@@ -1,6 +1,36 @@
 ChangeLog :
 ===========
 
+2016/12/13 : 1.7.1
+    - BUG/MEDIUM: proxy: return "none" and "unknown" for unknown LB algos
+    - BUG/MINOR: stats: make field_str() return an empty string on NULL
+    - DOC: Spelling fixes
+    - BUG/MEDIUM: http: Fix tunnel mode when the CONNECT method is used
+    - BUG/MINOR: http: Keep the same behavior between 1.6 and 1.7 for tunneled txn
+    - BUG/MINOR: filters: Protect args in macros HAS_DATA_FILTERS and IS_DATA_FILTER
+    - BUG/MINOR: filters: Invert evaluation order of HTTP_XFER_BODY and XFER_DATA analyzers
+    - BUG/MINOR: http: Call XFER_DATA analyzer when HTTP txn is switched in tunnel mode
+    - BUG/MAJOR: stream: fix session abort on resource shortage
+    - BUG/MINOR: cli: allow the backslash to be escaped on the CLI
+    - BUG/MEDIUM: cli: fix "show stat resolvers" and "show tls-keys"
+    - DOC: Fix map table's format
+    - DOC: Added 51Degrees conv and fetch functions to documentation.
+    - BUG/MINOR: http: don't send an extra CRLF after a Set-Cookie in a redirect
+    - DOC: mention that req_tot is for both frontends and backends
+    - BUG/MEDIUM: variables: some variable name can hide another ones
+    - BUG/MINOR: stats: fix be/sessions/max output in html stats
+    - MINOR: proxy: Add fe_name/be_name fetchers next to existing fe_id/be_id
+    - DOC: lua: Documentation about some entry missing
+    - MINOR: Do not forward the header "Expect: 100-continue" when the option http-buffer-request is set
+    - DOC: Add undocumented argument of the trace filter
+    - DOC: Fix some typo in SPOE documentation
+    - BUG/MINOR: cli: be sure to always warn the cli applet when input buffer is full
+    - MINOR: applet: Count number of (active) applets
+    - MINOR: task: Rename run_queue and run_queue_cur counters
+    - BUG/MEDIUM: stream: Save unprocessed events for a stream
+    - BUG/MAJOR: Fix how the list of entities waiting for a buffer is handled
+    - BUILD/MEDIUM: Fixing the build using LibreSSL
+
 2016/11/25 : 1.7.0
     - SCRIPTS: make publish-release also copy the new SPOE doc
     - BUILD: http: include types/sample.h in proto_http.h
