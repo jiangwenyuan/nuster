@@ -1884,14 +1884,19 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	 * the request buffer if its not required.
 	 */
 	if (socket->s->req.buf->size == 0) {
-		si_applet_cant_put(&socket->s->si[0]);
-		goto hlua_socket_write_yield_return;
+		appctx = hlua->task->context;
+		if (!channel_alloc_buffer(&socket->s->req, &appctx->buffer_wait))
+			goto hlua_socket_write_yield_return;
 	}
 
 	/* Check for avalaible space. */
 	len = buffer_total_space(socket->s->req.buf);
-	if (len <= 0)
+	if (len <= 0) {
+		appctx = objt_appctx(socket->s->si[0].end);
+		if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_write))
+			WILL_LJMP(luaL_error(L, "out of memory"));
 		goto hlua_socket_write_yield_return;
+	}
 
 	/* send data */
 	if (len < send_len)
@@ -1929,9 +1934,6 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 		return 1;
 
 hlua_socket_write_yield_return:
-	appctx = objt_appctx(socket->s->si[0].end);
-	if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_write))
-		WILL_LJMP(luaL_error(L, "out of memory"));
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_write_yield, TICK_ETERNITY, 0));
 	return 0;
 }
