@@ -1,6 +1,48 @@
 ChangeLog :
 ===========
 
+2017/01/13 : 1.7.2
+    - BUG/MEDIUM: lua: In some case, the return of sample-fetches is ignored (2)
+    - SCRIPTS: git-show-backports: fix a harmless typo
+    - SCRIPTS: git-show-backports: add -H to use the hash of the commit message
+    - BUG/MINOR: stream-int: automatically release SI_FL_WAIT_DATA on SHUTW_NOW
+    - DOC: lua: documentation about time parser functions
+    - DOC: lua: section declared twice
+    - BUG/MINOR: lua/cli: bad error message
+    - DOC: fix small typo in fe_id (backend instead of frontend)
+    - BUG/MINOR: Fix the sending function in Lua's cosocket
+    - BUG/MINOR: lua: memory leak executing tasks
+    - BUG/MINOR: lua: bad return code
+    - BUG/MEDIUM: ssl: properly reset the reused_sess during a forced handshake
+    - BUG/MEDIUM: ssl: avoid double free when releasing bind_confs
+    - BUG/MINOR: stats: fix be/sessions/current out in typed stats
+    - BUG/MINOR: backend: nbsrv() should return 0 if backend is disabled
+    - BUG/MEDIUM: ssl: for a handshake when server-side SNI changes
+    - BUG/MINOR: systemd: potential zombie processes
+    - DOC: Add timings events schemas
+    - BUILD: lua: build failed on FreeBSD.
+    - BUG/MINOR: option prefer-last-server must be ignored in some case
+    - MINOR: stats: Support "select all" for backend actions
+    - BUG/MINOR: sample-fetches/stick-tables: bad type for the sample fetches sc*_get_gpt0
+    - BUG/MAJOR: channel: Fix the definition order of channel analyzers
+    - BUG/MINOR: http: report real parser state in error captures
+    - BUILD: scripts: automatically update the branch in version.h when releasing
+    - BUG/MAJOR: http: fix risk of getting invalid reports of bad requests
+    - MINOR: http: custom status reason.
+    - MINOR: connection: add sample fetch "fc_rcvd_proxy"
+    - BUG/MINOR: config: emit a warning if http-reuse is enabled with incompatible options
+    - BUG/MINOR: tools: fix off-by-one in port size check
+    - BUG/MEDIUM: server: consider AF_UNSPEC as a valid address family
+    - MEDIUM: server: split the address and the port into two different fields
+    - MINOR: tools: make str2sa_range() return the port in a separate argument
+    - MINOR: server: take the destination port from the port field, not the addr
+    - MEDIUM: server: disable protocol validations when the server doesn't resolve
+    - BUG/MEDIUM: tools: do not force an unresolved address to AF_INET:0.0.0.0
+    - BUG/MINOR: ssl: EVP_PKEY must be freed after X509_get_pubkey usage
+    - MINOR: proto_http.c 502 error txt typo.
+    - DOC: add deprecation notice to "block"
+    - BUG/MINOR: Reset errno variable before calling strtol(3)
+
 2016/12/13 : 1.7.1
     - BUG/MEDIUM: proxy: return "none" and "unknown" for unknown LB algos
     - BUG/MINOR: stats: make field_str() return an empty string on NULL
