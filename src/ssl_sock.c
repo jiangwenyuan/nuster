@@ -1466,7 +1466,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, struct bind_conf *s)
 		}
 		return (s->strict_sni ?
 			SSL_TLSEXT_ERR_ALERT_FATAL :
-			SSL_TLSEXT_ERR_ALERT_WARNING);
+			SSL_TLSEXT_ERR_OK);
 	}
 
 	/* switch ctx */
