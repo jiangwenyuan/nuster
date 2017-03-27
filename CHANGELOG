@@ -1,6 +1,44 @@
 ChangeLog :
 ===========
 
+2017/03/27 : 1.7.4
+    - MINOR: config: warn when some HTTP rules are used in a TCP proxy
+    - BUG/MINOR: spoe: Fix soft stop handler using a specific id for spoe filters
+    - BUG/MINOR: spoe: Fix parsing of arguments in spoe-message section
+    - BUG/MEDIUM: ssl: Clear OpenSSL error stack after trying to parse OCSP file
+    - BUG/MEDIUM: cli: Prevent double free in CLI ACL lookup
+    - BUG/MINOR: Fix "get map <map> <value>" CLI command
+    - BUG/MAJOR: connection: update CO_FL_CONNECTED before calling the data layer
+    - BUG/MEDIUM: ssl: switchctx should not return SSL_TLSEXT_ERR_ALERT_WARNING
+    - BUG/MINOR: checks: attempt clean shutw for SSL check
+    - CONTRIB: tcploop: add limits.h to fix build issue with some compilers
+    - CONTRIB: tcploop: make it build on FreeBSD
+    - CONTRIB: tcploop: fix time format to silence build warnings
+    - CONTRIB: tcploop: report action 'K' (kill) in usage message
+    - CONTRIB: tcploop: fix connect's address length
+    - CONTRIB: tcploop: use the trash instead of NULL for recv()
+    - BUG/MEDIUM: listener: do not try to rebind another process' socket
+    - BUG/MEDIUM: filters: Fix channels synchronization in flt_end_analyze
+    - BUG/MAJOR: stream-int: do not depend on connection flags to detect connection
+    - BUG/MEDIUM: connection: ensure to always report the end of handshakes
+    - BUG: payload: fix payload not retrieving arbitrary lengths
+    - BUG/MAJOR: http: fix typo in http_apply_redirect_rule
+    - MINOR: doc: 2.4. Examples should be 2.5. Examples
+    - BUG/MEDIUM: stream: fix client-fin/server-fin handling
+    - MINOR: fd: add a new flag HAP_POLL_F_RDHUP to struct poller
+    - BUG/MINOR: raw_sock: always perfom the last recv if RDHUP is not available
+    - DOC/MINOR: Fix typos in proxy protocol doc
+    - DOC: Protocol doc: add checksum, TLV type ranges
+    - DOC: Protocol doc: add SSL TLVs, rename CHECKSUM
+    - DOC: Protocol doc: add noop TLV
+    - MEDIUM: global: add a 'hard-stop-after' option to cap the soft-stop time
+    - BUG/MINOR: cfgparse: loop in tracked servers lists not detected by check_config_validity().
+    - MINOR: server: irrelevant error message with 'default-server' config file keyword.
+    - MINOR: doc: fix use-server example (imap vs mail)
+    - BUG/MEDIUM: tcp: don't require privileges to bind to device
+    - BUILD: make the release script use shortlog for the final changelog
+    - BUILD: scripts: fix typo in announce-release error message
+
 2017/02/28 : 1.7.3
     - BUG/MINOR: stream: Fix how backend-specific analyzers are set on a stream
     - BUILD: ssl: fix build on OpenSSL 1.0.0
