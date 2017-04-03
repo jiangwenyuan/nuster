@@ -1,6 +1,16 @@
 ChangeLog :
 ===========
 
+2017/04/03 : 1.7.5
+    - BUG/MEDIUM: peers: fix buffer overflow control in intdecode.
+    - BUG/MEDIUM: buffers: Fix how input/output data are injected into buffers
+    - BUG/MEDIUM: http: Fix blocked HTTP/1.0 responses when compression is enabled
+    - BUG/MINOR: filters: Don't force the stream's wakeup when we wait in flt_end_analyze
+    - DOC: fix parenthesis and add missing "Example" tags
+    - DOC: update the contributing file
+    - DOC: log-format/tcplog/httplog update
+    - MINOR: config parsing: add warning when log-format/tcplog/httplog is overriden in "defaults" sections
+
 2017/03/27 : 1.7.4
     - MINOR: config: warn when some HTTP rules are used in a TCP proxy
     - BUG/MINOR: spoe: Fix soft stop handler using a specific id for spoe filters
