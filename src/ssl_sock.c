@@ -5844,9 +5844,9 @@ static int srv_parse_sni(char **args, int *cur_arg, struct proxy *px, struct ser
 	}
 
 	idx = (*cur_arg) + 1;
-	proxy->conf.args.ctx = ARGC_SRV;
+	px->conf.args.ctx = ARGC_SRV;
 
-	expr = sample_parse_expr((char **)args, &idx, px->conf.file, px->conf.line, err, &proxy->conf.args);
+	expr = sample_parse_expr((char **)args, &idx, px->conf.file, px->conf.line, err, &px->conf.args);
 	if (!expr) {
 		memprintf(err, "error detected while parsing sni expression : %s", *err);
 		return ERR_ALERT | ERR_FATAL;
