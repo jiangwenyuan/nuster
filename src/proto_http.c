@@ -4433,6 +4433,11 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	return 1;
 
  tarpit:
+	/* Allow cookie logging
+	 */
+	if (s->be->cookie_name || sess->fe->capture_name)
+		manage_client_side_cookies(s, req);
+
 	/* When a connection is tarpitted, we use the tarpit timeout,
 	 * which may be the same as the connect timeout if unspecified.
 	 * If unset, then set it to zero because we really want it to
@@ -4444,11 +4449,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	 * if the client closes first.
 	 */
 	channel_dont_connect(req);
-
-	/* Allow cookie logging
-	 */
-	if (s->be->cookie_name || sess->fe->capture_name)
-		manage_client_side_cookies(s, req);
 
 	req->analysers &= AN_REQ_FLT_END; /* remove switching rules etc... */
 	req->analysers |= AN_REQ_HTTP_TARPIT;
