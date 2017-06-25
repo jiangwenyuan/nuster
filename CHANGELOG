@@ -1,6 +1,14 @@
 ChangeLog :
 ===========
 
+2017/06/25 : 1.7.7
+    - BUG/MINOR: Wrong peer task expiration handling during synchronization processing.
+    - BUG/MEDIUM: http: Drop the connection establishment when a redirect is performed
+    - BUG/MEDIUM: cfgparse: Check if tune.http.maxhdr is in the range 1..32767
+    - DOC: fix references to the section about the unix socket
+    - BUG/MINOR: haproxy/cli : fix for solaris/illumos distros for CMSG* macros
+    - BUG/MINOR: log: pin the front connection when front ip/ports are logged
+
 2017/06/16 : 1.7.6
     - DOC: changed "block"(deprecated) examples to http-request deny
     - DOC: add few comments to examples.
