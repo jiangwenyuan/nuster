@@ -1,6 +1,18 @@
 ChangeLog :
 ===========
 
+2017/07/07 : 1.7.8
+    - BUG/MINOR: stream: flag TASK_WOKEN_RES not set if task in runqueue
+    - BUG/MAJOR: cli: fix custom io_release was crushed by NULL.
+    - BUG/MAJOR: map: fix segfault during 'show map/acl' on cli.
+    - BUG/MAJOR: compression: Be sure to release the compression state in all cases
+    - DOC: fix references to the section about time format.
+    - BUG/MEDIUM: map/acl: fix unwanted flags inheritance.
+    - BUG/MINOR: stream: Don't forget to remove CF_WAKE_ONCE flag on response channel
+    - BUG/MINOR: http: Don't reset the transaction if there are still data to send
+    - BUG/MEDIUM: filters: Be sure to call flt_end_analyze for both channels
+    - BUG/MINOR: http: properly handle all 1xx informational responses
+
 2017/06/25 : 1.7.7
     - BUG/MINOR: Wrong peer task expiration handling during synchronization processing.
     - BUG/MEDIUM: http: Drop the connection establishment when a redirect is performed
