@@ -1007,7 +1007,7 @@ void soft_stop(void)
 		p = p->next;
 	}
 
-	prs = peers;
+	prs = cfg_peers;
 	while (prs) {
 		if (prs->peers_fe)
 			stop_proxy(prs->peers_fe);
@@ -1142,7 +1142,7 @@ void pause_proxies(void)
 		p = p->next;
 	}
 
-	prs = peers;
+	prs = cfg_peers;
 	while (prs) {
 		if (prs->peers_fe)
 			err |= !pause_proxy(prs->peers_fe);
@@ -1176,7 +1176,7 @@ void resume_proxies(void)
 		p = p->next;
 	}
 
-	prs = peers;
+	prs = cfg_peers;
 	while (prs) {
 		if (prs->peers_fe)
 			err |= !resume_proxy(prs->peers_fe);
