@@ -5948,6 +5948,7 @@ error:
 
 static void hlua_applet_tcp_release(struct appctx *ctx)
 {
+	task_delete(ctx->ctx.hlua_apptcp.task);
 	task_free(ctx->ctx.hlua_apptcp.task);
 	ctx->ctx.hlua_apptcp.task = NULL;
 	hlua_ctx_destroy(&ctx->ctx.hlua_apptcp.hlua);
@@ -6226,6 +6227,7 @@ error:
 
 static void hlua_applet_http_release(struct appctx *ctx)
 {
+	task_delete(ctx->ctx.hlua_apphttp.task);
 	task_free(ctx->ctx.hlua_apphttp.task);
 	ctx->ctx.hlua_apphttp.task = NULL;
 	hlua_ctx_destroy(&ctx->ctx.hlua_apphttp.hlua);
