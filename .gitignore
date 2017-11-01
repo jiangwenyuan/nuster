@@ -25,6 +25,7 @@
 # nuster
 !/README.md
 !/README-CN.md
+!/README-JP.md
 # Reject some generic files
 *.o
 *~
