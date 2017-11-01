@@ -19,7 +19,11 @@ the content of request, response or server status, such as,
 Performance
 ===========
 
-Nuster is very fast(benchmark later).
+Nuster is very fast, some test shows nuster is almost three times faster than 
+nginx when both using single core, and nearly two times faster than nginx and
+three times faster than varnish when using all cores.
+
+See detailed benchmark.
 
 
 Installation
