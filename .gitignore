@@ -24,6 +24,7 @@
 !/scripts
 # nuster
 !/README.md
+!/README-CN.md
 # Reject some generic files
 *.o
 *~
