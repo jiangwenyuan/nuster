@@ -786,6 +786,7 @@ OBJS = src/haproxy.o src/base64.o src/protocol.o \
        src/acl.o src/sample.o src/memory.o src/freq_ctr.o src/auth.o src/proto_udp.o \
        src/compression.o src/payload.o src/hash.o src/pattern.o src/map.o \
        src/namespace.o src/mailers.o src/dns.o src/vars.o src/filters.o \
+       src/cache/dict.o src/cache/engine.o src/cache/filter.o src/cache/parser.o \
        src/flt_http_comp.o src/flt_trace.o src/flt_spoe.o src/cli.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o \
@@ -880,7 +881,7 @@ uninstall:
 	rm -f "$(DESTDIR)$(SBINDIR)"/haproxy-systemd-wrapper
 
 clean:
-	rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
+	rm -f *.[oas] src/*.[oas] src/cache/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
 	for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out

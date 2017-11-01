@@ -1,0 +1,249 @@
+/*
+ * Cache dict functions.
+ *
+ * Copyright (C) 2017, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
+ *
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <string.h>
+
+#include <types/global.h>
+#include <types/cache.h>
+
+#include <proto/cache.h>
+
+#include <import/xxhash.h>
+
+
+static int _cache_dict_resize(uint64_t size) {
+    struct cache_dict dict;
+
+    dict.size  = size;
+    dict.used  = 0;
+    dict.entry = malloc(sizeof(struct cache_entry*) * size);
+
+    if(dict.entry) {
+        int i;
+        for(i = 0; i < size; i++) {
+            dict.entry[i] = NULL;
+        }
+        if(!cache->dict[0].entry) {
+            cache->dict[0] = dict;
+            return 1;
+        } else {
+            cache->dict[1] = dict;
+            cache->rehash_idx = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int cache_dict_init() {
+    return _cache_dict_resize(CACHE_DEFAULT_DICT_SIZE);
+}
+
+static int _cache_dict_rehashing() {
+    return cache->rehash_idx != -1;
+}
+
+/*
+ * Rehash dict if cache->dict[0] is almost full
+ */
+void cache_dict_rehash() {
+    if(_cache_dict_rehashing()) {
+        int max_empty = 10;
+        struct cache_entry *entry = NULL;
+
+        /* check max_empty entryies */
+        while(!cache->dict[0].entry[cache->rehash_idx]) {
+            cache->rehash_idx++;
+            max_empty--;
+            if(cache->rehash_idx >= cache->dict[0].size) {
+                return;
+            }
+            if(!max_empty) {
+                return;
+            }
+        }
+
+        /* move all entries in this bucket to dict[1] */
+        entry = cache->dict[0].entry[cache->rehash_idx];
+        while(entry) {
+            int idx = entry->hash % cache->dict[1].size;
+            struct cache_entry *entry_next = entry->next;
+
+            entry->next = cache->dict[1].entry[idx];
+            cache->dict[1].entry[idx] = entry;
+            cache->dict[1].used++;
+            cache->dict[0].used--;
+            entry = entry_next;
+        }
+        cache->dict[0].entry[cache->rehash_idx] = NULL;
+        cache->rehash_idx++;
+
+        /* have we rehashed the whole dict? */
+        if(cache->dict[0].used == 0) {
+            free(cache->dict[0].entry);
+            cache->dict[0]       = cache->dict[1];
+            cache->rehash_idx     = -1;
+            cache->cleanup_idx    = 0;
+            cache->dict[1].entry = NULL;
+            cache->dict[1].size  = 0;
+            cache->dict[1].used  = 0;
+        }
+    } else {
+        /* should we rehash? */
+        if(cache->dict[0].used >= cache->dict[0].size * CACHE_DEFAULT_LOAD_FACTOR) {
+            _cache_dict_resize(cache->dict[0].size * CACHE_DEFAULT_GROWTH_FACTOR);
+        }
+    }
+}
+
+static int _cache_dict_entry_expired(struct cache_entry *entry) {
+    if(entry->expire == 0) {
+        return 0;
+    } else {
+        return entry->expire <= _get_current_timestamp();
+    }
+}
+
+static int _cache_entry_invalid(struct cache_entry *entry) {
+    /* check state */
+    if(entry->state == CACHE_ENTRY_STATE_INVALID) {
+        return 1;
+    } else if(entry->state == CACHE_ENTRY_STATE_EXPIRED) {
+        return 1;
+    }
+    /* check expire */
+    return _cache_dict_entry_expired(entry);
+}
+
+/*
+ * Check entry validity, free the entry if its invalid,
+ * If its invalid set entry->data->invalid to true,
+ * entry->data is freed by _cache_data_cleanup
+ */
+void cache_dict_cleanup() {
+    struct cache_entry *entry = cache->dict[0].entry[cache->cleanup_idx];
+    struct cache_entry *prev  = entry;
+
+    if(!cache->dict[0].used) {
+        return;
+    }
+
+    while(entry) {
+        if(_cache_entry_invalid(entry)) {
+            struct cache_entry *tmp = entry;
+
+            if(entry->data) {
+                entry->data->invalid = 1;
+            }
+            if(prev == entry) {
+                cache->dict[0].entry[cache->cleanup_idx] = entry->next;
+                prev = entry->next;
+            } else {
+                prev->next = entry->next;
+            }
+            entry = entry->next;
+            free(tmp->key);
+            pool_free2(global.cache.pool.entry, tmp);
+            cache->dict[0].used--;
+        } else {
+            prev  = entry;
+            entry = entry->next;
+        }
+    }
+    cache->cleanup_idx++;
+
+    /* if we have checked the whole dict */
+    if(cache->cleanup_idx == cache->dict[0].size) {
+        cache->cleanup_idx = 0;
+    }
+}
+
+/*
+ * Add a new cache_entry to cache_dict
+ */
+struct cache_entry *cache_dict_set(uint64_t hash, char *key) {
+    struct cache_dict  *dict  = NULL;
+    struct cache_data  *data  = NULL;
+    struct cache_entry *entry = NULL;
+    int idx;
+
+    cache_housekeeping();
+
+    dict = _cache_dict_rehashing() ? &cache->dict[1] : &cache->dict[0];
+
+    entry = pool_alloc2(global.cache.pool.entry);
+    if(!entry) {
+        return NULL;
+    }
+
+    data = cache_data_new();
+    if(!data) {
+        pool_free2(global.cache.pool.entry, entry);
+        return NULL;
+    }
+
+    idx = hash % dict->size;
+    /* prepend entry to dict->entry[idx] */
+    entry->next      = dict->entry[idx];
+    dict->entry[idx] = entry;
+    dict->used++;
+
+    /* init entry */
+    entry->data   = data;
+    entry->state  = CACHE_ENTRY_STATE_CREATING;
+    entry->key    = strdup(key);
+    entry->hash   = hash;
+    entry->expire = 0;
+    return entry;
+}
+
+/*
+ * Get entry
+ */
+struct cache_entry *cache_dict_get(uint64_t hash, const char *key) {
+    int i, idx;
+    struct cache_entry *entry = NULL;
+
+    cache_housekeeping();
+
+    if(cache->dict[0].used + cache->dict[1].used == 0) {
+        return NULL;
+    }
+
+    for(i = 0; i <= 1; i++) {
+        idx   = hash % cache->dict[i].size;
+        entry = cache->dict[i].entry[idx];
+        while(entry) {
+            if(entry->hash == hash && !strcmp(entry->key, key)) {
+                /* check expire
+                 * change state only, leave the free stuff to cleanup
+                 * */
+                if(entry->state == CACHE_ENTRY_STATE_VALID && _cache_dict_entry_expired(entry)) {
+                    entry->state         = CACHE_ENTRY_STATE_EXPIRED;
+                    entry->data->invalid = 1;
+                    entry->data          = NULL;
+                    entry->expire        = 0;
+                }
+                return entry;
+            }
+            entry = entry->next;
+        }
+        if(!_cache_dict_rehashing()) {
+            return NULL;
+        }
+    }
+    return NULL;
+}
+

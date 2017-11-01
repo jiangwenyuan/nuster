@@ -83,6 +83,7 @@
 #include <types/global.h>
 #include <types/acl.h>
 #include <types/peers.h>
+#include <types/cache.h>
 
 #include <proto/acl.h>
 #include <proto/applet.h>
@@ -110,6 +111,7 @@
 #include <proto/task.h>
 #include <proto/dns.h>
 #include <proto/vars.h>
+#include <proto/cache.h>
 
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
@@ -222,9 +224,15 @@ struct global global = {
 		.handle = NULL,
 	},
 #endif
+        .cache = {
+                .status    = CACHE_STATUS_UNDEFINED,
+                .data_size = CACHE_DEFAULT_SIZE,
+        },
 
 	/* others NULL OK */
 };
+
+struct cache *cache = NULL;
 
 /*********************************************************************/
 
@@ -275,6 +283,8 @@ unsigned int warned = 0;
 
 void display_version()
 {
+	printf("Nuster version %s\n", NUSTER_VERSION);
+	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE"\n");
 	printf("Copyright 2000-2017 Willy Tarreau <willy@haproxy.org>\n\n");
 }
@@ -1027,6 +1037,8 @@ void init(int argc, char **argv)
 	ha_wurfl_init();
 #endif
 
+        cache_init();
+
 	for (px = proxy; px; px = px->next) {
 		err_code |= flt_init(px);
 		if (err_code & (ERR_ABORT|ERR_FATAL)) {
@@ -1750,6 +1762,7 @@ void run_poll_loop()
 		cur_poller.poll(&cur_poller, next);
 		fd_process_cached_events();
 		applet_run_active();
+                cache_housekeeping();
 	}
 }
 

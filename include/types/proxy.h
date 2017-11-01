@@ -435,6 +435,7 @@ struct proxy {
 						 * name is used
 						 */
 	struct list filter_configs;		/* list of the filters that are declared on this proxy */
+	struct list cache_rules;                /* cache rules */
 };
 
 struct switching_rule {

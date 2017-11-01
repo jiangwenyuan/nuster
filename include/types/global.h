@@ -26,12 +26,14 @@
 
 #include <common/config.h>
 #include <common/standard.h>
+#include <common/memory.h>
 #include <import/da.h>
 #include <types/freq_ctr.h>
 #include <types/listener.h>
 #include <types/proxy.h>
 #include <types/task.h>
 #include <types/vars.h>
+#include <types/cache.h>
 
 #ifdef USE_51DEGREES
 #include <import/51d.h>
@@ -226,6 +228,22 @@ struct global {
 		struct eb_root btree; /* btree containing info (name/type) on WURFL data to return */
 	} wurfl;
 #endif
+        struct {
+                int                  status;            /* cache on or off */
+                //char              *storage;           /* memory or directory */
+                uint64_t             data_size;         /* max memory, in bytes */
+
+                struct {
+                        struct pool_head *stash;
+                        struct pool_head *ctx;
+                        struct pool_head *data;
+                        struct pool_head *element;
+                        struct pool_head *chunk;
+                        struct pool_head *entry;
+                } pool;
+
+                struct cache_stats *stats;
+        } cache;
 };
 
 extern struct global global;

@@ -22,6 +22,8 @@
 !/tests
 !/debian
 !/scripts
+# nuster
+!/README.md
 # Reject some generic files
 *.o
 *~

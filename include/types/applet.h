@@ -163,6 +163,11 @@ struct appctx {
 			unsigned int max_frame_size;
 			struct list  list;
 		} spoe;                         /* used by SPOE filter */
+                struct {
+                        struct cache_entry   *entry;
+                        struct cache_data    *data;
+                        struct cache_element *element;
+                } cache;
 	} ctx;					/* used by stats I/O handlers to dump the stats */
 };
 

@@ -52,6 +52,7 @@
 #include <types/mailers.h>
 #include <types/dns.h>
 #include <types/stats.h>
+#include <types/cache.h>
 
 #include <proto/acl.h>
 #include <proto/auth.h>
@@ -84,6 +85,7 @@
 #include <proto/stick_table.h>
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
+#include <proto/cache.h>
 
 #ifdef USE_OPENSSL
 #include <types/ssl_sock.h>
@@ -1923,6 +1925,52 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 				env++;
 		}
 	}
+        else if (!strcmp(args[0], "cache")) {
+                int cur_arg = 1;
+                if (alertif_too_many_args(3, file, linenum, args, &err_code)) {
+                        goto out;
+                }
+                if (global.cache.status != CACHE_STATUS_UNDEFINED) {
+                        Alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
+                        err_code |= ERR_ALERT;
+                        goto out;
+                }
+                if (*(args[cur_arg]) == 0) {
+                        Alert("parsing [%s:%d] : '%s' expects 'on' or 'off' as an argument.\n", file, linenum, args[0]);
+                        err_code |= ERR_ALERT | ERR_FATAL;
+                        goto out;
+                }
+                if (!strcmp(args[cur_arg], "off")) {
+                        global.cache.status = CACHE_STATUS_OFF;
+                } else if (!strcmp(args[cur_arg], "on")) {
+                        global.cache.status = CACHE_STATUS_ON;
+                } else {
+                        Alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
+                        err_code |= ERR_ALERT | ERR_FATAL;
+                        goto out;
+                }
+                cur_arg++;
+                while(*(args[cur_arg]) !=0) {
+                        if (!strcmp(args[cur_arg], "data-size")) {
+                                cur_arg++;
+                                if (*args[cur_arg] == 0) {
+                                        Alert("parsing [%s:%d] : '%s' data-size expects a size.\n", file, linenum, args[0]);
+                                        err_code |= ERR_ALERT | ERR_FATAL;
+                                        goto out;
+                                }
+                                if (cache_parse_size(args[cur_arg], &global.cache.data_size)) {
+                                        Alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                                        err_code |= ERR_ALERT | ERR_FATAL;
+                                        goto out;
+                                }
+                                cur_arg++;
+                                continue;
+                        }
+                        Alert("parsing [%s:%d] : '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
+                        err_code |= ERR_ALERT | ERR_FATAL;
+                        goto out;
+                }
+        }
 	else {
 		struct cfg_kw_list *kwl;
 		int index;
