@@ -293,3 +293,5 @@ Copyright (C) 2017, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen
 All rights reserved.
 
 Licensed under GPL, the same as HAProxy
+
+HAProxy and other sources license notices: see relevant individual files.
