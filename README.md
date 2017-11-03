@@ -179,7 +179,7 @@ Set `debug` in `global` section, or start `haproxy` with `-d`.
 
 Cache related debug messages start with `[CACHE]`.
 
-How to cache POST reqeust?
+How to cache POST request?
 ------------------------
 Enable `option http-buffer-request`.
 
