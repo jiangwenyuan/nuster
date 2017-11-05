@@ -23,7 +23,7 @@ Nuster is very fast, some test shows nuster is almost three times faster than
 nginx when both using single core, and nearly two times faster than nginx and
 three times faster than varnish when using all cores.
 
-See detailed benchmark.
+See [detailed benchmark](Benchmark.md)
 
 
 Installation

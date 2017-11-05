@@ -26,6 +26,9 @@
 !/README.md
 !/README-CN.md
 !/README-JP.md
+!/Benchmark.md
+!/Benchmark-CN.md
+!/Benchmark-JP.md
 # Reject some generic files
 *.o
 *~
