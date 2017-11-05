@@ -19,6 +19,8 @@ HAProxy的ACL功能来提供非常细致的缓存规则，比如
 
 非常快, 单进程模式下是nginx的3倍，多进程下nginx的2倍，varnish的3倍。
 
+详见[benchmark](https://github.com/jiangwenyuan/nuster/wiki/Performance-benchmark:-nuster-vs-nginx-vs-varnish)
+
 
 安装
 ====

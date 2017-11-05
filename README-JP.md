@@ -22,7 +22,7 @@ NusterはHAProxyを元に開発したキャッシュサーバーで、HAProxyと
 シングルコアでnginxより3倍、マルチコアでnginxより2倍varnishより3倍のテスト結果
 があった。
 
-詳細は後ほど。
+詳細は[benchmark](https://github.com/jiangwenyuan/nuster/wiki/Performance-benchmark:-nuster-vs-nginx-vs-varnish)
 
 インストール
 ============
