@@ -26,6 +26,7 @@
 !/README.md
 !/README-CN.md
 !/README-JP.md
+!/.github
 # Reject some generic files
 *.o
 *~
