@@ -29,6 +29,15 @@ See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Performance
 Installation
 ============
 
+Download
+--------
+
+Download stable version from [releases](https://github.com/jiangwenyuan/nuster/releases) page
+for production use, otherwise git clone the source code.
+
+Build
+-----
+
 ```
 make TARGET=linux2628
 make install
