@@ -23,9 +23,7 @@
 !/debian
 !/scripts
 # nuster
-!/README.md
-!/README-CN.md
-!/README-JP.md
+!/*.md
 !/.github
 # Reject some generic files
 *.o

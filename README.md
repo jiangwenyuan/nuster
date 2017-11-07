@@ -200,6 +200,17 @@ section in [HAProxy configuration](doc/configuration.txt) for details.
 
 Also it might be a good idea to put it separately in a dedicated backend as example does.
 
+Does nuster support multiple processes?
+---------------------------------------
+
+Yes and no.
+
+Yes, you can simply set `nbproc` in config to enable multiple processes.
+
+No, because `nuster-1.7.9.1` uses private memory which means you will have multiple copies of
+
+same data, shared memory is WIP and will be added in next version.
+
 Example
 =======
 
@@ -298,6 +309,23 @@ Conventions
 ===========
 
 1. Files with same name: those with `.md` extension belong to Nuster, otherwise HAProxy
+
+Contributing
+============
+
+* Join the development
+* Give feedback
+* Report issues
+* Send pull requests
+* Spread nuster
+
+TODO
+====
+
+* Shared memory(WIP)
+* Purge cache(web/api)
+* Cache stats(web/api)
+* etc
 
 License
 =======
