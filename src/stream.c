@@ -2347,6 +2347,8 @@ struct task *process_stream(struct task *t)
 
 		t->expire = tick_first(t->expire, req->analyse_exp);
 
+		t->expire = tick_first(t->expire, res->analyse_exp);
+
 		if (si_f->exp)
 			t->expire = tick_first(t->expire, si_f->exp);
 
