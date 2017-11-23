@@ -5723,7 +5723,7 @@ static int srv_parse_crt(char **args, int *cur_arg, struct proxy *px, struct ser
 	}
 
 	if ((*args[*cur_arg + 1] != '/') && global.crt_base)
-		memprintf(&newsrv->ssl_ctx.client_crt, "%s/%s", global.ca_base, args[*cur_arg + 1]);
+		memprintf(&newsrv->ssl_ctx.client_crt, "%s/%s", global.crt_base, args[*cur_arg + 1]);
 	else
 		memprintf(&newsrv->ssl_ctx.client_crt, "%s", args[*cur_arg + 1]);
 
