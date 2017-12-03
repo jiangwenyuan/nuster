@@ -1,6 +1,47 @@
 ChangeLog :
 ===========
 
+2017/12/03 : 1.8.1
+    - BUG/MEDIUM: kqueue: Don't bother closing the kqueue after fork.
+    - DOC: cache: update sections and fix some typos
+    - BUILD/MINOR: deviceatlas: enable thread support
+    - BUG/MEDIUM: tcp-check: Don't lock the server in tcpcheck_main
+    - BUG/MEDIUM: ssl: don't allocate shctx several time
+    - BUG/MEDIUM: cache: bad computation of the remaining size
+    - BUILD: checks: don't include server.h
+    - BUG/MEDIUM: stream: fix session leak on applet-initiated connections
+    - BUILD/MINOR: haproxy : FreeBSD/cpu affinity needs pthread_np header
+    - BUG/MINOR: ssl: CO_FL_EARLY_DATA removal is managed by stream
+    - BUG/MEDIUM: threads/peers: decrement, not increment jobs on quitting
+    - BUG/MEDIUM: h2: don't report an error after parsing a 100-continue response
+    - BUG/MEDIUM: peers: fix some track counter rules dont register entries for sync.
+    - BUG/MAJOR: thread/peers: fix deadlock on peers sync.
+    - BUILD/MINOR: haproxy: compiling config cpu parsing handling when needed
+    - BUG/MINOR: mworker: fix validity check for the pipe FDs
+    - BUG/MINOR: mworker: detach from tty when in daemon mode
+    - MINOR: threads: Fix pthread_setaffinity_np on FreeBSD.
+    - BUG/MAJOR: thread: Be sure to request a sync between threads only once at a time
+    - BUILD: Fix LDFLAGS vs. LIBS re linking order in various makefiles
+    - BUG/MEDIUM: checks: Be sure we have a mux if we created a cs.
+    - BUG/MINOR: hpack: fix debugging output of pseudo header names
+    - BUG/MINOR: hpack: must reject huffman literals padded with more than 7 bits
+    - BUG/MINOR: hpack: reject invalid header index
+    - BUG/MINOR: hpack: dynamic table size updates are only allowed before headers
+    - BUG/MAJOR: h2: correctly check the request length when building an H1 request
+    - BUG/MINOR: h2: immediately close if receiving GOAWAY after the last stream
+    - BUG/MINOR: h2: try to abort closed streams as soon as possible
+    - BUG/MINOR: h2: ":path" must not be empty
+    - BUG/MINOR: h2: fix a typo causing PING/ACK to be responded to
+    - BUG/MINOR: h2: the TE header if present may only contain trailers
+    - BUG/MEDIUM: h2: enforce the per-connection stream limit
+    - BUG/MINOR: h2: do not accept SETTINGS_ENABLE_PUSH other than 0 or 1
+    - BUG/MINOR: h2: reject incorrect stream dependencies on HEADERS frame
+    - BUG/MINOR: h2: properly check PRIORITY frames
+    - BUG/MINOR: h2: reject response pseudo-headers from requests
+    - BUG/MEDIUM: h2: remove connection-specific headers from request
+    - BUG/MEDIUM: h2: do not accept upper case letters in request header names
+    - BUG/MINOR: h2: use the H2_F_DATA_* macros for DATA frames
+
 2017/11/26 : 1.8.0
     - BUG/MEDIUM: stream: don't automatically forward connect nor close
     - BUG/MAJOR: stream: ensure analysers are always called upon close
