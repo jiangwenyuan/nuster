@@ -603,7 +603,7 @@ endif
 # For nuster
 ifeq ($(USE_OPENSSL),)
 ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DUSE_PTHREAD_PSHARED
+OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
 OPTIONS_LDFLAGS += -lpthread
 endif
 endif

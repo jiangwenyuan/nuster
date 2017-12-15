@@ -119,7 +119,7 @@ struct cache_dict {
     struct cache_entry **entry;
     uint64_t             size;      /* number of entries */
     uint64_t             used;      /* number of used entries */
-#ifdef USE_PTHREAD_PSHARED
+#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t      mutex;
 #else
     unsigned int         waiters;
@@ -156,7 +156,7 @@ struct cache_stats {
     uint64_t        used_mem;
     uint64_t        requests;
     uint64_t        hits;
-#ifdef USE_PTHREAD_PSHARED
+#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t mutex;
 #else
     unsigned int    waiters;
@@ -167,7 +167,7 @@ struct cache {
     struct cache_dict  dict[2];           /* 0: using, 1: rehashing */
     struct cache_data *data_head;         /* point to the circular linked list, tail->next ===  head */
     struct cache_data *data_tail;         /* and will be moved together constantly to check invalid data */
-#ifdef USE_PTHREAD_PSHARED
+#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t    mutex;
 #else
     unsigned int       waiters;
@@ -226,7 +226,7 @@ struct nuster_memory {
     uint8_t                    *stop;
     uint8_t                    *bitmap;
     char                        name[16];
-#ifdef USE_PTHREAD_PSHARED
+#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t             mutex;
 #else
     unsigned int                waiters;

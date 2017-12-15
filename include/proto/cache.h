@@ -124,7 +124,7 @@ int cache_stats_full();
 
 
 /* lock, borrowed from shctx.c */
-#ifdef USE_PTHREAD_PSHARED
+#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
 #include <pthread.h>
 #else
 #ifdef USE_SYSCALL_FUTEX
@@ -134,7 +134,7 @@ int cache_stats_full();
 #endif
 #endif
 
-#if defined (USE_PTHREAD_PSHARED)
+#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
 
 static inline int _nuster_shctx_init(pthread_mutex_t *mutex) {
     if(global.cache.share) {

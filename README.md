@@ -43,6 +43,8 @@ make TARGET=linux2628
 make install
 ```
 
+> use `make TARGET=linux2628 USE_PTHREAD_PSHARED=1` to use pthread lib
+
 See [HAProxy README](README) for details.
 
 
