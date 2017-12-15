@@ -48,6 +48,9 @@
 #define CACHE_STATUS_UNDEFINED       -1
 #define CACHE_STATUS_OFF              0
 #define CACHE_STATUS_ON               1
+#define CACHE_SHARE_UNDEFINED        -1
+#define CACHE_SHARE_OFF               0
+#define CACHE_SHARE_ON                1
 
 enum ck_type {
     CK_METHOD = 1,                /* method */

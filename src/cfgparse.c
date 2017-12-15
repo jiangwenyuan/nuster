@@ -1959,9 +1959,9 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                 goto out;
                             }
                             if (!strcmp(args[cur_arg], "off")) {
-                                global.cache.share = 0;
+                                global.cache.share = CACHE_SHARE_OFF;
                             } else if (!strcmp(args[cur_arg], "on")) {
-                                global.cache.share = 1;
+                                global.cache.share = CACHE_SHARE_ON;
                             } else {
                                 Alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
                                 err_code |= ERR_ALERT | ERR_FATAL;

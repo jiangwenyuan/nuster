@@ -265,11 +265,11 @@ void cache_housekeeping() {
 
 void cache_init() {
     if(global.cache.status == CACHE_STATUS_ON) {
-        if(global.cache.share == -1) {
+        if(global.cache.share == CACHE_STATUS_UNDEFINED) {
             if(global.nbproc == 1) {
-                global.cache.share = 0;
+                global.cache.share = CACHE_SHARE_OFF;
             } else {
-                global.cache.share = 1;
+                global.cache.share = CACHE_SHARE_ON;
             }
         }
 

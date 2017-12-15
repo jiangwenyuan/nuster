@@ -228,7 +228,7 @@ struct global global = {
                 .status    = CACHE_STATUS_UNDEFINED,
                 .data_size = CACHE_DEFAULT_SIZE,
                 .dict_size = CACHE_DEFAULT_SIZE,
-                .share     = -1,
+                .share     = CACHE_SHARE_UNDEFINED,
         },
 
 	/* others NULL OK */

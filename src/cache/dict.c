@@ -74,7 +74,7 @@ int cache_dict_init() {
 }
 
 static int _cache_dict_rehashing() {
-    return global.cache.share == 0 && cache->rehash_idx != -1;
+    return global.cache.share == CACHE_SHARE_OFF && cache->rehash_idx != -1;
 }
 
 /*
