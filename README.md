@@ -11,9 +11,10 @@ the content of request, response or server status, such as,
 
  * request url: cache only if the request url equals to X
  * request query: cache only if the request query contains X and equls to Y
+ * cookie: cache only if cookie contains X and equls to Y
  * response header: cache only if the response contains header X equals to Y
  * rate: cache only if the request rate is greater than X
- * etc
+ * etc, any combination of above
 
 
 Performance
