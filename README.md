@@ -49,8 +49,14 @@ See [HAProxy README](README) for details.
 Usage
 =====
 
-`cache on` should be declared in **global** section and a cache filter along
-with some cache-rules should be added into **backend** or **listen** section.
+Nuster is based on HAProxy, all directives from HAProxy are supported in nuster.
+
+In order to use cache functionality, `cache on` should be declared in **global**
+section and a cache filter along with some cache-rules should be added into
+**backend** or **listen** section.
+
+If `cache off` is declared or there is no `cache on|off` directive, nuster acts
+just like HAProxy, as a TCP and HTTP load balancer.
 
 Directives
 ==========
@@ -58,17 +64,64 @@ Directives
 cache
 -----
 
-**syntax:** cache on|off [data-size size]
+**syntax:** cache on|off [share on|off] [data-size size] [dict-size size]
 
 **default:** *none*
 
 **context:** *global*
 
 Determines whether to use cache or not.
-To limit the maximum memory usage of cached http response data, set **data-size**
-which accepts units like `m`, `M`, `g` and `G`. By default, the size is
-1024 * 1024 bytes, which is also the minimal size.
-Note that overheads used by cache are not included in it, only http response data.
+
+### share
+
+#### share on
+
+A memory zone with a size of `data-size + dict-size` will be created. Except for
+temporary data created and destroyed within request, all cache related data
+including http response data, keys and overheads are stored in this memroy zone
+and shared between all processes.
+
+If no more memory can be allocated from this memory zone, new requests that should
+be cached according to defined cache rules will not be cached unless some memory
+are freed.
+
+#### share off
+
+Cache data are stored in a memory pool which allocates memory dynamically from
+system in case there is no available memory in the pool.
+
+A global internal counter monitors the memory usage of all http response data across
+all processes, new requests will not be cached if the counter exceeds `data-size`.
+
+By default, share is set to on in multiple processes mode, and off in single process mode.
+
+### data-size
+
+With `share on`, it determines the size of memory zone along with `dict-size`.
+
+With `share off`, it detemines the maximum memory used by cache.
+
+It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024 bytes,
+which is also the minimal size.
+
+### dict-size
+
+Determines the size of memory used by hash table in `share on` mode.
+
+It has no effect in `share off` mode, the hash table resize itself if full.
+
+It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024 bytes,
+which is also the minimal size.
+
+Note that it only decides the memory used by hash table not keys. In fact, keys are
+stored in memory zone which is limited by `data-size`.
+
+**dict-size** is different from **number of keys**. New keys can still be added to hash
+table even if the number of keys exceeds dict-size as long as there are enough memory.
+
+Nevertheless it may lead to a performance drop if `number of keys` is greater than `dict-size`.
+
+An approximate number of keys multiplied by 8 (normally) as `dict-size` should work.
 
 filter cache
 ------------
@@ -200,17 +253,6 @@ section in [HAProxy configuration](doc/configuration.txt) for details.
 
 Also it might be a good idea to put it separately in a dedicated backend as example does.
 
-Does nuster support multiple processes?
----------------------------------------
-
-Yes and no.
-
-Yes, you can simply set `nbproc` in config to enable multiple processes.
-
-No, because `nuster-1.7.9.1` uses private memory which means you will have multiple copies of
-
-same data, shared memory is WIP and will be added in next version.
-
 Example
 =======
 
@@ -322,7 +364,6 @@ Contributing
 TODO
 ====
 
-* Shared memory(WIP)
 * Purge cache(web/api)
 * Cache stats(web/api)
 * etc

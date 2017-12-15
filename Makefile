@@ -600,6 +600,14 @@ endif
 endif
 endif
 
+# For nuster
+ifeq ($(USE_OPENSSL),)
+ifneq ($(USE_PTHREAD_PSHARED),)
+OPTIONS_CFLAGS  += -DUSE_PTHREAD_PSHARED
+OPTIONS_LDFLAGS += -lpthread
+endif
+endif
+
 ifneq ($(USE_LUA),)
 check_lua_lib = $(shell echo "int main(){}" | $(CC) -o /dev/null -x c - $(2) -l$(1) 2>/dev/null && echo $(1))
 check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
@@ -787,6 +795,7 @@ OBJS = src/haproxy.o src/base64.o src/protocol.o \
        src/compression.o src/payload.o src/hash.o src/pattern.o src/map.o \
        src/namespace.o src/mailers.o src/dns.o src/vars.o src/filters.o \
        src/cache/dict.o src/cache/engine.o src/cache/filter.o src/cache/parser.o \
+       src/cache/memory.o src/cache/stats.o \
        src/flt_http_comp.o src/flt_trace.o src/flt_spoe.o src/cli.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o \

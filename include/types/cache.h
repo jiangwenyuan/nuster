@@ -33,7 +33,7 @@
 #include <types/sample.h>
 #include <types/applet.h>
 
-#define NUSTER_VERSION                HAPROXY_VERSION".1"
+#define NUSTER_VERSION                HAPROXY_VERSION".2"
 #define NUSTER_COPYRIGHT             "2017, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 #define CACHE_DEFAULT_SIZE            1024 * 1024
 #define CACHE_DEFAULT_TTL             3600
@@ -43,6 +43,7 @@
 #define CACHE_DEFAULT_KEY            "method.scheme.host.path.query.body"
 #define CACHE_DEFAULT_CODE           "200"
 #define CACHE_DEFAULT_KEY_SIZE        128
+#define CACHE_DEFAULT_CHUNK_SIZE      32
 
 #define CACHE_STATUS_UNDEFINED       -1
 #define CACHE_STATUS_OFF              0
@@ -118,6 +119,11 @@ struct cache_dict {
     struct cache_entry **entry;
     uint64_t             size;      /* number of entries */
     uint64_t             used;      /* number of used entries */
+#ifdef USE_PTHREAD_PSHARED
+    pthread_mutex_t      mutex;
+#else
+    unsigned int         waiters;
+#endif
 };
 
 struct cache_rule_stash {
@@ -144,19 +150,28 @@ struct cache_ctx {
     struct cache_entry      *entry;
     struct cache_data       *data;
     struct cache_element    *element;
-
 };
 
 struct cache_stats {
-    uint64_t used_mem;
-    uint64_t requests;
-    uint64_t hits;
+    uint64_t        used_mem;
+    uint64_t        requests;
+    uint64_t        hits;
+#ifdef USE_PTHREAD_PSHARED
+    pthread_mutex_t mutex;
+#else
+    unsigned int    waiters;
+#endif
 };
 
 struct cache {
     struct cache_dict  dict[2];           /* 0: using, 1: rehashing */
     struct cache_data *data_head;         /* point to the circular linked list, tail->next ===  head */
     struct cache_data *data_tail;         /* and will be moved together constantly to check invalid data */
+#ifdef USE_PTHREAD_PSHARED
+    pthread_mutex_t    mutex;
+#else
+    unsigned int       waiters;
+#endif
 
     int                rehash_idx;        /* >=0: rehashing, index, -1: not rehashing */
     int                cleanup_idx;       /* cache dict cleanup index */
@@ -170,5 +185,70 @@ struct cache_config {
 extern struct cache   *cache;
 extern struct applet   cache_applet;
 extern struct flt_ops  cache_filter_ops;
+
+
+/* nuster memory */
+
+#define NUSTER_MEMORY_BLOCK_MIN_SIZE      4096ULL
+#define NUSTER_MEMORY_BLOCK_MIN_SHIFT     12
+#define NUSTER_MEMORY_CHUNK_MIN_SIZE      8ULL
+#define NUSTER_MEMORY_CHUNK_MIN_SHIFT     3
+#define NUSTER_MEMORY_BLOCK_MAX_SIZE      1024 * 1024 * 2
+#define NUSTER_MEMORY_BLOCK_MAX_SHIFT     21
+#define NUSTER_MEMORY_INFO_BITMAP_BITS    32
+
+
+/* start                                 alignment                   stop
+ * |                                     |   |                       |
+ * |_______|_0_|_...._|_M_|_0_|_..._|_N__|_*_|__0__|__...__|__N__|_*_|
+ *         |              |                  |             |     |
+ *         chunk        block              begin         end   <bitmap>
+ *
+ *
+ */
+
+/*
+ * info: | bitmap: 32 | reserved: 24 | 1 | full: 1 | bitmap: 1 | inited: 1 | type: 4 |
+ * info: | bitmap: 32 | reserved: 16 | 5 | full: 1 | bitmap: 1 | inited: 1 | type: 8 |
+ * bitmap: points to bitmap area, doesn't change once set
+ * chunk size[n]: 1<<(NUSTER_MEMORY_CHUNK_MIN_SHIFT + n)
+ */
+struct nuster_memory_ctrl {
+    uint64_t                   info;
+    uint8_t                   *bitmap;
+
+    struct nuster_memory_ctrl *prev;
+    struct nuster_memory_ctrl *next;
+};
+
+struct nuster_memory {
+    uint8_t                    *start;
+    uint8_t                    *stop;
+    uint8_t                    *bitmap;
+    char                        name[16];
+#ifdef USE_PTHREAD_PSHARED
+    pthread_mutex_t             mutex;
+#else
+    unsigned int                waiters;
+#endif
+
+    uint32_t                    block_size;  /* max memory can be allocated */
+    uint32_t                    chunk_size;  /* min memory can be allocated */
+    int                         chunk_shift;
+    int                         block_shift;
+
+    int                         chunks;
+    int                         blocks;
+    struct nuster_memory_ctrl **chunk;
+    struct nuster_memory_ctrl  *block;
+    struct nuster_memory_ctrl  *empty;
+    struct nuster_memory_ctrl  *full;
+
+    struct {
+        uint8_t                *begin;
+        uint8_t                *free;
+        uint8_t                *end;
+    } data;
+};
 
 #endif /* _TYPES_CACHE_H */

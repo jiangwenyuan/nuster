@@ -47,12 +47,34 @@ static int _cache_dict_resize(uint64_t size) {
     return 0;
 }
 
+static int _cache_dict_alloc(uint64_t size) {
+    int i, entry_size = sizeof(struct cache_entry*);
+
+    cache->dict[0].size  = size / entry_size;
+    cache->dict[0].used  = 0;
+    cache->dict[0].entry = nuster_memory_alloc(global.cache.memory, global.cache.memory->block_size);
+    if(!cache->dict[0].entry) return 0;
+
+    for(i = 1; i < size / global.cache.memory->block_size; i++) {
+        if(!nuster_memory_alloc(global.cache.memory, global.cache.memory->block_size)) return 0;
+    }
+    for(i = 0; i < cache->dict[0].size; i++) {
+        cache->dict[0].entry[i] = NULL;
+    }
+    return nuster_shctx_init((&cache->dict[0]));
+}
+
 int cache_dict_init() {
-    return _cache_dict_resize(CACHE_DEFAULT_DICT_SIZE);
+    if(global.cache.share) {
+        int size = (global.cache.memory->block_size + global.cache.dict_size - 1) / global.cache.memory->block_size * global.cache.memory->block_size;
+        return _cache_dict_alloc(size);
+    } else {
+        return _cache_dict_resize(CACHE_DEFAULT_DICT_SIZE);
+    }
 }
 
 static int _cache_dict_rehashing() {
-    return cache->rehash_idx != -1;
+    return global.cache.share == 0 && cache->rehash_idx != -1;
 }
 
 /*
@@ -94,14 +116,15 @@ void cache_dict_rehash() {
         if(cache->dict[0].used == 0) {
             free(cache->dict[0].entry);
             cache->dict[0]       = cache->dict[1];
-            cache->rehash_idx     = -1;
-            cache->cleanup_idx    = 0;
+            cache->rehash_idx    = -1;
+            cache->cleanup_idx   = 0;
             cache->dict[1].entry = NULL;
             cache->dict[1].size  = 0;
             cache->dict[1].used  = 0;
         }
     } else {
         /* should we rehash? */
+        if(global.cache.share) return;
         if(cache->dict[0].used >= cache->dict[0].size * CACHE_DEFAULT_LOAD_FACTOR) {
             _cache_dict_resize(cache->dict[0].size * CACHE_DEFAULT_GROWTH_FACTOR);
         }
@@ -154,8 +177,8 @@ void cache_dict_cleanup() {
                 prev->next = entry->next;
             }
             entry = entry->next;
-            free(tmp->key);
-            pool_free2(global.cache.pool.entry, tmp);
+            cache_memory_free(global.cache.pool.chunk, tmp->key);
+            cache_memory_free(global.cache.pool.entry, tmp);
             cache->dict[0].used--;
         } else {
             prev  = entry;
@@ -179,18 +202,16 @@ struct cache_entry *cache_dict_set(uint64_t hash, char *key) {
     struct cache_entry *entry = NULL;
     int idx;
 
-    cache_housekeeping();
-
     dict = _cache_dict_rehashing() ? &cache->dict[1] : &cache->dict[0];
 
-    entry = pool_alloc2(global.cache.pool.entry);
+    entry = cache_memory_alloc(global.cache.pool.entry, sizeof(*entry));
     if(!entry) {
         return NULL;
     }
 
     data = cache_data_new();
     if(!data) {
-        pool_free2(global.cache.pool.entry, entry);
+        cache_memory_free(global.cache.pool.entry, entry);
         return NULL;
     }
 
@@ -203,7 +224,10 @@ struct cache_entry *cache_dict_set(uint64_t hash, char *key) {
     /* init entry */
     entry->data   = data;
     entry->state  = CACHE_ENTRY_STATE_CREATING;
-    entry->key    = strdup(key);
+    entry->key    = cache_memory_alloc(global.cache.pool.chunk, strlen(key) + 1);
+    if(entry->key) {
+        entry->key = memcpy(entry->key, key, strlen(key) + 1);
+    }
     entry->hash   = hash;
     entry->expire = 0;
     return entry;
@@ -215,8 +239,6 @@ struct cache_entry *cache_dict_set(uint64_t hash, char *key) {
 struct cache_entry *cache_dict_get(uint64_t hash, const char *key) {
     int i, idx;
     struct cache_entry *entry = NULL;
-
-    cache_housekeeping();
 
     if(cache->dict[0].used + cache->dict[1].used == 0) {
         return NULL;
@@ -235,6 +257,7 @@ struct cache_entry *cache_dict_get(uint64_t hash, const char *key) {
                     entry->data->invalid = 1;
                     entry->data          = NULL;
                     entry->expire        = 0;
+                    return NULL;
                 }
                 return entry;
             }

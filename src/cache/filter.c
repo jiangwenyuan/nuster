@@ -111,6 +111,9 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
     uint64_t hash               = 0;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
+
+        cache_housekeeping();
+
         /* request */
         if(ctx->state == CACHE_CTX_STATE_INIT) {
             list_for_each_entry(rule, &px->cache_rules, list) {
@@ -219,7 +222,10 @@ static int cache_filter_http_forward_data(struct stream *s, struct filter *filte
     struct cache_ctx *ctx = filter->ctx;
 
     if(ctx->state == CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        cache_update(ctx, msg, len);
+        if(!cache_update(ctx, msg, len)) {
+            ctx->entry->state = CACHE_ENTRY_STATE_INVALID;
+            ctx->state        = CACHE_CTX_STATE_PASS;
+        }
     }
     return len;
 }

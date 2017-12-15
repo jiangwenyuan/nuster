@@ -138,8 +138,9 @@ static int _cache_find_param_value_by_name(char *query_beg, char *query_end,
  */
 struct cache_data *cache_data_new() {
 
-    struct cache_data *data = pool_alloc2(global.cache.pool.data);
+    struct cache_data *data = cache_memory_alloc(global.cache.pool.data, sizeof(*data));
 
+    nuster_shctx_lock(cache);
     if(data) {
         data->clients  = 0;
         data->invalid  = 0;
@@ -161,6 +162,7 @@ struct cache_data *cache_data_new() {
             }
         }
     }
+    nuster_shctx_unlock(cache);
     return data;
 }
 
@@ -170,14 +172,15 @@ struct cache_data *cache_data_new() {
 static struct cache_element *cache_data_append(struct cache_element *tail,
         struct http_msg *msg, long msg_len) {
 
-    struct cache_element *element = pool_alloc2(global.cache.pool.element);
+    struct cache_element *element = cache_memory_alloc(global.cache.pool.element, sizeof(*element));
 
     if(element) {
         char *data = msg->chn->buf->data;
         char *p    = msg->chn->buf->p;
         int size   = msg->chn->buf->size;
 
-        element->msg = pool_alloc2(global.cache.pool.chunk);
+        element->msg = cache_memory_alloc(global.cache.pool.chunk, msg_len);
+        if(!element->msg) return NULL;
 
         if(p - data + msg_len > size) {
             int right = data + size - p;
@@ -194,7 +197,7 @@ static struct cache_element *cache_data_append(struct cache_element *tail,
         } else {
             tail->next = element;
         }
-        global.cache.stats->used_mem += msg_len;
+        cache_stats_update_used_mem(msg_len);
     }
     return element;
 }
@@ -240,39 +243,63 @@ static void _cache_data_cleanup() {
             struct cache_element *tmp = element;
             element                   = element->next;
 
-            global.cache.stats->used_mem -= tmp->msg_len;
-            pool_free2(global.cache.pool.chunk, tmp->msg);
-            pool_free2(global.cache.pool.element, tmp);
+            cache_stats_update_used_mem(-tmp->msg_len);
+            cache_memory_free(global.cache.pool.chunk, tmp->msg);
+            cache_memory_free(global.cache.pool.element, tmp);
         }
-        pool_free2(global.cache.pool.data, data);
+        cache_memory_free(global.cache.pool.data, data);
     }
 }
 
 void cache_housekeeping() {
     if(global.cache.status == CACHE_STATUS_ON) {
         cache_dict_rehash();
+        nuster_shctx_lock(&cache->dict[0]);
         cache_dict_cleanup();
+        nuster_shctx_unlock(&cache->dict[0]);
+        nuster_shctx_lock(cache);
         _cache_data_cleanup();
+        nuster_shctx_unlock(cache);
     }
 }
 
 void cache_init() {
     if(global.cache.status == CACHE_STATUS_ON) {
+        if(global.cache.share == -1) {
+            if(global.nbproc == 1) {
+                global.cache.share = 0;
+            } else {
+                global.cache.share = 1;
+            }
+        }
+
         global.cache.pool.stash   = create_pool("cp.stash", sizeof(struct cache_rule_stash), MEM_F_SHARED);
         global.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct cache_ctx), MEM_F_SHARED);
-        global.cache.pool.data    = create_pool("cp.data", sizeof(struct cache_data), MEM_F_SHARED);
-        global.cache.pool.element = create_pool("cp.element", sizeof(struct cache_element), MEM_F_SHARED);
-        global.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
-        global.cache.pool.entry   = create_pool("cp.entry", sizeof(struct cache_entry), MEM_F_SHARED);
-        global.cache.stats        = malloc(sizeof(struct cache_stats));
-        if(!global.cache.stats) {
-            goto err;
-        }
-        global.cache.stats->used_mem = 0;
-        global.cache.stats->requests = 0;
-        global.cache.stats->hits     = 0;
 
-        cache = malloc(sizeof(struct cache));
+        if(global.cache.share) {
+            global.cache.memory = nuster_memory_create("cache.shm", global.cache.dict_size + global.cache.data_size, global.tune.bufsize, CACHE_DEFAULT_CHUNK_SIZE);
+            if(!global.cache.memory) {
+                goto shm_err;
+            }
+            if(!nuster_shctx_init(global.cache.memory)) {
+                goto shm_err;
+            }
+            cache = nuster_memory_alloc(global.cache.memory, sizeof(struct cache));
+        } else {
+            global.cache.memory = nuster_memory_create("cache.shm", NUSTER_MEMORY_BLOCK_MIN_SIZE * 3, 0, 0);
+            if(!global.cache.memory) {
+                goto shm_err;
+            }
+            if(!nuster_shctx_init(global.cache.memory)) {
+                goto shm_err;
+            }
+            global.cache.pool.data    = create_pool("cp.data", sizeof(struct cache_data), MEM_F_SHARED);
+            global.cache.pool.element = create_pool("cp.element", sizeof(struct cache_element), MEM_F_SHARED);
+            global.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
+            global.cache.pool.entry   = create_pool("cp.entry", sizeof(struct cache_entry), MEM_F_SHARED);
+
+            cache = malloc(sizeof(struct cache));
+        }
         if(!cache) {
             goto err;
         }
@@ -285,19 +312,27 @@ void cache_init() {
         cache->rehash_idx    = -1;
         cache->cleanup_idx   = 0;
 
+        if(!nuster_shctx_init(cache)) {
+            goto shm_err;
+        }
+
         if(!cache_dict_init()) {
             goto err;
         }
+
+        if(!cache_stats_init()) {
+            goto err;
+        }
+
         cache_debug("[CACHE] on, data_size=%llu\n", global.cache.data_size);
     }
     return;
 err:
     Alert("Out of memory when initializing cache.\n");
     exit(1);
-}
-
-int cache_full() {
-    return global.cache.data_size <= global.cache.stats->used_mem;
+shm_err:
+    Alert("Error when initializing cache.\n");
+    exit(1);
 }
 
 char *cache_build_key(struct cache_key **pck, struct stream *s,
@@ -451,15 +486,19 @@ uint64_t cache_hash_key(const char *key) {
  */
 struct cache_data *cache_exists(const char *key, uint64_t hash) {
     struct cache_entry *entry = NULL;
+    struct cache_data  *data  = NULL;
 
     if(!key) return NULL;
 
+    nuster_shctx_lock(&cache->dict[0]);
     entry = cache_dict_get(hash, key);
     if(entry && entry->state == CACHE_ENTRY_STATE_VALID) {
-        return entry->data;
+        data = entry->data;
+        data->clients++;
     }
+    nuster_shctx_unlock(&cache->dict[0]);
 
-    return NULL;
+    return data;
 }
 
 /*
@@ -472,11 +511,12 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
     struct cache_entry *entry = NULL;
 
     /* Check if cache is full */
-    if(cache_full()) {
+    if(cache_stats_full()) {
         ctx->state = CACHE_CTX_STATE_FULL;
         return;
     }
 
+    nuster_shctx_lock(&cache->dict[0]);
     entry = cache_dict_get(hash, key);
     if(entry) {
         if(entry->state == CACHE_ENTRY_STATE_CREATING) {
@@ -503,6 +543,7 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
             return;
         }
     }
+    nuster_shctx_unlock(&cache->dict[0]);
     ctx->entry   = entry;
     ctx->data    = entry->data;
     ctx->element = entry->data->element;
@@ -556,6 +597,7 @@ void cache_hit(struct stream *s, struct stream_interface *si, struct channel *re
     s->target = &cache_applet.obj_type;
     if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
         /* return to regular process on error */
+        data->clients--;
         s->target = NULL;
     } else {
         appctx = si_appctx(si);
@@ -587,9 +629,9 @@ static void cache_io_handler(struct appctx *appctx) {
         if(appctx->ctx.cache.element == appctx->ctx.cache.data->element) {
             s->res.analysers = 0;
             s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE | AN_RES_HTTP_XFER_BODY);
-            appctx->ctx.cache.data->clients++;
         }
         element = appctx->ctx.cache.element;
+
         ret = bi_putblk(res, element->msg, element->msg_len);
         if(ret >= 0) {
             appctx->ctx.cache.element = element->next;

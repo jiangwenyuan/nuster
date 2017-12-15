@@ -227,6 +227,8 @@ struct global global = {
         .cache = {
                 .status    = CACHE_STATUS_UNDEFINED,
                 .data_size = CACHE_DEFAULT_SIZE,
+                .dict_size = CACHE_DEFAULT_SIZE,
+                .share     = -1,
         },
 
 	/* others NULL OK */
@@ -1037,8 +1039,6 @@ void init(int argc, char **argv)
 	ha_wurfl_init();
 #endif
 
-        cache_init();
-
 	for (px = proxy; px; px = px->next) {
 		err_code |= flt_init(px);
 		if (err_code & (ERR_ABORT|ERR_FATAL)) {
@@ -1335,6 +1335,8 @@ void init(int argc, char **argv)
 	/* initialize structures for name resolution */
 	if (!dns_init_resolvers(0))
 		exit(1);
+
+        cache_init();
 
 	free(err_msg);
 }

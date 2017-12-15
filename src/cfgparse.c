@@ -1927,7 +1927,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 	}
         else if (!strcmp(args[0], "cache")) {
                 int cur_arg = 1;
-                if (alertif_too_many_args(3, file, linenum, args, &err_code)) {
+                if (alertif_too_many_args(7, file, linenum, args, &err_code)) {
                         goto out;
                 }
                 if (global.cache.status != CACHE_STATUS_UNDEFINED) {
@@ -1951,6 +1951,25 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                 }
                 cur_arg++;
                 while(*(args[cur_arg]) !=0) {
+                        if (!strcmp(args[cur_arg], "share")) {
+                            cur_arg++;
+                            if (*args[cur_arg] == 0) {
+                                Alert("parsing [%s:%d] : '%s': `share` expects 'on' or 'off' as augument.\n", file, linenum, args[0]);
+                                err_code |= ERR_ALERT | ERR_FATAL;
+                                goto out;
+                            }
+                            if (!strcmp(args[cur_arg], "off")) {
+                                global.cache.share = 0;
+                            } else if (!strcmp(args[cur_arg], "on")) {
+                                global.cache.share = 1;
+                            } else {
+                                Alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
+                                err_code |= ERR_ALERT | ERR_FATAL;
+                                goto out;
+                            }
+                            cur_arg++;
+                            continue;
+                        }
                         if (!strcmp(args[cur_arg], "data-size")) {
                                 cur_arg++;
                                 if (*args[cur_arg] == 0) {
@@ -1960,6 +1979,21 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                 }
                                 if (cache_parse_size(args[cur_arg], &global.cache.data_size)) {
                                         Alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                                        err_code |= ERR_ALERT | ERR_FATAL;
+                                        goto out;
+                                }
+                                cur_arg++;
+                                continue;
+                        }
+                        if (!strcmp(args[cur_arg], "dict-size")) {
+                                cur_arg++;
+                                if (*args[cur_arg] == 0) {
+                                        Alert("parsing [%s:%d] : '%s' dict-size expects a size.\n", file, linenum, args[0]);
+                                        err_code |= ERR_ALERT | ERR_FATAL;
+                                        goto out;
+                                }
+                                if (cache_parse_size(args[cur_arg], &global.cache.dict_size)) {
+                                        Alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
