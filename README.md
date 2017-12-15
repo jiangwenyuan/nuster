@@ -1,6 +1,26 @@
 Nuster, a web caching proxy server.
 
 
+Table of Contents
+=================
+
+* [Introduction](#introduction)
+* [Performance](#performance)
+* [Installation](#installation)
+  * [Download](#download)
+  * [Build](#build)
+* [Usage](#usage)
+* [Directives](#directives)
+  * [cache](#cache)
+  * [filter cache](#filter-cache)
+  * [cache-rule](#cache-rule)
+* [FAQ](#faq)
+* [Example](#example)
+* [Conventions](#conventions)
+* [Contributing](#contributing)
+* [TODO](#todo)
+* [License](#license)
+
 Introduction
 ============
 
