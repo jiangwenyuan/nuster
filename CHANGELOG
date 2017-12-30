@@ -1,6 +1,17 @@
 ChangeLog :
 ===========
 
+2017/12/30 : 1.8.3
+    - BUG/MEDIUM: h2: properly handle and report some stream errors
+    - BUG/MEDIUM: h2: improve handling of frames received on closed streams
+    - DOC/MINOR: configuration: typo, formatting fixes
+    - BUG/MEDIUM: h2: ensure we always know the stream before sending a reset
+    - BUG/MEDIUM: mworker: don't close stdio several time
+    - MINOR: don't close stdio anymore
+    - BUG/MEDIUM: http: don't automatically forward request close
+    - BUG/MAJOR: hpack: don't return direct references to the dynamic headers table
+    - MEDIUM: h2: prepare a graceful shutdown when the frontend is stopped
+
 2017/12/23 : 1.8.2
     - BUG/MINOR: action: Don't check http capture rules when no id is defined
     - BUG/MAJOR: hpack: don't pretend large headers fit in empty table
