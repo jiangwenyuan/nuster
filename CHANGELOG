@@ -1,6 +1,62 @@
 ChangeLog :
 ===========
 
+2018/01/02 : 1.7.10
+    - BUG/MEDIUM: connection: remove useless flag CO_FL_DATA_RD_SH
+    - BUG/MEDIUM: lua: HTTP services must take care of body-less status codes
+    - BUG/MEDIUM: stream: properly set the required HTTP analysers on use-service
+    - BUG/MEDIUM: http: Fix a regression bug when a HTTP response is in TUNNEL mode
+    - BUG/MEDIUM: epoll: ensure we always consider HUP and ERR
+    - BUG/MEDIUM: http: Close streams for connections closed before a redirect
+    - BUG/MINOR: Lua: The socket may be destroyed when we try to access.
+    - BUG/MEDIUM: compression: Fix check on txn in smp_fetch_res_comp_algo
+    - BUG/MINOR: compression: Check response headers before http-response rules eval
+    - BUG/MINOR: log: fixing small memory leak in error code path.
+    - BUG/MINOR: contrib/halog: fixing small memory leak
+    - BUG/MEDIUM: tcp/http: set-dst-port action broken
+    - BUG/MEDIUM: tcp-check: properly indicate polling state before performing I/O
+    - BUG/MINOR: tcp-check: don't quit with pending data in the send buffer
+    - BUG/MEDIUM: tcp-check: don't call tcpcheck_main() from the I/O handlers!
+    - BUG/MINOR: tcp-check: don't initialize then break a connection starting with a comment
+    - BUG/MEDIUM: http: Return an error when url_dec sample converter failed
+    - BUG/MAJOR: stream-int: don't re-arm recv if send fails
+    - DOC: 51d: add 51Degrees git URL that points to release version 3.2.12.12
+    - DOC: 51d: Updated git URL and instructions for getting Hash Trie data files.
+    - DOC: fix some typos
+    - BUILD/MINOR: 51d: fix warning when building with 51Degrees release version 3.2.12.12
+    - MINOR: tcp-check: make tcpcheck_main() take a check, not a connection
+    - MINOR: checks: don't create then kill a dummy connection before tcp-checks
+    - DOC: 1.7 is stable
+    - BUG/MEDIUM: ssl: fix OCSP expiry calculation
+    - MINOR: server: Handle weight increase in consistent hash.
+    - BUG/MINOR: stats: Clear a bit more counters with in cli_parse_clear_counters().
+    - BUG/MINOR: ssl: ocsp response with 'revoked' status is correct
+    - BUG/MINOR: ssl: OCSP_single_get0_status can return -1
+    - BUG/MINOR: cli: restore "set ssl tls-key" command
+    - BUG/MEDIUM: prevent buffers being overwritten during build_logline() execution
+    - BUG/MINOR: spoe: Don't compare engine name and SPOE scope when both are NULL
+    - BUG/MINOR: dns: Fix CLI keyword declaration
+    - BUG/MINOR: mailers: Fix a memory leak when email alerts are released
+    - BUG/MINOR: cli: do not perform an invalid action on "set server check-port"
+    - BUG/MEDIUM: stream: don't ignore res.analyse_exp anymore
+    - MEDIUM: http: always reject the "PRI" method
+    - BUG/MEDIUM: deviceatlas: ignore not valuable HTTP request data
+    - BUG/MAJOR: stream: ensure analysers are always called upon close
+    - BUG/MEDIUM: deinit: correctly deinitialize the proxy and global listener tasks
+    - BUG/MINOR: Use crt_base instead of ca_base when crt is parsed on a server line
+    - BUG/MINOR: stream: fix tv_request calculation for applets
+    - BUG/MINOR: listener: Allow multiple "process" options on "bind" lines
+    - DOC/MINOR: intro: typo, wording, formatting fixes
+    - CONTRIB: halog: Add help text for -s switch in halog program
+    - CONTRIB: iprange: Fix compiler warning in iprange.c
+    - CONTRIB: halog: Fix compiler warnings in halog.c
+    - BUG/MINOR: http: properly detect max-age=0 and s-maxage=0 in responses
+    - BUG/MEDIUM: kqueue: Don't bother closing the kqueue after fork.
+    - BUG/MEDIUM: peers: set NOLINGER on the outgoing stream interface
+    - BUG/MEDIUM: http: don't disable lingering on requests with tunnelled responses
+    - BUG/MEDIUM: lua: fix crash when using bogus mode in register_service()
+    - BUG/MEDIUM: http: don't automatically forward request close
+
 2017/08/18 : 1.7.9
     - BUG/MINOR: peers: peer synchronization issue (with several peers sections).
     - BUG/MINOR: lua: In error case, the safe mode is not removed
