@@ -114,6 +114,11 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 
         cache_housekeeping();
 
+        /* check http method */
+        if(s->txn->meth == HTTP_METH_OTHER) {
+            ctx->state = CACHE_CTX_STATE_BYPASS;
+        }
+
         /* request */
         if(ctx->state == CACHE_CTX_STATE_INIT) {
             list_for_each_entry(rule, &px->cache_rules, list) {
