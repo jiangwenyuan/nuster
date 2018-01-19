@@ -1927,7 +1927,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 	}
         else if (!strcmp(args[0], "cache")) {
                 int cur_arg = 1;
-                if (alertif_too_many_args(7, file, linenum, args, &err_code)) {
+                if (alertif_too_many_args(9, file, linenum, args, &err_code)) {
                         goto out;
                 }
                 if (global.cache.status != CACHE_STATUS_UNDEFINED) {
@@ -1949,6 +1949,9 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                         err_code |= ERR_ALERT | ERR_FATAL;
                         goto out;
                 }
+                global.cache.purge_method = calloc(CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
+                memcpy(global.cache.purge_method, CACHE_DEFAULT_PURGE_METHOD, 5);
+                memcpy(global.cache.purge_method + 5, " ", 1);
                 cur_arg++;
                 while(*(args[cur_arg]) !=0) {
                         if (!strcmp(args[cur_arg], "share")) {
@@ -1996,6 +1999,24 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         Alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
+                                }
+                                cur_arg++;
+                                continue;
+                        }
+                        if (!strcmp(args[cur_arg], "purge-method")) {
+                                cur_arg++;
+                                if (*args[cur_arg] == 0) {
+                                        Alert("parsing [%s:%d] : '%s' purge-method expects a name.\n", file, linenum, args[0]);
+                                        err_code |= ERR_ALERT | ERR_FATAL;
+                                        goto out;
+                                }
+                                memset(global.cache.purge_method, 0, CACHE_DEFAULT_PURGE_METHOD_SIZE);
+                                if(strlen(args[cur_arg]) <= CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
+                                    memcpy(global.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
+                                    memcpy(global.cache.purge_method + strlen(args[cur_arg]), " ", 1);
+                                } else {
+                                    memcpy(global.cache.purge_method, args[cur_arg], CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
+                                    memcpy(global.cache.purge_method + CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
                                 }
                                 cur_arg++;
                                 continue;

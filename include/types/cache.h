@@ -33,17 +33,19 @@
 #include <types/sample.h>
 #include <types/applet.h>
 
-#define NUSTER_VERSION                HAPROXY_VERSION".2"
-#define NUSTER_COPYRIGHT             "2017, Jiang Wenyuan, <koubunen AT gmail DOT com >"
-#define CACHE_DEFAULT_SIZE            1024 * 1024
-#define CACHE_DEFAULT_TTL             3600
-#define CACHE_DEFAULT_DICT_SIZE       32
-#define CACHE_DEFAULT_LOAD_FACTOR     0.75
-#define CACHE_DEFAULT_GROWTH_FACTOR   2
-#define CACHE_DEFAULT_KEY            "method.scheme.host.path.query.body"
-#define CACHE_DEFAULT_CODE           "200"
-#define CACHE_DEFAULT_KEY_SIZE        128
-#define CACHE_DEFAULT_CHUNK_SIZE      32
+#define NUSTER_VERSION                    HAPROXY_VERSION".2"
+#define NUSTER_COPYRIGHT                 "2017, Jiang Wenyuan, <koubunen AT gmail DOT com >"
+#define CACHE_DEFAULT_SIZE                1024 * 1024
+#define CACHE_DEFAULT_TTL                 3600
+#define CACHE_DEFAULT_DICT_SIZE           32
+#define CACHE_DEFAULT_LOAD_FACTOR         0.75
+#define CACHE_DEFAULT_GROWTH_FACTOR       2
+#define CACHE_DEFAULT_KEY                "method.scheme.host.path.query.body"
+#define CACHE_DEFAULT_CODE               "200"
+#define CACHE_DEFAULT_KEY_SIZE            128
+#define CACHE_DEFAULT_CHUNK_SIZE          32
+#define CACHE_DEFAULT_PURGE_METHOD       "PURGE"
+#define CACHE_DEFAULT_PURGE_METHOD_SIZE   16
 
 #define CACHE_STATUS_UNDEFINED       -1
 #define CACHE_STATUS_OFF              0
