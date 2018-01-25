@@ -780,23 +780,25 @@ int cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
 
-    if(txn->meth == HTTP_METH_OTHER) {
-        if(memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0) {
-            char *key = cache_purge_build_key(s, msg);
-            if(!key) {
-                txn->status = 500;
-                cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
+
+    if(global.cache.status == CACHE_STATUS_ON &&
+            txn->meth == HTTP_METH_OTHER &&
+            memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0) {
+
+        char *key = cache_purge_build_key(s, msg);
+        if(!key) {
+            txn->status = 500;
+            cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
+        } else {
+            uint64_t hash = cache_hash_key(key);
+            txn->status = cache_purge_by_key(key, hash);
+            if(txn->status == 200) {
+                cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);
             } else {
-                uint64_t hash = cache_hash_key(key);
-                txn->status = cache_purge_by_key(key, hash);
-                if(txn->status == 200) {
-                    cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);
-                } else {
-                    cache_response(s, &cache_msg_chunks[NUSTER_CACHE_404]);
-                }
+                cache_response(s, &cache_msg_chunks[NUSTER_CACHE_404]);
             }
-            return 1;
         }
+        return 1;
     }
     return 0;
 }
