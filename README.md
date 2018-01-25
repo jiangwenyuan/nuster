@@ -14,6 +14,7 @@ Table of Contents
   * [cache](#cache)
   * [filter cache](#filter-cache)
   * [cache-rule](#cache-rule)
+* [Purge cache](#purge-cache)
 * [FAQ](#faq)
 * [Example](#example)
 * [Conventions](#conventions)
@@ -259,6 +260,43 @@ cache-rule all code all
 Define when to cache using HAProxy ACL.
 See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
 
+Purge Cache
+===========
+
+There are several ways to purge cache.
+
+Purge one specific url
+----------------------
+
+This method creates a key of `GET.scheme.host.path.query`, and delete the cache with that key.
+
+Only works for the specific url that is being requested, like this:
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+You can define customized http method other than the default `PURGE` in case you need to forward `PURGE`
+
+to backend servers. By define `cache purge-method MYPURGE` in global section, you can purge cache like this
+
+`curl -XMYPURGE https://127.0.0.1/imgs/test.jpg`
+
+If you define `cache-rule imgs if { path_beg /imgs/ }`, and requested
+
+```
+curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+
+There will be two cache objects since the default key contains query part. In order to delete that, you have to use
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120`
+
+In case that the query part is irrelevant, you can define a key like `cache-rule imgs key method.scheme.host.path`,
+
+in this way only one cache will be created, and you can purge that without query.
+
+Delete by tag(name in cache-rule) or url will be added later.
+
 FAQ
 ===
 
@@ -279,6 +317,23 @@ Note that the body of the request maybe incomplete, refer to **option http-buffe
 section in [HAProxy configuration](doc/configuration.txt) for details.
 
 Also it might be a good idea to put it separately in a dedicated backend as example does.
+
+How to restrict access to PURGE?
+------------------------
+
+You can use the powerful HAProxy acl, something like this
+
+```
+acl network_allowed src 127.0.0.1
+acl purge_method method PURGE
+http-request deny if purge_method !network_allowed
+```
+
+Note by default cache key contains `Host`, if you cache a request like `http://example.com/test`
+
+and purge from localhost you need to specify `Host` header:
+
+`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
 
 Example
 =======
