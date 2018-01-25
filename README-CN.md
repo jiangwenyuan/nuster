@@ -1,6 +1,8 @@
 Nuster是一个基于HAProxy的高性能缓存服务器
 
 
+中文版更新可能不及时，最新版请参照英文版[README.md](README.md)
+
 介绍
 ====
 
