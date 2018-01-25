@@ -191,6 +191,13 @@ extern struct cache   *cache;
 extern struct applet   cache_applet;
 extern struct flt_ops  cache_filter_ops;
 
+enum {
+    NUSTER_CACHE_200 = 0,
+    NUSTER_CACHE_400,
+    NUSTER_CACHE_404,
+    NUSTER_CACHE_500,
+    NUSTER_CACHE_MSG_SIZE
+};
 
 /* nuster memory */
 

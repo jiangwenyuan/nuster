@@ -36,6 +36,42 @@
 #include <types/ssl_sock.h>
 #endif
 
+static const char *cache_msgs[NUSTER_CACHE_MSG_SIZE] = {
+    [NUSTER_CACHE_200] =
+        "HTTP/1.0 200 OK\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "OK\n",
+
+    [NUSTER_CACHE_400] =
+        "HTTP/1.0 400 Bad request\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "Bad request\n",
+
+    [NUSTER_CACHE_404] =
+        "HTTP/1.0 404 Not Found\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "Not Found\n",
+
+    [NUSTER_CACHE_500] =
+        "HTTP/1.0 500 Server Error\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "Server Error\n",
+};
+
+struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
+
 /*
  * Cache the keys which calculated in request for response use
  */
@@ -264,6 +300,8 @@ void cache_housekeeping() {
 }
 
 void cache_init() {
+    int i;
+
     if(global.cache.status == CACHE_STATUS_ON) {
         if(global.cache.share == CACHE_STATUS_UNDEFINED) {
             if(global.nbproc == 1) {
@@ -322,6 +360,11 @@ void cache_init() {
 
         if(!cache_stats_init()) {
             goto err;
+        }
+
+        for (i = 0; i < NUSTER_CACHE_MSG_SIZE; i++) {
+            cache_msg_chunks[i].str = (char *)cache_msgs[i];
+            cache_msg_chunks[i].len = strlen(cache_msgs[i]);
         }
 
         cache_debug("[CACHE] on, data_size=%llu\n", global.cache.data_size);
@@ -655,6 +698,107 @@ void cache_debug(const char *fmt, ...) {
         vfprintf(stderr, fmt, args);
         va_end(args);
     }
+}
+
+char *cache_purge_build_key(struct stream *s, struct http_msg *msg) {
+
+    struct http_txn *txn = s->txn;
+
+    int https;
+    char *path_beg, *url_end;
+    struct hdr_ctx ctx;
+
+    int key_len  = 0;
+
+    /* "method.scheme.host.path.query.body" */
+    int key_size = CACHE_DEFAULT_KEY_SIZE;
+    char *key    = malloc(key_size);
+    if(!key) {
+        return NULL;
+    }
+
+    key = _cache_key_append(key, &key_len, &key_size, "GET", 3);
+
+    https = 0;
+#ifdef USE_OPENSSL
+    if(s->sess->listener->xprt == &ssl_sock) {
+        https = 1;
+    }
+#endif
+
+    key = _cache_key_append(key, &key_len, &key_size, https ? "HTTPS": "HTTP", strlen(https ? "HTTPS": "HTTP"));
+    if(!key) return NULL;
+
+    ctx.idx  = 0;
+    if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+        key = _cache_key_append(key, &key_len, &key_size, ctx.line + ctx.val, ctx.vlen);
+        if(!key) return NULL;
+    }
+
+    path_beg = http_get_path(txn);
+    url_end  = NULL;
+    if(path_beg) {
+        url_end = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
+        key     = _cache_key_append(key, &key_len, &key_size, path_beg, url_end - path_beg);
+        if(!key) return NULL;
+    }
+    return key;
+}
+
+/*
+ * purge cache by key
+ */
+int cache_purge_by_key(const char *key, uint64_t hash) {
+    struct cache_entry *entry = NULL;
+    int ret;
+
+    nuster_shctx_lock(&cache->dict[0]);
+    entry = cache_dict_get(hash, key);
+    if(entry && entry->state == CACHE_ENTRY_STATE_VALID) {
+        entry->state         = CACHE_ENTRY_STATE_EXPIRED;
+        entry->data->invalid = 1;
+        entry->data          = NULL;
+        entry->expire        = 0;
+        ret                  = 200;
+    } else {
+        ret = 404;
+    }
+    nuster_shctx_unlock(&cache->dict[0]);
+
+    return ret;
+}
+
+void cache_response(struct stream *s, struct chunk *msg) {
+    s->txn->flags &= ~TX_WAIT_NEXT_RQ;
+    stream_int_retnclose(&s->si[0], msg);
+    if(!(s->flags & SF_ERR_MASK)) {
+        s->flags |= SF_ERR_LOCAL;
+    }
+}
+
+int cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+
+    if(txn->meth == HTTP_METH_OTHER) {
+        if(memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0) {
+            char *key = cache_purge_build_key(s, msg);
+            if(!key) {
+                txn->status = 500;
+                cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
+            } else {
+                uint64_t hash = cache_hash_key(key);
+                txn->status = cache_purge_by_key(key, hash);
+                if(txn->status == 200) {
+                    cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);
+                } else {
+                    cache_response(s, &cache_msg_chunks[NUSTER_CACHE_404]);
+                }
+            }
+            return 1;
+        }
+    }
+    return 0;
 }
 
 struct applet cache_applet = {

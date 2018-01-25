@@ -72,6 +72,7 @@
 #include <proto/task.h>
 #include <proto/pattern.h>
 #include <proto/vars.h>
+#include <proto/cache.h>
 
 const char HTTP_100[] =
 	"HTTP/1.1 100 Continue\r\n\r\n";
@@ -4354,6 +4355,11 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		if (verdict == HTTP_RULE_RES_ABRT) /* stats auth / stats http-request auth */
 			goto return_prx_cond;
 	}
+
+        /* check cache purge */
+        if (cache_purge(s, req, px)) {
+            goto return_prx_cond;
+        }
 
 	/* evaluate the req* rules except reqadd */
 	if (px->req_exp != NULL) {

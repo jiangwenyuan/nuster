@@ -54,6 +54,7 @@ void cache_hit(struct stream *s, struct stream_interface *si,
 struct cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
         struct cache_rule *rule, char *key, uint64_t hash);
 int cache_test_rule(struct cache_rule *rule, struct stream *s, int res);
+int cache_purge(struct stream *s, struct channel *req, struct proxy *px);
 
 
 /* parser */
