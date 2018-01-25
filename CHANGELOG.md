@@ -1,5 +1,14 @@
 # Nuster Changelog
 
+## 1.7.9.3 - 2018-01-25
+
+### Added
+- Cache purge by key
+- Customize purge method
+
+### Fixed
+- Crash when serve non-standard http method
+
 ## 1.7.9.2 - 2017-12-15
 
 ### Added
