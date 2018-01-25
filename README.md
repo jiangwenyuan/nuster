@@ -87,7 +87,7 @@ Directives
 cache
 -----
 
-**syntax:** cache on|off [share on|off] [data-size size] [dict-size size]
+**syntax:** cache on|off [share on|off] [data-size size] [dict-size size] [purge-method method]
 
 **default:** *none*
 
@@ -145,6 +145,10 @@ table even if the number of keys exceeds dict-size as long as there are enough m
 Nevertheless it may lead to a performance drop if `number of keys` is greater than `dict-size`.
 
 An approximate number of keys multiplied by 8 (normally) as `dict-size` should work.
+
+### purge-method
+
+Define a customized HTTP method with max length of 14 to purge cache, it is `PURGE` by default.
 
 filter cache
 ------------
