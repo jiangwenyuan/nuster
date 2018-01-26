@@ -69,6 +69,13 @@ make install
 
 See [HAProxy README](README) for details.
 
+Docker
+------
+
+```
+docker pull nuster/nuster
+docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nuster/nuster:1.7.9.3
+```
 
 Usage
 =====
