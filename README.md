@@ -9,6 +9,7 @@ Table of Contents
 * [Installation](#installation)
   * [Download](#download)
   * [Build](#build)
+  * [Docker](#docker)
 * [Usage](#usage)
 * [Directives](#directives)
   * [cache](#cache)
