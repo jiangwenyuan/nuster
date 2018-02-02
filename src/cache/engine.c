@@ -426,8 +426,10 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
     query_len = 0;
     if(path_beg) {
         query_beg = memchr(path_beg, '?', url_end - path_beg);
-        query_beg = query_beg ? query_beg + 1 : NULL;
-        query_len = url_end - query_beg;
+        if(query_beg) {
+            query_beg++;
+            query_len = url_end - query_beg;
+        }
     }
 
     ctx.idx    = 0;
@@ -474,7 +476,7 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                 break;
             case CK_PARAM:
                 cache_debug("param_%s.", ck->data);
-                if(query_beg) {
+                if(query_beg && query_len) {
                     char *v = NULL;
                     int v_l = 0;
                     if(_cache_find_param_value_by_name(query_beg, url_end, ck->data, &v, &v_l)) {
