@@ -1,5 +1,14 @@
 # Nuster Changelog
 
+## 1.7.9.4 - 2018-02-03
+
+### Added
+- New uri and delimiter keywords
+
+### Fixed
+- Check query before set query_len
+- Fix #6 cache key normalization
+
 ## 1.7.9.3 - 2018-01-25
 
 ### Added
