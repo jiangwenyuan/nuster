@@ -206,14 +206,16 @@ with `.` separator:
  * method:       http method, GET/POST...
  * scheme:       http or https
  * host:         the host in the request
+ * uri:          first slash to end of the url
  * path:         the URL path of the request
+ * delimiter:    '?' if query exists otherwise empty
  * query:        the whole query string of the request
  * header\_NAME: the value of header `NAME`
  * cookie\_NAME: the value of cookie `NAME`
  * param\_NAME:  the value of query `NAME`
  * body:         the body of the request
 
-By default the key is `method.scheme.host.path.query.body`
+By default the key is `method.scheme.host.path.delimiter.query.body`
 
 Example
 
@@ -232,14 +234,16 @@ Should result:
  * method:       GET
  * scheme:       http
  * host:         www.example.com
+ * uri:          /q?name=X&type=Y
  * path:         /q
+ * delimiter:    ?
  * query:        name=X&type=Y
  * header\_ASDF: Z
  * cookie\_user: nuster
  * param\_type:  Y
  * body:         (empty)
 
-So default key produces `GEThttpwww.example.com/qname=X&type=Y`, and
+So default key produces `GEThttpwww.example.com/q?name=X&type=Y`, and
 `key method.scheme.host.path.header_ASDF.cookie_user.param_type` produces
 `GEThttpwww.example.com/qZnusterY`
 
@@ -276,7 +280,7 @@ There are several ways to purge cache.
 Purge one specific url
 ----------------------
 
-This method creates a key of `GET.scheme.host.path.query`, and delete the cache with that key.
+This method creates a key of `GET.scheme.host.uri`, and delete the cache with that key.
 
 Only works for the specific url that is being requested, like this:
 
@@ -393,7 +397,7 @@ backend app1b
 
     # cache /mypage, key contains cookie[userId], so it will be cached per user
     acl pathB path /mypage
-    cache-rule r2 key method.scheme.host.path.query.cookie_userId ttl 60 if pathB
+    cache-rule r2 key method.scheme.host.path.delimiter.query.cookie_userId ttl 60 if pathB
 
     # cache /a.html if response's header[cache] is yes
     http-request set-var(txn.pathC) path
@@ -450,13 +454,6 @@ Contributing
 * Report issues
 * Send pull requests
 * Spread nuster
-
-TODO
-====
-
-* Purge cache(web/api)
-* Cache stats(web/api)
-* etc
 
 License
 =======
