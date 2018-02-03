@@ -451,44 +451,37 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
             case CK_METHOD:
                 cache_debug("method.");
                 key = _cache_key_append(key, &key_len, &key_size, http_known_methods[txn->meth].name, strlen(http_known_methods[txn->meth].name));
-                if(!key) return NULL;
                 break;
             case CK_SCHEME:
                 cache_debug("scheme.");
                 key = _cache_key_append(key, &key_len, &key_size, https ? "HTTPS": "HTTP", strlen(https ? "HTTPS": "HTTP"));
-                if(!key) return NULL;
                 break;
             case CK_HOST:
                 cache_debug("host.");
                 if(host) {
                     key = _cache_key_append(key, &key_len, &key_size, host, host_len);
-                    if(!key) return NULL;
                 }
                 break;
             case CK_URI:
                 cache_debug("uri.");
                 if(path_beg) {
                     key = _cache_key_append(key, &key_len, &key_size, path_beg, url_end - path_beg);
-                    if(!key) return NULL;
                 }
                 break;
             case CK_PATH:
                 cache_debug("path.");
                 if(path_beg) {
                     key = _cache_key_append(key, &key_len, &key_size, path_beg, path_len);
-                    if(!key) return NULL;
                 }
                 break;
             case CK_DELIMITER:
                 cache_debug("delimiter.");
                 key = _cache_key_append(key, &key_len, &key_size, delimiter ? "?": "", delimiter);
-                if(!key) return NULL;
                 break;
             case CK_QUERY:
                 cache_debug("query.");
                 if(query_beg && query_len) {
                     key = _cache_key_append(key, &key_len, &key_size, query_beg, query_len);
-                    if(!key) return NULL;
                 }
                 break;
             case CK_PARAM:
@@ -498,7 +491,6 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                     int v_l = 0;
                     if(_cache_find_param_value_by_name(query_beg, url_end, ck->data, &v, &v_l)) {
                         key = _cache_key_append(key, &key_len, &key_size, v, v_l);
-                        if(!key) return NULL;
                     }
 
                 }
@@ -508,7 +500,6 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                 cache_debug("header_%s.", ck->data);
                 if(http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
                     key = _cache_key_append(key, &key_len, &key_size, ctx.line + ctx.val, ctx.vlen);
-                    if(!key) return NULL;
                 }
                 break;
             case CK_COOKIE:
@@ -518,7 +509,6 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                     int v_l = 0;
                     if(extract_cookie_value(cookie_beg, cookie_end, ck->data, strlen(ck->data), 1, &v, &v_l)) {
                         key = _cache_key_append(key, &key_len, &key_size, v, v_l);
-                        if(!key) return NULL;
                     }
                 }
                 break;
@@ -527,13 +517,13 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
                     if((s->be->options & PR_O_WREQ_BODY) && msg->body_len > 0 ) {
                         key = _cache_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->body_len);
-                        if(!key) return NULL;
                     }
                 }
                 break;
             default:
                 break;
         }
+        if(!key) return NULL;
     }
     cache_debug("\n");
     return key;
