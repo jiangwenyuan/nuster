@@ -36,9 +36,17 @@ static struct cache_key *_cache_parse_rule_key(char *str) {
         key = malloc(sizeof(*key));
         key->type = CK_HOST;
         key->data = NULL;
+    } else if(!strcmp(str, "uri")) {
+        key = malloc(sizeof(*key));
+        key->type = CK_URI;
+        key->data = NULL;
     } else if(!strcmp(str, "path")) {
         key = malloc(sizeof(*key));
         key->type = CK_PATH;
+        key->data = NULL;
+    } else if(!strcmp(str, "delimiter")) {
+        key = malloc(sizeof(*key));
+        key->type = CK_DELIMITER;
         key->data = NULL;
     } else if(!strcmp(str, "query")) {
         key = malloc(sizeof(*key));

@@ -383,7 +383,7 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
 
     struct http_txn *txn = s->txn;
 
-    int https, host_len, path_len, query_len;
+    int https, host_len, path_len, query_len, delimiter;
     char *host, *path_beg, *url_end, *query_beg, *cookie_beg, *cookie_end;
     struct hdr_ctx ctx;
 
@@ -432,6 +432,11 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
         }
     }
 
+    delimiter = 0;
+    if(query_beg && query_len) {
+        delimiter = 1;
+    }
+
     ctx.idx    = 0;
     cookie_beg = NULL;
     cookie_end = NULL;
@@ -460,6 +465,13 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                     if(!key) return NULL;
                 }
                 break;
+            case CK_URI:
+                cache_debug("uri.");
+                if(path_beg) {
+                    key = _cache_key_append(key, &key_len, &key_size, path_beg, url_end - path_beg);
+                    if(!key) return NULL;
+                }
+                break;
             case CK_PATH:
                 cache_debug("path.");
                 if(path_beg) {
@@ -467,9 +479,14 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                     if(!key) return NULL;
                 }
                 break;
+            case CK_DELIMITER:
+                cache_debug("delimiter.");
+                key = _cache_key_append(key, &key_len, &key_size, delimiter ? "?": "", delimiter);
+                if(!key) return NULL;
+                break;
             case CK_QUERY:
                 cache_debug("query.");
-                if(query_beg) {
+                if(query_beg && query_len) {
                     key = _cache_key_append(key, &key_len, &key_size, query_beg, query_len);
                     if(!key) return NULL;
                 }

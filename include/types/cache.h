@@ -55,12 +55,14 @@
 #define CACHE_SHARE_ON                1
 
 enum ck_type {
-    CK_METHOD = 1,                /* method */
-    CK_SCHEME,                    /* scheme */
-    CK_HOST,                      /* host   */
-    CK_PATH,                      /* path   */
-    CK_QUERY,                     /* query  */
-    CK_PARAM,                     /* param  */
+    CK_METHOD = 1,                /* method:    GET, POST... */
+    CK_SCHEME,                    /* scheme:    http, https */
+    CK_HOST,                      /* host:      Host header   */
+    CK_URI,                       /* uri:       first slash to end of the url */
+    CK_PATH,                      /* path:      first slach to question mark */
+    CK_DELIMITER,                 /* delimiter: '?' or '' */
+    CK_QUERY,                     /* query:     question mark to end of the url, or empty */
+    CK_PARAM,                     /* param:     query key/value pair */
     CK_HEADER,                    /* header */
     CK_COOKIE,                    /* cookie */
     CK_BODY,                      /* body   */
