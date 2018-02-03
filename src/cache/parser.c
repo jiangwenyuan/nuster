@@ -25,47 +25,47 @@ static const char *cache_id = "cache filter";
 static struct cache_key *_cache_parse_rule_key(char *str) {
     struct cache_key *key = NULL;
     if(!strcmp(str, "method")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_METHOD;
         key->data = NULL;
     } else if(!strcmp(str, "scheme")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_SCHEME;
         key->data = NULL;
     } else if(!strcmp(str, "host")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_HOST;
         key->data = NULL;
     } else if(!strcmp(str, "uri")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_URI;
         key->data = NULL;
     } else if(!strcmp(str, "path")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_PATH;
         key->data = NULL;
     } else if(!strcmp(str, "delimiter")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_DELIMITER;
         key->data = NULL;
     } else if(!strcmp(str, "query")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_QUERY;
         key->data = NULL;
     } else if(!strncmp(str, "param_", 6) && strlen(str) > 6) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_PARAM;
         key->data = strdup(str + 6);
     } else if(!strncmp(str, "header_", 7) && strlen(str) > 7) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_HEADER;
         key->data = strdup(str + 7);
     } else if(!strncmp(str, "cookie_", 7) && strlen(str) > 7) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_COOKIE;
         key->data = strdup(str + 7);
     } else if(!strcmp(str, "body")) {
-        key = malloc(sizeof(*key));
+        key       = malloc(sizeof(*key));
         key->type = CK_BODY;
         key->data = NULL;
     }
