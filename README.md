@@ -29,15 +29,20 @@ Introduction
 Nuster is a simple yet powerful web caching proxy server based on HAProxy.
 It is 100% compatible with HAProxy, and takes full advantage of the ACL
 functionality of HAProxy to provide fine-grained caching policy based on
-the content of request, response or server status, such as,
+the content of request, response or server status. Its features include:
 
- * request url: cache only if the request url equals to X
- * request query: cache only if the request query contains X and equls to Y
- * cookie: cache only if cookie contains X and equls to Y
- * response header: cache only if the response contains header X equals to Y
- * rate: cache only if the request rate is greater than X
- * etc, any combination of above
-
+ * All features of HAProxy are inherited, 100% compatible with HAProxy
+ * Powerful dynamic cache ability
+   * Based on HTTP method, URI, path, query, header, cookies, etc
+   * Based on HTTP request or response contents, etc
+   * Based on environment variables, server state, etc
+   * Based on SSL version, SNI, etc
+   * Based on connection rate, number, byte, etc
+ * Extremely fast
+ * Cache purging
+ * HTTPS supports on both frontend and backend
+ * HTTP compression
+ * HTTP rewriting and redirection
 
 Performance
 ===========
