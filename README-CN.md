@@ -1,4 +1,4 @@
-Nuster是一个基于HAProxy的高性能缓存服务器
+nuster是一个基于HAProxy的高性能缓存服务器
 
 
 中文版更新可能不及时，最新版请参照英文版[README.md](README.md)
@@ -6,15 +6,24 @@ Nuster是一个基于HAProxy的高性能缓存服务器
 介绍
 ====
 
-Nuster是一个基于HAProxy的高性能缓存服务器。Nuster完全兼容HAProxy，并且利用
-HAProxy的ACL功能来提供非常细致的缓存规则，比如
+nuster是一个基于HAProxy的高性能缓存服务器。nuster完全兼容HAProxy，并且利用 HAProxy的ACL功能来提供非常细致的缓存规则。特性包括
 
- * 请求地址为某某时缓存
- * 请求参数中的X为Y时缓存
- * 响应头中的X为Y时缓存
- * 请求速率超过多少时缓存
- * 等等
 
+* 完全兼容HAProxy，支持所有HAProxy的特性和功能
+
+* 强大的动态缓存功能
+  * 根据HTTP method, uri, path, query, header, cookie等等进行缓存
+  * 根据HTTP 请求和响应内容等等进行缓存
+  * 根据环境变量服务器状态等等进行缓存
+  * 根据SSL版本, SNI等等进行缓存
+  * 根据连接数量，请求速率等等进行缓存
+  * 等等
+* 非常快
+* 删除缓存
+* 前后端HTTPS
+* HTTP压缩
+* HTTP重写重定向
+* 等等
 
 性能
 ====
