@@ -51,7 +51,7 @@ Nuster is very fast, some test shows nuster is almost three times faster than
 nginx when both using single core, and nearly two times faster than nginx and
 three times faster than varnish when using all cores.
 
-See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Performance-benchmark:-nuster-vs-nginx-vs-varnish)
+See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Web-cache-server-performance-benchmark:-nuster-vs-nginx-vs-varnish-vs-squid)
 
 
 Installation
