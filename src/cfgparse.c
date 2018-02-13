@@ -1927,7 +1927,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 	}
         else if (!strcmp(args[0], "cache")) {
                 int cur_arg = 1;
-                if (alertif_too_many_args(9, file, linenum, args, &err_code)) {
+                if (alertif_too_many_args(11, file, linenum, args, &err_code)) {
                         goto out;
                 }
                 if (global.cache.status != CACHE_STATUS_UNDEFINED) {
@@ -1953,6 +1953,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                 memcpy(global.cache.purge_method, CACHE_DEFAULT_PURGE_METHOD, 5);
                 memcpy(global.cache.purge_method + 5, " ", 1);
                 cur_arg++;
+                global.cache.manage_url = NULL;
                 while(*(args[cur_arg]) !=0) {
                         if (!strcmp(args[cur_arg], "share")) {
                             cur_arg++;
@@ -2012,18 +2013,32 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                 }
                                 memset(global.cache.purge_method, 0, CACHE_DEFAULT_PURGE_METHOD_SIZE);
                                 if(strlen(args[cur_arg]) <= CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
-                                    memcpy(global.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
-                                    memcpy(global.cache.purge_method + strlen(args[cur_arg]), " ", 1);
+                                        memcpy(global.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
+                                        memcpy(global.cache.purge_method + strlen(args[cur_arg]), " ", 1);
                                 } else {
-                                    memcpy(global.cache.purge_method, args[cur_arg], CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
-                                    memcpy(global.cache.purge_method + CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
+                                        memcpy(global.cache.purge_method, args[cur_arg], CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
+                                        memcpy(global.cache.purge_method + CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
                                 }
+                                cur_arg++;
+                                continue;
+                        }
+                        if (!strcmp(args[cur_arg], "url")) {
+                                cur_arg++;
+                                if (*(args[cur_arg]) == 0) {
+                                        Alert("parsing [%s:%d] : '%s': `url` expect an URL.\n", file, linenum, args[0]);
+                                        err_code |= ERR_ALERT | ERR_FATAL;
+                                        goto out;
+                                }
+                                global.cache.manage_url = strdup(args[cur_arg]);
                                 cur_arg++;
                                 continue;
                         }
                         Alert("parsing [%s:%d] : '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
                         err_code |= ERR_ALERT | ERR_FATAL;
                         goto out;
+                }
+                if (!global.cache.manage_url) {
+                        global.cache.manage_url = strdup(CACHE_DEFAULT_MANAGE_URL);
                 }
         }
 	else {
