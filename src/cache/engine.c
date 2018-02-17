@@ -681,9 +681,9 @@ void cache_hit(struct stream *s, struct stream_interface *si, struct channel *re
     struct appctx *appctx = NULL;
 
     /*
-     * set backend to cache_applet
+     * set backend to cache_io_applet
      */
-    s->target = &cache_applet.obj_type;
+    s->target = &cache_io_applet.obj_type;
     if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
         /* return to regular process on error */
         data->clients--;
@@ -849,7 +849,7 @@ int cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     return 0;
 }
 
-struct applet cache_applet = {
+struct applet cache_io_applet = {
     .obj_type = OBJ_TYPE_APPLET,
     .name = "<CACHE>",
     .fct = cache_io_handler,
