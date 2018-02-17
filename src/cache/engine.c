@@ -856,5 +856,19 @@ struct applet cache_io_applet = {
     .release = NULL,
 };
 
+int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
+    return 0;
+}
+
+static void cache_manager_handler(struct appctx *appctx) {
+}
+
+struct applet cache_manager_applet = {
+    .obj_type = OBJ_TYPE_APPLET,
+    .name = "<CACHE-MANAGER>",
+    .fct = cache_manager_handler,
+    .release = NULL,
+};
+
 __attribute__((constructor)) static void __cache_init(void) { }
 
