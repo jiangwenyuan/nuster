@@ -79,6 +79,8 @@ struct cache_code {
     struct cache_code *next;
 };
 
+#define CACHE_RULE_ENABLED    1
+#define CACHE_RULE_DISABLED   0
 struct cache_rule {
     struct list         list;       /* list linked to from the proxy */
     struct acl_cond    *cond;       /* acl condition to meet */
@@ -86,6 +88,8 @@ struct cache_rule {
     struct cache_key  **key;        /* key */
     struct cache_code  *code;       /* code */
     uint64_t            ttl;        /* ttl: seconds, 0: not expire */
+    int                *state;
+    int                 id;
 };
 
 struct cache_element {

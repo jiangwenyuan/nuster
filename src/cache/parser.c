@@ -222,16 +222,17 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
         }
     }
 
-    rule = malloc(sizeof(*rule));
+    rule       = malloc(sizeof(*rule));
     rule->cond = cond;
     rule->name = name;
-    rule->key = cache_parse_rule_key(key == NULL ? CACHE_DEFAULT_KEY : key);
+    rule->key  = cache_parse_rule_key(key == NULL ? CACHE_DEFAULT_KEY : key);
     if(!rule->key) {
         memprintf(err, "'%s %s': invalid key.", args[0], name);
         goto out;
     }
     rule->code = cache_parse_rule_code(code == NULL ? CACHE_DEFAULT_CODE : code);
-    rule->ttl = ttl;
+    rule->ttl  = ttl;
+    rule->id   = -1;
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->cache_rules, &rule->list);
 

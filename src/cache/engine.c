@@ -27,6 +27,7 @@
 #include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/acl.h>
+#include <proto/proxy.h>
 #include <proto/cache.h>
 
 #include <import/xxhash.h>
@@ -301,6 +302,7 @@ void cache_housekeeping() {
 
 void cache_init() {
     int i;
+    struct proxy *p;
 
     if(global.cache.status == CACHE_STATUS_ON) {
         if(global.cache.share == CACHE_STATUS_UNDEFINED) {
@@ -365,6 +367,41 @@ void cache_init() {
         for (i = 0; i < NUSTER_CACHE_MSG_SIZE; i++) {
             cache_msg_chunks[i].str = (char *)cache_msgs[i];
             cache_msg_chunks[i].len = strlen(cache_msgs[i]);
+        }
+
+        /* init cache rule */
+        i = 0;
+        p = proxy;
+        while(p) {
+            struct cache_rule *rule = NULL;
+            list_for_each_entry(rule, &p->cache_rules, list) {
+                struct proxy *pt = proxy;
+
+                rule->state  = nuster_memory_alloc(global.cache.memory, sizeof(*rule->state));
+                if(!rule->state) {
+                    goto err;
+                }
+                *rule->state = CACHE_RULE_ENABLED;
+
+                while(pt) {
+                    struct cache_rule *rt = NULL;
+                    list_for_each_entry(rt, &pt->cache_rules, list) {
+                        if(rt == rule) goto out;
+                        if(!strcmp(rt->name, rule->name)) {
+                            Alert("cache-rule with same name=[%s] found.\n", rule->name);
+                            rule->id = rt->id;
+                            goto out;
+                        }
+                    }
+                    pt = pt->next;
+                }
+
+out:
+                if(rule->id == -1) {
+                    rule->id = i++;
+                }
+            }
+            p = p->next;
         }
 
         cache_debug("[CACHE] on, data_size=%llu\n", global.cache.data_size);
