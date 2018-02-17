@@ -123,6 +123,10 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
         if(ctx->state == CACHE_CTX_STATE_INIT) {
             list_for_each_entry(rule, &px->cache_rules, list) {
                 cache_debug("[CACHE] Checking rule: %s\n", rule->name);
+                /* disabled? */
+                if(rule->state == CACHE_RULE_DISABLED) {
+                    continue;
+                }
                 /* build key */
                 key = cache_build_key(rule->key, s, msg);
                 if(!key) {
