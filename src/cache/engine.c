@@ -326,7 +326,7 @@ void cache_init() {
             }
             cache = nuster_memory_alloc(global.cache.memory, sizeof(struct cache));
         } else {
-            global.cache.memory = nuster_memory_create("cache.shm", NUSTER_MEMORY_BLOCK_MIN_SIZE * 3, 0, 0);
+            global.cache.memory = nuster_memory_create("cache.shm", CACHE_DEFAULT_SIZE, 0, 0);
             if(!global.cache.memory) {
                 goto shm_err;
             }
