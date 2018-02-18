@@ -216,6 +216,10 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 stash = stash->next;
             }
 
+            if(!key) {
+                return 1;
+            }
+
             /* start to build cache */
             cache_create(ctx, key, hash);
         }
