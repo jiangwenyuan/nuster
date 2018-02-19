@@ -1953,7 +1953,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                 memcpy(global.cache.purge_method, CACHE_DEFAULT_PURGE_METHOD, 5);
                 memcpy(global.cache.purge_method + 5, " ", 1);
                 cur_arg++;
-                global.cache.manage_url = NULL;
+                global.cache.manager_uri = NULL;
                 while(*(args[cur_arg]) !=0) {
                         if (!strcmp(args[cur_arg], "share")) {
                             cur_arg++;
@@ -2022,14 +2022,14 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                 cur_arg++;
                                 continue;
                         }
-                        if (!strcmp(args[cur_arg], "url")) {
+                        if (!strcmp(args[cur_arg], "uri")) {
                                 cur_arg++;
                                 if (*(args[cur_arg]) == 0) {
-                                        Alert("parsing [%s:%d] : '%s': `url` expect an URL.\n", file, linenum, args[0]);
+                                        Alert("parsing [%s:%d] : '%s': `uri` expect an URI.\n", file, linenum, args[0]);
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                global.cache.manage_url = strdup(args[cur_arg]);
+                                global.cache.manager_uri = strdup(args[cur_arg]);
                                 cur_arg++;
                                 continue;
                         }
@@ -2037,8 +2037,8 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                         err_code |= ERR_ALERT | ERR_FATAL;
                         goto out;
                 }
-                if (!global.cache.manage_url) {
-                        global.cache.manage_url = strdup(CACHE_DEFAULT_MANAGE_URL);
+                if (!global.cache.manager_uri) {
+                        global.cache.manager_uri = strdup(CACHE_DEFAULT_MANAGER_URI);
                 }
         }
 	else {

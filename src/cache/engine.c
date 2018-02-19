@@ -923,11 +923,11 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
         return 0;
     }
 
-    if(strlen(global.cache.manage_url) != msg->sl.rq.u_l) {
+    if(strlen(global.cache.manager_uri) != msg->sl.rq.u_l) {
         return 0;
     }
 
-    if(memcmp(uri, global.cache.manage_url, msg->sl.rq.u_l) != 0) {
+    if(memcmp(uri, global.cache.manager_uri, msg->sl.rq.u_l) != 0) {
         return 0;
     }
 

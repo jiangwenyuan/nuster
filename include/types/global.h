@@ -235,7 +235,7 @@ struct global {
                 uint64_t             dict_size;         /* max memory used by dict, in bytes */
                 int                  share;
                 char                *purge_method;
-                char                *manage_url;        /* the url used to manage cache: purge/enable/disable... */
+                char                *manager_uri;       /* the uri used to manage cache: purge/enable/disable... */
 
                 struct {
                         struct pool_head *stash;
