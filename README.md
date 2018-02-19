@@ -15,7 +15,9 @@ Table of Contents
   * [cache](#cache)
   * [filter cache](#filter-cache)
   * [cache-rule](#cache-rule)
-* [Purge cache](#purge-cache)
+* [Cache Management](#cache-management)
+  * [Enable/Disable](#enable-and-disable-cache-rule)
+  * [Purging](#purge-cache)
 * [FAQ](#faq)
 * [Example](#example)
 * [Conventions](#conventions)
@@ -166,9 +168,9 @@ Define a customized HTTP method with max length of 14 to purge cache, it is `PUR
 
 ### uri
 
-Define the endpoint of cache manager API, it is `/nuster/cache` by default.
+Enable cache manager API and define the endpoint.
 
-See `cache management` for details.
+See [Cache Management](#cache-management) for details.
 
 filter cache
 ------------
@@ -283,13 +285,61 @@ cache-rule all code all
 Define when to cache using HAProxy ACL.
 See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
 
+Cache Management
+================
+
+Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making POST
+
+requests along with some headers.
+
+**Eanble and define the endpoint**
+
+```
+cache on uri /nuster/cache
+```
+
+**Basic usage**
+
+`curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
+
+Enable and disable cache-rule
+-------------------------
+
+cache-rule can be disabled at run time through manager uri. Disabled cache-rule will not be processed, nor will the
+
+cache created by that.
+
+***headers***
+
+| header | value           | description
+| ------ | -----           | -----------
+| action | state           | indicate action
+| name   | cache-rule NAME | the cache-rule
+|        | proxy NAME      | all cache-rules belong to proxy NAME
+|        | *               | all cache-rules
+| data   | enable          | enalbe
+|        | disable         | disable
+
+### Examples
+
+* Disable cache-rule r1
+
+  `curl -X POST -H "action: state" -H "name: r1" -H "data: disable" http://127.0.0.1/nuster/cache`
+
+* Disable all cache-rule defined in proxy app1b
+
+  `curl -X POST -H "action: state" -H "name: app1b" -H "data: disable" http://127.0.0.1/nuster/cache`
+
+* Enable all cache-rule
+
+  `curl -X POST -H "action: state" -H "name: *" -H "data: enable" http://127.0.0.1/nuster/cache`
+
 Purge Cache
-===========
+-----------
 
 There are several ways to purge cache.
 
-Purge one specific url
-----------------------
+### Purge one specific url
 
 This method creates a key of `GET.scheme.host.uri`, and delete the cache with that key.
 
@@ -319,47 +369,6 @@ In case that the query part is irrelevant, you can define a key like `cache-rule
 in this way only one cache will be created, and you can purge that without query.
 
 Delete by tag(name in cache-rule) or url will be added later.
-
-Cache Management
-================
-
-Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making POST
-
-requests along with some headers.
-
-`curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
-
-Enalbe/Disable cache-rule
--------------------------
-
-cache-rule can be disabled on runtime through manager uri. Disabled cache-rule will not be processed, nor will the
-
-cache created by that.
-
-***headers***
-
-| header | value           | description
-| ------ | -----           | -----------
-| action | state           | indicate action
-| name   | cache-rule NAME | the cache-rule
-|        | proxy NAME      | all cache-rules belong to proxy NAME
-|        | *               | all cache-rules
-| data   | enable          | enalbe
-|        | disable         | disable
-
-### Examples
-
-* Disable cache-rule r1
-
-  `curl -X POST -H "action: state" -H "name: r1" -H "data: disable" http://127.0.0.1/nuster/cache`
-
-* Disable all cache-rule defined in proxy app1b
-
-  `curl -X POST -H "action: state" -H "name: app1b" -H "data: disable" http://127.0.0.1/nuster/cache`
-
-* Enable all cache-rule
-
-  `curl -X POST -H "action: state" -H "name: *" -H "data: enable" http://127.0.0.1/nuster/cache`
 
 FAQ
 ===
