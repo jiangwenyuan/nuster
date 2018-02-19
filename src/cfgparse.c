@@ -2037,9 +2037,6 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                         err_code |= ERR_ALERT | ERR_FATAL;
                         goto out;
                 }
-                if (!global.cache.manager_uri) {
-                        global.cache.manager_uri = strdup(CACHE_DEFAULT_MANAGER_URI);
-                }
         }
 	else {
 		struct cfg_kw_list *kwl;

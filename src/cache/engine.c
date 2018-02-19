@@ -919,6 +919,10 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     struct hdr_ctx ctx;
     int ret = 400;
 
+    if(!global.cache.manager_uri) {
+        return 0;
+    }
+
     if(txn->meth != HTTP_METH_POST) {
         return 0;
     }
