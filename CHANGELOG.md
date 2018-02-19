@@ -1,5 +1,16 @@
 # Nuster Changelog
 
+## 1.7.9.5 - 2018-02-19
+
+### Added
+- Cache manager API
+- Cache manager applet
+- Enable and disable cache-rule on runtime
+
+### Changed
+- Rename cache applet
+- Change default share memory size
+
 ## 1.7.9.4 - 2018-02-03
 
 ### Added
