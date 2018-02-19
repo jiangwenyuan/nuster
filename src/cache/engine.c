@@ -857,10 +857,10 @@ struct applet cache_io_applet = {
 };
 
 int cache_manager_state(struct stream *s, struct channel *req, struct proxy *px) {
-    struct http_txn *txn        = s->txn;
-    struct http_msg *msg        = &txn->req;
-    struct hdr_ctx ctx;
+    struct http_txn *txn   = s->txn;
+    struct http_msg *msg   = &txn->req;
     int state, found, mode = 2;     /* mode: 0: *, all; 1: proxy, 2: rule */
+    struct hdr_ctx ctx;
     struct proxy *p;
 
     ctx.idx = 0;
@@ -913,11 +913,11 @@ int cache_manager_state(struct stream *s, struct channel *req, struct proxy *px)
 }
 
 int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
-    struct http_txn *txn        = s->txn;
-    struct http_msg *msg        = &txn->req;
-    const char *uri             = msg->chn->buf->p + msg->sl.rq.u;
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+    const char *uri      = msg->chn->buf->p + msg->sl.rq.u;
+    int ret              = 400;
     struct hdr_ctx ctx;
-    int ret = 400;
 
     if(!global.cache.manager_uri) {
         return 0;
