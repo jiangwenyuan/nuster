@@ -6,9 +6,10 @@ Table of Contents
 
 * [Introduction](#introduction)
 * [Performance](#performance)
-* [Installation](#installation)
+* [Setup](#setup)
   * [Download](#download)
   * [Build](#build)
+  * [Start](#start)
   * [Docker](#docker)
 * [Usage](#usage)
 * [Directives](#directives)
@@ -56,8 +57,8 @@ three times faster than varnish when using all cores.
 See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Web-cache-server-performance-benchmark:-nuster-vs-nginx-vs-varnish-vs-squid)
 
 
-Installation
-============
+Setup
+=====
 
 Download
 --------
@@ -69,13 +70,22 @@ Build
 -----
 
 ```
-make TARGET=linux2628
-make install
+make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1 
+make install PREFIX=/usr/local/nuster/bin
 ```
 
-> use `make TARGET=linux2628 USE_PTHREAD_PSHARED=1` to use pthread lib
+> use `USE_PTHREAD_PSHARED=1` to use pthread lib
+
+> omit `USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1` if unnecessary
 
 See [HAProxy README](README) for details.
+
+Start
+-----
+
+Create a config file called `nuster.conf` like [Example](#example), and
+
+`/usr/local/nuster/bin/haproxy -f nuster.conf`
 
 Docker
 ------
@@ -209,7 +219,9 @@ cache-rule `path01` will never match because first rule will cache everything.
 
 ### name
 
-Define a name for this cache-rule.
+Define a name for this cache-rule. It will be used in cache manager API, it does not
+have to be unique, but it might be a good idea to make it unique. cache-rule with same
+name are treated as one.
 
 ### key KEY
 
@@ -289,7 +301,6 @@ Cache Management
 ================
 
 Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making POST
-
 requests along with some headers.
 
 **Eanble and define the endpoint**
@@ -306,7 +317,6 @@ Enable and disable cache-rule
 -------------------------
 
 cache-rule can be disabled at run time through manager uri. Disabled cache-rule will not be processed, nor will the
-
 cache created by that.
 
 ***headers***
@@ -319,6 +329,8 @@ cache created by that.
 |        | *               | all cache-rules
 | data   | enable          | enalbe
 |        | disable         | disable
+
+Keep in mind that if name is not uniq, **all** cache-rules with that name will be disabled/enabled.
 
 ### Examples
 
@@ -365,7 +377,6 @@ There will be two cache objects since the default key contains query part. In or
 `curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120`
 
 In case that the query part is irrelevant, you can define a key like `cache-rule imgs key method.scheme.host.path`,
-
 in this way only one cache will be created, and you can purge that without query.
 
 Delete by tag(name in cache-rule) or url will be added later.
@@ -403,7 +414,6 @@ http-request deny if purge_method !network_allowed
 ```
 
 Note by default cache key contains `Host`, if you cache a request like `http://example.com/test`
-
 and purge from localhost you need to specify `Host` header:
 
 `curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
