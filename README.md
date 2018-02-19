@@ -80,7 +80,7 @@ Docker
 
 ```
 docker pull nuster/nuster
-docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nuster/nuster:1.7.9.3
+docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nuster/nuster
 ```
 
 Usage
@@ -101,7 +101,7 @@ Directives
 cache
 -----
 
-**syntax:** cache on|off [share on|off] [data-size size] [dict-size size] [purge-method method]
+**syntax:** cache on|off [share on|off] [data-size size] [dict-size size] [purge-method method] [uri manager-uri]
 
 **default:** *none*
 
@@ -163,6 +163,12 @@ An approximate number of keys multiplied by 8 (normally) as `dict-size` should w
 ### purge-method
 
 Define a customized HTTP method with max length of 14 to purge cache, it is `PURGE` by default.
+
+### uri
+
+Define the endpoint of cache manager API, it is `/nuster/cache` by default.
+
+See `cache management` for details.
 
 filter cache
 ------------
@@ -313,6 +319,47 @@ In case that the query part is irrelevant, you can define a key like `cache-rule
 in this way only one cache will be created, and you can purge that without query.
 
 Delete by tag(name in cache-rule) or url will be added later.
+
+Cache Management
+================
+
+Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making POST
+
+requests along with some headers.
+
+`curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
+
+Enalbe/Disable cache-rule
+-------------------------
+
+cache-rule can be disabled on runtime through manager uri. Disabled cache-rule will not be processed, nor will the
+
+cache created by that.
+
+***headers***
+
+| header | value           | description
+| ------ | -----           | -----------
+| action | state           | indicate action
+| name   | cache-rule NAME | the cache-rule
+|        | proxy NAME      | all cache-rules belong to proxy NAME
+|        | *               | all cache-rules
+| data   | enable          | enalbe
+|        | disable         | disable
+
+### Examples
+
+* Disable cache-rule r1
+
+  `curl -X POST -H "action: state" -H "name: r1" -H "data: disable" http://127.0.0.1/nuster/cache`
+
+* Disable all cache-rule defined in proxy app1b
+
+  `curl -X POST -H "action: state" -H "name: app1b" -H "data: disable" http://127.0.0.1/nuster/cache`
+
+* Enable all cache-rule
+
+  `curl -X POST -H "action: state" -H "name: *" -H "data: enable" http://127.0.0.1/nuster/cache`
 
 FAQ
 ===
