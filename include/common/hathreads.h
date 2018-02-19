@@ -325,6 +325,8 @@ static inline const char *lock_label(enum lock_label label)
 	case THREAD_SYNC_LOCK:     return "THREAD_SYNC";
 	case FDCACHE_LOCK:         return "FDCACHE";
 	case FD_LOCK:              return "FD";
+	case FDTAB_LOCK:           return "FDTAB";
+	case POLL_LOCK:            return "POLL";
 	case TASK_RQ_LOCK:         return "TASK_RQ";
 	case TASK_WQ_LOCK:         return "TASK_WQ";
 	case POOL_LOCK:            return "POOL";
