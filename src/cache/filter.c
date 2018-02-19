@@ -204,8 +204,6 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 return 1;
             }
 
-            cache_debug("PASS\n[CACHE] To create\n");
-
             /* get cache key */
             while(stash) {
                 if(ctx->stash->rule == ctx->rule) {
@@ -219,6 +217,8 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
             if(!key) {
                 return 1;
             }
+
+            cache_debug("PASS\n[CACHE] To create\n");
 
             /* start to build cache */
             cache_create(ctx, key, hash);
