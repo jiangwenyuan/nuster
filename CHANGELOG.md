@@ -5,7 +5,7 @@
 ### Added
 - Cache manager API
 - Cache manager applet
-- Enable and disable cache-rule on runtime
+- Enable and disable cache-rule at run time
 
 ### Changed
 - Rename cache applet
