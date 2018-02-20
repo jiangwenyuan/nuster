@@ -323,28 +323,27 @@ cache created by that.
 
 | header | value           | description
 | ------ | -----           | -----------
-| action | state           | indicate action
-| name   | cache-rule NAME | the cache-rule
+| state  | enable          | enable  cache-rule
+|        | disable         | disable cache-rule
+| name   | cache-rule NAME | the cache-rule to be enabled/disabled
 |        | proxy NAME      | all cache-rules belong to proxy NAME
 |        | *               | all cache-rules
-| data   | enable          | enalbe
-|        | disable         | disable
 
-Keep in mind that if name is not uniq, **all** cache-rules with that name will be disabled/enabled.
+Keep in mind that if name is not unique, **all** cache-rules with that name will be disabled/enabled.
 
 ### Examples
 
 * Disable cache-rule r1
 
-  `curl -X POST -H "action: state" -H "name: r1" -H "data: disable" http://127.0.0.1/nuster/cache`
+  `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster/cache`
 
 * Disable all cache-rule defined in proxy app1b
 
-  `curl -X POST -H "action: state" -H "name: app1b" -H "data: disable" http://127.0.0.1/nuster/cache`
+  `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster/cache`
 
 * Enable all cache-rule
 
-  `curl -X POST -H "action: state" -H "name: *" -H "data: enable" http://127.0.0.1/nuster/cache`
+  `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster/cache`
 
 Purge Cache
 -----------

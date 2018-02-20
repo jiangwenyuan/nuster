@@ -1,6 +1,6 @@
 # Nuster Changelog
 
-## 1.7.9.5 - 2018-02-19
+## 1.7.9.5 - 2018-02-20
 
 ### Added
 - Cache manager API
