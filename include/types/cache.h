@@ -46,7 +46,6 @@
 #define CACHE_DEFAULT_CHUNK_SIZE          32
 #define CACHE_DEFAULT_PURGE_METHOD       "PURGE"
 #define CACHE_DEFAULT_PURGE_METHOD_SIZE   16
-#define CACHE_DEFAULT_MANAGER_URI        "/nuster/cache"
 
 #define CACHE_STATUS_UNDEFINED       -1
 #define CACHE_STATUS_OFF              0
