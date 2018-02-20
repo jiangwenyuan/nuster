@@ -856,55 +856,45 @@ struct applet cache_io_applet = {
     .release = NULL,
 };
 
-int cache_manager_state(struct stream *s, struct channel *req, struct proxy *px) {
-    struct http_txn *txn   = s->txn;
-    struct http_msg *msg   = &txn->req;
-    int state, found, mode = 2;     /* mode: 0: *, all; 1: proxy, 2: rule */
+int cache_manager_state(struct stream *s, struct channel *req, struct proxy *px, int state) {
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+    int found, mode = 2;                /* mode: 0: *, all; 1: proxy, 2: rule */
     struct hdr_ctx ctx;
     struct proxy *p;
 
     ctx.idx = 0;
-    if(http_find_header2("data", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
-            state = CACHE_RULE_ENABLED;
-        } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
-            state = CACHE_RULE_DISABLED;
-        } else {
-            return 400;
+    if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+        if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
+            found = 1;
+            mode  = 0;
         }
-        ctx.idx = 0;
-        if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-            if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
+        p = proxy;
+        while(p) {
+            struct cache_rule *rule = NULL;
+
+            if(mode !=0 && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
                 found = 1;
-                mode  = 0;
+                mode  = 1;
             }
-            p = proxy;
-            while(p) {
-                struct cache_rule *rule = NULL;
 
-                if(mode !=0 && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
-                    found = 1;
-                    mode  = 1;
+            list_for_each_entry(rule, &p->cache_rules, list) {
+                if(mode != 2) {
+                    *rule->state = state;
+                } else if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+                    *rule->state = state;
+                    found        = 1;
                 }
-
-                list_for_each_entry(rule, &p->cache_rules, list) {
-                    if(mode != 2) {
-                        *rule->state = state;
-                    } else if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
-                        *rule->state = state;
-                        found        = 1;
-                    }
-                }
-                if(mode == 1) {
-                    break;
-                }
-                p = p->next;
             }
-            if(found) {
-                return 200;
-            } else {
-                return 404;
+            if(mode == 1) {
+                break;
             }
+            p = p->next;
+        }
+        if(found) {
+            return 200;
+        } else {
+            return 404;
         }
     }
 
@@ -936,9 +926,11 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     }
 
     ctx.idx = 0;
-    if(http_find_header2("action", 6, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        if(ctx.vlen == 5 && !memcmp(ctx.line + ctx.val, "state", 5)) {
-            ret = cache_manager_state(s, req, px);
+    if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+        if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
+            ret = cache_manager_state(s, req, px, CACHE_RULE_ENABLED);
+        } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
+            ret = cache_manager_state(s, req, px, CACHE_RULE_DISABLED);
         }
     }
 
