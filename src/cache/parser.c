@@ -338,3 +338,70 @@ end:
     return NULL;
 }
 
+/*
+ * Parse time
+ */
+const char *cache_parse_time(const char *text, int len, unsigned *ret) {
+    unsigned imult, idiv, omult, odiv;
+    unsigned value;
+
+    if(*text - '0' > 9) {
+        return text;
+    }
+
+    omult = odiv = imult = idiv = 1;
+    value = 0;
+
+    while(len--) {
+        unsigned int j;
+
+        j = *text - '0';
+        if(j > 9) {
+            switch(*text) {
+                case 's':
+                    break;
+                case 'm':
+                    imult = 60;
+                    break;
+                case 'h':
+                    imult = 3600;
+                    break;
+                case 'd':
+                    imult = 86400;
+                    break;
+                default:
+                    return text;
+                    break;
+            }
+            break;
+        }
+        text++;
+        value *= 10;
+        value += j;
+    }
+
+    if(len > 0) {
+        return text;
+    }
+
+    if(omult % idiv == 0) {
+        omult /= idiv;
+        idiv   = 1;
+    }
+    if(idiv % omult == 0) {
+        idiv  /= omult;
+        omult  = 1;
+    }
+    if(imult % odiv == 0) {
+        imult /= odiv;
+        odiv   = 1;
+    }
+    if(odiv % imult == 0) {
+        odiv  /= imult;
+        imult  = 1;
+    }
+
+    value = (value * (imult * omult) + (idiv * odiv - 1)) / (idiv * odiv);
+    *ret = value;
+    return NULL;
+}
