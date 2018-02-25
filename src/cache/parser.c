@@ -169,7 +169,6 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
             continue;
         }
         if(!strcmp(args[cur_arg], "ttl")) {
-            const char *res = NULL;
             if((key == NULL && cur_arg >= 4) || (key !=NULL && cur_arg >= 6)) {
                 memprintf(err, "'%s %s': ttl already specified.", args[0], name);
                 goto out;
@@ -180,10 +179,9 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
                 goto out;
             }
             /* "d", "h", "m", "s"
-             * s is returned, 1 will be returned if ttl less than 1s
+             * s is returned
              * */
-            res = parse_time_err(args[cur_arg], &ttl, TIME_UNIT_S);
-            if(res) {
+            if(cache_parse_time(args[cur_arg], strlen(args[cur_arg]), &ttl)) {
                 memprintf(err, "'%s %s': invalid ttl.", args[0], name);
                 goto out;
             }
