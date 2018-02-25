@@ -374,6 +374,8 @@ void cache_init() {
         p = proxy;
         while(p) {
             struct cache_rule *rule = NULL;
+            uint32_t ttl;
+
             list_for_each_entry(rule, &p->cache_rules, list) {
                 struct proxy *pt = proxy;
 
@@ -382,6 +384,13 @@ void cache_init() {
                     goto err;
                 }
                 *rule->state = CACHE_RULE_ENABLED;
+                ttl          = *rule->ttl;
+                free(rule->ttl);
+                rule->ttl    = nuster_memory_alloc(global.cache.memory, sizeof(*rule->ttl));
+                if(!rule->ttl) {
+                    goto err;
+                }
+                *rule->ttl   = ttl;
 
                 while(pt) {
                     struct cache_rule *rt = NULL;
@@ -661,10 +670,10 @@ int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len) {
 void cache_finish(struct cache_ctx *ctx) {
     ctx->state = CACHE_CTX_STATE_DONE;
     ctx->entry->state = CACHE_ENTRY_STATE_VALID;
-    if(ctx->rule->ttl == 0) {
+    if(*ctx->rule->ttl == 0) {
         ctx->entry->expire = 0;
     } else {
-        ctx->entry->expire = _get_current_timestamp() + ctx->rule->ttl;
+        ctx->entry->expire = _get_current_timestamp() + *ctx->rule->ttl;
     }
 }
 

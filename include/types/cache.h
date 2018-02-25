@@ -86,7 +86,7 @@ struct cache_rule {
     char               *name;       /* cache name for logging */
     struct cache_key  **key;        /* key */
     struct cache_code  *code;       /* code */
-    uint32_t            ttl;        /* ttl: seconds, 0: not expire */
+    uint32_t           *ttl;        /* ttl: seconds, 0: not expire */
     int                *state;
     int                 id;
 };

@@ -231,7 +231,8 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
         goto out;
     }
     rule->code = cache_parse_rule_code(code == NULL ? CACHE_DEFAULT_CODE : code);
-    rule->ttl  = ttl;
+    rule->ttl  = malloc(sizeof(*rule->ttl));
+    *rule->ttl = ttl;
     rule->id   = -1;
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->cache_rules, &rule->list);
