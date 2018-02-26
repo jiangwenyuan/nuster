@@ -957,12 +957,64 @@ int cache_manager_ttl(struct stream *s, struct channel *req, struct proxy *px, u
 
 }
 
+int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy *px, int state, int ttl) {
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+    int found, mode = 2;                /* mode: 0: *, all; 1: proxy, 2: rule */
+    struct hdr_ctx ctx;
+    struct proxy *p;
+
+    if(state == -1 && ttl == -1) {
+        return 400;
+    }
+
+    ctx.idx = 0;
+    if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+        if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
+            found = 1;
+            mode  = 0;
+        }
+        p = proxy;
+        while(p) {
+            struct cache_rule *rule = NULL;
+
+            if(mode !=0 && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+                found = 1;
+                mode  = 1;
+            }
+
+            list_for_each_entry(rule, &p->cache_rules, list) {
+                if(mode != 2) {
+                    *rule->state = state == -1 ? *rule->state : state;
+                    *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
+                } else if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+                    *rule->state = state == -1 ? *rule->state : state;
+                    *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
+                    found      = 1;
+                }
+            }
+            if(mode == 1) {
+                break;
+            }
+            p = p->next;
+        }
+        if(found) {
+            return 200;
+        } else {
+            return 404;
+        }
+    }
+
+    return 400;
+
+}
 int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
     const char *uri      = msg->chn->buf->p + msg->sl.rq.u;
-    int ret              = 400;
     struct hdr_ctx ctx;
+    int state = -1;
+    int ttl   = -1;
 
     if(!global.cache.manager_uri) {
         return 0;
@@ -983,19 +1035,18 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     ctx.idx = 0;
     if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
         if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
-            ret = cache_manager_state(s, req, px, CACHE_RULE_ENABLED);
+            state = CACHE_RULE_ENABLED;
         } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
-            ret = cache_manager_state(s, req, px, CACHE_RULE_DISABLED);
-        }
-    } else if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        unsigned ttl;
-        if(!cache_parse_time(ctx.line + ctx.val, ctx.vlen, &ttl)) {
-            ret = cache_manager_ttl(s, req, px, ttl);
+            state = CACHE_RULE_DISABLED;
         }
     }
+    if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+        cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
+    }
 
-    txn->status = ret;
-    switch(ret) {
+    txn->status = cache_manager_state_ttl(s, req, px, state, ttl);
+
+    switch(txn->status) {
         case 200:
             cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);
             break;
