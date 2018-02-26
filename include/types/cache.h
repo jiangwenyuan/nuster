@@ -2,7 +2,7 @@
  * include/types/cache.h
  * This file defines everything related to cache.
  *
- * Copyright (C) 2017, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -34,7 +34,7 @@
 #include <types/applet.h>
 
 #define NUSTER_VERSION                    HAPROXY_VERSION".6"
-#define NUSTER_COPYRIGHT                 "2017, Jiang Wenyuan, <koubunen AT gmail DOT com >"
+#define NUSTER_COPYRIGHT                 "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 #define CACHE_DEFAULT_SIZE                1024 * 1024
 #define CACHE_DEFAULT_TTL                 3600
 #define CACHE_DEFAULT_DICT_SIZE           32
