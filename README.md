@@ -1,8 +1,7 @@
 Nuster, a web caching proxy server.
 
 
-Table of Contents
-=================
+# Table of Contents
 
 * [Introduction](#introduction)
 * [Performance](#performance)
@@ -18,6 +17,7 @@ Table of Contents
   * [cache-rule](#cache-rule)
 * [Cache Management](#cache-management)
   * [Enable/Disable](#enable-and-disable-cache-rule)
+  * [TTL](#ttl)
   * [Purging](#purge-cache)
 * [FAQ](#faq)
 * [Example](#example)
@@ -26,8 +26,7 @@ Table of Contents
 * [TODO](#todo)
 * [License](#license)
 
-Introduction
-============
+# Introduction
 
 Nuster is a simple yet powerful web caching proxy server based on HAProxy.
 It is 100% compatible with HAProxy, and takes full advantage of the ACL
@@ -47,8 +46,7 @@ the content of request, response or server status. Its features include:
  * HTTP compression
  * HTTP rewriting and redirection
 
-Performance
-===========
+# Performance
 
 Nuster is very fast, some test shows nuster is almost three times faster than 
 nginx when both using single core, and nearly two times faster than nginx and
@@ -57,17 +55,14 @@ three times faster than varnish when using all cores.
 See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Web-cache-server-performance-benchmark:-nuster-vs-nginx-vs-varnish-vs-squid)
 
 
-Setup
-=====
+# Setup
 
-Download
---------
+## Download
 
 Download stable version from [releases](https://github.com/jiangwenyuan/nuster/releases) page
 for production use, otherwise git clone the source code.
 
-Build
------
+## Build
 
 ```
 make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1 
@@ -80,23 +75,20 @@ make install PREFIX=/usr/local/nuster/bin
 
 See [HAProxy README](README) for details.
 
-Start
------
+## Start
 
 Create a config file called `nuster.conf` like [Example](#example), and
 
 `/usr/local/nuster/bin/haproxy -f nuster.conf`
 
-Docker
-------
+## Docker
 
 ```
 docker pull nuster/nuster
 docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nuster/nuster
 ```
 
-Usage
-=====
+# Usage
 
 Nuster is based on HAProxy, all directives from HAProxy are supported in nuster.
 
@@ -107,11 +99,9 @@ section and a cache filter along with some cache-rules should be added into
 If `cache off` is declared or there is no `cache on|off` directive, nuster acts
 just like HAProxy, as a TCP and HTTP load balancer.
 
-Directives
-==========
+# Directives
 
-cache
------
+## cache
 
 **syntax:** cache on|off [share on|off] [data-size size] [dict-size size] [purge-method method] [uri manager-uri]
 
@@ -178,12 +168,15 @@ Define a customized HTTP method with max length of 14 to purge cache, it is `PUR
 
 ### uri
 
-Enable cache manager API and define the endpoint.
+Enable cache manager API and define the endpoint:
+
+`cache on uri /_my/_unique/_/_cache/_uri`
+
+By default, the cache manager is disabled. When it is enabled, remember to restrict the access(see FAQ).
 
 See [Cache Management](#cache-management) for details.
 
-filter cache
-------------
+## filter cache
 
 **syntax:** filter cache [on|off]
 
@@ -196,8 +189,7 @@ turned off separately by including `off`.
 If there are multiple filters, make sure that cache filter is put after
 all other filters.
 
-cache-rule
-----------
+## cache-rule
 
 **syntax:** cache-rule name [key KEY] [ttl TTL] [code CODE] [if|unless condition]
 
@@ -297,8 +289,7 @@ cache-rule all code all
 Define when to cache using HAProxy ACL.
 See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
 
-Cache Management
-================
+# Cache Management
 
 Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making POST
 requests along with some headers.
@@ -313,8 +304,7 @@ cache on uri /nuster/cache
 
 `curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
 
-Enable and disable cache-rule
--------------------------
+## Enable and disable cache-rule
 
 cache-rule can be disabled at run time through manager uri. Disabled cache-rule will not be processed, nor will the
 cache created by that.
@@ -345,8 +335,35 @@ Keep in mind that if name is not unique, **all** cache-rules with that name will
 
   `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster/cache`
 
-Purge Cache
------------
+## TTL
+
+Change the TTL. It only affects the TTL of the responses to be cached, **does not** update the TTL of existing cache.
+
+***headers***
+
+| header | value           | description
+| ------ | -----           | -----------
+| ttl    | new TTL         | see `ttl` in `cache-rule`
+| name   | cache-rule NAME | the cache-rule to be changed
+|        | proxy NAME      | all cache-rules belong to proxy NAME
+|        | *               | all cache-rules
+
+### Examples
+
+  ```
+  curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster/cache
+  curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster/cache
+  ```
+
+## Update state and TTL
+
+state and ttl can be updated at the same time
+
+  ```
+  curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster/cache
+  ```
+
+## Purge Cache
 
 There are several ways to purge cache.
 
@@ -380,17 +397,16 @@ in this way only one cache will be created, and you can purge that without query
 
 Delete by tag(name in cache-rule) or url will be added later.
 
-FAQ
-===
+# FAQ
 
-How to debug?
-------------------------
+## How to debug?
+
 Set `debug` in `global` section, or start `haproxy` with `-d`.
 
 Cache related debug messages start with `[CACHE]`.
 
-How to cache POST request?
-------------------------
+## How to cache POST request?
+
 Enable `option http-buffer-request`.
 
 By default, the cache key includes the body of the request, remember to put
@@ -401,8 +417,7 @@ section in [HAProxy configuration](doc/configuration.txt) for details.
 
 Also it might be a good idea to put it separately in a dedicated backend as example does.
 
-How to restrict access to PURGE?
-------------------------
+## How to restrict access to PURGE?
 
 You can use the powerful HAProxy acl, something like this
 
@@ -417,8 +432,7 @@ and purge from localhost you need to specify `Host` header:
 
 `curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
 
-Example
-=======
+# Example
 
 ```
 global
@@ -511,13 +525,11 @@ listen web3
 
 ```
 
-Conventions
-===========
+# Conventions
 
 1. Files with same name: those with `.md` extension belong to Nuster, otherwise HAProxy
 
-Contributing
-============
+# Contributing
 
 * Join the development
 * Give feedback
@@ -525,8 +537,7 @@ Contributing
 * Send pull requests
 * Spread nuster
 
-License
-=======
+# License
 
 Copyright (C) 2017, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
 
