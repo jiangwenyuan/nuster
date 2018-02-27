@@ -3020,6 +3020,9 @@ static int h2s_frt_make_resp_headers(struct h2s *h2s, struct buffer *buf)
 	 * body or directly end in TRL2.
 	 */
 	if (es_now) {
+		// trim any possibly pending data (eg: inconsistent content-length)
+		bo_del(buf, buf->o);
+
 		h1m->state = HTTP_MSG_DONE;
 		h2s->flags |= H2_SF_ES_SENT;
 		if (h2s->st == H2_SS_OPEN)
@@ -3269,8 +3272,12 @@ static int h2s_frt_make_resp_data(struct h2s *h2s, struct buffer *buf)
 		else
 			h2c_stream_close(h2c, h2s);
 
-		if (!(h1m->flags & H1_MF_CHNK))
+		if (!(h1m->flags & H1_MF_CHNK)) {
+			// trim any possibly pending data (eg: inconsistent content-length)
+			bo_del(buf, buf->o);
+
 			h1m->state = HTTP_MSG_DONE;
+		}
 
 		h2s->flags |= H2_SF_ES_SENT;
 	}
@@ -3319,6 +3326,10 @@ static int h2_snd_buf(struct conn_stream *cs, struct buffer *buf, int flags)
 			}
 			total += count;
 			bo_del(buf, count);
+
+			// trim any possibly pending data (eg: extra CR-LF, ...)
+			bo_del(buf, buf->o);
+
 			h2s->res.state = HTTP_MSG_DONE;
 			break;
 		}
