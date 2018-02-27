@@ -868,7 +868,7 @@ struct applet cache_io_applet = {
 int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy *px, int state, int ttl) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
-    int found, mode = 2;                /* mode: 0: *, all; 1: proxy, 2: rule */
+    int found, mode      = 2;                /* mode: 0: *, all; 1: proxy, 2: rule */
     struct hdr_ctx ctx;
     struct proxy *p;
 
@@ -920,9 +920,9 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
     const char *uri      = msg->chn->buf->p + msg->sl.rq.u;
+    int state            = -1;
+    int ttl              = -1;
     struct hdr_ctx ctx;
-    int state = -1;
-    int ttl   = -1;
 
     if(!global.cache.manager_uri) {
         return 0;
@@ -948,6 +948,7 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             state = CACHE_RULE_DISABLED;
         }
     }
+    ctx.idx = 0;
     if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
         cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
     }
