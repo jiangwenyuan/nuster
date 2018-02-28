@@ -1,5 +1,15 @@
 # Nuster Changelog
 
+## 1.7.9.6 - 2018-02-28
+
+### Added
+- Update ttl at run time
+- Single API to update ttl and state
+- A new time parser
+
+### Changed
+- Put ttl in shared memory
+
 ## 1.7.9.5 - 2018-02-20
 
 ### Added
