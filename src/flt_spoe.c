@@ -1866,6 +1866,7 @@ spoe_handle_appctx(struct appctx *appctx)
 			goto switchstate;
 
 		case SPOE_APPCTX_ST_IDLE:
+			agent->rt[tid].applets_idle--;
 			if (stopping &&
 			    LIST_ISEMPTY(&agent->rt[tid].sending_queue) &&
 			    LIST_ISEMPTY(&SPOE_APPCTX(appctx)->waiting_queue)) {
@@ -1874,7 +1875,6 @@ spoe_handle_appctx(struct appctx *appctx)
 				appctx->st0 = SPOE_APPCTX_ST_DISCONNECT;
 				goto switchstate;
 			}
-			agent->rt[tid].applets_idle--;
 			appctx->st0 = SPOE_APPCTX_ST_PROCESSING;
 			/* fall through */
 
