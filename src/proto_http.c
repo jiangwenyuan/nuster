@@ -4357,7 +4357,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	}
 
         /* check cache purge */
-        if (cache_purge(s, req, px) || cache_manager(s, req, px)) {
+        if (global.cache.status == CACHE_STATUS_ON && (cache_manager(s, req, px) || cache_purge(s, req, px))) {
             goto return_prx_cond;
         }
 

@@ -1,6 +1,6 @@
 # Nuster Changelog
 
-## 1.7.9.6 - 2018-02-28
+## 1.7.9.6 - 2018-03-01
 
 ### Added
 - Update ttl at run time

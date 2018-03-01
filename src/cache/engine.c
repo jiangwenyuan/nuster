@@ -836,8 +836,7 @@ int cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_msg *msg = &txn->req;
 
 
-    if(global.cache.status == CACHE_STATUS_ON &&
-            txn->meth == HTTP_METH_OTHER &&
+    if(txn->meth == HTTP_METH_OTHER &&
             memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0) {
 
         char *key = cache_purge_build_key(s, msg);
