@@ -395,7 +395,20 @@ There will be two cache objects since the default key contains query part. In or
 In case that the query part is irrelevant, you can define a key like `cache-rule imgs key method.scheme.host.path`,
 in this way only one cache will be created, and you can purge that without query.
 
-Delete by tag(name in cache-rule) or url will be added later.
+### More powerfull Purge
+
+| header          | abbr   | description
+| ------          | ----   | -----------
+| X-NUSTER-NAME   | name   |
+| X-NUSTER-HOST   | host   |
+| X-NUSTER-PATH   | path   |
+| X-NUSTER-REGEX  | regex  |
+| X-NUSTER-METHOD | method |
+| X-NUSTER-SCHEME | scheme |
+| X-NUSTER-URI    | uri    |
+| cookie          | cookie |
+| KEY             | VALUE  |
+
 
 # FAQ
 
