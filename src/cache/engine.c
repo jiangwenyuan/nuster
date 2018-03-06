@@ -915,19 +915,15 @@ int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy 
     return 400;
 }
 
-int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
-    struct http_txn *txn = s->txn;
-    struct http_msg *msg = &txn->req;
+static inline int cache_manager_purge_method(struct http_txn *txn, struct http_msg *msg) {
+    return txn->meth == HTTP_METH_OTHER &&
+            memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0;
+}
+
+static inline int cache_manager_uri(struct http_msg *msg) {
     const char *uri      = msg->chn->buf->p + msg->sl.rq.u;
-    int state            = -1;
-    int ttl              = -1;
-    struct hdr_ctx ctx;
 
     if(!global.cache.manager_uri) {
-        return 0;
-    }
-
-    if(txn->meth != HTTP_METH_POST) {
         return 0;
     }
 
@@ -939,20 +935,40 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
         return 0;
     }
 
-    ctx.idx = 0;
-    if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
-            state = CACHE_RULE_ENABLED;
-        } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
-            state = CACHE_RULE_DISABLED;
-        }
-    }
-    ctx.idx = 0;
-    if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
-    }
+    return 1;
+}
 
-    txn->status = cache_manager_state_ttl(s, req, px, state, ttl);
+/*
+ * return 1 if the request is done, otherwise 0
+ */
+int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+    int state            = -1;
+    int ttl              = -1;
+    struct hdr_ctx ctx;
+
+    if(txn->meth == HTTP_METH_POST && cache_manager_uri(msg)) {
+        ctx.idx = 0;
+        if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+            if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
+                state = CACHE_RULE_ENABLED;
+            } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
+                state = CACHE_RULE_DISABLED;
+            }
+        }
+        ctx.idx = 0;
+        if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+            cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
+        }
+
+        txn->status = cache_manager_state_ttl(s, req, px, state, ttl);
+    } else if(cache_manager_purge_method(txn, msg) && cache_manager_uri(msg)) {
+        txn->status = 200;
+        return 0;
+    } else {
+        return 0;
+    }
 
     switch(txn->status) {
         case 200:
