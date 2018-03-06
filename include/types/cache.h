@@ -68,6 +68,11 @@ enum ck_type {
     CK_BODY,                      /* body   */
 };
 
+struct nst_string {
+    char *data;
+    int   len;
+};
+
 struct cache_key {
     enum ck_type  type;
     char         *data;
@@ -123,6 +128,8 @@ struct cache_entry {
     struct cache_data  *data;
     uint64_t            expire;
     uint64_t            atime;
+    nst_string          host;
+    nst_string          path;
     struct cache_entry *next;
 };
 
