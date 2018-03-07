@@ -31,7 +31,7 @@
 
 /* dict */
 int cache_dict_init();
-struct cache_entry *cache_dict_get(uint64_t hash, const char *key);
+struct cache_entry *cache_dict_get(const char *key, uint64_t hash);
 struct cache_entry *cache_dict_set(uint64_t hash, char *key);
 void cache_dict_rehash();
 void cache_dict_cleanup();

@@ -598,7 +598,7 @@ struct cache_data *cache_exists(const char *key, uint64_t hash) {
     if(!key) return NULL;
 
     nuster_shctx_lock(&cache->dict[0]);
-    entry = cache_dict_get(hash, key);
+    entry = cache_dict_get(key, hash);
     if(entry && entry->state == CACHE_ENTRY_STATE_VALID) {
         data = entry->data;
         data->clients++;
@@ -624,7 +624,7 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
     }
 
     nuster_shctx_lock(&cache->dict[0]);
-    entry = cache_dict_get(hash, key);
+    entry = cache_dict_get(key, hash);
     if(entry) {
         if(entry->state == CACHE_ENTRY_STATE_CREATING) {
             ctx->state = CACHE_CTX_STATE_WAIT;
@@ -817,7 +817,7 @@ int cache_purge_by_key(const char *key, uint64_t hash) {
     int ret;
 
     nuster_shctx_lock(&cache->dict[0]);
-    entry = cache_dict_get(hash, key);
+    entry = cache_dict_get(key, hash);
     if(entry && entry->state == CACHE_ENTRY_STATE_VALID) {
         entry->state         = CACHE_ENTRY_STATE_EXPIRED;
         entry->data->invalid = 1;
