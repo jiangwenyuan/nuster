@@ -196,7 +196,7 @@ void cache_dict_cleanup() {
 /*
  * Add a new cache_entry to cache_dict
  */
-struct cache_entry *cache_dict_set(uint64_t hash, char *key) {
+struct cache_entry *cache_dict_set(const char *key, uint64_t hash) {
     struct cache_dict  *dict  = NULL;
     struct cache_data  *data  = NULL;
     struct cache_entry *entry = NULL;
