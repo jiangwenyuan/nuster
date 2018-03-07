@@ -41,7 +41,9 @@ void cache_dict_cleanup();
 void cache_debug(const char *fmt, ...);
 void cache_init();
 void cache_housekeeping();
-char *cache_build_key(struct cache_key **pck, struct stream *s, struct http_msg *msg);
+void cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg *msg);
+char *cache_build_key(struct cache_ctx *ctx, struct cache_key **pck, struct stream *s,
+        struct http_msg *msg);
 uint64_t cache_hash_key(const char *key);
 void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash);
 int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len);

@@ -424,14 +424,73 @@ shm_err:
     exit(1);
 }
 
-char *cache_build_key(struct cache_key **pck, struct stream *s,
+void cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
+
+    struct http_txn *txn = s->txn;
+
+    char *url_end;
+    struct hdr_ctx hdr;
+
+    ctx->req.scheme = SCH_HTTP;
+#ifdef USE_OPENSSL
+    if(s->sess->listener->xprt == &ssl_sock) {
+        ctx->req.scheme = SCH_HTTPS;
+    }
+#endif
+
+    ctx->req.host.data = NULL;
+    ctx->req.host.len  = 0;
+    hdr.idx  = 0;
+    if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
+        ctx->req.host.data = hdr.line + hdr.val;
+        ctx->req.host.len  = hdr.vlen;
+    }
+
+    ctx->req.path.data = http_get_path(txn);
+    ctx->req.path.len  = 0;
+    ctx->req.uri.data  = ctx->req.path.data;
+    ctx->req.uri.len   = 0;
+    url_end  = NULL;
+    if(ctx->req.path.data) {
+        char *ptr = ctx->req.path.data;
+        url_end   = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
+        while(ptr < url_end && *ptr != '?') {
+            ptr++;
+        }
+        ctx->req.path.len = ptr - ctx->req.path.data;
+        ctx->req.uri.len  = url_end - ctx->req.uri.data;
+    }
+
+    ctx->req.query.data = NULL;
+    ctx->req.query.len  = 0;
+    ctx->req.delimiter  = 0;
+    if(ctx->req.path.data) {
+        ctx->req.query.data = memchr(ctx->req.path.data, '?', url_end - ctx->req.path.data);
+        if(ctx->req.query.data) {
+            ctx->req.query.data++;
+            ctx->req.query.len = url_end - ctx->req.query.data;
+            if(ctx->req.query.len) {
+                ctx->req.delimiter = 1;
+            }
+        }
+    }
+
+    hdr.idx    = 0;
+    ctx->req.cookie.data = NULL;
+    ctx->req.cookie.len  = 0;
+    if(http_find_header2("Cookie", 6, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
+        ctx->req.cookie.data = hdr.line + hdr.val;
+        ctx->req.cookie.len  = hdr.vlen;
+    }
+
+}
+
+char *cache_build_key(struct cache_ctx *ctx, struct cache_key **pck, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
 
-    int https, host_len, path_len, query_len, delimiter;
-    char *host, *path_beg, *url_end, *query_beg, *cookie_beg, *cookie_end;
-    struct hdr_ctx ctx;
+    struct hdr_ctx hdr;
 
     struct cache_key *ck = NULL;
     int key_len          = 0;
@@ -439,56 +498,6 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
     char *key            = malloc(key_size);
     if(!key) {
         return NULL;
-    }
-
-    https = 0;
-#ifdef USE_OPENSSL
-    if(s->sess->listener->xprt == &ssl_sock) {
-        https = 1;
-    }
-#endif
-
-    host     = NULL;
-    host_len = 0;
-    ctx.idx  = 0;
-    if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        host     = ctx.line + ctx.val;
-        host_len = ctx.vlen;
-    }
-
-    path_beg = http_get_path(txn);
-    url_end  = NULL;
-    path_len = 0;
-    if(path_beg) {
-        char *ptr = path_beg;
-        url_end   = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
-        while(ptr < url_end && *ptr != '?') {
-            ptr++;
-        }
-        path_len = ptr - path_beg;
-    }
-
-    query_beg = NULL;
-    query_len = 0;
-    if(path_beg) {
-        query_beg = memchr(path_beg, '?', url_end - path_beg);
-        if(query_beg) {
-            query_beg++;
-            query_len = url_end - query_beg;
-        }
-    }
-
-    delimiter = 0;
-    if(query_beg && query_len) {
-        delimiter = 1;
-    }
-
-    ctx.idx    = 0;
-    cookie_beg = NULL;
-    cookie_end = NULL;
-    if(http_find_header2("Cookie", 6, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        cookie_beg = ctx.line + ctx.val;
-        cookie_end = cookie_beg + ctx.vlen;
     }
 
     cache_debug("[CACHE] Calculate key: ");
@@ -500,60 +509,60 @@ char *cache_build_key(struct cache_key **pck, struct stream *s,
                 break;
             case CK_SCHEME:
                 cache_debug("scheme.");
-                key = _cache_key_append(key, &key_len, &key_size, https ? "HTTPS": "HTTP", strlen(https ? "HTTPS": "HTTP"));
+                key = _cache_key_append(key, &key_len, &key_size, ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP", ctx->req.scheme == SCH_HTTPS ? 5 : 4);
                 break;
             case CK_HOST:
                 cache_debug("host.");
-                if(host) {
-                    key = _cache_key_append(key, &key_len, &key_size, host, host_len);
+                if(ctx->req.host.data) {
+                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.host.data, ctx->req.host.len);
                 }
                 break;
             case CK_URI:
                 cache_debug("uri.");
-                if(path_beg) {
-                    key = _cache_key_append(key, &key_len, &key_size, path_beg, url_end - path_beg);
+                if(ctx->req.uri.data) {
+                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.uri.data, ctx->req.uri.len);
                 }
                 break;
             case CK_PATH:
                 cache_debug("path.");
-                if(path_beg) {
-                    key = _cache_key_append(key, &key_len, &key_size, path_beg, path_len);
+                if(ctx->req.path.data) {
+                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.path.data, ctx->req.path.len);
                 }
                 break;
             case CK_DELIMITER:
                 cache_debug("delimiter.");
-                key = _cache_key_append(key, &key_len, &key_size, delimiter ? "?": "", delimiter);
+                key = _cache_key_append(key, &key_len, &key_size, ctx->req.delimiter ? "?": "", ctx->req.delimiter);
                 break;
             case CK_QUERY:
                 cache_debug("query.");
-                if(query_beg && query_len) {
-                    key = _cache_key_append(key, &key_len, &key_size, query_beg, query_len);
+                if(ctx->req.query.data && ctx->req.query.len) {
+                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.query.data, ctx->req.query.len);
                 }
                 break;
             case CK_PARAM:
                 cache_debug("param_%s.", ck->data);
-                if(query_beg && query_len) {
+                if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
                     int v_l = 0;
-                    if(_cache_find_param_value_by_name(query_beg, url_end, ck->data, &v, &v_l)) {
+                    if(_cache_find_param_value_by_name(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
                         key = _cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
 
                 }
                 break;
             case CK_HEADER:
-                ctx.idx = 0;
+                hdr.idx = 0;
                 cache_debug("header_%s.", ck->data);
-                if(http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-                    key = _cache_key_append(key, &key_len, &key_size, ctx.line + ctx.val, ctx.vlen);
+                if(http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
+                    key = _cache_key_append(key, &key_len, &key_size, hdr.line + hdr.val, hdr.vlen);
                 }
                 break;
             case CK_COOKIE:
                 cache_debug("header_%s.", ck->data);
-                if(cookie_beg) {
+                if(ctx->req.cookie.data) {
                     char *v = NULL;
                     int v_l = 0;
-                    if(extract_cookie_value(cookie_beg, cookie_end, ck->data, strlen(ck->data), 1, &v, &v_l)) {
+                    if(extract_cookie_value(ctx->req.cookie.data, ctx->req.cookie.data + ctx->req.cookie.len, ck->data, strlen(ck->data), 1, &v, &v_l)) {
                         key = _cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
                 }

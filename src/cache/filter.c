@@ -121,6 +121,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 
         /* request */
         if(ctx->state == CACHE_CTX_STATE_INIT) {
+            cache_prebuild_key(ctx, s, msg);
             list_for_each_entry(rule, &px->cache_rules, list) {
                 cache_debug("[CACHE] Checking rule: %s\n", rule->name);
                 /* disabled? */
@@ -128,12 +129,13 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                     continue;
                 }
                 /* build key */
-                key = cache_build_key(rule->key, s, msg);
+                key = cache_build_key(ctx, rule->key, s, msg);
                 if(!key) {
                     return 1;
                 }
                 cache_debug("[CACHE] Got key: %s\n", key);
                 hash = cache_hash_key(key);
+
                 /* stash key */
                 if(!cache_stash_rule(ctx, rule, key, hash)) {
                     return 1;

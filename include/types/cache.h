@@ -128,8 +128,8 @@ struct cache_entry {
     struct cache_data  *data;
     uint64_t            expire;
     uint64_t            atime;
-    nst_string          host;
-    nst_string          path;
+    struct nst_string   host;
+    struct nst_string   path;
     struct cache_entry *next;
 };
 
@@ -168,6 +168,16 @@ struct cache_ctx {
     struct cache_entry      *entry;
     struct cache_data       *data;
     struct cache_element    *element;
+
+    struct {
+        int                  scheme;
+        struct nst_string    host;
+        struct nst_string    uri;
+        struct nst_string    path;
+        int                  delimiter;
+        struct nst_string    query;
+        struct nst_string    cookie;
+    } req;
 };
 
 struct cache_stats {
