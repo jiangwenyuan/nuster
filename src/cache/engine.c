@@ -642,7 +642,7 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
             ctx->state = CACHE_CTX_STATE_BYPASS;
         }
     } else {
-        entry = cache_dict_set(key, hash);
+        entry = cache_dict_set(key, hash, ctx);
         if(entry) {
             ctx->state = CACHE_CTX_STATE_CREATE;
         } else {

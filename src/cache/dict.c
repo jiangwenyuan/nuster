@@ -196,7 +196,7 @@ void cache_dict_cleanup() {
 /*
  * Add a new cache_entry to cache_dict
  */
-struct cache_entry *cache_dict_set(const char *key, uint64_t hash) {
+struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx) {
     struct cache_dict  *dict  = NULL;
     struct cache_data  *data  = NULL;
     struct cache_entry *entry = NULL;
@@ -230,6 +230,17 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash) {
     }
     entry->hash   = hash;
     entry->expire = 0;
+
+    entry->host.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.host.len);
+    if(entry->host.data) {
+        memcpy(entry->host.data, ctx->req.host.data, ctx->req.host.len);
+        entry->host.len = ctx->req.host.len;
+    }
+    entry->path.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len);
+    if(entry->path.data) {
+        memcpy(entry->path.data, ctx->req.path.data, ctx->req.path.len);
+        entry->path.len = ctx->req.path.len;
+    }
     return entry;
 }
 
