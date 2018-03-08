@@ -178,6 +178,8 @@ void cache_dict_cleanup() {
             }
             entry = entry->next;
             cache_memory_free(global.cache.pool.chunk, tmp->key);
+            cache_memory_free(global.cache.pool.chunk, tmp->host.data);
+            cache_memory_free(global.cache.pool.chunk, tmp->path.data);
             cache_memory_free(global.cache.pool.entry, tmp);
             cache->dict[0].used--;
         } else {
