@@ -232,6 +232,7 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_
     }
     entry->hash   = hash;
     entry->expire = 0;
+    entry->rid    = ctx->rule->id;
 
     entry->host.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.host.len);
     if(entry->host.data) {
@@ -243,6 +244,7 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_
         memcpy(entry->path.data, ctx->req.path.data, ctx->req.path.len);
         entry->path.len = ctx->req.path.len;
     }
+
     return entry;
 }
 

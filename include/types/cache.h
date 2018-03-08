@@ -131,6 +131,7 @@ struct cache_entry {
     struct nst_string   host;
     struct nst_string   path;
     struct cache_entry *next;
+    int                 rid;        /* rule id */
 };
 
 struct cache_dict {
