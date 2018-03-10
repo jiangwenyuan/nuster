@@ -876,7 +876,7 @@ struct applet cache_io_applet = {
 int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy *px, int state, int ttl) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
-    int found, mode      = 2;                /* mode: 0: *, all; 1: proxy, 2: rule */
+    int found, mode      = NUSTER_CACHE_PURGE_MODE_NAME_RULE;
     struct hdr_ctx ctx;
     struct proxy *p;
 
@@ -888,7 +888,7 @@ int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy 
     if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
         if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
             found = 1;
-            mode  = 0;
+            mode  = NUSTER_CACHE_PURGE_MODE_NAME_ALL;
         }
         p = proxy;
         while(p) {
@@ -896,11 +896,11 @@ int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy 
 
             if(mode !=0 && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
                 found = 1;
-                mode  = 1;
+                mode  = NUSTER_CACHE_PURGE_MODE_NAME_PROXY;
             }
 
             list_for_each_entry(rule, &p->cache_rules, list) {
-                if(mode != 2) {
+                if(mode != NUSTER_CACHE_PURGE_MODE_NAME_RULE) {
                     *rule->state = state == -1 ? *rule->state : state;
                     *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
                 } else if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
@@ -909,7 +909,7 @@ int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy 
                     found        = 1;
                 }
             }
-            if(mode == 1) {
+            if(mode == NUSTER_CACHE_PURGE_MODE_NAME_PROXY) {
                 break;
             }
             p = p->next;
