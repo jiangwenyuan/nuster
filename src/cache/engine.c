@@ -894,7 +894,7 @@ int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy 
         while(p) {
             struct cache_rule *rule = NULL;
 
-            if(mode !=0 && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+            if(mode != NUSTER_CACHE_PURGE_MODE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
                 found = 1;
                 mode  = NUSTER_CACHE_PURGE_MODE_NAME_PROXY;
             }
@@ -952,30 +952,32 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
     struct http_txn *txn        = s->txn;
     struct http_msg *msg        = &txn->req;
     struct appctx *appctx       = NULL;
+    int mode                    = NUSTER_CACHE_PURGE_MODE_NAME_RULE;
+    int st1                     = 0;
     struct hdr_ctx ctx;
     struct proxy *p;
 
     ctx.idx = 0;
     if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+        if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
+            mode = NUSTER_CACHE_PURGE_MODE_NAME_ALL;
+            goto purge;
+        }
         p = proxy;
         while(p) {
             struct cache_rule *rule = NULL;
 
+            if(mode != NUSTER_CACHE_PURGE_MODE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+                mode = NUSTER_CACHE_PURGE_MODE_NAME_PROXY;
+                st1  = p->uuid;
+                goto purge;
+            }
+
             list_for_each_entry(rule, &p->cache_rules, list) {
                 if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
-                    s->target = &cache_manager_applet.obj_type;
-                    if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
-                        return 500;
-                    } else {
-                        appctx = si_appctx(si);
-                        appctx->st1 = rule->id;
-                        appctx->st2 = 0;
-
-                        req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
-                        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
-                        req->analysers |= AN_REQ_HTTP_XFER_BODY;
-                        return 0;
-                    }
+                    mode = NUSTER_CACHE_PURGE_MODE_NAME_RULE;
+                    st1  = rule->id;
+                    goto purge;
                 }
             }
             p = p->next;
@@ -983,6 +985,22 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
         return 404;
     }
     return 400;
+
+purge:
+    s->target = &cache_manager_applet.obj_type;
+    if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
+        return 500;
+    } else {
+        appctx      = si_appctx(si);
+        appctx->st0 = mode;
+        appctx->st1 = st1;
+        appctx->st2 = 0;
+
+        req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+        req->analysers |= AN_REQ_HTTP_XFER_BODY;
+    }
+    return 0;
 }
 
 /*
@@ -1068,7 +1086,11 @@ static void cache_manager_handler(struct appctx *appctx) {
         while(appctx->st2 < cache->dict[0].size && max--) {
             entry = cache->dict[0].entry[appctx->st2];
             while(entry) {
-                if(entry->state == CACHE_ENTRY_STATE_VALID && entry->rule->id == appctx->st1) {
+                if(appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_ALL ||
+//                        (appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_PROXY && entry->pid == appctx->st1) ||
+                        (entry->state == CACHE_ENTRY_STATE_VALID && entry->rule->id == appctx->st1)
+                  ) {
+                    fprintf(stderr, "purge %d\n", entry->rule->id);
                     entry->state         = CACHE_ENTRY_STATE_INVALID;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
