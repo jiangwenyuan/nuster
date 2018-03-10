@@ -75,6 +75,13 @@ static inline uint64_t _get_current_timestamp() {
     return tv.tv_sec;
 }
 
+/* get current timestamp in milliseconds */
+static inline uint64_t get_current_timestamp() {
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
 /* memory */
 #define bit_set(bit, i) (bit |= 1 << i)
 #define bit_clear(bit, i) (bit &= ~(1 << i))

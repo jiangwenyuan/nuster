@@ -947,6 +947,44 @@ static inline int cache_manager_uri(struct http_msg *msg) {
     return 1;
 }
 
+int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px) {
+    struct stream_interface *si = &s->si[1];
+    struct http_txn *txn        = s->txn;
+    struct http_msg *msg        = &txn->req;
+    struct appctx *appctx       = NULL;
+    struct hdr_ctx ctx;
+    struct proxy *p;
+
+    ctx.idx = 0;
+    if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+        p = proxy;
+        while(p) {
+            struct cache_rule *rule = NULL;
+
+            list_for_each_entry(rule, &p->cache_rules, list) {
+                if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+                    s->target = &cache_manager_applet.obj_type;
+                    if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
+                        return 500;
+                    } else {
+                        appctx = si_appctx(si);
+                        appctx->st1 = rule->id;
+                        appctx->st2 = 0;
+
+                        req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+                        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+                        req->analysers |= AN_REQ_HTTP_XFER_BODY;
+                        return 0;
+                    }
+                }
+            }
+            p = p->next;
+        }
+        return 404;
+    }
+    return 400;
+}
+
 /*
  * return 1 if the request is done, otherwise 0
  */
@@ -957,24 +995,43 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     int ttl              = -1;
     struct hdr_ctx ctx;
 
-    if(txn->meth == HTTP_METH_POST && cache_manager_uri(msg)) {
-        ctx.idx = 0;
-        if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-            if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
-                state = CACHE_RULE_ENABLED;
-            } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
-                state = CACHE_RULE_DISABLED;
-            }
-        }
-        ctx.idx = 0;
-        if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-            cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
-        }
-
-        txn->status = cache_manager_state_ttl(s, req, px, state, ttl);
-    } else if(cache_manager_purge_method(txn, msg) && cache_manager_uri(msg)) {
-        txn->status = 200;
+    if(global.cache.status != CACHE_STATUS_ON) {
         return 0;
+    }
+
+    if(txn->meth == HTTP_METH_POST) {
+        /* POST */
+        if(cache_manager_uri(msg)) {
+            /* manager_uri */
+            ctx.idx = 0;
+            if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+                if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
+                    state = CACHE_RULE_ENABLED;
+                } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
+                    state = CACHE_RULE_DISABLED;
+                }
+            }
+            ctx.idx = 0;
+            if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+                cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
+            }
+
+            txn->status = cache_manager_state_ttl(s, req, px, state, ttl);
+        } else {
+            return 0;
+        }
+    } else if(cache_manager_purge_method(txn, msg)) {
+        /* purge */
+        if(cache_manager_uri(msg)) {
+            /* manager_uri */
+            txn->status = cache_manager_purge(s, req, px);
+            if(txn->status == 0) {
+                return 0;
+            }
+        } else {
+            /* single uri */
+            return cache_purge(s, req, px);
+        }
     } else {
         return 0;
     }
@@ -998,7 +1055,40 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     return 1;
 }
 
+
 static void cache_manager_handler(struct appctx *appctx) {
+    struct stream_interface *si   = appctx->owner;
+    struct channel *res           = si_ic(si);
+    struct stream *s              = si_strm(si);
+    int max = 1000;
+    struct cache_entry *entry = NULL;
+    uint64_t start = get_current_timestamp();
+
+    while(1) {
+        while(appctx->st2 < cache->dict[0].size && max--) {
+            entry = cache->dict[0].entry[appctx->st2];
+            while(entry) {
+                if(entry->state == CACHE_ENTRY_STATE_VALID && entry->rule->id == appctx->st1) {
+                    entry->state         = CACHE_ENTRY_STATE_INVALID;
+                    entry->data->invalid = 1;
+                    entry->data          = NULL;
+                    entry->expire        = 0;
+                }
+                entry = entry->next;
+            }
+            appctx->st2++;
+        }
+        if (get_current_timestamp() - start > 1) break;
+        max = 1000;
+    }
+    task_wakeup(s->task, TASK_WOKEN_OTHER);
+
+    if(appctx->st2 == cache->dict[0].size) {
+	bi_putblk(res, cache_msgs[NUSTER_CACHE_200], strlen(cache_msgs[NUSTER_CACHE_200]));
+        bo_skip(si_oc(si), si_ob(si)->o);
+        si_shutr(si);
+        res->flags |= CF_READ_NULL;
+    }
 }
 
 struct applet cache_manager_applet = {

@@ -4356,11 +4356,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 			goto return_prx_cond;
 	}
 
-        /* check cache purge */
-        if (global.cache.status == CACHE_STATUS_ON && (cache_manager(s, req, px) || cache_purge(s, req, px))) {
-            goto return_prx_cond;
-        }
-
 	/* evaluate the req* rules except reqadd */
 	if (px->req_exp != NULL) {
 		if (apply_filters_to_request(s, req, px) < 0)
@@ -4423,6 +4418,11 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 			goto return_bad_req;
 		goto done;
 	}
+
+        /* check cache purge */
+        if (cache_manager(s, req, px)) {
+            goto return_prx_cond;
+        }
 
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.
 	 * If this happens, then the data will not come immediately, so we must
