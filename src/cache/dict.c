@@ -233,6 +233,7 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_
     entry->hash   = hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
+    entry->pid    = ctx->pid;
 
     entry->host.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.host.len);
     if(entry->host.data) {

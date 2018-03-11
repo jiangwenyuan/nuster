@@ -73,6 +73,7 @@ static int cache_filter_attach(struct stream *s, struct filter *filter) {
         ctx->entry   = NULL;
         ctx->data    = NULL;
         ctx->element = NULL;
+        ctx->pid     = -1;
         filter->ctx  = ctx;
     }
     register_data_filter(s, &s->req, filter);
@@ -188,6 +189,8 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
             struct cache_rule_stash *stash = ctx->stash;
             struct cache_code *cc          = ctx->rule->code;
             int valid                      = 0;
+
+            ctx->pid = px->uuid;
 
             /* check if code is valid */
             cache_debug("[CACHE] [RES] Checking status code: ");

@@ -132,6 +132,7 @@ struct cache_entry {
     struct nst_string   path;
     struct cache_entry *next;
     struct cache_rule  *rule;        /* rule */
+    int                 pid;         /* proxy uuid */
 };
 
 struct cache_dict {
@@ -179,6 +180,7 @@ struct cache_ctx {
         struct nst_string    query;
         struct nst_string    cookie;
     } req;
+    int                      pid;         /* proxy uuid */
 };
 
 struct cache_stats {

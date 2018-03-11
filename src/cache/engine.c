@@ -1087,7 +1087,7 @@ static void cache_manager_handler(struct appctx *appctx) {
             entry = cache->dict[0].entry[appctx->st2];
             while(entry) {
                 if(appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_ALL ||
-//                        (appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_PROXY && entry->pid == appctx->st1) ||
+                        (appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_PROXY && entry->pid == appctx->st1) ||
                         (entry->state == CACHE_ENTRY_STATE_VALID && entry->rule->id == appctx->st1)
                   ) {
                     fprintf(stderr, "purge %d\n", entry->rule->id);
@@ -1106,7 +1106,7 @@ static void cache_manager_handler(struct appctx *appctx) {
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
     if(appctx->st2 == cache->dict[0].size) {
-	bi_putblk(res, cache_msgs[NUSTER_CACHE_200], strlen(cache_msgs[NUSTER_CACHE_200]));
+        bi_putblk(res, cache_msgs[NUSTER_CACHE_200], strlen(cache_msgs[NUSTER_CACHE_200]));
         bo_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
         res->flags |= CF_READ_NULL;
