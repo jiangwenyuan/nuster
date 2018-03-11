@@ -291,7 +291,7 @@ See **7. Using ACLs and fetching samples** section in [HAProxy configuration](do
 
 # Cache Management
 
-Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making POST
+Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making HTTP
 requests along with some headers.
 
 **Eanble and define the endpoint**
@@ -303,6 +303,8 @@ cache on uri /nuster/cache
 **Basic usage**
 
 `curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
+
+**REMEMBER to enable access restriction**
 
 ## Enable and disable cache-rule
 
@@ -321,7 +323,7 @@ cache created by that.
 
 Keep in mind that if name is not unique, **all** cache-rules with that name will be disabled/enabled.
 
-### Examples
+***Examples***
 
 * Disable cache-rule r1
 
@@ -348,24 +350,47 @@ Change the TTL. It only affects the TTL of the responses to be cached, **does no
 |        | proxy NAME      | all cache-rules belong to proxy NAME
 |        | *               | all cache-rules
 
-### Examples
+***Examples***
 
-  ```
-  curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster/cache
-  curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster/cache
-  ```
+```
+curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster/cache
+curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster/cache
+```
 
 ## Update state and TTL
 
 state and ttl can be updated at the same time
 
-  ```
-  curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster/cache
-  ```
+```
+curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster/cache
+```
 
 ## Purge Cache
 
 There are several ways to purge cache.
+
+### Purge by name
+
+Cache can be purged by making HTTP `PURGE`(or `purge-method`) requests to the manager uri along with a `name` HEADER.
+
+***headers***
+
+| header | value           | description
+| ------ | -----           | -----------
+| name   | cache-rule NAME | cache belong to cache-rule ${NAME} will be purged
+|        | proxy NAME      | cache belong to proxy ${NAME}
+|        | *               | all cache
+
+***Examples***
+
+```
+# purge all cache
+curl -X PURGE -H "name: *" http://127.0.0.1/nuster/cache
+# purge all cache belong to proxy applb
+curl -X PURGE -H "name: app1b" http://127.0.0.1/nuster/cache
+# purge all cache belong to cache-rule r1
+curl -X PURGE -H "name: r1" http://127.0.0.1/nuster/cache
+```
 
 ### Purge one specific url
 
@@ -394,21 +419,6 @@ There will be two cache objects since the default key contains query part. In or
 
 In case that the query part is irrelevant, you can define a key like `cache-rule imgs key method.scheme.host.path`,
 in this way only one cache will be created, and you can purge that without query.
-
-### More powerfull Purge
-
-| header          | abbr   | description
-| ------          | ----   | -----------
-| X-NUSTER-NAME   | name   |
-| X-NUSTER-HOST   | host   |
-| X-NUSTER-PATH   | path   |
-| X-NUSTER-REGEX  | regex  |
-| X-NUSTER-METHOD | method |
-| X-NUSTER-SCHEME | scheme |
-| X-NUSTER-URI    | uri    |
-| cookie          | cookie |
-| KEY             | VALUE  |
-
 
 # FAQ
 
