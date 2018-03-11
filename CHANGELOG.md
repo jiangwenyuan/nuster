@@ -1,5 +1,16 @@
 # Nuster Changelog
 
+## 1.7.9.7 - 2018-03-11
+
+### Added
+- Purge all cache
+- Purge the cache belong to a proxy
+- Purge the cache belong to a cache-rule
+
+### Changed
+- Performance improvement by parsing necessary data in advance instead of doing that in iterating cache-rules
+- Unified cache manager entry
+
 ## 1.7.9.6 - 2018-03-01
 
 ### Added
