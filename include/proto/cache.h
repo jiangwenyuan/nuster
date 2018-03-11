@@ -68,18 +68,18 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
 const char *cache_parse_size(const char *text, uint64_t *ret);
 const char *cache_parse_time(const char *text, int len, unsigned *ret);
 
-/* get current timestamp in seconds */
-static inline uint64_t _get_current_timestamp() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec;
-}
-
 /* get current timestamp in milliseconds */
 static inline uint64_t get_current_timestamp() {
     struct timeval tv;
     gettimeofday(&tv,NULL);
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+/* get current timestamp in seconds */
+static inline uint64_t get_current_timestamp_s() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec;
 }
 
 /* memory */
