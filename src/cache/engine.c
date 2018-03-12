@@ -1078,19 +1078,19 @@ static void cache_manager_handler(struct appctx *appctx) {
     struct stream_interface *si   = appctx->owner;
     struct channel *res           = si_ic(si);
     struct stream *s              = si_strm(si);
-    int max = 1000;
-    struct cache_entry *entry = NULL;
-    uint64_t start = get_current_timestamp();
+    struct cache_entry *entry     = NULL;
+    int max                       = 1000;
+    uint64_t start                = get_current_timestamp();
 
     while(1) {
+        nuster_shctx_lock(&cache->dict[0]);
         while(appctx->st2 < cache->dict[0].size && max--) {
             entry = cache->dict[0].entry[appctx->st2];
             while(entry) {
-                if(appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_ALL ||
+                if(entry->state == CACHE_ENTRY_STATE_VALID &&
+                        (appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_ALL ||
                         (appctx->st0 == NUSTER_CACHE_PURGE_MODE_NAME_PROXY && entry->pid == appctx->st1) ||
-                        (entry->state == CACHE_ENTRY_STATE_VALID && entry->rule->id == appctx->st1)
-                  ) {
-                    fprintf(stderr, "purge %d\n", entry->rule->id);
+                        entry->rule->id == appctx->st1)) {
                     entry->state         = CACHE_ENTRY_STATE_INVALID;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
@@ -1100,7 +1100,8 @@ static void cache_manager_handler(struct appctx *appctx) {
             }
             appctx->st2++;
         }
-        if (get_current_timestamp() - start > 1) break;
+        nuster_shctx_unlock(&cache->dict[0]);
+        if(get_current_timestamp() - start > 1) break;
         max = 1000;
     }
     task_wakeup(s->task, TASK_WOKEN_OTHER);

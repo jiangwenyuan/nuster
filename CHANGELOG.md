@@ -1,6 +1,6 @@
 # Nuster Changelog
 
-## 1.7.9.7 - 2018-03-11
+## 1.7.9.7 - 2018-03-12
 
 ### Added
 - Purge all cache
