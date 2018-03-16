@@ -47,12 +47,14 @@
 #define CACHE_DEFAULT_PURGE_METHOD       "PURGE"
 #define CACHE_DEFAULT_PURGE_METHOD_SIZE   16
 
-#define CACHE_STATUS_UNDEFINED       -1
-#define CACHE_STATUS_OFF              0
-#define CACHE_STATUS_ON               1
-#define CACHE_SHARE_UNDEFINED        -1
-#define CACHE_SHARE_OFF               0
-#define CACHE_SHARE_ON                1
+enum {
+    CACHE_STATUS_UNDEFINED = -1,
+    CACHE_STATUS_OFF       =  0,
+    CACHE_STATUS_ON        =  1,
+    CACHE_SHARE_UNDEFINED  = -1,
+    CACHE_SHARE_OFF        =  0,
+    CACHE_SHARE_ON         =  1,
+};
 
 enum ck_type {
     CK_METHOD = 1,                /* method:    GET, POST... */
@@ -83,8 +85,11 @@ struct cache_code {
     struct cache_code *next;
 };
 
-#define CACHE_RULE_ENABLED    1
-#define CACHE_RULE_DISABLED   0
+enum {
+    CACHE_RULE_DISABLED = 0,
+    CACHE_RULE_ENABLED  = 1,
+};
+
 struct cache_rule {
     struct list         list;       /* list linked to from the proxy */
     struct acl_cond    *cond;       /* acl condition to meet */
@@ -117,10 +122,13 @@ struct cache_data {
 /*
  * A cache_entry is an entry in cache_dict hash table
  */
-#define CACHE_ENTRY_STATE_CREATING  0
-#define CACHE_ENTRY_STATE_VALID     1
-#define CACHE_ENTRY_STATE_INVALID   2
-#define CACHE_ENTRY_STATE_EXPIRED   3
+enum {
+    CACHE_ENTRY_STATE_CREATING = 0,
+    CACHE_ENTRY_STATE_VALID    = 1,
+    CACHE_ENTRY_STATE_INVALID  = 2,
+    CACHE_ENTRY_STATE_EXPIRED  = 3,
+};
+
 struct cache_entry {
     int                 state;
     char               *key;
@@ -153,14 +161,17 @@ struct cache_rule_stash {
     struct cache_rule_stash *next;
 };
 
-#define CACHE_CTX_STATE_INIT        0   /* init */
-#define CACHE_CTX_STATE_CREATE      1   /* to cache */
-#define CACHE_CTX_STATE_DONE        2   /* cache done */
-#define CACHE_CTX_STATE_BYPASS      3   /* not cached, return to regular process */
-#define CACHE_CTX_STATE_WAIT        4   /* caching, wait */
-#define CACHE_CTX_STATE_HIT         5   /* cached, use cache */
-#define CACHE_CTX_STATE_PASS        6   /* cache rule passed */
-#define CACHE_CTX_STATE_FULL        7   /* cache full */
+enum {
+    CACHE_CTX_STATE_INIT   = 0,   /* init */
+    CACHE_CTX_STATE_CREATE = 1,   /* to cache */
+    CACHE_CTX_STATE_DONE   = 2,   /* cache done */
+    CACHE_CTX_STATE_BYPASS = 3,   /* not cached, return to regular process */
+    CACHE_CTX_STATE_WAIT   = 4,   /* caching, wait */
+    CACHE_CTX_STATE_HIT    = 5,   /* cached, use cache */
+    CACHE_CTX_STATE_PASS   = 6,   /* cache rule passed */
+    CACHE_CTX_STATE_FULL   = 7,   /* cache full */
+};
+
 struct cache_ctx {
     int                      state;
 
