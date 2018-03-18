@@ -116,7 +116,7 @@ Determines whether to use cache or not.
 #### share on
 
 A memory zone with a size of `data-size + dict-size` will be created. Except for
-temporary data created and destroyed within request, all cache related data
+temporary data created and destroyed within request, all caches related data
 including http response data, keys and overheads are stored in this memroy zone
 and shared between all processes.
 
@@ -339,7 +339,7 @@ Keep in mind that if name is not unique, **all** cache-rules with that name will
 
 ## TTL
 
-Change the TTL. It only affects the TTL of the responses to be cached, **does not** update the TTL of existing cache.
+Change the TTL. It only affects the TTL of the responses to be cached, **does not** update the TTL of existing caches.
 
 ***headers***
 
@@ -367,7 +367,18 @@ curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nust
 
 ## Purge Cache
 
-There are several ways to purge cache.
+There are several ways to purge cache by making HTTP `PURGE` requests to the manager uri defined by `uri`.
+
+You can define customized http method using `purge-method MYPURGE` other than the default `PURGE` in case
+you need to forward `PURGE` to backend servers.
+
+### Purge one specific url
+
+This method delete the specific url that is being requested, like this:
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+It creates a key of `GET.scheme.host.uri`, and delete the cache with that key.
 
 ### Purge by name
 
@@ -377,48 +388,127 @@ Cache can be purged by making HTTP `PURGE`(or `purge-method`) requests to the ma
 
 | header | value           | description
 | ------ | -----           | -----------
-| name   | cache-rule NAME | cache belong to cache-rule ${NAME} will be purged
-|        | proxy NAME      | cache belong to proxy ${NAME}
-|        | *               | all cache
+| name   | cache-rule NAME | caches belong to cache-rule ${NAME} will be purged
+|        | proxy NAME      | caches belong to proxy ${NAME}
+|        | *               | all caches
 
 ***Examples***
 
 ```
-# purge all cache
+# purge all caches
 curl -X PURGE -H "name: *" http://127.0.0.1/nuster/cache
-# purge all cache belong to proxy applb
+# purge all caches belong to proxy applb
 curl -X PURGE -H "name: app1b" http://127.0.0.1/nuster/cache
-# purge all cache belong to cache-rule r1
+# purge all caches belong to cache-rule r1
 curl -X PURGE -H "name: r1" http://127.0.0.1/nuster/cache
 ```
 
-### Purge one specific url
+### Purge by host
 
-This method creates a key of `GET.scheme.host.uri`, and delete the cache with that key.
+You can also purge cache by host, all caches belong to that host will be deleted:
 
-Only works for the specific url that is being requested, like this:
+***headers***
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+| header | value | description
+| ------ | ----- | -----------
+| x-host | HOST  | the ${HOST}
 
-You can define customized http method other than the default `PURGE` in case you need to forward `PURGE`
+***Examples***
 
-to backend servers. By define `cache purge-method MYPURGE` in global section, you can purge cache like this
+```
+curl -X PURGE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
+```
 
-`curl -XMYPURGE https://127.0.0.1/imgs/test.jpg`
+### Purge by path
 
-If you define `cache-rule imgs if { path_beg /imgs/ }`, and requested
+By default, the query part is also used as cache key, so there will be multiple caches if the query differs.
+
+For example, for cache-rule `cache-rule imgs if { path_beg /imgs/ }`, and request
 
 ```
 curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
 curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 
-There will be two cache objects since the default key contains query part. In order to delete that, you have to use
+There will be two cache objects since the default key contains query part.
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120`
+In order to delete that, you can
 
-In case that the query part is irrelevant, you can define a key like `cache-rule imgs key method.scheme.host.path`,
-in this way only one cache will be created, and you can purge that without query.
+***delete one by one in case you know all queries***
+
+```
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+
+It does not work if you don't know all queries.
+
+***use a customized key and delete once in case that the query part is irrelevant***
+
+Define a key like `cache-rule imgs key method.scheme.host.path if { path_beg /imgs }`, in this way only one cache
+will be created, and you can purge without query:
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+It does not work if the query part is required.
+
+***delete by cache-rule NAME***
+
+`curl -X PURGE -H "name: imgs" http://127.0.0.1/nuster/cache`
+
+It does not work if the cache-rule is defined something like `cache-rule static if { path_beg /imgs/ /css/ }`.
+
+This method provides a way to purge just by path:
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| path   | PATH  | caches with ${PATH} will be purged
+| x-host | HOST  | and host is ${HOST}
+
+***Examples***
+
+```
+#delete all caches which path is /imgs/test.jpg
+curl -X PURGE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster/cache
+#delete all caches which path is /imgs/test.jpg and belongs to 127.0.0.1:8080
+curl -X PURGE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
+```
+
+### Purge by regex
+
+You can also purge cache by regex, the caches which path matches the regex will be deleted.
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| regex  | REGEX | caches which path matches with ${REGEX} will be purged
+| x-host | HOST  | and host is ${HOST}
+
+***Examples***
+
+```
+#delete all caches which path starts with /imgs and ends with .jpg
+curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster/cache
+#delete all caches which path starts with /imgs and ends with .jpg and belongs to 127.0.0.1:8080
+curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster/cache
+```
+
+**Note that it is NOT glob**
+
+So it is not `/imgs/*.jpg` in above example.
+
+**Purge precedence**
+
+1. If there are mixed headers, use the precedence of `name`, `path & host`, `path`, `regex & host`, `regex`, `host`
+
+`curl -XPURGE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
+
+2. If there are redundant headers, use the first occurrence
+
+`curl -XPURGE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
 
 # FAQ
 
