@@ -240,7 +240,8 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_
         memcpy(entry->host.data, ctx->req.host.data, ctx->req.host.len);
         entry->host.len = ctx->req.host.len;
     }
-    entry->path.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len);
+    /* extra 1 char as required by regex_exec_match2 */
+    entry->path.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len + 1);
     if(entry->path.data) {
         memcpy(entry->path.data, ctx->req.path.data, ctx->req.path.len);
         entry->path.len = ctx->req.path.len;

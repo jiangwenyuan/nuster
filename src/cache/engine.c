@@ -956,10 +956,11 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
     int st1                     = 0;
     char *host                  = NULL;
     char *path                  = NULL;
-    char *regex                 = NULL;
+    struct my_regex *regex      = NULL;
+    char *error                 = NULL;
+    char *regex_str             = NULL;
     int host_len                = 0;
     int path_len                = 0;
-    int regex_len               = 0;
     struct hdr_ctx ctx;
     struct proxy *p;
 
@@ -994,25 +995,33 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
             }
             p = p->next;
         }
-        return 404;
+        goto notfound;
     } else if(http_find_header2("path", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
         path      = ctx.line + ctx.val;
         path_len  = ctx.vlen;
         mode      = host ? NUSTER_CACHE_PURGE_MODE_PATH_HOST : NUSTER_CACHE_PURGE_MODE_PATH;
     } else if(http_find_header2("regex", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        regex     = ctx.line + ctx.val;
-        regex_len = ctx.vlen;
-        mode      = host ? NUSTER_CACHE_PURGE_MODE_REGEX_HOST : NUSTER_CACHE_PURGE_MODE_REGEX;
+        regex_str   = malloc(ctx.vlen + 1);
+        regex       = calloc(1, sizeof(*regex));
+        if(!regex_str || !regex) {
+            goto err;
+        }
+        memcpy(regex_str, ctx.line + ctx.val, ctx.vlen);
+        regex_str[ctx.vlen] = '\0';
+        if (!regex_comp(regex_str, regex, 1, 0, &error)) {
+            goto err;
+        }
+        mode = host ? NUSTER_CACHE_PURGE_MODE_REGEX_HOST : NUSTER_CACHE_PURGE_MODE_REGEX;
     } else if(host) {
         mode      = NUSTER_CACHE_PURGE_MODE_HOST;
     } else {
-        return 400;
+        goto badreq;
     }
 
 purge:
     s->target = &cache_manager_applet.obj_type;
     if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
-        return 500;
+        goto err;
     } else {
         appctx      = si_appctx(si);
         memset(&appctx->ctx.cache, 0, sizeof(appctx->ctx.cache));
@@ -1023,37 +1032,45 @@ purge:
         if(mode == NUSTER_CACHE_PURGE_MODE_HOST ||
                 mode == NUSTER_CACHE_PURGE_MODE_PATH_HOST ||
                 mode == NUSTER_CACHE_PURGE_MODE_REGEX_HOST) {
-            appctx->ctx.cache.host      = nuster_memory_alloc(global.cache.memory, host_len);
-            appctx->ctx.cache.host_len  = host_len;
+            appctx->ctx.cache.host     = nuster_memory_alloc(global.cache.memory, host_len);
+            appctx->ctx.cache.host_len = host_len;
             if(!appctx->ctx.cache.host) {
-                return 500;
+                goto err;
             }
             memcpy(appctx->ctx.cache.host, host, host_len);
         }
 
         if(mode == NUSTER_CACHE_PURGE_MODE_PATH ||
                 mode == NUSTER_CACHE_PURGE_MODE_PATH_HOST) {
-            appctx->ctx.cache.path      = nuster_memory_alloc(global.cache.memory, path_len);
-            appctx->ctx.cache.path_len  = path_len;
+            appctx->ctx.cache.path     = nuster_memory_alloc(global.cache.memory, path_len);
+            appctx->ctx.cache.path_len = path_len;
             if(!appctx->ctx.cache.path) {
-                return 500;
+                goto err;
             }
             memcpy(appctx->ctx.cache.path, path, path_len);
         } else if(mode == NUSTER_CACHE_PURGE_MODE_REGEX ||
                 mode == NUSTER_CACHE_PURGE_MODE_REGEX_HOST) {
-            appctx->ctx.cache.regex      = nuster_memory_alloc(global.cache.memory, regex_len);
-            appctx->ctx.cache.regex_len  = regex_len;
-            if(!appctx->ctx.cache.regex) {
-                return 500;
-            }
-            memcpy(appctx->ctx.cache.regex, regex, regex_len);
+            appctx->ctx.cache.regex = regex;
         }
 
         req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
         req->analysers |= AN_REQ_HTTP_XFER_BODY;
     }
+
+    free(regex_str);
     return 0;
+notfound:
+    return 404;
+err:
+    free(error);
+    free(regex_str);
+    if(regex) {
+        regex_free(regex);
+    }
+    return 500;
+badreq:
+    return 400;
 }
 
 /*
@@ -1144,6 +1161,7 @@ static int _cache_manager_should_purge(struct cache_entry *entry, struct appctx 
                 !memcmp(entry->path.data, appctx->ctx.cache.path, entry->path.len);
             break;
         case NUSTER_CACHE_PURGE_MODE_REGEX:
+            ret = regex_exec(appctx->ctx.cache.regex, entry->path.data);
             break;
         case NUSTER_CACHE_PURGE_MODE_HOST:
             ret = entry->host.len == appctx->ctx.cache.host_len &&
@@ -1156,6 +1174,9 @@ static int _cache_manager_should_purge(struct cache_entry *entry, struct appctx 
                 !memcmp(entry->host.data, appctx->ctx.cache.host, entry->host.len);
             break;
         case NUSTER_CACHE_PURGE_MODE_REGEX_HOST:
+            ret = entry->host.len == appctx->ctx.cache.host_len &&
+                !memcmp(entry->host.data, appctx->ctx.cache.host, entry->host.len) &&
+                regex_exec(appctx->ctx.cache.regex, entry->path.data);
             break;
     }
     return ret;

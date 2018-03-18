@@ -169,12 +169,11 @@ struct appctx {
                         struct cache_element *element;
 
                         /* TODO: use nst_string: separate header file */
-                        char *host;
-                        char *path;
-                        char *regex;
-                        int   host_len;
-                        int   path_len;
-                        int   regex_len;
+                        struct my_regex *regex;
+                        char            *host;
+                        char            *path;
+                        int              host_len;
+                        int              path_len;
                 } cache;
 	} ctx;					/* used by stats I/O handlers to dump the stats */
 };
