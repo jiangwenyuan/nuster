@@ -930,7 +930,7 @@ static inline int cache_manager_purge_method(struct http_txn *txn, struct http_m
 }
 
 static inline int cache_manager_uri(struct http_msg *msg) {
-    const char *uri      = msg->chn->buf->p + msg->sl.rq.u;
+    const char *uri = msg->chn->buf->p + msg->sl.rq.u;
 
     if(!global.cache.manager_uri) {
         return 0;
@@ -964,7 +964,7 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
     struct hdr_ctx ctx;
     struct proxy *p;
 
-    ctx.idx  = 0;
+    ctx.idx = 0;
     if(http_find_header2("x-host", 6, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
         host     = ctx.line + ctx.val;
         host_len = ctx.vlen;
@@ -976,6 +976,7 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
             mode = NUSTER_CACHE_PURGE_MODE_NAME_ALL;
             goto purge;
         }
+
         p = proxy;
         while(p) {
             struct cache_rule *rule = NULL;
@@ -995,25 +996,30 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
             }
             p = p->next;
         }
+
         goto notfound;
     } else if(http_find_header2("path", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
         path      = ctx.line + ctx.val;
         path_len  = ctx.vlen;
         mode      = host ? NUSTER_CACHE_PURGE_MODE_PATH_HOST : NUSTER_CACHE_PURGE_MODE_PATH;
     } else if(http_find_header2("regex", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        regex_str   = malloc(ctx.vlen + 1);
-        regex       = calloc(1, sizeof(*regex));
+        regex_str = malloc(ctx.vlen + 1);
+        regex     = calloc(1, sizeof(*regex));
         if(!regex_str || !regex) {
             goto err;
         }
+
         memcpy(regex_str, ctx.line + ctx.val, ctx.vlen);
         regex_str[ctx.vlen] = '\0';
+
         if (!regex_comp(regex_str, regex, 1, 0, &error)) {
             goto err;
         }
+        free(regex_str);
+
         mode = host ? NUSTER_CACHE_PURGE_MODE_REGEX_HOST : NUSTER_CACHE_PURGE_MODE_REGEX;
     } else if(host) {
-        mode      = NUSTER_CACHE_PURGE_MODE_HOST;
+        mode = NUSTER_CACHE_PURGE_MODE_HOST;
     } else {
         goto badreq;
     }
@@ -1058,7 +1064,6 @@ purge:
         req->analysers |= AN_REQ_HTTP_XFER_BODY;
     }
 
-    free(regex_str);
     return 0;
 notfound:
     return 404;
@@ -1219,11 +1224,24 @@ static void cache_manager_handler(struct appctx *appctx) {
     }
 }
 
+static void cache_manager_release_handler(struct appctx *appctx) {
+    if(appctx->ctx.cache.regex) {
+        regex_free(appctx->ctx.cache.regex);
+        free(appctx->ctx.cache.regex);
+    }
+    if(appctx->ctx.cache.host) {
+        nuster_memory_free(global.cache.memory, appctx->ctx.cache.host);
+    }
+    if(appctx->ctx.cache.path) {
+        nuster_memory_free(global.cache.memory, appctx->ctx.cache.path);
+    }
+}
+
 struct applet cache_manager_applet = {
     .obj_type = OBJ_TYPE_APPLET,
     .name = "<CACHE-MANAGER>",
     .fct = cache_manager_handler,
-    .release = NULL,
+    .release = cache_manager_release_handler,
 };
 
 __attribute__((constructor)) static void __cache_init(void) { }
