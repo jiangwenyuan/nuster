@@ -2764,6 +2764,8 @@ static void tcpcheck_main(struct check *check)
 				set_host_port(&conn->addr.to, check->current_step->port);
 			else if (check->port)
 				set_host_port(&conn->addr.to, check->port);
+			else if (s->svc_port)
+				set_host_port(&conn->addr.to, s->svc_port);
 
 #ifdef USE_OPENSSL
 			if (check->current_step->conn_opts & TCPCHK_OPT_SSL) {
