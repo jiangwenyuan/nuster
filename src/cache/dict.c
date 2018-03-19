@@ -235,17 +235,13 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
 
-    entry->host.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.host.len);
-    if(entry->host.data) {
-        memcpy(entry->host.data, ctx->req.host.data, ctx->req.host.len);
-        entry->host.len = ctx->req.host.len;
-    }
-    /* extra 1 char as required by regex_exec_match2 */
-    entry->path.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len + 1);
-    if(entry->path.data) {
-        memcpy(entry->path.data, ctx->req.path.data, ctx->req.path.len);
-        entry->path.len = ctx->req.path.len;
-    }
+    entry->host.data   = ctx->req.host.data;
+    entry->host.len    = ctx->req.host.len;
+    ctx->req.host.data = NULL;
+
+    entry->path.data   = ctx->req.path.data;
+    entry->path.len    = ctx->req.path.len;
+    ctx->req.path.data = NULL;
 
     return entry;
 }

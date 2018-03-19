@@ -442,8 +442,12 @@ int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg 
     ctx->req.host.len  = 0;
     hdr.idx            = 0;
     if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data = hdr.line + hdr.val;
+        ctx->req.host.data = cache_memory_alloc(global.cache.pool.chunk, hdr.vlen);
+        if(!ctx->req.host.data) {
+            return 0;
+        }
         ctx->req.host.len  = hdr.vlen;
+        memcpy(ctx->req.host.data, hdr.line + hdr.val, hdr.vlen);
     }
 
     ctx->req.path.data = http_get_path(txn);
@@ -460,12 +464,18 @@ int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg 
         ctx->req.path.len = ptr - ctx->req.path.data;
         ctx->req.uri.len  = url_end - ctx->req.uri.data;
     }
+    /* extra 1 char as required by regex_exec_match2 */
+    ctx->req.path.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len + 1);
+    if(!ctx->req.path.data) {
+        return 0;
+    }
+    memcpy(ctx->req.path.data, ctx->req.uri.data, ctx->req.path.len);
 
     ctx->req.query.data = NULL;
     ctx->req.query.len  = 0;
     ctx->req.delimiter  = 0;
-    if(ctx->req.path.data) {
-        ctx->req.query.data = memchr(ctx->req.path.data, '?', url_end - ctx->req.path.data);
+    if(ctx->req.uri.data) {
+        ctx->req.query.data = memchr(ctx->req.uri.data, '?', url_end - ctx->req.uri.data);
         if(ctx->req.query.data) {
             ctx->req.query.data++;
             ctx->req.query.len = url_end - ctx->req.query.data;

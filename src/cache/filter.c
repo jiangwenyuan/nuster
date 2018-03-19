@@ -95,6 +95,12 @@ static void cache_filter_detach(struct stream *s, struct filter *filter) {
             free(stash->key);
             pool_free2(global.cache.pool.stash, stash);
         }
+        if(ctx->req.host.data) {
+            cache_memory_free(global.cache.pool.chunk, ctx->req.host.data);
+        }
+        if(ctx->req.path.data) {
+            cache_memory_free(global.cache.pool.chunk, ctx->req.path.data);
+        }
         pool_free2(global.cache.pool.ctx, ctx);
     }
 }
