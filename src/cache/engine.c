@@ -424,7 +424,7 @@ shm_err:
     exit(1);
 }
 
-void cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
+int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
 
@@ -440,7 +440,7 @@ void cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg
 
     ctx->req.host.data = NULL;
     ctx->req.host.len  = 0;
-    hdr.idx  = 0;
+    hdr.idx            = 0;
     if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
         ctx->req.host.data = hdr.line + hdr.val;
         ctx->req.host.len  = hdr.vlen;
@@ -450,7 +450,7 @@ void cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg
     ctx->req.path.len  = 0;
     ctx->req.uri.data  = ctx->req.path.data;
     ctx->req.uri.len   = 0;
-    url_end  = NULL;
+    url_end            = NULL;
     if(ctx->req.path.data) {
         char *ptr = ctx->req.path.data;
         url_end   = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
@@ -475,14 +475,15 @@ void cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg
         }
     }
 
-    hdr.idx    = 0;
     ctx->req.cookie.data = NULL;
     ctx->req.cookie.len  = 0;
+    hdr.idx              = 0;
     if(http_find_header2("Cookie", 6, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
         ctx->req.cookie.data = hdr.line + hdr.val;
         ctx->req.cookie.len  = hdr.vlen;
     }
 
+    return 1;
 }
 
 char *cache_build_key(struct cache_ctx *ctx, struct cache_key **pck, struct stream *s,
