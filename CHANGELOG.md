@@ -1,5 +1,15 @@
 # Nuster Changelog
 
+## 1.7.9.8 - 2018-03-21
+
+### Added
+- Purge cache by host
+- Purge cache by path
+- Purge cache by regex
+
+### Changed
+- Incorrect host and path of cache.entry
+
 ## 1.7.9.7 - 2018-03-12
 
 ### Added
