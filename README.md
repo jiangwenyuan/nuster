@@ -374,11 +374,11 @@ you need to forward `PURGE` to backend servers.
 
 ### Purge one specific url
 
-This method delete the specific url that is being requested, like this:
+This method deletes the specific url that is being requested, like this:
 
 `curl -XPURGE https://127.0.0.1/imgs/test.jpg`
 
-It creates a key of `GET.scheme.host.uri`, and delete the cache with that key.
+It creates a key of `GET.scheme.host.uri`, and deletes the cache with that key.
 
 ### Purge by name
 
@@ -496,19 +496,22 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster/cache
 curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster/cache
 ```
 
-**Note that it is NOT glob**
+**PURGE CAUTION**
 
-So it is not `/imgs/*.jpg` in above example.
+1. **ENABLE ACCESS RESTRICTION**
 
-**Purge precedence**
+2. If there are mixed headers, use the precedence of `name`, `path & host`, `path`, `regex & host`, `regex`, `host`
 
-1. If there are mixed headers, use the precedence of `name`, `path & host`, `path`, `regex & host`, `regex`, `host`
+   `curl -XPURGE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
 
-`curl -XPURGE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
+3. If there are redundant headers, use the first occurrence
 
-2. If there are redundant headers, use the first occurrence
+   `curl -XPURGE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
 
-`curl -XPURGE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
+4. `regex` is **NOT glob**
+
+   For example, all jpg files under /imgs should be `^/imgs/.*\.jpg$` instead of `/imgs/*.jpg`
+
 
 # FAQ
 
