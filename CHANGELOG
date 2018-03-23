@@ -1,6 +1,59 @@
 ChangeLog :
 ===========
 
+2018/03/23 : 1.8.5
+    - BUG/MINOR: threads: fix missing thread lock labels for 1.8
+    - BUG/MEDIUM: ssl: Don't always treat SSL_ERROR_SYSCALL as unrecovarable.
+    - BUG/MEDIUM: ssl: Shutdown the connection for reading on SSL_ERROR_SYSCALL
+    - BUG/MINOR: init: Add missing brackets in the code parsing -sf/-st
+    - BUG/MINOR: ssl/threads: Make management of the TLS ticket keys files thread-safe
+    - BUG/MEDIUM: http: Switch the HTTP response in tunnel mode as earlier as possible
+    - BUG/MEDIUM: ssl/sample: ssl_bc_* fetch keywords are broken.
+    - DOC: lua: new prototype for function "register_action()"
+    - DOC: cfgparse: Warn on option (tcp|http)log in backend
+    - BUG/MINOR: debug/pools: properly handle out-of-memory when building with DEBUG_UAF
+    - MINOR: debug/pools: make DEBUG_UAF also detect underflows
+    - BUG/MINOR: h2: Set the target of dbuf_wait to h2c
+    - MINOR: stats: display the number of threads in the statistics.
+    - BUG/MEDIUM: h2: always consume any trailing data after end of output buffers
+    - BUG/MEDIUM: buffer: Fix the wrapping case in bo_putblk
+    - BUG/MEDIUM: buffer: Fix the wrapping case in bi_putblk
+    - Revert "BUG/MINOR: send-proxy-v2: string size must include ('\0')"
+    - MINOR: systemd: Add section for SystemD sandboxing to unit file
+    - MINOR: systemd: Add SystemD's Protect*= options to the unit file
+    - MINOR: systemd: Add SystemD's SystemCallFilter option to the unit file
+    - MINOR/BUILD: fix Lua build on Mac OS X
+    - BUILD/MINOR: fix Lua build on Mac OS X (again)
+    - BUG/MINOR: session: Fix tcp-request session failure if handshake.
+    - CLEANUP: .gitignore: Ignore binaries from the contrib directory
+    - BUG/MINOR: unix: Don't mess up when removing the socket from the xfer_sock_list.
+    - BUG/MEDIUM: h2: also arm the h2 timeout when sending
+    - BUG/MINOR: cli: Fix a crash when passing a negative or too large value to "show fd"
+    - CLEANUP: ssl: Remove a duplicated #include
+    - CLEANUP: cli: Remove a leftover debug message
+    - BUG/MINOR: cli: Fix a typo in the 'set rate-limit' usage
+    - BUG/MEDIUM: fix a 100% cpu usage with cpu-map and nbthread/nbproc
+    - BUG/MINOR: force-persist and ignore-persist only apply to backends
+    - BUG/MEDIUM: spoe: Remove idle applets from idle list when HAProxy is stopping
+    - BUG/MEDIUM: threads/unix: Fix a deadlock when a listener is temporarily disabled
+    - BUG/MAJOR: threads/queue: Fix thread-safety issues on the queues management
+    - BUG/MINOR: dns: don't downgrade DNS accepted payload size automatically
+    - BUG/MINOR: seemless reload: Fix crash when an interface is specified.
+    - BUG/MINOR: cli: Fix a crash when sending a command with too many arguments
+    - BUILD: ssl: Fix build with OpenSSL without NPN capability
+    - BUG/MINOR: spoa-example: unexpected behavior for more than 127 args
+    - BUG/MINOR: lua: return bad error messages
+    - BUG/MEDIUM: tcp-check: single connect rule can't detect DOWN servers
+    - BUG/MINOR: tcp-check: use the server's service port as a fallback
+    - BUG/MEDIUM: threads/queue: wake up other threads upon dequeue
+    - MINOR: log: stop emitting alerts when it's not possible to write on the socket
+    - BUILD/BUG: enable -fno-strict-overflow by default
+    - DOC: log: more than 2 log servers are allowed
+    - DOC: don't suggest using http-server-close
+    - BUG/MEDIUM: h2: properly account for DATA padding in flow control
+    - BUG/MINOR: h2: ensure we can never send an RST_STREAM in response to an RST_STREAM
+    - BUG/MINOR: listener: Don't decrease actconn twice when a new session is rejected
+
 2018/02/08 : 1.8.4
     - BUG/MEDIUM: h2: properly handle the END_STREAM flag on empty DATA frames
     - BUILD: ssl: silence a warning when building without NPN nor ALPN support
