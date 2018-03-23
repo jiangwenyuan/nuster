@@ -119,7 +119,7 @@ int cache_test_rule(struct cache_rule *rule, struct stream *s, int res) {
     return 0;
 }
 
-static char *_cache_key_append(char *dst, int *dst_len, int *dst_size,
+static char *_string_append(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
 
     int left     = *dst_size - *dst_len;
@@ -143,6 +143,15 @@ static char *_cache_key_append(char *dst, int *dst_len, int *dst_size,
     *dst_len += src_len;
     dst[*dst_len] = '\0';
     return dst;
+}
+
+static char *_cache_key_append(char *dst, int *dst_len, int *dst_size,
+        char *src, int src_len) {
+    char *key = _string_append(dst, dst_len, dst_size, src, src_len);
+    if(key) {
+        return _string_append(dst, dst_len, dst_size, ".", 1);
+    }
+    return NULL;
 }
 
 static int _cache_find_param_value_by_name(char *query_beg, char *query_end,
