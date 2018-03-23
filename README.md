@@ -232,7 +232,7 @@ with `.` separator:
  * param\_NAME:  the value of query `NAME`
  * body:         the body of the request
 
-By default the key is `method.scheme.host.path.delimiter.query.body`
+By default the key is `method.scheme.host.uri`
 
 Example
 
@@ -260,9 +260,9 @@ Should result:
  * param\_type:  Y
  * body:         (empty)
 
-So default key produces `GEThttpwww.example.com/q?name=X&type=Y`, and
+So default key produces `GET.http.www.example.com./q?name=X&type=Y.`, and
 `key method.scheme.host.path.header_ASDF.cookie_user.param_type` produces
-`GEThttpwww.example.com/qZnusterY`
+`GET.http.www.example.com./q.Z.nuster.Y.`
 
 If a request has the same key as a cached http response data, then cached
 data will be sent to the client.
@@ -523,10 +523,10 @@ Cache related debug messages start with `[CACHE]`.
 
 ## How to cache POST request?
 
-Enable `option http-buffer-request`.
+Enable `option http-buffer-request` and set `body` in cache-rule `key`.
 
-By default, the cache key includes the body of the request, remember to put
-`body` in key field if you use a customized key.
+By default, the cache key does not include the body of the request, remember to put
+`body` in key field.
 
 Note that the body of the request maybe incomplete, refer to **option http-buffer-request**
 section in [HAProxy configuration](doc/configuration.txt) for details.
@@ -582,7 +582,7 @@ backend app1a
     filter cache
 
     # cache /search for 120 seconds. Only works when POST/PUT
-    cache-rule rpost ttl 120 if pathPost
+    cache-rule rpost key method.scheme.host.uri.body ttl 120 if pathPost
 
     server s1 10.0.0.10:8080
 backend app1b

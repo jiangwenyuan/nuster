@@ -615,7 +615,7 @@ char *cache_build_purge_key(struct stream *s, struct http_msg *msg) {
     struct hdr_ctx ctx;
     int key_len  = 0;
 
-    /* "method.scheme.host.path.query.body" */
+    /* method.scheme.host.uri */
     int key_size = CACHE_DEFAULT_KEY_SIZE;
     char *key    = malloc(key_size);
     if(!key) {
