@@ -4420,7 +4420,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	}
 
         /* check cache purge */
-        if (cache_manager(s, req, px)) {
+        if (cache_manager(s, req, px) || cache_stats(s, req, px)) {
             goto return_prx_cond;
         }
 

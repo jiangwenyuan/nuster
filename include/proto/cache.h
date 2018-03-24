@@ -134,6 +134,7 @@ static inline void cache_memory_free(struct pool_head *pool, void *p) {
 void cache_stats_update_used_mem(int i);
 int cache_stats_init();
 int cache_stats_full();
+int cache_stats(struct stream *s, struct channel *req, struct proxy *px);
 
 static inline int cache_check_uri(struct http_msg *msg) {
     const char *uri = msg->chn->buf->p + msg->sl.rq.u;

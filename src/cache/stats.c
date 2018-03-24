@@ -13,6 +13,7 @@
 #include <types/global.h>
 #include <types/cache.h>
 
+#include <proto/stream_interface.h>
 #include <proto/cache.h>
 
 void cache_stats_update_used_mem(int i) {
@@ -39,3 +40,61 @@ int cache_stats_full() {
     nuster_shctx_unlock(global.cache.stats);
     return i;
 }
+
+/*
+ * return 1 if the request is done, otherwise 0
+ */
+int cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
+    struct stream_interface *si = &s->si[1];
+    struct http_txn *txn        = s->txn;
+    struct http_msg *msg        = &txn->req;
+    struct appctx *appctx       = NULL;
+
+    if(global.cache.status != CACHE_STATUS_ON) {
+        return 0;
+    }
+
+    /* GET stats uri */
+    if(txn->meth == HTTP_METH_GET && cache_check_uri(msg)) {
+        s->target = &cache_stats_applet.obj_type;
+        if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
+            return 1;
+        } else {
+            appctx      = si_appctx(si);
+            appctx->st0 = NUSTER_CACHE_STATS_HEAD;
+
+            req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+            req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+            req->analysers |= AN_REQ_HTTP_XFER_BODY;
+        }
+    }
+    return 0;
+}
+
+static void cache_stats_handler(struct appctx *appctx) {
+    struct stream_interface *si = appctx->owner;
+    struct channel *res         = si_ic(si);
+    struct stream *s            = si_strm(si);
+
+    chunk_printf(&trash,
+            "HTTP/1.1 200 OK\r\n"
+            "Cache-Control: no-cache\r\n"
+            "Connection: close\r\n"
+            "Content-Type: text/plain\r\n"
+            "\r\n");
+    chunk_appendf(&trash, "**CACHE STATS**\n");
+
+    s->txn->status     = 200;
+
+    bi_putchk(res, &trash);
+    bo_skip(si_oc(si), si_ob(si)->o);
+    si_shutr(si);
+    res->flags |= CF_READ_NULL;
+}
+
+struct applet cache_stats_applet = {
+    .obj_type = OBJ_TYPE_APPLET,
+    .name = "<CACHE-STATS>",
+    .fct = cache_stats_handler,
+    .release = NULL,
+};
