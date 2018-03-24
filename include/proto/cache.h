@@ -135,6 +135,24 @@ void cache_stats_update_used_mem(int i);
 int cache_stats_init();
 int cache_stats_full();
 
+static inline int cache_check_uri(struct http_msg *msg) {
+    const char *uri = msg->chn->buf->p + msg->sl.rq.u;
+
+    if(!global.cache.uri) {
+        return 0;
+    }
+
+    if(strlen(global.cache.uri) != msg->sl.rq.u_l) {
+        return 0;
+    }
+
+    if(memcmp(uri, global.cache.uri, msg->sl.rq.u_l) != 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
 
 /* lock, borrowed from shctx.c */
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
