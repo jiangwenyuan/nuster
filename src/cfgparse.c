@@ -1953,7 +1953,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                 memcpy(global.cache.purge_method, CACHE_DEFAULT_PURGE_METHOD, 5);
                 memcpy(global.cache.purge_method + 5, " ", 1);
                 cur_arg++;
-                global.cache.manager_uri = NULL;
+                global.cache.uri = NULL;
                 while(*(args[cur_arg]) !=0) {
                         if (!strcmp(args[cur_arg], "share")) {
                             cur_arg++;
@@ -2029,7 +2029,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                global.cache.manager_uri = strdup(args[cur_arg]);
+                                global.cache.uri = strdup(args[cur_arg]);
                                 cur_arg++;
                                 continue;
                         }
