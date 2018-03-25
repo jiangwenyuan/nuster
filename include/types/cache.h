@@ -97,8 +97,9 @@ struct cache_rule {
     struct cache_key  **key;        /* key */
     struct cache_code  *code;       /* code */
     uint32_t           *ttl;        /* ttl: seconds, 0: not expire */
-    int                *state;
-    int                 id;
+    int                *state;      /* on when start, can be turned off by manager API */
+    int                 id;         /* same for identical names */
+    int                 uuid;       /* unique cache-rule ID */
 };
 
 struct cache_element {

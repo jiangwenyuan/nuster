@@ -310,7 +310,7 @@ void cache_housekeeping() {
 }
 
 void cache_init() {
-    int i;
+    int i, uuid;
     struct proxy *p;
 
     if(global.cache.status == CACHE_STATUS_ON) {
@@ -379,15 +379,16 @@ void cache_init() {
         }
 
         /* init cache rule */
-        i = 0;
+        i = uuid = 0;
         p = proxy;
         while(p) {
             struct cache_rule *rule = NULL;
             uint32_t ttl;
 
             list_for_each_entry(rule, &p->cache_rules, list) {
-                struct proxy *pt = proxy;
+                struct proxy *pt;
 
+                rule->uuid   = uuid++;
                 rule->state  = nuster_memory_alloc(global.cache.memory, sizeof(*rule->state));
                 if(!rule->state) {
                     goto err;
@@ -401,6 +402,7 @@ void cache_init() {
                 }
                 *rule->ttl   = ttl;
 
+                pt = proxy;
                 while(pt) {
                     struct cache_rule *rt = NULL;
                     list_for_each_entry(rt, &pt->cache_rules, list) {
