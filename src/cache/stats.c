@@ -63,6 +63,8 @@ int cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
         } else {
             appctx      = si_appctx(si);
             appctx->st0 = NUSTER_CACHE_STATS_HEAD;
+            appctx->st1 = proxy->uuid;
+            appctx->st2 = 0;
 
             req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
             req->analysers &= ~AN_REQ_FLT_XFER_DATA;
@@ -103,23 +105,55 @@ int cache_stats_data(struct appctx *appctx, struct stream *s, struct stream_inte
     while(p) {
         struct cache_rule *rule = NULL;
 
-        if(p->cap & PR_CAP_BE) {
-            chunk_appendf(&trash, "\n**PROXY %s**\n", p->id);
+        if(buffer_almost_full(res->buf)) {
+            si_applet_cant_put(si);
+            return 0;
+        }
 
-            if (!LIST_ISEMPTY(&p->cache_rules)) {
+        if(p->uuid != appctx->st1) {
+            goto next;
+        }
+
+        if(p->cap & PR_CAP_BE) {
+
+            if(!LIST_ISEMPTY(&p->cache_rules)) {
+
                 list_for_each_entry(rule, &p->cache_rules, list) {
-                    chunk_appendf(&trash, "%s.rule.%s: state=%s ttl=%"PRIu32"\n",
-                            p->id, rule->name, *rule->state == CACHE_RULE_ENABLED ? "on" : "off", *rule->ttl);
+
+                    if(buffer_almost_full(res->buf)) {
+                        si_applet_cant_put(si);
+                        return 0;
+                    }
+
+                    if(rule->uuid == appctx->st2) {
+
+                        if((struct cache_rule *)(&p->cache_rules)->n == rule) {
+                            chunk_printf(&trash, "\n**PROXY %s %d**\n", p->id, p->uuid);
+                            chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->name);
+                        } else {
+                            chunk_printf(&trash, "%s.rule.%s: ", p->id, rule->name);
+                        }
+
+                        chunk_appendf(&trash, "state=%s ttl=%"PRIu32"\n",
+                                *rule->state == CACHE_RULE_ENABLED ? "on" : "off", *rule->ttl);
+
+                        if (bi_putchk(res, &trash) == -1) {
+                            si_applet_cant_put(si);
+                            return 0;
+                        }
+                        appctx->st2++;
+                    }
                 }
             }
+
         }
+
+        appctx->st1 = p->next ? p->next->uuid : 0;
+
+next:
         p = p->next;
     }
 
-    if (bi_putchk(res, &trash) == -1) {
-        si_applet_cant_put(si);
-        return 0;
-    }
 
     return 1;
 }
