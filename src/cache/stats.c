@@ -87,6 +87,7 @@ int cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_inte
     chunk_appendf(&trash, "global.cache.dict.size: %"PRIu64"\n", global.cache.dict_size);
     chunk_appendf(&trash, "global.cache.uri: %s\n", global.cache.uri);
     chunk_appendf(&trash, "global.cache.purge_method: %.*s\n", (int)strlen(global.cache.purge_method) - 1, global.cache.purge_method);
+    chunk_appendf(&trash, "global.cache.used_mem: %"PRIu64"\n", global.cache.stats->used_mem);
 
     s->txn->status     = 200;
 
