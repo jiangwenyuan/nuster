@@ -3210,10 +3210,8 @@ static int init_email_alert_checks(struct server *s)
 		}
 
 		check->xprt = mailer->xprt;
-		if (!get_host_port(&mailer->addr))
-			/* Default to submission port */
-			check->port = 587;
 		check->addr = mailer->addr;
+		check->port = get_host_port(&mailer->addr);
 		check->server = s;
 	}
 
