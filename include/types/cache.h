@@ -197,8 +197,13 @@ struct cache_ctx {
 
 struct cache_stats {
     uint64_t        used_mem;
-    uint64_t        requests;
-    uint64_t        hits;
+
+    struct {
+        uint64_t    total;
+        uint64_t    create;
+        uint64_t    hit;
+        uint64_t    abort;
+    } request;
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t mutex;
 #else

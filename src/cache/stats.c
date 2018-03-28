@@ -23,14 +23,35 @@ void cache_stats_update_used_mem(int i) {
     nuster_shctx_unlock(global.cache.stats);
 }
 
+void cache_stats_update_request(int state) {
+    nuster_shctx_lock(global.cache.stats);
+    global.cache.stats->request.total++;
+    switch(state) {
+        case CACHE_CTX_STATE_HIT:
+            global.cache.stats->request.hit++;
+            break;
+        case CACHE_CTX_STATE_CREATE:
+            global.cache.stats->request.abort++;
+            break;
+        case CACHE_CTX_STATE_DONE:
+            global.cache.stats->request.create++;
+            break;
+        default:
+            break;
+    }
+    nuster_shctx_unlock(global.cache.stats);
+}
+
 int cache_stats_init() {
     global.cache.stats = nuster_memory_alloc(global.cache.memory, sizeof(struct cache_stats));
     if(!global.cache.stats) {
         return 0;
     }
-    global.cache.stats->used_mem = 0;
-    global.cache.stats->requests = 0;
-    global.cache.stats->hits     = 0;
+    global.cache.stats->used_mem       = 0;
+    global.cache.stats->request.total  = 0;
+    global.cache.stats->request.create = 0;
+    global.cache.stats->request.hit    = 0;
+    global.cache.stats->request.abort  = 0;
     return 1;
 }
 
@@ -88,6 +109,10 @@ int cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_inte
     chunk_appendf(&trash, "global.cache.uri: %s\n", global.cache.uri);
     chunk_appendf(&trash, "global.cache.purge_method: %.*s\n", (int)strlen(global.cache.purge_method) - 1, global.cache.purge_method);
     chunk_appendf(&trash, "global.cache.used_mem: %"PRIu64"\n", global.cache.stats->used_mem);
+    chunk_appendf(&trash, "global.cache.total: %"PRIu64"\n", global.cache.stats->request.total);
+    chunk_appendf(&trash, "global.cache.hit: %"PRIu64"\n", global.cache.stats->request.hit);
+    chunk_appendf(&trash, "global.cache.create: %"PRIu64"\n", global.cache.stats->request.create);
+    chunk_appendf(&trash, "global.cache.abort: %"PRIu64"\n", global.cache.stats->request.abort);
 
     s->txn->status     = 200;
 

@@ -86,6 +86,8 @@ static void cache_filter_detach(struct stream *s, struct filter *filter) {
         struct cache_rule_stash *stash = NULL;
         struct cache_ctx *ctx          = filter->ctx;
 
+        cache_stats_update_request(ctx->state);
+
         if(ctx->state == CACHE_CTX_STATE_CREATE) {
             cache_abort(ctx);
         }

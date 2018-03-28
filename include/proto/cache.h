@@ -135,6 +135,7 @@ void cache_stats_update_used_mem(int i);
 int cache_stats_init();
 int cache_stats_full();
 int cache_stats(struct stream *s, struct channel *req, struct proxy *px);
+void cache_stats_update_request(int state);
 
 static inline int cache_check_uri(struct http_msg *msg) {
     const char *uri = msg->chn->buf->p + msg->sl.rq.u;
