@@ -678,4 +678,7 @@ static inline void __spin_unlock(enum lock_label lbl, struct ha_spinlock *l,
 
 #endif /* USE_THREAD */
 
+/* Dummy I/O handler used by the sync pipe.*/
+void thread_sync_io_handler(int fd);
+
 #endif /* _COMMON_HATHREADS_H */
