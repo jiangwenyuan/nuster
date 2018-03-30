@@ -3435,11 +3435,6 @@ static int h2_snd_buf(struct conn_stream *cs, struct buffer *buf, int flags)
 		/* stream flow control, quit the list */
 		LIST_DEL(&h2s->list);
 		LIST_INIT(&h2s->list);
-
-			if (!h2s->cs && LIST_ISEMPTY(&h2s->h2c->send_list) && LIST_ISEMPTY(&h2s->h2c->fctl_list)) {
-				fprintf(stderr, "%s:%d: removing %p\n", __FUNCTION__, __LINE__, h2s);
-			}
-
 	}
 	else if (LIST_ISEMPTY(&h2s->list)) {
 		if (h2s->flags & H2_SF_BLK_MFCTL)
