@@ -200,7 +200,7 @@ struct cache_stats {
 
     struct {
         uint64_t    total;
-        uint64_t    create;
+        uint64_t    fetch;
         uint64_t    hit;
         uint64_t    abort;
     } request;

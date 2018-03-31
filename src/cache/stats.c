@@ -34,7 +34,7 @@ void cache_stats_update_request(int state) {
             global.cache.stats->request.abort++;
             break;
         case CACHE_CTX_STATE_DONE:
-            global.cache.stats->request.create++;
+            global.cache.stats->request.fetch++;
             break;
         default:
             break;
@@ -49,7 +49,7 @@ int cache_stats_init() {
     }
     global.cache.stats->used_mem       = 0;
     global.cache.stats->request.total  = 0;
-    global.cache.stats->request.create = 0;
+    global.cache.stats->request.fetch  = 0;
     global.cache.stats->request.hit    = 0;
     global.cache.stats->request.abort  = 0;
     return 1;
@@ -108,13 +108,13 @@ int cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_inte
     chunk_appendf(&trash, "global.cache.dict.size: %"PRIu64"\n", global.cache.dict_size);
     chunk_appendf(&trash, "global.cache.uri: %s\n", global.cache.uri);
     chunk_appendf(&trash, "global.cache.purge_method: %.*s\n", (int)strlen(global.cache.purge_method) - 1, global.cache.purge_method);
-    chunk_appendf(&trash, "global.cache.used_mem: %"PRIu64"\n", global.cache.stats->used_mem);
-    chunk_appendf(&trash, "global.cache.total: %"PRIu64"\n", global.cache.stats->request.total);
-    chunk_appendf(&trash, "global.cache.hit: %"PRIu64"\n", global.cache.stats->request.hit);
-    chunk_appendf(&trash, "global.cache.create: %"PRIu64"\n", global.cache.stats->request.create);
-    chunk_appendf(&trash, "global.cache.abort: %"PRIu64"\n", global.cache.stats->request.abort);
+    chunk_appendf(&trash, "global.cache.stats.used_mem: %"PRIu64"\n", global.cache.stats->used_mem);
+    chunk_appendf(&trash, "global.cache.stats.req_total: %"PRIu64"\n", global.cache.stats->request.total);
+    chunk_appendf(&trash, "global.cache.stats.req_hit: %"PRIu64"\n", global.cache.stats->request.hit);
+    chunk_appendf(&trash, "global.cache.stats.req_fetch: %"PRIu64"\n", global.cache.stats->request.fetch);
+    chunk_appendf(&trash, "global.cache.stats.req_abort: %"PRIu64"\n", global.cache.stats->request.abort);
 
-    s->txn->status     = 200;
+    s->txn->status = 200;
 
     if (bi_putchk(res, &trash) == -1) {
         si_applet_cant_put(si);
