@@ -33,7 +33,7 @@
 #include <types/sample.h>
 #include <types/applet.h>
 
-#define NUSTER_VERSION                    HAPROXY_VERSION".8"
+#define NUSTER_VERSION                    HAPROXY_VERSION".9"
 #define NUSTER_COPYRIGHT                 "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 #define CACHE_DEFAULT_SIZE                1024 * 1024
 #define CACHE_DEFAULT_TTL                 3600
