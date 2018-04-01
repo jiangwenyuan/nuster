@@ -1,5 +1,15 @@
 # Nuster Changelog
 
+## 1.7.9.9 - 2018-04-01
+
+### Added
+- Cache stats applet
+- Various cache stats
+
+### Changed
+- Separate cache manager file/applet
+- Rename manager_uri to uri for reuse
+
 ## 1.7.9.8 - 2018-03-21
 
 ### Added
