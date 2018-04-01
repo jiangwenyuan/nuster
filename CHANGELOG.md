@@ -9,6 +9,10 @@
 ### Changed
 - Separate cache manager file/applet
 - Rename manager_uri to uri for reuse
+- Simplify default key, use uri instead of path.delimiter.query
+
+### Fixed
+- A security bug which can bypass ACL by tampering with Host header(Thanks to Dan Reif)
 
 ## 1.7.9.8 - 2018-03-21
 
