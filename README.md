@@ -19,6 +19,7 @@ Nuster, a web caching proxy server.
   * [Enable/Disable](#enable-and-disable-cache-rule)
   * [TTL](#ttl)
   * [Purging](#purge-cache)
+* [Cache Stats](#cache-stats)
 * [FAQ](#faq)
 * [Example](#example)
 * [Conventions](#conventions)
@@ -48,7 +49,7 @@ the content of request, response or server status. Its features include:
 
 # Performance
 
-Nuster is very fast, some test shows nuster is almost three times faster than 
+Nuster is very fast, some test shows nuster is almost three times faster than
 nginx when both using single core, and nearly two times faster than nginx and
 three times faster than varnish when using all cores.
 
@@ -65,7 +66,7 @@ for production use, otherwise git clone the source code.
 ## Build
 
 ```
-make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1 
+make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
 make install PREFIX=/usr/local/nuster/bin
 ```
 
@@ -103,7 +104,7 @@ just like HAProxy, as a TCP and HTTP load balancer.
 
 ## cache
 
-**syntax:** cache on|off [share on|off] [data-size size] [dict-size size] [purge-method method] [uri manager-uri]
+**syntax:** cache on|off [share on|off] [data-size size] [dict-size size] [purge-method method] [uri uri]
 
 **default:** *none*
 
@@ -168,13 +169,13 @@ Define a customized HTTP method with max length of 14 to purge cache, it is `PUR
 
 ### uri
 
-Enable cache manager API and define the endpoint:
+Enable cache manager/stats API and define the endpoint:
 
 `cache on uri /_my/_unique/_/_cache/_uri`
 
-By default, the cache manager is disabled. When it is enabled, remember to restrict the access(see FAQ).
+By default, the cache manager/stats is disabled. When it is enabled, remember to restrict the access(see FAQ).
 
-See [Cache Management](#cache-management) for details.
+See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for details.
 
 ## filter cache
 
@@ -512,6 +513,29 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/n
 
    For example, all jpg files under /imgs should be `^/imgs/.*\.jpg$` instead of `/imgs/*.jpg`
 
+# Cache Stats
+
+Cache stats can be accessed by making HTTP GET request to the endpoint defined by `uri`;
+
+## Eanble and define the endpoint
+
+```
+cache on uri /nuster/cache
+```
+
+## Usage
+
+`curl http://127.0.0.1/nuster/cache`
+
+## Output
+
+* used\_mem:  The memory used for response, not include overheads.
+* req\_total: Total request number handled by cache enabled backends, not include the requests handled by backends without cache enabled
+* req\_hit:   Number of requests handled by cache
+* req\_fetch: Fetched from backends
+* req\_abort: Aborted when fetching from backends
+
+Others are very straightforward.
 
 # FAQ
 
@@ -608,7 +632,7 @@ backend app1b
     # cache /heavy for 100 seconds if be_conn greater than 10
     acl heavypage path /heavy
     acl tooFast be_conn ge 100
-    cache-rule heavy ttl 100 if heavypage tooFast 
+    cache-rule heavy ttl 100 if heavypage tooFast
 
     # cache all if response's header[asdf] is fdsa
     acl resHdrCache2 res.hdr(asdf)  fdsa
