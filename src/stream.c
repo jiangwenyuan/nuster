@@ -530,7 +530,7 @@ static int sess_update_st_con_tcp(struct stream *s)
 	 * attempts and error reports.
 	 */
 	if (unlikely(si->flags & (SI_FL_EXP|SI_FL_ERR))) {
-		if (unlikely(req->flags & CF_WRITE_PARTIAL)) {
+		if (unlikely(req->flags & CF_WROTE_DATA)) {
 			/* Some data were sent past the connection establishment,
 			 * so we need to pretend we're established to log correctly
 			 * and let later states handle the failure.
@@ -556,7 +556,7 @@ static int sess_update_st_con_tcp(struct stream *s)
 	}
 
 	/* OK, maybe we want to abort */
-	if (!(req->flags & CF_WRITE_PARTIAL) &&
+	if (!(req->flags & CF_WROTE_DATA) &&
 	    unlikely((rep->flags & CF_SHUTW) ||
 		     ((req->flags & CF_SHUTW_NOW) && /* FIXME: this should not prevent a connection from establishing */
 		      ((!(req->flags & CF_WRITE_ACTIVITY) && channel_is_empty(req)) ||
@@ -992,6 +992,8 @@ static void sess_prepare_conn_req(struct stream *s)
 			return;
 		}
 
+		if (tv_iszero(&s->logs.tv_request))
+			s->logs.tv_request = now;
 		s->logs.t_queue   = tv_ms_elapsed(&s->logs.tv_accept, &now);
 		si->state         = SI_ST_EST;
 		si->err_type      = SI_ET_NONE;
@@ -1050,6 +1052,15 @@ enum act_return process_use_service(struct act_rule *rule, struct proxy *px,
 		appctx = si_appctx(&s->si[1]);
 		memset(&appctx->ctx, 0, sizeof(appctx->ctx));
 		appctx->rule = rule;
+
+		/* enable the minimally required analyzers in case of HTTP
+		 * keep-alive to properly handle keep-alive and compression
+		 * on the HTTP response.
+		 */
+		if (rule->from == ACT_F_HTTP_REQ) {
+			s->req.analysers &= AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END;
+			s->req.analysers |= AN_REQ_HTTP_XFER_BODY;
+		}
 	}
 	else
 		appctx = si_appctx(&s->si[1]);
@@ -1124,13 +1135,21 @@ static int process_switching_rules(struct stream *s, struct channel *req, int an
 				 * If we can't resolve the name, or if any error occurs, break
 				 * the loop and fallback to the default backend.
 				 */
-				struct proxy *backend;
+				struct proxy *backend = NULL;
 
 				if (rule->dynamic) {
-					struct chunk *tmp = get_trash_chunk();
-					if (!build_logline(s, tmp->str, tmp->size, &rule->be.expr))
-						break;
-					backend = proxy_be_by_name(tmp->str);
+					struct chunk *tmp;
+
+					tmp = alloc_trash_chunk();
+					if (!tmp)
+						goto sw_failed;
+
+					if (build_logline(s, tmp->str, tmp->size, &rule->be.expr))
+						backend = proxy_be_by_name(tmp->str);
+
+					free_trash_chunk(tmp);
+					tmp = NULL;
+
 					if (!backend)
 						break;
 				}
@@ -1730,6 +1749,7 @@ struct task *process_stream(struct task *t)
 	/* Analyse request */
 	if (((req->flags & ~rqf_last) & CF_MASK_ANALYSER) ||
 	    ((req->flags ^ rqf_last) & CF_MASK_STATIC) ||
+	    (req->analysers && (req->flags & CF_SHUTW)) ||
 	    si_f->state != rq_prod_last ||
 	    si_b->state != rq_cons_last ||
 	    s->pending_events & TASK_WOKEN_MSG) {
@@ -1829,6 +1849,7 @@ struct task *process_stream(struct task *t)
 
 	if (((res->flags & ~rpf_last) & CF_MASK_ANALYSER) ||
 		 (res->flags ^ rpf_last) & CF_MASK_STATIC ||
+		 (res->analysers && (res->flags & CF_SHUTW)) ||
 		 si_f->state != rp_cons_last ||
 		 si_b->state != rp_prod_last ||
 		 s->pending_events & TASK_WOKEN_MSG) {
@@ -1983,7 +2004,7 @@ struct task *process_stream(struct task *t)
 	 * Note that we're checking CF_SHUTR_NOW as an indication of a possible
 	 * recent call to channel_abort().
 	 */
-	if (unlikely(!req->analysers &&
+	if (unlikely((!req->analysers || (req->analysers == AN_REQ_FLT_END && !(req->flags & CF_FLT_ANALYZE))) &&
 	    !(req->flags & (CF_SHUTW|CF_SHUTR_NOW)) &&
 	    (si_f->state >= SI_ST_EST) &&
 	    (req->to_forward != CHN_INFINITE_FORWARD))) {
@@ -2142,7 +2163,7 @@ struct task *process_stream(struct task *t)
 	 * Note that we're checking CF_SHUTR_NOW as an indication of a possible
 	 * recent call to channel_abort().
 	 */
-	if (unlikely(!res->analysers &&
+	if (unlikely((!res->analysers || (res->analysers == AN_RES_FLT_END && !(res->flags & CF_FLT_ANALYZE))) &&
 	    !(res->flags & (CF_SHUTW|CF_SHUTR_NOW)) &&
 	    (si_b->state >= SI_ST_EST) &&
 	    (res->to_forward != CHN_INFINITE_FORWARD))) {
@@ -2329,6 +2350,8 @@ struct task *process_stream(struct task *t)
 			req->analyse_exp = tick_add(now_ms, 5000);
 
 		t->expire = tick_first(t->expire, req->analyse_exp);
+
+		t->expire = tick_first(t->expire, res->analyse_exp);
 
 		if (si_f->exp)
 			t->expire = tick_first(t->expire, si_f->exp);

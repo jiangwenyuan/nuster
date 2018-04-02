@@ -69,7 +69,7 @@
 static int httpchk_expect(struct server *s, int done);
 static int tcpcheck_get_step_id(struct check *);
 static char * tcpcheck_get_step_comment(struct check *, int);
-static void tcpcheck_main(struct connection *);
+static void tcpcheck_main(struct check *);
 
 static const struct check_status check_statuses[HCHK_STATUS_SIZE] = {
 	[HCHK_STATUS_UNKNOWN]	= { CHK_RES_UNKNOWN,  "UNK",     "Unknown" },
@@ -763,10 +763,9 @@ static void event_srv_chk_w(struct connection *conn)
 	if (!check->type)
 		goto out_wakeup;
 
-	if (check->type == PR_O2_TCPCHK_CHK) {
-		tcpcheck_main(conn);
+	/* wake() will take care of calling tcpcheck_main() */
+	if (check->type == PR_O2_TCPCHK_CHK)
 		return;
-	}
 
 	if (check->bo->o) {
 		conn->xprt->snd_buf(conn, check->bo, 0);
@@ -821,10 +820,9 @@ static void event_srv_chk_r(struct connection *conn)
 	if (conn->flags & CO_FL_HANDSHAKE)
 		return;
 
-	if (check->type == PR_O2_TCPCHK_CHK) {
-		tcpcheck_main(conn);
+	/* wake() will take care of calling tcpcheck_main() */
+	if (check->type == PR_O2_TCPCHK_CHK)
 		return;
-	}
 
 	/* Warning! Linux returns EAGAIN on SO_ERROR if data are still available
 	 * but the connection was closed on the remote end. Fortunately, recv still
@@ -839,7 +837,7 @@ static void event_srv_chk_r(struct connection *conn)
 	done = 0;
 
 	conn->xprt->rcv_buf(conn, check->bi, check->bi->size);
-	if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_DATA_RD_SH)) {
+	if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH)) {
 		done = 1;
 		if ((conn->flags & CO_FL_ERROR) && !check->bi->i) {
 			/* Report network errors only if we got no other data. Otherwise
@@ -1385,6 +1383,10 @@ static int wake_srv_chk(struct connection *conn)
 {
 	struct check *check = conn->owner;
 
+	/* we may have to make progress on the TCP checks */
+	if (check->type == PR_O2_TCPCHK_CHK)
+		tcpcheck_main(check);
+
 	if (unlikely(conn->flags & CO_FL_ERROR)) {
 		/* We may get error reports bypassing the I/O handlers, typically
 		 * the case when sending a pure TCP check which fails, then the I/O
@@ -1451,6 +1453,20 @@ static struct task *server_warmup(struct task *t)
 	return t;
 }
 
+/* returns the first NON-COMMENT tcp-check rule from list <list> or NULL if
+ * none was found.
+ */
+static struct tcpcheck_rule *get_first_tcpcheck_rule(struct list *list)
+{
+	struct tcpcheck_rule *r;
+
+	list_for_each_entry(r, list, list) {
+		if (r->action != TCPCHK_ACT_COMMENT)
+			return r;
+	}
+	return NULL;
+}
+
 /*
  * establish a server health-check that makes use of a connection.
  *
@@ -1473,12 +1489,15 @@ static int connect_conn_chk(struct task *t)
 	struct server *s = check->server;
 	struct connection *conn = check->conn;
 	struct protocol *proto;
+	struct tcpcheck_rule *tcp_rule = NULL;
 	int ret;
 	int quickack;
 
 	/* tcpcheck send/expect initialisation */
-	if (check->type == PR_O2_TCPCHK_CHK)
+	if (check->type == PR_O2_TCPCHK_CHK) {
 		check->current_step = NULL;
+		tcp_rule = get_first_tcpcheck_rule(check->tcpcheck_rules);
+	}
 
 	/* prepare the check buffer.
 	 * This should not be used if check is the secondary agent check
@@ -1510,6 +1529,14 @@ static int connect_conn_chk(struct task *t)
 
 	if ((check->type & PR_O2_LB_AGENT_CHK) && check->send_string_len) {
 		bo_putblk(check->bo, check->send_string, check->send_string_len);
+	}
+
+	/* for tcp-checks, the initial connection setup is handled separately as
+	 * it may be sent to a specific port and not to the server's.
+	 */
+	if (tcp_rule && tcp_rule->action == TCPCHK_ACT_CONNECT) {
+		tcpcheck_main(check);
+		return SF_ERR_UP;
 	}
 
 	/* prepare a new connection */
@@ -1548,19 +1575,8 @@ static int connect_conn_chk(struct task *t)
 	/* only plain tcp-check supports quick ACK */
 	quickack = check->type == 0 || check->type == PR_O2_TCPCHK_CHK;
 
-	if (check->type == PR_O2_TCPCHK_CHK && !LIST_ISEMPTY(check->tcpcheck_rules)) {
-		struct tcpcheck_rule *r;
-
-		r = LIST_NEXT(check->tcpcheck_rules, struct tcpcheck_rule *, list);
-
-		/* if first step is a 'connect', then tcpcheck_main must run it */
-		if (r->action == TCPCHK_ACT_CONNECT) {
-			tcpcheck_main(conn);
-			return SF_ERR_UP;
-		}
-		if (r->action == TCPCHK_ACT_EXPECT)
-			quickack = 0;
-	}
+	if (tcp_rule && tcp_rule->action == TCPCHK_ACT_EXPECT)
+		quickack = 0;
 
 	ret = SF_ERR_INTERNAL;
 	if (proto->connect)
@@ -2599,12 +2615,15 @@ static char * tcpcheck_get_step_comment(struct check *check, int stepid)
 	return ret;
 }
 
-static void tcpcheck_main(struct connection *conn)
+/* proceed with next steps for the TCP checks <check>. Note that this is called
+ * both from the connection's wake() callback and from the check scheduling task.
+ */
+static void tcpcheck_main(struct check *check)
 {
 	char *contentptr, *comment;
 	struct tcpcheck_rule *next;
 	int done = 0, ret = 0, step = 0;
-	struct check *check = conn->owner;
+	struct connection *conn = check->conn;
 	struct server *s = check->server;
 	struct task *t = check->task;
 	struct list *head = check->tcpcheck_rules;
@@ -2685,6 +2704,7 @@ static void tcpcheck_main(struct connection *conn)
 		     check->current_step->action != TCPCHK_ACT_SEND ||
 		     check->current_step->string_len >= buffer_total_space(check->bo))) {
 
+			__conn_data_want_send(conn);
 			if (conn->xprt->snd_buf(conn, check->bo, 0) <= 0) {
 				if (conn->flags & CO_FL_ERROR) {
 					chk_report_conn_err(conn, errno, 0);
@@ -2884,15 +2904,14 @@ static void tcpcheck_main(struct connection *conn)
 				check->current_step->action == TCPCHK_ACT_COMMENT)
 				check->current_step = LIST_NEXT(&check->current_step->list, struct tcpcheck_rule *, list);
 
-			if (&check->current_step->list == head)
-				break;
 		} /* end 'send' */
 		else if (check->current_step->action == TCPCHK_ACT_EXPECT) {
 			if (unlikely(check->result == CHK_RES_FAILED))
 				goto out_end_tcpcheck;
 
+			__conn_data_want_recv(conn);
 			if (conn->xprt->rcv_buf(conn, check->bi, check->bi->size) <= 0) {
-				if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_DATA_RD_SH)) {
+				if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH)) {
 					done = 1;
 					if ((conn->flags & CO_FL_ERROR) && !check->bi->i) {
 						/* Report network errors only if we got no other data. Otherwise
@@ -3104,8 +3123,14 @@ void email_alert_free(struct email_alert *alert)
 	if (!alert)
 		return;
 
-	list_for_each_entry_safe(rule, back, &alert->tcpcheck_rules, list)
+	list_for_each_entry_safe(rule, back, &alert->tcpcheck_rules, list) {
+		LIST_DEL(&rule->list);
+		free(rule->comment);
+		free(rule->string);
+		if (rule->expect_regex)
+			regex_free(rule->expect_regex);
 		free(rule);
+	}
 	free(alert);
 }
 

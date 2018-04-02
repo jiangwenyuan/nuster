@@ -496,6 +496,10 @@ void stream_int_notify(struct stream_interface *si)
 	 * the buffer is full. We must not stop based on input data alone because
 	 * an HTTP parser might need more data to complete the parsing.
 	 */
+
+	/* ensure it's only set if a write attempt has succeeded */
+	ic->flags &= ~CF_WRITE_PARTIAL;
+
 	if (!channel_is_empty(ic) &&
 	    (si_opposite(si)->flags & SI_FL_WAIT_DATA) &&
 	    (ic->buf->i == 0 || ic->pipe)) {
@@ -609,6 +613,9 @@ static void si_conn_send(struct connection *conn)
 	struct stream_interface *si = conn->owner;
 	struct channel *oc = si_oc(si);
 	int ret;
+
+	/* ensure it's only set if a write attempt has succeeded */
+	oc->flags &= ~CF_WRITE_PARTIAL;
 
 	if (oc->pipe && conn->xprt->snd_pipe) {
 		ret = conn->xprt->snd_pipe(conn, oc->pipe);
@@ -937,6 +944,9 @@ static void stream_int_chk_snd_conn(struct stream_interface *si)
 	struct channel *oc = si_oc(si);
 	struct connection *conn = __objt_conn(si->end);
 
+	/* ensure it's only set if a write attempt has succeeded */
+	oc->flags &= ~CF_WRITE_PARTIAL;
+
 	if (unlikely(si->state > SI_ST_EST || (oc->flags & CF_SHUTW)))
 		return;
 
@@ -1060,13 +1070,13 @@ static void si_conn_recv_cb(struct connection *conn)
 	if (conn->flags & CO_FL_ERROR)
 		return;
 
-	/* stop here if we reached the end of data */
-	if (conn_data_read0_pending(conn))
-		goto out_shutdown_r;
-
 	/* maybe we were called immediately after an asynchronous shutr */
 	if (ic->flags & CF_SHUTR)
 		return;
+
+	/* stop here if we reached the end of data */
+	if (conn_data_read0_pending(conn))
+		goto out_shutdown_r;
 
 	cur_read = 0;
 
@@ -1153,7 +1163,7 @@ static void si_conn_recv_cb(struct connection *conn)
 	 * that if such an event is not handled above in splice, it will be handled here by
 	 * recv().
 	 */
-	while (!(conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_DATA_RD_SH | CO_FL_WAIT_ROOM | CO_FL_HANDSHAKE))) {
+	while (!(conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_WAIT_ROOM | CO_FL_HANDSHAKE)) && !(ic->flags & CF_SHUTR)) {
 		max = channel_recv_max(ic);
 
 		if (!max) {
@@ -1267,7 +1277,6 @@ static void si_conn_recv_cb(struct connection *conn)
 	if (ic->flags & CF_AUTO_CLOSE)
 		channel_shutw_now(ic);
 	stream_sock_read0(si);
-	conn_data_read0(conn);
 	return;
 }
 

@@ -299,12 +299,12 @@ nosec:
 	else if (p[0] == '+') {
 		if (end - p != 5) return -1;
 		/* Apply timezone offset */
-		return epoch - ((10 * (p[1] - '0') + p[2] - '0') * 60 + (10 * (p[3] - '0') + p[4] - '0')) * 60;
+		return epoch - ((10 * (p[1] - '0') + p[2] - '0') * 60 * 60 + (10 * (p[3] - '0') + p[4] - '0')) * 60;
 	}
 	else if (p[0] == '-') {
 		if (end - p != 5) return -1;
 		/* Apply timezone offset */
-		return epoch + ((10 * (p[1] - '0') + p[2] - '0') * 60 + (10 * (p[3] - '0') + p[4] - '0')) * 60;
+		return epoch + ((10 * (p[1] - '0') + p[2] - '0') * 60 * 60 + (10 * (p[3] - '0') + p[4] - '0')) * 60;
 	}
 
 	return -1;
@@ -374,8 +374,8 @@ static int ssl_sock_load_ocsp_response(struct chunk *ocsp_response, struct certi
 	id = (OCSP_CERTID*)OCSP_SINGLERESP_get0_id(sr);
 
 	rc = OCSP_single_get0_status(sr, &reason, &revtime, &thisupd, &nextupd);
-	if (rc != V_OCSP_CERTSTATUS_GOOD) {
-		memprintf(err, "OCSP single response: certificate status not good");
+	if (rc != V_OCSP_CERTSTATUS_GOOD && rc != V_OCSP_CERTSTATUS_REVOKED) {
+		memprintf(err, "OCSP single response: certificate status is unknown");
 		goto out;
 	}
 
@@ -5723,7 +5723,7 @@ static int srv_parse_crt(char **args, int *cur_arg, struct proxy *px, struct ser
 	}
 
 	if ((*args[*cur_arg + 1] != '/') && global.crt_base)
-		memprintf(&newsrv->ssl_ctx.client_crt, "%s/%s", global.ca_base, args[*cur_arg + 1]);
+		memprintf(&newsrv->ssl_ctx.client_crt, "%s/%s", global.crt_base, args[*cur_arg + 1]);
 	else
 		memprintf(&newsrv->ssl_ctx.client_crt, "%s", args[*cur_arg + 1]);
 
@@ -6262,6 +6262,7 @@ static int cli_parse_set_ocspresponse(char **args, struct appctx *appctx, void *
 static struct cli_kw_list cli_kws = {{ },{
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 	{ { "show", "tls-keys", NULL }, "show tls-keys [id|*]: show tls keys references or dump tls ticket keys when id specified", cli_parse_show_tlskeys, NULL },
+	{ { "set", "ssl", "tls-key", NULL }, "set ssl tls-key [id|keyfile] <tlskey>: set the next TLS key for the <id> or <keyfile> listener to <tlskey>", cli_parse_set_tlskeys, NULL },
 	{ { "set", "ssl", "tls-keys", NULL }, NULL, cli_parse_set_tlskeys, NULL },
 	{ { "set", "ssl", "ocsp-response", NULL }, NULL, cli_parse_set_ocspresponse, NULL },
 #endif
