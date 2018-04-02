@@ -3474,10 +3474,12 @@ static int cli_parse_set_server(char **args, struct appctx *appctx, void *privat
 		if (strl2irc(args[4], strlen(args[4]), &i) != 0) {
 			appctx->ctx.cli.msg = "'set server <srv> check-port' expects an integer as argument.\n";
 			appctx->st0 = CLI_ST_PRINT;
+			return 1;
 		}
 		if ((i < 0) || (i > 65535)) {
 			appctx->ctx.cli.msg = "provided port is not valid.\n";
 			appctx->st0 = CLI_ST_PRINT;
+			return 1;
 		}
 		/* prevent the update of port to 0 if MAPPORTS are in use */
 		if ((sv->flags & SRV_F_MAPPORTS) && (i == 0)) {

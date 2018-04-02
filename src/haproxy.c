@@ -1,6 +1,6 @@
 /*
  * HA-Proxy : High Availability-enabled HTTP/TCP proxy
- * Copyright 2000-2017 Willy Tarreau <willy@haproxy.org>.
+ * Copyright 2000-2018 Willy Tarreau <willy@haproxy.org>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -289,7 +289,7 @@ void display_version()
 	printf("Nuster version %s\n", NUSTER_VERSION);
 	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE"\n");
-	printf("Copyright 2000-2017 Willy Tarreau <willy@haproxy.org>\n\n");
+	printf("Copyright 2000-2018 Willy Tarreau <willy@haproxy.org>\n\n");
 }
 
 void display_build_opts()
@@ -1636,7 +1636,7 @@ void deinit(void)
 
 		free_http_req_rules(&p->http_req_rules);
 		free_http_res_rules(&p->http_res_rules);
-		free(p->task);
+		task_free(p->task);
 
 		pool_destroy2(p->req_cap_pool);
 		pool_destroy2(p->rsp_cap_pool);
@@ -1695,7 +1695,7 @@ void deinit(void)
 	free(static_table_key); static_table_key = NULL;
 	free(get_http_auth_buff); get_http_auth_buff = NULL;
 	free(swap_buffer);    swap_buffer = NULL;
-	free(global_listener_queue_task); global_listener_queue_task = NULL;
+	task_free(global_listener_queue_task); global_listener_queue_task = NULL;
 
 	list_for_each_entry_safe(log, logb, &global.logsrvs, list) {
 			LIST_DEL(&log->list);

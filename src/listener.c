@@ -778,7 +778,7 @@ static int bind_parse_process(char **args, int cur_arg, struct proxy *px, struct
 	unsigned int low, high;
 
 	if (strcmp(args[cur_arg + 1], "all") == 0) {
-		set = 0;
+		set |= ~0UL;
 	}
 	else if (strcmp(args[cur_arg + 1], "odd") == 0) {
 		set |= ~0UL/3UL; /* 0x555....555 */
@@ -811,7 +811,7 @@ static int bind_parse_process(char **args, int cur_arg, struct proxy *px, struct
 		return ERR_ALERT | ERR_FATAL;
 	}
 
-	conf->bind_proc = set;
+	conf->bind_proc |= set;
 	return 0;
 }
 

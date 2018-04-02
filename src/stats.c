@@ -2698,9 +2698,6 @@ static int stats_send_http_headers(struct stream_interface *si)
 	else
 		chunk_appendf(&trash, "\r\n");
 
-	s->txn->status = 200;
-	s->logs.tv_request = now;
-
 	if (bi_putchk(si_ic(si), &trash) == -1) {
 		si_applet_cant_put(si);
 		return 0;
@@ -2745,9 +2742,6 @@ static int stats_send_http_redirect(struct stream_interface *si)
 		     (appctx->ctx.stats.flags & STAT_HIDE_DOWN) ? ";up" : "",
 		     (appctx->ctx.stats.flags & STAT_NO_REFRESH) ? ";norefresh" : "",
 		     scope_txt);
-
-	s->txn->status = 303;
-	s->logs.tv_request = now;
 
 	if (bi_putchk(si_ic(si), &trash) == -1) {
 		si_applet_cant_put(si);
@@ -3096,6 +3090,9 @@ static int cli_parse_clear_counters(char **args, struct appctx *appctx, void *pr
 
 	global.cps_max = 0;
 	global.sps_max = 0;
+	global.ssl_max = 0;
+	global.ssl_fe_keys_max = 0;
+	global.ssl_be_keys_max = 0;
 	return 1;
 }
 
