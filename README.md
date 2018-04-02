@@ -43,6 +43,8 @@ the content of request, response or server status. Its features include:
    * Based on connection rate, number, byte, etc
  * Extremely fast
  * Cache purging
+ * Cache stats
+ * Cache management
  * HTTPS supports on both frontend and backend
  * HTTP compression
  * HTTP rewriting and redirection
