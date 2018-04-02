@@ -52,7 +52,7 @@
 #include <types/mailers.h>
 #include <types/dns.h>
 #include <types/stats.h>
-#include <types/cache.h>
+#include <nuster/cache.h>
 
 #include <proto/acl.h>
 #include <proto/auth.h>
@@ -85,7 +85,7 @@
 #include <proto/stick_table.h>
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
-#include <proto/cache.h>
+//#include <proto/cache.h>
 
 #ifdef USE_OPENSSL
 #include <types/ssl_sock.h>

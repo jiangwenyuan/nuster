@@ -16,9 +16,9 @@
 #include <string.h>
 
 #include <types/global.h>
-#include <types/cache.h>
+#include <nuster/cache.h>
 
-#include <proto/cache.h>
+//#include <proto/cache.h>
 
 #include <import/xxhash.h>
 

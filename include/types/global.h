@@ -33,7 +33,7 @@
 #include <types/proxy.h>
 #include <types/task.h>
 #include <types/vars.h>
-#include <types/cache.h>
+//#include <nuster/cache.h>
 
 #ifdef USE_51DEGREES
 #include <import/51d.h>

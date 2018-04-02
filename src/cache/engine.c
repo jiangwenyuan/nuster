@@ -18,7 +18,7 @@
 #include <types/applet.h>
 #include <types/cli.h>
 #include <types/global.h>
-#include <types/cache.h>
+#include <nuster/cache.h>
 
 #include <proto/filters.h>
 #include <proto/log.h>
@@ -28,7 +28,7 @@
 #include <proto/stream_interface.h>
 #include <proto/acl.h>
 #include <proto/proxy.h>
-#include <proto/cache.h>
+//#include <proto/cache.h>
 
 #include <import/xxhash.h>
 
