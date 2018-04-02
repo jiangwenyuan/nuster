@@ -83,7 +83,7 @@
 #include <types/global.h>
 #include <types/acl.h>
 #include <types/peers.h>
-#include <types/cache.h>
+#include <nuster/cache.h>
 
 #include <proto/acl.h>
 #include <proto/applet.h>
@@ -111,7 +111,7 @@
 #include <proto/task.h>
 #include <proto/dns.h>
 #include <proto/vars.h>
-#include <proto/cache.h>
+//#include <proto/cache.h>
 
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
