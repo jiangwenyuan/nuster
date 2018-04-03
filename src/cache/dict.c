@@ -16,11 +16,11 @@
 #include <string.h>
 
 #include <types/global.h>
-#include <nuster/cache.h>
-
-//#include <proto/cache.h>
 
 #include <import/xxhash.h>
+
+#include <nuster/shctx.h>
+#include <nuster/cache.h>
 
 
 static int _cache_dict_resize(uint64_t size) {

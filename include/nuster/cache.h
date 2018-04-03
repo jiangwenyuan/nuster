@@ -1,6 +1,6 @@
 /*
- * include/types/cache.h
- * This file defines everything related to cache.
+ * include/nuster/cache.h
+ * This file defines everything related to nuster cache.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
@@ -19,8 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef _TYPES_CACHE_H
-#define _TYPES_CACHE_H
+#ifndef _NUSTER_CACHE_H
+#define _NUSTER_CACHE_H
 
 #include <stdint.h>
 
@@ -33,8 +33,9 @@
 #include <types/sample.h>
 #include <types/applet.h>
 
-#define NUSTER_VERSION                    HAPROXY_VERSION".9"
-#define NUSTER_COPYRIGHT                 "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
+#include <nuster/common.h>
+#include <nuster/memory.h>
+
 #define CACHE_DEFAULT_SIZE                1024 * 1024
 #define CACHE_DEFAULT_TTL                 3600
 #define CACHE_DEFAULT_DICT_SIZE           32
@@ -68,11 +69,6 @@ enum ck_type {
     CK_HEADER,                    /* header */
     CK_COOKIE,                    /* cookie */
     CK_BODY,                      /* body   */
-};
-
-struct nst_string {
-    char *data;
-    int   len;
 };
 
 struct cache_key {
@@ -262,95 +258,6 @@ enum {
 };
 
 
-/* nuster memory */
-
-#define NUSTER_MEMORY_BLOCK_MIN_SIZE      4096ULL
-#define NUSTER_MEMORY_BLOCK_MIN_SHIFT     12
-#define NUSTER_MEMORY_CHUNK_MIN_SIZE      8ULL
-#define NUSTER_MEMORY_CHUNK_MIN_SHIFT     3
-#define NUSTER_MEMORY_BLOCK_MAX_SIZE      1024 * 1024 * 2
-#define NUSTER_MEMORY_BLOCK_MAX_SHIFT     21
-#define NUSTER_MEMORY_INFO_BITMAP_BITS    32
-
-
-/* start                                 alignment                   stop
- * |                                     |   |                       |
- * |_______|_0_|_...._|_M_|_0_|_..._|_N__|_*_|__0__|__...__|__N__|_*_|
- *         |              |                  |             |     |
- *         chunk        block              begin         end   <bitmap>
- *
- *
- */
-
-/*
- * info: | bitmap: 32 | reserved: 24 | 1 | full: 1 | bitmap: 1 | inited: 1 | type: 4 |
- * info: | bitmap: 32 | reserved: 16 | 5 | full: 1 | bitmap: 1 | inited: 1 | type: 8 |
- * bitmap: points to bitmap area, doesn't change once set
- * chunk size[n]: 1<<(NUSTER_MEMORY_CHUNK_MIN_SHIFT + n)
- */
-struct nuster_memory_ctrl {
-    uint64_t                   info;
-    uint8_t                   *bitmap;
-
-    struct nuster_memory_ctrl *prev;
-    struct nuster_memory_ctrl *next;
-};
-
-struct nuster_memory {
-    uint8_t                    *start;
-    uint8_t                    *stop;
-    uint8_t                    *bitmap;
-    char                        name[16];
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t             mutex;
-#else
-    unsigned int                waiters;
-#endif
-
-    uint32_t                    block_size;  /* max memory can be allocated */
-    uint32_t                    chunk_size;  /* min memory can be allocated */
-    int                         chunk_shift;
-    int                         block_shift;
-
-    int                         chunks;
-    int                         blocks;
-    struct nuster_memory_ctrl **chunk;
-    struct nuster_memory_ctrl  *block;
-    struct nuster_memory_ctrl  *empty;
-    struct nuster_memory_ctrl  *full;
-
-    struct {
-        uint8_t                *begin;
-        uint8_t                *free;
-        uint8_t                *end;
-    } data;
-};
-
-#endif /* _TYPES_CACHE_H */
-/*
- * include/types/cache.h
- * This file defines everything related to cache.
- *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation, version 2.1
- * exclusively.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- */
-
-#ifndef _PROTO_CACHE_H
-#define _PROTO_CACHE_H
-
 #include <common/config.h>
 
 #include <types/global.h>
@@ -398,51 +305,6 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
 const char *cache_parse_size(const char *text, uint64_t *ret);
 const char *cache_parse_time(const char *text, int len, unsigned *ret);
 
-/* get current timestamp in milliseconds */
-static inline uint64_t get_current_timestamp() {
-    struct timeval tv;
-    gettimeofday(&tv,NULL);
-    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
-/* get current timestamp in seconds */
-static inline uint64_t get_current_timestamp_s() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec;
-}
-
-/* memory */
-#define bit_set(bit, i) (bit |= 1 << i)
-#define bit_clear(bit, i) (bit &= ~(1 << i))
-#define bit_used(bit, i) (((bit) >> (i)) & 1)
-#define bit_unused(bit, i) ((((bit) >> (i)) & 1) == 0)
-static inline void _nuster_memory_block_set_type(struct nuster_memory_ctrl *block, uint8_t type) {
-    *(uint8_t *)(&block->info) = type;
-}
-static inline void _nuster_memory_block_set_inited(struct nuster_memory_ctrl *block) {
-    bit_set(block->info, 9);
-}
-static inline int _nuster_memory_block_is_inited(struct nuster_memory_ctrl *block) {
-    return bit_used(block->info, 9);
-}
-static inline void _nuster_memory_block_set_bitmap(struct nuster_memory_ctrl *block) {
-    bit_set(block->info, 10);
-}
-static inline void _nuster_memory_block_set_full(struct nuster_memory_ctrl *block) {
-    bit_set(block->info, 11);
-}
-static inline int _nuster_memory_block_is_full(struct nuster_memory_ctrl *block) {
-    return bit_used(block->info, 11);
-}
-static inline void _nuster_memory_block_clear_full(struct nuster_memory_ctrl *block) {
-    bit_clear(block->info, 11);
-}
-
-struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t block_size, uint32_t chunk_size);
-void *nuster_memory_alloc(struct nuster_memory *memory, int size);
-void nuster_memory_free(struct nuster_memory *memory, void *p);
-
 /* cache memory */
 static inline void *cache_memory_alloc(struct pool_head *pool, int size) {
     if(global.cache.share) {
@@ -485,151 +347,4 @@ static inline int cache_check_uri(struct http_msg *msg) {
 }
 
 
-/* lock, borrowed from shctx.c */
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-#include <pthread.h>
-#else
-#ifdef USE_SYSCALL_FUTEX
-#include <unistd.h>
-#include <linux/futex.h>
-#include <sys/syscall.h>
-#endif
-#endif
-
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-
-static inline int _nuster_shctx_init(pthread_mutex_t *mutex) {
-    if(global.cache.share) {
-        pthread_mutexattr_t attr;
-        if(pthread_mutexattr_init(&attr)) {
-            return 0;
-        }
-        if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED)) {
-            return 0;
-        }
-        if(pthread_mutex_init(mutex, &attr)) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-#define nuster_shctx_init(shctx)   _nuster_shctx_init(&(shctx)->mutex)
-#define nuster_shctx_lock(shctx)   if (global.cache.share) pthread_mutex_lock(&(shctx)->mutex)
-#define nuster_shctx_unlock(shctx) if (global.cache.share) pthread_mutex_unlock(&(shctx)->mutex)
-
-#else
-
-#ifdef USE_SYSCALL_FUTEX
-static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
-    syscall(SYS_futex, uaddr, FUTEX_WAIT, value, NULL, 0, 0);
-}
-
-static inline void _shctx_awakelocker(unsigned int *uaddr) {
-    syscall(SYS_futex, uaddr, FUTEX_WAKE, 1, NULL, 0, 0);
-}
-
-#else /* internal spin lock */
-
-#if defined (__i486__) || defined (__i586__) || defined (__i686__) || defined (__x86_64__)
-static inline void relax() {
-    __asm volatile("rep;nop\n" ::: "memory");
-}
-#else /* if no x86_64 or i586 arch: use less optimized but generic asm */
-static inline void relax() {
-    __asm volatile("" ::: "memory");
-}
-#endif
-
-static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
-    int i;
-
-    for (i = 0; i < *count; i++) {
-        relax();
-        relax();
-    }
-    *count = *count << 1;
-}
-
-#define _shctx_awakelocker(a)
-
-#endif
-
-#if defined (__i486__) || defined (__i586__) || defined (__i686__) || defined (__x86_64__)
-static inline unsigned int xchg(unsigned int *ptr, unsigned int x) {
-    __asm volatile("lock xchgl %0,%1"
-            : "=r" (x), "+m" (*ptr)
-            : "0" (x)
-            : "memory");
-    return x;
-}
-
-static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
-    unsigned int ret;
-
-    __asm volatile("lock cmpxchgl %2,%1"
-            : "=a" (ret), "+m" (*ptr)
-            : "r" (new), "0" (old)
-            : "memory");
-    return ret;
-}
-
-static inline unsigned char atomic_dec(unsigned int *ptr) {
-    unsigned char ret;
-    __asm volatile("lock decl %0\n"
-            "setne %1\n"
-            : "+m" (*ptr), "=qm" (ret)
-            :
-            : "memory");
-    return ret;
-}
-
-#else /* if no x86_64 or i586 arch: use less optimized gcc >= 4.1 built-ins */
-static inline unsigned int xchg(unsigned int *ptr, unsigned int x) {
-    return __sync_lock_test_and_set(ptr, x);
-}
-
-static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
-    return __sync_val_compare_and_swap(ptr, old, new);
-}
-
-static inline unsigned char atomic_dec(unsigned int *ptr) {
-    return __sync_sub_and_fetch(ptr, 1) ? 1 : 0;
-}
-
-#endif
-
-static inline void _shctx_lock(unsigned int *waiters) {
-    unsigned int x;
-    unsigned int count = 4;
-
-    x = cmpxchg(waiters, 0, 1);
-    if (x) {
-        if (x != 2)
-            x = xchg(waiters, 2);
-
-        while (x) {
-            _shctx_wait4lock(&count, waiters, 2);
-            x = xchg(waiters, 2);
-        }
-    }
-}
-
-static inline void _shctx_unlock(unsigned int *waiters) {
-    if (atomic_dec(waiters)) {
-        *waiters = 0;
-        _shctx_awakelocker(waiters);
-    }
-}
-
-static inline int _nuster_shctx_init(unsigned int *waiters) {
-    *waiters = 0;
-    return 1;
-}
-#define nuster_shctx_init(shctx)   _nuster_shctx_init(&(shctx)->waiters)
-#define nuster_shctx_lock(shctx)   if (global.cache.share) _shctx_lock(&(shctx)->waiters)
-#define nuster_shctx_unlock(shctx) if (global.cache.share) _shctx_unlock(&(shctx)->waiters)
-
-#endif
-
-#endif /* _PROTO_CACHE_H */
+#endif /* _NUSTER_CACHE_H */
