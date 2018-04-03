@@ -37,7 +37,7 @@
 #define NST_CACHE_DEFAULT_DICT_SIZE           32
 #define NST_CACHE_DEFAULT_LOAD_FACTOR         0.75
 #define NST_CACHE_DEFAULT_GROWTH_FACTOR       2
-#define CACHE_DEFAULT_KEY                "method.scheme.host.uri"
+#define NST_CACHE_DEFAULT_KEY                "method.scheme.host.uri"
 #define CACHE_DEFAULT_CODE               "200"
 #define CACHE_DEFAULT_KEY_SIZE            128
 #define CACHE_DEFAULT_CHUNK_SIZE          32
