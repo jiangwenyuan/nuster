@@ -133,8 +133,8 @@ struct cache_entry {
     struct cache_data  *data;
     uint64_t            expire;
     uint64_t            atime;
-    struct nst_string   host;
-    struct nst_string   path;
+    struct nuster_str   host;
+    struct nuster_str   path;
     struct cache_entry *next;
     struct cache_rule  *rule;        /* rule */
     int                 pid;         /* proxy uuid */
@@ -181,12 +181,12 @@ struct cache_ctx {
 
     struct {
         int                  scheme;
-        struct nst_string    host;
-        struct nst_string    uri;
-        struct nst_string    path;
+        struct nuster_str    host;
+        struct nuster_str    uri;
+        struct nuster_str    path;
         int                  delimiter;
-        struct nst_string    query;
-        struct nst_string    cookie;
+        struct nuster_str    query;
+        struct nuster_str    cookie;
     } req;
     int                      pid;         /* proxy uuid */
 };
