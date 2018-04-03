@@ -22,9 +22,12 @@
 #ifndef _NUSTER_COMMON_H
 #define _NUSTER_COMMON_H
 
+#include <stdlib.h>
+#include <stdint.h>
+#include <sys/time.h>
 
-#define NUSTER_VERSION                    HAPROXY_VERSION".9"
-#define NUSTER_COPYRIGHT                 "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
+#define NUSTER_VERSION     HAPROXY_VERSION".9"
+#define NUSTER_COPYRIGHT  "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
 #include <pthread.h>
@@ -45,7 +48,7 @@ struct nuster_str {
 /* get current timestamp in milliseconds */
 static inline uint64_t get_current_timestamp() {
     struct timeval tv;
-    gettimeofday(&tv,NULL);
+    gettimeofday(&tv, NULL);
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 

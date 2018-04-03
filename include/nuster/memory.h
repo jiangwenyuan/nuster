@@ -22,8 +22,6 @@
 #ifndef _NUSTER_MEMORY_H
 #define _NUSTER_MEMORY_H
 
-#include <stdint.h>
-
 #include <nuster/common.h>
 
 #define NUSTER_MEMORY_BLOCK_MIN_SIZE      4096ULL
