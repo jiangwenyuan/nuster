@@ -27,12 +27,6 @@
 #include <common/memory.h>
 
 #include <types/global.h>
-#include <types/acl.h>
-#include <types/filters.h>
-#include <types/obj_type.h>
-#include <types/proto_http.h>
-#include <types/sample.h>
-#include <types/applet.h>
 
 #include <nuster/common.h>
 
