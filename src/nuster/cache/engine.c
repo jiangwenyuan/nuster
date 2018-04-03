@@ -128,7 +128,7 @@ static char *_string_append(char *dst, int *dst_len, int *dst_size,
     int old_size = *dst_size;
 
     if(left < need) {
-        *dst_size += ((need - left) / CACHE_DEFAULT_KEY_SIZE + 1)  * CACHE_DEFAULT_KEY_SIZE;
+        *dst_size += ((need - left) / NST_CACHE_DEFAULT_KEY_SIZE + 1)  * NST_CACHE_DEFAULT_KEY_SIZE;
     }
 
     if(old_size != *dst_size) {
@@ -517,7 +517,7 @@ char *cache_build_key(struct cache_ctx *ctx, struct cache_key **pck, struct stre
 
     struct cache_key *ck = NULL;
     int key_len          = 0;
-    int key_size         = CACHE_DEFAULT_KEY_SIZE;
+    int key_size         = NST_CACHE_DEFAULT_KEY_SIZE;
     char *key            = malloc(key_size);
     if(!key) {
         return NULL;
@@ -619,7 +619,7 @@ char *cache_build_purge_key(struct stream *s, struct http_msg *msg) {
     int key_len  = 0;
 
     /* method.scheme.host.uri */
-    int key_size = CACHE_DEFAULT_KEY_SIZE;
+    int key_size = NST_CACHE_DEFAULT_KEY_SIZE;
     char *key    = malloc(key_size);
     if(!key) {
         return NULL;
