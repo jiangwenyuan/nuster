@@ -24,15 +24,6 @@
 
 #include <stdint.h>
 
-#include <common/memory.h>
-
-#include <types/acl.h>
-#include <types/filters.h>
-#include <types/obj_type.h>
-#include <types/proto_http.h>
-#include <types/sample.h>
-#include <types/applet.h>
-
 #include <nuster/common.h>
 
 #define NUSTER_MEMORY_BLOCK_MIN_SIZE      4096ULL
