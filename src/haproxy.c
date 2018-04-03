@@ -226,8 +226,8 @@ struct global global = {
 #endif
         .cache = {
                 .status       = CACHE_STATUS_UNDEFINED,
-                .data_size    = CACHE_DEFAULT_SIZE,
-                .dict_size    = CACHE_DEFAULT_SIZE,
+                .data_size    = NST_CACHE_DEFAULT_SIZE,
+                .dict_size    = NST_CACHE_DEFAULT_SIZE,
                 .share        = CACHE_SHARE_UNDEFINED,
                 .purge_method = NULL,
         },
