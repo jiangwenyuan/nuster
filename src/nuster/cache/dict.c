@@ -135,7 +135,7 @@ static int _cache_dict_entry_expired(struct cache_entry *entry) {
     if(entry->expire == 0) {
         return 0;
     } else {
-        return entry->expire <= get_current_timestamp_s();
+        return entry->expire <= get_current_timestamp() / 1000;
     }
 }
 

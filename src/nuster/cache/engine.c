@@ -747,7 +747,7 @@ void cache_finish(struct cache_ctx *ctx) {
     if(*ctx->rule->ttl == 0) {
         ctx->entry->expire = 0;
     } else {
-        ctx->entry->expire = get_current_timestamp_s() + *ctx->rule->ttl;
+        ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
     }
 }
 
