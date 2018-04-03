@@ -26,6 +26,16 @@
 #define NUSTER_VERSION                    HAPROXY_VERSION".9"
 #define NUSTER_COPYRIGHT                 "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
+#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
+#include <pthread.h>
+#else
+#ifdef USE_SYSCALL_FUTEX
+#include <unistd.h>
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#endif
+#endif
+
 struct nuster_str {
     char *data;
     int   len;

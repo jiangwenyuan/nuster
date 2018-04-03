@@ -34,16 +34,9 @@
 #include <types/sample.h>
 #include <types/applet.h>
 
+#include <nuster/common.h>
+
 /* lock, borrowed from shctx.c */
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-#include <pthread.h>
-#else
-#ifdef USE_SYSCALL_FUTEX
-#include <unistd.h>
-#include <linux/futex.h>
-#include <sys/syscall.h>
-#endif
-#endif
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
 
