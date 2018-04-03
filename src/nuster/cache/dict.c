@@ -126,7 +126,7 @@ void cache_dict_rehash() {
         /* should we rehash? */
         if(global.cache.share) return;
         if(cache->dict[0].used >= cache->dict[0].size * NST_CACHE_DEFAULT_LOAD_FACTOR) {
-            _cache_dict_resize(cache->dict[0].size * CACHE_DEFAULT_GROWTH_FACTOR);
+            _cache_dict_resize(cache->dict[0].size * NST_CACHE_DEFAULT_GROWTH_FACTOR);
         }
     }
 }
