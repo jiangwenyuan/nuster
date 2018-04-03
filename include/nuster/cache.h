@@ -33,7 +33,7 @@
 #include <nuster/memory.h>
 
 #define NST_CACHE_DEFAULT_SIZE                1024 * 1024
-#define CACHE_DEFAULT_TTL                 3600
+#define NST_CACHE_DEFAULT_TTL                 3600
 #define CACHE_DEFAULT_DICT_SIZE           32
 #define CACHE_DEFAULT_LOAD_FACTOR         0.75
 #define CACHE_DEFAULT_GROWTH_FACTOR       2

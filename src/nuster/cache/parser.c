@@ -138,7 +138,7 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
     char *name = NULL;
     char *key = NULL;
     char *code = NULL;
-    unsigned ttl = CACHE_DEFAULT_TTL;
+    unsigned ttl = NST_CACHE_DEFAULT_TTL;
     int cur_arg = 1;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
