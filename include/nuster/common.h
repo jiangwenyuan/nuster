@@ -26,7 +26,7 @@
 #define NUSTER_VERSION                    HAPROXY_VERSION".9"
 #define NUSTER_COPYRIGHT                 "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
-struct nst_string {
+struct nuster_str {
     char *data;
     int   len;
 };
@@ -37,13 +37,6 @@ static inline uint64_t get_current_timestamp() {
     struct timeval tv;
     gettimeofday(&tv,NULL);
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
-/* get current timestamp in seconds */
-static inline uint64_t get_current_timestamp_s() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec;
 }
 
 #endif /* _NUSTER_COMMON_H */
