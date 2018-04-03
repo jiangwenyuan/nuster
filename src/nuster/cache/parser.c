@@ -327,7 +327,7 @@ const char *cache_parse_size(const char *text, uint64_t *ret) {
     if(*text != '\0' && *++text != '\0')
         return text;
 
-    if(value < CACHE_DEFAULT_SIZE) 
+    if(value < CACHE_DEFAULT_SIZE)
         value = CACHE_DEFAULT_SIZE;
     *ret = value;
     return NULL;
