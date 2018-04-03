@@ -228,7 +228,7 @@ int cache_parse_rule(char **args, int section, struct proxy *proxy,
         memprintf(err, "'%s %s': invalid key.", args[0], name);
         goto out;
     }
-    rule->code = cache_parse_rule_code(code == NULL ? CACHE_DEFAULT_CODE : code);
+    rule->code = cache_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
     rule->ttl  = malloc(sizeof(*rule->ttl));
     *rule->ttl = ttl;
     rule->id   = -1;
