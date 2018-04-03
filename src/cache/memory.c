@@ -16,9 +16,10 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 
-#include <nuster/cache.h>
+#include <common/standard.h>
 
-//#include <proto/cache.h>
+#include <nuster/shctx.h>
+#include <nuster/memory.h>
 
 struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t block_size, uint32_t chunk_size) {
     uint8_t *p;

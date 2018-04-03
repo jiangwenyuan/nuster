@@ -11,11 +11,12 @@
  */
 
 #include <types/global.h>
-#include <nuster/cache.h>
 
 #include <proto/stream_interface.h>
 #include <proto/proxy.h>
-//#include <proto/cache.h>
+
+#include <nuster/shctx.h>
+#include <nuster/cache.h>
 
 void cache_stats_update_used_mem(int i) {
     nuster_shctx_lock(global.cache.stats);

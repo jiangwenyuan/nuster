@@ -18,7 +18,6 @@
 #include <types/applet.h>
 #include <types/cli.h>
 #include <types/global.h>
-#include <nuster/cache.h>
 
 #include <proto/filters.h>
 #include <proto/log.h>
@@ -28,7 +27,6 @@
 #include <proto/stream_interface.h>
 #include <proto/acl.h>
 #include <proto/proxy.h>
-//#include <proto/cache.h>
 
 #include <import/xxhash.h>
 
@@ -36,6 +34,9 @@
 #include <proto/ssl_sock.h>
 #include <types/ssl_sock.h>
 #endif
+
+#include <nuster/shctx.h>
+#include <nuster/cache.h>
 
 static const char *cache_msgs[NUSTER_CACHE_MSG_SIZE] = {
     [NUSTER_CACHE_200] =
