@@ -22,10 +22,6 @@
 #ifndef _NUSTER_SHCTX_H
 #define _NUSTER_SHCTX_H
 
-#include <stdint.h>
-
-#include <common/memory.h>
-
 #include <types/global.h>
 
 #include <nuster/common.h>

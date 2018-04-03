@@ -22,18 +22,14 @@
 #ifndef _NUSTER_CACHE_H
 #define _NUSTER_CACHE_H
 
-#include <stdint.h>
-
+#include <common/config.h>
 #include <common/memory.h>
 
+#include <types/global.h>
 #include <types/acl.h>
 #include <types/filters.h>
-#include <types/obj_type.h>
-#include <types/proto_http.h>
-#include <types/sample.h>
 #include <types/applet.h>
 
-#include <nuster/common.h>
 #include <nuster/memory.h>
 
 #define CACHE_DEFAULT_SIZE                1024 * 1024
@@ -257,13 +253,6 @@ enum {
     NUSTER_CACHE_STATS_DONE,
 };
 
-
-#include <common/config.h>
-
-#include <types/global.h>
-#include <types/proxy.h>
-#include <types/filters.h>
-//#include <types/cache.h>
 
 /* dict */
 int cache_dict_init();
