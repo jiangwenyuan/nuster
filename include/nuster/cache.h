@@ -55,23 +55,23 @@ enum {
     NST_CACHE_SHARE_ON         =  1,
 };
 
-enum ck_type {
-    CK_METHOD = 1,                /* method:    GET, POST... */
-    CK_SCHEME,                    /* scheme:    http, https */
-    CK_HOST,                      /* host:      Host header   */
-    CK_URI,                       /* uri:       first slash to end of the url */
-    CK_PATH,                      /* path:      first slach to question mark */
-    CK_DELIMITER,                 /* delimiter: '?' or '' */
-    CK_QUERY,                     /* query:     question mark to end of the url, or empty */
-    CK_PARAM,                     /* param:     query key/value pair */
-    CK_HEADER,                    /* header */
-    CK_COOKIE,                    /* cookie */
-    CK_BODY,                      /* body   */
+enum nst_cache_key_type {
+    NST_CACHE_KEY_METHOD = 1,                /* method:    GET, POST... */
+    NST_CACHE_KEY_SCHEME,                    /* scheme:    http, https */
+    NST_CACHE_KEY_HOST,                      /* host:      Host header   */
+    NST_CACHE_KEY_URI,                       /* uri:       first slash to end of the url */
+    NST_CACHE_KEY_PATH,                      /* path:      first slach to question mark */
+    NST_CACHE_KEY_DELIMITER,                 /* delimiter: '?' or '' */
+    NST_CACHE_KEY_QUERY,                     /* query:     question mark to end of the url, or empty */
+    NST_CACHE_KEY_PARAM,                     /* param:     query key/value pair */
+    NST_CACHE_KEY_HEADER,                    /* header */
+    NST_CACHE_KEY_COOKIE,                    /* cookie */
+    NST_CACHE_KEY_BODY,                      /* body   */
 };
 
 struct cache_key {
-    enum ck_type  type;
-    char         *data;
+    enum nst_cache_key_type  type;
+    char                    *data;
 };
 
 struct cache_code {
