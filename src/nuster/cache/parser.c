@@ -22,8 +22,8 @@
 
 static const char *cache_id = "cache filter";
 
-static struct cache_key *_cache_parse_rule_key(char *str) {
-    struct cache_key *key = NULL;
+static struct nst_cache_key *_cache_parse_rule_key(char *str) {
+    struct nst_cache_key *key = NULL;
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
         key->type = NST_CACHE_KEY_METHOD;
@@ -72,25 +72,25 @@ static struct cache_key *_cache_parse_rule_key(char *str) {
     return key;
 }
 
-static struct cache_key **cache_parse_rule_key(char *str) {
-    struct cache_key **pk = NULL;
+static struct nst_cache_key **cache_parse_rule_key(char *str) {
+    struct nst_cache_key **pk = NULL;
     char *m, *tmp = strdup(str);
     int i = 0;
 
     m = strtok(tmp, ".");
     while(m) {
-        struct cache_key *key = _cache_parse_rule_key(m);
+        struct nst_cache_key *key = _cache_parse_rule_key(m);
         if(!key) {
             goto err;
         }
-        pk = realloc(pk, (i + 1) * sizeof(struct cache_key *));
+        pk = realloc(pk, (i + 1) * sizeof(struct nst_cache_key *));
         pk[i++] = key;
         m = strtok(NULL, ".");
     }
     if(!pk) {
         goto err;
     }
-    pk = realloc(pk, (i + 1) * sizeof(struct cache_key *));
+    pk = realloc(pk, (i + 1) * sizeof(struct nst_cache_key *));
     pk[i] = NULL;
     free(tmp);
     return pk;
