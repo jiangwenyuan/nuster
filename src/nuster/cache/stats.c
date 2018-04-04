@@ -73,7 +73,7 @@ int cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_msg *msg        = &txn->req;
     struct appctx *appctx       = NULL;
 
-    if(global.cache.status != CACHE_STATUS_ON) {
+    if(global.cache.status != NST_CACHE_STATUS_ON) {
         return 0;
     }
 

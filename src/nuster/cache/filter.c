@@ -58,8 +58,8 @@ static int cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
 static int cache_filter_attach(struct stream *s, struct filter *filter) {
     struct cache_config *conf = FLT_CONF(filter);
 
-    /* disable cache if state is not CACHE_STATUS_ON */
-    if(global.cache.status != CACHE_STATUS_ON || conf->status != CACHE_STATUS_ON) {
+    /* disable cache if state is not NST_CACHE_STATUS_ON */
+    if(global.cache.status != NST_CACHE_STATUS_ON || conf->status != NST_CACHE_STATUS_ON) {
         return 0;
     }
     if(!filter->ctx) {
