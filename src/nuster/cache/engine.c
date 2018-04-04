@@ -327,7 +327,7 @@ void cache_init() {
         global.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct cache_ctx), MEM_F_SHARED);
 
         if(global.cache.share) {
-            global.cache.memory = nuster_memory_create("cache.shm", global.cache.dict_size + global.cache.data_size, global.tune.bufsize, CACHE_DEFAULT_CHUNK_SIZE);
+            global.cache.memory = nuster_memory_create("cache.shm", global.cache.dict_size + global.cache.data_size, global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
             if(!global.cache.memory) {
                 goto shm_err;
             }
