@@ -69,7 +69,7 @@ enum nst_cache_key_type {
     NST_CACHE_KEY_BODY,                      /* body   */
 };
 
-struct cache_key {
+struct nst_cache_key {
     enum nst_cache_key_type  type;
     char                    *data;
 };
@@ -85,15 +85,15 @@ enum {
 };
 
 struct cache_rule {
-    struct list         list;       /* list linked to from the proxy */
-    struct acl_cond    *cond;       /* acl condition to meet */
-    char               *name;       /* cache name for logging */
-    struct cache_key  **key;        /* key */
-    struct cache_code  *code;       /* code */
-    uint32_t           *ttl;        /* ttl: seconds, 0: not expire */
-    int                *state;      /* on when start, can be turned off by manager API */
-    int                 id;         /* same for identical names */
-    int                 uuid;       /* unique cache-rule ID */
+    struct list             list;       /* list linked to from the proxy */
+    struct acl_cond        *cond;       /* acl condition to meet */
+    char                   *name;       /* cache name for logging */
+    struct nst_cache_key  **key;        /* key */
+    struct cache_code      *code;       /* code */
+    uint32_t               *ttl;        /* ttl: seconds, 0: not expire */
+    int                    *state;      /* on when start, can be turned off by manager API */
+    int                     id;         /* same for identical names */
+    int                     uuid;       /* unique cache-rule ID */
 };
 
 struct cache_element {
@@ -269,7 +269,7 @@ void cache_debug(const char *fmt, ...);
 void cache_init();
 void cache_housekeeping();
 int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg *msg);
-char *cache_build_key(struct cache_ctx *ctx, struct cache_key **pck, struct stream *s,
+char *cache_build_key(struct cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
         struct http_msg *msg);
 char *cache_build_purge_key(struct stream *s, struct http_msg *msg);
 uint64_t cache_hash_key(const char *key);

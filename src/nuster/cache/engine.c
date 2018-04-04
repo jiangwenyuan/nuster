@@ -508,14 +508,14 @@ int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg 
     return 1;
 }
 
-char *cache_build_key(struct cache_ctx *ctx, struct cache_key **pck, struct stream *s,
+char *cache_build_key(struct cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
 
     struct hdr_ctx hdr;
 
-    struct cache_key *ck = NULL;
+    struct nst_cache_key *ck = NULL;
     int key_len          = 0;
     int key_size         = NST_CACHE_DEFAULT_KEY_SIZE;
     char *key            = malloc(key_size);
