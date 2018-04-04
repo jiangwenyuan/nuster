@@ -1950,7 +1950,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                         goto out;
                 }
                 global.cache.purge_method = calloc(CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
-                memcpy(global.cache.purge_method, CACHE_DEFAULT_PURGE_METHOD, 5);
+                memcpy(global.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
                 memcpy(global.cache.purge_method + 5, " ", 1);
                 cur_arg++;
                 global.cache.uri = NULL;
