@@ -1949,7 +1949,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                         err_code |= ERR_ALERT | ERR_FATAL;
                         goto out;
                 }
-                global.cache.purge_method = calloc(CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
+                global.cache.purge_method = calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
                 memcpy(global.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
                 memcpy(global.cache.purge_method + 5, " ", 1);
                 cur_arg++;
@@ -2011,13 +2011,13 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                memset(global.cache.purge_method, 0, CACHE_DEFAULT_PURGE_METHOD_SIZE);
-                                if(strlen(args[cur_arg]) <= CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
+                                memset(global.cache.purge_method, 0, NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
+                                if(strlen(args[cur_arg]) <= NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
                                         memcpy(global.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
                                         memcpy(global.cache.purge_method + strlen(args[cur_arg]), " ", 1);
                                 } else {
-                                        memcpy(global.cache.purge_method, args[cur_arg], CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
-                                        memcpy(global.cache.purge_method + CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
+                                        memcpy(global.cache.purge_method, args[cur_arg], NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
+                                        memcpy(global.cache.purge_method + NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
                                 }
                                 cur_arg++;
                                 continue;
