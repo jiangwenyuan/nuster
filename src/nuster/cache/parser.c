@@ -264,13 +264,13 @@ int cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
         }
     }
 
-    conf->status = CACHE_STATUS_ON;
+    conf->status = NST_CACHE_STATUS_ON;
     (*cur_arg)++;
     if(*args[*cur_arg]) {
         if(!strcmp(args[*cur_arg], "off")) {
-            conf->status = CACHE_STATUS_OFF;
+            conf->status = NST_CACHE_STATUS_OFF;
         } else if(!strcmp(args[*cur_arg], "on")) {
-            conf->status = CACHE_STATUS_ON;
+            conf->status = NST_CACHE_STATUS_ON;
         } else {
             memprintf(err, "%s: expects [on|off], default on", args[*cur_arg]);
             return -1;

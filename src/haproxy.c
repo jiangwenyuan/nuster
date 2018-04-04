@@ -225,10 +225,10 @@ struct global global = {
 	},
 #endif
         .cache = {
-                .status       = CACHE_STATUS_UNDEFINED,
+                .status       = NST_CACHE_STATUS_UNDEFINED,
                 .data_size    = NST_CACHE_DEFAULT_SIZE,
                 .dict_size    = NST_CACHE_DEFAULT_SIZE,
-                .share        = CACHE_SHARE_UNDEFINED,
+                .share        = NST_CACHE_SHARE_UNDEFINED,
                 .purge_method = NULL,
         },
 

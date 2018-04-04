@@ -45,12 +45,14 @@
 #define NST_CACHE_DEFAULT_PURGE_METHOD_SIZE   16
 
 enum {
-    CACHE_STATUS_UNDEFINED = -1,
-    CACHE_STATUS_OFF       =  0,
-    CACHE_STATUS_ON        =  1,
-    CACHE_SHARE_UNDEFINED  = -1,
-    CACHE_SHARE_OFF        =  0,
-    CACHE_SHARE_ON         =  1,
+    NST_CACHE_STATUS_UNDEFINED = -1,
+    NST_CACHE_STATUS_OFF       =  0,
+    NST_CACHE_STATUS_ON        =  1,
+};
+enum {
+    NST_CACHE_SHARE_UNDEFINED  = -1,
+    NST_CACHE_SHARE_OFF        =  0,
+    NST_CACHE_SHARE_ON         =  1,
 };
 
 enum ck_type {

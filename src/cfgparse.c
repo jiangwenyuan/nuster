@@ -1930,7 +1930,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                 if (alertif_too_many_args(11, file, linenum, args, &err_code)) {
                         goto out;
                 }
-                if (global.cache.status != CACHE_STATUS_UNDEFINED) {
+                if (global.cache.status != NST_CACHE_STATUS_UNDEFINED) {
                         Alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
                         err_code |= ERR_ALERT;
                         goto out;
@@ -1941,9 +1941,9 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                         goto out;
                 }
                 if (!strcmp(args[cur_arg], "off")) {
-                        global.cache.status = CACHE_STATUS_OFF;
+                        global.cache.status = NST_CACHE_STATUS_OFF;
                 } else if (!strcmp(args[cur_arg], "on")) {
-                        global.cache.status = CACHE_STATUS_ON;
+                        global.cache.status = NST_CACHE_STATUS_ON;
                 } else {
                         Alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
                         err_code |= ERR_ALERT | ERR_FATAL;
@@ -1963,9 +1963,9 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                 goto out;
                             }
                             if (!strcmp(args[cur_arg], "off")) {
-                                global.cache.share = CACHE_SHARE_OFF;
+                                global.cache.share = NST_CACHE_SHARE_OFF;
                             } else if (!strcmp(args[cur_arg], "on")) {
-                                global.cache.share = CACHE_SHARE_ON;
+                                global.cache.share = NST_CACHE_SHARE_ON;
                             } else {
                                 Alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
                                 err_code |= ERR_ALERT | ERR_FATAL;

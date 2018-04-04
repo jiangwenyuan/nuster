@@ -299,7 +299,7 @@ static void _cache_data_cleanup() {
 }
 
 void cache_housekeeping() {
-    if(global.cache.status == CACHE_STATUS_ON) {
+    if(global.cache.status == NST_CACHE_STATUS_ON) {
         cache_dict_rehash();
         nuster_shctx_lock(&cache->dict[0]);
         cache_dict_cleanup();
@@ -314,12 +314,12 @@ void cache_init() {
     int i, uuid;
     struct proxy *p;
 
-    if(global.cache.status == CACHE_STATUS_ON) {
-        if(global.cache.share == CACHE_STATUS_UNDEFINED) {
+    if(global.cache.status == NST_CACHE_STATUS_ON) {
+        if(global.cache.share == NST_CACHE_STATUS_UNDEFINED) {
             if(global.nbproc == 1) {
-                global.cache.share = CACHE_SHARE_OFF;
+                global.cache.share = NST_CACHE_SHARE_OFF;
             } else {
-                global.cache.share = CACHE_SHARE_ON;
+                global.cache.share = NST_CACHE_SHARE_ON;
             }
         }
 
