@@ -166,7 +166,7 @@ struct appctx {
                 struct {
                         struct cache_entry   *entry;
                         struct cache_data    *data;
-                        struct cache_element *element;
+                        struct nst_cache_element *element;
                 } cache;
                 struct {
                         struct my_regex *regex;
