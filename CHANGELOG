@@ -1,6 +1,31 @@
 ChangeLog :
 ===========
 
+2018/04/05 : 1.8.6
+    - BUG/MINOR: lua: the function returns anything
+    - BUG/MINOR: lua funtion hlua_socket_settimeout don't check negative values
+    - BUILD/MINOR: fix build when USE_THREAD is not defined
+    - MINOR: cli/threads: make "show fd" report thread_sync_io_handler instead of "unknown"
+    - MINOR: cli: make "show fd" report the mux and mux_ctx pointers when available
+    - BUILD/MINOR: cli: fix a build warning introduced by last commit
+    - BUG/MINOR: hpack: fix harmless use of uninitialized value in hpack_dht_insert
+    - CLEANUP: h2: rename misleading h2c_stream_close() to h2s_close()
+    - MINOR: h2: provide and use h2s_detach() and h2s_free()
+    - BUG/MAJOR: h2: remove orphaned streams from the send list before closing
+    - MINOR: h2: always call h2s_detach() in h2_detach()
+    - MINOR: h2: fuse h2s_detach() and h2s_free() into h2s_destroy()
+    - BUG/MEDIUM: h2/threads: never release the task outside of the task handler
+    - BUG/MEDIUM: h2: don't consider pending data on detach if connection is in error
+    - BUILD/MINOR: threads: always export thread_sync_io_handler()
+    - BUG/MEDIUM: h2: always add a stream to the send or fctl list when blocked
+    - BUG/MINOR: checks: check the conn_stream's readiness and not the connection
+    - BUG/MINOR: email-alert: Set the mailer port during alert initialization
+    - BUG/MINOR: cache: fix "show cache" output
+    - BUG/MINOR: fd: Don't clear the update_mask in fd_insert.
+    - BUG/MAJOR: cache: fix random crashes caused by incorrect delete() on non-first blocks
+    - BUG/MINOR: spoe: Initialize variables used during conf parsing before any check
+    - BUG/MINOR: spoe: Don't release the context buffer in .check_timeouts callbaclk
+
 2018/03/23 : 1.8.5
     - BUG/MINOR: threads: fix missing thread lock labels for 1.8
     - BUG/MEDIUM: ssl: Don't always treat SSL_ERROR_SYSCALL as unrecovarable.
