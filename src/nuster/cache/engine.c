@@ -181,11 +181,11 @@ static int _cache_find_param_value_by_name(char *query_beg, char *query_end,
 }
 
 /*
- * create a new cache_data and insert it to cache->data list
+ * create a new nst_cache_data and insert it to cache->data list
  */
-struct cache_data *cache_data_new() {
+struct nst_cache_data *cache_data_new() {
 
-    struct cache_data *data = cache_memory_alloc(global.cache.pool.data, sizeof(*data));
+    struct nst_cache_data *data = cache_memory_alloc(global.cache.pool.data, sizeof(*data));
 
     nuster_shctx_lock(cache);
     if(data) {
@@ -250,7 +250,7 @@ static struct nst_cache_element *cache_data_append(struct nst_cache_element *tai
 }
 
 
-static int _cache_data_invalid(struct cache_data *data) {
+static int _cache_data_invalid(struct nst_cache_data *data) {
     if(data->invalid) {
         if(!data->clients) {
             return 1;
@@ -260,10 +260,10 @@ static int _cache_data_invalid(struct cache_data *data) {
 }
 
 /*
- * free invalid cache_data
+ * free invalid nst_cache_data
  */
 static void _cache_data_cleanup() {
-    struct cache_data *data = NULL;
+    struct nst_cache_data *data = NULL;
 
     if(cache->data_head) {
         if(cache->data_head == cache->data_tail) {
@@ -343,7 +343,7 @@ void cache_init() {
             if(!nuster_shctx_init(global.cache.memory)) {
                 goto shm_err;
             }
-            global.cache.pool.data    = create_pool("cp.data", sizeof(struct cache_data), MEM_F_SHARED);
+            global.cache.pool.data    = create_pool("cp.data", sizeof(struct nst_cache_data), MEM_F_SHARED);
             global.cache.pool.element = create_pool("cp.element", sizeof(struct nst_cache_element), MEM_F_SHARED);
             global.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
             global.cache.pool.entry   = create_pool("cp.entry", sizeof(struct cache_entry), MEM_F_SHARED);
@@ -656,9 +656,9 @@ char *cache_build_purge_key(struct stream *s, struct http_msg *msg) {
 /*
  * Check if valid cache exists
  */
-struct cache_data *cache_exists(const char *key, uint64_t hash) {
+struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
     struct cache_entry *entry = NULL;
-    struct cache_data  *data  = NULL;
+    struct nst_cache_data  *data  = NULL;
 
     if(!key) return NULL;
 
@@ -676,7 +676,7 @@ struct cache_data *cache_exists(const char *key, uint64_t hash) {
 /*
  * Start to create cache,
  * if cache does not exist, add a new cache_entry
- * if cache exists but expired, add a new cache_data to the entry
+ * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
 void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
@@ -722,7 +722,7 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
 }
 
 /*
- * Add partial http data to cache_data
+ * Add partial http data to nst_cache_data
  */
 int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len) {
     struct nst_cache_element *element = cache_data_append(ctx->element, msg, msg_len);
@@ -759,7 +759,7 @@ void cache_abort(struct cache_ctx *ctx) {
  * Create cache applet to handle the request
  */
 void cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
-        struct channel *res, struct cache_data *data) {
+        struct channel *res, struct nst_cache_data *data) {
 
     struct appctx *appctx = NULL;
 

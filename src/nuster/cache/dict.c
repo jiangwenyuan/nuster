@@ -200,7 +200,7 @@ void cache_dict_cleanup() {
  */
 struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx) {
     struct cache_dict  *dict  = NULL;
-    struct cache_data  *data  = NULL;
+    struct nst_cache_data  *data  = NULL;
     struct cache_entry *entry = NULL;
     int idx;
 
