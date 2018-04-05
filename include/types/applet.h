@@ -165,7 +165,7 @@ struct appctx {
 		} spoe;                         /* used by SPOE filter */
                 struct {
                         struct cache_entry   *entry;
-                        struct cache_data    *data;
+                        struct nst_cache_data    *data;
                         struct nst_cache_element *element;
                 } cache;
                 struct {

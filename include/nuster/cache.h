@@ -103,15 +103,15 @@ struct nst_cache_element {
 };
 
 /*
- * A cache_data contains a complete http response data,
+ * A nst_cache_data contains a complete http response data,
  * and is pointed by cache_entry->data.
- * All cache_data are stored in a circular singly linked list
+ * All nst_cache_data are stored in a circular singly linked list
  */
-struct cache_data {
+struct nst_cache_data {
     int                       clients;
     int                       invalid;
     struct nst_cache_element *element;
-    struct cache_data        *next;
+    struct nst_cache_data    *next;
 };
 
 /*
@@ -128,7 +128,7 @@ struct cache_entry {
     int                     state;
     char                   *key;
     uint64_t                hash;
-    struct cache_data      *data;
+    struct nst_cache_data  *data;
     uint64_t                expire;
     uint64_t                atime;
     struct nuster_str       host;
@@ -174,7 +174,7 @@ struct cache_ctx {
     struct cache_rule_stash  *stash;
 
     struct cache_entry       *entry;
-    struct cache_data        *data;
+    struct nst_cache_data    *data;
     struct nst_cache_element *element;
 
     struct {
@@ -206,17 +206,17 @@ struct cache_stats {
 };
 
 struct cache {
-    struct cache_dict  dict[2];           /* 0: using, 1: rehashing */
-    struct cache_data *data_head;         /* point to the circular linked list, tail->next ===  head */
-    struct cache_data *data_tail;         /* and will be moved together constantly to check invalid data */
+    struct cache_dict      dict[2];           /* 0: using, 1: rehashing */
+    struct nst_cache_data *data_head;         /* point to the circular linked list, tail->next ===  head */
+    struct nst_cache_data *data_tail;         /* and will be moved together constantly to check invalid data */
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t    mutex;
+    pthread_mutex_t        mutex;
 #else
-    unsigned int       waiters;
+    unsigned int           waiters;
 #endif
 
-    int                rehash_idx;        /* >=0: rehashing, index, -1: not rehashing */
-    int                cleanup_idx;       /* cache dict cleanup index */
+    int                    rehash_idx;        /* >=0: rehashing, index, -1: not rehashing */
+    int                    cleanup_idx;       /* cache dict cleanup index */
 };
 
 struct cache_config {
@@ -277,10 +277,10 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash);
 int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len);
 void cache_finish(struct cache_ctx *ctx);
 void cache_abort(struct cache_ctx *ctx);
-struct cache_data *cache_exists(const char *key, uint64_t hash);
-struct cache_data *cache_data_new();
+struct nst_cache_data *cache_exists(const char *key, uint64_t hash);
+struct nst_cache_data *cache_data_new();
 void cache_hit(struct stream *s, struct stream_interface *si,
-        struct channel *req, struct channel *res, struct cache_data *data);
+        struct channel *req, struct channel *res, struct nst_cache_data *data);
 struct cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash);
 int cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
