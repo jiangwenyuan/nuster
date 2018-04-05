@@ -74,9 +74,9 @@ struct nst_cache_key {
     char                    *data;
 };
 
-struct cache_code {
-    int                code;
-    struct cache_code *next;
+struct nst_cache_code {
+    int                    code;
+    struct nst_cache_code *next;
 };
 
 enum {
@@ -89,7 +89,7 @@ struct cache_rule {
     struct acl_cond        *cond;       /* acl condition to meet */
     char                   *name;       /* cache name for logging */
     struct nst_cache_key  **key;        /* key */
-    struct cache_code      *code;       /* code */
+    struct nst_cache_code  *code;       /* code */
     uint32_t               *ttl;        /* ttl: seconds, 0: not expire */
     int                    *state;      /* on when start, can be turned off by manager API */
     int                     id;         /* same for identical names */

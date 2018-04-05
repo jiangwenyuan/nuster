@@ -197,7 +197,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 
         if(ctx->state == CACHE_CTX_STATE_PASS) {
             struct cache_rule_stash *stash = ctx->stash;
-            struct cache_code *cc          = ctx->rule->code;
+            struct nst_cache_code *cc      = ctx->rule->code;
             int valid                      = 0;
 
             ctx->pid = px->uuid;
