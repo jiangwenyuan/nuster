@@ -105,17 +105,17 @@ err:
     return NULL;
 }
 
-static struct cache_code *cache_parse_rule_code(char *str) {
+static struct nst_cache_code *cache_parse_rule_code(char *str) {
     if(!strcmp(str, "all")) {
         return NULL;
     } else {
-        struct cache_code *code = NULL;
+        struct nst_cache_code *code = NULL;
         char *tmp = strdup(str);
         char *m = strtok(tmp, ",");
         /* warn ","? */
         while(m) {
             int i = atoi(m);
-            struct cache_code *cc = malloc(sizeof(*cc));
+            struct nst_cache_code *cc = malloc(sizeof(*cc));
             cc->code = i;
             if(code) {
                 cc->next = code;
