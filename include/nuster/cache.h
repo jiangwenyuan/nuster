@@ -80,8 +80,8 @@ struct nst_cache_code {
 };
 
 enum {
-    CACHE_RULE_DISABLED = 0,
-    CACHE_RULE_ENABLED  = 1,
+    NST_CACHE_RULE_DISABLED = 0,
+    NST_CACHE_RULE_ENABLED  = 1,
 };
 
 struct cache_rule {

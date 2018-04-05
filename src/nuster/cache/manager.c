@@ -339,9 +339,9 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             ctx.idx = 0;
             if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
                 if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
-                    state = CACHE_RULE_ENABLED;
+                    state = NST_CACHE_RULE_ENABLED;
                 } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
-                    state = CACHE_RULE_DISABLED;
+                    state = NST_CACHE_RULE_DISABLED;
                 }
             }
             ctx.idx = 0;
