@@ -216,10 +216,10 @@ struct cache_data *cache_data_new() {
 /*
  * Append partial http response data
  */
-static struct cache_element *cache_data_append(struct cache_element *tail,
+static struct nst_cache_element *cache_data_append(struct nst_cache_element *tail,
         struct http_msg *msg, long msg_len) {
 
-    struct cache_element *element = cache_memory_alloc(global.cache.pool.element, sizeof(*element));
+    struct nst_cache_element *element = cache_memory_alloc(global.cache.pool.element, sizeof(*element));
 
     if(element) {
         char *data = msg->chn->buf->data;
@@ -285,9 +285,9 @@ static void _cache_data_cleanup() {
     }
 
     if(data) {
-        struct cache_element *element = data->element;
+        struct nst_cache_element *element = data->element;
         while(element) {
-            struct cache_element *tmp = element;
+            struct nst_cache_element *tmp = element;
             element                   = element->next;
 
             cache_stats_update_used_mem(-tmp->msg_len);
@@ -344,7 +344,7 @@ void cache_init() {
                 goto shm_err;
             }
             global.cache.pool.data    = create_pool("cp.data", sizeof(struct cache_data), MEM_F_SHARED);
-            global.cache.pool.element = create_pool("cp.element", sizeof(struct cache_element), MEM_F_SHARED);
+            global.cache.pool.element = create_pool("cp.element", sizeof(struct nst_cache_element), MEM_F_SHARED);
             global.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
             global.cache.pool.entry   = create_pool("cp.entry", sizeof(struct cache_entry), MEM_F_SHARED);
 
@@ -725,7 +725,7 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
  * Add partial http data to cache_data
  */
 int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len) {
-    struct cache_element *element = cache_data_append(ctx->element, msg, msg_len);
+    struct nst_cache_element *element = cache_data_append(ctx->element, msg, msg_len);
 
     if(element) {
         if(!ctx->element) {
@@ -794,7 +794,7 @@ static void cache_io_handler(struct appctx *appctx) {
     struct stream_interface *si   = appctx->owner;
     struct channel *res           = si_ic(si);
     struct stream *s              = si_strm(si);
-    struct cache_element *element = NULL;
+    struct nst_cache_element *element = NULL;
     int ret;
 
     if(appctx->ctx.cache.element) {

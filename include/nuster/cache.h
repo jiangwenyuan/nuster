@@ -75,8 +75,8 @@ struct nst_cache_key {
 };
 
 struct nst_cache_code {
-    int                    code;
     struct nst_cache_code *next;
+    int                    code;
 };
 
 enum {
@@ -96,10 +96,10 @@ struct nst_cache_rule {
     int                     uuid;       /* unique cache-rule ID */
 };
 
-struct cache_element {
-    char                 *msg;
-    int                   msg_len;
-    struct cache_element *next;
+struct nst_cache_element {
+    struct nst_cache_element *next;
+    char                     *msg;
+    int                       msg_len;
 };
 
 /*
@@ -108,10 +108,10 @@ struct cache_element {
  * All cache_data are stored in a circular singly linked list
  */
 struct cache_data {
-    int                   clients;
-    int                   invalid;
-    struct cache_element *element;
-    struct cache_data    *next;
+    int                       clients;
+    int                       invalid;
+    struct nst_cache_element *element;
+    struct cache_data        *next;
 };
 
 /*
@@ -168,25 +168,25 @@ enum {
 };
 
 struct cache_ctx {
-    int                      state;
+    int                       state;
 
-    struct nst_cache_rule   *rule;
-    struct cache_rule_stash *stash;
+    struct nst_cache_rule    *rule;
+    struct cache_rule_stash  *stash;
 
-    struct cache_entry      *entry;
-    struct cache_data       *data;
-    struct cache_element    *element;
+    struct cache_entry       *entry;
+    struct cache_data        *data;
+    struct nst_cache_element *element;
 
     struct {
-        int                  scheme;
-        struct nuster_str    host;
-        struct nuster_str    uri;
-        struct nuster_str    path;
-        int                  delimiter;
-        struct nuster_str    query;
-        struct nuster_str    cookie;
+        int                   scheme;
+        struct nuster_str     host;
+        struct nuster_str     uri;
+        struct nuster_str     path;
+        int                   delimiter;
+        struct nuster_str     query;
+        struct nuster_str     cookie;
     } req;
-    int                      pid;         /* proxy uuid */
+    int                       pid;         /* proxy uuid */
 };
 
 struct cache_stats {
