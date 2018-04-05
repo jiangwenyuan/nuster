@@ -115,7 +115,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
     struct proxy *px            = s->be;
     struct stream_interface *si = &s->si[1];
     struct cache_ctx *ctx       = filter->ctx;
-    struct cache_rule *rule     = NULL;
+    struct nst_cache_rule *rule = NULL;
     char *key                   = NULL;
     uint64_t hash               = 0;
 

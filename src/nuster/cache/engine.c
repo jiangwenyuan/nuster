@@ -78,7 +78,7 @@ struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
  * Cache the keys which calculated in request for response use
  */
 struct cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
-        struct cache_rule *rule, char *key, uint64_t hash) {
+        struct nst_cache_rule *rule, char *key, uint64_t hash) {
 
     struct cache_rule_stash *stash = pool_alloc2(global.cache.pool.stash);
 
@@ -96,7 +96,7 @@ struct cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
     return stash;
 }
 
-int cache_test_rule(struct cache_rule *rule, struct stream *s, int res) {
+int cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res) {
     int ret;
 
     /* no acl defined */
@@ -383,7 +383,7 @@ void cache_init() {
         i = uuid = 0;
         p = proxy;
         while(p) {
-            struct cache_rule *rule = NULL;
+            struct nst_cache_rule *rule = NULL;
             uint32_t ttl;
 
             list_for_each_entry(rule, &p->cache_rules, list) {
@@ -405,7 +405,7 @@ void cache_init() {
 
                 pt = proxy;
                 while(pt) {
-                    struct cache_rule *rt = NULL;
+                    struct nst_cache_rule *rt = NULL;
                     list_for_each_entry(rt, &pt->cache_rules, list) {
                         if(rt == rule) goto out;
                         if(!strcmp(rt->name, rule->name)) {

@@ -84,7 +84,7 @@ enum {
     NST_CACHE_RULE_ENABLED  = 1,
 };
 
-struct cache_rule {
+struct nst_cache_rule {
     struct list             list;       /* list linked to from the proxy */
     struct acl_cond        *cond;       /* acl condition to meet */
     char                   *name;       /* cache name for logging */
@@ -125,17 +125,17 @@ enum {
 };
 
 struct cache_entry {
-    int                 state;
-    char               *key;
-    uint64_t            hash;
-    struct cache_data  *data;
-    uint64_t            expire;
-    uint64_t            atime;
-    struct nuster_str   host;
-    struct nuster_str   path;
-    struct cache_entry *next;
-    struct cache_rule  *rule;        /* rule */
-    int                 pid;         /* proxy uuid */
+    int                     state;
+    char                   *key;
+    uint64_t                hash;
+    struct cache_data      *data;
+    uint64_t                expire;
+    uint64_t                atime;
+    struct nuster_str       host;
+    struct nuster_str       path;
+    struct cache_entry     *next;
+    struct nst_cache_rule  *rule;        /* rule */
+    int                     pid;         /* proxy uuid */
 };
 
 struct cache_dict {
@@ -150,7 +150,7 @@ struct cache_dict {
 };
 
 struct cache_rule_stash {
-    struct cache_rule       *rule;
+    struct nst_cache_rule   *rule;
     char                    *key;
     uint64_t                 hash;
     struct cache_rule_stash *next;
@@ -170,7 +170,7 @@ enum {
 struct cache_ctx {
     int                      state;
 
-    struct cache_rule       *rule;
+    struct nst_cache_rule   *rule;
     struct cache_rule_stash *stash;
 
     struct cache_entry      *entry;
@@ -282,8 +282,8 @@ struct cache_data *cache_data_new();
 void cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct cache_data *data);
 struct cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
-        struct cache_rule *rule, char *key, uint64_t hash);
-int cache_test_rule(struct cache_rule *rule, struct stream *s, int res);
+        struct nst_cache_rule *rule, char *key, uint64_t hash);
+int cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
 int cache_purge(struct stream *s, struct channel *req, struct proxy *px);
 int cache_manager(struct stream *s, struct channel *req, struct proxy *px);
 
