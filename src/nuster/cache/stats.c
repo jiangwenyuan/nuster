@@ -130,7 +130,7 @@ int cache_stats_data(struct appctx *appctx, struct stream *s, struct stream_inte
 
     p = proxy;
     while(p) {
-        struct cache_rule *rule = NULL;
+        struct nst_cache_rule *rule = NULL;
 
         if(buffer_almost_full(res->buf)) {
             si_applet_cant_put(si);
@@ -154,7 +154,7 @@ int cache_stats_data(struct appctx *appctx, struct stream *s, struct stream_inte
 
                     if(rule->uuid == appctx->st2) {
 
-                        if((struct cache_rule *)(&p->cache_rules)->n == rule) {
+                        if((struct nst_cache_rule *)(&p->cache_rules)->n == rule) {
                             chunk_printf(&trash, "\n**PROXY %s %d**\n", p->id, p->uuid);
                             chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->name);
                         } else {

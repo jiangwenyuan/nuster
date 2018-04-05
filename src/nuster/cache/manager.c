@@ -150,7 +150,7 @@ int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy 
         }
         p = proxy;
         while(p) {
-            struct cache_rule *rule = NULL;
+            struct nst_cache_rule *rule = NULL;
 
             if(mode != NUSTER_CACHE_PURGE_MODE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
                 found = 1;
@@ -219,7 +219,7 @@ int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px)
 
         p = proxy;
         while(p) {
-            struct cache_rule *rule = NULL;
+            struct nst_cache_rule *rule = NULL;
 
             if(mode != NUSTER_CACHE_PURGE_MODE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
                 mode = NUSTER_CACHE_PURGE_MODE_NAME_PROXY;
