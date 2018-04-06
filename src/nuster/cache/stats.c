@@ -28,13 +28,13 @@ void cache_stats_update_request(int state) {
     nuster_shctx_lock(global.cache.stats);
     global.cache.stats->request.total++;
     switch(state) {
-        case CACHE_CTX_STATE_HIT:
+        case NST_CACHE_CTX_STATE_HIT:
             global.cache.stats->request.hit++;
             break;
-        case CACHE_CTX_STATE_CREATE:
+        case NST_CACHE_CTX_STATE_CREATE:
             global.cache.stats->request.abort++;
             break;
-        case CACHE_CTX_STATE_DONE:
+        case NST_CACHE_CTX_STATE_DONE:
             global.cache.stats->request.fetch++;
             break;
         default:

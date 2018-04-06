@@ -157,14 +157,14 @@ struct nst_cache_rule_stash {
 };
 
 enum {
-    CACHE_CTX_STATE_INIT   = 0,   /* init */
-    CACHE_CTX_STATE_CREATE = 1,   /* to cache */
-    CACHE_CTX_STATE_DONE   = 2,   /* cache done */
-    CACHE_CTX_STATE_BYPASS = 3,   /* not cached, return to regular process */
-    CACHE_CTX_STATE_WAIT   = 4,   /* caching, wait */
-    CACHE_CTX_STATE_HIT    = 5,   /* cached, use cache */
-    CACHE_CTX_STATE_PASS   = 6,   /* cache rule passed */
-    CACHE_CTX_STATE_FULL   = 7,   /* cache full */
+    NST_CACHE_CTX_STATE_INIT   = 0,   /* init */
+    NST_CACHE_CTX_STATE_CREATE = 1,   /* to cache */
+    NST_CACHE_CTX_STATE_DONE   = 2,   /* cache done */
+    NST_CACHE_CTX_STATE_BYPASS = 3,   /* not cached, return to regular process */
+    NST_CACHE_CTX_STATE_WAIT   = 4,   /* caching, wait */
+    NST_CACHE_CTX_STATE_HIT    = 5,   /* cached, use cache */
+    NST_CACHE_CTX_STATE_PASS   = 6,   /* cache rule passed */
+    NST_CACHE_CTX_STATE_FULL   = 7,   /* cache full */
 };
 
 struct cache_ctx {
