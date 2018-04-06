@@ -41,26 +41,26 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 #define HA_ATOMIC_OR(val, flags)     ({*(val) |= (flags);})
 #define HA_ATOMIC_XCHG(val, new)					\
 	({								\
-		typeof(*(val)) __old = *(val);				\
+		typeof(*(val)) __old_xchg = *(val);			\
 		*(val) = new;						\
-		__old;							\
+		__old_xchg;						\
 	})
 #define HA_ATOMIC_STORE(val, new)    ({*(val) = new;})
 #define HA_ATOMIC_UPDATE_MAX(val, new)					\
 	({								\
-		typeof(*(val)) __new = (new);				\
+		typeof(*(val)) __new_max = (new);			\
 									\
-		if (*(val) < __new)					\
-			*(val) = __new;					\
+		if (*(val) < __new_max)					\
+			*(val) = __new_max;				\
 		*(val);							\
 	})
 
 #define HA_ATOMIC_UPDATE_MIN(val, new)					\
 	({								\
-		typeof(*(val)) __new = (new);				\
+		typeof(*(val)) __new_min = (new);			\
 									\
-		if (*(val) > __new)					\
-			*(val) = __new;					\
+		if (*(val) > __new_min)					\
+			*(val) = __new_min;				\
 		*(val);							\
 	})
 
@@ -120,38 +120,38 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
  * but only if it differs from the expected one. If it's the same it's a race
  * thus we try again to avoid confusing a possibly sensitive caller.
  */
-#define HA_ATOMIC_CAS(val, old, new)					       \
-	({								       \
-		typeof((val)) __val = (val);				       \
-		typeof((old)) __oldp = (old);				       \
-		typeof(*(old)) __oldv;					       \
-		typeof((new)) __new = (new);				       \
-		int __ret;						       \
-		do {							       \
-			__oldv = *__val;				       \
-			__ret = __sync_bool_compare_and_swap(__val, *__oldp, __new); \
-		} while (!__ret && *__oldp == __oldv);			       \
-		if (!__ret)						       \
-			*__oldp = __oldv;				       \
-		__ret;							       \
+#define HA_ATOMIC_CAS(val, old, new)					\
+	({								\
+		typeof((val)) __val_cas = (val);			\
+		typeof((old)) __oldp_cas = (old);			\
+		typeof(*(old)) __oldv_cas;				\
+		typeof((new)) __new_cas = (new);			\
+		int __ret_cas;						\
+		do {							\
+			__oldv_cas = *__val_cas;			\
+			__ret_cas = __sync_bool_compare_and_swap(__val_cas, *__oldp_cas, __new_cas); \
+		} while (!__ret_cas && *__oldp_cas == __oldv_cas);	\
+		if (!__ret_cas)						\
+			*__oldp_cas = __oldv_cas;			\
+		__ret_cas;						\
 	})
 
-#define HA_ATOMIC_XCHG(val, new)					       \
-	({								       \
-		typeof((val)) __val = (val);				       \
-		typeof(*(val)) __old;					       \
-		typeof((new)) __new = (new);				       \
-		do { __old = *__val;					       \
-		} while (!__sync_bool_compare_and_swap(__val, __old, __new));  \
-		__old;							       \
+#define HA_ATOMIC_XCHG(val, new)					\
+	({								\
+		typeof((val)) __val_xchg = (val);			\
+		typeof(*(val)) __old_xchg;				\
+		typeof((new)) __new_xchg = (new);			\
+		do { __old_xchg = *__val_xchg;				\
+		} while (!__sync_bool_compare_and_swap(__val_xchg, __old_xchg, __new_xchg)); \
+		__old_xchg;						\
 	})
-#define HA_ATOMIC_STORE(val, new)					     \
-	({								       \
-		typeof((val)) __val = (val);				       \
-		typeof(*(val)) __old;					       \
-		typeof((new)) __new = (new);				       \
-		do { __old = *__val;					       \
-		} while (!__sync_bool_compare_and_swap(__val, __old, __new));  \
+#define HA_ATOMIC_STORE(val, new)					\
+	({								\
+		typeof((val)) __val_store = (val);			\
+		typeof(*(val)) __old_store;				\
+		typeof((new)) __new_store = (new);			\
+		do { __old_store = *__val_store;			\
+		} while (!__sync_bool_compare_and_swap(__val_store, __old_store, __new_store));	\
 	})
 #else
 /* gcc >= 4.7 */
@@ -166,19 +166,21 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 
 #define HA_ATOMIC_UPDATE_MAX(val, new)					\
 	({								\
-		typeof(*(val)) __old = *(val);				\
-		typeof(*(val)) __new = (new);				\
+		typeof(*(val)) __old_max = *(val);			\
+		typeof(*(val)) __new_max = (new);			\
 									\
-		while (__old < __new && !HA_ATOMIC_CAS(val, &__old, __new)); \
-		(*val);							\
+		while (__old_max < __new_max &&				\
+		       !HA_ATOMIC_CAS(val, &__old_max, __new_max));	\
+		*(val);							\
 	})
 #define HA_ATOMIC_UPDATE_MIN(val, new)					\
 	({								\
-		typeof((*val)) __old = *(val);				\
-		typeof((*val)) __new = (new);				\
+		typeof(*(val)) __old_min = *(val);			\
+		typeof(*(val)) __new_min = (new);			\
 									\
-		while (__old > __new && !HA_ATOMIC_CAS(val, &__old, __new)); \
-		(*val);							\
+		while (__old_min > __new_min &&				\
+		       !HA_ATOMIC_CAS(val, &__old_min, __new_min));	\
+		*(val);							\
 	})
 
 #define HA_BARRIER() pl_barrier()
