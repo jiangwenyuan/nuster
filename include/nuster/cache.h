@@ -167,7 +167,7 @@ enum {
     NST_CACHE_CTX_STATE_FULL   = 7,   /* cache full */
 };
 
-struct cache_ctx {
+struct nst_cache_ctx {
     int                          state;
 
     struct nst_cache_rule       *rule;
@@ -259,7 +259,7 @@ enum {
 /* dict */
 int cache_dict_init();
 struct nst_cache_entry *cache_dict_get(const char *key, uint64_t hash);
-struct nst_cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx);
+struct nst_cache_entry *cache_dict_set(const char *key, uint64_t hash, struct nst_cache_ctx *ctx);
 void cache_dict_rehash();
 void cache_dict_cleanup();
 
@@ -268,20 +268,20 @@ void cache_dict_cleanup();
 void cache_debug(const char *fmt, ...);
 void cache_init();
 void cache_housekeeping();
-int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg *msg);
-char *cache_build_key(struct cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
+int cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
+char *cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
         struct http_msg *msg);
 char *cache_build_purge_key(struct stream *s, struct http_msg *msg);
 uint64_t cache_hash_key(const char *key);
-void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash);
-int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len);
-void cache_finish(struct cache_ctx *ctx);
-void cache_abort(struct cache_ctx *ctx);
+void cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash);
+int cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len);
+void cache_finish(struct nst_cache_ctx *ctx);
+void cache_abort(struct nst_cache_ctx *ctx);
 struct nst_cache_data *cache_exists(const char *key, uint64_t hash);
 struct nst_cache_data *cache_data_new();
 void cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
-struct nst_cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
+struct nst_cache_rule_stash *cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash);
 int cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
 int cache_purge(struct stream *s, struct channel *req, struct proxy *px);

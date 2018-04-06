@@ -77,7 +77,7 @@ struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
 /*
  * Cache the keys which calculated in request for response use
  */
-struct nst_cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
+struct nst_cache_rule_stash *cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash) {
 
     struct nst_cache_rule_stash *stash = pool_alloc2(global.cache.pool.stash);
@@ -324,7 +324,7 @@ void cache_init() {
         }
 
         global.cache.pool.stash   = create_pool("cp.stash", sizeof(struct nst_cache_rule_stash), MEM_F_SHARED);
-        global.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct cache_ctx), MEM_F_SHARED);
+        global.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct nst_cache_ctx), MEM_F_SHARED);
 
         if(global.cache.share) {
             global.cache.memory = nuster_memory_create("cache.shm", global.cache.dict_size + global.cache.data_size, global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
@@ -436,7 +436,7 @@ shm_err:
     exit(1);
 }
 
-int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
+int cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
 
@@ -508,7 +508,7 @@ int cache_prebuild_key(struct cache_ctx *ctx, struct stream *s, struct http_msg 
     return 1;
 }
 
-char *cache_build_key(struct cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
+char *cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
@@ -679,7 +679,7 @@ struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
  * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
-void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
+void cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
 
     /* Check if cache is full */
@@ -724,7 +724,7 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
 /*
  * Add partial http data to nst_cache_data
  */
-int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len) {
+int cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len) {
     struct nst_cache_element *element = cache_data_append(ctx->element, msg, msg_len);
 
     if(element) {
@@ -741,7 +741,7 @@ int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len) {
 /*
  * cache done
  */
-void cache_finish(struct cache_ctx *ctx) {
+void cache_finish(struct nst_cache_ctx *ctx) {
     ctx->state = NST_CACHE_CTX_STATE_DONE;
     ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
     if(*ctx->rule->ttl == 0) {
@@ -751,7 +751,7 @@ void cache_finish(struct cache_ctx *ctx) {
     }
 }
 
-void cache_abort(struct cache_ctx *ctx) {
+void cache_abort(struct nst_cache_ctx *ctx) {
     ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
 }
 

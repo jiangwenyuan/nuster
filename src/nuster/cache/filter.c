@@ -63,7 +63,7 @@ static int cache_filter_attach(struct stream *s, struct filter *filter) {
         return 0;
     }
     if(!filter->ctx) {
-        struct cache_ctx *ctx = pool_alloc2(global.cache.pool.ctx);
+        struct nst_cache_ctx *ctx = pool_alloc2(global.cache.pool.ctx);
         if(ctx == NULL ) {
             return 0;
         }
@@ -84,7 +84,7 @@ static int cache_filter_attach(struct stream *s, struct filter *filter) {
 static void cache_filter_detach(struct stream *s, struct filter *filter) {
     if(filter->ctx) {
         struct nst_cache_rule_stash *stash = NULL;
-        struct cache_ctx *ctx          = filter->ctx;
+        struct nst_cache_ctx *ctx          = filter->ctx;
 
         cache_stats_update_request(ctx->state);
 
@@ -114,7 +114,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
     struct channel *res         = &s->res;
     struct proxy *px            = s->be;
     struct stream_interface *si = &s->si[1];
-    struct cache_ctx *ctx       = filter->ctx;
+    struct nst_cache_ctx *ctx       = filter->ctx;
     struct nst_cache_rule *rule = NULL;
     char *key                   = NULL;
     uint64_t hash               = 0;
@@ -247,7 +247,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 static int cache_filter_http_forward_data(struct stream *s, struct filter *filter,
         struct http_msg *msg, unsigned int len) {
 
-    struct cache_ctx *ctx = filter->ctx;
+    struct nst_cache_ctx *ctx = filter->ctx;
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         if(!cache_update(ctx, msg, len)) {
@@ -261,7 +261,7 @@ static int cache_filter_http_forward_data(struct stream *s, struct filter *filte
 static int cache_filter_http_end(struct stream *s, struct filter *filter,
         struct http_msg *msg) {
 
-    struct cache_ctx *ctx = filter->ctx;
+    struct nst_cache_ctx *ctx = filter->ctx;
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         cache_finish(ctx);
