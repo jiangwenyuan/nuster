@@ -67,7 +67,7 @@ static int cache_filter_attach(struct stream *s, struct filter *filter) {
         if(ctx == NULL ) {
             return 0;
         }
-        ctx->state   = CACHE_CTX_STATE_INIT;
+        ctx->state   = NST_CACHE_CTX_STATE_INIT;
         ctx->rule    = NULL;
         ctx->stash   = NULL;
         ctx->entry   = NULL;
@@ -88,7 +88,7 @@ static void cache_filter_detach(struct stream *s, struct filter *filter) {
 
         cache_stats_update_request(ctx->state);
 
-        if(ctx->state == CACHE_CTX_STATE_CREATE) {
+        if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
             cache_abort(ctx);
         }
         while(ctx->stash) {
@@ -125,11 +125,11 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 
         /* check http method */
         if(s->txn->meth == HTTP_METH_OTHER) {
-            ctx->state = CACHE_CTX_STATE_BYPASS;
+            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
         }
 
         /* request */
-        if(ctx->state == CACHE_CTX_STATE_INIT) {
+        if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
             if(!cache_prebuild_key(ctx, s, msg)) {
                 return 1;
             }
@@ -157,7 +157,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 if(ctx->data) {
                     cache_debug("EXIST\n[CACHE] Hit\n");
                     /* OK, cache exists */
-                    ctx->state = CACHE_CTX_STATE_HIT;
+                    ctx->state = NST_CACHE_CTX_STATE_HIT;
                     break;
                 }
                 cache_debug("NOT EXIST\n");
@@ -167,7 +167,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 cache_debug("[CACHE] [REQ] Checking if rule pass: ");
                 if(cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     cache_debug("PASS\n");
-                    ctx->state = CACHE_CTX_STATE_PASS;
+                    ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
                     break;
                 }
@@ -175,19 +175,19 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
             }
         }
 
-        if(ctx->state == CACHE_CTX_STATE_HIT) {
+        if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
             cache_hit(s, si, req, res, ctx->data);
         }
 
     } else {
         /* response */
-        if(ctx->state == CACHE_CTX_STATE_INIT) {
+        if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
             cache_debug("[CACHE] [RES] Checking if rule pass: ");
             list_for_each_entry(rule, &px->cache_rules, list) {
                 /* test acls to see if we should cache it */
                 if(cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     cache_debug("PASS\n");
-                    ctx->state = CACHE_CTX_STATE_PASS;
+                    ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
                     break;
                 }
@@ -195,7 +195,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
             }
         }
 
-        if(ctx->state == CACHE_CTX_STATE_PASS) {
+        if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
             struct nst_cache_rule_stash *stash = ctx->stash;
             struct nst_cache_code *cc      = ctx->rule->code;
             int valid                      = 0;
@@ -249,10 +249,10 @@ static int cache_filter_http_forward_data(struct stream *s, struct filter *filte
 
     struct cache_ctx *ctx = filter->ctx;
 
-    if(ctx->state == CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         if(!cache_update(ctx, msg, len)) {
             ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
-            ctx->state        = CACHE_CTX_STATE_PASS;
+            ctx->state        = NST_CACHE_CTX_STATE_PASS;
         }
     }
     return len;
@@ -263,7 +263,7 @@ static int cache_filter_http_end(struct stream *s, struct filter *filter,
 
     struct cache_ctx *ctx = filter->ctx;
 
-    if(ctx->state == CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         cache_finish(ctx);
     }
     return 1;

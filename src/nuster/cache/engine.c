@@ -684,7 +684,7 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
 
     /* Check if cache is full */
     if(cache_stats_full()) {
-        ctx->state = CACHE_CTX_STATE_FULL;
+        ctx->state = NST_CACHE_CTX_STATE_FULL;
         return;
     }
 
@@ -692,26 +692,26 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
     entry = cache_dict_get(key, hash);
     if(entry) {
         if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
-            ctx->state = CACHE_CTX_STATE_WAIT;
+            ctx->state = NST_CACHE_CTX_STATE_WAIT;
         } else if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
-            ctx->state = CACHE_CTX_STATE_HIT;
+            ctx->state = NST_CACHE_CTX_STATE_HIT;
         } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
             entry->state = NST_CACHE_ENTRY_STATE_CREATING;
             entry->data = cache_data_new();
             if(!entry->data) {
-                ctx->state = CACHE_CTX_STATE_BYPASS;
+                ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 return;
             }
-            ctx->state = CACHE_CTX_STATE_CREATE;
+            ctx->state = NST_CACHE_CTX_STATE_CREATE;
         } else {
-            ctx->state = CACHE_CTX_STATE_BYPASS;
+            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
         }
     } else {
         entry = cache_dict_set(key, hash, ctx);
         if(entry) {
-            ctx->state = CACHE_CTX_STATE_CREATE;
+            ctx->state = NST_CACHE_CTX_STATE_CREATE;
         } else {
-            ctx->state = CACHE_CTX_STATE_BYPASS;
+            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
             return;
         }
     }
@@ -742,7 +742,7 @@ int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len) {
  * cache done
  */
 void cache_finish(struct cache_ctx *ctx) {
-    ctx->state = CACHE_CTX_STATE_DONE;
+    ctx->state = NST_CACHE_CTX_STATE_DONE;
     ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
     if(*ctx->rule->ttl == 0) {
         ctx->entry->expire = 0;
