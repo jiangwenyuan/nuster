@@ -104,7 +104,7 @@ struct nst_cache_element {
 
 /*
  * A nst_cache_data contains a complete http response data,
- * and is pointed by cache_entry->data.
+ * and is pointed by nst_cache_entry->data.
  * All nst_cache_data are stored in a circular singly linked list
  */
 struct nst_cache_data {
@@ -115,7 +115,7 @@ struct nst_cache_data {
 };
 
 /*
- * A cache_entry is an entry in cache_dict hash table
+ * A nst_cache_entry is an entry in cache_dict hash table
  */
 enum {
     NST_CACHE_ENTRY_STATE_CREATING = 0,
@@ -124,7 +124,7 @@ enum {
     NST_CACHE_ENTRY_STATE_EXPIRED  = 3,
 };
 
-struct cache_entry {
+struct nst_cache_entry {
     int                     state;
     char                   *key;
     uint64_t                hash;
@@ -133,19 +133,19 @@ struct cache_entry {
     uint64_t                atime;
     struct nuster_str       host;
     struct nuster_str       path;
-    struct cache_entry     *next;
+    struct nst_cache_entry *next;
     struct nst_cache_rule  *rule;        /* rule */
     int                     pid;         /* proxy uuid */
 };
 
 struct cache_dict {
-    struct cache_entry **entry;
-    uint64_t             size;      /* number of entries */
-    uint64_t             used;      /* number of used entries */
+    struct nst_cache_entry **entry;
+    uint64_t                 size;      /* number of entries */
+    uint64_t                 used;      /* number of used entries */
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t      mutex;
+    pthread_mutex_t          mutex;
 #else
-    unsigned int         waiters;
+    unsigned int             waiters;
 #endif
 };
 
@@ -173,7 +173,7 @@ struct cache_ctx {
     struct nst_cache_rule    *rule;
     struct cache_rule_stash  *stash;
 
-    struct cache_entry       *entry;
+    struct nst_cache_entry   *entry;
     struct nst_cache_data    *data;
     struct nst_cache_element *element;
 
@@ -258,8 +258,8 @@ enum {
 
 /* dict */
 int cache_dict_init();
-struct cache_entry *cache_dict_get(const char *key, uint64_t hash);
-struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx);
+struct nst_cache_entry *cache_dict_get(const char *key, uint64_t hash);
+struct nst_cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx);
 void cache_dict_rehash();
 void cache_dict_cleanup();
 

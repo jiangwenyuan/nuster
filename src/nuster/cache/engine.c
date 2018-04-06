@@ -346,7 +346,7 @@ void cache_init() {
             global.cache.pool.data    = create_pool("cp.data", sizeof(struct nst_cache_data), MEM_F_SHARED);
             global.cache.pool.element = create_pool("cp.element", sizeof(struct nst_cache_element), MEM_F_SHARED);
             global.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
-            global.cache.pool.entry   = create_pool("cp.entry", sizeof(struct cache_entry), MEM_F_SHARED);
+            global.cache.pool.entry   = create_pool("cp.entry", sizeof(struct nst_cache_entry), MEM_F_SHARED);
 
             cache = malloc(sizeof(struct cache));
         }
@@ -657,7 +657,7 @@ char *cache_build_purge_key(struct stream *s, struct http_msg *msg) {
  * Check if valid cache exists
  */
 struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
-    struct cache_entry *entry = NULL;
+    struct nst_cache_entry *entry = NULL;
     struct nst_cache_data  *data  = NULL;
 
     if(!key) return NULL;
@@ -675,12 +675,12 @@ struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
 
 /*
  * Start to create cache,
- * if cache does not exist, add a new cache_entry
+ * if cache does not exist, add a new nst_cache_entry
  * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
 void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
-    struct cache_entry *entry = NULL;
+    struct nst_cache_entry *entry = NULL;
 
     /* Check if cache is full */
     if(cache_stats_full()) {
