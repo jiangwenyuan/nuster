@@ -115,7 +115,7 @@ struct nst_cache_data {
 };
 
 /*
- * A nst_cache_entry is an entry in cache_dict hash table
+ * A nst_cache_entry is an entry in nst_cache_dict hash table
  */
 enum {
     NST_CACHE_ENTRY_STATE_CREATING = 0,
@@ -138,7 +138,7 @@ struct nst_cache_entry {
     int                     pid;         /* proxy uuid */
 };
 
-struct cache_dict {
+struct nst_cache_dict {
     struct nst_cache_entry **entry;
     uint64_t                 size;      /* number of entries */
     uint64_t                 used;      /* number of used entries */
@@ -206,7 +206,7 @@ struct cache_stats {
 };
 
 struct cache {
-    struct cache_dict      dict[2];           /* 0: using, 1: rehashing */
+    struct nst_cache_dict  dict[2];           /* 0: using, 1: rehashing */
     struct nst_cache_data *data_head;         /* point to the circular linked list, tail->next ===  head */
     struct nst_cache_data *data_tail;         /* and will be moved together constantly to check invalid data */
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED

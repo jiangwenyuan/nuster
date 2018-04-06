@@ -24,7 +24,7 @@
 
 
 static int _cache_dict_resize(uint64_t size) {
-    struct cache_dict dict;
+    struct nst_cache_dict dict;
 
     dict.size  = size;
     dict.used  = 0;
@@ -199,7 +199,7 @@ void cache_dict_cleanup() {
  * Add a new nst_cache_entry to cache_dict
  */
 struct nst_cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx) {
-    struct cache_dict  *dict  = NULL;
+    struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_data  *data  = NULL;
     struct nst_cache_entry *entry = NULL;
     int idx;
