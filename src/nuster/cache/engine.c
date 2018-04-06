@@ -77,10 +77,10 @@ struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
 /*
  * Cache the keys which calculated in request for response use
  */
-struct cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
+struct nst_cache_rule_stash *cache_stash_rule(struct cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash) {
 
-    struct cache_rule_stash *stash = pool_alloc2(global.cache.pool.stash);
+    struct nst_cache_rule_stash *stash = pool_alloc2(global.cache.pool.stash);
 
     if(stash) {
         stash->rule = rule;
@@ -323,7 +323,7 @@ void cache_init() {
             }
         }
 
-        global.cache.pool.stash   = create_pool("cp.stash", sizeof(struct cache_rule_stash), MEM_F_SHARED);
+        global.cache.pool.stash   = create_pool("cp.stash", sizeof(struct nst_cache_rule_stash), MEM_F_SHARED);
         global.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct cache_ctx), MEM_F_SHARED);
 
         if(global.cache.share) {

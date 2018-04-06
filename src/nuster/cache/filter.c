@@ -83,7 +83,7 @@ static int cache_filter_attach(struct stream *s, struct filter *filter) {
 
 static void cache_filter_detach(struct stream *s, struct filter *filter) {
     if(filter->ctx) {
-        struct cache_rule_stash *stash = NULL;
+        struct nst_cache_rule_stash *stash = NULL;
         struct cache_ctx *ctx          = filter->ctx;
 
         cache_stats_update_request(ctx->state);
@@ -196,7 +196,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
         }
 
         if(ctx->state == CACHE_CTX_STATE_PASS) {
-            struct cache_rule_stash *stash = ctx->stash;
+            struct nst_cache_rule_stash *stash = ctx->stash;
             struct nst_cache_code *cc      = ctx->rule->code;
             int valid                      = 0;
 
