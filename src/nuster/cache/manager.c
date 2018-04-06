@@ -78,7 +78,7 @@ struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
  * purge cache by key
  */
 int cache_purge_by_key(const char *key, uint64_t hash) {
-    struct cache_entry *entry = NULL;
+    struct nst_cache_entry *entry = NULL;
     int ret;
 
     nuster_shctx_lock(&cache->dict[0]);
@@ -389,7 +389,7 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
 }
 
 
-static int _cache_manager_should_purge(struct cache_entry *entry, struct appctx *appctx) {
+static int _cache_manager_should_purge(struct nst_cache_entry *entry, struct appctx *appctx) {
     int ret = 0;
     switch(appctx->st0) {
         case NUSTER_CACHE_PURGE_MODE_NAME_ALL:
@@ -431,7 +431,7 @@ static void cache_manager_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *res         = si_ic(si);
     struct stream *s            = si_strm(si);
-    struct cache_entry *entry   = NULL;
+    struct nst_cache_entry *entry   = NULL;
     int max                     = 1000;
     uint64_t start              = get_current_timestamp();
 

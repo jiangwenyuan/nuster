@@ -28,7 +28,7 @@ static int _cache_dict_resize(uint64_t size) {
 
     dict.size  = size;
     dict.used  = 0;
-    dict.entry = malloc(sizeof(struct cache_entry*) * size);
+    dict.entry = malloc(sizeof(struct nst_cache_entry*) * size);
 
     if(dict.entry) {
         int i;
@@ -48,7 +48,7 @@ static int _cache_dict_resize(uint64_t size) {
 }
 
 static int _cache_dict_alloc(uint64_t size) {
-    int i, entry_size = sizeof(struct cache_entry*);
+    int i, entry_size = sizeof(struct nst_cache_entry*);
 
     cache->dict[0].size  = size / entry_size;
     cache->dict[0].used  = 0;
@@ -83,7 +83,7 @@ static int _cache_dict_rehashing() {
 void cache_dict_rehash() {
     if(_cache_dict_rehashing()) {
         int max_empty = 10;
-        struct cache_entry *entry = NULL;
+        struct nst_cache_entry *entry = NULL;
 
         /* check max_empty entryies */
         while(!cache->dict[0].entry[cache->rehash_idx]) {
@@ -101,7 +101,7 @@ void cache_dict_rehash() {
         entry = cache->dict[0].entry[cache->rehash_idx];
         while(entry) {
             int idx = entry->hash % cache->dict[1].size;
-            struct cache_entry *entry_next = entry->next;
+            struct nst_cache_entry *entry_next = entry->next;
 
             entry->next = cache->dict[1].entry[idx];
             cache->dict[1].entry[idx] = entry;
@@ -131,7 +131,7 @@ void cache_dict_rehash() {
     }
 }
 
-static int _cache_dict_entry_expired(struct cache_entry *entry) {
+static int _cache_dict_entry_expired(struct nst_cache_entry *entry) {
     if(entry->expire == 0) {
         return 0;
     } else {
@@ -139,7 +139,7 @@ static int _cache_dict_entry_expired(struct cache_entry *entry) {
     }
 }
 
-static int _cache_entry_invalid(struct cache_entry *entry) {
+static int _cache_entry_invalid(struct nst_cache_entry *entry) {
     /* check state */
     if(entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
         return 1;
@@ -156,8 +156,8 @@ static int _cache_entry_invalid(struct cache_entry *entry) {
  * entry->data is freed by _cache_data_cleanup
  */
 void cache_dict_cleanup() {
-    struct cache_entry *entry = cache->dict[0].entry[cache->cleanup_idx];
-    struct cache_entry *prev  = entry;
+    struct nst_cache_entry *entry = cache->dict[0].entry[cache->cleanup_idx];
+    struct nst_cache_entry *prev  = entry;
 
     if(!cache->dict[0].used) {
         return;
@@ -165,7 +165,7 @@ void cache_dict_cleanup() {
 
     while(entry) {
         if(_cache_entry_invalid(entry)) {
-            struct cache_entry *tmp = entry;
+            struct nst_cache_entry *tmp = entry;
 
             if(entry->data) {
                 entry->data->invalid = 1;
@@ -196,12 +196,12 @@ void cache_dict_cleanup() {
 }
 
 /*
- * Add a new cache_entry to cache_dict
+ * Add a new nst_cache_entry to cache_dict
  */
-struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx) {
+struct nst_cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_ctx *ctx) {
     struct cache_dict  *dict  = NULL;
     struct nst_cache_data  *data  = NULL;
-    struct cache_entry *entry = NULL;
+    struct nst_cache_entry *entry = NULL;
     int idx;
 
     dict = _cache_dict_rehashing() ? &cache->dict[1] : &cache->dict[0];
@@ -249,9 +249,9 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_
 /*
  * Get entry
  */
-struct cache_entry *cache_dict_get(const char *key, uint64_t hash) {
+struct nst_cache_entry *cache_dict_get(const char *key, uint64_t hash) {
     int i, idx;
-    struct cache_entry *entry = NULL;
+    struct nst_cache_entry *entry = NULL;
 
     if(cache->dict[0].used + cache->dict[1].used == 0) {
         return NULL;
