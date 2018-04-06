@@ -141,9 +141,9 @@ static int _cache_dict_entry_expired(struct cache_entry *entry) {
 
 static int _cache_entry_invalid(struct cache_entry *entry) {
     /* check state */
-    if(entry->state == CACHE_ENTRY_STATE_INVALID) {
+    if(entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
         return 1;
-    } else if(entry->state == CACHE_ENTRY_STATE_EXPIRED) {
+    } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED) {
         return 1;
     }
     /* check expire */
@@ -225,7 +225,7 @@ struct cache_entry *cache_dict_set(const char *key, uint64_t hash, struct cache_
 
     /* init entry */
     entry->data   = data;
-    entry->state  = CACHE_ENTRY_STATE_CREATING;
+    entry->state  = NST_CACHE_ENTRY_STATE_CREATING;
     entry->key    = cache_memory_alloc(global.cache.pool.chunk, strlen(key) + 1);
     if(entry->key) {
         entry->key = memcpy(entry->key, key, strlen(key) + 1);
@@ -265,8 +265,8 @@ struct cache_entry *cache_dict_get(const char *key, uint64_t hash) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */
-                if(entry->state == CACHE_ENTRY_STATE_VALID && _cache_dict_entry_expired(entry)) {
-                    entry->state         = CACHE_ENTRY_STATE_EXPIRED;
+                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _cache_dict_entry_expired(entry)) {
+                    entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
                     entry->expire        = 0;
