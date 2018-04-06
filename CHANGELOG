@@ -1,6 +1,10 @@
 ChangeLog :
 ===========
 
+2018/04/07 : 1.8.7
+    - BUG/MAJOR: cache: always initialize newly created objects
+    - MINOR: servers: Support alphanumeric characters for the server templates names
+
 2018/04/05 : 1.8.6
     - BUG/MINOR: lua: the function returns anything
     - BUG/MINOR: lua funtion hlua_socket_settimeout don't check negative values
