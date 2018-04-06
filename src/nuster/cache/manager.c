@@ -83,8 +83,8 @@ int cache_purge_by_key(const char *key, uint64_t hash) {
 
     nuster_shctx_lock(&cache->dict[0]);
     entry = cache_dict_get(key, hash);
-    if(entry && entry->state == CACHE_ENTRY_STATE_VALID) {
-        entry->state         = CACHE_ENTRY_STATE_EXPIRED;
+    if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+        entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
         entry->data->invalid = 1;
         entry->data          = NULL;
         entry->expire        = 0;
@@ -440,8 +440,8 @@ static void cache_manager_handler(struct appctx *appctx) {
         while(appctx->st2 < cache->dict[0].size && max--) {
             entry = cache->dict[0].entry[appctx->st2];
             while(entry) {
-                if(entry->state == CACHE_ENTRY_STATE_VALID && _cache_manager_should_purge(entry, appctx)) {
-                    entry->state         = CACHE_ENTRY_STATE_INVALID;
+                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _cache_manager_should_purge(entry, appctx)) {
+                    entry->state         = NST_CACHE_ENTRY_STATE_INVALID;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
                     entry->expire        = 0;

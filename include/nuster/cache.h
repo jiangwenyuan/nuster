@@ -118,10 +118,10 @@ struct nst_cache_data {
  * A cache_entry is an entry in cache_dict hash table
  */
 enum {
-    CACHE_ENTRY_STATE_CREATING = 0,
-    CACHE_ENTRY_STATE_VALID    = 1,
-    CACHE_ENTRY_STATE_INVALID  = 2,
-    CACHE_ENTRY_STATE_EXPIRED  = 3,
+    NST_CACHE_ENTRY_STATE_CREATING = 0,
+    NST_CACHE_ENTRY_STATE_VALID    = 1,
+    NST_CACHE_ENTRY_STATE_INVALID  = 2,
+    NST_CACHE_ENTRY_STATE_EXPIRED  = 3,
 };
 
 struct cache_entry {

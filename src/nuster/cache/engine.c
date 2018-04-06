@@ -664,7 +664,7 @@ struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
 
     nuster_shctx_lock(&cache->dict[0]);
     entry = cache_dict_get(key, hash);
-    if(entry && entry->state == CACHE_ENTRY_STATE_VALID) {
+    if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
         data = entry->data;
         data->clients++;
     }
@@ -691,12 +691,12 @@ void cache_create(struct cache_ctx *ctx, char *key, uint64_t hash) {
     nuster_shctx_lock(&cache->dict[0]);
     entry = cache_dict_get(key, hash);
     if(entry) {
-        if(entry->state == CACHE_ENTRY_STATE_CREATING) {
+        if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
             ctx->state = CACHE_CTX_STATE_WAIT;
-        } else if(entry->state == CACHE_ENTRY_STATE_VALID) {
+        } else if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
             ctx->state = CACHE_CTX_STATE_HIT;
-        } else if(entry->state == CACHE_ENTRY_STATE_EXPIRED || entry->state == CACHE_ENTRY_STATE_INVALID) {
-            entry->state = CACHE_ENTRY_STATE_CREATING;
+        } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
+            entry->state = NST_CACHE_ENTRY_STATE_CREATING;
             entry->data = cache_data_new();
             if(!entry->data) {
                 ctx->state = CACHE_CTX_STATE_BYPASS;
@@ -743,7 +743,7 @@ int cache_update(struct cache_ctx *ctx, struct http_msg *msg, long msg_len) {
  */
 void cache_finish(struct cache_ctx *ctx) {
     ctx->state = CACHE_CTX_STATE_DONE;
-    ctx->entry->state = CACHE_ENTRY_STATE_VALID;
+    ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
     if(*ctx->rule->ttl == 0) {
         ctx->entry->expire = 0;
     } else {
@@ -752,7 +752,7 @@ void cache_finish(struct cache_ctx *ctx) {
 }
 
 void cache_abort(struct cache_ctx *ctx) {
-    ctx->entry->state = CACHE_ENTRY_STATE_INVALID;
+    ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
 }
 
 /*
