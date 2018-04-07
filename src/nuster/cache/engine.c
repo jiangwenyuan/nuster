@@ -300,7 +300,7 @@ static void _cache_data_cleanup() {
 
 void cache_housekeeping() {
     if(global.cache.status == NST_CACHE_STATUS_ON) {
-        cache_dict_rehash();
+        nst_cache_dict_rehash();
         nuster_shctx_lock(&cache->dict[0]);
         cache_dict_cleanup();
         nuster_shctx_unlock(&cache->dict[0]);
