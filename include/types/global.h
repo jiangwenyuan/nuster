@@ -247,7 +247,7 @@ struct global {
                 } pool;
 
                 struct nuster_memory *memory;           /* memory */
-                struct cache_stats   *stats;
+                struct nst_cache_stats   *stats;
         } cache;
 };
 

@@ -44,7 +44,7 @@ void cache_stats_update_request(int state) {
 }
 
 int cache_stats_init() {
-    global.cache.stats = nuster_memory_alloc(global.cache.memory, sizeof(struct cache_stats));
+    global.cache.stats = nuster_memory_alloc(global.cache.memory, sizeof(struct nst_cache_stats));
     if(!global.cache.stats) {
         return 0;
     }
