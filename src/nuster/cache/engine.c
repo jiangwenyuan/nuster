@@ -663,7 +663,7 @@ struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
     if(!key) return NULL;
 
     nuster_shctx_lock(&cache->dict[0]);
-    entry = cache_dict_get(key, hash);
+    entry = nst_cache_dict_get(key, hash);
     if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
         data = entry->data;
         data->clients++;
@@ -689,7 +689,7 @@ void cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     }
 
     nuster_shctx_lock(&cache->dict[0]);
-    entry = cache_dict_get(key, hash);
+    entry = nst_cache_dict_get(key, hash);
     if(entry) {
         if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
             ctx->state = NST_CACHE_CTX_STATE_WAIT;

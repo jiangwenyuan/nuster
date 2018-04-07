@@ -82,7 +82,7 @@ int cache_purge_by_key(const char *key, uint64_t hash) {
     int ret;
 
     nuster_shctx_lock(&cache->dict[0]);
-    entry = cache_dict_get(key, hash);
+    entry = nst_cache_dict_get(key, hash);
     if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
         entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
         entry->data->invalid = 1;

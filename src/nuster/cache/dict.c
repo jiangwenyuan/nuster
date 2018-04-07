@@ -249,7 +249,7 @@ struct nst_cache_entry *cache_dict_set(const char *key, uint64_t hash, struct ns
 /*
  * Get entry
  */
-struct nst_cache_entry *cache_dict_get(const char *key, uint64_t hash) {
+struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash) {
     int i, idx;
     struct nst_cache_entry *entry = NULL;
 
