@@ -80,7 +80,7 @@ static int _cache_dict_rehashing() {
 /*
  * Rehash dict if cache->dict[0] is almost full
  */
-void cache_dict_rehash() {
+void nst_cache_dict_rehash() {
     if(_cache_dict_rehashing()) {
         int max_empty = 10;
         struct nst_cache_entry *entry = NULL;
