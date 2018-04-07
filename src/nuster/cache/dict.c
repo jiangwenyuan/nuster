@@ -64,7 +64,7 @@ static int _cache_dict_alloc(uint64_t size) {
     return nuster_shctx_init((&cache->dict[0]));
 }
 
-int cache_dict_init() {
+int nst_cache_dict_init() {
     if(global.cache.share) {
         int size = (global.cache.memory->block_size + global.cache.dict_size - 1) / global.cache.memory->block_size * global.cache.memory->block_size;
         return _cache_dict_alloc(size);
