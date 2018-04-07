@@ -84,7 +84,7 @@ int cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
             return 1;
         } else {
             appctx      = si_appctx(si);
-            appctx->st0 = NUSTER_CACHE_STATS_HEAD;
+            appctx->st0 = NST_CACHE_STATS_HEAD;
             appctx->st1 = proxy->uuid;
             appctx->st2 = 0;
 
@@ -190,17 +190,17 @@ static void cache_stats_handler(struct appctx *appctx) {
     struct channel *res         = si_ic(si);
     struct stream *s            = si_strm(si);
 
-    if(appctx->st0 == NUSTER_CACHE_STATS_HEAD) {
+    if(appctx->st0 == NST_CACHE_STATS_HEAD) {
         if(cache_stats_head(appctx, s, si, res)) {
-            appctx->st0 = NUSTER_CACHE_STATS_DATA;
+            appctx->st0 = NST_CACHE_STATS_DATA;
         }
     }
-    if(appctx->st0 == NUSTER_CACHE_STATS_DATA) {
+    if(appctx->st0 == NST_CACHE_STATS_DATA) {
         if(cache_stats_data(appctx, s, si, res)) {
-            appctx->st0 = NUSTER_CACHE_STATS_DONE;
+            appctx->st0 = NST_CACHE_STATS_DONE;
         }
     }
-    if(appctx->st0 == NUSTER_CACHE_STATS_DONE) {
+    if(appctx->st0 == NST_CACHE_STATS_DONE) {
         bo_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
         res->flags |= CF_READ_NULL;
