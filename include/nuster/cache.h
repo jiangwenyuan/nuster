@@ -189,7 +189,7 @@ struct nst_cache_ctx {
     int                          pid;         /* proxy uuid */
 };
 
-struct cache_stats {
+struct nst_cache_stats {
     uint64_t        used_mem;
 
     struct {
