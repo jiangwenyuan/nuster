@@ -366,7 +366,7 @@ void cache_init() {
             goto shm_err;
         }
 
-        if(!cache_dict_init()) {
+        if(!nst_cache_dict_init()) {
             goto err;
         }
 

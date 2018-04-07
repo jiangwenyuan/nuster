@@ -257,7 +257,7 @@ enum {
 
 
 /* dict */
-int cache_dict_init();
+int nst_cache_dict_init();
 struct nst_cache_entry *cache_dict_get(const char *key, uint64_t hash);
 struct nst_cache_entry *cache_dict_set(const char *key, uint64_t hash, struct nst_cache_ctx *ctx);
 void cache_dict_rehash();
