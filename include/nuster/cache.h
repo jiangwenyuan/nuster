@@ -261,7 +261,7 @@ int nst_cache_dict_init();
 struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash);
 struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struct nst_cache_ctx *ctx);
 void nst_cache_dict_rehash();
-void cache_dict_cleanup();
+void nst_cache_dict_cleanup();
 
 
 /* engine */

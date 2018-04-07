@@ -155,7 +155,7 @@ static int _cache_entry_invalid(struct nst_cache_entry *entry) {
  * If its invalid set entry->data->invalid to true,
  * entry->data is freed by _cache_data_cleanup
  */
-void cache_dict_cleanup() {
+void nst_cache_dict_cleanup() {
     struct nst_cache_entry *entry = cache->dict[0].entry[cache->cleanup_idx];
     struct nst_cache_entry *prev  = entry;
 
