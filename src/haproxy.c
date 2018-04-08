@@ -1337,7 +1337,7 @@ void init(int argc, char **argv)
 	if (!dns_init_resolvers(0))
 		exit(1);
 
-        cache_init();
+        nst_cache_init();
 
 	free(err_msg);
 }
