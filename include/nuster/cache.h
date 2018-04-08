@@ -265,7 +265,6 @@ void nst_cache_dict_cleanup();
 
 
 /* engine */
-void cache_debug(const char *fmt, ...);
 void cache_init();
 void cache_housekeeping();
 int cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);

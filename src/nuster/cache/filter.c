@@ -134,7 +134,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 return 1;
             }
             list_for_each_entry(rule, &px->cache_rules, list) {
-                cache_debug("[CACHE] Checking rule: %s\n", rule->name);
+                nuster_debug("[CACHE] Checking rule: %s\n", rule->name);
                 /* disabled? */
                 if(*rule->state == NST_CACHE_RULE_DISABLED) {
                     continue;
@@ -144,7 +144,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 if(!key) {
                     return 1;
                 }
-                cache_debug("[CACHE] Got key: %s\n", key);
+                nuster_debug("[CACHE] Got key: %s\n", key);
                 hash = cache_hash_key(key);
 
                 /* stash key */
@@ -152,26 +152,26 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                     return 1;
                 }
                 /* check if cache exists  */
-                cache_debug("[CACHE] Checking key existence: ");
+                nuster_debug("[CACHE] Checking key existence: ");
                 ctx->data = cache_exists(key, hash);
                 if(ctx->data) {
-                    cache_debug("EXIST\n[CACHE] Hit\n");
+                    nuster_debug("EXIST\n[CACHE] Hit\n");
                     /* OK, cache exists */
                     ctx->state = NST_CACHE_CTX_STATE_HIT;
                     break;
                 }
-                cache_debug("NOT EXIST\n");
+                nuster_debug("NOT EXIST\n");
                 /* no, there's no cache yet */
 
                 /* test acls to see if we should cache it */
-                cache_debug("[CACHE] [REQ] Checking if rule pass: ");
+                nuster_debug("[CACHE] [REQ] Checking if rule pass: ");
                 if(cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
-                    cache_debug("PASS\n");
+                    nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
                     break;
                 }
-                cache_debug("FAIL\n");
+                nuster_debug("FAIL\n");
             }
         }
 
@@ -182,16 +182,16 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
     } else {
         /* response */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
-            cache_debug("[CACHE] [RES] Checking if rule pass: ");
+            nuster_debug("[CACHE] [RES] Checking if rule pass: ");
             list_for_each_entry(rule, &px->cache_rules, list) {
                 /* test acls to see if we should cache it */
                 if(cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
-                    cache_debug("PASS\n");
+                    nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
                     break;
                 }
-                cache_debug("FAIL\n");
+                nuster_debug("FAIL\n");
             }
         }
 
@@ -203,7 +203,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
             ctx->pid = px->uuid;
 
             /* check if code is valid */
-            cache_debug("[CACHE] [RES] Checking status code: ");
+            nuster_debug("[CACHE] [RES] Checking status code: ");
             if(!cc) {
                 valid = 1;
             }
@@ -215,7 +215,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 cc = cc->next;
             }
             if(!valid) {
-                cache_debug("FAIL\n");
+                nuster_debug("FAIL\n");
                 return 1;
             }
 
@@ -233,7 +233,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 return 1;
             }
 
-            cache_debug("PASS\n[CACHE] To create\n");
+            nuster_debug("PASS\n[CACHE] To create\n");
 
             /* start to build cache */
             cache_create(ctx, key, hash);
