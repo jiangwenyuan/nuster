@@ -121,7 +121,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 
     if(!(msg->chn->flags & CF_ISRESP)) {
 
-        cache_housekeeping();
+        nst_cache_housekeeping();
 
         /* check http method */
         if(s->txn->meth == HTTP_METH_OTHER) {
