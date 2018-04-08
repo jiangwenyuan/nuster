@@ -24,6 +24,8 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <sys/time.h>
 
 #define NUSTER_VERSION     HAPROXY_VERSION".9"
@@ -51,5 +53,7 @@ static inline uint64_t get_current_timestamp() {
     gettimeofday(&tv, NULL);
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
+
+void nuster_debug(const char *fmt, ...);
 
 #endif /* _NUSTER_COMMON_H */
