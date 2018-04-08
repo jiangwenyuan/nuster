@@ -310,7 +310,7 @@ void cache_housekeeping() {
     }
 }
 
-void cache_init() {
+void nst_cache_init() {
     int i, uuid;
     struct proxy *p;
 
