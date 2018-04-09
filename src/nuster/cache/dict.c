@@ -211,7 +211,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
         return NULL;
     }
 
-    data = cache_data_new();
+    data = nst_cache_data_new();
     if(!data) {
         cache_memory_free(global.cache.pool.entry, entry);
         return NULL;

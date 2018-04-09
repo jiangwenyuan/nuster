@@ -183,7 +183,7 @@ static int _cache_find_param_value_by_name(char *query_beg, char *query_end,
 /*
  * create a new nst_cache_data and insert it to cache->data list
  */
-struct nst_cache_data *cache_data_new() {
+struct nst_cache_data *nst_cache_data_new() {
 
     struct nst_cache_data *data = cache_memory_alloc(global.cache.pool.data, sizeof(*data));
 
@@ -656,7 +656,7 @@ char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
 /*
  * Check if valid cache exists
  */
-struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
+struct nst_cache_data *nst_cache_exists(const char *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
     struct nst_cache_data  *data  = NULL;
 
@@ -697,7 +697,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             ctx->state = NST_CACHE_CTX_STATE_HIT;
         } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
             entry->state = NST_CACHE_ENTRY_STATE_CREATING;
-            entry->data = cache_data_new();
+            entry->data = nst_cache_data_new();
             if(!entry->data) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 return;
