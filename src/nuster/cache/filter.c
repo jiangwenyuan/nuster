@@ -140,7 +140,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                     continue;
                 }
                 /* build key */
-                key = cache_build_key(ctx, rule->key, s, msg);
+                key = nst_cache_build_key(ctx, rule->key, s, msg);
                 if(!key) {
                     return 1;
                 }
