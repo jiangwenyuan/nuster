@@ -758,7 +758,7 @@ void nst_cache_abort(struct nst_cache_ctx *ctx) {
 /*
  * Create cache applet to handle the request
  */
-void cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
+void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
         struct channel *res, struct nst_cache_data *data) {
 
     struct appctx *appctx = NULL;
