@@ -96,7 +96,7 @@ struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
     return stash;
 }
 
-int cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res) {
+int nst_cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res) {
     int ret;
 
     /* no acl defined */
