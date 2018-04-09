@@ -130,7 +130,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 
         /* request */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
-            if(!cache_prebuild_key(ctx, s, msg)) {
+            if(!nst_cache_prebuild_key(ctx, s, msg)) {
                 return 1;
             }
             list_for_each_entry(rule, &px->cache_rules, list) {
