@@ -236,7 +236,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
             nuster_debug("PASS\n[CACHE] To create\n");
 
             /* start to build cache */
-            cache_create(ctx, key, hash);
+            nst_cache_create(ctx, key, hash);
         }
 
     }
