@@ -264,7 +264,7 @@ static int cache_filter_http_end(struct stream *s, struct filter *filter,
     struct nst_cache_ctx *ctx = filter->ctx;
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        cache_finish(ctx);
+        nst_cache_finish(ctx);
     }
     return 1;
 }
