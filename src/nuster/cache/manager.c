@@ -113,7 +113,7 @@ int cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     if(txn->meth == HTTP_METH_OTHER &&
             memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0) {
 
-        char *key = cache_build_purge_key(s, msg);
+        char *key = nst_cache_build_purge_key(s, msg);
         if(!key) {
             txn->status = 500;
             cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
