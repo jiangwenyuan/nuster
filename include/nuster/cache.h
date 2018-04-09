@@ -278,7 +278,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);
 struct nst_cache_data *nst_cache_exists(const char *key, uint64_t hash);
 struct nst_cache_data *nst_cache_data_new();
-void cache_hit(struct stream *s, struct stream_interface *si,
+void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
 struct nst_cache_rule_stash *cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash);

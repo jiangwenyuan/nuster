@@ -176,7 +176,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
         }
 
         if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
-            cache_hit(s, si, req, res, ctx->data);
+            nst_cache_hit(s, si, req, res, ctx->data);
         }
 
     } else {
