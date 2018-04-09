@@ -250,7 +250,7 @@ static int cache_filter_http_forward_data(struct stream *s, struct filter *filte
     struct nst_cache_ctx *ctx = filter->ctx;
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        if(!cache_update(ctx, msg, len)) {
+        if(!nst_cache_update(ctx, msg, len)) {
             ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
             ctx->state        = NST_CACHE_CTX_STATE_PASS;
         }

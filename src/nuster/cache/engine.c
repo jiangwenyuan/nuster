@@ -724,7 +724,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
 /*
  * Add partial http data to nst_cache_data
  */
-int cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len) {
+int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len) {
     struct nst_cache_element *element = cache_data_append(ctx->element, msg, msg_len);
 
     if(element) {
