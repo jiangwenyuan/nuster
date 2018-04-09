@@ -282,7 +282,7 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
 struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash);
-int cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
+int nst_cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
 int cache_purge(struct stream *s, struct channel *req, struct proxy *px);
 int cache_manager(struct stream *s, struct channel *req, struct proxy *px);
 

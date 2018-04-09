@@ -165,7 +165,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
 
                 /* test acls to see if we should cache it */
                 nuster_debug("[CACHE] [REQ] Checking if rule pass: ");
-                if(cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
+                if(nst_cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
@@ -185,7 +185,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
             nuster_debug("[CACHE] [RES] Checking if rule pass: ");
             list_for_each_entry(rule, &px->cache_rules, list) {
                 /* test acls to see if we should cache it */
-                if(cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
+                if(nst_cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
