@@ -679,7 +679,7 @@ struct nst_cache_data *cache_exists(const char *key, uint64_t hash) {
  * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
-void cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
+void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
 
     /* Check if cache is full */
