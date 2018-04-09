@@ -148,7 +148,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
                 hash = nst_cache_hash_key(key);
 
                 /* stash key */
-                if(!cache_stash_rule(ctx, rule, key, hash)) {
+                if(!nst_cache_stash_rule(ctx, rule, key, hash)) {
                     return 1;
                 }
                 /* check if cache exists  */
