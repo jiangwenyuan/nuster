@@ -321,7 +321,7 @@ badreq:
 /*
  * return 1 if the request is done, otherwise 0
  */
-int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
     int state            = -1;
