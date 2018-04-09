@@ -118,7 +118,7 @@ int cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
             txn->status = 500;
             cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
         } else {
-            uint64_t hash = cache_hash_key(key);
+            uint64_t hash = nst_cache_hash_key(key);
             txn->status = cache_purge_by_key(key, hash);
             if(txn->status == 200) {
                 cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);

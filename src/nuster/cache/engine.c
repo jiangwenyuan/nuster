@@ -607,7 +607,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck,
     return key;
 }
 
-uint64_t cache_hash_key(const char *key) {
+uint64_t nst_cache_hash_key(const char *key) {
     return XXH64(key, strlen(key), 0);
 }
 
