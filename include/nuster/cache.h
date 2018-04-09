@@ -271,7 +271,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
 char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
         struct http_msg *msg);
 char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg);
-uint64_t cache_hash_key(const char *key);
+uint64_t nst_cache_hash_key(const char *key);
 void cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash);
 int cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len);
 void cache_finish(struct nst_cache_ctx *ctx);
