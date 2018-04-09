@@ -611,7 +611,7 @@ uint64_t cache_hash_key(const char *key) {
     return XXH64(key, strlen(key), 0);
 }
 
-char *cache_build_purge_key(struct stream *s, struct http_msg *msg) {
+char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
     struct http_txn *txn = s->txn;
     int https;
     char *path_beg, *url_end;
