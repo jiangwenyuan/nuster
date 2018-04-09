@@ -286,7 +286,7 @@ int nst_cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
 
 /* manager */
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
-int cache_manager(struct stream *s, struct channel *req, struct proxy *px);
+int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px);
 
 
 /* parser */
