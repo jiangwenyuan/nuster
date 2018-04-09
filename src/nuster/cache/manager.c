@@ -105,7 +105,7 @@ void cache_response(struct stream *s, struct chunk *msg) {
     }
 }
 
-int cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
 
@@ -363,7 +363,7 @@ int cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             }
         } else {
             /* single uri */
-            return cache_purge(s, req, px);
+            return nst_cache_purge(s, req, px);
         }
     } else {
         return 0;
