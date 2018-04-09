@@ -508,7 +508,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
     return 1;
 }
 
-char *cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
+char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
