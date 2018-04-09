@@ -751,7 +751,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     }
 }
 
-void cache_abort(struct nst_cache_ctx *ctx) {
+void nst_cache_abort(struct nst_cache_ctx *ctx) {
     ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
 }
 
