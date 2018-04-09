@@ -275,7 +275,7 @@ uint64_t nst_cache_hash_key(const char *key);
 void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash);
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len);
 void nst_cache_finish(struct nst_cache_ctx *ctx);
-void cache_abort(struct nst_cache_ctx *ctx);
+void nst_cache_abort(struct nst_cache_ctx *ctx);
 struct nst_cache_data *cache_exists(const char *key, uint64_t hash);
 struct nst_cache_data *cache_data_new();
 void cache_hit(struct stream *s, struct stream_interface *si,

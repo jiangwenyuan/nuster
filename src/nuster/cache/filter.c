@@ -89,7 +89,7 @@ static void cache_filter_detach(struct stream *s, struct filter *filter) {
         cache_stats_update_request(ctx->state);
 
         if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
-            cache_abort(ctx);
+            nst_cache_abort(ctx);
         }
         while(ctx->stash) {
             stash      = ctx->stash;
