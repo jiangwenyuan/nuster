@@ -436,7 +436,7 @@ shm_err:
     exit(1);
 }
 
-int cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
+int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
 
