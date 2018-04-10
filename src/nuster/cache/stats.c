@@ -56,7 +56,7 @@ int nst_cache_stats_init() {
     return 1;
 }
 
-int cache_stats_full() {
+int nst_cache_stats_full() {
     int i;
     nuster_shctx_lock(global.cache.stats);
     i =  global.cache.data_size <= global.cache.stats->used_mem;
