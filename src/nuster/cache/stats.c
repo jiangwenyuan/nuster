@@ -43,7 +43,7 @@ void cache_stats_update_request(int state) {
     nuster_shctx_unlock(global.cache.stats);
 }
 
-int cache_stats_init() {
+int nst_cache_stats_init() {
     global.cache.stats = nuster_memory_alloc(global.cache.memory, sizeof(struct nst_cache_stats));
     if(!global.cache.stats) {
         return 0;
