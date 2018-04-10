@@ -683,7 +683,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
 
     /* Check if cache is full */
-    if(cache_stats_full()) {
+    if(nst_cache_stats_full()) {
         ctx->state = NST_CACHE_CTX_STATE_FULL;
         return;
     }
