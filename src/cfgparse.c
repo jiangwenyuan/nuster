@@ -1981,7 +1981,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                if (cache_parse_size(args[cur_arg], &global.cache.data_size)) {
+                                if (nst_cache_parse_size(args[cur_arg], &global.cache.data_size)) {
                                         Alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
@@ -1996,7 +1996,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                if (cache_parse_size(args[cur_arg], &global.cache.dict_size)) {
+                                if (nst_cache_parse_size(args[cur_arg], &global.cache.dict_size)) {
                                         Alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
