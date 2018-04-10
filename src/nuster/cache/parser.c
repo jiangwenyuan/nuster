@@ -240,7 +240,7 @@ out:
     return -1;
 }
 
-int cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
+int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
         struct flt_conf *fconf, char **err, void *private) {
 
     struct flt_conf *fc, *back;

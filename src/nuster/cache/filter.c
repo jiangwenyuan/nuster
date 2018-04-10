@@ -292,7 +292,7 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 
 /* Declare the filter parser for "cache" keyword */
 static struct flt_kw_list flt_kws = { "CACHE", { }, {
-    { "cache", cache_parse_filter, NULL }, { NULL, NULL, NULL }, }
+    { "cache", nst_cache_parse_filter, NULL }, { NULL, NULL, NULL }, }
 };
 
 __attribute__((constructor)) static void __flt_cache_init(void) {
