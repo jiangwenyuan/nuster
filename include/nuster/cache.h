@@ -300,7 +300,7 @@ const char *nst_cache_parse_time(const char *text, int len, unsigned *ret);
 void nst_cache_stats_update_used_mem(int i);
 int nst_cache_stats_init();
 int nst_cache_stats_full();
-int cache_stats(struct stream *s, struct channel *req, struct proxy *px);
+int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
 void cache_stats_update_request(int state);
 
 /* cache memory */
