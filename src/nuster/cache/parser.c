@@ -130,7 +130,7 @@ static struct nst_cache_code *cache_parse_rule_code(char *str) {
     }
 }
 
-int cache_parse_rule(char **args, int section, struct proxy *proxy,
+int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     struct nst_cache_rule *rule;

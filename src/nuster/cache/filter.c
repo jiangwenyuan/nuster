@@ -287,7 +287,7 @@ struct flt_ops cache_filter_ops = {
 
 /* Declare the config parser for "cache" keyword */
 static struct cfg_kw_list cfg_kws = {ILH, {
-    { CFG_LISTEN, "cache-rule", cache_parse_rule}, { 0, NULL, NULL }, }
+    { CFG_LISTEN, "cache-rule", nst_cache_parse_rule}, { 0, NULL, NULL }, }
 };
 
 /* Declare the filter parser for "cache" keyword */
