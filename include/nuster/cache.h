@@ -290,7 +290,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px);
 
 
 /* parser */
-int cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
+int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
         struct flt_conf *fconf, char **err, void *private);
 int cache_parse_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err);
