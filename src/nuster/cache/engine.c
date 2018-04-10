@@ -244,7 +244,7 @@ static struct nst_cache_element *cache_data_append(struct nst_cache_element *tai
         } else {
             tail->next = element;
         }
-        cache_stats_update_used_mem(msg_len);
+        nst_cache_stats_update_used_mem(msg_len);
     }
     return element;
 }
@@ -290,7 +290,7 @@ static void _cache_data_cleanup() {
             struct nst_cache_element *tmp = element;
             element                   = element->next;
 
-            cache_stats_update_used_mem(-tmp->msg_len);
+            nst_cache_stats_update_used_mem(-tmp->msg_len);
             cache_memory_free(global.cache.pool.chunk, tmp->msg);
             cache_memory_free(global.cache.pool.element, tmp);
         }
