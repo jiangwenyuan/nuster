@@ -295,7 +295,7 @@ int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
 int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err);
 const char *nst_cache_parse_size(const char *text, uint64_t *ret);
-const char *cache_parse_time(const char *text, int len, unsigned *ret);
+const char *nst_cache_parse_time(const char *text, int len, unsigned *ret);
 
 /* cache memory */
 static inline void *cache_memory_alloc(struct pool_head *pool, int size) {

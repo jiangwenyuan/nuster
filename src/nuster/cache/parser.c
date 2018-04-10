@@ -181,7 +181,7 @@ int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
             /* "d", "h", "m", "s"
              * s is returned
              * */
-            if(cache_parse_time(args[cur_arg], strlen(args[cur_arg]), &ttl)) {
+            if(nst_cache_parse_time(args[cur_arg], strlen(args[cur_arg]), &ttl)) {
                 memprintf(err, "'%s %s': invalid ttl.", args[0], name);
                 goto out;
             }
@@ -339,7 +339,7 @@ end:
 /*
  * Parse time
  */
-const char *cache_parse_time(const char *text, int len, unsigned *ret) {
+const char *nst_cache_parse_time(const char *text, int len, unsigned *ret) {
     unsigned imult, idiv, omult, odiv;
     unsigned value;
 
