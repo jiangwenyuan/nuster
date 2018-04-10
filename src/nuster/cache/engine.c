@@ -370,7 +370,7 @@ void nst_cache_init() {
             goto err;
         }
 
-        if(!cache_stats_init()) {
+        if(!nst_cache_stats_init()) {
             goto err;
         }
 
