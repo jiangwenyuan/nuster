@@ -288,7 +288,7 @@ int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
 /*
  * Parse size
  */
-const char *cache_parse_size(const char *text, uint64_t *ret) {
+const char *nst_cache_parse_size(const char *text, uint64_t *ret) {
     uint64_t value = 0;
 
     while(1) {
