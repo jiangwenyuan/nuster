@@ -263,7 +263,6 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
 void nst_cache_dict_rehash();
 void nst_cache_dict_cleanup();
 
-
 /* engine */
 void nst_cache_init();
 void nst_cache_housekeeping();
@@ -297,6 +296,13 @@ int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
 const char *nst_cache_parse_size(const char *text, uint64_t *ret);
 const char *nst_cache_parse_time(const char *text, int len, unsigned *ret);
 
+/* stats */
+void nst_cache_stats_update_used_mem(int i);
+int cache_stats_init();
+int cache_stats_full();
+int cache_stats(struct stream *s, struct channel *req, struct proxy *px);
+void cache_stats_update_request(int state);
+
 /* cache memory */
 static inline void *cache_memory_alloc(struct pool_head *pool, int size) {
     if(global.cache.share) {
@@ -313,12 +319,6 @@ static inline void cache_memory_free(struct pool_head *pool, void *p) {
     }
 }
 
-/* stats */
-void cache_stats_update_used_mem(int i);
-int cache_stats_init();
-int cache_stats_full();
-int cache_stats(struct stream *s, struct channel *req, struct proxy *px);
-void cache_stats_update_request(int state);
 
 static inline int cache_check_uri(struct http_msg *msg) {
     const char *uri = msg->chn->buf->p + msg->sl.rq.u;
