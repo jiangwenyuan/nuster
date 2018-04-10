@@ -24,7 +24,7 @@ void nst_cache_stats_update_used_mem(int i) {
     nuster_shctx_unlock(global.cache.stats);
 }
 
-void cache_stats_update_request(int state) {
+void nst_cache_stats_update_request(int state) {
     nuster_shctx_lock(global.cache.stats);
     global.cache.stats->request.total++;
     switch(state) {
