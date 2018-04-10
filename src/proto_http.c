@@ -4469,7 +4469,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	}
 
         /* check cache purge */
-        if (nst_cache_manager(s, req, px) || cache_stats(s, req, px)) {
+        if (nst_cache_manager(s, req, px) || nst_cache_stats(s, req, px)) {
             goto return_prx_cond;
         }
 

@@ -67,7 +67,7 @@ int nst_cache_stats_full() {
 /*
  * return 1 if the request is done, otherwise 0
  */
-int cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     struct stream_interface *si = &s->si[1];
     struct http_txn *txn        = s->txn;
     struct http_msg *msg        = &txn->req;
