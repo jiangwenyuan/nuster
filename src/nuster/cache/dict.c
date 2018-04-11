@@ -206,7 +206,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
 
     dict = _cache_dict_rehashing() ? &cache->dict[1] : &cache->dict[0];
 
-    entry = cache_memory_alloc(global.cache.pool.entry, sizeof(*entry));
+    entry = nst_cache_memory_alloc(global.cache.pool.entry, sizeof(*entry));
     if(!entry) {
         return NULL;
     }
@@ -226,7 +226,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
     /* init entry */
     entry->data   = data;
     entry->state  = NST_CACHE_ENTRY_STATE_CREATING;
-    entry->key    = cache_memory_alloc(global.cache.pool.chunk, strlen(key) + 1);
+    entry->key    = nst_cache_memory_alloc(global.cache.pool.chunk, strlen(key) + 1);
     if(entry->key) {
         entry->key = memcpy(entry->key, key, strlen(key) + 1);
     }

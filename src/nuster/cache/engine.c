@@ -185,7 +185,7 @@ static int _cache_find_param_value_by_name(char *query_beg, char *query_end,
  */
 struct nst_cache_data *nst_cache_data_new() {
 
-    struct nst_cache_data *data = cache_memory_alloc(global.cache.pool.data, sizeof(*data));
+    struct nst_cache_data *data = nst_cache_memory_alloc(global.cache.pool.data, sizeof(*data));
 
     nuster_shctx_lock(cache);
     if(data) {
@@ -219,14 +219,14 @@ struct nst_cache_data *nst_cache_data_new() {
 static struct nst_cache_element *cache_data_append(struct nst_cache_element *tail,
         struct http_msg *msg, long msg_len) {
 
-    struct nst_cache_element *element = cache_memory_alloc(global.cache.pool.element, sizeof(*element));
+    struct nst_cache_element *element = nst_cache_memory_alloc(global.cache.pool.element, sizeof(*element));
 
     if(element) {
         char *data = msg->chn->buf->data;
         char *p    = msg->chn->buf->p;
         int size   = msg->chn->buf->size;
 
-        element->msg = cache_memory_alloc(global.cache.pool.chunk, msg_len);
+        element->msg = nst_cache_memory_alloc(global.cache.pool.chunk, msg_len);
         if(!element->msg) return NULL;
 
         if(p - data + msg_len > size) {
@@ -454,7 +454,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
     ctx->req.host.len  = 0;
     hdr.idx            = 0;
     if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data = cache_memory_alloc(global.cache.pool.chunk, hdr.vlen);
+        ctx->req.host.data = nst_cache_memory_alloc(global.cache.pool.chunk, hdr.vlen);
         if(!ctx->req.host.data) {
             return 0;
         }
@@ -477,7 +477,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
         ctx->req.uri.len  = url_end - ctx->req.uri.data;
     }
     /* extra 1 char as required by regex_exec_match2 */
-    ctx->req.path.data = cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len + 1);
+    ctx->req.path.data = nst_cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len + 1);
     if(!ctx->req.path.data) {
         return 0;
     }
