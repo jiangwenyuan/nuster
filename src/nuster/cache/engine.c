@@ -291,10 +291,10 @@ static void _cache_data_cleanup() {
             element                   = element->next;
 
             nst_cache_stats_update_used_mem(-tmp->msg_len);
-            cache_memory_free(global.cache.pool.chunk, tmp->msg);
-            cache_memory_free(global.cache.pool.element, tmp);
+            nst_cache_memory_free(global.cache.pool.chunk, tmp->msg);
+            nst_cache_memory_free(global.cache.pool.element, tmp);
         }
-        cache_memory_free(global.cache.pool.data, data);
+        nst_cache_memory_free(global.cache.pool.data, data);
     }
 }
 
