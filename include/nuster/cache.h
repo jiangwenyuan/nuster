@@ -311,6 +311,7 @@ static inline void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
         return pool_alloc2(pool);
     }
 }
+
 static inline void nst_cache_memory_free(struct pool_head *pool, void *p) {
     if(global.cache.share) {
         return nuster_memory_free(global.cache.memory, p);
@@ -319,7 +320,7 @@ static inline void nst_cache_memory_free(struct pool_head *pool, void *p) {
     }
 }
 
-static inline int cache_check_uri(struct http_msg *msg) {
+static inline int nst_cache_check_uri(struct http_msg *msg) {
     const char *uri = msg->chn->buf->p + msg->sl.rq.u;
 
     if(!global.cache.uri) {
