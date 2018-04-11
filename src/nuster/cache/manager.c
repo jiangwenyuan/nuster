@@ -334,7 +334,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
 
     if(txn->meth == HTTP_METH_POST) {
         /* POST */
-        if(cache_check_uri(msg)) {
+        if(nst_cache_check_uri(msg)) {
             /* manager uri */
             ctx.idx = 0;
             if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
@@ -355,7 +355,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
         }
     } else if(cache_manager_purge_method(txn, msg)) {
         /* purge */
-        if(cache_check_uri(msg)) {
+        if(nst_cache_check_uri(msg)) {
             /* manager uri */
             txn->status = cache_manager_purge(s, req, px);
             if(txn->status == 0) {
