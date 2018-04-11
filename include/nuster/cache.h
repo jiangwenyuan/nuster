@@ -304,7 +304,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
 void nst_cache_stats_update_request(int state);
 
 /* cache memory */
-static inline void *cache_memory_alloc(struct pool_head *pool, int size) {
+static inline void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
     if(global.cache.share) {
         return nuster_memory_alloc(global.cache.memory, size);
     } else {
@@ -318,7 +318,6 @@ static inline void cache_memory_free(struct pool_head *pool, void *p) {
         return pool_free2(pool, p);
     }
 }
-
 
 static inline int cache_check_uri(struct http_msg *msg) {
     const char *uri = msg->chn->buf->p + msg->sl.rq.u;
@@ -337,6 +336,5 @@ static inline int cache_check_uri(struct http_msg *msg) {
 
     return 1;
 }
-
 
 #endif /* _NUSTER_CACHE_H */
