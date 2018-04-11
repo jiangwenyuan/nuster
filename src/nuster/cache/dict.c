@@ -177,10 +177,10 @@ void nst_cache_dict_cleanup() {
                 prev->next = entry->next;
             }
             entry = entry->next;
-            cache_memory_free(global.cache.pool.chunk, tmp->key);
-            cache_memory_free(global.cache.pool.chunk, tmp->host.data);
-            cache_memory_free(global.cache.pool.chunk, tmp->path.data);
-            cache_memory_free(global.cache.pool.entry, tmp);
+            nst_cache_memory_free(global.cache.pool.chunk, tmp->key);
+            nst_cache_memory_free(global.cache.pool.chunk, tmp->host.data);
+            nst_cache_memory_free(global.cache.pool.chunk, tmp->path.data);
+            nst_cache_memory_free(global.cache.pool.entry, tmp);
             cache->dict[0].used--;
         } else {
             prev  = entry;
@@ -213,7 +213,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
 
     data = nst_cache_data_new();
     if(!data) {
-        cache_memory_free(global.cache.pool.entry, entry);
+        nst_cache_memory_free(global.cache.pool.entry, entry);
         return NULL;
     }
 
