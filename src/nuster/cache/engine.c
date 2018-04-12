@@ -790,7 +790,7 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
 /*
  * The cache applet acts like the backend to send cached http data
  */
-static void cache_io_handler(struct appctx *appctx) {
+static void nst_cache_io_handler(struct appctx *appctx) {
     struct stream_interface *si   = appctx->owner;
     struct channel *res           = si_ic(si);
     struct stream *s              = si_strm(si);
@@ -823,7 +823,7 @@ static void cache_io_handler(struct appctx *appctx) {
 struct applet cache_io_applet = {
     .obj_type = OBJ_TYPE_APPLET,
     .name = "<CACHE>",
-    .fct = cache_io_handler,
+    .fct = nst_cache_io_handler,
     .release = NULL,
 };
 
