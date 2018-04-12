@@ -146,7 +146,7 @@ static char *_string_append(char *dst, int *dst_len, int *dst_size,
     return dst;
 }
 
-static char *_cache_key_append(char *dst, int *dst_len, int *dst_size,
+static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
     char *key = _string_append(dst, dst_len, dst_size, src, src_len);
     if(key) {
@@ -528,38 +528,38 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck,
         switch(ck->type) {
             case NST_CACHE_KEY_METHOD:
                 nuster_debug("method.");
-                key = _cache_key_append(key, &key_len, &key_size, http_known_methods[txn->meth].name, strlen(http_known_methods[txn->meth].name));
+                key = _nst_cache_key_append(key, &key_len, &key_size, http_known_methods[txn->meth].name, strlen(http_known_methods[txn->meth].name));
                 break;
             case NST_CACHE_KEY_SCHEME:
                 nuster_debug("scheme.");
-                key = _cache_key_append(key, &key_len, &key_size, ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP", ctx->req.scheme == SCH_HTTPS ? 5 : 4);
+                key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP", ctx->req.scheme == SCH_HTTPS ? 5 : 4);
                 break;
             case NST_CACHE_KEY_HOST:
                 nuster_debug("host.");
                 if(ctx->req.host.data) {
-                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.host.data, ctx->req.host.len);
+                    key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.host.data, ctx->req.host.len);
                 }
                 break;
             case NST_CACHE_KEY_URI:
                 nuster_debug("uri.");
                 if(ctx->req.uri.data) {
-                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.uri.data, ctx->req.uri.len);
+                    key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.uri.data, ctx->req.uri.len);
                 }
                 break;
             case NST_CACHE_KEY_PATH:
                 nuster_debug("path.");
                 if(ctx->req.path.data) {
-                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.path.data, ctx->req.path.len);
+                    key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.path.data, ctx->req.path.len);
                 }
                 break;
             case NST_CACHE_KEY_DELIMITER:
                 nuster_debug("delimiter.");
-                key = _cache_key_append(key, &key_len, &key_size, ctx->req.delimiter ? "?": "", ctx->req.delimiter);
+                key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.delimiter ? "?": "", ctx->req.delimiter);
                 break;
             case NST_CACHE_KEY_QUERY:
                 nuster_debug("query.");
                 if(ctx->req.query.data && ctx->req.query.len) {
-                    key = _cache_key_append(key, &key_len, &key_size, ctx->req.query.data, ctx->req.query.len);
+                    key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.query.data, ctx->req.query.len);
                 }
                 break;
             case NST_CACHE_KEY_PARAM:
@@ -568,7 +568,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck,
                     char *v = NULL;
                     int v_l = 0;
                     if(_cache_find_param_value_by_name(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
-                        key = _cache_key_append(key, &key_len, &key_size, v, v_l);
+                        key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
 
                 }
@@ -577,7 +577,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck,
                 hdr.idx = 0;
                 nuster_debug("header_%s.", ck->data);
                 if(http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
-                    key = _cache_key_append(key, &key_len, &key_size, hdr.line + hdr.val, hdr.vlen);
+                    key = _nst_cache_key_append(key, &key_len, &key_size, hdr.line + hdr.val, hdr.vlen);
                 }
                 break;
             case NST_CACHE_KEY_COOKIE:
@@ -586,7 +586,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck,
                     char *v = NULL;
                     int v_l = 0;
                     if(extract_cookie_value(ctx->req.cookie.data, ctx->req.cookie.data + ctx->req.cookie.len, ck->data, strlen(ck->data), 1, &v, &v_l)) {
-                        key = _cache_key_append(key, &key_len, &key_size, v, v_l);
+                        key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
                 }
                 break;
@@ -594,7 +594,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck,
                 nuster_debug("body.");
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
                     if((s->be->options & PR_O_WREQ_BODY) && msg->body_len > 0 ) {
-                        key = _cache_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->body_len);
+                        key = _nst_cache_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->body_len);
                     }
                 }
                 break;
@@ -625,7 +625,7 @@ char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
         return NULL;
     }
 
-    key = _cache_key_append(key, &key_len, &key_size, "GET", 3);
+    key = _nst_cache_key_append(key, &key_len, &key_size, "GET", 3);
 
     https = 0;
 #ifdef USE_OPENSSL
@@ -634,12 +634,12 @@ char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
     }
 #endif
 
-    key = _cache_key_append(key, &key_len, &key_size, https ? "HTTPS": "HTTP", strlen(https ? "HTTPS": "HTTP"));
+    key = _nst_cache_key_append(key, &key_len, &key_size, https ? "HTTPS": "HTTP", strlen(https ? "HTTPS": "HTTP"));
     if(!key) return NULL;
 
     ctx.idx  = 0;
     if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-        key = _cache_key_append(key, &key_len, &key_size, ctx.line + ctx.val, ctx.vlen);
+        key = _nst_cache_key_append(key, &key_len, &key_size, ctx.line + ctx.val, ctx.vlen);
         if(!key) return NULL;
     }
 
@@ -647,7 +647,7 @@ char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
     url_end  = NULL;
     if(path_beg) {
         url_end = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
-        key     = _cache_key_append(key, &key_len, &key_size, path_beg, url_end - path_beg);
+        key     = _nst_cache_key_append(key, &key_len, &key_size, path_beg, url_end - path_beg);
         if(!key) return NULL;
     }
     return key;
