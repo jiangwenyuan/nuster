@@ -155,7 +155,7 @@ static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
     return NULL;
 }
 
-static int _cache_find_param_value_by_name(char *query_beg, char *query_end,
+static int _nst_cache_find_param_value_by_name(char *query_beg, char *query_end,
         char *name, char **value, int *value_len) {
 
     char equal   = '=';
@@ -567,7 +567,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck,
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
                     int v_l = 0;
-                    if(_cache_find_param_value_by_name(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
+                    if(_nst_cache_find_param_value_by_name(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
                         key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
 
