@@ -73,7 +73,7 @@ int nst_cache_dict_init() {
     }
 }
 
-static int _cache_dict_rehashing() {
+static int _nst_cache_dict_rehashing() {
     return global.cache.share == NST_CACHE_SHARE_OFF && cache->rehash_idx != -1;
 }
 
@@ -81,7 +81,7 @@ static int _cache_dict_rehashing() {
  * Rehash dict if cache->dict[0] is almost full
  */
 void nst_cache_dict_rehash() {
-    if(_cache_dict_rehashing()) {
+    if(_nst_cache_dict_rehashing()) {
         int max_empty = 10;
         struct nst_cache_entry *entry = NULL;
 
@@ -204,7 +204,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
     struct nst_cache_entry *entry = NULL;
     int idx;
 
-    dict = _cache_dict_rehashing() ? &cache->dict[1] : &cache->dict[0];
+    dict = _nst_cache_dict_rehashing() ? &cache->dict[1] : &cache->dict[0];
 
     entry = nst_cache_memory_alloc(global.cache.pool.entry, sizeof(*entry));
     if(!entry) {
@@ -276,7 +276,7 @@ struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash) {
             }
             entry = entry->next;
         }
-        if(!_cache_dict_rehashing()) {
+        if(!_nst_cache_dict_rehashing()) {
             return NULL;
         }
     }
