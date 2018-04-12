@@ -216,7 +216,7 @@ struct nst_cache_data *nst_cache_data_new() {
 /*
  * Append partial http response data
  */
-static struct nst_cache_element *cache_data_append(struct nst_cache_element *tail,
+static struct nst_cache_element *_nst_cache_data_append(struct nst_cache_element *tail,
         struct http_msg *msg, long msg_len) {
 
     struct nst_cache_element *element = nst_cache_memory_alloc(global.cache.pool.element, sizeof(*element));
@@ -725,7 +725,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
  * Add partial http data to nst_cache_data
  */
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len) {
-    struct nst_cache_element *element = cache_data_append(ctx->element, msg, msg_len);
+    struct nst_cache_element *element = _nst_cache_data_append(ctx->element, msg, msg_len);
 
     if(element) {
         if(!ctx->element) {
