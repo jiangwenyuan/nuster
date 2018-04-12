@@ -139,7 +139,7 @@ static int _nst_cache_dict_entry_expired(struct nst_cache_entry *entry) {
     }
 }
 
-static int _cache_entry_invalid(struct nst_cache_entry *entry) {
+static int _nst_cache_entry_invalid(struct nst_cache_entry *entry) {
     /* check state */
     if(entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
         return 1;
@@ -164,7 +164,7 @@ void nst_cache_dict_cleanup() {
     }
 
     while(entry) {
-        if(_cache_entry_invalid(entry)) {
+        if(_nst_cache_entry_invalid(entry)) {
             struct nst_cache_entry *tmp = entry;
 
             if(entry->data) {
