@@ -47,7 +47,7 @@ static int _cache_dict_resize(uint64_t size) {
     return 0;
 }
 
-static int _cache_dict_alloc(uint64_t size) {
+static int _nst_cache_dict_alloc(uint64_t size) {
     int i, entry_size = sizeof(struct nst_cache_entry*);
 
     cache->dict[0].size  = size / entry_size;
@@ -67,7 +67,7 @@ static int _cache_dict_alloc(uint64_t size) {
 int nst_cache_dict_init() {
     if(global.cache.share) {
         int size = (global.cache.memory->block_size + global.cache.dict_size - 1) / global.cache.memory->block_size * global.cache.memory->block_size;
-        return _cache_dict_alloc(size);
+        return _nst_cache_dict_alloc(size);
     } else {
         return _cache_dict_resize(NST_CACHE_DEFAULT_DICT_SIZE);
     }
