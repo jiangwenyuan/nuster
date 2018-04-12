@@ -262,7 +262,7 @@ static int _cache_data_invalid(struct nst_cache_data *data) {
 /*
  * free invalid nst_cache_data
  */
-static void _cache_data_cleanup() {
+static void _nst_cache_data_cleanup() {
     struct nst_cache_data *data = NULL;
 
     if(cache->data_head) {
@@ -305,7 +305,7 @@ void nst_cache_housekeeping() {
         nst_cache_dict_cleanup();
         nuster_shctx_unlock(&cache->dict[0]);
         nuster_shctx_lock(cache);
-        _cache_data_cleanup();
+        _nst_cache_data_cleanup();
         nuster_shctx_unlock(cache);
     }
 }
