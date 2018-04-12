@@ -131,7 +131,7 @@ void nst_cache_dict_rehash() {
     }
 }
 
-static int _cache_dict_entry_expired(struct nst_cache_entry *entry) {
+static int _nst_cache_dict_entry_expired(struct nst_cache_entry *entry) {
     if(entry->expire == 0) {
         return 0;
     } else {
@@ -147,7 +147,7 @@ static int _cache_entry_invalid(struct nst_cache_entry *entry) {
         return 1;
     }
     /* check expire */
-    return _cache_dict_entry_expired(entry);
+    return _nst_cache_dict_entry_expired(entry);
 }
 
 /*
@@ -265,7 +265,7 @@ struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */
-                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _cache_dict_entry_expired(entry)) {
+                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _nst_cache_dict_entry_expired(entry)) {
                     entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
