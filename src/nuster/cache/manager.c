@@ -77,7 +77,7 @@ struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
 /*
  * purge cache by key
  */
-int cache_purge_by_key(const char *key, uint64_t hash) {
+int _nst_cache_purge_by_key(const char *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
     int ret;
 
@@ -119,7 +119,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
             cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
         } else {
             uint64_t hash = nst_cache_hash_key(key);
-            txn->status = cache_purge_by_key(key, hash);
+            txn->status = _nst_cache_purge_by_key(key, hash);
             if(txn->status == 200) {
                 cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);
             } else {
