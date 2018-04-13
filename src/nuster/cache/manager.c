@@ -184,7 +184,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
     return 400;
 }
 
-static inline int cache_manager_purge_method(struct http_txn *txn, struct http_msg *msg) {
+static inline int _nst_cache_manager_purge_method(struct http_txn *txn, struct http_msg *msg) {
     return txn->meth == HTTP_METH_OTHER &&
             memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0;
 }
@@ -355,7 +355,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
         } else {
             return 0;
         }
-    } else if(cache_manager_purge_method(txn, msg)) {
+    } else if(_nst_cache_manager_purge_method(txn, msg)) {
         /* purge */
         if(nst_cache_check_uri(msg)) {
             /* manager uri */
