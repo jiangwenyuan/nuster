@@ -391,7 +391,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
 }
 
 
-static int _cache_manager_should_purge(struct nst_cache_entry *entry, struct appctx *appctx) {
+static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry, struct appctx *appctx) {
     int ret = 0;
     switch(appctx->st0) {
         case NST_CACHE_PURGE_NAME_ALL:
@@ -442,7 +442,7 @@ static void cache_manager_handler(struct appctx *appctx) {
         while(appctx->st2 < cache->dict[0].size && max--) {
             entry = cache->dict[0].entry[appctx->st2];
             while(entry) {
-                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _cache_manager_should_purge(entry, appctx)) {
+                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _nst_cache_manager_should_purge(entry, appctx)) {
                     entry->state         = NST_CACHE_ENTRY_STATE_INVALID;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
