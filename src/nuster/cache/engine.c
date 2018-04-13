@@ -38,6 +38,7 @@
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 
+/* XXX */
 static const char *cache_msgs[NUSTER_CACHE_MSG_SIZE] = {
     [NUSTER_CACHE_200] =
         "HTTP/1.0 200 OK\r\n"
