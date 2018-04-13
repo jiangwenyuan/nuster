@@ -22,7 +22,7 @@
 
 static const char *cache_id = "cache filter";
 
-static struct nst_cache_key *_cache_parse_rule_key(char *str) {
+static struct nst_cache_key *_nst_cache_parse_rule_key_type(char *str) {
     struct nst_cache_key *key = NULL;
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
@@ -79,7 +79,7 @@ static struct nst_cache_key **_nst_cache_parse_rule_key(char *str) {
 
     m = strtok(tmp, ".");
     while(m) {
-        struct nst_cache_key *key = _cache_parse_rule_key(m);
+        struct nst_cache_key *key = _nst_cache_parse_rule_key_type(m);
         if(!key) {
             goto err;
         }
