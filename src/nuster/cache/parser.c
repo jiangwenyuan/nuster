@@ -105,7 +105,7 @@ err:
     return NULL;
 }
 
-static struct nst_cache_code *cache_parse_rule_code(char *str) {
+static struct nst_cache_code *_nst_cache_parse_rule_code(char *str) {
     if(!strcmp(str, "all")) {
         return NULL;
     } else {
@@ -228,7 +228,7 @@ int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
         memprintf(err, "'%s %s': invalid key.", args[0], name);
         goto out;
     }
-    rule->code = cache_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
+    rule->code = _nst_cache_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
     rule->ttl  = malloc(sizeof(*rule->ttl));
     *rule->ttl = ttl;
     rule->id   = -1;
