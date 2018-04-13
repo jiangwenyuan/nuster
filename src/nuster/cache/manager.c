@@ -429,7 +429,7 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry, struct
     return ret;
 }
 
-static void cache_manager_handler(struct appctx *appctx) {
+static void nst_cache_manager_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *res         = si_ic(si);
     struct stream *s            = si_strm(si);
@@ -482,7 +482,7 @@ static void cache_manager_release_handler(struct appctx *appctx) {
 struct applet cache_manager_applet = {
     .obj_type = OBJ_TYPE_APPLET,
     .name = "<CACHE-MANAGER>",
-    .fct = cache_manager_handler,
+    .fct = nst_cache_manager_handler,
     .release = cache_manager_release_handler,
 };
 
