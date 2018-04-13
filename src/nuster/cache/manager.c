@@ -466,7 +466,7 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
     }
 }
 
-static void cache_manager_release_handler(struct appctx *appctx) {
+static void nst_cache_manager_release_handler(struct appctx *appctx) {
     if(appctx->ctx.cache_manager.regex) {
         regex_free(appctx->ctx.cache_manager.regex);
         free(appctx->ctx.cache_manager.regex);
@@ -483,6 +483,6 @@ struct applet cache_manager_applet = {
     .obj_type = OBJ_TYPE_APPLET,
     .name = "<CACHE-MANAGER>",
     .fct = nst_cache_manager_handler,
-    .release = cache_manager_release_handler,
+    .release = nst_cache_manager_release_handler,
 };
 
