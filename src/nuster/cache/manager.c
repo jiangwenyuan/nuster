@@ -189,7 +189,7 @@ static inline int _nst_cache_manager_purge_method(struct http_txn *txn, struct h
             memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0;
 }
 
-int cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px) {
+int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct stream_interface *si = &s->si[1];
     struct http_txn *txn        = s->txn;
     struct http_msg *msg        = &txn->req;
@@ -359,7 +359,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
         /* purge */
         if(nst_cache_check_uri(msg)) {
             /* manager uri */
-            txn->status = cache_manager_purge(s, req, px);
+            txn->status = _nst_cache_manager_purge(s, req, px);
             if(txn->status == 0) {
                 return 0;
             }
