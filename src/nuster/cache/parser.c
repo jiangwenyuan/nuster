@@ -72,7 +72,7 @@ static struct nst_cache_key *_cache_parse_rule_key(char *str) {
     return key;
 }
 
-static struct nst_cache_key **cache_parse_rule_key(char *str) {
+static struct nst_cache_key **_nst_cache_parse_rule_key(char *str) {
     struct nst_cache_key **pk = NULL;
     char *m, *tmp = strdup(str);
     int i = 0;
@@ -223,7 +223,7 @@ int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
     rule       = malloc(sizeof(*rule));
     rule->cond = cond;
     rule->name = name;
-    rule->key  = cache_parse_rule_key(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
+    rule->key  = _nst_cache_parse_rule_key(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
     if(!rule->key) {
         memprintf(err, "'%s %s': invalid key.", args[0], name);
         goto out;
