@@ -38,6 +38,7 @@
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 
+/* XXX */
 static const char *cache_msgs[NUSTER_CACHE_MSG_SIZE] = {
     [NUSTER_CACHE_200] =
         "HTTP/1.0 200 OK\r\n"
@@ -97,6 +98,7 @@ int _nst_cache_purge_by_key(const char *key, uint64_t hash) {
     return ret;
 }
 
+/* XXX */
 void cache_response(struct stream *s, struct chunk *msg) {
     s->txn->flags &= ~TX_WAIT_NEXT_RQ;
     stream_int_retnclose(&s->si[0], msg);
@@ -131,7 +133,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     return 0;
 }
 
-int cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy *px, int state, int ttl) {
+int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy *px, int state, int ttl) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
     int found, mode      = NST_CACHE_PURGE_NAME_RULE;
@@ -349,7 +351,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
                 nst_cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
             }
 
-            txn->status = cache_manager_state_ttl(s, req, px, state, ttl);
+            txn->status = _nst_cache_manager_state_ttl(s, req, px, state, ttl);
         } else {
             return 0;
         }
