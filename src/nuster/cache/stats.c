@@ -125,7 +125,7 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
     return 1;
 }
 
-int cache_stats_data(struct appctx *appctx, struct stream *s, struct stream_interface *si, struct channel *res) {
+int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream_interface *si, struct channel *res) {
     struct proxy *p;
 
     p = proxy;
@@ -196,7 +196,7 @@ static void cache_stats_handler(struct appctx *appctx) {
         }
     }
     if(appctx->st0 == NST_CACHE_STATS_DATA) {
-        if(cache_stats_data(appctx, s, si, res)) {
+        if(_nst_cache_stats_data(appctx, s, si, res)) {
             appctx->st0 = NST_CACHE_STATS_DONE;
         }
     }
