@@ -96,7 +96,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     return 0;
 }
 
-int cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_interface *si, struct channel *res) {
+int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_interface *si, struct channel *res) {
     chunk_printf(&trash,
             "HTTP/1.1 200 OK\r\n"
             "Cache-Control: no-cache\r\n"
@@ -191,7 +191,7 @@ static void cache_stats_handler(struct appctx *appctx) {
     struct stream *s            = si_strm(si);
 
     if(appctx->st0 == NST_CACHE_STATS_HEAD) {
-        if(cache_stats_head(appctx, s, si, res)) {
+        if(_nst_cache_stats_head(appctx, s, si, res)) {
             appctx->st0 = NST_CACHE_STATS_DATA;
         }
     }
