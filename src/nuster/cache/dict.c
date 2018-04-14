@@ -10,15 +10,6 @@
  *
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <string.h>
-
-#include <types/global.h>
-
-#include <import/xxhash.h>
-
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 

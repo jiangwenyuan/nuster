@@ -10,19 +10,8 @@
  *
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <string.h>
-
-#include <types/applet.h>
-#include <types/cli.h>
-#include <types/global.h>
-
-#include <proto/filters.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
-#include <proto/sample.h>
 #include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/acl.h>

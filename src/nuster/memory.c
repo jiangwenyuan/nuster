@@ -16,8 +16,6 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 
-#include <common/standard.h>
-
 #include <nuster/shctx.h>
 #include <nuster/memory.h>
 
