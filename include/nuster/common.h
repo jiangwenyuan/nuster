@@ -54,6 +54,7 @@ static inline uint64_t get_current_timestamp() {
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+void nuster_init();
 void nuster_debug(const char *fmt, ...);
 
 #endif /* _NUSTER_COMMON_H */
