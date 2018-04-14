@@ -28,42 +28,6 @@
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 
-/* XXX */
-static const char *cache_msgs[NUSTER_CACHE_MSG_SIZE] = {
-    [NUSTER_CACHE_200] =
-        "HTTP/1.0 200 OK\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "OK\n",
-
-    [NUSTER_CACHE_400] =
-        "HTTP/1.0 400 Bad request\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "Bad request\n",
-
-    [NUSTER_CACHE_404] =
-        "HTTP/1.0 404 Not Found\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "Not Found\n",
-
-    [NUSTER_CACHE_500] =
-        "HTTP/1.0 500 Server Error\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "Server Error\n",
-};
-
-struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
 
 /*
  * Cache the keys which calculated in request for response use
@@ -397,11 +361,6 @@ void nst_cache_init() {
 
         if(!nst_cache_stats_init()) {
             goto err;
-        }
-
-        for (i = 0; i < NUSTER_CACHE_MSG_SIZE; i++) {
-            cache_msg_chunks[i].str = (char *)cache_msgs[i];
-            cache_msg_chunks[i].len = strlen(cache_msgs[i]);
         }
 
         /* init cache rule */

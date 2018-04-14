@@ -41,11 +41,21 @@
 #endif
 #endif
 
+enum {
+    NUSTER_HTTP_200 = 0,
+    NUSTER_HTTP_400,
+    NUSTER_HTTP_404,
+    NUSTER_HTTP_500,
+    NUSTER_HTTP_SIZE
+};
+
 struct nuster_str {
     char *data;
     int   len;
 };
 
+extern const char *nuster_http_msgs[NUSTER_HTTP_SIZE];
+extern struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
 
 /* get current timestamp in milliseconds */
 static inline uint64_t get_current_timestamp() {
@@ -56,5 +66,6 @@ static inline uint64_t get_current_timestamp() {
 
 void nuster_init();
 void nuster_debug(const char *fmt, ...);
+void nuster_response(struct stream *s, struct chunk *msg);
 
 #endif /* _NUSTER_COMMON_H */

@@ -232,14 +232,6 @@ extern struct applet   cache_stats_applet;
 extern struct flt_ops  cache_filter_ops;
 
 enum {
-    NUSTER_CACHE_200 = 0,
-    NUSTER_CACHE_400,
-    NUSTER_CACHE_404,
-    NUSTER_CACHE_500,
-    NUSTER_CACHE_MSG_SIZE
-};
-
-enum {
     NST_CACHE_PURGE_NAME_ALL = 0,
     NST_CACHE_PURGE_NAME_PROXY,
     NST_CACHE_PURGE_NAME_RULE,
