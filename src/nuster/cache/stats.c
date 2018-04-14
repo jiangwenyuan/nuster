@@ -185,7 +185,7 @@ next:
     return 1;
 }
 
-static void cache_stats_handler(struct appctx *appctx) {
+static void nst_cache_stats_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *res         = si_ic(si);
     struct stream *s            = si_strm(si);
@@ -211,6 +211,6 @@ static void cache_stats_handler(struct appctx *appctx) {
 struct applet cache_stats_applet = {
     .obj_type = OBJ_TYPE_APPLET,
     .name = "<CACHE-STATS>",
-    .fct = cache_stats_handler,
+    .fct = nst_cache_stats_handler,
     .release = NULL,
 };
