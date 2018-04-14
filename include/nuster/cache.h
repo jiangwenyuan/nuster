@@ -22,15 +22,16 @@
 #ifndef _NUSTER_CACHE_H
 #define _NUSTER_CACHE_H
 
-#include <common/config.h>
+#include <nuster/common.h>
+
 #include <common/memory.h>
 
-#include <types/global.h>
-#include <types/acl.h>
+#include <types/stream.h>
+#include <types/proto_http.h>
+#include <types/channel.h>
+#include <types/stream_interface.h>
+#include <types/proxy.h>
 #include <types/filters.h>
-#include <types/applet.h>
-
-#include <nuster/memory.h>
 
 #define NST_CACHE_DEFAULT_SIZE                1024 * 1024
 #define NST_CACHE_DEFAULT_TTL                 3600
@@ -282,6 +283,9 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si,
 struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash);
 int nst_cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
+void *nst_cache_memory_alloc(struct pool_head *pool, int size);
+void nst_cache_memory_free(struct pool_head *pool, void *p);
+int nst_cache_check_uri(struct http_msg *msg);
 
 /* manager */
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
@@ -303,39 +307,5 @@ int nst_cache_stats_full();
 int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
 void nst_cache_stats_update_request(int state);
 
-/* cache memory */
-static inline void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
-    if(global.cache.share) {
-        return nuster_memory_alloc(global.cache.memory, size);
-    } else {
-        return pool_alloc2(pool);
-    }
-}
-
-static inline void nst_cache_memory_free(struct pool_head *pool, void *p) {
-    if(global.cache.share) {
-        return nuster_memory_free(global.cache.memory, p);
-    } else {
-        return pool_free2(pool, p);
-    }
-}
-
-static inline int nst_cache_check_uri(struct http_msg *msg) {
-    const char *uri = msg->chn->buf->p + msg->sl.rq.u;
-
-    if(!global.cache.uri) {
-        return 0;
-    }
-
-    if(strlen(global.cache.uri) != msg->sl.rq.u_l) {
-        return 0;
-    }
-
-    if(memcmp(uri, global.cache.uri, msg->sl.rq.u_l) != 0) {
-        return 0;
-    }
-
-    return 1;
-}
 
 #endif /* _NUSTER_CACHE_H */
