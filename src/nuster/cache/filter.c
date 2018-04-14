@@ -10,30 +10,20 @@
  *
  */
 
-#include <ctype.h>
-
-#include <common/time.h>
-#include <common/tools.h>
 #include <common/cfgparse.h>
-#include <common/mini-clist.h>
 #include <common/standard.h>
-
 #include <types/channel.h>
 #include <types/filters.h>
-#include <types/global.h>
 #include <types/proxy.h>
 #include <types/stream.h>
-#include <types/proto_http.h>
-#include <nuster/cache.h>
 
 #include <proto/filters.h>
-#include <proto/hdr_idx.h>
 #include <proto/log.h>
 #include <proto/stream.h>
 #include <proto/proto_http.h>
 #include <proto/stream_interface.h>
-//#include <proto/cache.h>
 
+#include <nuster/cache.h>
 
 static int cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
     return 0;

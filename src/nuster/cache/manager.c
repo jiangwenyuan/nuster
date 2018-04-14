@@ -10,30 +10,11 @@
  *
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <string.h>
-
-#include <types/applet.h>
-#include <types/cli.h>
 #include <types/global.h>
 
-#include <proto/filters.h>
-#include <proto/log.h>
 #include <proto/proto_http.h>
-#include <proto/sample.h>
-#include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
-#include <proto/acl.h>
 #include <proto/proxy.h>
-
-#include <import/xxhash.h>
-
-#ifdef USE_OPENSSL
-#include <proto/ssl_sock.h>
-#include <types/ssl_sock.h>
-#endif
 
 #include <nuster/shctx.h>
 #include <nuster/cache.h>

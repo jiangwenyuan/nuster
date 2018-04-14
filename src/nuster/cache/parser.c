@@ -10,15 +10,9 @@
  *
  */
 
-#include <ctype.h>
-
-#include <common/cfgparse.h>
-
-#include <types/proxy.h>
-#include <nuster/cache.h>
-
 #include <proto/acl.h>
-//#include <proto/cache.h>
+
+#include <nuster/cache.h>
 
 static const char *cache_id = "cache filter";
 
