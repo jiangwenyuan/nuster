@@ -20,42 +20,6 @@
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 
-/* XXX */
-static const char *cache_msgs[NUSTER_CACHE_MSG_SIZE] = {
-    [NUSTER_CACHE_200] =
-        "HTTP/1.0 200 OK\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "OK\n",
-
-    [NUSTER_CACHE_400] =
-        "HTTP/1.0 400 Bad request\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "Bad request\n",
-
-    [NUSTER_CACHE_404] =
-        "HTTP/1.0 404 Not Found\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "Not Found\n",
-
-    [NUSTER_CACHE_500] =
-        "HTTP/1.0 500 Server Error\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "Server Error\n",
-};
-
-struct chunk cache_msg_chunks[NUSTER_CACHE_MSG_SIZE];
 
 /*
  * purge cache by key
@@ -80,15 +44,6 @@ int _nst_cache_purge_by_key(const char *key, uint64_t hash) {
     return ret;
 }
 
-/* XXX */
-void cache_response(struct stream *s, struct chunk *msg) {
-    s->txn->flags &= ~TX_WAIT_NEXT_RQ;
-    stream_int_retnclose(&s->si[0], msg);
-    if(!(s->flags & SF_ERR_MASK)) {
-        s->flags |= SF_ERR_LOCAL;
-    }
-}
-
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
@@ -100,14 +55,14 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
         char *key = nst_cache_build_purge_key(s, msg);
         if(!key) {
             txn->status = 500;
-            cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
         } else {
             uint64_t hash = nst_cache_hash_key(key);
             txn->status = _nst_cache_purge_by_key(key, hash);
             if(txn->status == 200) {
-                cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);
+                nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_200]);
             } else {
-                cache_response(s, &cache_msg_chunks[NUSTER_CACHE_404]);
+                nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_404]);
             }
         }
         return 1;
@@ -355,19 +310,19 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
 
     switch(txn->status) {
         case 200:
-            cache_response(s, &cache_msg_chunks[NUSTER_CACHE_200]);
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_200]);
             break;
         case 400:
-            cache_response(s, &cache_msg_chunks[NUSTER_CACHE_400]);
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_400]);
             break;
         case 404:
-            cache_response(s, &cache_msg_chunks[NUSTER_CACHE_404]);
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_404]);
             break;
         case 500:
-            cache_response(s, &cache_msg_chunks[NUSTER_CACHE_500]);
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
             break;
         default:
-            cache_response(s, &cache_msg_chunks[NUSTER_CACHE_400]);
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_400]);
     }
     return 1;
 }
@@ -441,7 +396,7 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
     if(appctx->st2 == cache->dict[0].size) {
-        bi_putblk(res, cache_msgs[NUSTER_CACHE_200], strlen(cache_msgs[NUSTER_CACHE_200]));
+        bi_putblk(res, nuster_http_msgs[NUSTER_HTTP_200], strlen(nuster_http_msgs[NUSTER_HTTP_200]));
         bo_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
         res->flags |= CF_READ_NULL;
