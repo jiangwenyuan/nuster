@@ -12,10 +12,6 @@
 
 #include <common/cfgparse.h>
 #include <common/standard.h>
-#include <types/channel.h>
-#include <types/filters.h>
-#include <types/proxy.h>
-#include <types/stream.h>
 
 #include <proto/filters.h>
 #include <proto/log.h>

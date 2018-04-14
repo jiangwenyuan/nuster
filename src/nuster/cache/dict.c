@@ -10,6 +10,9 @@
  *
  */
 
+#include <types/global.h>
+
+#include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 

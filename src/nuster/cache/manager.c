@@ -16,6 +16,7 @@
 #include <proto/stream_interface.h>
 #include <proto/proxy.h>
 
+#include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 

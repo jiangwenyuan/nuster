@@ -10,6 +10,8 @@
  *
  */
 
+#include <common/standard.h>
+
 #include <proto/acl.h>
 
 #include <nuster/cache.h>

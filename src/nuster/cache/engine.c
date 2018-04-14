@@ -24,6 +24,7 @@
 #include <types/ssl_sock.h>
 #endif
 
+#include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/cache.h>
 
@@ -168,6 +169,40 @@ static int _nst_cache_find_param_value_by_name(char *query_beg, char *query_end,
         ptr++;
     }
     return 0;
+}
+
+void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
+    if(global.cache.share) {
+        return nuster_memory_alloc(global.cache.memory, size);
+    } else {
+        return pool_alloc2(pool);
+    }
+}
+
+void nst_cache_memory_free(struct pool_head *pool, void *p) {
+    if(global.cache.share) {
+        return nuster_memory_free(global.cache.memory, p);
+    } else {
+        return pool_free2(pool, p);
+    }
+}
+
+int nst_cache_check_uri(struct http_msg *msg) {
+    const char *uri = msg->chn->buf->p + msg->sl.rq.u;
+
+    if(!global.cache.uri) {
+        return 0;
+    }
+
+    if(strlen(global.cache.uri) != msg->sl.rq.u_l) {
+        return 0;
+    }
+
+    if(memcmp(uri, global.cache.uri, msg->sl.rq.u_l) != 0) {
+        return 0;
+    }
+
+    return 1;
 }
 
 /*
