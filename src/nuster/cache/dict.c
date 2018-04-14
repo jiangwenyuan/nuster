@@ -17,7 +17,7 @@
 #include <nuster/cache.h>
 
 
-static int _cache_dict_resize(uint64_t size) {
+static int _nst_cache_dict_resize(uint64_t size) {
     struct nst_cache_dict dict;
 
     dict.size  = size;
@@ -63,7 +63,7 @@ int nst_cache_dict_init() {
         int size = (global.cache.memory->block_size + global.cache.dict_size - 1) / global.cache.memory->block_size * global.cache.memory->block_size;
         return _nst_cache_dict_alloc(size);
     } else {
-        return _cache_dict_resize(NST_CACHE_DEFAULT_DICT_SIZE);
+        return _nst_cache_dict_resize(NST_CACHE_DEFAULT_DICT_SIZE);
     }
 }
 
@@ -120,7 +120,7 @@ void nst_cache_dict_rehash() {
         /* should we rehash? */
         if(global.cache.share) return;
         if(cache->dict[0].used >= cache->dict[0].size * NST_CACHE_DEFAULT_LOAD_FACTOR) {
-            _cache_dict_resize(cache->dict[0].size * NST_CACHE_DEFAULT_GROWTH_FACTOR);
+            _nst_cache_dict_resize(cache->dict[0].size * NST_CACHE_DEFAULT_GROWTH_FACTOR);
         }
     }
 }
