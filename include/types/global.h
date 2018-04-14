@@ -26,14 +26,12 @@
 
 #include <common/config.h>
 #include <common/standard.h>
-#include <common/memory.h>
 #include <import/da.h>
 #include <types/freq_ctr.h>
 #include <types/listener.h>
 #include <types/proxy.h>
 #include <types/task.h>
 #include <types/vars.h>
-//#include <nuster/cache.h>
 
 #ifdef USE_51DEGREES
 #include <import/51d.h>
