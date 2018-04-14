@@ -43,7 +43,6 @@
 #include <types/filters.h>
 #include <types/global.h>
 #include <types/stats.h>
-#include <nuster/cache.h>
 
 #include <proto/acl.h>
 #include <proto/action.h>
@@ -72,7 +71,8 @@
 #include <proto/task.h>
 #include <proto/pattern.h>
 #include <proto/vars.h>
-//#include <proto/cache.h>
+
+#include <nuster/cache.h>
 
 const char HTTP_100[] =
 	"HTTP/1.1 100 Continue\r\n\r\n";

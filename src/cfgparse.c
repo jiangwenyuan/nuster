@@ -52,7 +52,6 @@
 #include <types/mailers.h>
 #include <types/dns.h>
 #include <types/stats.h>
-#include <nuster/cache.h>
 
 #include <proto/acl.h>
 #include <proto/auth.h>
@@ -85,13 +84,14 @@
 #include <proto/stick_table.h>
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
-//#include <proto/cache.h>
 
 #ifdef USE_OPENSSL
 #include <types/ssl_sock.h>
 #include <proto/ssl_sock.h>
 #include <proto/shctx.h>
 #endif /*USE_OPENSSL */
+
+#include <nuster/cache.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
