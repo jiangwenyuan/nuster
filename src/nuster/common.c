@@ -13,6 +13,7 @@
 #include <types/global.h>
 
 #include <nuster/common.h>
+#include <nuster/cache.h>
 
 void nuster_debug(const char *fmt, ...) {
     if((global.mode & MODE_DEBUG)) {
@@ -23,4 +24,6 @@ void nuster_debug(const char *fmt, ...) {
     }
 }
 
-
+void nuster_init() {
+    nst_cache_init();
+}
