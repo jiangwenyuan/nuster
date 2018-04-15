@@ -52,6 +52,10 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
 
 struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
 
+struct nuster nuster = {
+    .cache = NULL,
+};
+
 void nuster_debug(const char *fmt, ...) {
     if((global.mode & MODE_DEBUG)) {
         va_list args;
