@@ -206,7 +206,7 @@ struct nst_cache_stats {
 #endif
 };
 
-struct cache {
+struct nst_cache {
     struct nst_cache_dict  dict[2];           /* 0: using, 1: rehashing */
     struct nst_cache_data *data_head;         /* point to the circular linked list, tail->next ===  head */
     struct nst_cache_data *data_tail;         /* and will be moved together constantly to check invalid data */
@@ -224,8 +224,6 @@ struct cache_config {
     int status;
 };
 
-
-extern struct cache   *cache;
 extern struct flt_ops  cache_filter_ops;
 
 enum {
