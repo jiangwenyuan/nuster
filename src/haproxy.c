@@ -127,7 +127,7 @@
 #include <import/51d.h>
 #endif
 
-#include <nuster/cache.h>
+#include <nuster/nuster.h>
 
 /*********************************************************************/
 

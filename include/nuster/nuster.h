@@ -1,6 +1,6 @@
 /*
- * include/nuster/common.h
- * This file defines everything related to nuster common.
+ * include/nuster/nuster.h
+ * This file defines everything related to nuster.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
@@ -19,40 +19,32 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef _NUSTER_COMMON_H
-#define _NUSTER_COMMON_H
+#ifndef _NUSTER_H
+#define _NUSTER_H
 
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <sys/time.h>
+#define NUSTER_VERSION     HAPROXY_VERSION".9"
+#define NUSTER_COPYRIGHT  "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-#include <pthread.h>
-#else
-#ifdef USE_SYSCALL_FUTEX
-#include <unistd.h>
-#include <linux/futex.h>
-#include <sys/syscall.h>
-#endif
-#endif
+#include <nuster/cache.h>
 
 #include <common/chunk.h>
 #include <types/stream.h>
 
-struct nuster_str {
-    char *data;
-    int   len;
+enum {
+    NUSTER_HTTP_200 = 0,
+    NUSTER_HTTP_400,
+    NUSTER_HTTP_404,
+    NUSTER_HTTP_500,
+    NUSTER_HTTP_SIZE
 };
 
-/* get current timestamp in milliseconds */
-static inline uint64_t get_current_timestamp() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
 
-void nuster_debug(const char *fmt, ...);
+extern struct nuster nuster;
 
-#endif /* _NUSTER_COMMON_H */
+extern const char *nuster_http_msgs[NUSTER_HTTP_SIZE];
+extern struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
+
+void nuster_init();
+void nuster_response(struct stream *s, struct chunk *msg);
+
+#endif /* _NUSTER_H */
