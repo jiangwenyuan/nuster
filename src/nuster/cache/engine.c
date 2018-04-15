@@ -398,6 +398,10 @@ void nst_cache_init() {
             goto err;
         }
 
+        if(!nst_cache_manager_init()) {
+            goto err;
+        }
+
         /* init cache rule */
         i = uuid = 0;
         p = proxy;
