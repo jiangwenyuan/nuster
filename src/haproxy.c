@@ -224,15 +224,15 @@ struct global global = {
 		.handle = NULL,
 	},
 #endif
-        .nuster = {
-            .cache = {
-                .status       = NST_CACHE_STATUS_UNDEFINED,
-                .data_size    = NST_CACHE_DEFAULT_SIZE,
-                .dict_size    = NST_CACHE_DEFAULT_SIZE,
-                .share        = NST_CACHE_SHARE_UNDEFINED,
-                .purge_method = NULL,
-            },
-        },
+	.nuster = {
+		.cache = {
+			.status       = NST_CACHE_STATUS_UNDEFINED,
+			.data_size    = NST_CACHE_DEFAULT_SIZE,
+			.dict_size    = NST_CACHE_DEFAULT_SIZE,
+			.share        = NST_CACHE_SHARE_UNDEFINED,
+			.purge_method = NULL,
+		},
+	},
 
 	/* others NULL OK */
 };
@@ -1337,7 +1337,7 @@ void init(int argc, char **argv)
 	if (!dns_init_resolvers(0))
 		exit(1);
 
-        nuster_init();
+	nuster_init();
 
 	free(err_msg);
 }
@@ -1765,7 +1765,7 @@ void run_poll_loop()
 		cur_poller.poll(&cur_poller, next);
 		fd_process_cached_events();
 		applet_run_active();
-                nst_cache_housekeeping();
+		nst_cache_housekeeping();
 	}
 }
 
