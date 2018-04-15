@@ -810,5 +810,3 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
     }
 }
 
-__attribute__((constructor)) static void __cache_init(void) { }
-
