@@ -272,7 +272,7 @@ static struct nst_cache_element *_nst_cache_data_append(struct nst_cache_element
 }
 
 
-static int _cache_data_invalid(struct nst_cache_data *data) {
+static int _nst_cache_data_invalid(struct nst_cache_data *data) {
     if(data->invalid) {
         if(!data->clients) {
             return 1;
@@ -289,13 +289,13 @@ static void _nst_cache_data_cleanup() {
 
     if(nuster.cache->data_head) {
         if(nuster.cache->data_head == nuster.cache->data_tail) {
-            if(_cache_data_invalid(nuster.cache->data_head)) {
+            if(_nst_cache_data_invalid(nuster.cache->data_head)) {
                 data                    = nuster.cache->data_head;
                 nuster.cache->data_head = NULL;
                 nuster.cache->data_tail = NULL;
             }
         } else {
-            if(_cache_data_invalid(nuster.cache->data_head)) {
+            if(_nst_cache_data_invalid(nuster.cache->data_head)) {
                 data                          = nuster.cache->data_head;
                 nuster.cache->data_tail->next = nuster.cache->data_head->next;
                 nuster.cache->data_head       = nuster.cache->data_head->next;
