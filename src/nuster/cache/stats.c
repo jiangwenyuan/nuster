@@ -144,9 +144,9 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
 
         if(p->cap & PR_CAP_BE) {
 
-            if(!LIST_ISEMPTY(&p->cache_rules)) {
+            if(!LIST_ISEMPTY(&p->nuster.cache.rules)) {
 
-                list_for_each_entry(rule, &p->cache_rules, list) {
+                list_for_each_entry(rule, &p->nuster.cache.rules, list) {
 
                     if(buffer_almost_full(res->buf)) {
                         si_applet_cant_put(si);
@@ -155,7 +155,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
 
                     if(rule->uuid == appctx->st2) {
 
-                        if((struct nst_cache_rule *)(&p->cache_rules)->n == rule) {
+                        if((struct nst_cache_rule *)(&p->nuster.cache.rules)->n == rule) {
                             chunk_printf(&trash, "\n**PROXY %s %d**\n", p->id, p->uuid);
                             chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->name);
                         } else {
