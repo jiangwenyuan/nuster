@@ -14,7 +14,7 @@
 
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
-#include <nuster/cache.h>
+#include <nuster/nuster.h>
 
 
 static int _nst_cache_dict_resize(uint64_t size) {
@@ -29,12 +29,12 @@ static int _nst_cache_dict_resize(uint64_t size) {
         for(i = 0; i < size; i++) {
             dict.entry[i] = NULL;
         }
-        if(!cache->dict[0].entry) {
-            cache->dict[0] = dict;
+        if(!nuster.cache->dict[0].entry) {
+            nuster.cache->dict[0] = dict;
             return 1;
         } else {
-            cache->dict[1] = dict;
-            cache->rehash_idx = 0;
+            nuster.cache->dict[1] = dict;
+            nuster.cache->rehash_idx = 0;
             return 1;
         }
     }
@@ -44,18 +44,18 @@ static int _nst_cache_dict_resize(uint64_t size) {
 static int _nst_cache_dict_alloc(uint64_t size) {
     int i, entry_size = sizeof(struct nst_cache_entry*);
 
-    cache->dict[0].size  = size / entry_size;
-    cache->dict[0].used  = 0;
-    cache->dict[0].entry = nuster_memory_alloc(global.nuster.cache.memory, global.nuster.cache.memory->block_size);
-    if(!cache->dict[0].entry) return 0;
+    nuster.cache->dict[0].size  = size / entry_size;
+    nuster.cache->dict[0].used  = 0;
+    nuster.cache->dict[0].entry = nuster_memory_alloc(global.nuster.cache.memory, global.nuster.cache.memory->block_size);
+    if(!nuster.cache->dict[0].entry) return 0;
 
     for(i = 1; i < size / global.nuster.cache.memory->block_size; i++) {
         if(!nuster_memory_alloc(global.nuster.cache.memory, global.nuster.cache.memory->block_size)) return 0;
     }
-    for(i = 0; i < cache->dict[0].size; i++) {
-        cache->dict[0].entry[i] = NULL;
+    for(i = 0; i < nuster.cache->dict[0].size; i++) {
+        nuster.cache->dict[0].entry[i] = NULL;
     }
-    return nuster_shctx_init((&cache->dict[0]));
+    return nuster_shctx_init((&nuster.cache->dict[0]));
 }
 
 int nst_cache_dict_init() {
@@ -68,7 +68,7 @@ int nst_cache_dict_init() {
 }
 
 static int _nst_cache_dict_rehashing() {
-    return global.nuster.cache.share == NST_CACHE_SHARE_OFF && cache->rehash_idx != -1;
+    return global.nuster.cache.share == NST_CACHE_SHARE_OFF && nuster.cache->rehash_idx != -1;
 }
 
 /*
@@ -80,10 +80,10 @@ void nst_cache_dict_rehash() {
         struct nst_cache_entry *entry = NULL;
 
         /* check max_empty entryies */
-        while(!cache->dict[0].entry[cache->rehash_idx]) {
-            cache->rehash_idx++;
+        while(!nuster.cache->dict[0].entry[nuster.cache->rehash_idx]) {
+            nuster.cache->rehash_idx++;
             max_empty--;
-            if(cache->rehash_idx >= cache->dict[0].size) {
+            if(nuster.cache->rehash_idx >= nuster.cache->dict[0].size) {
                 return;
             }
             if(!max_empty) {
@@ -92,35 +92,35 @@ void nst_cache_dict_rehash() {
         }
 
         /* move all entries in this bucket to dict[1] */
-        entry = cache->dict[0].entry[cache->rehash_idx];
+        entry = nuster.cache->dict[0].entry[nuster.cache->rehash_idx];
         while(entry) {
-            int idx = entry->hash % cache->dict[1].size;
+            int idx = entry->hash % nuster.cache->dict[1].size;
             struct nst_cache_entry *entry_next = entry->next;
 
-            entry->next = cache->dict[1].entry[idx];
-            cache->dict[1].entry[idx] = entry;
-            cache->dict[1].used++;
-            cache->dict[0].used--;
+            entry->next = nuster.cache->dict[1].entry[idx];
+            nuster.cache->dict[1].entry[idx] = entry;
+            nuster.cache->dict[1].used++;
+            nuster.cache->dict[0].used--;
             entry = entry_next;
         }
-        cache->dict[0].entry[cache->rehash_idx] = NULL;
-        cache->rehash_idx++;
+        nuster.cache->dict[0].entry[nuster.cache->rehash_idx] = NULL;
+        nuster.cache->rehash_idx++;
 
         /* have we rehashed the whole dict? */
-        if(cache->dict[0].used == 0) {
-            free(cache->dict[0].entry);
-            cache->dict[0]       = cache->dict[1];
-            cache->rehash_idx    = -1;
-            cache->cleanup_idx   = 0;
-            cache->dict[1].entry = NULL;
-            cache->dict[1].size  = 0;
-            cache->dict[1].used  = 0;
+        if(nuster.cache->dict[0].used == 0) {
+            free(nuster.cache->dict[0].entry);
+            nuster.cache->dict[0]       = nuster.cache->dict[1];
+            nuster.cache->rehash_idx    = -1;
+            nuster.cache->cleanup_idx   = 0;
+            nuster.cache->dict[1].entry = NULL;
+            nuster.cache->dict[1].size  = 0;
+            nuster.cache->dict[1].used  = 0;
         }
     } else {
         /* should we rehash? */
         if(global.nuster.cache.share) return;
-        if(cache->dict[0].used >= cache->dict[0].size * NST_CACHE_DEFAULT_LOAD_FACTOR) {
-            _nst_cache_dict_resize(cache->dict[0].size * NST_CACHE_DEFAULT_GROWTH_FACTOR);
+        if(nuster.cache->dict[0].used >= nuster.cache->dict[0].size * NST_CACHE_DEFAULT_LOAD_FACTOR) {
+            _nst_cache_dict_resize(nuster.cache->dict[0].size * NST_CACHE_DEFAULT_GROWTH_FACTOR);
         }
     }
 }
@@ -150,10 +150,10 @@ static int _nst_cache_entry_invalid(struct nst_cache_entry *entry) {
  * entry->data is freed by _cache_data_cleanup
  */
 void nst_cache_dict_cleanup() {
-    struct nst_cache_entry *entry = cache->dict[0].entry[cache->cleanup_idx];
+    struct nst_cache_entry *entry = nuster.cache->dict[0].entry[nuster.cache->cleanup_idx];
     struct nst_cache_entry *prev  = entry;
 
-    if(!cache->dict[0].used) {
+    if(!nuster.cache->dict[0].used) {
         return;
     }
 
@@ -165,7 +165,7 @@ void nst_cache_dict_cleanup() {
                 entry->data->invalid = 1;
             }
             if(prev == entry) {
-                cache->dict[0].entry[cache->cleanup_idx] = entry->next;
+                nuster.cache->dict[0].entry[nuster.cache->cleanup_idx] = entry->next;
                 prev = entry->next;
             } else {
                 prev->next = entry->next;
@@ -175,17 +175,17 @@ void nst_cache_dict_cleanup() {
             nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->host.data);
             nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->path.data);
             nst_cache_memory_free(global.nuster.cache.pool.entry, tmp);
-            cache->dict[0].used--;
+            nuster.cache->dict[0].used--;
         } else {
             prev  = entry;
             entry = entry->next;
         }
     }
-    cache->cleanup_idx++;
+    nuster.cache->cleanup_idx++;
 
     /* if we have checked the whole dict */
-    if(cache->cleanup_idx == cache->dict[0].size) {
-        cache->cleanup_idx = 0;
+    if(nuster.cache->cleanup_idx == nuster.cache->dict[0].size) {
+        nuster.cache->cleanup_idx = 0;
     }
 }
 
@@ -198,7 +198,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
     struct nst_cache_entry *entry = NULL;
     int idx;
 
-    dict = _nst_cache_dict_rehashing() ? &cache->dict[1] : &cache->dict[0];
+    dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
 
     entry = nst_cache_memory_alloc(global.nuster.cache.pool.entry, sizeof(*entry));
     if(!entry) {
@@ -247,13 +247,13 @@ struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash) {
     int i, idx;
     struct nst_cache_entry *entry = NULL;
 
-    if(cache->dict[0].used + cache->dict[1].used == 0) {
+    if(nuster.cache->dict[0].used + nuster.cache->dict[1].used == 0) {
         return NULL;
     }
 
     for(i = 0; i <= 1; i++) {
-        idx   = hash % cache->dict[i].size;
-        entry = cache->dict[i].entry[idx];
+        idx   = hash % nuster.cache->dict[i].size;
+        entry = nuster.cache->dict[i].entry[idx];
         while(entry) {
             if(entry->hash == hash && !strcmp(entry->key, key)) {
                 /* check expire

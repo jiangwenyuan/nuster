@@ -209,29 +209,29 @@ struct nst_cache_data *nst_cache_data_new() {
 
     struct nst_cache_data *data = nst_cache_memory_alloc(global.nuster.cache.pool.data, sizeof(*data));
 
-    nuster_shctx_lock(cache);
+    nuster_shctx_lock(nuster.cache);
     if(data) {
         data->clients  = 0;
         data->invalid  = 0;
         data->element  = NULL;
 
-        if(cache->data_head == NULL) {
-            cache->data_head = data;
-            cache->data_tail = data;
-            data->next       = data;
+        if(nuster.cache->data_head == NULL) {
+            nuster.cache->data_head = data;
+            nuster.cache->data_tail = data;
+            data->next              = data;
         } else {
-            if(cache->data_head == cache->data_tail) {
-                cache->data_head->next = data;
-                data->next             = cache->data_head;
-                cache->data_tail       = data;
+            if(nuster.cache->data_head == nuster.cache->data_tail) {
+                nuster.cache->data_head->next = data;
+                data->next                    = nuster.cache->data_head;
+                nuster.cache->data_tail       = data;
             } else {
-                data->next             = cache->data_head;
-                cache->data_tail->next = data;
-                cache->data_tail       = data;
+                data->next                    = nuster.cache->data_head;
+                nuster.cache->data_tail->next = data;
+                nuster.cache->data_tail       = data;
             }
         }
     }
-    nuster_shctx_unlock(cache);
+    nuster_shctx_unlock(nuster.cache);
     return data;
 }
 
@@ -287,21 +287,21 @@ static int _cache_data_invalid(struct nst_cache_data *data) {
 static void _nst_cache_data_cleanup() {
     struct nst_cache_data *data = NULL;
 
-    if(cache->data_head) {
-        if(cache->data_head == cache->data_tail) {
-            if(_cache_data_invalid(cache->data_head)) {
-                data             = cache->data_head;
-                cache->data_head = NULL;
-                cache->data_tail = NULL;
+    if(nuster.cache->data_head) {
+        if(nuster.cache->data_head == nuster.cache->data_tail) {
+            if(_cache_data_invalid(nuster.cache->data_head)) {
+                data                    = nuster.cache->data_head;
+                nuster.cache->data_head = NULL;
+                nuster.cache->data_tail = NULL;
             }
         } else {
-            if(_cache_data_invalid(cache->data_head)) {
-                data                   = cache->data_head;
-                cache->data_tail->next = cache->data_head->next;
-                cache->data_head       = cache->data_head->next;
+            if(_cache_data_invalid(nuster.cache->data_head)) {
+                data                          = nuster.cache->data_head;
+                nuster.cache->data_tail->next = nuster.cache->data_head->next;
+                nuster.cache->data_head       = nuster.cache->data_head->next;
             } else {
-                cache->data_tail       = cache->data_head;
-                cache->data_head       = cache->data_head->next;
+                nuster.cache->data_tail = nuster.cache->data_head;
+                nuster.cache->data_head = nuster.cache->data_head->next;
             }
         }
     }
@@ -323,12 +323,12 @@ static void _nst_cache_data_cleanup() {
 void nst_cache_housekeeping() {
     if(global.nuster.cache.status == NST_CACHE_STATUS_ON) {
         nst_cache_dict_rehash();
-        nuster_shctx_lock(&cache->dict[0]);
+        nuster_shctx_lock(&nuster.cache->dict[0]);
         nst_cache_dict_cleanup();
-        nuster_shctx_unlock(&cache->dict[0]);
-        nuster_shctx_lock(cache);
+        nuster_shctx_unlock(&nuster.cache->dict[0]);
+        nuster_shctx_lock(nuster.cache);
         _nst_cache_data_cleanup();
-        nuster_shctx_unlock(cache);
+        nuster_shctx_unlock(nuster.cache);
     }
 }
 
@@ -358,7 +358,7 @@ void nst_cache_init() {
             if(!nuster_shctx_init(global.nuster.cache.memory)) {
                 goto shm_err;
             }
-            cache = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct cache));
+            nuster.cache = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct cache));
         } else {
             global.nuster.cache.memory = nuster_memory_create("cache.shm", NST_CACHE_DEFAULT_SIZE, 0, 0);
             if(!global.nuster.cache.memory) {
@@ -372,21 +372,21 @@ void nst_cache_init() {
             global.nuster.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
             global.nuster.cache.pool.entry   = create_pool("cp.entry", sizeof(struct nst_cache_entry), MEM_F_SHARED);
 
-            cache = malloc(sizeof(struct cache));
+            nuster.cache = malloc(sizeof(struct cache));
         }
-        if(!cache) {
+        if(!nuster.cache) {
             goto err;
         }
-        cache->dict[0].entry = NULL;
-        cache->dict[0].used  = 0;
-        cache->dict[1].entry = NULL;
-        cache->dict[1].used  = 0;
-        cache->data_head     = NULL;
-        cache->data_tail     = NULL;
-        cache->rehash_idx    = -1;
-        cache->cleanup_idx   = 0;
+        nuster.cache->dict[0].entry = NULL;
+        nuster.cache->dict[0].used  = 0;
+        nuster.cache->dict[1].entry = NULL;
+        nuster.cache->dict[1].used  = 0;
+        nuster.cache->data_head     = NULL;
+        nuster.cache->data_tail     = NULL;
+        nuster.cache->rehash_idx    = -1;
+        nuster.cache->cleanup_idx   = 0;
 
-        if(!nuster_shctx_init(cache)) {
+        if(!nuster_shctx_init(nuster.cache)) {
             goto shm_err;
         }
 
@@ -685,13 +685,13 @@ struct nst_cache_data *nst_cache_exists(const char *key, uint64_t hash) {
 
     if(!key) return NULL;
 
-    nuster_shctx_lock(&cache->dict[0]);
+    nuster_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
     if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
         data = entry->data;
         data->clients++;
     }
-    nuster_shctx_unlock(&cache->dict[0]);
+    nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     return data;
 }
@@ -711,7 +711,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
         return;
     }
 
-    nuster_shctx_lock(&cache->dict[0]);
+    nuster_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
     if(entry) {
         if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
@@ -738,7 +738,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             return;
         }
     }
-    nuster_shctx_unlock(&cache->dict[0]);
+    nuster_shctx_unlock(&nuster.cache->dict[0]);
     ctx->entry   = entry;
     ctx->data    = entry->data;
     ctx->element = entry->data->element;

@@ -237,8 +237,6 @@ struct global global = {
 	/* others NULL OK */
 };
 
-struct cache *cache = NULL;
-
 /*********************************************************************/
 
 int stopping;	/* non zero means stopping in progress */

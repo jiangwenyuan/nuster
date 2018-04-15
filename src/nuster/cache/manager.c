@@ -27,7 +27,7 @@ int _nst_cache_purge_by_key(const char *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
     int ret;
 
-    nuster_shctx_lock(&cache->dict[0]);
+    nuster_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
     if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
         entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
@@ -38,7 +38,7 @@ int _nst_cache_purge_by_key(const char *key, uint64_t hash) {
     } else {
         ret = 404;
     }
-    nuster_shctx_unlock(&cache->dict[0]);
+    nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     return ret;
 }
@@ -374,9 +374,9 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
     uint64_t start              = get_current_timestamp();
 
     while(1) {
-        nuster_shctx_lock(&cache->dict[0]);
-        while(appctx->st2 < cache->dict[0].size && max--) {
-            entry = cache->dict[0].entry[appctx->st2];
+        nuster_shctx_lock(&nuster.cache->dict[0]);
+        while(appctx->st2 < nuster.cache->dict[0].size && max--) {
+            entry = nuster.cache->dict[0].entry[appctx->st2];
             while(entry) {
                 if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _nst_cache_manager_should_purge(entry, appctx)) {
                     entry->state         = NST_CACHE_ENTRY_STATE_INVALID;
@@ -388,13 +388,13 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
             }
             appctx->st2++;
         }
-        nuster_shctx_unlock(&cache->dict[0]);
+        nuster_shctx_unlock(&nuster.cache->dict[0]);
         if(get_current_timestamp() - start > 1) break;
         max = 1000;
     }
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
-    if(appctx->st2 == cache->dict[0].size) {
+    if(appctx->st2 == nuster.cache->dict[0].size) {
         bi_putblk(res, nuster_http_msgs[NUSTER_HTTP_200], strlen(nuster_http_msgs[NUSTER_HTTP_200]));
         bo_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
