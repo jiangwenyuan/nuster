@@ -15,9 +15,9 @@
 #include <proto/stream_interface.h>
 #include <proto/proxy.h>
 
+#include <nuster/nuster.h>
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
-#include <nuster/cache.h>
 
 void nst_cache_stats_update_used_mem(int i) {
     nuster_shctx_lock(global.nuster.cache.stats);
@@ -44,19 +44,6 @@ void nst_cache_stats_update_request(int state) {
     nuster_shctx_unlock(global.nuster.cache.stats);
 }
 
-int nst_cache_stats_init() {
-    global.nuster.cache.stats = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct nst_cache_stats));
-    if(!global.nuster.cache.stats) {
-        return 0;
-    }
-    global.nuster.cache.stats->used_mem       = 0;
-    global.nuster.cache.stats->request.total  = 0;
-    global.nuster.cache.stats->request.fetch  = 0;
-    global.nuster.cache.stats->request.hit    = 0;
-    global.nuster.cache.stats->request.abort  = 0;
-    return 1;
-}
-
 int nst_cache_stats_full() {
     int i;
     nuster_shctx_lock(global.nuster.cache.stats);
@@ -80,7 +67,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
 
     /* GET stats uri */
     if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg)) {
-        s->target = &cache_stats_applet.obj_type;
+        s->target = &nuster.applet.cache.stats.obj_type;
         if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
             return 1;
         } else {
@@ -209,9 +196,17 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 
 }
 
-struct applet cache_stats_applet = {
-    .obj_type = OBJ_TYPE_APPLET,
-    .name = "<CACHE-STATS>",
-    .fct = nst_cache_stats_handler,
-    .release = NULL,
-};
+int nst_cache_stats_init() {
+    global.nuster.cache.stats = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct nst_cache_stats));
+    if(!global.nuster.cache.stats) {
+        return 0;
+    }
+    global.nuster.cache.stats->used_mem       = 0;
+    global.nuster.cache.stats->request.total  = 0;
+    global.nuster.cache.stats->request.fetch  = 0;
+    global.nuster.cache.stats->request.hit    = 0;
+    global.nuster.cache.stats->request.abort  = 0;
+    nuster.applet.cache.stats.fct             = nst_cache_stats_handler;
+    return 1;
+}
+
