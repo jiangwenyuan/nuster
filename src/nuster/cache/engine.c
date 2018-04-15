@@ -26,8 +26,41 @@
 
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
-#include <nuster/cache.h>
+#include <nuster/nuster.h>
 
+
+/*
+ * The cache applet acts like the backend to send cached http data
+ */
+static void nst_cache_engine_handler(struct appctx *appctx) {
+    struct stream_interface *si   = appctx->owner;
+    struct channel *res           = si_ic(si);
+    struct stream *s              = si_strm(si);
+    struct nst_cache_element *element = NULL;
+    int ret;
+
+    if(appctx->ctx.nuster.cache_engine.element) {
+        if(appctx->ctx.nuster.cache_engine.element == appctx->ctx.nuster.cache_engine.data->element) {
+            s->res.analysers = 0;
+            s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE | AN_RES_HTTP_XFER_BODY);
+        }
+        element = appctx->ctx.nuster.cache_engine.element;
+
+        ret = bi_putblk(res, element->msg, element->msg_len);
+        if(ret >= 0) {
+            appctx->ctx.nuster.cache_engine.element = element->next;
+        } else if(ret == -2) {
+            appctx->ctx.nuster.cache_engine.data->clients--;
+            si_shutr(si);
+            res->flags |= CF_READ_NULL;
+        }
+    } else {
+        bo_skip(si_oc(si), si_ob(si)->o);
+        si_shutr(si);
+        res->flags |= CF_READ_NULL;
+        appctx->ctx.nuster.cache_engine.data->clients--;
+    }
+}
 
 /*
  * Cache the keys which calculated in request for response use
@@ -302,6 +335,8 @@ void nst_cache_housekeeping() {
 void nst_cache_init() {
     int i, uuid;
     struct proxy *p;
+
+    nuster.applet.cache.engine.fct = nst_cache_engine_handler;
 
     if(global.nuster.cache.status == NST_CACHE_STATUS_ON) {
         if(global.nuster.cache.share == NST_CACHE_STATUS_UNDEFINED) {
@@ -748,9 +783,9 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
     struct appctx *appctx = NULL;
 
     /*
-     * set backend to cache_io_applet
+     * set backend to nuster.applet.cache.engine
      */
-    s->target = &cache_io_applet.obj_type;
+    s->target = &nuster.applet.cache.engine.obj_type;
     if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
         /* return to regular process on error */
         data->clients--;
@@ -770,46 +805,6 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
         res->flags |= CF_NEVER_WAIT;
     }
 }
-
-/*
- * The cache applet acts like the backend to send cached http data
- */
-static void nst_cache_io_handler(struct appctx *appctx) {
-    struct stream_interface *si   = appctx->owner;
-    struct channel *res           = si_ic(si);
-    struct stream *s              = si_strm(si);
-    struct nst_cache_element *element = NULL;
-    int ret;
-
-    if(appctx->ctx.nuster.cache_engine.element) {
-        if(appctx->ctx.nuster.cache_engine.element == appctx->ctx.nuster.cache_engine.data->element) {
-            s->res.analysers = 0;
-            s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE | AN_RES_HTTP_XFER_BODY);
-        }
-        element = appctx->ctx.nuster.cache_engine.element;
-
-        ret = bi_putblk(res, element->msg, element->msg_len);
-        if(ret >= 0) {
-            appctx->ctx.nuster.cache_engine.element = element->next;
-        } else if(ret == -2) {
-            appctx->ctx.nuster.cache_engine.data->clients--;
-            si_shutr(si);
-            res->flags |= CF_READ_NULL;
-        }
-    } else {
-        bo_skip(si_oc(si), si_ob(si)->o);
-        si_shutr(si);
-        res->flags |= CF_READ_NULL;
-        appctx->ctx.nuster.cache_engine.data->clients--;
-    }
-}
-
-struct applet cache_io_applet = {
-    .obj_type = OBJ_TYPE_APPLET,
-    .name = "<CACHE>",
-    .fct = nst_cache_io_handler,
-    .release = NULL,
-};
 
 __attribute__((constructor)) static void __cache_init(void) { }
 

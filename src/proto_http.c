@@ -72,7 +72,7 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
-#include <nuster/cache.h>
+#include <nuster/nuster.h>
 
 const char HTTP_100[] =
 	"HTTP/1.1 100 Continue\r\n\r\n";
@@ -6594,7 +6594,7 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 		goto skip_filters;
 	}
 
-	if (unlikely(objt_applet(s->target) == &cache_io_applet)) {
+	if (unlikely(objt_applet(s->target) == &nuster.applet.cache.engine)) {
 		rep->analysers &= ~an_bit;
 		rep->analyse_exp = TICK_ETERNITY;
 		goto skip_filters;
