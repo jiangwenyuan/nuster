@@ -224,7 +224,7 @@ struct nst_cache_config {
     int status;
 };
 
-extern struct flt_ops  cache_filter_ops;
+extern struct flt_ops  nst_cache_filter_ops;
 
 enum {
     NST_CACHE_PURGE_NAME_ALL = 0,

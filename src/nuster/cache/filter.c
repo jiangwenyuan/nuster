@@ -255,7 +255,7 @@ static int cache_filter_http_end(struct stream *s, struct filter *filter,
     return 1;
 }
 
-struct flt_ops cache_filter_ops = {
+struct flt_ops nst_cache_filter_ops = {
     /* Manage cache filter, called for each filter declaration */
     .init   = cache_filter_init,
     .deinit = cache_filter_deinit,
