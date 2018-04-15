@@ -29,6 +29,7 @@
 
 #include <common/chunk.h>
 #include <types/stream.h>
+#include <types/applet.h>
 
 enum {
     NUSTER_HTTP_200 = 0,
@@ -40,6 +41,13 @@ enum {
 
 struct nuster {
     struct cache *cache;
+    struct {
+        struct {
+            struct applet engine;
+            struct applet manager;
+            struct applet stats;
+        } cache;
+    } applet;
 };
 
 extern struct nuster nuster;
