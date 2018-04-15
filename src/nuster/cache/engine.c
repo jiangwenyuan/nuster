@@ -358,7 +358,7 @@ void nst_cache_init() {
             if(!nuster_shctx_init(global.nuster.cache.memory)) {
                 goto shm_err;
             }
-            nuster.cache = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct cache));
+            nuster.cache = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct nst_cache));
         } else {
             global.nuster.cache.memory = nuster_memory_create("cache.shm", NST_CACHE_DEFAULT_SIZE, 0, 0);
             if(!global.nuster.cache.memory) {
@@ -372,7 +372,7 @@ void nst_cache_init() {
             global.nuster.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
             global.nuster.cache.pool.entry   = create_pool("cp.entry", sizeof(struct nst_cache_entry), MEM_F_SHARED);
 
-            nuster.cache = malloc(sizeof(struct cache));
+            nuster.cache = malloc(sizeof(struct nst_cache));
         }
         if(!nuster.cache) {
             goto err;

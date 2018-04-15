@@ -40,7 +40,7 @@ enum {
 };
 
 struct nuster {
-    struct cache *cache;
+    struct nst_cache *cache;
     struct {
         struct {
             struct applet engine;
