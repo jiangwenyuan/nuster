@@ -38,6 +38,9 @@ enum {
     NUSTER_HTTP_SIZE
 };
 
+struct nuster {
+    struct cache *cache;
+};
 
 extern struct nuster nuster;
 
