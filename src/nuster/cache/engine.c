@@ -35,7 +35,7 @@
 struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_cache_rule *rule, char *key, uint64_t hash) {
 
-    struct nst_cache_rule_stash *stash = pool_alloc2(global.cache.pool.stash);
+    struct nst_cache_rule_stash *stash = pool_alloc2(global.nuster.cache.pool.stash);
 
     if(stash) {
         stash->rule = rule;
@@ -136,16 +136,16 @@ static int _nst_cache_find_param_value_by_name(char *query_beg, char *query_end,
 }
 
 void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
-    if(global.cache.share) {
-        return nuster_memory_alloc(global.cache.memory, size);
+    if(global.nuster.cache.share) {
+        return nuster_memory_alloc(global.nuster.cache.memory, size);
     } else {
         return pool_alloc2(pool);
     }
 }
 
 void nst_cache_memory_free(struct pool_head *pool, void *p) {
-    if(global.cache.share) {
-        return nuster_memory_free(global.cache.memory, p);
+    if(global.nuster.cache.share) {
+        return nuster_memory_free(global.nuster.cache.memory, p);
     } else {
         return pool_free2(pool, p);
     }
@@ -154,15 +154,15 @@ void nst_cache_memory_free(struct pool_head *pool, void *p) {
 int nst_cache_check_uri(struct http_msg *msg) {
     const char *uri = msg->chn->buf->p + msg->sl.rq.u;
 
-    if(!global.cache.uri) {
+    if(!global.nuster.cache.uri) {
         return 0;
     }
 
-    if(strlen(global.cache.uri) != msg->sl.rq.u_l) {
+    if(strlen(global.nuster.cache.uri) != msg->sl.rq.u_l) {
         return 0;
     }
 
-    if(memcmp(uri, global.cache.uri, msg->sl.rq.u_l) != 0) {
+    if(memcmp(uri, global.nuster.cache.uri, msg->sl.rq.u_l) != 0) {
         return 0;
     }
 
@@ -174,7 +174,7 @@ int nst_cache_check_uri(struct http_msg *msg) {
  */
 struct nst_cache_data *nst_cache_data_new() {
 
-    struct nst_cache_data *data = nst_cache_memory_alloc(global.cache.pool.data, sizeof(*data));
+    struct nst_cache_data *data = nst_cache_memory_alloc(global.nuster.cache.pool.data, sizeof(*data));
 
     nuster_shctx_lock(cache);
     if(data) {
@@ -208,14 +208,14 @@ struct nst_cache_data *nst_cache_data_new() {
 static struct nst_cache_element *_nst_cache_data_append(struct nst_cache_element *tail,
         struct http_msg *msg, long msg_len) {
 
-    struct nst_cache_element *element = nst_cache_memory_alloc(global.cache.pool.element, sizeof(*element));
+    struct nst_cache_element *element = nst_cache_memory_alloc(global.nuster.cache.pool.element, sizeof(*element));
 
     if(element) {
         char *data = msg->chn->buf->data;
         char *p    = msg->chn->buf->p;
         int size   = msg->chn->buf->size;
 
-        element->msg = nst_cache_memory_alloc(global.cache.pool.chunk, msg_len);
+        element->msg = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, msg_len);
         if(!element->msg) return NULL;
 
         if(p - data + msg_len > size) {
@@ -280,15 +280,15 @@ static void _nst_cache_data_cleanup() {
             element                   = element->next;
 
             nst_cache_stats_update_used_mem(-tmp->msg_len);
-            nst_cache_memory_free(global.cache.pool.chunk, tmp->msg);
-            nst_cache_memory_free(global.cache.pool.element, tmp);
+            nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->msg);
+            nst_cache_memory_free(global.nuster.cache.pool.element, tmp);
         }
-        nst_cache_memory_free(global.cache.pool.data, data);
+        nst_cache_memory_free(global.nuster.cache.pool.data, data);
     }
 }
 
 void nst_cache_housekeeping() {
-    if(global.cache.status == NST_CACHE_STATUS_ON) {
+    if(global.nuster.cache.status == NST_CACHE_STATUS_ON) {
         nst_cache_dict_rehash();
         nuster_shctx_lock(&cache->dict[0]);
         nst_cache_dict_cleanup();
@@ -303,39 +303,39 @@ void nst_cache_init() {
     int i, uuid;
     struct proxy *p;
 
-    if(global.cache.status == NST_CACHE_STATUS_ON) {
-        if(global.cache.share == NST_CACHE_STATUS_UNDEFINED) {
+    if(global.nuster.cache.status == NST_CACHE_STATUS_ON) {
+        if(global.nuster.cache.share == NST_CACHE_STATUS_UNDEFINED) {
             if(global.nbproc == 1) {
-                global.cache.share = NST_CACHE_SHARE_OFF;
+                global.nuster.cache.share = NST_CACHE_SHARE_OFF;
             } else {
-                global.cache.share = NST_CACHE_SHARE_ON;
+                global.nuster.cache.share = NST_CACHE_SHARE_ON;
             }
         }
 
-        global.cache.pool.stash   = create_pool("cp.stash", sizeof(struct nst_cache_rule_stash), MEM_F_SHARED);
-        global.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct nst_cache_ctx), MEM_F_SHARED);
+        global.nuster.cache.pool.stash   = create_pool("cp.stash", sizeof(struct nst_cache_rule_stash), MEM_F_SHARED);
+        global.nuster.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct nst_cache_ctx), MEM_F_SHARED);
 
-        if(global.cache.share) {
-            global.cache.memory = nuster_memory_create("cache.shm", global.cache.dict_size + global.cache.data_size, global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
-            if(!global.cache.memory) {
+        if(global.nuster.cache.share) {
+            global.nuster.cache.memory = nuster_memory_create("cache.shm", global.nuster.cache.dict_size + global.nuster.cache.data_size, global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
+            if(!global.nuster.cache.memory) {
                 goto shm_err;
             }
-            if(!nuster_shctx_init(global.cache.memory)) {
+            if(!nuster_shctx_init(global.nuster.cache.memory)) {
                 goto shm_err;
             }
-            cache = nuster_memory_alloc(global.cache.memory, sizeof(struct cache));
+            cache = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct cache));
         } else {
-            global.cache.memory = nuster_memory_create("cache.shm", NST_CACHE_DEFAULT_SIZE, 0, 0);
-            if(!global.cache.memory) {
+            global.nuster.cache.memory = nuster_memory_create("cache.shm", NST_CACHE_DEFAULT_SIZE, 0, 0);
+            if(!global.nuster.cache.memory) {
                 goto shm_err;
             }
-            if(!nuster_shctx_init(global.cache.memory)) {
+            if(!nuster_shctx_init(global.nuster.cache.memory)) {
                 goto shm_err;
             }
-            global.cache.pool.data    = create_pool("cp.data", sizeof(struct nst_cache_data), MEM_F_SHARED);
-            global.cache.pool.element = create_pool("cp.element", sizeof(struct nst_cache_element), MEM_F_SHARED);
-            global.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
-            global.cache.pool.entry   = create_pool("cp.entry", sizeof(struct nst_cache_entry), MEM_F_SHARED);
+            global.nuster.cache.pool.data    = create_pool("cp.data", sizeof(struct nst_cache_data), MEM_F_SHARED);
+            global.nuster.cache.pool.element = create_pool("cp.element", sizeof(struct nst_cache_element), MEM_F_SHARED);
+            global.nuster.cache.pool.chunk   = create_pool("cp.chunk", global.tune.bufsize, MEM_F_SHARED);
+            global.nuster.cache.pool.entry   = create_pool("cp.entry", sizeof(struct nst_cache_entry), MEM_F_SHARED);
 
             cache = malloc(sizeof(struct cache));
         }
@@ -374,14 +374,14 @@ void nst_cache_init() {
                 struct proxy *pt;
 
                 rule->uuid   = uuid++;
-                rule->state  = nuster_memory_alloc(global.cache.memory, sizeof(*rule->state));
+                rule->state  = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*rule->state));
                 if(!rule->state) {
                     goto err;
                 }
                 *rule->state = NST_CACHE_RULE_ENABLED;
                 ttl          = *rule->ttl;
                 free(rule->ttl);
-                rule->ttl    = nuster_memory_alloc(global.cache.memory, sizeof(*rule->ttl));
+                rule->ttl    = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*rule->ttl));
                 if(!rule->ttl) {
                     goto err;
                 }
@@ -409,7 +409,7 @@ out:
             p = p->next;
         }
 
-        nuster_debug("[CACHE] on, data_size=%llu\n", global.cache.data_size);
+        nuster_debug("[CACHE] on, data_size=%llu\n", global.nuster.cache.data_size);
     }
     return;
 err:
@@ -438,7 +438,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
     ctx->req.host.len  = 0;
     hdr.idx            = 0;
     if(http_find_header2("Host", 4, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data = nst_cache_memory_alloc(global.cache.pool.chunk, hdr.vlen);
+        ctx->req.host.data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, hdr.vlen);
         if(!ctx->req.host.data) {
             return 0;
         }
@@ -461,7 +461,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
         ctx->req.uri.len  = url_end - ctx->req.uri.data;
     }
     /* extra 1 char as required by regex_exec_match2 */
-    ctx->req.path.data = nst_cache_memory_alloc(global.cache.pool.chunk, ctx->req.path.len + 1);
+    ctx->req.path.data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, ctx->req.path.len + 1);
     if(!ctx->req.path.data) {
         return 0;
     }
