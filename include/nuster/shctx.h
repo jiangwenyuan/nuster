@@ -22,8 +22,6 @@
 #ifndef _NUSTER_SHCTX_H
 #define _NUSTER_SHCTX_H
 
-#include <types/global.h>
-
 #include <nuster/common.h>
 
 /* lock, borrowed from shctx.c */
@@ -31,24 +29,22 @@
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
 
 static inline int _nuster_shctx_init(pthread_mutex_t *mutex) {
-    if(global.cache.share) {
-        pthread_mutexattr_t attr;
-        if(pthread_mutexattr_init(&attr)) {
-            return 0;
-        }
-        if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED)) {
-            return 0;
-        }
-        if(pthread_mutex_init(mutex, &attr)) {
-            return 0;
-        }
+    pthread_mutexattr_t attr;
+    if(pthread_mutexattr_init(&attr)) {
+        return 0;
+    }
+    if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED)) {
+        return 0;
+    }
+    if(pthread_mutex_init(mutex, &attr)) {
+        return 0;
     }
     return 1;
 }
 
 #define nuster_shctx_init(shctx)   _nuster_shctx_init(&(shctx)->mutex)
-#define nuster_shctx_lock(shctx)   if (global.cache.share) pthread_mutex_lock(&(shctx)->mutex)
-#define nuster_shctx_unlock(shctx) if (global.cache.share) pthread_mutex_unlock(&(shctx)->mutex)
+#define nuster_shctx_lock(shctx)   pthread_mutex_lock(&(shctx)->mutex)
+#define nuster_shctx_unlock(shctx) pthread_mutex_unlock(&(shctx)->mutex)
 
 #else
 
@@ -159,8 +155,8 @@ static inline int _nuster_shctx_init(unsigned int *waiters) {
     return 1;
 }
 #define nuster_shctx_init(shctx)   _nuster_shctx_init(&(shctx)->waiters)
-#define nuster_shctx_lock(shctx)   if (global.cache.share) _shctx_lock(&(shctx)->waiters)
-#define nuster_shctx_unlock(shctx) if (global.cache.share) _shctx_unlock(&(shctx)->waiters)
+#define nuster_shctx_lock(shctx)   _shctx_lock(&(shctx)->waiters)
+#define nuster_shctx_unlock(shctx) _shctx_unlock(&(shctx)->waiters)
 
 #endif
 
