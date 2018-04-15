@@ -240,7 +240,7 @@ int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
         struct flt_conf *fconf, char **err, void *private) {
 
     struct flt_conf *fc, *back;
-    struct cache_config *conf;
+    struct nst_cache_config *conf;
 
     if(!(px->cap & PR_CAP_BE)) {
         memprintf(err, "`cache` is not allowed in a 'frontend' section.");

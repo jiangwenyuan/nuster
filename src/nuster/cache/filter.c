@@ -26,7 +26,7 @@ static int cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
 }
 
 static void cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
-    struct cache_config *conf = fconf->conf;
+    struct nst_cache_config *conf = fconf->conf;
 
     if(conf) {
         free(conf);
@@ -42,7 +42,7 @@ static int cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
 }
 
 static int cache_filter_attach(struct stream *s, struct filter *filter) {
-    struct cache_config *conf = FLT_CONF(filter);
+    struct nst_cache_config *conf = FLT_CONF(filter);
 
     /* disable cache if state is not NST_CACHE_STATUS_ON */
     if(global.nuster.cache.status != NST_CACHE_STATUS_ON || conf->status != NST_CACHE_STATUS_ON) {

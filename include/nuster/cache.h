@@ -220,7 +220,7 @@ struct nst_cache {
     int                    cleanup_idx;       /* cache dict cleanup index */
 };
 
-struct cache_config {
+struct nst_cache_config {
     int status;
 };
 
