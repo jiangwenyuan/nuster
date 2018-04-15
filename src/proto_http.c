@@ -6594,7 +6594,7 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 		goto skip_filters;
 	}
 
-	if (unlikely(objt_applet(s->target) == &nuster.applet.cache.engine)) {
+	if (unlikely(objt_applet(s->target) == &nuster.applet.cache_engine)) {
 		rep->analysers &= ~an_bit;
 		rep->analyse_exp = TICK_ETERNITY;
 		goto skip_filters;

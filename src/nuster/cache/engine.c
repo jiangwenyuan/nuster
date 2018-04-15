@@ -336,7 +336,7 @@ void nst_cache_init() {
     int i, uuid;
     struct proxy *p;
 
-    nuster.applet.cache.engine.fct = nst_cache_engine_handler;
+    nuster.applet.cache_engine.fct = nst_cache_engine_handler;
 
     if(global.nuster.cache.status == NST_CACHE_STATUS_ON) {
         if(global.nuster.cache.share == NST_CACHE_STATUS_UNDEFINED) {
@@ -787,9 +787,9 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
     struct appctx *appctx = NULL;
 
     /*
-     * set backend to nuster.applet.cache.engine
+     * set backend to nuster.applet.cache_engine
      */
-    s->target = &nuster.applet.cache.engine.obj_type;
+    s->target = &nuster.applet.cache_engine.obj_type;
     if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
         /* return to regular process on error */
         data->clients--;

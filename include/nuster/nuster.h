@@ -42,11 +42,9 @@ enum {
 struct nuster {
     struct nst_cache *cache;
     struct {
-        struct {
-            struct applet engine;
-            struct applet manager;
-            struct applet stats;
-        } cache;
+        struct applet cache_engine;
+        struct applet cache_manager;
+        struct applet cache_stats;
     } applet;
 };
 

@@ -203,7 +203,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
     }
 
 purge:
-    s->target = &nuster.applet.cache.manager.obj_type;
+    s->target = &nuster.applet.cache_manager.obj_type;
     if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
         goto err;
     } else {
@@ -416,7 +416,7 @@ static void nst_cache_manager_release_handler(struct appctx *appctx) {
 }
 
 int nst_cache_manager_init() {
-    nuster.applet.cache.manager.fct     = nst_cache_manager_handler;
-    nuster.applet.cache.manager.release = nst_cache_manager_release_handler;
+    nuster.applet.cache_manager.fct     = nst_cache_manager_handler;
+    nuster.applet.cache_manager.release = nst_cache_manager_release_handler;
     return 1;
 }
