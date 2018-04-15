@@ -435,11 +435,11 @@ struct proxy {
 						 * name is used
 						 */
 	struct list filter_configs;		/* list of the filters that are declared on this proxy */
-        struct {
-            struct {
-                struct list rules;              /* cache rules */
-            } cache;
-        } nuster;
+	struct {
+		struct {
+			struct list rules;      /* cache rules */
+		} cache;
+	} nuster;
 };
 
 struct switching_rule {

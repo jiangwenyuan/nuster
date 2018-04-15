@@ -226,29 +226,29 @@ struct global {
 		struct eb_root btree; /* btree containing info (name/type) on WURFL data to return */
 	} wurfl;
 #endif
-        struct {
-            struct {
-                int                  status;            /* cache on or off */
-                //char              *storage;           /* memory or directory */
-                uint64_t             data_size;         /* max memory used by data, in bytes */
-                uint64_t             dict_size;         /* max memory used by dict, in bytes */
-                int                  share;
-                char                *purge_method;
-                char                *uri;               /* the uri used for stats and manager */
+	struct {
+		struct {
+			int       status;                      /* cache on or off */
+			//char   *storage;                     /* memory or directory */
+			uint64_t  data_size;                   /* max memory used by data, in bytes */
+			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
+			int       share;
+			char     *purge_method;
+			char     *uri;                         /* the uri used for stats and manager */
 
-                struct {
-                    struct pool_head *stash;
-                    struct pool_head *ctx;
-                    struct pool_head *data;
-                    struct pool_head *element;
-                    struct pool_head *chunk;
-                    struct pool_head *entry;
-                } pool;
+			struct {
+				struct pool_head *stash;
+				struct pool_head *ctx;
+				struct pool_head *data;
+				struct pool_head *element;
+				struct pool_head *chunk;
+				struct pool_head *entry;
+			} pool;
 
-                struct nuster_memory *memory;           /* memory */
-                struct nst_cache_stats   *stats;
-            } cache;
-        } nuster;
+			struct nuster_memory   *memory;        /* memory */
+			struct nst_cache_stats *stats;
+		} cache;
+	} nuster;
 };
 
 extern struct global global;

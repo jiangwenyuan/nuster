@@ -4469,9 +4469,9 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	}
 
         /* check cache purge */
-        if (nst_cache_manager(s, req, px) || nst_cache_stats(s, req, px)) {
-            goto return_prx_cond;
-        }
+	if (nst_cache_manager(s, req, px) || nst_cache_stats(s, req, px)) {
+		goto return_prx_cond;
+	}
 
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.
 	 * If this happens, then the data will not come immediately, so we must
