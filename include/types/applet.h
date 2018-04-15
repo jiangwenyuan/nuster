@@ -163,18 +163,20 @@ struct appctx {
 			unsigned int max_frame_size;
 			struct list  list;
 		} spoe;                         /* used by SPOE filter */
-                struct {
+                union {
+                    struct {
                         struct nst_cache_entry   *entry;
                         struct nst_cache_data    *data;
                         struct nst_cache_element *element;
-                } cache;
-                struct {
+                    } cache_engine;
+                    struct {
                         struct my_regex *regex;
                         char            *host;
                         char            *path;
                         int              host_len;
                         int              path_len;
-                } cache_manager;
+                    } cache_manager;
+                } nuster;
 	} ctx;					/* used by stats I/O handlers to dump the stats */
 };
 

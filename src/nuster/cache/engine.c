@@ -757,9 +757,9 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
         s->target = NULL;
     } else {
         appctx = si_appctx(si);
-        memset(&appctx->ctx.cache, 0, sizeof(appctx->ctx.cache));
-        appctx->ctx.cache.data    = data;
-        appctx->ctx.cache.element = data->element;
+        memset(&appctx->ctx.nuster.cache_engine, 0, sizeof(appctx->ctx.nuster.cache_engine));
+        appctx->ctx.nuster.cache_engine.data    = data;
+        appctx->ctx.nuster.cache_engine.element = data->element;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
@@ -781,18 +781,18 @@ static void nst_cache_io_handler(struct appctx *appctx) {
     struct nst_cache_element *element = NULL;
     int ret;
 
-    if(appctx->ctx.cache.element) {
-        if(appctx->ctx.cache.element == appctx->ctx.cache.data->element) {
+    if(appctx->ctx.nuster.cache_engine.element) {
+        if(appctx->ctx.nuster.cache_engine.element == appctx->ctx.nuster.cache_engine.data->element) {
             s->res.analysers = 0;
             s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE | AN_RES_HTTP_XFER_BODY);
         }
-        element = appctx->ctx.cache.element;
+        element = appctx->ctx.nuster.cache_engine.element;
 
         ret = bi_putblk(res, element->msg, element->msg_len);
         if(ret >= 0) {
-            appctx->ctx.cache.element = element->next;
+            appctx->ctx.nuster.cache_engine.element = element->next;
         } else if(ret == -2) {
-            appctx->ctx.cache.data->clients--;
+            appctx->ctx.nuster.cache_engine.data->clients--;
             si_shutr(si);
             res->flags |= CF_READ_NULL;
         }
@@ -800,7 +800,7 @@ static void nst_cache_io_handler(struct appctx *appctx) {
         bo_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
         res->flags |= CF_READ_NULL;
-        appctx->ctx.cache.data->clients--;
+        appctx->ctx.nuster.cache_engine.data->clients--;
     }
 }
 
