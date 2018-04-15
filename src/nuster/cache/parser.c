@@ -276,7 +276,7 @@ int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
 
     fconf->id   = cache_id;
     fconf->conf = conf;
-    fconf->ops  = &cache_filter_ops;
+    fconf->ops  = &nst_cache_filter_ops;
     return 0;
 
 }
