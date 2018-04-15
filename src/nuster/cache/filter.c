@@ -21,11 +21,11 @@
 
 #include <nuster/cache.h>
 
-static int cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
+static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
     return 0;
 }
 
-static void cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
+static void _nst_cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
     struct nst_cache_config *conf = fconf->conf;
 
     if(conf) {
@@ -34,14 +34,14 @@ static void cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
     fconf->conf = NULL;
 }
 
-static int cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
+static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
     if(px->mode != PR_MODE_HTTP) {
         Warning("Proxy [%s] : mode should be http to enable cache\n", px->id);
     }
     return 0;
 }
 
-static int cache_filter_attach(struct stream *s, struct filter *filter) {
+static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     struct nst_cache_config *conf = FLT_CONF(filter);
 
     /* disable cache if state is not NST_CACHE_STATUS_ON */
@@ -67,7 +67,7 @@ static int cache_filter_attach(struct stream *s, struct filter *filter) {
     return 1;
 }
 
-static void cache_filter_detach(struct stream *s, struct filter *filter) {
+static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
     if(filter->ctx) {
         struct nst_cache_rule_stash *stash = NULL;
         struct nst_cache_ctx *ctx          = filter->ctx;
@@ -93,7 +93,7 @@ static void cache_filter_detach(struct stream *s, struct filter *filter) {
     }
 }
 
-static int cache_filter_http_headers(struct stream *s, struct filter *filter,
+static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filter,
         struct http_msg *msg) {
 
     struct channel *req         = msg->chn;
@@ -230,7 +230,7 @@ static int cache_filter_http_headers(struct stream *s, struct filter *filter,
     return 1;
 }
 
-static int cache_filter_http_forward_data(struct stream *s, struct filter *filter,
+static int _nst_cache_filter_http_forward_data(struct stream *s, struct filter *filter,
         struct http_msg *msg, unsigned int len) {
 
     struct nst_cache_ctx *ctx = filter->ctx;
@@ -244,7 +244,7 @@ static int cache_filter_http_forward_data(struct stream *s, struct filter *filte
     return len;
 }
 
-static int cache_filter_http_end(struct stream *s, struct filter *filter,
+static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
         struct http_msg *msg) {
 
     struct nst_cache_ctx *ctx = filter->ctx;
@@ -257,17 +257,17 @@ static int cache_filter_http_end(struct stream *s, struct filter *filter,
 
 struct flt_ops nst_cache_filter_ops = {
     /* Manage cache filter, called for each filter declaration */
-    .init   = cache_filter_init,
-    .deinit = cache_filter_deinit,
-    .check  = cache_filter_check,
+    .init   = _nst_cache_filter_init,
+    .deinit = _nst_cache_filter_deinit,
+    .check  = _nst_cache_filter_check,
 
-    .attach = cache_filter_attach,
-    .detach = cache_filter_detach,
+    .attach = _nst_cache_filter_attach,
+    .detach = _nst_cache_filter_detach,
 
     /* Filter HTTP requests and responses */
-    .http_headers      = cache_filter_http_headers,
-    .http_forward_data = cache_filter_http_forward_data,
-    .http_end          = cache_filter_http_end,
+    .http_headers      = _nst_cache_filter_http_headers,
+    .http_forward_data = _nst_cache_filter_http_forward_data,
+    .http_end          = _nst_cache_filter_http_end,
 
 };
 
@@ -281,7 +281,7 @@ static struct flt_kw_list flt_kws = { "CACHE", { }, {
     { "cache", nst_cache_parse_filter, NULL }, { NULL, NULL, NULL }, }
 };
 
-__attribute__((constructor)) static void __flt_cache_init(void) {
+__attribute__((constructor)) static void __nst_flt_cache_init(void) {
     cfg_register_keywords(&cfg_kws);
     flt_register_keywords(&flt_kws);
 }
