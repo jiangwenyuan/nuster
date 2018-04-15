@@ -20,48 +20,48 @@
 #include <nuster/cache.h>
 
 void nst_cache_stats_update_used_mem(int i) {
-    nuster_shctx_lock(global.cache.stats);
-    global.cache.stats->used_mem += i;
-    nuster_shctx_unlock(global.cache.stats);
+    nuster_shctx_lock(global.nuster.cache.stats);
+    global.nuster.cache.stats->used_mem += i;
+    nuster_shctx_unlock(global.nuster.cache.stats);
 }
 
 void nst_cache_stats_update_request(int state) {
-    nuster_shctx_lock(global.cache.stats);
-    global.cache.stats->request.total++;
+    nuster_shctx_lock(global.nuster.cache.stats);
+    global.nuster.cache.stats->request.total++;
     switch(state) {
         case NST_CACHE_CTX_STATE_HIT:
-            global.cache.stats->request.hit++;
+            global.nuster.cache.stats->request.hit++;
             break;
         case NST_CACHE_CTX_STATE_CREATE:
-            global.cache.stats->request.abort++;
+            global.nuster.cache.stats->request.abort++;
             break;
         case NST_CACHE_CTX_STATE_DONE:
-            global.cache.stats->request.fetch++;
+            global.nuster.cache.stats->request.fetch++;
             break;
         default:
             break;
     }
-    nuster_shctx_unlock(global.cache.stats);
+    nuster_shctx_unlock(global.nuster.cache.stats);
 }
 
 int nst_cache_stats_init() {
-    global.cache.stats = nuster_memory_alloc(global.cache.memory, sizeof(struct nst_cache_stats));
-    if(!global.cache.stats) {
+    global.nuster.cache.stats = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct nst_cache_stats));
+    if(!global.nuster.cache.stats) {
         return 0;
     }
-    global.cache.stats->used_mem       = 0;
-    global.cache.stats->request.total  = 0;
-    global.cache.stats->request.fetch  = 0;
-    global.cache.stats->request.hit    = 0;
-    global.cache.stats->request.abort  = 0;
+    global.nuster.cache.stats->used_mem       = 0;
+    global.nuster.cache.stats->request.total  = 0;
+    global.nuster.cache.stats->request.fetch  = 0;
+    global.nuster.cache.stats->request.hit    = 0;
+    global.nuster.cache.stats->request.abort  = 0;
     return 1;
 }
 
 int nst_cache_stats_full() {
     int i;
-    nuster_shctx_lock(global.cache.stats);
-    i =  global.cache.data_size <= global.cache.stats->used_mem;
-    nuster_shctx_unlock(global.cache.stats);
+    nuster_shctx_lock(global.nuster.cache.stats);
+    i =  global.nuster.cache.data_size <= global.nuster.cache.stats->used_mem;
+    nuster_shctx_unlock(global.nuster.cache.stats);
     return i;
 }
 
@@ -74,7 +74,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_msg *msg        = &txn->req;
     struct appctx *appctx       = NULL;
 
-    if(global.cache.status != NST_CACHE_STATUS_ON) {
+    if(global.nuster.cache.status != NST_CACHE_STATUS_ON) {
         return 0;
     }
 
@@ -106,15 +106,15 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
             "\r\n");
 
     chunk_appendf(&trash, "**GLOBAL**\n");
-    chunk_appendf(&trash, "global.cache.data.size: %"PRIu64"\n", global.cache.data_size);
-    chunk_appendf(&trash, "global.cache.dict.size: %"PRIu64"\n", global.cache.dict_size);
-    chunk_appendf(&trash, "global.cache.uri: %s\n", global.cache.uri);
-    chunk_appendf(&trash, "global.cache.purge_method: %.*s\n", (int)strlen(global.cache.purge_method) - 1, global.cache.purge_method);
-    chunk_appendf(&trash, "global.cache.stats.used_mem: %"PRIu64"\n", global.cache.stats->used_mem);
-    chunk_appendf(&trash, "global.cache.stats.req_total: %"PRIu64"\n", global.cache.stats->request.total);
-    chunk_appendf(&trash, "global.cache.stats.req_hit: %"PRIu64"\n", global.cache.stats->request.hit);
-    chunk_appendf(&trash, "global.cache.stats.req_fetch: %"PRIu64"\n", global.cache.stats->request.fetch);
-    chunk_appendf(&trash, "global.cache.stats.req_abort: %"PRIu64"\n", global.cache.stats->request.abort);
+    chunk_appendf(&trash, "global.nuster.cache.data.size: %"PRIu64"\n", global.nuster.cache.data_size);
+    chunk_appendf(&trash, "global.nuster.cache.dict.size: %"PRIu64"\n", global.nuster.cache.dict_size);
+    chunk_appendf(&trash, "global.nuster.cache.uri: %s\n", global.nuster.cache.uri);
+    chunk_appendf(&trash, "global.nuster.cache.purge_method: %.*s\n", (int)strlen(global.nuster.cache.purge_method) - 1, global.nuster.cache.purge_method);
+    chunk_appendf(&trash, "global.nuster.cache.stats.used_mem: %"PRIu64"\n", global.nuster.cache.stats->used_mem);
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_total: %"PRIu64"\n", global.nuster.cache.stats->request.total);
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_hit: %"PRIu64"\n", global.nuster.cache.stats->request.hit);
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_fetch: %"PRIu64"\n", global.nuster.cache.stats->request.fetch);
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_abort: %"PRIu64"\n", global.nuster.cache.stats->request.abort);
 
     s->txn->status = 200;
 

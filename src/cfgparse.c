@@ -1930,7 +1930,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                 if (alertif_too_many_args(11, file, linenum, args, &err_code)) {
                         goto out;
                 }
-                if (global.cache.status != NST_CACHE_STATUS_UNDEFINED) {
+                if (global.nuster.cache.status != NST_CACHE_STATUS_UNDEFINED) {
                         Alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
                         err_code |= ERR_ALERT;
                         goto out;
@@ -1941,19 +1941,19 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                         goto out;
                 }
                 if (!strcmp(args[cur_arg], "off")) {
-                        global.cache.status = NST_CACHE_STATUS_OFF;
+                        global.nuster.cache.status = NST_CACHE_STATUS_OFF;
                 } else if (!strcmp(args[cur_arg], "on")) {
-                        global.cache.status = NST_CACHE_STATUS_ON;
+                        global.nuster.cache.status = NST_CACHE_STATUS_ON;
                 } else {
                         Alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
                         err_code |= ERR_ALERT | ERR_FATAL;
                         goto out;
                 }
-                global.cache.purge_method = calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
-                memcpy(global.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
-                memcpy(global.cache.purge_method + 5, " ", 1);
+                global.nuster.cache.purge_method = calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
+                memcpy(global.nuster.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
+                memcpy(global.nuster.cache.purge_method + 5, " ", 1);
                 cur_arg++;
-                global.cache.uri = NULL;
+                global.nuster.cache.uri = NULL;
                 while(*(args[cur_arg]) !=0) {
                         if (!strcmp(args[cur_arg], "share")) {
                             cur_arg++;
@@ -1963,9 +1963,9 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                 goto out;
                             }
                             if (!strcmp(args[cur_arg], "off")) {
-                                global.cache.share = NST_CACHE_SHARE_OFF;
+                                global.nuster.cache.share = NST_CACHE_SHARE_OFF;
                             } else if (!strcmp(args[cur_arg], "on")) {
-                                global.cache.share = NST_CACHE_SHARE_ON;
+                                global.nuster.cache.share = NST_CACHE_SHARE_ON;
                             } else {
                                 Alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
                                 err_code |= ERR_ALERT | ERR_FATAL;
@@ -1981,7 +1981,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                if (nst_cache_parse_size(args[cur_arg], &global.cache.data_size)) {
+                                if (nst_cache_parse_size(args[cur_arg], &global.nuster.cache.data_size)) {
                                         Alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
@@ -1996,7 +1996,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                if (nst_cache_parse_size(args[cur_arg], &global.cache.dict_size)) {
+                                if (nst_cache_parse_size(args[cur_arg], &global.nuster.cache.dict_size)) {
                                         Alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
@@ -2011,13 +2011,13 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                memset(global.cache.purge_method, 0, NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
+                                memset(global.nuster.cache.purge_method, 0, NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
                                 if(strlen(args[cur_arg]) <= NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
-                                        memcpy(global.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
-                                        memcpy(global.cache.purge_method + strlen(args[cur_arg]), " ", 1);
+                                        memcpy(global.nuster.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
+                                        memcpy(global.nuster.cache.purge_method + strlen(args[cur_arg]), " ", 1);
                                 } else {
-                                        memcpy(global.cache.purge_method, args[cur_arg], NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
-                                        memcpy(global.cache.purge_method + NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
+                                        memcpy(global.nuster.cache.purge_method, args[cur_arg], NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
+                                        memcpy(global.nuster.cache.purge_method + NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
                                 }
                                 cur_arg++;
                                 continue;
@@ -2029,7 +2029,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
                                         err_code |= ERR_ALERT | ERR_FATAL;
                                         goto out;
                                 }
-                                global.cache.uri = strdup(args[cur_arg]);
+                                global.nuster.cache.uri = strdup(args[cur_arg]);
                                 cur_arg++;
                                 continue;
                         }

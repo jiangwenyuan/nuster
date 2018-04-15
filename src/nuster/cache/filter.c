@@ -45,11 +45,11 @@ static int cache_filter_attach(struct stream *s, struct filter *filter) {
     struct cache_config *conf = FLT_CONF(filter);
 
     /* disable cache if state is not NST_CACHE_STATUS_ON */
-    if(global.cache.status != NST_CACHE_STATUS_ON || conf->status != NST_CACHE_STATUS_ON) {
+    if(global.nuster.cache.status != NST_CACHE_STATUS_ON || conf->status != NST_CACHE_STATUS_ON) {
         return 0;
     }
     if(!filter->ctx) {
-        struct nst_cache_ctx *ctx = pool_alloc2(global.cache.pool.ctx);
+        struct nst_cache_ctx *ctx = pool_alloc2(global.nuster.cache.pool.ctx);
         if(ctx == NULL ) {
             return 0;
         }
@@ -81,15 +81,15 @@ static void cache_filter_detach(struct stream *s, struct filter *filter) {
             stash      = ctx->stash;
             ctx->stash = ctx->stash->next;
             free(stash->key);
-            pool_free2(global.cache.pool.stash, stash);
+            pool_free2(global.nuster.cache.pool.stash, stash);
         }
         if(ctx->req.host.data) {
-            nst_cache_memory_free(global.cache.pool.chunk, ctx->req.host.data);
+            nst_cache_memory_free(global.nuster.cache.pool.chunk, ctx->req.host.data);
         }
         if(ctx->req.path.data) {
-            nst_cache_memory_free(global.cache.pool.chunk, ctx->req.path.data);
+            nst_cache_memory_free(global.nuster.cache.pool.chunk, ctx->req.path.data);
         }
-        pool_free2(global.cache.pool.ctx, ctx);
+        pool_free2(global.nuster.cache.pool.ctx, ctx);
     }
 }
 

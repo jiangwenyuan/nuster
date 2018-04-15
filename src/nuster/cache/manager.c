@@ -50,7 +50,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
 
 
     if(txn->meth == HTTP_METH_OTHER &&
-            memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0) {
+            memcmp(msg->chn->buf->p, global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0) {
 
         char *key = nst_cache_build_purge_key(s, msg);
         if(!key) {
@@ -123,7 +123,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
 
 static inline int _nst_cache_manager_purge_method(struct http_txn *txn, struct http_msg *msg) {
     return txn->meth == HTTP_METH_OTHER &&
-            memcmp(msg->chn->buf->p, global.cache.purge_method, strlen(global.cache.purge_method)) == 0;
+            memcmp(msg->chn->buf->p, global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0;
 }
 
 int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px) {
@@ -217,7 +217,7 @@ purge:
         if(mode == NST_CACHE_PURGE_HOST ||
                 mode == NST_CACHE_PURGE_PATH_HOST ||
                 mode == NST_CACHE_PURGE_REGEX_HOST) {
-            appctx->ctx.cache_manager.host     = nuster_memory_alloc(global.cache.memory, host_len);
+            appctx->ctx.cache_manager.host     = nuster_memory_alloc(global.nuster.cache.memory, host_len);
             appctx->ctx.cache_manager.host_len = host_len;
             if(!appctx->ctx.cache_manager.host) {
                 goto err;
@@ -227,7 +227,7 @@ purge:
 
         if(mode == NST_CACHE_PURGE_PATH ||
                 mode == NST_CACHE_PURGE_PATH_HOST) {
-            appctx->ctx.cache_manager.path     = nuster_memory_alloc(global.cache.memory, path_len);
+            appctx->ctx.cache_manager.path     = nuster_memory_alloc(global.nuster.cache.memory, path_len);
             appctx->ctx.cache_manager.path_len = path_len;
             if(!appctx->ctx.cache_manager.path) {
                 goto err;
@@ -267,7 +267,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     int ttl              = -1;
     struct hdr_ctx ctx;
 
-    if(global.cache.status != NST_CACHE_STATUS_ON) {
+    if(global.nuster.cache.status != NST_CACHE_STATUS_ON) {
         return 0;
     }
 
@@ -409,10 +409,10 @@ static void nst_cache_manager_release_handler(struct appctx *appctx) {
         free(appctx->ctx.cache_manager.regex);
     }
     if(appctx->ctx.cache_manager.host) {
-        nuster_memory_free(global.cache.memory, appctx->ctx.cache_manager.host);
+        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.cache_manager.host);
     }
     if(appctx->ctx.cache_manager.path) {
-        nuster_memory_free(global.cache.memory, appctx->ctx.cache_manager.path);
+        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.cache_manager.path);
     }
 }
 
