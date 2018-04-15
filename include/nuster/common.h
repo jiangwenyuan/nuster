@@ -41,6 +41,9 @@
 #endif
 #endif
 
+#include <common/chunk.h>
+#include <types/stream.h>
+
 enum {
     NUSTER_HTTP_200 = 0,
     NUSTER_HTTP_400,
