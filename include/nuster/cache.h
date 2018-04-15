@@ -226,7 +226,6 @@ struct cache_config {
 
 
 extern struct cache   *cache;
-extern struct applet   cache_stats_applet;
 extern struct flt_ops  cache_filter_ops;
 
 enum {
