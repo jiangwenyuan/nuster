@@ -14,8 +14,7 @@
 
 #include <proto/stream_interface.h>
 
-#include <nuster/common.h>
-#include <nuster/cache.h>
+#include <nuster/nuster.h>
 
 const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
     [NUSTER_HTTP_200] =
