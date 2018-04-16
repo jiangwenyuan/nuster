@@ -229,7 +229,7 @@ struct global global = {
 			.status       = NST_CACHE_STATUS_UNDEFINED,
 			.data_size    = NST_CACHE_DEFAULT_SIZE,
 			.dict_size    = NST_CACHE_DEFAULT_SIZE,
-			.share        = NST_CACHE_SHARE_UNDEFINED,
+			.share        = NST_CACHE_SHARE_ON,
 			.purge_method = NULL,
 		},
 	},

@@ -106,17 +106,13 @@ just like HAProxy, as a TCP and HTTP load balancer.
 
 ## cache
 
-**syntax:** cache on|off [share on|off] [data-size size] [dict-size size] [purge-method method] [uri uri]
+**syntax:** cache on|off [data-size size] [dict-size size] [purge-method method] [uri uri]
 
 **default:** *none*
 
 **context:** *global*
 
 Determines whether to use cache or not.
-
-### share
-
-#### share on
 
 A memory zone with a size of `data-size + dict-size` will be created. Except for
 temporary data created and destroyed within request, all caches related data
@@ -127,30 +123,22 @@ If no more memory can be allocated from this memory zone, new requests that shou
 be cached according to defined cache rules will not be cached unless some memory
 are freed.
 
-#### share off
-
-Cache data are stored in a memory pool which allocates memory dynamically from
+Temporary data are stored in a memory pool which allocates memory dynamically from
 system in case there is no available memory in the pool.
 
 A global internal counter monitors the memory usage of all http response data across
 all processes, new requests will not be cached if the counter exceeds `data-size`.
 
-By default, share is set to on in multiple processes mode, and off in single process mode.
-
 ### data-size
 
-With `share on`, it determines the size of memory zone along with `dict-size`.
-
-With `share off`, it detemines the maximum memory used by cache.
+Determines the size of memory zone along with `dict-size`.
 
 It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024 bytes,
 which is also the minimal size.
 
 ### dict-size
 
-Determines the size of memory used by hash table in `share on` mode.
-
-It has no effect in `share off` mode, the hash table resize itself if full.
+Determines the size of memory used by hash table.
 
 It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024 bytes,
 which is also the minimal size.
