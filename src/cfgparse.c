@@ -1927,7 +1927,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 	}
 	else if (!strcmp(args[0], "cache")) {
 		int cur_arg = 1;
-		if (alertif_too_many_args(11, file, linenum, args, &err_code)) {
+		if (alertif_too_many_args(9, file, linenum, args, &err_code)) {
 			goto out;
 		}
 		if (global.nuster.cache.status != NST_CACHE_STATUS_UNDEFINED) {
@@ -1955,6 +1955,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		cur_arg++;
 		global.nuster.cache.uri = NULL;
 		while(*(args[cur_arg]) !=0) {
+			/*
 			if (!strcmp(args[cur_arg], "share")) {
 				cur_arg++;
 				if (*args[cur_arg] == 0) {
@@ -1974,6 +1975,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 				cur_arg++;
 				continue;
 			}
+			*/
 			if (!strcmp(args[cur_arg], "data-size")) {
 				cur_arg++;
 				if (*args[cur_arg] == 0) {
