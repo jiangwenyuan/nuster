@@ -56,11 +56,6 @@ enum {
     NST_CACHE_SHARE_ON         =  1,
 };
 
-struct nst_cache_key {
-    enum nuster_rule_key_type  type;
-    char                      *data;
-};
-
 struct nst_cache_code {
     struct nst_cache_code *next;
     int                    code;
@@ -75,7 +70,7 @@ struct nst_cache_rule {
     struct list             list;       /* list linked to from the proxy */
     struct acl_cond        *cond;       /* acl condition to meet */
     char                   *name;       /* cache name for logging */
-    struct nst_cache_key  **key;        /* key */
+    struct nuster_rule_key  **key;        /* key */
     struct nst_cache_code  *code;       /* code */
     uint32_t               *ttl;        /* ttl: seconds, 0: not expire */
     int                    *state;      /* on when start, can be turned off by manager API */
@@ -241,7 +236,7 @@ void nst_cache_dict_cleanup();
 void nst_cache_init();
 void nst_cache_housekeeping();
 int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
-char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_cache_key **pck, struct stream *s,
+char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg);
 char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg);
 uint64_t nst_cache_hash_key(const char *key);
