@@ -284,7 +284,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             }
             ctx.idx = 0;
             if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
-                nst_cache_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
+                nuster_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
             }
 
             txn->status = _nst_cache_manager_state_ttl(s, req, px, state, ttl);
