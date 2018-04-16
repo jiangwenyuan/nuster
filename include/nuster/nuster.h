@@ -31,14 +31,6 @@
 #include <types/stream.h>
 #include <types/applet.h>
 
-enum {
-    NUSTER_HTTP_200 = 0,
-    NUSTER_HTTP_400,
-    NUSTER_HTTP_404,
-    NUSTER_HTTP_500,
-    NUSTER_HTTP_SIZE
-};
-
 struct nuster {
     struct nst_cache *cache;
     struct {

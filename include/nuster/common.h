@@ -38,6 +38,14 @@
 #endif
 #endif
 
+enum {
+    NUSTER_HTTP_200 = 0,
+    NUSTER_HTTP_400,
+    NUSTER_HTTP_404,
+    NUSTER_HTTP_500,
+    NUSTER_HTTP_SIZE
+};
+
 enum nuster_rule_key_type {
     NST_CACHE_KEY_METHOD = 1,                /* method:    GET, POST... */
     NST_CACHE_KEY_SCHEME,                    /* scheme:    http, https */
