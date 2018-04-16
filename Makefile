@@ -879,6 +879,7 @@ install-bin:
 	done
 	install -d "$(DESTDIR)$(SBINDIR)"
 	install haproxy $(EXTRA) "$(DESTDIR)$(SBINDIR)"
+	ln -s "$(DESTDIR)$(SBINDIR)/haproxy" "$(DESTDIR)$(SBINDIR)/nuster"
 
 install: install-bin install-man install-doc
 
