@@ -69,7 +69,7 @@ for production use, otherwise git clone the source code.
 
 ```
 make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
-make install PREFIX=/usr/local/nuster/bin
+make install PREFIX=/usr/local/nuster
 ```
 
 > use `USE_PTHREAD_PSHARED=1` to use pthread lib
@@ -82,7 +82,7 @@ See [HAProxy README](README) for details.
 
 Create a config file called `nuster.conf` like [Example](#example), and
 
-`/usr/local/nuster/bin/haproxy -f nuster.conf`
+`/usr/local/nuster/sbin/nuster -f nuster.conf`
 
 ## Docker
 
@@ -104,9 +104,9 @@ just like HAProxy, as a TCP and HTTP load balancer.
 
 # Directives
 
-## cache
+## global: nuster cache
 
-**syntax:** cache on|off [data-size size] [dict-size size] [purge-method method] [uri uri]
+**syntax:** nuster cache on|off [data-size size] [dict-size size] [purge-method method] [uri uri]
 
 **default:** *none*
 
@@ -161,28 +161,27 @@ Define a customized HTTP method with max length of 14 to purge cache, it is `PUR
 
 Enable cache manager/stats API and define the endpoint:
 
-`cache on uri /_my/_unique/_/_cache/_uri`
+`nuster cache on uri /_my/_unique/_/_cache/_uri`
 
 By default, the cache manager/stats is disabled. When it is enabled, remember to restrict the access(see FAQ).
 
 See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for details.
 
-## filter cache
+## proxy: nuster cache
 
-**syntax:** filter cache [on|off]
+**syntax:** nuster cache [on|off]
 
 **default:** *on*
 
 **context:** *backend*, *listen*
 
-Define a cache filter, additional `cache-rule` should be defined. It can be
-turned off separately by including `off`.
-If there are multiple filters, make sure that cache filter is put after
-all other filters.
+Determines whether or not use cache on this backend, additional `nuster rule` should be defined.
+It can be turned off separately by including `off`.
+If there are filters on this proxy, put this directive after all other filters.
 
-## cache-rule
+## nuster rule
 
-**syntax:** cache-rule name [key KEY] [ttl TTL] [code CODE] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [if|unless condition]
 
 **default:** *none*
 
@@ -288,7 +287,7 @@ requests along with some headers.
 **Eanble and define the endpoint**
 
 ```
-cache on uri /nuster/cache
+nuster cache on uri /nuster/cache
 ```
 
 **Basic usage**
@@ -510,7 +509,7 @@ Cache stats can be accessed by making HTTP GET request to the endpoint defined b
 ## Eanble and define the endpoint
 
 ```
-cache on uri /nuster/cache
+nuster cache on uri /nuster/cache
 ```
 
 ## Usage
@@ -531,7 +530,7 @@ Others are very straightforward.
 
 ## How to debug?
 
-Set `debug` in `global` section, or start `haproxy` with `-d`.
+Set `debug` in `global` section, or start `nuster` with `-d`.
 
 Cache related debug messages start with `[CACHE]`.
 
@@ -566,7 +565,7 @@ and purge from localhost you need to specify `Host` header:
 
 ```
 global
-    cache on data-size 100m
+    nuster cache on data-size 100m
     #daemon
     ## to debug cache
     #debug
@@ -593,40 +592,40 @@ backend app1a
     acl pathPost path /search
 
     # enable cache for this proxy
-    filter cache
+    nuster cache
 
     # cache /search for 120 seconds. Only works when POST/PUT
-    cache-rule rpost key method.scheme.host.uri.body ttl 120 if pathPost
+    nuster rule rpost key method.scheme.host.uri.body ttl 120 if pathPost
 
     server s1 10.0.0.10:8080
 backend app1b
     balance     roundrobin
     mode http
 
-    filter cache on
+    nuster cache on
 
     # cache /a.jpg, not expire
     acl pathA path /a.jpg
-    cache-rule r1 ttl 0 if pathA
+    nuster rule r1 ttl 0 if pathA
 
     # cache /mypage, key contains cookie[userId], so it will be cached per user
     acl pathB path /mypage
-    cache-rule r2 key method.scheme.host.path.delimiter.query.cookie_userId ttl 60 if pathB
+    nuster rule r2 key method.scheme.host.path.delimiter.query.cookie_userId ttl 60 if pathB
 
     # cache /a.html if response's header[cache] is yes
     http-request set-var(txn.pathC) path
     acl pathC var(txn.pathC) -m str /a.html
     acl resHdrCache1 res.hdr(cache) yes
-    cache-rule r3 if pathC resHdrCache1
+    nuster rule r3 if pathC resHdrCache1
 
     # cache /heavy for 100 seconds if be_conn greater than 10
     acl heavypage path /heavy
     acl tooFast be_conn ge 100
-    cache-rule heavy ttl 100 if heavypage tooFast
+    nuster rule heavy ttl 100 if heavypage tooFast
 
     # cache all if response's header[asdf] is fdsa
     acl resHdrCache2 res.hdr(asdf)  fdsa
-    cache-rule resCache ttl 0 if resHdrCache1
+    nuster rule resCache ttl 0 if resHdrCache1
 
     server s1 10.0.0.10:8080
 
@@ -639,8 +638,8 @@ backend app2
     mode http
 
     # disable cache on this proxy
-    filter cache off
-    cache-rule all
+    nuster cache off
+    nuster rule all
 
     server s2 10.0.0.11:8080
 
@@ -648,8 +647,8 @@ listen web3
     bind *:8082
     mode http
 
-    filter cache
-    cache-rule everything
+    nuster cache
+    nuster rule everything
 
     server s3 10.0.0.12:8080
 
