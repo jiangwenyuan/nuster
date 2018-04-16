@@ -11,6 +11,7 @@
  */
 
 #include <common/standard.h>
+#include <common/cfgparse.h>
 #include <common/errors.h>
 
 #include <types/global.h>
@@ -139,7 +140,7 @@ int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
     char *key = NULL;
     char *code = NULL;
     unsigned ttl = NST_CACHE_DEFAULT_TTL;
-    int cur_arg = 1;
+    int cur_arg = 2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "`cache-rule` is not allowed in a 'frontend' or 'defaults' section.");
@@ -152,7 +153,7 @@ int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
     }
 
     name = strdup(args[cur_arg]);
-    cur_arg = 2;
+    cur_arg = 3;
     while(*(args[cur_arg]) !=0 && strcmp(args[cur_arg], "if") !=0 && strcmp(args[cur_arg], "unless") != 0) {
         if(!strcmp(args[cur_arg], "key")) {
             if(key != NULL) {
@@ -519,4 +520,86 @@ int nuster_parse_cache(const char *file, int linenum, char **args, int kwm) {
     }
 out:
     return err_code;
+}
+
+int nuster_parse_proxy_rule(char **args, int section, struct proxy *px,
+        struct proxy *defpx, const char *file, int line, char **err) {
+
+    nst_cache_parse_rule(args, section, px, defpx, file, line, err);
+}
+
+int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
+        struct proxy *defpx, const char *file, int line, char **err) {
+
+    struct flt_conf *fconf;
+    struct nst_cache_config *conf;
+    int cur_arg = 1;
+
+    list_for_each_entry(fconf, &px->filter_configs, list) {
+        if(fconf->id == cache_id) {
+            memprintf(err, "%s: Proxy supports only one cache filter\n", px->id);
+            return -1;
+        }
+    }
+
+    fconf = calloc(1, sizeof(*fconf));
+    conf  = malloc(sizeof(*conf));
+    memset(fconf, 0, sizeof(*fconf));
+    memset(conf, 0, sizeof(*conf));
+    if(!fconf || !conf) {
+        memprintf(err, "out of memory");
+        return -1;
+    }
+
+    conf->status = NST_CACHE_STATUS_ON;
+    cur_arg++;
+    if(*args[cur_arg]) {
+        if(!strcmp(args[cur_arg], "off")) {
+            conf->status = NST_CACHE_STATUS_OFF;
+        } else if(!strcmp(args[cur_arg], "on")) {
+            conf->status = NST_CACHE_STATUS_ON;
+        } else {
+            memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
+            return -1;
+        }
+        cur_arg++;
+    }
+
+    fconf->id   = cache_id;
+    fconf->conf = conf;
+    fconf->ops  = &nst_cache_filter_ops;
+
+    LIST_ADDQ(&px->filter_configs, &fconf->list);
+
+    return 0;
+}
+
+int nuster_parse(char **args, int section, struct proxy *px,
+        struct proxy *defpx, const char *file, int line, char **err) {
+
+    if(!(px->cap & PR_CAP_BE)) {
+        memprintf(err, "`nuster` is not allowed in a 'frontend' section.");
+        return -1;
+    }
+
+    if(*args[1]) {
+        if(!strcmp(args[1], "cache")) {
+            nuster_parse_proxy_cache(args, section, px, defpx, file, line, err);
+        } else if(!strcmp(args[1], "rule")) {
+            nuster_parse_proxy_rule(args, section, px, defpx, file, line, err);
+        } else {
+            memprintf(err, "%s: expects [cache|rule]", args[0]);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static struct cfg_kw_list cfg_kws = {ILH, {
+    { CFG_LISTEN, "nuster", nuster_parse}, { 0, NULL, NULL }, }
+};
+
+__attribute__((constructor)) static void __nuster_parser_init(void) {
+    cfg_register_keywords(&cfg_kws);
 }
