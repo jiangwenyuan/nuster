@@ -23,8 +23,8 @@
 
 static const char *cache_id = "cache filter";
 
-static struct nst_cache_key *_nuster_parse_rule_key_cast(char *str) {
-    struct nst_cache_key *key = NULL;
+static struct nuster_rule_key *_nuster_parse_rule_key_cast(char *str) {
+    struct nuster_rule_key *key = NULL;
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
         key->type = NUSTER_RULE_KEY_METHOD;
@@ -73,25 +73,25 @@ static struct nst_cache_key *_nuster_parse_rule_key_cast(char *str) {
     return key;
 }
 
-static struct nst_cache_key **_nuster_parse_rule_key(char *str) {
-    struct nst_cache_key **pk = NULL;
+static struct nuster_rule_key **_nuster_parse_rule_key(char *str) {
+    struct nuster_rule_key **pk = NULL;
     char *m, *tmp = strdup(str);
     int i = 0;
 
     m = strtok(tmp, ".");
     while(m) {
-        struct nst_cache_key *key = _nuster_parse_rule_key_cast(m);
+        struct nuster_rule_key *key = _nuster_parse_rule_key_cast(m);
         if(!key) {
             goto err;
         }
-        pk = realloc(pk, (i + 1) * sizeof(struct nst_cache_key *));
+        pk = realloc(pk, (i + 1) * sizeof(struct nuster_rule_key *));
         pk[i++] = key;
         m = strtok(NULL, ".");
     }
     if(!pk) {
         goto err;
     }
-    pk = realloc(pk, (i + 1) * sizeof(struct nst_cache_key *));
+    pk = realloc(pk, (i + 1) * sizeof(struct nuster_rule_key *));
     pk[i] = NULL;
     free(tmp);
     return pk;

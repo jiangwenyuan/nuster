@@ -65,6 +65,11 @@ struct nuster_str {
     int   len;
 };
 
+struct nuster_rule_key {
+    enum nuster_rule_key_type  type;
+    char                      *data;
+};
+
 /* get current timestamp in milliseconds */
 static inline uint64_t get_current_timestamp() {
     struct timeval tv;
