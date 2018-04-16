@@ -27,47 +27,47 @@ static struct nst_cache_key *_nuster_parse_rule_key_cast(char *str) {
     struct nst_cache_key *key = NULL;
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_METHOD;
+        key->type = NUSTER_RULE_KEY_METHOD;
         key->data = NULL;
     } else if(!strcmp(str, "scheme")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_SCHEME;
+        key->type = NUSTER_RULE_KEY_SCHEME;
         key->data = NULL;
     } else if(!strcmp(str, "host")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_HOST;
+        key->type = NUSTER_RULE_KEY_HOST;
         key->data = NULL;
     } else if(!strcmp(str, "uri")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_URI;
+        key->type = NUSTER_RULE_KEY_URI;
         key->data = NULL;
     } else if(!strcmp(str, "path")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_PATH;
+        key->type = NUSTER_RULE_KEY_PATH;
         key->data = NULL;
     } else if(!strcmp(str, "delimiter")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_DELIMITER;
+        key->type = NUSTER_RULE_KEY_DELIMITER;
         key->data = NULL;
     } else if(!strcmp(str, "query")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_QUERY;
+        key->type = NUSTER_RULE_KEY_QUERY;
         key->data = NULL;
     } else if(!strncmp(str, "param_", 6) && strlen(str) > 6) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_PARAM;
+        key->type = NUSTER_RULE_KEY_PARAM;
         key->data = strdup(str + 6);
     } else if(!strncmp(str, "header_", 7) && strlen(str) > 7) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_HEADER;
+        key->type = NUSTER_RULE_KEY_HEADER;
         key->data = strdup(str + 7);
     } else if(!strncmp(str, "cookie_", 7) && strlen(str) > 7) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_COOKIE;
+        key->type = NUSTER_RULE_KEY_COOKIE;
         key->data = strdup(str + 7);
     } else if(!strcmp(str, "body")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_CACHE_KEY_BODY;
+        key->type = NUSTER_RULE_KEY_BODY;
         key->data = NULL;
     }
     return key;
