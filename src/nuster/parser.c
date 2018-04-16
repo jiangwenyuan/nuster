@@ -19,11 +19,11 @@
 #include <proto/acl.h>
 #include <proto/log.h>
 
-#include <nuster/cache.h>
+#include <nuster/nuster.h>
 
 static const char *cache_id = "cache filter";
 
-static struct nst_cache_key *_nst_cache_parse_rule_key_type(char *str) {
+static struct nst_cache_key *_nuster_parse_rule_key_cast(char *str) {
     struct nst_cache_key *key = NULL;
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
@@ -73,14 +73,14 @@ static struct nst_cache_key *_nst_cache_parse_rule_key_type(char *str) {
     return key;
 }
 
-static struct nst_cache_key **_nst_cache_parse_rule_key(char *str) {
+static struct nst_cache_key **_nuster_parse_rule_key(char *str) {
     struct nst_cache_key **pk = NULL;
     char *m, *tmp = strdup(str);
     int i = 0;
 
     m = strtok(tmp, ".");
     while(m) {
-        struct nst_cache_key *key = _nst_cache_parse_rule_key_type(m);
+        struct nst_cache_key *key = _nuster_parse_rule_key_cast(m);
         if(!key) {
             goto err;
         }
@@ -106,7 +106,7 @@ err:
     return NULL;
 }
 
-static struct nst_cache_code *_nst_cache_parse_rule_code(char *str) {
+static struct nst_cache_code *_nuster_parse_rule_code(char *str) {
     if(!strcmp(str, "all")) {
         return NULL;
     } else {
@@ -131,165 +131,11 @@ static struct nst_cache_code *_nst_cache_parse_rule_code(char *str) {
     }
 }
 
-int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
-        struct proxy *defpx, const char *file, int line, char **err) {
-
-    struct nst_cache_rule *rule;
-    struct acl_cond *cond = NULL;
-    char *name = NULL;
-    char *key = NULL;
-    char *code = NULL;
-    unsigned ttl = NST_CACHE_DEFAULT_TTL;
-    int cur_arg = 2;
-
-    if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
-        memprintf(err, "`cache-rule` is not allowed in a 'frontend' or 'defaults' section.");
-        return -1;
-    }
-
-    if(*(args[cur_arg]) == 0) {
-        memprintf(err, "'%s' expects a name.", args[0]);
-        return -1;
-    }
-
-    name = strdup(args[cur_arg]);
-    cur_arg = 3;
-    while(*(args[cur_arg]) !=0 && strcmp(args[cur_arg], "if") !=0 && strcmp(args[cur_arg], "unless") != 0) {
-        if(!strcmp(args[cur_arg], "key")) {
-            if(key != NULL) {
-                memprintf(err, "'%s %s': key already specified.", args[0], name);
-                goto out;
-            }
-            cur_arg++;
-            if(*(args[cur_arg]) == 0) {
-                memprintf(err, "'%s %s': expects a key.", args[0], name);
-                goto out;
-            }
-            key = args[cur_arg];
-            cur_arg++;
-            continue;
-        }
-        if(!strcmp(args[cur_arg], "ttl")) {
-            if((key == NULL && cur_arg >= 4) || (key !=NULL && cur_arg >= 6)) {
-                memprintf(err, "'%s %s': ttl already specified.", args[0], name);
-                goto out;
-            }
-            cur_arg++;
-            if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects a ttl(in seconds).", args[0], name);
-                goto out;
-            }
-            /* "d", "h", "m", "s"
-             * s is returned
-             * */
-            if(nst_cache_parse_time(args[cur_arg], strlen(args[cur_arg]), &ttl)) {
-                memprintf(err, "'%s %s': invalid ttl.", args[0], name);
-                goto out;
-            }
-            cur_arg++;
-            continue;
-        }
-        if(!strcmp(args[cur_arg], "code")) {
-            if(key != NULL) {
-                memprintf(err, "'%s %s': code already specified.", args[0], name);
-                goto out;
-            }
-            cur_arg++;
-            if(*(args[cur_arg]) == 0) {
-                memprintf(err, "'%s %s': expects a code.", args[0], name);
-                goto out;
-            }
-            code = args[cur_arg];
-            cur_arg++;
-            continue;
-        }
-        memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name, args[cur_arg]);
-        goto out;
-    }
-
-    if(!strcmp(args[cur_arg], "if") || !strcmp(args[cur_arg], "unless")) {
-        if(*args[cur_arg + 1] != 0) {
-            char *errmsg = NULL;
-            if((cond = build_acl_cond(file, line, proxy, (const char **)args + cur_arg, &errmsg)) == NULL) {
-                memprintf(err, "%s", errmsg);
-                free(errmsg);
-                goto out;
-            }
-        } else {
-            memprintf(err, "'%s %s': [if|unless] expects an acl.", args[0], name);
-            goto out;
-        }
-    }
-
-    rule       = malloc(sizeof(*rule));
-    rule->cond = cond;
-    rule->name = name;
-    rule->key  = _nst_cache_parse_rule_key(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
-    if(!rule->key) {
-        memprintf(err, "'%s %s': invalid key.", args[0], name);
-        goto out;
-    }
-    rule->code = _nst_cache_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
-    rule->ttl  = malloc(sizeof(*rule->ttl));
-    *rule->ttl = ttl;
-    rule->id   = -1;
-    LIST_INIT(&rule->list);
-    LIST_ADDQ(&proxy->nuster.cache.rules, &rule->list);
-
-    return 0;
-out:
-    return -1;
-}
-
-int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
-        struct flt_conf *fconf, char **err, void *private) {
-
-    struct flt_conf *fc, *back;
-    struct nst_cache_config *conf;
-
-    if(!(px->cap & PR_CAP_BE)) {
-        memprintf(err, "`cache` is not allowed in a 'frontend' section.");
-        return -1;
-    }
-
-    conf = malloc(sizeof(*conf));
-    memset(conf, 0, sizeof(*conf));
-    if(!conf) {
-        memprintf(err, "%s: out of memory", args[*cur_arg]);
-        return -1;
-    }
-    list_for_each_entry_safe(fc, back, &px->filter_configs, list) {
-        if(fc->id == cache_id) {
-            memprintf(err, "%s: Proxy supports only one cache filter\n", px->id);
-            return -1;
-        }
-    }
-
-    conf->status = NST_CACHE_STATUS_ON;
-    (*cur_arg)++;
-    if(*args[*cur_arg]) {
-        if(!strcmp(args[*cur_arg], "off")) {
-            conf->status = NST_CACHE_STATUS_OFF;
-        } else if(!strcmp(args[*cur_arg], "on")) {
-            conf->status = NST_CACHE_STATUS_ON;
-        } else {
-            memprintf(err, "%s: expects [on|off], default on", args[*cur_arg]);
-            return -1;
-        }
-        (*cur_arg)++;
-    }
-
-    fconf->id   = cache_id;
-    fconf->conf = conf;
-    fconf->ops  = &nst_cache_filter_ops;
-    return 0;
-
-}
 
 /*
  * Parse size
  */
-const char *nst_cache_parse_size(const char *text, uint64_t *ret) {
+const char *nuster_parse_size(const char *text, uint64_t *ret) {
     uint64_t value = 0;
 
     while(1) {
@@ -340,7 +186,7 @@ end:
 /*
  * Parse time
  */
-const char *nst_cache_parse_time(const char *text, int len, unsigned *ret) {
+const char *nuster_parse_time(const char *text, int len, unsigned *ret) {
     unsigned imult, idiv, omult, odiv;
     unsigned value;
 
@@ -405,7 +251,7 @@ const char *nst_cache_parse_time(const char *text, int len, unsigned *ret) {
     return NULL;
 }
 
-int nuster_parse_cache(const char *file, int linenum, char **args, int kwm) {
+int nuster_parse_global_cache(const char *file, int linenum, char **args, int kwm) {
     int err_code = 0;
     int cur_arg  = 1;
 
@@ -462,7 +308,7 @@ int nuster_parse_cache(const char *file, int linenum, char **args, int kwm) {
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
-            if (nst_cache_parse_size(args[cur_arg], &global.nuster.cache.data_size)) {
+            if (nuster_parse_size(args[cur_arg], &global.nuster.cache.data_size)) {
                 Alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
@@ -477,7 +323,7 @@ int nuster_parse_cache(const char *file, int linenum, char **args, int kwm) {
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
-            if (nst_cache_parse_size(args[cur_arg], &global.nuster.cache.dict_size)) {
+            if (nuster_parse_size(args[cur_arg], &global.nuster.cache.dict_size)) {
                 Alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
@@ -520,12 +366,6 @@ int nuster_parse_cache(const char *file, int linenum, char **args, int kwm) {
     }
 out:
     return err_code;
-}
-
-int nuster_parse_proxy_rule(char **args, int section, struct proxy *px,
-        struct proxy *defpx, const char *file, int line, char **err) {
-
-    nst_cache_parse_rule(args, section, px, defpx, file, line, err);
 }
 
 int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
@@ -574,7 +414,117 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
     return 0;
 }
 
-int nuster_parse(char **args, int section, struct proxy *px,
+int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
+        struct proxy *defpx, const char *file, int line, char **err) {
+
+    struct nst_cache_rule *rule = NULL;
+    struct acl_cond *cond       = NULL;
+    char *name                  = NULL;
+    char *key                   = NULL;
+    char *code                  = NULL;
+    unsigned ttl                = NST_CACHE_DEFAULT_TTL;
+    int cur_arg                 = 2;
+
+    if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
+        memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' section.");
+        return -1;
+    }
+
+    if(*(args[cur_arg]) == 0) {
+        memprintf(err, "'%s' expects a name.", args[0]);
+        return -1;
+    }
+
+    name = strdup(args[cur_arg]);
+    cur_arg = 3;
+    while(*(args[cur_arg]) !=0 && strcmp(args[cur_arg], "if") !=0 && strcmp(args[cur_arg], "unless") != 0) {
+        if(!strcmp(args[cur_arg], "key")) {
+            if(key != NULL) {
+                memprintf(err, "'%s %s': key already specified.", args[0], name);
+                goto out;
+            }
+            cur_arg++;
+            if(*(args[cur_arg]) == 0) {
+                memprintf(err, "'%s %s': expects a key.", args[0], name);
+                goto out;
+            }
+            key = args[cur_arg];
+            cur_arg++;
+            continue;
+        }
+        if(!strcmp(args[cur_arg], "ttl")) {
+            if((key == NULL && cur_arg >= 4) || (key !=NULL && cur_arg >= 6)) {
+                memprintf(err, "'%s %s': ttl already specified.", args[0], name);
+                goto out;
+            }
+            cur_arg++;
+            if(*args[cur_arg] == 0) {
+                memprintf(err, "'%s %s': expects a ttl(in seconds).", args[0], name);
+                goto out;
+            }
+            /* "d", "h", "m", "s"
+             * s is returned
+             * */
+            if(nuster_parse_time(args[cur_arg], strlen(args[cur_arg]), &ttl)) {
+                memprintf(err, "'%s %s': invalid ttl.", args[0], name);
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
+        if(!strcmp(args[cur_arg], "code")) {
+            if(key != NULL) {
+                memprintf(err, "'%s %s': code already specified.", args[0], name);
+                goto out;
+            }
+            cur_arg++;
+            if(*(args[cur_arg]) == 0) {
+                memprintf(err, "'%s %s': expects a code.", args[0], name);
+                goto out;
+            }
+            code = args[cur_arg];
+            cur_arg++;
+            continue;
+        }
+        memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name, args[cur_arg]);
+        goto out;
+    }
+
+    if(!strcmp(args[cur_arg], "if") || !strcmp(args[cur_arg], "unless")) {
+        if(*args[cur_arg + 1] != 0) {
+            char *errmsg = NULL;
+            if((cond = build_acl_cond(file, line, proxy, (const char **)args + cur_arg, &errmsg)) == NULL) {
+                memprintf(err, "%s", errmsg);
+                free(errmsg);
+                goto out;
+            }
+        } else {
+            memprintf(err, "'%s %s': [if|unless] expects an acl.", args[0], name);
+            goto out;
+        }
+    }
+
+    rule       = malloc(sizeof(*rule));
+    rule->cond = cond;
+    rule->name = name;
+    rule->key  = _nuster_parse_rule_key(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
+    if(!rule->key) {
+        memprintf(err, "'%s %s': invalid key.", args[0], name);
+        goto out;
+    }
+    rule->code = _nuster_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
+    rule->ttl  = malloc(sizeof(*rule->ttl));
+    *rule->ttl = ttl;
+    rule->id   = -1;
+    LIST_INIT(&rule->list);
+    LIST_ADDQ(&proxy->nuster.cache.rules, &rule->list);
+
+    return 0;
+out:
+    return -1;
+}
+
+int nuster_parse_proxy(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     if(!(px->cap & PR_CAP_BE)) {
@@ -597,7 +547,7 @@ int nuster_parse(char **args, int section, struct proxy *px,
 }
 
 static struct cfg_kw_list cfg_kws = {ILH, {
-    { CFG_LISTEN, "nuster", nuster_parse}, { 0, NULL, NULL }, }
+    { CFG_LISTEN, "nuster", nuster_parse_proxy}, { 0, NULL, NULL }, }
 };
 
 __attribute__((constructor)) static void __nuster_parser_init(void) {

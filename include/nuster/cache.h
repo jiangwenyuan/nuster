@@ -279,16 +279,6 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
 int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px);
 int nst_cache_manager_init();
 
-
-/* parser */
-int nst_cache_parse_filter(char **args, int *cur_arg, struct proxy *px,
-        struct flt_conf *fconf, char **err, void *private);
-int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
-        struct proxy *defpx, const char *file, int line, char **err);
-const char *nst_cache_parse_size(const char *text, uint64_t *ret);
-const char *nst_cache_parse_time(const char *text, int len, unsigned *ret);
-int nuster_parse_cache(const char *file, int linenum, char **args, int kwm);
-
 /* stats */
 void nst_cache_stats_update_used_mem(int i);
 int nst_cache_stats_init();

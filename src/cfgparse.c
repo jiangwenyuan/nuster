@@ -91,7 +91,7 @@
 #include <proto/shctx.h>
 #endif /*USE_OPENSSL */
 
-#include <nuster/cache.h>
+#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
@@ -1932,7 +1932,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			}
 			args++;
-			err_code = nuster_parse_cache(file, linenum, args, kwm);
+			err_code = nuster_parse_global_cache(file, linenum, args, kwm);
 			if (err_code) {
 				goto out;
 			}
