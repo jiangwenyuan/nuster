@@ -11,8 +11,12 @@
  */
 
 #include <common/standard.h>
+#include <common/errors.h>
+
+#include <types/global.h>
 
 #include <proto/acl.h>
+#include <proto/log.h>
 
 #include <nuster/cache.h>
 
@@ -398,4 +402,121 @@ const char *nst_cache_parse_time(const char *text, int len, unsigned *ret) {
     value = (value * (imult * omult) + (idiv * odiv - 1)) / (idiv * odiv);
     *ret = value;
     return NULL;
+}
+
+int nuster_parse_cache(const char *file, int linenum, char **args, int kwm) {
+    int err_code = 0;
+    int cur_arg  = 1;
+
+    if (global.nuster.cache.status != NST_CACHE_STATUS_UNDEFINED) {
+        Alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
+        err_code |= ERR_ALERT;
+        goto out;
+    }
+    if (*(args[cur_arg]) == 0) {
+        Alert("parsing [%s:%d] : '%s' expects 'on' or 'off' as an argument.\n", file, linenum, args[0]);
+        err_code |= ERR_ALERT | ERR_FATAL;
+        goto out;
+    }
+    if (!strcmp(args[cur_arg], "off")) {
+        global.nuster.cache.status = NST_CACHE_STATUS_OFF;
+    } else if (!strcmp(args[cur_arg], "on")) {
+        global.nuster.cache.status = NST_CACHE_STATUS_ON;
+    } else {
+        Alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
+        err_code |= ERR_ALERT | ERR_FATAL;
+        goto out;
+    }
+    global.nuster.cache.purge_method = calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
+    memcpy(global.nuster.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
+    memcpy(global.nuster.cache.purge_method + 5, " ", 1);
+    cur_arg++;
+    global.nuster.cache.uri = NULL;
+    while(*(args[cur_arg]) !=0) {
+        /*
+        if (!strcmp(args[cur_arg], "share")) {
+            cur_arg++;
+            if (*args[cur_arg] == 0) {
+                Alert("parsing [%s:%d] : '%s': `share` expects 'on' or 'off' as augument.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            if (!strcmp(args[cur_arg], "off")) {
+                global.nuster.cache.share = NST_CACHE_SHARE_OFF;
+            } else if (!strcmp(args[cur_arg], "on")) {
+                global.nuster.cache.share = NST_CACHE_SHARE_ON;
+            } else {
+                Alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
+        */
+        if (!strcmp(args[cur_arg], "data-size")) {
+            cur_arg++;
+            if (*args[cur_arg] == 0) {
+                Alert("parsing [%s:%d] : '%s' data-size expects a size.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            if (nst_cache_parse_size(args[cur_arg], &global.nuster.cache.data_size)) {
+                Alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
+        if (!strcmp(args[cur_arg], "dict-size")) {
+            cur_arg++;
+            if (*args[cur_arg] == 0) {
+                Alert("parsing [%s:%d] : '%s' dict-size expects a size.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            if (nst_cache_parse_size(args[cur_arg], &global.nuster.cache.dict_size)) {
+                Alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
+        if (!strcmp(args[cur_arg], "purge-method")) {
+            cur_arg++;
+            if (*args[cur_arg] == 0) {
+                Alert("parsing [%s:%d] : '%s' purge-method expects a name.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            memset(global.nuster.cache.purge_method, 0, NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
+            if(strlen(args[cur_arg]) <= NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
+                memcpy(global.nuster.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
+                memcpy(global.nuster.cache.purge_method + strlen(args[cur_arg]), " ", 1);
+            } else {
+                memcpy(global.nuster.cache.purge_method, args[cur_arg], NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
+                memcpy(global.nuster.cache.purge_method + NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
+            }
+            cur_arg++;
+            continue;
+        }
+        if (!strcmp(args[cur_arg], "uri")) {
+            cur_arg++;
+            if (*(args[cur_arg]) == 0) {
+                Alert("parsing [%s:%d] : '%s': `uri` expect an URI.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            global.nuster.cache.uri = strdup(args[cur_arg]);
+            cur_arg++;
+            continue;
+        }
+        Alert("parsing [%s:%d] : '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
+        err_code |= ERR_ALERT | ERR_FATAL;
+        goto out;
+    }
+out:
+    return err_code;
 }

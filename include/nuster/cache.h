@@ -287,6 +287,7 @@ int nst_cache_parse_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err);
 const char *nst_cache_parse_size(const char *text, uint64_t *ret);
 const char *nst_cache_parse_time(const char *text, int len, unsigned *ret);
+int nuster_parse_cache(const char *file, int linenum, char **args, int kwm);
 
 /* stats */
 void nst_cache_stats_update_used_mem(int i);
