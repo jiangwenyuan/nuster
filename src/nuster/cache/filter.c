@@ -270,18 +270,3 @@ struct flt_ops nst_cache_filter_ops = {
     .http_end          = _nst_cache_filter_http_end,
 
 };
-
-/* Declare the config parser for "cache" keyword */
-static struct cfg_kw_list cfg_kws = {ILH, {
-    { CFG_LISTEN, "cache-rule", nst_cache_parse_rule}, { 0, NULL, NULL }, }
-};
-
-/* Declare the filter parser for "cache" keyword */
-static struct flt_kw_list flt_kws = { "CACHE", { }, {
-    { "cache", nst_cache_parse_filter, NULL }, { NULL, NULL, NULL }, }
-};
-
-__attribute__((constructor)) static void __nst_flt_cache_init(void) {
-    cfg_register_keywords(&cfg_kws);
-    flt_register_keywords(&flt_kws);
-}
