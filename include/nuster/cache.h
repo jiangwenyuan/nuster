@@ -56,23 +56,9 @@ enum {
     NST_CACHE_SHARE_ON         =  1,
 };
 
-enum nst_cache_key_type {
-    NST_CACHE_KEY_METHOD = 1,                /* method:    GET, POST... */
-    NST_CACHE_KEY_SCHEME,                    /* scheme:    http, https */
-    NST_CACHE_KEY_HOST,                      /* host:      Host header   */
-    NST_CACHE_KEY_URI,                       /* uri:       first slash to end of the url */
-    NST_CACHE_KEY_PATH,                      /* path:      first slach to question mark */
-    NST_CACHE_KEY_DELIMITER,                 /* delimiter: '?' or '' */
-    NST_CACHE_KEY_QUERY,                     /* query:     question mark to end of the url, or empty */
-    NST_CACHE_KEY_PARAM,                     /* param:     query key/value pair */
-    NST_CACHE_KEY_HEADER,                    /* header */
-    NST_CACHE_KEY_COOKIE,                    /* cookie */
-    NST_CACHE_KEY_BODY,                      /* body   */
-};
-
 struct nst_cache_key {
-    enum nst_cache_key_type  type;
-    char                    *data;
+    enum nuster_rule_key_type  type;
+    char                      *data;
 };
 
 struct nst_cache_code {
