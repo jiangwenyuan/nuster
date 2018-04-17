@@ -150,7 +150,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
                         }
 
                         chunk_appendf(&trash, "state=%s ttl=%"PRIu32"\n",
-                                *rule->state == NST_CACHE_RULE_ENABLED ? "on" : "off", *rule->ttl);
+                                *rule->state == NUSTER_RULE_ENABLED ? "on" : "off", *rule->ttl);
 
                         if (bi_putchk(res, &trash) == -1) {
                             si_applet_cant_put(si);

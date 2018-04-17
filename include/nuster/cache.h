@@ -56,11 +56,6 @@ enum {
     NST_CACHE_SHARE_ON         =  1,
 };
 
-enum {
-    NST_CACHE_RULE_DISABLED = 0,
-    NST_CACHE_RULE_ENABLED  = 1,
-};
-
 struct nst_cache_element {
     struct nst_cache_element *next;
     char                     *msg;

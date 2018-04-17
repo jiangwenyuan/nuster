@@ -78,6 +78,11 @@ struct nuster_rule_code {
     int                    code;
 };
 
+enum {
+    NUSTER_RULE_DISABLED = 0,
+    NUSTER_RULE_ENABLED  = 1,
+};
+
 struct nuster_rule {
     struct list              list;       /* list linked to from the proxy */
     struct acl_cond         *cond;       /* acl condition to meet */
