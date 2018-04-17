@@ -266,7 +266,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     int ttl              = -1;
     struct hdr_ctx ctx;
 
-    if(global.nuster.cache.status != NST_CACHE_STATUS_ON) {
+    if(global.nuster.cache.status != NUSTER_STATUS_ON) {
         return 0;
     }
 

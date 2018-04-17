@@ -61,7 +61,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_msg *msg        = &txn->req;
     struct appctx *appctx       = NULL;
 
-    if(global.nuster.cache.status != NST_CACHE_STATUS_ON) {
+    if(global.nuster.cache.status != NUSTER_STATUS_ON) {
         return 0;
     }
 

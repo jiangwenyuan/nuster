@@ -255,7 +255,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
     int err_code = 0;
     int cur_arg  = 1;
 
-    if (global.nuster.cache.status != NST_CACHE_STATUS_UNDEFINED) {
+    if (global.nuster.cache.status != NUSTER_STATUS_UNDEFINED) {
         Alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
         err_code |= ERR_ALERT;
         goto out;
@@ -266,9 +266,9 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
         goto out;
     }
     if (!strcmp(args[cur_arg], "off")) {
-        global.nuster.cache.status = NST_CACHE_STATUS_OFF;
+        global.nuster.cache.status = NUSTER_STATUS_OFF;
     } else if (!strcmp(args[cur_arg], "on")) {
-        global.nuster.cache.status = NST_CACHE_STATUS_ON;
+        global.nuster.cache.status = NUSTER_STATUS_ON;
     } else {
         Alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
         err_code |= ERR_ALERT | ERR_FATAL;
@@ -289,9 +289,9 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
                 goto out;
             }
             if (!strcmp(args[cur_arg], "off")) {
-                global.nuster.cache.share = NST_CACHE_SHARE_OFF;
+                global.nuster.cache.share = NUSTER_STATUS_OFF;
             } else if (!strcmp(args[cur_arg], "on")) {
-                global.nuster.cache.share = NST_CACHE_SHARE_ON;
+                global.nuster.cache.share = NUSTER_STATUS_ON;
             } else {
                 Alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
@@ -391,13 +391,13 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
         return -1;
     }
 
-    conf->status = NST_CACHE_STATUS_ON;
+    conf->status = NUSTER_STATUS_ON;
     cur_arg++;
     if(*args[cur_arg]) {
         if(!strcmp(args[cur_arg], "off")) {
-            conf->status = NST_CACHE_STATUS_OFF;
+            conf->status = NUSTER_STATUS_OFF;
         } else if(!strcmp(args[cur_arg], "on")) {
-            conf->status = NST_CACHE_STATUS_ON;
+            conf->status = NUSTER_STATUS_ON;
         } else {
             memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
             return -1;

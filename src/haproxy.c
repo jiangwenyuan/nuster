@@ -226,10 +226,10 @@ struct global global = {
 #endif
 	.nuster = {
 		.cache = {
-			.status       = NST_CACHE_STATUS_UNDEFINED,
+			.status       = NUSTER_STATUS_UNDEFINED,
 			.data_size    = NST_CACHE_DEFAULT_SIZE,
 			.dict_size    = NST_CACHE_DEFAULT_SIZE,
-			.share        = NST_CACHE_SHARE_ON,
+			.share        = NUSTER_STATUS_ON,
 			.purge_method = NULL,
 		},
 	},
