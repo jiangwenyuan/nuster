@@ -38,12 +38,20 @@
 #endif
 #endif
 
+#include <common/mini-clist.h>
+#include <types/acl.h>
+
 enum {
     NUSTER_HTTP_200 = 0,
     NUSTER_HTTP_400,
     NUSTER_HTTP_404,
     NUSTER_HTTP_500,
     NUSTER_HTTP_SIZE
+};
+
+struct nuster_str {
+    char *data;
+    int   len;
 };
 
 enum nuster_rule_key_type {
@@ -60,15 +68,28 @@ enum nuster_rule_key_type {
     NUSTER_RULE_KEY_BODY,                      /* body   */
 };
 
-struct nuster_str {
-    char *data;
-    int   len;
-};
-
 struct nuster_rule_key {
     enum nuster_rule_key_type  type;
     char                      *data;
 };
+
+struct nuster_rule_code {
+    struct nuster_rule_code *next;
+    int                    code;
+};
+
+struct nuster_rule {
+    struct list              list;       /* list linked to from the proxy */
+    struct acl_cond         *cond;       /* acl condition to meet */
+    char                    *name;       /* cache name for logging */
+    struct nuster_rule_key **key;        /* key */
+    struct nuster_rule_code *code;       /* code */
+    uint32_t                *ttl;        /* ttl: seconds, 0: not expire */
+    int                     *state;      /* on when start, can be turned off by manager API */
+    int                      id;         /* same for identical names */
+    int                      uuid;       /* unique cache-rule ID */
+};
+
 
 /* get current timestamp in milliseconds */
 static inline uint64_t get_current_timestamp() {
