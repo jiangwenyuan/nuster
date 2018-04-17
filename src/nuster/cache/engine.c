@@ -66,7 +66,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
  * Cache the keys which calculated in request for response use
  */
 struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nst_cache_rule *rule, char *key, uint64_t hash) {
+        struct nuster_rule *rule, char *key, uint64_t hash) {
 
     struct nst_cache_rule_stash *stash = pool_alloc2(global.nuster.cache.pool.stash);
 
@@ -84,7 +84,7 @@ struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
     return stash;
 }
 
-int nst_cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res) {
+int nst_cache_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
     int ret;
 
     /* no acl defined */
@@ -406,7 +406,7 @@ void nst_cache_init() {
         i = uuid = 0;
         p = proxy;
         while(p) {
-            struct nst_cache_rule *rule = NULL;
+            struct nuster_rule *rule = NULL;
             uint32_t ttl;
 
             list_for_each_entry(rule, &p->nuster.cache.rules, list) {
@@ -428,7 +428,7 @@ void nst_cache_init() {
 
                 pt = proxy;
                 while(pt) {
-                    struct nst_cache_rule *rt = NULL;
+                    struct nuster_rule *rt = NULL;
                     list_for_each_entry(rt, &pt->nuster.cache.rules, list) {
                         if(rt == rule) goto out;
                         if(!strcmp(rt->name, rule->name)) {

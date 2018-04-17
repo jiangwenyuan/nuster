@@ -417,7 +417,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
 int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err) {
 
-    struct nst_cache_rule *rule = NULL;
+    struct nuster_rule *rule = NULL;
     struct acl_cond *cond       = NULL;
     char *name                  = NULL;
     char *key                   = NULL;

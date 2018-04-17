@@ -56,26 +56,9 @@ enum {
     NST_CACHE_SHARE_ON         =  1,
 };
 
-struct nuster_rule_code {
-    struct nuster_rule_code *next;
-    int                    code;
-};
-
 enum {
     NST_CACHE_RULE_DISABLED = 0,
     NST_CACHE_RULE_ENABLED  = 1,
-};
-
-struct nst_cache_rule {
-    struct list             list;       /* list linked to from the proxy */
-    struct acl_cond        *cond;       /* acl condition to meet */
-    char                   *name;       /* cache name for logging */
-    struct nuster_rule_key  **key;        /* key */
-    struct nuster_rule_code  *code;       /* code */
-    uint32_t               *ttl;        /* ttl: seconds, 0: not expire */
-    int                    *state;      /* on when start, can be turned off by manager API */
-    int                     id;         /* same for identical names */
-    int                     uuid;       /* unique cache-rule ID */
 };
 
 struct nst_cache_element {
@@ -116,7 +99,7 @@ struct nst_cache_entry {
     struct nuster_str       host;
     struct nuster_str       path;
     struct nst_cache_entry *next;
-    struct nst_cache_rule  *rule;        /* rule */
+    struct nuster_rule  *rule;        /* rule */
     int                     pid;         /* proxy uuid */
 };
 
@@ -133,7 +116,7 @@ struct nst_cache_dict {
 
 struct nst_cache_rule_stash {
     struct nst_cache_rule_stash *next;
-    struct nst_cache_rule       *rule;
+    struct nuster_rule       *rule;
     char                        *key;
     uint64_t                     hash;
 };
@@ -152,7 +135,7 @@ enum {
 struct nst_cache_ctx {
     int                          state;
 
-    struct nst_cache_rule       *rule;
+    struct nuster_rule       *rule;
     struct nst_cache_rule_stash *stash;
 
     struct nst_cache_entry      *entry;
@@ -249,8 +232,8 @@ struct nst_cache_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
 struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nst_cache_rule *rule, char *key, uint64_t hash);
-int nst_cache_test_rule(struct nst_cache_rule *rule, struct stream *s, int res);
+        struct nuster_rule *rule, char *key, uint64_t hash);
+int nst_cache_test_rule(struct nuster_rule *rule, struct stream *s, int res);
 void *nst_cache_memory_alloc(struct pool_head *pool, int size);
 void nst_cache_memory_free(struct pool_head *pool, void *p);
 int nst_cache_check_uri(struct http_msg *msg);
