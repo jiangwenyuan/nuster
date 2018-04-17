@@ -366,12 +366,12 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry, struct
 }
 
 static void nst_cache_manager_handler(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
-    struct channel *res         = si_ic(si);
-    struct stream *s            = si_strm(si);
-    struct nst_cache_entry *entry   = NULL;
-    int max                     = 1000;
-    uint64_t start              = get_current_timestamp();
+    struct nst_cache_entry *entry = NULL;
+    struct stream_interface *si   = appctx->owner;
+    struct channel *res           = si_ic(si);
+    struct stream *s              = si_strm(si);
+    int max                       = 1000;
+    uint64_t start                = get_current_timestamp();
 
     while(1) {
         nuster_shctx_lock(&nuster.cache->dict[0]);

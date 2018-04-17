@@ -33,10 +33,10 @@
  * The cache applet acts like the backend to send cached http data
  */
 static void nst_cache_engine_handler(struct appctx *appctx) {
-    struct stream_interface *si   = appctx->owner;
-    struct channel *res           = si_ic(si);
-    struct stream *s              = si_strm(si);
     struct nst_cache_element *element = NULL;
+    struct stream_interface *si       = appctx->owner;
+    struct channel *res               = si_ic(si);
+    struct stream *s                  = si_strm(si);
     int ret;
 
     if(appctx->ctx.nuster.cache_engine.element) {
@@ -310,7 +310,7 @@ static void _nst_cache_data_cleanup() {
         struct nst_cache_element *element = data->element;
         while(element) {
             struct nst_cache_element *tmp = element;
-            element                   = element->next;
+            element                       = element->next;
 
             nst_cache_stats_update_used_mem(-tmp->msg_len);
             nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->msg);
@@ -347,8 +347,8 @@ void nst_cache_init() {
             }
         }
 
-        global.nuster.cache.pool.stash   = create_pool("cp.stash", sizeof(struct nuster_rule_stash), MEM_F_SHARED);
-        global.nuster.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct nst_cache_ctx), MEM_F_SHARED);
+        global.nuster.cache.pool.stash = create_pool("cp.stash", sizeof(struct nuster_rule_stash), MEM_F_SHARED);
+        global.nuster.cache.pool.ctx   = create_pool("cp.ctx", sizeof(struct nst_cache_ctx), MEM_F_SHARED);
 
         if(global.nuster.cache.share) {
             global.nuster.cache.memory = nuster_memory_create("cache.shm", global.nuster.cache.dict_size + global.nuster.cache.data_size, global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);

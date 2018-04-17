@@ -81,7 +81,7 @@ struct nuster_rule_key {
 
 struct nuster_rule_code {
     struct nuster_rule_code *next;
-    int                    code;
+    int                      code;
 };
 
 enum {
@@ -104,8 +104,12 @@ struct nuster_rule {
 struct nuster_rule_stash {
     struct nuster_rule_stash *next;
     struct nuster_rule       *rule;
-    char                        *key;
-    uint64_t                     hash;
+    char                     *key;
+    uint64_t                  hash;
+};
+
+struct nuster_flt_conf {
+    int status;
 };
 
 

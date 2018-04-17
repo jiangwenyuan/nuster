@@ -83,7 +83,7 @@ struct nst_cache_entry {
     struct nuster_str       host;
     struct nuster_str       path;
     struct nst_cache_entry *next;
-    struct nuster_rule  *rule;        /* rule */
+    struct nuster_rule     *rule;        /* rule */
     int                     pid;         /* proxy uuid */
 };
 
@@ -110,25 +110,25 @@ enum {
 };
 
 struct nst_cache_ctx {
-    int                          state;
+    int                       state;
 
     struct nuster_rule       *rule;
     struct nuster_rule_stash *stash;
 
-    struct nst_cache_entry      *entry;
-    struct nst_cache_data       *data;
-    struct nst_cache_element    *element;
+    struct nst_cache_entry   *entry;
+    struct nst_cache_data    *data;
+    struct nst_cache_element *element;
 
     struct {
-        int                      scheme;
-        struct nuster_str        host;
-        struct nuster_str        uri;
-        struct nuster_str        path;
-        int                      delimiter;
-        struct nuster_str        query;
-        struct nuster_str        cookie;
+        int                   scheme;
+        struct nuster_str     host;
+        struct nuster_str     uri;
+        struct nuster_str     path;
+        int                   delimiter;
+        struct nuster_str     query;
+        struct nuster_str     cookie;
     } req;
-    int                          pid;         /* proxy uuid */
+    int                       pid;         /* proxy uuid */
 };
 
 struct nst_cache_stats {
@@ -159,10 +159,6 @@ struct nst_cache {
 
     int                    rehash_idx;        /* >=0: rehashing, index, -1: not rehashing */
     int                    cleanup_idx;       /* cache dict cleanup index */
-};
-
-struct nst_cache_config {
-    int status;
 };
 
 extern struct flt_ops  nst_cache_filter_ops;

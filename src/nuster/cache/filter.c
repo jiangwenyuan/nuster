@@ -26,7 +26,7 @@ static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
 }
 
 static void _nst_cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
-    struct nst_cache_config *conf = fconf->conf;
+    struct nuster_flt_conf *conf = fconf->conf;
 
     if(conf) {
         free(conf);
@@ -42,7 +42,7 @@ static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
 }
 
 static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
-    struct nst_cache_config *conf = FLT_CONF(filter);
+    struct nuster_flt_conf *conf = FLT_CONF(filter);
 
     /* disable cache if state is not NUSTER_STATUS_ON */
     if(global.nuster.cache.status != NUSTER_STATUS_ON || conf->status != NUSTER_STATUS_ON) {
@@ -70,7 +70,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
     if(filter->ctx) {
         struct nuster_rule_stash *stash = NULL;
-        struct nst_cache_ctx *ctx          = filter->ctx;
+        struct nst_cache_ctx *ctx       = filter->ctx;
 
         nst_cache_stats_update_request(ctx->state);
 
@@ -100,8 +100,8 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
     struct channel *res         = &s->res;
     struct proxy *px            = s->be;
     struct stream_interface *si = &s->si[1];
-    struct nst_cache_ctx *ctx       = filter->ctx;
-    struct nuster_rule *rule = NULL;
+    struct nst_cache_ctx *ctx   = filter->ctx;
+    struct nuster_rule *rule    = NULL;
     char *key                   = NULL;
     uint64_t hash               = 0;
 
@@ -183,8 +183,8 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
 
         if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
             struct nuster_rule_stash *stash = ctx->stash;
-            struct nuster_rule_code *cc      = ctx->rule->code;
-            int valid                      = 0;
+            struct nuster_rule_code *cc     = ctx->rule->code;
+            int valid                       = 0;
 
             ctx->pid = px->uuid;
 
