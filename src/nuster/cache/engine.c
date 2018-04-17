@@ -417,7 +417,7 @@ void nst_cache_init() {
                 if(!rule->state) {
                     goto err;
                 }
-                *rule->state = NST_CACHE_RULE_ENABLED;
+                *rule->state = NUSTER_RULE_ENABLED;
                 ttl          = *rule->ttl;
                 free(rule->ttl);
                 rule->ttl    = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*rule->ttl));
