@@ -44,8 +44,8 @@ static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
 static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     struct nst_cache_config *conf = FLT_CONF(filter);
 
-    /* disable cache if state is not NST_CACHE_STATUS_ON */
-    if(global.nuster.cache.status != NST_CACHE_STATUS_ON || conf->status != NST_CACHE_STATUS_ON) {
+    /* disable cache if state is not NUSTER_STATUS_ON */
+    if(global.nuster.cache.status != NUSTER_STATUS_ON || conf->status != NUSTER_STATUS_ON) {
         return 0;
     }
     if(!filter->ctx) {
@@ -69,7 +69,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 
 static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
     if(filter->ctx) {
-        struct nst_cache_rule_stash *stash = NULL;
+        struct nuster_rule_stash *stash = NULL;
         struct nst_cache_ctx *ctx          = filter->ctx;
 
         nst_cache_stats_update_request(ctx->state);
@@ -182,7 +182,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
         }
 
         if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
-            struct nst_cache_rule_stash *stash = ctx->stash;
+            struct nuster_rule_stash *stash = ctx->stash;
             struct nuster_rule_code *cc      = ctx->rule->code;
             int valid                      = 0;
 

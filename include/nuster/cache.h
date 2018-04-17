@@ -45,17 +45,6 @@
 #define NST_CACHE_DEFAULT_PURGE_METHOD       "PURGE"
 #define NST_CACHE_DEFAULT_PURGE_METHOD_SIZE   16
 
-enum {
-    NST_CACHE_STATUS_UNDEFINED = -1,
-    NST_CACHE_STATUS_OFF       =  0,
-    NST_CACHE_STATUS_ON        =  1,
-};
-enum {
-    NST_CACHE_SHARE_UNDEFINED  = -1,
-    NST_CACHE_SHARE_OFF        =  0,
-    NST_CACHE_SHARE_ON         =  1,
-};
-
 struct nst_cache_element {
     struct nst_cache_element *next;
     char                     *msg;
@@ -109,13 +98,6 @@ struct nst_cache_dict {
 #endif
 };
 
-struct nst_cache_rule_stash {
-    struct nst_cache_rule_stash *next;
-    struct nuster_rule       *rule;
-    char                        *key;
-    uint64_t                     hash;
-};
-
 enum {
     NST_CACHE_CTX_STATE_INIT   = 0,   /* init */
     NST_CACHE_CTX_STATE_CREATE = 1,   /* to cache */
@@ -131,7 +113,7 @@ struct nst_cache_ctx {
     int                          state;
 
     struct nuster_rule       *rule;
-    struct nst_cache_rule_stash *stash;
+    struct nuster_rule_stash *stash;
 
     struct nst_cache_entry      *entry;
     struct nst_cache_data       *data;
@@ -226,7 +208,7 @@ struct nst_cache_data *nst_cache_exists(const char *key, uint64_t hash);
 struct nst_cache_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
-struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
+struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nuster_rule *rule, char *key, uint64_t hash);
 int nst_cache_test_rule(struct nuster_rule *rule, struct stream *s, int res);
 void *nst_cache_memory_alloc(struct pool_head *pool, int size);

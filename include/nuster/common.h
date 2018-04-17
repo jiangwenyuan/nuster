@@ -42,6 +42,12 @@
 #include <types/acl.h>
 
 enum {
+    NUSTER_STATUS_UNDEFINED = -1,
+    NUSTER_STATUS_OFF       =  0,
+    NUSTER_STATUS_ON        =  1,
+};
+
+enum {
     NUSTER_HTTP_200 = 0,
     NUSTER_HTTP_400,
     NUSTER_HTTP_404,
@@ -94,6 +100,14 @@ struct nuster_rule {
     int                      id;         /* same for identical names */
     int                      uuid;       /* unique cache-rule ID */
 };
+
+struct nuster_rule_stash {
+    struct nuster_rule_stash *next;
+    struct nuster_rule       *rule;
+    char                        *key;
+    uint64_t                     hash;
+};
+
 
 
 /* get current timestamp in milliseconds */

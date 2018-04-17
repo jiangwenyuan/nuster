@@ -65,10 +65,10 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
 /*
  * Cache the keys which calculated in request for response use
  */
-struct nst_cache_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
+struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nuster_rule *rule, char *key, uint64_t hash) {
 
-    struct nst_cache_rule_stash *stash = pool_alloc2(global.nuster.cache.pool.stash);
+    struct nuster_rule_stash *stash = pool_alloc2(global.nuster.cache.pool.stash);
 
     if(stash) {
         stash->rule = rule;
@@ -321,7 +321,7 @@ static void _nst_cache_data_cleanup() {
 }
 
 void nst_cache_housekeeping() {
-    if(global.nuster.cache.status == NST_CACHE_STATUS_ON) {
+    if(global.nuster.cache.status == NUSTER_STATUS_ON) {
         nst_cache_dict_rehash();
         nuster_shctx_lock(&nuster.cache->dict[0]);
         nst_cache_dict_cleanup();
@@ -338,16 +338,16 @@ void nst_cache_init() {
 
     nuster.applet.cache_engine.fct = nst_cache_engine_handler;
 
-    if(global.nuster.cache.status == NST_CACHE_STATUS_ON) {
-        if(global.nuster.cache.share == NST_CACHE_STATUS_UNDEFINED) {
+    if(global.nuster.cache.status == NUSTER_STATUS_ON) {
+        if(global.nuster.cache.share == NUSTER_STATUS_UNDEFINED) {
             if(global.nbproc == 1) {
-                global.nuster.cache.share = NST_CACHE_SHARE_OFF;
+                global.nuster.cache.share = NUSTER_STATUS_OFF;
             } else {
-                global.nuster.cache.share = NST_CACHE_SHARE_ON;
+                global.nuster.cache.share = NUSTER_STATUS_ON;
             }
         }
 
-        global.nuster.cache.pool.stash   = create_pool("cp.stash", sizeof(struct nst_cache_rule_stash), MEM_F_SHARED);
+        global.nuster.cache.pool.stash   = create_pool("cp.stash", sizeof(struct nuster_rule_stash), MEM_F_SHARED);
         global.nuster.cache.pool.ctx     = create_pool("cp.ctx", sizeof(struct nst_cache_ctx), MEM_F_SHARED);
 
         if(global.nuster.cache.share) {
