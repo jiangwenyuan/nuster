@@ -21,7 +21,7 @@
 
 #include <nuster/nuster.h>
 
-static const char *cache_id = "cache filter";
+static const char *nuster_cache_id = "cache filter";
 
 static struct nuster_rule_key *_nuster_parse_rule_key_cast(char *str) {
     struct nuster_rule_key *key = NULL;
@@ -372,11 +372,11 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     struct flt_conf *fconf;
-    struct nst_cache_config *conf;
+    struct nuster_flt_conf *conf;
     int cur_arg = 1;
 
     list_for_each_entry(fconf, &px->filter_configs, list) {
-        if(fconf->id == cache_id) {
+        if(fconf->id == nuster_cache_id) {
             memprintf(err, "%s: Proxy supports only one cache filter\n", px->id);
             return -1;
         }
@@ -405,7 +405,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
         cur_arg++;
     }
 
-    fconf->id   = cache_id;
+    fconf->id   = nuster_cache_id;
     fconf->conf = conf;
     fconf->ops  = &nst_cache_filter_ops;
 
@@ -418,12 +418,12 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     struct nuster_rule *rule = NULL;
-    struct acl_cond *cond       = NULL;
-    char *name                  = NULL;
-    char *key                   = NULL;
-    char *code                  = NULL;
-    unsigned ttl                = NST_CACHE_DEFAULT_TTL;
-    int cur_arg                 = 2;
+    struct acl_cond *cond    = NULL;
+    char *name               = NULL;
+    char *key                = NULL;
+    char *code               = NULL;
+    unsigned ttl             = NST_CACHE_DEFAULT_TTL;
+    int cur_arg              = 2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' section.");

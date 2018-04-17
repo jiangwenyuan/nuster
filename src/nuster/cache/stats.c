@@ -201,12 +201,12 @@ int nst_cache_stats_init() {
     if(!global.nuster.cache.stats) {
         return 0;
     }
-    global.nuster.cache.stats->used_mem       = 0;
-    global.nuster.cache.stats->request.total  = 0;
-    global.nuster.cache.stats->request.fetch  = 0;
-    global.nuster.cache.stats->request.hit    = 0;
-    global.nuster.cache.stats->request.abort  = 0;
-    nuster.applet.cache_stats.fct             = nst_cache_stats_handler;
+    global.nuster.cache.stats->used_mem      = 0;
+    global.nuster.cache.stats->request.total = 0;
+    global.nuster.cache.stats->request.fetch = 0;
+    global.nuster.cache.stats->request.hit   = 0;
+    global.nuster.cache.stats->request.abort = 0;
+    nuster.applet.cache_stats.fct            = nst_cache_stats_handler;
     return 1;
 }
 
