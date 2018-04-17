@@ -106,17 +106,17 @@ err:
     return NULL;
 }
 
-static struct nst_cache_code *_nuster_parse_rule_code(char *str) {
+static struct nuster_rule_code *_nuster_parse_rule_code(char *str) {
     if(!strcmp(str, "all")) {
         return NULL;
     } else {
-        struct nst_cache_code *code = NULL;
+        struct nuster_rule_code *code = NULL;
         char *tmp = strdup(str);
         char *m = strtok(tmp, ",");
         /* warn ","? */
         while(m) {
             int i = atoi(m);
-            struct nst_cache_code *cc = malloc(sizeof(*cc));
+            struct nuster_rule_code *cc = malloc(sizeof(*cc));
             cc->code = i;
             if(code) {
                 cc->next = code;
