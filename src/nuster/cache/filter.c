@@ -183,7 +183,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
 
         if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
             struct nst_cache_rule_stash *stash = ctx->stash;
-            struct nst_cache_code *cc      = ctx->rule->code;
+            struct nuster_rule_code *cc      = ctx->rule->code;
             int valid                      = 0;
 
             ctx->pid = px->uuid;
