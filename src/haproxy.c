@@ -1765,7 +1765,7 @@ void run_poll_loop()
 		cur_poller.poll(&cur_poller, next);
 		fd_process_cached_events();
 		applet_run_active();
-		nst_cache_housekeeping();
+		nuster_housekeeping();
 	}
 }
 
