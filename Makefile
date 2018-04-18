@@ -796,7 +796,7 @@ OBJS = src/haproxy.o src/base64.o src/protocol.o \
        src/namespace.o src/mailers.o src/dns.o src/vars.o src/filters.o \
        src/flt_http_comp.o src/flt_trace.o src/flt_spoe.o src/cli.o \
        \
-       src/nuster/common.o src/nuster/memory.o src/nuster/parser.o \
+       src/nuster/nuster.o src/nuster/memory.o src/nuster/parser.o \
        src/nuster/cache/dict.o src/nuster/cache/engine.o src/nuster/cache/filter.o \
        src/nuster/cache/stats.o src/nuster/cache/manager.o
 
