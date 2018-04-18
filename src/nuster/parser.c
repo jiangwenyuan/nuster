@@ -519,7 +519,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     *rule->ttl = ttl;
     rule->id   = -1;
     LIST_INIT(&rule->list);
-    LIST_ADDQ(&proxy->nuster.cache.rules, &rule->list);
+    LIST_ADDQ(&proxy->nuster.rules, &rule->list);
 
     return 0;
 out:
