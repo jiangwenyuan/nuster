@@ -95,7 +95,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
                 mode  = NST_CACHE_PURGE_NAME_PROXY;
             }
 
-            list_for_each_entry(rule, &p->nuster.cache.rules, list) {
+            list_for_each_entry(rule, &p->nuster.rules, list) {
                 if(mode != NST_CACHE_PURGE_NAME_RULE) {
                     *rule->state = state == -1 ? *rule->state : state;
                     *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
@@ -165,7 +165,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
                 goto purge;
             }
 
-            list_for_each_entry(rule, &p->nuster.cache.rules, list) {
+            list_for_each_entry(rule, &p->nuster.rules, list) {
                 if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
                     mode = NST_CACHE_PURGE_NAME_RULE;
                     st1  = rule->id;

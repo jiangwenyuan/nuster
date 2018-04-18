@@ -409,7 +409,7 @@ void nst_cache_init() {
             struct nuster_rule *rule = NULL;
             uint32_t ttl;
 
-            list_for_each_entry(rule, &p->nuster.cache.rules, list) {
+            list_for_each_entry(rule, &p->nuster.rules, list) {
                 struct proxy *pt;
 
                 rule->uuid   = uuid++;
@@ -429,7 +429,7 @@ void nst_cache_init() {
                 pt = proxy;
                 while(pt) {
                     struct nuster_rule *rt = NULL;
-                    list_for_each_entry(rt, &pt->nuster.cache.rules, list) {
+                    list_for_each_entry(rt, &pt->nuster.rules, list) {
                         if(rt == rule) goto out;
                         if(!strcmp(rt->name, rule->name)) {
                             Alert("cache-rule with same name=[%s] found.\n", rule->name);

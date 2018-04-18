@@ -119,7 +119,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
             if(!nst_cache_prebuild_key(ctx, s, msg)) {
                 return 1;
             }
-            list_for_each_entry(rule, &px->nuster.cache.rules, list) {
+            list_for_each_entry(rule, &px->nuster.rules, list) {
                 nuster_debug("[CACHE] Checking rule: %s\n", rule->name);
                 /* disabled? */
                 if(*rule->state == NUSTER_RULE_DISABLED) {
@@ -169,7 +169,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
         /* response */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
             nuster_debug("[CACHE] [RES] Checking if rule pass: ");
-            list_for_each_entry(rule, &px->nuster.cache.rules, list) {
+            list_for_each_entry(rule, &px->nuster.rules, list) {
                 /* test acls to see if we should cache it */
                 if(nst_cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
