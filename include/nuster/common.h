@@ -48,6 +48,10 @@ enum {
 };
 
 enum {
+    NUSTER_MODE_CACHE = 1,
+};
+
+enum {
     NUSTER_HTTP_200 = 0,
     NUSTER_HTTP_400,
     NUSTER_HTTP_404,
