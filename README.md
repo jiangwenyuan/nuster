@@ -1,4 +1,4 @@
-Nuster, a web caching proxy server.
+Nuster, a high performance caching proxy server.
 
 
 # Table of Contents
@@ -12,9 +12,9 @@ Nuster, a web caching proxy server.
   * [Docker](#docker)
 * [Usage](#usage)
 * [Directives](#directives)
-  * [cache](#cache)
-  * [filter cache](#filter-cache)
-  * [cache-rule](#cache-rule)
+  * [global: nuster cache](#global-nuster-cache)
+  * [proxy: nuster cache](#proxy-nuster-cache)
+  * [proxy: nuster rule](#nuster-rule)
 * [Cache Management](#cache-management)
   * [Enable/Disable](#enable-and-disable-cache-rule)
   * [TTL](#ttl)
@@ -29,7 +29,7 @@ Nuster, a web caching proxy server.
 
 # Introduction
 
-Nuster is a simple yet powerful web caching proxy server based on HAProxy.
+Nuster is a high performance caching proxy server based on HAProxy.
 It is 100% compatible with HAProxy, and takes full advantage of the ACL
 functionality of HAProxy to provide fine-grained caching policy based on
 the content of request, response or server status. Its features include:
@@ -95,12 +95,11 @@ docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nust
 
 Nuster is based on HAProxy, all directives from HAProxy are supported in nuster.
 
-In order to use cache functionality, `cache on` should be declared in **global**
-section and a cache filter along with some cache-rules should be added into
-**backend** or **listen** section.
+In order to use cache functionality, `nuster cache on` should be declared in **global**
+section and some rules should be added into **backend** or **listen** section.
 
-If `cache off` is declared or there is no `cache on|off` directive, nuster acts
-just like HAProxy, as a TCP and HTTP load balancer.
+If `nuster cache off` is declared or there is no `nuster cache on|off` directive,
+nuster acts just like HAProxy, as a TCP and HTTP load balancer.
 
 # Directives
 
@@ -120,7 +119,7 @@ including http response data, keys and overheads are stored in this memroy zone
 and shared between all processes.
 
 If no more memory can be allocated from this memory zone, new requests that should
-be cached according to defined cache rules will not be cached unless some memory
+be cached according to defined rules will not be cached unless some memory
 are freed.
 
 Temporary data are stored in a memory pool which allocates memory dynamically from
@@ -187,22 +186,22 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **context:** *backend*, *listen*
 
-Define cache rule. It is possible to declare multiple rules in the same section.
+Define rule. It is possible to declare multiple rules in the same section.
 The order is important because the matching process stops on the first match.
 
 ```
 acl pathA path /a.html
-filter cache
-cache-rule all ttl 3600
-cache-rule path01 ttl 60 if pathA
+nuster cache on
+nuster rule all ttl 3600
+nuster rule path01 ttl 60 if pathA
 ```
 
-cache-rule `path01` will never match because first rule will cache everything.
+rule `path01` will never match because first rule will cache everything.
 
 ### name
 
-Define a name for this cache-rule. It will be used in cache manager API, it does not
-have to be unique, but it might be a good idea to make it unique. cache-rule with same
+Define a name for this rule. It will be used in cache manager API, it does not
+have to be unique, but it might be a good idea to make it unique. rule with same
 name are treated as one.
 
 ### key KEY
@@ -269,9 +268,9 @@ Cache only if the response status code is CODE. By default, only 200 response
 is cached. You can use `all` to cache all responses.
 
 ```
-cache-rule only200
-cache-rule 200and404 code 200,404
-cache-rule all code all
+nuster rule only200
+nuster rule 200and404 code 200,404
+nuster rule all code all
 ```
 
 ### if|unless condition
@@ -296,34 +295,34 @@ nuster cache on uri /nuster/cache
 
 **REMEMBER to enable access restriction**
 
-## Enable and disable cache-rule
+## Enable and disable cache rule
 
-cache-rule can be disabled at run time through manager uri. Disabled cache-rule will not be processed, nor will the
+Rule can be disabled at run time through manager uri. Disabled rule will not be processed, nor will the
 cache created by that.
 
 ***headers***
 
-| header | value           | description
-| ------ | -----           | -----------
-| state  | enable          | enable  cache-rule
-|        | disable         | disable cache-rule
-| name   | cache-rule NAME | the cache-rule to be enabled/disabled
-|        | proxy NAME      | all cache-rules belong to proxy NAME
-|        | *               | all cache-rules
+| header | value       | description
+| ------ | -----       | -----------
+| state  | enable      | enable  rule
+|        | disable     | disable rule
+| name   | rule NAME   | the rule to be enabled/disabled
+|        | proxy NAME  | all rules belong to proxy NAME
+|        | *           | all rules
 
-Keep in mind that if name is not unique, **all** cache-rules with that name will be disabled/enabled.
+Keep in mind that if name is not unique, **all** rules with that name will be disabled/enabled.
 
 ***Examples***
 
-* Disable cache-rule r1
+* Disable cache rule r1
 
   `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster/cache`
 
-* Disable all cache-rule defined in proxy app1b
+* Disable all cache rule defined in proxy app1b
 
   `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster/cache`
 
-* Enable all cache-rule
+* Enable all cache rule
 
   `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster/cache`
 
@@ -333,12 +332,12 @@ Change the TTL. It only affects the TTL of the responses to be cached, **does no
 
 ***headers***
 
-| header | value           | description
-| ------ | -----           | -----------
-| ttl    | new TTL         | see `ttl` in `cache-rule`
-| name   | cache-rule NAME | the cache-rule to be changed
-|        | proxy NAME      | all cache-rules belong to proxy NAME
-|        | *               | all cache-rules
+| header | value      | description
+| ------ | -----      | -----------
+| ttl    | new TTL    | see `ttl` in `nuster rule`
+| name   | rule NAME  | the cache rule to be changed
+|        | proxy NAME | all cache rules belong to proxy NAME
+|        | *          | all cache rules
 
 ***Examples***
 
@@ -376,11 +375,11 @@ Cache can be purged by making HTTP `PURGE`(or `purge-method`) requests to the ma
 
 ***headers***
 
-| header | value           | description
-| ------ | -----           | -----------
-| name   | cache-rule NAME | caches belong to cache-rule ${NAME} will be purged
-|        | proxy NAME      | caches belong to proxy ${NAME}
-|        | *               | all caches
+| header | value            | description
+| ------ | -----            | -----------
+| name   | nuster rule NAME | caches belong to rule ${NAME} will be purged
+|        | proxy NAME       | caches belong to proxy ${NAME}
+|        | *                | all caches
 
 ***Examples***
 
@@ -389,7 +388,7 @@ Cache can be purged by making HTTP `PURGE`(or `purge-method`) requests to the ma
 curl -X PURGE -H "name: *" http://127.0.0.1/nuster/cache
 # purge all caches belong to proxy applb
 curl -X PURGE -H "name: app1b" http://127.0.0.1/nuster/cache
-# purge all caches belong to cache-rule r1
+# purge all caches belong to rule r1
 curl -X PURGE -H "name: r1" http://127.0.0.1/nuster/cache
 ```
 
@@ -413,7 +412,7 @@ curl -X PURGE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
 
 By default, the query part is also used as cache key, so there will be multiple caches if the query differs.
 
-For example, for cache-rule `cache-rule imgs if { path_beg /imgs/ }`, and request
+For example, for cache rule `nuster rule imgs if { path_beg /imgs/ }`, and request
 
 ```
 curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
@@ -435,18 +434,18 @@ It does not work if you don't know all queries.
 
 ***use a customized key and delete once in case that the query part is irrelevant***
 
-Define a key like `cache-rule imgs key method.scheme.host.path if { path_beg /imgs }`, in this way only one cache
+Define a key like `nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`, in this way only one cache
 will be created, and you can purge without query:
 
 `curl -XPURGE https://127.0.0.1/imgs/test.jpg`
 
 It does not work if the query part is required.
 
-***delete by cache-rule NAME***
+***delete by rule NAME***
 
 `curl -X PURGE -H "name: imgs" http://127.0.0.1/nuster/cache`
 
-It does not work if the cache-rule is defined something like `cache-rule static if { path_beg /imgs/ /css/ }`.
+It does not work if the nuster rule is defined something like `nuster rule static if { path_beg /imgs/ /css/ }`.
 
 This method provides a way to purge just by path:
 
@@ -536,7 +535,7 @@ Cache related debug messages start with `[CACHE]`.
 
 ## How to cache POST request?
 
-Enable `option http-buffer-request` and set `body` in cache-rule `key`.
+Enable `option http-buffer-request` and set `body` in cache rule `key`.
 
 By default, the cache key does not include the body of the request, remember to put
 `body` in key field.
