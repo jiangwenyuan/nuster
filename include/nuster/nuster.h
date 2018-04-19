@@ -28,7 +28,6 @@
 #include <nuster/cache.h>
 
 #include <common/chunk.h>
-#include <types/stream.h>
 #include <types/applet.h>
 
 struct nuster {
@@ -52,8 +51,13 @@ void nuster_response(struct stream *s, struct chunk *msg);
 const char *nuster_parse_size(const char *text, uint64_t *ret);
 const char *nuster_parse_time(const char *text, int len, unsigned *ret);
 int nuster_parse_global_cache(const char *file, int linenum, char **args, int kwm);
+
 static inline void nuster_housekeeping() {
     nst_cache_housekeeping();
+}
+
+static inline int nuster_check_applet (struct stream *s, struct channel *req, struct proxy *px) {
+    return (nst_cache_manager(s, req, px) || nst_cache_stats(s, req, px));
 }
 
 #endif /* _NUSTER_H */

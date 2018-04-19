@@ -4468,8 +4468,8 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		goto done;
 	}
 
-        /* check cache purge */
-	if (nst_cache_manager(s, req, px) || nst_cache_stats(s, req, px)) {
+        /* check nuster applets: manager/purge/stats... */
+	if (nuster_check_applet(s, req, px)) {
 		goto return_prx_cond;
 	}
 
