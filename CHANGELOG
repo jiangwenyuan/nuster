@@ -1,6 +1,16 @@
 ChangeLog :
 ===========
 
+2018/04/19 : 1.8.8
+    - BUG/MEDIUM: threads: Fix the max/min calculation because of name clashes
+    - BUG/MEDIUM: connection: Make sure we have a mux before calling detach().
+    - BUG/MINOR: http: Return an error in proxy mode when url2sa fails
+    - BUG/MEDIUM: kqueue: When adding new events, provide an output to get errors.
+    - BUG/MINOR: cli: Guard against NULL messages when using CLI_ST_PRINT_FREE
+    - MINOR: cli: Ensure the CLI always outputs an error when it should
+    - DOC: lua: update the links to the config and Lua API
+    - BUG/CRITICAL: h2: fix incorrect frame length check
+
 2018/04/07 : 1.8.7
     - BUG/MAJOR: cache: always initialize newly created objects
     - MINOR: servers: Support alphanumeric characters for the server templates names
