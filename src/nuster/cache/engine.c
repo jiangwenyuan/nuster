@@ -46,7 +46,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
         }
         element = appctx->ctx.nuster.cache_engine.element;
 
-        ret = bi_putblk(res, element->msg, element->msg_len);
+        ret = bi_putblk(res, element->msg.data, element->msg.len);
         if(ret >= 0) {
             appctx->ctx.nuster.cache_engine.element = element->next;
         } else if(ret == -2) {
@@ -248,18 +248,18 @@ static struct nst_cache_element *_nst_cache_data_append(struct nst_cache_element
         char *p    = msg->chn->buf->p;
         int size   = msg->chn->buf->size;
 
-        element->msg = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, msg_len);
-        if(!element->msg) return NULL;
+        element->msg.data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, msg_len);
+        if(!element->msg.data) return NULL;
 
         if(p - data + msg_len > size) {
             int right = data + size - p;
             int left  = msg_len - right;
-            memcpy(element->msg, p, right);
-            memcpy(element->msg + right, data, left);
+            memcpy(element->msg.data, p, right);
+            memcpy(element->msg.data + right, data, left);
         } else {
-            memcpy(element->msg, p, msg_len);
+            memcpy(element->msg.data, p, msg_len);
         }
-        element->msg_len = msg_len;
+        element->msg.len = msg_len;
         element->next    = NULL;
         if(tail == NULL) {
             tail = element;
@@ -312,8 +312,8 @@ static void _nst_cache_data_cleanup() {
             struct nst_cache_element *tmp = element;
             element                       = element->next;
 
-            nst_cache_stats_update_used_mem(-tmp->msg_len);
-            nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->msg);
+            nst_cache_stats_update_used_mem(-tmp->msg.len);
+            nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->msg.data);
             nst_cache_memory_free(global.nuster.cache.pool.element, tmp);
         }
         nst_cache_memory_free(global.nuster.cache.pool.data, data);
