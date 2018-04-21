@@ -30,6 +30,8 @@
 #include <common/chunk.h>
 #include <common/config.h>
 
+#include <nuster/common.h>
+
 struct appctx;
 
 /* Applet descriptor */
@@ -62,6 +64,18 @@ struct appctx {
 	struct buffer_wait buffer_wait; /* position in the list of objects waiting for a buffer */
 
 	union {
+		union {
+			struct {
+				struct nst_cache_entry   *entry;
+				struct nst_cache_data    *data;
+				struct nst_cache_element *element;
+			} cache_engine;
+			struct {
+				struct nuster_str host;
+				struct nuster_str path;
+				struct my_regex  *regex;
+			} cache_manager;
+		} nuster;
 		struct {
 			struct proxy *px;
 			struct server *sv;
@@ -163,20 +177,6 @@ struct appctx {
 			unsigned int max_frame_size;
 			struct list  list;
 		} spoe;                         /* used by SPOE filter */
-		union {
-			struct {
-				struct nst_cache_entry   *entry;
-				struct nst_cache_data    *data;
-				struct nst_cache_element *element;
-			} cache_engine;
-			struct {
-				struct my_regex *regex;
-				char            *host;
-				char            *path;
-				int              host_len;
-				int              path_len;
-			} cache_manager;
-		} nuster;
 	} ctx;					/* used by stats I/O handlers to dump the stats */
 };
 
