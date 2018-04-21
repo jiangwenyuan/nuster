@@ -47,8 +47,7 @@
 
 struct nst_cache_element {
     struct nst_cache_element *next;
-    char                     *msg;
-    int                       msg_len;
+    struct nuster_str         msg;
 };
 
 /*
