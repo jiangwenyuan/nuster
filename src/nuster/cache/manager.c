@@ -216,22 +216,22 @@ purge:
         if(mode == NST_CACHE_PURGE_HOST ||
                 mode == NST_CACHE_PURGE_PATH_HOST ||
                 mode == NST_CACHE_PURGE_REGEX_HOST) {
-            appctx->ctx.nuster.cache_manager.host     = nuster_memory_alloc(global.nuster.cache.memory, host_len);
-            appctx->ctx.nuster.cache_manager.host_len = host_len;
-            if(!appctx->ctx.nuster.cache_manager.host) {
+            appctx->ctx.nuster.cache_manager.host.data = nuster_memory_alloc(global.nuster.cache.memory, host_len);
+            appctx->ctx.nuster.cache_manager.host.len  = host_len;
+            if(!appctx->ctx.nuster.cache_manager.host.data) {
                 goto err;
             }
-            memcpy(appctx->ctx.nuster.cache_manager.host, host, host_len);
+            memcpy(appctx->ctx.nuster.cache_manager.host.data, host, host_len);
         }
 
         if(mode == NST_CACHE_PURGE_PATH ||
                 mode == NST_CACHE_PURGE_PATH_HOST) {
-            appctx->ctx.nuster.cache_manager.path     = nuster_memory_alloc(global.nuster.cache.memory, path_len);
-            appctx->ctx.nuster.cache_manager.path_len = path_len;
-            if(!appctx->ctx.nuster.cache_manager.path) {
+            appctx->ctx.nuster.cache_manager.path.data = nuster_memory_alloc(global.nuster.cache.memory, path_len);
+            appctx->ctx.nuster.cache_manager.path.len  = path_len;
+            if(!appctx->ctx.nuster.cache_manager.path.data) {
                 goto err;
             }
-            memcpy(appctx->ctx.nuster.cache_manager.path, path, path_len);
+            memcpy(appctx->ctx.nuster.cache_manager.path.data, path, path_len);
         } else if(mode == NST_CACHE_PURGE_REGEX ||
                 mode == NST_CACHE_PURGE_REGEX_HOST) {
             appctx->ctx.nuster.cache_manager.regex = regex;
@@ -340,25 +340,25 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry, struct
             ret = entry->rule->id == appctx->st1;
             break;
         case NST_CACHE_PURGE_PATH:
-            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path_len &&
-                !memcmp(entry->path.data, appctx->ctx.nuster.cache_manager.path, entry->path.len);
+            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len &&
+                !memcmp(entry->path.data, appctx->ctx.nuster.cache_manager.path.data, entry->path.len);
             break;
         case NST_CACHE_PURGE_REGEX:
             ret = regex_exec(appctx->ctx.nuster.cache_manager.regex, entry->path.data);
             break;
         case NST_CACHE_PURGE_HOST:
-            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host_len &&
-                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host, entry->host.len);
+            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len &&
+                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host.data, entry->host.len);
             break;
         case NST_CACHE_PURGE_PATH_HOST:
-            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path_len &&
-                entry->host.len == appctx->ctx.nuster.cache_manager.host_len &&
-                !memcmp(entry->path.data, appctx->ctx.nuster.cache_manager.path, entry->path.len) &&
-                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host, entry->host.len);
+            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len &&
+                entry->host.len == appctx->ctx.nuster.cache_manager.host.len &&
+                !memcmp(entry->path.data, appctx->ctx.nuster.cache_manager.path.data, entry->path.len) &&
+                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host.data, entry->host.len);
             break;
         case NST_CACHE_PURGE_REGEX_HOST:
-            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host_len &&
-                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host, entry->host.len) &&
+            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len &&
+                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host.data, entry->host.len) &&
                 regex_exec(appctx->ctx.nuster.cache_manager.regex, entry->path.data);
             break;
     }
@@ -407,11 +407,11 @@ static void nst_cache_manager_release_handler(struct appctx *appctx) {
         regex_free(appctx->ctx.nuster.cache_manager.regex);
         free(appctx->ctx.nuster.cache_manager.regex);
     }
-    if(appctx->ctx.nuster.cache_manager.host) {
-        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.nuster.cache_manager.host);
+    if(appctx->ctx.nuster.cache_manager.host.data) {
+        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.nuster.cache_manager.host.data);
     }
-    if(appctx->ctx.nuster.cache_manager.path) {
-        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.nuster.cache_manager.path);
+    if(appctx->ctx.nuster.cache_manager.path.data) {
+        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.nuster.cache_manager.path.data);
     }
 }
 
