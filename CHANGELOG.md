@@ -1,5 +1,24 @@
 # Nuster Changelog
 
+## 1.7.10.1 - 2018-04-22
+
+### Added
+- Upgrade to HAProxy v1.7.10
+- Proxy mode
+
+### Changed
+- Refactoring
+  - Separate include nuster directory
+  - Split headers
+  - Separate src nuster directory
+  - Split source
+  - Append nuster/nst to functions and variables
+- Update config keyword
+  - global: cache to nuster cache
+  - proxy: filter cache to nuster cache
+  - proxy: cache-rule to nuster rule
+- Remove share on|off keyword
+
 ## 1.7.9.9 - 2018-04-01
 
 ### Added

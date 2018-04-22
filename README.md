@@ -114,7 +114,7 @@ nuster acts just like HAProxy, as a TCP and HTTP load balancer.
 Determines whether to use cache or not.
 
 A memory zone with a size of `data-size + dict-size` will be created. Except for
-temporary data created and destroyed within request, all caches related data
+temporary data created and destroyed within request, all cache related data
 including http response data, keys and overheads are stored in this memroy zone
 and shared between all processes.
 
@@ -142,7 +142,7 @@ Determines the size of memory used by hash table.
 It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024 bytes,
 which is also the minimal size.
 
-Note that it only decides the memory used by hash table not keys. In fact, keys are
+Note that it only decides the memory used by hash table buckets not keys. In fact, keys are
 stored in memory zone which is limited by `data-size`.
 
 **dict-size** is different from **number of keys**. New keys can still be added to hash
@@ -151,6 +151,9 @@ table even if the number of keys exceeds dict-size as long as there are enough m
 Nevertheless it may lead to a performance drop if `number of keys` is greater than `dict-size`.
 
 An approximate number of keys multiplied by 8 (normally) as `dict-size` should work.
+
+> dict-size will be removed in future release, automatically resizing hash table like first
+version will be added back.
 
 ### purge-method
 
@@ -162,7 +165,8 @@ Enable cache manager/stats API and define the endpoint:
 
 `nuster cache on uri /_my/_unique/_/_cache/_uri`
 
-By default, the cache manager/stats is disabled. When it is enabled, remember to restrict the access(see FAQ).
+By default, the cache manager/stats is disabled. When it is enabled, remember to restrict the
+access(see [FAQ](#how-to-restrict-access)).
 
 See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for details.
 
@@ -174,7 +178,7 @@ See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for de
 
 **context:** *backend*, *listen*
 
-Determines whether or not use cache on this backend, additional `nuster rule` should be defined.
+Determines whether or not to use cache on this proxy, additional `nuster rule` should be defined.
 It can be turned off separately by including `off`.
 If there are filters on this proxy, put this directive after all other filters.
 
@@ -186,8 +190,24 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **context:** *backend*, *listen*
 
-Define rule. It is possible to declare multiple rules in the same section.
-The order is important because the matching process stops on the first match.
+Define cache rule to specify cache creating conditions, cache properties. At least one rule should be defined.
+
+```
+nuster cache on
+
+# cache request `/asdf` for 30 seconds
+nuster rule asdf ttl 30 if { path /asdf }
+
+# cache if the request path begins with /img/
+nuster rule img if { path_beg /img/ }
+
+# cache if the response header `cache` is `yes`
+acl resHdrCache res.hdr(cache) yes
+nuster rule r1 if resHdrCache
+```
+
+It is possible and recommended to declare multiple rules in the same section. The order is important because
+the matching process stops on the first match.
 
 ```
 acl pathA path /a.html
@@ -545,7 +565,7 @@ section in [HAProxy configuration](doc/configuration.txt) for details.
 
 Also it might be a good idea to put it separately in a dedicated backend as example does.
 
-## How to restrict access to PURGE?
+## How to restrict access?
 
 You can use the powerful HAProxy acl, something like this
 
