@@ -249,7 +249,7 @@ __LJMP static int hlua_http_get_headers(lua_State *L, struct hlua_txn *htxn, str
 __LJMP unsigned int hlua_checkfunction(lua_State *L, int argno)
 {
 	if (!lua_isfunction(L, argno)) {
-		const char *msg = lua_pushfstring(L, "function expected, got %s", luaL_typename(L, -1));
+		const char *msg = lua_pushfstring(L, "function expected, got %s", luaL_typename(L, argno));
 		WILL_LJMP(luaL_argerror(L, argno, msg));
 	}
 	lua_pushvalue(L, argno);
@@ -1792,19 +1792,19 @@ connection_empty:
 	return 0;
 }
 
-/* This Lus function gets two parameters. The first one can be string
- * or a number. If the string is "*l", the user require one line. If
- * the string is "*a", the user require all the content of the stream.
+/* This Lua function gets two parameters. The first one can be string
+ * or a number. If the string is "*l", the user requires one line. If
+ * the string is "*a", the user requires all the contents of the stream.
  * If the value is a number, the user require a number of bytes equal
  * to the value. The default value is "*l" (a line).
  *
- * This paraeter with a variable type is converted in integer. This
+ * This parameter with a variable type is converted in integer. This
  * integer takes this values:
  *  -1 : read a line
  *  -2 : read all the stream
- *  >0 : amount if bytes.
+ *  >0 : amount of bytes.
  *
- * The second parameter is optinal. It contains a string that must be
+ * The second parameter is optional. It contains a string that must be
  * concatenated with the read data.
  */
 __LJMP static int hlua_socket_receive(struct lua_State *L)
@@ -1845,9 +1845,12 @@ __LJMP static int hlua_socket_receive(struct lua_State *L)
 
 	/* Set pattern. */
 	lua_pushinteger(L, wanted);
-	lua_replace(L, 2);
 
-	/* init bufffer, and fiil it wih prefix. */
+	/* Check if we would replace the top by itself. */
+	if (lua_gettop(L) != 2)
+		lua_replace(L, 2);
+
+	/* init buffer, and fill it with prefix. */
 	luaL_buffinit(L, &socket->b);
 
 	/* Check prefix. */
@@ -2279,12 +2282,17 @@ __LJMP static int hlua_socket_settimeout(struct lua_State *L)
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
 	tmout = MAY_LJMP(luaL_checkinteger(L, 2)) * 1000;
 
+	/* Check for negative values */
+	if (tmout < 0)
+		WILL_LJMP(luaL_error(L, "settimeout: cannot set negatives values"));
+
 	socket->s->req.rto = tmout;
 	socket->s->req.wto = tmout;
 	socket->s->res.rto = tmout;
 	socket->s->res.wto = tmout;
 
-	return 0;
+	lua_pushinteger(L, 1);
+	return 1;
 }
 
 __LJMP static int hlua_socket_new(lua_State *L)

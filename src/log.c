@@ -1148,8 +1148,13 @@ void __send_log(struct proxy *p, int level, char *message, size_t size, char *sd
 			int proto = logsrv->addr.ss_family == AF_UNIX ? 0 : IPPROTO_UDP;
 
 			if ((*plogfd = socket(logsrv->addr.ss_family, SOCK_DGRAM, proto)) < 0) {
-				Alert("socket for logger #%d failed: %s (errno=%d)\n",
-				      nblogger, strerror(errno), errno);
+				static char once;
+
+				if (!once) {
+					once = 1; /* note: no need for atomic ops here */
+					Alert("socket for logger #%d failed: %s (errno=%d)\n",
+					      nblogger, strerror(errno), errno);
+				}
 				continue;
 			}
 			/* we don't want to receive anything on this socket */
@@ -1276,8 +1281,13 @@ send:
 		sent = sendmsg(*plogfd, &msghdr, MSG_DONTWAIT | MSG_NOSIGNAL);
 
 		if (sent < 0) {
-			Alert("sendmsg logger #%d failed: %s (errno=%d)\n",
-				nblogger, strerror(errno), errno);
+			static char once;
+
+			if (!once) {
+				once = 1; /* note: no need for atomic ops here */
+				Alert("sendmsg logger #%d failed: %s (errno=%d)\n",
+				      nblogger, strerror(errno), errno);
+			}
 		}
 	}
 }

@@ -386,12 +386,12 @@ struct sample_fetch *find_sample_fetch(const char *kw, int len)
 	return NULL;
 }
 
-/* This fucntion browse the list of available saple fetch. <current> is
+/* This function browses the list of available sample fetches. <current> is
  * the last used sample fetch. If it is the first call, it must set to NULL.
- * <idx> is the index of the next sampleèfetch entry. It is used as private
- * value. It is useles to initiate it.
+ * <idx> is the index of the next sample fetch entry. It is used as private
+ * value. It is useless to initiate it.
  *
- * It returns always the newt fetch_sample entry, and NULL when the end of
+ * It returns always the new fetch_sample entry, and NULL when the end of
  * the list is reached.
  */
 struct sample_fetch *sample_fetch_getnext(struct sample_fetch *current, int *idx)
@@ -493,8 +493,6 @@ struct sample_conv *find_sample_conv(const char *kw, int len)
 
 /******************************************************************/
 /*          Sample casts functions                                */
-/*   Note: these functions do *NOT* set the output type on the    */
-/*   sample, the caller is responsible for doing this on return.  */
 /******************************************************************/
 
 static int c_ip2int(struct sample *smp)
@@ -530,7 +528,7 @@ static int c_ipv62ip(struct sample *smp)
 {
 	if (!v6tov4(&smp->data.u.ipv4, &smp->data.u.ipv6))
 		return 0;
-	smp->data.type = SMP_T_IPV6;
+	smp->data.type = SMP_T_IPV4;
 	return 1;
 }
 

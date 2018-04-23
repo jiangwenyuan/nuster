@@ -4084,7 +4084,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
-		if (warnifnotcap(curproxy, PR_CAP_FE|PR_CAP_BE, file, linenum, args[0], NULL))
+		if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
 			err_code |= ERR_WARN;
 
 		if (strcmp(args[1], "if") != 0 && strcmp(args[1], "unless") != 0) {
@@ -7680,7 +7680,7 @@ int check_config_validity()
 			break;
 		}
 
-		if ((curproxy->cap & PR_CAP_FE) && LIST_ISEMPTY(&curproxy->conf.listeners)) {
+		if (curproxy != global.stats_fe && (curproxy->cap & PR_CAP_FE) && LIST_ISEMPTY(&curproxy->conf.listeners)) {
 			Warning("config : %s '%s' has no 'bind' directive. Please declare it as a backend if this was intended.\n",
 			        proxy_type_str(curproxy), curproxy->id);
 			err_code |= ERR_WARN;
@@ -8853,6 +8853,9 @@ out_uri_auth_compat:
 				err_code |= ERR_WARN;
 			}
 #endif
+
+			if ((curproxy->mode != PR_MODE_HTTP) && (curproxy->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR)
+				curproxy->options &= ~PR_O_REUSE_MASK;
 
 			if ((curproxy->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR) {
 				if ((curproxy->conn_src.opts & CO_SRC_TPROXY_MASK) == CO_SRC_TPROXY_CLI ||

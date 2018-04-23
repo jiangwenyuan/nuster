@@ -559,7 +559,7 @@ static int sess_update_st_con_tcp(struct stream *s)
 	if (!(req->flags & CF_WROTE_DATA) &&
 	    unlikely((rep->flags & CF_SHUTW) ||
 		     ((req->flags & CF_SHUTW_NOW) && /* FIXME: this should not prevent a connection from establishing */
-		      ((!(req->flags & CF_WRITE_ACTIVITY) && channel_is_empty(req)) ||
+		      ((!(req->flags & (CF_WRITE_ACTIVITY|CF_WRITE_EVENT)) && channel_is_empty(req)) ||
 		       s->be->options & PR_O_ABRT_CLOSE)))) {
 		/* give up */
 		si_shutw(si);
@@ -570,7 +570,7 @@ static int sess_update_st_con_tcp(struct stream *s)
 	}
 
 	/* we need to wait a bit more if there was no activity either */
-	if (!(req->flags & CF_WRITE_ACTIVITY))
+	if (!(req->flags & (CF_WRITE_ACTIVITY|CF_WRITE_EVENT)))
 		return 1;
 
 	/* OK, this means that a connection succeeded. The caller will be
@@ -746,7 +746,7 @@ static void sess_establish(struct stream *s)
 static int check_req_may_abort(struct channel *req, struct stream *s)
 {
 	return ((req->flags & (CF_READ_ERROR)) ||
-	        ((req->flags & CF_SHUTW_NOW) &&  /* empty and client aborted */
+	        ((req->flags & (CF_SHUTW_NOW|CF_SHUTW)) &&  /* empty and client aborted */
 	         (channel_is_empty(req) || s->be->options & PR_O_ABRT_CLOSE)));
 }
 
@@ -1615,7 +1615,7 @@ struct task *process_stream(struct task *t)
 		 */
 		if (!((req->flags | res->flags) &
 		      (CF_SHUTR|CF_READ_ACTIVITY|CF_READ_TIMEOUT|CF_SHUTW|
-		       CF_WRITE_ACTIVITY|CF_WRITE_TIMEOUT|CF_ANA_TIMEOUT)) &&
+		       CF_WRITE_ACTIVITY|CF_WRITE_EVENT|CF_WRITE_TIMEOUT|CF_ANA_TIMEOUT)) &&
 		    !((si_f->flags | si_b->flags) & (SI_FL_EXP|SI_FL_ERR)) &&
 		    ((s->pending_events & TASK_WOKEN_ANY) == TASK_WOKEN_TIMER)) {
 			si_f->flags &= ~SI_FL_DONT_WAKE;
@@ -2313,8 +2313,8 @@ struct task *process_stream(struct task *t)
 		if (si_b->state == SI_ST_EST)
 			si_update(si_b);
 
-		req->flags &= ~(CF_READ_NULL|CF_READ_PARTIAL|CF_WRITE_NULL|CF_WRITE_PARTIAL|CF_READ_ATTACHED);
-		res->flags &= ~(CF_READ_NULL|CF_READ_PARTIAL|CF_WRITE_NULL|CF_WRITE_PARTIAL|CF_READ_ATTACHED);
+		req->flags &= ~(CF_READ_NULL|CF_READ_PARTIAL|CF_WRITE_NULL|CF_WRITE_PARTIAL|CF_READ_ATTACHED|CF_WRITE_EVENT);
+		res->flags &= ~(CF_READ_NULL|CF_READ_PARTIAL|CF_WRITE_NULL|CF_WRITE_PARTIAL|CF_READ_ATTACHED|CF_WRITE_EVENT);
 		si_f->prev_state = si_f->state;
 		si_b->prev_state = si_b->state;
 		si_f->flags &= ~(SI_FL_ERR|SI_FL_EXP);

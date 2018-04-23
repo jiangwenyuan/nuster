@@ -770,7 +770,7 @@ handle_hanotify(struct worker *w)
 		}
 		DEBUG("  Message '%.*s' received", (int)sz, str);
 
-		nbargs = w->buf[idx++];
+		nbargs = (unsigned char)w->buf[idx++];
 		if (!memcmp(str, "check-client-ip", sz)) {
 			struct spoe_data data;
 
