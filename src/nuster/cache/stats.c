@@ -10,6 +10,8 @@
  *
  */
 
+#include <inttypes.h>
+
 #include <types/global.h>
 
 #include <proto/stream_interface.h>
