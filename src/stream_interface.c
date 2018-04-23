@@ -964,9 +964,6 @@ static void stream_int_chk_snd_conn(struct stream_interface *si)
 	/* ensure it's only set if a write attempt has succeeded */
 	oc->flags &= ~CF_WRITE_PARTIAL;
 
-	/* ensure it's only set if a write attempt has succeeded */
-	oc->flags &= ~CF_WRITE_PARTIAL;
-
 	if (unlikely(si->state > SI_ST_EST || (oc->flags & CF_SHUTW)))
 		return;
 

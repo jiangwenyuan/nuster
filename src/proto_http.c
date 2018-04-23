@@ -74,8 +74,6 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
-#include <nuster/nuster.h>
-
 const char HTTP_100[] =
 	"HTTP/1.1 100 Continue\r\n\r\n";
 
@@ -3558,11 +3556,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		goto done;
 	}
 
-        /* check nuster applets: manager/purge/stats... */
-	if (nuster_check_applet(s, req, px)) {
-		goto return_prx_cond;
-	}
-
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.
 	 * If this happens, then the data will not come immediately, so we must
 	 * send all what we have without waiting. Note that due to the small gain
@@ -4643,16 +4636,8 @@ int http_sync_res_state(struct stream *s)
 			 * let's enforce it now that we're not expecting any new
 			 * data to come. The caller knows the stream is complete
 			 * once both states are CLOSED.
-			 *
-			 * However, there is an exception if the response length
-			 * is undefined. In this case, we switch in TUNNEL mode.
 			 */
-			if (!(txn->rsp.flags & HTTP_MSGF_XFER_LEN)) {
-				channel_auto_read(chn);
-				txn->rsp.msg_state = HTTP_MSG_TUNNEL;
-				chn->flags |= CF_NEVER_WAIT;
-			}
-			else if (!(chn->flags & (CF_SHUTW|CF_SHUTW_NOW))) {
+			if (!(chn->flags & (CF_SHUTW|CF_SHUTW_NOW))) {
 				channel_shutr_now(chn);
 				channel_shutw_now(chn);
 			}
@@ -4805,7 +4790,7 @@ void http_resync_states(struct stream *s)
 		 * and the response buffer must realigned
 		 * (realign is done is http_end_txn_clean_session).
 		 */
-		if (s->req.buf->o) {
+		if (s->req.buf->o)
 			s->req.flags |= CF_WAKE_WRITE;
 		else if (s->res.buf->o)
 			s->res.flags |= CF_WAKE_WRITE;
@@ -5716,12 +5701,6 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 	 * apply any filter there.
 	 */
 	if (unlikely(objt_applet(s->target) == &http_stats_applet)) {
-		rep->analysers &= ~an_bit;
-		rep->analyse_exp = TICK_ETERNITY;
-		goto skip_filters;
-	}
-
-	if (unlikely(objt_applet(s->target) == &nuster.applet.cache_engine)) {
 		rep->analysers &= ~an_bit;
 		rep->analyse_exp = TICK_ETERNITY;
 		goto skip_filters;

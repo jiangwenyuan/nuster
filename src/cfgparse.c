@@ -86,8 +86,6 @@
 #include <proto/tcp_rules.h>
 
 
-#include <nuster/nuster.h>
-
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
  *
@@ -1873,23 +1871,6 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			}
 			else
 				env++;
-		}
-	}
-	else if (!strcmp(args[0], "nuster")) {
-		int cur_arg = 1;
-		if (!strcmp(args[cur_arg], "cache")) {
-			if (alertif_too_many_args(10, file, linenum, args, &err_code)) {
-				goto out;
-			}
-			args++;
-			err_code = nuster_parse_global_cache(file, linenum, args, kwm);
-			if (err_code) {
-				goto out;
-			}
-		} else {
-			Alert("parsing [%s:%d] : '%s' only supports 'cache'.\n", file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
 		}
 	}
 	else {

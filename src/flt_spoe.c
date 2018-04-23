@@ -67,9 +67,6 @@
 /* SPOE filter id. Used to identify SPOE filters */
 const char *spoe_filter_id = "SPOE filter";
 
-/* SPOE filter id. Used to identify SPOE filters */
-const char *spoe_filter_id = "SPOE filter";
-
 /* Set if the handle on SIGUSR1 is registered */
 static int sighandler_registered = 0;
 

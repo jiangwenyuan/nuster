@@ -6940,8 +6940,6 @@ option tcplog
 
   "option tcplog" overrides any previous "log-format" directive.
 
-  "option tcplog" overrides any previous "log-format" directive.
-
   See also :  "option httplog", and section 8 about logging.
 
 

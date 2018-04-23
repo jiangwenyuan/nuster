@@ -37,9 +37,6 @@ struct pool_head *pool_head_trash = NULL;
 /* this is used to drain data, and as a temporary buffer for sprintf()... */
 THREAD_LOCAL struct chunk trash = { .str = NULL };
 
-/* the trash pool for reentrant allocations */
-struct pool_head *pool2_trash = NULL;
-
 /*
 * Returns a pre-allocated and initialized trash chunk that can be used for any
 * type of conversion. Two chunks and their respective buffers are alternatively
@@ -129,25 +126,6 @@ struct chunk *alloc_trash_chunk(void)
 		char *buf = (char *)chunk + sizeof(struct chunk);
 		*buf = 0;
 		chunk_init(chunk, buf, pool_head_trash->size - sizeof(struct chunk));
-	}
-	return chunk;
-}
-
-/*
- * Allocate a trash chunk from the reentrant pool. The buffer starts at the
- * end of the chunk. This chunk must be freed using free_trash_chunk(). This
- * call may fail and the caller is responsible for checking that the returned
- * pointer is not NULL.
- */
-struct chunk *alloc_trash_chunk(void)
-{
-	struct chunk *chunk;
-
-	chunk = pool_alloc2(pool2_trash);
-	if (chunk) {
-		char *buf = (char *)chunk + sizeof(struct chunk);
-		*buf = 0;
-		chunk_init(chunk, buf, pool2_trash->size - sizeof(struct chunk));
 	}
 	return chunk;
 }

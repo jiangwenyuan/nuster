@@ -626,14 +626,6 @@ endif
 endif
 endif
 
-# For nuster
-ifeq ($(USE_OPENSSL),)
-ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
-OPTIONS_LDFLAGS += -lpthread
-endif
-endif
-
 ifneq ($(USE_LUA),)
 check_lua_lib = $(shell echo "int main(){}" | $(CC) -o /dev/null -x c - $(2) -l$(1) 2>/dev/null && echo $(1))
 check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
@@ -954,7 +946,6 @@ install-bin:
 	done
 	install -d "$(DESTDIR)$(SBINDIR)"
 	install haproxy $(EXTRA) "$(DESTDIR)$(SBINDIR)"
-	ln -s "$(DESTDIR)$(SBINDIR)/haproxy" "$(DESTDIR)$(SBINDIR)/nuster"
 
 install: install-bin install-man install-doc
 
@@ -968,7 +959,6 @@ uninstall:
 
 clean:
 	rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
-	rm -f src/nuster/*.[oas] src/nuster/cache/*.[oas]
 	for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out

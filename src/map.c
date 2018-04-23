@@ -362,7 +362,6 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 				LIST_ADDQ(&elt->back_refs, &appctx->ctx.map.bref.users);
 				HA_SPIN_UNLOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
 				si_applet_cant_put(si);
-				LIST_ADDQ(&elt->back_refs, &appctx->ctx.map.bref.users);
 				return 0;
 			}
 

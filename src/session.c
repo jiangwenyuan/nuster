@@ -329,7 +329,7 @@ static void session_prepare_log_prefix(struct session *sess)
  * disabled and finally kills the file descriptor. This function requires that
  * sess->origin points to the incoming connection.
  */
-static void session_kill_embryonic(struct session *sess, struct task *task)
+static void session_kill_embryonic(struct session *sess)
 {
 	int level = LOG_INFO;
 	struct connection *conn = __objt_conn(sess->origin);
@@ -388,7 +388,7 @@ static struct task *session_expire_embryonic(struct task *t)
 	if (!(t->state & TASK_WOKEN_TIMER))
 		return t;
 
-	session_kill_embryonic(sess, t);
+	session_kill_embryonic(sess);
 	return NULL;
 }
 

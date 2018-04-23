@@ -1530,15 +1530,6 @@ static void hlua_socket_handler(struct appctx *appctx)
 		stream_shutdown(si_strm(si), SF_ERR_KILLED);
 	}
 
-	if (appctx->ctx.hlua.die) {
-		si_shutw(si);
-		si_shutr(si);
-		si_ic(si)->flags |= CF_READ_NULL;
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_read);
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_write);
-		stream_shutdown(si_strm(si), SF_ERR_KILLED);
-	}
-
 	/* If the connection object is not avalaible, close all the
 	 * streams and wakeup everithing waiting for.
 	 */
@@ -5535,7 +5526,6 @@ static struct task *hlua_process_task(struct task *task)
 	/* finished or yield */
 	case HLUA_E_OK:
 		hlua_ctx_destroy(hlua);
-		free(hlua);
 		task_delete(task);
 		task_free(task);
 		break;
@@ -5550,7 +5540,6 @@ static struct task *hlua_process_task(struct task *task)
 	case HLUA_E_ERRMSG:
 		SEND_ERR(NULL, "Lua task: %s.\n", lua_tostring(hlua->T, -1));
 		hlua_ctx_destroy(hlua);
-		free(hlua);
 		task_delete(task);
 		task_free(task);
 		task = NULL;
@@ -5560,7 +5549,6 @@ static struct task *hlua_process_task(struct task *task)
 	default:
 		SEND_ERR(NULL, "Lua task: unknown error.\n");
 		hlua_ctx_destroy(hlua);
-		free(hlua);
 		task_delete(task);
 		task_free(task);
 		task = NULL;
@@ -6023,8 +6011,6 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 		SEND_ERR(px, "Lua: internal error while execute action.\n");
 		return ACT_RET_CONT;
 	}
-
-	consistency_set(s, dir, &s->hlua.cons);
 
 	/* In the execution wrappers linked with a stream, the
 	 * Lua context can be not initialized. This behavior
