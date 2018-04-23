@@ -27,10 +27,14 @@
 
 #ifdef USE_OPENSSL
 #include <openssl/ssl.h>
+#include <types/ssl_sock.h>
 #endif
 
 #include <common/config.h>
 #include <common/mini-clist.h>
+#include <common/hathreads.h>
+#include <common/standard.h>
+
 #include <types/obj_type.h>
 #include <eb32tree.h>
 
@@ -47,6 +51,7 @@ enum li_state {
 	LI_INIT,        /* all parameters filled in, but not assigned yet */
 	LI_ASSIGNED,    /* assigned to the protocol, but not listening yet */
 	LI_PAUSED,      /* listener was paused, it's bound but not listening  */
+	LI_ZOMBIE,	/* The listener doesn't belong to the process, but is kept opened */
 	LI_LISTEN,      /* started, listening but not enabled */
 	LI_READY,       /* started, listening and enabled */
 	LI_FULL,        /* reached its connection limit */
@@ -94,44 +99,52 @@ enum li_state {
 #define LI_O_V6ONLY             0x0400  /* bind to IPv6 only on Linux >= 2.4.21 */
 #define LI_O_V4V6               0x0800  /* bind to IPv4/IPv6 on Linux >= 2.4.21 */
 #define LI_O_ACC_CIP            0x1000  /* find the proxied address in the NetScaler Client IP header */
+#define LI_O_INHERITED          0x2000  /* inherited FD from the parent process (fd@) */
 
 /* Note: if a listener uses LI_O_UNLIMITED, it is highly recommended that it adds its own
  * maxconn setting to the global.maxsock value so that its resources are reserved.
  */
 
 #ifdef USE_OPENSSL
-/* bind_conf ssl options */
 #define BC_SSL_O_NONE           0x0000
-#define BC_SSL_O_NO_SSLV3       0x0001	/* disable SSLv3 */
-#define BC_SSL_O_NO_TLSV10      0x0002	/* disable TLSv10 */
-#define BC_SSL_O_NO_TLSV11      0x0004	/* disable TLSv11 */
-#define BC_SSL_O_NO_TLSV12      0x0008	/* disable TLSv12 */
-/* 0x000F reserved for 'no' protocol version options */
-#define BC_SSL_O_USE_SSLV3      0x0010	/* force SSLv3 */
-#define BC_SSL_O_USE_TLSV10     0x0020	/* force TLSv10 */
-#define BC_SSL_O_USE_TLSV11     0x0040	/* force TLSv11 */
-#define BC_SSL_O_USE_TLSV12     0x0080	/* force TLSv12 */
-/* 0x00F0 reserved for 'force' protocol version options */
 #define BC_SSL_O_NO_TLS_TICKETS 0x0100	/* disable session resumption tickets */
+#define BC_SSL_O_PREF_CLIE_CIPH 0x0200  /* prefer client ciphers */
 #endif
+
+/* ssl "bind" settings */
+struct ssl_bind_conf {
+#ifdef USE_OPENSSL
+#ifdef OPENSSL_NPN_NEGOTIATED
+	char *npn_str;             /* NPN protocol string */
+	int npn_len;               /* NPN protocol string length */
+#endif
+#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
+	char *alpn_str;            /* ALPN protocol string */
+	int alpn_len;              /* ALPN protocol string length */
+#endif
+	int verify:3;              /* verify method (set of SSL_VERIFY_* flags) */
+	int no_ca_names:1;         /* do not send ca names to clients (ca_file related) */
+	int early_data:1;          /* early data allowed */
+	char *ca_file;             /* CAfile to use on verify */
+	char *crl_file;            /* CRLfile to use on verify */
+	char *ciphers;             /* cipher suite to use if non-null */
+	char *curves;	           /* curves suite to use for ECDHE */
+	char *ecdhe;               /* named curve to use for ECDHE */
+	struct tls_version_filter ssl_methods; /* ssl methods */
+#endif
+};
 
 /* "bind" line settings */
 struct bind_conf {
 #ifdef USE_OPENSSL
-	char *ca_file;             /* CAfile to use on verify */
+	struct ssl_bind_conf ssl_conf; /* ssl conf for ctx setting */
 	unsigned long long ca_ignerr;  /* ignored verify errors in handshake if depth > 0 */
 	unsigned long long crt_ignerr; /* ignored verify errors in handshake if depth == 0 */
-	char *ciphers;             /* cipher suite to use if non-null */
-	char *crl_file;            /* CRLfile to use on verify */
-	char *ecdhe;               /* named curve to use for ECDHE */
-	int ssl_options;           /* ssl options */
-	int verify;                /* verify method (set of SSL_VERIFY_* flags) */
+	SSL_CTX *initial_ctx;      /* SSL context for initial negotiation */
 	SSL_CTX *default_ctx;      /* SSL context of first/default certificate */
-	char *npn_str;             /* NPN protocol string */
-	int npn_len;               /* NPN protocol string length */
-	char *alpn_str;            /* ALPN protocol string */
-	int alpn_len;              /* ALPN protocol string length */
+	struct ssl_bind_conf *default_ssl_conf; /* custom SSL conf of default_ctx */
 	int strict_sni;            /* refuse negotiation if sni doesn't match a certificate */
+	int ssl_options;           /* ssl options */
 	struct eb_root sni_ctx;    /* sni_ctx tree of all known certs full-names sorted by name */
 	struct eb_root sni_w_ctx;  /* sni_ctx tree of all known certs wildcards sorted by name */
 	struct tls_keys_ref *keys_ref; /* TLS ticket keys reference */
@@ -142,15 +155,19 @@ struct bind_conf {
 	X509     *ca_sign_cert;    /* CA certificate referenced by ca_file */
 	EVP_PKEY *ca_sign_pkey;    /* CA private key referenced by ca_key */
 #endif
+	struct proxy *frontend;    /* the frontend all these listeners belong to, or NULL */
+	struct xprt_ops *xprt;     /* transport-layer operations for all listeners */
 	int is_ssl;                /* SSL is required for these listeners */
 	int generate_certs;        /* 1 if generate-certificates option is set, else 0 */
 	unsigned long bind_proc;   /* bitmask of processes allowed to use these listeners */
+	unsigned long bind_thread[LONGBITS]; /* bitmask of threads (per processes) allowed to use these listeners */
 	struct {                   /* UNIX socket permissions */
 		uid_t uid;         /* -1 to leave unchanged */
 		gid_t gid;         /* -1 to leave unchanged */
 		mode_t mode;       /* 0 to leave unchanged */
 	} ux;
 	int level;                 /* stats access level (ACCESS_LVL_*) */
+	int severity_output;       /* default severity output format in cli feedback messages */
 	struct list by_fe;         /* next binding for the same frontend, or NULL */
 	struct list listeners;     /* list of listeners using this bind config */
 	uint32_t ns_cip_magic;     /* Excepted NetScaler Client IP magic number */
@@ -173,21 +190,20 @@ struct listener {
 	int options;			/* socket options : LI_O_* */
 	struct fe_counters *counters;	/* statistics counters */
 	struct protocol *proto;		/* protocol this listener belongs to */
-	struct xprt_ops *xprt;          /* transport-layer operations for this socket */
 	int nbconn;			/* current number of connections on this listener */
 	int maxconn;			/* maximum connections allowed on this listener */
 	unsigned int backlog;		/* if set, listen backlog */
 	unsigned int maxaccept;         /* if set, max number of connections accepted at once */
 	struct list proto_list;         /* list in the protocol header */
 	int (*accept)(struct listener *l, int fd, struct sockaddr_storage *addr); /* upper layer's accept() */
-	struct task * (*handler)(struct task *t); /* protocol handler. It is a task */
-	struct proxy *frontend;		/* the frontend this listener belongs to, or NULL */
 	enum obj_type *default_target;  /* default target to use for accepted sessions or NULL */
 	struct list wait_queue;		/* link element to make the listener wait for something (LI_LIMITED)  */
 	unsigned int analysers;		/* bitmap of required protocol analysers */
 	int maxseg;			/* for TCP, advertised MSS */
 	int tcp_ut;                     /* for TCP, user timeout */
 	char *interface;		/* interface name or NULL */
+
+	__decl_hathreads(HA_SPINLOCK_T lock);
 
 	const struct netns_entry *netns; /* network namespace of the listener*/
 
@@ -213,6 +229,11 @@ struct bind_kw {
 	int (*parse)(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err);
 	int skip; /* nb of args to skip */
 };
+struct ssl_bind_kw {
+	const char *kw;
+	int (*parse)(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err);
+	int skip; /* nb of args to skip */
+};
 
 /*
  * A keyword list. It is a NULL-terminated array of keywords. It embeds a
@@ -226,6 +247,16 @@ struct bind_kw_list {
 	struct bind_kw kw[VAR_ARRAY];
 };
 
+
+struct xfer_sock_list {
+	int fd;
+	char *iface;
+	char *namespace;
+	int options; /* socket options LI_O_* */
+	struct xfer_sock_list *prev;
+	struct xfer_sock_list *next;
+	struct sockaddr_storage addr;
+};
 
 #endif /* _TYPES_LISTENER_H */
 

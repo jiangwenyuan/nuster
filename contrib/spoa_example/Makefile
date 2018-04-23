@@ -6,13 +6,14 @@ CC = gcc
 LD = $(CC)
 
 CFLAGS  = -g -O2 -Wall -Werror -pthread
-LDFLAGS = -lpthread
+INCS += -I../../ebtree -I./include
+LIBS = -lpthread -levent -levent_pthreads
 
 OBJS = spoa.o
 
 
 spoa: $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $^
+	$(LD) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 install: spoa
 	install spoa $(DESTDIR)$(BINDIR)
@@ -21,4 +22,4 @@ clean:
 	rm -f spoa $(OBJS)
 
 %.o:	%.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(INCS) -c -o $@ $<

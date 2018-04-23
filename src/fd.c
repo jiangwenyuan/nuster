@@ -155,6 +155,7 @@
 #include <types/global.h>
 
 #include <proto/fd.h>
+#include <proto/log.h>
 #include <proto/port_range.h>
 
 struct fdtab *fdtab = NULL;     /* array of all the file descriptors */
@@ -168,15 +169,22 @@ struct poller cur_poller;
 int nbpollers = 0;
 
 unsigned int *fd_cache = NULL; // FD events cache
-unsigned int *fd_updt = NULL;  // FD updates list
 int fd_cache_num = 0;          // number of events in the cache
-int fd_nbupdt = 0;             // number of updates in the list
+unsigned long fd_cache_mask = 0; // Mask of threads with events in the cache
+
+THREAD_LOCAL int *fd_updt  = NULL;  // FD updates list
+THREAD_LOCAL int  fd_nbupdt = 0;   // number of updates in the list
+
+__decl_hathreads(HA_SPINLOCK_T fdtab_lock);       /* global lock to protect fdtab array */
+__decl_hathreads(HA_RWLOCK_T   fdcache_lock);     /* global lock to protect fd_cache array */
+__decl_hathreads(HA_SPINLOCK_T poll_lock);        /* global lock to protect poll info */
 
 /* Deletes an FD from the fdsets, and recomputes the maxfd limit.
  * The file descriptor is also closed.
  */
-void fd_delete(int fd)
+static void fd_dodelete(int fd, int do_close)
 {
+	HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
 	if (fdtab[fd].linger_risk) {
 		/* this is generally set when connecting to servers */
 		setsockopt(fd, SOL_SOCKET, SO_LINGER,
@@ -190,12 +198,36 @@ void fd_delete(int fd)
 
 	port_range_release_port(fdinfo[fd].port_range, fdinfo[fd].local_port);
 	fdinfo[fd].port_range = NULL;
-	close(fd);
 	fdtab[fd].owner = NULL;
+	fdtab[fd].update_mask &= ~tid_bit;
 	fdtab[fd].new = 0;
+	fdtab[fd].thread_mask = 0;
+	if (do_close) {
+		fdtab[fd].polled_mask = 0;
+		close(fd);
+	}
+	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 
+	HA_SPIN_LOCK(FDTAB_LOCK, &fdtab_lock);
 	while ((maxfd-1 >= 0) && !fdtab[maxfd-1].owner)
 		maxfd--;
+	HA_SPIN_UNLOCK(FDTAB_LOCK, &fdtab_lock);
+}
+
+/* Deletes an FD from the fdsets, and recomputes the maxfd limit.
+ * The file descriptor is also closed.
+ */
+void fd_delete(int fd)
+{
+	fd_dodelete(fd, 1);
+}
+
+/* Deletes an FD from the fdsets, and recomputes the maxfd limit.
+ * The file descriptor is kept open.
+ */
+void fd_remove(int fd)
+{
+	fd_dodelete(fd, 0);
 }
 
 /* Scan and process the cached events. This should be called right after
@@ -207,10 +239,25 @@ void fd_process_cached_events()
 {
 	int fd, entry, e;
 
+	HA_RWLOCK_RDLOCK(FDCACHE_LOCK, &fdcache_lock);
+	fd_cache_mask &= ~tid_bit;
 	for (entry = 0; entry < fd_cache_num; ) {
 		fd = fd_cache[entry];
-		e = fdtab[fd].state;
 
+		if (!(fdtab[fd].thread_mask & tid_bit)) {
+			activity[tid].fd_skip++;
+			goto next;
+		}
+
+		fd_cache_mask |= tid_bit;
+		if (HA_SPIN_TRYLOCK(FD_LOCK, &fdtab[fd].lock)) {
+			activity[tid].fd_lock++;
+			goto next;
+		}
+
+		HA_RWLOCK_RDUNLOCK(FDCACHE_LOCK, &fdcache_lock);
+
+		e = fdtab[fd].state;
 		fdtab[fd].ev &= FD_POLL_STICKY;
 
 		if ((e & (FD_EV_READY_R | FD_EV_ACTIVE_R)) == (FD_EV_READY_R | FD_EV_ACTIVE_R))
@@ -219,18 +266,27 @@ void fd_process_cached_events()
 		if ((e & (FD_EV_READY_W | FD_EV_ACTIVE_W)) == (FD_EV_READY_W | FD_EV_ACTIVE_W))
 			fdtab[fd].ev |= FD_POLL_OUT;
 
-		if (fdtab[fd].iocb && fdtab[fd].owner && fdtab[fd].ev)
+		if (fdtab[fd].iocb && fdtab[fd].owner && fdtab[fd].ev) {
+			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 			fdtab[fd].iocb(fd);
-		else
+		}
+		else {
 			fd_release_cache_entry(fd);
+			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		}
 
+		HA_RWLOCK_RDLOCK(FDCACHE_LOCK, &fdcache_lock);
 		/* If the fd was removed from the cache, it has been
 		 * replaced by the next one that we don't want to skip !
 		 */
-		if (entry < fd_cache_num && fd_cache[entry] != fd)
+		if (entry < fd_cache_num && fd_cache[entry] != fd) {
+			activity[tid].fd_del++;
 			continue;
+		}
+	  next:
 		entry++;
 	}
+	HA_RWLOCK_RDUNLOCK(FDCACHE_LOCK, &fdcache_lock);
 }
 
 /* disable the specified poller */
@@ -243,6 +299,21 @@ void disable_poller(const char *poller_name)
 			pollers[p].pref = 0;
 }
 
+/* Initialize the pollers per thread */
+static int init_pollers_per_thread()
+{
+	if ((fd_updt = calloc(global.maxsock, sizeof(*fd_updt))) == NULL)
+		return 0;
+	return 1;
+}
+
+/* Deinitialize the pollers per thread */
+static void deinit_pollers_per_thread()
+{
+	free(fd_updt);
+	fd_updt = NULL;
+}
+
 /*
  * Initialize the pollers till the best one is found.
  * If none works, returns 0, otherwise 1.
@@ -252,12 +323,24 @@ int init_pollers()
 	int p;
 	struct poller *bp;
 
-	if ((fd_cache = calloc(1, sizeof(uint32_t) * global.maxsock)) == NULL)
+	if ((fdtab = calloc(global.maxsock, sizeof(struct fdtab))) == NULL)
+		goto fail_tab;
+
+	if ((fdinfo = calloc(global.maxsock, sizeof(struct fdinfo))) == NULL)
+		goto fail_info;
+
+	if ((fd_cache = calloc(global.maxsock, sizeof(*fd_cache))) == NULL)
 		goto fail_cache;
 
-	if ((fd_updt = calloc(1, sizeof(uint32_t) * global.maxsock)) == NULL)
-		goto fail_updt;
+	hap_register_per_thread_init(init_pollers_per_thread);
+	hap_register_per_thread_deinit(deinit_pollers_per_thread);
 
+	for (p = 0; p < global.maxsock; p++)
+		HA_SPIN_INIT(&fdtab[p].lock);
+
+	HA_SPIN_INIT(&fdtab_lock);
+	HA_RWLOCK_INIT(&fdcache_lock);
+	HA_SPIN_INIT(&poll_lock);
 	do {
 		bp = NULL;
 		for (p = 0; p < nbpollers; p++)
@@ -274,9 +357,11 @@ int init_pollers()
 	} while (!bp || bp->pref == 0);
 	return 0;
 
- fail_updt:
-	free(fd_cache);
  fail_cache:
+	free(fdinfo);
+ fail_info:
+	free(fdtab);
+ fail_tab:
 	return 0;
 }
 
@@ -288,6 +373,9 @@ void deinit_pollers() {
 	struct poller *bp;
 	int p;
 
+	for (p = 0; p < global.maxsock; p++)
+		HA_SPIN_DESTROY(&fdtab[p].lock);
+
 	for (p = 0; p < nbpollers; p++) {
 		bp = &pollers[p];
 
@@ -295,10 +383,13 @@ void deinit_pollers() {
 			bp->term(bp);
 	}
 
-	free(fd_updt);
-	free(fd_cache);
-	fd_updt = NULL;
-	fd_cache = NULL;
+	free(fd_cache); fd_cache = NULL;
+	free(fdinfo);   fdinfo   = NULL;
+	free(fdtab);    fdtab    = NULL;
+
+	HA_SPIN_DESTROY(&fdtab_lock);
+	HA_RWLOCK_DESTROY(&fdcache_lock);
+	HA_SPIN_DESTROY(&poll_lock);
 }
 
 /*

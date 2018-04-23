@@ -27,6 +27,7 @@
 #include <types/proto_http.h>
 #include <types/stream.h>
 #include <types/task.h>
+#include <proto/h1.h>
 
 /*
  * some macros used for the request parsing.
@@ -42,29 +43,10 @@
  *   ver_token           = 'H', 'P', 'T', '/', '.', and digits.
  */
 
-extern const unsigned char http_char_classes[256];
-
-#define HTTP_FLG_CTL  0x01
-#define HTTP_FLG_SEP  0x02
-#define HTTP_FLG_LWS  0x04
-#define HTTP_FLG_SPHT 0x08
-#define HTTP_FLG_CRLF 0x10
-#define HTTP_FLG_TOK  0x20
-#define HTTP_FLG_VER  0x40
-
-#define HTTP_IS_CTL(x)       (http_char_classes[(unsigned char)(x)] & HTTP_FLG_CTL)
-#define HTTP_IS_SEP(x)       (http_char_classes[(unsigned char)(x)] & HTTP_FLG_SEP)
-#define HTTP_IS_LWS(x)       (http_char_classes[(unsigned char)(x)] & HTTP_FLG_LWS)
-#define HTTP_IS_SPHT(x)      (http_char_classes[(unsigned char)(x)] & HTTP_FLG_SPHT)
-#define HTTP_IS_CRLF(x)      (http_char_classes[(unsigned char)(x)] & HTTP_FLG_CRLF)
-#define HTTP_IS_TOKEN(x)     (http_char_classes[(unsigned char)(x)] & HTTP_FLG_TOK)
-#define HTTP_IS_VER_TOKEN(x) (http_char_classes[(unsigned char)(x)] & HTTP_FLG_VER)
-
 extern const int http_err_codes[HTTP_ERR_SIZE];
 extern struct chunk http_err_chunks[HTTP_ERR_SIZE];
 extern const char *HTTP_302;
 extern const char *HTTP_303;
-extern char *get_http_auth_buff;
 
 int process_cli(struct stream *s);
 int process_srv_data(struct stream *s);
@@ -90,6 +72,7 @@ int apply_filters_to_request(struct stream *s, struct channel *req, struct proxy
 int apply_filters_to_response(struct stream *s, struct channel *rtr, struct proxy *px);
 void manage_client_side_cookies(struct stream *s, struct channel *req);
 void manage_server_side_cookies(struct stream *s, struct channel *rtr);
+void check_request_for_cacheability(struct stream *s, struct channel *chn);
 void check_response_for_cacheability(struct stream *s, struct channel *rtr);
 int stats_check_uri(struct stream_interface *si, struct http_txn *txn, struct proxy *backend);
 void init_proto_http();
@@ -115,9 +98,9 @@ int http_transform_header_str(struct stream* s, struct http_msg *msg, const char
 void inet_set_tos(int fd, const struct sockaddr_storage *from, int tos);
 void http_perform_server_redirect(struct stream *s, struct stream_interface *si);
 void http_return_srv_error(struct stream *s, struct stream_interface *si);
-void http_capture_bad_message(struct error_snapshot *es, struct stream *s,
+void http_capture_bad_message(struct proxy *proxy, struct error_snapshot *es, struct stream *s,
                               struct http_msg *msg,
-			      enum ht_state state, struct proxy *other_end);
+			      enum h1_state state, struct proxy *other_end);
 unsigned int http_get_hdr(const struct http_msg *msg, const char *hname, int hlen,
 			  struct hdr_idx *idx, int occ,
 			  struct hdr_ctx *ctx, char **vptr, int *vlen);
@@ -136,7 +119,7 @@ struct act_rule *parse_http_res_cond(const char **args, const char *file, int li
 void free_http_req_rules(struct list *r);
 void free_http_res_rules(struct list *r);
 void http_reply_and_close(struct stream *s, short status, struct chunk *msg);
-struct chunk *http_error_message(struct stream *s, int msgnum);
+struct chunk *http_error_message(struct stream *s);
 struct redirect_rule *http_parse_redirect_rule(const char *file, int linenum, struct proxy *curproxy,
                                                const char **args, char **errmsg, int use_fmt, int dir);
 int smp_fetch_cookie(const struct arg *args, struct sample *smp, const char *kw, void *private);
@@ -242,60 +225,6 @@ static inline int http_body_bytes(const struct http_msg *msg)
 	if (len > msg->body_len)
 		len = msg->body_len;
 	return len;
-}
-
-/* for an http-request/response action ACT_ACTION_TRK_SC*, return a tracking index
- * starting at zero for SC0. Unknown actions also return zero.
- */
-static inline int http_trk_idx(int trk_action)
-{
-	return trk_action - ACT_ACTION_TRK_SC0;
-}
-
-/* for debugging, reports the HTTP message state name */
-static inline const char *http_msg_state_str(int msg_state)
-{
-	switch (msg_state) {
-	case HTTP_MSG_RQBEFORE:    return "MSG_RQBEFORE";
-	case HTTP_MSG_RQBEFORE_CR: return "MSG_RQBEFORE_CR";
-	case HTTP_MSG_RQMETH:      return "MSG_RQMETH";
-	case HTTP_MSG_RQMETH_SP:   return "MSG_RQMETH_SP";
-	case HTTP_MSG_RQURI:       return "MSG_RQURI";
-	case HTTP_MSG_RQURI_SP:    return "MSG_RQURI_SP";
-	case HTTP_MSG_RQVER:       return "MSG_RQVER";
-	case HTTP_MSG_RQLINE_END:  return "MSG_RQLINE_END";
-	case HTTP_MSG_RPBEFORE:    return "MSG_RPBEFORE";
-	case HTTP_MSG_RPBEFORE_CR: return "MSG_RPBEFORE_CR";
-	case HTTP_MSG_RPVER:       return "MSG_RPVER";
-	case HTTP_MSG_RPVER_SP:    return "MSG_RPVER_SP";
-	case HTTP_MSG_RPCODE:      return "MSG_RPCODE";
-	case HTTP_MSG_RPCODE_SP:   return "MSG_RPCODE_SP";
-	case HTTP_MSG_RPREASON:    return "MSG_RPREASON";
-	case HTTP_MSG_RPLINE_END:  return "MSG_RPLINE_END";
-	case HTTP_MSG_HDR_FIRST:   return "MSG_HDR_FIRST";
-	case HTTP_MSG_HDR_NAME:    return "MSG_HDR_NAME";
-	case HTTP_MSG_HDR_COL:     return "MSG_HDR_COL";
-	case HTTP_MSG_HDR_L1_SP:   return "MSG_HDR_L1_SP";
-	case HTTP_MSG_HDR_L1_LF:   return "MSG_HDR_L1_LF";
-	case HTTP_MSG_HDR_L1_LWS:  return "MSG_HDR_L1_LWS";
-	case HTTP_MSG_HDR_VAL:     return "MSG_HDR_VAL";
-	case HTTP_MSG_HDR_L2_LF:   return "MSG_HDR_L2_LF";
-	case HTTP_MSG_HDR_L2_LWS:  return "MSG_HDR_L2_LWS";
-	case HTTP_MSG_LAST_LF:     return "MSG_LAST_LF";
-	case HTTP_MSG_ERROR:       return "MSG_ERROR";
-	case HTTP_MSG_BODY:        return "MSG_BODY";
-	case HTTP_MSG_100_SENT:    return "MSG_100_SENT";
-	case HTTP_MSG_CHUNK_SIZE:  return "MSG_CHUNK_SIZE";
-	case HTTP_MSG_DATA:        return "MSG_DATA";
-	case HTTP_MSG_CHUNK_CRLF:  return "MSG_CHUNK_CRLF";
-	case HTTP_MSG_TRAILERS:    return "MSG_TRAILERS";
-	case HTTP_MSG_ENDING:      return "MSG_ENDING";
-	case HTTP_MSG_DONE:        return "MSG_DONE";
-	case HTTP_MSG_CLOSING:     return "MSG_CLOSING";
-	case HTTP_MSG_CLOSED:      return "MSG_CLOSED";
-	case HTTP_MSG_TUNNEL:      return "MSG_TUNNEL";
-	default:                   return "MSG_??????";
-	}
 }
 
 #endif /* _PROTO_PROTO_HTTP_H */

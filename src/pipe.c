@@ -14,22 +14,27 @@
 #include <fcntl.h>
 
 #include <common/config.h>
+#include <common/hathreads.h>
 #include <common/memory.h>
 
 #include <types/global.h>
 #include <types/pipe.h>
 
-struct pool_head *pool2_pipe = NULL;
+struct pool_head *pool_head_pipe = NULL;
 struct pipe *pipes_live = NULL; /* pipes which are still ready to use */
+
+__decl_hathreads(HA_SPINLOCK_T pipes_lock); /* lock used to protect pipes list */
+
 int pipes_used = 0;             /* # of pipes in use (2 fds each) */
 int pipes_free = 0;             /* # of pipes unused */
 
 /* allocate memory for the pipes */
 static void init_pipe()
 {
-	pool2_pipe = create_pool("pipe", sizeof(struct pipe), MEM_F_SHARED);
+	pool_head_pipe = create_pool("pipe", sizeof(struct pipe), MEM_F_SHARED);
 	pipes_used = 0;
 	pipes_free = 0;
+	HA_SPIN_INIT(&pipes_lock);
 }
 
 /* return a pre-allocated empty pipe. Try to allocate one if there isn't any
@@ -37,27 +42,28 @@ static void init_pipe()
  */
 struct pipe *get_pipe()
 {
-	struct pipe *ret;
+	struct pipe *ret = NULL;
 	int pipefd[2];
 
+	HA_SPIN_LOCK(PIPES_LOCK, &pipes_lock);
 	if (likely(pipes_live)) {
 		ret = pipes_live;
 		pipes_live = pipes_live->next;
 		pipes_free--;
 		pipes_used++;
-		return ret;
+		goto out;
 	}
 
 	if (pipes_used >= global.maxpipes)
-		return NULL;
+		goto out;
 
-	ret = pool_alloc2(pool2_pipe);
+	ret = pool_alloc(pool_head_pipe);
 	if (!ret)
-		return NULL;
+		goto out;
 
 	if (pipe(pipefd) < 0) {
-		pool_free2(pool2_pipe, ret);
-		return NULL;
+		pool_free(pool_head_pipe, ret);
+		goto out;
 	}
 #ifdef F_SETPIPE_SZ
 	if (global.tune.pipesize)
@@ -68,7 +74,18 @@ struct pipe *get_pipe()
 	ret->cons = pipefd[0];
 	ret->next = NULL;
 	pipes_used++;
+ out:
+	HA_SPIN_UNLOCK(PIPES_LOCK, &pipes_lock);
 	return ret;
+}
+
+static void inline __kill_pipe(struct pipe *p)
+{
+	close(p->prod);
+	close(p->cons);
+	pool_free(pool_head_pipe, p);
+	pipes_used--;
+	return;
 }
 
 /* destroy a pipe, possibly because an error was encountered on it. Its FDs
@@ -76,10 +93,9 @@ struct pipe *get_pipe()
  */
 void kill_pipe(struct pipe *p)
 {
-	close(p->prod);
-	close(p->cons);
-	pool_free2(pool2_pipe, p);
-	pipes_used--;
+	HA_SPIN_LOCK(PIPES_LOCK, &pipes_lock);
+	__kill_pipe(p);
+	HA_SPIN_UNLOCK(PIPES_LOCK, &pipes_lock);
 	return;
 }
 
@@ -89,14 +105,17 @@ void kill_pipe(struct pipe *p)
  */
 void put_pipe(struct pipe *p)
 {
+	HA_SPIN_LOCK(PIPES_LOCK, &pipes_lock);
 	if (p->data) {
-		kill_pipe(p);
-		return;
+		__kill_pipe(p);
+		goto out;
 	}
 	p->next = pipes_live;
 	pipes_live = p;
 	pipes_free++;
 	pipes_used--;
+ out:
+	HA_SPIN_UNLOCK(PIPES_LOCK, &pipes_lock);
 }
 
 

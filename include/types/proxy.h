@@ -32,6 +32,8 @@
 #include <common/mini-clist.h>
 #include <common/regex.h>
 #include <common/tools.h>
+#include <common/hathreads.h>
+
 #include <eb32tree.h>
 #include <ebistree.h>
 
@@ -189,6 +191,7 @@ enum PR_SRV_STATE_FILE {
 #define PR_CK_PSV       0x00000040      /* cookie ... preserve */
 #define PR_CK_HTTPONLY  0x00000080      /* emit the "HttpOnly" attribute */
 #define PR_CK_SECURE    0x00000100      /* emit the "Secure" attribute */
+#define PR_CK_DYNAMIC   0x00000200	/* create dynamic cookies for each server */
 
 /* bits for sticking rules */
 #define STK_IS_MATCH	0x00000001	/* match on request fetch */
@@ -227,6 +230,7 @@ struct error_snapshot {
 struct email_alert {
 	struct list list;
 	struct list tcpcheck_rules;
+	struct server *srv;
 };
 
 struct email_alertq {
@@ -235,6 +239,7 @@ struct email_alertq {
 					 * code even though they are not checks. This structure
 					 * is as a parameter to the check code.
 					 * Each check corresponds to a mailer */
+	__decl_hathreads(HA_SPINLOCK_T lock);
 };
 
 struct proxy {
@@ -276,16 +281,17 @@ struct proxy {
 		struct list inspect_rules;      /* inspection rules */
 	} tcp_rep;
 	struct server *srv, defsrv;		/* known servers; default server configuration */
+	struct lbprm lbprm;			/* load-balancing parameters */
 	int srv_act, srv_bck;			/* # of servers eligible for LB (UP|!checked) AND (enabled+weight!=0) */
 	int served;				/* # of active sessions currently being served */
-	struct lbprm lbprm;			/* load-balancing parameters */
+	int  cookie_len;			/* strlen(cookie_name), computed only once */
 	char *cookie_domain;			/* domain used to insert the cookie */
 	char *cookie_name;			/* name of the cookie to look for */
-	int  cookie_len;			/* strlen(cookie_name), computed only once */
+	char *dyncookie_key;			/* Secret key used to generate dynamic persistent cookies */
 	unsigned int cookie_maxidle;		/* max idle time for this cookie */
 	unsigned int cookie_maxlife;		/* max life time for this cookie */
-	int  rdp_cookie_len;			/* strlen(rdp_cookie_name), computed only once */
 	char *rdp_cookie_name;			/* name of the RDP cookie to look for */
+	int  rdp_cookie_len;			/* strlen(rdp_cookie_name), computed only once */
 	char *url_param_name;			/* name of the URL parameter used for hashing */
 	int  url_param_len;			/* strlen(url_param_name), computed only once */
 	int  uri_len_limit;			/* character limit for uri balancing algorithm */
@@ -326,6 +332,7 @@ struct proxy {
 	struct freq_ctr be_sess_per_sec;	/* sessions per second on the backend */
 	unsigned int fe_sps_lim;		/* limit on new sessions per second on the frontend */
 	unsigned int fullconn;			/* #conns on backend above which servers are used at full load */
+	unsigned int tot_fe_maxconn;		/* #maxconn of frontends linked to that backend, it is used to compute fullconn */
 	struct in_addr except_net, except_mask; /* don't x-forward-for for this address. FIXME: should support IPv6 */
 	struct in_addr except_to;		/* don't x-original-to for this address. */
 	struct in_addr except_mask_to;		/* the netmask for except_to. */
@@ -339,13 +346,13 @@ struct proxy {
 	int redispatch_after;			/* number of retries before redispatch */
 	unsigned down_trans;			/* up-down transitions */
 	unsigned down_time;			/* total time the proxy was down */
+	unsigned int log_count;			/* number of logs produced by the frontend */
 	time_t last_change;			/* last time, when the state was changed */
 	int (*accept)(struct stream *s);       /* application layer's accept() */
 	struct conn_src conn_src;               /* connection source settings */
 	enum obj_type *default_target;		/* default target to use for accepted streams or NULL */
 	struct proxy *next;
 
-	unsigned int log_count;			/* number of logs produced by the frontend */
 	struct list logsrvs;
 	struct list logformat; 			/* log_format linked list */
 	struct list logformat_sd;		/* log_format linked list for the RFC5424 structured-data part */
@@ -392,8 +399,8 @@ struct proxy {
 
 	struct {
 		char *file;			/* file where the section appears */
-		int line;			/* line where the section appears */
 		struct eb32_node id;		/* place in the tree of used IDs */
+		int line;			/* line where the section appears */
 		struct eb_root used_listener_id;/* list of listener IDs in use */
 		struct eb_root used_server_id;	/* list of server IDs in use */
 		struct list bind;		/* list of bind settings */
@@ -435,10 +442,7 @@ struct proxy {
 						 * name is used
 						 */
 	struct list filter_configs;		/* list of the filters that are declared on this proxy */
-	struct {
-		int mode;
-		struct list rules;      	/* nuster rules */
-	} nuster;
+	__decl_hathreads(HA_SPINLOCK_T lock);
 };
 
 struct switching_rule {

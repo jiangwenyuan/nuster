@@ -23,27 +23,26 @@
 #define _PROTO_DNS_H
 
 #include <types/dns.h>
-#include <types/proto_udp.h>
 
-char *dns_str_to_dn_label(const char *string, char *dn, int dn_len);
-int dns_str_to_dn_label_len(const char *string);
+extern struct list dns_resolvers;
+
+struct dns_resolvers *find_resolvers_by_id(const char *id);
+struct dns_srvrq *find_srvrq_by_name(const char *name, struct proxy *px);
+struct dns_srvrq *new_dns_srvrq(struct server *srv, char *fqdn);
+
+int dns_str_to_dn_label(const char *str, int str_len, char *dn, int dn_len);
+int dns_dn_label_to_str(const char *dn, int dn_len, char *str, int str_len);
+
 int dns_hostname_validation(const char *string, char **err);
-int dns_build_query(int query_id, int query_type, char *hostname_dn, int hostname_dn_len, char *buf, int bufsize);
-struct task *dns_process_resolve(struct task *t);
-int dns_init_resolvers(int close_socket);
-uint16_t dns_rnd16(void);
-int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend, struct dns_response_packet *dns_p);
 int dns_get_ip_from_response(struct dns_response_packet *dns_p,
-                             struct dns_resolution *resol, void *currentip,
+                             struct dns_options *dns_opts, void *currentip,
                              short currentip_sin_family,
-                             void **newip, short *newip_sin_family);
-void dns_resolve_send(struct dgram_conn *dgram);
-void dns_resolve_recv(struct dgram_conn *dgram);
-int dns_send_query(struct dns_resolution *resolution);
-void dns_print_current_resolutions(struct dns_resolvers *resolvers);
-void dns_update_resolvers_timeout(struct dns_resolvers *resolvers);
-void dns_reset_resolution(struct dns_resolution *resolution);
-int dns_check_resolution_queue(struct dns_resolvers *resolvers);
-unsigned short dns_response_get_query_id(unsigned char *resp);
+                             void **newip, short *newip_sin_family,
+                             void *owner);
+
+int dns_link_resolution(void *requester, int requester_type, int requester_locked);
+void dns_unlink_resolution(struct dns_requester *requester);
+void dns_trigger_resolution(struct dns_requester *requester);
+
 
 #endif // _PROTO_DNS_H

@@ -73,13 +73,20 @@ void init_default_instance();
 int check_config_validity();
 int str2listener(char *str, struct proxy *curproxy, struct bind_conf *bind_conf, const char *file, int line, char **err);
 int cfg_register_section(char *section_name,
-                         int (*section_parser)(const char *, int, char **, int));
+                         int (*section_parser)(const char *, int, char **, int),
+                         int (*post_section_parser)());
+int cfg_register_postparser(char *name, int (*func)());
 void cfg_unregister_sections(void);
 void cfg_backup_sections(struct list *backup_sections);
 void cfg_restore_sections(struct list *backup_sections);
 int warnif_misplaced_tcp_conn(struct proxy *proxy, const char *file, int line, const char *arg);
 int warnif_misplaced_tcp_sess(struct proxy *proxy, const char *file, int line, const char *arg);
 int warnif_misplaced_tcp_cont(struct proxy *proxy, const char *file, int line, const char *arg);
+int too_many_args_idx(int maxarg, int index, char **args, char **msg, int *err_code);
+int too_many_args(int maxarg, char **args, char **msg, int *err_code);
+int alertif_too_many_args_idx(int maxarg, int index, const char *file, int linenum, char **args, int *err_code);
+int alertif_too_many_args(int maxarg, const char *file, int linenum, char **args, int *err_code);
+int parse_process_number(const char *arg, unsigned long *proc, int *autoinc, char **err);
 
 /*
  * Sends a warning if proxy <proxy> does not have at least one of the
@@ -99,8 +106,8 @@ static inline int warnifnotcap(struct proxy *proxy, int cap, const char *file, i
 	}
 
 	if (!(proxy->cap & cap)) {
-		Warning("parsing [%s:%d] : '%s' ignored because %s '%s' has %s capability.%s\n",
-			file, line, arg, proxy_type_str(proxy), proxy->id, msg, hint ? hint : "");
+		ha_warning("parsing [%s:%d] : '%s' ignored because %s '%s' has %s capability.%s\n",
+			   file, line, arg, proxy_type_str(proxy), proxy->id, msg, hint ? hint : "");
 		return 1;
 	}
 	return 0;

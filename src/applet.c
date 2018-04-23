@@ -21,25 +21,46 @@
 #include <proto/stream_interface.h>
 
 unsigned int nb_applets = 0;
+unsigned long active_applets_mask = 0;
 unsigned int applets_active_queue = 0;
+__decl_hathreads(HA_SPINLOCK_T applet_active_lock);  /* spin lock related to applet active queue */
 
 struct list applet_active_queue = LIST_HEAD_INIT(applet_active_queue);
-struct list applet_cur_queue    = LIST_HEAD_INIT(applet_cur_queue);
 
 void applet_run_active()
 {
-	struct appctx *curr;
+	struct appctx *curr, *next;
 	struct stream_interface *si;
+	struct list applet_cur_queue = LIST_HEAD_INIT(applet_cur_queue);
+	int max_processed;
 
-	if (LIST_ISEMPTY(&applet_active_queue))
+	max_processed = applets_active_queue;
+	if (max_processed > 200)
+		max_processed = 200;
+
+	HA_SPIN_LOCK(APPLETS_LOCK, &applet_active_lock);
+	if (!(active_applets_mask & tid_bit)) {
+		HA_SPIN_UNLOCK(APPLETS_LOCK, &applet_active_lock);
 		return;
-
-	/* move active queue to run queue */
-	applet_active_queue.n->p = &applet_cur_queue;
-	applet_active_queue.p->n = &applet_cur_queue;
-
-	applet_cur_queue = applet_active_queue;
-	LIST_INIT(&applet_active_queue);
+	}
+	active_applets_mask &= ~tid_bit;
+	curr = LIST_NEXT(&applet_active_queue, typeof(curr), runq);
+	while (&curr->runq != &applet_active_queue) {
+		next = LIST_NEXT(&curr->runq, typeof(next), runq);
+		if (curr->thread_mask & tid_bit) {
+			LIST_DEL(&curr->runq);
+			curr->state = APPLET_RUNNING;
+			LIST_ADDQ(&applet_cur_queue, &curr->runq);
+			applets_active_queue--;
+			max_processed--;
+		}
+		curr = next;
+		if (max_processed <= 0) {
+			active_applets_mask |= tid_bit;
+			break;
+		}
+	}
+	HA_SPIN_UNLOCK(APPLETS_LOCK, &applet_active_lock);
 
 	/* The list is only scanned from the head. This guarantees that if any
 	 * applet removes another one, there is no side effect while walking
@@ -70,7 +91,28 @@ void applet_run_active()
 		if (applet_cur_queue.n == &curr->runq) {
 			/* curr was left in the list, move it back to the active list */
 			LIST_DEL(&curr->runq);
-			LIST_ADDQ(&applet_active_queue, &curr->runq);
+			LIST_INIT(&curr->runq);
+			HA_SPIN_LOCK(APPLETS_LOCK, &applet_active_lock);
+			if (curr->state & APPLET_WANT_DIE) {
+				curr->state = APPLET_SLEEPING;
+				__appctx_free(curr);
+			}
+			else {
+				if (curr->state & APPLET_WOKEN_UP) {
+					curr->state = APPLET_SLEEPING;
+					__appctx_wakeup(curr);
+				}
+				else {
+					curr->state = APPLET_SLEEPING;
+				}
+			}
+			HA_SPIN_UNLOCK(APPLETS_LOCK, &applet_active_lock);
 		}
 	}
+}
+
+__attribute__((constructor))
+static void __applet_init(void)
+{
+	HA_SPIN_INIT(&applet_active_lock);
 }

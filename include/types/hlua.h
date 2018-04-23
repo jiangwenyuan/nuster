@@ -6,6 +6,8 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+#include <common/xref.h>
+
 #include <types/proxy.h>
 #include <types/server.h>
 
@@ -22,6 +24,7 @@
 #define CLASS_PROXY        "Proxy"
 #define CLASS_SERVER       "Server"
 #define CLASS_LISTENER     "Listener"
+#define CLASS_REGEX        "Regex"
 
 struct stream;
 
@@ -60,7 +63,7 @@ struct hlua_consistency {
 	union {
 		struct {
 			int dir;
-			enum ht_state state;
+			enum h1_state state;
 		} http;
 	} data;
 };
@@ -84,14 +87,6 @@ struct hlua {
 	struct hlua_consistency cons; /* Store data consistency check. */
 };
 
-struct hlua_com {
-	struct list purge_me; /* Part of the list of signals to be purged in the
-	                         case of the LUA execution stack crash. */
-	struct list wake_me; /* Part of list of signals to be targeted if an
-	                        event occurs. */
-	struct task *task; /* The task to be wake if an event occurs. */
-};
-
 /* This is a part of the list containing references to functions
  * called at the initialisation time.
  */
@@ -107,6 +102,7 @@ struct hlua_init_function {
 struct hlua_function {
 	char *name;
 	int function_ref;
+	int nargs;
 };
 
 /* This struct is used with the structs:
@@ -158,8 +154,9 @@ struct hlua_sleep {
  * SSL I/O. It uses a fake stream.
  */
 struct hlua_socket {
-	struct stream *s; /* Stream used for socket I/O. */
+	struct xref xref; /* cross reference with the stream used for socket I/O. */
 	luaL_Buffer b; /* buffer used to prepare strings. */
+	unsigned long tid; /* Store the thread id which creates the socket. */
 };
 
 struct hlua_concat {

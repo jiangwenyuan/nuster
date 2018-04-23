@@ -24,6 +24,7 @@
 #include <common/config.h>
 #include <common/time.h>
 #include <common/standard.h>
+#include <common/hathreads.h>
 
 #include <types/global.h>
 #include <types/listener.h>
@@ -37,6 +38,7 @@
 #include <proto/frontend.h>
 #include <proto/log.h>
 #include <proto/hdr_idx.h>
+#include <proto/mux_pt.h>
 #include <proto/proto_tcp.h>
 #include <proto/proto_http.h>
 #include <proto/proxy.h>
@@ -269,7 +271,7 @@ static inline void peer_set_update_msg_type(char *msg_type, int use_identifier, 
  * If function returns 0, the caller should consider we were unable to encode this message (TODO:
  * check size)
  */
-static int peer_prepare_updatemsg(struct stksess *ts, struct shared_table *st, char *msg, size_t size, int use_identifier, int use_timed)
+static int peer_prepare_updatemsg(struct stksess *ts, struct shared_table *st, unsigned int updateid, char *msg, size_t size, int use_identifier, int use_timed)
 {
 	uint32_t netinteger;
 	unsigned short datalen;
@@ -282,13 +284,13 @@ static int peer_prepare_updatemsg(struct stksess *ts, struct shared_table *st, c
 	/* construct message */
 
 	/* check if we need to send the update identifer */
-	if (!st->last_pushed || ts->upd.key < st->last_pushed || ((ts->upd.key - st->last_pushed) != 1)) {
+	if (!st->last_pushed || updateid < st->last_pushed || ((updateid - st->last_pushed) != 1)) {
 		use_identifier = 1;
 	}
 
 	/* encode update identifier if needed */
 	if (use_identifier)  {
-		netinteger = htonl(ts->upd.key);
+		netinteger = htonl(updateid);
 		memcpy(cursor, &netinteger, sizeof(netinteger));
 		cursor += sizeof(netinteger);
 	}
@@ -317,6 +319,7 @@ static int peer_prepare_updatemsg(struct stksess *ts, struct shared_table *st, c
 		cursor += st->table->key_size;
 	}
 
+	HA_RWLOCK_RDLOCK(STK_SESS_LOCK, &ts->lock);
 	/* encode values */
 	for (data_type = 0 ; data_type < STKTABLE_DATA_TYPES ; data_type++) {
 
@@ -356,6 +359,7 @@ static int peer_prepare_updatemsg(struct stksess *ts, struct shared_table *st, c
 			}
 		}
 	}
+	HA_RWLOCK_RDUNLOCK(STK_SESS_LOCK, &ts->lock);
 
 	/* Compute datalen */
 	datalen = (cursor - datamsg);
@@ -383,7 +387,8 @@ static int peer_prepare_switchmsg(struct shared_table *st, char *msg, size_t siz
 {
 	int len;
 	unsigned short datalen;
-	char *cursor, *datamsg;
+	struct chunk *chunk;
+	char *cursor, *datamsg, *chunkp, *chunkq;
 	uint64_t data = 0;
 	unsigned int data_type;
 
@@ -407,6 +412,8 @@ static int peer_prepare_switchmsg(struct shared_table *st, char *msg, size_t siz
 	/* encode table key size */
 	intencode(st->table->key_size, &cursor);
 
+	chunk = get_trash_chunk();
+	chunkp = chunkq = chunk->str;
 	/* encode available known data types in table */
 	for (data_type = 0 ; data_type < STKTABLE_DATA_TYPES ; data_type++) {
 		if (st->table->data_ofs[data_type]) {
@@ -414,13 +421,26 @@ static int peer_prepare_switchmsg(struct shared_table *st, char *msg, size_t siz
 				case STD_T_SINT:
 				case STD_T_UINT:
 				case STD_T_ULL:
+					data |= 1 << data_type;
+					break;
 				case STD_T_FRQP:
 					data |= 1 << data_type;
+					intencode(data_type, &chunkq);
+					intencode(st->table->data_arg[data_type].u, &chunkq);
 					break;
 			}
 		}
 	}
 	intencode(data, &cursor);
+
+	/* Encode stick-table entries duration. */
+	intencode(st->table->expire, &cursor);
+
+	if (chunkq > chunkp) {
+		chunk->len = chunkq - chunkp;
+		memcpy(cursor, chunk->str, chunk->len);
+		cursor += chunk->len;
+	}
 
 	/* Compute datalen */
 	datalen = (cursor - datamsg);
@@ -490,6 +510,7 @@ static void peer_session_release(struct appctx *appctx)
 
 	/* peer session identified */
 	if (peer) {
+		HA_SPIN_LOCK(PEER_LOCK, &peer->lock);
 		if (peer->appctx == appctx) {
 			/* Re-init current table pointers to force announcement on re-connect */
 			peer->remote_table = peer->last_local_table = NULL;
@@ -506,6 +527,7 @@ static void peer_session_release(struct appctx *appctx)
 			peer->flags &= PEER_TEACH_RESET;
 			peer->flags &= PEER_LEARN_RESET;
 		}
+		HA_SPIN_UNLOCK(PEER_LOCK, &peer->lock);
 		task_wakeup(peers->sync_task, TASK_WOKEN_MSG);
 	}
 }
@@ -547,6 +569,7 @@ static void peer_io_handler(struct appctx *appctx)
 	struct stream_interface *si = appctx->owner;
 	struct stream *s = si_strm(si);
 	struct peers *curpeers = strm_fe(s)->parent;
+	struct peer *curpeer = NULL;
 	int reql = 0;
 	int repl = 0;
 	size_t proto_len = strlen(PEER_SESSION_PROTO_NAME);
@@ -565,7 +588,7 @@ switchstate:
 				appctx->st0 = PEER_SESS_ST_GETVERSION;
 				/* fall through */
 			case PEER_SESS_ST_GETVERSION:
-				reql = bo_getline(si_oc(si), trash.str, trash.size);
+				reql = co_getline(si_oc(si), trash.str, trash.size);
 				if (reql <= 0) { /* closed or EOL not found */
 					if (reql == 0)
 						goto out;
@@ -581,7 +604,7 @@ switchstate:
 				else
 					trash.str[reql-1] = 0;
 
-				bo_skip(si_oc(si), reql);
+				co_skip(si_oc(si), reql);
 
 				/* test protocol */
 				if (strncmp(PEER_SESSION_PROTO_NAME " ", trash.str, proto_len + 1) != 0) {
@@ -599,7 +622,7 @@ switchstate:
 				appctx->st0 = PEER_SESS_ST_GETHOST;
 				/* fall through */
 			case PEER_SESS_ST_GETHOST:
-				reql = bo_getline(si_oc(si), trash.str, trash.size);
+				reql = co_getline(si_oc(si), trash.str, trash.size);
 				if (reql <= 0) { /* closed or EOL not found */
 					if (reql == 0)
 						goto out;
@@ -615,7 +638,7 @@ switchstate:
 				else
 					trash.str[reql-1] = 0;
 
-				bo_skip(si_oc(si), reql);
+				co_skip(si_oc(si), reql);
 
 				/* test hostname match */
 				if (strcmp(localpeer, trash.str) != 0) {
@@ -627,9 +650,8 @@ switchstate:
 				appctx->st0 = PEER_SESS_ST_GETPEER;
 				/* fall through */
 			case PEER_SESS_ST_GETPEER: {
-				struct peer *curpeer;
 				char *p;
-				reql = bo_getline(si_oc(si), trash.str, trash.size);
+				reql = co_getline(si_oc(si), trash.str, trash.size);
 				if (reql <= 0) { /* closed or EOL not found */
 					if (reql == 0)
 						goto out;
@@ -646,7 +668,7 @@ switchstate:
 				else
 					trash.str[reql-1] = 0;
 
-				bo_skip(si_oc(si), reql);
+				co_skip(si_oc(si), reql);
 
 				/* parse line "<peer name> <pid> <relative_pid>" */
 				p = strchr(trash.str, ' ');
@@ -670,6 +692,7 @@ switchstate:
 					goto switchstate;
 				}
 
+				HA_SPIN_LOCK(PEER_LOCK, &curpeer->lock);
 				if (curpeer->appctx && curpeer->appctx != appctx) {
 					if (curpeer->local) {
 						/* Local connection, reply a retry */
@@ -677,6 +700,12 @@ switchstate:
 						appctx->st1 = PEER_SESS_SC_TRYAGAIN;
 						goto switchstate;
 					}
+
+					/* we're killing a connection, we must apply a random delay before
+					 * retrying otherwise the other end will do the same and we can loop
+					 * for a while.
+					 */
+					curpeer->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
 					peer_session_forceshutdown(curpeer->appctx);
 				}
 				if (maj_ver != (unsigned int)-1 && min_ver != (unsigned int)-1) {
@@ -693,11 +722,18 @@ switchstate:
 				/* fall through */
 			}
 			case PEER_SESS_ST_SENDSUCCESS: {
-				struct peer *curpeer = appctx->ctx.peers.ptr;
 				struct shared_table *st;
 
+				if (!curpeer) {
+					curpeer = appctx->ctx.peers.ptr;
+					HA_SPIN_LOCK(PEER_LOCK, &curpeer->lock);
+					if (curpeer->appctx != appctx) {
+						appctx->st0 = PEER_SESS_ST_END;
+						goto switchstate;
+					}
+				}
 				repl = snprintf(trash.str, trash.size, "%d\n", PEER_SESS_SC_SUCCESSCODE);
-				repl = bi_putblk(si_ic(si), trash.str, repl);
+				repl = ci_putblk(si_ic(si), trash.str, repl);
 				if (repl <= 0) {
 					if (repl == -1)
 						goto full;
@@ -748,7 +784,15 @@ switchstate:
 				goto switchstate;
 			}
 			case PEER_SESS_ST_CONNECT: {
-				struct peer *curpeer = appctx->ctx.peers.ptr;
+
+				if (!curpeer) {
+					curpeer = appctx->ctx.peers.ptr;
+					HA_SPIN_LOCK(PEER_LOCK, &curpeer->lock);
+					if (curpeer->appctx != appctx) {
+						appctx->st0 = PEER_SESS_ST_END;
+						goto switchstate;
+					}
+				}
 
 				/* Send headers */
 				repl = snprintf(trash.str, trash.size,
@@ -765,7 +809,7 @@ switchstate:
 					goto switchstate;
 				}
 
-				repl = bi_putblk(si_ic(si), trash.str, repl);
+				repl = ci_putblk(si_ic(si), trash.str, repl);
 				if (repl <= 0) {
 					if (repl == -1)
 						goto full;
@@ -778,13 +822,21 @@ switchstate:
 				/* fall through */
 			}
 			case PEER_SESS_ST_GETSTATUS: {
-				struct peer *curpeer = appctx->ctx.peers.ptr;
 				struct shared_table *st;
+
+				if (!curpeer) {
+					curpeer = appctx->ctx.peers.ptr;
+					HA_SPIN_LOCK(PEER_LOCK, &curpeer->lock);
+					if (curpeer->appctx != appctx) {
+						appctx->st0 = PEER_SESS_ST_END;
+						goto switchstate;
+					}
+				}
 
 				if (si_ic(si)->flags & CF_WRITE_PARTIAL)
 					curpeer->statuscode = PEER_SESS_SC_CONNECTEDCODE;
 
-				reql = bo_getline(si_oc(si), trash.str, trash.size);
+				reql = co_getline(si_oc(si), trash.str, trash.size);
 				if (reql <= 0) { /* closed or EOL not found */
 					if (reql == 0)
 						goto out;
@@ -801,7 +853,7 @@ switchstate:
 				else
 					trash.str[reql-1] = 0;
 
-				bo_skip(si_oc(si), reql);
+				co_skip(si_oc(si), reql);
 
 				/* Register status code */
 				curpeer->statuscode = atoi(trash.str);
@@ -852,7 +904,6 @@ switchstate:
 				/* fall through */
 			}
 			case PEER_SESS_ST_WAITMSG: {
-				struct peer *curpeer = appctx->ctx.peers.ptr;
 				struct stksess *ts, *newts = NULL;
 				uint32_t msg_len = 0;
 				char *msg_cur = trash.str;
@@ -860,7 +911,16 @@ switchstate:
 				unsigned char msg_head[7];
 				int totl = 0;
 
-				reql = bo_getblk(si_oc(si), (char *)msg_head, 2*sizeof(unsigned char), totl);
+				if (!curpeer) {
+					curpeer = appctx->ctx.peers.ptr;
+					HA_SPIN_LOCK(PEER_LOCK, &curpeer->lock);
+					if (curpeer->appctx != appctx) {
+						appctx->st0 = PEER_SESS_ST_END;
+						goto switchstate;
+					}
+				}
+
+				reql = co_getblk(si_oc(si), (char *)msg_head, 2*sizeof(unsigned char), totl);
 				if (reql <= 0) /* closed or EOL not found */
 					goto incomplete;
 
@@ -868,7 +928,7 @@ switchstate:
 
 				if (msg_head[1] >= 128) {
 					/* Read and Decode message length */
-					reql = bo_getblk(si_oc(si), (char *)&msg_head[2], sizeof(unsigned char), totl);
+					reql = co_getblk(si_oc(si), (char *)&msg_head[2], sizeof(unsigned char), totl);
 					if (reql <= 0) /* closed */
 						goto incomplete;
 
@@ -883,7 +943,7 @@ switchstate:
 						char *end;
 
 						for (i = 3 ; i < sizeof(msg_head) ; i++) {
-							reql = bo_getblk(si_oc(si), (char *)&msg_head[i], sizeof(char), totl);
+							reql = co_getblk(si_oc(si), (char *)&msg_head[i], sizeof(char), totl);
 							if (reql <= 0) /* closed */
 								goto incomplete;
 
@@ -918,7 +978,7 @@ switchstate:
 							goto switchstate;
 						}
 
-						reql = bo_getblk(si_oc(si), trash.str, msg_len, totl);
+						reql = co_getblk(si_oc(si), trash.str, msg_len, totl);
 						if (reql <= 0) /* closed */
 							goto incomplete;
 						totl += reql;
@@ -1184,27 +1244,13 @@ switchstate:
 						}
 
 						/* lookup for existing entry */
-						ts = stktable_lookup(st->table, newts);
-						if (ts) {
-							/* the entry already exist, we can free ours */
-							stktable_touch_with_exp(st->table, ts, 0, tick_add(now_ms, expire));
+						ts = stktable_set_entry(st->table, newts);
+						if (ts != newts) {
 							stksess_free(st->table, newts);
 							newts = NULL;
 						}
-						else {
-							struct eb32_node *eb;
 
-							/* create new entry */
-							ts = stktable_store_with_exp(st->table, newts, 0, tick_add(now_ms, expire));
-							newts = NULL; /* don't reuse it */
-
-							ts->upd.key= (++st->table->update)+(2147483648U);
-							eb = eb32_insert(&st->table->updates, &ts->upd);
-							if (eb != &ts->upd) {
-								eb32_delete(eb);
-								eb32_insert(&st->table->updates, &ts->upd);
-							}
-						}
+						HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
 
 						for (data_type = 0 ; data_type < STKTABLE_DATA_TYPES ; data_type++) {
 
@@ -1216,6 +1262,8 @@ switchstate:
 										data = intdecode(&msg_cur, msg_end);
 										if (!msg_cur) {
 											/* malformed message */
+											HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+											stktable_touch_remote(st->table, ts, 1);
 											appctx->st0 = PEER_SESS_ST_ERRPROTO;
 											goto switchstate;
 										}
@@ -1231,6 +1279,8 @@ switchstate:
 										data = intdecode(&msg_cur, msg_end);
 										if (!msg_cur) {
 											/* malformed message */
+											HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+											stktable_touch_remote(st->table, ts, 1);
 											appctx->st0 = PEER_SESS_ST_ERRPROTO;
 											goto switchstate;
 										}
@@ -1246,6 +1296,8 @@ switchstate:
 										data = intdecode(&msg_cur, msg_end);
 										if (!msg_cur) {
 											/* malformed message */
+											HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+											stktable_touch_remote(st->table, ts, 1);
 											appctx->st0 = PEER_SESS_ST_ERRPROTO;
 											goto switchstate;
 										}
@@ -1258,21 +1310,32 @@ switchstate:
 									case STD_T_FRQP: {
 										struct freq_ctr_period data;
 
-										data.curr_tick = tick_add(now_ms, -intdecode(&msg_cur, msg_end));
+										/* First bit is reserved for the freq_ctr_period lock
+										   Note: here we're still protected by the stksess lock
+										   so we don't need to update the update the freq_ctr_period
+										   using its internal lock */
+
+										data.curr_tick = tick_add(now_ms, -intdecode(&msg_cur, msg_end)) & ~0x1;
 										if (!msg_cur) {
 											/* malformed message */
+											HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+											stktable_touch_remote(st->table, ts, 1);
 											appctx->st0 = PEER_SESS_ST_ERRPROTO;
 											goto switchstate;
 										}
 										data.curr_ctr = intdecode(&msg_cur, msg_end);
 										if (!msg_cur) {
 											/* malformed message */
+											HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+											stktable_touch_remote(st->table, ts, 1);
 											appctx->st0 = PEER_SESS_ST_ERRPROTO;
 											goto switchstate;
 										}
 										data.prev_ctr = intdecode(&msg_cur, msg_end);
 										if (!msg_cur) {
 											/* malformed message */
+											HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+											stktable_touch_remote(st->table, ts, 1);
 											appctx->st0 = PEER_SESS_ST_ERRPROTO;
 											goto switchstate;
 										}
@@ -1285,6 +1348,13 @@ switchstate:
 								}
 							}
 						}
+
+						/* Force new expiration */
+						ts->expire = tick_add(now_ms, expire);
+
+						HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+						stktable_touch_remote(st->table, ts, 1);
+
 					}
 					else if (msg_head[1] == PEER_MSG_STKT_ACK) {
 						/* ack message */
@@ -1316,12 +1386,12 @@ switchstate:
 
 ignore_msg:
 				/* skip consumed message */
-				bo_skip(si_oc(si), totl);
+				co_skip(si_oc(si), totl);
 				/* loop on that state to peek next message */
 				goto switchstate;
 
 incomplete:
-				/* we get here when a bo_getblk() returns <= 0 in reql */
+				/* we get here when a co_getblk() returns <= 0 in reql */
 
 				if (reql < 0) {
 					/* there was an error */
@@ -1343,7 +1413,7 @@ incomplete:
 					msg[1] = PEER_MSG_CTRL_RESYNCREQ;
 
 					/* message to buffer */
-					repl = bi_putblk(si_ic(si), (char *)msg, sizeof(msg));
+					repl = ci_putblk(si_ic(si), (char *)msg, sizeof(msg));
                                         if (repl <= 0) {
                                                 /* no more write possible */
                                                 if (repl == -1)
@@ -1381,7 +1451,7 @@ incomplete:
 							}
 
 							/* message to buffer */
-							repl = bi_putblk(si_ic(si), trash.str, msglen);
+							repl = ci_putblk(si_ic(si), trash.str, msglen);
 							if (repl <= 0) {
 								/* no more write possible */
 								if (repl == -1) {
@@ -1394,6 +1464,7 @@ incomplete:
 						}
 
 						if (!(curpeer->flags & PEER_F_TEACH_PROCESS)) {
+							HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
 							if (!(curpeer->flags & PEER_F_LEARN_ASSIGN) &&
 							    ((int)(st->last_pushed - st->table->localupdate) < 0)) {
 								struct eb32_node *eb;
@@ -1404,14 +1475,16 @@ incomplete:
 
 									msglen = peer_prepare_switchmsg(st, trash.str, trash.size);
 									if (!msglen) {
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										/* internal error: message does not fit in trash */
 										appctx->st0 = PEER_SESS_ST_END;
 										goto switchstate;
 									}
 
 									/* message to buffer */
-									repl = bi_putblk(si_ic(si), trash.str, msglen);
+									repl = ci_putblk(si_ic(si), trash.str, msglen);
 									if (repl <= 0) {
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										/* no more write possible */
 										if (repl == -1) {
 											goto full;
@@ -1424,12 +1497,13 @@ incomplete:
 
 								/* We force new pushed to 1 to force identifier in update message */
 								new_pushed = 1;
-								eb = eb32_lookup_ge(&st->table->updates, st->last_pushed+1);
 								while (1) {
 									uint32_t msglen;
 									struct stksess *ts;
+									unsigned updateid;
 
 									/* push local updates */
+									eb = eb32_lookup_ge(&st->table->updates, st->last_pushed+1);
 									if (!eb) {
 										eb = eb32_first(&st->table->updates);
 										if (!eb || ((int)(eb->key - st->last_pushed) <= 0)) {
@@ -1444,32 +1518,44 @@ incomplete:
 									}
 
 									ts = eb32_entry(eb, struct stksess, upd);
-									msglen = peer_prepare_updatemsg(ts, st, trash.str, trash.size, new_pushed, 0);
+									updateid = ts->upd.key;
+									ts->ref_cnt++;
+									HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
+
+									msglen = peer_prepare_updatemsg(ts, st, updateid, trash.str, trash.size, new_pushed, 0);
 									if (!msglen) {
 										/* internal error: message does not fit in trash */
+										HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+										ts->ref_cnt--;
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										appctx->st0 = PEER_SESS_ST_END;
 										goto switchstate;
 									}
 
 									/* message to buffer */
-									repl = bi_putblk(si_ic(si), trash.str, msglen);
+									repl = ci_putblk(si_ic(si), trash.str, msglen);
 									if (repl <= 0) {
 										/* no more write possible */
+										HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+										ts->ref_cnt--;
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										if (repl == -1) {
 											goto full;
 										}
 										appctx->st0 = PEER_SESS_ST_END;
 										goto switchstate;
 									}
-									st->last_pushed = ts->upd.key;
+
+									HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+									ts->ref_cnt--;
+									st->last_pushed = updateid;
 									if ((int)(st->last_pushed - st->table->commitupdate) > 0)
 											st->table->commitupdate = st->last_pushed;
 									/* identifier may not needed in next update message */
 									new_pushed = 0;
-
-									eb = eb32_next(eb);
 								}
 							}
+							HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 						}
 						else {
 							if (!(st->flags & SHTABLE_F_TEACH_STAGE1)) {
@@ -1487,7 +1573,7 @@ incomplete:
 									}
 
 									/* message to buffer */
-									repl = bi_putblk(si_ic(si), trash.str, msglen);
+									repl = ci_putblk(si_ic(si), trash.str, msglen);
 									if (repl <= 0) {
 										/* no more write possible */
 										if (repl == -1) {
@@ -1501,13 +1587,15 @@ incomplete:
 
 								/* We force new pushed to 1 to force identifier in update message */
 								new_pushed = 1;
-								eb = eb32_lookup_ge(&st->table->updates, st->last_pushed+1);
+								HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
 								while (1) {
 									uint32_t msglen;
 									struct stksess *ts;
 									int use_timed;
+									unsigned updateid;
 
 									/* push local updates */
+									eb = eb32_lookup_ge(&st->table->updates, st->last_pushed+1);
 									if (!eb) {
 										st->flags |= SHTABLE_F_TEACH_STAGE1;
 										eb = eb32_first(&st->table->updates);
@@ -1517,30 +1605,41 @@ incomplete:
 									}
 
 									ts = eb32_entry(eb, struct stksess, upd);
+									updateid = ts->upd.key;
+									ts->ref_cnt++;
+									HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
+
 									use_timed = !(curpeer->flags & PEER_F_DWNGRD);
-									msglen = peer_prepare_updatemsg(ts, st, trash.str, trash.size, new_pushed, use_timed);
+									msglen = peer_prepare_updatemsg(ts, st, updateid, trash.str, trash.size, new_pushed, use_timed);
 									if (!msglen) {
 										/* internal error: message does not fit in trash */
+										HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+										ts->ref_cnt--;
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										appctx->st0 = PEER_SESS_ST_END;
 										goto switchstate;
 									}
 
 									/* message to buffer */
-									repl = bi_putblk(si_ic(si), trash.str, msglen);
+									repl = ci_putblk(si_ic(si), trash.str, msglen);
 									if (repl <= 0) {
 										/* no more write possible */
+										HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+										ts->ref_cnt--;
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										if (repl == -1) {
 											goto full;
 										}
 										appctx->st0 = PEER_SESS_ST_END;
 										goto switchstate;
 									}
-									st->last_pushed = ts->upd.key;
+									HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+									ts->ref_cnt--;
+									st->last_pushed = updateid;
 									/* identifier may not needed in next update message */
 									new_pushed = 0;
-
-									eb = eb32_next(eb);
 								}
+								HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 							}
 
 							if (!(st->flags & SHTABLE_F_TEACH_STAGE2)) {
@@ -1558,7 +1657,7 @@ incomplete:
 									}
 
 									/* message to buffer */
-									repl = bi_putblk(si_ic(si), trash.str, msglen);
+									repl = ci_putblk(si_ic(si), trash.str, msglen);
 									if (repl <= 0) {
 										/* no more write possible */
 										if (repl == -1) {
@@ -1572,11 +1671,15 @@ incomplete:
 
 								/* We force new pushed to 1 to force identifier in update message */
 								new_pushed = 1;
-								eb = eb32_lookup_ge(&st->table->updates, st->last_pushed+1);
+								HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
 								while (1) {
 									uint32_t msglen;
 									struct stksess *ts;
 									int use_timed;
+									unsigned updateid;
+
+									/* push local updates */
+									eb = eb32_lookup_ge(&st->table->updates, st->last_pushed+1);
 
 									/* push local updates */
 									if (!eb || eb->key > st->teaching_origin) {
@@ -1585,30 +1688,42 @@ incomplete:
 									}
 
 									ts = eb32_entry(eb, struct stksess, upd);
+									updateid = ts->upd.key;
+									ts->ref_cnt++;
+									HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
+
 									use_timed = !(curpeer->flags & PEER_F_DWNGRD);
-									msglen = peer_prepare_updatemsg(ts, st, trash.str, trash.size, new_pushed, use_timed);
+									msglen = peer_prepare_updatemsg(ts, st, updateid, trash.str, trash.size, new_pushed, use_timed);
 									if (!msglen) {
 										/* internal error: message does not fit in trash */
+										HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+										ts->ref_cnt--;
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										appctx->st0 = PEER_SESS_ST_END;
 										goto switchstate;
 									}
 
 									/* message to buffer */
-									repl = bi_putblk(si_ic(si), trash.str, msglen);
+									repl = ci_putblk(si_ic(si), trash.str, msglen);
 									if (repl <= 0) {
 										/* no more write possible */
+										HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+										ts->ref_cnt--;
+										HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 										if (repl == -1) {
 											goto full;
 										}
 										appctx->st0 = PEER_SESS_ST_END;
 										goto switchstate;
 									}
-									st->last_pushed = ts->upd.key;
+
+									HA_SPIN_LOCK(STK_TABLE_LOCK, &st->table->lock);
+									ts->ref_cnt--;
+									st->last_pushed = updateid;
 									/* identifier may not needed in next update message */
 									new_pushed = 0;
-
-									eb = eb32_next(eb);
 								}
+								HA_SPIN_UNLOCK(STK_TABLE_LOCK, &st->table->lock);
 							}
 						}
 
@@ -1626,7 +1741,7 @@ incomplete:
 					msg[0] = PEER_MSG_CLASS_CONTROL;
 					msg[1] = ((curpeers->flags & PEERS_RESYNC_STATEMASK) == PEERS_RESYNC_FINISHED) ? PEER_MSG_CTRL_RESYNCFINISHED : PEER_MSG_CTRL_RESYNCPARTIAL;
 					/* process final lesson message */
-					repl = bi_putblk(si_ic(si), (char *)msg, sizeof(msg));
+					repl = ci_putblk(si_ic(si), (char *)msg, sizeof(msg));
 					if (repl <= 0) {
 						/* no more write possible */
 						if (repl == -1)
@@ -1647,7 +1762,7 @@ incomplete:
 					msg[1] = PEER_MSG_CTRL_RESYNCCONFIRM;
 
 					/* message to buffer */
-					repl = bi_putblk(si_ic(si), (char *)msg, sizeof(msg));
+					repl = ci_putblk(si_ic(si), (char *)msg, sizeof(msg));
 					if (repl <= 0) {
 						/* no more write possible */
 						if (repl == -1)
@@ -1663,7 +1778,7 @@ incomplete:
 			}
 			case PEER_SESS_ST_EXIT:
 				repl = snprintf(trash.str, trash.size, "%d\n", appctx->st1);
-				if (bi_putblk(si_ic(si), trash.str, repl) == -1)
+				if (ci_putblk(si_ic(si), trash.str, repl) == -1)
 					goto full;
 				appctx->st0 = PEER_SESS_ST_END;
 				goto switchstate;
@@ -1673,7 +1788,7 @@ incomplete:
 				msg[0] = PEER_MSG_CLASS_ERROR;
 				msg[1] = PEER_MSG_ERR_SIZELIMIT;
 
-				if (bi_putblk(si_ic(si), (char *)msg, sizeof(msg)) == -1)
+				if (ci_putblk(si_ic(si), (char *)msg, sizeof(msg)) == -1)
 					goto full;
 				appctx->st0 = PEER_SESS_ST_END;
 				goto switchstate;
@@ -1684,12 +1799,16 @@ incomplete:
 				msg[0] = PEER_MSG_CLASS_ERROR;
 				msg[1] = PEER_MSG_ERR_PROTOCOL;
 
-				if (bi_putblk(si_ic(si), (char *)msg, sizeof(msg)) == -1)
+				if (ci_putblk(si_ic(si), (char *)msg, sizeof(msg)) == -1)
 					goto full;
 				appctx->st0 = PEER_SESS_ST_END;
 				/* fall through */
 			}
 			case PEER_SESS_ST_END: {
+				if (curpeer) {
+					HA_SPIN_UNLOCK(PEER_LOCK, &curpeer->lock);
+					curpeer = NULL;
+				}
 				si_shutw(si);
 				si_shutr(si);
 				si_ic(si)->flags |= CF_READ_NULL;
@@ -1699,6 +1818,9 @@ incomplete:
 	}
 out:
 	si_oc(si)->flags |= CF_READ_DONTWAIT;
+
+	if (curpeer)
+		HA_SPIN_UNLOCK(PEER_LOCK, &curpeer->lock);
 	return;
 full:
 	si_applet_cant_put(si);
@@ -1717,8 +1839,6 @@ static struct applet peer_applet = {
  */
 static void peer_session_forceshutdown(struct appctx *appctx)
 {
-	struct peer *ps;
-
 	/* Note that the peer sessions which have just been created
 	 * (->st0 == PEER_SESS_ST_CONNECT) must not
 	 * be shutdown, if not, the TCP session will never be closed
@@ -1731,16 +1851,7 @@ static void peer_session_forceshutdown(struct appctx *appctx)
 	if (appctx->applet != &peer_applet)
 		return;
 
-	ps = appctx->ctx.peers.ptr;
-	/* we're killing a connection, we must apply a random delay before
-	 * retrying otherwise the other end will do the same and we can loop
-	 * for a while.
-	 */
-	if (ps)
-		ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
-
 	appctx->st0 = PEER_SESS_ST_END;
-	appctx->ctx.peers.ptr = NULL;
 	appctx_wakeup(appctx);
 }
 
@@ -1763,40 +1874,33 @@ void peers_setup_frontend(struct proxy *fe)
  */
 static struct appctx *peer_session_create(struct peers *peers, struct peer *peer)
 {
-	struct listener *l = LIST_NEXT(&peers->peers_fe->conf.listeners, struct listener *, by_fe);
-	struct proxy *p = l->frontend; /* attached frontend */
+	struct proxy *p = peers->peers_fe; /* attached frontend */
 	struct appctx *appctx;
 	struct session *sess;
 	struct stream *s;
-	struct task *t;
 	struct connection *conn;
+	struct conn_stream *cs;
 
 	peer->reconnect = tick_add(now_ms, MS_TO_TICKS(5000));
 	peer->statuscode = PEER_SESS_SC_CONNECTCODE;
 	s = NULL;
 
-	appctx = appctx_new(&peer_applet);
+	appctx = appctx_new(&peer_applet, tid_bit);
 	if (!appctx)
 		goto out_close;
 
 	appctx->st0 = PEER_SESS_ST_CONNECT;
 	appctx->ctx.peers.ptr = (void *)peer;
 
-	sess = session_new(p, l, &appctx->obj_type);
+	sess = session_new(p, NULL, &appctx->obj_type);
 	if (!sess) {
-		Alert("out of memory in peer_session_create().\n");
+		ha_alert("out of memory in peer_session_create().\n");
 		goto out_free_appctx;
 	}
 
-	if ((t = task_new()) == NULL) {
-		Alert("out of memory in peer_session_create().\n");
+	if ((s = stream_new(sess, &appctx->obj_type)) == NULL) {
+		ha_alert("Failed to initialize stream in peer_session_create().\n");
 		goto out_free_sess;
-	}
-	t->nice = l->nice;
-
-	if ((s = stream_new(sess, t, &appctx->obj_type)) == NULL) {
-		Alert("Failed to initialize stream in peer_session_create().\n");
-		goto out_free_task;
 	}
 
 	/* The tasks below are normally what is supposed to be done by
@@ -1818,8 +1922,12 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 	if (unlikely((conn = conn_new()) == NULL))
 		goto out_free_strm;
 
+	if (unlikely((cs = cs_new(conn)) == NULL))
+		goto out_free_conn;
+
 	conn_prepare(conn, peer->proto, peer->xprt);
-	si_attach_conn(&s->si[1], conn);
+	conn_install_mux(conn, &mux_pt_ops, cs);
+	si_attach_cs(&s->si[1], cs);
 
 	conn->target = s->target = &s->be->obj_type;
 	memcpy(&conn->addr.to, &peer->addr, sizeof(conn->addr.to));
@@ -1828,22 +1936,16 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 
 	s->res.flags |= CF_READ_DONTWAIT;
 
-	l->nbconn++; /* warning! right now, it's up to the handler to decrease this */
-	p->feconn++;/* beconn will be increased later */
-	jobs++;
-	if (!(s->sess->listener->options & LI_O_UNLIMITED))
-		actconn++;
-	totalconn++;
-
 	peer->appctx = appctx;
+	task_wakeup(s->task, TASK_WOKEN_INIT);
 	return appctx;
 
 	/* Error unrolling */
+ out_free_conn:
+	conn_free(conn);
  out_free_strm:
 	LIST_DEL(&s->list);
-	pool_free2(pool2_stream, s);
- out_free_task:
-	task_free(t);
+	pool_free(pool_head_stream, s);
  out_free_sess:
 	session_free(sess);
  out_free_appctx:
@@ -1872,6 +1974,10 @@ static struct task *process_peer_sync(struct task * task)
 		peers->sync_task = NULL;
 		return NULL;
 	}
+
+	/* Acquire lock for all peers of the section */
+	for (ps = peers->remote; ps; ps = ps->next)
+		HA_SPIN_LOCK(PEER_LOCK, &ps->lock);
 
 	if (!stopping) {
 		/* Normal case (not soft stop)*/
@@ -1975,7 +2081,7 @@ static struct task *process_peer_sync(struct task * task)
 			/* We've just recieved the signal */
 			if (!(peers->flags & PEERS_F_DONOTSTOP)) {
 				/* add DO NOT STOP flag if not present */
-				jobs++;
+				HA_ATOMIC_ADD(&jobs, 1);
 				peers->flags |= PEERS_F_DONOTSTOP;
 				ps = peers->local;
 				for (st = ps->tables; st ; st = st->next)
@@ -1984,6 +2090,11 @@ static struct task *process_peer_sync(struct task * task)
 
 			/* disconnect all connected peers */
 			for (ps = peers->remote; ps; ps = ps->next) {
+				/* we're killing a connection, we must apply a random delay before
+				 * retrying otherwise the other end will do the same and we can loop
+				 * for a while.
+				 */
+				ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
 				if (ps->appctx) {
 					peer_session_forceshutdown(ps->appctx);
 					ps->appctx = NULL;
@@ -1995,7 +2106,7 @@ static struct task *process_peer_sync(struct task * task)
 		if (ps->flags & PEER_F_TEACH_COMPLETE) {
 			if (peers->flags & PEERS_F_DONOTSTOP) {
 				/* resync of new process was complete, current process can die now */
-				jobs--;
+				HA_ATOMIC_SUB(&jobs, 1);
 				peers->flags &= ~PEERS_F_DONOTSTOP;
 				for (st = ps->tables; st ; st = st->next)
 					st->table->syncing--;
@@ -2019,7 +2130,7 @@ static struct task *process_peer_sync(struct task * task)
 				/* Other error cases */
 				if (peers->flags & PEERS_F_DONOTSTOP) {
 					/* unable to resync new process, current process can die now */
-					jobs--;
+					HA_ATOMIC_SUB(&jobs, 1);
 					peers->flags &= ~PEERS_F_DONOTSTOP;
 					for (st = ps->tables; st ; st = st->next)
 						st->table->syncing--;
@@ -2037,6 +2148,11 @@ static struct task *process_peer_sync(struct task * task)
 			}
 		}
 	} /* stopping */
+
+	/* Release lock for all peers of the section */
+	for (ps = peers->remote; ps; ps = ps->next)
+		HA_SPIN_UNLOCK(PEER_LOCK, &ps->lock);
+
 	/* Wakeup for re-connect */
 	return task;
 }
@@ -2056,9 +2172,8 @@ void peers_init_sync(struct peers *peers)
 
 	list_for_each_entry(listener, &peers->peers_fe->conf.listeners, by_fe)
 		listener->maxconn = peers->peers_fe->maxconn;
-	peers->sync_task = task_new();
+	peers->sync_task = task_new(MAX_THREADS_MASK);
 	peers->sync_task->process = process_peer_sync;
-	peers->sync_task->expire = TICK_ETERNITY;
 	peers->sync_task->context = (void *)peers;
 	peers->sighandler = signal_register_task(0, peers->sync_task, 0);
 	task_wakeup(peers->sync_task, TASK_WOKEN_INIT);

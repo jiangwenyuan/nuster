@@ -50,19 +50,23 @@ void srv_compute_all_admin_states(struct proxy *px);
 int srv_set_addr_via_libc(struct server *srv, int *err_code);
 int srv_init_addr(void);
 struct server *cli_find_server(struct appctx *appctx, char *arg);
+void servers_update_status(void);
+
+extern struct list updated_servers;
 
 /* functions related to server name resolution */
-int snr_update_srv_status(struct server *s);
-int snr_resolution_cb(struct dns_resolution *resolution, struct dns_nameserver *nameserver, struct dns_response_packet *dns_p);
-int snr_resolution_error_cb(struct dns_resolution *resolution, int error_code);
+int snr_update_srv_status(struct server *s, int has_no_ip);
+const char *update_server_fqdn(struct server *server, const char *fqdn, const char *updater, int dns_locked);
+int snr_resolution_cb(struct dns_requester *requester, struct dns_nameserver *nameserver);
+int snr_resolution_error_cb(struct dns_requester *requester, int error_code);
+struct server *snr_check_ip_callback(struct server *srv, void *ip, unsigned char *ip_family);
 
 /* increase the number of cumulated connections on the designated server */
 static void inline srv_inc_sess_ctr(struct server *s)
 {
-	s->counters.cum_sess++;
-	update_freq_ctr(&s->sess_per_sec, 1);
-	if (s->sess_per_sec.curr_ctr > s->counters.sps_max)
-		s->counters.sps_max = s->sess_per_sec.curr_ctr;
+	HA_ATOMIC_ADD(&s->counters.cum_sess, 1);
+	HA_ATOMIC_UPDATE_MAX(&s->counters.sps_max,
+			     update_freq_ctr(&s->sess_per_sec, 1));
 }
 
 /* set the time of last session on the designated server */
@@ -100,7 +104,7 @@ static inline unsigned int server_throttle_rate(struct server *sv)
 	if (!sv->uweight)
 		return 100;
 
-	return (100U * px->lbprm.wmult * sv->eweight + px->lbprm.wdiv - 1) / (px->lbprm.wdiv * sv->uweight);
+	return (100U * px->lbprm.wmult * sv->cur_eweight + px->lbprm.wdiv - 1) / (px->lbprm.wdiv * sv->uweight);
 }
 
 /*
@@ -131,7 +135,7 @@ const char *server_parse_maxconn_change_request(struct server *sv,
  */
 static inline int server_is_draining(const struct server *s)
 {
-	return !s->uweight || (s->admin & SRV_ADMF_DRAIN);
+	return !s->uweight || (s->cur_admin & SRV_ADMF_DRAIN);
 }
 
 /* Shutdown all connections of a server. The caller must pass a termination
@@ -146,45 +150,11 @@ void srv_shutdown_streams(struct server *srv, int why);
  */
 void srv_shutdown_backup_streams(struct proxy *px, int why);
 
-/* Appends some information to a message string related to a server going UP or
- * DOWN.  If both <forced> and <reason> are null and the server tracks another
- * one, a "via" information will be provided to know where the status came from.
- * If <reason> is non-null, the entire string will be appended after a comma and
- * a space (eg: to report some information from the check that changed the state).
- * If <xferred> is non-negative, some information about requeued sessions are
- * provided.
- */
-void srv_append_status(struct chunk *msg, struct server *s, const char *reason, int xferred, int forced);
+void srv_append_status(struct chunk *msg, struct server *s, struct check *, int xferred, int forced);
 
-/* Marks server <s> down, regardless of its checks' statuses, notifies by all
- * available means, recounts the remaining servers on the proxy and transfers
- * queued sessions whenever possible to other servers. It automatically
- * recomputes the number of servers, but not the map. Maintenance servers are
- * ignored. It reports <reason> if non-null as the reason for going down. Note
- * that it makes use of the trash to build the log strings, so <reason> must
- * not be placed there.
- */
-void srv_set_stopped(struct server *s, const char *reason);
-
-/* Marks server <s> up regardless of its checks' statuses and provided it isn't
- * in maintenance. Notifies by all available means, recounts the remaining
- * servers on the proxy and tries to grab requests from the proxy. It
- * automatically recomputes the number of servers, but not the map. Maintenance
- * servers are ignored. It reports <reason> if non-null as the reason for going
- * up. Note that it makes use of the trash to build the log strings, so <reason>
- * must not be placed there.
- */
-void srv_set_running(struct server *s, const char *reason);
-
-/* Marks server <s> stopping regardless of its checks' statuses and provided it
- * isn't in maintenance. Notifies by all available means, recounts the remaining
- * servers on the proxy and tries to grab requests from the proxy. It
- * automatically recomputes the number of servers, but not the map. Maintenance
- * servers are ignored. It reports <reason> if non-null as the reason for going
- * up. Note that it makes use of the trash to build the log strings, so <reason>
- * must not be placed there.
- */
-void srv_set_stopping(struct server *s, const char *reason);
+void srv_set_stopped(struct server *s, const char *reason, struct check *check);
+void srv_set_running(struct server *s, const char *reason, struct check *check);
+void srv_set_stopping(struct server *s, const char *reason, struct check *check);
 
 /* Enables admin flag <mode> (among SRV_ADMF_*) on server <s>. This is used to
  * enforce either maint mode or drain mode. It is not allowed to set more than
@@ -203,6 +173,11 @@ void srv_set_admin_flag(struct server *s, enum srv_admin mode, const char *cause
  * either the flag is already cleared or no flag is passed, nothing is done.
  */
 void srv_clr_admin_flag(struct server *s, enum srv_admin mode);
+
+/* Calculates the dynamic persitent cookie for a server, if a secret key has
+ * been provided.
+ */
+void srv_set_dyncookie(struct server *s);
 
 /* Puts server <s> into maintenance mode, and propagate that status down to all
  * tracking servers.

@@ -25,18 +25,7 @@
 #include <string.h>
 
 #include <types/listener.h>
-
-/* This function adds the specified listener's file descriptor to the polling
- * lists if it is in the LI_LISTEN state. The listener enters LI_READY or
- * LI_FULL state depending on its number of connections.
- */
-void enable_listener(struct listener *listener);
-
-/* This function removes the specified listener's file descriptor from the
- * polling lists if it is in the LI_READY or in the LI_FULL state. The listener
- * enters LI_LISTEN.
- */
-void disable_listener(struct listener *listener);
+#include <types/cli.h>
 
 /* This function tries to temporarily disable a listener, depending on the OS
  * capabilities. Linux unbinds the listen socket after a SHUT_RD, and ignores
@@ -53,11 +42,6 @@ int pause_listener(struct listener *l);
  */
 int resume_listener(struct listener *l);
 
-/* Marks a ready listener as full so that the session code tries to re-enable
- * it upon next close() using resume_listener().
- */
-void listener_full(struct listener *l);
-
 /* This function adds all of the protocol's listener's file descriptors to the
  * polling lists when they are in the LI_LISTEN state. It is intended to be
  * used as a protocol's generic enable_all() primitive, for use after the
@@ -73,26 +57,44 @@ int enable_all_listeners(struct protocol *proto);
  */
 int disable_all_listeners(struct protocol *proto);
 
-/* Marks a ready listener as limited so that we only try to re-enable it when
- * resources are free again. It will be queued into the specified queue.
- */
-void limit_listener(struct listener *l, struct list *list);
-
 /* Dequeues all of the listeners waiting for a resource in wait queue <queue>. */
 void dequeue_all_listeners(struct list *list);
 
+/* Must be called with the lock held. Depending on <do_close> value, it does
+ * what unbind_listener or unbind_listener_no_close should do.
+ */
+void do_unbind_listener(struct listener *listener, int do_close);
+
 /* This function closes the listening socket for the specified listener,
  * provided that it's already in a listening state. The listener enters the
- * LI_ASSIGNED state. It always returns ERR_NONE. This function is intended
- * to be used as a generic function for standard protocols.
+ * LI_ASSIGNED state. This function is intended to be used as a generic
+ * function for standard protocols.
  */
-int unbind_listener(struct listener *listener);
+void unbind_listener(struct listener *listener);
+
+/* This function pretends the listener is dead, but keeps the FD opened, so
+ * that we can provide it, for conf reloading.
+ */
+void unbind_listener_no_close(struct listener *listener);
 
 /* This function closes all listening sockets bound to the protocol <proto>,
  * and the listeners end in LI_ASSIGNED state if they were higher. It does not
  * detach them from the protocol. It always returns ERR_NONE.
  */
 int unbind_all_listeners(struct protocol *proto);
+
+
+/* creates one or multiple listeners for bind_conf <bc> on sockaddr <ss> on port
+ * range <portl> to <porth>, and possibly attached to fd <fd> (or -1 for auto
+ * allocation). The address family is taken from ss->ss_family. The number of
+ * jobs and listeners is automatically increased by the number of listeners
+ * created. If the <inherited> argument is set to 1, it specifies that the FD
+ * was obtained from a parent process.
+ * It returns non-zero on success, zero on error with the error message
+ * set in <err>.
+ */
+int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
+                     int portl, int porth, int fd, int inherited, char **err);
 
 /* Delete a listener from its protocol's list of listeners. The listener's
  * state is automatically updated from LI_ASSIGNED to LI_INIT. The protocol's
@@ -107,6 +109,12 @@ void delete_listener(struct listener *listener);
  */
 void listener_accept(int fd);
 
+/* Notify the listener that a connection initiated from it was released. This
+ * is used to keep the connection count consistent and to possibly re-open
+ * listening when it was limited.
+ */
+void listener_release(struct listener *l);
+
 /*
  * Registers the bind keyword list <kwl> as a list of valid keywords for next
  * parsing sessions.
@@ -119,29 +127,45 @@ struct bind_kw *bind_find_kw(const char *kw);
 /* Dumps all registered "bind" keywords to the <out> string pointer. */
 void bind_dump_kws(char **out);
 
-/* allocate an bind_conf struct for a bind line, and chain it to list head <lh>.
+/* allocate an bind_conf struct for a bind line, and chain it to the frontend <fe>.
  * If <arg> is not NULL, it is duplicated into ->arg to store useful config
  * information for error reporting.
  */
-static inline struct bind_conf *bind_conf_alloc(struct list *lh, const char *file, int line, const char *arg)
+static inline struct bind_conf *bind_conf_alloc(struct proxy *fe, const char *file,
+                                 int line, const char *arg, struct xprt_ops *xprt)
 {
 	struct bind_conf *bind_conf = (void *)calloc(1, sizeof(struct bind_conf));
 
 	bind_conf->file = strdup(file);
 	bind_conf->line = line;
-	if (lh)
-		LIST_ADDQ(lh, &bind_conf->by_fe);
+	LIST_ADDQ(&fe->conf.bind, &bind_conf->by_fe);
 	if (arg)
 		bind_conf->arg = strdup(arg);
 
 	bind_conf->ux.uid = -1;
 	bind_conf->ux.gid = -1;
 	bind_conf->ux.mode = 0;
+	bind_conf->xprt = xprt;
+	bind_conf->frontend = fe;
+	bind_conf->severity_output = CLI_SEVERITY_NONE;
 
 	LIST_INIT(&bind_conf->listeners);
 	return bind_conf;
 }
 
+static inline const char *listener_state_str(const struct listener *l)
+{
+	static const char *states[9] = {
+		"NEW", "INI", "ASS", "PAU", "ZOM", "LIS", "RDY", "FUL", "LIM",
+	};
+	unsigned int st = l->state;
+
+	if (st > sizeof(states) / sizeof(*states))
+		return "INVALID";
+	return states[st];
+}
+
+extern struct xfer_sock_list *xfer_sock_list;
 #endif /* _PROTO_LISTENER_H */
 
 /*

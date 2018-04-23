@@ -22,7 +22,6 @@
 #include <types/connection.h>
 #include <types/obj_type.h>
 #include <types/task.h>
-#include <types/server.h>
 
 /* enum used by check->result. Must remain in this order, as some code uses
  * result >= CHK_RES_PASSED to declare success.
@@ -157,13 +156,13 @@ enum {
 
 struct check {
 	struct xprt_ops *xprt;			/* transport layer operations for health checks */
-	struct connection *conn;		/* connection state for health checks */
-	unsigned short port;			/* the port to use for the health checks */
+	struct conn_stream *cs;			/* conn_stream state for health checks */
 	struct buffer *bi, *bo;			/* input and output buffers to send/recv check */
 	struct task *task;			/* the task associated to the health check processing, NULL if disabled */
 	struct timeval start;			/* last health check start time */
 	long duration;				/* time in ms took to finish last health check */
 	short status, code;			/* check result, check code */
+	unsigned short port;			/* the port to use for the health checks */
 	char desc[HCHK_DESC_LEN];		/* health check description */
 	int use_ssl;				/* use SSL for health checks */
 	int send_proxy;				/* send a PROXY protocol header with checks */
@@ -177,13 +176,14 @@ struct check {
 						 * rise to rise+fall-1 = good */
 	int rise, fall;				/* time in iterations */
 	int type;				/* Check type, one of PR_O2_*_CHK */
-	char *send_string;			/* optionally send a string when connecting to the agent */
 	int send_string_len;			/* length of agent command string */
+	char *send_string;			/* optionally send a string when connecting to the agent */
 	struct server *server;			/* back-pointer to server */
 	char **argv;				/* the arguments to use if running a process-based check */
 	char **envp;				/* the environment to use if running a process-based check */
 	struct pid_list *curpid;		/* entry in pid_list used for current process-based test, or -1 if not in test */
 	struct sockaddr_storage addr;   	/* the address to check */
+	char *sni;				/* Server name */
 };
 
 struct check_status {

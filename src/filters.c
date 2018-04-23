@@ -18,6 +18,7 @@
 #include <common/errors.h>
 #include <common/namespace.h>
 #include <common/standard.h>
+#include <common/hathreads.h>
 
 #include <types/filters.h>
 #include <types/proto_http.h>
@@ -30,7 +31,7 @@
 #include <proto/stream_interface.h>
 
 /* Pool used to allocate filters */
-struct pool_head *pool2_filter = NULL;
+struct pool_head *pool_head_filter = NULL;
 
 static int handle_analyzer_result(struct stream *s, struct channel *chn, unsigned int an_bit, int ret);
 
@@ -251,7 +252,7 @@ parse_filter(char **args, int section_type, struct proxy *curpx,
  * the configuration parsing. Filters can finish to fill their config. Returns
  * (ERR_ALERT|ERR_FATAL) if an error occurs, 0 otherwise.
  */
-int
+static int
 flt_init(struct proxy *proxy)
 {
 	struct flt_conf *fconf;
@@ -261,6 +262,60 @@ flt_init(struct proxy *proxy)
 			return ERR_ALERT|ERR_FATAL;
 	}
 	return 0;
+}
+
+/*
+ * Calls 'init_per_thread' callback for all filters attached to a proxy for each
+ * threads. This happens after the thread creation. Filters can finish to fill
+ * their config. Returns (ERR_ALERT|ERR_FATAL) if an error occurs, 0 otherwise.
+ */
+static int
+flt_init_per_thread(struct proxy *proxy)
+{
+	struct flt_conf *fconf;
+
+	list_for_each_entry(fconf, &proxy->filter_configs, list) {
+		if (fconf->ops->init_per_thread && fconf->ops->init_per_thread(proxy, fconf) < 0)
+			return ERR_ALERT|ERR_FATAL;
+	}
+	return 0;
+}
+
+/* Calls flt_init() for all proxies, see above */
+static int
+flt_init_all()
+{
+	struct proxy *px;
+	int err_code = 0;
+
+	for (px = proxies_list; px; px = px->next) {
+		err_code |= flt_init(px);
+		if (err_code & (ERR_ABORT|ERR_FATAL)) {
+			ha_alert("Failed to initialize filters for proxy '%s'.\n",
+				 px->id);
+			return err_code;
+		}
+	}
+	return 0;
+}
+
+/* Calls flt_init_per_thread() for all proxies, see above.  Be carefull here, it
+ * returns 0 if an error occured. This is the opposite of flt_init_all. */
+static int
+flt_init_all_per_thread()
+{
+	struct proxy *px;
+	int err_code = 0;
+
+	for (px = proxies_list; px; px = px->next) {
+		err_code = flt_init_per_thread(px);
+		if (err_code & (ERR_ABORT|ERR_FATAL)) {
+			ha_alert("Failed to initialize filters for proxy '%s' for thread %u.\n",
+				 px->id, tid);
+			return 0;
+		}
+	}
+	return 1;
 }
 
 /*
@@ -299,11 +354,37 @@ flt_deinit(struct proxy *proxy)
 	}
 }
 
+/*
+ * Calls 'denit_per_thread' callback for all filters attached to a proxy for
+ * each threads. This happens before exiting a thread.
+ */
+void
+flt_deinit_per_thread(struct proxy *proxy)
+{
+	struct flt_conf *fconf, *back;
+
+	list_for_each_entry_safe(fconf, back, &proxy->filter_configs, list) {
+		if (fconf->ops->deinit_per_thread)
+			fconf->ops->deinit_per_thread(proxy, fconf);
+	}
+}
+
+
+/* Calls flt_deinit_per_thread() for all proxies, see above */
+static void
+flt_deinit_all_per_thread()
+{
+	struct proxy *px;
+
+	for (px = proxies_list; px; px = px->next)
+		flt_deinit_per_thread(px);
+}
+
 /* Attaches a filter to a stream. Returns -1 if an error occurs, 0 otherwise. */
 static int
 flt_stream_add_filter(struct stream *s, struct flt_conf *fconf, unsigned int flags)
 {
-	struct filter *f = pool_alloc2(pool2_filter);
+	struct filter *f = pool_alloc(pool_head_filter);
 
 	if (!f) /* not enough memory */
 		return -1;
@@ -314,7 +395,7 @@ flt_stream_add_filter(struct stream *s, struct flt_conf *fconf, unsigned int fla
 	if (FLT_OPS(f)->attach) {
 		int ret = FLT_OPS(f)->attach(s, f);
 		if (ret <= 0) {
-			pool_free2(pool2_filter, f);
+			pool_free(pool_head_filter, f);
 			return ret;
 		}
 	}
@@ -358,7 +439,7 @@ flt_stream_release(struct stream *s, int only_backend)
 			if (FLT_OPS(filter)->detach)
 				FLT_OPS(filter)->detach(s, filter);
 			LIST_DEL(&filter->list);
-			pool_free2(pool2_filter, filter);
+			pool_free(pool_head_filter, filter);
 		}
 	}
 	if (LIST_ISEMPTY(&strm_flt(s)->filters))
@@ -1070,7 +1151,7 @@ handle_analyzer_result(struct stream *s, struct channel *chn,
 			http_reply_and_close(s, s->txn->status, NULL);
 		else {
 			s->txn->status = 400;
-			http_reply_and_close(s, 400, http_error_message(s, HTTP_ERR_400));
+			http_reply_and_close(s, 400, http_error_message(s));
 		}
 	}
 
@@ -1103,15 +1184,18 @@ __attribute__((constructor))
 static void
 __filters_init(void)
 {
-        pool2_filter = create_pool("filter", sizeof(struct filter), MEM_F_SHARED);
+        pool_head_filter = create_pool("filter", sizeof(struct filter), MEM_F_SHARED);
 	cfg_register_keywords(&cfg_kws);
+	hap_register_post_check(flt_init_all);
+	hap_register_per_thread_init(flt_init_all_per_thread);
+	hap_register_per_thread_deinit(flt_deinit_all_per_thread);
 }
 
 __attribute__((destructor))
 static void
 __filters_deinit(void)
 {
-	pool_destroy2(pool2_filter);
+	pool_destroy(pool_head_filter);
 }
 
 /*

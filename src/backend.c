@@ -41,6 +41,7 @@
 #include <proto/lb_fwrr.h>
 #include <proto/lb_map.h>
 #include <proto/log.h>
+#include <proto/mux_pt.h>
 #include <proto/obj_type.h>
 #include <proto/payload.h>
 #include <proto/protocol.h>
@@ -51,7 +52,6 @@
 #include <proto/sample.h>
 #include <proto/server.h>
 #include <proto/stream.h>
-#include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 
@@ -98,6 +98,12 @@ static unsigned int gen_hash(const struct proxy* px, const char* key, unsigned l
  * This function also recomputes the total active and backup weights. However,
  * it does not update tot_weight nor tot_used. Use update_backend_weight() for
  * this.
+ * This functions is designed to be called before server's weight and state
+ * commit so it uses 'next' weight and states values.
+ *
+ * threads: this is the caller responsibility to lock data. For now, this
+ * function is called from lb modules, so it should be ok. But if you need to
+ * call it from another place, be careful (and update this comment).
  */
 void recount_servers(struct proxy *px)
 {
@@ -107,7 +113,7 @@ void recount_servers(struct proxy *px)
 	px->lbprm.tot_wact = px->lbprm.tot_wbck = 0;
 	px->lbprm.fbck = NULL;
 	for (srv = px->srv; srv != NULL; srv = srv->next) {
-		if (!srv_is_usable(srv))
+		if (!srv_willbe_usable(srv))
 			continue;
 
 		if (srv->flags & SRV_F_BACKUP) {
@@ -116,11 +122,11 @@ void recount_servers(struct proxy *px)
 				px->lbprm.fbck = srv;
 			px->srv_bck++;
 			srv->cumulative_weight = px->lbprm.tot_wbck;
-			px->lbprm.tot_wbck += srv->eweight;
+			px->lbprm.tot_wbck += srv->next_eweight;
 		} else {
 			px->srv_act++;
 			srv->cumulative_weight = px->lbprm.tot_wact;
-			px->lbprm.tot_wact += srv->eweight;
+			px->lbprm.tot_wact += srv->next_eweight;
 		}
 	}
 }
@@ -128,6 +134,10 @@ void recount_servers(struct proxy *px)
 /* This function simply updates the backend's tot_weight and tot_used values
  * after servers weights have been updated. It is designed to be used after
  * recount_servers() or equivalent.
+ *
+ * threads: this is the caller responsibility to lock data. For now, this
+ * function is called from lb modules, so it should be ok. But if you need to
+ * call it from another place, be careful (and update this comment).
  */
 void update_backend_weight(struct proxy *px)
 {
@@ -137,7 +147,7 @@ void update_backend_weight(struct proxy *px)
 	}
 	else if (px->lbprm.fbck) {
 		/* use only the first backup server */
-		px->lbprm.tot_weight = px->lbprm.fbck->eweight;
+		px->lbprm.tot_weight = px->lbprm.fbck->next_eweight;
 		px->lbprm.tot_used = 1;
 	}
 	else {
@@ -153,7 +163,7 @@ void update_backend_weight(struct proxy *px)
  * If any server is found, it will be returned. If no valid server is found,
  * NULL is returned.
  */
-struct server *get_server_sh(struct proxy *px, const char *addr, int len)
+static struct server *get_server_sh(struct proxy *px, const char *addr, int len)
 {
 	unsigned int h, l;
 
@@ -191,7 +201,7 @@ struct server *get_server_sh(struct proxy *px, const char *addr, int len)
  * algorithm out of a tens because it gave him the best results.
  *
  */
-struct server *get_server_uh(struct proxy *px, char *uri, int uri_len)
+static struct server *get_server_uh(struct proxy *px, char *uri, int uri_len)
 {
 	unsigned int hash = 0;
 	int c;
@@ -232,7 +242,7 @@ struct server *get_server_uh(struct proxy *px, char *uri, int uri_len)
 		return map_get_server_hash(px, hash);
 }
 
-/* 
+/*
  * This function tries to find a running server for the proxy <px> following
  * the URL parameter hash method. It looks for a specific parameter in the
  * URL and hashes it to compute the server ID. This is useful to optimize
@@ -241,7 +251,7 @@ struct server *get_server_uh(struct proxy *px, char *uri, int uri_len)
  * is returned. If any server is found, it will be returned. If no valid server
  * is found, NULL is returned.
  */
-struct server *get_server_ph(struct proxy *px, const char *uri, int uri_len)
+static struct server *get_server_ph(struct proxy *px, const char *uri, int uri_len)
 {
 	unsigned int hash = 0;
 	const char *start, *end;
@@ -303,7 +313,7 @@ struct server *get_server_ph(struct proxy *px, const char *uri, int uri_len)
 /*
  * this does the same as the previous server_ph, but check the body contents
  */
-struct server *get_server_ph_post(struct stream *s)
+static struct server *get_server_ph_post(struct stream *s)
 {
 	unsigned int hash = 0;
 	struct http_txn *txn  = s->txn;
@@ -384,7 +394,7 @@ struct server *get_server_ph_post(struct stream *s)
  * is returned. If any server is found, it will be returned. If no valid server
  * is found, NULL is returned.
  */
-struct server *get_server_hh(struct stream *s)
+static struct server *get_server_hh(struct stream *s)
 {
 	unsigned int hash = 0;
 	struct http_txn *txn  = s->txn;
@@ -460,7 +470,7 @@ struct server *get_server_hh(struct stream *s)
 }
 
 /* RDP Cookie HASH.  */
-struct server *get_server_rch(struct stream *s)
+static struct server *get_server_rch(struct stream *s)
 {
 	unsigned int hash = 0;
 	struct proxy    *px   = s->be;
@@ -502,7 +512,7 @@ struct server *get_server_rch(struct stream *s)
 	else
 		return map_get_server_hash(px, hash);
 }
- 
+
 /*
  * This function applies the load-balancing algorithm to the stream, as
  * defined by the backend it is assigned to. The stream is then marked as
@@ -557,7 +567,7 @@ int assign_server(struct stream *s)
 
 	srv = NULL;
 	s->target = NULL;
-	conn = objt_conn(s->si[1].end);
+	conn = cs_conn(objt_cs(s->si[1].end));
 
 	if (conn &&
 	    (conn->flags & CO_FL_CONNECTED) &&
@@ -568,7 +578,7 @@ int assign_server(struct stream *s)
 	      (!s->be->max_ka_queue ||
 	       server_has_room(__objt_server(conn->target)) ||
 	       (__objt_server(conn->target)->nbpend + 1) < s->be->max_ka_queue))) &&
-	    srv_is_usable(__objt_server(conn->target))) {
+	    srv_currently_usable(__objt_server(conn->target))) {
 		/* This stream was relying on a server in a previous request
 		 * and the proxy has "option prefer-last-server" set
 		 * and balance algorithm dont tell us to do otherwise, so
@@ -578,6 +588,7 @@ int assign_server(struct stream *s)
 		s->target = &srv->obj_type;
 	}
 	else if (s->be->lbprm.algo & BE_LB_KIND) {
+
 		/* we must check if we have at least one server available */
 		if (!s->be->lbprm.tot_weight) {
 			err = SRV_STATUS_NOSRV;
@@ -700,8 +711,8 @@ int assign_server(struct stream *s)
 			goto out;
 		}
 		else if (srv != prev_srv) {
-			s->be->be_counters.cum_lbconn++;
-			srv->counters.cum_lbconn++;
+			HA_ATOMIC_ADD(&s->be->be_counters.cum_lbconn, 1);
+			HA_ATOMIC_ADD(&srv->counters.cum_lbconn, 1);
 		}
 		s->target = &srv->obj_type;
 	}
@@ -709,8 +720,7 @@ int assign_server(struct stream *s)
 		s->target = &s->be->obj_type;
 	}
 	else if ((s->be->options & PR_O_HTTP_PROXY) &&
-		 (conn = objt_conn(s->si[1].end)) &&
-		 is_addr(&conn->addr.to)) {
+		 conn && is_addr(&conn->addr.to)) {
 		/* in proxy mode, we need a valid destination address */
 		s->target = &s->be->obj_type;
 	}
@@ -758,11 +768,9 @@ int assign_server(struct stream *s)
 int assign_server_address(struct stream *s)
 {
 	struct connection *cli_conn = objt_conn(strm_orig(s));
-	struct connection *srv_conn = objt_conn(s->si[1].end);
+	struct connection *srv_conn = cs_conn(objt_cs(s->si[1].end));
 
-#ifdef DEBUG_FULL
-	fprintf(stderr,"assign_server_address : s=%p\n",s);
-#endif
+	DPRINTF(stderr,"assign_server_address : s=%p\n",s);
 
 	if ((s->flags & SF_DIRECT) || (s->be->lbprm.algo & BE_LB_KIND)) {
 		/* A server is necessarily known for this stream */
@@ -878,11 +886,11 @@ int assign_server_and_queue(struct stream *s)
 					s->txn->flags |= TX_CK_DOWN;
 				}
 				s->flags |= SF_REDISP;
-				prev_srv->counters.redispatches++;
-				s->be->be_counters.redispatches++;
+				HA_ATOMIC_ADD(&prev_srv->counters.redispatches, 1);
+				HA_ATOMIC_ADD(&s->be->be_counters.redispatches, 1);
 			} else {
-				prev_srv->counters.retries++;
-				s->be->be_counters.retries++;
+				HA_ATOMIC_ADD(&prev_srv->counters.retries, 1);
+				HA_ATOMIC_ADD(&s->be->be_counters.retries, 1);
 			}
 		}
 	}
@@ -962,7 +970,7 @@ static void assign_tproxy_address(struct stream *s)
 	struct server *srv = objt_server(s->target);
 	struct conn_src *src;
 	struct connection *cli_conn;
-	struct connection *srv_conn = objt_conn(s->si[1].end);
+	struct connection *srv_conn = cs_conn(objt_cs(s->si[1].end));
 
 	if (srv && srv->conn_src.opts & CO_SRC_BIND)
 		src = &srv->conn_src;
@@ -1028,23 +1036,25 @@ static void assign_tproxy_address(struct stream *s)
  */
 int connect_server(struct stream *s)
 {
-	struct connection *cli_conn;
+	struct connection *cli_conn = NULL;
 	struct connection *srv_conn;
-	struct connection *old_conn;
+	struct conn_stream *srv_cs;
+	struct conn_stream *old_cs;
 	struct server *srv;
 	int reuse = 0;
 	int err;
 
 	srv = objt_server(s->target);
-	srv_conn = objt_conn(s->si[1].end);
+	srv_cs = objt_cs(s->si[1].end);
+	srv_conn = cs_conn(srv_cs);
 	if (srv_conn)
 		reuse = s->target == srv_conn->target;
 
 	if (srv && !reuse) {
-		old_conn = srv_conn;
-		if (old_conn) {
+		old_cs = srv_cs;
+		if (old_cs) {
 			srv_conn = NULL;
-			old_conn->owner = NULL;
+			srv_cs->data = NULL;
 			si_detach_endpoint(&s->si[1]);
 			/* note: if the connection was in a server's idle
 			 * queue, it doesn't get dequeued.
@@ -1065,20 +1075,19 @@ int connect_server(struct stream *s)
 		 *  idle|  -  |  1  |    idle|  -  |  1  |   idle|  2  |  1  |
 		 *  ----+-----+-----+    ----+-----+-----+   ----+-----+-----+
 		 */
-
-		if (!LIST_ISEMPTY(&srv->idle_conns) &&
+		if (srv->idle_conns && !LIST_ISEMPTY(&srv->idle_conns[tid]) &&
 		    ((s->be->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR &&
 		     s->txn && (s->txn->flags & TX_NOT_FIRST))) {
-			srv_conn = LIST_ELEM(srv->idle_conns.n, struct connection *, list);
+			srv_conn = LIST_ELEM(srv->idle_conns[tid].n, struct connection *, list);
 		}
-		else if (!LIST_ISEMPTY(&srv->safe_conns) &&
+		else if (srv->safe_conns && !LIST_ISEMPTY(&srv->safe_conns[tid]) &&
 			 ((s->txn && (s->txn->flags & TX_NOT_FIRST)) ||
 			  (s->be->options & PR_O_REUSE_MASK) >= PR_O_REUSE_AGGR)) {
-			srv_conn = LIST_ELEM(srv->safe_conns.n, struct connection *, list);
+			srv_conn = LIST_ELEM(srv->safe_conns[tid].n, struct connection *, list);
 		}
-		else if (!LIST_ISEMPTY(&srv->idle_conns) &&
+		else if (srv->idle_conns && !LIST_ISEMPTY(&srv->idle_conns[tid]) &&
 			 (s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_ALWS) {
-			srv_conn = LIST_ELEM(srv->idle_conns.n, struct connection *, list);
+			srv_conn = LIST_ELEM(srv->idle_conns[tid].n, struct connection *, list);
 		}
 
 		/* If we've picked a connection from the pool, we now have to
@@ -1091,23 +1100,25 @@ int connect_server(struct stream *s)
 			LIST_DEL(&srv_conn->list);
 			LIST_INIT(&srv_conn->list);
 
-			if (srv_conn->owner) {
-				si_detach_endpoint(srv_conn->owner);
-				if (old_conn && !(old_conn->flags & CO_FL_PRIVATE)) {
-					si_attach_conn(srv_conn->owner, old_conn);
-					si_idle_conn(srv_conn->owner, NULL);
+			/* XXX cognet: this assumes only 1 conn_stream per
+			 * connection, has to be revisited later
+			 */
+			srv_cs = srv_conn->mux_ctx;
+
+			if (srv_conn->mux == &mux_pt_ops && srv_cs->data) {
+				si_detach_endpoint(srv_cs->data);
+				if (old_cs && !(old_cs->conn->flags & CO_FL_PRIVATE)) {
+					si_attach_cs(srv_cs->data, old_cs);
+					si_idle_cs(srv_cs->data, NULL);
 				}
 			}
-			si_attach_conn(&s->si[1], srv_conn);
+			si_attach_cs(&s->si[1], srv_cs);
 			reuse = 1;
 		}
 
 		/* we may have to release our connection if we couldn't swap it */
-		if (old_conn && !old_conn->owner) {
-			LIST_DEL(&old_conn->list);
-			conn_force_close(old_conn);
-			conn_free(old_conn);
-		}
+		if (old_cs && !old_cs->data)
+			cs_destroy(old_cs);
 	}
 
 	if (reuse) {
@@ -1126,15 +1137,16 @@ int connect_server(struct stream *s)
 		}
 	}
 
-	if (!reuse)
-		srv_conn = si_alloc_conn(&s->si[1]);
-	else {
+	if (!reuse) {
+		srv_cs = si_alloc_cs(&s->si[1], NULL);
+		srv_conn = cs_conn(srv_cs);
+	} else {
 		/* reusing our connection, take it out of the idle list */
 		LIST_DEL(&srv_conn->list);
 		LIST_INIT(&srv_conn->list);
 	}
 
-	if (!srv_conn)
+	if (!srv_cs)
 		return SF_ERR_RESOURCE;
 
 	if (!(s->flags & SF_ADDR_SET)) {
@@ -1150,33 +1162,38 @@ int connect_server(struct stream *s)
 		/* set the correct protocol on the output stream interface */
 		if (srv) {
 			conn_prepare(srv_conn, protocol_by_family(srv_conn->addr.to.ss_family), srv->xprt);
+			/* XXX: Pick the right mux, when we finally have one */
+			conn_install_mux(srv_conn, &mux_pt_ops, srv_cs);
 		}
 		else if (obj_type(s->target) == OBJ_TYPE_PROXY) {
 			/* proxies exclusively run on raw_sock right now */
-			conn_prepare(srv_conn, protocol_by_family(srv_conn->addr.to.ss_family), &raw_sock);
-			if (!objt_conn(s->si[1].end) || !objt_conn(s->si[1].end)->ctrl)
+			conn_prepare(srv_conn, protocol_by_family(srv_conn->addr.to.ss_family), xprt_get(XPRT_RAW));
+			if (!objt_cs(s->si[1].end) || !objt_cs(s->si[1].end)->conn->ctrl)
 				return SF_ERR_INTERNAL;
+			/* XXX: Pick the right mux, when we finally have one */
+			conn_install_mux(srv_conn, &mux_pt_ops, srv_cs);
 		}
 		else
 			return SF_ERR_INTERNAL;  /* how did we get there ? */
 
 		/* process the case where the server requires the PROXY protocol to be sent */
 		srv_conn->send_proxy_ofs = 0;
+		cli_conn = objt_conn(strm_orig(s));
+
 		if (srv && srv->pp_opts) {
 			srv_conn->flags |= CO_FL_PRIVATE;
 			srv_conn->send_proxy_ofs = 1; /* must compute size */
-			cli_conn = objt_conn(strm_orig(s));
 			if (cli_conn)
 				conn_get_to_addr(cli_conn);
 		}
 
-		si_attach_conn(&s->si[1], srv_conn);
+		si_attach_cs(&s->si[1], srv_cs);
 
 		assign_tproxy_address(s);
 	}
 	else {
 		/* the connection is being reused, just re-attach it */
-		si_attach_conn(&s->si[1], srv_conn);
+		si_attach_cs(&s->si[1], srv_cs);
 		s->flags |= SF_SRV_REUSED;
 	}
 
@@ -1190,6 +1207,17 @@ int connect_server(struct stream *s)
 
 	err = si_connect(&s->si[1]);
 
+#ifdef USE_OPENSSL
+	if (!reuse && cli_conn && srv &&
+	    (srv->ssl_ctx.options & SRV_SSL_O_EARLY_DATA) &&
+		    (cli_conn->flags & CO_FL_EARLY_DATA) &&
+		    !channel_is_empty(si_oc(&s->si[1])) &&
+		    srv_conn->flags & CO_FL_SSL_WAIT_HS) {
+		srv_conn->flags &= ~(CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN);
+		srv_conn->flags |= CO_FL_EARLY_SSL_HS;
+	}
+#endif
+
 	if (err != SF_ERR_NONE)
 		return err;
 
@@ -1197,10 +1225,11 @@ int connect_server(struct stream *s)
 	s->si[1].exp = tick_add_ifset(now_ms, s->be->timeout.connect);
 
 	if (srv) {
+		int count;
+
 		s->flags |= SF_CURR_SESS;
-		srv->cur_sess++;
-		if (srv->cur_sess > srv->counters.cur_sess_max)
-			srv->counters.cur_sess_max = srv->cur_sess;
+		count = HA_ATOMIC_ADD(&srv->cur_sess, 1);
+		HA_ATOMIC_UPDATE_MAX(&srv->counters.cur_sess_max, count);
 		if (s->be->lbprm.server_take_conn)
 			s->be->lbprm.server_take_conn(srv);
 
@@ -1277,8 +1306,8 @@ int srv_redispatch_connect(struct stream *s)
 			s->si[1].err_type = SI_ET_QUEUE_ERR;
 		}
 
-		srv->counters.failed_conns++;
-		s->be->be_counters.failed_conns++;
+		HA_ATOMIC_ADD(&srv->counters.failed_conns, 1);
+		HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
 		return 1;
 
 	case SRV_STATUS_NOSRV:
@@ -1287,7 +1316,7 @@ int srv_redispatch_connect(struct stream *s)
 			s->si[1].err_type = SI_ET_CONN_ERR;
 		}
 
-		s->be->be_counters.failed_conns++;
+		HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
 		return 1;
 
 	case SRV_STATUS_QUEUED:
@@ -1307,8 +1336,8 @@ int srv_redispatch_connect(struct stream *s)
 		if (srv)
 			srv_set_sess_last(srv);
 		if (srv)
-			srv->counters.failed_conns++;
-		s->be->be_counters.failed_conns++;
+			HA_ATOMIC_ADD(&srv->counters.failed_conns, 1);
+		HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
 
 		/* release other streams waiting for this server */
 		if (may_dequeue_tasks(srv, s->be))
@@ -1327,10 +1356,10 @@ int srv_redispatch_connect(struct stream *s)
 void set_backend_down(struct proxy *be)
 {
 	be->last_change = now.tv_sec;
-	be->down_trans++;
+	HA_ATOMIC_ADD(&be->down_trans, 1);
 
 	if (!(global.mode & MODE_STARTING)) {
-		Alert("%s '%s' has no server available!\n", proxy_type_str(be), be->id);
+		ha_alert("%s '%s' has no server available!\n", proxy_type_str(be), be->id);
 		send_log(be, LOG_EMERG, "%s %s has no server available!\n", proxy_type_str(be), be->id);
 	}
 }
@@ -1388,7 +1417,7 @@ int tcp_persist_rdp_cookie(struct stream *s, struct channel *req, int an_bit)
 		if (srv->addr.ss_family == AF_INET &&
 		    port == srv->svc_port &&
 		    addr == ((struct sockaddr_in *)&srv->addr)->sin_addr.s_addr) {
-			if ((srv->state != SRV_ST_STOPPED) || (px->options & PR_O_PERSIST)) {
+			if ((srv->cur_state != SRV_ST_STOPPED) || (px->options & PR_O_PERSIST)) {
 				/* we found the server and it is usable */
 				s->flags |= SF_DIRECT | SF_ASSIGNED;
 				s->target = &srv->obj_type;
@@ -1615,14 +1644,7 @@ smp_fetch_nbsrv(const struct arg *args, struct sample *smp, const char *kw, void
 	smp->data.type = SMP_T_SINT;
 	px = args->data.prx;
 
-	if (px->state == PR_STSTOPPED)
-		smp->data.u.sint = 0;
-	else if (px->srv_act)
-		smp->data.u.sint = px->srv_act;
-	else if (px->lbprm.fbck)
-		smp->data.u.sint = 1;
-	else
-		smp->data.u.sint = px->srv_bck;
+	smp->data.u.sint = be_usable_srv(px);
 
 	return 1;
 }
@@ -1639,8 +1661,8 @@ smp_fetch_srv_is_up(const struct arg *args, struct sample *smp, const char *kw, 
 
 	smp->flags = SMP_F_VOL_TEST;
 	smp->data.type = SMP_T_BOOL;
-	if (!(srv->admin & SRV_ADMF_MAINT) &&
-	    (!(srv->check.state & CHK_ST_CONFIGURED) || (srv->state != SRV_ST_STOPPED)))
+	if (!(srv->cur_admin & SRV_ADMF_MAINT) &&
+	    (!(srv->check.state & CHK_ST_CONFIGURED) || (srv->cur_state != SRV_ST_STOPPED)))
 		smp->data.u.sint = 1;
 	else
 		smp->data.u.sint = 0;
@@ -1661,7 +1683,7 @@ smp_fetch_connslots(const struct arg *args, struct sample *smp, const char *kw, 
 	smp->data.u.sint = 0;
 
 	for (iterator = args->data.prx->srv; iterator; iterator = iterator->next) {
-		if (iterator->state == SRV_ST_STOPPED)
+		if (iterator->cur_state == SRV_ST_STOPPED)
 			continue;
 
 		if (iterator->maxconn == 0 || iterator->maxqueue == 0) {
@@ -1781,12 +1803,7 @@ smp_fetch_avg_queue_size(const struct arg *args, struct sample *smp, const char 
 	smp->data.type = SMP_T_SINT;
 	px = args->data.prx;
 
-	if (px->srv_act)
-		nbsrv = px->srv_act;
-	else if (px->lbprm.fbck)
-		nbsrv = 1;
-	else
-		nbsrv = px->srv_bck;
+	nbsrv = be_usable_srv(px);
 
 	if (nbsrv > 0)
 		smp->data.u.sint = (px->totpend + nbsrv - 1) / nbsrv;
@@ -1809,6 +1826,19 @@ smp_fetch_srv_conn(const struct arg *args, struct sample *smp, const char *kw, v
 	return 1;
 }
 
+/* set temp integer to the number of connections pending in the server's queue.
+ * Accepts exactly 1 argument. Argument is a server, other types will lead to
+ * undefined behaviour.
+ */
+static int
+smp_fetch_srv_queue(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	smp->flags = SMP_F_VOL_TEST;
+	smp->data.type = SMP_T_SINT;
+	smp->data.u.sint = args->data.srv->nbpend;
+	return 1;
+}
+
 /* set temp integer to the number of enabled servers on the proxy.
  * Accepts exactly 1 argument. Argument is a server, other types will lead to
  * undefined behaviour.
@@ -1819,6 +1849,24 @@ smp_fetch_srv_sess_rate(const struct arg *args, struct sample *smp, const char *
 	smp->flags = SMP_F_VOL_TEST;
 	smp->data.type = SMP_T_SINT;
 	smp->data.u.sint = read_freq_ctr(&args->data.srv->sess_per_sec);
+	return 1;
+}
+
+static int sample_conv_nbsrv(const struct arg *args, struct sample *smp, void *private)
+{
+
+	struct proxy *px;
+
+	if (!smp_make_safe(smp))
+		return 0;
+
+	px = proxy_find_by_name(smp->data.u.str.str, PR_CAP_BE, 0);
+	if (!px)
+		return 0;
+
+	smp->data.type = SMP_T_SINT;
+	smp->data.u.sint = be_usable_srv(px);
+
 	return 1;
 }
 
@@ -1838,7 +1886,14 @@ static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ "srv_conn",      smp_fetch_srv_conn,       ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
 	{ "srv_id",        smp_fetch_srv_id,         0,           NULL, SMP_T_SINT, SMP_USE_SERVR, },
 	{ "srv_is_up",     smp_fetch_srv_is_up,      ARG1(1,SRV), NULL, SMP_T_BOOL, SMP_USE_INTRN, },
+	{ "srv_queue",     smp_fetch_srv_queue,      ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
 	{ "srv_sess_rate", smp_fetch_srv_sess_rate,  ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ /* END */ },
+}};
+
+/* Note: must not be declared <const> as its list will be overwritten */
+static struct sample_conv_kw_list sample_conv_kws = {ILH, {
+	{ "nbsrv", sample_conv_nbsrv, 0, NULL, SMP_T_STR, SMP_T_SINT },
 	{ /* END */ },
 }};
 
@@ -1855,6 +1910,7 @@ __attribute__((constructor))
 static void __backend_init(void)
 {
 	sample_register_fetches(&smp_kws);
+	sample_register_convs(&sample_conv_kws);
 	acl_register_keywords(&acl_kws);
 }
 

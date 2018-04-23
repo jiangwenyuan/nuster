@@ -19,15 +19,23 @@
 #include <common/chunk.h>
 #include <common/standard.h>
 
+#include <types/global.h>
+
 /* trash chunks used for various conversions */
-static struct chunk *trash_chunk;
-static struct chunk trash_chunk1;
-static struct chunk trash_chunk2;
+static THREAD_LOCAL struct chunk *trash_chunk;
+static THREAD_LOCAL struct chunk trash_chunk1;
+static THREAD_LOCAL struct chunk trash_chunk2;
 
 /* trash buffers used for various conversions */
 static int trash_size;
-static char *trash_buf1;
-static char *trash_buf2;
+static THREAD_LOCAL char *trash_buf1;
+static THREAD_LOCAL char *trash_buf2;
+
+/* the trash pool for reentrant allocations */
+struct pool_head *pool_head_trash = NULL;
+
+/* this is used to drain data, and as a temporary buffer for sprintf()... */
+THREAD_LOCAL struct chunk trash = { .str = NULL };
 
 /* the trash pool for reentrant allocations */
 struct pool_head *pool2_trash = NULL;
@@ -61,24 +69,68 @@ struct chunk *get_trash_chunk(void)
 /* (re)allocates the trash buffers. Returns 0 in case of failure. It is
  * possible to call this function multiple times if the trash size changes.
  */
-int alloc_trash_buffers(int bufsize)
+static int alloc_trash_buffers(int bufsize)
 {
+	chunk_init(&trash, my_realloc2(trash.str, bufsize), bufsize);
 	trash_size = bufsize;
 	trash_buf1 = (char *)my_realloc2(trash_buf1, bufsize);
 	trash_buf2 = (char *)my_realloc2(trash_buf2, bufsize);
-	pool2_trash = create_pool("trash", sizeof(struct chunk) + bufsize, MEM_F_EXACT);
-	return trash_buf1 && trash_buf2 && pool2_trash;
+	return trash.str && trash_buf1 && trash_buf2;
+}
+
+static int init_trash_buffers_per_thread()
+{
+	return alloc_trash_buffers(global.tune.bufsize);
+}
+
+static void deinit_trash_buffers_per_thread()
+{
+	chunk_destroy(&trash);
+	free(trash_buf2);
+	free(trash_buf1);
+	trash_buf2 = NULL;
+	trash_buf1 = NULL;
+}
+
+/* Initialize the trash buffers. It returns 0 if an error occurred. */
+int init_trash_buffers(int first)
+{
+	if (!first) {
+		hap_register_per_thread_init(init_trash_buffers_per_thread);
+		hap_register_per_thread_deinit(deinit_trash_buffers_per_thread);
+	}
+	pool_destroy(pool_head_trash);
+	pool_head_trash = create_pool("trash", sizeof(struct chunk) + global.tune.bufsize, MEM_F_EXACT);
+	if (!pool_head_trash || !alloc_trash_buffers(global.tune.bufsize))
+		return 0;
+	return 1;
 }
 
 /*
  * free the trash buffers
  */
-void free_trash_buffers(void)
+void deinit_trash_buffers(void)
 {
-	free(trash_buf2);
-	free(trash_buf1);
-	trash_buf2 = NULL;
-	trash_buf1 = NULL;
+	pool_destroy(pool_head_trash);
+}
+
+/*
+ * Allocate a trash chunk from the reentrant pool. The buffer starts at the
+ * end of the chunk. This chunk must be freed using free_trash_chunk(). This
+ * call may fail and the caller is responsible for checking that the returned
+ * pointer is not NULL.
+ */
+struct chunk *alloc_trash_chunk(void)
+{
+	struct chunk *chunk;
+
+	chunk = pool_alloc(pool_head_trash);
+	if (chunk) {
+		char *buf = (char *)chunk + sizeof(struct chunk);
+		*buf = 0;
+		chunk_init(chunk, buf, pool_head_trash->size - sizeof(struct chunk));
+	}
+	return chunk;
 }
 
 /*

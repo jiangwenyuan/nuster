@@ -10,8 +10,10 @@
  *
  */
 
+#define _GNU_SOURCE  // for POLLRDHUP on Linux
+
 #include <unistd.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/time.h>
 #include <sys/types.h>
 
@@ -25,11 +27,16 @@
 #include <proto/fd.h>
 
 
+#ifndef POLLRDHUP
+/* POLLRDHUP was defined late in libc, and it appeared in kernel 2.6.17 */
+#define POLLRDHUP 0
+#endif
+
 static unsigned int *fd_evts[2];
 
 /* private data */
-static struct pollfd *poll_events = NULL;
-
+static THREAD_LOCAL int nbfd = 0;
+static THREAD_LOCAL struct pollfd *poll_events = NULL;
 
 static inline void hap_fd_set(int fd, unsigned int *evts)
 {
@@ -43,8 +50,10 @@ static inline void hap_fd_clr(int fd, unsigned int *evts)
 
 REGPRM1 static void __fd_clo(int fd)
 {
+	HA_SPIN_LOCK(POLL_LOCK, &poll_lock);
 	hap_fd_clr(fd, fd_evts[DIR_RD]);
 	hap_fd_clr(fd, fd_evts[DIR_WR]);
+	HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
 }
 
 /*
@@ -53,7 +62,7 @@ REGPRM1 static void __fd_clo(int fd)
 REGPRM2 static void _do_poll(struct poller *p, int exp)
 {
 	int status;
-	int fd, nbfd;
+	int fd;
 	int wait_time;
 	int updt_idx, en, eo;
 	int fds, count;
@@ -63,19 +72,26 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	/* first, scan the update list to find changes */
 	for (updt_idx = 0; updt_idx < fd_nbupdt; updt_idx++) {
 		fd = fd_updt[updt_idx];
-		fdtab[fd].updated = 0;
-		fdtab[fd].new = 0;
 
-		if (!fdtab[fd].owner)
+		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+		fdtab[fd].update_mask &= ~tid_bit;
+
+		if (!fdtab[fd].owner) {
+			activity[tid].poll_drop++;
+			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 			continue;
+		}
+
+		fdtab[fd].new = 0;
 
 		eo = fdtab[fd].state;
 		en = fd_compute_new_polled_status(eo);
+		fdtab[fd].state = en;
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 
 		if ((eo ^ en) & FD_EV_POLLED_RW) {
 			/* poll status changed, update the lists */
-			fdtab[fd].state = en;
-
+			HA_SPIN_LOCK(POLL_LOCK, &poll_lock);
 			if ((eo & ~en) & FD_EV_POLLED_R)
 				hap_fd_clr(fd, fd_evts[DIR_RD]);
 			else if ((en & ~eo) & FD_EV_POLLED_R)
@@ -85,6 +101,7 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 				hap_fd_clr(fd, fd_evts[DIR_WR]);
 			else if ((en & ~eo) & FD_EV_POLLED_W)
 				hap_fd_set(fd, fd_evts[DIR_WR]);
+			HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
 		}
 	}
 	fd_nbupdt = 0;
@@ -93,7 +110,7 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	for (fds = 0; (fds * 8*sizeof(**fd_evts)) < maxfd; fds++) {
 		rn = fd_evts[DIR_RD][fds];
 		wn = fd_evts[DIR_WR][fds];
-	  
+
 		if (!(rn|wn))
 			continue;
 
@@ -101,18 +118,32 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 			sr = (rn >> count) & 1;
 			sw = (wn >> count) & 1;
 			if ((sr|sw)) {
+				if (!fdtab[fd].owner) {
+					/* should normally not happen here except
+					 * due to rare thread concurrency
+					 */
+					continue;
+				}
+
+				if (!(fdtab[fd].thread_mask & tid_bit)) {
+					activity[tid].poll_skip++;
+					continue;
+				}
+
 				poll_events[nbfd].fd = fd;
-				poll_events[nbfd].events = (sr ? POLLIN : 0) | (sw ? POLLOUT : 0);
+				poll_events[nbfd].events = (sr ? (POLLIN | POLLRDHUP) : 0) | (sw ? POLLOUT : 0);
 				nbfd++;
 			}
-		}		  
+		}
 	}
-      
+
 	/* now let's wait for events */
 	if (!exp)
 		wait_time = MAX_DELAY_MS;
-	else if (tick_is_expired(exp, now_ms))
+	else if (tick_is_expired(exp, now_ms)) {
+		activity[tid].poll_exp++;
 		wait_time = 0;
+	}
 	else {
 		wait_time = TICKS_TO_MS(tick_remain(now_ms, exp)) + 1;
 		if (wait_time > MAX_DELAY_MS)
@@ -125,41 +156,58 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	measure_idle();
 
 	for (count = 0; status > 0 && count < nbfd; count++) {
+		unsigned int n;
 		int e = poll_events[count].revents;
 		fd = poll_events[count].fd;
-	  
-		if (!(e & ( POLLOUT | POLLIN | POLLERR | POLLHUP )))
+
+		if (!(e & ( POLLOUT | POLLIN | POLLERR | POLLHUP | POLLRDHUP )))
 			continue;
 
 		/* ok, we found one active fd */
 		status--;
 
-		if (!fdtab[fd].owner)
+		if (!fdtab[fd].owner) {
+			activity[tid].poll_dead++;
 			continue;
+		}
 
 		/* it looks complicated but gcc can optimize it away when constants
 		 * have same values... In fact it depends on gcc :-(
 		 */
-		fdtab[fd].ev &= FD_POLL_STICKY;
 		if (POLLIN == FD_POLL_IN && POLLOUT == FD_POLL_OUT &&
 		    POLLERR == FD_POLL_ERR && POLLHUP == FD_POLL_HUP) {
-			fdtab[fd].ev |= e & (POLLIN|POLLOUT|POLLERR|POLLHUP);
+			n = e & (POLLIN|POLLOUT|POLLERR|POLLHUP);
 		}
 		else {
-			fdtab[fd].ev |=
-				((e & POLLIN ) ? FD_POLL_IN  : 0) |
+			n =     ((e & POLLIN ) ? FD_POLL_IN  : 0) |
 				((e & POLLOUT) ? FD_POLL_OUT : 0) |
 				((e & POLLERR) ? FD_POLL_ERR : 0) |
 				((e & POLLHUP) ? FD_POLL_HUP : 0);
 		}
 
-		if (fdtab[fd].ev & (FD_POLL_IN | FD_POLL_HUP | FD_POLL_ERR))
-			fd_may_recv(fd);
-
-		if (fdtab[fd].ev & (FD_POLL_OUT | FD_POLL_ERR))
-			fd_may_send(fd);
+		/* always remap RDHUP to HUP as they're used similarly */
+		if (e & POLLRDHUP) {
+			HA_ATOMIC_OR(&cur_poller.flags, HAP_POLL_F_RDHUP);
+			n |= FD_POLL_HUP;
+		}
+		fd_update_events(fd, n);
 	}
 
+}
+
+
+static int init_poll_per_thread()
+{
+	poll_events = calloc(1, sizeof(struct pollfd) * global.maxsock);
+	if (poll_events == NULL)
+		return 0;
+	return 1;
+}
+
+static void deinit_poll_per_thread()
+{
+	free(poll_events);
+	poll_events = NULL;
 }
 
 /*
@@ -169,22 +217,19 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
  */
 REGPRM1 static int _do_init(struct poller *p)
 {
-	__label__ fail_swevt, fail_srevt, fail_pe;
+	__label__ fail_swevt, fail_srevt;
 	int fd_evts_bytes;
 
 	p->private = NULL;
-	fd_evts_bytes = (global.maxsock + sizeof(**fd_evts) - 1) / sizeof(**fd_evts) * sizeof(**fd_evts);
+	fd_evts_bytes = (global.maxsock + sizeof(**fd_evts) * 8 - 1) / (sizeof(**fd_evts) * 8) * sizeof(**fd_evts);
 
-	poll_events = calloc(1, sizeof(struct pollfd) * global.maxsock);
-
-	if (poll_events == NULL)
-		goto fail_pe;
-		
 	if ((fd_evts[DIR_RD] = calloc(1, fd_evts_bytes)) == NULL)
 		goto fail_srevt;
-
 	if ((fd_evts[DIR_WR] = calloc(1, fd_evts_bytes)) == NULL)
 		goto fail_swevt;
+
+	hap_register_per_thread_init(init_poll_per_thread);
+	hap_register_per_thread_deinit(deinit_poll_per_thread);
 
 	return 1;
 
@@ -192,7 +237,6 @@ REGPRM1 static int _do_init(struct poller *p)
 	free(fd_evts[DIR_RD]);
  fail_srevt:
 	free(poll_events);
- fail_pe:
 	p->pref = 0;
 	return 0;
 }
@@ -205,7 +249,6 @@ REGPRM1 static void _do_term(struct poller *p)
 {
 	free(fd_evts[DIR_WR]);
 	free(fd_evts[DIR_RD]);
-	free(poll_events);
 	p->private = NULL;
 	p->pref = 0;
 }

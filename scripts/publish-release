@@ -8,12 +8,14 @@
 #   - copies & compresses files, changelog & docs to the final destination
 #   - shows a listing of the final file
 
-USAGE="Usage: ${0##*/} [-y] [-b branch] [-n newver] DIR"
+USAGE="Usage: ${0##*/} [-a] [-q] [-y] [-b branch] [-n newver] DIR"
 TARGET_DIR=
 OUTPUT=
 SAYYES=
 BRANCH=
 DEVEL=
+QUIET=
+AUTO=
 NEW=
 DIR=
 DOC=( )
@@ -28,12 +30,14 @@ err() {
 }
 
 quit() {
-	[ "$#" -eq 0 ] || echo "$*"
+	[ "$#" -eq 0 -o -n "$QUIET" ] || echo "$*"
 	exit 0
 }
 
 while [ -n "$1" -a -z "${1##-*}" ]; do
 	case "$1" in
+		-a)        AUTO=1         ; shift   ;;
+		-q)        QUIET=1        ; shift   ;;
 		-y)        SAYYES=1       ; shift   ;;
 		-b)        BRANCH="$2"    ; shift 2 ;;
 		-n)        NEW="$2"       ; shift 2 ;;
@@ -64,25 +68,39 @@ if ! git rev-parse --verify -q HEAD >/dev/null; then
 fi
 
 # we want to go to the git top dir
-cd $(git rev-parse --show-toplevel)
+toplvl=$(git rev-parse --show-toplevel)
+if [ -n "$toplvl" ]; then
+	cd "$toplvl"
+fi
+
+# ensure that a master branch exists here
+if [ -z "$(git rev-parse --verify -q master 2>/dev/null)" ]; then
+	die "Current directory doesn't seem to be a valid git directory (no master branch)."
+fi
 
 if [ "$(git rev-parse --verify -q HEAD)" != "$(git rev-parse --verify -q master)" ]; then
 	die "git HEAD doesn't match master branch."
 fi
 
-if [ "$(git diff HEAD|wc -c)" != 0 ]; then
+if [ "$(git diff HEAD 2>/dev/null |wc -c)" != 0 ]; then
 	err "You appear to have uncommitted local changes, please commit them first :"
 	git status -s -uno >&2
 	die
 fi
 
-if [ -z "$NEW" ]; then
-	NEW="$(git describe --tags HEAD --abbrev=0)"
-	NEW="${NEW#v}"
+if [ -z "$NEW" -o -n "$AUTO" ]; then
 	if [ -z "$NEW" ]; then
-		die "Fatal: cannot determine new version, please specify it."
+		NEW="$(git describe --tags HEAD --abbrev=0)"
+		NEW="${NEW#v}"
+		if [ -z "$NEW" ]; then
+			die "Fatal: cannot determine new version, please specify it."
+		fi
 	fi
+
 	if [ "$(git describe --tags HEAD)" != "v$NEW" ]; then
+		if [ -n "$AUTO" ]; then
+			quit "Not tagged, nothing to do."
+		fi
 		die "Current version doesn't seem tagged, it reports $(git describe --tags "v$NEW"). Did you release it ?"
 	fi
 fi
@@ -109,6 +127,10 @@ if [ -z "${NEW##*-dev*}" ]; then
 	DEVEL="/devel"
 fi
 
+if [ -n "$AUTO" -a -e "$TARGET_DIR/src${DEVEL}/haproxy-$NEW.tar.gz.md5" ]; then
+	quit "Version $NEW Already released."
+fi
+
 if ! mkdir -p "$TARGET_DIR/src$DEVEL" "$TARGET_DIR/doc"; then
 	die "failed to create target directories."
 fi
@@ -121,17 +143,19 @@ case "$BRANCH" in
 	*)   DOC=( doc/{coding-style,intro,management,configuration,proxy-protocol,lua,SPOE}.txt ) ;;
 esac
 
-echo "Ready to produce the following files in $TARGET_DIR/ :"
-echo "    haproxy-$NEW.tar.gz -> src${DEVEL}/"
-echo "    CHANGELOG -> src/CHANGELOG"
-echo "    ${DOC[@]} -> doc/*{,.gz}"
-echo
+if [ -z "$AUTO" ]; then
+	echo "Ready to produce the following files in $TARGET_DIR/ :"
+	echo "    haproxy-$NEW.tar.gz -> src${DEVEL}/"
+	echo "    CHANGELOG -> src/CHANGELOG"
+	echo "    ${DOC[@]} -> doc/*{,.gz}"
+	echo
 
-git ls-tree -l --abbrev=12 "v$NEW" -- CHANGELOG "${DOC[@]}"
+	git ls-tree -l --abbrev=12 "v$NEW" -- CHANGELOG "${DOC[@]}"
 
-if [ -z "$SAYYES" ]; then
-	echo "Press ENTER to continue or Ctrl-C to abort now!"
-	read
+	if [ -z "$SAYYES" ]; then
+		echo "Press ENTER to continue or Ctrl-C to abort now!"
+		read
+	fi
 fi
 
 echo "Archiving sources for version $NEW ..."

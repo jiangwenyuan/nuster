@@ -29,6 +29,7 @@
 #include <common/buffer.h>
 #include <common/chunk.h>
 #include <common/config.h>
+#include <common/xref.h>
 
 #include <nuster/common.h>
 
@@ -46,11 +47,17 @@ struct applet {
 	unsigned int timeout;              /* execution timeout. */
 };
 
+#define APPLET_SLEEPING     0x00  /* applet is currently sleeping or pending in active queue */
+#define APPLET_RUNNING      0x01  /* applet is currently running */
+#define APPLET_WOKEN_UP     0x02  /* applet was running and requested to woken up again */
+#define APPLET_WANT_DIE     0x04  /* applet was running and requested to die */
+
 /* Context of a running applet. */
 struct appctx {
 	struct list runq;          /* chaining in the applet run queue */
 	enum obj_type obj_type;    /* OBJ_TYPE_APPCTX */
 	/* 3 unused bytes here */
+	unsigned short state;      /* Internal appctx state */
 	unsigned int st0;          /* CLI state for stats, session state for peers */
 	unsigned int st1;          /* prompt for stats, session error for peers */
 	unsigned int st2;          /* output state for stats, unused by peers  */
@@ -60,8 +67,9 @@ struct appctx {
 	int (*io_handler)(struct appctx *appctx);  /* used within the cli_io_handler when st0 = CLI_ST_CALLBACK */
 	void (*io_release)(struct appctx *appctx);  /* used within the cli_io_handler when st0 = CLI_ST_CALLBACK,
 	                                               if the command is terminated or the session released */
-	void *private;
+	int cli_severity_output;        /* used within the cli_io_handler to format severity output of informational feedback */
 	struct buffer_wait buffer_wait; /* position in the list of objects waiting for a buffer */
+	unsigned long thread_mask;      /* mask of thread IDs authorized to process the applet */
 
 	union {
 		union {
@@ -76,6 +84,45 @@ struct appctx {
 				struct my_regex  *regex;
 			} cache_manager;
 		} nuster;
+		struct {
+			void *ptr;              /* current peer or NULL, do not use for something else */
+		} peers;                        /* used by the peers applet */
+		struct {
+			int connected;
+			struct xref xref; /* cross reference with the Lua object owner. */
+			struct list wake_on_read;
+			struct list wake_on_write;
+			int die;
+		} hlua_cosocket;                /* used by the Lua cosockets */
+		struct {
+			struct hlua *hlua;
+			int flags;
+			struct task *task;
+		} hlua_apptcp;                  /* used by the Lua TCP services */
+		struct {
+			struct hlua *hlua;
+			int left_bytes;         /* The max amount of bytes that we can read. */
+			int flags;
+			int status;
+			const char *reason;
+			struct task *task;
+		} hlua_apphttp;                 /* used by the Lua HTTP services */
+		struct {
+			void *ptr;              /* private pointer for SPOE filter */
+		} spoe;                         /* used by SPOE filter */
+		struct {
+			const char *msg;        /* pointer to a persistent message to be returned in CLI_ST_PRINT state */
+			int severity;           /* severity of the message to be returned according to (syslog) rfc5424 */
+			char *err;              /* pointer to a 'must free' message to be returned in CLI_ST_PRINT_FREE state */
+			void *p0, *p1;          /* general purpose pointers and integers for registered commands, initialized */
+			int i0, i1;             /* to 0 by the CLI before first invocation of the keyword parser. */
+		} cli;                          /* context used by the CLI */
+		struct {
+			struct cache_entry *entry;
+		} cache;
+		/* all entries below are used by various CLI commands, please
+		 * keep the grouped together and avoid adding new ones.
+		 */
 		struct {
 			struct proxy *px;
 			struct server *sv;
@@ -109,14 +156,8 @@ struct appctx {
 			long long value;	/* value to compare against */
 			signed char data_type;	/* type of data to compare, or -1 if none */
 			signed char data_op;	/* operator (STD_OP_*) when data_type set */
+			char action;            /* action on the table : one of STK_CLI_ACT_* */
 		} table;
-		struct {
-			const char *msg;	/* pointer to a persistent message to be returned in PRINT state */
-			char *err;        /* pointer to a 'must free' message to be returned in PRINT_FREE state */
-		} cli;
-		struct {
-			void *ptr;              /* multi-purpose pointer for peers */
-		} peers;
 		struct {
 			unsigned int display_flags;
 			struct pat_ref *ref;
@@ -124,60 +165,15 @@ struct appctx {
 			struct pattern_expr *expr;
 			struct chunk chunk;
 		} map;
-#if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 		struct {
-			int dump_all;
-			int dump_keys_index;
-			struct tls_keys_ref *ref;
-		} tlskeys;
-#endif
-		struct {
-			int connected;
-			struct hlua_socket *socket;
-			struct list wake_on_read;
-			struct list wake_on_write;
-			int die;
-		} hlua;
-		struct {
-			struct hlua hlua;
+			struct hlua *hlua;
 			struct task *task;
+			struct hlua_function *fcn;
 		} hlua_cli;
-		struct {
-			struct hlua hlua;
-			int flags;
-			struct task *task;
-		} hlua_apptcp;
-		struct {
-			struct hlua hlua;
-			int left_bytes; /* The max amount of bytes that we can read. */
-			int flags;
-			int status;
-			const char *reason;
-			struct task *task;
-		} hlua_apphttp;
-		struct {
-			struct dns_resolvers *ptr;
-		} resolvers;
-		struct {
-			int iid;		/* if >= 0, ID of the proxy to filter on */
-			struct proxy *px;	/* current proxy being dumped, NULL = not started yet. */
-			struct server *sv;	/* current server being dumped, NULL = not started yet. */
-		} server_state;
-		struct {
-			struct proxy *px;	/* current proxy being dumped, NULL = not started yet. */
-		} be;				/* used by "show backends" command */
-		struct {
-			char **var;
-		} env;
-		struct {
-			struct task *task;
-			void        *ctx;
-			void        *agent;
-			unsigned int version;
-			unsigned int max_frame_size;
-			struct list  list;
-		} spoe;                         /* used by SPOE filter */
-	} ctx;					/* used by stats I/O handlers to dump the stats */
+		/* NOTE: please add regular applet contexts (ie: not
+		 * CLI-specific ones) above, before "cli".
+		 */
+	} ctx;					/* context-specific variables used by any applet */
 };
 
 #endif /* _TYPES_APPLET_H */

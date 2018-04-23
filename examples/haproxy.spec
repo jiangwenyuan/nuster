@@ -1,6 +1,6 @@
 Summary: HA-Proxy is a TCP/HTTP reverse proxy for high availability environments
 Name: haproxy
-Version: 1.7.10
+Version: 1.8.8
 Release: 1
 License: GPL
 Group: System Environment/Daemons
@@ -74,35 +74,56 @@ fi
 %attr(0755,root,root) %config %{_sysconfdir}/rc.d/init.d/%{name}
 
 %changelog
-* Tue Jan  2 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.7.10
+* Thu Apr 19 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.8
 
-* Fri Aug 18 2017 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.7.9
+* Sat Apr  7 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.7
 
-* Fri Jul  7 2017 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.7.8
+* Thu Apr  5 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.6
 
-* Sun Jun 25 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.7.7
+* Fri Mar 23 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.5
 
-* Fri Jun 16 2017 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.7.6
+* Thu Feb  8 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.4
+
+* Sat Dec 30 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.3
+
+* Sat Dec 23 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.2
+
+* Sun Dec  3 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.1
+
+* Sun Nov 26 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.0
+
+* Sun Nov 19 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8-rc4
+
+* Sat Nov 11 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8-rc3
+
+* Fri Nov  3 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8-rc2
+
+* Tue Oct 31 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8-rc1
+
+* Sun Oct 22 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8-dev3
+
+* Fri Jun  2 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.8-dev2
 
 * Mon Apr  3 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.7.5
+- updated to 1.8-dev1
 
-* Mon Mar 27 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.7.4
-
-* Tue Feb 28 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.7.3
-
-* Fri Jan 13 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.7.2
-
-* Tue Dec 13 2016 Willy Tarreau <w@1wt.eu>
-- updated to 1.7.1
+* Fri Nov 25 2016 Willy Tarreau <w@1wt.eu>
+- updated to 1.8-dev0
 
 * Fri Nov 25 2016 Willy Tarreau <w@1wt.eu>
 - updated to 1.7.0

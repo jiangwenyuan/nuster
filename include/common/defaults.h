@@ -74,8 +74,11 @@
 // max # args on a configuration line
 #define MAX_LINE_ARGS   64
 
-// crt-list parsing factor for LINESIZE and MAX_LINE_ARGS
-#define CRTLIST_FACTOR  32
+// maximum line size when parsing crt-bind-list config
+#define CRT_LINESIZE    65536
+
+// max # args on crt-bind-list configuration line
+#define MAX_CRT_ARGS  2048
 
 // max # args on a stats socket
 // This should cover at least 5 + twice the # of data_types
@@ -270,7 +273,7 @@
 #define STREAM_MAX_COST (sizeof(struct stream) + \
                           2 * sizeof(struct channel) + \
                           2 * sizeof(struct connection) + \
-                          REQURI_LEN + \
+                          global.tune.requri_len + \
                           2 * global.tune.cookie_len)
 #endif
 

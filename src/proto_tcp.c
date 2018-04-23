@@ -63,6 +63,8 @@
 
 static int tcp_bind_listeners(struct protocol *proto, char *errmsg, int errlen);
 static int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen);
+static void tcpv4_add_listener(struct listener *listener, int port);
+static void tcpv6_add_listener(struct listener *listener, int port);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_tcpv4 = {
@@ -83,6 +85,7 @@ static struct protocol proto_tcpv4 = {
 	.get_dst = tcp_get_dst,
 	.drain = tcp_drain,
 	.pause = tcp_pause_listener,
+	.add = tcpv4_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_tcpv4.listeners),
 	.nb_listeners = 0,
 };
@@ -106,9 +109,16 @@ static struct protocol proto_tcpv6 = {
 	.get_dst = tcp_get_dst,
 	.drain = tcp_drain,
 	.pause = tcp_pause_listener,
+	.add = tcpv6_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_tcpv6.listeners),
 	.nb_listeners = 0,
 };
+
+/* Default TCP parameters, got by opening a temporary TCP socket. */
+#ifdef TCP_MAXSEG
+static THREAD_LOCAL int default_tcp_maxseg = -1;
+static THREAD_LOCAL int default_tcp6_maxseg = -1;
+#endif
 
 /* Binds ipv4/ipv6 address <local> to socket <fd>, unless <flags> is set, in which
  * case we try to bind <remote>. <flags> is a 2-bit field consisting of :
@@ -128,8 +138,8 @@ int tcp_bind_socket(int fd, int flags, struct sockaddr_storage *local, struct so
 	struct sockaddr_storage bind_addr;
 	int foreign_ok = 0;
 	int ret;
-	static int ip_transp_working = 1;
-	static int ip6_transp_working = 1;
+	static THREAD_LOCAL int ip_transp_working = 1;
+	static THREAD_LOCAL int ip6_transp_working = 1;
 
 	switch (local->ss_family) {
 	case AF_INET:
@@ -296,7 +306,7 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 		return SF_ERR_INTERNAL;
 	}
 
-	fd = conn->t.sock.fd = create_server_socket(conn);
+	fd = conn->handle.fd = create_server_socket(conn);
 
 	if (fd == -1) {
 		qfprintf(stderr, "Cannot get a server socket.\n");
@@ -334,7 +344,7 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 		/* do not log anything there, it's a normal condition when this option
 		 * is used to serialize connections to a server !
 		 */
-		Alert("socket(): not enough free sockets. Raise -n argument. Giving up.\n");
+		ha_alert("socket(): not enough free sockets. Raise -n argument. Giving up.\n");
 		close(fd);
 		conn->err_code = CO_ER_CONF_FDLIM;
 		conn->flags |= CO_FL_ERROR;
@@ -423,7 +433,7 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 		}
 		else {
 #ifdef IP_BIND_ADDRESS_NO_PORT
-			static int bind_address_no_port = 1;
+			static THREAD_LOCAL int bind_address_no_port = 1;
 			setsockopt(fd, SOL_IP, IP_BIND_ADDRESS_NO_PORT, (const void *) &bind_address_no_port, sizeof(int));
 #endif
 			ret = tcp_bind_socket(fd, flags, &src->source_addr, &conn->addr.from);
@@ -437,14 +447,14 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 			close(fd);
 
 			if (ret == 1) {
-				Alert("Cannot bind to source address before connect() for backend %s. Aborting.\n",
-				      be->id);
+				ha_alert("Cannot bind to source address before connect() for backend %s. Aborting.\n",
+					 be->id);
 				send_log(be, LOG_EMERG,
 					 "Cannot bind to source address before connect() for backend %s.\n",
 					 be->id);
 			} else {
-				Alert("Cannot bind to tproxy source address before connect() for backend %s. Aborting.\n",
-				      be->id);
+				ha_alert("Cannot bind to tproxy source address before connect() for backend %s. Aborting.\n",
+					 be->id);
 				send_log(be, LOG_EMERG,
 					 "Cannot bind to tproxy source address before connect() for backend %s.\n",
 					 be->id);
@@ -535,13 +545,15 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 	fdtab[fd].linger_risk = 1;  /* close hard if needed */
 
 	if (conn_xprt_init(conn) < 0) {
-		conn_force_close(conn);
+		conn_full_close(conn);
 		conn->flags |= CO_FL_ERROR;
 		return SF_ERR_RESOURCE;
 	}
 
-	if (conn->flags & (CO_FL_HANDSHAKE | CO_FL_WAIT_L4_CONN)) {
+	if (conn->flags & (CO_FL_HANDSHAKE | CO_FL_WAIT_L4_CONN | CO_FL_EARLY_SSL_HS)) {
 		conn_sock_want_send(conn);  /* for connect status, proxy protocol or SSL */
+		if (conn->flags & CO_FL_EARLY_SSL_HS)
+			conn_xprt_want_send(conn);
 	}
 	else {
 		/* If there's no more handshake, we need to notify the data
@@ -552,7 +564,7 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 	}
 
 	if (data)
-		conn_data_want_send(conn);  /* prepare to send data if any */
+		conn_xprt_want_send(conn);  /* prepare to send data if any */
 
 	return SF_ERR_NONE;  /* connection is OK */
 }
@@ -663,7 +675,7 @@ int tcp_drain(int fd)
  */
 int tcp_connect_probe(struct connection *conn)
 {
-	int fd = conn->t.sock.fd;
+	int fd = conn->handle.fd;
 	socklen_t lskerr;
 	int skerr;
 
@@ -731,6 +743,83 @@ int tcp_connect_probe(struct connection *conn)
 	return 0;
 }
 
+/* XXX: Should probably be elsewhere */
+static int compare_sockaddr(struct sockaddr_storage *a, struct sockaddr_storage *b)
+{
+	if (a->ss_family != b->ss_family) {
+		return (-1);
+	}
+	switch (a->ss_family) {
+	case AF_INET:
+		{
+			struct sockaddr_in *a4 = (void *)a, *b4 = (void *)b;
+			if (a4->sin_port != b4->sin_port)
+				return (-1);
+			return (memcmp(&a4->sin_addr, &b4->sin_addr,
+			    sizeof(a4->sin_addr)));
+		}
+	case AF_INET6:
+		{
+			struct sockaddr_in6 *a6 = (void *)a, *b6 = (void *)b;
+			if (a6->sin6_port != b6->sin6_port)
+				return (-1);
+			return (memcmp(&a6->sin6_addr, &b6->sin6_addr,
+			    sizeof(a6->sin6_addr)));
+		}
+	default:
+		return (-1);
+	}
+
+}
+
+#define LI_MANDATORY_FLAGS	(LI_O_FOREIGN | LI_O_V6ONLY | LI_O_V4V6)
+/* When binding the listeners, check if a socket has been sent to us by the
+ * previous process that we could reuse, instead of creating a new one.
+ */
+static int tcp_find_compatible_fd(struct listener *l)
+{
+	struct xfer_sock_list *xfer_sock = xfer_sock_list;
+	int ret = -1;
+
+	while (xfer_sock) {
+		if (!compare_sockaddr(&xfer_sock->addr, &l->addr)) {
+			if ((l->interface == NULL && xfer_sock->iface == NULL) ||
+			    (l->interface != NULL && xfer_sock->iface != NULL &&
+			     !strcmp(l->interface, xfer_sock->iface))) {
+				if ((l->options & LI_MANDATORY_FLAGS) ==
+				    (xfer_sock->options & LI_MANDATORY_FLAGS)) {
+					if ((xfer_sock->namespace == NULL &&
+					    l->netns == NULL)
+#ifdef CONFIG_HAP_NS
+					    || (xfer_sock->namespace != NULL &&
+					    l->netns != NULL &&
+					    !strcmp(xfer_sock->namespace,
+					    l->netns->node.key))
+#endif
+					   ) {
+						break;
+					}
+
+				}
+			}
+		}
+		xfer_sock = xfer_sock->next;
+	}
+	if (xfer_sock != NULL) {
+		ret = xfer_sock->fd;
+		if (xfer_sock == xfer_sock_list)
+			xfer_sock_list = xfer_sock->next;
+		if (xfer_sock->prev)
+			xfer_sock->prev->next = xfer_sock->next;
+		if (xfer_sock->next)
+			xfer_sock->next->prev = xfer_sock->prev;
+		free(xfer_sock->iface);
+		free(xfer_sock->namespace);
+		free(xfer_sock);
+	}
+	return ret;
+}
+#undef L1_MANDATORY_FLAGS
 
 /* This function tries to bind a TCPv4/v6 listener. It may return a warning or
  * an error message in <errmsg> if the message is at most <errlen> bytes long
@@ -752,6 +841,36 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 	int ext, ready;
 	socklen_t ready_len;
 	const char *msg = NULL;
+#ifdef TCP_MAXSEG
+
+	/* Create a temporary TCP socket to get default parameters we can't
+	 * guess.
+	 * */
+	ready_len = sizeof(default_tcp_maxseg);
+	if (default_tcp_maxseg == -1) {
+		default_tcp_maxseg = -2;
+		fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (fd < 0)
+			ha_warning("Failed to create a temporary socket!\n");
+		else {
+			if (getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &default_tcp_maxseg,
+			    &ready_len) == -1)
+				ha_warning("Failed to get the default value of TCP_MAXSEG\n");
+		}
+		close(fd);
+	}
+	if (default_tcp6_maxseg == -1) {
+		default_tcp6_maxseg = -2;
+		fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+		if (fd >= 0) {
+			if (getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &default_tcp6_maxseg,
+			    &ready_len) == -1)
+				ha_warning("Failed ot get the default value of TCP_MAXSEG for IPv6\n");
+			close(fd);
+		}
+	}
+#endif
+
 
 	/* ensure we never return garbage */
 	if (errlen)
@@ -761,6 +880,9 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 		return ERR_NONE; /* already bound */
 
 	err = ERR_NONE;
+
+	if (listener->fd == -1)
+		listener->fd = tcp_find_compatible_fd(listener);
 
 	/* if the listener already has an fd assigned, then we were offered the
 	 * fd by an external process (most likely the parent), and we don't want
@@ -800,6 +922,17 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 
 	if (listener->options & LI_O_NOLINGER)
 		setsockopt(fd, SOL_SOCKET, SO_LINGER, &nolinger, sizeof(struct linger));
+	else {
+		struct linger tmplinger;
+		socklen_t len = sizeof(tmplinger);
+		if (getsockopt(fd, SOL_SOCKET, SO_LINGER, &tmplinger, &len) == 0 &&
+		    (tmplinger.l_onoff == 1 || tmplinger.l_linger == 0)) {
+			tmplinger.l_onoff = 0;
+			tmplinger.l_linger = 0;
+			setsockopt(fd, SOL_SOCKET, SO_LINGER, &tmplinger,
+			    sizeof(tmplinger));
+		}
+	}
 
 #ifdef SO_REUSEPORT
 	/* OpenBSD and Linux 3.9 support this. As it's present in old libc versions of
@@ -869,6 +1002,23 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 			msg = "cannot set MSS";
 			err |= ERR_WARN;
 		}
+	} else if (ext) {
+		int tmpmaxseg = -1;
+		int defaultmss;
+		socklen_t len = sizeof(tmpmaxseg);
+
+		if (listener->addr.ss_family == AF_INET)
+			defaultmss = default_tcp_maxseg;
+		else
+			defaultmss = default_tcp6_maxseg;
+
+		getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &tmpmaxseg, &len);
+		if (tmpmaxseg != defaultmss && setsockopt(fd, IPPROTO_TCP,
+						TCP_MAXSEG, &defaultmss,
+						sizeof(defaultmss)) == -1) {
+			msg = "cannot set MSS";
+			err |= ERR_WARN;
+		}
 	}
 #endif
 #if defined(TCP_USER_TIMEOUT)
@@ -878,7 +1028,9 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 			msg = "cannot set TCP User Timeout";
 			err |= ERR_WARN;
 		}
-	}
+	} else
+		setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &zero,
+		    sizeof(zero));
 #endif
 #if defined(TCP_DEFER_ACCEPT)
 	if (listener->options & LI_O_DEF_ACCEPT) {
@@ -888,7 +1040,9 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 			msg = "cannot enable DEFER_ACCEPT";
 			err |= ERR_WARN;
 		}
-	}
+	} else
+		setsockopt(fd, IPPROTO_TCP, TCP_DEFER_ACCEPT, &zero,
+		    sizeof(zero));
 #endif
 #if defined(TCP_FASTOPEN)
 	if (listener->options & LI_O_TCP_FO) {
@@ -897,6 +1051,21 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 		if (setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &qlen, sizeof(qlen)) == -1) {
 			msg = "cannot enable TCP_FASTOPEN";
 			err |= ERR_WARN;
+		}
+	} else {
+		socklen_t len;
+		int qlen;
+		len = sizeof(qlen);
+		/* Only disable fast open if it was enabled, we don't want
+		 * the kernel to create a fast open queue if there's none.
+		 */
+		if (getsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &qlen, &len) == 0 &&
+		    qlen != 0) {
+			if (setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &zero,
+			    sizeof(zero)) == -1) {
+				msg = "cannot disable TCP_FASTOPEN";
+				err |= ERR_WARN;
+			}
 		}
 	}
 #endif
@@ -928,6 +1097,8 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 #if defined(TCP_QUICKACK)
 	if (listener->options & LI_O_NOQUICKACK)
 		setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &zero, sizeof(zero));
+	else
+		setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
 #endif
 
 	/* the socket is ready */
@@ -936,7 +1107,10 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 
 	fdtab[fd].owner = listener; /* reference the listener instead of a task */
 	fdtab[fd].iocb = listener->proto->accept;
-	fd_insert(fd);
+	if (listener->bind_conf->bind_thread[relative_pid-1])
+		fd_insert(fd, listener->bind_conf->bind_thread[relative_pid-1]);
+	else
+		fd_insert(fd, MAX_THREADS_MASK);
 
  tcp_return:
 	if (msg && errlen) {
@@ -972,30 +1146,32 @@ static int tcp_bind_listeners(struct protocol *proto, char *errmsg, int errlen)
 	return err;
 }
 
-/* Add listener to the list of tcpv4 listeners. The listener's state
- * is automatically updated from LI_INIT to LI_ASSIGNED. The number of
- * listeners is updated. This is the function to use to add a new listener.
+/* Add <listener> to the list of tcpv4 listeners, on port <port>. The
+ * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
+ * The number of listeners for the protocol is updated.
  */
-void tcpv4_add_listener(struct listener *listener)
+static void tcpv4_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
 	listener->state = LI_ASSIGNED;
 	listener->proto = &proto_tcpv4;
+	((struct sockaddr_in *)(&listener->addr))->sin_port = htons(port);
 	LIST_ADDQ(&proto_tcpv4.listeners, &listener->proto_list);
 	proto_tcpv4.nb_listeners++;
 }
 
-/* Add listener to the list of tcpv4 listeners. The listener's state
- * is automatically updated from LI_INIT to LI_ASSIGNED. The number of
- * listeners is updated. This is the function to use to add a new listener.
+/* Add <listener> to the list of tcpv6 listeners, on port <port>. The
+ * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
+ * The number of listeners for the protocol is updated.
  */
-void tcpv6_add_listener(struct listener *listener)
+static void tcpv6_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
 	listener->state = LI_ASSIGNED;
 	listener->proto = &proto_tcpv6;
+	((struct sockaddr_in *)(&listener->addr))->sin_port = htons(port);
 	LIST_ADDQ(&proto_tcpv6.listeners, &listener->proto_list);
 	proto_tcpv6.nb_listeners++;
 }
@@ -1161,7 +1337,7 @@ static enum act_return tcp_exec_action_silent_drop(struct act_rule *rule, struct
 	/* re-enable quickack if it was disabled to ack all data and avoid
 	 * retransmits from the client that might trigger a real reset.
 	 */
-	setsockopt(conn->t.sock.fd, SOL_TCP, TCP_QUICKACK, &one, sizeof(one));
+	setsockopt(conn->handle.fd, SOL_TCP, TCP_QUICKACK, &one, sizeof(one));
 #endif
 	/* lingering must absolutely be disabled so that we don't send a
 	 * shutdown(), this is critical to the TCP_REPAIR trick. When no stream
@@ -1173,10 +1349,10 @@ static enum act_return tcp_exec_action_silent_drop(struct act_rule *rule, struct
 	/* We're on the client-facing side, we must force to disable lingering to
 	 * ensure we will use an RST exclusively and kill any pending data.
 	 */
-	fdtab[conn->t.sock.fd].linger_risk = 1;
+	fdtab[conn->handle.fd].linger_risk = 1;
 
 #ifdef TCP_REPAIR
-	if (setsockopt(conn->t.sock.fd, SOL_TCP, TCP_REPAIR, &one, sizeof(one)) == 0) {
+	if (setsockopt(conn->handle.fd, SOL_TCP, TCP_REPAIR, &one, sizeof(one)) == 0) {
 		/* socket will be quiet now */
 		goto out;
 	}
@@ -1186,7 +1362,7 @@ static enum act_return tcp_exec_action_silent_drop(struct act_rule *rule, struct
 	 * network and has no effect on local net.
 	 */
 #ifdef IP_TTL
-	setsockopt(conn->t.sock.fd, SOL_IP, IP_TTL, &one, sizeof(one));
+	setsockopt(conn->handle.fd, SOL_IP, IP_TTL, &one, sizeof(one));
 #endif
  out:
 	/* kill the stream if any */
@@ -1195,16 +1371,16 @@ static enum act_return tcp_exec_action_silent_drop(struct act_rule *rule, struct
 		channel_abort(&strm->res);
 		strm->req.analysers = 0;
 		strm->res.analysers = 0;
-		strm->be->be_counters.denied_req++;
+		HA_ATOMIC_ADD(&strm->be->be_counters.denied_req, 1);
 		if (!(strm->flags & SF_ERR_MASK))
 			strm->flags |= SF_ERR_PRXCOND;
 		if (!(strm->flags & SF_FINST_MASK))
 			strm->flags |= SF_FINST_R;
 	}
 
-	sess->fe->fe_counters.denied_req++;
+	HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
 	if (sess->listener->counters)
-		sess->listener->counters->denied_req++;
+		HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
 
 	return ACT_RET_STOP;
 }
@@ -1222,9 +1398,9 @@ enum act_parse_ret tcp_parse_set_src_dst(const char **args, int *orig_arg, struc
 		return ACT_RET_PRS_ERR;
 
 	where = 0;
-	if (proxy->cap & PR_CAP_FE)
+	if (px->cap & PR_CAP_FE)
 		where |= SMP_VAL_FE_HRQ_HDR;
-	if (proxy->cap & PR_CAP_BE)
+	if (px->cap & PR_CAP_BE)
 		where |= SMP_VAL_BE_HRQ_HDR;
 
 	if (!(expr->fetch->val & where)) {
@@ -1425,14 +1601,14 @@ static inline int get_tcp_info(const struct arg *args, struct sample *smp,
 	/* get the object associated with the stream interface.The
 	 * object can be other thing than a connection. For example,
 	 * it be a appctx. */
-	conn = objt_conn(smp->strm->si[dir].end);
+	conn = cs_conn(objt_cs(smp->strm->si[dir].end));
 	if (!conn)
 		return 0;
 
-	/* The fd may not be avalaible for the tcp_info struct, and the
+	/* The fd may not be available for the tcp_info struct, and the
 	  syscal can fail. */
 	optlen = sizeof(info);
-	if (getsockopt(conn->t.sock.fd, SOL_TCP, TCP_INFO, &info, &optlen) == -1)
+	if (getsockopt(conn->handle.fd, SOL_TCP, TCP_INFO, &info, &optlen) == -1)
 		return 0;
 
 	/* extract the value. */
@@ -1722,7 +1898,7 @@ static int bind_parse_namespace(char **args, int cur_arg, struct proxy *px, stru
 			l->netns = netns_store_insert(namespace);
 
 		if (l->netns == NULL) {
-			Alert("Cannot open namespace '%s'.\n", args[cur_arg + 1]);
+			ha_alert("Cannot open namespace '%s'.\n", args[cur_arg + 1]);
 			return ERR_ALERT | ERR_FATAL;
 		}
 	}
@@ -1832,7 +2008,7 @@ static struct bind_kw_list bind_kws = { "TCP", { }, {
 
 static struct srv_kw_list srv_kws = { "TCP", { }, {
 #ifdef TCP_USER_TIMEOUT
-	{ "tcp-ut",        srv_parse_tcp_ut,        1,  0 }, /* set TCP user timeout on server */
+	{ "tcp-ut",        srv_parse_tcp_ut,        1,  1 }, /* set TCP user timeout on server */
 #endif
 	{ NULL, NULL, 0 },
 }};
@@ -1894,6 +2070,28 @@ static void __tcp_protocol_init(void)
 	tcp_res_cont_keywords_register(&tcp_res_cont_actions);
 	http_req_keywords_register(&http_req_actions);
 	http_res_keywords_register(&http_res_actions);
+
+
+	hap_register_build_opts("Built with transparent proxy support using:"
+#if defined(IP_TRANSPARENT)
+	       " IP_TRANSPARENT"
+#endif
+#if defined(IPV6_TRANSPARENT)
+	       " IPV6_TRANSPARENT"
+#endif
+#if defined(IP_FREEBIND)
+	       " IP_FREEBIND"
+#endif
+#if defined(IP_BINDANY)
+	       " IP_BINDANY"
+#endif
+#if defined(IPV6_BINDANY)
+	       " IPV6_BINDANY"
+#endif
+#if defined(SO_BINDANY)
+	       " SO_BINDANY"
+#endif
+		"", 0);
 }
 
 

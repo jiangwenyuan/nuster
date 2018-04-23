@@ -26,16 +26,13 @@
 
 #include <common/config.h>
 #include <common/standard.h>
-#include <import/da.h>
+#include <common/hathreads.h>
+
 #include <types/freq_ctr.h>
 #include <types/listener.h>
 #include <types/proxy.h>
 #include <types/task.h>
 #include <types/vars.h>
-
-#ifdef USE_51DEGREES
-#include <import/51d.h>
-#endif
 
 #ifndef UNIX_MAX_PATH
 #define UNIX_MAX_PATH 108
@@ -49,7 +46,7 @@
 #define	MODE_VERBOSE	0x10
 #define	MODE_STARTING	0x20
 #define	MODE_FOREGROUND	0x40
-#define	MODE_SYSTEMD	0x80
+#define	MODE_MWORKER	0x80    /* Master Worker */
 
 /* list of last checks to perform, depending on config options */
 #define LSTCHK_CAP_BIND	0x00000001	/* check that we can bind to any port */
@@ -67,11 +64,18 @@
 #define GTUNE_USE_REUSEPORT      (1<<6)
 #define GTUNE_RESOLVE_DONTFAIL   (1<<7)
 
+#define GTUNE_SOCKET_TRANSFER	 (1<<8)
+#define GTUNE_NOEXIT_ONFAILURE   (1<<9)
+#define GTUNE_USE_SYSTEMD        (1<<10)
+
 /* Access level for a stats socket */
 #define ACCESS_LVL_NONE     0
 #define ACCESS_LVL_USER     1
 #define ACCESS_LVL_OPER     2
 #define ACCESS_LVL_ADMIN    3
+#define ACCESS_LVL_MASK     0x3
+
+#define ACCESS_FD_LISTENERS 0x4  /* expose listeners FDs on stats socket */
 
 /* SSL server verify mode */
 enum {
@@ -81,14 +85,11 @@ enum {
 
 /* FIXME : this will have to be redefined correctly */
 struct global {
-#ifdef USE_OPENSSL
-	char *crt_base;             /* base directory path for certificates */
-	char *ca_base;              /* base directory path for CAs and CRLs */
-#endif
 	int uid;
 	int gid;
 	int external_check;
 	int nbproc;
+	int nbthread;
 	unsigned int hard_stop_after;	/* maximum time allowed to perform a soft-stop */
 	int maxconn, hardmaxconn;
 	int maxsslconn;
@@ -96,12 +97,7 @@ struct global {
 	int ssl_handshake_max_cost; /* how many bytes an SSL handshake may use */
 	int ssl_used_frontend;      /* non-zero if SSL is used in a frontend */
 	int ssl_used_backend;       /* non-zero if SSL is used in a backend */
-#ifdef USE_OPENSSL
-	char *listen_default_ciphers;
-	char *connect_default_ciphers;
-	int listen_default_ssloptions;
-	int connect_default_ssloptions;
-#endif
+	int ssl_used_async_engines; /* number of used async engines */
 	unsigned int ssl_server_verify; /* default verify mode on servers side */
 	struct freq_ctr conn_per_sec;
 	struct freq_ctr sess_per_sec;
@@ -152,20 +148,10 @@ struct global {
 		int chksize;       /* check buffer size in bytes, defaults to BUFSIZE */
 		int pipesize;      /* pipe size in bytes, system defaults if zero */
 		int max_http_hdr;  /* max number of HTTP headers, use MAX_HTTP_HDR if zero */
+		int requri_len;    /* max len of request URI, use REQURI_LEN if zero */
 		int cookie_len;    /* max length of cookie captures */
 		int pattern_cache; /* max number of entries in the pattern cache. */
 		int sslcachesize;  /* SSL cache size in session, defaults to 20000 */
-#ifdef USE_OPENSSL
-		int sslprivatecache; /* Force to use a private session cache even if nbproc > 1 */
-		unsigned int ssllifetime;   /* SSL session lifetime in seconds */
-		unsigned int ssl_max_record; /* SSL max record size */
-		unsigned int ssl_default_dh_param; /* SSL maximum DH parameter size */
-		int ssl_ctx_cache; /* max number of entries in the ssl_ctx cache. */
-#endif
-#ifdef USE_ZLIB
-		int zlibmemlevel;    /* zlib memlevel */
-		int zlibwindowsize;  /* zlib window size */
-#endif
 		int comp_maxlevel;    /* max HTTP compression level */
 		unsigned short idle_timer; /* how long before an empty buffer is considered idle (ms) */
 	} tune;
@@ -177,54 +163,13 @@ struct global {
 			mode_t mode;    /* 0 to leave unchanged */
 		} ux;
 	} unix_bind;
-#ifdef USE_CPU_AFFINITY
-	unsigned long cpu_map[LONGBITS];  /* list of CPU masks for the 32/64 first processes */
-#endif
 	struct proxy *stats_fe;     /* the frontend holding the stats settings */
 	struct vars   vars;         /* list of variables for the process scope. */
-#ifdef USE_DEVICEATLAS
+#ifdef USE_CPU_AFFINITY
 	struct {
-		void *atlasimgptr;
-		char *jsonpath;
-		char *cookiename;
-		size_t cookienamelen;
-		da_atlas_t atlas;
-		da_evidence_id_t useragentid;
-		da_severity_t loglevel;
-		char separator;
-		unsigned char daset:1;
-	} deviceatlas;
-#endif
-#ifdef USE_51DEGREES
-	struct {
-		char property_separator;    /* the separator to use in the response for the values. this is taken from 51degrees-property-separator from config. */
-		struct list property_names; /* list of properties to load into the data set. this is taken from 51degrees-property-name-list from config. */
-		char *data_file_path;
-		int header_count; /* number of HTTP headers related to device detection. */
-		struct chunk *header_names; /* array of HTTP header names. */
-		fiftyoneDegreesDataSet data_set; /* data set used with the pattern and trie detection methods. */
-#ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
-		fiftyoneDegreesWorksetPool *pool; /* pool of worksets to avoid creating a new one for each request. */
-#endif
-#ifdef FIFTYONEDEGREES_H_TRIE_INCLUDED
-		int32_t *header_offsets; /* offsets to the HTTP header name string. */
-		fiftyoneDegreesDeviceOffsets device_offsets; /* Memory used for device offsets. */
-#endif
-		int cache_size;
-	} _51degrees;
-#endif
-#ifdef USE_WURFL
-	struct {
-		char *data_file; /* the WURFL data file */
-		char *cache_size; /* the WURFL cache parameters */
-		int engine_mode; /* the WURFL engine mode */
-		int useragent_priority; /* the WURFL ua priority */
-		struct list patch_file_list; /* the list of WURFL patch file to use */
-		char information_list_separator; /* the separator used in request to separate values */
-		struct list information_list; /* the list of WURFL data to return into request */
-		void *handle; /* the handle to WURFL engine */
-		struct eb_root btree; /* btree containing info (name/type) on WURFL data to return */
-	} wurfl;
+		unsigned long proc[LONGBITS];             /* list of CPU masks for the 32/64 first processes */
+		unsigned long thread[LONGBITS][MAX_THREADS]; /* list of CPU masks for the 32/64 first threads per process */
+	} cpu_map;
 #endif
 	struct {
 		struct {
@@ -251,14 +196,41 @@ struct global {
 	} nuster;
 };
 
+/* per-thread activity reports. It's important that it's aligned on cache lines
+ * because some elements will be updated very often. Most counters are OK on
+ * 32-bit since this will be used during debugging sessions for troubleshooting
+ * in iterative mode.
+ */
+struct activity {
+	unsigned int loops;        // complete loops in run_poll_loop()
+	unsigned int wake_cache;   // active fd_cache prevented poll() from sleeping
+	unsigned int wake_tasks;   // active tasks prevented poll() from sleeping
+	unsigned int wake_applets; // active applets prevented poll() from sleeping
+	unsigned int wake_signal;  // pending signal prevented poll() from sleeping
+	unsigned int poll_exp;     // number of times poll() sees an expired timeout (includes wake_*)
+	unsigned int poll_drop;    // poller dropped a dead FD from the update list
+	unsigned int poll_dead;    // poller woke up with a dead FD
+	unsigned int poll_skip;    // poller skipped another thread's FD
+	unsigned int fd_skip;      // fd cache skipped another thread's FD
+	unsigned int fd_lock;      // fd cache skipped a locked FD
+	unsigned int fd_del;       // fd cache detected a deleted FD
+	unsigned int conn_dead;    // conn_fd_handler woke up on an FD indicating a dead connection
+	unsigned int stream;       // calls to process_stream()
+	unsigned int empty_rq;     // calls to process_runnable_tasks() with nothing for the thread
+	unsigned int long_rq;      // process_runnable_tasks() left with tasks in the run queue
+	char __pad[0]; // unused except to check remaining room
+	char __end[0] __attribute__((aligned(64))); // align size to 64.
+};
+
 extern struct global global;
+extern struct activity activity[MAX_THREADS];
 extern int  pid;                /* current process id */
 extern int  relative_pid;       /* process id starting at 1 */
+extern unsigned long pid_bit;   /* bit corresponding to the process id */
 extern int  actconn;            /* # of active sessions */
 extern int  listeners;
-extern int  jobs;               /* # of active jobs */
-extern struct chunk trash;
-extern char *swap_buffer;
+extern int  jobs;               /* # of active jobs (listeners, sessions, open devices) */
+extern THREAD_LOCAL struct chunk trash;
 extern int nb_oldpids;          /* contains the number of old pids found */
 extern const int zero;
 extern const int one;
@@ -270,7 +242,6 @@ extern char localpeer[MAX_HOSTNAME_LEN];
 extern struct list global_listener_queue; /* list of the temporarily limited listeners */
 extern struct task *global_listener_queue_task;
 extern unsigned int warned;     /* bitfield of a few warnings to emit just once */
-extern struct list dns_resolvers;
 
 /* bit values to go with "warned" above */
 #define WARN_BLOCK_DEPRECATED       0x00000001
@@ -290,6 +261,12 @@ static inline int already_warned(unsigned int warning)
 }
 
 void deinit(void);
+void hap_register_build_opts(const char *str, int must_free);
+void hap_register_post_check(int (*fct)());
+void hap_register_post_deinit(void (*fct)());
+
+void hap_register_per_thread_init(int (*fct)());
+void hap_register_per_thread_deinit(void (*fct)());
 
 #endif /* _TYPES_GLOBAL_H */
 

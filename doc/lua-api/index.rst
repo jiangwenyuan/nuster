@@ -173,6 +173,40 @@ Core class
   proxy give an access to his list of listeners and servers. Each entry is of
   type :ref:`proxy_class`
 
+  Warning, if you are declared frontend and backend with the same name, only one
+  of these are listed.
+
+  :see: :js:attr:`core.backends`
+  :see: :js:attr:`core.frontends`
+
+.. js:attribute:: core.backends
+
+  **context**: task, action, sample-fetch, converter
+
+  This attribute is an array of declared proxies with backend capability. Each
+  proxy give an access to his list of listeners and servers. Each entry is of
+  type :ref:`proxy_class`
+
+  Warning, if you are declared frontend and backend with the same name, only one
+  of these are listed.
+
+  :see: :js:attr:`core.proxies`
+  :see: :js:attr:`core.frontends`
+
+.. js:attribute:: core.frontends
+
+  **context**: task, action, sample-fetch, converter
+
+  This attribute is an array of declared proxies with frontend capability. Each
+  proxy give an access to his list of listeners and servers. Each entry is of
+  type :ref:`proxy_class`
+
+  Warning, if you are declared frontend and backend with the same name, only one
+  of these are listed.
+
+  :see: :js:attr:`core.proxies`
+  :see: :js:attr:`core.backends`
+
 .. js:function:: core.log(loglevel, msg)
 
   **context**: body, init, task, action, sample-fetch, converter
@@ -409,7 +443,7 @@ Core class
   configuration file. Each entry of the proxies array is an object of type
   :ref:`proxy_class`
 
-.. js:function:: core.register_action(name, actions, func)
+.. js:function:: core.register_action(name, actions, func [, nb_args])
 
   **context**: body
 
@@ -421,17 +455,21 @@ Core class
   :param table actions: is a table of string describing the HAProxy actions who
                         want to register to. The expected actions are 'tcp-req',
                         'tcp-res', 'http-req' or 'http-res'.
+  :param integer nb_args: is the expected number of argument for the action.
+                          By default the value is 0.
   :param function func: is the Lua function called to work as converter.
 
   The prototype of the Lua function used as argument is:
 
 .. code-block:: lua
 
-  function(txn)
+  function(txn [, arg1 [, arg2]])
 ..
 
   * **txn** (:ref:`txn_class`): this is a TXN object used for manipulating the
             current request or TCP stream.
+
+  * **argX**: this is argument provided throught the HAProxy configuration file.
 
   Here, an exemple of action registration. the action juste send an 'Hello world'
   in the logs.
@@ -454,7 +492,26 @@ Core class
   frontend http_frt
     mode http
     http-request lua.hello-world
+..
 
+  A second example using aruments
+
+.. code-block:: lua
+
+  function hello_world(txn, arg)
+     txn:Info("Hello world for " .. arg)
+  end
+  core.register_action("hello-world", { "tcp-req", "http-req" }, hello_world, 2)
+..
+
+  This example code is used in HAproxy configuration like this:
+
+::
+
+  frontend tcp_frt
+    mode tcp
+    tcp-request content lua.hello-world everybody
+..
 .. js:function:: core.register_converters(name, func)
 
   **context**: body
@@ -784,6 +841,14 @@ Proxy class
 
   This class provides a way for manipulating proxy and retrieving information
   like statistics.
+
+.. js:attribute:: Proxy.name
+
+  Contain the name of the proxy.
+
+.. js:attribute:: Proxy.uuid
+
+  Contain the unique identifier of the proxy.
 
 .. js:attribute:: Proxy.servers
 
@@ -1727,7 +1792,7 @@ Socket class
   "abns@", and finaly a filedescriotr can be passed with the prefix "fd@".
   The prefix "ipv4@", "ipv6@" and "unix@" are also supported. The port can be
   passed int the string. The syntax "127.0.0.1:1234" is valid. in this case, the
-  parameter *port* is ignored.
+  parameter *port* must not be set.
 
 .. js:function:: Socket.connect_ssl(socket, address, port)
 
@@ -1847,6 +1912,70 @@ Socket class
 
   :param class_socket socket: Is the manipulated Socket.
   :param integer value: The timeout value.
+
+.. _regex_class:
+
+Regex class
+===========
+
+.. js:class:: Regex
+
+  This class allows the usage of HAProxy regexes because classic lua doesn't
+  provides regexes. This class inherits the HAProxy compilation options, so the
+  regexes can be libc regex, pcre regex or pcre JIT regex.
+
+  The expression matching number is limited to 20 per regex. The only available
+  option is case sensitive.
+
+  Because regexes compilation is a heavy process, it is better to define all
+  your regexes in the **body context** and use it during the runtime.
+
+.. code-block:: lua
+
+  -- Create the regex
+  st, regex = Regex.new("needle (..) (...)", true);
+
+  -- Check compilation errors
+  if st == false then
+    print "error: " .. regex
+  end
+
+  -- Match the regexes
+  print(regex:exec("Looking for a needle in the haystack")) -- true
+  print(regex:exec("Lokking for a cat in the haystack"))    -- false
+
+  -- Extract words
+  st, list = regex:match("Looking for a needle in the haystack")
+  print(st)      -- true
+  print(list[1]) -- needle in the
+  print(list[2]) -- in
+  print(list[3]) -- the
+
+.. js:function:: Regex.new(regex, case_sensitive)
+
+  Create and compile a regex.
+
+  :param string regex: The regular expression according with the libc or pcre
+    standard
+  :param boolean case_sensitive: Match is case sensitive or not.
+  :returns: boolean status and :ref:`regex_class` or string containing fail reason.
+
+.. js:function:: Regex.exec(regex, str)
+
+  Execute the regex.
+
+  :param class_regex regex: A :ref:`regex_class` object.
+  :param string str: The input string will be compared with the compiled regex.
+  :returns: a boolean status according with the match result.
+
+.. js:function:: Regex.match(regex, str)
+
+  Execute the regex and return matched expressions.
+
+  :param class_map map: A :ref:`regex_class` object.
+  :param string str: The input string will be compared with the compiled regex.
+  :returns: a boolean status according with the match result, and
+    a table containing all the string matched in order of declaration.
 
 .. _map_class:
 
@@ -2174,6 +2303,35 @@ AppletHTTP class
   :param opaque data: The data which is stored in the transaction.
   :see: :js:func:`AppletHTTP.get_priv`
 
+.. js:function:: AppletHTTP.set_var(applet, var, value)
+
+  Converts a Lua type in a HAProxy type and store it in a variable <var>.
+
+  :param class_AppletHTTP applet: An :ref:`applethttp_class`
+  :param string var: The variable name according with the HAProxy variable syntax.
+  :param type value: The value associated to the variable. The type ca be string or
+                     integer.
+  :see: :js:func:`AppletHTTP.unset_var`
+  :see: :js:func:`AppletHTTP.get_var`
+
+.. js:function:: AppletHTTP.unset_var(applet, var)
+
+  Unset the variable <var>.
+
+  :param class_AppletHTTP applet: An :ref:`applethttp_class`
+  :param string var: The variable name according with the HAProxy variable syntax.
+  :see: :js:func:`AppletHTTP.set_var`
+  :see: :js:func:`AppletHTTP.get_var`
+
+.. js:function:: AppletHTTP.get_var(applet, var)
+
+  Returns data stored in the variable <var> converter in Lua type.
+
+  :param class_AppletHTTP applet: An :ref:`applethttp_class`
+  :param string var: The variable name according with the HAProxy variable syntax.
+  :see: :js:func:`AppletHTTP.set_var`
+  :see: :js:func:`AppletHTTP.unset_var`
+
 .. _applettcp_class:
 
 AppletTCP class
@@ -2255,6 +2413,35 @@ AppletTCP class
   :param class_AppletTCP applet: An :ref:`applettcp_class`
   :param opaque data: The data which is stored in the transaction.
   :see: :js:func:`AppletTCP.get_priv`
+
+.. js:function:: AppletTCP.set_var(applet, var, value)
+
+  Converts a Lua type in a HAProxy type and stores it in a variable <var>.
+
+  :param class_AppletTCP applet: An :ref:`applettcp_class`
+  :param string var: The variable name according with the HAProxy variable syntax.
+  :param type value: The value associated to the variable. The type can be string or
+                     integer.
+  :see: :js:func:`AppletTCP.unset_var`
+  :see: :js:func:`AppletTCP.get_var`
+
+.. js:function:: AppletTCP.unset_var(applet, var)
+
+  Unsets the variable <var>.
+
+  :param class_AppletTCP applet: An :ref:`applettcp_class`
+  :param string var: The variable name according with the HAProxy variable syntax.
+  :see: :js:func:`AppletTCP.unset_var`
+  :see: :js:func:`AppletTCP.set_var`
+
+.. js:function:: AppletTCP.get_var(applet, var)
+
+  Returns data stored in the variable <var> converter in Lua type.
+
+  :param class_AppletTCP applet: An :ref:`applettcp_class`
+  :param string var: The variable name according with the HAProxy variable syntax.
+  :see: :js:func:`AppletTCP.unset_var`
+  :see: :js:func:`AppletTCP.set_var`
 
 External Lua libraries
 ======================

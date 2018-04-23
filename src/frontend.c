@@ -57,30 +57,6 @@ int frontend_accept(struct stream *s)
 	struct listener *l = sess->listener;
 	struct proxy *fe = sess->fe;
 
-	if (unlikely(fe->nb_req_cap > 0)) {
-		if ((s->req_cap = pool_alloc2(fe->req_cap_pool)) == NULL)
-			goto out_return;	/* no memory */
-		memset(s->req_cap, 0, fe->nb_req_cap * sizeof(void *));
-	}
-
-	if (unlikely(fe->nb_rsp_cap > 0)) {
-		if ((s->res_cap = pool_alloc2(fe->rsp_cap_pool)) == NULL)
-			goto out_free_reqcap;	/* no memory */
-		memset(s->res_cap, 0, fe->nb_rsp_cap * sizeof(void *));
-	}
-
-	if (fe->http_needed) {
-		/* we have to allocate header indexes only if we know
-		 * that we may make use of them. This of course includes
-		 * (mode == PR_MODE_HTTP).
-		 */
-		if (unlikely(!http_alloc_txn(s)))
-			goto out_free_rspcap; /* no memory */
-
-		/* and now initialize the HTTP transaction state */
-		http_init_txn(s);
-	}
-
 	if ((fe->mode == PR_MODE_TCP || fe->mode == PR_MODE_HTTP)
 	    && (!LIST_ISEMPTY(&fe->logsrvs))) {
 		if (likely(!LIST_ISEMPTY(&fe->logformat))) {
@@ -117,21 +93,34 @@ int frontend_accept(struct stream *s)
 	if (unlikely((global.mode & MODE_DEBUG) && conn &&
 		     (!(global.mode & MODE_QUIET) || (global.mode & MODE_VERBOSE)))) {
 		char pn[INET6_ADDRSTRLEN];
+		char alpn[16] = "<none>";
+		const char *alpn_str = NULL;
+		int alpn_len;
 
 		conn_get_from_addr(conn);
+
+		/* try to report the ALPN value when available (also works for NPN) */
+
+		if (conn && conn == cs_conn(objt_cs(s->si[0].end))) {
+			if (conn_get_alpn(conn, &alpn_str, &alpn_len) && alpn_str) {
+				int len = MIN(alpn_len, sizeof(alpn) - 1);
+				memcpy(alpn, alpn_str, len);
+				alpn[len] = 0;
+			}
+		}
 
 		switch (addr_to_str(&conn->addr.from, pn, sizeof(pn))) {
 		case AF_INET:
 		case AF_INET6:
-			chunk_printf(&trash, "%08x:%s.accept(%04x)=%04x from [%s:%d]\n",
-			             s->uniq_id, fe->id, (unsigned short)l->fd, (unsigned short)conn->t.sock.fd,
-			             pn, get_host_port(&conn->addr.from));
+			chunk_printf(&trash, "%08x:%s.accept(%04x)=%04x from [%s:%d] ALPN=%s\n",
+			             s->uniq_id, fe->id, (unsigned short)l->fd, (unsigned short)conn->handle.fd,
+			             pn, get_host_port(&conn->addr.from), alpn);
 			break;
 		case AF_UNIX:
 			/* UNIX socket, only the destination is known */
-			chunk_printf(&trash, "%08x:%s.accept(%04x)=%04x from [unix:%d]\n",
-			             s->uniq_id, fe->id, (unsigned short)l->fd, (unsigned short)conn->t.sock.fd,
-			             l->luid);
+			chunk_printf(&trash, "%08x:%s.accept(%04x)=%04x from [unix:%d] ALPN=%s\n",
+			             s->uniq_id, fe->id, (unsigned short)l->fd, (unsigned short)conn->handle.fd,
+			             l->luid, alpn);
 			break;
 		}
 
@@ -141,14 +130,38 @@ int frontend_accept(struct stream *s)
 	if (fe->mode == PR_MODE_HTTP)
 		s->req.flags |= CF_READ_DONTWAIT; /* one read is usually enough */
 
+	if (unlikely(fe->nb_req_cap > 0)) {
+		if ((s->req_cap = pool_alloc(fe->req_cap_pool)) == NULL)
+			goto out_return;	/* no memory */
+		memset(s->req_cap, 0, fe->nb_req_cap * sizeof(void *));
+	}
+
+	if (unlikely(fe->nb_rsp_cap > 0)) {
+		if ((s->res_cap = pool_alloc(fe->rsp_cap_pool)) == NULL)
+			goto out_free_reqcap;	/* no memory */
+		memset(s->res_cap, 0, fe->nb_rsp_cap * sizeof(void *));
+	}
+
+	if (fe->http_needed) {
+		/* we have to allocate header indexes only if we know
+		 * that we may make use of them. This of course includes
+		 * (mode == PR_MODE_HTTP).
+		 */
+		if (unlikely(!http_alloc_txn(s)))
+			goto out_free_rspcap; /* no memory */
+
+		/* and now initialize the HTTP transaction state */
+		http_init_txn(s);
+	}
+
 	/* everything's OK, let's go on */
 	return 1;
 
 	/* Error unrolling */
  out_free_rspcap:
-	pool_free2(fe->rsp_cap_pool, s->res_cap);
+	pool_free(fe->rsp_cap_pool, s->res_cap);
  out_free_reqcap:
-	pool_free2(fe->req_cap_pool, s->req_cap);
+	pool_free(fe->req_cap_pool, s->req_cap);
  out_return:
 	return -1;
 }

@@ -1,8 +1,8 @@
 /*
- * include/proto/proto_uxst.h
- * This file contains UNIX-stream socket protocol definitions.
+ * include/proto/mux_pt.h
+ * This file contains the pass-though mux function prototypes
  *
- * Copyright (C) 2000-2010 Willy Tarreau - w@1wt.eu
+ * Copyright (C) 2017 Willy Tarreau - w@1wt.eu
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -19,19 +19,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef _PROTO_PROTO_UXST_H
-#define _PROTO_PROTO_UXST_H
+#ifndef _PROTO_MUX_PT_H
+#define _PROTO_MUX_PT_H
 
 #include <common/config.h>
-#include <types/stream.h>
-#include <types/task.h>
+#include <types/connection.h>
 
-void uxst_add_listener(struct listener *listener);
-int uxst_pause_listener(struct listener *l);
-int uxst_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir);
-int uxst_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir);
+extern const struct mux_ops mux_pt_ops;
 
-#endif /* _PROTO_PROTO_UXST_H */
+#endif /* _PROTO_MUX_PT_H */
 
 /*
  * Local variables:

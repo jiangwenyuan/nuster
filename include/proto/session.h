@@ -32,7 +32,7 @@
 
 #include <proto/stick_table.h>
 
-extern struct pool_head *pool2_session;
+extern struct pool_head *pool_head_session;
 struct session *session_new(struct proxy *fe, struct listener *li, enum obj_type *origin);
 void session_free(struct session *sess);
 int init_session();
@@ -46,19 +46,29 @@ static inline void session_store_counters(struct session *sess)
 {
 	void *ptr;
 	int i;
+	struct stksess *ts;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
 		struct stkctr *stkctr = &sess->stkctr[i];
 
-		if (!stkctr_entry(stkctr))
+		ts = stkctr_entry(stkctr);
+		if (!ts)
 			continue;
 
-		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_CONN_CUR);
-		if (ptr)
+		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_CONN_CUR);
+		if (ptr) {
+			HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
+
 			stktable_data_cast(ptr, conn_cur)--;
-		stkctr_entry(stkctr)->ref_cnt--;
-		stksess_kill_if_expired(stkctr->table, stkctr_entry(stkctr));
+
+			HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+
+			/* If data was modified, we need to touch to re-schedule sync */
+			stktable_touch_local(stkctr->table, ts, 0);
+		}
+
 		stkctr_set_entry(stkctr, NULL);
+		stksess_kill_if_expired(stkctr->table, ts, 1);
 	}
 }
 

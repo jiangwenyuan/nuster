@@ -28,13 +28,13 @@
 
 
 /* private data */
-static struct epoll_event *epoll_events;
-static int epoll_fd;
+static THREAD_LOCAL struct epoll_event *epoll_events = NULL;
+static int epoll_fd[MAX_THREADS]; // per-thread epoll_fd
 
 /* This structure may be used for any purpose. Warning! do not use it in
  * recursive functions !
  */
-static struct epoll_event ev;
+static THREAD_LOCAL struct epoll_event ev;
 
 #ifndef EPOLLRDHUP
 /* EPOLLRDHUP was defined late in libc, and it appeared in kernel 2.6.17 */
@@ -50,7 +50,12 @@ static struct epoll_event ev;
 REGPRM1 static void __fd_clo(int fd)
 {
 	if (unlikely(fdtab[fd].cloned)) {
-		epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev);
+		unsigned long m = fdtab[fd].polled_mask;
+		int i;
+
+		for (i = global.nbthread - 1; i >= 0; i--)
+			if (m & (1UL << i))
+				epoll_ctl(epoll_fd[i], EPOLL_CTL_DEL, fd, &ev);
 	}
 }
 
@@ -68,51 +73,63 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	/* first, scan the update list to find polling changes */
 	for (updt_idx = 0; updt_idx < fd_nbupdt; updt_idx++) {
 		fd = fd_updt[updt_idx];
-		fdtab[fd].updated = 0;
-		fdtab[fd].new = 0;
 
-		if (!fdtab[fd].owner)
+		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+		fdtab[fd].update_mask &= ~tid_bit;
+
+		if (!fdtab[fd].owner) {
+			activity[tid].poll_drop++;
+			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 			continue;
+		}
+
+		fdtab[fd].new = 0;
 
 		eo = fdtab[fd].state;
 		en = fd_compute_new_polled_status(eo);
+		fdtab[fd].state = en;
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 
-		if ((eo ^ en) & FD_EV_POLLED_RW) {
-			/* poll status changed */
-			fdtab[fd].state = en;
-
-			if ((en & FD_EV_POLLED_RW) == 0) {
+		if (fdtab[fd].polled_mask & tid_bit) {
+			if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
 				/* fd removed from poll list */
 				opcode = EPOLL_CTL_DEL;
-			}
-			else if ((eo & FD_EV_POLLED_RW) == 0) {
-				/* new fd in the poll list */
-				opcode = EPOLL_CTL_ADD;
+				HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
 			}
 			else {
 				/* fd status changed */
 				opcode = EPOLL_CTL_MOD;
 			}
-
-			/* construct the epoll events based on new state */
-			ev.events = 0;
-			if (en & FD_EV_POLLED_R)
-				ev.events |= EPOLLIN | EPOLLRDHUP;
-
-			if (en & FD_EV_POLLED_W)
-				ev.events |= EPOLLOUT;
-
-			ev.data.fd = fd;
-			epoll_ctl(epoll_fd, opcode, fd, &ev);
 		}
+		else if ((fdtab[fd].thread_mask & tid_bit) && (en & FD_EV_POLLED_RW)) {
+			/* new fd in the poll list */
+			opcode = EPOLL_CTL_ADD;
+			HA_ATOMIC_OR(&fdtab[fd].polled_mask, tid_bit);
+		}
+		else {
+			continue;
+		}
+
+		/* construct the epoll events based on new state */
+		ev.events = 0;
+		if (en & FD_EV_POLLED_R)
+			ev.events |= EPOLLIN | EPOLLRDHUP;
+
+		if (en & FD_EV_POLLED_W)
+			ev.events |= EPOLLOUT;
+
+		ev.data.fd = fd;
+		epoll_ctl(epoll_fd[tid], opcode, fd, &ev);
 	}
 	fd_nbupdt = 0;
 
 	/* compute the epoll_wait() timeout */
 	if (!exp)
 		wait_time = MAX_DELAY_MS;
-	else if (tick_is_expired(exp, now_ms))
+	else if (tick_is_expired(exp, now_ms)) {
+		activity[tid].poll_exp++;
 		wait_time = 0;
+	}
 	else {
 		wait_time = TICKS_TO_MS(tick_remain(now_ms, exp)) + 1;
 		if (wait_time > MAX_DELAY_MS)
@@ -122,7 +139,7 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	/* now let's wait for polled events */
 
 	gettimeofday(&before_poll, NULL);
-	status = epoll_wait(epoll_fd, epoll_events, global.tune.maxpollevents, wait_time);
+	status = epoll_wait(epoll_fd[tid], epoll_events, global.tune.maxpollevents, wait_time);
 	tv_update_date(wait_time, status);
 	measure_idle();
 
@@ -133,13 +150,22 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 		unsigned int e = epoll_events[count].events;
 		fd = epoll_events[count].data.fd;
 
-		if (!fdtab[fd].owner)
+		if (!fdtab[fd].owner) {
+			activity[tid].poll_dead++;
 			continue;
+		}
+
+		if (!(fdtab[fd].thread_mask & tid_bit)) {
+			/* FD has been migrated */
+			activity[tid].poll_skip++;
+			epoll_ctl(epoll_fd[tid], EPOLL_CTL_DEL, fd, &ev);
+			HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
+			continue;
+		}
 
 		/* it looks complicated but gcc can optimize it away when constants
 		 * have same values... In fact it depends on gcc :-(
 		 */
-		fdtab[fd].ev &= FD_POLL_STICKY;
 		if (EPOLLIN == FD_POLL_IN && EPOLLOUT == FD_POLL_OUT &&
 		    EPOLLPRI == FD_POLL_PRI && EPOLLERR == FD_POLL_ERR &&
 		    EPOLLHUP == FD_POLL_HUP) {
@@ -155,18 +181,50 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 
 		/* always remap RDHUP to HUP as they're used similarly */
 		if (e & EPOLLRDHUP) {
-			cur_poller.flags |= HAP_POLL_F_RDHUP;
+			HA_ATOMIC_OR(&cur_poller.flags, HAP_POLL_F_RDHUP);
 			n |= FD_POLL_HUP;
 		}
-
-		fdtab[fd].ev |= n;
-		if (fdtab[fd].ev & (FD_POLL_IN | FD_POLL_HUP | FD_POLL_ERR))
-			fd_may_recv(fd);
-
-		if (fdtab[fd].ev & (FD_POLL_OUT | FD_POLL_ERR))
-			fd_may_send(fd);
+		fd_update_events(fd, n);
 	}
 	/* the caller will take care of cached events */
+}
+
+static int init_epoll_per_thread()
+{
+	int fd;
+
+	epoll_events = calloc(1, sizeof(struct epoll_event) * global.tune.maxpollevents);
+	if (epoll_events == NULL)
+		goto fail_alloc;
+
+	if (MAX_THREADS > 1 && tid) {
+		epoll_fd[tid] = epoll_create(global.maxsock + 1);
+		if (epoll_fd[tid] < 0)
+			goto fail_fd;
+	}
+
+	/* we may have to unregister some events initially registered on the
+	 * original fd when it was alone, and/or to register events on the new
+	 * fd for this thread. Let's just mark them as updated, the poller will
+	 * do the rest.
+	 */
+	for (fd = 0; fd < maxfd; fd++)
+		updt_fd_polling(fd);
+
+	return 1;
+ fail_fd:
+	free(epoll_events);
+ fail_alloc:
+	return 0;
+}
+
+static void deinit_epoll_per_thread()
+{
+	if (MAX_THREADS > 1 && tid)
+		close(epoll_fd[tid]);
+
+	free(epoll_events);
+	epoll_events = NULL;
 }
 
 /*
@@ -178,21 +236,15 @@ REGPRM1 static int _do_init(struct poller *p)
 {
 	p->private = NULL;
 
-	epoll_fd = epoll_create(global.maxsock + 1);
-	if (epoll_fd < 0)
+	epoll_fd[tid] = epoll_create(global.maxsock + 1);
+	if (epoll_fd[tid] < 0)
 		goto fail_fd;
 
-	epoll_events = (struct epoll_event*)
-		calloc(1, sizeof(struct epoll_event) * global.tune.maxpollevents);
-
-	if (epoll_events == NULL)
-		goto fail_ee;
+	hap_register_per_thread_init(init_epoll_per_thread);
+	hap_register_per_thread_deinit(deinit_epoll_per_thread);
 
 	return 1;
 
- fail_ee:
-	close(epoll_fd);
-	epoll_fd = -1;
  fail_fd:
 	p->pref = 0;
 	return 0;
@@ -204,14 +256,11 @@ REGPRM1 static int _do_init(struct poller *p)
  */
 REGPRM1 static void _do_term(struct poller *p)
 {
-	free(epoll_events);
-
-	if (epoll_fd >= 0) {
-		close(epoll_fd);
-		epoll_fd = -1;
+	if (epoll_fd[tid] >= 0) {
+		close(epoll_fd[tid]);
+		epoll_fd[tid] = -1;
 	}
 
-	epoll_events = NULL;
 	p->private = NULL;
 	p->pref = 0;
 }
@@ -239,10 +288,10 @@ REGPRM1 static int _do_test(struct poller *p)
  */
 REGPRM1 static int _do_fork(struct poller *p)
 {
-	if (epoll_fd >= 0)
-		close(epoll_fd);
-	epoll_fd = epoll_create(global.maxsock + 1);
-	if (epoll_fd < 0)
+	if (epoll_fd[tid] >= 0)
+		close(epoll_fd[tid]);
+	epoll_fd[tid] = epoll_create(global.maxsock + 1);
+	if (epoll_fd[tid] < 0)
 		return 0;
 	return 1;
 }
@@ -256,11 +305,14 @@ __attribute__((constructor))
 static void _do_register(void)
 {
 	struct poller *p;
+	int i;
 
 	if (nbpollers >= MAX_POLLERS)
 		return;
 
-	epoll_fd = -1;
+	for (i = 0; i < MAX_THREADS; i++)
+		epoll_fd[i] = -1;
+
 	p = &pollers[nbpollers++];
 
 	p->name = "epoll";

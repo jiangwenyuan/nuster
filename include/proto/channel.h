@@ -45,16 +45,16 @@ int init_channel();
 unsigned long long __channel_forward(struct channel *chn, unsigned long long bytes);
 
 /* SI-to-channel functions working with buffers */
-int bi_putblk(struct channel *chn, const char *str, int len);
-struct buffer *bi_swpbuf(struct channel *chn, struct buffer *buf);
-int bi_putchr(struct channel *chn, char c);
-int bi_getline_nc(struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
-int bi_getblk_nc(struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
-int bo_inject(struct channel *chn, const char *msg, int len);
-int bo_getline(struct channel *chn, char *str, int len);
-int bo_getblk(struct channel *chn, char *blk, int len, int offset);
-int bo_getline_nc(struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
-int bo_getblk_nc(struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
+int ci_putblk(struct channel *chn, const char *str, int len);
+struct buffer *ci_swpbuf(struct channel *chn, struct buffer *buf);
+int ci_putchr(struct channel *chn, char c);
+int ci_getline_nc(const struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
+int ci_getblk_nc(const struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
+int co_inject(struct channel *chn, const char *msg, int len);
+int co_getline(const struct channel *chn, char *str, int len);
+int co_getblk(const struct channel *chn, char *blk, int len, int offset);
+int co_getline_nc(const struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
+int co_getblk_nc(const struct channel *chn, char **blk1, int *len1, char **blk2, int *len2);
 
 
 /* returns a pointer to the stream the channel belongs to */
@@ -139,7 +139,7 @@ static inline void channel_forward_forever(struct channel *chn)
  * jump-less and much more efficient on both 32 and 64-bit than
  * the boolean test.
  */
-static inline unsigned int channel_is_empty(struct channel *c)
+static inline unsigned int channel_is_empty(const struct channel *c)
 {
 	return !(c->buf->o | (long)c->pipe);
 }
@@ -157,27 +157,6 @@ static inline int channel_is_rewritable(const struct channel *chn)
 	rem -= chn->buf->i;
 	rem -= global.tune.maxrewrite;
 	return rem >= 0;
-}
-
-/* Returns non-zero if the channel is congested with data in transit waiting
- * for leaving, indicating to the caller that it should wait for the reserve to
- * be released before starting to process new data in case it needs the ability
- * to append data. This is meant to be used while waiting for a clean response
- * buffer before processing a request.
- */
-static inline int channel_congested(const struct channel *chn)
-{
-	if (!chn->buf->o)
-		return 0;
-
-	if (!channel_is_rewritable(chn))
-		return 1;
-
-	if (chn->buf->p + chn->buf->i >
-	    chn->buf->data + chn->buf->size - global.tune.maxrewrite)
-		return 1;
-
-	return 0;
 }
 
 /* Tells whether data are likely to leave the buffer. This is used to know when
@@ -252,7 +231,7 @@ static inline void channel_check_timeouts(struct channel *chn)
 	    unlikely(tick_is_expired(chn->rex, now_ms)))
 		chn->flags |= CF_READ_TIMEOUT;
 
-	if (likely(!(chn->flags & (CF_SHUTW|CF_WRITE_TIMEOUT|CF_WRITE_ACTIVITY))) &&
+	if (likely(!(chn->flags & (CF_SHUTW|CF_WRITE_TIMEOUT|CF_WRITE_ACTIVITY|CF_WRITE_EVENT))) &&
 	    unlikely(tick_is_expired(chn->wex, now_ms)))
 		chn->flags |= CF_WRITE_TIMEOUT;
 
@@ -461,8 +440,12 @@ static inline int channel_alloc_buffer(struct channel *chn, struct buffer_wait *
 	if (b_alloc_margin(&chn->buf, margin) != NULL)
 		return 1;
 
-	if (LIST_ISEMPTY(&wait->list))
+	if (LIST_ISEMPTY(&wait->list)) {
+		HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
 		LIST_ADDQ(&buffer_wq, &wait->list);
+		HA_SPIN_UNLOCK(BUF_WQ_LOCK, &buffer_wq_lock);
+	}
+
 	return 0;
 }
 
@@ -500,7 +483,7 @@ static inline void channel_truncate(struct channel *chn)
  * the caller's responsibility to ensure that <len> is never larger than
  * chn->o. Channel flag WRITE_PARTIAL is set.
  */
-static inline void bo_skip(struct channel *chn, int len)
+static inline void co_skip(struct channel *chn, int len)
 {
 	chn->buf->o -= len;
 
@@ -508,7 +491,7 @@ static inline void bo_skip(struct channel *chn, int len)
 		chn->buf->p = chn->buf->data;
 
 	/* notify that some data was written to the SI from the buffer */
-	chn->flags |= CF_WRITE_PARTIAL;
+	chn->flags |= CF_WRITE_PARTIAL | CF_WRITE_EVENT;
 }
 
 /* Tries to copy chunk <chunk> into the channel's buffer after length controls.
@@ -519,11 +502,11 @@ static inline void bo_skip(struct channel *chn, int len)
  * Channel flag READ_PARTIAL is updated if some data can be transferred. The
  * chunk's length is updated with the number of bytes sent.
  */
-static inline int bi_putchk(struct channel *chn, struct chunk *chunk)
+static inline int ci_putchk(struct channel *chn, struct chunk *chunk)
 {
 	int ret;
 
-	ret = bi_putblk(chn, chunk->str, chunk->len);
+	ret = ci_putblk(chn, chunk->str, chunk->len);
 	if (ret > 0)
 		chunk->len -= ret;
 	return ret;
@@ -537,19 +520,19 @@ static inline int bi_putchk(struct channel *chn, struct chunk *chunk)
  * number).  Channel flag READ_PARTIAL is updated if some data can be
  * transferred.
  */
-static inline int bi_putstr(struct channel *chn, const char *str)
+static inline int ci_putstr(struct channel *chn, const char *str)
 {
-	return bi_putblk(chn, str, strlen(str));
+	return ci_putblk(chn, str, strlen(str));
 }
 
 /*
  * Return one char from the channel's buffer. If the buffer is empty and the
  * channel is closed, return -2. If the buffer is just empty, return -1. The
- * buffer's pointer is not advanced, it's up to the caller to call bo_skip(buf,
+ * buffer's pointer is not advanced, it's up to the caller to call co_skip(buf,
  * 1) when it has consumed the char.  Also note that this function respects the
  * chn->o limit.
  */
-static inline int bo_getchr(struct channel *chn)
+static inline int co_getchr(struct channel *chn)
 {
 	/* closed or empty + imminent close = -2; empty = -1 */
 	if (unlikely((chn->flags & CF_SHUTW) || channel_is_empty(chn))) {

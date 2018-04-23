@@ -7,18 +7,21 @@
 # the TARGET, others have to be explictly specified :
 #   USE_DLMALLOC         : enable use of dlmalloc (see DLMALLOC_SRC)
 #   USE_EPOLL            : enable epoll() on Linux 2.6. Automatic.
-#   USE_GETSOCKNAME      : enable getsockname() on Linux 2.2. Automatic.
 #   USE_KQUEUE           : enable kqueue() on BSD. Automatic.
 #   USE_MY_EPOLL         : redefine epoll_* syscalls. Automatic.
 #   USE_MY_SPLICE        : redefine the splice syscall if build fails without.
 #   USE_NETFILTER        : enable netfilter on Linux. Automatic.
 #   USE_PCRE             : enable use of libpcre for regex. Recommended.
 #   USE_PCRE_JIT         : enable JIT for faster regex on libpcre >= 8.32
+#   USE_PCRE2            : enable use of libpcre2 for regex.
+#   USE_PCRE2_JIT        : enable JIT for faster regex on libpcre2
 #   USE_POLL             : enable poll(). Automatic.
 #   USE_PRIVATE_CACHE    : disable shared memory cache of ssl sessions.
+#   USE_THREAD           : enable threads support.
 #   USE_PTHREAD_PSHARED  : enable pthread process shared mutex on sslcache.
 #   USE_REGPARM          : enable regparm optimization. Recommended on x86.
 #   USE_STATIC_PCRE      : enable static libpcre. Recommended.
+#   USE_STATIC_PCRE2     : enable static libpcre2.
 #   USE_TPROXY           : enable transparent proxy. Automatic.
 #   USE_LINUX_TPROXY     : enable full transparent proxy. Automatic.
 #   USE_LINUX_SPLICE     : enable kernel 2.6 splicing. Automatic.
@@ -40,6 +43,7 @@
 #   USE_DEVICEATLAS      : enable DeviceAtlas api.
 #   USE_51DEGREES        : enable third party device detection library from 51Degrees
 #   USE_WURFL            : enable WURFL detection library from Scientiamobile
+#   USE_SYSTEMD          : enable sd_notify() support.
 #
 # Options can be forced by specifying "USE_xxx=1" or can be disabled by using
 # "USE_xxx=" (empty string).
@@ -59,8 +63,7 @@
 #          by "haproxy -vv" in CFLAGS.
 #   SILENT_DEFINE may be used to specify other defines which will not be
 #     reported by "haproxy -vv".
-#   EXTRA   is used to force building or not building some extra tools. By
-#           default on Linux 2.6+, it contains "haproxy-systemd-wrapper".
+#   EXTRA   is used to force building or not building some extra tools.
 #   DESTDIR is not set by default and is used for installation only.
 #           It might be useful to set DESTDIR if you want to install haproxy
 #           in a sandbox.
@@ -88,6 +91,18 @@
 #   VERSION        : force haproxy version reporting.
 #   SUBVERS        : add a sub-version (eg: platform, model, ...).
 #   VERDATE        : force haproxy's release date.
+
+# Function used to detect support of a given option by the compiler.
+# Usage: CFLAGS += $(call cc-opt,option). Eg: $(call cc-opt,-fwrapv)
+# Note: ensure the referencing variable is assigned using ":=" and not "=" to
+#       call it only once.
+cc-opt = $(shell set -e; if $(CC) $(1) -c -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; fi;)
+
+# Disable a warning when supported by the compiler. Don't put spaces around the
+# warning! And don't use cc-opt which doesn't always report an error until
+# another one is also returned.
+# Usage: CFLAGS += $(call cc-nowarn,warning). Eg: $(call cc-opt,format-truncation)
+cc-nowarn = $(shell set -e; if $(CC) -W$(1) -c -xc - -o /dev/null </dev/null >&0 2>&0; then echo "-Wno-$(1)"; fi;)
 
 #### Installation options.
 DESTDIR =
@@ -131,7 +146,13 @@ DEBUG_CFLAGS = -g
 # We rely on signed integer wraparound on overflow, however clang think it
 # can do whatever it wants since it's an undefined behavior, so use -fwrapv
 # to be sure we get the intended behavior.
-SPEC_CFLAGS = -fno-strict-aliasing -Wdeclaration-after-statement -fwrapv
+SPEC_CFLAGS := -fno-strict-aliasing -Wdeclaration-after-statement
+SPEC_CFLAGS += $(call cc-opt,-fwrapv)
+SPEC_CFLAGS += $(call cc-opt,-fno-strict-overflow)
+SPEC_CFLAGS += $(call cc-nowarn,format-truncation)
+SPEC_CFLAGS += $(call cc-nowarn,address-of-packed-member)
+SPEC_CFLAGS += $(call cc-nowarn,null-dereference)
+SPEC_CFLAGS += $(call cc-nowarn,unused-label)
 
 #### Memory usage tuning
 # If small memory footprint is required, you can reduce the buffer size. There
@@ -147,8 +168,8 @@ SMALL_OPTS =
 #### Debug settings
 # You can enable debugging on specific code parts by setting DEBUG=-DDEBUG_xxx.
 # Currently defined DEBUG macros include DEBUG_FULL, DEBUG_MEMORY, DEBUG_FSM,
-# DEBUG_HASH, DEBUG_AUTH and DEBUG_SPOE. Please check sources for exact meaning
-# or do not use at all.
+# DEBUG_HASH, DEBUG_AUTH, DEBUG_SPOE, DEBUG_UAF and DEBUG_THREAD. Please check
+# sources for exact meaning or do not use at all.
 DEBUG =
 
 #### Trace options
@@ -173,7 +194,7 @@ ADDLIB =
 DEFINE =
 SILENT_DEFINE =
 
-#### extra programs to build (eg: haproxy-systemd-wrapper)
+#### extra programs to build
 # Force this to enable building extra programs or to disable them.
 # It's automatically appended depending on the targets.
 EXTRA =
@@ -220,6 +241,9 @@ LDFLAGS = $(ARCH_FLAGS) -g
 # passing USE_POLL="" on the make command line.
 USE_POLL   = default
 
+# Always enable threads support by default and let the Makefile detect if
+# HAProxy can be compiled with threads or not.
+
 ifeq ($(TARGET),generic)
   # generic system target has nothing specific
   USE_POLL   = implicit
@@ -233,7 +257,6 @@ ifeq ($(TARGET),haiku)
 else
 ifeq ($(TARGET),linux22)
   # This is for Linux 2.2
-  USE_GETSOCKNAME = implicit
   USE_POLL        = implicit
   USE_TPROXY      = implicit
   USE_LIBCRYPT    = implicit
@@ -241,7 +264,6 @@ ifeq ($(TARGET),linux22)
 else
 ifeq ($(TARGET),linux24)
   # This is for standard Linux 2.4 with netfilter but without epoll()
-  USE_GETSOCKNAME = implicit
   USE_NETFILTER   = implicit
   USE_POLL        = implicit
   USE_TPROXY      = implicit
@@ -250,7 +272,6 @@ ifeq ($(TARGET),linux24)
 else
 ifeq ($(TARGET),linux24e)
   # This is for enhanced Linux 2.4 with netfilter and epoll() patch > 0.21
-  USE_GETSOCKNAME = implicit
   USE_NETFILTER   = implicit
   USE_POLL        = implicit
   USE_EPOLL       = implicit
@@ -261,19 +282,16 @@ ifeq ($(TARGET),linux24e)
 else
 ifeq ($(TARGET),linux26)
   # This is for standard Linux 2.6 with netfilter and standard epoll()
-  USE_GETSOCKNAME = implicit
   USE_NETFILTER   = implicit
   USE_POLL        = implicit
   USE_EPOLL       = implicit
   USE_TPROXY      = implicit
   USE_LIBCRYPT    = implicit
   USE_FUTEX       = implicit
-  EXTRA          += haproxy-systemd-wrapper
   USE_DL          = implicit
 else
 ifeq ($(TARGET),linux2628)
   # This is for standard Linux >= 2.6.28 with netfilter, epoll, tproxy and splice
-  USE_GETSOCKNAME = implicit
   USE_NETFILTER   = implicit
   USE_POLL        = implicit
   USE_EPOLL       = implicit
@@ -285,8 +303,8 @@ ifeq ($(TARGET),linux2628)
   USE_FUTEX       = implicit
   USE_CPU_AFFINITY= implicit
   ASSUME_SPLICE_WORKS= implicit
-  EXTRA          += haproxy-systemd-wrapper
   USE_DL          = implicit
+  USE_THREAD      = implicit
 else
 ifeq ($(TARGET),solaris)
   # This is for Solaris 8
@@ -298,6 +316,7 @@ ifeq ($(TARGET),solaris)
   USE_LIBCRYPT    = implicit
   USE_CRYPT_H     = implicit
   USE_GETADDRINFO = implicit
+  USE_THREAD      = implicit
 else
 ifeq ($(TARGET),freebsd)
   # This is for FreeBSD
@@ -305,12 +324,15 @@ ifeq ($(TARGET),freebsd)
   USE_KQUEUE     = implicit
   USE_TPROXY     = implicit
   USE_LIBCRYPT   = implicit
+  USE_THREAD     = implicit
+  USE_CPU_AFFINITY= implicit
 else
 ifeq ($(TARGET),osx)
   # This is for Mac OS/X
   USE_POLL       = implicit
   USE_KQUEUE     = implicit
   USE_TPROXY     = implicit
+  EXPORT_SYMBOL  = -export_dynamic
 else
 ifeq ($(TARGET),openbsd)
   # This is for OpenBSD >= 5.7
@@ -318,6 +340,7 @@ ifeq ($(TARGET),openbsd)
   USE_KQUEUE     = implicit
   USE_TPROXY     = implicit
   USE_ACCEPT4    = implicit
+  USE_THREAD     = implicit
 else
 ifeq ($(TARGET),netbsd)
   # This is for NetBSD
@@ -540,11 +563,6 @@ OPTIONS_CFLAGS += -DNETFILTER
 BUILD_OPTIONS  += $(call ignore_implicit,USE_NETFILTER)
 endif
 
-ifneq ($(USE_GETSOCKNAME),)
-OPTIONS_CFLAGS += -DUSE_GETSOCKNAME
-BUILD_OPTIONS  += $(call ignore_implicit,USE_GETSOCKNAME)
-endif
-
 ifneq ($(USE_REGPARM),)
 OPTIONS_CFLAGS += -DCONFIG_REGPARM=3
 BUILD_OPTIONS  += $(call ignore_implicit,USE_REGPARM)
@@ -553,6 +571,12 @@ endif
 ifneq ($(USE_DL),)
 BUILD_OPTIONS   += $(call ignore_implicit,USE_DL)
 OPTIONS_LDFLAGS += -ldl
+endif
+
+ifneq ($(USE_THREAD),)
+BUILD_OPTIONS   += $(call ignore_implicit,USE_THREAD)
+OPTIONS_CFLAGS  += -DUSE_THREAD
+OPTIONS_LDFLAGS += -lpthread
 endif
 
 # report DLMALLOC_SRC only if explicitly specified
@@ -585,7 +609,10 @@ OPTIONS_LDFLAGS += $(if $(SSL_LIB),-L$(SSL_LIB)) -lssl -lcrypto
 ifneq ($(USE_DL),)
 OPTIONS_LDFLAGS += -ldl
 endif
-OPTIONS_OBJS  += src/ssl_sock.o src/shctx.o
+OPTIONS_OBJS  += src/ssl_sock.o
+endif
+
+# The private cache option affect the way the shctx is built
 ifneq ($(USE_PRIVATE_CACHE),)
 OPTIONS_CFLAGS  += -DUSE_PRIVATE_CACHE
 else
@@ -595,7 +622,6 @@ OPTIONS_LDFLAGS += -lpthread
 else
 ifneq ($(USE_FUTEX),)
 OPTIONS_CFLAGS  += -DUSE_SYSCALL_FUTEX
-endif
 endif
 endif
 endif
@@ -614,7 +640,7 @@ check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
 
 BUILD_OPTIONS   += $(call ignore_implicit,USE_LUA)
 OPTIONS_CFLAGS  += -DUSE_LUA $(if $(LUA_INC),-I$(LUA_INC))
-LUA_LD_FLAGS := -Wl,--export-dynamic $(if $(LUA_LIB),-L$(LUA_LIB))
+LUA_LD_FLAGS := -Wl,$(if $(EXPORT_SYMBOL),$(EXPORT_SYMBOL),--export-dynamic) $(if $(LUA_LIB),-L$(LUA_LIB))
 ifeq ($(LUA_LIB_NAME),)
 # Try to automatically detect the Lua library
 LUA_LIB_NAME := $(firstword $(foreach lib,lua5.3 lua53 lua,$(call check_lua_lib,$(lib),$(LUA_LD_FLAGS))))
@@ -686,7 +712,16 @@ BUILD_OPTIONS   += $(call ignore_implicit,USE_WURFL)
 OPTIONS_LDFLAGS += $(if $(WURFL_LIB),-L$(WURFL_LIB)) -lwurfl
 endif
 
+ifneq ($(USE_SYSTEMD),)
+BUILD_OPTIONS   += $(call ignore_implicit,USE_SYSTEMD)
+OPTIONS_CFLAGS  += -DUSE_SYSTEMD
+OPTIONS_LDFLAGS += -lsystemd
+endif
+
 ifneq ($(USE_PCRE)$(USE_STATIC_PCRE)$(USE_PCRE_JIT),)
+ifneq ($(USE_PCRE2)$(USE_STATIC_PCRE2)$(USE_PCRE2_JIT),)
+$(error cannot compile both PCRE and PCRE2 support)
+endif
 # PCREDIR is used to automatically construct the PCRE_INC and PCRE_LIB paths,
 # by appending /include and /lib respectively. If your system does not use the
 # same sub-directories, simply force these variables instead of PCREDIR. It is
@@ -715,6 +750,54 @@ endif
 ifneq ($(USE_PCRE_JIT),)
 OPTIONS_CFLAGS  += -DUSE_PCRE_JIT
 BUILD_OPTIONS   += $(call ignore_implicit,USE_PCRE_JIT)
+endif
+endif
+
+ifneq ($(USE_PCRE2)$(USE_STATIC_PCRE2)$(USE_PCRE2_JIT),)
+PCRE2DIR	:= $(shell pcre2-config --prefix 2>/dev/null || echo /usr/local)
+ifneq ($(PCRE2DIR),)
+PCRE2_INC       := $(PCRE2DIR)/include
+PCRE2_LIB       := $(PCRE2DIR)/lib
+
+ifeq ($(PCRE2_WIDTH),)
+PCRE2_WIDTH	= 8
+endif
+
+ifneq ($(PCRE2_WIDTH),8)
+ifneq ($(PCRE2_WIDTH),16)
+ifneq ($(PCRE2_WIDTH),32)
+$(error PCRE2_WIDTH needs to be set to either 8,16 or 32)
+endif
+endif
+endif
+
+
+PCRE2_LDFLAGS	:= $(shell pcre2-config --libs$(PCRE2_WIDTH) 2>/dev/null || echo -L/usr/local/lib -lpcre2-$(PCRE2_WIDTH))
+
+ifeq ($(PCRE2_LDFLAGS),)
+$(error libpcre2-$(PCRE2_WIDTH) not found)
+else
+ifeq ($(PCRE2_WIDTH),8)
+PCRE2_LDFLAGS	+= -lpcre2-posix
+endif
+endif
+
+OPTIONS_CFLAGS	+= -DUSE_PCRE2 -DPCRE2_CODE_UNIT_WIDTH=$(PCRE2_WIDTH)
+OPTIONS_CFLAGS  += $(if $(PCRE2_INC), -I$(PCRE2_INC))
+
+ifneq ($(USE_STATIC_PCRE2),)
+OPTIONS_LDFLAGS += $(if $(PCRE2_LIB),-L$(PCRE2_LIB)) -Wl,-Bstatic -L$(PCRE2_LIB) $(PCRE2_LDFLAGS) -Wl,-Bdynamic
+BUILD_OPTIONS   += $(call ignore_implicit,USE_STATIC_PCRE2)
+else
+OPTIONS_LDFLAGS += $(if $(PCRE2_LIB),-L$(PCRE2_LIB)) -L$(PCRE2_LIB) $(PCRE2_LDFLAGS)
+BUILD_OPTIONS   += $(call ignore_implicit,USE_PCRE2)
+endif
+
+ifneq ($(USE_PCRE2_JIT),)
+OPTIONS_CFLAGS  += -DUSE_PCRE2_JIT
+BUILD_OPTIONS   += $(call ignore_implicit,USE_PCRE2_JIT)
+endif
+
 endif
 endif
 
@@ -781,26 +864,27 @@ else
 all: haproxy $(EXTRA)
 endif
 
-OBJS = src/haproxy.o src/base64.o src/protocol.o \
-       src/uri_auth.o src/standard.o src/buffer.o src/log.o src/task.o \
-       src/chunk.o src/channel.o src/listener.o src/lru.o src/xxhash.o \
-       src/time.o src/fd.o src/pipe.o src/regex.o src/cfgparse.o src/server.o \
-       src/checks.o src/queue.o src/frontend.o src/proxy.o src/peers.o \
-       src/arg.o src/stick_table.o src/proto_uxst.o src/connection.o \
-       src/proto_http.o src/raw_sock.o src/backend.o src/tcp_rules.o \
-       src/lb_chash.o src/lb_fwlc.o src/lb_fwrr.o src/lb_map.o src/lb_fas.o \
-       src/stream_interface.o src/stats.o src/proto_tcp.o src/applet.o \
-       src/session.o src/stream.o src/hdr_idx.o src/ev_select.o src/signal.o \
-       src/acl.o src/sample.o src/memory.o src/freq_ctr.o src/auth.o src/proto_udp.o \
-       src/compression.o src/payload.o src/hash.o src/pattern.o src/map.o \
-       src/namespace.o src/mailers.o src/dns.o src/vars.o src/filters.o \
-       src/flt_http_comp.o src/flt_trace.o src/flt_spoe.o src/cli.o \
-       \
-       src/nuster/nuster.o src/nuster/memory.o src/nuster/parser.o \
-       src/nuster/cache/dict.o src/nuster/cache/engine.o src/nuster/cache/filter.o \
-       src/nuster/cache/stats.o src/nuster/cache/manager.o
+OBJS = src/proto_http.o src/cfgparse.o src/server.o src/stream.o        \
+       src/flt_spoe.o src/stick_table.o src/stats.o src/mux_h2.o        \
+       src/checks.o src/haproxy.o src/log.o src/dns.o src/peers.o       \
+       src/standard.o src/sample.o src/cli.o src/stream_interface.o     \
+       src/proto_tcp.o src/backend.o src/proxy.o src/tcp_rules.o        \
+       src/listener.o src/flt_http_comp.o src/pattern.o src/cache.o     \
+       src/filters.o src/vars.o src/acl.o src/payload.o                 \
+       src/connection.o src/raw_sock.o src/proto_uxst.o                 \
+       src/flt_trace.o src/session.o src/ev_select.o src/channel.o      \
+       src/task.o src/queue.o src/applet.o src/map.o src/frontend.o     \
+       src/freq_ctr.o src/lb_fwlc.o src/mux_pt.o src/auth.o src/fd.o    \
+       src/hpack-dec.o src/memory.o src/lb_fwrr.o src/lb_chash.o        \
+       src/lb_fas.o src/hathreads.o src/chunk.o src/lb_map.o            \
+       src/xxhash.o src/regex.o src/shctx.o src/buffer.o src/action.o   \
+       src/h1.o src/compression.o src/pipe.o src/namespace.o            \
+       src/sha1.o src/hpack-tbl.o src/hpack-enc.o src/uri_auth.o        \
+       src/time.o src/proto_udp.o src/arg.o src/signal.o                \
+       src/protocol.o src/lru.o src/hdr_idx.o src/hpack-huff.o          \
+       src/mailers.o src/h2.o src/base64.o src/hash.o
 
-EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o \
+EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
               $(EBTREE_DIR)/ebmbtree.o $(EBTREE_DIR)/ebsttree.o \
               $(EBTREE_DIR)/ebimtree.o $(EBTREE_DIR)/ebistree.o
@@ -809,7 +893,6 @@ ifneq ($(TRACE),)
 OBJS += src/trace.o
 endif
 
-WRAPPER_OBJS = src/haproxy-systemd-wrapper.o
 
 # Not used right now
 LIB_EBTREE = $(EBTREE_DIR)/libebtree.a
@@ -821,10 +904,7 @@ DEP = $(INCLUDES) .build_opts
 # Used only to force a rebuild if some build options change
 .build_opts: $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 
-haproxy: $(OBJS) $(OPTIONS_OBJS) $(EBTREE_OBJS)
-	$(LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
-
-haproxy-systemd-wrapper: $(WRAPPER_OBJS)
+haproxy: $(OPTIONS_OBJS) $(EBTREE_OBJS) $(OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
 
 $(LIB_EBTREE): $(EBTREE_OBJS)
@@ -847,11 +927,6 @@ src/haproxy.o:	src/haproxy.c $(DEP)
 	      -DBUILD_CC='"$(strip $(CC))"' \
 	      -DBUILD_CFLAGS='"$(strip $(VERBOSE_CFLAGS))"' \
 	      -DBUILD_OPTIONS='"$(strip $(BUILD_OPTIONS))"' \
-	       -c -o $@ $<
-
-src/haproxy-systemd-wrapper.o:	src/haproxy-systemd-wrapper.c $(DEP)
-	$(CC) $(COPTS) \
-	      -DSBINDIR='"$(strip $(SBINDIR))"' \
 	       -c -o $@ $<
 
 src/dlmalloc.o: $(DLMALLOC_SRC) $(DEP)
@@ -890,7 +965,6 @@ uninstall:
 	done
 	-rmdir "$(DESTDIR)$(DOCDIR)"
 	rm -f "$(DESTDIR)$(SBINDIR)"/haproxy
-	rm -f "$(DESTDIR)$(SBINDIR)"/haproxy-systemd-wrapper
 
 clean:
 	rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
@@ -898,7 +972,6 @@ clean:
 	for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
-	rm -f haproxy-systemd-wrapper
 
 tags:
 	find src include \( -name '*.c' -o -name '*.h' \) -print0 | \
