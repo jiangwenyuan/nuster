@@ -89,9 +89,9 @@ static inline int SSL_SESSION_set1_id_context(SSL_SESSION *s, const unsigned cha
 }
 #endif
 
-#if (OPENSSL_VERSION_NUMBER < 0x1010000fL) || defined(LIBRESSL_VERSION_NUMBER)
+#if (OPENSSL_VERSION_NUMBER < 0x1010000fL) || defined(LIBRESSL_VERSION_NUMBER) || defined(OPENSSL_IS_BORINGSSL)
 /*
- * Functions introduced in OpenSSL 1.1.0 and not yet present in LibreSSL
+ * Functions introduced in OpenSSL 1.1.0 and not yet present in LibreSSL / BoringSSL
  */
 
 static inline const unsigned char *SSL_SESSION_get0_id_context(const SSL_SESSION *sess, unsigned int *sid_ctx_length)
@@ -107,10 +107,24 @@ static inline int SSL_SESSION_set1_id(SSL_SESSION *s, const unsigned char *sid, 
 	return 1;
 }
 
+static inline X509_ALGOR *X509_get0_tbs_sigalg(const X509 *x)
+{
+	return x->cert_info->signature;
+}
+
+#if (!defined OPENSSL_NO_OCSP)
 static inline const OCSP_CERTID *OCSP_SINGLERESP_get0_id(const OCSP_SINGLERESP *single)
 {
 	return single->certId;
 }
+#endif
+
+#endif
+
+#if (OPENSSL_VERSION_NUMBER < 0x1010000fL) || defined(LIBRESSL_VERSION_NUMBER)
+/*
+ * Functions introduced in OpenSSL 1.1.0 and not yet present in LibreSSL
+ */
 
 static inline pem_password_cb *SSL_CTX_get_default_passwd_cb(SSL_CTX *ctx)
 {
@@ -137,17 +151,21 @@ static inline const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *x)
 	return x->data;
 }
 
-static inline X509_ALGOR *X509_get0_tbs_sigalg(const X509 *x)
-{
-	return x->cert_info->signature;
-}
-
 #endif
 
 #if (OPENSSL_VERSION_NUMBER >= 0x1010000fL)
 #define __OPENSSL_110_CONST__ const
 #else
 #define __OPENSSL_110_CONST__
+#endif
+
+#ifdef OPENSSL_IS_BORINGSSL
+#define SSL_NO_GENERATE_CERTIFICATES
+
+static inline int EVP_PKEY_base_id(EVP_PKEY *pkey)
+{
+	return EVP_PKEY_type(pkey->type);
+}
 #endif
 
 /* ERR_remove_state() was deprecated in 1.0.0 in favor of
@@ -169,6 +187,15 @@ static inline X509_ALGOR *X509_get0_tbs_sigalg(const X509 *x)
 #if (OPENSSL_VERSION_NUMBER >= 0x1010000fL)
 #undef  RAND_pseudo_bytes
 #define RAND_pseudo_bytes(x,y) RAND_bytes(x,y)
+#endif
+
+
+/* Signature from RFC 5246, missing in openssl < 1.0.1 */
+#ifndef TLSEXT_signature_anonymous
+#define TLSEXT_signature_anonymous  0
+#define TLSEXT_signature_rsa        1
+#define TLSEXT_signature_dsa        2
+#define TLSEXT_signature_ecdsa      3
 #endif
 
 #endif /* _PROTO_OPENSSL_COMPAT_H */

@@ -23,6 +23,7 @@
 #define _TYPES_FD_H
 
 #include <common/config.h>
+#include <common/hathreads.h>
 #include <types/port_range.h>
 
 /* Direction for each FD event update */
@@ -91,13 +92,16 @@ enum fd_states {
 
 /* info about one given fd */
 struct fdtab {
+	__decl_hathreads(HA_SPINLOCK_T lock);
+	unsigned long thread_mask;           /* mask of thread IDs authorized to process the task */
+	unsigned long polled_mask;           /* mask of thread IDs currently polling this fd */
+	unsigned long update_mask;           /* mask of thread IDs having an update for fd */
 	void (*iocb)(int fd);                /* I/O handler */
 	void *owner;                         /* the connection or listener associated with this fd, NULL if closed */
 	unsigned int  cache;                 /* position+1 in the FD cache. 0=not in cache. */
 	unsigned char state;                 /* FD state for read and write directions (2*3 bits) */
 	unsigned char ev;                    /* event seen in return of poll() : FD_POLL_* */
 	unsigned char new:1;                 /* 1 if this fd has just been created */
-	unsigned char updated:1;             /* 1 if this fd is already in the update list */
 	unsigned char linger_risk:1;         /* 1 if we must kill lingering before closing */
 	unsigned char cloned:1;              /* 1 if a cloned socket, requires EPOLL_CTL_DEL on close */
 };

@@ -36,10 +36,11 @@ static int class_concat_ref;
 static int class_proxy_ref;
 static int class_server_ref;
 static int class_listener_ref;
+static int class_regex_ref;
 
 #define STATS_LEN (MAX((int)ST_F_TOTAL_FIELDS, (int)INF_TOTAL_FIELDS))
 
-static struct field stats[STATS_LEN];
+static THREAD_LOCAL struct field stats[STATS_LEN];
 
 int hlua_checkboolean(lua_State *L, int index)
 {
@@ -470,12 +471,12 @@ int hlua_listener_get_stats(lua_State *L)
 
 	li = hlua_check_listener(L, 1);
 
-	if (!li->frontend) {
+	if (!li->bind_conf->frontend) {
 		lua_pushnil(L);
 		return 1;
 	}
 
-	stats_fill_li_stats(li->frontend, li, ST_SHLGNDS, stats, STATS_LEN);
+	stats_fill_li_stats(li->bind_conf->frontend, li, ST_SHLGNDS, stats, STATS_LEN);
 
 	lua_newtable(L);
 	for (i=0; i<ST_F_TOTAL_FIELDS; i++) {
@@ -586,7 +587,9 @@ int hlua_server_set_weight(lua_State *L)
 	srv = hlua_check_server(L, 1);
 	weight = luaL_checkstring(L, 2);
 
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 	err = server_parse_weight_change_request(srv, weight);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 	if (!err)
 		lua_pushnil(L);
 	else
@@ -612,7 +615,9 @@ int hlua_server_set_addr(lua_State *L)
 	srv = hlua_check_server(L, 1);
 	addr = luaL_checkstring(L, 2);
 
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 	err = server_parse_addr_change_request(srv, addr, "Lua script");
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 	if (!err)
 		lua_pushnil(L);
 	else
@@ -625,7 +630,9 @@ int hlua_server_shut_sess(lua_State *L)
 	struct server *srv;
 
 	srv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 	srv_shutdown_streams(srv, SF_ERR_KILLED);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 	return 0;
 }
 
@@ -634,7 +641,9 @@ int hlua_server_set_drain(lua_State *L)
 	struct server *srv;
 
 	srv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 	srv_adm_set_drain(srv);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 	return 0;
 }
 
@@ -643,7 +652,9 @@ int hlua_server_set_maint(lua_State *L)
 	struct server *srv;
 
 	srv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 	srv_adm_set_maint(srv);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 	return 0;
 }
 
@@ -652,7 +663,9 @@ int hlua_server_set_ready(lua_State *L)
 	struct server *srv;
 
 	srv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 	srv_adm_set_ready(srv);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 	return 0;
 }
 
@@ -661,9 +674,11 @@ int hlua_server_check_enable(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (sv->check.state & CHK_ST_CONFIGURED) {
 		sv->check.state |= CHK_ST_ENABLED;
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -672,9 +687,11 @@ int hlua_server_check_disable(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (sv->check.state & CHK_ST_CONFIGURED) {
 		sv->check.state &= ~CHK_ST_ENABLED;
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -683,10 +700,12 @@ int hlua_server_check_force_up(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (!(sv->track)) {
 		sv->check.health = sv->check.rise + sv->check.fall - 1;
-		srv_set_running(sv, "changed from Lua script");
+		srv_set_running(sv, "changed from Lua script", NULL);
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -695,10 +714,12 @@ int hlua_server_check_force_nolb(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (!(sv->track)) {
 		sv->check.health = sv->check.rise + sv->check.fall - 1;
-		srv_set_stopping(sv, "changed from Lua script");
+		srv_set_stopping(sv, "changed from Lua script", NULL);
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -707,10 +728,12 @@ int hlua_server_check_force_down(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (!(sv->track)) {
 		sv->check.health = 0;
-		srv_set_stopped(sv, "changed from Lua script");
+		srv_set_stopped(sv, "changed from Lua script", NULL);
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -719,9 +742,11 @@ int hlua_server_agent_enable(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (sv->agent.state & CHK_ST_CONFIGURED) {
 		sv->agent.state |= CHK_ST_ENABLED;
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -730,9 +755,11 @@ int hlua_server_agent_disable(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (sv->agent.state & CHK_ST_CONFIGURED) {
 		sv->agent.state &= ~CHK_ST_ENABLED;
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -741,10 +768,12 @@ int hlua_server_agent_force_up(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (sv->agent.state & CHK_ST_ENABLED) {
 		sv->agent.health = sv->agent.rise + sv->agent.fall - 1;
-		srv_set_running(sv, "changed from Lua script");
+		srv_set_running(sv, "changed from Lua script", NULL);
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -753,10 +782,12 @@ int hlua_server_agent_force_down(lua_State *L)
 	struct server *sv;
 
 	sv = hlua_check_server(L, 1);
+	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 	if (sv->agent.state & CHK_ST_ENABLED) {
 		sv->agent.health = 0;
-		srv_set_stopped(sv, "changed from Lua script");
+		srv_set_stopped(sv, "changed from Lua script", NULL);
 	}
+	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 0;
 }
 
@@ -775,6 +806,17 @@ int hlua_fcn_new_proxy(lua_State *L, struct proxy *px)
 
 	lua_pushlightuserdata(L, px);
 	lua_rawseti(L, -2, 0);
+
+	/* Add proxy name. */
+	lua_pushstring(L, "name");
+	lua_pushstring(L, px->id);
+	lua_settable(L, -3);
+
+	/* Add proxy uuid. */
+	lua_pushstring(L, "uuid");
+	snprintf(buffer, sizeof(buffer), "%d", px->uuid);
+	lua_pushstring(L, buffer);
+	lua_settable(L, -3);
 
 	/* Browse and register servers. */
 	lua_pushstring(L, "servers");
@@ -901,13 +943,45 @@ int hlua_fcn_post_init(lua_State *L)
 	lua_newtable(L);
 
 	/* List all proxies. */
-	for (px = proxy; px; px = px->next) {
+	for (px = proxies_list; px; px = px->next) {
 		lua_pushstring(L, px->id);
 		hlua_fcn_new_proxy(L, px);
 		lua_settable(L, -3);
 	}
 
 	/* push "proxies" in "core" */
+	lua_settable(L, -3);
+
+	/* Create proxies entry. */
+	lua_pushstring(L, "frontends");
+	lua_newtable(L);
+
+	/* List all proxies. */
+	for (px = proxies_list; px; px = px->next) {
+		if (!(px->cap & PR_CAP_FE))
+			continue;
+		lua_pushstring(L, px->id);
+		hlua_fcn_new_proxy(L, px);
+		lua_settable(L, -3);
+	}
+
+	/* push "frontends" in "core" */
+	lua_settable(L, -3);
+
+	/* Create proxies entry. */
+	lua_pushstring(L, "backends");
+	lua_newtable(L);
+
+	/* List all proxies. */
+	for (px = proxies_list; px; px = px->next) {
+		if (!(px->cap & PR_CAP_BE))
+			continue;
+		lua_pushstring(L, px->id);
+		hlua_fcn_new_proxy(L, px);
+		lua_settable(L, -3);
+	}
+
+	/* push "backend" in "core" */
 	lua_settable(L, -3);
 
 	return 1;
@@ -1033,6 +1107,112 @@ int hlua_match_addr(lua_State *L)
 	return 1;
 }
 
+static struct my_regex *hlua_check_regex(lua_State *L, int ud)
+{
+	return (hlua_checkudata(L, ud, class_regex_ref));
+}
+
+static int hlua_regex_comp(struct lua_State *L)
+{
+	struct my_regex *regex;
+	const char *str;
+	int cs;
+	char *err;
+
+	str = luaL_checkstring(L, 1);
+	luaL_argcheck(L, lua_isboolean(L, 2), 2, NULL);
+	cs = lua_toboolean(L, 2);
+
+	regex = lua_newuserdata(L, sizeof(*regex));
+
+	err = NULL;
+	if (!regex_comp(str, regex, cs, 1, &err)) {
+		lua_pushboolean(L, 0); /* status error */
+		lua_pushstring(L, err); /* Reason */
+		free(err);
+		return 2;
+	}
+
+	lua_pushboolean(L, 1); /* Status ok */
+
+	/* Create object */
+	lua_newtable(L);
+	lua_pushvalue(L, -3); /* Get the userdata pointer. */
+	lua_rawseti(L, -2, 0);
+	lua_rawgeti(L, LUA_REGISTRYINDEX, class_regex_ref);
+	lua_setmetatable(L, -2);
+	return 2;
+}
+
+static int hlua_regex_exec(struct lua_State *L)
+{
+	struct my_regex *regex;
+	const char *str;
+	size_t len;
+	struct chunk *tmp;
+
+	regex = hlua_check_regex(L, 1);
+	str = luaL_checklstring(L, 2, &len);
+
+	/* Copy the string because regex_exec2 require a 'char *'
+	 * and not a 'const char *'.
+	 */
+	tmp = get_trash_chunk();
+	if (len >= tmp->size) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+	memcpy(tmp->str, str, len);
+
+	lua_pushboolean(L, regex_exec2(regex, tmp->str, len));
+
+	return 1;
+}
+
+static int hlua_regex_match(struct lua_State *L)
+{
+	struct my_regex *regex;
+	const char *str;
+	size_t len;
+	regmatch_t pmatch[20];
+	int ret;
+	int i;
+	struct chunk *tmp;
+
+	regex = hlua_check_regex(L, 1);
+	str = luaL_checklstring(L, 2, &len);
+
+	/* Copy the string because regex_exec2 require a 'char *'
+	 * and not a 'const char *'.
+	 */
+	tmp = get_trash_chunk();
+	if (len >= tmp->size) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+	memcpy(tmp->str, str, len);
+
+	ret = regex_exec_match2(regex, tmp->str, len, 20, pmatch, 0);
+	lua_pushboolean(L, ret);
+	lua_newtable(L);
+	if (ret) {
+		for (i = 0; i < 20 && pmatch[i].rm_so != -1; i++) {
+			lua_pushlstring(L, str + pmatch[i].rm_so, pmatch[i].rm_eo - pmatch[i].rm_so);
+			lua_rawseti(L, -2, i + 1);
+		}
+	}
+	return 2;
+}
+
+static int hlua_regex_free(struct lua_State *L)
+{
+	struct my_regex *regex;
+
+	regex = hlua_check_regex(L, 1);
+	regex_free(regex);
+	return 0;
+}
+
 int hlua_fcn_reg_core_fcn(lua_State *L)
 {
 	if (!hlua_concat_init(L))
@@ -1048,6 +1228,24 @@ int hlua_fcn_reg_core_fcn(lua_State *L)
 	hlua_class_function(L, "parse_addr", hlua_parse_addr);
 	hlua_class_function(L, "match_addr", hlua_match_addr);
 	hlua_class_function(L, "tokenize", hlua_tokenize);
+
+	/* Create regex object. */
+	lua_newtable(L);
+	hlua_class_function(L, "new", hlua_regex_comp);
+
+	lua_newtable(L); /* The metatable. */
+	lua_pushstring(L, "__index");
+	lua_newtable(L);
+	hlua_class_function(L, "exec", hlua_regex_exec);
+	hlua_class_function(L, "match", hlua_regex_match);
+	lua_rawset(L, -3); /* -> META["__index"] = TABLE */
+	hlua_class_function(L, "__gc", hlua_regex_free);
+
+	lua_pushvalue(L, -1); /* Duplicate the metatable reference. */
+	class_regex_ref = hlua_register_metatable(L, CLASS_REGEX);
+
+	lua_setmetatable(L, -2);
+	lua_setglobal(L, CLASS_REGEX); /* Create global object called Regex */
 
 	/* Create listener object. */
 	lua_newtable(L);

@@ -23,37 +23,26 @@
 #include <proto/log.h>
 #include <proto/proto_http.h>
 #include <proto/proxy.h>
-#include <proto/raw_sock.h>
 #include <proto/session.h>
 #include <proto/stream.h>
 #include <proto/tcp_rules.h>
 #include <proto/vars.h>
 
-struct pool_head *pool2_session;
+struct pool_head *pool_head_session;
 
 static int conn_complete_session(struct connection *conn);
-static int conn_update_session(struct connection *conn);
 static struct task *session_expire_embryonic(struct task *t);
-
-/* data layer callbacks for an embryonic stream */
-struct data_cb sess_conn_cb = {
-	.recv = NULL,
-	.send = NULL,
-	.wake = conn_update_session,
-	.init = conn_complete_session,
-	.name = "SESS",
-};
 
 /* Create a a new session and assign it to frontend <fe>, listener <li>,
  * origin <origin>, set the current date and clear the stick counters pointers.
  * Returns the session upon success or NULL. The session may be released using
- * session_free().
+ * session_free(). Note: <li> may be NULL.
  */
 struct session *session_new(struct proxy *fe, struct listener *li, enum obj_type *origin)
 {
 	struct session *sess;
 
-	sess = pool_alloc2(pool2_session);
+	sess = pool_alloc(pool_head_session);
 	if (sess) {
 		sess->listener = li;
 		sess->fe = fe;
@@ -62,22 +51,41 @@ struct session *session_new(struct proxy *fe, struct listener *li, enum obj_type
 		sess->tv_accept   = now;  /* corrected date for internal use */
 		memset(sess->stkctr, 0, sizeof(sess->stkctr));
 		vars_init(&sess->vars, SCOPE_SESS);
+		sess->task = NULL;
+		HA_ATOMIC_UPDATE_MAX(&fe->fe_counters.conn_max,
+				     HA_ATOMIC_ADD(&fe->feconn, 1));
+		if (li)
+			proxy_inc_fe_conn_ctr(li, fe);
+		HA_ATOMIC_ADD(&totalconn, 1);
+		HA_ATOMIC_ADD(&jobs, 1);
 	}
 	return sess;
 }
 
 void session_free(struct session *sess)
 {
+	HA_ATOMIC_SUB(&sess->fe->feconn, 1);
+	if (sess->listener)
+		listener_release(sess->listener);
 	session_store_counters(sess);
 	vars_prune_per_sess(&sess->vars);
-	pool_free2(pool2_session, sess);
+	pool_free(pool_head_session, sess);
+	HA_ATOMIC_SUB(&jobs, 1);
+}
+
+/* callback used from the connection/mux layer to notify that a connection is
+ * gonig to be released.
+ */
+void conn_session_free(struct connection *conn)
+{
+	session_free(conn->owner);
 }
 
 /* perform minimal intializations, report 0 in case of error, 1 if OK. */
 int init_session()
 {
-	pool2_session = create_pool("session", sizeof(struct session), MEM_F_SHARED);
-	return pool2_session != NULL;
+	pool_head_session = create_pool("session", sizeof(struct session), MEM_F_SHARED);
+	return pool_head_session != NULL;
 }
 
 /* count a new session to keep frontend, listener and track stats up to date */
@@ -110,15 +118,14 @@ static void session_count_new(struct session *sess)
  * returns a positive value upon success, 0 if the connection can be ignored,
  * or a negative value upon critical failure. The accepted file descriptor is
  * closed if we return <= 0. If no handshake is needed, it immediately tries
- * to instanciate a new stream.
+ * to instanciate a new stream. The created connection's owner points to the
+ * new session until the upper layers are created.
  */
 int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr)
 {
 	struct connection *cli_conn;
-	struct proxy *p = l->frontend;
+	struct proxy *p = l->bind_conf->frontend;
 	struct session *sess;
-	struct stream *strm;
-	struct task *t;
 	int ret;
 
 
@@ -127,9 +134,9 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	if (unlikely((cli_conn = conn_new()) == NULL))
 		goto out_close;
 
-	conn_prepare(cli_conn, l->proto, l->xprt);
+	conn_prepare(cli_conn, l->proto, l->bind_conf->xprt);
 
-	cli_conn->t.sock.fd = cfd;
+	cli_conn->handle.fd = cfd;
 	cli_conn->addr.from = *addr;
 	cli_conn->flags |= CO_FL_ADDR_FROM_SET;
 	cli_conn->target = &l->obj_type;
@@ -149,7 +156,7 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 		conn_sock_want_recv(cli_conn);
 	}
 
-	conn_data_want_recv(cli_conn);
+	conn_xprt_want_recv(cli_conn);
 	if (conn_xprt_init(cli_conn) < 0)
 		goto out_free_conn;
 
@@ -157,12 +164,7 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	if (!sess)
 		goto out_free_conn;
 
-	p->feconn++;
-	/* This session was accepted, count it now */
-	if (p->feconn > p->fe_counters.conn_max)
-		p->fe_counters.conn_max = p->feconn;
-
-	proxy_inc_fe_conn_ctr(l, p);
+	conn_set_owner(cli_conn, sess, NULL);
 
 	/* now evaluate the tcp-request layer4 rules. We only need a session
 	 * and no stream for these rules.
@@ -231,68 +233,53 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	if (global.tune.client_rcvbuf)
 		setsockopt(cfd, SOL_SOCKET, SO_RCVBUF, &global.tune.client_rcvbuf, sizeof(global.tune.client_rcvbuf));
 
-	if (unlikely((t = task_new()) == NULL))
-		goto out_free_sess;
-
-	t->context = sess;
-	t->nice = l->nice;
-
-	/* OK, now either we have a pending handshake to execute with and
-	 * then we must return to the I/O layer, or we can proceed with the
-	 * end of the stream initialization. In case of handshake, we also
-	 * set the I/O timeout to the frontend's client timeout.
+	/* OK, now either we have a pending handshake to execute with and then
+	 * we must return to the I/O layer, or we can proceed with the end of
+	 * the stream initialization. In case of handshake, we also set the I/O
+	 * timeout to the frontend's client timeout and register a task in the
+	 * session for this purpose. The connection's owner is left to the
+	 * session during this period.
 	 *
 	 * At this point we set the relation between sess/task/conn this way :
 	 *
-	 *          orig -- sess <-- context
-	 *           |                   |
-	 *           v                   |
-	 *          conn -- owner ---> task
+	 *                   +----------------- task
+	 *                   |                    |
+	 *          orig -- sess <-- context      |
+	 *           |       ^           |        |
+	 *           v       |           |        |
+	 *          conn -- owner ---> task <-----+
 	 */
-	if (cli_conn->flags & CO_FL_HANDSHAKE) {
-		conn_attach(cli_conn, t, &sess_conn_cb);
-		t->process = session_expire_embryonic;
-		t->expire = tick_add_ifset(now_ms, p->timeout.client);
-		task_queue(t);
-		cli_conn->flags |= CO_FL_INIT_DATA | CO_FL_WAKE_DATA;
+	if (cli_conn->flags & (CO_FL_HANDSHAKE | CO_FL_EARLY_SSL_HS)) {
+		if (unlikely((sess->task = task_new(tid_bit)) == NULL))
+			goto out_free_sess;
+
+		conn_set_xprt_done_cb(cli_conn, conn_complete_session);
+
+		sess->task->context = sess;
+		sess->task->nice    = l->nice;
+		sess->task->process = session_expire_embryonic;
+		sess->task->expire  = tick_add_ifset(now_ms, p->timeout.client);
+		task_queue(sess->task);
 		return 1;
 	}
 
 	/* OK let's complete stream initialization since there is no handshake */
-	cli_conn->flags |= CO_FL_CONNECTED;
+	if (conn_complete_session(cli_conn) >= 0)
+		return 1;
 
-	/* we want the connection handler to notify the stream interface about updates. */
-	cli_conn->flags |= CO_FL_WAKE_DATA;
-
-	/* if logs require transport layer information, note it on the connection */
-	if (sess->fe->to_log & LW_XPRT)
-		cli_conn->flags |= CO_FL_XPRT_TRACKED;
-
-	/* we may have some tcp-request-session rules */
-	if ((l->options & LI_O_TCP_L5_RULES) && !tcp_exec_l5_rules(sess))
-		goto out_free_sess;
-
-	session_count_new(sess);
-	strm = stream_new(sess, t, &cli_conn->obj_type);
-	if (!strm)
-		goto out_free_task;
-
-	strm->target         = sess->listener->default_target;
-	strm->req.analysers |= sess->listener->analysers;
-
-	return 1;
-
- out_free_task:
-	task_free(t);
+	/* error unrolling */
  out_free_sess:
-	p->feconn--;
+	 /* prevent call to listener_release during session_free. It will be
+	  * done below, for all errors. */
+	sess->listener = NULL;
 	session_free(sess);
  out_free_conn:
-	cli_conn->flags &= ~CO_FL_XPRT_TRACKED;
+	conn_stop_tracking(cli_conn);
 	conn_xprt_close(cli_conn);
 	conn_free(cli_conn);
  out_close:
-	if (ret < 0 && l->xprt == &raw_sock && p->mode == PR_MODE_HTTP) {
+	listener_release(l);
+	if (ret < 0 && l->bind_conf->xprt == xprt_get(XPRT_RAW) && p->mode == PR_MODE_HTTP) {
 		/* critical error, no more memory, try to emit a 500 response */
 		struct chunk *err_msg = &p->errmsg[HTTP_ERR_500];
 		if (!err_msg->str)
@@ -342,10 +329,11 @@ static void session_prepare_log_prefix(struct session *sess)
  * disabled and finally kills the file descriptor. This function requires that
  * sess->origin points to the incoming connection.
  */
-static void session_kill_embryonic(struct session *sess, struct task *task)
+static void session_kill_embryonic(struct session *sess)
 {
 	int level = LOG_INFO;
 	struct connection *conn = __objt_conn(sess->origin);
+	struct task *task = sess->task;
 	unsigned int log = sess->fe->to_log;
 	const char *err_msg;
 
@@ -381,25 +369,9 @@ static void session_kill_embryonic(struct session *sess, struct task *task)
 	}
 
 	/* kill the connection now */
-	conn_force_close(conn);
+	conn_stop_tracking(conn);
+	conn_full_close(conn);
 	conn_free(conn);
-
-	sess->fe->feconn--;
-
-	if (!(sess->listener->options & LI_O_UNLIMITED))
-		actconn--;
-	jobs--;
-	sess->listener->nbconn--;
-	if (sess->listener->state == LI_FULL)
-		resume_listener(sess->listener);
-
-	/* Dequeues all of the listeners waiting for a resource */
-	if (!LIST_ISEMPTY(&global_listener_queue))
-		dequeue_all_listeners(&global_listener_queue);
-
-	if (!LIST_ISEMPTY(&sess->fe->listener_queue) &&
-	    (!sess->fe->fe_sps_lim || freq_ctr_remain(&sess->fe->fe_sess_per_sec, sess->fe->fe_sps_lim, 0) > 0))
-		dequeue_all_listeners(&sess->fe->listener_queue);
 
 	task_delete(task);
 	task_free(task);
@@ -416,24 +388,28 @@ static struct task *session_expire_embryonic(struct task *t)
 	if (!(t->state & TASK_WOKEN_TIMER))
 		return t;
 
-	session_kill_embryonic(sess, t);
+	session_kill_embryonic(sess);
 	return NULL;
 }
 
 /* Finish initializing a session from a connection, or kills it if the
- * connection shows and error. Returns <0 if the connection was killed.
+ * connection shows and error. Returns <0 if the connection was killed. It may
+ * be called either asynchronously as an xprt_done callback with an embryonic
+ * session, or synchronously to finalize the session. The distinction is made
+ * on sess->task which is only set in the embryonic session case.
  */
 static int conn_complete_session(struct connection *conn)
 {
-	struct task *task = conn->owner;
-	struct session *sess = task->context;
-	struct stream *strm;
+	struct session *sess = conn->owner;
+
+	conn_clear_xprt_done_cb(conn);
+
+	/* Verify if the connection just established. */
+	if (unlikely(!(conn->flags & (CO_FL_WAIT_L4_CONN | CO_FL_WAIT_L6_CONN | CO_FL_CONNECTED))))
+		conn->flags |= CO_FL_CONNECTED;
 
 	if (conn->flags & CO_FL_ERROR)
 		goto fail;
-
-	/* we want the connection handler to notify the stream interface about updates. */
-	conn->flags |= CO_FL_WAKE_DATA;
 
 	/* if logs require transport layer information, note it on the connection */
 	if (sess->fe->to_log & LW_XPRT)
@@ -444,35 +420,24 @@ static int conn_complete_session(struct connection *conn)
 		goto fail;
 
 	session_count_new(sess);
-	task->process = sess->listener->handler;
-	strm = stream_new(sess, task, &conn->obj_type);
-	if (!strm)
+	if (conn_install_best_mux(conn, sess->fe->mode == PR_MODE_HTTP, NULL) < 0)
 		goto fail;
 
-	strm->target         = sess->listener->default_target;
-	strm->req.analysers |= sess->listener->analysers;
-	conn->flags &= ~CO_FL_INIT_DATA;
+	/* the embryonic session's task is not needed anymore */
+	if (sess->task) {
+		task_delete(sess->task);
+		task_free(sess->task);
+		sess->task = NULL;
+	}
+
+	conn_set_owner(conn, sess, conn_session_free);
 
 	return 0;
 
  fail:
-	session_kill_embryonic(sess, task);
+	if (sess->task)
+		session_kill_embryonic(sess);
 	return -1;
-}
-
-/* Update a session status. The connection is killed in case of
- * error, and <0 will be returned. Otherwise it does nothing.
- */
-static int conn_update_session(struct connection *conn)
-{
-	struct task *task = conn->owner;
-	struct session *sess = task->context;
-
-	if (conn->flags & CO_FL_ERROR) {
-		session_kill_embryonic(sess, task);
-		return -1;
-	}
-	return 0;
 }
 
 /*

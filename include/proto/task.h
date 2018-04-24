@@ -30,6 +30,9 @@
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/ticks.h>
+#include <common/hathreads.h>
+
+#include <eb32sctree.h>
 #include <eb32tree.h>
 
 #include <types/global.h>
@@ -80,13 +83,16 @@
 
 /* a few exported variables */
 extern unsigned int nb_tasks;     /* total number of tasks */
+extern unsigned long active_tasks_mask; /* Mask of threads with active tasks */
 extern unsigned int tasks_run_queue;    /* run queue size */
 extern unsigned int tasks_run_queue_cur;
 extern unsigned int nb_tasks_cur;
 extern unsigned int niced_tasks;  /* number of niced tasks in the run queue */
-extern struct pool_head *pool2_task;
-extern struct eb32_node *last_timer;   /* optimization: last queued timer */
-extern struct eb32_node *rq_next;    /* optimization: next task except if delete/insert */
+extern struct pool_head *pool_head_task;
+extern struct pool_head *pool_head_notification;
+
+__decl_hathreads(extern HA_SPINLOCK_T rq_lock);  /* spin lock related to run queue */
+__decl_hathreads(extern HA_SPINLOCK_T wq_lock);  /* spin lock related to wait queue */
 
 /* return 0 if task is in run queue, otherwise non-zero */
 static inline int task_in_rq(struct task *t)
@@ -104,10 +110,28 @@ static inline int task_in_wq(struct task *t)
 struct task *__task_wakeup(struct task *t);
 static inline struct task *task_wakeup(struct task *t, unsigned int f)
 {
+	HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
+
+	/* If task is running, we postpone the call
+	 * and backup the state.
+	 */
+	if (unlikely(t->state & TASK_RUNNING)) {
+		t->pending_state |= f;
+		HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
+		return t;
+	}
 	if (likely(!task_in_rq(t)))
 		__task_wakeup(t);
 	t->state |= f;
+	HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
+
 	return t;
+}
+
+/* change the thread affinity of a task to <thread_mask> */
+static inline void task_set_affinity(struct task *t, unsigned long thread_mask)
+{
+	t->thread_mask = thread_mask;
 }
 
 /*
@@ -119,15 +143,15 @@ static inline struct task *task_wakeup(struct task *t, unsigned int f)
 static inline struct task *__task_unlink_wq(struct task *t)
 {
 	eb32_delete(&t->wq);
-	if (last_timer == &t->wq)
-		last_timer = NULL;
 	return t;
 }
 
 static inline struct task *task_unlink_wq(struct task *t)
 {
+	HA_SPIN_LOCK(TASK_WQ_LOCK, &wq_lock);
 	if (likely(task_in_wq(t)))
 		__task_unlink_wq(t);
+	HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
 	return t;
 }
 
@@ -140,7 +164,7 @@ static inline struct task *task_unlink_wq(struct task *t)
  */
 static inline struct task *__task_unlink_rq(struct task *t)
 {
-	eb32_delete(&t->rq);
+	eb32sc_delete(&t->rq);
 	tasks_run_queue--;
 	if (likely(t->nice))
 		niced_tasks--;
@@ -152,11 +176,10 @@ static inline struct task *__task_unlink_rq(struct task *t)
  */
 static inline struct task *task_unlink_rq(struct task *t)
 {
-	if (likely(task_in_rq(t))) {
-		if (&t->rq == rq_next)
-			rq_next = eb32_next(rq_next);
+	HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
+	if (likely(task_in_rq(t)))
 		__task_unlink_rq(t);
-	}
+	HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
 	return t;
 }
 
@@ -176,13 +199,15 @@ static inline struct task *task_delete(struct task *t)
  * state).  The task is returned. This function should not be used outside of
  * task_new().
  */
-static inline struct task *task_init(struct task *t)
+static inline struct task *task_init(struct task *t, unsigned long thread_mask)
 {
 	t->wq.node.leaf_p = NULL;
 	t->rq.node.leaf_p = NULL;
-	t->state = TASK_SLEEPING;
+	t->pending_state = t->state = TASK_SLEEPING;
+	t->thread_mask = thread_mask;
 	t->nice = 0;
 	t->calls = 0;
+	t->expire = TICK_ETERNITY;
 	return t;
 }
 
@@ -191,12 +216,12 @@ static inline struct task *task_init(struct task *t)
  * case of lack of memory. The task count is incremented. Tasks should only
  * be allocated this way, and must be freed using task_free().
  */
-static inline struct task *task_new(void)
+static inline struct task *task_new(unsigned long thread_mask)
 {
-	struct task *t = pool_alloc2(pool2_task);
+	struct task *t = pool_alloc(pool_head_task);
 	if (t) {
-		nb_tasks++;
-		task_init(t);
+		HA_ATOMIC_ADD(&nb_tasks, 1);
+		task_init(t, thread_mask);
 	}
 	return t;
 }
@@ -207,10 +232,10 @@ static inline struct task *task_new(void)
  */
 static inline void task_free(struct task *t)
 {
-	pool_free2(pool2_task, t);
+	pool_free(pool_head_task, t);
 	if (unlikely(stopping))
-		pool_flush2(pool2_task);
-	nb_tasks--;
+		pool_flush(pool_head_task);
+	HA_ATOMIC_SUB(&nb_tasks, 1);
 }
 
 /* Place <task> into the wait queue, where it may already be. If the expiration
@@ -231,8 +256,10 @@ static inline void task_queue(struct task *task)
 	if (!tick_isset(task->expire))
 		return;
 
+	HA_SPIN_LOCK(TASK_WQ_LOCK, &wq_lock);
 	if (!task_in_wq(task) || tick_is_lt(task->expire, task->wq.key))
 		__task_queue(task);
+	HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
 }
 
 /* Ensure <task> will be woken up at most at <when>. If the task is already in
@@ -241,15 +268,107 @@ static inline void task_queue(struct task *task)
  */
 static inline void task_schedule(struct task *task, int when)
 {
+	/* TODO: mthread, check if there is no tisk with this test */
 	if (task_in_rq(task))
 		return;
 
+	HA_SPIN_LOCK(TASK_WQ_LOCK, &wq_lock);
 	if (task_in_wq(task))
 		when = tick_first(when, task->expire);
 
 	task->expire = when;
 	if (!task_in_wq(task) || tick_is_lt(task->expire, task->wq.key))
 		__task_queue(task);
+	HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
+}
+
+/* This function register a new signal. "lua" is the current lua
+ * execution context. It contains a pointer to the associated task.
+ * "link" is a list head attached to an other task that must be wake
+ * the lua task if an event occurs. This is useful with external
+ * events like TCP I/O or sleep functions. This funcion allocate
+ * memory for the signal.
+ */
+static inline struct notification *notification_new(struct list *purge, struct list *event, struct task *wakeup)
+{
+	struct notification *com = pool_alloc(pool_head_notification);
+	if (!com)
+		return NULL;
+	LIST_ADDQ(purge, &com->purge_me);
+	LIST_ADDQ(event, &com->wake_me);
+	HA_SPIN_INIT(&com->lock);
+	com->task = wakeup;
+	return com;
+}
+
+/* This function purge all the pending signals when the LUA execution
+ * is finished. This prevent than a coprocess try to wake a deleted
+ * task. This function remove the memory associated to the signal.
+ * The purge list is not locked because it is owned by only one
+ * process. before browsing this list, the caller must ensure to be
+ * the only one browser.
+ */
+static inline void notification_purge(struct list *purge)
+{
+	struct notification *com, *back;
+
+	/* Delete all pending communication signals. */
+	list_for_each_entry_safe(com, back, purge, purge_me) {
+		HA_SPIN_LOCK(NOTIF_LOCK, &com->lock);
+		LIST_DEL(&com->purge_me);
+		if (!com->task) {
+			HA_SPIN_UNLOCK(NOTIF_LOCK, &com->lock);
+			pool_free(pool_head_notification, com);
+			continue;
+		}
+		com->task = NULL;
+		HA_SPIN_UNLOCK(NOTIF_LOCK, &com->lock);
+	}
+}
+
+/* In some cases, the disconnected notifications must be cleared.
+ * This function just release memory blocs. The purge list is not
+ * locked because it is owned by only one process. Before browsing
+ * this list, the caller must ensure to be the only one browser.
+ * The "com" is not locked because when com->task is NULL, the
+ * notification is no longer used.
+ */
+static inline void notification_gc(struct list *purge)
+{
+	struct notification *com, *back;
+
+	/* Delete all pending communication signals. */
+	list_for_each_entry_safe (com, back, purge, purge_me) {
+		if (com->task)
+			continue;
+		LIST_DEL(&com->purge_me);
+		pool_free(pool_head_notification, com);
+	}
+}
+
+/* This function sends signals. It wakes all the tasks attached
+ * to a list head, and remove the signal, and free the used
+ * memory. The wake list is not locked because it is owned by
+ * only one process. before browsing this list, the caller must
+ * ensure to be the only one browser.
+ */
+static inline void notification_wake(struct list *wake)
+{
+	struct notification *com, *back;
+
+	/* Wake task and delete all pending communication signals. */
+	list_for_each_entry_safe(com, back, wake, wake_me) {
+		HA_SPIN_LOCK(NOTIF_LOCK, &com->lock);
+		LIST_DEL(&com->wake_me);
+		if (!com->task) {
+			HA_SPIN_UNLOCK(NOTIF_LOCK, &com->lock);
+			pool_free(pool_head_notification, com);
+			continue;
+		}
+		task_wakeup(com->task, TASK_WOKEN_MSG);
+		com->task = NULL;
+		HA_SPIN_UNLOCK(NOTIF_LOCK, &com->lock);
+	}
 }
 
 /*

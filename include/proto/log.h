@@ -28,12 +28,14 @@
 
 #include <common/config.h>
 #include <common/memory.h>
+#include <common/hathreads.h>
+
 #include <types/log.h>
 #include <types/proxy.h>
 #include <types/stream.h>
 
-extern struct pool_head *pool2_requri;
-extern struct pool_head *pool2_uniqueid;
+extern struct pool_head *pool_head_requri;
+extern struct pool_head *pool_head_uniqueid;
 
 extern char *log_format;
 extern char default_tcp_log_format[];
@@ -42,16 +44,21 @@ extern char clf_http_log_format[];
 
 extern char default_rfc5424_sd_log_format[];
 
-extern char *logheader;
-extern char *logheader_rfc5424;
-extern char *logline;
-extern char *logline_rfc5424;
+extern THREAD_LOCAL char *logheader;
+extern THREAD_LOCAL char *logheader_rfc5424;
+extern THREAD_LOCAL char *logline;
+extern THREAD_LOCAL char *logline_rfc5424;
 
 
 /*
  * Initializes some log data.
  */
 void init_log();
+
+
+/* Initialize/Deinitialize log buffers used for syslog messages */
+int init_log_buffers();
+void deinit_log_buffers();
 
 /*
  * Builds a log line.
@@ -79,13 +86,13 @@ int parse_logformat_string(const char *str, struct proxy *curproxy, struct list 
  * Displays the message on stderr with the date and pid. Overrides the quiet
  * mode during startup.
  */
-void Alert(const char *fmt, ...)
+void ha_alert(const char *fmt, ...)
 	__attribute__ ((format(printf, 1, 2)));
 
 /*
  * Displays the message on stderr with the date and pid.
  */
-void Warning(const char *fmt, ...)
+void ha_warning(const char *fmt, ...)
 	__attribute__ ((format(printf, 1, 2)));
 
 /*

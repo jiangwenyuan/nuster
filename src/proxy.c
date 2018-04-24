@@ -46,6 +46,7 @@
 #include <proto/proto_tcp.h>
 #include <proto/proto_http.h>
 #include <proto/proxy.h>
+#include <proto/server.h>
 #include <proto/signal.h>
 #include <proto/stream.h>
 #include <proto/stream_interface.h>
@@ -53,7 +54,7 @@
 
 
 int listeners;	/* # of proxy listeners, set by cfgparse */
-struct proxy *proxy  = NULL;	/* list of all existing proxies */
+struct proxy *proxies_list  = NULL;	/* list of all existing proxies */
 struct eb_root used_proxy_id = EB_ROOT;	/* list of proxy IDs in use */
 struct eb_root proxy_by_name = EB_ROOT; /* tree of proxies sorted by name */
 unsigned int error_snapshot_id = 0;     /* global ID assigned to each error then incremented */
@@ -660,8 +661,8 @@ struct server *findserver(const struct proxy *px, const char *name) {
 			continue;
 		}
 
-		Alert("Refusing to use duplicated server '%s' found in proxy: %s!\n",
-			name, px->id);
+		ha_alert("Refusing to use duplicated server '%s' found in proxy: %s!\n",
+			 name, px->id);
 
 		return NULL;
 	}
@@ -678,40 +679,40 @@ struct server *findserver(const struct proxy *px, const char *name) {
 int proxy_cfg_ensure_no_http(struct proxy *curproxy)
 {
 	if (curproxy->cookie_name != NULL) {
-		Warning("config : cookie will be ignored for %s '%s' (needs 'mode http').\n",
-			proxy_type_str(curproxy), curproxy->id);
+		ha_warning("config : cookie will be ignored for %s '%s' (needs 'mode http').\n",
+			   proxy_type_str(curproxy), curproxy->id);
 	}
 	if (curproxy->rsp_exp != NULL) {
-		Warning("config : server regular expressions will be ignored for %s '%s' (needs 'mode http').\n",
-			proxy_type_str(curproxy), curproxy->id);
+		ha_warning("config : server regular expressions will be ignored for %s '%s' (needs 'mode http').\n",
+			   proxy_type_str(curproxy), curproxy->id);
 	}
 	if (curproxy->req_exp != NULL) {
-		Warning("config : client regular expressions will be ignored for %s '%s' (needs 'mode http').\n",
-			proxy_type_str(curproxy), curproxy->id);
+		ha_warning("config : client regular expressions will be ignored for %s '%s' (needs 'mode http').\n",
+			   proxy_type_str(curproxy), curproxy->id);
 	}
 	if (curproxy->monitor_uri != NULL) {
-		Warning("config : monitor-uri will be ignored for %s '%s' (needs 'mode http').\n",
-			proxy_type_str(curproxy), curproxy->id);
+		ha_warning("config : monitor-uri will be ignored for %s '%s' (needs 'mode http').\n",
+			   proxy_type_str(curproxy), curproxy->id);
 	}
 	if (curproxy->lbprm.algo & BE_LB_NEED_HTTP) {
 		curproxy->lbprm.algo &= ~BE_LB_ALGO;
 		curproxy->lbprm.algo |= BE_LB_ALGO_RR;
-		Warning("config : Layer 7 hash not possible for %s '%s' (needs 'mode http'). Falling back to round robin.\n",
-			proxy_type_str(curproxy), curproxy->id);
+		ha_warning("config : Layer 7 hash not possible for %s '%s' (needs 'mode http'). Falling back to round robin.\n",
+			   proxy_type_str(curproxy), curproxy->id);
 	}
 	if (curproxy->to_log & (LW_REQ | LW_RESP)) {
 		curproxy->to_log &= ~(LW_REQ | LW_RESP);
-		Warning("parsing [%s:%d] : HTTP log/header format not usable with %s '%s' (needs 'mode http').\n",
-			curproxy->conf.lfs_file, curproxy->conf.lfs_line,
-			proxy_type_str(curproxy), curproxy->id);
+		ha_warning("parsing [%s:%d] : HTTP log/header format not usable with %s '%s' (needs 'mode http').\n",
+			   curproxy->conf.lfs_file, curproxy->conf.lfs_line,
+			   proxy_type_str(curproxy), curproxy->id);
 	}
 	if (curproxy->conf.logformat_string == default_http_log_format ||
 	    curproxy->conf.logformat_string == clf_http_log_format) {
 		/* Note: we don't change the directive's file:line number */
 		curproxy->conf.logformat_string = default_tcp_log_format;
-		Warning("parsing [%s:%d] : 'option httplog' not usable with %s '%s' (needs 'mode http'). Falling back to 'option tcplog'.\n",
-			curproxy->conf.lfs_file, curproxy->conf.lfs_line,
-			proxy_type_str(curproxy), curproxy->id);
+		ha_warning("parsing [%s:%d] : 'option httplog' not usable with %s '%s' (needs 'mode http'). Falling back to 'option tcplog'.\n",
+			   curproxy->conf.lfs_file, curproxy->conf.lfs_line,
+			   proxy_type_str(curproxy), curproxy->id);
 	}
 
 	return 0;
@@ -753,7 +754,6 @@ void init_new_proxy(struct proxy *p)
 	LIST_INIT(&p->conf.args.list);
 	LIST_INIT(&p->tcpcheck_rules);
 	LIST_INIT(&p->filter_configs);
-	LIST_INIT(&p->nuster.rules);
 
 	/* Timeouts are defined as -1 */
 	proxy_reset_timeouts(p);
@@ -761,6 +761,8 @@ void init_new_proxy(struct proxy *p)
 
 	/* initial uuid is unassigned (-1) */
 	p->uuid = -1;
+
+	HA_SPIN_INIT(&p->lock);
 }
 
 /*
@@ -781,7 +783,7 @@ int start_proxies(int verbose)
 	int pxerr;
 	char msg[100];
 
-	for (curproxy = proxy; curproxy != NULL; curproxy = curproxy->next) {
+	for (curproxy = proxies_list; curproxy != NULL; curproxy = curproxy->next) {
 		if (curproxy->state != PR_STNEW)
 			continue; /* already initialized */
 
@@ -795,11 +797,11 @@ int start_proxies(int verbose)
 			/* errors are reported if <verbose> is set or if they are fatal */
 			if (verbose || (lerr & (ERR_FATAL | ERR_ABORT))) {
 				if (lerr & ERR_ALERT)
-					Alert("Starting %s %s: %s\n",
-					      proxy_type_str(curproxy), curproxy->id, msg);
+					ha_alert("Starting %s %s: %s\n",
+						 proxy_type_str(curproxy), curproxy->id, msg);
 				else if (lerr & ERR_WARN)
-					Warning("Starting %s %s: %s\n",
-						proxy_type_str(curproxy), curproxy->id, msg);
+					ha_warning("Starting %s %s: %s\n",
+						   proxy_type_str(curproxy), curproxy->id, msg);
 			}
 
 			err |= lerr;
@@ -847,13 +849,13 @@ struct task *manage_proxy(struct task *t)
 		int t;
 		t = tick_remain(now_ms, p->stop_time);
 		if (t == 0) {
-			Warning("Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
-				p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
+			ha_warning("Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
+				   p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
 			send_log(p, LOG_WARNING, "Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
 				 p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
 			stop_proxy(p);
 			/* try to free more memory */
-			pool_gc2();
+			pool_gc(NULL);
 		}
 		else {
 			next = tick_first(next, p->stop_time);
@@ -870,7 +872,7 @@ struct task *manage_proxy(struct task *t)
 	if (unlikely(stopping && p->state == PR_STSTOPPED && p->table.current)) {
 		if (!p->table.syncing) {
 			stktable_trash_oldest(&p->table, p->table.current);
-			pool_gc2();
+			pool_gc(NULL);
 		}
 		if (p->table.current) {
 			/* some entries still remain, let's recheck in one second */
@@ -938,20 +940,20 @@ struct task *hard_stop(struct task *t)
 	struct stream *s;
 
 	if (killed) {
-		Warning("Some tasks resisted to hard-stop, exiting now.\n");
+		ha_warning("Some tasks resisted to hard-stop, exiting now.\n");
 		send_log(NULL, LOG_WARNING, "Some tasks resisted to hard-stop, exiting now.\n");
 		/* Do some cleanup and explicitely quit */
 		deinit();
 		exit(0);
 	}
 
-	Warning("soft-stop running for too long, performing a hard-stop.\n");
+	ha_warning("soft-stop running for too long, performing a hard-stop.\n");
 	send_log(NULL, LOG_WARNING, "soft-stop running for too long, performing a hard-stop.\n");
-	p = proxy;
+	p = proxies_list;
 	while (p) {
 		if ((p->cap & PR_CAP_FE) && (p->feconn > 0)) {
-			Warning("Proxy %s hard-stopped (%d remaining conns will be closed).\n",
-				p->id, p->feconn);
+			ha_warning("Proxy %s hard-stopped (%d remaining conns will be closed).\n",
+				   p->id, p->feconn);
 			send_log(p, LOG_WARNING, "Proxy %s hard-stopped (%d remaining conns will be closed).\n",
 				p->id, p->feconn);
 		}
@@ -979,20 +981,33 @@ void soft_stop(void)
 
 	stopping = 1;
 	if (tick_isset(global.hard_stop_after)) {
-		task = task_new();
+		task = task_new(MAX_THREADS_MASK);
 		if (task) {
 			task->process = hard_stop;
 			task_schedule(task, tick_add(now_ms, global.hard_stop_after));
 		}
 		else {
-			Alert("out of memory trying to allocate the hard-stop task.\n");
+			ha_alert("out of memory trying to allocate the hard-stop task.\n");
 		}
 	}
-	p = proxy;
+	p = proxies_list;
 	tv_update_date(0,1); /* else, the old time before select will be used */
 	while (p) {
+		/* Zombie proxy, let's close the file descriptors */
+		if (p->state == PR_STSTOPPED &&
+		    !LIST_ISEMPTY(&p->conf.listeners) &&
+		    LIST_ELEM(p->conf.listeners.n,
+		    struct listener *, by_fe)->state >= LI_ZOMBIE) {
+			struct listener *l;
+			list_for_each_entry(l, &p->conf.listeners, by_fe) {
+				if (l->state >= LI_ZOMBIE)
+					close(l->fd);
+				l->state = LI_INIT;
+			}
+		}
+
 		if (p->state != PR_STSTOPPED) {
-			Warning("Stopping %s %s in %d ms.\n", proxy_cap_str(p->cap), p->id, p->grace);
+			ha_warning("Stopping %s %s in %d ms.\n", proxy_cap_str(p->cap), p->id, p->grace);
 			send_log(p, LOG_WARNING, "Stopping %s %s in %d ms.\n", proxy_cap_str(p->cap), p->id, p->grace);
 			p->stop_time = tick_add(now_ms, p->grace);
 
@@ -1033,7 +1048,7 @@ int pause_proxy(struct proxy *p)
 	    p->state == PR_STSTOPPED || p->state == PR_STPAUSED)
 		return 1;
 
-	Warning("Pausing %s %s.\n", proxy_cap_str(p->cap), p->id);
+	ha_warning("Pausing %s %s.\n", proxy_cap_str(p->cap), p->id);
 	send_log(p, LOG_WARNING, "Pausing %s %s.\n", proxy_cap_str(p->cap), p->id);
 
 	list_for_each_entry(l, &p->conf.listeners, by_fe) {
@@ -1042,7 +1057,7 @@ int pause_proxy(struct proxy *p)
 	}
 
 	if (p->state == PR_STERROR) {
-		Warning("%s %s failed to enter pause mode.\n", proxy_cap_str(p->cap), p->id);
+		ha_warning("%s %s failed to enter pause mode.\n", proxy_cap_str(p->cap), p->id);
 		send_log(p, LOG_WARNING, "%s %s failed to enter pause mode.\n", proxy_cap_str(p->cap), p->id);
 		return 0;
 	}
@@ -1051,6 +1066,43 @@ int pause_proxy(struct proxy *p)
 	return 1;
 }
 
+/* This function makes the proxy unusable, but keeps the listening sockets
+ * opened, so that if any process requests them, we are able to serve them.
+ * This should only be called early, before we started accepting requests.
+ */
+void zombify_proxy(struct proxy *p)
+{
+	struct listener *l;
+	struct listener *first_to_listen = NULL;
+
+	list_for_each_entry(l, &p->conf.listeners, by_fe) {
+		enum li_state oldstate = l->state;
+
+		unbind_listener_no_close(l);
+		if (l->state >= LI_ASSIGNED) {
+			delete_listener(l);
+		}
+		/*
+		 * Pretend we're still up and running so that the fd
+		 * will be sent if asked.
+		 */
+		l->state = LI_ZOMBIE;
+		if (!first_to_listen && oldstate >= LI_LISTEN)
+			first_to_listen = l;
+	}
+	/* Quick hack : at stop time, to know we have to close the sockets
+	 * despite the proxy being marked as stopped, make the first listener
+	 * of the listener list an active one, so that we don't have to
+	 * parse the whole list to be sure.
+	 */
+	if (first_to_listen && LIST_ELEM(p->conf.listeners.n,
+	    struct listener *, by_fe) != first_to_listen) {
+		LIST_DEL(&l->by_fe);
+		LIST_ADD(&p->conf.listeners, &l->by_fe);
+	}
+
+	p->state = PR_STSTOPPED;
+}
 
 /*
  * This function completely stops a proxy and releases its listeners. It has
@@ -1067,8 +1119,6 @@ void stop_proxy(struct proxy *p)
 		unbind_listener(l);
 		if (l->state >= LI_ASSIGNED) {
 			delete_listener(l);
-			listeners--;
-			jobs--;
 		}
 	}
 	p->state = PR_STSTOPPED;
@@ -1087,7 +1137,7 @@ int resume_proxy(struct proxy *p)
 	if (p->state != PR_STPAUSED)
 		return 1;
 
-	Warning("Enabling %s %s.\n", proxy_cap_str(p->cap), p->id);
+	ha_warning("Enabling %s %s.\n", proxy_cap_str(p->cap), p->id);
 	send_log(p, LOG_WARNING, "Enabling %s %s.\n", proxy_cap_str(p->cap), p->id);
 
 	fail = 0;
@@ -1097,14 +1147,14 @@ int resume_proxy(struct proxy *p)
 
 			port = get_host_port(&l->addr);
 			if (port) {
-				Warning("Port %d busy while trying to enable %s %s.\n",
-					port, proxy_cap_str(p->cap), p->id);
+				ha_warning("Port %d busy while trying to enable %s %s.\n",
+					   port, proxy_cap_str(p->cap), p->id);
 				send_log(p, LOG_WARNING, "Port %d busy while trying to enable %s %s.\n",
 					 port, proxy_cap_str(p->cap), p->id);
 			}
 			else {
-				Warning("Bind on socket %d busy while trying to enable %s %s.\n",
-					l->luid, proxy_cap_str(p->cap), p->id);
+				ha_warning("Bind on socket %d busy while trying to enable %s %s.\n",
+					   l->luid, proxy_cap_str(p->cap), p->id);
 				send_log(p, LOG_WARNING, "Bind on socket %d busy while trying to enable %s %s.\n",
 					 l->luid, proxy_cap_str(p->cap), p->id);
 			}
@@ -1136,7 +1186,7 @@ void pause_proxies(void)
 	struct peers *prs;
 
 	err = 0;
-	p = proxy;
+	p = proxies_list;
 	tv_update_date(0,1); /* else, the old time before select will be used */
 	while (p) {
 		err |= !pause_proxy(p);
@@ -1151,7 +1201,7 @@ void pause_proxies(void)
         }
 
 	if (err) {
-		Warning("Some proxies refused to pause, performing soft stop now.\n");
+		ha_warning("Some proxies refused to pause, performing soft stop now.\n");
 		send_log(p, LOG_WARNING, "Some proxies refused to pause, performing soft stop now.\n");
 		soft_stop();
 	}
@@ -1170,7 +1220,7 @@ void resume_proxies(void)
 	struct peers *prs;
 
 	err = 0;
-	p = proxy;
+	p = proxies_list;
 	tv_update_date(0,1); /* else, the old time before select will be used */
 	while (p) {
 		err |= !resume_proxy(p);
@@ -1185,7 +1235,7 @@ void resume_proxies(void)
         }
 
 	if (err) {
-		Warning("Some proxies refused to resume, a restart is probably needed to resume safe operations.\n");
+		ha_warning("Some proxies refused to resume, a restart is probably needed to resume safe operations.\n");
 		send_log(p, LOG_WARNING, "Some proxies refused to resume, a restart is probably needed to resume safe operations.\n");
 	}
 }
@@ -1205,9 +1255,8 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 		return 0;
 
 	s->be = be;
-	be->beconn++;
-	if (be->beconn > be->be_counters.conn_max)
-		be->be_counters.conn_max = be->beconn;
+	HA_ATOMIC_UPDATE_MAX(&be->be_counters.conn_max,
+			     HA_ATOMIC_ADD(&be->beconn, 1));
 	proxy_inc_be_ctr(be);
 
 	/* assign new parameters to the stream from the new backend */
@@ -1298,6 +1347,7 @@ struct proxy *cli_find_frontend(struct appctx *appctx, const char *arg)
 	struct proxy *px;
 
 	if (!*arg) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "A frontend name is expected.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return NULL;
@@ -1305,6 +1355,7 @@ struct proxy *cli_find_frontend(struct appctx *appctx, const char *arg)
 
 	px = proxy_fe_by_name(arg);
 	if (!px) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "No such frontend.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return NULL;
@@ -1312,53 +1363,82 @@ struct proxy *cli_find_frontend(struct appctx *appctx, const char *arg)
 	return px;
 }
 
+/* Expects to find a backend named <arg> and returns it, otherwise displays various
+ * adequate error messages and returns NULL. This function is designed to be used by
+ * functions requiring a frontend on the CLI.
+ */
+struct proxy *cli_find_backend(struct appctx *appctx, const char *arg)
+{
+	struct proxy *px;
+
+	if (!*arg) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "A backend name is expected.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return NULL;
+	}
+
+	px = proxy_be_by_name(arg);
+	if (!px) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "No such backend.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return NULL;
+	}
+	return px;
+}
+
+
 /* parse a "show servers" CLI line, returns 0 if it wants to start the dump or
- * 1 if it stops immediately.
+ * 1 if it stops immediately. If an argument is specified, it will set the proxy
+ * pointer into cli.p0 and its ID into cli.i0.
  */
 static int cli_parse_show_servers(char **args, struct appctx *appctx, void *private)
 {
-	appctx->ctx.server_state.iid = 0;
-	appctx->ctx.server_state.px = NULL;
-	appctx->ctx.server_state.sv = NULL;
+	struct proxy *px;
 
 	/* check if a backend name has been provided */
 	if (*args[3]) {
 		/* read server state from local file */
-		appctx->ctx.server_state.px = proxy_be_by_name(args[3]);
+		px = proxy_be_by_name(args[3]);
 
-		if (!appctx->ctx.server_state.px) {
+		if (!px) {
+			appctx->ctx.cli.severity = LOG_ERR;
 			appctx->ctx.cli.msg = "Can't find backend.\n";
 			appctx->st0 = CLI_ST_PRINT;
 			return 1;
 		}
-		appctx->ctx.server_state.iid = appctx->ctx.server_state.px->uuid;
+		appctx->ctx.cli.p0 = px;
+		appctx->ctx.cli.i0 = px->uuid;
 	}
 	return 0;
 }
 
-/* dumps server state information into <buf> for all the servers found in <backend>
+/* dumps server state information into <buf> for all the servers found in backend cli.p0.
  * These information are all the parameters which may change during HAProxy runtime.
  * By default, we only export to the last known server state file format.
  * These information can be used at next startup to recover same level of server state.
+ * It uses the proxy pointer from cli.p0, the proxy's id from cli.i0 and the server's
+ * pointer from cli.p1.
  */
 static int dump_servers_state(struct stream_interface *si, struct chunk *buf)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
+	struct proxy *px = appctx->ctx.cli.p0;
 	struct server *srv;
 	char srv_addr[INET6_ADDRSTRLEN + 1];
 	time_t srv_time_since_last_change;
 	int bk_f_forced_id, srv_f_forced_id;
 
-
 	/* we don't want to report any state if the backend is not enabled on this process */
-	if (appctx->ctx.server_state.px->bind_proc && !(appctx->ctx.server_state.px->bind_proc & (1UL << (relative_pid - 1))))
+	if (px->bind_proc && !(px->bind_proc & pid_bit))
 		return 1;
 
-	if (!appctx->ctx.server_state.sv)
-		appctx->ctx.server_state.sv = appctx->ctx.server_state.px->srv;
+	if (!appctx->ctx.cli.p1)
+		appctx->ctx.cli.p1 = px->srv;
 
-	for (; appctx->ctx.server_state.sv != NULL; appctx->ctx.server_state.sv = srv->next) {
-		srv = appctx->ctx.server_state.sv;
+	for (; appctx->ctx.cli.p1 != NULL; appctx->ctx.cli.p1 = srv->next) {
+		srv = appctx->ctx.cli.p1;
 		srv_addr[0] = '\0';
 
 		switch (srv->addr.ss_family) {
@@ -1372,7 +1452,7 @@ static int dump_servers_state(struct stream_interface *si, struct chunk *buf)
 				break;
 		}
 		srv_time_since_last_change = now.tv_sec - srv->last_change;
-		bk_f_forced_id = appctx->ctx.server_state.px->options & PR_O_FORCED_ID ? 1 : 0;
+		bk_f_forced_id = px->options & PR_O_FORCED_ID ? 1 : 0;
 		srv_f_forced_id = srv->flags & SRV_F_FORCED_ID ? 1 : 0;
 
 		chunk_appendf(buf,
@@ -1380,14 +1460,14 @@ static int dump_servers_state(struct stream_interface *si, struct chunk *buf)
 				"%d %s %s "
 				"%d %d %d %d %ld "
 				"%d %d %d %d %d "
-				"%d %d"
+				"%d %d %s %u"
 				"\n",
-				appctx->ctx.server_state.px->uuid, appctx->ctx.server_state.px->id,
+				px->uuid, px->id,
 				srv->puid, srv->id, srv_addr,
-				srv->state, srv->admin, srv->uweight, srv->iweight, (long int)srv_time_since_last_change,
+				srv->cur_state, srv->cur_admin, srv->uweight, srv->iweight, (long int)srv_time_since_last_change,
 				srv->check.status, srv->check.result, srv->check.health, srv->check.state, srv->agent.state,
-				bk_f_forced_id, srv_f_forced_id);
-		if (bi_putchk(si_ic(si), &trash) == -1) {
+				bk_f_forced_id, srv_f_forced_id, srv->hostname ? srv->hostname : "-", srv->svc_port);
+		if (ci_putchk(si_ic(si), &trash) == -1) {
 			si_applet_cant_put(si);
 			return 0;
 		}
@@ -1396,25 +1476,25 @@ static int dump_servers_state(struct stream_interface *si, struct chunk *buf)
 }
 
 /* Parses backend list or simply use backend name provided by the user to return
- * states of servers to stdout.
+ * states of servers to stdout. It dumps proxy <cli.p0> and stops if <cli.i0> is
+ * non-null.
  */
 static int cli_io_handler_servers_state(struct appctx *appctx)
 {
 	struct stream_interface *si = appctx->owner;
-	extern struct proxy *proxy;
 	struct proxy *curproxy;
 
 	chunk_reset(&trash);
 
 	if (appctx->st2 == STAT_ST_INIT) {
-		if (!appctx->ctx.server_state.px)
-			appctx->ctx.server_state.px = proxy;
+		if (!appctx->ctx.cli.p0)
+			appctx->ctx.cli.p0 = proxies_list;
 		appctx->st2 = STAT_ST_HEAD;
 	}
 
 	if (appctx->st2 == STAT_ST_HEAD) {
 		chunk_printf(&trash, "%d\n# %s\n", SRV_STATE_FILE_VERSION, SRV_STATE_FILE_FIELD_NAMES);
-		if (bi_putchk(si_ic(si), &trash) == -1) {
+		if (ci_putchk(si_ic(si), &trash) == -1) {
 			si_applet_cant_put(si);
 			return 0;
 		}
@@ -1422,67 +1502,140 @@ static int cli_io_handler_servers_state(struct appctx *appctx)
 	}
 
 	/* STAT_ST_INFO */
-	for (; appctx->ctx.server_state.px != NULL; appctx->ctx.server_state.px = curproxy->next) {
-		curproxy = appctx->ctx.server_state.px;
+	for (; appctx->ctx.cli.p0 != NULL; appctx->ctx.cli.p0 = curproxy->next) {
+		curproxy = appctx->ctx.cli.p0;
 		/* servers are only in backends */
 		if (curproxy->cap & PR_CAP_BE) {
 			if (!dump_servers_state(si, &trash))
 				return 0;
-
-			if (bi_putchk(si_ic(si), &trash) == -1) {
-				si_applet_cant_put(si);
-				return 0;
-			}
 		}
 		/* only the selected proxy is dumped */
-		if (appctx->ctx.server_state.iid)
+		if (appctx->ctx.cli.i0)
 			break;
 	}
 
 	return 1;
 }
 
-static int cli_parse_show_backend(char **args, struct appctx *appctx, void *private)
-{
-	appctx->ctx.be.px = NULL;
-	return 0;
-}
-
-/* Parses backend list and simply report backend names */
+/* Parses backend list and simply report backend names. It keeps the proxy
+ * pointer in cli.p0.
+ */
 static int cli_io_handler_show_backend(struct appctx *appctx)
 {
-	extern struct proxy *proxy;
 	struct stream_interface *si = appctx->owner;
 	struct proxy *curproxy;
 
 	chunk_reset(&trash);
 
-	if (!appctx->ctx.be.px) {
+	if (!appctx->ctx.cli.p0) {
 		chunk_printf(&trash, "# name\n");
-		if (bi_putchk(si_ic(si), &trash) == -1) {
+		if (ci_putchk(si_ic(si), &trash) == -1) {
 			si_applet_cant_put(si);
 			return 0;
 		}
-		appctx->ctx.be.px = proxy;
+		appctx->ctx.cli.p0 = proxies_list;
 	}
 
-	for (; appctx->ctx.be.px != NULL; appctx->ctx.be.px = curproxy->next) {
-		curproxy = appctx->ctx.be.px;
+	for (; appctx->ctx.cli.p0 != NULL; appctx->ctx.cli.p0 = curproxy->next) {
+		curproxy = appctx->ctx.cli.p0;
 
 		/* looking for backends only */
 		if (!(curproxy->cap & PR_CAP_BE))
 			continue;
 
 		/* we don't want to list a backend which is bound to this process */
-		if (curproxy->bind_proc && !(curproxy->bind_proc & (1UL << (relative_pid - 1))))
+		if (curproxy->bind_proc && !(curproxy->bind_proc & pid_bit))
 			continue;
 
 		chunk_appendf(&trash, "%s\n", curproxy->id);
-		if (bi_putchk(si_ic(si), &trash) == -1) {
+		if (ci_putchk(si_ic(si), &trash) == -1) {
 			si_applet_cant_put(si);
 			return 0;
 		}
 	}
+
+	return 1;
+}
+
+/* Parses the "enable dynamic-cookies backend" directive, it always returns 1 */
+static int cli_parse_enable_dyncookie_backend(char **args, struct appctx *appctx, void *private)
+{
+	struct proxy *px;
+	struct server *s;
+
+	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
+		return 1;
+
+	px = cli_find_backend(appctx, args[3]);
+	if (!px)
+		return 1;
+
+	px->ck_opts |= PR_CK_DYNAMIC;
+
+	for (s = px->srv; s != NULL; s = s->next)
+		srv_set_dyncookie(s);
+
+	return 1;
+}
+
+/* Parses the "disable dynamic-cookies backend" directive, it always returns 1 */
+static int cli_parse_disable_dyncookie_backend(char **args, struct appctx *appctx, void *private)
+{
+	struct proxy *px;
+	struct server *s;
+
+	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
+		return 1;
+
+	px = cli_find_backend(appctx, args[3]);
+	if (!px)
+		return 1;
+
+	px->ck_opts &= ~PR_CK_DYNAMIC;
+
+	for (s = px->srv; s != NULL; s = s->next) {
+		if (!(s->flags & SRV_F_COOKIESET)) {
+			free(s->cookie);
+			s->cookie = NULL;
+		}
+	}
+
+	return 1;
+}
+
+/* Parses the "set dynamic-cookie-key backend" directive, it always returns 1 */
+static int cli_parse_set_dyncookie_key_backend(char **args, struct appctx *appctx, void *private)
+{
+	struct proxy *px;
+	struct server *s;
+	char *newkey;
+
+	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
+		return 1;
+
+	px = cli_find_backend(appctx, args[3]);
+	if (!px)
+		return 1;
+
+	if (!*args[4]) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "String value expected.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return 1;
+	}
+
+	newkey = strdup(args[4]);
+	if (!newkey) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "Failed to allocate memory.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return 1;
+	}
+	free(px->dyncookie_key);
+	px->dyncookie_key = newkey;
+
+	for (s = px->srv; s != NULL; s = s->next)
+		srv_set_dyncookie(s);
 
 	return 1;
 }
@@ -1502,6 +1655,7 @@ static int cli_parse_set_maxconn_frontend(char **args, struct appctx *appctx, vo
 		return 1;
 
 	if (!*args[4]) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Integer value expected.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -1509,6 +1663,7 @@ static int cli_parse_set_maxconn_frontend(char **args, struct appctx *appctx, vo
 
 	v = atoi(args[4]);
 	if (v < 0) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Value out of range.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -1543,13 +1698,14 @@ static int cli_parse_shutdown_frontend(char **args, struct appctx *appctx, void 
 		return 1;
 
 	if (px->state == PR_STSTOPPED) {
+		appctx->ctx.cli.severity = LOG_NOTICE;
 		appctx->ctx.cli.msg = "Frontend was already shut down.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
 	}
 
-	Warning("Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
-	        px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
+	ha_warning("Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
+		   px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
 	send_log(px, LOG_WARNING, "Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
 	         px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
 	stop_proxy(px);
@@ -1569,18 +1725,21 @@ static int cli_parse_disable_frontend(char **args, struct appctx *appctx, void *
 		return 1;
 
 	if (px->state == PR_STSTOPPED) {
+		appctx->ctx.cli.severity = LOG_NOTICE;
 		appctx->ctx.cli.msg = "Frontend was previously shut down, cannot disable.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
 	}
 
 	if (px->state == PR_STPAUSED) {
+		appctx->ctx.cli.severity = LOG_NOTICE;
 		appctx->ctx.cli.msg = "Frontend is already disabled.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
 	}
 
 	if (!pause_proxy(px)) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Failed to pause frontend, check logs for precise cause.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -1601,18 +1760,21 @@ static int cli_parse_enable_frontend(char **args, struct appctx *appctx, void *p
 		return 1;
 
 	if (px->state == PR_STSTOPPED) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Frontend was previously shut down, cannot enable.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
 	}
 
 	if (px->state != PR_STPAUSED) {
+		appctx->ctx.cli.severity = LOG_NOTICE;
 		appctx->ctx.cli.msg = "Frontend is already enabled.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
 	}
 
 	if (!resume_proxy(px)) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Failed to resume frontend, check logs for precise cause (port conflict?).\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -1626,8 +1788,11 @@ static struct cli_kw_list cli_kws = {{ },{
 	{ { "enable", "frontend",  NULL }, "enable frontend : re-enable specific frontend", cli_parse_enable_frontend, NULL, NULL },
 	{ { "set", "maxconn", "frontend",  NULL }, "set maxconn frontend : change a frontend's maxconn setting", cli_parse_set_maxconn_frontend, NULL },
 	{ { "show","servers", "state",  NULL }, "show servers state [id]: dump volatile server information (for backend <id>)", cli_parse_show_servers, cli_io_handler_servers_state },
-	{ { "show", "backend", NULL }, "show backend   : list backends in the current running config", cli_parse_show_backend, cli_io_handler_show_backend },
+	{ { "show", "backend", NULL }, "show backend   : list backends in the current running config", NULL, cli_io_handler_show_backend },
 	{ { "shutdown", "frontend",  NULL }, "shutdown frontend : stop a specific frontend", cli_parse_shutdown_frontend, NULL, NULL },
+	{ { "set", "dynamic-cookie-key", "backend", NULL }, "set dynamic-cookie-key backend : change a backend secret key for dynamic cookies", cli_parse_set_dyncookie_key_backend, NULL },
+	{ { "enable", "dynamic-cookie", "backend", NULL }, "enable dynamic-cookie backend : enable dynamic cookies on a specific backend", cli_parse_enable_dyncookie_backend, NULL },
+	{ { "disable", "dynamic-cookie", "backend", NULL }, "disable dynamic-cookie backend : disable dynamic cookies on a specific backend", cli_parse_disable_dyncookie_backend, NULL },
 	{{},}
 }};
 

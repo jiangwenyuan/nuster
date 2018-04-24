@@ -24,12 +24,11 @@
 
 #include <types/task.h>
 #include <common/config.h>
+#include <types/mailers.h>
 
 const char *get_check_status_description(short check_status);
 const char *get_check_status_info(short check_status);
-int start_checks();
 void __health_adjust(struct server *s, short status);
-int trigger_resolution(struct server *s);
 
 extern struct data_cb check_conn_cb;
 
@@ -38,23 +37,28 @@ extern struct data_cb check_conn_cb;
  */
 static inline void health_adjust(struct server *s, short status)
 {
+	HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
 	/* return now if observing nor health check is not enabled */
-	if (!s->observe || !s->check.task)
+	if (!s->observe || !s->check.task) {
+		HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 		return;
+	}
 
-	return __health_adjust(s, status);
+	__health_adjust(s, status);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 }
 
 const char *init_check(struct check *check, int type);
 void free_check(struct check *check);
 
+int init_email_alert(struct mailers *mailers, struct proxy *p, char **err);
 void send_email_alert(struct server *s, int priority, const char *format, ...)
 	__attribute__ ((format(printf, 3, 4)));
 int srv_check_healthcheck_port(struct check *chk);
 
 /* Declared here, but the definitions are in flt_spoe.c */
-int prepare_spoe_healthcheck_request(char **req, int *len);
-int handle_spoe_healthcheck_response(char *frame, size_t size, char *err, int errlen);
+int spoe_prepare_healthcheck_request(char **req, int *len);
+int spoe_handle_healthcheck_response(char *frame, size_t size, char *err, int errlen);
 
 #endif /* _PROTO_CHECKS_H */
 

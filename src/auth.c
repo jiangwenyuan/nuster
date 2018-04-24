@@ -25,6 +25,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <types/global.h>
 #include <common/config.h>
 #include <common/errors.h>
 
@@ -132,8 +133,8 @@ int userlist_postinit()
 				}
 
 				if (!ag) {
-					Alert("userlist '%s': no such group '%s' specified in user '%s'\n",
-					      curuserlist->name, group, curuser->user);
+					ha_alert("userlist '%s': no such group '%s' specified in user '%s'\n",
+						 curuserlist->name, group, curuser->user);
 					free(groups);
 					return ERR_ALERT | ERR_FATAL;
 				}
@@ -141,8 +142,8 @@ int userlist_postinit()
 				/* Add this group at the group userlist. */
 				grl = calloc(1, sizeof(*grl));
 				if (!grl) {
-					Alert("userlist '%s': no more memory when trying to allocate the user groups.\n",
-					      curuserlist->name);
+					ha_alert("userlist '%s': no more memory when trying to allocate the user groups.\n",
+						 curuserlist->name);
 					free(groups);
 					return ERR_ALERT | ERR_FATAL;
 				}
@@ -169,16 +170,16 @@ int userlist_postinit()
 				}
 
 				if (!curuser) {
-					Alert("userlist '%s': no such user '%s' specified in group '%s'\n",
-					      curuserlist->name, user, ag->name);
+					ha_alert("userlist '%s': no such user '%s' specified in group '%s'\n",
+						 curuserlist->name, user, ag->name);
 					return ERR_ALERT | ERR_FATAL;
 				}
 
 				/* Add this group at the group userlist. */
 				grl = calloc(1, sizeof(*grl));
 				if (!grl) {
-					Alert("userlist '%s': no more memory when trying to allocate the user groups.\n",
-					      curuserlist->name);
+					ha_alert("userlist '%s': no more memory when trying to allocate the user groups.\n",
+						 curuserlist->name);
 					return  ERR_ALERT | ERR_FATAL;
 				}
 
@@ -293,4 +294,10 @@ pat_match_auth(struct sample *smp, struct pattern_expr *expr, int fill)
 		}
 	}
 	return NULL;
+}
+
+__attribute__((constructor))
+static void __auth_init(void)
+{
+	hap_register_build_opts("Encrypted password support via crypt(3): yes", 0);
 }

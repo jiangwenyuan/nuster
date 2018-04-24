@@ -1,7 +1,7 @@
                              ------------------------
                              HAProxy Management Guide
                              ------------------------
-                                   version 1.7
+                                   version 1.8
 
 
 This document describes how to start, stop, manage, and troubleshoot HAProxy,
@@ -160,8 +160,6 @@ list of options is :
     configuration. It is recommended to always force it in any init script so
     that a faulty configuration doesn't prevent the system from booting.
 
-  -Ds : work in systemd mode. Only used by the systemd wrapper.
-
   -L <name> : change the local peer name to <name>, which defaults to the local
     hostname. This is used only with peers replication.
 
@@ -170,6 +168,17 @@ list of options is :
 
   -V : enable verbose mode (disables quiet mode). Reverts the effect of "-q" or
     "quiet".
+
+  -W : master-worker mode. It is equivalent to the "master-worker" keyword in
+    the "global" section of the configuration. This mode will launch a "master"
+    which will monitor the "workers". Using this mode, you can reload HAProxy
+    directly by sending a SIGUSR2 signal to the master.  The master-worker mode
+    is compatible either with the foreground or daemon mode.  It is
+    recommended to use this mode with multiprocess and systemd.
+
+  -Ws : master-worker mode with support of `notify` type of systemd service.
+    This option is only available when HAProxy was built with `USE_SYSTEMD`
+    build option enabled.
 
   -c : only performs a check of the configuration files and exits before trying
     to bind. The exit status is zero if everything is OK, or non-zero if an
@@ -187,7 +196,7 @@ list of options is :
     difficult to troubleshoot.
 
   -dM[<byte>] : forces memory poisoning, which means that each and every
-    memory region allocated with malloc() or pool_alloc2() will be filled with
+    memory region allocated with malloc() or pool_alloc() will be filled with
     <byte> before being passed to the caller. When <byte> is not specified, it
     defaults to 0x50 ('P'). While this slightly slows down operations, it is
     useful to reliably trigger issues resulting from missing initializations in
@@ -276,6 +285,12 @@ list of options is :
 
   -vv : display the version, build options, libraries versions and usable
     pollers. This output is systematically requested when filing a bug report.
+
+  -x <unix_socket> : connect to the specified socket and try to retrieve any
+    listening sockets from the old process, and use them instead of trying to
+    bind new ones. This is useful to avoid missing any new connection when
+    reloading the configuration on Linux. The capability must be enable on the
+    stats socket using "expose-fd listeners" in your configuration.
 
 A safe way to start HAProxy from an init file consists in forcing the daemon
 mode, storing existing pids to a pid file and using this pid file to notify
@@ -412,6 +427,12 @@ Both of these signals may be sent by the new haproxy process itself during a
 reload or restart, so that they are sent at the latest possible moment and only
 if absolutely required. This is what is performed by the "-st" (hard) and "-sf"
 (graceful) options respectively.
+
+In master-worker mode, it is not needed to start a new haproxy process in
+order to reload the configuration. The master process reacts to the SIGUSR2
+signal by reexecuting itself with the -sf parameter followed by the PIDs of
+the workers. The master will then parse the configuration file and fork new
+workers.
 
 To understand better how these signals are used, it is important to understand
 the whole restart mechanism.
@@ -985,6 +1006,8 @@ S (Servers).
         L7TOUT  -> layer 7 (HTTP/SMTP) timeout
         L7RSP   -> layer 7 invalid response - protocol error
         L7STS   -> layer 7 response error, for example HTTP 5xx
+     Notice: If a check is currently running, the last known status will be
+     reported, prefixed with "* ". e. g. "* L7OK".
  37. check_code [...S]: layer5-7 code, if available
  38. check_duration [...S]: time in ms took to finish last health check
  39. hrsp_1xx [.FBS]: http responses with 1xx code
@@ -1282,6 +1305,11 @@ If an unknown command is sent, haproxy displays the usage message which reminds
 all supported commands. Some commands support a more complex syntax, generally
 it will explain what part of the command is invalid when this happens.
 
+Some commands require a higher level of privilege to work. If you do not have
+enough privilege, you will get an error "Permission denied". Please check
+the "level" option of the "bind" keyword lines in the configuration manual
+for more information.
+
 add acl <acl> <pattern>
   Add an entry into the acl <acl>. <acl> is the #<id> or the <file> returned by
   "show acl". This command does not verify if the entry already exists. This
@@ -1297,7 +1325,8 @@ add map <map> <key> <value>
 
 clear counters
   Clear the max values of the statistics counters in each proxy (frontend &
-  backend) and in each server. The accumulated counters are not affected. This
+  backend) and in each server. The accumulated counters are not affected. The
+  internal activity counters reported by "show activity" are also reset. This
   can be used to get clean counters after an incident, without having to
   restart nor to clear traffic counters. This command is restricted and can
   only be issued on sockets configured for levels "operator" or "admin".
@@ -1401,6 +1430,9 @@ disable agent <backend>/<server>
   This command is restricted and can only be issued on sockets configured for
   level "admin".
 
+disable dynamic-cookie backend <backend>
+  Disable the generation of dynamic cookies fot the backend <backend>
+
 disable frontend <frontend>
   Mark the frontend as temporarily stopped. This corresponds to the mode which
   is used during a soft restart : the frontend releases the port but can be
@@ -1449,6 +1481,10 @@ enable agent <backend>/<server>
 
   This command is restricted and can only be issued on sockets configured for
   level "admin".
+
+enable dynamic-cookie backend <backend>
+  Enable the generation of dynamic cookies fot the backend <backend>
+  A secret key must also be provided
 
 enable frontend <frontend>
   Resume a frontend which was temporarily stopped. It is possible that some of
@@ -1540,6 +1576,10 @@ prompt
 quit
   Close the connection when in interactive mode.
 
+set dynamic-cookie-key backend <backend> <value>
+  Modify the secret key used to generate the dynamic persistent cookies.
+  This will break the existing sessions.
+
 set map <map> [<key>|#<ref>] <value>
   Modify the value corresponding to each key <key> in a map <map>. <map> is the
   #<id> or <file> returned by "show map". If the <ref> is used in place of
@@ -1603,6 +1643,15 @@ set server <backend>/<server> agent [ up | down ]
   switch a server's state regardless of some slow agent checks for example.
   Note that the change is propagated to tracking servers if any.
 
+set server <backend>/<server> agent-addr <addr>
+  Change addr for servers agent checks. Allows to migrate agent-checks to
+  another address at runtime. You can specify both IP and hostname, it will be
+  resolved.
+
+set server <backend>/<server> agent-send <value>
+  Change agent string sent to agent check target. Allows to update string while
+  changing server address to keep those two matching.
+
 set server <backend>/<server> health [ up | stopping | down ]
   Force a server's health to a new state. This can be useful to immediately
   switch a server's state regardless of some slow health checks for example.
@@ -1625,11 +1674,19 @@ set server <backend>/<server> weight <weight>[%]
   Change a server's weight to the value passed in argument. This is the exact
   equivalent of the "set weight" command below.
 
+set server <backend>/<server> fqdn <FQDN>
+  Change a server's FQDN to the value passed in argument.
+
+set severity-output [ none | number | string ]
+  Change the severity output format of the stats socket connected to for the
+  duration of the current session.
+
 set ssl ocsp-response <response>
   This command is used to update an OCSP Response for a certificate (see "crt"
   on "bind" lines). Same controls are performed as during the initial loading of
   the response. The <response> must be passed as a base64 encoded string of the
-  DER encoded response from the OCSP server.
+  DER encoded response from the OCSP server. This command is not supported with
+  BoringSSL.
 
   Example:
     openssl ocsp -issuer issuer.pem -cert server.pem \
@@ -1673,6 +1730,56 @@ set weight <backend>/<server> <weight>[%]
   is restricted and can only be issued on sockets configured for level
   "admin". Both the backend and the server may be specified either by their
   name or by their numeric ID, prefixed with a sharp ('#').
+
+show acl [<acl>]
+  Dump info about acl converters. Without argument, the list of all available
+  acls is returned. If a <acl> is specified, its contents are dumped. <acl> if
+  the #<id> or <file>. The dump format is the same than the map even for the
+  sample value. The data returned are not a list of available ACL, but are the
+  list of all patterns composing any ACL. Many of these patterns can be shared
+  with maps.
+
+show backend
+  Dump the list of backends available in the running process
+
+show cli sockets
+  List CLI sockets. The output format is composed of 3 fields separated by
+  spaces. The first field is the socket address, it can be a unix socket, a
+  ipv4 address:port couple or a ipv6 one. Socket of other types won't be dump.
+  The second field describe the level of the socket: 'admin', 'user' or
+  'operator'. The last field list the processes on which the socket is bound,
+  separated by commas, it can be numbers or 'all'.
+
+  Example :
+
+     $ echo 'show cli sockets' | socat stdio /tmp/sock1
+     # socket lvl processes
+     /tmp/sock1 admin all
+     127.0.0.1:9999 user 2,3,4
+     127.0.0.2:9969 user 2
+     [::1]:9999 operator 2
+
+show cache
+  List the configured caches and the objects stored in each cache tree.
+
+  $ echo 'show cache' | socat stdio /tmp/sock1
+  0x7f6ac6c5b03a: foobar (shctx:0x7f6ac6c5b000, available blocks:3918)
+         1          2             3                             4
+
+  1. pointer to the cache structure
+  2. cache name
+  3. pointer to the mmap area (shctx)
+  4. number of blocks available for reuse in the shctx
+
+  0x7f6ac6c5b4cc hash:286881868 size:39114 (39 blocks), refcount:9, expire:237
+           1               2            3        4            5           6
+
+  1. pointer to the cache entry
+  2. first 32 bits of the hash
+  3. size of the object in bytes
+  4. number of blocks used for the object
+  5. number of transactions using the entry
+  6. expiration time, can be negative if already expired
 
 show env [<name>]
   Dump one or all environment variables known by the process. Without any
@@ -1740,19 +1847,49 @@ show errors [<iid>|<proxy>] [request|response]
     is the slash ('/') in header name "header/bizarre", which is not a valid
     HTTP character for a header name.
 
-show backend
-  Dump the list of backends available in the running process
+show fd [<fd>]
+  Dump the list of either all open file descriptors or just the one number <fd>
+  if specified. This is only aimed at developers who need to observe internal
+  states in order to debug complex issues such as abnormal CPU usages. One fd
+  is reported per lines, and for each of them, its state in the poller using
+  upper case letters for enabled flags and lower case for disabled flags, using
+  "P" for "polled", "R" for "ready", "A" for "active", the events status using
+  "H" for "hangup", "E" for "error", "O" for "output", "P" for "priority" and
+  "I" for "input", a few other flags like "N" for "new" (just added into the fd
+  cache), "U" for "updated" (received an update in the fd cache), "L" for
+  "linger_risk", "C" for "cloned", then the cached entry position, the pointer
+  to the internal owner, the pointer to the I/O callback and its name when
+  known. When the owner is a connection, the connection flags, and the target
+  are reported (frontend, proxy or server). When the owner is a listener, the
+  listener's state and its frontend are reported. There is no point in using
+  this command without a good knowledge of the internals. It's worth noting
+  that the output format may evolve over time so this output must not be parsed
+  by tools designed to be durable.
 
-show info [typed]
+show activity
+  Reports some counters about internal events that will help developers and
+  more generally people who know haproxy well enough to narrow down the causes
+  of reports of abnormal behaviours. A typical example would be a properly
+  running process never sleeping and eating 100% of the CPU. The output fields
+  will be made of one line per metric, and per-thread counters on the same
+  line. These counters are 32-bit and will wrap during the process' life, which
+  is not a problem since calls to this command will typically be performed
+  twice. The fields are purposely not documented so that their exact meaning is
+  verified in the code where the counters are fed. These values are also reset
+  by the "clear counters" command.
+
+show info [typed|json]
   Dump info about haproxy status on current process. If "typed" is passed as an
   optional argument, field numbers, names and types are emitted as well so that
   external monitoring products can easily retrieve, possibly aggregate, then
   report information found in fields they don't know. Each field is dumped on
-  its own line. By default, the format contains only two columns delimited by a
-  colon (':'). The left one is the field name and the right one is the value.
-  It is very important to note that in typed output format, the dump for a
-  single object is contiguous so that there is no need for a consumer to store
-  everything at once.
+  its own line. If "json" is passed as an optional argument then
+  information provided by "typed" output is provided in JSON format as a
+  list of JSON objects. By default, the format contains only two columns
+  delimited by a colon (':'). The left one is the field name and the right
+  one is the value.  It is very important to note that in typed output
+  format, the dump for a single object is contiguous so that there is no
+  need for a consumer to store everything at once.
 
   When using the typed output format, each line is made of 4 columns delimited
   by colons (':'). The first column is a dot-delimited series of 3 elements. The
@@ -1829,6 +1966,23 @@ show info [typed]
       6.Uptime.2:MDP:str:0d 0h01m28s
       (...)
 
+  The format of JSON output is described in a schema which may be output
+  using "show schema json".
+
+  The JSON output contains no extra whitespace in order to reduce the
+  volume of output. For human consumption passing the output through a
+  pretty printer may be helpful. Example :
+
+  $ echo "show info json" | socat /var/run/haproxy.sock stdio | \
+    python -m json.tool
+
+  The JSON output contains no extra whitespace in order to reduce the
+  volume of output. For human consumption passing the output through a
+  pretty printer may be helpful. Example :
+
+  $ echo "show info json" | socat /var/run/haproxy.sock stdio | \
+    python -m json.tool
+
 show map [<map>]
   Dump info about map converters. Without argument, the list of all available
   maps is returned. If a <map> is specified, its contents are dumped. <map> is
@@ -1837,14 +1991,6 @@ show map [<map>]
   the pattern and the third column is the sample if available. The data returned
   are not directly a list of available maps, but are the list of all patterns
   composing any map. Many of these patterns can be shared with ACL.
-
-show acl [<acl>]
-  Dump info about acl converters. Without argument, the list of all available
-  acls is returned. If a <acl> is specified, its contents are dumped. <acl> if
-  the #<id> or <file>. The dump format is the same than the map even for the
-  sample value. The data returned are not a list of available ACL, but are the
-  list of all patterns composing any ACL. Many of these patterns can be shared
-  with maps.
 
 show pools
   Dump the status of internal memory pools. This is useful to track memory
@@ -1901,6 +2047,9 @@ show servers state [<backend>]
                                     0x20 = SRV_ADMF_RMAINT
                                       The server is in maintenance because of an
                                       IP address resolution failure.
+                                    0x40 = SRV_ADMF_HMAINT
+                                      The server FQDN was set from stats socket.
+
      srv_uweight:                 User visible server's weight.
      srv_iweight:                 Server's initial weight.
      srv_time_since_last_change:  Time since last operational change.
@@ -1942,6 +2091,8 @@ show servers state [<backend>]
                                   configuration.
      srv_f_forced_id:             Flag to know if the server's ID is forced by
                                   configuration.
+     srv_fqdn:                    Server FQDN.
+     srv_port:                    Server port.
 
 show sess
   Dump all known sessions. Avoid doing this on slow connections as this can
@@ -1960,11 +2111,12 @@ show sess <id>
   The special id "all" dumps the states of all sessions, which must be avoided
   as much as possible as it is highly CPU intensive and can take a lot of time.
 
-show stat [{<iid>|<proxy>} <type> <sid>] [typed]
-  Dump statistics using the CSV format, or using the extended typed output
-  format described in the section above if "typed" is passed after the other
-  arguments. By passing <id>, <type> and <sid>, it is possible to dump only
-  selected items :
+show stat [{<iid>|<proxy>} <type> <sid>] [typed|json]
+  Dump statistics using the CSV format; using the extended typed output
+  format described in the section above if "typed" is passed after the
+  other arguments; or in JSON if "json" is passed after the other arguments
+  . By passing <id>, <type> and <sid>, it is possible to dump only selected
+  items :
     - <iid> is a proxy ID, -1 to dump everything. Alternatively, a proxy name
       <proxy> may be specified. In this case, this proxy's ID will be used as
       the ID selector.
@@ -2097,6 +2249,23 @@ show stat [{<iid>|<proxy>} <type> <sid>] [typed]
         B.3.0.6.slim.2:MGP:u32:1000
         (...)
 
+  The format of JSON output is described in a schema which may be output
+  using "show schema json".
+
+  The JSON output contains no extra whitespace in order to reduce the
+  volume of output. For human consumption passing the output through a
+  pretty printer may be helpful. Example :
+
+  $ echo "show stat json" | socat /var/run/haproxy.sock stdio | \
+    python -m json.tool
+
+  The JSON output contains no extra whitespace in order to reduce the
+  volume of output. For human consumption passing the output through a
+  pretty printer may be helpful. Example :
+
+  $ echo "show stat json" | socat /var/run/haproxy.sock stdio | \
+    python -m json.tool
+
 show stat resolvers [<resolvers section id>]
   Dump statistics for the given resolvers section, or all resolvers sections
   if no section is supplied.
@@ -2196,6 +2365,21 @@ show tls-keys [id|*]
   can be used to update the TLS keys using "set ssl tls-key". If an ID is
   specified as parameter, it will dump the tickets, using * it will dump every
   keys from every references.
+
+show schema json
+  Dump the schema used for the output of "show info json" and "show stat json".
+
+  The contains no extra whitespace in order to reduce the volume of output.
+  For human consumption passing the output through a pretty printer may be
+  helpful. Example :
+
+  $ echo "show schema json" | socat /var/run/haproxy.sock stdio | \
+    python -m json.tool
+
+  The schema follows "JSON Schema" (json-schema.org) and accordingly
+  verifiers may be used to verify the output of "show info json" and "show
+  stat json" against the schema.
+
 
 shutdown frontend <frontend>
   Completely delete the specified frontend. All the ports it was bound to will

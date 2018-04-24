@@ -58,7 +58,6 @@
 #include <proto/listener.h>
 #include <proto/map.h>
 #include <proto/proto_http.h>
-#include <proto/proto_uxst.h>
 #include <proto/proxy.h>
 #include <proto/sample.h>
 #include <proto/session.h>
@@ -82,6 +81,7 @@ const char *info_field_names[INF_TOTAL_FIELDS] = {
 	[INF_NAME]                           = "Name",
 	[INF_VERSION]                        = "Version",
 	[INF_RELEASE_DATE]                   = "Release_date",
+	[INF_NBTHREAD]                       = "Nbthread",
 	[INF_NBPROC]                         = "Nbproc",
 	[INF_PROCESS_NUM]                    = "Process_num",
 	[INF_PID]                            = "Pid",
@@ -219,9 +219,9 @@ const char *stat_field_names[ST_F_TOTAL_FIELDS] = {
 };
 
 /* one line of info */
-static struct field info[INF_TOTAL_FIELDS];
+static THREAD_LOCAL struct field info[INF_TOTAL_FIELDS];
 /* one line of stats */
-static struct field stats[ST_F_TOTAL_FIELDS];
+static THREAD_LOCAL struct field stats[ST_F_TOTAL_FIELDS];
 
 
 
@@ -229,6 +229,7 @@ static struct field stats[ST_F_TOTAL_FIELDS];
  * http_stats_io_handler()
  *     -> stats_dump_stat_to_buffer()     // same as above, but used for CSV or HTML
  *        -> stats_dump_csv_header()      // emits the CSV headers (same as above)
+ *        -> stats_dump_json_header()     // emits the JSON headers (same as above)
  *        -> stats_dump_html_head()       // emits the HTML headers
  *        -> stats_dump_html_info()       // emits the equivalent of "show info" at the top
  *        -> stats_dump_proxy_to_buffer() // same as above, valid for CSV and HTML
@@ -239,6 +240,7 @@ static struct field stats[ST_F_TOTAL_FIELDS];
  *           -> stats_dump_be_stats()
  *           -> stats_dump_html_px_end()
  *        -> stats_dump_html_end()       // emits HTML trailer
+ *        -> stats_dump_json_end()       // emits JSON trailer
  */
 
 
@@ -294,6 +296,58 @@ int stats_emit_typed_data_field(struct chunk *out, const struct field *f)
 	}
 }
 
+/* Limit JSON integer values to the range [-(2**53)+1, (2**53)-1] as per
+ * the recommendation for interoperable integers in section 6 of RFC 7159.
+ */
+#define JSON_INT_MAX ((1ULL << 53) - 1)
+#define JSON_INT_MIN (0 - JSON_INT_MAX)
+
+/* Emits a stats field value and its type in JSON.
+ * Returns non-zero on success, 0 on error.
+ */
+int stats_emit_json_data_field(struct chunk *out, const struct field *f)
+{
+	int old_len;
+	char buf[20];
+	const char *type, *value = buf, *quote = "";
+
+	switch (field_format(f, 0)) {
+	case FF_EMPTY: return 1;
+	case FF_S32:   type = "\"s32\"";
+		       snprintf(buf, sizeof(buf), "%d", f->u.s32);
+		       break;
+	case FF_U32:   type = "\"u32\"";
+		       snprintf(buf, sizeof(buf), "%u", f->u.u32);
+		       break;
+	case FF_S64:   type = "\"s64\"";
+		       if (f->u.s64 < JSON_INT_MIN || f->u.s64 > JSON_INT_MAX)
+			       return 0;
+		       type = "\"s64\"";
+		       snprintf(buf, sizeof(buf), "%lld", (long long)f->u.s64);
+		       break;
+	case FF_U64:   if (f->u.u64 > JSON_INT_MAX)
+			       return 0;
+		       type = "\"u64\"";
+		       snprintf(buf, sizeof(buf), "%llu",
+				(unsigned long long) f->u.u64);
+		       break;
+	case FF_STR:   type = "\"str\"";
+		       value = field_str(f, 0);
+		       quote = "\"";
+		       break;
+	default:       snprintf(buf, sizeof(buf), "%u", f->type);
+		       type = buf;
+		       value = "unknown";
+		       quote = "\"";
+		       break;
+	}
+
+	old_len = out->len;
+	chunk_appendf(out, ",\"value\":{\"type\":%s,\"value\":%s%s%s}",
+		      type, quote, value, quote);
+	return !(old_len == out->len);
+}
+
 /* Emits an encoding of the field type on 3 characters followed by a delimiter.
  * Returns non-zero on success, 0 if the buffer is full.
  */
@@ -337,6 +391,55 @@ int stats_emit_field_tags(struct chunk *out, const struct field *f, char delim)
 	return chunk_appendf(out, "%c%c%c%c", origin, nature, scope, delim);
 }
 
+/* Emits an encoding of the field type as JSON.
+  * Returns non-zero on success, 0 if the buffer is full.
+  */
+int stats_emit_json_field_tags(struct chunk *out, const struct field *f)
+{
+	const char *origin, *nature, *scope;
+	int old_len;
+
+	switch (field_origin(f, 0)) {
+	case FO_METRIC:  origin = "Metric";  break;
+	case FO_STATUS:  origin = "Status";  break;
+	case FO_KEY:     origin = "Key";     break;
+	case FO_CONFIG:  origin = "Config";  break;
+	case FO_PRODUCT: origin = "Product"; break;
+	default:         origin = "Unknown"; break;
+	}
+
+	switch (field_nature(f, 0)) {
+	case FN_GAUGE:    nature = "Gauge";    break;
+	case FN_LIMIT:    nature = "Limit";    break;
+	case FN_MIN:      nature = "Min";      break;
+	case FN_MAX:      nature = "Max";      break;
+	case FN_RATE:     nature = "Rate";     break;
+	case FN_COUNTER:  nature = "Counter";  break;
+	case FN_DURATION: nature = "Duration"; break;
+	case FN_AGE:      nature = "Age";      break;
+	case FN_TIME:     nature = "Time";     break;
+	case FN_NAME:     nature = "Name";     break;
+	case FN_OUTPUT:   nature = "Output";   break;
+	case FN_AVG:      nature = "Avg";      break;
+	default:          nature = "Unknown";  break;
+	}
+
+	switch (field_scope(f, 0)) {
+	case FS_PROCESS: scope = "Process"; break;
+	case FS_SERVICE: scope = "Service"; break;
+	case FS_SYSTEM:  scope = "System";  break;
+	case FS_CLUSTER: scope = "Cluster"; break;
+	default:         scope = "Unknown"; break;
+	}
+
+	old_len = out->len;
+	chunk_appendf(out, "\"tags\":{"
+			    "\"origin\":\"%s\","
+			    "\"nature\":\"%s\","
+			    "\"scope\":\"%s\""
+			   "}", origin, nature, scope);
+	return !(old_len == out->len);
+}
 
 /* Dump all fields from <stats> into <out> using CSV format */
 static int stats_dump_fields_csv(struct chunk *out, const struct field *stats)
@@ -379,6 +482,123 @@ static int stats_dump_fields_typed(struct chunk *out, const struct field *stats)
 			return 0;
 	}
 	return 1;
+}
+
+/* Dump all fields from <stats> into <out> using the "show info json" format */
+static int stats_dump_json_info_fields(struct chunk *out,
+				       const struct field *info)
+{
+	int field;
+	int started = 0;
+
+	if (!chunk_strcat(out, "["))
+		return 0;
+
+	for (field = 0; field < INF_TOTAL_FIELDS; field++) {
+		int old_len;
+
+		if (!field_format(info, field))
+			continue;
+
+		if (started && !chunk_strcat(out, ","))
+			goto err;
+		started = 1;
+
+		old_len = out->len;
+		chunk_appendf(out,
+			      "{\"field\":{\"pos\":%d,\"name\":\"%s\"},"
+			      "\"processNum\":%u,",
+			      field, info_field_names[field],
+			      info[INF_PROCESS_NUM].u.u32);
+		if (old_len == out->len)
+			goto err;
+
+		if (!stats_emit_json_field_tags(out, &info[field]))
+			goto err;
+
+		if (!stats_emit_json_data_field(out, &info[field]))
+			goto err;
+
+		if (!chunk_strcat(out, "}"))
+			goto err;
+	}
+
+	if (!chunk_strcat(out, "]"))
+		goto err;
+	return 1;
+
+err:
+	chunk_reset(out);
+	chunk_appendf(out, "{\"errorStr\":\"output buffer too short\"}");
+	return 0;
+}
+
+/* Dump all fields from <stats> into <out> using a typed "field:desc:type:value" format */
+static int stats_dump_fields_json(struct chunk *out, const struct field *stats,
+				  int first_stat)
+{
+	int field;
+	int started = 0;
+
+	if (!first_stat && !chunk_strcat(out, ","))
+		return 0;
+	if (!chunk_strcat(out, "["))
+		return 0;
+
+	for (field = 0; field < ST_F_TOTAL_FIELDS; field++) {
+		const char *obj_type;
+		int old_len;
+
+		if (!stats[field].type)
+			continue;
+
+		if (started && !chunk_strcat(out, ","))
+			goto err;
+		started = 1;
+
+		switch (stats[ST_F_TYPE].u.u32) {
+		case STATS_TYPE_FE: obj_type = "Frontend"; break;
+		case STATS_TYPE_BE: obj_type = "Backend";  break;
+		case STATS_TYPE_SO: obj_type = "Listener"; break;
+		case STATS_TYPE_SV: obj_type = "Server";   break;
+		default:            obj_type = "Unknown";  break;
+		}
+
+		old_len = out->len;
+		chunk_appendf(out,
+			      "{"
+				"\"objType\":\"%s\","
+				"\"proxyId\":%d,"
+				"\"id\":%d,"
+				"\"field\":{\"pos\":%d,\"name\":\"%s\"},"
+				"\"processNum\":%u,",
+			       obj_type, stats[ST_F_IID].u.u32,
+			       stats[ST_F_SID].u.u32, field,
+			       stat_field_names[field], stats[ST_F_PID].u.u32);
+		if (old_len == out->len)
+			goto err;
+
+		if (!stats_emit_json_field_tags(out, &stats[field]))
+			goto err;
+
+		if (!stats_emit_json_data_field(out, &stats[field]))
+			goto err;
+
+		if (!chunk_strcat(out, "}"))
+			goto err;
+	}
+
+	if (!chunk_strcat(out, "]"))
+		goto err;
+
+	return 1;
+
+err:
+	chunk_reset(out);
+	if (!first_stat)
+	    chunk_strcat(out, ",");
+	chunk_appendf(out, "{\"errorStr\":\"output buffer too short\"}");
+	return 0;
 }
 
 /* Dump all fields from <stats> into <out> using the HTML format. A column is
@@ -1022,15 +1242,26 @@ static int stats_dump_fields_html(struct chunk *out, const struct field *stats, 
 
 int stats_dump_one_line(const struct field *stats, unsigned int flags, struct proxy *px, struct appctx *appctx)
 {
+	int ret;
+
 	if ((px->cap & PR_CAP_BE) && px->srv && (appctx->ctx.stats.flags & STAT_ADMIN))
 		flags |= ST_SHOWADMIN;
 
 	if (appctx->ctx.stats.flags & STAT_FMT_HTML)
-		return stats_dump_fields_html(&trash, stats, flags);
+		ret = stats_dump_fields_html(&trash, stats, flags);
 	else if (appctx->ctx.stats.flags & STAT_FMT_TYPED)
-		return stats_dump_fields_typed(&trash, stats);
+		ret = stats_dump_fields_typed(&trash, stats);
+	else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
+		ret = stats_dump_fields_json(&trash, stats,
+					     !(appctx->ctx.stats.flags &
+					       STAT_STARTED));
 	else
-		return stats_dump_fields_csv(&trash, stats);
+		ret = stats_dump_fields_csv(&trash, stats);
+
+	if (ret)
+		appctx->ctx.stats.flags |= STAT_STARTED;
+
+	return ret;
 }
 
 /* Fill <stats> with the frontend statistics. <stats> is
@@ -1260,7 +1491,7 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 	while (ref->track)
 		ref = ref->track;
 
-	if (sv->state == SRV_ST_RUNNING || sv->state == SRV_ST_STARTING) {
+	if (sv->cur_state == SRV_ST_RUNNING || sv->cur_state == SRV_ST_STARTING) {
 		if ((ref->check.state & CHK_ST_ENABLED) &&
 		    (ref->check.health < ref->check.rise + ref->check.fall - 1)) {
 			state = SRV_STATS_STATE_UP_GOING_DOWN;
@@ -1268,7 +1499,7 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 			state = SRV_STATS_STATE_UP;
 		}
 
-		if (sv->admin & SRV_ADMF_DRAIN) {
+		if (sv->cur_admin & SRV_ADMF_DRAIN) {
 			if (ref->agent.state & CHK_ST_ENABLED)
 				state = SRV_STATS_STATE_DRAIN_AGENT;
 			else if (state == SRV_STATS_STATE_UP_GOING_DOWN)
@@ -1281,7 +1512,7 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 			state = SRV_STATS_STATE_NO_CHECK;
 		}
 	}
-	else if (sv->state == SRV_ST_STOPPING) {
+	else if (sv->cur_state == SRV_ST_STOPPING) {
 		if ((!(sv->check.state & CHK_ST_ENABLED) && !sv->track) ||
 		    (ref->check.health == ref->check.rise + ref->check.fall - 1)) {
 			state = SRV_STATS_STATE_NOLB;
@@ -1325,21 +1556,21 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 
 	/* status */
 	fld_status = chunk_newstr(out);
-	if (sv->admin & SRV_ADMF_RMAINT)
+	if (sv->cur_admin & SRV_ADMF_RMAINT)
 		chunk_appendf(out, "MAINT (resolution)");
-	else if (sv->admin & SRV_ADMF_IMAINT)
+	else if (sv->cur_admin & SRV_ADMF_IMAINT)
 		chunk_appendf(out, "MAINT (via %s/%s)", via->proxy->id, via->id);
-	else if (sv->admin & SRV_ADMF_MAINT)
+	else if (sv->cur_admin & SRV_ADMF_MAINT)
 		chunk_appendf(out, "MAINT");
 	else
 		chunk_appendf(out,
 			      srv_hlt_st[state],
-			      (ref->state != SRV_ST_STOPPED) ? (ref->check.health - ref->check.rise + 1) : (ref->check.health),
-			      (ref->state != SRV_ST_STOPPED) ? (ref->check.fall) : (ref->check.rise));
+			      (ref->cur_state != SRV_ST_STOPPED) ? (ref->check.health - ref->check.rise + 1) : (ref->check.health),
+			      (ref->cur_state != SRV_ST_STOPPED) ? (ref->check.fall) : (ref->check.rise));
 
 	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, fld_status);
 	stats[ST_F_LASTCHG]  = mkf_u32(FN_AGE, now.tv_sec - sv->last_change);
-	stats[ST_F_WEIGHT]   = mkf_u32(FN_AVG, (sv->eweight * px->lbprm.wmult + px->lbprm.wdiv - 1) / px->lbprm.wdiv);
+	stats[ST_F_WEIGHT]   = mkf_u32(FN_AVG, (sv->cur_eweight * px->lbprm.wmult + px->lbprm.wdiv - 1) / px->lbprm.wdiv);
 	stats[ST_F_ACT]      = mkf_u32(FO_STATUS, (sv->flags & SRV_F_BACKUP) ? 0 : 1);
 	stats[ST_F_BCK]      = mkf_u32(FO_STATUS, (sv->flags & SRV_F_BACKUP) ? 1 : 0);
 
@@ -1357,7 +1588,7 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 	stats[ST_F_IID]      = mkf_u32(FO_KEY|FS_SERVICE, px->uuid);
 	stats[ST_F_SID]      = mkf_u32(FO_KEY|FS_SERVICE, sv->puid);
 
-	if (sv->state == SRV_ST_STARTING && !server_is_draining(sv))
+	if (sv->cur_state == SRV_ST_STARTING && !server_is_draining(sv))
 		stats[ST_F_THROTTLE] = mkf_u32(FN_AVG, server_throttle_rate(sv));
 
 	stats[ST_F_LBTOT]    = mkf_u64(FN_COUNTER, sv->counters.cum_lbconn);
@@ -1726,7 +1957,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 
 	if (uri)
 		flags = uri->flags;
-	else if (strm_li(s)->bind_conf->level >= ACCESS_LVL_OPER)
+	else if ((strm_li(s)->bind_conf->level & ACCESS_LVL_MASK) >= ACCESS_LVL_OPER)
 		flags = ST_SHLGNDS | ST_SHNODE | ST_SHDESC;
 	else
 		flags = ST_SHNODE | ST_SHDESC;
@@ -1778,7 +2009,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 	case STAT_PX_ST_TH:
 		if (appctx->ctx.stats.flags & STAT_FMT_HTML) {
 			stats_dump_html_px_hdr(si, px, uri);
-			if (bi_putchk(rep, &trash) == -1) {
+			if (ci_putchk(rep, &trash) == -1) {
 				si_applet_cant_put(si);
 				return 0;
 			}
@@ -1790,7 +2021,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 	case STAT_PX_ST_FE:
 		/* print the frontend */
 		if (stats_dump_fe_stats(si, px)) {
-			if (bi_putchk(rep, &trash) == -1) {
+			if (ci_putchk(rep, &trash) == -1) {
 				si_applet_cant_put(si);
 				return 0;
 			}
@@ -1822,7 +2053,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 
 			/* print the frontend */
 			if (stats_dump_li_stats(si, px, l, flags)) {
-				if (bi_putchk(rep, &trash) == -1) {
+				if (ci_putchk(rep, &trash) == -1) {
 					si_applet_cant_put(si);
 					return 0;
 				}
@@ -1857,8 +2088,8 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 
 			/* do not report servers which are DOWN and not changing state */
 			if ((appctx->ctx.stats.flags & STAT_HIDE_DOWN) &&
-			    ((sv->admin & SRV_ADMF_MAINT) || /* server is in maintenance */
-			     (sv->state == SRV_ST_STOPPED && /* server is down */
+			    ((sv->cur_admin & SRV_ADMF_MAINT) || /* server is in maintenance */
+			     (sv->cur_state == SRV_ST_STOPPED && /* server is down */
 			      (!((svs->agent.state | svs->check.state) & CHK_ST_ENABLED) ||
 			       ((svs->agent.state & CHK_ST_ENABLED) && !svs->agent.health) ||
 			       ((svs->check.state & CHK_ST_ENABLED) && !svs->check.health))))) {
@@ -1866,7 +2097,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 			}
 
 			if (stats_dump_sv_stats(si, px, flags, sv)) {
-				if (bi_putchk(rep, &trash) == -1) {
+				if (ci_putchk(rep, &trash) == -1) {
 					si_applet_cant_put(si);
 					return 0;
 				}
@@ -1879,7 +2110,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 	case STAT_PX_ST_BE:
 		/* print the backend */
 		if (stats_dump_be_stats(si, px, flags)) {
-			if (bi_putchk(rep, &trash) == -1) {
+			if (ci_putchk(rep, &trash) == -1) {
 				si_applet_cant_put(si);
 				return 0;
 			}
@@ -1891,7 +2122,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct proxy *px, st
 	case STAT_PX_ST_END:
 		if (appctx->ctx.stats.flags & STAT_FMT_HTML) {
 			stats_dump_html_px_end(si, px);
-			if (bi_putchk(rep, &trash) == -1) {
+			if (ci_putchk(rep, &trash) == -1) {
 				si_applet_cant_put(si);
 				return 0;
 			}
@@ -2047,7 +2278,7 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 	              "<hr width=\"100%%\" class=\"hr\">\n"
 	              "<h3>&gt; General process information</h3>\n"
 	              "<table border=0><tr><td align=\"left\" nowrap width=\"1%%\">\n"
-	              "<p><b>pid = </b> %d (process #%d, nbproc = %d)<br>\n"
+	              "<p><b>pid = </b> %d (process #%d, nbproc = %d, nbthread = %d)<br>\n"
 	              "<b>uptime = </b> %dd %dh%02dm%02ds<br>\n"
 	              "<b>system limits:</b> memmax = %s%s; ulimit-n = %d<br>\n"
 	              "<b>maxsock = </b> %d; <b>maxconn = </b> %d; <b>maxpipes = </b> %d<br>\n"
@@ -2081,7 +2312,7 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 		      (uri->flags & ST_SHNODE) ? (uri->node ? uri->node : global.node) : "",
 	              (uri->flags & ST_SHDESC) ? ": " : "",
 		      (uri->flags & ST_SHDESC) ? (uri->desc ? uri->desc : global.desc) : "",
-	              pid, relative_pid, global.nbproc,
+	              pid, relative_pid, global.nbproc, global.nbthread,
 	              up / 86400, (up % 86400) / 3600,
 	              (up % 3600) / 60, (up % 60),
 	              global.rlimit_memmax ? ultoa(global.rlimit_memmax) : "unlimited",
@@ -2258,6 +2489,23 @@ static void stats_dump_html_end()
 	chunk_appendf(&trash, "</body></html>\n");
 }
 
+/* Dumps the stats JSON header to the trash buffer which. The caller is responsible
+ * for clearing it if needed.
+ */
+static void stats_dump_json_header()
+{
+	chunk_strcat(&trash, "[");
+}
+
+
+/* Dumps the JSON stats trailer block to the trash. The caller is responsible
+ * for clearing the trash if needed.
+ */
+static void stats_dump_json_end()
+{
+	chunk_strcat(&trash, "]");
+}
+
 /* This function dumps statistics onto the stream interface's read buffer in
  * either CSV or HTML format. <uri> contains some HTML-specific parameters that
  * are ignored for CSV format (hence <uri> may be NULL there). It returns 0 if
@@ -2281,10 +2529,12 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct uri_aut
 	case STAT_ST_HEAD:
 		if (appctx->ctx.stats.flags & STAT_FMT_HTML)
 			stats_dump_html_head(uri);
+		else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
+			stats_dump_json_header();
 		else if (!(appctx->ctx.stats.flags & STAT_FMT_TYPED))
 			stats_dump_csv_header();
 
-		if (bi_putchk(rep, &trash) == -1) {
+		if (ci_putchk(rep, &trash) == -1) {
 			si_applet_cant_put(si);
 			return 0;
 		}
@@ -2295,13 +2545,13 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct uri_aut
 	case STAT_ST_INFO:
 		if (appctx->ctx.stats.flags & STAT_FMT_HTML) {
 			stats_dump_html_info(si, uri);
-			if (bi_putchk(rep, &trash) == -1) {
+			if (ci_putchk(rep, &trash) == -1) {
 				si_applet_cant_put(si);
 				return 0;
 			}
 		}
 
-		appctx->ctx.stats.px = proxy;
+		appctx->ctx.stats.px = proxies_list;
 		appctx->ctx.stats.px_st = STAT_PX_ST_INIT;
 		appctx->st2 = STAT_ST_LIST;
 		/* fall through */
@@ -2329,9 +2579,12 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct uri_aut
 		/* fall through */
 
 	case STAT_ST_END:
-		if (appctx->ctx.stats.flags & STAT_FMT_HTML) {
-			stats_dump_html_end();
-			if (bi_putchk(rep, &trash) == -1) {
+		if (appctx->ctx.stats.flags & (STAT_FMT_HTML|STAT_FMT_JSON)) {
+			if (appctx->ctx.stats.flags & STAT_FMT_HTML)
+				stats_dump_html_end();
+			else
+				stats_dump_json_end();
+			if (ci_putchk(rep, &trash) == -1) {
 				si_applet_cant_put(si);
 				return 0;
 			}
@@ -2384,7 +2637,7 @@ static int stats_process_http_post(struct stream_interface *si)
 		goto out;
 	}
 
-	reql = bo_getblk(si_oc(si), temp->str, s->txn->req.body_len, s->txn->req.eoh + 2);
+	reql = co_getblk(si_oc(si), temp->str, s->txn->req.body_len, s->txn->req.eoh + 2);
 	if (reql <= 0) {
 		/* we need more data */
 		appctx->ctx.stats.st_code = STAT_STATUS_NONE;
@@ -2512,30 +2765,31 @@ static int stats_process_http_post(struct stream_interface *si)
 					reprocess = 1;
 				}
 				else if ((sv = findserver(px, value)) != NULL) {
+					HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
 					switch (action) {
 					case ST_ADM_ACTION_DISABLE:
-						if (!(sv->admin & SRV_ADMF_FMAINT)) {
+						if (!(sv->cur_admin & SRV_ADMF_FMAINT)) {
 							altered_servers++;
 							total_servers++;
 							srv_set_admin_flag(sv, SRV_ADMF_FMAINT, "'disable' on stats page");
 						}
 						break;
 					case ST_ADM_ACTION_ENABLE:
-						if (sv->admin & SRV_ADMF_FMAINT) {
+						if (sv->cur_admin & SRV_ADMF_FMAINT) {
 							altered_servers++;
 							total_servers++;
 							srv_clr_admin_flag(sv, SRV_ADMF_FMAINT);
 						}
 						break;
 					case ST_ADM_ACTION_STOP:
-						if (!(sv->admin & SRV_ADMF_FDRAIN)) {
+						if (!(sv->cur_admin & SRV_ADMF_FDRAIN)) {
 							srv_set_admin_flag(sv, SRV_ADMF_FDRAIN, "'stop' on stats page");
 							altered_servers++;
 							total_servers++;
 						}
 						break;
 					case ST_ADM_ACTION_START:
-						if (sv->admin & SRV_ADMF_FDRAIN) {
+						if (sv->cur_admin & SRV_ADMF_FDRAIN) {
 							srv_clr_admin_flag(sv, SRV_ADMF_FDRAIN);
 							altered_servers++;
 							total_servers++;
@@ -2558,7 +2812,7 @@ static int stats_process_http_post(struct stream_interface *si)
 					case ST_ADM_ACTION_HRUNN:
 						if (!(sv->track)) {
 							sv->check.health = sv->check.rise + sv->check.fall - 1;
-							srv_set_running(sv, "changed from Web interface");
+							srv_set_running(sv, "changed from Web interface", NULL);
 							altered_servers++;
 							total_servers++;
 						}
@@ -2566,7 +2820,7 @@ static int stats_process_http_post(struct stream_interface *si)
 					case ST_ADM_ACTION_HNOLB:
 						if (!(sv->track)) {
 							sv->check.health = sv->check.rise + sv->check.fall - 1;
-							srv_set_stopping(sv, "changed from Web interface");
+							srv_set_stopping(sv, "changed from Web interface", NULL);
 							altered_servers++;
 							total_servers++;
 						}
@@ -2574,7 +2828,7 @@ static int stats_process_http_post(struct stream_interface *si)
 					case ST_ADM_ACTION_HDOWN:
 						if (!(sv->track)) {
 							sv->check.health = 0;
-							srv_set_stopped(sv, "changed from Web interface");
+							srv_set_stopped(sv, "changed from Web interface", NULL);
 							altered_servers++;
 							total_servers++;
 						}
@@ -2596,7 +2850,7 @@ static int stats_process_http_post(struct stream_interface *si)
 					case ST_ADM_ACTION_ARUNN:
 						if (sv->agent.state & CHK_ST_ENABLED) {
 							sv->agent.health = sv->agent.rise + sv->agent.fall - 1;
-							srv_set_running(sv, "changed from Web interface");
+							srv_set_running(sv, "changed from Web interface", NULL);
 							altered_servers++;
 							total_servers++;
 						}
@@ -2604,7 +2858,7 @@ static int stats_process_http_post(struct stream_interface *si)
 					case ST_ADM_ACTION_ADOWN:
 						if (sv->agent.state & CHK_ST_ENABLED) {
 							sv->agent.health = 0;
-							srv_set_stopped(sv, "changed from Web interface");
+							srv_set_stopped(sv, "changed from Web interface", NULL);
 							altered_servers++;
 							total_servers++;
 						}
@@ -2637,6 +2891,7 @@ static int stats_process_http_post(struct stream_interface *si)
 						}
 						break;
 					}
+					HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 				} else {
 					/* the server name is unknown or ambiguous (duplicate names) */
 					total_servers++;
@@ -2698,7 +2953,7 @@ static int stats_send_http_headers(struct stream_interface *si)
 	else
 		chunk_appendf(&trash, "\r\n");
 
-	if (bi_putchk(si_ic(si), &trash) == -1) {
+	if (ci_putchk(si_ic(si), &trash) == -1) {
 		si_applet_cant_put(si);
 		return 0;
 	}
@@ -2743,13 +2998,14 @@ static int stats_send_http_redirect(struct stream_interface *si)
 		     (appctx->ctx.stats.flags & STAT_NO_REFRESH) ? ";norefresh" : "",
 		     scope_txt);
 
-	if (bi_putchk(si_ic(si), &trash) == -1) {
+	if (ci_putchk(si_ic(si), &trash) == -1) {
 		si_applet_cant_put(si);
 		return 0;
 	}
 
 	return 1;
 }
+
 
 /* This I/O handler runs as an applet embedded in a stream interface. It is
  * used to send HTTP stats over a TCP socket. The mechanism is very simple.
@@ -2801,7 +3057,7 @@ static void http_stats_io_handler(struct appctx *appctx)
 			last_fwd = si_ic(si)->to_forward;
 			si_ic(si)->to_forward = 0;
 			chunk_printf(&trash, "\r\n000000\r\n");
-			if (bi_putchk(si_ic(si), &trash) == -1) {
+			if (ci_putchk(si_ic(si), &trash) == -1) {
 				si_applet_cant_put(si);
 				si_ic(si)->to_forward = last_fwd;
 				goto out;
@@ -2827,7 +3083,7 @@ static void http_stats_io_handler(struct appctx *appctx)
 
 			if (last_len != data_len) {
 				chunk_printf(&trash, "\r\n%06x\r\n", (last_len - data_len));
-				if (bi_putchk(si_ic(si), &trash) == -1)
+				if (ci_putchk(si_ic(si), &trash) == -1)
 					si_applet_cant_put(si);
 
 				si_ic(si)->total += (last_len - data_len);
@@ -2853,13 +3109,13 @@ static void http_stats_io_handler(struct appctx *appctx)
 	if (appctx->st0 == STAT_HTTP_DONE) {
 		if (appctx->ctx.stats.flags & STAT_CHUNKED) {
 			chunk_printf(&trash, "\r\n0\r\n\r\n");
-			if (bi_putchk(si_ic(si), &trash) == -1) {
+			if (ci_putchk(si_ic(si), &trash) == -1) {
 				si_applet_cant_put(si);
 				goto out;
 			}
 		}
 		/* eat the whole request */
-		bo_skip(si_oc(si), si_ob(si)->o);
+		co_skip(si_oc(si), si_ob(si)->o);
 		res->flags |= CF_READ_NULL;
 		si_shutr(si);
 	}
@@ -2948,6 +3204,7 @@ int stats_fill_info(struct field *info, int len)
 	info[INF_VERSION]                        = mkf_str(FO_PRODUCT|FN_OUTPUT|FS_SERVICE, HAPROXY_VERSION);
 	info[INF_RELEASE_DATE]                   = mkf_str(FO_PRODUCT|FN_OUTPUT|FS_SERVICE, HAPROXY_DATE);
 
+	info[INF_NBTHREAD]                       = mkf_u32(FO_CONFIG|FS_SERVICE, global.nbthread);
 	info[INF_NBPROC]                         = mkf_u32(FO_CONFIG|FS_SERVICE, global.nbproc);
 	info[INF_PROCESS_NUM]                    = mkf_u32(FO_KEY, relative_pid);
 	info[INF_PID]                            = mkf_u32(FO_STATUS, pid);
@@ -3026,10 +3283,240 @@ static int stats_dump_info_to_buffer(struct stream_interface *si)
 
 	if (appctx->ctx.stats.flags & STAT_FMT_TYPED)
 		stats_dump_typed_info_fields(&trash, info);
+	else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
+		stats_dump_json_info_fields(&trash, info);
 	else
 		stats_dump_info_fields(&trash, info);
 
-	if (bi_putchk(si_ic(si), &trash) == -1) {
+	if (ci_putchk(si_ic(si), &trash) == -1) {
+		si_applet_cant_put(si);
+		return 0;
+	}
+
+	return 1;
+}
+
+/* This function dumps the schema onto the stream interface's read buffer.
+ * It returns 0 as long as it does not complete, non-zero upon completion.
+ * No state is used.
+ *
+ * Integer values bouned to the range [-(2**53)+1, (2**53)-1] as
+ * per the recommendation for interoperable integers in section 6 of RFC 7159.
+ */
+static void stats_dump_json_schema(struct chunk *out)
+{
+
+	int old_len = out->len;
+
+	chunk_strcat(out,
+		     "{"
+		      "\"$schema\":\"http://json-schema.org/draft-04/schema#\","
+		      "\"oneOf\":["
+		       "{"
+			"\"title\":\"Info\","
+			"\"type\":\"array\","
+			"\"items\":{"
+			 "\"properties\":{"
+			  "\"title\":\"InfoItem\","
+			  "\"type\":\"object\","
+			  "\"field\":{\"$ref\":\"#/definitions/field\"},"
+			  "\"processNum\":{\"$ref\":\"#/definitions/processNum\"},"
+			  "\"tags\":{\"$ref\":\"#/definitions/tags\"},"
+			  "\"value\":{\"$ref\":\"#/definitions/typedValue\"}"
+			 "},"
+			 "\"required\":[\"field\",\"processNum\",\"tags\","
+				       "\"value\"]"
+			"}"
+		       "},"
+		       "{"
+			"\"title\":\"Stat\","
+			"\"type\":\"array\","
+			"\"items\":{"
+			 "\"title\":\"InfoItem\","
+			 "\"type\":\"object\","
+			 "\"properties\":{"
+			  "\"objType\":{"
+			   "\"enum\":[\"Frontend\",\"Backend\",\"Listener\","
+				     "\"Server\",\"Unknown\"]"
+			  "},"
+			  "\"proxyId\":{"
+			   "\"type\":\"integer\","
+			   "\"minimum\":0"
+			  "},"
+			  "\"id\":{"
+			   "\"type\":\"integer\","
+			   "\"minimum\":0"
+			  "},"
+			  "\"field\":{\"$ref\":\"#/definitions/field\"},"
+			  "\"processNum\":{\"$ref\":\"#/definitions/processNum\"},"
+			  "\"tags\":{\"$ref\":\"#/definitions/tags\"},"
+			  "\"typedValue\":{\"$ref\":\"#/definitions/typedValue\"}"
+			 "},"
+			 "\"required\":[\"objType\",\"proxyId\",\"id\","
+				       "\"field\",\"processNum\",\"tags\","
+				       "\"value\"]"
+			"}"
+		       "},"
+		       "{"
+			"\"title\":\"Error\","
+			"\"type\":\"object\","
+			"\"properties\":{"
+			 "\"errorStr\":{"
+			  "\"type\":\"string\""
+			 "},"
+			 "\"required\":[\"errorStr\"]"
+			"}"
+		       "}"
+		      "],"
+		      "\"definitions\":{"
+		       "\"field\":{"
+			"\"type\":\"object\","
+			"\"pos\":{"
+			 "\"type\":\"integer\","
+			 "\"minimum\":0"
+			"},"
+			"\"name\":{"
+			 "\"type\":\"string\""
+			"},"
+			"\"required\":[\"pos\",\"name\"]"
+		       "},"
+		       "\"processNum\":{"
+			"\"type\":\"integer\","
+			"\"minimum\":1"
+		       "},"
+		       "\"tags\":{"
+			"\"type\":\"object\","
+			"\"origin\":{"
+			 "\"type\":\"string\","
+			 "\"enum\":[\"Metric\",\"Status\",\"Key\","
+				   "\"Config\",\"Product\",\"Unknown\"]"
+			"},"
+			"\"nature\":{"
+			 "\"type\":\"string\","
+			 "\"enum\":[\"Gauge\",\"Limit\",\"Min\",\"Max\","
+				   "\"Rate\",\"Counter\",\"Duration\","
+				   "\"Age\",\"Time\",\"Name\",\"Output\","
+				   "\"Avg\", \"Unknown\"]"
+			"},"
+			"\"scope\":{"
+			 "\"type\":\"string\","
+			 "\"enum\":[\"Cluster\",\"Process\",\"Service\","
+				   "\"System\",\"Unknown\"]"
+			"},"
+			"\"required\":[\"origin\",\"nature\",\"scope\"]"
+		       "},"
+		       "\"typedValue\":{"
+			"\"type\":\"object\","
+			"\"oneOf\":["
+			 "{\"$ref\":\"#/definitions/typedValue/definitions/s32Value\"},"
+			 "{\"$ref\":\"#/definitions/typedValue/definitions/s64Value\"},"
+			 "{\"$ref\":\"#/definitions/typedValue/definitions/u32Value\"},"
+			 "{\"$ref\":\"#/definitions/typedValue/definitions/u64Value\"},"
+			 "{\"$ref\":\"#/definitions/typedValue/definitions/strValue\"}"
+			"],"
+			"\"definitions\":{"
+			 "\"s32Value\":{"
+			  "\"properties\":{"
+			   "\"type\":{"
+			    "\"type\":\"string\","
+			    "\"enum\":[\"s32\"]"
+			   "},"
+			   "\"value\":{"
+			    "\"type\":\"integer\","
+			    "\"minimum\":-2147483648,"
+			    "\"maximum\":2147483647"
+			   "}"
+			  "},"
+			  "\"required\":[\"type\",\"value\"]"
+			 "},"
+			 "\"s64Value\":{"
+			  "\"properties\":{"
+			   "\"type\":{"
+			    "\"type\":\"string\","
+			    "\"enum\":[\"s64\"]"
+			   "},"
+			   "\"value\":{"
+			    "\"type\":\"integer\","
+			    "\"minimum\":-9007199254740991,"
+			    "\"maximum\":9007199254740991"
+			   "}"
+			  "},"
+			  "\"required\":[\"type\",\"value\"]"
+			 "},"
+			 "\"u32Value\":{"
+			  "\"properties\":{"
+			   "\"type\":{"
+			    "\"type\":\"string\","
+			    "\"enum\":[\"u32\"]"
+			   "},"
+			   "\"value\":{"
+			    "\"type\":\"integer\","
+			    "\"minimum\":0,"
+			    "\"maximum\":4294967295"
+			   "}"
+			  "},"
+			  "\"required\":[\"type\",\"value\"]"
+			 "},"
+			 "\"u64Value\":{"
+			  "\"properties\":{"
+			   "\"type\":{"
+			    "\"type\":\"string\","
+			    "\"enum\":[\"u64\"]"
+			   "},"
+			   "\"value\":{"
+			    "\"type\":\"integer\","
+			    "\"minimum\":0,"
+			    "\"maximum\":9007199254740991"
+			   "}"
+			  "},"
+			  "\"required\":[\"type\",\"value\"]"
+			 "},"
+			 "\"strValue\":{"
+			  "\"properties\":{"
+			   "\"type\":{"
+			    "\"type\":\"string\","
+			    "\"enum\":[\"str\"]"
+			   "},"
+			   "\"value\":{\"type\":\"string\"}"
+			  "},"
+			  "\"required\":[\"type\",\"value\"]"
+			 "},"
+			 "\"unknownValue\":{"
+			  "\"properties\":{"
+			   "\"type\":{"
+			    "\"type\":\"integer\","
+			    "\"minimum\":0"
+			   "},"
+			   "\"value\":{"
+			    "\"type\":\"string\","
+			    "\"enum\":[\"unknown\"]"
+			   "}"
+			  "},"
+			  "\"required\":[\"type\",\"value\"]"
+			 "}"
+			"}"
+		       "}"
+		      "}"
+		     "}");
+
+	if (old_len == out->len) {
+		chunk_reset(out);
+		chunk_appendf(out,
+			      "{\"errorStr\":\"output buffer too short\"}");
+	}
+}
+
+/* This function dumps the schema onto the stream interface's read buffer.
+ * It returns 0 as long as it does not complete, non-zero upon completion.
+ * No state is used.
+ */
+static int stats_dump_json_schema_to_buffer(struct stream_interface *si)
+{
+	chunk_reset(&trash);
+
+	stats_dump_json_schema(&trash);
+
+	if (ci_putchk(si_ic(si), &trash) == -1) {
 		si_applet_cant_put(si);
 		return 0;
 	}
@@ -3052,7 +3539,7 @@ static int cli_parse_clear_counters(char **args, struct appctx *appctx, void *pr
 	    (clrall && !cli_has_level(appctx, ACCESS_LVL_ADMIN)))
 		return 1;
 
-	for (px = proxy; px; px = px->next) {
+	for (px = proxies_list; px; px = px->next) {
 		if (clrall) {
 			memset(&px->be_counters, 0, sizeof(px->be_counters));
 			memset(&px->fe_counters, 0, sizeof(px->fe_counters));
@@ -3093,20 +3580,32 @@ static int cli_parse_clear_counters(char **args, struct appctx *appctx, void *pr
 	global.ssl_max = 0;
 	global.ssl_fe_keys_max = 0;
 	global.ssl_be_keys_max = 0;
+
+	memset(activity, 0, sizeof(activity));
 	return 1;
 }
 
 
 static int cli_parse_show_info(char **args, struct appctx *appctx, void *private)
 {
+	appctx->ctx.stats.scope_str = 0;
+	appctx->ctx.stats.scope_len = 0;
+	appctx->ctx.stats.flags = 0;
+
 	if (strcmp(args[2], "typed") == 0)
 		appctx->ctx.stats.flags |= STAT_FMT_TYPED;
+	else if (strcmp(args[2], "json") == 0)
+		appctx->ctx.stats.flags |= STAT_FMT_JSON;
 	return 0;
 }
 
 
 static int cli_parse_show_stat(char **args, struct appctx *appctx, void *private)
 {
+	appctx->ctx.stats.scope_str = 0;
+	appctx->ctx.stats.scope_len = 0;
+	appctx->ctx.stats.flags = 0;
+
 	if (*args[2] && *args[3] && *args[4]) {
 		struct proxy *px;
 
@@ -3117,6 +3616,7 @@ static int cli_parse_show_stat(char **args, struct appctx *appctx, void *private
 			appctx->ctx.stats.iid = atoi(args[2]);
 
 		if (!appctx->ctx.stats.iid) {
+			appctx->ctx.cli.severity = LOG_ERR;
 			appctx->ctx.cli.msg = "No such proxy.\n";
 			appctx->st0 = CLI_ST_PRINT;
 			return 1;
@@ -3127,9 +3627,13 @@ static int cli_parse_show_stat(char **args, struct appctx *appctx, void *private
 		appctx->ctx.stats.sid = atoi(args[4]);
 		if (strcmp(args[5], "typed") == 0)
 			appctx->ctx.stats.flags |= STAT_FMT_TYPED;
+		else if (strcmp(args[5], "json") == 0)
+			appctx->ctx.stats.flags |= STAT_FMT_JSON;
 	}
 	else if (strcmp(args[2], "typed") == 0)
 		appctx->ctx.stats.flags |= STAT_FMT_TYPED;
+	else if (strcmp(args[2], "json") == 0)
+		appctx->ctx.stats.flags |= STAT_FMT_JSON;
 
 	return 0;
 }
@@ -3147,11 +3651,17 @@ static int cli_io_handler_dump_stat(struct appctx *appctx)
 	return stats_dump_stat_to_buffer(appctx->owner, NULL);
 }
 
+static int cli_io_handler_dump_json_schema(struct appctx *appctx)
+{
+	return stats_dump_json_schema_to_buffer(appctx->owner);
+}
+
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
 	{ { "clear", "counters",  NULL }, "clear counters : clear max statistics counters (add 'all' for all counters)", cli_parse_clear_counters, NULL, NULL },
 	{ { "show", "info",  NULL }, "show info      : report information about the running process", cli_parse_show_info, cli_io_handler_dump_info, NULL },
 	{ { "show", "stat",  NULL }, "show stat      : report counters for each proxy and server", cli_parse_show_stat, cli_io_handler_dump_stat, NULL },
+	{ { "show", "schema",  "json", NULL }, "show schema json : report schema used for stats", NULL, cli_io_handler_dump_json_schema, NULL },
 	{{},}
 }};
 

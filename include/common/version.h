@@ -33,7 +33,7 @@
 #ifdef  CONFIG_PRODUCT_BRANCH
 #define PRODUCT_BRANCH    CONFIG_PRODUCT_BRANCH
 #else
-#define PRODUCT_BRANCH   "1.7"
+#define PRODUCT_BRANCH   "1.8"
 #endif
 
 #ifdef  CONFIG_PRODUCT_URL

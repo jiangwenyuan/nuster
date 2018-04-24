@@ -24,6 +24,8 @@
 #include <ebpttree.h>
 
 #include <common/cfgparse.h>
+#include <common/xref.h>
+#include <common/hathreads.h>
 
 #include <types/cli.h>
 #include <types/hlua.h>
@@ -44,12 +46,10 @@
 #include <proto/pattern.h>
 #include <proto/payload.h>
 #include <proto/proto_http.h>
-#include <proto/raw_sock.h>
 #include <proto/sample.h>
 #include <proto/server.h>
 #include <proto/session.h>
 #include <proto/stream.h>
-#include <proto/ssl_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
@@ -98,17 +98,36 @@
  * RESET_SAFE_LJMP reset the longjmp. These function must be macro
  * because they must be exists in the program stack when the longjmp
  * is called.
+ *
+ * Note that the Lua processing is not really thread safe. It provides
+ * heavy system which consists to add our own lock function in the Lua
+ * code and recompile the library. This system will probably not accepted
+ * by maintainers of various distribs.
+ *
+ * Our main excution point of the Lua is the function lua_resume(). A
+ * quick looking on the Lua sources displays a lua_lock() a the start
+ * of function and a lua_unlock() at the end of the function. So I
+ * conclude that the Lua thread safe mode just perform a mutex around
+ * all execution. So I prefer to do this in the HAProxy code, it will be
+ * easier for distro maintainers.
+ *
+ * Note that the HAProxy lua functions rounded by the macro SET_SAFE_LJMP
+ * and RESET_SAFE_LJMP manipulates the Lua stack, so it will be careful
+ * to set mutex around these functions.
  */
-jmp_buf safe_ljmp_env;
+__decl_hathreads(HA_SPINLOCK_T hlua_global_lock);
+THREAD_LOCAL jmp_buf safe_ljmp_env;
 static int hlua_panic_safe(lua_State *L) { return 0; }
 static int hlua_panic_ljmp(lua_State *L) { longjmp(safe_ljmp_env, 1); }
 
 #define SET_SAFE_LJMP(__L) \
 	({ \
 		int ret; \
+		HA_SPIN_LOCK(LUA_LOCK, &hlua_global_lock); \
 		if (setjmp(safe_ljmp_env) != 0) { \
 			lua_atpanic(__L, hlua_panic_safe); \
 			ret = 0; \
+			HA_SPIN_UNLOCK(LUA_LOCK, &hlua_global_lock); \
 		} else { \
 			lua_atpanic(__L, hlua_panic_ljmp); \
 			ret = 1; \
@@ -122,6 +141,7 @@ static int hlua_panic_ljmp(lua_State *L) { longjmp(safe_ljmp_env, 1); }
 #define RESET_SAFE_LJMP(__L) \
 	do { \
 		lua_atpanic(__L, hlua_panic_safe); \
+		HA_SPIN_UNLOCK(LUA_LOCK, &hlua_global_lock); \
 	} while(0)
 
 /* Applet status flags */
@@ -137,10 +157,10 @@ static int hlua_panic_ljmp(lua_State *L) { longjmp(safe_ljmp_env, 1); }
 /* The main Lua execution context. */
 struct hlua gL;
 
-/* This is the memory pool containing all the signal structs. These
- * struct are used to store each requiered signal between two tasks.
+/* This is the memory pool containing struct lua for applets
+ * (including cli).
  */
-struct pool_head *pool2_hlua_com;
+struct pool_head *pool_head_hlua;
 
 /* Used for Socket connection. */
 static struct proxy socket_proxy;
@@ -213,12 +233,12 @@ struct hlua_mem_allocator {
 static struct hlua_mem_allocator hlua_global_allocator;
 
 static const char error_500[] =
-	"HTTP/1.0 500 Server Error\r\n"
+	"HTTP/1.0 500 Internal Server Error\r\n"
 	"Cache-Control: no-cache\r\n"
 	"Connection: close\r\n"
 	"Content-Type: text/html\r\n"
 	"\r\n"
-	"<html><body><h1>500 Server Error</h1>\nAn internal server error occured.\n</body></html>\n";
+	"<html><body><h1>500 Internal Server Error</h1>\nAn internal server error occured.\n</body></html>\n";
 
 /* These functions converts types between HAProxy internal args or
  * sample and LUA types. Another function permits to check if the
@@ -239,7 +259,7 @@ __LJMP static int hlua_http_get_headers(lua_State *L, struct hlua_txn *htxn, str
 	do { \
 		send_log(__be, LOG_ERR, __fmt, ## __args); \
 		if (!(global.mode & MODE_QUIET) || (global.mode & MODE_VERBOSE)) \
-			Alert(__fmt, ## __args); \
+			ha_alert(__fmt, ## __args); \
 	} while (0)
 
 /* Used to check an Lua function type in the stack. It creates and
@@ -249,7 +269,7 @@ __LJMP static int hlua_http_get_headers(lua_State *L, struct hlua_txn *htxn, str
 __LJMP unsigned int hlua_checkfunction(lua_State *L, int argno)
 {
 	if (!lua_isfunction(L, argno)) {
-		const char *msg = lua_pushfstring(L, "function expected, got %s", luaL_typename(L, -1));
+		const char *msg = lua_pushfstring(L, "function expected, got %s", luaL_typename(L, argno));
 		WILL_LJMP(luaL_argerror(L, argno, msg));
 	}
 	lua_pushvalue(L, argno);
@@ -289,57 +309,6 @@ static int hlua_pusherror(lua_State *L, const char *fmt, ...)
 	va_end(argp);
 	lua_concat(L, 2);
 	return 1;
-}
-
-/* This function register a new signal. "lua" is the current lua
- * execution context. It contains a pointer to the associated task.
- * "link" is a list head attached to an other task that must be wake
- * the lua task if an event occurs. This is useful with external
- * events like TCP I/O or sleep functions. This funcion allocate
- * memory for the signal.
- */
-static int hlua_com_new(struct hlua *lua, struct list *link)
-{
-	struct hlua_com *com = pool_alloc2(pool2_hlua_com);
-	if (!com)
-		return 0;
-	LIST_ADDQ(&lua->com, &com->purge_me);
-	LIST_ADDQ(link, &com->wake_me);
-	com->task = lua->task;
-	return 1;
-}
-
-/* This function purge all the pending signals when the LUA execution
- * is finished. This prevent than a coprocess try to wake a deleted
- * task. This function remove the memory associated to the signal.
- */
-static void hlua_com_purge(struct hlua *lua)
-{
-	struct hlua_com *com, *back;
-
-	/* Delete all pending communication signals. */
-	list_for_each_entry_safe(com, back, &lua->com, purge_me) {
-		LIST_DEL(&com->purge_me);
-		LIST_DEL(&com->wake_me);
-		pool_free2(pool2_hlua_com, com);
-	}
-}
-
-/* This function sends signals. It wakes all the tasks attached
- * to a list head, and remove the signal, and free the used
- * memory.
- */
-static void hlua_com_wake(struct list *wake)
-{
-	struct hlua_com *com, *back;
-
-	/* Wake task and delete all pending communication signals. */
-	list_for_each_entry_safe(com, back, wake, wake_me) {
-		LIST_DEL(&com->purge_me);
-		LIST_DEL(&com->wake_me);
-		task_wakeup(com->task, TASK_WOKEN_MSG);
-		pool_free2(pool2_hlua_com, com);
-	}
 }
 
 /* This functions is used with sample fetch and converters. It
@@ -870,11 +839,14 @@ int hlua_ctx_init(struct hlua *lua, struct task *task)
  */
 void hlua_ctx_destroy(struct hlua *lua)
 {
-	if (!lua->T)
+	if (!lua)
 		return;
 
+	if (!lua->T)
+		goto end;
+
 	/* Purge all the pending signals. */
-	hlua_com_purge(lua);
+	notification_purge(&lua->com);
 
 	if (!SET_SAFE_LJMP(lua->T))
 		return;
@@ -902,6 +874,9 @@ void hlua_ctx_destroy(struct hlua *lua)
 	}
 
 	lua->T = NULL;
+
+end:
+	pool_free(pool_head_hlua, lua);
 }
 
 /* This function is used to restore the Lua context when a coroutine
@@ -1013,6 +988,11 @@ static enum hlua_exec hlua_ctx_resume(struct hlua *lua, int yield_allowed)
 	/* Initialise run time counter. */
 	if (!HLUA_IS_RUNNING(lua))
 		lua->run_time = 0;
+
+	/* Lock the whole Lua execution. This lock must be before the
+	 * label "resume_execution".
+	 */
+	HA_SPIN_LOCK(LUA_LOCK, &hlua_global_lock);
 
 resume_execution:
 
@@ -1154,22 +1134,25 @@ resume_execution:
 		break;
 
 	case HLUA_E_ERRMSG:
-		hlua_com_purge(lua);
+		notification_purge(&lua->com);
 		hlua_ctx_renew(lua, 1);
 		HLUA_CLR_RUN(lua);
 		break;
 
 	case HLUA_E_ERR:
 		HLUA_CLR_RUN(lua);
-		hlua_com_purge(lua);
+		notification_purge(&lua->com);
 		hlua_ctx_renew(lua, 0);
 		break;
 
 	case HLUA_E_OK:
 		HLUA_CLR_RUN(lua);
-		hlua_com_purge(lua);
+		notification_purge(&lua->com);
 		break;
 	}
+
+	/* This is the main exit point, remove the Lua lock. */
+	HA_SPIN_UNLOCK(LUA_LOCK, &hlua_global_lock);
 
 	return ret;
 }
@@ -1536,14 +1519,14 @@ __LJMP static struct hlua_socket *hlua_checksocket(lua_State *L, int ud)
 static void hlua_socket_handler(struct appctx *appctx)
 {
 	struct stream_interface *si = appctx->owner;
-	struct connection *c = objt_conn(si_opposite(si)->end);
+	struct connection *c = cs_conn(objt_cs(si_opposite(si)->end));
 
-	if (appctx->ctx.hlua.die) {
+	if (appctx->ctx.hlua_cosocket.die) {
 		si_shutw(si);
 		si_shutr(si);
 		si_ic(si)->flags |= CF_READ_NULL;
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_read);
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_write);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_read);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_write);
 		stream_shutdown(si_strm(si), SF_ERR_KILLED);
 	}
 
@@ -1554,18 +1537,18 @@ static void hlua_socket_handler(struct appctx *appctx)
 		si_shutw(si);
 		si_shutr(si);
 		si_ic(si)->flags |= CF_READ_NULL;
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_read);
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_write);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_read);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_write);
 		return;
 	}
 
 	/* If we cant write, wakeup the pending write signals. */
 	if (channel_output_closed(si_ic(si)))
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_write);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_write);
 
 	/* If we cant read, wakeup the pending read signals. */
 	if (channel_input_closed(si_oc(si)))
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_read);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_read);
 
 	/* if the connection is not estabkished, inform the stream that we want
 	 * to be notified whenever the connection completes.
@@ -1577,15 +1560,15 @@ static void hlua_socket_handler(struct appctx *appctx)
 	}
 
 	/* This function is called after the connect. */
-	appctx->ctx.hlua.connected = 1;
+	appctx->ctx.hlua_cosocket.connected = 1;
 
 	/* Wake the tasks which wants to write if the buffer have avalaible space. */
 	if (channel_may_recv(si_ic(si)))
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_write);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_write);
 
 	/* Wake the tasks which wants to read if the buffer contains data. */
 	if (!channel_is_empty(si_oc(si)))
-		hlua_com_wake(&appctx->ctx.hlua.wake_on_read);
+		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_read);
 }
 
 /* This function is called when the "struct stream" is destroyed.
@@ -1594,13 +1577,16 @@ static void hlua_socket_handler(struct appctx *appctx)
  */
 static void hlua_socket_release(struct appctx *appctx)
 {
+	struct xref *peer;
+
 	/* Remove my link in the original object. */
-	if (appctx->ctx.hlua.socket)
-		appctx->ctx.hlua.socket->s = NULL;
+	peer = xref_get_peer_and_lock(&appctx->ctx.hlua_cosocket.xref);
+	if (peer)
+		xref_disconnect(&appctx->ctx.hlua_cosocket.xref, peer);
 
 	/* Wake all the task waiting for me. */
-	hlua_com_wake(&appctx->ctx.hlua.wake_on_read);
-	hlua_com_wake(&appctx->ctx.hlua.wake_on_write);
+	notification_wake(&appctx->ctx.hlua_cosocket.wake_on_read);
+	notification_wake(&appctx->ctx.hlua_cosocket.wake_on_write);
 }
 
 /* If the garbage collectio of the object is launch, nobody
@@ -1613,20 +1599,22 @@ __LJMP static int hlua_socket_gc(lua_State *L)
 {
 	struct hlua_socket *socket;
 	struct appctx *appctx;
+	struct xref *peer;
 
 	MAY_LJMP(check_args(L, 1, "__gc"));
 
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
-	if (!socket->s)
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer)
 		return 0;
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
 
-	/* Remove all reference between the Lua stack and the coroutine stream. */
-	appctx = objt_appctx(socket->s->si[0].end);
-	socket->s = NULL;
-	appctx->ctx.hlua.socket = NULL;
-	appctx->ctx.hlua.die = 1;
+	/* Set the flag which destroy the session. */
+	appctx->ctx.hlua_cosocket.die = 1;
 	appctx_wakeup(appctx);
 
+	/* Remove all reference between the Lua stack and the coroutine stream. */
+	xref_disconnect(&socket->xref, peer);
 	return 0;
 }
 
@@ -1637,20 +1625,29 @@ __LJMP static int hlua_socket_close(lua_State *L)
 {
 	struct hlua_socket *socket;
 	struct appctx *appctx;
+	struct xref *peer;
 
 	MAY_LJMP(check_args(L, 1, "close"));
 
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
-	if (!socket->s)
-		return 0;
 
-	/* Close the stream and remove the associated stop task. */
-	appctx = objt_appctx(socket->s->si[0].end);
-	appctx->ctx.hlua.socket = NULL;
-	socket->s = NULL;
-	appctx->ctx.hlua.die = 1;
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
+
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer)
+		return 0;
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+
+	/* Set the flag which destroy the session. */
+	appctx->ctx.hlua_cosocket.die = 1;
 	appctx_wakeup(appctx);
 
+	/* Remove all reference between the Lua stack and the coroutine stream. */
+	xref_disconnect(&socket->xref, peer);
 	return 0;
 }
 
@@ -1679,20 +1676,33 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 	int len2;
 	int skip_at_end = 0;
 	struct channel *oc;
+	struct stream_interface *si;
+	struct stream *s;
+	struct xref *peer;
 
 	/* Check if this lua stack is schedulable. */
 	if (!hlua || !hlua->task)
 		WILL_LJMP(luaL_error(L, "The 'receive' function is only allowed in "
 		                      "'frontend', 'backend' or 'task'"));
 
-	/* check for connection closed. If some data where read, return it. */
-	if (!socket->s)
-		goto connection_closed;
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
 
-	oc = &socket->s->res;
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer)
+		goto no_peer;
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
+
+	oc = &s->res;
 	if (wanted == HLSR_READ_LINE) {
 		/* Read line. */
-		nblk = bo_getline_nc(oc, &blk1, &len1, &blk2, &len2);
+		nblk = co_getline_nc(oc, &blk1, &len1, &blk2, &len2);
 		if (nblk < 0) /* Connection close. */
 			goto connection_closed;
 		if (nblk == 0) /* No data avalaible. */
@@ -1723,7 +1733,7 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 
 	else if (wanted == HLSR_READ_ALL) {
 		/* Read all the available data. */
-		nblk = bo_getblk_nc(oc, &blk1, &len1, &blk2, &len2);
+		nblk = co_getblk_nc(oc, &blk1, &len1, &blk2, &len2);
 		if (nblk < 0) /* Connection close. */
 			goto connection_closed;
 		if (nblk == 0) /* No data avalaible. */
@@ -1732,7 +1742,7 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 
 	else {
 		/* Read a block of data. */
-		nblk = bo_getblk_nc(oc, &blk1, &len1, &blk2, &len2);
+		nblk = co_getblk_nc(oc, &blk1, &len1, &blk2, &len2);
 		if (nblk < 0) /* Connection close. */
 			goto connection_closed;
 		if (nblk == 0) /* No data avalaible. */
@@ -1754,11 +1764,11 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 	}
 
 	/* Consume data. */
-	bo_skip(oc, len + skip_at_end);
+	co_skip(oc, len + skip_at_end);
 
 	/* Don't wait anything. */
-	stream_int_notify(&socket->s->si[0]);
-	stream_int_update_applet(&socket->s->si[0]);
+	stream_int_notify(&s->si[0]);
+	stream_int_update_applet(&s->si[0]);
 
 	/* If the pattern reclaim to read all the data
 	 * in the connection, got out.
@@ -1770,9 +1780,14 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 
 	/* Return result. */
 	luaL_pushresult(&socket->b);
+	xref_unlock(&socket->xref, peer);
 	return 1;
 
 connection_closed:
+
+	xref_unlock(&socket->xref, peer);
+
+no_peer:
 
 	/* If the buffer containds data. */
 	if (socket->b.n > 0) {
@@ -1785,26 +1800,29 @@ connection_closed:
 
 connection_empty:
 
-	appctx = objt_appctx(socket->s->si[0].end);
-	if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_read))
+	appctx = objt_appctx(s->si[0].end);
+	if (!notification_new(&hlua->com, &appctx->ctx.hlua_cosocket.wake_on_read, hlua->task)) {
+		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "out of memory"));
+	}
+	xref_unlock(&socket->xref, peer);
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_receive_yield, TICK_ETERNITY, 0));
 	return 0;
 }
 
-/* This Lus function gets two parameters. The first one can be string
- * or a number. If the string is "*l", the user require one line. If
- * the string is "*a", the user require all the content of the stream.
+/* This Lua function gets two parameters. The first one can be string
+ * or a number. If the string is "*l", the user requires one line. If
+ * the string is "*a", the user requires all the contents of the stream.
  * If the value is a number, the user require a number of bytes equal
  * to the value. The default value is "*l" (a line).
  *
- * This paraeter with a variable type is converted in integer. This
+ * This parameter with a variable type is converted in integer. This
  * integer takes this values:
  *  -1 : read a line
  *  -2 : read all the stream
- *  >0 : amount if bytes.
+ *  >0 : amount of bytes.
  *
- * The second parameter is optinal. It contains a string that must be
+ * The second parameter is optional. It contains a string that must be
  * concatenated with the read data.
  */
 __LJMP static int hlua_socket_receive(struct lua_State *L)
@@ -1820,6 +1838,12 @@ __LJMP static int hlua_socket_receive(struct lua_State *L)
 		WILL_LJMP(luaL_error(L, "The 'receive' function requires between 1 and 3 arguments."));
 
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
+
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
 
 	/* check for pattern. */
 	if (lua_gettop(L) >= 2) {
@@ -1845,9 +1869,12 @@ __LJMP static int hlua_socket_receive(struct lua_State *L)
 
 	/* Set pattern. */
 	lua_pushinteger(L, wanted);
-	lua_replace(L, 2);
 
-	/* init bufffer, and fiil it wih prefix. */
+	/* Check if we would replace the top by itself. */
+	if (lua_gettop(L) != 2)
+		lua_replace(L, 2);
+
+	/* init buffer, and fill it with prefix. */
 	luaL_buffinit(L, &socket->b);
 
 	/* Check prefix. */
@@ -1874,6 +1901,9 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	int len;
 	int send_len;
 	int sent;
+	struct xref *peer;
+	struct stream_interface *si;
+	struct stream *s;
 
 	/* Check if this lua stack is schedulable. */
 	if (!hlua || !hlua->task)
@@ -1885,8 +1915,25 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	buf = MAY_LJMP(luaL_checklstring(L, 2, &buf_len));
 	sent = MAY_LJMP(luaL_checkinteger(L, 3));
 
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
+
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer) {
+		lua_pushinteger(L, -1);
+		return 1;
+	}
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
+
 	/* Check for connection close. */
-	if (!socket->s || channel_output_closed(&socket->s->req)) {
+	if (channel_output_closed(&s->req)) {
+		xref_unlock(&socket->xref, peer);
 		lua_pushinteger(L, -1);
 		return 1;
 	}
@@ -1896,31 +1943,35 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	send_len = buf_len - sent;
 
 	/* All the data are sent. */
-	if (sent >= buf_len)
+	if (sent >= buf_len) {
+		xref_unlock(&socket->xref, peer);
 		return 1; /* Implicitly return the length sent. */
+	}
 
 	/* Check if the buffer is avalaible because HAProxy doesn't allocate
 	 * the request buffer if its not required.
 	 */
-	if (socket->s->req.buf->size == 0) {
+	if (s->req.buf->size == 0) {
 		appctx = hlua->task->context;
-		if (!channel_alloc_buffer(&socket->s->req, &appctx->buffer_wait))
+		if (!channel_alloc_buffer(&s->req, &appctx->buffer_wait))
 			goto hlua_socket_write_yield_return;
 	}
 
 	/* Check for avalaible space. */
-	len = buffer_total_space(socket->s->req.buf);
+	len = buffer_total_space(s->req.buf);
 	if (len <= 0) {
-		appctx = objt_appctx(socket->s->si[0].end);
-		if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_write))
+		appctx = objt_appctx(s->si[0].end);
+		if (!notification_new(&hlua->com, &appctx->ctx.hlua_cosocket.wake_on_write, hlua->task)) {
+			xref_unlock(&socket->xref, peer);
 			WILL_LJMP(luaL_error(L, "out of memory"));
+		}
 		goto hlua_socket_write_yield_return;
 	}
 
 	/* send data */
 	if (len < send_len)
 		send_len = len;
-	len = bi_putblk(&socket->s->req, buf+sent, send_len);
+	len = ci_putblk(&s->req, buf+sent, send_len);
 
 	/* "Not enough space" (-1), "Buffer too little to contain
 	 * the data" (-2) are not expected because the available length
@@ -1929,30 +1980,34 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	 */
 	if (len <= 0) {
 		if (len == -1)
-			socket->s->req.flags |= CF_WAKE_WRITE;
+			s->req.flags |= CF_WAKE_WRITE;
 
 		MAY_LJMP(hlua_socket_close(L));
 		lua_pop(L, 1);
 		lua_pushinteger(L, -1);
+		xref_unlock(&socket->xref, peer);
 		return 1;
 	}
 
 	/* update buffers. */
-	stream_int_notify(&socket->s->si[0]);
-	stream_int_update_applet(&socket->s->si[0]);
+	stream_int_notify(&s->si[0]);
+	stream_int_update_applet(&s->si[0]);
 
-	socket->s->req.rex = TICK_ETERNITY;
-	socket->s->res.wex = TICK_ETERNITY;
+	s->req.rex = TICK_ETERNITY;
+	s->res.wex = TICK_ETERNITY;
 
 	/* Update length sent. */
 	lua_pop(L, 1);
 	lua_pushinteger(L, sent + len);
 
 	/* All the data buffer is sent ? */
-	if (sent + len >= buf_len)
+	if (sent + len >= buf_len) {
+		xref_unlock(&socket->xref, peer);
 		return 1;
+	}
 
 hlua_socket_write_yield_return:
+	xref_unlock(&socket->xref, peer);
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_write_yield, TICK_ETERNITY, 0));
 	return 0;
 }
@@ -2087,30 +2142,49 @@ __LJMP static int hlua_socket_getpeername(struct lua_State *L)
 {
 	struct hlua_socket *socket;
 	struct connection *conn;
+	struct xref *peer;
+	struct appctx *appctx;
+	struct stream_interface *si;
+	struct stream *s;
+	int ret;
 
 	MAY_LJMP(check_args(L, 1, "getpeername"));
 
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
 
-	/* Check if the tcp object is avalaible. */
-	if (!socket->s) {
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
+
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer) {
 		lua_pushnil(L);
 		return 1;
 	}
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
 
-	conn = objt_conn(socket->s->si[1].end);
+	conn = cs_conn(objt_cs(s->si[1].end));
 	if (!conn) {
+		xref_unlock(&socket->xref, peer);
 		lua_pushnil(L);
 		return 1;
 	}
 
 	conn_get_to_addr(conn);
 	if (!(conn->flags & CO_FL_ADDR_TO_SET)) {
+		xref_unlock(&socket->xref, peer);
 		lua_pushnil(L);
 		return 1;
 	}
 
-	return MAY_LJMP(hlua_socket_info(L, &conn->addr.to));
+	ret = MAY_LJMP(hlua_socket_info(L, &conn->addr.to));
+	xref_unlock(&socket->xref, peer);
+	return ret;
 }
 
 /* Returns information about my connection side. */
@@ -2118,30 +2192,49 @@ static int hlua_socket_getsockname(struct lua_State *L)
 {
 	struct hlua_socket *socket;
 	struct connection *conn;
+	struct appctx *appctx;
+	struct xref *peer;
+	struct stream_interface *si;
+	struct stream *s;
+	int ret;
 
 	MAY_LJMP(check_args(L, 1, "getsockname"));
 
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
 
-	/* Check if the tcp object is avalaible. */
-	if (!socket->s) {
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
+
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer) {
 		lua_pushnil(L);
 		return 1;
 	}
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
 
-	conn = objt_conn(socket->s->si[1].end);
+	conn = cs_conn(objt_cs(s->si[1].end));
 	if (!conn) {
+		xref_unlock(&socket->xref, peer);
 		lua_pushnil(L);
 		return 1;
 	}
 
 	conn_get_from_addr(conn);
 	if (!(conn->flags & CO_FL_ADDR_FROM_SET)) {
+		xref_unlock(&socket->xref, peer);
 		lua_pushnil(L);
 		return 1;
 	}
 
-	return hlua_socket_info(L, &conn->addr.from);
+	ret = hlua_socket_info(L, &conn->addr.from);
+	xref_unlock(&socket->xref, peer);
+	return ret;
 }
 
 /* This struct define the applet. */
@@ -2156,25 +2249,58 @@ __LJMP static int hlua_socket_connect_yield(struct lua_State *L, int status, lua
 {
 	struct hlua_socket *socket = MAY_LJMP(hlua_checksocket(L, 1));
 	struct hlua *hlua = hlua_gethlua(L);
+	struct xref *peer;
 	struct appctx *appctx;
+	struct stream_interface *si;
+	struct stream *s;
+
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
+
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer) {
+		lua_pushnil(L);
+		lua_pushstring(L, "Can't connect");
+		return 2;
+	}
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
+
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid) {
+		xref_unlock(&socket->xref, peer);
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
+	}
 
 	/* Check for connection close. */
-	if (!hlua || !socket->s || channel_output_closed(&socket->s->req)) {
+	if (!hlua || channel_output_closed(&s->req)) {
+		xref_unlock(&socket->xref, peer);
 		lua_pushnil(L);
 		lua_pushstring(L, "Can't connect");
 		return 2;
 	}
 
-	appctx = objt_appctx(socket->s->si[0].end);
+	appctx = objt_appctx(s->si[0].end);
 
 	/* Check for connection established. */
-	if (appctx->ctx.hlua.connected) {
+	if (appctx->ctx.hlua_cosocket.connected) {
+		xref_unlock(&socket->xref, peer);
 		lua_pushinteger(L, 1);
 		return 1;
 	}
 
-	if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_write))
+	if (!notification_new(&hlua->com, &appctx->ctx.hlua_cosocket.wake_on_write, hlua->task)) {
+		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "out of memory error"));
+	}
+	xref_unlock(&socket->xref, peer);
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_connect_yield, TICK_ETERNITY, 0));
 	return 0;
 }
@@ -2190,6 +2316,9 @@ __LJMP static int hlua_socket_connect(struct lua_State *L)
 	struct appctx *appctx;
 	int low, high;
 	struct sockaddr_storage *addr;
+	struct xref *peer;
+	struct stream_interface *si;
+	struct stream *s;
 
 	if (lua_gettop(L) < 2)
 		WILL_LJMP(luaL_error(L, "connect: need at least 2 arguments"));
@@ -2197,56 +2326,95 @@ __LJMP static int hlua_socket_connect(struct lua_State *L)
 	/* Get args. */
 	socket  = MAY_LJMP(hlua_checksocket(L, 1));
 
-	/* The socket may be destroy. */
-	if (!socket->s)
-		return 0;
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
 
 	ip      = MAY_LJMP(luaL_checkstring(L, 2));
-	if (lua_gettop(L) >= 3)
+	if (lua_gettop(L) >= 3) {
+		luaL_Buffer b;
 		port = MAY_LJMP(luaL_checkinteger(L, 3));
 
-	conn = si_alloc_conn(&socket->s->si[1]);
-	if (!conn)
+		/* Force the ip to end with a colon, to support IPv6 addresses
+		 * that are not enclosed within square brackets.
+		 */
+		if (port > 0) {
+			luaL_buffinit(L, &b);
+			luaL_addstring(&b, ip);
+			luaL_addchar(&b, ':');
+			luaL_pushresult(&b);
+			ip = lua_tolstring(L, lua_gettop(L), NULL);
+		}
+	}
+
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer) {
+		lua_pushnil(L);
+		return 1;
+	}
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
+
+	/* Initialise connection. */
+	conn = cs_conn(si_alloc_cs(&s->si[1], NULL));
+	if (!conn) {
+		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "connect: internal error"));
+	}
 
 	/* needed for the connection not to be closed */
-	conn->target = socket->s->target;
+	conn->target = s->target;
 
 	/* Parse ip address. */
 	addr = str2sa_range(ip, NULL, &low, &high, NULL, NULL, NULL, 0);
-	if (!addr)
+	if (!addr) {
+		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "connect: cannot parse destination address '%s'", ip));
-	if (low != high)
+	}
+	if (low != high) {
+		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "connect: port ranges not supported : address '%s'", ip));
+	}
 	memcpy(&conn->addr.to, addr, sizeof(struct sockaddr_storage));
 
 	/* Set port. */
 	if (low == 0) {
 		if (conn->addr.to.ss_family == AF_INET) {
-			if (port == -1)
+			if (port == -1) {
+				xref_unlock(&socket->xref, peer);
 				WILL_LJMP(luaL_error(L, "connect: port missing"));
+			}
 			((struct sockaddr_in *)&conn->addr.to)->sin_port = htons(port);
 		} else if (conn->addr.to.ss_family == AF_INET6) {
-			if (port == -1)
+			if (port == -1) {
+				xref_unlock(&socket->xref, peer);
 				WILL_LJMP(luaL_error(L, "connect: port missing"));
+			}
 			((struct sockaddr_in6 *)&conn->addr.to)->sin6_port = htons(port);
 		}
 	}
 
 	hlua = hlua_gethlua(L);
-	appctx = objt_appctx(socket->s->si[0].end);
+	appctx = objt_appctx(s->si[0].end);
 
 	/* inform the stream that we want to be notified whenever the
 	 * connection completes.
 	 */
-	si_applet_cant_get(&socket->s->si[0]);
-	si_applet_cant_put(&socket->s->si[0]);
+	si_applet_cant_get(&s->si[0]);
+	si_applet_cant_put(&s->si[0]);
 	appctx_wakeup(appctx);
 
 	hlua->flags |= HLUA_MUST_GC;
 
-	if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_write))
+	if (!notification_new(&hlua->com, &appctx->ctx.hlua_cosocket.wake_on_write, hlua->task)) {
+		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "out of memory"));
+	}
+	xref_unlock(&socket->xref, peer);
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_connect_yield, TICK_ETERNITY, 0));
 
 	return 0;
@@ -2256,10 +2424,26 @@ __LJMP static int hlua_socket_connect(struct lua_State *L)
 __LJMP static int hlua_socket_connect_ssl(struct lua_State *L)
 {
 	struct hlua_socket *socket;
+	struct xref *peer;
+	struct appctx *appctx;
+	struct stream_interface *si;
+	struct stream *s;
 
 	MAY_LJMP(check_args(L, 3, "connect_ssl"));
 	socket  = MAY_LJMP(hlua_checksocket(L, 1));
-	socket->s->target = &socket_ssl.obj_type;
+
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer) {
+		lua_pushnil(L);
+		return 1;
+	}
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
+
+	s->target = &socket_ssl.obj_type;
+	xref_unlock(&socket->xref, peer);
 	return MAY_LJMP(hlua_socket_connect(L));
 }
 #endif
@@ -2273,18 +2457,45 @@ __LJMP static int hlua_socket_settimeout(struct lua_State *L)
 {
 	struct hlua_socket *socket;
 	int tmout;
+	struct xref *peer;
+	struct appctx *appctx;
+	struct stream_interface *si;
+	struct stream *s;
 
 	MAY_LJMP(check_args(L, 2, "settimeout"));
 
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
 	tmout = MAY_LJMP(luaL_checkinteger(L, 2)) * 1000;
 
-	socket->s->req.rto = tmout;
-	socket->s->req.wto = tmout;
-	socket->s->res.rto = tmout;
-	socket->s->res.wto = tmout;
+	/* Check for negative values */
+	if (tmout < 0)
+		WILL_LJMP(luaL_error(L, "settimeout: cannot set negatives values"));
 
-	return 0;
+	/* Check if we run on the same thread than the xreator thread.
+	 * We cannot access to the socket if the thread is different.
+	 */
+	if (socket->tid != tid)
+		WILL_LJMP(luaL_error(L, "connect: cannot use socket on other thread"));
+
+	/* check for connection break. If some data where read, return it. */
+	peer = xref_get_peer_and_lock(&socket->xref);
+	if (!peer) {
+		hlua_pusherror(L, "socket: not yet initialised, you can't set timeouts.");
+		WILL_LJMP(lua_error(L));
+		return 0;
+	}
+	appctx = container_of(peer, struct appctx, ctx.hlua_cosocket.xref);
+	si = appctx->owner;
+	s = si_strm(si);
+
+	s->req.rto = tmout;
+	s->req.wto = tmout;
+	s->res.rto = tmout;
+	s->res.wto = tmout;
+	xref_unlock(&socket->xref, peer);
+
+	lua_pushinteger(L, 1);
+	return 1;
 }
 
 __LJMP static int hlua_socket_new(lua_State *L)
@@ -2293,7 +2504,6 @@ __LJMP static int hlua_socket_new(lua_State *L)
 	struct appctx *appctx;
 	struct session *sess;
 	struct stream *strm;
-	struct task *task;
 
 	/* Check stack size. */
 	if (!lua_checkstack(L, 3)) {
@@ -2306,9 +2516,10 @@ __LJMP static int hlua_socket_new(lua_State *L)
 	socket = MAY_LJMP(lua_newuserdata(L, sizeof(*socket)));
 	lua_rawseti(L, -2, 0);
 	memset(socket, 0, sizeof(*socket));
+	socket->tid = tid;
 
 	/* Check if the various memory pools are intialized. */
-	if (!pool2_stream || !pool2_buffer) {
+	if (!pool_head_stream || !pool_head_buffer) {
 		hlua_pusherror(L, "socket: uninitialized pools.");
 		goto out_fail_conf;
 	}
@@ -2318,17 +2529,16 @@ __LJMP static int hlua_socket_new(lua_State *L)
 	lua_setmetatable(L, -2);
 
 	/* Create the applet context */
-	appctx = appctx_new(&update_applet);
+	appctx = appctx_new(&update_applet, tid_bit);
 	if (!appctx) {
 		hlua_pusherror(L, "socket: out of memory");
 		goto out_fail_conf;
 	}
 
-	appctx->ctx.hlua.socket = socket;
-	appctx->ctx.hlua.connected = 0;
-	appctx->ctx.hlua.die = 0;
-	LIST_INIT(&appctx->ctx.hlua.wake_on_write);
-	LIST_INIT(&appctx->ctx.hlua.wake_on_read);
+	appctx->ctx.hlua_cosocket.connected = 0;
+	appctx->ctx.hlua_cosocket.die = 0;
+	LIST_INIT(&appctx->ctx.hlua_cosocket.wake_on_write);
+	LIST_INIT(&appctx->ctx.hlua_cosocket.wake_on_read);
 
 	/* Now create a session, task and stream for this applet */
 	sess = session_new(&socket_proxy, NULL, &appctx->obj_type);
@@ -2337,27 +2547,14 @@ __LJMP static int hlua_socket_new(lua_State *L)
 		goto out_fail_sess;
 	}
 
-	task = task_new();
-	if (!task) {
-		hlua_pusherror(L, "socket: out of memory");
-		goto out_fail_task;
-	}
-	task->nice = 0;
-
-	strm = stream_new(sess, task, &appctx->obj_type);
+	strm = stream_new(sess, &appctx->obj_type);
 	if (!strm) {
 		hlua_pusherror(L, "socket: out of memory");
 		goto out_fail_stream;
 	}
 
-	/* Configure an empty Lua for the stream. */
-	socket->s = strm;
-	strm->hlua.T = NULL;
-	strm->hlua.Tref = LUA_REFNIL;
-	strm->hlua.Mref = LUA_REFNIL;
-	strm->hlua.nargs = 0;
-	strm->hlua.flags = 0;
-	LIST_INIT(&strm->hlua.com);
+	/* Initialise cross reference between stream and Lua socket object. */
+	xref_create(&socket->xref, &appctx->ctx.hlua_cosocket.xref);
 
 	/* Configure "right" stream interface. this "si" is used to connect
 	 * and retrieve data from the server. The connection is initialized
@@ -2369,17 +2566,11 @@ __LJMP static int hlua_socket_new(lua_State *L)
 	strm->flags |= SF_DIRECT | SF_ASSIGNED | SF_ADDR_SET | SF_BE_ASSIGNED;
 	strm->target = &socket_tcp.obj_type;
 
-	/* Update statistics counters. */
-	socket_proxy.feconn++; /* beconn will be increased later */
-	jobs++;
-	totalconn++;
-
+	task_wakeup(strm->task, TASK_WOKEN_INIT);
 	/* Return yield waiting for connection. */
 	return 1;
 
  out_fail_stream:
-	task_free(task);
- out_fail_task:
 	session_free(sess);
  out_fail_sess:
 	appctx_free(appctx);
@@ -2513,7 +2704,7 @@ static inline int _hlua_channel_dup(struct channel *chn, lua_State *L)
 	int ret;
 	luaL_Buffer b;
 
-	ret = bi_getblk_nc(chn, &blk1, &len1, &blk2, &len2);
+	ret = ci_getblk_nc(chn, &blk1, &len1, &blk2, &len2);
 	if (unlikely(ret == 0))
 		return 0;
 
@@ -2605,7 +2796,7 @@ __LJMP static int hlua_channel_getline_yield(lua_State *L, int status, lua_KCont
 
 	chn = MAY_LJMP(hlua_checkchannel(L, 1));
 
-	ret = bi_getline_nc(chn, &blk1, &len1, &blk2, &len2);
+	ret = ci_getline_nc(chn, &blk1, &len1, &blk2, &len2);
 	if (ret == 0)
 		WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_channel_getline_yield, TICK_ETERNITY, 0));
 
@@ -2663,7 +2854,7 @@ __LJMP static int hlua_channel_append_yield(lua_State *L, int status, lua_KConte
 	if (max > len - l)
 		max = len - l;
 
-	ret = bi_putblk(chn, str + l, max);
+	ret = ci_putblk(chn, str + l, max);
 	if (ret == -2 || ret == -3) {
 		lua_pushinteger(L, -1);
 		return 1;
@@ -3241,6 +3432,81 @@ static int hlua_applet_tcp_new(lua_State *L, struct appctx *ctx)
 	return 1;
 }
 
+__LJMP static int hlua_applet_tcp_set_var(lua_State *L)
+{
+	struct hlua_appctx *appctx;
+	struct stream *s;
+	const char *name;
+	size_t len;
+	struct sample smp;
+
+	MAY_LJMP(check_args(L, 3, "set_var"));
+
+	/* It is useles to retrieve the stream, but this function
+	 * runs only in a stream context.
+	 */
+	appctx = MAY_LJMP(hlua_checkapplet_tcp(L, 1));
+	name = MAY_LJMP(luaL_checklstring(L, 2, &len));
+	s = appctx->htxn.s;
+
+	/* Converts the third argument in a sample. */
+	hlua_lua2smp(L, 3, &smp);
+
+	/* Store the sample in a variable. */
+	smp_set_owner(&smp, s->be, s->sess, s, 0);
+	vars_set_by_name(name, len, &smp);
+	return 0;
+}
+
+__LJMP static int hlua_applet_tcp_unset_var(lua_State *L)
+{
+	struct hlua_appctx *appctx;
+	struct stream *s;
+	const char *name;
+	size_t len;
+	struct sample smp;
+
+	MAY_LJMP(check_args(L, 2, "unset_var"));
+
+	/* It is useles to retrieve the stream, but this function
+	 * runs only in a stream context.
+	 */
+	appctx = MAY_LJMP(hlua_checkapplet_tcp(L, 1));
+	name = MAY_LJMP(luaL_checklstring(L, 2, &len));
+	s = appctx->htxn.s;
+
+	/* Unset the variable. */
+	smp_set_owner(&smp, s->be, s->sess, s, 0);
+	vars_unset_by_name(name, len, &smp);
+	return 0;
+}
+
+__LJMP static int hlua_applet_tcp_get_var(lua_State *L)
+{
+	struct hlua_appctx *appctx;
+	struct stream *s;
+	const char *name;
+	size_t len;
+	struct sample smp;
+
+	MAY_LJMP(check_args(L, 2, "get_var"));
+
+	/* It is useles to retrieve the stream, but this function
+	 * runs only in a stream context.
+	 */
+	appctx = MAY_LJMP(hlua_checkapplet_tcp(L, 1));
+	name = MAY_LJMP(luaL_checklstring(L, 2, &len));
+	s = appctx->htxn.s;
+
+	smp_set_owner(&smp, s->be, s->sess, s, 0);
+	if (!vars_get_by_name(name, len, &smp)) {
+		lua_pushnil(L);
+		return 1;
+	}
+
+	return hlua_smp2lua(L, &smp);
+}
+
 __LJMP static int hlua_applet_tcp_set_priv(lua_State *L)
 {
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_tcp(L, 1));
@@ -3248,13 +3514,14 @@ __LJMP static int hlua_applet_tcp_set_priv(lua_State *L)
 	struct hlua *hlua;
 
 	/* Note that this hlua struct is from the session and not from the applet. */
-	hlua = &s->hlua;
+	if (!s->hlua)
+		return 0;
+	hlua = s->hlua;
 
 	MAY_LJMP(check_args(L, 2, "set_priv"));
 
 	/* Remove previous value. */
-	if (hlua->Mref != -1)
-		luaL_unref(L, LUA_REGISTRYINDEX, hlua->Mref);
+	luaL_unref(L, LUA_REGISTRYINDEX, hlua->Mref);
 
 	/* Get and store new value. */
 	lua_pushvalue(L, 2); /* Copy the element 2 at the top of the stack. */
@@ -3270,7 +3537,11 @@ __LJMP static int hlua_applet_tcp_get_priv(lua_State *L)
 	struct hlua *hlua;
 
 	/* Note that this hlua struct is from the session and not from the applet. */
-	hlua = &s->hlua;
+	if (!s->hlua) {
+		lua_pushnil(L);
+		return 1;
+	}
+	hlua = s->hlua;
 
 	/* Push configuration index in the stack. */
 	lua_rawgeti(L, LUA_REGISTRYINDEX, hlua->Mref);
@@ -3293,7 +3564,7 @@ __LJMP static int hlua_applet_tcp_getline_yield(lua_State *L, int status, lua_KC
 	int len2;
 
 	/* Read the maximum amount of data avalaible. */
-	ret = bo_getline_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
+	ret = co_getline_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
 
 	/* Data not yet avalaible. return yield. */
 	if (ret == 0) {
@@ -3316,7 +3587,7 @@ __LJMP static int hlua_applet_tcp_getline_yield(lua_State *L, int status, lua_KC
 	luaL_addlstring(&appctx->b, blk2, len2);
 
 	/* Consume input channel output buffer data. */
-	bo_skip(si_oc(si), len1 + len2);
+	co_skip(si_oc(si), len1 + len2);
 	luaL_pushresult(&appctx->b);
 	return 1;
 }
@@ -3348,7 +3619,7 @@ __LJMP static int hlua_applet_tcp_recv_yield(lua_State *L, int status, lua_KCont
 	int len2;
 
 	/* Read the maximum amount of data avalaible. */
-	ret = bo_getblk_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
+	ret = co_getblk_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
 
 	/* Data not yet avalaible. return yield. */
 	if (ret == 0) {
@@ -3374,7 +3645,7 @@ __LJMP static int hlua_applet_tcp_recv_yield(lua_State *L, int status, lua_KCont
 		 */
 		luaL_addlstring(&appctx->b, blk1, len1);
 		luaL_addlstring(&appctx->b, blk2, len2);
-		bo_skip(si_oc(si), len1 + len2);
+		co_skip(si_oc(si), len1 + len2);
 		si_applet_cant_get(si);
 		WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_tcp_recv_yield, TICK_ETERNITY, 0));
 
@@ -3393,7 +3664,7 @@ __LJMP static int hlua_applet_tcp_recv_yield(lua_State *L, int status, lua_KCont
 		len -= len2;
 
 		/* Consume input channel output buffer data. */
-		bo_skip(si_oc(si), len1 + len2);
+		co_skip(si_oc(si), len1 + len2);
 
 		/* If we are no other data avalaible, yield waiting for new data. */
 		if (len > 0) {
@@ -3457,7 +3728,7 @@ __LJMP static int hlua_applet_tcp_send_yield(lua_State *L, int status, lua_KCont
 		max = len - l;
 
 	/* Copy data. */
-	bi_putblk(chn, str + l, max);
+	ci_putblk(chn, str + l, max);
 
 	/* update counters. */
 	l += max;
@@ -3623,6 +3894,81 @@ static int hlua_applet_http_new(lua_State *L, struct appctx *ctx)
 	return 1;
 }
 
+__LJMP static int hlua_applet_http_set_var(lua_State *L)
+{
+	struct hlua_appctx *appctx;
+	struct stream *s;
+	const char *name;
+	size_t len;
+	struct sample smp;
+
+	MAY_LJMP(check_args(L, 3, "set_var"));
+
+	/* It is useles to retrieve the stream, but this function
+	 * runs only in a stream context.
+	 */
+	appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
+	name = MAY_LJMP(luaL_checklstring(L, 2, &len));
+	s = appctx->htxn.s;
+
+	/* Converts the third argument in a sample. */
+	hlua_lua2smp(L, 3, &smp);
+
+	/* Store the sample in a variable. */
+	smp_set_owner(&smp, s->be, s->sess, s, 0);
+	vars_set_by_name(name, len, &smp);
+	return 0;
+}
+
+__LJMP static int hlua_applet_http_unset_var(lua_State *L)
+{
+	struct hlua_appctx *appctx;
+	struct stream *s;
+	const char *name;
+	size_t len;
+	struct sample smp;
+
+	MAY_LJMP(check_args(L, 2, "unset_var"));
+
+	/* It is useles to retrieve the stream, but this function
+	 * runs only in a stream context.
+	 */
+	appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
+	name = MAY_LJMP(luaL_checklstring(L, 2, &len));
+	s = appctx->htxn.s;
+
+	/* Unset the variable. */
+	smp_set_owner(&smp, s->be, s->sess, s, 0);
+	vars_unset_by_name(name, len, &smp);
+	return 0;
+}
+
+__LJMP static int hlua_applet_http_get_var(lua_State *L)
+{
+	struct hlua_appctx *appctx;
+	struct stream *s;
+	const char *name;
+	size_t len;
+	struct sample smp;
+
+	MAY_LJMP(check_args(L, 2, "get_var"));
+
+	/* It is useles to retrieve the stream, but this function
+	 * runs only in a stream context.
+	 */
+	appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
+	name = MAY_LJMP(luaL_checklstring(L, 2, &len));
+	s = appctx->htxn.s;
+
+	smp_set_owner(&smp, s->be, s->sess, s, 0);
+	if (!vars_get_by_name(name, len, &smp)) {
+		lua_pushnil(L);
+		return 1;
+	}
+
+	return hlua_smp2lua(L, &smp);
+}
+
 __LJMP static int hlua_applet_http_set_priv(lua_State *L)
 {
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
@@ -3630,13 +3976,14 @@ __LJMP static int hlua_applet_http_set_priv(lua_State *L)
 	struct hlua *hlua;
 
 	/* Note that this hlua struct is from the session and not from the applet. */
-	hlua = &s->hlua;
+	if (!s->hlua)
+		return 0;
+	hlua = s->hlua;
 
 	MAY_LJMP(check_args(L, 2, "set_priv"));
 
 	/* Remove previous value. */
-	if (hlua->Mref != -1)
-		luaL_unref(L, LUA_REGISTRYINDEX, hlua->Mref);
+	luaL_unref(L, LUA_REGISTRYINDEX, hlua->Mref);
 
 	/* Get and store new value. */
 	lua_pushvalue(L, 2); /* Copy the element 2 at the top of the stack. */
@@ -3652,7 +3999,11 @@ __LJMP static int hlua_applet_http_get_priv(lua_State *L)
 	struct hlua *hlua;
 
 	/* Note that this hlua struct is from the session and not from the applet. */
-	hlua = &s->hlua;
+	if (!s->hlua) {
+		lua_pushnil(L);
+		return 1;
+	}
+	hlua = s->hlua;
 
 	/* Push configuration index in the stack. */
 	lua_rawgeti(L, LUA_REGISTRYINDEX, hlua->Mref);
@@ -3677,7 +4028,7 @@ __LJMP static int hlua_applet_http_getline_yield(lua_State *L, int status, lua_K
 
 	/* Maybe we cant send a 100-continue ? */
 	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_100C) {
-		ret = bi_putblk(chn, HTTP_100C, strlen(HTTP_100C));
+		ret = ci_putblk(chn, HTTP_100C, strlen(HTTP_100C));
 		/* if ret == -2 or -3 the channel closed or the message si too
 		 * big for the buffers. We cant send anything. So, we ignoring
 		 * the error, considers that the 100-continue is sent, and try
@@ -3698,7 +4049,7 @@ __LJMP static int hlua_applet_http_getline_yield(lua_State *L, int status, lua_K
 	}
 
 	/* Read the maximum amount of data avalaible. */
-	ret = bo_getline_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
+	ret = co_getline_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
 
 	/* Data not yet avalaible. return yield. */
 	if (ret == 0) {
@@ -3729,7 +4080,7 @@ __LJMP static int hlua_applet_http_getline_yield(lua_State *L, int status, lua_K
 	appctx->appctx->ctx.hlua_apphttp.left_bytes -= len2;
 
 	/* Consume input channel output buffer data. */
-	bo_skip(si_oc(si), len1 + len2);
+	co_skip(si_oc(si), len1 + len2);
 	luaL_pushresult(&appctx->b);
 	return 1;
 }
@@ -3763,7 +4114,7 @@ __LJMP static int hlua_applet_http_recv_yield(lua_State *L, int status, lua_KCon
 
 	/* Maybe we cant send a 100-continue ? */
 	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_100C) {
-		ret = bi_putblk(chn, HTTP_100C, strlen(HTTP_100C));
+		ret = ci_putblk(chn, HTTP_100C, strlen(HTTP_100C));
 		/* if ret == -2 or -3 the channel closed or the message si too
 		 * big for the buffers. We cant send anything. So, we ignoring
 		 * the error, considers that the 100-continue is sent, and try
@@ -3778,7 +4129,7 @@ __LJMP static int hlua_applet_http_recv_yield(lua_State *L, int status, lua_KCon
 	}
 
 	/* Read the maximum amount of data avalaible. */
-	ret = bo_getblk_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
+	ret = co_getblk_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
 
 	/* Data not yet avalaible. return yield. */
 	if (ret == 0) {
@@ -3809,7 +4160,7 @@ __LJMP static int hlua_applet_http_recv_yield(lua_State *L, int status, lua_KCon
 	len -= len2;
 
 	/* Consume input channel output buffer data. */
-	bo_skip(si_oc(si), len1 + len2);
+	co_skip(si_oc(si), len1 + len2);
 	if (appctx->appctx->ctx.hlua_apphttp.left_bytes != -1)
 		appctx->appctx->ctx.hlua_apphttp.left_bytes -= len;
 
@@ -3872,7 +4223,7 @@ __LJMP static int hlua_applet_http_send_yield(lua_State *L, int status, lua_KCon
 		max = len - l;
 
 	/* Copy data. */
-	bi_putblk(chn, str + l, max);
+	ci_putblk(chn, str + l, max);
 
 	/* update counters. */
 	l += max;
@@ -4011,7 +4362,7 @@ __LJMP static int hlua_applet_http_start_response_yield(lua_State *L, int status
 	msg = MAY_LJMP(luaL_checklstring(L, 2, &len));
 
 	/* Send the message at once. */
-	ret = bi_putblk(chn, msg, len);
+	ret = ci_putblk(chn, msg, len);
 
 	/* if ret == -2 or -3 the channel closed or the message si too
 	 * big for the buffers.
@@ -4037,10 +4388,11 @@ __LJMP static int hlua_applet_http_start_response(lua_State *L)
 	struct chunk *tmp = get_trash_chunk();
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
 	const char *name;
+	size_t name_len;
 	const char *value;
+	size_t value_len;
 	int id;
-	int hdr_connection = 0;
-	int hdr_contentlength = -1;
+	long long hdr_contentlength = -1;
 	int hdr_chunked = 0;
 	const char *reason = appctx->appctx->ctx.hlua_apphttp.reason;
 
@@ -4072,7 +4424,7 @@ __LJMP static int hlua_applet_http_start_response(lua_State *L)
 			               lua_typename(L, lua_type(L, -2)));
 			WILL_LJMP(lua_error(L));
 		}
-		name = lua_tostring(L, -2);
+		name = lua_tolstring(L, -2, &name_len);
 
 		/* We expect an array as -1. */
 		if (lua_type(L, -1) != LUA_TTABLE) {
@@ -4105,26 +4457,34 @@ __LJMP static int hlua_applet_http_start_response(lua_State *L)
 				               lua_typename(L, lua_type(L, -1)));
 				WILL_LJMP(lua_error(L));
 			}
-			value = lua_tostring(L, -1);
+			value = lua_tolstring(L, -1, &value_len);
 
 			/* Catenate a new header. */
-			chunk_appendf(tmp, "%s: %s\r\n", name, value);
+			if (tmp->len + name_len + 2 + value_len + 2 < tmp->size) {
+				memcpy(tmp->str + tmp->len, name, name_len);
+				tmp->len += name_len;
+				tmp->str[tmp->len++] = ':';
+				tmp->str[tmp->len++] = ' ';
+
+				memcpy(tmp->str + tmp->len, value, value_len);
+				tmp->len += value_len;
+				tmp->str[tmp->len++] = '\r';
+				tmp->str[tmp->len++] = '\n';
+			}
 
 			/* Protocol checks. */
 
-			/* Check if the header conneciton is present. */
-			if (strcasecmp("connection", name) == 0)
-				hdr_connection = 1;
-
 			/* Copy the header content length. The length conversion
-			 * is done without control. If it contains a ad value, this
-			 * is not our problem.
+			 * is done without control. If it contains a bad value,
+			 * the content-length remains negative so that we can
+			 * switch to either chunked encoding or close.
 			 */
-			if (strcasecmp("content-length", name) == 0)
-				hdr_contentlength = atoi(value);
+			if (name_len == 14 && strcasecmp("content-length", name) == 0)
+				strl2llrc(value, strlen(value), &hdr_contentlength);
 
 			/* Check if the client annouces a transfer-encoding chunked it self. */
-			if (strcasecmp("transfer-encoding", name) == 0 &&
+			if (name_len == 17 && value_len == 7 &&
+			    strcasecmp("transfer-encoding", name) == 0 &&
 			    strcasecmp("chunked", value) == 0)
 				hdr_chunked = 1;
 
@@ -4136,25 +4496,13 @@ __LJMP static int hlua_applet_http_start_response(lua_State *L)
 		lua_pop(L, 1);
 	}
 
-	/* If the http protocol version is 1.1, we expect an header "connection" set
-	 * to "close" to be HAProxy/keeplive compliant. Otherwise, we expect nothing.
-	 * If the header conneciton is present, don't change it, if it is not present,
-	 * we must set.
-	 *
-	 * we set a "connection: close" header for ensuring that the keepalive will be
-	 * respected by haproxy. HAProcy considers that the application cloe the connection
-	 * and it keep the connection from the client open.
-	 */
-	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_HTTP11 && !hdr_connection)
-		chunk_appendf(tmp, "Connection: close\r\n");
-
 	/* If we dont have a content-length set, and the HTTP version is 1.1
 	 * and the status code implies the presence of a message body, we must
 	 * announce a transfer encoding chunked. This is required by haproxy
 	 * for the keepalive compliance. If the applet annouces a transfer-encoding
 	 * chunked itslef, don't do anything.
 	 */
-	if (hdr_contentlength == -1 && hdr_chunked == 0 &&
+	if (hdr_contentlength < 0 && hdr_chunked == 0 &&
 	    (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_HTTP11) &&
 	    appctx->appctx->ctx.hlua_apphttp.status >= 200 &&
 	    appctx->appctx->ctx.hlua_apphttp.status != 204 &&
@@ -4723,8 +5071,7 @@ __LJMP static int hlua_set_priv(lua_State *L)
 	hlua = hlua_gethlua(L);
 
 	/* Remove previous value. */
-	if (hlua->Mref != -1)
-		luaL_unref(L, LUA_REGISTRYINDEX, hlua->Mref);
+	luaL_unref(L, LUA_REGISTRYINDEX, hlua->Mref);
 
 	/* Get and store new value. */
 	lua_pushvalue(L, 2); /* Copy the element 2 at the top of the stack. */
@@ -4936,7 +5283,7 @@ __LJMP static int hlua_txn_set_tos(lua_State *L)
 	tos = MAY_LJMP(luaL_checkinteger(L, 2));
 
 	if ((cli_conn = objt_conn(htxn->s->sess->origin)) && conn_ctrl_ready(cli_conn))
-		inet_set_tos(cli_conn->t.sock.fd, &cli_conn->addr.from, tos);
+		inet_set_tos(cli_conn->handle.fd, &cli_conn->addr.from, tos);
 
 	return 0;
 }
@@ -4953,7 +5300,7 @@ __LJMP static int hlua_txn_set_mark(lua_State *L)
 	mark = MAY_LJMP(luaL_checkinteger(L, 2));
 
 	if ((cli_conn = objt_conn(htxn->s->sess->origin)) && conn_ctrl_ready(cli_conn))
-		setsockopt(cli_conn->t.sock.fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
+		setsockopt(cli_conn->handle.fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
 #endif
 	return 0;
 }
@@ -5166,12 +5513,6 @@ static struct task *hlua_process_task(struct task *task)
 	struct hlua *hlua = task->context;
 	enum hlua_exec status;
 
-	/* We need to remove the task from the wait queue before executing
-	 * the Lua code because we don't know if it needs to wait for
-	 * another timer or not in the case of E_AGAIN.
-	 */
-	task_delete(task);
-
 	/* If it is the first call to the task, we must initialize the
 	 * execution timeouts.
 	 */
@@ -5185,35 +5526,35 @@ static struct task *hlua_process_task(struct task *task)
 	/* finished or yield */
 	case HLUA_E_OK:
 		hlua_ctx_destroy(hlua);
-		free(hlua);
 		task_delete(task);
 		task_free(task);
 		break;
 
 	case HLUA_E_AGAIN: /* co process or timeout wake me later. */
+		notification_gc(&hlua->com);
 		if (hlua->wake_time != TICK_ETERNITY)
-			task_schedule(task, hlua->wake_time);
+			task->expire = hlua->wake_time;
 		break;
 
 	/* finished with error. */
 	case HLUA_E_ERRMSG:
 		SEND_ERR(NULL, "Lua task: %s.\n", lua_tostring(hlua->T, -1));
 		hlua_ctx_destroy(hlua);
-		free(hlua);
 		task_delete(task);
 		task_free(task);
+		task = NULL;
 		break;
 
 	case HLUA_E_ERR:
 	default:
 		SEND_ERR(NULL, "Lua task: unknown error.\n");
 		hlua_ctx_destroy(hlua);
-		free(hlua);
 		task_delete(task);
 		task_free(task);
+		task = NULL;
 		break;
 	}
-	return NULL;
+	return task;
 }
 
 /* This function is an LUA binding that register LUA function to be
@@ -5259,11 +5600,11 @@ static int hlua_register_task(lua_State *L)
 
 	ref = MAY_LJMP(hlua_checkfunction(L, 1));
 
-	hlua = calloc(1, sizeof(*hlua));
+	hlua = pool_alloc(pool_head_hlua);
 	if (!hlua)
 		WILL_LJMP(luaL_error(L, "lua out of memory error."));
 
-	task = task_new();
+	task = task_new(MAX_THREADS_MASK);
 	task->context = hlua;
 	task->process = hlua_process_task;
 
@@ -5298,18 +5639,25 @@ static int hlua_sample_conv_wrapper(const struct arg *arg_p, struct sample *smp,
 	 * permits to save performances because a systematic
 	 * Lua initialization cause 5% performances loss.
 	 */
-	if (!stream->hlua.T && !hlua_ctx_init(&stream->hlua, stream->task)) {
-		SEND_ERR(stream->be, "Lua converter '%s': can't initialize Lua context.\n", fcn->name);
-		return 0;
+	if (!stream->hlua) {
+		stream->hlua = pool_alloc(pool_head_hlua);
+		if (!stream->hlua) {
+			SEND_ERR(stream->be, "Lua converter '%s': can't initialize Lua context.\n", fcn->name);
+			return 0;
+		}
+		if (!hlua_ctx_init(stream->hlua, stream->task)) {
+			SEND_ERR(stream->be, "Lua converter '%s': can't initialize Lua context.\n", fcn->name);
+			return 0;
+		}
 	}
 
 	/* If it is the first run, initialize the data for the call. */
-	if (!HLUA_IS_RUNNING(&stream->hlua)) {
+	if (!HLUA_IS_RUNNING(stream->hlua)) {
 
 		/* The following Lua calls can fail. */
-		if (!SET_SAFE_LJMP(stream->hlua.T)) {
-			if (lua_type(stream->hlua.T, -1) == LUA_TSTRING)
-				error = lua_tostring(stream->hlua.T, -1);
+		if (!SET_SAFE_LJMP(stream->hlua->T)) {
+			if (lua_type(stream->hlua->T, -1) == LUA_TSTRING)
+				error = lua_tostring(stream->hlua->T, -1);
 			else
 				error = "critical error";
 			SEND_ERR(stream->be, "Lua converter '%s': %s.\n", fcn->name, error);
@@ -5317,55 +5665,55 @@ static int hlua_sample_conv_wrapper(const struct arg *arg_p, struct sample *smp,
 		}
 
 		/* Check stack available size. */
-		if (!lua_checkstack(stream->hlua.T, 1)) {
+		if (!lua_checkstack(stream->hlua->T, 1)) {
 			SEND_ERR(stream->be, "Lua converter '%s': full stack.\n", fcn->name);
-			RESET_SAFE_LJMP(stream->hlua.T);
+			RESET_SAFE_LJMP(stream->hlua->T);
 			return 0;
 		}
 
 		/* Restore the function in the stack. */
-		lua_rawgeti(stream->hlua.T, LUA_REGISTRYINDEX, fcn->function_ref);
+		lua_rawgeti(stream->hlua->T, LUA_REGISTRYINDEX, fcn->function_ref);
 
 		/* convert input sample and pust-it in the stack. */
-		if (!lua_checkstack(stream->hlua.T, 1)) {
+		if (!lua_checkstack(stream->hlua->T, 1)) {
 			SEND_ERR(stream->be, "Lua converter '%s': full stack.\n", fcn->name);
-			RESET_SAFE_LJMP(stream->hlua.T);
+			RESET_SAFE_LJMP(stream->hlua->T);
 			return 0;
 		}
-		hlua_smp2lua(stream->hlua.T, smp);
-		stream->hlua.nargs = 1;
+		hlua_smp2lua(stream->hlua->T, smp);
+		stream->hlua->nargs = 1;
 
 		/* push keywords in the stack. */
 		if (arg_p) {
 			for (; arg_p->type != ARGT_STOP; arg_p++) {
-				if (!lua_checkstack(stream->hlua.T, 1)) {
+				if (!lua_checkstack(stream->hlua->T, 1)) {
 					SEND_ERR(stream->be, "Lua converter '%s': full stack.\n", fcn->name);
-					RESET_SAFE_LJMP(stream->hlua.T);
+					RESET_SAFE_LJMP(stream->hlua->T);
 					return 0;
 				}
-				hlua_arg2lua(stream->hlua.T, arg_p);
-				stream->hlua.nargs++;
+				hlua_arg2lua(stream->hlua->T, arg_p);
+				stream->hlua->nargs++;
 			}
 		}
 
 		/* We must initialize the execution timeouts. */
-		stream->hlua.max_time = hlua_timeout_session;
+		stream->hlua->max_time = hlua_timeout_session;
 
 		/* At this point the execution is safe. */
-		RESET_SAFE_LJMP(stream->hlua.T);
+		RESET_SAFE_LJMP(stream->hlua->T);
 	}
 
 	/* Execute the function. */
-	switch (hlua_ctx_resume(&stream->hlua, 0)) {
+	switch (hlua_ctx_resume(stream->hlua, 0)) {
 	/* finished. */
 	case HLUA_E_OK:
 		/* If the stack is empty, the function fails. */
-		if (lua_gettop(stream->hlua.T) <= 0)
+		if (lua_gettop(stream->hlua->T) <= 0)
 			return 0;
 
 		/* Convert the returned value in sample. */
-		hlua_lua2smp(stream->hlua.T, -1, smp);
-		lua_pop(stream->hlua.T, 1);
+		hlua_lua2smp(stream->hlua->T, -1, smp);
+		lua_pop(stream->hlua->T, 1);
 		return 1;
 
 	/* yield. */
@@ -5377,8 +5725,8 @@ static int hlua_sample_conv_wrapper(const struct arg *arg_p, struct sample *smp,
 	case HLUA_E_ERRMSG:
 		/* Display log. */
 		SEND_ERR(stream->be, "Lua converter '%s': %s.\n",
-		         fcn->name, lua_tostring(stream->hlua.T, -1));
-		lua_pop(stream->hlua.T, 1);
+		         fcn->name, lua_tostring(stream->hlua->T, -1));
+		lua_pop(stream->hlua->T, 1);
 		return 0;
 
 	case HLUA_E_ERR:
@@ -5411,20 +5759,27 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 	 * permits to save performances because a systematic
 	 * Lua initialization cause 5% performances loss.
 	 */
-	if (!stream->hlua.T && !hlua_ctx_init(&stream->hlua, stream->task)) {
-		SEND_ERR(stream->be, "Lua sample-fetch '%s': can't initialize Lua context.\n", fcn->name);
-		return 0;
+	if (!stream->hlua) {
+		stream->hlua = pool_alloc(pool_head_hlua);
+		if (!stream->hlua) {
+			SEND_ERR(stream->be, "Lua sample-fetch '%s': can't initialize Lua context.\n", fcn->name);
+			return 0;
+		}
+		if (!hlua_ctx_init(stream->hlua, stream->task)) {
+			SEND_ERR(stream->be, "Lua sample-fetch '%s': can't initialize Lua context.\n", fcn->name);
+			return 0;
+		}
 	}
 
-	consistency_set(stream, smp->opt, &stream->hlua.cons);
+	consistency_set(stream, smp->opt, &stream->hlua->cons);
 
 	/* If it is the first run, initialize the data for the call. */
-	if (!HLUA_IS_RUNNING(&stream->hlua)) {
+	if (!HLUA_IS_RUNNING(stream->hlua)) {
 
 		/* The following Lua calls can fail. */
-		if (!SET_SAFE_LJMP(stream->hlua.T)) {
-			if (lua_type(stream->hlua.T, -1) == LUA_TSTRING)
-				error = lua_tostring(stream->hlua.T, -1);
+		if (!SET_SAFE_LJMP(stream->hlua->T)) {
+			if (lua_type(stream->hlua->T, -1) == LUA_TSTRING)
+				error = lua_tostring(stream->hlua->T, -1);
 			else
 				error = "critical error";
 			SEND_ERR(smp->px, "Lua sample-fetch '%s': %s.\n", fcn->name, error);
@@ -5432,58 +5787,58 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 		}
 
 		/* Check stack available size. */
-		if (!lua_checkstack(stream->hlua.T, 2)) {
+		if (!lua_checkstack(stream->hlua->T, 2)) {
 			SEND_ERR(smp->px, "Lua sample-fetch '%s': full stack.\n", fcn->name);
-			RESET_SAFE_LJMP(stream->hlua.T);
+			RESET_SAFE_LJMP(stream->hlua->T);
 			return 0;
 		}
 
 		/* Restore the function in the stack. */
-		lua_rawgeti(stream->hlua.T, LUA_REGISTRYINDEX, fcn->function_ref);
+		lua_rawgeti(stream->hlua->T, LUA_REGISTRYINDEX, fcn->function_ref);
 
 		/* push arguments in the stack. */
-		if (!hlua_txn_new(stream->hlua.T, stream, smp->px, smp->opt & SMP_OPT_DIR,
+		if (!hlua_txn_new(stream->hlua->T, stream, smp->px, smp->opt & SMP_OPT_DIR,
 		                  HLUA_TXN_NOTERM)) {
 			SEND_ERR(smp->px, "Lua sample-fetch '%s': full stack.\n", fcn->name);
-			RESET_SAFE_LJMP(stream->hlua.T);
+			RESET_SAFE_LJMP(stream->hlua->T);
 			return 0;
 		}
-		stream->hlua.nargs = 1;
+		stream->hlua->nargs = 1;
 
 		/* push keywords in the stack. */
 		for (; arg_p && arg_p->type != ARGT_STOP; arg_p++) {
 			/* Check stack available size. */
-			if (!lua_checkstack(stream->hlua.T, 1)) {
+			if (!lua_checkstack(stream->hlua->T, 1)) {
 				SEND_ERR(smp->px, "Lua sample-fetch '%s': full stack.\n", fcn->name);
-				RESET_SAFE_LJMP(stream->hlua.T);
+				RESET_SAFE_LJMP(stream->hlua->T);
 				return 0;
 			}
-			hlua_arg2lua(stream->hlua.T, arg_p);
-			stream->hlua.nargs++;
+			hlua_arg2lua(stream->hlua->T, arg_p);
+			stream->hlua->nargs++;
 		}
 
 		/* We must initialize the execution timeouts. */
-		stream->hlua.max_time = hlua_timeout_session;
+		stream->hlua->max_time = hlua_timeout_session;
 
 		/* At this point the execution is safe. */
-		RESET_SAFE_LJMP(stream->hlua.T);
+		RESET_SAFE_LJMP(stream->hlua->T);
 	}
 
 	/* Execute the function. */
-	switch (hlua_ctx_resume(&stream->hlua, 0)) {
+	switch (hlua_ctx_resume(stream->hlua, 0)) {
 	/* finished. */
 	case HLUA_E_OK:
-		if (!consistency_check(stream, smp->opt, &stream->hlua.cons)) {
+		if (!consistency_check(stream, smp->opt, &stream->hlua->cons)) {
 			stream_int_retnclose(&stream->si[0], &msg);
 			return 0;
 		}
 		/* If the stack is empty, the function fails. */
-		if (lua_gettop(stream->hlua.T) <= 0)
+		if (lua_gettop(stream->hlua->T) <= 0)
 			return 0;
 
 		/* Convert the returned value in sample. */
-		hlua_lua2smp(stream->hlua.T, -1, smp);
-		lua_pop(stream->hlua.T, 1);
+		hlua_lua2smp(stream->hlua->T, -1, smp);
+		lua_pop(stream->hlua->T, 1);
 
 		/* Set the end of execution flag. */
 		smp->flags &= ~SMP_F_MAY_CHANGE;
@@ -5491,23 +5846,23 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 
 	/* yield. */
 	case HLUA_E_AGAIN:
-		if (!consistency_check(stream, smp->opt, &stream->hlua.cons))
+		if (!consistency_check(stream, smp->opt, &stream->hlua->cons))
 			stream_int_retnclose(&stream->si[0], &msg);
 		SEND_ERR(smp->px, "Lua sample-fetch '%s': cannot use yielded functions.\n", fcn->name);
 		return 0;
 
 	/* finished with error. */
 	case HLUA_E_ERRMSG:
-		if (!consistency_check(stream, smp->opt, &stream->hlua.cons))
+		if (!consistency_check(stream, smp->opt, &stream->hlua->cons))
 			stream_int_retnclose(&stream->si[0], &msg);
 		/* Display log. */
 		SEND_ERR(smp->px, "Lua sample-fetch '%s': %s.\n",
-		         fcn->name, lua_tostring(stream->hlua.T, -1));
-		lua_pop(stream->hlua.T, 1);
+		         fcn->name, lua_tostring(stream->hlua->T, -1));
+		lua_pop(stream->hlua->T, 1);
 		return 0;
 
 	case HLUA_E_ERR:
-		if (!consistency_check(stream, smp->opt, &stream->hlua.cons))
+		if (!consistency_check(stream, smp->opt, &stream->hlua->cons))
 			stream_int_retnclose(&stream->si[0], &msg);
 		/* Display log. */
 		SEND_ERR(smp->px, "Lua sample-fetch '%s' returns an unknown error.\n", fcn->name);
@@ -5657,26 +6012,34 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 		return ACT_RET_CONT;
 	}
 
-	consistency_set(s, dir, &s->hlua.cons);
-
 	/* In the execution wrappers linked with a stream, the
 	 * Lua context can be not initialized. This behavior
 	 * permits to save performances because a systematic
 	 * Lua initialization cause 5% performances loss.
 	 */
-	if (!s->hlua.T && !hlua_ctx_init(&s->hlua, s->task)) {
-		SEND_ERR(px, "Lua action '%s': can't initialize Lua context.\n",
-		         rule->arg.hlua_rule->fcn.name);
-		return ACT_RET_CONT;
+	if (!s->hlua) {
+		s->hlua = pool_alloc(pool_head_hlua);
+		if (!s->hlua) {
+			SEND_ERR(px, "Lua action '%s': can't initialize Lua context.\n",
+			         rule->arg.hlua_rule->fcn.name);
+			return ACT_RET_CONT;
+		}
+		if (!hlua_ctx_init(s->hlua, s->task)) {
+			SEND_ERR(px, "Lua action '%s': can't initialize Lua context.\n",
+			         rule->arg.hlua_rule->fcn.name);
+			return ACT_RET_CONT;
+		}
 	}
 
+	consistency_set(s, dir, &s->hlua->cons);
+
 	/* If it is the first run, initialize the data for the call. */
-	if (!HLUA_IS_RUNNING(&s->hlua)) {
+	if (!HLUA_IS_RUNNING(s->hlua)) {
 
 		/* The following Lua calls can fail. */
-		if (!SET_SAFE_LJMP(s->hlua.T)) {
-			if (lua_type(s->hlua.T, -1) == LUA_TSTRING)
-				error = lua_tostring(s->hlua.T, -1);
+		if (!SET_SAFE_LJMP(s->hlua->T)) {
+			if (lua_type(s->hlua->T, -1) == LUA_TSTRING)
+				error = lua_tostring(s->hlua->T, -1);
 			else
 				error = "critical error";
 			SEND_ERR(px, "Lua function '%s': %s.\n",
@@ -5685,75 +6048,75 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 		}
 
 		/* Check stack available size. */
-		if (!lua_checkstack(s->hlua.T, 1)) {
+		if (!lua_checkstack(s->hlua->T, 1)) {
 			SEND_ERR(px, "Lua function '%s': full stack.\n",
 			         rule->arg.hlua_rule->fcn.name);
-			RESET_SAFE_LJMP(s->hlua.T);
+			RESET_SAFE_LJMP(s->hlua->T);
 			return ACT_RET_CONT;
 		}
 
 		/* Restore the function in the stack. */
-		lua_rawgeti(s->hlua.T, LUA_REGISTRYINDEX, rule->arg.hlua_rule->fcn.function_ref);
+		lua_rawgeti(s->hlua->T, LUA_REGISTRYINDEX, rule->arg.hlua_rule->fcn.function_ref);
 
 		/* Create and and push object stream in the stack. */
-		if (!hlua_txn_new(s->hlua.T, s, px, dir, 0)) {
+		if (!hlua_txn_new(s->hlua->T, s, px, dir, 0)) {
 			SEND_ERR(px, "Lua function '%s': full stack.\n",
 			         rule->arg.hlua_rule->fcn.name);
-			RESET_SAFE_LJMP(s->hlua.T);
+			RESET_SAFE_LJMP(s->hlua->T);
 			return ACT_RET_CONT;
 		}
-		s->hlua.nargs = 1;
+		s->hlua->nargs = 1;
 
 		/* push keywords in the stack. */
 		for (arg = rule->arg.hlua_rule->args; arg && *arg; arg++) {
-			if (!lua_checkstack(s->hlua.T, 1)) {
+			if (!lua_checkstack(s->hlua->T, 1)) {
 				SEND_ERR(px, "Lua function '%s': full stack.\n",
 				         rule->arg.hlua_rule->fcn.name);
-				RESET_SAFE_LJMP(s->hlua.T);
+				RESET_SAFE_LJMP(s->hlua->T);
 				return ACT_RET_CONT;
 			}
-			lua_pushstring(s->hlua.T, *arg);
-			s->hlua.nargs++;
+			lua_pushstring(s->hlua->T, *arg);
+			s->hlua->nargs++;
 		}
 
 		/* Now the execution is safe. */
-		RESET_SAFE_LJMP(s->hlua.T);
+		RESET_SAFE_LJMP(s->hlua->T);
 
 		/* We must initialize the execution timeouts. */
-		s->hlua.max_time = hlua_timeout_session;
+		s->hlua->max_time = hlua_timeout_session;
 	}
 
 	/* Execute the function. */
-	switch (hlua_ctx_resume(&s->hlua, !(flags & ACT_FLAG_FINAL))) {
+	switch (hlua_ctx_resume(s->hlua, !(flags & ACT_FLAG_FINAL))) {
 	/* finished. */
 	case HLUA_E_OK:
-		if (!consistency_check(s, dir, &s->hlua.cons)) {
+		if (!consistency_check(s, dir, &s->hlua->cons)) {
 			stream_int_retnclose(&s->si[0], &msg);
 			return ACT_RET_ERR;
 		}
-		if (s->hlua.flags & HLUA_STOP)
+		if (s->hlua->flags & HLUA_STOP)
 			return ACT_RET_STOP;
 		return ACT_RET_CONT;
 
 	/* yield. */
 	case HLUA_E_AGAIN:
 		/* Set timeout in the required channel. */
-		if (s->hlua.wake_time != TICK_ETERNITY) {
+		if (s->hlua->wake_time != TICK_ETERNITY) {
 			if (analyzer & (AN_REQ_INSPECT_FE|AN_REQ_HTTP_PROCESS_FE))
-				s->req.analyse_exp = s->hlua.wake_time;
+				s->req.analyse_exp = s->hlua->wake_time;
 			else if (analyzer & (AN_RES_INSPECT|AN_RES_HTTP_PROCESS_BE))
-				s->res.analyse_exp = s->hlua.wake_time;
+				s->res.analyse_exp = s->hlua->wake_time;
 		}
 		/* Some actions can be wake up when a "write" event
 		 * is detected on a response channel. This is useful
 		 * only for actions targetted on the requests.
 		 */
-		if (HLUA_IS_WAKERESWR(&s->hlua)) {
+		if (HLUA_IS_WAKERESWR(s->hlua)) {
 			s->res.flags |= CF_WAKE_WRITE;
 			if ((analyzer & (AN_REQ_INSPECT_FE|AN_REQ_HTTP_PROCESS_FE)))
 				s->res.analysers |= analyzer;
 		}
-		if (HLUA_IS_WAKEREQWR(&s->hlua))
+		if (HLUA_IS_WAKEREQWR(s->hlua))
 			s->req.flags |= CF_WAKE_WRITE;
 		/* We can quit the fcuntion without consistency check
 		 * because HAProxy is not able to manipulate data, it
@@ -5762,18 +6125,18 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 
 	/* finished with error. */
 	case HLUA_E_ERRMSG:
-		if (!consistency_check(s, dir, &s->hlua.cons)) {
+		if (!consistency_check(s, dir, &s->hlua->cons)) {
 			stream_int_retnclose(&s->si[0], &msg);
 			return ACT_RET_ERR;
 		}
 		/* Display log. */
 		SEND_ERR(px, "Lua function '%s': %s.\n",
-		         rule->arg.hlua_rule->fcn.name, lua_tostring(s->hlua.T, -1));
-		lua_pop(s->hlua.T, 1);
+		         rule->arg.hlua_rule->fcn.name, lua_tostring(s->hlua->T, -1));
+		lua_pop(s->hlua->T, 1);
 		return ACT_RET_CONT;
 
 	case HLUA_E_ERR:
-		if (!consistency_check(s, dir, &s->hlua.cons)) {
+		if (!consistency_check(s, dir, &s->hlua->cons)) {
 			stream_int_retnclose(&s->si[0], &msg);
 			return ACT_RET_ERR;
 		}
@@ -5799,22 +6162,30 @@ struct task *hlua_applet_wakeup(struct task *t)
 	 */
 	si_applet_cant_put(si);
 	appctx_wakeup(ctx);
-	return NULL;
+	t->expire = TICK_ETERNITY;
+	return t;
 }
 
 static int hlua_applet_tcp_init(struct appctx *ctx, struct proxy *px, struct stream *strm)
 {
 	struct stream_interface *si = ctx->owner;
-	struct hlua *hlua = &ctx->ctx.hlua_apptcp.hlua;
+	struct hlua *hlua;
 	struct task *task;
 	char **arg;
 	const char *error;
 
+	hlua = pool_alloc(pool_head_hlua);
+	if (!hlua) {
+		SEND_ERR(px, "Lua applet tcp '%s': out of memory.\n",
+		         ctx->rule->arg.hlua_rule->fcn.name);
+		return 0;
+	}
 	HLUA_INIT(hlua);
+	ctx->ctx.hlua_apptcp.hlua = hlua;
 	ctx->ctx.hlua_apptcp.flags = 0;
 
 	/* Create task used by signal to wakeup applets. */
-	task = task_new();
+	task = task_new(tid_bit);
 	if (!task) {
 		SEND_ERR(px, "Lua applet tcp '%s': out of memory.\n",
 		         ctx->rule->arg.hlua_rule->fcn.name);
@@ -5899,7 +6270,7 @@ static void hlua_applet_tcp_fct(struct appctx *ctx)
 	struct channel *res = si_ic(si);
 	struct act_rule *rule = ctx->rule;
 	struct proxy *px = strm->be;
-	struct hlua *hlua = &ctx->ctx.hlua_apptcp.hlua;
+	struct hlua *hlua = ctx->ctx.hlua_apptcp.hlua;
 
 	/* The applet execution is already done. */
 	if (ctx->ctx.hlua_apptcp.flags & APPLET_DONE)
@@ -5919,7 +6290,7 @@ static void hlua_applet_tcp_fct(struct appctx *ctx)
 		strm->logs.tv_request = now;
 
 		/* eat the whole request */
-		bo_skip(si_oc(si), si_ob(si)->o);
+		co_skip(si_oc(si), si_ob(si)->o);
 		res->flags |= CF_READ_NULL;
 		si_shutr(si);
 		return;
@@ -5961,7 +6332,8 @@ static void hlua_applet_tcp_release(struct appctx *ctx)
 	task_delete(ctx->ctx.hlua_apptcp.task);
 	task_free(ctx->ctx.hlua_apptcp.task);
 	ctx->ctx.hlua_apptcp.task = NULL;
-	hlua_ctx_destroy(&ctx->ctx.hlua_apptcp.hlua);
+	hlua_ctx_destroy(ctx->ctx.hlua_apptcp.hlua);
+	ctx->ctx.hlua_apptcp.hlua = NULL;
 }
 
 /* The function returns 1 if the initialisation is complete, 0 if
@@ -5974,7 +6346,7 @@ static int hlua_applet_http_init(struct appctx *ctx, struct proxy *px, struct st
 	struct channel *req = si_oc(si);
 	struct http_msg *msg;
 	struct http_txn *txn;
-	struct hlua *hlua = &ctx->ctx.hlua_apphttp.hlua;
+	struct hlua *hlua;
 	char **arg;
 	struct hdr_ctx hdr;
 	struct task *task;
@@ -5999,7 +6371,14 @@ static int hlua_applet_http_init(struct appctx *ctx, struct proxy *px, struct st
 	if ((txn->flags & TX_CON_WANT_MSK) == TX_CON_WANT_KAL)
 		txn->flags = (txn->flags & ~TX_CON_WANT_MSK) | TX_CON_WANT_SCL;
 
+	hlua = pool_alloc(pool_head_hlua);
+	if (!hlua) {
+		SEND_ERR(px, "Lua applet http '%s': out of memory.\n",
+		         ctx->rule->arg.hlua_rule->fcn.name);
+		return 0;
+	}
 	HLUA_INIT(hlua);
+	ctx->ctx.hlua_apphttp.hlua = hlua;
 	ctx->ctx.hlua_apphttp.left_bytes = -1;
 	ctx->ctx.hlua_apphttp.flags = 0;
 
@@ -6007,7 +6386,7 @@ static int hlua_applet_http_init(struct appctx *ctx, struct proxy *px, struct st
 		ctx->ctx.hlua_apphttp.flags |= APPLET_HTTP11;
 
 	/* Create task used by signal to wakeup applets. */
-	task = task_new();
+	task = task_new(tid_bit);
 	if (!task) {
 		SEND_ERR(px, "Lua applet http '%s': out of memory.\n",
 		         ctx->rule->arg.hlua_rule->fcn.name);
@@ -6098,7 +6477,7 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 	struct channel *res = si_ic(si);
 	struct act_rule *rule = ctx->rule;
 	struct proxy *px = strm->be;
-	struct hlua *hlua = &ctx->ctx.hlua_apphttp.hlua;
+	struct hlua *hlua = ctx->ctx.hlua_apphttp.hlua;
 	char *blk1;
 	int len1;
 	char *blk2;
@@ -6127,7 +6506,7 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 		 */
 
 		/* Read the maximum amount of data avalaible. */
-		ret = bo_getblk_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
+		ret = co_getblk_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
 		if (ret == -1)
 			return;
 
@@ -6142,7 +6521,7 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 		}
 
 		/* skip the requests bytes. */
-		bo_skip(si_oc(si), strm->txn->req.eoh + 2);
+		co_skip(si_oc(si), strm->txn->req.eoh + 2);
 	}
 
 	/* Executes The applet if it is not done. */
@@ -6187,7 +6566,7 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 		    !(ctx->ctx.hlua_apphttp.flags & APPLET_LAST_CHK)) {
 
 			/* sent last chunk at once. */
-			ret = bi_putblk(res, "0\r\n\r\n", 5);
+			ret = ci_putblk(res, "0\r\n\r\n", 5);
 
 			/* critical error. */
 			if (ret == -2 || ret == -3) {
@@ -6213,7 +6592,7 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 		strm->logs.tv_request = now;
 
 		/* eat the whole request */
-		bo_skip(si_oc(si), si_ob(si)->o);
+		co_skip(si_oc(si), si_ob(si)->o);
 		res->flags |= CF_READ_NULL;
 		si_shutr(si);
 
@@ -6227,7 +6606,7 @@ error:
 	 * if there are no room avalaible in the buffer,
 	 * just close the connection.
 	 */
-	bi_putblk(res, error_500, strlen(error_500));
+	ci_putblk(res, error_500, strlen(error_500));
 	if (!(strm->flags & SF_ERR_MASK))
 		strm->flags |= SF_ERR_RESOURCE;
 	si_shutw(si);
@@ -6240,7 +6619,8 @@ static void hlua_applet_http_release(struct appctx *ctx)
 	task_delete(ctx->ctx.hlua_apphttp.task);
 	task_free(ctx->ctx.hlua_apphttp.task);
 	ctx->ctx.hlua_apphttp.task = NULL;
-	hlua_ctx_destroy(&ctx->ctx.hlua_apphttp.hlua);
+	hlua_ctx_destroy(ctx->ctx.hlua_apphttp.hlua);
+	ctx->ctx.hlua_apphttp.hlua = NULL;
 }
 
 /* global {tcp|http}-request parser. Return ACT_RET_PRS_OK in
@@ -6254,6 +6634,7 @@ static enum act_parse_ret action_register_lua(const char **args, int *cur_arg, s
                                               struct act_rule *rule, char **err)
 {
 	struct hlua_function *fcn = rule->kw->private;
+	int i;
 
 	/* Memory for the rule. */
 	rule->arg.hlua_rule = calloc(1, sizeof(*rule->arg.hlua_rule));
@@ -6262,11 +6643,30 @@ static enum act_parse_ret action_register_lua(const char **args, int *cur_arg, s
 		return ACT_RET_PRS_ERR;
 	}
 
+	/* Memory for arguments. */
+	rule->arg.hlua_rule->args = calloc(fcn->nargs + 1, sizeof(char *));
+	if (!rule->arg.hlua_rule->args) {
+		memprintf(err, "out of memory error");
+		return ACT_RET_PRS_ERR;
+	}
+
 	/* Reference the Lua function and store the reference. */
 	rule->arg.hlua_rule->fcn = *fcn;
 
-	/* TODO: later accept arguments. */
-	rule->arg.hlua_rule->args = NULL;
+	/* Expect some arguments */
+	for (i = 0; i < fcn->nargs; i++) {
+		if (*args[i+1] == '\0') {
+			memprintf(err, "expect %d arguments", fcn->nargs);
+			return ACT_RET_PRS_ERR;
+		}
+		rule->arg.hlua_rule->args[i] = strdup(args[i + 1]);
+		if (!rule->arg.hlua_rule->args[i]) {
+			memprintf(err, "out of memory error");
+			return ACT_RET_PRS_ERR;
+		}
+		(*cur_arg)++;
+	}
+	rule->arg.hlua_rule->args[i] = NULL;
 
 	rule->action = ACT_CUSTOM;
 	rule->action_ptr = hlua_action;
@@ -6324,8 +6724,13 @@ __LJMP static int hlua_register_action(lua_State *L)
 	int ref;
 	int len;
 	struct hlua_function *fcn;
+	int nargs;
 
-	MAY_LJMP(check_args(L, 3, "register_action"));
+	/* Initialise the number of expected arguments at 0. */
+	nargs = 0;
+
+	if (lua_gettop(L) < 3 || lua_gettop(L) > 4)
+		WILL_LJMP(luaL_error(L, "'register_action' needs between 3 and 4 arguments"));
 
 	/* First argument : converter name. */
 	name = MAY_LJMP(luaL_checkstring(L, 1));
@@ -6336,6 +6741,10 @@ __LJMP static int hlua_register_action(lua_State *L)
 
 	/* Third argument : lua function. */
 	ref = MAY_LJMP(hlua_checkfunction(L, 3));
+
+	/* Fouth argument : number of mandatories arguments expected on the configuration line. */
+	if (lua_gettop(L) >= 4)
+		nargs = MAY_LJMP(luaL_checkinteger(L, 4));
 
 	/* browse the second argulent as an array. */
 	lua_pushnil(L);
@@ -6357,6 +6766,9 @@ __LJMP static int hlua_register_action(lua_State *L)
 		if (!fcn->name)
 			WILL_LJMP(luaL_error(L, "lua out of memory error."));
 		fcn->function_ref = ref;
+
+		/* Set the expected number od arguments. */
+		fcn->nargs = nargs;
 
 		/* List head */
 		akl->list.n = akl->list.p = NULL;
@@ -6504,18 +6916,25 @@ static int hlua_cli_parse_fct(char **args, struct appctx *appctx, void *private)
 	int i;
 	const char *error;
 
-	hlua = &appctx->ctx.hlua_cli.hlua;
 	fcn = private;
-	appctx->private = private;
+	appctx->ctx.hlua_cli.fcn = private;
+
+	hlua = pool_alloc(pool_head_hlua);
+	if (!hlua) {
+		SEND_ERR(NULL, "Lua cli '%s': out of memory.\n", fcn->name);
+		return 1;
+	}
+	HLUA_INIT(hlua);
+	appctx->ctx.hlua_cli.hlua = hlua;
 
 	/* Create task used by signal to wakeup applets.
 	 * We use the same wakeup fonction than the Lua applet_tcp and
 	 * applet_http. It is absolutely compatible.
 	 */
-	appctx->ctx.hlua_cli.task = task_new();
+	appctx->ctx.hlua_cli.task = task_new(tid_bit);
 	if (!appctx->ctx.hlua_cli.task) {
 		SEND_ERR(NULL, "Lua cli '%s': out of memory.\n", fcn->name);
-		return 1;
+		goto error;
 	}
 	appctx->ctx.hlua_cli.task->nice = 0;
 	appctx->ctx.hlua_cli.task->context = appctx;
@@ -6524,7 +6943,7 @@ static int hlua_cli_parse_fct(char **args, struct appctx *appctx, void *private)
 	/* Initialises the Lua context */
 	if (!hlua_ctx_init(hlua, appctx->ctx.hlua_cli.task)) {
 		SEND_ERR(NULL, "Lua cli '%s': can't initialize Lua context.\n", fcn->name);
-		return 1;
+		goto error;
 	}
 
 	/* The following Lua calls can fail. */
@@ -6579,6 +6998,7 @@ static int hlua_cli_parse_fct(char **args, struct appctx *appctx, void *private)
 error:
 	RESET_SAFE_LJMP(hlua->T);
 	hlua_ctx_destroy(hlua);
+	appctx->ctx.hlua_cli.hlua = NULL;
 	return 1;
 }
 
@@ -6588,9 +7008,9 @@ static int hlua_cli_io_handler_fct(struct appctx *appctx)
 	struct stream_interface *si;
 	struct hlua_function *fcn;
 
-	hlua = &appctx->ctx.hlua_cli.hlua;
+	hlua = appctx->ctx.hlua_cli.hlua;
 	si = appctx->owner;
-	fcn = appctx->private;
+	fcn = appctx->ctx.hlua_cli.fcn;
 
 	/* If the stream is disconnect or closed, ldo nothing. */
 	if (unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO))
@@ -6636,10 +7056,8 @@ static int hlua_cli_io_handler_fct(struct appctx *appctx)
 
 static void hlua_cli_io_release_fct(struct appctx *appctx)
 {
-	struct hlua *hlua;
-
-	hlua = &appctx->ctx.hlua_cli.hlua;
-	hlua_ctx_destroy(hlua);
+	hlua_ctx_destroy(appctx->ctx.hlua_cli.hlua);
+	appctx->ctx.hlua_cli.hlua = NULL;
 }
 
 /* This function is an LUA binding used for registering
@@ -6895,15 +7313,15 @@ int hlua_post_init()
 			lua_pop(gL.T, -1);
 			return 1;
 		case HLUA_E_AGAIN:
-			Alert("lua init: yield not allowed.\n");
+			ha_alert("lua init: yield not allowed.\n");
 			return 0;
 		case HLUA_E_ERRMSG:
 			msg = lua_tostring(gL.T, -1);
-			Alert("lua init: %s.\n", msg);
+			ha_alert("lua init: %s.\n", msg);
 			return 0;
 		case HLUA_E_ERR:
 		default:
-			Alert("lua init: unknown runtime error.\n");
+			ha_alert("lua init: unknown runtime error.\n");
 			return 0;
 		}
 	}
@@ -6972,8 +7390,10 @@ void hlua_init(void)
 	};
 #endif
 
-	/* Initialise com signals pool */
-	pool2_hlua_com = create_pool("hlua_com", sizeof(struct hlua_com), MEM_F_SHARED);
+	HA_SPIN_INIT(&hlua_global_lock);
+
+	/* Initialise struct hlua and com signals pool */
+	pool_head_hlua = create_pool("hlua", sizeof(struct hlua), MEM_F_SHARED);
 
 	/* Register configuration keywords. */
 	cfg_register_keywords(&cfg_kws);
@@ -7266,11 +7686,14 @@ void hlua_init(void)
 	lua_newtable(gL.T);
 
 	/* Register Lua functions. */
-	hlua_class_function(gL.T, "getline",  hlua_applet_tcp_getline);
-	hlua_class_function(gL.T, "receive",  hlua_applet_tcp_recv);
-	hlua_class_function(gL.T, "send",     hlua_applet_tcp_send);
-	hlua_class_function(gL.T, "set_priv", hlua_applet_tcp_set_priv);
-	hlua_class_function(gL.T, "get_priv", hlua_applet_tcp_get_priv);
+	hlua_class_function(gL.T, "getline",   hlua_applet_tcp_getline);
+	hlua_class_function(gL.T, "receive",   hlua_applet_tcp_recv);
+	hlua_class_function(gL.T, "send",      hlua_applet_tcp_send);
+	hlua_class_function(gL.T, "set_priv",  hlua_applet_tcp_set_priv);
+	hlua_class_function(gL.T, "get_priv",  hlua_applet_tcp_get_priv);
+	hlua_class_function(gL.T, "set_var",   hlua_applet_tcp_set_var);
+	hlua_class_function(gL.T, "unset_var", hlua_applet_tcp_unset_var);
+	hlua_class_function(gL.T, "get_var",   hlua_applet_tcp_get_var);
 
 	lua_settable(gL.T, -3);
 
@@ -7293,6 +7716,9 @@ void hlua_init(void)
 	/* Register Lua functions. */
 	hlua_class_function(gL.T, "set_priv",       hlua_applet_http_set_priv);
 	hlua_class_function(gL.T, "get_priv",       hlua_applet_http_get_priv);
+	hlua_class_function(gL.T, "set_var",        hlua_applet_http_set_var);
+	hlua_class_function(gL.T, "unset_var",      hlua_applet_http_unset_var);
+	hlua_class_function(gL.T, "get_var",        hlua_applet_http_get_var);
 	hlua_class_function(gL.T, "getline",        hlua_applet_http_getline);
 	hlua_class_function(gL.T, "receive",        hlua_applet_http_recv);
 	hlua_class_function(gL.T, "send",           hlua_applet_http_send);
@@ -7396,10 +7822,10 @@ void hlua_init(void)
 	socket_tcp.obj_type = OBJ_TYPE_SERVER;
 	LIST_INIT(&socket_tcp.actconns);
 	LIST_INIT(&socket_tcp.pendconns);
-	LIST_INIT(&socket_tcp.priv_conns);
-	LIST_INIT(&socket_tcp.idle_conns);
-	LIST_INIT(&socket_tcp.safe_conns);
-	socket_tcp.state = SRV_ST_RUNNING; /* early server setup */
+	socket_tcp.priv_conns = NULL;
+	socket_tcp.idle_conns = NULL;
+	socket_tcp.safe_conns = NULL;
+	socket_tcp.next_state = SRV_ST_RUNNING; /* early server setup */
 	socket_tcp.last_change = 0;
 	socket_tcp.id = "LUA-TCP-CONN";
 	socket_tcp.check.state &= ~CHK_ST_ENABLED; /* Disable health checks. */
@@ -7432,7 +7858,7 @@ void hlua_init(void)
 	socket_tcp.agent.health = socket_tcp.agent.rise;   /* socket, but will fall down at first failure */
 	socket_tcp.agent.server = &socket_tcp;
 
-	socket_tcp.xprt = &raw_sock;
+	socket_tcp.xprt = xprt_get(XPRT_RAW);
 
 #ifdef USE_OPENSSL
 	/* Init TCP server: unchanged parameters */
@@ -7442,10 +7868,10 @@ void hlua_init(void)
 	socket_ssl.obj_type = OBJ_TYPE_SERVER;
 	LIST_INIT(&socket_ssl.actconns);
 	LIST_INIT(&socket_ssl.pendconns);
-	LIST_INIT(&socket_ssl.priv_conns);
-	LIST_INIT(&socket_ssl.idle_conns);
-	LIST_INIT(&socket_ssl.safe_conns);
-	socket_ssl.state = SRV_ST_RUNNING; /* early server setup */
+	socket_tcp.priv_conns = NULL;
+	socket_tcp.idle_conns = NULL;
+	socket_tcp.safe_conns = NULL;
+	socket_ssl.next_state = SRV_ST_RUNNING; /* early server setup */
 	socket_ssl.last_change = 0;
 	socket_ssl.id = "LUA-SSL-CONN";
 	socket_ssl.check.state &= ~CHK_ST_ENABLED; /* Disable health checks. */
@@ -7479,7 +7905,7 @@ void hlua_init(void)
 	socket_ssl.agent.server = &socket_ssl;
 
 	socket_ssl.use_ssl = 1;
-	socket_ssl.xprt = &ssl_sock;
+	socket_ssl.xprt = xprt_get(XPRT_SSL);
 
 	for (idx = 0; args[idx] != NULL; idx++) {
 		if ((kw = srv_find_kw(args[idx])) != NULL) { /* Maybe it's registered server keyword */
@@ -7501,8 +7927,17 @@ void hlua_init(void)
 	}
 
 	/* Initialize SSL server. */
-	ssl_sock_prepare_srv_ctx(&socket_ssl, &socket_proxy);
+	if (socket_ssl.xprt->prepare_srv)
+		socket_ssl.xprt->prepare_srv(&socket_ssl);
 #endif
 
 	RESET_SAFE_LJMP(gL.T);
+}
+
+__attribute__((constructor))
+static void __hlua_init(void)
+{
+	char *ptr = NULL;
+	memprintf(&ptr, "Built with Lua version : %s", LUA_RELEASE);
+	hap_register_build_opts(ptr, 1);
 }

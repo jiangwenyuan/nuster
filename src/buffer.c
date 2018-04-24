@@ -20,7 +20,7 @@
 
 #include <types/global.h>
 
-struct pool_head *pool2_buffer;
+struct pool_head *pool_head_buffer;
 
 /* These buffers are used to always have a valid pointer to an empty buffer in
  * channels. The first buffer is set once a buffer is empty. The second one is
@@ -33,14 +33,33 @@ struct buffer buf_wanted = { .p = buf_wanted.data };
 
 /* list of objects waiting for at least one buffer */
 struct list buffer_wq = LIST_HEAD_INIT(buffer_wq);
+__decl_hathreads(HA_SPINLOCK_T __attribute__((aligned(64))) buffer_wq_lock);
+
+/* this buffer is always the same size as standard buffers and is used for
+ * swapping data inside a buffer.
+ */
+static THREAD_LOCAL char *swap_buffer = NULL;
+
+static int init_buffer_per_thread()
+{
+	swap_buffer = calloc(1, global.tune.bufsize);
+	if (swap_buffer == NULL)
+		return 0;
+	return 1;
+}
+
+static void deinit_buffer_per_thread()
+{
+	free(swap_buffer); swap_buffer = NULL;
+}
 
 /* perform minimal intializations, report 0 in case of error, 1 if OK. */
 int init_buffer()
 {
 	void *buffer;
 
-	pool2_buffer = create_pool("buffer", sizeof (struct buffer) + global.tune.bufsize, MEM_F_SHARED|MEM_F_EXACT);
-	if (!pool2_buffer)
+	pool_head_buffer = create_pool("buffer", sizeof (struct buffer) + global.tune.bufsize, MEM_F_SHARED|MEM_F_EXACT);
+	if (!pool_head_buffer)
 		return 0;
 
 	/* The reserved buffer is what we leave behind us. Thus we always need
@@ -50,16 +69,26 @@ int init_buffer()
 	 * (2 for current session, one for next session that might be needed to
 	 * release a server connection).
 	 */
-	pool2_buffer->minavail = MAX(global.tune.reserved_bufs, 3);
+	pool_head_buffer->minavail = MAX(global.tune.reserved_bufs, 3);
 	if (global.tune.buf_limit)
-		pool2_buffer->limit = global.tune.buf_limit;
+		pool_head_buffer->limit = global.tune.buf_limit;
 
-	buffer = pool_refill_alloc(pool2_buffer, pool2_buffer->minavail - 1);
+	HA_SPIN_INIT(&buffer_wq_lock);
+
+	buffer = pool_refill_alloc(pool_head_buffer, pool_head_buffer->minavail - 1);
 	if (!buffer)
 		return 0;
 
-	pool_free2(pool2_buffer, buffer);
+	pool_free(pool_head_buffer, buffer);
+
+	hap_register_per_thread_init(init_buffer_per_thread);
+	hap_register_per_thread_deinit(deinit_buffer_per_thread);
 	return 1;
+}
+
+void deinit_buffer()
+{
+	pool_destroy(pool_head_buffer);
 }
 
 /* This function writes the string <str> at position <pos> which must be in
@@ -176,69 +205,6 @@ void buffer_slow_realign(struct buffer *buf)
 	buf->p = buf->data;
 }
 
-
-/* Realigns a possibly non-contiguous buffer by bouncing bytes from source to
- * destination. It does not use any intermediate buffer and does the move in
- * place, though it will be slower than a simple memmove() on contiguous data,
- * so it's desirable to use it only on non-contiguous buffers. No pointers are
- * changed, the caller is responsible for that.
- */
-void buffer_bounce_realign(struct buffer *buf)
-{
-	int advance, to_move;
-	char *from, *to;
-
-	from = bo_ptr(buf);
-	advance = buf->data + buf->size - from;
-	if (!advance)
-		return;
-
-	to_move = buffer_len(buf);
-	while (to_move) {
-		char last, save;
-
-		last = *from;
-		to = from + advance;
-		if (to >= buf->data + buf->size)
-			to -= buf->size;
-
-		while (1) {
-			save = *to;
-			*to  = last;
-			last = save;
-			to_move--;
-			if (!to_move)
-				break;
-
-			/* check if we went back home after rotating a number of bytes */
-			if (to == from)
-				break;
-
-			/* if we ended up in the empty area, let's walk to next place. The
-			 * empty area is either between buf->r and from or before from or
-			 * after buf->r.
-			 */
-			if (from > bi_end(buf)) {
-				if (to >= bi_end(buf) && to < from)
-					break;
-			} else if (from < bi_end(buf)) {
-				if (to < from || to >= bi_end(buf))
-					break;
-			}
-
-			/* we have overwritten a byte of the original set, let's move it */
-			to += advance;
-			if (to >= buf->data + buf->size)
-				to -= buf->size;
-		}
-
-		from++;
-		if (from >= buf->data + buf->size)
-			from -= buf->size;
-	}
-}
-
-
 /*
  * Dumps part or all of a buffer.
  */
@@ -295,7 +261,7 @@ void __offer_buffer(void *from, unsigned int threshold)
 	 * allocated, and in any case at least one task per two reserved
 	 * buffers.
 	 */
-	avail = pool2_buffer->allocated - pool2_buffer->used - global.tune.reserved_bufs / 2;
+	avail = pool_head_buffer->allocated - pool_head_buffer->used - global.tune.reserved_bufs / 2;
 
 	list_for_each_entry_safe(wait, bak, &buffer_wq, list) {
 		if (avail <= threshold)

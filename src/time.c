@@ -15,18 +15,21 @@
 #include <common/config.h>
 #include <common/standard.h>
 #include <common/time.h>
+#include <common/hathreads.h>
 
-unsigned int   curr_sec_ms;     /* millisecond of current second (0..999) */
-unsigned int   ms_left_scaled;  /* milliseconds left for current second (0..2^32-1) */
-unsigned int   now_ms;          /* internal date in milliseconds (may wrap) */
-unsigned int   samp_time;       /* total elapsed time over current sample */
-unsigned int   idle_time;       /* total idle time over current sample */
-unsigned int   idle_pct;        /* idle to total ratio over last sample (percent) */
-struct timeval now;             /* internal date is a monotonic function of real clock */
-struct timeval date;            /* the real current date */
+THREAD_LOCAL unsigned int   ms_left_scaled;  /* milliseconds left for current second (0..2^32-1) */
+THREAD_LOCAL unsigned int   now_ms;          /* internal date in milliseconds (may wrap) */
+THREAD_LOCAL unsigned int   samp_time;       /* total elapsed time over current sample */
+THREAD_LOCAL unsigned int   idle_time;       /* total idle time over current sample */
+THREAD_LOCAL unsigned int   idle_pct;        /* idle to total ratio over last sample (percent) */
+THREAD_LOCAL struct timeval now;             /* internal date is a monotonic function of real clock */
+THREAD_LOCAL struct timeval date;            /* the real current date */
 struct timeval start_date;      /* the process's start date */
-struct timeval before_poll;     /* system date before calling poll() */
-struct timeval after_poll;      /* system date after leaving poll() */
+THREAD_LOCAL struct timeval before_poll;     /* system date before calling poll() */
+THREAD_LOCAL struct timeval after_poll;      /* system date after leaving poll() */
+
+static THREAD_LOCAL struct timeval tv_offset;  /* per-thread time ofsset relative to global time */
+volatile unsigned long long global_now;        /* common date between all threads (32:32) */
 
 /*
  * adds <ms> ms to <from>, set the result to <tv> and returns a pointer <tv>
@@ -151,7 +154,7 @@ REGPRM2 int _tv_isgt(const struct timeval *tv1, const struct timeval *tv2)
 	return __tv_isgt(tv1, tv2);
 }
 
-/* tv_udpate_date: sets <date> to system time, and sets <now> to something as
+/* tv_update_date: sets <date> to system time, and sets <now> to something as
  * close as possible to real time, following a monotonic function. The main
  * principle consists in detecting backwards and forwards time jumps and adjust
  * an offset to correct them. This function should be called once after each
@@ -160,11 +163,20 @@ REGPRM2 int _tv_isgt(const struct timeval *tv1, const struct timeval *tv2)
  * value means that we have not expired the timeout). Calling it with (-1,*)
  * sets both <date> and <now> to current date, and calling it with (0,1) simply
  * updates the values.
+ *
+ * An offset is used to adjust the current time (date), to have a monotonic time
+ * (now). It must be global and thread-safe. But a timeval cannot be atomically
+ * updated. So instead, we store it in a 64-bits integer (offset) whose 32 MSB
+ * contain the signed seconds adjustment andthe 32 LSB contain the unsigned
+ * microsecond adjustment. We cannot use a timeval for this since it's never
+ * clearly specified whether a timeval may hold negative values or not.
  */
 REGPRM2 void tv_update_date(int max_wait, int interrupted)
 {
-	static struct timeval tv_offset; /* warning: signed offset! */
-	struct timeval adjusted, deadline;
+	struct timeval adjusted, deadline, tmp_now, tmp_adj;
+	unsigned int   curr_sec_ms;     /* millisecond of current second (0..999) */
+	unsigned long long old_now;
+	unsigned long long new_now;
 
 	gettimeofday(&date, NULL);
 	if (unlikely(max_wait < 0)) {
@@ -173,33 +185,61 @@ REGPRM2 void tv_update_date(int max_wait, int interrupted)
 		after_poll = date;
 		samp_time = idle_time = 0;
 		idle_pct = 100;
+		global_now = (((unsigned long long)adjusted.tv_sec) << 32) +
+		             (unsigned int)adjusted.tv_usec;
 		goto to_ms;
 	}
-	__tv_add(&adjusted, &date, &tv_offset);
-	if (unlikely(__tv_islt(&adjusted, &now))) {
-		goto fixup; /* jump in the past */
-	}
 
-	/* OK we did not jump backwards, let's see if we have jumped too far
-	 * forwards. The poll value was in <max_wait>, we accept that plus
-	 * MAX_DELAY_MS to cover additional time.
+	__tv_add(&adjusted, &date, &tv_offset);
+
+	/* compute the minimum and maximum local date we may have reached based
+	 * on our past date and the associated timeout.
 	 */
 	_tv_ms_add(&deadline, &now, max_wait + MAX_DELAY_MS);
-	if (likely(__tv_islt(&adjusted, &deadline)))
-		goto to_ms; /* OK time is within expected range */
- fixup:
-	/* Large jump. If the poll was interrupted, we consider that the date
-	 * has not changed (immediate wake-up), otherwise we add the poll
-	 * time-out to the previous date. The new offset is recomputed.
-	 */
-	_tv_ms_add(&adjusted, &now, interrupted ? 0 : max_wait);
 
+	if (unlikely(__tv_islt(&adjusted, &now) || __tv_islt(&deadline, &adjusted))) {
+		/* Large jump. If the poll was interrupted, we consider that the
+		 * date has not changed (immediate wake-up), otherwise we add
+		 * the poll time-out to the previous date. The new offset is
+		 * recomputed.
+		 */
+		_tv_ms_add(&adjusted, &now, interrupted ? 0 : max_wait);
+	}
+
+	/* now that we have bounded the local time, let's check if it's
+	 * realistic regarding the global date, which only moves forward,
+	 * otherwise catch up.
+	 */
+	old_now = global_now;
+
+	do {
+		tmp_now.tv_sec  = (unsigned int)(old_now >> 32);
+		tmp_now.tv_usec = old_now & 0xFFFFFFFFU;
+		tmp_adj = adjusted;
+
+		if (__tv_islt(&tmp_adj, &tmp_now))
+			tmp_adj = tmp_now;
+
+		/* now <adjusted> is expected to be the most accurate date,
+		 * equal to <global_now> or newer.
+		 */
+		new_now = (((unsigned long long)tmp_adj.tv_sec) << 32) + (unsigned int)tmp_adj.tv_usec;
+
+		/* let's try to update the global <now> or loop again */
+	} while (!HA_ATOMIC_CAS(&global_now, &old_now, new_now));
+
+	adjusted = tmp_adj;
+
+	/* the new global date when we looked was old_now, and the new one is
+	 * new_now == adjusted. We can recompute our local offset.
+	 */
 	tv_offset.tv_sec  = adjusted.tv_sec  - date.tv_sec;
 	tv_offset.tv_usec = adjusted.tv_usec - date.tv_usec;
 	if (tv_offset.tv_usec < 0) {
 		tv_offset.tv_usec += 1000000;
 		tv_offset.tv_sec--;
 	}
+
  to_ms:
 	now = adjusted;
 	curr_sec_ms = now.tv_usec / 1000;            /* ms of current second */

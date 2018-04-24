@@ -26,6 +26,7 @@
 
 #include <common/config.h>
 #include <common/mini-clist.h>
+#include <eb32sctree.h>
 #include <eb32tree.h>
 
 /* values for task->state */
@@ -50,16 +51,27 @@
  */
 #define TASK_REASON_SHIFT 8
 
+struct notification {
+	struct list purge_me; /* Part of the list of signals to be purged in the
+	                         case of the LUA execution stack crash. */
+	struct list wake_me; /* Part of list of signals to be targeted if an
+	                        event occurs. */
+	struct task *task; /* The task to be wake if an event occurs. */
+	__decl_hathreads(HA_SPINLOCK_T lock);
+};
+
 /* The base for all tasks */
 struct task {
-	struct eb32_node rq;		/* ebtree node used to hold the task in the run queue */
+	struct eb32sc_node rq;		/* ebtree node used to hold the task in the run queue */
 	unsigned short state;		/* task state : bit field of TASK_* */
+	unsigned short pending_state;	/* pending states for running talk */
 	short nice;			/* the task's current nice value from -1024 to +1024 */
 	unsigned int calls;		/* number of times ->process() was called */
 	struct task * (*process)(struct task *t);  /* the function which processes the task */
 	void *context;			/* the task's context */
 	struct eb32_node wq;		/* ebtree node used to hold the task in the wait queue */
 	int expire;			/* next expiration date for this task, in ticks */
+	unsigned long thread_mask;	/* mask of thread IDs authorized to process the task */
 };
 
 /*

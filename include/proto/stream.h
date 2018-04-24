@@ -30,12 +30,13 @@
 #include <proto/stick_table.h>
 #include <proto/task.h>
 
-extern struct pool_head *pool2_stream;
+extern struct pool_head *pool_head_stream;
 extern struct list streams;
 
 extern struct data_cb sess_conn_cb;
 
-struct stream *stream_new(struct session *sess, struct task *t, enum obj_type *origin);
+struct stream *stream_new(struct session *sess, enum obj_type *origin);
+int stream_create_from_cs(struct conn_stream *cs);
 
 /* perform minimal intializations, report 0 in case of error, 1 if OK. */
 int init_stream();
@@ -89,20 +90,29 @@ static inline void stream_store_counters(struct stream *s)
 {
 	void *ptr;
 	int i;
+	struct stksess *ts;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
-		if (!stkctr_entry(&s->stkctr[i]))
+		ts = stkctr_entry(&s->stkctr[i]);
+		if (!ts)
 			continue;
 
 		if (stkctr_entry(&s->sess->stkctr[i]))
 			continue;
 
-		ptr = stktable_data_ptr(s->stkctr[i].table, stkctr_entry(&s->stkctr[i]), STKTABLE_DT_CONN_CUR);
-		if (ptr)
+		ptr = stktable_data_ptr(s->stkctr[i].table, ts, STKTABLE_DT_CONN_CUR);
+		if (ptr) {
+			HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
+
 			stktable_data_cast(ptr, conn_cur)--;
-		stkctr_entry(&s->stkctr[i])->ref_cnt--;
-		stksess_kill_if_expired(s->stkctr[i].table, stkctr_entry(&s->stkctr[i]));
+
+			HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+
+			/* If data was modified, we need to touch to re-schedule sync */
+			stktable_touch_local(s->stkctr[i].table, ts, 0);
+		}
 		stkctr_set_entry(&s->stkctr[i], NULL);
+		stksess_kill_if_expired(s->stkctr[i].table, ts, 1);
 	}
 }
 
@@ -113,11 +123,13 @@ static inline void stream_store_counters(struct stream *s)
  */
 static inline void stream_stop_content_counters(struct stream *s)
 {
+	struct stksess *ts;
 	void *ptr;
 	int i;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
-		if (!stkctr_entry(&s->stkctr[i]))
+		ts = stkctr_entry(&s->stkctr[i]);
+		if (!ts)
 			continue;
 
 		if (stkctr_entry(&s->sess->stkctr[i]))
@@ -126,12 +138,19 @@ static inline void stream_stop_content_counters(struct stream *s)
 		if (!(stkctr_flags(&s->stkctr[i]) & STKCTR_TRACK_CONTENT))
 			continue;
 
-		ptr = stktable_data_ptr(s->stkctr[i].table, stkctr_entry(&s->stkctr[i]), STKTABLE_DT_CONN_CUR);
-		if (ptr)
+		ptr = stktable_data_ptr(s->stkctr[i].table, ts, STKTABLE_DT_CONN_CUR);
+		if (ptr) {
+			HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
+
 			stktable_data_cast(ptr, conn_cur)--;
-		stkctr_entry(&s->stkctr[i])->ref_cnt--;
-		stksess_kill_if_expired(s->stkctr[i].table, stkctr_entry(&s->stkctr[i]));
+
+			HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+
+			/* If data was modified, we need to touch to re-schedule sync */
+			stktable_touch_local(s->stkctr[i].table, ts, 0);
+		}
 		stkctr_set_entry(&s->stkctr[i], NULL);
+		stksess_kill_if_expired(s->stkctr[i].table, ts, 1);
 	}
 }
 
@@ -142,6 +161,8 @@ static inline void stream_stop_content_counters(struct stream *s)
 static inline void stream_start_counters(struct stktable *t, struct stksess *ts)
 {
 	void *ptr;
+
+	HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_CONN_CUR);
 	if (ptr)
@@ -157,6 +178,11 @@ static inline void stream_start_counters(struct stktable *t, struct stksess *ts)
 				       t->data_arg[STKTABLE_DT_CONN_RATE].u, 1);
 	if (tick_isset(t->expire))
 		ts->expire = tick_add(now_ms, MS_TO_TICKS(t->expire));
+
+	HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+
+	/* If data was modified, we need to touch to re-schedule sync */
+	stktable_touch_local(t, ts, 0);
 }
 
 /* Enable tracking of stream counters as <stkctr> on stksess <ts>. The caller is
@@ -165,10 +191,10 @@ static inline void stream_start_counters(struct stktable *t, struct stksess *ts)
  */
 static inline void stream_track_stkctr(struct stkctr *ctr, struct stktable *t, struct stksess *ts)
 {
+	/* Why this test ???? */
 	if (stkctr_entry(ctr))
 		return;
 
-	ts->ref_cnt++;
 	ctr->table = t;
 	stkctr_set_entry(ctr, ts);
 	stream_start_counters(t, ts);
@@ -177,26 +203,36 @@ static inline void stream_track_stkctr(struct stkctr *ctr, struct stktable *t, s
 /* Increase the number of cumulated HTTP requests in the tracked counters */
 static void inline stream_inc_http_req_ctr(struct stream *s)
 {
+	struct stksess *ts;
 	void *ptr;
 	int i;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
 		struct stkctr *stkctr = &s->stkctr[i];
 
-		if (!stkctr_entry(stkctr)) {
+		ts = stkctr_entry(stkctr);
+		if (!ts) {
 			stkctr = &s->sess->stkctr[i];
-			if (!stkctr_entry(stkctr))
+			ts = stkctr_entry(stkctr);
+			if (!ts)
 				continue;
 		}
 
-		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_HTTP_REQ_CNT);
+		HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
+
+		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_CNT);
 		if (ptr)
 			stktable_data_cast(ptr, http_req_cnt)++;
 
-		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_HTTP_REQ_RATE);
+		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_RATE);
 		if (ptr)
 			update_freq_ctr_period(&stktable_data_cast(ptr, http_req_rate),
 					       stkctr->table->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u, 1);
+
+		HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+
+		/* If data was modified, we need to touch to re-schedule sync */
+		stktable_touch_local(stkctr->table, ts, 0);
 	}
 }
 
@@ -205,26 +241,35 @@ static void inline stream_inc_http_req_ctr(struct stream *s)
  */
 static void inline stream_inc_be_http_req_ctr(struct stream *s)
 {
+	struct stksess *ts;
 	void *ptr;
 	int i;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
 		struct stkctr *stkctr = &s->stkctr[i];
 
-		if (!stkctr_entry(stkctr))
+		ts = stkctr_entry(stkctr);
+		if (!ts)
 			continue;
 
 		if (!(stkctr_flags(&s->stkctr[i]) & STKCTR_TRACK_BACKEND))
 			continue;
 
-		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_HTTP_REQ_CNT);
+		HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
+
+		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_CNT);
 		if (ptr)
 			stktable_data_cast(ptr, http_req_cnt)++;
 
-		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_HTTP_REQ_RATE);
+		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_RATE);
 		if (ptr)
 			update_freq_ctr_period(&stktable_data_cast(ptr, http_req_rate),
 			                       stkctr->table->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u, 1);
+
+		HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+
+		/* If data was modified, we need to touch to re-schedule sync */
+		stktable_touch_local(stkctr->table, ts, 0);
 	}
 }
 
@@ -236,42 +281,63 @@ static void inline stream_inc_be_http_req_ctr(struct stream *s)
  */
 static void inline stream_inc_http_err_ctr(struct stream *s)
 {
+	struct stksess *ts;
 	void *ptr;
 	int i;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
 		struct stkctr *stkctr = &s->stkctr[i];
 
-		if (!stkctr_entry(stkctr)) {
+		ts = stkctr_entry(stkctr);
+		if (!ts) {
 			stkctr = &s->sess->stkctr[i];
-			if (!stkctr_entry(stkctr))
+			ts = stkctr_entry(stkctr);
+			if (!ts)
 				continue;
 		}
 
-		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_HTTP_ERR_CNT);
+		HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
+
+		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_ERR_CNT);
 		if (ptr)
 			stktable_data_cast(ptr, http_err_cnt)++;
 
-		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_HTTP_ERR_RATE);
+		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_ERR_RATE);
 		if (ptr)
 			update_freq_ctr_period(&stktable_data_cast(ptr, http_err_rate),
 			                       stkctr->table->data_arg[STKTABLE_DT_HTTP_ERR_RATE].u, 1);
+
+		HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
+
+		/* If data was modified, we need to touch to re-schedule sync */
+		stktable_touch_local(stkctr->table, ts, 0);
 	}
 }
 
-static void inline stream_add_srv_conn(struct stream *sess, struct server *srv)
+static void inline __stream_add_srv_conn(struct stream *sess, struct server *srv)
 {
 	sess->srv_conn = srv;
 	LIST_ADD(&srv->actconns, &sess->by_srv);
 }
 
+static void inline stream_add_srv_conn(struct stream *sess, struct server *srv)
+{
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
+	__stream_add_srv_conn(sess, srv);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
+}
+
 static void inline stream_del_srv_conn(struct stream *sess)
 {
-	if (!sess->srv_conn)
+	struct server *srv = sess->srv_conn;
+
+	if (!srv)
 		return;
 
+	HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 	sess->srv_conn = NULL;
 	LIST_DEL(&sess->by_srv);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 }
 
 static void inline stream_init_srv_conn(struct stream *sess)

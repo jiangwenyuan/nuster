@@ -17,21 +17,31 @@
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/time.h>
+#include <eb32sctree.h>
 #include <eb32tree.h>
 
 #include <proto/proxy.h>
 #include <proto/stream.h>
 #include <proto/task.h>
 
-struct pool_head *pool2_task;
+struct pool_head *pool_head_task;
+
+/* This is the memory pool containing all the signal structs. These
+ * struct are used to store each requiered signal between two tasks.
+ */
+struct pool_head *pool_head_notification;
 
 unsigned int nb_tasks = 0;
+unsigned long active_tasks_mask = 0; /* Mask of threads with active tasks */
 unsigned int tasks_run_queue = 0;
 unsigned int tasks_run_queue_cur = 0;    /* copy of the run queue size */
 unsigned int nb_tasks_cur = 0;     /* copy of the tasks count */
 unsigned int niced_tasks = 0;      /* number of niced tasks in the run queue */
-struct eb32_node *last_timer = NULL;  /* optimization: last queued timer */
-struct eb32_node *rq_next    = NULL;  /* optimization: next task except if delete/insert */
+
+THREAD_LOCAL struct task *curr_task = NULL; /* task currently running or NULL */
+
+__decl_hathreads(HA_SPINLOCK_T __attribute__((aligned(64))) rq_lock); /* spin lock related to run queue */
+__decl_hathreads(HA_SPINLOCK_T __attribute__((aligned(64))) wq_lock); /* spin lock related to wait queue */
 
 static struct eb_root timers;      /* sorted timers tree */
 static struct eb_root rqueue;      /* tree constituting the run queue */
@@ -48,6 +58,7 @@ static unsigned int rqueue_ticks;  /* insertion count */
 struct task *__task_wakeup(struct task *t)
 {
 	tasks_run_queue++;
+	active_tasks_mask |= t->thread_mask;
 	t->rq.key = ++rqueue_ticks;
 
 	if (likely(t->nice)) {
@@ -61,11 +72,12 @@ struct task *__task_wakeup(struct task *t)
 		t->rq.key += offset;
 	}
 
-	/* clear state flags at the same time */
-	t->state &= ~TASK_WOKEN_ANY;
-
-	eb32_insert(&rqueue, &t->rq);
-	rq_next = NULL;
+	/* reset flag to pending ones
+	 * Note: __task_wakeup must not be called
+	 * if task is running
+	 */
+	t->state = t->pending_state;
+	eb32sc_insert(&rqueue, &t->rq, t->thread_mask);
 	return t;
 }
 
@@ -95,25 +107,8 @@ void __task_queue(struct task *task)
 		return;
 #endif
 
-	if (likely(last_timer &&
-		   last_timer->node.bit < 0 &&
-		   last_timer->key == task->wq.key &&
-		   last_timer->node.node_p)) {
-		/* Most often, last queued timer has the same expiration date, so
-		 * if it's not queued at the root, let's queue a dup directly there.
-		 * Note that we can only use dups at the dup tree's root (most
-		 * negative bit).
-		 */
-		eb_insert_dup(&last_timer->node, &task->wq.node);
-		if (task->wq.node.bit < last_timer->node.bit)
-			last_timer = &task->wq;
-		return;
-	}
 	eb32_insert(&timers, &task->wq);
 
-	/* Make sure we don't assign the last_timer to a node-less entry */
-	if (task->wq.node.node_p && (!last_timer || (task->wq.node.bit < last_timer->node.bit)))
-		last_timer = &task->wq;
 	return;
 }
 
@@ -125,10 +120,13 @@ int wake_expired_tasks()
 {
 	struct task *task;
 	struct eb32_node *eb;
+	int ret = TICK_ETERNITY;
 
-	eb = eb32_lookup_ge(&timers, now_ms - TIMER_LOOK_BACK);
 	while (1) {
-		if (unlikely(!eb)) {
+		HA_SPIN_LOCK(TASK_WQ_LOCK, &wq_lock);
+  lookup_next:
+		eb = eb32_lookup_ge(&timers, now_ms - TIMER_LOOK_BACK);
+		if (!eb) {
 			/* we might have reached the end of the tree, typically because
 			* <now_ms> is in the first half and we're first scanning the last
 			* half. Let's loop back to the beginning of the tree now.
@@ -138,14 +136,14 @@ int wake_expired_tasks()
 				break;
 		}
 
-		if (likely(tick_is_lt(now_ms, eb->key))) {
+		if (tick_is_lt(now_ms, eb->key)) {
 			/* timer not expired yet, revisit it later */
-			return eb->key;
+			ret = eb->key;
+			break;
 		}
 
 		/* timer looks expired, detach it from the queue */
 		task = eb32_entry(eb, struct task, wq);
-		eb = eb32_next(eb);
 		__task_unlink_wq(task);
 
 		/* It is possible that this task was left at an earlier place in the
@@ -162,89 +160,190 @@ int wake_expired_tasks()
 		 * expiration time is not set.
 		 */
 		if (!tick_is_expired(task->expire, now_ms)) {
-			if (!tick_isset(task->expire))
-				continue;
-			__task_queue(task);
-			if (!eb || eb->key > task->wq.key)
-				eb = &task->wq;
-			continue;
+			if (tick_isset(task->expire))
+				__task_queue(task);
+			goto lookup_next;
 		}
 		task_wakeup(task, TASK_WOKEN_TIMER);
+		HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
 	}
 
-	/* No task is expired */
-	return TICK_ETERNITY;
+	HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
+	return ret;
 }
 
 /* The run queue is chronologically sorted in a tree. An insertion counter is
  * used to assign a position to each task. This counter may be combined with
  * other variables (eg: nice value) to set the final position in the tree. The
  * counter may wrap without a problem, of course. We then limit the number of
- * tasks processed at once to 1/4 of the number of tasks in the queue, and to
- * 200 max in any case, so that general latency remains low and so that task
- * positions have a chance to be considered.
+ * tasks processed to 200 in any case, so that general latency remains low and
+ * so that task positions have a chance to be considered.
  *
  * The function adjusts <next> if a new event is closer.
  */
 void process_runnable_tasks()
 {
 	struct task *t;
-	unsigned int max_processed;
+	int i;
+	int max_processed;
+	struct eb32sc_node *rq_next;
+	struct task *local_tasks[16];
+	int local_tasks_count;
+	int final_tasks_count;
 
 	tasks_run_queue_cur = tasks_run_queue; /* keep a copy for reporting */
 	nb_tasks_cur = nb_tasks;
-	max_processed = tasks_run_queue;
+	max_processed = 200;
+	if (unlikely(global.nbthread <= 1)) {
+		/* when no lock is needed, this loop is much faster */
+		if (!(active_tasks_mask & tid_bit)) {
+			activity[tid].empty_rq++;
+			return;
+		}
 
-	if (!tasks_run_queue)
-		return;
-
-	if (max_processed > 200)
-		max_processed = 200;
-
-	if (likely(niced_tasks))
-		max_processed = (max_processed + 3) / 4;
-
-	while (max_processed--) {
-		/* Note: this loop is one of the fastest code path in
-		 * the whole program. It should not be re-arranged
-		 * without a good reason.
-		 */
-		if (unlikely(!rq_next)) {
-			rq_next = eb32_lookup_ge(&rqueue, rqueue_ticks - TIMER_LOOK_BACK);
+		active_tasks_mask &= ~tid_bit;
+		rq_next = eb32sc_lookup_ge(&rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
+		while (1) {
 			if (!rq_next) {
 				/* we might have reached the end of the tree, typically because
 				 * <rqueue_ticks> is in the first half and we're first scanning
 				 * the last half. Let's loop back to the beginning of the tree now.
 				 */
-				rq_next = eb32_first(&rqueue);
+				rq_next = eb32sc_first(&rqueue, tid_bit);
 				if (!rq_next)
 					break;
 			}
+
+			t = eb32sc_entry(rq_next, struct task, rq);
+			rq_next = eb32sc_next(rq_next, tid_bit);
+			__task_unlink_rq(t);
+			t->state |= TASK_RUNNING;
+			t->pending_state = 0;
+
+			t->calls++;
+			curr_task = t;
+			/* This is an optimisation to help the processor's branch
+			 * predictor take this most common call.
+			 */
+			if (likely(t->process == process_stream))
+				t = process_stream(t);
+			else
+				t = t->process(t);
+			curr_task = NULL;
+
+			if (likely(t != NULL)) {
+				t->state &= ~TASK_RUNNING;
+				/* If there is a pending state
+				 * we have to wake up the task
+				 * immediatly, else we defer
+				 * it into wait queue
+				 */
+				if (t->pending_state)
+					__task_wakeup(t);
+				else
+					task_queue(t);
+			}
+
+			max_processed--;
+			if (max_processed <= 0) {
+				active_tasks_mask |= tid_bit;
+				activity[tid].long_rq++;
+				break;
+			}
+		}
+		return;
+	}
+
+	HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
+	if (!(active_tasks_mask & tid_bit)) {
+		HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
+		activity[tid].empty_rq++;
+		return;
+	}
+
+	active_tasks_mask &= ~tid_bit;
+	while (1) {
+		/* Note: this loop is one of the fastest code path in
+		 * the whole program. It should not be re-arranged
+		 * without a good reason.
+		 */
+
+		/* we have to restart looking up after every batch */
+		rq_next = eb32sc_lookup_ge(&rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
+		for (local_tasks_count = 0; local_tasks_count < 16; local_tasks_count++) {
+			if (unlikely(!rq_next)) {
+				/* either we just started or we reached the end
+				 * of the tree, typically because <rqueue_ticks>
+				 * is in the first half and we're first scanning
+				 * the last half. Let's loop back to the beginning
+				 * of the tree now.
+				 */
+				rq_next = eb32sc_first(&rqueue, tid_bit);
+				if (!rq_next)
+					break;
+			}
+
+			t = eb32sc_entry(rq_next, struct task, rq);
+			rq_next = eb32sc_next(rq_next, tid_bit);
+
+			/* detach the task from the queue */
+			__task_unlink_rq(t);
+			local_tasks[local_tasks_count] = t;
+			t->state |= TASK_RUNNING;
+			t->pending_state = 0;
+			t->calls++;
+			max_processed--;
 		}
 
-		/* detach the task from the queue after updating the pointer to
-		 * the next entry.
-		 */
-		t = eb32_entry(rq_next, struct task, rq);
-		rq_next = eb32_next(rq_next);
-		__task_unlink_rq(t);
+		if (!local_tasks_count)
+			break;
 
-		t->state |= TASK_RUNNING;
-		/* This is an optimisation to help the processor's branch
-		 * predictor take this most common call.
-		 */
-		t->calls++;
-		if (likely(t->process == process_stream))
-			t = process_stream(t);
-		else
-			t = t->process(t);
+		HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
 
-		if (likely(t != NULL)) {
+		final_tasks_count = 0;
+		for (i = 0; i < local_tasks_count ; i++) {
+			t = local_tasks[i];
+			/* This is an optimisation to help the processor's branch
+			 * predictor take this most common call.
+			 */
+			curr_task = t;
+			if (likely(t->process == process_stream))
+				t = process_stream(t);
+			else
+				t = t->process(t);
+			curr_task = NULL;
+			if (t)
+				local_tasks[final_tasks_count++] = t;
+		}
+
+		for (i = 0; i < final_tasks_count ; i++) {
+			t = local_tasks[i];
+			/* If there is a pending state
+			 * we have to wake up the task
+			 * immediatly, else we defer
+			 * it into wait queue
+			 */
+			HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
 			t->state &= ~TASK_RUNNING;
-			if (t->expire)
+			if (t->pending_state) {
+				__task_wakeup(t);
+				HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
+			}
+			else {
+				/* we must never hold the RQ lock before the WQ lock */
+				HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
 				task_queue(t);
+			}
+		}
+
+		HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
+		if (max_processed <= 0) {
+			active_tasks_mask |= tid_bit;
+			activity[tid].long_rq++;
+			break;
 		}
 	}
+	HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
 }
 
 /* perform minimal intializations, report 0 in case of error, 1 if OK. */
@@ -252,8 +351,15 @@ int init_task()
 {
 	memset(&timers, 0, sizeof(timers));
 	memset(&rqueue, 0, sizeof(rqueue));
-	pool2_task = create_pool("task", sizeof(struct task), MEM_F_SHARED);
-	return pool2_task != NULL;
+	HA_SPIN_INIT(&wq_lock);
+	HA_SPIN_INIT(&rq_lock);
+	pool_head_task = create_pool("task", sizeof(struct task), MEM_F_SHARED);
+	if (!pool_head_task)
+		return 0;
+	pool_head_notification = create_pool("notification", sizeof(struct notification), MEM_F_SHARED);
+	if (!pool_head_notification)
+		return 0;
+	return 1;
 }
 
 /*

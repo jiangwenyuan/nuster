@@ -63,8 +63,11 @@ static void fas_srv_reposition(struct server *s)
 {
 	if (!s->lb_tree)
 		return;
+
+	HA_SPIN_LOCK(LBPRM_LOCK, &s->proxy->lbprm.lock);
 	fas_dequeue_srv(s);
 	fas_queue_srv(s);
+	HA_SPIN_UNLOCK(LBPRM_LOCK, &s->proxy->lbprm.lock);
 }
 
 /* This function updates the server trees according to server <srv>'s new
@@ -80,15 +83,15 @@ static void fas_set_server_status_down(struct server *srv)
 	if (!srv_lb_status_changed(srv))
 		return;
 
-	if (srv_is_usable(srv))
+	if (srv_willbe_usable(srv))
 		goto out_update_state;
 
-	if (!srv_was_usable(srv))
+	if (!srv_currently_usable(srv))
 		/* server was already down */
 		goto out_update_backend;
 
 	if (srv->flags & SRV_F_BACKUP) {
-		p->lbprm.tot_wbck -= srv->prev_eweight;
+		p->lbprm.tot_wbck -= srv->cur_eweight;
 		p->srv_bck--;
 
 		if (srv == p->lbprm.fbck) {
@@ -100,18 +103,18 @@ static void fas_set_server_status_down(struct server *srv)
 				srv2 = srv2->next;
 			} while (srv2 &&
 				 !((srv2->flags & SRV_F_BACKUP) &&
-				   srv_is_usable(srv2)));
+				   srv_willbe_usable(srv2)));
 			p->lbprm.fbck = srv2;
 		}
 	} else {
-		p->lbprm.tot_wact -= srv->prev_eweight;
+		p->lbprm.tot_wact -= srv->cur_eweight;
 		p->srv_act--;
 	}
 
 	fas_dequeue_srv(srv);
 	fas_remove_from_tree(srv);
 
-out_update_backend:
+ out_update_backend:
 	/* check/update tot_used, tot_weight */
 	update_backend_weight(p);
  out_update_state:
@@ -132,16 +135,16 @@ static void fas_set_server_status_up(struct server *srv)
 	if (!srv_lb_status_changed(srv))
 		return;
 
-	if (!srv_is_usable(srv))
+	if (!srv_willbe_usable(srv))
 		goto out_update_state;
 
-	if (srv_was_usable(srv))
+	if (srv_currently_usable(srv))
 		/* server was already up */
 		goto out_update_backend;
 
 	if (srv->flags & SRV_F_BACKUP) {
 		srv->lb_tree = &p->lbprm.fas.bck;
-		p->lbprm.tot_wbck += srv->eweight;
+		p->lbprm.tot_wbck += srv->next_eweight;
 		p->srv_bck++;
 
 		if (!(p->options & PR_O_USE_ALL_BK)) {
@@ -162,7 +165,7 @@ static void fas_set_server_status_up(struct server *srv)
 		}
 	} else {
 		srv->lb_tree = &p->lbprm.fas.act;
-		p->lbprm.tot_wact += srv->eweight;
+		p->lbprm.tot_wact += srv->next_eweight;
 		p->srv_act++;
 	}
 
@@ -195,8 +198,8 @@ static void fas_update_server_weight(struct server *srv)
 	 * possibly a new tree for this server.
 	 */
 	 
-	old_state = srv_was_usable(srv);
-	new_state = srv_is_usable(srv);
+	old_state = srv_currently_usable(srv);
+	new_state = srv_willbe_usable(srv);
 
 	if (!old_state && !new_state) {
 		srv_lb_commit_status(srv);
@@ -215,10 +218,10 @@ static void fas_update_server_weight(struct server *srv)
 		fas_dequeue_srv(srv);
 
 	if (srv->flags & SRV_F_BACKUP) {
-		p->lbprm.tot_wbck += srv->eweight - srv->prev_eweight;
+		p->lbprm.tot_wbck += srv->next_eweight - srv->cur_eweight;
 		srv->lb_tree = &p->lbprm.fas.bck;
 	} else {
-		p->lbprm.tot_wact += srv->eweight - srv->prev_eweight;
+		p->lbprm.tot_wact += srv->next_eweight - srv->cur_eweight;
 		srv->lb_tree = &p->lbprm.fas.act;
 	}
 
@@ -245,7 +248,7 @@ void fas_init_server_tree(struct proxy *p)
 
 	p->lbprm.wdiv = BE_WEIGHT_SCALE;
 	for (srv = p->srv; srv; srv = srv->next) {
-		srv->eweight = (srv->uweight * p->lbprm.wdiv + p->lbprm.wmult - 1) / p->lbprm.wmult;
+		srv->next_eweight = (srv->uweight * p->lbprm.wdiv + p->lbprm.wmult - 1) / p->lbprm.wmult;
 		srv_lb_commit_status(srv);
 	}
 
@@ -257,7 +260,7 @@ void fas_init_server_tree(struct proxy *p)
 
 	/* queue active and backup servers in two distinct groups */
 	for (srv = p->srv; srv; srv = srv->next) {
-		if (!srv_is_usable(srv))
+		if (!srv_currently_usable(srv))
 			continue;
 		srv->lb_tree = (srv->flags & SRV_F_BACKUP) ? &p->lbprm.fas.bck : &p->lbprm.fas.act;
 		fas_queue_srv(srv);
@@ -274,14 +277,19 @@ struct server *fas_get_next_server(struct proxy *p, struct server *srvtoavoid)
 
 	srv = avoided = NULL;
 
+	HA_SPIN_LOCK(LBPRM_LOCK, &p->lbprm.lock);
 	if (p->srv_act)
 		node = eb32_first(&p->lbprm.fas.act);
-	else if (p->lbprm.fbck)
-		return p->lbprm.fbck;
+	else if (p->lbprm.fbck) {
+		srv = p->lbprm.fbck;
+		goto out;
+	}
 	else if (p->srv_bck)
 		node = eb32_first(&p->lbprm.fas.bck);
-	else
-		return NULL;
+	else {
+		srv = NULL;
+		goto out;
+	}
 
 	while (node) {
 		/* OK, we have a server. However, it may be saturated, in which
@@ -304,7 +312,8 @@ struct server *fas_get_next_server(struct proxy *p, struct server *srvtoavoid)
 
 	if (!srv)
 		srv = avoided;
-
+  out:
+	HA_SPIN_UNLOCK(LBPRM_LOCK, &p->lbprm.lock);
 	return srv;
 }
 

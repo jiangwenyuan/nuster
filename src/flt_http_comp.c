@@ -32,8 +32,12 @@ static const char *http_comp_flt_id = "compression filter";
 
 struct flt_ops comp_ops;
 
-static struct buffer *tmpbuf = &buf_empty;
-static struct buffer *zbuf   = &buf_empty;
+
+/* Pools used to allocate comp_state structs */
+static struct pool_head *pool_head_comp_state = NULL;
+
+static THREAD_LOCAL struct buffer *tmpbuf = &buf_empty;
+static THREAD_LOCAL struct buffer *zbuf   = &buf_empty;
 
 struct comp_state {
 	struct comp_ctx  *comp_ctx;   /* compression context */
@@ -62,9 +66,8 @@ static int http_compression_buffer_end(struct comp_state *st, struct stream *s,
 
 /***********************************************************************/
 static int
-comp_flt_init(struct proxy *px, struct flt_conf *fconf)
+comp_flt_init_per_thread(struct proxy *px, struct flt_conf *fconf)
 {
-
 	if (!tmpbuf->size && b_alloc(&tmpbuf) == NULL)
 		return -1;
 	if (!zbuf->size && b_alloc(&zbuf) == NULL)
@@ -73,7 +76,7 @@ comp_flt_init(struct proxy *px, struct flt_conf *fconf)
 }
 
 static void
-comp_flt_deinit(struct proxy *px, struct flt_conf *fconf)
+comp_flt_deinit_per_thread(struct proxy *px, struct flt_conf *fconf)
 {
 	if (tmpbuf->size)
 		b_free(&tmpbuf);
@@ -84,10 +87,12 @@ comp_flt_deinit(struct proxy *px, struct flt_conf *fconf)
 static int
 comp_start_analyze(struct stream *s, struct filter *filter, struct channel *chn)
 {
+
 	if (filter->ctx == NULL) {
 		struct comp_state *st;
 
-		if (!(st = malloc(sizeof(*st))))
+		st = pool_alloc_dirty(pool_head_comp_state);
+		if (st == NULL)
 			return -1;
 
 		st->comp_algo   = NULL;
@@ -119,7 +124,7 @@ comp_end_analyze(struct stream *s, struct filter *filter, struct channel *chn)
 	/* release any possible compression context */
 	if (st->comp_algo)
 		st->comp_algo->end(&st->comp_ctx);
-	free(st);
+	pool_free(pool_head_comp_state, st);
 	filter->ctx = NULL;
  end:
 	return 1;
@@ -256,7 +261,7 @@ comp_http_forward_data(struct stream *s, struct filter *filter,
 
 	/* To work, previous filters MUST forward all data */
 	if (flt_rsp_fwd(filter) + len != flt_rsp_nxt(filter)) {
-		Warning("HTTP compression failed: unexpected behavior of previous filters\n");
+		ha_warning("HTTP compression failed: unexpected behavior of previous filters\n");
 		return -1;
 	}
 
@@ -293,8 +298,8 @@ comp_http_forward_data(struct stream *s, struct filter *filter,
 	if (msg->flags & HTTP_MSGF_TE_CHNK) {
 		ret = http_compression_buffer_add_data(st, tmpbuf, zbuf, tmpbuf->i);
 		if (ret != tmpbuf->i) {
-			Warning("HTTP compression failed: Must consume %d bytes but only %d bytes consumed\n",
-				tmpbuf->i, ret);
+			ha_warning("HTTP compression failed: Must consume %d bytes but only %d bytes consumed\n",
+				   tmpbuf->i, ret);
 			return -1;
 		}
 	}
@@ -327,9 +332,9 @@ comp_http_end(struct stream *s, struct filter *filter,
 		goto end;
 
 	if (strm_fe(s)->mode == PR_MODE_HTTP)
-		strm_fe(s)->fe_counters.p.http.comp_rsp++;
+		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.p.http.comp_rsp, 1);
 	if ((s->flags & SF_BE_ASSIGNED) && (s->be->mode == PR_MODE_HTTP))
-		s->be->be_counters.p.http.comp_rsp++;
+		HA_ATOMIC_ADD(&s->be->be_counters.p.http.comp_rsp, 1);
  end:
 	return 1;
 }
@@ -749,11 +754,11 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 	/* update input rate */
 	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
 		update_freq_ctr(&global.comp_bps_in, st->consumed);
-		strm_fe(s)->fe_counters.comp_in += st->consumed;
-		s->be->be_counters.comp_in      += st->consumed;
+		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_in, st->consumed);
+		HA_ATOMIC_ADD(&s->be->be_counters.comp_in,      st->consumed);
 	} else {
-		strm_fe(s)->fe_counters.comp_byp += st->consumed;
-		s->be->be_counters.comp_byp      += st->consumed;
+		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_byp, st->consumed);
+		HA_ATOMIC_ADD(&s->be->be_counters.comp_byp,      st->consumed);
 	}
 
 	/* copy the remaining data in the tmp buffer. */
@@ -775,8 +780,8 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 
 	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
 		update_freq_ctr(&global.comp_bps_out, to_forward);
-		strm_fe(s)->fe_counters.comp_out += to_forward;
-		s->be->be_counters.comp_out += to_forward;
+		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_out, to_forward);
+		HA_ATOMIC_ADD(&s->be->be_counters.comp_out,      to_forward);
 	}
 
 	return to_forward;
@@ -785,8 +790,8 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 
 /***********************************************************************/
 struct flt_ops comp_ops = {
-	.init   = comp_flt_init,
-	.deinit = comp_flt_deinit,
+	.init_per_thread   = comp_flt_init_per_thread,
+	.deinit_per_thread = comp_flt_deinit_per_thread,
 
 	.channel_start_analyze = comp_start_analyze,
 	.channel_end_analyze   = comp_end_analyze,
@@ -898,16 +903,16 @@ check_legacy_http_comp_flt(struct proxy *proxy)
 			if (fconf->id == http_comp_flt_id)
 				goto end;
 		}
-		Alert("config: %s '%s': require an explicit filter declaration to use HTTP compression\n",
-		      proxy_type_str(proxy), proxy->id);
+		ha_alert("config: %s '%s': require an explicit filter declaration to use HTTP compression\n",
+			 proxy_type_str(proxy), proxy->id);
 		err++;
 		goto end;
 	}
 
 	fconf = calloc(1, sizeof(*fconf));
 	if (!fconf) {
-		Alert("config: %s '%s': out of memory\n",
-		      proxy_type_str(proxy), proxy->id);
+		ha_alert("config: %s '%s': out of memory\n",
+			 proxy_type_str(proxy), proxy->id);
 		err++;
 		goto end;
 	}
@@ -994,4 +999,5 @@ __flt_http_comp_init(void)
 	cfg_register_keywords(&cfg_kws);
 	flt_register_keywords(&filter_kws);
 	sample_register_fetches(&sample_fetch_keywords);
+	pool_head_comp_state = create_pool("comp_state", sizeof(struct comp_state), MEM_F_SHARED);
 }

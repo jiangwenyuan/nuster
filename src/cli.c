@@ -24,6 +24,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <net/if.h>
+
 #include <common/cfgparse.h>
 #include <common/compat.h>
 #include <common/config.h>
@@ -56,15 +58,14 @@
 #include <proto/pipe.h>
 #include <proto/listener.h>
 #include <proto/map.h>
-#include <proto/proto_uxst.h>
 #include <proto/proxy.h>
 #include <proto/sample.h>
 #include <proto/session.h>
 #include <proto/stream.h>
 #include <proto/server.h>
-#include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
+#include <proto/proto_udp.h>
 
 static struct applet cli_applet;
 
@@ -80,7 +81,7 @@ static const char stats_permission_denied_msg[] =
 	"";
 
 
-static char *dynamic_usage_msg = NULL;
+static THREAD_LOCAL char *dynamic_usage_msg = NULL;
 
 /* List head of cli keywords */
 static struct cli_kw_list cli_keywords = {
@@ -169,8 +170,8 @@ static struct proxy *alloc_stats_fe(const char *name, const char *file, int line
 		return NULL;
 
 	init_new_proxy(fe);
-	fe->next = proxy;
-	proxy = fe;
+	fe->next = proxies_list;
+	proxies_list = fe;
 	fe->last_change = now.tv_sec;
 	fe->id = strdup("GLOBAL");
 	fe->cap = PR_CAP_FE;
@@ -215,8 +216,9 @@ static int stats_parse_global(char **args, int section_type, struct proxy *curpx
 			}
 		}
 
-		bind_conf = bind_conf_alloc(&global.stats_fe->conf.bind, file, line, args[2]);
-		bind_conf->level = ACCESS_LVL_OPER; /* default access level */
+		bind_conf = bind_conf_alloc(global.stats_fe, file, line, args[2], xprt_get(XPRT_RAW));
+		bind_conf->level &= ~ACCESS_LVL_MASK;
+		bind_conf->level |= ACCESS_LVL_OPER; /* default access level */
 
 		if (!str2listener(args[2], global.stats_fe, bind_conf, file, line, err)) {
 			memprintf(err, "parsing [%s:%d] : '%s %s' : %s\n",
@@ -266,7 +268,6 @@ static int stats_parse_global(char **args, int section_type, struct proxy *curpx
 			l->maxconn = global.stats_fe->maxconn;
 			l->backlog = global.stats_fe->backlog;
 			l->accept = session_accept_fd;
-			l->handler = process_stream;
 			l->default_target = global.stats_fe->default_target;
 			l->options |= LI_O_UNLIMITED; /* don't make the peers subject to global limits */
 			l->nice = -64;  /* we want to boost priority for local stats */
@@ -322,43 +323,12 @@ static int stats_parse_global(char **args, int section_type, struct proxy *curpx
 		}
 
 		while (*args[cur_arg]) {
-			unsigned int low, high;
-
 			if (strcmp(args[cur_arg], "all") == 0) {
 				set = 0;
 				break;
 			}
-			else if (strcmp(args[cur_arg], "odd") == 0) {
-				set |= ~0UL/3UL; /* 0x555....555 */
-			}
-			else if (strcmp(args[cur_arg], "even") == 0) {
-				set |= (~0UL/3UL) << 1; /* 0xAAA...AAA */
-			}
-			else if (isdigit((int)*args[cur_arg])) {
-				char *dash = strchr(args[cur_arg], '-');
-
-				low = high = str2uic(args[cur_arg]);
-				if (dash)
-					high = str2uic(dash + 1);
-
-				if (high < low) {
-					unsigned int swap = low;
-					low = high;
-					high = swap;
-				}
-
-				if (low < 1 || high > LONGBITS) {
-					memprintf(err, "'%s %s' supports process numbers from 1 to %d.\n",
-					          args[0], args[1], LONGBITS);
-					return -1;
-				}
-				while (low <= high)
-					set |= 1UL << (low++ - 1);
-			}
-			else {
-				memprintf(err,
-				          "'%s %s' expects 'all', 'odd', 'even', or a list of process ranges with numbers from 1 to %d.\n",
-				          args[0], args[1], LONGBITS);
+			if (parse_process_number(args[cur_arg], &set, NULL, err)) {
+				memprintf(err, "'%s %s' : %s", args[0], args[1], *err);
 				return -1;
 			}
 			cur_arg++;
@@ -382,7 +352,8 @@ int cli_has_level(struct appctx *appctx, int level)
 	struct stream_interface *si = appctx->owner;
 	struct stream *s = si_strm(si);
 
-	if (strm_li(s)->bind_conf->level < level) {
+	if ((strm_li(s)->bind_conf->level & ACCESS_LVL_MASK) < level) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = stats_permission_denied_msg;
 		appctx->st0 = CLI_ST_PRINT;
 		return 0;
@@ -390,6 +361,13 @@ int cli_has_level(struct appctx *appctx, int level)
 	return 1;
 }
 
+/* Returns severity_output for the current session if set, or default for the socket */
+static int cli_get_severity_output(struct appctx *appctx)
+{
+	if (appctx->cli_severity_output)
+		return appctx->cli_severity_output;
+	return strm_li(si_strm(appctx->owner))->bind_conf->severity_output;
+}
 
 /* Processes the CLI interpreter on the stats socket. This function is called
  * from the CLI's IO handler running in an appctx context. The function returns 1
@@ -398,6 +376,8 @@ int cli_has_level(struct appctx *appctx, int level)
  * it. It will possilbly leave st0 to CLI_ST_CALLBACK if the keyword needs to
  * have its own I/O handler called again. Most of the time, parsers will only
  * set st0 to CLI_ST_PRINT and put their message to be displayed into cli.msg.
+ * If a keyword parser is NULL and an I/O handler is declared, the I/O handler
+ * will automatically be used.
  */
 static int cli_parse_request(struct appctx *appctx, char *line)
 {
@@ -436,7 +416,7 @@ static int cli_parse_request(struct appctx *appctx, char *line)
 
 	/* unescape '\' */
 	arg = 0;
-	while (*args[arg] != '\0') {
+	while (arg <= MAX_STATS_ARGS && *args[arg] != '\0') {
 		j = 0;
 		for (i=0; args[arg][i] != '\0'; i++) {
 			if (args[arg][i] == '\\') {
@@ -452,22 +432,52 @@ static int cli_parse_request(struct appctx *appctx, char *line)
 		arg++;
 	}
 
-	appctx->ctx.stats.scope_str = 0;
-	appctx->ctx.stats.scope_len = 0;
-	appctx->ctx.stats.flags = 0;
 	appctx->st2 = 0;
+	memset(&appctx->ctx.cli, 0, sizeof(appctx->ctx.cli));
 
 	kw = cli_find_kw(args);
-	if (!kw || !kw->parse)
+	if (!kw)
 		return 0;
 
 	appctx->io_handler = kw->io_handler;
 	appctx->io_release = kw->io_release;
 	/* kw->parse could set its own io_handler or ip_release handler */
-	if (kw->parse(args, appctx, kw->private) == 0 && appctx->io_handler) {
+	if ((!kw->parse || kw->parse(args, appctx, kw->private) == 0) && appctx->io_handler) {
 		appctx->st0 = CLI_ST_CALLBACK;
 	}
 	return 1;
+}
+
+/* prepends then outputs the argument msg with a syslog-type severity depending on severity_output value */
+static int cli_output_msg(struct channel *chn, const char *msg, int severity, int severity_output)
+{
+	struct chunk *tmp;
+
+	if (likely(severity_output == CLI_SEVERITY_NONE))
+		return ci_putblk(chn, msg, strlen(msg));
+
+	tmp = get_trash_chunk();
+	chunk_reset(tmp);
+
+	if (severity < 0 || severity > 7) {
+		ha_warning("socket command feedback with invalid severity %d", severity);
+		chunk_printf(tmp, "[%d]: ", severity);
+	}
+	else {
+		switch (severity_output) {
+			case CLI_SEVERITY_NUMBER:
+				chunk_printf(tmp, "[%d]: ", severity);
+				break;
+			case CLI_SEVERITY_STRING:
+				chunk_printf(tmp, "[%s]: ", log_levels[severity]);
+				break;
+			default:
+				ha_warning("Unrecognized severity output %d", severity_output);
+		}
+	}
+	chunk_appendf(tmp, "%s", msg);
+
+	return ci_putblk(chn, tmp->str, strlen(tmp->str));
 }
 
 /* This I/O handler runs as an applet embedded in a stream interface. It is
@@ -483,6 +493,7 @@ static void cli_io_handler(struct appctx *appctx)
 	struct stream_interface *si = appctx->owner;
 	struct channel *req = si_oc(si);
 	struct channel *res = si_ic(si);
+	struct bind_conf *bind_conf = strm_li(si_strm(si))->bind_conf;
 	int reql;
 	int len;
 
@@ -499,6 +510,8 @@ static void cli_io_handler(struct appctx *appctx)
 		if (appctx->st0 == CLI_ST_INIT) {
 			/* Stats output not initialized yet */
 			memset(&appctx->ctx.stats, 0, sizeof(appctx->ctx.stats));
+			/* reset severity to default at init */
+			appctx->cli_severity_output = bind_conf->severity_output;
 			appctx->st0 = CLI_ST_GETREQ;
 		}
 		else if (appctx->st0 == CLI_ST_END) {
@@ -517,7 +530,7 @@ static void cli_io_handler(struct appctx *appctx)
 				break;
 			}
 
-			reql = bo_getline(si_oc(si), trash.str, trash.size);
+			reql = co_getline(si_oc(si), trash.str, trash.size);
 			if (reql <= 0) { /* closed or EOL not found */
 				if (reql == 0)
 					break;
@@ -566,10 +579,14 @@ static void cli_io_handler(struct appctx *appctx)
 				else if (strcmp(trash.str, "help") == 0 ||
 					 !cli_parse_request(appctx, trash.str)) {
 					cli_gen_usage_msg();
-					if (dynamic_usage_msg)
+					if (dynamic_usage_msg) {
+						appctx->ctx.cli.severity = LOG_INFO;
 						appctx->ctx.cli.msg = dynamic_usage_msg;
-					else
+					}
+					else {
+						appctx->ctx.cli.severity = LOG_INFO;
 						appctx->ctx.cli.msg = stats_sock_usage_msg;
+					}
 					appctx->st0 = CLI_ST_PRINT;
 				}
 				/* NB: stats_sock_parse_request() may have put
@@ -582,15 +599,19 @@ static void cli_io_handler(struct appctx *appctx)
 				 * prompt and find help.
 				 */
 				cli_gen_usage_msg();
-				if (dynamic_usage_msg)
+				if (dynamic_usage_msg) {
+					appctx->ctx.cli.severity = LOG_INFO;
 					appctx->ctx.cli.msg = dynamic_usage_msg;
-				else
+				}
+				else {
+					appctx->ctx.cli.severity = LOG_INFO;
 					appctx->ctx.cli.msg = stats_sock_usage_msg;
+				}
 				appctx->st0 = CLI_ST_PRINT;
 			}
 
 			/* re-adjust req buffer */
-			bo_skip(si_oc(si), reql);
+			co_skip(si_oc(si), reql);
 			req->flags |= CF_READ_DONTWAIT; /* we plan to read small requests */
 		}
 		else {	/* output functions */
@@ -598,19 +619,26 @@ static void cli_io_handler(struct appctx *appctx)
 			case CLI_ST_PROMPT:
 				break;
 			case CLI_ST_PRINT:
-				if (bi_putstr(si_ic(si), appctx->ctx.cli.msg) != -1)
+				if (cli_output_msg(res, appctx->ctx.cli.msg, appctx->ctx.cli.severity,
+							cli_get_severity_output(appctx)) != -1)
 					appctx->st0 = CLI_ST_PROMPT;
 				else
 					si_applet_cant_put(si);
 				break;
-			case CLI_ST_PRINT_FREE:
-				if (bi_putstr(si_ic(si), appctx->ctx.cli.err) != -1) {
+			case CLI_ST_PRINT_FREE: {
+				const char *msg = appctx->ctx.cli.err;
+
+				if (!msg)
+					msg = "Out of memory.\n";
+
+				if (cli_output_msg(res, msg, LOG_ERR, cli_get_severity_output(appctx)) != -1) {
 					free(appctx->ctx.cli.err);
 					appctx->st0 = CLI_ST_PROMPT;
 				}
 				else
 					si_applet_cant_put(si);
 				break;
+			}
 			case CLI_ST_CALLBACK: /* use custom pointer */
 				if (appctx->io_handler)
 					if (appctx->io_handler(appctx)) {
@@ -628,7 +656,7 @@ static void cli_io_handler(struct appctx *appctx)
 
 			/* The post-command prompt is either LF alone or LF + '> ' in interactive mode */
 			if (appctx->st0 == CLI_ST_PROMPT) {
-				if (bi_putstr(si_ic(si), appctx->st1 ? "\n> " : "\n") != -1)
+				if (ci_putstr(si_ic(si), appctx->st1 ? "\n> " : "\n") != -1)
 					appctx->st0 = CLI_ST_GETREQ;
 				else
 					si_applet_cant_put(si);
@@ -699,11 +727,13 @@ static void cli_release_handler(struct appctx *appctx)
 
 /* This function dumps all environmnent variables to the buffer. It returns 0
  * if the output buffer is full and it needs to be called again, otherwise
- * non-zero. Dumps only one entry if st2 == STAT_ST_END.
+ * non-zero. Dumps only one entry if st2 == STAT_ST_END. It uses cli.p0 as the
+ * pointer to the current variable.
  */
 static int cli_io_handler_show_env(struct appctx *appctx)
 {
 	struct stream_interface *si = appctx->owner;
+	char **var = appctx->ctx.cli.p0;
 
 	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
 		return 1;
@@ -713,47 +743,323 @@ static int cli_io_handler_show_env(struct appctx *appctx)
 	/* we have two inner loops here, one for the proxy, the other one for
 	 * the buffer.
 	 */
-	while (*appctx->ctx.env.var) {
-		chunk_printf(&trash, "%s\n", *appctx->ctx.env.var);
+	while (*var) {
+		chunk_printf(&trash, "%s\n", *var);
 
-		if (bi_putchk(si_ic(si), &trash) == -1) {
+		if (ci_putchk(si_ic(si), &trash) == -1) {
 			si_applet_cant_put(si);
 			return 0;
 		}
 		if (appctx->st2 == STAT_ST_END)
 			break;
-		appctx->ctx.env.var++;
+		var++;
+		appctx->ctx.cli.p0 = var;
 	}
 
 	/* dump complete */
 	return 1;
 }
 
+/* This function dumps all file descriptors states (or the requested one) to
+ * the buffer. It returns 0 if the output buffer is full and it needs to be
+ * called again, otherwise non-zero. Dumps only one entry if st2 == STAT_ST_END.
+ * It uses cli.i0 as the fd number to restart from.
+ */
+static int cli_io_handler_show_fd(struct appctx *appctx)
+{
+	struct stream_interface *si = appctx->owner;
+	int fd = appctx->ctx.cli.i0;
+
+	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
+		return 1;
+
+	chunk_reset(&trash);
+
+	/* we have two inner loops here, one for the proxy, the other one for
+	 * the buffer.
+	 */
+	while (fd >= 0 && fd < global.maxsock) {
+		struct fdtab fdt;
+		struct listener *li = NULL;
+		struct server *sv = NULL;
+		struct proxy *px = NULL;
+		const struct mux_ops *mux = NULL;
+		void *ctx = NULL;
+		uint32_t conn_flags = 0;
+
+		fdt = fdtab[fd];
+
+		if (!fdt.owner)
+			goto skip; // closed
+
+		if (fdt.iocb == conn_fd_handler) {
+			conn_flags = ((struct connection *)fdt.owner)->flags;
+			mux = ((struct connection *)fdt.owner)->mux;
+			ctx = ((struct connection *)fdt.owner)->mux_ctx;
+			li = objt_listener(((struct connection *)fdt.owner)->target);
+			sv = objt_server(((struct connection *)fdt.owner)->target);
+			px = objt_proxy(((struct connection *)fdt.owner)->target);
+		}
+		else if (fdt.iocb == listener_accept)
+			li = fdt.owner;
+
+		chunk_printf(&trash,
+			     "  %5d : st=0x%02x(R:%c%c%c W:%c%c%c) ev=0x%02x(%c%c%c%c%c) [%c%c%c] cache=%u owner=%p iocb=%p(%s) tmask=0x%lx umask=0x%lx",
+			     fd,
+			     fdt.state,
+			     (fdt.state & FD_EV_POLLED_R) ? 'P' : 'p',
+			     (fdt.state & FD_EV_READY_R)  ? 'R' : 'r',
+			     (fdt.state & FD_EV_ACTIVE_R) ? 'A' : 'a',
+			     (fdt.state & FD_EV_POLLED_W) ? 'P' : 'p',
+			     (fdt.state & FD_EV_READY_W)  ? 'R' : 'r',
+			     (fdt.state & FD_EV_ACTIVE_W) ? 'A' : 'a',
+			     fdt.ev,
+			     (fdt.ev & FD_POLL_HUP) ? 'H' : 'h',
+			     (fdt.ev & FD_POLL_ERR) ? 'E' : 'e',
+			     (fdt.ev & FD_POLL_OUT) ? 'O' : 'o',
+			     (fdt.ev & FD_POLL_PRI) ? 'P' : 'p',
+			     (fdt.ev & FD_POLL_IN)  ? 'I' : 'i',
+			     fdt.new ? 'N' : 'n',
+			     fdt.linger_risk ? 'L' : 'l',
+			     fdt.cloned ? 'C' : 'c',
+			     fdt.cache,
+			     fdt.owner,
+			     fdt.iocb,
+			     (fdt.iocb == conn_fd_handler)  ? "conn_fd_handler" :
+			     (fdt.iocb == dgram_fd_handler) ? "dgram_fd_handler" :
+			     (fdt.iocb == listener_accept)  ? "listener_accept" :
+			     (fdt.iocb == thread_sync_io_handler) ? "thread_sync_io_handler" :
+			     "unknown",
+			     fdt.thread_mask, fdt.update_mask);
+
+		if (fdt.iocb == conn_fd_handler) {
+			chunk_appendf(&trash, " cflg=0x%08x", conn_flags);
+			if (px)
+				chunk_appendf(&trash, " px=%s", px->id);
+			else if (sv)
+				chunk_appendf(&trash, " sv=%s/%s", sv->id, sv->proxy->id);
+			else if (li)
+				chunk_appendf(&trash, " fe=%s", li->bind_conf->frontend->id);
+
+			if (mux)
+				chunk_appendf(&trash, " mux=%s mux_ctx=%p", mux->name, ctx);
+			else
+				chunk_appendf(&trash, " nomux");
+		}
+		else if (fdt.iocb == listener_accept) {
+			chunk_appendf(&trash, " l.st=%s fe=%s",
+			              listener_state_str(li),
+			              li->bind_conf->frontend->id);
+		}
+
+		chunk_appendf(&trash, "\n");
+
+		if (ci_putchk(si_ic(si), &trash) == -1) {
+			si_applet_cant_put(si);
+			return 0;
+		}
+	skip:
+		if (appctx->st2 == STAT_ST_END)
+			break;
+
+		fd++;
+		appctx->ctx.cli.i0 = fd;
+	}
+
+	/* dump complete */
+	return 1;
+}
+
+/* This function dumps some activity counters used by developers and support to
+ * rule out some hypothesis during bug reports. It returns 0 if the output
+ * buffer is full and it needs to be called again, otherwise non-zero. It dumps
+ * everything at once in the buffer and is not designed to do it in multiple
+ * passes.
+ */
+static int cli_io_handler_show_activity(struct appctx *appctx)
+{
+	struct stream_interface *si = appctx->owner;
+	int thr;
+
+	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
+		return 1;
+
+	chunk_reset(&trash);
+
+	chunk_appendf(&trash, "thread_id: %u", tid);
+	chunk_appendf(&trash, "\ndate_now: %lu.%06lu", (long)now.tv_sec, (long)now.tv_usec);
+	chunk_appendf(&trash, "\nloops:");        for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].loops);
+	chunk_appendf(&trash, "\nwake_cache:");   for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_cache);
+	chunk_appendf(&trash, "\nwake_tasks:");   for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_tasks);
+	chunk_appendf(&trash, "\nwake_applets:"); for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_applets);
+	chunk_appendf(&trash, "\nwake_signal:");  for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_signal);
+	chunk_appendf(&trash, "\npoll_exp:");     for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_exp);
+	chunk_appendf(&trash, "\npoll_drop:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_drop);
+	chunk_appendf(&trash, "\npoll_dead:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_dead);
+	chunk_appendf(&trash, "\npoll_skip:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_skip);
+	chunk_appendf(&trash, "\nfd_skip:");      for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].fd_skip);
+	chunk_appendf(&trash, "\nfd_lock:");      for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].fd_lock);
+	chunk_appendf(&trash, "\nfd_del:");       for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].fd_del);
+	chunk_appendf(&trash, "\nconn_dead:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].conn_dead);
+	chunk_appendf(&trash, "\nstream:");       for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].stream);
+	chunk_appendf(&trash, "\nempty_rq:");     for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].empty_rq);
+	chunk_appendf(&trash, "\nlong_rq:");      for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].long_rq);
+
+	chunk_appendf(&trash, "\n");
+
+	if (ci_putchk(si_ic(si), &trash) == -1) {
+		chunk_reset(&trash);
+		chunk_printf(&trash, "[output too large, cannot dump]\n");
+		si_applet_cant_put(si);
+	}
+
+	/* dump complete */
+	return 1;
+}
+
+/*
+ * CLI IO handler for `show cli sockets`.
+ * Uses ctx.cli.p0 to store the restart pointer.
+ */
+static int cli_io_handler_show_cli_sock(struct appctx *appctx)
+{
+	struct bind_conf *bind_conf;
+	struct stream_interface *si = appctx->owner;
+
+	chunk_reset(&trash);
+
+	switch (appctx->st2) {
+		case STAT_ST_INIT:
+			chunk_printf(&trash, "# socket lvl processes\n");
+			if (ci_putchk(si_ic(si), &trash) == -1) {
+				si_applet_cant_put(si);
+				return 0;
+			}
+			appctx->st2 = STAT_ST_LIST;
+
+		case STAT_ST_LIST:
+			if (global.stats_fe) {
+				list_for_each_entry(bind_conf, &global.stats_fe->conf.bind, by_fe) {
+					struct listener *l;
+
+					/*
+					 * get the latest dumped node in appctx->ctx.cli.p0
+					 * if the current node is the first of the list
+					 */
+
+					if (appctx->ctx.cli.p0  &&
+					    &bind_conf->by_fe == (&global.stats_fe->conf.bind)->n) {
+						/* change the current node to the latest dumped and continue the loop */
+						bind_conf = LIST_ELEM(appctx->ctx.cli.p0, typeof(bind_conf), by_fe);
+						continue;
+					}
+
+					list_for_each_entry(l, &bind_conf->listeners, by_bind) {
+
+						char addr[46];
+						char port[6];
+
+						if (l->addr.ss_family == AF_UNIX) {
+							const struct sockaddr_un *un;
+
+							un = (struct sockaddr_un *)&l->addr;
+							chunk_appendf(&trash, "%s ", un->sun_path);
+						} else if (l->addr.ss_family == AF_INET) {
+							addr_to_str(&l->addr, addr, sizeof(addr));
+							port_to_str(&l->addr, port, sizeof(port));
+							chunk_appendf(&trash, "%s:%s ", addr, port);
+						} else if (l->addr.ss_family == AF_INET6) {
+							addr_to_str(&l->addr, addr, sizeof(addr));
+							port_to_str(&l->addr, port, sizeof(port));
+							chunk_appendf(&trash, "[%s]:%s ", addr, port);
+						} else
+							continue;
+
+						if ((bind_conf->level & ACCESS_LVL_MASK) == ACCESS_LVL_ADMIN)
+							chunk_appendf(&trash, "admin ");
+						else if ((bind_conf->level & ACCESS_LVL_MASK) == ACCESS_LVL_OPER)
+							chunk_appendf(&trash, "operator ");
+						else if ((bind_conf->level & ACCESS_LVL_MASK) == ACCESS_LVL_USER)
+							chunk_appendf(&trash, "user ");
+						else
+							chunk_appendf(&trash, "  ");
+
+						if (bind_conf->bind_proc != 0) {
+							int pos;
+							for (pos = 0; pos < 8 * sizeof(bind_conf->bind_proc); pos++) {
+								if (bind_conf->bind_proc & (1UL << pos)) {
+									chunk_appendf(&trash, "%d,", pos+1);
+								}
+							}
+							/* replace the latest comma by a newline */
+							trash.str[trash.len-1] = '\n';
+
+						} else {
+							chunk_appendf(&trash, "all\n");
+						}
+
+						if (ci_putchk(si_ic(si), &trash) == -1) {
+							si_applet_cant_put(si);
+							return 0;
+						}
+					}
+					appctx->ctx.cli.p0 = &bind_conf->by_fe; /* store the latest list node dumped */
+				}
+			}
+		default:
+			appctx->st2 = STAT_ST_FIN;
+			return 1;
+	}
+}
+
+
 /* parse a "show env" CLI request. Returns 0 if it needs to continue, 1 if it
- * wants to stop here.
+ * wants to stop here. It puts the variable to be dumped into cli.p0 if a single
+ * variable is requested otherwise puts environ there.
  */
 static int cli_parse_show_env(char **args, struct appctx *appctx, void *private)
 {
 	extern char **environ;
+	char **var;
 
 	if (!cli_has_level(appctx, ACCESS_LVL_OPER))
 		return 1;
 
-	appctx->ctx.env.var = environ;
+	var = environ;
 
 	if (*args[2]) {
 		int len = strlen(args[2]);
 
-		for (; *appctx->ctx.env.var; appctx->ctx.env.var++) {
-			if (strncmp(*appctx->ctx.env.var, args[2], len) == 0 &&
-			    (*appctx->ctx.env.var)[len] == '=')
+		for (; *var; var++) {
+			if (strncmp(*var, args[2], len) == 0 &&
+			    (*var)[len] == '=')
 				break;
 		}
-		if (!*appctx->ctx.env.var) {
+		if (!*var) {
+			appctx->ctx.cli.severity = LOG_ERR;
 			appctx->ctx.cli.msg = "Variable not found\n";
 			appctx->st0 = CLI_ST_PRINT;
 			return 1;
 		}
+		appctx->st2 = STAT_ST_END;
+	}
+	appctx->ctx.cli.p0 = var;
+	return 0;
+}
+
+/* parse a "show fd" CLI request. Returns 0 if it needs to continue, 1 if it
+ * wants to stop here. It puts the FD number into cli.i0 if a specific FD is
+ * requested and sets st2 to STAT_ST_END, otherwise leaves 0 in i0.
+ */
+static int cli_parse_show_fd(char **args, struct appctx *appctx, void *private)
+{
+	if (!cli_has_level(appctx, ACCESS_LVL_OPER))
+		return 1;
+
+	appctx->ctx.cli.i0 = 0;
+
+	if (*args[2]) {
+		appctx->ctx.cli.i0 = atoi(args[2]);
 		appctx->st2 = STAT_ST_END;
 	}
 	return 0;
@@ -770,6 +1076,7 @@ static int cli_parse_set_timeout(char **args, struct appctx *appctx, void *priva
 		const char *res;
 
 		if (!*args[3]) {
+			appctx->ctx.cli.severity = LOG_ERR;
 			appctx->ctx.cli.msg = "Expects an integer value.\n";
 			appctx->st0 = CLI_ST_PRINT;
 			return 1;
@@ -777,6 +1084,7 @@ static int cli_parse_set_timeout(char **args, struct appctx *appctx, void *priva
 
 		res = parse_time_err(args[3], &timeout, TIME_UNIT_S);
 		if (res || timeout < 1) {
+			appctx->ctx.cli.severity = LOG_ERR;
 			appctx->ctx.cli.msg = "Invalid timeout value.\n";
 			appctx->st0 = CLI_ST_PRINT;
 			return 1;
@@ -787,6 +1095,7 @@ static int cli_parse_set_timeout(char **args, struct appctx *appctx, void *priva
 		return 1;
 	}
 	else {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "'set timeout' only supports 'cli'.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -802,6 +1111,7 @@ static int cli_parse_set_maxconn_global(char **args, struct appctx *appctx, void
 		return 1;
 
 	if (!*args[3]) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Expects an integer value.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -809,6 +1119,7 @@ static int cli_parse_set_maxconn_global(char **args, struct appctx *appctx, void
 
 	v = atoi(args[3]);
 	if (v > global.hardmaxconn) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Value out of range.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -825,6 +1136,40 @@ static int cli_parse_set_maxconn_global(char **args, struct appctx *appctx, void
 		dequeue_all_listeners(&global_listener_queue);
 
 	return 1;
+}
+
+static int set_severity_output(int *target, char *argument)
+{
+	if (!strcmp(argument, "none")) {
+		*target = CLI_SEVERITY_NONE;
+		return 1;
+	}
+	else if (!strcmp(argument, "number")) {
+		*target = CLI_SEVERITY_NUMBER;
+		return 1;
+	}
+	else if (!strcmp(argument, "string")) {
+		*target = CLI_SEVERITY_STRING;
+		return 1;
+	}
+	return 0;
+}
+
+/* parse a "set severity-output" command. */
+static int cli_parse_set_severity_output(char **args, struct appctx *appctx, void *private)
+{
+	if (*args[2] && set_severity_output(&appctx->cli_severity_output, args[2]))
+		return 0;
+
+	appctx->ctx.cli.severity = LOG_ERR;
+	appctx->ctx.cli.msg = "one of 'none', 'number', 'string' is a required argument";
+	appctx->st0 = CLI_ST_PRINT;
+	return 1;
+}
+
+int cli_parse_default(char **args, struct appctx *appctx, void *private)
+{
+	return 0;
 }
 
 /* parse a "set rate-limit" command. It always returns 1. */
@@ -850,12 +1195,13 @@ static int cli_parse_set_ratelimit(char **args, struct appctx *appctx, void *pri
 		mul = 1024;
 	}
 	else {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg =
 			"'set rate-limit' only supports :\n"
 			"   - 'connections global' to set the per-process maximum connection rate\n"
 			"   - 'sessions global' to set the per-process maximum session rate\n"
 #ifdef USE_OPENSSL
-			"   - 'ssl-session global' to set the per-process maximum SSL session rate\n"
+			"   - 'ssl-sessions global' to set the per-process maximum SSL session rate\n"
 #endif
 			"   - 'http-compression global' to set the per-process maximum compression speed in kB/s\n";
 		appctx->st0 = CLI_ST_PRINT;
@@ -863,6 +1209,7 @@ static int cli_parse_set_ratelimit(char **args, struct appctx *appctx, void *pri
 	}
 
 	if (!*args[4]) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Expects an integer value.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -870,6 +1217,7 @@ static int cli_parse_set_ratelimit(char **args, struct appctx *appctx, void *pri
 
 	v = atoi(args[4]);
 	if (v < 0) {
+		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = "Value out of range.\n";
 		appctx->st0 = CLI_ST_PRINT;
 		return 1;
@@ -884,6 +1232,24 @@ static int cli_parse_set_ratelimit(char **args, struct appctx *appctx, void *pri
 	return 1;
 }
 
+/* parse the "expose-fd" argument on the bind lines */
+static int bind_parse_expose_fd(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
+{
+	if (!*args[cur_arg + 1]) {
+		memprintf(err, "'%s' : missing fd type", args[cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+	if (!strcmp(args[cur_arg+1], "listeners")) {
+		conf->level |= ACCESS_FD_LISTENERS;
+	} else {
+		memprintf(err, "'%s' only supports 'listeners' (got '%s')",
+			  args[cur_arg], args[cur_arg+1]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	return 0;
+}
+
 /* parse the "level" argument on the bind lines */
 static int bind_parse_level(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
@@ -892,13 +1258,16 @@ static int bind_parse_level(char **args, int cur_arg, struct proxy *px, struct b
 		return ERR_ALERT | ERR_FATAL;
 	}
 
-	if (!strcmp(args[cur_arg+1], "user"))
-		conf->level = ACCESS_LVL_USER;
-	else if (!strcmp(args[cur_arg+1], "operator"))
-		conf->level = ACCESS_LVL_OPER;
-	else if (!strcmp(args[cur_arg+1], "admin"))
-		conf->level = ACCESS_LVL_ADMIN;
-	else {
+	if (!strcmp(args[cur_arg+1], "user")) {
+		conf->level &= ~ACCESS_LVL_MASK;
+		conf->level |= ACCESS_LVL_USER;
+	} else if (!strcmp(args[cur_arg+1], "operator")) {
+		conf->level &= ~ACCESS_LVL_MASK;
+		conf->level |= ACCESS_LVL_OPER;
+	} else if (!strcmp(args[cur_arg+1], "admin")) {
+		conf->level &= ~ACCESS_LVL_MASK;
+		conf->level |= ACCESS_LVL_ADMIN;
+	} else {
 		memprintf(err, "'%s' only supports 'user', 'operator', and 'admin' (got '%s')",
 			  args[cur_arg], args[cur_arg+1]);
 		return ERR_ALERT | ERR_FATAL;
@@ -906,6 +1275,203 @@ static int bind_parse_level(char **args, int cur_arg, struct proxy *px, struct b
 
 	return 0;
 }
+
+static int bind_parse_severity_output(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
+{
+	if (!*args[cur_arg + 1]) {
+		memprintf(err, "'%s' : missing severity format", args[cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	if (set_severity_output(&conf->severity_output, args[cur_arg+1]))
+		return 0;
+	else {
+		memprintf(err, "'%s' only supports 'none', 'number', and 'string' (got '%s')",
+				args[cur_arg], args[cur_arg+1]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+}
+
+/* Send all the bound sockets, always returns 1 */
+static int _getsocks(char **args, struct appctx *appctx, void *private)
+{
+	char *cmsgbuf = NULL;
+	unsigned char *tmpbuf = NULL;
+	struct cmsghdr *cmsg;
+	struct stream_interface *si = appctx->owner;
+	struct stream *s = si_strm(si);
+	struct connection *remote = cs_conn(objt_cs(si_opposite(si)->end));
+	struct msghdr msghdr;
+	struct iovec iov;
+	struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+	int *tmpfd;
+	int tot_fd_nb = 0;
+	struct proxy *px;
+	int i = 0;
+	int fd = remote->handle.fd;
+	int curoff = 0;
+	int old_fcntl;
+	int ret;
+
+	/* Temporary set the FD in blocking mode, that will make our life easier */
+	old_fcntl = fcntl(fd, F_GETFL);
+	if (old_fcntl < 0) {
+		ha_warning("Couldn't get the flags for the unix socket\n");
+		goto out;
+	}
+	cmsgbuf = malloc(CMSG_SPACE(sizeof(int) * MAX_SEND_FD));
+	if (!cmsgbuf) {
+		ha_warning("Failed to allocate memory to send sockets\n");
+		goto out;
+	}
+	if (fcntl(fd, F_SETFL, old_fcntl &~ O_NONBLOCK) == -1) {
+		ha_warning("Cannot make the unix socket blocking\n");
+		goto out;
+	}
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (void *)&tv, sizeof(tv));
+	iov.iov_base = &tot_fd_nb;
+	iov.iov_len = sizeof(tot_fd_nb);
+	if (!(strm_li(s)->bind_conf->level & ACCESS_FD_LISTENERS))
+		goto out;
+	memset(&msghdr, 0, sizeof(msghdr));
+	/*
+	 * First, calculates the total number of FD, so that we can let
+	 * the caller know how much he should expects.
+	 */
+	px = proxies_list;
+	while (px) {
+		struct listener *l;
+
+		list_for_each_entry(l, &px->conf.listeners, by_fe) {
+			/* Only transfer IPv4/IPv6/UNIX sockets */
+			if (l->state >= LI_ZOMBIE &&
+			    (l->proto->sock_family == AF_INET ||
+			    l->proto->sock_family == AF_INET6 ||
+			    l->proto->sock_family == AF_UNIX))
+				tot_fd_nb++;
+		}
+		px = px->next;
+	}
+	if (tot_fd_nb == 0)
+		goto out;
+
+	/* First send the total number of file descriptors, so that the
+	 * receiving end knows what to expect.
+	 */
+	msghdr.msg_iov = &iov;
+	msghdr.msg_iovlen = 1;
+	ret = sendmsg(fd, &msghdr, 0);
+	if (ret != sizeof(tot_fd_nb)) {
+		ha_warning("Failed to send the number of sockets to send\n");
+		goto out;
+	}
+
+	/* Now send the fds */
+	msghdr.msg_control = cmsgbuf;
+	msghdr.msg_controllen = CMSG_SPACE(sizeof(int) * MAX_SEND_FD);
+	cmsg = CMSG_FIRSTHDR(&msghdr);
+	cmsg->cmsg_len = CMSG_LEN(MAX_SEND_FD * sizeof(int));
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	tmpfd = (int *)CMSG_DATA(cmsg);
+
+	px = proxies_list;
+	/* For each socket, e message is sent, containing the following :
+	 *  Size of the namespace name (or 0 if none), as an unsigned char.
+	 *  The namespace name, if any
+	 *  Size of the interface name (or 0 if none), as an unsigned char
+	 *  The interface name, if any
+	 *  Listener options, as an int.
+	 */
+	/* We will send sockets MAX_SEND_FD per MAX_SEND_FD, allocate a
+	 * buffer big enough to store the socket informations.
+	 */
+	tmpbuf = malloc(MAX_SEND_FD * (1 + MAXPATHLEN + 1 + IFNAMSIZ + sizeof(int)));
+	if (tmpbuf == NULL) {
+		ha_warning("Failed to allocate memory to transfer socket informations\n");
+		goto out;
+	}
+	iov.iov_base = tmpbuf;
+	while (px) {
+		struct listener *l;
+
+		list_for_each_entry(l, &px->conf.listeners, by_fe) {
+			int ret;
+			/* Only transfer IPv4/IPv6 sockets */
+			if (l->state >= LI_ZOMBIE &&
+			    (l->proto->sock_family == AF_INET ||
+			    l->proto->sock_family == AF_INET6 ||
+			    l->proto->sock_family == AF_UNIX)) {
+				memcpy(&tmpfd[i % MAX_SEND_FD], &l->fd, sizeof(l->fd));
+				if (!l->netns)
+					tmpbuf[curoff++] = 0;
+#ifdef CONFIG_HAP_NS
+				else {
+					char *name = l->netns->node.key;
+					unsigned char len = l->netns->name_len;
+					tmpbuf[curoff++] = len;
+					memcpy(tmpbuf + curoff, name, len);
+					curoff += len;
+				}
+#endif
+				if (l->interface) {
+					unsigned char len = strlen(l->interface);
+					tmpbuf[curoff++] = len;
+					memcpy(tmpbuf + curoff, l->interface, len);
+				curoff += len;
+				} else
+					tmpbuf[curoff++] = 0;
+				memcpy(tmpbuf + curoff, &l->options,
+				    sizeof(l->options));
+				curoff += sizeof(l->options);
+
+
+				i++;
+			} else
+				continue;
+			if ((!(i % MAX_SEND_FD))) {
+				iov.iov_len = curoff;
+				if (sendmsg(fd, &msghdr, 0) != curoff) {
+					ha_warning("Failed to transfer sockets\n");
+					goto out;
+				}
+				/* Wait for an ack */
+				do {
+					ret = recv(fd, &tot_fd_nb,
+					    sizeof(tot_fd_nb), 0);
+				} while (ret == -1 && errno == EINTR);
+				if (ret <= 0) {
+					ha_warning("Unexpected error while transferring sockets\n");
+					goto out;
+				}
+				curoff = 0;
+			}
+
+		}
+		px = px->next;
+	}
+	if (i % MAX_SEND_FD) {
+		iov.iov_len = curoff;
+		cmsg->cmsg_len = CMSG_LEN((i % MAX_SEND_FD) * sizeof(int));
+		msghdr.msg_controllen = CMSG_SPACE(sizeof(int) *  (i % MAX_SEND_FD));
+		if (sendmsg(fd, &msghdr, 0) != curoff) {
+			ha_warning("Failed to transfer sockets\n");
+			goto out;
+		}
+	}
+
+out:
+	if (old_fcntl >= 0 && fcntl(fd, F_SETFL, old_fcntl) == -1) {
+		ha_warning("Cannot make the unix socket non-blocking\n");
+		goto out;
+	}
+	appctx->st0 = CLI_ST_END;
+	free(cmsgbuf);
+	free(tmpbuf);
+	return 1;
+}
+
+
 
 static struct applet cli_applet = {
 	.obj_type = OBJ_TYPE_APPLET,
@@ -918,8 +1484,13 @@ static struct applet cli_applet = {
 static struct cli_kw_list cli_kws = {{ },{
 	{ { "set", "maxconn", "global",  NULL }, "set maxconn global : change the per-process maxconn setting", cli_parse_set_maxconn_global, NULL },
 	{ { "set", "rate-limit", NULL }, "set rate-limit : change a rate limiting value", cli_parse_set_ratelimit, NULL },
+	{ { "set", "severity-output",  NULL }, "set severity-output [none|number|string] : set presence of severity level in feedback information", cli_parse_set_severity_output, NULL, NULL },
 	{ { "set", "timeout",  NULL }, "set timeout    : change a timeout setting", cli_parse_set_timeout, NULL, NULL },
 	{ { "show", "env",  NULL }, "show env [var] : dump environment variables known to the process", cli_parse_show_env, cli_io_handler_show_env, NULL },
+	{ { "show", "cli", "sockets",  NULL }, "show cli sockets : dump list of cli sockets", cli_parse_default, cli_io_handler_show_cli_sock, NULL },
+	{ { "show", "fd", NULL }, "show fd [num] : dump list of file descriptors in use", cli_parse_show_fd, cli_io_handler_show_fd, NULL },
+	{ { "show", "activity", NULL }, "show activity : show per-thread activity stats (for support/developers)", cli_parse_default, cli_io_handler_show_activity, NULL },
+	{ { "_getsocks", NULL }, NULL,  _getsocks, NULL },
 	{{},}
 }};
 
@@ -929,7 +1500,9 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 }};
 
 static struct bind_kw_list bind_kws = { "STAT", { }, {
-	{ "level",    bind_parse_level,    1 }, /* set the unix socket admin level */
+	{ "level",     bind_parse_level,    1 }, /* set the unix socket admin level */
+	{ "expose-fd", bind_parse_expose_fd, 1 }, /* set the unix socket expose fd rights */
+	{ "severity-output", bind_parse_severity_output, 1 }, /* set the severity output format */
 	{ NULL, NULL, 0 },
 }};
 

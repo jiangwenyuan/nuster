@@ -36,7 +36,7 @@ struct chunk {
 	int len;	/* current size of the string from first to last char. <0 = uninit. */
 };
 
-struct pool_head *pool2_trash;
+struct pool_head *pool_head_trash;
 
 /* function prototypes */
 
@@ -50,17 +50,17 @@ int chunk_htmlencode(struct chunk *dst, struct chunk *src);
 int chunk_asciiencode(struct chunk *dst, struct chunk *src, char qc);
 int chunk_strcmp(const struct chunk *chk, const char *str);
 int chunk_strcasecmp(const struct chunk *chk, const char *str);
-int alloc_trash_buffers(int bufsize);
-void free_trash_buffers(void);
 struct chunk *get_trash_chunk(void);
 struct chunk *alloc_trash_chunk(void);
+int init_trash_buffers(int first);
+void deinit_trash_buffers(void);
 
 /*
  * free a trash chunk allocated by alloc_trash_chunk(). NOP on NULL.
  */
 static inline void free_trash_chunk(struct chunk *chunk)
 {
-	pool_free2(pool2_trash, chunk);
+	pool_free(pool_head_trash, chunk);
 }
 
 
@@ -96,6 +96,33 @@ static inline void chunk_initstr(struct chunk *chk, const char *str)
 	chk->str = (char *)str;
 	chk->len = strlen(str);
 	chk->size = 0;			/* mark it read-only */
+}
+
+/* copies memory area <src> into <chk> for <len> bytes. Returns 0 in
+ * case of failure. No trailing zero is added.
+ */
+static inline int chunk_memcpy(struct chunk *chk, const char *src, size_t len)
+{
+	if (unlikely(len >= chk->size))
+		return 0;
+
+	chk->len  = len;
+	memcpy(chk->str, src, len);
+
+	return 1;
+}
+
+/* appends memory area <src> after <chk> for <len> bytes. Returns 0 in
+ * case of failure. No trailing zero is added.
+ */
+static inline int chunk_memcat(struct chunk *chk, const char *src, size_t len)
+{
+	if (unlikely(chk->len < 0 || chk->len + len >= chk->size))
+		return 0;
+
+	memcpy(chk->str + chk->len, src, len);
+	chk->len += len;
+	return 1;
 }
 
 /* copies str into <chk> followed by a trailing zero. Returns 0 in

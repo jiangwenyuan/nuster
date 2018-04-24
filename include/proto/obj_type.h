@@ -119,6 +119,18 @@ static inline struct appctx *objt_appctx(enum obj_type *t)
 	return __objt_appctx(t);
 }
 
+static inline struct conn_stream *__objt_cs(enum obj_type *t)
+{
+	return (container_of(t, struct conn_stream, obj_type));
+}
+
+static inline struct conn_stream *objt_cs(enum obj_type *t)
+{
+	if (!t || *t != OBJ_TYPE_CS)
+		return NULL;
+	return __objt_cs(t);
+}
+
 static inline struct connection *__objt_conn(enum obj_type *t)
 {
 	return container_of(t, struct connection, obj_type);
@@ -131,6 +143,18 @@ static inline struct connection *objt_conn(enum obj_type *t)
 	return __objt_conn(t);
 }
 
+static inline struct dns_srvrq *__objt_dns_srvrq(enum obj_type *t)
+{
+	return container_of(t, struct dns_srvrq, obj_type);
+}
+
+static inline struct dns_srvrq *objt_dns_srvrq(enum obj_type *t)
+{
+	if (!t || *t != OBJ_TYPE_SRVRQ)
+		return NULL;
+	return __objt_dns_srvrq(t);
+}
+
 static inline void *obj_base_ptr(enum obj_type *t)
 {
 	switch (obj_type(t)) {
@@ -140,6 +164,7 @@ static inline void *obj_base_ptr(enum obj_type *t)
 	case OBJ_TYPE_APPLET:   return __objt_applet(t);
 	case OBJ_TYPE_APPCTX:   return __objt_appctx(t);
 	case OBJ_TYPE_CONN:     return __objt_conn(t);
+	case OBJ_TYPE_CS:       return __objt_cs(t);
 	default:                return NULL;
 	}
 }

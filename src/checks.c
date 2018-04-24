@@ -35,29 +35,24 @@
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/time.h>
+#include <common/hathreads.h>
 
 #include <types/global.h>
-#include <types/mailers.h>
 #include <types/dns.h>
 #include <types/stats.h>
-
-#ifdef USE_OPENSSL
-#include <types/ssl_sock.h>
-#include <proto/ssl_sock.h>
-#endif /* USE_OPENSSL */
 
 #include <proto/backend.h>
 #include <proto/checks.h>
 #include <proto/stats.h>
 #include <proto/fd.h>
 #include <proto/log.h>
+#include <proto/mux_pt.h>
 #include <proto/queue.h>
 #include <proto/port_range.h>
 #include <proto/proto_http.h>
 #include <proto/proto_tcp.h>
 #include <proto/protocol.h>
 #include <proto/proxy.h>
-#include <proto/raw_sock.h>
 #include <proto/server.h>
 #include <proto/signal.h>
 #include <proto/stream_interface.h>
@@ -66,10 +61,18 @@
 #include <proto/dns.h>
 #include <proto/proto_udp.h>
 
+#ifdef USE_OPENSSL
+#include <proto/ssl_sock.h>
+#endif /* USE_OPENSSL */
+
 static int httpchk_expect(struct server *s, int done);
 static int tcpcheck_get_step_id(struct check *);
 static char * tcpcheck_get_step_comment(struct check *, int);
-static void tcpcheck_main(struct check *);
+static int tcpcheck_main(struct check *);
+
+static struct pool_head *pool_head_email_alert   = NULL;
+static struct pool_head *pool_head_tcpcheck_rule = NULL;
+
 
 static const struct check_status check_statuses[HCHK_STATUS_SIZE] = {
 	[HCHK_STATUS_UNKNOWN]	= { CHK_RES_UNKNOWN,  "UNK",     "Unknown" },
@@ -185,41 +188,6 @@ const char *get_analyze_status(short analyze_status) {
 		return analyze_statuses[HANA_STATUS_UNKNOWN].desc;
 }
 
-/* Builds a string containing some information about the health check's result.
- * The output string is allocated from the trash chunks. If the check is NULL,
- * NULL is returned. This is designed to be used when emitting logs about health
- * checks.
- */
-static const char *check_reason_string(struct check *check)
-{
-	struct chunk *msg;
-
-	if (!check)
-		return NULL;
-
-	msg = get_trash_chunk();
-	chunk_printf(msg, "reason: %s", get_check_status_description(check->status));
-
-	if (check->status >= HCHK_STATUS_L57DATA)
-		chunk_appendf(msg, ", code: %d", check->code);
-
-	if (*check->desc) {
-		struct chunk src;
-
-		chunk_appendf(msg, ", info: \"");
-
-		chunk_initlen(&src, check->desc, 0, strlen(check->desc));
-		chunk_asciiencode(msg, &src, '"');
-
-		chunk_appendf(msg, "\"");
-	}
-
-	if (check->duration >= 0)
-		chunk_appendf(msg, ", check duration: %ldms", check->duration);
-
-	return msg->str;
-}
-
 /*
  * Set check->status, update check->duration and fill check->result with
  * an adequate CHK_RES_* value. The new check->health is computed based
@@ -276,7 +244,7 @@ static void set_server_check_status(struct check *check, short status, const cha
 		if ((!(check->state & CHK_ST_AGENT) ||
 		    (check->status >= HCHK_STATUS_L57DATA)) &&
 		    (check->health >= check->rise)) {
-			s->counters.failed_checks++;
+			HA_ATOMIC_ADD(&s->counters.failed_checks, 1);
 			report = 1;
 			check->health--;
 			if (check->health < check->rise)
@@ -314,14 +282,14 @@ static void set_server_check_status(struct check *check, short status, const cha
 		             (check->result == CHK_RES_CONDPASS) ? "conditionally ":"",
 		             (check->result >= CHK_RES_PASSED)   ? "succeeded" : "failed");
 
-		srv_append_status(&trash, s, check_reason_string(check), -1, 0);
+		srv_append_status(&trash, s, check, -1, 0);
 
 		chunk_appendf(&trash, ", status: %d/%d %s",
 		             (check->health >= check->rise) ? check->health - check->rise + 1 : check->health,
 		             (check->health >= check->rise) ? check->fall : check->rise,
 			     (check->health >= check->rise) ? (s->uweight ? "UP" : "DRAIN") : "DOWN");
 
-		Warning("%s.\n", trash.str);
+		ha_warning("%s.\n", trash.str);
 		send_log(s->proxy, LOG_NOTICE, "%s.\n", trash.str);
 		send_email_alert(s, LOG_INFO, "%s", trash.str);
 	}
@@ -347,7 +315,7 @@ static void check_notify_failure(struct check *check)
 		return;
 
 	/* We only report a reason for the check if we did not do so previously */
-	srv_set_stopped(s, (!s->track && !(s->proxy->options2 & PR_O2_LOGHCHKS)) ? check_reason_string(check) : NULL);
+	srv_set_stopped(s, NULL, (!s->track && !(s->proxy->options2 & PR_O2_LOGHCHKS)) ? check : NULL);
 }
 
 /* Marks the check <check> as valid and tries to set its server up, provided
@@ -365,10 +333,10 @@ static void check_notify_success(struct check *check)
 {
 	struct server *s = check->server;
 
-	if (s->admin & SRV_ADMF_MAINT)
+	if (s->next_admin & SRV_ADMF_MAINT)
 		return;
 
-	if (s->track && s->track->state == SRV_ST_STOPPED)
+	if (s->track && s->track->next_state == SRV_ST_STOPPED)
 		return;
 
 	if ((s->check.state & CHK_ST_ENABLED) && (s->check.health < s->check.rise))
@@ -377,10 +345,10 @@ static void check_notify_success(struct check *check)
 	if ((s->agent.state & CHK_ST_ENABLED) && (s->agent.health < s->agent.rise))
 		return;
 
-	if ((check->state & CHK_ST_AGENT) && s->state == SRV_ST_STOPPING)
+	if ((check->state & CHK_ST_AGENT) && s->next_state == SRV_ST_STOPPING)
 		return;
 
-	srv_set_running(s, (!s->track && !(s->proxy->options2 & PR_O2_LOGHCHKS)) ? check_reason_string(check) : NULL);
+	srv_set_running(s, NULL, (!s->track && !(s->proxy->options2 & PR_O2_LOGHCHKS)) ? check : NULL);
 }
 
 /* Marks the check <check> as valid and tries to set its server into stopping mode
@@ -393,13 +361,13 @@ static void check_notify_stopping(struct check *check)
 {
 	struct server *s = check->server;
 
-	if (s->admin & SRV_ADMF_MAINT)
+	if (s->next_admin & SRV_ADMF_MAINT)
 		return;
 
 	if (check->state & CHK_ST_AGENT)
 		return;
 
-	if (s->track && s->track->state == SRV_ST_STOPPED)
+	if (s->track && s->track->next_state == SRV_ST_STOPPED)
 		return;
 
 	if ((s->check.state & CHK_ST_ENABLED) && (s->check.health < s->check.rise))
@@ -408,7 +376,7 @@ static void check_notify_stopping(struct check *check)
 	if ((s->agent.state & CHK_ST_ENABLED) && (s->agent.health < s->agent.rise))
 		return;
 
-	srv_set_stopping(s, (!s->track && !(s->proxy->options2 & PR_O2_LOGHCHKS)) ? check_reason_string(check) : NULL);
+	srv_set_stopping(s, NULL, (!s->track && !(s->proxy->options2 & PR_O2_LOGHCHKS)) ? check : NULL);
 }
 
 /* note: use health_adjust() only, which first checks that the observe mode is
@@ -444,7 +412,7 @@ void __health_adjust(struct server *s, short status)
 		return;
 	}
 
-	s->consecutive_errors++;
+	HA_ATOMIC_ADD(&s->consecutive_errors, 1);
 
 	if (s->consecutive_errors < s->consecutive_errors_limit)
 		return;
@@ -483,7 +451,7 @@ void __health_adjust(struct server *s, short status)
 	}
 
 	s->consecutive_errors = 0;
-	s->counters.failed_hana++;
+	HA_ATOMIC_ADD(&s->counters.failed_hana, 1);
 
 	if (s->check.fastinter) {
 		expire = tick_add(now_ms, MS_TO_TICKS(s->check.fastinter));
@@ -512,13 +480,13 @@ static int httpchk_build_status_header(struct server *s, char *buffer, int size)
 
 	if (!(s->check.state & CHK_ST_ENABLED))
 		sv_state = 6;
-	else if (s->state != SRV_ST_STOPPED) {
+	else if (s->cur_state != SRV_ST_STOPPED) {
 		if (s->check.health == s->check.rise + s->check.fall - 1)
 			sv_state = 3; /* UP */
 		else
 			sv_state = 2; /* going down */
 
-		if (s->state == SRV_ST_STOPPING)
+		if (s->cur_state == SRV_ST_STOPPING)
 			sv_state += 2;
 	} else {
 		if (s->check.health)
@@ -529,8 +497,8 @@ static int httpchk_build_status_header(struct server *s, char *buffer, int size)
 
 	hlen += snprintf(buffer + hlen, size - hlen,
 			     srv_hlt_st[sv_state],
-			     (s->state != SRV_ST_STOPPED) ? (s->check.health - s->check.rise + 1) : (s->check.health),
-			     (s->state != SRV_ST_STOPPED) ? (s->check.fall) : (s->check.rise));
+			     (s->cur_state != SRV_ST_STOPPED) ? (s->check.health - s->check.rise + 1) : (s->check.health),
+			     (s->cur_state != SRV_ST_STOPPED) ? (s->check.fall) : (s->check.rise));
 
 	addr_to_str(&s->addr, addr, sizeof(addr));
 	if (s->addr.ss_family == AF_INET || s->addr.ss_family == AF_INET6)
@@ -541,12 +509,12 @@ static int httpchk_build_status_header(struct server *s, char *buffer, int size)
 	hlen += snprintf(buffer + hlen,  size - hlen, "; address=%s; port=%s; name=%s/%s; node=%s; weight=%d/%d; scur=%d/%d; qcur=%d",
 			     addr, port, s->proxy->id, s->id,
 			     global.node,
-			     (s->eweight * s->proxy->lbprm.wmult + s->proxy->lbprm.wdiv - 1) / s->proxy->lbprm.wdiv,
+			     (s->cur_eweight * s->proxy->lbprm.wmult + s->proxy->lbprm.wdiv - 1) / s->proxy->lbprm.wdiv,
 			     (s->proxy->lbprm.tot_weight * s->proxy->lbprm.wmult + s->proxy->lbprm.wdiv - 1) / s->proxy->lbprm.wdiv,
 			     s->cur_sess, s->proxy->beconn - s->proxy->nbpend,
 			     s->nbpend);
 
-	if ((s->state == SRV_ST_STARTING) &&
+	if ((s->cur_state == SRV_ST_STARTING) &&
 	    now.tv_sec < s->last_change + s->slowstart &&
 	    now.tv_sec >= s->last_change) {
 		ratio = MAX(1, 100 * (now.tv_sec - s->last_change) / s->slowstart);
@@ -579,7 +547,7 @@ static int retrieve_errno_from_socket(struct connection *conn)
 	if (!conn_ctrl_ready(conn))
 		return 0;
 
-	if (getsockopt(conn->t.sock.fd, SOL_SOCKET, SO_ERROR, &skerr, &lskerr) == 0)
+	if (getsockopt(conn->handle.fd, SOL_SOCKET, SO_ERROR, &skerr, &lskerr) == 0)
 		errno = skerr;
 
 	if (errno == EAGAIN)
@@ -612,9 +580,10 @@ static int retrieve_errno_from_socket(struct connection *conn)
  * All situations where at least one of <expired> or CO_FL_ERROR are set
  * produce a status.
  */
-static void chk_report_conn_err(struct connection *conn, int errno_bck, int expired)
+static void chk_report_conn_err(struct check *check, int errno_bck, int expired)
 {
-	struct check *check = conn->owner;
+	struct conn_stream *cs = check->cs;
+	struct connection *conn = cs_conn(cs);
 	const char *err_msg;
 	struct chunk *chk;
 	int step;
@@ -624,10 +593,11 @@ static void chk_report_conn_err(struct connection *conn, int errno_bck, int expi
 		return;
 
 	errno = errno_bck;
-	if (!errno || errno == EAGAIN)
+	if (conn && (!errno || errno == EAGAIN))
 		retrieve_errno_from_socket(conn);
 
-	if (!(conn->flags & CO_FL_ERROR) && !expired)
+	if (conn && !(conn->flags & CO_FL_ERROR) &&
+	    !(cs->flags & CS_FL_ERROR) && !expired)
 		return;
 
 	/* we'll try to build a meaningful error message depending on the
@@ -666,7 +636,7 @@ static void chk_report_conn_err(struct connection *conn, int errno_bck, int expi
 		}
 	}
 
-	if (conn->err_code) {
+	if (conn && conn->err_code) {
 		if (errno && errno != EAGAIN)
 			chunk_printf(&trash, "%s (%s)%s", conn_err_code_str(conn), strerror(errno), chk->str);
 		else
@@ -683,15 +653,19 @@ static void chk_report_conn_err(struct connection *conn, int errno_bck, int expi
 		}
 	}
 
-       if (check->state & CHK_ST_PORT_MISS) {
+	if (check->state & CHK_ST_PORT_MISS) {
 		/* NOTE: this is reported after <fall> tries */
 		chunk_printf(chk, "No port available for the TCP connection");
 		set_server_check_status(check, HCHK_STATUS_SOCKERR, err_msg);
 	}
 
-	if ((conn->flags & (CO_FL_CONNECTED|CO_FL_WAIT_L4_CONN)) == CO_FL_WAIT_L4_CONN) {
+	if (!conn) {
+		/* connection allocation error before the connection was established */
+		set_server_check_status(check, HCHK_STATUS_SOCKERR, err_msg);
+	}
+	else if ((conn->flags & (CO_FL_CONNECTED|CO_FL_WAIT_L4_CONN)) == CO_FL_WAIT_L4_CONN) {
 		/* L4 not established (yet) */
-		if (conn->flags & CO_FL_ERROR)
+		if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
 			set_server_check_status(check, HCHK_STATUS_L4CON, err_msg);
 		else if (expired)
 			set_server_check_status(check, HCHK_STATUS_L4TOUT, err_msg);
@@ -700,18 +674,17 @@ static void chk_report_conn_err(struct connection *conn, int errno_bck, int expi
 		 * might be due to a server IP change.
 		 * Let's trigger a DNS resolution if none are currently running.
 		 */
-		if ((check->server->resolution)	&& (check->server->resolution->step == RSLV_STEP_NONE))
-			trigger_resolution(check->server);
+		dns_trigger_resolution(check->server->dns_requester);
 
 	}
 	else if ((conn->flags & (CO_FL_CONNECTED|CO_FL_WAIT_L6_CONN)) == CO_FL_WAIT_L6_CONN) {
 		/* L6 not established (yet) */
-		if (conn->flags & CO_FL_ERROR)
+		if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
 			set_server_check_status(check, HCHK_STATUS_L6RSP, err_msg);
 		else if (expired)
 			set_server_check_status(check, HCHK_STATUS_L6TOUT, err_msg);
 	}
-	else if (conn->flags & CO_FL_ERROR) {
+	else if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR) {
 		/* I/O error after connection was established and before we could diagnose */
 		set_server_check_status(check, HCHK_STATUS_SOCKERR, err_msg);
 	}
@@ -731,29 +704,34 @@ static void chk_report_conn_err(struct connection *conn, int errno_bck, int expi
  * the connection acknowledgement. If the proxy requires L7 health-checks,
  * it sends the request. In other cases, it calls set_server_check_status()
  * to set check->status, check->duration and check->result.
+ *
+ * Please do NOT place any return statement in this function and only leave
+ * via the out_unlock label.
  */
-static void event_srv_chk_w(struct connection *conn)
+static void event_srv_chk_w(struct conn_stream *cs)
 {
-	struct check *check = conn->owner;
+	struct connection *conn = cs->conn;
+	struct check *check = cs->data;
 	struct server *s = check->server;
 	struct task *t = check->task;
 
+	HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
 	if (unlikely(check->result == CHK_RES_FAILED))
 		goto out_wakeup;
 
 	if (conn->flags & CO_FL_HANDSHAKE)
-		return;
+		goto out_unlock;
 
 	if (retrieve_errno_from_socket(conn)) {
-		chk_report_conn_err(conn, errno, 0);
-		__conn_data_stop_both(conn);
+		chk_report_conn_err(check, errno, 0);
+		__cs_stop_both(cs);
 		goto out_wakeup;
 	}
 
-	if (conn->flags & (CO_FL_SOCK_WR_SH | CO_FL_DATA_WR_SH)) {
+	if (conn->flags & CO_FL_SOCK_WR_SH) {
 		/* if the output is closed, we can't do anything */
 		conn->flags |= CO_FL_ERROR;
-		chk_report_conn_err(conn, 0, 0);
+		chk_report_conn_err(check, 0, 0);
 		goto out_wakeup;
 	}
 
@@ -765,17 +743,17 @@ static void event_srv_chk_w(struct connection *conn)
 
 	/* wake() will take care of calling tcpcheck_main() */
 	if (check->type == PR_O2_TCPCHK_CHK)
-		return;
+		goto out_unlock;
 
 	if (check->bo->o) {
-		conn->xprt->snd_buf(conn, check->bo, 0);
-		if (conn->flags & CO_FL_ERROR) {
-			chk_report_conn_err(conn, errno, 0);
-			__conn_data_stop_both(conn);
+		conn->mux->snd_buf(cs, check->bo, 0);
+		if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR) {
+			chk_report_conn_err(check, errno, 0);
+			__cs_stop_both(cs);
 			goto out_wakeup;
 		}
 		if (check->bo->o)
-			return;
+			goto out_unlock;
 	}
 
 	/* full request sent, we allow up to <timeout.check> if nonzero for a response */
@@ -788,7 +766,9 @@ static void event_srv_chk_w(struct connection *conn)
  out_wakeup:
 	task_wakeup(t, TASK_WOKEN_IO);
  out_nowake:
-	__conn_data_stop_send(conn);   /* nothing more to write */
+	__cs_stop_send(cs);   /* nothing more to write */
+ out_unlock:
+	HA_SPIN_UNLOCK(SERVER_LOCK, &check->server->lock);
 }
 
 /*
@@ -804,25 +784,31 @@ static void event_srv_chk_w(struct connection *conn)
  * distinguish between an SSL server and a pure TCP relay). All other cases will
  * call it with a proper error status like HCHK_STATUS_L7STS, HCHK_STATUS_L6RSP,
  * etc.
+ *
+ * Please do NOT place any return statement in this function and only leave
+ * via the out_unlock label.
  */
-static void event_srv_chk_r(struct connection *conn)
+static void event_srv_chk_r(struct conn_stream *cs)
 {
-	struct check *check = conn->owner;
+	struct connection *conn = cs->conn;
+	struct check *check = cs->data;
 	struct server *s = check->server;
 	struct task *t = check->task;
 	char *desc;
 	int done;
 	unsigned short msglen;
 
+	HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
+
 	if (unlikely(check->result == CHK_RES_FAILED))
 		goto out_wakeup;
 
 	if (conn->flags & CO_FL_HANDSHAKE)
-		return;
+		goto out_unlock;
 
 	/* wake() will take care of calling tcpcheck_main() */
 	if (check->type == PR_O2_TCPCHK_CHK)
-		return;
+		goto out_unlock;
 
 	/* Warning! Linux returns EAGAIN on SO_ERROR if data are still available
 	 * but the connection was closed on the remote end. Fortunately, recv still
@@ -836,16 +822,16 @@ static void event_srv_chk_r(struct connection *conn)
 
 	done = 0;
 
-	conn->xprt->rcv_buf(conn, check->bi, check->bi->size);
-	if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH)) {
+	conn->mux->rcv_buf(cs, check->bi, check->bi->size);
+	if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH) || cs->flags & CS_FL_ERROR) {
 		done = 1;
-		if ((conn->flags & CO_FL_ERROR) && !check->bi->i) {
+		if ((conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR) && !check->bi->i) {
 			/* Report network errors only if we got no other data. Otherwise
 			 * we'll let the upper layers decide whether the response is OK
 			 * or not. It is very common that an RST sent by the server is
 			 * reported as an error just after the last data chunk.
 			 */
-			chk_report_conn_err(conn, errno, 0);
+			chk_report_conn_err(check, errno, 0);
 			goto out_wakeup;
 		}
 	}
@@ -881,9 +867,9 @@ static void event_srv_chk_r(struct connection *conn)
 
 		check->code = str2uic(check->bi->data + 9);
 		desc = ltrim(check->bi->data + 12, ' ');
-		
+
 		if ((s->proxy->options & PR_O_DISABLE404) &&
-			 (s->state != SRV_ST_STOPPED) && (check->code == 404)) {
+			 (s->next_state != SRV_ST_STOPPED) && (check->code == 404)) {
 			/* 404 may be accepted as "stopping" only if the server was up */
 			cut_crlf(desc);
 			set_server_check_status(check, HCHK_STATUS_L7OKCD, desc);
@@ -926,7 +912,6 @@ static void event_srv_chk_r(struct connection *conn)
 		    !isdigit((unsigned char) *(check->bi->data + 2))) {
 			cut_crlf(check->bi->data);
 			set_server_check_status(check, HCHK_STATUS_L7RSP, check->bi->data);
-
 			goto out_wakeup;
 		}
 
@@ -1193,6 +1178,7 @@ static void event_srv_chk_r(struct connection *conn)
 				else {
 					if (!done)
 						goto wait_more_data;
+
 					/* it seems we have a OK packet but without a valid length,
 					 * it must be a protocol error
 					 */
@@ -1223,7 +1209,7 @@ static void event_srv_chk_r(struct connection *conn)
 					* an error message is attached, so we can display it
 					*/
 					desc = &check->bi->data[7];
-					//Warning("onlyoneERR: %s\n", desc);
+					//ha_warning("onlyoneERR: %s\n", desc);
 					set_server_check_status(check, HCHK_STATUS_L7STS, desc);
 				}
 			} else if (check->bi->i > first_packet_len + 4) {
@@ -1238,7 +1224,7 @@ static void event_srv_chk_r(struct connection *conn)
 						/* No error packet */
 						/* We set the MySQL Version in description for information purpose */
 						desc = &check->bi->data[5];
-						//Warning("2packetOK: %s\n", desc);
+						//ha_warning("2packetOK: %s\n", desc);
 						set_server_check_status(check, HCHK_STATUS_L7OKD, desc);
 					}
 					else {
@@ -1246,7 +1232,7 @@ static void event_srv_chk_r(struct connection *conn)
 						* so we can display it ! :)
 						*/
 						desc = &check->bi->data[first_packet_len+11];
-						//Warning("2packetERR: %s\n", desc);
+						//ha_warning("2packetERR: %s\n", desc);
 						set_server_check_status(check, HCHK_STATUS_L7STS, desc);
 					}
 				}
@@ -1254,11 +1240,12 @@ static void event_srv_chk_r(struct connection *conn)
 			else {
 				if (!done)
 					goto wait_more_data;
+
 				/* it seems we have a Handshake Initialization packet but without a valid length,
 				 * it must be a protocol error
 				 */
 				desc = &check->bi->data[5];
-				//Warning("protoerr: %s\n", desc);
+				//ha_warning("protoerr: %s\n", desc);
 				set_server_check_status(check, HCHK_STATUS_L7RSP, desc);
 			}
 		}
@@ -1290,7 +1277,6 @@ static void event_srv_chk_r(struct connection *conn)
 			if ((msglen > 2) ||
 			    (memcmp(check->bi->data + 2 + msglen, "\x02\x01\x01\x61", 4) != 0)) {
 				set_server_check_status(check, HCHK_STATUS_L7RSP, "Not LDAPv3 protocol");
-
 				goto out_wakeup;
 			}
 
@@ -1303,7 +1289,6 @@ static void event_srv_chk_r(struct connection *conn)
 			if ((msglen > 4) ||
 			    (memcmp(check->bi->data + 7 + msglen, "\x0a\x01", 2) != 0)) {
 				set_server_check_status(check, HCHK_STATUS_L7RSP, "Not LDAPv3 protocol");
-
 				goto out_wakeup;
 			}
 
@@ -1332,7 +1317,7 @@ static void event_srv_chk_r(struct connection *conn)
 		if (!done && check->bi->i < (4+framesz))
 		    goto wait_more_data;
 
-		if (!handle_spoe_healthcheck_response(check->bi->data+4, framesz, err, HCHK_DESC_LEN-1))
+		if (!spoe_handle_healthcheck_response(check->bi->data+4, framesz, err, HCHK_DESC_LEN-1))
 			set_server_check_status(check, HCHK_STATUS_L7OKD, "SPOA server is ok");
 		else
 			set_server_check_status(check, HCHK_STATUS_L7STS, err);
@@ -1346,8 +1331,8 @@ static void event_srv_chk_r(struct connection *conn)
 
  out_wakeup:
 	/* collect possible new errors */
-	if (conn->flags & CO_FL_ERROR)
-		chk_report_conn_err(conn, 0, 0);
+	if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
+		chk_report_conn_err(check, 0, 0);
 
 	/* Reset the check buffer... */
 	*check->bi->data = '\0';
@@ -1360,46 +1345,56 @@ static void event_srv_chk_r(struct connection *conn)
 	 * range quickly.  To avoid sending RSTs all the time, we first try to
 	 * drain pending data.
 	 */
-	__conn_data_stop_both(conn);
-	conn_data_shutw(conn);
+	__cs_stop_both(cs);
+	cs_shutw(cs, CS_SHW_NORMAL);
 
 	/* OK, let's not stay here forever */
 	if (check->result == CHK_RES_FAILED)
 		conn->flags |= CO_FL_ERROR;
 
 	task_wakeup(t, TASK_WOKEN_IO);
+ out_unlock:
+	HA_SPIN_UNLOCK(SERVER_LOCK, &check->server->lock);
 	return;
 
  wait_more_data:
-	__conn_data_want_recv(conn);
+	__cs_want_recv(cs);
+        goto out_unlock;
 }
 
 /*
  * This function is used only for server health-checks. It handles connection
  * status updates including errors. If necessary, it wakes the check task up.
- * It always returns 0.
+ * It returns 0 on normal cases, <0 if at least one close() has happened on the
+ * connection (eg: reconnect).
  */
-static int wake_srv_chk(struct connection *conn)
+static int wake_srv_chk(struct conn_stream *cs)
 {
-	struct check *check = conn->owner;
+	struct connection *conn = cs->conn;
+	struct check *check = cs->data;
+	int ret = 0;
+
+	HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
 
 	/* we may have to make progress on the TCP checks */
-	if (check->type == PR_O2_TCPCHK_CHK)
-		tcpcheck_main(check);
+	if (check->type == PR_O2_TCPCHK_CHK) {
+		ret = tcpcheck_main(check);
+		cs = check->cs;
+		conn = cs_conn(cs);
+	}
 
-	if (unlikely(conn->flags & CO_FL_ERROR)) {
+	if (unlikely(conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)) {
 		/* We may get error reports bypassing the I/O handlers, typically
 		 * the case when sending a pure TCP check which fails, then the I/O
 		 * handlers above are not called. This is completely handled by the
 		 * main processing task so let's simply wake it up. If we get here,
 		 * we expect errno to still be valid.
 		 */
-		chk_report_conn_err(conn, errno, 0);
-
-		__conn_data_stop_both(conn);
+		chk_report_conn_err(check, errno, 0);
+		__cs_stop_both(cs);
 		task_wakeup(check->task, TASK_WOKEN_IO);
 	}
-	else if (!(conn->flags & (CO_FL_DATA_RD_ENA|CO_FL_DATA_WR_ENA|CO_FL_HANDSHAKE))) {
+	else if (!(conn->flags & CO_FL_HANDSHAKE) && !(cs->flags & (CS_FL_DATA_RD_ENA|CS_FL_DATA_WR_ENA))) {
 		/* we may get here if only a connection probe was required : we
 		 * don't have any data to send nor anything expected in response,
 		 * so the completion of the connection establishment is enough.
@@ -1412,9 +1407,19 @@ static int wake_srv_chk(struct connection *conn)
 		 * sure want to abort the hard way.
 		 */
 		conn_sock_drain(conn);
-		conn_force_close(conn);
+		cs_close(cs);
+		ret = -1;
 	}
-	return 0;
+
+	HA_SPIN_UNLOCK(SERVER_LOCK, &check->server->lock);
+
+	/* if a connection got replaced, we must absolutely prevent the connection
+	 * handler from touching its fd, and perform the FD polling updates ourselves
+	 */
+	if (ret < 0)
+		conn_cond_update_polling(conn);
+
+	return ret;
 }
 
 struct data_cb check_conn_cb = {
@@ -1435,8 +1440,8 @@ static struct task *server_warmup(struct task *t)
 
 	/* by default, plan on stopping the task */
 	t->expire = TICK_ETERNITY;
-	if ((s->admin & SRV_ADMF_MAINT) ||
-	    (s->state != SRV_ST_STARTING))
+	if ((s->next_admin & SRV_ADMF_MAINT) ||
+	    (s->next_state != SRV_ST_STARTING))
 		return t;
 
 	/* recalculate the weights and update the state */
@@ -1448,7 +1453,7 @@ static struct task *server_warmup(struct task *t)
 	/* get back there in 1 second or 1/20th of the slowstart interval,
 	 * whichever is greater, resulting in small 5% steps.
 	 */
-	if (s->state == SRV_ST_STARTING)
+	if (s->next_state == SRV_ST_STARTING)
 		t->expire = tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20)));
 	return t;
 }
@@ -1487,11 +1492,16 @@ static int connect_conn_chk(struct task *t)
 {
 	struct check *check = t->context;
 	struct server *s = check->server;
-	struct connection *conn = check->conn;
+	struct conn_stream *cs = check->cs;
+	struct connection *conn = cs_conn(cs);
 	struct protocol *proto;
 	struct tcpcheck_rule *tcp_rule = NULL;
 	int ret;
 	int quickack;
+
+	/* we cannot have a connection here */
+	if (conn)
+		return SF_ERR_INTERNAL;
 
 	/* tcpcheck send/expect initialisation */
 	if (check->type == PR_O2_TCPCHK_CHK) {
@@ -1540,7 +1550,10 @@ static int connect_conn_chk(struct task *t)
 	}
 
 	/* prepare a new connection */
-	conn_init(conn);
+	cs = check->cs = cs_new(NULL);
+	if (!check->cs)
+		return SF_ERR_RESOURCE;
+	conn = cs->conn;
 
 	if (is_addr(&check->addr)) {
 		/* we'll connect to the check addr specified on the server */
@@ -1551,23 +1564,22 @@ static int connect_conn_chk(struct task *t)
 		conn->addr.to = s->addr;
 	}
 
+	proto = protocol_by_family(conn->addr.to.ss_family);
+
+	conn_prepare(conn, proto, check->xprt);
+	conn_install_mux(conn, &mux_pt_ops, cs);
+	cs_attach(cs, check, &check_conn_cb);
+	conn->target = &s->obj_type;
+
        if ((conn->addr.to.ss_family == AF_INET) || (conn->addr.to.ss_family == AF_INET6)) {
 		int i = 0;
 
 		i = srv_check_healthcheck_port(check);
-		if (i == 0) {
-			conn->owner = check;
+		if (i == 0)
 			return SF_ERR_CHK_PORT;
-		}
 
 		set_host_port(&conn->addr.to, i);
 	}
-
-	proto = protocol_by_family(conn->addr.to.ss_family);
-
-	conn_prepare(conn, proto, check->xprt);
-	conn_attach(conn, check, &check_conn_cb);
-	conn->target = &s->obj_type;
 
 	/* no client address */
 	clear_addr(&conn->addr.from);
@@ -1579,9 +1591,16 @@ static int connect_conn_chk(struct task *t)
 		quickack = 0;
 
 	ret = SF_ERR_INTERNAL;
-	if (proto->connect)
+	if (proto && proto->connect)
 		ret = proto->connect(conn, check->type, quickack ? 2 : 0);
-	conn->flags |= CO_FL_WAKE_DATA;
+
+	if (check->type)
+		cs_want_send(cs);
+
+#ifdef USE_OPENSSL
+	if (s->check.sni)
+		ssl_sock_set_servername(conn, s->check.sni);
+#endif
 	if (s->check.send_proxy && !(check->state & CHK_ST_AGENT)) {
 		conn->send_proxy_ofs = 1;
 		conn->flags |= CO_FL_SEND_PROXY;
@@ -1591,7 +1610,8 @@ static int connect_conn_chk(struct task *t)
 }
 
 static struct list pid_list = LIST_HEAD_INIT(pid_list);
-static struct pool_head *pool2_pid_list;
+static struct pool_head *pool_head_pid_list;
+__decl_hathreads(HA_SPINLOCK_T pid_list_lock);
 
 void block_sigchld(void)
 {
@@ -1614,7 +1634,7 @@ static struct pid_list *pid_list_add(pid_t pid, struct task *t)
 	struct pid_list *elem;
 	struct check *check = t->context;
 
-	elem = pool_alloc2(pool2_pid_list);
+	elem = pool_alloc(pool_head_pid_list);
 	if (!elem)
 		return NULL;
 	elem->pid = pid;
@@ -1622,7 +1642,11 @@ static struct pid_list *pid_list_add(pid_t pid, struct task *t)
 	elem->exited = 0;
 	check->curpid = elem;
 	LIST_INIT(&elem->list);
+
+	HA_SPIN_LOCK(PID_LIST_LOCK, &pid_list_lock);
 	LIST_ADD(&pid_list, &elem->list);
+	HA_SPIN_UNLOCK(PID_LIST_LOCK, &pid_list_lock);
+
 	return elem;
 }
 
@@ -1633,13 +1657,16 @@ static void pid_list_del(struct pid_list *elem)
 	if (!elem)
 		return;
 
+	HA_SPIN_LOCK(PID_LIST_LOCK, &pid_list_lock);
 	LIST_DEL(&elem->list);
+	HA_SPIN_UNLOCK(PID_LIST_LOCK, &pid_list_lock);
+
 	if (!elem->exited)
 		kill(elem->pid, SIGTERM);
 
 	check = elem->t->context;
 	check->curpid = NULL;
-	pool_free2(pool2_pid_list, elem);
+	pool_free(pool_head_pid_list, elem);
 }
 
 /* Called from inside SIGCHLD handler, SIGCHLD is blocked */
@@ -1647,15 +1674,17 @@ static void pid_list_expire(pid_t pid, int status)
 {
 	struct pid_list *elem;
 
+	HA_SPIN_LOCK(PID_LIST_LOCK, &pid_list_lock);
 	list_for_each_entry(elem, &pid_list, list) {
 		if (elem->pid == pid) {
 			elem->t->expire = now_ms;
 			elem->status = status;
 			elem->exited = 1;
 			task_wakeup(elem->t, TASK_WOKEN_IO);
-			return;
+			break;
 		}
 	}
+	HA_SPIN_UNLOCK(PID_LIST_LOCK, &pid_list_lock);
 }
 
 static void sigchld_handler(struct sig_handler *sh)
@@ -1669,22 +1698,24 @@ static void sigchld_handler(struct sig_handler *sh)
 
 static int init_pid_list(void)
 {
-	if (pool2_pid_list != NULL)
+	if (pool_head_pid_list != NULL)
 		/* Nothing to do */
 		return 0;
 
 	if (!signal_register_fct(SIGCHLD, sigchld_handler, SIGCHLD)) {
-		Alert("Failed to set signal handler for external health checks: %s. Aborting.\n",
-		      strerror(errno));
+		ha_alert("Failed to set signal handler for external health checks: %s. Aborting.\n",
+			 strerror(errno));
 		return 1;
 	}
 
-	pool2_pid_list = create_pool("pid_list", sizeof(struct pid_list), MEM_F_SHARED);
-	if (pool2_pid_list == NULL) {
-		Alert("Failed to allocate memory pool for external health checks: %s. Aborting.\n",
-		      strerror(errno));
+	pool_head_pid_list = create_pool("pid_list", sizeof(struct pid_list), MEM_F_SHARED);
+	if (pool_head_pid_list == NULL) {
+		ha_alert("Failed to allocate memory pool for external health checks: %s. Aborting.\n",
+			 strerror(errno));
 		return 1;
 	}
+
+	HA_SPIN_INIT(&pid_list_lock);
 
 	return 0;
 }
@@ -1704,7 +1735,7 @@ static int extchk_setenv(struct check *check, int idx, const char *value)
 	int vmaxlen;
 
 	if (idx < 0 || idx >= EXTCHK_SIZE) {
-		Alert("Illegal environment variable index %d. Aborting.\n", idx);
+		ha_alert("Illegal environment variable index %d. Aborting.\n", idx);
 		return 1;
 	}
 
@@ -1731,16 +1762,16 @@ static int extchk_setenv(struct check *check, int idx, const char *value)
 		check->envp[idx] = malloc(len + 1);
 
 	if (!check->envp[idx]) {
-		Alert("Failed to allocate memory for the environment variable '%s'. Aborting.\n", envname);
+		ha_alert("Failed to allocate memory for the environment variable '%s'. Aborting.\n", envname);
 		return 1;
 	}
 	ret = snprintf(check->envp[idx], len + 1, "%s=%s", envname, value);
 	if (ret < 0) {
-		Alert("Failed to store the environment variable '%s'. Reason : %s. Aborting.\n", envname, strerror(errno));
+		ha_alert("Failed to store the environment variable '%s'. Reason : %s. Aborting.\n", envname, strerror(errno));
 		return 1;
 	}
 	else if (ret > len) {
-		Alert("Environment variable '%s' was truncated. Aborting.\n", envname);
+		ha_alert("Environment variable '%s' was truncated. Aborting.\n", envname);
 		return 1;
 	}
 	return 0;
@@ -1767,13 +1798,13 @@ static int prepare_external_check(struct check *check)
 	check->curpid = NULL;
 	check->envp = calloc((EXTCHK_SIZE + 1), sizeof(char *));
 	if (!check->envp) {
-		Alert("Failed to allocate memory for environment variables. Aborting\n");
+		ha_alert("Failed to allocate memory for environment variables. Aborting\n");
 		goto err;
 	}
 
 	check->argv = calloc(6, sizeof(char *));
 	if (!check->argv) {
-		Alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
+		ha_alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
 		goto err;
 	}
 
@@ -1798,7 +1829,7 @@ static int prepare_external_check(struct check *check)
 		check->argv[2] = strdup("NOT_USED");
 	}
 	else {
-		Alert("Starting [%s:%s] check: unsupported address family.\n", px->id, s->id);
+		ha_alert("Starting [%s:%s] check: unsupported address family.\n", px->id, s->id);
 		goto err;
 	}
 
@@ -1813,7 +1844,7 @@ static int prepare_external_check(struct check *check)
 
 	for (i = 0; i < 5; i++) {
 		if (!check->argv[i]) {
-			Alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
+			ha_alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
 			goto err;
 		}
 	}
@@ -1860,11 +1891,7 @@ err:
  *
  * It can return one of :
  *  - SF_ERR_NONE if everything's OK
- *  - SF_ERR_SRVTO if there are no more servers
- *  - SF_ERR_SRVCL if the connection was refused by the server
- *  - SF_ERR_PRXCOND if the connection has been limited by the proxy (maxconn)
  *  - SF_ERR_RESOURCE if a system resource is lacking (eg: fd limits, ports, ...)
- *  - SF_ERR_INTERNAL for any other purely internal errors
  * Additionally, in the case of SF_ERR_RESOURCE, an emergency log will be emitted.
  *
  * Blocks and then unblocks SIGCHLD
@@ -1884,8 +1911,8 @@ static int connect_proc_chk(struct task *t)
 
 	pid = fork();
 	if (pid < 0) {
-		Alert("Failed to fork process for external health check: %s. Aborting.\n",
-		      strerror(errno));
+		ha_alert("Failed to fork process for external health check: %s. Aborting.\n",
+			 strerror(errno));
 		set_server_check_status(check, HCHK_STATUS_SOCKERR, strerror(errno));
 		goto out;
 	}
@@ -1903,8 +1930,8 @@ static int connect_proc_chk(struct task *t)
 		environ = check->envp;
 		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_CURCONN, ultoa_r(s->cur_sess, buf, sizeof(buf)));
 		execvp(px->check_command, check->argv);
-		Alert("Failed to exec process for external health check: %s. Aborting.\n",
-		      strerror(errno));
+		ha_alert("Failed to exec process for external health check: %s. Aborting.\n",
+			 strerror(errno));
 		exit(-1);
 	}
 
@@ -1934,22 +1961,25 @@ out:
 }
 
 /*
- * manages a server health-check that uses a process. Returns
+ * manages a server health-check that uses an external process. Returns
  * the time the task accepts to wait, or TIME_ETERNITY for infinity.
+ *
+ * Please do NOT place any return statement in this function and only leave
+ * via the out_unlock label.
  */
 static struct task *process_chk_proc(struct task *t)
 {
 	struct check *check = t->context;
 	struct server *s = check->server;
-	struct connection *conn = check->conn;
 	int rv;
 	int ret;
 	int expired = tick_is_expired(t->expire, now_ms);
 
+	HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
 	if (!(check->state & CHK_ST_INPROGRESS)) {
 		/* no check currently running */
 		if (!expired) /* woke up too early */
-			return t;
+			goto out_unlock;
 
 		/* we don't send any health-checks when the proxy is
 		 * stopped, the server should not be checked or the check
@@ -1965,13 +1995,11 @@ static struct task *process_chk_proc(struct task *t)
 		check->state |= CHK_ST_INPROGRESS;
 
 		ret = connect_proc_chk(t);
-		switch (ret) {
-		case SF_ERR_UP:
-			return t;
-		case SF_ERR_NONE:
-			/* we allow up to min(inter, timeout.connect) for a connection
-			 * to establish but only when timeout.check is set
-			 * as it may be to short for a full check otherwise
+		if (ret == SF_ERR_NONE) {
+			/* the process was forked, we allow up to min(inter,
+			 * timeout.connect) for it to report its status, but
+			 * only when timeout.check is set as it may be to short
+			 * for a full check otherwise.
 			 */
 			t->expire = tick_add(now_ms, MS_TO_TICKS(check->inter));
 
@@ -1979,23 +2007,11 @@ static struct task *process_chk_proc(struct task *t)
 				int t_con = tick_add(now_ms, s->proxy->timeout.connect);
 				t->expire = tick_first(t->expire, t_con);
 			}
-
+			task_set_affinity(t, tid_bit);
 			goto reschedule;
-
-		case SF_ERR_SRVTO: /* ETIMEDOUT */
-		case SF_ERR_SRVCL: /* ECONNREFUSED, ENETUNREACH, ... */
-			conn->flags |= CO_FL_ERROR;
-			chk_report_conn_err(conn, errno, 0);
-			break;
-		case SF_ERR_PRXCOND:
-		case SF_ERR_RESOURCE:
-		case SF_ERR_INTERNAL:
-			conn->flags |= CO_FL_ERROR;
-			chk_report_conn_err(conn, 0, 0);
-			break;
 		}
 
-		/* here, we have seen a synchronous error, no fd was allocated */
+		/* here, we failed to start the check */
 
 		check->state &= ~CHK_ST_INPROGRESS;
 		check_notify_failure(check);
@@ -2036,7 +2052,7 @@ static struct task *process_chk_proc(struct task *t)
 					status = HCHK_STATUS_PROCOK;
 			} else if (expired) {
 				status = HCHK_STATUS_PROCTOUT;
-				Warning("kill %d\n", (int)elem->pid);
+				ha_warning("kill %d\n", (int)elem->pid);
 				kill(elem->pid, SIGTERM);
 			}
 			set_server_check_status(check, status, NULL);
@@ -2054,6 +2070,7 @@ static struct task *process_chk_proc(struct task *t)
 			/* a success was detected */
 			check_notify_success(check);
 		}
+		task_set_affinity(t, MAX_THREADS_MASK);
 		check->state &= ~CHK_ST_INPROGRESS;
 
 		pid_list_del(check->curpid);
@@ -2069,26 +2086,34 @@ static struct task *process_chk_proc(struct task *t)
  reschedule:
 	while (tick_is_expired(t->expire, now_ms))
 		t->expire = tick_add(t->expire, MS_TO_TICKS(check->inter));
+
+ out_unlock:
+	HA_SPIN_UNLOCK(SERVER_LOCK, &check->server->lock);
 	return t;
 }
 
 /*
  * manages a server health-check that uses a connection. Returns
  * the time the task accepts to wait, or TIME_ETERNITY for infinity.
+ *
+ * Please do NOT place any return statement in this function and only leave
+ * via the out_unlock label.
  */
 static struct task *process_chk_conn(struct task *t)
 {
 	struct check *check = t->context;
 	struct server *s = check->server;
-	struct connection *conn = check->conn;
+	struct conn_stream *cs = check->cs;
+	struct connection *conn = cs_conn(cs);
 	int rv;
 	int ret;
 	int expired = tick_is_expired(t->expire, now_ms);
 
+	HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
 	if (!(check->state & CHK_ST_INPROGRESS)) {
 		/* no check currently running */
 		if (!expired) /* woke up too early */
-			return t;
+			goto out_unlock;
 
 		/* we don't send any health-checks when the proxy is
 		 * stopped, the server should not be checked or the check
@@ -2108,9 +2133,13 @@ static struct task *process_chk_conn(struct task *t)
 		check->bo->o = 0;
 
 		ret = connect_conn_chk(t);
+		cs = check->cs;
+		conn = cs_conn(cs);
+
 		switch (ret) {
 		case SF_ERR_UP:
-			return t;
+			goto out_unlock;
+
 		case SF_ERR_NONE:
 			/* we allow up to min(inter, timeout.connect) for a connection
 			 * to establish but only when timeout.check is set
@@ -2124,14 +2153,16 @@ static struct task *process_chk_conn(struct task *t)
 			}
 
 			if (check->type)
-				conn_data_want_recv(conn);   /* prepare for reading a possible reply */
+				cs_want_recv(cs);   /* prepare for reading a possible reply */
 
+			task_set_affinity(t, tid_bit);
 			goto reschedule;
 
 		case SF_ERR_SRVTO: /* ETIMEDOUT */
 		case SF_ERR_SRVCL: /* ECONNREFUSED, ENETUNREACH, ... */
-			conn->flags |= CO_FL_ERROR;
-			chk_report_conn_err(conn, errno, 0);
+			if (conn)
+				conn->flags |= CO_FL_ERROR;
+			chk_report_conn_err(check, errno, 0);
 			break;
 		/* should share same code than cases below */
 		case SF_ERR_CHK_PORT:
@@ -2139,12 +2170,18 @@ static struct task *process_chk_conn(struct task *t)
 		case SF_ERR_PRXCOND:
 		case SF_ERR_RESOURCE:
 		case SF_ERR_INTERNAL:
-			conn->flags |= CO_FL_ERROR;
-			chk_report_conn_err(conn, 0, 0);
+			if (conn)
+				conn->flags |= CO_FL_ERROR;
+			chk_report_conn_err(check, conn ? 0 : ENOMEM, 0);
 			break;
 		}
 
 		/* here, we have seen a synchronous error, no fd was allocated */
+		if (cs) {
+			cs_destroy(cs);
+			cs = check->cs = NULL;
+			conn = NULL;
+		}
 
 		check->state &= ~CHK_ST_INPROGRESS;
 		check_notify_failure(check);
@@ -2176,22 +2213,28 @@ static struct task *process_chk_conn(struct task *t)
 				else
 					set_server_check_status(check, HCHK_STATUS_L4OK, NULL);
 			}
-			else if ((conn->flags & CO_FL_ERROR) || expired) {
-				chk_report_conn_err(conn, 0, expired);
+			else if ((conn->flags & CO_FL_ERROR) || cs->flags & CS_FL_ERROR || expired) {
+				chk_report_conn_err(check, 0, expired);
 			}
 			else
-				goto out_wait; /* timeout not reached, wait again */
+				goto out_unlock; /* timeout not reached, wait again */
 		}
 
 		/* check complete or aborted */
-		if (conn->xprt) {
+		if (conn && conn->xprt) {
 			/* The check was aborted and the connection was not yet closed.
 			 * This can happen upon timeout, or when an external event such
 			 * as a failed response coupled with "observe layer7" caused the
 			 * server state to be suddenly changed.
 			 */
 			conn_sock_drain(conn);
-			conn_force_close(conn);
+			cs_close(cs);
+		}
+
+		if (cs) {
+			cs_destroy(cs);
+			cs = check->cs = NULL;
+			conn = NULL;
 		}
 
 		if (check->result == CHK_RES_FAILED) {
@@ -2206,6 +2249,7 @@ static struct task *process_chk_conn(struct task *t)
 			/* a success was detected */
 			check_notify_success(check);
 		}
+		task_set_affinity(t, MAX_THREADS_MASK);
 		check->state &= ~CHK_ST_INPROGRESS;
 
 		rv = 0;
@@ -2219,7 +2263,8 @@ static struct task *process_chk_conn(struct task *t)
  reschedule:
 	while (tick_is_expired(t->expire, now_ms))
 		t->expire = tick_add(t->expire, MS_TO_TICKS(check->inter));
- out_wait:
+ out_unlock:
+	HA_SPIN_UNLOCK(SERVER_LOCK, &check->server->lock);
 	return t;
 }
 
@@ -2230,22 +2275,6 @@ static struct task *process_chk_conn(struct task *t)
 static struct task *process_chk(struct task *t)
 {
 	struct check *check = t->context;
-	struct server *s = check->server;
-	struct dns_resolution *resolution = s->resolution;
-
-	/* trigger name resolution */
-	if ((s->check.state & CHK_ST_ENABLED) && (resolution)) {
-		/* check if a no resolution is running for this server */
-		if (resolution->step == RSLV_STEP_NONE) {
-			/*
-			 * if there has not been any name resolution for a longer period than
-			 * hold.valid, let's trigger a new one.
-			 */
-			if (!resolution->last_resolution || tick_is_expired(tick_add(resolution->last_resolution, resolution->resolvers->hold.valid), now_ms)) {
-				trigger_resolution(s);
-			}
-		}
-	}
 
 	if (check->type == PR_O2_EXT_CHK)
 		return process_chk_proc(t);
@@ -2253,85 +2282,14 @@ static struct task *process_chk(struct task *t)
 
 }
 
-/*
- * Initiates a new name resolution:
- *  - generates a query id
- *  - configure the resolution structure
- *  - startup the resolvers task if required
- *
- * returns:
- *  - 0 in case of error or if resolution already running
- *  - 1 if everything started properly
- */
-int trigger_resolution(struct server *s)
-{
-	struct dns_resolution *resolution;
-	struct dns_resolvers *resolvers;
-	int query_id;
-	int i;
-
-	resolution = s->resolution;
-	resolvers = resolution->resolvers;
-
-	/*
-	 * check if a resolution has already been started for this server
-	 * return directly to avoid resolution pill up
-	 */
-	if (resolution->step != RSLV_STEP_NONE)
-		return 0;
-
-	/* generates a query id */
-	i = 0;
-	do {
-		query_id = dns_rnd16();
-		/* we do try only 100 times to find a free query id */
-		if (i++ > 100) {
-			chunk_printf(&trash, "could not generate a query id for %s/%s, in resolvers %s",
-						s->proxy->id, s->id, resolvers->id);
-
-			send_log(s->proxy, LOG_NOTICE, "%s.\n", trash.str);
-			return 0;
-		}
-	} while (eb32_lookup(&resolvers->query_ids, query_id));
-
-	LIST_ADDQ(&resolvers->curr_resolution, &resolution->list);
-
-	/* now update resolution parameters */
-	resolution->query_id = query_id;
-	resolution->qid.key = query_id;
-	resolution->step = RSLV_STEP_RUNNING;
-	resolution->opts = &s->dns_opts;
-	if (resolution->opts->family_prio == AF_INET) {
-		resolution->query_type = DNS_RTYPE_A;
-	} else {
-		resolution->query_type = DNS_RTYPE_AAAA;
-	}
-	resolution->try = resolvers->resolve_retries;
-	resolution->try_cname = 0;
-	resolution->nb_responses = 0;
-	eb32_insert(&resolvers->query_ids, &resolution->qid);
-
-	dns_send_query(resolution);
-	resolution->try -= 1;
-
-	/* update wakeup date if this resolution is the only one in the FIFO list */
-	if (dns_check_resolution_queue(resolvers) == 1) {
-		/* update task timeout */
-		dns_update_resolvers_timeout(resolvers);
-		task_queue(resolvers->t);
-	}
-
-	return 1;
-}
-
 static int start_check_task(struct check *check, int mininter,
 			    int nbcheck, int srvpos)
 {
 	struct task *t;
 	/* task for the check */
-	if ((t = task_new()) == NULL) {
-		Alert("Starting [%s:%s] check: out of memory.\n",
-		      check->server->proxy->id, check->server->id);
+	if ((t = task_new(MAX_THREADS_MASK)) == NULL) {
+		ha_alert("Starting [%s:%s] check: out of memory.\n",
+			 check->server->proxy->id, check->server->id);
 		return 0;
 	}
 
@@ -2355,9 +2313,10 @@ static int start_check_task(struct check *check, int mininter,
 
 /*
  * Start health-check.
- * Returns 0 if OK, -1 if error, and prints the error in this case.
+ * Returns 0 if OK, ERR_FATAL on error, and prints the error in this case.
  */
-int start_checks() {
+static int start_checks()
+{
 
 	struct proxy *px;
 	struct server *s;
@@ -2371,12 +2330,12 @@ int start_checks() {
 	 * a shorter interval will start independently and will not dictate
 	 * too short an interval for all others.
 	 */
-	for (px = proxy; px; px = px->next) {
+	for (px = proxies_list; px; px = px->next) {
 		for (s = px->srv; s; s = s->next) {
 			if (s->slowstart) {
-				if ((t = task_new()) == NULL) {
-					Alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
-					return -1;
+				if ((t = task_new(MAX_THREADS_MASK)) == NULL) {
+					ha_alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
+					return ERR_ALERT | ERR_FATAL;
 				}
 				/* We need a warmup task that will be called when the server
 				 * state switches from down to up.
@@ -2384,9 +2343,8 @@ int start_checks() {
 				s->warmup = t;
 				t->process = server_warmup;
 				t->context = s;
-				t->expire = TICK_ETERNITY;
 				/* server can be in this state only because of */
-				if (s->state == SRV_ST_STARTING)
+				if (s->next_state == SRV_ST_STARTING)
 					task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, (now.tv_sec - s->last_change)) / 20)));
 			}
 
@@ -2416,11 +2374,11 @@ int start_checks() {
 	 * start them after their interval set to the min interval divided by
 	 * the number of servers, weighted by the server's position in the list.
 	 */
-	for (px = proxy; px; px = px->next) {
+	for (px = proxies_list; px; px = px->next) {
 		if ((px->options2 & PR_O2_CHK_ANY) == PR_O2_EXT_CHK) {
 			if (init_pid_list()) {
-				Alert("Starting [%s] check: out of memory.\n", px->id);
-				return -1;
+				ha_alert("Starting [%s] check: out of memory.\n", px->id);
+				return ERR_ALERT | ERR_FATAL;
 			}
 		}
 
@@ -2429,17 +2387,17 @@ int start_checks() {
 			if (s->check.state & CHK_ST_CONFIGURED) {
 				if (s->check.type == PR_O2_EXT_CHK) {
 					if (!prepare_external_check(&s->check))
-						return -1;
+						return ERR_ALERT | ERR_FATAL;
 				}
 				if (!start_check_task(&s->check, mininter, nbcheck, srvpos))
-					return -1;
+					return ERR_ALERT | ERR_FATAL;
 				srvpos++;
 			}
 
 			/* A task for a auxiliary agent check */
 			if (s->agent.state & CHK_ST_CONFIGURED) {
 				if (!start_check_task(&s->agent, mininter, nbcheck, srvpos)) {
-					return -1;
+					return ERR_ALERT | ERR_FATAL;
 				}
 				srvpos++;
 			}
@@ -2457,7 +2415,7 @@ int start_checks() {
  */
 static int httpchk_expect(struct server *s, int done)
 {
-	static char status_msg[] = "HTTP status check returned code <000>";
+	static THREAD_LOCAL char status_msg[] = "HTTP status check returned code <000>";
 	char status_code[] = "000";
 	char *contentptr;
 	int crlf;
@@ -2617,16 +2575,23 @@ static char * tcpcheck_get_step_comment(struct check *check, int stepid)
 
 /* proceed with next steps for the TCP checks <check>. Note that this is called
  * both from the connection's wake() callback and from the check scheduling task.
+ * It returns 0 on normal cases, or <0 if a close() has happened on an existing
+ * connection, presenting the risk of an fd replacement.
+ *
+ * Please do NOT place any return statement in this function and only leave
+ * via the out_unlock label after setting retcode.
  */
-static void tcpcheck_main(struct check *check)
+static int tcpcheck_main(struct check *check)
 {
 	char *contentptr, *comment;
 	struct tcpcheck_rule *next;
 	int done = 0, ret = 0, step = 0;
-	struct connection *conn = check->conn;
+	struct conn_stream *cs = check->cs;
+	struct connection *conn = cs_conn(cs);
 	struct server *s = check->server;
 	struct task *t = check->task;
 	struct list *head = check->tcpcheck_rules;
+	int retcode = 0;
 
 	/* here, we know that the check is complete or that it failed */
 	if (check->result != CHK_RES_UNKNOWN)
@@ -2634,13 +2599,13 @@ static void tcpcheck_main(struct check *check)
 
 	/* We have 4 possibilities here :
 	 *   1. we've not yet attempted step 1, and step 1 is a connect, so no
-	 *      connection attempt was made yet ;
+	 *      connection attempt was made yet ; conn==NULL;current_step==NULL.
 	 *   2. we've not yet attempted step 1, and step 1 is a not connect or
 	 *      does not exist (no rule), so a connection attempt was made
-	 *      before coming here.
+	 *      before coming here, conn!=NULL.
 	 *   3. we're coming back after having started with step 1, so we may
-	 *      be waiting for a connection attempt to complete.
-	 *   4. the connection + handshake are complete
+	 *      be waiting for a connection attempt to complete. conn!=NULL.
+	 *   4. the connection + handshake are complete. conn!=NULL.
 	 *
 	 * #2 and #3 are quite similar, we want both the connection and the
 	 * handshake to complete before going any further. Thus we must always
@@ -2653,8 +2618,8 @@ static void tcpcheck_main(struct check *check)
 	while (&next->list != head && next->action == TCPCHK_ACT_COMMENT)
 		next = LIST_NEXT(&next->list, struct tcpcheck_rule *, list);
 
-	if ((!(conn->flags & CO_FL_CONNECTED) || (conn->flags & CO_FL_HANDSHAKE)) &&
-	    (check->current_step || &next->list == head)) {
+	if ((check->current_step || &next->list == head) &&
+	    (!(conn->flags & CO_FL_CONNECTED) || (conn->flags & CO_FL_HANDSHAKE))) {
 		/* we allow up to min(inter, timeout.connect) for a connection
 		 * to establish but only when timeout.check is set
 		 * as it may be to short for a full check otherwise
@@ -2668,7 +2633,7 @@ static void tcpcheck_main(struct check *check)
 			if (s->proxy->timeout.check)
 				t->expire = tick_first(t->expire, t_con);
 		}
-		return;
+		goto out;
 	}
 
 	/* special case: option tcp-check with no rule, a connect is enough */
@@ -2691,24 +2656,25 @@ static void tcpcheck_main(struct check *check)
 	}
 
 	/* It's only the rules which will enable send/recv */
-	__conn_data_stop_both(conn);
+	if (cs)
+		cs_stop_both(cs);
 
 	while (1) {
 		/* We have to try to flush the output buffer before reading, at
 		 * the end, or if we're about to send a string that does not fit
 		 * in the remaining space. That explains why we break out of the
-		 * loop after this control.
+		 * loop after this control. If we have data, conn is valid.
 		 */
 		if (check->bo->o &&
 		    (&check->current_step->list == head ||
 		     check->current_step->action != TCPCHK_ACT_SEND ||
 		     check->current_step->string_len >= buffer_total_space(check->bo))) {
 
-			__conn_data_want_send(conn);
-			if (conn->xprt->snd_buf(conn, check->bo, 0) <= 0) {
-				if (conn->flags & CO_FL_ERROR) {
-					chk_report_conn_err(conn, errno, 0);
-					__conn_data_stop_both(conn);
+			__cs_want_send(cs);
+			if (conn->mux->snd_buf(cs, check->bo, 0) <= 0) {
+				if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR) {
+					chk_report_conn_err(check, errno, 0);
+					__cs_stop_both(cs);
 					goto out_end_tcpcheck;
 				}
 				break;
@@ -2735,15 +2701,42 @@ static void tcpcheck_main(struct check *check)
 			struct protocol *proto;
 			struct xprt_ops *xprt;
 
+			/* For a connect action we'll create a new connection.
+			 * We may also have to kill a previous one. But we don't
+			 * want to leave *without* a connection if we came here
+			 * from the connection layer, hence with a connection.
+			 * Thus we'll proceed in the following order :
+			 *   1: close but not release previous connection
+			 *   2: try to get a new connection
+			 *   3: release and replace the old one on success
+			 */
+			if (check->cs) {
+				cs_close(check->cs);
+				retcode = -1; /* do not reuse the fd in the caller! */
+			}
+
 			/* mark the step as started */
 			check->last_started_step = check->current_step;
-			/* first, shut existing connection */
-			conn_force_close(conn);
 
 			/* prepare new connection */
-			/* initialization */
-			conn_init(conn);
-			conn_attach(conn, check, &check_conn_cb);
+			cs = cs_new(NULL);
+			if (!cs) {
+				step = tcpcheck_get_step_id(check);
+				chunk_printf(&trash, "TCPCHK error allocating connection at step %d", step);
+				comment = tcpcheck_get_step_comment(check, step);
+				if (comment)
+					chunk_appendf(&trash, " comment: '%s'", comment);
+				set_server_check_status(check, HCHK_STATUS_SOCKERR, trash.str);
+				check->current_step = NULL;
+				goto out;
+			}
+
+			if (check->cs)
+				cs_destroy(check->cs);
+
+			check->cs = cs;
+			conn = cs->conn;
+			cs_attach(cs, check, &check_conn_cb);
 			conn->target = &s->obj_type;
 
 			/* no client address */
@@ -2764,25 +2757,23 @@ static void tcpcheck_main(struct check *check)
 				set_host_port(&conn->addr.to, check->current_step->port);
 			else if (check->port)
 				set_host_port(&conn->addr.to, check->port);
+			else if (s->svc_port)
+				set_host_port(&conn->addr.to, s->svc_port);
 
-#ifdef USE_OPENSSL
 			if (check->current_step->conn_opts & TCPCHK_OPT_SSL) {
-				xprt = &ssl_sock;
+				xprt = xprt_get(XPRT_SSL);
 			}
 			else {
-				xprt = &raw_sock;
+				xprt = xprt_get(XPRT_RAW);
 			}
-#else  /* USE_OPENSSL */
-			xprt = &raw_sock;
-#endif /* USE_OPENSSL */
 			conn_prepare(conn, proto, xprt);
+			conn_install_mux(conn, &mux_pt_ops, cs);
 
 			ret = SF_ERR_INTERNAL;
 			if (proto->connect)
 				ret = proto->connect(conn,
 						     1 /* I/O polling is always needed */,
 						     (next && next->action == TCPCHK_ACT_EXPECT) ? 0 : 2);
-			conn->flags |= CO_FL_WAKE_DATA;
 			if (check->current_step->conn_opts & TCPCHK_OPT_SEND_PROXY) {
 				conn->send_proxy_ofs = 1;
 				conn->flags |= CO_FL_SEND_PROXY;
@@ -2845,25 +2836,6 @@ static void tcpcheck_main(struct check *check)
 			if (&check->current_step->list == head)
 				break;
 
-			/* don't do anything until the connection is established */
-			if (!(conn->flags & CO_FL_CONNECTED)) {
-				/* update expire time, should be done by process_chk */
-				/* we allow up to min(inter, timeout.connect) for a connection
-				 * to establish but only when timeout.check is set
-				 * as it may be to short for a full check otherwise
-				 */
-				while (tick_is_expired(t->expire, now_ms)) {
-					int t_con;
-
-					t_con = tick_add(t->expire, s->proxy->timeout.connect);
-					t->expire = tick_add(t->expire, MS_TO_TICKS(check->inter));
-
-					if (s->proxy->timeout.check)
-						t->expire = tick_first(t->expire, t_con);
-				}
-				return;
-			}
-
 		} /* end 'connect' */
 		else if (check->current_step->action == TCPCHK_ACT_SEND) {
 			/* mark the step as started */
@@ -2875,9 +2847,9 @@ static void tcpcheck_main(struct check *check)
 				check->bi->i = 0;
 			}
 
-			if (conn->flags & (CO_FL_SOCK_WR_SH | CO_FL_DATA_WR_SH)) {
+			if (conn->flags & CO_FL_SOCK_WR_SH) {
 				conn->flags |= CO_FL_ERROR;
-				chk_report_conn_err(conn, 0, 0);
+				chk_report_conn_err(check, 0, 0);
 				goto out_end_tcpcheck;
 			}
 
@@ -2909,17 +2881,17 @@ static void tcpcheck_main(struct check *check)
 			if (unlikely(check->result == CHK_RES_FAILED))
 				goto out_end_tcpcheck;
 
-			__conn_data_want_recv(conn);
-			if (conn->xprt->rcv_buf(conn, check->bi, check->bi->size) <= 0) {
-				if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH)) {
+			__cs_want_recv(cs);
+			if (conn->mux->rcv_buf(cs, check->bi, check->bi->size) <= 0) {
+				if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH) || cs->flags & CS_FL_ERROR) {
 					done = 1;
-					if ((conn->flags & CO_FL_ERROR) && !check->bi->i) {
+					if ((conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR) && !check->bi->i) {
 						/* Report network errors only if we got no other data. Otherwise
 						 * we'll let the upper layers decide whether the response is OK
 						 * or not. It is very common that an RST sent by the server is
 						 * reported as an error just after the last data chunk.
 						 */
-						chk_report_conn_err(conn, errno, 0);
+						chk_report_conn_err(check, errno, 0);
 						goto out_end_tcpcheck;
 					}
 				}
@@ -3007,7 +2979,7 @@ static void tcpcheck_main(struct check *check)
 
 					if (check->current_step->action == TCPCHK_ACT_EXPECT)
 						goto tcpcheck_expect;
-					__conn_data_stop_recv(conn);
+					__cs_stop_recv(cs);
 				}
 			}
 			else {
@@ -3027,7 +2999,7 @@ static void tcpcheck_main(struct check *check)
 
 					if (check->current_step->action == TCPCHK_ACT_EXPECT)
 						goto tcpcheck_expect;
-					__conn_data_stop_recv(conn);
+					__cs_stop_recv(cs);
 				}
 				/* not matched but was supposed to => ERROR */
 				else {
@@ -3051,6 +3023,25 @@ static void tcpcheck_main(struct check *check)
 		} /* end expect */
 	} /* end loop over double chained step list */
 
+	/* don't do anything until the connection is established */
+	if (!(conn->flags & CO_FL_CONNECTED)) {
+		/* update expire time, should be done by process_chk */
+		/* we allow up to min(inter, timeout.connect) for a connection
+		 * to establish but only when timeout.check is set
+		 * as it may be to short for a full check otherwise
+		 */
+		while (tick_is_expired(t->expire, now_ms)) {
+			int t_con;
+
+			t_con = tick_add(t->expire, s->proxy->timeout.connect);
+			t->expire = tick_add(t->expire, MS_TO_TICKS(check->inter));
+
+			if (s->proxy->timeout.check)
+				t->expire = tick_first(t->expire, t_con);
+		}
+		goto out;
+	}
+
 	/* We're waiting for some I/O to complete, we've reached the end of the
 	 * rules, or both. Do what we have to do, otherwise we're done.
 	 */
@@ -3061,17 +3052,17 @@ static void tcpcheck_main(struct check *check)
 
 	/* warning, current_step may now point to the head */
 	if (check->bo->o)
-		__conn_data_want_send(conn);
+		__cs_want_send(cs);
 
 	if (&check->current_step->list != head &&
 	    check->current_step->action == TCPCHK_ACT_EXPECT)
-		__conn_data_want_recv(conn);
-	return;
+		__cs_want_recv(cs);
+	goto out;
 
  out_end_tcpcheck:
 	/* collect possible new errors */
-	if (conn->flags & CO_FL_ERROR)
-		chk_report_conn_err(conn, 0, 0);
+	if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
+		chk_report_conn_err(check, 0, 0);
 
 	/* cleanup before leaving */
 	check->current_step = NULL;
@@ -3079,8 +3070,10 @@ static void tcpcheck_main(struct check *check)
 	if (check->result == CHK_RES_FAILED)
 		conn->flags |= CO_FL_ERROR;
 
-	__conn_data_stop_both(conn);
-	return;
+	__cs_stop_both(cs);
+
+ out:
+	return retcode;
 }
 
 const char *init_check(struct check *check, int type)
@@ -3098,22 +3091,21 @@ const char *init_check(struct check *check, int type)
 		return "out of memory while allocating check buffer";
 	}
 	check->bo->size = global.tune.chksize;
-
-	/* Allocate buffer for partial results... */
-	if ((check->conn = calloc(1, sizeof(struct connection))) == NULL) {
-		return "out of memory while allocating check connection";
-	}
-
-	check->conn->t.sock.fd = -1; /* no agent in progress yet */
-
 	return NULL;
 }
 
 void free_check(struct check *check)
 {
 	free(check->bi);
+	check->bi = NULL;
 	free(check->bo);
-	free(check->conn);
+	check->bo = NULL;
+	if (check->cs) {
+		free(check->cs->conn);
+		check->cs->conn = NULL;
+		cs_free(check->cs);
+		check->cs = NULL;
+	}
 }
 
 void email_alert_free(struct email_alert *alert)
@@ -3129,102 +3121,125 @@ void email_alert_free(struct email_alert *alert)
 		free(rule->string);
 		if (rule->expect_regex)
 			regex_free(rule->expect_regex);
-		free(rule);
+		pool_free(pool_head_tcpcheck_rule, rule);
 	}
-	free(alert);
+	pool_free(pool_head_email_alert, alert);
 }
 
 static struct task *process_email_alert(struct task *t)
 {
-	struct check *check = t->context;
+	struct check        *check = t->context;
 	struct email_alertq *q;
+	struct email_alert  *alert;
 
 	q = container_of(check, typeof(*q), check);
 
-	if (!(check->state & CHK_ST_ENABLED)) {
-		if (LIST_ISEMPTY(&q->email_alerts)) {
-			/* All alerts processed, delete check */
-			task_delete(t);
-			task_free(t);
-			check->task = NULL;
-			return NULL;
-		} else {
-			struct email_alert *alert;
+	HA_SPIN_LOCK(EMAIL_ALERTS_LOCK, &q->lock);
+	while (1) {
+		if (!(check->state & CHK_ST_ENABLED)) {
+			if (LIST_ISEMPTY(&q->email_alerts)) {
+				/* All alerts processed, queue the task */
+				t->expire = TICK_ETERNITY;
+				task_queue(t);
+				goto end;
+			}
 
 			alert = LIST_NEXT(&q->email_alerts, typeof(alert), list);
-			check->tcpcheck_rules = &alert->tcpcheck_rules;
 			LIST_DEL(&alert->list);
-
-			check->state |= CHK_ST_ENABLED;
+			t->expire             = now_ms;
+			check->server         = alert->srv;
+			check->tcpcheck_rules = &alert->tcpcheck_rules;
+			check->status         = HCHK_STATUS_UNKNOWN; // the UNKNOWN status is used to exit set_server_check_status(.) early
+			check->state         |= CHK_ST_ENABLED;
 		}
 
-	}
-
-	process_chk(t);
-
-	if (!(check->state & CHK_ST_INPROGRESS) && check->tcpcheck_rules) {
-		struct email_alert *alert;
+		process_chk(t);
+		if (check->state & CHK_ST_INPROGRESS)
+			break;
 
 		alert = container_of(check->tcpcheck_rules, typeof(*alert), tcpcheck_rules);
 		email_alert_free(alert);
-
 		check->tcpcheck_rules = NULL;
-		check->state &= ~CHK_ST_ENABLED;
+		check->server         = NULL;
+		check->state         &= ~CHK_ST_ENABLED;
 	}
+  end:
+	HA_SPIN_UNLOCK(EMAIL_ALERTS_LOCK, &q->lock);
 	return t;
 }
 
-static int init_email_alert_checks(struct server *s)
+/* Initializes mailer alerts for the proxy <p> using <mls> parameters.
+ *
+ * The function returns 1 in success case, otherwise, it returns 0 and err is
+ * filled.
+ */
+int init_email_alert(struct mailers *mls, struct proxy *p, char **err)
 {
-	int i;
-	struct mailer *mailer;
-	const char *err_str;
-	struct proxy *p = s->proxy;
+	struct mailer       *mailer;
+	struct email_alertq *queues;
+	const char          *err_str;
+	int                  i = 0;
 
-	if (p->email_alert.queues)
-		/* Already initialised, nothing to do */
-		return 1;
-
-	p->email_alert.queues = calloc(p->email_alert.mailers.m->count, sizeof *p->email_alert.queues);
-	if (!p->email_alert.queues) {
-		err_str = "out of memory while allocating checks array";
-		goto error_alert;
+	if ((queues = calloc(mls->count, sizeof(*queues))) == NULL) {
+		memprintf(err, "out of memory while allocating mailer alerts queues");
+		goto error;
 	}
 
-	for (i = 0, mailer = p->email_alert.mailers.m->mailer_list;
-	     i < p->email_alert.mailers.m->count; i++, mailer = mailer->next) {
-		struct email_alertq *q = &p->email_alert.queues[i];
-		struct check *check = &q->check;
-
+	for (mailer = mls->mailer_list; mailer; i++, mailer = mailer->next) {
+		struct email_alertq *q     = &queues[i];
+		struct check        *check = &q->check;
+		struct task         *t;
 
 		LIST_INIT(&q->email_alerts);
-
-		check->inter = p->email_alert.mailers.m->timeout.mail;
+		HA_SPIN_INIT(&q->lock);
+		check->inter = mls->timeout.mail;
 		check->rise = DEF_AGENT_RISETIME;
 		check->fall = DEF_AGENT_FALLTIME;
-		err_str = init_check(check, PR_O2_TCPCHK_CHK);
-		if (err_str) {
-			goto error_free;
+		if ((err_str = init_check(check, PR_O2_TCPCHK_CHK))) {
+			memprintf(err, "%s", err_str);
+			goto error;
 		}
 
 		check->xprt = mailer->xprt;
-		if (!get_host_port(&mailer->addr))
-			/* Default to submission port */
-			check->port = 587;
 		check->addr = mailer->addr;
-		check->server = s;
+		check->port = get_host_port(&mailer->addr);
+		//check->server = s;
+
+		if ((t = task_new(MAX_THREADS_MASK)) == NULL) {
+			memprintf(err, "out of memory while allocating mailer alerts task");
+			goto error;
+		}
+
+		check->task = t;
+		t->process = process_email_alert;
+		t->context = check;
+
+		/* check this in one ms */
+		t->expire    = TICK_ETERNITY;
+		check->start = now;
+		task_queue(t);
 	}
 
-	return 1;
-
-error_free:
-	while (i-- > 1)
-		task_free(p->email_alert.queues[i].check.task);
-	free(p->email_alert.queues);
-	p->email_alert.queues = NULL;
-error_alert:
-	Alert("Email alert [%s] could not be initialised: %s\n", p->id, err_str);
+	mls->users++;
+	free(p->email_alert.mailers.name);
+	p->email_alert.mailers.m = mls;
+	p->email_alert.queues    = queues;
 	return 0;
+
+  error:
+	for (i = 0; i < mls->count; i++) {
+		struct email_alertq *q     = &queues[i];
+		struct check        *check = &q->check;
+
+		if (check->task) {
+			task_delete(check->task);
+			task_free(check->task);
+			check->task = NULL;
+		}
+		free_check(check);
+	}
+	free(queues);
+	return 1;
 }
 
 
@@ -3232,14 +3247,15 @@ static int add_tcpcheck_expect_str(struct list *list, const char *str)
 {
 	struct tcpcheck_rule *tcpcheck;
 
-	tcpcheck = calloc(1, sizeof *tcpcheck);
-	if (!tcpcheck)
+	if ((tcpcheck = pool_alloc(pool_head_tcpcheck_rule)) == NULL)
 		return 0;
-
-	tcpcheck->action = TCPCHK_ACT_EXPECT;
-	tcpcheck->string = strdup(str);
+	memset(tcpcheck, 0, sizeof(*tcpcheck));
+	tcpcheck->action       = TCPCHK_ACT_EXPECT;
+	tcpcheck->string       = strdup(str);
+	tcpcheck->expect_regex = NULL;
+	tcpcheck->comment      = NULL;
 	if (!tcpcheck->string) {
-		free(tcpcheck);
+		pool_free(pool_head_tcpcheck_rule, tcpcheck);
 		return 0;
 	}
 
@@ -3254,19 +3270,19 @@ static int add_tcpcheck_send_strs(struct list *list, const char * const *strs)
 	char *dst;
 	int i;
 
-	tcpcheck = calloc(1, sizeof *tcpcheck);
-	if (!tcpcheck)
+	if ((tcpcheck = pool_alloc(pool_head_tcpcheck_rule)) == NULL)
 		return 0;
-
-	tcpcheck->action = TCPCHK_ACT_SEND;
-
+	memset(tcpcheck, 0, sizeof(*tcpcheck));
+	tcpcheck->action       = TCPCHK_ACT_SEND;
+	tcpcheck->expect_regex = NULL;
+	tcpcheck->comment      = NULL;
 	tcpcheck->string_len = 0;
 	for (i = 0; strs[i]; i++)
 		tcpcheck->string_len += strlen(strs[i]);
 
 	tcpcheck->string = malloc(tcpcheck->string_len + 1);
 	if (!tcpcheck->string) {
-		free(tcpcheck);
+		pool_free(pool_head_tcpcheck_rule, tcpcheck);
 		return 0;
 	}
 
@@ -3279,23 +3295,26 @@ static int add_tcpcheck_send_strs(struct list *list, const char * const *strs)
 	return 1;
 }
 
-static int enqueue_one_email_alert(struct email_alertq *q, const char *msg)
+static int enqueue_one_email_alert(struct proxy *p, struct server *s,
+				   struct email_alertq *q, const char *msg)
 {
-	struct email_alert *alert = NULL;
+	struct email_alert   *alert;
 	struct tcpcheck_rule *tcpcheck;
 	struct check *check = &q->check;
-	struct proxy *p = check->server->proxy;
 
-	alert = calloc(1, sizeof *alert);
-	if (!alert) {
+	if ((alert = pool_alloc(pool_head_email_alert)) == NULL)
 		goto error;
-	}
+	LIST_INIT(&alert->list);
 	LIST_INIT(&alert->tcpcheck_rules);
+	alert->srv = s;
 
-	tcpcheck = calloc(1, sizeof *tcpcheck);
-	if (!tcpcheck)
+	if ((tcpcheck = pool_alloc(pool_head_tcpcheck_rule)) == NULL)
 		goto error;
-	tcpcheck->action = TCPCHK_ACT_CONNECT;
+	memset(tcpcheck, 0, sizeof(*tcpcheck));
+	tcpcheck->action       = TCPCHK_ACT_CONNECT;
+	tcpcheck->comment      = NULL;
+	tcpcheck->string       = NULL;
+	tcpcheck->expect_regex = NULL;
 	LIST_ADDQ(&alert->tcpcheck_rules, &tcpcheck->list);
 
 	if (!add_tcpcheck_expect_str(&alert->tcpcheck_rules, "220 "))
@@ -3374,24 +3393,10 @@ static int enqueue_one_email_alert(struct email_alertq *q, const char *msg)
 	if (!add_tcpcheck_expect_str(&alert->tcpcheck_rules, "221 "))
 		goto error;
 
-	if (!check->task) {
-		struct task *t;
-
-		if ((t = task_new()) == NULL)
-			goto error;
-
-		check->task = t;
-		t->process = process_email_alert;
-		t->context = check;
-
-		/* check this in one ms */
-		t->expire = tick_add(now_ms, MS_TO_TICKS(1));
-		check->start = now;
-		task_queue(t);
-	}
-
+	HA_SPIN_LOCK(EMAIL_ALERTS_LOCK, &q->lock);
+	task_wakeup(check->task, TASK_WOKEN_MSG);
 	LIST_ADDQ(&q->email_alerts, &alert->list);
-
+	HA_SPIN_UNLOCK(EMAIL_ALERTS_LOCK, &q->lock);
 	return 1;
 
 error:
@@ -3399,15 +3404,15 @@ error:
 	return 0;
 }
 
-static void enqueue_email_alert(struct proxy *p, const char *msg)
+static void enqueue_email_alert(struct proxy *p, struct server *s, const char *msg)
 {
 	int i;
 	struct mailer *mailer;
 
 	for (i = 0, mailer = p->email_alert.mailers.m->mailer_list;
 	     i < p->email_alert.mailers.m->count; i++, mailer = mailer->next) {
-		if (!enqueue_one_email_alert(&p->email_alert.queues[i], msg)) {
-			Alert("Email alert [%s] could not be enqueued: out of memory\n", p->id);
+		if (!enqueue_one_email_alert(p, s, &p->email_alert.queues[i], msg)) {
+			ha_alert("Email alert [%s] could not be enqueued: out of memory\n", p->id);
 			return;
 		}
 	}
@@ -3425,8 +3430,7 @@ void send_email_alert(struct server *s, int level, const char *format, ...)
 	int len;
 	struct proxy *p = s->proxy;
 
-	if (!p->email_alert.mailers.m || level > p->email_alert.level ||
-	    format == NULL || !init_email_alert_checks(s))
+	if (!p->email_alert.mailers.m || level > p->email_alert.level || format == NULL)
 		return;
 
 	va_start(argp, format);
@@ -3434,11 +3438,11 @@ void send_email_alert(struct server *s, int level, const char *format, ...)
 	va_end(argp);
 
 	if (len < 0 || len >= sizeof(buf)) {
-		Alert("Email alert [%s] could not format message\n", p->id);
+		ha_alert("Email alert [%s] could not format message\n", p->id);
 		return;
 	}
 
-	enqueue_email_alert(p, buf);
+	enqueue_email_alert(p, s, buf);
 }
 
 /*
@@ -3459,9 +3463,7 @@ int srv_check_healthcheck_port(struct check *chk)
 	 * default, unless one is specified.
 	 */
 	if (!chk->port && !is_addr(&chk->addr)) {
-#ifdef USE_OPENSSL
 		chk->use_ssl |= (srv->use_ssl || (srv->proxy->options & PR_O_TCPCHK_SSL));
-#endif
 		chk->send_proxy |= (srv->pp_opts);
 	}
 
@@ -3487,6 +3489,15 @@ int srv_check_healthcheck_port(struct check *chk)
 		return i;
 
 	return 0;
+}
+
+__attribute__((constructor))
+static void __check_init(void)
+{
+	hap_register_post_check(start_checks);
+
+	pool_head_email_alert   = create_pool("email_alert",   sizeof(struct email_alert),   MEM_F_SHARED);
+	pool_head_tcpcheck_rule = create_pool("tcpcheck_rule", sizeof(struct tcpcheck_rule), MEM_F_SHARED);
 }
 
 

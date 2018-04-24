@@ -26,8 +26,10 @@
 #undef free_func
 #endif /* USE_ZLIB */
 
+#include <common/cfgparse.h>
 #include <common/compat.h>
 #include <common/memory.h>
+#include <common/hathreads.h>
 
 #include <types/global.h>
 #include <types/compression.h>
@@ -38,6 +40,10 @@
 #include <proto/proto_http.h>
 #include <proto/stream.h>
 
+
+#if defined(USE_SLZ) || defined(USE_ZLIB)
+__decl_hathreads(static HA_SPINLOCK_T comp_pool_lock);
+#endif
 
 #ifdef USE_ZLIB
 
@@ -52,6 +58,9 @@ static struct pool_head *zlib_pool_head = NULL;
 static struct pool_head *zlib_pool_pending_buf = NULL;
 
 long zlib_used_memory = 0;
+
+static int global_tune_zlibmemlevel = 8;            /* zlib memlevel */
+static int global_tune_zlibwindowsize = MAX_WBITS;  /* zlib window size */
 
 #endif
 
@@ -150,10 +159,14 @@ static inline int init_comp_ctx(struct comp_ctx **comp_ctx)
 		return -1;
 #endif
 
-	if (unlikely(pool_comp_ctx == NULL))
-		pool_comp_ctx = create_pool("comp_ctx", sizeof(struct comp_ctx), MEM_F_SHARED);
+	if (unlikely(pool_comp_ctx == NULL)) {
+		HA_SPIN_LOCK(COMP_POOL_LOCK, &comp_pool_lock);
+		if (unlikely(pool_comp_ctx == NULL))
+			pool_comp_ctx = create_pool("comp_ctx", sizeof(struct comp_ctx), MEM_F_SHARED);
+		HA_SPIN_UNLOCK(COMP_POOL_LOCK, &comp_pool_lock);
+	}
 
-	*comp_ctx = pool_alloc2(pool_comp_ctx);
+	*comp_ctx = pool_alloc(pool_comp_ctx);
 	if (*comp_ctx == NULL)
 		return -1;
 #if defined(USE_SLZ)
@@ -161,7 +174,7 @@ static inline int init_comp_ctx(struct comp_ctx **comp_ctx)
 	(*comp_ctx)->direct_len = 0;
 	(*comp_ctx)->queued = NULL;
 #elif defined(USE_ZLIB)
-	zlib_used_memory += sizeof(struct comp_ctx);
+	HA_ATOMIC_ADD(&zlib_used_memory, sizeof(struct comp_ctx));
 
 	strm = &(*comp_ctx)->strm;
 	strm->zalloc = alloc_zlib;
@@ -179,11 +192,11 @@ static inline int deinit_comp_ctx(struct comp_ctx **comp_ctx)
 	if (!*comp_ctx)
 		return 0;
 
-	pool_free2(pool_comp_ctx, *comp_ctx);
+	pool_free(pool_comp_ctx, *comp_ctx);
 	*comp_ctx = NULL;
 
 #ifdef USE_ZLIB
-	zlib_used_memory -= sizeof(struct comp_ctx);
+	HA_ATOMIC_SUB(&zlib_used_memory, sizeof(struct comp_ctx));
 #endif
 	return 0;
 }
@@ -278,7 +291,7 @@ static int rfc1950_init(struct comp_ctx **comp_ctx, int level)
  */
 static int rfc195x_add_data(struct comp_ctx *comp_ctx, const char *in_data, int in_len, struct buffer *out)
 {
-	static struct buffer *tmpbuf = &buf_empty;
+	static THREAD_LOCAL struct buffer *tmpbuf = &buf_empty;
 
 	if (in_len <= 0)
 		return 0;
@@ -389,7 +402,7 @@ static int rfc195x_end(struct comp_ctx **comp_ctx)
 static void *alloc_zlib(void *opaque, unsigned int items, unsigned int size)
 {
 	struct comp_ctx *ctx = opaque;
-	static char round = 0; /* order in deflateInit2 */
+	static THREAD_LOCAL char round = 0; /* order in deflateInit2 */
 	void *buf = NULL;
 	struct pool_head *pool = NULL;
 
@@ -398,42 +411,62 @@ static void *alloc_zlib(void *opaque, unsigned int items, unsigned int size)
 
 	switch (round) {
 		case 0:
-			if (zlib_pool_deflate_state == NULL)
-				zlib_pool_deflate_state = create_pool("zlib_state", size * items, MEM_F_SHARED);
+			if (zlib_pool_deflate_state == NULL) {
+				HA_SPIN_LOCK(COMP_POOL_LOCK, &comp_pool_lock);
+				if (zlib_pool_deflate_state == NULL)
+					zlib_pool_deflate_state = create_pool("zlib_state", size * items, MEM_F_SHARED);
+				HA_SPIN_UNLOCK(COMP_POOL_LOCK, &comp_pool_lock);
+			}
 			pool = zlib_pool_deflate_state;
-			ctx->zlib_deflate_state = buf = pool_alloc2(pool);
+			ctx->zlib_deflate_state = buf = pool_alloc(pool);
 		break;
 
 		case 1:
-			if (zlib_pool_window == NULL)
-				zlib_pool_window = create_pool("zlib_window", size * items, MEM_F_SHARED);
+			if (zlib_pool_window == NULL) {
+				HA_SPIN_LOCK(COMP_POOL_LOCK, &comp_pool_lock);
+				if (zlib_pool_window == NULL)
+					zlib_pool_window = create_pool("zlib_window", size * items, MEM_F_SHARED);
+				HA_SPIN_UNLOCK(COMP_POOL_LOCK, &comp_pool_lock);
+			}
 			pool = zlib_pool_window;
-			ctx->zlib_window = buf = pool_alloc2(pool);
+			ctx->zlib_window = buf = pool_alloc(pool);
 		break;
 
 		case 2:
-			if (zlib_pool_prev == NULL)
-				zlib_pool_prev = create_pool("zlib_prev", size * items, MEM_F_SHARED);
+			if (zlib_pool_prev == NULL) {
+				HA_SPIN_LOCK(COMP_POOL_LOCK, &comp_pool_lock);
+				if (zlib_pool_prev == NULL)
+					zlib_pool_prev = create_pool("zlib_prev", size * items, MEM_F_SHARED);
+				HA_SPIN_UNLOCK(COMP_POOL_LOCK, &comp_pool_lock);
+			}
 			pool = zlib_pool_prev;
-			ctx->zlib_prev = buf = pool_alloc2(pool);
+			ctx->zlib_prev = buf = pool_alloc(pool);
 		break;
 
 		case 3:
-			if (zlib_pool_head == NULL)
-				zlib_pool_head = create_pool("zlib_head", size * items, MEM_F_SHARED);
+			if (zlib_pool_head == NULL) {
+				HA_SPIN_LOCK(COMP_POOL_LOCK, &comp_pool_lock);
+				if (zlib_pool_head == NULL)
+					zlib_pool_head = create_pool("zlib_head", size * items, MEM_F_SHARED);
+				HA_SPIN_UNLOCK(COMP_POOL_LOCK, &comp_pool_lock);
+			}
 			pool = zlib_pool_head;
-			ctx->zlib_head = buf = pool_alloc2(pool);
+			ctx->zlib_head = buf = pool_alloc(pool);
 		break;
 
 		case 4:
-			if (zlib_pool_pending_buf == NULL)
-				zlib_pool_pending_buf = create_pool("zlib_pending_buf", size * items, MEM_F_SHARED);
+			if (zlib_pool_pending_buf == NULL) {
+				HA_SPIN_LOCK(COMP_POOL_LOCK, &comp_pool_lock);
+				if (zlib_pool_pending_buf == NULL)
+					zlib_pool_pending_buf = create_pool("zlib_pending_buf", size * items, MEM_F_SHARED);
+				HA_SPIN_UNLOCK(COMP_POOL_LOCK, &comp_pool_lock);
+			}
 			pool = zlib_pool_pending_buf;
-			ctx->zlib_pending_buf = buf = pool_alloc2(pool);
+			ctx->zlib_pending_buf = buf = pool_alloc(pool);
 		break;
 	}
 	if (buf != NULL)
-		zlib_used_memory += pool->size;
+		HA_ATOMIC_ADD(&zlib_used_memory, pool->size);
 
 end:
 
@@ -463,8 +496,8 @@ static void free_zlib(void *opaque, void *ptr)
 	else if (ptr == ctx->zlib_pending_buf)
 		pool = zlib_pool_pending_buf;
 
-	pool_free2(pool, ptr);
-	zlib_used_memory -= pool->size;
+	pool_free(pool, ptr);
+	HA_ATOMIC_SUB(&zlib_used_memory, pool->size);
 }
 
 /**************************
@@ -479,7 +512,7 @@ static int gzip_init(struct comp_ctx **comp_ctx, int level)
 
 	strm = &(*comp_ctx)->strm;
 
-	if (deflateInit2(strm, level, Z_DEFLATED, global.tune.zlibwindowsize + 16, global.tune.zlibmemlevel, Z_DEFAULT_STRATEGY) != Z_OK) {
+	if (deflateInit2(strm, level, Z_DEFLATED, global_tune_zlibwindowsize + 16, global_tune_zlibmemlevel, Z_DEFAULT_STRATEGY) != Z_OK) {
 		deinit_comp_ctx(comp_ctx);
 		return -1;
 	}
@@ -499,7 +532,7 @@ static int raw_def_init(struct comp_ctx **comp_ctx, int level)
 
 	strm = &(*comp_ctx)->strm;
 
-	if (deflateInit2(strm, level, Z_DEFLATED, -global.tune.zlibwindowsize, global.tune.zlibmemlevel, Z_DEFAULT_STRATEGY) != Z_OK) {
+	if (deflateInit2(strm, level, Z_DEFLATED, -global_tune_zlibwindowsize, global_tune_zlibmemlevel, Z_DEFAULT_STRATEGY) != Z_OK) {
 		deinit_comp_ctx(comp_ctx);
 		return -1;
 	}
@@ -521,7 +554,7 @@ static int deflate_init(struct comp_ctx **comp_ctx, int level)
 
 	strm = &(*comp_ctx)->strm;
 
-	if (deflateInit2(strm, level, Z_DEFLATED, global.tune.zlibwindowsize, global.tune.zlibmemlevel, Z_DEFAULT_STRATEGY) != Z_OK) {
+	if (deflateInit2(strm, level, Z_DEFLATED, global_tune_zlibwindowsize, global_tune_zlibmemlevel, Z_DEFAULT_STRATEGY) != Z_OK) {
 		deinit_comp_ctx(comp_ctx);
 		return -1;
 	}
@@ -619,13 +652,91 @@ static int deflate_end(struct comp_ctx **comp_ctx)
 	return ret;
 }
 
+/* config parser for global "tune.zlibmemlevel" */
+static int zlib_parse_global_memlevel(char **args, int section_type, struct proxy *curpx,
+                                      struct proxy *defpx, const char *file, int line,
+                                      char **err)
+{
+        if (too_many_args(1, args, err, NULL))
+                return -1;
+
+        if (*(args[1]) == 0) {
+                memprintf(err, "'%s' expects a numeric value between 1 and 9.", args[0]);
+                return -1;
+        }
+
+	global_tune_zlibmemlevel = atoi(args[1]);
+	if (global_tune_zlibmemlevel < 1 || global_tune_zlibmemlevel > 9) {
+                memprintf(err, "'%s' expects a numeric value between 1 and 9.", args[0]);
+                return -1;
+	}
+        return 0;
+}
+
+
+/* config parser for global "tune.zlibwindowsize" */
+static int zlib_parse_global_windowsize(char **args, int section_type, struct proxy *curpx,
+                                        struct proxy *defpx, const char *file, int line,
+                                        char **err)
+{
+        if (too_many_args(1, args, err, NULL))
+                return -1;
+
+        if (*(args[1]) == 0) {
+                memprintf(err, "'%s' expects a numeric value between 8 and 15.", args[0]);
+                return -1;
+        }
+
+	global_tune_zlibwindowsize = atoi(args[1]);
+	if (global_tune_zlibwindowsize < 8 || global_tune_zlibwindowsize > 15) {
+                memprintf(err, "'%s' expects a numeric value between 8 and 15.", args[0]);
+                return -1;
+	}
+        return 0;
+}
+
 #endif /* USE_ZLIB */
+
+
+/* config keyword parsers */
+static struct cfg_kw_list cfg_kws = {ILH, {
+#ifdef USE_ZLIB
+	{ CFG_GLOBAL, "tune.zlib.memlevel",   zlib_parse_global_memlevel },
+	{ CFG_GLOBAL, "tune.zlib.windowsize", zlib_parse_global_windowsize },
+#endif
+	{ 0, NULL, NULL }
+}};
 
 __attribute__((constructor))
 static void __comp_fetch_init(void)
 {
+	char *ptr = NULL;
+	int i;
+
 #ifdef USE_SLZ
 	slz_make_crc_table();
 	slz_prepare_dist_table();
 #endif
+#if defined(USE_ZLIB) && defined(DEFAULT_MAXZLIBMEM)
+	global.tune.maxzlibmem = DEFAULT_MAXZLIBMEM * 1024U * 1024U,
+#endif
+#ifdef USE_ZLIB
+	HA_SPIN_INIT(&comp_pool_lock);
+	memprintf(&ptr, "Built with zlib version : " ZLIB_VERSION);
+	memprintf(&ptr, "%s\nRunning on zlib version : %s", ptr, zlibVersion());
+#elif defined(USE_SLZ)
+	memprintf(&ptr, "Built with libslz for stateless compression.");
+#else
+	memprintf(&ptr, "Built without compression support (neither USE_ZLIB nor USE_SLZ are set).");
+#endif
+	memprintf(&ptr, "%s\nCompression algorithms supported :", ptr);
+
+	for (i = 0; comp_algos[i].cfg_name; i++)
+		memprintf(&ptr, "%s%s %s(\"%s\")", ptr, (i == 0 ? "" : ","), comp_algos[i].cfg_name, comp_algos[i].ua_name);
+
+	if (i == 0)
+		memprintf(&ptr, "%s none", ptr);
+
+	hap_register_build_opts(ptr, 1);
+	cfg_register_keywords(&cfg_kws);
 }

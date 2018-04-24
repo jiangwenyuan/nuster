@@ -29,9 +29,12 @@
 #include <common/standard.h>
 #include <common/time.h>
 
+#include <types/cli.h>
 #include <types/global.h>
 #include <types/log.h>
 
+#include <proto/applet.h>
+#include <proto/cli.h>
 #include <proto/frontend.h>
 #include <proto/proto_http.h>
 #include <proto/log.h>
@@ -208,22 +211,26 @@ char default_rfc5424_sd_log_format[] = "- ";
  * RFC3164 format. It begins with time-based part and is updated by
  * update_log_hdr().
  */
-char *logheader = NULL;
+THREAD_LOCAL char *logheader = NULL;
 
 /* This is a global syslog header for messages in RFC5424 format. It is
  * updated by update_log_hdr_rfc5424().
  */
-char *logheader_rfc5424 = NULL;
+THREAD_LOCAL char *logheader_rfc5424 = NULL;
 
 /* This is a global syslog message buffer, common to all outgoing
  * messages. It contains only the data part.
  */
-char *logline = NULL;
+THREAD_LOCAL char *logline = NULL;
 
 /* A global syslog message buffer, common to all RFC5424 syslog messages.
  * Currently, it is used for generating the structured-data part.
  */
-char *logline_rfc5424 = NULL;
+THREAD_LOCAL char *logline_rfc5424 = NULL;
+
+/* A global buffer used to store all startup alerts/warnings. It will then be
+ * retrieve on the CLI. */
+static THREAD_LOCAL char *startup_logs = NULL;
 
 struct logformat_var_args {
 	char *name;
@@ -381,9 +388,9 @@ int parse_logformat_var(char *arg, int arg_len, char *var, int var_len, struct p
 					LIST_ADDQ(list_format, &node->list);
 				}
 				if (logformat_keywords[j].replace_by)
-					Warning("parsing [%s:%d] : deprecated variable '%s' in '%s', please replace it with '%s'.\n",
-					        curproxy->conf.args.file, curproxy->conf.args.line,
-					        logformat_keywords[j].name, fmt_directive(curproxy), logformat_keywords[j].replace_by);
+					ha_warning("parsing [%s:%d] : deprecated variable '%s' in '%s', please replace it with '%s'.\n",
+						   curproxy->conf.args.file, curproxy->conf.args.line,
+						   logformat_keywords[j].name, fmt_directive(curproxy), logformat_keywords[j].replace_by);
 				return 1;
 			} else {
 				memprintf(err, "format variable '%s' is reserved for HTTP mode",
@@ -664,23 +671,40 @@ int parse_logformat_string(const char *fmt, struct proxy *curproxy, struct list 
 	return 1;
 }
 
+/* Generic function to display messages prefixed by a label */
+static void print_message(const char *label, const char *fmt, va_list argp)
+{
+	struct tm tm;
+	char *head, *msg;
+
+	head = msg = NULL;
+
+	get_localtime(date.tv_sec, &tm);
+	memprintf(&head, "[%s] %03d/%02d%02d%02d (%d) : ",
+		  label, tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
+	memvprintf(&msg, fmt, argp);
+
+	if (global.mode & MODE_STARTING)
+		memprintf(&startup_logs, "%s%s%s", (startup_logs ? startup_logs : ""), head, msg);
+
+	fprintf(stderr, "%s%s", head, msg);
+	fflush(stderr);
+
+	free(head);
+	free(msg);
+}
+
 /*
  * Displays the message on stderr with the date and pid. Overrides the quiet
  * mode during startup.
  */
-void Alert(const char *fmt, ...)
+void ha_alert(const char *fmt, ...)
 {
 	va_list argp;
-	struct tm tm;
 
 	if (!(global.mode & MODE_QUIET) || (global.mode & (MODE_VERBOSE | MODE_STARTING))) {
 		va_start(argp, fmt);
-
-		get_localtime(date.tv_sec, &tm);
-		fprintf(stderr, "[ALERT] %03d/%02d%02d%02d (%d) : ",
-			tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
-		vfprintf(stderr, fmt, argp);
-		fflush(stderr);
+		print_message("ALERT", fmt, argp);
 		va_end(argp);
 	}
 }
@@ -689,19 +713,13 @@ void Alert(const char *fmt, ...)
 /*
  * Displays the message on stderr with the date and pid.
  */
-void Warning(const char *fmt, ...)
+void ha_warning(const char *fmt, ...)
 {
 	va_list argp;
-	struct tm tm;
 
 	if (!(global.mode & MODE_QUIET) || (global.mode & MODE_VERBOSE)) {
 		va_start(argp, fmt);
-
-		get_localtime(date.tv_sec, &tm);
-		fprintf(stderr, "[WARNING] %03d/%02d%02d%02d (%d) : ",
-			tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
-		vfprintf(stderr, fmt, argp);
-		fflush(stderr);
+		print_message("WARNING", fmt, argp);
 		va_end(argp);
 	}
 }
@@ -967,10 +985,10 @@ char *lf_port(char *dst, struct sockaddr *sockaddr, size_t size, struct logforma
  */
 static char *update_log_hdr(const time_t time)
 {
-	static long tvsec;
-	static char *dataptr = NULL; /* backup of last end of header, NULL first time */
-	static struct chunk host = { NULL, 0, 0 };
-	static int sep = 0;
+	static THREAD_LOCAL long tvsec;
+	static THREAD_LOCAL char *dataptr = NULL; /* backup of last end of header, NULL first time */
+	static THREAD_LOCAL struct chunk host = { NULL, 0, 0 };
+	static THREAD_LOCAL int sep = 0;
 
 	if (unlikely(time != tvsec || dataptr == NULL)) {
 		/* this string is rebuild only once a second */
@@ -1012,8 +1030,8 @@ static char *update_log_hdr(const time_t time)
  */
 static char *update_log_hdr_rfc5424(const time_t time)
 {
-	static long tvsec;
-	static char *dataptr = NULL; /* backup of last end of header, NULL first time */
+	static THREAD_LOCAL long tvsec;
+	static THREAD_LOCAL char *dataptr = NULL; /* backup of last end of header, NULL first time */
 	const char *gmt_offset;
 
 	if (unlikely(time != tvsec || dataptr == NULL)) {
@@ -1076,14 +1094,14 @@ void send_log(struct proxy *p, int level, const char *format, ...)
  */
 void __send_log(struct proxy *p, int level, char *message, size_t size, char *sd, size_t sd_size)
 {
-	static struct iovec iovec[NB_MSG_IOVEC_ELEMENTS] = { };
-	static struct msghdr msghdr = {
-		.msg_iov = iovec,
+	static THREAD_LOCAL struct iovec iovec[NB_MSG_IOVEC_ELEMENTS] = { };
+	static THREAD_LOCAL struct msghdr msghdr = {
+		//.msg_iov = iovec,
 		.msg_iovlen = NB_MSG_IOVEC_ELEMENTS
 	};
-	static int logfdunix = -1;	/* syslog to AF_UNIX socket */
-	static int logfdinet = -1;	/* syslog to AF_INET socket */
-	static char *dataptr = NULL;
+	static THREAD_LOCAL int logfdunix = -1;	/* syslog to AF_UNIX socket */
+	static THREAD_LOCAL int logfdinet = -1;	/* syslog to AF_INET socket */
+	static THREAD_LOCAL char *dataptr = NULL;
 	int fac_level;
 	struct list *logsrvs = NULL;
 	struct logsrv *tmp = NULL;
@@ -1092,9 +1110,11 @@ void __send_log(struct proxy *p, int level, char *message, size_t size, char *sd
 	size_t hdr_size;
 	time_t time = date.tv_sec;
 	struct chunk *tag = &global.log_tag;
-	static int curr_pid;
-	static char pidstr[100];
-	static struct chunk pid;
+	static THREAD_LOCAL int curr_pid;
+	static THREAD_LOCAL char pidstr[100];
+	static THREAD_LOCAL struct chunk pid;
+
+	msghdr.msg_iov = iovec;
 
 	dataptr = message;
 
@@ -1148,14 +1168,20 @@ void __send_log(struct proxy *p, int level, char *message, size_t size, char *sd
 			int proto = logsrv->addr.ss_family == AF_UNIX ? 0 : IPPROTO_UDP;
 
 			if ((*plogfd = socket(logsrv->addr.ss_family, SOCK_DGRAM, proto)) < 0) {
-				Alert("socket for logger #%d failed: %s (errno=%d)\n",
-				      nblogger, strerror(errno), errno);
+				static char once;
+
+				if (!once) {
+					once = 1; /* note: no need for atomic ops here */
+					ha_alert("socket for logger #%d failed: %s (errno=%d)\n",
+					         nblogger, strerror(errno), errno);
+				}
 				continue;
 			}
 			/* we don't want to receive anything on this socket */
 			setsockopt(*plogfd, SOL_SOCKET, SO_RCVBUF, &zero, sizeof(zero));
 			/* does nothing under Linux, maybe needed for others */
 			shutdown(*plogfd, SHUT_RD);
+			fcntl(*plogfd, F_SETFD, fcntl(*plogfd, F_GETFD, FD_CLOEXEC) | FD_CLOEXEC);
 		}
 
 		switch (logsrv->format) {
@@ -1276,8 +1302,13 @@ send:
 		sent = sendmsg(*plogfd, &msghdr, MSG_DONTWAIT | MSG_NOSIGNAL);
 
 		if (sent < 0) {
-			Alert("sendmsg logger #%d failed: %s (errno=%d)\n",
-				nblogger, strerror(errno), errno);
+			static char once;
+
+			if (!once) {
+				once = 1; /* note: no need for atomic ops here */
+				ha_alert("sendmsg logger #%d failed: %s (errno=%d)\n",
+				         nblogger, strerror(errno), errno);
+			}
 		}
 	}
 }
@@ -1322,6 +1353,43 @@ void init_log()
 		FD_SET(*tmp, rfc5424_escape_map);
 		tmp++;
 	}
+}
+
+static int init_log_buffers_per_thread()
+{
+	return init_log_buffers();
+}
+
+static void deinit_log_buffers_per_thread()
+{
+	deinit_log_buffers();
+}
+
+/* Initialize log buffers used for syslog messages */
+int init_log_buffers()
+{
+	logheader = my_realloc2(logheader, global.max_syslog_len + 1);
+	logheader_rfc5424 = my_realloc2(logheader_rfc5424, global.max_syslog_len + 1);
+	logline = my_realloc2(logline, global.max_syslog_len + 1);
+	logline_rfc5424 = my_realloc2(logline_rfc5424, global.max_syslog_len + 1);
+	if (!logheader || !logline_rfc5424 || !logline || !logline_rfc5424)
+		return 0;
+	return 1;
+}
+
+/* Deinitialize log buffers used for syslog messages */
+void deinit_log_buffers()
+{
+	free(logheader);
+	free(logheader_rfc5424);
+	free(logline);
+	free(logline_rfc5424);
+	free(startup_logs);
+	logheader         = NULL;
+	logheader_rfc5424 = NULL;
+	logline           = NULL;
+	logline_rfc5424   = NULL;
+	startup_logs      = NULL;
 }
 
 /* Builds a log line in <dst> based on <list_format>, and stops before reaching
@@ -1468,7 +1536,7 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				break;
 
 			case LOG_FMT_BACKENDIP:  // %bi
-				conn = objt_conn(s->si[1].end);
+				conn = cs_conn(objt_cs(s->si[1].end));
 				if (conn)
 					ret = lf_ip(tmplog, (struct sockaddr *)&conn->addr.from, dst + maxsize - tmplog, tmp);
 				else
@@ -1481,7 +1549,7 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				break;
 
 			case LOG_FMT_BACKENDPORT:  // %bp
-				conn = objt_conn(s->si[1].end);
+				conn = cs_conn(objt_cs(s->si[1].end));
 				if (conn)
 					ret = lf_port(tmplog, (struct sockaddr *)&conn->addr.from, dst + maxsize - tmplog, tmp);
 				else
@@ -1494,7 +1562,7 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				break;
 
 			case LOG_FMT_SERVERIP: // %si
-				conn = objt_conn(s->si[1].end);
+				conn = cs_conn(objt_cs(s->si[1].end));
 				if (conn)
 					ret = lf_ip(tmplog, (struct sockaddr *)&conn->addr.to, dst + maxsize - tmplog, tmp);
 				else
@@ -1507,7 +1575,7 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				break;
 
 			case LOG_FMT_SERVERPORT: // %sp
-				conn = objt_conn(s->si[1].end);
+				conn = cs_conn(objt_cs(s->si[1].end));
 				if (conn)
 					ret = lf_port(tmplog, (struct sockaddr *)&conn->addr.to, dst + maxsize - tmplog, tmp);
 				else
@@ -1631,10 +1699,8 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				if (iret == 0)
 					goto out;
 				tmplog += iret;
-#ifdef USE_OPENSSL
-				if (sess->listener->xprt == &ssl_sock)
+				if (sess->listener->bind_conf->xprt == xprt_get(XPRT_SSL))
 					LOGCHAR('~');
-#endif
 				if (tmp->options & LOG_OPT_QUOTE)
 					LOGCHAR('"');
 				last_isspace = 0;
@@ -1644,8 +1710,7 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				src = NULL;
 				conn = objt_conn(sess->origin);
 				if (conn) {
-					if (sess->listener->xprt == &ssl_sock)
-						src = ssl_sock_get_cipher_name(conn);
+					src = ssl_sock_get_cipher_name(conn);
 				}
 				ret = lf_text(tmplog, src, dst + maxsize - tmplog, tmp);
 				if (ret == NULL)
@@ -1658,8 +1723,7 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				src = NULL;
 				conn = objt_conn(sess->origin);
 				if (conn) {
-					if (sess->listener->xprt == &ssl_sock)
-						src = ssl_sock_get_proto_version(conn);
+					src = ssl_sock_get_proto_version(conn);
 				}
 				ret = lf_text(tmplog, src, dst + maxsize - tmplog, tmp);
 				if (ret == NULL)
@@ -2325,7 +2389,7 @@ void strm_log(struct stream *s)
 
 	/* if unique-id was not generated */
 	if (!s->unique_id && !LIST_ISEMPTY(&sess->fe->format_unique_id)) {
-		if ((s->unique_id = pool_alloc2(pool2_uniqueid)) != NULL)
+		if ((s->unique_id = pool_alloc(pool_head_uniqueid)) != NULL)
 			build_logline(s, s->unique_id, UNIQUEID_LEN, &sess->fe->format_unique_id);
 	}
 
@@ -2336,12 +2400,39 @@ void strm_log(struct stream *s)
 
 	size = build_logline(s, logline, global.max_syslog_len, &sess->fe->logformat);
 	if (size > 0) {
-		sess->fe->log_count++;
+		HA_ATOMIC_ADD(&sess->fe->log_count, 1);
 		__send_log(sess->fe, level, logline, size + 1, logline_rfc5424, sd_size);
 		s->logs.logwait = 0;
 	}
 }
 
+static int cli_io_handler_show_startup_logs(struct appctx *appctx)
+{
+	struct stream_interface *si = appctx->owner;
+	const char *msg = (startup_logs ? startup_logs : "No startup alerts/warnings.\n");
+
+	if (ci_putstr(si_ic(si), msg) == -1) {
+		si_applet_cant_put(si);
+		return 0;
+	}
+	return 1;
+}
+
+/* register cli keywords */
+static struct cli_kw_list cli_kws = {{ },{
+	{ { "show", "startup-logs",  NULL },
+	  "show startup-logs : report logs emitted during HAProxy startup",
+	  NULL, cli_io_handler_show_startup_logs },
+	{{},}
+}};
+
+__attribute__((constructor))
+static void __log_init(void)
+{
+	hap_register_per_thread_init(init_log_buffers_per_thread);
+	hap_register_per_thread_deinit(deinit_log_buffers_per_thread);
+	cli_register_kw(&cli_kws);
+}
 /*
  * Local variables:
  *  c-indent-level: 8

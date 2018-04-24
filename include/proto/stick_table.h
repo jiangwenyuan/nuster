@@ -31,22 +31,18 @@
 #define stktable_data_size(type) (sizeof(((union stktable_data*)0)->type))
 #define stktable_data_cast(ptr, type) ((union stktable_data*)(ptr))->type
 
-extern struct stktable_key *static_table_key;
-
 struct stksess *stksess_new(struct stktable *t, struct stktable_key *key);
 void stksess_setkey(struct stktable *t, struct stksess *ts, struct stktable_key *key);
 void stksess_free(struct stktable *t, struct stksess *ts);
-void stksess_kill(struct stktable *t, struct stksess *ts);
+int stksess_kill(struct stktable *t, struct stksess *ts, int decrefcount);
 
 int stktable_init(struct stktable *t);
 int stktable_parse_type(char **args, int *idx, unsigned long *type, size_t *key_size);
 struct stksess *stktable_get_entry(struct stktable *table, struct stktable_key *key);
-struct stksess *stktable_store(struct stktable *t, struct stksess *ts, int local);
-struct stksess *stktable_store_with_exp(struct stktable *t, struct stksess *ts,
-                                        int local, int expire);
-struct stksess *stktable_touch_with_exp(struct stktable *t, struct stksess *ts,
-                                        int local, int expire);
-struct stksess *stktable_touch(struct stktable *t, struct stksess *ts, int local);
+struct stksess *stktable_set_entry(struct stktable *table, struct stksess *nts);
+void stktable_touch_with_exp(struct stktable *t, struct stksess *ts, int decrefcount, int expire);
+void stktable_touch_remote(struct stktable *t, struct stksess *ts, int decrefcnt);
+void stktable_touch_local(struct stktable *t, struct stksess *ts, int decrefccount);
 struct stksess *stktable_lookup(struct stktable *t, struct stksess *ts);
 struct stksess *stktable_lookup_key(struct stktable *t, struct stktable_key *key);
 struct stksess *stktable_update_key(struct stktable *table, struct stktable_key *key);
@@ -54,12 +50,13 @@ struct stktable_key *smp_to_stkey(struct sample *smp, struct stktable *t);
 struct stktable_key *stktable_fetch_key(struct stktable *t, struct proxy *px, struct session *sess,
                                         struct stream *strm, unsigned int opt,
                                         struct sample_expr *expr, struct sample *smp);
-struct stkctr *smp_fetch_sc_stkctr(struct session *sess, struct stream *strm, const struct arg *args, const char *kw);
-struct stkctr *smp_create_src_stkctr(struct session *sess, struct stream *strm, const struct arg *args, const char *kw);
+struct stkctr *smp_fetch_sc_stkctr(struct session *sess, struct stream *strm, const struct arg *args, const char *kw, struct stkctr *stkctr);
+struct stkctr *smp_create_src_stkctr(struct session *sess, struct stream *strm, const struct arg *args, const char *kw, struct stkctr *stkctr);
 int stktable_compatible_sample(struct sample_expr *expr, unsigned long table_type);
 int stktable_register_data_store(int idx, const char *name, int std_type, int arg_type);
 int stktable_get_data_type(char *name);
 int stktable_trash_oldest(struct stktable *t, int to_batch);
+int __stksess_kill(struct stktable *t, struct stksess *ts);
 
 /* return allocation size for standard data type <type> */
 static inline int stktable_type_size(int type)
@@ -134,10 +131,25 @@ static inline void *stktable_data_ptr(struct stktable *t, struct stksess *ts, in
 }
 
 /* kill an entry if it's expired and its ref_cnt is zero */
-static inline void stksess_kill_if_expired(struct stktable *t, struct stksess *ts)
+static inline int __stksess_kill_if_expired(struct stktable *t, struct stksess *ts)
 {
 	if (t->expire != TICK_ETERNITY && tick_is_expired(ts->expire, now_ms))
-		stksess_kill(t, ts);
+		return __stksess_kill(t, ts);
+
+	return 0;
+}
+
+static inline void stksess_kill_if_expired(struct stktable *t, struct stksess *ts, int decrefcnt)
+{
+	HA_SPIN_LOCK(STK_TABLE_LOCK, &t->lock);
+
+	if (decrefcnt)
+		ts->ref_cnt--;
+
+	if (t->expire != TICK_ETERNITY && tick_is_expired(ts->expire, now_ms))
+		__stksess_kill_if_expired(t, ts);
+
+	HA_SPIN_UNLOCK(STK_TABLE_LOCK, &t->lock);
 }
 
 /* sets the stick counter's entry pointer */

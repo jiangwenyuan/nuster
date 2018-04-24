@@ -37,13 +37,15 @@ BEGIN {
   if (prog == "")
     prog=ENVIRON["PROG"];
 
-  cmd=cmd " -f -e " prog;
+  cmd=cmd " -f -s -e " prog;
 
   for (i = 1; i < 100; i++) {
     indents[">",i] = indents[">",i-1] "->"
     indents[">",i-1] = indents[">",i-1] " "
     indents["<",i] = indents["<",i-1] "  "
     indents["<",i-1] = indents["<",i-1] " "
+    indents[" ",i] = indents[" ",i-1] "##"
+    indents[" ",i-1] = indents[" ",i-1] " "
   }
 }
 
@@ -61,10 +63,16 @@ function getptr(ptr)
 }
 
 {
-  # input format: <timestamp> <level> <caller> <dir> <callee>
+  # input format: <timestamp> <level> <caller> <dir> <callee> [<ret>|<args>...]
+  if ($3 == "#") { # this is a trace comment
+    printf "%s %s  ", $1, indents[" ",$2]
+    $1=""; $2=""; $3=""
+    print substr($0,4)
+    next
+  }
   getptr($3); caller_loc=loc; caller_name=name
   getptr($5); callee_loc=loc; callee_name=name
-  printf "%s %s  %s %s %s [%s:%s] %s [%s:%s]\n",
-    $1, indents[$4,$2], caller_name, $4, callee_name, caller_loc, $3, $4, callee_loc, $5
+  printf "%s %s  %s %s %s(%s) [%s:%s] %s [%s:%s]\n",
+    $1, indents[$4,$2], caller_name, $4, callee_name, $6, caller_loc, $3, $4, callee_loc, $5
 }
 '

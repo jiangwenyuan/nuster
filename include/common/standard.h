@@ -24,7 +24,9 @@
 
 #include <limits.h>
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
+#include <stdarg.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -35,6 +37,7 @@
 #include <common/config.h>
 #include <common/namespace.h>
 #include <eb32tree.h>
+#include <eb32sctree.h>
 
 #ifndef LLONG_MAX
 # define LLONG_MAX 9223372036854775807LL
@@ -90,7 +93,7 @@ struct split_url {
 	int host_len;
 };
 
-extern int itoa_idx; /* index of next itoa_str to use */
+extern THREAD_LOCAL int itoa_idx; /* index of next itoa_str to use */
 
 /*
  * copies at most <size-1> chars from <src> to <dst>. Last char is always
@@ -105,7 +108,7 @@ extern int strlcpy2(char *dst, const char *src, int size);
  * This function simply returns a locally allocated string containing
  * the ascii representation for number 'n' in decimal.
  */
-extern char itoa_str[][171];
+extern THREAD_LOCAL char itoa_str[][171];
 extern char *ultoa_r(unsigned long n, char *buffer, int size);
 extern char *lltoa_r(long long int n, char *buffer, int size);
 extern char *sltoa_r(long n, char *buffer, int size);
@@ -204,6 +207,83 @@ static inline const char *LIM2A(unsigned long n, const char *alt)
 	return ret;
 }
 
+/* Encode the integer <i> into a varint (variable-length integer). The encoded
+ * value is copied in <*buf>. Here is the encoding format:
+ *
+ *        0 <= X < 240        : 1 byte  (7.875 bits)  [ XXXX XXXX ]
+ *      240 <= X < 2288       : 2 bytes (11 bits)     [ 1111 XXXX ] [ 0XXX XXXX ]
+ *     2288 <= X < 264432     : 3 bytes (18 bits)     [ 1111 XXXX ] [ 1XXX XXXX ]   [ 0XXX XXXX ]
+ *   264432 <= X < 33818864   : 4 bytes (25 bits)     [ 1111 XXXX ] [ 1XXX XXXX ]*2 [ 0XXX XXXX ]
+ * 33818864 <= X < 4328786160 : 5 bytes (32 bits)     [ 1111 XXXX ] [ 1XXX XXXX ]*3 [ 0XXX XXXX ]
+ * ...
+ *
+ * On success, it returns the number of written bytes and <*buf> is moved after
+ * the encoded value. Otherwise, it returns -1. */
+static inline int
+encode_varint(uint64_t i, char **buf, char *end)
+{
+	unsigned char *p = (unsigned char *)*buf;
+	int r;
+
+	if (p >= (unsigned char *)end)
+		return -1;
+
+	if (i < 240) {
+		*p++ = i;
+		*buf = (char *)p;
+		return 1;
+	}
+
+	*p++ = (unsigned char)i | 240;
+	i = (i - 240) >> 4;
+	while (i >= 128) {
+		if (p >= (unsigned char *)end)
+			return -1;
+		*p++ = (unsigned char)i | 128;
+		i = (i - 128) >> 7;
+	}
+
+	if (p >= (unsigned char *)end)
+		return -1;
+	*p++ = (unsigned char)i;
+
+	r    = ((char *)p - *buf);
+	*buf = (char *)p;
+	return r;
+}
+
+/* Decode a varint from <*buf> and save the decoded value in <*i>. See
+ * 'spoe_encode_varint' for details about varint.
+ * On success, it returns the number of read bytes and <*buf> is moved after the
+ * varint. Otherwise, it returns -1. */
+static inline int
+decode_varint(char **buf, char *end, uint64_t *i)
+{
+	unsigned char *p = (unsigned char *)*buf;
+	int r;
+
+	if (p >= (unsigned char *)end)
+		return -1;
+
+	*i = *p++;
+	if (*i < 240) {
+		*buf = (char *)p;
+		return 1;
+	}
+
+	r = 4;
+	do {
+		if (p >= (unsigned char *)end)
+			return -1;
+		*i += (uint64_t)*p << r;
+		r  += 7;
+	} while (*p++ >= 128);
+
+	r    = ((char *)p - *buf);
+	*buf = (char *)p;
+	return r;
+}
+
 /* returns a locally allocated string containing the quoted encoding of the
  * input string. The output may be truncated to QSTR_SIZE chars, but it is
  * guaranteed that the string will always be properly terminated. Quotes are
@@ -238,9 +318,9 @@ extern int ishex(char s);
  */
 static inline int hex2i(int c)
 {
-	if (unlikely((unsigned char)(c -= '0') > 9)) {
-		if (likely((unsigned char)(c -= 'A' - '0') > 5 &&
-			      (unsigned char)(c -= 'a' - 'A') > 5))
+	if ((unsigned char)(c -= '0') > 9) {
+		if ((unsigned char)(c -= 'A' - '0') > 5 &&
+			      (unsigned char)(c -= 'a' - 'A') > 5)
 			c = -11;
 		c += 10;
 	}
@@ -258,11 +338,18 @@ unsigned int round_2dig(unsigned int i);
 extern const char *invalid_char(const char *name);
 
 /*
- * Checks <domainname> for invalid characters. Valid chars are [A-Za-z0-9_.-].
+ * Checks <name> for invalid characters. Valid chars are [A-Za-z0-9_.-].
  * If an invalid character is found, a pointer to it is returned.
  * If everything is fine, NULL is returned.
  */
 extern const char *invalid_domainchar(const char *name);
+
+/*
+ * Checks <name> for invalid characters. Valid chars are [A-Za-z_.-].
+ * If an invalid character is found, a pointer to it is returned.
+ * If everything is fine, NULL is returned.
+ */
+extern const char *invalid_prefix_char(const char *name);
 
 /*
  * converts <str> to a locally allocated struct sockaddr_storage *, and a
@@ -286,7 +373,7 @@ struct sockaddr_storage *str2sa_range(const char *str,
 
 /* converts <str> to a struct in_addr containing a network mask. It can be
  * passed in dotted form (255.255.255.0) or in CIDR form (24). It returns 1
- * if the conversion succeeds otherwise non-zero.
+ * if the conversion succeeds otherwise zero.
  */
 int str2mask(const char *str, struct in_addr *mask);
 
@@ -706,6 +793,46 @@ static inline unsigned int my_popcountl(unsigned long a)
 	return cnt;
 }
 
+/* Simple ffs implementation. It returns the position of the lowest bit set to
+ * one. */
+static inline unsigned int my_ffsl(unsigned long a)
+{
+	unsigned int cnt;
+
+	if (!a)
+		return 0;
+
+	cnt = 1;
+#if LONG_MAX > 0x7FFFFFFFL /* 64bits */
+	if (!(a & 0xFFFFFFFFUL)) {
+		a >>= 32;
+		cnt += 32;
+	}
+#endif
+	if (!(a & 0XFFFFU)) {
+		a >>= 16;
+		cnt += 16;
+	}
+	if (!(a & 0XFF)) {
+		a >>= 8;
+		cnt += 8;
+	}
+	if (!(a & 0xf)) {
+		a >>= 4;
+		cnt += 4;
+	}
+	if (!(a & 0x3)) {
+		a >>= 2;
+		cnt += 2;
+	}
+	if (!(a & 0x1)) {
+		a >>= 1;
+		cnt += 1;
+	}
+
+	return cnt;
+}
+
 /* Build a word with the <bits> lower bits set (reverse of my_popcountl) */
 static inline unsigned long nbits(int bits)
 {
@@ -736,6 +863,16 @@ const void *my_memmem(const void *, size_t, const void *, size_t);
  * ID tree <root>. Zero is returned if no place is found.
  */
 unsigned int get_next_id(struct eb_root *root, unsigned int key);
+
+/* dump the full tree to <file> in DOT format for debugging purposes. Will
+ * optionally highlight node <subj> if found, depending on operation <op> :
+ *    0 : nothing
+ *   >0 : insertion, node/leaf are surrounded in red
+ *   <0 : removal, node/leaf are dashed with no background
+ * Will optionally add "desc" as a label on the graph if set and non-null.
+ */
+void eb32sc_to_file(FILE *file, struct eb_root *root, const struct eb32sc_node *subj,
+                    int op, const char *desc);
 
 /* This function compares a sample word possibly followed by blanks to another
  * clean word. The compare is case-insensitive. 1 is returned if both are equal,
@@ -987,7 +1124,13 @@ int parse_asctime_date(const char *date, int len, struct tm *tm);
  *    if (!fct2(err)) report(*err);
  *    if (!fct3(err)) report(*err);
  *    free(*err);
+ *
+ * memprintf relies on memvprintf. This last version can be called from any
+ * function with variadic arguments.
  */
+char *memvprintf(char **out, const char *format, va_list args)
+	__attribute__ ((format(printf, 2, 0)));
+
 char *memprintf(char **out, const char *format, ...)
 	__attribute__ ((format(printf, 2, 3)));
 
@@ -1013,6 +1156,16 @@ char *env_expand(char *in);
  * them.
  */
 #define fddebug(msg...) do { char *_m = NULL; memprintf(&_m, ##msg); if (_m) write(-1, _m, strlen(_m)); free(_m); } while (0)
+
+/* displays a <len> long memory block at <buf>, assuming first byte of <buf>
+ * has address <baseaddr>. String <pfx> may be placed as a prefix in front of
+ * each line. It may be NULL if unused. The output is emitted to file <out>.
+ */
+void debug_hexdump(FILE *out, const char *pfx, const char *buf, unsigned int baseaddr, int len);
+
+/* this is used to emit traces when building with TRACE=1 */
+__attribute__((format(printf, 1, 2)))
+void trace(char *fmt, ...);
 
 /* used from everywhere just to drain results we don't want to read and which
  * recent versions of gcc increasingly and annoyingly complain about.
@@ -1110,6 +1263,10 @@ static inline unsigned char utf8_return_length(unsigned char code)
  */
 static inline unsigned long long my_htonll(unsigned long long a)
 {
+#if defined(__x86_64__)
+	__asm__ volatile("bswap %0" : "=r"(a) : "0"(a));
+	return a;
+#else
 	union {
 		struct {
 			unsigned int w1;
@@ -1118,6 +1275,7 @@ static inline unsigned long long my_htonll(unsigned long long a)
 		unsigned long long by64;
 	} w = { .by64 = a };
 	return ((unsigned long long)htonl(w.by32.w1) << 32) | htonl(w.by32.w2);
+#endif
 }
 
 /* Turns 64-bit value <a> from network byte order to host byte order. */

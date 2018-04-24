@@ -166,10 +166,10 @@ resume_execution:
 				channel_abort(&s->res);
 				req->analysers = 0;
 
-				s->be->be_counters.denied_req++;
-				sess->fe->fe_counters.denied_req++;
-				if (sess->listener->counters)
-					sess->listener->counters->denied_req++;
+				HA_ATOMIC_ADD(&s->be->be_counters.denied_req, 1);
+				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
+				if (sess->listener && sess->listener->counters)
+					HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
 
 				if (!(s->flags & SF_ERR_MASK))
 					s->flags |= SF_ERR_PRXCOND;
@@ -184,7 +184,7 @@ resume_execution:
 				struct stktable_key *key;
 				struct sample smp;
 
-				if (stkctr_entry(&s->stkctr[tcp_trk_idx(rule->action)]))
+				if (stkctr_entry(&s->stkctr[trk_idx(rule->action)]))
 					continue;
 
 				t = rule->arg.trk_ctr.table.t;
@@ -194,10 +194,10 @@ resume_execution:
 					goto missing_data; /* key might appear later */
 
 				if (key && (ts = stktable_get_entry(t, key))) {
-					stream_track_stkctr(&s->stkctr[tcp_trk_idx(rule->action)], t, ts);
-					stkctr_set_flags(&s->stkctr[tcp_trk_idx(rule->action)], STKCTR_TRACK_CONTENT);
+					stream_track_stkctr(&s->stkctr[trk_idx(rule->action)], t, ts);
+					stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_CONTENT);
 					if (sess->fe != s->be)
-						stkctr_set_flags(&s->stkctr[tcp_trk_idx(rule->action)], STKCTR_TRACK_BACKEND);
+						stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_BACKEND);
 				}
 			}
 			else if (rule->action == ACT_TCP_CAPTURE) {
@@ -214,7 +214,7 @@ resume_execution:
 					goto missing_data;
 
 				if (cap[h->index] == NULL)
-					cap[h->index] = pool_alloc2(h->pool);
+					cap[h->index] = pool_alloc(h->pool);
 
 				if (cap[h->index] == NULL) /* no more capture memory */
 					continue;
@@ -344,10 +344,10 @@ resume_execution:
 				channel_abort(&s->req);
 				rep->analysers = 0;
 
-				s->be->be_counters.denied_resp++;
-				sess->fe->fe_counters.denied_resp++;
-				if (sess->listener->counters)
-					sess->listener->counters->denied_resp++;
+				HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
+				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_resp, 1);
+				if (sess->listener && sess->listener->counters)
+					HA_ATOMIC_ADD(&sess->listener->counters->denied_resp, 1);
 
 				if (!(s->flags & SF_ERR_MASK))
 					s->flags |= SF_ERR_PRXCOND;
@@ -427,9 +427,9 @@ int tcp_exec_l4_rules(struct session *sess)
 				break;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
-				sess->fe->fe_counters.denied_conn++;
-				if (sess->listener->counters)
-					sess->listener->counters->denied_conn++;
+				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_conn, 1);
+				if (sess->listener && sess->listener->counters)
+					HA_ATOMIC_ADD(&sess->listener->counters->denied_conn, 1);
 
 				result = 0;
 				break;
@@ -440,14 +440,14 @@ int tcp_exec_l4_rules(struct session *sess)
 				 */
 				struct stktable_key *key;
 
-				if (stkctr_entry(&sess->stkctr[tcp_trk_idx(rule->action)]))
+				if (stkctr_entry(&sess->stkctr[trk_idx(rule->action)]))
 					continue;
 
 				t = rule->arg.trk_ctr.table.t;
 				key = stktable_fetch_key(t, sess->fe, sess, NULL, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.trk_ctr.expr, NULL);
 
 				if (key && (ts = stktable_get_entry(t, key)))
-					stream_track_stkctr(&sess->stkctr[tcp_trk_idx(rule->action)], t, ts);
+					stream_track_stkctr(&sess->stkctr[trk_idx(rule->action)], t, ts);
 			}
 			else if (rule->action == ACT_TCP_EXPECT_PX) {
 				conn->flags |= CO_FL_ACCEPT_PROXY;
@@ -514,9 +514,9 @@ int tcp_exec_l5_rules(struct session *sess)
 				break;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
-				sess->fe->fe_counters.denied_sess++;
-				if (sess->listener->counters)
-					sess->listener->counters->denied_sess++;
+				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_sess, 1);
+				if (sess->listener && sess->listener->counters)
+					HA_ATOMIC_ADD(&sess->listener->counters->denied_sess, 1);
 
 				result = 0;
 				break;
@@ -527,14 +527,14 @@ int tcp_exec_l5_rules(struct session *sess)
 				 */
 				struct stktable_key *key;
 
-				if (stkctr_entry(&sess->stkctr[tcp_trk_idx(rule->action)]))
+				if (stkctr_entry(&sess->stkctr[trk_idx(rule->action)]))
 					continue;
 
 				t = rule->arg.trk_ctr.table.t;
 				key = stktable_fetch_key(t, sess->fe, sess, NULL, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.trk_ctr.expr, NULL);
 
 				if (key && (ts = stktable_get_entry(t, key)))
-					stream_track_stkctr(&sess->stkctr[tcp_trk_idx(rule->action)], t, ts);
+					stream_track_stkctr(&sess->stkctr[trk_idx(rule->action)], t, ts);
 			}
 			else {
 				/* Custom keywords. */
@@ -606,7 +606,7 @@ static int tcp_parse_response_rule(char **args, int arg, int section_type,
 	}
 
 	if (strcmp(args[arg], "if") == 0 || strcmp(args[arg], "unless") == 0) {
-		if ((rule->cond = build_acl_cond(file, line, curpx, (const char **)args+arg, err)) == NULL) {
+		if ((rule->cond = build_acl_cond(file, line, &curpx->acl, curpx, (const char **)args+arg, err)) == NULL) {
 			memprintf(err,
 			          "'%s %s %s' : error detected in %s '%s' while parsing '%s' condition : %s",
 			          args[0], args[1], args[2], proxy_type_str(curpx), curpx->id, args[arg], *err);
@@ -773,6 +773,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 		}
 		rule->arg.trk_ctr.expr = expr;
 		rule->action = ACT_ACTION_TRK_SC0 + args[kw][8] - '0';
+		rule->check_ptr = check_trk_action;
 	}
 	else if (strcmp(args[arg], "expect-proxy") == 0) {
 		if (strcmp(args[arg+1], "layer4") != 0) {
@@ -849,7 +850,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 	}
 
 	if (strcmp(args[arg], "if") == 0 || strcmp(args[arg], "unless") == 0) {
-		if ((rule->cond = build_acl_cond(file, line, curpx, (const char **)args+arg, err)) == NULL) {
+		if ((rule->cond = build_acl_cond(file, line, &curpx->acl, curpx, (const char **)args+arg, err)) == NULL) {
 			memprintf(err,
 			          "'%s %s %s' : error detected in %s '%s' while parsing '%s' condition : %s",
 			          args[0], args[1], args[2], proxy_type_str(curpx), curpx->id, args[arg], *err);

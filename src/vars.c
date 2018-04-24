@@ -31,6 +31,9 @@ static unsigned int var_sess_limit = 0;
 static unsigned int var_txn_limit = 0;
 static unsigned int var_reqres_limit = 0;
 
+
+__decl_hathreads(HA_RWLOCK_T var_names_rwlock);
+
 /* This function adds or remove memory size from the accounting. The inner
  * pointers may be null when setting the outer ones only.
  */
@@ -39,17 +42,17 @@ static void var_accounting_diff(struct vars *vars, struct session *sess, struct 
 	switch (vars->scope) {
 	case SCOPE_REQ:
 	case SCOPE_RES:
-		strm->vars_reqres.size += size;
+		HA_ATOMIC_ADD(&strm->vars_reqres.size, size);
 		/* fall through */
 	case SCOPE_TXN:
-		strm->vars_txn.size += size;
+		HA_ATOMIC_ADD(&strm->vars_txn.size, size);
 		/* fall through */
 	case SCOPE_SESS:
-		sess->vars.size += size;
+		HA_ATOMIC_ADD(&sess->vars.size, size);
 		/* fall through */
 	case SCOPE_PROC:
-		global.vars.size += size;
-		var_global_size   += size;
+		HA_ATOMIC_ADD(&global.vars.size, size);
+		HA_ATOMIC_ADD(&var_global_size, size);
 	}
 }
 
@@ -95,12 +98,12 @@ unsigned int var_clear(struct var *var)
 		free(var->data.u.str.str);
 		size += var->data.u.str.len;
 	}
-	else if (var->data.type == SMP_T_METH) {
+	else if (var->data.type == SMP_T_METH && var->data.u.meth.meth == HTTP_METH_OTHER) {
 		free(var->data.u.meth.str.str);
 		size += var->data.u.meth.str.len;
 	}
 	LIST_DEL(&var->l);
-	pool_free2(var_pool, var);
+	pool_free(var_pool, var);
 	size += sizeof(struct var);
 	return size;
 }
@@ -113,9 +116,11 @@ void vars_prune(struct vars *vars, struct session *sess, struct stream *strm)
 	struct var *var, *tmp;
 	unsigned int size = 0;
 
+	HA_RWLOCK_WRLOCK(VARS_LOCK, &vars->rwlock);
 	list_for_each_entry_safe(var, tmp, &vars->head, l) {
 		size += var_clear(var);
 	}
+	HA_RWLOCK_WRUNLOCK(VARS_LOCK, &vars->rwlock);
 	var_accounting_diff(vars, sess, strm, -size);
 }
 
@@ -127,12 +132,15 @@ void vars_prune_per_sess(struct vars *vars)
 	struct var *var, *tmp;
 	unsigned int size = 0;
 
+	HA_RWLOCK_WRLOCK(VARS_LOCK, &vars->rwlock);
 	list_for_each_entry_safe(var, tmp, &vars->head, l) {
 		size += var_clear(var);
 	}
-	vars->size       -= size;
-	global.vars.size -= size;
-	var_global_size  -= size;
+	HA_RWLOCK_WRUNLOCK(VARS_LOCK, &vars->rwlock);
+
+	HA_ATOMIC_SUB(&vars->size, size);
+	HA_ATOMIC_SUB(&global.vars.size, size);
+	HA_ATOMIC_SUB(&var_global_size, size);
 }
 
 /* This function init a list of variabes. */
@@ -141,6 +149,7 @@ void vars_init(struct vars *vars, enum vars_scope scope)
 	LIST_INIT(&vars->head);
 	vars->scope = scope;
 	vars->size = 0;
+	HA_RWLOCK_INIT(&vars->rwlock);
 }
 
 /* This function declares a new variable name. It returns a pointer
@@ -160,11 +169,12 @@ static char *register_name(const char *name, int len, enum vars_scope *scope,
 	int i;
 	char **var_names2;
 	const char *tmp;
+	char *res = NULL;
 
 	/* Check length. */
 	if (len == 0) {
 		memprintf(err, "Empty variable name cannot be accepted");
-		return NULL;
+		return res;
 	}
 
 	/* Check scope. */
@@ -196,29 +206,41 @@ static char *register_name(const char *name, int len, enum vars_scope *scope,
 	else {
 		memprintf(err, "invalid variable name '%s'. A variable name must be start by its scope. "
 		               "The scope can be 'proc', 'sess', 'txn', 'req' or 'res'", name);
-		return NULL;
+		return res;
 	}
+
+	if (alloc)
+		HA_RWLOCK_WRLOCK(VARS_LOCK, &var_names_rwlock);
+	else
+		HA_RWLOCK_RDLOCK(VARS_LOCK, &var_names_rwlock);
+
 
 	/* Look for existing variable name. */
 	for (i = 0; i < var_names_nb; i++)
-		if (strncmp(var_names[i], name, len) == 0 && var_names[i][len] == '\0')
-			return var_names[i];
+		if (strncmp(var_names[i], name, len) == 0 && var_names[i][len] == '\0') {
+			res = var_names[i];
+			goto end;
+		}
 
-	if (!alloc)
-		return NULL;
+	if (!alloc) {
+		res = NULL;
+		goto end;
+	}
 
 	/* Store variable name. If realloc fails, var_names remains valid */
 	var_names2 = realloc(var_names, (var_names_nb + 1) * sizeof(*var_names));
 	if (!var_names2) {
 		memprintf(err, "out of memory error");
-		return NULL;
+		res = NULL;
+		goto end;
 	}
 	var_names_nb++;
 	var_names = var_names2;
 	var_names[var_names_nb - 1] = malloc(len + 1);
 	if (!var_names[var_names_nb - 1]) {
 		memprintf(err, "out of memory error");
-		return NULL;
+		res = NULL;
+		goto end;
 	}
 	memcpy(var_names[var_names_nb - 1], name, len);
 	var_names[var_names_nb - 1][len] = '\0';
@@ -228,13 +250,20 @@ static char *register_name(const char *name, int len, enum vars_scope *scope,
 	while (*tmp) {
 		if (!isalnum((int)(unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
 			memprintf(err, "invalid syntax at char '%s'", tmp);
-			return NULL;
+			res = NULL;
+			goto end;
 		}
 		tmp++;
 	}
+	res = var_names[var_names_nb - 1];
 
-	/* Return the result. */
-	return var_names[var_names_nb - 1];
+  end:
+	if (alloc)
+		HA_RWLOCK_WRUNLOCK(VARS_LOCK, &var_names_rwlock);
+	else
+		HA_RWLOCK_RDUNLOCK(VARS_LOCK, &var_names_rwlock);
+
+	return res;
 }
 
 /* This function returns an existing variable or returns NULL. */
@@ -278,15 +307,23 @@ static int smp_fetch_var(const struct arg *args, struct sample *smp, const char 
 	}
 	if (vars->scope != var_desc->scope)
 		return 0;
+
+	HA_RWLOCK_RDLOCK(VARS_LOCK, &vars->rwlock);
 	var = var_get(vars, var_desc->name);
 
 	/* check for the variable avalaibility */
-	if (!var)
+	if (!var) {
+		HA_RWLOCK_RDUNLOCK(VARS_LOCK, &vars->rwlock);
 		return 0;
+	}
 
-	/* Copy sample. */
+	/* Duplicate the sample data because it could modified by another
+	 * thread */
 	smp->data = var->data;
+	smp_dup(smp);
 	smp->flags |= SMP_F_CONST;
+
+	HA_RWLOCK_RDUNLOCK(VARS_LOCK, &vars->rwlock);
 	return 1;
 }
 
@@ -309,7 +346,7 @@ static int sample_store(struct vars *vars, const char *name, struct sample *smp)
 			free(var->data.u.str.str);
 			var_accounting_diff(vars, smp->sess, smp->strm, -var->data.u.str.len);
 		}
-		else if (var->data.type == SMP_T_METH) {
+		else if (var->data.type == SMP_T_METH && var->data.u.meth.meth == HTTP_METH_OTHER) {
 			free(var->data.u.meth.str.str);
 			var_accounting_diff(vars, smp->sess, smp->strm, -var->data.u.meth.str.len);
 		}
@@ -320,7 +357,7 @@ static int sample_store(struct vars *vars, const char *name, struct sample *smp)
 			return 0;
 
 		/* Create new entry. */
-		var = pool_alloc2(var_pool);
+		var = pool_alloc(var_pool);
 		if (!var)
 			return 0;
 		LIST_ADDQ(&vars->head, &var->l);
@@ -358,6 +395,10 @@ static int sample_store(struct vars *vars, const char *name, struct sample *smp)
 		memcpy(var->data.u.str.str, smp->data.u.str.str, var->data.u.str.len);
 		break;
 	case SMP_T_METH:
+		var->data.u.meth.meth = smp->data.u.meth.meth;
+		if (smp->data.u.meth.meth != HTTP_METH_OTHER)
+			break;
+
 		if (!var_accounting_add(vars, smp->sess, smp->strm, smp->data.u.meth.str.len)) {
 			var->data.type = SMP_T_BOOL; /* This type doesn't use additional memory. */
 			return 0;
@@ -368,7 +409,6 @@ static int sample_store(struct vars *vars, const char *name, struct sample *smp)
 			var->data.type = SMP_T_BOOL; /* This type doesn't use additional memory. */
 			return 0;
 		}
-		var->data.u.meth.meth = smp->data.u.meth.meth;
 		var->data.u.meth.str.len = smp->data.u.meth.str.len;
 		var->data.u.meth.str.size = smp->data.u.meth.str.len;
 		memcpy(var->data.u.meth.str.str, smp->data.u.meth.str.str, var->data.u.meth.str.len);
@@ -381,6 +421,7 @@ static int sample_store(struct vars *vars, const char *name, struct sample *smp)
 static inline int sample_store_stream(const char *name, enum vars_scope scope, struct sample *smp)
 {
 	struct vars *vars;
+	int ret;
 
 	switch (scope) {
 	case SCOPE_PROC: vars = &global.vars;  break;
@@ -392,7 +433,11 @@ static inline int sample_store_stream(const char *name, enum vars_scope scope, s
 	}
 	if (vars->scope != scope)
 		return 0;
-	return sample_store(vars, name, smp);
+
+	HA_RWLOCK_WRLOCK(VARS_LOCK, &vars->rwlock);
+	ret = sample_store(vars, name, smp);
+	HA_RWLOCK_WRUNLOCK(VARS_LOCK, &vars->rwlock);
+	return ret;
 }
 
 /* Returns 0 if fails, else returns 1. Note that stream may be null for SCOPE_SESS. */
@@ -414,11 +459,13 @@ static inline int sample_clear_stream(const char *name, enum vars_scope scope, s
 		return 0;
 
 	/* Look for existing variable name. */
+	HA_RWLOCK_WRLOCK(VARS_LOCK, &vars->rwlock);
 	var = var_get(vars, name);
 	if (var) {
 		size = var_clear(var);
 		var_accounting_diff(vars, smp->sess, smp->strm, -size);
 	}
+	HA_RWLOCK_WRUNLOCK(VARS_LOCK, &vars->rwlock);
 	return 1;
 }
 
@@ -613,7 +660,7 @@ static enum act_return action_store(struct act_rule *rule, struct proxy *px,
 	default:
 		send_log(px, LOG_ERR, "Vars: internal error while execute action store.");
 		if (!(global.mode & MODE_QUIET) || (global.mode & MODE_VERBOSE))
-			Alert("Vars: internal error while execute action store.\n");
+			ha_alert("Vars: internal error while execute action store.\n");
 		return ACT_RET_CONT;
 	}
 
@@ -850,7 +897,7 @@ static struct cfg_kw_list cfg_kws = {{ },{
 }};
 
 __attribute__((constructor))
-static void __http_protocol_init(void)
+static void __vars_init(void)
 {
 	var_pool = create_pool("vars", sizeof(struct var), MEM_F_SHARED);
 
@@ -862,4 +909,6 @@ static void __http_protocol_init(void)
 	http_req_keywords_register(&http_req_kws);
 	http_res_keywords_register(&http_res_kws);
 	cfg_register_keywords(&cfg_kws);
+
+	HA_RWLOCK_INIT(&var_names_rwlock);
 }

@@ -124,7 +124,7 @@ struct stream {
 	struct session *sess;           /* the session this stream is attached to */
 
 	struct server *srv_conn;        /* stream already has a slot on a server and is not in queue */
-	struct pendconn *pend_pos;      /* if not NULL, points to the position in the pending queue */
+	struct pendconn *pend_pos;      /* if not NULL, points to the pending position in the pending queue */
 
 	struct http_txn *txn;           /* current HTTP transaction being processed. Should become a list. */
 
@@ -165,7 +165,7 @@ struct stream {
 	/* These two pointers are used to resume the execution of the rule lists. */
 	struct list *current_rule_list;         /* this is used to store the current executed rule list. */
 	void *current_rule;                     /* this is used to store the current rule to be resumed. */
-	struct hlua hlua;                       /* lua runtime context */
+	struct hlua *hlua;                      /* lua runtime context */
 };
 
 #endif /* _TYPES_STREAM_H */

@@ -34,37 +34,16 @@
 
 #include <proto/backend.h>
 
-extern struct pool_head *pool2_pendconn;
+extern struct pool_head *pool_head_pendconn;
 
 int init_pendconn();
-struct stream *pendconn_get_next_strm(struct server *srv, struct proxy *px);
 struct pendconn *pendconn_add(struct stream *strm);
+int pendconn_dequeue(struct stream *strm);
 void pendconn_free(struct pendconn *p);
 void process_srv_queue(struct server *s);
 unsigned int srv_dynamic_maxconn(const struct server *s);
 int pendconn_redistribute(struct server *s);
 int pendconn_grab_from_px(struct server *s);
-
-
-/* Returns the first pending connection for server <s>, which may be NULL if
- * nothing is pending.
- */
-static inline struct pendconn *pendconn_from_srv(const struct server *s) {
-	if (!s->nbpend)
-		return NULL;
-
-	return LIST_ELEM(s->pendconns.n, struct pendconn *, list);
-}
-
-/* Returns the first pending connection for proxy <px>, which may be NULL if
- * nothing is pending.
- */
-static inline struct pendconn *pendconn_from_px(const struct proxy *px) {
-	if (!px->nbpend)
-		return NULL;
-
-	return LIST_ELEM(px->pendconns.n, struct pendconn *, list);
-}
 
 /* Returns 0 if all slots are full on a server, or 1 if there are slots available. */
 static inline int server_has_room(const struct server *s) {
@@ -76,7 +55,7 @@ static inline int server_has_room(const struct server *s) {
  * for and if/else usage.
  */
 static inline int may_dequeue_tasks(const struct server *s, const struct proxy *p) {
-	return (s && (s->nbpend || (p->nbpend && srv_is_usable(s))) &&
+	return (s && (s->nbpend || (p->nbpend && srv_currently_usable(s))) &&
 		(!s->maxconn || s->cur_sess < srv_dynamic_maxconn(s)));
 }
 

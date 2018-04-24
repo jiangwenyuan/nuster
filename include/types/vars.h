@@ -2,6 +2,7 @@
 #define _TYPES_VARS_H
 
 #include <common/mini-clist.h>
+#include <common/hathreads.h>
 
 #include <types/sample.h>
 
@@ -17,6 +18,7 @@ struct vars {
 	struct list head;
 	enum vars_scope scope;
 	unsigned int size;
+	__decl_hathreads(HA_RWLOCK_T rwlock);
 };
 
 /* This struct describes a variable. */

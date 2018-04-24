@@ -42,13 +42,16 @@
 #include <proto/listener.h>
 #include <proto/log.h>
 #include <proto/protocol.h>
-#include <proto/proto_uxst.h>
 #include <proto/task.h>
 
 static int uxst_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int uxst_bind_listeners(struct protocol *proto, char *errmsg, int errlen);
 static int uxst_unbind_listeners(struct protocol *proto);
 static int uxst_connect_server(struct connection *conn, int data, int delack);
+static void uxst_add_listener(struct listener *listener, int port);
+static int uxst_pause_listener(struct listener *l);
+static int uxst_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir);
+static int uxst_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_unix = {
@@ -69,6 +72,7 @@ static struct protocol proto_unix = {
 	.get_src = uxst_get_src,
 	.get_dst = uxst_get_dst,
 	.pause = uxst_pause_listener,
+	.add = uxst_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_unix.listeners),
 	.nb_listeners = 0,
 };
@@ -83,7 +87,7 @@ static struct protocol proto_unix = {
  * success, -1 in case of error. The socket's source address is stored in
  * <sa> for <salen> bytes.
  */
-int uxst_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir)
+static int uxst_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir)
 {
 	if (dir)
 		return getsockname(fd, sa, &salen);
@@ -98,7 +102,7 @@ int uxst_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir)
  * case of success, -1 in case of error. The socket's source address is stored
  * in <sa> for <salen> bytes.
  */
-int uxst_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir)
+static int uxst_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir)
 {
 	if (dir)
 		return getpeername(fd, sa, &salen);
@@ -111,6 +115,54 @@ int uxst_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir)
  * 2) listener-oriented functions
  ********************************/
 
+
+static int uxst_find_compatible_fd(struct listener *l)
+{
+	struct xfer_sock_list *xfer_sock = xfer_sock_list;
+	int ret = -1;
+
+	while (xfer_sock) {
+		struct sockaddr_un *un1 = (void *)&l->addr;
+		struct sockaddr_un *un2 = (void *)&xfer_sock->addr;
+
+		/*
+		 * The bound socket's path as returned by getsockaddr
+		 * will be the temporary name <sockname>.XXXXX.tmp,
+		 * so we can't just compare the two names
+		 */
+		if (xfer_sock->addr.ss_family == AF_UNIX &&
+		    strncmp(un1->sun_path, un2->sun_path,
+		    strlen(un1->sun_path)) == 0) {
+			char *after_sockname = un2->sun_path +
+			    strlen(un1->sun_path);
+			/* Make a reasonnable effort to check that
+			 * it is indeed a haproxy-generated temporary
+			 * name, it's not perfect, but probably good enough.
+			 */
+			if (after_sockname[0] == '.') {
+				after_sockname++;
+				while (after_sockname[0] >= '0' &&
+				    after_sockname[0] <= '9')
+					after_sockname++;
+				if (!strcmp(after_sockname, ".tmp"))
+					break;
+			}
+		}
+		xfer_sock = xfer_sock->next;
+	}
+	if (xfer_sock != NULL) {
+		ret = xfer_sock->fd;
+		if (xfer_sock == xfer_sock_list)
+			xfer_sock_list = xfer_sock->next;
+		if (xfer_sock->prev)
+			xfer_sock->prev->next = xfer_sock->next;
+		if (xfer_sock->next)
+			xfer_sock->next->prev = xfer_sock->prev;
+		free(xfer_sock);
+	}
+	return ret;
+
+}
 
 /* This function creates a UNIX socket associated to the listener. It changes
  * the state from ASSIGNED to LISTEN. The socket is NOT enabled for polling.
@@ -141,6 +193,8 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 	if (listener->state != LI_ASSIGNED)
 		return ERR_NONE; /* already bound */
 		
+	if (listener->fd == -1)
+		listener->fd = uxst_find_compatible_fd(listener);
 	path = ((struct sockaddr_un *)&listener->addr)->sun_path;
 
 	/* if the listener already has an fd assigned, then we were offered the
@@ -278,9 +332,12 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 	listener->state = LI_LISTEN;
 
 	/* the function for the accept() event */
-	fd_insert(fd);
 	fdtab[fd].iocb = listener->proto->accept;
 	fdtab[fd].owner = listener; /* reference the listener instead of a task */
+	if (listener->bind_conf->bind_thread[relative_pid-1])
+		fd_insert(fd, listener->bind_conf->bind_thread[relative_pid-1]);
+	else
+		fd_insert(fd, MAX_THREADS_MASK);
 	return err;
 
  err_rename:
@@ -315,11 +372,11 @@ static int uxst_unbind_listener(struct listener *listener)
 	return ERR_NONE;
 }
 
-/* Add a listener to the list of unix stream listeners. The listener's state
- * is automatically updated from LI_INIT to LI_ASSIGNED. The number of
- * listeners is updated. This is the function to use to add a new listener.
+/* Add <listener> to the list of unix stream listeners (port is ignored). The
+ * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
+ * The number of listeners for the protocol is updated.
  */
-void uxst_add_listener(struct listener *listener)
+static void uxst_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
@@ -334,12 +391,14 @@ void uxst_add_listener(struct listener *listener)
  * plain unix sockets since currently it's the new process which handles
  * the renaming. Abstract sockets are completely unbound.
  */
-int uxst_pause_listener(struct listener *l)
+static int uxst_pause_listener(struct listener *l)
 {
 	if (((struct sockaddr_un *)&l->addr)->sun_path[0])
 		return 1;
 
-	unbind_listener(l);
+	/* Listener's lock already held. Call lockless version of
+	 * unbind_listener. */
+	do_unbind_listener(l, 1);
 	return 0;
 }
 
@@ -367,7 +426,7 @@ int uxst_pause_listener(struct listener *l)
  * The connection's fd is inserted only when SF_ERR_NONE is returned, otherwise
  * it's invalid and the caller has nothing to do.
  */
-int uxst_connect_server(struct connection *conn, int data, int delack)
+static int uxst_connect_server(struct connection *conn, int data, int delack)
 {
 	int fd;
 	struct server *srv;
@@ -389,7 +448,7 @@ int uxst_connect_server(struct connection *conn, int data, int delack)
 		return SF_ERR_INTERNAL;
 	}
 
-	if ((fd = conn->t.sock.fd = socket(PF_UNIX, SOCK_STREAM, 0)) == -1) {
+	if ((fd = conn->handle.fd = socket(PF_UNIX, SOCK_STREAM, 0)) == -1) {
 		qfprintf(stderr, "Cannot get a server socket.\n");
 
 		if (errno == ENFILE) {
@@ -425,7 +484,7 @@ int uxst_connect_server(struct connection *conn, int data, int delack)
 		/* do not log anything there, it's a normal condition when this option
 		 * is used to serialize connections to a server !
 		 */
-		Alert("socket(): not enough free sockets. Raise -n argument. Giving up.\n");
+		ha_alert("socket(): not enough free sockets. Raise -n argument. Giving up.\n");
 		close(fd);
 		conn->err_code = CO_ER_CONF_FDLIM;
 		conn->flags |= CO_FL_ERROR;
@@ -503,7 +562,7 @@ int uxst_connect_server(struct connection *conn, int data, int delack)
 	fdtab[fd].linger_risk = 0;  /* no need to disable lingering */
 
 	if (conn_xprt_init(conn) < 0) {
-		conn_force_close(conn);
+		conn_full_close(conn);
 		conn->flags |= CO_FL_ERROR;
 		return SF_ERR_RESOURCE;
 	}
@@ -520,7 +579,7 @@ int uxst_connect_server(struct connection *conn, int data, int delack)
 	}
 
 	if (data)
-		conn_data_want_send(conn);  /* prepare to send data if any */
+		conn_xprt_want_send(conn);  /* prepare to send data if any */
 
 	return SF_ERR_NONE;  /* connection is OK */
 }
@@ -569,12 +628,15 @@ static int uxst_unbind_listeners(struct protocol *proto)
 /* parse the "mode" bind keyword */
 static int bind_parse_mode(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
-	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing mode (octal integer expected)", args[cur_arg]);
+	char *endptr;
+
+	conf->ux.mode = strtol(args[cur_arg + 1], &endptr, 8);
+
+	if (!*args[cur_arg + 1] || *endptr) {
+		memprintf(err, "'%s' : missing or invalid mode '%s' (octal integer expected)", args[cur_arg], args[cur_arg + 1]);
 		return ERR_ALERT | ERR_FATAL;
 	}
 
-	conf->ux.mode = strtol(args[cur_arg + 1], NULL, 8);
 	return 0;
 }
 

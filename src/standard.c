@@ -31,6 +31,7 @@
 #include <types/global.h>
 #include <proto/dns.h>
 #include <eb32tree.h>
+#include <eb32sctree.h>
 
 /* This macro returns false if the test __x is false. Many
  * of the following parsing function must be abort the processing
@@ -46,14 +47,14 @@
  * '<span class="rls"></span>' around digits at positions 3N+1 in order
  * to add spacing at up to 6 positions : 18 446 744 073 709 551 615
  */
-char itoa_str[NB_ITOA_STR][171];
-int itoa_idx = 0; /* index of next itoa_str to use */
+THREAD_LOCAL char itoa_str[NB_ITOA_STR][171];
+THREAD_LOCAL int itoa_idx = 0; /* index of next itoa_str to use */
 
 /* sometimes we'll need to quote strings (eg: in stats), and we don't expect
  * to quote strings larger than a max configuration line.
  */
-char quoted_str[NB_QSTR][QSTR_SIZE + 1];
-int quoted_idx = 0;
+THREAD_LOCAL char quoted_str[NB_QSTR][QSTR_SIZE + 1];
+THREAD_LOCAL int quoted_idx = 0;
 
 /*
  * unsigned long long ASCII representation
@@ -592,17 +593,18 @@ const char *invalid_char(const char *name)
 }
 
 /*
- * Checks <domainname> for invalid characters. Valid chars are [A-Za-z0-9_.-].
+ * Checks <name> for invalid characters. Valid chars are [_.-] and those
+ * accepted by <f> function.
  * If an invalid character is found, a pointer to it is returned.
  * If everything is fine, NULL is returned.
  */
-const char *invalid_domainchar(const char *name) {
+static inline const char *__invalid_char(const char *name, int (*f)(int)) {
 
 	if (!*name)
 		return name;
 
 	while (*name) {
-		if (!isalnum((int)(unsigned char)*name) && *name != '.' &&
+		if (!f((int)(unsigned char)*name) && *name != '.' &&
 		    *name != '_' && *name != '-')
 			return name;
 
@@ -610,6 +612,24 @@ const char *invalid_domainchar(const char *name) {
 	}
 
 	return NULL;
+}
+
+/*
+ * Checks <name> for invalid characters. Valid chars are [A-Za-z0-9_.-].
+ * If an invalid character is found, a pointer to it is returned.
+ * If everything is fine, NULL is returned.
+ */
+const char *invalid_domainchar(const char *name) {
+	return __invalid_char(name, isalnum);
+}
+
+/*
+ * Checks <name> for invalid characters. Valid chars are [A-Za-z_.-].
+ * If an invalid character is found, a pointer to it is returned.
+ * If everything is fine, NULL is returned.
+ */
+const char *invalid_prefix_char(const char *name) {
+	return __invalid_char(name, isalnum);
 }
 
 /*
@@ -702,6 +722,7 @@ struct sockaddr_storage *str2ip2(const char *str, struct sockaddr_storage *sa, i
 #ifdef USE_GETADDRINFO
 	if (global.tune.options & GTUNE_USE_GAI) {
 		struct addrinfo hints, *result;
+		int success = 0;
 
 		memset(&result, 0, sizeof(result));
 		memset(&hints, 0, sizeof(hints));
@@ -713,23 +734,30 @@ struct sockaddr_storage *str2ip2(const char *str, struct sockaddr_storage *sa, i
 		if (getaddrinfo(str, NULL, &hints, &result) == 0) {
 			if (!sa->ss_family || sa->ss_family == AF_UNSPEC)
 				sa->ss_family = result->ai_family;
-			else if (sa->ss_family != result->ai_family)
+			else if (sa->ss_family != result->ai_family) {
+				freeaddrinfo(result);
 				goto fail;
+			}
 
 			switch (result->ai_family) {
 			case AF_INET:
 				memcpy((struct sockaddr_in *)sa, result->ai_addr, result->ai_addrlen);
 				set_host_port(sa, port);
-				return sa;
+				success = 1;
+				break;
 			case AF_INET6:
 				memcpy((struct sockaddr_in6 *)sa, result->ai_addr, result->ai_addrlen);
 				set_host_port(sa, port);
-				return sa;
+				success = 1;
+				break;
 			}
 		}
 
 		if (result)
 			freeaddrinfo(result);
+
+		if (success)
+			return sa;
 	}
 #endif
 	/* try to resolve an IPv4/IPv6 hostname */
@@ -818,7 +846,7 @@ struct sockaddr_storage *str2ip2(const char *str, struct sockaddr_storage *sa, i
  */
 struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int *high, char **err, const char *pfx, char **fqdn, int resolve)
 {
-	static struct sockaddr_storage ss;
+	static THREAD_LOCAL struct sockaddr_storage ss;
 	struct sockaddr_storage *ret = NULL;
 	char *back, *str2;
 	char *port1, *port2;
@@ -988,7 +1016,7 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 
 /* converts <str> to a struct in_addr containing a network mask. It can be
  * passed in dotted form (255.255.255.0) or in CIDR form (24). It returns 1
- * if the conversion succeeds otherwise non-zero.
+ * if the conversion succeeds otherwise zero.
  */
 int str2mask(const char *str, struct in_addr *mask)
 {
@@ -2208,6 +2236,75 @@ unsigned int get_next_id(struct eb_root *root, unsigned int key)
 	return key;
 }
 
+/* dump the full tree to <file> in DOT format for debugging purposes. Will
+ * optionally highlight node <subj> if found, depending on operation <op> :
+ *    0 : nothing
+ *   >0 : insertion, node/leaf are surrounded in red
+ *   <0 : removal, node/leaf are dashed with no background
+ * Will optionally add "desc" as a label on the graph if set and non-null.
+ */
+void eb32sc_to_file(FILE *file, struct eb_root *root, const struct eb32sc_node *subj, int op, const char *desc)
+{
+	struct eb32sc_node *node;
+	unsigned long scope = -1;
+
+	fprintf(file, "digraph ebtree {\n");
+
+	if (desc && *desc) {
+		fprintf(file,
+			"  fontname=\"fixed\";\n"
+			"  fontsize=8;\n"
+			"  label=\"%s\";\n", desc);
+	}
+
+	fprintf(file,
+		"  node [fontname=\"fixed\" fontsize=8 shape=\"box\" style=\"filled\" color=\"black\" fillcolor=\"white\"];\n"
+		"  edge [fontname=\"fixed\" fontsize=8 style=\"solid\" color=\"magenta\" dir=\"forward\"];\n"
+		"  \"%lx_n\" [label=\"root\\n%lx\"]\n", (long)eb_root_to_node(root), (long)root
+		);
+
+	fprintf(file, "  \"%lx_n\" -> \"%lx_%c\" [taillabel=\"L\"];\n",
+		(long)eb_root_to_node(root),
+		(long)eb_root_to_node(eb_clrtag(root->b[0])),
+		eb_gettag(root->b[0]) == EB_LEAF ? 'l' : 'n');
+
+	node = eb32sc_first(root, scope);
+	while (node) {
+		if (node->node.node_p) {
+			/* node part is used */
+			fprintf(file, "  \"%lx_n\" [label=\"%lx\\nkey=%u\\nscope=%lx\\nbit=%d\" fillcolor=\"lightskyblue1\" %s];\n",
+				(long)node, (long)node, node->key, node->node_s, node->node.bit,
+				(node == subj) ? (op < 0 ? "color=\"red\" style=\"dashed\"" : op > 0 ? "color=\"red\"" : "") : "");
+
+			fprintf(file, "  \"%lx_n\" -> \"%lx_n\" [taillabel=\"%c\"];\n",
+				(long)node,
+				(long)eb_root_to_node(eb_clrtag(node->node.node_p)),
+				eb_gettag(node->node.node_p) ? 'R' : 'L');
+
+			fprintf(file, "  \"%lx_n\" -> \"%lx_%c\" [taillabel=\"L\"];\n",
+				(long)node,
+				(long)eb_root_to_node(eb_clrtag(node->node.branches.b[0])),
+				eb_gettag(node->node.branches.b[0]) == EB_LEAF ? 'l' : 'n');
+
+			fprintf(file, "  \"%lx_n\" -> \"%lx_%c\" [taillabel=\"R\"];\n",
+				(long)node,
+				(long)eb_root_to_node(eb_clrtag(node->node.branches.b[1])),
+				eb_gettag(node->node.branches.b[1]) == EB_LEAF ? 'l' : 'n');
+		}
+
+		fprintf(file, "  \"%lx_l\" [label=\"%lx\\nkey=%u\\nscope=%lx\\npfx=%u\" fillcolor=\"yellow\" %s];\n",
+			(long)node, (long)node, node->key, node->leaf_s, node->node.pfx,
+			(node == subj) ? (op < 0 ? "color=\"red\" style=\"dashed\"" : op > 0 ? "color=\"red\"" : "") : "");
+
+		fprintf(file, "  \"%lx_l\" -> \"%lx_n\" [taillabel=\"%c\"];\n",
+			(long)node,
+			(long)eb_root_to_node(eb_clrtag(node->node.leaf_p)),
+			eb_gettag(node->node.leaf_p) ? 'R' : 'L');
+		node = eb32sc_next(node, scope);
+	}
+	fprintf(file, "}\n");
+}
+
 /* This function compares a sample word possibly followed by blanks to another
  * clean word. The compare is case-insensitive. 1 is returned if both are equal,
  * otherwise zero. This intends to be used when checking HTTP headers for some
@@ -2474,7 +2571,7 @@ int buf2ip6(const char *buf, size_t len, struct in6_addr *dst)
  */
 const char *quote_arg(const char *ptr)
 {
-	static char val[32];
+	static THREAD_LOCAL char val[32];
 	int i;
 
 	if (!ptr || !*ptr)
@@ -2745,7 +2842,7 @@ static int my_tm_diff(const struct tm *a, const struct tm *b)
 const char *get_gmt_offset(time_t t, struct tm *tm)
 {
 	/* Cache offsets from GMT (depending on whether DST is active or not) */
-	static char gmt_offsets[2][5+1] = { "", "" };
+	static THREAD_LOCAL char gmt_offsets[2][5+1] = { "", "" };
 
 	char *gmt_offset;
 	struct tm tm_gmt;
@@ -3290,8 +3387,11 @@ int parse_http_date(const char *date, int len, struct tm *tm)
  *    if (!fct2(err)) report(*err);
  *    if (!fct3(err)) report(*err);
  *    free(*err);
+ *
+ * memprintf relies on memvprintf. This last version can be called from any
+ * function with variadic arguments.
  */
-char *memprintf(char **out, const char *format, ...)
+char *memvprintf(char **out, const char *format, va_list orig_args)
 {
 	va_list args;
 	char *ret = NULL;
@@ -3306,10 +3406,9 @@ char *memprintf(char **out, const char *format, ...)
 		 * target buffer is NULL. We do this in a loop just in case
 		 * intermediate evaluations get wrong.
 		 */
-		va_start(args, format);
+		va_copy(args, orig_args);
 		needed = vsnprintf(ret, allocated, format, args);
 		va_end(args);
-
 		if (needed < allocated) {
 			/* Note: on Solaris 8, the first iteration always
 			 * returns -1 if allocated is zero, so we force a
@@ -3335,6 +3434,18 @@ char *memprintf(char **out, const char *format, ...)
 		free(*out);
 		*out = ret;
 	}
+
+	return ret;
+}
+
+char *memprintf(char **out, const char *format, ...)
+{
+	va_list args;
+	char *ret = NULL;
+
+	va_start(args, format);
+	ret = memvprintf(out, format, args);
+	va_end(args);
 
 	return ret;
 }
@@ -3812,6 +3923,59 @@ int dump_text_line(struct chunk *out, const char *buf, int bsize, int len,
 	/* we have an incomplete line, we return it as-is */
 	out->str[out->len++] = '\n';
 	return ptr;
+}
+
+/* displays a <len> long memory block at <buf>, assuming first byte of <buf>
+ * has address <baseaddr>. String <pfx> may be placed as a prefix in front of
+ * each line. It may be NULL if unused. The output is emitted to file <out>.
+ */
+void debug_hexdump(FILE *out, const char *pfx, const char *buf,
+                   unsigned int baseaddr, int len)
+{
+	unsigned int i;
+	int b, j;
+
+	for (i = 0; i < (len + (baseaddr & 15)); i += 16) {
+		b = i - (baseaddr & 15);
+		fprintf(out, "%s%08x: ", pfx ? pfx : "", i + (baseaddr & ~15));
+		for (j = 0; j < 8; j++) {
+			if (b + j >= 0 && b + j < len)
+				fprintf(out, "%02x ", (unsigned char)buf[b + j]);
+			else
+				fprintf(out, "   ");
+		}
+
+		if (b + j >= 0 && b + j < len)
+			fputc('-', out);
+		else
+			fputc(' ', out);
+
+		for (j = 8; j < 16; j++) {
+			if (b + j >= 0 && b + j < len)
+				fprintf(out, " %02x", (unsigned char)buf[b + j]);
+			else
+				fprintf(out, "   ");
+		}
+
+		fprintf(out, "   ");
+		for (j = 0; j < 16; j++) {
+			if (b + j >= 0 && b + j < len) {
+				if (isprint((unsigned char)buf[b + j]))
+					fputc((unsigned char)buf[b + j], out);
+				else
+					fputc('.', out);
+			}
+			else
+				fputc(' ', out);
+		}
+		fputc('\n', out);
+	}
+}
+
+/* do nothing, just a placeholder for debugging calls, the real one is in trace.c */
+__attribute__((weak,format(printf, 1, 2)))
+void trace(char *msg, ...)
+{
 }
 
 /*
