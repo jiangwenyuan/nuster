@@ -442,6 +442,10 @@ struct proxy {
 						 * name is used
 						 */
 	struct list filter_configs;		/* list of the filters that are declared on this proxy */
+	struct {
+		int mode;
+		struct list rules;              /* nuster rules */
+	} nuster;
 	__decl_hathreads(HA_SPINLOCK_T lock);
 };
 

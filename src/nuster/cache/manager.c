@@ -86,7 +86,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
             found = 1;
             mode  = NST_CACHE_PURGE_NAME_ALL;
         }
-        p = proxy;
+        p = proxies_list;
         while(p) {
             struct nuster_rule *rule = NULL;
 
@@ -155,7 +155,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
             goto purge;
         }
 
-        p = proxy;
+        p = proxies_list;
         while(p) {
             struct nuster_rule *rule = NULL;
 
@@ -395,8 +395,8 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
     if(appctx->st2 == nuster.cache->dict[0].size) {
-        bi_putblk(res, nuster_http_msgs[NUSTER_HTTP_200], strlen(nuster_http_msgs[NUSTER_HTTP_200]));
-        bo_skip(si_oc(si), si_ob(si)->o);
+        ci_putblk(res, nuster_http_msgs[NUSTER_HTTP_200], strlen(nuster_http_msgs[NUSTER_HTTP_200]));
+        co_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
         res->flags |= CF_READ_NULL;
     }

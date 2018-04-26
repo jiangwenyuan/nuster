@@ -36,7 +36,7 @@ static void _nst_cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
 
 static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
     if(px->mode != PR_MODE_HTTP) {
-        Warning("Proxy [%s] : mode should be http to enable cache\n", px->id);
+        ha_warning("Proxy [%s] : mode should be http to enable cache\n", px->id);
     }
     return 0;
 }
@@ -49,7 +49,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
         return 0;
     }
     if(!filter->ctx) {
-        struct nst_cache_ctx *ctx = pool_alloc2(global.nuster.cache.pool.ctx);
+        struct nst_cache_ctx *ctx = pool_alloc(global.nuster.cache.pool.ctx);
         if(ctx == NULL ) {
             return 0;
         }
@@ -81,7 +81,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
             stash      = ctx->stash;
             ctx->stash = ctx->stash->next;
             free(stash->key);
-            pool_free2(global.nuster.cache.pool.stash, stash);
+            pool_free(global.nuster.cache.pool.stash, stash);
         }
         if(ctx->req.host.data) {
             nst_cache_memory_free(global.nuster.cache.pool.chunk, ctx->req.host.data);
@@ -89,7 +89,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
         if(ctx->req.path.data) {
             nst_cache_memory_free(global.nuster.cache.pool.chunk, ctx->req.path.data);
         }
-        pool_free2(global.nuster.cache.pool.ctx, ctx);
+        pool_free(global.nuster.cache.pool.ctx, ctx);
     }
 }
 

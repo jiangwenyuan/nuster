@@ -256,12 +256,12 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
     int cur_arg  = 1;
 
     if (global.nuster.cache.status != NUSTER_STATUS_UNDEFINED) {
-        Alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
+        ha_alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
         err_code |= ERR_ALERT;
         goto out;
     }
     if (*(args[cur_arg]) == 0) {
-        Alert("parsing [%s:%d] : '%s' expects 'on' or 'off' as an argument.\n", file, linenum, args[0]);
+        ha_alert("parsing [%s:%d] : '%s' expects 'on' or 'off' as an argument.\n", file, linenum, args[0]);
         err_code |= ERR_ALERT | ERR_FATAL;
         goto out;
     }
@@ -270,7 +270,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
     } else if (!strcmp(args[cur_arg], "on")) {
         global.nuster.cache.status = NUSTER_STATUS_ON;
     } else {
-        Alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
+        ha_alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
         err_code |= ERR_ALERT | ERR_FATAL;
         goto out;
     }
@@ -284,7 +284,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
         if (!strcmp(args[cur_arg], "share")) {
             cur_arg++;
             if (*args[cur_arg] == 0) {
-                Alert("parsing [%s:%d] : '%s': `share` expects 'on' or 'off' as augument.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s': `share` expects 'on' or 'off' as augument.\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
@@ -293,7 +293,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
             } else if (!strcmp(args[cur_arg], "on")) {
                 global.nuster.cache.share = NUSTER_STATUS_ON;
             } else {
-                Alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s': `share` only supports 'on' and 'off'.\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
@@ -304,12 +304,12 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
         if (!strcmp(args[cur_arg], "data-size")) {
             cur_arg++;
             if (*args[cur_arg] == 0) {
-                Alert("parsing [%s:%d] : '%s' data-size expects a size.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s' data-size expects a size.\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
             if (nuster_parse_size(args[cur_arg], &global.nuster.cache.data_size)) {
-                Alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
@@ -319,12 +319,12 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
         if (!strcmp(args[cur_arg], "dict-size")) {
             cur_arg++;
             if (*args[cur_arg] == 0) {
-                Alert("parsing [%s:%d] : '%s' dict-size expects a size.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s' dict-size expects a size.\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
             if (nuster_parse_size(args[cur_arg], &global.nuster.cache.dict_size)) {
-                Alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
@@ -334,7 +334,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
         if (!strcmp(args[cur_arg], "purge-method")) {
             cur_arg++;
             if (*args[cur_arg] == 0) {
-                Alert("parsing [%s:%d] : '%s' purge-method expects a name.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s' purge-method expects a name.\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
@@ -352,7 +352,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
         if (!strcmp(args[cur_arg], "uri")) {
             cur_arg++;
             if (*(args[cur_arg]) == 0) {
-                Alert("parsing [%s:%d] : '%s': `uri` expect an URI.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d] : '%s': `uri` expect an URI.\n", file, linenum, args[0]);
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
@@ -360,7 +360,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
             cur_arg++;
             continue;
         }
-        Alert("parsing [%s:%d] : '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
+        ha_alert("parsing [%s:%d] : '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
         err_code |= ERR_ALERT | ERR_FATAL;
         goto out;
     }
@@ -495,7 +495,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     if(!strcmp(args[cur_arg], "if") || !strcmp(args[cur_arg], "unless")) {
         if(*args[cur_arg + 1] != 0) {
             char *errmsg = NULL;
-            if((cond = build_acl_cond(file, line, proxy, (const char **)args + cur_arg, &errmsg)) == NULL) {
+            if((cond = build_acl_cond(file, line, &proxy->acl, proxy, (const char **)args + cur_arg, &errmsg)) == NULL) {
                 memprintf(err, "%s", errmsg);
                 free(errmsg);
                 goto out;
