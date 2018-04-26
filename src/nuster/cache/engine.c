@@ -46,7 +46,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
         }
         element = appctx->ctx.nuster.cache_engine.element;
 
-        ret = bi_putblk(res, element->msg.data, element->msg.len);
+        ret = ci_putblk(res, element->msg.data, element->msg.len);
         if(ret >= 0) {
             appctx->ctx.nuster.cache_engine.element = element->next;
         } else if(ret == -2) {
@@ -55,7 +55,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
             res->flags |= CF_READ_NULL;
         }
     } else {
-        bo_skip(si_oc(si), si_ob(si)->o);
+        co_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
         res->flags |= CF_READ_NULL;
         appctx->ctx.nuster.cache_engine.data->clients--;
@@ -68,7 +68,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
 struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nuster_rule *rule, char *key, uint64_t hash) {
 
-    struct nuster_rule_stash *stash = pool_alloc2(global.nuster.cache.pool.stash);
+    struct nuster_rule_stash *stash = pool_alloc(global.nuster.cache.pool.stash);
 
     if(stash) {
         stash->rule = rule;
@@ -172,7 +172,7 @@ void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
     if(global.nuster.cache.share) {
         return nuster_memory_alloc(global.nuster.cache.memory, size);
     } else {
-        return pool_alloc2(pool);
+        return pool_alloc(pool);
     }
 }
 
@@ -180,7 +180,7 @@ void nst_cache_memory_free(struct pool_head *pool, void *p) {
     if(global.nuster.cache.share) {
         return nuster_memory_free(global.nuster.cache.memory, p);
     } else {
-        return pool_free2(pool, p);
+        return pool_free(pool, p);
     }
 }
 
@@ -404,7 +404,7 @@ void nst_cache_init() {
 
         /* init cache rule */
         i = uuid = 0;
-        p = proxy;
+        p = proxies_list;
         while(p) {
             struct nuster_rule *rule = NULL;
             uint32_t ttl;
@@ -426,13 +426,13 @@ void nst_cache_init() {
                 }
                 *rule->ttl   = ttl;
 
-                pt = proxy;
+                pt = proxies_list;
                 while(pt) {
                     struct nuster_rule *rt = NULL;
                     list_for_each_entry(rt, &pt->nuster.rules, list) {
                         if(rt == rule) goto out;
                         if(!strcmp(rt->name, rule->name)) {
-                            Alert("cache-rule with same name=[%s] found.\n", rule->name);
+                            ha_alert("cache-rule with same name=[%s] found.\n", rule->name);
                             rule->id = rt->id;
                             goto out;
                         }
@@ -452,10 +452,10 @@ out:
     }
     return;
 err:
-    Alert("Out of memory when initializing cache.\n");
+    ha_alert("Out of memory when initializing cache.\n");
     exit(1);
 shm_err:
-    Alert("Error when initializing cache.\n");
+    ha_alert("Error when initializing cache.\n");
     exit(1);
 }
 
@@ -468,7 +468,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
 
     ctx->req.scheme = SCH_HTTP;
 #ifdef USE_OPENSSL
-    if(s->sess->listener->xprt == &ssl_sock) {
+    if(s->sess->listener->bind_conf->is_ssl) {
         ctx->req.scheme = SCH_HTTPS;
     }
 #endif
@@ -652,7 +652,7 @@ char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
 
     https = 0;
 #ifdef USE_OPENSSL
-    if(s->sess->listener->xprt == &ssl_sock) {
+    if(s->sess->listener->bind_conf->is_ssl) {
         https = 1;
     }
 #endif

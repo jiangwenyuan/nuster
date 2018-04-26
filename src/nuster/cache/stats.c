@@ -75,7 +75,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
         } else {
             appctx      = si_appctx(si);
             appctx->st0 = NST_CACHE_STATS_HEAD;
-            appctx->st1 = proxy->uuid;
+            appctx->st1 = proxies_list->uuid;
             appctx->st2 = 0;
 
             req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
@@ -107,7 +107,7 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
 
     s->txn->status = 200;
 
-    if (bi_putchk(res, &trash) == -1) {
+    if (ci_putchk(res, &trash) == -1) {
         si_applet_cant_put(si);
         return 0;
     }
@@ -118,7 +118,7 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
 int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream_interface *si, struct channel *res) {
     struct proxy *p;
 
-    p = proxy;
+    p = proxies_list;
     while(p) {
         struct nuster_rule *rule = NULL;
 
@@ -154,7 +154,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
                         chunk_appendf(&trash, "state=%s ttl=%"PRIu32"\n",
                                 *rule->state == NUSTER_RULE_ENABLED ? "on" : "off", *rule->ttl);
 
-                        if (bi_putchk(res, &trash) == -1) {
+                        if (ci_putchk(res, &trash) == -1) {
                             si_applet_cant_put(si);
                             return 0;
                         }
@@ -191,7 +191,7 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
         }
     }
     if(appctx->st0 == NST_CACHE_STATS_DONE) {
-        bo_skip(si_oc(si), si_ob(si)->o);
+        co_skip(si_oc(si), si_ob(si)->o);
         si_shutr(si);
         res->flags |= CF_READ_NULL;
     }

@@ -31,6 +31,8 @@
 #include <common/config.h>
 #include <common/xref.h>
 
+#include <nuster/common.h>
+
 struct appctx;
 
 /* Applet descriptor */
@@ -70,6 +72,18 @@ struct appctx {
 	unsigned long thread_mask;      /* mask of thread IDs authorized to process the applet */
 
 	union {
+		union {
+			struct {
+				struct nst_cache_entry   *entry;
+				struct nst_cache_data    *data;
+				struct nst_cache_element *element;
+			} cache_engine;
+			struct {
+				struct nuster_str host;
+				struct nuster_str path;
+				struct my_regex  *regex;
+			} cache_manager;
+		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */
 		} peers;                        /* used by the peers applet */
