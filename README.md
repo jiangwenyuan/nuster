@@ -63,8 +63,7 @@ See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Web-cache-s
 
 ## Download
 
-Download stable version from [releases](https://github.com/jiangwenyuan/nuster/releases) page
-for production use, otherwise git clone the source code.
+Download stable version from [Download](Download.md) page for production use, otherwise git clone the source code.
 
 ## Build
 
