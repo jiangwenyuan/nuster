@@ -429,6 +429,10 @@ static int conn_complete_session(struct connection *conn)
 	struct session *sess = task->context;
 	struct stream *strm;
 
+	/* Verify if the connection just established. */
+	if (unlikely(!(conn->flags & (CO_FL_WAIT_L4_CONN | CO_FL_WAIT_L6_CONN | CO_FL_CONNECTED))))
+		conn->flags |= CO_FL_CONNECTED;
+
 	if (conn->flags & CO_FL_ERROR)
 		goto fail;
 

@@ -4633,9 +4633,11 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 		}
 
 		path = http_get_path(txn);
-		url2sa(req->buf->p + msg->sl.rq.u,
-		       path ? path - (req->buf->p + msg->sl.rq.u) : msg->sl.rq.u_l,
-		       &conn->addr.to, NULL);
+		if (url2sa(req->buf->p + msg->sl.rq.u,
+			   path ? path - (req->buf->p + msg->sl.rq.u) : msg->sl.rq.u_l,
+			   &conn->addr.to, NULL) == -1)
+			goto return_bad_req;
+
 		/* if the path was found, we have to remove everything between
 		 * req->buf->p + msg->sl.rq.u and path (excluded). If it was not
 		 * found, we need to replace from req->buf->p + msg->sl.rq.u for
@@ -5273,7 +5275,7 @@ void http_end_txn_clean_session(struct stream *s)
 	s->si[1].exp       = TICK_ETERNITY;
 	s->si[1].flags    &= SI_FL_ISBACK | SI_FL_DONT_WAKE; /* we're in the context of process_stream */
 	s->req.flags &= ~(CF_SHUTW|CF_SHUTW_NOW|CF_AUTO_CONNECT|CF_WRITE_ERROR|CF_STREAMER|CF_STREAMER_FAST|CF_NEVER_WAIT|CF_WAKE_CONNECT|CF_WROTE_DATA);
-	s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA);
+	s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA|CF_WRITE_EVENT);
 	s->flags &= ~(SF_DIRECT|SF_ASSIGNED|SF_ADDR_SET|SF_BE_ASSIGNED|SF_FORCE_PRST|SF_IGNORE_PRST);
 	s->flags &= ~(SF_CURR_SESS|SF_REDIRECTABLE|SF_SRV_REUSED);
 	s->flags &= ~(SF_ERR_MASK|SF_FINST_MASK|SF_REDISP);
@@ -5539,16 +5541,8 @@ int http_sync_res_state(struct stream *s)
 			 * let's enforce it now that we're not expecting any new
 			 * data to come. The caller knows the stream is complete
 			 * once both states are CLOSED.
-			 *
-			 * However, there is an exception if the response length
-			 * is undefined. In this case, we switch in TUNNEL mode.
 			 */
-			if (!(txn->rsp.flags & HTTP_MSGF_XFER_LEN)) {
-				channel_auto_read(chn);
-				txn->rsp.msg_state = HTTP_MSG_TUNNEL;
-				chn->flags |= CF_NEVER_WAIT;
-			}
-			else if (!(chn->flags & (CF_SHUTW|CF_SHUTW_NOW))) {
+			if (!(chn->flags & (CF_SHUTW|CF_SHUTW_NOW))) {
 				channel_shutr_now(chn);
 				channel_shutw_now(chn);
 			}
@@ -7121,6 +7115,8 @@ http_msg_forward_body(struct stream *s, struct http_msg *msg)
 		/* The server still sending data that should be filtered */
 		if (!(chn->flags & CF_SHUTR) && HAS_DATA_FILTERS(s, chn))
 			goto missing_data_or_waiting;
+		msg->msg_state = HTTP_MSG_TUNNEL;
+		goto ending;
 	}
 
 	msg->msg_state = HTTP_MSG_ENDING;
@@ -7142,7 +7138,8 @@ http_msg_forward_body(struct stream *s, struct http_msg *msg)
 			 /* default_ret */ 1,
 			 /* on_error    */ goto error,
 			 /* on_wait     */ goto waiting);
-	msg->msg_state = HTTP_MSG_DONE;
+	if (msg->msg_state == HTTP_MSG_ENDING)
+		msg->msg_state = HTTP_MSG_DONE;
 	return 1;
 
   missing_data_or_waiting:

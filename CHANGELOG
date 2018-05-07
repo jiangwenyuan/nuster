@@ -1,6 +1,46 @@
 ChangeLog :
 ===========
 
+2018/04/30 : 1.7.11
+    - BUG/MINOR: lua: Fix default value for pattern in Socket.receive
+    - DOC: lua: Fix typos in comments of hlua_socket_receive
+    - BUG/MINOR: lua: Fix return value of Socket.settimeout
+    - BUG/MEDIUM: stream: properly handle client aborts during redispatch
+    - BUG/MEDIUM: srv-state: always ensure there's a warmup task before manipulating it
+    - BUG/MEDIUM: stream-int: Don't loss write's notifs when a stream is woken up
+    - DOC: clarify the scope of ssl_fc_is_resumed
+    - BUG/MINOR: poll: too large size allocation for FD events
+    - CLEANUP: sample: Fix comment encoding of sample.c
+    - CLEANUP: sample: Fix outdated comment about sample casts functions
+    - BUG/MINOR: sample: Fix output type of c_ipv62ip
+    - CLEANUP: Fix typo in ARGT_MSK6 comment
+    - BUG/MEDIUM: standard: Fix memory leak in str2ip2()
+    - DOC: Describe routing impact of using interface keyword on bind lines
+    - BUG/MINOR: config: don't emit a warning when global stats is incompletely configured
+    - BUG/MEDIUM: http: Switch the HTTP response in tunnel mode as earlier as possible
+    - BUG/MEDIUM: buffer: Fix the wrapping case in bo_putblk
+    - MINOR/BUILD: fix Lua build on Mac OS X
+    - BUILD/MINOR: fix Lua build on Mac OS X (again)
+    - CLEANUP: ssl: Remove a duplicated #include
+    - BUG/MINOR: cli: Fix a typo in the 'set rate-limit' usage
+    - BUG/MINOR: force-persist and ignore-persist only apply to backends
+    - BUG/MINOR: spoa-example: unexpected behavior for more than 127 args
+    - BUG/MINOR: lua: return bad error messages
+    - BUG/MEDIUM: tcp-check: single connect rule can't detect DOWN servers
+    - BUG/MINOR: tcp-check: use the server's service port as a fallback
+    - MINOR: log: stop emitting alerts when it's not possible to write on the socket
+    - BUG/MINOR: lua: the function returns anything
+    - BUG/MINOR: lua funtion hlua_socket_settimeout don't check negative values
+    - BUG/MINOR: email-alert: Set the mailer port during alert initialization
+    - BUG/MINOR: http: Return an error in proxy mode when url2sa fails
+    - DOC: lua: update the links to the config and Lua API
+    - BUG/MINOR: session: Fix tcp-request session failure if handshake.
+    - BUILD/BUG: enable -fno-strict-overflow by default
+    - DOC: log: more than 2 log servers are allowed
+    - DOC: don't suggest using http-server-close
+    - BUG/MAJOR: channel: Fix crash when trying to read from a closed socket
+    - BUG/MINOR: config: disable http-reuse on TCP proxies
+
 2018/01/02 : 1.7.10
     - BUG/MEDIUM: connection: remove useless flag CO_FL_DATA_RD_SH
     - BUG/MEDIUM: lua: HTTP services must take care of body-less status codes

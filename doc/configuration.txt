@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.7
                              willy tarreau
-                              2018/01/02
+                              2018/04/30
 
 
 This document covers the configuration language as implemented in the version
@@ -724,7 +724,7 @@ group <group name>
   See also "gid" and "user".
 
 log <address> [len <length>] [format <format>] <facility> [max level [min level]]
-  Adds a global syslog server. Up to two global servers can be defined. They
+  Adds a global syslog server. Several global servers can be defined. They
   will receive logs for startups and exits, as well as all logs from proxies
   configured with "log global".
 
@@ -1847,7 +1847,7 @@ errorloc                                  X          X         X         X
 errorloc302                               X          X         X         X
 -- keyword -------------------------- defaults - frontend - listen -- backend -
 errorloc303                               X          X         X         X
-force-persist                             -          X         X         X
+force-persist                             -          -         X         X
 filter                                    -          X         X         X
 fullconn                                  X          -         X         X
 grace                                     X          X         X         X
@@ -1860,7 +1860,7 @@ http-response                             -          X         X         X
 http-reuse                                X          -         X         X
 http-send-name-header                     -          -         X         X
 id                                        -          X         X         X
-ignore-persist                            -          X         X         X
+ignore-persist                            -          -         X         X
 load-server-state-from-file               X          -         X         X
 log                                  (*)  X          X         X         X
 log-format                                X          X         X         -
@@ -3287,7 +3287,7 @@ email-alert to <emailaddr>
 force-persist { if | unless } <condition>
   Declare a condition to force persistence on down servers
   May be used in sections:    defaults | frontend | listen | backend
-                                  no   |    yes   |   yes  |   yes
+                                  no   |    no    |   yes  |   yes
 
   By default, requests are not dispatched to down servers. It is possible to
   force this using "option persist", but it is unconditional and redispatches
@@ -4556,7 +4556,7 @@ id <value>
 ignore-persist { if | unless } <condition>
   Declare a condition to ignore persistence
   May be used in sections:    defaults | frontend | listen | backend
-                                  no   |    yes   |   yes  |   yes
+                                  no   |    no    |   yes  |   yes
 
   By default, when cookie persistence is enabled, every requests containing
   the cookie are unconditionally persistent (assuming the target server is up
@@ -5495,9 +5495,6 @@ no option http-keep-alive
   immediately be closed and a new one re-opened. Option "prefer-last-server" is
   available to try optimize server selection so that if the server currently
   attached to an idle connection is usable, it will be used.
-
-  In general it is preferred to use "option http-server-close" with application
-  servers, and some static servers might benefit from "option http-keep-alive".
 
   At the moment, logs will not indicate whether requests came from the same
   session or not. The accept date reported in the logs corresponds to the end
@@ -10384,7 +10381,12 @@ interface <interface>
   interface, not an aliased interface. It is also possible to bind multiple
   frontends to the same address if they are bound to different interfaces. Note
   that binding to a network interface requires root privileges. This parameter
-  is only compatible with TCPv4/TCPv6 sockets.
+  is only compatible with TCPv4/TCPv6 sockets. When specified, return traffic
+  uses the same interface as inbound traffic, and its associated routing table,
+  even if there are explicit routes through different interfaces configured.
+  This can prove useful to address asymmetric routing issues when the same
+  client IP addresses need to be able to reach frontends hosted on different
+  interfaces.
 
 level <level>
   This setting is used with the stats sockets only to restrict the nature of
@@ -13886,7 +13888,8 @@ ssl_fc_has_sni : boolean
 
 ssl_fc_is_resumed : boolean
   Returns true if the SSL/TLS session has been resumed through the use of
-  SSL session cache or TLS tickets.
+  SSL session cache or TLS tickets on an incoming connection over an SSL/TLS
+  transport layer.
 
 ssl_fc_npn : string
   This extracts the Next Protocol Negotiation field from an incoming connection

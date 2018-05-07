@@ -318,8 +318,10 @@ void srv_set_running(struct server *s, const char *reason)
 	s->last_change = now.tv_sec;
 
 	s->state = SRV_ST_STARTING;
-	if (s->slowstart > 0)
-		task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20))));
+	if (s->slowstart > 0) {
+		if (s->warmup)
+			task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20))));
+	}
 	else
 		s->state = SRV_ST_RUNNING;
 
@@ -622,8 +624,10 @@ void srv_clr_admin_flag(struct server *s, enum srv_admin mode)
 				s->state = SRV_ST_STOPPING;
 			else {
 				s->state = SRV_ST_STARTING;
-				if (s->slowstart > 0)
-					task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20))));
+				if (s->slowstart > 0) {
+					if (s->warmup)
+						task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20))));
+				}
 				else
 					s->state = SRV_ST_RUNNING;
 			}
