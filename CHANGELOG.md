@@ -1,5 +1,8 @@
 # Nuster Changelog
 
+## 1.7.11.1 - 2018-05-07
+Upgrade to HAProxy v1.7.11
+
 ## 1.7.10.1 - 2018-04-22
 
 ### Added
