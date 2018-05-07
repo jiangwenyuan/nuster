@@ -390,6 +390,12 @@ This method deletes the specific url that is being requested, like this:
 
 It creates a key of `GET.scheme.host.uri`, and deletes the cache with that key.
 
+Note by default cache key contains `Host`, if you cache a request like `http://example.com/test`
+and purge from localhost you need to specify `Host` header:
+
+`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
+
+
 ### Purge by name
 
 Cache can be purged by making HTTP `PURGE`(or `purge-method`) requests to the manager uri along with a `name` HEADER.
@@ -488,13 +494,13 @@ curl -X PURGE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0
 
 ### Purge by regex
 
-You can also purge cache by regex, the caches which path matches the regex will be deleted.
+You can also purge cache by regex, the caches which path match the regex will be deleted.
 
 ***headers***
 
 | header | value | description
 | ------ | ----- | -----------
-| regex  | REGEX | caches which path matches with ${REGEX} will be purged
+| regex  | REGEX | caches which path match with ${REGEX} will be purged
 | x-host | HOST  | and host is ${HOST}
 
 ***Examples***
@@ -575,11 +581,6 @@ acl network_allowed src 127.0.0.1
 acl purge_method method PURGE
 http-request deny if purge_method !network_allowed
 ```
-
-Note by default cache key contains `Host`, if you cache a request like `http://example.com/test`
-and purge from localhost you need to specify `Host` header:
-
-`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
 
 ## How to enable HTTP2
 
