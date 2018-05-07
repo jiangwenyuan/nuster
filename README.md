@@ -45,6 +45,7 @@ the content of request, response or server status. Its features include:
  * Cache purging
  * Cache stats
  * Cache management
+ * HTTP2
  * HTTPS supports on both frontend and backend
  * HTTP compression
  * HTTP rewriting and redirection
@@ -579,6 +580,12 @@ Note by default cache key contains `Host`, if you cache a request like `http://e
 and purge from localhost you need to specify `Host` header:
 
 `curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
+
+## How to enable HTTP2
+
+```
+bind :443 ssl crt pub.pem alpn h2,http/1.1
+```
 
 # Example
 
