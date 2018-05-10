@@ -3381,7 +3381,7 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 			tmp = args[2];
 			while (*tmp) {
 				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
-					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z_-.] chars.\n",
+					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
 						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
 					goto out;
@@ -3410,7 +3410,7 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 			tmp = args[2];
 			while (*tmp) {
 				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
-					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z_-.] chars.\n",
+					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
 						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
 					goto out;
