@@ -4865,7 +4865,8 @@ int http_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 		if (!(s->res.flags & CF_READ_ATTACHED)) {
 			channel_auto_connect(req);
 			req->flags |= CF_WAKE_CONNECT;
-			goto missing_data_or_waiting;
+			channel_dont_close(req); /* don't fail on early shutr */
+			goto waiting;
 		}
 		msg->flags &= ~HTTP_MSGF_WAIT_CONN;
 	}
@@ -4949,6 +4950,7 @@ int http_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 		goto return_bad_req_stats_ok;
 	}
 
+ waiting:
 	/* waiting for the last bits to leave the buffer */
 	if (req->flags & CF_SHUTW)
 		goto aborted_xfer;
