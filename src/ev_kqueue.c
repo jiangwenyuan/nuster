@@ -33,6 +33,41 @@ static int kqueue_fd[MAX_THREADS]; // per-thread kqueue_fd
 static THREAD_LOCAL struct kevent *kev = NULL;
 static struct kevent *kev_out = NULL; // Trash buffer for kevent() to write the eventlist in
 
+static int _update_fd(int fd, int start)
+{
+	int en;
+	int changes = start;
+
+	en = fdtab[fd].state;
+
+	if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
+		if (!(fdtab[fd].polled_mask & tid_bit)) {
+			/* fd was not watched, it's still not */
+			return 0;
+		}
+		/* fd totally removed from poll list */
+		EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+		EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+		HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
+	}
+	else {
+		/* OK fd has to be monitored, it was either added or changed */
+
+		if (en & FD_EV_POLLED_R)
+			EV_SET(&kev[changes++], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+		else if (fdtab[fd].polled_mask & tid_bit)
+			EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+
+		if (en & FD_EV_POLLED_W)
+			EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+		else if (fdtab[fd].polled_mask & tid_bit)
+			EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+
+		HA_ATOMIC_OR(&fdtab[fd].polled_mask, tid_bit);
+	}
+	return changes;
+}
+
 /*
  * kqueue() poller
  */
@@ -66,32 +101,32 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 		fdtab[fd].state = en;
 		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 
-		if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
-			if (!(fdtab[fd].polled_mask & tid_bit)) {
-				/* fd was not watched, it's still not */
-				continue;
-			}
-			/* fd totally removed from poll list */
-			EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-			EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-			HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
-		}
-		else {
-			/* OK fd has to be monitored, it was either added or changed */
-
-			if (en & FD_EV_POLLED_R)
-				EV_SET(&kev[changes++], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-			else if (fdtab[fd].polled_mask & tid_bit)
-				EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-
-			if (en & FD_EV_POLLED_W)
-				EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
-			else if (fdtab[fd].polled_mask & tid_bit)
-				EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-
-			HA_ATOMIC_OR(&fdtab[fd].polled_mask, tid_bit);
-		}
+		changes = _update_fd(fd, changes);
 	}
+
+	/* Scan the global update list */
+	HA_SPIN_LOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+	for (fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
+		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+		if (fdtab[fd].update_mask & tid_bit)
+			done_update_polling(fd);
+		else {
+			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+			continue;
+		}
+		fdtab[fd].new = 0;
+
+		eo = fdtab[fd].state;
+		en = fd_compute_new_polled_status(eo);
+		fdtab[fd].state = en;
+
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		if (!fdtab[fd].owner)
+			continue;
+		changes = _update_fd(fd, changes);
+	}
+	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+
 	if (changes) {
 #ifdef EV_RECEIPT
 		kev[0].flags |= EV_RECEIPT;
@@ -189,8 +224,10 @@ static int init_kqueue_per_thread()
 	 * fd for this thread. Let's just mark them as updated, the poller will
 	 * do the rest.
 	 */
-	for (fd = 0; fd < maxfd; fd++)
+	for (fd = 0; fd < maxfd; fd++) {
+		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
 		updt_fd_polling(fd);
+	}
 
 	return 1;
  fail_fd:

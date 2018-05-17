@@ -43,6 +43,9 @@ extern THREAD_LOCAL int fd_nbupdt; // number of updates in the list
 __decl_hathreads(extern HA_SPINLOCK_T __attribute__((aligned(64))) fdtab_lock);      /* global lock to protect fdtab array */
 __decl_hathreads(extern HA_RWLOCK_T   __attribute__((aligned(64))) fdcache_lock);    /* global lock to protect fd_cache array */
 __decl_hathreads(extern HA_SPINLOCK_T __attribute__((aligned(64))) poll_lock);       /* global lock to protect poll info */
+__decl_hathreads(extern HA_SPINLOCK_T __attribute__((aligned(64))) fd_updt_lock); /* global lock to protect the update list */
+
+extern struct fdlist update_list; // Global update list
 
 /* Deletes an FD from the fdsets, and recomputes the maxfd limit.
  * The file descriptor is also closed.
@@ -96,14 +99,70 @@ void fd_process_cached_events();
 
 /* Mark fd <fd> as updated for polling and allocate an entry in the update list
  * for this if it was not already there. This can be done at any time.
+ * This function expects the FD lock to be locked, and returns with the
+ * FD lock unlocked.
  */
 static inline void updt_fd_polling(const int fd)
 {
-	if (fdtab[fd].update_mask & tid_bit)
+	if ((fdtab[fd].update_mask & fdtab[fd].thread_mask) ==
+	    fdtab[fd].thread_mask) {
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 		/* already scheduled for update */
 		return;
-	fdtab[fd].update_mask |= tid_bit;
-	fd_updt[fd_nbupdt++] = fd;
+	}
+	if (fdtab[fd].thread_mask == tid_bit) {
+		fdtab[fd].update_mask |= tid_bit;
+		fd_updt[fd_nbupdt++] = fd;
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	} else {
+		/* This is ugly, but we can afford to unlock the FD lock
+		 * before we acquire the fd_updt_lock, to prevent a
+		 * lock order reversal, because this function is only called
+		 * from fd_update_cache(), and all users of fd_update_cache()
+		 * used to just unlock the fd lock just after, anyway.
+		 */
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		HA_SPIN_LOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+		/* If update_mask is non-nul, then it's already in the list
+		 * so we don't have to add it.
+		 */
+		if (fdtab[fd].update_mask == 0) {
+			if (update_list.first == -1) {
+				update_list.first = update_list.last = fd;
+				fdtab[fd].update.next = fdtab[fd].update.prev = -1;
+			} else {
+				fdtab[update_list.last].update.next = fd;
+				fdtab[fd].update.prev = update_list.last;
+				fdtab[fd].update.next = -1;
+				update_list.last = fd;
+			}
+		}
+		fdtab[fd].update_mask |= fdtab[fd].thread_mask;
+		HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+
+	}
+}
+
+/* Called from the poller to acknoledge we read an entry from the global
+ * update list, to remove our bit from the update_mask, and remove it from
+ * the list if we were the last one.
+ */
+/* Expects to be called with the FD lock and the FD update lock held */
+static inline void done_update_polling(int fd)
+{
+	fdtab[fd].update_mask &= ~tid_bit;
+	if ((fdtab[fd].update_mask & all_threads_mask) == 0) {
+		if (fdtab[fd].update.prev != -1)
+			fdtab[fdtab[fd].update.prev].update.next =
+			    fdtab[fd].update.next;
+		else
+			update_list.first = fdtab[fd].update.next;
+		if (fdtab[fd].update.next != -1)
+			fdtab[fdtab[fd].update.next].update.prev =
+			    fdtab[fd].update.prev;
+		else
+			update_list.last = fdtab[fd].update.prev;
+	}
 }
 
 
@@ -175,13 +234,6 @@ static inline int fd_compute_new_polled_status(int state)
  */
 static inline void fd_update_cache(int fd)
 {
-	/* 3 states for each direction require a polling update */
-	if ((fdtab[fd].state & (FD_EV_POLLED_R |                 FD_EV_ACTIVE_R)) == FD_EV_POLLED_R ||
-	    (fdtab[fd].state & (FD_EV_POLLED_R | FD_EV_READY_R | FD_EV_ACTIVE_R)) == FD_EV_ACTIVE_R ||
-	    (fdtab[fd].state & (FD_EV_POLLED_W |                 FD_EV_ACTIVE_W)) == FD_EV_POLLED_W ||
-	    (fdtab[fd].state & (FD_EV_POLLED_W | FD_EV_READY_W | FD_EV_ACTIVE_W)) == FD_EV_ACTIVE_W)
-		updt_fd_polling(fd);
-
 	/* only READY and ACTIVE states (the two with both flags set) require a cache entry */
 	if (((fdtab[fd].state & (FD_EV_READY_R | FD_EV_ACTIVE_R)) == (FD_EV_READY_R | FD_EV_ACTIVE_R)) ||
 	    ((fdtab[fd].state & (FD_EV_READY_W | FD_EV_ACTIVE_W)) == (FD_EV_READY_W | FD_EV_ACTIVE_W))) {
@@ -190,6 +242,14 @@ static inline void fd_update_cache(int fd)
 	else {
 		fd_release_cache_entry(fd);
 	}
+	/* 3 states for each direction require a polling update */
+	if ((fdtab[fd].state & (FD_EV_POLLED_R |                 FD_EV_ACTIVE_R)) == FD_EV_POLLED_R ||
+	    (fdtab[fd].state & (FD_EV_POLLED_R | FD_EV_READY_R | FD_EV_ACTIVE_R)) == FD_EV_ACTIVE_R ||
+	    (fdtab[fd].state & (FD_EV_POLLED_W |                 FD_EV_ACTIVE_W)) == FD_EV_POLLED_W ||
+	    (fdtab[fd].state & (FD_EV_POLLED_W | FD_EV_READY_W | FD_EV_ACTIVE_W)) == FD_EV_ACTIVE_W)
+		updt_fd_polling(fd);
+	else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /*
@@ -271,8 +331,9 @@ static inline void fd_stop_recv(int fd)
 	if (fd_recv_active(fd)) {
 		fdtab[fd].state &= ~FD_EV_ACTIVE_R;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Disable processing send events on fd <fd> */
@@ -282,8 +343,9 @@ static inline void fd_stop_send(int fd)
 	if (fd_send_active(fd)) {
 		fdtab[fd].state &= ~FD_EV_ACTIVE_W;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Disable processing of events on fd <fd> for both directions. */
@@ -293,8 +355,9 @@ static inline void fd_stop_both(int fd)
 	if (fd_active(fd)) {
 		fdtab[fd].state &= ~FD_EV_ACTIVE_RW;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Report that FD <fd> cannot receive anymore without polling (EAGAIN detected). */
@@ -304,8 +367,9 @@ static inline void fd_cant_recv(const int fd)
 	if (fd_recv_ready(fd)) {
 		fdtab[fd].state &= ~FD_EV_READY_R;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Report that FD <fd> can receive anymore without polling. */
@@ -315,8 +379,9 @@ static inline void fd_may_recv(const int fd)
 	if (!fd_recv_ready(fd)) {
 		fdtab[fd].state |= FD_EV_READY_R;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Disable readiness when polled. This is useful to interrupt reading when it
@@ -330,8 +395,9 @@ static inline void fd_done_recv(const int fd)
 	if (fd_recv_polled(fd) && fd_recv_ready(fd)) {
 		fdtab[fd].state &= ~FD_EV_READY_R;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Report that FD <fd> cannot send anymore without polling (EAGAIN detected). */
@@ -341,8 +407,9 @@ static inline void fd_cant_send(const int fd)
 	if (fd_send_ready(fd)) {
 		fdtab[fd].state &= ~FD_EV_READY_W;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Report that FD <fd> can send anymore without polling (EAGAIN detected). */
@@ -352,8 +419,9 @@ static inline void fd_may_send(const int fd)
 	if (!fd_send_ready(fd)) {
 		fdtab[fd].state |= FD_EV_READY_W;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Prepare FD <fd> to try to receive */
@@ -363,8 +431,9 @@ static inline void fd_want_recv(int fd)
 	if (!fd_recv_active(fd)) {
 		fdtab[fd].state |= FD_EV_ACTIVE_R;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Prepare FD <fd> to try to send */
@@ -374,8 +443,9 @@ static inline void fd_want_send(int fd)
 	if (!fd_send_active(fd)) {
 		fdtab[fd].state |= FD_EV_ACTIVE_W;
 		fd_update_cache(fd); /* need an update entry to change the state */
-	}
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		/* the FD lock is unlocked by fd_update_cache() */
+	} else
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Update events seen for FD <fd> and its state if needed. This should be called

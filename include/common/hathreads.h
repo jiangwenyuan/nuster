@@ -201,6 +201,8 @@ void thread_exit_sync(void);
 int  thread_no_sync(void);
 int  thread_need_sync(void);
 
+extern unsigned long all_threads_mask;
+
 #if defined(DEBUG_THREAD) || defined(DEBUG_FULL)
 
 /* WARNING!!! if you update this enum, please also keep lock_label() up to date below */
@@ -209,6 +211,7 @@ enum lock_label {
 	FDTAB_LOCK,
 	FDCACHE_LOCK,
 	FD_LOCK,
+	FD_UPDATE_LOCK,
 	POLL_LOCK,
 	TASK_RQ_LOCK,
 	TASK_WQ_LOCK,
@@ -330,6 +333,7 @@ static inline const char *lock_label(enum lock_label label)
 	case FDCACHE_LOCK:         return "FDCACHE";
 	case FD_LOCK:              return "FD";
 	case FDTAB_LOCK:           return "FDTAB";
+	case FD_UPDATE_LOCK:       return "FD_UPDATE";
 	case POLL_LOCK:            return "POLL";
 	case TASK_RQ_LOCK:         return "TASK_RQ";
 	case TASK_WQ_LOCK:         return "TASK_WQ";

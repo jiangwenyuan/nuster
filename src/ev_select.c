@@ -70,7 +70,6 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 		en = fd_compute_new_polled_status(eo);
 		fdtab[fd].state = en;
 		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
-
 		if ((eo ^ en) & FD_EV_POLLED_RW) {
 			/* poll status changed, update the lists */
 			HA_SPIN_LOCK(POLL_LOCK, &poll_lock);
@@ -86,6 +85,44 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 			HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
 		}
 	}
+	HA_SPIN_LOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+	for (fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
+		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+		if (fdtab[fd].update_mask & tid_bit) {
+			/* Cheat a bit, as the state is global to all pollers
+			 * we don't need every thread ot take care of the
+			 * update.
+			 */
+			fdtab[fd].update_mask &= ~all_threads_mask;
+			done_update_polling(fd);
+		} else {
+			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+			continue;
+		}
+
+		fdtab[fd].new = 0;
+
+		eo = fdtab[fd].state;
+		en = fd_compute_new_polled_status(eo);
+		fdtab[fd].state = en;
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		if ((eo ^ en) & FD_EV_POLLED_RW) {
+			/* poll status changed, update the lists */
+			HA_SPIN_LOCK(POLL_LOCK, &poll_lock);
+			if ((eo & ~en) & FD_EV_POLLED_R)
+				FD_CLR(fd, fd_evts[DIR_RD]);
+			else if ((en & ~eo) & FD_EV_POLLED_R)
+				FD_SET(fd, fd_evts[DIR_RD]);
+
+			if ((eo & ~en) & FD_EV_POLLED_W)
+				FD_CLR(fd, fd_evts[DIR_WR]);
+			else if ((en & ~eo) & FD_EV_POLLED_W)
+				FD_SET(fd, fd_evts[DIR_WR]);
+			HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
+		}
+
+	}
+	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
 	fd_nbupdt = 0;
 
 	/* let's restore fdset state */
