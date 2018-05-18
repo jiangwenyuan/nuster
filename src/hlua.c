@@ -6984,6 +6984,7 @@ void hlua_init(void)
 		"none",
 		NULL
 	};
+	int saved_used_backed;
 #endif
 
 	/* Initialise com signals pool */
@@ -7515,7 +7516,10 @@ void hlua_init(void)
 	}
 
 	/* Initialize SSL server. */
+	saved_used_backed = global.ssl_used_backend;
 	ssl_sock_prepare_srv_ctx(&socket_ssl, &socket_proxy);
+	// don't affect maxconn automatic computation
+	global.ssl_used_backend = saved_used_backed;
 #endif
 
 	RESET_SAFE_LJMP(gL.T);
