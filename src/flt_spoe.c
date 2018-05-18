@@ -395,6 +395,7 @@ spoe_prepare_hahello_frame(struct appctx *appctx, char *frame, size_t size)
 	*p++ = SPOE_FRM_T_HAPROXY_HELLO;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -484,6 +485,7 @@ spoe_prepare_hadiscon_frame(struct appctx *appctx, char *frame, size_t size)
 	*p++ = SPOE_FRM_T_HAPROXY_DISCON;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -555,6 +557,7 @@ spoe_prepare_hanotify_frame(struct appctx *appctx, struct spoe_context *ctx,
 	*p++ = SPOE_FRM_T_HAPROXY_NOTIFY;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -611,6 +614,7 @@ spoe_prepare_hafrag_frame(struct appctx *appctx, struct spoe_context *ctx,
 	*p++ = SPOE_FRM_T_UNSET;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -665,6 +669,7 @@ spoe_handle_agenthello_frame(struct appctx *appctx, char *frame, size_t size)
 
 	/* Retrieve flags */
 	memcpy((char *)&flags, p, 4);
+	flags = ntohl(flags);
 	p += 4;
 
 	/* Fragmentation is not supported for HELLO frame */
@@ -848,6 +853,7 @@ spoe_handle_agentdiscon_frame(struct appctx *appctx, char *frame, size_t size)
 
 	/* Retrieve flags */
 	memcpy((char *)&flags, p, 4);
+	flags = ntohl(flags);
 	p += 4;
 
 	/* Fragmentation is not supported for DISCONNECT frame */
@@ -958,6 +964,7 @@ spoe_handle_agentack_frame(struct appctx *appctx, struct spoe_context **ctx,
 
 	/* Retrieve flags */
 	memcpy((char *)&flags, p, 4);
+	flags = ntohl(flags);
 	p += 4;
 
 	/* Fragmentation is not supported for now */
