@@ -1,6 +1,28 @@
 ChangeLog :
 ===========
 
+2018/05/18 : 1.8.9
+    - BUG/MINOR: pattern: Add a missing HA_SPIN_INIT() in pat_ref_newid()
+    - BUG/MAJOR: channel: Fix crash when trying to read from a closed socket
+    - BUG/MINOR: log: t_idle (%Ti) is not set for some requests
+    - BUG/MEDIUM: lua: Fix segmentation fault if a Lua task exits
+    - MINOR: h2: detect presence of CONNECT and/or content-length
+    - BUG/MEDIUM: h2: implement missing support for chunked encoded uploads
+    - BUG/MINOR: lua/threads: Make lua's tasks sticky to the current thread
+    - BUG/MINOR: config: disable http-reuse on TCP proxies
+    - BUG/MINOR: checks: Fix check->health computation for flapping servers
+    - BUG/MEDIUM: threads: Fix the sync point for more than 32 threads
+    - BUG/MINOR: lua: Put tasks to sleep when waiting for data
+    - DOC/MINOR: clean up LUA documentation re: servers & array/table.
+    - BUG/MINOR: map: correctly track reference to the last ref_elt being dumped
+    - BUG/MEDIUM: task: Don't free a task that is about to be run.
+    - BUG/MINOR: lua: schedule socket task upon lua connect()
+    - BUG/MINOR: lua: ensure large proxy IDs can be represented
+    - BUG/MEDIUM: http: don't always abort transfers on CF_SHUTR
+    - BUG/MEDIUM: pollers: Use a global list for fd shared between threads.
+    - BUG/MEDIUM: ssl: properly protect SSL cert generation
+    - BUG/MINOR: spoe: Mistake in error message about SPOE configuration
+
 2018/04/19 : 1.8.8
     - BUG/MEDIUM: threads: Fix the max/min calculation because of name clashes
     - BUG/MEDIUM: connection: Make sure we have a mux before calling detach().
