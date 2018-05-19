@@ -1885,6 +1885,15 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			if (err_code) {
 				goto out;
 			}
+		} else if (!strcmp(args[cur_arg], "nosql")) {
+			if (alertif_too_many_args(4, file, linenum, args, &err_code)) {
+				goto out;
+			}
+			args++;
+			err_code = nuster_parse_global_nosql(file, linenum, args, kwm);
+			if (err_code) {
+				goto out;
+			}
 		} else {
 			ha_alert("parsing [%s:%d] : '%s' only supports 'cache'.\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
