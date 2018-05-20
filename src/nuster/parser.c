@@ -466,49 +466,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
 
 int nuster_parse_proxy_nosql(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
-
-    struct flt_conf *fconf;
-    struct nuster_flt_conf *conf;
-    int cur_arg = 1;
-
-    list_for_each_entry(fconf, &px->filter_configs, list) {
-        if(fconf->id == nuster_cache_id) {
-            memprintf(err, "%s: Proxy supports only one cache filter\n", px->id);
-            return -1;
-        }
-    }
-
-    fconf = calloc(1, sizeof(*fconf));
-    conf  = malloc(sizeof(*conf));
-    memset(fconf, 0, sizeof(*fconf));
-    memset(conf, 0, sizeof(*conf));
-    if(!fconf || !conf) {
-        memprintf(err, "out of memory");
-        return -1;
-    }
-
-    conf->status = NUSTER_STATUS_ON;
-    cur_arg++;
-    if(*args[cur_arg]) {
-        if(!strcmp(args[cur_arg], "off")) {
-            conf->status = NUSTER_STATUS_OFF;
-        } else if(!strcmp(args[cur_arg], "on")) {
-            conf->status = NUSTER_STATUS_ON;
-        } else {
-            memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
-            return -1;
-        }
-        cur_arg++;
-    }
-
-    fconf->id   = nuster_cache_id;
-    fconf->conf = conf;
-    fconf->ops  = &nst_cache_filter_ops;
-
-    LIST_ADDQ(&px->filter_configs, &fconf->list);
-
-    px->nuster.mode = NUSTER_MODE_CACHE;
-
+    px->nuster.mode = NUSTER_MODE_NOSQL;
     return 0;
 }
 

@@ -49,6 +49,7 @@ enum {
 
 enum {
     NUSTER_MODE_CACHE = 1,
+    NUSTER_MODE_NOSQL,
 };
 
 enum {
