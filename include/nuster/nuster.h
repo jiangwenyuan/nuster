@@ -26,6 +26,7 @@
 #define NUSTER_COPYRIGHT  "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
 #include <nuster/cache.h>
+#include <nuster/nosql.h>
 
 #include <common/chunk.h>
 #include <types/applet.h>
@@ -57,7 +58,9 @@ static inline void nuster_housekeeping() {
 }
 
 static inline int nuster_check_applet (struct stream *s, struct channel *req, struct proxy *px) {
-    return (nst_cache_manager(s, req, px) || nst_cache_stats(s, req, px));
+    return (nst_nosql_check_applet(s, req, px) ||
+            nst_cache_manager(s, req, px) ||
+            nst_cache_stats(s, req, px));
 }
 
 #endif /* _NUSTER_H */

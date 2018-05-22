@@ -887,6 +887,7 @@ OBJS = src/proto_http.o src/cfgparse.o src/server.o src/stream.o        \
        src/nuster/cache/dict.o src/nuster/cache/filter.o                \
        src/nuster/cache/stats.o src/nuster/cache/manager.o              \
        src/nuster/cache/engine.o                                        \
+       src/nuster/nosql/engine.o                                        \
        src/nuster/memory.o src/nuster/parser.o                          \
        src/nuster/nuster.o
 
