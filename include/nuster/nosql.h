@@ -24,6 +24,8 @@
 
 #include <nuster/common.h>
 
+extern struct flt_ops  nst_nosql_filter_ops;
+
 /* engine */
 int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);
 

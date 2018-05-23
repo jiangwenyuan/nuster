@@ -67,6 +67,10 @@ struct nuster nuster = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.CACHE.STATS>",
         },
+        .nosql_engine = {
+            .obj_type = OBJ_TYPE_APPLET,
+            .name     = "<NUSTER.NOSQL.ENGINE>",
+        },
     },
 };
 
@@ -96,4 +100,5 @@ void nuster_init() {
     }
 
     nst_cache_init();
+    nst_nosql_init();
 }
