@@ -179,7 +179,7 @@ struct fdlist update_list; // Global update list
 __decl_hathreads(HA_SPINLOCK_T fdtab_lock);       /* global lock to protect fdtab array */
 __decl_hathreads(HA_RWLOCK_T   fdcache_lock);     /* global lock to protect fd_cache array */
 __decl_hathreads(HA_SPINLOCK_T poll_lock);        /* global lock to protect poll info */
-__decl_hathreads(HA_SPINLOCK_T) fd_updt_lock;     /* global lock to protect the update list */
+__decl_hathreads(HA_SPINLOCK_T fd_updt_lock);     /* global lock to protect the update list */
 
 
 /* Deletes an FD from the fdsets, and recomputes the maxfd limit.
