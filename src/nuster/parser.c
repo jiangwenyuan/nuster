@@ -22,6 +22,7 @@
 #include <nuster/nuster.h>
 
 static const char *nuster_cache_id = "cache filter";
+static const char *nuster_nosql_id = "nosql filter";
 
 static struct nuster_rule_key *_nuster_parse_rule_key_cast(char *str) {
     struct nuster_rule_key *key = NULL;
@@ -466,6 +467,18 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
 
 int nuster_parse_proxy_nosql(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
+    struct flt_conf *fconf;
+    fconf = calloc(1, sizeof(*fconf));
+    memset(fconf, 0, sizeof(*fconf));
+    if(!fconf) {
+        memprintf(err, "out of memory");
+        return -1;
+    }
+    fconf->id   = nuster_nosql_id;
+    fconf->ops  = &nst_nosql_filter_ops;
+
+    LIST_ADDQ(&px->filter_configs, &fconf->list);
+
     px->nuster.mode = NUSTER_MODE_NOSQL;
     return 0;
 }
