@@ -174,6 +174,7 @@ struct global global = {
 		},
 		.nosql = {
 			.status       = NUSTER_STATUS_UNDEFINED,
+			.dict_size    = NST_CACHE_DEFAULT_SIZE,
 			.data_size    = NST_CACHE_DEFAULT_SIZE,
 		},
 	},

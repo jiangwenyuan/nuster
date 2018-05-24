@@ -394,6 +394,21 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args, int kw
     }
     cur_arg++;
     while(*(args[cur_arg]) !=0) {
+        if (!strcmp(args[cur_arg], "dict-size")) {
+            cur_arg++;
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d] : '%s' dict-size expects a size.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            if (nuster_parse_size(args[cur_arg], &global.nuster.nosql.dict_size)) {
+                ha_alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
         if (!strcmp(args[cur_arg], "data-size")) {
             cur_arg++;
             if (*args[cur_arg] == 0) {
