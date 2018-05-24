@@ -1886,7 +1886,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			}
 		} else if (!strcmp(args[cur_arg], "nosql")) {
-			if (alertif_too_many_args(4, file, linenum, args, &err_code)) {
+			if (alertif_too_many_args(6, file, linenum, args, &err_code)) {
 				goto out;
 			}
 			args++;

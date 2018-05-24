@@ -195,6 +195,7 @@ struct global {
 		} cache;
 		struct {
 			int       status;                      /* enable nosql on or off */
+			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
 			uint64_t  data_size;                   /* max memory used by nosql, in bytes */
 
 			struct nuster_memory   *memory;        /* memory */
