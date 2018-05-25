@@ -21,6 +21,7 @@
 
 #include <proto/stream_interface.h>
 #include <proto/proto_http.h>
+#include <proto/log.h>
 
 static const char HTTP_100[] =
 "HTTP/1.1 100 Continue\r\n\r\n";
@@ -46,8 +47,93 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     }
 }
 
+static int _nst_nosql_dict_alloc(uint64_t size) {
+    int i, entry_size = sizeof(struct nst_nosql_entry*);
+
+    nuster.nosql->dict[0].size  = size / entry_size;
+    nuster.nosql->dict[0].used  = 0;
+    nuster.nosql->dict[0].entry = nuster_memory_alloc(global.nuster.nosql.memory, global.nuster.nosql.memory->block_size);
+    if(!nuster.nosql->dict[0].entry) return 0;
+
+    for(i = 1; i < size / global.nuster.nosql.memory->block_size; i++) {
+        if(!nuster_memory_alloc(global.nuster.nosql.memory, global.nuster.nosql.memory->block_size)) return 0;
+    }
+    for(i = 0; i < nuster.nosql->dict[0].size; i++) {
+        nuster.nosql->dict[0].entry[i] = NULL;
+    }
+    return nuster_shctx_init((&nuster.nosql->dict[0]));
+}
+
+struct nst_nosql_data *nst_nosql_data_new() {
+
+    struct nst_nosql_data *data = nuster_memory_alloc(global.nuster.nosql.memory, sizeof(*data));
+
+    nuster_shctx_lock(nuster.nosql);
+    if(data) {
+        data->clients  = 0;
+        data->invalid  = 0;
+        data->element  = NULL;
+
+        if(nuster.nosql->data_head == NULL) {
+            nuster.nosql->data_head = data;
+            nuster.nosql->data_tail = data;
+            data->next              = data;
+        } else {
+            if(nuster.nosql->data_head == nuster.nosql->data_tail) {
+                nuster.nosql->data_head->next = data;
+                data->next                    = nuster.nosql->data_head;
+                nuster.nosql->data_tail       = data;
+            } else {
+                data->next                    = nuster.nosql->data_head;
+                nuster.nosql->data_tail->next = data;
+                nuster.nosql->data_tail       = data;
+            }
+        }
+    }
+    nuster_shctx_unlock(nuster.nosql);
+    return data;
+}
+
 void nst_nosql_init() {
     nuster.applet.nosql_engine.fct = nst_nosql_engine_handler;
+
+    if(global.nuster.nosql.status == NUSTER_STATUS_ON) {
+        global.nuster.nosql.memory = nuster_memory_create("nosql.shm", global.nuster.nosql.data_size, global.tune.bufsize, NST_NOSQL_DEFAULT_CHUNK_SIZE);
+        if(!global.nuster.nosql.memory) {
+            goto shm_err;
+        }
+        if(!nuster_shctx_init(global.nuster.nosql.memory)) {
+            goto shm_err;
+        }
+        nuster.nosql = nuster_memory_alloc(global.nuster.nosql.memory, sizeof(struct nst_nosql));
+        if(!nuster.nosql) {
+            goto err;
+        }
+
+        nuster.nosql->dict[0].entry = NULL;
+        nuster.nosql->dict[0].used  = 0;
+        nuster.nosql->dict[1].entry = NULL;
+        nuster.nosql->dict[1].used  = 0;
+        nuster.nosql->data_head     = NULL;
+        nuster.nosql->data_tail     = NULL;
+        nuster.nosql->rehash_idx    = -1;
+        nuster.nosql->cleanup_idx   = 0;
+
+        if(!nuster_shctx_init(nuster.nosql)) {
+            goto shm_err;
+        }
+
+        if(!nst_nosql_dict_init()) {
+            goto err;
+        }
+    }
+    return;
+err:
+    ha_alert("Out of memory when initializing nuster nosql.\n");
+    exit(1);
+shm_err:
+    ha_alert("Error when initializing nuster nosql memory.\n");
+    exit(1);
 }
 
 /*
