@@ -43,6 +43,8 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
 
 static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter,
         struct http_msg *msg) {
+    if(!(msg->chn->flags & CF_ISRESP)) {
+    }
     return 1;
 }
 
