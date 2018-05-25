@@ -1696,6 +1696,8 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 	if (!socket->s)
 		goto connection_closed;
 
+	appctx = objt_appctx(socket->s->si[0].end);
+
 	oc = &socket->s->res;
 	if (wanted == HLSR_READ_LINE) {
 		/* Read line. */
@@ -1765,8 +1767,7 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 	bo_skip(oc, len + skip_at_end);
 
 	/* Don't wait anything. */
-	stream_int_notify(&socket->s->si[0]);
-	stream_int_update_applet(&socket->s->si[0]);
+	appctx_wakeup(appctx);
 
 	/* If the pattern reclaim to read all the data
 	 * in the connection, got out.
