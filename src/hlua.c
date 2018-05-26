@@ -1941,7 +1941,7 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	/* send data */
 	if (len < send_len)
 		send_len = len;
-	len = bi_putblk(&socket->s->req, buf+sent, send_len);
+	len = bi_putblk(&socket->s->req, buf, send_len);
 
 	/* "Not enough space" (-1), "Buffer too little to contain
 	 * the data" (-2) are not expected because the available length
