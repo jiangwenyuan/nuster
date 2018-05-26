@@ -1586,6 +1586,18 @@ static void hlua_socket_handler(struct appctx *appctx)
 	/* Wake the tasks which wants to read if the buffer contains data. */
 	if (!channel_is_empty(si_oc(si)))
 		hlua_com_wake(&appctx->ctx.hlua.wake_on_read);
+
+	/* Some data were injected in the buffer, notify the stream
+	 * interface.
+	 */
+	if (!channel_is_empty(si_ic(si)))
+		stream_int_update(si);
+
+	/* If write notifications are registered, we considers we want
+	 * to write, so we set the flag cant put
+	 */
+	if (notification_registered(&appctx->ctx.hlua.wake_on_write))
+		si_applet_cant_put(si);
 }
 
 /* This function is called when the "struct stream" is destroyed.
@@ -1947,8 +1959,7 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	}
 
 	/* update buffers. */
-	stream_int_notify(&socket->s->si[0]);
-	stream_int_update_applet(&socket->s->si[0]);
+	appctx_wakeup(appctx);
 
 	socket->s->req.rex = TICK_ETERNITY;
 	socket->s->res.wex = TICK_ETERNITY;
