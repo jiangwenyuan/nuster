@@ -1923,8 +1923,6 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	/* Check for avalaible space. */
 	len = buffer_total_space(socket->s->req.buf);
 	if (len <= 0) {
-		if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_write))
-			WILL_LJMP(luaL_error(L, "out of memory"));
 		goto hlua_socket_write_yield_return;
 	}
 
@@ -1964,6 +1962,8 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 		return 1;
 
 hlua_socket_write_yield_return:
+	if (!hlua_com_new(hlua, &appctx->ctx.hlua.wake_on_write))
+		WILL_LJMP(luaL_error(L, "out of memory"));
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_write_yield, TICK_ETERNITY, 0));
 	return 0;
 }
