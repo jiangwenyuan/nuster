@@ -27,7 +27,17 @@
 #define NST_NOSQL_DEFAULT_CHUNK_SIZE   32
 #define NST_NOSQL_DEFAULT_LOAD_FACTOR         0.75
 #define NST_NOSQL_DEFAULT_GROWTH_FACTOR       2
+#define NST_NOSQL_DEFAULT_KEY_SIZE            128
 
+
+enum {
+    NST_NOSQL_APPCTX_STATE_INIT,
+    NST_NOSQL_APPCTX_STATE_WAIT,
+    NST_NOSQL_APPCTX_STATE_HIT,
+    NST_NOSQL_APPCTX_STATE_NOT_FOUND,
+    NST_NOSQL_APPCTX_STATE_ERROR,
+    NST_NOSQL_APPCTX_STATE_ERROR_NOT_ALLOWED,
+};
 
 struct nst_nosql_element {
     struct nst_nosql_element *next;
@@ -82,14 +92,16 @@ struct nst_nosql_dict {
 };
 
 enum {
-    NST_NOSQL_CTX_STATE_INIT   = 0,   /* init */
-    NST_NOSQL_CTX_STATE_CREATE = 1,   /* to cache */
-    NST_NOSQL_CTX_STATE_DONE   = 2,   /* cache done */
-    NST_NOSQL_CTX_STATE_BYPASS = 3,   /* not cached, return to regular process */
-    NST_NOSQL_CTX_STATE_WAIT   = 4,   /* caching, wait */
-    NST_NOSQL_CTX_STATE_HIT    = 5,   /* cached, use cache */
-    NST_NOSQL_CTX_STATE_PASS   = 6,   /* cache rule passed */
-    NST_NOSQL_CTX_STATE_FULL   = 7,   /* cache full */
+    NST_NOSQL_CTX_STATE_INIT   ,   /* init */
+    NST_NOSQL_CTX_STATE_CREATE ,   /* to cache */
+    NST_NOSQL_CTX_STATE_DONE   ,   /* cache done */
+    NST_NOSQL_CTX_STATE_INVALID ,   /* invalid */
+
+    NST_NOSQL_CTX_STATE_BYPASS  ,   /* not cached, return to regular process */
+    NST_NOSQL_CTX_STATE_WAIT    ,   /* caching, wait */
+    NST_NOSQL_CTX_STATE_HIT     ,   /* cached, use cache */
+    NST_NOSQL_CTX_STATE_PASS    ,   /* cache rule passed */
+    NST_NOSQL_CTX_STATE_FULL    ,   /* cache full */
 };
 
 struct nst_nosql_ctx {
@@ -112,6 +124,10 @@ struct nst_nosql_ctx {
         struct nuster_str     cookie;
     } req;
     int                       pid;         /* proxy uuid */
+    struct {
+        struct nuster_str     content_type;
+        uint64_t              content_length;
+    } res;
 };
 
 struct nst_nosql_stats {
@@ -148,6 +164,10 @@ extern struct flt_ops  nst_nosql_filter_ops;
 /* engine */
 int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);
 struct nst_nosql_data *nst_nosql_data_new();
+int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
+char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
+        struct http_msg *msg);
+uint64_t nst_nosql_hash_key(const char *key);
 
 /* dict */
 int nst_nosql_dict_init();

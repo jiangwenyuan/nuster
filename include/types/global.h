@@ -198,6 +198,15 @@ struct global {
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
 			uint64_t  data_size;                   /* max memory used by nosql, in bytes */
 
+			struct {
+				struct pool_head *stash;
+				struct pool_head *ctx;
+				struct pool_head *data;
+				struct pool_head *element;
+				struct pool_head *chunk;
+				struct pool_head *entry;
+			} pool;
+
 			struct nuster_memory   *memory;        /* memory */
 		} nosql;
 	} nuster;
