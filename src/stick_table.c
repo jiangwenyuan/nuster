@@ -873,6 +873,7 @@ static int sample_conv_in_table(const struct arg *arg_p, struct sample *smp, voi
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = !!ts;
 	smp->flags = SMP_F_VOL_TEST;
+	stktable_release(t, ts);
 	return 1;
 }
 
@@ -905,12 +906,12 @@ static int sample_conv_table_bytes_in_rate(const struct arg *arg_p, struct sampl
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_BYTES_IN_RATE);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, bytes_in_rate),
+                                                       t->data_arg[STKTABLE_DT_BYTES_IN_RATE].u);
 
-	smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, bytes_in_rate),
-					       t->data_arg[STKTABLE_DT_BYTES_IN_RATE].u);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -942,11 +943,11 @@ static int sample_conv_table_conn_cnt(const struct arg *arg_p, struct sample *sm
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_CONN_CNT);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, conn_cnt);
 
-	smp->data.u.sint = stktable_data_cast(ptr, conn_cnt);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -978,11 +979,11 @@ static int sample_conv_table_conn_cur(const struct arg *arg_p, struct sample *sm
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_CONN_CUR);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, conn_cur);
 
-	smp->data.u.sint = stktable_data_cast(ptr, conn_cur);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1014,12 +1015,12 @@ static int sample_conv_table_conn_rate(const struct arg *arg_p, struct sample *s
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_CONN_RATE);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, conn_rate),
+                                                       t->data_arg[STKTABLE_DT_CONN_RATE].u);
 
-	smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, conn_rate),
-					       t->data_arg[STKTABLE_DT_CONN_RATE].u);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1051,12 +1052,12 @@ static int sample_conv_table_bytes_out_rate(const struct arg *arg_p, struct samp
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_BYTES_OUT_RATE);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, bytes_out_rate),
+                                                       t->data_arg[STKTABLE_DT_BYTES_OUT_RATE].u);
 
-	smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, bytes_out_rate),
-					       t->data_arg[STKTABLE_DT_BYTES_OUT_RATE].u);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1088,11 +1089,11 @@ static int sample_conv_table_gpt0(const struct arg *arg_p, struct sample *smp, v
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_GPT0);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, gpt0);
 
-	smp->data.u.sint = stktable_data_cast(ptr, gpt0);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1124,11 +1125,11 @@ static int sample_conv_table_gpc0(const struct arg *arg_p, struct sample *smp, v
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_GPC0);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, gpc0);
 
-	smp->data.u.sint = stktable_data_cast(ptr, gpc0);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1160,12 +1161,12 @@ static int sample_conv_table_gpc0_rate(const struct arg *arg_p, struct sample *s
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_GPC0_RATE);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, gpc0_rate),
+                                                       t->data_arg[STKTABLE_DT_GPC0_RATE].u);
 
-	smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, gpc0_rate),
-	                                      t->data_arg[STKTABLE_DT_GPC0_RATE].u);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1197,11 +1198,11 @@ static int sample_conv_table_http_err_cnt(const struct arg *arg_p, struct sample
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_ERR_CNT);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, http_err_cnt);
 
-	smp->data.u.sint = stktable_data_cast(ptr, http_err_cnt);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1233,12 +1234,12 @@ static int sample_conv_table_http_err_rate(const struct arg *arg_p, struct sampl
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_ERR_RATE);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, http_err_rate),
+                                                       t->data_arg[STKTABLE_DT_HTTP_ERR_RATE].u);
 
-	smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, http_err_rate),
-					       t->data_arg[STKTABLE_DT_HTTP_ERR_RATE].u);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1270,11 +1271,11 @@ static int sample_conv_table_http_req_cnt(const struct arg *arg_p, struct sample
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_REQ_CNT);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, http_req_cnt);
 
-	smp->data.u.sint = stktable_data_cast(ptr, http_req_cnt);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1306,12 +1307,12 @@ static int sample_conv_table_http_req_rate(const struct arg *arg_p, struct sampl
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_REQ_RATE);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, http_req_rate),
+                                                       t->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u);
 
-	smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, http_req_rate),
-					       t->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1343,11 +1344,11 @@ static int sample_conv_table_kbytes_in(const struct arg *arg_p, struct sample *s
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_BYTES_IN_CNT);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, bytes_in_cnt) >> 10;
 
-	smp->data.u.sint = stktable_data_cast(ptr, bytes_in_cnt) >> 10;
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1379,11 +1380,11 @@ static int sample_conv_table_kbytes_out(const struct arg *arg_p, struct sample *
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_BYTES_OUT_CNT);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, bytes_out_cnt) >> 10;
 
-	smp->data.u.sint = stktable_data_cast(ptr, bytes_out_cnt) >> 10;
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1415,11 +1416,11 @@ static int sample_conv_table_server_id(const struct arg *arg_p, struct sample *s
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_SERVER_ID);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, server_id);
 
-	smp->data.u.sint = stktable_data_cast(ptr, server_id);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1451,11 +1452,11 @@ static int sample_conv_table_sess_cnt(const struct arg *arg_p, struct sample *sm
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_SESS_CNT);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = stktable_data_cast(ptr, sess_cnt);
 
-	smp->data.u.sint = stktable_data_cast(ptr, sess_cnt);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1487,12 +1488,12 @@ static int sample_conv_table_sess_rate(const struct arg *arg_p, struct sample *s
 		return 1;
 
 	ptr = stktable_data_ptr(t, ts, STKTABLE_DT_SESS_RATE);
-	if (!ptr)
-		return 0; /* parameter not stored */
+	if (ptr)
+		smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, sess_rate),
+                                                       t->data_arg[STKTABLE_DT_SESS_RATE].u);
 
-	smp->data.u.sint = read_freq_ctr_period(&stktable_data_cast(ptr, sess_rate),
-					       t->data_arg[STKTABLE_DT_SESS_RATE].u);
-	return 1;
+	stktable_release(t, ts);
+	return !!ptr;
 }
 
 /* Casts sample <smp> to the type of the table specified in arg(0), and looks
@@ -1522,6 +1523,7 @@ static int sample_conv_table_trackers(const struct arg *arg_p, struct sample *sm
 	if (ts)
 		smp->data.u.sint = ts->ref_cnt;
 
+	stktable_release(t, ts);
 	return 1;
 }
 
