@@ -723,6 +723,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             entry->data = nst_cache_data_new();
             if(!entry->data) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+                nuster_shctx_unlock(&nuster.cache->dict[0]);
                 return;
             }
             ctx->state = NST_CACHE_CTX_STATE_CREATE;
@@ -735,6 +736,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             ctx->state = NST_CACHE_CTX_STATE_CREATE;
         } else {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+            nuster_shctx_unlock(&nuster.cache->dict[0]);
             return;
         }
     }
