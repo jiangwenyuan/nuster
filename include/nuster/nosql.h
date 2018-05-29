@@ -24,19 +24,23 @@
 
 #include <nuster/common.h>
 
-#define NST_NOSQL_DEFAULT_CHUNK_SIZE   32
-#define NST_NOSQL_DEFAULT_LOAD_FACTOR         0.75
-#define NST_NOSQL_DEFAULT_GROWTH_FACTOR       2
-#define NST_NOSQL_DEFAULT_KEY_SIZE            128
+#define NST_NOSQL_DEFAULT_CHUNK_SIZE            32
+#define NST_NOSQL_DEFAULT_LOAD_FACTOR           0.75
+#define NST_NOSQL_DEFAULT_GROWTH_FACTOR         2
+#define NST_NOSQL_DEFAULT_KEY_SIZE              128
 
 
 enum {
-    NST_NOSQL_APPCTX_STATE_INIT,
+    NST_NOSQL_APPCTX_STATE_INIT = 0,
     NST_NOSQL_APPCTX_STATE_WAIT,
     NST_NOSQL_APPCTX_STATE_HIT,
-    NST_NOSQL_APPCTX_STATE_NOT_FOUND,
+    NST_NOSQL_APPCTX_STATE_CREATE,
+    NST_NOSQL_APPCTX_STATE_DELETED,
     NST_NOSQL_APPCTX_STATE_ERROR,
-    NST_NOSQL_APPCTX_STATE_ERROR_NOT_ALLOWED,
+    NST_NOSQL_APPCTX_STATE_NOT_ALLOWED,
+    NST_NOSQL_APPCTX_STATE_NOT_FOUND,
+    NST_NOSQL_APPCTX_STATE_END,
+    NST_NOSQL_APPCTX_STATE_DONE,
 };
 
 struct nst_nosql_element {
@@ -54,6 +58,11 @@ struct nst_nosql_data {
     int                       invalid;
     struct nst_nosql_element *element;
     struct nst_nosql_data    *next;
+    struct {
+        struct nuster_str     content_type;
+        struct nuster_str     transfer_encoding;
+        uint64_t              content_length;
+    } headers;
 };
 
 /*
@@ -61,9 +70,9 @@ struct nst_nosql_data {
  */
 enum {
     NST_NOSQL_ENTRY_STATE_CREATING = 0,
-    NST_NOSQL_ENTRY_STATE_VALID    = 1,
-    NST_NOSQL_ENTRY_STATE_INVALID  = 2,
-    NST_NOSQL_ENTRY_STATE_EXPIRED  = 3,
+    NST_NOSQL_ENTRY_STATE_VALID,
+    NST_NOSQL_ENTRY_STATE_INVALID,
+    NST_NOSQL_ENTRY_STATE_EXPIRED,
 };
 
 struct nst_nosql_entry {
@@ -92,23 +101,23 @@ struct nst_nosql_dict {
 };
 
 enum {
-    NST_NOSQL_CTX_STATE_INIT   ,   /* init */
-    NST_NOSQL_CTX_STATE_CREATE ,   /* to cache */
-    NST_NOSQL_CTX_STATE_DONE   ,   /* cache done */
-    NST_NOSQL_CTX_STATE_INVALID ,   /* invalid */
+    NST_NOSQL_CTX_STATE_INIT = 0,   /* init */
+    NST_NOSQL_CTX_STATE_HIT,        /* cached, use cache */
+    NST_NOSQL_CTX_STATE_CREATE,     /* to cache */
+    NST_NOSQL_CTX_STATE_DELETE,     /* to cache */
+    NST_NOSQL_CTX_STATE_DONE,       /* cache done */
+    NST_NOSQL_CTX_STATE_INVALID,    /* invalid */
 
-    NST_NOSQL_CTX_STATE_BYPASS  ,   /* not cached, return to regular process */
-    NST_NOSQL_CTX_STATE_WAIT    ,   /* caching, wait */
-    NST_NOSQL_CTX_STATE_HIT     ,   /* cached, use cache */
-    NST_NOSQL_CTX_STATE_PASS    ,   /* cache rule passed */
-    NST_NOSQL_CTX_STATE_FULL    ,   /* cache full */
+    NST_NOSQL_CTX_STATE_BYPASS,     /* not cached, return to regular process */
+    NST_NOSQL_CTX_STATE_WAIT,       /* caching, wait */
+    NST_NOSQL_CTX_STATE_PASS,       /* cache rule passed */
+    NST_NOSQL_CTX_STATE_FULL,       /* cache full */
 };
 
 struct nst_nosql_ctx {
     int                       state;
 
     struct nuster_rule       *rule;
-    struct nuster_rule_stash *stash;
 
     struct nst_nosql_entry   *entry;
     struct nst_nosql_data    *data;
@@ -122,12 +131,11 @@ struct nst_nosql_ctx {
         int                   delimiter;
         struct nuster_str     query;
         struct nuster_str     cookie;
+        struct nuster_str     content_type;
+        struct nuster_str     transfer_encoding;
+        uint64_t              content_length;
     } req;
     int                       pid;         /* proxy uuid */
-    struct {
-        struct nuster_str     content_type;
-        uint64_t              content_length;
-    } res;
 };
 
 struct nst_nosql_stats {

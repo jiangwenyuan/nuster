@@ -1,5 +1,5 @@
 /*
- * Cache filter related variables and functions.
+ * Nuster nosql filter related variables and functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
@@ -44,7 +44,6 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
         }
         ctx->state   = NST_NOSQL_CTX_STATE_INIT;
         ctx->rule    = NULL;
-        ctx->stash   = NULL;
         ctx->entry   = NULL;
         ctx->data    = NULL;
         ctx->element = NULL;
@@ -74,15 +73,17 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
         return 1;
     }
 
-    if(txn->meth != HTTP_METH_GET && txn->meth != HTTP_METH_POST) {
-        appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR_NOT_ALLOWED;
-        return 0;
+    if(s->txn->meth != HTTP_METH_GET &&
+            s->txn->meth != HTTP_METH_POST &&
+            s->txn->meth != HTTP_METH_DELETE) {
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_ALLOWED;
+        return 1;
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
         if(!nst_nosql_prebuild_key(ctx, s, msg)) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
-            return 0;
+            return 1;
         }
 
         list_for_each_entry(rule, &px->nuster.rules, list) {
@@ -91,7 +92,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
             key = nst_nosql_build_key(ctx, rule->key, s, msg);
             if(!key) {
                 appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
-                return 0;
+                return 1;
             }
             nuster_debug("[NOSQL] Got key: %s\n", key);
             hash = nst_nosql_hash_key(key);
@@ -101,35 +102,65 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
                 if(ctx->data) {
                     nuster_debug("EXIST\n[NOSQL] Hit\n");
                     /* OK, nosql exists */
-                    appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT;
-                    appctx->ctx.nuster.nosql_engine.data = ctx->data;
-                    appctx->ctx.nuster.nosql_engine.element = ctx->data->element;
-                    return 1;
+                    ctx->state = NST_NOSQL_CTX_STATE_HIT;
+                    break;
                 }
 
                 nuster_debug("NOT EXIST\n");
-                appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_FOUND;
-                return 0;
-            } else {
+            } else if(s->txn->meth == HTTP_METH_POST) {
                 nuster_debug("[NOSQL] Checking if rule pass: ");
-                if(nst_cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
+                if(nst_nosql_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
-                    nst_nosql_create(ctx, key, hash);
+                    ctx->state = NST_NOSQL_CTX_STATE_PASS;
+                    ctx->rule  = rule;
+                    ctx->pid   = px->uuid;
                     break;
                 }
                 nuster_debug("FAIL\n");
+            } else if(s->txn->meth == HTTP_METH_DELETE) {
+                if(nst_nosql_delete(key, hash)) {
+                    nuster_debug("EXIST\n[NOSQL] Delete\n");
+                    ctx->state = NST_NOSQL_CTX_STATE_DELETE;
+                    break;
+                }
+                nuster_debug("NOT EXIST\n");
             }
         }
     }
 
+    /* ctx->state should have been changed in previous stage,
+     * if not, either the key does not exist for GET/DELETE
+     * or all rules do not pass for POST request
+     * */
+    if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_FOUND;
+        return 1;
+    }
+
+    if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT;
+        appctx->ctx.nuster.nosql_engine.data = ctx->data;
+        appctx->ctx.nuster.nosql_engine.element = ctx->data->element;
+    }
+
+    if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
+        appctx->st1 = msg->sov;
+        nst_nosql_create(ctx, key, hash, s, msg);
+    }
+
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_WAIT;
+        ctx->state = NST_NOSQL_CTX_STATE_INIT;
         return 0;
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_INVALID) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
-        return 0;
+    }
+
+    if(ctx->state == NST_NOSQL_CTX_STATE_DELETE) {
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_DELETED;
     }
 
     return 1;
@@ -143,9 +174,16 @@ static int _nst_nosql_filter_http_forward_data(struct stream *s, struct filter *
     struct nst_nosql_ctx *ctx   = filter->ctx;
 
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
-        if(!nst_nosql_update(ctx, msg, len)) {
-            ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
-            appctx->st0       = NST_NOSQL_APPCTX_STATE_ERROR;
+        if(appctx->st1 > 0) {
+            if(len > appctx->st1) {
+                len = appctx->st1;
+            }
+            appctx->st1 -= len;
+        } else {
+            if(!nst_nosql_update(ctx, msg, len)) {
+                ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
+                appctx->st0       = NST_NOSQL_APPCTX_STATE_ERROR;
+            }
         }
     }
     return len;
@@ -153,16 +191,31 @@ static int _nst_nosql_filter_http_forward_data(struct stream *s, struct filter *
 
 static int _nst_nosql_filter_http_end(struct stream *s, struct filter *filter,
         struct http_msg *msg) {
-    struct nst_nosql_ctx *ctx = filter->ctx;
+    struct stream_interface *si = &s->si[1];
+    struct appctx *appctx       = si_appctx(si);
+    struct nst_nosql_ctx *ctx   = filter->ctx;
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        nst_nosql_finish(ctx);
+    if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
+        if(nst_nosql_finish(ctx, msg->body_len)) {
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
+        } else {
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
+        }
     }
     return 1;
 }
 
+void nst_nosql_abort(struct nst_nosql_ctx *ctx) {
+    ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
+}
+
+static int _nst_nosql_filter_http_chunk_trailers(struct stream *s, struct filter *filter,
+        struct http_msg *msg) {
+    return 1;
+}
+
 struct flt_ops nst_nosql_filter_ops = {
-    /* Manage cache filter, called for each filter declaration */
+    /* Manage nosql filter, called for each filter declaration */
     .init   = _nst_nosql_filter_init,
     .deinit = _nst_nosql_filter_deinit,
     .check  = _nst_nosql_filter_check,
@@ -174,5 +227,6 @@ struct flt_ops nst_nosql_filter_ops = {
     .http_headers      = _nst_nosql_filter_http_headers,
     .http_forward_data = _nst_nosql_filter_http_forward_data,
     .http_end          = _nst_nosql_filter_http_end,
+    .http_chunk_trailers = _nst_nosql_filter_http_chunk_trailers,
 
 };

@@ -402,6 +402,7 @@ void nst_cache_init() {
             goto err;
         }
 
+        /*TODO: use a common memory for rule instead of cache, because it is used by nosql too */
         /* init cache rule */
         i = uuid = 0;
         p = proxies_list;
