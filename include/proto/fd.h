@@ -126,7 +126,7 @@ static inline void updt_fd_polling(const int fd)
 		/* If update_mask is non-nul, then it's already in the list
 		 * so we don't have to add it.
 		 */
-		if (fdtab[fd].update_mask == 0) {
+		if ((fdtab[fd].update_mask & all_threads_mask) == 0) {
 			if (update_list.first == -1) {
 				update_list.first = update_list.last = fd;
 				fdtab[fd].update.next = fdtab[fd].update.prev = -1;
