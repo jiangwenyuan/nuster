@@ -1,5 +1,17 @@
 # Nuster Changelog
 
+## 1.8.8.2 - 2018-05-29
+
+### Fixed
+- Rare case segfault when comparing a valid entry with null entry->key (Thanks to Martin)
+- Incorrect address when appending separator to long cache key (Thanks to Klaus)
+
+## 1.7.11.2 - 2018-05-28
+
+### Fixed
+- Rare case segfault when comparing a valid entry with null entry->key (Thanks to Martin)
+- Incorrect address when appending separator to long cache key (Thanks to Klaus)
+
 ## 1.8.8.1 - 2018-05-07
 Upgrade to HAProxy v1.8.8
 
