@@ -41,6 +41,14 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
         "\r\n"
         "404 Not Found\n",
 
+    [NUSTER_HTTP_405] =
+        "HTTP/1.0 405 Method Not Allowed\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "405 Method Not Allowed\n",
+
     [NUSTER_HTTP_500] =
         "HTTP/1.0 500 Internal Server Error\r\n"
         "Cache-Control: no-cache\r\n"

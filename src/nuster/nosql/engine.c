@@ -21,7 +21,13 @@
 
 #include <proto/stream_interface.h>
 #include <proto/proto_http.h>
+#include <proto/acl.h>
 #include <proto/log.h>
+
+/* TODO:
+ * Copied from cache/engine.c with little adjustment
+ * Move to common when nosql part is fixed
+ * */
 
 static const char HTTP_100[] =
 "HTTP/1.1 100 Continue\r\n\r\n";
@@ -35,16 +41,63 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct stream *s            = si_strm(si);
     struct channel *res         = si_ic(si);
+    int code                    = 200;
 
-    if(s->txn->req.msg_state == HTTP_MSG_DATA) {
-        co_skip(si_oc(si), si_ob(si)->o);
+    switch(appctx->st0) {
+        case NST_NOSQL_APPCTX_STATE_CREATE:
+            co_skip(si_oc(si), si_ob(si)->o);
+            break;
+        case NST_NOSQL_APPCTX_STATE_ERROR:
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
+            break;
+        case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
+            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_405]);
+            break;
+        case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
+            code = NUSTER_HTTP_404;
+        case NST_NOSQL_APPCTX_STATE_END:
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
+            ci_putblk(res, nuster_http_msgs[code], strlen(nuster_http_msgs[code]));
+            co_skip(si_oc(si), si_ob(si)->o);
+            si_shutr(si);
+            res->flags |= CF_READ_NULL;
+            break;
+        case NST_NOSQL_APPCTX_STATE_WAIT:
+            //task_wakeup(s->task, TASK_WOKEN_OTHER);
+            break;
+        case NST_NOSQL_APPCTX_STATE_DONE:
+            //co_skip(si_oc(si), si_ob(si)->o);
+            break;
+        default:
+            co_skip(si_oc(si), si_ob(si)->o);
+            break;
     }
-    if(s->txn->req.msg_state == HTTP_MSG_DONE) {
-        ci_putblk(res, nuster_http_msgs[NUSTER_HTTP_200], strlen(nuster_http_msgs[NUSTER_HTTP_200]));
-        co_skip(si_oc(si), si_ob(si)->o);
-        si_shutr(si);
-        res->flags |= CF_READ_NULL;
+}
+
+int nst_nosql_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
+    int ret;
+
+    /* no acl defined */
+    if(!rule->cond) {
+        return 1;
     }
+
+    if(res) {
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_RES|SMP_OPT_FINAL);
+    } else {
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
+    }
+    ret = acl_pass(ret);
+    if(rule->cond->pol == ACL_COND_UNLESS) {
+        ret = !ret;
+    }
+
+    if(ret) {
+        return 1;
+    }
+    return 0;
 }
 
 static int _nst_nosql_dict_alloc(uint64_t size) {
@@ -197,7 +250,7 @@ static char *_string_append(char *dst, int *dst_len, int *dst_size,
     int old_size = *dst_size;
 
     if(left < need) {
-        *dst_size += ((need - left) / NST_CACHE_DEFAULT_KEY_SIZE + 1)  * NST_CACHE_DEFAULT_KEY_SIZE;
+        *dst_size += ((need - left) / NST_NOSQL_DEFAULT_KEY_SIZE + 1)  * NST_NOSQL_DEFAULT_KEY_SIZE;
     }
 
     if(old_size != *dst_size) {
@@ -335,12 +388,12 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pc
         return NULL;
     }
 
-    nuster_debug("[CACHE] Calculate key: ");
+    nuster_debug("[NOSQL] Calculate key: ");
     while((ck = *pck++)) {
         switch(ck->type) {
             case NUSTER_RULE_KEY_METHOD:
                 nuster_debug("method.");
-                key = _nst_nosql_key_append(key, &key_len, &key_size, http_known_methods[txn->meth].name, strlen(http_known_methods[txn->meth].name));
+                key = _nst_nosql_key_append(key, &key_len, &key_size, http_known_methods[HTTP_METH_GET].name, strlen(http_known_methods[HTTP_METH_GET].name));
                 break;
             case NUSTER_RULE_KEY_SCHEME:
                 nuster_debug("scheme.");
@@ -427,14 +480,61 @@ void nst_nosql_hit(struct stream *s, struct stream_interface *si, struct channel
         struct channel *res, struct nst_nosql_data *data) {
 }
 
-void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash) {
+int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
+    struct http_txn *txn = s->txn;
+    struct hdr_ctx hdr;
+
+    ctx->req.content_type.data = NULL;
+    ctx->req.content_type.len  = 0;
+    hdr.idx                    = 0;
+    if(http_find_header2("Content-Type", 12, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
+        ctx->req.content_type.data = nuster_memory_alloc(global.nuster.nosql.memory, hdr.vlen);
+        if(!ctx->req.content_type.data) {
+            return 0;
+        }
+        ctx->req.content_type.len = hdr.vlen;
+        memcpy(ctx->req.content_type.data, hdr.line + hdr.val, hdr.vlen);
+    }
+
+    ctx->req.transfer_encoding.data = NULL;
+    ctx->req.transfer_encoding.len  = 0;
+    hdr.idx                         = 0;
+    while (http_find_header2("Transfer-Encoding", 17, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
+        char *p = ctx->req.transfer_encoding.data;
+        int len = p ? ctx->req.transfer_encoding.len + hdr.vlen + 1 : ctx->req.transfer_encoding.len + hdr.vlen;
+
+        ctx->req.transfer_encoding.data = nuster_memory_alloc(global.nuster.nosql.memory, len);
+        if(!ctx->req.transfer_encoding.data) {
+            if(p) nuster_memory_free(global.nuster.nosql.memory, p);
+            return 0;
+        }
+        if(p) {
+            memcpy(ctx->req.transfer_encoding.data, p, ctx->req.transfer_encoding.len);
+            ctx->req.transfer_encoding.data[ctx->req.transfer_encoding.len] = ',';
+            nuster_memory_free(global.nuster.nosql.memory, p);
+            memcpy(ctx->req.transfer_encoding.data + ctx->req.transfer_encoding.len + 1, hdr.line + hdr.val, hdr.vlen);
+        } else {
+            memcpy(ctx->req.transfer_encoding.data, hdr.line + hdr.val, hdr.vlen);
+        }
+        ctx->req.transfer_encoding.len = len;
+    }
+    return 1;
+}
+
+void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
+        struct stream *s, struct http_msg *msg) {
     struct nst_nosql_entry *entry = NULL;
 
     ///* Check if nosql is full */
     //if(nst_nosql_stats_full()) {
-    //    ctx->state = NST_nosql_CTX_STATE_FULL;
+    //    ctx->state = NST_NOSQL_CTX_STATE_FULL;
     //    return;
     //}
+
+    if(!nst_nosql_get_headers(ctx, s, msg)) {
+        ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+        return;
+    }
 
     nuster_shctx_lock(&nuster.nosql->dict[0]);
     entry = nst_nosql_dict_get(key, hash);
@@ -447,8 +547,10 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash) {
                 entry->data->invalid = 1;
             }
             entry->data = nst_nosql_data_new();
+            ctx->state  = NST_NOSQL_CTX_STATE_CREATE;
         }
     } else {
+        ctx->state = NST_NOSQL_CTX_STATE_CREATE;
         entry = nst_nosql_dict_set(key, hash, ctx);
     }
     nuster_shctx_unlock(&nuster.nosql->dict[0]);
@@ -456,10 +558,11 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash) {
     if(!entry && !entry->data) {
         ctx->state   = NST_NOSQL_CTX_STATE_INVALID;
     } else {
-        ctx->state   = NST_NOSQL_CTX_STATE_CREATE;
-        ctx->entry   = entry;
-        ctx->data    = entry->data;
-        ctx->element = entry->data->element;
+        if(ctx->state == NST_NOSQL_CTX_STATE_CREATE) {
+            ctx->entry   = entry;
+            ctx->data    = entry->data;
+            ctx->element = entry->data->element;
+        }
     }
 }
 
@@ -509,6 +612,7 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg, long msg_l
         return 0;
     }
 }
+
 struct nst_nosql_data *nst_nosql_exists(const char *key, uint64_t hash) {
     struct nst_nosql_entry *entry = NULL;
     struct nst_nosql_data  *data  = NULL;
@@ -526,7 +630,35 @@ struct nst_nosql_data *nst_nosql_exists(const char *key, uint64_t hash) {
     return data;
 }
 
-void nst_nosql_finish(struct nst_nosql_ctx *ctx) {
+int nst_nosql_delete(const char *key, uint64_t hash) {
+    struct nst_nosql_entry *entry = NULL;
+    int ret = 0;
+
+    if(!key) return NULL;
+
+    nuster_shctx_lock(&nuster.nosql->dict[0]);
+    entry = nst_nosql_dict_get(key, hash);
+    if(entry) {
+        entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
+        ret = 1;
+    }
+    nuster_shctx_unlock(&nuster.nosql->dict[0]);
+
+    return ret;
+}
+
+void nst_nosql_finish(struct nst_nosql_ctx *ctx, uint64_t len) {
+    if(ctx->req.content_type.data) {
+        ctx->entry->data->headers.content_type.data = ctx->req.content_type.data;
+        ctx->entry->data->headers.content_type.len  = ctx->req.content_type.len;
+        ctx->req.content_type.data = NULL;
+    }
+    if(ctx->req.transfer_encoding.data) {
+        ctx->entry->data->headers.transfer_encoding.data = ctx->req.transfer_encoding.data;
+        ctx->entry->data->headers.transfer_encoding.len  = ctx->req.transfer_encoding.len;
+        ctx->req.transfer_encoding.data = NULL;
+    }
+    ctx->entry->data->headers.content_length = len;
     ctx->state = NST_NOSQL_CTX_STATE_DONE;
     ctx->entry->state = NST_NOSQL_ENTRY_STATE_VALID;
     if(*ctx->rule->ttl == 0) {

@@ -1,5 +1,5 @@
 /*
- * Nuster dict functions.
+ * Nuster nosql dict functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
@@ -16,6 +16,13 @@
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
 
+
+/* TODO:
+ * Copied from cache/dict.c with little adjustment
+ * Move to common when nosql part is fixed
+ * A universal dict/object for both cache and nosql with the ability
+ * to resize
+ * */
 
 static int _nst_nosql_dict_resize(uint64_t size) {
     struct nst_nosql_dict dict;
