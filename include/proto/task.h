@@ -252,6 +252,13 @@ static inline void task_schedule(struct task *task, int when)
 		__task_queue(task);
 }
 
+/* This function returns true is some notification are pending
+ */
+static inline int notification_registered(struct list *wake)
+{
+	return !LIST_ISEMPTY(wake);
+}
+
 /*
  * This does 3 things :
  *   - wake up all expired tasks
