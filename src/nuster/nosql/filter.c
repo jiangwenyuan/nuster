@@ -80,6 +80,9 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
         return 1;
     }
 
+	txn->req.msg_state = HTTP_MSG_ERROR;
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
+            return 1;
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
         if(!nst_nosql_prebuild_key(ctx, s, msg)) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
