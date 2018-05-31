@@ -176,6 +176,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct h
 char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg);
 uint64_t nst_nosql_hash_key(const char *key);
+struct nst_nosql_data *nst_nosql_exists(const char *key, uint64_t hash);
 
 /* dict */
 int nst_nosql_dict_init();
