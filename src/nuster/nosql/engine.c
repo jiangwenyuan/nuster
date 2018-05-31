@@ -42,15 +42,54 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct stream *s            = si_strm(si);
     struct channel *res         = si_ic(si);
     int code                    = 200;
+    struct nst_nosql_element *element = NULL;
+    int ret;
 
     switch(appctx->st0) {
         case NST_NOSQL_APPCTX_STATE_CREATE:
             co_skip(si_oc(si), si_ob(si)->o);
+            task_wakeup(s->task, TASK_WOKEN_OTHER);
+            break;
+        case NST_NOSQL_APPCTX_STATE_HIT:
+            if(appctx->st1 == 0) {
+                //co_skip(si_oc(si), si_ob(si)->o);
+                chunk_printf(&trash,
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Length: %d\r\n\r\n",
+                        appctx->ctx.nuster.nosql_engine.data->headers.content_length);
+                ci_putchk(si_ic(si), &trash);
+                appctx->st1++;
+            } else {
+                if(appctx->ctx.nuster.nosql_engine.element) {
+                    //if(appctx->ctx.nuster.nosql_engine.element == appctx->ctx.nuster.nosql_engine.data->element) {
+                    //    s->res.analysers = 0;
+                    //    s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE | AN_RES_HTTP_XFER_BODY);
+                    //}
+                    element = appctx->ctx.nuster.nosql_engine.element;
+
+                    ret = ci_putblk(res, element->msg.data, element->msg.len);
+                    if(ret >= 0) {
+                        appctx->ctx.nuster.nosql_engine.element = element->next;
+                    } else if(ret == -2) {
+                        appctx->ctx.nuster.nosql_engine.data->clients--;
+                        si_shutr(si);
+                        res->flags |= CF_READ_NULL;
+                    }
+                } else {
+                    appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
+                    co_skip(si_oc(si), si_ob(si)->o);
+                    si_shutr(si);
+                    res->flags |= CF_READ_NULL;
+                    appctx->ctx.nuster.nosql_engine.data->clients--;
+                }
+            }
+            task_wakeup(s->task, TASK_WOKEN_OTHER);
+
             break;
         case NST_NOSQL_APPCTX_STATE_ERROR:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             code = NUSTER_HTTP_500;
-            goto abort;
+            goto abort2;
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
@@ -59,14 +98,12 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
             code = NUSTER_HTTP_404;
-            goto abort;
+            goto abort2;
             break;
         case NST_NOSQL_APPCTX_STATE_END:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            //ci_putblk(res, nuster_http_msgs[code], strlen(nuster_http_msgs[code]));
-            //co_skip(si_oc(si), si_ob(si)->o);
-            //si_shutr(si);
-            //res->flags |= CF_READ_NULL;
+            code = NUSTER_HTTP_200;
+            goto abort2;
             break;
         case NST_NOSQL_APPCTX_STATE_WAIT:
             //task_wakeup(s->task, TASK_WOKEN_OTHER);

@@ -68,6 +68,8 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
     uint64_t hash               = 0;
     struct appctx *appctx       = si_appctx(si);
     struct http_txn *txn        = s->txn;
+    struct channel *req         = msg->chn;
+    struct channel *res         = &s->res;
 
     if((msg->chn->flags & CF_ISRESP)) {
         return 1;
@@ -80,9 +82,6 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
         return 1;
     }
 
-	txn->req.msg_state = HTTP_MSG_ERROR;
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
-            return 1;
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
         if(!nst_nosql_prebuild_key(ctx, s, msg)) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
@@ -142,8 +141,17 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
 
     if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT;
+        appctx->st1 = 0; /* 0: header unsent, 1: sent */
         appctx->ctx.nuster.nosql_engine.data = ctx->data;
         appctx->ctx.nuster.nosql_engine.element = ctx->data->element;
+
+        req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
+        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+
+        req->analysers |= AN_REQ_FLT_END;
+        req->analyse_exp = TICK_ETERNITY;
+
+        res->flags |= CF_NEVER_WAIT;
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
@@ -154,7 +162,6 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_WAIT;
-        ctx->state = NST_NOSQL_CTX_STATE_INIT;
         return 0;
     }
 
