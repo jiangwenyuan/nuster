@@ -190,6 +190,7 @@ static int _nst_nosql_filter_http_forward_data(struct stream *s, struct filter *
             }
             appctx->st1 -= len;
         } else {
+            if(len == 0) return len;
             if(!nst_nosql_update(ctx, msg, len)) {
                 ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
                 appctx->st0       = NST_NOSQL_APPCTX_STATE_ERROR;
