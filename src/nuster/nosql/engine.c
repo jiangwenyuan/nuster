@@ -10,6 +10,8 @@
  *
  */
 
+#include <inttypes.h>
+
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
@@ -23,6 +25,8 @@
 #include <proto/proto_http.h>
 #include <proto/acl.h>
 #include <proto/log.h>
+
+#include <import/xxhash.h>
 
 /* TODO:
  * Copied from cache/engine.c with little adjustment
@@ -61,7 +65,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                             appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data);
                 } else {
                     chunk_appendf(&trash,
-                            "Content-Length: %d\r\n",
+                            "Content-Length: %"PRIu64"\r\n",
                             appctx->ctx.nuster.nosql_engine.data->info.content_length);
                     if(appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data) {
                         chunk_appendf(&trash, "Transfer-Encoding: %.*s\r\n",
@@ -172,23 +176,6 @@ int nst_nosql_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
         return 1;
     }
     return 0;
-}
-
-static int _nst_nosql_dict_alloc(uint64_t size) {
-    int i, entry_size = sizeof(struct nst_nosql_entry*);
-
-    nuster.nosql->dict[0].size  = size / entry_size;
-    nuster.nosql->dict[0].used  = 0;
-    nuster.nosql->dict[0].entry = nuster_memory_alloc(global.nuster.nosql.memory, global.nuster.nosql.memory->block_size);
-    if(!nuster.nosql->dict[0].entry) return 0;
-
-    for(i = 1; i < size / global.nuster.nosql.memory->block_size; i++) {
-        if(!nuster_memory_alloc(global.nuster.nosql.memory, global.nuster.nosql.memory->block_size)) return 0;
-    }
-    for(i = 0; i < nuster.nosql->dict[0].size; i++) {
-        nuster.nosql->dict[0].entry[i] = NULL;
-    }
-    return nuster_shctx_init((&nuster.nosql->dict[0]));
 }
 
 struct nst_nosql_data *nst_nosql_data_new() {
@@ -341,6 +328,7 @@ static char *_string_append(char *dst, int *dst_len, int *dst_size,
     dst[*dst_len] = '\0';
     return dst;
 }
+
 static char *_nst_nosql_key_append(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
     char *key = _string_append(dst, dst_len, dst_size, src, src_len);
@@ -708,7 +696,7 @@ int nst_nosql_delete(const char *key, uint64_t hash) {
     struct nst_nosql_entry *entry = NULL;
     int ret = 0;
 
-    if(!key) return NULL;
+    if(!key) return 0;
 
     nuster_shctx_lock(&nuster.nosql->dict[0]);
     entry = nst_nosql_dict_get(key, hash);
