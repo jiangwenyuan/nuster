@@ -60,7 +60,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                             appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.len,
                             appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data);
                 } else {
-                    chunk_printf(&trash,
+                    chunk_appendf(&trash,
                             "Content-Length: %d\r\n",
                             appctx->ctx.nuster.nosql_engine.data->info.content_length);
                     if(appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data) {
