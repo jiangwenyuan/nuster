@@ -67,7 +67,6 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
     char *key                   = NULL;
     uint64_t hash               = 0;
     struct appctx *appctx       = si_appctx(si);
-    struct http_txn *txn        = s->txn;
     struct channel *req         = msg->chn;
     struct channel *res         = &s->res;
 
@@ -207,11 +206,8 @@ static int _nst_nosql_filter_http_end(struct stream *s, struct filter *filter,
     struct nst_nosql_ctx *ctx   = filter->ctx;
 
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
-        if(nst_nosql_finish(ctx, msg)) {
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
-        } else {
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
-        }
+        nst_nosql_finish(ctx, msg);
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
     }
     return 1;
 }

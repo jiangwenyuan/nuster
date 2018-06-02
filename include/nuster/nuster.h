@@ -54,6 +54,7 @@ void nuster_response(struct stream *s, struct chunk *msg);
 const char *nuster_parse_size(const char *text, uint64_t *ret);
 const char *nuster_parse_time(const char *text, int len, unsigned *ret);
 int nuster_parse_global_cache(const char *file, int linenum, char **args, int kwm);
+int nuster_parse_global_nosql(const char *file, int linenum, char **args, int kwm);
 
 static inline void nuster_housekeeping() {
     nst_cache_housekeeping();
