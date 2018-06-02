@@ -58,6 +58,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args, int kw
 
 static inline void nuster_housekeeping() {
     nst_cache_housekeeping();
+    nst_nosql_housekeeping();
 }
 
 static inline int nuster_check_applet (struct stream *s, struct channel *req, struct proxy *px) {

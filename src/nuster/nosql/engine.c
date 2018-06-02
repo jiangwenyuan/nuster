@@ -197,6 +197,68 @@ struct nst_nosql_data *nst_nosql_data_new() {
     return data;
 }
 
+static int _nst_nosql_data_invalid(struct nst_nosql_data *data) {
+    if(data->invalid) {
+        if(!data->clients) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void _nst_nosql_data_cleanup() {
+    struct nst_nosql_data *data = NULL;
+
+    if(nuster.nosql->data_head) {
+        if(nuster.nosql->data_head == nuster.nosql->data_tail) {
+            if(_nst_nosql_data_invalid(nuster.nosql->data_head)) {
+                data                    = nuster.nosql->data_head;
+                nuster.nosql->data_head = NULL;
+                nuster.nosql->data_tail = NULL;
+            }
+        } else {
+            if(_nst_nosql_data_invalid(nuster.nosql->data_head)) {
+                data                          = nuster.nosql->data_head;
+                nuster.nosql->data_tail->next = nuster.nosql->data_head->next;
+                nuster.nosql->data_head       = nuster.nosql->data_head->next;
+            } else {
+                nuster.nosql->data_tail = nuster.nosql->data_head;
+                nuster.nosql->data_head = nuster.nosql->data_head->next;
+            }
+        }
+    }
+
+    if(data) {
+        struct nst_nosql_element *element = data->element;
+        while(element) {
+            struct nst_nosql_element *tmp = element;
+            element                       = element->next;
+
+            nuster_memory_free(global.nuster.nosql.memory, tmp->msg.data);
+            nuster_memory_free(global.nuster.nosql.memory, tmp);
+        }
+
+        if(data->info.content_type.data) {
+            nuster_memory_free(global.nuster.nosql.memory, data->info.content_type.data);
+        }
+        if(data->info.transfer_encoding.data) {
+            nuster_memory_free(global.nuster.nosql.memory, data->info.transfer_encoding.data);
+        }
+        nuster_memory_free(global.nuster.nosql.memory, data);
+    }
+}
+
+void nst_nosql_housekeeping() {
+    if(global.nuster.nosql.status == NUSTER_STATUS_ON) {
+        nuster_shctx_lock(&nuster.nosql->dict[0]);
+        nst_nosql_dict_cleanup();
+        nuster_shctx_unlock(&nuster.nosql->dict[0]);
+        nuster_shctx_lock(nuster.nosql);
+        _nst_nosql_data_cleanup();
+        nuster_shctx_unlock(nuster.nosql);
+    }
+}
+
 void nst_nosql_init() {
     nuster.applet.nosql_engine.fct = nst_nosql_engine_handler;
 

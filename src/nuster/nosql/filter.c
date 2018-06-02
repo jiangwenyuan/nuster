@@ -98,6 +98,8 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
         return 1;
     }
 
+    nst_nosql_housekeeping();
+
     if(s->txn->meth != HTTP_METH_GET &&
             s->txn->meth != HTTP_METH_POST &&
             s->txn->meth != HTTP_METH_DELETE) {

@@ -175,6 +175,7 @@ extern struct flt_ops  nst_nosql_filter_ops;
 
 /* engine */
 void nst_nosql_init();
+void nst_nosql_housekeeping();
 int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);
 struct nst_nosql_data *nst_nosql_data_new();
 int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
