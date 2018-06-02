@@ -443,9 +443,9 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pc
     struct hdr_ctx hdr;
 
     struct nuster_rule_key *ck = NULL;
-    int key_len          = 0;
-    int key_size         = NST_NOSQL_DEFAULT_KEY_SIZE;
-    char *key            = malloc(key_size);
+    int key_len                = 0;
+    int key_size               = NST_NOSQL_DEFAULT_KEY_SIZE;
+    char *key                  = malloc(key_size);
     if(!key) {
         return NULL;
     }
@@ -733,5 +733,9 @@ void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct http_msg *msg) {
     } else {
         ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
     }
+}
+
+void nst_nosql_abort(struct nst_nosql_ctx *ctx) {
+    ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
 }
 
