@@ -56,7 +56,6 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             break;
         case NST_NOSQL_APPCTX_STATE_HIT:
             if(appctx->st1 == 0) {
-                //co_skip(si_oc(si), si_ob(si)->o);
                 chunk_printf(&trash,
                         "HTTP/1.1 200 OK\r\n");
                 if(appctx->ctx.nuster.nosql_engine.data->info.flags & NST_NOSQL_DATA_FLAG_CHUNKED) {
@@ -83,10 +82,6 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                 appctx->st1++;
             } else {
                 if(appctx->ctx.nuster.nosql_engine.element) {
-                    //if(appctx->ctx.nuster.nosql_engine.element == appctx->ctx.nuster.nosql_engine.data->element) {
-                    //    s->res.analysers = 0;
-                    //    s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE | AN_RES_HTTP_XFER_BODY);
-                    //}
                     element = appctx->ctx.nuster.nosql_engine.element;
 
                     ret = ci_putblk(res, element->msg.data, element->msg.len);
@@ -111,27 +106,29 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
         case NST_NOSQL_APPCTX_STATE_ERROR:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             code = NUSTER_HTTP_500;
-            goto abort2;
+            goto abort;
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             code = NUSTER_HTTP_405;
-            goto abort2;
+            goto abort;
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
             code = NUSTER_HTTP_404;
-            goto abort2;
+            goto abort;
+            break;
+        case NST_NOSQL_APPCTX_STATE_EMPTY:
+            code = NUSTER_HTTP_400;
+            goto abort;
             break;
         case NST_NOSQL_APPCTX_STATE_END:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             code = NUSTER_HTTP_200;
-            goto abort2;
+            goto abort;
             break;
         case NST_NOSQL_APPCTX_STATE_WAIT:
-            //task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
         case NST_NOSQL_APPCTX_STATE_DONE:
-            //co_skip(si_oc(si), si_ob(si)->o);
             break;
         default:
             co_skip(si_oc(si), si_ob(si)->o);
@@ -139,19 +136,11 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     }
 
     return;
-abort2:
-    //co_skip(si_oc(si), si_ob(si)->o);
-    //s->txn->status = 500;
+
+abort:
     channel_abort(&s->req);
     channel_abort(&s->res);
     nuster_response(s, &nuster_http_msg_chunks[code]);
-    return;
-abort:
-    ci_putblk(res, nuster_http_msgs[code], strlen(nuster_http_msgs[code]));
-    co_skip(si_oc(si), si_ob(si)->o);
-    si_shutr(si);
-    si_shutw(si);
-    res->flags |= CF_READ_NULL;
 }
 
 int nst_nosql_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
@@ -710,28 +699,33 @@ int nst_nosql_delete(const char *key, uint64_t hash) {
 }
 
 void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct http_msg *msg) {
-    if(ctx->req.content_type.data) {
-        ctx->entry->data->info.content_type.data = ctx->req.content_type.data;
-        ctx->entry->data->info.content_type.len  = ctx->req.content_type.len;
-        ctx->req.content_type.data = NULL;
-    }
-    if(ctx->req.transfer_encoding.data) {
-        ctx->entry->data->info.transfer_encoding.data = ctx->req.transfer_encoding.data;
-        ctx->entry->data->info.transfer_encoding.len  = ctx->req.transfer_encoding.len;
-        ctx->req.transfer_encoding.data = NULL;
-    }
-    ctx->entry->data->info.content_length = msg->body_len;
-    if(msg->flags & HTTP_MSGF_TE_CHNK) {
-        ctx->entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
+    if(msg->body_len == 0) {
+        ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+        ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
     } else {
-        ctx->entry->data->info.flags = 0;
-    }
-    ctx->state = NST_NOSQL_CTX_STATE_DONE;
-    ctx->entry->state = NST_NOSQL_ENTRY_STATE_VALID;
-    if(*ctx->rule->ttl == 0) {
-        ctx->entry->expire = 0;
-    } else {
-        ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
+        if(ctx->req.content_type.data) {
+            ctx->entry->data->info.content_type.data = ctx->req.content_type.data;
+            ctx->entry->data->info.content_type.len  = ctx->req.content_type.len;
+            ctx->req.content_type.data = NULL;
+        }
+        if(ctx->req.transfer_encoding.data) {
+            ctx->entry->data->info.transfer_encoding.data = ctx->req.transfer_encoding.data;
+            ctx->entry->data->info.transfer_encoding.len  = ctx->req.transfer_encoding.len;
+            ctx->req.transfer_encoding.data = NULL;
+        }
+        ctx->entry->data->info.content_length = msg->body_len;
+        if(msg->flags & HTTP_MSGF_TE_CHNK) {
+            ctx->entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
+        } else {
+            ctx->entry->data->info.flags = 0;
+        }
+        ctx->state = NST_NOSQL_CTX_STATE_DONE;
+        ctx->entry->state = NST_NOSQL_ENTRY_STATE_VALID;
+        if(*ctx->rule->ttl == 0) {
+            ctx->entry->expire = 0;
+        } else {
+            ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
+        }
     }
 }
 
