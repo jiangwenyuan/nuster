@@ -53,6 +53,7 @@ struct nst_nosql_element {
  * and is pointed by nst_nosql_entry->data.
  * All nst_nosql_data are stored in a circular singly linked list
  */
+#define NST_NOSQL_DATA_FLAG_CHUNKED    0x00000001
 struct nst_nosql_data {
     int                       clients;
     int                       invalid;
@@ -62,7 +63,8 @@ struct nst_nosql_data {
         struct nuster_str     content_type;
         struct nuster_str     transfer_encoding;
         uint64_t              content_length;
-    } headers;
+        unsigned int          flags;
+    } info;
 };
 
 /*

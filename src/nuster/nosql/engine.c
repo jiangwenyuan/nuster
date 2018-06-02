@@ -54,9 +54,27 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             if(appctx->st1 == 0) {
                 //co_skip(si_oc(si), si_ob(si)->o);
                 chunk_printf(&trash,
-                        "HTTP/1.1 200 OK\r\n"
-                        "Content-Length: %d\r\n\r\n",
-                        appctx->ctx.nuster.nosql_engine.data->headers.content_length);
+                        "HTTP/1.1 200 OK\r\n");
+                if(appctx->ctx.nuster.nosql_engine.data->info.flags & NST_NOSQL_DATA_FLAG_CHUNKED) {
+                    chunk_appendf(&trash, "Transfer-Encoding: %.*s\r\n",
+                            appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.len,
+                            appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data);
+                } else {
+                    chunk_printf(&trash,
+                            "Content-Length: %d\r\n",
+                            appctx->ctx.nuster.nosql_engine.data->info.content_length);
+                    if(appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data) {
+                        chunk_appendf(&trash, "Transfer-Encoding: %.*s\r\n",
+                                appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.len,
+                                appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data);
+                    }
+                }
+                if(appctx->ctx.nuster.nosql_engine.data->info.content_type.data) {
+                    chunk_appendf(&trash, "Content-Type: %.*s\r\n",
+                            appctx->ctx.nuster.nosql_engine.data->info.content_type.len,
+                            appctx->ctx.nuster.nosql_engine.data->info.content_type.data);
+                }
+                chunk_appendf(&trash, "\r\n");
                 ci_putchk(si_ic(si), &trash);
                 appctx->st1++;
             } else {
@@ -703,18 +721,23 @@ int nst_nosql_delete(const char *key, uint64_t hash) {
     return ret;
 }
 
-void nst_nosql_finish(struct nst_nosql_ctx *ctx, uint64_t len) {
+void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct http_msg *msg) {
     if(ctx->req.content_type.data) {
-        ctx->entry->data->headers.content_type.data = ctx->req.content_type.data;
-        ctx->entry->data->headers.content_type.len  = ctx->req.content_type.len;
+        ctx->entry->data->info.content_type.data = ctx->req.content_type.data;
+        ctx->entry->data->info.content_type.len  = ctx->req.content_type.len;
         ctx->req.content_type.data = NULL;
     }
     if(ctx->req.transfer_encoding.data) {
-        ctx->entry->data->headers.transfer_encoding.data = ctx->req.transfer_encoding.data;
-        ctx->entry->data->headers.transfer_encoding.len  = ctx->req.transfer_encoding.len;
+        ctx->entry->data->info.transfer_encoding.data = ctx->req.transfer_encoding.data;
+        ctx->entry->data->info.transfer_encoding.len  = ctx->req.transfer_encoding.len;
         ctx->req.transfer_encoding.data = NULL;
     }
-    ctx->entry->data->headers.content_length = len;
+    ctx->entry->data->info.content_length = msg->body_len;
+    if(msg->flags & HTTP_MSGF_TE_CHNK) {
+        ctx->entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
+    } else {
+        ctx->entry->data->info.flags = 0;
+    }
     ctx->state = NST_NOSQL_CTX_STATE_DONE;
     ctx->entry->state = NST_NOSQL_ENTRY_STATE_VALID;
     if(*ctx->rule->ttl == 0) {

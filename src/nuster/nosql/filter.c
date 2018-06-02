@@ -207,7 +207,7 @@ static int _nst_nosql_filter_http_end(struct stream *s, struct filter *filter,
     struct nst_nosql_ctx *ctx   = filter->ctx;
 
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
-        if(nst_nosql_finish(ctx, msg->body_len)) {
+        if(nst_nosql_finish(ctx, msg)) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
         } else {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
