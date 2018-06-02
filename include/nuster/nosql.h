@@ -36,11 +36,12 @@ enum {
     NST_NOSQL_APPCTX_STATE_HIT,
     NST_NOSQL_APPCTX_STATE_CREATE,
     NST_NOSQL_APPCTX_STATE_DELETED,
+    NST_NOSQL_APPCTX_STATE_END,
+    NST_NOSQL_APPCTX_STATE_DONE,
     NST_NOSQL_APPCTX_STATE_ERROR,
     NST_NOSQL_APPCTX_STATE_NOT_ALLOWED,
     NST_NOSQL_APPCTX_STATE_NOT_FOUND,
-    NST_NOSQL_APPCTX_STATE_END,
-    NST_NOSQL_APPCTX_STATE_DONE,
+    NST_NOSQL_APPCTX_STATE_EMPTY,
 };
 
 struct nst_nosql_element {
@@ -104,10 +105,10 @@ struct nst_nosql_dict {
 
 enum {
     NST_NOSQL_CTX_STATE_INIT = 0,   /* init */
-    NST_NOSQL_CTX_STATE_HIT,        /* cached, use cache */
+    NST_NOSQL_CTX_STATE_HIT,        /* key exists */
     NST_NOSQL_CTX_STATE_CREATE,     /* to cache */
-    NST_NOSQL_CTX_STATE_DELETE,     /* to cache */
-    NST_NOSQL_CTX_STATE_DONE,       /* cache done */
+    NST_NOSQL_CTX_STATE_DELETE,     /* to delete */
+    NST_NOSQL_CTX_STATE_DONE,       /* set done */
     NST_NOSQL_CTX_STATE_INVALID,    /* invalid */
 
     NST_NOSQL_CTX_STATE_BYPASS,     /* not cached, return to regular process */

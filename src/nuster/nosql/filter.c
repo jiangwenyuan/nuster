@@ -232,7 +232,11 @@ static int _nst_nosql_filter_http_end(struct stream *s, struct filter *filter,
 
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
         nst_nosql_finish(ctx, msg);
-        appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
+        if(ctx->state == NST_NOSQL_CTX_STATE_DONE) {
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
+        } else {
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_EMPTY;
+        }
     }
     return 1;
 }
