@@ -120,6 +120,7 @@ struct nst_nosql_ctx {
     int                       state;
 
     struct nuster_rule       *rule;
+    char                     *key;
 
     struct nst_nosql_entry   *entry;
     struct nst_nosql_data    *data;
@@ -185,6 +186,7 @@ int nst_nosql_delete(const char *key, uint64_t hash);
 void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash, struct stream *s, struct http_msg *msg);
 int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg, long msg_len);
 void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct http_msg *msg);
+void nst_nosql_abort(struct nst_nosql_ctx *ctx);
 
 /* dict */
 int nst_nosql_dict_init();

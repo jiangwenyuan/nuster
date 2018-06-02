@@ -19,6 +19,7 @@
 #include <proto/proto_http.h>
 #include <proto/stream_interface.h>
 
+#include <nuster/memory.h>
 #include <nuster/nuster.h>
 #include <nuster/nosql.h>
 
@@ -44,6 +45,7 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
         }
         ctx->state   = NST_NOSQL_CTX_STATE_INIT;
         ctx->rule    = NULL;
+        ctx->key     = NULL;
         ctx->entry   = NULL;
         ctx->data    = NULL;
         ctx->element = NULL;
@@ -56,6 +58,29 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
 }
 
 static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
+    if(filter->ctx) {
+        struct nst_nosql_ctx *ctx = filter->ctx;
+
+        if(ctx->state == NST_NOSQL_CTX_STATE_CREATE) {
+            nst_nosql_abort(ctx);
+        }
+        if(ctx->req.host.data) {
+            nuster_memory_free(global.nuster.nosql.memory, ctx->req.host.data);
+        }
+        if(ctx->req.path.data) {
+            nuster_memory_free(global.nuster.nosql.memory, ctx->req.path.data);
+        }
+        if(ctx->req.content_type.data) {
+            nuster_memory_free(global.nuster.nosql.memory, ctx->req.content_type.data);
+        }
+        if(ctx->req.transfer_encoding.data) {
+            nuster_memory_free(global.nuster.nosql.memory, ctx->req.transfer_encoding.data);
+        }
+        if(ctx->key) {
+            free(ctx->key);
+        }
+        pool_free(global.nuster.nosql.pool.ctx, ctx);
+    }
 }
 
 static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter,
@@ -64,7 +89,6 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
     struct nst_nosql_ctx *ctx   = filter->ctx;
     struct nuster_rule *rule    = NULL;
     struct proxy *px            = s->be;
-    char *key                   = NULL;
     uint64_t hash               = 0;
     struct appctx *appctx       = si_appctx(si);
     struct channel *req         = msg->chn;
@@ -90,16 +114,17 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
         list_for_each_entry(rule, &px->nuster.rules, list) {
             nuster_debug("[NOSQL] Checking rule: %s\n", rule->name);
             /* build key */
-            key = nst_nosql_build_key(ctx, rule->key, s, msg);
-            if(!key) {
+            if(ctx->key) free(ctx->key);
+            ctx->key = nst_nosql_build_key(ctx, rule->key, s, msg);
+            if(!ctx->key) {
                 appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
                 return 1;
             }
-            nuster_debug("[NOSQL] Got key: %s\n", key);
-            hash = nst_nosql_hash_key(key);
+            nuster_debug("[NOSQL] Got key: %s\n", ctx->key);
+            hash = nst_nosql_hash_key(ctx->key);
 
             if(s->txn->meth == HTTP_METH_GET) {
-                ctx->data = nst_nosql_exists(key, hash);
+                ctx->data = nst_nosql_exists(ctx->key, hash);
                 if(ctx->data) {
                     nuster_debug("EXIST\n[NOSQL] Hit\n");
                     /* OK, nosql exists */
@@ -119,7 +144,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
                 }
                 nuster_debug("FAIL\n");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
-                if(nst_nosql_delete(key, hash)) {
+                if(nst_nosql_delete(ctx->key, hash)) {
                     nuster_debug("EXIST\n[NOSQL] Delete\n");
                     ctx->state = NST_NOSQL_CTX_STATE_DELETE;
                     break;
@@ -156,7 +181,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
     if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
         appctx->st1 = msg->sov;
-        nst_nosql_create(ctx, key, hash, s, msg);
+        nst_nosql_create(ctx, ctx->key, hash, s, msg);
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
@@ -210,10 +235,6 @@ static int _nst_nosql_filter_http_end(struct stream *s, struct filter *filter,
         appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
     }
     return 1;
-}
-
-void nst_nosql_abort(struct nst_nosql_ctx *ctx) {
-    ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
 }
 
 static int _nst_nosql_filter_http_chunk_trailers(struct stream *s, struct filter *filter,
