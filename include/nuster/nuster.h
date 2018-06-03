@@ -30,6 +30,7 @@
 
 #include <common/chunk.h>
 #include <types/applet.h>
+#include <import/xxhash.h>
 
 struct nuster {
     struct nst_cache *cache;
@@ -68,5 +69,9 @@ static inline int nuster_check_applet (struct stream *s, struct channel *req, st
 }
 
 int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res);
+
+static inline uint64_t nuster_hash(const char *key) {
+    return XXH64(key, strlen(key), 0);
+}
 
 #endif /* _NUSTER_H */
