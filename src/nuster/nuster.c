@@ -15,6 +15,7 @@
 #include <proto/stream_interface.h>
 #include <proto/proxy.h>
 #include <proto/log.h>
+#include <proto/acl.h>
 
 #include <nuster/memory.h>
 #include <nuster/nuster.h>
@@ -170,5 +171,29 @@ out:
 err:
     ha_alert("Out of memory when initializing rules.\n");
     exit(1);
+}
+
+int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
+    int ret;
+
+    /* no acl defined */
+    if(!rule->cond) {
+        return 1;
+    }
+
+    if(res) {
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_RES|SMP_OPT_FINAL);
+    } else {
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
+    }
+    ret = acl_pass(ret);
+    if(rule->cond->pol == ACL_COND_UNLESS) {
+        ret = !ret;
+    }
+
+    if(ret) {
+        return 1;
+    }
+    return 0;
 }
 

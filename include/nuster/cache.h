@@ -205,7 +205,6 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
 struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nuster_rule *rule, char *key, uint64_t hash);
-int nst_cache_test_rule(struct nuster_rule *rule, struct stream *s, int res);
 void *nst_cache_memory_alloc(struct pool_head *pool, int size);
 void nst_cache_memory_free(struct pool_head *pool, void *p);
 int nst_cache_check_uri(struct http_msg *msg);

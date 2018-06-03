@@ -183,7 +183,6 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pc
         struct http_msg *msg);
 uint64_t nst_nosql_hash_key(const char *key);
 struct nst_nosql_data *nst_nosql_exists(const char *key, uint64_t hash);
-int nst_nosql_test_rule(struct nuster_rule *rule, struct stream *s, int res);
 int nst_nosql_delete(const char *key, uint64_t hash);
 void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash, struct stream *s, struct http_msg *msg);
 int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg, long msg_len);
