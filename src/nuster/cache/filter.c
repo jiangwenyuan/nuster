@@ -20,6 +20,7 @@
 #include <proto/stream_interface.h>
 
 #include <nuster/cache.h>
+#include <nuster/nuster.h>
 
 static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
     return 0;
@@ -151,7 +152,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
 
                 /* test acls to see if we should cache it */
                 nuster_debug("[CACHE] [REQ] Checking if rule pass: ");
-                if(nst_cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
+                if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
@@ -171,7 +172,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
             nuster_debug("[CACHE] [RES] Checking if rule pass: ");
             list_for_each_entry(rule, &px->nuster.rules, list) {
                 /* test acls to see if we should cache it */
-                if(nst_cache_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
+                if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;

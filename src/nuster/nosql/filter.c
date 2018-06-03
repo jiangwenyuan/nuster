@@ -133,11 +133,10 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
                     ctx->state = NST_NOSQL_CTX_STATE_HIT;
                     break;
                 }
-
                 nuster_debug("NOT EXIST\n");
             } else if(s->txn->meth == HTTP_METH_POST) {
                 nuster_debug("[NOSQL] Checking if rule pass: ");
-                if(nst_nosql_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
+                if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
                     ctx->state = NST_NOSQL_CTX_STATE_PASS;
                     ctx->rule  = rule;
