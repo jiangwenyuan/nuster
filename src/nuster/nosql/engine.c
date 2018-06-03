@@ -26,8 +26,6 @@
 #include <proto/acl.h>
 #include <proto/log.h>
 
-#include <import/xxhash.h>
-
 /* TODO:
  * Copied from cache/engine.c with little adjustment
  * Move to common when nosql part is fixed
@@ -559,10 +557,6 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pc
     }
     nuster_debug("\n");
     return key;
-}
-
-uint64_t nst_nosql_hash_key(const char *key) {
-    return XXH64(key, strlen(key), 0);
 }
 
 void nst_nosql_hit(struct stream *s, struct stream_interface *si, struct channel *req,

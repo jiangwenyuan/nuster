@@ -132,7 +132,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                     return 1;
                 }
                 nuster_debug("[CACHE] Got key: %s\n", key);
-                hash = nst_cache_hash_key(key);
+                hash = nuster_hash(key);
 
                 /* stash key */
                 if(!nst_cache_stash_rule(ctx, rule, key, hash)) {

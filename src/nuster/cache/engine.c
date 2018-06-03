@@ -17,8 +17,6 @@
 #include <proto/acl.h>
 #include <proto/proxy.h>
 
-#include <import/xxhash.h>
-
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
 #include <types/ssl_sock.h>
@@ -556,10 +554,6 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
     }
     nuster_debug("\n");
     return key;
-}
-
-uint64_t nst_cache_hash_key(const char *key) {
-    return XXH64(key, strlen(key), 0);
 }
 
 char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {

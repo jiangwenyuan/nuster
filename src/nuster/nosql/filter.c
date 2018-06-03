@@ -123,7 +123,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
                 return 1;
             }
             nuster_debug("[NOSQL] Got key: %s\n", ctx->key);
-            hash = nst_nosql_hash_key(ctx->key);
+            hash = nuster_hash(ctx->key);
 
             if(s->txn->meth == HTTP_METH_GET) {
                 ctx->data = nst_nosql_exists(ctx->key, hash);
