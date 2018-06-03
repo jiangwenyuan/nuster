@@ -333,8 +333,6 @@ void nst_cache_housekeeping() {
 }
 
 void nst_cache_init() {
-    int i, uuid;
-    struct proxy *p;
 
     nuster.applet.cache_engine.fct = nst_cache_engine_handler;
 
@@ -400,53 +398,6 @@ void nst_cache_init() {
 
         if(!nst_cache_manager_init()) {
             goto err;
-        }
-
-        /*TODO: use a common memory for rule instead of cache, because it is used by nosql too */
-        /* init cache rule */
-        i = uuid = 0;
-        p = proxies_list;
-        while(p) {
-            struct nuster_rule *rule = NULL;
-            uint32_t ttl;
-
-            list_for_each_entry(rule, &p->nuster.rules, list) {
-                struct proxy *pt;
-
-                rule->uuid   = uuid++;
-                rule->state  = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*rule->state));
-                if(!rule->state) {
-                    goto err;
-                }
-                *rule->state = NUSTER_RULE_ENABLED;
-                ttl          = *rule->ttl;
-                free(rule->ttl);
-                rule->ttl    = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*rule->ttl));
-                if(!rule->ttl) {
-                    goto err;
-                }
-                *rule->ttl   = ttl;
-
-                pt = proxies_list;
-                while(pt) {
-                    struct nuster_rule *rt = NULL;
-                    list_for_each_entry(rt, &pt->nuster.rules, list) {
-                        if(rt == rule) goto out;
-                        if(!strcmp(rt->name, rule->name)) {
-                            ha_alert("cache-rule with same name=[%s] found.\n", rule->name);
-                            rule->id = rt->id;
-                            goto out;
-                        }
-                    }
-                    pt = pt->next;
-                }
-
-out:
-                if(rule->id == -1) {
-                    rule->id = i++;
-                }
-            }
-            p = p->next;
         }
 
         nuster_debug("[CACHE] on, data_size=%llu\n", global.nuster.cache.data_size);

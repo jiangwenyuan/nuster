@@ -159,17 +159,19 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
         while(p) {
             struct nuster_rule *rule = NULL;
 
-            if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
-                mode = NST_CACHE_PURGE_NAME_PROXY;
-                st1  = p->uuid;
-                goto purge;
-            }
-
-            list_for_each_entry(rule, &p->nuster.rules, list) {
-                if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
-                    mode = NST_CACHE_PURGE_NAME_RULE;
-                    st1  = rule->id;
+            if(p->nuster.mode == NUSTER_MODE_CACHE) {
+                if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+                    mode = NST_CACHE_PURGE_NAME_PROXY;
+                    st1  = p->uuid;
                     goto purge;
+                }
+
+                list_for_each_entry(rule, &p->nuster.rules, list) {
+                    if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+                        mode = NST_CACHE_PURGE_NAME_RULE;
+                        st1  = rule->id;
+                        goto purge;
+                    }
                 }
             }
             p = p->next;
