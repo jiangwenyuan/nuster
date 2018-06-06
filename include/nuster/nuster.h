@@ -74,4 +74,6 @@ static inline uint64_t nuster_hash(const char *key) {
     return XXH64(key, strlen(key), 0);
 }
 
+int nuster_fetch_query_param(char *query_beg, char *query_end, char *name, char **value, int *value_len);
+
 #endif /* _NUSTER_H */

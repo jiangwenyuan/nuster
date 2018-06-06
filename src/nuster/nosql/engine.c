@@ -435,31 +435,6 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct h
     return 1;
 }
 
-static int _nst_nosql_find_param_value_by_name(char *query_beg, char *query_end,
-        char *name, char **value, int *value_len) {
-
-    char equal   = '=';
-    char and     = '&';
-    char *ptr    = query_beg;
-    int name_len = strlen(name);
-
-    while(ptr + name_len + 1 < query_end) {
-        if(!memcmp(ptr, name, name_len) && *(ptr + name_len) == equal) {
-            if(ptr == query_beg || *(ptr - 1) == and) {
-                ptr    = ptr + name_len + 1;
-                *value = ptr;
-                while(ptr < query_end && *ptr != and) {
-                    (*value_len)++;
-                    ptr++;
-                }
-                return 1;
-            }
-        }
-        ptr++;
-    }
-    return 0;
-}
-
 char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg) {
 
@@ -519,7 +494,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pc
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
                     int v_l = 0;
-                    if(_nst_nosql_find_param_value_by_name(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
+                    if(nuster_fetch_query_param(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
                         key = _nst_nosql_key_append(key, &key_len, &key_size, v, v_l);
                     }
 
