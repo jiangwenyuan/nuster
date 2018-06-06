@@ -117,31 +117,6 @@ static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
     return NULL;
 }
 
-static int _nst_cache_find_param_value_by_name(char *query_beg, char *query_end,
-        char *name, char **value, int *value_len) {
-
-    char equal   = '=';
-    char and     = '&';
-    char *ptr    = query_beg;
-    int name_len = strlen(name);
-
-    while(ptr + name_len + 1 < query_end) {
-        if(!memcmp(ptr, name, name_len) && *(ptr + name_len) == equal) {
-            if(ptr == query_beg || *(ptr - 1) == and) {
-                ptr    = ptr + name_len + 1;
-                *value = ptr;
-                while(ptr < query_end && *ptr != and) {
-                    (*value_len)++;
-                    ptr++;
-                }
-                return 1;
-            }
-        }
-        ptr++;
-    }
-    return 0;
-}
-
 void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
     if(global.nuster.cache.share) {
         return nuster_memory_alloc(global.nuster.cache.memory, size);
@@ -516,7 +491,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
                     int v_l = 0;
-                    if(_nst_cache_find_param_value_by_name(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
+                    if(nuster_fetch_query_param(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
                         key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
 

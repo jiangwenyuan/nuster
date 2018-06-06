@@ -197,3 +197,28 @@ int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
     return 0;
 }
 
+int nuster_fetch_query_param(char *query_beg, char *query_end,
+        char *name, char **value, int *value_len) {
+
+    char equal   = '=';
+    char and     = '&';
+    char *ptr    = query_beg;
+    int name_len = strlen(name);
+
+    while(ptr + name_len + 1 < query_end) {
+        if(!memcmp(ptr, name, name_len) && *(ptr + name_len) == equal) {
+            if(ptr == query_beg || *(ptr - 1) == and) {
+                ptr    = ptr + name_len + 1;
+                *value = ptr;
+                while(ptr < query_end && *ptr != and) {
+                    (*value_len)++;
+                    ptr++;
+                }
+                return 1;
+            }
+        }
+        ptr++;
+    }
+    return 0;
+}
+
