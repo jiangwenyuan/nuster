@@ -509,7 +509,7 @@ static void mworker_block_signals()
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGINT);
 	sigaddset(&set, SIGTERM);
-	sigprocmask(SIG_SETMASK, &set, NULL);
+	ha_sigmask(SIG_SETMASK, &set, NULL);
 }
 
 static void mworker_unblock_signals()
@@ -522,7 +522,7 @@ static void mworker_unblock_signals()
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGINT);
 	sigaddset(&set, SIGTERM);
-	sigprocmask(SIG_UNBLOCK, &set, NULL);
+	ha_sigmask(SIG_UNBLOCK, &set, NULL);
 }
 
 static void mworker_unregister_signals()
