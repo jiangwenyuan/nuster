@@ -1,5 +1,15 @@
 # Nuster Changelog
 
+## 1.8.8.3 - 2018-06-08
+
+### Fixed
+- Broken rule key parser in config file (Thanks to Nelson)
+
+## 1.7.11.3 - 2018-06-08
+
+### Fixed
+- Broken rule key parser in config file (Thanks to Nelson)
+
 ## 1.8.8.2 - 2018-05-29
 
 ### Fixed
