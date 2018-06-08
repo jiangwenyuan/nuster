@@ -536,9 +536,9 @@ int nuster_parse_proxy(char **args, int section, struct proxy *px,
 
     if(*args[1]) {
         if(!strcmp(args[1], "cache")) {
-            nuster_parse_proxy_cache(args, section, px, defpx, file, line, err);
+            return nuster_parse_proxy_cache(args, section, px, defpx, file, line, err);
         } else if(!strcmp(args[1], "rule")) {
-            nuster_parse_proxy_rule(args, section, px, defpx, file, line, err);
+            return nuster_parse_proxy_rule(args, section, px, defpx, file, line, err);
         } else {
             memprintf(err, "%s: expects [cache|rule]", args[0]);
             return -1;
