@@ -432,6 +432,11 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct h
         ctx->req.cookie.len  = hdr.vlen;
     }
 
+    ctx->req.transfer_encoding.data = NULL;
+    ctx->req.transfer_encoding.len  = 0;
+    ctx->req.content_type.data      = NULL;
+    ctx->req.content_type.len       = 0;
+
     return 1;
 }
 
@@ -542,9 +547,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct ht
     struct http_txn *txn = s->txn;
     struct hdr_ctx hdr;
 
-    ctx->req.content_type.data = NULL;
-    ctx->req.content_type.len  = 0;
-    hdr.idx                    = 0;
+    hdr.idx = 0;
     if(http_find_header2("Content-Type", 12, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
         ctx->req.content_type.data = nuster_memory_alloc(global.nuster.nosql.memory, hdr.vlen);
         if(!ctx->req.content_type.data) {
@@ -554,9 +557,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct ht
         memcpy(ctx->req.content_type.data, hdr.line + hdr.val, hdr.vlen);
     }
 
-    ctx->req.transfer_encoding.data = NULL;
-    ctx->req.transfer_encoding.len  = 0;
-    hdr.idx                         = 0;
+    hdr.idx = 0;
     while (http_find_header2("Transfer-Encoding", 17, msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
         char *p = ctx->req.transfer_encoding.data;
         int len = p ? ctx->req.transfer_encoding.len + hdr.vlen + 1 : ctx->req.transfer_encoding.len + hdr.vlen;
