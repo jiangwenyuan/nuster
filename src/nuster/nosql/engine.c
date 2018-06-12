@@ -614,7 +614,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
     }
     nuster_shctx_unlock(&nuster.nosql->dict[0]);
 
-    if(!entry && !entry->data) {
+    if(!entry || !entry->data) {
         ctx->state   = NST_NOSQL_CTX_STATE_INVALID;
     } else {
         if(ctx->state == NST_NOSQL_CTX_STATE_CREATE) {
