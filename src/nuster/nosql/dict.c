@@ -223,9 +223,12 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash, struc
     entry->data   = data;
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
     entry->key    = nuster_memory_alloc(global.nuster.nosql.memory, strlen(key) + 1);
-    if(entry->key) {
-        entry->key = memcpy(entry->key, key, strlen(key) + 1);
+    if(!entry->key) {
+        entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
+        data->invalid = 1;
+        return NULL;
     }
+    memcpy(entry->key, key, strlen(key) + 1);
     entry->hash   = hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
