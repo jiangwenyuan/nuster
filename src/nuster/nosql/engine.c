@@ -120,7 +120,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             goto abort;
             break;
         case NST_NOSQL_APPCTX_STATE_FULL:
-            code = NUSTER_HTTP_500;
+            code = NUSTER_HTTP_507;
             goto abort;
             break;
         case NST_NOSQL_APPCTX_STATE_END:
