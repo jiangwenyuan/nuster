@@ -208,6 +208,7 @@ struct global {
 			} pool;
 
 			struct nuster_memory   *memory;        /* memory */
+			struct nst_nosql_stats *stats;
 		} nosql;
 	} nuster;
 };

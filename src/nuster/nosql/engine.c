@@ -119,6 +119,10 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             code = NUSTER_HTTP_400;
             goto abort;
             break;
+        case NST_NOSQL_APPCTX_STATE_FULL:
+            code = NUSTER_HTTP_500;
+            goto abort;
+            break;
         case NST_NOSQL_APPCTX_STATE_END:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             code = NUSTER_HTTP_200;
@@ -208,6 +212,7 @@ static void _nst_nosql_data_cleanup() {
             struct nst_nosql_element *tmp = element;
             element                       = element->next;
 
+            nst_nosql_stats_update_used_mem(-tmp->msg.len);
             nuster_memory_free(global.nuster.nosql.memory, tmp->msg.data);
             nuster_memory_free(global.nuster.nosql.memory, tmp);
         }
@@ -266,6 +271,11 @@ void nst_nosql_init() {
         if(!nst_nosql_dict_init()) {
             goto err;
         }
+
+        if(!nst_nosql_stats_init()) {
+            goto err;
+        }
+
     }
     return;
 err:
@@ -584,11 +594,11 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
         struct stream *s, struct http_msg *msg) {
     struct nst_nosql_entry *entry = NULL;
 
-    ///* Check if nosql is full */
-    //if(nst_nosql_stats_full()) {
-    //    ctx->state = NST_NOSQL_CTX_STATE_FULL;
-    //    return;
-    //}
+    /* Check if nosql is full */
+    if(nst_nosql_stats_full()) {
+        ctx->state = NST_NOSQL_CTX_STATE_FULL;
+        return;
+    }
 
     if(!nst_nosql_get_headers(ctx, s, msg)) {
         ctx->state = NST_NOSQL_CTX_STATE_INVALID;
@@ -653,7 +663,7 @@ static struct nst_nosql_element *_nst_nosql_data_append(struct nst_nosql_element
         } else {
             tail->next = element;
         }
-        //nst_nosql_stats_update_used_mem(msg_len);
+        nst_nosql_stats_update_used_mem(msg_len);
     }
     return element;
 }

@@ -198,6 +198,10 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
         appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
     }
 
+    if(ctx->state == NST_NOSQL_CTX_STATE_FULL) {
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_FULL;
+    }
+
     return 1;
 }
 

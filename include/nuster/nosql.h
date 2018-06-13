@@ -42,6 +42,7 @@ enum {
     NST_NOSQL_APPCTX_STATE_NOT_ALLOWED,
     NST_NOSQL_APPCTX_STATE_NOT_FOUND,
     NST_NOSQL_APPCTX_STATE_EMPTY,
+    NST_NOSQL_APPCTX_STATE_FULL,
 };
 
 struct nst_nosql_element {
@@ -110,11 +111,9 @@ enum {
     NST_NOSQL_CTX_STATE_DELETE,     /* to delete */
     NST_NOSQL_CTX_STATE_DONE,       /* set done */
     NST_NOSQL_CTX_STATE_INVALID,    /* invalid */
-
-    NST_NOSQL_CTX_STATE_BYPASS,     /* not cached, return to regular process */
-    NST_NOSQL_CTX_STATE_WAIT,       /* caching, wait */
-    NST_NOSQL_CTX_STATE_PASS,       /* cache rule passed */
-    NST_NOSQL_CTX_STATE_FULL,       /* cache full */
+    NST_NOSQL_CTX_STATE_FULL,       /* nosql full */
+    NST_NOSQL_CTX_STATE_WAIT,       /* wait */
+    NST_NOSQL_CTX_STATE_PASS,       /* rule passed */
 };
 
 struct nst_nosql_ctx {
@@ -144,19 +143,13 @@ struct nst_nosql_ctx {
 
 struct nst_nosql_stats {
     uint64_t        used_mem;
-
-    struct {
-        uint64_t    total;
-        uint64_t    fetch;
-        uint64_t    hit;
-        uint64_t    abort;
-    } request;
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t mutex;
 #else
     unsigned int    waiters;
 #endif
 };
+
 struct nst_nosql {
     struct nst_nosql_dict  dict[2];           /* 0: using, 1: rehashing */
     struct nst_nosql_data *data_head;         /* point to the circular linked list, tail->next ===  head */
@@ -195,5 +188,10 @@ struct nst_nosql_entry *nst_nosql_dict_get(const char *key, uint64_t hash);
 struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash, struct nst_nosql_ctx *ctx);
 void nst_nosql_dict_rehash();
 void nst_nosql_dict_cleanup();
+
+/* stats */
+void nst_nosql_stats_update_used_mem(int i);
+int nst_nosql_stats_init();
+int nst_nosql_stats_full();
 
 #endif /* _NUSTER_NOSQL_H */
