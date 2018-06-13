@@ -368,7 +368,7 @@ static char *_nst_nosql_key_append(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
     char *key = _string_append(dst, dst_len, dst_size, src, src_len);
     if(key) {
-        return _string_append(dst, dst_len, dst_size, ".", 1);
+        return _string_append(key, dst_len, dst_size, ".", 1);
     }
     return NULL;
 }
