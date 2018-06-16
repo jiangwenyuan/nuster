@@ -155,6 +155,12 @@ struct nst_nosql_data *nst_nosql_data_new() {
         data->invalid = 0;
         data->element = NULL;
 
+        data->info.transfer_encoding.data = NULL;
+        data->info.transfer_encoding.len  = 0;
+        data->info.content_type.data      = NULL;
+        data->info.content_type.len       = 0;
+        data->info.content_length         = 0;
+
         if(nuster.nosql->data_head == NULL) {
             nuster.nosql->data_head = data;
             nuster.nosql->data_tail = data;
