@@ -74,6 +74,7 @@ struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
 
 struct nuster nuster = {
     .cache = NULL,
+    .nosql = NULL,
     .applet = {
         .cache_engine = {
             .obj_type = OBJ_TYPE_APPLET,
