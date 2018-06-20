@@ -2368,10 +2368,12 @@ void mworker_pipe_register()
 	fd_want_recv(mworker_pipe[0]);
 }
 
-static void sync_poll_loop()
+static int sync_poll_loop()
 {
+	int stop = 0;
+
 	if (THREAD_NO_SYNC())
-		return;
+		return stop;
 
 	THREAD_ENTER_SYNC();
 
@@ -2385,7 +2387,9 @@ static void sync_poll_loop()
 
 	/* *** } */
   exit:
+	stop = (jobs == 0); /* stop when there's nothing left to do */
 	THREAD_EXIT_SYNC();
+	return stop;
 }
 
 /* Runs the polling loop */
@@ -2406,9 +2410,10 @@ static void run_poll_loop()
 		/* Check if we can expire some tasks */
 		next = wake_expired_tasks();
 
-		/* stop when there's nothing left to do */
-		if (jobs == 0)
-			break;
+		/* the first thread requests a synchronization to exit when
+		 * there is no active jobs anymore */
+		if (tid == 0 && jobs == 0)
+			THREAD_WANT_SYNC();
 
 		/* expire immediately if events are pending */
 		exp = now_ms;
@@ -2430,7 +2435,9 @@ static void run_poll_loop()
 
 
 		/* Synchronize all polling loops */
-		sync_poll_loop();
+		if (sync_poll_loop())
+			break;
+
 		activity[tid].loops++;
 	}
 }
