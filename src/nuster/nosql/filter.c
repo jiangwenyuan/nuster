@@ -186,6 +186,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
+        ctx->state = NST_NOSQL_CTX_STATE_PASS;
         appctx->st0 = NST_NOSQL_APPCTX_STATE_WAIT;
         return 0;
     }
