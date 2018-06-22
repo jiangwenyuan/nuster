@@ -138,9 +138,15 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
                 nuster_debug("[NOSQL] Checking if rule pass: ");
                 if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
                     nuster_debug("PASS\n");
-                    ctx->state = NST_NOSQL_CTX_STATE_PASS;
-                    ctx->rule  = rule;
-                    ctx->pid   = px->uuid;
+
+                    if(nst_nosql_get_headers(ctx, s, msg)) {
+                        ctx->state = NST_NOSQL_CTX_STATE_PASS;
+                        ctx->rule  = rule;
+                        ctx->pid   = px->uuid;
+                    } else {
+                        ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+                    }
+
                     break;
                 }
                 nuster_debug("FAIL\n");
@@ -186,7 +192,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s, struct filter *filte
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
-        ctx->state = NST_NOSQL_CTX_STATE_PASS;
+        ctx->state  = NST_NOSQL_CTX_STATE_PASS;
         appctx->st0 = NST_NOSQL_APPCTX_STATE_WAIT;
         return 0;
     }
