@@ -606,11 +606,6 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
         return;
     }
 
-    if(!nst_nosql_get_headers(ctx, s, msg)) {
-        ctx->state = NST_NOSQL_CTX_STATE_INVALID;
-        return;
-    }
-
     nuster_shctx_lock(&nuster.nosql->dict[0]);
     entry = nst_nosql_dict_get(key, hash);
     if(entry) {
