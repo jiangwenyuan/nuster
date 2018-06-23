@@ -47,6 +47,8 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct nst_nosql_element *element = NULL;
     int ret;
 
+    char *p = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+
     switch(appctx->st0) {
         case NST_NOSQL_APPCTX_STATE_CREATE:
             co_skip(si_oc(si), si_ob(si)->o);
@@ -126,7 +128,10 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
         case NST_NOSQL_APPCTX_STATE_END:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             code = NUSTER_HTTP_200;
-            goto abort;
+            ci_putblk(res, p, strlen(p));
+            co_skip(si_oc(si), si_ob(si)->o);
+            si_shutr(si);
+            res->flags |= CF_READ_NULL;
             break;
         case NST_NOSQL_APPCTX_STATE_WAIT:
             break;
