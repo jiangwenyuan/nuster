@@ -1,6 +1,10 @@
 ChangeLog :
 ===========
 
+2018/06/26 : 1.8.11
+    - BUG/MAJOR: Stick-tables crash with segfault when the key is not in the stick-table
+    - BUG/BUILD: threads: unbreak build without threads
+
 2018/06/22 : 1.8.10
     - BUG/MINOR: lua: Socket.send threw runtime error: 'close' needs 1 arguments.
     - BUG/MEDIUM: spoe: Flags are not encoded in network order
