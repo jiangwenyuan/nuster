@@ -1,6 +1,10 @@
 ChangeLog :
 ===========
 
+2018/06/27 : 1.8.12
+    - BUG/MAJOR: stick_table: Complete incomplete SEGV fix
+    - MINOR: stick-tables: make stktable_release() do nothing on NULL
+
 2018/06/26 : 1.8.11
     - BUG/MAJOR: Stick-tables crash with segfault when the key is not in the stick-table
     - BUG/BUILD: threads: unbreak build without threads
