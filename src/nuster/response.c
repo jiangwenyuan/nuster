@@ -1,5 +1,5 @@
 /*
- * nuster response functions.
+ * nuster request/response functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
@@ -101,7 +101,7 @@ void nuster_response(struct stream *s, struct chunk *msg) {
 }
 
 
-void nuster_res_begin(int status) {
+inline void nuster_res_begin(int status) {
     chunk_printf(&trash, "HTTP/1.1 %d %s\r\n", status, get_reason(status));
 }
 
@@ -127,8 +127,30 @@ inline void nuster_res_header(struct nuster_str *k, struct nuster_str *v) {
     chunk_appendf(&trash, "%.*s: %.*s\r\n", k->len, k->data, v->len, v->data);
 }
 
-void nuster_res_body() {
+inline void nuster_res_header_end() {
+    chunk_appendf(&trash, "\r\n");
 }
 
-void nuster_res_end() {
+inline void nuster_res_header_send(struct channel *chn) {
+    ci_putblk(chn, trash.str, trash.len);
 }
+
+inline void nuster_res_end(struct stream_interface *si) {
+    co_skip(si_oc(si), si_ob(si)->o);
+    si_shutr(si);
+    si_ic(si)->flags |= CF_READ_NULL;
+}
+
+inline int nuster_res_send(struct channel *chn, const char *blk, int len) {
+    return ci_putblk(chn, blk, len);
+}
+
+inline void nuster_res_simple(struct stream_interface *si, int status, const char *content, int content_length) {
+    nuster_res_begin(status);
+    nuster_res_header_content_length(content_length);
+    nuster_res_header_end();
+    chunk_appendf(&trash, "%.*s", content_length, content);
+    nuster_res_send(si_ic(si), trash.str, trash.len);
+    nuster_res_end(si);
+}
+
