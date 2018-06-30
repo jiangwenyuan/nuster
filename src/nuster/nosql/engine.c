@@ -43,11 +43,8 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct stream *s            = si_strm(si);
     struct channel *res         = si_ic(si);
-    int code                    = 200;
     struct nst_nosql_element *element = NULL;
     int ret;
-
-    char *p = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
 
     switch(appctx->st0) {
         case NST_NOSQL_APPCTX_STATE_CREATE:
@@ -56,35 +53,26 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             break;
         case NST_NOSQL_APPCTX_STATE_HIT:
             if(appctx->st1 == 0) {
-                chunk_printf(&trash,
-                        "HTTP/1.1 200 OK\r\n");
+                nuster_res_begin(200);
                 if(appctx->ctx.nuster.nosql_engine.data->info.flags & NST_NOSQL_DATA_FLAG_CHUNKED) {
-                    chunk_appendf(&trash, "Transfer-Encoding: %.*s\r\n",
-                            appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.len,
-                            appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data);
+                    nuster_res_header(&nuster_headers.transfer_encoding, &appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding);
                 } else {
-                    chunk_appendf(&trash,
-                            "Content-Length: %"PRIu64"\r\n",
-                            appctx->ctx.nuster.nosql_engine.data->info.content_length);
+                    nuster_res_header_content_length(appctx->ctx.nuster.nosql_engine.data->info.content_length);
                     if(appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data) {
-                        chunk_appendf(&trash, "Transfer-Encoding: %.*s\r\n",
-                                appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.len,
-                                appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding.data);
+                        nuster_res_header(&nuster_headers.transfer_encoding, &appctx->ctx.nuster.nosql_engine.data->info.transfer_encoding);
                     }
                 }
                 if(appctx->ctx.nuster.nosql_engine.data->info.content_type.data) {
-                    chunk_appendf(&trash, "Content-Type: %.*s\r\n",
-                            appctx->ctx.nuster.nosql_engine.data->info.content_type.len,
-                            appctx->ctx.nuster.nosql_engine.data->info.content_type.data);
+                    nuster_res_header(&nuster_headers.content_type, &appctx->ctx.nuster.nosql_engine.data->info.content_type);
                 }
-                chunk_appendf(&trash, "\r\n");
-                ci_putchk(si_ic(si), &trash);
+                nuster_res_header_end();
+                nuster_res_send(si_ic(si), trash.str, trash.len);
                 appctx->st1++;
             } else {
                 if(appctx->ctx.nuster.nosql_engine.element) {
                     element = appctx->ctx.nuster.nosql_engine.element;
 
-                    ret = ci_putblk(res, element->msg.data, element->msg.len);
+                    ret = nuster_res_send(res, element->msg.data, element->msg.len);
                     if(ret >= 0) {
                         appctx->ctx.nuster.nosql_engine.element = element->next;
                     } else if(ret == -2) {
@@ -105,33 +93,24 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             break;
         case NST_NOSQL_APPCTX_STATE_ERROR:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            code = NUSTER_HTTP_500;
-            goto abort;
+            nuster_res_simple(si, 500, get_reason(500), strlen(get_reason(500)));
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            code = NUSTER_HTTP_405;
-            goto abort;
+            nuster_res_simple(si, 405, get_reason(405), strlen(get_reason(405)));
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
-            code = NUSTER_HTTP_404;
-            goto abort;
+            nuster_res_simple(si, 404, get_reason(404), strlen(get_reason(404)));
             break;
         case NST_NOSQL_APPCTX_STATE_EMPTY:
-            code = NUSTER_HTTP_400;
-            goto abort;
+            nuster_res_simple(si, 400, get_reason(400), strlen(get_reason(400)));
             break;
         case NST_NOSQL_APPCTX_STATE_FULL:
-            code = NUSTER_HTTP_507;
-            goto abort;
+            nuster_res_simple(si, 507, get_reason(507), strlen(get_reason(507)));
             break;
         case NST_NOSQL_APPCTX_STATE_END:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            code = NUSTER_HTTP_200;
-            ci_putblk(res, p, strlen(p));
-            co_skip(si_oc(si), si_ob(si)->o);
-            si_shutr(si);
-            res->flags |= CF_READ_NULL;
+            nuster_res_simple(si, 200, get_reason(200), strlen(get_reason(200)));
             break;
         case NST_NOSQL_APPCTX_STATE_WAIT:
             break;
@@ -144,10 +123,6 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
 
     return;
 
-abort:
-    channel_abort(&s->req);
-    channel_abort(&s->res);
-    nuster_response(s, &nuster_http_msg_chunks[code]);
 }
 
 struct nst_nosql_data *nst_nosql_data_new() {
