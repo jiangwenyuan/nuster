@@ -136,7 +136,6 @@ struct nst_nosql_ctx {
         struct nuster_str     cookie;
         struct nuster_str     content_type;
         struct nuster_str     transfer_encoding;
-        uint64_t              content_length;
     } req;
     int                       pid;         /* proxy uuid */
 };
