@@ -10,6 +10,9 @@
  *
  */
 
+#ifndef _NUSTER_HTTP_H
+#define _NUSTER_HTTP_H
+
 #include <types/global.h>
 
 #include <proto/stream_interface.h>
@@ -112,3 +115,6 @@ static inline void nuster_res_simple(struct stream_interface *si, int status, co
     nuster_res_end(si);
 }
 
+int nuster_req_find_param(char *query_beg, char *query_end, char *name, char **value, int *value_len);
+
+#endif /* _NUSTER_HTTP_H */
