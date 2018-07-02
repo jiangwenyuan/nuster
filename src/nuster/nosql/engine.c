@@ -41,9 +41,9 @@ static struct chunk http_100_chunk = {
 };
 
 static void nst_nosql_engine_handler(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
-    struct stream *s            = si_strm(si);
-    struct channel *res         = si_ic(si);
+    struct stream_interface *si       = appctx->owner;
+    struct stream *s                  = si_strm(si);
+    struct channel *res               = si_ic(si);
     struct nst_nosql_element *element = NULL;
     int ret;
 
@@ -101,12 +101,15 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             nuster_res_simple(si, 405, get_reason(405), strlen(get_reason(405)));
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             nuster_res_simple(si, 404, get_reason(404), strlen(get_reason(404)));
             break;
         case NST_NOSQL_APPCTX_STATE_EMPTY:
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             nuster_res_simple(si, 400, get_reason(400), strlen(get_reason(400)));
             break;
         case NST_NOSQL_APPCTX_STATE_FULL:
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             nuster_res_simple(si, 507, get_reason(507), strlen(get_reason(507)));
             break;
         case NST_NOSQL_APPCTX_STATE_END:
