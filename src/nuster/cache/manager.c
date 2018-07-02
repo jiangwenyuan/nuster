@@ -19,6 +19,7 @@
 #include <nuster/nuster.h>
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
+#include <nuster/http.h>
 
 /*
  * purge cache by key

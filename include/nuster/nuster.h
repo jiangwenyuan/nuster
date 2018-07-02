@@ -45,21 +45,8 @@ struct nuster {
 
 extern struct nuster nuster;
 
-extern const char *nuster_http_msgs[NUSTER_HTTP_SIZE];
-extern struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
-
-extern struct nuster_headers nuster_headers;
 
 void nuster_init();
-
-/* response */
-void nuster_response(struct stream *s, struct chunk *msg);
-void nuster_res_begin(int status);
-void nuster_res_header(struct nuster_str *k, struct nuster_str *v);
-void nuster_res_header_content_length(uint64_t content_length);
-void nuster_res_header_end();
-int nuster_res_send(struct channel *chn, const char *blk, int len);
-void nuster_res_simple(struct stream_interface *si, int status, const char *content, int content_length);
 
 /* parser */
 const char *nuster_parse_size(const char *text, uint64_t *ret);

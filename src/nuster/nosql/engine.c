@@ -15,6 +15,7 @@
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
+#include <nuster/http.h>
 
 #include <types/global.h>
 #include <types/stream.h>

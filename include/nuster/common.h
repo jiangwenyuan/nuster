@@ -52,16 +52,6 @@ enum {
     NUSTER_MODE_NOSQL,
 };
 
-enum {
-    NUSTER_HTTP_200 = 0,
-    NUSTER_HTTP_400,
-    NUSTER_HTTP_404,
-    NUSTER_HTTP_405,
-    NUSTER_HTTP_500,
-    NUSTER_HTTP_507,
-    NUSTER_HTTP_SIZE
-};
-
 #define nuster_str_set(str)     { (char *) str, sizeof(str) - 1 }
 
 struct nuster_str {
@@ -119,18 +109,6 @@ struct nuster_rule_stash {
 
 struct nuster_flt_conf {
     int status;
-};
-
-struct nuster_headers {
-    struct nuster_str server;
-    struct nuster_str date;
-    struct nuster_str content_length;
-    struct nuster_str content_type;
-    struct nuster_str transfer_encoding;
-    struct nuster_str last_modified;
-    struct nuster_str expires;
-    struct nuster_str cache_control;
-    struct nuster_str etag;
 };
 
 
