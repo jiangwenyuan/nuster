@@ -889,7 +889,7 @@ OBJS = src/proto_http.o src/cfgparse.o src/server.o src/stream.o        \
        src/nuster/cache/engine.o                                        \
        src/nuster/nosql/filter.o  src/nuster/nosql/dict.o               \
        src/nuster/nosql/stats.o src/nuster/nosql/engine.o               \
-       src/nuster/memory.o src/nuster/parser.o src/nuster/response.o    \
+       src/nuster/memory.o src/nuster/parser.o src/nuster/http.o        \
        src/nuster/nuster.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \

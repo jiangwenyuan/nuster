@@ -19,6 +19,7 @@
 
 #include <nuster/memory.h>
 #include <nuster/nuster.h>
+#include <nuster/http.h>
 
 struct nuster nuster = {
     .cache = NULL,
