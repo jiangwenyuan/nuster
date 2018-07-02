@@ -79,3 +79,30 @@ struct nuster_headers nuster_headers = {
     .etag              = nuster_str_set("ETag"),
 };
 
+
+
+int nuster_req_find_param(char *query_beg, char *query_end,
+        char *name, char **value, int *value_len) {
+
+    char equal   = '=';
+    char and     = '&';
+    char *ptr    = query_beg;
+    int name_len = strlen(name);
+
+    while(ptr + name_len + 1 < query_end) {
+        if(!memcmp(ptr, name, name_len) && *(ptr + name_len) == equal) {
+            if(ptr == query_beg || *(ptr - 1) == and) {
+                ptr    = ptr + name_len + 1;
+                *value = ptr;
+                while(ptr < query_end && *ptr != and) {
+                    (*value_len)++;
+                    ptr++;
+                }
+                return 1;
+            }
+        }
+        ptr++;
+    }
+    return 0;
+}
+
