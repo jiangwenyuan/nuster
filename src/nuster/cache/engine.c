@@ -113,7 +113,7 @@ static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
     char *key = _string_append(dst, dst_len, dst_size, src, src_len);
     if(key) {
-        return _string_append(dst, dst_len, dst_size, ".", 1);
+        return _string_append(key, dst_len, dst_size, ".", 1);
     }
     return NULL;
 }
@@ -621,6 +621,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             entry->data = nst_cache_data_new();
             if(!entry->data) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+                nuster_shctx_unlock(&nuster.cache->dict[0]);
                 return;
             }
             ctx->state = NST_CACHE_CTX_STATE_CREATE;
@@ -633,6 +634,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             ctx->state = NST_CACHE_CTX_STATE_CREATE;
         } else {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+            nuster_shctx_unlock(&nuster.cache->dict[0]);
             return;
         }
     }

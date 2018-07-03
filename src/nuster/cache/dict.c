@@ -221,9 +221,12 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
     entry->data   = data;
     entry->state  = NST_CACHE_ENTRY_STATE_CREATING;
     entry->key    = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, strlen(key) + 1);
-    if(entry->key) {
-        entry->key = memcpy(entry->key, key, strlen(key) + 1);
+    if(!entry->key) {
+        entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+        data->invalid = 1;
+        return NULL;
     }
+    memcpy(entry->key, key, strlen(key) + 1);
     entry->hash   = hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
