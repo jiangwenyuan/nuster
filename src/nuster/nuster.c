@@ -72,13 +72,21 @@ void nuster_init() {
     while(p) {
         struct nuster_rule *rule = NULL;
         uint32_t ttl;
+        struct nuster_memory *m  = NULL;
 
         list_for_each_entry(rule, &p->nuster.rules, list) {
             struct proxy *pt;
 
+            if(global.nuster.cache.status == NUSTER_STATUS_ON && p->nuster.mode == NUSTER_MODE_CACHE) {
+                m = global.nuster.cache.memory;
+            } else if(global.nuster.nosql.status == NUSTER_STATUS_ON && p->nuster.mode == NUSTER_MODE_NOSQL) {
+                m = global.nuster.nosql.memory;
+            } else {
+                continue;
+            }
+
             rule->uuid  = uuid++;
-            rule->state = nuster_memory_alloc(p->nuster.mode == NUSTER_MODE_CACHE ?
-                    global.nuster.cache.memory : global.nuster.nosql.memory, sizeof(*rule->state));
+            rule->state = nuster_memory_alloc(m, sizeof(*rule->state));
 
             if(!rule->state) {
                 goto err;
@@ -86,8 +94,7 @@ void nuster_init() {
             *rule->state = NUSTER_RULE_ENABLED;
             ttl          = *rule->ttl;
             free(rule->ttl);
-            rule->ttl    = nuster_memory_alloc(p->nuster.mode == NUSTER_MODE_CACHE ?
-                    global.nuster.cache.memory : global.nuster.nosql.memory, sizeof(*rule->ttl));
+            rule->ttl    = nuster_memory_alloc(m, sizeof(*rule->ttl));
 
             if(!rule->ttl) {
                 goto err;
