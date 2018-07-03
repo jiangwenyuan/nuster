@@ -94,27 +94,27 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             break;
         case NST_NOSQL_APPCTX_STATE_ERROR:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nuster_res_simple(si, 500, get_reason(500), strlen(get_reason(500)));
+            nuster_res_simple(si, 500, NULL, 0);
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nuster_res_simple(si, 405, get_reason(405), strlen(get_reason(405)));
+            nuster_res_simple(si, 405, NULL, 0);
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nuster_res_simple(si, 404, get_reason(404), strlen(get_reason(404)));
+            nuster_res_simple(si, 404, NULL, 0);
             break;
         case NST_NOSQL_APPCTX_STATE_EMPTY:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nuster_res_simple(si, 400, get_reason(400), strlen(get_reason(400)));
+            nuster_res_simple(si, 400, NULL, 0);
             break;
         case NST_NOSQL_APPCTX_STATE_FULL:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nuster_res_simple(si, 507, get_reason(507), strlen(get_reason(507)));
+            nuster_res_simple(si, 507, NULL, 0);
             break;
         case NST_NOSQL_APPCTX_STATE_END:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nuster_res_simple(si, 200, get_reason(200), strlen(get_reason(200)));
+            nuster_res_simple(si, 200, NULL, 0);
             break;
         case NST_NOSQL_APPCTX_STATE_WAIT:
             break;
