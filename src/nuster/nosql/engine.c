@@ -233,7 +233,7 @@ void nst_nosql_init() {
 
     if(global.nuster.nosql.status == NUSTER_STATUS_ON) {
         global.nuster.nosql.pool.ctx   = create_pool("np.ctx", sizeof(struct nst_nosql_ctx), MEM_F_SHARED);
-        global.nuster.nosql.memory = nuster_memory_create("nosql.shm", global.nuster.nosql.data_size, global.tune.bufsize, NST_NOSQL_DEFAULT_CHUNK_SIZE);
+        global.nuster.nosql.memory = nuster_memory_create("nosql.shm", global.nuster.nosql.dict_size + global.nuster.nosql.data_size, global.tune.bufsize, NST_NOSQL_DEFAULT_CHUNK_SIZE);
         if(!global.nuster.nosql.memory) {
             goto shm_err;
         }
