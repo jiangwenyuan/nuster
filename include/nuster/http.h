@@ -110,7 +110,9 @@ static inline void nuster_res_simple(struct stream_interface *si, int status, co
     nuster_res_begin(status);
     nuster_res_header_content_length(content_length);
     nuster_res_header_end();
-    chunk_appendf(&trash, "%.*s", content_length, content);
+    if(content) {
+        chunk_appendf(&trash, "%.*s", content_length, content);
+    }
     nuster_res_send(si_ic(si), trash.str, trash.len);
     nuster_res_end(si);
 }
