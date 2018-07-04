@@ -22,6 +22,7 @@
 #include <nuster/nuster.h>
 
 static const char *nuster_cache_id = "cache filter";
+static const char *nuster_nosql_id = "nosql filter";
 
 static struct nuster_rule_key *_nuster_parse_rule_key_cast(char *str) {
     struct nuster_rule_key *key = NULL;
@@ -368,6 +369,69 @@ out:
     return err_code;
 }
 
+int nuster_parse_global_nosql(const char *file, int linenum, char **args, int kwm) {
+    int err_code = 0;
+    int cur_arg  = 1;
+
+    if (global.nuster.nosql.status != NUSTER_STATUS_UNDEFINED) {
+        ha_alert("parsing [%s:%d] : '%s' already specified. Ignore.\n", file, linenum, args[0]);
+        err_code |= ERR_ALERT;
+        goto out;
+    }
+    if (*(args[cur_arg]) == 0) {
+        ha_alert("parsing [%s:%d] : '%s' expects 'on' or 'off' as an argument.\n", file, linenum, args[0]);
+        err_code |= ERR_ALERT | ERR_FATAL;
+        goto out;
+    }
+    if (!strcmp(args[cur_arg], "off")) {
+        global.nuster.nosql.status = NUSTER_STATUS_OFF;
+    } else if (!strcmp(args[cur_arg], "on")) {
+        global.nuster.nosql.status = NUSTER_STATUS_ON;
+    } else {
+        ha_alert("parsing [%s:%d] : '%s' only supports 'on' and 'off'.\n", file, linenum, args[0]);
+        err_code |= ERR_ALERT | ERR_FATAL;
+        goto out;
+    }
+    cur_arg++;
+    while(*(args[cur_arg]) !=0) {
+        if (!strcmp(args[cur_arg], "dict-size")) {
+            cur_arg++;
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d] : '%s' dict-size expects a size.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            if (nuster_parse_size(args[cur_arg], &global.nuster.nosql.dict_size)) {
+                ha_alert("parsing [%s:%d] : '%s' invalid dict-size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
+        if (!strcmp(args[cur_arg], "data-size")) {
+            cur_arg++;
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d] : '%s' data-size expects a size.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            if (nuster_parse_size(args[cur_arg], &global.nuster.nosql.data_size)) {
+                ha_alert("parsing [%s:%d] : '%s' invalid data_size, expects [m|M|g|G].\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
+        ha_alert("parsing [%s:%d] : '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
+        err_code |= ERR_ALERT | ERR_FATAL;
+        goto out;
+    }
+out:
+    return err_code;
+}
+
 int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
@@ -413,6 +477,24 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
 
     px->nuster.mode = NUSTER_MODE_CACHE;
 
+    return 0;
+}
+
+int nuster_parse_proxy_nosql(char **args, int section, struct proxy *px,
+        struct proxy *defpx, const char *file, int line, char **err) {
+    struct flt_conf *fconf;
+    fconf = calloc(1, sizeof(*fconf));
+    memset(fconf, 0, sizeof(*fconf));
+    if(!fconf) {
+        memprintf(err, "out of memory");
+        return -1;
+    }
+    fconf->id   = nuster_nosql_id;
+    fconf->ops  = &nst_nosql_filter_ops;
+
+    LIST_ADDQ(&px->filter_configs, &fconf->list);
+
+    px->nuster.mode = NUSTER_MODE_NOSQL;
     return 0;
 }
 
@@ -537,6 +619,8 @@ int nuster_parse_proxy(char **args, int section, struct proxy *px,
     if(*args[1]) {
         if(!strcmp(args[1], "cache")) {
             return nuster_parse_proxy_cache(args, section, px, defpx, file, line, err);
+        } else if(!strcmp(args[1], "nosql")) {
+            return nuster_parse_proxy_nosql(args, section, px, defpx, file, line, err);
         } else if(!strcmp(args[1], "rule")) {
             return nuster_parse_proxy_rule(args, section, px, defpx, file, line, err);
         } else {

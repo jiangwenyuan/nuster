@@ -19,6 +19,7 @@
 #include <nuster/nuster.h>
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
+#include <nuster/http.h>
 
 /*
  * purge cache by key
@@ -56,7 +57,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
             txn->status = 500;
             nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
         } else {
-            uint64_t hash = nst_cache_hash_key(key);
+            uint64_t hash = nuster_hash(key);
             txn->status = _nst_cache_purge_by_key(key, hash);
             if(txn->status == 200) {
                 nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_200]);
@@ -159,17 +160,19 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
         while(p) {
             struct nuster_rule *rule = NULL;
 
-            if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
-                mode = NST_CACHE_PURGE_NAME_PROXY;
-                st1  = p->uuid;
-                goto purge;
-            }
-
-            list_for_each_entry(rule, &p->nuster.rules, list) {
-                if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
-                    mode = NST_CACHE_PURGE_NAME_RULE;
-                    st1  = rule->id;
+            if(p->nuster.mode == NUSTER_MODE_CACHE) {
+                if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+                    mode = NST_CACHE_PURGE_NAME_PROXY;
+                    st1  = p->uuid;
                     goto purge;
+                }
+
+                list_for_each_entry(rule, &p->nuster.rules, list) {
+                    if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+                        mode = NST_CACHE_PURGE_NAME_RULE;
+                        st1  = rule->id;
+                        goto purge;
+                    }
                 }
             }
             p = p->next;
