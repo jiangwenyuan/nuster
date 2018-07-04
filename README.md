@@ -1,5 +1,8 @@
-NuSTER, a high performance HTTP proxy cache server and RESTful NoSQL cache server.
+# NuSTER
 
+[Wiki](https://github.com/jiangwenyuan/nuster/wiki) | [English](README.md) | [中文](README-CN.md) | [日本語](README-JP.md)
+
+A high performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
 
 # Table of Contents
 
@@ -75,7 +78,7 @@ It supports headers, cookies, so you can store per-user data to same endpoint.
 
 # Performance
 
-Nuster is very fast, some test shows nuster is almost three times faster than nginx when both using single core, and nearly two times faster than nginx and three times faster than varnish when using all cores.
+NuSTER is very fast, some test shows nuster is almost three times faster than nginx when both using single core, and nearly two times faster than nginx and three times faster than varnish when using all cores.
 
 See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Web-cache-server-performance-benchmark:-nuster-vs-nginx-vs-varnish-vs-squid)
 
@@ -101,7 +104,7 @@ See [HAProxy README](README) for details.
 
 ## Create config file
 
-A minimal config file: nuster.cfg
+A minimal config file: `nuster.cfg`
 
 ```
 global
@@ -878,7 +881,7 @@ backend nosql_be
 
 # Conventions
 
-1. Files with same name: those with `.md` extension belong to Nuster, otherwise HAProxy
+1. Files with same name: those with `.md` extension belong to NuSTER, otherwise HAProxy
 
 # Contributing
 
@@ -890,7 +893,7 @@ backend nosql_be
 
 # License
 
-Copyright (C) 2017, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+Copyright (C) 2017-2018, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
 
 All rights reserved.
 
