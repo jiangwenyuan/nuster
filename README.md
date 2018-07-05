@@ -18,18 +18,19 @@ A high performance HTTP proxy cache server and RESTful NoSQL cache server based 
   * [Purging](#cache-purging)
   * [Stats](#cache-stats)
 * [NoSQL](#nosql)
+  * [Set](#set)
+  * [Get](#get)
+  * [Delete](#delete)
 * [FAQ](#faq)
-* [Example](#example)
-* [Conventions](#conventions)
-* [Contributing](#contributing)
-* [License](#license)
 
 # Introduction
 
 NuSTER is a high performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
 It is 100% compatible with HAProxy, and takes full advantage of the ACL functionality of HAProxy to provide fine-grained caching policy based on the content of request, response or server status.
 
-## As HTTP/TCP loader balancer
+## Features
+
+### As HTTP/TCP loader balancer
 
 NuSTER can be used as an HTTP/TCP load balancer just like HAProxy.
 
@@ -38,14 +39,14 @@ NuSTER can be used as an HTTP/TCP load balancer just like HAProxy.
 * HTTPS supports on both frontend and backend
 * HTTP compression
 * HTTP rewriting and redirection
+* HTTP fixing
 * HTTP2
 * Monitoring
 * Stickiness
 * ACLs and conditions
 * Content switching
-* Stick-tables
 
-## As HTTP cache server
+### As HTTP cache server
 
 NuSTER can also be used as an HTTP proxy cache server like Varnish or Nginx to cache dynamic and static HTTP response.
 
@@ -57,12 +58,12 @@ NuSTER can also be used as an HTTP proxy cache server like Varnish or Nginx to c
   * Based on environment variables, server state, etc
   * Based on SSL version, SNI, etc
   * Based on connection rate, number, byte, etc
+* Cache management
 * Cache purging
 * Cache stats
-* Cache management
 * Cache TTL
 
-## As RESTful NoSQL cache server
+### As RESTful NoSQL cache server
 
 NuSTER can also be used as a RESTful NoSQL cache server, using HTTP `POST/GET/DELETE` to set/get/delete Key/Value object.
 
@@ -81,7 +82,6 @@ It supports headers, cookies, so you can store per-user data to same endpoint.
 NuSTER is very fast, some test shows nuster is almost three times faster than nginx when both using single core, and nearly two times faster than nginx and three times faster than varnish when using all cores.
 
 See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Web-cache-server-performance-benchmark:-nuster-vs-nginx-vs-varnish-vs-squid)
-
 
 # Getting Started
 
@@ -164,7 +164,7 @@ There are four basic `section`s: `global`, `defaults`, `frontend` and `backend` 
   * `nuster cache on` or `nuster nosql on` must be declared in this section
   * `nuster rule` must be declared here
 
-You can define multiple `frontend` or `backend` sections. If `nuster cache off` is declared or no `nuster cache on|off` declared, nuster acts just like HAProxy, as a TCP and HTTP load balancer.
+You can define multiple `frontend` or `backend` sections. If `nuster cache|nosql off` is declared or no `nuster cache|nosql on|off` declared, nuster acts just like HAProxy, as a TCP and HTTP load balancer.
 
 You can find HAProxy documentation in `/doc`, and [Online HAProxy Documentation](https://cbonte.github.io/haproxy-dconv/)
 
@@ -232,7 +232,9 @@ backend be
 ## global: nuster cache|nosql
 
 **syntax:**
+
 nuster cache on|off [data-size size] [dict-size size] [purge-method method] [uri uri]
+
 nuster nosql on|off [data-size size] [dict-size size]
 
 **default:** *none*
@@ -262,9 +264,9 @@ It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024
 
 Note that it only decides the memory used by hash table buckets not keys. In fact, keys are stored in memory zone which is limited by `data-size`.
 
-**dict-size** is different from **number of keys**. New keys can still be added to hash table even if the number of keys exceeds dict-size as long as there are enough memory.
+**dict-size(number of buckets)** is different from **number of keys**. New keys can still be added to hash table even if the number of keys exceeds dict-size(number of buckets) as long as there are enough memory.
 
-Nevertheless it may lead to a potential performance drop if `number of keys` is greater than `dict-size`. An approximate number of keys multiplied by 8 (normally) as `dict-size` should be fine.
+Nevertheless it may lead to a potential performance drop if `number of keys` is greater than `dict-size(number of buckets)`. An approximate number of keys multiplied by 8 (normally) as `dict-size` should be fine.
 
 > dict-size will be removed in future release, automatically resizing hash table in first version will be added back.
 
@@ -285,7 +287,9 @@ See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for de
 ## proxy: nuster cache|nosql
 
 **syntax:**
+
 nuster cache [on|off]
+
 nuster nosql [on|off]
 
 **default:** *on*
@@ -293,7 +297,6 @@ nuster nosql [on|off]
 **context:** *backend*, *listen*
 
 Determines whether or not to use cache/nosql on this proxy, additional `nuster rule` should be defined.
-It can be turned off separately by `nuster cache off`.
 If there are filters on this proxy, put this directive after all other filters.
 
 ## nuster rule
@@ -304,7 +307,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **context:** *backend*, *listen*
 
-Define cache rule to specify cache creating conditions, cache properties. At least one rule should be defined.
+Define rule to specify cache/nosql creating conditions, properties. At least one rule should be defined.
 
 ```
 nuster cache on
@@ -339,7 +342,7 @@ It will be used in cache manager API, it does not have to be unique, but it migh
 
 ### key KEY
 
-Define the key for cache, it takes a string combined by following keywords with `.` separator:
+Define the key for cache/nosql, it takes a string combined by following keywords with `.` separator:
 
  * method:       http method, GET/POST...
  * scheme:       http or https
@@ -524,7 +527,7 @@ Cache can be purged by making HTTP `PURGE`(or `purge-method`) requests to the ma
 
 ```
 # purge all caches
-curl -X PURGE -H "name: \*" http://127.0.0.1/nuster/cache
+curl -X PURGE -H "name: *" http://127.0.0.1/nuster/cache
 # purge all caches belong to proxy applb
 curl -X PURGE -H "name: app1b" http://127.0.0.1/nuster/cache
 # purge all caches belong to rule r1
@@ -755,11 +758,9 @@ Cache related debug messages start with `[CACHE]`.
 
 Enable `option http-buffer-request` and set `body` in cache rule `key`.
 
-By default, the cache key does not include the body of the request, remember to put
-`body` in key field.
+By default, the cache key does not include the body of the request, remember to put `body` in key field.
 
-Note that the body of the request maybe incomplete, refer to **option http-buffer-request**
-section in [HAProxy configuration](doc/configuration.txt) for details.
+Note that the body of the request maybe incomplete, refer to **option http-buffer-request** section in [HAProxy configuration](doc/configuration.txt) for details.
 
 Also it might be a good idea to put it separately in a dedicated backend as example does.
 
