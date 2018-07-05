@@ -85,6 +85,7 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 
+#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
@@ -3353,8 +3354,6 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
-		free(curproxy->dyncookie_key);
-		curproxy->dyncookie_key = strdup(args[1]);
 	}
 	else if (!strcmp(args[0], "dynamic-cookie-key")) { /* Dynamic cookies secret key */
 

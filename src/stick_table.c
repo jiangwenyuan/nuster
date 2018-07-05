@@ -491,51 +491,6 @@ struct stksess *__stktable_set_entry(struct stktable *table, struct stksess *nts
 	}
 	return ts;
 }
-/* Returns a valid or initialized stksess for the specified stktable_key in the
- * specified table, or NULL if the key was NULL, or if no entry was found nor
- * could be created. The entry's expiration is updated.
- * This function locks the table, and the refcount of the entry is increased.
- */
-struct stksess *stktable_get_entry(struct stktable *table, struct stktable_key *key)
-{
-	struct stksess *ts;
-
-	HA_SPIN_LOCK(STK_TABLE_LOCK, &table->lock);
-	ts = __stktable_get_entry(table, key);
-	if (ts)
-		ts->ref_cnt++;
-	HA_SPIN_UNLOCK(STK_TABLE_LOCK, &table->lock);
-
-	return ts;
-}
-
-/* Lookup for an entry with the same key and store the submitted
- * stksess if not found.
- */
-struct stksess *__stktable_set_entry(struct stktable *table, struct stksess *nts)
-{
-	struct stksess *ts;
-
-	ts = __stktable_lookup(table, nts);
-	if (ts == NULL) {
-		ts = nts;
-		__stktable_store(table, ts);
-	}
-	return ts;
-}
-
-/* Lookup for an entry with the same key and store the submitted
- * stksess if not found.
- * This function locks the table, and the refcount of the entry is increased.
- */
-struct stksess *stktable_set_entry(struct stktable *table, struct stksess *nts)
-{
-	struct stksess *ts;
-
-	HA_SPIN_LOCK(STK_TABLE_LOCK, &table->lock);
-	ts = __stktable_set_entry(table, nts);
-	ts->ref_cnt++;
-	HA_SPIN_UNLOCK(STK_TABLE_LOCK, &table->lock);
 
 /* Lookup for an entry with the same key and store the submitted
  * stksess if not found.

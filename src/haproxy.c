@@ -118,6 +118,7 @@
 #include <proto/ssl_sock.h>
 #endif
 
+#include <nuster/nuster.h>
 /* list of config files */
 static struct list cfg_cfgfiles = LIST_HEAD_INIT(cfg_cfgfiles);
 int  pid;			/* current process id */
@@ -162,6 +163,15 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
+	.nuster = {
+		.cache = {
+			.status       = NUSTER_STATUS_UNDEFINED,
+			.data_size    = NST_CACHE_DEFAULT_SIZE,
+			.dict_size    = NST_CACHE_DEFAULT_SIZE,
+			.share        = NUSTER_STATUS_ON,
+			.purge_method = NULL,
+		},
+	},
 	/* others NULL OK */
 };
 
@@ -325,33 +335,6 @@ void hap_register_post_deinit(void (*fct)())
 
 /* used to register some initialization functions to call for each thread. */
 void hap_register_per_thread_init(int (*fct)())
-{
-	struct per_thread_init_fct *b;
-
-	b = calloc(1, sizeof(*b));
-	if (!b) {
-		fprintf(stderr, "out of memory\n");
-		exit(1);
-	}
-	b->fct = fct;
-	LIST_ADDQ(&per_thread_init_list, &b->list);
-}
-
-/* used to register some de-initialization functions to call for each thread. */
-void hap_register_per_thread_deinit(void (*fct)())
-{
-	struct per_thread_deinit_fct *b;
-
-	b = calloc(1, sizeof(*b));
-	if (!b) {
-		fprintf(stderr, "out of memory\n");
-		exit(1);
-	}
-	b->fct = fct;
-	LIST_ADDQ(&per_thread_deinit_list, &b->list);
-}
-
-static void display_version()
 {
 	struct per_thread_init_fct *b;
 
@@ -1977,6 +1960,8 @@ static void init(int argc, char **argv)
 	if (!hlua_post_init())
 		exit(1);
 
+	nuster_init();
+
 	free(err_msg);
 }
 
@@ -2461,6 +2446,7 @@ static void run_poll_loop()
 		cur_poller.poll(&cur_poller, exp);
 		fd_process_cached_events();
 		applet_run_active();
+		nuster_housekeeping();
 
 
 		/* Synchronize all polling loops */
@@ -2469,19 +2455,6 @@ static void run_poll_loop()
 
 		activity[tid].loops++;
 	}
-
-	protocol_enable_all();
-	THREAD_SYNC_ENABLE();
-	run_poll_loop();
-
-	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
-		ptdf->fct();
-
-#ifdef USE_THREAD
-	if (tid > 0)
-		pthread_exit(NULL);
-#endif
-	return NULL;
 }
 
 static void *run_thread_poll_loop(void *data)
