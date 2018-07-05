@@ -31,8 +31,6 @@
 #include <common/config.h>
 #include <common/xref.h>
 
-#include <nuster/common.h>
-
 struct appctx;
 
 /* Applet descriptor */
@@ -84,6 +82,45 @@ struct appctx {
 				struct my_regex  *regex;
 			} cache_manager;
 		} nuster;
+		struct {
+			void *ptr;              /* current peer or NULL, do not use for something else */
+		} peers;                        /* used by the peers applet */
+		struct {
+			int connected;
+			struct xref xref; /* cross reference with the Lua object owner. */
+			struct list wake_on_read;
+			struct list wake_on_write;
+			int die;
+		} hlua_cosocket;                /* used by the Lua cosockets */
+		struct {
+			struct hlua *hlua;
+			int flags;
+			struct task *task;
+		} hlua_apptcp;                  /* used by the Lua TCP services */
+		struct {
+			struct hlua *hlua;
+			int left_bytes;         /* The max amount of bytes that we can read. */
+			int flags;
+			int status;
+			const char *reason;
+			struct task *task;
+		} hlua_apphttp;                 /* used by the Lua HTTP services */
+		struct {
+			void *ptr;              /* private pointer for SPOE filter */
+		} spoe;                         /* used by SPOE filter */
+		struct {
+			const char *msg;        /* pointer to a persistent message to be returned in CLI_ST_PRINT state */
+			int severity;           /* severity of the message to be returned according to (syslog) rfc5424 */
+			char *err;              /* pointer to a 'must free' message to be returned in CLI_ST_PRINT_FREE state */
+			void *p0, *p1;          /* general purpose pointers and integers for registered commands, initialized */
+			int i0, i1;             /* to 0 by the CLI before first invocation of the keyword parser. */
+		} cli;                          /* context used by the CLI */
+		struct {
+			struct cache_entry *entry;
+		} cache;
+		/* all entries below are used by various CLI commands, please
+		 * keep the grouped together and avoid adding new ones.
+		 */
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */
 		} peers;                        /* used by the peers applet */

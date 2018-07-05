@@ -43,7 +43,7 @@
 #define CONNECTION_BACKLOG 10
 #define NUM_WORKERS        10
 #define MAX_FRAME_SIZE     16384
-#define SPOP_VERSION       "1.0"
+#define SPOP_VERSION       "2.0"
 
 #define SLEN(str) (sizeof(str)-1)
 
@@ -513,6 +513,7 @@ handle_hahello(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p += 4;
 
 	/* Fragmentation is not supported for HELLO frame */
@@ -620,6 +621,7 @@ handle_hadiscon(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p += 4;
 
 	/* Fragmentation is not supported for DISCONNECT frame */
@@ -701,6 +703,7 @@ handle_hanotify(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p += 4;
 
 	/* Fragmentation is not supported */
@@ -763,6 +766,7 @@ handle_hafrag(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p+= 4;
 
 	/* Read the stream-id and frame-id */
@@ -825,6 +829,7 @@ prepare_agenthello(struct spoe_frame *frame)
 	*p++ = SPOE_FRM_T_AGENT_HELLO;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -906,6 +911,7 @@ prepare_agentdicon(struct spoe_frame *frame)
 	*p++ = SPOE_FRM_T_AGENT_DISCON;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -953,6 +959,7 @@ prepare_agentack(struct spoe_frame *frame)
 	*p++ = SPOE_FRM_T_AGENT_ACK;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -1466,7 +1473,6 @@ read_frame_cb(evutil_socket_t fd, short events, void *arg)
 			if (client->status_code != SPOE_FRM_ERR_NONE)
 				LOG(client->worker, "<%lu> Peer closed connection: %s",
 				    client->id, spoe_frm_err_reasons[client->status_code]);
-			client->status_code = SPOE_FRM_ERR_NONE;
 			goto disconnect;
 	}
 
@@ -1561,6 +1567,139 @@ write_frame_cb(evutil_socket_t fd, short events, void *arg)
 		case SPOA_ST_DISCONNECTING:
 			goto close;
 	}
+	return;
+
+  close:
+	release_client(client);
+}
+
+static void
+accept_cb(int listener, short event, void *arg)
+{
+	struct worker     *worker;
+	struct client     *client;
+	int                fd;
+
+	worker = &workers[clicount++ % num_workers];
+
+	if ((fd = accept(listener, NULL, NULL)) < 0) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			LOG(worker, "Failed to accept client connection : %m");
+		return;
+	}
+
+	DEBUG(&null_worker,
+	      "<%lu> New Client connection accepted and assigned to worker %02d",
+	      clicount, worker->id);
+
+	if (evutil_make_socket_nonblocking(fd) < 0) {
+		LOG(&null_worker, "Failed to set client socket to non-blocking : %m");
+		close(fd);
+		return;
+	}
+
+	if ((client = calloc(1, sizeof(*client))) == NULL) {
+		LOG(&null_worker, "Failed to allocate memory for client state : %m");
+		close(fd);
+		return;
+	}
+
+	client->id             = clicount;
+	client->fd             = fd;
+	client->worker         = worker;
+	client->state          = SPOA_ST_CONNECTING;
+	client->status_code    = SPOE_FRM_ERR_NONE;
+	client->max_frame_size = max_frame_size;
+	client->engine         = NULL;
+	client->pipelining     = false;
+	client->async          = false;
+	client->incoming_frame = NULL;
+	client->outgoing_frame = NULL;
+	LIST_INIT(&client->processing_frames);
+	LIST_INIT(&client->outgoing_frames);
+
+	LIST_ADDQ(&worker->clients, &client->by_worker);
+
+	worker->nbclients++;
+
+	if (event_assign(&client->read_frame_event, worker->base, fd,
+			 EV_READ|EV_PERSIST, read_frame_cb, client) < 0     ||
+	    event_assign(&client->write_frame_event, worker->base, fd,
+			 EV_WRITE|EV_PERSIST, write_frame_cb, client) < 0) {
+		LOG(&null_worker, "Failed to create client events");
+		release_client(client);
+		return;
+	}
+	event_add(&client->read_frame_event,  NULL);
+}
+
+static void *
+worker_function(void *data)
+{
+	struct client     *client, *cback;
+	struct spoe_frame *frame, *fback;
+	struct worker     *worker = data;
+
+	DEBUG(worker, "Worker ready to process client messages");
+	event_base_dispatch(worker->base);
+
+	list_for_each_entry_safe(client, cback, &worker->clients, by_worker) {
+		release_client(client);
+	}
+
+	list_for_each_entry_safe(frame, fback, &worker->frames, list) {
+		LIST_DEL(&frame->list);
+		free(frame);
+	}
+
+	event_free(worker->monitor_event);
+	event_base_free(worker->base);
+	DEBUG(worker, "Worker is stopped");
+	pthread_exit(&null_worker);
+}
+
+
+static int
+parse_processing_delay(const char *str)
+{
+        unsigned long value;
+
+        value = 0;
+        while (1) {
+                unsigned int j;
+
+                j = *str - '0';
+                if (j > 9)
+                        break;
+                str++;
+                value *= 10;
+                value += j;
+        }
+
+        switch (*str) {
+		case '\0': /* no unit = millisecond */
+			value *= 1000;
+			break;
+		case 's': /* second */
+			value *= 1000000;
+			str++;
+			break;
+		case 'm': /* millisecond : "ms" */
+			if (str[1] != 's')
+				return -1;
+			value *= 1000;
+			str += 2;
+			break;
+		case 'u': /* microsecond : "us" */
+			if (str[1] != 's')
+				return -1;
+			str += 2;
+			break;
+		default:
+			return -1;
+        }
+	if (*str)
+		return -1;
 
 	release_frame(frame);
 	client->outgoing_frame = NULL;
@@ -1573,6 +1712,7 @@ write_frame_cb(evutil_socket_t fd, short events, void *arg)
   close:
 	release_client(client);
 }
+
 
 static void
 accept_cb(int listener, short event, void *arg)

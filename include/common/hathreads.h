@@ -31,6 +31,7 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 #ifndef USE_THREAD
 
 #define MAX_THREADS 1
+#define all_threads_mask 0UL
 
 #define __decl_hathreads(decl)
 
@@ -88,6 +89,8 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 #define HA_RWLOCK_RDLOCK(lbl, l)   do { /* do nothing */ } while(0)
 #define HA_RWLOCK_TRYRDLOCK(lbl, l)   ({ 0; })
 #define HA_RWLOCK_RDUNLOCK(lbl, l) do { /* do nothing */ } while(0)
+
+#define ha_sigmask(how, set, oldset)  sigprocmask(how, set, oldset)
 
 #else /* USE_THREAD */
 
@@ -201,6 +204,11 @@ void thread_exit_sync(void);
 int  thread_no_sync(void);
 int  thread_need_sync(void);
 
+extern unsigned long all_threads_mask;
+
+#define ha_sigmask(how, set, oldset)  pthread_sigmask(how, set, oldset)
+
+
 #if defined(DEBUG_THREAD) || defined(DEBUG_FULL)
 
 /* WARNING!!! if you update this enum, please also keep lock_label() up to date below */
@@ -209,6 +217,7 @@ enum lock_label {
 	FDTAB_LOCK,
 	FDCACHE_LOCK,
 	FD_LOCK,
+	FD_UPDATE_LOCK,
 	POLL_LOCK,
 	TASK_RQ_LOCK,
 	TASK_WQ_LOCK,
@@ -330,6 +339,7 @@ static inline const char *lock_label(enum lock_label label)
 	case FDCACHE_LOCK:         return "FDCACHE";
 	case FD_LOCK:              return "FD";
 	case FDTAB_LOCK:           return "FDTAB";
+	case FD_UPDATE_LOCK:       return "FD_UPDATE";
 	case POLL_LOCK:            return "POLL";
 	case TASK_RQ_LOCK:         return "TASK_RQ";
 	case TASK_WQ_LOCK:         return "TASK_WQ";
