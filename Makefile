@@ -887,9 +887,7 @@ OBJS = src/proto_http.o src/cfgparse.o src/server.o src/stream.o        \
        src/nuster/cache/dict.o src/nuster/cache/filter.o                \
        src/nuster/cache/stats.o src/nuster/cache/manager.o              \
        src/nuster/cache/engine.o                                        \
-       src/nuster/nosql/filter.o  src/nuster/nosql/dict.o               \
-       src/nuster/nosql/stats.o src/nuster/nosql/engine.o               \
-       src/nuster/memory.o src/nuster/parser.o src/nuster/http.o        \
+       src/nuster/memory.o src/nuster/parser.o                          \
        src/nuster/nuster.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
@@ -979,7 +977,7 @@ clean:
 	for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
-	rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
+	rm -f src/nuster/*.[oas] src/nuster/cache/*.[oas]
 
 tags:
 	find src include \( -name '*.c' -o -name '*.h' \) -print0 | \

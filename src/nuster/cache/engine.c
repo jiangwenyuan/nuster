@@ -17,6 +17,8 @@
 #include <proto/acl.h>
 #include <proto/proxy.h>
 
+#include <import/xxhash.h>
+
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
 #include <types/ssl_sock.h>
@@ -25,7 +27,6 @@
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
-#include <nuster/http.h>
 
 
 /*
@@ -83,6 +84,30 @@ struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
     return stash;
 }
 
+int nst_cache_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
+    int ret;
+
+    /* no acl defined */
+    if(!rule->cond) {
+        return 1;
+    }
+
+    if(res) {
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_RES|SMP_OPT_FINAL);
+    } else {
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
+    }
+    ret = acl_pass(ret);
+    if(rule->cond->pol == ACL_COND_UNLESS) {
+        ret = !ret;
+    }
+
+    if(ret) {
+        return 1;
+    }
+    return 0;
+}
+
 static char *_string_append(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
 
@@ -116,6 +141,31 @@ static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
         return _string_append(key, dst_len, dst_size, ".", 1);
     }
     return NULL;
+}
+
+static int _nst_cache_find_param_value_by_name(char *query_beg, char *query_end,
+        char *name, char **value, int *value_len) {
+
+    char equal   = '=';
+    char and     = '&';
+    char *ptr    = query_beg;
+    int name_len = strlen(name);
+
+    while(ptr + name_len + 1 < query_end) {
+        if(!memcmp(ptr, name, name_len) && *(ptr + name_len) == equal) {
+            if(ptr == query_beg || *(ptr - 1) == and) {
+                ptr    = ptr + name_len + 1;
+                *value = ptr;
+                while(ptr < query_end && *ptr != and) {
+                    (*value_len)++;
+                    ptr++;
+                }
+                return 1;
+            }
+        }
+        ptr++;
+    }
+    return 0;
 }
 
 void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
@@ -283,6 +333,8 @@ void nst_cache_housekeeping() {
 }
 
 void nst_cache_init() {
+    int i, uuid;
+    struct proxy *p;
 
     nuster.applet.cache_engine.fct = nst_cache_engine_handler;
 
@@ -348,6 +400,52 @@ void nst_cache_init() {
 
         if(!nst_cache_manager_init()) {
             goto err;
+        }
+
+        /* init cache rule */
+        i = uuid = 0;
+        p = proxies_list;
+        while(p) {
+            struct nuster_rule *rule = NULL;
+            uint32_t ttl;
+
+            list_for_each_entry(rule, &p->nuster.rules, list) {
+                struct proxy *pt;
+
+                rule->uuid   = uuid++;
+                rule->state  = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*rule->state));
+                if(!rule->state) {
+                    goto err;
+                }
+                *rule->state = NUSTER_RULE_ENABLED;
+                ttl          = *rule->ttl;
+                free(rule->ttl);
+                rule->ttl    = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*rule->ttl));
+                if(!rule->ttl) {
+                    goto err;
+                }
+                *rule->ttl   = ttl;
+
+                pt = proxies_list;
+                while(pt) {
+                    struct nuster_rule *rt = NULL;
+                    list_for_each_entry(rt, &pt->nuster.rules, list) {
+                        if(rt == rule) goto out;
+                        if(!strcmp(rt->name, rule->name)) {
+                            ha_alert("cache-rule with same name=[%s] found.\n", rule->name);
+                            rule->id = rt->id;
+                            goto out;
+                        }
+                    }
+                    pt = pt->next;
+                }
+
+out:
+                if(rule->id == -1) {
+                    rule->id = i++;
+                }
+            }
+            p = p->next;
         }
 
         nuster_debug("[CACHE] on, data_size=%llu\n", global.nuster.cache.data_size);
@@ -492,7 +590,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
                     int v_l = 0;
-                    if(nuster_req_find_param(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
+                    if(_nst_cache_find_param_value_by_name(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
                         key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
 
@@ -530,6 +628,10 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
     }
     nuster_debug("\n");
     return key;
+}
+
+uint64_t nst_cache_hash_key(const char *key) {
+    return XXH64(key, strlen(key), 0);
 }
 
 char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {

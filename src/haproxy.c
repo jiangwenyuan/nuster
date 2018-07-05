@@ -119,7 +119,6 @@
 #endif
 
 #include <nuster/nuster.h>
-
 /* list of config files */
 static struct list cfg_cfgfiles = LIST_HEAD_INIT(cfg_cfgfiles);
 int  pid;			/* current process id */
@@ -171,11 +170,6 @@ struct global global = {
 			.dict_size    = NST_CACHE_DEFAULT_SIZE,
 			.share        = NUSTER_STATUS_ON,
 			.purge_method = NULL,
-		},
-		.nosql = {
-			.status       = NUSTER_STATUS_UNDEFINED,
-			.dict_size    = NST_CACHE_DEFAULT_SIZE,
-			.data_size    = NST_CACHE_DEFAULT_SIZE,
 		},
 	},
 	/* others NULL OK */

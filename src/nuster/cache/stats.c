@@ -131,7 +131,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
             goto next;
         }
 
-        if(p->cap & PR_CAP_BE && p->nuster.mode == NUSTER_MODE_CACHE) {
+        if(p->cap & PR_CAP_BE) {
 
             if(!LIST_ISEMPTY(&p->nuster.rules)) {
 

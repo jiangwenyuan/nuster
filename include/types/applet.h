@@ -83,11 +83,6 @@ struct appctx {
 				struct nuster_str path;
 				struct my_regex  *regex;
 			} cache_manager;
-			struct {
-				struct nst_nosql_entry   *entry;
-				struct nst_nosql_data    *data;
-				struct nst_nosql_element *element;
-			} nosql_engine;
 		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */

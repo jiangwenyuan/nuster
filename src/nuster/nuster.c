@@ -13,17 +13,47 @@
 #include <types/global.h>
 
 #include <proto/stream_interface.h>
-#include <proto/proxy.h>
-#include <proto/log.h>
-#include <proto/acl.h>
 
-#include <nuster/memory.h>
 #include <nuster/nuster.h>
-#include <nuster/http.h>
+
+const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
+    [NUSTER_HTTP_200] =
+        "HTTP/1.0 200 OK\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "200 OK\n",
+
+    [NUSTER_HTTP_400] =
+        "HTTP/1.0 400 Bad request\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "400 Bad request\n",
+
+    [NUSTER_HTTP_404] =
+        "HTTP/1.0 404 Not Found\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "404 Not Found\n",
+
+    [NUSTER_HTTP_500] =
+        "HTTP/1.0 500 Internal Server Error\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "500 Internal Server Error\n",
+};
+
+struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
 
 struct nuster nuster = {
     .cache = NULL,
-    .nosql = NULL,
     .applet = {
         .cache_engine = {
             .obj_type = OBJ_TYPE_APPLET,
@@ -37,10 +67,6 @@ struct nuster nuster = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.CACHE.STATS>",
         },
-        .nosql_engine = {
-            .obj_type = OBJ_TYPE_APPLET,
-            .name     = "<NUSTER.NOSQL.ENGINE>",
-        },
     },
 };
 
@@ -53,9 +79,16 @@ void nuster_debug(const char *fmt, ...) {
     }
 }
 
+void nuster_response(struct stream *s, struct chunk *msg) {
+    s->txn->flags &= ~TX_WAIT_NEXT_RQ;
+    stream_int_retnclose(&s->si[0], msg);
+    if(!(s->flags & SF_ERR_MASK)) {
+        s->flags |= SF_ERR_LOCAL;
+    }
+}
+
 void nuster_init() {
-    int i, uuid;
-    struct proxy *p;
+    int i = 0;
 
     for (i = 0; i < NUSTER_HTTP_SIZE; i++) {
         nuster_http_msg_chunks[i].str = (char *)nuster_http_msgs[i];
@@ -63,94 +96,4 @@ void nuster_init() {
     }
 
     nst_cache_init();
-    nst_nosql_init();
-
-
-    /* init rule */
-    i = uuid = 0;
-    p = proxies_list;
-    while(p) {
-        struct nuster_rule *rule = NULL;
-        uint32_t ttl;
-        struct nuster_memory *m  = NULL;
-
-        list_for_each_entry(rule, &p->nuster.rules, list) {
-            struct proxy *pt;
-
-            if(global.nuster.cache.status == NUSTER_STATUS_ON && p->nuster.mode == NUSTER_MODE_CACHE) {
-                m = global.nuster.cache.memory;
-            } else if(global.nuster.nosql.status == NUSTER_STATUS_ON && p->nuster.mode == NUSTER_MODE_NOSQL) {
-                m = global.nuster.nosql.memory;
-            } else {
-                continue;
-            }
-
-            rule->uuid  = uuid++;
-            rule->state = nuster_memory_alloc(m, sizeof(*rule->state));
-
-            if(!rule->state) {
-                goto err;
-            }
-            *rule->state = NUSTER_RULE_ENABLED;
-            ttl          = *rule->ttl;
-            free(rule->ttl);
-            rule->ttl    = nuster_memory_alloc(m, sizeof(*rule->ttl));
-
-            if(!rule->ttl) {
-                goto err;
-            }
-            *rule->ttl = ttl;
-
-            pt = proxies_list;
-            while(pt) {
-                struct nuster_rule *rt = NULL;
-                list_for_each_entry(rt, &pt->nuster.rules, list) {
-                    if(rt == rule) goto out;
-                    if(!strcmp(rt->name, rule->name)) {
-                        ha_alert("nuster rule with same name=[%s] found.\n", rule->name);
-                        rule->id = rt->id;
-                        goto out;
-                    }
-                }
-                pt = pt->next;
-            }
-
-out:
-            if(rule->id == -1) {
-                rule->id = i++;
-            }
-        }
-        p = p->next;
-    }
-
-    return;
-
-err:
-    ha_alert("Out of memory when initializing rules.\n");
-    exit(1);
 }
-
-int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
-    int ret;
-
-    /* no acl defined */
-    if(!rule->cond) {
-        return 1;
-    }
-
-    if(res) {
-        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_RES|SMP_OPT_FINAL);
-    } else {
-        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
-    }
-    ret = acl_pass(ret);
-    if(rule->cond->pol == ACL_COND_UNLESS) {
-        ret = !ret;
-    }
-
-    if(ret) {
-        return 1;
-    }
-    return 0;
-}
-

@@ -1,5 +1,18 @@
 # Nuster Changelog
 
+## 1.1.0.18 - 2018-07-06
+
+## 1.0.0.17 - 2018-07-06
+
+Previously nuster used HAPROXY_VERSION.NUSTER_VERSION(eg, v1.8.8.3) which is very straightforward to find out the base HAProxy version, but very hard to tell whether it is a major r
+
+Starting from v1.8.8.3, nuster uses a different version system as MAJOR.MINOR.PATCH.HAPROXY_BRANCH.
+
+* MAJOR: big feature release of nuster
+* MINOR: small features, haproxy branch update
+* PATCH: bug fixes, haproxy minor updates
+* HAPROXY_BRANCH: 17 stands for v1.7.x, 18 for v1.8.x
+
 ## 1.8.8.3 - 2018-06-08
 
 ### Fixed
