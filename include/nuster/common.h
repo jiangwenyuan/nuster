@@ -49,15 +49,10 @@ enum {
 
 enum {
     NUSTER_MODE_CACHE = 1,
+    NUSTER_MODE_NOSQL,
 };
 
-enum {
-    NUSTER_HTTP_200 = 0,
-    NUSTER_HTTP_400,
-    NUSTER_HTTP_404,
-    NUSTER_HTTP_500,
-    NUSTER_HTTP_SIZE
-};
+#define nuster_str_set(str)     { (char *) str, sizeof(str) - 1 }
 
 struct nuster_str {
     char *data;
@@ -115,7 +110,6 @@ struct nuster_rule_stash {
 struct nuster_flt_conf {
     int status;
 };
-
 
 
 /* get current timestamp in milliseconds */
