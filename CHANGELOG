@@ -1,6 +1,78 @@
 ChangeLog :
 ===========
 
+2018/06/27 : 1.8.12
+    - BUG/MAJOR: stick_table: Complete incomplete SEGV fix
+    - MINOR: stick-tables: make stktable_release() do nothing on NULL
+
+2018/06/26 : 1.8.11
+    - BUG/MAJOR: Stick-tables crash with segfault when the key is not in the stick-table
+    - BUG/BUILD: threads: unbreak build without threads
+
+2018/06/22 : 1.8.10
+    - BUG/MINOR: lua: Socket.send threw runtime error: 'close' needs 1 arguments.
+    - BUG/MEDIUM: spoe: Flags are not encoded in network order
+    - BUG/MEDIUM: contrib/mod_defender: Use network order to encode/decode flags
+    - BUG/MEDIUM: contrib/modsecurity: Use network order to encode/decode flags
+    - BUG/MINOR: ssl/lua: prevent lua from affecting automatic maxconn computation
+    - BUG/MEDIUM: cache: don't cache when an Authorization header is present
+    - BUG/MEDIUM: dns: Delay the attempt to run a DNS resolution on check failure.
+    - BUG/BUILD: threads: unbreak build without threads
+    - BUG/BUILD: fd: fix typo causing a warning when threads are disabled
+    - BUG/MEDIUM: fd: Only check update_mask against all_threads_mask.
+    - BUG/MEDIUM: servers: Add srv_addr default placeholder to the state file
+    - BUG/MEDIUM: lua/socket: Length required read doesn't work
+    - BUG/MEDIUM: stick-tables: Decrement ref_cnt in table_* converters
+    - BUG/MEDIUM: spoe: Return an error when the wrong ACK is received in sync mode
+    - MINOR: task/notification: Is notifications registered ?
+    - BUG/MEDIUM: lua/socket: wrong scheduling for sockets
+    - BUG/MAJOR: lua: Dead lock with sockets
+    - BUG/MEDIUM: lua/socket: Notification error
+    - BUG/MEDIUM: lua/socket: Sheduling error on write: may dead-lock
+    - BUG/MEDIUM: lua/socket: Buffer error, may segfault
+    - MAJOR: spoe: upgrade the SPOP version to 2.0 and remove the support for 1.0
+    - BUG/MINOR: contrib/spoa_example: Don't reset the status code during disconnect
+    - BUG/MINOR: contrib/mod_defender: Don't reset the status code during disconnect
+    - BUG/MINOR: contrib/modsecurity: Don't reset the status code during disconnect
+    - BUG/MINOR: contrib/mod_defender: update pointer on the end of the frame
+    - BUG/MINOR: contrib/modsecurity: update pointer on the end of the frame
+    - DOC: SPOE.txt: fix a typo
+    - DOC: contrib/modsecurity: few typo fixes
+    - BUG/MINOR: unix: Make sure we can transfer abns sockets on seamless reload.
+    - BUG/MEDIUM: threads: handle signal queue only in thread 0
+    - BUG/MINOR: don't ignore SIG{BUS,FPE,ILL,SEGV} during signal processing
+    - BUG/MINOR: signals: ha_sigmask macro for multithreading
+    - MINOR: lua: Increase debug information
+    - BUG/MAJOR: map: fix a segfault when using http-request set-map
+    - BUG/MINOR: lua: Segfaults with wrong usage of types.
+    - BUG/MAJOR: ssl: Random crash with cipherlist capture
+    - BUG/MAJOR: ssl: OpenSSL context is stored in non-reserved memory slot
+    - BUG/MEDIUM: fd: Don't modify the update_mask in fd_dodelete().
+    - BUG/MEDIUM: threads: Use the sync point to check active jobs and exit
+    - MINOR: threads: Be sure to remove threads from all_threads_mask on exit
+
+2018/05/18 : 1.8.9
+    - BUG/MINOR: pattern: Add a missing HA_SPIN_INIT() in pat_ref_newid()
+    - BUG/MAJOR: channel: Fix crash when trying to read from a closed socket
+    - BUG/MINOR: log: t_idle (%Ti) is not set for some requests
+    - BUG/MEDIUM: lua: Fix segmentation fault if a Lua task exits
+    - MINOR: h2: detect presence of CONNECT and/or content-length
+    - BUG/MEDIUM: h2: implement missing support for chunked encoded uploads
+    - BUG/MINOR: lua/threads: Make lua's tasks sticky to the current thread
+    - BUG/MINOR: config: disable http-reuse on TCP proxies
+    - BUG/MINOR: checks: Fix check->health computation for flapping servers
+    - BUG/MEDIUM: threads: Fix the sync point for more than 32 threads
+    - BUG/MINOR: lua: Put tasks to sleep when waiting for data
+    - DOC/MINOR: clean up LUA documentation re: servers & array/table.
+    - BUG/MINOR: map: correctly track reference to the last ref_elt being dumped
+    - BUG/MEDIUM: task: Don't free a task that is about to be run.
+    - BUG/MINOR: lua: schedule socket task upon lua connect()
+    - BUG/MINOR: lua: ensure large proxy IDs can be represented
+    - BUG/MEDIUM: http: don't always abort transfers on CF_SHUTR
+    - BUG/MEDIUM: pollers: Use a global list for fd shared between threads.
+    - BUG/MEDIUM: ssl: properly protect SSL cert generation
+    - BUG/MINOR: spoe: Mistake in error message about SPOE configuration
+
 2018/04/19 : 1.8.8
     - BUG/MEDIUM: threads: Fix the max/min calculation because of name clashes
     - BUG/MEDIUM: connection: Make sure we have a mux before calling detach().

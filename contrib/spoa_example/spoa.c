@@ -43,7 +43,7 @@
 #define CONNECTION_BACKLOG 10
 #define NUM_WORKERS        10
 #define MAX_FRAME_SIZE     16384
-#define SPOP_VERSION       "1.0"
+#define SPOP_VERSION       "2.0"
 
 #define SLEN(str) (sizeof(str)-1)
 
@@ -513,6 +513,7 @@ handle_hahello(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p += 4;
 
 	/* Fragmentation is not supported for HELLO frame */
@@ -620,6 +621,7 @@ handle_hadiscon(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p += 4;
 
 	/* Fragmentation is not supported for DISCONNECT frame */
@@ -701,6 +703,7 @@ handle_hanotify(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p += 4;
 
 	/* Fragmentation is not supported */
@@ -763,6 +766,7 @@ handle_hafrag(struct spoe_frame *frame)
 
 	/* Retrieve flags */
 	memcpy((char *)&(frame->flags), p, 4);
+	frame->flags = ntohl(frame->flags);
 	p+= 4;
 
 	/* Read the stream-id and frame-id */
@@ -825,6 +829,7 @@ prepare_agenthello(struct spoe_frame *frame)
 	*p++ = SPOE_FRM_T_AGENT_HELLO;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -906,6 +911,7 @@ prepare_agentdicon(struct spoe_frame *frame)
 	*p++ = SPOE_FRM_T_AGENT_DISCON;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -953,6 +959,7 @@ prepare_agentack(struct spoe_frame *frame)
 	*p++ = SPOE_FRM_T_AGENT_ACK;
 
 	/* Set flags */
+	flags = htonl(flags);
 	memcpy(p, (char *)&flags, 4);
 	p += 4;
 
@@ -1466,7 +1473,6 @@ read_frame_cb(evutil_socket_t fd, short events, void *arg)
 			if (client->status_code != SPOE_FRM_ERR_NONE)
 				LOG(client->worker, "<%lu> Peer closed connection: %s",
 				    client->id, spoe_frm_err_reasons[client->status_code]);
-			client->status_code = SPOE_FRM_ERR_NONE;
 			goto disconnect;
 	}
 

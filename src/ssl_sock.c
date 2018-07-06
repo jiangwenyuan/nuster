@@ -260,6 +260,7 @@ struct ssl_capture {
 };
 struct pool_head *pool_head_ssl_capture = NULL;
 static int ssl_capture_ptr_index = -1;
+static int ssl_app_data_index = -1;
 
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 struct list tlskeys_reference = LIST_HEAD_INIT(tlskeys_reference);
@@ -825,7 +826,7 @@ static int ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16], unsigned
 	int i;
 	int ret = -1; /* error by default */
 
-	conn = SSL_get_app_data(s);
+	conn = SSL_get_ex_data(s, ssl_app_data_index);
 	ref  = objt_listener(conn->target)->bind_conf->keys_ref;
 	HA_RWLOCK_RDLOCK(TLSKEYS_REF_LOCK, &ref->lock);
 
@@ -1389,7 +1390,7 @@ out:
 
 void ssl_sock_infocbk(const SSL *ssl, int where, int ret)
 {
-	struct connection *conn = SSL_get_app_data(ssl);
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	BIO *write_bio;
 	(void)ret; /* shut gcc stupid warning */
 
@@ -1427,7 +1428,7 @@ int ssl_sock_bind_verifycbk(int ok, X509_STORE_CTX *x_store)
 	int err, depth;
 
 	ssl = X509_STORE_CTX_get_ex_data(x_store, SSL_get_ex_data_X509_STORE_CTX_idx());
-	conn = SSL_get_app_data(ssl);
+	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 
 	conn->xprt_st |= SSL_SOCK_ST_FL_VERIFY_DONE;
 
@@ -1575,7 +1576,7 @@ void ssl_sock_msgcbk(int write_p, int version, int content_type, const void *buf
 	/* test heartbeat received (write_p is set to 0
 	   for a received record) */
 	if ((content_type == TLS1_RT_HEARTBEAT) && (write_p == 0)) {
-		struct connection *conn = SSL_get_app_data(ssl);
+		struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 		const unsigned char *p = buf;
 		unsigned int payload;
 
@@ -1812,15 +1813,15 @@ ssl_sock_assign_generated_cert(unsigned int key, struct bind_conf *bind_conf, SS
 	struct lru64 *lru = NULL;
 
 	if (ssl_ctx_lru_tree) {
-		HA_RWLOCK_RDLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
+		HA_RWLOCK_WRLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
 		lru = lru64_lookup(key, ssl_ctx_lru_tree, bind_conf->ca_sign_cert, 0);
 		if (lru && lru->domain) {
 			if (ssl)
 				SSL_set_SSL_CTX(ssl, (SSL_CTX *)lru->data);
-			HA_RWLOCK_RDUNLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
+			HA_RWLOCK_WRUNLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
 			return (SSL_CTX *)lru->data;
 		}
-		HA_RWLOCK_RDUNLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
+		HA_RWLOCK_WRUNLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
 	}
 	return NULL;
 }
@@ -1903,7 +1904,7 @@ static int
 ssl_sock_generate_certificate_from_conn(struct bind_conf *bind_conf, SSL *ssl)
 {
 	unsigned int key;
-	struct connection *conn = SSL_get_app_data(ssl);
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 
 	conn_get_to_addr(conn);
 	if (conn->flags & CO_FL_ADDR_TO_SET) {
@@ -2099,7 +2100,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 	int allow_early = 0;
 	int i;
 
-	conn = SSL_get_app_data(ssl);
+	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	s = objt_listener(conn->target)->bind_conf;
 
 	if (s->ssl_conf.early_data)
@@ -3876,7 +3877,7 @@ static int sh_ssl_sess_store(unsigned char *s_id, unsigned char *data, int data_
 /* SSL callback used when a new session is created while connecting to a server */
 static int ssl_sess_new_srv_cb(SSL *ssl, SSL_SESSION *sess)
 {
-	struct connection *conn = SSL_get_app_data(ssl);
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	struct server *s;
 
 	s = objt_server(conn->target);
@@ -4373,7 +4374,7 @@ static int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx)
 		return ok;
 
 	ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-	conn = SSL_get_app_data(ssl);
+	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 
 	/* We're checking if the provided hostnames match the desired one. The
 	 * desired hostname comes from the SNI we presented if any, or if not
@@ -4948,7 +4949,7 @@ static int ssl_sock_init(struct connection *conn)
 		}
 
 		/* set connection pointer */
-		if (!SSL_set_app_data(conn->xprt_ctx, conn)) {
+		if (!SSL_set_ex_data(conn->xprt_ctx, ssl_app_data_index, conn)) {
 			SSL_free(conn->xprt_ctx);
 			conn->xprt_ctx = NULL;
 			if (may_retry--) {
@@ -5007,7 +5008,7 @@ static int ssl_sock_init(struct connection *conn)
 		}
 
 		/* set connection pointer */
-		if (!SSL_set_app_data(conn->xprt_ctx, conn)) {
+		if (!SSL_set_ex_data(conn->xprt_ctx, ssl_app_data_index, conn)) {
 			SSL_free(conn->xprt_ctx);
 			conn->xprt_ctx = NULL;
 			if (may_retry--) {
@@ -8805,7 +8806,8 @@ static void __ssl_sock_init(void)
 #if (OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	sctl_ex_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_sctl_free_func);
 #endif
-	ssl_capture_ptr_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_capture_free_func);
+	ssl_app_data_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+	ssl_capture_ptr_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_capture_free_func);
 	sample_register_fetches(&sample_fetch_keywords);
 	acl_register_keywords(&acl_kws);
 	bind_register_keywords(&bind_kws);

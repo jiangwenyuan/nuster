@@ -286,6 +286,63 @@ const char *hlua_get_top_error_string(lua_State *L)
 	return lua_tostring(L, -1);
 }
 
+__LJMP static const char *hlua_traceback(lua_State *L)
+{
+	lua_Debug ar;
+	int level = 0;
+	struct chunk *msg = get_trash_chunk();
+	int filled = 0;
+
+	while (lua_getstack(L, level++, &ar)) {
+
+		/* Add separator */
+		if (filled)
+			chunk_appendf(msg, ", ");
+		filled = 1;
+
+		/* Fill fields:
+		 * 'S': fills in the fields source, short_src, linedefined, lastlinedefined, and what;
+		 * 'l': fills in the field currentline;
+		 * 'n': fills in the field name and namewhat;
+		 * 't': fills in the field istailcall;
+		 */
+		lua_getinfo(L, "Slnt", &ar);
+
+		/* Append code localisation */
+		if (ar.currentline > 0)
+			chunk_appendf(msg, "%s:%d ", ar.short_src, ar.currentline);
+		else
+			chunk_appendf(msg, "%s ", ar.short_src);
+
+		/*
+		 * Get function name
+		 *
+		 * if namewhat is no empty, name is defined.
+		 * what contains "Lua" for Lua function, "C" for C function,
+		 * or "main" for main code.
+		 */
+		if (*ar.namewhat != '\0' && ar.name != NULL)  /* is there a name from code? */
+			chunk_appendf(msg, "%s '%s'", ar.namewhat, ar.name);  /* use it */
+
+		else if (*ar.what == 'm')  /* "main", the code is not executed in a function */
+			chunk_appendf(msg, "main chunk");
+
+		else if (*ar.what != 'C')  /* for Lua functions, use <file:line> */
+			chunk_appendf(msg, "C function line %d", ar.linedefined);
+
+		else  /* nothing left... */
+			chunk_appendf(msg, "?");
+
+
+		/* Display tailed call */
+		if (ar.istailcall)
+			chunk_appendf(msg, " ...");
+	}
+
+	return msg->str;
+}
+
+
 /* This function check the number of arguments available in the
  * stack. If the number of arguments available is not the same
  * then <nb> an error is throwed.
@@ -984,6 +1041,7 @@ static enum hlua_exec hlua_ctx_resume(struct hlua *lua, int yield_allowed)
 {
 	int ret;
 	const char *msg;
+	const char *trace;
 
 	/* Initialise run time counter. */
 	if (!HLUA_IS_RUNNING(lua))
@@ -1078,10 +1136,11 @@ resume_execution:
 		msg = lua_tostring(lua->T, -1);
 		lua_settop(lua->T, 0); /* Empty the stack. */
 		lua_pop(lua->T, 1);
+		trace = hlua_traceback(lua->T);
 		if (msg)
-			lua_pushfstring(lua->T, "runtime error: %s", msg);
+			lua_pushfstring(lua->T, "runtime error: %s from %s", msg, trace);
 		else
-			lua_pushfstring(lua->T, "unknown runtime error");
+			lua_pushfstring(lua->T, "unknown runtime error from %s", trace);
 		ret = HLUA_E_ERRMSG;
 		break;
 
@@ -1569,6 +1628,18 @@ static void hlua_socket_handler(struct appctx *appctx)
 	/* Wake the tasks which wants to read if the buffer contains data. */
 	if (!channel_is_empty(si_oc(si)))
 		notification_wake(&appctx->ctx.hlua_cosocket.wake_on_read);
+
+	/* Some data were injected in the buffer, notify the stream
+	 * interface.
+	 */
+	if (!channel_is_empty(si_ic(si)))
+		stream_int_update(si);
+
+	/* If write notifications are registered, we considers we want
+	 * to write, so we set the flag cant put
+	 */
+	if (notification_registered(&appctx->ctx.hlua_cosocket.wake_on_write))
+		si_applet_cant_put(si);
 }
 
 /* This function is called when the "struct stream" is destroyed.
@@ -1621,13 +1692,11 @@ __LJMP static int hlua_socket_gc(lua_State *L)
 /* The close function send shutdown signal and break the
  * links between the stream and the object.
  */
-__LJMP static int hlua_socket_close(lua_State *L)
+__LJMP static int hlua_socket_close_helper(lua_State *L)
 {
 	struct hlua_socket *socket;
 	struct appctx *appctx;
 	struct xref *peer;
-
-	MAY_LJMP(check_args(L, 1, "close"));
 
 	socket = MAY_LJMP(hlua_checksocket(L, 1));
 
@@ -1649,6 +1718,14 @@ __LJMP static int hlua_socket_close(lua_State *L)
 	/* Remove all reference between the Lua stack and the coroutine stream. */
 	xref_disconnect(&socket->xref, peer);
 	return 0;
+}
+
+/* The close function calls close_helper.
+ */
+__LJMP static int hlua_socket_close(lua_State *L)
+{
+	MAY_LJMP(check_args(L, 1, "close"));
+	return hlua_socket_close_helper(L);
 }
 
 /* This Lua function assumes that the stack contain three parameters.
@@ -1679,6 +1756,7 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 	struct stream_interface *si;
 	struct stream *s;
 	struct xref *peer;
+	int missing_bytes;
 
 	/* Check if this lua stack is schedulable. */
 	if (!hlua || !hlua->task)
@@ -1748,11 +1826,12 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 		if (nblk == 0) /* No data avalaible. */
 			goto connection_empty;
 
-		if (len1 > wanted) {
+		missing_bytes = wanted - socket->b.n;
+		if (len1 > missing_bytes) {
 			nblk = 1;
-			len1 = wanted;
-		} if (nblk == 2 && len1 + len2 > wanted)
-			len2 = wanted - len1;
+			len1 = missing_bytes;
+		} if (nblk == 2 && len1 + len2 > missing_bytes)
+			len2 = missing_bytes - len1;
 	}
 
 	len = len1;
@@ -1767,15 +1846,14 @@ __LJMP static int hlua_socket_receive_yield(struct lua_State *L, int status, lua
 	co_skip(oc, len + skip_at_end);
 
 	/* Don't wait anything. */
-	stream_int_notify(&s->si[0]);
-	stream_int_update_applet(&s->si[0]);
+	appctx_wakeup(appctx);
 
 	/* If the pattern reclaim to read all the data
 	 * in the connection, got out.
 	 */
 	if (wanted == HLSR_READ_ALL)
 		goto connection_empty;
-	else if (wanted >= 0 && len < wanted)
+	else if (wanted >= 0 && socket->b.n < wanted)
 		goto connection_empty;
 
 	/* Return result. */
@@ -1800,7 +1878,6 @@ no_peer:
 
 connection_empty:
 
-	appctx = objt_appctx(s->si[0].end);
 	if (!notification_new(&hlua->com, &appctx->ctx.hlua_cosocket.wake_on_read, hlua->task)) {
 		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "out of memory"));
@@ -1952,7 +2029,6 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	 * the request buffer if its not required.
 	 */
 	if (s->req.buf->size == 0) {
-		appctx = hlua->task->context;
 		if (!channel_alloc_buffer(&s->req, &appctx->buffer_wait))
 			goto hlua_socket_write_yield_return;
 	}
@@ -1960,18 +2036,13 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	/* Check for avalaible space. */
 	len = buffer_total_space(s->req.buf);
 	if (len <= 0) {
-		appctx = objt_appctx(s->si[0].end);
-		if (!notification_new(&hlua->com, &appctx->ctx.hlua_cosocket.wake_on_write, hlua->task)) {
-			xref_unlock(&socket->xref, peer);
-			WILL_LJMP(luaL_error(L, "out of memory"));
-		}
 		goto hlua_socket_write_yield_return;
 	}
 
 	/* send data */
 	if (len < send_len)
 		send_len = len;
-	len = ci_putblk(&s->req, buf+sent, send_len);
+	len = ci_putblk(&s->req, buf, send_len);
 
 	/* "Not enough space" (-1), "Buffer too little to contain
 	 * the data" (-2) are not expected because the available length
@@ -1982,7 +2053,7 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 		if (len == -1)
 			s->req.flags |= CF_WAKE_WRITE;
 
-		MAY_LJMP(hlua_socket_close(L));
+		MAY_LJMP(hlua_socket_close_helper(L));
 		lua_pop(L, 1);
 		lua_pushinteger(L, -1);
 		xref_unlock(&socket->xref, peer);
@@ -1990,8 +2061,7 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	}
 
 	/* update buffers. */
-	stream_int_notify(&s->si[0]);
-	stream_int_update_applet(&s->si[0]);
+	appctx_wakeup(appctx);
 
 	s->req.rex = TICK_ETERNITY;
 	s->res.wex = TICK_ETERNITY;
@@ -2007,6 +2077,10 @@ static int hlua_socket_write_yield(struct lua_State *L,int status, lua_KContext 
 	}
 
 hlua_socket_write_yield_return:
+	if (!notification_new(&hlua->com, &appctx->ctx.hlua_cosocket.wake_on_write, hlua->task)) {
+		xref_unlock(&socket->xref, peer);
+		WILL_LJMP(luaL_error(L, "out of memory"));
+	}
 	xref_unlock(&socket->xref, peer);
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_write_yield, TICK_ETERNITY, 0));
 	return 0;
@@ -2415,6 +2489,10 @@ __LJMP static int hlua_socket_connect(struct lua_State *L)
 		WILL_LJMP(luaL_error(L, "out of memory"));
 	}
 	xref_unlock(&socket->xref, peer);
+
+	task_wakeup(s->task, TASK_WOKEN_INIT);
+	/* Return yield waiting for connection. */
+
 	WILL_LJMP(hlua_yieldk(L, 0, 0, hlua_socket_connect_yield, TICK_ETERNITY, 0));
 
 	return 0;
@@ -2566,8 +2644,6 @@ __LJMP static int hlua_socket_new(lua_State *L)
 	strm->flags |= SF_DIRECT | SF_ASSIGNED | SF_ADDR_SET | SF_BE_ASSIGNED;
 	strm->target = &socket_tcp.obj_type;
 
-	task_wakeup(strm->task, TASK_WOKEN_INIT);
-	/* Return yield waiting for connection. */
 	return 1;
 
  out_fail_stream:
@@ -3181,7 +3257,7 @@ __LJMP static int hlua_run_sample_fetch(lua_State *L)
 {
 	struct hlua_smp *hsmp;
 	struct sample_fetch *f;
-	struct arg args[ARGM_NBARGS + 1];
+	struct arg args[ARGM_NBARGS + 1] = {{0}};
 	int i;
 	struct sample smp;
 
@@ -3295,7 +3371,7 @@ __LJMP static int hlua_run_sample_conv(lua_State *L)
 {
 	struct hlua_smp *hsmp;
 	struct sample_conv *conv;
-	struct arg args[ARGM_NBARGS + 1];
+	struct arg args[ARGM_NBARGS + 1] = {{0}};
 	int i;
 	struct sample smp;
 
@@ -5513,6 +5589,9 @@ static struct task *hlua_process_task(struct task *task)
 	struct hlua *hlua = task->context;
 	enum hlua_exec status;
 
+	if (task->thread_mask == MAX_THREADS_MASK)
+		task_set_affinity(task, tid_bit);
+
 	/* If it is the first call to the task, we must initialize the
 	 * execution timeouts.
 	 */
@@ -5528,12 +5607,12 @@ static struct task *hlua_process_task(struct task *task)
 		hlua_ctx_destroy(hlua);
 		task_delete(task);
 		task_free(task);
+		task = NULL;
 		break;
 
 	case HLUA_E_AGAIN: /* co process or timeout wake me later. */
 		notification_gc(&hlua->com);
-		if (hlua->wake_time != TICK_ETERNITY)
-			task->expire = hlua->wake_time;
+		task->expire = hlua->wake_time;
 		break;
 
 	/* finished with error. */
@@ -7927,8 +8006,12 @@ void hlua_init(void)
 	}
 
 	/* Initialize SSL server. */
-	if (socket_ssl.xprt->prepare_srv)
+	if (socket_ssl.xprt->prepare_srv) {
+		int saved_used_backed = global.ssl_used_backend;
+		// don't affect maxconn automatic computation
 		socket_ssl.xprt->prepare_srv(&socket_ssl);
+		global.ssl_used_backend = saved_used_backed;
+	}
 #endif
 
 	RESET_SAFE_LJMP(gL.T);

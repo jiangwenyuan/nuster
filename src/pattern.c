@@ -1815,12 +1815,14 @@ int pat_ref_set(struct pat_ref *ref, const char *key, const char *value, char **
 	list_for_each_entry(elt, &ref->head, list) {
 		if (strcmp(key, elt->pattern) == 0) {
 			if (!pat_ref_set_elt(ref, elt, value, merr)) {
-				if (!found)
-					*err = *merr;
-				else {
-					memprintf(err, "%s, %s", *err, *merr);
-					free(*merr);
-					*merr = NULL;
+				if (err && merr) {
+					if (!found) {
+						*err = *merr;
+					} else {
+						memprintf(err, "%s, %s", *err, *merr);
+						free(*merr);
+						*merr = NULL;
+					}
 				}
 			}
 			found = 1;
@@ -1906,7 +1908,7 @@ struct pat_ref *pat_ref_newid(int unique_id, const char *display, unsigned int f
 	ref->unique_id = unique_id;
 	LIST_INIT(&ref->head);
 	LIST_INIT(&ref->pat);
-
+	HA_SPIN_INIT(&ref->lock);
 	LIST_ADDQ(&pattern_reference, &ref->list);
 
 	return ref;
