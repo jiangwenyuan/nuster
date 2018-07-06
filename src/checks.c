@@ -243,7 +243,7 @@ static void set_server_check_status(struct check *check, short status, const cha
 		 */
 		if ((!(check->state & CHK_ST_AGENT) ||
 		    (check->status >= HCHK_STATUS_L57DATA)) &&
-		    (check->health >= check->rise)) {
+		    (check->health > 0)) {
 			HA_ATOMIC_ADD(&s->counters.failed_checks, 1);
 			report = 1;
 			check->health--;
@@ -1618,7 +1618,7 @@ void block_sigchld(void)
 	sigset_t set;
 	sigemptyset(&set);
 	sigaddset(&set, SIGCHLD);
-	assert(sigprocmask(SIG_BLOCK, &set, NULL) == 0);
+	assert(ha_sigmask(SIG_BLOCK, &set, NULL) == 0);
 }
 
 void unblock_sigchld(void)
@@ -1626,7 +1626,7 @@ void unblock_sigchld(void)
 	sigset_t set;
 	sigemptyset(&set);
 	sigaddset(&set, SIGCHLD);
-	assert(sigprocmask(SIG_UNBLOCK, &set, NULL) == 0);
+	assert(ha_sigmask(SIG_UNBLOCK, &set, NULL) == 0);
 }
 
 static struct pid_list *pid_list_add(pid_t pid, struct task *t)

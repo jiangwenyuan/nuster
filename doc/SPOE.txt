@@ -588,7 +588,12 @@ actions.
     KV-NAME          : <STRING>
     KV-VALUE         : <TYPED-DATA>
 
-    FLAGS :   0   1      2-31
+    FLAGS :
+
+    Flags are a 32 bits field. They are encoded on 4 bytes in network byte
+    order, where the bit 0 is the LSB.
+
+              0   1      2-31
             +---+---+----------+
             |   | A |          |
             | F | B |          |
@@ -999,7 +1004,7 @@ Here is the list of supported actions:
 
   * set-var    set the value for an existing variable. 3 arguments must be
                attached to this action: the variable scope (proc, sess, txn,
-               req or req), the variable name (a string) and its value.
+               req or res), the variable name (a string) and its value.
 
     ACTION-SET-VAR  : <SET-VAR:1 byte><NB-ARGS:1 byte><VAR-SCOPE:1 byte><VAR-NAME><VAR-VALUE>
 
@@ -1017,7 +1022,7 @@ Here is the list of supported actions:
 
   * unset-var    unset the value for an existing variable. 2 arguments must be
                  attached to this action: the variable scope (proc, sess, txn,
-                 req or req) and the variable name (a string).
+                 req or res) and the variable name (a string).
 
     ACTION-UNSET-VAR  : <UNSET-VAR:1 byte><NB-ARGS:1 byte><VAR-SCOPE:1 byte><VAR-NAME>
 

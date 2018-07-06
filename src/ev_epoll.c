@@ -59,13 +59,51 @@ REGPRM1 static void __fd_clo(int fd)
 	}
 }
 
+static void _update_fd(int fd)
+{
+	int en, opcode;
+
+	en = fdtab[fd].state;
+
+	if (fdtab[fd].polled_mask & tid_bit) {
+		if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
+			/* fd removed from poll list */
+			opcode = EPOLL_CTL_DEL;
+			HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
+		}
+		else {
+			/* fd status changed */
+			opcode = EPOLL_CTL_MOD;
+		}
+	}
+	else if ((fdtab[fd].thread_mask & tid_bit) && (en & FD_EV_POLLED_RW)) {
+		/* new fd in the poll list */
+		opcode = EPOLL_CTL_ADD;
+		HA_ATOMIC_OR(&fdtab[fd].polled_mask, tid_bit);
+	}
+	else {
+		return;
+	}
+
+	/* construct the epoll events based on new state */
+	ev.events = 0;
+	if (en & FD_EV_POLLED_R)
+		ev.events |= EPOLLIN | EPOLLRDHUP;
+
+	if (en & FD_EV_POLLED_W)
+		ev.events |= EPOLLOUT;
+
+	ev.data.fd = fd;
+	epoll_ctl(epoll_fd[tid], opcode, fd, &ev);
+}
+
 /*
  * Linux epoll() poller
  */
 REGPRM2 static void _do_poll(struct poller *p, int exp)
 {
 	int status, eo, en;
-	int fd, opcode;
+	int fd;
 	int count;
 	int updt_idx;
 	int wait_time;
@@ -89,39 +127,31 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 		en = fd_compute_new_polled_status(eo);
 		fdtab[fd].state = en;
 		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
-
-		if (fdtab[fd].polled_mask & tid_bit) {
-			if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
-				/* fd removed from poll list */
-				opcode = EPOLL_CTL_DEL;
-				HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
-			}
-			else {
-				/* fd status changed */
-				opcode = EPOLL_CTL_MOD;
-			}
-		}
-		else if ((fdtab[fd].thread_mask & tid_bit) && (en & FD_EV_POLLED_RW)) {
-			/* new fd in the poll list */
-			opcode = EPOLL_CTL_ADD;
-			HA_ATOMIC_OR(&fdtab[fd].polled_mask, tid_bit);
-		}
-		else {
-			continue;
-		}
-
-		/* construct the epoll events based on new state */
-		ev.events = 0;
-		if (en & FD_EV_POLLED_R)
-			ev.events |= EPOLLIN | EPOLLRDHUP;
-
-		if (en & FD_EV_POLLED_W)
-			ev.events |= EPOLLOUT;
-
-		ev.data.fd = fd;
-		epoll_ctl(epoll_fd[tid], opcode, fd, &ev);
+		_update_fd(fd);
 	}
 	fd_nbupdt = 0;
+	/* Scan the global update list */
+	HA_SPIN_LOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+	for (fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
+		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+		if (fdtab[fd].update_mask & tid_bit)
+			done_update_polling(fd);
+		else {
+			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+			continue;
+		}
+		fdtab[fd].new = 0;
+
+		eo = fdtab[fd].state;
+		en = fd_compute_new_polled_status(eo);
+		fdtab[fd].state = en;
+
+		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		if (!fdtab[fd].owner)
+			continue;
+		_update_fd(fd);
+	}
+	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
 
 	/* compute the epoll_wait() timeout */
 	if (!exp)
@@ -208,8 +238,10 @@ static int init_epoll_per_thread()
 	 * fd for this thread. Let's just mark them as updated, the poller will
 	 * do the rest.
 	 */
-	for (fd = 0; fd < maxfd; fd++)
+	for (fd = 0; fd < maxfd; fd++) {
+		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
 		updt_fd_polling(fd);
+	}
 
 	return 1;
  fail_fd:
