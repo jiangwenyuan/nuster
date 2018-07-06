@@ -1,5 +1,21 @@
 # Nuster Changelog
 
+## 2.0.0.18 - 2018-07-06
+
+Add NoSQL mode.
+
+NuSTER can be used as a RESTful NoSQL cache server, using HTTP `POST/GET/DELETE` to set/get/delete Key/Value object.
+
+It can be used as an internal NoSQL cache sits between your application and database like Memcached or Redis as well as a user facing NoSQL cache that sits between end user and your application.
+It supports headers, cookies, so you can store per-user data to same endpoint.
+
+* All features from HAProxy(HTTPS, HTTP/2, ACL, etc)
+* Conditional cache
+* Internal KV cache
+* User facing RESTful cache
+* Support any kind of data
+* Support all programming languages as long as HTTP is supported
+
 ## 1.1.1.18 - 2018-07-06
 
 Merge HAProxy v1.8.12
