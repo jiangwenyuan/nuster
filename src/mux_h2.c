@@ -2328,14 +2328,6 @@ static int h2_wake(struct connection *conn)
 			h2_release(conn);
 			return -1;
 		}
-		else {
-			/* some streams still there, we need to signal them all and
-			 * wait for their departure.
-			 */
-			__conn_xprt_stop_recv(conn);
-			__conn_xprt_stop_send(conn);
-			return 0;
-		}
 	}
 
 	if (!h2c->dbuf->i)
@@ -2351,6 +2343,7 @@ static int h2_wake(struct connection *conn)
 
 	/* adjust output polling */
 	if (!(conn->flags & CO_FL_SOCK_WR_SH) &&
+	    h2c->st0 != H2_CS_ERROR2 && !(h2c->flags & H2_CF_GOAWAY_FAILED) &&
 	    (h2c->st0 == H2_CS_ERROR ||
 	     h2c->mbuf->o ||
 	     (h2c->mws > 0 && !LIST_ISEMPTY(&h2c->fctl_list)) ||
@@ -2512,6 +2505,7 @@ static void h2_detach(struct conn_stream *cs)
 	 * an ES or RST frame), so orphan it in this case.
 	 */
 	if (!(cs->conn->flags & CO_FL_ERROR) &&
+	    (h2c->st0 < H2_CS_ERROR) &&
 	    (h2s->flags & (H2_SF_BLK_MBUSY | H2_SF_BLK_MROOM | H2_SF_BLK_MFCTL)))
 		return;
 
