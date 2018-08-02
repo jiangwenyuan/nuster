@@ -17,6 +17,7 @@
 #include <common/config.h>
 #include <common/debug.h>
 #include <common/epoll.h>
+#include <common/hathreads.h>
 #include <common/standard.h>
 #include <common/ticks.h>
 #include <common/time.h>
@@ -153,6 +154,8 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	}
 	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
 
+	thread_harmless_now();
+
 	/* compute the epoll_wait() timeout */
 	if (!exp)
 		wait_time = MAX_DELAY_MS;
@@ -172,6 +175,8 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	status = epoll_wait(epoll_fd[tid], epoll_events, global.tune.maxpollevents, wait_time);
 	tv_update_date(wait_time, status);
 	measure_idle();
+
+	thread_harmless_end();
 
 	/* process polled events */
 

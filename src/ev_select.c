@@ -16,6 +16,7 @@
 
 #include <common/compat.h>
 #include <common/config.h>
+#include <common/hathreads.h>
 #include <common/ticks.h>
 #include <common/time.h>
 
@@ -123,6 +124,9 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 
 	}
 	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+
+	thread_harmless_now();
+
 	fd_nbupdt = 0;
 
 	/* let's restore fdset state */
@@ -170,6 +174,8 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 
 	tv_update_date(delta_ms, status);
 	measure_idle();
+
+	thread_harmless_end();
 
 	if (status <= 0)
 		return;
