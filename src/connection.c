@@ -1066,12 +1066,6 @@ int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connec
 		ret += make_tlv(&buf[ret], (buf_len - ret), PP2_TYPE_ALPN, value_len, value);
 	}
 
-	if (conn_get_alpn(remote, &value, &value_len)) {
-		if ((buf_len - ret) < sizeof(struct tlv))
-			return 0;
-		ret += make_tlv(&buf[ret], (buf_len - ret), PP2_TYPE_ALPN, value_len, value);
-	}
-
 #ifdef USE_OPENSSL
 	if (srv->pp_opts & SRV_PP_V2_SSL) {
 		struct tlv_ssl *tlv;
