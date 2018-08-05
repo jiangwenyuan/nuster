@@ -1,5 +1,5 @@
 /*
- * Cache manager functions.
+ * nuster cache manager functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
