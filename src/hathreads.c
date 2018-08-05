@@ -11,6 +11,7 @@
  */
 
 #include <unistd.h>
+#include <stdlib.h>
 #include <fcntl.h>
 
 #include <common/cfgparse.h>
@@ -31,17 +32,17 @@ void thread_sync_io_handler(int fd)
 static HA_SPINLOCK_T sync_lock;
 static int           threads_sync_pipe[2];
 static unsigned long threads_want_sync = 0;
-unsigned long all_threads_mask  = 0;
+volatile unsigned long all_threads_mask  = 1; // nbthread 1 assumed by default
 
 #if defined(DEBUG_THREAD) || defined(DEBUG_FULL)
 struct lock_stat lock_stats[LOCK_LABELS];
 #endif
 
-/* Initializes the sync point. It creates a pipe used by threads to wakup all
- * others when a sync is requested. It also initialize the mask of all create
+/* Initializes the sync point. It creates a pipe used by threads to wake up all
+ * others when a sync is requested. It also initializes the mask of all created
  * threads. It returns 0 on success and -1 if an error occurred.
  */
-int thread_sync_init(unsigned long mask)
+int thread_sync_init()
 {
 	int rfd;
 
@@ -54,8 +55,6 @@ int thread_sync_init(unsigned long mask)
 	fdtab[rfd].owner = thread_sync_io_handler;
 	fdtab[rfd].iocb = thread_sync_io_handler;
 	fd_insert(rfd, MAX_THREADS_MASK);
-
-	all_threads_mask = mask;
 	return 0;
 }
 
@@ -109,8 +108,20 @@ static inline void thread_sync_barrier(volatile unsigned long *barrier)
 
 	HA_ATOMIC_CAS(barrier, &old, 0);
 	HA_ATOMIC_OR(barrier, tid_bit);
-	while (*barrier != all_threads_mask)
+
+	/* Note below: we need to wait for all threads to join here, but in
+	 * case several threads are scheduled on the same CPU, busy polling
+	 * will instead degrade the performance, forcing other threads to
+	 * wait longer (typically in epoll_wait()). Let's use sched_yield()
+	 * when available instead.
+	 */
+	while ((*barrier & all_threads_mask) != all_threads_mask) {
+#if _POSIX_PRIORITY_SCHEDULING
+		sched_yield();
+#else
 		pl_cpu_relax();
+#endif
+	}
 }
 
 /* Enter into the sync point and lock it if the current thread has requested a
@@ -162,4 +173,38 @@ static void __hathreads_init(void)
 	hap_register_build_opts("Built with multi-threading support.", 0);
 }
 
+#endif // USE_THREAD
+
+
+/* Parse the number of threads in argument <arg>, returns it and adjusts a few
+ * internal variables accordingly, or fails and returns zero with an error
+ * reason in <errmsg>. May be called multiple times while parsing.
+ */
+int parse_nbthread(const char *arg, char **err)
+{
+	long nbthread;
+	char *errptr;
+
+	nbthread = strtol(arg, &errptr, 10);
+	if (!*arg || *errptr) {
+		memprintf(err, "passed a missing or unparsable integer value in '%s'", arg);
+		return 0;
+	}
+
+#ifndef USE_THREAD
+	if (nbthread != 1) {
+		memprintf(err, "specified with a value other than 1 while HAProxy is not compiled with threads support. Please check build options for USE_THREAD");
+		return 0;
+	}
+#else
+	if (nbthread < 1 || nbthread > MAX_THREADS) {
+		memprintf(err, "value must be between 1 and %d (was %ld)", MAX_THREADS, nbthread);
+		return 0;
+	}
+
+	/* we proceed like this to be sure never to overflow the left shift */
+	all_threads_mask = 1UL << (nbthread - 1);
+	all_threads_mask |= all_threads_mask - 1;
 #endif
+	return nbthread;
+}

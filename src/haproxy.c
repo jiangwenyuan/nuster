@@ -3039,7 +3039,7 @@ int main(int argc, char **argv)
 		int          i;
 		sigset_t     blocked_sig, old_sig;
 
-		THREAD_SYNC_INIT((1UL << global.nbthread) - 1);
+		THREAD_SYNC_INIT();
 
 		/* Init tids array */
 		for (i = 0; i < global.nbthread; i++)

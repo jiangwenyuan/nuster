@@ -1,6 +1,36 @@
 ChangeLog :
 ===========
 
+2018/07/30 : 1.8.13
+    - MINOR: systemd: consider exit status 143 as successful
+    - BUG/MINOR: ssl: properly ref-count the tls_keys entries
+    - MINOR: mux: add a "show_fd" function to dump debugging information for "show fd"
+    - MINOR: h2: implement a basic "show_fd" function
+    - BUG/MINOR: h2: remove accidental debug code introduced with show_fd function
+    - MINOR: h2: keep a count of the number of conn_streams attached to the mux
+    - MINOR: h2: add the mux and demux buffer lengths on "show fd"
+    - BUG/MEDIUM: h2: don't accept new streams if conn_streams are still in excess
+    - BUG/MEDIUM: h2: never leave pending data in the output buffer on close
+    - BUG/MEDIUM: h2: make sure the last stream closes the connection after a timeout
+    - BUG/MINOR: http: Set brackets for the unlikely macro at the right place
+    - BUILD: Generate sha256 checksums in publish-release
+    - MINOR: debug: Add check for CO_FL_WILL_UPDATE
+    - MINOR: debug: Add checks for conn_stream flags
+    - BUG/MEDIUM: threads: Fix the exit condition of the thread barrier
+    - MINOR: h2: add the error code and the max/last stream IDs to "show fd"
+    - BUG/MEDIUM: stream-int: don't immediately enable reading when the buffer was reportedly full
+    - BUG/MEDIUM: stats: don't ask for more data as long as we're responding
+    - BUG/MINOR: servers: Don't make "server" in a frontend fatal.
+    - BUG/MEDIUM: threads/sync: use sched_yield when available
+    - BUG/MEDIUM: h2: prevent orphaned streams from blocking a connection forever
+    - BUG/MINOR: config: stick-table is not supported in defaults section
+    - BUG/MINOR: threads: Handle nbthread == MAX_THREADS.
+    - BUG/MEDIUM: threads: properly fix nbthreads == MAX_THREADS
+    - MINOR: threads: move "nbthread" parsing to hathreads.c
+    - BUG/MEDIUM: threads: unbreak "bind" referencing an incorrect thread number
+    - MEDIUM: proxy_protocol: Convert IPs to v6 when protocols are mixed
+    - SCRIPTS: git-show-backports: add missing quotes to "echo"
+
 2018/06/27 : 1.8.12
     - BUG/MAJOR: stick_table: Complete incomplete SEGV fix
     - MINOR: stick-tables: make stktable_release() do nothing on NULL
