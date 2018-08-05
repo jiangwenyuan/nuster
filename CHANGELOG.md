@@ -1,4 +1,8 @@
-# Nuster Changelog
+# NuSTER Changelog
+
+## 2.0.1.18 - 2018-08-05
+
+Upgrade HAProxy to v1.8.13
 
 ## 2.0.0.18 - 2018-07-06
 
