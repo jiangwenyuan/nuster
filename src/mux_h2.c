@@ -54,11 +54,12 @@ static struct pool_head *pool_head_h2s;
 #define H2_CF_DEM_MROOM         0x00000020  // demux blocked on lack of room in mux buffer
 #define H2_CF_DEM_SALLOC        0x00000040  // demux blocked on lack of stream's request buffer
 #define H2_CF_DEM_SFULL         0x00000080  // demux blocked on stream request buffer full
-#define H2_CF_DEM_BLOCK_ANY     0x000000F0  // aggregate of the demux flags above except DALLOC/DFULL
+#define H2_CF_DEM_TOOMANY       0x00000100  // demux blocked waiting for some conn_streams to leave
+#define H2_CF_DEM_BLOCK_ANY     0x000001F0  // aggregate of the demux flags above except DALLOC/DFULL
 
 /* other flags */
-#define H2_CF_GOAWAY_SENT       0x00000100  // a GOAWAY frame was successfully sent
-#define H2_CF_GOAWAY_FAILED     0x00000200  // a GOAWAY frame failed to be sent
+#define H2_CF_GOAWAY_SENT       0x00001000  // a GOAWAY frame was successfully sent
+#define H2_CF_GOAWAY_FAILED     0x00002000  // a GOAWAY frame failed to be sent
 
 
 /* H2 connection state, in h2c->st0 */
@@ -113,7 +114,7 @@ struct h2c {
 	int timeout;        /* idle timeout duration in ticks */
 	int shut_timeout;   /* idle timeout duration in ticks after GOAWAY was sent */
 	unsigned int nb_streams;  /* number of streams in the tree */
-	/* 32 bit hole here */
+	unsigned int nb_cs;       /* number of attached conn_streams */
 	struct task *task;  /* timeout management task */
 	struct eb_root streams_by_id; /* all active streams by their ID */
 	struct list send_list; /* list of blocked streams requesting to send */
@@ -250,6 +251,12 @@ static inline int h2_recv_allowed(const struct h2c *h2c)
 		return 1;
 
 	return 0;
+}
+
+/* returns true if the connection has too many conn_streams attached */
+static inline int h2_has_too_many_cs(const struct h2c *h2c)
+{
+	return h2c->nb_cs >= h2_settings_max_concurrent_streams;
 }
 
 /* re-enables receiving on mux <target> after a buffer was allocated. It returns
@@ -402,6 +409,7 @@ static int h2c_frt_init(struct connection *conn)
 	h2c->rcvd_c = 0;
 	h2c->rcvd_s = 0;
 	h2c->nb_streams = 0;
+	h2c->nb_cs = 0;
 
 	h2c->dbuf = &buf_empty;
 	h2c->dsi = -1;
@@ -685,14 +693,18 @@ static struct h2s *h2c_stream_new(struct h2c *h2c, int id)
 
 	h2s->cs = cs;
 	cs->ctx = h2s;
+	h2c->nb_cs++;
 
 	if (stream_create_from_cs(cs) < 0)
 		goto out_free_cs;
 
 	/* OK done, the stream lives its own life now */
+	if (h2_has_too_many_cs(h2c))
+		h2c->flags |= H2_CF_DEM_TOOMANY;
 	return h2s;
 
  out_free_cs:
+	h2c->nb_cs--;
 	cs_free(cs);
  out_close:
 	h2s_destroy(h2s);
@@ -1595,6 +1607,9 @@ static int h2c_frt_handle_headers(struct h2c *h2c, struct h2s *h2s)
 	if (h2c->dbuf->i < h2c->dfl && h2c->dbuf->i < h2c->dbuf->size)
 		return 0; // incomplete frame
 
+	if (h2c->flags & H2_CF_DEM_TOOMANY)
+		return 0; // too many cs still present
+
 	/* now either the frame is complete or the buffer is complete */
 	if (h2s->st != H2_SS_IDLE) {
 		/* FIXME: stream already exists, this is only allowed for
@@ -2313,14 +2328,6 @@ static int h2_wake(struct connection *conn)
 			h2_release(conn);
 			return -1;
 		}
-		else {
-			/* some streams still there, we need to signal them all and
-			 * wait for their departure.
-			 */
-			__conn_xprt_stop_recv(conn);
-			__conn_xprt_stop_send(conn);
-			return 0;
-		}
 	}
 
 	if (!h2c->dbuf->i)
@@ -2336,6 +2343,7 @@ static int h2_wake(struct connection *conn)
 
 	/* adjust output polling */
 	if (!(conn->flags & CO_FL_SOCK_WR_SH) &&
+	    h2c->st0 != H2_CS_ERROR2 && !(h2c->flags & H2_CF_GOAWAY_FAILED) &&
 	    (h2c->st0 == H2_CS_ERROR ||
 	     h2c->mbuf->o ||
 	     (h2c->mws > 0 && !LIST_ISEMPTY(&h2c->fctl_list)) ||
@@ -2483,11 +2491,21 @@ static void h2_detach(struct conn_stream *cs)
 
 	h2c = h2s->h2c;
 	h2s->cs = NULL;
+	h2c->nb_cs--;
+	if (h2c->flags & H2_CF_DEM_TOOMANY &&
+	    !h2_has_too_many_cs(h2c)) {
+		h2c->flags &= ~H2_CF_DEM_TOOMANY;
+		if (h2_recv_allowed(h2c)) {
+			__conn_xprt_want_recv(h2c->conn);
+			conn_xprt_want_send(h2c->conn);
+		}
+	}
 
 	/* this stream may be blocked waiting for some data to leave (possibly
 	 * an ES or RST frame), so orphan it in this case.
 	 */
 	if (!(cs->conn->flags & CO_FL_ERROR) &&
+	    (h2c->st0 < H2_CS_ERROR) &&
 	    (h2s->flags & (H2_SF_BLK_MBUSY | H2_SF_BLK_MROOM | H2_SF_BLK_MFCTL)))
 		return;
 
@@ -2511,6 +2529,7 @@ static void h2_detach(struct conn_stream *cs)
 	 */
 	if (eb_is_empty(&h2c->streams_by_id) &&     /* don't close if streams exist */
 	    ((h2c->conn->flags & CO_FL_ERROR) ||    /* errors close immediately */
+	     (h2c->st0 >= H2_CS_ERROR && !h2c->task) || /* a timeout stroke earlier */
 	     (h2c->flags & H2_CF_GOAWAY_FAILED) ||
 	     (!h2c->mbuf->o &&  /* mux buffer empty, also process clean events below */
 	      (conn_xprt_read0_pending(h2c->conn) ||
@@ -3322,6 +3341,14 @@ static int h2s_frt_make_resp_data(struct h2s *h2s, struct buffer *buf)
 	/* we may need to add END_STREAM */
 	/* FIXME: we should also detect shutdown(w) below, but how ? Maybe we
 	 * could rely on the MSG_MORE flag as a hint for this ?
+	 *
+	 * FIXME: what we do here is not correct because we send end_stream
+	 * before knowing if we'll have to send a HEADERS frame for the
+	 * trailers. More importantly we're not consuming the trailing CRLF
+	 * after the end of trailers, so it will be left to the caller to
+	 * eat it. The right way to do it would be to measure trailers here
+	 * and to send ES only if there are no trailers.
+	 *
 	 */
 	if (((h1m->flags & H1_MF_CLEN) && !(h1m->curr_len - size)) ||
 	    !h1m->curr_len || h1m->state >= HTTP_MSG_DONE)
@@ -3424,6 +3451,13 @@ static int h2_snd_buf(struct conn_stream *cs, struct buffer *buf, int flags)
 		}
 	}
 
+	if (h2s->st >= H2_SS_ERROR) {
+		/* trim any possibly pending data after we close (extra CR-LF,
+		 * unprocessed trailers, abnormal extra data, ...)
+		 */
+		bo_del(buf, buf->o);
+	}
+
 	/* RST are sent similarly to frame acks */
 	if (h2s->st == H2_SS_ERROR || h2s->flags & H2_SF_RST_RCVD) {
 		cs->flags |= CS_FL_ERROR;
@@ -3446,6 +3480,41 @@ static int h2_snd_buf(struct conn_stream *cs, struct buffer *buf, int flags)
 	return total;
 }
 
+/* for debugging with CLI's "show fd" command */
+static void h2_show_fd(struct chunk *msg, struct connection *conn)
+{
+	struct h2c *h2c = conn->mux_ctx;
+	struct h2s *h2s;
+	struct eb32_node *node;
+	int fctl_cnt = 0;
+	int send_cnt = 0;
+	int tree_cnt = 0;
+	int orph_cnt = 0;
+
+	if (!h2c)
+		return;
+
+	list_for_each_entry(h2s, &h2c->fctl_list, list)
+		fctl_cnt++;
+
+	list_for_each_entry(h2s, &h2c->send_list, list)
+		send_cnt++;
+
+	node = eb32_first(&h2c->streams_by_id);
+	while (node) {
+		h2s = container_of(node, struct h2s, by_id);
+		tree_cnt++;
+		if (!h2s->cs)
+			orph_cnt++;
+		node = eb32_next(node);
+	}
+
+	chunk_appendf(msg, " st0=%d err=%d maxid=%d lastid=%d flg=0x%08x nbst=%u nbcs=%u"
+		      " fctl_cnt=%d send_cnt=%d tree_cnt=%d orph_cnt=%d dbuf=%u/%u mbuf=%u/%u",
+		      h2c->st0, h2c->errcode, h2c->max_id, h2c->last_sid, h2c->flags,
+		      h2c->nb_streams, h2c->nb_cs, fctl_cnt, send_cnt, tree_cnt, orph_cnt,
+		      h2c->dbuf->i, h2c->dbuf->size, h2c->mbuf->o, h2c->mbuf->size);
+}
 
 /*******************************************************/
 /* functions below are dedicated to the config parsers */
@@ -3517,6 +3586,7 @@ const struct mux_ops h2_ops = {
 	.detach = h2_detach,
 	.shutr = h2_shutr,
 	.shutw = h2_shutw,
+	.show_fd = h2_show_fd,
 	.flags = MX_FL_CLEAN_ABRT,
 	.name = "H2",
 };

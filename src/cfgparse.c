@@ -85,7 +85,6 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 
-#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
@@ -1155,18 +1154,10 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
-		global.nbthread = atol(args[1]);
-#ifndef USE_THREAD
-		if (global.nbthread > 1) {
-			ha_alert("HAProxy is not compiled with threads support, please check build options for USE_THREAD.\n");
-			global.nbthread = 1;
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-#endif
-		if (global.nbthread < 1 || global.nbthread > MAX_THREADS) {
-			ha_alert("parsing [%s:%d] : '%s' must be between 1 and %d (was %d).\n",
-				 file, linenum, args[0], MAX_THREADS, global.nbthread);
+		global.nbthread = parse_nbthread(args[1], &errmsg);
+		if (!global.nbthread) {
+			ha_alert("parsing [%s:%d] : '%s' %s.\n",
+				 file, linenum, args[0], errmsg);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -3378,6 +3369,20 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		free(curproxy->dyncookie_key);
 		curproxy->dyncookie_key = strdup(args[1]);
 	}
+	else if (!strcmp(args[0], "dynamic-cookie-key")) { /* Dynamic cookies secret key */
+
+		if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
+			err_code |= ERR_WARN;
+
+		if (*(args[1]) == 0) {
+			ha_alert("parsing [%s:%d] : '%s' expects <secret_key> as argument.\n",
+				 file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		free(curproxy->dyncookie_key);
+		curproxy->dyncookie_key = strdup(args[1]);
+	}
 	else if (!strcmp(args[0], "cookie")) {  /* cookie name */
 		int cur_arg;
 
@@ -4111,6 +4116,13 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 	else if (!strcmp(args[0], "stick-table")) {
 		int myidx = 1;
 		struct proxy *other;
+
+		if (curproxy == &defproxy) {
+			ha_alert("parsing [%s:%d] : 'stick-table' is not supported in 'defaults' section.\n",
+				 file, linenum);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
 
 		other = proxy_tbl_by_name(curproxy->id);
 		if (other) {
@@ -7674,6 +7686,29 @@ int check_config_validity()
 			} /* HTTP && bufsize < 16384 */
 #endif
 
+			/* detect and address thread affinity inconsistencies */
+			nbproc = 0;
+			if (bind_conf->bind_proc)
+				nbproc = my_ffsl(bind_conf->bind_proc);
+
+			mask = bind_conf->bind_thread[nbproc - 1];
+			if (mask && !(mask & (all_threads_mask ? all_threads_mask : 1UL))) {
+				unsigned long new_mask = 0;
+
+				while (mask) {
+					new_mask |= mask & (all_threads_mask ? all_threads_mask : 1UL);
+					mask >>= global.nbthread;
+				}
+
+				for (nbproc = 0; nbproc < LONGBITS; nbproc++) {
+					if (!bind_conf->bind_proc || (bind_conf->bind_proc & (1UL << nbproc)))
+						bind_conf->bind_thread[nbproc] = new_mask;
+				}
+				ha_warning("Proxy '%s': the thread range specified on the 'process' directive of 'bind %s' at [%s:%d] only refers to thread numbers out of the range defined by the global 'nbthread' directive. The thread numbers were remapped to existing threads instead (mask 0x%lx).\n",
+					   curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line, new_mask);
+			}
+
+			/* detect process and nbproc affinity inconsistencies */
 			if (!bind_conf->bind_proc)
 				continue;
 

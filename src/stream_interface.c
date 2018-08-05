@@ -720,7 +720,7 @@ void stream_int_update(struct stream_interface *si)
 				ic->rex = TICK_ETERNITY;
 			}
 		}
-		else {
+		else if (!(si->flags & SI_FL_WAIT_ROOM) || !ic->buf->o) {
 			/* (re)start reading and update timeout. Note: we don't recompute the timeout
 			 * everytime we get here, otherwise it would risk never to expire. We only
 			 * update it if is was not yet set. The stream socket handler will already
