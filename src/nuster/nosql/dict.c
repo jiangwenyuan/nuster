@@ -1,5 +1,5 @@
 /*
- * Nuster nosql dict functions.
+ * nuster nosql dict functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *

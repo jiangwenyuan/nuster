@@ -1,5 +1,5 @@
 /*
- * Cache parser related variables and functions.
+ * nuster parser related variables and functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *

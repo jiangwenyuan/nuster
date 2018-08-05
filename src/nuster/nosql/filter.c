@@ -1,5 +1,5 @@
 /*
- * Nuster nosql filter related variables and functions.
+ * nuster nosql filter related variables and functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *

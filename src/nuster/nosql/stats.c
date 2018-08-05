@@ -1,5 +1,5 @@
 /*
- * Nosql stats functions.
+ * nuster nosql stats functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *

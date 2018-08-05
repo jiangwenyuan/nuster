@@ -1,5 +1,5 @@
 /*
- * Cache stats functions.
+ * nuster cache stats functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *

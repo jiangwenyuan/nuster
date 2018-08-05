@@ -1,5 +1,5 @@
 /*
- * Cache filter related variables and functions.
+ * nuster cache filter related variables and functions.
  *
  * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
  *
