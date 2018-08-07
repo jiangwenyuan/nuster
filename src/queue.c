@@ -117,7 +117,10 @@ static int pendconn_process_next_strm(struct server *srv, struct proxy *px)
 	}
 
   ps_found:
-	if (srv_currently_usable(rsrv) && px->nbpend) {
+	if (srv_currently_usable(rsrv) && px->nbpend &&
+	    (!(srv->flags & SRV_F_BACKUP) ||
+	     (!px->srv_act &&
+	      (srv == px->lbprm.fbck || (px->options & PR_O_USE_ALL_BK))))) {
 		struct pendconn *pp;
 
 		list_for_each_entry(pp, &px->pendconns, list) {
@@ -285,6 +288,15 @@ int pendconn_grab_from_px(struct server *s)
 	int remote = 0;
 
 	if (!srv_currently_usable(s))
+		return 0;
+
+	/* if this is a backup server and there are active servers or at
+	 * least another backup server was elected, then this one must
+	 * not dequeue requests from the proxy.
+	 */
+	if ((s->flags & SRV_F_BACKUP) &&
+	    (s->proxy->srv_act ||
+	     ((s != s->proxy->lbprm.fbck) && !(s->proxy->options & PR_O_USE_ALL_BK))))
 		return 0;
 
 	HA_SPIN_LOCK(PROXY_LOCK, &s->proxy->lock);
