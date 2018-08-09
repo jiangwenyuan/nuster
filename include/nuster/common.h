@@ -41,6 +41,8 @@
 #include <common/mini-clist.h>
 #include <types/acl.h>
 
+#define NST_DEFAULT_TTL         3600
+
 enum {
     NUSTER_STATUS_UNDEFINED = -1,
     NUSTER_STATUS_OFF       =  0,

@@ -598,7 +598,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     }
     rule->code = _nuster_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
     rule->ttl  = malloc(sizeof(*rule->ttl));
-    *rule->ttl = ttl == -1 ? NST_CACHE_DEFAULT_TTL : ttl;
+    *rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
     rule->id   = -1;
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->nuster.rules, &rule->list);
