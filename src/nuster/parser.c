@@ -506,7 +506,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     char *name               = NULL;
     char *key                = NULL;
     char *code               = NULL;
-    unsigned ttl             = NST_CACHE_DEFAULT_TTL;
+    int ttl                  = -1;
     int cur_arg              = 2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
@@ -537,7 +537,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             continue;
         }
         if(!strcmp(args[cur_arg], "ttl")) {
-            if((key == NULL && cur_arg >= 4) || (key !=NULL && cur_arg >= 6)) {
+            if(ttl != -1) {
                 memprintf(err, "'%s %s': ttl already specified.", args[0], name);
                 goto out;
             }
@@ -549,7 +549,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             /* "d", "h", "m", "s"
              * s is returned
              * */
-            if(nuster_parse_time(args[cur_arg], strlen(args[cur_arg]), &ttl)) {
+            if(nuster_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&ttl)) {
                 memprintf(err, "'%s %s': invalid ttl.", args[0], name);
                 goto out;
             }
@@ -557,7 +557,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             continue;
         }
         if(!strcmp(args[cur_arg], "code")) {
-            if(key != NULL) {
+            if(code != NULL) {
                 memprintf(err, "'%s %s': code already specified.", args[0], name);
                 goto out;
             }
@@ -598,7 +598,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     }
     rule->code = _nuster_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
     rule->ttl  = malloc(sizeof(*rule->ttl));
-    *rule->ttl = ttl;
+    *rule->ttl = ttl == -1 ? NST_CACHE_DEFAULT_TTL : ttl;
     rule->id   = -1;
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->nuster.rules, &rule->list);
