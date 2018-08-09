@@ -392,7 +392,7 @@ If a request has the same key as a cached http response data, then cached data w
 
 Set a TTL on key, after the TTL has expired, the key will be deleted.
 
-It accepts units like `d`, `h`, `m` and `s`. Default ttl is `3600` seconds.  Set to `0` if you don't want to expire the key.
+It accepts units like `d`, `h`, `m` and `s`. Default ttl is `0` which does not expire the key.
 
 ### code CODE1,CODE2...
 
