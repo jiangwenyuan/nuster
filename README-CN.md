@@ -389,7 +389,7 @@ Cookie: logged_in=yes; user=nuster;
 
 ### ttl TTL
 
-设置缓存生存时间，过期后缓存会被删除。 可以使用 `d`, `h`, `m` and `s`。默认`3600`秒.
+设置缓存生存时间，过期后缓存会被删除。 可以使用 `d`, `h`, `m` and `s`。默认`0`秒.
 如果不希望失效则设为0
 
 ### code CODE1,CODE2...
