@@ -456,6 +456,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         }
         if(!strcmp(args[cur_arg], "ttl")) {
             if(ttl != -1) {
+                /* except this case: ttl 4294967295 ttl 4294967295 */
                 memprintf(err, "'%s %s': ttl already specified.", args[0], name);
                 goto out;
             }
