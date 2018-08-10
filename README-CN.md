@@ -167,6 +167,8 @@ NuSTER基于HAProxy, 支持所有的HAProxy指令。
 
 可以定义多个`frontend` or `backend` . 如果定义了`nuster cache|nosql off`或者没有`nuster cache|nosql on|off`, nuster就是一个HAProxy。
 
+无法在`listen`里定义nuster。
+
 具体参考`/doc`下的HAProxy文档, 或者[在线HAProxy文档](https://cbonte.github.io/haproxy-dconv/)
 
 ## As TCP loader balancer
@@ -293,7 +295,7 @@ nuster nosql [on|off]
 
 **default:** *on*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 决定是否在这个backend开启cache/nosql。
 如果这个section有filter，记得放在最后。
@@ -304,7 +306,7 @@ nuster nosql [on|off]
 
 **default:** *none*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 定义cache/nosql的生效条件，需要定义至少一个rule。
 
@@ -852,15 +854,6 @@ backend app2
     nuster rule all
 
     server s2 10.0.0.11:8080
-
-listen web3
-    bind *:8082
-    mode http
-
-    nuster cache
-    nuster rule everything
-
-    server s3 10.0.0.12:8080
 
 frontend nosql_fe
     bind *:9090

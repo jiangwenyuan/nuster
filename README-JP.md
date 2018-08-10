@@ -170,6 +170,8 @@ NuSTERはHAProxyをベースに開発したので、HAProxyのすべての機能
 
 複数の`frontend` or `backend` 定義できる. `nuster cache off`設定したり, `nuster cache on|off`入れなかったりすると, nusterは全くHAProxy同様にとして動く。
 
+`listen`ではnusterを使えない。
+
 `/doc`したのドキュメントか[オンラインのHAProxyドキュメント](https://cbonte.github.io/haproxy-dconv/)を参照ください。
 
 ## As TCP loader balancer
@@ -294,7 +296,7 @@ nuster nosql [on|off]
 
 **default:** *on*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 cache/nosqlの有効無効を決める。
 他のfilterがある場合は、一番後ろ置く。
@@ -305,7 +307,7 @@ cache/nosqlの有効無効を決める。
 
 **default:** *none*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 cache/nosqlの有効条件を定義する、少なくとも１つは必要。
 
@@ -846,15 +848,6 @@ backend app2
     nuster rule all
 
     server s2 10.0.0.11:8080
-
-listen web3
-    bind *:8082
-    mode http
-
-    nuster cache
-    nuster rule everything
-
-    server s3 10.0.0.12:8080
 
 frontend nosql_fe
     bind *:9090
