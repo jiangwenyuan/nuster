@@ -39,7 +39,7 @@ make install
 使い方
 =====
 
-**global**セクションに`cache on`を定義して、**backend**や**listen**セクションに
+**global**セクションに`cache on`を定義して、**backend**セクションに
 cache filterとcache-rulesも定義する 
 
 ディレクティブ
@@ -67,7 +67,7 @@ filter cache
 
 **default:** *on*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 cache filterを定義する。 `cache-rule` も定義する必要がある。
 
@@ -82,7 +82,7 @@ cache-rule
 
 **default:** *none*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 cache ruleを定義する。複数のルールがある場合は順序を注意して定義すること。
 マッチングできたら止まるので。
@@ -269,15 +269,6 @@ backend app2
     cache-rule all
 
     server s2 10.0.0.11:8080
-
-listen web3
-    bind *:8082
-    mode http
-
-    filter cache
-    cache-rule everything
-
-    server s3 10.0.0.12:8080
 
 ```
 

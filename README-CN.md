@@ -47,7 +47,7 @@ make install
 使用方法
 =======
 
-在**global**中添加`cache on`, 然后在**backend**或**listen**中添加cache filter和cache rule
+在**global**中添加`cache on`, 然后在**backend**中添加cache filter和cache rule
 
 指令
 ====
@@ -72,7 +72,7 @@ filter cache
 
 **default:** *on*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 定义一个cache filter, 另外`cache-rule`也需要添加。 
 可以为多个代理添加，并单独设置某个代理的缓存是否开启。
@@ -85,7 +85,7 @@ cache-rule
 
 **default:** *none*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 定义缓存规则。可以同时定义多个，但是需要注意顺序，匹配则会停止测试。
 
@@ -271,14 +271,6 @@ backend app2
 
     server s2 10.0.0.11:8080
 
-listen web3
-    bind *:8082
-    mode http
-
-    filter cache
-    cache-rule everything
-
-    server s3 10.0.0.12:8080
 
 ```
 

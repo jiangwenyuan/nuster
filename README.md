@@ -96,7 +96,7 @@ docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nust
 Nuster is based on HAProxy, all directives from HAProxy are supported in nuster.
 
 In order to use cache functionality, `nuster cache on` should be declared in **global**
-section and some rules should be added into **backend** or **listen** section.
+section and some rules should be added into **backend** section.
 
 If `nuster cache off` is declared or there is no `nuster cache on|off` directive,
 nuster acts just like HAProxy, as a TCP and HTTP load balancer.
@@ -176,7 +176,7 @@ See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for de
 
 **default:** *on*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 Determines whether or not to use cache on this proxy, additional `nuster rule` should be defined.
 It can be turned off separately by including `off`.
@@ -188,7 +188,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **default:** *none*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 Define cache rule to specify cache creating conditions, cache properties. At least one rule should be defined.
 
@@ -661,15 +661,6 @@ backend app2
     nuster rule all
 
     server s2 10.0.0.11:8080
-
-listen web3
-    bind *:8082
-    mode http
-
-    nuster cache
-    nuster rule everything
-
-    server s3 10.0.0.12:8080
 
 ```
 

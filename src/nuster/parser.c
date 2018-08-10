@@ -530,8 +530,8 @@ out:
 int nuster_parse_proxy(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
-    if(!(px->cap & PR_CAP_BE)) {
-        memprintf(err, "`nuster` is not allowed in a 'frontend' section.");
+    if(px->cap != PR_CAP_BE) {
+        memprintf(err, "[proxy] '%s' is only allowed in 'backend' section.", args[0]);
         return -1;
     }
 

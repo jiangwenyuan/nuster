@@ -1937,7 +1937,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			}
 		} else {
-			Alert("parsing [%s:%d] : '%s' only supports 'cache'.\n", file, linenum, args[0]);
+			Alert("parsing [%s:%d] : [global] '%s' only supports 'cache'.\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
