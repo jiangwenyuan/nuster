@@ -166,6 +166,8 @@ There are four basic `section`s: `global`, `defaults`, `frontend` and `backend` 
 
 You can define multiple `frontend` or `backend` sections. If `nuster cache|nosql off` is declared or no `nuster cache|nosql on|off` declared, nuster acts just like HAProxy, as a TCP and HTTP load balancer.
 
+Although `listen` is a complete proxy with its frontend and backend parts combined in one section, you cannot use nuster in `listen`, use `frontend` and `backend` pairs.
+
 You can find HAProxy documentation in `/doc`, and [Online HAProxy Documentation](https://cbonte.github.io/haproxy-dconv/)
 
 ## As TCP loader balancer
@@ -294,7 +296,7 @@ nuster nosql [on|off]
 
 **default:** *on*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 Determines whether or not to use cache/nosql on this proxy, additional `nuster rule` should be defined.
 If there are filters on this proxy, put this directive after all other filters.
@@ -305,7 +307,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **default:** *none*
 
-**context:** *backend*, *listen*
+**context:** *backend*
 
 Define rule to specify cache/nosql creating conditions, properties. At least one rule should be defined.
 
@@ -862,15 +864,6 @@ backend app2
     nuster rule all
 
     server s2 10.0.0.11:8080
-
-listen web3
-    bind *:8082
-    mode http
-
-    nuster cache
-    nuster rule everything
-
-    server s3 10.0.0.12:8080
 
 frontend nosql_fe
     bind *:9090
