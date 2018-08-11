@@ -31,7 +31,7 @@ Starting from v1.8.8.3, nuster uses a different version system as MAJOR.MINOR.PA
 
 https://github.com/jiangwenyuan/nuster/releases
 
-| NuSTER version | HAProxy version | Previous nuster version
+| nuster version | HAProxy version | Previous nuster version
 | -------------- | --------------- | ------------------
 | 2.0.1.18       | 1.8.13          |
 | 2.0.0.18       | 1.8.12          |

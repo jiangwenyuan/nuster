@@ -1,4 +1,4 @@
-# NuSTER
+# nuster
 
 [Wiki](https://github.com/jiangwenyuan/nuster/wiki) | [English](README.md) | [中文](README-CN.md) | [日本語](README-JP.md)
 
@@ -27,14 +27,14 @@
 
 # 紹介
 
-NuSTERはHAProxyを元に開発したHTTPキャッシュサーバーとRESTful NoSQLサーバーで、HAProxyと互換性がある。
+nusterはHAProxyを元に開発したHTTPキャッシュサーバーとRESTful NoSQLサーバーで、HAProxyと互換性がある。
 そしてHAProxyのACLを利用して細かいキャッシュルールを定義できる。
 
 ## 特徴
 
 ### HTTP/TCPロードバランサ
 
-NuSTERはHAProxyのようにHTTP/TCPロードバランサとして使える。
+nusterはHAProxyのようにHTTP/TCPロードバランサとして使える。
 
 * HAProxyのすべての機能を持ち、HAProxyと互換性がある
 * ロード・バランシング
@@ -50,7 +50,7 @@ NuSTERはHAProxyのようにHTTP/TCPロードバランサとして使える。
 
 ### HTTPキャッシュサーバー
 
-NuSTERはVarnishやNginxのように動的や静的なHTTPコンテンツをキャッシュするキャッシュサーバーとしても使える。
+nusterはVarnishやNginxのように動的や静的なHTTPコンテンツをキャッシュするキャッシュサーバーとしても使える。
 
 * HAProxyのすべての機能(HTTPS, HTTP/2, ACL, etc)
 * とっても速い
@@ -67,7 +67,7 @@ NuSTERはVarnishやNginxのように動的や静的なHTTPコンテンツをキ�
 
 ### RESTful NoSQLキャッシュサーバー
 
-NuSTERはRESTful NoSQLキャッシュサーバーとしても使える、 HTTP `POST/GET/DELETE` でKey/Valueを登録・取得・削除する。
+nusterはRESTful NoSQLキャッシュサーバーとしても使える、 HTTP `POST/GET/DELETE` でKey/Valueを登録・取得・削除する。
 
 MemcachedやRedisのようにアプリとデータベースの間に配置する内部KVキャッシュサーバーとして使えるし、アプリとユーザーの間に配置するユーザー向けのRESTful NoSQLキャッシュサーバーとしても使える。
 headerやcookieなど識別できるので、同じエンドポイントにユーザー毎のデータを保存することができる。
@@ -149,7 +149,7 @@ docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nust
 
 # 使用方法
 
-NuSTERはHAProxyをベースに開発したので、HAProxyのすべての機能をサポートする。
+nusterはHAProxyをベースに開発したので、HAProxyのすべての機能をサポートする。
 
 ## Basic
 
@@ -413,9 +413,9 @@ See **7. Using ACLs and fetching samples** section in [HAProxy configuration](do
 
 # Cache
 
-NuSTERはVarnishやNginxのように動的や静的なHTTPコンテンツをキャッシュするキャッシュサーバーとしても使える。
+nusterはVarnishやNginxのように動的や静的なHTTPコンテンツをキャッシュするキャッシュサーバーとしても使える。
 
-HAProxyのSSL, HTTP, HTTP2, リライト、リダイレクトなどの機能の他、NuSTERは下記も提供する。
+HAProxyのSSL, HTTP, HTTP2, リライト、リダイレクトなどの機能の他、nusterは下記も提供する。
 
 ## キャッシュ管理
 
@@ -656,7 +656,7 @@ nuster cache on uri /nuster/cache
 
 # NoSQL
 
-NuSTERはRESTful NoSQLキャッシュサーバーとしても使える、 HTTP `POST/GET/DELETE` でKey/Valueを登録・取得・削除する。
+nusterはRESTful NoSQLキャッシュサーバーとしても使える、 HTTP `POST/GET/DELETE` でKey/Valueを登録・取得・削除する。
 
 ## 基本操作
 
@@ -859,7 +859,7 @@ backend nosql_be
 
 # Conventions
 
-1. Files with same name: those with `.md` extension belong to NuSTER, otherwise HAProxy
+1. Files with same name: those with `.md` extension belong to nuster, otherwise HAProxy
 
 # Contributing
 
