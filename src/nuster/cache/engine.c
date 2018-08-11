@@ -620,6 +620,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             entry->state = NST_CACHE_ENTRY_STATE_CREATING;
             entry->data = nst_cache_data_new();
             if(!entry->data) {
+                entry->state = NST_CACHE_ENTRY_STATE_INVALID;
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 nuster_shctx_unlock(&nuster.cache->dict[0]);
                 return;
