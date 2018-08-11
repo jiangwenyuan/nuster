@@ -369,7 +369,7 @@ void hap_register_per_thread_deinit(void (*fct)())
 
 static void display_version()
 {
-	printf("NuSTER version %s\n", NUSTER_VERSION);
+	printf("nuster version %s\n", NUSTER_VERSION);
 	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE"\n");
 	printf("Copyright 2000-2018 Willy Tarreau <willy@haproxy.org>\n\n");

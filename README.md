@@ -1,4 +1,4 @@
-# NuSTER
+# nuster
 
 [Wiki](https://github.com/jiangwenyuan/nuster/wiki) | [English](README.md) | [中文](README-CN.md) | [日本語](README-JP.md)
 
@@ -25,14 +25,14 @@ A high performance HTTP proxy cache server and RESTful NoSQL cache server based 
 
 # Introduction
 
-NuSTER is a high performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
+nuster is a high performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
 It is 100% compatible with HAProxy, and takes full advantage of the ACL functionality of HAProxy to provide fine-grained caching policy based on the content of request, response or server status.
 
 ## Features
 
 ### As HTTP/TCP loader balancer
 
-NuSTER can be used as an HTTP/TCP load balancer just like HAProxy.
+nuster can be used as an HTTP/TCP load balancer just like HAProxy.
 
 * All features of HAProxy are inherited, 100% compatible with HAProxy
 * Load balancing
@@ -48,7 +48,7 @@ NuSTER can be used as an HTTP/TCP load balancer just like HAProxy.
 
 ### As HTTP cache server
 
-NuSTER can also be used as an HTTP proxy cache server like Varnish or Nginx to cache dynamic and static HTTP response.
+nuster can also be used as an HTTP proxy cache server like Varnish or Nginx to cache dynamic and static HTTP response.
 
 * All features from HAProxy(HTTPS, HTTP/2, ACL, etc)
 * Extremely fast
@@ -65,7 +65,7 @@ NuSTER can also be used as an HTTP proxy cache server like Varnish or Nginx to c
 
 ### As RESTful NoSQL cache server
 
-NuSTER can also be used as a RESTful NoSQL cache server, using HTTP `POST/GET/DELETE` to set/get/delete Key/Value object.
+nuster can also be used as a RESTful NoSQL cache server, using HTTP `POST/GET/DELETE` to set/get/delete Key/Value object.
 
 It can be used as an internal NoSQL cache sits between your application and database like Memcached or Redis as well as a user facing NoSQL cache that sits between end user and your application.
 It supports headers, cookies, so you can store per-user data to same endpoint.
@@ -79,7 +79,7 @@ It supports headers, cookies, so you can store per-user data to same endpoint.
 
 # Performance
 
-NuSTER is very fast, some test shows nuster is almost three times faster than nginx when both using single core, and nearly two times faster than nginx and three times faster than varnish when using all cores.
+nuster is very fast, some test shows nuster is almost three times faster than nginx when both using single core, and nearly two times faster than nginx and three times faster than varnish when using all cores.
 
 See [detailed benchmark](https://github.com/jiangwenyuan/nuster/wiki/Web-cache-server-performance-benchmark:-nuster-vs-nginx-vs-varnish-vs-squid)
 
@@ -145,7 +145,7 @@ docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nust
 
 # Usage
 
-NuSTER is based on HAProxy, all directives from HAProxy are supported in nuster.
+nuster is based on HAProxy, all directives from HAProxy are supported in nuster.
 
 ## Basic
 
@@ -416,9 +416,9 @@ See **7. Using ACLs and fetching samples** section in [HAProxy configuration](do
 
 # Cache
 
-NuSTER can be used as an HTTP proxy cache server like Varnish or Nginx to cache dynamic and static HTTP response.
+nuster can be used as an HTTP proxy cache server like Varnish or Nginx to cache dynamic and static HTTP response.
 
-You can use HAProxy functionalities to terminate SSL, normalize HTTP, support HTTP2, rewrite the URL or modify headers and so on, and additional functionalities provided by NuSTER to control cache.
+You can use HAProxy functionalities to terminate SSL, normalize HTTP, support HTTP2, rewrite the URL or modify headers and so on, and additional functionalities provided by nuster to control cache.
 
 ## Cache Management
 
@@ -670,7 +670,7 @@ Others are very straightforward.
 
 # NoSQL
 
-NuSTER can be used as a RESTful NoSQL cache server, using HTTP `POST/GET/DELETE` to set/get/delete Key/Value object.
+nuster can be used as a RESTful NoSQL cache server, using HTTP `POST/GET/DELETE` to set/get/delete Key/Value object.
 
 ## Basic Operations
 
@@ -875,7 +875,7 @@ backend nosql_be
 
 # Conventions
 
-1. Files with same name: those with `.md` extension belong to NuSTER, otherwise HAProxy
+1. Files with same name: those with `.md` extension belong to nuster, otherwise HAProxy
 
 # Contributing
 

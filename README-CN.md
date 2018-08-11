@@ -1,4 +1,4 @@
-# NuSTER
+# nuster
 
 [Wiki](https://github.com/jiangwenyuan/nuster/wiki) | [English](README.md) | [中文](README-CN.md) | [日本語](README-JP.md)
 
@@ -27,13 +27,13 @@
 
 # 介绍
 
-NuSTER是一个基于HAProxy的高性能HTTP缓存服务器和RESTful NoSQL缓存服务器，完全兼容HAProxy，并且利用HAProxy的ACL功能来提供非常细致的缓存规则。
+nuster是一个基于HAProxy的高性能HTTP缓存服务器和RESTful NoSQL缓存服务器，完全兼容HAProxy，并且利用HAProxy的ACL功能来提供非常细致的缓存规则。
 
 ## 特性
 
 ### HTTP/TCP负载均衡器
 
-NuSTER可以作为HTTP/TCP负载均衡器使用。
+nuster可以作为HTTP/TCP负载均衡器使用。
 
 * 继承了HAProxy的所有特性，完全兼容HAProxy
 * 负载均衡
@@ -49,7 +49,7 @@ NuSTER可以作为HTTP/TCP负载均衡器使用。
 
 ### HTTP缓存服务器
 
-NuSTER也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来缓存动态或者静态的HTTP资源。
+nuster也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来缓存动态或者静态的HTTP资源。
 
 * HAProxy的所有特性(HTTPS, HTTP/2, ACL, etc)
 * 非常快
@@ -66,7 +66,7 @@ NuSTER也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来�
 
 ### RESTful NoSQL缓存服务器
 
-NuSTER也可以用作RESTful NoSQL缓存服务器, 用HTTP `POST/GET/DELETE` 来 添加/取得/删除 Key/Value.
+nuster也可以用作RESTful NoSQL缓存服务器, 用HTTP `POST/GET/DELETE` 来 添加/取得/删除 Key/Value.
 
 可以像Memcached或者Redis那样放在应用和数据库之间作为内部KV缓存使用，也可以放在用户和应用之间作为面向用户的NoSQL使用。
 支持header, cookie等等，所以可以将不同的用户数据存到相同的路劲。
@@ -146,7 +146,7 @@ docker run -d -v /path/to/nuster.cfg:/etc/nuster/nuster.cfg:ro -p 8080:8080 nust
 
 # 使用方法
 
-NuSTER基于HAProxy, 支持所有的HAProxy指令。
+nuster基于HAProxy, 支持所有的HAProxy指令。
 
 ## 基本
 
@@ -411,7 +411,7 @@ cache-rule all code all
 
 # Cache
 
-NuSTER也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来缓存动态或者静态的HTTP资源。
+nuster也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来缓存动态或者静态的HTTP资源。
 出了HAProxy的SSL, HTTP, HTTP2, 重写重定向，增删改Header等等，还提供了下面的功能。
 
 ## 缓存管理
@@ -660,7 +660,7 @@ nuster cache on uri /nuster/cache
 
 # NoSQL
 
-NuSTER也可以用作RESTful NoSQL缓存服务器, 用HTTP `POST/GET/DELETE` 来 添加/取得/删除 Key/Value.
+nuster也可以用作RESTful NoSQL缓存服务器, 用HTTP `POST/GET/DELETE` 来 添加/取得/删除 Key/Value.
 
 ## 基本操作
 
@@ -865,7 +865,7 @@ backend nosql_be
 
 # Conventions
 
-1. Files with same name: those with `.md` extension belong to NuSTER, otherwise HAProxy
+1. Files with same name: those with `.md` extension belong to nuster, otherwise HAProxy
 
 # Contributing
 
