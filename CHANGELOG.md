@@ -1,5 +1,21 @@
 # nuster Changelog
 
+## 2.0.2.18 - 2018-08-15
+
+### Fixed
+
+* Fix #24, segfault when insufficient memory
+* Fix #23, disable usage of nuster in listen
+* Fix #22 Wrong rule parsing
+
+### Changed
+
+* Change default ttl from 3600 to 0
+
+## 1.0.1.17 - 2018-08-15
+
+Same as 2.0.2.18
+
 ## 2.0.1.18 - 2018-08-05
 
 Upgrade HAProxy to v1.8.13
