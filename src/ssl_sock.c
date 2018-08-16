@@ -1678,6 +1678,8 @@ end:
         if (in)
                 BIO_free(in);
 
+	ERR_clear_error();
+
 	return dh;
 }
 
