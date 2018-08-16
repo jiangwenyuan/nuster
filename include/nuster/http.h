@@ -14,6 +14,7 @@
 #define _NUSTER_HTTP_H
 
 #include <types/global.h>
+#include <inttypes.h>
 
 #include <proto/stream_interface.h>
 #include <proto/proto_http.h>
