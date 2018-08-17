@@ -2305,10 +2305,18 @@ __LJMP static int hlua_socket_settimeout(struct lua_State *L)
 	if (tmout < 0)
 		WILL_LJMP(luaL_error(L, "settimeout: cannot set negatives values"));
 
+	socket->s->sess->fe->timeout.connect = tmout;
 	socket->s->req.rto = tmout;
 	socket->s->req.wto = tmout;
 	socket->s->res.rto = tmout;
 	socket->s->res.wto = tmout;
+	socket->s->req.rex = tick_add_ifset(now_ms, tmout);
+	socket->s->req.wex = tick_add_ifset(now_ms, tmout);
+	socket->s->res.rex = tick_add_ifset(now_ms, tmout);
+	socket->s->res.wex = tick_add_ifset(now_ms, tmout);
+
+	socket->s->task->expire = tick_add_ifset(now_ms, tmout);
+	task_queue(socket->s->task);
 
 	lua_pushinteger(L, 1);
 	return 1;
