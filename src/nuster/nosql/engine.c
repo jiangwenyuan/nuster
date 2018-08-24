@@ -513,7 +513,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pc
                 }
                 break;
             case NUSTER_RULE_KEY_COOKIE:
-                nuster_debug("header_%s.", ck->data);
+                nuster_debug("cookie_%s.", ck->data);
                 if(ctx->req.cookie.data) {
                     char *v = NULL;
                     int v_l = 0;

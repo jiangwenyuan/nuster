@@ -725,8 +725,8 @@ nuster rule r2 key method.scheme.host.uri.cookie_sessionId if { path /mydata }
 curl -v -X POST -d "333" -H "userId: 1000" http://127.0.0.1:8080/mypoint
 curl -v -X POST -d "555" -H "userId: 1001" http://127.0.0.1:8080/mypoint
 
-curl -v -X POST -d "userA data" --cookie "sessionId: ijsf023xe" http://127.0.0.1:8080/mydata
-curl -v -X POST -d "userB data" --cookie "sessionId: rosre329x" http://127.0.0.1:8080/mydata
+curl -v -X POST -d "userA data" --cookie "sessionId=ijsf023xe" http://127.0.0.1:8080/mydata
+curl -v -X POST -d "userB data" --cookie "sessionId=rosre329x" http://127.0.0.1:8080/mydata
 ```
 
 ### Get
@@ -739,7 +739,7 @@ curl -v -H "userId: 1000" http://127.0.0.1:8080/mypoint
 < 200 OK
 333
 
-curl -v --cookie "sessionId: ijsf023xe" http://127.0.0.1:8080/mydata
+curl -v --cookie "sessionId=ijsf023xe" http://127.0.0.1:8080/mydata
 < 200 OK
 userA data
 ```
