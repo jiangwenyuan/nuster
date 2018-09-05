@@ -36,14 +36,16 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
     struct nst_cache_element *element = NULL;
     struct stream_interface *si       = appctx->owner;
     struct channel *res               = si_ic(si);
-    struct stream *s                  = si_strm(si);
+    /* struct stream *s                  = si_strm(si); */
     int ret;
 
     if(appctx->ctx.nuster.cache_engine.element) {
+        /*
         if(appctx->ctx.nuster.cache_engine.element == appctx->ctx.nuster.cache_engine.data->element) {
             s->res.analysers = 0;
             s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE | AN_RES_HTTP_XFER_BODY);
         }
+        */
         element = appctx->ctx.nuster.cache_engine.element;
 
         ret = bi_putblk(res, element->msg.data, element->msg.len);
