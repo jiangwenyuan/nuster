@@ -912,6 +912,15 @@ static inline const struct mux_ops *alpn_get_mux(const struct ist token, int htt
 	return fallback;
 }
 
+/* returns 0 if the connection is valid and is a frontend connection, otherwise
+ * returns 1 indicating it's a backend connection. And uninitialized connection
+ * also returns 1 to better handle the usage in the middle of initialization.
+ */
+static inline int conn_is_back(const struct connection *conn)
+{
+	return !objt_listener(conn->target);
+}
+
 /* finds the best mux for incoming connection <conn> and mode <http_mode> for
  * the proxy. Null cannot be returned unless there's a serious bug somewhere
  * else (no fallback mux registered).
