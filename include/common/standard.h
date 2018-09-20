@@ -999,8 +999,10 @@ static inline int set_net_port(struct sockaddr_storage *addr, int port)
 	switch (addr->ss_family) {
 	case AF_INET:
 		((struct sockaddr_in *)addr)->sin_port = port;
+		break;
 	case AF_INET6:
 		((struct sockaddr_in6 *)addr)->sin6_port = port;
+		break;
 	}
 	return 0;
 }
@@ -1011,8 +1013,10 @@ static inline int set_host_port(struct sockaddr_storage *addr, int port)
 	switch (addr->ss_family) {
 	case AF_INET:
 		((struct sockaddr_in *)addr)->sin_port = htons(port);
+		break;
 	case AF_INET6:
 		((struct sockaddr_in6 *)addr)->sin6_port = htons(port);
+		break;
 	}
 	return 0;
 }
