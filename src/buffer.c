@@ -107,7 +107,7 @@ int buffer_replace2(struct buffer *b, char *pos, char *end, const char *str, int
 
 	delta = len - (end - pos);
 
-	if (bi_end(b) + delta > b->data + b->size)
+	if (b->p + b->i + delta > b->data + b->size)
 		return 0;  /* no space left */
 
 	if (buffer_not_empty(b) &&
@@ -146,7 +146,7 @@ int buffer_insert_line2(struct buffer *b, char *pos, const char *str, int len)
 
 	delta = len + 2;
 
-	if (bi_end(b) + delta >= b->data + b->size)
+	if (b->p + b->i + delta >= b->data + b->size)
 		return 0;  /* no space left */
 
 	if (buffer_not_empty(b) &&
