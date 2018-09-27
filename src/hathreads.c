@@ -28,7 +28,7 @@ void thread_sync_io_handler(int fd)
 #ifdef USE_THREAD
 
 static HA_SPINLOCK_T sync_lock;
-static int           threads_sync_pipe[2];
+static int           threads_sync_pipe[2] = {-1, -1};
 static unsigned long threads_want_sync = 0;
 volatile unsigned long threads_want_rdv_mask = 0;
 volatile unsigned long threads_harmless_mask = 0;
@@ -76,7 +76,8 @@ void thread_want_sync()
 	if (all_threads_mask & (all_threads_mask - 1)) {
 		if (threads_want_sync & tid_bit)
 			return;
-		if (HA_ATOMIC_OR(&threads_want_sync, tid_bit) == tid_bit)
+		if (HA_ATOMIC_OR(&threads_want_sync, tid_bit) == tid_bit &&
+		    threads_sync_pipe[1] != -1)
 			shut_your_big_mouth_gcc(write(threads_sync_pipe[1], "S", 1));
 	}
 	else {
