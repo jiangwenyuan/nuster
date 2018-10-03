@@ -996,3 +996,20 @@ update-version:
 	echo "$(VERSION)" > VERSION
 	echo "$(SUBVERS)" > SUBVERS
 	echo "$(VERDATE)" > VERDATE
+
+# just display the build options
+opts:
+	@echo -n 'Using: '
+	@echo -n 'TARGET="$(strip $(TARGET))" '
+	@echo -n 'ARCH="$(strip $(ARCH))" '
+	@echo -n 'CPU="$(strip $(CPU))" '
+	@echo -n 'CC="$(strip $(CC))" '
+	@echo -n 'ARCH_FLAGS="$(strip $(ARCH_FLAGS))" '
+	@echo -n 'CPU_CFLAGS="$(strip $(CPU_CFLAGS))" '
+	@echo -n 'DEBUG_CFLAGS="$(strip $(DEBUG_CFLAGS))" '
+	@echo "$(strip $(BUILD_OPTIONS))"
+	@echo 'COPTS="$(strip $(COPTS))"'
+	@echo 'LDFLAGS="$(strip $(LDFLAGS))"'
+	@echo 'LDOPTS="$(strip $(LDOPTS))"'
+	@echo 'OPTIONS_OBJS="$(strip $(OPTIONS_OBJS))"'
+	@echo 'OBJS="$(strip $(OBJS))"'
