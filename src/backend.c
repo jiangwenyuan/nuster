@@ -1163,7 +1163,8 @@ int connect_server(struct stream *s)
 		if (srv) {
 			conn_prepare(srv_conn, protocol_by_family(srv_conn->addr.to.ss_family), srv->xprt);
 			/* XXX: Pick the right mux, when we finally have one */
-			conn_install_mux(srv_conn, &mux_pt_ops, srv_cs);
+			if (conn_install_mux(srv_conn, &mux_pt_ops, srv_cs) < 0)
+				return SF_ERR_INTERNAL;
 		}
 		else if (obj_type(s->target) == OBJ_TYPE_PROXY) {
 			/* proxies exclusively run on raw_sock right now */
@@ -1171,7 +1172,8 @@ int connect_server(struct stream *s)
 			if (!objt_cs(s->si[1].end) || !objt_cs(s->si[1].end)->conn->ctrl)
 				return SF_ERR_INTERNAL;
 			/* XXX: Pick the right mux, when we finally have one */
-			conn_install_mux(srv_conn, &mux_pt_ops, srv_cs);
+			if (conn_install_mux(srv_conn, &mux_pt_ops, srv_cs) < 0)
+				return SF_ERR_INTERNAL;
 		}
 		else
 			return SF_ERR_INTERNAL;  /* how did we get there ? */
