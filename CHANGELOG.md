@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 2.0.3.18 - 2018-10-05
+
+### Fixed
+
+* Fix #28, stalled response
+
 ## 2.0.2.18 - 2018-08-15
 
 ### Fixed
