@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.7
                              willy tarreau
-                              2018/04/30
+                              2019/10/25
 
 
 This document covers the configuration language as implemented in the version
@@ -1473,7 +1473,7 @@ tune.ssl.cachesize <number>
   this value to 0 disables the SSL session cache.
 
 tune.ssl.force-private-cache
-  This boolean disables SSL session cache sharing between all processes. It
+  This option disables SSL session cache sharing between all processes. It
   should normally not be used since it will force many renegotiations due to
   clients hitting a random process. But it may be required on some operating
   systems where none of the SSL cache synchronization method may be used. In
@@ -3919,9 +3919,11 @@ http-request { allow | tarpit | auth [realm <realm>] | redirect <rule> |
 
     - { track-sc0 | track-sc1 | track-sc2 } <key> [table <table>] :
       enables tracking of sticky counters from current request. These rules
-      do not stop evaluation and do not change default action. Three sets of
-      counters may be simultaneously tracked by the same connection. The first
-      "track-sc0" rule executed enables tracking of the counters of the
+      do not stop evaluation and do not change default action. The number of
+      counters that may be simultaneously tracked by the same connection is set
+      in MAX_SESS_STKCTR at build time (reported in haproxy -vv) which defaults
+      to 3, so the track-sc number is between 0 and (MAX_SESS_STCKTR-1). The
+      first "track-sc0" rule executed enables tracking of the counters of the
       specified table as the first set. The first "track-sc1" rule executed
       enables tracking of the counters of the specified table as the second
       set. The first "track-sc2" rule executed enables tracking of the
@@ -5884,7 +5886,7 @@ no option independent-streams
   data sent to the server. Doing so will typically break large HTTP posts from
   slow lines, so use it with caution.
 
-  Note: older versions used to call this setting "option independent-streams"
+  Note: older versions used to call this setting "option independant-streams"
         with a spelling mistake. This spelling is still supported but
         deprecated.
 
@@ -6274,7 +6276,7 @@ option smtpchk <hello> <domain>
                                  yes   |    no    |   yes  |   yes
   Arguments :
     <hello>   is an optional argument. It is the "hello" command to use. It can
-              be either "HELO" (for SMTP) or "EHLO" (for ESTMP). All other
+              be either "HELO" (for SMTP) or "EHLO" (for ESMTP). All other
               values will be turned into the default command ("HELO").
 
     <domain>  is the domain name to present to the server. It may only be
@@ -8904,16 +8906,18 @@ tcp-request connection <action> [{if | unless} <condition>]
 
     - { track-sc0 | track-sc1 | track-sc2 } <key> [table <table>] :
         enables tracking of sticky counters from current connection. These
-        rules do not stop evaluation and do not change default action. 3 sets
-        of counters may be simultaneously tracked by the same connection. The
-        first "track-sc0" rule executed enables tracking of the counters of the
-        specified table as the first set. The first "track-sc1" rule executed
-        enables tracking of the counters of the specified table as the second
-        set. The first "track-sc2" rule executed enables tracking of the
-        counters of the specified table as the third set. It is a recommended
-        practice to use the first set of counters for the per-frontend counters
-        and the second set for the per-backend ones. But this is just a
-        guideline, all may be used everywhere.
+        rules do not stop evaluation and do not change default action. The
+        number of counters that may be simultaneously tracked by the same
+        connection is set in MAX_SESS_STKCTR at build time (reported in
+        haproxy -vv) whichs defaults to 3, so the track-sc number is between 0
+        and (MAX_SESS_STCKTR-1). The first "track-sc0" rule executed enables
+        tracking of the counters of the specified table as the first set. The
+        first "track-sc1" rule executed enables tracking of the counters of the
+        specified table as the second set. The first "track-sc2" rule executed
+        enables tracking of the counters of the specified table as the third
+        set. It is a recommended practice to use the first set of counters for
+        the per-frontend counters and the second set for the per-backend ones.
+        But this is just a guideline, all may be used everywhere.
 
         These actions take one or two arguments :
           <key>   is mandatory, and is a sample expression rule as described
@@ -13128,10 +13132,13 @@ sets unless they require some future information. Those generally include
 TCP/IP addresses and ports, as well as elements from stick-tables related to
 the incoming connection. For retrieving a value from a sticky counters, the
 counter number can be explicitly set as 0, 1, or 2 using the pre-defined
-"sc0_", "sc1_", or "sc2_" prefix, or it can be specified as the first integer
-argument when using the "sc_" prefix. An optional table may be specified with
-the "sc*" form, in which case the currently tracked key will be looked up into
-this alternate table instead of the table currently being tracked.
+"sc0_", "sc1_", or "sc2_" prefix. These three pre-defined prefixes can only be
+used if MAX_SESS_STKCTR value does not exceed 3, otherwise the counter number
+can be specified as the first integer argument when using the "sc_" prefix.
+Starting from "sc_0" to "sc_N" where N is (MAX_SESS_STKCTR-1). An optional
+table may be specified with the "sc*" form, in which case the currently
+tracked key will be looked up into this alternate table instead of the table
+currently being tracked.
 
 be_id : integer
   Returns an integer containing the current backend's id. It can be used in
@@ -13146,7 +13153,12 @@ dst : ip
   which is the address the client connected to. It can be useful when running
   in transparent mode. It is of type IP and works on both IPv4 and IPv6 tables.
   On IPv6 tables, IPv4 address is mapped to its IPv6 equivalent, according to
-  RFC 4291.
+  RFC 4291. When the incoming connection passed through address translation or
+  redirection involving connection tracking, the original destination address
+  before the redirection will be reported. On Linux systems, the source and
+  destination may seldom appear reversed if the nf_conntrack_tcp_loose sysctl
+  is set, because a late response may reopen a timed out connection and switch
+  what is believed to be the source and the destination.
 
 dst_conn : integer
   Returns an integer value corresponding to the number of currently established
@@ -13196,37 +13208,37 @@ fc_rttvar(<unit>) : integer
   operating system does not support TCP_INFO, for example Linux kernels before
   2.4, the sample fetch fails.
 
-fc_unacked(<unit>) : integer
+fc_unacked : integer
   Returns the unacked counter measured by the kernel for the client connection.
   If the server connection is not established, if the connection is not TCP or
   if the operating system does not support TCP_INFO, for example Linux kernels
   before 2.4, the sample fetch fails.
 
-fc_sacked(<unit>) : integer
+fc_sacked : integer
   Returns the sacked counter measured by the kernel for the client connection.
   If the server connection is not established, if the connection is not TCP or
   if the operating system does not support TCP_INFO, for example Linux kernels
   before 2.4, the sample fetch fails.
 
-fc_retrans(<unit>) : integer
+fc_retrans : integer
   Returns the retransmits counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example
   Linux kernels before 2.4, the sample fetch fails.
 
-fc_fackets(<unit>) : integer
+fc_fackets : integer
   Returns the fack counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example
   Linux kernels before 2.4, the sample fetch fails.
 
-fc_lost(<unit>) : integer
+fc_lost : integer
   Returns the lost counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example
   Linux kernels before 2.4, the sample fetch fails.
 
-fc_reordering(<unit>) : integer
+fc_reordering : integer
   Returns the reordering counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example
@@ -13446,7 +13458,13 @@ src : ip
   behind a proxy. However if the "accept-proxy" or "accept-netscaler-cip" bind
   directive is used, it can be the address of a client behind another
   PROXY-protocol compatible component for all rule sets except
-  "tcp-request connection" which sees the real address.
+  "tcp-request connection" which sees the real address. When the incoming
+  connection passed through address translation or redirection involving
+  connection tracking, the original destination address before the redirection
+  will be reported. On Linux systems, the source and destination may seldom
+  appear reversed if the nf_conntrack_tcp_loose sysctl is set, because a late
+  response may reopen a timed out connection and switch what is believed to be
+  the source and the destination.
 
   Example:
        # add an HTTP header in requests with the originating address' country
@@ -15426,7 +15444,7 @@ Please refer to the table below for currently defined variables :
   |   | %t   | date_time      (with millisecond resolution)  | date        |
   | H | %tr  | date_time of HTTP request                     | date        |
   | H | %trg | gmt_date_time of start of HTTP request        | date        |
-  | H | %trl | locla_date_time of start of HTTP request      | date        |
+  | H | %trl | local_date_time of start of HTTP request      | date        |
   |   | %ts  | termination_state                             | string      |
   | H | %tsc | termination_state with cookie status          | string      |
   +---+------+-----------------------------------------------+-------------+

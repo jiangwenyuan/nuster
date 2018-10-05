@@ -141,10 +141,10 @@ int sample_load_map(struct arg *arg, struct sample_conv *conv,
 	                            1, err, file, line))
 		return 0;
 
-	/* the maps of type IP have a string as defaultvalue. This
-	 * string canbe anipv4 or an ipv6, we must convert it.
+	/* the maps of type IP support a string as default value. This
+	 * string can be an ipv4 or an ipv6, we must convert it.
 	 */
-	if (desc->conv->out_type == SMP_T_ADDR) {
+	if (arg[1].type != ARGT_STOP && desc->conv->out_type == SMP_T_ADDR) {
 		struct sample_data data;
 		if (!map_parse_ip(arg[1].data.str.str, &data)) {
 			memprintf(err, "map: cannot parse default ip <%s>.", arg[1].data.str.str);
@@ -183,10 +183,27 @@ static int sample_conv_map(const struct arg *arg_p, struct sample *smp, void *pr
 		if (pat->data) {
 			/* In the regm case, merge the sample with the input. */
 			if ((long)private == PAT_MATCH_REGM) {
+				struct chunk *tmptrash;
+
+				/* Copy the content of the sample because it could
+				   be scratched by incoming get_trash_chunk */
+				tmptrash = alloc_trash_chunk();
+				if (!tmptrash)
+					return 0;
+
+				tmptrash->len = smp->data.u.str.len;
+				if (tmptrash->len > (tmptrash->size-1))
+					tmptrash->len = tmptrash->size-1;
+
+				memcpy(tmptrash->str, smp->data.u.str.str, tmptrash->len);
+				tmptrash->str[tmptrash->len] = 0;
+
 				str = get_trash_chunk();
-				str->len = exp_replace(str->str, str->size, smp->data.u.str.str,
+				str->len = exp_replace(str->str, str->size, tmptrash->str,
 				                       pat->data->u.str.str,
 				                       (regmatch_t *)smp->ctx.a[0]);
+
+				free_trash_chunk(tmptrash);
 				if (str->len == -1)
 					return 0;
 				smp->data.u.str = *str;
@@ -306,9 +323,9 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 		 * reference to the last ref_elt being dumped.
 		 */
 		if (appctx->st2 == STAT_ST_LIST) {
-			if (!LIST_ISEMPTY(&appctx->ctx.sess.bref.users)) {
-				LIST_DEL(&appctx->ctx.sess.bref.users);
-				LIST_INIT(&appctx->ctx.sess.bref.users);
+			if (!LIST_ISEMPTY(&appctx->ctx.map.bref.users)) {
+				LIST_DEL(&appctx->ctx.map.bref.users);
+				LIST_INIT(&appctx->ctx.map.bref.users);
 			}
 		}
 		return 1;

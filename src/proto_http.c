@@ -59,6 +59,7 @@
 #include <proto/frontend.h>
 #include <proto/log.h>
 #include <proto/hdr_idx.h>
+#include <proto/hlua.h>
 #include <proto/pattern.h>
 #include <proto/proto_tcp.h>
 #include <proto/proto_http.h>
@@ -2611,7 +2612,7 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 			s->logs.t_idle = tv_ms_elapsed(&s->logs.tv_accept, &now) - s->logs.t_handshake;
 
 		if (txn->flags & TX_NOT_FIRST) {
-			if (unlikely(!channel_is_rewritable(req))) {
+			if (unlikely(!channel_is_rewritable(req) && req->buf->o)) {
 				if (req->flags & (CF_SHUTW|CF_SHUTW_NOW|CF_WRITE_ERROR|CF_WRITE_TIMEOUT))
 					goto failed_keep_alive;
 				/* some data has still not left the buffer, wake us once that's done */
@@ -3087,6 +3088,10 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 			goto return_bad_req;
 		}
 	}
+
+	/* "chunked" mandatory if transfer-encoding is used */
+	if (ctx.idx && !(msg->flags & HTTP_MSGF_TE_CHNK))
+		goto return_bad_req;
 
 	/* Chunked requests must have their content-length removed */
 	ctx.idx = 0;
@@ -4344,8 +4349,10 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		req->buf->i,
 		req->analysers);
 
-	/* just in case we have some per-backend tracking */
-	stream_inc_be_http_req_ctr(s);
+	/* just in case we have some per-backend tracking. Only called the first
+	 * execution of the analyser. */
+	if (!s->current_rule || s->current_rule_list != &px->http_req_rules)
+		stream_inc_be_http_req_ctr(s);
 
 	/* evaluate http-request rules */
 	if (!LIST_ISEMPTY(&px->http_req_rules)) {
@@ -4848,7 +4855,8 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 	 * that parameter. This will be done in another analyser.
 	 */
 	if (!(s->flags & (SF_ASSIGNED|SF_DIRECT)) &&
-	    s->txn->meth == HTTP_METH_POST && s->be->url_param_name != NULL &&
+	    s->txn->meth == HTTP_METH_POST &&
+	    (s->be->lbprm.algo & BE_LB_ALGO) == BE_LB_ALGO_PH &&
 	    (msg->flags & (HTTP_MSGF_CNT_LEN|HTTP_MSGF_TE_CHNK))) {
 		channel_dont_connect(req);
 		req->analysers |= AN_REQ_HTTP_BODY;
@@ -5279,6 +5287,8 @@ void http_end_txn_clean_session(struct stream *s)
 	s->flags &= ~(SF_DIRECT|SF_ASSIGNED|SF_ADDR_SET|SF_BE_ASSIGNED|SF_FORCE_PRST|SF_IGNORE_PRST);
 	s->flags &= ~(SF_CURR_SESS|SF_REDIRECTABLE|SF_SRV_REUSED);
 	s->flags &= ~(SF_ERR_MASK|SF_FINST_MASK|SF_REDISP);
+
+	hlua_ctx_destroy(&s->hlua);
 
 	s->txn->meth = 0;
 	http_reset_txn(s);
@@ -5980,7 +5990,7 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	 * data later, which is much more complicated.
 	 */
 	if (buffer_not_empty(rep->buf) && msg->msg_state < HTTP_MSG_ERROR) {
-		if (unlikely(!channel_is_rewritable(rep))) {
+		if (unlikely(!channel_is_rewritable(rep) && rep->buf->o)) {
 			/* some data has still not left the buffer, wake us once that's done */
 			if (rep->flags & (CF_SHUTW|CF_SHUTW_NOW|CF_WRITE_ERROR|CF_WRITE_TIMEOUT))
 				goto abort_response;
@@ -6431,6 +6441,12 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			msg->flags &= ~(HTTP_MSGF_TE_CHNK | HTTP_MSGF_XFER_LEN);
 			break;
 		}
+	}
+
+	/* "chunked" mandatory if transfer-encoding is used */
+	if (ctx.idx && !(msg->flags & HTTP_MSGF_TE_CHNK)) {
+		use_close_only = 1;
+		msg->flags &= ~(HTTP_MSGF_TE_CHNK | HTTP_MSGF_XFER_LEN);
 	}
 
 	/* Chunked responses must have their content-length removed */
@@ -6999,6 +7015,7 @@ int http_response_forward_body(struct stream *s, struct channel *res, int an_bit
 		if (!buffer_pending(res->buf)) {
 			if (!(s->flags & SF_ERR_MASK))
 				s->flags |= SF_ERR_SRVCL;
+			sess->fe->fe_counters.srv_aborts++;
 			s->be->be_counters.srv_aborts++;
 			if (objt_server(s->target))
 				objt_server(s->target)->counters.srv_aborts++;
@@ -9552,7 +9569,8 @@ struct act_rule *parse_http_req_cond(const char **args, const char *file, int li
 		rule->cond = cond;
 	}
 	else if (*args[cur_arg]) {
-		Alert("parsing [%s:%d]: 'http-request %s' expects 'realm' for 'auth' or"
+		Alert("parsing [%s:%d]: 'http-request %s' expects 'realm' for 'auth',"
+		      " 'deny_status' for 'deny', or"
 		      " either 'if' or 'unless' followed by a condition but found '%s'.\n",
 		      file, linenum, args[0], args[cur_arg]);
 		goto out_err;

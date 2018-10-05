@@ -1,6 +1,6 @@
 /*
  * HA-Proxy : High Availability-enabled HTTP/TCP proxy
- * Copyright 2000-2018 Willy Tarreau <willy@haproxy.org>.
+ * Copyright 2000-2019 Willy Tarreau <willy@haproxy.org>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -289,7 +289,7 @@ void display_version()
 	printf("Nuster version %s\n", NUSTER_VERSION);
 	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE"\n");
-	printf("Copyright 2000-2018 Willy Tarreau <willy@haproxy.org>\n\n");
+	printf("Copyright 2000-2019 Willy Tarreau <willy@haproxy.org>\n\n");
 }
 
 void display_build_opts()
@@ -949,7 +949,6 @@ void init(int argc, char **argv)
 		exit(1);
 	}
 
-	pattern_finalize_config();
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 	tlskeys_finalize_config();
 #endif
@@ -959,6 +958,8 @@ void init(int argc, char **argv)
 		Alert("Fatal errors found in configuration.\n");
 		exit(1);
 	}
+
+	pattern_finalize_config();
 
 	/* recompute the amount of per-process memory depending on nbproc and
 	 * the shared SSL cache size (allowed to exist in all processes).
@@ -1509,8 +1510,8 @@ void deinit(void)
 			if (rule->cond) {
 				prune_acl_cond(rule->cond);
 				free(rule->cond);
-				free(rule->file);
 			}
+			free(rule->file);
 			free(rule);
 		}
 
@@ -1544,6 +1545,7 @@ void deinit(void)
 		}
 
 		deinit_tcp_rules(&p->tcp_req.inspect_rules);
+		deinit_tcp_rules(&p->tcp_rep.inspect_rules);
 		deinit_tcp_rules(&p->tcp_req.l4_rules);
 
 		deinit_stick_rules(&p->storersp_rules);

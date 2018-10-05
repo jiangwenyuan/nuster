@@ -15,6 +15,7 @@
 #include <common/hash.h>
 #include <common/errors.h>
 #include <proto/log.h>
+#include <proto/signal.h>
 #include <types/global.h>
 
 #ifdef CONFIG_HAP_NS
@@ -41,6 +42,24 @@ static int init_default_namespace()
 
 static struct eb_root namespace_tree_root = EB_ROOT;
 
+static void netns_sig_stop(struct sig_handler *sh)
+{
+	struct ebpt_node *node, *next;
+	struct netns_entry *entry;
+
+	/* close namespace file descriptors and remove registered namespaces from the
+	 * tree when stopping */
+	node = ebpt_first(&namespace_tree_root);
+	while (node) {
+		next = ebpt_next(node);
+		ebpt_delete(node);
+		entry = container_of(node, struct netns_entry, node);
+		free(entry->node.key);
+		close(entry->fd);
+		node = next;
+	}
+}
+
 int netns_init(void)
 {
 	int err_code = 0;
@@ -56,6 +75,8 @@ int netns_init(void)
 			err_code |= ERR_ALERT | ERR_FATAL;
 		}
 	}
+
+	signal_register_fct(0, netns_sig_stop, 0);
 
 	return err_code;
 }

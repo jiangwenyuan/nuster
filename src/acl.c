@@ -341,6 +341,8 @@ struct acl_expr *parse_acl_expr(const char **args, char **err, struct arg_list *
 				goto out_free_smp;
 			}
 		}
+		free(ckw);
+		ckw = NULL;
 	}
 	else {
 		/* This is not an ACL keyword, so we hope this is a sample fetch
@@ -359,7 +361,7 @@ struct acl_expr *parse_acl_expr(const char **args, char **err, struct arg_list *
 	expr = calloc(1, sizeof(*expr));
 	if (!expr) {
 		memprintf(err, "out of memory when parsing ACL expression");
-		goto out_return;
+		goto out_free_smp;
 	}
 
 	pattern_init_head(&expr->pat);
@@ -400,6 +402,7 @@ struct acl_expr *parse_acl_expr(const char **args, char **err, struct arg_list *
 			expr->pat.prune = pat_prune_fcts[PAT_MATCH_INT];
 			expr->pat.expect_type = pat_match_types[PAT_MATCH_INT];
 			break;
+		case SMP_T_ADDR:
 		case SMP_T_IPV4:
 		case SMP_T_IPV6:
 			expr->pat.parse = pat_parse_fcts[PAT_MATCH_IP];
@@ -675,8 +678,8 @@ struct acl_expr *parse_acl_expr(const char **args, char **err, struct arg_list *
  out_free_expr:
 	prune_acl_expr(expr);
 	free(expr);
-	free(ckw);
  out_free_smp:
+	free(ckw);
 	free(smp);
  out_return:
 	return NULL;

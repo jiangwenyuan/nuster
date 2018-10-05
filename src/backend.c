@@ -173,7 +173,7 @@ struct server *get_server_sh(struct proxy *px, const char *addr, int len)
 	if ((px->lbprm.algo & BE_LB_HASH_MOD) == BE_LB_HMOD_AVAL)
 		h = full_hash(h);
  hash_done:
-	if (px->lbprm.algo & BE_LB_LKUP_CHTREE)
+	if ((px->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 		return chash_get_server_hash(px, h);
 	else
 		return map_get_server_hash(px, h);
@@ -226,7 +226,7 @@ struct server *get_server_uh(struct proxy *px, char *uri, int uri_len)
 	if ((px->lbprm.algo & BE_LB_HASH_MOD) == BE_LB_HMOD_AVAL)
 		hash = full_hash(hash);
  hash_done:
-	if (px->lbprm.algo & BE_LB_LKUP_CHTREE)
+	if ((px->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 		return chash_get_server_hash(px, hash);
 	else
 		return map_get_server_hash(px, hash);
@@ -283,7 +283,7 @@ struct server *get_server_ph(struct proxy *px, const char *uri, int uri_len)
 				if ((px->lbprm.algo & BE_LB_HASH_MOD) == BE_LB_HMOD_AVAL)
 					hash = full_hash(hash);
 
-				if (px->lbprm.algo & BE_LB_LKUP_CHTREE)
+				if ((px->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 					return chash_get_server_hash(px, hash);
 				else
 					return map_get_server_hash(px, hash);
@@ -357,7 +357,7 @@ struct server *get_server_ph_post(struct stream *s)
 				if ((px->lbprm.algo & BE_LB_HASH_MOD) == BE_LB_HMOD_AVAL)
 					hash = full_hash(hash);
 
-				if (px->lbprm.algo & BE_LB_LKUP_CHTREE)
+				if ((px->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 					return chash_get_server_hash(px, hash);
 				else
 					return map_get_server_hash(px, hash);
@@ -453,7 +453,7 @@ struct server *get_server_hh(struct stream *s)
 	if ((px->lbprm.algo & BE_LB_HASH_MOD) == BE_LB_HMOD_AVAL)
 		hash = full_hash(hash);
  hash_done:
-	if (px->lbprm.algo & BE_LB_LKUP_CHTREE)
+	if ((px->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 		return chash_get_server_hash(px, hash);
 	else
 		return map_get_server_hash(px, hash);
@@ -497,7 +497,7 @@ struct server *get_server_rch(struct stream *s)
 	if ((px->lbprm.algo & BE_LB_HASH_MOD) == BE_LB_HMOD_AVAL)
 		hash = full_hash(hash);
  hash_done:
-	if (px->lbprm.algo & BE_LB_LKUP_CHTREE)
+	if ((px->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 		return chash_get_server_hash(px, hash);
 	else
 		return map_get_server_hash(px, hash);
@@ -604,7 +604,7 @@ int assign_server(struct stream *s)
 		case BE_LB_LKUP_CHTREE:
 		case BE_LB_LKUP_MAP:
 			if ((s->be->lbprm.algo & BE_LB_KIND) == BE_LB_KIND_RR) {
-				if (s->be->lbprm.algo & BE_LB_LKUP_CHTREE)
+				if ((s->be->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 					srv = chash_get_next_server(s->be, prev_srv);
 				else
 					srv = map_get_server_rr(s->be, prev_srv);
@@ -680,7 +680,7 @@ int assign_server(struct stream *s)
 			 * back to round robin on the map.
 			 */
 			if (!srv) {
-				if (s->be->lbprm.algo & BE_LB_LKUP_CHTREE)
+				if ((s->be->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_CHTREE)
 					srv = chash_get_next_server(s->be, prev_srv);
 				else
 					srv = map_get_server_rr(s->be, prev_srv);
@@ -1485,6 +1485,8 @@ int backend_parse_balance(const char **args, char **err, struct proxy *curproxy)
 		curproxy->lbprm.algo |= BE_LB_ALGO_UH;
 
 		curproxy->uri_whole = 0;
+		curproxy->uri_len_limit = 0;
+		curproxy->uri_dirs_depth1 = 0;
 
 		while (*args[arg]) {
 			if (!strcmp(args[arg], "len")) {

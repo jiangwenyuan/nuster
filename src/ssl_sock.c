@@ -1678,6 +1678,8 @@ end:
         if (in)
                 BIO_free(in);
 
+	ERR_clear_error();
+
 	return dh;
 }
 
@@ -1765,7 +1767,7 @@ static int ssl_sock_add_cert_sni(SSL_CTX *ctx, struct bind_conf *s, char *name, 
 		for (j = 0; j < len && j < trash.size; j++)
 			trash.str[j] = tolower(name[j]);
 		if (j >= trash.size)
-			return order;
+			return -1;
 		trash.str[j] = 0;
 
 		/* Check for duplicates. */
@@ -1781,7 +1783,7 @@ static int ssl_sock_add_cert_sni(SSL_CTX *ctx, struct bind_conf *s, char *name, 
 
 		sc = malloc(sizeof(struct sni_ctx) + len + 1);
 		if (!sc)
-			return order;
+			return -1;
 		memcpy(sc->name.key, trash.str, len + 1);
 		sc->ctx = ctx;
 		sc->order = order++;
@@ -1994,7 +1996,7 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 }
 
 
-static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
+static int ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
 {
 	struct sni_keytype *s_kt = NULL;
 	struct ebmb_node *node;
@@ -2014,6 +2016,9 @@ static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root 
 		 * strncpy will cause sig_abrt errors under certain versions of gcc with -O2
 		 * See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=60792
 		 */
+		if (!s_kt)
+			return -1;
+
 		memcpy(s_kt->name.key, trash.str, i+1);
 		s_kt->keytypes = 0;
 		ebst_insert(sni_keytypes, &s_kt->name);
@@ -2024,6 +2029,8 @@ static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root 
 
 	/* Mark that this CN has the keytype of key_index via keytypes mask */
 	s_kt->keytypes |= 1<<key_index;
+
+	return 0;
 
 }
 
@@ -2078,13 +2085,21 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 	 *     keyindex = 0 | 1 | 4 = 5
 	 */
 	for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
+		int ret;
 
 		if (!ssl_sock_is_ckch_valid(&certs_and_keys[n]))
 			continue;
 
 		if (fcount) {
-			for (i = 0; i < fcount; i++)
-				ssl_sock_populate_sni_keytypes_hplr(sni_filter[i], &sni_keytypes_map, n);
+			for (i = 0; i < fcount; i++) {
+				ret = ssl_sock_populate_sni_keytypes_hplr(sni_filter[i], &sni_keytypes_map, n);
+				if (ret < 0) {
+					memprintf(err, "%sunable to allocate SSL context.\n",
+					          err && *err ? *err : "");
+					rv = 1;
+					goto end;
+				}
+			}
 		} else {
 			/* A lot of the following code is OpenSSL boilerplate for processing CN's and SAN's,
 			 * so the line that contains logic is marked via comments
@@ -2097,10 +2112,16 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 				value = X509_NAME_ENTRY_get_data(entry);
 				if (ASN1_STRING_to_UTF8((unsigned char **)&str, value) >= 0) {
 					/* Important line is here */
-					ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
+					ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
 
 					OPENSSL_free(str);
 					str = NULL;
+					if (ret < 0) {
+						memprintf(err, "%sunable to allocate SSL context.\n",
+						          err && *err ? *err : "");
+						rv = 1;
+						goto end;
+					}
 				}
 			}
 
@@ -2114,10 +2135,16 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 					if (name->type == GEN_DNS) {
 						if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
 							/* Important line is here */
-							ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
+							ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
 
 							OPENSSL_free(str);
 							str = NULL;
+							if (ret < 0) {
+								memprintf(err, "%sunable to allocate SSL context.\n",
+								          err && *err ? *err : "");
+								rv = 1;
+								goto end;
+							}
 						}
 					}
 				}
@@ -2213,6 +2240,11 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 
 		/* Update SNI Tree */
 		key_combos[i-1].order = ssl_sock_add_cert_sni(cur_ctx, bind_conf, str, key_combos[i-1].order);
+		if (key_combos[i-1].order < 0) {
+			memprintf(err, "%sunable to create a sni context.\n", err && *err ? *err : "");
+			rv = 1;
+			goto end;
+		}
 		node = ebmb_next(node);
 	}
 
@@ -2239,6 +2271,7 @@ end:
 	while (node) {
 		next = ebmb_next(node);
 		ebmb_delete(node);
+		free(ebmb_entry(node, struct sni_keytype, name));
 		node = next;
 	}
 
@@ -2290,8 +2323,11 @@ static int ssl_sock_load_cert_chain_file(SSL_CTX *ctx, const char *file, struct 
 		goto end;
 
 	if (fcount) {
-		while (fcount--)
+		while (fcount--) {
 			order = ssl_sock_add_cert_sni(ctx, s, sni_filter[fcount], order);
+			if (order < 0)
+				goto end;
+		}
 	}
 	else {
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
@@ -2303,6 +2339,8 @@ static int ssl_sock_load_cert_chain_file(SSL_CTX *ctx, const char *file, struct 
 					if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
 						order = ssl_sock_add_cert_sni(ctx, s, str, order);
 						OPENSSL_free(str);
+						if (order < 0)
+							goto end;
 					}
 				}
 			}
@@ -2319,6 +2357,8 @@ static int ssl_sock_load_cert_chain_file(SSL_CTX *ctx, const char *file, struct 
 			if (ASN1_STRING_to_UTF8((unsigned char **)&str, value) >= 0) {
 				order = ssl_sock_add_cert_sni(ctx, s, str, order);
 				OPENSSL_free(str);
+				if (order < 0)
+					goto end;
 			}
 		}
 	}
@@ -2525,7 +2565,7 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, struct proxy *cu
 						}
 
 						snprintf(fp, sizeof(fp), "%s/%s", path, dp);
-						ssl_sock_load_multi_cert(fp, bind_conf, curproxy, NULL, 0, err);
+						cfgerr += ssl_sock_load_multi_cert(fp, bind_conf, curproxy, NULL, 0, err);
 
 						/* Successfully processed the bundle */
 						goto ignore_entry;
@@ -2696,7 +2736,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, SSL_CTX *ctx, struct proxy
 		SSL_MODE_RELEASE_BUFFERS |
 		SSL_MODE_SMALL_BUFFERS;
 	STACK_OF(SSL_CIPHER) * ciphers = NULL;
-	SSL_CIPHER * cipher = NULL;
+	const SSL_CIPHER * cipher = NULL;
 	char cipher_description[128];
 	/* The description of ciphers using an Ephemeral Diffie Hellman key exchange
 	   contains " Kx=DH " or " Kx=DH(". Beware of " Kx=DH/",
@@ -5551,15 +5591,15 @@ static int bind_parse_strict_sni(char **args, int cur_arg, struct proxy *px, str
 static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
-	FILE *f;
+	FILE *f = NULL;
 	int i = 0;
 	char thisline[LINESIZE];
-	struct tls_keys_ref *keys_ref;
+	struct tls_keys_ref *keys_ref = NULL;
 
 	if (!*args[cur_arg + 1]) {
 		if (err)
 			memprintf(err, "'%s' : missing TLS ticket keys file path", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref = tlskeys_ref_lookup(args[cur_arg + 1]);
@@ -5568,16 +5608,32 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 		return 0;
 	}
 
-	keys_ref = malloc(sizeof(*keys_ref));
+	keys_ref = calloc(1, sizeof(*keys_ref));
+	if (!keys_ref) {
+		if (err)
+			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
+		goto fail;
+	}
+
 	keys_ref->tlskeys = malloc(TLS_TICKETS_NO * sizeof(struct tls_sess_key));
+	if (!keys_ref->tlskeys) {
+		if (err)
+			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
+		goto fail;
+	}
 
 	if ((f = fopen(args[cur_arg + 1], "r")) == NULL) {
 		if (err)
 			memprintf(err, "'%s' : unable to load ssl tickets keys file", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref->filename = strdup(args[cur_arg + 1]);
+	if (!keys_ref->filename) {
+		if (err)
+			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
+		goto fail;
+	}
 
 	while (fgets(thisline, sizeof(thisline), f) != NULL) {
 		int len = strlen(thisline);
@@ -5591,8 +5647,7 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 		if (base64dec(thisline, len, (char *) (keys_ref->tlskeys + i % TLS_TICKETS_NO), sizeof(struct tls_sess_key)) != sizeof(struct tls_sess_key)) {
 			if (err)
 				memprintf(err, "'%s' : unable to decode base64 key on line %d", args[cur_arg+1], i + 1);
-			fclose(f);
-			return ERR_ALERT | ERR_FATAL;
+			goto fail;
 		}
 		i++;
 	}
@@ -5600,8 +5655,7 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	if (i < TLS_TICKETS_NO) {
 		if (err)
 			memprintf(err, "'%s' : please supply at least %d keys in the tls-tickets-file", args[cur_arg+1], TLS_TICKETS_NO);
-		fclose(f);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	fclose(f);
@@ -5615,6 +5669,17 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	LIST_ADD(&tlskeys_reference, &keys_ref->list);
 
 	return 0;
+
+  fail:
+	if (f)
+		fclose(f);
+	if (keys_ref) {
+		free(keys_ref->filename);
+		free(keys_ref->tlskeys);
+		free(keys_ref);
+	}
+	return ERR_ALERT | ERR_FATAL;
+
 #else
 	if (err)
 		memprintf(err, "'%s' : TLS ticket callback extension not supported", args[cur_arg]);

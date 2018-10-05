@@ -369,7 +369,9 @@ void dns_update_resolvers_timeout(struct dns_resolvers *resolvers)
  * while parsing the name.
  * <offset> is the number of bytes the caller could move forward.
  */
-int dns_read_name(unsigned char *buffer, unsigned char *bufend, unsigned char *name, char *destination, int dest_len, int *offset)
+int dns_read_name(unsigned char *buffer, unsigned char *bufend,
+		  unsigned char *name, char *destination, int dest_len,
+		  int *offset, unsigned int depth)
 {
 	int nb_bytes = 0, n = 0;
 	int label_len;
@@ -377,14 +379,24 @@ int dns_read_name(unsigned char *buffer, unsigned char *bufend, unsigned char *n
 	char *dest = destination;
 
 	while (1) {
+		if (reader >= bufend)
+			goto out_error;
+
 		/* name compression is in use */
 		if ((*reader & 0xc0) == 0xc0) {
+			if (reader + 1 >= bufend)
+				goto out_error;
+
 			/* a pointer must point BEFORE current position */
 			if ((buffer + reader[1]) > reader) {
 				goto out_error;
 			}
 
-			n = dns_read_name(buffer, bufend, buffer + reader[1], dest, dest_len - nb_bytes, offset);
+			if (depth++ > 100)
+				goto out_error;
+
+			n = dns_read_name(buffer, bufend, buffer + (*reader & 0x3f)*256 + reader[1],
+					  dest, dest_len - nb_bytes, offset, depth);
 			if (n == 0)
 				goto out_error;
 
@@ -551,7 +563,7 @@ int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend, struct
 		 * (using the 0x0c format)
 		 */
 		offset = 0;
-		len = dns_read_name(resp, bufend, reader, dns_query->name, DNS_MAX_NAME_SIZE, &offset);
+		len = dns_read_name(resp, bufend, reader, dns_query->name, DNS_MAX_NAME_SIZE, &offset, 0);
 
 		if (len == 0)
 			return DNS_RESP_INVALID;
@@ -586,7 +598,7 @@ int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend, struct
 		LIST_ADDQ(&dns_p->answer_list, &dns_answer_record->list);
 
 		offset = 0;
-		len = dns_read_name(resp, bufend, reader, tmpname, DNS_MAX_NAME_SIZE, &offset);
+		len = dns_read_name(resp, bufend, reader, tmpname, DNS_MAX_NAME_SIZE, &offset, 0);
 
 		if (len == 0)
 			return DNS_RESP_INVALID;
@@ -649,6 +661,9 @@ int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend, struct
 		/* move forward 2 bytes for data len */
 		reader += 2;
 
+		if (reader + dns_answer_record->data_len > bufend)
+			return DNS_RESP_INVALID;
+
 		/* analyzing record content */
 		switch (dns_answer_record->type) {
 			case DNS_RTYPE_A:
@@ -672,7 +687,7 @@ int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend, struct
 					return DNS_RESP_CNAME_ERROR;
 
 				offset = 0;
-				len = dns_read_name(resp, bufend, reader, tmpname, DNS_MAX_NAME_SIZE, &offset);
+				len = dns_read_name(resp, bufend, reader, tmpname, DNS_MAX_NAME_SIZE, &offset, 0);
 
 				if (len == 0)
 					return DNS_RESP_INVALID;
