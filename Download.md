@@ -5,7 +5,7 @@ Branch | nuster version | Released        | Download                    | Notes
 ------ | -------------- | --------        | --------                    | -----
 master |                |                 |                             | maybe broken
 v1.8.x | 2.0.3.18       | [2018-10-05][3] | [nuster-2.0.3.18.tar.gz][4] | stable: cache, nosql, http2
-v1.7.x | 1.0.1.17       | [2018-08-15][5] | [nuster-1.0.1.17.tar.gz][6] | stable: cache only
+v1.7.x | 1.0.2.17       | [2018-10-05][5] | [nuster-1.0.2.17.tar.gz][6] | stable: cache only
 disk   |                |                 |                             | disk persistence
 sync   |                |                 |                             | replication
 
@@ -13,8 +13,8 @@ sync   |                |                 |                             | replic
 [2]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.3.18/nuster-2.0.3.18.tar.gz
 [3]:https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.3.18
 [4]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.3.18/nuster-2.0.3.18.tar.gz
-[5]:https://github.com/jiangwenyuan/nuster/releases/tag/v1.0.1.17
-[6]:https://github.com/jiangwenyuan/nuster/releases/download/v1.0.1.17/nuster-1.0.1.17.tar.gz
+[5]:https://github.com/jiangwenyuan/nuster/releases/tag/v1.0.2.17
+[6]:https://github.com/jiangwenyuan/nuster/releases/download/v1.0.2.17/nuster-1.0.2.17.tar.gz
 
 ## Versioning
 
@@ -39,6 +39,7 @@ https://github.com/jiangwenyuan/nuster/releases
 | 2.0.0.18       | 1.8.12          |
 | 1.1.1.18       | 1.8.12          |
 | 1.1.0.18       | 1.8.8           | 1.8.8.3
+| 1.0.2.17       | 1.7.11          |
 | 1.0.1.17       | 1.7.11          | 1.7.11.3
 | 1.0.0.17       | 1.7.11          | 1.7.11.3
 |                | 1.8.8           | 1.8.8.2
