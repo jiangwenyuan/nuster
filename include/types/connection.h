@@ -45,7 +45,7 @@ struct server;
 struct pipe;
 
 
-/* A connection handle is how we differenciate two connections on the lower
+/* A connection handle is how we differentiate two connections on the lower
  * layers. It usually is a file descriptor but can be a connection id.
  */
 union conn_handle {
