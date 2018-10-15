@@ -2159,9 +2159,9 @@ static struct task *process_peer_sync(struct task * task)
 
 
 /*
- *
+ * returns 0 in case of error.
  */
-void peers_init_sync(struct peers *peers)
+int peers_init_sync(struct peers *peers)
 {
 	struct peer * curpeer;
 	struct listener *listener;
@@ -2173,10 +2173,14 @@ void peers_init_sync(struct peers *peers)
 	list_for_each_entry(listener, &peers->peers_fe->conf.listeners, by_fe)
 		listener->maxconn = peers->peers_fe->maxconn;
 	peers->sync_task = task_new(MAX_THREADS_MASK);
+	if (!peers->sync_task)
+		return 0;
+
 	peers->sync_task->process = process_peer_sync;
 	peers->sync_task->context = (void *)peers;
 	peers->sighandler = signal_register_task(0, peers->sync_task, 0);
 	task_wakeup(peers->sync_task, TASK_WOKEN_INIT);
+	return 1;
 }
 
 
