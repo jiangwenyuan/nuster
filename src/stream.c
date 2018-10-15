@@ -282,8 +282,8 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
  out_fail_accept:
 	flt_stream_release(s, 0);
 	task_free(t);
- out_fail_alloc:
 	LIST_DEL(&s->list);
+ out_fail_alloc:
 	pool_free(pool_head_stream, s);
 	return NULL;
 }
