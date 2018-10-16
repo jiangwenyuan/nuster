@@ -29,7 +29,7 @@ void thread_sync_io_handler(int fd)
 
 static HA_SPINLOCK_T sync_lock;
 static int           threads_sync_pipe[2] = {-1, -1};
-static unsigned long threads_want_sync = 0;
+volatile static unsigned long threads_want_sync = 0;
 volatile unsigned long threads_want_rdv_mask = 0;
 volatile unsigned long threads_harmless_mask = 0;
 volatile unsigned long all_threads_mask  = 1; // nbthread 1 assumed by default
