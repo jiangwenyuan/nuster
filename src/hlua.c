@@ -24,6 +24,7 @@
 #include <ebpttree.h>
 
 #include <common/cfgparse.h>
+#include <common/compiler.h>
 #include <common/xref.h>
 #include <common/hathreads.h>
 
@@ -63,7 +64,7 @@
  *   MAY_LJMP() marks an lua function that may use longjmp.
  */
 #define __LJMP
-#define WILL_LJMP(func) func
+#define WILL_LJMP(func) do { func; __unreachable(); } while(0)
 #define MAY_LJMP(func) func
 
 /* This couple of function executes securely some Lua calls outside of
