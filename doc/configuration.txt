@@ -17132,7 +17132,7 @@ cache <name>
 
 total-max-size <megabytes>
   Define the size in RAM of the cache in megabytes. This size is split in
-  blocks of 1kB which are used by the cache entries.
+  blocks of 1kB which are used by the cache entries. Its maximum value is 4095.
 
 max-age <seconds>
   Define the maximum expiration duration. The expiration is set has the lowest
