@@ -4388,8 +4388,6 @@ void http_end_txn_clean_session(struct stream *s)
 		 * it's better to do it (at least it helps with debugging).
 		 */
 		s->txn->flags |= TX_PREFER_LAST;
-		if (srv_conn)
-			srv_conn->flags |= CO_FL_PRIVATE;
 	}
 
 	/* Never ever allow to reuse a connection from a non-reuse backend */
@@ -5053,9 +5051,12 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	struct http_txn *txn = s->txn;
 	struct http_msg *msg = &txn->rsp;
 	struct hdr_ctx ctx;
+	struct connection *srv_conn;
 	int use_close_only;
 	int cur_idx;
 	int n;
+
+	srv_conn = cs_conn(objt_cs(s->si[1].end));
 
 	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%d analysers=%02x\n",
 		now_ms, __FUNCTION__,
@@ -5586,6 +5587,27 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 
 		msg->flags |= HTTP_MSGF_CNT_LEN | HTTP_MSGF_XFER_LEN;
 		msg->body_len = msg->chunk_len = cl;
+	}
+
+	/* check for NTML authentication headers in 401 (WWW-Authenticate) and
+	 * 407 (Proxy-Authenticate) responses and set the connection to private
+	 */
+	if (srv_conn && txn->status == 401) {
+	    /* check for Negotiate/NTLM WWW-Authenticate headers */
+	    ctx.idx = 0;
+	    while (http_find_header2("WWW-Authenticate", 16, rep->buf->p, &txn->hdr_idx, &ctx)) {
+	            if ((ctx.vlen >= 9 && word_match(ctx.line + ctx.val, ctx.vlen, "Negotiate", 9)) ||
+	                  (ctx.vlen >= 4 && word_match(ctx.line + ctx.val, ctx.vlen, "NTLM", 4)))
+				srv_conn->flags |= CO_FL_PRIVATE;
+	    }
+	} else if (srv_conn && txn->status == 407) {
+	    /* check for Negotiate/NTLM Proxy-Authenticate headers */
+	    ctx.idx = 0;
+	    while (http_find_header2("Proxy-Authenticate", 18, rep->buf->p, &txn->hdr_idx, &ctx)) {
+	            if ((ctx.vlen >= 9 && word_match(ctx.line + ctx.val, ctx.vlen, "Negotiate", 9)) ||
+	                  (ctx.vlen >= 4 && word_match(ctx.line + ctx.val, ctx.vlen, "NTLM", 4)))
+				srv_conn->flags |= CO_FL_PRIVATE;
+	    }
 	}
 
  skip_content_length:
