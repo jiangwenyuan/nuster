@@ -985,6 +985,9 @@ char *http_get_path(struct http_txn *txn)
 {
 	char *ptr, *end;
 
+	if (!txn->req.chn->buf->size)
+		return NULL;
+
 	ptr = txn->req.chn->buf->p + txn->req.sl.rq.u;
 	end = ptr + txn->req.sl.rq.u_l;
 
