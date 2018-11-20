@@ -101,7 +101,7 @@ int hpack_encode_header(struct chunk *out, const struct ist n, const struct ist 
 	else if (isteq(n, ist("last-modified")))
 		out->str[len++] = 0x6c; // literal with indexing -- name="last-modified" (idx 44)
 	else if (isteq(n, ist("accept-ranges")))
-		out->str[len++] = 0x51; // literal with indexing -- name="accept-ranges" (idx 17)
+		out->str[len++] = 0x52; // literal with indexing -- name="accept-ranges" (idx 18)
 	else if (isteq(n, ist("cache-control")))
 		out->str[len++] = 0x58; // literal with indexing -- name="cache-control" (idx 24)
 	else if (isteq(n, ist("content-length")))
