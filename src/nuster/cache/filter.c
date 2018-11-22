@@ -239,7 +239,7 @@ static int _nst_cache_filter_http_forward_data(struct stream *s, struct filter *
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         if(!nst_cache_update(ctx, msg, len)) {
             ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
-            ctx->state        = NST_CACHE_CTX_STATE_PASS;
+            ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
         }
     }
     return len;
