@@ -201,7 +201,10 @@ static struct nst_cache_element *_nst_cache_data_append(struct nst_cache_element
         int size   = msg->chn->buf->size;
 
         element->msg.data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, msg_len);
-        if(!element->msg.data) return NULL;
+        if(!element->msg.data) {
+            nst_cache_memory_free(global.nuster.cache.pool.element, element);
+            return NULL;
+        }
 
         if(p - data + msg_len > size) {
             int right = data + size - p;
