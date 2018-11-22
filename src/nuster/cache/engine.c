@@ -38,6 +38,21 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
     /* struct stream *s                  = si_strm(si); */
     int ret;
 
+    if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
+        return;
+    }
+
+    /* Check if the input buffer is avalaible. */
+    if(res->buf->size == 0) {
+        si_applet_cant_put(si);
+        return;
+    }
+
+    /* check that the output is not closed */
+    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
+        appctx->ctx.nuster.cache_engine.element = NULL;
+    }
+
     if(appctx->ctx.nuster.cache_engine.element) {
         /*
         if(appctx->ctx.nuster.cache_engine.element == appctx->ctx.nuster.cache_engine.data->element) {
