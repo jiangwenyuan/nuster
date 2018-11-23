@@ -205,8 +205,7 @@ struct nst_cache_data *nst_cache_data_new() {
 /*
  * Append partial http response data
  */
-static struct nst_cache_element *_nst_cache_data_append(struct nst_cache_element *tail,
-        struct http_msg *msg, long msg_len) {
+static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg, long msg_len) {
 
     struct nst_cache_element *element = nst_cache_memory_alloc(global.nuster.cache.pool.element, sizeof(*element));
 
@@ -231,11 +230,6 @@ static struct nst_cache_element *_nst_cache_data_append(struct nst_cache_element
         }
         element->msg.len = msg_len;
         element->next    = NULL;
-        if(tail == NULL) {
-            tail = element;
-        } else {
-            tail->next = element;
-        }
         nst_cache_stats_update_used_mem(msg_len);
     }
     return element;
@@ -669,10 +663,12 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
  * Add partial http data to nst_cache_data
  */
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len) {
-    struct nst_cache_element *element = _nst_cache_data_append(ctx->element, msg, msg_len);
+    struct nst_cache_element *element = _nst_cache_data_append(msg, msg_len);
 
     if(element) {
-        if(!ctx->element) {
+        if(ctx->element) {
+            ctx->element->next = element;
+        } else {
             ctx->data->element = element;
         }
         ctx->element = element;
