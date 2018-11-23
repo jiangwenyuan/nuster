@@ -381,7 +381,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
 
     struct http_txn *txn = s->txn;
 
-    char *url_end;
+    char *uri_begin, *uri_end;
     struct hdr_ctx hdr;
 
     ctx->req.scheme = SCH_HTTP;
@@ -403,35 +403,37 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
         memcpy(ctx->req.host.data, hdr.line + hdr.val, hdr.vlen);
     }
 
-    ctx->req.path.data = http_get_path(txn);
+    uri_begin          = http_get_path(txn);
+    uri_end            = NULL;
+    ctx->req.path.data = NULL;
     ctx->req.path.len  = 0;
-    ctx->req.uri.data  = ctx->req.path.data;
+    ctx->req.uri.data  = NULL;
     ctx->req.uri.len   = 0;
-    url_end            = NULL;
-    if(ctx->req.path.data) {
-        char *ptr = ctx->req.path.data;
-        url_end   = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
-        while(ptr < url_end && *ptr != '?') {
+    if(uri_begin) {
+        char *ptr = uri_begin;
+        uri_end   = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
+        while(ptr < uri_end && *ptr != '?') {
             ptr++;
         }
-        ctx->req.path.len = ptr - ctx->req.path.data;
-        ctx->req.uri.len  = url_end - ctx->req.uri.data;
+        ctx->req.path.len = ptr - uri_begin;
+        ctx->req.uri.len  = uri_end - uri_begin;
+
+        /* extra 1 char as required by regex_exec_match2 */
+        ctx->req.path.data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, ctx->req.path.len + 1);
+        if(!ctx->req.path.data) {
+            return 0;
+        }
+        memcpy(ctx->req.path.data, uri_begin, ctx->req.path.len);
     }
-    /* extra 1 char as required by regex_exec_match2 */
-    ctx->req.path.data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, ctx->req.path.len + 1);
-    if(!ctx->req.path.data) {
-        return 0;
-    }
-    memcpy(ctx->req.path.data, ctx->req.uri.data, ctx->req.path.len);
 
     ctx->req.query.data = NULL;
     ctx->req.query.len  = 0;
     ctx->req.delimiter  = 0;
     if(ctx->req.uri.data) {
-        ctx->req.query.data = memchr(ctx->req.uri.data, '?', url_end - ctx->req.uri.data);
+        ctx->req.query.data = memchr(ctx->req.uri.data, '?', uri_end - ctx->req.uri.data);
         if(ctx->req.query.data) {
             ctx->req.query.data++;
-            ctx->req.query.len = url_end - ctx->req.query.data;
+            ctx->req.query.len = uri_end - ctx->req.query.data;
             if(ctx->req.query.len) {
                 ctx->req.delimiter = 1;
             }
