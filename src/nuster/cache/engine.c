@@ -276,8 +276,10 @@ static void _nst_cache_data_cleanup() {
             struct nst_cache_element *tmp = element;
             element                       = element->next;
 
-            nst_cache_stats_update_used_mem(-tmp->msg.len);
-            nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->msg.data);
+            if(tmp->msg.data) {
+                nst_cache_stats_update_used_mem(-tmp->msg.len);
+                nst_cache_memory_free(global.nuster.cache.pool.chunk, tmp->msg.data);
+            }
             nst_cache_memory_free(global.nuster.cache.pool.element, tmp);
         }
         nst_cache_memory_free(global.nuster.cache.pool.data, data);
