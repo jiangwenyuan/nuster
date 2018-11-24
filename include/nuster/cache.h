@@ -127,6 +127,7 @@ struct nst_cache_ctx {
         struct nuster_str     cookie;
     } req;
     int                       pid;         /* proxy uuid */
+    int                       sov;
 };
 
 struct nst_cache_stats {

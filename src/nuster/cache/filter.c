@@ -63,6 +63,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
         ctx->pid           = -1;
         ctx->req.host.data = NULL;
         ctx->req.path.data = NULL;
+        ctx->sov           = 0;
         filter->ctx        = ctx;
     }
     register_data_filter(s, &s->req, filter);
@@ -222,6 +223,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                 return 1;
             }
 
+            ctx->sov = msg->sov;
             nuster_debug("PASS\n[CACHE] To create\n");
 
             /* start to build cache */
@@ -238,13 +240,18 @@ static int _nst_cache_filter_http_forward_data(struct stream *s, struct filter *
 
     struct nst_cache_ctx *ctx = filter->ctx;
 
+    int forward = len;
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        if(!nst_cache_update(ctx, msg, len)) {
+        if(ctx->sov > 0) {
+            forward  = ctx->sov;
+            ctx->sov = 0;
+        }
+        if(!nst_cache_update(ctx, msg, forward)) {
             ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
             ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
         }
     }
-    return len;
+    return forward;
 }
 
 static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
