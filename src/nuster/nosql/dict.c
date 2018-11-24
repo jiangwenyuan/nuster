@@ -198,6 +198,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash, struc
     struct nst_nosql_dict  *dict  = NULL;
     struct nst_nosql_data  *data  = NULL;
     struct nst_nosql_entry *entry = NULL;
+    char *entry_key               = NULL;
     int idx;
 
     dict = _nst_nosql_dict_rehashing() ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
@@ -207,8 +208,15 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash, struc
         return NULL;
     }
 
+    entry_key = nuster_memory_alloc(global.nuster.nosql.memory, strlen(key) + 1);
+    if(!entry_key) {
+        nuster_memory_free(global.nuster.nosql.memory, entry_key);
+        return NULL;
+    }
+
     data = nst_nosql_data_new();
     if(!data) {
+        nuster_memory_free(global.nuster.nosql.memory, entry_key);
         nuster_memory_free(global.nuster.nosql.memory, entry);
         return NULL;
     }
@@ -222,12 +230,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash, struc
     /* init entry */
     entry->data   = data;
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
-    entry->key    = nuster_memory_alloc(global.nuster.nosql.memory, strlen(key) + 1);
-    if(!entry->key) {
-        entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
-        data->invalid = 1;
-        return NULL;
-    }
+    entry->key    = entry_key;
     memcpy(entry->key, key, strlen(key) + 1);
     entry->hash   = hash;
     entry->expire = 0;
