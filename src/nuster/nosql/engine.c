@@ -47,6 +47,21 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct nst_nosql_element *element = NULL;
     int ret;
 
+    if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
+        return;
+    }
+
+    /* Check if the input buffer is avalaible. */
+    if(res->buf->size == 0) {
+        si_applet_cant_put(si);
+        return;
+    }
+
+    /* check that the output is not closed */
+    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
+        appctx->st0 = NST_NOSQL_CTX_STATE_DONE;
+    }
+
     switch(appctx->st0) {
         case NST_NOSQL_APPCTX_STATE_CREATE:
             co_skip(si_oc(si), si_ob(si)->o);
@@ -202,8 +217,10 @@ static void _nst_nosql_data_cleanup() {
             struct nst_nosql_element *tmp = element;
             element                       = element->next;
 
-            nst_nosql_stats_update_used_mem(-tmp->msg.len);
-            nuster_memory_free(global.nuster.nosql.memory, tmp->msg.data);
+            if(tmp->msg.data) {
+                nst_nosql_stats_update_used_mem(-tmp->msg.len);
+                nuster_memory_free(global.nuster.nosql.memory, tmp->msg.data);
+            }
             nuster_memory_free(global.nuster.nosql.memory, tmp);
         }
 
@@ -367,7 +384,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct h
 
     struct http_txn *txn = s->txn;
 
-    char *url_end;
+    char *uri_begin, *uri_end;
     struct hdr_ctx hdr;
 
     ctx->req.scheme = SCH_HTTP;
@@ -389,35 +406,37 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct h
         memcpy(ctx->req.host.data, hdr.line + hdr.val, hdr.vlen);
     }
 
-    ctx->req.path.data = http_get_path(txn);
+    uri_begin          = http_get_path(txn);
+    uri_end            = NULL;
+    ctx->req.path.data = NULL;
     ctx->req.path.len  = 0;
-    ctx->req.uri.data  = ctx->req.path.data;
+    ctx->req.uri.data  = NULL;
     ctx->req.uri.len   = 0;
-    url_end            = NULL;
-    if(ctx->req.path.data) {
-        char *ptr = ctx->req.path.data;
-        url_end   = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
-        while(ptr < url_end && *ptr != '?') {
+    if(uri_begin) {
+        char *ptr = uri_begin;
+        uri_end   = msg->chn->buf->p + msg->sl.rq.u + msg->sl.rq.u_l;
+        while(ptr < uri_end && *ptr != '?') {
             ptr++;
         }
-        ctx->req.path.len = ptr - ctx->req.path.data;
-        ctx->req.uri.len  = url_end - ctx->req.uri.data;
+        ctx->req.path.len = ptr - uri_begin;
+        ctx->req.uri.len  = uri_end - uri_begin;
+
+        /* extra 1 char as required by regex_exec_match2 */
+        ctx->req.path.data = nuster_memory_alloc(global.nuster.nosql.memory, ctx->req.path.len + 1);
+        if(!ctx->req.path.data) {
+            return 0;
+        }
+        memcpy(ctx->req.path.data, uri_begin, ctx->req.path.len);
     }
-    /* extra 1 char as required by regex_exec_match2 */
-    ctx->req.path.data = nuster_memory_alloc(global.nuster.nosql.memory, ctx->req.path.len + 1);
-    if(!ctx->req.path.data) {
-        return 0;
-    }
-    memcpy(ctx->req.path.data, ctx->req.uri.data, ctx->req.path.len);
 
     ctx->req.query.data = NULL;
     ctx->req.query.len  = 0;
     ctx->req.delimiter  = 0;
     if(ctx->req.uri.data) {
-        ctx->req.query.data = memchr(ctx->req.uri.data, '?', url_end - ctx->req.uri.data);
+        ctx->req.query.data = memchr(ctx->req.uri.data, '?', uri_end - ctx->req.uri.data);
         if(ctx->req.query.data) {
             ctx->req.query.data++;
-            ctx->req.query.len = url_end - ctx->req.query.data;
+            ctx->req.query.len = uri_end - ctx->req.query.data;
             if(ctx->req.query.len) {
                 ctx->req.delimiter = 1;
             }
@@ -525,8 +544,8 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pc
             case NUSTER_RULE_KEY_BODY:
                 nuster_debug("body.");
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
-                    if((s->be->options & PR_O_WREQ_BODY) && msg->body_len > 0 ) {
-                        key = _nst_nosql_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->body_len);
+                    if((s->be->options & PR_O_WREQ_BODY) && msg->chn->buf->i - msg->sov > 0) {
+                        key = _nst_nosql_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->chn->buf->i - msg->sov);
                     }
                 }
                 break;
@@ -620,8 +639,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
     }
 }
 
-static struct nst_nosql_element *_nst_nosql_data_append(struct nst_nosql_element *tail,
-        struct http_msg *msg, long msg_len) {
+static struct nst_nosql_element *_nst_nosql_data_append(struct http_msg *msg, long msg_len) {
 
     struct nst_nosql_element *element = nuster_memory_alloc(global.nuster.nosql.memory, sizeof(*element));
 
@@ -631,7 +649,10 @@ static struct nst_nosql_element *_nst_nosql_data_append(struct nst_nosql_element
         int size   = msg->chn->buf->size;
 
         element->msg.data = nuster_memory_alloc(global.nuster.nosql.memory, msg_len);
-        if(!element->msg.data) return NULL;
+        if(!element->msg.data) {
+            nuster_memory_free(global.nuster.nosql.memory, element);
+            return NULL;
+        }
 
         if(p - data + msg_len > size) {
             int right = data + size - p;
@@ -643,21 +664,18 @@ static struct nst_nosql_element *_nst_nosql_data_append(struct nst_nosql_element
         }
         element->msg.len = msg_len;
         element->next    = NULL;
-        if(tail == NULL) {
-            tail = element;
-        } else {
-            tail->next = element;
-        }
         nst_nosql_stats_update_used_mem(msg_len);
     }
     return element;
 }
 
 int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg, long msg_len) {
-    struct nst_nosql_element *element = _nst_nosql_data_append(ctx->element, msg, msg_len);
+    struct nst_nosql_element *element = _nst_nosql_data_append(msg, msg_len);
 
     if(element) {
-        if(!ctx->element) {
+        if(ctx->element) {
+            ctx->element->next = element;
+        } else {
             ctx->data->element = element;
         }
         ctx->element = element;
