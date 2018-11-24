@@ -196,6 +196,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_data  *data  = NULL;
     struct nst_cache_entry *entry = NULL;
+    char *entry_key               = NULL;
     int idx;
 
     dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
@@ -205,8 +206,15 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
         return NULL;
     }
 
+    entry_key = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, strlen(key) + 1);
+    if(!entry_key) {
+        nst_cache_memory_free(global.nuster.cache.pool.entry, entry);
+        return NULL;
+    }
+
     data = nst_cache_data_new();
     if(!data) {
+        nst_cache_memory_free(global.nuster.cache.pool.chunk, entry_key);
         nst_cache_memory_free(global.nuster.cache.pool.entry, entry);
         return NULL;
     }
@@ -220,12 +228,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
     /* init entry */
     entry->data   = data;
     entry->state  = NST_CACHE_ENTRY_STATE_CREATING;
-    entry->key    = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, strlen(key) + 1);
-    if(!entry->key) {
-        entry->state = NST_CACHE_ENTRY_STATE_INVALID;
-        data->invalid = 1;
-        return NULL;
-    }
+    entry->key    = entry_key;
     memcpy(entry->key, key, strlen(key) + 1);
     entry->hash   = hash;
     entry->expire = 0;
