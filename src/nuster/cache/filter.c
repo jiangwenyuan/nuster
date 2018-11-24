@@ -240,18 +240,29 @@ static int _nst_cache_filter_http_forward_data(struct stream *s, struct filter *
 
     struct nst_cache_ctx *ctx = filter->ctx;
 
-    int forward = len;
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         if(ctx->sov > 0) {
-            forward  = ctx->sov;
+            if(!nst_cache_update(ctx, msg, ctx->sov)) {
+                goto err;
+            }
+            b_adv(msg->chn->buf, ctx->sov);
+
+            if(!nst_cache_update(ctx, msg, len - ctx->sov)) {
+                goto err;
+            }
+            b_rew(msg->chn->buf, ctx->sov);
             ctx->sov = 0;
-        }
-        if(!nst_cache_update(ctx, msg, forward)) {
-            ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
-            ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
+        } else {
+            if(!nst_cache_update(ctx, msg, len)) {
+                goto err;
+            }
         }
     }
-    return forward;
+    return len;
+err:
+    ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+    ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
+    return len;
 }
 
 static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
