@@ -536,8 +536,8 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
             case NUSTER_RULE_KEY_BODY:
                 nuster_debug("body.");
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
-                    if((s->be->options & PR_O_WREQ_BODY) && msg->body_len > 0 ) {
-                        key = _nst_cache_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->body_len);
+                    if((s->be->options & PR_O_WREQ_BODY) && msg->chn->buf->i - msg->sov > 0) {
+                        key = _nst_cache_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->chn->buf->i - msg->sov);
                     }
                 }
                 break;
