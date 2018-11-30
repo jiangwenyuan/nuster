@@ -22,6 +22,7 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t b
     struct nuster_memory *memory;
     uint64_t n;
     uint8_t *begin, *end;
+    uint32_t bitmap_size;
 
     if(block_size < NUSTER_MEMORY_BLOCK_MIN_SIZE) block_size = NUSTER_MEMORY_BLOCK_MIN_SIZE;
     if(chunk_size < NUSTER_MEMORY_CHUNK_MIN_SIZE) chunk_size = NUSTER_MEMORY_CHUNK_MIN_SIZE;
@@ -33,6 +34,7 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t b
         fprintf(stderr, "chunk_size cannot be greater than block_size.\n");
         return NULL;
     }
+    size = (size + block_size - 1) / block_size * block_size;
 
     /* create shared memory */
     p = (uint8_t *) mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_ANON|MAP_SHARED, -1, 0);
@@ -49,7 +51,6 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t b
     }
     memory->start      = p;
     memory->stop       = p + size;
-    memory->bitmap     = memory->stop;
     memory->block_size = block_size;
     memory->chunk_size = chunk_size;
 
@@ -67,16 +68,19 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t b
     memory->empty = NULL;
     memory->full  = NULL;
 
+    bitmap_size = block_size / chunk_size / 8;
+
     /* set data begin */
-    n     = (memory->stop - p) / (sizeof(struct nuster_memory_ctrl) + block_size);
-    begin = (uint8_t *) (((uintptr_t)(p) + n * sizeof(struct nuster_memory_ctrl) + ((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1)) & ~((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1));
+    n     = (memory->stop - p) / (sizeof(struct nuster_memory_ctrl) + block_size + bitmap_size);
+    begin = (uint8_t *) (((uintptr_t)(p) + n * sizeof(struct nuster_memory_ctrl) + n * bitmap_size + ((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1)) & ~((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1));
     end   = begin + block_size * n;
     if(memory->stop < end) {
         n--;
-        begin = (uint8_t *) (((uintptr_t)(p) + n * sizeof(struct nuster_memory_ctrl) + ((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1)) & ~((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1));
+        begin = (uint8_t *) (((uintptr_t)(p) + n * sizeof(struct nuster_memory_ctrl) + n * bitmap_size + ((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1)) & ~((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1));
     }
 
     memory->blocks      = n;
+    memory->bitmap      = (uint8_t *)(memory->block + n);
     memory->data.begin  = begin;
     memory->data.free   = begin;
     memory->data.end    = begin + block_size * (n - 1);
@@ -94,13 +98,9 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t b
     /* initialize block */
     for(n = 0; n < memory->blocks; n++) {
         memory->block[n].info   = 0;
-        memory->block[n].bitmap = NULL;
+        memory->block[n].bitmap = memory->bitmap + n * bitmap_size;
         memory->block[n].prev   = NULL;
         memory->block[n].next   = NULL;
-    }
-    /* initialize bitmap area */
-    if (memory->stop - memory->data.end - memory->block_size > 0) {
-        memset(memory->data.end + memory->block_size, 0, memory->stop - memory->data.end - memory->block_size);
     }
 
     return memory;
@@ -110,23 +110,19 @@ void *_nuster_memory_block_alloc(struct nuster_memory *memory,
         struct nuster_memory_ctrl *block, int chunk_idx) {
     int chunk_size = 1<<(memory->chunk_shift + chunk_idx);
     int block_idx  = block - memory->block;
-    /*
-     * use max bits here instead of exact bits(block_size/chunk_size)
-     * to avoid possible bitmap memory loss when reuse a lower block_ctrl
-     * for a upper one, in which case it might lead to memory exhaustion.
-     */
-    int bits       = memory->block_size / memory->chunk_size;
+
     int bits_need  = memory->block_size / chunk_size;
-    int full       = 1;
     int bits_idx   = 0;
     int i          = 0;
     int unset      = 1;
+    int full       = 1;
 
-    /* use info */
+    /* use info, should not use anymore */
     if (chunk_size * NUSTER_MEMORY_INFO_BITMAP_BITS >= memory->block_size) {
         uint32_t mask =  ~0U >> (NUSTER_MEMORY_INFO_BITMAP_BITS - bits_need);
         uint32_t *v   = (uint32_t *)(&block->info) + 1;
         uint32_t t    = *v;
+
         /* get bits_idx */
         bits_idx      = __builtin_ffs(~t) - 1;
         /* set rightmost 0 to 1 */
@@ -136,27 +132,7 @@ void *_nuster_memory_block_alloc(struct nuster_memory *memory,
     /* use bitmap */
     else {
         uint64_t *begin;
-        /* first time? */
-        if (!block->bitmap) {
-            memory->bitmap -= bits / 8;
-            block->bitmap   = memory->bitmap;
-        }
         begin = (uint64_t *)block->bitmap;
-        /* are we using blocks? */
-        if (memory->bitmap <= memory->data.end + memory->block_size) {
-            if (memory->bitmap >= memory->data.free) {
-                i = (memory->bitmap - memory->data.begin) / memory->block_size;
-                memset(begin, 0, bits / 64);
-                _nuster_memory_block_set_inited(&memory->block[i]);
-                _nuster_memory_block_set_bitmap(&memory->block[i]);
-                memory->block[i].bitmap = NULL;
-                memory->block[i].prev   = NULL;
-                memory->block[i].next   = NULL;
-                memory->data.end       -= memory->block_size;
-            } else {
-                return NULL;
-            }
-        }
 
         i     = 0;
         unset = 1;
@@ -209,9 +185,8 @@ void _nuster_memory_block_init(struct nuster_memory * memory,
     _nuster_memory_block_set_type(block, chunk_idx);
     _nuster_memory_block_set_inited(block);
 
-    if(block->bitmap) {
-        memset(block->bitmap, 0, memory->block_size / memory->chunk_size / 8);
-    }
+    memset(block->bitmap, 0, memory->block_size / memory->chunk_size / 8);
+
     block->prev = NULL;
     block->next = NULL;
 
