@@ -214,8 +214,8 @@ static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg, lo
         char *p    = msg->chn->buf->p;
         int size   = msg->chn->buf->size;
 
-        element->msg.data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, msg_len);
-        if(!element->msg.data) {
+        char *msg_data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, msg_len);
+        if(!msg_data) {
             nst_cache_memory_free(global.nuster.cache.pool.element, element);
             return NULL;
         }
@@ -223,13 +223,15 @@ static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg, lo
         if(p - data + msg_len > size) {
             int right = data + size - p;
             int left  = msg_len - right;
-            memcpy(element->msg.data, p, right);
-            memcpy(element->msg.data + right, data, left);
+            memcpy(msg_data, p, right);
+            memcpy(msg_data + right, data, left);
         } else {
-            memcpy(element->msg.data, p, msg_len);
+            memcpy(msg_data, p, msg_len);
         }
-        element->msg.len = msg_len;
-        element->next    = NULL;
+
+        element->msg.data = msg_data;
+        element->msg.len  = msg_len;
+        element->next     = NULL;
         nst_cache_stats_update_used_mem(msg_len);
     }
     return element;
