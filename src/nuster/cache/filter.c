@@ -261,6 +261,7 @@ static int _nst_cache_filter_http_forward_data(struct stream *s, struct filter *
     return len;
 err:
     ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+    ctx->entry->data  = NULL;
     ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
     return len;
 }
