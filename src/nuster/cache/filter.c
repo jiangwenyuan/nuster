@@ -245,12 +245,14 @@ static int _nst_cache_filter_http_forward_data(struct stream *s, struct filter *
             if(!nst_cache_update(ctx, msg, ctx->sov)) {
                 goto err;
             }
-            b_adv(msg->chn->buf, ctx->sov);
 
-            if(!nst_cache_update(ctx, msg, len - ctx->sov)) {
-                goto err;
+            if(len > ctx->sov) {
+                b_adv(msg->chn->buf, ctx->sov);
+                if(!nst_cache_update(ctx, msg, len - ctx->sov)) {
+                    goto err;
+                }
+                b_rew(msg->chn->buf, ctx->sov);
             }
-            b_rew(msg->chn->buf, ctx->sov);
             ctx->sov = 0;
         } else {
             if(!nst_cache_update(ctx, msg, len)) {
