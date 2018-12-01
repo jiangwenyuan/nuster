@@ -642,28 +642,29 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             entry->data = nst_cache_data_new();
             if(!entry->data) {
                 entry->state = NST_CACHE_ENTRY_STATE_INVALID;
-                ctx->state = NST_CACHE_CTX_STATE_BYPASS;
-                nuster_shctx_unlock(&nuster.cache->dict[0]);
-                return;
+                ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
+            } else {
+                ctx->state   = NST_CACHE_CTX_STATE_CREATE;
+                ctx->entry   = entry;
+                ctx->data    = entry->data;
+                ctx->element = entry->data->element;
             }
-            ctx->state = NST_CACHE_CTX_STATE_CREATE;
         } else {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
         }
     } else {
         entry = nst_cache_dict_set(key, hash, ctx);
         if(entry) {
-            ctx->state = NST_CACHE_CTX_STATE_CREATE;
+            ctx->state   = NST_CACHE_CTX_STATE_CREATE;
+            ctx->entry   = entry;
+            ctx->data    = entry->data;
+            ctx->element = entry->data->element;
         } else {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
-            nuster_shctx_unlock(&nuster.cache->dict[0]);
-            return;
         }
     }
+
     nuster_shctx_unlock(&nuster.cache->dict[0]);
-    ctx->entry   = entry;
-    ctx->data    = entry->data;
-    ctx->element = entry->data->element;
 }
 
 /*
