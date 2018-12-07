@@ -419,6 +419,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct h
             ptr++;
         }
         ctx->req.path.len = ptr - uri_begin;
+        ctx->req.uri.data = uri_begin;
         ctx->req.uri.len  = uri_end - uri_begin;
 
         /* extra 1 char as required by regex_exec_match2 */
