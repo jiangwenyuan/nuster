@@ -61,6 +61,7 @@
 #include <proto/h1.h>
 #include <proto/log.h>
 #include <proto/hdr_idx.h>
+#include <proto/hlua.h>
 #include <proto/pattern.h>
 #include <proto/proto_tcp.h>
 #include <proto/proto_http.h>
@@ -4378,6 +4379,9 @@ void http_end_txn_clean_session(struct stream *s)
 	s->flags &= ~(SF_CURR_SESS|SF_REDIRECTABLE|SF_SRV_REUSED);
 	s->flags &= ~(SF_ERR_MASK|SF_FINST_MASK|SF_REDISP);
 
+	hlua_ctx_destroy(s->hlua);
+	s->hlua = NULL;
+
 	s->txn->meth = 0;
 	http_reset_txn(s);
 	s->txn->flags |= TX_NOT_FIRST | TX_WAIT_NEXT_RQ;
@@ -7962,7 +7966,7 @@ void http_capture_bad_message(struct proxy *proxy, struct error_snapshot *es, st
 		memset(&es->src, 0, sizeof(es->src));
 
 	es->state = state;
-	es->ev_id = error_snapshot_id++;
+	es->ev_id = HA_ATOMIC_XADD(&error_snapshot_id, 1);
 	es->b_flags = chn->flags;
 	es->s_flags = s->flags;
 	es->t_flags = s->txn->flags;
@@ -8273,7 +8277,7 @@ void http_reset_txn(struct stream *s)
 	s->target = NULL;
 	/* re-init store persistence */
 	s->store_count = 0;
-	s->uniq_id = global.req_count++;
+	s->uniq_id = HA_ATOMIC_XADD(&global.req_count, 1);
 
 	s->req.flags |= CF_READ_DONTWAIT; /* one read is usually enough */
 
@@ -12554,11 +12558,8 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 			     tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(date.tv_usec/1000),
 			     error_snapshot_id);
 
-		if (ci_putchk(si_ic(si), &trash) == -1) {
-			/* Socket buffer full. Let's try again later from the same point */
-			si_applet_cant_put(si);
-			return 0;
-		}
+		if (ci_putchk(si_ic(si), &trash) == -1)
+			goto cant_send;
 
 		appctx->ctx.errors.px = proxies_list;
 		appctx->ctx.errors.bol = 0;
@@ -12570,6 +12571,8 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 	 */
 	while (appctx->ctx.errors.px) {
 		struct error_snapshot *es;
+
+		HA_SPIN_LOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
 
 		if ((appctx->ctx.errors.flag & 1) == 0) {
 			es = &appctx->ctx.errors.px->invalid_req;
@@ -12644,11 +12647,9 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 				     es->b_flags, es->b_out, es->b_tot,
 				     es->len, es->b_wrap, es->pos);
 
-			if (ci_putchk(si_ic(si), &trash) == -1) {
-				/* Socket buffer full. Let's try again later from the same point */
-				si_applet_cant_put(si);
-				return 0;
-			}
+			if (ci_putchk(si_ic(si), &trash) == -1)
+				goto cant_send_unlock;
+
 			appctx->ctx.errors.ptr = 0;
 			appctx->ctx.errors.sid = es->sid;
 		}
@@ -12657,10 +12658,9 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 			/* the snapshot changed while we were dumping it */
 			chunk_appendf(&trash,
 				     "  WARNING! update detected on this snapshot, dump interrupted. Please re-check!\n");
-			if (ci_putchk(si_ic(si), &trash) == -1) {
-				si_applet_cant_put(si);
-				return 0;
-			}
+			if (ci_putchk(si_ic(si), &trash) == -1)
+				goto cant_send_unlock;
+
 			goto next;
 		}
 
@@ -12672,17 +12672,16 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 			newline = appctx->ctx.errors.bol;
 			newptr = dump_text_line(&trash, es->buf, global.tune.bufsize, es->len, &newline, appctx->ctx.errors.ptr);
 			if (newptr == appctx->ctx.errors.ptr)
-				return 0;
+				goto cant_send_unlock;
 
-			if (ci_putchk(si_ic(si), &trash) == -1) {
-				/* Socket buffer full. Let's try again later from the same point */
-				si_applet_cant_put(si);
-				return 0;
-			}
+			if (ci_putchk(si_ic(si), &trash) == -1)
+				goto cant_send_unlock;
+
 			appctx->ctx.errors.ptr = newptr;
 			appctx->ctx.errors.bol = newline;
 		};
 	next:
+		HA_SPIN_UNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
 		appctx->ctx.errors.bol = 0;
 		appctx->ctx.errors.ptr = -1;
 		appctx->ctx.errors.flag ^= 1;
@@ -12692,6 +12691,12 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 
 	/* dump complete */
 	return 1;
+
+ cant_send_unlock:
+	HA_SPIN_UNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
+ cant_send:
+	si_applet_cant_put(si);
+	return 0;
 }
 
 /* register cli keywords */

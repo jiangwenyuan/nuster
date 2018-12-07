@@ -19,6 +19,7 @@
 
 #include <sys/types.h>
 
+#include <common/cfgparse.h>
 #include <common/errors.h>
 #include <common/time.h>
 #include <common/ticks.h>
@@ -965,8 +966,10 @@ int dns_get_ip_from_response(struct dns_response_packet *dns_p,
 	int currentip_sel;
 	int j;
 	int score, max_score;
+	int allowed_duplicated_ip;
 
 	family_priority   = dns_opts->family_prio;
+	allowed_duplicated_ip = dns_opts->accept_duplicate_ip;
 	*newip = newip4   = newip6 = NULL;
 	currentip_found   = 0;
 	*newip_sin_family = AF_UNSPEC;
@@ -1027,10 +1030,15 @@ int dns_get_ip_from_response(struct dns_response_packet *dns_p,
 		}
 
 		/* Check if the IP found in the record is already affected to a
-		 * member of a group.  If yes, the score should be incremented
+		 * member of a group.  If not, the score should be incremented
 		 * by 2. */
-		if (owner && snr_check_ip_callback(owner, ip, &ip_type))
-			continue;
+		if (owner && snr_check_ip_callback(owner, ip, &ip_type)) {
+			if (!allowed_duplicated_ip) {
+				continue;
+			}
+		} else {
+			score += 2;
+		}
 
 		/* Check for current ip matching. */
 		if (ip_type == currentip_sin_family &&
@@ -2053,7 +2061,7 @@ static void __dns_init(void)
 	dns_answer_item_pool = create_pool("dns_answer_item", sizeof(struct dns_answer_item), MEM_F_SHARED);
 	dns_resolution_pool  = create_pool("dns_resolution",  sizeof(struct dns_resolution),  MEM_F_SHARED);
 
-	hap_register_post_check(dns_finalize_config);
+	cfg_register_postparser("dns runtime resolver", dns_finalize_config);
 	hap_register_post_deinit(dns_deinit);
 
 	cli_register_kw(&cli_kws);
