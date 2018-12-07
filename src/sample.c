@@ -660,11 +660,13 @@ int smp_dup(struct sample *smp)
 
 	case SMP_T_STR:
 		trash = get_trash_chunk();
-		trash->len = smp->data.u.str.len;
+		trash->len = (smp->data.type == SMP_T_STR) ?
+		             smp->data.u.str.len : smp->data.u.meth.str.len;
 		if (trash->len > trash->size - 1)
 			trash->len = trash->size - 1;
 
-		memcpy(trash->str, smp->data.u.str.str, trash->len);
+		memcpy(trash->str, (smp->data.type == SMP_T_STR) ?
+		       smp->data.u.str.str : smp->data.u.meth.str.str, trash->len);
 		trash->str[trash->len] = 0;
 		smp->data.u.str = *trash;
 		break;
