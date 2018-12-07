@@ -276,6 +276,11 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
         goto out;
     }
     global.nuster.cache.purge_method = calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
+    if(!global.nuster.cache.purge_method) {
+        ha_alert("parsing [%s:%d] : '%s' : out of memory.\n", file, linenum, args[0]);
+        err_code = ERR_ALERT | ERR_FATAL;
+        goto out;
+    }
     memcpy(global.nuster.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
     memcpy(global.nuster.cache.purge_method + 5, " ", 1);
     cur_arg++;
@@ -448,12 +453,12 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
 
     fconf = calloc(1, sizeof(*fconf));
     conf  = malloc(sizeof(*conf));
-    memset(fconf, 0, sizeof(*fconf));
-    memset(conf, 0, sizeof(*conf));
     if(!fconf || !conf) {
         memprintf(err, "out of memory");
         return -1;
     }
+    memset(fconf, 0, sizeof(*fconf));
+    memset(conf, 0, sizeof(*conf));
 
     conf->status = NUSTER_STATUS_ON;
     cur_arg++;
@@ -484,11 +489,11 @@ int nuster_parse_proxy_nosql(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
     struct flt_conf *fconf;
     fconf = calloc(1, sizeof(*fconf));
-    memset(fconf, 0, sizeof(*fconf));
     if(!fconf) {
         memprintf(err, "out of memory");
         return -1;
     }
+    memset(fconf, 0, sizeof(*fconf));
     fconf->id   = nuster_nosql_id;
     fconf->ops  = &nst_nosql_filter_ops;
 
