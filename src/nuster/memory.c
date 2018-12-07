@@ -40,7 +40,7 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t b
     p = (uint8_t *) mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_ANON|MAP_SHARED, -1, 0);
 
     if (p == MAP_FAILED) {
-        fprintf(stderr, "mmap error.\n");
+        fprintf(stderr, "Out of memory when initialization.\n");
         return NULL;
     }
 
