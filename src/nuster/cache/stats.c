@@ -203,6 +203,9 @@ int nst_cache_stats_init() {
     if(!global.nuster.cache.stats) {
         return 0;
     }
+    if(!nuster_shctx_init(global.nuster.cache.stats)) {
+        return 0;
+    }
     global.nuster.cache.stats->used_mem      = 0;
     global.nuster.cache.stats->request.total = 0;
     global.nuster.cache.stats->request.fetch = 0;
