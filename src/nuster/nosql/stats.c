@@ -40,6 +40,9 @@ int nst_nosql_stats_init() {
     if(!global.nuster.nosql.stats) {
         return 0;
     }
+    if(!nuster_shctx_init(global.nuster.nosql.stats)) {
+        return 0;
+    }
     global.nuster.nosql.stats->used_mem = 0;
     return 1;
 }
