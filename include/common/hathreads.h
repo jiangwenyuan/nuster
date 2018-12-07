@@ -24,10 +24,6 @@
 
 #include <common/config.h>
 
-#define MAX_THREADS_MASK ((unsigned long)-1)
-extern THREAD_LOCAL unsigned int tid;     /* The thread id */
-extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the thread id */
-
 /* Note about all_threads_mask :
  *    - with threads support disabled, this symbol is defined as zero (0UL).
  *    - with threads enabled, this variable is never zero, it contains the mask
@@ -37,13 +33,27 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 #ifndef USE_THREAD
 
 #define MAX_THREADS 1
-#define all_threads_mask 0UL
+#define MAX_THREADS_MASK 1
+
+/* Only way found to replace variables with constants that are optimized away
+ * at build time.
+ */
+enum { all_threads_mask = 1UL };
+enum { tid_bit = 1UL };
+enum { tid = 0 };
 
 #define __decl_hathreads(decl)
 
 #define HA_ATOMIC_CAS(val, old, new) ({((*val) == (*old)) ? (*(val) = (new) , 1) : (*(old) = *(val), 0);})
 #define HA_ATOMIC_ADD(val, i)        ({*(val) += (i);})
 #define HA_ATOMIC_SUB(val, i)        ({*(val) -= (i);})
+#define HA_ATOMIC_XADD(val, i)						\
+	({								\
+		typeof((val)) __p_xadd = (val);				\
+		typeof(*(val)) __old_xadd = *__p_xadd;			\
+		*__p_xadd += i;						\
+		__old_xadd;						\
+	})
 #define HA_ATOMIC_AND(val, flags)    ({*(val) &= (flags);})
 #define HA_ATOMIC_OR(val, flags)     ({*(val) |= (flags);})
 #define HA_ATOMIC_XCHG(val, new)					\
@@ -98,6 +108,43 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 
 #define ha_sigmask(how, set, oldset)  sigprocmask(how, set, oldset)
 
+static inline void ha_set_tid(unsigned int tid)
+{
+}
+
+static inline void __ha_barrier_load(void)
+{
+}
+
+static inline void __ha_barrier_store(void)
+{
+}
+
+static inline void __ha_barrier_full(void)
+{
+}
+
+static inline void thread_harmless_now()
+{
+}
+
+static inline void thread_harmless_end()
+{
+}
+
+static inline void thread_isolate()
+{
+}
+
+static inline void thread_release()
+{
+}
+
+static inline unsigned long thread_isolated()
+{
+	return 1;
+}
+
 #else /* USE_THREAD */
 
 #include <stdio.h>
@@ -107,6 +154,7 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 #include <import/plock.h>
 
 #define MAX_THREADS LONGBITS
+#define MAX_THREADS_MASK ((unsigned long)-1)
 
 #define __decl_hathreads(decl) decl
 
@@ -118,6 +166,7 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 
 #define HA_ATOMIC_ADD(val, i)        __sync_add_and_fetch(val, i)
 #define HA_ATOMIC_SUB(val, i)        __sync_sub_and_fetch(val, i)
+#define HA_ATOMIC_XADD(val, i)       __sync_fetch_and_add(val, i)
 #define HA_ATOMIC_AND(val, flags)    __sync_and_and_fetch(val, flags)
 #define HA_ATOMIC_OR(val, flags)     __sync_or_and_fetch(val,  flags)
 
@@ -166,6 +215,7 @@ extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the threa
 /* gcc >= 4.7 */
 #define HA_ATOMIC_CAS(val, old, new) __atomic_compare_exchange_n(val, old, new, 0, 0, 0)
 #define HA_ATOMIC_ADD(val, i)        __atomic_add_fetch(val, i, 0)
+#define HA_ATOMIC_XADD(val, i)       __atomic_fetch_add(val, i, 0)
 #define HA_ATOMIC_SUB(val, i)        __atomic_sub_fetch(val, i, 0)
 #define HA_ATOMIC_AND(val, flags)    __atomic_and_fetch(val, flags, 0)
 #define HA_ATOMIC_OR(val, flags)     __atomic_or_fetch(val,  flags, 0)
@@ -209,10 +259,75 @@ void thread_enter_sync(void);
 void thread_exit_sync(void);
 int  thread_no_sync(void);
 int  thread_need_sync(void);
+void thread_harmless_till_end();
+void thread_isolate();
+void thread_release();
 
+extern THREAD_LOCAL unsigned int tid;     /* The thread id */
+extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the thread id */
 extern volatile unsigned long all_threads_mask;
+extern volatile unsigned long threads_want_rdv_mask;
+extern volatile unsigned long threads_harmless_mask;
+
+/* explanation for threads_want_rdv_mask and threads_harmless_mask :
+ * - threads_want_rdv_mask is a bit field indicating all threads that have
+ *   requested a rendez-vous of other threads using thread_isolate().
+ * - threads_harmless_mask is a bit field indicating all threads that are
+ *   currently harmless in that they promise not to access a shared resource.
+ *
+ * For a given thread, its bits in want_rdv and harmless can be translated like
+ * this :
+ *
+ *  ----------+----------+----------------------------------------------------
+ *   want_rdv | harmless | description
+ *  ----------+----------+----------------------------------------------------
+ *       0    |     0    | thread not interested in RDV, possibly harmful
+ *       0    |     1    | thread not interested in RDV but harmless
+ *       1    |     1    | thread interested in RDV and waiting for its turn
+ *       1    |     0    | thread currently working isolated from others
+ *  ----------+----------+----------------------------------------------------
+ */
 
 #define ha_sigmask(how, set, oldset)  pthread_sigmask(how, set, oldset)
+
+/* sets the thread ID and the TID bit for the current thread */
+static inline void ha_set_tid(unsigned int data)
+{
+	tid     = data;
+	tid_bit = (1UL << tid);
+}
+
+/* Marks the thread as harmless. Note: this must be true, i.e. the thread must
+ * not be touching any unprotected shared resource during this period. Usually
+ * this is called before poll(), but it may also be placed around very slow
+ * calls (eg: some crypto operations). Needs to be terminated using
+ * thread_harmless_end().
+ */
+static inline void thread_harmless_now()
+{
+	HA_ATOMIC_OR(&threads_harmless_mask, tid_bit);
+}
+
+/* Ends the harmless period started by thread_harmless_now(). Usually this is
+ * placed after the poll() call. If it is discovered that a job was running and
+ * is relying on the thread still being harmless, the thread waits for the
+ * other one to finish.
+ */
+static inline void thread_harmless_end()
+{
+	while (1) {
+		HA_ATOMIC_AND(&threads_harmless_mask, ~tid_bit);
+		if (likely((threads_want_rdv_mask & all_threads_mask) == 0))
+			break;
+		thread_harmless_till_end();
+	}
+}
+
+/* an isolated thread has harmless cleared and want_rdv set */
+static inline unsigned long thread_isolated()
+{
+	return threads_want_rdv_mask & ~threads_harmless_mask & tid_bit;
+}
 
 
 #if defined(DEBUG_THREAD) || defined(DEBUG_FULL)
@@ -694,7 +809,146 @@ static inline void __spin_unlock(enum lock_label lbl, struct ha_spinlock *l,
 
 #endif  /* DEBUG_THREAD */
 
+#ifdef __x86_64__
+#define HA_HAVE_CAS_DW	1
+#define HA_CAS_IS_8B
+static __inline int
+__ha_cas_dw(void *target, void *compare, const void *set)
+{
+        char ret;
+
+        __asm __volatile("lock cmpxchg16b %0; setz %3"
+                          : "+m" (*(void **)target),
+                            "=a" (((void **)compare)[0]),
+                            "=d" (((void **)compare)[1]),
+                            "=q" (ret)
+                          : "a" (((void **)compare)[0]),
+                            "d" (((void **)compare)[1]),
+                            "b" (((const void **)set)[0]),
+                            "c" (((const void **)set)[1])
+                          : "memory", "cc");
+        return (ret);
+}
+
+static __inline void
+__ha_barrier_load(void)
+{
+	__asm __volatile("lfence" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_store(void)
+{
+	__asm __volatile("sfence" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_full(void)
+{
+	__asm __volatile("mfence" ::: "memory");
+}
+
+#elif defined(__arm__) && (defined(__ARM_ARCH_7__) || defined(__ARM_ARCH_7A__))
+#define HA_HAVE_CAS_DW	1
+static __inline void
+__ha_barrier_load(void)
+{
+	__asm __volatile("dmb" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_store(void)
+{
+	__asm __volatile("dsb" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_full(void)
+{
+	__asm __volatile("dmb" ::: "memory");
+}
+
+static __inline int __ha_cas_dw(void *target, void *compare, const void *set)
+{
+	uint64_t previous;
+	int tmp;
+
+	__asm __volatile("1:"
+	                 "ldrexd %0, [%4];"
+			 "cmp %Q0, %Q2;"
+			 "ittt eq;"
+			 "cmpeq %R0, %R2;"
+			 "strexdeq %1, %3, [%4];"
+			 "cmpeq %1, #1;"
+			 "beq 1b;"
+			 : "=&r" (previous), "=&r" (tmp)
+			 : "r" (*(uint64_t *)compare), "r" (*(uint64_t *)set), "r" (target)
+			 : "memory", "cc");
+	tmp = (previous == *(uint64_t *)compare);
+	*(uint64_t *)compare = previous;
+	return (tmp);
+}
+
+#elif defined (__aarch64__)
+#define HA_HAVE_CAS_DW	1
+#define HA_CAS_IS_8B
+
+static __inline void
+__ha_barrier_load(void)
+{
+	__asm __volatile("dmb ishld" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_store(void)
+{
+	__asm __volatile("dmb ishst" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_full(void)
+{
+	__asm __volatile("dmb ish" ::: "memory");
+}
+
+static __inline int __ha_cas_dw(void *target, void *compare, void *set)
+{
+	void *value[2];
+	uint64_t tmp1, tmp2;
+
+	__asm__ __volatile__("1:"
+                             "ldxp %0, %1, [%4];"
+                             "mov %2, %0;"
+                             "mov %3, %1;"
+                             "eor %0, %0, %5;"
+                             "eor %1, %1, %6;"
+                             "orr %1, %0, %1;"
+                             "mov %w0, #0;"
+                             "cbnz %1, 2f;"
+                             "stxp %w0, %7, %8, [%4];"
+                             "cbnz %w0, 1b;"
+                             "mov %w0, #1;"
+                             "2:"
+                             : "=&r" (tmp1), "=&r" (tmp2), "=&r" (value[0]), "=&r" (value[1])
+                             : "r" (target), "r" (((void **)(compare))[0]), "r" (((void **)(compare))[1]), "r" (((void **)(set))[0]), "r" (((void **)(set))[1])
+                             : "cc", "memory");
+
+	memcpy(compare, &value, sizeof(value));
+        return (tmp1);
+}
+
+#else
+#define __ha_barrier_load __sync_synchronize
+#define __ha_barrier_store __sync_synchronize
+#define __ha_barrier_full __sync_synchronize
+#endif
+
 #endif /* USE_THREAD */
+
+static inline void __ha_compiler_barrier(void)
+{
+	__asm __volatile("" ::: "memory");
+}
 
 /* Dummy I/O handler used by the sync pipe.*/
 void thread_sync_io_handler(int fd);
