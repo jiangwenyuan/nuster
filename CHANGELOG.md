@@ -1,5 +1,32 @@
 # nuster Changelog
 
+## 2.0.4.18 - 2018-12-08
+
+### Fixed
+
+* Fix some init issues
+* Fixed uninitialized stats shctx
+* Fix missed uri.data
+* Check msg len before update data
+* Update cache create order to prevent potential lock
+* Set entry->data to null when forward error
+* Assign to temp var
+* Fix missed uri.data
+* Fixed bitmap overlap
+* Series of fixes backported from cache part
+* Fix incorrect len when build BODY cache key
+* Fix improper handling of MSG_ENDING
+* Send response header asap.
+* This fix separate header and body, and send header along.
+* Allocate entry_key before entry
+* Initialise ctx.req to prevent incorrect release
+* Check data before release
+* Do not pass tail to _nst_cache_data_append
+* Check state in io handler
+* Release element when failed to allocate data
+* Change incorrect CTX_PASS to CTX_BYPASS
+* Upgrade HAProxy to v1.8.14
+
 ## 2.0.3.18 - 2018-10-05
 
 ### Fixed

@@ -762,7 +762,9 @@ Enable `option http-buffer-request` and set `body` in cache rule `key`.
 
 By default, the cache key does not include the body of the request, remember to put `body` in key field.
 
-Note that the body of the request maybe incomplete, refer to **option http-buffer-request** section in [HAProxy configuration](doc/configuration.txt) for details.
+Note that the size of the request body must be smaller than `tune.bufsize - tune.maxrewrite - request_header_size`, which by default is `16384 - 1024 - request_header_size`.
+
+Refer to **option http-buffer-request** and **tune.bufsize** section in [HAProxy configuration](doc/configuration.txt) for details.
 
 Also it might be a good idea to put it separately in a dedicated backend as example does.
 
