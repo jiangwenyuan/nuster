@@ -664,6 +664,7 @@ static void h2s_destroy(struct h2s *h2s)
  */
 static struct h2s *h2c_stream_new(struct h2c *h2c, int id)
 {
+	struct session *sess = h2c->conn->owner;
 	struct conn_stream *cs;
 	struct h2s *h2s;
 
@@ -697,6 +698,15 @@ static struct h2s *h2c_stream_new(struct h2c *h2c, int id)
 
 	if (stream_create_from_cs(cs) < 0)
 		goto out_free_cs;
+
+	/* We want the accept date presented to the next stream to be the one
+	 * we have now, the handshake time to be null (since the next stream
+	 * is not delayed by a handshake), and the idle time to count since
+	 * right now.
+	 */
+	sess->accept_date = date;
+	sess->tv_accept   = now;
+	sess->t_handshake = 0;
 
 	/* OK done, the stream lives its own life now */
 	if (h2_has_too_many_cs(h2c))
@@ -2681,7 +2691,7 @@ static int h2_frt_decode_headers(struct h2s *h2s, struct buffer *buf, int count)
 		if (h2c->dpl >= flen) {
 			/* RFC7540#6.2 : pad length = length of frame payload or greater */
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
-			return 0;
+			goto fail;
 		}
 		flen -= h2c->dpl + 1;
 		hdrs += 1; // skip Pad Length
@@ -2692,7 +2702,7 @@ static int h2_frt_decode_headers(struct h2s *h2s, struct buffer *buf, int count)
 		if (read_n32(hdrs) == h2s->id) {
 			/* RFC7540#5.3.1 : stream dep may not depend on itself */
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
-			return 0;//goto fail_stream;
+			goto fail;
 		}
 
 		hdrs += 5; // stream dep = 4, weight = 1

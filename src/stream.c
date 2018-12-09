@@ -114,10 +114,7 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	s->logs.level = 0;
 	s->logs.accept_date = sess->accept_date; /* user-visible date for logging */
 	s->logs.tv_accept = sess->tv_accept;   /* corrected date for internal use */
-	/* This function is called just after the handshake, so the handshake duration is
-	 * between the accept time and now.
-	 */
-	s->logs.t_handshake = tv_ms_elapsed(&sess->tv_accept, &now);
+	s->logs.t_handshake = sess->t_handshake;
 	s->logs.t_idle = -1;
 	tv_zero(&s->logs.tv_request);
 	s->logs.t_queue = -1;
@@ -152,7 +149,7 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	s->si[0].flags = SI_FL_NONE;
 	s->si[1].flags = SI_FL_ISBACK;
 
-	s->uniq_id = global.req_count++;
+	s->uniq_id = HA_ATOMIC_XADD(&global.req_count, 1);
 
 	/* OK, we're keeping the stream, so let's properly initialize the stream */
 	LIST_INIT(&s->back_refs);

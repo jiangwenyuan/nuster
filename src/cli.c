@@ -787,10 +787,14 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 		void *ctx = NULL;
 		uint32_t conn_flags = 0;
 
+		thread_isolate();
+
 		fdt = fdtab[fd];
 
-		if (!fdt.owner)
+		if (!fdt.owner) {
+			thread_release();
 			goto skip; // closed
+		}
 
 		if (fdt.iocb == conn_fd_handler) {
 			conn_flags = ((struct connection *)fdt.owner)->flags;
@@ -854,6 +858,8 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			              listener_state_str(li),
 			              li->bind_conf->frontend->id);
 		}
+
+		thread_release();
 
 		chunk_appendf(&trash, "\n");
 
@@ -1311,10 +1317,17 @@ static int _getsocks(char **args, struct appctx *appctx, void *private)
 	int tot_fd_nb = 0;
 	struct proxy *px;
 	int i = 0;
-	int fd = remote->handle.fd;
+	int fd = -1;
 	int curoff = 0;
-	int old_fcntl;
+	int old_fcntl = -1;
 	int ret;
+
+	if (!remote) {
+		ha_warning("Only works on real connections\n");
+		goto out;
+	}
+
+	fd = remote->handle.fd;
 
 	/* Temporary set the FD in blocking mode, that will make our life easier */
 	old_fcntl = fcntl(fd, F_GETFL);
@@ -1464,7 +1477,7 @@ static int _getsocks(char **args, struct appctx *appctx, void *private)
 	}
 
 out:
-	if (old_fcntl >= 0 && fcntl(fd, F_SETFL, old_fcntl) == -1) {
+	if (fd >= 0 && old_fcntl >= 0 && fcntl(fd, F_SETFL, old_fcntl) == -1) {
 		ha_warning("Cannot make the unix socket non-blocking\n");
 		goto out;
 	}

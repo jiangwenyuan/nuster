@@ -2566,10 +2566,19 @@ __LJMP static int hlua_socket_settimeout(struct lua_State *L)
 	si = appctx->owner;
 	s = si_strm(si);
 
+	s->sess->fe->timeout.connect = tmout;
 	s->req.rto = tmout;
 	s->req.wto = tmout;
 	s->res.rto = tmout;
 	s->res.wto = tmout;
+	s->req.rex = tick_add_ifset(now_ms, tmout);
+	s->req.wex = tick_add_ifset(now_ms, tmout);
+	s->res.rex = tick_add_ifset(now_ms, tmout);
+	s->res.wex = tick_add_ifset(now_ms, tmout);
+
+	s->task->expire = tick_add_ifset(now_ms, tmout);
+	task_queue(s->task);
+
 	xref_unlock(&socket->xref, peer);
 
 	lua_pushinteger(L, 1);
@@ -6297,7 +6306,6 @@ static int hlua_applet_tcp_init(struct appctx *ctx, struct proxy *px, struct str
 			error = "critical error";
 		SEND_ERR(px, "Lua applet tcp '%s': %s.\n",
 		         ctx->rule->arg.hlua_rule->fcn.name, error);
-		RESET_SAFE_LJMP(hlua->T);
 		return 0;
 	}
 
@@ -6352,8 +6360,11 @@ static void hlua_applet_tcp_fct(struct appctx *ctx)
 	struct hlua *hlua = ctx->ctx.hlua_apptcp.hlua;
 
 	/* The applet execution is already done. */
-	if (ctx->ctx.hlua_apptcp.flags & APPLET_DONE)
+	if (ctx->ctx.hlua_apptcp.flags & APPLET_DONE) {
+		/* eat the whole request */
+		co_skip(si_oc(si), si_ob(si)->o);
 		return;
+	}
 
 	/* If the stream is disconnect or closed, ldo nothing. */
 	if (unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO))
@@ -6364,9 +6375,6 @@ static void hlua_applet_tcp_fct(struct appctx *ctx)
 	/* finished. */
 	case HLUA_E_OK:
 		ctx->ctx.hlua_apptcp.flags |= APPLET_DONE;
-
-		/* log time */
-		strm->logs.tv_request = now;
 
 		/* eat the whole request */
 		co_skip(si_oc(si), si_ob(si)->o);
@@ -6594,13 +6602,13 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 			len2 = 0;
 		if (ret == 0)
 			len1 = 0;
-		if (len1 + len2 < strm->txn->req.eoh + 2) {
+		if (len1 + len2 < strm->txn->req.eoh + strm->txn->req.eol) {
 			si_applet_cant_get(si);
 			return;
 		}
 
 		/* skip the requests bytes. */
-		co_skip(si_oc(si), strm->txn->req.eoh + 2);
+		co_skip(si_oc(si), strm->txn->req.eoh + strm->txn->req.eol);
 	}
 
 	/* Executes The applet if it is not done. */
@@ -6666,9 +6674,8 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 
 		/* close the connection. */
 
-		/* status / log */
+		/* status */
 		strm->txn->status = ctx->ctx.hlua_apphttp.status;
-		strm->logs.tv_request = now;
 
 		/* eat the whole request */
 		co_skip(si_oc(si), si_ob(si)->o);
@@ -7381,6 +7388,17 @@ int hlua_post_init()
 		fprintf(stderr, "Lua post-init: %s.\n", error);
 		exit(1);
 	}
+
+#if USE_OPENSSL
+	/* Initialize SSL server. */
+	if (socket_ssl.xprt->prepare_srv) {
+		int saved_used_backed = global.ssl_used_backend;
+		// don't affect maxconn automatic computation
+		socket_ssl.xprt->prepare_srv(&socket_ssl);
+		global.ssl_used_backend = saved_used_backed;
+	}
+#endif
+
 	hlua_fcn_post_init(gL.T);
 	RESET_SAFE_LJMP(gL.T);
 
@@ -8003,14 +8021,6 @@ void hlua_init(void)
 			}
 			idx += kw->skip;
 		}
-	}
-
-	/* Initialize SSL server. */
-	if (socket_ssl.xprt->prepare_srv) {
-		int saved_used_backed = global.ssl_used_backend;
-		// don't affect maxconn automatic computation
-		socket_ssl.xprt->prepare_srv(&socket_ssl);
-		global.ssl_used_backend = saved_used_backed;
 	}
 #endif
 
