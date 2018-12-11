@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 2.0.5.18 - 2018-12-11
+
+### Fixed
+
+* Fix incorrect acl check
+
 ## 2.0.4.18 - 2018-12-08
 
 ### Fixed
