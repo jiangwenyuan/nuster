@@ -161,6 +161,9 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                     ctx->rule  = rule;
                     break;
                 }
+            }
+            if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
+                ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 nuster_debug("FAIL\n");
             }
         }
@@ -181,6 +184,9 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                     ctx->rule  = rule;
                     break;
                 }
+            }
+            if(ctx->state != NST_CACHE_CTX_STATE_PASS) {
+                ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 nuster_debug("FAIL\n");
             }
         }
