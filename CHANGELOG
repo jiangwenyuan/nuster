@@ -1,6 +1,77 @@
 ChangeLog :
 ===========
 
+2018/12/13 : 1.8.15
+    - MINOR: threads: Make sure threads_sync_pipe is initialized before using it.
+    - DOC: clarify force-private-cache is an option
+    - BUG/MINOR: connection: avoid null pointer dereference in send-proxy-v2
+    - BUG/MINOR: backend: check that the mux installed properly
+    - BUG/MEDIUM: buffers: Make sure we don't wrap in buffer_insert_line2/replace2.
+    - MEDIUM: ssl: add support for ciphersuites option for TLSv1.3
+    - BUG/MEDIUM: Cur/CumSslConns counters not threadsafe.
+    - BUG/MINOR: checks: queues null-deref
+    - BUG/MEDIUM: mworker: segfault receiving SIGUSR1 followed by SIGTERM.
+    - BUG/MEDIUM: stream: don't crash on out-of-memory
+    - BUILD: ssl: fix null-deref warning in ssl_fc_cipherlist_str sample fetch
+    - BUILD: ssl: fix another null-deref warning in ssl_sock_switchctx_cbk()
+    - BUILD: stick-table: make sure not to fail on task_new() during initialization
+    - BUILD: peers: check allocation error during peers_init_sync()
+    - DOC: Fix a few typos
+    - BUG/MEDIUM: threads: fix thread_release() at the end of the rendez-vous point
+    - BUG/MEDIUM: threads: make sure threads_want_sync is marked volatile
+    - BUILD: compiler: add a new statement "__unreachable()"
+    - MINOR: lua: all functions calling lua_yieldk() may return
+    - BUILD: lua: silence some compiler warnings about potential null derefs (#2)
+    - BUILD: lua: silence some compiler warnings after WILL_LJMP
+    - CLEANUP: stick-tables: Remove unneeded double (()) around conditional clause
+    - BUILD: Makefile: add a "make opts" target to simply show the build options
+    - BUILD: Makefile: speed up compiler options detection
+    - BUILD: Makefile: silence an option conflict warning with clang
+    - MINOR: server: Use memcpy() instead of strncpy().
+    - MINOR: cfgparse: Write 130 as 128 as 0x82 and 0x80.
+    - MINOR: peers: use defines instead of enums to appease clang.
+    - DOC: fix reference to map files in MAINTAINERS
+    - BUILD: compiler: rename __unreachable() to my_unreachable()
+    - BUG/MEDIUM: pools: Fix the usage of mmap()) with DEBUG_UAF.
+    - BUG/MEDIUM: h2: Close connection if no stream is left an GOAWAY was sent.
+    - BUILD: Makefile: add the new ERR variable to force -Werror
+    - BUG/MINOR: cache: Crashes with "total-max-size" > 2047(MB).
+    - BUG/MINOR: cache: Wrong usage of shctx_init().
+    - BUG/MINOR: ssl: Wrong usage of shctx_init().
+    - DOC: cache: Missing information about "total-max-size"
+    - BUG/MINOR: only mark connections private if NTLM is detected
+    - BUG/MINOR: only auto-prefer last server if lb-alg is non-deterministic
+    - BUG/MAJOR: http: http_txn_get_path() may deference an inexisting buffer
+    - BUG/MEDIUM: auth/threads: use of crypt() is not thread-safe
+    - BUG/MINOR: config: better detect the presence of the h2 pattern in npn/alpn
+    - BUG/MEDIUM: Make sure stksess is properly aligned.
+    - BUG/MINOR: config: Copy default error messages when parsing of a backend starts
+    - BUG/MEDIUM: hpack: fix encoding of "accept-ranges" field
+    - BUG/MINOR: ssl: ssl_sock_parse_clienthello ignores session id
+    - BUG/MINOR: cfgparse: Fix transition between 2 sections with the same name
+    - BUG/MINOR: cfgparse: Fix the call to post parser of the last sections parsed
+    - BUG/MINOR: lb-map: fix unprotected update to server's score
+    - BUG/MEDIUM: sample: Don't treat SMP_T_METH as SMP_T_STR.
+    - BUG/MINOR: hpack: fix off-by-one in header name encoding length calculation
+    - BUG/MINOR: mux-h2: refrain from muxing during the preface
+    - BUG/MINOR: mux-h2: advertise a larger connection window size
+    - BUILD: compression: fix build error with DEFAULT_MAXZLIBMEM
+    - BUILD: threads: fix minor build warnings when threads are disabled
+    - MINOR: stats: report the number of active jobs and listeners in "show info"
+    - MINOR: servers: Free [idle|safe|priv]_conns on exit.
+    - DOC: clarify that check-sni needs an argument.
+    - DOC: refer to check-sni in the documentation of sni
+    - BUG: dns: Prevent stack-exhaustion via recursion loop in dns_read_name
+    - BUG: dns: Prevent out-of-bounds read in dns_read_name()
+    - BUG: dns: Prevent out-of-bounds read in dns_validate_dns_response()
+    - BUG: dns: Fix out-of-bounds read via signedness error in dns_validate_dns_response()
+    - BUG: dns: Fix off-by-one write in dns_validate_dns_response()
+    - DOC: Update configuration doc about the maximum number of stick counters.
+    - DOC: restore note about "independant" typo
+    - DOC: Fix typos in README and CONTRIBUTING
+    - DOC: Fix typos in different subsections of the documentation
+    - DOC: fix a few typos in the documentation
+
 2018/09/20 : 1.8.14
     - BUG/MEDIUM: servers: check the queues once enabling a server
     - BUG/MEDIUM: queue: prevent a backup server from draining the proxy's connections
