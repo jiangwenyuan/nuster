@@ -2081,6 +2081,11 @@ static int h2_process_mux(struct h2c *h2c)
 {
 	struct h2s *h2s, *h2s_back;
 
+	if (unlikely(h2c->st0 < H2_CS_FRAME_H)) {
+		/* need to wait for the other side */
+		return 1;
+	}
+
 	/* start by sending possibly pending window updates */
 	if (h2c->rcvd_c > 0 &&
 	    !(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_MUX_MALLOC)) &&
