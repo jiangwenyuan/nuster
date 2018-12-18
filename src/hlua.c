@@ -6651,6 +6651,8 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 	}
 
 	if (ctx->ctx.hlua_apphttp.flags & APPLET_DONE) {
+		if (!(ctx->ctx.hlua_apphttp.flags & APPLET_HDR_SENT))
+			goto error;
 
 		/* We must send the final chunk. */
 		if (ctx->ctx.hlua_apphttp.flags & APPLET_CHUNKED &&
