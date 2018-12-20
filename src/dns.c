@@ -661,7 +661,7 @@ int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend, struct
 		/* move forward 2 bytes for data len */
 		reader += 2;
 
-		if (reader + dns_answer_record->data_len >= bufend)
+		if (reader + dns_answer_record->data_len > bufend)
 			return DNS_RESP_INVALID;
 
 		/* analyzing record content */
