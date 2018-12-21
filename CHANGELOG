@@ -1,6 +1,11 @@
 ChangeLog :
 ===========
 
+2018/12/21 : 1.8.16
+    - BUG/MINOR: logs: leave startup-logs global and not per-thread
+    - BUG/MEDIUM: dns: Don't prevent reading the last byte of the payload in dns_validate_response()
+    - BUG/MEDIUM: dns: overflowed dns name start position causing invalid dns error
+
 2018/12/13 : 1.8.15
     - MINOR: threads: Make sure threads_sync_pipe is initialized before using it.
     - DOC: clarify force-private-cache is an option
