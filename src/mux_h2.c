@@ -264,7 +264,7 @@ static inline int h2_recv_allowed(const struct h2c *h2c)
 /* returns true if the connection has too many conn_streams attached */
 static inline int h2_has_too_many_cs(const struct h2c *h2c)
 {
-	return h2c->nb_cs >= h2_settings_max_concurrent_streams;
+	return h2c->nb_cs > h2_settings_max_concurrent_streams;
 }
 
 /* re-enables receiving on mux <target> after a buffer was allocated. It returns
