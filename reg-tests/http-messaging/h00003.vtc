@@ -58,7 +58,6 @@ client c1h2 -connect ${h1_feh2_sock} {
 		txsettings
 		rxsettings
 		txsettings -ack
-		rxwinup
 		rxsettings
 		expect settings.ack == true
 	} -run
@@ -206,7 +205,6 @@ client c3h2 -connect ${h1_feh2_sock} {
 		txsettings
 		rxsettings
 		txsettings -ack
-		rxwinup
 		rxsettings
 		expect settings.ack == true
 	} -run
