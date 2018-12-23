@@ -60,6 +60,7 @@ static struct pool_head *pool_head_h2s;
 /* other flags */
 #define H2_CF_GOAWAY_SENT       0x00001000  // a GOAWAY frame was successfully sent
 #define H2_CF_GOAWAY_FAILED     0x00002000  // a GOAWAY frame failed to be sent
+#define H2_CF_WINDOW_OPENED     0x00010000 // demux increased window already advertised
 
 
 /* H2 connection state, in h2c->st0 */
@@ -413,7 +414,7 @@ static int h2c_frt_init(struct connection *conn)
 	h2c->max_id = -1;
 	h2c->errcode = H2_ERR_NO_ERROR;
 	h2c->flags = H2_CF_NONE;
-	h2c->rcvd_c = H2_INITIAL_WINDOW_INCREMENT;
+	h2c->rcvd_c = 0;
 	h2c->rcvd_s = 0;
 	h2c->nb_streams = 0;
 	h2c->nb_cs = 0;
@@ -1333,6 +1334,14 @@ static int h2c_send_conn_wu(struct h2c *h2c)
 
 	if (h2c->rcvd_c <= 0)
 		return 1;
+
+	if (!(h2c->flags & H2_CF_WINDOW_OPENED)) {
+		/* increase the advertised connection window to 2G on
+		 * first update.
+		 */
+		h2c->flags |= H2_CF_WINDOW_OPENED;
+		h2c->rcvd_c += H2_INITIAL_WINDOW_INCREMENT;
+	}
 
 	/* send WU for the connection */
 	ret = h2c_send_window_update(h2c, 0, h2c->rcvd_c);
