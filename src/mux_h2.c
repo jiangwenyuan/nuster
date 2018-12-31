@@ -2726,6 +2726,11 @@ static int h2_frt_decode_headers(struct h2s *h2s, struct buffer *buf, int count)
 			goto fail;
 		}
 
+		if (flen < 5) {
+			h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
+			goto fail;
+		}
+
 		hdrs += 5; // stream dep = 4, weight = 1
 		flen -= 5;
 	}
