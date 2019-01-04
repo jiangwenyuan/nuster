@@ -17157,13 +17157,13 @@ max-age <seconds>
 10.2.2. Proxy section
 ---------------------
 
-http-request cache-use <name>
+http-request cache-use <name> [ { if | unless } <condition> ]
   Try to deliver a cached object from the cache <name>. This directive is also
   mandatory to store the cache as it calculates the cache hash. If you want to
   use a condition for both storage and delivering that's a good idea to put it
   after this one.
 
-http-response cache-store <name>
+http-response cache-store <name> [ { if | unless } <condition> ]
   Store an http-response within the cache. The storage of the response headers
   is done at this step, which means you can use others http-response actions
   to modify headers before or after the storage of the response. This action
