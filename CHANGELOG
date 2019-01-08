@@ -1,6 +1,98 @@
 ChangeLog :
 ===========
 
+2019/01/08 : 1.9.1
+    - BUG/MEDIUM: tasks: Decrement tasks_run_queue in tasklet_free().
+    - BUG/MEDIUM: log: don't mark log FDs as non-blocking on terminals
+    - BUG/MAJOR: stream-int: Update the stream expiration date in stream_int_notify()
+    - BUG/MAJOR: connections: Close the connection before freeing it.
+    - BUG/MEDIUM: h2: Don't forget to quit the sending_list if SUB_CALL_UNSUBSCRIBE.
+    - BUG/MEDIUM: mux-h2: Don't forget to quit the send list on error reports
+    - BUG/MEDIUM: mux-h2: don't needlessly wake up the demux on short frames
+    - MINOR: mux-h2: only increase the connection window with the first update
+    - REGTESTS: remove the expected window updates from H2 handshakes
+    - BUG/MINOR: mux-h2: make empty HEADERS frame return a connection error
+    - BUG/MEDIUM: mux-h2: mark that we have too many CS once we have more than the max
+    - BUG/MEDIUM: mux_h2: Don't add to the idle list if we're full.
+    - BUG/MEDIUM: mux-h2: always restart reading if data are available
+    - BUG/MINOR: mux-h2: don't check the CS count in h2c_bck_handle_headers()
+    - BUG/MEDIUM: dns: Don't prevent reading the last byte of the payload in dns_validate_response()
+    - BUG/MEDIUM: dns: overflowed dns name start position causing invalid dns error
+    - BUG/MINOR: compression/htx: Don't compress responses with unknown body length
+    - BUG/MINOR: compression/htx: Don't add the last block of data if it is empty
+    - BUG/MEDIUM: server: Also copy "check-sni" for server templates.
+    - BUG/MEDIUM: servers: Don't try to reuse connection if we switched server.
+    - BUG/MEDIUM: servers: Fail if we fail to allocate a conn_stream.
+    - BUG/MAJOR: servers: Use the list api correctly to avoid crashes.
+    - BUG/MAJOR: servers: Correctly use LIST_ELEM().
+    - BUG/MAJOR: sessions: Use an unlimited number of servers for the conn list.
+    - BUG/MEDIUM: servers: Flag the stream_interface on handshake error.
+    - MEDIUM: servers: Be smarter when switching connections.
+    - MINOR: channel: Add the function channel_add_input
+    - MINOR: stats/htx: Call channel_add_input instead of updating channel state by hand
+    - BUG/MEDIUM: cache: Be sure to end the forwarding when XFER length is unknown
+    - BUG/MAJOR: htx: Return the good block address after a defrag
+    - BUG/MEDIUM: mux-h1: use per-direction flags to indicate transitions
+    - BUG/MEDIUM: mux-h1: make HTX chunking consistent with H2
+    - MINOR: mux-h1: parse the content-length header on output and set H1_MF_CLEN
+    - BUG/MEDIUM: mux-h1: don't enforce chunked encoding on requests
+    - BUG/MEDIUM: mux-h1: Add a task to handle connection timeouts
+    - BUG/MEDIUM: proto-htx: Set SI_FL_NOHALF on server side when request is done
+    - BUG/MINOR: htx: send the proper authenticate header when using http-request auth
+    - MINOR: lb: allow redispatch when using consistent hash
+    - MINOR: ssl: Add ssl_sock_set_alpn().
+    - MEDIUM: checks: Add check-alpn.
+    - MEDIUM: mux_h1: Implement h1_show_fd.
+    - MINOR: payload: add sample fetch for TLS ALPN
+    - REGTEST: Require the option LUA to run lua tests
+    - REGTEST: script: Process script arguments before everything else
+    - REGTEST: script: Evaluate the varnishtest command to allow quoted parameters
+    - REGTEST: script: Add the option --clean to remove previous log direcotries
+    - REGTEST: script: Add the option --debug to show logs on standard ouput
+    - REGTEST: script: Add the option --keep-logs to keep all log directories
+    - REGTEST: script: Add the option --use-htx to enable the HTX in regtests
+    - REGTEST: script: Print only errors in the results report
+    - REGTEST: Add option to use HTX prefixed by the macro 'no-htx'
+    - REGTEST: Make reg-tests target support argument.
+    - REGTEST: Fix a typo about barrier type.
+    - REGTEST: Be less Linux specific with a syslog regex.
+    - REGTEST: Missing enclosing quotes for ${tmpdir} macro.
+    - REGTEST: Exclude freebsd target for some reg tests.
+    - REGTEST: script: Add support of alternatives in requited options list
+    - REGTEST: Add a basic test for the compression
+    - REGTEST: A basic test for "http-buffer-request"
+    - BUG/MINOR: cache/htx: Be sure to count partial trailers
+    - MINOR: stream/htx: Add info about the HTX structs in "show sess all" command
+    - MINOR: stream/htx: add the HTX flags output in "show sess all"
+    - MINOR: stream: Add the subscription events of SIs in "show sess all" command
+    - MINOR: stream/cli: fix the location of the waiting flag in "show sess all"
+    - MINOR: stream/cli: report more info about the HTTP messages on "show sess all"
+    - MINOR: mux-h1: Add the subscription events in "show fd" command
+    - BUG/MEDIUM: h1: In h1_init(), wake the tasklet instead of calling h1_recv().
+    - BUG/MEDIUM: server: Defer the mux init until after xprt has been initialized.
+    - BUG/MEDIUM: cli: make "show sess" really thread-safe
+    - BUG/MINOR: lua: bad args are returned for Lua actions
+    - BUG/MEDIUM: lua: dead lock when Lua tasks are trigerred
+    - MINOR: htx: Add an helper function to get the max space usable for a block
+    - MINOR: channel/htx: Add HTX version for some helper functions
+    - BUG/MEDIUM: cache/htx: Respect the reserve when cached objects are served
+    - BUG/MINOR: stats/htx: Respect the reserve when the stats page is dumped
+    - DOC: regtest: make it clearer what the purpose of the "broken" series is
+    - REGTEST: mailers: add new test for 'mailers' section
+    - REGTEST: Add a reg test for health-checks over SSL/TLS.
+    - BUG/MINOR: mux-h1: Close connection on shutr only when shutw was really done
+    - MEDIUM: mux-h1: Clarify how shutr/shutw are handled
+    - BUG/MINOR: compression: Disable it if another one is already in progress
+    - BUG/MINOR: filters: Detect cache+compression config on legacy HTTP streams
+    - BUG/MINOR: cache: Disable the cache if any compression filter precedes it
+    - REGTEST: Add some informatoin to test results.
+    - MINOR: htx: Add a function to truncate all blocks after a specific offset
+    - MINOR: channel/htx: Add the HTX version of channel_truncate/erase
+    - BUG/MINOR: proto_htx: Use HTX versions to truncate or erase a buffer
+    - BUG/CRITICAL: mux-h2: re-check the frame length when PRIORITY is used
+    - DOC: Fix typo in req.ssl_alpn example (commit 4afdd138424ab...)
+    - DOC: http-request cache-use / http-response cache-store expects cache name
+
 2018/12/19 : 1.9.0
     - BUG/MEDIUM: compression: Use the right buffer pointers to compress input data
     - BUG/MINOR: mux_pt: Set CS_FL_WANT_ROOM when count is zero in rcv_buf() callback
