@@ -1,6 +1,6 @@
 Summary: HA-Proxy is a TCP/HTTP reverse proxy for high availability environments
 Name: haproxy
-Version: 1.8.16
+Version: 1.8.17
 Release: 1
 License: GPL
 Group: System Environment/Daemons
@@ -74,6 +74,9 @@ fi
 %attr(0755,root,root) %config %{_sysconfdir}/rc.d/init.d/%{name}
 
 %changelog
+* Tue Jan  8 2019 Willy Tarreau <w@1wt.eu>
+- updated to 1.8.17
+
 * Fri Dec 21 2018 William Lallemand <wlallemand@haproxy.org>
 - updated to 1.8.16
 

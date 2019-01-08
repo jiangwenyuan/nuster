@@ -1,6 +1,20 @@
 ChangeLog :
 ===========
 
+2019/01/08 : 1.8.17
+    - BUG/MAJOR: stream-int: Update the stream expiration date in stream_int_notify()
+    - MINOR: mux-h2: only increase the connection window with the first update
+    - BUG/MEDIUM: mux-h2: mark that we have too many CS once we have more than the max
+    - BUG/MEDIUM: server: Also copy "check-sni" for server templates.
+    - MINOR: lb: allow redispatch when using consistent hash
+    - MINOR: stream/cli: fix the location of the waiting flag in "show sess all"
+    - MINOR: stream/cli: report more info about the HTTP messages on "show sess all"
+    - BUG/MEDIUM: cli: make "show sess" really thread-safe
+    - BUG/MINOR: lua: Return an error if a legacy HTTP applet doesn't send anything
+    - BUG/MINOR: lua: bad args are returned for Lua actions
+    - BUG/MEDIUM: lua: dead lock when Lua tasks are trigerred
+    - BUG/CRITICAL: mux-h2: re-check the frame length when PRIORITY is used
+
 2018/12/21 : 1.8.16
     - BUG/MINOR: logs: leave startup-logs global and not per-thread
     - BUG/MEDIUM: dns: Don't prevent reading the last byte of the payload in dns_validate_response()
