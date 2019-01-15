@@ -57,6 +57,7 @@
 #   DEP may be cleared to ignore changes to include files during development
 #   SMALL_OPTS may be used to specify some options to shrink memory usage.
 #   DEBUG may be used to set some internal debugging options.
+#   ERR may be set to non-empty to pass -Werror to the compiler
 #   ADDINC may be used to complete the include path in the form -Ipath.
 #   ADDLIB may be used to complete the library list in the form -Lpath -llib.
 #   DEFINE may be used to specify any additional define, which will be reported
@@ -96,13 +97,16 @@
 # Usage: CFLAGS += $(call cc-opt,option). Eg: $(call cc-opt,-fwrapv)
 # Note: ensure the referencing variable is assigned using ":=" and not "=" to
 #       call it only once.
-cc-opt = $(shell set -e; if $(CC) $(1) -c -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; fi;)
+cc-opt = $(shell set -e; if $(CC) $(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; fi;)
+
+# same but emits $2 if $1 is not supported
+cc-opt-alt = $(shell set -e; if $(CC) $(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; else echo "$(2)"; fi;)
 
 # Disable a warning when supported by the compiler. Don't put spaces around the
 # warning! And don't use cc-opt which doesn't always report an error until
 # another one is also returned.
 # Usage: CFLAGS += $(call cc-nowarn,warning). Eg: $(call cc-opt,format-truncation)
-cc-nowarn = $(shell set -e; if $(CC) -W$(1) -c -xc - -o /dev/null </dev/null >&0 2>&0; then echo "-Wno-$(1)"; fi;)
+cc-nowarn = $(shell set -e; if $(CC) -W$(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "-Wno-$(1)"; fi;)
 
 #### Installation options.
 DESTDIR =
@@ -140,6 +144,9 @@ LD = $(CC)
 # Those flags only feed CFLAGS so it is not mandatory to use this form.
 DEBUG_CFLAGS = -g
 
+#### Add -Werror when set to non-empty
+ERR =
+
 #### Compiler-specific flags that may be used to disable some negative over-
 # optimization or to silence some warnings. -fno-strict-aliasing is needed with
 # gcc >= 4.4.
@@ -147,8 +154,7 @@ DEBUG_CFLAGS = -g
 # can do whatever it wants since it's an undefined behavior, so use -fwrapv
 # to be sure we get the intended behavior.
 SPEC_CFLAGS := -fno-strict-aliasing -Wdeclaration-after-statement
-SPEC_CFLAGS += $(call cc-opt,-fwrapv)
-SPEC_CFLAGS += $(call cc-opt,-fno-strict-overflow)
+SPEC_CFLAGS += $(call cc-opt-alt,-fwrapv,$(call cc-opt,-fno-strict-overflow))
 SPEC_CFLAGS += $(call cc-nowarn,format-truncation)
 SPEC_CFLAGS += $(call cc-nowarn,address-of-packed-member)
 SPEC_CFLAGS += $(call cc-nowarn,null-dereference)
@@ -626,14 +632,6 @@ endif
 endif
 endif
 
-# For nuster
-ifeq ($(USE_OPENSSL),)
-ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
-OPTIONS_LDFLAGS += -lpthread
-endif
-endif
-
 ifneq ($(USE_LUA),)
 check_lua_lib = $(shell echo "int main(){}" | $(CC) -o /dev/null -x c - $(2) -l$(1) 2>/dev/null && echo $(1))
 check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
@@ -813,6 +811,11 @@ EBTREE_DIR := ebtree
 #### Global compile options
 VERBOSE_CFLAGS = $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE)
 COPTS  = -Iinclude -I$(EBTREE_DIR) -Wall
+
+ifneq ($(ERR),)
+COPTS += -Werror
+endif
+
 COPTS += $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE) $(SILENT_DEFINE)
 COPTS += $(DEBUG) $(OPTIONS_CFLAGS) $(ADDINC)
 
@@ -882,15 +885,7 @@ OBJS = src/proto_http.o src/cfgparse.o src/server.o src/stream.o        \
        src/sha1.o src/hpack-tbl.o src/hpack-enc.o src/uri_auth.o        \
        src/time.o src/proto_udp.o src/arg.o src/signal.o                \
        src/protocol.o src/lru.o src/hdr_idx.o src/hpack-huff.o          \
-       src/mailers.o src/h2.o src/base64.o src/hash.o                   \
-                                                                        \
-       src/nuster/cache/dict.o src/nuster/cache/filter.o                \
-       src/nuster/cache/stats.o src/nuster/cache/manager.o              \
-       src/nuster/cache/engine.o                                        \
-       src/nuster/nosql/filter.o  src/nuster/nosql/dict.o               \
-       src/nuster/nosql/stats.o src/nuster/nosql/engine.o               \
-       src/nuster/memory.o src/nuster/parser.o src/nuster/http.o        \
-       src/nuster/nuster.o
+       src/mailers.o src/h2.o src/base64.o src/hash.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
@@ -979,7 +974,6 @@ clean:
 	for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
-	rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
 
 tags:
 	find src include \( -name '*.c' -o -name '*.h' \) -print0 | \
@@ -1014,3 +1008,20 @@ update-version:
 	echo "$(VERSION)" > VERSION
 	echo "$(SUBVERS)" > SUBVERS
 	echo "$(VERDATE)" > VERDATE
+
+# just display the build options
+opts:
+	@echo -n 'Using: '
+	@echo -n 'TARGET="$(strip $(TARGET))" '
+	@echo -n 'ARCH="$(strip $(ARCH))" '
+	@echo -n 'CPU="$(strip $(CPU))" '
+	@echo -n 'CC="$(strip $(CC))" '
+	@echo -n 'ARCH_FLAGS="$(strip $(ARCH_FLAGS))" '
+	@echo -n 'CPU_CFLAGS="$(strip $(CPU_CFLAGS))" '
+	@echo -n 'DEBUG_CFLAGS="$(strip $(DEBUG_CFLAGS))" '
+	@echo "$(strip $(BUILD_OPTIONS))"
+	@echo 'COPTS="$(strip $(COPTS))"'
+	@echo 'LDFLAGS="$(strip $(LDFLAGS))"'
+	@echo 'LDOPTS="$(strip $(LDOPTS))"'
+	@echo 'OPTIONS_OBJS="$(strip $(OPTIONS_OBJS))"'
+	@echo 'OBJS="$(strip $(OBJS))"'

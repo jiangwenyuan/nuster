@@ -874,6 +874,7 @@ int conn_recv_netscaler_cip(struct connection *conn, int flag)
 	return 0;
 }
 
+/* Note: <remote> is explicitly allowed to be NULL */
 int make_proxy_line(char *buf, int buf_len, struct server *srv, struct connection *remote)
 {
 	int ret = 0;
@@ -985,6 +986,7 @@ static int make_tlv(char *dest, int dest_len, char type, uint16_t length, const 
 	return length + sizeof(*tlv);
 }
 
+/* Note: <remote> is explicitly allowed to be NULL */
 int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connection *remote)
 {
 	const char pp2_signature[] = PP2_SIGNATURE;
@@ -1060,7 +1062,7 @@ int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connec
 		}
 	}
 
-	if (conn_get_alpn(remote, &value, &value_len)) {
+	if (remote && conn_get_alpn(remote, &value, &value_len)) {
 		if ((buf_len - ret) < sizeof(struct tlv))
 			return 0;
 		ret += make_tlv(&buf[ret], (buf_len - ret), PP2_TYPE_ALPN, value_len, value);

@@ -60,6 +60,7 @@ static struct pool_head *pool_head_h2s;
 /* other flags */
 #define H2_CF_GOAWAY_SENT       0x00001000  // a GOAWAY frame was successfully sent
 #define H2_CF_GOAWAY_FAILED     0x00002000  // a GOAWAY frame failed to be sent
+#define H2_CF_WINDOW_OPENED     0x00010000 // demux increased window already advertised
 
 
 /* H2 connection state, in h2c->st0 */
@@ -192,6 +193,13 @@ struct h2_fh {
 	uint8_t ff;         /* frame flags */
 };
 
+/* The default connection window size is 65535, it may only be enlarged using
+ * a WINDOW_UPDATE message. Since the window must never be larger than 2G-1,
+ * we'll pretend we already received the difference between the two to send
+ * an equivalent window update to enlarge it to 2G-1.
+ */
+#define H2_INITIAL_WINDOW_INCREMENT ((1U<<31)-1 - 65535)
+
 /* a few settings from the global section */
 static int h2_settings_header_table_size      =  4096; /* initial value */
 static int h2_settings_initial_window_size    = 65535; /* initial value */
@@ -256,7 +264,7 @@ static inline int h2_recv_allowed(const struct h2c *h2c)
 /* returns true if the connection has too many conn_streams attached */
 static inline int h2_has_too_many_cs(const struct h2c *h2c)
 {
-	return h2c->nb_cs >= h2_settings_max_concurrent_streams;
+	return h2c->nb_cs > h2_settings_max_concurrent_streams;
 }
 
 /* re-enables receiving on mux <target> after a buffer was allocated. It returns
@@ -1327,6 +1335,14 @@ static int h2c_send_conn_wu(struct h2c *h2c)
 	if (h2c->rcvd_c <= 0)
 		return 1;
 
+	if (!(h2c->flags & H2_CF_WINDOW_OPENED)) {
+		/* increase the advertised connection window to 2G on
+		 * first update.
+		 */
+		h2c->flags |= H2_CF_WINDOW_OPENED;
+		h2c->rcvd_c += H2_INITIAL_WINDOW_INCREMENT;
+	}
+
 	/* send WU for the connection */
 	ret = h2c_send_window_update(h2c, 0, h2c->rcvd_c);
 	if (ret > 0)
@@ -2081,6 +2097,11 @@ static int h2_process_mux(struct h2c *h2c)
 {
 	struct h2s *h2s, *h2s_back;
 
+	if (unlikely(h2c->st0 < H2_CS_FRAME_H)) {
+		/* need to wait for the other side */
+		return 1;
+	}
+
 	/* start by sending possibly pending window updates */
 	if (h2c->rcvd_c > 0 &&
 	    !(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_MUX_MALLOC)) &&
@@ -2540,7 +2561,7 @@ static void h2_detach(struct conn_stream *cs)
 	if (eb_is_empty(&h2c->streams_by_id) &&     /* don't close if streams exist */
 	    ((h2c->conn->flags & CO_FL_ERROR) ||    /* errors close immediately */
 	     (h2c->st0 >= H2_CS_ERROR && !h2c->task) || /* a timeout stroke earlier */
-	     (h2c->flags & H2_CF_GOAWAY_FAILED) ||
+	     (h2c->flags & (H2_CF_GOAWAY_FAILED | H2_CF_GOAWAY_SENT)) ||
 	     (!h2c->mbuf->o &&  /* mux buffer empty, also process clean events below */
 	      (conn_xprt_read0_pending(h2c->conn) ||
 	       (h2c->last_sid >= 0 && h2c->max_id >= h2c->last_sid))))) {
@@ -2702,6 +2723,11 @@ static int h2_frt_decode_headers(struct h2s *h2s, struct buffer *buf, int count)
 		if (read_n32(hdrs) == h2s->id) {
 			/* RFC7540#5.3.1 : stream dep may not depend on itself */
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+			goto fail;
+		}
+
+		if (flen < 5) {
+			h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
 			goto fail;
 		}
 

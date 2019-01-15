@@ -3182,7 +3182,7 @@ int init_email_alert(struct mailers *mls, struct proxy *p, char **err)
 
 	if ((queues = calloc(mls->count, sizeof(*queues))) == NULL) {
 		memprintf(err, "out of memory while allocating mailer alerts queues");
-		goto error;
+		goto fail_no_queue;
 	}
 
 	for (mailer = mls->mailer_list; mailer; i++, mailer = mailer->next) {
@@ -3239,6 +3239,7 @@ int init_email_alert(struct mailers *mls, struct proxy *p, char **err)
 		free_check(check);
 	}
 	free(queues);
+  fail_no_queue:
 	return 1;
 }
 

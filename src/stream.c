@@ -282,8 +282,8 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
  out_fail_accept:
 	flt_stream_release(s, 0);
 	task_free(t);
- out_fail_alloc:
 	LIST_DEL(&s->list);
+ out_fail_alloc:
 	pool_free(pool_head_stream, s);
 	return NULL;
 }
@@ -306,7 +306,7 @@ static void stream_free(struct stream *s)
 	if (objt_server(s->target)) { /* there may be requests left pending in queue */
 		if (s->flags & SF_CURR_SESS) {
 			s->flags &= ~SF_CURR_SESS;
-			HA_ATOMIC_SUB(&objt_server(s->target)->cur_sess, 1);
+			HA_ATOMIC_SUB(&__objt_server(s->target)->cur_sess, 1);
 		}
 		if (may_dequeue_tasks(objt_server(s->target), s->be))
 			process_srv_queue(objt_server(s->target));
@@ -661,7 +661,7 @@ static int sess_update_st_cer(struct stream *s)
 
 		if (s->flags & SF_CURR_SESS) {
 			s->flags &= ~SF_CURR_SESS;
-			HA_ATOMIC_SUB(&objt_server(s->target)->cur_sess, 1);
+			HA_ATOMIC_SUB(&__objt_server(s->target)->cur_sess, 1);
 		}
 
 		if ((si->flags & SI_FL_ERR) &&
@@ -2712,13 +2712,9 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 	if (appctx->ctx.sess.section > 0 && appctx->ctx.sess.uid != strm->uniq_id) {
 		/* stream changed, no need to go any further */
 		chunk_appendf(&trash, "  *** session terminated while we were watching it ***\n");
-		if (ci_putchk(si_ic(si), &trash) == -1) {
-			si_applet_cant_put(si);
-			return 0;
-		}
-		appctx->ctx.sess.uid = 0;
-		appctx->ctx.sess.section = 0;
-		return 1;
+		if (ci_putchk(si_ic(si), &trash) == -1)
+			goto full;
+		goto done;
 	}
 
 	switch (appctx->ctx.sess.section) {
@@ -2754,8 +2750,9 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 		}
 
 		chunk_appendf(&trash,
-			     "  flags=0x%x, conn_retries=%d, srv_conn=%p, pend_pos=%p\n",
-			     strm->flags, strm->si[1].conn_retries, strm->srv_conn, strm->pend_pos);
+			     "  flags=0x%x, conn_retries=%d, srv_conn=%p, pend_pos=%p waiting=%d\n",
+			     strm->flags, strm->si[1].conn_retries, strm->srv_conn, strm->pend_pos,
+			     !LIST_ISEMPTY(&strm->buffer_wait.list));
 
 		chunk_appendf(&trash,
 			     "  frontend=%s (id=%u mode=%s), listener=%s (id=%u)",
@@ -2854,9 +2851,13 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 
 		if (strm->txn)
 			chunk_appendf(&trash,
-			     "  txn=%p flags=0x%x meth=%d status=%d req.st=%s rsp.st=%s waiting=%d\n",
+			      "  txn=%p flags=0x%x meth=%d status=%d req.st=%s rsp.st=%s\n"
+			      "      req.f=0x%02x blen=%llu chnk=%llu next=%u\n"
+			      "      rsp.f=0x%02x blen=%llu chnk=%llu next=%u\n",
 			      strm->txn, strm->txn->flags, strm->txn->meth, strm->txn->status,
-			      h1_msg_state_str(strm->txn->req.msg_state), h1_msg_state_str(strm->txn->rsp.msg_state), !LIST_ISEMPTY(&strm->buffer_wait.list));
+			      h1_msg_state_str(strm->txn->req.msg_state), h1_msg_state_str(strm->txn->rsp.msg_state),
+			      strm->txn->req.flags, strm->txn->req.body_len, strm->txn->req.chunk_len, strm->txn->req.next,
+			      strm->txn->rsp.flags, strm->txn->rsp.body_len, strm->txn->rsp.chunk_len, strm->txn->rsp.next);
 
 		chunk_appendf(&trash,
 			     "  si[0]=%p (state=%s flags=0x%02x endp0=%s:%p exp=%s, et=0x%03x)\n",
@@ -3008,17 +3009,18 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 			     strm->txn ? strm->txn->rsp.next : 0, strm->res.buf->i,
 			     strm->res.buf->size);
 
-		if (ci_putchk(si_ic(si), &trash) == -1) {
-			si_applet_cant_put(si);
-			return 0;
-		}
+		if (ci_putchk(si_ic(si), &trash) == -1)
+			goto full;
 
 		/* use other states to dump the contents */
 	}
 	/* end of dump */
+ done:
 	appctx->ctx.sess.uid = 0;
 	appctx->ctx.sess.section = 0;
 	return 1;
+ full:
+	return 0;
 }
 
 
@@ -3041,13 +3043,15 @@ static int cli_parse_show_sess(char **args, struct appctx *appctx, void *private
 
 /* This function dumps all streams' states onto the stream interface's
  * read buffer. It returns 0 if the output buffer is full and it needs
- * to be called again, otherwise non-zero. It is designed to be called
- * from stats_dump_sess_to_buffer() below.
+ * to be called again, otherwise non-zero. It proceeds in an isolated
+ * thread so there is no thread safety issue here.
  */
 static int cli_io_handler_dump_sess(struct appctx *appctx)
 {
 	struct stream_interface *si = appctx->owner;
 	struct connection *conn;
+
+	thread_isolate();
 
 	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW))) {
 		/* If we're forced to shut down, we might have to remove our
@@ -3059,7 +3063,7 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 				LIST_INIT(&appctx->ctx.sess.bref.users);
 			}
 		}
-		return 1;
+		goto done;
 	}
 
 	chunk_reset(&trash);
@@ -3101,10 +3105,8 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 
 				LIST_ADDQ(&curr_strm->back_refs, &appctx->ctx.sess.bref.users);
 				/* call the proper dump() function and return if we're missing space */
-				if (!stats_dump_full_strm_to_buffer(si, curr_strm)) {
-					HA_SPIN_UNLOCK(STRMS_LOCK, &streams_lock);
-					return 0;
-				}
+				if (!stats_dump_full_strm_to_buffer(si, curr_strm))
+					goto full;
 
 				/* stream dump complete */
 				LIST_DEL(&appctx->ctx.sess.bref.users);
@@ -3228,10 +3230,8 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 				/* let's try again later from this stream. We add ourselves into
 				 * this stream's users so that it can remove us upon termination.
 				 */
-				si_applet_cant_put(si);
 				LIST_ADDQ(&curr_strm->back_refs, &appctx->ctx.sess.bref.users);
-				HA_SPIN_UNLOCK(STRMS_LOCK, &streams_lock);
-				return 0;
+				goto full;
 			}
 
 		next_sess:
@@ -3245,26 +3245,26 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 			else
 				chunk_appendf(&trash, "Session not found.\n");
 
-			if (ci_putchk(si_ic(si), &trash) == -1) {
-				si_applet_cant_put(si);
-				HA_SPIN_UNLOCK(STRMS_LOCK, &streams_lock);
-				return 0;
-			}
+			if (ci_putchk(si_ic(si), &trash) == -1)
+				goto full;
 
 			appctx->ctx.sess.target = NULL;
 			appctx->ctx.sess.uid = 0;
-			HA_SPIN_UNLOCK(STRMS_LOCK, &streams_lock);
-			return 1;
+			goto done;
 		}
-
-		HA_SPIN_UNLOCK(STRMS_LOCK, &streams_lock);
-		appctx->st2 = STAT_ST_FIN;
 		/* fall through */
 
 	default:
 		appctx->st2 = STAT_ST_FIN;
-		return 1;
+		goto done;
 	}
+ done:
+	thread_release();
+	return 1;
+ full:
+	thread_release();
+	si_applet_cant_put(si);
+	return 0;
 }
 
 static void cli_release_show_sess(struct appctx *appctx)

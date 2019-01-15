@@ -169,6 +169,10 @@ static struct {
 
 	char *listen_default_ciphers;
 	char *connect_default_ciphers;
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	char *listen_default_ciphersuites;
+	char *connect_default_ciphersuites;
+#endif
 	int listen_default_ssloptions;
 	int connect_default_ssloptions;
 	struct tls_version_filter listen_default_sslmethods;
@@ -186,6 +190,14 @@ static struct {
 #endif
 #ifdef CONNECT_DEFAULT_CIPHERS
 	.connect_default_ciphers = CONNECT_DEFAULT_CIPHERS,
+#endif
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+#ifdef LISTEN_DEFAULT_CIPHERSUITES
+	.listen_default_ciphersuites = LISTEN_DEFAULT_CIPHERSUITES,
+#endif
+#ifdef CONNECT_DEFAULT_CIPHERSUITES
+	.connect_default_ciphersuites = CONNECT_DEFAULT_CIPHERSUITES,
+#endif
 #endif
 	.listen_default_ssloptions = BC_SSL_O_NONE,
 	.connect_default_ssloptions = SRV_SSL_O_NONE,
@@ -479,7 +491,7 @@ static void ssl_async_fd_free(int fd)
 
 	/* Now we can safely call SSL_free, no more pending job in engines */
 	SSL_free(ssl);
-	sslconns--;
+	HA_ATOMIC_SUB(&sslconns, 1);
 	HA_ATOMIC_SUB(&jobs, 1);
 }
 /*
@@ -1540,10 +1552,19 @@ void ssl_sock_parse_clienthello(int write_p, int version, int content_type,
 
 	/* Expect 2 bytes for protocol version (1 byte for major and 1 byte
 	 * for minor, the random, composed by 4 bytes for the unix time and
-	 * 28 bytes for unix payload, and them 1 byte for the session id. So
-	 * we jump 1 + 1 + 4 + 28 + 1 bytes.
+	 * 28 bytes for unix payload. So we jump 1 + 1 + 4 + 28.
 	 */
-	msg += 1 + 1 + 4 + 28 + 1;
+	msg += 1 + 1 + 4 + 28;
+	if (msg > end)
+		return;
+
+	/* Next, is session id:
+	 * if present, we have to jump by length + 1 for the size information
+	 * if not present, we have to jump by 1 only
+	 */
+	if (msg[0] > 0)
+		msg += msg[0];
+	msg += 1;
 	if (msg > end)
 		return;
 
@@ -2101,6 +2122,422 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 	int i;
 
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+	s = __objt_listener(conn->target)->bind_conf;
+
+	if (s->ssl_conf.early_data)
+		allow_early = 1;
+#ifdef OPENSSL_IS_BORINGSSL
+	if (SSL_early_callback_ctx_extension_get(ctx, TLSEXT_TYPE_server_name,
+						 &extension_data, &extension_len)) {
+#else
+	if (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_server_name, &extension_data, &extension_len)) {
+#endif
+		/*
+		 * The server_name extension was given too much extensibility when it
+		 * was written, so parsing the normal case is a bit complex.
+		 */
+		size_t len;
+		if (extension_len <= 2)
+			goto abort;
+		/* Extract the length of the supplied list of names. */
+		len = (*extension_data++) << 8;
+		len |= *extension_data++;
+		if (len + 2 != extension_len)
+			goto abort;
+		/*
+		 * The list in practice only has a single element, so we only consider
+		 * the first one.
+		 */
+		if (len == 0 || *extension_data++ != TLSEXT_NAMETYPE_host_name)
+			goto abort;
+		extension_len = len - 1;
+		/* Now we can finally pull out the byte array with the actual hostname. */
+		if (extension_len <= 2)
+			goto abort;
+		len = (*extension_data++) << 8;
+		len |= *extension_data++;
+		if (len == 0 || len + 2 > extension_len || len > TLSEXT_MAXLEN_host_name
+		    || memchr(extension_data, 0, len) != NULL)
+			goto abort;
+		servername = extension_data;
+		servername_len = len;
+	} else {
+#if (!defined SSL_NO_GENERATE_CERTIFICATES)
+		if (s->generate_certs && ssl_sock_generate_certificate_from_conn(s, ssl)) {
+			goto allow_early;
+		}
+#endif
+		/* without SNI extension, is the default_ctx (need SSL_TLSEXT_ERR_NOACK) */
+		if (!s->strict_sni) {
+			ssl_sock_switchctx_set(ssl, s->default_ctx);
+			goto allow_early;
+		}
+		goto abort;
+	}
+
+	/* extract/check clientHello informations */
+#ifdef OPENSSL_IS_BORINGSSL
+	if (SSL_early_callback_ctx_extension_get(ctx, TLSEXT_TYPE_signature_algorithms, &extension_data, &extension_len)) {
+#else
+	if (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_signature_algorithms, &extension_data, &extension_len)) {
+#endif
+		uint8_t sign;
+		size_t len;
+		if (extension_len < 2)
+			goto abort;
+		len = (*extension_data++) << 8;
+		len |= *extension_data++;
+		if (len + 2 != extension_len)
+			goto abort;
+		if (len % 2 != 0)
+			goto abort;
+		for (; len > 0; len -= 2) {
+			extension_data++; /* hash */
+			sign = *extension_data++;
+			switch (sign) {
+			case TLSEXT_signature_rsa:
+				has_rsa_sig = 1;
+				break;
+			case TLSEXT_signature_ecdsa:
+				has_ecdsa_sig = 1;
+				break;
+			default:
+				continue;
+			}
+			if (has_ecdsa_sig && has_rsa_sig)
+				break;
+		}
+	} else {
+		/* without TLSEXT_TYPE_signature_algorithms extension (< TLSv1.2) */
+		has_rsa_sig = 1;
+	}
+	if (has_ecdsa_sig) {  /* in very rare case: has ecdsa sign but not a ECDSA cipher */
+		const SSL_CIPHER *cipher;
+		size_t len;
+		const uint8_t *cipher_suites;
+		has_ecdsa_sig = 0;
+#ifdef OPENSSL_IS_BORINGSSL
+		len = ctx->cipher_suites_len;
+		cipher_suites = ctx->cipher_suites;
+#else
+		len = SSL_client_hello_get0_ciphers(ssl, &cipher_suites);
+#endif
+		if (len % 2 != 0)
+			goto abort;
+		for (; len != 0; len -= 2, cipher_suites += 2) {
+#ifdef OPENSSL_IS_BORINGSSL
+			uint16_t cipher_suite = (cipher_suites[0] << 8) | cipher_suites[1];
+			cipher = SSL_get_cipher_by_value(cipher_suite);
+#else
+			cipher = SSL_CIPHER_find(ssl, cipher_suites);
+#endif
+			if (cipher && SSL_CIPHER_get_auth_nid(cipher) == NID_auth_ecdsa) {
+				has_ecdsa_sig = 1;
+				break;
+			}
+		}
+	}
+
+	for (i = 0; i < trash.size && i < servername_len; i++) {
+		trash.str[i] = tolower(servername[i]);
+		if (!wildp && (trash.str[i] == '.'))
+			wildp = &trash.str[i];
+	}
+	trash.str[i] = 0;
+
+	/* lookup in full qualified names */
+	node = ebst_lookup(&s->sni_ctx, trash.str);
+
+	/* lookup a not neg filter */
+	for (n = node; n; n = ebmb_next_dup(n)) {
+		if (!container_of(n, struct sni_ctx, name)->neg) {
+			switch(container_of(n, struct sni_ctx, name)->key_sig) {
+			case TLSEXT_signature_ecdsa:
+				if (!node_ecdsa)
+					node_ecdsa = n;
+				break;
+			case TLSEXT_signature_rsa:
+				if (!node_rsa)
+					node_rsa = n;
+				break;
+			default: /* TLSEXT_signature_anonymous */
+				if (!node_anonymous)
+					node_anonymous = n;
+				break;
+			}
+		}
+	}
+	if (wildp) {
+		/* lookup in wildcards names */
+		node = ebst_lookup(&s->sni_w_ctx, wildp);
+		for (n = node; n; n = ebmb_next_dup(n)) {
+			if (!container_of(n, struct sni_ctx, name)->neg) {
+				switch(container_of(n, struct sni_ctx, name)->key_sig) {
+				case TLSEXT_signature_ecdsa:
+					if (!node_ecdsa)
+						node_ecdsa = n;
+					break;
+				case TLSEXT_signature_rsa:
+					if (!node_rsa)
+						node_rsa = n;
+					break;
+				default: /* TLSEXT_signature_anonymous */
+					if (!node_anonymous)
+						node_anonymous = n;
+					break;
+				}
+			}
+		}
+	}
+	/* select by key_signature priority order */
+	node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
+		: ((has_rsa_sig && node_rsa) ? node_rsa
+		   : (node_anonymous ? node_anonymous
+		      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
+			 : node_rsa                   /* no rsa signature case (far far away) */
+			 )));
+	if (node) {
+		/* switch ctx */
+		struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
+		ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
+			if (conf) {
+				methodVersions[conf->ssl_methods.min].ssl_set_version(ssl, SET_MIN);
+				methodVersions[conf->ssl_methods.max].ssl_set_version(ssl, SET_MAX);
+				if (conf->early_data)
+					allow_early = 1;
+			}
+			goto allow_early;
+	}
+#if (!defined SSL_NO_GENERATE_CERTIFICATES)
+	if (s->generate_certs && ssl_sock_generate_certificate(trash.str, s, ssl)) {
+		/* switch ctx done in ssl_sock_generate_certificate */
+		goto allow_early;
+	}
+#endif
+	if (!s->strict_sni) {
+		/* no certificate match, is the default_ctx */
+		ssl_sock_switchctx_set(ssl, s->default_ctx);
+	}
+allow_early:
+#ifdef OPENSSL_IS_BORINGSSL
+	if (allow_early)
+		SSL_set_early_data_enabled(ssl, 1);
+#else
+	if (!allow_early)
+		SSL_set_max_early_data(ssl, 0);
+#endif
+	return 1;
+ abort:
+	/* abort handshake (was SSL_TLSEXT_ERR_ALERT_FATAL) */
+	conn->err_code = CO_ER_SSL_HANDSHAKE;
+#ifdef OPENSSL_IS_BORINGSSL
+	return ssl_select_cert_error;
+#else
+	*al = SSL_AD_UNRECOGNIZED_NAME;
+	return 0;
+#endif
+}
+static int
+ssl_sock_generate_certificate_from_conn(struct bind_conf *bind_conf, SSL *ssl)
+{
+	unsigned int key;
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+
+	conn_get_to_addr(conn);
+	if (conn->flags & CO_FL_ADDR_TO_SET) {
+		key = ssl_sock_generated_cert_key(&conn->addr.to, get_addr_len(&conn->addr.to));
+		if (ssl_sock_assign_generated_cert(key, bind_conf, ssl))
+			return 1;
+	}
+	return 0;
+}
+#endif /* !defined SSL_NO_GENERATE_CERTIFICATES */
+
+
+#ifndef SSL_OP_CIPHER_SERVER_PREFERENCE                 /* needs OpenSSL >= 0.9.7 */
+#define SSL_OP_CIPHER_SERVER_PREFERENCE 0
+#endif
+
+#ifndef SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION   /* needs OpenSSL >= 0.9.7 */
+#define SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION 0
+#define SSL_renegotiate_pending(arg) 0
+#endif
+#ifndef SSL_OP_SINGLE_ECDH_USE                          /* needs OpenSSL >= 0.9.8 */
+#define SSL_OP_SINGLE_ECDH_USE 0
+#endif
+#ifndef SSL_OP_NO_TICKET                                /* needs OpenSSL >= 0.9.8 */
+#define SSL_OP_NO_TICKET 0
+#endif
+#ifndef SSL_OP_NO_COMPRESSION                           /* needs OpenSSL >= 0.9.9 */
+#define SSL_OP_NO_COMPRESSION 0
+#endif
+#ifdef OPENSSL_NO_SSL3                                  /* SSLv3 support removed */
+#undef  SSL_OP_NO_SSLv3
+#define SSL_OP_NO_SSLv3 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_1                               /* needs OpenSSL >= 1.0.1 */
+#define SSL_OP_NO_TLSv1_1 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_2                               /* needs OpenSSL >= 1.0.1 */
+#define SSL_OP_NO_TLSv1_2 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_3                               /* needs OpenSSL >= 1.1.1 */
+#define SSL_OP_NO_TLSv1_3 0
+#endif
+#ifndef SSL_OP_SINGLE_DH_USE                            /* needs OpenSSL >= 0.9.6 */
+#define SSL_OP_SINGLE_DH_USE 0
+#endif
+#ifndef SSL_OP_SINGLE_ECDH_USE                            /* needs OpenSSL >= 1.0.0 */
+#define SSL_OP_SINGLE_ECDH_USE 0
+#endif
+#ifndef SSL_MODE_RELEASE_BUFFERS                        /* needs OpenSSL >= 1.0.0 */
+#define SSL_MODE_RELEASE_BUFFERS 0
+#endif
+#ifndef SSL_MODE_SMALL_BUFFERS                          /* needs small_records.patch */
+#define SSL_MODE_SMALL_BUFFERS 0
+#endif
+
+#if (OPENSSL_VERSION_NUMBER < 0x1010000fL)
+typedef enum { SET_CLIENT, SET_SERVER } set_context_func;
+
+static void ctx_set_SSLv3_func(SSL_CTX *ctx, set_context_func c)
+{
+#if SSL_OP_NO_SSLv3
+	c == SET_SERVER ? SSL_CTX_set_ssl_version(ctx, SSLv3_server_method())
+		: SSL_CTX_set_ssl_version(ctx, SSLv3_client_method());
+#endif
+}
+static void ctx_set_TLSv10_func(SSL_CTX *ctx, set_context_func c) {
+	c == SET_SERVER ? SSL_CTX_set_ssl_version(ctx, TLSv1_server_method())
+		: SSL_CTX_set_ssl_version(ctx, TLSv1_client_method());
+}
+static void ctx_set_TLSv11_func(SSL_CTX *ctx, set_context_func c) {
+#if SSL_OP_NO_TLSv1_1
+	c == SET_SERVER ? SSL_CTX_set_ssl_version(ctx, TLSv1_1_server_method())
+		: SSL_CTX_set_ssl_version(ctx, TLSv1_1_client_method());
+#endif
+}
+static void ctx_set_TLSv12_func(SSL_CTX *ctx, set_context_func c) {
+#if SSL_OP_NO_TLSv1_2
+	c == SET_SERVER ? SSL_CTX_set_ssl_version(ctx, TLSv1_2_server_method())
+		: SSL_CTX_set_ssl_version(ctx, TLSv1_2_client_method());
+#endif
+}
+/* TLSv1.2 is the last supported version in this context. */
+static void ctx_set_TLSv13_func(SSL_CTX *ctx, set_context_func c) {}
+/* Unusable in this context. */
+static void ssl_set_SSLv3_func(SSL *ssl, set_context_func c) {}
+static void ssl_set_TLSv10_func(SSL *ssl, set_context_func c) {}
+static void ssl_set_TLSv11_func(SSL *ssl, set_context_func c) {}
+static void ssl_set_TLSv12_func(SSL *ssl, set_context_func c) {}
+static void ssl_set_TLSv13_func(SSL *ssl, set_context_func c) {}
+#else /* openssl >= 1.1.0 */
+typedef enum { SET_MIN, SET_MAX } set_context_func;
+
+static void ctx_set_SSLv3_func(SSL_CTX *ctx, set_context_func c) {
+	c == SET_MAX ? SSL_CTX_set_max_proto_version(ctx, SSL3_VERSION)
+		: SSL_CTX_set_min_proto_version(ctx, SSL3_VERSION);
+}
+static void ssl_set_SSLv3_func(SSL *ssl, set_context_func c) {
+	c == SET_MAX ? SSL_set_max_proto_version(ssl, SSL3_VERSION)
+		: SSL_set_min_proto_version(ssl, SSL3_VERSION);
+}
+static void ctx_set_TLSv10_func(SSL_CTX *ctx, set_context_func c) {
+	c == SET_MAX ? SSL_CTX_set_max_proto_version(ctx, TLS1_VERSION)
+		: SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION);
+}
+static void ssl_set_TLSv10_func(SSL *ssl, set_context_func c) {
+	c == SET_MAX ? SSL_set_max_proto_version(ssl, TLS1_VERSION)
+		: SSL_set_min_proto_version(ssl, TLS1_VERSION);
+}
+static void ctx_set_TLSv11_func(SSL_CTX *ctx, set_context_func c) {
+	c == SET_MAX ? SSL_CTX_set_max_proto_version(ctx, TLS1_1_VERSION)
+		: SSL_CTX_set_min_proto_version(ctx, TLS1_1_VERSION);
+}
+static void ssl_set_TLSv11_func(SSL *ssl, set_context_func c) {
+	c == SET_MAX ? SSL_set_max_proto_version(ssl, TLS1_1_VERSION)
+		: SSL_set_min_proto_version(ssl, TLS1_1_VERSION);
+}
+static void ctx_set_TLSv12_func(SSL_CTX *ctx, set_context_func c) {
+	c == SET_MAX ? SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION)
+		: SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+}
+static void ssl_set_TLSv12_func(SSL *ssl, set_context_func c) {
+	c == SET_MAX ? SSL_set_max_proto_version(ssl, TLS1_2_VERSION)
+		: SSL_set_min_proto_version(ssl, TLS1_2_VERSION);
+}
+static void ctx_set_TLSv13_func(SSL_CTX *ctx, set_context_func c) {
+#if SSL_OP_NO_TLSv1_3
+	c == SET_MAX ? SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION)
+		: SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+#endif
+}
+static void ssl_set_TLSv13_func(SSL *ssl, set_context_func c) {
+#if SSL_OP_NO_TLSv1_3
+	c == SET_MAX ? SSL_set_max_proto_version(ssl, TLS1_3_VERSION)
+		: SSL_set_min_proto_version(ssl, TLS1_3_VERSION);
+#endif
+}
+#endif
+static void ctx_set_None_func(SSL_CTX *ctx, set_context_func c) { }
+static void ssl_set_None_func(SSL *ssl, set_context_func c) { }
+
+static struct {
+	int      option;
+	uint16_t flag;
+	void   (*ctx_set_version)(SSL_CTX *, set_context_func);
+	void   (*ssl_set_version)(SSL *, set_context_func);
+	const char *name;
+} methodVersions[] = {
+	{0, 0, ctx_set_None_func, ssl_set_None_func, "NONE"},   /* CONF_TLSV_NONE */
+	{SSL_OP_NO_SSLv3,   MC_SSL_O_NO_SSLV3,  ctx_set_SSLv3_func, ssl_set_SSLv3_func, "SSLv3"},    /* CONF_SSLV3 */
+	{SSL_OP_NO_TLSv1,   MC_SSL_O_NO_TLSV10, ctx_set_TLSv10_func, ssl_set_TLSv10_func, "TLSv1.0"}, /* CONF_TLSV10 */
+	{SSL_OP_NO_TLSv1_1, MC_SSL_O_NO_TLSV11, ctx_set_TLSv11_func, ssl_set_TLSv11_func, "TLSv1.1"}, /* CONF_TLSV11 */
+	{SSL_OP_NO_TLSv1_2, MC_SSL_O_NO_TLSV12, ctx_set_TLSv12_func, ssl_set_TLSv12_func, "TLSv1.2"}, /* CONF_TLSV12 */
+	{SSL_OP_NO_TLSv1_3, MC_SSL_O_NO_TLSV13, ctx_set_TLSv13_func, ssl_set_TLSv13_func, "TLSv1.3"}, /* CONF_TLSV13 */
+};
+
+static void ssl_sock_switchctx_set(SSL *ssl, SSL_CTX *ctx)
+{
+	SSL_set_verify(ssl, SSL_CTX_get_verify_mode(ctx), ssl_sock_bind_verifycbk);
+	SSL_set_client_CA_list(ssl, SSL_dup_CA_list(SSL_CTX_get_client_CA_list(ctx)));
+	SSL_set_SSL_CTX(ssl, ctx);
+}
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL)
+
+static int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
+{
+	struct bind_conf *s = priv;
+	(void)al; /* shut gcc stupid warning */
+
+	if (SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name) || s->generate_certs)
+		return SSL_TLSEXT_ERR_OK;
+	return SSL_TLSEXT_ERR_NOACK;
+}
+
+#ifdef OPENSSL_IS_BORINGSSL
+static int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx)
+{
+	SSL *ssl = ctx->ssl;
+#else
+static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
+{
+#endif
+	struct connection *conn;
+	struct bind_conf *s;
+	const uint8_t *extension_data;
+	size_t extension_len;
+	int has_rsa_sig = 0, has_ecdsa_sig = 0;
+
+	char *wildp = NULL;
+	const uint8_t *servername;
+	size_t servername_len;
+	struct ebmb_node *node, *n, *node_ecdsa = NULL, *node_rsa = NULL, *node_anonymous = NULL;
+	int allow_early = 0;
+	int i;
+
+	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	s = objt_listener(conn->target)->bind_conf;
 
 	if (s->ssl_conf.early_data)
@@ -2316,6 +2753,8 @@ allow_early:
 	return 0;
 #endif
 }
+
+#else /* OPENSSL_IS_BORINGSSL */
 
 #else /* OPENSSL_IS_BORINGSSL */
 
@@ -3528,6 +3967,10 @@ void ssl_sock_free_ssl_conf(struct ssl_bind_conf *conf)
 		conf->crl_file = NULL;
 		free(conf->ciphers);
 		conf->ciphers = NULL;
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+		free(conf->ciphersuites);
+		conf->ciphersuites = NULL;
+#endif
 		free(conf->curves);
 		conf->curves = NULL;
 		free(conf->ecdhe);
@@ -4061,6 +4504,9 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 	int verify = SSL_VERIFY_NONE;
 	struct ssl_bind_conf __maybe_unused *ssl_conf_cur;
 	const char *conf_ciphers;
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	const char *conf_ciphersuites;
+#endif
 	const char *conf_curves = NULL;
 
 	if (ssl_conf) {
@@ -4159,6 +4605,16 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 			 curproxy->id, conf_ciphers, bind_conf->arg, bind_conf->file, bind_conf->line);
 		cfgerr++;
 	}
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	conf_ciphersuites = (ssl_conf && ssl_conf->ciphersuites) ? ssl_conf->ciphersuites : bind_conf->ssl_conf.ciphersuites;
+	if (conf_ciphersuites &&
+	    !SSL_CTX_set_ciphersuites(ctx, conf_ciphersuites)) {
+		ha_alert("Proxy '%s': unable to set TLS 1.3 cipher suites to '%s' for bind '%s' at [%s:%d].\n",
+			 curproxy->id, conf_ciphersuites, bind_conf->arg, bind_conf->file, bind_conf->line);
+		cfgerr++;
+	}
+#endif
 
 #ifndef OPENSSL_NO_DH
 	/* If tune.ssl.default-dh-param has not been set,
@@ -4642,6 +5098,16 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 		cfgerr++;
 	}
 
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (srv->ssl_ctx.ciphersuites &&
+		!SSL_CTX_set_cipher_list(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
+		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set TLS 1.3 cipher suites to '%s'.\n",
+			 curproxy->id, srv->id,
+			 srv->conf.file, srv->conf.line, srv->ssl_ctx.ciphersuites);
+		cfgerr++;
+	}
+#endif
+
 	return cfgerr;
 }
 
@@ -4729,7 +5195,7 @@ int ssl_sock_prepare_bind_conf(struct bind_conf *bind_conf)
 		                       sizeof(struct sh_ssl_sess_hdr) + SHSESS_BLOCK_MIN_SIZE,
 		                       sizeof(*sh_ssl_sess_tree),
 		                       ((global.nbthread > 1) || (!global_ssl.private_cache && (global.nbproc > 1))) ? 1 : 0);
-		if (alloc_ctx < 0) {
+		if (alloc_ctx <= 0) {
 			if (alloc_ctx == SHCTX_E_INIT_LOCK)
 				ha_alert("Unable to initialize the lock for the shared SSL session cache. You can retry using the global statement 'tune.ssl.force-private-cache' but it could increase CPU usage due to renegotiations if nbproc > 1.\n");
 			else
@@ -4972,8 +5438,8 @@ static int ssl_sock_init(struct connection *conn)
 		/* leave init state and start handshake */
 		conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
 
-		sslconns++;
-		totalsslconns++;
+		HA_ATOMIC_ADD(&sslconns, 1);
+		HA_ATOMIC_ADD(&totalsslconns, 1);
 		return 0;
 	}
 	else if (objt_listener(conn->target)) {
@@ -5023,8 +5489,8 @@ static int ssl_sock_init(struct connection *conn)
 		conn->flags |= CO_FL_EARLY_SSL_HS;
 #endif
 
-		sslconns++;
-		totalsslconns++;
+		HA_ATOMIC_ADD(&sslconns, 1);
+		HA_ATOMIC_ADD(&totalsslconns, 1);
 		return 0;
 	}
 	/* don't know how to handle such a target */
@@ -5674,7 +6140,7 @@ static void ssl_sock_close(struct connection *conn) {
 #endif
 		SSL_free(conn->xprt_ctx);
 		conn->xprt_ctx = NULL;
-		sslconns--;
+		HA_ATOMIC_SUB(&sslconns, 1);
 	}
 }
 
@@ -6890,7 +7356,7 @@ smp_fetch_ssl_fc_cl_str(const struct arg *args, struct sample *smp, const char *
 #if defined(OPENSSL_IS_BORINGSSL)
 		cipher = SSL_get_cipher_by_value(id);
 #else
-		struct connection *conn = objt_conn(smp->sess->origin);
+		struct connection *conn = __objt_conn(smp->sess->origin);
 		cipher = SSL_CIPHER_find(conn->xprt_ctx, bin);
 #endif
 		str = SSL_CIPHER_get_name(cipher);
@@ -7101,6 +7567,26 @@ static int bind_parse_ciphers(char **args, int cur_arg, struct proxy *px, struct
 {
 	return ssl_bind_parse_ciphers(args, cur_arg, px, &conf->ssl_conf, err);
 }
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+/* parse the "ciphersuites" bind keyword */
+static int ssl_bind_parse_ciphersuites(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
+{
+	if (!*args[cur_arg + 1]) {
+		memprintf(err, "'%s' : missing cipher suite", args[cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	free(conf->ciphersuites);
+	conf->ciphersuites = strdup(args[cur_arg + 1]);
+	return 0;
+}
+static int bind_parse_ciphersuites(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
+{
+	return ssl_bind_parse_ciphersuites(args, cur_arg, px, &conf->ssl_conf, err);
+}
+#endif
+
 /* parse the "crt" bind keyword */
 static int bind_parse_crt(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
@@ -7492,6 +7978,10 @@ static int bind_parse_ssl(char **args, int cur_arg, struct proxy *px, struct bin
 
 	if (global_ssl.listen_default_ciphers && !conf->ssl_conf.ciphers)
 		conf->ssl_conf.ciphers = strdup(global_ssl.listen_default_ciphers);
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (global_ssl.listen_default_ciphersuites && !conf->ssl_conf.ciphersuites)
+		conf->ssl_conf.ciphersuites = strdup(global_ssl.listen_default_ciphersuites);
+#endif
 	conf->ssl_options |= global_ssl.listen_default_ssloptions;
 	conf->ssl_conf.ssl_methods.flags |= global_ssl.listen_default_sslmethods.flags;
 	if (!conf->ssl_conf.ssl_methods.min)
@@ -7689,6 +8179,10 @@ static int srv_parse_check_ssl(char **args, int *cur_arg, struct proxy *px, stru
 	newsrv->check.use_ssl = 1;
 	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
 		newsrv->ssl_ctx.ciphers = strdup(global_ssl.connect_default_ciphers);
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
+		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
+#endif
 	newsrv->ssl_ctx.options |= global_ssl.connect_default_ssloptions;
 	newsrv->ssl_ctx.methods.flags |= global_ssl.connect_default_sslmethods.flags;
 	if (!newsrv->ssl_ctx.methods.min)
@@ -7711,6 +8205,21 @@ static int srv_parse_ciphers(char **args, int *cur_arg, struct proxy *px, struct
 	newsrv->ssl_ctx.ciphers = strdup(args[*cur_arg + 1]);
 	return 0;
 }
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+/* parse the "ciphersuites" server keyword */
+static int srv_parse_ciphersuites(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
+{
+	if (!*args[*cur_arg + 1]) {
+		memprintf(err, "'%s' : missing cipher suite", args[*cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	free(newsrv->ssl_ctx.ciphersuites);
+	newsrv->ssl_ctx.ciphersuites = strdup(args[*cur_arg + 1]);
+	return 0;
+}
+#endif
 
 /* parse the "crl-file" server keyword */
 static int srv_parse_crl_file(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
@@ -7853,6 +8362,10 @@ static int srv_parse_ssl(char **args, int *cur_arg, struct proxy *px, struct ser
 	newsrv->use_ssl = 1;
 	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
 		newsrv->ssl_ctx.ciphers = strdup(global_ssl.connect_default_ciphers);
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
+		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
+#endif
 	return 0;
 }
 
@@ -8091,6 +8604,32 @@ static int ssl_parse_global_ciphers(char **args, int section_type, struct proxy 
 	*target = strdup(args[1]);
 	return 0;
 }
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+/* parse the "ssl-default-bind-ciphersuites" / "ssl-default-server-ciphersuites" keywords
+ * in global section. Returns <0 on alert, >0 on warning, 0 on success.
+ */
+static int ssl_parse_global_ciphersuites(char **args, int section_type, struct proxy *curpx,
+                                    struct proxy *defpx, const char *file, int line,
+                                    char **err)
+{
+	char **target;
+
+	target = (args[0][12] == 'b') ? &global_ssl.listen_default_ciphersuites : &global_ssl.connect_default_ciphersuites;
+
+	if (too_many_args(1, args, err, NULL))
+		return -1;
+
+	if (*(args[1]) == 0) {
+		memprintf(err, "global statement '%s' expects a cipher suite as an argument.", args[0]);
+		return -1;
+	}
+
+	free(*target);
+	*target = strdup(args[1]);
+	return 0;
+}
+#endif
 
 /* parse various global tune.ssl settings consisting in positive integers.
  * Returns <0 on alert, >0 on warning, 0 on success.
@@ -8599,6 +9138,9 @@ static struct ssl_bind_kw ssl_bind_kws[] = {
 	{ "alpn",                  ssl_bind_parse_alpn,             1 }, /* set ALPN supported protocols */
 	{ "ca-file",               ssl_bind_parse_ca_file,          1 }, /* set CAfile to process verify on client cert */
 	{ "ciphers",               ssl_bind_parse_ciphers,          1 }, /* set SSL cipher suite */
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ "ciphersuites",          ssl_bind_parse_ciphersuites,     1 }, /* set TLS 1.3 cipher suite */
+#endif
 	{ "crl-file",              ssl_bind_parse_crl_file,         1 }, /* set certificat revocation list file use on client cert verify */
 	{ "curves",                ssl_bind_parse_curves,           1 }, /* set SSL curve suite */
 	{ "ecdhe",                 ssl_bind_parse_ecdhe,            1 }, /* defines named curve for elliptic curve Diffie-Hellman */
@@ -8618,6 +9160,9 @@ static struct bind_kw_list bind_kws = { "SSL", { }, {
 	{ "ca-sign-file",          bind_parse_ca_sign_file,       1 }, /* set CAFile used to generate and sign server certs */
 	{ "ca-sign-pass",          bind_parse_ca_sign_pass,       1 }, /* set CAKey passphrase */
 	{ "ciphers",               bind_parse_ciphers,            1 }, /* set SSL cipher suite */
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ "ciphersuites",          bind_parse_ciphersuites,       1 }, /* set TLS 1.3 cipher suite */
+#endif
 	{ "crl-file",              bind_parse_crl_file,           1 }, /* set certificat revocation list file use on client cert verify */
 	{ "crt",                   bind_parse_crt,                1 }, /* load SSL certificates from this location */
 	{ "crt-ignore-err",        bind_parse_ignore_err,         1 }, /* set error IDs to ingore on verify depth == 0 */
@@ -8661,6 +9206,9 @@ static struct srv_kw_list srv_kws = { "SSL", { }, {
 	{ "check-sni",               srv_parse_check_sni,          1, 1 }, /* set SNI */
 	{ "check-ssl",               srv_parse_check_ssl,          0, 1 }, /* enable SSL for health checks */
 	{ "ciphers",                 srv_parse_ciphers,            1, 1 }, /* select the cipher suite */
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ "ciphersuites",            srv_parse_ciphersuites,       1, 1 }, /* select the cipher suite */
+#endif
 	{ "crl-file",                srv_parse_crl_file,           1, 1 }, /* set certificate revocation list file use on server cert verify */
 	{ "crt",                     srv_parse_crt,                1, 1 }, /* set client certificate */
 	{ "force-sslv3",             srv_parse_tls_method_options, 0, 1 }, /* force SSLv3 */
@@ -8716,6 +9264,10 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 	{ CFG_GLOBAL, "tune.ssl.capture-cipherlist-size", ssl_parse_global_capture_cipherlist },
 	{ CFG_GLOBAL, "ssl-default-bind-ciphers", ssl_parse_global_ciphers },
 	{ CFG_GLOBAL, "ssl-default-server-ciphers", ssl_parse_global_ciphers },
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ CFG_GLOBAL, "ssl-default-bind-ciphersuites", ssl_parse_global_ciphersuites },
+	{ CFG_GLOBAL, "ssl-default-server-ciphersuites", ssl_parse_global_ciphersuites },
+#endif
 	{ 0, NULL, NULL },
 }};
 
@@ -8793,6 +9345,12 @@ static void __ssl_sock_init(void)
 		global_ssl.listen_default_ciphers = strdup(global_ssl.listen_default_ciphers);
 	if (global_ssl.connect_default_ciphers)
 		global_ssl.connect_default_ciphers = strdup(global_ssl.connect_default_ciphers);
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (global_ssl.listen_default_ciphersuites)
+		global_ssl.listen_default_ciphersuites = strdup(global_ssl.listen_default_ciphersuites);
+	if (global_ssl.connect_default_ciphersuites)
+		global_ssl.connect_default_ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
+#endif
 
 	xprt_register(XPRT_SSL, &ssl_sock);
 	SSL_library_init();
