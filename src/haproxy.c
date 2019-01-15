@@ -1,6 +1,6 @@
 /*
  * HA-Proxy : High Availability-enabled HTTP/TCP proxy
- * Copyright 2000-2018 Willy Tarreau <willy@haproxy.org>.
+ * Copyright 2000-2019 Willy Tarreau <willy@haproxy.org>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -372,7 +372,7 @@ static void display_version()
 	printf("nuster version %s\n", NUSTER_VERSION);
 	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE"\n");
-	printf("Copyright 2000-2018 Willy Tarreau <willy@haproxy.org>\n\n");
+	printf("Copyright 2000-2019 Willy Tarreau <willy@haproxy.org>\n\n");
 }
 
 static void display_build_opts()
@@ -2225,6 +2225,9 @@ void deinit(void)
 			free(s->agent.send_string);
 			free(s->hostname_dn);
 			free((char*)s->conf.file);
+			free(s->idle_conns);
+			free(s->priv_conns);
+			free(s->safe_conns);
 
 			if (s->use_ssl || s->check.use_ssl) {
 				if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->destroy_srv)
@@ -2369,7 +2372,13 @@ void mworker_pipe_handler(int fd)
 		break;
 	}
 
-	deinit();
+	/* At this step the master is down before
+	 * this worker perform a 'normal' exit.
+	 * So we want to exit with an error but
+	 * other threads could currently process
+	 * some stuff so we can't perform a clean
+	 * deinit().
+	 */
 	exit(EXIT_FAILURE);
 	return;
 }
@@ -2384,7 +2393,10 @@ void mworker_pipe_register()
 	fcntl(mworker_pipe[0], F_SETFL, O_NONBLOCK);
 	fdtab[mworker_pipe[0]].owner = mworker_pipe;
 	fdtab[mworker_pipe[0]].iocb = mworker_pipe_handler;
-	fd_insert(mworker_pipe[0], MAX_THREADS_MASK);
+	/* In multi-tread, we need only one thread to process
+	 * events on the pipe with master
+	 */
+	fd_insert(mworker_pipe[0], 1);
 	fd_want_recv(mworker_pipe[0]);
 }
 

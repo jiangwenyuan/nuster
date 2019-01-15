@@ -2814,14 +2814,14 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			curproxy->server_id_hdr_name = strdup(defproxy.server_id_hdr_name);
 		}
 
+		/* initialize error relocations */
+		for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
+			chunk_dup(&curproxy->errmsg[rc], &defproxy.errmsg[rc]);
+
 		if (curproxy->cap & PR_CAP_FE) {
 			curproxy->maxconn = defproxy.maxconn;
 			curproxy->backlog = defproxy.backlog;
 			curproxy->fe_sps_lim = defproxy.fe_sps_lim;
-
-			/* initialize error relocations */
-			for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
-				chunk_dup(&curproxy->errmsg[rc], &defproxy.errmsg[rc]);
 
 			curproxy->to_log = defproxy.to_log & ~LW_COOKIE & ~LW_REQHDR & ~ LW_RSPHDR;
 		}
@@ -5109,7 +5109,7 @@ stats_error_parsing:
 									((unsigned char) (packetlen >> 16) & 0xff));
 
 								curproxy->check_req[3] = 1;
-								curproxy->check_req[5] = 130;
+								curproxy->check_req[5] = 0x82; // 130
 								curproxy->check_req[11] = 1;
 								curproxy->check_req[12] = 33;
 								memcpy(&curproxy->check_req[36], mysqluser, userlen);
@@ -5135,7 +5135,7 @@ stats_error_parsing:
 								((unsigned char) (packetlen >> 16) & 0xff));
 
 							curproxy->check_req[3] = 1;
-							curproxy->check_req[5] = 128;
+							curproxy->check_req[5] = 0x80;
 							curproxy->check_req[8] = 1;
 							memcpy(&curproxy->check_req[9], mysqluser, userlen);
 							curproxy->check_req[9 + userlen + 1 + 1]     = 1;
@@ -7449,32 +7449,31 @@ next_line:
 		list_for_each_entry(ics, &sections, list) {
 			if (strcmp(args[0], ics->section_name) == 0) {
 				cursection = ics->section_name;
+				pcs = cs;
 				cs = ics;
 				break;
 			}
 		}
 
+		if (pcs && pcs->post_section_parser) {
+			err_code |= pcs->post_section_parser();
+			if (err_code & ERR_ABORT)
+				goto err;
+		}
+		pcs = NULL;
+
 		if (!cs) {
 			ha_alert("parsing [%s:%d]: unknown keyword '%s' out of section.\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 		} else {
-			/* else it's a section keyword */
-
-			if (pcs != cs && pcs && pcs->post_section_parser) {
-				err_code |= pcs->post_section_parser();
-				if (err_code & ERR_ABORT)
-					goto err;
-			}
-
 			err_code |= cs->section_parser(file, linenum, args, kwm);
 			if (err_code & ERR_ABORT)
 				goto err;
 		}
-		pcs = cs;
 	}
 
-	if (pcs == cs && pcs && pcs->post_section_parser)
-		err_code |= pcs->post_section_parser();
+	if (cs && cs->post_section_parser)
+		err_code |= cs->post_section_parser();
 
 err:
 	free(cfg_scope);
@@ -7656,7 +7655,7 @@ int check_config_validity()
 			if (curproxy->mode == PR_MODE_HTTP && global.tune.bufsize < 16384) {
 #ifdef OPENSSL_NPN_NEGOTIATED
 				/* check NPN */
-				if (bind_conf->ssl_conf.npn_str && strcmp(bind_conf->ssl_conf.npn_str, "\002h2") == 0) {
+				if (bind_conf->ssl_conf.npn_str && strstr(bind_conf->ssl_conf.npn_str, "\002h2")) {
 					ha_alert("config : HTTP frontend '%s' enables HTTP/2 via NPN at [%s:%d], so global.tune.bufsize must be at least 16384 bytes (%d now).\n",
 						 curproxy->id, bind_conf->file, bind_conf->line, global.tune.bufsize);
 					cfgerr++;
@@ -7664,7 +7663,7 @@ int check_config_validity()
 #endif
 #ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
 				/* check ALPN */
-				if (bind_conf->ssl_conf.alpn_str && strcmp(bind_conf->ssl_conf.alpn_str, "\002h2") == 0) {
+				if (bind_conf->ssl_conf.alpn_str && strstr(bind_conf->ssl_conf.alpn_str, "\002h2")) {
 					ha_alert("config : HTTP frontend '%s' enables HTTP/2 via ALPN at [%s:%d], so global.tune.bufsize must be at least 16384 bytes (%d now).\n",
 						 curproxy->id, bind_conf->file, bind_conf->line, global.tune.bufsize);
 					cfgerr++;
@@ -9138,7 +9137,12 @@ out_uri_auth_compat:
 				curpeers->peers_fe = NULL;
 			}
 			else {
-				peers_init_sync(curpeers);
+				if (!peers_init_sync(curpeers)) {
+					ha_alert("Peers section '%s': out of memory, giving up on peers.\n",
+						 curpeers->id);
+					cfgerr++;
+					break;
+				}
 				last = &curpeers->next;
 				continue;
 			}

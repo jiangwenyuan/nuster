@@ -1380,6 +1380,10 @@ static void srv_ssl_settings_cpy(struct server *srv, struct server *src)
 		srv->ssl_ctx.verify_host = strdup(src->ssl_ctx.verify_host);
 	if (src->ssl_ctx.ciphers != NULL)
 		srv->ssl_ctx.ciphers = strdup(src->ssl_ctx.ciphers);
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (src->ssl_ctx.ciphersuites != NULL)
+		srv->ssl_ctx.ciphersuites = strdup(src->ssl_ctx.ciphersuites);
+#endif
 	if (src->sni_expr != NULL)
 		srv->sni_expr = strdup(src->sni_expr);
 }
@@ -1456,6 +1460,7 @@ static void srv_settings_cpy(struct server *srv, struct server *src, int srv_tmp
 	srv->check.addr = srv->agent.addr = src->check.addr;
 	srv->check.use_ssl            = src->check.use_ssl;
 	srv->check.port               = src->check.port;
+	srv->check.sni                = src->check.sni;
 	/* Note: 'flags' field has potentially been already initialized. */
 	srv->flags                   |= src->flags;
 	srv->do_check                 = src->do_check;
@@ -3074,7 +3079,7 @@ void apply_server_state(void)
 				globalfilepathlen = 0;
 				goto globalfileerror;
 			}
-			strncpy(globalfilepath, global.server_state_base, len);
+			memcpy(globalfilepath, global.server_state_base, len);
 			globalfilepath[globalfilepathlen] = 0;
 
 			/* append a slash if needed */
@@ -3143,7 +3148,7 @@ void apply_server_state(void)
 						localfilepathlen = 0;
 						goto localfileerror;
 					}
-					strncpy(localfilepath, global.server_state_base, len);
+					memcpy(localfilepath, global.server_state_base, len);
 					localfilepath[localfilepathlen] = 0;
 
 					/* append a slash if needed */
