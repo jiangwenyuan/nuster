@@ -889,7 +889,7 @@ backend nosql_be
 
 # License
 
-Copyright (C) 2017-2018, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+Copyright (C) 2017-2019, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
 
 All rights reserved.
 

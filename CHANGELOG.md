@@ -1,5 +1,17 @@
 # nuster Changelog
 
+## 2.0.6.18 - 2019-01-15
+
+Upgrade to HAProxy v1.8.17
+
+### Changed
+
+* Use rs,ks as key separator
+* Use different separator in key header list
+* Work with key headers defined as comma-separated lists
+
+* Fix incorrect acl check
+
 ## 2.0.5.18 - 2018-12-11
 
 ### Fixed
