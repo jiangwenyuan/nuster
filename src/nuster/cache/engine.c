@@ -135,6 +135,15 @@ static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
     return NULL;
 }
 
+static char *_nst_cache_key_append2(char *dst, int *dst_len, int *dst_size,
+        char *src, int src_len) {
+    char *key = _string_append(dst, dst_len, dst_size, src, src_len);
+    if(key) {
+        return _string_append(key, dst_len, dst_size, "_", 1);
+    }
+    return NULL;
+}
+
 void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
     if(global.nuster.cache.share) {
         return nuster_memory_alloc(global.nuster.cache.memory, size);
@@ -516,15 +525,15 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                     if(nuster_req_find_param(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
                         key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
                     }
-
                 }
                 break;
             case NUSTER_RULE_KEY_HEADER:
                 hdr.idx = 0;
                 nuster_debug("header_%s.", ck->data);
                 while (http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
-                    key = _nst_cache_key_append(key, &key_len, &key_size, hdr.line + hdr.val, hdr.vlen);
+                    key = _nst_cache_key_append2(key, &key_len, &key_size, hdr.line + hdr.val, hdr.vlen);
                 }
+                key = _string_append(key, &key_len, &key_size, ".", 1);
                 break;
             case NUSTER_RULE_KEY_COOKIE:
                 nuster_debug("cookie_%s.", ck->data);
