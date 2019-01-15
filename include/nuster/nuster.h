@@ -22,8 +22,8 @@
 #ifndef _NUSTER_H
 #define _NUSTER_H
 
-#define NUSTER_VERSION    "2.0.5.18"
-#define NUSTER_COPYRIGHT  "2017-2018, Jiang Wenyuan, <koubunen AT gmail DOT com >"
+#define NUSTER_VERSION    "2.0.6.18"
+#define NUSTER_COPYRIGHT  "2017-2019, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
