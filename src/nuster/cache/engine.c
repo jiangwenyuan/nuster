@@ -27,6 +27,9 @@
 #include <nuster/nuster.h>
 #include <nuster/http.h>
 
+static char key_holder[] = {0x1A, '\0'};
+static char key_rs[]     = {0x1E, '\0'};
+static char key_us[]     = {0x1F, '\0'};
 
 /*
  * The cache applet acts like the backend to send cached http data
@@ -126,11 +129,14 @@ static char *_string_append(char *dst, int *dst_len, int *dst_size,
     return dst;
 }
 
+/*
+ * TODO: rewrite in h19 version
+ */
 static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
     char *key = _string_append(dst, dst_len, dst_size, src, src_len);
     if(key) {
-        return _string_append(key, dst_len, dst_size, ".", 1);
+        return _string_append(key, dst_len, dst_size, key_rs, 1);
     }
     return NULL;
 }
@@ -139,7 +145,7 @@ static char *_nst_cache_key_append2(char *dst, int *dst_len, int *dst_size,
         char *src, int src_len) {
     char *key = _string_append(dst, dst_len, dst_size, src, src_len);
     if(key) {
-        return _string_append(key, dst_len, dst_size, "_", 1);
+        return _string_append(key, dst_len, dst_size, key_us, 1);
     }
     return NULL;
 }
@@ -463,6 +469,9 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
     return 1;
 }
 
+/*
+ * TODO: rewrite in h19 version
+ */
 char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg) {
 
@@ -493,28 +502,40 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                 nuster_debug("host.");
                 if(ctx->req.host.data) {
                     key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.host.data, ctx->req.host.len);
+                } else {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                 }
                 break;
             case NUSTER_RULE_KEY_URI:
                 nuster_debug("uri.");
                 if(ctx->req.uri.data) {
                     key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.uri.data, ctx->req.uri.len);
+                } else {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                 }
                 break;
             case NUSTER_RULE_KEY_PATH:
                 nuster_debug("path.");
                 if(ctx->req.path.data) {
                     key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.path.data, ctx->req.path.len);
+                } else {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                 }
                 break;
             case NUSTER_RULE_KEY_DELIMITER:
                 nuster_debug("delimiter.");
-                key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.delimiter ? "?": "", ctx->req.delimiter);
+                if(ctx->req.delimiter) {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, "?", 1);
+                } else {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
+                }
                 break;
             case NUSTER_RULE_KEY_QUERY:
                 nuster_debug("query.");
                 if(ctx->req.query.data && ctx->req.query.len) {
                     key = _nst_cache_key_append(key, &key_len, &key_size, ctx->req.query.data, ctx->req.query.len);
+                } else {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                 }
                 break;
             case NUSTER_RULE_KEY_PARAM:
@@ -524,7 +545,11 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                     int v_l = 0;
                     if(nuster_req_find_param(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
                         key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
+                    } else {
+                        key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                     }
+                } else {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                 }
                 break;
             case NUSTER_RULE_KEY_HEADER:
@@ -533,7 +558,11 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                 while (http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
                     key = _nst_cache_key_append2(key, &key_len, &key_size, hdr.line + hdr.val, hdr.vlen);
                 }
-                key = _string_append(key, &key_len, &key_size, ".", 1);
+                if(hdr.idx == 0) {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
+                } else {
+                    key = _string_append(key, &key_len, &key_size, key_rs, 1);
+                }
                 break;
             case NUSTER_RULE_KEY_COOKIE:
                 nuster_debug("cookie_%s.", ck->data);
@@ -542,7 +571,11 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                     int v_l = 0;
                     if(extract_cookie_value(ctx->req.cookie.data, ctx->req.cookie.data + ctx->req.cookie.len, ck->data, strlen(ck->data), 1, &v, &v_l)) {
                         key = _nst_cache_key_append(key, &key_len, &key_size, v, v_l);
+                    } else {
+                        key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                     }
+                } else {
+                    key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                 }
                 break;
             case NUSTER_RULE_KEY_BODY:
@@ -550,6 +583,8 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
                     if((s->be->options & PR_O_WREQ_BODY) && msg->chn->buf->i - msg->sov > 0) {
                         key = _nst_cache_key_append(key, &key_len, &key_size, msg->chn->buf->p + msg->sov, msg->chn->buf->i - msg->sov);
+                    } else {
+                        key = _nst_cache_key_append(key, &key_len, &key_size, key_holder, 1);
                     }
                 }
                 break;
