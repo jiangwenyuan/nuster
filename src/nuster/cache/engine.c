@@ -522,7 +522,7 @@ char *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pc
             case NUSTER_RULE_KEY_HEADER:
                 hdr.idx = 0;
                 nuster_debug("header_%s.", ck->data);
-                if(http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
+                while (http_find_header2(ck->data, strlen(ck->data), msg->chn->buf->p, &txn->hdr_idx, &hdr)) {
                     key = _nst_cache_key_append(key, &key_len, &key_size, hdr.line + hdr.val, hdr.vlen);
                 }
                 break;
