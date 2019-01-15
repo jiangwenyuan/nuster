@@ -85,6 +85,7 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 
+#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
@@ -2469,32 +2470,6 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 		err_code |= ERR_WARN;
 		goto out;
 	}
-	else if (strcmp(args[0], "accepted_payload_size") == 0) {
-		int i = 0;
-
-		if (!*args[1]) {
-			ha_alert("parsing [%s:%d] : '%s' expects <nb> as argument.\n",
-				 file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		i = atoi(args[1]);
-		if (i < DNS_HEADER_SIZE || i > DNS_MAX_UDP_MESSAGE) {
-			ha_alert("parsing [%s:%d] : '%s' must be between %d and %d inclusive (was %s).\n",
-				 file, linenum, args[0], DNS_HEADER_SIZE, DNS_MAX_UDP_MESSAGE, args[1]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		curr_resolvers->accepted_payload_size = i;
-	}
-	else if (strcmp(args[0], "resolution_pool_size") == 0) {
-		ha_warning("parsing [%s:%d] : '%s' directive is now deprecated and ignored.\n",
-			   file, linenum, args[0]);
-		err_code |= ERR_WARN;
-		goto out;
-	}
 	else if (strcmp(args[0], "resolve_retries") == 0) {
 		if (!*args[1]) {
 			ha_alert("parsing [%s:%d] : '%s' expects <nb> as argument.\n",
@@ -3380,20 +3355,6 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
-	}
-	else if (!strcmp(args[0], "dynamic-cookie-key")) { /* Dynamic cookies secret key */
-
-		if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
-			err_code |= ERR_WARN;
-
-		if (*(args[1]) == 0) {
-			ha_alert("parsing [%s:%d] : '%s' expects <secret_key> as argument.\n",
-				 file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-		free(curproxy->dyncookie_key);
-		curproxy->dyncookie_key = strdup(args[1]);
 	}
 	else if (!strcmp(args[0], "dynamic-cookie-key")) { /* Dynamic cookies secret key */
 

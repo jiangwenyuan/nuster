@@ -575,7 +575,6 @@ int assign_server(struct stream *s)
 	    (s->be->lbprm.algo & BE_LB_KIND) != BE_LB_KIND_HI &&
 	    ((s->txn && s->txn->flags & TX_PREFER_LAST) ||
 	     ((s->be->options & PR_O_PREF_LAST) &&
-              (s->be->lbprm.algo & BE_LB_KIND) != BE_LB_KIND_HI &&
 	      (!s->be->max_ka_queue ||
 	       server_has_room(__objt_server(conn->target)) ||
 	       (__objt_server(conn->target)->nbpend + 1) < s->be->max_ka_queue))) &&
@@ -1175,8 +1174,6 @@ int connect_server(struct stream *s)
 			/* XXX: Pick the right mux, when we finally have one */
 			if (conn_install_mux(srv_conn, &mux_pt_ops, srv_cs) < 0)
 				return SF_ERR_INTERNAL;
-			/* XXX: Pick the right mux, when we finally have one */
-			conn_install_mux(srv_conn, &mux_pt_ops, srv_cs);
 		}
 		else
 			return SF_ERR_INTERNAL;  /* how did we get there ? */

@@ -28,8 +28,8 @@ void thread_sync_io_handler(int fd)
 #ifdef USE_THREAD
 
 static HA_SPINLOCK_T sync_lock;
-static int           threads_sync_pipe[2];
-static unsigned long threads_want_sync = 0;
+static int           threads_sync_pipe[2] = {-1, -1};
+volatile static unsigned long threads_want_sync = 0;
 volatile unsigned long threads_want_rdv_mask = 0;
 volatile unsigned long threads_harmless_mask = 0;
 volatile unsigned long all_threads_mask  = 1; // nbthread 1 assumed by default
@@ -76,7 +76,8 @@ void thread_want_sync()
 	if (all_threads_mask & (all_threads_mask - 1)) {
 		if (threads_want_sync & tid_bit)
 			return;
-		if (HA_ATOMIC_OR(&threads_want_sync, tid_bit) == tid_bit)
+		if (HA_ATOMIC_OR(&threads_want_sync, tid_bit) == tid_bit &&
+		    threads_sync_pipe[1] != -1)
 			shut_your_big_mouth_gcc(write(threads_sync_pipe[1], "S", 1));
 	}
 	else {
@@ -220,12 +221,8 @@ void thread_isolate()
  */
 void thread_release()
 {
-	while (1) {
-		HA_ATOMIC_AND(&threads_want_rdv_mask, ~tid_bit);
-		if (!(threads_want_rdv_mask & all_threads_mask))
-			break;
-		thread_harmless_till_end();
-	}
+	HA_ATOMIC_AND(&threads_want_rdv_mask, ~tid_bit);
+	thread_harmless_end();
 }
 
 __attribute__((constructor))

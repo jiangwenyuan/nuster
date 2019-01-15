@@ -3078,14 +3078,11 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 		 * pointer points back to the head of the streams list.
 		 */
 		LIST_INIT(&appctx->ctx.sess.bref.users);
-		HA_SPIN_LOCK(STRMS_LOCK, &streams_lock);
 		appctx->ctx.sess.bref.ref = streams.n;
-		HA_SPIN_UNLOCK(STRMS_LOCK, &streams_lock);
 		appctx->st2 = STAT_ST_LIST;
 		/* fall through */
 
 	case STAT_ST_LIST:
-		HA_SPIN_LOCK(STRMS_LOCK, &streams_lock);
 		/* first, let's detach the back-ref from a possible previous stream */
 		if (!LIST_ISEMPTY(&appctx->ctx.sess.bref.users)) {
 			LIST_DEL(&appctx->ctx.sess.bref.users);
