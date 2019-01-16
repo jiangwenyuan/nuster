@@ -1,6 +1,66 @@
 ChangeLog :
 ===========
 
+2019/01/16 : 1.9.2
+    - BUG/MAJOR: cache: fix confusion between zero and uninitialized cache key
+    - BUG/MEDIUM: h1: Make sure we destroy an inactive connectin that did shutw.
+    - MEDIUM: sessions: Keep track of which connections are idle.
+    - BUG/MEDIUM: init: Initialize idle_orphan_conns for first server in server-template
+    - BUG/MEDIUM: connection: properly unregister the mux on failed initialization
+    - MINOR: checks: Store the proxy in checks.
+    - BUG/MEDIUM: checks: Avoid having an associated server for email checks.
+    - BUG/MINOR: lua/htx: Respect the reserve when data are send from an HTX applet
+    - BUG/MEDIUM: ssl: Disable anti-replay protection and set max data with 0RTT.
+    - DOC: Be a bit more explicit about allow-0rtt security implications.
+    - BUG/MEDIUM: ssl: missing allocation failure checks loading tls key file
+    - BUG/MINOR: backend: don't use url_param_name as a hint for BE_LB_ALGO_PH
+    - BUG/MINOR: backend: balance uri specific options were lost across defaults
+    - BUG/MINOR: backend: BE_LB_LKUP_CHTREE is a value, not a bit
+    - REGTEST: "capture (request|response)" regtest.
+    - REGTEST: filters: add compression test
+    - REGTESTS: test case for map_regm commit 271022150d
+    - REGTESTS: Basic tests for concat,strcmp,word,field,ipmask converters
+    - REGTESTS: Basic tests for using maps to redirect requests / select backend
+    - DOC: REGTESTS README varnishtest -Dno-htx= define.
+    - REGTEST: Switch to vtest.
+    - REGTEST: Adapt reg test doc files to vtest.
+    - BUILD/MEDIUM: da: Necessary code changes for new buffer API.
+    - BUG/MINOR: base64: dec func ignores padding for output size checking
+    - MINOR: ssl: add support of aes256 bits ticket keys on file and cli.
+    - BUG/MINOR: stick_table: Prevent conn_cur from underflowing
+    - MINOR: spoe: Make the SPOE filter compatible with HTX proxies
+    - MINOR: h2: add a bit-based frame type representation
+    - MEDIUM: mux-h2: remove padlen during headers phase
+    - MINOR: mux-h2: remove useless check for empty frame length in h2s_decode_headers()
+    - MEDIUM: mux-h2: decode HEADERS frames before allocating the stream
+    - MINOR: mux-h2: make h2c_send_rst_stream() use the dummy stream's error code
+    - MINOR: mux-h2: add a new dummy stream for the REFUSED_STREAM error code
+    - MINOR: mux-h2: fail stream creation more cleanly using RST_STREAM
+    - MINOR: buffers: add a new b_move() function
+    - MINOR: mux-h2: make h2_peek_frame_hdr() support an offset
+    - MEDIUM: mux-h2: handle decoding of CONTINUATION frames
+    - BUG/MINOR: mux-h2: set the stream-full flag when leaving h2c_decode_headers()
+    - BUG/MINOR: mux-h2: mark end-of-stream after processing response HEADERS, not before
+    - BUG/MINOR: mux-h2: only update rxbuf's length for H1 headers
+    - MINOR: mux-h2: make h2c_decode_headers() return a status, not a count
+    - MINOR: mux-h2: add a new dummy stream : h2_error_stream
+    - MEDIUM: mux-h2: make h2c_decode_headers() support recoverable errors
+    - BUG/MINOR: mux-h2: detect when the HTX EOM block cannot be added after headers
+    - MINOR: mux-h2: check for too many streams only for idle streams
+    - MINOR: mux-h2: set H2_SF_HEADERS_RCVD when a HEADERS frame was decoded
+    - BUG/MEDIUM: mux-h2: decode trailers in HEADERS frames
+    - MINOR: h2: add h2_make_h1_trailers to turn H2 headers to H1 trailers
+    - MEDIUM: mux-h2: pass trailers to H1 (legacy mode)
+    - MINOR: htx: add a new function to add a block without filling it
+    - MINOR: h2: add h2_make_htx_trailers to turn H2 headers to HTX trailers
+    - MEDIUM: mux-h2: pass trailers to HTX
+    - MINOR: mux-h2: make HTX_BLK_EOM processing idempotent
+    - MINOR: h1: make the H1 headers block parser able to parse headers only
+    - BUG/MEDIUM: h1: Get the h1m state when restarting the headers parsing
+    - MEDIUM: mux-h2: emit HEADERS frames when facing HTX trailers blocks
+    - BUG: 51d: Changes to the buffer API in 1.9 were not applied to the 51Degrees code.
+    - BUG/MEDIUM: stats: Get the right scope pointer depending on HTX is used or not
+
 2019/01/08 : 1.9.1
     - BUG/MEDIUM: tasks: Decrement tasks_run_queue in tasklet_free().
     - BUG/MEDIUM: log: don't mark log FDs as non-blocking on terminals
