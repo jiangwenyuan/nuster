@@ -177,8 +177,6 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 
 	thread_harmless_end();
 
-	thread_harmless_end();
-
 	if (status <= 0)
 		return;
 

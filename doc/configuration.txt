@@ -195,12 +195,6 @@ server connection after a response, so it is closed after the response. HTTP/2
 is only supported for incoming connections, not on connections going to
 servers.
 
-For HTTP/2, the connection mode resembles more the "server close" mode : given
-the independence of all streams, there is currently no place to hook the idle
-server connection after a response, so it is closed after the response. HTTP/2
-is only supported for incoming connections, not on connections going to
-servers.
-
 
 1.2. HTTP request
 -----------------

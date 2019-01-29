@@ -579,10 +579,6 @@ static void peer_io_handler(struct appctx *appctx)
 	if (si_ic(si)->buf.size == 0)
 		goto full;
 
-	/* Check if the input buffer is avalaible. */
-	if (si_ic(si)->buf->size == 0)
-		goto full;
-
 	while (1) {
 		prev_state = appctx->st0;
 switchstate:

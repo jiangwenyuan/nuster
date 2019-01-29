@@ -846,7 +846,6 @@ static int cli_io_handler_show_env(struct appctx *appctx)
 			si_rx_room_blk(si);
 			return 0;
 		}
-	skip:
 		if (appctx->st2 == STAT_ST_END)
 			break;
 		var++;

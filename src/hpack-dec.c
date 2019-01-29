@@ -30,10 +30,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <common/standard.h>
 #include <common/hpack-dec.h>
 #include <common/hpack-huff.h>
 #include <common/hpack-tbl.h>
 #include <common/chunk.h>
+#include <common/h2.h>
 #include <common/ist.h>
 
 #include <types/global.h>
@@ -41,8 +43,10 @@
 
 #if defined(DEBUG_HPACK)
 #define hpack_debug_printf printf
+#define hpack_debug_hexdump debug_hexdump
 #else
 #define hpack_debug_printf(...) do { } while (0)
+#define hpack_debug_hexdump(...) do { } while (0)
 #endif
 
 /* reads a varint from <raw>'s lowest <b> bits and <len> bytes max (raw included).
@@ -110,7 +114,8 @@ static inline int hpack_idx_to_phdr(uint32_t idx)
  * allocated there. In case of allocation failure, returns a string whose
  * pointer is NULL.
  */
-static inline struct ist hpack_alloc_string(struct chunk *store, uint32_t idx, struct ist in)
+static inline struct ist hpack_alloc_string(struct buffer *store, uint32_t idx,
+					    struct ist in)
 {
 	struct ist out;
 
@@ -122,12 +127,12 @@ static inline struct ist hpack_alloc_string(struct chunk *store, uint32_t idx, s
 	if (unlikely(!out.ptr))
 		return out;
 
-	if (unlikely(store->len + out.len > store->size)) {
+	if (unlikely(store->data + out.len > store->size)) {
 		out.ptr = NULL;
 		return out;
 	}
 
-	store->len += out.len;
+	store->data += out.len;
 	memcpy(out.ptr, in.ptr, out.len);
 	return out;
 }
@@ -144,7 +149,8 @@ static inline struct ist hpack_alloc_string(struct chunk *store, uint32_t idx, s
  * can use list[].n.len == 0 as a marker for the end of list.
  */
 int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
-                       struct http_hdr *list, int list_size, struct chunk *tmp)
+                       struct http_hdr *list, int list_size,
+                       struct buffer *tmp)
 {
 	uint32_t idx;
 	uint32_t nlen;
@@ -154,6 +160,8 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 	struct ist value;
 	int must_index;
 	int ret;
+
+	hpack_debug_hexdump(stderr, "[HPACK-DEC] ", (const char *)raw, 0, len);
 
 	chunk_reset(tmp);
 	ret = 0;
@@ -173,17 +181,22 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 
 			idx = get_var_int(&raw, &len, 7);
 			if (len == (uint32_t)-1) { // truncated
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
 
+			hpack_debug_printf(" idx=%u ", idx);
+
 			if (!hpack_valid_idx(dht, idx)) {
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TOO_LARGE;
 				goto leave;
 			}
 
 			value = hpack_alloc_string(tmp, idx, hpack_idx_to_value(dht, idx));
 			if (!value.ptr) {
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TOO_LARGE;
 				goto leave;
 			}
@@ -194,6 +207,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			if (!name.len) {
 				name = hpack_alloc_string(tmp, idx, hpack_idx_to_name(dht, idx));
 				if (!name.ptr) {
+					hpack_debug_printf("##ERR@%d##\n", __LINE__);
 					ret = -HPACK_ERR_TOO_LARGE;
 					goto leave;
 				}
@@ -202,17 +216,22 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 		}
 		else if (*raw >= 0x20 && *raw <= 0x3f) {
 			/* max dyn table size change */
+			hpack_debug_printf("%02x: p18: dynamic table size update : ", code);
+
 			if (ret) {
 				/* 7541#4.2.1 : DHT size update must only be at the beginning */
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TOO_LARGE;
 				goto leave;
 			}
 
 			idx = get_var_int(&raw, &len, 5);
 			if (len == (uint32_t)-1) { // truncated
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
+			hpack_debug_printf(" new len=%u\n", idx);
 
 			if (idx > dht->size) {
 				hpack_debug_printf("##ERR@%d##\n", __LINE__);
@@ -239,6 +258,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 
 			/* retrieve name */
 			if (!len) { // truncated
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
@@ -246,6 +266,8 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			huff = *raw & 0x80;
 			nlen = get_var_int(&raw, &len, 7);
 			if (len == (uint32_t)-1 || len < nlen) { // truncated
+				hpack_debug_printf("##ERR@%d## (truncated): nlen=%d len=%d\n",
+				                   __LINE__, (int)nlen, (int)len);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
@@ -258,22 +280,27 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			if (huff) {
 				char *ntrash = chunk_newstr(tmp);
 				if (!ntrash) {
+					hpack_debug_printf("##ERR@%d##\n", __LINE__);
 					ret = -HPACK_ERR_TOO_LARGE;
 					goto leave;
 				}
 
-				nlen = huff_dec((const uint8_t *)name.ptr, name.len, ntrash, tmp->size - tmp->len);
+				nlen = huff_dec((const uint8_t *)name.ptr, name.len, ntrash,
+						tmp->size - tmp->data);
 				if (nlen == (uint32_t)-1) {
 					hpack_debug_printf("2: can't decode huffman.\n");
 					ret = -HPACK_ERR_HUFFMAN;
 					goto leave;
 				}
-				tmp->len += nlen; // make room for the value
+				hpack_debug_printf(" [name huff %d->%d] ", (int)name.len, (int)nlen);
+
+				tmp->data += nlen; // make room for the value
 				name = ist2(ntrash, nlen);
 			}
 
 			/* retrieve value */
 			if (!len) { // truncated
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
@@ -281,6 +308,8 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			huff = *raw & 0x80;
 			vlen = get_var_int(&raw, &len, 7);
 			if (len == (uint32_t)-1 || len < vlen) { // truncated
+				hpack_debug_printf("##ERR@%d## : vlen=%d len=%d\n",
+				                   __LINE__, (int)vlen, (int)len);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
@@ -292,17 +321,21 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			if (huff) {
 				char *vtrash = chunk_newstr(tmp);
 				if (!vtrash) {
+					hpack_debug_printf("##ERR@%d##\n", __LINE__);
 					ret = -HPACK_ERR_TOO_LARGE;
 					goto leave;
 				}
 
-				vlen = huff_dec((const uint8_t *)value.ptr, value.len, vtrash, tmp->size - tmp->len);
+				vlen = huff_dec((const uint8_t *)value.ptr, value.len, vtrash,
+						tmp->size - tmp->data);
 				if (vlen == (uint32_t)-1) {
 					hpack_debug_printf("3: can't decode huffman.\n");
 					ret = -HPACK_ERR_HUFFMAN;
 					goto leave;
 				}
-				tmp->len += vlen; // make room for the value
+				hpack_debug_printf(" [value huff %d->%d] ", (int)value.len, (int)vlen);
+
+				tmp->data += vlen; // make room for the value
 				value = ist2(vtrash, vlen);
 			}
 
@@ -328,12 +361,16 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			else
 				idx = get_var_int(&raw, &len, 4);
 
+			hpack_debug_printf(" idx=%u ", idx);
+
 			if (len == (uint32_t)-1 || !len) { // truncated
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
 
 			if (!hpack_valid_idx(dht, idx)) {
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TOO_LARGE;
 				goto leave;
 			}
@@ -342,6 +379,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			huff = *raw & 0x80;
 			vlen = get_var_int(&raw, &len, 7);
 			if (len == (uint32_t)-1 || len < vlen) { // truncated
+				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TRUNCATED;
 				goto leave;
 			}
@@ -353,17 +391,22 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			if (huff) {
 				char *vtrash = chunk_newstr(tmp);
 				if (!vtrash) {
+					hpack_debug_printf("##ERR@%d##\n", __LINE__);
 					ret = -HPACK_ERR_TOO_LARGE;
 					goto leave;
 				}
 
-				vlen = huff_dec((const uint8_t *)value.ptr, value.len, vtrash, tmp->size - tmp->len);
+				vlen = huff_dec((const uint8_t *)value.ptr, value.len, vtrash,
+						tmp->size - tmp->data);
 				if (vlen == (uint32_t)-1) {
-					hpack_debug_printf("1: can't decode huffman.\n");
+					hpack_debug_printf("##ERR@%d## can't decode huffman : ilen=%d osize=%d\n",
+					                   __LINE__, (int)value.len,
+					                   (int)(tmp->size - tmp->data));
+					hpack_debug_hexdump(stderr, "[HUFFMAN] ", value.ptr, 0, value.len);
 					ret = -HPACK_ERR_HUFFMAN;
 					goto leave;
 				}
-				tmp->len += vlen; // make room for the value
+				tmp->data += vlen; // make room for the value
 				value = ist2(vtrash, vlen);
 			}
 
@@ -374,6 +417,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			if (!name.len) {
 				name = hpack_alloc_string(tmp, idx, hpack_idx_to_name(dht, idx));
 				if (!name.ptr) {
+					hpack_debug_printf("##ERR@%d##\n", __LINE__);
 					ret = -HPACK_ERR_TOO_LARGE;
 					goto leave;
 				}
@@ -388,6 +432,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 		 *   - name.ptr != NULL || must_index : general header, unknown pseudo-header or index needed
 		 */
 		if (ret >= list_size) {
+			hpack_debug_printf("##ERR@%d##\n", __LINE__);
 			ret = -HPACK_ERR_TOO_LARGE;
 			goto leave;
 		}
@@ -403,11 +448,12 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 		}
 
 		hpack_debug_printf("\e[1;34m%s\e[0m: ",
-		                   istpad(trash.str, name.ptr ? name : hpack_idx_to_name(dht, idx)).ptr);
+				   name.ptr ? istpad(trash.area, name).ptr : h2_phdr_to_str(name.len));
 
-		hpack_debug_printf("\e[1;35m%s\e[0m [idx=%d, used=%d]\n",
-		                   istpad(trash.str, value).ptr,
-		                   must_index, dht->used);
+		hpack_debug_printf("\e[1;35m%s\e[0m [mustidx=%d, used=%d] [n=(%p,%d) v=(%p,%d)]\n",
+				   istpad(trash.area, value).ptr, must_index,
+				   dht->used,
+				   name.ptr, (int)name.len, value.ptr, (int)value.len);
 	}
 
 	if (ret >= list_size) {
@@ -420,5 +466,6 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 	ret++;
 
  leave:
+	hpack_debug_printf("-- done: ret=%d list_size=%d --\n", (int)ret, (int)list_size);
 	return ret;
 }

@@ -458,14 +458,6 @@ void process_runnable_tasks()
 #endif
 			else
 				task_queue(t);
-			}
-		}
-
-		HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
-		if (max_processed <= 0) {
-			active_tasks_mask |= tid_bit;
-			activity[tid].long_rq++;
-			break;
 		}
 
 		max_processed--;
@@ -523,7 +515,6 @@ void mworker_cleantasks()
 			task_free(t);
 		}
 	}
-	HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
 }
 
 /* perform minimal intializations */

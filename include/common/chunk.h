@@ -32,8 +32,6 @@
 
 struct pool_head *pool_head_trash;
 
-struct pool_head *pool_head_trash;
-
 /* function prototypes */
 
 int chunk_printf(struct buffer *chk, const char *fmt, ...)

@@ -166,12 +166,6 @@ static inline void task_set_affinity(struct task *t, unsigned long thread_mask)
 	t->thread_mask = thread_mask;
 }
 
-/* change the thread affinity of a task to <thread_mask> */
-static inline void task_set_affinity(struct task *t, unsigned long thread_mask)
-{
-	t->thread_mask = thread_mask;
-}
-
 /*
  * Unlink the task from the wait queue, and possibly update the last_timer
  * pointer. A pointer to the task itself is returned. The task *must* already

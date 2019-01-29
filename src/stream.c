@@ -22,7 +22,6 @@
 #include <common/htx.h>
 #include <common/initcall.h>
 #include <common/memory.h>
-#include <common/hathreads.h>
 
 #include <types/applet.h>
 #include <types/capture.h>
@@ -680,7 +679,7 @@ static int sess_update_st_con_tcp(struct stream *s)
 	}
 
 	/* we need to wait a bit more if there was no activity either */
-	if (!(req->flags & (CF_WRITE_ACTIVITY|CF_WRITE_EVENT)))
+	if (!(req->flags & CF_WRITE_ACTIVITY))
 		return 1;
 
 	/* OK, this means that a connection succeeded. The caller will be
@@ -858,8 +857,7 @@ static void sess_establish(struct stream *s)
 		rep->flags |= CF_READ_DONTWAIT; /* a single read is enough to get response headers */
 	}
 
-	if (!(s->flags & SF_TUNNEL)) {
-		rep->analysers |= strm_fe(s)->fe_rsp_ana | s->be->be_rsp_ana;
+	rep->analysers |= strm_fe(s)->fe_rsp_ana | s->be->be_rsp_ana;
 
 	/* Be sure to filter response headers if the backend is an HTTP proxy
 	 * and if there are filters attached to the stream. */
@@ -1780,7 +1778,7 @@ redo:
 		 */
 		if (!((req->flags | res->flags) &
 		      (CF_SHUTR|CF_READ_ACTIVITY|CF_READ_TIMEOUT|CF_SHUTW|
-		       CF_WRITE_ACTIVITY|CF_WRITE_EVENT|CF_WRITE_TIMEOUT|CF_ANA_TIMEOUT)) &&
+		       CF_WRITE_ACTIVITY|CF_WRITE_TIMEOUT|CF_ANA_TIMEOUT)) &&
 		    !((si_f->flags | si_b->flags) & (SI_FL_EXP|SI_FL_ERR)) &&
 		    ((s->pending_events & TASK_WOKEN_ANY) == TASK_WOKEN_TIMER)) {
 			si_f->flags &= ~SI_FL_DONT_WAKE;

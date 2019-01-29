@@ -215,11 +215,6 @@ static void stream_int_shutw(struct stream_interface *si)
 		ic->rex = tick_add(now_ms, ic->rto);
 	}
 
-	if (tick_isset(si->hcto)) {
-		ic->rto = si->hcto;
-		ic->rex = tick_add(now_ms, ic->rto);
-	}
-
 	switch (si->state) {
 	case SI_ST_EST:
 		/* we have to shut before closing, otherwise some short messages
@@ -493,10 +488,6 @@ static void stream_int_notify(struct stream_interface *si)
 	 * the buffer is full. We must not stop based on input data alone because
 	 * an HTTP parser might need more data to complete the parsing.
 	 */
-
-	/* ensure it's only set if a write attempt has succeeded */
-	ic->flags &= ~CF_WRITE_PARTIAL;
-
 	if (!channel_is_empty(ic) &&
 	    (sio->flags & SI_FL_WAIT_DATA) &&
 	    (!(ic->flags & CF_EXPECT_MORE) || c_full(ic) || ci_data(ic) == 0 || ic->pipe)) {
@@ -544,7 +535,7 @@ static void stream_int_notify(struct stream_interface *si)
 
 	    /* changes on the consumption side */
 	    (oc->flags & (CF_WRITE_NULL|CF_WRITE_ERROR)) ||
-	    ((oc->flags & (CF_WRITE_ACTIVITY|CF_WRITE_EVENT)) &&
+	    ((oc->flags & CF_WRITE_ACTIVITY) &&
 	     ((oc->flags & CF_SHUTW) ||
 	      (((oc->flags & CF_WAKE_WRITE) ||
 		!(oc->flags & (CF_AUTO_CLOSE|CF_SHUTW_NOW|CF_SHUTW))) &&
@@ -771,7 +762,7 @@ void si_update(struct stream_interface *si)
 			/* stop reading, imposed by channel's policy or contents */
 			si_rx_room_blk(si);
 		}
-		else if (!(si->flags & SI_FL_WAIT_ROOM) || !ic->buf->o) {
+		else {
 			/* (re)start reading and update timeout. Note: we don't recompute the timeout
 			 * everytime we get here, otherwise it would risk never to expire. We only
 			 * update it if is was not yet set. The stream socket handler will already
@@ -948,11 +939,6 @@ static void stream_int_shutw_conn(struct stream_interface *si)
 	oc->flags |= CF_SHUTW;
 	oc->wex = TICK_ETERNITY;
 	si_done_get(si);
-
-	if (tick_isset(si->hcto)) {
-		ic->rto = si->hcto;
-		ic->rex = tick_add(now_ms, ic->rto);
-	}
 
 	if (tick_isset(si->hcto)) {
 		ic->rto = si->hcto;
@@ -1543,11 +1529,6 @@ static void stream_int_shutw_applet(struct stream_interface *si)
 	oc->flags |= CF_SHUTW;
 	oc->wex = TICK_ETERNITY;
 	si_done_get(si);
-
-	if (tick_isset(si->hcto)) {
-		ic->rto = si->hcto;
-		ic->rex = tick_add(now_ms, ic->rto);
-	}
 
 	if (tick_isset(si->hcto)) {
 		ic->rto = si->hcto;

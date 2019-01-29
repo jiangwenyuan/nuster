@@ -58,7 +58,6 @@
 #include <proto/fd.h>
 #include <proto/filters.h>
 #include <proto/frontend.h>
-#include <proto/h1.h>
 #include <proto/log.h>
 #include <proto/hdr_idx.h>
 #include <proto/hlua.h>
@@ -2666,11 +2665,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		goto done;
 	}
 
-	/* check nuster applets: manager/purge/stats... */
-	if (nuster_check_applet(s, req, px)) {
-		goto return_prx_cond;
-	}
-
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.
 	 * If this happens, then the data will not come immediately, so we must
 	 * send all what we have without waiting. Note that due to the small gain
@@ -3526,7 +3520,7 @@ void http_end_txn_clean_session(struct stream *s)
 	s->si[1].exp       = TICK_ETERNITY;
 	s->si[1].flags    &= SI_FL_ISBACK | SI_FL_DONT_WAKE; /* we're in the context of process_stream */
 	s->req.flags &= ~(CF_SHUTW|CF_SHUTW_NOW|CF_AUTO_CONNECT|CF_WRITE_ERROR|CF_STREAMER|CF_STREAMER_FAST|CF_NEVER_WAIT|CF_WAKE_CONNECT|CF_WROTE_DATA);
-	s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA|CF_WRITE_EVENT);
+	s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA);
 	s->flags &= ~(SF_DIRECT|SF_ASSIGNED|SF_ADDR_SET|SF_BE_ASSIGNED|SF_FORCE_PRST|SF_IGNORE_PRST);
 	s->flags &= ~(SF_CURR_SESS|SF_REDIRECTABLE|SF_SRV_REUSED);
 	s->flags &= ~(SF_ERR_MASK|SF_FINST_MASK|SF_REDISP);
@@ -4886,12 +4880,6 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 	 * apply any filter there.
 	 */
 	if (unlikely(objt_applet(s->target) == &http_stats_applet)) {
-		rep->analysers &= ~an_bit;
-		rep->analyse_exp = TICK_ETERNITY;
-		goto skip_filters;
-	}
-
-	if (unlikely(objt_applet(s->target) == &nuster.applet.cache_engine)) {
 		rep->analysers &= ~an_bit;
 		rep->analyse_exp = TICK_ETERNITY;
 		goto skip_filters;
@@ -7335,9 +7323,6 @@ void http_reset_txn(struct stream *s)
 
 	/* Now we can realign the response buffer */
 	c_realign_if_empty(&s->res);
-
-	/* Now we can realign the response buffer */
-	buffer_realign(s->res.buf);
 
 	s->req.rto = strm_fe(s)->timeout.client;
 	s->req.wto = TICK_ETERNITY;

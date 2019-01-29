@@ -56,7 +56,6 @@
 #include <sys/param.h>
 #ifdef __FreeBSD__
 #include <sys/cpuset.h>
-#include <pthread_np.h>
 #endif
 #include <pthread_np.h>
 #endif
@@ -172,8 +171,6 @@ struct global global = {
 #endif
 	/* others NULL OK */
 };
-
-struct activity activity[MAX_THREADS] __attribute__((aligned(64))) = { };
 
 /*********************************************************************/
 
@@ -1113,51 +1110,12 @@ static void cfgfiles_expand_directories(void)
 					 strerror(errno));
 				exit(1);
 			}
-			memcpy(xfer_sock->iface, &tmpbuf[curoff], len);
-			xfer_sock->iface[len] = 0;
-			curoff += len;
-		}
-		if (curoff + sizeof(int) > maxoff) {
-			ha_warning("Inconsistency while transferring sockets\n");
-			goto out;
-		}
-		memcpy(&xfer_sock->options, &tmpbuf[curoff],
-		    sizeof(xfer_sock->options));
-		curoff += sizeof(xfer_sock->options);
 
-		xfer_sock->fd = fd;
-		if (xfer_sock_list)
-			xfer_sock_list->prev = xfer_sock;
-		xfer_sock->next = xfer_sock_list;
-		xfer_sock->prev = NULL;
-		xfer_sock_list = xfer_sock;
-		xfer_sock = NULL;
-	}
-
-	ret2 = 0;
-out:
-	/* If we failed midway make sure to close the remaining
-	 * file descriptors
-	 */
-	if (tmpfd != NULL && i < got_fd) {
-		for (; i < got_fd; i++) {
-			close(tmpfd[i]);
-		}
-	}
-	free(tmpbuf);
-	free(tmpfd);
-	free(cmsgbuf);
-	if (sock != -1)
-		close(sock);
-	if (xfer_sock) {
-		free(xfer_sock->namespace);
-		free(xfer_sock->iface);
-		if (xfer_sock->fd != -1)
-			close(xfer_sock->fd);
-		free(xfer_sock);
-	}
-	return (ret2);
-}
+			/* don't add anything else than regular file in cfg_cfgfiles
+			 * this way we avoid loops
+			 */
+			if (!S_ISREG(file_stat.st_mode))
+				goto next_dir_entry;
 
 			if (!list_append_word(&wl->list, filename, &err)) {
 				ha_alert("Cannot load configuration files %s : %s\n",
@@ -1166,33 +1124,20 @@ out:
 				exit(1);
 			}
 
-static char **copy_argv(int argc, char **argv)
-{
-	char **newargv;
-	int i = 0, j = 0;
-
-	newargv = calloc(argc + 2, sizeof(char *));
-	if (newargv == NULL) {
-		ha_warning("Cannot allocate memory\n");
-		return NULL;
-	}
-
-	while (i < argc) {
-		/* -sf or -st or -x */
-		if (i > 0 && argv[i][0] == '-' &&
-		    ((argv[i][1] == 's' && (argv[i][2] == 'f' || argv[i][2] == 't')) || argv[i][1] == 'x' )) {
-			/* list of pids to finish ('f') or terminate ('t') or unix socket (-x) */
-			i++;
-			while (i < argc && argv[i][0] != '-') {
-				i++;
-			}
-			continue;
+next_dir_entry:
+			free(filename);
+			free(dir_entry);
 		}
 
-		newargv[j++] = argv[i++];
+		free(dir_entries);
+
+		/* remove the current directory (wl) from cfg_cfgfiles */
+		free(wl->s);
+		LIST_DEL(&wl->list);
+		free(wl);
 	}
 
-	return newargv;
+	free(err);
 }
 
 static int get_old_sockets(const char *unixsocket)
@@ -1843,15 +1788,6 @@ static void init(int argc, char **argv)
 				free(c);
 			}
 		}
-	}
-
-	/* do not try to resolve arguments nor to spot inconsistencies when
-	 * the configuration contains fatal errors caused by files not found
-	 * or failed memory allocations.
-	 */
-	if (err_code & (ERR_ABORT|ERR_FATAL)) {
-		ha_alert("Fatal errors found in configuration.\n");
-		exit(1);
 	}
 
 	pattern_finalize_config();
@@ -2747,43 +2683,6 @@ static void *run_thread_poll_loop(void *data)
 	}
 
 	protocol_enable_all();
-	run_poll_loop();
-
-	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
-		ptdf->fct();
-
-#ifdef USE_THREAD
-	HA_ATOMIC_AND(&all_threads_mask, ~tid_bit);
-	if (tid > 0)
-		pthread_exit(NULL);
-#endif
-	return NULL;
-}
-
-static void *run_thread_poll_loop(void *data)
-{
-	struct per_thread_init_fct   *ptif;
-	struct per_thread_deinit_fct *ptdf;
-	__decl_hathreads(static HA_SPINLOCK_T start_lock);
-
-	ha_set_tid(*((unsigned int *)data));
-	tv_update_date(-1,-1);
-
-	list_for_each_entry(ptif, &per_thread_init_list, list) {
-		if (!ptif->fct()) {
-			ha_alert("failed to initialize thread %u.\n", tid);
-			exit(1);
-		}
-	}
-
-	if (global.mode & MODE_MWORKER) {
-		HA_SPIN_LOCK(START_LOCK, &start_lock);
-		mworker_pipe_register();
-		HA_SPIN_UNLOCK(START_LOCK, &start_lock);
-	}
-
-	protocol_enable_all();
-	THREAD_SYNC_ENABLE();
 	run_poll_loop();
 
 	list_for_each_entry(ptdf, &per_thread_deinit_list, list)

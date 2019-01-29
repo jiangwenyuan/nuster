@@ -125,21 +125,6 @@ cc-opt-alt = $(shell set -e; if $(CC) $(1) -E -xc - -o /dev/null </dev/null >&0 
 # Usage: CFLAGS += $(call cc-nowarn,warning). Eg: $(call cc-opt,format-truncation)
 cc-nowarn = $(shell set -e; if $(CC) -W$(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "-Wno-$(1)"; fi;)
 
-# Function used to detect support of a given option by the compiler.
-# Usage: CFLAGS += $(call cc-opt,option). Eg: $(call cc-opt,-fwrapv)
-# Note: ensure the referencing variable is assigned using ":=" and not "=" to
-#       call it only once.
-cc-opt = $(shell set -e; if $(CC) $(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; fi;)
-
-# same but emits $2 if $1 is not supported
-cc-opt-alt = $(shell set -e; if $(CC) $(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; else echo "$(2)"; fi;)
-
-# Disable a warning when supported by the compiler. Don't put spaces around the
-# warning! And don't use cc-opt which doesn't always report an error until
-# another one is also returned.
-# Usage: CFLAGS += $(call cc-nowarn,warning). Eg: $(call cc-opt,format-truncation)
-cc-nowarn = $(shell set -e; if $(CC) -W$(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "-Wno-$(1)"; fi;)
-
 #### Installation options.
 DESTDIR =
 PREFIX = /usr/local

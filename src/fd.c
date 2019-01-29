@@ -446,7 +446,6 @@ static inline void fdlist_process_cached_events(volatile struct fdlist *fdlist)
 				HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 		}
 	}
-	HA_RWLOCK_RDUNLOCK(FDCACHE_LOCK, &fdcache_lock);
 }
 
 /* Scan and process the cached events. This should be called right after

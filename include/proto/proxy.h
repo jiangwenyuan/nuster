@@ -70,7 +70,6 @@ void proxy_capture_error(struct proxy *proxy, int is_back,
 			 void (*show)(struct buffer *, const struct error_snapshot *));
 struct proxy *cli_find_frontend(struct appctx *appctx, const char *arg);
 struct proxy *cli_find_frontend(struct appctx *appctx, const char *arg);
-struct proxy *cli_find_frontend(struct appctx *appctx, const char *arg);
 
 /*
  * This function returns a string containing the type of the proxy in a format

@@ -26,28 +26,6 @@ struct pool_head *pool_head_buffer;
 struct list buffer_wq = LIST_HEAD_INIT(buffer_wq);
 __decl_aligned_spinlock(buffer_wq_lock);
 
-/* list of objects waiting for at least one buffer */
-struct list buffer_wq = LIST_HEAD_INIT(buffer_wq);
-__decl_hathreads(HA_SPINLOCK_T __attribute__((aligned(64))) buffer_wq_lock);
-
-/* this buffer is always the same size as standard buffers and is used for
- * swapping data inside a buffer.
- */
-static THREAD_LOCAL char *swap_buffer = NULL;
-
-static int init_buffer_per_thread()
-{
-	swap_buffer = calloc(1, global.tune.bufsize);
-	if (swap_buffer == NULL)
-		return 0;
-	return 1;
-}
-
-static void deinit_buffer_per_thread()
-{
-	free(swap_buffer); swap_buffer = NULL;
-}
-
 /* perform minimal intializations, report 0 in case of error, 1 if OK. */
 int init_buffer()
 {

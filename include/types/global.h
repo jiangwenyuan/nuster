@@ -195,7 +195,6 @@ struct mworker_proc {
 };
 
 extern struct global global;
-extern struct activity activity[MAX_THREADS];
 extern int  pid;                /* current process id */
 extern int  relative_pid;       /* process id starting at 1 */
 extern unsigned long pid_bit;   /* bit corresponding to the process id */

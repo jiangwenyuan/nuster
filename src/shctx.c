@@ -190,10 +190,6 @@ void shctx_row_dec_hot(struct shared_context *shctx, struct shared_block *first)
 
 }
 
-	/* skipping full buffers, stop at the first buffer with remaining space */
-	block = first;
-	list_for_each_entry_from(block, &shctx->hot, list) {
-		count++;
 
 /*
  * Append data in the row if there is enough space.

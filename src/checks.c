@@ -748,7 +748,6 @@ static void __event_srv_chk_w(struct conn_stream *cs)
 	struct server *s = check->server;
 	struct task *t = check->task;
 
-	HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
 	if (unlikely(check->result == CHK_RES_FAILED))
 		goto out_wakeup;
 
@@ -833,8 +832,6 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 	char *desc;
 	int done;
 	unsigned short msglen;
-
-	HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
 
 	if (unlikely(check->result == CHK_RES_FAILED))
 		goto out_wakeup;
@@ -1594,14 +1591,6 @@ static int connect_conn_chk(struct task *t)
 		return SF_ERR_UP;
 	}
 
-	/* for tcp-checks, the initial connection setup is handled separately as
-	 * it may be sent to a specific port and not to the server's.
-	 */
-	if (tcp_rule && tcp_rule->action == TCPCHK_ACT_CONNECT) {
-		tcpcheck_main(check);
-		return SF_ERR_UP;
-	}
-
 	/* prepare a new connection */
 	cs = check->cs = cs_new(NULL);
 	if (!check->cs)
@@ -1773,8 +1762,6 @@ static int init_pid_list(void)
 			 strerror(errno));
 		return 1;
 	}
-
-	HA_SPIN_INIT(&pid_list_lock);
 
 	return 0;
 }

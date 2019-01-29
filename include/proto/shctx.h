@@ -100,27 +100,6 @@ static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, in
 #define _shctx_awakelocker(a)
 
 #endif
-#endif
-
-int shctx_init(struct shared_context **orig_shctx, int maxblocks, int blocksize, int extra, int shared);
-struct shared_block *shctx_row_reserve_hot(struct shared_context *shctx, int data_len);
-void shctx_row_inc_hot(struct shared_context *shctx, struct shared_block *first);
-void shctx_row_dec_hot(struct shared_context *shctx, struct shared_block *first);
-int shctx_row_data_append(struct shared_context *shctx,
-                          struct shared_block *first, unsigned char *data, int len);
-int shctx_row_data_get(struct shared_context *shctx, struct shared_block *first,
-                       unsigned char *dst, int offset, int len);
-
-
-/* Lock functions */
-
-#if defined (USE_PRIVATE_CACHE)
-
-#define shctx_lock(shctx)
-#define shctx_unlock(shctx)
-
-#elif defined (USE_PTHREAD_PSHARED)
-extern int use_shared_mem;
 
 #if defined (__i486__) || defined (__i586__) || defined (__i686__) || defined (__x86_64__)
 static inline unsigned int xchg(unsigned int *ptr, unsigned int x)

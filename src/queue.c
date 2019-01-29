@@ -398,7 +398,6 @@ int pendconn_redistribute(struct server *s)
 	struct pendconn *p;
 	struct eb32_node *node;
 	int xferred = 0;
-	int remote = 0;
 
 	/* The REDISP option was specified. We will ignore cookie and force to
 	 * balance or use the dispatcher. */
@@ -416,10 +415,6 @@ int pendconn_redistribute(struct server *s)
 
 		task_wakeup(p->strm->task, TASK_WOKEN_RES);
 	}
-	HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
-
-	if (remote)
-		THREAD_WANT_SYNC();
 	return xferred;
 }
 

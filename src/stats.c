@@ -4047,11 +4047,6 @@ static int cli_io_handler_dump_json_schema(struct appctx *appctx)
 	return stats_dump_json_schema_to_buffer(appctx->owner);
 }
 
-static int cli_io_handler_dump_json_schema(struct appctx *appctx)
-{
-	return stats_dump_json_schema_to_buffer(appctx->owner);
-}
-
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
 	{ { "clear", "counters",  NULL }, "clear counters : clear max statistics counters (add 'all' for all counters)", cli_parse_clear_counters, NULL, NULL },

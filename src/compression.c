@@ -31,7 +31,6 @@
 #include <common/hathreads.h>
 #include <common/initcall.h>
 #include <common/memory.h>
-#include <common/hathreads.h>
 
 #include <types/global.h>
 #include <types/compression.h>
@@ -707,9 +706,6 @@ INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
 __attribute__((constructor))
 static void __comp_fetch_init(void)
 {
-	char *ptr = NULL;
-	int i;
-
 #ifdef USE_SLZ
 	slz_make_crc_table();
 	slz_prepare_dist_table();

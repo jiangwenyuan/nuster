@@ -1416,7 +1416,7 @@ int connect_server(struct stream *s)
 		}
 	}
 
-	if (!srv_cs)
+	if (!srv_conn)
 		return SF_ERR_RESOURCE;
 
 	if (!(s->flags & SF_ADDR_SET)) {
@@ -1527,17 +1527,6 @@ int connect_server(struct stream *s)
 			LIST_ADD(&srv->idle_conns[tid], &srv_conn->list);
 	}
 
-
-#ifdef USE_OPENSSL
-	if (!reuse && cli_conn && srv &&
-	    (srv->ssl_ctx.options & SRV_SSL_O_EARLY_DATA) &&
-		    (cli_conn->flags & CO_FL_EARLY_DATA) &&
-		    !channel_is_empty(si_oc(&s->si[1])) &&
-		    srv_conn->flags & CO_FL_SSL_WAIT_HS) {
-		srv_conn->flags &= ~(CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN);
-		srv_conn->flags |= CO_FL_EARLY_SSL_HS;
-	}
-#endif
 
 #ifdef USE_OPENSSL
 	if (!reuse && cli_conn && srv &&

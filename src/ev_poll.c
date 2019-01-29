@@ -43,10 +43,8 @@ static THREAD_LOCAL struct pollfd *poll_events = NULL;
 
 REGPRM1 static void __fd_clo(int fd)
 {
-	HA_SPIN_LOCK(POLL_LOCK, &poll_lock);
 	hap_fd_clr(fd, fd_evts[DIR_RD]);
 	hap_fd_clr(fd, fd_evts[DIR_WR]);
-	HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
 }
 
 static void _update_fd(int fd, int *max_add_fd)
@@ -202,8 +200,6 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	status = poll(poll_events, nbfd, wait_time);
 	tv_update_date(wait_time, status);
 	tv_leaving_poll(wait_time, status);
-
-	thread_harmless_end();
 
 	thread_harmless_end();
 

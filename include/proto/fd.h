@@ -108,8 +108,6 @@ void fd_rm_from_fd_list(volatile struct fdlist *list, int fd, int off);
 
 /* Mark fd <fd> as updated for polling and allocate an entry in the update list
  * for this if it was not already there. This can be done at any time.
- * This function expects the FD lock to be locked, and returns with the
- * FD lock unlocked.
  */
 static inline void updt_fd_polling(const int fd)
 {
@@ -203,14 +201,6 @@ static inline void fd_update_cache(int fd)
 	else {
 		fd_release_cache_entry(fd);
 	}
-	/* 3 states for each direction require a polling update */
-	if ((fdtab[fd].state & (FD_EV_POLLED_R |                 FD_EV_ACTIVE_R)) == FD_EV_POLLED_R ||
-	    (fdtab[fd].state & (FD_EV_POLLED_R | FD_EV_READY_R | FD_EV_ACTIVE_R)) == FD_EV_ACTIVE_R ||
-	    (fdtab[fd].state & (FD_EV_POLLED_W |                 FD_EV_ACTIVE_W)) == FD_EV_POLLED_W ||
-	    (fdtab[fd].state & (FD_EV_POLLED_W | FD_EV_READY_W | FD_EV_ACTIVE_W)) == FD_EV_ACTIVE_W)
-		updt_fd_polling(fd);
-	else
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /*

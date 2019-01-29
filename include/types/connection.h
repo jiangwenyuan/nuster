@@ -351,33 +351,6 @@ struct mux_ops {
 	char name[8];                                 /* mux layer name, zero-terminated */
 };
 
-/* mux_ops describes the mux operations, which are to be performed at the
- * connection level after data are exchanged with the transport layer in order
- * to propagate them to streams. The <init> function will automatically be
- * called once the mux is instanciated by the connection's owner at the end
- * of a transport handshake, when it is about to transfer data and the data
- * layer is not ready yet.
- */
-struct mux_ops {
-	int  (*init)(struct connection *conn);        /* early initialization */
-	void (*recv)(struct connection *conn);        /* mux-layer recv callback */
-	void (*send)(struct connection *conn);        /* mux-layer send callback */
-	int  (*wake)(struct connection *conn);        /* mux-layer callback to report activity, mandatory */
-	void (*update_poll)(struct conn_stream *cs);  /* commit cs flags to mux/conn */
-	int  (*rcv_buf)(struct conn_stream *cs, struct buffer *buf, int count); /* Called from the upper layer to get data */
-	int  (*snd_buf)(struct conn_stream *cs, struct buffer *buf, int flags); /* Called from the upper layer to send data */
-	int  (*rcv_pipe)(struct conn_stream *cs, struct pipe *pipe, unsigned int count); /* recv-to-pipe callback */
-	int  (*snd_pipe)(struct conn_stream *cs, struct pipe *pipe); /* send-to-pipe callback */
-	void (*shutr)(struct conn_stream *cs, enum cs_shr_mode);     /* shutr function */
-	void (*shutw)(struct conn_stream *cs, enum cs_shw_mode);     /* shutw function */
-
-	struct conn_stream *(*attach)(struct connection *); /* Create and attach a conn_stream to an outgoing connection */
-	void (*detach)(struct conn_stream *); /* Detach a conn_stream from an outgoing connection, when the request is done */
-	void (*show_fd)(struct chunk *, struct connection *); /* append some data about connection into chunk for "show fd" */
-	unsigned int flags;                           /* some flags characterizing the mux's capabilities (MX_FL_*) */
-	char name[8];                                 /* mux layer name, zero-terminated */
-};
-
 /* data_cb describes the data layer's recv and send callbacks which are called
  * when I/O activity was detected after the transport layer is ready. These
  * callbacks are supposed to make use of the xprt_ops above to exchange data
@@ -504,21 +477,6 @@ struct mux_proto_list {
 	const struct ist token;    /* token name and length. Empty is catch-all */
 	enum proto_proxy_mode mode;
 	enum proto_proxy_side side;
-	const struct mux_ops *mux;
-	struct list list;
-};
-
-/* ALPN token registration */
-enum alpn_proxy_mode {
-	ALPN_MODE_NONE = 0,
-	ALPN_MODE_TCP  = 1 << 0, // must not be changed!
-	ALPN_MODE_HTTP = 1 << 1, // must not be changed!
-	ALPN_MODE_ANY  = ALPN_MODE_TCP | ALPN_MODE_HTTP,
-};
-
-struct alpn_mux_list {
-	const struct ist token;    /* token name and length. Empty is catch-all */
-	enum alpn_proxy_mode mode;
 	const struct mux_ops *mux;
 	struct list list;
 };

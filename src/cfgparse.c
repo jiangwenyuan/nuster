@@ -781,8 +781,6 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
-		if (curproxy->conf.logformat_string && curproxy == &defproxy) {
-			char *oldlogformat = "log-format";
 
 		list_for_each_entry(newnameserver, &curr_resolvers->nameservers, list) {
 			/* Error if two resolvers owns the same name */

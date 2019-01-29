@@ -37,10 +37,6 @@ struct task *task_run_applet(struct task *t, void *context, unsigned short state
 int appctx_buf_available(void *arg);
 
 
-
-static int inline appctx_res_wakeup(struct appctx *appctx);
-
-
 /* Initializes all required fields for a new appctx. Note that it does the
  * minimum acceptable initialization for an appctx. This means only the
  * 3 integer states st0, st1, st2 and the chunk used to gather unfinished
@@ -123,7 +119,6 @@ static inline void appctx_wakeup(struct appctx *appctx)
 {
 	task_wakeup(appctx->t, TASK_WOKEN_OTHER);
 }
-
 
 #endif /* _PROTO_APPLET_H */
 

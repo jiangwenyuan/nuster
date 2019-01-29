@@ -78,7 +78,7 @@ static int http_compression_buffer_end(struct comp_state *st, struct stream *s,
 
 /***********************************************************************/
 static int
-comp_flt_init_per_thread(struct proxy *px, struct flt_conf *fconf)
+comp_flt_init(struct proxy *px, struct flt_conf *fconf)
 {
 	fconf->flags |= FLT_CFG_FL_HTX;
 	return 0;
@@ -1326,7 +1326,6 @@ struct flt_ops comp_ops = {
 	.http_data             = comp_http_data,
 	.http_chunk_trailers   = comp_http_chunk_trailers,
 	.http_forward_data     = comp_http_forward_data,
-	.http_end              = comp_http_end,
 };
 
 static int

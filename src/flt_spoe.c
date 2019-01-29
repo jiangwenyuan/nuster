@@ -20,7 +20,6 @@
 #include <common/initcall.h>
 #include <common/memory.h>
 #include <common/time.h>
-#include <common/hathreads.h>
 
 #include <types/arg.h>
 #include <types/global.h>
@@ -2079,8 +2078,6 @@ spoe_queue_context(struct spoe_context *ctx)
 
 		goto end;
 	}
-	if (agent->rt[tid].applets_act <= min_applets)
-		SPOE_APPCTX(appctx)->flags |= SPOE_APPCTX_FL_PERSIST;
 
 	/* Increase the per-process number of cumulated connections */
 	if (agent->cps_max > 0)
@@ -2588,7 +2585,6 @@ spoe_stop_processing(struct spoe_agent *agent, struct spoe_context *ctx)
 		else
 			sa->cur_fpa--;
 	}
-}
 
 	/* Reset the flag to allow next processing */
 	agent->rt[tid].processing--;
@@ -2703,11 +2699,6 @@ spoe_process_messages(struct stream *s, struct spoe_context *ctx,
 
   out:
 	return ret;
-
-  error:
-	spoe_handle_processing_error(s, agent, ctx, dir);
-	ret = 1;
-	goto end;
 
   skip:
 	tv_zero(&ctx->stats.tv_start);
@@ -3035,27 +3026,6 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 	struct flt_conf    *f;
 	struct spoe_config *conf = fconf->conf;
 	struct proxy       *target;
-	int i;
-
-	/* Check all SPOE filters for proxy <px> to be sure all SPOE agent names
-	 * are uniq */
-	list_for_each_entry(f, &px->filter_configs, list) {
-		struct spoe_config *c = f->conf;
-
-		/* This is not an SPOE filter */
-		if (f->id != spoe_filter_id)
-			continue;
-		/* This is the current SPOE filter */
-		if (f == fconf)
-			continue;
-
-		/* Check engine Id. It should be uniq */
-		if (!strcmp(conf->id, c->id)) {
-			ha_alert("Proxy %s : duplicated name for SPOE engine '%s'.\n",
-				 px->id, conf->id);
-			return 1;
-		}
-	}
 
 	/* Check all SPOE filters for proxy <px> to be sure all SPOE agent names
 	 * are uniq */
@@ -3099,26 +3069,6 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 			 px->id, target->id, conf->agent->id,
 			 conf->agent->conf.file, conf->agent->conf.line);
 		return 1;
-	}
-
-	/* finish per-thread agent initialization */
-	if (global.nbthread == 1)
-		conf->agent->flags |= SPOE_FL_ASYNC;
-
-	if ((curagent->rt = calloc(global.nbthread, sizeof(*curagent->rt))) == NULL) {
-		ha_alert("Proxy %s : out of memory initializing SPOE agent '%s' declared at %s:%d.\n",
-			 px->id, conf->agent->id, conf->agent->conf.file, conf->agent->conf.line);
-		return 1;
-	}
-	for (i = 0; i < global.nbthread; ++i) {
-		curagent->rt[i].frame_size   = curagent->max_frame_size;
-		curagent->rt[i].applets_act  = 0;
-		curagent->rt[i].applets_idle = 0;
-		curagent->rt[i].sending_rate = 0;
-		LIST_INIT(&curagent->rt[i].applets);
-		LIST_INIT(&curagent->rt[i].sending_queue);
-		LIST_INIT(&curagent->rt[i].waiting_queue);
-		HA_SPIN_INIT(&curagent->rt[i].lock);
 	}
 
 	free(conf->agent->b.name);

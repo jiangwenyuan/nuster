@@ -43,6 +43,7 @@
 #include <proto/listener.h>
 #include <proto/log.h>
 #include <proto/protocol.h>
+#include <proto/proto_tcp.h>
 #include <proto/task.h>
 
 static int uxst_bind_listener(struct listener *listener, char *errmsg, int errlen);

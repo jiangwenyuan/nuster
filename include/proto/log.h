@@ -58,11 +58,6 @@ extern THREAD_LOCAL char *logline_rfc5424;
 int init_log_buffers();
 void deinit_log_buffers();
 
-
-/* Initialize/Deinitialize log buffers used for syslog messages */
-int init_log_buffers();
-void deinit_log_buffers();
-
 /*
  * Builds a log line.
  */

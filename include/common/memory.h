@@ -75,7 +75,6 @@ struct pool_free_list {
 #endif
 
 struct pool_head {
-	__decl_hathreads(HA_SPINLOCK_T lock); /* the spin lock */
 	void **free_list;
 #ifdef CONFIG_HAP_LOCKLESS_POOLS
 	uintptr_t seq;

@@ -18,7 +18,6 @@
 #include <common/standard.h>
 #include <common/time.h>
 #include <common/tools.h>
-#include <common/hathreads.h>
 
 #include <types/channel.h>
 #include <types/filters.h>

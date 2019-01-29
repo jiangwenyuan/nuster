@@ -170,8 +170,6 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 
 	thread_harmless_end();
 
-	thread_harmless_end();
-
 	/* process polled events */
 
 	for (count = 0; count < status; count++) {

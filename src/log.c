@@ -691,29 +691,6 @@ int parse_logformat_string(const char *fmt, struct proxy *curproxy, struct list 
 	return 1;
 }
 
-/* Generic function to display messages prefixed by a label */
-static void print_message(const char *label, const char *fmt, va_list argp)
-{
-	struct tm tm;
-	char *head, *msg;
-
-	head = msg = NULL;
-
-	get_localtime(date.tv_sec, &tm);
-	memprintf(&head, "[%s] %03d/%02d%02d%02d (%d) : ",
-		  label, tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
-	memvprintf(&msg, fmt, argp);
-
-	if (global.mode & MODE_STARTING)
-		memprintf(&startup_logs, "%s%s%s", (startup_logs ? startup_logs : ""), head, msg);
-
-	fprintf(stderr, "%s%s", head, msg);
-	fflush(stderr);
-
-	free(head);
-	free(msg);
-}
-
 /*
  * Parse "log" keyword and update <logsrvs> list accordingly.
  *
@@ -1689,43 +1666,6 @@ static void init_log()
 }
 
 INITCALL0(STG_PREPARE, init_log);
-
-static int init_log_buffers_per_thread()
-{
-	return init_log_buffers();
-}
-
-static void deinit_log_buffers_per_thread()
-{
-	deinit_log_buffers();
-}
-
-/* Initialize log buffers used for syslog messages */
-int init_log_buffers()
-{
-	logheader = my_realloc2(logheader, global.max_syslog_len + 1);
-	logheader_rfc5424 = my_realloc2(logheader_rfc5424, global.max_syslog_len + 1);
-	logline = my_realloc2(logline, global.max_syslog_len + 1);
-	logline_rfc5424 = my_realloc2(logline_rfc5424, global.max_syslog_len + 1);
-	if (!logheader || !logline_rfc5424 || !logline || !logline_rfc5424)
-		return 0;
-	return 1;
-}
-
-/* Deinitialize log buffers used for syslog messages */
-void deinit_log_buffers()
-{
-	free(logheader);
-	free(logheader_rfc5424);
-	free(logline);
-	free(logline_rfc5424);
-	free(startup_logs);
-	logheader         = NULL;
-	logheader_rfc5424 = NULL;
-	logline           = NULL;
-	logline_rfc5424   = NULL;
-	startup_logs      = NULL;
-}
 
 static int init_log_buffers_per_thread()
 {
@@ -2821,33 +2761,6 @@ void strm_log(struct stream *s)
 	}
 }
 
-static int cli_io_handler_show_startup_logs(struct appctx *appctx)
-{
-	struct stream_interface *si = appctx->owner;
-	const char *msg = (startup_logs ? startup_logs : "No startup alerts/warnings.\n");
-
-	if (ci_putstr(si_ic(si), msg) == -1) {
-		si_applet_cant_put(si);
-		return 0;
-	}
-	return 1;
-}
-
-/* register cli keywords */
-static struct cli_kw_list cli_kws = {{ },{
-	{ { "show", "startup-logs",  NULL },
-	  "show startup-logs : report logs emitted during HAProxy startup",
-	  NULL, cli_io_handler_show_startup_logs },
-	{{},}
-}};
-
-__attribute__((constructor))
-static void __log_init(void)
-{
-	hap_register_per_thread_init(init_log_buffers_per_thread);
-	hap_register_per_thread_deinit(deinit_log_buffers_per_thread);
-	cli_register_kw(&cli_kws);
-}
 /*
  * send a minimalist log for the session. Will not log if the frontend has no
  * log defined. It is assumed that this is only used to report anomalies that
