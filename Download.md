@@ -4,15 +4,15 @@
 Branch | nuster version | Released        | Download                    | Notes
 ------ | -------------- | --------        | --------                    | -----
 master |                |                 |                             | maybe broken
-v1.8.x | 2.0.6.18       | [2019-01-15][3] | [nuster-2.0.6.18.tar.gz][4] | stable: cache, nosql, http2
+v1.8.x | 2.0.7.18       | [2019-01-29][3] | [nuster-2.0.7.18.tar.gz][4] | stable: cache, nosql, http2
 v1.7.x | 1.0.2.17       | [2018-10-05][5] | [nuster-1.0.2.17.tar.gz][6] | stable: cache only
 disk   |                |                 |                             | disk persistence
 sync   |                |                 |                             | replication
 
-[1]:https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.6.18
-[2]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.6.18/nuster-2.0.6.18.tar.gz
-[3]:https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.6.18
-[4]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.6.18/nuster-2.0.6.18.tar.gz
+[1]:https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.7.18
+[2]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.7.18/nuster-2.0.7.18.tar.gz
+[3]:https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.7.18
+[4]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.7.18/nuster-2.0.7.18.tar.gz
 [5]:https://github.com/jiangwenyuan/nuster/releases/tag/v1.0.2.17
 [6]:https://github.com/jiangwenyuan/nuster/releases/download/v1.0.2.17/nuster-1.0.2.17.tar.gz
 
@@ -31,32 +31,15 @@ Starting from v1.8.8.3, nuster uses a different version system as MAJOR.MINOR.PA
 
 https://github.com/jiangwenyuan/nuster/releases
 
-| nuster version | HAProxy version | Previous nuster version
-| -------------- | --------------- | ------------------
-| 2.0.6.18       | 1.8.17          |
-| 2.0.5.18       | 1.8.14          |
-| 2.0.4.18       | 1.8.14          |
-| 2.0.3.18       | 1.8.13          |
-| 2.0.2.18       | 1.8.13          |
-| 2.0.1.18       | 1.8.13          |
-| 2.0.0.18       | 1.8.12          |
-| 1.1.1.18       | 1.8.12          |
-| 1.1.0.18       | 1.8.8           | 1.8.8.3
-| 1.0.2.17       | 1.7.11          |
-| 1.0.1.17       | 1.7.11          | 1.7.11.3
-| 1.0.0.17       | 1.7.11          | 1.7.11.3
-|                | 1.8.8           | 1.8.8.2
-|                | 1.8.8           | 1.8.8.1
-|                | 1.7.11          | 1.7.11.2
-|                | 1.7.11          | 1.7.11.1
-|                | 1.7.10          | 1.7.10.1
-|                | 1.7.9           | 1.7.9.9
-|                | 1.7.9           | 1.7.9.8
-|                | 1.7.9           | 1.7.9.7
-|                | 1.7.9           | 1.7.9.6
-|                | 1.7.9           | 1.7.9.5
-|                | 1.7.9           | 1.7.9.4
-|                | 1.7.9           | 1.7.9.3
-|                | 1.7.9           | 1.7.9.2
-|                | 1.7.9           | 1.7.9.1
-
+| nuster version | HAProxy version
+| -------------- | ---------------
+| 2.0.7.18       | 1.8.17
+| 2.0.6.18       | 1.8.17
+| 2.0.5.18       | 1.8.14
+| 2.0.4.18       | 1.8.14
+| 2.0.3.18       | 1.8.13
+| 2.0.2.18       | 1.8.13
+| 2.0.1.18       | 1.8.13
+| 2.0.0.18       | 1.8.12
+| 1.1.1.18       | 1.8.12
+| 1.0.2.17       | 1.7.11

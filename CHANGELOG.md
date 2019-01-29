@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 2.0.7.18 - 2019-01-29
+
+### Fixed
+
+* ACL does not work for response
+
 ## 2.0.6.18 - 2019-01-15
 
 Upgrade to HAProxy v1.8.17

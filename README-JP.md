@@ -409,6 +409,62 @@ cache-rule all code all
 ### if|unless condition
 
 HAProxy ACLを使う。
+
+ACLはリクエストとリスポンスの二段階で評価する
+
+下記満たせばキャッシュする：
+
+1. リクエスト段階でACLがtrue
+2. リクエスト段階でACLがfalseだが、リスポンス段階でtrue
+
+**否定のACLや特定のSample使う場合は要注意**
+
+例えば、
+
+1.  `/img/`で始まるリクエストをキャッシュする
+
+    nuster rule img if { path_beg /img/ }
+
+リクエスト段階でACLがtrueなら、キャッシュする、falseの場合はリスポンス段階でpath存在しないのでACLもfalseでキャッシュしない。
+
+2. リスポンスの`Content-Type` が `image/jpeg`の場合キャッシュする
+
+    nuster rule jpeg if { res.hdr(Content-Type) image/jpeg }
+
+リクエスト段階ではres.hdrがないため、falseで、リスポンス段階ではtrueもしくはfalse
+
+3. `/img/`で始まり、 リスポンスの`Content-Type` が`image/jpeg`ならキャッシュする
+
+下記は正常に動かない：
+
+    nuster rule img if { path_beg /img/ } { res.hdr(Content-Type) image/jpeg }
+
+リクエスト段階ではres.hdrがないためfalseで、リスポンス段階ではpath存在しないのでACLもfalseのため。
+
+下記なら大丈夫
+
+    http-request set-var(txn.pathImg) path
+    acl pathImg var(txn.pathImg) -m beg /img/
+    acl resHdrCT res.hdr(Content-Type) image/jpeg
+    nuster rule r3 if pathImg resHdrCT
+
+4. `/api/`で始まるリクエスト以外はキャッシュする
+
+下記は動かない：
+
+    acl NoCache path_beg /api/
+    nuster rule r3 if !NoCache
+
+リスポンス段階ではpathないため、NoCacheはfalseで `!NoCache`はいつもtrueなので、すべてのリクエストがキャッシュされる
+
+下記は大丈夫
+
+    http-request set-var(txn.path) path
+    acl NoCache var(txn.path) -m beg /api/
+    nuster rule r1 if !NoCache
+
+新しいsample取得方法を追加する予定ある。
+
 See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
 
 # Cache

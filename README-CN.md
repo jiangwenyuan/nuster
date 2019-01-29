@@ -407,6 +407,62 @@ cache-rule all code all
 ### if|unless condition
 
 定义ACL条件
+
+ACL分别在请求阶段和响应阶段执行。
+
+当下述条件满足时，会进行缓存：
+
+1. 在请求阶段ACL为真
+2. 请求阶段ACL为假，但是响应阶段ACL为真
+
+**当使用否定的ACL或者某些样本获取方法时，需要特别注意**
+
+比如
+
+1.  缓存以`/img/`开头的请求
+
+    nuster rule img if { path_beg /img/ }
+
+请求阶段要么为真要么为假，因为在响应阶段无法获取path所以永远为假。
+
+2. 缓存响应的http头部`Content-Type` 为 `image/jpeg`
+
+    nuster rule jpeg if { res.hdr(Content-Type) image/jpeg }
+
+因为在请求阶段无法获取res.hdr所以永远为假，在响应阶段要么为真要么为假。
+
+3. 以`/img/`开头，并且响应头 `Content-Type` 为`image/jpeg`时缓存
+
+如果定义为下面的规则，则不会成功：
+
+    nuster rule img if { path_beg /img/ } { res.hdr(Content-Type) image/jpeg }
+
+因为在响应阶段无法获取path所以永远为假，而在请求阶段无法获取res.hdr所以永远为假，那么这个ACL就永远无法匹配。
+
+需要如下来定义：
+
+    http-request set-var(txn.pathImg) path
+    acl pathImg var(txn.pathImg) -m beg /img/
+    acl resHdrCT res.hdr(Content-Type) image/jpeg
+    nuster rule r3 if pathImg resHdrCT
+
+4. 另一个例子，缓存所有不以 `/api/` 开头的请求
+
+下面不正确：
+
+    acl NoCache path_beg /api/
+    nuster rule r3 if !NoCache
+
+因为虽然在响应阶段path并不存在，所以NoCache永远为假，而 `!NoCache` 为真，所有的请求都会被缓存。
+
+需要改成:
+
+    http-request set-var(txn.path) path
+    acl NoCache var(txn.path) -m beg /api/
+    nuster rule r1 if !NoCache
+
+会添加一些新的样本获取方法来简化这些操作。
+
 详见[HAProxy configuration](doc/configuration.txt)的**7. Using ACLs and fetching samples**
 
 # Cache
