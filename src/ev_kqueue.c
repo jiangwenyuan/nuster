@@ -26,7 +26,9 @@
 
 #include <types/global.h>
 
+#include <proto/activity.h>
 #include <proto/fd.h>
+#include <proto/signal.h>
 
 
 /* private data */
@@ -42,29 +44,29 @@ static int _update_fd(int fd, int start)
 	en = fdtab[fd].state;
 
 	if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
-		if (!(fdtab[fd].polled_mask & tid_bit)) {
+		if (!(polled_mask[fd] & tid_bit)) {
 			/* fd was not watched, it's still not */
 			return changes;
 		}
 		/* fd totally removed from poll list */
 		EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
 		EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-		HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
+		HA_ATOMIC_AND(&polled_mask[fd], ~tid_bit);
 	}
 	else {
 		/* OK fd has to be monitored, it was either added or changed */
 
 		if (en & FD_EV_POLLED_R)
 			EV_SET(&kev[changes++], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-		else if (fdtab[fd].polled_mask & tid_bit)
+		else if (polled_mask[fd] & tid_bit)
 			EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
 
 		if (en & FD_EV_POLLED_W)
 			EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
-		else if (fdtab[fd].polled_mask & tid_bit)
+		else if (polled_mask[fd] & tid_bit)
 			EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
 
-		HA_ATOMIC_OR(&fdtab[fd].polled_mask, tid_bit);
+		HA_ATOMIC_OR(&polled_mask[fd], tid_bit);
 	}
 	return changes;
 }
@@ -75,58 +77,43 @@ static int _update_fd(int fd, int start)
 REGPRM2 static void _do_poll(struct poller *p, int exp)
 {
 	int status;
-	int count, fd, delta_ms;
-	struct timespec timeout;
-	int updt_idx, en, eo;
+	int count, fd, wait_time;
+	struct timespec timeout_ts;
+	int updt_idx;
 	int changes = 0;
+	int old_fd;
 
-	timeout.tv_sec  = 0;
-	timeout.tv_nsec = 0;
+	timeout_ts.tv_sec  = 0;
+	timeout_ts.tv_nsec = 0;
 	/* first, scan the update list to find changes */
 	for (updt_idx = 0; updt_idx < fd_nbupdt; updt_idx++) {
 		fd = fd_updt[updt_idx];
 
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-		fdtab[fd].update_mask &= ~tid_bit;
-
+		HA_ATOMIC_AND(&fdtab[fd].update_mask, ~tid_bit);
 		if (!fdtab[fd].owner) {
 			activity[tid].poll_drop++;
-			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 			continue;
 		}
-
-		fdtab[fd].new = 0;
-
-		eo = fdtab[fd].state;
-		en = fd_compute_new_polled_status(eo);
-		fdtab[fd].state = en;
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
-
 		changes = _update_fd(fd, changes);
 	}
-
 	/* Scan the global update list */
-	HA_SPIN_LOCK(FD_UPDATE_LOCK, &fd_updt_lock);
-	for (fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-		if (fdtab[fd].update_mask & tid_bit)
-			done_update_polling(fd);
-		else {
-			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	for (old_fd = fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
+		if (fd == -2) {
+			fd = old_fd;
 			continue;
 		}
-		fdtab[fd].new = 0;
-
-		eo = fdtab[fd].state;
-		en = fd_compute_new_polled_status(eo);
-		fdtab[fd].state = en;
-
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		else if (fd <= -3)
+			fd = -fd -4;
+		if (fd == -1)
+			break;
+		if (fdtab[fd].update_mask & tid_bit)
+			done_update_polling(fd);
+		else
+			continue;
 		if (!fdtab[fd].owner)
 			continue;
 		changes = _update_fd(fd, changes);
 	}
-	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
 
 	thread_harmless_now();
 
@@ -140,37 +127,43 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 		 */
 		EV_SET(&kev[changes++], -1, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
 #endif
-		kevent(kqueue_fd[tid], kev, changes, kev_out, changes, &timeout);
+		kevent(kqueue_fd[tid], kev, changes, kev_out, changes, &timeout_ts);
 	}
 	fd_nbupdt = 0;
 
-	delta_ms        = 0;
+	/* now let's wait for events */
+	wait_time = compute_poll_timeout(exp);
+	fd = global.tune.maxpollevents;
+	tv_entering_poll();
+	activity_count_runtime();
 
-	if (!exp) {
-		delta_ms        = MAX_DELAY_MS;
-		timeout.tv_sec  = (MAX_DELAY_MS / 1000);
-		timeout.tv_nsec = (MAX_DELAY_MS % 1000) * 1000000;
-	}
-	else if (!tick_is_expired(exp, now_ms)) {
-		delta_ms = TICKS_TO_MS(tick_remain(now_ms, exp)) + 1;
-		if (delta_ms > MAX_DELAY_MS)
-			delta_ms = MAX_DELAY_MS;
-		timeout.tv_sec  = (delta_ms / 1000);
-		timeout.tv_nsec = (delta_ms % 1000) * 1000000;
-	}
-	else
-		activity[tid].poll_exp++;
+	do {
+		int timeout = (global.tune.options & GTUNE_BUSY_POLLING) ? 0 : wait_time;
 
-	fd = MIN(maxfd, global.tune.maxpollevents);
-	gettimeofday(&before_poll, NULL);
-	status = kevent(kqueue_fd[tid], // int kq
-			NULL,      // const struct kevent *changelist
-			0,         // int nchanges
-			kev,       // struct kevent *eventlist
-			fd,        // int nevents
-			&timeout); // const struct timespec *timeout
-	tv_update_date(delta_ms, status);
-	measure_idle();
+		timeout_ts.tv_sec  = (timeout / 1000);
+		timeout_ts.tv_nsec = (timeout % 1000) * 1000000;
+
+		status = kevent(kqueue_fd[tid], // int kq
+		                NULL,      // const struct kevent *changelist
+		                0,         // int nchanges
+		                kev,       // struct kevent *eventlist
+		                fd,        // int nevents
+		                &timeout_ts); // const struct timespec *timeout
+		tv_update_date(timeout, status);
+
+		if (status)
+			break;
+		if (timeout || !wait_time)
+			break;
+		if (signal_queue_len)
+			break;
+		if (tick_isset(exp) && tick_is_expired(exp, now_ms))
+			break;
+	} while (1);
+
+	tv_leaving_poll(wait_time, status);
+
+	thread_harmless_end();
 
 	thread_harmless_end();
 
@@ -229,10 +222,8 @@ static int init_kqueue_per_thread()
 	 * fd for this thread. Let's just mark them as updated, the poller will
 	 * do the rest.
 	 */
-	for (fd = 0; fd < maxfd; fd++) {
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+	for (fd = 0; fd < global.maxsock; fd++)
 		updt_fd_polling(fd);
-	}
 
 	return 1;
  fail_fd:

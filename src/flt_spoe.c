@@ -16,6 +16,8 @@
 #include <common/compat.h>
 #include <common/config.h>
 #include <common/debug.h>
+#include <common/hathreads.h>
+#include <common/initcall.h>
 #include <common/memory.h>
 #include <common/time.h>
 #include <common/hathreads.h>
@@ -31,6 +33,7 @@
 #include <proto/filters.h>
 #include <proto/freq_ctr.h>
 #include <proto/frontend.h>
+#include <proto/http_rules.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
 #include <proto/proxy.h>
@@ -46,8 +49,10 @@
 
 #if defined(DEBUG_SPOE) || defined(DEBUG_FULL)
 #define SPOE_PRINTF(x...) fprintf(x)
+#define SPOE_DEBUG_STMT(statement) statement
 #else
 #define SPOE_PRINTF(x...)
+#define SPOE_DEBUG_STMT(statement)
 #endif
 
 /* Reserved 4 bytes to the frame size. So a frame and its size can be written
@@ -87,16 +92,24 @@ struct list curmsgs;
 struct list curgrps;
 struct list curmphs;
 struct list curgphs;
+struct list curvars;
+
+/* list of log servers used during the parsing */
+struct list curlogsrvs;
+
+/* agent's proxy flags (PR_O_* and PR_O2_*) used during parsing */
+int curpxopts;
+int curpxopts2;
 
 /* Pools used to allocate SPOE structs */
-static struct pool_head *pool_head_spoe_ctx = NULL;
-static struct pool_head *pool_head_spoe_appctx = NULL;
+DECLARE_STATIC_POOL(pool_head_spoe_ctx,    "spoe_ctx",    sizeof(struct spoe_context));
+DECLARE_STATIC_POOL(pool_head_spoe_appctx, "spoe_appctx", sizeof(struct spoe_appctx));
 
 struct flt_ops spoe_ops;
 
 static int  spoe_queue_context(struct spoe_context *ctx);
-static int  spoe_acquire_buffer(struct buffer **buf, struct buffer_wait *buffer_wait);
-static void spoe_release_buffer(struct buffer **buf, struct buffer_wait *buffer_wait);
+static int  spoe_acquire_buffer(struct buffer *buf, struct buffer_wait *buffer_wait);
+static void spoe_release_buffer(struct buffer *buf, struct buffer_wait *buffer_wait);
 
 /********************************************************************
  * helper functions/globals
@@ -162,6 +175,8 @@ spoe_release_agent(struct spoe_agent *agent)
 	free(agent->var_pfx);
 	free(agent->engine_id);
 	free(agent->var_on_error);
+	free(agent->var_t_process);
+	free(agent->var_t_total);
 	list_for_each_entry_safe(msg, msgback, &agent->messages, list) {
 		LIST_DEL(&msg->list);
 		spoe_release_message(msg);
@@ -170,10 +185,8 @@ spoe_release_agent(struct spoe_agent *agent)
 		LIST_DEL(&grp->list);
 		spoe_release_group(grp);
 	}
-	if (agent->rt) {
-		for (i = 0; i < global.nbthread; ++i)
-			HA_SPIN_DESTROY(&agent->rt[i].lock);
-	}
+	for (i = 0; i < global.nbthread; ++i)
+		HA_SPIN_DESTROY(&agent->rt[i].lock);
 	free(agent->rt);
 	free(agent);
 }
@@ -269,23 +282,15 @@ generate_pseudo_uuid()
 	return uuid;
 }
 
-/* Returns the minimum number of appets alive at a time. This function is used
- * to know if more applets should be created for an engine. */
-static inline unsigned int
-min_applets_act(struct spoe_agent *agent)
+
+static inline void
+spoe_update_stat_time(struct timeval *tv, long *t)
 {
-	unsigned int nbsrv;
-
-	/* TODO: Add a config parameter to customize this value. Always 0 for
-	 * now */
-	if (agent->min_applets)
-		return agent->min_applets;
-
-	/* Get the number of active servers for the backend */
-	nbsrv = (agent->b.be->srv_act
-		 ? agent->b.be->srv_act
-		 : agent->b.be->srv_bck);
-	return 2*nbsrv;
+	if (*t == -1)
+		*t = tv_ms_elapsed(tv, &now);
+	else
+		*t += tv_ms_elapsed(tv, &now);
+	tv_zero(tv);
 }
 
 /********************************************************************
@@ -380,12 +385,12 @@ spoe_str_to_vsn(const char *str, size_t len)
 }
 
 /* Encode the HELLO frame sent by HAProxy to an agent. It returns the number of
- * encoded bytes in the frame on success, 0 if an encoding error occured and -1
+ * encoded bytes in the frame on success, 0 if an encoding error occurred and -1
  * if a fatal error occurred. */
 static int
 spoe_prepare_hahello_frame(struct appctx *appctx, char *frame, size_t size)
 {
-	struct chunk      *chk;
+	struct buffer      *chk;
 	struct spoe_agent *agent = SPOE_APPCTX(appctx)->agent;
 	char              *p, *end;
 	unsigned int       flags = SPOE_FRM_FL_FIN;
@@ -435,20 +440,20 @@ spoe_prepare_hahello_frame(struct appctx *appctx, char *frame, size_t size)
 	*p++ = SPOE_DATA_T_STR;
 	chk = get_trash_chunk();
 	if (agent != NULL && (agent->flags & SPOE_FL_PIPELINING)) {
-		memcpy(chk->str, "pipelining", 10);
-		chk->len += 10;
+		memcpy(chk->area, "pipelining", 10);
+		chk->data += 10;
 	}
 	if (agent != NULL && (agent->flags & SPOE_FL_ASYNC)) {
-		if (chk->len) chk->str[chk->len++] = ',';
-		memcpy(chk->str+chk->len, "async", 5);
-		chk->len += 5;
+		if (chk->data) chk->area[chk->data++] = ',';
+		memcpy(chk->area+chk->data, "async", 5);
+		chk->data += 5;
 	}
 	if (agent != NULL && (agent->flags & SPOE_FL_RCV_FRAGMENTATION)) {
-		if (chk->len) chk->str[chk->len++] = ',';
-		memcpy(chk->str+chk->len, "fragmentation", 13);
-		chk->len += 13;
+		if (chk->data) chk->area[chk->data++] = ',';
+		memcpy(chk->area+chk->data, "fragmentation", 13);
+		chk->data += 13;
 	}
-	if (spoe_encode_buffer(chk->str, chk->len, &p, end) == -1)
+	if (spoe_encode_buffer(chk->area, chk->data, &p, end) == -1)
 		goto too_big;
 
 	/* (optionnal) "engine-id" K/V item, if present */
@@ -571,10 +576,10 @@ spoe_prepare_hanotify_frame(struct appctx *appctx, struct spoe_context *ctx,
 		goto too_big;
 
 	/* Copy encoded messages, if possible */
-	sz = ctx->buffer->i;
+	sz = b_data(&ctx->buffer);
 	if (p + sz >= end)
 		goto too_big;
-	memcpy(p, ctx->buffer->p, sz);
+	memcpy(p, b_head(&ctx->buffer), sz);
 	p += sz;
 
 	return (p - frame);
@@ -631,10 +636,10 @@ spoe_prepare_hafrag_frame(struct appctx *appctx, struct spoe_context *ctx,
 		goto end;
 
 	/* Copy encoded messages, if possible */
-	sz = ctx->buffer->i;
+	sz = b_data(&ctx->buffer);
 	if (p + sz >= end)
 		goto too_big;
-	memcpy(p, ctx->buffer->p, sz);
+	memcpy(p, b_head(&ctx->buffer), sz);
 	p += sz;
 
   end:
@@ -819,14 +824,10 @@ spoe_handle_agenthello_frame(struct appctx *appctx, char *frame, size_t size)
 		SPOE_APPCTX(appctx)->status_code = SPOE_FRM_ERR_NO_FRAME_SIZE;
 		return -1;
 	}
-	if (!agent)
-		flags &= ~(SPOE_APPCTX_FL_PIPELINING|SPOE_APPCTX_FL_ASYNC);
-	else {
-		if ((flags & SPOE_APPCTX_FL_PIPELINING) && !(agent->flags & SPOE_FL_PIPELINING))
-			flags &= ~SPOE_APPCTX_FL_PIPELINING;
-		if ((flags & SPOE_APPCTX_FL_ASYNC) && !(agent->flags & SPOE_FL_ASYNC))
-			flags &= ~SPOE_APPCTX_FL_ASYNC;
-	}
+	if ((flags & SPOE_APPCTX_FL_PIPELINING) && !(agent->flags & SPOE_FL_PIPELINING))
+		flags &= ~SPOE_APPCTX_FL_PIPELINING;
+	if ((flags & SPOE_APPCTX_FL_ASYNC) && !(agent->flags & SPOE_FL_ASYNC))
+		flags &= ~SPOE_APPCTX_FL_ASYNC;
 
 	SPOE_APPCTX(appctx)->version        = (unsigned int)vsn;
 	SPOE_APPCTX(appctx)->max_frame_size = (unsigned int)max_frame_size;
@@ -1013,7 +1014,6 @@ spoe_handle_agentack_frame(struct appctx *appctx, struct spoe_context **ctx,
 		/* ABRT bit is set for an unfinished fragmented frame */
 		if (flags & SPOE_FRM_FL_ABRT) {
 			*ctx = SPOE_APPCTX(appctx)->frag_ctx.ctx;
-			(*ctx)->frag_ctx.spoe_appctx = NULL;
 			(*ctx)->state = SPOE_CTX_ST_ERROR;
 			(*ctx)->status_code = SPOE_CTX_ERR_FRAG_FRAME_ABRT;
 			/* Ignore the payload */
@@ -1047,13 +1047,13 @@ spoe_handle_agentack_frame(struct appctx *appctx, struct spoe_context **ctx,
 
 	/* Copy encoded actions */
 	len = (end - p);
-	memcpy(SPOE_APPCTX(appctx)->buffer->p, p, len);
-	SPOE_APPCTX(appctx)->buffer->i = len;
+	memcpy(b_head(&SPOE_APPCTX(appctx)->buffer), p, len);
+	b_set_data(&SPOE_APPCTX(appctx)->buffer, len);
 	p += len;
 
 	/* Transfer the buffer ownership to the SPOE context */
 	(*ctx)->buffer = SPOE_APPCTX(appctx)->buffer;
-	SPOE_APPCTX(appctx)->buffer = &buf_empty;
+	SPOE_APPCTX(appctx)->buffer = BUF_NULL;
 
 	(*ctx)->state = SPOE_CTX_ST_DONE;
 
@@ -1157,9 +1157,8 @@ spoe_send_frame(struct appctx *appctx, char *buf, size_t framesz)
 	memcpy(buf, (char *)&netint, 4);
 	ret = ci_putblk(si_ic(si), buf, framesz+4);
 	if (ret <= 0) {
-		if ((ret == -3 && si_ic(si)->buf == &buf_empty) || ret == -1) {
-		  retry:
-			si_applet_cant_put(si);
+		if ((ret == -3 && b_is_null(&si_ic(si)->buf)) || ret == -1) {
+			si_rx_room_blk(si);
 			return 1; /* retry */
 		}
 		SPOE_APPCTX(appctx)->status_code = SPOE_FRM_ERR_IO;
@@ -1189,7 +1188,6 @@ spoe_recv_frame(struct appctx *appctx, char *buf, size_t framesz)
 	}
 	if (ret <= 0) {
 		if (ret == 0) {
-		  retry:
 			return 1; /* retry */
 		}
 		SPOE_APPCTX(appctx)->status_code = SPOE_FRM_ERR_IO;
@@ -1204,8 +1202,8 @@ spoe_recv_frame(struct appctx *appctx, char *buf, size_t framesz)
 static int
 spoe_wakeup_appctx(struct appctx *appctx)
 {
-	si_applet_want_get(appctx->owner);
-	si_applet_want_put(appctx->owner);
+	si_want_get(appctx->owner);
+	si_rx_endp_more(appctx->owner);
 	appctx_wakeup(appctx);
 	return 1;
 }
@@ -1213,9 +1211,9 @@ spoe_wakeup_appctx(struct appctx *appctx)
 /* Callback function that catches applet timeouts. If a timeout occurred, we set
  * <appctx->st1> flag and the SPOE applet is woken up. */
 static struct task *
-spoe_process_appctx(struct task * task)
+spoe_process_appctx(struct task * task, void *context, unsigned short state)
 {
-	struct appctx *appctx = task->context;
+	struct appctx *appctx = context;
 
 	appctx->st1 = SPOE_APPCTX_ERR_NONE;
 	if (tick_is_expired(task->expire, now_ms)) {
@@ -1247,16 +1245,20 @@ spoe_release_appctx(struct appctx *appctx)
 		    __FUNCTION__, appctx);
 
 	/* Remove applet from the list of running applets */
-	agent->rt[tid].applets_act--;
+	HA_ATOMIC_SUB(&agent->counters.applets, 1);
+	HA_SPIN_LOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
 	if (!LIST_ISEMPTY(&spoe_appctx->list)) {
 		LIST_DEL(&spoe_appctx->list);
 		LIST_INIT(&spoe_appctx->list);
 	}
+	HA_SPIN_UNLOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
 
 	/* Shutdown the server connection, if needed */
 	if (appctx->st0 != SPOE_APPCTX_ST_END) {
-		if (appctx->st0 == SPOE_APPCTX_ST_IDLE)
-			agent->rt[tid].applets_idle--;
+		if (appctx->st0 == SPOE_APPCTX_ST_IDLE) {
+			eb32_delete(&spoe_appctx->node);
+			HA_ATOMIC_SUB(&agent->counters.idles, 1);
+		}
 
 		appctx->st0 = SPOE_APPCTX_ST_END;
 		if (spoe_appctx->status_code == SPOE_FRM_ERR_NONE)
@@ -1277,6 +1279,8 @@ spoe_release_appctx(struct appctx *appctx)
 	list_for_each_entry_safe(ctx, back, &spoe_appctx->waiting_queue, list) {
 		LIST_DEL(&ctx->list);
 		LIST_INIT(&ctx->list);
+		HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+		spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
@@ -1286,7 +1290,7 @@ spoe_release_appctx(struct appctx *appctx)
 	 * corresponding stream. */
 	if (spoe_appctx->frag_ctx.ctx) {
 		ctx = spoe_appctx->frag_ctx.ctx;
-		ctx->frag_ctx.spoe_appctx = NULL;
+		ctx->spoe_appctx = NULL;
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
@@ -1304,6 +1308,8 @@ spoe_release_appctx(struct appctx *appctx)
 	list_for_each_entry_safe(ctx, back, &agent->rt[tid].sending_queue, list) {
 		LIST_DEL(&ctx->list);
 		LIST_INIT(&ctx->list);
+		HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+		spoe_update_stat_time(&ctx->stats.tv_queue, &ctx->stats.t_queue);
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
@@ -1311,6 +1317,8 @@ spoe_release_appctx(struct appctx *appctx)
 	list_for_each_entry_safe(ctx, back, &agent->rt[tid].waiting_queue, list) {
 		LIST_DEL(&ctx->list);
 		LIST_INIT(&ctx->list);
+		HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+		spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
@@ -1332,7 +1340,7 @@ spoe_handle_connect_appctx(struct appctx *appctx)
 	int   ret;
 
 	if (si->state <= SI_ST_CON) {
-		si_applet_want_put(si);
+		si_rx_endp_more(si);
 		task_wakeup(si_strm(si)->task, TASK_WOKEN_MSG);
 		goto stop;
 	}
@@ -1356,7 +1364,7 @@ spoe_handle_connect_appctx(struct appctx *appctx)
 
 	/* 4 bytes are reserved at the beginning of <buf> to store the frame
 	 * length. */
-	buf = trash.str; frame = buf+4;
+	buf = trash.area; frame = buf+4;
 	ret = spoe_prepare_hahello_frame(appctx, frame,
 					 SPOE_APPCTX(appctx)->max_frame_size);
 	if (ret > 1)
@@ -1409,7 +1417,7 @@ spoe_handle_connecting_appctx(struct appctx *appctx)
 		goto exit;
 	}
 
-	frame = trash.str; trash.len = 0;
+	frame = trash.area; trash.data = 0;
 	ret = spoe_recv_frame(appctx, frame,
 			      SPOE_APPCTX(appctx)->max_frame_size);
 	if (ret > 1) {
@@ -1417,7 +1425,7 @@ spoe_handle_connecting_appctx(struct appctx *appctx)
 			appctx->st0 = SPOE_APPCTX_ST_DISCONNECTING;
 			goto next;
 		}
-		trash.len = ret + 4;
+		trash.data = ret + 4;
 		ret = spoe_handle_agenthello_frame(appctx, frame, ret);
 	}
 
@@ -1433,12 +1441,10 @@ spoe_handle_connecting_appctx(struct appctx *appctx)
 		default:
 			/* HELLO handshake is finished, set the idle timeout and
 			 * add the applet in the list of running applets. */
-			agent->rt[tid].applets_idle++;
+			HA_ATOMIC_ADD(&agent->counters.idles, 1);
 			appctx->st0 = SPOE_APPCTX_ST_IDLE;
-			HA_SPIN_LOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
-			LIST_DEL(&SPOE_APPCTX(appctx)->list);
-			LIST_ADD(&agent->rt[tid].applets, &SPOE_APPCTX(appctx)->list);
-			HA_SPIN_UNLOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
+			SPOE_APPCTX(appctx)->node.key = 0;
+			eb32_insert(&agent->rt[tid].idle_applets, &SPOE_APPCTX(appctx)->node);
 
 			/* Update runtinme agent info */
 			HA_ATOMIC_UPDATE_MIN(&agent->rt[tid].frame_size, SPOE_APPCTX(appctx)->max_frame_size);
@@ -1447,8 +1453,8 @@ spoe_handle_connecting_appctx(struct appctx *appctx)
 
   next:
 	/* Do not forget to remove processed frame from the output buffer */
-	if (trash.len)
-		co_skip(si_oc(si), trash.len);
+	if (trash.data)
+		co_skip(si_oc(si), trash.data);
 
 	SPOE_APPCTX(appctx)->task->expire =
 		tick_add_ifset(now_ms, agent->timeout.idle);
@@ -1471,7 +1477,7 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 
 	/* 4 bytes are reserved at the beginning of <buf> to store the frame
 	 * length. */
-	buf = trash.str; frame = buf+4;
+	buf = trash.area; frame = buf+4;
 
 	if (appctx->st0 == SPOE_APPCTX_ST_SENDING_FRAG_NOTIFY) {
 		ctx = SPOE_APPCTX(appctx)->frag_ctx.ctx;
@@ -1505,9 +1511,13 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 			spoe_release_buffer(&ctx->buffer, &ctx->buffer_wait);
 			LIST_DEL(&ctx->list);
 			LIST_INIT(&ctx->list);
+			HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+			spoe_update_stat_time(&ctx->stats.tv_queue, &ctx->stats.t_queue);
+			ctx->spoe_appctx = NULL;
 			ctx->state = SPOE_CTX_ST_ERROR;
 			ctx->status_code = (SPOE_APPCTX(appctx)->status_code + 0x100);
 			task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
+			*skip = 1;
 			break;
 
 		case 1: /* retry */
@@ -1521,23 +1531,23 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 			spoe_release_buffer(&ctx->buffer, &ctx->buffer_wait);
 			LIST_DEL(&ctx->list);
 			LIST_INIT(&ctx->list);
+			HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+			spoe_update_stat_time(&ctx->stats.tv_queue, &ctx->stats.t_queue);
+			ctx->spoe_appctx = SPOE_APPCTX(appctx);
 			if (!(ctx->flags & SPOE_CTX_FL_FRAGMENTED) ||
 			    (ctx->frag_ctx.flags & SPOE_FRM_FL_FIN))
 				goto no_frag_frame_sent;
-			else {
-				*skip = 1;
+			else
 				goto frag_frame_sent;
-			}
 	}
 	goto end;
 
   frag_frame_sent:
 	appctx->st0 = SPOE_APPCTX_ST_SENDING_FRAG_NOTIFY;
+	*skip = 1;
 	SPOE_APPCTX(appctx)->frag_ctx.ctx    = ctx;
 	SPOE_APPCTX(appctx)->frag_ctx.cursid = ctx->stream_id;
 	SPOE_APPCTX(appctx)->frag_ctx.curfid = ctx->frame_id;
-
-	ctx->frag_ctx.spoe_appctx = SPOE_APPCTX(appctx);
 	ctx->state = SPOE_CTX_ST_ENCODING_MSGS;
 	task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
 	goto end;
@@ -1553,13 +1563,16 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 	}
 	else {
 		appctx->st0 = SPOE_APPCTX_ST_WAITING_SYNC_ACK;
+		*skip = 1;
 		LIST_ADDQ(&SPOE_APPCTX(appctx)->waiting_queue, &ctx->list);
 	}
+	HA_ATOMIC_ADD(&agent->counters.nb_waiting, 1);
+	ctx->stats.tv_wait = now;
 	SPOE_APPCTX(appctx)->frag_ctx.ctx    = NULL;
 	SPOE_APPCTX(appctx)->frag_ctx.cursid = 0;
 	SPOE_APPCTX(appctx)->frag_ctx.curfid = 0;
+	SPOE_APPCTX(appctx)->cur_fpa++;
 
-	ctx->frag_ctx.spoe_appctx = NULL;
 	ctx->state = SPOE_CTX_ST_WAITING_ACK;
 	goto end;
 
@@ -1577,19 +1590,21 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 static int
 spoe_handle_receiving_frame_appctx(struct appctx *appctx, int *skip)
 {
+	struct spoe_agent   *agent = SPOE_APPCTX(appctx)->agent;
 	struct spoe_context *ctx = NULL;
 	char *frame;
 	int   ret;
 
-	frame = trash.str; trash.len = 0;
+	frame = trash.area; trash.data = 0;
 	ret = spoe_recv_frame(appctx, frame,
 			      SPOE_APPCTX(appctx)->max_frame_size);
 	if (ret > 1) {
 		if (*frame == SPOE_FRM_T_AGENT_DISCON) {
 			appctx->st0 = SPOE_APPCTX_ST_DISCONNECTING;
+			ret = -1;
 			goto end;
 		}
-		trash.len = ret + 4;
+		trash.data = ret + 4;
 		ret = spoe_handle_agentack_frame(appctx, &ctx, frame, ret);
 	}
 	switch (ret) {
@@ -1607,7 +1622,13 @@ spoe_handle_receiving_frame_appctx(struct appctx *appctx, int *skip)
 		default:
 			LIST_DEL(&ctx->list);
 			LIST_INIT(&ctx->list);
-
+			HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+			spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
+			ctx->stats.tv_response = now;
+			if (ctx->spoe_appctx) {
+				ctx->spoe_appctx->cur_fpa--;
+				ctx->spoe_appctx = NULL;
+			}
 			if (appctx->st0 == SPOE_APPCTX_ST_SENDING_FRAG_NOTIFY &&
 			    ctx == SPOE_APPCTX(appctx)->frag_ctx.ctx) {
 				appctx->st0 = SPOE_APPCTX_ST_PROCESSING;
@@ -1617,14 +1638,13 @@ spoe_handle_receiving_frame_appctx(struct appctx *appctx, int *skip)
 			}
 			else if (appctx->st0 == SPOE_APPCTX_ST_WAITING_SYNC_ACK)
 				appctx->st0 = SPOE_APPCTX_ST_PROCESSING;
-
 			task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
 			break;
 	}
 
 	/* Do not forget to remove processed frame from the output buffer */
-	if (trash.len)
-		co_skip(si_oc(appctx->owner), trash.len);
+	if (trash.data)
+		co_skip(si_oc(appctx->owner), trash.data);
   end:
 	return ret;
 }
@@ -1634,8 +1654,7 @@ spoe_handle_processing_appctx(struct appctx *appctx)
 {
 	struct stream_interface *si    = appctx->owner;
 	struct spoe_agent       *agent = SPOE_APPCTX(appctx)->agent;
-	unsigned int  fpa = 0;
-	int           ret, skip_sending = 0, skip_receiving = 0;
+	int ret, skip_sending = 0, skip_receiving = 0, active_s = 0, active_r = 0;
 
 	if (si->state == SI_ST_CLO || si_opposite(si)->state == SI_ST_CLO) {
 		SPOE_APPCTX(appctx)->status_code = SPOE_FRM_ERR_IO;
@@ -1649,85 +1668,75 @@ spoe_handle_processing_appctx(struct appctx *appctx)
 		goto next;
 	}
 
-  process:
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: appctx=%p"
-		    " - process: fpa=%u/%u - skip_sending=%d - skip_receiving=%d"
-		    " - appctx-state=%s\n",
+		    " - process: fpa=%u/%u - appctx-state=%s - weight=%u - flags=0x%08x\n",
 		    (int)now.tv_sec, (int)now.tv_usec, agent->id,
-		    __FUNCTION__, appctx, fpa, agent->max_fpa,
-		    skip_sending, skip_receiving,
-		    spoe_appctx_state_str[appctx->st0]);
+		    __FUNCTION__, appctx, SPOE_APPCTX(appctx)->cur_fpa,
+		    agent->max_fpa, spoe_appctx_state_str[appctx->st0],
+		    SPOE_APPCTX(appctx)->node.key, SPOE_APPCTX(appctx)->flags);
 
-	if (fpa > agent->max_fpa)
-		goto stop;
-	else if (skip_sending || appctx->st0 == SPOE_APPCTX_ST_WAITING_SYNC_ACK) {
-		if (skip_receiving)
-			goto stop;
-		goto recv_frame;
+	if (appctx->st0 == SPOE_APPCTX_ST_WAITING_SYNC_ACK)
+		skip_sending = 1;
+
+	/* receiving_frame loop */
+	while (!skip_receiving) {
+		ret = spoe_handle_receiving_frame_appctx(appctx, &skip_receiving);
+		switch (ret) {
+			case -1: /* error */
+				goto next;
+
+			case 0: /* ignore */
+				active_r = 1;
+				break;
+
+			case 1: /* retry */
+				break;
+
+			default:
+				active_r = 1;
+				break;
+		}
 	}
 
-	/* send_frame */
-	ret = spoe_handle_sending_frame_appctx(appctx, &skip_sending);
-	switch (ret) {
-		case -1: /* error */
-			goto next;
+	/* send_frame loop */
+	while (!skip_sending && SPOE_APPCTX(appctx)->cur_fpa < agent->max_fpa) {
+		ret = spoe_handle_sending_frame_appctx(appctx, &skip_sending);
+		switch (ret) {
+			case -1: /* error */
+				goto next;
 
-		case 0: /* ignore */
-			agent->rt[tid].sending_rate++;
-			fpa++;
-			break;
+			case 0: /* ignore */
+				if (SPOE_APPCTX(appctx)->node.key)
+					SPOE_APPCTX(appctx)->node.key--;
+				active_s++;
+				break;
 
-		case 1: /* retry */
-			break;
+			case 1: /* retry */
+				break;
 
-		default:
-			agent->rt[tid].sending_rate++;
-			fpa++;
-			break;
+			default:
+				if (SPOE_APPCTX(appctx)->node.key)
+					SPOE_APPCTX(appctx)->node.key--;
+				active_s++;
+				break;
+		}
 	}
-	if (fpa > agent->max_fpa)
-		goto stop;
 
-  recv_frame:
-	if (skip_receiving)
-		goto process;
-	ret = spoe_handle_receiving_frame_appctx(appctx, &skip_receiving);
-	switch (ret) {
-		case -1: /* error */
-			goto next;
-
-		case 0: /* ignore */
-			fpa++;
-			break;
-
-		case 1: /* retry */
-			break;
-
-		default:
-			fpa++;
-			break;
+	if (active_s || active_r) {
+		update_freq_ctr(&agent->rt[tid].processing_per_sec, active_s);
+		SPOE_APPCTX(appctx)->task->expire = tick_add_ifset(now_ms, agent->timeout.idle);
 	}
-	goto process;
 
-  next:
-	SPOE_APPCTX(appctx)->task->expire =
-		tick_add_ifset(now_ms, agent->timeout.idle);
-	return 0;
-  stop:
-	if (appctx->st0 == SPOE_APPCTX_ST_PROCESSING) {
+	if (appctx->st0 == SPOE_APPCTX_ST_PROCESSING && SPOE_APPCTX(appctx)->cur_fpa < agent->max_fpa) {
+		HA_ATOMIC_ADD(&agent->counters.idles, 1);
 		appctx->st0 = SPOE_APPCTX_ST_IDLE;
-		agent->rt[tid].applets_idle++;
-	}
-	if (fpa || (SPOE_APPCTX(appctx)->flags & SPOE_APPCTX_FL_PERSIST)) {
-		HA_SPIN_LOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
-		LIST_DEL(&SPOE_APPCTX(appctx)->list);
-		LIST_ADD(&agent->rt[tid].applets, &SPOE_APPCTX(appctx)->list);
-		HA_SPIN_UNLOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
-		if (fpa)
-			SPOE_APPCTX(appctx)->task->expire =
-				tick_add_ifset(now_ms, agent->timeout.idle);
+		eb32_insert(&agent->rt[tid].idle_applets, &SPOE_APPCTX(appctx)->node);
 	}
 	return 1;
+
+  next:
+	SPOE_APPCTX(appctx)->task->expire = tick_add_ifset(now_ms, agent->timeout.idle);
+	return 0;
 
   exit:
 	appctx->st0 = SPOE_APPCTX_ST_EXIT;
@@ -1750,7 +1759,7 @@ spoe_handle_disconnect_appctx(struct appctx *appctx)
 
 	/* 4 bytes are reserved at the beginning of <buf> to store the frame
 	 * length. */
-	buf = trash.str; frame = buf+4;
+	buf = trash.area; frame = buf+4;
 	ret = spoe_prepare_hadiscon_frame(appctx, frame,
 					  SPOE_APPCTX(appctx)->max_frame_size);
 	if (ret > 1)
@@ -1804,11 +1813,11 @@ spoe_handle_disconnecting_appctx(struct appctx *appctx)
 		goto exit;
 	}
 
-	frame = trash.str; trash.len = 0;
+	frame = trash.area; trash.data = 0;
 	ret = spoe_recv_frame(appctx, frame,
 			      SPOE_APPCTX(appctx)->max_frame_size);
 	if (ret > 1) {
-		trash.len = ret + 4;
+		trash.data = ret + 4;
 		ret = spoe_handle_agentdiscon_frame(appctx, frame, ret);
 	}
 
@@ -1840,8 +1849,8 @@ spoe_handle_disconnecting_appctx(struct appctx *appctx)
 
   next:
 	/* Do not forget to remove processed frame from the output buffer */
-	if (trash.len)
-		co_skip(si_oc(appctx->owner), trash.len);
+	if (trash.data)
+		co_skip(si_oc(appctx->owner), trash.data);
 
 	return 0;
   stop:
@@ -1882,7 +1891,8 @@ spoe_handle_appctx(struct appctx *appctx)
 			goto switchstate;
 
 		case SPOE_APPCTX_ST_IDLE:
-			agent->rt[tid].applets_idle--;
+			HA_ATOMIC_SUB(&agent->counters.idles, 1);
+			eb32_delete(&SPOE_APPCTX(appctx)->node);
 			if (stopping &&
 			    LIST_ISEMPTY(&agent->rt[tid].sending_queue) &&
 			    LIST_ISEMPTY(&SPOE_APPCTX(appctx)->waiting_queue)) {
@@ -1969,7 +1979,8 @@ spoe_create_appctx(struct spoe_config *conf)
 	SPOE_APPCTX(appctx)->max_frame_size  = conf->agent->max_frame_size;
 	SPOE_APPCTX(appctx)->flags           = 0;
 	SPOE_APPCTX(appctx)->status_code     = SPOE_FRM_ERR_NONE;
-	SPOE_APPCTX(appctx)->buffer          = &buf_empty;
+	SPOE_APPCTX(appctx)->buffer          = BUF_NULL;
+	SPOE_APPCTX(appctx)->cur_fpa         = 0;
 
 	LIST_INIT(&SPOE_APPCTX(appctx)->buffer_wait.list);
 	SPOE_APPCTX(appctx)->buffer_wait.target = appctx;
@@ -1988,7 +1999,7 @@ spoe_create_appctx(struct spoe_config *conf)
 	stream_set_backend(strm, conf->agent->b.be);
 
 	/* applet is waiting for data */
-	si_applet_cant_get(&strm->si[0]);
+	si_cant_get(&strm->si[0]);
 	appctx_wakeup(appctx);
 
 	strm->do_log = NULL;
@@ -1997,7 +2008,7 @@ spoe_create_appctx(struct spoe_config *conf)
 	HA_SPIN_LOCK(SPOE_APPLET_LOCK, &conf->agent->rt[tid].lock);
 	LIST_ADDQ(&conf->agent->rt[tid].applets, &SPOE_APPCTX(appctx)->list);
 	HA_SPIN_UNLOCK(SPOE_APPLET_LOCK, &conf->agent->rt[tid].lock);
-	conf->agent->rt[tid].applets_act++;
+	HA_ATOMIC_ADD(&conf->agent->counters.applets, 1);
 
 	task_wakeup(SPOE_APPCTX(appctx)->task, TASK_WOKEN_INIT);
 	task_wakeup(strm->task, TASK_WOKEN_INIT);
@@ -2023,14 +2034,10 @@ spoe_queue_context(struct spoe_context *ctx)
 	struct spoe_agent  *agent = conf->agent;
 	struct appctx      *appctx;
 	struct spoe_appctx *spoe_appctx;
-	unsigned int        min_applets;
-
-	min_applets = min_applets_act(agent);
 
 	/* Check if we need to create a new SPOE applet or not. */
-	if (agent->rt[tid].applets_act >= min_applets &&
-	    agent->rt[tid].applets_idle &&
-	    agent->rt[tid].sending_rate)
+	if (!eb_is_empty(&agent->rt[tid].idle_applets) &&
+	    agent->rt[tid].processing < read_freq_ctr(&agent->rt[tid].processing_per_sec))
 		goto end;
 
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
@@ -2066,7 +2073,7 @@ spoe_queue_context(struct spoe_context *ctx)
 			    " - failed to create SPOE appctx\n",
 			    (int)now.tv_sec, (int)now.tv_usec, agent->id,
 			    __FUNCTION__, ctx->strm);
-		send_log(ctx->strm->be, LOG_EMERG,
+		send_log(&conf->agent_fe, LOG_EMERG,
 			 "SPOE: [%s] failed to create SPOE applet\n",
 			 agent->id);
 
@@ -2086,30 +2093,30 @@ spoe_queue_context(struct spoe_context *ctx)
 		return -1;
 	}
 
-	/* Add the SPOE context in the sending queue and update all running
-	 * info */
+	/* Add the SPOE context in the sending queue */
 	LIST_ADDQ(&agent->rt[tid].sending_queue, &ctx->list);
-	if (agent->rt[tid].sending_rate)
-		agent->rt[tid].sending_rate--;
+	HA_ATOMIC_ADD(&agent->counters.nb_sending, 1);
+	spoe_update_stat_time(&ctx->stats.tv_request, &ctx->stats.t_request);
+	ctx->stats.tv_queue = now;
 
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
 		    " - Add stream in sending queue"
-		    " - applets_act=%u - applets_idle=%u - sending_rate=%u\n",
+		    " - applets=%u - idles=%u - processing=%u\n",
 		    (int)now.tv_sec, (int)now.tv_usec, agent->id, __FUNCTION__,
-		    ctx->strm, agent->rt[tid].applets_act, agent->rt[tid].applets_idle,
-		    agent->rt[tid].sending_rate);
+		    ctx->strm, agent->counters.applets, agent->counters.idles,
+		    agent->rt[tid].processing);
 
-	/* Finally try to wakeup the first IDLE applet found and move it at the
-	 * end of the list. */
-	list_for_each_entry(spoe_appctx, &agent->rt[tid].applets, list) {
-		appctx = spoe_appctx->owner;
-		if (appctx->st0 == SPOE_APPCTX_ST_IDLE) {
-			spoe_wakeup_appctx(appctx);
-			HA_SPIN_LOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
-			LIST_DEL(&spoe_appctx->list);
-			LIST_ADDQ(&agent->rt[tid].applets, &spoe_appctx->list);
-			HA_SPIN_UNLOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
-			break;
+	/* Finally try to wakeup an IDLE applet. */
+	if (!eb_is_empty(&agent->rt[tid].idle_applets)) {
+		struct eb32_node *node;
+
+		node = eb32_first(&agent->rt[tid].idle_applets);
+		spoe_appctx = eb32_entry(node, struct spoe_appctx, node);
+		if (node && spoe_appctx) {
+			eb32_delete(&spoe_appctx->node);
+			spoe_appctx->node.key++;
+			eb32_insert(&agent->rt[tid].idle_applets, &spoe_appctx->node);
+			spoe_wakeup_appctx(spoe_appctx->owner);
 		}
 	}
 	return 1;
@@ -2176,14 +2183,14 @@ spoe_encode_message(struct stream *s, struct spoe_context *ctx,
 		if (ctx->frag_ctx.curoff != UINT_MAX)
 			goto encode_arg_value;
 
-		/* Encode the arguement name as a string. It can by NULL */
+		/* Encode the argument name as a string. It can by NULL */
 		if (spoe_encode_buffer(arg->name, arg->name_len, buf, end) == -1)
 			goto too_big;
 
 		ctx->frag_ctx.curoff = 0;
 	  encode_arg_value:
 
-		/* Fetch the arguement value */
+		/* Fetch the argument value */
 		smp = sample_process(s->be, s->sess, s, dir|SMP_OPT_FINAL, arg->expr, NULL);
 		ret = spoe_encode_data(smp, &ctx->frag_ctx.curoff, buf, end);
 		if (ret == -1 || ctx->frag_ctx.curoff)
@@ -2210,7 +2217,7 @@ spoe_encode_messages(struct stream *s, struct spoe_context *ctx,
 	struct spoe_message *msg;
 	char   *p, *end;
 
-	p   = ctx->buffer->p;
+	p   = b_head(&ctx->buffer);
 	end =  p + agent->rt[tid].frame_size - FRAME_HDR_SIZE;
 
 	if (type == SPOE_MSGS_BY_EVENT) { /* Loop on messages by event */
@@ -2252,7 +2259,7 @@ spoe_encode_messages(struct stream *s, struct spoe_context *ctx,
 
 
 	/* nothing has been encoded for an unfragmented payload */
-	if (!(ctx->flags & SPOE_CTX_FL_FRAGMENTED) && p == ctx->buffer->p)
+	if (!(ctx->flags & SPOE_CTX_FL_FRAGMENTED) && p == b_head(&ctx->buffer))
 		goto skip;
 
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
@@ -2261,10 +2268,10 @@ spoe_encode_messages(struct stream *s, struct spoe_context *ctx,
 		    (int)now.tv_sec, (int)now.tv_usec,
 		    agent->id, __FUNCTION__, s,
 		    ((ctx->flags & SPOE_CTX_FL_FRAGMENTED) ? "last fragment of" : "unfragmented"),
-		    ctx->frag_ctx.spoe_appctx, (agent->rt[tid].frame_size - FRAME_HDR_SIZE),
-		    p - ctx->buffer->p);
+		    ctx->spoe_appctx, (agent->rt[tid].frame_size - FRAME_HDR_SIZE),
+		    p - b_head(&ctx->buffer));
 
-	ctx->buffer->i = p - ctx->buffer->p;
+	b_set_data(&ctx->buffer, p - b_head(&ctx->buffer));
 	ctx->frag_ctx.curmsg = NULL;
 	ctx->frag_ctx.curarg = NULL;
 	ctx->frag_ctx.curoff = 0;
@@ -2283,11 +2290,11 @@ spoe_encode_messages(struct stream *s, struct spoe_context *ctx,
 		    " - curmsg=%p - curarg=%p - curoff=%u"
 		    " - max_size=%u - encoded=%ld\n",
 		    (int)now.tv_sec, (int)now.tv_usec,
-		    agent->id, __FUNCTION__, s, ctx->frag_ctx.spoe_appctx,
+		    agent->id, __FUNCTION__, s, ctx->spoe_appctx,
 		    ctx->frag_ctx.curmsg, ctx->frag_ctx.curarg, ctx->frag_ctx.curoff,
-		    (agent->rt[tid].frame_size - FRAME_HDR_SIZE), p - ctx->buffer->p);
+		    (agent->rt[tid].frame_size - FRAME_HDR_SIZE), p - b_head(&ctx->buffer));
 
-	ctx->buffer->i = p - ctx->buffer->p;
+	b_set_data(&ctx->buffer, p - b_head(&ctx->buffer));
 	ctx->flags |= SPOE_CTX_FL_FRAGMENTED;
 	ctx->frag_ctx.flags &= ~SPOE_FRM_FL_FIN;
 	return 1;
@@ -2316,7 +2323,10 @@ spoe_set_var(struct spoe_context *ctx, char *scope, char *name, int len,
 	memset(varname, 0, sizeof(varname));
 	len = snprintf(varname, sizeof(varname), "%s.%s.%.*s",
 		       scope, agent->var_pfx, len, name);
-	vars_set_by_name_ifexist(varname, len, smp);
+	if (agent->flags & SPOE_FL_FORCE_SET_VAR)
+		vars_set_by_name(varname, len, smp);
+	else
+		vars_set_by_name_ifexist(varname, len, smp);
 }
 
 /* Helper function to unset a variable */
@@ -2440,8 +2450,8 @@ spoe_process_actions(struct stream *s, struct spoe_context *ctx, int dir)
 	char *p, *end;
 	int   ret;
 
-	p   = ctx->buffer->p;
-	end = p + ctx->buffer->i;
+	p   = b_head(&ctx->buffer);
+	end = p + b_data(&ctx->buffer);
 
 	while (p < end)  {
 		enum spoe_action_type type;
@@ -2473,51 +2483,41 @@ spoe_process_actions(struct stream *s, struct spoe_context *ctx, int dir)
 /***************************************************************************
  * Functions that process SPOE events
  **************************************************************************/
-static inline int
-spoe_start_processing(struct spoe_context *ctx, int dir)
+static void
+spoe_update_stats(struct stream *s, struct spoe_agent *agent,
+		  struct spoe_context *ctx, int dir)
 {
-	/* If a process is already started for this SPOE context, retry
-	 * later. */
-	if (ctx->flags & SPOE_CTX_FL_PROCESS)
-		return 0;
-
-	/* Set the right flag to prevent request and response processing
-	 * in same time. */
-	ctx->flags |= ((dir == SMP_OPT_DIR_REQ)
-		       ? SPOE_CTX_FL_REQ_PROCESS
-		       : SPOE_CTX_FL_RSP_PROCESS);
-	return 1;
-}
-
-static inline void
-spoe_stop_processing(struct spoe_context *ctx)
-{
-	struct spoe_appctx *sa = ctx->frag_ctx.spoe_appctx;
-
-	if (sa) {
-		sa->frag_ctx.ctx = NULL;
-		spoe_wakeup_appctx(sa->owner);
+	if (!tv_iszero(&ctx->stats.tv_start)) {
+		spoe_update_stat_time(&ctx->stats.tv_start, &ctx->stats.t_process);
+		ctx->stats.t_total  += ctx->stats.t_process;
+		tv_zero(&ctx->stats.tv_request);
+		tv_zero(&ctx->stats.tv_queue);
+		tv_zero(&ctx->stats.tv_wait);
+		tv_zero(&ctx->stats.tv_response);
 	}
 
-	/* Reset the flag to allow next processing */
-	ctx->flags &= ~(SPOE_CTX_FL_PROCESS|SPOE_CTX_FL_FRAGMENTED);
+	if (agent->var_t_process) {
+		struct sample smp;
 
-	ctx->status_code = 0;
+		memset(&smp, 0, sizeof(smp));
+		smp_set_owner(&smp, s->be, s->sess, s, dir|SMP_OPT_FINAL);
+		smp.data.u.sint = ctx->stats.t_process;
+		smp.data.type   = SMP_T_SINT;
 
-	/* Reset processing timer */
-	ctx->process_exp = TICK_ETERNITY;
+		spoe_set_var(ctx, "txn", agent->var_t_process,
+			     strlen(agent->var_t_process), &smp);
+	}
 
-	spoe_release_buffer(&ctx->buffer, &ctx->buffer_wait);
+	if (agent->var_t_total) {
+		struct sample smp;
 
-	ctx->frag_ctx.spoe_appctx = NULL;
-	ctx->frag_ctx.curmsg      = NULL;
-	ctx->frag_ctx.curarg      = NULL;
-	ctx->frag_ctx.curoff      = 0;
-	ctx->frag_ctx.flags       = 0;
+		memset(&smp, 0, sizeof(smp));
+		smp_set_owner(&smp, s->be, s->sess, s, dir|SMP_OPT_FINAL);
+		smp.data.u.sint = ctx->stats.t_total;
+		smp.data.type   = SMP_T_SINT;
 
-	if (!LIST_ISEMPTY(&ctx->list)) {
-		LIST_DEL(&ctx->list);
-		LIST_INIT(&ctx->list);
+		spoe_set_var(ctx, "txn", agent->var_t_total,
+			     strlen(agent->var_t_total), &smp);
 	}
 }
 
@@ -2539,17 +2539,81 @@ spoe_handle_processing_error(struct stream *s, struct spoe_agent *agent,
 		spoe_set_var(ctx, "txn", agent->var_on_error,
 			     strlen(agent->var_on_error), &smp);
 	}
-	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
-		    " - failed to process messages: code=%u\n",
-		    (int)now.tv_sec, (int)now.tv_usec, agent->id,
-		    __FUNCTION__, s, ctx->status_code);
-	send_log(ctx->strm->be, LOG_WARNING,
-		 "SPOE: [%s] failed to process messages: code=%u\n",
-		 agent->id, ctx->status_code);
 
 	ctx->state = ((agent->flags & SPOE_FL_CONT_ON_ERR)
 		      ? SPOE_CTX_ST_READY
 		      : SPOE_CTX_ST_NONE);
+}
+
+static inline int
+spoe_start_processing(struct spoe_agent *agent, struct spoe_context *ctx, int dir)
+{
+	/* If a process is already started for this SPOE context, retry
+	 * later. */
+	if (ctx->flags & SPOE_CTX_FL_PROCESS)
+		return 0;
+
+	agent->rt[tid].processing++;
+	ctx->stats.tv_start   = now;
+	ctx->stats.tv_request = now;
+	ctx->stats.t_request  = -1;
+	ctx->stats.t_queue    = -1;
+	ctx->stats.t_waiting  = -1;
+	ctx->stats.t_response = -1;
+	ctx->stats.t_process  = -1;
+
+	ctx->status_code = 0;
+
+	/* Set the right flag to prevent request and response processing
+	 * in same time. */
+	ctx->flags |= ((dir == SMP_OPT_DIR_REQ)
+		       ? SPOE_CTX_FL_REQ_PROCESS
+		       : SPOE_CTX_FL_RSP_PROCESS);
+	return 1;
+}
+
+static inline void
+spoe_stop_processing(struct spoe_agent *agent, struct spoe_context *ctx)
+{
+	struct spoe_appctx *sa = ctx->spoe_appctx;
+
+	if (!(ctx->flags & SPOE_CTX_FL_PROCESS))
+		return;
+	HA_ATOMIC_ADD(&agent->counters.nb_processed, 1);
+	if (sa) {
+		if (sa->frag_ctx.ctx == ctx) {
+			sa->frag_ctx.ctx = NULL;
+			spoe_wakeup_appctx(sa->owner);
+		}
+		else
+			sa->cur_fpa--;
+	}
+}
+
+	/* Reset the flag to allow next processing */
+	agent->rt[tid].processing--;
+	ctx->flags &= ~(SPOE_CTX_FL_PROCESS|SPOE_CTX_FL_FRAGMENTED);
+
+	/* Reset processing timer */
+	ctx->process_exp = TICK_ETERNITY;
+
+	spoe_release_buffer(&ctx->buffer, &ctx->buffer_wait);
+
+	ctx->spoe_appctx          = NULL;
+	ctx->frag_ctx.curmsg      = NULL;
+	ctx->frag_ctx.curarg      = NULL;
+	ctx->frag_ctx.curoff      = 0;
+	ctx->frag_ctx.flags       = 0;
+
+	if (!LIST_ISEMPTY(&ctx->list)) {
+		if (ctx->state == SPOE_CTX_ST_SENDING_MSGS)
+			HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+		else
+			HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+
+		LIST_DEL(&ctx->list);
+		LIST_INIT(&ctx->list);
+	}
 }
 
 /* Process a list of SPOE messages. First, this functions will process messages
@@ -2566,7 +2630,7 @@ spoe_process_messages(struct stream *s, struct spoe_context *ctx,
 	int                 ret = 1;
 
 	if (ctx->state == SPOE_CTX_ST_ERROR)
-		goto error;
+		goto end;
 
 	if (tick_is_expired(ctx->process_exp, now_ms) && ctx->state != SPOE_CTX_ST_DONE) {
 		SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
@@ -2574,7 +2638,7 @@ spoe_process_messages(struct stream *s, struct spoe_context *ctx,
 			    (int)now.tv_sec, (int)now.tv_usec,
 			    agent->id, __FUNCTION__, s);
 		ctx->status_code = SPOE_CTX_ERR_TOUT;
-		goto error;
+		goto end;
 	}
 
 	if (ctx->state == SPOE_CTX_ST_READY) {
@@ -2593,31 +2657,32 @@ spoe_process_messages(struct stream *s, struct spoe_context *ctx,
 			s->task->expire  = tick_first((tick_is_expired(s->task->expire, now_ms) ? 0 : s->task->expire),
 						      ctx->process_exp);
 		}
-		ret = spoe_start_processing(ctx, dir);
+		ret = spoe_start_processing(agent, ctx, dir);
 		if (!ret)
 			goto out;
-
-		if (spoe_queue_context(ctx) < 0)
-			goto error;
 
 		ctx->state = SPOE_CTX_ST_ENCODING_MSGS;
 		/* fall through */
 	}
 
 	if (ctx->state == SPOE_CTX_ST_ENCODING_MSGS) {
+		if (!tv_iszero(&ctx->stats.tv_request))
+		    ctx->stats.tv_request = now;
 		if (!spoe_acquire_buffer(&ctx->buffer, &ctx->buffer_wait))
 			goto out;
 		ret = spoe_encode_messages(s, ctx, messages, dir, type);
 		if (ret < 0)
-			goto error;
+			goto end;
 		if (!ret)
 			goto skip;
+		if (spoe_queue_context(ctx) < 0)
+			goto end;
 		ctx->state = SPOE_CTX_ST_SENDING_MSGS;
 	}
 
 	if (ctx->state == SPOE_CTX_ST_SENDING_MSGS) {
-		if (ctx->frag_ctx.spoe_appctx)
-			spoe_wakeup_appctx(ctx->frag_ctx.spoe_appctx->owner);
+		if (ctx->spoe_appctx)
+			spoe_wakeup_appctx(ctx->spoe_appctx->owner);
 		ret = 0;
 		goto out;
 	}
@@ -2632,6 +2697,7 @@ spoe_process_messages(struct stream *s, struct spoe_context *ctx,
 		ret = 1;
 		ctx->frame_id++;
 		ctx->state = SPOE_CTX_ST_READY;
+		spoe_update_stat_time(&ctx->stats.tv_response, &ctx->stats.t_response);
 		goto end;
 	}
 
@@ -2644,11 +2710,19 @@ spoe_process_messages(struct stream *s, struct spoe_context *ctx,
 	goto end;
 
   skip:
+	tv_zero(&ctx->stats.tv_start);
 	ctx->state = SPOE_CTX_ST_READY;
-	ret = 1;
+	spoe_stop_processing(agent, ctx);
+	return 1;
 
   end:
-	spoe_stop_processing(ctx);
+	spoe_update_stats(s, agent, ctx, dir);
+	spoe_stop_processing(agent, ctx);
+	if (ctx->status_code) {
+		HA_ATOMIC_ADD(&agent->counters.nb_errors, 1);
+		spoe_handle_processing_error(s, agent, ctx, dir);
+		ret = 1;
+	}
 	return ret;
 }
 
@@ -2658,12 +2732,13 @@ static int
 spoe_process_group(struct stream *s, struct spoe_context *ctx,
 		   struct spoe_group *group, int dir)
 {
+	struct spoe_config *conf = FLT_CONF(ctx->filter);
+	struct spoe_agent  *agent = conf->agent;
 	int ret;
 
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
 		    " - ctx-state=%s - Process messages for group=%s\n",
-		    (int)now.tv_sec, (int)now.tv_usec,
-		    ((struct spoe_config *)FLT_CONF(ctx->filter))->agent->id,
+		    (int)now.tv_sec, (int)now.tv_usec, agent->id,
 		    __FUNCTION__, s, spoe_ctx_state_str[ctx->state],
 		    group->id);
 
@@ -2671,6 +2746,27 @@ spoe_process_group(struct stream *s, struct spoe_context *ctx,
 		return 1;
 
 	ret = spoe_process_messages(s, ctx, &group->messages, dir, SPOE_MSGS_BY_GROUP);
+	if (ret && ctx->stats.t_process != -1) {
+		SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
+			    " - <GROUP:%s> sid=%u st=%u %ld/%ld/%ld/%ld/%ld %u/%u %u/%u %llu/%llu %u/%u\n",
+			    (int)now.tv_sec, (int)now.tv_usec, agent->id,
+			    __FUNCTION__, s, group->id, s->uniq_id, ctx->status_code,
+			    ctx->stats.t_request, ctx->stats.t_queue, ctx->stats.t_waiting,
+			    ctx->stats.t_response, ctx->stats.t_process,
+			    agent->counters.idles, agent->counters.applets,
+			    agent->counters.nb_sending, agent->counters.nb_waiting,
+			    agent->counters.nb_errors, agent->counters.nb_processed,
+			    agent->rt[tid].processing, read_freq_ctr(&agent->rt[tid].processing_per_sec));
+		if (ctx->status_code || !(conf->agent_fe.options2 & PR_O2_NOLOGNORM))
+			send_log(&conf->agent_fe, (!ctx->status_code ? LOG_NOTICE : LOG_WARNING),
+				 "SPOE: [%s] <GROUP:%s> sid=%u st=%u %ld/%ld/%ld/%ld/%ld %u/%u %u/%u %llu/%llu\n",
+				 agent->id, group->id, s->uniq_id, ctx->status_code,
+				 ctx->stats.t_request, ctx->stats.t_queue, ctx->stats.t_waiting,
+				 ctx->stats.t_response, ctx->stats.t_process,
+				 agent->counters.idles, agent->counters.applets,
+				 agent->counters.nb_sending, agent->counters.nb_waiting,
+				 agent->counters.nb_errors, agent->counters.nb_processed);
+	}
 	return ret;
 }
 
@@ -2680,12 +2776,13 @@ static int
 spoe_process_event(struct stream *s, struct spoe_context *ctx,
 		   enum spoe_event ev)
 {
+	struct spoe_config *conf = FLT_CONF(ctx->filter);
+	struct spoe_agent  *agent = conf->agent;
 	int dir, ret;
 
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
 		    " - ctx-state=%s - Process messages for event=%s\n",
-		    (int)now.tv_sec, (int)now.tv_usec,
-		    ((struct spoe_config *)FLT_CONF(ctx->filter))->agent->id,
+		    (int)now.tv_sec, (int)now.tv_usec, agent->id,
 		    __FUNCTION__, s, spoe_ctx_state_str[ctx->state],
 		    spoe_event_str[ev]);
 
@@ -2695,6 +2792,27 @@ spoe_process_event(struct stream *s, struct spoe_context *ctx,
 		return 1;
 
 	ret = spoe_process_messages(s, ctx, &(ctx->events[ev]), dir, SPOE_MSGS_BY_EVENT);
+	if (ret && ctx->stats.t_process != -1) {
+		SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
+			    " - <EVENT:%s> sid=%u st=%u %ld/%ld/%ld/%ld/%ld %u/%u %u/%u %llu/%llu %u/%u\n",
+			    (int)now.tv_sec, (int)now.tv_usec, agent->id,
+			    __FUNCTION__, s, spoe_event_str[ev], s->uniq_id, ctx->status_code,
+			    ctx->stats.t_request, ctx->stats.t_queue, ctx->stats.t_waiting,
+			    ctx->stats.t_response, ctx->stats.t_process,
+			    agent->counters.idles, agent->counters.applets,
+			    agent->counters.nb_sending, agent->counters.nb_waiting,
+			    agent->counters.nb_errors, agent->counters.nb_processed,
+			    agent->rt[tid].processing, read_freq_ctr(&agent->rt[tid].processing_per_sec));
+		if (ctx->status_code || !(conf->agent_fe.options2 & PR_O2_NOLOGNORM))
+			send_log(&conf->agent_fe, (!ctx->status_code ? LOG_NOTICE : LOG_WARNING),
+				 "SPOE: [%s] <EVENT:%s> sid=%u st=%u %ld/%ld/%ld/%ld/%ld %u/%u %u/%u %llu/%llu\n",
+				 agent->id, spoe_event_str[ev], s->uniq_id, ctx->status_code,
+				 ctx->stats.t_request, ctx->stats.t_queue, ctx->stats.t_waiting,
+				 ctx->stats.t_response, ctx->stats.t_process,
+				 agent->counters.idles, agent->counters.applets,
+				 agent->counters.nb_sending, agent->counters.nb_waiting,
+				 agent->counters.nb_errors, agent->counters.nb_processed);
+	}
 	return ret;
 }
 
@@ -2702,9 +2820,9 @@ spoe_process_event(struct stream *s, struct spoe_context *ctx,
  * Functions that create/destroy SPOE contexts
  **************************************************************************/
 static int
-spoe_acquire_buffer(struct buffer **buf, struct buffer_wait *buffer_wait)
+spoe_acquire_buffer(struct buffer *buf, struct buffer_wait *buffer_wait)
 {
-	if ((*buf)->size)
+	if (buf->size)
 		return 1;
 
 	if (!LIST_ISEMPTY(&buffer_wait->list)) {
@@ -2724,7 +2842,7 @@ spoe_acquire_buffer(struct buffer **buf, struct buffer_wait *buffer_wait)
 }
 
 static void
-spoe_release_buffer(struct buffer **buf, struct buffer_wait *buffer_wait)
+spoe_release_buffer(struct buffer *buf, struct buffer_wait *buffer_wait)
 {
 	if (!LIST_ISEMPTY(&buffer_wait->list)) {
 		HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
@@ -2734,10 +2852,9 @@ spoe_release_buffer(struct buffer **buf, struct buffer_wait *buffer_wait)
 	}
 
 	/* Release the buffer if needed */
-	if ((*buf)->size) {
+	if (buf->size) {
 		b_free(buf);
-		offer_buffers(buffer_wait->target,
-			      tasks_run_queue + applets_active_queue);
+		offer_buffers(buffer_wait->target, tasks_run_queue);
 	}
 }
 
@@ -2749,7 +2866,7 @@ spoe_wakeup_context(struct spoe_context *ctx)
 }
 
 static struct spoe_context *
-spoe_create_context(struct filter *filter)
+spoe_create_context(struct stream *s, struct filter *filter)
 {
 	struct spoe_config  *conf = FLT_CONF(filter);
 	struct spoe_context *ctx;
@@ -2765,7 +2882,7 @@ spoe_create_context(struct filter *filter)
 	ctx->flags       = 0;
 	ctx->events      = conf->agent->events;
 	ctx->groups      = &conf->agent->groups;
-	ctx->buffer      = &buf_empty;
+	ctx->buffer      = BUF_NULL;
 	LIST_INIT(&ctx->buffer_wait.list);
 	ctx->buffer_wait.target = ctx;
 	ctx->buffer_wait.wakeup_cb = (int (*)(void *))spoe_wakeup_context;
@@ -2775,17 +2892,37 @@ spoe_create_context(struct filter *filter)
 	ctx->frame_id    = 1;
 	ctx->process_exp = TICK_ETERNITY;
 
+	tv_zero(&ctx->stats.tv_start);
+	tv_zero(&ctx->stats.tv_request);
+	tv_zero(&ctx->stats.tv_queue);
+	tv_zero(&ctx->stats.tv_wait);
+	tv_zero(&ctx->stats.tv_response);
+	ctx->stats.t_request  = -1;
+	ctx->stats.t_queue    = -1;
+	ctx->stats.t_waiting  = -1;
+	ctx->stats.t_response = -1;
+	ctx->stats.t_process  = -1;
+	ctx->stats.t_total    =  0;
+
+	ctx->strm   = s;
+	ctx->state  = SPOE_CTX_ST_READY;
+	filter->ctx = ctx;
+
 	return ctx;
 }
 
 static void
-spoe_destroy_context(struct spoe_context *ctx)
+spoe_destroy_context(struct filter *filter)
 {
+	struct spoe_config  *conf = FLT_CONF(filter);
+	struct spoe_context *ctx  = filter->ctx;
+
 	if (!ctx)
 		return;
 
-	spoe_stop_processing(ctx);
+	spoe_stop_processing(conf->agent, ctx);
 	pool_free(pool_head_spoe_ctx, ctx);
+	filter->ctx = NULL;
 }
 
 static void
@@ -2793,6 +2930,18 @@ spoe_reset_context(struct spoe_context *ctx)
 {
 	ctx->state  = SPOE_CTX_ST_READY;
 	ctx->flags &= ~(SPOE_CTX_FL_PROCESS|SPOE_CTX_FL_FRAGMENTED);
+
+	tv_zero(&ctx->stats.tv_start);
+	tv_zero(&ctx->stats.tv_request);
+	tv_zero(&ctx->stats.tv_queue);
+	tv_zero(&ctx->stats.tv_wait);
+	tv_zero(&ctx->stats.tv_response);
+	ctx->stats.t_request  = -1;
+	ctx->stats.t_queue    = -1;
+	ctx->stats.t_waiting  = -1;
+	ctx->stats.t_response = -1;
+	ctx->stats.t_process  = -1;
+	ctx->stats.t_total    =  0;
 }
 
 
@@ -2839,11 +2988,9 @@ spoe_init(struct proxy *px, struct flt_conf *fconf)
 {
 	struct spoe_config *conf = fconf->conf;
 
-        memset(&conf->agent_fe, 0, sizeof(conf->agent_fe));
-        init_new_proxy(&conf->agent_fe);
-        conf->agent_fe.parent = conf->agent;
+	/* conf->agent_fe was already initialized during the config
+	 * parsing. Finish initialization. */
         conf->agent_fe.last_change = now.tv_sec;
-        conf->agent_fe.id = conf->agent->id;
         conf->agent_fe.cap = PR_CAP_FE;
         conf->agent_fe.mode = PR_MODE_TCP;
         conf->agent_fe.maxconn = 0;
@@ -2860,6 +3007,7 @@ spoe_init(struct proxy *px, struct flt_conf *fconf)
 		sighandler_registered = 1;
 	}
 
+	fconf->flags |= FLT_CFG_FL_HTX;
 	return 0;
 }
 
@@ -2888,6 +3036,26 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 	struct spoe_config *conf = fconf->conf;
 	struct proxy       *target;
 	int i;
+
+	/* Check all SPOE filters for proxy <px> to be sure all SPOE agent names
+	 * are uniq */
+	list_for_each_entry(f, &px->filter_configs, list) {
+		struct spoe_config *c = f->conf;
+
+		/* This is not an SPOE filter */
+		if (f->id != spoe_filter_id)
+			continue;
+		/* This is the current SPOE filter */
+		if (f == fconf)
+			continue;
+
+		/* Check engine Id. It should be uniq */
+		if (!strcmp(conf->id, c->id)) {
+			ha_alert("Proxy %s : duplicated name for SPOE engine '%s'.\n",
+				 px->id, conf->id);
+			return 1;
+		}
+	}
 
 	/* Check all SPOE filters for proxy <px> to be sure all SPOE agent names
 	 * are uniq */
@@ -2975,21 +3143,16 @@ spoe_start(struct stream *s, struct filter *filter)
 		    (int)now.tv_sec, (int)now.tv_usec, agent->id,
 		    __FUNCTION__, s);
 
-	ctx = spoe_create_context(filter);
-	if (ctx == NULL) {
+	if ((ctx = spoe_create_context(s, filter)) == NULL) {
 		SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
 			    " - failed to create SPOE context\n",
 			    (int)now.tv_sec, (int)now.tv_usec, agent->id,
 			    __FUNCTION__, s);
-		send_log(s->be, LOG_EMERG,
+		send_log(&conf->agent_fe, LOG_EMERG,
 			 "SPOE: [%s] failed to create SPOE context\n",
 			 agent->id);
 		return 0;
 	}
-
-	ctx->strm   = s;
-	ctx->state  = SPOE_CTX_ST_READY;
-	filter->ctx = ctx;
 
 	if (!LIST_ISEMPTY(&ctx->events[SPOE_EV_ON_TCP_REQ_FE]))
 		filter->pre_analyzers |= AN_REQ_INSPECT_FE;
@@ -3021,7 +3184,7 @@ spoe_stop(struct stream *s, struct filter *filter)
 		    (int)now.tv_sec, (int)now.tv_usec,
 		    ((struct spoe_config *)FLT_CONF(filter))->agent->id,
 		    __FUNCTION__, s);
-	spoe_destroy_context(filter->ctx);
+	spoe_destroy_context(filter);
 }
 
 
@@ -3230,17 +3393,34 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 		curagent->engine_id      = NULL;
 		curagent->var_pfx        = NULL;
 		curagent->var_on_error   = NULL;
+		curagent->var_t_process  = NULL;
+		curagent->var_t_total    = NULL;
 		curagent->flags          = (SPOE_FL_PIPELINING | SPOE_FL_SND_FRAGMENTATION);
+		if (global.nbthread == 1)
+			curagent->flags |= SPOE_FL_ASYNC;
 		curagent->cps_max        = 0;
 		curagent->eps_max        = 0;
 		curagent->max_frame_size = MAX_FRAME_SIZE;
-		curagent->min_applets    = 0;
-		curagent->max_fpa        = 100;
+		curagent->max_fpa        = 20;
 
 		for (i = 0; i < SPOE_EV_EVENTS; ++i)
 			LIST_INIT(&curagent->events[i]);
 		LIST_INIT(&curagent->groups);
 		LIST_INIT(&curagent->messages);
+
+		if ((curagent->rt = calloc(global.nbthread, sizeof(*curagent->rt))) == NULL) {
+			ha_alert("parsing [%s:%d] : out of memory.\n", file, linenum);
+			err_code |= ERR_ALERT | ERR_ABORT;
+			goto out;
+		}
+		for (i = 0; i < global.nbthread; ++i) {
+			curagent->rt[i].frame_size   = curagent->max_frame_size;
+			curagent->rt[i].processing   = 0;
+			LIST_INIT(&curagent->rt[i].applets);
+			LIST_INIT(&curagent->rt[i].sending_queue);
+			LIST_INIT(&curagent->rt[i].waiting_queue);
+			HA_SPIN_INIT(&curagent->rt[i].lock);
+		}
 	}
 	else if (!strcmp(args[0], "use-backend")) {
 		if (!*args[1]) {
@@ -3384,6 +3564,15 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 				curagent->flags |= SPOE_FL_SND_FRAGMENTATION;
 			goto out;
 		}
+		else if (!strcmp(args[1], "dontlog-normal")) {
+			if (alertif_too_many_args(1, file, linenum, args, &err_code))
+				goto out;
+			if (kwm == 1)
+				curpxopts2 &= ~PR_O2_NOLOGNORM;
+			else
+				curpxopts2 |= PR_O2_NOLOGNORM;
+			goto out;
+		}
 
 		/* Following options does not support negation */
 		if (kwm == 1) {
@@ -3417,6 +3606,11 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 			}
 			curagent->var_pfx = strdup(args[2]);
 		}
+		else if (!strcmp(args[1], "force-set-var")) {
+			if (alertif_too_many_args(1, file, linenum, args, &err_code))
+				goto out;
+			curagent->flags |= SPOE_FL_FORCE_SET_VAR;
+		}
 		else if (!strcmp(args[1], "continue-on-error")) {
 			if (alertif_too_many_args(1, file, linenum, args, &err_code))
 				goto out;
@@ -3445,6 +3639,54 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 				tmp++;
 			}
 			curagent->var_on_error = strdup(args[2]);
+		}
+		else if (!strcmp(args[1], "set-process-time")) {
+			char *tmp;
+
+			if (!*args[2]) {
+				ha_alert("parsing [%s:%d]: '%s %s' expects a value.\n",
+					 file, linenum, args[0],
+					 args[1]);
+				err_code |= ERR_ALERT | ERR_FATAL;
+				goto out;
+			}
+			if (alertif_too_many_args(2, file, linenum, args, &err_code))
+				goto out;
+			tmp = args[2];
+			while (*tmp) {
+				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
+					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
+						 file, linenum, args[0], args[1]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				tmp++;
+			}
+			curagent->var_t_process = strdup(args[2]);
+		}
+		else if (!strcmp(args[1], "set-total-time")) {
+			char *tmp;
+
+			if (!*args[2]) {
+				ha_alert("parsing [%s:%d]: '%s %s' expects a value.\n",
+					 file, linenum, args[0],
+					 args[1]);
+				err_code |= ERR_ALERT | ERR_FATAL;
+				goto out;
+			}
+			if (alertif_too_many_args(2, file, linenum, args, &err_code))
+				goto out;
+			tmp = args[2];
+			while (*tmp) {
+				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
+					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
+						 file, linenum, args[0], args[1]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				tmp++;
+			}
+			curagent->var_t_total = strdup(args[2]);
 		}
 		else {
 			ha_alert("parsing [%s:%d]: option '%s' is not supported.\n",
@@ -3489,6 +3731,59 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 		    curagent->max_frame_size > MAX_FRAME_SIZE) {
 			ha_alert("parsing [%s:%d] : '%s' expects a positive integer argument in the range [%d, %d].\n",
 				 file, linenum, args[0], MIN_FRAME_SIZE, MAX_FRAME_SIZE);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+	}
+	else if (!strcmp(args[0], "max-waiting-frames")) {
+		if (!*args[1]) {
+			ha_alert("parsing [%s:%d] : '%s' expects an integer argument.\n",
+				 file, linenum, args[0]);
+                        err_code |= ERR_ALERT | ERR_FATAL;
+                        goto out;
+                }
+		if (alertif_too_many_args(1, file, linenum, args, &err_code))
+			goto out;
+		curagent->max_fpa = atol(args[1]);
+		if (curagent->max_fpa < 1) {
+			ha_alert("parsing [%s:%d] : '%s' expects a positive integer argument.\n",
+				 file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+	}
+	else if (!strcmp(args[0], "register-var-names")) {
+		int   cur_arg;
+
+		if (!*args[1]) {
+			ha_alert("parsing [%s:%d] : '%s' expects one or more variable names.\n",
+				 file, linenum, args[0]);
+                        err_code |= ERR_ALERT | ERR_FATAL;
+                        goto out;
+                }
+		cur_arg = 1;
+		while (*args[cur_arg]) {
+			struct spoe_var_placeholder *vph;
+
+			if ((vph = calloc(1, sizeof(*vph))) == NULL) {
+				ha_alert("parsing [%s:%d] : out of memory.\n", file, linenum);
+				err_code |= ERR_ALERT | ERR_ABORT;
+				goto out;
+			}
+			if ((vph->name  = strdup(args[cur_arg])) == NULL) {
+				ha_alert("parsing [%s:%d] : out of memory.\n", file, linenum);
+				err_code |= ERR_ALERT | ERR_ABORT;
+				goto out;
+			}
+			LIST_ADDQ(&curvars, &vph->list);
+			cur_arg++;
+		}
+	}
+	else if (!strcmp(args[0], "log")) {
+		char *errmsg = NULL;
+
+		if (!parse_logsrv(args, &curlogsrvs, (kwm == 1), &errmsg)) {
+			ha_alert("parsing [%s:%d] : %s : %s\n", file, linenum, args[0], errmsg);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -3739,7 +4034,7 @@ cfg_parse_spoe_message(const char *file, int linenum, char **args, int kwm)
 		else if (!strcmp(args[1], spoe_event_str[SPOE_EV_ON_HTTP_RSP]))
 			curmsg->event = SPOE_EV_ON_HTTP_RSP;
 		else {
-			ha_alert("parsing [%s:%d] : unkown event '%s'.\n",
+			ha_alert("parsing [%s:%d] : unknown event '%s'.\n",
 				 file, linenum, args[1]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
@@ -3789,6 +4084,8 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 	struct spoe_message         *msg, *msgback;
 	struct spoe_group           *grp, *grpback;
 	struct spoe_placeholder     *ph, *phback;
+	struct spoe_var_placeholder *vph, *vphback;
+	struct logsrv               *logsrv, *logsrvback;
 	char                        *file = NULL, *engine = NULL;
 	int                          ret, pos = *cur_arg + 1;
 
@@ -3796,6 +4093,10 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 	LIST_INIT(&curgrps);
 	LIST_INIT(&curmphs);
 	LIST_INIT(&curgphs);
+	LIST_INIT(&curvars);
+	LIST_INIT(&curlogsrvs);
+	curpxopts  = 0;
+	curpxopts2 = 0;
 
 	conf = calloc(1, sizeof(*conf));
 	if (conf == NULL) {
@@ -3897,6 +4198,54 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 	}
 	if (curagent->engine_id == NULL)
 		curagent->engine_id = generate_pseudo_uuid();
+
+	if (curagent->var_on_error) {
+		struct arg arg;
+
+		trash.data = snprintf(trash.area, trash.size, "txn.%s.%s",
+				     curagent->var_pfx, curagent->var_on_error);
+
+		arg.type = ARGT_STR;
+		arg.data.str.area = trash.area;
+		arg.data.str.data = trash.data;
+		if (!vars_check_arg(&arg, err)) {
+			memprintf(err, "SPOE agent '%s': failed to register variable %s.%s (%s)",
+				  curagent->id, curagent->var_pfx, curagent->var_on_error, *err);
+			goto error;
+		}
+	}
+
+	if (curagent->var_t_process) {
+		struct arg arg;
+
+		trash.data = snprintf(trash.area, trash.size, "txn.%s.%s",
+				     curagent->var_pfx, curagent->var_t_process);
+
+		arg.type = ARGT_STR;
+		arg.data.str.area = trash.area;
+		arg.data.str.data = trash.data;
+		if (!vars_check_arg(&arg, err)) {
+			memprintf(err, "SPOE agent '%s': failed to register variable %s.%s (%s)",
+				  curagent->id, curagent->var_pfx, curagent->var_t_process, *err);
+			goto error;
+		}
+	}
+
+	if (curagent->var_t_total) {
+		struct arg arg;
+
+		trash.data = snprintf(trash.area, trash.size, "txn.%s.%s",
+				     curagent->var_pfx, curagent->var_t_total);
+
+		arg.type = ARGT_STR;
+		arg.data.str.area = trash.area;
+		arg.data.str.data = trash.data;
+		if (!vars_check_arg(&arg, err)) {
+			memprintf(err, "SPOE agent '%s': failed to register variable %s.%s (%s)",
+				  curagent->id, curagent->var_pfx, curagent->var_t_process, *err);
+			goto error;
+		}
+	}
 
 	if (LIST_ISEMPTY(&curmphs) && LIST_ISEMPTY(&curgphs)) {
 		ha_warning("Proxy '%s': No message/group used by SPOE agent '%s' declared at %s:%d.\n",
@@ -4064,6 +4413,21 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 
 	conf->id    = strdup(engine ? engine : curagent->id);
 	conf->agent = curagent;
+
+	/* Start agent's proxy initialization here. It will be finished during
+	 * the filter init. */
+        memset(&conf->agent_fe, 0, sizeof(conf->agent_fe));
+        init_new_proxy(&conf->agent_fe);
+	conf->agent_fe.id        = conf->agent->id;
+	conf->agent_fe.parent    = conf->agent;
+	conf->agent_fe.options  |= curpxopts;
+	conf->agent_fe.options2 |= curpxopts2;
+
+	list_for_each_entry_safe(logsrv, logsrvback, &curlogsrvs, list) {
+		LIST_DEL(&logsrv->list);
+		LIST_ADDQ(&conf->agent_fe.logsrvs, &logsrv->list);
+	}
+
 	list_for_each_entry_safe(ph, phback, &curmphs, list) {
 		LIST_DEL(&ph->list);
 		spoe_release_placeholder(ph);
@@ -4071,6 +4435,25 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 	list_for_each_entry_safe(ph, phback, &curgphs, list) {
 		LIST_DEL(&ph->list);
 		spoe_release_placeholder(ph);
+	}
+	list_for_each_entry_safe(vph, vphback, &curvars, list) {
+		struct arg arg;
+
+		trash.data = snprintf(trash.area, trash.size, "proc.%s.%s",
+				     curagent->var_pfx, vph->name);
+
+		arg.type = ARGT_STR;
+		arg.data.str.area = trash.area;
+		arg.data.str.data = trash.data;
+		if (!vars_check_arg(&arg, err)) {
+			memprintf(err, "SPOE agent '%s': failed to register variable %s.%s (%s)",
+				  curagent->id, curagent->var_pfx, vph->name, *err);
+			goto error;
+		}
+
+		LIST_DEL(&vph->list);
+		free(vph->name);
+		free(vph);
 	}
 	list_for_each_entry_safe(grp, grpback, &curgrps, list) {
 		LIST_DEL(&grp->list);
@@ -4092,6 +4475,11 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 		LIST_DEL(&ph->list);
 		spoe_release_placeholder(ph);
 	}
+	list_for_each_entry_safe(vph, vphback, &curvars, list) {
+		LIST_DEL(&vph->list);
+		free(vph->name);
+		free(vph);
+	}
 	list_for_each_entry_safe(grp, grpback, &curgrps, list) {
 		LIST_DEL(&grp->list);
 		spoe_release_group(grp);
@@ -4099,6 +4487,10 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 	list_for_each_entry_safe(msg, msgback, &curmsgs, list) {
 		LIST_DEL(&msg->list);
 		spoe_release_message(msg);
+	}
+	list_for_each_entry_safe(logsrv, logsrvback, &curlogsrvs, list) {
+		LIST_DEL(&logsrv->list);
+		free(logsrv);
 	}
 	free(conf);
 	return -1;
@@ -4159,8 +4551,8 @@ spoe_send_group(struct act_rule *rule, struct proxy *px,
 				    (int)now.tv_sec, (int)now.tv_usec,
 				    agent->id, __FUNCTION__, s, group->id);
 			ctx->status_code = SPOE_CTX_ERR_INTERRUPT;
+			spoe_stop_processing(agent, ctx);
 			spoe_handle_processing_error(s, agent, ctx, dir);
-			spoe_stop_processing(ctx);
 			return ACT_RET_CONT;
 		}
 		return ACT_RET_YIELD;
@@ -4309,45 +4701,37 @@ static struct flt_kw_list flt_kws = { "SPOE", { }, {
 	}
 };
 
+INITCALL1(STG_REGISTER, flt_register_keywords, &flt_kws);
+
 /* Delcate the action parser for "spoe-action" keyword */
 static struct action_kw_list tcp_req_action_kws = { { }, {
 		{ "send-spoe-group", parse_send_spoe_group },
 		{ /* END */ },
 	}
 };
+
+INITCALL1(STG_REGISTER, tcp_req_cont_keywords_register, &tcp_req_action_kws);
+
 static struct action_kw_list tcp_res_action_kws = { { }, {
 		{ "send-spoe-group", parse_send_spoe_group },
 		{ /* END */ },
 	}
 };
+
+INITCALL1(STG_REGISTER, tcp_res_cont_keywords_register, &tcp_res_action_kws);
+
 static struct action_kw_list http_req_action_kws = { { }, {
 		{ "send-spoe-group", parse_send_spoe_group },
 		{ /* END */ },
 	}
 };
+
+INITCALL1(STG_REGISTER, http_req_keywords_register, &http_req_action_kws);
+
 static struct action_kw_list http_res_action_kws = { { }, {
 		{ "send-spoe-group", parse_send_spoe_group },
 		{ /* END */ },
 	}
 };
 
-__attribute__((constructor))
-static void __spoe_init(void)
-{
-	flt_register_keywords(&flt_kws);
-	tcp_req_cont_keywords_register(&tcp_req_action_kws);
-	tcp_res_cont_keywords_register(&tcp_res_action_kws);
-	http_req_keywords_register(&http_req_action_kws);
-	http_res_keywords_register(&http_res_action_kws);
-
-	pool_head_spoe_ctx = create_pool("spoe_ctx", sizeof(struct spoe_context), MEM_F_SHARED);
-	pool_head_spoe_appctx = create_pool("spoe_appctx", sizeof(struct spoe_appctx), MEM_F_SHARED);
-}
-
-__attribute__((destructor))
-static void
-__spoe_deinit(void)
-{
-	pool_destroy(pool_head_spoe_ctx);
-	pool_destroy(pool_head_spoe_appctx);
-}
+INITCALL1(STG_REGISTER, http_res_keywords_register, &http_res_action_kws);

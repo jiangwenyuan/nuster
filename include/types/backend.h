@@ -48,10 +48,12 @@
 #define BE_LB_HASH_PRM  0x00002  /* hash HTTP URL parameter */
 #define BE_LB_HASH_HDR  0x00003  /* hash HTTP header value */
 #define BE_LB_HASH_RDP  0x00004  /* hash RDP cookie value */
+#define BE_LB_HASH_RND  0x00008  /* hash a random value */
 
 /* BE_LB_RR_* is used with BE_LB_KIND_RR */
 #define BE_LB_RR_DYN    0x00000  /* dynamic round robin (default) */
 #define BE_LB_RR_STATIC 0x00001  /* static round robin */
+#define BE_LB_RR_RANDOM 0x00002  /* random round robin */
 
 /* BE_LB_CB_* is used with BE_LB_KIND_CB */
 #define BE_LB_CB_LC     0x00000  /* least-connections */
@@ -79,6 +81,7 @@
  */
 #define BE_LB_ALGO_NONE (BE_LB_KIND_NONE | BE_LB_NEED_NONE)    /* not defined */
 #define BE_LB_ALGO_RR   (BE_LB_KIND_RR | BE_LB_NEED_NONE)      /* round robin */
+#define BE_LB_ALGO_RND  (BE_LB_KIND_RR | BE_LB_NEED_NONE | BE_LB_RR_RANDOM) /* random value */
 #define BE_LB_ALGO_LC   (BE_LB_KIND_CB | BE_LB_NEED_NONE | BE_LB_CB_LC)    /* least connections */
 #define BE_LB_ALGO_FAS  (BE_LB_KIND_CB | BE_LB_NEED_NONE | BE_LB_CB_FAS)   /* first available server */
 #define BE_LB_ALGO_SRR  (BE_LB_KIND_RR | BE_LB_NEED_NONE | BE_LB_RR_STATIC) /* static round robin */
@@ -135,18 +138,26 @@
 
 /* LB parameters for all algorithms */
 struct lbprm {
+	union { /* LB parameters depending on the algo type */
+		struct lb_map map;
+		struct lb_fwrr fwrr;
+		struct lb_fwlc fwlc;
+		struct lb_chash chash;
+		struct lb_fas fas;
+	};
 	int algo;			/* load balancing algorithm and variants: BE_LB_* */
 	int tot_wact, tot_wbck;		/* total effective weights of active and backup servers */
 	int tot_weight;			/* total effective weight of servers participating to LB */
 	int tot_used;			/* total number of servers used for LB */
 	int wmult;			/* ratio between user weight and effective weight */
 	int wdiv;			/* ratio between effective weight and user weight */
+	int hash_balance_factor;	/* load balancing factor * 100, 0 if disabled */
+	char *arg_str;			/* name of the URL parameter/header/cookie used for hashing */
+	int   arg_len;			/* strlen(arg_str), computed only once */
+	int   arg_opt1;			/* extra option 1 for the LB algo (algo-specific) */
+	int   arg_opt2;			/* extra option 2 for the LB algo (algo-specific) */
+	int   arg_opt3;			/* extra option 3 for the LB algo (algo-specific) */
 	struct server *fbck;		/* first backup server when !PR_O_USE_ALL_BK, or NULL */
-	struct lb_map map;		/* LB parameters for map-based algorithms */
-	struct lb_fwrr fwrr;
-	struct lb_fwlc fwlc;
-	struct lb_chash chash;
-	struct lb_fas fas;
 	__decl_hathreads(HA_SPINLOCK_T lock);
 
 	/* Call backs for some actions. Any of them may be NULL (thus should be ignored). */

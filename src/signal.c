@@ -29,10 +29,10 @@
 int signal_queue_len; /* length of signal queue, <= MAX_SIGNAL (1 entry per signal max) */
 int signal_queue[MAX_SIGNAL];                     /* in-order queue of received signals */
 struct signal_descriptor signal_state[MAX_SIGNAL];
-struct pool_head *pool_head_sig_handlers = NULL;
 sigset_t blocked_sig;
 int signal_pending = 0; /* non-zero if t least one signal remains unprocessed */
 
+DECLARE_STATIC_POOL(pool_head_sig_handlers, "sig_handlers", sizeof(struct sig_handler));
 
 /* Common signal handler, used by all signals. Received signals are queued.
  * Signal number zero has a specific status, as it cannot be delivered by the
@@ -89,7 +89,7 @@ void __signal_process_queue()
 				if ((sh->flags & SIG_F_TYPE_FCT) && sh->handler)
 					((void (*)(struct sig_handler *))sh->handler)(sh);
 				else if ((sh->flags & SIG_F_TYPE_TASK) && sh->handler)
-					task_wakeup(sh->handler, sh->arg | TASK_WOKEN_SIGNAL);
+					task_wakeup(sh->handler, TASK_WOKEN_SIGNAL);
 			}
 			desc->count = 0;
 		}
@@ -100,25 +100,14 @@ void __signal_process_queue()
 	ha_sigmask(SIG_SETMASK, &old_sig, NULL);
 }
 
-/* perform minimal intializations, report 0 in case of error, 1 if OK. */
-int signal_init()
+/* perform minimal intializations */
+static void signal_init()
 {
 	int sig;
 
 	signal_queue_len = 0;
 	memset(signal_queue, 0, sizeof(signal_queue));
 	memset(signal_state, 0, sizeof(signal_state));
-
-	/* Ensure signals are not blocked. Some shells or service managers may
-	 * accidently block all of our signals unfortunately, causing lots of
-	 * zombie processes to remain in the background during reloads.
-	 */
-	sigemptyset(&blocked_sig);
-	/* Ensure that SIGUSR2 is blocked until the end of configuration
-	 * parsing We don't want the process to be killed by an unregistered
-	 * USR2 signal when the master-worker is reloading */
-	sigaddset(&blocked_sig, SIGUSR2);
-	ha_sigmask(SIG_SETMASK, &blocked_sig, NULL);
 
 	sigfillset(&blocked_sig);
 	sigdelset(&blocked_sig, SIGPROF);
@@ -132,9 +121,21 @@ int signal_init()
 	sigdelset(&blocked_sig, SIGSEGV);
 	for (sig = 0; sig < MAX_SIGNAL; sig++)
 		LIST_INIT(&signal_state[sig].handlers);
+}
 
-	pool_head_sig_handlers = create_pool("sig_handlers", sizeof(struct sig_handler), MEM_F_SHARED);
-	return pool_head_sig_handlers != NULL;
+/*
+ * This function should be called to unblock all signals
+ */
+void haproxy_unblock_signals()
+{
+	sigset_t set;
+
+	/* Ensure signals are not blocked. Some shells or service managers may
+	 * accidentally block all of our signals unfortunately, causing lots of
+	 * zombie processes to remain in the background during reloads.
+	 */
+	sigemptyset(&set);
+	ha_sigmask(SIG_SETMASK, &set, NULL);
 }
 
 /* releases all registered signal handlers */
@@ -250,3 +251,25 @@ void signal_unregister_target(int sig, void *target)
 		}
 	}
 }
+
+/*
+ * Immedialtely unregister every handler assigned to a signal <sig>.
+ * Once the handler list is empty, the signal is ignored with SIG_IGN.
+ */
+
+void signal_unregister(int sig)
+{
+	struct sig_handler *sh, *shb;
+
+	if (sig < 0 || sig >= MAX_SIGNAL)
+		return;
+
+	list_for_each_entry_safe(sh, shb, &signal_state[sig].handlers, list) {
+		LIST_DEL(&sh->list);
+		pool_free(pool_head_sig_handlers, sh);
+	}
+
+	signal(sig, SIG_IGN);
+}
+
+INITCALL0(STG_PREPARE, signal_init);

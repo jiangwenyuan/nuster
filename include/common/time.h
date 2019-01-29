@@ -22,7 +22,9 @@
 #ifndef _COMMON_TIME_H
 #define _COMMON_TIME_H
 
+#include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/time.h>
 #include <common/config.h>
 #include <common/standard.h>
@@ -61,6 +63,8 @@ extern THREAD_LOCAL struct timeval date;             /* the real current date */
 extern struct timeval start_date;       /* the process's start date */
 extern THREAD_LOCAL struct timeval before_poll;      /* system date before calling poll() */
 extern THREAD_LOCAL struct timeval after_poll;       /* system date after leaving poll() */
+extern THREAD_LOCAL uint64_t prev_cpu_time;          /* previous per thread CPU time */
+extern THREAD_LOCAL uint64_t prev_mono_time;         /* previous system wide monotonic time */
 
 
 /**** exported functions *************************************************/
@@ -514,6 +518,30 @@ REGPRM3 static inline struct timeval *__tv_ms_add(struct timeval *tv, const stru
         tv1;                       \
 })
 
+/* returns the system's monotonic time in nanoseconds if supported, otherwise zero */
+static inline uint64_t now_mono_time()
+{
+#if defined(_POSIX_TIMERS) && defined(_POSIX_MONOTONIC_CLOCK)
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+#else
+	return 0;
+#endif
+}
+
+/* returns the current thread's cumulated CPU time in nanoseconds if supported, otherwise zero */
+static inline uint64_t now_cpu_time()
+{
+#if defined(_POSIX_TIMERS) && defined(_POSIX_THREAD_CPUTIME)
+	struct timespec ts;
+	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+	return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+#else
+	return 0;
+#endif
+}
+
 /* Update the idle time value twice a second, to be called after
  * tv_update_date() when called after poll(). It relies on <before_poll> to be
  * updated to the system time before calling poll().
@@ -541,6 +569,26 @@ static inline void measure_idle()
 
 	idle_pct = (100 * idle_time + samp_time / 2) / samp_time;
 	idle_time = samp_time = 0;
+}
+
+/* Collect date and time information before calling poll(). This will be used
+ * to count the run time of the past loop and the sleep time of the next poll.
+ */
+static inline void tv_entering_poll()
+{
+	gettimeofday(&before_poll, NULL);
+}
+
+/* Collect date and time information after leaving poll(). <timeout> must be
+ * set to the maximum sleep time passed to poll (in milliseconds), and
+ * <interrupted> must be zero if the poller reached the timeout or non-zero
+ * otherwise, which generally is provided by the poller's return value.
+ */
+static inline void tv_leaving_poll(int timeout, int interrupted)
+{
+	measure_idle();
+	prev_cpu_time  = now_cpu_time();
+	prev_mono_time = now_mono_time();
 }
 
 #endif /* _COMMON_TIME_H */

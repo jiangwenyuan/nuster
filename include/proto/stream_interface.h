@@ -33,25 +33,22 @@
 #include <proto/connection.h>
 
 
-/* main event functions used to move data between sockets and buffers */
-int stream_int_check_timeouts(struct stream_interface *si);
-void stream_int_report_error(struct stream_interface *si);
-void stream_int_retnclose(struct stream_interface *si, const struct chunk *msg);
-int conn_si_send_proxy(struct connection *conn, unsigned int flag);
-void stream_sock_read0(struct stream_interface *si);
-
 extern struct si_ops si_embedded_ops;
 extern struct si_ops si_conn_ops;
 extern struct si_ops si_applet_ops;
 extern struct data_cb si_conn_cb;
-extern struct data_cb si_idle_conn_cb;
 
-struct appctx *stream_int_register_handler(struct stream_interface *si, struct applet *app);
+/* main event functions used to move data between sockets and buffers */
+int si_check_timeouts(struct stream_interface *si);
+void si_report_error(struct stream_interface *si);
+void si_retnclose(struct stream_interface *si, const struct buffer *msg);
+int conn_si_send_proxy(struct connection *conn, unsigned int flag);
+struct appctx *si_register_handler(struct stream_interface *si, struct applet *app);
 void si_applet_wake_cb(struct stream_interface *si);
-void stream_int_update(struct stream_interface *si);
-void stream_int_update_conn(struct stream_interface *si);
-void stream_int_update_applet(struct stream_interface *si);
-void stream_int_notify(struct stream_interface *si);
+void si_update(struct stream_interface *si);
+int si_cs_recv(struct conn_stream *cs);
+struct task *si_cs_io_cb(struct task *t, void *ctx, unsigned short state);
+void si_update_both(struct stream_interface *si_f, struct stream_interface *si_b);
 
 /* returns the channel which receives data from this stream interface (input channel) */
 static inline struct channel *si_ic(struct stream_interface *si)
@@ -74,13 +71,13 @@ static inline struct channel *si_oc(struct stream_interface *si)
 /* returns the buffer which receives data from this stream interface (input channel's buffer) */
 static inline struct buffer *si_ib(struct stream_interface *si)
 {
-	return si_ic(si)->buf;
+	return &si_ic(si)->buf;
 }
 
 /* returns the buffer which feeds data to this stream interface (output channel's buffer) */
 static inline struct buffer *si_ob(struct stream_interface *si)
 {
-	return si_oc(si)->buf;
+	return &si_oc(si)->buf;
 }
 
 /* returns the stream associated to a stream interface */
@@ -114,7 +111,7 @@ static inline struct stream_interface *si_opposite(struct stream_interface *si)
  * any endpoint and only keeps its side which is expected to have already been
  * set.
  */
-static inline void si_reset(struct stream_interface *si)
+static inline int si_reset(struct stream_interface *si)
 {
 	si->err_type       = SI_ET_NONE;
 	si->conn_retries   = 0;  /* used for logging too */
@@ -123,6 +120,13 @@ static inline void si_reset(struct stream_interface *si)
 	si->end            = NULL;
 	si->state          = si->prev_state = SI_ST_INI;
 	si->ops            = &si_embedded_ops;
+	si->wait_event.task = tasklet_new();
+	if (!si->wait_event.task)
+		return -1;
+	si->wait_event.task->process    = si_cs_io_cb;
+	si->wait_event.task->context = si;
+	si->wait_event.events = 0;
+	return 0;
 }
 
 /* sets the current and previous state of a stream interface to <state>. This
@@ -152,38 +156,29 @@ static inline enum obj_type *si_detach_endpoint(struct stream_interface *si)
  */
 static inline void si_release_endpoint(struct stream_interface *si)
 {
+	struct connection *conn;
 	struct conn_stream *cs;
 	struct appctx *appctx;
 
 	if (!si->end)
 		return;
 
-	if ((cs = objt_cs(si->end)))
+	if ((cs = objt_cs(si->end))) {
+		if (si->wait_event.events != 0)
+			cs->conn->mux->unsubscribe(cs, si->wait_event.events,
+			    &si->wait_event);
 		cs_destroy(cs);
+	}
 	else if ((appctx = objt_appctx(si->end))) {
 		if (appctx->applet->release && si->state < SI_ST_DIS)
 			appctx->applet->release(appctx);
 		appctx_free(appctx); /* we share the connection pool */
+	} else if ((conn = objt_conn(si->end))) {
+		conn_stop_tracking(conn);
+		conn_full_close(conn);
+		conn_free(conn);
 	}
 	si_detach_endpoint(si);
-}
-
-/* Turn an existing connection endpoint of stream interface <si> to idle mode,
- * which means that the connection will be polled for incoming events and might
- * be killed by the underlying I/O handler. If <pool> is not null, the
- * connection will also be added at the head of this list. This connection
- * remains assigned to the stream interface it is currently attached to.
- */
-static inline void si_idle_cs(struct stream_interface *si, struct list *pool)
-{
-	struct conn_stream *cs = __objt_cs(si->end);
-	struct connection *conn = cs->conn;
-
-	if (pool)
-		LIST_ADD(pool, &conn->list);
-
-	cs_attach(cs, si, &si_idle_conn_cb);
-	cs_want_recv(cs);
 }
 
 /* Attach conn_stream <cs> to the stream interface <si>. The stream interface
@@ -217,10 +212,10 @@ static inline void si_attach_appctx(struct stream_interface *si, struct appctx *
 	appctx->owner = si;
 }
 
-/* returns a pointer to the appctx being run in the SI or NULL if none */
+/* returns a pointer to the appctx being run in the SI, which must be valid */
 static inline struct appctx *si_appctx(struct stream_interface *si)
 {
-	return objt_appctx(si->end);
+	return __objt_appctx(si->end);
 }
 
 /* call the applet's release function if any. Needs to be called upon close() */
@@ -228,49 +223,134 @@ static inline void si_applet_release(struct stream_interface *si)
 {
 	struct appctx *appctx;
 
-	appctx = si_appctx(si);
+	appctx = objt_appctx(si->end);
 	if (appctx && appctx->applet->release && si->state < SI_ST_DIS)
 		appctx->applet->release(appctx);
 }
 
-/* let an applet indicate that it wants to put some data into the input buffer */
-static inline void si_applet_want_put(struct stream_interface *si)
+/* Returns non-zero if the stream interface's Rx path is blocked */
+static inline int si_rx_blocked(const struct stream_interface *si)
 {
-	si->flags |= SI_FL_WANT_PUT;
+	return !!(si->flags & SI_FL_RXBLK_ANY);
 }
 
-/* let an applet indicate that it wanted to put some data into the input buffer
- * but it couldn't.
+/* Returns non-zero if the stream interface's endpoint is ready to receive */
+static inline int si_rx_endp_ready(const struct stream_interface *si)
+{
+	return !(si->flags & SI_FL_RX_WAIT_EP);
+}
+
+/* The stream interface announces it is ready to try to deliver more data to the input buffer */
+static inline void si_rx_endp_more(struct stream_interface *si)
+{
+	si->flags &= ~SI_FL_RX_WAIT_EP;
+}
+
+/* The stream interface announces it doesn't have more data for the input buffer */
+static inline void si_rx_endp_done(struct stream_interface *si)
+{
+	si->flags |=  SI_FL_RX_WAIT_EP;
+}
+
+/* Tell a stream interface the input channel is OK with it sending it some data */
+static inline void si_rx_chan_rdy(struct stream_interface *si)
+{
+	si->flags &= ~SI_FL_RXBLK_CHAN;
+}
+
+/* Tell a stream interface the input channel is not OK with it sending it some data */
+static inline void si_rx_chan_blk(struct stream_interface *si)
+{
+	si->flags |=  SI_FL_RXBLK_CHAN;
+}
+
+/* Tell a stream interface the other side is connected */
+static inline void si_rx_conn_rdy(struct stream_interface *si)
+{
+	si->flags &= ~SI_FL_RXBLK_CONN;
+}
+
+/* Tell a stream interface it must wait for the other side to connect */
+static inline void si_rx_conn_blk(struct stream_interface *si)
+{
+	si->flags |=  SI_FL_RXBLK_CONN;
+}
+
+/* The stream interface just got the input buffer it was waiting for */
+static inline void si_rx_buff_rdy(struct stream_interface *si)
+{
+	si->flags &= ~SI_FL_RXBLK_BUFF;
+}
+
+/* The stream interface failed to get an input buffer and is waiting for it.
+ * Since it indicates a willingness to deliver data to the buffer that will
+ * have to be retried, we automatically clear RXBLK_ENDP to be called again
+ * as soon as RXBLK_BUFF is cleared.
  */
-static inline void si_applet_cant_put(struct stream_interface *si)
+static inline void si_rx_buff_blk(struct stream_interface *si)
 {
-	si->flags |= SI_FL_WANT_PUT | SI_FL_WAIT_ROOM;
+	si->flags |=  SI_FL_RXBLK_BUFF;
 }
 
-/* let an applet indicate that it doesn't want to put data into the input buffer */
-static inline void si_applet_stop_put(struct stream_interface *si)
+/* Tell a stream interface some room was made in the input buffer */
+static inline void si_rx_room_rdy(struct stream_interface *si)
 {
-	si->flags &= ~SI_FL_WANT_PUT;
+	si->flags &= ~SI_FL_RXBLK_ROOM;
 }
 
-/* let an applet indicate that it wants to get some data from the output buffer */
-static inline void si_applet_want_get(struct stream_interface *si)
+/* The stream interface announces it failed to put data into the input buffer
+ * by lack of room. Since it indicates a willingness to deliver data to the
+ * buffer that will have to be retried, we automatically clear RXBLK_ENDP to
+ * be called again as soon as RXBLK_ROOM is cleared.
+ */
+static inline void si_rx_room_blk(struct stream_interface *si)
+{
+	si->flags |=  SI_FL_RXBLK_ROOM;
+}
+
+/* The stream interface announces it will never put new data into the input
+ * buffer and that it's not waiting for its endpoint to deliver anything else.
+ * This function obviously doesn't have a _rdy equivalent.
+ */
+static inline void si_rx_shut_blk(struct stream_interface *si)
+{
+	si->flags |=  SI_FL_RXBLK_SHUT;
+}
+
+/* Returns non-zero if the stream interface's Rx path is blocked */
+static inline int si_tx_blocked(const struct stream_interface *si)
+{
+	return !!(si->flags & SI_FL_WAIT_DATA);
+}
+
+/* Returns non-zero if the stream interface's endpoint is ready to transmit */
+static inline int si_tx_endp_ready(const struct stream_interface *si)
+{
+	return (si->flags & SI_FL_WANT_GET);
+}
+
+/* Report that a stream interface wants to get some data from the output buffer */
+static inline void si_want_get(struct stream_interface *si)
 {
 	si->flags |= SI_FL_WANT_GET;
 }
 
-/* let an applet indicate that it wanted to get some data from the output buffer
- * but it couldn't.
- */
-static inline void si_applet_cant_get(struct stream_interface *si)
+/* Report that a stream interface failed to get some data from the output buffer */
+static inline void si_cant_get(struct stream_interface *si)
 {
 	si->flags |= SI_FL_WANT_GET | SI_FL_WAIT_DATA;
 }
 
-/* let an applet indicate that it doesn't want to get data from the input buffer */
-static inline void si_applet_stop_get(struct stream_interface *si)
+/* Report that a stream interface doesn't want to get data from the output buffer */
+static inline void si_stop_get(struct stream_interface *si)
 {
 	si->flags &= ~SI_FL_WANT_GET;
+}
+
+/* Report that a stream interface won't get any more data from the output buffer */
+static inline void si_done_get(struct stream_interface *si)
+{
+	si->flags &= ~(SI_FL_WANT_GET | SI_FL_WAIT_DATA);
 }
 
 /* Try to allocate a new conn_stream and assign it to the interface. If
@@ -291,6 +371,24 @@ static inline struct conn_stream *si_alloc_cs(struct stream_interface *si, struc
 	return cs;
 }
 
+/* Try to allocate a buffer for the stream-int's input channel. It relies on
+ * channel_alloc_buffer() for this so it abides by its rules. It returns 0 on
+ * failure, non-zero otherwise. If no buffer is available, the requester,
+ * represented by the <wait> pointer, will be added in the list of objects
+ * waiting for an available buffer, and SI_FL_RXBLK_BUFF will be set on the
+ * stream-int and SI_FL_RX_WAIT_EP cleared. The requester will be responsible
+ * for calling this function to try again once woken up.
+ */
+static inline int si_alloc_ibuf(struct stream_interface *si, struct buffer_wait *wait)
+{
+	int ret;
+
+	ret = channel_alloc_buffer(si_ic(si), wait);
+	if (!ret)
+		si_rx_buff_blk(si);
+	return ret;
+}
+
 /* Release the interface's existing endpoint (connection or appctx) and
  * allocate then initialize a new appctx which is assigned to the interface
  * and returned. NULL may be returned upon memory shortage. Applet <applet>
@@ -302,8 +400,10 @@ static inline struct appctx *si_alloc_appctx(struct stream_interface *si, struct
 
 	si_release_endpoint(si);
 	appctx = appctx_new(applet, tid_bit);
-	if (appctx)
+	if (appctx) {
 		si_attach_appctx(si, appctx);
+		appctx->t->nice = si_strm(si)->task->nice;
+	}
 
 	return appctx;
 }
@@ -326,18 +426,52 @@ static inline void si_must_kill_conn(struct stream_interface *si)
 	si->flags |= SI_FL_KILL_CONN;
 }
 
-/* Updates the stream interface and timers, then updates the data layer below */
-static inline void si_update(struct stream_interface *si)
-{
-	stream_int_update(si);
-	if (si->ops->update)
-		si->ops->update(si);
-}
-
-/* Calls chk_rcv on the connection using the data layer */
+/* This is to be used after making some room available in a channel. It will
+ * return without doing anything if the stream interface's RX path is blocked.
+ * It will automatically mark the stream interface as busy processing the end
+ * point in order to avoid useless repeated wakeups.
+ * It will then call ->chk_rcv() to enable receipt of new data.
+ */
 static inline void si_chk_rcv(struct stream_interface *si)
 {
+	if (si->flags & SI_FL_RXBLK_CONN && (si_opposite(si)->state >= SI_ST_EST))
+		si_rx_conn_rdy(si);
+
+	if (si_rx_blocked(si) || !si_rx_endp_ready(si))
+		return;
+
+	if (si->state != SI_ST_EST)
+		return;
+
+	si->flags |= SI_FL_RX_WAIT_EP;
 	si->ops->chk_rcv(si);
+}
+
+/* This tries to perform a synchronous receive on the stream interface to
+ * try to collect last arrived data. In practice it's only implemented on
+ * conn_streams. Returns 0 if nothing was done, non-zero if new data or a
+ * shutdown were collected. This may result on some delayed receive calls
+ * to be programmed and performed later, though it doesn't provide any
+ * such guarantee.
+ */
+static inline int si_sync_recv(struct stream_interface *si)
+{
+	struct conn_stream *cs;
+
+	if (si->state != SI_ST_EST)
+		return 0;
+
+	cs = objt_cs(si->end);
+	if (!cs)
+		return 0; // only conn_streams are supported
+
+	if (si->wait_event.events & SUB_RETRY_RECV)
+		return 0; // already subscribed
+
+	if (!si_rx_endp_ready(si) || si_rx_blocked(si))
+		return 0; // already failed
+
+	return si_cs_recv(cs);
 }
 
 /* Calls chk_snd on the connection using the data layer */
@@ -347,10 +481,8 @@ static inline void si_chk_snd(struct stream_interface *si)
 }
 
 /* Calls chk_snd on the connection using the ctrl layer */
-static inline int si_connect(struct stream_interface *si)
+static inline int si_connect(struct stream_interface *si, struct connection *conn)
 {
-	struct conn_stream *cs = objt_cs(si->end);
-	struct connection *conn = cs_conn(cs);
 	int ret = SF_ERR_NONE;
 
 	if (unlikely(!conn || !conn->ctrl || !conn->ctrl->connect))
@@ -365,14 +497,10 @@ static inline int si_connect(struct stream_interface *si)
 		si->state = SI_ST_CON;
 	}
 	else {
-		/* reuse the existing connection */
-		if (!channel_is_empty(si_oc(si))) {
-			/* we'll have to send a request there. */
-			cs_want_send(cs);
-		}
-
-		/* the connection is established */
-		si->state = SI_ST_EST;
+		/* try to reuse the existing connection, it will be
+		 * confirmed once we can send on it.
+		 */
+		si->state = SI_ST_CON;
 	}
 
 	/* needs src ip/port for logging */
@@ -380,6 +508,18 @@ static inline int si_connect(struct stream_interface *si)
 		conn_get_from_addr(conn);
 
 	return ret;
+}
+
+/* Returns info about the conn_stream <cs>, if not NULL. It call the mux layer's
+ * get_cs_info() function, if it exists. On success, it returns a cs_info
+ * structure. Otherwise, on error, if the mux does not implement get_cs_info()
+ * or if conn_stream is NULL, NULL is returned.
+ */
+static inline const struct cs_info *si_get_cs_info(struct conn_stream *cs)
+{
+	if (cs && cs->conn->mux->get_cs_info)
+		return cs->conn->mux->get_cs_info(cs);
+	return NULL;
 }
 
 /* for debugging, reports the stream interface state name */

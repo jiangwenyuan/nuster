@@ -9,6 +9,7 @@
  * 2 of the License, or (at your option) any later version.
  *
  */
+#include <errno.h>
 
 #include <types/applet.h>
 #include <types/cli.h>
@@ -17,6 +18,8 @@
 
 #include <common/config.h>
 #include <common/debug.h>
+#include <common/hathreads.h>
+#include <common/initcall.h>
 #include <common/memory.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
@@ -27,6 +30,18 @@
 #include <proto/log.h>
 #include <proto/stream_interface.h>
 #include <proto/stats.h>
+
+/* These are the most common pools, expected to be initialized first. These
+ * ones are allocated from an array, allowing to map them to an index.
+ */
+struct pool_head pool_base_start[MAX_BASE_POOLS] = { };
+unsigned int pool_base_count = 0;
+
+/* These ones are initialized per-thread on startup by init_pools() */
+struct pool_cache_head pool_cache[MAX_THREADS][MAX_BASE_POOLS];
+static struct list pool_lru_head[MAX_THREADS];           /* oldest objects   */
+THREAD_LOCAL size_t pool_cache_bytes = 0;                /* total cache size */
+THREAD_LOCAL size_t pool_cache_count = 0;                /* #cache objects   */
 
 static struct list pools = LIST_HEAD_INIT(pools);
 int mem_poison_byte = -1;
@@ -50,10 +65,12 @@ struct pool_head *create_pool(char *name, unsigned int size, unsigned int flags)
 	 * ease merging of entries. Note that the rounding is a power of two.
 	 * This extra (void *) is not accounted for in the size computation
 	 * so that the visible parts outside are not affected.
+	 *
+	 * Note: for the LRU cache, we need to store 2 doubly-linked lists.
 	 */
 
 	if (!(flags & MEM_F_EXACT)) {
-		align = 16;
+		align = 4 * sizeof(void *); // 2 lists = 4 pointers min
 		size  = ((size + POOL_EXTRA + align - 1) & -align) - POOL_EXTRA;
 	}
 
@@ -83,7 +100,22 @@ struct pool_head *create_pool(char *name, unsigned int size, unsigned int flags)
 	}
 
 	if (!pool) {
-		pool = calloc(1, sizeof(*pool));
+		if (pool_base_count < MAX_BASE_POOLS)
+			pool = &pool_base_start[pool_base_count++];
+
+		if (!pool) {
+			/* look for a freed entry */
+			for (entry = pool_base_start; entry != pool_base_start + MAX_BASE_POOLS; entry++) {
+				if (!entry->size) {
+					pool = entry;
+					break;
+				}
+			}
+		}
+
+		if (!pool)
+			pool = calloc(1, sizeof(*pool));
+
 		if (!pool)
 			return NULL;
 		if (name)
@@ -93,9 +125,168 @@ struct pool_head *create_pool(char *name, unsigned int size, unsigned int flags)
 		LIST_ADDQ(start, &pool->list);
 	}
 	pool->users++;
+#ifndef CONFIG_HAP_LOCKLESS_POOLS
 	HA_SPIN_INIT(&pool->lock);
+#endif
 	return pool;
 }
+
+#ifdef CONFIG_HAP_LOCKLESS_POOLS
+/* Allocates new entries for pool <pool> until there are at least <avail> + 1
+ * available, then returns the last one for immediate use, so that at least
+ * <avail> are left available in the pool upon return. NULL is returned if the
+ * last entry could not be allocated. It's important to note that at least one
+ * allocation is always performed even if there are enough entries in the pool.
+ * A call to the garbage collector is performed at most once in case malloc()
+ * returns an error, before returning NULL.
+ */
+void *__pool_refill_alloc(struct pool_head *pool, unsigned int avail)
+{
+	void *ptr = NULL, **free_list;
+	int failed = 0;
+	int size = pool->size;
+	int limit = pool->limit;
+	int allocated = pool->allocated, allocated_orig = allocated;
+
+	/* stop point */
+	avail += pool->used;
+
+	while (1) {
+		if (limit && allocated >= limit) {
+			HA_ATOMIC_ADD(&pool->allocated, allocated - allocated_orig);
+			return NULL;
+		}
+
+		ptr = malloc(size + POOL_EXTRA);
+		if (!ptr) {
+			HA_ATOMIC_ADD(&pool->failed, 1);
+			if (failed)
+				return NULL;
+			failed++;
+			pool_gc(pool);
+			continue;
+		}
+		if (++allocated > avail)
+			break;
+
+		free_list = pool->free_list;
+		do {
+			*POOL_LINK(pool, ptr) = free_list;
+			__ha_barrier_store();
+		} while (HA_ATOMIC_CAS(&pool->free_list, &free_list, ptr) == 0);
+	}
+
+	HA_ATOMIC_ADD(&pool->allocated, allocated - allocated_orig);
+	HA_ATOMIC_ADD(&pool->used, 1);
+
+#ifdef DEBUG_MEMORY_POOLS
+	/* keep track of where the element was allocated from */
+	*POOL_LINK(pool, ptr) = (void *)pool;
+#endif
+	return ptr;
+}
+void *pool_refill_alloc(struct pool_head *pool, unsigned int avail)
+{
+	void *ptr;
+
+	ptr = __pool_refill_alloc(pool, avail);
+	return ptr;
+}
+/*
+ * This function frees whatever can be freed in pool <pool>.
+ */
+void pool_flush(struct pool_head *pool)
+{
+	void **next, *temp;
+	int removed = 0;
+
+	if (!pool)
+		return;
+	do {
+		next = pool->free_list;
+	} while (!HA_ATOMIC_CAS(&pool->free_list, &next, NULL));
+	while (next) {
+		temp = next;
+		next = *POOL_LINK(pool, temp);
+		removed++;
+		free(temp);
+	}
+	pool->free_list = next;
+	HA_ATOMIC_SUB(&pool->allocated, removed);
+	/* here, we should have pool->allocate == pool->used */
+}
+
+/*
+ * This function frees whatever can be freed in all pools, but respecting
+ * the minimum thresholds imposed by owners. It takes care of avoiding
+ * recursion because it may be called from a signal handler.
+ *
+ * <pool_ctx> is unused
+ */
+void pool_gc(struct pool_head *pool_ctx)
+{
+	static int recurse;
+	int cur_recurse = 0;
+	struct pool_head *entry;
+
+	if (recurse || !HA_ATOMIC_CAS(&recurse, &cur_recurse, 1))
+		return;
+
+	list_for_each_entry(entry, &pools, list) {
+		while ((int)((volatile int)entry->allocated - (volatile int)entry->used) > (int)entry->minavail) {
+			struct pool_free_list cmp, new;
+
+			cmp.seq = entry->seq;
+			__ha_barrier_load();
+			cmp.free_list = entry->free_list;
+			__ha_barrier_load();
+			if (cmp.free_list == NULL)
+				break;
+			new.free_list = *POOL_LINK(entry, cmp.free_list);
+			new.seq = cmp.seq + 1;
+			if (__ha_cas_dw(&entry->free_list, &cmp, &new) == 0)
+				continue;
+			free(cmp.free_list);
+			HA_ATOMIC_SUB(&entry->allocated, 1);
+		}
+	}
+
+	HA_ATOMIC_STORE(&recurse, 0);
+}
+
+/* frees an object to the local cache, possibly pushing oldest objects to the
+ * global pool. Must not be called directly.
+ */
+void __pool_put_to_cache(struct pool_head *pool, void *ptr, ssize_t idx)
+{
+	struct pool_cache_item *item = (struct pool_cache_item *)ptr;
+	struct pool_cache_head *ph = &pool_cache[tid][idx];
+
+	LIST_ADD(&ph->list, &item->by_pool);
+	LIST_ADD(&pool_lru_head[tid], &item->by_lru);
+	ph->count++;
+	pool_cache_count++;
+	pool_cache_bytes += ph->size;
+
+	if (pool_cache_bytes <= CONFIG_HAP_POOL_CACHE_SIZE)
+		return;
+
+	do {
+		item = LIST_PREV(&pool_lru_head[tid], struct pool_cache_item *, by_lru);
+		/* note: by definition we remove oldest objects so they also are the
+		 * oldest in their own pools, thus their next is the pool's head.
+		 */
+		ph = LIST_NEXT(&item->by_pool, struct pool_cache_head *, list);
+		LIST_DEL(&item->by_pool);
+		LIST_DEL(&item->by_lru);
+		ph->count--;
+		pool_cache_count--;
+		pool_cache_bytes -= ph->size;
+		__pool_free(pool_base_start + (ph - pool_cache[tid]), item);
+	} while (pool_cache_bytes > CONFIG_HAP_POOL_CACHE_SIZE * 7 / 8);
+}
+
+#else /* CONFIG_HAP_LOCKLESS_POOLS */
 
 /* Allocates new entries for pool <pool> until there are at least <avail> + 1
  * available, then returns the last one for immediate use, so that at least
@@ -208,6 +399,7 @@ void pool_gc(struct pool_head *pool_ctx)
 
 	HA_ATOMIC_STORE(&recurse, 0);
 }
+#endif
 
 /*
  * This function destroys a pool by freeing it completely, unless it's still
@@ -225,11 +417,25 @@ void *pool_destroy(struct pool_head *pool)
 		pool->users--;
 		if (!pool->users) {
 			LIST_DEL(&pool->list);
+#ifndef CONFIG_HAP_LOCKLESS_POOLS
 			HA_SPIN_DESTROY(&pool->lock);
-			free(pool);
+#endif
+			if ((pool - pool_base_start) < MAX_BASE_POOLS)
+				memset(pool, 0, sizeof(*pool));
+			else
+				free(pool);
 		}
 	}
 	return NULL;
+}
+
+/* This destroys all pools on exit. It is *not* thread safe. */
+void pool_destroy_all()
+{
+	struct pool_head *entry, *back;
+
+	list_for_each_entry_safe(entry, back, &pools, list)
+		pool_destroy(entry);
 }
 
 /* This function dumps memory usage information into the trash buffer. */
@@ -242,16 +448,21 @@ void dump_pools_to_trash()
 	allocated = used = nbpools = 0;
 	chunk_printf(&trash, "Dumping pools usage. Use SIGQUIT to flush them.\n");
 	list_for_each_entry(entry, &pools, list) {
+#ifndef CONFIG_HAP_LOCKLESS_POOLS
 		HA_SPIN_LOCK(POOL_LOCK, &entry->lock);
-		chunk_appendf(&trash, "  - Pool %s (%d bytes) : %d allocated (%u bytes), %d used, %d failures, %d users%s\n",
+#endif
+		chunk_appendf(&trash, "  - Pool %s (%d bytes) : %d allocated (%u bytes), %d used, %d failures, %d users, @%p=%02d%s\n",
 			 entry->name, entry->size, entry->allocated,
 		         entry->size * entry->allocated, entry->used, entry->failed,
-			 entry->users, (entry->flags & MEM_F_SHARED) ? " [SHARED]" : "");
+			 entry->users, entry, (int)pool_get_index(entry),
+			 (entry->flags & MEM_F_SHARED) ? " [SHARED]" : "");
 
 		allocated += entry->allocated * entry->size;
 		used += entry->used * entry->size;
 		nbpools++;
+#ifndef CONFIG_HAP_LOCKLESS_POOLS
 		HA_SPIN_UNLOCK(POOL_LOCK, &entry->lock);
+#endif
 	}
 	chunk_appendf(&trash, "Total: %d pools, %lu bytes allocated, %lu used.\n",
 		 nbpools, allocated, used);
@@ -261,7 +472,7 @@ void dump_pools_to_trash()
 void dump_pools(void)
 {
 	dump_pools_to_trash();
-	qfprintf(stderr, "%s", trash.str);
+	qfprintf(stderr, "%s", trash.area);
 }
 
 /* This function returns the total number of failed pool allocations */
@@ -307,11 +518,41 @@ static int cli_io_handler_dump_pools(struct appctx *appctx)
 
 	dump_pools_to_trash();
 	if (ci_putchk(si_ic(si), &trash) == -1) {
-		si_applet_cant_put(si);
+		si_rx_room_blk(si);
 		return 0;
 	}
 	return 1;
 }
+
+/* callback used to create early pool <name> of size <size> and store the
+ * resulting pointer into <ptr>. If the allocation fails, it quits with after
+ * emitting an error message.
+ */
+void create_pool_callback(struct pool_head **ptr, char *name, unsigned int size)
+{
+	*ptr = create_pool(name, size, MEM_F_SHARED);
+	if (!*ptr) {
+		ha_alert("Failed to allocate pool '%s' of size %u : %s. Aborting.\n",
+			 name, size, strerror(errno));
+		exit(1);
+	}
+}
+
+/* Initializes all per-thread arrays on startup */
+static void init_pools()
+{
+	int thr, idx;
+
+	for (thr = 0; thr < MAX_THREADS; thr++) {
+		for (idx = 0; idx < MAX_BASE_POOLS; idx++) {
+			LIST_INIT(&pool_cache[thr][idx].list);
+			pool_cache[thr][idx].size = 0;
+		}
+		LIST_INIT(&pool_lru_head[thr]);
+	}
+}
+
+INITCALL0(STG_PREPARE, init_pools);
 
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
@@ -319,11 +560,7 @@ static struct cli_kw_list cli_kws = {{ },{
 	{{},}
 }};
 
-__attribute__((constructor))
-static void __memory_init(void)
-{
-	cli_register_kw(&cli_kws);
-}
+INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
 
 /*
  * Local variables:

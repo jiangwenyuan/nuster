@@ -3,8 +3,11 @@
 # You should use it this way :
 #   [g]make TARGET=os ARCH=arch CPU=cpu USE_xxx=1 ...
 #
+# By default the detailed commands are hidden for a cleaner output, but you may
+# see them by appending "V=1" to the make command.
+#
 # Valid USE_* options are the following. Most of them are automatically set by
-# the TARGET, others have to be explictly specified :
+# the TARGET, others have to be explicitly specified :
 #   USE_DLMALLOC         : enable use of dlmalloc (see DLMALLOC_SRC)
 #   USE_EPOLL            : enable epoll() on Linux 2.6. Automatic.
 #   USE_KQUEUE           : enable kqueue() on BSD. Automatic.
@@ -40,6 +43,7 @@
 #   USE_TFO              : enable TCP fast open. Supported on Linux >= 3.7.
 #   USE_NS               : enable network namespace support. Supported on Linux >= 2.6.24.
 #   USE_DL               : enable it if your system requires -ldl. Automatic on Linux.
+#   USE_RT               : enable it if your system requires -lrt. Automatic on Linux.
 #   USE_DEVICEATLAS      : enable DeviceAtlas api.
 #   USE_51DEGREES        : enable third party device detection library from 51Degrees
 #   USE_WURFL            : enable WURFL detection library from Scientiamobile
@@ -79,9 +83,13 @@
 # Other variables :
 #   DLMALLOC_SRC   : build with dlmalloc, indicate the location of dlmalloc.c.
 #   DLMALLOC_THRES : should match PAGE_SIZE on every platform (default: 4096).
+#   PCRE_CONFIG    : force the binary path to get pcre config (by default
+#                                                              pcre-config)
 #   PCREDIR        : force the path to libpcre.
 #   PCRE_LIB       : force the lib path to libpcre (defaults to $PCREDIR/lib).
 #   PCRE_INC       : force the include path to libpcre ($PCREDIR/inc)
+#   PCRE2_CONFIG   : force the binary path to get pcre2 config (by default
+#                                                               pcre2-config)
 #   SSL_LIB        : force the lib path to libssl/libcrypto
 #   SSL_INC        : force the include path to libssl/libcrypto
 #   LUA_LIB        : force the lib path to lua
@@ -92,6 +100,30 @@
 #   VERSION        : force haproxy version reporting.
 #   SUBVERS        : add a sub-version (eg: platform, model, ...).
 #   VERDATE        : force haproxy's release date.
+#
+#   VTEST_PROGRAM : location of the vtest program to run reg-tests.
+
+# verbosity: pass V=1 for verbose shell invocation
+V = 0
+Q = @
+ifeq ($V,1)
+Q=
+endif
+
+# Function used to detect support of a given option by the compiler.
+# Usage: CFLAGS += $(call cc-opt,option). Eg: $(call cc-opt,-fwrapv)
+# Note: ensure the referencing variable is assigned using ":=" and not "=" to
+#       call it only once.
+cc-opt = $(shell set -e; if $(CC) $(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; fi;)
+
+# same but emits $2 if $1 is not supported
+cc-opt-alt = $(shell set -e; if $(CC) $(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "$(1)"; else echo "$(2)"; fi;)
+
+# Disable a warning when supported by the compiler. Don't put spaces around the
+# warning! And don't use cc-opt which doesn't always report an error until
+# another one is also returned.
+# Usage: CFLAGS += $(call cc-nowarn,warning). Eg: $(call cc-opt,format-truncation)
+cc-nowarn = $(shell set -e; if $(CC) -W$(1) -E -xc - -o /dev/null </dev/null >&0 2>&0; then echo "-Wno-$(1)"; fi;)
 
 # Function used to detect support of a given option by the compiler.
 # Usage: CFLAGS += $(call cc-opt,option). Eg: $(call cc-opt,-fwrapv)
@@ -147,6 +179,9 @@ DEBUG_CFLAGS = -g
 #### Add -Werror when set to non-empty
 ERR =
 
+#### May be used to force running a specific set of reg-tests
+REG_TEST_FILES =
+
 #### Compiler-specific flags that may be used to disable some negative over-
 # optimization or to silence some warnings. -fno-strict-aliasing is needed with
 # gcc >= 4.4.
@@ -157,8 +192,21 @@ SPEC_CFLAGS := -fno-strict-aliasing -Wdeclaration-after-statement
 SPEC_CFLAGS += $(call cc-opt-alt,-fwrapv,$(call cc-opt,-fno-strict-overflow))
 SPEC_CFLAGS += $(call cc-nowarn,format-truncation)
 SPEC_CFLAGS += $(call cc-nowarn,address-of-packed-member)
-SPEC_CFLAGS += $(call cc-nowarn,null-dereference)
 SPEC_CFLAGS += $(call cc-nowarn,unused-label)
+SPEC_CFLAGS += $(call cc-nowarn,sign-compare)
+SPEC_CFLAGS += $(call cc-nowarn,unused-parameter)
+SPEC_CFLAGS += $(call cc-nowarn,old-style-declaration)
+SPEC_CFLAGS += $(call cc-nowarn,ignored-qualifiers)
+SPEC_CFLAGS += $(call cc-nowarn,clobbered)
+SPEC_CFLAGS += $(call cc-nowarn,missing-field-initializers)
+SPEC_CFLAGS += $(call cc-nowarn,implicit-fallthrough)
+SPEC_CFLAGS += $(call cc-nowarn,stringop-overflow)
+SPEC_CFLAGS += $(call cc-nowarn,cast-function-type)
+SPEC_CFLAGS += $(call cc-opt,-Wtype-limits)
+SPEC_CFLAGS += $(call cc-opt,-Wshift-negative-value)
+SPEC_CFLAGS += $(call cc-opt,-Wshift-overflow=2)
+SPEC_CFLAGS += $(call cc-opt,-Wduplicated-cond)
+SPEC_CFLAGS += $(call cc-opt,-Wnull-dereference)
 
 #### Memory usage tuning
 # If small memory footprint is required, you can reduce the buffer size. There
@@ -217,7 +265,7 @@ CPU_CFLAGS.i686       = -O2 -march=i686
 CPU_CFLAGS.ultrasparc = -O6 -mcpu=v9 -mtune=ultrasparc
 CPU_CFLAGS            = $(CPU_CFLAGS.$(CPU))
 
-#### ARCH dependant flags, may be overriden by CPU flags
+#### ARCH dependant flags, may be overridden by CPU flags
 ARCH_FLAGS.32     = -m32
 ARCH_FLAGS.64     = -m64
 ARCH_FLAGS.i386   = -m32 -march=i386
@@ -267,14 +315,17 @@ ifeq ($(TARGET),linux22)
   USE_TPROXY      = implicit
   USE_LIBCRYPT    = implicit
   USE_DL          = implicit
+  USE_RT          = implicit
 else
 ifeq ($(TARGET),linux24)
   # This is for standard Linux 2.4 with netfilter but without epoll()
   USE_NETFILTER   = implicit
   USE_POLL        = implicit
   USE_TPROXY      = implicit
+  USE_CRYPT_H     = implicit
   USE_LIBCRYPT    = implicit
   USE_DL          = implicit
+  USE_RT          = implicit
 else
 ifeq ($(TARGET),linux24e)
   # This is for enhanced Linux 2.4 with netfilter and epoll() patch > 0.21
@@ -283,8 +334,10 @@ ifeq ($(TARGET),linux24e)
   USE_EPOLL       = implicit
   USE_MY_EPOLL    = implicit
   USE_TPROXY      = implicit
+  USE_CRYPT_H     = implicit
   USE_LIBCRYPT    = implicit
   USE_DL          = implicit
+  USE_RT          = implicit
 else
 ifeq ($(TARGET),linux26)
   # This is for standard Linux 2.6 with netfilter and standard epoll()
@@ -292,9 +345,11 @@ ifeq ($(TARGET),linux26)
   USE_POLL        = implicit
   USE_EPOLL       = implicit
   USE_TPROXY      = implicit
+  USE_CRYPT_H     = implicit
   USE_LIBCRYPT    = implicit
   USE_FUTEX       = implicit
   USE_DL          = implicit
+  USE_RT          = implicit
 else
 ifeq ($(TARGET),linux2628)
   # This is for standard Linux >= 2.6.28 with netfilter, epoll, tproxy and splice
@@ -302,6 +357,7 @@ ifeq ($(TARGET),linux2628)
   USE_POLL        = implicit
   USE_EPOLL       = implicit
   USE_TPROXY      = implicit
+  USE_CRYPT_H     = implicit
   USE_LIBCRYPT    = implicit
   USE_LINUX_SPLICE= implicit
   USE_LINUX_TPROXY= implicit
@@ -310,6 +366,7 @@ ifeq ($(TARGET),linux2628)
   USE_CPU_AFFINITY= implicit
   ASSUME_SPLICE_WORKS= implicit
   USE_DL          = implicit
+  USE_RT          = implicit
   USE_THREAD      = implicit
 else
 ifeq ($(TARGET),solaris)
@@ -585,6 +642,11 @@ OPTIONS_CFLAGS  += -DUSE_THREAD
 OPTIONS_LDFLAGS += -lpthread
 endif
 
+ifneq ($(USE_RT),)
+BUILD_OPTIONS   += $(call ignore_implicit,USE_RT)
+OPTIONS_LDFLAGS += -lrt
+endif
+
 # report DLMALLOC_SRC only if explicitly specified
 ifneq ($(DLMALLOC_SRC),)
 BUILD_OPTIONS += DLMALLOC_SRC=$(DLMALLOC_SRC)
@@ -629,14 +691,6 @@ else
 ifneq ($(USE_FUTEX),)
 OPTIONS_CFLAGS  += -DUSE_SYSCALL_FUTEX
 endif
-endif
-endif
-
-# For nuster
-ifeq ($(USE_OPENSSL),)
-ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
-OPTIONS_LDFLAGS += -lpthread
 endif
 endif
 
@@ -735,7 +789,8 @@ endif
 # Forcing PCREDIR to an empty string will let the compiler use the default
 # locations.
 
-PCREDIR	        := $(shell pcre-config --prefix 2>/dev/null || echo /usr/local)
+PCRE_CONFIG    	:= pcre-config
+PCREDIR	        := $(shell $(PCRE_CONFIG) --prefix 2>/dev/null || echo /usr/local)
 ifneq ($(PCREDIR),)
 PCRE_INC        := $(PCREDIR)/include
 PCRE_LIB        := $(PCREDIR)/lib
@@ -760,7 +815,8 @@ endif
 endif
 
 ifneq ($(USE_PCRE2)$(USE_STATIC_PCRE2)$(USE_PCRE2_JIT),)
-PCRE2DIR	:= $(shell pcre2-config --prefix 2>/dev/null || echo /usr/local)
+PCRE2_CONFIG 	:= pcre2-config
+PCRE2DIR	:= $(shell $(PCRE2_CONFIG) --prefix 2>/dev/null || echo /usr/local)
 ifneq ($(PCRE2DIR),)
 PCRE2_INC       := $(PCRE2DIR)/include
 PCRE2_LIB       := $(PCRE2DIR)/lib
@@ -778,7 +834,7 @@ endif
 endif
 
 
-PCRE2_LDFLAGS	:= $(shell pcre2-config --libs$(PCRE2_WIDTH) 2>/dev/null || echo -L/usr/local/lib -lpcre2-$(PCRE2_WIDTH))
+PCRE2_LDFLAGS	:= $(shell $(PCRE2_CONFIG) --libs$(PCRE2_WIDTH) 2>/dev/null || echo -L/usr/local/lib -lpcre2-$(PCRE2_WIDTH))
 
 ifeq ($(PCRE2_LDFLAGS),)
 $(error libpcre2-$(PCRE2_WIDTH) not found)
@@ -818,7 +874,7 @@ EBTREE_DIR := ebtree
 
 #### Global compile options
 VERBOSE_CFLAGS = $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE)
-COPTS  = -Iinclude -I$(EBTREE_DIR) -Wall
+COPTS  = -Iinclude -I$(EBTREE_DIR) -Wall -Wextra
 
 ifneq ($(ERR),)
 COPTS += -Werror
@@ -844,12 +900,23 @@ endif
 ifneq ($(USE_NS),)
 OPTIONS_CFLAGS += -DCONFIG_HAP_NS
 BUILD_OPTIONS  += $(call ignore_implicit,USE_NS)
+OPTIONS_OBJS  += src/namespace.o
 endif
 
 #### Global link options
 # These options are added at the end of the "ld" command line. Use LDFLAGS to
 # add options at the beginning of the "ld" command line if needed.
 LDOPTS = $(TARGET_LDFLAGS) $(OPTIONS_LDFLAGS) $(ADDLIB)
+
+ifeq ($V,1)
+cmd_CC = $(CC)
+cmd_LD = $(LD)
+cmd_AR = $(AR)
+else
+cmd_CC = $(Q)echo "  CC      $@";$(CC)
+cmd_LD = $(Q)echo "  LD      $@";$(LD)
+cmd_AR = $(Q)echo "  AR      $@";$(AR)
+endif
 
 ifeq ($(TARGET),)
 all:
@@ -862,8 +929,9 @@ all:
 	@echo
 	@echo "Please choose the target among the following supported list :"
 	@echo
-	@echo "   linux2628, linux26, linux24, linux24e, linux22, solaris"
-	@echo "   freebsd, openbsd, cygwin, custom, generic"
+	@echo "   linux2628, linux26, linux24, linux24e, linux22, solaris,"
+	@echo "   freebsd, netbsd, osx, openbsd, aix51, aix52, cygwin, haiku,"
+	@echo "   generic, custom"
 	@echo
 	@echo "Use \"generic\" if you don't want any optimization, \"custom\" if you"
 	@echo "want to precisely tweak every option, or choose the target which"
@@ -875,33 +943,26 @@ else
 all: haproxy $(EXTRA)
 endif
 
-OBJS = src/proto_http.o src/cfgparse.o src/server.o src/stream.o        \
-       src/flt_spoe.o src/stick_table.o src/stats.o src/mux_h2.o        \
-       src/checks.o src/haproxy.o src/log.o src/dns.o src/peers.o       \
-       src/standard.o src/sample.o src/cli.o src/stream_interface.o     \
-       src/proto_tcp.o src/backend.o src/proxy.o src/tcp_rules.o        \
-       src/listener.o src/flt_http_comp.o src/pattern.o src/cache.o     \
-       src/filters.o src/vars.o src/acl.o src/payload.o                 \
-       src/connection.o src/raw_sock.o src/proto_uxst.o                 \
-       src/flt_trace.o src/session.o src/ev_select.o src/channel.o      \
-       src/task.o src/queue.o src/applet.o src/map.o src/frontend.o     \
-       src/freq_ctr.o src/lb_fwlc.o src/mux_pt.o src/auth.o src/fd.o    \
-       src/hpack-dec.o src/memory.o src/lb_fwrr.o src/lb_chash.o        \
-       src/lb_fas.o src/hathreads.o src/chunk.o src/lb_map.o            \
-       src/xxhash.o src/regex.o src/shctx.o src/buffer.o src/action.o   \
-       src/h1.o src/compression.o src/pipe.o src/namespace.o            \
-       src/sha1.o src/hpack-tbl.o src/hpack-enc.o src/uri_auth.o        \
-       src/time.o src/proto_udp.o src/arg.o src/signal.o                \
-       src/protocol.o src/lru.o src/hdr_idx.o src/hpack-huff.o          \
-       src/mailers.o src/h2.o src/base64.o src/hash.o                   \
-                                                                        \
-       src/nuster/cache/dict.o src/nuster/cache/filter.o                \
-       src/nuster/cache/stats.o src/nuster/cache/manager.o              \
-       src/nuster/cache/engine.o                                        \
-       src/nuster/nosql/filter.o  src/nuster/nosql/dict.o               \
-       src/nuster/nosql/stats.o src/nuster/nosql/engine.o               \
-       src/nuster/memory.o src/nuster/parser.o src/nuster/http.o        \
-       src/nuster/nuster.o
+OBJS = src/proto_http.o src/cfgparse-listen.o src/proto_htx.o src/stream.o    \
+       src/mux_h2.o src/stats.o src/flt_spoe.o src/server.o src/checks.o      \
+       src/haproxy.o src/cfgparse.o src/flt_http_comp.o src/http_fetch.o      \
+       src/dns.o src/stick_table.o src/mux_h1.o src/peers.o src/standard.o    \
+       src/proxy.o src/cli.o src/log.o src/backend.o src/pattern.o            \
+       src/sample.o src/stream_interface.o src/proto_tcp.o src/listener.o     \
+       src/h1.o src/cfgparse-global.o src/cache.o src/http_rules.o            \
+       src/http_act.o src/tcp_rules.o src/filters.o src/connection.o          \
+       src/session.o src/acl.o src/vars.o src/raw_sock.o src/map.o            \
+       src/proto_uxst.o src/payload.o src/fd.o src/queue.o src/flt_trace.o    \
+       src/task.o src/lb_chash.o src/frontend.o src/applet.o src/mux_pt.o     \
+       src/signal.o src/ev_select.o src/proto_sockpair.o src/compression.o    \
+       src/http_conv.o src/memory.o src/lb_fwrr.o src/channel.o src/htx.o     \
+       src/uri_auth.o src/regex.o src/chunk.o src/pipe.o src/lb_fas.o         \
+       src/lb_map.o src/lb_fwlc.o src/auth.o src/time.o src/hathreads.o       \
+       src/http_htx.o src/buffer.o src/hpack-tbl.o src/shctx.o src/sha1.o     \
+       src/http.o src/hpack-dec.o src/action.o src/proto_udp.o src/http_acl.o \
+       src/xxhash.o src/hpack-enc.o src/h2.o src/freq_ctr.o src/lru.o         \
+       src/protocol.o src/arg.o src/hpack-huff.o src/hdr_idx.o src/base64.o   \
+       src/hash.o src/mailers.o src/activity.o src/http_msg.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
@@ -920,26 +981,29 @@ LIB_EBTREE = $(EBTREE_DIR)/libebtree.a
 INCLUDES = $(wildcard include/*/*.h ebtree/*.h)
 DEP = $(INCLUDES) .build_opts
 
+help:
+	$(Q)sed -ne "/^[^#]*$$/q;s/^#\(.*\)/\1/p" Makefile
+
 # Used only to force a rebuild if some build options change
 .build_opts: $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 
-haproxy: $(OPTIONS_OBJS) $(EBTREE_OBJS) $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
+haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS)
+	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
 
 $(LIB_EBTREE): $(EBTREE_OBJS)
-	$(AR) rv $@ $^
+	$(cmd_AR) rv $@ $^
 
 objsize: haproxy
-	@objdump -t $^|grep ' g '|grep -F '.text'|awk '{print $$5 FS $$6}'|sort
+	$(Q)objdump -t $^|grep ' g '|grep -F '.text'|awk '{print $$5 FS $$6}'|sort
 
 %.o:	%.c $(DEP)
-	$(CC) $(COPTS) -c -o $@ $<
+	$(cmd_CC) $(COPTS) -c -o $@ $<
 
 src/trace.o: src/trace.c $(DEP)
-	$(CC) $(TRACE_COPTS) -c -o $@ $<
+	$(cmd_CC) $(TRACE_COPTS) -c -o $@ $<
 
 src/haproxy.o:	src/haproxy.c $(DEP)
-	$(CC) $(COPTS) \
+	$(cmd_CC) $(COPTS) \
 	      -DBUILD_TARGET='"$(strip $(TARGET))"' \
 	      -DBUILD_ARCH='"$(strip $(ARCH))"' \
 	      -DBUILD_CPU='"$(strip $(CPU))"' \
@@ -949,66 +1013,66 @@ src/haproxy.o:	src/haproxy.c $(DEP)
 	       -c -o $@ $<
 
 src/dlmalloc.o: $(DLMALLOC_SRC) $(DEP)
-	$(CC) $(COPTS) -DDEFAULT_MMAP_THRESHOLD=$(DLMALLOC_THRES) -c -o $@ $<
+	$(cmd_CC) $(COPTS) -DDEFAULT_MMAP_THRESHOLD=$(DLMALLOC_THRES) -c -o $@ $<
 
 install-man:
-	install -d "$(DESTDIR)$(MANDIR)"/man1
-	install -m 644 doc/haproxy.1 "$(DESTDIR)$(MANDIR)"/man1
+	$(Q)install -v -d "$(DESTDIR)$(MANDIR)"/man1
+	$(Q)install -v -m 644 doc/haproxy.1 "$(DESTDIR)$(MANDIR)"/man1
 
 EXCLUDE_DOCUMENTATION = lgpl gpl coding-style
 DOCUMENTATION = $(filter-out $(EXCLUDE_DOCUMENTATION),$(patsubst doc/%.txt,%,$(wildcard doc/*.txt)))
 
 install-doc:
-	install -d "$(DESTDIR)$(DOCDIR)"
-	for x in $(DOCUMENTATION); do \
-		install -m 644 doc/$$x.txt "$(DESTDIR)$(DOCDIR)" ; \
+	$(Q)install -v -d "$(DESTDIR)$(DOCDIR)"
+	$(Q)for x in $(DOCUMENTATION); do \
+		install -v -m 644 doc/$$x.txt "$(DESTDIR)$(DOCDIR)" ; \
 	done
 
 install-bin:
-	@for i in haproxy $(EXTRA); do \
+	$(Q)for i in haproxy $(EXTRA); do \
 		if ! [ -e "$$i" ]; then \
 			echo "Please run 'make' before 'make install'."; \
 			exit 1; \
 		fi; \
 	done
-	install -d "$(DESTDIR)$(SBINDIR)"
-	install haproxy $(EXTRA) "$(DESTDIR)$(SBINDIR)"
-	ln -s "$(DESTDIR)$(SBINDIR)/haproxy" "$(DESTDIR)$(SBINDIR)/nuster"
+	$(Q)install -v -d "$(DESTDIR)$(SBINDIR)"
+	$(Q)install -v haproxy $(EXTRA) "$(DESTDIR)$(SBINDIR)"
 
 install: install-bin install-man install-doc
 
 uninstall:
-	rm -f "$(DESTDIR)$(MANDIR)"/man1/haproxy.1
-	for x in $(DOCUMENTATION); do \
+	$(Q)rm -f "$(DESTDIR)$(MANDIR)"/man1/haproxy.1
+	$(Q)for x in $(DOCUMENTATION); do \
 		rm -f "$(DESTDIR)$(DOCDIR)"/$$x.txt ; \
 	done
-	-rmdir "$(DESTDIR)$(DOCDIR)"
-	rm -f "$(DESTDIR)$(SBINDIR)"/haproxy
+	$(Q)-rmdir "$(DESTDIR)$(DOCDIR)"
+	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/haproxy
 
 clean:
-	rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
-	for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
-	rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
-	rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
-	rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
+	$(Q)rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
+	$(Q)for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
+	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
+	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
 
 tags:
-	find src include \( -name '*.c' -o -name '*.h' \) -print0 | \
+	$(Q)find src include \( -name '*.c' -o -name '*.h' \) -print0 | \
 	   xargs -0 etags --declarations --members
 
 cscope:
-	find src include -name "*.[ch]" -print | cscope -q -b -i -
+	$(Q)find src include -name "*.[ch]" -print | cscope -q -b -i -
 
 tar:	clean
-	ln -s . haproxy-$(VERSION)$(SUBVERS)
-	tar --exclude=haproxy-$(VERSION)$(SUBVERS)/.git \
+	$(Q)ln -s . haproxy-$(VERSION)$(SUBVERS)
+	$(Q)tar --exclude=haproxy-$(VERSION)$(SUBVERS)/.git \
 	    --exclude=haproxy-$(VERSION)$(SUBVERS)/haproxy-$(VERSION)$(SUBVERS) \
 	    --exclude=haproxy-$(VERSION)$(SUBVERS)/haproxy-$(VERSION)$(SUBVERS).tar.gz \
 	    -cf - haproxy-$(VERSION)$(SUBVERS)/* | gzip -c9 >haproxy-$(VERSION)$(SUBVERS).tar.gz
-	rm -f haproxy-$(VERSION)$(SUBVERS)
+	$(Q)echo haproxy-$(VERSION)$(SUBVERS).tar.gz
+	$(Q)rm -f haproxy-$(VERSION)$(SUBVERS)
 
 git-tar:
-	git archive --format=tar --prefix="haproxy-$(VERSION)$(SUBVERS)/" HEAD | gzip -9 > haproxy-$(VERSION)$(SUBVERS).tar.gz
+	$(Q)git archive --format=tar --prefix="haproxy-$(VERSION)$(SUBVERS)/" HEAD | gzip -9 > haproxy-$(VERSION)$(SUBVERS).tar.gz
+	$(Q)echo haproxy-$(VERSION)$(SUBVERS).tar.gz
 
 version:
 	@echo "VERSION: $(VERSION)"
@@ -1042,3 +1106,42 @@ opts:
 	@echo 'LDOPTS="$(strip $(LDOPTS))"'
 	@echo 'OPTIONS_OBJS="$(strip $(OPTIONS_OBJS))"'
 	@echo 'OBJS="$(strip $(OBJS))"'
+
+ifeq (reg-tests, $(firstword $(MAKECMDGOALS)))
+  REGTEST_ARGS := $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS))
+  $(eval $(REGTEST_ARGS):;@true)
+endif
+
+# Target to run the regression testing script files.
+reg-tests:
+	@./scripts/run-regtests.sh --LEVEL "$$LEVEL" $(REGTEST_ARGS) $(REG_TEST_FILES)
+.PHONY: $(REGTEST_ARGS)
+
+reg-tests-help:
+	@echo
+	@echo "To launch the reg tests for haproxy, first export to your environment VTEST_PROGRAM variable to point to your vtest program:"
+	@echo "    $$ export VTEST_PROGRAM=/opt/local/bin/vtest"
+	@echo "or"
+	@echo "    $$ setenv VTEST_PROGRAM /opt/local/bin/vtest"
+	@echo
+	@echo "The same thing may be done to set your haproxy program with HAPROXY_PROGRAM but with ./haproxy as default value."
+	@echo
+	@echo "To run all the tests:"
+	@echo "    $$ make reg-tests"
+	@echo
+	@echo "You can also set the programs to be used on the command line:"
+	@echo "    $$ VTEST_PROGRAM=<...> HAPROXY_PROGRAM=<...> make reg-tests"
+	@echo
+	@echo "To run tests with specific levels:"
+	@echo "    $$ LEVEL=1,3,4   make reg-tests  #list of levels"
+	@echo "    $$ LEVEL=1-3,5-6 make reg-tests  #list of range of levels"
+	@echo
+	@echo "About the levels:"
+	@echo "    LEVEL 1 scripts are dedicated to pure haproxy compliance tests (prefixed with 'h' letter)."
+	@echo "    LEVEL 2 scripts are slow scripts (prefixed with 's' letter)."
+	@echo "    LEVEL 3 scripts are low interest scripts (prefixed with 'l' letter)."
+	@echo "    LEVEL 4 scripts are in relation with bugs they help to reproduce (prefixed with 'b' letter)."
+	@echo "    LEVEL 5 scripts are scripts triggering known broken behaviors for which there is still no fix (prefixed with 'k' letter)."
+	@echo "    LEVEL 6 scripts are experimental, typically used to develop new scripts (prefixed with 'e' lettre)."
+
+.PHONY: reg-tests reg-tests-help

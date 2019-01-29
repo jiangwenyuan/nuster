@@ -17,8 +17,6 @@
 #include <proto/log.h>
 #include <types/global.h>
 
-#ifdef CONFIG_HAP_NS
-
 /* Opens the namespace <ns_name> and returns the FD or -1 in case of error
  * (check errno).
  */
@@ -26,7 +24,7 @@ static int open_named_namespace(const char *ns_name)
 {
 	if (chunk_printf(&trash, "/var/run/netns/%s", ns_name) < 0)
 		return -1;
-	return open(trash.str, O_RDONLY);
+	return open(trash.area, O_RDONLY);
 }
 
 static int default_namespace = -1;
@@ -35,7 +33,7 @@ static int init_default_namespace()
 {
 	if (chunk_printf(&trash, "/proc/%d/ns/net", getpid()) < 0)
 		return -1;
-	default_namespace = open(trash.str, O_RDONLY);
+	default_namespace = open(trash.area, O_RDONLY);
 	return default_namespace;
 }
 
@@ -88,7 +86,6 @@ const struct netns_entry* netns_store_lookup(const char *ns_name, size_t ns_name
 	else
 		return NULL;
 }
-#endif
 
 /* Opens a socket in the namespace described by <ns> with the parameters <domain>,
  * <type> and <protocol> and returns the FD or -1 in case of error (check errno).
@@ -97,24 +94,16 @@ int my_socketat(const struct netns_entry *ns, int domain, int type, int protocol
 {
 	int sock;
 
-#ifdef CONFIG_HAP_NS
 	if (default_namespace >= 0 && ns && setns(ns->fd, CLONE_NEWNET) == -1)
 		return -1;
-#endif
+
 	sock = socket(domain, type, protocol);
 
-#ifdef CONFIG_HAP_NS
 	if (default_namespace >= 0 && ns && setns(default_namespace, CLONE_NEWNET) == -1) {
 		close(sock);
 		return -1;
 	}
-#endif
-
 	return sock;
 }
 
-__attribute__((constructor))
-static void __ns_init(void)
-{
-	hap_register_build_opts("Built with network namespace support.", 0);
-}
+REGISTER_BUILD_OPTS("Built with network namespace support.");

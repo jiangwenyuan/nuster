@@ -44,6 +44,7 @@ struct fe_counters {
 	long long failed_req;                   /* failed requests (eg: invalid or timeout) */
 	long long denied_conn;                  /* denied connection requests (tcp-req-conn rules) */
 	long long denied_sess;                  /* denied session requests (tcp-req-sess rules) */
+	long long failed_rewrites;              /* failed rewrites (warning) */
 
 	long long cli_aborts;                   /* aborted responses during DATA phase caused by the client */
 	long long srv_aborts;                   /* aborted responses during DATA phase caused by the server */
@@ -55,6 +56,8 @@ struct fe_counters {
 			long long comp_rsp;     /* number of compressed responses */
 			unsigned int rps_max;   /* maximum of new HTTP requests second observed */
 			long long rsp[6];       /* http response codes */
+			long long cache_lookups;/* cache lookups */
+			long long cache_hits;   /* cache hits */
 		} http;
 	} p;                                    /* protocol-specific stats */
 };
@@ -82,12 +85,15 @@ struct be_counters {
 	long long denied_req;                   /* blocked requests because of security concerns */
 	long long denied_resp;                  /* blocked responses because of security concerns */
 
+	long long connect;                      /* number of connection establishment attempts */
+	long long reuse;                        /* number of connection reuses */
 	long long failed_conns;                 /* failed connect() attempts (BE only) */
 	long long failed_resp;                  /* failed responses (BE only) */
 	long long cli_aborts;                   /* aborted responses during DATA phase caused by the client */
 	long long srv_aborts;                   /* aborted responses during DATA phase caused by the server */
 	long long retries;                      /* retried and redispatched connections (BE only) */
 	long long redispatches;                 /* retried and redispatched connections (BE only) */
+	long long failed_rewrites;              /* failed rewrites (warning) */
 	long long failed_secu;			/* blocked responses because of security concerns */
 
 	long long failed_checks, failed_hana;	/* failed health checks and health analyses for servers */
@@ -101,6 +107,8 @@ struct be_counters {
 			long long comp_rsp;     /* number of compressed responses */
 			unsigned int rps_max;   /* maximum of new HTTP requests second observed */
 			long long rsp[6];       /* http response codes */
+			long long cache_lookups;/* cache lookups */
+			long long cache_hits;   /* cache hits */
 		} http;
 	} p;                                    /* protocol-specific stats */
 };

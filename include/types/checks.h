@@ -18,6 +18,7 @@
 #include <common/config.h>
 #include <common/mini-clist.h>
 #include <common/regex.h>
+#include <common/buffer.h>
 
 #include <types/connection.h>
 #include <types/obj_type.h>
@@ -157,7 +158,7 @@ enum {
 struct check {
 	struct xprt_ops *xprt;			/* transport layer operations for health checks */
 	struct conn_stream *cs;			/* conn_stream state for health checks */
-	struct buffer *bi, *bo;			/* input and output buffers to send/recv check */
+	struct buffer bi, bo;			/* input and output buffers to send/recv check */
 	struct task *task;			/* the task associated to the health check processing, NULL if disabled */
 	struct timeval start;			/* last health check start time */
 	long duration;				/* time in ms took to finish last health check */
@@ -179,11 +180,15 @@ struct check {
 	int send_string_len;			/* length of agent command string */
 	char *send_string;			/* optionally send a string when connecting to the agent */
 	struct server *server;			/* back-pointer to server */
+	struct proxy *proxy;                    /* proxy to be used */
 	char **argv;				/* the arguments to use if running a process-based check */
 	char **envp;				/* the environment to use if running a process-based check */
 	struct pid_list *curpid;		/* entry in pid_list used for current process-based test, or -1 if not in test */
 	struct sockaddr_storage addr;   	/* the address to check */
+	struct wait_event wait_list;            /* Waiting for I/O events */
 	char *sni;				/* Server name */
+	char *alpn_str;                         /* ALPN to use for checks */
+	int alpn_len;                           /* ALPN string length */
 };
 
 struct check_status {
@@ -222,7 +227,7 @@ struct tcpcheck_rule {
 	/* match type uses NON-NULL pointer from either string or expect_regex below */
 	/* sent string is string */
 	char *string;                           /* sent or expected string */
-	int string_len;                         /* string lenght */
+	int string_len;                         /* string length */
 	struct my_regex *expect_regex;          /* expected */
 	int inverse;                            /* 0 = regular match, 1 = inverse match */
 	unsigned short port;                    /* port to connect to */

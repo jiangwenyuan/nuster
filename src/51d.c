@@ -4,7 +4,10 @@
 #include <common/chunk.h>
 #include <common/buffer.h>
 #include <common/errors.h>
+#include <common/initcall.h>
+#include <types/global.h>
 #include <proto/arg.h>
+#include <proto/http_fetch.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
 #include <proto/sample.h>
@@ -27,7 +30,7 @@ static struct {
 	struct list property_names; /* list of properties to load into the data set. this is taken from 51degrees-property-name-list from config. */
 	char *data_file_path;
 	int header_count; /* number of HTTP headers related to device detection. */
-	struct chunk *header_names; /* array of HTTP header names. */
+	struct buffer *header_names; /* array of HTTP header names. */
 	fiftyoneDegreesDataSet data_set; /* data set used with the pattern and trie detection methods. */
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
 	fiftyoneDegreesWorksetPool *pool; /* pool of worksets to avoid creating a new one for each request. */
@@ -155,12 +158,12 @@ static int _51d_conv_check(struct arg *arg, struct sample_conv *conv,
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
 static void _51d_lru_free(void *cache_entry)
 {
-	struct chunk *ptr = cache_entry;
+	struct buffer *ptr = cache_entry;
 
 	if (!ptr)
 		return;
 
-	free(ptr->str);
+	free(ptr->area);
 	free(ptr);
 }
 
@@ -184,20 +187,20 @@ static void *_51d_malloc(int size)
  */
 static void _51d_insert_cache_entry(struct sample *smp, struct lru64 *lru, void* domain)
 {
-	struct chunk *cache_entry = _51d_malloc(sizeof(*cache_entry));
+	struct buffer *cache_entry = _51d_malloc(sizeof(*cache_entry));
 
 	if (!cache_entry)
 		return;
 
-	cache_entry->str = _51d_malloc(smp->data.u.str.len + 1);
-	if (!cache_entry->str) {
+	cache_entry->area = _51d_malloc(smp->data.u.str.data + 1);
+	if (!cache_entry->area) {
 		free(cache_entry);
 		return;
 	}
 
-	memcpy(cache_entry->str, smp->data.u.str.str, smp->data.u.str.len);
-	cache_entry->str[smp->data.u.str.len] = 0;
-	cache_entry->len = smp->data.u.str.len;
+	memcpy(cache_entry->area, smp->data.u.str.area, smp->data.u.str.data);
+	cache_entry->area[smp->data.u.str.data] = 0;
+	cache_entry->data = smp->data.u.str.data;
 	lru64_commit(lru, cache_entry, domain, 0, _51d_lru_free);
 }
 
@@ -205,9 +208,9 @@ static void _51d_insert_cache_entry(struct sample *smp, struct lru64 *lru, void*
  */
 static void _51d_retrieve_cache_entry(struct sample *smp, struct lru64 *lru)
 {
-	struct chunk *cache_entry = lru->data;
-	smp->data.u.str.str = cache_entry->str;
-	smp->data.u.str.len = cache_entry->len;
+	struct buffer *cache_entry = lru->data;
+	smp->data.u.str.area = cache_entry->area;
+	smp->data.u.str.data = cache_entry->data;
 }
 #endif
 
@@ -228,10 +231,15 @@ static void _51d_set_headers(struct sample *smp, fiftyoneDegreesWorkset *ws)
 
 	for (i = 0; i < global_51degrees.header_count; i++) {
 		ctx.idx = 0;
-		if (http_find_full_header2(
-			(global_51degrees.header_names + i)->str,
-			(global_51degrees.header_names + i)->len,
-			msg->chn->buf->p, idx, &ctx) == 1) {
+		if (http_find_full_header2((global_51degrees.header_names + i)->area,
+					   (global_51degrees.header_names + i)->data,
+#ifndef BUF_NULL
+		                           msg->chn->buf->p,
+#else
+		                           ci_head(msg->chn),
+#endif
+		                           idx,
+		                           &ctx) == 1) {
 			ws->importantHeaders[ws->importantHeadersCount].header = ws->dataSet->httpHeaders + i;
 			ws->importantHeaders[ws->importantHeadersCount].headerValue = ctx.line + ctx.val;
 			ws->importantHeaders[ws->importantHeadersCount].headerValueLength = ctx.vlen;
@@ -256,10 +264,16 @@ static void _51d_set_device_offsets(struct sample *smp)
 
 	for (index = 0; index < global_51degrees.header_count; index++) {
 		ctx.idx = 0;
-		if (http_find_full_header2(
-			(global_51degrees.header_names + index)->str,
-			(global_51degrees.header_names + index)->len,
-			msg->chn->buf->p, idx, &ctx) == 1) {
+		if (http_find_full_header2((global_51degrees.header_names + index)->area,
+					   (global_51degrees.header_names + index)->data,
+#ifndef BUF_NULL
+		                           msg->chn->buf->p,
+#else
+		                           ci_head(msg->chn),
+#endif
+		                           idx,
+		                           &ctx) == 1) {
+
 			(offsets->firstOffset + offsets->size)->httpHeaderOffset = *(global_51degrees.header_offsets + index);
 			(offsets->firstOffset + offsets->size)->deviceOffset = fiftyoneDegreesGetDeviceOffset(&global_51degrees.data_set, ctx.line + ctx.val);
 			offsets->size++;
@@ -302,16 +316,16 @@ static void _51d_process_match(const struct arg *args, struct sample *smp)
 #endif
 
 	char no_data[] = "NoData";  /* response when no data could be found */
-	struct chunk *temp = get_trash_chunk();
+	struct buffer *temp = get_trash_chunk();
 	int j, i = 0, found;
 	const char* property_name;
 
 	/* Loop through property names passed to the filter and fetch them from the dataset. */
-	while (args[i].data.str.str) {
+	while (args[i].data.str.area) {
 		/* Try to find request property in dataset. */
 		found = 0;
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
-		if (strcmp("Method", args[i].data.str.str) == 0) {
+		if (strcmp("Method", args[i].data.str.area) == 0) {
 			switch(ws->method) {
 				case EXACT: methodName = "Exact"; break;
 				case NUMERIC: methodName = "Numeric"; break;
@@ -323,18 +337,18 @@ static void _51d_process_match(const struct arg *args, struct sample *smp)
 			chunk_appendf(temp, "%s", methodName);
 			found = 1;
 		}
-		else if (strcmp("Difference", args[i].data.str.str) == 0) {
+		else if (strcmp("Difference", args[i].data.str.area) == 0) {
 			chunk_appendf(temp, "%d", ws->difference);
 			found = 1;
 		}
-		else if (strcmp("Rank", args[i].data.str.str) == 0) {
+		else if (strcmp("Rank", args[i].data.str.area) == 0) {
 			chunk_appendf(temp, "%d", fiftyoneDegreesGetSignatureRank(ws));
 			found = 1;
 		}
 		else {
 			for (j = 0; j < ws->dataSet->requiredPropertyCount; j++) {
 				property_name = fiftyoneDegreesGetPropertyName(ws->dataSet, ws->dataSet->requiredProperties[j]);
-				if (strcmp(property_name, args[i].data.str.str) == 0) {
+				if (strcmp(property_name, args[i].data.str.area) == 0) {
 					found = 1;
 					fiftyoneDegreesSetValues(ws, j);
 					chunk_appendf(temp, "%s", fiftyoneDegreesGetValueName(ws->dataSet, *ws->values));
@@ -347,7 +361,7 @@ static void _51d_process_match(const struct arg *args, struct sample *smp)
 		found = 0;
 		for (j = 0; j < requiredPropertiesCount; j++) {
 			property_name = requiredProperties[j];
-			if (strcmp(property_name, args[i].data.str.str) == 0 &&
+			if (strcmp(property_name, args[i].data.str.area) == 0 &&
 				fiftyoneDegreesGetValueFromOffsets(&global_51degrees.data_set, deviceOffsets, j, valuesBuffer, 1024) > 0) {
 				found = 1;
 				chunk_appendf(temp, "%s", valuesBuffer);
@@ -363,13 +377,13 @@ static void _51d_process_match(const struct arg *args, struct sample *smp)
 		++i;
 	}
 
-	if (temp->len) {
-		--temp->len;
-		temp->str[temp->len] = '\0';
+	if (temp->data) {
+		--temp->data;
+		temp->area[temp->data] = '\0';
 	}
 
-	smp->data.u.str.str = temp->str;
-	smp->data.u.str.len = temp->len;
+	smp->data.u.str.area = temp->area;
+	smp->data.u.str.data = temp->data;
 }
 
 static int _51d_fetch(const struct arg *args, struct sample *smp, const char *kw, void *private)
@@ -379,7 +393,7 @@ static int _51d_fetch(const struct arg *args, struct sample *smp, const char *kw
 	struct lru64 *lru = NULL;
 #endif
 
-	/* Needed to ensure that the HTTP message has been fully recieved when
+	/* Needed to ensure that the HTTP message has been fully received when
 	 * used with TCP operation. Not required for HTTP operation.
 	 * Data type has to be reset to ensure the string output is processed
 	 * correctly.
@@ -457,7 +471,7 @@ static int _51d_conv(const struct arg *args, struct sample *smp, void *private)
 	if (_51d_lru_tree) {
 		unsigned long long seed = _51d_lru_seed ^ (long)args;
 
-		lru = lru64_get(XXH64(smp->data.u.str.str, smp->data.u.str.len, seed),
+		lru = lru64_get(XXH64(smp->data.u.str.area, smp->data.u.str.data, seed),
 		                _51d_lru_tree, (void*)args, 0);
 		if (lru && lru->domain) {
 			_51d_retrieve_cache_entry(smp, lru);
@@ -475,15 +489,16 @@ static int _51d_conv(const struct arg *args, struct sample *smp, void *private)
 	if (!smp_dup(smp))
 		return 0;
 
-	smp->data.u.str.str[smp->data.u.str.len] = '\0';
+	smp->data.u.str.area[smp->data.u.str.data] = '\0';
 
 	/* Perform detection. */
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
-	fiftyoneDegreesMatch(ws, smp->data.u.str.str);
+	fiftyoneDegreesMatch(ws, smp->data.u.str.area);
 	_51d_process_match(args, smp, ws);
 #endif
 #ifdef FIFTYONEDEGREES_H_TRIE_INCLUDED
-	global_51degrees.device_offsets.firstOffset->deviceOffset = fiftyoneDegreesGetDeviceOffset(&global_51degrees.data_set, smp->data.u.str.str);
+	global_51degrees.device_offsets.firstOffset->deviceOffset = fiftyoneDegreesGetDeviceOffset(&global_51degrees.data_set,
+												   smp->data.u.str.area);
 	global_51degrees.device_offsets.size = 1;
 	_51d_process_match(args, smp);
 #endif
@@ -504,12 +519,12 @@ void _51d_init_http_headers()
 	const fiftyoneDegreesAsciiString *headerName;
 	fiftyoneDegreesDataSet *ds = &global_51degrees.data_set;
 	global_51degrees.header_count = ds->httpHeadersCount;
-	global_51degrees.header_names = malloc(global_51degrees.header_count * sizeof(struct chunk));
+	global_51degrees.header_names = malloc(global_51degrees.header_count * sizeof(struct buffer));
 	for (index = 0; index < global_51degrees.header_count; index++) {
 		headerName = fiftyoneDegreesGetString(ds, ds->httpHeaders[index].headerNameOffset);
-		(global_51degrees.header_names + index)->str = (char*)&headerName->firstByte;
-		(global_51degrees.header_names + index)->len = headerName->length - 1;
-		(global_51degrees.header_names + index)->size = (global_51degrees.header_names + index)->len;
+		(global_51degrees.header_names + index)->area = (char*)&headerName->firstByte;
+		(global_51degrees.header_names + index)->data = headerName->length - 1;
+		(global_51degrees.header_names + index)->size = (global_51degrees.header_names + index)->data;
 	}
 }
 #endif
@@ -522,13 +537,13 @@ void _51d_init_http_headers()
 	global_51degrees.header_count = fiftyoneDegreesGetHttpHeaderCount(ds);
 	global_51degrees.device_offsets.firstOffset = malloc(
 		global_51degrees.header_count * sizeof(fiftyoneDegreesDeviceOffset));
-	global_51degrees.header_names = malloc(global_51degrees.header_count * sizeof(struct chunk));
+	global_51degrees.header_names = malloc(global_51degrees.header_count * sizeof(struct buffer));
 	global_51degrees.header_offsets = malloc(global_51degrees.header_count * sizeof(int32_t));
 	for (index = 0; index < global_51degrees.header_count; index++) {
 		global_51degrees.header_offsets[index] = fiftyoneDegreesGetHttpHeaderNameOffset(ds, index);
-		global_51degrees.header_names[index].str = (char*)fiftyoneDegreesGetHttpHeaderNamePointer(ds, index);
-		global_51degrees.header_names[index].len = strlen(global_51degrees.header_names[index].str);
-		global_51degrees.header_names[index].size = global_51degrees.header_names[index].len;
+		global_51degrees.header_names->area = (char*)fiftyoneDegreesGetHttpHeaderNamePointer(ds, index);
+		global_51degrees.header_names->data = strlen(global_51degrees.header_names->area);
+		global_51degrees.header_names[index].size = global_51degrees.header_names->data;
 	}
 }
 #endif
@@ -539,7 +554,7 @@ void _51d_init_http_headers()
 static int init_51degrees(void)
 {
 	int i = 0;
-	struct chunk *temp;
+	struct buffer *temp;
 	struct _51d_property_names *name;
 	char **_51d_property_list = NULL;
 	fiftyoneDegreesDataSetInitStatus _51d_dataset_status = DATA_SET_INIT_STATUS_NOT_SET;
@@ -615,8 +630,9 @@ static int init_51degrees(void)
 			break;
 	}
 	if (_51d_dataset_status != DATA_SET_INIT_STATUS_SUCCESS) {
-		if (temp->len)
-			ha_alert("51Degrees Setup - Error reading 51Degrees data file. %s\n", temp->str);
+		if (temp->data)
+			ha_alert("51Degrees Setup - Error reading 51Degrees data file. %s\n",
+				 temp->area);
 		else
 			ha_alert("51Degrees Setup - Error reading 51Degrees data file.\n");
 		return ERR_ALERT | ERR_FATAL;
@@ -666,11 +682,15 @@ static struct cfg_kw_list _51dcfg_kws = {{ }, {
 	{ 0, NULL, NULL },
 }};
 
+INITCALL1(STG_REGISTER, cfg_register_keywords, &_51dcfg_kws);
+
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	{ "51d.all", _51d_fetch, ARG5(1,STR,STR,STR,STR,STR), _51d_fetch_check, SMP_T_STR, SMP_USE_HRQHV },
 	{ NULL, NULL, 0, 0, 0 },
 }};
+
+INITCALL1(STG_REGISTER, sample_register_fetches, &sample_fetch_keywords);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_conv_kw_list conv_kws = {ILH, {
@@ -678,14 +698,8 @@ static struct sample_conv_kw_list conv_kws = {ILH, {
 	{ NULL, NULL, 0, 0, 0 },
 }};
 
-__attribute__((constructor))
-static void __51d_init(void)
-{
-	/* register sample fetch and conversion keywords */
-	sample_register_fetches(&sample_fetch_keywords);
-	sample_register_convs(&conv_kws);
-	cfg_register_keywords(&_51dcfg_kws);
-	hap_register_build_opts("Built with 51Degrees support.", 0);
-	hap_register_post_check(init_51degrees);
-	hap_register_post_deinit(deinit_51degrees);
-}
+INITCALL1(STG_REGISTER, sample_register_convs, &conv_kws);
+
+REGISTER_POST_CHECK(init_51degrees);
+REGISTER_POST_DEINIT(deinit_51degrees);
+REGISTER_BUILD_OPTS("Built with 51Degrees support.");

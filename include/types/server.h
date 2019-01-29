@@ -145,10 +145,15 @@ enum srv_initaddr {
 #define SRV_F_COOKIESET    0x0100        /* this server has a cookie configured, so don't generate dynamic cookies */
 
 /* configured server options for send-proxy (server->pp_opts) */
-#define SRV_PP_V1          0x0001        /* proxy protocol version 1 */
-#define SRV_PP_V2          0x0002        /* proxy protocol version 2 */
-#define SRV_PP_V2_SSL      0x0004        /* proxy protocol version 2 with SSL*/
-#define SRV_PP_V2_SSL_CN   0x0008        /* proxy protocol version 2 with SSL and CN*/
+#define SRV_PP_V1               0x0001   /* proxy protocol version 1 */
+#define SRV_PP_V2               0x0002   /* proxy protocol version 2 */
+#define SRV_PP_V2_SSL           0x0004   /* proxy protocol version 2 with SSL */
+#define SRV_PP_V2_SSL_CN        0x0008   /* proxy protocol version 2 with CN */
+#define SRV_PP_V2_SSL_KEY_ALG   0x0010   /* proxy protocol version 2 with cert key algorithm */
+#define SRV_PP_V2_SSL_SIG_ALG   0x0020   /* proxy protocol version 2 with cert signature algorithm */
+#define SRV_PP_V2_SSL_CIPHER    0x0040   /* proxy protocol version 2 with cipher used */
+#define SRV_PP_V2_AUTHORITY     0x0080   /* proxy protocol version 2 with authority */
+#define SRV_PP_V2_CRC32C        0x0100   /* proxy protocol version 2 with crc32c */
 
 /* function which act on servers need to return various errors */
 #define SRV_STATUS_OK       0   /* everything is OK. */
@@ -192,7 +197,8 @@ struct server {
 	enum obj_type obj_type;                 /* object type == OBJ_TYPE_SERVER */
 	enum srv_state next_state, cur_state;   /* server state among SRV_ST_* */
 	enum srv_admin next_admin, cur_admin;   /* server maintenance status : SRV_ADMF_* */
-	unsigned char pp_opts;                  /* proxy protocol options (SRV_PP_*) */
+	unsigned char use_ssl;			/* ssl enabled  */
+	unsigned int pp_opts;                   /* proxy protocol options (SRV_PP_*) */
 	struct server *next;
 	int cklen;				/* the len of the cookie, to speed up checks */
 	int rdr_len;				/* the length of the redirection prefix */
@@ -200,19 +206,27 @@ struct server {
 	char *rdr_pfx;				/* the redirection prefix */
 
 	struct proxy *proxy;			/* the proxy this server belongs to */
+	const struct mux_proto_list *mux_proto;       /* the mux to use for all outgoing connections (specified by the "proto" keyword) */
 	int served;				/* # of active sessions currently being served (ie not pending) */
 	int cur_sess;				/* number of currently active sessions (including syn_sent) */
 	unsigned maxconn, minconn;		/* max # of active sessions (0 = unlimited), min# for dynamic limit. */
 	int nbpend;				/* number of pending connections */
+	unsigned int queue_idx;			/* count of pending connections which have been de-queued */
 	int maxqueue;				/* maximum number of pending connections allowed */
 	struct freq_ctr sess_per_sec;		/* sessions per second on this server */
 	struct be_counters counters;		/* statistics counters */
 
-	struct list pendconns;			/* pending connections */
+	struct eb_root pendconns;		/* pending connections */
 	struct list actconns;			/* active connections */
 	struct list *priv_conns;		/* private idle connections attached to stream interfaces */
 	struct list *idle_conns;		/* sharable idle connections attached or not to a stream interface */
 	struct list *safe_conns;		/* safe idle connections attached to stream interfaces, shared */
+	struct list *idle_orphan_conns;         /* Orphan connections idling */
+	unsigned int pool_purge_delay;          /* Delay before starting to purge the idle conns pool */
+	unsigned int max_idle_conns;            /* Max number of connection allowed in the orphan connections list */
+	unsigned int curr_idle_conns;           /* Current number of orphan idling connections */
+	int max_reuse;                          /* Max number of requests on a same connection */
+	struct task **idle_task;                /* task responsible for cleaning idle orphan connections */
 	struct task *warmup;                    /* the task dedicated to the warmup when slowstart is set */
 
 	struct conn_src conn_src;               /* connection source settings */
@@ -264,7 +278,7 @@ struct server {
 	struct dns_resolvers *resolvers;	/* pointer to the resolvers structure used by this server */
 	char *lastaddr;				/* the address string provided by the server-state file */
 	struct dns_options dns_opts;
-	int hostname_dn_len;			/* sting lenght of the server hostname in Domain Name format */
+	int hostname_dn_len;			/* sting length of the server hostname in Domain Name format */
 	char *hostname_dn;			/* server hostname in Domain Name format */
 	char *hostname;				/* server hostname */
 	struct sockaddr_storage init_addr;	/* plain IP address specified on the init-addr line */
@@ -292,6 +306,14 @@ struct server {
 		char *crl_file;			/* CRLfile to use on verify */
 		char *client_crt;		/* client certificate to send */
 		struct sample_expr *sni;        /* sample expression for SNI */
+#ifdef OPENSSL_NPN_NEGOTIATED
+		char *npn_str;                  /* NPN protocol string */
+		int npn_len;                    /* NPN protocol string length */
+#endif
+#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
+		char *alpn_str;                 /* ALPN protocol string */
+		int alpn_len;                   /* ALPN protocol string length */
+#endif
 	} ssl_ctx;
 #endif
 	struct dns_srvrq *srvrq;		/* Pointer representing the DNS SRV requeest, if any */
@@ -310,13 +332,12 @@ struct server {
 		int nb_low;
 		int nb_high;
 	} tmpl_info;
-	struct list update_status;		/* to attach to list of servers chnaging status */
 	struct {
 		long duration;
 		short status, code;
 		char reason[128];
 	} op_st_chg;				/* operational status change's reason */
-	char adm_st_chg_cause[48];		/* adminstrative status change's cause */
+	char adm_st_chg_cause[48];		/* administrative status change's cause */
 };
 
 /* Descriptor for a "server" keyword. The ->parse() function returns 0 in case of

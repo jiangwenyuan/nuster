@@ -1,6 +1,6 @@
                    Lua: Architecture and first steps
                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                             version 1.8
+                             version 1.9
 
                         author: Thierry FOURNIER
                  contact: tfournier at arpalert dot org
@@ -85,7 +85,7 @@ current paragraph:
 
    HAProxy doc: http://cbonte.github.io/haproxy-dconv/
    Lua API:     http://www.lua.org/manual/5.3/
-   HAProxy API: http://www.arpalert.org/src/haproxy-lua-api/1.8/index.html
+   HAProxy API: http://www.arpalert.org/src/haproxy-lua-api/1.9dev/index.html
    Lua guide:   http://www.lua.org/pil/
 
 more about Lua choice

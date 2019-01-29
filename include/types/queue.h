@@ -32,11 +32,12 @@ struct stream;
 
 struct pendconn {
 	int            strm_flags; /* stream flags */
+	unsigned int   queue_idx;  /* value of proxy/server queue_idx at time of enqueue */
 	struct stream *strm;
 	struct proxy  *px;
-	struct server *srv;        /* the server we are waiting for, may be NULL */
-	struct list    list;       /* next pendconn */
-	__decl_hathreads(HA_SPINLOCK_T lock);
+	struct server *srv;        /* the server we are waiting for, may be NULL if don't care */
+	struct server *target;     /* the server that was assigned, = srv except if srv==NULL */
+	struct eb32_node node;
 };
 
 #endif /* _TYPES_QUEUE_H */

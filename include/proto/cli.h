@@ -23,11 +23,30 @@
 #ifndef _PROTO_CLI_H
 #define _PROTO_CLI_H
 
+#include <types/applet.h>
+#include <types/channel.h>
+#include <types/cli.h>
+#include <types/global.h>
+#include <types/stream.h>
 
-struct cli_kw* cli_find_kw(char **args);
+
 void cli_register_kw(struct cli_kw_list *kw_list);
 
 int cli_has_level(struct appctx *appctx, int level);
+
+/* mworker proxy functions */
+
+int mworker_cli_proxy_create();
+int mworker_cli_proxy_new_listener(char *line);
+int mworker_cli_sockpair_new(struct mworker_proc *mworker_proc, int proc);
+void mworker_cli_proxy_stop();
+
+/* proxy mode cli functions */
+
+/* analyzers */
+int pcli_wait_for_request(struct stream *s, struct channel *req, int an_bit);
+int pcli_wait_for_response(struct stream *s, struct channel *rep, int an_bit);
+
 
 #endif /* _PROTO_CLI_H */
 

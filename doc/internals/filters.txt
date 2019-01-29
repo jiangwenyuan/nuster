@@ -1,5 +1,5 @@
                    -----------------------------------------
-                          Filters Guide - version 1.8
+                          Filters Guide - version 1.9
                           ( Last update: 2017-07-27 )
                    ------------------------------------------
                           Author : Christopher Faulet
@@ -229,7 +229,7 @@ existing callbacks. Available callbacks are listed in the following structure:
                                     struct http_msg *msg);
         void (*http_reply)         (struct stream *s, struct filter *f,
                                     short status,
-                                    const struct chunk *msg);
+                                    const struct buffer *msg);
 
         /*
          * TCP callbacks
@@ -353,13 +353,7 @@ line:
             { NULL, NULL, NULL },
         }
     };
-
-    __attribute__((constructor))
-    static void
-    __my_filter_init(void)
-    {
-        flt_register_keywords(&flt_kws);
-    }
+    INITCALL1(STG_REGISTER, flt_register_keywords, &flt_kws);
 
 
 Then you must define the internal configuration your filter will use. For
@@ -1207,14 +1201,14 @@ data itself, i.e. the buffer offsets. For a HTTP message, you also must update
         if (avail > 10 and /* ...Some condition... */) {
             /* Move the buffer forward to have buf->p pointing on unparsed
              * data */
-            b_adv(msg->chn->buf, flt_rsp_nxt(filter));
+            c_adv(msg->chn, flt_rsp_nxt(filter));
 
             /* Skip first 10 bytes. To simplify this example, we consider a
              * non-wrapping buffer  */
             memmove(buf->p + 10, buf->p, avail - 10);
 
             /* Restore buf->p value */
-            b_rew(msg->chn->buf, flt_rsp_nxt(filter));
+            c_rew(msg->chn, flt_rsp_nxt(filter));
 
             /* Now update other filters */
             flt_change_next_size(filter, msg->chn, -10);
@@ -1240,14 +1234,14 @@ data itself, i.e. the buffer offsets. For a HTTP message, you also must update
         if (len > 10 and /* ...Some condition... */) {
             /* Move the buffer forward to have buf->p pointing on non-forwarded
              * data */
-            b_adv(msg->chn->buf, flt_rsp_fwd(filter));
+            c_adv(msg->chn, flt_rsp_fwd(filter));
 
             /* Skip first 10 bytes. To simplify this example, we consider a
              * non-wrapping buffer  */
             memmove(buf->p + 10, buf->p, len - 10);
 
             /* Restore buf->p value */
-            b_rew(msg->chn->buf, flt_rsp_fwd(filter));
+            c_rew(msg->chn, flt_rsp_fwd(filter));
 
             /* Now update other filters */
             flt_change_forward_size(filter, msg->chn, -10);

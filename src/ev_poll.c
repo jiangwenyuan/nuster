@@ -25,6 +25,7 @@
 
 #include <types/global.h>
 
+#include <proto/activity.h>
 #include <proto/fd.h>
 
 
@@ -33,21 +34,12 @@
 #define POLLRDHUP 0
 #endif
 
+static int maxfd;   /* # of the highest fd + 1 */
 static unsigned int *fd_evts[2];
 
 /* private data */
 static THREAD_LOCAL int nbfd = 0;
 static THREAD_LOCAL struct pollfd *poll_events = NULL;
-
-static inline void hap_fd_set(int fd, unsigned int *evts)
-{
-	evts[fd / (8*sizeof(*evts))] |= 1U << (fd & (8*sizeof(*evts) - 1));
-}
-
-static inline void hap_fd_clr(int fd, unsigned int *evts)
-{
-	evts[fd / (8*sizeof(*evts))] &= ~(1U << (fd & (8*sizeof(*evts) - 1)));
-}
 
 REGPRM1 static void __fd_clo(int fd)
 {
@@ -55,6 +47,44 @@ REGPRM1 static void __fd_clo(int fd)
 	hap_fd_clr(fd, fd_evts[DIR_RD]);
 	hap_fd_clr(fd, fd_evts[DIR_WR]);
 	HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
+}
+
+static void _update_fd(int fd, int *max_add_fd)
+{
+	int en;
+
+	en = fdtab[fd].state;
+
+	/* we have a single state for all threads, which is why we
+	 * don't check the tid_bit. First thread to see the update
+	 * takes it for every other one.
+	 */
+	if (!(en & FD_EV_POLLED_RW)) {
+		if (!polled_mask[fd]) {
+			/* fd was not watched, it's still not */
+			return;
+		}
+		/* fd totally removed from poll list */
+		hap_fd_clr(fd, fd_evts[DIR_RD]);
+		hap_fd_clr(fd, fd_evts[DIR_WR]);
+		HA_ATOMIC_AND(&polled_mask[fd], 0);
+	}
+	else {
+		/* OK fd has to be monitored, it was either added or changed */
+		if (!(en & FD_EV_POLLED_R))
+			hap_fd_clr(fd, fd_evts[DIR_RD]);
+		else
+			hap_fd_set(fd, fd_evts[DIR_RD]);
+
+		if (!(en & FD_EV_POLLED_W))
+			hap_fd_clr(fd, fd_evts[DIR_WR]);
+		else
+			hap_fd_set(fd, fd_evts[DIR_WR]);
+
+		HA_ATOMIC_OR(&polled_mask[fd], tid_bit);
+		if (fd > *max_add_fd)
+			*max_add_fd = fd;
+	}
 }
 
 /*
@@ -65,91 +95,70 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	int status;
 	int fd;
 	int wait_time;
-	int updt_idx, en, eo;
+	int updt_idx;
 	int fds, count;
 	int sr, sw;
+	int old_maxfd, new_maxfd, max_add_fd;
 	unsigned rn, wn; /* read new, write new */
+	int old_fd;
+
+	max_add_fd = -1;
 
 	/* first, scan the update list to find changes */
 	for (updt_idx = 0; updt_idx < fd_nbupdt; updt_idx++) {
 		fd = fd_updt[updt_idx];
 
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-		fdtab[fd].update_mask &= ~tid_bit;
-
+		HA_ATOMIC_AND(&fdtab[fd].update_mask, ~tid_bit);
 		if (!fdtab[fd].owner) {
 			activity[tid].poll_drop++;
-			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 			continue;
 		}
-
-		fdtab[fd].new = 0;
-
-		eo = fdtab[fd].state;
-		en = fd_compute_new_polled_status(eo);
-		fdtab[fd].state = en;
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
-
-		if ((eo ^ en) & FD_EV_POLLED_RW) {
-			/* poll status changed, update the lists */
-			HA_SPIN_LOCK(POLL_LOCK, &poll_lock);
-			if ((eo & ~en) & FD_EV_POLLED_R)
-				hap_fd_clr(fd, fd_evts[DIR_RD]);
-			else if ((en & ~eo) & FD_EV_POLLED_R)
-				hap_fd_set(fd, fd_evts[DIR_RD]);
-
-			if ((eo & ~en) & FD_EV_POLLED_W)
-				hap_fd_clr(fd, fd_evts[DIR_WR]);
-			else if ((en & ~eo) & FD_EV_POLLED_W)
-				hap_fd_set(fd, fd_evts[DIR_WR]);
-			HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
-		}
+		_update_fd(fd, &max_add_fd);
 	}
-	HA_SPIN_LOCK(FD_UPDATE_LOCK, &fd_updt_lock);
-	for (fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+
+	/* Now scan the global update list */
+	for (old_fd = fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
+		if (fd == -2) {
+			fd = old_fd;
+			continue;
+		}
+		else if (fd <= -3)
+			fd = -fd -4;
+		if (fd == -1)
+			break;
 		if (fdtab[fd].update_mask & tid_bit) {
 			/* Cheat a bit, as the state is global to all pollers
 			 * we don't need every thread ot take care of the
 			 * update.
 			 */
-			fdtab[fd].update_mask &= ~all_threads_mask;
+			HA_ATOMIC_AND(&fdtab[fd].update_mask, ~all_threads_mask);
 			done_update_polling(fd);
-		} else {
-			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		} else
 			continue;
-		}
-
-		if (!fdtab[fd].owner) {
-			activity[tid].poll_drop++;
-			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		if (!fdtab[fd].owner)
 			continue;
-		}
-
-		fdtab[fd].new = 0;
-
-		eo = fdtab[fd].state;
-		en = fd_compute_new_polled_status(eo);
-		fdtab[fd].state = en;
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
-
-		if ((eo ^ en) & FD_EV_POLLED_RW) {
-			/* poll status changed, update the lists */
-			HA_SPIN_LOCK(POLL_LOCK, &poll_lock);
-			if ((eo & ~en) & FD_EV_POLLED_R)
-				hap_fd_clr(fd, fd_evts[DIR_RD]);
-			else if ((en & ~eo) & FD_EV_POLLED_R)
-				hap_fd_set(fd, fd_evts[DIR_RD]);
-
-			if ((eo & ~en) & FD_EV_POLLED_W)
-				hap_fd_clr(fd, fd_evts[DIR_WR]);
-			else if ((en & ~eo) & FD_EV_POLLED_W)
-				hap_fd_set(fd, fd_evts[DIR_WR]);
-			HA_SPIN_UNLOCK(POLL_LOCK, &poll_lock);
-		}
-
+		_update_fd(fd, &max_add_fd);
 	}
-	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
+
+	/* maybe we added at least one fd larger than maxfd */
+	for (old_maxfd = maxfd; old_maxfd <= max_add_fd; ) {
+		if (HA_ATOMIC_CAS(&maxfd, &old_maxfd, max_add_fd + 1))
+			break;
+	}
+
+	/* maxfd doesn't need to be precise but it needs to cover *all* active
+	 * FDs. Thus we only shrink it if we have such an opportunity. The algo
+	 * is simple : look for the previous used place, try to update maxfd to
+	 * point to it, abort if maxfd changed in the mean time.
+	 */
+	old_maxfd = maxfd;
+	do {
+		new_maxfd = old_maxfd;
+		while (new_maxfd - 1 >= 0 && !fdtab[new_maxfd - 1].owner)
+			new_maxfd--;
+		if (new_maxfd >= old_maxfd)
+			break;
+	} while (!HA_ATOMIC_CAS(&maxfd, &old_maxfd, new_maxfd));
 
 	thread_harmless_now();
 
@@ -187,22 +196,14 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 	}
 
 	/* now let's wait for events */
-	if (!exp)
-		wait_time = MAX_DELAY_MS;
-	else if (tick_is_expired(exp, now_ms)) {
-		activity[tid].poll_exp++;
-		wait_time = 0;
-	}
-	else {
-		wait_time = TICKS_TO_MS(tick_remain(now_ms, exp)) + 1;
-		if (wait_time > MAX_DELAY_MS)
-			wait_time = MAX_DELAY_MS;
-	}
-
-	gettimeofday(&before_poll, NULL);
+	wait_time = compute_poll_timeout(exp);
+	tv_entering_poll();
+	activity_count_runtime();
 	status = poll(poll_events, nbfd, wait_time);
 	tv_update_date(wait_time, status);
-	measure_idle();
+	tv_leaving_poll(wait_time, status);
+
+	thread_harmless_end();
 
 	thread_harmless_end();
 

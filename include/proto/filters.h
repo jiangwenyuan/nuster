@@ -29,6 +29,11 @@
 
 #include <proto/channel.h>
 
+extern const char *trace_flt_id;
+extern const char *http_comp_flt_id;
+extern const char *cache_store_flt_id;
+extern const char *spoe_filter_id;
+
 #define FLT_ID(flt)   (flt)->config->id
 #define FLT_CONF(flt) (flt)->config->conf
 #define FLT_OPS(flt)  (flt)->config->ops
@@ -36,6 +41,9 @@
 /* Useful macros to access per-channel values. It can be safely used inside
  * filters. */
 #define CHN_IDX(chn)     (((chn)->flags & CF_ISRESP) == CF_ISRESP)
+#define FLT_STRM_OFF(s, chn) (strm_flt(s)->offset[CHN_IDX(chn)])
+#define FLT_OFF(flt, chn) ((flt)->offset[CHN_IDX(chn)])
+
 #define FLT_NXT(flt, chn) ((flt)->next[CHN_IDX(chn)])
 #define FLT_FWD(flt, chn) ((flt)->fwd[CHN_IDX(chn)])
 #define flt_req_nxt(flt) ((flt)->next[0])
@@ -93,8 +101,6 @@
 				FLT_STRM_DATA_CB_IMPL_2(strm, chn, call, ##__VA_ARGS__), \
 				FLT_STRM_DATA_CB_IMPL_1(strm, chn, call, ##__VA_ARGS__))
 
-extern struct pool_head *pool_head_filter;
-
 void flt_deinit(struct proxy *p);
 int  flt_check(struct proxy *p);
 
@@ -105,13 +111,15 @@ int  flt_stream_init(struct stream *s);
 void flt_stream_release(struct stream *s, int only_backend);
 void flt_stream_check_timeouts(struct stream *s);
 
+int  flt_http_payload(struct stream *s, struct http_msg *msg, unsigned int len);
+int  flt_http_end(struct stream *s, struct http_msg *msg);
+
 int  flt_http_data(struct stream *s, struct http_msg *msg);
 int  flt_http_chunk_trailers(struct stream *s, struct http_msg *msg);
-int  flt_http_end(struct stream *s, struct http_msg *msg);
 int  flt_http_forward_data(struct stream *s, struct http_msg *msg, unsigned int len);
 
 void flt_http_reset(struct stream *s, struct http_msg *msg);
-void flt_http_reply(struct stream *s, short status, const struct chunk *msg);
+void flt_http_reply(struct stream *s, short status, const struct buffer *msg);
 
 int  flt_start_analyze(struct stream *s, struct channel *chn, unsigned int an_bit);
 int  flt_pre_analyze(struct stream *s, struct channel *chn, unsigned int an_bit);
@@ -218,6 +226,27 @@ flt_change_forward_size(struct filter *filter, struct channel *chn, int len)
 				FLT_FWD(f, chn) += len;
 			FLT_NXT(f, chn) += len;
 		}
+	}
+}
+
+/* This function must be called when a filter alter payload data. It updates
+ * offsets of all previous filters and the offset of the stream. Do not call
+ * this function when a filter change the size of payload data leads to an
+ * undefined behavior.
+ *
+ * This is the filter's responsiblitiy to update data itself..
+ */
+static inline void
+flt_update_offsets(struct filter *filter, struct channel *chn, int len)
+{
+	struct stream *s = chn_strm(chn);
+	struct filter *f;
+
+	list_for_each_entry(f, &strm_flt(s)->filters, list) {
+		if (f == filter)
+			break;
+		if (IS_DATA_FILTER(filter, chn))
+			FLT_OFF(f, chn) += len;
 	}
 }
 

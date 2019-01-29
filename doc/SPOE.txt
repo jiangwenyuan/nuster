@@ -33,6 +33,7 @@ SUMMARY
   3.3.        Events & messages
   3.4.        Actions
   3.5.        Errors & timeouts
+  4.      Logging
 
 
 0. Terms
@@ -132,10 +133,10 @@ scope ends when the file ends or when another scope is found.
               ...
           spoe-message msg2
               ...
-	  spoe-group grp1
+          spoe-group grp1
               ...
-	  spoe-group grp2
-	      ...
+          spoe-group grp2
+              ...
 
       [my-second-engine]
           ...
@@ -164,16 +165,23 @@ spoe-agent <name>
 
   following keywords are supported :
     - groups
+    - log
     - maxconnrate
     - maxerrrate
     - max-frame-size
+    - max-waiting-frames
     - messages
     - [no] option async
+    - [no] option dontlog-normal
     - [no] option pipelining
     - [no] option send-frag-payload
     - option continue-on-error
+    - option force-set-var
     - option set-on-error
+    - option set-process-time
+    - option set-total-time
     - option var-prefix
+    - register-var-names
     - timeout hello|idle|processing
     - use-backend
 
@@ -189,6 +197,16 @@ groups <grp-name> ...
 
   See also: "spoe-group" section.
 
+
+log global
+log <address> [len <length>] [format <format>] <facility> [<level> [<minlevel>]]
+no log
+  Enable per-instance logging of events and traffic.
+
+  Prefix :
+    no         should be used when the logger list must be flushed.
+
+  See the HAProxy Configuration Manual for details about this option.
 
 maxconnrate <number>
   Set the maximum number of connections per second to <number>. The SPOE will
@@ -207,6 +225,10 @@ max-frame-size <number>
   It must be in the range [256, tune.bufsize-4] (4 bytes are reserved for the
   frame length). By default, it is set to (tune.bufsize-4).
 
+max-waiting-frames <number>
+  Set the maximum number of frames waiting for an acknowledgement on the same
+  connection. This value is only used when the pipelinied or asynchronus
+  exchanges between HAProxy and SPOA are enabled. By default, it is set to 20.
 
 messages <msg-name> ...
   Declare the list of SPOE messages that an agent will handle.
@@ -238,6 +260,25 @@ option continue-on-error
 
   When set, this option bypass this behaviour and only the current event will
   be ignored.
+
+
+option dontlog-normal
+no option dontlog-normal
+  Enable or disable logging of normal, successful processing.
+
+  Arguments : none
+
+  See also: "log" and section 4 about logging.
+
+
+option force-set-var
+  By default, SPOE filter only register already known variables (mainly from
+  parsing of the configuration). If you want that haproxy trusts the agent and
+  registers all variables (ex: can be useful for LUA workload), activate this
+  option.
+
+  Caution : this option opens to a variety of attacks such as a rogue SPOA that
+  asks to register too many variables.
 
 
 option pipelining
@@ -291,6 +332,55 @@ option set-on-error <var name>
 
   See also: "option continue-on-error", "option var-prefix".
 
+
+option set-process-time <var name>
+  Define the variable to set to report the processing time of the last event or
+  group.
+
+  Arguments :
+
+    <var name>   is the variable name, without the scope. The name may only
+                 contain characters 'a-z', 'A-Z', '0-9', '.' and '_'.
+
+  This variable will be set in the scope of the transaction. As for all other
+  variables define by the SPOE, it will be prefixed. So, if your variable name
+  is "process_time" and your prefix is "my_spoe_pfx", the variable will be
+  "txn.my_spoe_pfx.process_time".
+
+  When set, the variable is an integer representing the delay to process the
+  event or the group, in milliseconds. From the stream point of view, it is the
+  latency added by the SPOE processing for the last handled event or group.
+
+  If several events or groups are processed for the same stream, this value
+  will be overrideen.
+
+  See also: "option set-total-time".
+
+
+option set-total-time <var name>
+  Define the variable to set to report the total processing time SPOE for a
+  stream.
+
+  Arguments :
+
+    <var name>   is the variable name, without the scope. The name may only
+                 contain characters 'a-z', 'A-Z', '0-9', '.' and '_'.
+
+  This variable will be set in the scope of the transaction. As for all other
+  variables define by the SPOE, it will be prefixed. So, if your variable name
+  is "total_time" and your prefix is "my_spoe_pfx", the variable will be
+  "txn.my_spoe_pfx.total_time".
+
+  When set, the variable is an integer representing the sum of processing times
+  for a stream, in milliseconds. From the stream point of view, it is the
+  latency added by the SPOE processing.
+
+  If several events or groups are processed for the same stream, this value
+  will be updated.
+
+  See also: "option set-process-time".
+
+
 option var-prefix <prefix>
   Define the prefix used when variables are set by an agent.
 
@@ -310,9 +400,26 @@ option var-prefix <prefix>
   "myvar" in the "txn" scope, with the prefix "my_spoe_pfx", then you should
   use "txn.my_spoe_pfx.myvar" name in your HAProxy configuration.
 
-  An agent will never set new variables at runtime. It can only set new value
-  for existing ones.
+  By default, an agent will never set new variables at runtime: It can only set
+  new value for existing ones. If you want a different behaviour, see
+  force-set-var option and register-var-names directive.
 
+register-var-names <var name> ...
+  Register some variable names. By default, an agent will not be allowed to set
+  new variables at runtime. This rule can be totally relaxed by setting the
+  option "force-set-var". If you know all the variables you will need, this
+  directive is a good way to register them without letting an agent doing what
+  it want. This is only required if these variables are not referenced anywhere
+  in the HAProxy configuration or the SPOE one.
+
+  Arguments:
+    <var name>   is a variable name without the scope. The name may only
+                 contain characters 'a-z', 'A-Z', '0-9', '.' and '_'.
+
+  The prefix will be automatically added during the registration. You can have
+  many "register-var-names" lines.
+
+  See also: "option force-set-var", "option var-prefix".
 
 timeout hello <timeout>
   Set the maximum time to wait for an agent to receive the AGENT-HELLO frame.
@@ -381,7 +488,6 @@ spoe-message <name>
 
 
 acl <aclname> <criterion> [flags] [operator] <value> ...
-
   Declare or complete an access list.
 
   See section 7 about ACL usage in the HAProxy Configuration Manual.
@@ -1086,6 +1192,52 @@ to use a lower value for idle timeout than the server timeout. Else the
 connection will be closed by HAProxy. The same is true for hello timeout. You
 should choose a lower value than the connect timeout.
 
+4. Logging
+-----------
+
+Activity of an SPOE is logged using HAProxy's logger. The messages are logged
+in the context of the streams that handle the client and the server
+connections. A message is emitted for each event or group handled by an
+SPOE. Depending on the status code, the log level will be different. In the
+normal case, when no error occurred, the message is logged with the level
+LOG_NOTICE. Otherwise, the message is logged with the level LOG_WARNING.
+
+The messages are logged using the agent's logger, if defined, and use the
+following format:
+
+    SPOE: [AGENT] <TYPE:NAME> sid=STREAM-ID st=STATUS-CODE reqT/qT/wT/resT/pT \
+    <idles>/<applets> <nb_sending>/<nb_waiting> <nb_error>/<nb_processed>
+
+      AGENT              is the agent name
+      TYPE               is EVENT of GROUP
+      NAME               is the event or the group name
+      STREAM-ID          is an integer, the unique id of the stream
+      STATUS_CODE        is the processing's status code
+      reqT/qT/wT/resT/pT are the following time events:
+
+        * reqT : the encoding time. It includes ACLs processing, if any. For
+                 fragmented frames, it is the sum of all fragments.
+        * qT   : the delay before the request gets out the sending queue. For
+                 fragmented frames, it is the sum of all fragments.
+        * wT   : the delay before the response is received. No fragmentation
+                 supported here.
+        * resT : the delay to process the response. No fragmentation supported
+                 here.
+        * pT   : the delay to process the event or the group. From the stream
+                 point of view, it is the latency added by the SPOE processing.
+                 It is more or less the sum of values above.
+
+      <idle>             is the numbers of idle SPOE applets
+      <applets>          is the numbers of SPOE applets
+      <nb_sending>       is the numbers of streams waiting to send data
+      <nb_waiting>       is the numbers of streams waiting for a ack
+      <nb_error>         is the numbers of processing errors
+      <nb_processed>     is the numbers of events/groups processed
+
+
+For all these time events, -1 means the processing was interrupted before the
+end. So -1 for the queue time means the request was never dequeued. For
+fragmented frames it is harder to know when the interruption happened.
 
 /*
  * Local variables:

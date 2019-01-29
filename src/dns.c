@@ -21,6 +21,7 @@
 
 #include <common/cfgparse.h>
 #include <common/errors.h>
+#include <common/initcall.h>
 #include <common/time.h>
 #include <common/ticks.h>
 #include <common/net_helper.h>
@@ -47,8 +48,10 @@ struct list dns_resolvers  = LIST_HEAD_INIT(dns_resolvers);
 struct list dns_srvrq_list = LIST_HEAD_INIT(dns_srvrq_list);
 
 static THREAD_LOCAL int64_t dns_query_id_seed = 0; /* random seed */
-static struct pool_head *dns_answer_item_pool = NULL;
-static struct pool_head *dns_resolution_pool  = NULL;
+
+DECLARE_STATIC_POOL(dns_answer_item_pool, "dns_answer_item", sizeof(struct dns_answer_item));
+DECLARE_STATIC_POOL(dns_resolution_pool,  "dns_resolution",  sizeof(struct dns_resolution));
+
 static unsigned int resolution_uuid = 1;
 
 /* Returns a pointer to the resolvers matching the id <id>. NULL is returned if
@@ -88,7 +91,8 @@ struct dns_srvrq *new_dns_srvrq(struct server *srv, char *fqdn)
 	int fqdn_len, hostname_dn_len;
 
 	fqdn_len = strlen(fqdn);
-	hostname_dn_len = dns_str_to_dn_label(fqdn, fqdn_len + 1, trash.str, trash.size);
+	hostname_dn_len = dns_str_to_dn_label(fqdn, fqdn_len + 1, trash.area,
+					      trash.size);
 	if (hostname_dn_len == -1) {
 		ha_alert("config : %s '%s', server '%s': failed to parse FQDN '%s'\n",
 			 proxy_type_str(px), px->id, srv->id, fqdn);
@@ -103,7 +107,7 @@ struct dns_srvrq *new_dns_srvrq(struct server *srv, char *fqdn)
 	srvrq->obj_type        = OBJ_TYPE_SRVRQ;
 	srvrq->proxy           = px;
 	srvrq->name            = strdup(fqdn);
-	srvrq->hostname_dn     = strdup(trash.str);
+	srvrq->hostname_dn     = strdup(trash.area);
 	srvrq->hostname_dn_len = hostname_dn_len;
 	if (!srvrq->name || !srvrq->hostname_dn) {
 		ha_alert("config : %s '%s', server '%s': out of memory\n",
@@ -194,9 +198,7 @@ static int dns_connect_namesaver(struct dns_nameserver *ns)
 
 	/* Add the fd in the fd list and update its parameters */
 	dgram->t.sock.fd = fd;
-	fdtab[fd].owner  = dgram;
-	fdtab[fd].iocb   = dgram_fd_handler;
-	fd_insert(fd, (unsigned long)-1);
+	fd_insert(fd, dgram, dgram_fd_handler, MAX_THREADS_MASK);
 	fd_want_recv(fd);
 	return 0;
 }
@@ -966,7 +968,6 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
  * For both cases above, dns_validate_dns_response is required
  * returns one of the DNS_UPD_* code
  */
-#define DNS_MAX_IP_REC 20
 int dns_get_ip_from_response(struct dns_response_packet *dns_p,
                              struct dns_options *dns_opts, void *currentip,
                              short currentip_sin_family,
@@ -990,14 +991,14 @@ int dns_get_ip_from_response(struct dns_response_packet *dns_p,
 	max_score         = -1;
 
 	/* Select an IP regarding configuration preference.
-	 * Top priority is the prefered network ip version,
-	 * second priority is the prefered network.
+	 * Top priority is the preferred network ip version,
+	 * second priority is the preferred network.
 	 * the last priority is the currently used IP,
 	 *
 	 * For these three priorities, a score is calculated. The
 	 * weight are:
-	 *  8 - prefered netwok ip version.
-	 *  4 - prefered network.
+	 *  8 - preferred ip version.
+	 *  4 - preferred network.
 	 *  2 - if the ip in the record is not affected to any other server in the same backend (duplication)
 	 *  1 - current ip.
 	 * The result with the biggest score is returned.
@@ -1019,11 +1020,11 @@ int dns_get_ip_from_response(struct dns_response_packet *dns_p,
 			continue;
 		score = 0;
 
-		/* Check for prefered ip protocol. */
+		/* Check for preferred ip protocol. */
 		if (ip_type == family_priority)
 			score += 8;
 
-		/* Check for prefered network. */
+		/* Check for preferred network. */
 		for (j = 0; j < dns_opts->pref_net_nb; j++) {
 
 			/* Compare only the same adresses class. */
@@ -1450,12 +1451,12 @@ void dns_unlink_resolution(struct dns_requester *requester)
 	/* Move hostname_dn related pointers to the next requester */
 	switch (obj_type(req->owner)) {
 		case OBJ_TYPE_SERVER:
-			res->hostname_dn     = objt_server(req->owner)->hostname_dn;
-			res->hostname_dn_len = objt_server(req->owner)->hostname_dn_len;
+			res->hostname_dn     = __objt_server(req->owner)->hostname_dn;
+			res->hostname_dn_len = __objt_server(req->owner)->hostname_dn_len;
 			break;
 		case OBJ_TYPE_SRVRQ:
-			res->hostname_dn     = objt_dns_srvrq(req->owner)->hostname_dn;
-			res->hostname_dn_len = objt_dns_srvrq(req->owner)->hostname_dn_len;
+			res->hostname_dn     = __objt_dns_srvrq(req->owner)->hostname_dn;
+			res->hostname_dn_len = __objt_dns_srvrq(req->owner)->hostname_dn_len;
 			break;
 		default:
 			res->hostname_dn     = NULL;
@@ -1691,20 +1692,20 @@ static void dns_resolve_send(struct dgram_conn *dgram)
 	HA_SPIN_LOCK(DNS_LOCK, &resolvers->lock);
 
 	list_for_each_entry(res, &resolvers->resolutions.curr, list) {
-		int ret;
+		int ret, len;
 
 		if (res->nb_queries == resolvers->nb_nameservers)
 			continue;
 
-		trash.len = dns_build_query(res->query_id, res->query_type,
-					    resolvers->accepted_payload_size,
-					    res->hostname_dn, res->hostname_dn_len,
-					    trash.str, trash.size);
-		if (trash.len == -1)
+		len = dns_build_query(res->query_id, res->query_type,
+		                      resolvers->accepted_payload_size,
+		                      res->hostname_dn, res->hostname_dn_len,
+		                      trash.area, trash.size);
+		if (len == -1)
 			goto snd_error;
 
-		ret = send(fd, trash.str, trash.len, 0);
-		if (ret != trash.len)
+		ret = send(fd, trash.area, len, 0);
+		if (ret != len)
 			goto snd_error;
 
 		ns->counters.sent++;
@@ -1722,9 +1723,9 @@ static void dns_resolve_send(struct dgram_conn *dgram)
  * resolutions and retry them if possible. Else a timeout is reported. Then, it
  * checks the wait list to trigger new resolutions.
  */
-static struct task *dns_process_resolvers(struct task *t)
+static struct task *dns_process_resolvers(struct task *t, void *context, unsigned short state)
 {
-	struct dns_resolvers  *resolvers = t->context;
+	struct dns_resolvers  *resolvers = context;
 	struct dns_resolution *res, *resback;
 	int exp;
 
@@ -1852,9 +1853,6 @@ static void dns_deinit(void)
 		LIST_DEL(&srvrq->list);
 		free(srvrq);
 	}
-
-	pool_destroy(dns_answer_item_pool);
-	pool_destroy(dns_resolution_pool);
 }
 
 /* Finalizes the DNS configuration by allocating required resources and checking
@@ -1970,7 +1968,7 @@ static int dns_finalize_config(void)
 }
 
 /* if an arg is found, it sets the resolvers section pointer into cli.p0 */
-static int cli_parse_stat_resolvers(char **args, struct appctx *appctx, void *private)
+static int cli_parse_stat_resolvers(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	struct dns_resolvers *presolvers;
 
@@ -2046,11 +2044,9 @@ static int cli_io_handler_dump_resolvers_to_buffer(struct appctx *appctx)
 			/* let's try again later from this session. We add ourselves into
 			 * this session's users so that it can remove us upon termination.
 			 */
-			si->flags |= SI_FL_WAIT_ROOM;
+			si_rx_room_blk(si);
 			return 0;
 		}
-
-		appctx->st2 = STAT_ST_FIN;
 		/* fall through */
 
 	default:
@@ -2068,15 +2064,7 @@ static struct cli_kw_list cli_kws = {{ }, {
 	}
 };
 
+INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
 
-__attribute__((constructor))
-static void __dns_init(void)
-{
-	dns_answer_item_pool = create_pool("dns_answer_item", sizeof(struct dns_answer_item), MEM_F_SHARED);
-	dns_resolution_pool  = create_pool("dns_resolution",  sizeof(struct dns_resolution),  MEM_F_SHARED);
-
-	cfg_register_postparser("dns runtime resolver", dns_finalize_config);
-	hap_register_post_deinit(dns_deinit);
-
-	cli_register_kw(&cli_kws);
-}
+REGISTER_POST_DEINIT(dns_deinit);
+REGISTER_CONFIG_POSTPARSER("dns runtime resolver", dns_finalize_config);

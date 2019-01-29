@@ -30,26 +30,45 @@
 #include <eb32tree.h>
 
 /* values for task->state */
-#define TASK_SLEEPING     0x00  /* task sleeping */
-#define TASK_RUNNING      0x01  /* the task is currently running */
-#define TASK_WOKEN_INIT   0x02  /* woken up for initialisation purposes */
-#define TASK_WOKEN_TIMER  0x04  /* woken up because of expired timer */
-#define TASK_WOKEN_IO     0x08  /* woken up because of completed I/O */
-#define TASK_WOKEN_SIGNAL 0x10  /* woken up by a system signal */
-#define TASK_WOKEN_MSG    0x20  /* woken up by another task's message */
-#define TASK_WOKEN_RES    0x40  /* woken up because of available resource */
-#define TASK_WOKEN_OTHER  0x80  /* woken up for an unspecified reason */
+#define TASK_SLEEPING     0x0000  /* task sleeping */
+#define TASK_RUNNING      0x0001  /* the task is currently running */
+#define TASK_GLOBAL       0x0002  /* The task is currently in the global runqueue */
+#define TASK_QUEUED       0x0004  /* The task has been (re-)added to the run queue */
+
+#define TASK_WOKEN_INIT   0x0100  /* woken up for initialisation purposes */
+#define TASK_WOKEN_TIMER  0x0200  /* woken up because of expired timer */
+#define TASK_WOKEN_IO     0x0400  /* woken up because of completed I/O */
+#define TASK_WOKEN_SIGNAL 0x0800  /* woken up by a system signal */
+#define TASK_WOKEN_MSG    0x1000  /* woken up by another task's message */
+#define TASK_WOKEN_RES    0x2000  /* woken up because of available resource */
+#define TASK_WOKEN_OTHER  0x4000  /* woken up for an unspecified reason */
 
 /* use this to check a task state or to clean it up before queueing */
 #define TASK_WOKEN_ANY    (TASK_WOKEN_OTHER|TASK_WOKEN_INIT|TASK_WOKEN_TIMER| \
                            TASK_WOKEN_IO|TASK_WOKEN_SIGNAL|TASK_WOKEN_MSG| \
                            TASK_WOKEN_RES)
 
-/* Additional wakeup info may be passed in the state by lef-shifting the value
- * by this number of bits. Not more than 8 bits are guaranteed to be delivered.
- * System signals may use that too.
+struct notification {
+	struct list purge_me; /* Part of the list of signals to be purged in the
+	                         case of the LUA execution stack crash. */
+	struct list wake_me; /* Part of list of signals to be targeted if an
+	                        event occurs. */
+	struct task *task; /* The task to be wake if an event occurs. */
+	__decl_hathreads(HA_SPINLOCK_T lock);
+};
+
+/* This part is common between struct task and struct tasklet so that tasks
+ * can be used as-is as tasklets.
  */
-#define TASK_REASON_SHIFT 8
+#define TASK_COMMON							\
+	struct {							\
+		unsigned short state; /* task state : bitfield of TASK_	*/ \
+		short nice; /* task prio from -1024 to +1024, or -32768 for tasklets */ \
+		unsigned int calls; /* number of times process was called */ \
+		uint64_t cpu_time; /* total CPU time consumed */            \
+		struct task *(*process)(struct task *t, void *ctx, unsigned short state); /* the function which processes the task */ \
+		void *context; /* the task's context */			\
+	}
 
 struct notification {
 	struct list purge_me; /* Part of the list of signals to be purged in the
@@ -62,17 +81,22 @@ struct notification {
 
 /* The base for all tasks */
 struct task {
+	TASK_COMMON;			/* must be at the beginning! */
 	struct eb32sc_node rq;		/* ebtree node used to hold the task in the run queue */
-	unsigned short state;		/* task state : bit field of TASK_* */
-	unsigned short pending_state;	/* pending states for running talk */
-	short nice;			/* the task's current nice value from -1024 to +1024 */
-	unsigned int calls;		/* number of times ->process() was called */
-	struct task * (*process)(struct task *t);  /* the function which processes the task */
-	void *context;			/* the task's context */
 	struct eb32_node wq;		/* ebtree node used to hold the task in the wait queue */
 	int expire;			/* next expiration date for this task, in ticks */
 	unsigned long thread_mask;	/* mask of thread IDs authorized to process the task */
+	uint64_t call_date;		/* date of the last task wakeup or call */
+	uint64_t lat_time;		/* total latency time experienced */
 };
+
+/* lightweight tasks, without priority, mainly used for I/Os */
+struct tasklet {
+	TASK_COMMON;			/* must be at the beginning! */
+	struct list list;
+};
+
+#define TASK_IS_TASKLET(t) ((t)->nice == -32768)
 
 /*
  * The task callback (->process) is responsible for updating ->expire. It must

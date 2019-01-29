@@ -25,7 +25,9 @@
 
 #include <types/global.h>
 
+#include <proto/activity.h>
 #include <proto/fd.h>
+#include <proto/signal.h>
 
 
 /* private data */
@@ -51,7 +53,7 @@ static THREAD_LOCAL struct epoll_event ev;
 REGPRM1 static void __fd_clo(int fd)
 {
 	if (unlikely(fdtab[fd].cloned)) {
-		unsigned long m = fdtab[fd].polled_mask;
+		unsigned long m = polled_mask[fd];
 		int i;
 
 		for (i = global.nbthread - 1; i >= 0; i--)
@@ -66,11 +68,11 @@ static void _update_fd(int fd)
 
 	en = fdtab[fd].state;
 
-	if (fdtab[fd].polled_mask & tid_bit) {
+	if (polled_mask[fd] & tid_bit) {
 		if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
 			/* fd removed from poll list */
 			opcode = EPOLL_CTL_DEL;
-			HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
+			HA_ATOMIC_AND(&polled_mask[fd], ~tid_bit);
 		}
 		else {
 			/* fd status changed */
@@ -80,7 +82,7 @@ static void _update_fd(int fd)
 	else if ((fdtab[fd].thread_mask & tid_bit) && (en & FD_EV_POLLED_RW)) {
 		/* new fd in the poll list */
 		opcode = EPOLL_CTL_ADD;
-		HA_ATOMIC_OR(&fdtab[fd].polled_mask, tid_bit);
+		HA_ATOMIC_OR(&polled_mask[fd], tid_bit);
 	}
 	else {
 		return;
@@ -103,78 +105,70 @@ static void _update_fd(int fd)
  */
 REGPRM2 static void _do_poll(struct poller *p, int exp)
 {
-	int status, eo, en;
+	int status;
 	int fd;
 	int count;
 	int updt_idx;
 	int wait_time;
+	int old_fd;
 
 	/* first, scan the update list to find polling changes */
 	for (updt_idx = 0; updt_idx < fd_nbupdt; updt_idx++) {
 		fd = fd_updt[updt_idx];
 
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-		fdtab[fd].update_mask &= ~tid_bit;
-
+		HA_ATOMIC_AND(&fdtab[fd].update_mask, ~tid_bit);
 		if (!fdtab[fd].owner) {
 			activity[tid].poll_drop++;
-			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 			continue;
 		}
 
-		fdtab[fd].new = 0;
-
-		eo = fdtab[fd].state;
-		en = fd_compute_new_polled_status(eo);
-		fdtab[fd].state = en;
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 		_update_fd(fd);
 	}
 	fd_nbupdt = 0;
 	/* Scan the global update list */
-	HA_SPIN_LOCK(FD_UPDATE_LOCK, &fd_updt_lock);
-	for (fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-		if (fdtab[fd].update_mask & tid_bit)
-			done_update_polling(fd);
-		else {
-			HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	for (old_fd = fd = update_list.first; fd != -1; fd = fdtab[fd].update.next) {
+		if (fd == -2) {
+			fd = old_fd;
 			continue;
 		}
-		fdtab[fd].new = 0;
-
-		eo = fdtab[fd].state;
-		en = fd_compute_new_polled_status(eo);
-		fdtab[fd].state = en;
-
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		else if (fd <= -3)
+			fd = -fd -4;
+		if (fd == -1)
+			break;
+		if (fdtab[fd].update_mask & tid_bit)
+			done_update_polling(fd);
+		else
+			continue;
 		if (!fdtab[fd].owner)
 			continue;
 		_update_fd(fd);
 	}
-	HA_SPIN_UNLOCK(FD_UPDATE_LOCK, &fd_updt_lock);
 
 	thread_harmless_now();
 
-	/* compute the epoll_wait() timeout */
-	if (!exp)
-		wait_time = MAX_DELAY_MS;
-	else if (tick_is_expired(exp, now_ms)) {
-		activity[tid].poll_exp++;
-		wait_time = 0;
-	}
-	else {
-		wait_time = TICKS_TO_MS(tick_remain(now_ms, exp)) + 1;
-		if (wait_time > MAX_DELAY_MS)
-			wait_time = MAX_DELAY_MS;
-	}
-
 	/* now let's wait for polled events */
+	wait_time = compute_poll_timeout(exp);
+	tv_entering_poll();
+	activity_count_runtime();
+	do {
+		int timeout = (global.tune.options & GTUNE_BUSY_POLLING) ? 0 : wait_time;
 
-	gettimeofday(&before_poll, NULL);
-	status = epoll_wait(epoll_fd[tid], epoll_events, global.tune.maxpollevents, wait_time);
-	tv_update_date(wait_time, status);
-	measure_idle();
+		status = epoll_wait(epoll_fd[tid], epoll_events, global.tune.maxpollevents, timeout);
+		tv_update_date(timeout, status);
+
+		if (status)
+			break;
+		if (timeout || !wait_time)
+			break;
+		if (signal_queue_len)
+			break;
+		if (tick_isset(exp) && tick_is_expired(exp, now_ms))
+			break;
+	} while (1);
+
+	tv_leaving_poll(wait_time, status);
+
+	thread_harmless_end();
 
 	thread_harmless_end();
 
@@ -194,7 +188,7 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 			/* FD has been migrated */
 			activity[tid].poll_skip++;
 			epoll_ctl(epoll_fd[tid], EPOLL_CTL_DEL, fd, &ev);
-			HA_ATOMIC_AND(&fdtab[fd].polled_mask, ~tid_bit);
+			HA_ATOMIC_AND(&polled_mask[fd], ~tid_bit);
 			continue;
 		}
 
@@ -243,10 +237,8 @@ static int init_epoll_per_thread()
 	 * fd for this thread. Let's just mark them as updated, the poller will
 	 * do the rest.
 	 */
-	for (fd = 0; fd < maxfd; fd++) {
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+	for (fd = 0; fd < global.maxsock; fd++)
 		updt_fd_polling(fd);
-	}
 
 	return 1;
  fail_fd:

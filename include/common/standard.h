@@ -38,6 +38,7 @@
 #include <common/namespace.h>
 #include <eb32tree.h>
 #include <eb32sctree.h>
+#include <types/protocol.h>
 
 #ifndef LLONG_MAX
 # define LLONG_MAX 9223372036854775807LL
@@ -56,7 +57,7 @@
 #define NB_LLMAX_STR (sizeof("-9223372036854775807")-1)
 
 /* number of itoa_str entries */
-#define NB_ITOA_STR	10
+#define NB_ITOA_STR	16
 
 /* maximum quoted string length (truncated above) */
 #define QSTR_SIZE 200
@@ -194,7 +195,7 @@ static inline const char *U2H(unsigned long long n)
 	return ret;
 }
 
-/* returns a locally allocated string containing the HTML representation of
+/* returns a locally allocated string containing the ASCII representation of
  * the number 'n' in decimal. Up to NB_ITOA_STR calls may be used in the same
  * function call (eg: printf), shared with the other similar functions making
  * use of itoa_str[].
@@ -364,7 +365,7 @@ extern const char *invalid_prefix_char(const char *name);
  * IPv6, use ":::port". NULL is returned if the host part cannot be resolved.
  * If <pfx> is non-null, it is used as a string prefix before any path-based
  * address (typically the path to a unix socket). If use_dns is not true,
- * the funtion cannot accept the DNS resolution.
+ * the function cannot accept the DNS resolution.
  */
 struct sockaddr_storage *str2sa_range(const char *str,
                                       int *port, int *low, int *high,
@@ -376,6 +377,12 @@ struct sockaddr_storage *str2sa_range(const char *str,
  * if the conversion succeeds otherwise zero.
  */
 int str2mask(const char *str, struct in_addr *mask);
+
+/* converts <str> to a struct in6_addr containing a network mask. It can be
+ * passed in quadruplet form (ffff:ffff::) or in CIDR form (64). It returns 1
+ * if the conversion succeeds otherwise zero.
+ */
+int str2mask6(const char *str, struct in6_addr *mask);
 
 /* convert <cidr> to struct in_addr <mask>. It returns 1 if the conversion
  * succeeds otherwise non-zero.
@@ -480,7 +487,7 @@ char *encode_string(char *start, char *stop,
  */
 char *encode_chunk(char *start, char *stop,
                    const char escape, const fd_set *map,
-                   const struct chunk *chunk);
+                   const struct buffer *chunk);
 
 /*
  * Tries to prefix characters tagged in the <map> with the <escape>
@@ -503,7 +510,7 @@ char *escape_string(char *start, char *stop,
  */
 char *escape_chunk(char *start, char *stop,
                    const char escape, const fd_set *map,
-                   const struct chunk *chunk);
+                   const struct buffer *chunk);
 
 
 /* Check a string for using it in a CSV output format. If the string contains
@@ -533,10 +540,11 @@ char *escape_chunk(char *start, char *stop,
  * This function appends the encoding to the existing output chunk. Please
  * use csv_enc() instead if you want to replace the output chunk.
  */
-const char *csv_enc_append(const char *str, int quote, struct chunk *output);
+const char *csv_enc_append(const char *str, int quote, struct buffer *output);
 
 /* same as above but the output chunk is reset first */
-static inline const char *csv_enc(const char *str, int quote, struct chunk *output)
+static inline const char *csv_enc(const char *str, int quote,
+				  struct buffer *output)
 {
 	chunk_reset(output);
 	return csv_enc_append(str, quote, output);
@@ -793,14 +801,23 @@ static inline unsigned int my_popcountl(unsigned long a)
 	return cnt;
 }
 
+/* returns non-zero if <a> has at least 2 bits set */
+static inline unsigned long atleast2(unsigned long a)
+{
+	return a & (a - 1);
+}
+
 /* Simple ffs implementation. It returns the position of the lowest bit set to
- * one. */
+ * one. It is illegal to call it with a==0 (undefined result).
+ */
 static inline unsigned int my_ffsl(unsigned long a)
 {
-	unsigned int cnt;
+	unsigned long cnt;
 
-	if (!a)
-		return 0;
+#if defined(__x86_64__)
+	__asm__("bsf %1,%0\n" : "=r" (cnt) : "rm" (a));
+	cnt++;
+#else
 
 	cnt = 1;
 #if LONG_MAX > 0x7FFFFFFFL /* 64bits */
@@ -829,6 +846,7 @@ static inline unsigned int my_ffsl(unsigned long a)
 		a >>= 1;
 		cnt += 1;
 	}
+#endif /* x86_64 */
 
 	return cnt;
 }
@@ -949,7 +967,7 @@ static inline int is_inet_addr(const struct sockaddr_storage *addr)
  */
 static inline int is_addr(const struct sockaddr_storage *addr)
 {
-	if (addr->ss_family == AF_UNIX)
+	if (addr->ss_family == AF_UNIX || addr->ss_family == AF_CUST_SOCKPAIR)
 		return 1;
 	else
 		return is_inet_addr(addr);
@@ -1037,10 +1055,10 @@ extern int in_net_ipv4(const void *addr, const struct in_addr *mask, const struc
 /* Return true if IPv6 address is part of the network */
 extern int in_net_ipv6(const void *addr, const struct in6_addr *mask, const struct in6_addr *net);
 
-/* Map IPv4 adress on IPv6 address, as specified in RFC 3513. */
+/* Map IPv4 address on IPv6 address, as specified in RFC 3513. */
 extern void v4tov6(struct in6_addr *sin6_addr, struct in_addr *sin_addr);
 
-/* Map IPv6 adress on IPv4 address, as specified in RFC 3513.
+/* Map IPv6 address on IPv4 address, as specified in RFC 3513.
  * Return true if conversion is possible and false otherwise.
  */
 extern int v6tov4(struct in_addr *sin_addr, struct in6_addr *sin6_addr);
@@ -1069,7 +1087,7 @@ extern const char *monthname[];
  * without using sprintf. return a pointer to the last char written (\0) or
  * NULL if there isn't enough space.
  */
-char *date2str_log(char *dest, struct tm *tm, struct timeval *date, size_t size);
+char *date2str_log(char *dest, const struct tm *tm, const struct timeval *date, size_t size);
 
 /* Return the GMT offset for a specific local time.
  * Both t and tm must represent the same time.
@@ -1187,6 +1205,24 @@ static inline void shut_your_big_mouth_gcc(int r)
 /* same as strstr() but case-insensitive */
 const char *strnistr(const char *str1, int len_str1, const char *str2, int len_str2);
 
+/* after increasing a pointer value, it can exceed the first buffer
+ * size. This function transform the value of <ptr> according with
+ * the expected position. <chunks> is an array of the one or two
+ * available chunks. The first value is the start of the first chunk,
+ * the second value if the end+1 of the first chunks. The third value
+ * is NULL or the start of the second chunk and the fourth value is
+ * the end+1 of the second chunk. The function returns 1 if does a
+ * wrap, else returns 0.
+ */
+static inline int fix_pointer_if_wrap(const char **chunks, const char **ptr)
+{
+	if (*ptr < chunks[1])
+		return 0;
+	if (!chunks[2])
+		return 0;
+	*ptr = chunks[2] + ( *ptr - chunks[1] );
+	return 1;
+}
 
 /************************* Composite address manipulation *********************
  * Composite addresses are simply unsigned long data in which the higher bits
@@ -1315,9 +1351,9 @@ static inline unsigned long long rdtsc()
 struct list;
 int list_append_word(struct list *li, const char *str, char **err);
 
-int dump_text(struct chunk *out, const char *buf, int bsize);
-int dump_binary(struct chunk *out, const char *buf, int bsize);
-int dump_text_line(struct chunk *out, const char *buf, int bsize, int len,
+int dump_text(struct buffer *out, const char *buf, int bsize);
+int dump_binary(struct buffer *out, const char *buf, int bsize);
+int dump_text_line(struct buffer *out, const char *buf, int bsize, int len,
                    int *line, int ptr);
 
 /* same as realloc() except that ptr is also freed upon failure */

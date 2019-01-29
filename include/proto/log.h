@@ -34,6 +34,8 @@
 #include <types/proxy.h>
 #include <types/stream.h>
 
+#include <proto/stream.h>
+
 extern struct pool_head *pool_head_requri;
 extern struct pool_head *pool_head_uniqueid;
 
@@ -44,16 +46,17 @@ extern char clf_http_log_format[];
 
 extern char default_rfc5424_sd_log_format[];
 
+extern unsigned int dropped_logs;
+
 extern THREAD_LOCAL char *logheader;
 extern THREAD_LOCAL char *logheader_rfc5424;
 extern THREAD_LOCAL char *logline;
 extern THREAD_LOCAL char *logline_rfc5424;
 
 
-/*
- * Initializes some log data.
- */
-void init_log();
+/* Initialize/Deinitialize log buffers used for syslog messages */
+int init_log_buffers();
+void deinit_log_buffers();
 
 
 /* Initialize/Deinitialize log buffers used for syslog messages */
@@ -63,13 +66,20 @@ void deinit_log_buffers();
 /*
  * Builds a log line.
  */
-int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list_format);
+int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t maxsize, struct list *list_format);
+
+static inline int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list_format)
+{
+	return sess_build_logline(strm_sess(s), s, dst, maxsize, list_format);
+}
+
 
 /*
  * send a log for the stream when we have enough info about it.
  * Will not log if the frontend has no log defined.
  */
 void strm_log(struct stream *s);
+void sess_log(struct session *sess);
 
 /*
  * add to the logformat linked list
@@ -82,6 +92,10 @@ int add_to_logformat_list(char *start, char *end, int type, struct list *list_fo
  * You can set arguments using { } : %{many arguments}varname
  */
 int parse_logformat_string(const char *str, struct proxy *curproxy, struct list *list_format, int options, int cap, char **err);
+
+/* Parse "log" keyword and update the linked list. */
+int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err);
+
 /*
  * Displays the message on stderr with the date and pid. Overrides the quiet
  * mode during startup.
@@ -93,6 +107,12 @@ void ha_alert(const char *fmt, ...)
  * Displays the message on stderr with the date and pid.
  */
 void ha_warning(const char *fmt, ...)
+	__attribute__ ((format(printf, 1, 2)));
+
+/*
+ * Displays the message on stderr with the date and pid.
+ */
+void ha_notice(const char *fmt, ...)
 	__attribute__ ((format(printf, 1, 2)));
 
 /*
@@ -136,21 +156,21 @@ int get_log_facility(const char *fac);
  * Write a string in the log string
  * Take cares of quote options
  *
- * Return the adress of the \0 character, or NULL on error
+ * Return the address of the \0 character, or NULL on error
  */
-char *lf_text_len(char *dst, const char *src, size_t len, size_t size, struct logformat_node *node);
+char *lf_text_len(char *dst, const char *src, size_t len, size_t size, const struct logformat_node *node);
 
 /*
- * Write a IP adress to the log string
+ * Write a IP address to the log string
  * +X option write in hexadecimal notation, most signifant byte on the left
  */
-char *lf_ip(char *dst, struct sockaddr *sockaddr, size_t size, struct logformat_node *node);
+char *lf_ip(char *dst, const struct sockaddr *sockaddr, size_t size, const struct logformat_node *node);
 
 /*
  * Write a port to the log
  * +X option write in hexadecimal notation, most signifant byte on the left
  */
-char *lf_port(char *dst, struct sockaddr *sockaddr, size_t size, struct logformat_node *node);
+char *lf_port(char *dst, const struct sockaddr *sockaddr, size_t size, const struct logformat_node *node);
 
 
 #endif /* _PROTO_LOG_H */

@@ -50,9 +50,7 @@ void srv_compute_all_admin_states(struct proxy *px);
 int srv_set_addr_via_libc(struct server *srv, int *err_code);
 int srv_init_addr(void);
 struct server *cli_find_server(struct appctx *appctx, char *arg);
-void servers_update_status(void);
-
-extern struct list updated_servers;
+struct server *new_server(struct proxy *proxy);
 
 /* functions related to server name resolution */
 int snr_update_srv_status(struct server *s, int has_no_ip);
@@ -91,7 +89,7 @@ void srv_dump_kws(char **out);
  * and the proxy's algorihtm. To be used after updating sv->uweight. The warmup
  * state is automatically disabled if the time is elapsed.
  */
-void server_recalc_eweight(struct server *sv);
+void server_recalc_eweight(struct server *sv, int must_update);
 
 /* returns the current server throttle rate between 0 and 100% */
 static inline unsigned int server_throttle_rate(struct server *sv)
@@ -150,7 +148,8 @@ void srv_shutdown_streams(struct server *srv, int why);
  */
 void srv_shutdown_backup_streams(struct proxy *px, int why);
 
-void srv_append_status(struct chunk *msg, struct server *s, struct check *, int xferred, int forced);
+void srv_append_status(struct buffer *msg, struct server *s, struct check *,
+		       int xferred, int forced);
 
 void srv_set_stopped(struct server *s, const char *reason, struct check *check);
 void srv_set_running(struct server *s, const char *reason, struct check *check);
@@ -232,6 +231,30 @@ static inline enum srv_initaddr srv_get_next_initaddr(unsigned int *list)
 	ret = *list & 7;
 	*list >>= 3;
 	return ret;
+}
+
+/* This adds an idle connection to the server's list if the connection is
+ * reusable, not held by any owner anymore, but still has available streams.
+ */
+static inline int srv_add_to_idle_list(struct server *srv, struct connection *conn)
+{
+	if (srv && srv->pool_purge_delay > 0 &&
+	    (srv->max_idle_conns == -1 || srv->max_idle_conns > srv->curr_idle_conns) &&
+	    !(conn->flags & CO_FL_PRIVATE) &&
+	    ((srv->proxy->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR) &&
+	    !conn->mux->used_streams(conn) && conn->mux->avail_streams(conn)) {
+		LIST_DEL(&conn->list);
+		LIST_ADDQ(&srv->idle_orphan_conns[tid], &conn->list);
+		srv->curr_idle_conns++;
+
+		conn->idle_time = now_ms;
+		if (!(task_in_wq(srv->idle_task[tid])) &&
+		    !(task_in_rq(srv->idle_task[tid])))
+			task_schedule(srv->idle_task[tid],
+			    tick_add(now_ms, srv->pool_purge_delay));
+		return 1;
+	}
+	return 0;
 }
 
 #endif /* _PROTO_SERVER_H */

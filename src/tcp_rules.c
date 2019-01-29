@@ -13,6 +13,7 @@
 #include <common/compat.h>
 #include <common/config.h>
 #include <common/debug.h>
+#include <common/initcall.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/ticks.h>
@@ -103,13 +104,13 @@ int tcp_inspect_request(struct stream *s, struct channel *req, int an_bit)
 	int partial;
 	int act_flags = 0;
 
-	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%d analysers=%02x\n",
+	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%lu analysers=%02x\n",
 		now_ms, __FUNCTION__,
 		s,
 		req,
 		req->rex, req->wex,
 		req->flags,
-		req->buf->i,
+		ci_data(req),
 		req->analysers);
 
 	/* We don't know whether we have enough data, so must proceed
@@ -122,7 +123,7 @@ int tcp_inspect_request(struct stream *s, struct channel *req, int an_bit)
 	 * - if one rule returns KO, then return KO
 	 */
 
-	if ((req->flags & CF_SHUTR) || buffer_full(req->buf, global.tune.maxrewrite) ||
+	if ((req->flags & CF_SHUTR) || channel_full(req, global.tune.maxrewrite) ||
 	    !s->be->tcp_req.inspect_delay || tick_is_expired(req->analyse_exp, now_ms))
 		partial = SMP_OPT_FINAL;
 	else
@@ -220,11 +221,12 @@ resume_execution:
 				if (cap[h->index] == NULL) /* no more capture memory */
 					continue;
 
-				len = key->data.u.str.len;
+				len = key->data.u.str.data;
 				if (len > h->len)
 					len = h->len;
 
-				memcpy(cap[h->index], key->data.u.str.str, len);
+				memcpy(cap[h->index], key->data.u.str.area,
+				       len);
 				cap[h->index][len] = 0;
 			}
 			else {
@@ -279,13 +281,13 @@ int tcp_inspect_response(struct stream *s, struct channel *rep, int an_bit)
 	int partial;
 	int act_flags = 0;
 
-	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%d analysers=%02x\n",
+	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%lu analysers=%02x\n",
 		now_ms, __FUNCTION__,
 		s,
 		rep,
 		rep->rex, rep->wex,
 		rep->flags,
-		rep->buf->i,
+		ci_data(rep),
 		rep->analysers);
 
 	/* We don't know whether we have enough data, so must proceed
@@ -603,7 +605,8 @@ static int tcp_parse_response_rule(char **args, int arg, int section_type,
 			action_build_list(&tcp_res_cont_keywords, &trash);
 			memprintf(err,
 			          "'%s %s' expects 'accept', 'close', 'reject', %s in %s '%s' (got '%s')",
-			          args[0], args[1], trash.str, proxy_type_str(curpx), curpx->id, args[arg]);
+			          args[0], args[1], trash.area,
+			          proxy_type_str(curpx), curpx->id, args[arg]);
 			return -1;
 		}
 	}
@@ -733,13 +736,19 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 		rule->arg.cap.hdr = hdr;
 		rule->action = ACT_TCP_CAPTURE;
 	}
-	else if (strncmp(args[arg], "track-sc", 8) == 0 &&
-		 args[arg][9] == '\0' && args[arg][8] >= '0' &&
-		 args[arg][8] < '0' + MAX_SESS_STKCTR) { /* track-sc 0..9 */
+	else if (strncmp(args[arg], "track-sc", 8) == 0) {
 		struct sample_expr *expr;
 		int kw = arg;
+		unsigned int tsc_num;
+		const char *tsc_num_str;
 
 		arg++;
+
+		tsc_num_str = &args[kw][8];
+		if (cfg_parse_track_sc_num(&tsc_num, tsc_num_str, tsc_num_str + strlen(tsc_num_str), err) == -1) {
+			memprintf(err, "'%s %s %s' : %s", args[0], args[1], args[kw], *err);
+			return -1;
+		}
 
 		curpx->conf.args.ctx = ARGC_TRK;
 		expr = sample_parse_expr(args, &arg, file, line, err, &curpx->conf.args);
@@ -775,7 +784,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 			arg++;
 		}
 		rule->arg.trk_ctr.expr = expr;
-		rule->action = ACT_ACTION_TRK_SC0 + args[kw][8] - '0';
+		rule->action = ACT_ACTION_TRK_SC0 + tsc_num;
 		rule->check_ptr = check_trk_action;
 	}
 	else if (strcmp(args[arg], "expect-proxy") == 0) {
@@ -846,7 +855,8 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 			memprintf(err,
 			          "'%s %s' expects 'accept', 'reject', 'track-sc0' ... 'track-sc%d', %s "
 			          "in %s '%s' (got '%s').\n",
-			          args[0], args[1], MAX_SESS_STKCTR-1, trash.str, proxy_type_str(curpx),
+			          args[0], args[1], MAX_SESS_STKCTR-1,
+			          trash.area, proxy_type_str(curpx),
 			          curpx->id, args[arg]);
 			return -1;
 		}
@@ -1185,12 +1195,7 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 	{ 0, NULL, NULL },
 }};
 
-
-__attribute__((constructor))
-static void __tcp_protocol_init(void)
-{
-	cfg_register_keywords(&cfg_kws);
-}
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
 
 /*
  * Local variables:

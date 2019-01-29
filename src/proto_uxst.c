@@ -30,6 +30,7 @@
 #include <common/config.h>
 #include <common/debug.h>
 #include <common/errors.h>
+#include <common/initcall.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/time.h>
@@ -42,7 +43,6 @@
 #include <proto/listener.h>
 #include <proto/log.h>
 #include <proto/protocol.h>
-#include <proto/proto_tcp.h>
 #include <proto/task.h>
 
 static int uxst_bind_listener(struct listener *listener, char *errmsg, int errlen);
@@ -78,6 +78,8 @@ static struct protocol proto_unix = {
 	.listeners = LIST_HEAD_INIT(proto_unix.listeners),
 	.nb_listeners = 0,
 };
+
+INITCALL1(STG_REGISTER, protocol_register, &proto_unix);
 
 /********************************
  * 1) low-level socket functions
@@ -338,13 +340,10 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 	listener->fd = fd;
 	listener->state = LI_LISTEN;
 
-	/* the function for the accept() event */
-	fdtab[fd].iocb = listener->proto->accept;
-	fdtab[fd].owner = listener; /* reference the listener instead of a task */
-	if (listener->bind_conf->bind_thread[relative_pid-1])
-		fd_insert(fd, listener->bind_conf->bind_thread[relative_pid-1]);
-	else
-		fd_insert(fd, MAX_THREADS_MASK);
+	fd_insert(fd, listener, listener->proto->accept,
+		  listener->bind_conf->bind_thread[relative_pid-1] ?
+		  listener->bind_conf->bind_thread[relative_pid-1] : MAX_THREADS_MASK);
+
 	return err;
 
  err_rename:
@@ -439,8 +438,6 @@ static int uxst_connect_server(struct connection *conn, int data, int delack)
 	struct server *srv;
 	struct proxy *be;
 
-	conn->flags = 0;
-
 	switch (obj_type(conn->target)) {
 	case OBJ_TYPE_PROXY:
 		be = objt_proxy(conn->target);
@@ -461,20 +458,20 @@ static int uxst_connect_server(struct connection *conn, int data, int delack)
 		if (errno == ENFILE) {
 			conn->err_code = CO_ER_SYS_FDLIM;
 			send_log(be, LOG_EMERG,
-				 "Proxy %s reached system FD limit at %d. Please check system tunables.\n",
-				 be->id, maxfd);
+				 "Proxy %s reached system FD limit (maxsock=%d). Please check system tunables.\n",
+				 be->id, global.maxsock);
 		}
 		else if (errno == EMFILE) {
 			conn->err_code = CO_ER_PROC_FDLIM;
 			send_log(be, LOG_EMERG,
-				 "Proxy %s reached process FD limit at %d. Please check 'ulimit-n' and restart.\n",
-				 be->id, maxfd);
+				 "Proxy %s reached process FD limit (maxsock=%d). Please check 'ulimit-n' and restart.\n",
+				 be->id, global.maxsock);
 		}
 		else if (errno == ENOBUFS || errno == ENOMEM) {
 			conn->err_code = CO_ER_SYS_MEMLIM;
 			send_log(be, LOG_EMERG,
-				 "Proxy %s reached system memory limit at %d sockets. Please check system tunables.\n",
-				 be->id, maxfd);
+				 "Proxy %s reached system memory limit (maxsock=%d). Please check system tunables.\n",
+				 be->id, global.maxsock);
 		}
 		else if (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT) {
 			conn->err_code = CO_ER_NOPROTO;
@@ -500,6 +497,14 @@ static int uxst_connect_server(struct connection *conn, int data, int delack)
 
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
 		qfprintf(stderr,"Cannot set client socket to non blocking mode.\n");
+		close(fd);
+		conn->err_code = CO_ER_SOCK_ERR;
+		conn->flags |= CO_FL_ERROR;
+		return SF_ERR_INTERNAL;
+	}
+
+	if (master == 1 && (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1)) {
+		ha_alert("Cannot set CLOEXEC on client socket.\n");
 		close(fd);
 		conn->err_code = CO_ER_SOCK_ERR;
 		conn->flags |= CO_FL_ERROR;
@@ -727,17 +732,7 @@ static struct bind_kw_list bind_kws = { "UNIX", { }, {
 	{ NULL, NULL, 0 },
 }};
 
-/********************************
- * 4) high-level functions
- ********************************/
-
-__attribute__((constructor))
-static void __uxst_protocol_init(void)
-{
-	protocol_register(&proto_unix);
-	bind_register_keywords(&bind_kws);
-}
-
+INITCALL1(STG_REGISTER, bind_register_keywords, &bind_kws);
 
 /*
  * Local variables:

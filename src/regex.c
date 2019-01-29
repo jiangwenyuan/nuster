@@ -193,7 +193,7 @@ int regex_exec_match(const struct my_regex *preg, const char *subject,
 	 * value from a successful match is 1, indicating that just the first pair of
 	 * offsets has been set.
 	 *
-	 * It seems that this function returns 0 if it detect more matches than avalaible
+	 * It seems that this function returns 0 if it detects more matches than available
 	 * space in the matches array.
 	 */
 #ifdef USE_PCRE2
@@ -286,7 +286,7 @@ int regex_exec_match2(const struct my_regex *preg, char *subject, int length,
 	 * value from a successful match is 1, indicating that just the first pair of
 	 * offsets has been set.
 	 *
-	 * It seems that this function returns 0 if it detect more matches than avalaible
+	 * It seems that this function returns 0 if it detects more matches than available
 	 * space in the matches array.
 	 */
 #ifdef USE_PCRE2
@@ -411,8 +411,7 @@ int regex_comp(const char *str, struct my_regex *regex, int cs, int cap, char **
 	return 1;
 }
 
-__attribute__((constructor))
-static void __regex_init(void)
+static void regex_register_build_options(void)
 {
 	char *ptr = NULL;
 
@@ -457,6 +456,8 @@ static void __regex_init(void)
 #endif
 	hap_register_build_opts(ptr, 1);
 }
+
+INITCALL0(STG_REGISTER, regex_register_build_options);
 
 /*
  * Local variables:

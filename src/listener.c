@@ -22,6 +22,7 @@
 #include <common/cfgparse.h>
 #include <common/config.h>
 #include <common/errors.h>
+#include <common/initcall.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/time.h>
@@ -30,17 +31,19 @@
 #include <types/protocol.h>
 
 #include <proto/acl.h>
+#include <proto/connection.h>
 #include <proto/fd.h>
 #include <proto/freq_ctr.h>
 #include <proto/log.h>
 #include <proto/listener.h>
 #include <proto/protocol.h>
+#include <proto/proto_sockpair.h>
 #include <proto/sample.h>
 #include <proto/stream.h>
 #include <proto/task.h>
 
  /* listner_queue lock (same for global and per proxy queues) */
-__decl_hathreads(static HA_SPINLOCK_T lq_lock);
+__decl_spinlock(lq_lock);
 
 /* List head of all known bind keywords */
 static struct bind_kw_list bind_keywords = {
@@ -79,6 +82,12 @@ static void enable_listener(struct listener *listener)
 		else {
 			listener->state = LI_FULL;
 		}
+	}
+	/* if this listener is supposed to be only in the master, close it in the workers */
+	if ((global.mode & MODE_MWORKER) &&
+	    (listener->options & LI_O_MWORKER) &&
+	    master == 0) {
+		do_unbind_listener(listener, 1);
 	}
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &listener->lock);
 }
@@ -532,6 +541,15 @@ void listener_accept(int fd)
 			goto end;
 		}
 
+		/* with sockpair@ we don't want to do an accept */
+		if (unlikely(l->addr.ss_family == AF_CUST_SOCKPAIR)) {
+			if ((cfd = recv_fd_uxst(fd)) != -1)
+				fcntl(cfd, F_SETFL, O_NONBLOCK);
+			/* just like with UNIX sockets, only the family is filled */
+			addr.ss_family = AF_UNIX;
+			laddr = sizeof(addr.ss_family);
+		} else
+
 #ifdef USE_ACCEPT4
 		/* only call accept4() if it's known to be safe, otherwise
 		 * fallback to the legacy accept() + fcntl().
@@ -567,27 +585,31 @@ void listener_accept(int fd)
 			case ENFILE:
 				if (p)
 					send_log(p, LOG_EMERG,
-						 "Proxy %s reached system FD limit at %d. Please check system tunables.\n",
-						 p->id, maxfd);
+						 "Proxy %s reached system FD limit (maxsock=%d). Please check system tunables.\n",
+						 p->id, global.maxsock);
 				goto transient_error;
 			case EMFILE:
 				if (p)
 					send_log(p, LOG_EMERG,
-						 "Proxy %s reached process FD limit at %d. Please check 'ulimit-n' and restart.\n",
-						 p->id, maxfd);
+						 "Proxy %s reached process FD limit (maxsock=%d). Please check 'ulimit-n' and restart.\n",
+						 p->id, global.maxsock);
 				goto transient_error;
 			case ENOBUFS:
 			case ENOMEM:
 				if (p)
 					send_log(p, LOG_EMERG,
-						 "Proxy %s reached system memory limit at %d sockets. Please check system tunables.\n",
-						 p->id, maxfd);
+						 "Proxy %s reached system memory limit (maxsock=%d). Please check system tunables.\n",
+						 p->id, global.maxsock);
 				goto transient_error;
 			default:
 				/* unexpected result, let's give up and let other tasks run */
 				goto stop;
 			}
 		}
+
+		/* we don't want to leak the FD upon reload if it's in the master */
+		if (unlikely(master == 1))
+			fcntl(cfd, F_SETFD, FD_CLOEXEC);
 
 		if (unlikely(cfd >= global.maxsock)) {
 			send_log(p, LOG_EMERG,
@@ -964,6 +986,25 @@ static int bind_parse_process(char **args, int cur_arg, struct proxy *px, struct
 	return 0;
 }
 
+/* parse the "proto" bind keyword */
+static int bind_parse_proto(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
+{
+	struct ist proto;
+
+	if (!*args[cur_arg + 1]) {
+		memprintf(err, "'%s' : missing value", args[cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	proto = ist2(args[cur_arg + 1], strlen(args[cur_arg + 1]));
+	conf->mux_proto = get_mux_proto(proto);
+	if (!conf->mux_proto) {
+		memprintf(err, "'%s' :  unknown MUX protocol '%s'", args[cur_arg], args[cur_arg+1]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+	return 0;
+}
+
 /* Note: must not be declared <const> as its list will be overwritten.
  * Please take care of keeping this list alphabetically sorted.
  */
@@ -973,12 +1014,16 @@ static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ /* END */ },
 }};
 
+INITCALL1(STG_REGISTER, sample_register_fetches, &smp_kws);
+
 /* Note: must not be declared <const> as its list will be overwritten.
  * Please take care of keeping this list alphabetically sorted.
  */
 static struct acl_kw_list acl_kws = {ILH, {
 	{ /* END */ },
 }};
+
+INITCALL1(STG_REGISTER, acl_register_keywords, &acl_kws);
 
 /* Note: must not be declared <const> as its list will be overwritten.
  * Please take care of keeping this list alphabetically sorted, doing so helps
@@ -996,17 +1041,11 @@ static struct bind_kw_list bind_kws = { "ALL", { }, {
 	{ "name",         bind_parse_name,         1 }, /* set name of listening socket */
 	{ "nice",         bind_parse_nice,         1 }, /* set nice of listening socket */
 	{ "process",      bind_parse_process,      1 }, /* set list of allowed process for this socket */
+	{ "proto",        bind_parse_proto,        1 }, /* set the proto to use for all incoming connections */
 	{ /* END */ },
 }};
 
-__attribute__((constructor))
-static void __listener_init(void)
-{
-	sample_register_fetches(&smp_kws);
-	acl_register_keywords(&acl_kws);
-	bind_register_keywords(&bind_kws);
-	HA_SPIN_INIT(&lq_lock);
-}
+INITCALL1(STG_REGISTER, bind_register_keywords, &bind_kws);
 
 /*
  * Local variables:

@@ -10,6 +10,8 @@
  *
  */
 
+#include <stdint.h>
+#include <unistd.h>
 #include <sys/time.h>
 
 #include <common/config.h>
@@ -27,6 +29,8 @@ THREAD_LOCAL struct timeval date;            /* the real current date */
 struct timeval start_date;      /* the process's start date */
 THREAD_LOCAL struct timeval before_poll;     /* system date before calling poll() */
 THREAD_LOCAL struct timeval after_poll;      /* system date after leaving poll() */
+THREAD_LOCAL uint64_t prev_cpu_time = 0;     /* previous per thread CPU time */
+THREAD_LOCAL uint64_t prev_mono_time = 0;    /* previous system wide monotonic time */
 
 static THREAD_LOCAL struct timeval tv_offset;  /* per-thread time ofsset relative to global time */
 volatile unsigned long long global_now;        /* common date between all threads (32:32) */

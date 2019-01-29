@@ -250,10 +250,10 @@ int raw_sock_from_pipe(struct connection *conn, struct pipe *pipe)
  * errno is cleared before starting so that the caller knows that if it spots an
  * error without errno, it's pending and can be retrieved via getsockopt(SO_ERROR).
  */
-static int raw_sock_to_buf(struct connection *conn, struct buffer *buf, int count)
+static size_t raw_sock_to_buf(struct connection *conn, struct buffer *buf, size_t count, int flags)
 {
-	int ret, done = 0;
-	int try;
+	ssize_t ret;
+	size_t try, done = 0;
 
 	if (!conn_ctrl_ready(conn))
 		return 0;
@@ -276,31 +276,23 @@ static int raw_sock_to_buf(struct connection *conn, struct buffer *buf, int coun
 		}
 	}
 
-	/* let's realign the buffer to optimize I/O */
-	if (buffer_empty(buf))
-		buf->p = buf->data;
-
 	/* read the largest possible block. For this, we perform only one call
 	 * to recv() unless the buffer wraps and we exactly fill the first hunk,
 	 * in which case we accept to do it once again. A new attempt is made on
 	 * EINTR too.
 	 */
 	while (count > 0) {
-		/* first check if we have some room after p+i */
-		try = buf->data + buf->size - (buf->p + buf->i);
-		/* otherwise continue between data and p-o */
-		if (try <= 0) {
-			try = buf->p - (buf->data + buf->o);
-			if (try <= 0)
-				break;
-		}
+		try = b_contig_space(buf);
+		if (!try)
+			break;
+
 		if (try > count)
 			try = count;
 
-		ret = recv(conn->handle.fd, bi_end(buf), try, 0);
+		ret = recv(conn->handle.fd, b_tail(buf), try, 0);
 
 		if (ret > 0) {
-			buf->i += ret;
+			b_add(buf, ret);
 			done += ret;
 			if (ret < try) {
 				/* unfortunately, on level-triggered events, POLL_HUP
@@ -360,19 +352,22 @@ static int raw_sock_to_buf(struct connection *conn, struct buffer *buf, int coun
 }
 
 
-/* Send all pending bytes from buffer <buf> to connection <conn>'s socket.
- * <flags> may contain some CO_SFL_* flags to hint the system about other
- * pending data for example.
+/* Send up to <count> pending bytes from buffer <buf> to connection <conn>'s
+ * socket. <flags> may contain some CO_SFL_* flags to hint the system about
+ * other pending data for example, but this flag is ignored at the moment.
  * Only one call to send() is performed, unless the buffer wraps, in which case
  * a second call may be performed. The connection's flags are updated with
  * whatever special event is detected (error, empty). The caller is responsible
  * for taking care of those events and avoiding the call if inappropriate. The
  * function does not call the connection's polling update function, so the caller
- * is responsible for this.
+ * is responsible for this. It's up to the caller to update the buffer's contents
+ * based on the return value.
  */
-static int raw_sock_from_buf(struct connection *conn, struct buffer *buf, int flags)
+static size_t raw_sock_from_buf(struct connection *conn, const struct buffer *buf, size_t count, int flags)
 {
-	int ret, try, done, send_flag;
+	ssize_t ret;
+	size_t try, done;
+	int send_flag;
 
 	if (!conn_ctrl_ready(conn))
 		return 0;
@@ -386,26 +381,23 @@ static int raw_sock_from_buf(struct connection *conn, struct buffer *buf, int fl
 	 * to send() unless the buffer wraps and we exactly fill the first hunk,
 	 * in which case we accept to do it once again.
 	 */
-	while (buf->o) {
-		try = buf->o;
-		/* outgoing data may wrap at the end */
-		if (buf->data + try > buf->p)
-			try = buf->data + try - buf->p;
+	while (count) {
+		try = b_contig_data(buf, done);
+		if (try > count)
+			try = count;
 
 		send_flag = MSG_DONTWAIT | MSG_NOSIGNAL;
-		if (try < buf->o || flags & CO_SFL_MSG_MORE)
+		if (try < count || flags & CO_SFL_MSG_MORE)
 			send_flag |= MSG_MORE;
 
-		ret = send(conn->handle.fd, bo_ptr(buf), try, send_flag);
+		ret = send(conn->handle.fd, b_peek(buf, done), try, send_flag);
 
 		if (ret > 0) {
-			buf->o -= ret;
+			count -= ret;
 			done += ret;
 
-			if (likely(buffer_empty(buf)))
-				/* optimize data alignment in the buffer */
-				buf->p = buf->data;
-
+			/* A send succeeded, so we can consier ourself connected */
+			conn->flags |= CO_FL_CONNECTED;
 			/* if the system buffer is full, don't insist */
 			if (ret < try)
 				break;
@@ -432,6 +424,8 @@ static int raw_sock_from_buf(struct connection *conn, struct buffer *buf, int fl
 static struct xprt_ops raw_sock = {
 	.snd_buf  = raw_sock_from_buf,
 	.rcv_buf  = raw_sock_to_buf,
+	.subscribe = conn_subscribe,
+	.unsubscribe = conn_unsubscribe,
 #if defined(CONFIG_HAP_LINUX_SPLICE)
 	.rcv_pipe = raw_sock_to_pipe,
 	.snd_pipe = raw_sock_from_pipe,
