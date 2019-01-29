@@ -412,6 +412,61 @@ nuster rule all code all
 
 Define when to cache using HAProxy ACL.
 
+The evaluation involves two stages: request stage and response stage.
+
+Cache will be performed if:
+
+1. The evaluation in request stage is true,
+2. The evaluation in request stage is false but true in response stage.
+
+**Please be very careful if you use negation in the condition or samples not available in certain stage**
+
+For example,
+
+1.  Cache if the request path begins with `/img/`
+
+    nuster rule img if { path_beg /img/ }
+
+This will work because the evaluation in request stage will either be ture or false, and will never be true in response stage as `path` is not available in the response stage.
+
+2. Cache if `Content-Type` in response is `image/jpeg`
+
+    nuster rule jpeg if { res.hdr(Content-Type) image/jpeg }
+
+This will work because the evaluation in request stage is always false as `res.hdr` is not available in the request stage, and will be either true or false in response stage.
+
+3. Cache if the request path begins with `/img/` and `Content-Type` in response is `image/jpeg`
+
+It won't work if you define the rule as:
+
+    nuster rule img if { path_beg /img/ } { res.hdr(Content-Type) image/jpeg }
+
+because `path` is not available in the response stage and `res.hdr` is not available in the request stage, so the evaluation will never be true.
+
+In order the make this work, `path` needs to be allocated for further use in reponse stage:
+
+    http-request set-var(txn.pathImg) path
+    acl pathImg var(txn.pathImg) -m beg /img/
+    acl resHdrCT res.hdr(Content-Type) image/jpeg
+    nuster rule r3 if pathImg resHdrCT
+
+4. Another example, cache if the request path does not begin with `/api/`
+
+It won't work neither:
+
+    acl NoCache path_beg /api/
+    nuster rule r3 if !NoCache
+
+Because the evaluation of `NoCache` against `/api/` in request stage is true, and the negation is false, which is the desired state, but in response stage, the evaluation of `NoCache` is always false as `path` is not available in response stage, and it will be cached as the negation `!NoCache` is true.
+
+This will work:
+
+    http-request set-var(txn.path) path
+    acl NoCache var(txn.path) -m beg /api/
+    nuster rule r1 if !NoCache
+
+I will add several new sample fetch methods to simplify this kind of tasks in futrue versions.
+
 See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
 
 # Cache
