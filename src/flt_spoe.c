@@ -2909,26 +2909,6 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 		}
 	}
 
-	/* Check all SPOE filters for proxy <px> to be sure all SPOE agent names
-	 * are uniq */
-	list_for_each_entry(f, &px->filter_configs, list) {
-		struct spoe_config *c = f->conf;
-
-		/* This is not an SPOE filter */
-		if (f->id != spoe_filter_id)
-			continue;
-		/* This is the current SPOE filter */
-		if (f == fconf)
-			continue;
-
-		/* Check engine Id. It should be uniq */
-		if (!strcmp(conf->id, c->id)) {
-			ha_alert("Proxy %s : duplicated name for SPOE engine '%s'.\n",
-				 px->id, conf->id);
-			return 1;
-		}
-	}
-
 	target = proxy_be_by_name(conf->agent->b.name);
 	if (target == NULL) {
 		ha_alert("Proxy %s : unknown backend '%s' used by SPOE agent '%s'"

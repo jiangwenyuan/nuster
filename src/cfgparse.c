@@ -85,6 +85,7 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 
+#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
@@ -2446,13 +2447,6 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
-		curr_resolvers->accepted_payload_size = i;
-	}
-	else if (strcmp(args[0], "resolution_pool_size") == 0) {
-		ha_warning("parsing [%s:%d] : '%s' directive is now deprecated and ignored.\n",
-			   file, linenum, args[0]);
-		err_code |= ERR_WARN;
-		goto out;
 	}
 	else if (strcmp(args[0], "accepted_payload_size") == 0) {
 		int i = 0;
