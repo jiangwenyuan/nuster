@@ -1406,6 +1406,10 @@ void ssl_sock_infocbk(const SSL *ssl, int where, int ret)
 	BIO *write_bio;
 	(void)ret; /* shut gcc stupid warning */
 
+#ifndef SSL_OP_NO_RENEGOTIATION
+	/* Please note that BoringSSL defines this macro to zero so don't
+	 * change this to #if and do not assign a default value to this macro!
+	 */
 	if (where & SSL_CB_HANDSHAKE_START) {
 		/* Disable renegotiation (CVE-2009-3555) */
 		if ((conn->flags & (CO_FL_CONNECTED | CO_FL_EARLY_SSL_HS | CO_FL_EARLY_DATA)) == CO_FL_CONNECTED) {
@@ -1413,6 +1417,7 @@ void ssl_sock_infocbk(const SSL *ssl, int where, int ret)
 			conn->err_code = CO_ER_SSL_RENEG;
 		}
 	}
+#endif
 
 	if ((where & SSL_CB_ACCEPT_LOOP) == SSL_CB_ACCEPT_LOOP) {
 		if (!(conn->xprt_st & SSL_SOCK_ST_FL_16K_WBFSIZE)) {
@@ -3806,6 +3811,11 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 		options |= SSL_OP_NO_TICKET;
 	if (bind_conf->ssl_options & BC_SSL_O_PREF_CLIE_CIPH)
 		options &= ~SSL_OP_CIPHER_SERVER_PREFERENCE;
+
+#ifdef SSL_OP_NO_RENEGOTIATION
+	options |= SSL_OP_NO_RENEGOTIATION;
+#endif
+
 	SSL_CTX_set_options(ctx, options);
 
 #if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
@@ -3821,6 +3831,10 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 	SSL_CTX_set_select_certificate_cb(ctx, ssl_sock_switchctx_cbk);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
 #elif (OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	if (bind_conf->ssl_conf.early_data) {
+		SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
+		SSL_CTX_set_max_early_data(ctx, global.tune.bufsize - global.tune.maxrewrite);
+	}
 	SSL_CTX_set_client_hello_cb(ctx, ssl_sock_switchctx_cbk, NULL);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
 #else
@@ -4679,6 +4693,16 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 			 srv->conf.file, srv->conf.line, srv->ssl_ctx.ciphers);
 		cfgerr++;
 	}
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (srv->ssl_ctx.ciphersuites &&
+		!SSL_CTX_set_cipher_list(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
+		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set TLS 1.3 cipher suites to '%s'.\n",
+			 curproxy->id, srv->id,
+			 srv->conf.file, srv->conf.line, srv->ssl_ctx.ciphersuites);
+		cfgerr++;
+	}
+#endif
 
 #if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	if (srv->ssl_ctx.ciphersuites &&
@@ -7623,15 +7647,36 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	}
 
 	keys_ref = malloc(sizeof(*keys_ref));
+	if (!keys_ref) {
+		if (err)
+			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
 	keys_ref->tlskeys = malloc(TLS_TICKETS_NO * sizeof(struct tls_sess_key));
+	if (!keys_ref->tlskeys) {
+		free(keys_ref);
+		if (err)
+			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
+		return ERR_ALERT | ERR_FATAL;
+	}
 
 	if ((f = fopen(args[cur_arg + 1], "r")) == NULL) {
+		free(keys_ref->tlskeys);
+		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : unable to load ssl tickets keys file", args[cur_arg+1]);
 		return ERR_ALERT | ERR_FATAL;
 	}
 
 	keys_ref->filename = strdup(args[cur_arg + 1]);
+	if (!keys_ref->filename) {
+		free(keys_ref->tlskeys);
+		free(keys_ref);
+		if (err)
+			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
+		return ERR_ALERT | ERR_FATAL;
+	}
 
 	while (fgets(thisline, sizeof(thisline), f) != NULL) {
 		int len = strlen(thisline);
@@ -7643,6 +7688,9 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 			thisline[--len] = 0;
 
 		if (base64dec(thisline, len, (char *) (keys_ref->tlskeys + i % TLS_TICKETS_NO), sizeof(struct tls_sess_key)) != sizeof(struct tls_sess_key)) {
+			free(keys_ref->filename);
+			free(keys_ref->tlskeys);
+			free(keys_ref);
 			if (err)
 				memprintf(err, "'%s' : unable to decode base64 key on line %d", args[cur_arg+1], i + 1);
 			fclose(f);
@@ -7652,6 +7700,9 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	}
 
 	if (i < TLS_TICKETS_NO) {
+		free(keys_ref->filename);
+		free(keys_ref->tlskeys);
+		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : please supply at least %d keys in the tls-tickets-file", args[cur_arg+1], TLS_TICKETS_NO);
 		fclose(f);

@@ -3942,7 +3942,8 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 	 * that parameter. This will be done in another analyser.
 	 */
 	if (!(s->flags & (SF_ASSIGNED|SF_DIRECT)) &&
-	    s->txn->meth == HTTP_METH_POST && s->be->url_param_name != NULL &&
+	    s->txn->meth == HTTP_METH_POST &&
+	    (s->be->lbprm.algo & BE_LB_ALGO) == BE_LB_ALGO_PH &&
 	    (msg->flags & (HTTP_MSGF_CNT_LEN|HTTP_MSGF_TE_CHNK))) {
 		channel_dont_connect(req);
 		req->analysers |= AN_REQ_HTTP_BODY;
@@ -8223,6 +8224,7 @@ void http_init_txn(struct stream *s)
 
 	txn->flags = 0;
 	txn->status = -1;
+	*(unsigned int *)txn->cache_hash = 0;
 
 	txn->cookie_first_date = 0;
 	txn->cookie_last_date = 0;
@@ -12119,6 +12121,7 @@ enum act_parse_ret parse_http_set_status(const char **args, int *orig_arg, struc
 enum act_return http_action_reject(struct act_rule *rule, struct proxy *px,
                                    struct session *sess, struct stream *s, int flags)
 {
+	si_must_kill_conn(chn_prod(&s->req));
 	channel_abort(&s->req);
 	channel_abort(&s->res);
 	s->req.analysers = 0;

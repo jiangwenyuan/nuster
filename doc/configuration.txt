@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.8
                              willy tarreau
-                              2019/01/08
+                              2019/02/11
 
 
 This document covers the configuration language as implemented in the version
@@ -917,7 +917,14 @@ nbproc <number>
   mode. By default, only one process is created, which is the recommended mode
   of operation. For systems limited to small sets of file descriptors per
   process, it may be needed to fork multiple daemons. USING MULTIPLE PROCESSES
-  IS HARDER TO DEBUG AND IS REALLY DISCOURAGED. See also "daemon".
+  IS HARDER TO DEBUG AND IS REALLY DISCOURAGED. See also "daemon" and
+  "nbthread".
+
+nbthread <number>
+  This setting is only available when support for threads was built in. It
+  creates <number> threads for each created processes. It means if HAProxy is
+  started in foreground, it only creates <number> threads for the first
+  process. See also "nbproc".
 
 nbthread <number>
   This setting is only available when support for threads was built in. It
@@ -986,12 +993,14 @@ setenv <name> <value>
 ssl-default-bind-ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. It sets
   the default string describing the list of cipher algorithms ("cipher suite")
-  that are negotiated during the SSL/TLS handshake except for TLSv1.3 for all
+  that are negotiated during the SSL/TLS handshake up to TLSv1.2 for all
   "bind" lines which do not explicitly define theirs. The format of the string
-  is defined in "man 1 ciphers" from OpenSSL man pages, and can be for instance
-  a string such as "AES:ALL:!aNULL:!eNULL:+RC4:@STRENGTH" (without quotes). For
-  TLSv1.3 cipher configuration, please check the "ssl-default-bind-ciphersuites"
-  keyword. Please check the "bind" keyword for more information.
+  is defined in "man 1 ciphers" from OpenSSL man pages. For background
+  information and recommendations see e.g.
+  (https://wiki.mozilla.org/Security/Server_Side_TLS) and
+  (https://mozilla.github.io/server-side-tls/ssl-config-generator/). For TLSv1.3
+  cipher configuration, please check the "ssl-default-bind-ciphersuites" keyword.
+  Please check the "bind" keyword for more information.
 
 ssl-default-bind-ciphersuites <ciphersuites>
   This setting is only available when support for OpenSSL was built in and
@@ -999,11 +1008,9 @@ ssl-default-bind-ciphersuites <ciphersuites>
   describing the list of cipher algorithms ("cipher suite") that are negotiated
   during the TLSv1.3 handshake for all "bind" lines which do not explicitly define
   theirs. The format of the string is defined in
-  "man 1 ciphers" from OpenSSL man pages under the section "ciphersuites", and can
-  be for instance a string such as
-  "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"
-  (without quotes). For cipher configuration for TLSv1.2 and earlier, please check
-  the "ssl-default-bind-ciphers" keyword. Please check the "bind" keyword for more
+  "man 1 ciphers" from OpenSSL man pages under the section "ciphersuites". For
+  cipher configuration for TLSv1.2 and earlier, please check the
+  "ssl-default-bind-ciphers" keyword. Please check the "bind" keyword for more
   information.
 
 ssl-default-bind-options [<option>]...
@@ -1018,11 +1025,15 @@ ssl-default-bind-options [<option>]...
 ssl-default-server-ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. It
   sets the default string describing the list of cipher algorithms that are
-  negotiated during the SSL/TLS handshake except for TLSv1.3 with the server,
+  negotiated during the SSL/TLS handshake up to TLSv1.2 with the server,
   for all "server" lines which do not explicitly define theirs. The format of
-  the string is defined in "man 1 ciphers". For TLSv1.3 cipher configuration,
-  please check the "ssl-default-server-ciphersuites" keyword. Please check the
-  "server" keyword for more information.
+  the string is defined in "man 1 ciphers" from OpenSSL man pages. For background
+  information and recommendations see e.g.
+  (https://wiki.mozilla.org/Security/Server_Side_TLS) and
+  (https://mozilla.github.io/server-side-tls/ssl-config-generator/).
+  For TLSv1.3 cipher configuration, please check the
+  "ssl-default-server-ciphersuites" keyword. Please check the "server" keyword
+  for more information.
 
 ssl-default-server-ciphersuites <ciphersuites>
   This setting is only available when support for OpenSSL was built in and
@@ -1030,9 +1041,10 @@ ssl-default-server-ciphersuites <ciphersuites>
   string describing the list of cipher algorithms that are negotiated during
   the TLSv1.3 handshake with the server, for all "server" lines which do not
   explicitly define theirs. The format of the string is defined in
-  "man 1 ciphers" under the "ciphersuites" section. For cipher configuration for
-  TLSv1.2 and earlier, please check the "ssl-default-server-ciphers" keyword.
-  Please check the "server" keyword for more information.
+  "man 1 ciphers" from OpenSSL man pages under the section "ciphersuites". For
+  cipher configuration for TLSv1.2 and earlier, please check the
+  "ssl-default-server-ciphers" keyword. Please check the "server" keyword for
+  more information.
 
 ssl-default-server-options [<option>]...
   This setting is only available when support for OpenSSL was built in. It sets
@@ -10483,7 +10495,10 @@ accept-proxy
 
 allow-0rtt
   Allow receiving early data when using TLSv1.3. This is disabled by default,
-  due to security considerations.
+  due to security considerations. Because it is vulnerable to replay attacks,
+  you should only allow if for requests that are safe to replay, ie requests
+  that are idempotent. You can use the "wait-for-handshake" action for any
+  request that wouldn't be safe with early data.
 
 alpn <protocols>
   This enables the TLS ALPN extension and advertises the specified protocol
@@ -10545,11 +10560,8 @@ ca-sign-pass <passphrase>
 ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. It sets
   the string describing the list of cipher algorithms ("cipher suite") that are
-  negotiated during the SSL/TLS handshake except for TLSv1.3. The format of the
-  string is defined in "man 1 ciphers" from OpenSSL man pages, and can be for
-  instance a string such as "AES:ALL:!aNULL:!eNULL:+RC4:@STRENGTH" (without
-  quotes). Depending on the compatibility and security requirements, the list
-  of suitable ciphers depends on a variety of variables. For background
+  negotiated during the SSL/TLS handshake up to TLSv1.2. The format of the
+  string is defined in "man 1 ciphers" from OpenSSL man pages. For background
   information and recommendations see e.g.
   (https://wiki.mozilla.org/Security/Server_Side_TLS) and
   (https://mozilla.github.io/server-side-tls/ssl-config-generator/). For TLSv1.3
@@ -10560,11 +10572,8 @@ ciphersuites <ciphersuites>
   OpenSSL 1.1.1 or later was used to build HAProxy. It sets the string describing
   the list of cipher algorithms ("cipher suite") that are negotiated during the
   TLSv1.3 handshake. The format of the string is defined in "man 1 ciphers" from
-  OpenSSL man pages under the "ciphersuites" section, and can be for instance a
-  string such as
-  "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"
-  (without quotes). For cipher configuration for TLSv1.2 and earlier, please check
-  the "ciphers" keyword.
+  OpenSSL man pages under the "ciphersuites" section. For cipher configuration
+  for TLSv1.2 and earlier, please check the "ciphers" keyword.
 
 crl-file <crlfile>
   This setting is only available when support for OpenSSL was built in. It
@@ -11278,19 +11287,20 @@ ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. This
   option sets the string describing the list of cipher algorithms that is
   negotiated during the SSL/TLS handshake with the server. The format of the
-  string is defined in "man 1 ciphers". When SSL is used to communicate with
-  servers on the local network, it is common to see a weaker set of algorithms
-  than what is used over the internet. Doing so reduces CPU usage on both the
-  server and haproxy while still keeping it compatible with deployed software.
-  Some algorithms such as RC4-SHA1 are reasonably cheap. If no security at all
-  is needed and just connectivity, using DES can be appropriate.
+  string is defined in "man 1 ciphers" from OpenSSL man pages. For background
+  information and recommendations see e.g.
+  (https://wiki.mozilla.org/Security/Server_Side_TLS) and
+  (https://mozilla.github.io/server-side-tls/ssl-config-generator/). For TLSv1.3
+  cipher configuration, please check the "ciphersuites" keyword.
 
 ciphersuites <ciphersuites>
   This setting is only available when support for OpenSSL was built in and
   OpenSSL 1.1.1 or later was used to build HAProxy. This option sets the string
   describing the list of cipher algorithms that is negotiated during the TLS
   1.3 handshake with the server. The format of the string is defined in
-  "man 1 ciphers" under the "ciphersuites" section.
+  "man 1 ciphers" from OpenSSL man pages under the "ciphersuites" section.
+  For cipher configuration for TLSv1.2 and earlier, please check the "ciphers"
+  keyword.
 
 cookie <value>
   The "cookie" parameter sets the cookie value assigned to the server to
@@ -13819,7 +13829,12 @@ dst : ip
   which is the address the client connected to. It can be useful when running
   in transparent mode. It is of type IP and works on both IPv4 and IPv6 tables.
   On IPv6 tables, IPv4 address is mapped to its IPv6 equivalent, according to
-  RFC 4291.
+  RFC 4291. When the incoming connection passed through address translation or
+  redirection involving connection tracking, the original destination address
+  before the redirection will be reported. On Linux systems, the source and
+  destination may seldom appear reversed if the nf_conntrack_tcp_loose sysctl
+  is set, because a late response may reopen a timed out connection and switch
+  what is believed to be the source and the destination.
 
 dst_conn : integer
   Returns an integer value corresponding to the number of currently established
@@ -14124,7 +14139,13 @@ src : ip
   behind a proxy. However if the "accept-proxy" or "accept-netscaler-cip" bind
   directive is used, it can be the address of a client behind another
   PROXY-protocol compatible component for all rule sets except
-  "tcp-request connection" which sees the real address.
+  "tcp-request connection" which sees the real address. When the incoming
+  connection passed through address translation or redirection involving
+  connection tracking, the original destination address before the redirection
+  will be reported. On Linux systems, the source and destination may seldom
+  appear reversed if the nf_conntrack_tcp_loose sysctl is set, because a late
+  response may reopen a timed out connection and switch what is believed to be
+  the source and the destination.
 
   Example:
        # add an HTTP header in requests with the originating address' country
@@ -17157,13 +17178,13 @@ max-age <seconds>
 10.2.2. Proxy section
 ---------------------
 
-http-request cache-use <name>
+http-request cache-use <name> [ { if | unless } <condition> ]
   Try to deliver a cached object from the cache <name>. This directive is also
   mandatory to store the cache as it calculates the cache hash. If you want to
   use a condition for both storage and delivering that's a good idea to put it
   after this one.
 
-http-response cache-store <name>
+http-response cache-store <name> [ { if | unless } <condition> ]
   Store an http-response within the cache. The storage of the response headers
   is done at this step, which means you can use others http-response actions
   to modify headers before or after the storage of the response. This action

@@ -1403,12 +1403,13 @@ static int wake_srv_chk(struct conn_stream *cs)
 	}
 
 	if (check->result != CHK_RES_UNKNOWN) {
-		/* We're here because nobody wants to handle the error, so we
-		 * sure want to abort the hard way.
-		 */
+		/* Check complete or aborted. If connection not yet closed do it
+		 * now and wake the check task up to be sure the result is
+		 * handled ASAP. */
 		conn_sock_drain(conn);
 		cs_close(cs);
 		ret = -1;
+		task_wakeup(check->task, TASK_WOKEN_IO);
 	}
 
 	HA_SPIN_UNLOCK(SERVER_LOCK, &check->server->lock);

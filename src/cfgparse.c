@@ -85,7 +85,6 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 
-#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
@@ -614,16 +613,20 @@ int parse_process_number(const char *arg, unsigned long *proc, int *autoinc, cha
 	else if (strcmp(arg, "even") == 0)
 		*proc |= (~0UL/3UL) << 1; /* 0xAAA...AAA */
 	else {
-		char *dash;
+		const char *p, *dash = NULL;
 		unsigned int low, high;
 
-		if (!isdigit((int)*arg)) {
-			memprintf(err, "'%s' is not a valid number.\n", arg);
-			return -1;
+		for (p = arg; *p; p++) {
+			if (*p == '-' && !dash)
+				dash = p;
+			else if (!isdigit((int)*p)) {
+				memprintf(err, "'%s' is not a valid number/range.", arg);
+				return -1;
+			}
 		}
 
 		low = high = str2uic(arg);
-		if ((dash = strchr(arg, '-')) != NULL)
+		if (dash)
 			high = ((!*(dash+1)) ? LONGBITS : str2uic(dash + 1));
 
 		if (high < low) {
@@ -2443,6 +2446,13 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
+		curr_resolvers->accepted_payload_size = i;
+	}
+	else if (strcmp(args[0], "resolution_pool_size") == 0) {
+		ha_warning("parsing [%s:%d] : '%s' directive is now deprecated and ignored.\n",
+			   file, linenum, args[0]);
+		err_code |= ERR_WARN;
+		goto out;
 	}
 	else if (strcmp(args[0], "accepted_payload_size") == 0) {
 		int i = 0;
@@ -2871,7 +2881,10 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 			if (defproxy.url_param_name)
 				curproxy->url_param_name = strdup(defproxy.url_param_name);
-			curproxy->url_param_len = defproxy.url_param_len;
+			curproxy->url_param_len   = defproxy.url_param_len;
+			curproxy->uri_whole       = defproxy.uri_whole;
+			curproxy->uri_len_limit   = defproxy.uri_len_limit;
+			curproxy->uri_dirs_depth1 = defproxy.uri_dirs_depth1;
 
 			if (defproxy.hh_name)
 				curproxy->hh_name = strdup(defproxy.hh_name);
@@ -7675,9 +7688,9 @@ int check_config_validity()
 			/* detect and address thread affinity inconsistencies */
 			nbproc = 0;
 			if (bind_conf->bind_proc)
-				nbproc = my_ffsl(bind_conf->bind_proc);
+				nbproc = my_ffsl(bind_conf->bind_proc) - 1;
 
-			mask = bind_conf->bind_thread[nbproc - 1];
+			mask = bind_conf->bind_thread[nbproc];
 			if (mask && !(mask & all_threads_mask)) {
 				unsigned long new_mask = 0;
 
@@ -8023,6 +8036,11 @@ int check_config_validity()
 					 curproxy->id, mrule->table.name ? mrule->table.name : curproxy->id);
 				cfgerr++;
 			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				ha_alert("Proxy '%s': stick-table '%s' referenced 'stick-store' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, curproxy->id);
+				cfgerr++;
+			}
 			else {
 				free((void *)mrule->table.name);
 				mrule->table.t = &(target->table);
@@ -8054,6 +8072,11 @@ int check_config_validity()
 			else if (!stktable_compatible_sample(mrule->expr, target->table.type)) {
 				ha_alert("Proxy '%s': type of fetch not usable with type of stick-table '%s'.\n",
 					 curproxy->id, mrule->table.name ? mrule->table.name : curproxy->id);
+				cfgerr++;
+			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				ha_alert("Proxy '%s': stick-table '%s' referenced 'stick-store' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, curproxy->id);
 				cfgerr++;
 			}
 			else {
@@ -8855,6 +8878,33 @@ out_uri_auth_compat:
 					curproxy->be_rsp_ana |= AN_RES_FLT_HTTP_HDRS;
 				}
 			}
+		}
+
+		/* initialize idle conns lists */
+		for (newsrv = curproxy->srv; newsrv; newsrv = newsrv->next) {
+			int i;
+
+			newsrv->priv_conns = calloc(global.nbthread, sizeof(*newsrv->priv_conns));
+			newsrv->idle_conns = calloc(global.nbthread, sizeof(*newsrv->idle_conns));
+			newsrv->safe_conns = calloc(global.nbthread, sizeof(*newsrv->safe_conns));
+
+			if (!newsrv->priv_conns || !newsrv->idle_conns || !newsrv->safe_conns) {
+				free(newsrv->safe_conns); newsrv->safe_conns = NULL;
+				free(newsrv->idle_conns); newsrv->idle_conns = NULL;
+				free(newsrv->priv_conns); newsrv->priv_conns = NULL;
+				ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
+					 newsrv->conf.file, newsrv->conf.line, newsrv->id);
+				cfgerr++;
+				continue;
+			}
+
+			for (i = 0; i < global.nbthread; i++) {
+				LIST_INIT(&newsrv->priv_conns[i]);
+				LIST_INIT(&newsrv->idle_conns[i]);
+				LIST_INIT(&newsrv->safe_conns[i]);
+			}
+
+			LIST_INIT(&newsrv->update_status);
 		}
 	}
 
