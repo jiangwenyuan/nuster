@@ -2606,11 +2606,17 @@ static void h2_shutr(struct conn_stream *cs, enum cs_shr_mode mode)
 	if (h2s->st == H2_SS_HLOC || h2s->st == H2_SS_ERROR || h2s->st == H2_SS_CLOSED)
 		return;
 
-	/* if no outgoing data was seen on this stream, it means it was
-	 * closed with a "tcp-request content" rule that is normally
-	 * used to kill the connection ASAP (eg: limit abuse). In this
-	 * case we send a goaway to close the connection.
+	/* a connstream may require us to immediately kill the whole connection
+	 * for example because of a "tcp-request content reject" rule that is
+	 * normally used to limit abuse. In this case we schedule a goaway to
+	 * close the connection.
 	 */
+	if ((h2s->cs->flags & CS_FL_KILL_CONN) &&
+	    !(h2s->h2c->flags & (H2_CF_GOAWAY_SENT|H2_CF_GOAWAY_FAILED))) {
+		h2c_error(h2s->h2c, H2_ERR_ENHANCE_YOUR_CALM);
+		h2s_error(h2s, H2_ERR_ENHANCE_YOUR_CALM);
+	}
+
 	if (!(h2s->flags & H2_SF_RST_SENT) &&
 	    h2s_send_rst_stream(h2s->h2c, h2s) <= 0)
 		goto add_to_list;
@@ -2653,11 +2659,17 @@ static void h2_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
 		else
 			h2s->st = H2_SS_HLOC;
 	} else {
-		/* if no outgoing data was seen on this stream, it means it was
-		 * closed with a "tcp-request content" rule that is normally
-		 * used to kill the connection ASAP (eg: limit abuse). In this
-		 * case we send a goaway to close the connection.
+		/* a connstream may require us to immediately kill the whole connection
+		 * for example because of a "tcp-request content reject" rule that is
+		 * normally used to limit abuse. In this case we schedule a goaway to
+		 * close the connection.
 		 */
+		if ((h2s->cs->flags & CS_FL_KILL_CONN) &&
+		    !(h2s->h2c->flags & (H2_CF_GOAWAY_SENT|H2_CF_GOAWAY_FAILED))) {
+			h2c_error(h2s->h2c, H2_ERR_ENHANCE_YOUR_CALM);
+			h2s_error(h2s, H2_ERR_ENHANCE_YOUR_CALM);
+		}
+
 		if (!(h2s->flags & H2_SF_RST_SENT) &&
 		    h2s_send_rst_stream(h2s->h2c, h2s) <= 0)
 			goto add_to_list;
