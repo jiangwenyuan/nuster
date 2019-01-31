@@ -75,6 +75,7 @@ enum {
 	SI_FL_WANT_PUT   = 0x00002000,  /* an applet would like to put some data into the buffer */
 	SI_FL_WANT_GET   = 0x00004000,  /* an applet would like to get some data from the buffer */
 	SI_FL_CLEAN_ABRT = 0x00008000,  /* SI_FL_ERR is used to report aborts, and not SHUTR */
+	SI_FL_KILL_CONN  = 0x00010000,  /* next shutw must kill the whole conn, not just the stream */
 };
 
 /* A stream interface has 3 parts :

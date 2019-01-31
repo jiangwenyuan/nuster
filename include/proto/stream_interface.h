@@ -320,6 +320,12 @@ static inline void si_shutw(struct stream_interface *si)
 	si->ops->shutw(si);
 }
 
+/* Marks on the stream-interface that next shutw must kill the whole connection */
+static inline void si_must_kill_conn(struct stream_interface *si)
+{
+	si->flags |= SI_FL_KILL_CONN;
+}
+
 /* Updates the stream interface and timers, then updates the data layer below */
 static inline void si_update(struct stream_interface *si)
 {
