@@ -339,6 +339,8 @@ static void stream_free(struct stream *s)
 		offer_buffers(NULL, tasks_run_queue + applets_active_queue);
 	}
 
+	pool_free(pool_head_uniqueid, s->unique_id);
+
 	hlua_ctx_destroy(s->hlua);
 	s->hlua = NULL;
 	if (s->txn)
