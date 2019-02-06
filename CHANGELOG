@@ -1,6 +1,73 @@
 ChangeLog :
 ===========
 
+2019/02/06 : 1.9.4
+    - BUG/MEDIUM: mux-h1: Don't add "transfer-encoding" if message-body is forbidden
+    - BUG/MEDIUM: compression: Rewrite strong ETags
+    - DOC: compression: Update the reasons for disabled compression
+    - BUG/MINOR: deinit: tcp_rep.inspect_rules not deinit, add to deinit
+    - DOC: add a missing space in the documentation for bc_http_major
+    - SCRIPTS: add the issue tracker URL to the announce script
+    - BUG/MEDIUM: connections: Don't forget to remove CO_FL_SESS_IDLE.
+    - BUG/MINOR: server: fix logic flaw in idle connection list management
+    - BUG/MINOR: stream: don't close the front connection when facing a backend error
+    - MINOR: xref: Add missing barriers.
+    - BUG/MEDIUM: peers: Handle mux creation failure.
+    - BUG/MEDIUM: checks: Check that conn_install_mux succeeded.
+    - BUG/MEDIUM: servers: Only destroy a conn_stream we just allocated.
+    - BUG/MEDIUM: servers: Don't add an incomplete conn to the server idle list.
+    - BUG/MEDIUM: checks: Don't try to set ALPN if connection failed.
+    - BUG/MEDIUM: h2: In h2_send(), stop the loop if we failed to alloc a buf.
+    - BUG/MEDIUM: servers: Close the connection if we failed to install the mux.
+    - BUG/MEDIUM: buffer: Make sure b_is_null handles buffers waiting for allocation.
+    - DOC: htx: make it clear that htxbuf() and htx_from_buf() always return valid pointers
+    - MINOR: htx: never check for null htx pointer in htx_is_{,not_}empty()
+    - MEDIUM: stream-int: always mark pending outgoing SI_ST_CON
+    - MINOR: stream: don't wait before retrying after a failed connection reuse
+    - MEDIUM: h2: always parse and deduplicate the content-length header
+    - BUG/MINOR: mux-h2: always compare content-length to the sum of DATA frames
+    - BUG/MEDIUM: mux-h2: only close connection on request frames on closed streams
+    - BUG/MEDIUM: mux-h2: wake up flow-controlled streams on initial window update
+    - BUG/MEDIUM: mux-h2: fix two half-closed to closed transitions
+    - BUG/MEDIUM: mux-h2: make sure never to send GOAWAY on too old streams
+    - BUG/MEDIUM: mux-h2: do not abort HEADERS frame before decoding them
+    - BUG/MINOR: mux-h2: make sure response HEADERS are not received in other states than OPEN and HLOC
+    - MINOR: h2: add a generic frame checker
+    - MEDIUM: mux-h2: check the frame validity before considering the stream state
+    - CLEANUP: mux-h2: remove misleading leftover test on h2s' nullity
+    - CLEANUP: mux-h2: clean the stream error path on HEADERS frame processing
+    - CLEANUP: mux-h2: remove stream ID and frame length checks from the frame parsers
+    - BUG/MINOR: mux-h2: make sure request trailers on aborted streams don't break the connection
+    - MINOR: mux-h2: consistently rely on the htx variable to detect the mode
+    - BUG/MEDIUM: mux-h2: wait for the mux buffer to be empty before closing the connection
+    - MINOR: stream-int: add a new flag to mention that we want the connection to be killed
+    - MINOR: connstream: have a new flag CS_FL_KILL_CONN to kill a connection
+    - BUG/MEDIUM: mux-h2: do not close the connection on aborted streams
+    - MINOR: mux-h2: max-concurrent-streams should be unsigned
+    - MINOR: mux-h2: make sure to only check concurrency limit on the frontend
+    - MINOR: mux-h2: learn and store the peer's advertised MAX_CONCURRENT_STREAMS setting
+    - BUG/MEDIUM: mux-h2: properly consider the peer's advertised max-concurrent-streams
+    - BUG/MEDIUM: backend: always release the previous connection into its own target srv_list
+    - BUG/MEDIUM: htx: check the HTX compatibility in dynamic use-backend rules
+    - BUG/MINOR: backend: check srv_conn before dereferencing it
+    - BUG/MEDIUM: mux-h2: always omit :scheme and :path for the CONNECT method
+    - BUG/MEDIUM: mux-h2: always set :authority on request output
+    - BUG/MEDIUM: stream: Don't forget to free s->unique_id in stream_free().
+    - BUG/MINOR: config: fix bind line thread mask validation
+    - BUG/MINOR: compression: properly report compression stats in HTX mode
+    - BUG/MINOR: task: close a tiny race in the inter-thread wakeup
+    - BUG/MAJOR: config: verify that targets of track-sc and stick rules are present
+    - BUG/MAJOR: spoe: verify that backends used by SPOE cover all their callers' processes
+    - MINOR: backend: move url_param_name/len to lbprm.arg_str/len
+    - MINOR: backend: make headers and RDP cookie also use arg_str/len
+    - MINOR: backend: add new fields in lbprm to store more LB options
+    - MINOR: backend: make the header hash use arg_opt1 for use_domain_only
+    - MINOR: backend: remap the balance uri settings to lbprm.arg_opt{1,2,3}
+    - MINOR: backend: move hash_balance_factor out of chash
+    - MEDIUM: backend: move all LB algo parameters into an union
+    - BUG/MAJOR: htx/backend: Make all tests on HTTP messages compatible with HTX
+    - BUG/MINOR: config: make sure to count the error on incorrect track-sc/stick rules
+
 2019/01/29 : 1.9.3
     - REGTEST: checks basic stats webpage functionality
     - BUG/MEDIUM: checks: fix recent regression on agent-check making it crash
