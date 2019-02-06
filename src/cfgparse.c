@@ -8002,7 +8002,7 @@ int check_config_validity()
 			else if (curproxy->bind_proc & ~target->bind_proc) {
 				ha_alert("Proxy '%s': stick-table '%s' referenced 'stick-store' rule not present on all processes covered by proxy '%s'.\n",
 				         curproxy->id, target->id, curproxy->id);
-				return 0;
+				cfgerr++;
 			}
 			else {
 				free((void *)mrule->table.name);
@@ -8040,7 +8040,7 @@ int check_config_validity()
 			else if (curproxy->bind_proc & ~target->bind_proc) {
 				ha_alert("Proxy '%s': stick-table '%s' referenced 'stick-store' rule not present on all processes covered by proxy '%s'.\n",
 				         curproxy->id, target->id, curproxy->id);
-				return 0;
+				cfgerr++;
 			}
 			else {
 				free((void *)mrule->table.name);
