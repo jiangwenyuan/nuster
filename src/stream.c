@@ -302,6 +302,7 @@ static void stream_free(struct stream *s)
 	}
 
 	pool_free2(pool2_uniqueid, s->unique_id);
+	s->unique_id = NULL;
 
 	hlua_ctx_destroy(&s->hlua);
 	if (s->txn)
