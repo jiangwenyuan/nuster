@@ -1,6 +1,17 @@
 ChangeLog :
 ===========
 
+2019/02/11 : 1.8.19
+    - DOC: ssl: Clarify when pre TLSv1.3 cipher can be used
+    - DOC: ssl: Stop documenting ciphers example to use
+    - BUG/MINOR: spoe: do not assume agent->rt is valid on exit
+    - BUG/MINOR: lua: initialize the correct idle conn lists for the SSL sockets
+    - BUG/MEDIUM: spoe: initialization depending on nbthread must be done last
+    - BUG/MEDIUM: server: initialize the idle conns list after parsing the config
+    - BUG/MAJOR: spoe: Don't try to get agent config during SPOP healthcheck
+    - BUG/MAJOR: stream: avoid double free on unique_id
+    - BUG/MINOR: config: Reinforce validity check when a process number is parsed
+
 2019/02/06 : 1.8.18
     - DOC: http-request cache-use / http-response cache-store expects cache name
     - BUG/MAJOR: cache: fix confusion between zero and uninitialized cache key
