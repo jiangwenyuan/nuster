@@ -2210,6 +2210,7 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 			              "Action not processed because of invalid parameters."
 			              "<ul>"
 			              "<li>The action is maybe unknown.</li>"
+				      "<li>Invalid key parameter (empty or too long).</li>"
 			              "<li>The backend name is probably unknown or ambiguous (duplicated names).</li>"
 			              "<li>Some server names are probably unknown or ambiguous (duplicated names in the backend).</li>"
 			              "</ul>"
@@ -2381,17 +2382,21 @@ static int stats_process_http_post(struct stream_interface *si)
 	int reql;
 
 	temp = get_trash_chunk();
-	if (temp->size < s->txn->req.body_len) {
-		/* too large request */
-		appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
-		goto out;
+
+	/* we need more data */
+	if (s->txn->req.msg_state < HTTP_MSG_DONE) {
+		/* check if we can receive more */
+		if (buffer_total_space(s->req.buf) <= global.tune.maxrewrite) {
+			appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
+			goto out;
+		}
+		goto wait;
 	}
 
 	reql = bo_getblk(si_oc(si), temp->str, s->txn->req.body_len, s->txn->req.eoh + 2);
 	if (reql <= 0) {
-		/* we need more data */
-		appctx->ctx.stats.st_code = STAT_STATUS_NONE;
-		return 0;
+		appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
+		goto out;
 	}
 
 	first_param = temp->str;
@@ -2420,7 +2425,7 @@ static int stats_process_http_post(struct stream_interface *si)
 				strncpy(key, cur_param + poffset, plen);
 				key[plen - 1] = '\0';
 			} else {
-				appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
+				appctx->ctx.stats.st_code = STAT_STATUS_ERRP;
 				goto out;
 			}
 
@@ -2674,6 +2679,9 @@ static int stats_process_http_post(struct stream_interface *si)
 	}
  out:
 	return 1;
+ wait:
+	appctx->ctx.stats.st_code = STAT_STATUS_NONE;
+	return 0;
 }
 
 
