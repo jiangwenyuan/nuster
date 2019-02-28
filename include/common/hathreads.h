@@ -344,7 +344,6 @@ enum lock_label {
 	TASK_WQ_LOCK,
 	POOL_LOCK,
 	LISTENER_LOCK,
-	LISTENER_QUEUE_LOCK,
 	PROXY_LOCK,
 	SERVER_LOCK,
 	UPDATED_SERVERS_LOCK,
@@ -467,7 +466,6 @@ static inline const char *lock_label(enum lock_label label)
 	case TASK_WQ_LOCK:         return "TASK_WQ";
 	case POOL_LOCK:            return "POOL";
 	case LISTENER_LOCK:        return "LISTENER";
-	case LISTENER_QUEUE_LOCK:  return "LISTENER_QUEUE";
 	case PROXY_LOCK:           return "PROXY";
 	case SERVER_LOCK:          return "SERVER";
 	case UPDATED_SERVERS_LOCK: return "UPDATED_SERVERS";

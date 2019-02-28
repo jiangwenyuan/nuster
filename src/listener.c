@@ -39,9 +39,6 @@
 #include <proto/stream.h>
 #include <proto/task.h>
 
- /* listner_queue lock (same for global and per proxy queues) */
-__decl_hathreads(static HA_SPINLOCK_T lq_lock);
-
 /* List head of all known bind keywords */
 static struct bind_kw_list bind_keywords = {
 	.list = LIST_HEAD_INIT(bind_keywords.list)
@@ -94,11 +91,7 @@ static void disable_listener(struct listener *listener)
 		goto end;
 	if (listener->state == LI_READY)
 		fd_stop_recv(listener->fd);
-	if (listener->state == LI_LIMITED) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_DEL(&listener->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	}
+	LIST_DEL_LOCKED(&listener->wait_queue);
 	listener->state = LI_LISTEN;
   end:
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &listener->lock);
@@ -134,11 +127,7 @@ int pause_listener(struct listener *l)
 			goto end;
 	}
 
-	if (l->state == LI_LIMITED) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_DEL(&l->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	}
+	LIST_DEL_LOCKED(&l->wait_queue);
 
 	fd_stop_recv(l->fd);
 	l->state = LI_PAUSED;
@@ -157,7 +146,7 @@ int pause_listener(struct listener *l)
  * stopped it. If the resume fails, 0 is returned and an error might be
  * displayed.
  */
-static int __resume_listener(struct listener *l)
+int resume_listener(struct listener *l)
 {
 	int ret = 1;
 
@@ -199,8 +188,7 @@ static int __resume_listener(struct listener *l)
 	if (l->state == LI_READY)
 		goto end;
 
-	if (l->state == LI_LIMITED)
-		LIST_DEL(&l->wait_queue);
+	LIST_DEL_LOCKED(&l->wait_queue);
 
 	if (l->nbconn >= l->maxconn) {
 		l->state = LI_FULL;
@@ -214,16 +202,6 @@ static int __resume_listener(struct listener *l)
 	return ret;
 }
 
-int resume_listener(struct listener *l)
-{
-	int ret;
-
-	HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	ret = __resume_listener(l);
-	HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	return ret;
-}
-
 /* Marks a ready listener as full so that the stream code tries to re-enable
  * it upon next close() using resume_listener().
  */
@@ -231,11 +209,7 @@ static void listener_full(struct listener *l)
 {
 	HA_SPIN_LOCK(LISTENER_LOCK, &l->lock);
 	if (l->state >= LI_READY) {
-		if (l->state == LI_LIMITED) {
-			HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-			LIST_DEL(&l->wait_queue);
-			HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		}
+		LIST_DEL_LOCKED(&l->wait_queue);
 		if (l->state != LI_FULL) {
 			fd_stop_recv(l->fd);
 			l->state = LI_FULL;
@@ -251,9 +225,7 @@ static void limit_listener(struct listener *l, struct list *list)
 {
 	HA_SPIN_LOCK(LISTENER_LOCK, &l->lock);
 	if (l->state == LI_READY) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_ADDQ(list, &l->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
+		LIST_ADDQ_LOCKED(list, &l->wait_queue);
 		fd_stop_recv(l->fd);
 		l->state = LI_LIMITED;
 	}
@@ -292,17 +264,14 @@ int disable_all_listeners(struct protocol *proto)
 /* Dequeues all of the listeners waiting for a resource in wait queue <queue>. */
 void dequeue_all_listeners(struct list *list)
 {
-	struct listener *listener, *l_back;
+	struct listener *listener;
 
-	HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	list_for_each_entry_safe(listener, l_back, list, wait_queue) {
+	while ((listener = LIST_POP_LOCKED(list, struct listener *, wait_queue))) {
 		/* This cannot fail because the listeners are by definition in
-		 * the LI_LIMITED state. The function also removes the entry
-		 * from the queue.
+		 * the LI_LIMITED state.
 		 */
-		__resume_listener(listener);
+		resume_listener(listener);
 	}
-	HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
 }
 
 /* Must be called with the lock held. Depending on <do_close> value, it does
@@ -313,11 +282,7 @@ void do_unbind_listener(struct listener *listener, int do_close)
 	if (listener->state == LI_READY)
 		fd_stop_recv(listener->fd);
 
-	if (listener->state == LI_LIMITED) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_DEL(&listener->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	}
+	LIST_DEL_LOCKED(&listener->wait_queue);
 
 	if (listener->state >= LI_PAUSED) {
 		if (do_close) {
@@ -399,6 +364,7 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 
 		l->fd = fd;
 		memcpy(&l->addr, ss, sizeof(*ss));
+		LIST_INIT(&l->wait_queue);
 		l->state = LI_INIT;
 
 		proto->add(l, port);
@@ -1039,7 +1005,6 @@ static void __listener_init(void)
 	sample_register_fetches(&smp_kws);
 	acl_register_keywords(&acl_kws);
 	bind_register_keywords(&bind_kws);
-	HA_SPIN_INIT(&lq_lock);
 }
 
 /*
