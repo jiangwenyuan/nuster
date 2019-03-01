@@ -22,6 +22,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -1965,6 +1966,7 @@ static int connect_proc_chk(struct task *t)
 	if (pid == 0) {
 		/* Child */
 		extern char **environ;
+		struct rlimit limit;
 		int fd;
 
 		/* close all FDs. Keep stdin/stdout/stderr in verbose mode */
@@ -1972,6 +1974,16 @@ static int connect_proc_chk(struct task *t)
 
 		while (fd < global.rlimit_nofile)
 			close(fd++);
+
+		/* restore the initial FD limits */
+		limit.rlim_cur = rlim_fd_cur_at_boot;
+		limit.rlim_max = rlim_fd_max_at_boot;
+		if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
+			getrlimit(RLIMIT_NOFILE, &limit);
+			ha_warning("External check: failed to restore initial FD limits (cur=%u max=%u), using cur=%u max=%u\n",
+				   rlim_fd_cur_at_boot, rlim_fd_max_at_boot,
+				   (unsigned int)limit.rlim_cur, (unsigned int)limit.rlim_max);
+		}
 
 		environ = check->envp;
 		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_CURCONN, ultoa_r(s->cur_sess, buf, sizeof(buf)));
