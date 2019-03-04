@@ -1931,7 +1931,8 @@ static struct h2s *h2c_frt_handle_headers(struct h2c *h2c, struct h2s *h2s)
 			h2s->st = H2_SS_HREM;
 		else
 			h2s_close(h2s);
-		h2s->cs->flags |= CS_FL_REOS;
+		if (h2s->cs)
+			h2s->cs->flags |= CS_FL_REOS;
 	}
 
 	if (h2s->st >= H2_SS_ERROR) {
@@ -2004,14 +2005,15 @@ static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 
 	if (h2c->dff & H2_F_HEADERS_END_STREAM) {
 		h2s->flags |= H2_SF_ES_RCVD;
-		h2s->cs->flags |= CS_FL_REOS;
+		if (h2s->cs)
+			h2s->cs->flags |= CS_FL_REOS;
 	}
 
-	if (h2s->cs->flags & CS_FL_ERROR && h2s->st < H2_SS_ERROR)
+	if (h2s->cs && h2s->cs->flags & CS_FL_ERROR && h2s->st < H2_SS_ERROR)
 		h2s->st = H2_SS_ERROR;
-	else if (h2s->cs->flags & CS_FL_REOS && h2s->st == H2_SS_OPEN)
+	else if (h2s->cs && h2s->cs->flags & CS_FL_REOS && h2s->st == H2_SS_OPEN)
 		h2s->st = H2_SS_HREM;
-	else if (h2s->cs->flags & CS_FL_REOS && h2s->st == H2_SS_HLOC)
+	else if ((!h2s || h2s->cs->flags & CS_FL_REOS) && h2s->st == H2_SS_HLOC)
 		h2s_close(h2s);
 
 	return h2s;
@@ -2081,7 +2083,8 @@ static int h2c_frt_handle_data(struct h2c *h2c, struct h2s *h2s)
 			h2s_close(h2s);
 
 		h2s->flags |= H2_SF_ES_RCVD;
-		h2s->cs->flags |= CS_FL_REOS;
+		if (h2s->cs)
+			h2s->cs->flags |= CS_FL_REOS;
 
 		if (h2s->flags & H2_SF_DATA_CLEN && h2s->body_len) {
 			/* RFC7540#8.1.2 */
@@ -3695,7 +3698,8 @@ try_again:
 
 	if (h2c->dff & H2_F_DATA_END_STREAM) {
 		h2s->flags |= H2_SF_ES_RCVD;
-		h2s->cs->flags |= CS_FL_REOS;
+		if (h2s->cs)
+			h2s->cs->flags |= CS_FL_REOS;
 	}
 	if (htx)
 		htx_to_buf(htx, csbuf);
@@ -3827,7 +3831,7 @@ static size_t h2s_frt_make_resp_headers(struct h2s *h2s, const struct buffer *bu
 	}
 
 	/* we may need to add END_STREAM */
-	if (((h1m->flags & H1_MF_CLEN) && !h1m->body_len) || h2s->cs->flags & CS_FL_SHW)
+	if (((h1m->flags & H1_MF_CLEN) && !h1m->body_len) || !h2s->cs || h2s->cs->flags & CS_FL_SHW)
 		es_now = 1;
 
 	/* update the frame's size */
@@ -4290,7 +4294,7 @@ static size_t h2s_htx_frt_make_resp_headers(struct h2s *h2s, struct htx *htx)
 	    (h2s->status >= 200 || h2s->status == 101))
 		es_now = 1;
 
-	if (h2s->cs->flags & CS_FL_SHW)
+	if (!h2s->cs || h2s->cs->flags & CS_FL_SHW)
 		es_now = 1;
 
 	/* update the frame's size */
@@ -4541,7 +4545,7 @@ static size_t h2s_htx_bck_make_req_headers(struct h2s *h2s, struct htx *htx)
 	if (sl->flags & HTX_SL_F_BODYLESS)
 		es_now = 1;
 
-	if (h2s->cs->flags & CS_FL_SHW)
+	if (!h2s->cs || h2s->cs->flags & CS_FL_SHW)
 		es_now = 1;
 
 	/* update the frame's size */
