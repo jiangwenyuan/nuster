@@ -3745,7 +3745,7 @@ hash-balance-factor <factor>
   Arguments :
     <factor> is the control for the maximum number of concurrent requests to
              send to a server, expressed as a percentage of the average number
-	     of concurrent requests across all of the active servers.
+             of concurrent requests across all of the active servers.
 
   Specifying a "hash-balance-factor" for a server with "hash-type consistent"
   enables an algorithm that prevents any one server from getting too many
@@ -6021,7 +6021,7 @@ no option http-keep-alive
 
   See also : "option httpclose",, "option http-server-close",
              "option prefer-last-server", "option http-pretend-keepalive",
-	     and "1.1. The HTTP transaction model".
+             and "1.1. The HTTP transaction model".
 
 
 option http-no-delay
@@ -12471,11 +12471,11 @@ timeout <event> <time>
   Defines timeouts related to name resolution
      <event> : the event on which the <time> timeout period applies to.
                events available are:
-	       - resolve : default time to trigger name resolutions when no
-	                   other time applied.
+               - resolve : default time to trigger name resolutions when no
+                           other time applied.
                            Default value: 1s
                - retry   : time between two DNS queries, when no valid response
-	                   have been received.
+                           have been received.
                            Default value: 1s
      <time>  : time related to the event. It follows the HAProxy time format.
                <time> is expressed in milliseconds.
