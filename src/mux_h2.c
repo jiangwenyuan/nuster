@@ -548,12 +548,15 @@ static inline __maybe_unused void h2c_error(struct h2c *h2c, enum h2_err err)
 	h2c->st0 = H2_CS_ERROR;
 }
 
-/* marks an error on the stream */
+/* marks an error on the stream. It may also update an already closed stream
+ * (e.g. to report an error after an RST was received).
+ */
 static inline __maybe_unused void h2s_error(struct h2s *h2s, enum h2_err err)
 {
-	if (h2s->st > H2_SS_IDLE && h2s->st < H2_SS_ERROR) {
+	if (h2s->id && h2s->st != H2_SS_ERROR) {
 		h2s->errcode = err;
-		h2s->st = H2_SS_ERROR;
+		if (h2s->st < H2_SS_ERROR)
+			h2s->st = H2_SS_ERROR;
 		if (h2s->cs)
 			h2s->cs->flags |= CS_FL_ERROR;
 	}
@@ -1140,6 +1143,14 @@ static void h2c_update_all_ws(struct h2c *h2c, int diff)
 	while (node) {
 		h2s = container_of(node, struct h2s, by_id);
 		h2s->mws += diff;
+
+		if (h2s->mws > 0 && (h2s->flags & H2_SF_BLK_SFCTL)) {
+			h2s->flags &= ~H2_SF_BLK_SFCTL;
+			if (h2s->cs && LIST_ISEMPTY(&h2s->list) &&
+			    (h2s->cs->flags & CS_FL_DATA_WR_ENA))
+				LIST_ADDQ(&h2c->send_list, &h2s->list);
+		}
+
 		node = eb32_next(node);
 	}
 }
@@ -1766,7 +1777,11 @@ static int h2c_frt_handle_data(struct h2c *h2c, struct h2s *h2s)
 
 	/* last frame */
 	if (h2c->dff & H2_F_DATA_END_STREAM) {
-		h2s->st = H2_SS_HREM;
+		if (h2s->st == H2_SS_OPEN)
+			h2s->st = H2_SS_HREM;
+		else
+			h2s_close(h2s);
+
 		h2s->flags |= H2_SF_ES_RCVD;
 	}
 
@@ -1891,10 +1906,14 @@ static void h2_process_demux(struct h2c *h2c)
 		if (h2s->st == H2_SS_HREM && h2c->dft != H2_FT_WINDOW_UPDATE &&
 		    h2c->dft != H2_FT_RST_STREAM && h2c->dft != H2_FT_PRIORITY) {
 			/* RFC7540#5.1: any frame other than WU/PRIO/RST in
-			 * this state MUST be treated as a stream error
+			 * this state MUST be treated as a stream error.
+			 * 6.2, 6.6 and 6.10 further mandate that HEADERS/
+			 * PUSH_PROMISE/CONTINUATION cause connection errors.
 			 */
-			h2s_error(h2s, H2_ERR_STREAM_CLOSED);
-			h2c->st0 = H2_CS_FRAME_E;
+			if (h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK)
+				h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+			else
+				h2s_error(h2s, H2_ERR_STREAM_CLOSED);
 			goto strm_err;
 		}
 
@@ -1910,7 +1929,7 @@ static void h2_process_demux(struct h2c *h2c)
 		 * Some frames have to be silently ignored as well.
 		 */
 		if (h2s->st == H2_SS_CLOSED && h2c->dsi) {
-			if (h2c->dft == H2_FT_HEADERS || h2c->dft == H2_FT_PUSH_PROMISE) {
+			if (h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK) {
 				/* #5.1.1: The identifier of a newly
 				 * established stream MUST be numerically
 				 * greater than all streams that the initiating
@@ -1949,7 +1968,7 @@ static void h2_process_demux(struct h2c *h2c)
 			 * over which it ignores frames and treat frames that
 			 * arrive after this time as being in error.
 			 */
-			if (!(h2s->flags & H2_SF_RST_SENT)) {
+			if (h2s->id && !(h2s->flags & H2_SF_RST_SENT)) {
 				/* RFC7540#5.1:closed: any frame other than
 				 * PRIO/WU/RST in this state MUST be treated as
 				 * a connection error
@@ -2561,7 +2580,6 @@ static void h2_detach(struct conn_stream *cs)
 	if (eb_is_empty(&h2c->streams_by_id) &&     /* don't close if streams exist */
 	    ((h2c->conn->flags & CO_FL_ERROR) ||    /* errors close immediately */
 	     (h2c->st0 >= H2_CS_ERROR && !h2c->task) || /* a timeout stroke earlier */
-	     (h2c->flags & (H2_CF_GOAWAY_FAILED | H2_CF_GOAWAY_SENT)) ||
 	     (!h2c->mbuf->o &&  /* mux buffer empty, also process clean events below */
 	      (conn_xprt_read0_pending(h2c->conn) ||
 	       (h2c->last_sid >= 0 && h2c->max_id >= h2c->last_sid))))) {
@@ -2588,11 +2606,17 @@ static void h2_shutr(struct conn_stream *cs, enum cs_shr_mode mode)
 	if (h2s->st == H2_SS_HLOC || h2s->st == H2_SS_ERROR || h2s->st == H2_SS_CLOSED)
 		return;
 
-	/* if no outgoing data was seen on this stream, it means it was
-	 * closed with a "tcp-request content" rule that is normally
-	 * used to kill the connection ASAP (eg: limit abuse). In this
-	 * case we send a goaway to close the connection.
+	/* a connstream may require us to immediately kill the whole connection
+	 * for example because of a "tcp-request content reject" rule that is
+	 * normally used to limit abuse. In this case we schedule a goaway to
+	 * close the connection.
 	 */
+	if ((h2s->cs->flags & CS_FL_KILL_CONN) &&
+	    !(h2s->h2c->flags & (H2_CF_GOAWAY_SENT|H2_CF_GOAWAY_FAILED))) {
+		h2c_error(h2s->h2c, H2_ERR_ENHANCE_YOUR_CALM);
+		h2s_error(h2s, H2_ERR_ENHANCE_YOUR_CALM);
+	}
+
 	if (!(h2s->flags & H2_SF_RST_SENT) &&
 	    h2s_send_rst_stream(h2s->h2c, h2s) <= 0)
 		goto add_to_list;
@@ -2635,11 +2659,17 @@ static void h2_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
 		else
 			h2s->st = H2_SS_HLOC;
 	} else {
-		/* if no outgoing data was seen on this stream, it means it was
-		 * closed with a "tcp-request content" rule that is normally
-		 * used to kill the connection ASAP (eg: limit abuse). In this
-		 * case we send a goaway to close the connection.
+		/* a connstream may require us to immediately kill the whole connection
+		 * for example because of a "tcp-request content reject" rule that is
+		 * normally used to limit abuse. In this case we schedule a goaway to
+		 * close the connection.
 		 */
+		if ((h2s->cs->flags & CS_FL_KILL_CONN) &&
+		    !(h2s->h2c->flags & (H2_CF_GOAWAY_SENT|H2_CF_GOAWAY_FAILED))) {
+			h2c_error(h2s->h2c, H2_ERR_ENHANCE_YOUR_CALM);
+			h2s_error(h2s, H2_ERR_ENHANCE_YOUR_CALM);
+		}
+
 		if (!(h2s->flags & H2_SF_RST_SENT) &&
 		    h2s_send_rst_stream(h2s->h2c, h2s) <= 0)
 			goto add_to_list;

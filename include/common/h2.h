@@ -81,6 +81,30 @@ enum h2_ft {
 	H2_FT_ENTRIES /* must be last */
 } __attribute__((packed));
 
+/* frame types, turned to bits or bit fields */
+enum {
+	/* one bit per frame type */
+	H2_FT_DATA_BIT          = 1U << H2_FT_DATA,
+	H2_FT_HEADERS_BIT       = 1U << H2_FT_HEADERS,
+	H2_FT_PRIORITY_BIT      = 1U << H2_FT_PRIORITY,
+	H2_FT_RST_STREAM_BIT    = 1U << H2_FT_RST_STREAM,
+	H2_FT_SETTINGS_BIT      = 1U << H2_FT_SETTINGS,
+	H2_FT_PUSH_PROMISE_BIT  = 1U << H2_FT_PUSH_PROMISE,
+	H2_FT_PING_BIT          = 1U << H2_FT_PING,
+	H2_FT_GOAWAY_BIT        = 1U << H2_FT_GOAWAY,
+	H2_FT_WINDOW_UPDATE_BIT = 1U << H2_FT_WINDOW_UPDATE,
+	H2_FT_CONTINUATION_BIT  = 1U << H2_FT_CONTINUATION,
+	/* padded frames */
+	H2_FT_PADDED_MASK       = H2_FT_DATA_BIT | H2_FT_HEADERS_BIT | H2_FT_PUSH_PROMISE_BIT,
+	/* flow controlled frames */
+	H2_FT_FC_MASK           = H2_FT_DATA_BIT,
+	/* header frames */
+	H2_FT_HDR_MASK          = H2_FT_HEADERS_BIT | H2_FT_PUSH_PROMISE_BIT | H2_FT_CONTINUATION_BIT,
+	/* frames allowed to arrive late on a stream */
+	H2_FT_LATE_MASK         = H2_FT_WINDOW_UPDATE_BIT | H2_FT_RST_STREAM_BIT | H2_FT_PRIORITY_BIT,
+};
+
+
 /* flags defined for each frame type */
 
 // RFC7540 #6.1
@@ -108,6 +132,9 @@ enum h2_ft {
 
 // RFC7540 #6.8 : GOAWAY defines no flags
 // RFC7540 #6.9 : WINDOW_UPDATE defines no flags
+
+// PADDED is the exact same among DATA, HEADERS and PUSH_PROMISE (8)
+#define H2_F_PADDED              0x08
 
 /* HTTP/2 error codes - RFC7540 #7 */
 enum h2_err {
@@ -158,6 +185,12 @@ int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int
 /*
  * Some helpful debugging functions.
  */
+
+/* returns a bit corresponding to the frame type */
+static inline unsigned int h2_ft_bit(enum h2_ft ft)
+{
+	return 1U << ft;
+}
 
 /* returns the frame type as a string */
 static inline const char *h2_ft_str(int type)

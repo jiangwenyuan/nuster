@@ -1534,7 +1534,6 @@ static void srv_settings_cpy(struct server *srv, struct server *src, int srv_tmp
 static struct server *new_server(struct proxy *proxy)
 {
 	struct server *srv;
-	int i;
 
 	srv = calloc(1, sizeof *srv);
 	if (!srv)
@@ -1544,21 +1543,6 @@ static struct server *new_server(struct proxy *proxy)
 	srv->proxy = proxy;
 	LIST_INIT(&srv->actconns);
 	LIST_INIT(&srv->pendconns);
-
-	if ((srv->priv_conns = calloc(global.nbthread, sizeof(*srv->priv_conns))) == NULL)
-		goto free_srv;
-	if ((srv->idle_conns = calloc(global.nbthread, sizeof(*srv->idle_conns))) == NULL)
-		goto free_priv_conns;
-	if ((srv->safe_conns = calloc(global.nbthread, sizeof(*srv->safe_conns))) == NULL)
-		goto free_idle_conns;
-
-	for (i = 0; i < global.nbthread; i++) {
-		LIST_INIT(&srv->priv_conns[i]);
-		LIST_INIT(&srv->idle_conns[i]);
-		LIST_INIT(&srv->safe_conns[i]);
-	}
-
-	LIST_INIT(&srv->update_status);
 
 	srv->next_state = SRV_ST_RUNNING; /* early server setup */
 	srv->last_change = now.tv_sec;
@@ -1572,14 +1556,6 @@ static struct server *new_server(struct proxy *proxy)
 	srv->xprt  = srv->check.xprt = srv->agent.xprt = xprt_get(XPRT_RAW);
 
 	return srv;
-
-  free_idle_conns:
-	free(srv->idle_conns);
-  free_priv_conns:
-	free(srv->priv_conns);
-  free_srv:
-	free(srv);
-	return NULL;
 }
 
 /*
@@ -2843,16 +2819,37 @@ static void srv_update_state(struct server *srv, int version, char **params)
 			HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 			/* recover operational state and apply it to this server
 			 * and all servers tracking this one */
+			srv->check.health = srv_check_health;
 			switch (srv_op_state) {
 				case SRV_ST_STOPPED:
 					srv->check.health = 0;
 					srv_set_stopped(srv, "changed from server-state after a reload", NULL);
 					break;
 				case SRV_ST_STARTING:
+					/* If rise == 1 there is no STARTING state, let's switch to
+					 * RUNNING
+					 */
+					if (srv->check.rise == 1) {
+						srv->check.health = srv->check.rise + srv->check.fall - 1;
+						srv_set_running(srv, "", NULL);
+						break;
+					}
+					if (srv->check.health < 1 || srv->check.health >= srv->check.rise)
+						srv->check.health = srv->check.rise - 1;
 					srv->next_state = srv_op_state;
 					break;
 				case SRV_ST_STOPPING:
-					srv->check.health = srv->check.rise + srv->check.fall - 1;
+					/* If fall == 1 there is no STOPPING state, let's switch to
+					 * STOPPED
+					 */
+					if (srv->check.fall == 1) {
+						srv->check.health = 0;
+						srv_set_stopped(srv, "changed from server-state after a reload", NULL);
+						break;
+					}
+					if (srv->check.health < srv->check.rise ||
+					    srv->check.health > srv->check.rise + srv->check.fall - 2)
+						srv->check.health = srv->check.rise;
 					srv_set_stopping(srv, "changed from server-state after a reload", NULL);
 					break;
 				case SRV_ST_RUNNING:
@@ -2906,7 +2903,6 @@ static void srv_update_state(struct server *srv, int version, char **params)
 			srv->last_change = date.tv_sec - srv_last_time_change;
 			srv->check.status = srv_check_status;
 			srv->check.result = srv_check_result;
-			srv->check.health = srv_check_health;
 
 			/* Only case we want to apply is removing ENABLED flag which could have been
 			 * done by the "disable health" command over the stats socket

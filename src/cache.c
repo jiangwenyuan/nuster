@@ -400,7 +400,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	struct cache *cache = (struct cache *)rule->arg.act.p[0];
 	struct shared_context *shctx = shctx_ptr(cache);
 	struct cache_entry *object;
-
+	unsigned int key = *(unsigned int *)txn->cache_hash;
 
 	/* Don't cache if the response came from a cache */
 	if ((obj_type(s->target) == OBJ_TYPE_APPLET) &&
@@ -418,6 +418,10 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 
 	/* cache only GET method */
 	if (txn->meth != HTTP_METH_GET)
+		goto out;
+
+	/* cache key was not computed */
+	if (!key)
 		goto out;
 
 	/* cache only 200 status code */
@@ -478,7 +482,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 
 					cache_ctx->first_block = first;
 
-					object->eb.key = (*(unsigned int *)&txn->cache_hash);
+					object->eb.key = key;
 					memcpy(object->hash, txn->cache_hash, sizeof(object->hash));
 					/* Insert the node later on caching success */
 
