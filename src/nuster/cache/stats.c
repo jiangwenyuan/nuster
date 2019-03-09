@@ -108,7 +108,7 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
     s->txn->status = 200;
 
     if (ci_putchk(res, &trash) == -1) {
-        si_applet_cant_put(si);
+        si_rx_room_blk(si);
         return 0;
     }
 
@@ -123,7 +123,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
         struct nuster_rule *rule = NULL;
 
         if(buffer_almost_full(res->buf)) {
-            si_applet_cant_put(si);
+            si_rx_room_blk(si);
             return 0;
         }
 
@@ -138,7 +138,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
                 list_for_each_entry(rule, &p->nuster.rules, list) {
 
                     if(buffer_almost_full(res->buf)) {
-                        si_applet_cant_put(si);
+                        si_rx_room_blk(si);
                         return 0;
                     }
 
@@ -155,7 +155,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
                                 *rule->state == NUSTER_RULE_ENABLED ? "on" : "off", *rule->ttl);
 
                         if (ci_putchk(res, &trash) == -1) {
-                            si_applet_cant_put(si);
+                            si_rx_room_blk(si);
                             return 0;
                         }
                         appctx->st2++;
