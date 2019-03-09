@@ -124,6 +124,8 @@
 #include <proto/ssl_sock.h>
 #endif
 
+#include <nuster/nuster.h>
+
 /* list of config files */
 static struct list cfg_cfgfiles = LIST_HEAD_INIT(cfg_cfgfiles);
 int  pid;			/* current process id */
@@ -169,6 +171,20 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
+	.nuster = {
+		.cache = {
+			.status       = NUSTER_STATUS_UNDEFINED,
+			.data_size    = NST_CACHE_DEFAULT_SIZE,
+			.dict_size    = NST_CACHE_DEFAULT_SIZE,
+			.share        = NUSTER_STATUS_ON,
+			.purge_method = NULL,
+		},
+		.nosql = {
+			.status       = NUSTER_STATUS_UNDEFINED,
+			.dict_size    = NST_CACHE_DEFAULT_SIZE,
+			.data_size    = NST_CACHE_DEFAULT_SIZE,
+		},
+	},
 	/* others NULL OK */
 };
 
@@ -370,6 +386,8 @@ void hap_register_per_thread_deinit(void (*fct)())
 
 static void display_version()
 {
+	printf("nuster version %s\n", NUSTER_VERSION);
+	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE" - https://haproxy.org/\n");
 }
 
@@ -2171,6 +2189,8 @@ static void init(int argc, char **argv)
 	if (!hlua_post_init())
 		exit(1);
 
+	nuster_init();
+
 	free(err_msg);
 }
 
@@ -2655,6 +2675,8 @@ static void run_poll_loop()
 		if (sleeping_thread_mask & tid_bit)
 			HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 		fd_process_cached_events();
+
+		nuster_housekeeping();
 
 		activity[tid].loops++;
 	}

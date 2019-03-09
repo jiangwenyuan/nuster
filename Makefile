@@ -679,6 +679,14 @@ endif
 endif
 endif
 
+# For nuster
+ifeq ($(USE_OPENSSL),)
+ifneq ($(USE_PTHREAD_PSHARED),)
+OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
+OPTIONS_LDFLAGS += -lpthread
+endif
+endif
+
 ifneq ($(USE_LUA),)
 check_lua_lib = $(shell echo "int main(){}" | $(CC) -o /dev/null -x c - $(2) -l$(1) 2>/dev/null && echo $(1))
 check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
@@ -954,6 +962,14 @@ EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/ebmbtree.o $(EBTREE_DIR)/ebsttree.o \
               $(EBTREE_DIR)/ebimtree.o $(EBTREE_DIR)/ebistree.o
 
+NUSTER_OBJS = src/nuster/cache/dict.o src/nuster/cache/filter.o               \
+              src/nuster/cache/stats.o src/nuster/cache/manager.o             \
+              src/nuster/cache/engine.o                                       \
+              src/nuster/nosql/filter.o  src/nuster/nosql/dict.o              \
+              src/nuster/nosql/stats.o src/nuster/nosql/engine.o              \
+              src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
+              src/nuster/nuster.o
+
 ifneq ($(TRACE),)
 OBJS += src/trace.o
 endif
@@ -972,7 +988,7 @@ help:
 # Used only to force a rebuild if some build options change
 .build_opts: $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 
-haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS)
+haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS) $(NUSTER_OBJS)
 	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
 
 $(LIB_EBTREE): $(EBTREE_OBJS)
@@ -1022,6 +1038,7 @@ install-bin:
 	done
 	$(Q)install -v -d "$(DESTDIR)$(SBINDIR)"
 	$(Q)install -v haproxy $(EXTRA) "$(DESTDIR)$(SBINDIR)"
+	$(Q)ln -s "$(DESTDIR)$(SBINDIR)/haproxy" "$(DESTDIR)$(SBINDIR)/nuster"
 
 install: install-bin install-man install-doc
 
@@ -1032,12 +1049,14 @@ uninstall:
 	done
 	$(Q)-rmdir "$(DESTDIR)$(DOCDIR)"
 	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/haproxy
+	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/nuster
 
 clean:
 	$(Q)rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
 	$(Q)for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
+	$(Q)rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
 
 tags:
 	$(Q)find src include \( -name '*.c' -o -name '*.h' \) -print0 | \
