@@ -47,7 +47,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
 
     /* Check if the input buffer is avalaible. */
     if(res->buf->size == 0) {
-        si_applet_cant_put(si);
+        si_rx_room_blk(si);
         return;
     }
 
