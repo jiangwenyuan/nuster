@@ -759,7 +759,7 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
      * set backend to nuster.applet.cache_engine
      */
     s->target = &nuster.applet.cache_engine.obj_type;
-    if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
+    if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
         /* return to regular process on error */
         data->clients--;
         s->target = NULL;

@@ -207,7 +207,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
 
 purge:
     s->target = &nuster.applet.cache_manager.obj_type;
-    if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
+    if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
         goto err;
     } else {
         appctx      = si_appctx(si);
