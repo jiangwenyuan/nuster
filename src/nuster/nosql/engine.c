@@ -304,7 +304,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *
         struct appctx *appctx       = NULL;
 
         s->target = &nuster.applet.nosql_engine.obj_type;
-        if(unlikely(!stream_int_register_handler(si, objt_applet(s->target)))) {
+        if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
             txn->status = 500;
             nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
             return 1;
