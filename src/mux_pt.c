@@ -125,9 +125,6 @@ static int mux_pt_wake(struct connection *conn)
 		}
 	}
 
-	if (ret < 0)
-		return ret;
-
 	/* If we had early data, and we're done with the handshake
 	 * then whe know the data are safe, and we can remove the flag.
 	 */
