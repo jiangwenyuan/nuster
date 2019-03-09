@@ -29,6 +29,7 @@
 #include <common/config.h>
 #include <common/errors.h>
 #include <common/hathreads.h>
+#include <common/initcall.h>
 
 #include <proto/acl.h>
 #include <proto/log.h>
@@ -39,7 +40,13 @@
 struct userlist *userlist = NULL;    /* list of all existing userlists */
 
 #ifdef CONFIG_HAP_CRYPT
+#ifdef HA_HAVE_CRYPT_R
+/* context for crypt_r() */
+static THREAD_LOCAL struct crypt_data crypt_data = { .initialized = 0 };
+#else
+/* lock for crypt() */
 __decl_hathreads(static HA_SPINLOCK_T auth_lock);
+#endif
 #endif
 
 /* find targets for selected gropus. The function returns pointer to
@@ -250,9 +257,13 @@ check_user(struct userlist *ul, const char *user, const char *pass)
 
 	if (!(u->flags & AU_O_INSECURE)) {
 #ifdef CONFIG_HAP_CRYPT
+#ifdef HA_HAVE_CRYPT_R
+		ep = crypt_r(pass, u->pass, &crypt_data);
+#else
 		HA_SPIN_LOCK(AUTH_LOCK, &auth_lock);
 		ep = crypt(pass, u->pass);
 		HA_SPIN_UNLOCK(AUTH_LOCK, &auth_lock);
+#endif
 #else
 		return 0;
 #endif
@@ -284,7 +295,7 @@ pat_match_auth(struct sample *smp, struct pattern_expr *expr, int fill)
 
 	/* Browse the userlist for searching user. */
 	for (u = ul->users; u; u = u->next) {
-		if (strcmp(smp->data.u.str.str, u->user) == 0)
+		if (strcmp(smp->data.u.str.area, u->user) == 0)
 			break;
 	}
 	if (!u)
@@ -303,8 +314,4 @@ pat_match_auth(struct sample *smp, struct pattern_expr *expr, int fill)
 	return NULL;
 }
 
-__attribute__((constructor))
-static void __auth_init(void)
-{
-	hap_register_build_opts("Encrypted password support via crypt(3): yes", 0);
-}
+REGISTER_BUILD_OPTS("Encrypted password support via crypt(3): yes");

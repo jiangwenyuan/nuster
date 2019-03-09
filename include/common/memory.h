@@ -26,10 +26,13 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <unistd.h>
 
 #include <common/config.h>
 #include <common/mini-clist.h>
 #include <common/hathreads.h>
+#include <common/initcall.h>
 
 #ifndef DEBUG_DONT_SHARE_POOLS
 #define MEM_F_SHARED	0x1
@@ -47,10 +50,37 @@
 #define POOL_LINK(pool, item) ((void **)(item))
 #endif
 
-struct pool_head {
-	__decl_hathreads(HA_SPINLOCK_T lock); /* the spin lock */
+#define MAX_BASE_POOLS 32
+
+struct pool_cache_head {
+	struct list list;    /* head of objects in this pool */
+	size_t size;         /* size of an object */
+	unsigned int count;  /* number of objects in this pool */
+};
+
+struct pool_cache_item {
+	struct list by_pool; /* link to objects in this pool */
+	struct list by_lru;  /* link to objects by LRU order */
+};
+
+extern struct pool_cache_head pool_cache[][MAX_BASE_POOLS];
+extern THREAD_LOCAL size_t pool_cache_bytes;   /* total cache size */
+extern THREAD_LOCAL size_t pool_cache_count;   /* #cache objects   */
+
+#ifdef CONFIG_HAP_LOCKLESS_POOLS
+struct pool_free_list {
 	void **free_list;
-	struct list list;	/* list of all known pools */
+	uintptr_t seq;
+};
+#endif
+
+struct pool_head {
+	void **free_list;
+#ifdef CONFIG_HAP_LOCKLESS_POOLS
+	uintptr_t seq;
+#else
+	__decl_hathreads(HA_SPINLOCK_T lock); /* the spin lock */
+#endif
 	unsigned int used;	/* how many chunks are currently in use */
 	unsigned int allocated;	/* how many chunks have been allocated */
 	unsigned int limit;	/* hard limit on the number of chunks */
@@ -59,8 +89,13 @@ struct pool_head {
 	unsigned int flags;	/* MEM_F_* */
 	unsigned int users;	/* number of pools sharing this zone */
 	unsigned int failed;	/* failed allocations */
+	struct list list;	/* list of all known pools */
 	char name[12];		/* name of the pool */
 } __attribute__((aligned(64)));
+
+
+extern struct pool_head pool_base_start[MAX_BASE_POOLS];
+extern unsigned int pool_base_count;
 
 /* poison each newly allocated area with this byte if >= 0 */
 extern int mem_poison_byte;
@@ -81,6 +116,21 @@ void *pool_refill_alloc(struct pool_head *pool, unsigned int avail);
  * is available for a new creation.
  */
 struct pool_head *create_pool(char *name, unsigned int size, unsigned int flags);
+void create_pool_callback(struct pool_head **ptr, char *name, unsigned int size);
+
+/* This registers a call to create_pool_callback(ptr, name, size) */
+#define REGISTER_POOL(ptr, name, size)  \
+	INITCALL3(STG_POOL, create_pool_callback, (ptr), (name), (size))
+
+/* This macro declares a pool head <ptr> and registers its creation */
+#define DECLARE_POOL(ptr, name, size)   \
+	struct pool_head *(ptr) = NULL; \
+	REGISTER_POOL(&ptr, name, size)
+
+/* This macro declares a static pool head <ptr> and registers its creation */
+#define DECLARE_STATIC_POOL(ptr, name, size) \
+	static struct pool_head *(ptr);      \
+	REGISTER_POOL(&ptr, name, size)
 
 /* Dump statistics on pools usage.
  */
@@ -110,7 +160,181 @@ void pool_gc(struct pool_head *pool_ctx);
  * This should be called only under extreme circumstances.
  */
 void *pool_destroy(struct pool_head *pool);
+void pool_destroy_all();
 
+/* returns the pool index for pool <pool>, or -1 if this pool has no index */
+static inline ssize_t pool_get_index(const struct pool_head *pool)
+{
+	size_t idx;
+
+	idx = pool - pool_base_start;
+	if (idx >= MAX_BASE_POOLS)
+		return -1;
+	return idx;
+}
+
+#ifdef CONFIG_HAP_LOCKLESS_POOLS
+
+/* Tries to retrieve an object from the local pool cache corresponding to pool
+ * <pool>. Returns NULL if none is available.
+ */
+static inline void *__pool_get_from_cache(struct pool_head *pool)
+{
+	ssize_t idx = pool_get_index(pool);
+	struct pool_cache_item *item;
+	struct pool_cache_head *ph;
+
+	/* pool not in cache */
+	if (idx < 0)
+		return NULL;
+
+	ph = &pool_cache[tid][idx];
+	if (LIST_ISEMPTY(&ph->list))
+		return NULL; // empty
+
+	item = LIST_NEXT(&ph->list, typeof(item), by_pool);
+	ph->count--;
+	pool_cache_bytes -= ph->size;
+	pool_cache_count--;
+	LIST_DEL(&item->by_pool);
+	LIST_DEL(&item->by_lru);
+#ifdef DEBUG_MEMORY_POOLS
+	/* keep track of where the element was allocated from */
+	*POOL_LINK(pool, item) = (void *)pool;
+#endif
+	return item;
+}
+
+/*
+ * Returns a pointer to type <type> taken from the pool <pool_type> if
+ * available, otherwise returns NULL. No malloc() is attempted, and poisonning
+ * is never performed. The purpose is to get the fastest possible allocation.
+ */
+static inline void *__pool_get_first(struct pool_head *pool)
+{
+	struct pool_free_list cmp, new;
+	void *ret = __pool_get_from_cache(pool);
+
+	if (ret)
+		return ret;
+
+	cmp.seq = pool->seq;
+	__ha_barrier_load();
+
+	cmp.free_list = pool->free_list;
+	do {
+		if (cmp.free_list == NULL)
+			return NULL;
+		new.seq = cmp.seq + 1;
+		__ha_barrier_load();
+		new.free_list = *POOL_LINK(pool, cmp.free_list);
+	} while (__ha_cas_dw((void *)&pool->free_list, (void *)&cmp, (void *)&new) == 0);
+
+	HA_ATOMIC_ADD(&pool->used, 1);
+#ifdef DEBUG_MEMORY_POOLS
+	/* keep track of where the element was allocated from */
+	*POOL_LINK(pool, cmp.free_list) = (void *)pool;
+#endif
+	return cmp.free_list;
+}
+
+static inline void *pool_get_first(struct pool_head *pool)
+{
+	void *ret;
+
+	ret = __pool_get_first(pool);
+	return ret;
+}
+/*
+ * Returns a pointer to type <type> taken from the pool <pool_type> or
+ * dynamically allocated. In the first case, <pool_type> is updated to point to
+ * the next element in the list. No memory poisonning is ever performed on the
+ * returned area.
+ */
+static inline void *pool_alloc_dirty(struct pool_head *pool)
+{
+	void *p;
+
+	if ((p = __pool_get_first(pool)) == NULL)
+		p = __pool_refill_alloc(pool, 0);
+	return p;
+}
+
+/*
+ * Returns a pointer to type <type> taken from the pool <pool_type> or
+ * dynamically allocated. In the first case, <pool_type> is updated to point to
+ * the next element in the list. Memory poisonning is performed if enabled.
+ */
+static inline void *pool_alloc(struct pool_head *pool)
+{
+	void *p;
+
+	p = pool_alloc_dirty(pool);
+	if (p && mem_poison_byte >= 0) {
+		memset(p, mem_poison_byte, pool->size);
+	}
+
+	return p;
+}
+
+/* Locklessly add item <ptr> to pool <pool>, then update the pool used count.
+ * Both the pool and the pointer must be valid. Use pool_free() for normal
+ * operations.
+ */
+static inline void __pool_free(struct pool_head *pool, void *ptr)
+{
+	void **free_list = pool->free_list;
+
+	do {
+		*POOL_LINK(pool, ptr) = (void *)free_list;
+		__ha_barrier_store();
+	} while (!HA_ATOMIC_CAS(&pool->free_list, &free_list, ptr));
+	HA_ATOMIC_SUB(&pool->used, 1);
+}
+
+/* frees an object to the local cache, possibly pushing oldest objects to the
+ * global pool.
+ */
+void __pool_put_to_cache(struct pool_head *pool, void *ptr, ssize_t idx);
+static inline void pool_put_to_cache(struct pool_head *pool, void *ptr)
+{
+	ssize_t idx = pool_get_index(pool);
+
+	/* pool not in cache or too many objects for this pool (more than
+	 * half of the cache is used and this pool uses more than 1/8 of
+	 * the cache size).
+	 */
+	if (idx < 0 ||
+	    (pool_cache_bytes > CONFIG_HAP_POOL_CACHE_SIZE * 3 / 4 &&
+	     pool_cache[tid][idx].count >= 16 + pool_cache_count / 8)) {
+		__pool_free(pool, ptr);
+		return;
+	}
+	__pool_put_to_cache(pool, ptr, idx);
+}
+
+/*
+ * Puts a memory area back to the corresponding pool.
+ * Items are chained directly through a pointer that
+ * is written in the beginning of the memory area, so
+ * there's no need for any carrier cell. This implies
+ * that each memory area is at least as big as one
+ * pointer. Just like with the libc's free(), nothing
+ * is done if <ptr> is NULL.
+ */
+static inline void pool_free(struct pool_head *pool, void *ptr)
+{
+        if (likely(ptr != NULL)) {
+#ifdef DEBUG_MEMORY_POOLS
+		/* we'll get late corruption if we refill to the wrong pool or double-free */
+		if (*POOL_LINK(pool, ptr) != (void *)pool)
+			*(volatile int *)0 = 0;
+#endif
+		pool_put_to_cache(pool, ptr);
+	}
+}
+
+#else /* CONFIG_HAP_LOCKLESS_POOLS */
 /*
  * Returns a pointer to type <type> taken from the pool <pool_type> if
  * available, otherwise returns NULL. No malloc() is attempted, and poisonning
@@ -228,14 +452,6 @@ static inline void *pool_alloc(struct pool_head *pool)
 	void *p;
 
 	p = pool_alloc_dirty(pool);
-#ifdef DEBUG_MEMORY_POOLS
-	if (p) {
-		HA_SPIN_LOCK(POOL_LOCK, &pool->lock);
-		/* keep track of where the element was allocated from */
-		*POOL_LINK(pool, p) = (void *)pool;
-		HA_SPIN_UNLOCK(POOL_LOCK, &pool->lock);
-	}
-#endif
 	if (p && mem_poison_byte >= 0) {
 		memset(p, mem_poison_byte, pool->size);
 	}
@@ -259,7 +475,7 @@ static inline void pool_free(struct pool_head *pool, void *ptr)
 #ifdef DEBUG_MEMORY_POOLS
 		/* we'll get late corruption if we refill to the wrong pool or double-free */
 		if (*POOL_LINK(pool, ptr) != (void *)pool)
-			*(int *)0 = 0;
+			*(volatile int *)0 = 0;
 #endif
 
 #ifndef DEBUG_UAF /* normal pool behaviour */
@@ -275,6 +491,7 @@ static inline void pool_free(struct pool_head *pool, void *ptr)
 		HA_SPIN_UNLOCK(POOL_LOCK, &pool->lock);
 	}
 }
+#endif /* CONFIG_HAP_LOCKLESS_POOLS */
 #endif /* _COMMON_MEMORY_H */
 
 /*

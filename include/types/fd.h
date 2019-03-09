@@ -80,8 +80,8 @@ enum fd_states {
 
 /* This is the value used to mark a file descriptor as dead. This value is
  * negative, this is important so that tests on fd < 0 properly match. It
- * also has the nice property of being highly negative but not overflowing
- * nor changing sign on 32-bit machines when multipled by sizeof(fdtab).
+ * also has the nice property of being highly negative but neither overflowing
+ * nor changing sign on 32-bit machines when multiplied by sizeof(fdtab).
  * This ensures that any unexpected dereference of such an uninitialized
  * file descriptor will lead to so large a dereference that it will crash
  * the process at the exact location of the bug with a clean stack trace
@@ -90,31 +90,37 @@ enum fd_states {
  */
 #define DEAD_FD_MAGIC 0xFDDEADFD
 
+/* fdlist_entry: entry used by the fd cache.
+ *    >= 0 means we're in the cache and gives the FD of the next in the cache,
+ *      -1 means we're in the cache and the last element,
+ *      -2 means the entry is locked,
+ *   <= -3 means not in the cache, and next element is -4-fd
+ *
+ * It must remain 8-aligned so that aligned CAS operations may be done on both
+ * entries at once.
+ */
 struct fdlist_entry {
 	int next;
 	int prev;
 } __attribute__ ((aligned(8)));
 
-/* head of the fd list */
+/* head of the fd cache */
 struct fdlist {
 	int first;
 	int last;
 } __attribute__ ((aligned(8)));
 
-
 /* info about one given fd */
 struct fdtab {
 	__decl_hathreads(HA_SPINLOCK_T lock);
 	unsigned long thread_mask;           /* mask of thread IDs authorized to process the task */
-	unsigned long polled_mask;           /* mask of thread IDs currently polling this fd */
-	struct fdlist_entry update;          /* Entry in the global update list */
 	unsigned long update_mask;           /* mask of thread IDs having an update for fd */
+	struct fdlist_entry cache;           /* Entry in the fdcache */
+	struct fdlist_entry update;          /* Entry in the global update list */
 	void (*iocb)(int fd);                /* I/O handler */
 	void *owner;                         /* the connection or listener associated with this fd, NULL if closed */
-	unsigned int  cache;                 /* position+1 in the FD cache. 0=not in cache. */
 	unsigned char state;                 /* FD state for read and write directions (2*3 bits) */
 	unsigned char ev;                    /* event seen in return of poll() : FD_POLL_* */
-	unsigned char new:1;                 /* 1 if this fd has just been created */
 	unsigned char linger_risk:1;         /* 1 if we must kill lingering before closing */
 	unsigned char cloned:1;              /* 1 if a cloned socket, requires EPOLL_CTL_DEL on close */
 };
@@ -162,7 +168,6 @@ extern struct poller pollers[MAX_POLLERS];   /* all registered pollers */
 
 extern struct fdtab *fdtab;             /* array of all the file descriptors */
 extern struct fdinfo *fdinfo;           /* less-often used infos for file descriptors */
-extern int maxfd;                       /* # of the highest fd + 1 */
 extern int totalconn;                   /* total # of terminated sessions */
 extern int actconn;                     /* # of active sessions */
 

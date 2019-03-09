@@ -25,89 +25,109 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <common/buf.h>
 #include <common/config.h>
 #include <common/memory.h>
 
-
-/* describes a chunk of string */
-struct chunk {
-	char *str;	/* beginning of the string itself. Might not be 0-terminated */
-	int size;	/* total size of the buffer, 0 if the *str is read-only */
-	int len;	/* current size of the string from first to last char. <0 = uninit. */
-};
 
 struct pool_head *pool_head_trash;
 
 /* function prototypes */
 
-int chunk_printf(struct chunk *chk, const char *fmt, ...)
+int chunk_printf(struct buffer *chk, const char *fmt, ...)
 	__attribute__ ((format(printf, 2, 3)));
 
-int chunk_appendf(struct chunk *chk, const char *fmt, ...)
+int chunk_appendf(struct buffer *chk, const char *fmt, ...)
 	__attribute__ ((format(printf, 2, 3)));
 
-int chunk_htmlencode(struct chunk *dst, struct chunk *src);
-int chunk_asciiencode(struct chunk *dst, struct chunk *src, char qc);
-int chunk_strcmp(const struct chunk *chk, const char *str);
-int chunk_strcasecmp(const struct chunk *chk, const char *str);
-struct chunk *get_trash_chunk(void);
-struct chunk *alloc_trash_chunk(void);
+int chunk_htmlencode(struct buffer *dst, struct buffer *src);
+int chunk_asciiencode(struct buffer *dst, struct buffer *src, char qc);
+int chunk_strcmp(const struct buffer *chk, const char *str);
+int chunk_strcasecmp(const struct buffer *chk, const char *str);
+struct buffer *get_trash_chunk(void);
+struct buffer *alloc_trash_chunk(void);
 int init_trash_buffers(int first);
-void deinit_trash_buffers(void);
 
 /*
  * free a trash chunk allocated by alloc_trash_chunk(). NOP on NULL.
  */
-static inline void free_trash_chunk(struct chunk *chunk)
+static inline void free_trash_chunk(struct buffer *chunk)
 {
 	pool_free(pool_head_trash, chunk);
 }
 
 
-static inline void chunk_reset(struct chunk *chk)
+static inline void chunk_reset(struct buffer *chk)
 {
-	chk->len  = 0;
+	chk->data  = 0;
 }
 
-static inline void chunk_init(struct chunk *chk, char *str, size_t size)
+static inline void chunk_init(struct buffer *chk, char *str, size_t size)
 {
-	chk->str  = str;
-	chk->len  = 0;
+	chk->area = str;
+	chk->head = 0;
+	chk->data = 0;
 	chk->size = size;
 }
 
 /* report 0 in case of error, 1 if OK. */
-static inline int chunk_initlen(struct chunk *chk, char *str, size_t size, int len)
+static inline int chunk_initlen(struct buffer *chk, char *str, size_t size,
+				int len)
 {
 
 	if (len < 0 || (size && len > size))
 		return 0;
 
-	chk->str  = str;
-	chk->len  = len;
+	chk->area = str;
+	chk->head = 0;
+	chk->data = len;
 	chk->size = size;
 
 	return 1;
 }
 
 /* this is only for temporary manipulation, the chunk is read-only */
-static inline void chunk_initstr(struct chunk *chk, const char *str)
+static inline void chunk_initstr(struct buffer *chk, const char *str)
 {
-	chk->str = (char *)str;
-	chk->len = strlen(str);
+	chk->area = (char *)str;
+	chk->head = 0;
+	chk->data = strlen(str);
 	chk->size = 0;			/* mark it read-only */
+}
+
+/* copies chunk <src> into <chk>. Returns 0 in case of failure. */
+static inline int chunk_cpy(struct buffer *chk, const struct buffer *src)
+{
+	if (unlikely(src->data >= chk->size))
+		return 0;
+
+	chk->data  = src->data;
+	memcpy(chk->area, src->area, src->data);
+	return 1;
+}
+
+/* appends chunk <src> after <chk>. Returns 0 in case of failure. */
+static inline int chunk_cat(struct buffer *chk, const struct buffer *src)
+{
+	if (unlikely(chk->data + src->data >= chk->size))
+		return 0;
+
+	memcpy(chk->area + chk->data, src->area, src->data);
+	chk->data += src->data;
+	return 1;
 }
 
 /* copies memory area <src> into <chk> for <len> bytes. Returns 0 in
  * case of failure. No trailing zero is added.
  */
-static inline int chunk_memcpy(struct chunk *chk, const char *src, size_t len)
+static inline int chunk_memcpy(struct buffer *chk, const char *src,
+			       size_t len)
 {
 	if (unlikely(len >= chk->size))
 		return 0;
 
-	chk->len  = len;
-	memcpy(chk->str, src, len);
+	chk->data  = len;
+	memcpy(chk->area, src, len);
 
 	return 1;
 }
@@ -115,20 +135,21 @@ static inline int chunk_memcpy(struct chunk *chk, const char *src, size_t len)
 /* appends memory area <src> after <chk> for <len> bytes. Returns 0 in
  * case of failure. No trailing zero is added.
  */
-static inline int chunk_memcat(struct chunk *chk, const char *src, size_t len)
+static inline int chunk_memcat(struct buffer *chk, const char *src,
+			       size_t len)
 {
-	if (unlikely(chk->len < 0 || chk->len + len >= chk->size))
+	if (unlikely(chk->data + len >= chk->size))
 		return 0;
 
-	memcpy(chk->str + chk->len, src, len);
-	chk->len += len;
+	memcpy(chk->area + chk->data, src, len);
+	chk->data += len;
 	return 1;
 }
 
 /* copies str into <chk> followed by a trailing zero. Returns 0 in
  * case of failure.
  */
-static inline int chunk_strcpy(struct chunk *chk, const char *str)
+static inline int chunk_strcpy(struct buffer *chk, const char *str)
 {
 	size_t len;
 
@@ -137,8 +158,8 @@ static inline int chunk_strcpy(struct chunk *chk, const char *str)
 	if (unlikely(len >= chk->size))
 		return 0;
 
-	chk->len  = len;
-	memcpy(chk->str, str, len + 1);
+	chk->data  = len;
+	memcpy(chk->area, str, len + 1);
 
 	return 1;
 }
@@ -146,36 +167,36 @@ static inline int chunk_strcpy(struct chunk *chk, const char *str)
 /* appends str after <chk> followed by a trailing zero. Returns 0 in
  * case of failure.
  */
-static inline int chunk_strcat(struct chunk *chk, const char *str)
+static inline int chunk_strcat(struct buffer *chk, const char *str)
 {
 	size_t len;
 
 	len = strlen(str);
 
-	if (unlikely(chk->len < 0 || chk->len + len >= chk->size))
+	if (unlikely(chk->data + len >= chk->size))
 		return 0;
 
-	memcpy(chk->str + chk->len, str, len + 1);
-	chk->len += len;
+	memcpy(chk->area + chk->data, str, len + 1);
+	chk->data += len;
 	return 1;
 }
 
 /* appends <nb> characters from str after <chk>.
  * Returns 0 in case of failure.
  */
-static inline int chunk_strncat(struct chunk *chk, const char *str, int nb)
+static inline int chunk_strncat(struct buffer *chk, const char *str, int nb)
 {
-	if (unlikely(chk->len < 0 || chk->len + nb >= chk->size))
+	if (unlikely(chk->data + nb >= chk->size))
 		return 0;
 
-	memcpy(chk->str + chk->len, str, nb);
-	chk->len += nb;
+	memcpy(chk->area + chk->data, str, nb);
+	chk->data += nb;
 	return 1;
 }
 
 /* Adds a trailing zero to the current chunk and returns the pointer to the
  * following part. The purpose is to be able to use a chunk as a series of
- * short independant strings with chunk_* functions, which do not need to be
+ * short independent strings with chunk_* functions, which do not need to be
  * released. Returns NULL if no space is available to ensure that the new
  * string will have its own trailing zero. For example :
  *   chunk_init(&trash);
@@ -185,28 +206,28 @@ static inline int chunk_strncat(struct chunk *chk, const char *str, int nb)
  *   chunk_appendf(&trash, "%s", gethosname());
  *   printf("hostname=<%s>, pid=<%d>\n", name, pid);
  */
-static inline char *chunk_newstr(struct chunk *chk)
+static inline char *chunk_newstr(struct buffer *chk)
 {
-	if (chk->len < 0 || chk->len + 1 >= chk->size)
+	if (chk->data + 1 >= chk->size)
 		return NULL;
 
-	chk->str[chk->len++] = 0;
-	return chk->str + chk->len;
+	chk->area[chk->data++] = 0;
+	return chk->area + chk->data;
 }
 
-static inline void chunk_drop(struct chunk *chk)
+static inline void chunk_drop(struct buffer *chk)
 {
-	chk->str  = NULL;
-	chk->len  = -1;
+	chk->area  = NULL;
+	chk->data  = -1;
 	chk->size = 0;
 }
 
-static inline void chunk_destroy(struct chunk *chk)
+static inline void chunk_destroy(struct buffer *chk)
 {
 	if (!chk->size)
 		return;
 
-	free(chk->str);
+	free(chk->area);
 	chunk_drop(chk);
 }
 
@@ -217,30 +238,32 @@ static inline void chunk_destroy(struct chunk *chk)
  * the destination string is returned, or NULL if the allocation fails or if
  * any pointer is NULL.
  */
-static inline char *chunk_dup(struct chunk *dst, const struct chunk *src)
+static inline char *chunk_dup(struct buffer *dst, const struct buffer *src)
 {
-	if (!dst || !src || src->len < 0 || !src->str)
+	if (!dst || !src || !src->area)
 		return NULL;
 
 	if (dst->size)
-		free(dst->str);
-	dst->len = src->len;
-	dst->size = src->len;
+		free(dst->area);
+	dst->head = src->head;
+	dst->data = src->data;
+	dst->size = src->data;
 	if (dst->size < src->size || !src->size)
 		dst->size++;
 
-	dst->str = (char *)malloc(dst->size);
-	if (!dst->str) {
-		dst->len = 0;
+	dst->area = (char *)malloc(dst->size);
+	if (!dst->area) {
+		dst->head = 0;
+		dst->data = 0;
 		dst->size = 0;
 		return NULL;
 	}
 
-	memcpy(dst->str, src->str, dst->len);
-	if (dst->len < dst->size)
-		dst->str[dst->len] = 0;
+	memcpy(dst->area, src->area, dst->data);
+	if (dst->data < dst->size)
+		dst->area[dst->data] = 0;
 
-	return dst->str;
+	return dst->area;
 }
 
 #endif /* _TYPES_CHUNK_H */

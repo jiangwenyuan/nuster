@@ -5,6 +5,8 @@
 #include <common/chunk.h>
 #include <common/buffer.h>
 #include <common/errors.h>
+#include <common/initcall.h>
+#include <types/global.h>
 #include <proto/arg.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
@@ -520,7 +522,7 @@ static void ha_wurfl_deinit(void)
 static int ha_wurfl_get_all(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	wurfl_device_handle dHandle;
-	struct chunk *temp;
+	struct buffer *temp;
 	wurfl_information_t *wi;
 	ha_wurfl_header_t wh;
 
@@ -576,15 +578,15 @@ static int ha_wurfl_get_all(const struct arg *args, struct sample *smp, const ch
 	}
 
 	wurfl_device_destroy(dHandle);
-	smp->data.u.str.str = temp->str;
-	smp->data.u.str.len = temp->len;
+	smp->data.u.str.area = temp->area;
+	smp->data.u.str.data = temp->data;
 	return 1;
 }
 
 static int ha_wurfl_get(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	wurfl_device_handle dHandle;
-	struct chunk *temp;
+	struct buffer *temp;
 	wurfl_data_t *wn = NULL;
 	struct ebmb_node *node;
 	ha_wurfl_header_t wh;
@@ -602,9 +604,9 @@ static int ha_wurfl_get(const struct arg *args, struct sample *smp, const char *
 	temp = get_trash_chunk();
 	chunk_reset(temp);
 
-	while (args[i].data.str.str) {
+	while (args[i].data.str.area) {
 		chunk_appendf(temp, "%c", global_wurfl.information_list_separator);
-		node = ebst_lookup(&global_wurfl.btree, args[i].data.str.str);
+		node = ebst_lookup(&global_wurfl.btree, args[i].data.str.area);
 		wn = container_of(node, wurfl_data_t, nd);
 
 		if (wn) {
@@ -644,15 +646,16 @@ static int ha_wurfl_get(const struct arg *args, struct sample *smp, const char *
 			}
 
 		} else {
-			ha_wurfl_log("WURFL: %s not in wurfl-information-list \n", args[i].data.str.str);
+			ha_wurfl_log("WURFL: %s not in wurfl-information-list \n",
+				     args[i].data.str.area);
 		}
 
 		i++;
 	}
 
 	wurfl_device_destroy(dHandle);
-	smp->data.u.str.str = temp->str;
-	smp->data.u.str.len = temp->len;
+	smp->data.u.str.area = temp->area;
+	smp->data.u.str.data = temp->data;
 	return 1;
 }
 
@@ -668,6 +671,8 @@ static struct cfg_kw_list wurflcfg_kws = {{ }, {
 	}
 };
 
+INITCALL1(STG_REGISTER, cfg_register_keywords, &wurflcfg_kws);
+
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_fetch_kw_list fetch_kws = {ILH, {
 		{ "wurfl-get-all", ha_wurfl_get_all, 0, NULL, SMP_T_STR, SMP_USE_HRQHV },
@@ -676,23 +681,15 @@ static struct sample_fetch_kw_list fetch_kws = {ILH, {
 	}
 };
 
+INITCALL1(STG_REGISTER, sample_register_fetches, &fetch_kws);
+
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_conv_kw_list conv_kws = {ILH, {
 		{ NULL, NULL, 0, 0, 0 },
 	}
 };
 
-__attribute__((constructor))
-static void __wurfl_init(void)
-{
-	/* register sample fetch and format conversion keywords */
-	sample_register_fetches(&fetch_kws);
-	sample_register_convs(&conv_kws);
-	cfg_register_keywords(&wurflcfg_kws);
-	hap_register_build_opts("Built with WURFL support.", 0);
-	hap_register_post_check(ha_wurfl_init);
-	hap_register_post_deinit(ha_wurfl_deinit);
-}
+INITCALL1(STG_REGISTER, sample_register_convs, &conv_kws);
 
 // WURFL properties wrapper functions
 static const char *ha_wurfl_get_wurfl_root_id (wurfl_handle wHandle, wurfl_device_handle dHandle)
@@ -797,3 +794,7 @@ static const char *ha_wurfl_retrieve_header(const char *header_name, const void 
 	ha_wurfl_log("WURFL: retrieve header request returns [%s]\n", ((ha_wurfl_header_t *)wh)->header_value);
 	return ((ha_wurfl_header_t *)wh)->header_value;
 }
+
+REGISTER_POST_CHECK(ha_wurfl_init);
+REGISTER_POST_DEINIT(ha_wurfl_deinit);
+REGISTER_BUILD_OPTS("Built with WURFL support.");

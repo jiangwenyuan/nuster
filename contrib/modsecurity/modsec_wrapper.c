@@ -130,7 +130,7 @@ static void modsec_log(void *obj, int level, char *str)
 	LOG(&null_worker, "%s", str);
 }
 
-/* This fucntion load the ModSecurity file. It returns -1 if the
+/* This function load the ModSecurity file. It returns -1 if the
  * initialisation fails.
  */
 int modsecurity_load(const char *file)
@@ -218,28 +218,28 @@ int modsecurity_process(struct worker *worker, struct modsecurity_parameters *pa
 	int return_code = -1;
 
 	/* Decode uniqueid. */
-	uniqueid = params->uniqueid.data.u.str.str;
-	uniqueid_len = params->uniqueid.data.u.str.len;
+	uniqueid = params->uniqueid.data.u.str.area;
+	uniqueid_len = params->uniqueid.data.u.str.data;
 
 	/* Decode method. */
-	meth = params->method.data.u.str.str;
-	meth_len = params->method.data.u.str.len;
+	meth = params->method.data.u.str.area;
+	meth_len = params->method.data.u.str.data;
 
 	/* Decode path. */
-	path = params->path.data.u.str.str;
-	path_len = params->path.data.u.str.len;
+	path = params->path.data.u.str.area;
+	path_len = params->path.data.u.str.data;
 
 	/* Decode query string. */
-	qs = params->query.data.u.str.str;
-	qs_len = params->query.data.u.str.len;
+	qs = params->query.data.u.str.area;
+	qs_len = params->query.data.u.str.data;
 
 	/* Decode version. */
-	vers = params->vers.data.u.str.str;
-	vers_len = params->vers.data.u.str.len;
+	vers = params->vers.data.u.str.area;
+	vers_len = params->vers.data.u.str.data;
 
 	/* Decode header binary block. */
-	buf = params->hdrs_bin.data.u.str.str;
-	end = buf + params->hdrs_bin.data.u.str.len;
+	buf = params->hdrs_bin.data.u.str.area;
+	end = buf + params->hdrs_bin.data.u.str.data;
 
 	/* Decode each header. */
 	hdr_nb = 0;
@@ -289,8 +289,8 @@ int modsecurity_process(struct worker *worker, struct modsecurity_parameters *pa
 		return -1;
 
 	/* Decode body. */
-	body = params->body.data.u.str.str;
-	body_len = params->body.data.u.str.len;
+	body = params->body.data.u.str.area;
+	body_len = params->body.data.u.str.data;
 
 	fail = 1;
 
@@ -568,7 +568,7 @@ int modsecurity_process(struct worker *worker, struct modsecurity_parameters *pa
 		goto fail;
 	}
 
-	/* Stores HTTP body avalaible data in a bucket */
+	/* Stores HTTP body available data in a bucket */
 	data_bucket = apr_bucket_alloc(sizeof(*data_bucket), req->connection->bucket_alloc);
 	if (!data_bucket) {
 		errno = ENOMEM;

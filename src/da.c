@@ -2,7 +2,11 @@
 
 #include <common/cfgparse.h>
 #include <common/errors.h>
+#include <common/http.h>
+#include <common/initcall.h>
+#include <types/global.h>
 #include <proto/arg.h>
+#include <proto/http_fetch.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
 #include <proto/sample.h>
@@ -183,7 +187,7 @@ static void deinit_deviceatlas(void)
 
 static int da_haproxy(const struct arg *args, struct sample *smp, da_deviceinfo_t *devinfo)
 {
-	struct chunk *tmp;
+	struct buffer *tmp;
 	da_propid_t prop, *pprop;
 	da_status_t status;
 	da_type_t proptype;
@@ -193,10 +197,11 @@ static int da_haproxy(const struct arg *args, struct sample *smp, da_deviceinfo_
 	tmp = get_trash_chunk();
 	chunk_reset(tmp);
 
-	propname = (const char *)args[0].data.str.str;
+	propname = (const char *) args[0].data.str.area;
 	i = 0;
 
-	for (; propname != 0; i ++, propname = (const char *)args[i].data.str.str) {
+	for (; propname != 0; i ++,
+	     propname = (const char *) args[i].data.str.area) {
 		status = da_atlas_getpropid(&global_deviceatlas.atlas,
 			propname, &prop);
 		if (status != DA_OK) {
@@ -241,13 +246,13 @@ static int da_haproxy(const struct arg *args, struct sample *smp, da_deviceinfo_
 
 	da_close(devinfo);
 
-	if (tmp->len) {
-		--tmp->len;
-		tmp->str[tmp->len] = 0;
+	if (tmp->data) {
+		--tmp->data;
+		tmp->area[tmp->data] = 0;
 	}
 
-	smp->data.u.str.str = tmp->str;
-	smp->data.u.str.len = tmp->len;
+	smp->data.u.str.area = tmp->area;
+	smp->data.u.str.data = tmp->data;
 
 	return 1;
 }
@@ -260,12 +265,12 @@ static int da_haproxy_conv(const struct arg *args, struct sample *smp, void *pri
 	char useragentbuf[1024] = { 0 };
 	int i;
 
-	if (global_deviceatlas.daset == 0 || smp->data.u.str.len == 0) {
+	if (global_deviceatlas.daset == 0 || smp->data.u.str.data == 0) {
 		return 1;
 	}
 
-	i = smp->data.u.str.len > sizeof(useragentbuf) ? sizeof(useragentbuf) : smp->data.u.str.len;
-	memcpy(useragentbuf, smp->data.u.str.str, i - 1);
+	i = smp->data.u.str.data > sizeof(useragentbuf) ? sizeof(useragentbuf) : smp->data.u.str.data;
+	memcpy(useragentbuf, smp->data.u.str.area, i - 1);
 	useragentbuf[i - 1] = 0;
 
 	useragent = (const char *)useragentbuf;
@@ -304,7 +309,7 @@ static int da_haproxy_fetch(const struct arg *args, struct sample *smp, const ch
 	hidx = &smp->strm->txn->hdr_idx;
 	hmsg = &smp->strm->txn->req;
 
-	while (http_find_next_header(hmsg->chn->buf->p, hidx, &hctx) == 1 &&
+	while (http_find_next_header(ci_head(hmsg->chn), hidx, &hctx) == 1 &&
 	        nbh < DA_MAX_HEADERS) {
 		char *pval;
 		size_t vlen;
@@ -326,14 +331,14 @@ static int da_haproxy_fetch(const struct arg *args, struct sample *smp, const ch
 				atlas);
 		} else if (strcmp(hbuf, "Cookie") == 0) {
 			char *p, *eval;
-			int pl;
+			size_t pl;
 
 			eval = pval + hctx.vlen;
 			/**
 			 * The cookie value, if it exists, is located between the current header's
 			 * value position and the next one
 			 */
-			if (extract_cookie_value(pval, eval, global_deviceatlas.cookiename,
+			if (http_extract_cookie_value(pval, eval, global_deviceatlas.cookiename,
 				global_deviceatlas.cookienamelen, 1, &p, &pl) == NULL) {
 				continue;
 			}
@@ -373,11 +378,15 @@ static struct cfg_kw_list dacfg_kws = {{ }, {
 	{ 0, NULL, NULL },
 }};
 
+INITCALL1(STG_REGISTER, cfg_register_keywords, &dacfg_kws);
+
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_fetch_kw_list fetch_kws = {ILH, {
 	{ "da-csv-fetch", da_haproxy_fetch, ARG12(1,STR,STR,STR,STR,STR,STR,STR,STR,STR,STR,STR,STR), NULL, SMP_T_STR, SMP_USE_HRQHV },
 	{ NULL, NULL, 0, 0, 0 },
 }};
+
+INITCALL1(STG_REGISTER, sample_register_fetches, &fetch_kws);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_conv_kw_list conv_kws = {ILH, {
@@ -385,14 +394,8 @@ static struct sample_conv_kw_list conv_kws = {ILH, {
 	{ NULL, NULL, 0, 0, 0 },
 }};
 
-__attribute__((constructor))
-static void __da_init(void)
-{
-	/* register sample fetch and format conversion keywords */
-	sample_register_fetches(&fetch_kws);
-	sample_register_convs(&conv_kws);
-	cfg_register_keywords(&dacfg_kws);
-	hap_register_build_opts("Built with DeviceAtlas support.", 0);
-	hap_register_post_check(init_deviceatlas);
-	hap_register_post_deinit(deinit_deviceatlas);
-}
+INITCALL1(STG_REGISTER, sample_register_convs, &conv_kws);
+
+REGISTER_POST_CHECK(init_deviceatlas);
+REGISTER_POST_DEINIT(deinit_deviceatlas);
+REGISTER_BUILD_OPTS("Built with DeviceAtlas support.");

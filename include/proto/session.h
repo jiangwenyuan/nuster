@@ -30,12 +30,15 @@
 #include <types/global.h>
 #include <types/session.h>
 
+#include <proto/obj_type.h>
 #include <proto/stick_table.h>
+#include <proto/server.h>
 
 extern struct pool_head *pool_head_session;
+extern struct pool_head *pool_head_sess_srv_list;
+
 struct session *session_new(struct proxy *fe, struct listener *li, enum obj_type *origin);
 void session_free(struct session *sess);
-int init_session();
 int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr);
 
 /* Remove the refcount from the session to the tracked counters, and clear the
@@ -73,6 +76,67 @@ static inline void session_store_counters(struct session *sess)
 	}
 }
 
+/* Remove the connection from the session list, and destroy the srv_list if it's now empty */
+static inline void session_unown_conn(struct session *sess, struct connection *conn)
+{
+	struct sess_srv_list *srv_list = NULL;
+	LIST_DEL(&conn->session_list);
+	LIST_INIT(&conn->session_list);
+	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
+		if (srv_list->target == conn->target) {
+			if (LIST_ISEMPTY(&srv_list->conn_list)) {
+				LIST_DEL(&srv_list->srv_list);
+				pool_free(pool_head_sess_srv_list, srv_list);
+			}
+			break;
+		}
+	}
+}
+
+static inline int session_add_conn(struct session *sess, struct connection *conn, void *target)
+{
+	struct sess_srv_list *srv_list = NULL;
+	int found = 0;
+
+	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
+		if (srv_list->target == target) {
+			found = 1;
+			break;
+		}
+	}
+	if (!found) {
+		/* The session has no connection for the server, create a new entry */
+		srv_list = pool_alloc(pool_head_sess_srv_list);
+		if (!srv_list)
+			return 0;
+		srv_list->target = target;
+		LIST_INIT(&srv_list->conn_list);
+		LIST_ADDQ(&sess->srv_list, &srv_list->srv_list);
+	}
+	LIST_ADDQ(&srv_list->conn_list, &conn->session_list);
+	return 1;
+}
+
+/* Returns 0 if the session can keep the idle conn, -1 if it was destroyed, or 1 if it was added to the server list */
+static inline int session_check_idle_conn(struct session *sess, struct connection *conn)
+{
+	if (sess->idle_conns > sess->fe->max_out_conns) {
+		/* We can't keep the connection, let's try to add it to the server idle list */
+		session_unown_conn(sess, conn);
+		conn->owner = NULL;
+		if (!srv_add_to_idle_list(objt_server(conn->target), conn)) {
+			/* The server doesn't want it, let's kill the connection right away */
+			conn->mux->destroy(conn);
+			return -1;
+		} else
+			conn->flags &= ~CO_FL_SESS_IDLE;
+		return 1;
+	} else {
+		conn->flags |= CO_FL_SESS_IDLE;
+		sess->idle_conns++;
+	}
+	return 0;
+}
 
 #endif /* _PROTO_SESSION_H */
 

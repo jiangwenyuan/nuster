@@ -87,7 +87,7 @@ enum li_state {
 /* listener socket options */
 #define LI_O_NONE               0x0000
 #define LI_O_NOLINGER           0x0001  /* disable linger on this socket */
-#define LI_O_FOREIGN            0x0002  /* permit listening on foreing addresses ("transparent") */
+#define LI_O_FOREIGN            0x0002  /* permit listening on foreign addresses ("transparent") */
 #define LI_O_NOQUICKACK         0x0004  /* disable quick ack of immediate data (linux) */
 #define LI_O_DEF_ACCEPT         0x0008  /* wait up to 1 second for data before accepting */
 #define LI_O_TCP_L4_RULES       0x0010  /* run TCP L4 rules checks on the incoming connection */
@@ -100,6 +100,8 @@ enum li_state {
 #define LI_O_V4V6               0x0800  /* bind to IPv4/IPv6 on Linux >= 2.4.21 */
 #define LI_O_ACC_CIP            0x1000  /* find the proxied address in the NetScaler Client IP header */
 #define LI_O_INHERITED          0x2000  /* inherited FD from the parent process (fd@) */
+#define LI_O_MWORKER            0x4000  /* keep the FD open in the master but close it in the children */
+#define LI_O_NOSTOP             0x8000  /* keep the listener active even after a soft stop */
 
 /* Note: if a listener uses LI_O_UNLIMITED, it is highly recommended that it adds its own
  * maxconn setting to the global.maxsock value so that its resources are reserved.
@@ -159,6 +161,7 @@ struct bind_conf {
 	EVP_PKEY *ca_sign_pkey;    /* CA private key referenced by ca_key */
 #endif
 	struct proxy *frontend;    /* the frontend all these listeners belong to, or NULL */
+	const struct mux_proto_list *mux_proto; /* the mux to use for all incoming connections (specified by the "proto" keyword) */
 	struct xprt_ops *xprt;     /* transport-layer operations for all listeners */
 	int is_ssl;                /* SSL is required for these listeners */
 	int generate_certs;        /* 1 if generate-certificates option is set, else 0 */

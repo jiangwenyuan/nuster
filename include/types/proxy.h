@@ -29,6 +29,7 @@
 
 #include <common/chunk.h>
 #include <common/config.h>
+#include <common/http.h>
 #include <common/mini-clist.h>
 #include <common/regex.h>
 #include <common/tools.h>
@@ -45,7 +46,6 @@
 #include <types/listener.h>
 #include <types/log.h>
 #include <types/obj_type.h>
-#include <types/proto_http.h>
 #include <types/sample.h>
 #include <types/server.h>
 #include <types/stick_table.h>
@@ -65,6 +65,7 @@ enum pr_mode {
 	PR_MODE_TCP = 0,
 	PR_MODE_HTTP,
 	PR_MODE_HEALTH,
+	PR_MODE_CLI,
 } __attribute__((packed));
 
 enum PR_SRV_STATE_FILE {
@@ -113,16 +114,14 @@ enum PR_SRV_STATE_FILE {
 #define PR_O_TCP_NOLING 0x00400000      /* disable lingering on client and server connections */
 #define PR_O_ABRT_CLOSE 0x00800000      /* immediately abort request when client closes */
 
-/* unused: 0x01000000, 0x02000000, 0x04000000, 0x08000000 */
 #define PR_O_HTTP_KAL   0x00000000      /* HTTP keep-alive mode (http-keep-alive) */
-#define PR_O_HTTP_PCL   0x01000000      /* HTTP passive close mode (httpclose) = tunnel with Connection: close */
-#define PR_O_HTTP_FCL   0x02000000      /* HTTP forced close mode (forceclose) */
-#define PR_O_HTTP_SCL   0x03000000      /* HTTP server close mode (http-server-close) */
+#define PR_O_HTTP_CLO   0x01000000      /* HTTP close mode (httpclose) */
+#define PR_O_HTTP_SCL   0x02000000      /* HTTP server close mode (http-server-close) */
 #define PR_O_HTTP_TUN   0x04000000      /* HTTP tunnel mode : no analysis past first request/response */
-/* unassigned values : 0x05000000, 0x06000000, 0x07000000 */
 #define PR_O_HTTP_MODE  0x07000000      /* MASK to retrieve the HTTP mode */
+
 #define PR_O_TCPCHK_SSL 0x08000000	/* at least one TCPCHECK connect rule requires SSL */
-#define PR_O_CONTSTATS	0x10000000	/* continous counters */
+#define PR_O_CONTSTATS	0x10000000	/* continuous counters */
 #define PR_O_HTTP_PROXY 0x20000000	/* Enable stream to use HTTP proxy operations */
 #define PR_O_DISABLE404 0x40000000      /* Disable a server on a 404 response to a health-check */
 #define PR_O_ORGTO      0x80000000      /* insert x-original-to with destination address */
@@ -153,7 +152,7 @@ enum PR_SRV_STATE_FILE {
 #define PR_O2_SRC_ADDR	0x00100000	/* get the source ip and port for logs */
 
 #define PR_O2_FAKE_KA   0x00200000      /* pretend we do keep-alive with server eventhough we close */
-/* unused: 0x00400000 */
+#define PR_O2_USE_HTX   0x00400000      /* use the HTX representation for the HTTP protocol */
 #define PR_O2_EXP_NONE  0x00000000      /* http-check : no expect rule */
 #define PR_O2_EXP_STS   0x00800000      /* http-check expect status */
 #define PR_O2_EXP_RSTS  0x01000000      /* http-check expect rstatus */
@@ -205,26 +204,54 @@ enum PR_SRV_STATE_FILE {
 
 struct stream;
 
-struct error_snapshot {
-	struct timeval when;		/* date of this event, (tv_sec == 0) means "never" */
-	unsigned int len;		/* original length of the last invalid request/response */
-	unsigned int pos;		/* position of the first invalid character */
+struct http_snapshot {
 	unsigned int sid;		/* ID of the faulty stream */
-	unsigned int ev_id;		/* event number (counter incremented for each capture) */
 	unsigned int state;		/* message state before the error (when saved) */
 	unsigned int b_flags;		/* buffer flags */
 	unsigned int s_flags;		/* stream flags */
+
 	unsigned int t_flags;		/* transaction flags */
 	unsigned int m_flags;		/* message flags */
-	unsigned int b_out;		/* pending output bytes */
-	unsigned int b_wrap;		/* position where the buffer is expected to wrap */
-	unsigned long long b_tot;	/* total bytes transferred via this buffer */
 	unsigned long long m_clen;	/* chunk len for this message */
 	unsigned long long m_blen;	/* body len for this message */
-	struct server *srv;		/* server associated with the error (or NULL) */
-	struct proxy *oe;		/* other end = frontend or backend involved */
-	struct sockaddr_storage src;	/* client's address */
-	char *buf;			/* copy of the beginning of the message (may be NULL) */
+};
+
+struct h1_snapshot {
+	unsigned int state;		/* H1 message state when the error occurred */
+	unsigned int c_flags;		/* H1 connection flags */
+	unsigned int s_flags;		/* H1 stream flags */
+	unsigned int m_flags;		/* H1 message flags */
+	unsigned long long m_clen;	/* chunk len for this message */
+	unsigned long long m_blen;	/* body len for this message */
+};
+
+union error_snapshot_ctx {
+	struct http_snapshot http;
+	struct h1_snapshot h1;
+};
+
+struct error_snapshot {
+	/**** common part ****/
+	struct timeval when;            /* date of this event, (tv_sec == 0) means "never" */
+	/* @16 */
+	void (*show)(struct buffer *, const struct error_snapshot *); /* dump function */
+	unsigned long long buf_ofs;     /* relative position of the buffer's input inside its container */
+	/* @32 */
+	unsigned int buf_out;           /* pending output bytes _before_ the buffer's input (0..buf->data-1) */
+	unsigned int buf_len;           /* original length of the last invalid request/response (0..buf->data-1-buf_out) */
+	unsigned int buf_err;           /* buffer-relative position where the error was detected (0..len-1) */
+	unsigned int buf_wrap;          /* buffer-relative position where the buffer is expected to wrap (1..buf_size) */
+	/* @48 */
+	struct proxy *oe;               /* other end = frontend or backend involved */
+	struct server *srv;             /* server associated with the error (or NULL) */
+	/* @64 */
+	unsigned int ev_id;             /* event number (counter incremented for each capture) */
+	/* @68: 4 bytes hole here */
+	struct sockaddr_storage src;    /* client's address */
+
+	/**** protocol-specific part ****/
+	union error_snapshot_ctx ctx;
+	char buf[0];                    /* copy of the beginning of the message for bufsize bytes */
 };
 
 struct email_alert {
@@ -251,6 +278,7 @@ struct proxy {
 
 	int options;				/* PR_O_REDISP, PR_O_TRANSP, ... */
 	int options2;				/* PR_O2_* */
+	int max_out_conns;                      /* Max number of idling connections we keep for a session */
 	struct in_addr mon_net, mon_mask;	/* don't forward connections from this net (network order) FIXME: should support IPv6 */
 	unsigned int ck_opts;			/* PR_CK_* (cookie options) */
 	unsigned int fe_req_ana, be_req_ana;	/* bitmap of common request protocol analysers for the frontend and backend */
@@ -292,14 +320,6 @@ struct proxy {
 	unsigned int cookie_maxlife;		/* max life time for this cookie */
 	char *rdp_cookie_name;			/* name of the RDP cookie to look for */
 	int  rdp_cookie_len;			/* strlen(rdp_cookie_name), computed only once */
-	char *url_param_name;			/* name of the URL parameter used for hashing */
-	int  url_param_len;			/* strlen(url_param_name), computed only once */
-	int  uri_len_limit;			/* character limit for uri balancing algorithm */
-	int  uri_dirs_depth1;			/* directories+1 (slashes) limit for uri balancing algorithm */
-	int  uri_whole;				/* if != 0, calculates the hash from the whole uri. Still honors the len_limit and dirs_depth1 */
-	char *hh_name;				/* name of the header parameter used for hashing */
-	int  hh_len;				/* strlen(hh_name), computed only once */
-	int  hh_match_domain;			/* toggle use of special match function */
 	char *capture_name;			/* beginning of the name of the cookie to capture */
 	int  capture_namelen;			/* length of the cookie name to match */
 	int  capture_len;			/* length of the string to be captured */
@@ -322,9 +342,10 @@ struct proxy {
 		int serverfin;                  /* timeout to apply to server half-closed connections */
 	} timeout;
 	char *id, *desc;			/* proxy id (name) and description */
-	struct list pendconns;			/* pending connections with no server assigned yet */
+	struct eb_root pendconns;		/* pending connections with no server assigned yet */
 	int nbpend;				/* number of pending connections with no server assigned yet */
 	int totpend;				/* total number of pending connections on this instance (for stats) */
+	unsigned int queue_idx;			/* number of pending connections which have been de-queued */
 	unsigned int feconn, beconn;		/* # of active frontend and backends streams */
 	struct freq_ctr fe_req_per_sec;		/* HTTP requests per second on the frontend */
 	struct freq_ctr fe_conn_per_sec;	/* received connections per second on the frontend */
@@ -356,7 +377,7 @@ struct proxy {
 	struct list logsrvs;
 	struct list logformat; 			/* log_format linked list */
 	struct list logformat_sd;		/* log_format linked list for the RFC5424 structured-data part */
-	struct chunk log_tag;                   /* override default syslog tag */
+	struct buffer log_tag;                   /* override default syslog tag */
 	char *header_unique_id; 		/* unique-id header */
 	struct list format_unique_id;		/* unique-id format */
 	int to_log;				/* things to be logged (LW_*) */
@@ -384,14 +405,14 @@ struct proxy {
 	char *check_path;			/* PATH environment to use for external agent checks */
 	char *expect_str;			/* http-check expected content : string or text version of the regex */
 	struct my_regex *expect_regex;		/* http-check expected content */
-	struct chunk errmsg[HTTP_ERR_SIZE];	/* default or customized error messages for known errors */
+	struct buffer errmsg[HTTP_ERR_SIZE];	/* default or customized error messages for known errors */
 	int uuid;				/* universally unique proxy ID, used for SNMP */
 	unsigned int backlog;			/* force the frontend's listen backlog */
 	unsigned long bind_proc;		/* bitmask of processes using this proxy */
 
 	/* warning: these structs are huge, keep them at the bottom */
 	struct sockaddr_storage dispatch_addr;	/* the default address to connect to */
-	struct error_snapshot invalid_req, invalid_rep; /* captures of last errors */
+	struct error_snapshot *invalid_req, *invalid_rep; /* captures of last errors */
 
 	/* used only during configuration parsing */
 	int no_options;				/* PR_O_REDISP, PR_O_TRANSP, ... */
@@ -500,6 +521,15 @@ struct redirect_rule {
 	unsigned int flags;
 	int cookie_len;
 	char *cookie_str;
+};
+
+/* some of the most common options which are also the easiest to handle */
+struct cfg_opt {
+	const char *name;
+	unsigned int val;
+	unsigned int cap;
+	unsigned int checks;
+	unsigned int mode;
 };
 
 #endif /* _TYPES_PROXY_H */

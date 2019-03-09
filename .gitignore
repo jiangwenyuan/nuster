@@ -7,6 +7,7 @@
 !/LICENSE
 !/Makefile
 !/README
+!/INSTALL
 !/CONTRIBUTING
 !/MAINTAINERS
 !/ROADMAP
@@ -22,9 +23,7 @@
 !/tests
 !/debian
 !/scripts
-# nuster
-!/*.md
-!/.github
+!/reg-tests
 # Reject some generic files
 *.o
 *~

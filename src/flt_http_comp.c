@@ -12,36 +12,33 @@
 
 #include <common/buffer.h>
 #include <common/cfgparse.h>
+#include <common/htx.h>
+#include <common/initcall.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
 
 #include <types/compression.h>
 #include <types/filters.h>
-#include <types/proto_http.h>
 #include <types/proxy.h>
 #include <types/sample.h>
 
 #include <proto/compression.h>
 #include <proto/filters.h>
 #include <proto/hdr_idx.h>
+#include <proto/http_htx.h>
 #include <proto/proto_http.h>
 #include <proto/sample.h>
 #include <proto/stream.h>
 
-static const char *http_comp_flt_id = "compression filter";
+const char *http_comp_flt_id = "compression filter";
 
 struct flt_ops comp_ops;
-
-
-/* Pools used to allocate comp_state structs */
-static struct pool_head *pool_head_comp_state = NULL;
-
-static THREAD_LOCAL struct buffer *tmpbuf = &buf_empty;
-static THREAD_LOCAL struct buffer *zbuf   = &buf_empty;
 
 struct comp_state {
 	struct comp_ctx  *comp_ctx;   /* compression context */
 	struct comp_algo *comp_algo;  /* compression algorithm if not NULL */
+
+	/* Following fields are used by the legacy code only: */
 	int hdrs_len;
 	int tlrs_len;
 	int consumed;
@@ -49,28 +46,50 @@ struct comp_state {
 	int finished;
 };
 
+/* Pools used to allocate comp_state structs */
+DECLARE_STATIC_POOL(pool_head_comp_state, "comp_state", sizeof(struct comp_state));
+
+static THREAD_LOCAL struct buffer tmpbuf;
+static THREAD_LOCAL struct buffer zbuf;
+
 static int select_compression_request_header(struct comp_state *st,
 					     struct stream *s,
 					     struct http_msg *msg);
 static int select_compression_response_header(struct comp_state *st,
 					      struct stream *s,
 					      struct http_msg *msg);
+static int set_compression_response_header(struct comp_state *st,
+					   struct stream *s,
+					   struct http_msg *msg);
 
-static int http_compression_buffer_init(struct buffer *in, struct buffer *out);
+static int htx_compression_buffer_init(struct htx *htx, struct buffer *out);
+static int htx_compression_buffer_add_data(struct comp_state *st, const char *data, size_t len,
+					    struct buffer *out);
+static int htx_compression_buffer_end(struct comp_state *st, struct buffer *out, int end);
+
+static int http_compression_buffer_init(struct channel *inc, struct buffer *out);
 static int http_compression_buffer_add_data(struct comp_state *st,
 					    struct buffer *in,
+					    int in_out,
 					    struct buffer *out, int sz);
 static int http_compression_buffer_end(struct comp_state *st, struct stream *s,
-				       struct buffer **in, struct buffer **out,
+				       struct channel *chn, struct buffer *out,
 				       int end);
 
 /***********************************************************************/
 static int
+comp_flt_init(struct proxy *px, struct flt_conf *fconf)
+{
+	fconf->flags |= FLT_CFG_FL_HTX;
+	return 0;
+}
+
+static int
 comp_flt_init_per_thread(struct proxy *px, struct flt_conf *fconf)
 {
-	if (!tmpbuf->size && b_alloc(&tmpbuf) == NULL)
+	if (!tmpbuf.size && b_alloc(&tmpbuf) == NULL)
 		return -1;
-	if (!zbuf->size && b_alloc(&zbuf) == NULL)
+	if (!zbuf.size && b_alloc(&zbuf) == NULL)
 		return -1;
 	return 0;
 }
@@ -78,9 +97,9 @@ comp_flt_init_per_thread(struct proxy *px, struct flt_conf *fconf)
 static void
 comp_flt_deinit_per_thread(struct proxy *px, struct flt_conf *fconf)
 {
-	if (tmpbuf->size)
+	if (tmpbuf.size)
 		b_free(&tmpbuf);
-	if (zbuf->size)
+	if (zbuf.size)
 		b_free(&zbuf);
 }
 
@@ -144,8 +163,11 @@ comp_http_headers(struct stream *s, struct filter *filter, struct http_msg *msg)
 		/* Response headers have already been checked in
 		 * comp_http_post_analyze callback. */
 		if (st->comp_algo) {
+			if (!set_compression_response_header(st, s, msg))
+				goto end;
 			register_data_filter(s, msg->chn, filter);
-			st->hdrs_len = s->txn->rsp.sov;
+			if (!IS_HTX_STRM(s))
+				st->hdrs_len = s->txn->rsp.sov;
 		}
 	}
 
@@ -174,25 +196,131 @@ comp_http_post_analyze(struct stream *s, struct filter *filter,
 }
 
 static int
+comp_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg,
+		  unsigned int offset, unsigned int len)
+{
+	struct comp_state *st = filter->ctx;
+	struct htx *htx = htxbuf(&msg->chn->buf);
+	struct htx_blk *blk;
+	struct htx_ret htx_ret;
+	int ret, consumed = 0, to_forward = 0;
+
+	htx_ret = htx_find_blk(htx, offset);
+	blk = htx_ret.blk;
+	offset = htx_ret.ret;
+
+	while (blk && len) {
+		enum htx_blk_type type = htx_get_blk_type(blk);
+		uint32_t sz = htx_get_blksz(blk);
+		struct ist v;
+
+		switch (type) {
+			case HTX_BLK_UNUSED:
+				break;
+
+			case HTX_BLK_DATA:
+				v = htx_get_blk_value(htx, blk);
+				v.ptr += offset;
+				v.len -= offset;
+				if (v.len > len)
+					v.len = len;
+				if (htx_compression_buffer_init(htx, &trash) < 0) {
+					msg->chn->flags |= CF_WAKE_WRITE;
+					goto end;
+				}
+				ret = htx_compression_buffer_add_data(st, v.ptr, v.len, &trash);
+				if (ret < 0)
+					goto error;
+				if (htx_compression_buffer_end(st, &trash, 0) < 0)
+					goto error;
+				len -= ret;
+				consumed += ret;
+				to_forward += b_data(&trash);
+				if (ret == sz && !b_data(&trash)) {
+					offset = 0;
+					blk = htx_remove_blk(htx, blk);
+					continue;
+				}
+				v.len = ret;
+				blk = htx_replace_blk_value(htx, blk, v, ist2(b_head(&trash), b_data(&trash)));
+				break;
+
+			case HTX_BLK_EOD:
+			case HTX_BLK_TLR:
+			case HTX_BLK_EOM:
+				if (msg->flags & HTTP_MSGF_COMPRESSING) {
+					if (htx_compression_buffer_init(htx, &trash) < 0) {
+						msg->chn->flags |= CF_WAKE_WRITE;
+						goto end;
+					}
+					if (htx_compression_buffer_end(st, &trash, 1) < 0)
+						goto error;
+					if (b_data(&trash)) {
+						blk = htx_add_data_before(htx, blk, ist2(b_head(&trash), b_data(&trash)));
+						if (!blk)
+							goto error;
+						to_forward += b_data(&trash);
+					}
+					msg->flags &= ~HTTP_MSGF_COMPRESSING;
+					/* We let the mux add last empty chunk and empty trailers */
+				}
+				/* fall through */
+
+			default:
+				sz -= offset;
+				if (sz > len)
+					sz = len;
+				consumed += sz;
+				to_forward += sz;
+				len -= sz;
+				break;
+		}
+
+		offset = 0;
+		blk  = htx_get_next_blk(htx, blk);
+	}
+
+  end:
+	if (to_forward != consumed)
+		flt_update_offsets(filter, msg->chn, to_forward - consumed);
+
+	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
+		update_freq_ctr(&global.comp_bps_in, consumed);
+		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_in, consumed);
+		HA_ATOMIC_ADD(&s->be->be_counters.comp_in, consumed);
+		update_freq_ctr(&global.comp_bps_out, to_forward);
+		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_out, to_forward);
+		HA_ATOMIC_ADD(&s->be->be_counters.comp_out, to_forward);
+	} else {
+		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_byp, consumed);
+		HA_ATOMIC_ADD(&s->be->be_counters.comp_byp, consumed);
+	}
+	return to_forward;
+
+  error:
+	return -1;
+}
+
+static int
 comp_http_data(struct stream *s, struct filter *filter, struct http_msg *msg)
 {
 	struct comp_state *st = filter->ctx;
-	struct buffer     *buf = msg->chn->buf;
+	struct channel    *chn = msg->chn;
 	unsigned int      *nxt = &flt_rsp_nxt(filter);
 	unsigned int       len;
 	int                ret;
 
-	len = MIN(msg->chunk_len + msg->next, buf->i) - *nxt;
+	len = MIN(msg->chunk_len + msg->next, ci_data(chn)) - *nxt;
 	if (!len)
 		return len;
 
 	if (!st->initialized) {
 		unsigned int fwd = flt_rsp_fwd(filter) + st->hdrs_len;
 
-		b_reset(tmpbuf);
-		b_adv(buf, fwd);
-		ret = http_compression_buffer_init(buf, zbuf);
-		b_rew(buf, fwd);
+		b_reset(&tmpbuf);
+		c_adv(chn, fwd);
+		ret = http_compression_buffer_init(chn, &zbuf);
+		c_rew(chn, fwd);
 		if (ret < 0) {
 			msg->chn->flags |= CF_WAKE_WRITE;
 			return 0;
@@ -202,22 +330,22 @@ comp_http_data(struct stream *s, struct filter *filter, struct http_msg *msg)
 	if (msg->flags & HTTP_MSGF_TE_CHNK) {
 		int block;
 
-		len = MIN(tmpbuf->size - buffer_len(tmpbuf), len);
+		len = MIN(b_room(&tmpbuf), len);
 
-		b_adv(buf, *nxt);
-		block = bi_contig_data(buf);
-		memcpy(bi_end(tmpbuf), bi_ptr(buf), block);
+		c_adv(chn, *nxt);
+		block = ci_contig_data(chn);
+		memcpy(b_tail(&tmpbuf), ci_head(chn), block);
 		if (len > block)
-			memcpy(bi_end(tmpbuf)+block, buf->data, len-block);
-		b_rew(buf, *nxt);
+			memcpy(b_tail(&tmpbuf)+block, b_orig(&chn->buf), len-block);
+		c_rew(chn, *nxt);
 
-		tmpbuf->i += len;
+		b_add(&tmpbuf, len);
 		ret        = len;
 	}
 	else {
-		b_adv(buf, *nxt);
-		ret = http_compression_buffer_add_data(st, buf, zbuf, len);
-		b_rew(buf, *nxt);
+		c_adv(chn, *nxt);
+		ret = http_compression_buffer_add_data(st, &chn->buf, co_data(chn), &zbuf, len);
+		c_rew(chn, *nxt);
 		if (ret < 0)
 			return ret;
 	}
@@ -237,13 +365,13 @@ comp_http_chunk_trailers(struct stream *s, struct filter *filter,
 
 	if (!st->initialized) {
 		if (!st->finished) {
-			struct buffer *buf = msg->chn->buf;
+			struct channel *chn = msg->chn;
 			unsigned int   fwd = flt_rsp_fwd(filter) + st->hdrs_len;
 
-			b_reset(tmpbuf);
-			b_adv(buf, fwd);
-			http_compression_buffer_init(buf, zbuf);
-			b_rew(buf, fwd);
+			b_reset(&tmpbuf);
+			c_adv(chn, fwd);
+			http_compression_buffer_init(chn, &zbuf);
+			c_rew(chn, fwd);
 			st->initialized = 1;
 		}
 	}
@@ -267,7 +395,7 @@ comp_http_forward_data(struct stream *s, struct filter *filter,
 
 	if (!st->initialized) {
 		if (!len) {
-			/* Nothing to foward */
+			/* Nothing to forward */
 			ret = len;
 		}
 		else if (st->hdrs_len > len) {
@@ -296,18 +424,19 @@ comp_http_forward_data(struct stream *s, struct filter *filter,
 	}
 
 	if (msg->flags & HTTP_MSGF_TE_CHNK) {
-		ret = http_compression_buffer_add_data(st, tmpbuf, zbuf, tmpbuf->i);
-		if (ret != tmpbuf->i) {
-			ha_warning("HTTP compression failed: Must consume %d bytes but only %d bytes consumed\n",
-				   tmpbuf->i, ret);
+		ret = http_compression_buffer_add_data(st, &tmpbuf, 0,
+		    &zbuf, b_data(&tmpbuf));
+		if (ret != b_data(&tmpbuf)) {
+			ha_warning("HTTP compression failed: Must consume %u bytes but only %d bytes consumed\n",
+				   (unsigned int)b_data(&tmpbuf), ret);
 			return -1;
 		}
 	}
 
 	st->consumed = len - st->hdrs_len - st->tlrs_len;
-	b_adv(msg->chn->buf, flt_rsp_fwd(filter) + st->hdrs_len);
-	ret = http_compression_buffer_end(st, s, &msg->chn->buf, &zbuf, msg->msg_state >= HTTP_MSG_TRAILERS);
-	b_rew(msg->chn->buf, flt_rsp_fwd(filter) + st->hdrs_len);
+	c_adv(msg->chn, flt_rsp_fwd(filter) + st->hdrs_len);
+	ret = http_compression_buffer_end(st, s, msg->chn, &zbuf, msg->msg_state >= HTTP_MSG_TRAILERS);
+	c_rew(msg->chn, flt_rsp_fwd(filter) + st->hdrs_len);
 	if (ret < 0)
 		return ret;
 
@@ -339,15 +468,138 @@ comp_http_end(struct stream *s, struct filter *filter,
 	return 1;
 }
 /***********************************************************************/
+static int
+http_set_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg *msg)
+{
+	struct http_txn *txn = s->txn;
+	struct hdr_ctx ctx;
+
+	/*
+	 * Add Content-Encoding header when it's not identity encoding.
+         * RFC 2616 : Identity encoding: This content-coding is used only in the
+	 * Accept-Encoding header, and SHOULD NOT be used in the Content-Encoding
+	 * header.
+	 */
+	if (st->comp_algo->cfg_name_len != 8 || memcmp(st->comp_algo->cfg_name, "identity", 8) != 0) {
+		trash.data = 18;
+		memcpy(trash.area, "Content-Encoding: ", trash.data);
+		memcpy(trash.area + trash.data, st->comp_algo->ua_name,
+		       st->comp_algo->ua_name_len);
+		trash.data += st->comp_algo->ua_name_len;
+		trash.area[trash.data] = '\0';
+		if (http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data) < 0)
+			goto error;
+	}
+
+	/* remove Content-Length header */
+	if (msg->flags & HTTP_MSGF_CNT_LEN) {
+		ctx.idx = 0;
+		while (http_find_header2("Content-Length", 14, ci_head(&s->res), &txn->hdr_idx, &ctx))
+			http_remove_header2(msg, &txn->hdr_idx, &ctx);
+	}
+
+	/* add Transfer-Encoding header */
+	if (!(msg->flags & HTTP_MSGF_TE_CHNK)) {
+		if (http_header_add_tail2(msg, &txn->hdr_idx, "Transfer-Encoding: chunked", 26) < 0)
+			goto error;
+	}
+
+	ctx.idx = 0;
+	if (http_find_full_header2("ETag", 4, ci_head(&s->res), &txn->hdr_idx, &ctx)) {
+		if (ctx.line[ctx.val] == '"') {
+			/* This a strong ETag. Convert it to a weak one. */
+			trash.data = 8;
+			if (trash.data + ctx.vlen > trash.size)
+				goto error;
+			memcpy(trash.area, "ETag: W/", trash.data);
+			memcpy(trash.area + trash.data, ctx.line + ctx.val, ctx.vlen);
+			trash.data += ctx.vlen;
+			trash.area[trash.data] = '\0';
+			http_remove_header2(msg, &txn->hdr_idx, &ctx);
+			if (http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data) < 0)
+				goto error;
+		}
+	}
+
+	return 1;
+
+  error:
+	st->comp_algo->end(&st->comp_ctx);
+	st->comp_algo = NULL;
+	return 0;
+}
+
+static int
+htx_set_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg *msg)
+{
+	struct htx *htx = htxbuf(&msg->chn->buf);
+	struct http_hdr_ctx ctx;
+
+	/*
+	 * Add Content-Encoding header when it's not identity encoding.
+	 * RFC 2616 : Identity encoding: This content-coding is used only in the
+	 * Accept-Encoding header, and SHOULD NOT be used in the Content-Encoding
+	 * header.
+	 */
+	if (st->comp_algo->cfg_name_len != 8 || memcmp(st->comp_algo->cfg_name, "identity", 8) != 0) {
+		struct ist v = ist2(st->comp_algo->ua_name, st->comp_algo->ua_name_len);
+
+		if (!http_add_header(htx, ist("Content-Encoding"), v))
+			goto error;
+	}
+
+	/* remove Content-Length header */
+	if (msg->flags & HTTP_MSGF_CNT_LEN) {
+		ctx.blk = NULL;
+		while (http_find_header(htx, ist("Content-Length"), &ctx, 1))
+			http_remove_header(htx, &ctx);
+	}
+
+	/* add "Transfer-Encoding: chunked" header */
+	if (!(msg->flags & HTTP_MSGF_TE_CHNK)) {
+		if (!http_add_header(htx, ist("Transfer-Encoding"), ist("chunked")))
+			goto error;
+	}
+
+	/* convert "ETag" header to a weak ETag */
+	ctx.blk = NULL;
+	if (http_find_header(htx, ist("ETag"), &ctx, 1)) {
+		if (ctx.value.ptr[0] == '"') {
+			/* This a strong ETag. Convert it to a weak one. */
+			struct ist v = ist2(trash.area, 0);
+			if (istcat(&v, ist("W/"), trash.size) == -1 || istcat(&v, ctx.value, trash.size) == -1)
+				goto error;
+
+			if (!http_replace_header_value(htx, &ctx, v))
+				goto error;
+		}
+	}
+
+	return 1;
+
+  error:
+	st->comp_algo->end(&st->comp_ctx);
+	st->comp_algo = NULL;
+	return 0;
+}
+
+static int
+set_compression_response_header(struct comp_state *st, struct stream *s, struct http_msg *msg)
+{
+	if (IS_HTX_STRM(s))
+		return htx_set_comp_reshdr(st, s, msg);
+	else
+		return http_set_comp_reshdr(st, s, msg);
+}
+
 /*
  * Selects a compression algorithm depending on the client request.
  */
-int
-select_compression_request_header(struct comp_state *st, struct stream *s,
-				  struct http_msg *msg)
+static int
+http_select_comp_reqhdr(struct comp_state *st, struct stream *s, struct http_msg *msg)
 {
 	struct http_txn *txn = s->txn;
-	struct buffer *req = msg->chn->buf;
+	struct channel *req = msg->chn;
 	struct hdr_ctx ctx;
 	struct comp_algo *comp_algo = NULL;
 	struct comp_algo *comp_algo_back = NULL;
@@ -357,7 +609,7 @@ select_compression_request_header(struct comp_state *st, struct stream *s,
 	 * See http://zoompf.com/2012/02/lose-the-wait-http-compression for more details.
 	 */
 	ctx.idx = 0;
-	if (http_find_header2("User-Agent", 10, req->p, &txn->hdr_idx, &ctx) &&
+	if (http_find_header2("User-Agent", 10, ci_head(req), &txn->hdr_idx, &ctx) &&
 	    ctx.vlen >= 9 &&
 	    memcmp(ctx.line + ctx.val, "Mozilla/4", 9) == 0 &&
 	    (ctx.vlen < 31 ||
@@ -375,7 +627,7 @@ select_compression_request_header(struct comp_state *st, struct stream *s,
 		int best_q = 0;
 
 		ctx.idx = 0;
-		while (http_find_header2("Accept-Encoding", 15, req->p, &txn->hdr_idx, &ctx)) {
+		while (http_find_header2("Accept-Encoding", 15, ci_head(req), &txn->hdr_idx, &ctx)) {
 			const char *qval;
 			int q;
 			int toklen;
@@ -411,7 +663,7 @@ select_compression_request_header(struct comp_state *st, struct stream *s,
 			}
 
 			/* here we have qval pointing to the first "q=" attribute or NULL if not found */
-			q = qval ? parse_qvalue(qval + 2, NULL) : 1000;
+			q = qval ? http_parse_qvalue(qval + 2, NULL) : 1000;
 
 			if (q <= best_q)
 				continue;
@@ -433,7 +685,7 @@ select_compression_request_header(struct comp_state *st, struct stream *s,
 		    (strm_fe(s)->comp && strm_fe(s)->comp->offload)) {
 			http_remove_header2(msg, &txn->hdr_idx, &ctx);
 			ctx.idx = 0;
-			while (http_find_header2("Accept-Encoding", 15, req->p, &txn->hdr_idx, &ctx)) {
+			while (http_find_header2("Accept-Encoding", 15, ci_head(req), &txn->hdr_idx, &ctx)) {
 				http_remove_header2(msg, &txn->hdr_idx, &ctx);
 			}
 		}
@@ -455,20 +707,143 @@ select_compression_request_header(struct comp_state *st, struct stream *s,
 	return 0;
 }
 
+static int
+htx_select_comp_reqhdr(struct comp_state *st, struct stream *s, struct http_msg *msg)
+{
+	struct htx *htx = htxbuf(&msg->chn->buf);
+	struct http_hdr_ctx ctx;
+	struct comp_algo *comp_algo = NULL;
+	struct comp_algo *comp_algo_back = NULL;
+
+	/* Disable compression for older user agents announcing themselves as "Mozilla/4"
+	 * unless they are known good (MSIE 6 with XP SP2, or MSIE 7 and later).
+	 * See http://zoompf.com/2012/02/lose-the-wait-http-compression for more details.
+	 */
+	ctx.blk = NULL;
+	if (http_find_header(htx, ist("User-Agent"), &ctx, 1) &&
+	    ctx.value.len >= 9 &&
+	    memcmp(ctx.value.ptr, "Mozilla/4", 9) == 0 &&
+	    (ctx.value.len < 31 ||
+	     memcmp(ctx.value.ptr + 25, "MSIE ", 5) != 0 ||
+	     *(ctx.value.ptr + 30) < '6' ||
+	     (*(ctx.value.ptr + 30) == '6' &&
+	      (ctx.value.len < 54 || memcmp(ctx.value.ptr + 51, "SV1", 3) != 0)))) {
+		st->comp_algo = NULL;
+		return 0;
+	}
+
+	/* search for the algo in the backend in priority or the frontend */
+	if ((s->be->comp && (comp_algo_back = s->be->comp->algos)) ||
+	    (strm_fe(s)->comp && (comp_algo_back = strm_fe(s)->comp->algos))) {
+		int best_q = 0;
+
+		ctx.blk = NULL;
+		while (http_find_header(htx, ist("Accept-Encoding"), &ctx, 0)) {
+			const char *qval;
+			int q;
+			int toklen;
+
+			/* try to isolate the token from the optional q-value */
+			toklen = 0;
+			while (toklen < ctx.value.len && HTTP_IS_TOKEN(*(ctx.value.ptr + toklen)))
+				toklen++;
+
+			qval = ctx.value.ptr + toklen;
+			while (1) {
+				while (qval < ctx.value.ptr + ctx.value.len && HTTP_IS_LWS(*qval))
+					qval++;
+
+				if (qval >= ctx.value.ptr + ctx.value.len || *qval != ';') {
+					qval = NULL;
+					break;
+				}
+				qval++;
+
+				while (qval < ctx.value.ptr + ctx.value.len && HTTP_IS_LWS(*qval))
+					qval++;
+
+				if (qval >= ctx.value.ptr + ctx.value.len) {
+					qval = NULL;
+					break;
+				}
+				if (strncmp(qval, "q=", MIN(ctx.value.ptr + ctx.value.len - qval, 2)) == 0)
+					break;
+
+				while (qval < ctx.value.ptr + ctx.value.len && *qval != ';')
+					qval++;
+			}
+
+			/* here we have qval pointing to the first "q=" attribute or NULL if not found */
+			q = qval ? http_parse_qvalue(qval + 2, NULL) : 1000;
+
+			if (q <= best_q)
+				continue;
+
+			for (comp_algo = comp_algo_back; comp_algo; comp_algo = comp_algo->next) {
+				if (*(ctx.value.ptr) == '*' ||
+				    word_match(ctx.value.ptr, toklen, comp_algo->ua_name, comp_algo->ua_name_len)) {
+					st->comp_algo = comp_algo;
+					best_q = q;
+					break;
+				}
+			}
+		}
+	}
+
+	/* remove all occurrences of the header when "compression offload" is set */
+	if (st->comp_algo) {
+		if ((s->be->comp && s->be->comp->offload) ||
+		    (strm_fe(s)->comp && strm_fe(s)->comp->offload)) {
+			http_remove_header(htx, &ctx);
+			ctx.blk = NULL;
+			while (http_find_header(htx, ist("Accept-Encoding"), &ctx, 1))
+				http_remove_header(htx, &ctx);
+		}
+		return 1;
+	}
+
+	/* identity is implicit does not require headers */
+	if ((s->be->comp && (comp_algo_back = s->be->comp->algos)) ||
+	    (strm_fe(s)->comp && (comp_algo_back = strm_fe(s)->comp->algos))) {
+		for (comp_algo = comp_algo_back; comp_algo; comp_algo = comp_algo->next) {
+			if (comp_algo->cfg_name_len == 8 && memcmp(comp_algo->cfg_name, "identity", 8) == 0) {
+				st->comp_algo = comp_algo;
+				return 1;
+			}
+		}
+	}
+
+	st->comp_algo = NULL;
+	return 0;
+}
+
+static int
+select_compression_request_header(struct comp_state *st, struct stream *s,
+				  struct http_msg *msg)
+{
+	if (IS_HTX_STRM(s))
+		return htx_select_comp_reqhdr(st, s, msg);
+	else
+		return http_select_comp_reqhdr(st, s, msg);
+}
 
 /*
  * Selects a comression algorithm depending of the server response.
  */
 static int
-select_compression_response_header(struct comp_state *st, struct stream *s, struct http_msg *msg)
+http_select_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg *msg)
 {
 	struct http_txn *txn = s->txn;
-	struct buffer *res = msg->chn->buf;
+	struct channel *c = msg->chn;
 	struct hdr_ctx ctx;
 	struct comp_type *comp_type;
 
 	/* no common compression algorithm was found in request header */
 	if (st->comp_algo == NULL)
+		goto fail;
+
+	/* compression already in progress */
+	if (msg->flags & HTTP_MSGF_COMPRESSING)
 		goto fail;
 
 	/* HTTP < 1.1 should not be compressed */
@@ -492,15 +867,30 @@ select_compression_response_header(struct comp_state *st, struct stream *s, stru
 
 	/* content is already compressed */
 	ctx.idx = 0;
-	if (http_find_header2("Content-Encoding", 16, res->p, &txn->hdr_idx, &ctx))
+	if (http_find_header2("Content-Encoding", 16, ci_head(c), &txn->hdr_idx, &ctx))
 		goto fail;
 
 	/* no compression when Cache-Control: no-transform is present in the message */
 	ctx.idx = 0;
-	while (http_find_header2("Cache-Control", 13, res->p, &txn->hdr_idx, &ctx)) {
+	while (http_find_header2("Cache-Control", 13, ci_head(c), &txn->hdr_idx, &ctx)) {
 		if (word_match(ctx.line + ctx.val, ctx.vlen, "no-transform", 12))
 			goto fail;
 	}
+
+	/* no compression when ETag is malformed */
+	ctx.idx = 0;
+	if (http_find_full_header2("ETag", 4, ci_head(c), &txn->hdr_idx, &ctx)) {
+		if (!(((ctx.vlen >= 4 && memcmp(ctx.line + ctx.val, "W/\"", 3) == 0) || /* Either a weak ETag */
+		       (ctx.vlen >= 2 && ctx.line[ctx.val] == '"')) &&                  /* or strong ETag */
+		      ctx.line[ctx.val + ctx.vlen - 1] == '"')) {
+			goto fail;
+		}
+	}
+	/* no compression when multiple ETags are present
+	 * Note: Do not reset ctx.idx!
+	 */
+	if (http_find_full_header2("ETag", 4, ci_head(c), &txn->hdr_idx, &ctx))
+		goto fail;
 
 	comp_type = NULL;
 
@@ -510,7 +900,7 @@ select_compression_response_header(struct comp_state *st, struct stream *s, stru
 	 * the priority.
 	 */
 	ctx.idx = 0;
-	if (http_find_header2("Content-Type", 12, res->p, &txn->hdr_idx, &ctx)) {
+	if (http_find_header2("Content-Type", 12, ci_head(c), &txn->hdr_idx, &ctx)) {
 		if (ctx.vlen >= 9 && strncasecmp("multipart", ctx.line+ctx.val, 9) == 0)
 			goto fail;
 
@@ -545,30 +935,6 @@ select_compression_response_header(struct comp_state *st, struct stream *s, stru
 	/* initialize compression */
 	if (st->comp_algo->init(&st->comp_ctx, global.tune.comp_maxlevel) < 0)
 		goto fail;
-
-	/* remove Content-Length header */
-	ctx.idx = 0;
-	if ((msg->flags & HTTP_MSGF_CNT_LEN) && http_find_header2("Content-Length", 14, res->p, &txn->hdr_idx, &ctx))
-		http_remove_header2(msg, &txn->hdr_idx, &ctx);
-
-	/* add Transfer-Encoding header */
-	if (!(msg->flags & HTTP_MSGF_TE_CHNK))
-		http_header_add_tail2(&txn->rsp, &txn->hdr_idx, "Transfer-Encoding: chunked", 26);
-
-	/*
-	 * Add Content-Encoding header when it's not identity encoding.
-         * RFC 2616 : Identity encoding: This content-coding is used only in the
-	 * Accept-Encoding header, and SHOULD NOT be used in the Content-Encoding
-	 * header.
-	 */
-	if (st->comp_algo->cfg_name_len != 8 || memcmp(st->comp_algo->cfg_name, "identity", 8) != 0) {
-		trash.len = 18;
-		memcpy(trash.str, "Content-Encoding: ", trash.len);
-		memcpy(trash.str + trash.len, st->comp_algo->ua_name, st->comp_algo->ua_name_len);
-		trash.len += st->comp_algo->ua_name_len;
-		trash.str[trash.len] = '\0';
-		http_header_add_tail2(&txn->rsp, &txn->hdr_idx, trash.str, trash.len);
-	}
 	msg->flags |= HTTP_MSGF_COMPRESSING;
 	return 1;
 
@@ -577,6 +943,127 @@ fail:
 	return 0;
 }
 
+static int
+htx_select_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg *msg)
+{
+	struct htx *htx = htxbuf(&msg->chn->buf);
+	struct http_txn *txn = s->txn;
+	struct http_hdr_ctx ctx;
+	struct comp_type *comp_type;
+
+	/* no common compression algorithm was found in request header */
+	if (st->comp_algo == NULL)
+		goto fail;
+
+	/* compression already in progress */
+	if (msg->flags & HTTP_MSGF_COMPRESSING)
+		goto fail;
+
+	/* HTTP < 1.1 should not be compressed */
+	if (!(msg->flags & HTTP_MSGF_VER_11) || !(txn->req.flags & HTTP_MSGF_VER_11))
+		goto fail;
+
+	if (txn->meth == HTTP_METH_HEAD)
+		goto fail;
+
+	/* compress 200,201,202,203 responses only */
+	if ((txn->status != 200) &&
+	    (txn->status != 201) &&
+	    (txn->status != 202) &&
+	    (txn->status != 203))
+		goto fail;
+
+	if (!(msg->flags & HTTP_MSGF_XFER_LEN) || msg->flags & HTTP_MSGF_BODYLESS)
+		goto fail;
+
+	/* content is already compressed */
+	ctx.blk = NULL;
+	if (http_find_header(htx, ist("Content-Encoding"), &ctx, 1))
+		goto fail;
+
+	/* no compression when Cache-Control: no-transform is present in the message */
+	ctx.blk = NULL;
+	while (http_find_header(htx, ist("Cache-Control"), &ctx, 0)) {
+		if (word_match(ctx.value.ptr, ctx.value.len, "no-transform", 12))
+			goto fail;
+	}
+
+	/* no compression when ETag is malformed */
+	ctx.blk = NULL;
+	if (http_find_header(htx, ist("ETag"), &ctx, 1)) {
+		if (!(((ctx.value.len >= 4 && memcmp(ctx.value.ptr, "W/\"", 3) == 0) || /* Either a weak ETag */
+		       (ctx.value.len >= 2 && ctx.value.ptr[0] == '"')) &&              /* or strong ETag */
+		      ctx.value.ptr[ctx.value.len - 1] == '"')) {
+			goto fail;
+		}
+	}
+	/* no compression when multiple ETags are present
+	 * Note: Do not reset ctx.blk!
+	 */
+	if (http_find_header(htx, ist("ETag"), &ctx, 1))
+		goto fail;
+
+	comp_type = NULL;
+
+	/* we don't want to compress multipart content-types, nor content-types that are
+	 * not listed in the "compression type" directive if any. If no content-type was
+	 * found but configuration requires one, we don't compress either. Backend has
+	 * the priority.
+	 */
+	ctx.blk = NULL;
+	if (http_find_header(htx, ist("Content-Type"), &ctx, 1)) {
+		if (ctx.value.len >= 9 && strncasecmp("multipart", ctx.value.ptr, 9) == 0)
+			goto fail;
+
+		if ((s->be->comp && (comp_type = s->be->comp->types)) ||
+		    (strm_fe(s)->comp && (comp_type = strm_fe(s)->comp->types))) {
+			for (; comp_type; comp_type = comp_type->next) {
+				if (ctx.value.len >= comp_type->name_len &&
+				    strncasecmp(ctx.value.ptr, comp_type->name, comp_type->name_len) == 0)
+					/* this Content-Type should be compressed */
+					break;
+			}
+			/* this Content-Type should not be compressed */
+			if (comp_type == NULL)
+				goto fail;
+		}
+	}
+	else { /* no content-type header */
+		if ((s->be->comp && s->be->comp->types) ||
+		    (strm_fe(s)->comp && strm_fe(s)->comp->types))
+			goto fail; /* a content-type was required */
+	}
+
+	/* limit compression rate */
+	if (global.comp_rate_lim > 0)
+		if (read_freq_ctr(&global.comp_bps_in) > global.comp_rate_lim)
+			goto fail;
+
+	/* limit cpu usage */
+	if (idle_pct < compress_min_idle)
+		goto fail;
+
+	/* initialize compression */
+	if (st->comp_algo->init(&st->comp_ctx, global.tune.comp_maxlevel) < 0)
+		goto fail;
+	msg->flags |= HTTP_MSGF_COMPRESSING;
+	return 1;
+
+  deinit_comp_ctx:
+	st->comp_algo->end(&st->comp_ctx);
+  fail:
+	st->comp_algo = NULL;
+	return 0;
+}
+
+static int
+select_compression_response_header(struct comp_state *st, struct stream *s, struct http_msg *msg)
+{
+	if (IS_HTX_STRM(s))
+		return htx_select_comp_reshdr(st, s, msg);
+	else
+		return http_select_comp_reshdr(st, s, msg);
+}
 /***********************************************************************/
 /* emit the chunksize followed by a CRLF on the output and return the number of
  * bytes written. It goes backwards and starts with the byte before <end>. It
@@ -601,13 +1088,13 @@ http_emit_chunk_size(char *end, unsigned int chksz)
  * Init HTTP compression
  */
 static int
-http_compression_buffer_init(struct buffer *in, struct buffer *out)
+http_compression_buffer_init(struct channel *inc, struct buffer *out)
 {
 	/* output stream requires at least 10 bytes for the gzip header, plus
 	 * at least 8 bytes for the gzip trailer (crc+len), plus a possible
 	 * plus at most 5 bytes per 32kB block and 2 bytes to close the stream.
 	 */
-	if (in->size - buffer_len(in) < 20 + 5 * ((in->i + 32767) >> 15))
+	if (c_room(inc) < 20 + 5 * ((ci_data(inc) + 32767) >> 15))
 		return -1;
 
 	/* prepare an empty output buffer in which we reserve enough room for
@@ -616,9 +1103,20 @@ http_compression_buffer_init(struct buffer *in, struct buffer *out)
 	 * cancel the operation later, it's cheap.
 	 */
 	b_reset(out);
-	out->o = in->o;
-	out->p += out->o;
-	out->i = 10;
+	out->head += co_data(inc) + 10;
+	return 0;
+}
+
+static int
+htx_compression_buffer_init(struct htx *htx, struct buffer *out)
+{
+	/* output stream requires at least 10 bytes for the gzip header, plus
+	 * at least 8 bytes for the gzip trailer (crc+len), plus a possible
+	 * plus at most 5 bytes per 32kB block and 2 bytes to close the stream.
+	 */
+	if (htx_free_space(htx) < 20 + 5 * ((htx->data + 32767) >> 15))
+		return -1;
+	b_reset(out);
 	return 0;
 }
 
@@ -627,7 +1125,7 @@ http_compression_buffer_init(struct buffer *in, struct buffer *out)
  */
 static int
 http_compression_buffer_add_data(struct comp_state *st, struct buffer *in,
-				 struct buffer *out, int sz)
+				 int in_out, struct buffer *out, int sz)
 {
 	int consumed_data = 0;
 	int data_process_len;
@@ -640,18 +1138,18 @@ http_compression_buffer_add_data(struct comp_state *st, struct buffer *in,
 	 * data, and the available output buffer size. The compressors are
 	 * assumed to be able to process all the bytes we pass to them at
 	 * once. */
-	data_process_len = MIN(out->size - buffer_len(out), sz);
+	data_process_len = MIN(b_room(out), sz);
 
 	block1 = data_process_len;
-	if (block1 > bi_contig_data(in))
-		block1 = bi_contig_data(in);
+	if (block1 > b_contig_data(in, in_out))
+		block1 = b_contig_data(in, in_out);
 	block2 = data_process_len - block1;
 
 	/* compressors return < 0 upon error or the amount of bytes read */
-	consumed_data = st->comp_algo->add_data(st->comp_ctx, bi_ptr(in), block1, out);
+	consumed_data = st->comp_algo->add_data(st->comp_ctx, b_peek(in, in_out), block1, out);
 	if (consumed_data != block1 || !block2)
 		goto end;
-	consumed_data = st->comp_algo->add_data(st->comp_ctx, in->data, block2, out);
+	consumed_data = st->comp_algo->add_data(st->comp_ctx, b_orig(in), block2, out);
 	if (consumed_data < 0)
 		goto end;
 	consumed_data += block1;
@@ -660,16 +1158,23 @@ http_compression_buffer_add_data(struct comp_state *st, struct buffer *in,
 	return consumed_data;
 }
 
+static int
+htx_compression_buffer_add_data(struct comp_state *st, const char *data, size_t len,
+				struct buffer *out)
+{
+	return st->comp_algo->add_data(st->comp_ctx, data, len, out);
+}
+
 /*
  * Flush data in process, and write the header and footer of the chunk. Upon
  * success, in and out buffers are swapped to avoid a copy.
  */
 static int
 http_compression_buffer_end(struct comp_state *st, struct stream *s,
-			    struct buffer **in, struct buffer **out,
+			    struct channel *chn, struct buffer *out,
 			    int end)
 {
-	struct buffer *ib = *in, *ob = *out;
+	struct buffer tmp_buf;
 	char *tail;
 	int   to_forward, left;
 
@@ -678,22 +1183,22 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 
 	/* flush data here */
 	if (end)
-		ret = st->comp_algo->finish(st->comp_ctx, ob); /* end of data */
+		ret = st->comp_algo->finish(st->comp_ctx, out); /* end of data */
 	else
-		ret = st->comp_algo->flush(st->comp_ctx, ob); /* end of buffer */
+		ret = st->comp_algo->flush(st->comp_ctx, out); /* end of buffer */
 
 	if (ret < 0)
 		return -1; /* flush failed */
 
 #endif /* USE_ZLIB */
-	if (ob->i == 10) {
+	if (b_data(out) == 0) {
 		/* No data were appended, let's drop the output buffer and
 		 * keep the input buffer unchanged.
 		 */
 		return 0;
 	}
 
-	/* OK so at this stage, we have an output buffer <ob> looking like this :
+	/* OK so at this stage, we have an output buffer <out> looking like this :
 	 *
 	 *        <-- o --> <------ i ----->
 	 *       +---------+---+------------+-----------+
@@ -701,32 +1206,38 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 	 *       +---------+---+------------+-----------+
 	 *     data        p                           size
 	 *
-	 * <out> is the room reserved to copy ib->o. It starts at ob->data and
-	 * has not yet been filled. <c> is the room reserved to write the chunk
-	 * size (10 bytes). <comp_in> is the compressed equivalent of the data
-	 * part of ib->i. <empty> is the amount of empty bytes at the end of
-	 * the buffer, into which we may have to copy the remaining bytes from
-	 * ib->i after the data (chunk size, trailers, ...).
+	 * <out> is the room reserved to copy the channel output. It starts at
+	 * out->area and has not yet been filled. <c> is the room reserved to
+	 * write the chunk size (10 bytes). <comp_in> is the compressed
+	 * equivalent of the data part of ib->len. <empty> is the amount of
+	 * empty bytes at the end of  the buffer, into which we may have to
+	 * copy the remaining bytes from ib->len after the data
+	 * (chunk size, trailers, ...).
 	 */
 
-	/* Write real size at the begining of the chunk, no need of wrapping.
-	 * We write the chunk using a dynamic length and adjust ob->p and ob->i
+	/* Write real size at the beginning of the chunk, no need of wrapping.
+	 * We write the chunk using a dynamic length and adjust out->p and out->i
 	 * accordingly afterwards. That will move <out> away from <data>.
 	 */
-	left = 10 - http_emit_chunk_size(ob->p + 10, ob->i - 10);
-	ob->p += left;
-	ob->i -= left;
+	left = http_emit_chunk_size(b_head(out), b_data(out));
+	b_add(out, left);
+	out->head -= co_data(chn) + (left);
+	/* Copy previous data from chn into out */
+	if (co_data(chn) > 0) {
+		left = b_contig_data(&chn->buf, 0);
+		if (left > co_data(chn))
+			left = co_data(chn);
 
-	/* Copy previous data from ib->o into ob->o */
-	if (ib->o > 0) {
-		left = bo_contig_data(ib);
-		memcpy(ob->p - ob->o, bo_ptr(ib), left);
-		if (ib->o - left) /* second part of the buffer */
-			memcpy(ob->p - ob->o + left, ib->data, ib->o - left);
+		memcpy(b_head(out), co_head(chn), left);
+		b_add(out, left);
+		if (co_data(chn) - left) {/* second part of the buffer */
+			memcpy(b_head(out) + left, b_orig(&chn->buf), co_data(chn) - left);
+			b_add(out, co_data(chn) - left);
+		}
 	}
 
 	/* chunked encoding requires CRLF after data */
-	tail = ob->p + ob->i;
+	tail = b_tail(out);
 	*tail++ = '\r';
 	*tail++ = '\n';
 
@@ -748,8 +1259,8 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 		}
 	}
 
-	ob->i = tail - ob->p;
-	to_forward = ob->i;
+	b_add(out, tail - b_tail(out));
+	to_forward = b_data(out) - co_data(chn);
 
 	/* update input rate */
 	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
@@ -762,21 +1273,22 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 	}
 
 	/* copy the remaining data in the tmp buffer. */
-	b_adv(ib, st->consumed);
-	if (ib->i > 0) {
-		left = bi_contig_data(ib);
-		memcpy(ob->p + ob->i, bi_ptr(ib), left);
-		ob->i += left;
-		if (ib->i - left) {
-			memcpy(ob->p + ob->i, ib->data, ib->i - left);
-			ob->i += ib->i - left;
+	c_adv(chn, st->consumed);
+	if (b_data(&chn->buf) - co_data(chn) > 0) {
+		left = ci_contig_data(chn);
+		memcpy(b_tail(out), ci_head(chn), left);
+		b_add(out, left);
+		if (b_data(&chn->buf) - (co_data(chn) + left)) {
+			memcpy(b_tail(out), b_orig(&chn->buf), b_data(&chn->buf) - left);
+			b_add(out, b_data(&chn->buf) - left);
 		}
 	}
+	c_rew(chn, st->consumed);
 
 	/* swap the buffers */
-	*in = ob;
-	*out = ib;
-
+	tmp_buf = chn->buf;
+	chn->buf = *out;
+	*out = tmp_buf;
 
 	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
 		update_freq_ctr(&global.comp_bps_out, to_forward);
@@ -787,9 +1299,19 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 	return to_forward;
 }
 
+static int
+htx_compression_buffer_end(struct comp_state *st, struct buffer *out, int end)
+{
+	if (end)
+		return st->comp_algo->finish(st->comp_ctx, out);
+	else
+		return st->comp_algo->flush(st->comp_ctx, out);
+}
+
 
 /***********************************************************************/
 struct flt_ops comp_ops = {
+	.init              = comp_flt_init,
 	.init_per_thread   = comp_flt_init_per_thread,
 	.deinit_per_thread = comp_flt_deinit_per_thread,
 
@@ -798,10 +1320,12 @@ struct flt_ops comp_ops = {
 	.channel_post_analyze  = comp_http_post_analyze,
 
 	.http_headers          = comp_http_headers,
+	.http_payload          = comp_http_payload,
+	.http_end              = comp_http_end,
+
 	.http_data             = comp_http_data,
 	.http_chunk_trailers   = comp_http_chunk_trailers,
 	.http_forward_data     = comp_http_forward_data,
-	.http_end              = comp_http_end,
 };
 
 static int
@@ -891,9 +1415,11 @@ parse_http_comp_flt(char **args, int *cur_arg, struct proxy *px,
 
 
 int
-check_legacy_http_comp_flt(struct proxy *proxy)
+check_implicit_http_comp_flt(struct proxy *proxy)
 {
 	struct flt_conf *fconf;
+	int explicit = 0;
+	int comp = 0;
 	int err = 0;
 
 	if (proxy->comp == NULL)
@@ -901,14 +1427,31 @@ check_legacy_http_comp_flt(struct proxy *proxy)
 	if (!LIST_ISEMPTY(&proxy->filter_configs)) {
 		list_for_each_entry(fconf, &proxy->filter_configs, list) {
 			if (fconf->id == http_comp_flt_id)
-				goto end;
+				comp = 1;
+			else if (fconf->id == cache_store_flt_id) {
+				if (comp) {
+					ha_alert("config: %s '%s': unable to enable the compression filter "
+						 "before any cache filter.\n",
+						 proxy_type_str(proxy), proxy->id);
+					err++;
+					goto end;
+				}
+			}
+			else
+				explicit = 1;
 		}
-		ha_alert("config: %s '%s': require an explicit filter declaration to use HTTP compression\n",
-			 proxy_type_str(proxy), proxy->id);
+	}
+	if (comp)
+		goto end;
+	else if (explicit) {
+		ha_alert("config: %s '%s': require an explicit filter declaration to use "
+			 "HTTP compression\n", proxy_type_str(proxy), proxy->id);
 		err++;
 		goto end;
 	}
 
+	/* Implicit declaration of the compression filter is always the last
+	 * one */
 	fconf = calloc(1, sizeof(*fconf));
 	if (!fconf) {
 		ha_alert("config: %s '%s': out of memory\n",
@@ -920,7 +1463,6 @@ check_legacy_http_comp_flt(struct proxy *proxy)
 	fconf->conf = NULL;
 	fconf->ops  = &comp_ops;
 	LIST_ADDQ(&proxy->filter_configs, &fconf->list);
-
  end:
 	return err;
 }
@@ -963,8 +1505,8 @@ smp_fetch_res_comp_algo(const struct arg *args, struct sample *smp,
 
 		smp->data.type = SMP_T_STR;
 		smp->flags = SMP_F_CONST;
-		smp->data.u.str.str = st->comp_algo->cfg_name;
-		smp->data.u.str.len = st->comp_algo->cfg_name_len;
+		smp->data.u.str.area = st->comp_algo->cfg_name;
+		smp->data.u.str.data = st->comp_algo->cfg_name_len;
 		return 1;
 	}
 	return 0;
@@ -977,12 +1519,16 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 	}
 };
 
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
+
 /* Declare the filter parser for "compression" keyword */
 static struct flt_kw_list filter_kws = { "COMP", { }, {
 		{ "compression", parse_http_comp_flt, NULL },
 		{ NULL, NULL, NULL },
 	}
 };
+
+INITCALL1(STG_REGISTER, flt_register_keywords, &filter_kws);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
@@ -992,12 +1538,4 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	}
 };
 
-__attribute__((constructor))
-static void
-__flt_http_comp_init(void)
-{
-	cfg_register_keywords(&cfg_kws);
-	flt_register_keywords(&filter_kws);
-	sample_register_fetches(&sample_fetch_keywords);
-	pool_head_comp_state = create_pool("comp_state", sizeof(struct comp_state), MEM_F_SHARED);
-}
+INITCALL1(STG_REGISTER, sample_register_fetches, &sample_fetch_keywords);

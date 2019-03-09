@@ -36,6 +36,7 @@
 #include <common/config.h>
 #include <common/debug.h>
 #include <common/errors.h>
+#include <common/initcall.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/namespace.h>
@@ -49,6 +50,7 @@
 #include <proto/channel.h>
 #include <proto/connection.h>
 #include <proto/fd.h>
+#include <proto/http_rules.h>
 #include <proto/listener.h>
 #include <proto/log.h>
 #include <proto/port_range.h>
@@ -83,12 +85,13 @@ static struct protocol proto_tcpv4 = {
 	.enable_all = enable_all_listeners,
 	.get_src = tcp_get_src,
 	.get_dst = tcp_get_dst,
-	.drain = tcp_drain,
 	.pause = tcp_pause_listener,
 	.add = tcpv4_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_tcpv4.listeners),
 	.nb_listeners = 0,
 };
+
+INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv4);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_tcpv6 = {
@@ -107,12 +110,13 @@ static struct protocol proto_tcpv6 = {
 	.enable_all = enable_all_listeners,
 	.get_src = tcp_get_src,
 	.get_dst = tcp_get_dst,
-	.drain = tcp_drain,
 	.pause = tcp_pause_listener,
 	.add = tcpv6_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_tcpv6.listeners),
 	.nb_listeners = 0,
 };
+
+INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv6);
 
 /* Default TCP parameters, got by opening a temporary TCP socket. */
 #ifdef TCP_MAXSEG
@@ -290,7 +294,7 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 	struct proxy *be;
 	struct conn_src *src;
 
-	conn->flags = CO_FL_WAIT_L4_CONN; /* connection in progress */
+	conn->flags |= CO_FL_WAIT_L4_CONN; /* connection in progress */
 
 	switch (obj_type(conn->target)) {
 	case OBJ_TYPE_PROXY:
@@ -314,20 +318,20 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 		if (errno == ENFILE) {
 			conn->err_code = CO_ER_SYS_FDLIM;
 			send_log(be, LOG_EMERG,
-				 "Proxy %s reached system FD limit at %d. Please check system tunables.\n",
-				 be->id, maxfd);
+				 "Proxy %s reached system FD limit (maxsock=%d). Please check system tunables.\n",
+				 be->id, global.maxsock);
 		}
 		else if (errno == EMFILE) {
 			conn->err_code = CO_ER_PROC_FDLIM;
 			send_log(be, LOG_EMERG,
-				 "Proxy %s reached process FD limit at %d. Please check 'ulimit-n' and restart.\n",
-				 be->id, maxfd);
+				 "Proxy %s reached process FD limit (maxsock=%d). Please check 'ulimit-n' and restart.\n",
+				 be->id, global.maxsock);
 		}
 		else if (errno == ENOBUFS || errno == ENOMEM) {
 			conn->err_code = CO_ER_SYS_MEMLIM;
 			send_log(be, LOG_EMERG,
-				 "Proxy %s reached system memory limit at %d sockets. Please check system tunables.\n",
-				 be->id, maxfd);
+				 "Proxy %s reached system memory limit (maxsock=%d). Please check system tunables.\n",
+				 be->id, global.maxsock);
 		}
 		else if (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT) {
 			conn->err_code = CO_ER_NOPROTO;
@@ -354,6 +358,14 @@ int tcp_connect_server(struct connection *conn, int data, int delack)
 	if ((fcntl(fd, F_SETFL, O_NONBLOCK)==-1) ||
 	    (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == -1)) {
 		qfprintf(stderr,"Cannot set client socket to non blocking mode.\n");
+		close(fd);
+		conn->err_code = CO_ER_SOCK_ERR;
+		conn->flags |= CO_FL_ERROR;
+		return SF_ERR_INTERNAL;
+	}
+
+	if (master == 1 && (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1)) {
+		ha_alert("Cannot set CLOEXEC on client socket.\n");
 		close(fd);
 		conn->err_code = CO_ER_SOCK_ERR;
 		conn->flags |= CO_FL_ERROR;
@@ -614,48 +626,6 @@ int tcp_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir)
 #endif
 		return ret;
 	}
-}
-
-/* Tries to drain any pending incoming data from the socket to reach the
- * receive shutdown. Returns positive if the shutdown was found, negative
- * if EAGAIN was hit, otherwise zero. This is useful to decide whether we
- * can close a connection cleanly are we must kill it hard.
- */
-int tcp_drain(int fd)
-{
-	int turns = 2;
-	int len;
-
-	while (turns) {
-#ifdef MSG_TRUNC_CLEARS_INPUT
-		len = recv(fd, NULL, INT_MAX, MSG_DONTWAIT | MSG_NOSIGNAL | MSG_TRUNC);
-		if (len == -1 && errno == EFAULT)
-#endif
-			len = recv(fd, trash.str, trash.size, MSG_DONTWAIT | MSG_NOSIGNAL);
-
-		if (len == 0) {
-			/* cool, shutdown received */
-			fdtab[fd].linger_risk = 0;
-			return 1;
-		}
-
-		if (len < 0) {
-			if (errno == EAGAIN) {
-				/* connection not closed yet */
-				fd_cant_recv(fd);
-				return -1;
-			}
-			if (errno == EINTR)  /* oops, try again */
-				continue;
-			/* other errors indicate a dead connection, fine. */
-			fdtab[fd].linger_risk = 0;
-			return 1;
-		}
-		/* OK we read some data, let's try again once */
-		turns--;
-	}
-	/* some data are still present, give up */
-	return 0;
 }
 
 /* This is the callback which is set when a connection establishment is pending
@@ -1105,12 +1075,9 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 	listener->fd = fd;
 	listener->state = LI_LISTEN;
 
-	fdtab[fd].owner = listener; /* reference the listener instead of a task */
-	fdtab[fd].iocb = listener->proto->accept;
-	if (listener->bind_conf->bind_thread[relative_pid-1])
-		fd_insert(fd, listener->bind_conf->bind_thread[relative_pid-1]);
-	else
-		fd_insert(fd, MAX_THREADS_MASK);
+	fd_insert(fd, listener, listener->proto->accept,
+		  listener->bind_conf->bind_thread[relative_pid-1] ?
+		  listener->bind_conf->bind_thread[relative_pid-1] : MAX_THREADS_MASK);
 
  tcp_return:
 	if (msg && errlen) {
@@ -1580,11 +1547,11 @@ smp_fetch_dport(const struct arg *args, struct sample *smp, const char *kw, void
 
 #ifdef TCP_INFO
 
-/* Returns some tcp_info data is its avalaible. "dir" must be set to 0 if
- * the client connection is require, otherwise it is set to 1. "val" represents
+/* Returns some tcp_info data if it's available. "dir" must be set to 0 if
+ * the client connection is required, otherwise it is set to 1. "val" represents
  * the required value. Use 0 for rtt and 1 for rttavg. "unit" is the expected unit
  * by default, the rtt is in us. Id "unit" is set to 0, the unit is us, if it is
- * set to 1, the untis are milliseconds.
+ * set to 1, the units are milliseconds.
  * If the function fails it returns 0, otherwise it returns 1 and "result" is filled.
  */
 static inline int get_tcp_info(const struct arg *args, struct sample *smp,
@@ -1639,9 +1606,9 @@ static inline int get_tcp_info(const struct arg *args, struct sample *smp,
 	/* Convert the value as expected. */
 	if (args) {
 		if (args[0].type == ARGT_STR) {
-			if (strcmp(args[0].data.str.str, "us") == 0) {
+			if (strcmp(args[0].data.str.area, "us") == 0) {
 				/* Do nothing. */
-			} else if (strcmp(args[0].data.str.str, "ms") == 0) {
+			} else if (strcmp(args[0].data.str.area, "ms") == 0) {
 				smp->data.u.sint = (smp->data.u.sint + 500) / 1000;
 			} else
 				return 0;
@@ -1959,6 +1926,8 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	{ /* END */ },
 }};
 
+INITCALL1(STG_REGISTER, sample_register_fetches, &sample_fetch_keywords);
+
 /************************************************************************/
 /*           All supported bind keywords must be declared here.         */
 /************************************************************************/
@@ -2006,12 +1975,16 @@ static struct bind_kw_list bind_kws = { "TCP", { }, {
 	{ NULL, NULL, 0 },
 }};
 
+INITCALL1(STG_REGISTER, bind_register_keywords, &bind_kws);
+
 static struct srv_kw_list srv_kws = { "TCP", { }, {
 #ifdef TCP_USER_TIMEOUT
 	{ "tcp-ut",        srv_parse_tcp_ut,        1,  1 }, /* set TCP user timeout on server */
 #endif
 	{ NULL, NULL, 0 },
 }};
+
+INITCALL1(STG_REGISTER, srv_register_keywords, &srv_kws);
 
 static struct action_kw_list tcp_req_conn_actions = {ILH, {
 	{ "silent-drop",  tcp_parse_silent_drop },
@@ -2022,6 +1995,8 @@ static struct action_kw_list tcp_req_conn_actions = {ILH, {
 	{ /* END */ }
 }};
 
+INITCALL1(STG_REGISTER, tcp_req_conn_keywords_register, &tcp_req_conn_actions);
+
 static struct action_kw_list tcp_req_sess_actions = {ILH, {
 	{ "silent-drop",  tcp_parse_silent_drop },
 	{ "set-src",      tcp_parse_set_src_dst },
@@ -2031,15 +2006,21 @@ static struct action_kw_list tcp_req_sess_actions = {ILH, {
 	{ /* END */ }
 }};
 
+INITCALL1(STG_REGISTER, tcp_req_sess_keywords_register, &tcp_req_sess_actions);
+
 static struct action_kw_list tcp_req_cont_actions = {ILH, {
 	{ "silent-drop", tcp_parse_silent_drop },
 	{ /* END */ }
 }};
 
+INITCALL1(STG_REGISTER, tcp_req_cont_keywords_register, &tcp_req_cont_actions);
+
 static struct action_kw_list tcp_res_cont_actions = {ILH, {
 	{ "silent-drop", tcp_parse_silent_drop },
 	{ /* END */ }
 }};
+
+INITCALL1(STG_REGISTER, tcp_res_cont_keywords_register, &tcp_res_cont_actions);
 
 static struct action_kw_list http_req_actions = {ILH, {
 	{ "silent-drop",  tcp_parse_silent_drop },
@@ -2050,49 +2031,35 @@ static struct action_kw_list http_req_actions = {ILH, {
 	{ /* END */ }
 }};
 
+INITCALL1(STG_REGISTER, http_req_keywords_register, &http_req_actions);
+
 static struct action_kw_list http_res_actions = {ILH, {
 	{ "silent-drop", tcp_parse_silent_drop },
 	{ /* END */ }
 }};
 
+INITCALL1(STG_REGISTER, http_res_keywords_register, &http_res_actions);
 
-__attribute__((constructor))
-static void __tcp_protocol_init(void)
-{
-	protocol_register(&proto_tcpv4);
-	protocol_register(&proto_tcpv6);
-	sample_register_fetches(&sample_fetch_keywords);
-	bind_register_keywords(&bind_kws);
-	srv_register_keywords(&srv_kws);
-	tcp_req_conn_keywords_register(&tcp_req_conn_actions);
-	tcp_req_sess_keywords_register(&tcp_req_sess_actions);
-	tcp_req_cont_keywords_register(&tcp_req_cont_actions);
-	tcp_res_cont_keywords_register(&tcp_res_cont_actions);
-	http_req_keywords_register(&http_req_actions);
-	http_res_keywords_register(&http_res_actions);
-
-
-	hap_register_build_opts("Built with transparent proxy support using:"
+REGISTER_BUILD_OPTS("Built with transparent proxy support using:"
 #if defined(IP_TRANSPARENT)
-	       " IP_TRANSPARENT"
+		    " IP_TRANSPARENT"
 #endif
 #if defined(IPV6_TRANSPARENT)
-	       " IPV6_TRANSPARENT"
+		    " IPV6_TRANSPARENT"
 #endif
 #if defined(IP_FREEBIND)
-	       " IP_FREEBIND"
+		    " IP_FREEBIND"
 #endif
 #if defined(IP_BINDANY)
-	       " IP_BINDANY"
+		    " IP_BINDANY"
 #endif
 #if defined(IPV6_BINDANY)
-	       " IPV6_BINDANY"
+		    " IPV6_BINDANY"
 #endif
 #if defined(SO_BINDANY)
-	       " SO_BINDANY"
+		    " SO_BINDANY"
 #endif
-		"", 0);
-}
+		    "");
 
 
 /*

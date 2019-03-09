@@ -13,6 +13,7 @@
 #include <limits.h>
 #include <stdio.h>
 
+#include <common/initcall.h>
 #include <common/standard.h>
 
 #include <types/applet.h>
@@ -57,9 +58,9 @@ int map_parse_ip(const char *text, struct sample_data *data)
  */
 int map_parse_str(const char *text, struct sample_data *data)
 {
-	data->u.str.str = (char *)text;
-	data->u.str.len = strlen(text);
-	data->u.str.size = data->u.str.len + 1;
+	data->u.str.area = (char *)text;
+	data->u.str.data = strlen(text);
+	data->u.str.size = data->u.str.data + 1;
 	data->type = SMP_T_STR;
 	return 1;
 }
@@ -138,7 +139,7 @@ int sample_load_map(struct arg *arg, struct sample_conv *conv,
 	}
 
 	/* Load map. */
-	if (!pattern_read_from_file(&desc->pat, PAT_REF_MAP, arg[0].data.str.str, PAT_MF_NO_DNS,
+	if (!pattern_read_from_file(&desc->pat, PAT_REF_MAP, arg[0].data.str.area, PAT_MF_NO_DNS,
 	                            1, err, file, line))
 		return 0;
 
@@ -147,8 +148,9 @@ int sample_load_map(struct arg *arg, struct sample_conv *conv,
 	 */
 	if (desc->conv->out_type == SMP_T_ADDR) {
 		struct sample_data data;
-		if (!map_parse_ip(arg[1].data.str.str, &data)) {
-			memprintf(err, "map: cannot parse default ip <%s>.", arg[1].data.str.str);
+		if (!map_parse_ip(arg[1].data.str.area, &data)) {
+			memprintf(err, "map: cannot parse default ip <%s>.",
+				  arg[1].data.str.area);
 			return 0;
 		}
 		if (data.type == SMP_T_IPV4) {
@@ -171,7 +173,7 @@ static int sample_conv_map(const struct arg *arg_p, struct sample *smp, void *pr
 {
 	struct map_descriptor *desc;
 	struct pattern *pat;
-	struct chunk *str;
+	struct buffer *str;
 
 	/* get config */
 	desc = arg_p[0].data.map;
@@ -184,7 +186,8 @@ static int sample_conv_map(const struct arg *arg_p, struct sample *smp, void *pr
 		if (pat->data) {
 			/* In the regm case, merge the sample with the input. */
 			if ((long)private == PAT_MATCH_REGM) {
-				struct chunk *tmptrash;
+				struct buffer *tmptrash;
+				int len;
 
 				/* Copy the content of the sample because it could
 				   be scratched by incoming get_trash_chunk */
@@ -192,21 +195,22 @@ static int sample_conv_map(const struct arg *arg_p, struct sample *smp, void *pr
 				if (!tmptrash)
 					return 0;
 
-				tmptrash->len = smp->data.u.str.len;
-				if (tmptrash->len > (tmptrash->size-1))
-					tmptrash->len = tmptrash->size-1;
+				tmptrash->data = smp->data.u.str.data;
+				if (tmptrash->data > (tmptrash->size-1))
+					tmptrash->data = tmptrash->size-1;
 
-				memcpy(tmptrash->str, smp->data.u.str.str, tmptrash->len);
-				tmptrash->str[tmptrash->len] = 0;
+				memcpy(tmptrash->area, smp->data.u.str.area, tmptrash->data);
+				tmptrash->area[tmptrash->data] = 0;
 
 				str = get_trash_chunk();
-				str->len = exp_replace(str->str, str->size, tmptrash->str,
-				                       pat->data->u.str.str,
-				                       (regmatch_t *)smp->ctx.a[0]);
-
-				free_trash_chunk(tmptrash);
-				if (str->len == -1)
+				len = exp_replace(str->area, str->size,
+				                  tmptrash->area,
+				                  pat->data->u.str.area,
+				                  (regmatch_t *)smp->ctx.a[0]);
+				if (len == -1)
 					return 0;
+
+				str->data = len;
 				smp->data.u.str = *str;
 				return 1;
 			}
@@ -222,7 +226,7 @@ static int sample_conv_map(const struct arg *arg_p, struct sample *smp, void *pr
 		return 1;
 	}
 
-	/* If no default value avalaible, the converter fails. */
+	/* If no default value available, the converter fails. */
 	if (arg_p[1].type == ARGT_STOP)
 		return 0;
 
@@ -378,7 +382,7 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 				 */
 				LIST_ADDQ(&elt->back_refs, &appctx->ctx.map.bref.users);
 				HA_SPIN_UNLOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
-				si_applet_cant_put(si);
+				si_rx_room_blk(si);
 				return 0;
 			}
 
@@ -386,7 +390,6 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 			appctx->ctx.map.bref.ref = elt->list.n;
 		}
 		HA_SPIN_UNLOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
-		appctx->st2 = STAT_ST_FIN;
 		/* fall through */
 
 	default:
@@ -402,20 +405,20 @@ static int cli_io_handler_pats_list(struct appctx *appctx)
 	switch (appctx->st2) {
 	case STAT_ST_INIT:
 		/* Display the column headers. If the message cannot be sent,
-		 * quit the fucntion with returning 0. The function is called
-		 * later and restart at the state "STAT_ST_INIT".
+		 * quit the function with returning 0. The function is called
+		 * later and restarted at the state "STAT_ST_INIT".
 		 */
 		chunk_reset(&trash);
 		chunk_appendf(&trash, "# id (file) description\n");
 		if (ci_putchk(si_ic(si), &trash) == -1) {
-			si_applet_cant_put(si);
+			si_rx_room_blk(si);
 			return 0;
 		}
 
 		/* Now, we start the browsing of the references lists.
-		 * Note that the following call to LIST_ELEM return bad pointer. The only
+		 * Note that the following call to LIST_ELEM returns a bad pointer. The only
 		 * available field of this pointer is <list>. It is used with the function
-		 * pat_list_get_next() for retruning the first available entry
+		 * pat_list_get_next() for returning the first available entry
 		 */
 		appctx->ctx.map.ref = LIST_ELEM(&pattern_reference, struct pat_ref *, list);
 		appctx->ctx.map.ref = pat_list_get_next(appctx->ctx.map.ref, &pattern_reference,
@@ -428,7 +431,7 @@ static int cli_io_handler_pats_list(struct appctx *appctx)
 			chunk_reset(&trash);
 
 			/* Build messages. If the reference is used by another category than
-			 * the listed categorie, display the information in the massage.
+			 * the listed categories, display the information in the message.
 			 */
 			chunk_appendf(&trash, "%d (%s) %s\n", appctx->ctx.map.ref->unique_id,
 			              appctx->ctx.map.ref->reference ? appctx->ctx.map.ref->reference : "",
@@ -438,7 +441,7 @@ static int cli_io_handler_pats_list(struct appctx *appctx)
 				/* let's try again later from this stream. We add ourselves into
 				 * this stream's users so that it can remove us upon termination.
 				 */
-				si_applet_cant_put(si);
+				si_rx_room_blk(si);
 				return 0;
 			}
 
@@ -447,7 +450,6 @@ static int cli_io_handler_pats_list(struct appctx *appctx)
 			                                        appctx->ctx.map.display_flags);
 		}
 
-		appctx->st2 = STAT_ST_FIN;
 		/* fall through */
 
 	default:
@@ -482,8 +484,8 @@ static int cli_io_handler_map_lookup(struct appctx *appctx)
 			/* execute pattern matching */
 			sample.data.type = SMP_T_STR;
 			sample.flags = SMP_F_CONST;
-			sample.data.u.str.len = appctx->ctx.map.chunk.len;
-			sample.data.u.str.str = appctx->ctx.map.chunk.str;
+			sample.data.u.str.data = appctx->ctx.map.chunk.data;
+			sample.data.u.str.area = appctx->ctx.map.chunk.area;
 
 			if (appctx->ctx.map.expr->pat_head->match &&
 			    sample_convert(&sample, appctx->ctx.map.expr->pat_head->expect_type))
@@ -560,7 +562,7 @@ static int cli_io_handler_map_lookup(struct appctx *appctx)
 				 * this stream's users so that it can remove us upon termination.
 				 */
 				HA_SPIN_UNLOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
-				si_applet_cant_put(si);
+				si_rx_room_blk(si);
 				return 0;
 			}
 
@@ -569,7 +571,6 @@ static int cli_io_handler_map_lookup(struct appctx *appctx)
 			                                         &appctx->ctx.map.ref->pat);
 		}
 		HA_SPIN_UNLOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
-		appctx->st2 = STAT_ST_FIN;
 		/* fall through */
 
 	default:
@@ -580,12 +581,12 @@ static int cli_io_handler_map_lookup(struct appctx *appctx)
 
 static void cli_release_mlook(struct appctx *appctx)
 {
-	free(appctx->ctx.map.chunk.str);
-	appctx->ctx.map.chunk.str = NULL;
+	free(appctx->ctx.map.chunk.area);
+	appctx->ctx.map.chunk.area = NULL;
 }
 
 
-static int cli_parse_get_map(char **args, struct appctx *appctx, void *private)
+static int cli_parse_get_map(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (strcmp(args[1], "map") == 0 || strcmp(args[1], "acl") == 0) {
 		/* Set flags. */
@@ -627,10 +628,10 @@ static int cli_parse_get_map(char **args, struct appctx *appctx, void *private)
 		 * it may be used over multiple iterations. It's released
 		 * at the end and upon abort anyway.
 		 */
-		appctx->ctx.map.chunk.len = strlen(args[3]);
-		appctx->ctx.map.chunk.size = appctx->ctx.map.chunk.len + 1;
-		appctx->ctx.map.chunk.str = strdup(args[3]);
-		if (!appctx->ctx.map.chunk.str) {
+		appctx->ctx.map.chunk.data = strlen(args[3]);
+		appctx->ctx.map.chunk.size = appctx->ctx.map.chunk.data + 1;
+		appctx->ctx.map.chunk.area = strdup(args[3]);
+		if (!appctx->ctx.map.chunk.area) {
 			appctx->ctx.cli.severity = LOG_ERR;
 			appctx->ctx.cli.msg = "Out of memory error.\n";
 			appctx->st0 = CLI_ST_PRINT;
@@ -652,7 +653,7 @@ static void cli_release_show_map(struct appctx *appctx)
 	}
 }
 
-static int cli_parse_show_map(char **args, struct appctx *appctx, void *private)
+static int cli_parse_show_map(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (strcmp(args[1], "map") == 0 ||
 	    strcmp(args[1], "acl") == 0) {
@@ -692,7 +693,7 @@ static int cli_parse_show_map(char **args, struct appctx *appctx, void *private)
 	return 0;
 }
 
-static int cli_parse_set_map(char **args, struct appctx *appctx, void *private)
+static int cli_parse_set_map(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (strcmp(args[1], "map") == 0) {
 		char *err;
@@ -792,7 +793,21 @@ static int cli_parse_set_map(char **args, struct appctx *appctx, void *private)
 	return 1;
 }
 
-static int cli_parse_add_map(char **args, struct appctx *appctx, void *private)
+static int map_add_key_value(struct appctx *appctx, const char *key, const char *value, char **err)
+{
+	int ret;
+
+	HA_SPIN_LOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
+	if (appctx->ctx.map.display_flags == PAT_REF_MAP)
+		ret = pat_ref_add(appctx->ctx.map.ref, key, value, err);
+	else
+		ret = pat_ref_add(appctx->ctx.map.ref, key, NULL, err);
+	HA_SPIN_UNLOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
+
+	return ret;
+}
+
+static int cli_parse_add_map(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (strcmp(args[1], "map") == 0 ||
 	    strcmp(args[1], "acl") == 0) {
@@ -805,13 +820,16 @@ static int cli_parse_add_map(char **args, struct appctx *appctx, void *private)
 		else
 			appctx->ctx.map.display_flags = PAT_REF_ACL;
 
-		/* If the keywork is "map", we expect three parameters, if it
-		 * is "acl", we expect only two parameters
+		/* If the keyword is "map", we expect:
+		 *   - three parameters if there is no payload
+		 *   - one parameter if there is a payload
+		 * If it is "acl", we expect only two parameters
 		 */
 		if (appctx->ctx.map.display_flags == PAT_REF_MAP) {
-			if (!*args[2] || !*args[3] || !*args[4]) {
+			if ((!payload && (!*args[2] || !*args[3] || !*args[4])) ||
+			    (payload && !*args[2])) {
 				appctx->ctx.cli.severity = LOG_ERR;
-				appctx->ctx.cli.msg = "'add map' expects three parameters: map identifier, key and value.\n";
+				appctx->ctx.cli.msg = "'add map' expects three parameters (map identifier, key and value) or one parameter (map identifier) and a payload\n";
 				appctx->st0 = CLI_ST_PRINT;
 				return 1;
 			}
@@ -852,26 +870,69 @@ static int cli_parse_add_map(char **args, struct appctx *appctx, void *private)
 			return 1;
 		}
 
-		/* Add value. */
+		/* Add value(s). */
 		err = NULL;
-		HA_SPIN_LOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
-		if (appctx->ctx.map.display_flags == PAT_REF_MAP)
-			ret = pat_ref_add(appctx->ctx.map.ref, args[3], args[4], &err);
-		else
-			ret = pat_ref_add(appctx->ctx.map.ref, args[3], NULL, &err);
-		HA_SPIN_UNLOCK(PATREF_LOCK, &appctx->ctx.map.ref->lock);
-		if (!ret) {
-			if (err) {
-				memprintf(&err, "%s.\n", err);
-				appctx->ctx.cli.err = err;
-				appctx->st0 = CLI_ST_PRINT_FREE;
+		if (!payload) {
+			ret = map_add_key_value(appctx, args[3], args[4], &err);
+			if (!ret) {
+				if (err) {
+					memprintf(&err, "%s.\n", err);
+					appctx->ctx.cli.err = err;
+					appctx->st0 = CLI_ST_PRINT_FREE;
+				}
+				else {
+					appctx->ctx.cli.severity = LOG_ERR;
+					appctx->ctx.cli.msg = "Failed to add an entry.\n";
+					appctx->st0 = CLI_ST_PRINT;
+				}
+				return 1;
 			}
-			else {
-				appctx->ctx.cli.severity = LOG_ERR;
-				appctx->ctx.cli.msg = "Failed to add an entry.\n";
-				appctx->st0 = CLI_ST_PRINT;
+		}
+		else {
+			const char *end = payload + strlen(payload);
+
+			while (payload < end) {
+				char *key, *value;
+				size_t l;
+
+				/* key */
+				key = payload;
+				l = strcspn(key, " \t");
+				payload += l;
+
+				if (!*payload && appctx->ctx.map.display_flags == PAT_REF_MAP) {
+					memprintf(&err, "Missing value for key '%s'.\n", key);
+					appctx->ctx.cli.err = err;
+					appctx->st0 = CLI_ST_PRINT_FREE;
+					return 1;
+				}
+				key[l] = 0;
+				payload++;
+
+				/* value */
+				payload += strspn(payload, " \t");
+				value = payload;
+				l = strcspn(value, "\n");
+				payload += l;
+				if (*payload)
+					payload++;
+				value[l] = 0;
+
+				ret = map_add_key_value(appctx, key, value, &err);
+				if (!ret) {
+					if (err) {
+						memprintf(&err, "%s.\n", err);
+						appctx->ctx.cli.err = err;
+						appctx->st0 = CLI_ST_PRINT_FREE;
+					}
+					else {
+						appctx->ctx.cli.severity = LOG_ERR;
+						appctx->ctx.cli.msg = "Failed to add a key.\n";
+						appctx->st0 = CLI_ST_PRINT;
+					}
+					return 1;
+				}
 			}
-			return 1;
 		}
 
 		/* The add is done, send message. */
@@ -882,7 +943,7 @@ static int cli_parse_add_map(char **args, struct appctx *appctx, void *private)
 	return 0;
 }
 
-static int cli_parse_del_map(char **args, struct appctx *appctx, void *private)
+static int cli_parse_del_map(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (args[1][0] == 'm')
 		appctx->ctx.map.display_flags = PAT_REF_MAP;
@@ -978,7 +1039,7 @@ static int cli_parse_del_map(char **args, struct appctx *appctx, void *private)
 }
 
 
-static int cli_parse_clear_map(char **args, struct appctx *appctx, void *private)
+static int cli_parse_clear_map(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (strcmp(args[1], "map") == 0 || strcmp(args[1], "acl") == 0) {
 		/* Set ACL or MAP flags. */
@@ -1046,6 +1107,7 @@ static struct cli_kw_list cli_kws = {{ },{
 	{ { NULL }, NULL, NULL, NULL }
 }};
 
+INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
 
 /* Note: must not be declared <const> as its list will be overwritten
  *
@@ -1099,10 +1161,4 @@ static struct sample_conv_kw_list sample_conv_kws = {ILH, {
 	{ /* END */ },
 }};
 
-__attribute__((constructor))
-static void __map_init(void)
-{
-	/* register format conversion keywords */
-	sample_register_convs(&sample_conv_kws);
-	cli_register_kw(&cli_kws);
-}
+INITCALL1(STG_REGISTER, sample_register_convs, &sample_conv_kws);

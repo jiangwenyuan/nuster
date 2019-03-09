@@ -1,6 +1,6 @@
 Summary: HA-Proxy is a TCP/HTTP reverse proxy for high availability environments
 Name: haproxy
-Version: 1.8.19
+Version: 1.9.4
 Release: 1
 License: GPL
 Group: System Environment/Daemons
@@ -74,62 +74,56 @@ fi
 %attr(0755,root,root) %config %{_sysconfdir}/rc.d/init.d/%{name}
 
 %changelog
-* Mon Feb 11 2019 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.19
-
 * Wed Feb  6 2019 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.18
+- updated to 1.9.4
+
+* Tue Jan 29 2019 Willy Tarreau <w@1wt.eu>
+- updated to 1.9.3
+
+* Wed Jan 16 2019 Willy Tarreau <w@1wt.eu>
+- updated to 1.9.2
 
 * Tue Jan  8 2019 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.17
+- updated to 1.9.1
 
-* Fri Dec 21 2018 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.8.16
+* Wed Dec 19 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9.0
 
-* Thu Dec 13 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.15
+* Sun Dec 16 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev11
 
-* Thu Sep 20 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.14
+* Sat Dec  8 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev10
 
-* Mon Jul 30 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.13
+* Sun Dec  2 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev9
 
-* Wed Jun 27 2018 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.8.12
+* Sun Nov 25 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev8
 
-* Tue Jun 26 2018 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.8.11
+* Sun Nov 18 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev7
 
-* Fri Jun 22 2018 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.8.10
+* Sun Nov 11 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev6
 
-* Fri May 18 2018 William Lallemand <wlallemand@haproxy.org>
-- updated to 1.8.9
+* Sun Oct 28 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev5
 
-* Thu Apr 19 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.8
+* Sun Oct 21 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev4
 
-* Sat Apr  7 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.7
+* Sat Sep 29 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev3
 
-* Thu Apr  5 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.6
+* Wed Sep 12 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev2
 
-* Fri Mar 23 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.5
+* Thu Aug  2 2018 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev1
 
-* Thu Feb  8 2018 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.4
-
-* Sat Dec 30 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.3
-
-* Sat Dec 23 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.2
-
-* Sun Dec  3 2017 Willy Tarreau <w@1wt.eu>
-- updated to 1.8.1
+* Sun Nov 26 2017 Willy Tarreau <w@1wt.eu>
+- updated to 1.9-dev0
 
 * Sun Nov 26 2017 Willy Tarreau <w@1wt.eu>
 - updated to 1.8.0

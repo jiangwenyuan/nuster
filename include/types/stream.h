@@ -54,11 +54,11 @@
 #define SF_FORCE_PRST	0x00000010	/* force persistence here, even if server is down */
 #define SF_MONITOR	0x00000020	/* this stream comes from a monitoring system */
 #define SF_CURR_SESS	0x00000040	/* a connection is currently being counted on the server */
-#define SF_INITIALIZED	0x00000080	/* the stream was fully initialized */
+/* unused: 0x00000080 */
 #define SF_REDISP	0x00000100	/* set if this stream was redispatched from one server to another */
-#define SF_CONN_TAR	0x00000200	/* set if this stream is turning around before reconnecting */
+/* unused: 0x00000200 */
 #define SF_REDIRECTABLE	0x00000400	/* set if this stream is redirectable (GET or HEAD) */
-#define SF_TUNNEL	0x00000800	/* tunnel-mode stream, nothing to catch after data */
+/* unused: 0x00000800 */
 
 /* stream termination conditions, bits values 0x1000 to 0x7000 (0-9 shift 12) */
 #define SF_ERR_NONE     0x00000000	/* normal end of request */
@@ -92,6 +92,13 @@
 
 #define SF_SRV_REUSED   0x00100000	/* the server-side connection was reused */
 
+
+/* flags for the proxy of the master CLI */
+/* 0x1.. to 0x3 are reserved for ACCESS_LVL_MASK */
+
+#define PCLI_F_PROMPT          0x4
+#define PCLI_F_PAYLOAD         0x8
+
 /* some external definitions */
 struct strm_logs {
 	int logwait;                    /* log fields waiting to be collected : LW_* */
@@ -105,8 +112,8 @@ struct strm_logs {
 	long  t_connect;                /* delay before the connect() to the server succeeds, -1 if never occurs */
 	long  t_data;                   /* delay before the first data byte from the server ... */
 	unsigned long t_close;          /* total stream duration */
-	unsigned long srv_queue_size;   /* number of streams waiting for a connect slot on this server at accept() time (in direct assignment) */
-	unsigned long prx_queue_size;   /* overall number of streams waiting for a connect slot on this instance at accept() time */
+	unsigned long srv_queue_pos;    /* number of streams de-queued while waiting for a connection slot on this server */
+	unsigned long prx_queue_pos;    /* number of streams de-qeuued while waiting for a connection slot on this instance */
 	long long bytes_in;             /* number of bytes transferred from the client to the server */
 	long long bytes_out;            /* number of bytes transferred from the server to the client */
 };
@@ -131,6 +138,8 @@ struct stream {
 	struct task *task;              /* the task associated with this stream */
 	unsigned short pending_events;	/* the pending events not yet processed by the stream.
 					 * This is a bit field of TASK_WOKEN_* */
+	int16_t priority_class;         /* priority class of the stream for the pending queue */
+	int32_t priority_offset;        /* priority offset of the stream for the pending queue */
 
 	struct list list;               /* position in global streams list */
 	struct list by_srv;             /* position in server stream list */
@@ -159,6 +168,9 @@ struct stream {
 	void (*do_log)(struct stream *s);       /* the function to call in order to log (or NULL) */
 	void (*srv_error)(struct stream *s,     /* the function to call upon unrecoverable server errors (or NULL) */
 			  struct stream_interface *si);
+
+	int pcli_next_pid;                      /* next target PID to use for the CLI proxy */
+	int pcli_flags;                         /* flags for CLI proxy */
 
 	char *unique_id;                        /* custom unique ID */
 

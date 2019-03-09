@@ -30,6 +30,7 @@
 #include <common/compat.h>
 #include <common/config.h>
 #include <common/debug.h>
+#include <common/initcall.h>
 #include <common/memory.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
@@ -45,6 +46,7 @@
 #include <types/dns.h>
 #include <types/stats.h>
 
+#include <proto/activity.h>
 #include <proto/backend.h>
 #include <proto/channel.h>
 #include <proto/checks.h>
@@ -56,6 +58,7 @@
 #include <proto/log.h>
 #include <proto/pattern.h>
 #include <proto/pipe.h>
+#include <proto/protocol.h>
 #include <proto/listener.h>
 #include <proto/map.h>
 #include <proto/proxy.h>
@@ -66,6 +69,8 @@
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 #include <proto/proto_udp.h>
+
+#define PAYLOAD_PATTERN "<<"
 
 static struct applet cli_applet;
 
@@ -90,31 +95,58 @@ static struct cli_kw_list cli_keywords = {
 
 extern const char *stat_status_codes[];
 
-char *cli_gen_usage_msg()
+static struct proxy *mworker_proxy; /* CLI proxy of the master */
+
+static char *cli_gen_usage_msg(struct appctx *appctx)
 {
 	struct cli_kw_list *kw_list;
 	struct cli_kw *kw;
-	struct chunk *tmp = get_trash_chunk();
-	struct chunk out;
+	struct buffer *tmp = get_trash_chunk();
+	struct buffer out;
 
 	free(dynamic_usage_msg);
 	dynamic_usage_msg = NULL;
 
 	if (LIST_ISEMPTY(&cli_keywords.list))
-		return NULL;
+		goto end;
 
 	chunk_reset(tmp);
 	chunk_strcat(tmp, stats_sock_usage_msg);
 	list_for_each_entry(kw_list, &cli_keywords.list, list) {
 		kw = &kw_list->kw[0];
-		while (kw->usage) {
-			chunk_appendf(tmp, "  %s\n", kw->usage);
+		while (kw->str_kw[0]) {
+
+			/* in a worker or normal process, don't display master only commands */
+			if (master == 0 && (kw->level & ACCESS_MASTER_ONLY))
+				goto next_kw;
+
+			/* in master don't displays if we don't have the master bits */
+			if (master == 1 && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
+				goto next_kw;
+
+			if (kw->usage)
+				chunk_appendf(tmp, "  %s\n", kw->usage);
+
+next_kw:
+
 			kw++;
 		}
 	}
 	chunk_init(&out, NULL, 0);
 	chunk_dup(&out, tmp);
-	dynamic_usage_msg = out.str;
+	dynamic_usage_msg = out.area;
+
+end:
+	if (dynamic_usage_msg) {
+		appctx->ctx.cli.severity = LOG_INFO;
+		appctx->ctx.cli.msg = dynamic_usage_msg;
+	}
+	else {
+		appctx->ctx.cli.severity = LOG_INFO;
+		appctx->ctx.cli.msg = stats_sock_usage_msg;
+	}
+	appctx->st0 = CLI_ST_PRINT;
+
 	return dynamic_usage_msg;
 }
 
@@ -349,13 +381,20 @@ static int stats_parse_global(char **args, int section_type, struct proxy *curpx
  */
 int cli_has_level(struct appctx *appctx, int level)
 {
-	struct stream_interface *si = appctx->owner;
-	struct stream *s = si_strm(si);
 
-	if ((strm_li(s)->bind_conf->level & ACCESS_LVL_MASK) < level) {
+	if ((appctx->cli_level & ACCESS_LVL_MASK) < level) {
 		appctx->ctx.cli.severity = LOG_ERR;
 		appctx->ctx.cli.msg = stats_permission_denied_msg;
 		appctx->st0 = CLI_ST_PRINT;
+		return 0;
+	}
+	return 1;
+}
+
+/* same as cli_has_level but for the CLI proxy and without error message */
+int pcli_has_level(struct stream *s, int level)
+{
+	if ((s->pcli_flags & ACCESS_LVL_MASK) < level) {
 		return 0;
 	}
 	return 1;
@@ -379,70 +418,86 @@ static int cli_get_severity_output(struct appctx *appctx)
  * If a keyword parser is NULL and an I/O handler is declared, the I/O handler
  * will automatically be used.
  */
-static int cli_parse_request(struct appctx *appctx, char *line)
+static int cli_parse_request(struct appctx *appctx)
 {
-	char *args[MAX_STATS_ARGS + 1];
+	char *args[MAX_STATS_ARGS + 1], *p, *end, *payload = NULL;
+	int i = 0;
 	struct cli_kw *kw;
-	int arg;
-	int i, j;
-
-	while (isspace((unsigned char)*line))
-		line++;
-
-	arg = 0;
-	args[arg] = line;
-
-	while (*line && arg < MAX_STATS_ARGS) {
-		if (*line == '\\') {
-			line++;
-			if (*line == '\0')
-				break;
-		}
-		else if (isspace((unsigned char)*line)) {
-			*line++ = '\0';
-
-			while (isspace((unsigned char)*line))
-				line++;
-
-			args[++arg] = line;
-			continue;
-		}
-
-		line++;
-	}
-
-	while (++arg <= MAX_STATS_ARGS)
-		args[arg] = line;
-
-	/* unescape '\' */
-	arg = 0;
-	while (arg <= MAX_STATS_ARGS && *args[arg] != '\0') {
-		j = 0;
-		for (i=0; args[arg][i] != '\0'; i++) {
-			if (args[arg][i] == '\\') {
-				if (args[arg][i+1] == '\\')
-					i++;
-				else
-					continue;
-			}
-			args[arg][j] = args[arg][i];
-			j++;
-		}
-		args[arg][j] = '\0';
-		arg++;
-	}
 
 	appctx->st2 = 0;
 	memset(&appctx->ctx.cli, 0, sizeof(appctx->ctx.cli));
+
+	p = appctx->chunk->area;
+	end = p + appctx->chunk->data;
+
+	/*
+	 * Get the payload start if there is one.
+	 * For the sake of simplicity, the payload pattern is looked up
+	 * everywhere from the start of the input but it can only be found
+	 * at the end of the first line if APPCTX_CLI_ST1_PAYLOAD is set.
+	 *
+	 * The input string was zero terminated so it is safe to use
+	 * the str*() functions throughout the parsing
+	 */
+	if (appctx->st1 & APPCTX_CLI_ST1_PAYLOAD) {
+		payload = strstr(p, PAYLOAD_PATTERN);
+		end = payload;
+		/* skip the pattern */
+		payload += strlen(PAYLOAD_PATTERN);
+	}
+
+	/*
+	 * Get pointers on words.
+	 * One extra slot is reserved to store a pointer on a null byte.
+	 */
+	while (i < MAX_STATS_ARGS && p < end) {
+		int j, k;
+
+		/* skip leading spaces/tabs */
+		p += strspn(p, " \t");
+		if (!*p)
+			break;
+
+		args[i] = p;
+		p += strcspn(p, " \t");
+		*p++ = 0;
+
+		/* unescape backslashes (\) */
+		for (j = 0, k = 0; args[i][k]; k++) {
+			if (args[i][k] == '\\') {
+				if (args[i][k + 1] == '\\')
+					k++;
+				else
+					continue;
+			}
+			args[i][j] = args[i][k];
+			j++;
+		}
+		args[i][j] = 0;
+
+		i++;
+	}
+	/* fill unused slots */
+	p = appctx->chunk->area + appctx->chunk->data;
+	for (; i < MAX_STATS_ARGS + 1; i++)
+		args[i] = p;
 
 	kw = cli_find_kw(args);
 	if (!kw)
 		return 0;
 
+	/* in a worker or normal process, don't display master only commands */
+	if (master == 0 && (kw->level & ACCESS_MASTER_ONLY))
+		return 0;
+
+	/* in master don't displays if we don't have the master bits */
+	if (master == 1 && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
+		return 0;
+
 	appctx->io_handler = kw->io_handler;
 	appctx->io_release = kw->io_release;
 	/* kw->parse could set its own io_handler or ip_release handler */
-	if ((!kw->parse || kw->parse(args, appctx, kw->private) == 0) && appctx->io_handler) {
+	if ((!kw->parse || kw->parse(args, payload, appctx, kw->private) == 0) && appctx->io_handler) {
 		appctx->st0 = CLI_ST_CALLBACK;
 	}
 	return 1;
@@ -451,7 +506,7 @@ static int cli_parse_request(struct appctx *appctx, char *line)
 /* prepends then outputs the argument msg with a syslog-type severity depending on severity_output value */
 static int cli_output_msg(struct channel *chn, const char *msg, int severity, int severity_output)
 {
-	struct chunk *tmp;
+	struct buffer *tmp;
 
 	if (likely(severity_output == CLI_SEVERITY_NONE))
 		return ci_putblk(chn, msg, strlen(msg));
@@ -477,7 +532,7 @@ static int cli_output_msg(struct channel *chn, const char *msg, int severity, in
 	}
 	chunk_appendf(tmp, "%s", msg);
 
-	return ci_putblk(chn, tmp->str, strlen(tmp->str));
+	return ci_putblk(chn, tmp->area, strlen(tmp->area));
 }
 
 /* This I/O handler runs as an applet embedded in a stream interface. It is
@@ -500,9 +555,11 @@ static void cli_io_handler(struct appctx *appctx)
 	if (unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO))
 		goto out;
 
-	/* Check if the input buffer is avalaible. */
-	if (res->buf->size == 0) {
-		si_applet_cant_put(si);
+	/* Check if the input buffer is available. */
+	if (res->buf.size == 0) {
+		/* buf.size==0 means we failed to get a buffer and were
+		 * already subscribed to a wait list to get a buffer.
+		 */
 		goto out;
 	}
 
@@ -513,24 +570,41 @@ static void cli_io_handler(struct appctx *appctx)
 			/* reset severity to default at init */
 			appctx->cli_severity_output = bind_conf->severity_output;
 			appctx->st0 = CLI_ST_GETREQ;
+			appctx->cli_level = bind_conf->level;
 		}
 		else if (appctx->st0 == CLI_ST_END) {
 			/* Let's close for real now. We just close the request
 			 * side, the conditions below will complete if needed.
 			 */
 			si_shutw(si);
+			free_trash_chunk(appctx->chunk);
 			break;
 		}
 		else if (appctx->st0 == CLI_ST_GETREQ) {
+			char *str;
+
+			/* use a trash chunk to store received data */
+			if (!appctx->chunk) {
+				appctx->chunk = alloc_trash_chunk();
+				if (!appctx->chunk) {
+					appctx->st0 = CLI_ST_END;
+					continue;
+				}
+			}
+
+			str = appctx->chunk->area + appctx->chunk->data;
+
 			/* ensure we have some output room left in the event we
 			 * would want to return some info right after parsing.
 			 */
 			if (buffer_almost_full(si_ib(si))) {
-				si_applet_cant_put(si);
+				si_rx_room_blk(si);
 				break;
 			}
 
-			reql = co_getline(si_oc(si), trash.str, trash.size);
+			/* '- 1' is to ensure a null byte can always be inserted at the end */
+			reql = co_getline(si_oc(si), str,
+					  appctx->chunk->size - appctx->chunk->data - 1);
 			if (reql <= 0) { /* closed or EOL not found */
 				if (reql == 0)
 					break;
@@ -538,18 +612,20 @@ static void cli_io_handler(struct appctx *appctx)
 				continue;
 			}
 
-			/* seek for a possible unescaped semi-colon. If we find
-			 * one, we replace it with an LF and skip only this part.
-			 */
-			for (len = 0; len < reql; len++) {
-				if (trash.str[len] == '\\') {
-					len++;
-					continue;
-				}
-				if (trash.str[len] == ';') {
-					trash.str[len] = '\n';
-					reql = len + 1;
-					break;
+			if (!(appctx->st1 & APPCTX_CLI_ST1_PAYLOAD)) {
+				/* seek for a possible unescaped semi-colon. If we find
+				 * one, we replace it with an LF and skip only this part.
+				 */
+				for (len = 0; len < reql; len++) {
+					if (str[len] == '\\') {
+						len++;
+						continue;
+					}
+					if (str[len] == ';') {
+						str[len] = '\n';
+						reql = len + 1;
+						break;
+					}
 				}
 			}
 
@@ -558,56 +634,58 @@ static void cli_io_handler(struct appctx *appctx)
 			 * line.
 			 */
 			len = reql - 1;
-			if (trash.str[len] != '\n') {
+			if (str[len] != '\n') {
 				appctx->st0 = CLI_ST_END;
 				continue;
 			}
 
-			if (len && trash.str[len-1] == '\r')
+			if (len && str[len-1] == '\r')
 				len--;
 
-			trash.str[len] = '\0';
+			str[len] = '\0';
+			appctx->chunk->data += len;
+
+			if (appctx->st1 & APPCTX_CLI_ST1_PAYLOAD) {
+				appctx->chunk->area[appctx->chunk->data] = '\n';
+				appctx->chunk->area[appctx->chunk->data + 1] = 0;
+				appctx->chunk->data++;
+			}
 
 			appctx->st0 = CLI_ST_PROMPT;
-			if (len) {
-				if (strcmp(trash.str, "quit") == 0) {
-					appctx->st0 = CLI_ST_END;
-					continue;
+
+			if (appctx->st1 & APPCTX_CLI_ST1_PAYLOAD) {
+				/* empty line */
+				if (!len) {
+					/* remove the last two \n */
+					appctx->chunk->data -= 2;
+					appctx->chunk->area[appctx->chunk->data] = 0;
+
+					if (!cli_parse_request(appctx))
+						cli_gen_usage_msg(appctx);
+
+					chunk_reset(appctx->chunk);
+					/* NB: cli_sock_parse_request() may have put
+					 * another CLI_ST_O_* into appctx->st0.
+					 */
+
+					appctx->st1 &= ~APPCTX_CLI_ST1_PAYLOAD;
 				}
-				else if (strcmp(trash.str, "prompt") == 0)
-					appctx->st1 = !appctx->st1;
-				else if (strcmp(trash.str, "help") == 0 ||
-					 !cli_parse_request(appctx, trash.str)) {
-					cli_gen_usage_msg();
-					if (dynamic_usage_msg) {
-						appctx->ctx.cli.severity = LOG_INFO;
-						appctx->ctx.cli.msg = dynamic_usage_msg;
-					}
-					else {
-						appctx->ctx.cli.severity = LOG_INFO;
-						appctx->ctx.cli.msg = stats_sock_usage_msg;
-					}
-					appctx->st0 = CLI_ST_PRINT;
-				}
-				/* NB: stats_sock_parse_request() may have put
-				 * another CLI_ST_O_* into appctx->st0.
-				 */
 			}
-			else if (!appctx->st1) {
-				/* if prompt is disabled, print help on empty lines,
-				 * so that the user at least knows how to enable
-				 * prompt and find help.
+			else {
+				/*
+				 * Look for the "payload start" pattern at the end of a line
+				 * Its location is not remembered here, this is just to switch
+				 * to a gathering mode.
 				 */
-				cli_gen_usage_msg();
-				if (dynamic_usage_msg) {
-					appctx->ctx.cli.severity = LOG_INFO;
-					appctx->ctx.cli.msg = dynamic_usage_msg;
-				}
+				if (!strcmp(appctx->chunk->area + appctx->chunk->data - strlen(PAYLOAD_PATTERN), PAYLOAD_PATTERN))
+					appctx->st1 |= APPCTX_CLI_ST1_PAYLOAD;
 				else {
-					appctx->ctx.cli.severity = LOG_INFO;
-					appctx->ctx.cli.msg = stats_sock_usage_msg;
+					/* no payload, the command is complete: parse the request */
+					if (!cli_parse_request(appctx))
+						cli_gen_usage_msg(appctx);
+
+					chunk_reset(appctx->chunk);
 				}
-				appctx->st0 = CLI_ST_PRINT;
 			}
 
 			/* re-adjust req buffer */
@@ -623,7 +701,7 @@ static void cli_io_handler(struct appctx *appctx)
 							cli_get_severity_output(appctx)) != -1)
 					appctx->st0 = CLI_ST_PROMPT;
 				else
-					si_applet_cant_put(si);
+					si_rx_room_blk(si);
 				break;
 			case CLI_ST_PRINT_FREE: {
 				const char *msg = appctx->ctx.cli.err;
@@ -636,7 +714,7 @@ static void cli_io_handler(struct appctx *appctx)
 					appctx->st0 = CLI_ST_PROMPT;
 				}
 				else
-					si_applet_cant_put(si);
+					si_rx_room_blk(si);
 				break;
 			}
 			case CLI_ST_CALLBACK: /* use custom pointer */
@@ -656,10 +734,27 @@ static void cli_io_handler(struct appctx *appctx)
 
 			/* The post-command prompt is either LF alone or LF + '> ' in interactive mode */
 			if (appctx->st0 == CLI_ST_PROMPT) {
-				if (ci_putstr(si_ic(si), appctx->st1 ? "\n> " : "\n") != -1)
+				const char *prompt = "";
+
+				if (appctx->st1 & APPCTX_CLI_ST1_PROMPT) {
+					/*
+					 * when entering a payload with interactive mode, change the prompt
+					 * to emphasize that more data can still be sent
+					 */
+					if (appctx->chunk->data && appctx->st1 & APPCTX_CLI_ST1_PAYLOAD)
+						prompt = "+ ";
+					else
+						prompt = "\n> ";
+				}
+				else {
+					if (!(appctx->st1 & APPCTX_CLI_ST1_PAYLOAD))
+						prompt = "\n";
+				}
+
+				if (ci_putstr(si_ic(si), prompt) != -1)
 					appctx->st0 = CLI_ST_GETREQ;
 				else
-					si_applet_cant_put(si);
+					si_rx_room_blk(si);
 			}
 
 			/* If the output functions are still there, it means they require more room. */
@@ -671,7 +766,8 @@ static void cli_io_handler(struct appctx *appctx)
 			 * buffer is empty. This still allows pipelined requests
 			 * to be sent in non-interactive mode.
 			 */
-			if ((res->flags & (CF_SHUTW|CF_SHUTW_NOW)) || (!appctx->st1 && !req->buf->o)) {
+			if (((res->flags & (CF_SHUTW|CF_SHUTW_NOW))) ||
+			   (!(appctx->st1 & APPCTX_CLI_ST1_PROMPT) && !co_data(req) && (!(appctx->st1 & APPCTX_CLI_ST1_PAYLOAD)))) {
 				appctx->st0 = CLI_ST_END;
 				continue;
 			}
@@ -704,9 +800,9 @@ static void cli_io_handler(struct appctx *appctx)
 	}
 
  out:
-	DPRINTF(stderr, "%s@%d: st=%d, rqf=%x, rpf=%x, rqh=%d, rqs=%d, rh=%d, rs=%d\n",
+	DPRINTF(stderr, "%s@%d: st=%d, rqf=%x, rpf=%x, rqh=%lu, rqs=%lu, rh=%lu, rs=%lu\n",
 		__FUNCTION__, __LINE__,
-		si->state, req->flags, res->flags, req->buf->i, req->buf->o, res->buf->i, res->buf->o);
+		si->state, req->flags, res->flags, ci_data(req), co_data(req), ci_data(res), co_data(res));
 }
 
 /* This is called when the stream interface is closed. For instance, upon an
@@ -747,7 +843,7 @@ static int cli_io_handler_show_env(struct appctx *appctx)
 		chunk_printf(&trash, "%s\n", *var);
 
 		if (ci_putchk(si_ic(si), &trash) == -1) {
-			si_applet_cant_put(si);
+			si_rx_room_blk(si);
 			return 0;
 		}
 		if (appctx->st2 == STAT_ST_END)
@@ -769,11 +865,17 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 {
 	struct stream_interface *si = appctx->owner;
 	int fd = appctx->ctx.cli.i0;
+	int ret = 1;
 
 	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
-		return 1;
+		goto end;
 
 	chunk_reset(&trash);
+
+	/* isolate the threads once per round. We're limited to a buffer worth
+	 * of output anyway, it cannot last very long.
+	 */
+	thread_isolate();
 
 	/* we have two inner loops here, one for the proxy, the other one for
 	 * the buffer.
@@ -786,29 +888,27 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 		const struct mux_ops *mux = NULL;
 		void *ctx = NULL;
 		uint32_t conn_flags = 0;
-
-		thread_isolate();
+		int is_back = 0;
 
 		fdt = fdtab[fd];
 
-		if (!fdt.owner) {
-			thread_release();
+		if (!fdt.owner)
 			goto skip; // closed
-		}
 
 		if (fdt.iocb == conn_fd_handler) {
 			conn_flags = ((struct connection *)fdt.owner)->flags;
 			mux = ((struct connection *)fdt.owner)->mux;
-			ctx = ((struct connection *)fdt.owner)->mux_ctx;
+			ctx = ((struct connection *)fdt.owner)->ctx;
 			li = objt_listener(((struct connection *)fdt.owner)->target);
 			sv = objt_server(((struct connection *)fdt.owner)->target);
 			px = objt_proxy(((struct connection *)fdt.owner)->target);
+			is_back = conn_is_back((struct connection *)fdt.owner);
 		}
 		else if (fdt.iocb == listener_accept)
 			li = fdt.owner;
 
 		chunk_printf(&trash,
-			     "  %5d : st=0x%02x(R:%c%c%c W:%c%c%c) ev=0x%02x(%c%c%c%c%c) [%c%c%c] cache=%u owner=%p iocb=%p(%s) tmask=0x%lx umask=0x%lx",
+			     "  %5d : st=0x%02x(R:%c%c%c W:%c%c%c) ev=0x%02x(%c%c%c%c%c) [%c%c] cnext=%d cprev=%d tmask=0x%lx umask=0x%lx owner=%p iocb=%p(%s)",
 			     fd,
 			     fdt.state,
 			     (fdt.state & FD_EV_POLLED_R) ? 'P' : 'p',
@@ -823,21 +923,22 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			     (fdt.ev & FD_POLL_OUT) ? 'O' : 'o',
 			     (fdt.ev & FD_POLL_PRI) ? 'P' : 'p',
 			     (fdt.ev & FD_POLL_IN)  ? 'I' : 'i',
-			     fdt.new ? 'N' : 'n',
 			     fdt.linger_risk ? 'L' : 'l',
 			     fdt.cloned ? 'C' : 'c',
-			     fdt.cache,
+			     fdt.cache.next,
+			     fdt.cache.prev,
+			     fdt.thread_mask, fdt.update_mask,
 			     fdt.owner,
 			     fdt.iocb,
 			     (fdt.iocb == conn_fd_handler)  ? "conn_fd_handler" :
 			     (fdt.iocb == dgram_fd_handler) ? "dgram_fd_handler" :
 			     (fdt.iocb == listener_accept)  ? "listener_accept" :
-			     (fdt.iocb == thread_sync_io_handler) ? "thread_sync_io_handler" :
-			     "unknown",
-			     fdt.thread_mask, fdt.update_mask);
+			     (fdt.iocb == poller_pipe_io_handler) ? "poller_pipe_io_handler" :
+			     (fdt.iocb == mworker_accept_wrapper) ? "mworker_accept_wrapper" :
+			     "unknown");
 
 		if (fdt.iocb == conn_fd_handler) {
-			chunk_appendf(&trash, " cflg=0x%08x", conn_flags);
+			chunk_appendf(&trash, " back=%d cflg=0x%08x", is_back, conn_flags);
 			if (px)
 				chunk_appendf(&trash, " px=%s", px->id);
 			else if (sv)
@@ -846,7 +947,7 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 				chunk_appendf(&trash, " fe=%s", li->bind_conf->frontend->id);
 
 			if (mux) {
-				chunk_appendf(&trash, " mux=%s mux_ctx=%p", mux->name, ctx);
+				chunk_appendf(&trash, " mux=%s ctx=%p", mux->name, ctx);
 				if (mux->show_fd)
 					mux->show_fd(&trash, fdt.owner);
 			}
@@ -859,24 +960,26 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			              li->bind_conf->frontend->id);
 		}
 
-		thread_release();
-
 		chunk_appendf(&trash, "\n");
 
 		if (ci_putchk(si_ic(si), &trash) == -1) {
-			si_applet_cant_put(si);
-			return 0;
+			si_rx_room_blk(si);
+			appctx->ctx.cli.i0 = fd;
+			ret = 0;
+			break;
 		}
 	skip:
 		if (appctx->st2 == STAT_ST_END)
 			break;
 
 		fd++;
-		appctx->ctx.cli.i0 = fd;
 	}
 
+ end:
 	/* dump complete */
-	return 1;
+
+	thread_release();
+	return ret;
 }
 
 /* This function dumps some activity counters used by developers and support to
@@ -900,7 +1003,6 @@ static int cli_io_handler_show_activity(struct appctx *appctx)
 	chunk_appendf(&trash, "\nloops:");        for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].loops);
 	chunk_appendf(&trash, "\nwake_cache:");   for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_cache);
 	chunk_appendf(&trash, "\nwake_tasks:");   for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_tasks);
-	chunk_appendf(&trash, "\nwake_applets:"); for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_applets);
 	chunk_appendf(&trash, "\nwake_signal:");  for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_signal);
 	chunk_appendf(&trash, "\npoll_exp:");     for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_exp);
 	chunk_appendf(&trash, "\npoll_drop:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_drop);
@@ -913,13 +1015,17 @@ static int cli_io_handler_show_activity(struct appctx *appctx)
 	chunk_appendf(&trash, "\nstream:");       for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].stream);
 	chunk_appendf(&trash, "\nempty_rq:");     for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].empty_rq);
 	chunk_appendf(&trash, "\nlong_rq:");      for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].long_rq);
+	chunk_appendf(&trash, "\ncpust_ms_tot:"); for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].cpust_total/2);
+	chunk_appendf(&trash, "\ncpust_ms_1s:");  for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", read_freq_ctr(&activity[thr].cpust_1s)/2);
+	chunk_appendf(&trash, "\ncpust_ms_15s:"); for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", read_freq_ctr_period(&activity[thr].cpust_15s, 15000)/2);
+	chunk_appendf(&trash, "\navg_loop_us:");  for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", swrate_avg(activity[thr].avg_loop_us, TIME_STATS_SAMPLES));
 
 	chunk_appendf(&trash, "\n");
 
 	if (ci_putchk(si_ic(si), &trash) == -1) {
 		chunk_reset(&trash);
 		chunk_printf(&trash, "[output too large, cannot dump]\n");
-		si_applet_cant_put(si);
+		si_rx_room_blk(si);
 	}
 
 	/* dump complete */
@@ -941,7 +1047,7 @@ static int cli_io_handler_show_cli_sock(struct appctx *appctx)
 		case STAT_ST_INIT:
 			chunk_printf(&trash, "# socket lvl processes\n");
 			if (ci_putchk(si_ic(si), &trash) == -1) {
-				si_applet_cant_put(si);
+				si_rx_room_blk(si);
 				return 0;
 			}
 			appctx->st2 = STAT_ST_LIST;
@@ -981,8 +1087,10 @@ static int cli_io_handler_show_cli_sock(struct appctx *appctx)
 							addr_to_str(&l->addr, addr, sizeof(addr));
 							port_to_str(&l->addr, port, sizeof(port));
 							chunk_appendf(&trash, "[%s]:%s ", addr, port);
+						} else if (l->addr.ss_family == AF_CUST_SOCKPAIR) {
+							chunk_appendf(&trash, "sockpair@%d ", ((struct sockaddr_in *)&l->addr)->sin_addr.s_addr);
 						} else
-							continue;
+							chunk_appendf(&trash, "unknown ");
 
 						if ((bind_conf->level & ACCESS_LVL_MASK) == ACCESS_LVL_ADMIN)
 							chunk_appendf(&trash, "admin ");
@@ -1001,14 +1109,14 @@ static int cli_io_handler_show_cli_sock(struct appctx *appctx)
 								}
 							}
 							/* replace the latest comma by a newline */
-							trash.str[trash.len-1] = '\n';
+							trash.area[trash.data-1] = '\n';
 
 						} else {
 							chunk_appendf(&trash, "all\n");
 						}
 
 						if (ci_putchk(si_ic(si), &trash) == -1) {
-							si_applet_cant_put(si);
+							si_rx_room_blk(si);
 							return 0;
 						}
 					}
@@ -1026,7 +1134,7 @@ static int cli_io_handler_show_cli_sock(struct appctx *appctx)
  * wants to stop here. It puts the variable to be dumped into cli.p0 if a single
  * variable is requested otherwise puts environ there.
  */
-static int cli_parse_show_env(char **args, struct appctx *appctx, void *private)
+static int cli_parse_show_env(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	extern char **environ;
 	char **var;
@@ -1060,7 +1168,7 @@ static int cli_parse_show_env(char **args, struct appctx *appctx, void *private)
  * wants to stop here. It puts the FD number into cli.i0 if a specific FD is
  * requested and sets st2 to STAT_ST_END, otherwise leaves 0 in i0.
  */
-static int cli_parse_show_fd(char **args, struct appctx *appctx, void *private)
+static int cli_parse_show_fd(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (!cli_has_level(appctx, ACCESS_LVL_OPER))
 		return 1;
@@ -1075,7 +1183,7 @@ static int cli_parse_show_fd(char **args, struct appctx *appctx, void *private)
 }
 
 /* parse a "set timeout" CLI request. It always returns 1. */
-static int cli_parse_set_timeout(char **args, struct appctx *appctx, void *private)
+static int cli_parse_set_timeout(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	struct stream_interface *si = appctx->owner;
 	struct stream *s = si_strm(si);
@@ -1112,7 +1220,7 @@ static int cli_parse_set_timeout(char **args, struct appctx *appctx, void *priva
 }
 
 /* parse a "set maxconn global" command. It always returns 1. */
-static int cli_parse_set_maxconn_global(char **args, struct appctx *appctx, void *private)
+static int cli_parse_set_maxconn_global(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	int v;
 
@@ -1165,24 +1273,75 @@ static int set_severity_output(int *target, char *argument)
 }
 
 /* parse a "set severity-output" command. */
-static int cli_parse_set_severity_output(char **args, struct appctx *appctx, void *private)
+static int cli_parse_set_severity_output(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	if (*args[2] && set_severity_output(&appctx->cli_severity_output, args[2]))
 		return 0;
 
 	appctx->ctx.cli.severity = LOG_ERR;
-	appctx->ctx.cli.msg = "one of 'none', 'number', 'string' is a required argument";
+	appctx->ctx.cli.msg = "one of 'none', 'number', 'string' is a required argument\n";
 	appctx->st0 = CLI_ST_PRINT;
 	return 1;
 }
 
-int cli_parse_default(char **args, struct appctx *appctx, void *private)
+
+/* show the level of the current CLI session */
+static int cli_parse_show_lvl(char **args, char *payload, struct appctx *appctx, void *private)
+{
+
+	appctx->ctx.cli.severity = LOG_INFO;
+	if ((appctx->cli_level & ACCESS_LVL_MASK) == ACCESS_LVL_ADMIN)
+		appctx->ctx.cli.msg = "admin\n";
+	else if ((appctx->cli_level & ACCESS_LVL_MASK) == ACCESS_LVL_OPER)
+		appctx->ctx.cli.msg = "operator\n";
+	else if ((appctx->cli_level & ACCESS_LVL_MASK) == ACCESS_LVL_USER)
+		appctx->ctx.cli.msg = "user\n";
+	else
+		appctx->ctx.cli.msg = "unknown\n";
+
+	appctx->st0 = CLI_ST_PRINT;
+	return 1;
+
+}
+
+/* parse and set the CLI level dynamically */
+static int cli_parse_set_lvl(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	if (!strcmp(args[0], "operator")) {
+		if (!cli_has_level(appctx, ACCESS_LVL_OPER)) {
+			return 1;
+		}
+		appctx->cli_level &= ~ACCESS_LVL_MASK;
+		appctx->cli_level |= ACCESS_LVL_OPER;
+
+	} else if (!strcmp(args[0], "user")) {
+		if (!cli_has_level(appctx, ACCESS_LVL_USER)) {
+			return 1;
+		}
+		appctx->cli_level &= ~ACCESS_LVL_MASK;
+		appctx->cli_level |= ACCESS_LVL_USER;
+	}
+	return 1;
+}
+
+/* reload the master process */
+static int cli_parse_reload(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	if (!cli_has_level(appctx, ACCESS_LVL_OPER))
+		return 1;
+
+	mworker_reload();
+
+	return 1;
+}
+
+int cli_parse_default(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	return 0;
 }
 
 /* parse a "set rate-limit" command. It always returns 1. */
-static int cli_parse_set_ratelimit(char **args, struct appctx *appctx, void *private)
+static int cli_parse_set_ratelimit(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	int v;
 	int *res;
@@ -1301,8 +1460,70 @@ static int bind_parse_severity_output(char **args, int cur_arg, struct proxy *px
 	}
 }
 
+
+ /*  Displays workers and processes  */
+static int cli_io_handler_show_proc(struct appctx *appctx)
+{
+	struct stream_interface *si = appctx->owner;
+	struct mworker_proc *child;
+	int old = 0;
+	int up = now.tv_sec - proc_self->timestamp;
+
+	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
+		return 1;
+
+	chunk_reset(&trash);
+
+	chunk_printf(&trash, "#%-14s %-15s %-15s %-15s %s\n", "<PID>", "<type>", "<relative PID>", "<reloads>", "<uptime>");
+	chunk_appendf(&trash, "%-15u %-15s %-15u %-15d %dd %02dh%02dm%02ds\n", getpid(), "master", 0, proc_self->reloads, up / 86400, (up % 86400) / 3600, (up % 3600) / 60, (up % 60));
+
+	/* displays current processes */
+
+	chunk_appendf(&trash, "# workers\n");
+	list_for_each_entry(child, &proc_list, list) {
+		up = now.tv_sec - child->timestamp;
+
+		if (child->type != 'w')
+			continue;
+
+		if (child->reloads > 0) {
+			old++;
+			continue;
+		}
+		chunk_appendf(&trash, "%-15u %-15s %-15u %-15d %dd %02dh%02dm%02ds\n", child->pid, "worker", child->relative_pid, child->reloads, up / 86400, (up % 86400) / 3600, (up % 3600) / 60, (up % 60));
+	}
+
+	/* displays old processes */
+
+	if (old) {
+		char *msg = NULL;
+
+		chunk_appendf(&trash, "# old workers\n");
+		list_for_each_entry(child, &proc_list, list) {
+			up = now.tv_sec - child->timestamp;
+
+			if (child->type != 'w')
+				continue;
+
+			if (child->reloads > 0) {
+				memprintf(&msg, "[was: %u]", child->relative_pid);
+				chunk_appendf(&trash, "%-15u %-15s %-15s %-15d %dd %02dh%02dm%02ds\n", child->pid, "worker", msg, child->reloads, up / 86400, (up % 86400) / 3600, (up % 3600) / 60, (up % 60));
+			}
+		}
+		free(msg);
+	}
+
+	if (ci_putchk(si_ic(si), &trash) == -1) {
+		si_rx_room_blk(si);
+		return 0;
+	}
+
+	/* dump complete */
+	return 1;
+}
+
 /* Send all the bound sockets, always returns 1 */
-static int _getsocks(char **args, struct appctx *appctx, void *private)
+static int _getsocks(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	char *cmsgbuf = NULL;
 	unsigned char *tmpbuf = NULL;
@@ -1487,7 +1708,906 @@ out:
 	return 1;
 }
 
+static int cli_parse_simple(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	if (*args[0] == 'h')
+		/* help */
+		cli_gen_usage_msg(appctx);
+	else if (*args[0] == 'p')
+		/* prompt */
+		appctx->st1 ^= APPCTX_CLI_ST1_PROMPT;
+	else if (*args[0] == 'q')
+		/* quit */
+		appctx->st0 = CLI_ST_END;
 
+	return 1;
+}
+
+void pcli_write_prompt(struct stream *s)
+{
+	struct buffer *msg = get_trash_chunk();
+	struct channel *oc = si_oc(&s->si[0]);
+
+	if (!(s->pcli_flags & PCLI_F_PROMPT))
+		return;
+
+	if (s->pcli_flags & PCLI_F_PAYLOAD) {
+		chunk_appendf(msg, "+ ");
+	} else {
+		if (s->pcli_next_pid == 0)
+			chunk_appendf(msg, "master%s> ",
+			              (global.mode & MODE_MWORKER_WAIT) ? "[ReloadFailed]" : "");
+		else
+			chunk_appendf(msg, "%d> ", s->pcli_next_pid);
+	}
+	co_inject(oc, msg->area, msg->data);
+}
+
+
+/* The pcli_* functions are used for the CLI proxy in the master */
+
+void pcli_reply_and_close(struct stream *s, const char *msg)
+{
+	struct buffer *buf = get_trash_chunk();
+
+	chunk_initstr(buf, msg);
+	si_retnclose(&s->si[0], buf);
+}
+
+static enum obj_type *pcli_pid_to_server(int proc_pid)
+{
+	struct mworker_proc *child;
+
+	/* return the CLI applet of the master */
+	if (proc_pid == 0)
+		return &cli_applet.obj_type;
+
+	list_for_each_entry(child, &proc_list, list) {
+		if (child->pid == proc_pid){
+			return &child->srv->obj_type;
+		}
+	}
+	return NULL;
+}
+
+/* Take a CLI prefix in argument (eg: @!1234 @master @1)
+ *  Return:
+ *     0: master
+ *   > 0: pid of a worker
+ *   < 0: didn't find a worker
+ */
+static int pcli_prefix_to_pid(const char *prefix)
+{
+	int proc_pid;
+	struct mworker_proc *child;
+	char *errtol = NULL;
+
+	if (*prefix != '@') /* not a prefix, should not happen */
+		return -1;
+
+	prefix++;
+	if (!*prefix)    /* sent @ alone, return the master */
+		return 0;
+
+	if (strcmp("master", prefix) == 0) {
+		return 0;
+	} else if (*prefix == '!') {
+		prefix++;
+		if (!*prefix)
+			return -1;
+
+		proc_pid = strtol(prefix, &errtol, 10);
+		if (*errtol != '\0')
+			return -1;
+		list_for_each_entry(child, &proc_list, list) {
+			if (child->type != 'w')
+				continue;
+			if (child->pid == proc_pid){
+				return child->pid;
+			}
+		}
+	} else {
+		struct mworker_proc *chosen = NULL;
+		/* this is a relative pid */
+
+		proc_pid = strtol(prefix, &errtol, 10);
+		if (*errtol != '\0')
+			return -1;
+
+		if (proc_pid == 0) /* return the master */
+			return 0;
+
+		/* chose the right process, the current one is the one with the
+		 least number of reloads */
+		list_for_each_entry(child, &proc_list, list) {
+			if (child->type != 'w')
+				continue;
+			if (child->relative_pid == proc_pid){
+				if (child->reloads == 0)
+					return child->pid;
+				else if (chosen == NULL || child->reloads < chosen->reloads)
+					chosen = child;
+			}
+		}
+		if (chosen)
+			return chosen->pid;
+	}
+	return -1;
+}
+
+/* Return::
+ *  >= 0 : number of words to escape
+ *  = -1 : error
+ */
+
+int pcli_find_and_exec_kw(struct stream *s, char **args, int argl, char **errmsg, int *next_pid)
+{
+	if (argl < 1)
+		return 0;
+
+	/* there is a prefix */
+	if (args[0][0] == '@') {
+		int target_pid = pcli_prefix_to_pid(args[0]);
+
+		if (target_pid == -1) {
+			memprintf(errmsg, "Can't find the target PID matching the prefix '%s'\n", args[0]);
+			return -1;
+		}
+
+		/* if the prefix is alone, define a default target */
+		if (argl == 1)
+			s->pcli_next_pid = target_pid;
+		else
+			*next_pid = target_pid;
+		return 1;
+	} else if (!strcmp("prompt", args[0])) {
+		s->pcli_flags ^= PCLI_F_PROMPT;
+		return argl; /* return the number of elements in the array */
+
+	} else if (!strcmp("quit", args[0])) {
+		channel_shutr_now(&s->req);
+		channel_shutw_now(&s->res);
+		return argl; /* return the number of elements in the array */
+	} else if (!strcmp(args[0], "operator")) {
+		if (!pcli_has_level(s, ACCESS_LVL_OPER)) {
+			memprintf(errmsg, "Permission denied!\n");
+			return -1;
+		}
+		s->pcli_flags &= ~ACCESS_LVL_MASK;
+		s->pcli_flags |= ACCESS_LVL_OPER;
+		return argl;
+
+	} else if (!strcmp(args[0], "user")) {
+		if (!pcli_has_level(s, ACCESS_LVL_USER)) {
+			memprintf(errmsg, "Permission denied!\n");
+			return -1;
+		}
+		s->pcli_flags &= ~ACCESS_LVL_MASK;
+		s->pcli_flags |= ACCESS_LVL_USER;
+		return argl;
+	}
+
+	return 0;
+}
+
+/*
+ * Parse the CLI request:
+ *  - It does basically the same as the cli_io_handler, but as a proxy
+ *  - It can exec a command and strip non forwardable commands
+ *
+ *  Return:
+ *  - the number of characters to forward or
+ *  - 1 if there is an error or not enough data
+ */
+int pcli_parse_request(struct stream *s, struct channel *req, char **errmsg, int *next_pid)
+{
+	char *str = (char *)ci_head(req);
+	char *end = (char *)ci_stop(req);
+	char *args[MAX_STATS_ARGS + 1]; /* +1 for storing a NULL */
+	int argl; /* number of args */
+	char *p;
+	char *trim = NULL;
+	char *payload = NULL;
+	int wtrim = 0; /* number of words to trim */
+	int reql = 0;
+	int ret;
+	int i = 0;
+
+	p = str;
+
+	if (!(s->pcli_flags & PCLI_F_PAYLOAD)) {
+
+		/* Looks for the end of one command */
+		while (p+reql < end) {
+			/* handle escaping */
+			if (p[reql] == '\\') {
+				reql++;
+				continue;
+			}
+			if (p[reql] == ';' || p[reql] == '\n') {
+				/* found the end of the command */
+				p[reql] = '\n';
+				reql++;
+				break;
+			}
+			reql++;
+		}
+	} else {
+		while (p+reql < end) {
+			if (p[reql] == '\n') {
+				/* found the end of the line */
+				reql++;
+				break;
+			}
+			reql++;
+		}
+	}
+
+	/* set end to first byte after the end of the command */
+	end = p + reql;
+
+	/* there is no end to this command, need more to parse ! */
+	if (*(end-1) != '\n') {
+		return -1;
+	}
+
+	if (s->pcli_flags & PCLI_F_PAYLOAD) {
+		if (reql == 1) /* last line of the payload */
+			s->pcli_flags &= ~PCLI_F_PAYLOAD;
+		return reql;
+	}
+
+	*(end-1) = '\0';
+
+	/* splits the command in words */
+	while (i < MAX_STATS_ARGS && p < end) {
+		int j, k;
+
+		/* skip leading spaces/tabs */
+		p += strspn(p, " \t");
+		if (!*p)
+			break;
+
+		args[i] = p;
+		p += strcspn(p, " \t");
+		*p++ = 0;
+
+		/* unescape backslashes (\) */
+		for (j = 0, k = 0; args[i][k]; k++) {
+			if (args[i][k] == '\\') {
+				if (args[i][k + 1] == '\\')
+					k++;
+				else
+					continue;
+			}
+			args[i][j] = args[i][k];
+			j++;
+		}
+		args[i][j] = 0;
+		i++;
+	}
+
+	argl = i;
+
+	for (; i < MAX_STATS_ARGS + 1; i++)
+		args[i] = NULL;
+
+	wtrim = pcli_find_and_exec_kw(s, args, argl, errmsg, next_pid);
+
+	/* End of words are ending by \0, we need to replace the \0s by spaces
+1	   before forwarding them */
+	p = str;
+	while (p < end-1) {
+		if (*p == '\0')
+			*p = ' ';
+		p++;
+	}
+
+	payload = strstr(str, PAYLOAD_PATTERN);
+	if ((end - 1) == (payload + strlen(PAYLOAD_PATTERN))) {
+		/* if the payload pattern is at the end */
+		s->pcli_flags |= PCLI_F_PAYLOAD;
+		ret = reql;
+	}
+
+	*(end-1) = '\n';
+
+	if (wtrim > 0) {
+		trim = &args[wtrim][0];
+		if (trim == NULL) /* if this was the last word in the table */
+			trim = end;
+
+		b_del(&req->buf, trim - str);
+
+		ret = end - trim;
+	} else if (wtrim < 0) {
+		/* parsing error */
+		return -1;
+	} else {
+		/* the whole string */
+		ret = end - str;
+	}
+
+	if (ret > 1) {
+		if (pcli_has_level(s, ACCESS_LVL_ADMIN)) {
+			goto end;
+		} else if (pcli_has_level(s, ACCESS_LVL_OPER)) {
+			ci_insert_line2(req, 0, "operator", strlen("operator"));
+			ret += strlen("operator") + 2;
+		} else if (pcli_has_level(s, ACCESS_LVL_USER)) {
+			ci_insert_line2(req, 0, "user", strlen("user"));
+			ret += strlen("user") + 2;
+		}
+	}
+end:
+
+	return ret;
+}
+
+int pcli_wait_for_request(struct stream *s, struct channel *req, int an_bit)
+{
+	int next_pid = -1;
+	int to_forward;
+	char *errmsg = NULL;
+
+	if ((s->pcli_flags & ACCESS_LVL_MASK) == ACCESS_LVL_NONE)
+		s->pcli_flags |= strm_li(s)->bind_conf->level & ACCESS_LVL_MASK;
+
+read_again:
+	/* if the channel is closed for read, we won't receive any more data
+	   from the client, but we don't want to forward this close to the
+	   server */
+	channel_dont_close(req);
+
+	/* We don't know yet to which server we will connect */
+	channel_dont_connect(req);
+
+
+	/* we are not waiting for a response, there is no more request and we
+	 * receive a close from the client, we can leave */
+	if (!(ci_data(req)) && req->flags & CF_SHUTR) {
+		channel_shutw_now(&s->res);
+		s->req.analysers &= ~AN_REQ_WAIT_CLI;
+		return 1;
+	}
+
+	req->flags |= CF_READ_DONTWAIT;
+
+	/* need more data */
+	if (!ci_data(req))
+		return 0;
+
+	/* If there is data available for analysis, log the end of the idle time. */
+	if (c_data(req) && s->logs.t_idle == -1)
+		s->logs.t_idle = tv_ms_elapsed(&s->logs.tv_accept, &now) - s->logs.t_handshake;
+
+	to_forward = pcli_parse_request(s, req, &errmsg, &next_pid);
+	if (to_forward > 0) {
+		int target_pid;
+		/* enough data */
+
+		/* forward only 1 command */
+		channel_forward(req, to_forward);
+
+		if (!(s->pcli_flags & PCLI_F_PAYLOAD)) {
+			/* we send only 1 command per request, and we write close after it */
+			channel_shutw_now(req);
+		} else {
+			pcli_write_prompt(s);
+		}
+
+		s->res.flags |= CF_WAKE_ONCE; /* need to be called again */
+
+		/* remove the XFER_DATA analysers, which forwards all
+		 * the data, we don't want to forward the next requests
+		 * We need to add CF_FLT_ANALYZE to abort the forward too.
+		 */
+		req->analysers &= ~(AN_REQ_FLT_XFER_DATA|AN_REQ_WAIT_CLI);
+		req->analysers |= AN_REQ_FLT_END|CF_FLT_ANALYZE;
+		s->res.analysers |= AN_RES_WAIT_CLI;
+
+		if (!(s->flags & SF_ASSIGNED)) {
+			if (next_pid > -1)
+				target_pid = next_pid;
+			else
+				target_pid = s->pcli_next_pid;
+			/* we can connect now */
+			s->target = pcli_pid_to_server(target_pid);
+
+			s->flags |= (SF_DIRECT | SF_ASSIGNED);
+			channel_auto_connect(req);
+		}
+
+	} else if (to_forward == 0) {
+		/* we trimmed things but we might have other commands to consume */
+		pcli_write_prompt(s);
+		goto read_again;
+	} else if (to_forward == -1 && errmsg) {
+		/* there was an error during the parsing */
+			pcli_reply_and_close(s, errmsg);
+			return 0;
+	} else if (to_forward == -1 && channel_full(req, global.tune.maxrewrite)) {
+		/* buffer is full and we didn't catch the end of a command */
+		goto send_help;
+	}
+
+	return 0;
+
+send_help:
+	b_reset(&req->buf);
+	b_putblk(&req->buf, "help\n", 5);
+	goto read_again;
+}
+
+int pcli_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
+{
+	struct proxy *fe = strm_fe(s);
+	struct proxy *be = s->be;
+
+	if (rep->flags & CF_READ_ERROR) {
+		pcli_reply_and_close(s, "Can't connect to the target CLI!\n");
+		s->res.analysers &= ~AN_RES_WAIT_CLI;
+		return 0;
+	}
+	rep->flags |= CF_READ_DONTWAIT; /* try to get back here ASAP */
+	rep->flags |= CF_NEVER_WAIT;
+
+	/* don't forward the close */
+	channel_dont_close(&s->res);
+	channel_dont_close(&s->req);
+
+	if (s->pcli_flags & PCLI_F_PAYLOAD) {
+		s->req.analysers |= AN_REQ_WAIT_CLI;
+		s->res.analysers &= ~AN_RES_WAIT_CLI;
+		s->req.flags |= CF_WAKE_ONCE; /* need to be called again if there is some command left in the request */
+		return 0;
+	}
+
+	/* forward the data */
+	if (ci_data(rep)) {
+		c_adv(rep, ci_data(rep));
+		return 0;
+	}
+
+	if ((rep->flags & (CF_SHUTR|CF_READ_NULL))) {
+		/* stream cleanup */
+
+		pcli_write_prompt(s);
+
+		s->si[1].flags |= SI_FL_NOLINGER | SI_FL_NOHALF;
+		si_shutr(&s->si[1]);
+		si_shutw(&s->si[1]);
+
+		/*
+		 * starting from there this the same code as
+		 * http_end_txn_clean_session().
+		 *
+		 * It allows to do frontend keepalive while reconnecting to a
+		 * new server for each request.
+		 */
+
+		if (s->flags & SF_BE_ASSIGNED) {
+			HA_ATOMIC_SUB(&be->beconn, 1);
+			if (unlikely(s->srv_conn))
+				sess_change_server(s, NULL);
+		}
+
+		s->logs.t_close = tv_ms_elapsed(&s->logs.tv_accept, &now);
+		stream_process_counters(s);
+
+		/* don't count other requests' data */
+		s->logs.bytes_in  -= ci_data(&s->req);
+		s->logs.bytes_out -= ci_data(&s->res);
+
+		/* we may need to know the position in the queue */
+		pendconn_free(s);
+
+		/* let's do a final log if we need it */
+		if (!LIST_ISEMPTY(&fe->logformat) && s->logs.logwait &&
+		    !(s->flags & SF_MONITOR) &&
+		    (!(fe->options & PR_O_NULLNOLOG) || s->req.total)) {
+			s->do_log(s);
+		}
+
+		/* stop tracking content-based counters */
+		stream_stop_content_counters(s);
+		stream_update_time_stats(s);
+
+		s->logs.accept_date = date; /* user-visible date for logging */
+		s->logs.tv_accept = now;  /* corrected date for internal use */
+		s->logs.t_handshake = 0; /* There are no handshake in keep alive connection. */
+		s->logs.t_idle = -1;
+		tv_zero(&s->logs.tv_request);
+		s->logs.t_queue = -1;
+		s->logs.t_connect = -1;
+		s->logs.t_data = -1;
+		s->logs.t_close = 0;
+		s->logs.prx_queue_pos = 0;  /* we get the number of pending conns before us */
+		s->logs.srv_queue_pos = 0; /* we will get this number soon */
+
+		s->logs.bytes_in = s->req.total = ci_data(&s->req);
+		s->logs.bytes_out = s->res.total = ci_data(&s->res);
+
+		stream_del_srv_conn(s);
+		if (objt_server(s->target)) {
+			if (s->flags & SF_CURR_SESS) {
+				s->flags &= ~SF_CURR_SESS;
+				HA_ATOMIC_SUB(&__objt_server(s->target)->cur_sess, 1);
+			}
+			if (may_dequeue_tasks(__objt_server(s->target), be))
+				process_srv_queue(__objt_server(s->target));
+		}
+
+		s->target = NULL;
+
+		/* only release our endpoint if we don't intend to reuse the
+		 * connection.
+		 */
+		if (!si_conn_ready(&s->si[1])) {
+			si_release_endpoint(&s->si[1]);
+			s->srv_conn = NULL;
+		}
+
+		s->si[1].state     = s->si[1].prev_state = SI_ST_INI;
+		s->si[1].err_type  = SI_ET_NONE;
+		s->si[1].conn_retries = 0;  /* used for logging too */
+		s->si[1].exp       = TICK_ETERNITY;
+		s->si[1].flags    &= SI_FL_ISBACK | SI_FL_DONT_WAKE; /* we're in the context of process_stream */
+		s->req.flags &= ~(CF_SHUTW|CF_SHUTW_NOW|CF_AUTO_CONNECT|CF_WRITE_ERROR|CF_STREAMER|CF_STREAMER_FAST|CF_NEVER_WAIT|CF_WAKE_CONNECT|CF_WROTE_DATA);
+		s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA);
+		s->flags &= ~(SF_DIRECT|SF_ASSIGNED|SF_ADDR_SET|SF_BE_ASSIGNED|SF_FORCE_PRST|SF_IGNORE_PRST);
+		s->flags &= ~(SF_CURR_SESS|SF_REDIRECTABLE|SF_SRV_REUSED);
+		s->flags &= ~(SF_ERR_MASK|SF_FINST_MASK|SF_REDISP);
+		/* reinitialise the current rule list pointer to NULL. We are sure that
+		 * any rulelist match the NULL pointer.
+		 */
+		s->current_rule_list = NULL;
+
+		s->be = strm_fe(s);
+		s->logs.logwait = strm_fe(s)->to_log;
+		s->logs.level = 0;
+		stream_del_srv_conn(s);
+		s->target = NULL;
+		/* re-init store persistence */
+		s->store_count = 0;
+		s->uniq_id = global.req_count++;
+
+		s->req.flags |= CF_READ_DONTWAIT; /* one read is usually enough */
+
+		s->req.flags |= CF_WAKE_ONCE; /* need to be called again if there is some command left in the request */
+
+		s->req.analysers |= AN_REQ_WAIT_CLI;
+		s->res.analysers &= ~AN_RES_WAIT_CLI;
+
+		/* We must trim any excess data from the response buffer, because we
+		 * may have blocked an invalid response from a server that we don't
+		 * want to accidently forward once we disable the analysers, nor do
+		 * we want those data to come along with next response. A typical
+		 * example of such data would be from a buggy server responding to
+		 * a HEAD with some data, or sending more than the advertised
+		 * content-length.
+		 */
+		if (unlikely(ci_data(&s->res)))
+			b_set_data(&s->res.buf, co_data(&s->res));
+
+		/* Now we can realign the response buffer */
+		c_realign_if_empty(&s->res);
+
+		s->req.rto = strm_fe(s)->timeout.client;
+		s->req.wto = TICK_ETERNITY;
+
+		s->res.rto = TICK_ETERNITY;
+		s->res.wto = strm_fe(s)->timeout.client;
+
+		s->req.rex = TICK_ETERNITY;
+		s->req.wex = TICK_ETERNITY;
+		s->req.analyse_exp = TICK_ETERNITY;
+		s->res.rex = TICK_ETERNITY;
+		s->res.wex = TICK_ETERNITY;
+		s->res.analyse_exp = TICK_ETERNITY;
+		s->si[1].hcto = TICK_ETERNITY;
+
+		/* we're removing the analysers, we MUST re-enable events detection.
+		 * We don't enable close on the response channel since it's either
+		 * already closed, or in keep-alive with an idle connection handler.
+		 */
+		channel_auto_read(&s->req);
+		channel_auto_close(&s->req);
+		channel_auto_read(&s->res);
+
+
+		return 1;
+	}
+	return 0;
+}
+
+/*
+ * The mworker functions are used to initialize the CLI in the master process
+ */
+
+ /*
+ * Stop the mworker proxy
+ */
+void mworker_cli_proxy_stop()
+{
+	if (mworker_proxy)
+		stop_proxy(mworker_proxy);
+}
+
+/*
+ * Create the mworker CLI proxy
+ */
+int mworker_cli_proxy_create()
+{
+	struct mworker_proc *child;
+	char *msg = NULL;
+	char *errmsg = NULL;
+
+	mworker_proxy = calloc(1, sizeof(*mworker_proxy));
+	if (!mworker_proxy)
+		return -1;
+
+	init_new_proxy(mworker_proxy);
+	mworker_proxy->next = proxies_list;
+	proxies_list = mworker_proxy;
+	mworker_proxy->id = strdup("MASTER");
+	mworker_proxy->mode = PR_MODE_CLI;
+	mworker_proxy->state = PR_STNEW;
+	mworker_proxy->last_change = now.tv_sec;
+	mworker_proxy->cap = PR_CAP_LISTEN; /* this is a listen section */
+	mworker_proxy->maxconn = 10;                 /* default to 10 concurrent connections */
+	mworker_proxy->timeout.client = 0; /* no timeout */
+	mworker_proxy->conf.file = strdup("MASTER");
+	mworker_proxy->conf.line = 0;
+	mworker_proxy->accept = frontend_accept;
+	mworker_proxy-> lbprm.algo = BE_LB_ALGO_NONE;
+
+	/* Does not init the default target the CLI applet, but must be done in
+	 * the request parsing code */
+	mworker_proxy->default_target = NULL;
+
+	/* the check_config_validity() will get an ID for the proxy */
+	mworker_proxy->uuid = -1;
+
+	proxy_store_name(mworker_proxy);
+
+	/* create all servers using the mworker_proc list */
+	list_for_each_entry(child, &proc_list, list) {
+		struct server *newsrv = NULL;
+		struct sockaddr_storage *sk;
+		int port1, port2, port;
+		struct protocol *proto;
+
+		newsrv = new_server(mworker_proxy);
+		if (!newsrv)
+			goto error;
+
+		/* we don't know the new pid yet */
+		if (child->pid == -1)
+			memprintf(&msg, "cur-%d", child->relative_pid);
+		else
+			memprintf(&msg, "old-%d", child->pid);
+
+		newsrv->next = mworker_proxy->srv;
+		mworker_proxy->srv = newsrv;
+		newsrv->conf.file = strdup(msg);
+		newsrv->id = strdup(msg);
+		newsrv->conf.line = 0;
+
+		memprintf(&msg, "sockpair@%d", child->ipc_fd[0]);
+		if ((sk = str2sa_range(msg, &port, &port1, &port2, &errmsg, NULL, NULL, 0)) == 0) {
+			goto error;
+		}
+		free(msg);
+		msg = NULL;
+
+		proto = protocol_by_family(sk->ss_family);
+		if (!proto || !proto->connect) {
+			goto error;
+		}
+
+		/* no port specified */
+		newsrv->flags |= SRV_F_MAPPORTS;
+		newsrv->addr = *sk;
+		/* don't let the server participate to load balancing */
+		newsrv->iweight = 0;
+		newsrv->uweight = 0;
+		srv_lb_commit_status(newsrv);
+
+		child->srv = newsrv;
+	}
+	return 0;
+
+error:
+	ha_alert("%s\n", errmsg);
+
+	list_for_each_entry(child, &proc_list, list) {
+		free((char *)child->srv->conf.file); /* cast because of const char *  */
+		free(child->srv->id);
+		free(child->srv);
+		child->srv = NULL;
+	}
+	free(mworker_proxy->id);
+	free(mworker_proxy->conf.file);
+	free(mworker_proxy);
+	mworker_proxy = NULL;
+	free(errmsg);
+	free(msg);
+
+	return -1;
+}
+
+/*
+ * Create a new listener for the master CLI proxy
+ */
+int mworker_cli_proxy_new_listener(char *line)
+{
+	struct bind_conf *bind_conf;
+	struct listener *l;
+	char *err = NULL;
+	char *args[MAX_LINE_ARGS + 1];
+	int arg;
+	int cur_arg;
+
+	arg = 0;
+	args[0] = line;
+
+	/* args is a bind configuration with spaces replaced by commas */
+	while (*line && arg < MAX_LINE_ARGS) {
+
+		if (*line == ',') {
+			*line++ = '\0';
+			while (*line == ',')
+				line++;
+			args[++arg] = line;
+		}
+		line++;
+	}
+
+	args[++arg] = "\0";
+
+	bind_conf = bind_conf_alloc(mworker_proxy, "master-socket", 0, "", xprt_get(XPRT_RAW));
+	if (!bind_conf)
+		goto err;
+
+	bind_conf->level &= ~ACCESS_LVL_MASK;
+	bind_conf->level |= ACCESS_LVL_ADMIN;
+
+	if (!str2listener(args[0], mworker_proxy, bind_conf, "master-socket", 0, &err)) {
+		ha_alert("Cannot create the listener of the master CLI\n");
+		goto err;
+	}
+
+	cur_arg = 1;
+
+	while (*args[cur_arg]) {
+			static int bind_dumped;
+			struct bind_kw *kw;
+
+			kw = bind_find_kw(args[cur_arg]);
+			if (kw) {
+				if (!kw->parse) {
+					memprintf(&err, "'%s %s' : '%s' option is not implemented in this version (check build options).",
+						  args[0], args[1], args[cur_arg]);
+					goto err;
+				}
+
+				if (kw->parse(args, cur_arg, global.stats_fe, bind_conf, &err) != 0) {
+					if (err)
+						memprintf(&err, "'%s %s' : '%s'", args[0], args[1], err);
+					else
+						memprintf(&err, "'%s %s' : error encountered while processing '%s'",
+						          args[0], args[1], args[cur_arg]);
+					goto err;
+				}
+
+				cur_arg += 1 + kw->skip;
+				continue;
+			}
+
+			if (!bind_dumped) {
+				bind_dump_kws(&err);
+				indent_msg(&err, 4);
+				bind_dumped = 1;
+			}
+
+			memprintf(&err, "'%s %s' : unknown keyword '%s'.%s%s",
+			          args[0], args[1], args[cur_arg],
+			          err ? " Registered keywords :" : "", err ? err : "");
+			goto err;
+	}
+
+
+	list_for_each_entry(l, &bind_conf->listeners, by_bind) {
+		l->maxconn = 10;
+		l->backlog = 10;
+		l->accept = session_accept_fd;
+		l->default_target = mworker_proxy->default_target;
+		/* don't make the peers subject to global limits and don't close it in the master */
+		l->options |= (LI_O_UNLIMITED|LI_O_MWORKER); /* we are keeping this FD in the master */
+		l->nice = -64;  /* we want to boost priority for local stats */
+		global.maxsock += l->maxconn;
+	}
+
+	return 0;
+
+err:
+	ha_alert("%s\n", err);
+	free(err);
+	free(bind_conf);
+	return -1;
+
+}
+
+/*
+ * Create a new CLI socket using a socketpair for a worker process
+ * <mworker_proc> is the process structure, and <proc> is the process number
+ */
+int mworker_cli_sockpair_new(struct mworker_proc *mworker_proc, int proc)
+{
+	struct bind_conf *bind_conf;
+	struct listener *l;
+	char *path = NULL;
+	char *err = NULL;
+
+	/* master pipe to ensure the master is still alive  */
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, mworker_proc->ipc_fd) < 0) {
+		ha_alert("Cannot create worker socketpair.\n");
+		return -1;
+	}
+
+	/* XXX: we might want to use a separate frontend at some point */
+	if (!global.stats_fe) {
+		if ((global.stats_fe = alloc_stats_fe("GLOBAL", "master-socket", 0)) == NULL) {
+			ha_alert("out of memory trying to allocate the stats frontend");
+			goto error;
+		}
+	}
+
+	bind_conf = bind_conf_alloc(global.stats_fe, "master-socket", 0, "", xprt_get(XPRT_RAW));
+	if (!bind_conf)
+		goto error;
+
+	bind_conf->level &= ~ACCESS_LVL_MASK;
+	bind_conf->level |= ACCESS_LVL_ADMIN; /* TODO: need to lower the rights with a CLI keyword*/
+
+	bind_conf->bind_proc = 1UL << proc;
+	global.stats_fe->bind_proc = 0; /* XXX: we should be careful with that, it can be removed by configuration */
+
+	if (!memprintf(&path, "sockpair@%d", mworker_proc->ipc_fd[1])) {
+		ha_alert("Cannot allocate listener.\n");
+		goto error;
+	}
+
+	if (!str2listener(path, global.stats_fe, bind_conf, "master-socket", 0, &err)) {
+		free(path);
+		ha_alert("Cannot create a CLI sockpair listener for process #%d\n", proc);
+		goto error;
+	}
+	free(path);
+	path = NULL;
+
+	list_for_each_entry(l, &bind_conf->listeners, by_bind) {
+		l->maxconn = global.stats_fe->maxconn;
+		l->backlog = global.stats_fe->backlog;
+		l->accept = session_accept_fd;
+		l->default_target = global.stats_fe->default_target;
+		l->options |= (LI_O_UNLIMITED | LI_O_NOSTOP);
+		/* it's a sockpair but we don't want to keep the fd in the master */
+		l->options &= ~LI_O_INHERITED;
+		l->nice = -64;  /* we want to boost priority for local stats */
+		global.maxsock += l->maxconn;
+	}
+
+	return 0;
+
+error:
+	close(mworker_proc->ipc_fd[0]);
+	close(mworker_proc->ipc_fd[1]);
+	free(err);
+
+	return -1;
+}
 
 static struct applet cli_applet = {
 	.obj_type = OBJ_TYPE_APPLET,
@@ -1498,22 +2618,37 @@ static struct applet cli_applet = {
 
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
+	{ { "@<relative pid>", NULL }, "@<relative pid> : send a command to the <relative pid> process", NULL, cli_io_handler_show_proc, NULL, NULL, ACCESS_MASTER_ONLY},
+	{ { "@!<pid>", NULL }, "@!<pid>        : send a command to the <pid> process", cli_parse_default, NULL, NULL, NULL, ACCESS_MASTER_ONLY},
+	{ { "@master", NULL }, "@master        : send a command to the master process", cli_parse_default, NULL, NULL, NULL, ACCESS_MASTER_ONLY},
+	{ { "help", NULL }, NULL, cli_parse_simple, NULL },
+	{ { "prompt", NULL }, NULL, cli_parse_simple, NULL },
+	{ { "quit", NULL }, NULL, cli_parse_simple, NULL },
 	{ { "set", "maxconn", "global",  NULL }, "set maxconn global : change the per-process maxconn setting", cli_parse_set_maxconn_global, NULL },
 	{ { "set", "rate-limit", NULL }, "set rate-limit : change a rate limiting value", cli_parse_set_ratelimit, NULL },
 	{ { "set", "severity-output",  NULL }, "set severity-output [none|number|string] : set presence of severity level in feedback information", cli_parse_set_severity_output, NULL, NULL },
 	{ { "set", "timeout",  NULL }, "set timeout    : change a timeout setting", cli_parse_set_timeout, NULL, NULL },
 	{ { "show", "env",  NULL }, "show env [var] : dump environment variables known to the process", cli_parse_show_env, cli_io_handler_show_env, NULL },
-	{ { "show", "cli", "sockets",  NULL }, "show cli sockets : dump list of cli sockets", cli_parse_default, cli_io_handler_show_cli_sock, NULL },
+	{ { "show", "cli", "sockets",  NULL }, "show cli sockets : dump list of cli sockets", cli_parse_default, cli_io_handler_show_cli_sock, NULL, NULL, ACCESS_MASTER },
+	{ { "show", "cli", "level", NULL },    "show cli level   : display the level of the current CLI session", cli_parse_show_lvl, NULL, NULL, NULL, ACCESS_MASTER},
 	{ { "show", "fd", NULL }, "show fd [num] : dump list of file descriptors in use", cli_parse_show_fd, cli_io_handler_show_fd, NULL },
 	{ { "show", "activity", NULL }, "show activity : show per-thread activity stats (for support/developers)", cli_parse_default, cli_io_handler_show_activity, NULL },
+	{ { "show", "proc", NULL }, "show proc      : show processes status", cli_parse_default, cli_io_handler_show_proc, NULL, NULL, ACCESS_MASTER_ONLY},
+	{ { "operator", NULL },  "operator       : lower the level of the current CLI session to operator", cli_parse_set_lvl, NULL, NULL, NULL, ACCESS_MASTER},
+	{ { "user", NULL },      "user           : lower the level of the current CLI session to user", cli_parse_set_lvl, NULL, NULL, NULL, ACCESS_MASTER},
+	{ { "reload", NULL },    "reload         : reload haproxy", cli_parse_reload, NULL, NULL, NULL, ACCESS_MASTER_ONLY},
 	{ { "_getsocks", NULL }, NULL,  _getsocks, NULL },
 	{{},}
 }};
+
+INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
 
 static struct cfg_kw_list cfg_kws = {ILH, {
 	{ CFG_GLOBAL, "stats", stats_parse_global },
 	{ 0, NULL, NULL },
 }};
+
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
 
 static struct bind_kw_list bind_kws = { "STAT", { }, {
 	{ "level",     bind_parse_level,    1 }, /* set the unix socket admin level */
@@ -1522,13 +2657,7 @@ static struct bind_kw_list bind_kws = { "STAT", { }, {
 	{ NULL, NULL, 0 },
 }};
 
-__attribute__((constructor))
-static void __dumpstats_module_init(void)
-{
-	cfg_register_keywords(&cfg_kws);
-	cli_register_kw(&cli_kws);
-	bind_register_keywords(&bind_kws);
-}
+INITCALL1(STG_REGISTER, bind_register_keywords, &bind_kws);
 
 /*
  * Local variables:

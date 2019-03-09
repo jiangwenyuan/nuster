@@ -23,6 +23,7 @@
 #define _COMMON_HATHREADS_H
 
 #include <common/config.h>
+#include <common/initcall.h>
 
 /* Note about all_threads_mask :
  *    - with threads support disabled, this symbol is defined as zero (0UL).
@@ -43,6 +44,10 @@ enum { tid_bit = 1UL };
 enum { tid = 0 };
 
 #define __decl_hathreads(decl)
+#define __decl_spinlock(lock)
+#define __decl_aligned_spinlock(lock)
+#define __decl_rwlock(lock)
+#define __decl_aligned_rwlock(lock)
 
 #define HA_ATOMIC_CAS(val, old, new) ({((*val) == (*old)) ? (*(val) = (new) , 1) : (*(old) = *(val), 0);})
 #define HA_ATOMIC_ADD(val, i)        ({*(val) += (i);})
@@ -61,6 +66,24 @@ enum { tid = 0 };
 		typeof(*(val)) __old_xchg = *(val);			\
 		*(val) = new;						\
 		__old_xchg;						\
+	})
+#define HA_ATOMIC_BTS(val, bit)						\
+	({								\
+		typeof((val)) __p_bts = (val);				\
+		typeof(*__p_bts)  __b_bts = (1UL << (bit));		\
+		typeof(*__p_bts)  __t_bts = *__p_bts & __b_bts;		\
+		if (!__t_bts)						\
+			*__p_bts |= __b_bts;				\
+		__t_bts;						\
+	})
+#define HA_ATOMIC_BTR(val, bit)						\
+	({								\
+		typeof((val)) __p_btr = (val);				\
+		typeof(*__p_btr)  __b_btr = (1UL << (bit));		\
+		typeof(*__p_btr)  __t_btr = *__p_btr & __b_btr;		\
+		if (__t_btr)						\
+			*__p_btr &= ~__b_btr;				\
+		__t_btr;						\
 	})
 #define HA_ATOMIC_STORE(val, new)    ({*(val) = new;})
 #define HA_ATOMIC_UPDATE_MAX(val, new)					\
@@ -82,14 +105,6 @@ enum { tid = 0 };
 	})
 
 #define HA_BARRIER() do { } while (0)
-
-#define THREAD_SYNC_INIT()   do { /* do nothing */ } while(0)
-#define THREAD_SYNC_ENABLE() do { /* do nothing */ } while(0)
-#define THREAD_WANT_SYNC()   do { /* do nothing */ } while(0)
-#define THREAD_ENTER_SYNC()  do { /* do nothing */ } while(0)
-#define THREAD_EXIT_SYNC()   do { /* do nothing */ } while(0)
-#define THREAD_NO_SYNC()     ({ 0; })
-#define THREAD_NEED_SYNC()   ({ 1; })
 
 #define HA_SPIN_INIT(l)         do { /* do nothing */ } while(0)
 #define HA_SPIN_DESTROY(l)      do { /* do nothing */ } while(0)
@@ -158,6 +173,26 @@ static inline unsigned long thread_isolated()
 
 #define __decl_hathreads(decl) decl
 
+/* declare a self-initializing spinlock */
+#define __decl_spinlock(lock)                               \
+	HA_SPINLOCK_T (lock);                               \
+	INITCALL1(STG_LOCK, ha_spin_init, &(lock))
+
+/* declare a self-initializing spinlock, aligned on a cache line */
+#define __decl_aligned_spinlock(lock)                       \
+	HA_SPINLOCK_T (lock) __attribute__((aligned(64)));  \
+	INITCALL1(STG_LOCK, ha_spin_init, &(lock))
+
+/* declare a self-initializing rwlock */
+#define __decl_rwlock(lock)                                 \
+	HA_RWLOCK_T   (lock);                               \
+	INITCALL1(STG_LOCK, ha_rwlock_init, &(lock))
+
+/* declare a self-initializing rwlock, aligned on a cache line */
+#define __decl_aligned_rwlock(lock)                         \
+	HA_RWLOCK_T   (lock) __attribute__((aligned(64)));  \
+	INITCALL1(STG_LOCK, ha_rwlock_init, &(lock))
+
 /* TODO: thread: For now, we rely on GCC builtins but it could be a good idea to
  * have a header file regrouping all functions dealing with threads. */
 
@@ -203,6 +238,19 @@ static inline unsigned long thread_isolated()
 		} while (!__sync_bool_compare_and_swap(__val_xchg, __old_xchg, __new_xchg)); \
 		__old_xchg;						\
 	})
+
+#define HA_ATOMIC_BTS(val, bit)						\
+	({								\
+		typeof(*(val)) __b_bts = (1UL << (bit));		\
+		__sync_fetch_and_or((val), __b_bts) & __b_bts;		\
+	})
+
+#define HA_ATOMIC_BTR(val, bit)						\
+	({								\
+		typeof(*(val)) __b_btr = (1UL << (bit));		\
+		__sync_fetch_and_and((val), ~__b_btr) & __b_btr;	\
+	})
+
 #define HA_ATOMIC_STORE(val, new)					\
 	({								\
 		typeof((val)) __val_store = (val);			\
@@ -219,6 +267,18 @@ static inline unsigned long thread_isolated()
 #define HA_ATOMIC_SUB(val, i)        __atomic_sub_fetch(val, i, 0)
 #define HA_ATOMIC_AND(val, flags)    __atomic_and_fetch(val, flags, 0)
 #define HA_ATOMIC_OR(val, flags)     __atomic_or_fetch(val,  flags, 0)
+#define HA_ATOMIC_BTS(val, bit)						\
+	({								\
+		typeof(*(val)) __b_bts = (1UL << (bit));		\
+		__sync_fetch_and_or((val), __b_bts) & __b_bts;		\
+	})
+
+#define HA_ATOMIC_BTR(val, bit)						\
+	({								\
+		typeof(*(val)) __b_btr = (1UL << (bit));		\
+		__sync_fetch_and_and((val), ~__b_btr) & __b_btr;	\
+	})
+
 #define HA_ATOMIC_XCHG(val, new)     __atomic_exchange_n(val, new, 0)
 #define HA_ATOMIC_STORE(val, new)    __atomic_store_n(val, new, 0)
 #endif
@@ -244,21 +304,6 @@ static inline unsigned long thread_isolated()
 
 #define HA_BARRIER() pl_barrier()
 
-#define THREAD_SYNC_INIT()    thread_sync_init()
-#define THREAD_SYNC_ENABLE()  thread_sync_enable()
-#define THREAD_WANT_SYNC()    thread_want_sync()
-#define THREAD_ENTER_SYNC()   thread_enter_sync()
-#define THREAD_EXIT_SYNC()    thread_exit_sync()
-#define THREAD_NO_SYNC()      thread_no_sync()
-#define THREAD_NEED_SYNC()    thread_need_sync()
-
-int  thread_sync_init();
-void thread_sync_enable(void);
-void thread_want_sync(void);
-void thread_enter_sync(void);
-void thread_exit_sync(void);
-int  thread_no_sync(void);
-int  thread_need_sync(void);
 void thread_harmless_till_end();
 void thread_isolate();
 void thread_release();
@@ -334,12 +379,7 @@ static inline unsigned long thread_isolated()
 
 /* WARNING!!! if you update this enum, please also keep lock_label() up to date below */
 enum lock_label {
-	THREAD_SYNC_LOCK = 0,
-	FDTAB_LOCK,
-	FDCACHE_LOCK,
 	FD_LOCK,
-	FD_UPDATE_LOCK,
-	POLL_LOCK,
 	TASK_RQ_LOCK,
 	TASK_WQ_LOCK,
 	POOL_LOCK,
@@ -347,7 +387,6 @@ enum lock_label {
 	LISTENER_QUEUE_LOCK,
 	PROXY_LOCK,
 	SERVER_LOCK,
-	UPDATED_SERVERS_LOCK,
 	LBPRM_LOCK,
 	SIGNALS_LOCK,
 	STK_TABLE_LOCK,
@@ -372,7 +411,6 @@ enum lock_label {
 	PIPES_LOCK,
 	START_LOCK,
 	TLSKEYS_REF_LOCK,
-	PENDCONN_LOCK,
 	AUTH_LOCK,
 	LOCK_LABELS
 };
@@ -457,12 +495,7 @@ struct ha_rwlock {
 static inline const char *lock_label(enum lock_label label)
 {
 	switch (label) {
-	case THREAD_SYNC_LOCK:     return "THREAD_SYNC";
-	case FDCACHE_LOCK:         return "FDCACHE";
 	case FD_LOCK:              return "FD";
-	case FDTAB_LOCK:           return "FDTAB";
-	case FD_UPDATE_LOCK:       return "FD_UPDATE";
-	case POLL_LOCK:            return "POLL";
 	case TASK_RQ_LOCK:         return "TASK_RQ";
 	case TASK_WQ_LOCK:         return "TASK_WQ";
 	case POOL_LOCK:            return "POOL";
@@ -470,7 +503,6 @@ static inline const char *lock_label(enum lock_label label)
 	case LISTENER_QUEUE_LOCK:  return "LISTENER_QUEUE";
 	case PROXY_LOCK:           return "PROXY";
 	case SERVER_LOCK:          return "SERVER";
-	case UPDATED_SERVERS_LOCK: return "UPDATED_SERVERS";
 	case LBPRM_LOCK:           return "LBPRM";
 	case SIGNALS_LOCK:         return "SIGNALS";
 	case STK_TABLE_LOCK:       return "STK_TABLE";
@@ -495,7 +527,6 @@ static inline const char *lock_label(enum lock_label label)
 	case PIPES_LOCK:           return "PIPES";
 	case START_LOCK:           return "START";
 	case TLSKEYS_REF_LOCK:     return "TLSKEYS_REF";
-	case PENDCONN_LOCK:        return "PENDCONN";
 	case AUTH_LOCK:            return "AUTH";
 	case LOCK_LABELS:          break; /* keep compiler happy */
 	};
@@ -812,8 +843,7 @@ static inline void __spin_unlock(enum lock_label lbl, struct ha_spinlock *l,
 #endif  /* DEBUG_THREAD */
 
 #ifdef __x86_64__
-#define HA_HAVE_CAS_DW	1
-#define HA_CAS_IS_8B
+
 static __inline int
 __ha_cas_dw(void *target, void *compare, const void *set)
 {
@@ -851,7 +881,7 @@ __ha_barrier_full(void)
 }
 
 #elif defined(__arm__) && (defined(__ARM_ARCH_7__) || defined(__ARM_ARCH_7A__))
-#define HA_HAVE_CAS_DW	1
+
 static __inline void
 __ha_barrier_load(void)
 {
@@ -892,8 +922,6 @@ static __inline int __ha_cas_dw(void *target, void *compare, const void *set)
 }
 
 #elif defined (__aarch64__)
-#define HA_HAVE_CAS_DW	1
-#define HA_CAS_IS_8B
 
 static __inline void
 __ha_barrier_load(void)
@@ -945,6 +973,9 @@ static __inline int __ha_cas_dw(void *target, void *compare, void *set)
 #define __ha_barrier_full __sync_synchronize
 #endif
 
+void ha_spin_init(HA_SPINLOCK_T *l);
+void ha_rwlock_init(HA_RWLOCK_T *l);
+
 #endif /* USE_THREAD */
 
 static inline void __ha_compiler_barrier(void)
@@ -952,8 +983,6 @@ static inline void __ha_compiler_barrier(void)
 	__asm __volatile("" ::: "memory");
 }
 
-/* Dummy I/O handler used by the sync pipe.*/
-void thread_sync_io_handler(int fd);
 int parse_nbthread(const char *arg, char **err);
 
 #endif /* _COMMON_HATHREADS_H */

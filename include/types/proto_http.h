@@ -22,16 +22,16 @@
 #ifndef _TYPES_PROTO_HTTP_H
 #define _TYPES_PROTO_HTTP_H
 
-#include <common/chunk.h>
+#include <common/buf.h>
 #include <common/config.h>
+#include <common/http.h>
 #include <common/mini-clist.h>
 #include <common/regex.h>
 
 #include <types/channel.h>
-#include <types/h1.h>
 #include <types/hdr_idx.h>
 #include <types/filters.h>
-#include <types/sample.h>
+//#include <types/sample.h>
 
 /* These are the flags that are found in txn->flags */
 
@@ -147,6 +147,8 @@
 #define HTTP_MSGF_WAIT_CONN   0x00000010  /* Wait for connect() to be confirmed before processing body */
 #define HTTP_MSGF_COMPRESSING 0x00000020  /* data compression is in progress */
 
+#define HTTP_MSGF_BODYLESS    0x00000040  /* The message has no body (content-length = 0) */
+
 
 /* Redirect flags */
 enum {
@@ -170,13 +172,6 @@ enum {
 	PERSIST_TYPE_IGNORE,            /* ignore-persist */
 };
 
-enum ht_auth_m {
-	HTTP_AUTH_WRONG		= -1,		/* missing or unknown */
-	HTTP_AUTH_UNKNOWN	= 0,
-	HTTP_AUTH_BASIC,
-	HTTP_AUTH_DIGEST,
-} __attribute__((packed));
-
 /* final results for http-request rules */
 enum rule_result {
 	HTTP_RULE_RES_CONT = 0,  /* nothing special, continue rules evaluation */
@@ -188,36 +183,80 @@ enum rule_result {
 	HTTP_RULE_RES_BADREQ,    /* bad request */
 };
 
-/*
- * All implemented return codes
- */
-enum {
-	HTTP_ERR_200 = 0,
-	HTTP_ERR_400,
-	HTTP_ERR_403,
-	HTTP_ERR_405,
-	HTTP_ERR_408,
-	HTTP_ERR_425,
-	HTTP_ERR_429,
-	HTTP_ERR_500,
-	HTTP_ERR_502,
-	HTTP_ERR_503,
-	HTTP_ERR_504,
-	HTTP_ERR_SIZE
-};
-
 /* status codes available for the stats admin page */
 enum {
 	STAT_STATUS_INIT = 0,
 	STAT_STATUS_DENY,	/* action denied */
 	STAT_STATUS_DONE,	/* the action is successful */
-	STAT_STATUS_ERRP,	/* an error occured due to invalid values in parameters */
-	STAT_STATUS_EXCD,	/* an error occured because the buffer couldn't store all data */
+	STAT_STATUS_ERRP,	/* an error occurred due to invalid values in parameters */
+	STAT_STATUS_EXCD,	/* an error occurred because the buffer couldn't store all data */
 	STAT_STATUS_NONE,	/* nothing happened (no action chosen or servers state didn't change) */
 	STAT_STATUS_PART,	/* the action is partially successful */
-	STAT_STATUS_UNKN,	/* an unknown error occured, shouldn't happen */
+	STAT_STATUS_UNKN,	/* an unknown error occurred, shouldn't happen */
 	STAT_STATUS_SIZE
 };
+
+/* Legacy version of the HTTP/1 message state, used by the channels, should
+ * ultimately be removed.
+ */
+enum h1_state {
+	HTTP_MSG_RQBEFORE     =  0, // request: leading LF, before start line
+	HTTP_MSG_RQBEFORE_CR  =  1, // request: leading CRLF, before start line
+	/* these ones define a request start line */
+	HTTP_MSG_RQMETH       =  2, // parsing the Method
+	HTTP_MSG_RQMETH_SP    =  3, // space(s) after the Method
+	HTTP_MSG_RQURI        =  4, // parsing the Request URI
+	HTTP_MSG_RQURI_SP     =  5, // space(s) after the Request URI
+	HTTP_MSG_RQVER        =  6, // parsing the Request Version
+	HTTP_MSG_RQLINE_END   =  7, // end of request line (CR or LF)
+
+	HTTP_MSG_RPBEFORE     =  8, // response: leading LF, before start line
+	HTTP_MSG_RPBEFORE_CR  =  9, // response: leading CRLF, before start line
+
+	/* these ones define a response start line */
+	HTTP_MSG_RPVER        = 10, // parsing the Response Version
+	HTTP_MSG_RPVER_SP     = 11, // space(s) after the Response Version
+	HTTP_MSG_RPCODE       = 12, // response code
+	HTTP_MSG_RPCODE_SP    = 13, // space(s) after the response code
+	HTTP_MSG_RPREASON     = 14, // response reason
+	HTTP_MSG_RPLINE_END   = 15, // end of response line (CR or LF)
+
+	/* common header processing */
+	HTTP_MSG_HDR_FIRST    = 16, // waiting for first header or last CRLF (no LWS possible)
+	HTTP_MSG_HDR_NAME     = 17, // parsing header name
+	HTTP_MSG_HDR_COL      = 18, // parsing header colon
+	HTTP_MSG_HDR_L1_SP    = 19, // parsing header LWS (SP|HT) before value
+	HTTP_MSG_HDR_L1_LF    = 20, // parsing header LWS (LF) before value
+	HTTP_MSG_HDR_L1_LWS   = 21, // checking whether it's a new header or an LWS
+	HTTP_MSG_HDR_VAL      = 22, // parsing header value
+	HTTP_MSG_HDR_L2_LF    = 23, // parsing header LWS (LF) inside/after value
+	HTTP_MSG_HDR_L2_LWS   = 24, // checking whether it's a new header or an LWS
+
+	HTTP_MSG_LAST_LF      = 25, // parsing last LF
+
+	/* error state : must be before HTTP_MSG_BODY so that (>=BODY) always indicates
+	 * that data are being processed.
+	 */
+	HTTP_MSG_ERROR        = 26, // an error occurred
+	/* Body processing.
+	 * The state HTTP_MSG_BODY is a delimiter to know if we're waiting for headers
+	 * or body. All the sub-states below also indicate we're processing the body,
+	 * with some additional information.
+	 */
+	HTTP_MSG_BODY         = 27, // parsing body at end of headers
+	HTTP_MSG_100_SENT     = 28, // parsing body after a 100-Continue was sent
+	HTTP_MSG_CHUNK_SIZE   = 29, // parsing the chunk size (RFC7230 #4.1)
+	HTTP_MSG_DATA         = 30, // skipping data chunk / content-length data
+	HTTP_MSG_CHUNK_CRLF   = 31, // skipping CRLF after data chunk
+	HTTP_MSG_TRAILERS     = 32, // trailers (post-data entity headers)
+	/* we enter this state when we've received the end of the current message */
+	HTTP_MSG_ENDING       = 33, // message end received, wait that the filters end too
+	HTTP_MSG_DONE         = 34, // message end received, waiting for resync or close
+	HTTP_MSG_CLOSING      = 35, // shutdown_w done, not all bytes sent yet
+	HTTP_MSG_CLOSED       = 36, // shutdown_w done, all bytes sent
+	HTTP_MSG_TUNNEL       = 37, // tunneled data after DONE
+} __attribute__((packed));
+
 
 /* This is an HTTP message, as described in RFC7230. It can be either a request
  * message or a response message.
@@ -231,7 +270,7 @@ enum {
  *                             During parsing, it points to last header seen
  *                             for states after START. When in HTTP_MSG_BODY,
  *                             eoh points to the first byte of the last CRLF
- *                             preceeding data. Relative to buffer's origin.
+ *                             preceding data. Relative to buffer's origin.
  *                             This value then remains unchanged till the end
  *                             so that we can rewind the buffer to change some
  *                             headers if needed (eg: http-send-name-header).
@@ -297,13 +336,6 @@ struct http_msg {
 	unsigned long long body_len;           /* total known length of the body, excluding encoding */
 };
 
-struct http_auth_data {
-	enum ht_auth_m method;                /* one of HTTP_AUTH_* */
-	/* 7 bytes unused here */
-	struct chunk method_data;             /* points to the creditial part from 'Authorization:' header */
-	char *user, *pass;                    /* extracted username & password */
-};
-
 struct proxy;
 struct http_txn;
 struct stream;
@@ -347,16 +379,6 @@ struct hdr_ctx {
 	int  del;  /* relative to line */
 	int  prev; /* index of previous header */
 };
-
-struct http_method_name {
-	char *name;
-	int len;
-};
-
-extern struct action_kw_list http_req_keywords;
-extern struct action_kw_list http_res_keywords;
-
-extern const struct http_method_name http_known_methods[HTTP_METH_OTHER];
 
 extern struct pool_head *pool_head_http_txn;
 

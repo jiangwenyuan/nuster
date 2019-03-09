@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include <common/config.h>
+#include <common/initcall.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
 #include <common/uri_auth.h>
@@ -113,9 +114,9 @@ static struct acl_expr *prune_acl_expr(struct acl_expr *expr)
 		if (arg->type == ARGT_STOP)
 			break;
 		if (arg->type == ARGT_STR || arg->unresolved) {
-			free(arg->data.str.str);
-			arg->data.str.str = NULL;
-			arg->data.str.len = 0;
+			free(arg->data.str.area);
+			arg->data.str.area = NULL;
+			arg->data.str.data = 0;
 			unresolved |= arg->unresolved;
 			arg->unresolved = 0;
 		}
@@ -188,7 +189,7 @@ struct acl_expr *parse_acl_expr(const char **args, char **err, struct arg_list *
 		smp->fetch = aclkw->smp;
 		smp->arg_p = empty_arg_list;
 
-		/* look for the begining of the subject arguments */
+		/* look for the beginning of the subject arguments */
 		for (arg = args[0]; *arg && *arg != '(' && *arg != ','; arg++);
 
 		endt = arg;
@@ -230,7 +231,7 @@ struct acl_expr *parse_acl_expr(const char **args, char **err, struct arg_list *
 		}
 		arg = endt;
 
-		/* look for the begining of the converters list. Those directly attached
+		/* look for the beginning of the converters list. Those directly attached
 		 * to the ACL keyword are found just after <arg> which points to the comma.
 		 * If we find any converter, then we don't use the ACL keyword's match
 		 * anymore but the one related to the converter's output type.
@@ -525,11 +526,12 @@ struct acl_expr *parse_acl_expr(const char **args, char **err, struct arg_list *
 	}
 
 	/* Create displayed reference */
-	snprintf(trash.str, trash.size, "acl '%s' file '%s' line %d", expr->kw, file, line);
-	trash.str[trash.size - 1] = '\0';
+	snprintf(trash.area, trash.size, "acl '%s' file '%s' line %d",
+		 expr->kw, file, line);
+	trash.area[trash.size - 1] = '\0';
 
 	/* Create new patern reference. */
-	ref = pat_ref_newid(unique_id, trash.str, PAT_REF_ACL);
+	ref = pat_ref_newid(unique_id, trash.area, PAT_REF_ACL);
 	if (!ref) {
 		memprintf(err, "memory error");
 		goto out_free_expr;
@@ -1272,7 +1274,8 @@ int acl_find_targets(struct proxy *p)
 				 */
 				if (expr->smp->arg_p->unresolved) {
 					ha_alert("Internal bug in proxy %s: %sacl %s %s() makes use of unresolved userlist '%s'. Please report this.\n",
-						 p->id, *acl->name ? "" : "anonymous ", acl->name, expr->kw, expr->smp->arg_p->data.str.str);
+						 p->id, *acl->name ? "" : "anonymous ", acl->name, expr->kw,
+						 expr->smp->arg_p->data.str.area);
 					cfgerr++;
 					continue;
 				}
@@ -1350,12 +1353,7 @@ static struct acl_kw_list acl_kws = {ILH, {
 	{ /* END */ },
 }};
 
-__attribute__((constructor))
-static void __acl_init(void)
-{
-	acl_register_keywords(&acl_kws);
-}
-
+INITCALL1(STG_REGISTER, acl_register_keywords, &acl_kws);
 
 /*
  * Local variables:

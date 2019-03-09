@@ -16,6 +16,8 @@
 #include <common/compat.h>
 #include <common/config.h>
 #include <common/errors.h>
+#include <common/htx.h>
+#include <common/initcall.h>
 #include <common/namespace.h>
 #include <common/standard.h>
 #include <common/hathreads.h>
@@ -26,12 +28,13 @@
 #include <proto/compression.h>
 #include <proto/filters.h>
 #include <proto/flt_http_comp.h>
+#include <proto/http_htx.h>
 #include <proto/proto_http.h>
 #include <proto/stream.h>
 #include <proto/stream_interface.h>
 
 /* Pool used to allocate filters */
-struct pool_head *pool_head_filter = NULL;
+DECLARE_STATIC_POOL(pool_head_filter, "filter", sizeof(struct filter));
 
 static int handle_analyzer_result(struct stream *s, struct channel *chn, unsigned int an_bit, int ret);
 
@@ -299,8 +302,8 @@ flt_init_all()
 	return 0;
 }
 
-/* Calls flt_init_per_thread() for all proxies, see above.  Be carefull here, it
- * returns 0 if an error occured. This is the opposite of flt_init_all. */
+/* Calls flt_init_per_thread() for all proxies, see above.  Be careful here, it
+ * returns 0 if an error occurred. This is the opposite of flt_init_all. */
 static int
 flt_init_all_per_thread()
 {
@@ -329,11 +332,11 @@ flt_check(struct proxy *proxy)
 	struct flt_conf *fconf;
 	int err = 0;
 
+	err += check_implicit_http_comp_flt(proxy);
 	list_for_each_entry(fconf, &proxy->filter_configs, list) {
 		if (fconf->ops->check)
 			err += fconf->ops->check(proxy, fconf);
 	}
-	err += check_legacy_http_comp_flt(proxy);
 	return err;
 }
 
@@ -384,8 +387,12 @@ flt_deinit_all_per_thread()
 static int
 flt_stream_add_filter(struct stream *s, struct flt_conf *fconf, unsigned int flags)
 {
-	struct filter *f = pool_alloc(pool_head_filter);
+	struct filter *f;
 
+	if ((strm_fe(s)->options2 & PR_O2_USE_HTX) && !(fconf->flags & FLT_CFG_FL_HTX))
+		return 0;
+
+	f = pool_alloc(pool_head_filter);
 	if (!f) /* not enough memory */
 		return -1;
 	memset(f, 0, sizeof(*f));
@@ -530,6 +537,8 @@ flt_set_stream_backend(struct stream *s, struct proxy *be)
  * filters and adjusts available data to be sure that a filter cannot parse more
  * data than its predecessors. A filter can choose to not consume all available
  * data. Returns -1 if an error occurs, the number of consumed bytes otherwise.
+ *
+ * DEPRECATED FUNCTION - CALLED FROM LEGACY HTTP ANALYZERS
  */
 int
 flt_http_data(struct stream *s, struct http_msg *msg)
@@ -539,7 +548,7 @@ flt_http_data(struct stream *s, struct http_msg *msg)
 	int            delta = 0, ret = 0;
 
 	/* Save buffer state */
-	buf_i = msg->chn->buf->i;
+	buf_i = ci_data(msg->chn);
 
 	list_for_each_entry(filter, &strm_flt(s)->filters, list) {
 		unsigned int *nxt;
@@ -550,18 +559,18 @@ flt_http_data(struct stream *s, struct http_msg *msg)
 
 		/* If the HTTP parser is ahead, we update the next offset of the
 		 * current filter. This happens for chunked messages, at the
-		 * begining of a new chunk. */
+		 * beginning of a new chunk. */
 		nxt = &FLT_NXT(filter, msg->chn);
 		if (msg->next > *nxt)
 			*nxt = msg->next;
 
 		if (FLT_OPS(filter)->http_data) {
-			unsigned int i = msg->chn->buf->i;
+			unsigned int i = ci_data(msg->chn);
 
 			ret = FLT_OPS(filter)->http_data(s, filter, msg);
 			if (ret < 0)
 				break;
-			delta += (int)(msg->chn->buf->i - i);
+			delta += (int)(ci_data(msg->chn) - i);
 
 			/* Update the next offset of the current filter */
 			*nxt += ret;
@@ -569,18 +578,18 @@ flt_http_data(struct stream *s, struct http_msg *msg)
 			/* And set this value as the bound for the next
 			 * filter. It will not able to parse more data than this
 			 * one. */
-			msg->chn->buf->i = *nxt;
+			b_set_data(&msg->chn->buf, co_data(msg->chn) + *nxt);
 		}
 		else {
 			/* Consume all available data and update the next offset
 			 * of the current filter. buf->i is untouched here. */
-			ret = MIN(msg->chunk_len + msg->next, msg->chn->buf->i) - *nxt;
+			ret = MIN(msg->chunk_len + msg->next, ci_data(msg->chn)) - *nxt;
 			*nxt += ret;
 		}
 	}
 
 	/* Restore the original buffer state */
-	msg->chn->buf->i = buf_i + delta;
+	b_set_data(&msg->chn->buf, co_data(msg->chn) + buf_i + delta);
 
 	return ret;
 }
@@ -592,6 +601,8 @@ flt_http_data(struct stream *s, struct http_msg *msg)
  * analyzers. Filters can know how much data were parsed by the HTTP parsing
  * until the last call with the msg->sol value. Returns a negative value if an
  * error occurs, any other value otherwise.
+ *
+ * DEPRECATED FUNCTION - CALLED FROM LEGACY HTTP ANALYZERS
  */
 int
 flt_http_chunk_trailers(struct stream *s, struct http_msg *msg)
@@ -630,6 +641,10 @@ flt_http_chunk_trailers(struct stream *s, struct http_msg *msg)
  * functions is called when all data were parsed and forwarded. 'http_end'
  * callback is resumable, so this function returns a negative value if an error
  * occurs, 0 if it needs to wait for some reason, any other value otherwise.
+ *
+ * Be carefull, this function can be called from the HTTP legacy analyzers or
+ * from HTX analyzers. If your filter is compatible with the two modes, use
+ * IS_HTX_STRM macro on the stream.
  */
 int
 flt_http_end(struct stream *s, struct http_msg *msg)
@@ -650,6 +665,10 @@ end:
 /*
  * Calls 'http_reset' callback for all filters attached to a stream. This
  * happens when a 100-continue response is received.
+ *
+ * Be carefull, this function can be called from the HTTP legacy analyzers or
+ * from HTX analyzers. If your filter is compatible with the two modes, use
+ * IS_HTX_STRM macro on the stream.
  */
 void
 flt_http_reset(struct stream *s, struct http_msg *msg)
@@ -665,9 +684,13 @@ flt_http_reset(struct stream *s, struct http_msg *msg)
 /*
  * Calls 'http_reply' callback for all filters attached to a stream when HA
  * decides to stop the HTTP message processing.
+ *
+ * Be carefull, this function can be called from the HTTP legacy analyzers or
+ * from HTX analyzers. If your filter is compatible with the two modes, use
+ * IS_HTX_STRM macro on the stream.
  */
 void
-flt_http_reply(struct stream *s, short status, const struct chunk *msg)
+flt_http_reply(struct stream *s, short status, const struct buffer *msg)
 {
 	struct filter *filter;
 
@@ -678,13 +701,15 @@ flt_http_reply(struct stream *s, short status, const struct chunk *msg)
 }
 
 /*
- * Calls 'http_forward_data' callback for all "data" filters attached to a
- * stream. This function is called when some data can be forwarded in the
+ * Calls 'http_forward_data' callback for all "data" filters attached to a HTTP
+ * legacy stream. This function is called when some data can be forwarded in the
  * AN_REQ_HTTP_XFER_BODY and AN_RES_HTTP_XFER_BODY analyzers. It takes care to
  * update the forward offset of filters and adjusts "forwardable" data to be
  * sure that a filter cannot forward more data than its predecessors. A filter
  * can choose to not forward all parsed data. Returns a negative value if an
  * error occurs, else the number of forwarded bytes.
+ *
+ * DEPRECATED FUNCTION - CALLED FROM LEGACY HTTP ANALYZERS
  */
 int
 flt_http_forward_data(struct stream *s, struct http_msg *msg, unsigned int len)
@@ -735,6 +760,48 @@ flt_http_forward_data(struct stream *s, struct http_msg *msg, unsigned int len)
 		FLT_NXT(filter, msg->chn) -= ret;
 		FLT_FWD(filter, msg->chn) -= ret;
 	}
+ end:
+	return ret;
+}
+
+/*
+ * Calls 'http_payload' callback for all "data" filters attached to a
+ * stream. This function is called when some data can be forwarded in the
+ * AN_REQ_HTTP_XFER_BODY and AN_RES_HTTP_XFER_BODY analyzers. It takes care to
+ * update the filters and the stream offset to be sure that a filter cannot
+ * forward more data than its predecessors. A filter can choose to not forward
+ * all data. Returns a negative value if an error occurs, else the number of
+ * forwarded bytes.
+ *
+ * Be carefull, this callback is only called from HTX analyzers. So the
+ * channel's buffer must be considered as an HTX structured. Of course, your
+ * filter must support HTX streams.
+ */
+int
+flt_http_payload(struct stream *s, struct http_msg *msg, unsigned int len)
+{
+	struct filter *filter;
+	unsigned long long *strm_off = &FLT_STRM_OFF(s, msg->chn);
+	unsigned int out = co_data(msg->chn);
+	int ret = len - out;
+
+	list_for_each_entry(filter, &strm_flt(s)->filters, list) {
+		/* Call "data" filters only */
+		if (!IS_DATA_FILTER(filter, msg->chn))
+			continue;
+		if (FLT_OPS(filter)->http_payload) {
+			unsigned long long *flt_off = &FLT_OFF(filter, msg->chn);
+			unsigned int offset = *flt_off - *strm_off;
+
+			ret = FLT_OPS(filter)->http_payload(s, filter, msg, out + offset, ret - offset);
+			if (ret < 0)
+				goto end;
+			*flt_off += ret;
+			ret += offset;
+		}
+	}
+	*strm_off += ret;
+
  end:
 	return ret;
 }
@@ -841,6 +908,10 @@ flt_post_analyze(struct stream *s, struct channel *chn, unsigned int an_bit)
  * This function is the AN_REQ/RES_FLT_HTTP_HDRS analyzer, used to filter HTTP
  * headers or a request or a response. Returns 0 if an error occurs or if it
  * needs to wait, any other value otherwise.
+ *
+ * Be carefull, this function can be called from the HTTP legacy analyzers or
+ * from HTX analyzers. If your filter is compatible with the two modes, use
+ * IS_HTX_STRM macro on the stream.
  */
 int
 flt_analyze_http_headers(struct stream *s, struct channel *chn, unsigned int an_bit)
@@ -858,15 +929,28 @@ flt_analyze_http_headers(struct stream *s, struct channel *chn, unsigned int an_
 		}
 	} RESUME_FILTER_END;
 
-	/* We increase next offset of all "data" filters after all processing on
-	 * headers because any filter can alter them. So the definitive size of
-	 * headers (msg->sov) is only known when all filters have been
-	 * called. */
-	list_for_each_entry(filter, &strm_flt(s)->filters, list) {
-		/* Handle "data" filters only */
-		if (!IS_DATA_FILTER(filter, chn))
-			continue;
-		FLT_NXT(filter, chn) = msg->sov;
+	if (IS_HTX_STRM(s)) {
+		struct htx *htx = htxbuf(&chn->buf);
+		int32_t pos;
+
+		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+			struct htx_blk *blk = htx_get_blk(htx, pos);
+			c_adv(chn, htx_get_blksz(blk));
+			if (htx_get_blk_type(blk) == HTX_BLK_EOH)
+				break;
+		}
+	}
+	else {
+		/* We increase next offset of all "data" filters after all processing on
+		 * headers because any filter can alter them. So the definitive size of
+		 * headers (msg->sov) is only known when all filters have been
+		 * called. */
+		list_for_each_entry(filter, &strm_flt(s)->filters, list) {
+			/* Handle "data" filters only */
+			if (!IS_DATA_FILTER(filter, chn))
+				continue;
+			FLT_NXT(filter, chn) = msg->sov;
+		}
 	}
 
  check_result:
@@ -914,7 +998,7 @@ flt_end_analyze(struct stream *s, struct channel *chn, unsigned int an_bit)
 		 * one will remain. This is a way to be sure that
 		 * 'channel_end_analyze' callback will have a chance to be
 		 * called at least once for the other side to finish the current
-		 * processing. Of course, this is the filter responsiblity to
+		 * processing. Of course, this is the filter responsibility to
 		 * wakeup the stream if it choose to loop on this callback. */
 		s->req.flags |= CF_WAKE_ONCE;
 		s->res.flags |= CF_WAKE_ONCE;
@@ -957,7 +1041,7 @@ flt_data(struct stream *s, struct channel *chn)
 	int            delta = 0, ret = 0;
 
 	/* Save buffer state */
-	buf_i = chn->buf->i;
+	buf_i = ci_data(chn);
 
 	list_for_each_entry(filter, &strm_flt(s)->filters, list) {
 		unsigned int *nxt;
@@ -968,12 +1052,12 @@ flt_data(struct stream *s, struct channel *chn)
 
 		nxt = &FLT_NXT(filter, chn);
 		if (FLT_OPS(filter)->tcp_data) {
-			unsigned int i = chn->buf->i;
+			unsigned int i = ci_data(chn);
 
 			ret = FLT_OPS(filter)->tcp_data(s, filter, chn);
 			if (ret < 0)
 				break;
-			delta += (int)(chn->buf->i - i);
+			delta += (int)(ci_data(chn) - i);
 
 			/* Increase next offset of the current filter */
 			*nxt += ret;
@@ -981,11 +1065,11 @@ flt_data(struct stream *s, struct channel *chn)
 			/* And set this value as the bound for the next
 			 * filter. It will not able to parse more data than the
 			 * current one. */
-			chn->buf->i = *nxt;
+			b_set_data(&chn->buf, co_data(chn) + *nxt);
 		}
 		else {
 			/* Consume all available data */
-			*nxt = chn->buf->i;
+			*nxt = ci_data(chn);
 		}
 
 		/* Update <ret> value to be sure to have the last one when we
@@ -995,7 +1079,7 @@ flt_data(struct stream *s, struct channel *chn)
 	}
 
 	/* Restore the original buffer state */
-	chn->buf->i = buf_i + delta;
+	b_set_data(&chn->buf, co_data(chn) + buf_i + delta);
 
 	return ret;
 }
@@ -1075,7 +1159,7 @@ flt_xfer_data(struct stream *s, struct channel *chn, unsigned int an_bit)
 	/* Be sure that the output is still opened. Else we stop the data
 	 * filtering. */
 	if ((chn->flags & (CF_READ_ERROR|CF_READ_TIMEOUT|CF_WRITE_ERROR|CF_WRITE_TIMEOUT)) ||
-	    ((chn->flags & CF_SHUTW) && (chn->to_forward || chn->buf->o)))
+	    ((chn->flags & CF_SHUTW) && (chn->to_forward || co_data(chn))))
 		goto end;
 
 	/* Let all "data" filters parsing incoming data */
@@ -1089,12 +1173,12 @@ flt_xfer_data(struct stream *s, struct channel *chn, unsigned int an_bit)
 		goto end;
 
 	/* Consume data that all filters consider as forwarded. */
-	b_adv(chn->buf, ret);
+	c_adv(chn, ret);
 
 	/* Stop waiting data if the input in closed and no data is pending or if
 	 * the output is closed. */
 	if ((chn->flags & CF_SHUTW) ||
-	    ((chn->flags & CF_SHUTR) && !buffer_pending(chn->buf))) {
+	    ((chn->flags & CF_SHUTR) && !ci_data(chn))) {
 		ret = 1;
 		goto end;
 	}
@@ -1180,23 +1264,11 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 	}
 };
 
-__attribute__((constructor))
-static void
-__filters_init(void)
-{
-        pool_head_filter = create_pool("filter", sizeof(struct filter), MEM_F_SHARED);
-	cfg_register_keywords(&cfg_kws);
-	hap_register_post_check(flt_init_all);
-	hap_register_per_thread_init(flt_init_all_per_thread);
-	hap_register_per_thread_deinit(flt_deinit_all_per_thread);
-}
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
 
-__attribute__((destructor))
-static void
-__filters_deinit(void)
-{
-	pool_destroy(pool_head_filter);
-}
+REGISTER_POST_CHECK(flt_init_all);
+REGISTER_PER_THREAD_INIT(flt_init_all_per_thread);
+REGISTER_PER_THREAD_DEINIT(flt_deinit_all_per_thread);
 
 /*
  * Local variables:

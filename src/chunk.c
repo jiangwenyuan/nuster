@@ -22,9 +22,9 @@
 #include <types/global.h>
 
 /* trash chunks used for various conversions */
-static THREAD_LOCAL struct chunk *trash_chunk;
-static THREAD_LOCAL struct chunk trash_chunk1;
-static THREAD_LOCAL struct chunk trash_chunk2;
+static THREAD_LOCAL struct buffer *trash_chunk;
+static THREAD_LOCAL struct buffer trash_chunk1;
+static THREAD_LOCAL struct buffer trash_chunk2;
 
 /* trash buffers used for various conversions */
 static int trash_size;
@@ -35,7 +35,7 @@ static THREAD_LOCAL char *trash_buf2;
 struct pool_head *pool_head_trash = NULL;
 
 /* this is used to drain data, and as a temporary buffer for sprintf()... */
-THREAD_LOCAL struct chunk trash = { .str = NULL };
+THREAD_LOCAL struct buffer trash = { };
 
 /*
 * Returns a pre-allocated and initialized trash chunk that can be used for any
@@ -46,7 +46,7 @@ THREAD_LOCAL struct chunk trash = { .str = NULL };
 * a zero is always emitted at the beginning of the string so that it may be
 * used as an empty string as well.
 */
-struct chunk *get_trash_chunk(void)
+struct buffer *get_trash_chunk(void)
 {
 	char *trash_buf;
 
@@ -68,11 +68,11 @@ struct chunk *get_trash_chunk(void)
  */
 static int alloc_trash_buffers(int bufsize)
 {
-	chunk_init(&trash, my_realloc2(trash.str, bufsize), bufsize);
+	chunk_init(&trash, my_realloc2(trash.area, bufsize), bufsize);
 	trash_size = bufsize;
 	trash_buf1 = (char *)my_realloc2(trash_buf1, bufsize);
 	trash_buf2 = (char *)my_realloc2(trash_buf2, bufsize);
-	return trash.str && trash_buf1 && trash_buf2;
+	return trash.area && trash_buf1 && trash_buf2;
 }
 
 static int init_trash_buffers_per_thread()
@@ -92,23 +92,13 @@ static void deinit_trash_buffers_per_thread()
 /* Initialize the trash buffers. It returns 0 if an error occurred. */
 int init_trash_buffers(int first)
 {
-	if (!first) {
-		hap_register_per_thread_init(init_trash_buffers_per_thread);
-		hap_register_per_thread_deinit(deinit_trash_buffers_per_thread);
-	}
 	pool_destroy(pool_head_trash);
-	pool_head_trash = create_pool("trash", sizeof(struct chunk) + global.tune.bufsize, MEM_F_EXACT);
+	pool_head_trash = create_pool("trash",
+				      sizeof(struct buffer) + global.tune.bufsize,
+				      MEM_F_EXACT);
 	if (!pool_head_trash || !alloc_trash_buffers(global.tune.bufsize))
 		return 0;
 	return 1;
-}
-
-/*
- * free the trash buffers
- */
-void deinit_trash_buffers(void)
-{
-	pool_destroy(pool_head_trash);
 }
 
 /*
@@ -117,15 +107,16 @@ void deinit_trash_buffers(void)
  * call may fail and the caller is responsible for checking that the returned
  * pointer is not NULL.
  */
-struct chunk *alloc_trash_chunk(void)
+struct buffer *alloc_trash_chunk(void)
 {
-	struct chunk *chunk;
+	struct buffer *chunk;
 
 	chunk = pool_alloc(pool_head_trash);
 	if (chunk) {
-		char *buf = (char *)chunk + sizeof(struct chunk);
+		char *buf = (char *)chunk + sizeof(struct buffer);
 		*buf = 0;
-		chunk_init(chunk, buf, pool_head_trash->size - sizeof(struct chunk));
+		chunk_init(chunk, buf,
+			   pool_head_trash->size - sizeof(struct buffer));
 	}
 	return chunk;
 }
@@ -135,24 +126,23 @@ struct chunk *alloc_trash_chunk(void)
  * at most chk->size chars. If the chk->len is over, nothing is added. Returns
  * the new chunk size, or < 0 in case of failure.
  */
-int chunk_printf(struct chunk *chk, const char *fmt, ...)
+int chunk_printf(struct buffer *chk, const char *fmt, ...)
 {
 	va_list argp;
 	int ret;
 
-	if (!chk->str || !chk->size)
+	if (!chk->area || !chk->size)
 		return 0;
 
 	va_start(argp, fmt);
-	ret = vsnprintf(chk->str, chk->size, fmt, argp);
+	ret = vsnprintf(chk->area, chk->size, fmt, argp);
 	va_end(argp);
-	chk->len = ret;
 
 	if (ret >= chk->size)
-		ret = -1;
+		return -1;
 
-	chk->len = ret;
-	return chk->len;
+	chk->data = ret;
+	return chk->data;
 }
 
 /*
@@ -160,23 +150,24 @@ int chunk_printf(struct chunk *chk, const char *fmt, ...)
  * at most chk->size chars. If the chk->len is over, nothing is added. Returns
  * the new chunk size.
  */
-int chunk_appendf(struct chunk *chk, const char *fmt, ...)
+int chunk_appendf(struct buffer *chk, const char *fmt, ...)
 {
 	va_list argp;
 	int ret;
 
-	if (chk->len < 0 || !chk->str || !chk->size)
+	if (!chk->area || !chk->size)
 		return 0;
 
 	va_start(argp, fmt);
-	ret = vsnprintf(chk->str + chk->len, chk->size - chk->len, fmt, argp);
-	if (ret >= chk->size - chk->len)
+	ret = vsnprintf(chk->area + chk->data, chk->size - chk->data, fmt,
+			argp);
+	if (ret >= chk->size - chk->data)
 		/* do not copy anything in case of truncation */
-		chk->str[chk->len] = 0;
+		chk->area[chk->data] = 0;
 	else
-		chk->len += ret;
+		chk->data += ret;
 	va_end(argp);
-	return chk->len;
+	return chk->data;
 }
 
 /*
@@ -184,43 +175,41 @@ int chunk_appendf(struct chunk *chk, const char *fmt, ...)
  * chk->size chars. Replace non-printable or special chracters with "&#%d;".
  * If the chk->len is over, nothing is added. Returns the new chunk size.
  */
-int chunk_htmlencode(struct chunk *dst, struct chunk *src)
+int chunk_htmlencode(struct buffer *dst, struct buffer *src)
 {
 	int i, l;
 	int olen, free;
 	char c;
 
-	if (dst->len < 0)
-		return dst->len;
+	olen = dst->data;
 
-	olen = dst->len;
-
-	for (i = 0; i < src->len; i++) {
-		free = dst->size - dst->len;
+	for (i = 0; i < src->data; i++) {
+		free = dst->size - dst->data;
 
 		if (!free) {
-			dst->len = olen;
-			return dst->len;
+			dst->data = olen;
+			return dst->data;
 		}
 
-		c = src->str[i];
+		c = src->area[i];
 
 		if (!isascii(c) || !isprint((unsigned char)c) || c == '&' || c == '"' || c == '\'' || c == '<' || c == '>') {
-			l = snprintf(dst->str + dst->len, free, "&#%u;", (unsigned char)c);
+			l = snprintf(dst->area + dst->data, free, "&#%u;",
+				     (unsigned char)c);
 
 			if (free < l) {
-				dst->len = olen;
-				return dst->len;
+				dst->data = olen;
+				return dst->data;
 			}
 
-			dst->len += l;
+			dst->data += l;
 		} else {
-			dst->str[dst->len] = c;
-			dst->len++;
+			dst->area[dst->data] = c;
+			dst->data++;
 		}
 	}
 
-	return dst->len;
+	return dst->data;
 }
 
 /*
@@ -228,53 +217,51 @@ int chunk_htmlencode(struct chunk *dst, struct chunk *src)
  * chk->size chars. Replace non-printable or char passed in qc with "<%02X>".
  * If the chk->len is over, nothing is added. Returns the new chunk size.
  */
-int chunk_asciiencode(struct chunk *dst, struct chunk *src, char qc)
+int chunk_asciiencode(struct buffer *dst, struct buffer *src, char qc)
 {
 	int i, l;
 	int olen, free;
 	char c;
 
-	if (dst->len < 0)
-		return dst->len;
+	olen = dst->data;
 
-	olen = dst->len;
-
-	for (i = 0; i < src->len; i++) {
-		free = dst->size - dst->len;
+	for (i = 0; i < src->data; i++) {
+		free = dst->size - dst->data;
 
 		if (!free) {
-			dst->len = olen;
-			return dst->len;
+			dst->data = olen;
+			return dst->data;
 		}
 
-		c = src->str[i];
+		c = src->area[i];
 
 		if (!isascii(c) || !isprint((unsigned char)c) || c == '<' || c == '>' || c == qc) {
-			l = snprintf(dst->str + dst->len, free, "<%02X>", (unsigned char)c);
+			l = snprintf(dst->area + dst->data, free, "<%02X>",
+				     (unsigned char)c);
 
 			if (free < l) {
-				dst->len = olen;
-				return dst->len;
+				dst->data = olen;
+				return dst->data;
 			}
 
-			dst->len += l;
+			dst->data += l;
 		} else {
-			dst->str[dst->len] = c;
-			dst->len++;
+			dst->area[dst->data] = c;
+			dst->data++;
 		}
 	}
 
-	return dst->len;
+	return dst->data;
 }
 
 /* Compares the string in chunk <chk> with the string in <str> which must be
  * zero-terminated. Return is the same as with strcmp(). Neither is allowed
  * to be null.
  */
-int chunk_strcmp(const struct chunk *chk, const char *str)
+int chunk_strcmp(const struct buffer *chk, const char *str)
 {
-	const char *s1 = chk->str;
-	int len = chk->len;
+	const char *s1 = chk->area;
+	int len = chk->data;
 	int diff = 0;
 
 	do {
@@ -291,10 +278,10 @@ int chunk_strcmp(const struct chunk *chk, const char *str)
  * <str> which must be zero-terminated. Return is the same as with strcmp().
  * Neither is allowed to be null.
  */
-int chunk_strcasecmp(const struct chunk *chk, const char *str)
+int chunk_strcasecmp(const struct buffer *chk, const char *str)
 {
-	const char *s1 = chk->str;
-	int len = chk->len;
+	const char *s1 = chk->area;
+	int len = chk->data;
 	int diff = 0;
 
 	do {
@@ -320,6 +307,9 @@ int chunk_strcasecmp(const struct chunk *chk, const char *str)
 	} while (!diff);
 	return diff;
 }
+
+REGISTER_PER_THREAD_INIT(init_trash_buffers_per_thread);
+REGISTER_PER_THREAD_DEINIT(deinit_trash_buffers_per_thread);
 
 /*
  * Local variables:

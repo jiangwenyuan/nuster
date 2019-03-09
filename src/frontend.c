@@ -26,6 +26,7 @@
 #include <common/compat.h>
 #include <common/config.h>
 #include <common/debug.h>
+#include <common/initcall.h>
 #include <common/standard.h>
 #include <common/time.h>
 
@@ -124,7 +125,7 @@ int frontend_accept(struct stream *s)
 			break;
 		}
 
-		shut_your_big_mouth_gcc(write(1, trash.str, trash.len));
+		shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
 	}
 
 	if (fe->mode == PR_MODE_HTTP)
@@ -184,13 +185,29 @@ smp_fetch_fe_id(const struct arg *args, struct sample *smp, const char *kw, void
 static int
 smp_fetch_fe_name(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	smp->data.u.str.str = (char *)smp->sess->fe->id;
-	if (!smp->data.u.str.str)
+	smp->data.u.str.area = (char *)smp->sess->fe->id;
+	if (!smp->data.u.str.area)
 		return 0;
 
 	smp->data.type = SMP_T_STR;
 	smp->flags = SMP_F_CONST;
-	smp->data.u.str.len = strlen(smp->data.u.str.str);
+	smp->data.u.str.data = strlen(smp->data.u.str.area);
+	return 1;
+}
+
+/* set string to the name of the default backend */
+static int
+smp_fetch_fe_defbe(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	if (!smp->sess->fe->defbe.be)
+		return 0;
+	smp->data.u.str.area = (char *)smp->sess->fe->defbe.be->id;
+	if (!smp->data.u.str.area)
+		return 0;
+
+	smp->data.type = SMP_T_STR;
+	smp->flags = SMP_F_CONST;
+	smp->data.u.str.data = strlen(smp->data.u.str.area);
 	return 1;
 }
 
@@ -239,6 +256,7 @@ smp_fetch_fe_conn(const struct arg *args, struct sample *smp, const char *kw, vo
  */
 static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ "fe_conn",      smp_fetch_fe_conn,      ARG1(1,FE), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "fe_defbe",     smp_fetch_fe_defbe,     0,          NULL, SMP_T_STR,  SMP_USE_FTEND, },
 	{ "fe_id",        smp_fetch_fe_id,        0,          NULL, SMP_T_SINT, SMP_USE_FTEND, },
 	{ "fe_name",      smp_fetch_fe_name,      0,          NULL, SMP_T_STR,  SMP_USE_FTEND, },
 	{ "fe_req_rate",  smp_fetch_fe_req_rate,  ARG1(1,FE), NULL, SMP_T_SINT, SMP_USE_INTRN, },
@@ -246,6 +264,7 @@ static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ /* END */ },
 }};
 
+INITCALL1(STG_REGISTER, sample_register_fetches, &smp_kws);
 
 /* Note: must not be declared <const> as its list will be overwritten.
  * Please take care of keeping this list alphabetically sorted.
@@ -254,14 +273,7 @@ static struct acl_kw_list acl_kws = {ILH, {
 	{ /* END */ },
 }};
 
-
-__attribute__((constructor))
-static void __frontend_init(void)
-{
-	sample_register_fetches(&smp_kws);
-	acl_register_keywords(&acl_kws);
-}
-
+INITCALL1(STG_REGISTER, acl_register_keywords, &acl_kws);
 
 /*
  * Local variables:

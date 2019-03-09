@@ -26,13 +26,6 @@
 #include <common/compat.h>
 #include <common/defaults.h>
 
-/* this reduces the number of calls to select() by choosing appropriate
- * sheduler precision in milliseconds. It should be near the minimum
- * time that is needed by select() to collect all events. All timeouts
- * are rounded up by adding this value prior to pass it to select().
- */
-#define SCHEDULER_RESOLUTION    9
-
 /* CONFIG_HAP_MEM_OPTIM
  * This enables use of memory pools instead of malloc()/free(). There
  * is no reason to disable it, except perhaps for rare debugging.
@@ -45,6 +38,24 @@
 #define THREAD_LOCAL __thread
 #else
 #define THREAD_LOCAL
+#endif
+
+/* Some architectures have a double-word CAS, sometimes even dual-8 bytes */
+#if defined(__x86_64__) || defined (__aarch64__)
+#define HA_HAVE_CAS_DW
+#define HA_CAS_IS_8B
+#elif defined(__arm__) && (defined(__ARM_ARCH_7__) || defined(__ARM_ARCH_7A__))
+#define HA_HAVE_CAS_DW
+#endif
+
+/* On architectures supporting threads and double-word CAS, we can implement
+ * lock-less memory pools. This isn't supported for debugging modes however.
+ */
+#if defined(USE_THREAD) && defined(HA_HAVE_CAS_DW) && !defined(DEBUG_NO_LOCKLESS_POOLS) && !defined(DEBUG_UAF)
+#define CONFIG_HAP_LOCKLESS_POOLS
+#ifndef CONFIG_HAP_POOL_CACHE_SIZE
+#define CONFIG_HAP_POOL_CACHE_SIZE 524288
+#endif
 #endif
 
 /* CONFIG_HAP_INLINE_FD_SET

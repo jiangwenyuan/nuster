@@ -852,6 +852,10 @@ Proxy class
   Contain a table with the attached servers. The table is indexed by server
   name, and each server entry is an object of type :ref:`server_class`.
 
+.. js:attribute:: Proxy.stktable
+
+  Contains a stick table object attached to the proxy.
+
 .. js:attribute:: Proxy.listeners
 
   Contain a table with the attached listeners. The table is indexed by listener
@@ -922,6 +926,14 @@ Server class
 
   This class provides a way for manipulating servers and retrieving information.
 
+.. js:attribute:: Server.name
+
+  Contain the name of the server.
+
+.. js:attribute:: Server.puid
+
+  Contain the proxy unique identifier of the server.
+
 .. js:function:: Server.is_draining(sv)
 
   Return true if the server is currently draining sticky connections.
@@ -929,6 +941,23 @@ Server class
   :param class_server sv: A :ref:`server_class` which indicates the manipulated
     server.
   :returns: a boolean
+
+.. js:function:: Server.set_maxconn(sv, weight)
+
+  Dynamically change the maximum connections of the server. See the management
+  socket documentation for more information about the format of the string.
+
+  :param class_server sv: A :ref:`server_class` which indicates the manipulated
+    server.
+  :param string maxconn: A string describing the server maximum connections.
+
+.. js:function:: Server.get_maxconn(sv, weight)
+
+  This function returns an integer representing the server maximum connections.
+
+  :param class_server sv: A :ref:`server_class` which indicates the manipulated
+    server.
+  :returns: an integer.
 
 .. js:function:: Server.set_weight(sv, weight)
 
@@ -1744,6 +1773,24 @@ TXN class
   :param class_txn txn: The class txn object containing the data.
   :param integer mark: The mark value.
 
+.. js:function:: TXN.set_priority_class(txn, prio)
+
+  This function adjusts the priority class of the transaction. The value should
+  be within the range -2047..2047. Values outside this range will be
+  truncated.
+
+  See the HAProxy configuration.txt file keyword "http-request" action
+  "set-priority-class" for details.
+
+.. js:function:: TXN.set_priority_offset(txn, prio)
+
+  This function adjusts the priority offset of the transaction. The value
+  should be within the range -524287..524287. Values outside this range will be
+  truncated.
+
+  See the HAProxy configuration.txt file keyword "http-request" action
+  "set-priority-offset" for details.
+
 .. _socket_class:
 
 Socket class
@@ -1908,12 +1955,12 @@ Socket class
 
   The amount of time to wait is specified as the value parameter, in seconds.
 
-  The timeout modes are bot implemented, the only settable timeout is the
+  The timeout modes are not implemented, the only settable timeout is the
   inactivity time waiting for complete the internal buffer send or waiting for
   receive data.
 
   :param class_socket socket: Is the manipulated Socket.
-  :param integer value: The timeout value. Use floating point to specify
+  :param float value: The timeout value. Use floating point to specify
     milliseconds.
 
 .. _regex_class:
@@ -2445,6 +2492,74 @@ AppletTCP class
   :param string var: The variable name according with the HAProxy variable syntax.
   :see: :js:func:`AppletTCP.unset_var`
   :see: :js:func:`AppletTCP.set_var`
+
+StickTable class
+================
+
+.. js:class:: StickTable
+
+  **context**: task, action, sample-fetch
+
+  This class can be used to access the HAProxy stick tables from Lua.
+
+.. js:function:: StickTable.info()
+
+  Returns stick table attributes as a Lua table. See HAProxy documentation for
+  "stick-table" for canonical info, or check out example bellow.
+
+  :returns: Lua table
+
+  Assume our table has IPv4 key and gpc0 and conn_rate "columns":
+
+.. code-block:: lua
+
+  {
+    expire=<int>,  # Value in ms
+    size=<int>,    # Maximum table size
+    used=<int>,    # Actual number of entries in table
+    data={         # Data columns, with types as key, and periods as values
+                     (-1 if type is not rate counter)
+      conn_rate=<int>,
+      gpc0=-1
+    },
+    length=<int>,  # max string length for string table keys, key length
+                   # otherwise
+    nopurge=<boolean>, # purge oldest entries when table is full
+    type="ip"      # can be "ip", "ipv6", "integer", "string", "binary"
+  }
+
+.. js:function:: StickTable.lookup(key)
+
+   Returns stick table entry for given <key>
+
+   :param string key: Stick table key (IP addresses and strings are supported)
+   :returns: Lua table
+
+.. js:function:: StickTable.dump([filter])
+
+   Returns all entries in stick table. An optional filter can be used
+   to extract entries with specific data values. Filter is a table with valid
+   comparison operators as keys followed by data type name and value pairs.
+   Check out the HAProxy docs for "show table" for more details. For the
+   reference, the supported operators are:
+     "eq", "ne", "le", "lt", "ge", "gt"
+
+   For large tables, execution of this function can take a long time (for
+   HAProxy standards). That's also true when filter is used, so take care and
+   measure the impact.
+
+   :param table filter: Stick table filter
+   :returns: Stick table entries (table)
+
+   See below for example filter, which contains 4 entries (or comparisons).
+   (Maximum number of filter entries is 4, defined in the source code)
+
+.. code-block:: lua
+
+    local filter = {
+      {"gpc0", "gt", 30}, {"gpc1", "gt", 20}}, {"conn_rate", "le", 10}
+    }
+
 
 External Lua libraries
 ======================

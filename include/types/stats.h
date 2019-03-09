@@ -290,7 +290,12 @@ enum info_field {
 	INF_DESCRIPTION,
 	INF_STOPPING,
 	INF_JOBS,
+	INF_UNSTOPPABLE_JOBS,
 	INF_LISTENERS,
+	INF_ACTIVE_PEERS,
+	INF_CONNECTED_PEERS,
+	INF_DROPPED_LOGS,
+	INF_BUSY_POLLING,
 
 	/* must always be the last one */
 	INF_TOTAL_FIELDS
@@ -386,6 +391,11 @@ enum stat_field {
 	ST_F_INTERCEPTED,
 	ST_F_DCON,
 	ST_F_DSES,
+	ST_F_WREW,
+	ST_F_CONNECT,
+	ST_F_REUSE,
+	ST_F_CACHE_LOOKUPS,
+	ST_F_CACHE_HITS,
 
 	/* must always be the last one */
 	ST_F_TOTAL_FIELDS
