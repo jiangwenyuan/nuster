@@ -45,15 +45,15 @@ struct nuster_headers {
 };
 
 extern const char *nuster_http_msgs[NUSTER_HTTP_SIZE];
-extern struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
+extern struct buffer nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
 extern struct nuster_headers nuster_headers;
 
 /*
  * simply response and close
  */
-static inline void nuster_response(struct stream *s, struct chunk *msg) {
+static inline void nuster_response(struct stream *s, struct buffer *msg) {
     s->txn->flags &= ~TX_WAIT_NEXT_RQ;
-    stream_int_retnclose(&s->si[0], msg);
+    si_retnclose(&s->si[0], msg);
     if(!(s->flags & SF_ERR_MASK)) {
         s->flags |= SF_ERR_LOCAL;
     }
@@ -61,7 +61,7 @@ static inline void nuster_response(struct stream *s, struct chunk *msg) {
 
 
 static inline void nuster_res_begin(int status) {
-    chunk_printf(&trash, "HTTP/1.1 %d %s\r\n", status, get_reason(status));
+    chunk_printf(&trash, "HTTP/1.1 %d %s\r\n", status, http_get_reason(status));
 }
 
 static inline void nuster_res_header_server() {
@@ -94,11 +94,11 @@ static inline void nuster_res_header_end() {
 }
 
 static inline void nuster_res_header_send(struct channel *chn) {
-    ci_putblk(chn, trash.str, trash.len);
+    ci_putblk(chn, trash.area, trash.data);
 }
 
 static inline void nuster_res_end(struct stream_interface *si) {
-    co_skip(si_oc(si), si_ob(si)->o);
+    co_skip(si_oc(si), co_data(si_oc(si)));
     si_shutr(si);
     si_ic(si)->flags |= CF_READ_NULL;
 }
@@ -114,7 +114,7 @@ static inline void nuster_res_simple(struct stream_interface *si, int status, co
     if(content) {
         chunk_appendf(&trash, "%.*s", content_length, content);
     }
-    nuster_res_send(si_ic(si), trash.str, trash.len);
+    nuster_res_send(si_ic(si), trash.area, trash.data);
     nuster_res_end(si);
 }
 

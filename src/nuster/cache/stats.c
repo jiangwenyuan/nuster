@@ -122,7 +122,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
     while(p) {
         struct nuster_rule *rule = NULL;
 
-        if(buffer_almost_full(res->buf)) {
+        if(buffer_almost_full(&res->buf)) {
             si_rx_room_blk(si);
             return 0;
         }
@@ -137,7 +137,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
 
                 list_for_each_entry(rule, &p->nuster.rules, list) {
 
-                    if(buffer_almost_full(res->buf)) {
+                    if(buffer_almost_full(&res->buf)) {
                         si_rx_room_blk(si);
                         return 0;
                     }
@@ -191,7 +191,7 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
         }
     }
     if(appctx->st0 == NST_CACHE_STATS_DONE) {
-        co_skip(si_oc(si), si_ob(si)->o);
+        co_skip(si_oc(si), co_data(si_oc(si)));
         si_shutr(si);
         res->flags |= CF_READ_NULL;
     }

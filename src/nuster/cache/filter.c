@@ -247,11 +247,11 @@ static int _nst_cache_filter_http_forward_data(struct stream *s, struct filter *
             }
 
             if(len > ctx->sov) {
-                b_adv(msg->chn->buf, ctx->sov);
+                c_adv(msg->chn, ctx->sov);
                 if(!nst_cache_update(ctx, msg, len - ctx->sov)) {
                     goto err;
                 }
-                b_rew(msg->chn->buf, ctx->sov);
+                c_rew(msg->chn, ctx->sov);
             }
             ctx->sov = 0;
         } else {
