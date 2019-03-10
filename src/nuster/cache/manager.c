@@ -50,7 +50,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
 
 
     if(txn->meth == HTTP_METH_OTHER &&
-            memcmp(msg->chn->buf->p, global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0) {
+            memcmp(ci_head(msg->chn), global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0) {
 
         char *key = nst_cache_build_purge_key(s, msg);
         if(!key) {
@@ -82,7 +82,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
     }
 
     ctx.idx = 0;
-    if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+    if(http_find_header2("name", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
         if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
             found = 1;
             mode  = NST_CACHE_PURGE_NAME_ALL;
@@ -123,7 +123,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
 
 static inline int _nst_cache_manager_purge_method(struct http_txn *txn, struct http_msg *msg) {
     return txn->meth == HTTP_METH_OTHER &&
-            memcmp(msg->chn->buf->p, global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0;
+            memcmp(ci_head(msg->chn), global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0;
 }
 
 int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px) {
@@ -144,13 +144,13 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
     struct proxy *p;
 
     ctx.idx = 0;
-    if(http_find_header2("x-host", 6, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+    if(http_find_header2("x-host", 6, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
         host     = ctx.line + ctx.val;
         host_len = ctx.vlen;
     }
 
     ctx.idx = 0;
-    if(http_find_header2("name", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+    if(http_find_header2("name", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
         if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
             mode = NST_CACHE_PURGE_NAME_ALL;
             goto purge;
@@ -179,11 +179,11 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
         }
 
         goto notfound;
-    } else if(http_find_header2("path", 4, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+    } else if(http_find_header2("path", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
         path      = ctx.line + ctx.val;
         path_len  = ctx.vlen;
         mode      = host ? NST_CACHE_PURGE_PATH_HOST : NST_CACHE_PURGE_PATH;
-    } else if(http_find_header2("regex", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+    } else if(http_find_header2("regex", 5, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
         regex_str = malloc(ctx.vlen + 1);
         regex     = calloc(1, sizeof(*regex));
         if(!regex_str || !regex) {
@@ -278,7 +278,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
         if(nst_cache_check_uri(msg)) {
             /* manager uri */
             ctx.idx = 0;
-            if(http_find_header2("state", 5, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+            if(http_find_header2("state", 5, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
                 if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
                     state = NUSTER_RULE_ENABLED;
                 } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
@@ -286,7 +286,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
                 }
             }
             ctx.idx = 0;
-            if(http_find_header2("ttl", 3, msg->chn->buf->p, &txn->hdr_idx, &ctx)) {
+            if(http_find_header2("ttl", 3, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
                 nuster_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
             }
 
@@ -399,7 +399,7 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
 
     if(appctx->st2 == nuster.cache->dict[0].size) {
         ci_putblk(res, nuster_http_msgs[NUSTER_HTTP_200], strlen(nuster_http_msgs[NUSTER_HTTP_200]));
-        co_skip(si_oc(si), si_ob(si)->o);
+        co_skip(si_oc(si), co_data(si_oc(si)));
         si_shutr(si);
         res->flags |= CF_READ_NULL;
     }

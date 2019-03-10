@@ -65,7 +65,7 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
         "507 Insufficient Storage\n",
 };
 
-struct chunk nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
+struct buffer nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
 
 struct nuster_headers nuster_headers = {
     .server            = nuster_str_set("Server"),
