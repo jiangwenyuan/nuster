@@ -6990,6 +6990,7 @@ int http_response_forward_body(struct stream *s, struct channel *res, int an_bit
 		if (!buffer_pending(res->buf)) {
 			if (!(s->flags & SF_ERR_MASK))
 				s->flags |= SF_ERR_SRVCL;
+			sess->fe->fe_counters.srv_aborts++;
 			s->be->be_counters.srv_aborts++;
 			if (objt_server(s->target))
 				objt_server(s->target)->counters.srv_aborts++;
