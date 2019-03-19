@@ -1,6 +1,89 @@
 ChangeLog :
 ===========
 
+2019/03/19 : 1.9.5
+    - DOC: ssl: Clarify when pre TLSv1.3 cipher can be used
+    - DOC: ssl: Stop documenting ciphers example to use
+    - BUG/MINOR: spoe: do not assume agent->rt is valid on exit
+    - BUG/MINOR: lua: initialize the correct idle conn lists for the SSL sockets
+    - BUG/MEDIUM: spoe: initialization depending on nbthread must be done last
+    - BUG/MEDIUM: server: initialize the idle conns list after parsing the config
+    - CLEANUP: server: fix indentation mess on idle connections
+    - BUG/MEDIUM: server: initialize the orphaned conns lists and tasks at the end
+    - BUG/MAJOR: spoe: Don't try to get agent config during SPOP healthcheck
+    - BUG/MINOR: config: Reinforce validity check when a process number is parsed
+    - BUG/MINOR: mux-h1: verify the request's version before dropping connection: keep-alive
+    - BUG: 51d: In Hash Trie, multi header matching was affected by the header names stored globaly.
+    - BUG/MAJOR: stream: avoid double free on unique_id
+    - BUILD/MINOR: stream: avoid a build warning with threads disabled
+    - BUILD/MINOR: tools: fix build warning in the date conversion functions
+    - BUILD/MINOR: peers: remove an impossible null test in intencode()
+    - BUILD/MINOR: htx: fix some potential null-deref warnings with http_find_stline
+    - BUG/MEDIUM: http_fetch: fix the "base" and "base32" fetch methods in HTX mode
+    - BUG/MEDIUM: proto_htx: Fix data size update if end of the cookie is removed
+    - BUG/MEDIUM: http_fetch: fix "req.body_len" and "req.body_size" fetch methods in HTX mode
+    - BUILD/MEDIUM: initcall: Fix build on MacOS.
+    - BUG/MEDIUM: mux-h2/htx: Always set CS flags before exiting h2_rcv_buf()
+    - MINOR: h2/htx: Set the flag HTX_SL_F_BODYLESS for messages without body
+    - BUG/MINOR: mux-h1: Add "transfer-encoding" header on outgoing requests if needed
+    - BUG/MINOR: mux-h2: Don't add ":status" pseudo-header on trailers
+    - BUG/MINOR: proto-htx: Consider a XFER_LEN message as chunked by default
+    - BUG/MEDIUM: h2/htx: Correctly handle interim responses when HTX is enabled
+    - MINOR: mux-h2: Set HTX extra value when possible
+    - BUG/MEDIUM: htx: count the amount of copied data towards the final count
+    - BUG/MEDIUM: mux-h2/htx: send an empty DATA frame on empty HTX trailers
+    - BUG/MEDIUM: servers: Use atomic operations when handling curr_idle_conns.
+    - BUG/MEDIUM: servers: Add a per-thread counter of idle connections.
+    - BUG/MAJOR: fd/threads, task/threads: ensure all spin locks are unlocked
+    - BUG/MAJOR: listener: Make sure the listener exist before using it.
+    - BUG/MEDIUM: mux-h1: Report the right amount of data xferred in h1_rcv_buf()
+    - BUG/MINOR: channel: Set CF_WROTE_DATA when outgoing data are skipped
+    - MINOR: htx: Add function to drain data from an HTX message
+    - MINOR: channel/htx: Add function to skips output bytes from an HTX channel
+    - BUG/MAJOR: cache/htx: Set the start-line offset when a cached object is served
+    - BUG/MEDIUM: cache: Get objects from the cache only for GET and HEAD requests
+    - BUG/MINOR: cache/htx: Return only the headers of cached objects to HEAD requests
+    - BUG/MINOR: mux-h1: Always initilize h1m variable in h1_process_input()
+    - BUG/MEDIUM: proto_htx: Fix functions applying regex filters on HTX messages
+    - BUG/MEDIUM: h2: advertise to servers that we don't support push
+    - BUG/MINOR: listener: keep accept rate counters accurate under saturation
+    - MINOR: global: keep a copy of the initial rlim_fd_cur and rlim_fd_max values
+    - BUG/MINOR: init: never lower rlim_fd_max
+    - BUG/MINOR: checks: make external-checks restore the original rlim_fd_cur/max
+    - BUG/MINOR: mworker: be careful to restore the original rlim_fd_cur/max on reload
+    - BUG/MAJOR: mux-h2: fix race condition between close on both ends
+    - MINOR: htx: unconditionally handle parsing errors in requests or responses
+    - MINOR: mux-h2: always pass HTX_FL_PARSING_ERROR between h2s and buf on RX
+    - BUG/MEDIUM: h2/htx: verify that :path doesn't contain invalid chars
+    - BUG/MEDIUM: logs: Only attempt to free startup_logs once.
+    - BUG/MEDIUM: 51d: fix possible segfault on deinit_51degrees()
+    - BUG/MINOR: ssl: fix warning about ssl-min/max-ver support
+    - MINOR: fd: Remove debugging code.
+    - BUG/MEDIUM: listeners: Don't call fd_stop_recv() if fd_updt is NULL.
+    - MEDIUM: threads: Use __ATOMIC_SEQ_CST when using the newer atomic API.
+    - DOC: Remove tabs and fixed punctuation.
+    - BUG/MAJOR: tasks: Use the TASK_GLOBAL flag to know if we're in the global rq.
+    - BUG/MEDIUM: threads/fd: do not forget to take into account epoll_fd/pipes
+    - BUG/MEDIUM: tasks: Make sure we wake sleeping threads if needed.
+    - BUG/MINOR: mux-h1: Don't report an error on EOS if no message was received
+    - BUG/MINOR: stats/htx: Call channel_add_input() when response headers are sent
+    - BUG/MINOR: lua/htx: Use channel_add_input() when response data are added
+    - BUG/MINOR: lua/htx: Don't forget to call htx_to_buf() when appropriate
+    - MINOR: stats: Add the status code STAT_STATUS_IVAL to handle invalid requests
+    - MINOR: stats: Move stuff about the stats status codes in stats files
+    - BUG/MINOR: stats: Be more strict on what is a valid request to the stats applet
+    - BUG/MAJOR: spoe: Fix initialization of thread-dependent fields
+    - MINOR: cfgparse: Add a cast to make gcc happier.
+    - REGTEST: fix a spurious "nbthread 4" in the connection test
+    - BUILD: Makefile: allow the reg-tests target to be verbose
+    - BUILD: Makefile: resolve LEVEL before calling run-regtests
+    - BUG/MAJOR: stats: Fix how huge POST data are read from the channel
+    - BUG/MINOR: http/counters: fix missing increment of fe->srv_aborts
+    - BUG/MEDIUM: mux-h2: Always wakeup streams with no id to avoid frozen streams
+    - MINOR: mux-h2: Set REFUSED_STREAM error to reset a stream if no data was never sent
+    - MINOR: muxes: Report the Last read with a dedicated flag
+    - MINOR: proto-http/proto-htx: Make error handling clearer during data forwarding
+
 2019/02/06 : 1.9.4
     - BUG/MEDIUM: mux-h1: Don't add "transfer-encoding" if message-body is forbidden
     - BUG/MEDIUM: compression: Rewrite strong ETags
