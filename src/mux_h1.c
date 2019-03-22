@@ -1035,9 +1035,11 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 		sl->info.res.status = h1s->status;
 	}
 
-	if (h1m->state == H1_MSG_DONE)
+	if (h1m->state == H1_MSG_DONE) {
 		if (!htx_add_endof(htx, HTX_BLK_EOM))
 			goto error;
+		h1s->cs->flags |= CS_FL_EOI;
+	}
 
 	h1_process_conn_mode(h1s, h1m, htx, NULL);
 
@@ -1132,6 +1134,7 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 				if (!htx_add_endof(htx, HTX_BLK_EOM))
 					goto end;
 				h1m->state = H1_MSG_DONE;
+				h1s->cs->flags |= CS_FL_EOI;
 			}
 		}
 		else if (h1m->flags & H1_MF_CHNK) {
@@ -1230,6 +1233,7 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 				if (!htx_add_endof(htx, HTX_BLK_EOM))
 					goto end;
 				h1m->state = H1_MSG_DONE;
+				h1s->cs->flags |= CS_FL_EOI;
 			}
 		}
 		else {
@@ -1239,6 +1243,7 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 			if (!htx_add_endof(htx, HTX_BLK_EOM))
 				goto end;
 			h1m->state = H1_MSG_DONE;
+			h1s->cs->flags |= CS_FL_EOI;
 		}
 	}
 	else {
