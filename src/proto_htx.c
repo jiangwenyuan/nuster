@@ -1295,7 +1295,7 @@ int htx_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 	 * server, which will decide whether to close or to go on processing the
 	 * request. We only do that in tunnel mode, and not in other modes since
 	 * it can be abused to exhaust source ports. */
-	if ((s->be->options & PR_O_ABRT_CLOSE) && !(s->si[0].flags & SI_FL_CLEAN_ABRT)) {
+	if (s->be->options & PR_O_ABRT_CLOSE) {
 		channel_auto_read(req);
 		if ((req->flags & (CF_SHUTR|CF_READ_NULL)) &&
 		    ((txn->flags & TX_CON_WANT_MSK) != TX_CON_WANT_TUN))
@@ -3022,7 +3022,6 @@ static enum rule_result htx_req_get_intercept_rule(struct proxy *px, struct list
 			case ACT_CUSTOM:
 				if ((s->req.flags & CF_READ_ERROR) ||
 				    ((s->req.flags & (CF_SHUTR|CF_READ_NULL)) &&
-				     !(s->si[0].flags & SI_FL_CLEAN_ABRT) &&
 				     (px->options & PR_O_ABRT_CLOSE)))
 					act_flags |= ACT_FLAG_FINAL;
 
@@ -3412,7 +3411,6 @@ resume_execution:
 			case ACT_CUSTOM:
 				if ((s->req.flags & CF_READ_ERROR) ||
 				    ((s->req.flags & (CF_SHUTR|CF_READ_NULL)) &&
-				     !(s->si[0].flags & SI_FL_CLEAN_ABRT) &&
 				     (px->options & PR_O_ABRT_CLOSE)))
 					act_flags |= ACT_FLAG_FINAL;
 
@@ -5069,8 +5067,7 @@ static void htx_end_request(struct stream *s)
 		 * buffers, otherwise a close could cause an RST on some systems
 		 * (eg: Linux).
 		 */
-		if ((!(s->be->options & PR_O_ABRT_CLOSE) || (s->si[0].flags & SI_FL_CLEAN_ABRT)) &&
-		    txn->meth != HTTP_METH_POST)
+		if (!(s->be->options & PR_O_ABRT_CLOSE) && txn->meth != HTTP_METH_POST)
 			channel_dont_read(chn);
 
 		/* if the server closes the connection, we want to immediately react
@@ -5150,7 +5147,7 @@ static void htx_end_request(struct stream *s)
 		if (txn->rsp.flags & HTTP_MSGF_XFER_LEN)
 			s->si[1].flags |= SI_FL_NOLINGER;  /* we want to close ASAP */
 		/* see above in MSG_DONE why we only do this in these states */
-		if ((!(s->be->options & PR_O_ABRT_CLOSE) || (s->si[0].flags & SI_FL_CLEAN_ABRT)))
+		if (!(s->be->options & PR_O_ABRT_CLOSE))
 			channel_dont_read(chn);
 		goto end;
 	}
