@@ -5381,6 +5381,7 @@ int http_msg_forward_body(struct stream *s, struct http_msg *msg)
 	}
 
 	msg->msg_state = HTTP_MSG_ENDING;
+	chn->flags |= CF_EOI;
 
   ending:
 	/* we may have some pending data starting at res->buf.p such as a last
@@ -5516,6 +5517,8 @@ int http_msg_forward_chunked_body(struct stream *s, struct http_msg *msg)
 	}
 
 	msg->msg_state = HTTP_MSG_ENDING;
+	chn->flags |= CF_EOI;
+
   ending:
 	/* we may have some pending data starting at res->buf.p such as a last
 	 * chunk of data or trailers. */
