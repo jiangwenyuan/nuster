@@ -271,7 +271,10 @@ static inline void task_insert_into_tasklet_list(struct task *t)
 	LIST_ADDQ(&task_per_thread[tid].task_list, &tl->list);
 }
 
-static inline void task_remove_from_task_list(struct task *t)
+/* remove the task from the tasklet list. The task MUST already be there. If
+ * unsure, use task_remove_from_task_list() instead.
+ */
+static inline void __task_remove_from_tasklet_list(struct task *t)
 {
 	LIST_DEL(&((struct tasklet *)t)->list);
 	LIST_INIT(&((struct tasklet *)t)->list);
@@ -281,6 +284,12 @@ static inline void task_remove_from_task_list(struct task *t)
 		t->rq.node.leaf_p = NULL; // was 0x1
 		__ha_barrier_store();
 	}
+}
+
+static inline void task_remove_from_tasklet_list(struct task *t)
+{
+	if (likely(!LIST_ISEMPTY(&((struct tasklet *)t)->list)))
+		__task_remove_from_tasklet_list(t);
 }
 
 /*
