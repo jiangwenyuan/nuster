@@ -178,6 +178,7 @@ struct global global = {
 			.dict_size    = NST_CACHE_DEFAULT_SIZE,
 			.share        = NUSTER_STATUS_ON,
 			.purge_method = NULL,
+			.directory    = NULL,
 		},
 		.nosql = {
 			.status       = NUSTER_STATUS_UNDEFINED,
