@@ -180,7 +180,7 @@ struct global {
 	struct {
 		struct {
 			int       status;                      /* cache on or off */
-			//char   *storage;                     /* memory or directory */
+			char     *directory;                   /* directory */
 			uint64_t  data_size;                   /* max memory used by data, in bytes */
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
 			int       share;

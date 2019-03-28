@@ -1102,7 +1102,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 	else if (!strcmp(args[0], "nuster")) {
 		int cur_arg = 1;
 		if (!strcmp(args[cur_arg], "cache")) {
-			if (alertif_too_many_args(10, file, linenum, args, &err_code)) {
+			if (alertif_too_many_args(12, file, linenum, args, &err_code)) {
 				goto out;
 			}
 			args++;

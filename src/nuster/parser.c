@@ -366,6 +366,17 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args, int kw
             cur_arg++;
             continue;
         }
+        if (!strcmp(args[cur_arg], "dir")) {
+            cur_arg++;
+            if (*(args[cur_arg]) == 0) {
+                ha_alert("parsing [%s:%d] : '%s': `dir` expects a directory as an argument.\n", file, linenum, args[0]);
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+            global.nuster.cache.directory = strdup(args[cur_arg]);
+            cur_arg++;
+            continue;
+        }
         ha_alert("parsing [%s:%d] : '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
         err_code |= ERR_ALERT | ERR_FATAL;
         goto out;
