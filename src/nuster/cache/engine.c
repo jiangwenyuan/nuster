@@ -337,6 +337,7 @@ void nst_cache_init() {
             }
         }
 
+        global.nuster.cache.pool.ctx   = create_pool("cp.path", strlen(global.nuster.cache.directory) + strlen("/0/00/") + 17, MEM_F_SHARED);
         global.nuster.cache.pool.stash = create_pool("cp.stash", sizeof(struct nuster_rule_stash), MEM_F_SHARED);
         global.nuster.cache.pool.ctx   = create_pool("cp.ctx", sizeof(struct nst_cache_ctx), MEM_F_SHARED);
 
