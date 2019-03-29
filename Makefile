@@ -402,7 +402,8 @@ ifeq ($(TARGET),aix51)
   USE_POLL        = implicit
   USE_LIBCRYPT    = implicit
   USE_OBSOLETE_LINKER = implicit
-  TARGET_CFLAGS   = -Dss_family=__ss_family -Dip6_hdr=ip6hdr -DSTEVENS_API -D_LINUX_SOURCE_COMPAT
+  USE_PRIVATE_CACHE = implicit
+  TARGET_CFLAGS   = -Dss_family=__ss_family -Dip6_hdr=ip6hdr -DSTEVENS_API -D_LINUX_SOURCE_COMPAT -Dunsetenv=my_unsetenv
   DEBUG_CFLAGS    =
 else
 ifeq ($(TARGET),aix52)
