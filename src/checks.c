@@ -2781,7 +2781,7 @@ static void tcpcheck_main(struct check *check)
 			conn_prepare(conn, proto, xprt);
 
 			ret = SF_ERR_INTERNAL;
-			if (proto->connect)
+			if (proto && proto->connect)
 				ret = proto->connect(conn,
 						     1 /* I/O polling is always needed */,
 						     (next && next->action == TCPCHK_ACT_EXPECT) ? 0 : 2);
