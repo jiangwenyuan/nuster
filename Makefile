@@ -159,7 +159,7 @@ LD = $(CC)
 
 #### Debug flags (typically "-g").
 # Those flags only feed CFLAGS so it is not mandatory to use this form.
-DEBUG_CFLAGS = -g
+DEBUG_CFLAGS = -ggdb3
 
 #### Add -Werror when set to non-empty
 ERR =
@@ -243,7 +243,7 @@ EXTRA =
 # feed CPU_CFLAGS, which in turn feed CFLAGS, so it is not mandatory to use
 # them. You should not have to change these options. Better use CPU_CFLAGS or
 # even CFLAGS instead.
-CPU_CFLAGS.generic    = -O2
+CPU_CFLAGS.generic    = -O0
 CPU_CFLAGS.native     = -O2 -march=native
 CPU_CFLAGS.i586       = -O2 -march=i586
 CPU_CFLAGS.i686       = -O2 -march=i686
@@ -968,7 +968,7 @@ NUSTER_OBJS = src/nuster/cache/dict.o src/nuster/cache/filter.o               \
               src/nuster/nosql/filter.o  src/nuster/nosql/dict.o              \
               src/nuster/nosql/stats.o src/nuster/nosql/engine.o              \
               src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
-              src/nuster/nuster.o
+              src/nuster/file.o src/nuster/nuster.o
 
 ifneq ($(TRACE),)
 OBJS += src/trace.o
