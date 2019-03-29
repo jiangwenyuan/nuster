@@ -48,7 +48,7 @@
 
 const char *cache_store_flt_id = "cache store filter";
 
-struct applet http_cache_applet;
+extern struct applet http_cache_applet;
 
 struct flt_ops cache_ops;
 
