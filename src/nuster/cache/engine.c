@@ -26,6 +26,7 @@
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
 #include <nuster/http.h>
+#include <nuster/file.h>
 
 static char key_holder[] = {0x1A, '\0'};
 static char key_rs[]     = {0x1E, '\0'};
@@ -326,6 +327,13 @@ void nst_cache_init() {
                 global.nuster.cache.share = NUSTER_STATUS_OFF;
             } else {
                 global.nuster.cache.share = NUSTER_STATUS_ON;
+            }
+        }
+
+        if(global.nuster.cache.directory) {
+            if(!nuster_create_path(global.nuster.cache.directory)) {
+                ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
+                exit(1);
             }
         }
 
