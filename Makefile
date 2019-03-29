@@ -358,7 +358,7 @@ ifeq ($(TARGET),aix51)
   # This is for AIX 5.1
   USE_POLL        = implicit
   USE_LIBCRYPT    = implicit
-  TARGET_CFLAGS   = -Dss_family=__ss_family -Dip6_hdr=ip6hdr -DSTEVENS_API
+  TARGET_CFLAGS   = -Dss_family=__ss_family -Dip6_hdr=ip6hdr -DSTEVENS_API -D_LINUX_SOURCE_COMPAT
   DEBUG_CFLAGS    =
 else
 ifeq ($(TARGET),aix52)
