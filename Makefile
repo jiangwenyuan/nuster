@@ -48,6 +48,7 @@
 #   USE_51DEGREES        : enable third party device detection library from 51Degrees
 #   USE_WURFL            : enable WURFL detection library from Scientiamobile
 #   USE_SYSTEMD          : enable sd_notify() support.
+#   USE_OBSOLETE_LINKER  : use when the linker fails to emit __start_init/__stop_init
 #
 # Options can be forced by specifying "USE_xxx=1" or can be disabled by using
 # "USE_xxx=" (empty string).
@@ -400,6 +401,7 @@ ifeq ($(TARGET),aix51)
   # This is for AIX 5.1
   USE_POLL        = implicit
   USE_LIBCRYPT    = implicit
+  USE_OBSOLETE_LINKER = implicit
   TARGET_CFLAGS   = -Dss_family=__ss_family
   DEBUG_CFLAGS    =
 else
@@ -407,6 +409,7 @@ ifeq ($(TARGET),aix52)
   # This is for AIX 5.2 and later
   USE_POLL        = implicit
   USE_LIBCRYPT    = implicit
+  USE_OBSOLETE_LINKER = implicit
   TARGET_CFLAGS   = -D_MSGQSUPPORT
   DEBUG_CFLAGS    =
 else
@@ -415,6 +418,7 @@ ifeq ($(TARGET),cygwin)
   # Cygwin adds IPv6 support only in version 1.7 (in beta right now). 
   USE_POLL   = implicit
   USE_TPROXY = implicit
+  USE_OBSOLETE_LINKER = implicit
   TARGET_CFLAGS  = $(if $(filter 1.5.%, $(shell uname -r)), -DUSE_IPV6 -DAF_INET6=23 -DINET6_ADDRSTRLEN=46, )
 endif # cygwin
 endif # aix52
