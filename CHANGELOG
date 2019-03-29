@@ -1,6 +1,42 @@
 ChangeLog :
 ===========
 
+2019/03/29 : 1.9.6
+    - BUG/MEDIUM: mux-h2: Make sure we destroyed the h2s once shutr/shutw is done.
+    - BUG/MEDIUM: mux-h2: Don't bother keeping the h2s if detaching and nothing to send.
+    - BUG/MEDIUM: mux-h2: Use the right list in h2_stop_senders().
+    - BUG/MINOR: cache: Fully consume large requests in the cache applet
+    - BUG/MINOR: stats: Fully consume large requests in the stats applet
+    - BUG/MEDIUM: lua: Fully consume large requests when an HTTP applet ends
+    - BUG/MINOR: doc: Be accurate on the behavior on pool-purge-delay.
+    - BUG/MEDIUM: ssl: ability to set TLS 1.3 ciphers using ssl-default-server-ciphersuites
+    - MINOR: mux-h2: copy small data blocks more often and reduce the number of pauses
+    - BUG/MINOR: log: properly format IPv6 address when LOG_OPT_HEXA modifier is used.
+    - MINOR: lists: add a LIST_DEL_INIT() macro
+    - BUG/MEDIUM: h2: Try to be fair when sending data.
+    - BUG/MINOR: proto-http: Don't forward request body anymore on error
+    - MINOR: mux-h2: Remove useless test on ES flag in h2_frt_transfer_data()
+    - MINOR: connection: and new flag to mark end of input (EOI)
+    - MINOR: channel: Report EOI on the input channel if it was reached in the mux
+    - CONTRIB: debug: report the CS and CF's EOI flags
+    - MEDIUM: mux-h2: Don't mix the end of the message with the end of stream
+    - BUG/MEDIUM: mux-h2: make sure to always notify streams of EOS condition
+    - MINOR: mux-h1: Set CS_FL_EOI the end of the message is reached
+    - BUG/MEDIUM: http/htx: Fix handling of the option abortonclose
+    - CLEANUP: muxes/stream-int: Remove flags CS_FL_READ_NULL and SI_FL_READ_NULL
+    - BUG/MEDIUM: h2: only destroy the h2s if h2s->cs is NULL.
+    - BUG/MEDIUM: h2: Use the new sending_list in h2s_notify_send().
+    - BUG/MEDIUM: h2: Follow the same logic in h2_deferred_shut than in h2_snd_buf.
+    - BUG/MEDIUM: h2: Remove the tasklet from the task list if unsubscribing.
+    - BUG/MEDIUM: task/h2: add an idempotent task removal fucntion
+    - REGTEST: Enable again reg tests with HEAD HTTP method usage.
+    - DOC: The option httplog is no longer valid in a backend.
+    - REGTEST: remove unexpected "nbthread" statement from Lua test cases
+    - BUG/MINOR: mux-h1: Only skip invalid C-L headers on output
+    - BUG/MEDIUM: mworker: don't free the wrong child when not found
+    - BUG/MEDIUM: checks: Don't bother subscribing if we have a connection error.
+    - BUG/MAJOR: checks: segfault during tcpcheck_main
+
 2019/03/19 : 1.9.5
     - DOC: ssl: Clarify when pre TLSv1.3 cipher can be used
     - DOC: ssl: Stop documenting ciphers example to use
