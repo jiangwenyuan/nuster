@@ -523,6 +523,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     char *key                = NULL;
     char *code               = NULL;
     int ttl                  = -1;
+    int disk                 = -1;
     int cur_arg              = 2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
@@ -587,6 +588,27 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             cur_arg++;
             continue;
         }
+        if(!strcmp(args[cur_arg], "disk")) {
+            if(disk != -1) {
+                memprintf(err, "'%s %s': disk already specified.", args[0], name);
+                goto out;
+            }
+            cur_arg++;
+            if(*args[cur_arg] == 0) {
+                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                goto out;
+            }
+            if(!strcmp(args[cur_arg], "off")) {
+                disk = 0;
+            } else if(!strcmp(args[cur_arg], "on")) {
+                disk = 1;
+            } else {
+                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                goto out;
+            }
+            cur_arg++;
+            continue;
+        }
         memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name, args[cur_arg]);
         goto out;
     }
@@ -616,6 +638,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     rule->code = _nuster_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
     rule->ttl  = malloc(sizeof(*rule->ttl));
     *rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
+    rule->disk = disk == -1 ? NUSTER_DISK_OFF : disk;
     rule->id   = -1;
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->nuster.rules, &rule->list);
