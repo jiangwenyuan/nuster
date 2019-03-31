@@ -90,6 +90,11 @@ enum {
     NUSTER_RULE_ENABLED  = 1,
 };
 
+enum {
+    NUSTER_DISK_OFF = 0,
+    NUSTER_DISK_ON  = 1,
+};
+
 struct nuster_rule {
     struct list              list;       /* list linked to from the proxy */
     struct acl_cond         *cond;       /* acl condition to meet */
@@ -100,6 +105,7 @@ struct nuster_rule {
     int                     *state;      /* on when start, can be turned off by manager API */
     int                      id;         /* same for identical names */
     int                      uuid;       /* unique cache-rule ID */
+    int                      disk;       /* off: 0, on: 1 */
 };
 
 struct nuster_rule_stash {
