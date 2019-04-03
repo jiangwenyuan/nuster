@@ -539,6 +539,11 @@ OPTIONS_CFLAGS  += -DUSE_GETADDRINFO
 BUILD_OPTIONS   += $(call ignore_implicit,USE_GETADDRINFO)
 endif
 
+ifneq ($(USE_OBSOLETE_LINKER),)
+OPTIONS_CFLAGS  += -DUSE_OBSOLETE_LINKER
+BUILD_OPTIONS   += $(call ignore_implicit,USE_OBSOLETE_LINKER)
+endif
+
 ifneq ($(USE_SLZ),)
 # Use SLZ_INC and SLZ_LIB to force path to zlib.h and libz.{a,so} if needed.
 SLZ_INC =
