@@ -1651,7 +1651,6 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				break;
 
 			case LOG_FMT_TS: // %Ts
-				get_gmtime(s->logs.accept_date.tv_sec, &tm);
 				if (tmp->options & LOG_OPT_HEXA) {
 					iret = snprintf(tmplog, dst + maxsize - tmplog, "%04X", (unsigned int)s->logs.accept_date.tv_sec);
 					if (iret < 0 || iret > dst + maxsize - tmplog)
