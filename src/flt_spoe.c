@@ -2276,7 +2276,9 @@ spoe_encode_messages(struct stream *s, struct spoe_context *ctx,
 	return 1;
 
   too_big:
-	if (!(agent->flags & SPOE_FL_SND_FRAGMENTATION)) {
+	/* Return an error if fragmentation is unsupported or if nothing has
+	 * been encoded because its too big and not splittable. */
+	if (!(agent->flags & SPOE_FL_SND_FRAGMENTATION) || p == ctx->buffer->p) {
 		ctx->status_code = SPOE_CTX_ERR_TOO_BIG;
 		return -1;
 	}
