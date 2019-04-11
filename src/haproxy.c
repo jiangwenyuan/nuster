@@ -936,7 +936,6 @@ void init(int argc, char **argv)
 		exit(1);
 	}
 
-	pattern_finalize_config();
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 	tlskeys_finalize_config();
 #endif
@@ -946,6 +945,8 @@ void init(int argc, char **argv)
 		Alert("Fatal errors found in configuration.\n");
 		exit(1);
 	}
+
+	pattern_finalize_config();
 
 	/* recompute the amount of per-process memory depending on nbproc and
 	 * the shared SSL cache size (allowed to exist in all processes).
