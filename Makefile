@@ -37,6 +37,7 @@
 #   USE_FUTEX            : enable use of futex on kernel 2.6. Automatic.
 #   USE_ACCEPT4          : enable use of accept4() on linux. Automatic.
 #   USE_MY_ACCEPT4       : use own implemention of accept4() if glibc < 2.10.
+#   USE_PRCTL            : enable use of prctl(). Automatic.
 #   USE_ZLIB             : enable zlib library support.
 #   USE_SLZ              : enable slz library instead of zlib (pick at most one).
 #   USE_CPU_AFFINITY     : enable pinning processes to CPU on Linux. Automatic.
@@ -334,6 +335,7 @@ ifeq ($(TARGET),linux26)
   USE_CRYPT_H     = implicit
   USE_LIBCRYPT    = implicit
   USE_FUTEX       = implicit
+  USE_PRCTL       = implicit
   USE_DL          = implicit
   USE_RT          = implicit
 else
@@ -350,6 +352,7 @@ ifeq ($(TARGET),linux2628)
   USE_ACCEPT4     = implicit
   USE_FUTEX       = implicit
   USE_CPU_AFFINITY= implicit
+  USE_PRCTL       = implicit
   ASSUME_SPLICE_WORKS= implicit
   USE_DL          = implicit
   USE_RT          = implicit
@@ -619,6 +622,10 @@ endif
 ifneq ($(USE_NETFILTER),)
 OPTIONS_CFLAGS += -DNETFILTER
 BUILD_OPTIONS  += $(call ignore_implicit,USE_NETFILTER)
+endif
+
+ifneq ($(USE_PRCTL),)
+OPTIONS_CFLAGS += -DUSE_PRCTL
 endif
 
 ifneq ($(USE_REGPARM),)
