@@ -339,6 +339,7 @@ void process_runnable_tasks()
 
 	while (task_per_thread[tid].task_list_size < max_processed) {
 		if ((global_tasks_mask & tid_bit) && !grq) {
+#ifdef USE_THREAD
 			HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
 			grq = eb32sc_lookup_ge(&rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
 			if (unlikely(!grq)) {
@@ -348,6 +349,7 @@ void process_runnable_tasks()
 					HA_ATOMIC_AND(&global_tasks_mask, ~tid_bit);
 				}
 			}
+#endif
 		}
 
 		/* If a global task is available for this thread, it's in grq
@@ -368,6 +370,7 @@ void process_runnable_tasks()
 			lrq = eb32sc_next(lrq, tid_bit);
 			__task_unlink_rq(t);
 		}
+#ifdef USE_THREAD
 		else {
 			t = eb32sc_entry(grq, struct task, rq);
 			grq = eb32sc_next(grq, tid_bit);
@@ -380,6 +383,7 @@ void process_runnable_tasks()
 				}
 			}
 		}
+#endif
 
 		/* Make sure nobody re-adds the task in the runqueue */
 		HA_ATOMIC_OR(&t->state, TASK_RUNNING);
