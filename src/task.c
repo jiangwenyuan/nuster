@@ -78,7 +78,7 @@ void __task_wakeup(struct task *t, struct eb_root *root)
 	HA_ATOMIC_ADD(&tasks_run_queue, 1);
 #ifdef USE_THREAD
 	if (root == &rqueue) {
-		HA_ATOMIC_OR(&global_tasks_mask, t->thread_mask);
+		global_tasks_mask |= t->thread_mask;
 		__ha_barrier_store();
 	}
 #endif
@@ -303,8 +303,8 @@ void process_runnable_tasks()
 			if (unlikely(!grq)) {
 				grq = eb32sc_first(&rqueue, tid_bit);
 				if (!grq) {
+					global_tasks_mask &= ~tid_bit;
 					HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
-					HA_ATOMIC_AND(&global_tasks_mask, ~tid_bit);
 				}
 			}
 #endif
@@ -336,8 +336,8 @@ void process_runnable_tasks()
 			if (unlikely(!grq)) {
 				grq = eb32sc_first(&rqueue, tid_bit);
 				if (!grq) {
+					global_tasks_mask &= ~tid_bit;
 					HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
-					HA_ATOMIC_AND(&global_tasks_mask, ~tid_bit);
 				}
 			}
 		}
