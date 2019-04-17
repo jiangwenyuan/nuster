@@ -6458,7 +6458,7 @@ static int hlua_applet_http_init(struct appctx *ctx, struct proxy *px, struct st
 	const char *error;
 
 	/* Wait for a full HTTP request. */
-	if (!smp_prefetch_http(px, strm, 0, NULL, &smp, 0)) {
+	if (!smp_prefetch_http(px, strm, 0, req, &smp, 0)) {
 		if (smp.flags & SMP_F_MAY_CHANGE)
 			return -1;
 		return 0;
