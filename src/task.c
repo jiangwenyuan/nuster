@@ -343,9 +343,6 @@ void process_runnable_tasks()
 		}
 #endif
 
-		/* Make sure nobody re-adds the task in the runqueue */
-		HA_ATOMIC_OR(&t->state, TASK_RUNNING);
-
 		/* And add it to the local task list */
 		task_insert_into_tasklet_list(t);
 	}
