@@ -22,7 +22,7 @@
 #ifndef _NUSTER_H
 #define _NUSTER_H
 
-#define NUSTER_VERSION    "2.1.0.19"
+#define NUSTER_VERSION    "2.1.1.19"
 #define NUSTER_COPYRIGHT  "2017-2019, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
 #include <nuster/cache.h>
