@@ -2962,7 +2962,7 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 		}
 
 		chunk_appendf(&trash,
-			     "  task=%p (state=0x%02x nice=%d calls=%d exp=%s tmask=0x%lx%s",
+			     "  task=%p (state=0x%02x nice=%d calls=%u exp=%s tmask=0x%lx%s",
 			     strm->task,
 			     strm->task->state,
 			     strm->task->nice, strm->task->calls,
@@ -3302,7 +3302,7 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 			}
 
 			chunk_appendf(&trash,
-				     " ts=%02x age=%s calls=%d cpu=%llu lat=%llu",
+				     " ts=%02x age=%s calls=%u cpu=%llu lat=%llu",
 				     curr_strm->task->state,
 				     human_time(now.tv_sec - curr_strm->logs.tv_accept.tv_sec, 1),
 			             curr_strm->task->calls,
