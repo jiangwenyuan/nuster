@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 2.0.9.18 - 2019-04-24
+
+### Fixed
+
+* Empty response from Nuster for content in cache #40
+
 ## 2.0.8.18 - 2019-03-10
 
 Upgrade to HAProxy v1.8.19
