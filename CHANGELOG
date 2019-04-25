@@ -1,6 +1,108 @@
 ChangeLog :
 ===========
 
+2019/04/25 : 1.9.7
+    - BUILD: makefile: work around an old bug in GNU make-3.80
+    - BUILD: http: properly mark some struct as extern
+    - BUILD: chunk: properly declare pool_head_trash as extern
+    - BUILD: cache: avoid a build warning with some compilers/linkers
+    - MINOR: tools: make memvprintf() never pass a NULL target to vsnprintf()
+    - BUILD: re-implement an initcall variant without using executable sections
+    - BUILD: makefile: fix build of IPv6 header on aix51
+    - BUILD: makefile: add _LINUX_SOURCE_COMPAT to build on AIX-51
+    - BUILD: Makefile: disable shared cache on AIX 5.1
+    - BUG/MINOR: cli: correctly handle abns in 'show cli sockets'
+    - MINOR: cli: start addresses by a prefix in 'show cli sockets'
+    - BUG/MINOR: htx: Preserve empty HTX messages with an unprocessed parsing error
+    - BUG/MEDIUM: peers: fix a case where peer session is not cleanly reset on release.
+    - BUILD: fix backport of initcall variant
+    - BUILD: use inttypes.h instead of stdint.h
+    - BUILD: connection: fix naming of ip_v field
+    - BUG/MEDIUM: h2: Don't attempt to recv from h2_process_demux if we subscribed.
+    - BUG/MEDIUM: htx: fix random premature abort of data transfers
+    - BUG/MEDIUM: streams: Don't remove the SI_FL_ERR flag in si_update_both().
+    - BUG/MEDIUM: streams: Store prev_state before calling si_update_both().
+    - BUG/MEDIUM: stream: Don't clear the stream_interface flags in si_update_both.
+    - BUG/MEDIUM: pattern: assign pattern IDs after checking the config validity
+    - BUG/MEDIUM: streams: Only re-run process_stream if we're in a connected state.
+    - BUG/MEDIUM: stream_interface: Don't bother doing chk_rcv/snd if not connected.
+    - BUG/MEDIUM: task/threads: address a fairness issue between local and global tasks
+    - BUG/MINOR: tasks: make sure the first task to be queued keeps its nice value
+    - BUG/MEDIUM: spoe: Queue message only if no SPOE applet is attached to the stream
+    - BUG/MEDIUM: spoe: Return an error if nothing is encoded for fragmented messages
+    - BUG/MINOR: spoe: Be sure to set tv_request when each message fragment is encoded
+    - BUG/MEDIUM: htx: Defrag if blocks position is changed and the payloads wrap
+    - BUG/MEDIUM: htx: Don't crush blocks payload when append is done on a data block
+    - MEDIUM: htx: Deprecate the option 'http-tunnel' and ignore it in HTX
+    - MINOR: proto_htx: Don't adjust transaction mode anymore in HTX analyzers
+    - BUG/MEDIUM: htx: Fix the process of HTTP CONNECT with h2 connections
+    - MINOR: mux-h1: Simplify handling of 1xx responses
+    - BUG/MINOR: mux-h1: Handle the flag CS_FL_KILL_CONN during a shutdown read/write
+    - BUG/MEDIUM: map: Fix memory leak in the map converter
+    - BUG/MINOR: ssl: Fix 48 byte TLS ticket key rotation
+    - BUG/MINOR: threads: fix the process range of thread masks
+    - MINOR: lists: Implement locked variations.
+    - BUG/MEDIUM: lists: Properly handle the case we're removing the first elt.
+    - BUG/MEDIUM: list: fix the rollback on addq in the locked liss
+    - BUG/MEDIUM: list: fix LIST_POP_LOCKED's removal of the last pointer
+    - BUG/MEDIUM: list: add missing store barriers when updating elements and head
+    - MINOR: list: make the delete and pop operations idempotent
+    - BUG/MEDIUM: list: correct fix for LIST_POP_LOCKED's removal of last element
+    - BUG/MEDIUM: list: fix again LIST_ADDQ_LOCKED
+    - BUG/MEDIUM: list: fix incorrect pointer unlocking in LIST_DEL_LOCKED()
+    - MAJOR: listener: do not hold the listener lock in listener_accept()
+    - BUG/MEDIUM: listener: use a self-locked list for the dequeue lists
+    - BUG/MEDIUM: listener: make sure the listener never accepts too many conns
+    - BUILD/MINOR: listener: Silent a few signedness warnings.
+    - MINOR: initcall: Don't forget to define the __start/stop_init_##stg symbols.
+    - MINOR: skip get_gmtime where tm is unused
+    - BUG/MEDIUM: h2: Make sure we're not already in the send_list in h2_subscribe().
+    - BUILD: htx: fix a used uninitialized warning on is_cookie2
+    - BUG/MAJOR: lb/threads: fix insufficient locking on round-robin LB
+    - BUG/MINOR: mworker: don't exit with an ambiguous value
+    - BUG/MINOR: mworker: ensure that we still quits with SIGINT
+    - BUG/MINOR: mux-h1: Process input even if the input buffer is empty
+    - BUG/MINOR: mux-h1: Don't switch the parser in busy mode if other side has done
+    - BUG/MEDIUM: mux-h1: Notify the stream waiting for TCP splicing if ibuf is empty
+    - BUG/MEDIUM: mux-h1: Enable TCP splicing to exchange data only
+    - MINOR: mux-h1: Handle read0 during TCP splicing
+    - BUG/MEDIUM: htx: Don't return the start-line if the HTX message is empty
+    - BUG/MAJOR: http_fetch: Get the channel depending on the keyword used
+    - BUG/MINOR: http_fetch/htx: Allow permissive sample prefetch for the HTX
+    - MEDIUM: tasks: improve fairness between the local and global queues
+    - BUILD: task/thread: fix single-threaded build of task.c
+    - MEDIUM: tasks: only base the nice offset on the run queue depth
+    - MINOR: tasks: restore the lower latency scheduling when niced tasks are present
+    - BUG/MEDIUM: tasks: Make sure we set TASK_QUEUED before adding a task to the rq.
+    - BUG/MEDIUM: tasks: Make sure we modify global_tasks_mask with the rq_lock.
+    - MINOR: tasks: Don't consider we can wake task with tasklet_wakeup().
+    - MEDIUM: tasks: No longer use rq.node.leaf_p as a lock.
+    - MINOR: tasks: Don't set the TASK_RUNNING flag when adding in the tasklet list.
+    - BUG/MAJOR: task: make sure never to delete a queued task
+    - BUG/MEDIUM: applets: Don't use task_in_rq().
+    - REGTESTS: exclude tests that require ssl, pcre if no such feature is enabled
+    - BUG/MINOR: mworker: disable busy polling in the master process
+    - BUG/MEDIUM: maps: only try to parse the default value when it's present
+    - BUG/MINOR: acl: properly detect pattern type SMP_T_ADDR
+    - MINOR: peers: Add a new command to the CLI for peers.
+    - DOC: update for "show peers" CLI command.
+    - MINOR: peers: adds counters on show peers about tasks calls.
+    - MINOR: init: add a "set-dumpable" global directive to enable core dumps
+    - BUG/MEDIUM: h1: Don't parse chunks CRLF if not enough data are available
+    - BUG/MEDIUM: thread/http: Add missing locks in set-map and add-acl HTTP rules
+    - BUG/MEDIUM: stream: Don't request a server connection if a shutw was scheduled
+    - BUG/MINOR: 51d: Get the request channel to call CHECK_HTTP_MESSAGE_FIRST()
+    - BUG/MINOR: da: Get the request channel to call CHECK_HTTP_MESSAGE_FIRST()
+    - MINOR: ssl/cli: async fd io-handlers printable on show fd
+    - BUG/MEDIUM: stream: Fix the way early aborts on the client side are handled
+    - BUG/MINOR: spoe: Don't systematically wakeup SPOE stream in the applet handler
+    - BUG/MAJOR: lb/threads: fix AB/BA locking issue in round-robin LB
+    - BUILD: wurfl: build fix for 1.9/2.0 code base
+    - MINOR: wurfl: enabled multithreading mode
+    - DOC: wurfl: added point of contact in MAINTAINERS file
+    - BUG/MAJOR: muxes: Use the HTX mode to find the best mux for HTTP proxies only
+    - BUG/MINOR: htx: Exclude TCP proxies when the HTX mode is handled during startup
+
 2019/03/29 : 1.9.6
     - BUG/MEDIUM: mux-h2: Make sure we destroyed the h2s once shutr/shutw is done.
     - BUG/MEDIUM: mux-h2: Don't bother keeping the h2s if detaching and nothing to send.
