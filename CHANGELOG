@@ -1,6 +1,56 @@
 ChangeLog :
 ===========
 
+2019/04/25 : 1.8.20
+    - BUG/MAJOR: listener: Make sure the listener exist before using it.
+    - BUG/MINOR: listener: keep accept rate counters accurate under saturation
+    - BUG/MEDIUM: logs: Only attempt to free startup_logs once.
+    - BUG/MEDIUM: 51d: fix possible segfault on deinit_51degrees()
+    - BUG/MINOR: ssl: fix warning about ssl-min/max-ver support
+    - MEDIUM: threads: Use __ATOMIC_SEQ_CST when using the newer atomic API.
+    - BUG/MEDIUM: threads/fd: do not forget to take into account epoll_fd/pipes
+    - BUG/MAJOR: spoe: Fix initialization of thread-dependent fields
+    - BUG/MAJOR: stats: Fix how huge POST data are read from the channel
+    - BUG/MINOR: http/counters: fix missing increment of fe->srv_aborts
+    - BUG/MEDIUM: ssl: ability to set TLS 1.3 ciphers using ssl-default-server-ciphersuites
+    - DOC: The option httplog is no longer valid in a backend.
+    - BUG/MAJOR: checks: segfault during tcpcheck_main
+    - BUILD: makefile: work around an old bug in GNU make-3.80
+    - MINOR: tools: make memvprintf() never pass a NULL target to vsnprintf()
+    - BUILD: makefile: fix build of IPv6 header on aix51
+    - BUILD: makefile: add _LINUX_SOURCE_COMPAT to build on AIX-51
+    - BUILD: Makefile: disable shared cache on AIX 5.1
+    - BUG/MINOR: cli: correctly handle abns in 'show cli sockets'
+    - MINOR: cli: start addresses by a prefix in 'show cli sockets'
+    - BUG/MEDIUM: peers: fix a case where peer session is not cleanly reset on release.
+    - BUILD: use inttypes.h instead of stdint.h
+    - BUILD: connection: fix naming of ip_v field
+    - BUG/MEDIUM: pattern: assign pattern IDs after checking the config validity
+    - BUG/MEDIUM: spoe: Queue message only if no SPOE applet is attached to the stream
+    - BUG/MEDIUM: spoe: Return an error if nothing is encoded for fragmented messages
+    - BUG/MINOR: threads: fix the process range of thread masks
+    - MINOR: lists: Implement locked variations.
+    - BUG/MEDIUM: lists: Properly handle the case we're removing the first elt.
+    - BUG/MEDIUM: list: fix the rollback on addq in the locked liss
+    - BUG/MEDIUM: list: fix LIST_POP_LOCKED's removal of the last pointer
+    - BUG/MEDIUM: list: add missing store barriers when updating elements and head
+    - MINOR: list: make the delete and pop operations idempotent
+    - BUG/MEDIUM: list: correct fix for LIST_POP_LOCKED's removal of last element
+    - BUG/MEDIUM: list: fix again LIST_ADDQ_LOCKED
+    - BUG/MEDIUM: list: fix incorrect pointer unlocking in LIST_DEL_LOCKED()
+    - MAJOR: listener: do not hold the listener lock in listener_accept()
+    - BUG/MEDIUM: listener: use a self-locked list for the dequeue lists
+    - BUG/MEDIUM: listener: make sure the listener never accepts too many conns
+    - BUILD/MINOR: listener: Silent a few signedness warnings.
+    - MINOR: skip get_gmtime where tm is unused
+    - BUG/MAJOR: http_fetch: Get the channel depending on the keyword used
+    - BUG/MEDIUM: maps: only try to parse the default value when it's present
+    - BUG/MINOR: acl: properly detect pattern type SMP_T_ADDR
+    - BUG/MEDIUM: thread/http: Add missing locks in set-map and add-acl HTTP rules
+    - BUG/MINOR: 51d: Get the request channel to call CHECK_HTTP_MESSAGE_FIRST()
+    - BUG/MINOR: da: Get the request channel to call CHECK_HTTP_MESSAGE_FIRST()
+    - BUG/MINOR: spoe: Don't systematically wakeup SPOE stream in the applet handler
+
 2019/02/11 : 1.8.19
     - DOC: ssl: Clarify when pre TLSv1.3 cipher can be used
     - DOC: ssl: Stop documenting ciphers example to use
