@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 2.1.2.19 - 2019-04-26
+
+### Fixed
+
+* clients does not decrease on connection close
+
 ## 2.1.1.19 - 2019-04-24
 
 ### Fixed
