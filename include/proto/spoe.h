@@ -121,7 +121,7 @@ spoe_decode_buffer(char **buf, char *end, char **str, uint64_t *len)
  * many bytes has been encoded. If <*off> is zero at the end, it means that all
  * data has been encoded. */
 static inline int
-spoe_encode_data(struct sample *smp, unsigned int *off, char **buf, char *end)
+spoe_encode_data(unsigned int *len, struct sample *smp, unsigned int *off, char **buf, char *end)
 {
 	char *p = *buf;
 	int   ret;
@@ -183,15 +183,16 @@ spoe_encode_data(struct sample *smp, unsigned int *off, char **buf, char *end)
 				ret = spoe_encode_frag_buffer(chk->str, chk->len, &p, end);
 				if (ret == -1)
 					return -1;
+				*len = chk->len;
 			}
 			else {
 				/* The sample has been fragmented, encode remaining data */
-				ret = MIN(chk->len - *off, end - p);
+				ret = MIN(*len - *off, end - p);
 				memcpy(p, chk->str + *off, ret);
 				p += ret;
 			}
 			/* Now update <*off> */
-			if (ret + *off != chk->len)
+			if (ret + *off != *len)
 				*off += ret;
 			else
 				*off = 0;
