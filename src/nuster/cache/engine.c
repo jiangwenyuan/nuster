@@ -42,6 +42,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
     int ret;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
+        appctx->ctx.nuster.cache_engine.data->clients--;
         return;
     }
 
