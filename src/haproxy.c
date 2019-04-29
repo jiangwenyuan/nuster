@@ -2450,6 +2450,11 @@ void deinit(void)
 				task_free(s->agent.task);
 			}
 
+			if (s->check.wait_list.task)
+				tasklet_free(s->check.wait_list.task);
+			if (s->agent.wait_list.task)
+				tasklet_free(s->agent.wait_list.task);
+
 			if (s->warmup) {
 				task_delete(s->warmup);
 				task_free(s->warmup);
