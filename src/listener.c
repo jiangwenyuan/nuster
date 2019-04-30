@@ -415,7 +415,7 @@ void listener_accept(int fd)
 {
 	struct listener *l = fdtab[fd].owner;
 	struct proxy *p;
-	int max_accept;
+	unsigned int max_accept;
 	int next_conn = 0;
 	int next_feconn = 0;
 	int next_actconn = 0;
@@ -429,6 +429,10 @@ void listener_accept(int fd)
 	if (!l)
 		return;
 	p = l->bind_conf->frontend;
+
+	/* if l->maxaccept is -1, then max_accept is UINT_MAX. It is not really
+	 * illimited, but it is probably enough.
+	 */
 	max_accept = l->maxaccept ? l->maxaccept : 1;
 
 	if (!(l->options & LI_O_UNLIMITED) && global.sps_lim) {
@@ -489,7 +493,7 @@ void listener_accept(int fd)
 	 * worst case. If we fail due to system limits or temporary resource
 	 * shortage, we try again 100ms later in the worst case.
 	 */
-	for (; max_accept-- > 0; next_conn = next_feconn = next_actconn = 0) {
+	for (; max_accept; next_conn = next_feconn = next_actconn = 0, max_accept--) {
 		struct sockaddr_storage addr;
 		socklen_t laddr = sizeof(addr);
 		unsigned int count;
