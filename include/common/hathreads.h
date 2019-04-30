@@ -85,6 +85,7 @@ enum { tid = 0 };
 			*__p_btr &= ~__b_btr;				\
 		__t_btr;						\
 	})
+#define HA_ATOMIC_LOAD(val)          *(val)
 #define HA_ATOMIC_STORE(val, new)    ({*(val) = new;})
 #define HA_ATOMIC_UPDATE_MAX(val, new)					\
 	({								\
@@ -251,6 +252,15 @@ static inline unsigned long thread_isolated()
 		__sync_fetch_and_and((val), ~__b_btr) & __b_btr;	\
 	})
 
+#define HA_ATOMIC_LOAD(val)                                             \
+        ({                                                              \
+	        typeof(*(val)) ret;                                     \
+		__sync_synchronize();                                   \
+		ret = *(volatile typeof(val))val;                       \
+		__sync_synchronize();                                   \
+		ret;                                                    \
+	})
+
 #define HA_ATOMIC_STORE(val, new)					\
 	({								\
 		typeof((val)) __val_store = (val);			\
@@ -281,6 +291,8 @@ static inline unsigned long thread_isolated()
 
 #define HA_ATOMIC_XCHG(val, new)     __atomic_exchange_n(val, new, __ATOMIC_SEQ_CST)
 #define HA_ATOMIC_STORE(val, new)    __atomic_store_n(val, new, __ATOMIC_SEQ_CST)
+#define HA_ATOMIC_LOAD(val)          __atomic_load_n(val, __ATOMIC_SEQ_CST)
+
 #endif
 
 #define HA_ATOMIC_UPDATE_MAX(val, new)					\
