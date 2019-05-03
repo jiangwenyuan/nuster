@@ -5662,7 +5662,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 	if (!conn->xprt_ctx)
 		goto out_error;
 
-	if (conn->flags & CO_FL_HANDSHAKE)
+	if (conn->flags & (CO_FL_HANDSHAKE | CO_FL_EARLY_SSL_HS))
 		/* a handshake was requested */
 		return 0;
 
@@ -5693,7 +5693,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 		}
 
 #if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
-		if (!SSL_is_init_finished(conn->xprt_ctx)) {
+		if (!SSL_is_init_finished(conn->xprt_ctx) && conn_is_back(conn)) {
 			unsigned int max_early;
 
 			if (objt_listener(conn->target))
@@ -5708,8 +5708,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 			if (try + conn->sent_early_data > max_early) {
 				try -= (try + conn->sent_early_data) - max_early;
 				if (try <= 0) {
-					if (!(conn->flags & CO_FL_EARLY_SSL_HS))
-						conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
+					conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
 					break;
 				}
 			}
@@ -5717,10 +5716,8 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 			if (ret == 1) {
 				ret = written_data;
 				conn->sent_early_data += ret;
-				if (objt_server(conn->target)) {
-					conn->flags &= ~CO_FL_EARLY_SSL_HS;
+				if (objt_server(conn->target))
 					conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN | CO_FL_EARLY_DATA;
-				}
 
 			}
 
