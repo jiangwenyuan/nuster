@@ -116,6 +116,7 @@
 #include <proto/vars.h>
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
+#include <openssl/rand.h>
 #endif
 
 /* list of config files */
@@ -665,6 +666,12 @@ static void mworker_reload()
 		sd_notify(0, "RELOADING=1");
 #endif
 	setenv("HAPROXY_MWORKER_REEXEC", "1", 1);
+
+#if defined(USE_OPENSSL) && (OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	if (global.ssl_used_frontend || global.ssl_used_backend)
+		/* close random device FDs */
+		RAND_keep_random_devices_open(0);
+#endif
 
 	/* compute length  */
 	while (next_argv[next_argc])
