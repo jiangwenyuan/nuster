@@ -11223,6 +11223,10 @@ agent-port <port>
 
   See also the "agent-check" and "agent-inter" parameters.
 
+allow-0rtt
+  Allow sending early data to the server when using TLS 1.3.
+  Note that early data will be sent only if the client used early data.
+
 backup
   When "backup" is present on a server line, the server is only used in load
   balancing when all other non-backup servers are unavailable. Requests coming
