@@ -64,6 +64,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
         ctx->req.host.data = NULL;
         ctx->req.path.data = NULL;
         ctx->sov           = 0;
+        ctx->full          = 0;
         filter->ctx        = ctx;
     }
     register_data_filter(s, &s->req, filter);

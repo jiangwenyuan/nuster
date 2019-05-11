@@ -678,12 +678,6 @@ struct nst_cache_data *nst_cache_exists(const char *key, uint64_t hash) {
 void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
 
-    /* Check if cache is full */
-    if(nst_cache_stats_full()) {
-        ctx->state = NST_CACHE_CTX_STATE_FULL;
-        return;
-    }
-
     nuster_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
     if(entry) {
@@ -697,6 +691,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             if(!entry->data) {
                 entry->state = NST_CACHE_ENTRY_STATE_INVALID;
                 ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
+                ctx->full    = 1;
             } else {
                 ctx->state   = NST_CACHE_CTX_STATE_CREATE;
                 ctx->entry   = entry;
@@ -715,6 +710,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
             ctx->element = entry->data->element;
         } else {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+            ctx->full  = 1;
         }
     }
 
@@ -736,6 +732,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_l
         ctx->element = element;
         return 1;
     } else {
+        ctx->full = 1;
         return 0;
     }
 }
