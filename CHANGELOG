@@ -1,6 +1,61 @@
 ChangeLog :
 ===========
 
+2019/05/13 : 1.9.8
+    - BUG/MEDIUM: mux-h2: properly deal with too large headers frames
+    - BUG/MINOR: http: Call stream_inc_be_http_req_ctr() only one time per request
+    - BUG/MEDIUM: spoe: arg len encoded in previous frag frame but len changed
+    - MINOR: spoe: Use the sample context to pass frag_ctx info during encoding
+    - DOC: contrib/modsecurity: Typos and fix the reject example
+    - BUG/MEDIUM: contrib/modsecurity: If host header is NULL, don't try to strdup it
+    - BUG/MAJOR: map/acl: real fix segfault during show map/acl on CLI
+    - MINOR: examples: Use right locale for the last changelog date in haproxy.spec
+    - BUG/MEDIUM: listener: Fix how unlimited number of consecutive accepts is handled
+    - MINOR: config: Test validity of tune.maxaccept during the config parsing
+    - CLEANUP: config: Don't alter listener->maxaccept when nbproc is set to 1
+    - MINOR: threads: Implement HA_ATOMIC_LOAD().
+    - BUG/MEDIUM: port_range: Make the ring buffer lock-free.
+    - BUG/MEDIUM: servers: fix typo "src" instead of "srv"
+    - BUG/MINOR: haproxy: fix rule->file memory leak
+    - BUG/MINOR: log: properly free memory on logformat parse error and deinit()
+    - BUG/MINOR: checks: free memory allocated for tasklets
+    - BUG/MEDIUM: pattern: fix memory leak in regex pattern functions
+    - BUG/MEDIUM: channels: Don't forget to reset output in channel_erase().
+    - BUG/MEDIUM: connections: Make sure we remove CO_FL_SESS_IDLE on disown.
+    - BUG/MEDIUM: ssl: Use the early_data API the right way.
+    - BUG/MEDIUM: streams: Don't add CF_WRITE_ERROR if early data were rejected.
+    - BUG/MEDIUM: checks: make sure the warmup task takes the server lock
+    - CLEANUP: task: report calls as unsigned in show sess
+    - BUG/MINOR: activity: always initialize the profiling variable
+    - MINOR: connection: make the debugging helper functions safer
+    - BUG/MINOR: logs/threads: properly split the log area upon startup
+    - DOC: Fix typo in keyword matrix
+    - BUG/MEDIUM: ssl: Don't attempt to use early data with libressl.
+    - MINOR: doc: Document allow-0rtt on the server line.
+    - BUG/MEDIUM: h2: Revamp the way send subscriptions works.
+    - BUG/MINOR: mux-h2: rely on trailers output not input to turn them to empty data
+    - BUG/MEDIUM: h2/htx: always fail on too large trailers
+    - MEDIUM: mux-h2: discard contents that are to be sent after a shutdown
+    - BUG/MEDIUM: mux-h2/htx: never wait for EOM when processing trailers
+    - BUG/MEDIUM: h2/htx: never leave a trailers block alone with no EOM block
+    - BUG/MINOR: mworker/ssl: close OpenSSL FDs on reload
+    - BUG/MINOR: mux-h2: fix the condition to close a cs-less h2s on the backend
+    - BUG/MEDIUM: spoe: Be sure the sample is found before setting its context
+    - BUG/MINOR: mux-h1: Fix the parsing of trailers
+    - BUG/MINOR: htx: Never transfer more than expected in htx_xfer_blks()
+    - MINOR: htx: Split on DATA blocks only when blocks are moved to an HTX message
+    - BUG/MEDIUM: h2: Make sure we set send_list to NULL in h2_detach().
+    - BUILD: ssl: fix again a libressl build failure after the openssl FD leak fix
+    - BUG/MINOR: stream: Attach the read side on the response as soon as possible
+    - BUG/MEDIUM: http: Use pointer to the begining of input to parse message headers
+    - BUG/MEDIUM: h2: Don't check send_wait to know if we're in the send_list.
+    - BUILD: threads: Add __ha_cas_dw fallback for single threaded builds
+    - BUILD: threads: fix again the __ha_cas_dw() definition
+    - BUG/MAJOR: mux-h2: do not add a stream twice to the send list
+    - BUG/MINOR: htx: make sure to always initialize the HTTP method when parsing a buffer
+    - MINOR: spoe: Set the argument chunk size to 0 when SPOE variables are checked
+    - BUG/MINOR: vars: Fix memory leak in vars_check_arg
+
 2019/04/25 : 1.9.7
     - BUILD: makefile: work around an old bug in GNU make-3.80
     - BUILD: http: properly mark some struct as extern
