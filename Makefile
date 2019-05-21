@@ -369,6 +369,7 @@ ifeq ($(TARGET),solaris)
   USE_CRYPT_H     = implicit
   USE_GETADDRINFO = implicit
   USE_THREAD      = implicit
+  USE_OBSOLETE_LINKER = implicit
 else
 ifeq ($(TARGET),freebsd)
   # This is for FreeBSD
