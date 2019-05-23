@@ -1292,11 +1292,6 @@ spoe_release_appctx(struct appctx *appctx)
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
 	}
 
-	/* Release allocated memory */
-	spoe_release_buffer(&spoe_appctx->buffer,
-			    &spoe_appctx->buffer_wait);
-	pool_free(pool_head_spoe_appctx, spoe_appctx);
-
 	if (!LIST_ISEMPTY(&agent->rt[tid].applets))
 		goto end;
 
@@ -1317,6 +1312,11 @@ spoe_release_appctx(struct appctx *appctx)
 	}
 
   end:
+	/* Release allocated memory */
+	spoe_release_buffer(&spoe_appctx->buffer,
+			    &spoe_appctx->buffer_wait);
+	pool_free(pool_head_spoe_appctx, spoe_appctx);
+
 	/* Update runtinme agent info */
 	agent->rt[tid].frame_size = agent->max_frame_size;
 	list_for_each_entry(spoe_appctx, &agent->rt[tid].applets, list)
