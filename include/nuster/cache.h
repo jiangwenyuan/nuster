@@ -22,6 +22,8 @@
 #ifndef _NUSTER_CACHE_H
 #define _NUSTER_CACHE_H
 
+#include <aio.h>
+
 #include <nuster/common.h>
 
 #include <common/memory.h>
@@ -97,14 +99,17 @@ struct nst_cache_dict {
 };
 
 enum {
-    NST_CACHE_CTX_STATE_INIT   = 0,   /* init */
-    NST_CACHE_CTX_STATE_CREATE = 1,   /* to cache */
-    NST_CACHE_CTX_STATE_DONE   = 2,   /* cache done */
-    NST_CACHE_CTX_STATE_BYPASS = 3,   /* not cached, return to regular process */
-    NST_CACHE_CTX_STATE_WAIT   = 4,   /* caching, wait */
-    NST_CACHE_CTX_STATE_HIT    = 5,   /* cached, use cache */
-    NST_CACHE_CTX_STATE_PASS   = 6,   /* cache rule passed */
-    NST_CACHE_CTX_STATE_FULL   = 7,   /* cache full */
+    NST_CACHE_CTX_STATE_INIT        = 0,   /* init */
+    NST_CACHE_CTX_STATE_BYPASS,            /* not cached, return to regular process */
+    NST_CACHE_CTX_STATE_WAIT,              /* caching, wait */
+    NST_CACHE_CTX_STATE_HIT,               /* cached, use cache */
+    NST_CACHE_CTX_STATE_PASS,              /* cache rule passed */
+    NST_CACHE_CTX_STATE_FULL,              /* cache full */
+    NST_CACHE_CTX_STATE_CREATE,            /* to cache */
+    NST_CACHE_CTX_STATE_DISK_ONLY,         /* */
+    NST_CACHE_CTX_STATE_DISK_SYNC,         /* */
+    NST_CACHE_CTX_STATE_DISK_ASYNC,        /* */
+    NST_CACHE_CTX_STATE_DONE,              /* cache done */
 };
 
 struct nst_cache_ctx {
@@ -129,6 +134,11 @@ struct nst_cache_ctx {
     int                       pid;         /* proxy uuid */
     int                       sov;
     int                       full;        /* memory full */
+
+    struct {
+        char                 *filename;
+        struct aiocb          cb;
+    } disk;
 };
 
 struct nst_cache_stats {
