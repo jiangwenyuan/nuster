@@ -335,7 +335,7 @@ void nst_cache_init() {
                 ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
                 exit(1);
             }
-            global.nuster.cache.pool.ctx   = create_pool("cp.path", NUSTER_PATH_LENGTH, MEM_F_SHARED);
+            global.nuster.cache.pool.path = create_pool("cp.path", NUSTER_PATH_LENGTH, MEM_F_SHARED);
         }
 
         global.nuster.cache.pool.stash = create_pool("cp.stash", sizeof(struct nuster_rule_stash), MEM_F_SHARED);
