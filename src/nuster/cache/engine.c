@@ -720,14 +720,14 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
         char buf[21];
         sprintf(buf, "%" PRIu64, hash);
         int dir_len = strlen(global.nuster.cache.directory);
-        ctx->disk.filename = nuster_memory_alloc(global.nuster.cache.memory, dir_len + strlen("/0/00/") + 20 + 1 + 17 );
-        memcpy(ctx->disk.filename, global.nuster.cache.directory, dir_len);
-        memcpy(ctx->disk.filename + dir_len, "/", 1);
-        memcpy(ctx->disk.filename + dir_len + 1, buf, 1);
-        memcpy(ctx->disk.filename + dir_len + 2, "/", 1);
-        memcpy(ctx->disk.filename + dir_len + 3, buf, 2);
-        memcpy(ctx->disk.filename + dir_len + 5, "/", 1);
-        memcpy(ctx->disk.filename + dir_len + 6, buf, 20);
+        ctx->disk.path = nuster_memory_alloc(global.nuster.cache.memory, dir_len + strlen("/0/00/") + 20 + 1 + 17 );
+        memcpy(ctx->disk.path, global.nuster.cache.directory, dir_len);
+        memcpy(ctx->disk.path + dir_len, "/", 1);
+        memcpy(ctx->disk.path + dir_len + 1, buf, 1);
+        memcpy(ctx->disk.path + dir_len + 2, "/", 1);
+        memcpy(ctx->disk.path + dir_len + 3, buf, 2);
+        memcpy(ctx->disk.path + dir_len + 5, "/", 1);
+        memcpy(ctx->disk.path + dir_len + 6, buf, 20);
     }
 }
 
