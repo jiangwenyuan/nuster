@@ -107,7 +107,7 @@ struct nuster_rule {
     int                     *state;      /* on when start, can be turned off by manager API */
     int                      id;         /* same for identical names */
     int                      uuid;       /* unique cache-rule ID */
-    int                      disk;       /* off: 0, on: 1 */
+    int                      disk;       /* NUSTER_DISK_* */
 };
 
 struct nuster_rule_stash {
