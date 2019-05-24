@@ -717,23 +717,13 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ctx->rule->disk) {
-        int dir_len = strlen(global.nuster.cache.directory);
-        char buf[21];
-        sprintf(buf, "%" PRIu64, hash);
-        ctx->disk.path = nuster_memory_alloc(global.nuster.cache.memory, dir_len + strlen("/0/00/") + 20 + 1);
-        memcpy(ctx->disk.path, global.nuster.cache.directory, dir_len);
-        memcpy(ctx->disk.path + dir_len, "/", 1);
-        memcpy(ctx->disk.path + dir_len + 1, buf, 1);
-        memcpy(ctx->disk.path + dir_len + 2, "/", 1);
-        memcpy(ctx->disk.path + dir_len + 3, buf, 2);
-        memcpy(ctx->disk.path + dir_len + 5, "/", 1);
-        memcpy(ctx->disk.path + dir_len + 6, buf, 20);
-        ctx->disk.path[dir_len + 26] = '\0';
+        ctx->disk.path = nuster_memory_alloc(global.nuster.cache.memory, strlen(global.nuster.cache.directory) + strlen("/0/00/") + 16 + 1);
+        sprintf(ctx->disk.path, "%s/%"PRIx64"/%"PRIx64"/%"PRIx64, global.nuster.cache.directory, hash % 16, hash % 256, hash);
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.path);
 
         ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory, 32);
         sprintf(ctx->disk.file, "%"PRIx64"-%"PRIx64, get_current_timestamp(), get_current_timestamp() * rand() | hash);
-        nuster_debug("[CACHE] file: %s\n", ctx->disk.file);
+        nuster_debug("[CACHE] File: %s\n", ctx->disk.file);
     }
 }
 
