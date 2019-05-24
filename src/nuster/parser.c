@@ -595,15 +595,19 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             }
             cur_arg++;
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                memprintf(err, "'%s %s': expects [off|only|sync|async], default off.", args[0], name);
                 goto out;
             }
             if(!strcmp(args[cur_arg], "off")) {
-                disk = 0;
-            } else if(!strcmp(args[cur_arg], "on")) {
-                disk = 1;
+                disk = NUSTER_DISK_OFF;
+            } else if(!strcmp(args[cur_arg], "only")) {
+                disk = NUSTER_DISK_ONLY;
+            } else if(!strcmp(args[cur_arg], "sync")) {
+                disk = NUSTER_DISK_SYNC;
+            } else if(!strcmp(args[cur_arg], "async")) {
+                disk = NUSTER_DISK_ASYNC;
             } else {
-                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                memprintf(err, "'%s %s': expects [off|only|sync|async], default off.", args[0], name);
                 goto out;
             }
             cur_arg++;

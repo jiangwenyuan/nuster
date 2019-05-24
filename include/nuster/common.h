@@ -91,8 +91,10 @@ enum {
 };
 
 enum {
-    NUSTER_DISK_OFF = 0,
-    NUSTER_DISK_ON  = 1,
+    NUSTER_DISK_OFF    = 0,              /* no disk persistence */
+    NUSTER_DISK_ONLY   = 1,              /* disk persistence only, do not cache in memory */
+    NUSTER_DISK_SYNC   = 2,              /* persist the response on disk before return to client */
+    NUSTER_DISK_ASYNC  = 3,              /* cache in memory first and persist on disk later */
 };
 
 struct nuster_rule {
