@@ -717,9 +717,9 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ctx->rule->disk) {
+        int dir_len = strlen(global.nuster.cache.directory);
         char buf[21];
         sprintf(buf, "%" PRIu64, hash);
-        int dir_len = strlen(global.nuster.cache.directory);
         ctx->disk.path = nuster_memory_alloc(global.nuster.cache.memory, dir_len + strlen("/0/00/") + 20 + 1 + 17 );
         memcpy(ctx->disk.path, global.nuster.cache.directory, dir_len);
         memcpy(ctx->disk.path + dir_len, "/", 1);
