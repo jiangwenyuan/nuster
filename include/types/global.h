@@ -194,6 +194,7 @@ struct global {
 				struct pool_head *element;
 				struct pool_head *chunk;
 				struct pool_head *entry;
+				struct pool_head *path;
 			} pool;
 
 			struct nuster_memory   *memory;        /* memory */
