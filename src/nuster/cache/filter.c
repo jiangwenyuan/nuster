@@ -137,6 +137,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                 }
                 nuster_debug("[CACHE] Got key: %s\n", key);
                 hash = nuster_hash(key);
+                nuster_debug("[CACHE] Got hash: %"PRIu64"\n", hash);
 
                 /* stash key */
                 if(!nst_cache_stash_rule(ctx, rule, key, hash)) {
