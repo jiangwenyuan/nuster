@@ -730,6 +730,10 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
         memcpy(ctx->disk.path + dir_len + 6, buf, 20);
         ctx->disk.path[dir_len + 26] = '\0';
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.path);
+
+        ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory, 32);
+        sprintf(ctx->disk.file, "%"PRIx64"-%"PRIx64, get_current_timestamp(), get_current_timestamp() * rand() | hash);
+        nuster_debug("[CACHE] file: %s\n", ctx->disk.file);
     }
 }
 

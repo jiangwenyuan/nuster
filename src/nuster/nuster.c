@@ -62,6 +62,8 @@ void nuster_init() {
         nuster_http_msg_chunks[i].data = strlen(nuster_http_msgs[i]);
     }
 
+    srand(time(NULL));
+
     nst_cache_init();
     nst_nosql_init();
 
