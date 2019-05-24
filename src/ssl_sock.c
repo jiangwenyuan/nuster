@@ -9409,6 +9409,7 @@ __attribute__((constructor))
 static void __ssl_sock_init(void)
 {
 	STACK_OF(SSL_COMP)* cm;
+	int n;
 
 	if (global_ssl.listen_default_ciphers)
 		global_ssl.listen_default_ciphers = strdup(global_ssl.listen_default_ciphers);
@@ -9426,7 +9427,11 @@ static void __ssl_sock_init(void)
 	SSL_library_init();
 #endif
 	cm = SSL_COMP_get_compression_methods();
-	sk_SSL_COMP_zero(cm);
+	n = sk_SSL_COMP_num(cm);
+	while (n--) {
+		(void) sk_SSL_COMP_pop(cm);
+	}
+
 #if defined(USE_THREAD) && ((OPENSSL_VERSION_NUMBER < 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER))
 	ssl_locking_init();
 #endif
