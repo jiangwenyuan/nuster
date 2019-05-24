@@ -335,7 +335,7 @@ void nst_cache_init() {
                 ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
                 exit(1);
             }
-            global.nuster.cache.pool.ctx   = create_pool("cp.path", strlen(global.nuster.cache.directory) + strlen("/0/00/") + 17, MEM_F_SHARED);
+            global.nuster.cache.pool.ctx   = create_pool("cp.path", NUSTER_PATH_LENGTH, MEM_F_SHARED);
         }
 
         global.nuster.cache.pool.stash = create_pool("cp.stash", sizeof(struct nuster_rule_stash), MEM_F_SHARED);
@@ -717,7 +717,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ctx->rule->disk) {
-        ctx->disk.path = nuster_memory_alloc(global.nuster.cache.memory, strlen(global.nuster.cache.directory) + strlen("/0/00/") + 16 + 1);
+        ctx->disk.path = nuster_memory_alloc(global.nuster.cache.memory, NUSTER_PATH_LENGTH);
         sprintf(ctx->disk.path, "%s/%"PRIx64"/%"PRIx64"/%"PRIx64, global.nuster.cache.directory, hash % 16, hash % 256, hash);
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.path);
 

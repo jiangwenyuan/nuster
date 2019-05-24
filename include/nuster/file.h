@@ -17,6 +17,8 @@
 #include <errno.h>
 #include <sys/stat.h>
 
+#define NUSTER_PATH_LENGTH strlen(global.nuster.cache.directory) + 23 /* strlen("/0/00/") + 16 + 1 */
+
 int nuster_create_path(char*);
 
 #endif /* _NUSTER_FILE_H */
