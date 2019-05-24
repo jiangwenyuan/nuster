@@ -8959,10 +8959,9 @@ static void ssl_sock_capture_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *
 __attribute__((constructor))
 static void __ssl_sock_init(void)
 {
+	STACK_OF(SSL_COMP)* cm;
 	char *ptr;
 	int i;
-
-	STACK_OF(SSL_COMP)* cm;
 
 	if (global_ssl.listen_default_ciphers)
 		global_ssl.listen_default_ciphers = strdup(global_ssl.listen_default_ciphers);
@@ -8978,7 +8977,11 @@ static void __ssl_sock_init(void)
 	xprt_register(XPRT_SSL, &ssl_sock);
 	SSL_library_init();
 	cm = SSL_COMP_get_compression_methods();
-	sk_SSL_COMP_zero(cm);
+	i = sk_SSL_COMP_num(cm);
+	while (i--) {
+		(void) sk_SSL_COMP_pop(cm);
+	}
+
 #ifdef USE_THREAD
 	ssl_locking_init();
 #endif
