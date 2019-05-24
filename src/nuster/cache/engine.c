@@ -729,6 +729,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
         memcpy(ctx->disk.path + dir_len + 5, "/", 1);
         memcpy(ctx->disk.path + dir_len + 6, buf, 20);
         ctx->disk.path[dir_len + 26] = '\0';
+        nuster_debug("[CACHE] Path: %s\n", ctx->disk.path);
     }
 }
 
