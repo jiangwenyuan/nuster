@@ -9408,8 +9408,10 @@ static void ssl_sock_capture_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *
 __attribute__((constructor))
 static void __ssl_sock_init(void)
 {
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
 	STACK_OF(SSL_COMP)* cm;
 	int n;
+#endif
 
 	if (global_ssl.listen_default_ciphers)
 		global_ssl.listen_default_ciphers = strdup(global_ssl.listen_default_ciphers);
@@ -9426,11 +9428,13 @@ static void __ssl_sock_init(void)
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 	SSL_library_init();
 #endif
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
 	cm = SSL_COMP_get_compression_methods();
 	n = sk_SSL_COMP_num(cm);
 	while (n--) {
 		(void) sk_SSL_COMP_pop(cm);
 	}
+#endif
 
 #if defined(USE_THREAD) && ((OPENSSL_VERSION_NUMBER < 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER))
 	ssl_locking_init();
