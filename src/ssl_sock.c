@@ -8959,7 +8959,9 @@ static void ssl_sock_capture_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *
 __attribute__((constructor))
 static void __ssl_sock_init(void)
 {
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
 	STACK_OF(SSL_COMP)* cm;
+#endif
 	char *ptr;
 	int i;
 
@@ -8976,11 +8978,13 @@ static void __ssl_sock_init(void)
 
 	xprt_register(XPRT_SSL, &ssl_sock);
 	SSL_library_init();
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
 	cm = SSL_COMP_get_compression_methods();
 	i = sk_SSL_COMP_num(cm);
 	while (i--) {
 		(void) sk_SSL_COMP_pop(cm);
 	}
+#endif
 
 #ifdef USE_THREAD
 	ssl_locking_init();
