@@ -717,7 +717,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
 
     if(ctx->rule->disk) {
         ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory, NUSTER_FILE_LENGTH + 1);
-        sprintf(ctx->disk.file, "%s/%"PRIx64"/%"PRIx64"/%"PRIx64, global.nuster.cache.directory, hash % 16, hash % 256, hash);
+        sprintf(ctx->disk.file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, global.nuster.cache.directory, hash % 16, hash % 256, hash);
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.file);
 
         if(!nuster_create_path(ctx->disk.file)) {
