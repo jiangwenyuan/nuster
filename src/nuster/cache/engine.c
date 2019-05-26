@@ -725,6 +725,10 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
 
         sprintf(ctx->disk.file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64, get_current_timestamp(), get_current_timestamp() * random() | hash);
         nuster_debug("[CACHE] File: %s\n", ctx->disk.file);
+
+        ctx->disk.offset = 0;
+        ctx->disk.fd     = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
+        ctx->disk.state  = 0;
     }
 }
 
@@ -741,6 +745,15 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_l
             ctx->data->element = element;
         }
         ctx->element = element;
+
+        memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
+        ctx->disk.cb.aio_buf    = element->msg.data;
+        ctx->disk.cb.aio_offset = ctx->disk.offset;
+        ctx->disk.cb.aio_nbytes = element->msg.len;
+        ctx->disk.cb.aio_fildes = ctx->disk.fd;
+        aio_write(&ctx->disk.cb);
+        ctx->disk.offset       += element->msg.len;
+        ctx->disk.state         = aio_error(&ctx->disk.cb);
         return 1;
     } else {
         ctx->full = 1;
