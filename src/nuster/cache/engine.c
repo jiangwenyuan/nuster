@@ -720,6 +720,9 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
         sprintf(ctx->disk.file, "%s/%"PRIx64"/%"PRIx64"/%"PRIx64, global.nuster.cache.directory, hash % 16, hash % 256, hash);
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.file);
 
+        if(!nuster_create_path(ctx->disk.file)) {
+        }
+
         sprintf(ctx->disk.file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64, get_current_timestamp(), get_current_timestamp() * rand() | hash);
         nuster_debug("[CACHE] File: %s\n", ctx->disk.file);
     }
