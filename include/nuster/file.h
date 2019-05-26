@@ -16,6 +16,8 @@
 #include <stdio.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
 
 /* DIR/a/4a/60322ec3e2428e4a/16ae92496e1-71fabeefebdaaedb */
 #define NUSTER_PATH_LENGTH strlen(global.nuster.cache.directory) + 22 /* strlen("/0/00/") + 16, without '\0' */

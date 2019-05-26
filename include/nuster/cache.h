@@ -136,7 +136,10 @@ struct nst_cache_ctx {
     int                       full;        /* memory full */
 
     struct {
-        char                 *file;
+        char                 *file;        /* cache file */
+        int                   fd;
+        int                   offset;
+        int                   state;
         struct aiocb          cb;
     } disk;
 };
