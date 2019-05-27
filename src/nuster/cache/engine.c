@@ -729,6 +729,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
 
         ctx->disk.fd     = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
 
+        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, 0, 0, ctx->sov, strlen(key), hash);
+
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
         memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
@@ -787,7 +789,9 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     memcpy(ctx->disk.meta, (char*)&ctx->rule->disk, 1);
     memcpy(ctx->disk.meta, (char*)&ctx->rule->disk, 1);
 
-    sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, ctx->entry->expire, 12345, 123, 12, 123456);
+    *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_EXPIRE) = ctx->entry->expire;
+    *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) = 0;
+
     memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
     ctx->disk.cb.aio_buf    = ctx->disk.meta;
     ctx->disk.cb.aio_offset = 0;
