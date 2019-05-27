@@ -282,6 +282,12 @@ static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
 
     struct nst_cache_ctx *ctx = filter->ctx;
 
+    if(ctx->disk.state != 0) {
+        ctx->disk.state = aio_error(&ctx->disk.cb);
+        task_wakeup(s->task, TASK_WOKEN_MSG);
+        return 0;
+    }
+
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         nst_cache_finish(ctx);
     }

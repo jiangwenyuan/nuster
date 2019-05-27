@@ -27,6 +27,7 @@
 #include <nuster/nuster.h>
 #include <nuster/http.h>
 #include <nuster/file.h>
+#include <nuster/persist.h>
 
 static char key_holder[] = {0x1A, '\0'};
 static char key_rs[]     = {0x1E, '\0'};
@@ -726,9 +727,18 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
         sprintf(ctx->disk.file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64, get_current_timestamp(), get_current_timestamp() * random() | hash);
         nuster_debug("[CACHE] File: %s\n", ctx->disk.file);
 
-        ctx->disk.offset = 0;
         ctx->disk.fd     = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
-        ctx->disk.state  = 0;
+
+        /* write key */
+        ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
+        memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
+        ctx->disk.cb.aio_buf    = key;
+        ctx->disk.cb.aio_offset = ctx->disk.offset;
+        ctx->disk.cb.aio_nbytes = strlen(key);
+        ctx->disk.cb.aio_fildes = ctx->disk.fd;
+        aio_write(&ctx->disk.cb);
+        ctx->disk.offset       += strlen(key);
+        ctx->disk.state         = 1;
     }
 }
 
@@ -753,7 +763,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_l
         ctx->disk.cb.aio_fildes = ctx->disk.fd;
         aio_write(&ctx->disk.cb);
         ctx->disk.offset       += element->msg.len;
-        ctx->disk.state         = aio_error(&ctx->disk.cb);
+        ctx->disk.state         = 1;
         return 1;
     } else {
         ctx->full = 1;
@@ -772,6 +782,19 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     } else {
         ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
     }
+
+    memcpy(ctx->disk.meta, "NUSTER", 6);
+    memcpy(ctx->disk.meta, (char*)&ctx->rule->disk, 1);
+    memcpy(ctx->disk.meta, (char*)&ctx->rule->disk, 1);
+
+    sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, ctx->entry->expire, 12345, 123, 12, 123456);
+    memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
+    ctx->disk.cb.aio_buf    = ctx->disk.meta;
+    ctx->disk.cb.aio_offset = 0;
+    ctx->disk.cb.aio_nbytes = 40;
+    ctx->disk.cb.aio_fildes = ctx->disk.fd;
+    aio_write(&ctx->disk.cb);
+    ctx->disk.state         = 1;
 }
 
 void nst_cache_abort(struct nst_cache_ctx *ctx) {

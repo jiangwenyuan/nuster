@@ -968,7 +968,7 @@ NUSTER_OBJS = src/nuster/cache/dict.o src/nuster/cache/filter.o               \
               src/nuster/nosql/filter.o  src/nuster/nosql/dict.o              \
               src/nuster/nosql/stats.o src/nuster/nosql/engine.o              \
               src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
-              src/nuster/file.o src/nuster/nuster.o
+              src/nuster/file.o src/nuster/persist.o src/nuster/nuster.o
 
 ifneq ($(TRACE),)
 OBJS += src/trace.o
