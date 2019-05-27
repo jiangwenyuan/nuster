@@ -140,6 +140,7 @@ struct nst_cache_ctx {
         int                   fd;
         int                   offset;
         int                   state;
+        char                  meta[48];
         struct aiocb          cb;
     } disk;
 };
