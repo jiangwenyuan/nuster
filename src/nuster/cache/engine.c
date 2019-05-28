@@ -729,7 +729,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
 
         ctx->disk.fd     = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
 
-        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, 0, 0, ctx->sov, strlen(key), hash);
+        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov, (uint64_t)strlen(key), hash);
 
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
