@@ -533,9 +533,6 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
     return 1;
 }
 
-/*
- * TODO: rewrite in h19 version
- */
 struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg) {
 
@@ -657,17 +654,11 @@ struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg)
     int https;
     char *path_beg, *url_end;
     struct hdr_ctx ctx;
-    int key_len  = 0;
     int err;
+    struct buffer *bkey;
 
     /* method.scheme.host.uri */
-    int key_size = NST_CACHE_DEFAULT_KEY_SIZE;
-    char *key    = malloc(key_size);
-    if(!key) {
-        return NULL;
-    }
-
-    struct buffer *bkey  = _nst_key_init();
+    bkey = _nst_key_init();
     if(!bkey) {
         return NULL;
     }
