@@ -108,6 +108,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
     struct nst_cache_ctx *ctx   = filter->ctx;
     struct nuster_rule *rule    = NULL;
     char *key                   = NULL;
+    struct buffer *bkey         = NULL;
     uint64_t hash               = 0;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
@@ -131,8 +132,8 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                     continue;
                 }
                 /* build key */
-                key = nst_cache_build_key(ctx, rule->key, s, msg);
-                if(!key) {
+                bkey = nst_cache_build_key(ctx, rule->key, s, msg);
+                if(!bkey) {
                     return 1;
                 }
                 nuster_debug("[CACHE] Got key: %s\n", key);
