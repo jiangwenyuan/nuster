@@ -170,6 +170,22 @@ static int _nst_key_expand(struct buffer *key) {
     }
 }
 
+static struct buffer *_nst_key_init() {
+    struct buffer *key  = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*key));
+    if(!key) {
+        return NULL;
+    }
+    key->area = nuster_memory_alloc(global.nuster.cache.memory, NST_CACHE_DEFAULT_KEY_SIZE);
+    if(!key->area) {
+        return NULL;
+    }
+    key->size = NST_CACHE_DEFAULT_KEY_SIZE;
+    key->data = 0;
+    key->head = 0;
+    memset(key->area, 0, key->size);
+    return key;
+}
+
 static int _nst_key_append(struct buffer *key, char *str, int str_len) {
     if(b_room(key) < str_len) {
         if(_nst_key_expand(key)) {
@@ -531,18 +547,10 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
     int key_len          = 0;
     int key_size         = NST_CACHE_DEFAULT_KEY_SIZE;
     char *key            = malloc(key_size);
-    struct buffer *bkey  = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*bkey));
+    struct buffer *bkey  = _nst_key_init();
     if(!bkey) {
         return NULL;
     }
-    bkey->area = nuster_memory_alloc(global.nuster.cache.memory, NST_CACHE_DEFAULT_KEY_SIZE);
-    if(!bkey->area) {
-        return NULL;
-    }
-    bkey->size = NST_CACHE_DEFAULT_KEY_SIZE;
-    bkey->data = 0;
-    bkey->head = 0;
-    memset(bkey->area, 0, bkey->size);
 
     nuster_debug("[CACHE] Calculate key: ");
     while((ck = *pck++)) {
