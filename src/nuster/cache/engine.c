@@ -29,9 +29,6 @@
 #include <nuster/file.h>
 #include <nuster/persist.h>
 
-static char key_holder[] = {0x1A, '\0'};
-static char key_rs[]     = {0x1E, '\0'};
-static char key_us[]     = {0x1F, '\0'};
 
 /*
  * The cache applet acts like the backend to send cached http data
@@ -106,51 +103,20 @@ struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
     return stash;
 }
 
-static char *_string_append(char *dst, int *dst_len, int *dst_size,
-        char *src, int src_len) {
-
-    int left     = *dst_size - *dst_len;
-    int need     = src_len + 1;
-    int old_size = *dst_size;
-
-    if(left < need) {
-        *dst_size += ((need - left) / NST_CACHE_DEFAULT_KEY_SIZE + 1)  * NST_CACHE_DEFAULT_KEY_SIZE;
+static struct buffer *_nst_key_init() {
+    struct buffer *key  = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*key));
+    if(!key) {
+        return NULL;
     }
-
-    if(old_size != *dst_size) {
-        char *new_dst = realloc(dst, *dst_size);
-        if(!new_dst) {
-            free(dst);
-            return NULL;
-        }
-        dst = new_dst;
+    key->area = nuster_memory_alloc(global.nuster.cache.memory, NST_CACHE_DEFAULT_KEY_SIZE);
+    if(!key->area) {
+        return NULL;
     }
-
-    memcpy(dst + *dst_len, src, src_len);
-    *dst_len += src_len;
-    dst[*dst_len] = '\0';
-    return dst;
-}
-
-/*
- * TODO: rewrite in h19 version
- */
-static char *_nst_cache_key_append(char *dst, int *dst_len, int *dst_size,
-        char *src, int src_len) {
-    char *key = _string_append(dst, dst_len, dst_size, src, src_len);
-    if(key) {
-        return _string_append(key, dst_len, dst_size, key_rs, 1);
-    }
-    return NULL;
-}
-
-static char *_nst_cache_key_append2(char *dst, int *dst_len, int *dst_size,
-        char *src, int src_len) {
-    char *key = _string_append(dst, dst_len, dst_size, src, src_len);
-    if(key) {
-        return _string_append(key, dst_len, dst_size, key_us, 1);
-    }
-    return NULL;
+    key->size = NST_CACHE_DEFAULT_KEY_SIZE;
+    key->data = 0;
+    key->head = 0;
+    memset(key->area, 0, key->size);
+    return key;
 }
 
 static int _nst_key_expand(struct buffer *key) {
@@ -168,22 +134,6 @@ static int _nst_key_expand(struct buffer *key) {
         key->size = key->size * 2;
         return 0;
     }
-}
-
-static struct buffer *_nst_key_init() {
-    struct buffer *key  = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*key));
-    if(!key) {
-        return NULL;
-    }
-    key->area = nuster_memory_alloc(global.nuster.cache.memory, NST_CACHE_DEFAULT_KEY_SIZE);
-    if(!key->area) {
-        return NULL;
-    }
-    key->size = NST_CACHE_DEFAULT_KEY_SIZE;
-    key->data = 0;
-    key->head = 0;
-    memset(key->area, 0, key->size);
-    return key;
 }
 
 static int _nst_key_advance(struct buffer *key, int step) {
