@@ -554,77 +554,54 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
 
     nuster_debug("[CACHE] Calculate key: ");
     while((ck = *pck++)) {
+        int ret;
         switch(ck->type) {
             case NUSTER_RULE_KEY_METHOD:
                 nuster_debug("method.");
-                if(_nst_key_append(bkey, http_known_methods[txn->meth].ptr, http_known_methods[txn->meth].len)) {
-                    return NULL;
-                }
+                ret = _nst_key_append(bkey, http_known_methods[txn->meth].ptr, http_known_methods[txn->meth].len);
                 break;
             case NUSTER_RULE_KEY_SCHEME:
                 nuster_debug("scheme.");
-                if(_nst_key_append(bkey, ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP", ctx->req.scheme == SCH_HTTPS ? 5 : 4)) {
-                    return NULL;
-                }
+                ret = _nst_key_append(bkey, ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP", ctx->req.scheme == SCH_HTTPS ? 5 : 4);
                 break;
             case NUSTER_RULE_KEY_HOST:
                 nuster_debug("host.");
                 if(ctx->req.host.data) {
-                    if(_nst_key_append(bkey, ctx->req.host.data, ctx->req.host.len)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_append(bkey, ctx->req.host.data, ctx->req.host.len);
                 } else {
-                    if(_nst_key_advance(bkey, 2)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_advance(bkey, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_URI:
                 nuster_debug("uri.");
                 if(ctx->req.uri.data) {
-                    if(_nst_key_append(bkey, ctx->req.uri.data, ctx->req.uri.len)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_append(bkey, ctx->req.uri.data, ctx->req.uri.len);
                 } else {
-                    if(_nst_key_advance(bkey, 2)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_advance(bkey, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_PATH:
                 nuster_debug("path.");
                 if(ctx->req.path.data) {
-                    if(_nst_key_append(bkey, ctx->req.path.data, ctx->req.path.len)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_append(bkey, ctx->req.path.data, ctx->req.path.len);
                 } else {
-                    if(_nst_key_advance(bkey, 2)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_advance(bkey, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_DELIMITER:
                 nuster_debug("delimiter.");
                 if(ctx->req.delimiter) {
-                    if(_nst_key_append(bkey, "?", 1)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_append(bkey, "?", 1);
                 } else {
-                    if(_nst_key_advance(bkey, 2)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_advance(bkey, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_QUERY:
                 nuster_debug("query.");
                 if(ctx->req.query.data && ctx->req.query.len) {
-                    if(_nst_key_append(bkey, ctx->req.query.data, ctx->req.query.len)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_append(bkey, ctx->req.query.data, ctx->req.query.len);
                 } else {
-                    if(_nst_key_advance(bkey, 2)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_advance(bkey, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_PARAM:
@@ -633,27 +610,19 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
                     char *v = NULL;
                     int v_l = 0;
                     if(nuster_req_find_param(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
-                        if(_nst_key_append(bkey, v, v_l)) {
-                            return NULL;
-                        }
+                        ret = _nst_key_append(bkey, v, v_l);
                         break;
                     }
                 }
-                if(_nst_key_advance(bkey, 2)) {
-                    return NULL;
-                }
+                ret = _nst_key_advance(bkey, 2);
                 break;
             case NUSTER_RULE_KEY_HEADER:
                 hdr.idx = 0;
                 nuster_debug("header_%s.", ck->data);
                 while (http_find_header2(ck->data, strlen(ck->data), ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-                    if(_nst_key_append(bkey, hdr.line + hdr.val, hdr.vlen)) {
-                        return NULL;
-                    }
+                    ret = _nst_key_append(bkey, hdr.line + hdr.val, hdr.vlen);
                 }
-                if(_nst_key_advance(bkey, hdr.idx == 0 ? 2 : 1)) {
-                    return NULL;
-                }
+                ret = !ret && _nst_key_advance(bkey, hdr.idx == 0 ? 2 : 1);
                 break;
             case NUSTER_RULE_KEY_COOKIE:
                 nuster_debug("cookie_%s.", ck->data);
@@ -661,34 +630,26 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
                     char *v = NULL;
                     size_t v_l = 0;
                     if(http_extract_cookie_value(ctx->req.cookie.data, ctx->req.cookie.data + ctx->req.cookie.len, ck->data, strlen(ck->data), 1, &v, &v_l)) {
-                        if(_nst_key_append(bkey, v, v_l)) {
-                            return NULL;
-                        }
+                        ret = _nst_key_append(bkey, v, v_l);
                         break;
                     }
                 }
-                if(_nst_key_advance(bkey, 2)) {
-                    return NULL;
-                }
+                ret = _nst_key_advance(bkey, 2);
                 break;
             case NUSTER_RULE_KEY_BODY:
                 nuster_debug("body.");
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
                     if((s->be->options & PR_O_WREQ_BODY) && ci_data(msg->chn) - msg->sov > 0) {
-                        if(_nst_key_append(bkey, ci_head(msg->chn) + msg->sov, ci_data(msg->chn) - msg->sov)) {
-                            return NULL;
-                        }
+                        ret = _nst_key_append(bkey, ci_head(msg->chn) + msg->sov, ci_data(msg->chn) - msg->sov);
                     } else {
-                        if(_nst_key_advance(bkey, 2)) {
-                            return NULL;
-                        }
+                        ret = _nst_key_advance(bkey, 2);
                     }
                 }
                 break;
             default:
                 break;
         }
-        if(!bkey) return NULL;
+        if(ret) return NULL;
     }
     nuster_debug("\n");
     return bkey;
