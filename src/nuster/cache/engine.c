@@ -544,9 +544,6 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
     struct hdr_ctx hdr;
 
     struct nuster_rule_key *ck = NULL;
-    int key_len          = 0;
-    int key_size         = NST_CACHE_DEFAULT_KEY_SIZE;
-    char *key            = malloc(key_size);
     struct buffer *bkey  = _nst_key_init();
     if(!bkey) {
         return NULL;
