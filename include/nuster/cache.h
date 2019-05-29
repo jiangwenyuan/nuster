@@ -208,7 +208,7 @@ void nst_cache_housekeeping();
 int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
 struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg);
-char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg);
+struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg);
 uint64_t nst_cache_hash_key(const char *key);
 void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash);
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len);

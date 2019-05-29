@@ -652,12 +652,13 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
     return bkey;
 }
 
-char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
+struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
     struct http_txn *txn = s->txn;
     int https;
     char *path_beg, *url_end;
     struct hdr_ctx ctx;
     int key_len  = 0;
+    int err;
 
     /* method.scheme.host.uri */
     int key_size = NST_CACHE_DEFAULT_KEY_SIZE;
@@ -666,7 +667,13 @@ char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
         return NULL;
     }
 
-    key = _nst_cache_key_append(key, &key_len, &key_size, "GET", 3);
+    struct buffer *bkey  = _nst_key_init();
+    if(!bkey) {
+        return NULL;
+    }
+
+    err = _nst_key_append(bkey, "GET", 3);
+    if(err) return NULL;
 
     https = 0;
 #ifdef USE_OPENSSL
@@ -675,23 +682,23 @@ char *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
     }
 #endif
 
-    key = _nst_cache_key_append(key, &key_len, &key_size, https ? "HTTPS": "HTTP", strlen(https ? "HTTPS": "HTTP"));
-    if(!key) return NULL;
+    err = _nst_key_append(bkey, https ? "HTTPS": "HTTP", strlen(https ? "HTTPS": "HTTP"));
+    if(err) return NULL;
 
     ctx.idx  = 0;
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
-        key = _nst_cache_key_append(key, &key_len, &key_size, ctx.line + ctx.val, ctx.vlen);
-        if(!key) return NULL;
+        err = _nst_key_append(bkey, ctx.line + ctx.val, ctx.vlen);
+        if(err) return NULL;
     }
 
     path_beg = http_txn_get_path(txn);
     url_end  = NULL;
     if(path_beg) {
         url_end = ci_head(msg->chn) + msg->sl.rq.u + msg->sl.rq.u_l;
-        key     = _nst_cache_key_append(key, &key_len, &key_size, path_beg, url_end - path_beg);
-        if(!key) return NULL;
+        err     = _nst_key_append(bkey, path_beg, url_end - path_beg);
+        if(err) return NULL;
     }
-    return key;
+    return bkey;
 }
 
 /*
