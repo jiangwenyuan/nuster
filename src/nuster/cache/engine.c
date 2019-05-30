@@ -121,11 +121,11 @@ static struct buffer *_nst_key_init() {
 
 static int _nst_key_expand(struct buffer *key) {
     if(key->size >= global.tune.bufsize) {
-        return 1;
+        goto err;
     } else {
         char *p = nuster_memory_alloc(global.nuster.cache.memory, key->size * 2);
         if(!p) {
-            return 1;
+            goto err;
         }
         memset(p, 0, key->size * 2);
         memcpy(p, key->area, key->size);
@@ -134,6 +134,10 @@ static int _nst_key_expand(struct buffer *key) {
         key->size = key->size * 2;
         return 0;
     }
+err:
+    nuster_memory_free(global.nuster.cache.memory, key->area);
+    nuster_memory_free(global.nuster.cache.memory, key);
+    return 1;
 }
 
 static int _nst_key_advance(struct buffer *key, int step) {
