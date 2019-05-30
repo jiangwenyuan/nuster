@@ -649,7 +649,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg)
 /*
  * Check if valid cache exists
  */
-struct nst_cache_data *nst_cache_exists(const char *key, uint64_t hash) {
+struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
     struct nst_cache_data  *data  = NULL;
 

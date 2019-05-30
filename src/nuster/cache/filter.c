@@ -146,7 +146,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                 }
                 /* check if cache exists  */
                 nuster_debug("[CACHE] Checking key existence: ");
-                ctx->data = nst_cache_exists(key, hash);
+                ctx->data = nst_cache_exists(bkey, hash);
                 if(ctx->data) {
                     nuster_debug("EXIST\n[CACHE] Hit\n");
                     /* OK, cache exists */
