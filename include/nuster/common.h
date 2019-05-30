@@ -113,7 +113,7 @@ struct nuster_rule {
 struct nuster_rule_stash {
     struct nuster_rule_stash *next;
     struct nuster_rule       *rule;
-    char                     *key;
+    struct buffer            *key;
     uint64_t                  hash;
 };
 
