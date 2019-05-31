@@ -99,7 +99,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
     struct stream_interface *si = &s->si[1];
     struct nst_cache_ctx *ctx   = filter->ctx;
     struct nuster_rule *rule    = NULL;
-    struct buffer *bkey         = NULL;
+    struct buffer *key          = NULL;
     uint64_t hash               = 0;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
@@ -123,22 +123,22 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                     continue;
                 }
                 /* build key */
-                bkey = nst_cache_build_key(ctx, rule->key, s, msg);
-                if(!bkey) {
+                key = nst_cache_build_key(ctx, rule->key, s, msg);
+                if(!key) {
                     return 1;
                 }
                 //TODO
-                nuster_debug("[CACHE] Got key: %s\n", bkey->area);
-                hash = nuster_hash(bkey->area, bkey->data);
+                nuster_debug("[CACHE] Got key: %s\n", key->area);
+                hash = nuster_hash(key->area, key->data);
                 nuster_debug("[CACHE] Got hash: %"PRIu64"\n", hash);
 
                 /* stash key */
-                if(!nst_cache_stash_rule(ctx, rule, bkey, hash)) {
+                if(!nst_cache_stash_rule(ctx, rule, key, hash)) {
                     return 1;
                 }
                 /* check if cache exists  */
                 nuster_debug("[CACHE] Checking key existence: ");
-                ctx->data = nst_cache_exists(bkey, hash);
+                ctx->data = nst_cache_exists(key, hash);
                 if(ctx->data) {
                     nuster_debug("EXIST\n[CACHE] Hit\n");
                     /* OK, cache exists */
@@ -207,14 +207,14 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
             /* get cache key */
             while(stash) {
                 if(ctx->stash->rule == ctx->rule) {
-                    bkey  = stash->key;
+                    key  = stash->key;
                     hash = stash->hash;
                     break;
                 }
                 stash = stash->next;
             }
 
-            if(!bkey) {
+            if(!key) {
                 return 1;
             }
 
@@ -222,7 +222,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
             nuster_debug("PASS\n[CACHE] To create\n");
 
             /* start to build cache */
-            nst_cache_create(ctx, bkey, hash);
+            nst_cache_create(ctx, key, hash);
         }
 
     }
