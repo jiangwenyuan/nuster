@@ -731,7 +731,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct buffer *key, uint64_t ha
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
         memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
-        ctx->disk.cb.aio_buf    = key;
+        ctx->disk.cb.aio_buf    = key->area;
         ctx->disk.cb.aio_offset = ctx->disk.offset;
         ctx->disk.cb.aio_nbytes = key->data;
         ctx->disk.cb.aio_fildes = ctx->disk.fd;
