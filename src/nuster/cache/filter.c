@@ -54,17 +54,9 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
         if(ctx == NULL ) {
             return 0;
         }
+        memset(ctx, 0, sizeof(*ctx));
         ctx->state         = NST_CACHE_CTX_STATE_INIT;
-        ctx->rule          = NULL;
-        ctx->stash         = NULL;
-        ctx->entry         = NULL;
-        ctx->data          = NULL;
-        ctx->element       = NULL;
         ctx->pid           = -1;
-        ctx->req.host.data = NULL;
-        ctx->req.path.data = NULL;
-        ctx->sov           = 0;
-        ctx->full          = 0;
         filter->ctx        = ctx;
     }
     register_data_filter(s, &s->req, filter);
@@ -107,7 +99,6 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
     struct stream_interface *si = &s->si[1];
     struct nst_cache_ctx *ctx   = filter->ctx;
     struct nuster_rule *rule    = NULL;
-    char *key                   = NULL;
     struct buffer *bkey         = NULL;
     uint64_t hash               = 0;
 
@@ -136,7 +127,8 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                 if(!bkey) {
                     return 1;
                 }
-                nuster_debug("[CACHE] Got key: %s\n", key);
+                //TODO
+                nuster_debug("[CACHE] Got key: %s\n", bkey->area);
                 hash = nuster_hash(bkey->area, bkey->data);
                 nuster_debug("[CACHE] Got hash: %"PRIu64"\n", hash);
 
@@ -222,7 +214,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                 stash = stash->next;
             }
 
-            if(!key) {
+            if(!bkey) {
                 return 1;
             }
 
