@@ -192,7 +192,7 @@ void nst_cache_dict_cleanup() {
 /*
  * Add a new nst_cache_entry to cache_dict
  */
-struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struct nst_cache_ctx *ctx) {
+struct nst_cache_entry *nst_cache_dict_set(struct buffer *key, uint64_t hash, struct nst_cache_ctx *ctx) {
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_data  *data  = NULL;
     struct nst_cache_entry *entry = NULL;
@@ -206,15 +206,8 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
         return NULL;
     }
 
-    entry_key = nst_cache_memory_alloc(global.nuster.cache.pool.chunk, strlen(key) + 1);
-    if(!entry_key) {
-        nst_cache_memory_free(global.nuster.cache.pool.entry, entry);
-        return NULL;
-    }
-
     data = nst_cache_data_new();
     if(!data) {
-        nst_cache_memory_free(global.nuster.cache.pool.chunk, entry_key);
         nst_cache_memory_free(global.nuster.cache.pool.entry, entry);
         return NULL;
     }
@@ -228,8 +221,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
     /* init entry */
     entry->data   = data;
     entry->state  = NST_CACHE_ENTRY_STATE_CREATING;
-    entry->key    = entry_key;
-    memcpy(entry->key, key, strlen(key) + 1);
+    entry->key    = key;
     entry->hash   = hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
@@ -249,7 +241,7 @@ struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struc
 /*
  * Get entry
  */
-struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash) {
+struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
     int i, idx;
     struct nst_cache_entry *entry = NULL;
 
@@ -261,7 +253,7 @@ struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash) {
         idx   = hash % nuster.cache->dict[i].size;
         entry = nuster.cache->dict[i].entry[idx];
         while(entry) {
-            if(entry->hash == hash && !strcmp(entry->key, key)) {
+            if(entry->hash == hash && entry->key->data == key->data && !memcmp(entry->key->area, key->area, key->data)) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */

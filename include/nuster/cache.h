@@ -75,7 +75,7 @@ enum {
 
 struct nst_cache_entry {
     int                     state;
-    char                   *key;
+    struct buffer          *key;
     uint64_t                hash;
     struct nst_cache_data  *data;
     uint64_t                expire;
@@ -197,8 +197,8 @@ enum {
 
 /* dict */
 int nst_cache_dict_init();
-struct nst_cache_entry *nst_cache_dict_get(const char *key, uint64_t hash);
-struct nst_cache_entry *nst_cache_dict_set(const char *key, uint64_t hash, struct nst_cache_ctx *ctx);
+struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash);
+struct nst_cache_entry *nst_cache_dict_set(struct buffer *key, uint64_t hash, struct nst_cache_ctx *ctx);
 void nst_cache_dict_rehash();
 void nst_cache_dict_cleanup();
 
@@ -210,7 +210,7 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
         struct http_msg *msg);
 struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg);
 uint64_t nst_cache_hash_key(const char *key);
-void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash);
+void nst_cache_create(struct nst_cache_ctx *ctx, struct buffer *key, uint64_t hash);
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len);
 void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);

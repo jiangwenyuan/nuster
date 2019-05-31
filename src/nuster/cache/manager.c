@@ -24,7 +24,7 @@
 /*
  * purge cache by key
  */
-int _nst_cache_purge_by_key(const char *key, uint64_t hash) {
+int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
     int ret;
 
@@ -52,12 +52,12 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     if(txn->meth == HTTP_METH_OTHER &&
             memcmp(ci_head(msg->chn), global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0) {
 
-        char *key = nst_cache_build_purge_key(s, msg);
+        struct buffer *key = nst_cache_build_purge_key(s, msg);
         if(!key) {
             txn->status = 500;
             nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
         } else {
-            uint64_t hash = nuster_hash(key, strlen(key));
+            uint64_t hash = nuster_hash(key->area, key->data);
             txn->status = _nst_cache_purge_by_key(key, hash);
             if(txn->status == 200) {
                 nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_200]);

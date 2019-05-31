@@ -215,7 +215,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
             /* get cache key */
             while(stash) {
                 if(ctx->stash->rule == ctx->rule) {
-                    key  = stash->key;
+                    bkey  = stash->key;
                     hash = stash->hash;
                     break;
                 }
@@ -230,7 +230,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
             nuster_debug("PASS\n[CACHE] To create\n");
 
             /* start to build cache */
-            nst_cache_create(ctx, key, hash);
+            nst_cache_create(ctx, bkey, hash);
         }
 
     }

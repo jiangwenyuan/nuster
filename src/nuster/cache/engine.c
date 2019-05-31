@@ -672,7 +672,7 @@ struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
  * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
-void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
+void nst_cache_create(struct nst_cache_ctx *ctx, struct buffer *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
 
     nuster_shctx_lock(&nuster.cache->dict[0]);
@@ -726,17 +726,17 @@ void nst_cache_create(struct nst_cache_ctx *ctx, char *key, uint64_t hash) {
 
         ctx->disk.fd     = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
 
-        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov, (uint64_t)strlen(key), hash);
+        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov, (uint64_t)key->data, hash);
 
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
         memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
         ctx->disk.cb.aio_buf    = key;
         ctx->disk.cb.aio_offset = ctx->disk.offset;
-        ctx->disk.cb.aio_nbytes = strlen(key);
+        ctx->disk.cb.aio_nbytes = key->data;
         ctx->disk.cb.aio_fildes = ctx->disk.fd;
         aio_write(&ctx->disk.cb);
-        ctx->disk.offset       += strlen(key);
+        ctx->disk.offset       += key->data;
         ctx->disk.state         = 1;
     }
 }
