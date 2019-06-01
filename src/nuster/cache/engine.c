@@ -85,14 +85,14 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
  * Cache the keys which calculated in request for response use
  */
 struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nuster_rule *rule, struct buffer *key, uint64_t hash) {
+        struct nuster_rule *rule) {
 
     struct nuster_rule_stash *stash = pool_alloc(global.nuster.cache.pool.stash);
 
     if(stash) {
         stash->rule = rule;
-        stash->key  = key;
-        stash->hash = hash;
+        stash->key  = ctx->key;
+        stash->hash = ctx->hash;
         if(ctx->stash) {
             stash->next = ctx->stash;
         } else {
@@ -487,7 +487,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct h
     return 1;
 }
 
-struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
+int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
@@ -495,9 +495,10 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
     struct hdr_ctx hdr;
 
     struct nuster_rule_key *ck = NULL;
-    struct buffer *key  = _nst_key_init();
-    if(!key) {
-        return NULL;
+
+    ctx->key  = _nst_key_init();
+    if(!ctx->key) {
+        return 1;
     }
 
     nuster_debug("[CACHE] Calculate key: ");
@@ -506,50 +507,50 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
         switch(ck->type) {
             case NUSTER_RULE_KEY_METHOD:
                 nuster_debug("method.");
-                err = _nst_key_append(key, http_known_methods[txn->meth].ptr, http_known_methods[txn->meth].len);
+                err = _nst_key_append(ctx->key, http_known_methods[txn->meth].ptr, http_known_methods[txn->meth].len);
                 break;
             case NUSTER_RULE_KEY_SCHEME:
                 nuster_debug("scheme.");
-                err = _nst_key_append(key, ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP", ctx->req.scheme == SCH_HTTPS ? 5 : 4);
+                err = _nst_key_append(ctx->key, ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP", ctx->req.scheme == SCH_HTTPS ? 5 : 4);
                 break;
             case NUSTER_RULE_KEY_HOST:
                 nuster_debug("host.");
                 if(ctx->req.host.data) {
-                    err = _nst_key_append(key, ctx->req.host.data, ctx->req.host.len);
+                    err = _nst_key_append(ctx->key, ctx->req.host.data, ctx->req.host.len);
                 } else {
-                    err = _nst_key_advance(key, 2);
+                    err = _nst_key_advance(ctx->key, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_URI:
                 nuster_debug("uri.");
                 if(ctx->req.uri.data) {
-                    err = _nst_key_append(key, ctx->req.uri.data, ctx->req.uri.len);
+                    err = _nst_key_append(ctx->key, ctx->req.uri.data, ctx->req.uri.len);
                 } else {
-                    err = _nst_key_advance(key, 2);
+                    err = _nst_key_advance(ctx->key, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_PATH:
                 nuster_debug("path.");
                 if(ctx->req.path.data) {
-                    err = _nst_key_append(key, ctx->req.path.data, ctx->req.path.len);
+                    err = _nst_key_append(ctx->key, ctx->req.path.data, ctx->req.path.len);
                 } else {
-                    err = _nst_key_advance(key, 2);
+                    err = _nst_key_advance(ctx->key, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_DELIMITER:
                 nuster_debug("delimiter.");
                 if(ctx->req.delimiter) {
-                    err = _nst_key_append(key, "?", 1);
+                    err = _nst_key_append(ctx->key, "?", 1);
                 } else {
-                    err = _nst_key_advance(key, 2);
+                    err = _nst_key_advance(ctx->key, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_QUERY:
                 nuster_debug("query.");
                 if(ctx->req.query.data && ctx->req.query.len) {
-                    err = _nst_key_append(key, ctx->req.query.data, ctx->req.query.len);
+                    err = _nst_key_append(ctx->key, ctx->req.query.data, ctx->req.query.len);
                 } else {
-                    err = _nst_key_advance(key, 2);
+                    err = _nst_key_advance(ctx->key, 2);
                 }
                 break;
             case NUSTER_RULE_KEY_PARAM:
@@ -558,19 +559,19 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
                     char *v = NULL;
                     int v_l = 0;
                     if(nuster_req_find_param(ctx->req.query.data, ctx->req.query.data + ctx->req.query.len, ck->data, &v, &v_l)) {
-                        err = _nst_key_append(key, v, v_l);
+                        err = _nst_key_append(ctx->key, v, v_l);
                         break;
                     }
                 }
-                err = _nst_key_advance(key, 2);
+                err = _nst_key_advance(ctx->key, 2);
                 break;
             case NUSTER_RULE_KEY_HEADER:
                 hdr.idx = 0;
                 nuster_debug("header_%s.", ck->data);
                 while (http_find_header2(ck->data, strlen(ck->data), ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-                    err = _nst_key_append(key, hdr.line + hdr.val, hdr.vlen);
+                    err = _nst_key_append(ctx->key, hdr.line + hdr.val, hdr.vlen);
                 }
-                err = !err && _nst_key_advance(key, hdr.idx == 0 ? 2 : 1);
+                err = !err && _nst_key_advance(ctx->key, hdr.idx == 0 ? 2 : 1);
                 break;
             case NUSTER_RULE_KEY_COOKIE:
                 nuster_debug("cookie_%s.", ck->data);
@@ -578,29 +579,29 @@ struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule
                     char *v = NULL;
                     size_t v_l = 0;
                     if(http_extract_cookie_value(ctx->req.cookie.data, ctx->req.cookie.data + ctx->req.cookie.len, ck->data, strlen(ck->data), 1, &v, &v_l)) {
-                        err = _nst_key_append(key, v, v_l);
+                        err = _nst_key_append(ctx->key, v, v_l);
                         break;
                     }
                 }
-                err = _nst_key_advance(key, 2);
+                err = _nst_key_advance(ctx->key, 2);
                 break;
             case NUSTER_RULE_KEY_BODY:
                 nuster_debug("body.");
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
                     if((s->be->options & PR_O_WREQ_BODY) && ci_data(msg->chn) - msg->sov > 0) {
-                        err = _nst_key_append(key, ci_head(msg->chn) + msg->sov, ci_data(msg->chn) - msg->sov);
+                        err = _nst_key_append(ctx->key, ci_head(msg->chn) + msg->sov, ci_data(msg->chn) - msg->sov);
                     } else {
-                        err = _nst_key_advance(key, 2);
+                        err = _nst_key_advance(ctx->key, 2);
                     }
                 }
                 break;
             default:
                 break;
         }
-        if(err) return NULL;
+        if(err) return 1;
     }
     nuster_debug("\n");
-    return key;
+    return 0;
 }
 
 struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg) {
@@ -672,11 +673,11 @@ struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
  * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
-void nst_cache_create(struct nst_cache_ctx *ctx, struct buffer *key, uint64_t hash) {
+void nst_cache_create(struct nst_cache_ctx *ctx) {
     struct nst_cache_entry *entry = NULL;
 
     nuster_shctx_lock(&nuster.cache->dict[0]);
-    entry = nst_cache_dict_get(key, hash);
+    entry = nst_cache_dict_get(ctx->key, ctx->hash);
     if(entry) {
         if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
             ctx->state = NST_CACHE_CTX_STATE_WAIT;
@@ -699,7 +700,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct buffer *key, uint64_t ha
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
         }
     } else {
-        entry = nst_cache_dict_set(key, hash, ctx);
+        entry = nst_cache_dict_set(ctx);
         if(entry) {
             ctx->state   = NST_CACHE_CTX_STATE_CREATE;
             ctx->entry   = entry;
@@ -715,28 +716,28 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct buffer *key, uint64_t ha
 
     if(ctx->rule->disk) {
         ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory, NUSTER_FILE_LENGTH + 1);
-        sprintf(ctx->disk.file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, global.nuster.cache.directory, hash >> 60, hash >> 56, hash);
+        sprintf(ctx->disk.file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, global.nuster.cache.directory, ctx->hash >> 60, ctx->hash >> 56, ctx->hash);
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.file);
 
         if(!nuster_create_path(ctx->disk.file)) {
         }
 
-        sprintf(ctx->disk.file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64, get_current_timestamp(), get_current_timestamp() * random() | hash);
+        sprintf(ctx->disk.file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64, get_current_timestamp(), get_current_timestamp() * random() | ctx->hash);
         nuster_debug("[CACHE] File: %s\n", ctx->disk.file);
 
-        ctx->disk.fd     = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
+        ctx->disk.fd = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
 
-        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov, (uint64_t)key->data, hash);
+        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov, (uint64_t)ctx->key->data, ctx->hash);
 
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
         memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
-        ctx->disk.cb.aio_buf    = key->area;
+        ctx->disk.cb.aio_buf    = ctx->key->area;
         ctx->disk.cb.aio_offset = ctx->disk.offset;
-        ctx->disk.cb.aio_nbytes = key->data;
+        ctx->disk.cb.aio_nbytes = ctx->key->data;
         ctx->disk.cb.aio_fildes = ctx->disk.fd;
         aio_write(&ctx->disk.cb);
-        ctx->disk.offset       += key->data;
+        ctx->disk.offset       += ctx->key->data;
         ctx->disk.state         = 1;
     }
 }
