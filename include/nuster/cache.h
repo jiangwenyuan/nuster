@@ -115,6 +115,9 @@ enum {
 struct nst_cache_ctx {
     int                       state;
 
+    struct buffer            *key;
+    uint64_t                  hash;
+
     struct nuster_rule       *rule;
     struct nuster_rule_stash *stash;
 
@@ -198,7 +201,7 @@ enum {
 /* dict */
 int nst_cache_dict_init();
 struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash);
-struct nst_cache_entry *nst_cache_dict_set(struct buffer *key, uint64_t hash, struct nst_cache_ctx *ctx);
+struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
 void nst_cache_dict_rehash();
 void nst_cache_dict_cleanup();
 
@@ -206,11 +209,11 @@ void nst_cache_dict_cleanup();
 void nst_cache_init();
 void nst_cache_housekeeping();
 int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
-struct buffer *nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
+int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
         struct http_msg *msg);
 struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg);
 uint64_t nst_cache_hash_key(const char *key);
-void nst_cache_create(struct nst_cache_ctx *ctx, struct buffer *key, uint64_t hash);
+void nst_cache_create(struct nst_cache_ctx *ctx);
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len);
 void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);
@@ -219,7 +222,7 @@ struct nst_cache_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
 struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nuster_rule *rule, struct buffer *key, uint64_t hash);
+        struct nuster_rule *rule);
 void *nst_cache_memory_alloc(struct pool_head *pool, int size);
 void nst_cache_memory_free(struct pool_head *pool, void *p);
 int nst_cache_check_uri(struct http_msg *msg);

@@ -192,11 +192,10 @@ void nst_cache_dict_cleanup() {
 /*
  * Add a new nst_cache_entry to cache_dict
  */
-struct nst_cache_entry *nst_cache_dict_set(struct buffer *key, uint64_t hash, struct nst_cache_ctx *ctx) {
+struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_data  *data  = NULL;
     struct nst_cache_entry *entry = NULL;
-    char *entry_key               = NULL;
     int idx;
 
     dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
@@ -212,7 +211,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct buffer *key, uint64_t hash, st
         return NULL;
     }
 
-    idx = hash % dict->size;
+    idx = ctx->hash % dict->size;
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
     dict->entry[idx] = entry;
@@ -221,8 +220,9 @@ struct nst_cache_entry *nst_cache_dict_set(struct buffer *key, uint64_t hash, st
     /* init entry */
     entry->data   = data;
     entry->state  = NST_CACHE_ENTRY_STATE_CREATING;
-    entry->key    = key;
-    entry->hash   = hash;
+    entry->key    = ctx->key;
+    ctx->key      = NULL;
+    entry->hash   = ctx->hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
