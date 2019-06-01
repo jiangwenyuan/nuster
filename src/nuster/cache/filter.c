@@ -121,7 +121,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                     continue;
                 }
                 /* build key */
-                if(!nst_cache_build_key(ctx, rule->key, s, msg)) {
+                if(nst_cache_build_key(ctx, rule->key, s, msg)) {
                     return 1;
                 }
                 //TODO
