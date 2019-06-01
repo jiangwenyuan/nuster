@@ -714,7 +714,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
-    if(ctx->rule->disk) {
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE && ctx->rule->disk) {
         ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory, NUSTER_FILE_LENGTH + 1);
         sprintf(ctx->disk.file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, global.nuster.cache.directory, ctx->hash >> 60, ctx->hash >> 56, ctx->hash);
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.file);
@@ -727,17 +727,17 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         ctx->disk.fd = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
 
-        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov, (uint64_t)ctx->key->data, ctx->hash);
+        sprintf(ctx->disk.meta, "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64, (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION, (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov, (uint64_t)ctx->entry->key->data, ctx->hash);
 
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
         memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
-        ctx->disk.cb.aio_buf    = ctx->key->area;
+        ctx->disk.cb.aio_buf    = ctx->entry->key->area;
         ctx->disk.cb.aio_offset = ctx->disk.offset;
-        ctx->disk.cb.aio_nbytes = ctx->key->data;
+        ctx->disk.cb.aio_nbytes = ctx->entry->key->data;
         ctx->disk.cb.aio_fildes = ctx->disk.fd;
         aio_write(&ctx->disk.cb);
-        ctx->disk.offset       += ctx->key->data;
+        ctx->disk.offset       += ctx->entry->key->data;
         ctx->disk.state         = 1;
     }
 }

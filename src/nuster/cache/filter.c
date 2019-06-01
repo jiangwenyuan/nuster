@@ -77,7 +77,9 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
         while(ctx->stash) {
             stash      = ctx->stash;
             ctx->stash = ctx->stash->next;
-            free(stash->key);
+            if(stash->key) {
+                nuster_memory_free(global.nuster.cache.memory, stash->key);
+            }
             pool_free(global.nuster.cache.pool.stash, stash);
         }
         if(ctx->req.host.data) {
@@ -206,6 +208,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
                 if(ctx->stash->rule == ctx->rule) {
                     ctx->key  = stash->key;
                     ctx->hash = stash->hash;
+                    stash->key = NULL;
                     break;
                 }
                 stash = stash->next;
