@@ -2678,6 +2678,10 @@ static void run_poll_loop()
 		if ((jobs - unstoppable_jobs) == 0)
 			break;
 
+		/* also stop  if we failed to cleanly stop all tasks */
+		if (killed > 1)
+			break;
+
 		/* expire immediately if events are pending */
 		exp = now_ms;
 		if (fd_cache_mask & tid_bit)
