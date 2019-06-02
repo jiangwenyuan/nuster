@@ -2,7 +2,7 @@
  * include/nuster/nosql.h
  * This file defines everything related to nuster nosql.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
 #ifndef _NUSTER_NOSQL_H
@@ -150,17 +150,26 @@ struct nst_nosql_stats {
 };
 
 struct nst_nosql {
-    struct nst_nosql_dict  dict[2];           /* 0: using, 1: rehashing */
-    struct nst_nosql_data *data_head;         /* point to the circular linked list, tail->next ===  head */
-    struct nst_nosql_data *data_tail;         /* and will be moved together constantly to check invalid data */
+    /* 0: using, 1: rehashing */
+    struct nst_nosql_dict  dict[2];
+
+    /* point to the circular linked list, tail->next ===  head */
+    struct nst_nosql_data *data_head;
+
+    /* and will be moved together constantly to check invalid data */
+    struct nst_nosql_data *data_tail;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t        mutex;
 #else
     unsigned int           waiters;
 #endif
 
-    int                    rehash_idx;        /* >=0: rehashing, index, -1: not rehashing */
-    int                    cleanup_idx;       /* cache dict cleanup index */
+    /* >=0: rehashing, index, -1: not rehashing */
+    int                    rehash_idx;
+
+    /* cache dict cleanup index */
+    int                    cleanup_idx;
 };
 
 extern struct flt_ops  nst_nosql_filter_ops;
@@ -168,24 +177,30 @@ extern struct flt_ops  nst_nosql_filter_ops;
 /* engine */
 void nst_nosql_init();
 void nst_nosql_housekeeping();
-int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);
+int nst_nosql_check_applet(struct stream *s, struct channel *req,
+        struct proxy *px);
 struct nst_nosql_data *nst_nosql_data_new();
-int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
-char *nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
+int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
+char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
+        struct nuster_rule_key **pck, struct stream *s, struct http_msg *msg);
 uint64_t nst_nosql_hash_key(const char *key);
 struct nst_nosql_data *nst_nosql_exists(const char *key, uint64_t hash);
 int nst_nosql_delete(const char *key, uint64_t hash);
-void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash, struct stream *s, struct http_msg *msg);
-int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg, long msg_len);
+void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
+        struct stream *s, struct http_msg *msg);
+int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
+        long msg_len);
 void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct http_msg *msg);
 void nst_nosql_abort(struct nst_nosql_ctx *ctx);
-int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
+int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
+        struct http_msg *msg);
 
 /* dict */
 int nst_nosql_dict_init();
 struct nst_nosql_entry *nst_nosql_dict_get(const char *key, uint64_t hash);
-struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash, struct nst_nosql_ctx *ctx);
+struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
+        struct nst_nosql_ctx *ctx);
 void nst_nosql_dict_rehash();
 void nst_nosql_dict_cleanup();
 

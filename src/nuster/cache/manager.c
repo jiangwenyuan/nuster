@@ -1,7 +1,7 @@
 /*
  * nuster cache manager functions.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,6 +30,7 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
 
     nuster_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
+
     if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
         entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
         entry->data->invalid = 1;
@@ -39,6 +40,7 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
     } else {
         ret = 404;
     }
+
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     return ret;
@@ -50,27 +52,34 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
 
 
     if(txn->meth == HTTP_METH_OTHER &&
-            memcmp(ci_head(msg->chn), global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0) {
+            memcmp(ci_head(msg->chn), global.nuster.cache.purge_method,
+                strlen(global.nuster.cache.purge_method)) == 0) {
 
         struct buffer *key = nst_cache_build_purge_key(s, msg);
+
         if(!key) {
             txn->status = 500;
             nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
         } else {
             uint64_t hash = nuster_hash(key->area, key->data);
             txn->status = _nst_cache_purge_by_key(key, hash);
+
             if(txn->status == 200) {
                 nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_200]);
             } else {
                 nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_404]);
             }
         }
+
         return 1;
     }
+
     return 0;
 }
 
-int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy *px, int state, int ttl) {
+int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
+        struct proxy *px, int state, int ttl) {
+
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
     int found, mode      = NST_CACHE_PURGE_NAME_RULE;
@@ -83,34 +92,43 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
 
     ctx.idx = 0;
     if(http_find_header2("name", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
+
         if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
             found = 1;
             mode  = NST_CACHE_PURGE_NAME_ALL;
         }
+
         p = proxies_list;
         while(p) {
             struct nuster_rule *rule = NULL;
 
-            if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+            if(mode != NST_CACHE_PURGE_NAME_ALL
+                    && strlen(p->id) == ctx.vlen
+                    && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
                 found = 1;
                 mode  = NST_CACHE_PURGE_NAME_PROXY;
             }
 
             list_for_each_entry(rule, &p->nuster.rules, list) {
+
                 if(mode != NST_CACHE_PURGE_NAME_RULE) {
                     *rule->state = state == -1 ? *rule->state : state;
                     *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
-                } else if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+                } else if(strlen(rule->name) == ctx.vlen
+                        && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
                     *rule->state = state == -1 ? *rule->state : state;
                     *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
                     found        = 1;
                 }
             }
+
             if(mode == NST_CACHE_PURGE_NAME_PROXY) {
                 break;
             }
+
             p = p->next;
         }
+
         if(found) {
             return 200;
         } else {
@@ -121,12 +139,17 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct p
     return 400;
 }
 
-static inline int _nst_cache_manager_purge_method(struct http_txn *txn, struct http_msg *msg) {
+static inline int _nst_cache_manager_purge_method(struct http_txn *txn,
+        struct http_msg *msg) {
+
     return txn->meth == HTTP_METH_OTHER &&
-            memcmp(ci_head(msg->chn), global.nuster.cache.purge_method, strlen(global.nuster.cache.purge_method)) == 0;
+            memcmp(ci_head(msg->chn), global.nuster.cache.purge_method,
+                    strlen(global.nuster.cache.purge_method)) == 0;
 }
 
-int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px) {
+int _nst_cache_manager_purge(struct stream *s, struct channel *req,
+        struct proxy *px) {
+
     struct stream_interface *si = &s->si[1];
     struct http_txn *txn        = s->txn;
     struct http_msg *msg        = &txn->req;
@@ -151,6 +174,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
 
     ctx.idx = 0;
     if(http_find_header2("name", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
+
         if(ctx.vlen == 1 && !memcmp(ctx.line + ctx.val, "*", 1)) {
             mode = NST_CACHE_PURGE_NAME_ALL;
             goto purge;
@@ -161,31 +185,45 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
             struct nuster_rule *rule = NULL;
 
             if(p->nuster.mode == NUSTER_MODE_CACHE) {
-                if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == ctx.vlen && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+
+                if(mode != NST_CACHE_PURGE_NAME_ALL
+                        && strlen(p->id) == ctx.vlen
+                        && !memcmp(ctx.line + ctx.val, p->id, ctx.vlen)) {
+
                     mode = NST_CACHE_PURGE_NAME_PROXY;
                     st1  = p->uuid;
                     goto purge;
                 }
 
                 list_for_each_entry(rule, &p->nuster.rules, list) {
-                    if(strlen(rule->name) == ctx.vlen && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+
+                    if(strlen(rule->name) == ctx.vlen
+                            && !memcmp(ctx.line + ctx.val, rule->name,
+                                ctx.vlen)) {
+
                         mode = NST_CACHE_PURGE_NAME_RULE;
                         st1  = rule->id;
                         goto purge;
                     }
                 }
             }
+
             p = p->next;
         }
 
         goto notfound;
-    } else if(http_find_header2("path", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
+    } else if(http_find_header2("path", 4, ci_head(msg->chn),
+                &txn->hdr_idx, &ctx)) {
+
         path      = ctx.line + ctx.val;
         path_len  = ctx.vlen;
         mode      = host ? NST_CACHE_PURGE_PATH_HOST : NST_CACHE_PURGE_PATH;
-    } else if(http_find_header2("regex", 5, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
+    } else if(http_find_header2("regex", 5, ci_head(msg->chn), &txn->hdr_idx,
+                &ctx)) {
+
         regex_str = malloc(ctx.vlen + 1);
         regex     = calloc(1, sizeof(*regex));
+
         if(!regex_str || !regex) {
             goto err;
         }
@@ -196,6 +234,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
         if (!regex_comp(regex_str, regex, 1, 0, &error)) {
             goto err;
         }
+
         free(regex_str);
 
         mode = host ? NST_CACHE_PURGE_REGEX_HOST : NST_CACHE_PURGE_REGEX;
@@ -207,11 +246,14 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy
 
 purge:
     s->target = &nuster.applet.cache_manager.obj_type;
+
     if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
         goto err;
     } else {
         appctx      = si_appctx(si);
-        memset(&appctx->ctx.nuster.cache_manager, 0, sizeof(appctx->ctx.nuster.cache_manager));
+        memset(&appctx->ctx.nuster.cache_manager, 0,
+                sizeof(appctx->ctx.nuster.cache_manager));
+
         appctx->st0 = mode;
         appctx->st1 = st1;
         appctx->st2 = 0;
@@ -219,42 +261,59 @@ purge:
         if(mode == NST_CACHE_PURGE_HOST ||
                 mode == NST_CACHE_PURGE_PATH_HOST ||
                 mode == NST_CACHE_PURGE_REGEX_HOST) {
-            appctx->ctx.nuster.cache_manager.host.data = nuster_memory_alloc(global.nuster.cache.memory, host_len);
+
+            appctx->ctx.nuster.cache_manager.host.data =
+                nuster_memory_alloc(global.nuster.cache.memory, host_len);
+
             appctx->ctx.nuster.cache_manager.host.len  = host_len;
+
             if(!appctx->ctx.nuster.cache_manager.host.data) {
                 goto err;
             }
+
             memcpy(appctx->ctx.nuster.cache_manager.host.data, host, host_len);
         }
 
         if(mode == NST_CACHE_PURGE_PATH ||
                 mode == NST_CACHE_PURGE_PATH_HOST) {
-            appctx->ctx.nuster.cache_manager.path.data = nuster_memory_alloc(global.nuster.cache.memory, path_len);
+
+            appctx->ctx.nuster.cache_manager.path.data =
+                nuster_memory_alloc(global.nuster.cache.memory, path_len);
+
             appctx->ctx.nuster.cache_manager.path.len  = path_len;
+
             if(!appctx->ctx.nuster.cache_manager.path.data) {
                 goto err;
             }
+
             memcpy(appctx->ctx.nuster.cache_manager.path.data, path, path_len);
         } else if(mode == NST_CACHE_PURGE_REGEX ||
                 mode == NST_CACHE_PURGE_REGEX_HOST) {
             appctx->ctx.nuster.cache_manager.regex = regex;
         }
 
-        req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+        req->analysers &=
+            (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
         req->analysers |= AN_REQ_HTTP_XFER_BODY;
     }
 
     return 0;
+
 notfound:
     return 404;
+
 err:
     free(error);
     free(regex_str);
+
     if(regex) {
         regex_free(regex);
     }
+
     return 500;
+
 badreq:
     return 400;
 }
@@ -274,20 +333,29 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     }
 
     if(txn->meth == HTTP_METH_POST) {
+
         /* POST */
         if(nst_cache_check_uri(msg)) {
             /* manager uri */
             ctx.idx = 0;
-            if(http_find_header2("state", 5, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
+            if(http_find_header2("state", 5, ci_head(msg->chn),
+                        &txn->hdr_idx, &ctx)) {
+
                 if(ctx.vlen == 6 && !memcmp(ctx.line + ctx.val, "enable", 6)) {
                     state = NUSTER_RULE_ENABLED;
-                } else if(ctx.vlen == 7 && !memcmp(ctx.line + ctx.val, "disable", 7)) {
+                } else if(ctx.vlen == 7
+                        && !memcmp(ctx.line + ctx.val, "disable", 7)) {
+
                     state = NUSTER_RULE_DISABLED;
                 }
             }
+
             ctx.idx = 0;
-            if(http_find_header2("ttl", 3, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
-                nuster_parse_time(ctx.line + ctx.val, ctx.vlen, (unsigned *)&ttl);
+            if(http_find_header2("ttl", 3, ci_head(msg->chn),
+                        &txn->hdr_idx, &ctx)) {
+
+                nuster_parse_time(ctx.line + ctx.val, ctx.vlen,
+                        (unsigned *)&ttl);
             }
 
             txn->status = _nst_cache_manager_state_ttl(s, req, px, state, ttl);
@@ -295,8 +363,10 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             return 0;
         }
     } else if(_nst_cache_manager_purge_method(txn, msg)) {
+
         /* purge */
         if(nst_cache_check_uri(msg)) {
+
             /* manager uri */
             txn->status = _nst_cache_manager_purge(s, req, px);
             if(txn->status == 0) {
@@ -330,7 +400,9 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
 }
 
 
-static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry, struct appctx *appctx) {
+static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry,
+        struct appctx *appctx) {
+
     int ret = 0;
     switch(appctx->st0) {
         case NST_CACHE_PURGE_NAME_ALL:
@@ -343,28 +415,46 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry, struct
             ret = entry->rule->id == appctx->st1;
             break;
         case NST_CACHE_PURGE_PATH:
-            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len &&
-                !memcmp(entry->path.data, appctx->ctx.nuster.cache_manager.path.data, entry->path.len);
+            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len
+                && !memcmp(entry->path.data,
+                        appctx->ctx.nuster.cache_manager.path.data,
+                        entry->path.len);
+
             break;
         case NST_CACHE_PURGE_REGEX:
-            ret = regex_exec(appctx->ctx.nuster.cache_manager.regex, entry->path.data);
+            ret = regex_exec(appctx->ctx.nuster.cache_manager.regex,
+                    entry->path.data);
+
             break;
         case NST_CACHE_PURGE_HOST:
-            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len &&
-                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host.data, entry->host.len);
+            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len
+                && !memcmp(entry->host.data,
+                        appctx->ctx.nuster.cache_manager.host.data,
+                        entry->host.len);
+
             break;
         case NST_CACHE_PURGE_PATH_HOST:
-            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len &&
-                entry->host.len == appctx->ctx.nuster.cache_manager.host.len &&
-                !memcmp(entry->path.data, appctx->ctx.nuster.cache_manager.path.data, entry->path.len) &&
-                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host.data, entry->host.len);
+            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len
+                && entry->host.len == appctx->ctx.nuster.cache_manager.host.len
+                && !memcmp(entry->path.data,
+                        appctx->ctx.nuster.cache_manager.path.data,
+                        entry->path.len)
+                && !memcmp(entry->host.data,
+                        appctx->ctx.nuster.cache_manager.host.data,
+                        entry->host.len);
+
             break;
         case NST_CACHE_PURGE_REGEX_HOST:
-            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len &&
-                !memcmp(entry->host.data, appctx->ctx.nuster.cache_manager.host.data, entry->host.len) &&
-                regex_exec(appctx->ctx.nuster.cache_manager.regex, entry->path.data);
+            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len
+                && !memcmp(entry->host.data,
+                        appctx->ctx.nuster.cache_manager.host.data,
+                        entry->host.len)
+                && regex_exec(appctx->ctx.nuster.cache_manager.regex,
+                        entry->path.data);
+
             break;
     }
+
     return ret;
 }
 
@@ -378,27 +468,42 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
 
     while(1) {
         nuster_shctx_lock(&nuster.cache->dict[0]);
+
         while(appctx->st2 < nuster.cache->dict[0].size && max--) {
             entry = nuster.cache->dict[0].entry[appctx->st2];
+
             while(entry) {
-                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && _nst_cache_manager_should_purge(entry, appctx)) {
+
+                if(entry->state == NST_CACHE_ENTRY_STATE_VALID
+                        && _nst_cache_manager_should_purge(entry, appctx)) {
+
                     entry->state         = NST_CACHE_ENTRY_STATE_INVALID;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
                     entry->expire        = 0;
                 }
+
                 entry = entry->next;
             }
+
             appctx->st2++;
         }
+
         nuster_shctx_unlock(&nuster.cache->dict[0]);
-        if(get_current_timestamp() - start > 1) break;
+
+        if(get_current_timestamp() - start > 1) {
+            break;
+        }
+
         max = 1000;
     }
+
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
     if(appctx->st2 == nuster.cache->dict[0].size) {
-        ci_putblk(res, nuster_http_msgs[NUSTER_HTTP_200], strlen(nuster_http_msgs[NUSTER_HTTP_200]));
+        ci_putblk(res, nuster_http_msgs[NUSTER_HTTP_200],
+                strlen(nuster_http_msgs[NUSTER_HTTP_200]));
+
         co_skip(si_oc(si), co_data(si_oc(si)));
         si_shutr(si);
         res->flags |= CF_READ_NULL;
@@ -406,20 +511,26 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
 }
 
 static void nst_cache_manager_release_handler(struct appctx *appctx) {
+
     if(appctx->ctx.nuster.cache_manager.regex) {
         regex_free(appctx->ctx.nuster.cache_manager.regex);
         free(appctx->ctx.nuster.cache_manager.regex);
     }
+
     if(appctx->ctx.nuster.cache_manager.host.data) {
-        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.nuster.cache_manager.host.data);
+        nuster_memory_free(global.nuster.cache.memory,
+                appctx->ctx.nuster.cache_manager.host.data);
     }
+
     if(appctx->ctx.nuster.cache_manager.path.data) {
-        nuster_memory_free(global.nuster.cache.memory, appctx->ctx.nuster.cache_manager.path.data);
+        nuster_memory_free(global.nuster.cache.memory,
+                appctx->ctx.nuster.cache_manager.path.data);
     }
 }
 
 int nst_cache_manager_init() {
     nuster.applet.cache_manager.fct     = nst_cache_manager_handler;
     nuster.applet.cache_manager.release = nst_cache_manager_release_handler;
+
     return 1;
 }

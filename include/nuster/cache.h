@@ -2,7 +2,7 @@
  * include/nuster/cache.h
  * This file defines everything related to nuster cache.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
 #ifndef _NUSTER_CACHE_H
@@ -100,7 +100,7 @@ struct nst_cache_dict {
 
 enum {
     NST_CACHE_CTX_STATE_INIT        = 0,   /* init */
-    NST_CACHE_CTX_STATE_BYPASS,            /* not cached, return to regular process */
+    NST_CACHE_CTX_STATE_BYPASS,            /* do not cached */
     NST_CACHE_CTX_STATE_WAIT,              /* caching, wait */
     NST_CACHE_CTX_STATE_HIT,               /* cached, use cache */
     NST_CACHE_CTX_STATE_PASS,              /* cache rule passed */
@@ -165,17 +165,27 @@ struct nst_cache_stats {
 };
 
 struct nst_cache {
-    struct nst_cache_dict  dict[2];           /* 0: using, 1: rehashing */
-    struct nst_cache_data *data_head;         /* point to the circular linked list, tail->next ===  head */
-    struct nst_cache_data *data_tail;         /* and will be moved together constantly to check invalid data */
+    /* 0: using, 1: rehashing */
+    struct nst_cache_dict  dict[2];
+
+    /*
+     * point to the circular linked list, tail->next ===  head,
+     * and will be moved together constantly to check invalid data
+     */
+    struct nst_cache_data *data_head;
+    struct nst_cache_data *data_tail;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t        mutex;
 #else
     unsigned int           waiters;
 #endif
 
-    int                    rehash_idx;        /* >=0: rehashing, index, -1: not rehashing */
-    int                    cleanup_idx;       /* cache dict cleanup index */
+    /* >=0: rehashing, index, -1: not rehashing */
+    int                    rehash_idx;
+
+    /* cache dict cleanup index */
+    int                    cleanup_idx;
 };
 
 extern struct flt_ops  nst_cache_filter_ops;
@@ -208,13 +218,16 @@ void nst_cache_dict_cleanup();
 /* engine */
 void nst_cache_init();
 void nst_cache_housekeeping();
-int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
-int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck, struct stream *s,
+int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
-struct buffer *nst_cache_build_purge_key(struct stream *s, struct http_msg *msg);
+int nst_cache_build_key(struct nst_cache_ctx *ctx,
+        struct nuster_rule_key **pck, struct stream *s, struct http_msg *msg);
+struct buffer *nst_cache_build_purge_key(struct stream *s,
+        struct http_msg *msg);
 uint64_t nst_cache_hash_key(const char *key);
 void nst_cache_create(struct nst_cache_ctx *ctx);
-int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, long msg_len);
+int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
+        long msg_len);
 void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);
 struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash);

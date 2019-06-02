@@ -2,7 +2,7 @@
  * include/nuster/shctx.h
  * This file defines everything related to nuster shctx.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
 #ifndef _NUSTER_SHCTX_H
@@ -30,15 +30,19 @@
 
 static inline int _nuster_shctx_init(pthread_mutex_t *mutex) {
     pthread_mutexattr_t attr;
+
     if(pthread_mutexattr_init(&attr)) {
         return 0;
     }
+
     if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED)) {
         return 0;
     }
+
     if(pthread_mutex_init(mutex, &attr)) {
         return 0;
     }
+
     return 1;
 }
 
@@ -49,7 +53,9 @@ static inline int _nuster_shctx_init(pthread_mutex_t *mutex) {
 #else
 
 #ifdef USE_SYSCALL_FUTEX
-static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
+static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr,
+        int value) {
+
     syscall(SYS_futex, uaddr, FUTEX_WAIT, value, NULL, 0, 0);
 }
 
@@ -59,7 +65,8 @@ static inline void _shctx_awakelocker(unsigned int *uaddr) {
 
 #else /* internal spin lock */
 
-#if defined (__i486__) || defined (__i586__) || defined (__i686__) || defined (__x86_64__)
+#if defined (__i486__) || defined (__i586__) || defined (__i686__)           \
+    || defined (__x86_64__)
 static inline void relax() {
     __asm volatile("rep;nop\n" ::: "memory");
 }
@@ -69,13 +76,16 @@ static inline void relax() {
 }
 #endif
 
-static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
+static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr,
+        int value) {
+
     int i;
 
     for (i = 0; i < *count; i++) {
         relax();
         relax();
     }
+
     *count = *count << 1;
 }
 
@@ -83,32 +93,39 @@ static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, in
 
 #endif
 
-#if defined (__i486__) || defined (__i586__) || defined (__i686__) || defined (__x86_64__)
+#if defined (__i486__) || defined (__i586__) || defined (__i686__)           \
+    || defined (__x86_64__)
 static inline unsigned int xchg(unsigned int *ptr, unsigned int x) {
     __asm volatile("lock xchgl %0,%1"
             : "=r" (x), "+m" (*ptr)
             : "0" (x)
             : "memory");
+
     return x;
 }
 
-static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
+static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old,
+        unsigned int new) {
+
     unsigned int ret;
 
     __asm volatile("lock cmpxchgl %2,%1"
             : "=a" (ret), "+m" (*ptr)
             : "r" (new), "0" (old)
             : "memory");
+
     return ret;
 }
 
 static inline unsigned char atomic_dec(unsigned int *ptr) {
     unsigned char ret;
+
     __asm volatile("lock decl %0\n"
             "setne %1\n"
             : "+m" (*ptr), "=qm" (ret)
             :
             : "memory");
+
     return ret;
 }
 
@@ -117,7 +134,9 @@ static inline unsigned int xchg(unsigned int *ptr, unsigned int x) {
     return __sync_lock_test_and_set(ptr, x);
 }
 
-static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
+static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old,
+        unsigned int new) {
+
     return __sync_val_compare_and_swap(ptr, old, new);
 }
 
@@ -132,26 +151,34 @@ static inline void _shctx_lock(unsigned int *waiters) {
     unsigned int count = 4;
 
     x = cmpxchg(waiters, 0, 1);
+
     if (x) {
-        if (x != 2)
+
+        if (x != 2) {
             x = xchg(waiters, 2);
+        }
 
         while (x) {
             _shctx_wait4lock(&count, waiters, 2);
             x = xchg(waiters, 2);
         }
+
     }
+
 }
 
 static inline void _shctx_unlock(unsigned int *waiters) {
+
     if (atomic_dec(waiters)) {
         *waiters = 0;
         _shctx_awakelocker(waiters);
     }
+
 }
 
 static inline int _nuster_shctx_init(unsigned int *waiters) {
     *waiters = 0;
+
     return 1;
 }
 #define nuster_shctx_init(shctx)   _nuster_shctx_init(&(shctx)->waiters)

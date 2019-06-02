@@ -1,13 +1,22 @@
 /*
+ * include/nuster/http.h
  * nuster http related functions.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation, version 2.1
+ * exclusively.
  *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
 #ifndef _NUSTER_HTTP_H
@@ -65,27 +74,35 @@ static inline void nuster_res_begin(int status) {
 }
 
 static inline void nuster_res_header_server() {
-    chunk_appendf(&trash, "%.*s: nuster\r\n", nuster_headers.server.len, nuster_headers.server.data);
+    chunk_appendf(&trash, "%.*s: nuster\r\n", nuster_headers.server.len,
+            nuster_headers.server.data);
 }
 
 static inline void nuster_res_header_date() {
-    const char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    const char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+        "Aug", "Sep", "Oct", "Nov", "Dec" };
+
     const char day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
     struct tm *tm;
     time_t now;
     time(&now);
     tm = gmtime(&now);
-    chunk_appendf(&trash, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT", nuster_headers.date.len, nuster_headers.date.data,
-            day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon], 1900 + tm->tm_year,
+    chunk_appendf(&trash, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT",
+            nuster_headers.date.len, nuster_headers.date.data, day[tm->tm_wday],
+            tm->tm_mday, mon[tm->tm_mon], 1900 + tm->tm_year,
             tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
 
 static inline void nuster_res_header_content_length(uint64_t content_length) {
-    chunk_appendf(&trash, "%.*s: %" PRIu64 "\r\n", nuster_headers.content_length.len, nuster_headers.content_length.data, content_length);
+    chunk_appendf(&trash, "%.*s: %" PRIu64 "\r\n",
+            nuster_headers.content_length.len,
+            nuster_headers.content_length.data, content_length);
 }
 
-static inline void nuster_res_header(struct nuster_str *k, struct nuster_str *v) {
+static inline void nuster_res_header(struct nuster_str *k,
+        struct nuster_str *v) {
+
     chunk_appendf(&trash, "%.*s: %.*s\r\n", k->len, k->data, v->len, v->data);
 }
 
@@ -103,21 +120,28 @@ static inline void nuster_res_end(struct stream_interface *si) {
     si_ic(si)->flags |= CF_READ_NULL;
 }
 
-static inline int nuster_res_send(struct channel *chn, const char *blk, int len) {
+static inline int nuster_res_send(struct channel *chn, const char *blk,
+        int len) {
+
     return ci_putblk(chn, blk, len);
 }
 
-static inline void nuster_res_simple(struct stream_interface *si, int status, const char *content, int content_length) {
+static inline void nuster_res_simple(struct stream_interface *si, int status,
+        const char *content, int content_length) {
+
     nuster_res_begin(status);
     nuster_res_header_content_length(content_length);
     nuster_res_header_end();
+
     if(content) {
         chunk_appendf(&trash, "%.*s", content_length, content);
     }
+
     nuster_res_send(si_ic(si), trash.area, trash.data);
     nuster_res_end(si);
 }
 
-int nuster_req_find_param(char *query_beg, char *query_end, char *name, char **value, int *value_len);
+int nuster_req_find_param(char *query_beg, char *query_end,
+        char *name, char **value, int *value_len);
 
 #endif /* _NUSTER_HTTP_H */
