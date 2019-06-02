@@ -2431,6 +2431,10 @@ static void run_poll_loop()
 		if (tid == 0 && jobs == 0)
 			THREAD_WANT_SYNC();
 
+		/* also stop  if we failed to cleanly stop all tasks */
+		if (killed > 1)
+			break;
+
 		/* expire immediately if events are pending */
 		exp = now_ms;
 		if (fd_cache_mask & tid_bit)

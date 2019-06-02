@@ -942,9 +942,9 @@ struct task *hard_stop(struct task *t)
 	if (killed) {
 		ha_warning("Some tasks resisted to hard-stop, exiting now.\n");
 		send_log(NULL, LOG_WARNING, "Some tasks resisted to hard-stop, exiting now.\n");
-		/* Do some cleanup and explicitely quit */
-		deinit();
-		exit(0);
+		killed = 2;
+		t->expire = TICK_ETERNITY;
+		return t;
 	}
 
 	ha_warning("soft-stop running for too long, performing a hard-stop.\n");
