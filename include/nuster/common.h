@@ -41,6 +41,9 @@
 #include <common/mini-clist.h>
 #include <types/acl.h>
 
+#define NUSTER_OK               0
+#define NUSTER_ERR              1
+
 #define NST_DEFAULT_TTL         0
 
 enum {
