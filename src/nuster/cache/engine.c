@@ -403,7 +403,9 @@ void nst_cache_init() {
 
         if(global.nuster.cache.directory) {
 
-            if(!nuster_create_path(global.nuster.cache.directory)) {
+            if(nuster_create_path(global.nuster.cache.directory) ==
+                    NUSTER_ERR) {
+
                 ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
                 exit(1);
             }
@@ -908,7 +910,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         nuster_debug("[CACHE] Path: %s\n", ctx->disk.file);
 
-        if(!nuster_create_path(ctx->disk.file)) {
+        if(nuster_create_path(ctx->disk.file) == NUSTER_ERR) {
         }
 
         sprintf(ctx->disk.file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64,
