@@ -10,6 +10,7 @@
  *
  */
 
+#include <nuster/common.h>
 #include <nuster/file.h>
 
 int nuster_create_path(char *path) {
@@ -28,7 +29,7 @@ int nuster_create_path(char *path) {
             if(mkdir(path, S_IRWXU) == -1 && errno != EEXIST) {
                 *p = '/';
 
-                return 0;
+                return NUSTER_ERR;
             }
 
             *p = '/';
@@ -37,8 +38,8 @@ int nuster_create_path(char *path) {
     }
 
     if(mkdir(path, S_IRWXU) == -1 && errno != EEXIST) {
-        return 0;
+        return NUSTER_ERR;
     }
 
-    return 1;
+    return NUSTER_OK;
 }
