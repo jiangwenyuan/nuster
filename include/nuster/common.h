@@ -2,7 +2,7 @@
  * include/nuster/common.h
  * This file defines everything related to nuster common.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,7 +16,7 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
 #ifndef _NUSTER_COMMON_H
@@ -62,17 +62,38 @@ struct nuster_str {
 };
 
 enum nuster_rule_key_type {
-    NUSTER_RULE_KEY_METHOD = 1,                /* method:    GET, POST... */
-    NUSTER_RULE_KEY_SCHEME,                    /* scheme:    http, https */
-    NUSTER_RULE_KEY_HOST,                      /* host:      Host header   */
-    NUSTER_RULE_KEY_URI,                       /* uri:       first slash to end of the url */
-    NUSTER_RULE_KEY_PATH,                      /* path:      first slach to question mark */
-    NUSTER_RULE_KEY_DELIMITER,                 /* delimiter: '?' or '' */
-    NUSTER_RULE_KEY_QUERY,                     /* query:     question mark to end of the url, or empty */
-    NUSTER_RULE_KEY_PARAM,                     /* param:     query key/value pair */
-    NUSTER_RULE_KEY_HEADER,                    /* header */
-    NUSTER_RULE_KEY_COOKIE,                    /* cookie */
-    NUSTER_RULE_KEY_BODY,                      /* body   */
+    /* method: GET, POST... */
+    NUSTER_RULE_KEY_METHOD = 1,
+
+    /* scheme: http, https */
+    NUSTER_RULE_KEY_SCHEME,
+
+    /* host: Host header */
+    NUSTER_RULE_KEY_HOST,
+
+    /* uri: first slash to end of the url */
+    NUSTER_RULE_KEY_URI,
+
+    /* path: first slach to question mark */
+    NUSTER_RULE_KEY_PATH,
+
+    /* delimiter: '?' or '' */
+    NUSTER_RULE_KEY_DELIMITER,
+
+    /*query: question mark to end of the url, or empty */
+    NUSTER_RULE_KEY_QUERY,
+
+    /* param: query key/value pair */
+    NUSTER_RULE_KEY_PARAM,
+
+    /* header */
+    NUSTER_RULE_KEY_HEADER,
+
+    /* cookie */
+    NUSTER_RULE_KEY_COOKIE,
+
+    /* body */
+    NUSTER_RULE_KEY_BODY,
 };
 
 struct nuster_rule_key {
@@ -91,10 +112,17 @@ enum {
 };
 
 enum {
-    NUSTER_DISK_OFF    = 0,              /* no disk persistence */
-    NUSTER_DISK_ONLY   = 1,              /* disk persistence only, do not cache in memory */
-    NUSTER_DISK_SYNC   = 2,              /* persist the response on disk before return to client */
-    NUSTER_DISK_ASYNC  = 3,              /* cache in memory first and persist on disk later */
+    /* no disk persistence */
+    NUSTER_DISK_OFF    = 0,
+
+    /* disk persistence only, do not cache in memory */
+    NUSTER_DISK_ONLY   = 1,
+
+    /* persist the response on disk before return to client */
+    NUSTER_DISK_SYNC   = 2,
+
+    /* cache in memory first and persist on disk later */
+    NUSTER_DISK_ASYNC  = 3,
 };
 
 struct nuster_rule {
@@ -104,7 +132,7 @@ struct nuster_rule {
     struct nuster_rule_key **key;        /* key */
     struct nuster_rule_code *code;       /* code */
     uint32_t                *ttl;        /* ttl: seconds, 0: not expire */
-    int                     *state;      /* on when start, can be turned off by manager API */
+    int                     *state;      /* enabled or disabled */
     int                      id;         /* same for identical names */
     int                      uuid;       /* unique cache-rule ID */
     int                      disk;       /* NUSTER_DISK_* */

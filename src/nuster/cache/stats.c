@@ -1,7 +1,7 @@
 /*
  * nuster cache stats functions.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,6 +30,7 @@ void nst_cache_stats_update_used_mem(int i) {
 void nst_cache_stats_update_request(int state) {
     nuster_shctx_lock(global.nuster.cache.stats);
     global.nuster.cache.stats->request.total++;
+
     switch(state) {
         case NST_CACHE_CTX_STATE_HIT:
             global.nuster.cache.stats->request.hit++;
@@ -43,14 +44,17 @@ void nst_cache_stats_update_request(int state) {
         default:
             break;
     }
+
     nuster_shctx_unlock(global.nuster.cache.stats);
 }
 
 int nst_cache_stats_full() {
     int i;
+
     nuster_shctx_lock(global.nuster.cache.stats);
     i =  global.nuster.cache.data_size <= global.nuster.cache.stats->used_mem;
     nuster_shctx_unlock(global.nuster.cache.stats);
+
     return i;
 }
 
@@ -70,6 +74,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     /* GET stats uri */
     if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg)) {
         s->target = &nuster.applet.cache_stats.obj_type;
+
         if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
             return 1;
         } else {
@@ -78,15 +83,20 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
             appctx->st1 = proxies_list->uuid;
             appctx->st2 = 0;
 
-            req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+            req->analysers &=
+                (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+
             req->analysers &= ~AN_REQ_FLT_XFER_DATA;
             req->analysers |= AN_REQ_HTTP_XFER_BODY;
         }
     }
+
     return 0;
 }
 
-int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_interface *si, struct channel *res) {
+int _nst_cache_stats_head(struct appctx *appctx, struct stream *s,
+        struct stream_interface *si, struct channel *res) {
+
     chunk_printf(&trash,
             "HTTP/1.1 200 OK\r\n"
             "Cache-Control: no-cache\r\n"
@@ -95,27 +105,48 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
             "\r\n");
 
     chunk_appendf(&trash, "**GLOBAL**\n");
-    chunk_appendf(&trash, "global.nuster.cache.data.size: %"PRIu64"\n", global.nuster.cache.data_size);
-    chunk_appendf(&trash, "global.nuster.cache.dict.size: %"PRIu64"\n", global.nuster.cache.dict_size);
-    chunk_appendf(&trash, "global.nuster.cache.uri: %s\n", global.nuster.cache.uri);
-    chunk_appendf(&trash, "global.nuster.cache.purge_method: %.*s\n", (int)strlen(global.nuster.cache.purge_method) - 1, global.nuster.cache.purge_method);
-    chunk_appendf(&trash, "global.nuster.cache.stats.used_mem: %"PRIu64"\n", global.nuster.cache.stats->used_mem);
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_total: %"PRIu64"\n", global.nuster.cache.stats->request.total);
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_hit: %"PRIu64"\n", global.nuster.cache.stats->request.hit);
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_fetch: %"PRIu64"\n", global.nuster.cache.stats->request.fetch);
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_abort: %"PRIu64"\n", global.nuster.cache.stats->request.abort);
+    chunk_appendf(&trash, "global.nuster.cache.data.size: %"PRIu64"\n",
+            global.nuster.cache.data_size);
+
+    chunk_appendf(&trash, "global.nuster.cache.dict.size: %"PRIu64"\n",
+            global.nuster.cache.dict_size);
+
+    chunk_appendf(&trash, "global.nuster.cache.uri: %s\n",
+            global.nuster.cache.uri);
+
+    chunk_appendf(&trash, "global.nuster.cache.purge_method: %.*s\n",
+            (int)strlen(global.nuster.cache.purge_method) - 1,
+            global.nuster.cache.purge_method);
+
+    chunk_appendf(&trash, "global.nuster.cache.stats.used_mem: %"PRIu64"\n",
+            global.nuster.cache.stats->used_mem);
+
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_total: %"PRIu64"\n",
+            global.nuster.cache.stats->request.total);
+
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_hit: %"PRIu64"\n",
+            global.nuster.cache.stats->request.hit);
+
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_fetch: %"PRIu64"\n",
+            global.nuster.cache.stats->request.fetch);
+
+    chunk_appendf(&trash, "global.nuster.cache.stats.req_abort: %"PRIu64"\n",
+            global.nuster.cache.stats->request.abort);
 
     s->txn->status = 200;
 
     if (ci_putchk(res, &trash) == -1) {
         si_rx_room_blk(si);
+
         return 0;
     }
 
     return 1;
 }
 
-int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream_interface *si, struct channel *res) {
+int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
+        struct stream_interface *si, struct channel *res) {
+
     struct proxy *p;
 
     p = proxies_list;
@@ -145,19 +176,24 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s, struct stream
                     if(rule->uuid == appctx->st2) {
 
                         if((struct nuster_rule *)(&p->nuster.rules)->n == rule) {
-                            chunk_printf(&trash, "\n**PROXY %s %d**\n", p->id, p->uuid);
-                            chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->name);
+                            chunk_printf(&trash, "\n**PROXY %s %d**\n",
+                                    p->id, p->uuid);
+                            chunk_appendf(&trash, "%s.rule.%s: ",
+                                    p->id, rule->name);
                         } else {
-                            chunk_printf(&trash, "%s.rule.%s: ", p->id, rule->name);
+                            chunk_printf(&trash, "%s.rule.%s: ",
+                                    p->id, rule->name);
                         }
 
                         chunk_appendf(&trash, "state=%s ttl=%"PRIu32"\n",
-                                *rule->state == NUSTER_RULE_ENABLED ? "on" : "off", *rule->ttl);
+                                *rule->state == NUSTER_RULE_ENABLED
+                                ? "on" : "off", *rule->ttl);
 
                         if (ci_putchk(res, &trash) == -1) {
                             si_rx_room_blk(si);
                             return 0;
                         }
+
                         appctx->st2++;
                     }
                 }
@@ -171,7 +207,6 @@ next:
         p = p->next;
     }
 
-
     return 1;
 }
 
@@ -181,15 +216,19 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
     struct stream *s            = si_strm(si);
 
     if(appctx->st0 == NST_CACHE_STATS_HEAD) {
+
         if(_nst_cache_stats_head(appctx, s, si, res)) {
             appctx->st0 = NST_CACHE_STATS_DATA;
         }
     }
+
     if(appctx->st0 == NST_CACHE_STATS_DATA) {
+
         if(_nst_cache_stats_data(appctx, s, si, res)) {
             appctx->st0 = NST_CACHE_STATS_DONE;
         }
     }
+
     if(appctx->st0 == NST_CACHE_STATS_DONE) {
         co_skip(si_oc(si), co_data(si_oc(si)));
         si_shutr(si);
@@ -199,19 +238,24 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 }
 
 int nst_cache_stats_init() {
-    global.nuster.cache.stats = nuster_memory_alloc(global.nuster.cache.memory, sizeof(struct nst_cache_stats));
+    global.nuster.cache.stats = nuster_memory_alloc(global.nuster.cache.memory,
+            sizeof(struct nst_cache_stats));
+
     if(!global.nuster.cache.stats) {
         return 0;
     }
+
     if(!nuster_shctx_init(global.nuster.cache.stats)) {
         return 0;
     }
+
     global.nuster.cache.stats->used_mem      = 0;
     global.nuster.cache.stats->request.total = 0;
     global.nuster.cache.stats->request.fetch = 0;
     global.nuster.cache.stats->request.hit   = 0;
     global.nuster.cache.stats->request.abort = 0;
     nuster.applet.cache_stats.fct            = nst_cache_stats_handler;
+
     return 1;
 }
 

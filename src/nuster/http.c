@@ -1,7 +1,7 @@
 /*
  * nuster http related functions.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -90,19 +90,26 @@ int nuster_req_find_param(char *query_beg, char *query_end,
     int name_len = strlen(name);
 
     while(ptr + name_len + 1 < query_end) {
+
         if(!memcmp(ptr, name, name_len) && *(ptr + name_len) == equal) {
+
             if(ptr == query_beg || *(ptr - 1) == and) {
                 ptr    = ptr + name_len + 1;
                 *value = ptr;
+
                 while(ptr < query_end && *ptr != and) {
                     (*value_len)++;
                     ptr++;
                 }
+
                 return 1;
             }
+
         }
+
         ptr++;
     }
+
     return 0;
 }
 

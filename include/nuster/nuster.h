@@ -2,7 +2,7 @@
  * include/nuster/nuster.h
  * This file defines everything related to nuster.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,14 +16,15 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
 #ifndef _NUSTER_H
 #define _NUSTER_H
 
 #define NUSTER_VERSION    "2.1.2.19"
-#define NUSTER_COPYRIGHT  "2017-2019, Jiang Wenyuan, <koubunen AT gmail DOT com >"
+#define NUSTER_COPYRIGHT                                                     \
+    "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
@@ -51,15 +52,19 @@ void nuster_init();
 /* parser */
 const char *nuster_parse_size(const char *text, uint64_t *ret);
 const char *nuster_parse_time(const char *text, int len, unsigned *ret);
-int nuster_parse_global_cache(const char *file, int linenum, char **args, int kwm);
-int nuster_parse_global_nosql(const char *file, int linenum, char **args, int kwm);
+int nuster_parse_global_cache(const char *file, int linenum, char **args,
+        int kwm);
+int nuster_parse_global_nosql(const char *file, int linenum, char **args,
+        int kwm);
 
 static inline void nuster_housekeeping() {
     nst_cache_housekeeping();
     nst_nosql_housekeeping();
 }
 
-static inline int nuster_check_applet (struct stream *s, struct channel *req, struct proxy *px) {
+static inline int nuster_check_applet (struct stream *s, struct channel *req,
+        struct proxy *px) {
+
     return (nst_nosql_check_applet(s, req, px) ||
             nst_cache_manager(s, req, px) ||
             nst_cache_stats(s, req, px));

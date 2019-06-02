@@ -1,7 +1,7 @@
 /*
  * nuster common functions.
  *
- * Copyright (C) [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+ * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -45,6 +45,7 @@ struct nuster nuster = {
 };
 
 void nuster_debug(const char *fmt, ...) {
+
     if((global.mode & MODE_DEBUG)) {
         va_list args;
         va_start(args, fmt);
@@ -69,6 +70,7 @@ void nuster_init() {
     /* init rule */
     i = uuid = 0;
     p = proxies_list;
+
     while(p) {
         struct nuster_rule *rule = NULL;
         uint32_t ttl;
@@ -77,9 +79,11 @@ void nuster_init() {
         list_for_each_entry(rule, &p->nuster.rules, list) {
             struct proxy *pt;
 
-            if(global.nuster.cache.status == NUSTER_STATUS_ON && p->nuster.mode == NUSTER_MODE_CACHE) {
+            if(global.nuster.cache.status == NUSTER_STATUS_ON
+                    && p->nuster.mode == NUSTER_MODE_CACHE) {
                 m = global.nuster.cache.memory;
-            } else if(global.nuster.nosql.status == NUSTER_STATUS_ON && p->nuster.mode == NUSTER_MODE_NOSQL) {
+            } else if(global.nuster.nosql.status == NUSTER_STATUS_ON
+                    && p->nuster.mode == NUSTER_MODE_NOSQL) {
                 m = global.nuster.nosql.memory;
             } else {
                 continue;
@@ -91,6 +95,7 @@ void nuster_init() {
             if(!rule->state) {
                 goto err;
             }
+
             *rule->state = NUSTER_RULE_ENABLED;
             ttl          = *rule->ttl;
             free(rule->ttl);
@@ -99,15 +104,18 @@ void nuster_init() {
             if(!rule->ttl) {
                 goto err;
             }
+
             *rule->ttl = ttl;
 
             pt = proxies_list;
+
             while(pt) {
                 struct nuster_rule *rt = NULL;
                 list_for_each_entry(rt, &pt->nuster.rules, list) {
                     if(rt == rule) goto out;
                     if(!strcmp(rt->name, rule->name)) {
-                        ha_alert("nuster rule with same name=[%s] found.\n", rule->name);
+                        ha_alert("nuster rule with same name=[%s] found.\n",
+                                rule->name);
                         rule->id = rt->id;
                         goto out;
                     }
@@ -139,11 +147,15 @@ int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
     }
 
     if(res) {
-        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_RES|SMP_OPT_FINAL);
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s,
+                SMP_OPT_DIR_RES|SMP_OPT_FINAL);
     } else {
-        ret = acl_exec_cond(rule->cond, s->be, s->sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
+        ret = acl_exec_cond(rule->cond, s->be, s->sess, s,
+                SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
     }
+
     ret = acl_pass(ret);
+
     if(rule->cond->pol == ACL_COND_UNLESS) {
         ret = !ret;
     }
@@ -151,6 +163,7 @@ int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
     if(ret) {
         return 1;
     }
+
     return 0;
 }
 
