@@ -217,18 +217,18 @@ int nst_cache_check_uri(struct http_msg *msg) {
     const char *uri = ci_head(msg->chn) + msg->sl.rq.u;
 
     if(!global.nuster.cache.uri) {
-        return 0;
+        return NUSTER_ERR;
     }
 
     if(strlen(global.nuster.cache.uri) != msg->sl.rq.u_l) {
-        return 0;
+        return NUSTER_ERR;
     }
 
     if(memcmp(uri, global.nuster.cache.uri, msg->sl.rq.u_l) != 0) {
-        return 0;
+        return NUSTER_ERR;
     }
 
-    return 1;
+    return NUSTER_OK;
 }
 
 /*

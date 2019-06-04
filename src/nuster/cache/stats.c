@@ -72,7 +72,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     }
 
     /* GET stats uri */
-    if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg)) {
+    if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg) == NUSTER_OK) {
         s->target = &nuster.applet.cache_stats.obj_type;
 
         if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
