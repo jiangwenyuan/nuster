@@ -153,37 +153,37 @@ static int _nst_key_expand(struct buffer *key) {
         key->area = p;
         key->size = key->size * 2;
 
-        return 0;
+        return NUSTER_OK;
     }
 
 err:
     nuster_memory_free(global.nuster.cache.memory, key->area);
     nuster_memory_free(global.nuster.cache.memory, key);
 
-    return 1;
+    return NUSTER_ERR;
 }
 
 static int _nst_key_advance(struct buffer *key, int step) {
 
     if(b_room(key) < step) {
 
-        if(_nst_key_expand(key)) {
-            return 1;
+        if(_nst_key_expand(key) != NUSTER_OK) {
+            return NUSTER_ERR;
         }
 
     }
 
     key->data += step;
 
-    return 0;
+    return NUSTER_OK;
 }
 
 static int _nst_key_append(struct buffer *key, char *str, int str_len) {
 
     if(b_room(key) < str_len + 1) {
 
-        if(_nst_key_expand(key)) {
-            return 1;
+        if(_nst_key_expand(key) != NUSTER_OK) {
+            return NUSTER_ERR;
         }
 
     }
@@ -191,7 +191,7 @@ static int _nst_key_append(struct buffer *key, char *str, int str_len) {
     memcpy(key->area + key->data, str, str_len);
     key->data += str_len + 1;
 
-    return 0;
+    return NUSTER_OK;
 }
 
 void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
@@ -607,7 +607,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
 
     ctx->key  = _nst_key_init();
     if(!ctx->key) {
-        return 1;
+        return NUSTER_ERR;
     }
 
     nuster_debug("[CACHE] Calculate key: ");
@@ -758,13 +758,13 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
             default:
                 break;
         }
-        if(err) {
-            return 1;
+        if(err != NUSTER_OK) {
+            return NUSTER_ERR;
         }
     }
 
     nuster_debug("\n");
-    return 0;
+    return NUSTER_OK;
 }
 
 struct buffer *nst_cache_build_purge_key(struct stream *s,
@@ -784,7 +784,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     }
 
     err = _nst_key_append(key, "GET", 3);
-    if(err) {
+    if(err != NUSTER_OK) {
         return NULL;
     }
 
@@ -797,14 +797,14 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
 
     err = _nst_key_append(key, https ? "HTTPS": "HTTP",
             strlen(https ? "HTTPS": "HTTP"));
-    if(err) {
+    if(err != NUSTER_OK) {
         return NULL;
     }
 
     ctx.idx  = 0;
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
         err = _nst_key_append(key, ctx.line + ctx.val, ctx.vlen);
-        if(err) {
+        if(err != NUSTER_OK) {
             return NULL;
         }
     }
@@ -814,7 +814,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     if(path_beg) {
         url_end = ci_head(msg->chn) + msg->sl.rq.u + msg->sl.rq.u_l;
         err     = _nst_key_append(key, path_beg, url_end - path_beg);
-        if(err) {
+        if(err != NUSTER_OK) {
             return NULL;
         }
     }

@@ -148,7 +148,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 }
 
                 /* build key */
-                if(nst_cache_build_key(ctx, rule->key, s, msg)) {
+                if(nst_cache_build_key(ctx, rule->key, s, msg) != NUSTER_OK) {
                     return 1;
                 }
 
