@@ -278,6 +278,8 @@ static int _nst_cache_filter_http_forward_data(struct stream *s,
 
     struct nst_cache_ctx *ctx = filter->ctx;
 
+    int ret = len;
+
     if(ctx->disk.state != 0) {
         ctx->disk.state = aio_error(&ctx->disk.cb);
         task_wakeup(s->task, TASK_WOKEN_MSG);
@@ -288,39 +290,22 @@ static int _nst_cache_filter_http_forward_data(struct stream *s,
             && (msg->chn->flags & CF_ISRESP)) {
 
         if(ctx->sov > 0) {
-
-            if(nst_cache_update(ctx, msg, ctx->sov) != NUSTER_OK) {
-                goto err;
-            }
-
-            if(len > ctx->sov) {
-                c_adv(msg->chn, ctx->sov);
-
-                if(nst_cache_update(ctx, msg, len - ctx->sov) != NUSTER_OK) {
-                    c_rew(msg->chn, ctx->sov);
-                    goto err;
-                }
-
-                c_rew(msg->chn, ctx->sov);
-            }
-
+            ret = ctx->sov;
             ctx->sov = 0;
-        } else {
+        }
 
-            if(nst_cache_update(ctx, msg, len) != NUSTER_OK) {
-                goto err;
-            }
-
+        if(nst_cache_update(ctx, msg, ret) != NUSTER_OK) {
+            goto err;
         }
     }
 
-    return len;
+    return ret;
 
 err:
     ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
     ctx->entry->data  = NULL;
     ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
-    return len;
+    return ret;
 }
 
 static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
