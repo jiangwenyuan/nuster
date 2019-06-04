@@ -32,18 +32,18 @@ static inline int _nuster_shctx_init(pthread_mutex_t *mutex) {
     pthread_mutexattr_t attr;
 
     if(pthread_mutexattr_init(&attr)) {
-        return 0;
+        return NUSTER_ERR;
     }
 
     if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED)) {
-        return 0;
+        return NUSTER_ERR;
     }
 
     if(pthread_mutex_init(mutex, &attr)) {
-        return 0;
+        return NUSTER_ERR;
     }
 
-    return 1;
+    return NUSTER_OK;
 }
 
 #define nuster_shctx_init(shctx)   _nuster_shctx_init(&(shctx)->mutex)
@@ -179,7 +179,7 @@ static inline void _shctx_unlock(unsigned int *waiters) {
 static inline int _nuster_shctx_init(unsigned int *waiters) {
     *waiters = 0;
 
-    return 1;
+    return NUSTER_OK;
 }
 #define nuster_shctx_init(shctx)   _nuster_shctx_init(&(shctx)->waiters)
 #define nuster_shctx_lock(shctx)   _shctx_lock(&(shctx)->waiters)

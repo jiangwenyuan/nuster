@@ -303,7 +303,7 @@ void nst_nosql_init() {
             goto shm_err;
         }
 
-        if(!nuster_shctx_init(global.nuster.nosql.memory)) {
+        if(nuster_shctx_init(global.nuster.nosql.memory) != NUSTER_OK) {
             goto shm_err;
         }
 
@@ -323,15 +323,15 @@ void nst_nosql_init() {
         nuster.nosql->rehash_idx    = -1;
         nuster.nosql->cleanup_idx   = 0;
 
-        if(!nuster_shctx_init(nuster.nosql)) {
+        if(nuster_shctx_init(nuster.nosql) != NUSTER_OK) {
             goto shm_err;
         }
 
-        if(!nst_nosql_dict_init()) {
+        if(nst_nosql_dict_init() != NUSTER_OK) {
             goto err;
         }
 
-        if(!nst_nosql_stats_init()) {
+        if(nst_nosql_stats_init() != NUSTER_OK) {
             goto err;
         }
 

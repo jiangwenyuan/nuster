@@ -427,7 +427,7 @@ void nst_cache_init() {
                 goto shm_err;
             }
 
-            if(!nuster_shctx_init(global.nuster.cache.memory)) {
+            if(nuster_shctx_init(global.nuster.cache.memory) != NUSTER_OK) {
                 goto shm_err;
             }
 
@@ -442,7 +442,7 @@ void nst_cache_init() {
                 goto shm_err;
             }
 
-            if(!nuster_shctx_init(global.nuster.cache.memory)) {
+            if(nuster_shctx_init(global.nuster.cache.memory) != NUSTER_OK) {
                 goto shm_err;
             }
 
@@ -474,15 +474,15 @@ void nst_cache_init() {
         nuster.cache->rehash_idx    = -1;
         nuster.cache->cleanup_idx   = 0;
 
-        if(!nuster_shctx_init(nuster.cache)) {
+        if(nuster_shctx_init(nuster.cache) != NUSTER_OK) {
             goto shm_err;
         }
 
-        if(!nst_cache_dict_init()) {
+        if(nst_cache_dict_init() != NUSTER_OK) {
             goto err;
         }
 
-        if(!nst_cache_stats_init()) {
+        if(nst_cache_stats_init() !=NUSTER_OK) {
             goto err;
         }
 
