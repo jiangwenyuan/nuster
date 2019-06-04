@@ -530,7 +530,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
             nst_cache_memory_alloc(global.nuster.cache.pool.chunk, hdr.vlen);
 
         if(!ctx->req.host.data) {
-            return 0;
+            return NUSTER_ERR;
         }
 
         ctx->req.host.len  = hdr.vlen;
@@ -561,7 +561,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
                 global.nuster.cache.pool.chunk, ctx->req.path.len + 1);
 
         if(!ctx->req.path.data) {
-            return 0;
+            return NUSTER_ERR;
         }
 
         memcpy(ctx->req.path.data, uri_begin, ctx->req.path.len);
@@ -594,7 +594,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         ctx->req.cookie.len  = hdr.vlen;
     }
 
-    return 1;
+    return NUSTER_OK;
 }
 
 int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
