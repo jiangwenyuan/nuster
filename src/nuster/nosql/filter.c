@@ -164,7 +164,9 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             } else if(s->txn->meth == HTTP_METH_POST) {
                 nuster_debug("[NOSQL] Checking if rule pass: ");
 
-                if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP)) {
+                if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
+                        NUSTER_OK) {
+
                     nuster_debug("PASS\n");
 
                     if(nst_nosql_get_headers(ctx, s, msg)) {
