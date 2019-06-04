@@ -143,7 +143,7 @@ int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
 
     /* no acl defined */
     if(!rule->cond) {
-        return 1;
+        return NUSTER_OK;
     }
 
     if(res) {
@@ -161,9 +161,9 @@ int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
     }
 
     if(ret) {
-        return 1;
+        return NUSTER_OK;
     }
 
-    return 0;
+    return NUSTER_ERR;
 }
 
