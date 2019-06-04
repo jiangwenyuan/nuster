@@ -135,7 +135,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
         /* request */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
 
-            if(!nst_cache_prebuild_key(ctx, s, msg)) {
+            if(nst_cache_prebuild_key(ctx, s, msg) != NUSTER_OK) {
                 return 1;
             }
 
