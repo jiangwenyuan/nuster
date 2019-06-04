@@ -102,7 +102,7 @@ int nuster_req_find_param(char *query_beg, char *query_end,
                     ptr++;
                 }
 
-                return 1;
+                return NUSTER_OK;
             }
 
         }
@@ -110,6 +110,6 @@ int nuster_req_find_param(char *query_beg, char *query_end,
         ptr++;
     }
 
-    return 0;
+    return NUSTER_ERR;
 }
 

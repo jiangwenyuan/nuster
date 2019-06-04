@@ -633,7 +633,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
 
                     if(nuster_req_find_param(ctx->req.query.data,
                                 ctx->req.query.data + ctx->req.query.len,
-                                ck->data, &v, &v_l)) {
+                                ck->data, &v, &v_l) == NUSTER_OK) {
 
                         key = _nst_nosql_key_append(key, &key_len, &key_size,
                                 v, v_l);

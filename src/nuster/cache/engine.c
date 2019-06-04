@@ -695,7 +695,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                     int v_l = 0;
                     if(nuster_req_find_param(ctx->req.query.data,
                                 ctx->req.query.data + ctx->req.query.len,
-                                ck->data, &v, &v_l)) {
+                                ck->data, &v, &v_l) == NUSTER_OK) {
 
                         err = _nst_key_append(ctx->key, v, v_l);
                         break;
