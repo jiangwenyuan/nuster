@@ -194,15 +194,6 @@ static int _nst_key_append(struct buffer *key, char *str, int str_len) {
     return NUSTER_OK;
 }
 
-void nst_cache_memory_free(struct pool_head *pool, void *p) {
-
-    if(global.nuster.cache.share) {
-        return nuster_memory_free(global.nuster.cache.memory, p);
-    } else {
-        return pool_free(pool, p);
-    }
-}
-
 int nst_cache_check_uri(struct http_msg *msg) {
     const char *uri = ci_head(msg->chn) + msg->sl.rq.u;
 
@@ -277,7 +268,7 @@ static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg,
                 msg_len);
 
         if(!msg_data) {
-            nst_cache_memory_free(global.nuster.cache.pool.element, element);
+            nuster_memory_free(global.nuster.cache.memory, element);
             return NULL;
         }
 
@@ -352,14 +343,13 @@ static void _nst_cache_data_cleanup() {
 
             if(tmp->msg.data) {
                 nst_cache_stats_update_used_mem(-tmp->msg.len);
-                nst_cache_memory_free(global.nuster.cache.pool.chunk,
-                        tmp->msg.data);
+                nuster_memory_free(global.nuster.cache.memory, tmp->msg.data);
             }
 
-            nst_cache_memory_free(global.nuster.cache.pool.element, tmp);
+            nuster_memory_free(global.nuster.cache.memory, tmp);
         }
 
-        nst_cache_memory_free(global.nuster.cache.pool.data, data);
+        nuster_memory_free(global.nuster.cache.memory, data);
     }
 }
 
