@@ -19,6 +19,7 @@
 #include <proto/proto_http.h>
 #include <proto/stream_interface.h>
 
+#include <nuster/memory.h>
 #include <nuster/cache.h>
 #include <nuster/nuster.h>
 
