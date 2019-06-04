@@ -194,16 +194,6 @@ static int _nst_key_append(struct buffer *key, char *str, int str_len) {
     return NUSTER_OK;
 }
 
-void *nst_cache_memory_alloc(struct pool_head *pool, int size) {
-
-    if(global.nuster.cache.share) {
-        return nuster_memory_alloc(global.nuster.cache.memory, size);
-    } else {
-        return pool_alloc(pool);
-    }
-
-}
-
 void nst_cache_memory_free(struct pool_head *pool, void *p) {
 
     if(global.nuster.cache.share) {
@@ -237,7 +227,7 @@ int nst_cache_check_uri(struct http_msg *msg) {
 struct nst_cache_data *nst_cache_data_new() {
 
     struct nst_cache_data *data =
-        nst_cache_memory_alloc(global.nuster.cache.pool.data, sizeof(*data));
+        nuster_memory_alloc(global.nuster.cache.memory, sizeof(*data));
 
     nuster_shctx_lock(nuster.cache);
 
@@ -275,15 +265,15 @@ struct nst_cache_data *nst_cache_data_new() {
 static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg,
         long msg_len) {
 
-    struct nst_cache_element *element = nst_cache_memory_alloc(
-            global.nuster.cache.pool.element, sizeof(*element));
+    struct nst_cache_element *element =
+        nuster_memory_alloc(global.nuster.cache.memory, sizeof(*element));
 
     if(element) {
         char *data = b_orig(&msg->chn->buf);
         char *p    = ci_head(msg->chn);
         int size   = msg->chn->buf.size;
 
-        char *msg_data = nst_cache_memory_alloc(global.nuster.cache.pool.chunk,
+        char *msg_data = nuster_memory_alloc(global.nuster.cache.memory,
                 msg_len);
 
         if(!msg_data) {
@@ -526,8 +516,8 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     hdr.idx            = 0;
 
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data =
-            nst_cache_memory_alloc(global.nuster.cache.pool.chunk, hdr.vlen);
+        ctx->req.host.data = nuster_memory_alloc(global.nuster.cache.memory,
+                hdr.vlen);
 
         if(!ctx->req.host.data) {
             return NUSTER_ERR;
@@ -557,8 +547,8 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         ctx->req.uri.len  = uri_end - uri_begin;
 
         /* extra 1 char as required by regex_exec_match2 */
-        ctx->req.path.data = nst_cache_memory_alloc(
-                global.nuster.cache.pool.chunk, ctx->req.path.len + 1);
+        ctx->req.path.data = nuster_memory_alloc(global.nuster.cache.memory,
+                ctx->req.path.len + 1);
 
         if(!ctx->req.path.data) {
             return NUSTER_ERR;
