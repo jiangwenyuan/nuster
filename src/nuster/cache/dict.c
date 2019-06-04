@@ -257,8 +257,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     dict = _nst_cache_dict_rehashing()
         ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
 
-    entry = nst_cache_memory_alloc(global.nuster.cache.pool.entry,
-            sizeof(*entry));
+    entry = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*entry));
 
     if(!entry) {
         return NULL;
