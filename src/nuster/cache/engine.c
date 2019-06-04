@@ -613,19 +613,19 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
     nuster_debug("[CACHE] Calculate key: ");
 
     while((ck = *pck++)) {
-        int err;
+        int ret;
 
         switch(ck->type) {
             case NUSTER_RULE_KEY_METHOD:
                 nuster_debug("method.");
-                err = _nst_key_append(ctx->key,
+                ret = _nst_key_append(ctx->key,
                         http_known_methods[txn->meth].ptr,
                         http_known_methods[txn->meth].len);
 
                 break;
             case NUSTER_RULE_KEY_SCHEME:
                 nuster_debug("scheme.");
-                err = _nst_key_append(ctx->key,
+                ret = _nst_key_append(ctx->key,
                         ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
                         ctx->req.scheme == SCH_HTTPS ? 5 : 4);
 
@@ -634,10 +634,10 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                 nuster_debug("host.");
 
                 if(ctx->req.host.data) {
-                    err = _nst_key_append(ctx->key, ctx->req.host.data,
+                    ret = _nst_key_append(ctx->key, ctx->req.host.data,
                             ctx->req.host.len);
                 } else {
-                    err = _nst_key_advance(ctx->key, 2);
+                    ret = _nst_key_advance(ctx->key, 2);
                 }
 
                 break;
@@ -645,11 +645,11 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                 nuster_debug("uri.");
 
                 if(ctx->req.uri.data) {
-                    err = _nst_key_append(ctx->key, ctx->req.uri.data,
+                    ret = _nst_key_append(ctx->key, ctx->req.uri.data,
                             ctx->req.uri.len);
 
                 } else {
-                    err = _nst_key_advance(ctx->key, 2);
+                    ret = _nst_key_advance(ctx->key, 2);
                 }
 
                 break;
@@ -657,11 +657,11 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                 nuster_debug("path.");
 
                 if(ctx->req.path.data) {
-                    err = _nst_key_append(ctx->key, ctx->req.path.data,
+                    ret = _nst_key_append(ctx->key, ctx->req.path.data,
                             ctx->req.path.len);
 
                 } else {
-                    err = _nst_key_advance(ctx->key, 2);
+                    ret = _nst_key_advance(ctx->key, 2);
                 }
 
                 break;
@@ -669,9 +669,9 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                 nuster_debug("delimiter.");
 
                 if(ctx->req.delimiter) {
-                    err = _nst_key_append(ctx->key, "?", 1);
+                    ret = _nst_key_append(ctx->key, "?", 1);
                 } else {
-                    err = _nst_key_advance(ctx->key, 2);
+                    ret = _nst_key_advance(ctx->key, 2);
                 }
 
                 break;
@@ -679,11 +679,11 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                 nuster_debug("query.");
 
                 if(ctx->req.query.data && ctx->req.query.len) {
-                    err = _nst_key_append(ctx->key, ctx->req.query.data,
+                    ret = _nst_key_append(ctx->key, ctx->req.query.data,
                             ctx->req.query.len);
 
                 } else {
-                    err = _nst_key_advance(ctx->key, 2);
+                    ret = _nst_key_advance(ctx->key, 2);
                 }
 
                 break;
@@ -697,13 +697,13 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                                 ctx->req.query.data + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NUSTER_OK) {
 
-                        err = _nst_key_append(ctx->key, v, v_l);
+                        ret = _nst_key_append(ctx->key, v, v_l);
                         break;
                     }
 
                 }
 
-                err = _nst_key_advance(ctx->key, 2);
+                ret = _nst_key_advance(ctx->key, 2);
                 break;
             case NUSTER_RULE_KEY_HEADER:
                 hdr.idx = 0;
@@ -712,12 +712,14 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                 while (http_find_header2(ck->data, strlen(ck->data),
                             ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
 
-                    err = _nst_key_append(ctx->key, hdr.line + hdr.val,
+                    ret = _nst_key_append(ctx->key, hdr.line + hdr.val,
                             hdr.vlen);
 
                 }
 
-                err = !err && _nst_key_advance(ctx->key, hdr.idx == 0 ? 2 : 1);
+                ret = ret == NUSTER_OK && _nst_key_advance(ctx->key,
+                        hdr.idx == 0 ? 2 : 1);
+
                 break;
             case NUSTER_RULE_KEY_COOKIE:
                 nuster_debug("cookie_%s.", ck->data);
@@ -730,13 +732,13 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                                 ctx->req.cookie.data + ctx->req.cookie.len,
                                 ck->data, strlen(ck->data), 1, &v, &v_l)) {
 
-                        err = _nst_key_append(ctx->key, v, v_l);
+                        ret = _nst_key_append(ctx->key, v, v_l);
                         break;
                     }
 
                 }
 
-                err = _nst_key_advance(ctx->key, 2);
+                ret = _nst_key_advance(ctx->key, 2);
                 break;
             case NUSTER_RULE_KEY_BODY:
                 nuster_debug("body.");
@@ -746,19 +748,19 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
                     if((s->be->options & PR_O_WREQ_BODY)
                             && ci_data(msg->chn) - msg->sov > 0) {
 
-                        err = _nst_key_append(ctx->key,
+                        ret = _nst_key_append(ctx->key,
                                 ci_head(msg->chn) + msg->sov,
                                 ci_data(msg->chn) - msg->sov);
 
                     } else {
-                        err = _nst_key_advance(ctx->key, 2);
+                        ret = _nst_key_advance(ctx->key, 2);
                     }
                 }
                 break;
             default:
                 break;
         }
-        if(err != NUSTER_OK) {
+        if(ret != NUSTER_OK) {
             return NUSTER_ERR;
         }
     }
@@ -774,7 +776,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     int https;
     char *path_beg, *url_end;
     struct hdr_ctx ctx;
-    int err;
+    int ret;
     struct buffer *key;
 
     /* method.scheme.host.uri */
@@ -783,8 +785,8 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
         return NULL;
     }
 
-    err = _nst_key_append(key, "GET", 3);
-    if(err != NUSTER_OK) {
+    ret = _nst_key_append(key, "GET", 3);
+    if(ret != NUSTER_OK) {
         return NULL;
     }
 
@@ -795,16 +797,16 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     }
 #endif
 
-    err = _nst_key_append(key, https ? "HTTPS": "HTTP",
+    ret = _nst_key_append(key, https ? "HTTPS": "HTTP",
             strlen(https ? "HTTPS": "HTTP"));
-    if(err != NUSTER_OK) {
+    if(ret != NUSTER_OK) {
         return NULL;
     }
 
     ctx.idx  = 0;
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
-        err = _nst_key_append(key, ctx.line + ctx.val, ctx.vlen);
-        if(err != NUSTER_OK) {
+        ret = _nst_key_append(key, ctx.line + ctx.val, ctx.vlen);
+        if(ret != NUSTER_OK) {
             return NULL;
         }
     }
@@ -813,8 +815,8 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     url_end  = NULL;
     if(path_beg) {
         url_end = ci_head(msg->chn) + msg->sl.rq.u + msg->sl.rq.u_l;
-        err     = _nst_key_append(key, path_beg, url_end - path_beg);
-        if(err != NUSTER_OK) {
+        ret     = _nst_key_append(key, path_beg, url_end - path_beg);
+        if(ret != NUSTER_OK) {
             return NULL;
         }
     }
