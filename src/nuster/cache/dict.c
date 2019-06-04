@@ -34,17 +34,17 @@ static int _nst_cache_dict_resize(uint64_t size) {
         if(!nuster.cache->dict[0].entry) {
             nuster.cache->dict[0] = dict;
 
-            return 1;
+            return NUSTER_OK;
         } else {
             nuster.cache->dict[1] = dict;
             nuster.cache->rehash_idx = 0;
 
-            return 1;
+            return NUSTER_OK;
         }
 
     }
 
-    return 0;
+    return NUSTER_ERR;
 }
 
 static int _nst_cache_dict_alloc(uint64_t size) {
@@ -56,7 +56,7 @@ static int _nst_cache_dict_alloc(uint64_t size) {
             global.nuster.cache.memory, global.nuster.cache.memory->block_size);
 
     if(!nuster.cache->dict[0].entry) {
-        return 0;
+        return NUSTER_ERR;
     }
 
     for(i = 1; i < size / global.nuster.cache.memory->block_size; i++) {
@@ -64,7 +64,7 @@ static int _nst_cache_dict_alloc(uint64_t size) {
         if(!nuster_memory_alloc(global.nuster.cache.memory,
                     global.nuster.cache.memory->block_size)) {
 
-            return 0;
+            return NUSTER_ERR;
         }
 
     }

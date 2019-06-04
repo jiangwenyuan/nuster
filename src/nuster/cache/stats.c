@@ -242,11 +242,11 @@ int nst_cache_stats_init() {
             sizeof(struct nst_cache_stats));
 
     if(!global.nuster.cache.stats) {
-        return 0;
+        return NUSTER_ERR;
     }
 
-    if(!nuster_shctx_init(global.nuster.cache.stats)) {
-        return 0;
+    if(nuster_shctx_init(global.nuster.cache.stats) != NUSTER_OK) {
+        return NUSTER_ERR;
     }
 
     global.nuster.cache.stats->used_mem      = 0;
@@ -256,6 +256,6 @@ int nst_cache_stats_init() {
     global.nuster.cache.stats->request.abort = 0;
     nuster.applet.cache_stats.fct            = nst_cache_stats_handler;
 
-    return 1;
+    return NUSTER_OK;
 }
 
