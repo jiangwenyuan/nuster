@@ -969,11 +969,11 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         ctx->disk.offset       += element->msg.len;
         ctx->disk.state         = 1;
 
-        return 1;
+        return NUSTER_OK;
     } else {
         ctx->full = 1;
 
-        return 0;
+        return NUSTER_ERR;
     }
 }
 

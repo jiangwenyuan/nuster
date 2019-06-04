@@ -292,14 +292,14 @@ static int _nst_cache_filter_http_forward_data(struct stream *s,
 
         if(ctx->sov > 0) {
 
-            if(!nst_cache_update(ctx, msg, ctx->sov)) {
+            if(nst_cache_update(ctx, msg, ctx->sov) != NUSTER_OK) {
                 goto err;
             }
 
             if(len > ctx->sov) {
                 c_adv(msg->chn, ctx->sov);
 
-                if(!nst_cache_update(ctx, msg, len - ctx->sov)) {
+                if(nst_cache_update(ctx, msg, len - ctx->sov) != NUSTER_OK) {
                     c_rew(msg->chn, ctx->sov);
                     goto err;
                 }
@@ -310,7 +310,7 @@ static int _nst_cache_filter_http_forward_data(struct stream *s,
             ctx->sov = 0;
         } else {
 
-            if(!nst_cache_update(ctx, msg, len)) {
+            if(nst_cache_update(ctx, msg, len) != NUSTER_OK) {
                 goto err;
             }
 
