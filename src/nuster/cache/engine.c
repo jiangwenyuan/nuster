@@ -910,7 +910,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             ctx->hash;
 
         *(uint64_t *)(ctx->disk.meta
-                + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) = ctx->sov;
+                + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) = ctx->header_length;
 
         *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_KEY_LENGTH) =
             ctx->entry->key->data;

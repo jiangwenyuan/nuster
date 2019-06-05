@@ -136,8 +136,8 @@ struct nst_cache_ctx {
     } req;
 
     int                       pid;              /* proxy uuid */
-    int                       sov;
     int                       full;             /* memory full */
+    int                       header_length;
     uint64_t                  cache_length;
 
     struct {
