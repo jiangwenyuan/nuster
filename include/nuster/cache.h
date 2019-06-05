@@ -134,12 +134,14 @@ struct nst_cache_ctx {
         struct nuster_str     query;
         struct nuster_str     cookie;
     } req;
-    int                       pid;         /* proxy uuid */
+
+    int                       pid;              /* proxy uuid */
     int                       sov;
-    int                       full;        /* memory full */
+    int                       full;             /* memory full */
+    uint64_t                  cache_length;
 
     struct {
-        char                 *file;        /* cache file */
+        char                 *file;             /* cache file */
         int                   fd;
         int                   offset;
         int                   state;

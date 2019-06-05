@@ -948,7 +948,8 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
             pwrite(ctx->disk.fd, element->msg.data, element->msg.len,
                     ctx->disk.offset);
 
-            ctx->disk.offset += element->msg.len;
+            ctx->cache_length += element->msg.len;
+            ctx->disk.offset  += element->msg.len;
         }
 
         return NUSTER_OK;
@@ -975,7 +976,8 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
         ctx->entry->expire;
 
-    *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) = 0;
+    *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) =
+        ctx->cache_length;
 
     if(ctx->rule->disk) {
         pwrite(ctx->disk.fd, ctx->disk.meta, 40, 0);
