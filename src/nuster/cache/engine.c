@@ -980,7 +980,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         ctx->cache_length;
 
     if(ctx->rule->disk) {
-        pwrite(ctx->disk.fd, ctx->disk.meta, 40, 0);
+        pwrite(ctx->disk.fd, ctx->disk.meta, 48, 0);
     }
 }
 
