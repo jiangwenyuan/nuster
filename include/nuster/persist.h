@@ -31,22 +31,23 @@
    0            6               NUSTER
    6            1               Mode: NUSTER_DISK_*, 1, 2, 3
    7            1               Version: 1
-   24           8               hash
-   8            8               expire time
-   16           8               cache length
-   16           8               header length
-   32           8               key length
-   36           A               key
-   36+A         B               cache
+   8 * 1        8               hash
+   8 * 2        8               expire time
+   8 * 3        8               cache length
+   8 * 4        8               header length
+   8 * 5        8               key length
+   8 * 6        key_len         key
+   48 + key_len cache_len       cache
  */
 
-#define NUSTER_PERSIST_META_VERSION             1
-#define NUSTER_PERSIST_META_INDEX_HASH          8
-#define NUSTER_PERSIST_META_INDEX_EXPIRE        16
-#define NUSTER_PERSIST_META_INDEX_CACHE_LENGTH  24
-#define NUSTER_PERSIST_META_INDEX_HEADER_LENGTH 32
-#define NUSTER_PERSIST_META_INDEX_KEY_LENGTH    40
-#define NUSTER_PERSIST_META_INDEX_KEY           48
+#define NUSTER_PERSIST_VERSION                  1
+
+#define NUSTER_PERSIST_META_INDEX_HASH          8 * 1
+#define NUSTER_PERSIST_META_INDEX_EXPIRE        8 * 2
+#define NUSTER_PERSIST_META_INDEX_CACHE_LENGTH  8 * 3
+#define NUSTER_PERSIST_META_INDEX_HEADER_LENGTH 8 * 4
+#define NUSTER_PERSIST_META_INDEX_KEY_LENGTH    8 * 5
+#define NUSTER_PERSIST_META_INDEX_KEY           8 * 6
 
 int nuster_persist_create(char*);
 

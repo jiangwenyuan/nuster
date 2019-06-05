@@ -903,22 +903,26 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         ctx->disk.fd = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
 
-        sprintf(ctx->disk.meta,
-                "NUSTER%c%c%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64"%"PRIu64,
-                (char)ctx->rule->disk, (char)NUSTER_PERSIST_META_VERSION,
-                (uint64_t)0, (uint64_t)0, (uint64_t)ctx->sov,
-                (uint64_t)ctx->entry->key->data, ctx->hash);
+        memcpy(ctx->disk.meta, "NUSTER", 6);
+        ctx->disk.meta[6] = (char)ctx->rule->disk;
+        ctx->disk.meta[7] = (char)NUSTER_PERSIST_VERSION;
+        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_HASH) =
+            ctx->hash;
+
+        *(uint64_t *)(ctx->disk.meta
+                + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) = ctx->sov;
+
+        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_KEY_LENGTH) =
+            ctx->entry->key->data;
 
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
-        memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
-        ctx->disk.cb.aio_buf    = ctx->entry->key->area;
-        ctx->disk.cb.aio_offset = ctx->disk.offset;
-        ctx->disk.cb.aio_nbytes = ctx->entry->key->data;
-        ctx->disk.cb.aio_fildes = ctx->disk.fd;
-        aio_write(&ctx->disk.cb);
-        ctx->disk.offset       += ctx->entry->key->data;
-        ctx->disk.state         = 1;
+        ctx->disk.state  = 0;
+
+        pwrite(ctx->disk.fd, ctx->entry->key->area, ctx->entry->key->data,
+                ctx->disk.offset);
+
+        ctx->disk.offset += ctx->entry->key->data;
     }
 }
 
@@ -940,14 +944,12 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
         ctx->element = element;
 
-        memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
-        ctx->disk.cb.aio_buf    = element->msg.data;
-        ctx->disk.cb.aio_offset = ctx->disk.offset;
-        ctx->disk.cb.aio_nbytes = element->msg.len;
-        ctx->disk.cb.aio_fildes = ctx->disk.fd;
-        aio_write(&ctx->disk.cb);
-        ctx->disk.offset       += element->msg.len;
-        ctx->disk.state         = 1;
+        if(ctx->state == NST_CACHE_CTX_STATE_CREATE && ctx->rule->disk) {
+            pwrite(ctx->disk.fd, element->msg.data, element->msg.len,
+                    ctx->disk.offset);
+
+            ctx->disk.offset += element->msg.len;
+        }
 
         return NUSTER_OK;
     } else {
@@ -970,22 +972,14 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
     }
 
-    memcpy(ctx->disk.meta, "NUSTER", 6);
-    memcpy(ctx->disk.meta, (char*)&ctx->rule->disk, 1);
-    memcpy(ctx->disk.meta, (char*)&ctx->rule->disk, 1);
-
     *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
         ctx->entry->expire;
 
     *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) = 0;
 
-    memset(&ctx->disk.cb, 0, sizeof(struct aiocb));
-    ctx->disk.cb.aio_buf    = ctx->disk.meta;
-    ctx->disk.cb.aio_offset = 0;
-    ctx->disk.cb.aio_nbytes = 40;
-    ctx->disk.cb.aio_fildes = ctx->disk.fd;
-    aio_write(&ctx->disk.cb);
-    ctx->disk.state         = 1;
+    if(ctx->rule->disk) {
+        pwrite(ctx->disk.fd, ctx->disk.meta, 40, 0);
+    }
 }
 
 void nst_cache_abort(struct nst_cache_ctx *ctx) {
