@@ -33,7 +33,7 @@ THREAD_LOCAL uint64_t prev_cpu_time = 0;     /* previous per thread CPU time */
 THREAD_LOCAL uint64_t prev_mono_time = 0;    /* previous system wide monotonic time */
 
 static THREAD_LOCAL struct timeval tv_offset;  /* per-thread time ofsset relative to global time */
-volatile unsigned long long global_now;        /* common date between all threads (32:32) */
+static volatile unsigned long long global_now; /* common date between all threads (32:32) */
 
 /*
  * adds <ms> ms to <from>, set the result to <tv> and returns a pointer <tv>
@@ -189,8 +189,11 @@ REGPRM2 void tv_update_date(int max_wait, int interrupted)
 		after_poll = date;
 		samp_time = idle_time = 0;
 		idle_pct = 100;
-		global_now = (((unsigned long long)adjusted.tv_sec) << 32) +
-		             (unsigned int)adjusted.tv_usec;
+		old_now = global_now;
+		if (!old_now) { // never set
+			new_now = (((unsigned long long)adjusted.tv_sec) << 32) + (unsigned int)adjusted.tv_usec;
+			HA_ATOMIC_CAS(&global_now, &old_now, new_now);
+		}
 		goto to_ms;
 	}
 
