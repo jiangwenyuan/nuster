@@ -296,6 +296,10 @@ static int _nst_cache_filter_http_forward_data(struct stream *s,
 
     int ret = len;
 
+    if(len <= 0) {
+        return 0;
+    }
+
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
             && (msg->chn->flags & CF_ISRESP)) {
 
