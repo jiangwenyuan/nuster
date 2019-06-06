@@ -91,7 +91,6 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
  * The cache disk applet acts like the backend to send cached http data
  */
 static void nst_cache_disk_engine_handler(struct appctx *appctx) {
-    struct nst_cache_element *element = NULL;
     struct stream_interface *si       = appctx->owner;
     struct channel *res               = si_ic(si);
     /* struct stream *s                  = si_strm(si); */
@@ -104,7 +103,6 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
 
     char buf[16*1024] = {0};
 
-    nuster_debug("XXXX");
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         return;
     }
