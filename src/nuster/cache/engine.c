@@ -142,6 +142,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 appctx->st0 = -1;
             }
             if(read_ret == 0) {
+                close(fd);
                 appctx->st0 = 0;
                 break;
             }
@@ -165,6 +166,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             appctx->st0 = -1;
             si_shutr(si);
             res->flags |= CF_READ_NULL;
+            close(fd);
             break;
     }
 
@@ -968,6 +970,7 @@ int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
                 ctx->disk.fd = fd;
                 memcpy(ctx->disk.meta, buf, 48);
 
+                closedir(dir);
                 return NUSTER_OK;
             }
 
