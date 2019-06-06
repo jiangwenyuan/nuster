@@ -41,6 +41,7 @@ struct nuster {
         struct applet cache_manager;
         struct applet cache_stats;
         struct applet nosql_engine;
+        struct applet cache_disk_engine;
     } applet;
 };
 

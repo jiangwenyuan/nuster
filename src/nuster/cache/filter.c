@@ -172,6 +172,16 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     break;
                 }
 
+                /* check if cache exists on disk */
+                if(ctx->state != NST_CACHE_CTX_STATE_HIT) {
+                    if(nst_cache_exists_disk(ctx, ctx->key, ctx->hash) ==
+                            NUSTER_OK) {
+
+                        ctx->state = NST_CACHE_CTX_STATE_HIT_DISK;
+                        break;
+                    }
+                }
+
                 nuster_debug("NOT EXIST\n");
                 /* no, there's no cache yet */
 
@@ -193,6 +203,10 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
         if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
             nst_cache_hit(s, si, req, res, ctx->data);
+        }
+
+        if(ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
+            nst_cache_hit_disk(s, si, req, res, ctx);
         }
 
     } else {

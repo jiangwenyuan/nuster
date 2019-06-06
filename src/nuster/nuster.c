@@ -41,6 +41,10 @@ struct nuster nuster = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.NOSQL.ENGINE>",
         },
+        .cache_disk_engine = {
+            .obj_type = OBJ_TYPE_APPLET,
+            .name     = "<NUSTER.CACHE.ENGINE2>",
+        },
     },
 };
 

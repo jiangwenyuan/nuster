@@ -90,6 +90,11 @@ struct appctx {
 				struct nst_nosql_data    *data;
 				struct nst_nosql_element *element;
 			} nosql_engine;
+			struct {
+				int fd;
+				int header_length;
+				uint64_t offset;
+			} cache_disk_engine;
 		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */
