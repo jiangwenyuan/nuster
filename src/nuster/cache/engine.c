@@ -10,6 +10,7 @@
  *
  */
 
+#include <dirent.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
 #include <proto/raw_sock.h>
@@ -82,6 +83,89 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
         si_shutr(si);
         res->flags |= CF_READ_NULL;
         appctx->ctx.nuster.cache_engine.data->clients--;
+    }
+
+}
+
+/*
+ * The cache disk applet acts like the backend to send cached http data
+ */
+static void nst_cache_disk_engine_handler(struct appctx *appctx) {
+    struct nst_cache_element *element = NULL;
+    struct stream_interface *si       = appctx->owner;
+    struct channel *res               = si_ic(si);
+    /* struct stream *s                  = si_strm(si); */
+    int ret;
+    int read_ret;
+
+    int fd = appctx->ctx.nuster.cache_disk_engine.fd;
+    int header_length = appctx->ctx.nuster.cache_disk_engine.header_length;
+    uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
+
+    char buf[16*1024] = {0};
+
+    nuster_debug("XXXX");
+    if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
+        return;
+    }
+
+    /* Check if the input buffer is avalaible. */
+    if(res->buf.size == 0) {
+        si_rx_room_blk(si);
+        return;
+    }
+
+    /* check that the output is not closed */
+    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
+    }
+
+    switch(appctx->st0) {
+        case 1:
+            if((read_ret = pread(fd, buf, header_length, offset)) == -1) {
+                printf("Error read: %s\n",strerror(errno));
+                appctx->st0 = -1;
+            }
+            ret = ci_putblk(res, buf, read_ret);
+
+            if(ret >= 0) {
+                appctx->st0 = 2;
+                appctx->ctx.nuster.cache_disk_engine.offset += read_ret;
+            } else if(ret == -2) {
+                appctx->st0 = -1;
+                si_shutr(si);
+                res->flags |= CF_READ_NULL;
+            }
+            break;
+        case 2:
+            if((read_ret = pread(fd, buf, b_room(&res->buf), offset)) == -1) {
+                printf("Error read: %s\n",strerror(errno));
+                appctx->st0 = -1;
+            }
+            if(read_ret == 0) {
+                appctx->st0 = 0;
+                break;
+            }
+            ret = ci_putblk(res, buf, read_ret);
+
+            if(ret >= 0) {
+                appctx->st0 = 2;
+                appctx->ctx.nuster.cache_disk_engine.offset += read_ret;
+            } else if(ret == -2) {
+                appctx->st0 = -1;
+                si_shutr(si);
+                res->flags |= CF_READ_NULL;
+            }
+            break;
+        case 0:
+            co_skip(si_oc(si), co_data(si_oc(si)));
+            si_shutr(si);
+            res->flags |= CF_READ_NULL;
+            break;
+        case -1:
+            appctx->st0 = -1;
+            si_shutr(si);
+            res->flags |= CF_READ_NULL;
+            break;
     }
 
 }
@@ -369,6 +453,7 @@ void nst_cache_housekeeping() {
 void nst_cache_init() {
 
     nuster.applet.cache_engine.fct = nst_cache_engine_handler;
+    nuster.applet.cache_disk_engine.fct = nst_cache_disk_engine_handler;
 
     if(global.nuster.cache.status == NUSTER_STATUS_ON) {
 
@@ -828,6 +913,71 @@ struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
     return data;
 }
 
+int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
+        uint64_t hash) {
+
+    struct dirent *de;
+    DIR *dir;
+    char *file;
+    int fd;
+    char buf[512] = {0};
+
+    file = nuster_memory_alloc(global.nuster.cache.memory,
+            NUSTER_FILE_LENGTH + 1);
+
+    sprintf(file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
+            global.nuster.cache.directory, ctx->hash >> 60,
+            ctx->hash >> 56, ctx->hash);
+
+
+    dir = opendir(file);
+
+    if(!dir) {
+        return NUSTER_ERR;
+    }
+
+    while((de = readdir(dir)) != NULL) {
+
+        if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
+            // TODO
+            memcpy(file + NUSTER_PATH_LENGTH, "/", 1);
+            memcpy(file + NUSTER_PATH_LENGTH + 1, de->d_name, strlen(de->d_name));
+
+            fd = open(file, O_RDONLY);
+
+            if (fd == -1) {
+                printf("Error open: %s\n", strerror(errno));
+                return NUSTER_ERR;
+            }
+
+            if (read(fd, buf, 512) == -1) {
+                printf("Error read: %s\n",strerror(errno));
+                close(fd);
+                return NUSTER_ERR;
+            }
+
+            if(memcmp(buf, "NUSTER", 6) !=0) {
+                return NUSTER_ERR;
+            }
+
+            if(*(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_HASH) == hash
+                    && *(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_KEY_LENGTH)
+                    == key->data && memcmp(buf + NUSTER_PERSIST_META_INDEX_KEY,
+                        key->area, key->data) == 0) {
+
+                ctx->disk.fd = fd;
+                memcpy(ctx->disk.meta, buf, 48);
+
+                return NUSTER_OK;
+            }
+
+        }
+    }
+
+    closedir(dir);
+    return NUSTER_ERR;
+}
+
 /*
  * Start to create cache,
  * if cache does not exist, add a new nst_cache_entry
@@ -1012,6 +1162,44 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si,
 
         appctx->ctx.nuster.cache_engine.data    = data;
         appctx->ctx.nuster.cache_engine.element = data->element;
+
+        req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
+        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+
+        req->analysers |= AN_REQ_FLT_END;
+        req->analyse_exp = TICK_ETERNITY;
+
+        res->flags |= CF_NEVER_WAIT;
+    }
+}
+
+/*
+ * Create cache disk applet to handle the request
+ */
+void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
+        struct channel *req, struct channel *res, struct nst_cache_ctx *ctx) {
+
+    struct appctx *appctx = NULL;
+
+    /*
+     * set backend to nuster.applet.cache_disk_engine
+     */
+    s->target = &nuster.applet.cache_disk_engine.obj_type;
+
+    if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
+        /* return to regular process on error */
+        s->target = NULL;
+    } else {
+        appctx = si_appctx(si);
+        memset(&appctx->ctx.nuster.cache_disk_engine, 0,
+                sizeof(appctx->ctx.nuster.cache_disk_engine));
+
+        appctx->ctx.nuster.cache_disk_engine.fd = ctx->disk.fd;
+        appctx->ctx.nuster.cache_disk_engine.offset = (int)(48 +
+            *(uint64_t *)(ctx->disk.meta + 40));
+        appctx->ctx.nuster.cache_disk_engine.header_length = (int)(
+            *(uint64_t *)(ctx->disk.meta + 32));
+        appctx->st0 = 1;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;

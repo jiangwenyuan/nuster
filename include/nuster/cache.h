@@ -103,6 +103,7 @@ enum {
     NST_CACHE_CTX_STATE_BYPASS,            /* do not cached */
     NST_CACHE_CTX_STATE_WAIT,              /* caching, wait */
     NST_CACHE_CTX_STATE_HIT,               /* cached, use cache */
+    NST_CACHE_CTX_STATE_HIT_DISK,          /* cached, use disk */
     NST_CACHE_CTX_STATE_PASS,              /* cache rule passed */
     NST_CACHE_CTX_STATE_FULL,              /* cache full */
     NST_CACHE_CTX_STATE_CREATE,            /* to cache */
@@ -233,9 +234,13 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);
 struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash);
+int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
+        uint64_t hash);
 struct nst_cache_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
+void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
+        struct channel *req, struct channel *res, struct nst_cache_ctx *ctx);
 struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nuster_rule *rule);
 int nst_cache_check_uri(struct http_msg *msg);
