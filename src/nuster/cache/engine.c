@@ -117,10 +117,13 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
     }
 
+    if(b_data(&res->buf) != 0) {
+        return;
+    }
+
     switch(appctx->st0) {
         case 1:
             if((read_ret = pread(fd, buf, header_length, offset)) == -1) {
-                printf("Error read: %s\n",strerror(errno));
                 appctx->st0 = -1;
             }
             ret = ci_putblk(res, buf, read_ret);
@@ -135,8 +138,9 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             }
             break;
         case 2:
-            if((read_ret = pread(fd, buf, b_room(&res->buf), offset)) == -1) {
-                printf("Error read: %s\n",strerror(errno));
+            if((read_ret = pread(fd, buf,
+                            b_room(&res->buf) - global.tune.maxrewrite, offset))
+                    == -1) {
                 appctx->st0 = -1;
             }
             if(read_ret == 0) {
@@ -1198,8 +1202,10 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
         appctx->ctx.nuster.cache_disk_engine.fd = ctx->disk.fd;
         appctx->ctx.nuster.cache_disk_engine.offset = (int)(48 +
             *(uint64_t *)(ctx->disk.meta + 40));
+
         appctx->ctx.nuster.cache_disk_engine.header_length = (int)(
             *(uint64_t *)(ctx->disk.meta + 32));
+
         appctx->st0 = 1;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
