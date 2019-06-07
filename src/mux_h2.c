@@ -2896,12 +2896,8 @@ static int h2_process(struct h2c *h2c)
 		h2_release_buf(h2c, &h2c->mbuf);
 
 	if (h2c->task) {
-		if (eb_is_empty(&h2c->streams_by_id) || b_data(&h2c->mbuf)) {
-			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
-			task_queue(h2c->task);
-		}
-		else
-			h2c->task->expire = TICK_ETERNITY;
+		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		task_queue(h2c->task);
 	}
 
 	h2_send(h2c);
@@ -3138,12 +3134,8 @@ static void h2_detach(struct conn_stream *cs)
 		h2_release(h2c->conn);
 	}
 	else if (h2c->task) {
-		if (eb_is_empty(&h2c->streams_by_id) || b_data(&h2c->mbuf)) {
-			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
-			task_queue(h2c->task);
-		}
-		else
-			h2c->task->expire = TICK_ETERNITY;
+		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		task_queue(h2c->task);
 	}
 }
 
