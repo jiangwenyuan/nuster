@@ -958,7 +958,10 @@ static void h1_handle_1xx_response(struct h1s *h1s, struct h1m *h1m)
 	    h1s->status < 200 && (h1s->status == 100 || h1s->status >= 102)) {
 		h1m_init_res(&h1s->res);
 		h1m->flags |= H1_MF_NO_PHDR;
-		h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+		if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+			h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+			tasklet_wakeup(h1s->h1c->wait_event.task);
+		}
 	}
 }
 
