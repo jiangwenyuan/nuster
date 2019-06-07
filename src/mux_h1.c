@@ -1372,9 +1372,15 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 
 	do {
 		if (h1m->state <= H1_MSG_LAST_LF) {
+			/* Don't start to parse a new message if some part of
+			 * the previous one is still there
+			 */
+			if (!htx_is_empty(htx))
+				goto end;
 			ret = h1_process_headers(h1s, h1m, htx, &h1c->ibuf, &total, count);
 			if (!ret)
 				break;
+			h1_handle_1xx_response(h1s, h1m);
 		}
 		else if (h1m->state <= H1_MSG_TRAILERS) {
 			ret = h1_process_data(h1s, h1m, htx, &h1c->ibuf, &total, count, buf, rsv);
@@ -1691,6 +1697,7 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					}
 				}
 				h1m->state = H1_MSG_DONE;
+				h1_handle_1xx_response(h1s, h1m);
 				break;
 
 			case HTX_BLK_OOB:
@@ -1712,9 +1719,6 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 			break;
 		}
 	}
-
-	if (htx_is_empty(chn_htx))
-		h1_handle_1xx_response(h1s, h1m);
 
   copy:
 	/* when the output buffer is empty, tmp shares the same area so that we
