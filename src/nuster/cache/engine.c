@@ -1005,17 +1005,22 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
                 || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
 
             entry->state = NST_CACHE_ENTRY_STATE_CREATING;
-            entry->data = nst_cache_data_new();
 
-            if(!entry->data) {
-                entry->state = NST_CACHE_ENTRY_STATE_INVALID;
-                ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
-                ctx->full    = 1;
+            if(ctx->rule->disk == NUSTER_DISK_OFF) {
+                entry->data = nst_cache_data_new();
+
+                if(!entry->data) {
+                    entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+                    ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
+                    ctx->full    = 1;
+                } else {
+                    ctx->state   = NST_CACHE_CTX_STATE_CREATE;
+                    ctx->entry   = entry;
+                    ctx->data    = entry->data;
+                    ctx->element = entry->data->element;
+                }
             } else {
                 ctx->state   = NST_CACHE_CTX_STATE_CREATE;
-                ctx->entry   = entry;
-                ctx->data    = entry->data;
-                ctx->element = entry->data->element;
             }
 
         } else {
@@ -1028,7 +1033,10 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             ctx->state   = NST_CACHE_CTX_STATE_CREATE;
             ctx->entry   = entry;
             ctx->data    = entry->data;
-            ctx->element = entry->data->element;
+
+            if(ctx->data) {
+                ctx->element = entry->data->element;
+            }
         } else {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
             ctx->full  = 1;
@@ -1037,7 +1045,10 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
-    if(ctx->state == NST_CACHE_CTX_STATE_CREATE && ctx->rule->disk) {
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE
+            && (ctx->rule->disk == NUSTER_DISK_SYNC
+                || ctx->rule->disk == NUSTER_DISK_ONLY)) {
+
         ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory,
                 NUSTER_FILE_LENGTH + 1);
 
