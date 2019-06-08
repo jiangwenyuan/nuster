@@ -1098,32 +1098,58 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         long msg_len) {
 
-    struct nst_cache_element *element = _nst_cache_data_append(msg, msg_len);
+    struct nst_cache_element *element;
 
-    if(element) {
+    if(ctx->rule->disk == NUSTER_DISK_OFF
+            || ctx->rule->disk == NUSTER_DISK_SYNC)  {
 
-        if(ctx->element) {
-            ctx->element->next = element;
+        element = _nst_cache_data_append(msg, msg_len);
+
+        if(element) {
+
+            if(ctx->element) {
+                ctx->element->next = element;
+            } else {
+                ctx->data->element = element;
+            }
+
+            ctx->element = element;
+
+            if(ctx->state == NST_CACHE_CTX_STATE_CREATE && ctx->rule->disk) {
+                pwrite(ctx->disk.fd, element->msg.data, element->msg.len,
+                        ctx->disk.offset);
+
+                ctx->cache_length += element->msg.len;
+                ctx->disk.offset  += element->msg.len;
+            }
+
         } else {
-            ctx->data->element = element;
+            ctx->full = 1;
+
+            return NUSTER_ERR;
+        }
+    } else if(ctx->rule->disk == NUSTER_DISK_ONLY) {
+        char *data = b_orig(&msg->chn->buf);
+        char *p    = ci_head(msg->chn);
+        int size   = msg->chn->buf.size;
+
+        if(p - data + msg_len > size) {
+            int right = data + size - p;
+            int left  = msg_len - right;
+
+            /* pwritev */
+            pwrite(ctx->disk.fd, p, right, ctx->disk.offset);
+            ctx->disk.offset += right;
+            pwrite(ctx->disk.fd, data, left, ctx->disk.offset);
+            ctx->disk.offset += left;
+        } else {
+            pwrite(ctx->disk.fd, p, msg_len, ctx->disk.offset);
+            ctx->disk.offset += msg_len;
         }
 
-        ctx->element = element;
-
-        if(ctx->state == NST_CACHE_CTX_STATE_CREATE && ctx->rule->disk) {
-            pwrite(ctx->disk.fd, element->msg.data, element->msg.len,
-                    ctx->disk.offset);
-
-            ctx->cache_length += element->msg.len;
-            ctx->disk.offset  += element->msg.len;
-        }
-
-        return NUSTER_OK;
-    } else {
-        ctx->full = 1;
-
-        return NUSTER_ERR;
     }
+
+    return NUSTER_OK;
 }
 
 /*
