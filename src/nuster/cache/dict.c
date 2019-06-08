@@ -259,11 +259,13 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
         return NULL;
     }
 
-    data = nst_cache_data_new();
+    if(ctx->rule->disk == NUSTER_DISK_OFF) {
+        data = nst_cache_data_new();
 
-    if(!data) {
-        nuster_memory_free(global.nuster.cache.memory, entry);
-        return NULL;
+        if(!data) {
+            nuster_memory_free(global.nuster.cache.memory, entry);
+            return NULL;
+        }
     }
 
     idx = ctx->hash % dict->size;
@@ -281,6 +283,8 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->expire = 0;
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
+
+    entry->persist = 0;
 
     entry->host.data   = ctx->req.host.data;
     entry->host.len    = ctx->req.host.len;
