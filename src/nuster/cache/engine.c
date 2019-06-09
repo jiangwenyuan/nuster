@@ -1165,13 +1165,15 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
     }
 
-    *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
-        ctx->entry->expire;
+    if(ctx->rule->disk == NUSTER_DISK_SYNC
+            || ctx->rule->disk == NUSTER_DISK_ONLY) {
 
-    *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) =
-        ctx->cache_length;
+        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
+            ctx->entry->expire;
 
-    if(ctx->rule->disk) {
+        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) =
+            ctx->cache_length;
+
         pwrite(ctx->disk.fd, ctx->disk.meta, 48, 0);
     }
 }
