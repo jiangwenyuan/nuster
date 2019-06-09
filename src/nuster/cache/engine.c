@@ -1115,7 +1115,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
             ctx->element = element;
 
-            if(ctx->state == NST_CACHE_CTX_STATE_CREATE && ctx->rule->disk) {
+            if(ctx->rule->disk == NUSTER_DISK_SYNC) {
                 pwrite(ctx->disk.fd, element->msg.data, element->msg.len,
                         ctx->disk.offset);
 
