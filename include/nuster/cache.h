@@ -86,6 +86,7 @@ struct nst_cache_entry {
     struct nuster_rule     *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     int                     persist;
+    char                   *file;
 };
 
 struct nst_cache_dict {
@@ -190,6 +191,9 @@ struct nst_cache {
 
     /* cache dict cleanup index */
     int                    cleanup_idx;
+
+    /* cache dict cleanup index */
+    int                    persist_idx;
 };
 
 extern struct flt_ops  nst_cache_filter_ops;

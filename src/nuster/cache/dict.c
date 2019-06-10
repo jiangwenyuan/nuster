@@ -15,6 +15,8 @@
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
+#include <nuster/file.h>
+#include <nuster/persist.h>
 
 
 static int _nst_cache_dict_resize(uint64_t size) {
@@ -237,6 +239,100 @@ void nst_cache_dict_cleanup() {
     /* if we have checked the whole dict */
     if(nuster.cache->cleanup_idx == nuster.cache->dict[0].size) {
         nuster.cache->cleanup_idx = 0;
+    }
+
+}
+
+void nst_cache_persist_async() {
+    struct nst_cache_entry *entry =
+        nuster.cache->dict[0].entry[nuster.cache->persist_idx];
+
+    if(!nuster.cache->dict[0].used) {
+        return;
+    }
+
+    while(entry) {
+
+        if(!_nst_cache_entry_invalid(entry)
+                && entry->rule->disk == NUSTER_DISK_ASYNC
+                && entry->persist == 0) {
+
+            int fd;
+            char meta[48] = "NUSTER";
+            uint64_t offset = 0;
+            struct nst_cache_element *element = entry->data->element;
+
+
+            entry->file = nuster_memory_alloc(global.nuster.cache.memory,
+                    NUSTER_FILE_LENGTH + 1);
+
+            sprintf(entry->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
+                    global.nuster.cache.directory, entry->hash >> 60,
+                    entry->hash >> 56, entry->hash);
+
+            nuster_debug("[CACHE] Path: %s\n", entry->file);
+
+            if(nuster_create_path(entry->file) == NUSTER_ERR) {
+            }
+
+            sprintf(entry->file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64,
+                    get_current_timestamp() * random() * random() & entry->hash,
+                    get_current_timestamp());
+
+            nuster_debug("[CACHE] File: %s\n", entry->file);
+
+            fd = open(entry->file, O_CREAT | O_WRONLY, 0600);
+
+            meta[6] = (char)entry->rule->disk;
+            meta[7] = (char)NUSTER_PERSIST_VERSION;
+
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HASH) = entry->hash;
+
+            //TODO
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) = 0;
+                //entry->header_length;
+
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_KEY_LENGTH) =
+                entry->key->data;
+
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
+                entry->expire;
+
+            //TODO
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) = 0;
+                //entry->cache_length;
+
+            /* write key */
+            offset = 0;
+            pwrite(fd, meta, 48, offset);
+            offset = NUSTER_PERSIST_META_INDEX_KEY;
+            pwrite(fd, entry->key->area, entry->key->data, offset);
+            offset += entry->key->data;
+
+            while(element) {
+
+                if(element->msg.data) {
+                    pwrite(fd, element->msg.data, element->msg.len, offset);
+
+                    //ctx->cache_length += element->msg.len;
+                    offset += element->msg.len;
+                }
+
+                element = element->next;
+            }
+
+            close(fd);
+        }
+
+        entry = entry->next;
+
+    }
+
+    nuster.cache->persist_idx++;
+
+    /* if we have checked the whole dict */
+    if(nuster.cache->persist_idx == nuster.cache->dict[0].size) {
+        nuster.cache->persist_idx = 0;
     }
 
 }
