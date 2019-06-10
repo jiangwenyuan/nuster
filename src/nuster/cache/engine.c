@@ -542,6 +542,7 @@ void nst_cache_init() {
         nuster.cache->data_tail     = NULL;
         nuster.cache->rehash_idx    = -1;
         nuster.cache->cleanup_idx   = 0;
+        nuster.cache->persist_idx   = 0;
 
         if(nuster_shctx_init(nuster.cache) != NUSTER_OK) {
             goto shm_err;
