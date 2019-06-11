@@ -261,6 +261,7 @@ void nst_cache_persist_async() {
             char meta[48] = "NUSTER";
             uint64_t offset = 0;
             struct nst_cache_element *element = entry->data->element;
+            uint64_t cache_length = 0;
 
 
             entry->file = nuster_memory_alloc(global.nuster.cache.memory,
@@ -297,13 +298,7 @@ void nst_cache_persist_async() {
             *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
                 entry->expire;
 
-            //TODO
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) = 0;
-                //entry->cache_length;
-
             /* write key */
-            offset = 0;
-            pwrite(fd, meta, 48, offset);
             offset = NUSTER_PERSIST_META_INDEX_KEY;
             pwrite(fd, entry->key->area, entry->key->data, offset);
             offset += entry->key->data;
@@ -313,12 +308,16 @@ void nst_cache_persist_async() {
                 if(element->msg.data) {
                     pwrite(fd, element->msg.data, element->msg.len, offset);
 
-                    //ctx->cache_length += element->msg.len;
+                    cache_length += element->msg.len;
                     offset += element->msg.len;
                 }
 
                 element = element->next;
             }
+
+            pwrite(fd, meta, 48, 0);
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) =
+                cache_length;
 
             close(fd);
         }
