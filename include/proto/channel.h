@@ -38,6 +38,7 @@
 #include <types/stream.h>
 #include <types/stream_interface.h>
 
+#include <proto/stream.h>
 #include <proto/task.h>
 
 /* perform minimal intializations, report 0 in case of error, 1 if OK. */
@@ -748,6 +749,19 @@ static inline int channel_htx_recv_limit(const struct channel *chn, const struct
 	return (htx_max_data_space(htx) - reserve);
 }
 
+/* HTX version of channel_full(). Instead of checking if INPUT data exceeds
+ * (size - reserve), this function checks if the free space for data in <htx>
+ * and the data scheduled for output are lower to the reserve. In such case, the
+ * channel is considered as full.
+ */
+static inline int channel_htx_full(const struct channel *c, const struct htx *htx,
+				   unsigned int reserve)
+{
+	if (!htx->size)
+		return 0;
+	return (htx_free_data_space(htx) + co_data(c) <= reserve);
+}
+
 /* Returns non-zero if the channel's INPUT buffer's is considered full, which
  * means that it holds at least as much INPUT data as (size - reserve). This
  * also means that data that are scheduled for output are considered as potential
@@ -762,20 +776,10 @@ static inline int channel_full(const struct channel *c, unsigned int reserve)
 	if (b_is_null(&c->buf))
 		return 0;
 
-	return (ci_data(c) + reserve >= c_size(c));
-}
+	if (strm_fe((chn_strm(c)))->options2 & PR_O2_USE_HTX)
+		return channel_htx_full(c, htxbuf(&c->buf), reserve);
 
-/* HTX version of channel_full(). Instead of checking if INPUT data exceeds
- * (size - reserve), this function checks if the free space for data in <htx>
- * and the data scheduled for output are lower to the reserve. In such case, the
- * channel is considered as full.
- */
-static inline int channel_htx_full(const struct channel *c, const struct htx *htx,
-				   unsigned int reserve)
-{
-	if (!htx->size)
-		return 0;
-	return (htx_free_data_space(htx) + co_data(c) <= reserve);
+	return (ci_data(c) + reserve >= c_size(c));
 }
 
 
