@@ -87,6 +87,7 @@ struct nst_cache_entry {
     int                     pid;         /* proxy uuid */
     int                     persist;
     char                   *file;
+    int                     header_length;
 };
 
 struct nst_cache_dict {

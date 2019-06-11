@@ -288,9 +288,8 @@ void nst_cache_persist_async() {
 
             *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HASH) = entry->hash;
 
-            //TODO
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) = 0;
-                //entry->header_length;
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) =
+                entry->header_length;
 
             *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_KEY_LENGTH) =
                 entry->key->data;
@@ -381,6 +380,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->pid    = ctx->pid;
 
     entry->persist = 0;
+    entry->header_length = ctx->header_length;
 
     entry->host.data   = ctx->req.host.data;
     entry->host.len    = ctx->req.host.len;
