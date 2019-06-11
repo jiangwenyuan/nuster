@@ -987,7 +987,7 @@ static void h1_handle_1xx_response(struct h1s *h1s, struct h1m *h1m)
 static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 				 struct buffer *buf, size_t *ofs, size_t max)
 {
-	struct http_hdr hdrs[MAX_HTTP_HDR];
+	struct http_hdr hdrs[global.tune.max_http_hdr];
 	union h1_sl h1sl;
 	unsigned int flags = HTX_SL_F_NONE;
 	int ret = 0;

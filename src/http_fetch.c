@@ -219,7 +219,7 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 	else { /* PR_MODE_TCP */
 		struct buffer *buf;
 		struct h1m h1m;
-		struct http_hdr hdrs[MAX_HTTP_HDR];
+		struct http_hdr hdrs[global.tune.max_http_hdr];
 		union h1_sl h1sl;
 		unsigned int flags = HTX_FL_NONE;
 		int ret;

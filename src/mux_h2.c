@@ -3358,7 +3358,7 @@ static int h2c_decode_headers(struct h2c *h2c, struct buffer *rxbuf, uint32_t *f
 {
 	const uint8_t *hdrs = (uint8_t *)b_head(&h2c->dbuf);
 	struct buffer *tmp = get_trash_chunk();
-	struct http_hdr list[MAX_HTTP_HDR * 2];
+	struct http_hdr list[global.tune.max_http_hdr * 2];
 	struct buffer *copy = NULL;
 	unsigned int msgf;
 	struct htx *htx = NULL;
@@ -3828,7 +3828,7 @@ try_again:
  */
 static size_t h2s_frt_make_resp_headers(struct h2s *h2s, const struct buffer *buf, size_t ofs, size_t max)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct h1m *h1m = &h2s->h1m;
 	struct buffer outbuf;
@@ -4271,7 +4271,7 @@ static size_t h2s_frt_make_resp_data(struct h2s *h2s, const struct buffer *buf, 
  */
 static size_t h2s_htx_frt_make_resp_headers(struct h2s *h2s, struct htx *htx)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct htx_blk *blk;
 	struct htx_blk *blk_end;
@@ -4478,7 +4478,7 @@ static size_t h2s_htx_frt_make_resp_headers(struct h2s *h2s, struct htx *htx)
  */
 static size_t h2s_htx_bck_make_req_headers(struct h2s *h2s, struct htx *htx)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct htx_blk *blk;
 	struct htx_blk *blk_end;
@@ -4991,7 +4991,7 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
  */
 static size_t h2s_htx_make_trailers(struct h2s *h2s, struct htx *htx)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct htx_blk *blk;
 	struct htx_blk *blk_end;
