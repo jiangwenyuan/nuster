@@ -1009,7 +1009,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
             entry->state = NST_CACHE_ENTRY_STATE_CREATING;
 
-            if(ctx->rule->disk == NUSTER_DISK_OFF) {
+            if(ctx->rule->disk != NUSTER_DISK_ONLY) {
                 entry->data = nst_cache_data_new();
 
                 if(!entry->data) {
