@@ -447,6 +447,7 @@ void nst_cache_housekeeping() {
         nst_cache_dict_rehash();
         nuster_shctx_lock(&nuster.cache->dict[0]);
         nst_cache_dict_cleanup();
+        nst_cache_persist_async();
         nuster_shctx_unlock(&nuster.cache->dict[0]);
         nuster_shctx_lock(nuster.cache);
         _nst_cache_data_cleanup();
