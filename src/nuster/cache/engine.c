@@ -908,7 +908,9 @@ struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
     nuster_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
 
-    if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+    if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID
+            && entry->rule->disk != NUSTER_DISK_ONLY) {
+
         data = entry->data;
         data->clients++;
     }
