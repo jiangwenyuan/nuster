@@ -54,10 +54,10 @@
  */
 
 /* strlen("/0/00/") + 16, without '\0' */
-#define NUSTER_PATH_LENGTH strlen(global.nuster.cache.directory) + 22
+#define NUSTER_PATH_LEN strlen(global.nuster.cache.directory) + 22
 
 /* 1 + 11 + 1 + 16, without '\0'  */
-#define NUSTER_FILE_LENGTH NUSTER_PATH_LENGTH + 29
+#define NUSTER_FILE_LENGTH NUSTER_PATH_LEN + 29
 
 char *nuster_persist_create(struct nuster_memory *p, uint64_t hash);
 

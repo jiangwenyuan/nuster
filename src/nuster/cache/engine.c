@@ -948,8 +948,8 @@ int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
 
         if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
             // TODO
-            memcpy(file + NUSTER_PATH_LENGTH, "/", 1);
-            memcpy(file + NUSTER_PATH_LENGTH + 1, de->d_name, strlen(de->d_name));
+            memcpy(file + NUSTER_PATH_LEN, "/", 1);
+            memcpy(file + NUSTER_PATH_LEN + 1, de->d_name, strlen(de->d_name));
 
             fd = open(file, O_RDONLY);
 
