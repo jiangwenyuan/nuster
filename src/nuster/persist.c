@@ -10,7 +10,23 @@
  *
  */
 
-#include <nuster/file.h>
+#include <types/global.h>
+
+#include <nuster/memory.h>
+#include <nuster/persist.h>
 
 
 int nuster_persist_create(char*);
+
+char *nuster_persist_make_path(struct nuster_memory *p, uint64_t hash) {
+    char *path = NULL;
+
+    path = nuster_memory_alloc(p, NUSTER_FILE_LENGTH + 1);
+
+    if(path) {
+        sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
+                global.nuster.cache.directory, hash >> 60, hash >> 56, hash);
+    }
+
+    return path;
+}
