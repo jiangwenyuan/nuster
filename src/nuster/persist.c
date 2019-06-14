@@ -18,7 +18,7 @@
 
 
 char *nuster_persist_create(struct nuster_memory *m, uint64_t hash) {
-    char *p = nuster_memory_alloc(m, NUSTER_FILE_LENGTH + 1);
+    char *p = nuster_memory_alloc(m, NUSTER_FILE_LEN + 1);
 
     if(p) {
         sprintf(p, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
