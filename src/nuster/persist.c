@@ -30,7 +30,7 @@ char *nuster_persist_create(struct nuster_memory *m, uint64_t hash) {
             return NULL;
         }
 
-        sprintf(p + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64,
+        sprintf(p + NUSTER_PATH_LEN, "/%"PRIx64"-%"PRIx64,
                 get_current_timestamp() * random() * random() & hash,
                 get_current_timestamp());
 
