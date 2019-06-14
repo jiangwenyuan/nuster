@@ -267,7 +267,7 @@ void nst_cache_persist_async() {
             entry->file = nuster_persist_create(global.nuster.cache.memory,
                     entry->hash);
 
-            fd = open(entry->file, O_CREAT | O_WRONLY, 0600);
+            fd = nuster_persist_open(entry->file);
 
             meta[6] = (char)entry->rule->disk;
             meta[7] = (char)NUSTER_PERSIST_VERSION;

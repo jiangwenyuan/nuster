@@ -1056,7 +1056,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         ctx->disk.file = nuster_persist_create(global.nuster.cache.memory,
                 ctx->hash);
 
-        ctx->disk.fd = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
+        ctx->disk.fd = nuster_persist_open(ctx->disk.file);
 
         memcpy(ctx->disk.meta, "NUSTER", 6);
         ctx->disk.meta[6] = (char)ctx->rule->disk;
