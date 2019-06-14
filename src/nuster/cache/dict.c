@@ -264,12 +264,8 @@ void nst_cache_persist_async() {
             uint64_t cache_length = 0;
 
 
-            entry->file = nuster_memory_alloc(global.nuster.cache.memory,
-                    NUSTER_FILE_LENGTH + 1);
-
-            sprintf(entry->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
-                    global.nuster.cache.directory, entry->hash >> 60,
-                    entry->hash >> 56, entry->hash);
+            entry->file = nuster_persist_make_path(global.nuster.cache.memory,
+                    entry->hash);
 
             nuster_debug("[CACHE] Path: %s\n", entry->file);
 
