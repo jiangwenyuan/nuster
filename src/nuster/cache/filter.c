@@ -177,8 +177,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                 /* check if cache exists on disk */
                 if(ret == 2) {
-                    if(nst_cache_exists_disk(ctx, ctx->key, ctx->hash) ==
-                            NUSTER_OK) {
+                    if(nst_cache_exists_disk(ctx) == NUSTER_OK) {
 
                         ctx->state = NST_CACHE_CTX_STATE_HIT_DISK;
                         break;

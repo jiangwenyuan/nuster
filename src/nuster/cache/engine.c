@@ -923,7 +923,7 @@ struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
 
 int nst_cache_exists2(struct nst_cache_ctx *ctx, int mode) {
     struct nst_cache_entry *entry = NULL;
-    int ret = 0;
+    int ret = NST_CACHE_CTX_STATE_INIT;
 
     if(!ctx->key) {
         return ret;
@@ -950,7 +950,7 @@ int nst_cache_exists2(struct nst_cache_ctx *ctx, int mode) {
         if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
             ctx->data = entry->data;
             ctx->data->clients++;
-            ret = 1;
+            ret = NST_CACHE_CTX_STATE_HIT;
         }
         if(entry->state == NST_CACHE_ENTRY_STATE_INVALID && entry->file) {
             ctx->disk.file = entry->file;
@@ -965,11 +965,18 @@ int nst_cache_exists2(struct nst_cache_ctx *ctx, int mode) {
 
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
+    if(ret == 2) {
+        if(nst_cache_exists_disk(ctx) == NUSTER_OK) {
+            ret = NST_CACHE_CTX_STATE_HIT_DISK;
+        } else {
+            ret = NST_CACHE_CTX_STATE_INIT;
+        }
+    }
+
     return ret;
 }
 
-int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
-        uint64_t hash) {
+int nst_cache_exists_disk(struct nst_cache_ctx *ctx) {
 
     struct dirent *de;
     DIR *dir;
@@ -1014,10 +1021,10 @@ int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
                 return NUSTER_ERR;
             }
 
-            if(*(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_HASH) == hash
+            if(*(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_HASH) == ctx->hash
                     && *(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_KEY_LEN)
-                    == key->data && memcmp(buf + NUSTER_PERSIST_META_INDEX_KEY,
-                        key->area, key->data) == 0) {
+                    == ctx->key->data && memcmp(buf + NUSTER_PERSIST_META_INDEX_KEY,
+                        ctx->key->area, ctx->key->data) == 0) {
 
                 ctx->disk.fd = fd;
                 memcpy(ctx->disk.meta, buf, 48);
