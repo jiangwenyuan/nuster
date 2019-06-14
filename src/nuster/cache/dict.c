@@ -264,17 +264,8 @@ void nst_cache_persist_async() {
             uint64_t cache_length = 0;
 
 
-            entry->file = nuster_persist_make_path(global.nuster.cache.memory,
+            entry->file = nuster_persist_create(global.nuster.cache.memory,
                     entry->hash);
-
-            nuster_debug("[CACHE] Path: %s\n", entry->file);
-
-            if(nuster_create_path(entry->file) == NUSTER_ERR) {
-            }
-
-            nuster_persist_make_file(entry->file, entry->hash);
-
-            nuster_debug("[CACHE] File: %s\n", entry->file);
 
             fd = open(entry->file, O_CREAT | O_WRONLY, 0600);
 

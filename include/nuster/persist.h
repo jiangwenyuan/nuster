@@ -59,8 +59,6 @@
 /* 1 + 11 + 1 + 16, without '\0'  */
 #define NUSTER_FILE_LENGTH NUSTER_PATH_LENGTH + 29
 
-int nuster_persist_create(char*);
-char *nuster_persist_make_path(struct nuster_memory *p, uint64_t hash);
-void nuster_persist_make_file(char *p, uint64_t hash);
+char *nuster_persist_create(struct nuster_memory *p, uint64_t hash);
 
 #endif /* _NUSTER_PERSIST_H */
