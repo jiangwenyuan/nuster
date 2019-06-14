@@ -1061,9 +1061,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         if(nuster_create_path(ctx->disk.file) == NUSTER_ERR) {
         }
 
-        sprintf(ctx->disk.file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64,
-                get_current_timestamp() * random() * random() & ctx->hash,
-                get_current_timestamp());
+        nuster_persist_make_file(ctx->disk.file, ctx->hash);
 
         nuster_debug("[CACHE] File: %s\n", ctx->disk.file);
 

@@ -272,9 +272,7 @@ void nst_cache_persist_async() {
             if(nuster_create_path(entry->file) == NUSTER_ERR) {
             }
 
-            sprintf(entry->file + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64,
-                    get_current_timestamp() * random() * random() & entry->hash,
-                    get_current_timestamp());
+            nuster_persist_make_file(entry->file, entry->hash);
 
             nuster_debug("[CACHE] File: %s\n", entry->file);
 
