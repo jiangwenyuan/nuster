@@ -269,19 +269,9 @@ void nst_cache_persist_async() {
 
             fd = nuster_persist_open(entry->file);
 
-            meta[6] = (char)entry->rule->disk;
-            meta[7] = (char)NUSTER_PERSIST_VERSION;
-
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HASH) = entry->hash;
-
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HEADER_LEN) =
-                entry->header_length;
-
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_KEY_LEN) =
-                entry->key->data;
-
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
-                entry->expire;
+            nuster_persist_meta_init(meta, (char)entry->rule->disk,
+                    entry->hash, entry->expire, 0, entry->header_length,
+                    entry->key->data);
 
             /* write key */
             offset = NUSTER_PERSIST_META_INDEX_KEY;
@@ -300,8 +290,7 @@ void nst_cache_persist_async() {
                 element = element->next;
             }
 
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_CACHE_LEN) =
-                cache_length;
+            nuster_persist_meta_set_cache_len(meta, cache_length);
 
             pwrite(fd, meta, 48, 0);
 

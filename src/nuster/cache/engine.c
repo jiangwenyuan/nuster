@@ -1058,17 +1058,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         ctx->disk.fd = nuster_persist_open(ctx->disk.file);
 
-        memcpy(ctx->disk.meta, "NUSTER", 6);
-        ctx->disk.meta[6] = (char)ctx->rule->disk;
-        ctx->disk.meta[7] = (char)NUSTER_PERSIST_VERSION;
-        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_HASH) =
-            ctx->hash;
-
-        *(uint64_t *)(ctx->disk.meta
-                + NUSTER_PERSIST_META_INDEX_HEADER_LEN) = ctx->header_length;
-
-        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_KEY_LEN) =
-            ctx->entry->key->data;
+        nuster_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
+                ctx->hash, 0, 0, ctx->header_length, ctx->entry->key->data);
 
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
@@ -1155,11 +1146,9 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     if(ctx->rule->disk == NUSTER_DISK_SYNC
             || ctx->rule->disk == NUSTER_DISK_ONLY) {
 
-        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
-            ctx->entry->expire;
+        nuster_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
-        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LEN) =
-            ctx->cache_length;
+        nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_length);
 
         pwrite(ctx->disk.fd, ctx->disk.meta, 48, 0);
     }
