@@ -40,3 +40,6 @@ char *nuster_persist_create(struct nuster_memory *m, uint64_t hash) {
     return p;
 }
 
+int nuster_persist_open(const char *pathname) {
+    return open(pathname, O_CREAT | O_WRONLY, 0600);
+}
