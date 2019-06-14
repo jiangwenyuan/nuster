@@ -94,10 +94,10 @@ static inline void nuster_res_header_date() {
             tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
 
-static inline void nuster_res_header_content_length(uint64_t content_length) {
+static inline void nuster_res_header_content_length(uint64_t len) {
     chunk_appendf(&trash, "%.*s: %" PRIu64 "\r\n",
             nuster_headers.content_length.len,
-            nuster_headers.content_length.data, content_length);
+            nuster_headers.content_length.data, len);
 }
 
 static inline void nuster_res_header(struct nuster_str *k,
@@ -127,14 +127,14 @@ static inline int nuster_res_send(struct channel *chn, const char *blk,
 }
 
 static inline void nuster_res_simple(struct stream_interface *si, int status,
-        const char *content, int content_length) {
+        const char *content, int len) {
 
     nuster_res_begin(status);
-    nuster_res_header_content_length(content_length);
+    nuster_res_header_content_length(len);
     nuster_res_header_end();
 
     if(content) {
-        chunk_appendf(&trash, "%.*s", content_length, content);
+        chunk_appendf(&trash, "%.*s", len, content);
     }
 
     nuster_res_send(si_ic(si), trash.area, trash.data);
