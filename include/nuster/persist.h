@@ -49,6 +49,16 @@
 #define NUSTER_PERSIST_META_INDEX_KEY_LENGTH    8 * 5
 #define NUSTER_PERSIST_META_INDEX_KEY           8 * 6
 
+/*
+ * DIR/a/4a/60322ec3e2428e4a/16ae92496e1-71fabeefebdaaedb
+ */
+
+/* strlen("/0/00/") + 16, without '\0' */
+#define NUSTER_PATH_LENGTH strlen(global.nuster.cache.directory) + 22
+
+/* 1 + 11 + 1 + 16, without '\0'  */
+#define NUSTER_FILE_LENGTH NUSTER_PATH_LENGTH + 29
+
 int nuster_persist_create(char*);
 
 #endif /* _NUSTER_PERSIST_H */
