@@ -1053,17 +1053,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             && (ctx->rule->disk == NUSTER_DISK_SYNC
                 || ctx->rule->disk == NUSTER_DISK_ONLY)) {
 
-        ctx->disk.file = nuster_persist_make_path(global.nuster.cache.memory,
+        ctx->disk.file = nuster_persist_create(global.nuster.cache.memory,
                 ctx->hash);
-
-        nuster_debug("[CACHE] Path: %s\n", ctx->disk.file);
-
-        if(nuster_create_path(ctx->disk.file) == NUSTER_ERR) {
-        }
-
-        nuster_persist_make_file(ctx->disk.file, ctx->hash);
-
-        nuster_debug("[CACHE] File: %s\n", ctx->disk.file);
 
         ctx->disk.fd = open(ctx->disk.file, O_CREAT | O_WRONLY, 0600);
 

@@ -13,26 +13,30 @@
 #include <types/global.h>
 
 #include <nuster/memory.h>
+#include <nuster/file.h>
 #include <nuster/persist.h>
 
 
-int nuster_persist_create(char*);
+char *nuster_persist_create(struct nuster_memory *m, uint64_t hash) {
+    char *p = nuster_memory_alloc(m, NUSTER_FILE_LENGTH + 1);
 
-char *nuster_persist_make_path(struct nuster_memory *p, uint64_t hash) {
-    char *path = NULL;
-
-    path = nuster_memory_alloc(p, NUSTER_FILE_LENGTH + 1);
-
-    if(path) {
-        sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
+    if(p) {
+        sprintf(p, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
                 global.nuster.cache.directory, hash >> 60, hash >> 56, hash);
+
+        nuster_debug("[CACHE] Path: %s\n", p);
+
+        if(nuster_create_path(p) == NUSTER_ERR) {
+            return NULL;
+        }
+
+        sprintf(p + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64,
+                get_current_timestamp() * random() * random() & hash,
+                get_current_timestamp());
+
+        nuster_debug("[CACHE] File: %s\n", p);
     }
 
-    return path;
+    return p;
 }
 
-void nuster_persist_make_file(char *p, uint64_t hash) {
-    sprintf(p + NUSTER_PATH_LENGTH, "/%"PRIx64"-%"PRIx64,
-            get_current_timestamp() * random() * random() & hash,
-            get_current_timestamp());
-}
