@@ -65,6 +65,26 @@ static inline int nuster_persist_open(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 
+static inline void nuster_persist_meta_set_hash(char *p, uint64_t v) {
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HASH) = v;
+}
+
+static inline void nuster_persist_meta_set_expire(char *p, uint64_t v) {
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_EXPIRE) = v;
+}
+
+static inline void nuster_persist_meta_set_cache_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_CACHE_LEN) = v;
+}
+
+static inline void nuster_persist_meta_set_header_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HEADER_LEN) = v;
+}
+
+static inline void nuster_persist_meta_set_key_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_KEY_LEN) = v;
+}
+
 static inline void
 nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
         uint64_t cache_len, uint64_t header_len, uint64_t key_len) {
@@ -73,15 +93,11 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     p[6] = mode;
     p[7] = (char)NUSTER_PERSIST_VERSION;
 
-    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HASH) = hash;
-
-    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_EXPIRE) = expire;
-
-    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_CACHE_LEN) = cache_len;
-
-    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HEADER_LEN) = header_len;
-
-    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_KEY_LEN) = key_len;
+    nuster_persist_meta_set_hash(p, hash);
+    nuster_persist_meta_set_expire(p, expire);
+    nuster_persist_meta_set_cache_len(p, cache_len);
+    nuster_persist_meta_set_header_len(p, header_len);
+    nuster_persist_meta_set_key_len(p, key_len);
 }
 
 #endif /* _NUSTER_PERSIST_H */
