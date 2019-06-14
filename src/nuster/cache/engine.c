@@ -98,7 +98,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     int read_ret;
 
     int fd = appctx->ctx.nuster.cache_disk_engine.fd;
-    int header_length = appctx->ctx.nuster.cache_disk_engine.header_length;
+    int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
     uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
 
     char buf[16*1024] = {0};
@@ -123,7 +123,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
 
     switch(appctx->st0) {
         case 1:
-            if((read_ret = pread(fd, buf, header_length, offset)) == -1) {
+            if((read_ret = pread(fd, buf, header_len, offset)) == -1) {
                 appctx->st0 = -1;
             }
             ret = ci_putblk(res, buf, read_ret);
@@ -1059,7 +1059,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         ctx->disk.fd = nuster_persist_open(ctx->disk.file);
 
         nuster_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
-                ctx->hash, 0, 0, ctx->header_length, ctx->entry->key->data);
+                ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
 
         /* write key */
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
@@ -1116,7 +1116,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
                 pwrite(ctx->disk.fd, element->msg.data, element->msg.len,
                         ctx->disk.offset);
 
-                ctx->cache_length += element->msg.len;
+                ctx->cache_len += element->msg.len;
                 ctx->disk.offset  += element->msg.len;
             }
 
@@ -1148,7 +1148,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 
         nuster_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
-        nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_length);
+        nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
 
         pwrite(ctx->disk.fd, ctx->disk.meta, 48, 0);
     }
@@ -1218,7 +1218,7 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
         appctx->ctx.nuster.cache_disk_engine.offset = (int)(48 +
             *(uint64_t *)(ctx->disk.meta + 40));
 
-        appctx->ctx.nuster.cache_disk_engine.header_length = (int)(
+        appctx->ctx.nuster.cache_disk_engine.header_len = (int)(
             *(uint64_t *)(ctx->disk.meta + 32));
 
         appctx->st0 = 1;

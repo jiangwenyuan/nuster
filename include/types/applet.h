@@ -92,7 +92,7 @@ struct appctx {
 			} nosql_engine;
 			struct {
 				int fd;
-				int header_length;
+				int header_len;
 				uint64_t offset;
 			} cache_disk_engine;
 		} nuster;
