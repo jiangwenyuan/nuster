@@ -1714,6 +1714,10 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				}
 				h1m->state = H1_MSG_DONE;
 				h1_handle_1xx_response(h1s, h1m);
+				if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+					h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+					tasklet_wakeup(h1s->h1c->wait_event.task);
+				}
 				break;
 
 			case HTX_BLK_OOB:
