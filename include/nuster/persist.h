@@ -61,5 +61,6 @@
 
 int nuster_persist_create(char*);
 char *nuster_persist_make_path(struct nuster_memory *p, uint64_t hash);
+void nuster_persist_make_file(char *p, uint64_t hash);
 
 #endif /* _NUSTER_PERSIST_H */
