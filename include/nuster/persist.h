@@ -60,6 +60,8 @@
 #define NUSTER_FILE_LENGTH NUSTER_PATH_LENGTH + 29
 
 char *nuster_persist_create(struct nuster_memory *p, uint64_t hash);
-int nuster_persist_open(const char *pathname);
+static inline int nuster_persist_open(const char *pathname) {
+    return open(pathname, O_CREAT | O_WRONLY, 0600);
+}
 
 #endif /* _NUSTER_PERSIST_H */
