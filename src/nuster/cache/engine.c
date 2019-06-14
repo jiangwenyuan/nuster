@@ -930,8 +930,7 @@ int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
     int fd;
     char buf[512] = {0};
 
-    file = nuster_memory_alloc(global.nuster.cache.memory,
-            NUSTER_FILE_LENGTH + 1);
+    file = nuster_memory_alloc(global.nuster.cache.memory, NUSTER_FILE_LEN + 1);
 
     sprintf(file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
             global.nuster.cache.directory, ctx->hash >> 60,
