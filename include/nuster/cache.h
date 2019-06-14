@@ -223,6 +223,7 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash);
 struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
 void nst_cache_dict_rehash();
 void nst_cache_dict_cleanup();
+void nst_cache_persist_async();
 
 /* engine */
 void nst_cache_init();
