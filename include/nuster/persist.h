@@ -44,9 +44,9 @@
 
 #define NUSTER_PERSIST_META_INDEX_HASH          8 * 1
 #define NUSTER_PERSIST_META_INDEX_EXPIRE        8 * 2
-#define NUSTER_PERSIST_META_INDEX_CACHE_LENGTH  8 * 3
-#define NUSTER_PERSIST_META_INDEX_HEADER_LENGTH 8 * 4
-#define NUSTER_PERSIST_META_INDEX_KEY_LENGTH    8 * 5
+#define NUSTER_PERSIST_META_INDEX_CACHE_LEN     8 * 3
+#define NUSTER_PERSIST_META_INDEX_HEADER_LEN    8 * 4
+#define NUSTER_PERSIST_META_INDEX_KEY_LEN       8 * 5
 #define NUSTER_PERSIST_META_INDEX_KEY           8 * 6
 
 /*
@@ -60,8 +60,28 @@
 #define NUSTER_FILE_LENGTH NUSTER_PATH_LENGTH + 29
 
 char *nuster_persist_create(struct nuster_memory *p, uint64_t hash);
+
 static inline int nuster_persist_open(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
+}
+
+static inline void
+nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
+        uint64_t cache_len, uint64_t header_len, uint64_t key_len) {
+
+    memcpy(p, "NUSTER", 6);
+    p[6] = mode;
+    p[7] = (char)NUSTER_PERSIST_VERSION;
+
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HASH) = hash;
+
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_EXPIRE) = expire;
+
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_CACHE_LEN) = cache_len;
+
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HEADER_LEN) = header_len;
+
+    *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_KEY_LEN) = key_len;
 }
 
 #endif /* _NUSTER_PERSIST_H */
