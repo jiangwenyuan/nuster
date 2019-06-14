@@ -1533,7 +1533,7 @@ int connect_server(struct stream *s)
 #if USE_OPENSSL && (defined(OPENSSL_IS_BORINGSSL) || \
     ((OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)))
 
-	if (!reuse && cli_conn && srv &&
+	if (!reuse && cli_conn && srv && srv_conn->mux &&
 	    (srv->ssl_ctx.options & SRV_SSL_O_EARLY_DATA) &&
 		    (cli_conn->flags & CO_FL_EARLY_DATA) &&
 		    !channel_is_empty(si_oc(&s->si[1])) &&
