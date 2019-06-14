@@ -921,6 +921,53 @@ struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
     return data;
 }
 
+int nst_cache_exists2(struct nst_cache_ctx *ctx) {
+    struct nst_cache_entry *entry = NULL;
+    int ret = 0;
+
+    if(!ctx->key) {
+        return ret;
+    }
+
+    nuster_shctx_lock(&nuster.cache->dict[0]);
+    entry = nst_cache_dict_get(ctx->key, ctx->hash);
+
+    if(entry) {
+
+        /*
+         * before disk, entry is set to valid after response is cached to memory
+         * now we can save cache to both memory and disk, and we can also save
+         * cache to disk only.
+         * To keep from big changes, we still use valid to indicate the cache is
+         * in memory, and use another *file to indicate the disk persistence.
+         * So if valid, return memory cache
+         * if invalid and file is set, return disk cache
+         * if entry is null, check disk and return cache if exists
+         * Since valid only indicates whether or not cached is in memory, the
+         * state is set to invalid even if the cache is successfully saved to
+         * disk in disk_only mode
+         */
+        if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+            ctx->data = entry->data;
+            ctx->data->clients++;
+            ret = 1;
+        }
+        if(entry->state == NST_CACHE_ENTRY_STATE_INVALID && entry->file) {
+            ctx->disk.file = entry->file;
+            ret = 2;
+        }
+    } else {
+        if(ctx->rule->disk != NUSTER_DISK_OFF) {
+            ctx->disk.file = NULL;
+            ret = 2;
+        }
+    }
+
+    nuster_shctx_unlock(&nuster.cache->dict[0]);
+
+    return ret;
+}
+
 int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
         uint64_t hash) {
 
