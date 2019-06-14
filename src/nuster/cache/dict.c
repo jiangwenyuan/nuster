@@ -315,9 +315,10 @@ void nst_cache_persist_async() {
                 element = element->next;
             }
 
-            pwrite(fd, meta, 48, 0);
             *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) =
                 cache_length;
+
+            pwrite(fd, meta, 48, 0);
 
             close(fd);
         }
