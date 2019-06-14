@@ -969,7 +969,7 @@ int nst_cache_exists_disk(struct nst_cache_ctx *ctx, struct buffer *key,
             }
 
             if(*(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_HASH) == hash
-                    && *(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_KEY_LENGTH)
+                    && *(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_KEY_LEN)
                     == key->data && memcmp(buf + NUSTER_PERSIST_META_INDEX_KEY,
                         key->area, key->data) == 0) {
 
@@ -1065,9 +1065,9 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             ctx->hash;
 
         *(uint64_t *)(ctx->disk.meta
-                + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) = ctx->header_length;
+                + NUSTER_PERSIST_META_INDEX_HEADER_LEN) = ctx->header_length;
 
-        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_KEY_LENGTH) =
+        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_KEY_LEN) =
             ctx->entry->key->data;
 
         /* write key */
@@ -1158,7 +1158,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
             ctx->entry->expire;
 
-        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) =
+        *(uint64_t *)(ctx->disk.meta + NUSTER_PERSIST_META_INDEX_CACHE_LEN) =
             ctx->cache_length;
 
         pwrite(ctx->disk.fd, ctx->disk.meta, 48, 0);

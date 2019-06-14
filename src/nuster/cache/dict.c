@@ -274,10 +274,10 @@ void nst_cache_persist_async() {
 
             *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HASH) = entry->hash;
 
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HEADER_LENGTH) =
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_HEADER_LEN) =
                 entry->header_length;
 
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_KEY_LENGTH) =
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_KEY_LEN) =
                 entry->key->data;
 
             *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_EXPIRE) =
@@ -300,7 +300,7 @@ void nst_cache_persist_async() {
                 element = element->next;
             }
 
-            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_CACHE_LENGTH) =
+            *(uint64_t *)(meta + NUSTER_PERSIST_META_INDEX_CACHE_LEN) =
                 cache_length;
 
             pwrite(fd, meta, 48, 0);
