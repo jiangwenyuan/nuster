@@ -261,7 +261,7 @@ void nst_cache_persist_async() {
             char meta[48] = "NUSTER";
             uint64_t offset = 0;
             struct nst_cache_element *element = entry->data->element;
-            uint64_t cache_length = 0;
+            uint64_t cache_len = 0;
 
 
             entry->file = nuster_persist_create(global.nuster.cache.memory,
@@ -270,7 +270,7 @@ void nst_cache_persist_async() {
             fd = nuster_persist_open(entry->file);
 
             nuster_persist_meta_init(meta, (char)entry->rule->disk,
-                    entry->hash, entry->expire, 0, entry->header_length,
+                    entry->hash, entry->expire, 0, entry->header_len,
                     entry->key->data);
 
             /* write key */
@@ -283,14 +283,14 @@ void nst_cache_persist_async() {
                 if(element->msg.data) {
                     pwrite(fd, element->msg.data, element->msg.len, offset);
 
-                    cache_length += element->msg.len;
+                    cache_len += element->msg.len;
                     offset += element->msg.len;
                 }
 
                 element = element->next;
             }
 
-            nuster_persist_meta_set_cache_len(meta, cache_length);
+            nuster_persist_meta_set_cache_len(meta, cache_len);
 
             pwrite(fd, meta, 48, 0);
 
@@ -354,7 +354,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->pid    = ctx->pid;
 
     entry->persist = 0;
-    entry->header_length = ctx->header_length;
+    entry->header_len = ctx->header_len;
 
     entry->host.data   = ctx->req.host.data;
     entry->host.len    = ctx->req.host.len;

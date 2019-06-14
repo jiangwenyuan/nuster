@@ -87,7 +87,7 @@ struct nst_cache_entry {
     int                     pid;         /* proxy uuid */
     int                     persist;
     char                   *file;
-    int                     header_length;
+    int                     header_len;
 };
 
 struct nst_cache_dict {
@@ -141,8 +141,8 @@ struct nst_cache_ctx {
 
     int                       pid;              /* proxy uuid */
     int                       full;             /* memory full */
-    int                       header_length;
-    uint64_t                  cache_length;
+    int                       header_len;
+    uint64_t                  cache_len;
 
     struct {
         char                 *file;             /* cache file */
