@@ -1104,8 +1104,25 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
     struct nst_cache_element *element;
 
-    if(ctx->rule->disk == NUSTER_DISK_OFF
-            || ctx->rule->disk == NUSTER_DISK_SYNC)  {
+    if(ctx->rule->disk == NUSTER_DISK_ONLY)  {
+        char *data = b_orig(&msg->chn->buf);
+        char *p    = ci_head(msg->chn);
+        int size   = msg->chn->buf.size;
+
+        if(p - data + msg_len > size) {
+            int right = data + size - p;
+            int left  = msg_len - right;
+
+            /* pwritev */
+            pwrite(ctx->disk.fd, p, right, ctx->disk.offset);
+            ctx->disk.offset += right;
+            pwrite(ctx->disk.fd, data, left, ctx->disk.offset);
+            ctx->disk.offset += left;
+        } else {
+            pwrite(ctx->disk.fd, p, msg_len, ctx->disk.offset);
+            ctx->disk.offset += msg_len;
+        }
+    } else {
 
         element = _nst_cache_data_append(msg, msg_len);
 
@@ -1132,25 +1149,6 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
             return NUSTER_ERR;
         }
-    } else if(ctx->rule->disk == NUSTER_DISK_ONLY) {
-        char *data = b_orig(&msg->chn->buf);
-        char *p    = ci_head(msg->chn);
-        int size   = msg->chn->buf.size;
-
-        if(p - data + msg_len > size) {
-            int right = data + size - p;
-            int left  = msg_len - right;
-
-            /* pwritev */
-            pwrite(ctx->disk.fd, p, right, ctx->disk.offset);
-            ctx->disk.offset += right;
-            pwrite(ctx->disk.fd, data, left, ctx->disk.offset);
-            ctx->disk.offset += left;
-        } else {
-            pwrite(ctx->disk.fd, p, msg_len, ctx->disk.offset);
-            ctx->disk.offset += msg_len;
-        }
-
     }
 
     return NUSTER_OK;
