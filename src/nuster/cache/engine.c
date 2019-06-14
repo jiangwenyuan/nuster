@@ -921,7 +921,7 @@ struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
     return data;
 }
 
-int nst_cache_exists2(struct nst_cache_ctx *ctx) {
+int nst_cache_exists2(struct nst_cache_ctx *ctx, int mode) {
     struct nst_cache_entry *entry = NULL;
     int ret = 0;
 
@@ -957,7 +957,7 @@ int nst_cache_exists2(struct nst_cache_ctx *ctx) {
             ret = 2;
         }
     } else {
-        if(ctx->rule->disk != NUSTER_DISK_OFF) {
+        if(mode != NUSTER_DISK_OFF) {
             ctx->disk.file = NULL;
             ret = 2;
         }
