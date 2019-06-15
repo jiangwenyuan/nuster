@@ -897,30 +897,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
 /*
  * Check if valid cache exists
  */
-struct nst_cache_data *nst_cache_exists(struct buffer *key, uint64_t hash) {
-    struct nst_cache_entry *entry = NULL;
-    struct nst_cache_data  *data  = NULL;
-
-    if(!key) {
-        return NULL;
-    }
-
-    nuster_shctx_lock(&nuster.cache->dict[0]);
-    entry = nst_cache_dict_get(key, hash);
-
-    if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID
-            && entry->rule->disk != NUSTER_DISK_ONLY) {
-
-        data = entry->data;
-        data->clients++;
-    }
-
-    nuster_shctx_unlock(&nuster.cache->dict[0]);
-
-    return data;
-}
-
-int nst_cache_exists2(struct nst_cache_ctx *ctx, int mode) {
+int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
     struct nst_cache_entry *entry = NULL;
     int ret = NST_CACHE_CTX_STATE_INIT;
 
