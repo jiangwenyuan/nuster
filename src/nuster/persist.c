@@ -48,16 +48,15 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
     disk->fd = nuster_persist_open_read(disk->file);
 
     if(disk->fd == -1) {
-        return NUSTER_ERR;
+        goto err;
     }
 
     if(read(disk->fd, disk->meta, 48) == -1) {
-        close(disk->fd);
-        return NUSTER_ERR;
+        goto err;
     }
 
     if(memcmp(disk->meta, "NUSTER", 6) !=0) {
-        return NUSTER_ERR;
+        goto err;
     }
 
     if(nuster_persist_meta_get_hash(disk->meta) == hash
@@ -68,6 +67,8 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         return NUSTER_OK;
     }
 
+err:
+    close(disk->fd);
     return NUSTER_ERR;
 }
 
