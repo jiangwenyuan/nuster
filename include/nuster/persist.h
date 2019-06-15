@@ -77,7 +77,7 @@ static inline int nuster_persist_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 
-static inline int nuster_persist_open_read(const char *pathname) {
+static inline int nuster_persist_open(const char *pathname) {
     return open(pathname, O_RDONLY);
 }
 

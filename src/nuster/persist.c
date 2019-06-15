@@ -48,7 +48,7 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
     char *buf;
     int ret;
 
-    disk->fd = nuster_persist_open_read(disk->file);
+    disk->fd = nuster_persist_open(disk->file);
 
     if(disk->fd == -1) {
         goto err;
