@@ -85,20 +85,40 @@ static inline void nuster_persist_meta_set_hash(char *p, uint64_t v) {
     *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HASH) = v;
 }
 
+static inline uint64_t nuster_persist_meta_get_hash(char *p) {
+    return *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HASH);
+}
+
 static inline void nuster_persist_meta_set_expire(char *p, uint64_t v) {
     *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_EXPIRE) = v;
+}
+
+static inline uint64_t nuster_persist_meta_get_expire(char *p) {
+    return *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_EXPIRE);
 }
 
 static inline void nuster_persist_meta_set_cache_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_CACHE_LEN) = v;
 }
 
+static inline uint64_t nuster_persist_meta_get_cache_len(char *p) {
+    return *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_CACHE_LEN);
+}
+
 static inline void nuster_persist_meta_set_header_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HEADER_LEN) = v;
 }
 
+static inline uint64_t nuster_persist_meta_get_header_len(char *p) {
+    return *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HEADER_LEN);
+}
+
 static inline void nuster_persist_meta_set_key_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_KEY_LEN) = v;
+}
+
+static inline uint64_t nuster_persist_meta_get_key_len(char *p) {
+    return *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_KEY_LEN);
 }
 
 static inline void
