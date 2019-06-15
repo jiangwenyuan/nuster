@@ -24,7 +24,12 @@
 
 #include <stdio.h>
 #include <errno.h>
+#include <sys/types.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <aio.h>
+
+#define NUSTER_PERSIST_VERSION  1
 
 /*
    Offset       Length(bytes)   Content
@@ -40,14 +45,21 @@
    48 + key_len cache_len       cache
  */
 
-#define NUSTER_PERSIST_VERSION                  1
-
 #define NUSTER_PERSIST_META_INDEX_HASH          8 * 1
 #define NUSTER_PERSIST_META_INDEX_EXPIRE        8 * 2
 #define NUSTER_PERSIST_META_INDEX_CACHE_LEN     8 * 3
 #define NUSTER_PERSIST_META_INDEX_HEADER_LEN    8 * 4
 #define NUSTER_PERSIST_META_INDEX_KEY_LEN       8 * 5
 #define NUSTER_PERSIST_META_INDEX_KEY           8 * 6
+
+struct persist {
+    char         *file;             /* cache file */
+    int           fd;
+    int           offset;
+    int           state;
+    char          meta[48];
+    struct aiocb  cb;
+};
 
 /*
  * DIR/a/4a/60322ec3e2428e4a/16ae92496e1-71fabeefebdaaedb

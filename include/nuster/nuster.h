@@ -26,12 +26,12 @@
 #define NUSTER_COPYRIGHT                                                     \
     "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
-#include <nuster/cache.h>
-#include <nuster/nosql.h>
-
 #include <common/chunk.h>
 #include <types/applet.h>
 #include <import/xxhash.h>
+
+#include <nuster/cache.h>
+#include <nuster/nosql.h>
 
 struct nuster {
     struct nst_cache *cache;

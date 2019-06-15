@@ -22,18 +22,17 @@
 #ifndef _NUSTER_CACHE_H
 #define _NUSTER_CACHE_H
 
-#include <aio.h>
-
-#include <nuster/common.h>
-
-#include <common/memory.h>
-
 #include <types/stream.h>
 #include <types/proto_http.h>
 #include <types/channel.h>
 #include <types/stream_interface.h>
 #include <types/proxy.h>
 #include <types/filters.h>
+
+#include <common/memory.h>
+
+#include <nuster/common.h>
+#include <nuster/persist.h>
 
 #define NST_CACHE_DEFAULT_SIZE                1024 * 1024
 #define NST_CACHE_DEFAULT_DICT_SIZE           32
@@ -144,14 +143,7 @@ struct nst_cache_ctx {
     int                       header_len;
     uint64_t                  cache_len;
 
-    struct {
-        char                 *file;             /* cache file */
-        int                   fd;
-        int                   offset;
-        int                   state;
-        char                  meta[48];
-        struct aiocb          cb;
-    } disk;
+    struct persist            disk;
 };
 
 struct nst_cache_stats {
