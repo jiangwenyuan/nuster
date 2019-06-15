@@ -45,6 +45,7 @@ char *nuster_persist_create(struct nuster_memory *m, uint64_t hash) {
 static int
 _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
 
+    char *buf;
     int ret;
 
     disk->fd = nuster_persist_open_read(disk->file);
@@ -72,6 +73,21 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
 
         goto err;
     }
+
+    buf = malloc(key->data);
+
+    if(!buf) {
+        goto err;
+    }
+
+    ret = read(disk->fd, buf, key->data);
+
+    if(ret != key->data) {
+        goto err;
+    }
+
+    free(buf);
+    return NUSTER_OK;
 
 err:
     close(disk->fd);
