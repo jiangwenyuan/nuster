@@ -77,6 +77,10 @@ static inline int nuster_persist_open(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 
+static inline int nuster_persist_open_read(const char *pathname) {
+    return open(pathname, O_RDONLY);
+}
+
 static inline void nuster_persist_meta_set_hash(char *p, uint64_t v) {
     *(uint64_t *)(p + NUSTER_PERSIST_META_INDEX_HASH) = v;
 }
@@ -111,5 +115,8 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nuster_persist_meta_set_header_len(p, header_len);
     nuster_persist_meta_set_key_len(p, key_len);
 }
+
+int
+nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash);
 
 #endif /* _NUSTER_PERSIST_H */

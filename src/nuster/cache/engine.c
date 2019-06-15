@@ -10,7 +10,6 @@
  *
  */
 
-#include <dirent.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
 #include <proto/raw_sock.h>
@@ -966,7 +965,7 @@ int nst_cache_exists2(struct nst_cache_ctx *ctx, int mode) {
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ret == 2) {
-        if(nst_cache_exists_disk(ctx) == NUSTER_OK) {
+        if(nuster_persist_exists(&ctx->disk, ctx->key, ctx->hash) == NUSTER_OK) {
             ret = NST_CACHE_CTX_STATE_HIT_DISK;
         } else {
             ret = NST_CACHE_CTX_STATE_INIT;
@@ -974,70 +973,6 @@ int nst_cache_exists2(struct nst_cache_ctx *ctx, int mode) {
     }
 
     return ret;
-}
-
-int nst_cache_exists_disk(struct nst_cache_ctx *ctx) {
-
-    struct dirent *de;
-    DIR *dir;
-    char *file;
-    int fd;
-    char buf[512] = {0};
-
-    file = nuster_memory_alloc(global.nuster.cache.memory, NUSTER_FILE_LEN + 1);
-
-    sprintf(file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
-            global.nuster.cache.directory, ctx->hash >> 60,
-            ctx->hash >> 56, ctx->hash);
-
-
-    dir = opendir(file);
-
-    if(!dir) {
-        return NUSTER_ERR;
-    }
-
-    while((de = readdir(dir)) != NULL) {
-
-        if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-            // TODO
-            memcpy(file + NUSTER_PATH_LEN, "/", 1);
-            memcpy(file + NUSTER_PATH_LEN + 1, de->d_name, strlen(de->d_name));
-
-            fd = open(file, O_RDONLY);
-
-            if (fd == -1) {
-                printf("Error open: %s\n", strerror(errno));
-                return NUSTER_ERR;
-            }
-
-            if (read(fd, buf, 512) == -1) {
-                printf("Error read: %s\n",strerror(errno));
-                close(fd);
-                return NUSTER_ERR;
-            }
-
-            if(memcmp(buf, "NUSTER", 6) !=0) {
-                return NUSTER_ERR;
-            }
-
-            if(*(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_HASH) == ctx->hash
-                    && *(uint64_t *)(buf + NUSTER_PERSIST_META_INDEX_KEY_LEN)
-                    == ctx->key->data && memcmp(buf + NUSTER_PERSIST_META_INDEX_KEY,
-                        ctx->key->area, ctx->key->data) == 0) {
-
-                ctx->disk.fd = fd;
-                memcpy(ctx->disk.meta, buf, 48);
-
-                closedir(dir);
-                return NUSTER_OK;
-            }
-
-        }
-    }
-
-    closedir(dir);
-    return NUSTER_ERR;
 }
 
 /*
