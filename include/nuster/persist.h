@@ -73,7 +73,7 @@ struct persist {
 
 char *nuster_persist_init(struct nuster_memory *p, uint64_t hash);
 
-static inline int nuster_persist_open(const char *pathname) {
+static inline int nuster_persist_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 

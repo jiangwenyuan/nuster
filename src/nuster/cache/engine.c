@@ -1021,7 +1021,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         ctx->disk.file = nuster_persist_init(global.nuster.cache.memory,
                 ctx->hash);
 
-        ctx->disk.fd = nuster_persist_open(ctx->disk.file);
+        ctx->disk.fd = nuster_persist_create(ctx->disk.file);
 
         nuster_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
                 ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
