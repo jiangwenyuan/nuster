@@ -60,9 +60,9 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         return NUSTER_ERR;
     }
 
-    if(*(uint64_t *)(disk->meta + NUSTER_PERSIST_META_INDEX_HASH) == hash
-            && *(uint64_t *)(disk->meta + NUSTER_PERSIST_META_INDEX_KEY_LEN)
-            == key->data && memcmp(disk->meta + NUSTER_PERSIST_META_INDEX_KEY,
+    if(nuster_persist_meta_get_hash(disk->meta) == hash
+            && nuster_persist_meta_get_key_len(disk->meta) == key->data
+            && memcmp(disk->meta + NUSTER_PERSIST_META_INDEX_KEY,
                 key->area, key->data) == 0) {
 
         return NUSTER_OK;
