@@ -63,6 +63,10 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
+    if(nuster_persist_meta_get_expire(disk->meta) > get_current_timestamp()) {
+        goto err;
+    }
+
     if(nuster_persist_meta_get_hash(disk->meta) == hash
             && nuster_persist_meta_get_key_len(disk->meta) == key->data
             && memcmp(disk->meta + NUSTER_PERSIST_META_INDEX_KEY,
