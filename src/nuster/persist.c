@@ -45,13 +45,17 @@ char *nuster_persist_create(struct nuster_memory *m, uint64_t hash) {
 static int
 _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
 
+    int ret;
+
     disk->fd = nuster_persist_open_read(disk->file);
 
     if(disk->fd == -1) {
         goto err;
     }
 
-    if(read(disk->fd, disk->meta, 48) == -1) {
+    ret = read(disk->fd, disk->meta, 48);
+
+    if(ret != 48) {
         goto err;
     }
 
