@@ -19,7 +19,7 @@
 #include <nuster/persist.h>
 
 
-char *nuster_persist_create(struct nuster_memory *m, uint64_t hash) {
+char *nuster_persist_init(struct nuster_memory *m, uint64_t hash) {
     char *p = nuster_memory_alloc(m, NUSTER_FILE_LEN + 1);
 
     if(p) {

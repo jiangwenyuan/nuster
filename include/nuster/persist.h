@@ -71,7 +71,7 @@ struct persist {
 /* 1 + 11 + 1 + 16, without '\0'  */
 #define NUSTER_FILE_LEN NUSTER_PATH_LEN + 29
 
-char *nuster_persist_create(struct nuster_memory *p, uint64_t hash);
+char *nuster_persist_init(struct nuster_memory *p, uint64_t hash);
 
 static inline int nuster_persist_open(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);

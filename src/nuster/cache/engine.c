@@ -1018,7 +1018,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             && (ctx->rule->disk == NUSTER_DISK_SYNC
                 || ctx->rule->disk == NUSTER_DISK_ONLY)) {
 
-        ctx->disk.file = nuster_persist_create(global.nuster.cache.memory,
+        ctx->disk.file = nuster_persist_init(global.nuster.cache.memory,
                 ctx->hash);
 
         ctx->disk.fd = nuster_persist_open(ctx->disk.file);
@@ -1054,7 +1054,6 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
             int right = data + size - p;
             int left  = msg_len - right;
 
-            /* pwritev */
             nuster_write(ctx->disk.fd, p, right, ctx->disk.offset);
             ctx->disk.offset += right;
             nuster_write(ctx->disk.fd, data, left, ctx->disk.offset);
