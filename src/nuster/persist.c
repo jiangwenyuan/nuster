@@ -80,7 +80,7 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    ret = pread(disk->fd, buf, key->data, NUSTER_PERSIST_META_POS_KEY);
+    ret = pread(disk->fd, buf, key->data, NUSTER_PERSIST_POS_KEY);
 
     if(ret != key->data) {
         goto err;
