@@ -255,7 +255,7 @@ void nst_cache_persist_async() {
 
         if(!_nst_cache_entry_invalid(entry)
                 && entry->rule->disk == NUSTER_DISK_ASYNC
-                && entry->persist == 0) {
+                && entry->file == NULL) {
 
             struct nst_cache_element *element = entry->data->element;
             uint64_t cache_len = 0;
@@ -346,8 +346,8 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->expire = 0;
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
+    entry->file   = NULL;
 
-    entry->persist = 0;
     entry->header_len = ctx->header_len;
 
     entry->host.data   = ctx->req.host.data;
