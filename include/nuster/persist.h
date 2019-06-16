@@ -44,15 +44,15 @@
    48 + key_len cache_len       cache
  */
 
-#define NUSTER_PERSIST_META_POS_HASH          8 * 1
-#define NUSTER_PERSIST_META_POS_EXPIRE        8 * 2
-#define NUSTER_PERSIST_META_POS_CACHE_LEN     8 * 3
-#define NUSTER_PERSIST_META_POS_HEADER_LEN    8 * 4
-#define NUSTER_PERSIST_META_POS_KEY_LEN       8 * 5
-#define NUSTER_PERSIST_META_POS_KEY           8 * 6
+#define NUSTER_PERSIST_META_POS_HASH            8 * 1
+#define NUSTER_PERSIST_META_POS_EXPIRE          8 * 2
+#define NUSTER_PERSIST_META_POS_CACHE_LEN       8 * 3
+#define NUSTER_PERSIST_META_POS_HEADER_LEN      8 * 4
+#define NUSTER_PERSIST_META_POS_KEY_LEN         8 * 5
 
-#define NUSTER_PERSIST_META_SIZE              NUSTER_PERSIST_META_POS_KEY
 
+#define NUSTER_PERSIST_META_SIZE        8 * 6
+#define NUSTER_PERSIST_POS_KEY          NUSTER_PERSIST_META_SIZE
 
 enum {
     NUSTER_PERSIST_APPLET_ERROR   = -1,
@@ -171,7 +171,7 @@ nuster_persist_write_meta(struct persist *disk) {
 
 static inline int
 nuster_persist_write_key(struct persist *disk, struct buffer *key) {
-    disk->offset = NUSTER_PERSIST_META_POS_KEY;
+    disk->offset = NUSTER_PERSIST_POS_KEY;
     return nuster_persist_write(disk, key->area, key->data);
 }
 
