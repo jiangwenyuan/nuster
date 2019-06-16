@@ -113,6 +113,7 @@ enum {
     NST_CACHE_CTX_STATE_DISK_SYNC,         /* */
     NST_CACHE_CTX_STATE_DISK_ASYNC,        /* */
     NST_CACHE_CTX_STATE_DONE,              /* cache done */
+    NST_CACHE_CTX_STATE_CHECK_PERSIST,     /* check persistence */
 };
 
 struct nst_cache_ctx {
