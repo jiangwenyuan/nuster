@@ -270,8 +270,7 @@ void nst_cache_persist_async() {
                     entry->hash, entry->expire, 0, entry->header_len,
                     entry->key->data);
 
-            disk.offset = NUSTER_PERSIST_META_POS_KEY;
-            nuster_persist_write(&disk, entry->key->area, entry->key->data);
+            nuster_persist_write_key(&disk, entry->key);
 
             while(element) {
 

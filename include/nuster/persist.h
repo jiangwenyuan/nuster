@@ -157,4 +157,10 @@ nuster_persist_write_meta(struct persist *disk) {
     return nuster_persist_write(disk, disk->meta, NUSTER_PERSIST_META_SIZE);
 }
 
+static inline int
+nuster_persist_write_key(struct persist *disk, struct buffer *key) {
+    disk->offset = NUSTER_PERSIST_META_POS_KEY;
+    return nuster_persist_write(disk, key->area, key->data);
+}
+
 #endif /* _NUSTER_PERSIST_H */
