@@ -128,6 +128,10 @@ static inline uint64_t nuster_persist_meta_get_key_len(char *p) {
     return *(uint64_t *)(p + NUSTER_PERSIST_META_POS_KEY_LEN);
 }
 
+static inline int nuster_persist_get_header_pos(char *p) {
+    return (int)(NUSTER_PERSIST_META_SIZE + nuster_persist_meta_get_key_len(p));
+}
+
 static inline void
 nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
         uint64_t cache_len, uint64_t header_len, uint64_t key_len) {
