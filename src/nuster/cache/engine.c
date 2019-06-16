@@ -121,50 +121,49 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     }
 
     switch(appctx->st0) {
-        case 1:
+        case NUSTER_PERSIST_APPLET_HEADER:
             if((read_ret = pread(fd, buf, header_len, offset)) == -1) {
-                appctx->st0 = -1;
+                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
             }
             ret = ci_putblk(res, buf, read_ret);
 
             if(ret >= 0) {
-                appctx->st0 = 2;
+                appctx->st0 = NUSTER_PERSIST_APPLET_PAYLOAD;
                 appctx->ctx.nuster.cache_disk_engine.offset += read_ret;
             } else if(ret == -2) {
-                appctx->st0 = -1;
+                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
                 si_shutr(si);
                 res->flags |= CF_READ_NULL;
             }
             break;
-        case 2:
+        case NUSTER_PERSIST_APPLET_PAYLOAD:
             if((read_ret = pread(fd, buf,
                             b_room(&res->buf) - global.tune.maxrewrite, offset))
                     == -1) {
-                appctx->st0 = -1;
+                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
             }
             if(read_ret == 0) {
                 close(fd);
-                appctx->st0 = 0;
+                appctx->st0 = NUSTER_PERSIST_APPLET_DONE;
                 break;
             }
             ret = ci_putblk(res, buf, read_ret);
 
             if(ret >= 0) {
-                appctx->st0 = 2;
+                appctx->st0 = NUSTER_PERSIST_APPLET_PAYLOAD;
                 appctx->ctx.nuster.cache_disk_engine.offset += read_ret;
             } else if(ret == -2) {
-                appctx->st0 = -1;
+                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
                 si_shutr(si);
                 res->flags |= CF_READ_NULL;
             }
             break;
-        case 0:
+        case NUSTER_PERSIST_APPLET_DONE:
             co_skip(si_oc(si), co_data(si_oc(si)));
             si_shutr(si);
             res->flags |= CF_READ_NULL;
             break;
-        case -1:
-            appctx->st0 = -1;
+        case NUSTER_PERSIST_APPLET_ERROR:
             si_shutr(si);
             res->flags |= CF_READ_NULL;
             close(fd);
@@ -1172,14 +1171,13 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
                 sizeof(appctx->ctx.nuster.cache_disk_engine));
 
         appctx->ctx.nuster.cache_disk_engine.fd = ctx->disk.fd;
-        appctx->ctx.nuster.cache_disk_engine.offset = (int)(
-                NUSTER_PERSIST_META_SIZE
-                + *(uint64_t *)(ctx->disk.meta + 40));
+        appctx->ctx.nuster.cache_disk_engine.offset =
+            nuster_persist_get_header_pos(ctx->disk.meta);
 
-        appctx->ctx.nuster.cache_disk_engine.header_len = (int)(
-            *(uint64_t *)(ctx->disk.meta + 32));
+        appctx->ctx.nuster.cache_disk_engine.header_len =
+            nuster_persist_meta_get_header_len(ctx->disk.meta);
 
-        appctx->st0 = 1;
+        appctx->st0 = NUSTER_PERSIST_APPLET_HEADER;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
