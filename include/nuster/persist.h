@@ -141,4 +141,23 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
 int
 nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash);
 
+static inline int
+nuster_persist_write(struct persist *disk, char *buf, int len) {
+
+    ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
+
+    if(ret != len) {
+        return NUSTER_ERR;
+    }
+
+    disk->offset += len;
+
+    return NUSTER_OK;
+}
+
+static inline int
+nuster_persist_write_meta(struct persist *disk) {
+    return nuster_persist_write(disk, disk->meta, NUSTER_PERSIST_META_SIZE);
+}
+
 #endif /* _NUSTER_PERSIST_H */
