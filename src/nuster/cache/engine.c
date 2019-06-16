@@ -1114,7 +1114,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 
         nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
 
-        pwrite(ctx->disk.fd, ctx->disk.meta, 48, 0);
+        pwrite(ctx->disk.fd, ctx->disk.meta, NUSTER_PERSIST_META_SIZE, 0);
     }
 }
 
@@ -1179,8 +1179,9 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
                 sizeof(appctx->ctx.nuster.cache_disk_engine));
 
         appctx->ctx.nuster.cache_disk_engine.fd = ctx->disk.fd;
-        appctx->ctx.nuster.cache_disk_engine.offset = (int)(48 +
-            *(uint64_t *)(ctx->disk.meta + 40));
+        appctx->ctx.nuster.cache_disk_engine.offset = (int)(
+                NUSTER_PERSIST_META_SIZE
+                + *(uint64_t *)(ctx->disk.meta + 40));
 
         appctx->ctx.nuster.cache_disk_engine.header_len = (int)(
             *(uint64_t *)(ctx->disk.meta + 32));
