@@ -930,19 +930,21 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
         }
         if(entry->state == NST_CACHE_ENTRY_STATE_INVALID && entry->file) {
             ctx->disk.file = entry->file;
-            ret = 2;
+            ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
         }
     } else {
         if(mode != NUSTER_DISK_OFF) {
             ctx->disk.file = NULL;
-            ret = 2;
+            ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
         }
     }
 
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
-    if(ret == 2) {
-        if(nuster_persist_exists(&ctx->disk, ctx->key, ctx->hash) == NUSTER_OK) {
+    if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
+        if(nuster_persist_exists(&ctx->disk, ctx->key, ctx->hash) ==
+                NUSTER_OK) {
+
             ret = NST_CACHE_CTX_STATE_HIT_DISK;
         } else {
             ret = NST_CACHE_CTX_STATE_INIT;
