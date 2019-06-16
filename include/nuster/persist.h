@@ -27,7 +27,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <aio.h>
 
 #define NUSTER_PERSIST_VERSION  1
 
@@ -58,9 +57,7 @@ struct persist {
     char         *file;             /* cache file */
     int           fd;
     int           offset;
-    int           state;
     char          meta[NUSTER_PERSIST_META_SIZE];
-    struct aiocb  cb;
 };
 
 /*
