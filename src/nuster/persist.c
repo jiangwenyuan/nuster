@@ -132,6 +132,7 @@ nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash) {
         }
 
         closedir(dir);
+        nuster_memory_free(global.nuster.cache.memory, disk->file);
         return NUSTER_ERR;
     }
 }
