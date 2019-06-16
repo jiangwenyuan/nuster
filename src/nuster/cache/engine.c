@@ -1030,7 +1030,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
         ctx->disk.state  = 0;
 
-        nuster_write(ctx->disk.fd, ctx->entry->key->area, ctx->entry->key->data,
+        pwrite(ctx->disk.fd, ctx->entry->key->area, ctx->entry->key->data,
                 ctx->disk.offset);
 
         ctx->disk.offset += ctx->entry->key->data;
@@ -1054,12 +1054,12 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
             int right = data + size - p;
             int left  = msg_len - right;
 
-            nuster_write(ctx->disk.fd, p, right, ctx->disk.offset);
+            pwrite(ctx->disk.fd, p, right, ctx->disk.offset);
             ctx->disk.offset += right;
-            nuster_write(ctx->disk.fd, data, left, ctx->disk.offset);
+            pwrite(ctx->disk.fd, data, left, ctx->disk.offset);
             ctx->disk.offset += left;
         } else {
-            nuster_write(ctx->disk.fd, p, msg_len, ctx->disk.offset);
+            pwrite(ctx->disk.fd, p, msg_len, ctx->disk.offset);
             ctx->disk.offset += msg_len;
         }
     } else {
@@ -1077,7 +1077,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
             ctx->element = element;
 
             if(ctx->rule->disk == NUSTER_DISK_SYNC) {
-                nuster_write(ctx->disk.fd, element->msg.data, element->msg.len,
+                pwrite(ctx->disk.fd, element->msg.data, element->msg.len,
                         ctx->disk.offset);
 
                 ctx->cache_len += element->msg.len;
@@ -1114,7 +1114,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 
         nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
 
-        nuster_write(ctx->disk.fd, ctx->disk.meta, 48, 0);
+        pwrite(ctx->disk.fd, ctx->disk.meta, 48, 0);
     }
 }
 
