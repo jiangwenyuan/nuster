@@ -275,13 +275,13 @@ void nst_cache_persist_async() {
 
             /* write key */
             offset = NUSTER_PERSIST_META_INDEX_KEY;
-            nuster_write(fd, entry->key->area, entry->key->data, offset);
+            pwrite(fd, entry->key->area, entry->key->data, offset);
             offset += entry->key->data;
 
             while(element) {
 
                 if(element->msg.data) {
-                    nuster_write(fd, element->msg.data, element->msg.len,
+                    pwrite(fd, element->msg.data, element->msg.len,
                             offset);
 
                     cache_len += element->msg.len;
@@ -293,7 +293,7 @@ void nst_cache_persist_async() {
 
             nuster_persist_meta_set_cache_len(meta, cache_len);
 
-            nuster_write(fd, meta, 48, 0);
+            pwrite(fd, meta, 48, 0);
 
             close(fd);
         }
