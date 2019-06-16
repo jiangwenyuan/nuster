@@ -54,7 +54,7 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    ret = read(disk->fd, disk->meta, 48);
+    ret = pread(disk->fd, disk->meta, 48, 0);
 
     if(ret != 48) {
         goto err;
@@ -80,7 +80,7 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    ret = read(disk->fd, buf, key->data);
+    ret = pread(disk->fd, buf, key->data, NUSTER_PERSIST_META_INDEX_KEY);
 
     if(ret != key->data) {
         goto err;
