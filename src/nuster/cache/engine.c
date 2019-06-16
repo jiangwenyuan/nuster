@@ -90,11 +90,11 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
  * The cache disk applet acts like the backend to send cached http data
  */
 static void nst_cache_disk_engine_handler(struct appctx *appctx) {
-    struct stream_interface *si       = appctx->owner;
-    struct channel *res               = si_ic(si);
-    /* struct stream *s                  = si_strm(si); */
+    struct stream_interface *si = appctx->owner;
+    struct channel *res         = si_ic(si);
+
     int ret;
-    int read_ret;
+    int max = b_room(&res->buf) - global.tune.maxrewrite;
 
     int fd = appctx->ctx.nuster.cache_disk_engine.fd;
     int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
@@ -122,14 +122,18 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
 
     switch(appctx->st0) {
         case NUSTER_PERSIST_APPLET_HEADER:
-            if((read_ret = pread(fd, buf, header_len, offset)) == -1) {
+            ret = pread(fd, buf, header_len, offset);
+
+            if(ret != header_len) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
+                break;
             }
-            ret = ci_putblk(res, buf, read_ret);
+
+            ret = ci_putblk(res, buf, ret);
 
             if(ret >= 0) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_PAYLOAD;
-                appctx->ctx.nuster.cache_disk_engine.offset += read_ret;
+                appctx->ctx.nuster.cache_disk_engine.offset += ret;
             } else if(ret == -2) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
                 si_shutr(si);
@@ -137,21 +141,24 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             }
             break;
         case NUSTER_PERSIST_APPLET_PAYLOAD:
-            if((read_ret = pread(fd, buf,
-                            b_room(&res->buf) - global.tune.maxrewrite, offset))
-                    == -1) {
+            ret = pread(fd, buf, max, offset);
+
+            if(ret == -1) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
+                break;
             }
-            if(read_ret == 0) {
+
+            if(ret == 0) {
                 close(fd);
                 appctx->st0 = NUSTER_PERSIST_APPLET_DONE;
                 break;
             }
-            ret = ci_putblk(res, buf, read_ret);
+
+            ret = ci_putblk(res, buf, ret);
 
             if(ret >= 0) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_PAYLOAD;
-                appctx->ctx.nuster.cache_disk_engine.offset += read_ret;
+                appctx->ctx.nuster.cache_disk_engine.offset += ret;
             } else if(ret == -2) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
                 si_shutr(si);
