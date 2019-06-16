@@ -257,45 +257,39 @@ void nst_cache_persist_async() {
                 && entry->rule->disk == NUSTER_DISK_ASYNC
                 && entry->persist == 0) {
 
-            int fd;
-            char meta[NUSTER_PERSIST_META_SIZE] = "NUSTER";
-            uint64_t offset = 0;
             struct nst_cache_element *element = entry->data->element;
             uint64_t cache_len = 0;
-
+            struct persist disk;
 
             entry->file = nuster_persist_init(global.nuster.cache.memory,
                     entry->hash);
 
-            fd = nuster_persist_create(entry->file);
+            disk.fd = nuster_persist_create(entry->file);
 
-            nuster_persist_meta_init(meta, (char)entry->rule->disk,
+            nuster_persist_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->hash, entry->expire, 0, entry->header_len,
                     entry->key->data);
 
-            /* write key */
-            offset = NUSTER_PERSIST_META_POS_KEY;
-            pwrite(fd, entry->key->area, entry->key->data, offset);
-            offset += entry->key->data;
+            disk.offset = NUSTER_PERSIST_META_POS_KEY;
+            nuster_persist_write(&disk, entry->key->area, entry->key->data);
 
             while(element) {
 
                 if(element->msg.data) {
-                    pwrite(fd, element->msg.data, element->msg.len,
-                            offset);
+                    nuster_persist_write(&disk, element->msg.data,
+                            element->msg.len);
 
                     cache_len += element->msg.len;
-                    offset += element->msg.len;
                 }
 
                 element = element->next;
             }
 
-            nuster_persist_meta_set_cache_len(meta, cache_len);
+            nuster_persist_meta_set_cache_len(disk.meta, cache_len);
 
-            pwrite(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
+            nuster_persist_write_meta(&disk);
 
-            close(fd);
+            close(disk.fd);
         }
 
         entry = entry->next;
