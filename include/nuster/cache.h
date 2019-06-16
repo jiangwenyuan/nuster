@@ -84,7 +84,6 @@ struct nst_cache_entry {
     struct nst_cache_entry *next;
     struct nuster_rule     *rule;        /* rule */
     int                     pid;         /* proxy uuid */
-    int                     persist;
     char                   *file;
     int                     header_len;
 };
