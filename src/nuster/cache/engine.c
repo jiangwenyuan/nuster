@@ -1027,7 +1027,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
                 ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
 
         /* write key */
-        ctx->disk.offset = NUSTER_PERSIST_META_INDEX_KEY;
+        ctx->disk.offset = NUSTER_PERSIST_META_POS_KEY;
         ctx->disk.state  = 0;
 
         pwrite(ctx->disk.fd, ctx->entry->key->area, ctx->entry->key->data,

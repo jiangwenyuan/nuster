@@ -274,7 +274,7 @@ void nst_cache_persist_async() {
                     entry->key->data);
 
             /* write key */
-            offset = NUSTER_PERSIST_META_INDEX_KEY;
+            offset = NUSTER_PERSIST_META_POS_KEY;
             pwrite(fd, entry->key->area, entry->key->data, offset);
             offset += entry->key->data;
 
