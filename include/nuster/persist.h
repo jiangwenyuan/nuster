@@ -52,12 +52,14 @@
 #define NUSTER_PERSIST_META_POS_KEY_LEN       8 * 5
 #define NUSTER_PERSIST_META_POS_KEY           8 * 6
 
+#define NUSTER_PERSIST_META_SIZE              NUSTER_PERSIST_META_POS_KEY
+
 struct persist {
     char         *file;             /* cache file */
     int           fd;
     int           offset;
     int           state;
-    char          meta[48];
+    char          meta[NUSTER_PERSIST_META_SIZE];
     struct aiocb  cb;
 };
 

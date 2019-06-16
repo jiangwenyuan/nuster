@@ -258,7 +258,7 @@ void nst_cache_persist_async() {
                 && entry->persist == 0) {
 
             int fd;
-            char meta[48] = "NUSTER";
+            char meta[NUSTER_PERSIST_META_SIZE] = "NUSTER";
             uint64_t offset = 0;
             struct nst_cache_element *element = entry->data->element;
             uint64_t cache_len = 0;
@@ -293,7 +293,7 @@ void nst_cache_persist_async() {
 
             nuster_persist_meta_set_cache_len(meta, cache_len);
 
-            pwrite(fd, meta, 48, 0);
+            pwrite(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
 
             close(fd);
         }

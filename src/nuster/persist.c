@@ -54,9 +54,9 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    ret = pread(disk->fd, disk->meta, 48, 0);
+    ret = pread(disk->fd, disk->meta, NUSTER_PERSIST_META_SIZE, 0);
 
-    if(ret != 48) {
+    if(ret != NUSTER_PERSIST_META_SIZE) {
         goto err;
     }
 
