@@ -1106,6 +1106,8 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
 
         nuster_persist_write_meta(&ctx->disk);
+
+        ctx->entry->file = ctx->disk.file;
     }
 }
 
