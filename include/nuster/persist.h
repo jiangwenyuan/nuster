@@ -53,6 +53,14 @@
 
 #define NUSTER_PERSIST_META_SIZE              NUSTER_PERSIST_META_POS_KEY
 
+
+enum {
+    NUSTER_PERSIST_APPLET_ERROR   = -1,
+    NUSTER_PERSIST_APPLET_DONE    =  0,
+    NUSTER_PERSIST_APPLET_HEADER,
+    NUSTER_PERSIST_APPLET_PAYLOAD,
+};
+
 struct persist {
     char         *file;             /* cache file */
     int           fd;
