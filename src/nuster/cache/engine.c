@@ -998,7 +998,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
                     ctx->element = entry->data->element;
                 }
             } else {
-                ctx->state   = NST_CACHE_CTX_STATE_CREATE;
+                ctx->state = NST_CACHE_CTX_STATE_CREATE;
+                ctx->entry = entry;
             }
 
         } else {
@@ -1008,9 +1009,9 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         entry = nst_cache_dict_set(ctx);
 
         if(entry) {
-            ctx->state   = NST_CACHE_CTX_STATE_CREATE;
-            ctx->entry   = entry;
-            ctx->data    = entry->data;
+            ctx->state = NST_CACHE_CTX_STATE_CREATE;
+            ctx->entry = entry;
+            ctx->data  = entry->data;
 
             if(ctx->data) {
                 ctx->element = entry->data->element;
