@@ -1097,7 +1097,12 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
  */
 void nst_cache_finish(struct nst_cache_ctx *ctx) {
     ctx->state = NST_CACHE_CTX_STATE_DONE;
-    ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
+
+    if(ctx->rule->disk == NUSTER_DISK_ONLY) {
+        ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+    } else {
+        ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
+    }
 
     if(*ctx->rule->ttl == 0) {
         ctx->entry->expire = 0;
