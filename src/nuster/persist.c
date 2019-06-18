@@ -86,6 +86,10 @@ _persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
+    if(memcmp(key->area, buf, key->data) != 0) {
+        goto err;
+    }
+
     free(buf);
     return NUSTER_OK;
 
