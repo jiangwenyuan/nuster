@@ -162,4 +162,6 @@ static inline uint64_t get_current_timestamp() {
 
 void nuster_debug(const char *fmt, ...);
 
+void nuster_debug_key(struct buffer *key);
+
 #endif /* _NUSTER_COMMON_H */
