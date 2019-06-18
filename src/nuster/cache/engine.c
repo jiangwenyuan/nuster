@@ -1060,6 +1060,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         } else {
             nuster_persist_write(&ctx->disk, p, msg_len);
         }
+        ctx->cache_len += msg_len;
     } else {
 
         element = _nst_cache_data_append(msg, msg_len);
