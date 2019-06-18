@@ -58,6 +58,20 @@ void nuster_debug(const char *fmt, ...) {
     }
 }
 
+void nuster_debug_key(struct buffer *key) {
+
+    if((global.mode & MODE_DEBUG)) {
+        int i;
+        for(i = 0; i < key->data; i++) {
+            char c = key->area[i];
+            if(c != 0) {
+                printf("%c", c);
+            }
+        }
+        printf("\n");
+    }
+}
+
 void nuster_init() {
     int i, uuid;
     struct proxy *p;
