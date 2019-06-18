@@ -934,6 +934,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
             ctx->data->clients++;
             ret = NST_CACHE_CTX_STATE_HIT;
         }
+
         if(entry->state == NST_CACHE_ENTRY_STATE_INVALID && entry->file) {
             ctx->disk.file = entry->file;
             ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
