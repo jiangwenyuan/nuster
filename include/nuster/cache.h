@@ -254,5 +254,27 @@ int nst_cache_stats_full();
 int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
 void nst_cache_stats_update_request(int state);
 
+static inline int nst_cache_entry_expired(struct nst_cache_entry *entry) {
+
+    if(entry->expire == 0) {
+        return 0;
+    } else {
+        return entry->expire <= get_current_timestamp() / 1000;
+    }
+
+}
+
+static inline int nst_cache_entry_invalid(struct nst_cache_entry *entry) {
+
+    /* check state */
+    if(entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
+        return 1;
+    } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED) {
+        return 1;
+    }
+
+    /* check expire */
+    return nst_cache_entry_expired(entry);
+}
 
 #endif /* _NUSTER_CACHE_H */
