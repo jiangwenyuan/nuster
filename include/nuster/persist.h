@@ -28,6 +28,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include <nuster/common.h>
+
 #define NUSTER_PERSIST_VERSION  1
 
 /*
@@ -102,6 +104,16 @@ static inline void nuster_persist_meta_set_expire(char *p, uint64_t v) {
 
 static inline uint64_t nuster_persist_meta_get_expire(char *p) {
     return *(uint64_t *)(p + NUSTER_PERSIST_META_POS_EXPIRE);
+}
+
+static inline int nuster_persist_meta_check_expire(char *p) {
+    uint64_t expire = *(uint64_t *)(p + NUSTER_PERSIST_META_POS_EXPIRE);
+
+    if(expire * 1000 > get_current_timestamp()) {
+        return NUSTER_OK;
+    } else {
+        return NUSTER_ERR;
+    }
 }
 
 static inline void nuster_persist_meta_set_cache_len(char *p, uint64_t v) {
