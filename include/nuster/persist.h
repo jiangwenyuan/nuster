@@ -109,6 +109,10 @@ static inline uint64_t nuster_persist_meta_get_expire(char *p) {
 static inline int nuster_persist_meta_check_expire(char *p) {
     uint64_t expire = *(uint64_t *)(p + NUSTER_PERSIST_META_POS_EXPIRE);
 
+    if(expire == 0) {
+        return NUSTER_OK;
+    }
+
     if(expire * 1000 > get_current_timestamp()) {
         return NUSTER_OK;
     } else {
