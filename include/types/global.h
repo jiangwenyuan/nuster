@@ -186,6 +186,11 @@ struct global {
 			int       share;
 			char     *purge_method;
 			char     *uri;                         /* the uri used for stats and manager */
+			int	  dict_cleaner;                /* the number of entries checked once */
+			int	  data_cleaner;                /* the number of data checked once */
+			int	  disk_cleaner;                /* the number of files checked once */
+			int	  disk_loader;                 /* the number of files load once */
+			int	  disk_saver;                  /* the number of entries checked once for persist_async */
 
 			struct {
 				struct pool_head *stash;
