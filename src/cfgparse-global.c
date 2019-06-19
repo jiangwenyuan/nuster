@@ -1106,7 +1106,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			}
 			args++;
-			err_code = nuster_parse_global_cache(file, linenum, args, kwm);
+			err_code = nuster_parse_global_cache(file, linenum, args);
 			if (err_code) {
 				goto out;
 			}
@@ -1115,7 +1115,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			}
 			args++;
-			err_code = nuster_parse_global_nosql(file, linenum, args, kwm);
+			err_code = nuster_parse_global_nosql(file, linenum, args);
 			if (err_code) {
 				goto out;
 			}
