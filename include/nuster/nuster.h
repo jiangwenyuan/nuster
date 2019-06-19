@@ -53,10 +53,8 @@ void nuster_init();
 /* parser */
 const char *nuster_parse_size(const char *text, uint64_t *ret);
 const char *nuster_parse_time(const char *text, int len, unsigned *ret);
-int nuster_parse_global_cache(const char *file, int linenum, char **args,
-        int kwm);
-int nuster_parse_global_nosql(const char *file, int linenum, char **args,
-        int kwm);
+int nuster_parse_global_cache(const char *file, int linenum, char **args);
+int nuster_parse_global_nosql(const char *file, int linenum, char **args);
 
 static inline void nuster_housekeeping() {
     nst_cache_housekeeping();
