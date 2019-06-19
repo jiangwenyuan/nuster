@@ -449,14 +449,26 @@ static void _nst_cache_data_cleanup() {
 void nst_cache_housekeeping() {
 
     if(global.nuster.cache.status == NUSTER_STATUS_ON) {
-        nst_cache_dict_rehash();
-        nuster_shctx_lock(&nuster.cache->dict[0]);
-        nst_cache_dict_cleanup();
-        nst_cache_persist_async();
-        nuster_shctx_unlock(&nuster.cache->dict[0]);
-        nuster_shctx_lock(nuster.cache);
-        _nst_cache_data_cleanup();
-        nuster_shctx_unlock(nuster.cache);
+        int i = 1;
+
+        if(global.mode & MODE_MWORKER) {
+            if(master == 1) {
+                i = 10000;
+            } else {
+                i = 0;
+            }
+        }
+
+        while(i--) {
+            nst_cache_dict_rehash();
+            nuster_shctx_lock(&nuster.cache->dict[0]);
+            nst_cache_dict_cleanup();
+            nst_cache_persist_async();
+            nuster_shctx_unlock(&nuster.cache->dict[0]);
+            nuster_shctx_lock(nuster.cache);
+            _nst_cache_data_cleanup();
+            nuster_shctx_unlock(nuster.cache);
+        }
     }
 }
 
