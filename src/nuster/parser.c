@@ -296,8 +296,7 @@ const char *nuster_parse_time(const char *text, int len, unsigned *ret) {
     return NULL;
 }
 
-int nuster_parse_global_cache(const char *file, int linenum, char **args,
-        int kwm) {
+int nuster_parse_global_cache(const char *file, int linenum, char **args) {
 
     int err_code = 0;
     int cur_arg  = 1;
@@ -418,6 +417,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args,
             cur_arg++;
             continue;
         }
+
         if (!strcmp(args[cur_arg], "purge-method")) {
             cur_arg++;
 
@@ -486,6 +486,115 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args,
             continue;
         }
 
+        if (!strcmp(args[cur_arg], "dict-cleaner")) {
+            cur_arg++;
+
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.cache.dict_cleaner = atoi(args[cur_arg]);
+
+            if(global.nuster.cache.dict_cleaner <= 0) {
+                global.nuster.cache.dict_cleaner =
+                    NST_CACHE_DEFAULT_DICT_CLEANER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if (!strcmp(args[cur_arg], "data-cleaner")) {
+            cur_arg++;
+
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.cache.data_cleaner = atoi(args[cur_arg]);
+
+            if(global.nuster.cache.data_cleaner <= 0) {
+                global.nuster.cache.data_cleaner =
+                    NST_CACHE_DEFAULT_DATA_CLEANER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if (!strcmp(args[cur_arg], "disk-cleaner")) {
+            cur_arg++;
+
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.cache.disk_cleaner = atoi(args[cur_arg]);
+
+            if(global.nuster.cache.disk_cleaner <= 0) {
+                global.nuster.cache.disk_cleaner =
+                    NST_CACHE_DEFAULT_DISK_CLEANER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if (!strcmp(args[cur_arg], "disk-loader")) {
+            cur_arg++;
+
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.cache.disk_loader = atoi(args[cur_arg]);
+
+            if(global.nuster.cache.disk_loader <= 0) {
+                global.nuster.cache.disk_loader = NST_CACHE_DEFAULT_DISK_LOADER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if (!strcmp(args[cur_arg], "disk-saver")) {
+            cur_arg++;
+
+            if (*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.cache.disk_saver = atoi(args[cur_arg]);
+
+            if(global.nuster.cache.disk_saver <= 0) {
+                global.nuster.cache.disk_saver =
+                    NST_CACHE_DEFAULT_DISK_SAVER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
         ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum,
                 args[cur_arg]);
 
@@ -497,8 +606,7 @@ out:
     return err_code;
 }
 
-int nuster_parse_global_nosql(const char *file, int linenum, char **args,
-        int kwm) {
+int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
 
     int err_code = 0;
     int cur_arg  = 1;

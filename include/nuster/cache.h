@@ -44,6 +44,11 @@
 #define NST_CACHE_DEFAULT_CHUNK_SIZE          32
 #define NST_CACHE_DEFAULT_PURGE_METHOD       "PURGE"
 #define NST_CACHE_DEFAULT_PURGE_METHOD_SIZE   16
+#define NST_CACHE_DEFAULT_DICT_CLEANER        1024
+#define NST_CACHE_DEFAULT_DATA_CLEANER        1024
+#define NST_CACHE_DEFAULT_DISK_CLEANER        1024
+#define NST_CACHE_DEFAULT_DISK_LOADER         1024
+#define NST_CACHE_DEFAULT_DISK_SAVER          1024
 
 struct nst_cache_element {
     struct nst_cache_element *next;
