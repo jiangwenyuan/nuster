@@ -449,26 +449,41 @@ static void _nst_cache_data_cleanup() {
 void nst_cache_housekeeping() {
 
     if(global.nuster.cache.status == NUSTER_STATUS_ON) {
-        int i = 1;
+        int dict_cleaner = 1;
+        int data_cleaner = 1;
+        int disk_saver   = 1;
 
         if(global.mode & MODE_MWORKER) {
             if(master == 1) {
-                i = 10000;
+                dict_cleaner = global.nuster.cache.dict_cleaner;
+                data_cleaner = global.nuster.cache.data_cleaner;
+                disk_saver   = global.nuster.cache.disk_saver;
             } else {
-                i = 0;
+                dict_cleaner = 0;
+                data_cleaner = 0;
+                disk_saver   = 0;
             }
         }
 
-        while(i--) {
+        while(dict_cleaner--) {
             nst_cache_dict_rehash();
             nuster_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_dict_cleanup();
-            nst_cache_persist_async();
             nuster_shctx_unlock(&nuster.cache->dict[0]);
+        }
+
+        while(data_cleaner--) {
             nuster_shctx_lock(nuster.cache);
             _nst_cache_data_cleanup();
             nuster_shctx_unlock(nuster.cache);
         }
+
+        while(disk_saver--) {
+            nuster_shctx_lock(&nuster.cache->dict[0]);
+            nst_cache_persist_async();
+            nuster_shctx_unlock(&nuster.cache->dict[0]);
+        }
+
     }
 }
 
