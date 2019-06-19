@@ -220,67 +220,6 @@ void nst_cache_dict_cleanup() {
 
 }
 
-void nst_cache_persist_async() {
-    struct nst_cache_entry *entry =
-        nuster.cache->dict[0].entry[nuster.cache->persist_idx];
-
-    if(!nuster.cache->dict[0].used) {
-        return;
-    }
-
-    while(entry) {
-
-        if(!nst_cache_entry_invalid(entry)
-                && entry->rule->disk == NUSTER_DISK_ASYNC
-                && entry->file == NULL) {
-
-            struct nst_cache_element *element = entry->data->element;
-            uint64_t cache_len = 0;
-            struct persist disk;
-
-            entry->file = nuster_persist_init(global.nuster.cache.memory,
-                    entry->hash);
-
-            disk.fd = nuster_persist_create(entry->file);
-
-            nuster_persist_meta_init(disk.meta, (char)entry->rule->disk,
-                    entry->hash, entry->expire, 0, entry->header_len,
-                    entry->key->data);
-
-            nuster_persist_write_key(&disk, entry->key);
-
-            while(element) {
-
-                if(element->msg.data) {
-                    nuster_persist_write(&disk, element->msg.data,
-                            element->msg.len);
-
-                    cache_len += element->msg.len;
-                }
-
-                element = element->next;
-            }
-
-            nuster_persist_meta_set_cache_len(disk.meta, cache_len);
-
-            nuster_persist_write_meta(&disk);
-
-            close(disk.fd);
-        }
-
-        entry = entry->next;
-
-    }
-
-    nuster.cache->persist_idx++;
-
-    /* if we have checked the whole dict */
-    if(nuster.cache->persist_idx == nuster.cache->dict[0].size) {
-        nuster.cache->persist_idx = 0;
-    }
-
-}
-
 /*
  * Add a new nst_cache_entry to cache_dict
  */
