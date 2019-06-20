@@ -22,6 +22,8 @@
 #ifndef _NUSTER_CACHE_H
 #define _NUSTER_CACHE_H
 
+#include <dirent.h>
+
 #include <types/stream.h>
 #include <types/proto_http.h>
 #include <types/channel.h>
@@ -190,8 +192,14 @@ struct nst_cache {
     /* cache dict cleanup index */
     int                    cleanup_idx;
 
-    /* cache dict cleanup index */
+    /* persist async index */
     int                    persist_idx;
+
+    /* for disk_loader and disk_cleaner */
+    int                    loaded;
+    int                    disk_idx;
+    DIR                   *dir;
+    struct dirent         *de;
 };
 
 extern struct flt_ops  nst_cache_filter_ops;

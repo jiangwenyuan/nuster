@@ -576,6 +576,10 @@ void nst_cache_init() {
         nuster.cache->rehash_idx    = -1;
         nuster.cache->cleanup_idx   = 0;
         nuster.cache->persist_idx   = 0;
+        nuster.cache->loaded        = 0;
+        nuster.cache->disk_idx      = 0;
+        nuster.cache->dir           = NULL;
+        nuster.cache->de            = NULL;
 
         if(nuster_shctx_init(nuster.cache) != NUSTER_OK) {
             goto shm_err;
@@ -1290,5 +1294,74 @@ void nst_cache_persist_async() {
         nuster.cache->persist_idx = 0;
     }
 
+}
+
+void nst_cache_persist_load() {
+
+    if(global.nuster.cache.directory && !nuster.cache->loaded) {
+        DIR *dir;
+        struct dirent *de1, *de2;
+        int fd;
+        char *file = malloc(NUSTER_FILE_LEN + 1);
+
+        if(nuster.cache->dir) {
+            de1 = readdir(nuster.cache->dir);
+
+            if(de1 != NULL) {
+
+                if (strcmp(de1->d_name, ".") == 0
+                        || strcmp(de1->d_name, "..") == 0) {
+
+                    return;
+                }
+
+                memcpy(file + NUSTER_PATH_LEN, "/", 1);
+                memcpy(file + NUSTER_PATH_LEN + 1, de1->d_name,
+                        strlen(de1->d_name));
+
+                dir = opendir(file);
+
+                if(!dir) {
+                    return;
+                }
+
+                while((de2 = readdir(dir)) != NULL) {
+
+                    if(strcmp(de2->d_name, ".") != 0
+                            && strcmp(de2->d_name, "..") != 0) {
+
+                        memcpy(file + NUSTER_PATH_LEN, "/", 1);
+                        memcpy(file + NUSTER_PATH_LEN + 1, de2->d_name,
+                                strlen(de2->d_name));
+
+                        printf("%s\n", file);
+                        fd = nuster_persist_open(file);
+
+                        if(fd == -1) {
+                            return;
+                        }
+                    }
+                }
+
+                closedir(dir);
+            } else {
+                nuster.cache->disk_idx++;
+                closedir(nuster.cache->dir);
+                nuster.cache->dir = NULL;
+            }
+        } else {
+            sprintf(file, "%s/%x/%02x", global.nuster.cache.directory,
+                    nuster.cache->disk_idx / 16,
+                    nuster.cache->disk_idx);
+
+            nuster.cache->dir = opendir(file);
+        }
+
+        if(nuster.cache->disk_idx == 16 * 16) {
+            nuster.cache->disk_idx = 0;
+            nuster.cache->loaded   = 1;
+        }
+
+    }
 }
 
