@@ -567,19 +567,7 @@ void nst_cache_init() {
             goto err;
         }
 
-        nuster.cache->dict[0].entry = NULL;
-        nuster.cache->dict[0].used  = 0;
-        nuster.cache->dict[1].entry = NULL;
-        nuster.cache->dict[1].used  = 0;
-        nuster.cache->data_head     = NULL;
-        nuster.cache->data_tail     = NULL;
-        nuster.cache->rehash_idx    = -1;
-        nuster.cache->cleanup_idx   = 0;
-        nuster.cache->persist_idx   = 0;
-        nuster.cache->disk.loaded   = 0;
-        nuster.cache->disk.idx      = 0;
-        nuster.cache->disk.dir      = NULL;
-        nuster.cache->disk.de       = NULL;
+        memset(nuster.cache, 0, sizeof(*nuster.cache));
 
         if(nuster_shctx_init(nuster.cache) != NUSTER_OK) {
             goto shm_err;
