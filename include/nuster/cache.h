@@ -196,10 +196,12 @@ struct nst_cache {
     int                    persist_idx;
 
     /* for disk_loader and disk_cleaner */
-    int                    loaded;
-    int                    disk_idx;
-    DIR                   *dir;
-    struct dirent         *de;
+    struct {
+        int                    loaded;
+        int                    idx;
+        DIR                   *dir;
+        struct dirent         *de;
+    } disk;
 };
 
 extern struct flt_ops  nst_cache_filter_ops;
