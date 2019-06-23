@@ -576,10 +576,10 @@ void nst_cache_init() {
         nuster.cache->rehash_idx    = -1;
         nuster.cache->cleanup_idx   = 0;
         nuster.cache->persist_idx   = 0;
-        nuster.cache->loaded        = 0;
-        nuster.cache->disk_idx      = 0;
-        nuster.cache->dir           = NULL;
-        nuster.cache->de            = NULL;
+        nuster.cache->disk.loaded   = 0;
+        nuster.cache->disk.idx      = 0;
+        nuster.cache->disk.dir      = NULL;
+        nuster.cache->disk.de       = NULL;
 
         if(nuster_shctx_init(nuster.cache) != NUSTER_OK) {
             goto shm_err;
@@ -1298,14 +1298,14 @@ void nst_cache_persist_async() {
 
 void nst_cache_persist_load() {
 
-    if(global.nuster.cache.directory && !nuster.cache->loaded) {
+    if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
         DIR *dir;
         struct dirent *de1, *de2;
         int fd;
         char *file = malloc(NUSTER_FILE_LEN + 1);
 
-        if(nuster.cache->dir) {
-            de1 = readdir(nuster.cache->dir);
+        if(nuster.cache->disk.dir) {
+            de1 = readdir(nuster.cache->disk.dir);
 
             if(de1 != NULL) {
 
@@ -1345,21 +1345,21 @@ void nst_cache_persist_load() {
 
                 closedir(dir);
             } else {
-                nuster.cache->disk_idx++;
-                closedir(nuster.cache->dir);
-                nuster.cache->dir = NULL;
+                nuster.cache->disk.idx++;
+                closedir(nuster.cache->disk.dir);
+                nuster.cache->disk.dir = NULL;
             }
         } else {
             sprintf(file, "%s/%x/%02x", global.nuster.cache.directory,
-                    nuster.cache->disk_idx / 16,
-                    nuster.cache->disk_idx);
+                    nuster.cache->disk.idx / 16,
+                    nuster.cache->disk.idx);
 
-            nuster.cache->dir = opendir(file);
+            nuster.cache->disk.dir = opendir(file);
         }
 
-        if(nuster.cache->disk_idx == 16 * 16) {
-            nuster.cache->disk_idx = 0;
-            nuster.cache->loaded   = 1;
+        if(nuster.cache->disk.idx == 16 * 16) {
+            nuster.cache->disk.loaded = 1;
+            nuster.cache->disk.idx    = 0;
         }
 
     }
@@ -1367,14 +1367,14 @@ void nst_cache_persist_load() {
 
 void nst_cache_persist_cleanup() {
 
-    if(global.nuster.cache.directory && nuster.cache->loaded) {
+    if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
         DIR *dir;
         struct dirent *de1, *de2;
         int fd;
         char *file = malloc(NUSTER_FILE_LEN + 1);
 
-        if(nuster.cache->dir) {
-            de1 = readdir(nuster.cache->dir);
+        if(nuster.cache->disk.dir) {
+            de1 = readdir(nuster.cache->disk.dir);
 
             if(de1 != NULL) {
 
@@ -1414,23 +1414,22 @@ void nst_cache_persist_cleanup() {
 
                 closedir(dir);
             } else {
-                nuster.cache->disk_idx++;
-                closedir(nuster.cache->dir);
-                nuster.cache->dir = NULL;
+                nuster.cache->disk.idx++;
+                closedir(nuster.cache->disk.dir);
+                nuster.cache->disk.dir = NULL;
             }
         } else {
             sprintf(file, "%s/%x/%02x", global.nuster.cache.directory,
-                    nuster.cache->disk_idx / 16,
-                    nuster.cache->disk_idx);
+                    nuster.cache->disk.idx / 16,
+                    nuster.cache->disk.idx);
 
-            nuster.cache->dir = opendir(file);
+            nuster.cache->disk.dir = opendir(file);
         }
 
-        if(nuster.cache->disk_idx == 16 * 16) {
-            nuster.cache->disk_idx = 0;
-            nuster.cache->loaded   = 1;
+        if(nuster.cache->disk.idx == 16 * 16) {
+            nuster.cache->disk.loaded = 1;
+            nuster.cache->disk.idx    = 0;
         }
 
     }
 }
-
