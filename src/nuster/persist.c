@@ -18,6 +18,9 @@
 #include <nuster/file.h>
 #include <nuster/persist.h>
 
+char *nuster_persist_alloc(struct nuster_memory *m) {
+    return nuster_memory_alloc(m, NUSTER_FILE_LEN + 1);
+}
 
 char *nuster_persist_init(struct nuster_memory *m, uint64_t hash) {
     char *p = nuster_memory_alloc(m, NUSTER_FILE_LEN + 1);

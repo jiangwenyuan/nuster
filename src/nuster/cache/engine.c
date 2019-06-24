@@ -569,6 +569,13 @@ void nst_cache_init() {
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
+        nuster.cache->disk.file = nuster_persist_alloc(
+                global.nuster.cache.memory);
+
+        if(!nuster.cache->disk.file) {
+            goto err;
+        }
+
         if(nuster_shctx_init(nuster.cache) != NUSTER_OK) {
             goto shm_err;
         }
@@ -1290,7 +1297,7 @@ void nst_cache_persist_load() {
         DIR *dir;
         struct dirent *de1, *de2;
         int fd;
-        char *file = malloc(NUSTER_FILE_LEN + 1);
+        char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
             de1 = readdir(nuster.cache->disk.dir);
@@ -1359,7 +1366,7 @@ void nst_cache_persist_cleanup() {
         DIR *dir;
         struct dirent *de1, *de2;
         int fd;
-        char *file = malloc(NUSTER_FILE_LEN + 1);
+        char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
             de1 = readdir(nuster.cache->disk.dir);

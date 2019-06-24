@@ -201,6 +201,7 @@ struct nst_cache {
         int                    idx;
         DIR                   *dir;
         struct dirent         *de;
+        char                  *file;
     } disk;
 };
 
