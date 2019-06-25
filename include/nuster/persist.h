@@ -194,8 +194,11 @@ nuster_persist_write_key(struct persist *disk, struct buffer *key) {
     return nuster_persist_write(disk, key->area, key->data);
 }
 
-void nuster_persist_load(char *path, DIR *dir1, char **meta, char **key);
+void
+nuster_persist_load(char *path, struct dirent *de1, char **meta, char **key);
+
 DIR *nuster_persist_opendir_by_idx(char *path, int idx);
 void nuster_persist_cleanup(char *path, DIR *dir1);
+struct dirent *nuster_persist_dir_next(DIR *dir);
 
 #endif /* _NUSTER_PERSIST_H */

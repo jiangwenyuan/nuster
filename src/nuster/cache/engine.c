@@ -451,16 +451,22 @@ void nst_cache_housekeeping() {
     if(global.nuster.cache.status == NUSTER_STATUS_ON) {
         int dict_cleaner = 1;
         int data_cleaner = 1;
+        int disk_cleaner = 1;
+        int disk_loader  = 1;
         int disk_saver   = 1;
 
         if(global.mode & MODE_MWORKER) {
             if(master == 1) {
                 dict_cleaner = global.nuster.cache.dict_cleaner;
                 data_cleaner = global.nuster.cache.data_cleaner;
+                disk_cleaner = global.nuster.cache.disk_cleaner;
+                disk_loader  = global.nuster.cache.disk_loader;
                 disk_saver   = global.nuster.cache.disk_saver;
             } else {
                 dict_cleaner = 0;
                 data_cleaner = 0;
+                disk_cleaner = 0;
+                disk_loader  = 0;
                 disk_saver   = 0;
             }
         }
@@ -476,6 +482,14 @@ void nst_cache_housekeeping() {
             nuster_shctx_lock(nuster.cache);
             _nst_cache_data_cleanup();
             nuster_shctx_unlock(nuster.cache);
+        }
+
+        while(disk_cleaner--) {
+            nst_cache_persist_cleanup();
+        }
+
+        while(disk_loader--) {
+            nst_cache_persist_load();
         }
 
         while(disk_saver--) {
@@ -1298,7 +1312,15 @@ void nst_cache_persist_load() {
         char *meta, *key;
 
         if(nuster.cache->disk.dir) {
-            nuster_persist_load(file, nuster.cache->disk.dir, &meta, &key);
+            struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);
+
+            if(de) {
+                nuster_persist_load(file, nuster.cache->disk.dir, &meta, &key);
+            } else {
+                nuster.cache->disk.idx++;
+                closedir(nuster.cache->disk.dir);
+                nuster.cache->disk.dir = NULL;
+            }
         } else {
             nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
                     nuster.cache->disk.idx);
@@ -1313,6 +1335,7 @@ void nst_cache_persist_load() {
 }
 
 void nst_cache_persist_cleanup() {
+    return;
 
     if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
         char *file = nuster.cache->disk.file;
