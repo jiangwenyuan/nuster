@@ -167,8 +167,8 @@ nuster_persist_load(char *path, struct dirent *de1, char **meta, char **key) {
         return;
     }
 
-    memcpy(path + NUSTER_PATH_LEN, "/", 1);
-    memcpy(path + NUSTER_PATH_LEN + 1, de1->d_name, strlen(de1->d_name));
+    memcpy(path + NUSTER_BASE_PATH_LEN, "/", 1);
+    memcpy(path + NUSTER_BASE_PATH_LEN + 1, de1->d_name, strlen(de1->d_name));
 
     dir2 = opendir(path);
 
