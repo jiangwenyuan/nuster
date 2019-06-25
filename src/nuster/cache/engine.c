@@ -1315,7 +1315,7 @@ void nst_cache_persist_load() {
             struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
-                nuster_persist_load(file, nuster.cache->disk.dir, &meta, &key);
+                nuster_persist_load(file, de, &meta, &key);
             } else {
                 nuster.cache->disk.idx++;
                 closedir(nuster.cache->disk.dir);
