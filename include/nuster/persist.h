@@ -75,6 +75,7 @@ struct persist {
  */
 
 /* strlen("/0/00/") + 16, without '\0' */
+#define NUSTER_BASE_PATH_LEN strlen(global.nuster.cache.directory) + 5
 #define NUSTER_PATH_LEN strlen(global.nuster.cache.directory) + 22
 
 /* 1 + 11 + 1 + 16, without '\0'  */
