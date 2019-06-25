@@ -1294,62 +1294,14 @@ void nst_cache_persist_async() {
 void nst_cache_persist_load() {
 
     if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
-        DIR *dir;
-        struct dirent *de1, *de2;
-        int fd;
         char *file = nuster.cache->disk.file;
+        char *meta, *key;
 
         if(nuster.cache->disk.dir) {
-            de1 = readdir(nuster.cache->disk.dir);
-
-            if(de1 != NULL) {
-
-                if (strcmp(de1->d_name, ".") == 0
-                        || strcmp(de1->d_name, "..") == 0) {
-
-                    return;
-                }
-
-                memcpy(file + NUSTER_PATH_LEN, "/", 1);
-                memcpy(file + NUSTER_PATH_LEN + 1, de1->d_name,
-                        strlen(de1->d_name));
-
-                dir = opendir(file);
-
-                if(!dir) {
-                    return;
-                }
-
-                while((de2 = readdir(dir)) != NULL) {
-
-                    if(strcmp(de2->d_name, ".") != 0
-                            && strcmp(de2->d_name, "..") != 0) {
-
-                        memcpy(file + NUSTER_PATH_LEN, "/", 1);
-                        memcpy(file + NUSTER_PATH_LEN + 1, de2->d_name,
-                                strlen(de2->d_name));
-
-                        printf("%s\n", file);
-                        fd = nuster_persist_open(file);
-
-                        if(fd == -1) {
-                            return;
-                        }
-                    }
-                }
-
-                closedir(dir);
-            } else {
-                nuster.cache->disk.idx++;
-                closedir(nuster.cache->disk.dir);
-                nuster.cache->disk.dir = NULL;
-            }
+            nuster_persist_load(file, nuster.cache->disk.dir, &meta, &key);
         } else {
-            sprintf(file, "%s/%x/%02x", global.nuster.cache.directory,
-                    nuster.cache->disk.idx / 16,
+            nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
                     nuster.cache->disk.idx);
-
-            nuster.cache->disk.dir = opendir(file);
         }
 
         if(nuster.cache->disk.idx == 16 * 16) {
@@ -1363,62 +1315,13 @@ void nst_cache_persist_load() {
 void nst_cache_persist_cleanup() {
 
     if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
-        DIR *dir;
-        struct dirent *de1, *de2;
-        int fd;
         char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
-            de1 = readdir(nuster.cache->disk.dir);
-
-            if(de1 != NULL) {
-
-                if (strcmp(de1->d_name, ".") == 0
-                        || strcmp(de1->d_name, "..") == 0) {
-
-                    return;
-                }
-
-                memcpy(file + NUSTER_PATH_LEN, "/", 1);
-                memcpy(file + NUSTER_PATH_LEN + 1, de1->d_name,
-                        strlen(de1->d_name));
-
-                dir = opendir(file);
-
-                if(!dir) {
-                    return;
-                }
-
-                while((de2 = readdir(dir)) != NULL) {
-
-                    if(strcmp(de2->d_name, ".") != 0
-                            && strcmp(de2->d_name, "..") != 0) {
-
-                        memcpy(file + NUSTER_PATH_LEN, "/", 1);
-                        memcpy(file + NUSTER_PATH_LEN + 1, de2->d_name,
-                                strlen(de2->d_name));
-
-                        printf("%s\n", file);
-                        fd = nuster_persist_open(file);
-
-                        if(fd == -1) {
-                            return;
-                        }
-                    }
-                }
-
-                closedir(dir);
-            } else {
-                nuster.cache->disk.idx++;
-                closedir(nuster.cache->disk.dir);
-                nuster.cache->disk.dir = NULL;
-            }
+            nuster_persist_cleanup(file, nuster.cache->disk.dir);
         } else {
-            sprintf(file, "%s/%x/%02x", global.nuster.cache.directory,
-                    nuster.cache->disk.idx / 16,
+            nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
                     nuster.cache->disk.idx);
-
-            nuster.cache->disk.dir = opendir(file);
         }
 
         if(nuster.cache->disk.idx == 16 * 16) {
