@@ -488,7 +488,7 @@ void nst_cache_housekeeping() {
             nst_cache_persist_cleanup();
         }
 
-        disk_loader = 100;
+        disk_loader = 1000;
         while(disk_loader--) {
             nst_cache_persist_load();
         }

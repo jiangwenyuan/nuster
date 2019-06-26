@@ -17,6 +17,7 @@
 #include <nuster/memory.h>
 #include <nuster/file.h>
 #include <nuster/persist.h>
+#include <nuster/nuster.h>
 
 char *nuster_persist_alloc(struct nuster_memory *m) {
     return nuster_memory_alloc(m, NUSTER_PERSIST_PATH_FILE_LEN + 1);
@@ -108,9 +109,12 @@ nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash) {
     if(disk->file) {
         return _persist_valid(disk, key, hash);
     } else {
-
         struct dirent *de;
         DIR *dir;
+
+        if(nuster.cache->disk.loaded) {
+            return NUSTER_ERR;
+        }
 
         disk->file = nuster_memory_alloc(global.nuster.cache.memory,
                 NUSTER_PERSIST_PATH_FILE_LEN + 1);
