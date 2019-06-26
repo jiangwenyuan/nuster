@@ -1309,10 +1309,13 @@ void nst_cache_persist_async() {
 void nst_cache_persist_load() {
 
     if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
-        char *file = nuster.cache->disk.file;
-        char *key;
+        char *file;
         char meta[NUSTER_PERSIST_META_SIZE];
+        struct buffer *key;
+        DIR *dir;
         int fd;
+
+        file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
             struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);

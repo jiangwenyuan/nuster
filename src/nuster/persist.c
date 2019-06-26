@@ -174,29 +174,41 @@ int nuster_persist_get_meta(int fd, char *meta) {
     return NUSTER_OK;
 }
 
-char *nuster_persist_get_key(int fd, char *meta) {
+struct buffer *nuster_persist_get_key(int fd, char *meta) {
 
-    char *buf;
-    int len, ret;
+    struct buffer *key;
 
-    len = nuster_persist_meta_get_key_len(meta);
-    buf = nuster_memory_alloc(global.nuster.cache.memory, len);
+    key = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*key));
 
-    if(!buf) {
+    if(!key) {
         goto err;
     }
 
-    ret = pread(fd, buf, len, NUSTER_PERSIST_POS_KEY);
+    key->size = nuster_persist_meta_get_key_len(meta);
 
-    if(ret != len) {
+    key->area = nuster_memory_alloc(global.nuster.cache.memory, key->size);
+
+    if(!key->area) {
         goto err;
     }
 
-    return buf;
+    key->head = 0;
+
+    key->data = pread(fd, key->area, key->size, NUSTER_PERSIST_POS_KEY);
+
+    if(!b_full(key)) {
+        goto err;
+    }
+
+    return key;
 
 err:
-    if(buf) {
-        nuster_memory_free(global.nuster.cache.memory, buf);
+    if(key) {
+        if(key->area) {
+            nuster_memory_free(global.nuster.cache.memory, key->area);
+        }
+
+        nuster_memory_free(global.nuster.cache.memory, key);
     }
 
     return NULL;
