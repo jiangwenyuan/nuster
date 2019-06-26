@@ -145,6 +145,7 @@ nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash) {
 }
 
 DIR *nuster_persist_opendir_by_idx(char *path, int idx) {
+    memset(path, 0, NUSTER_PERSIST_PATH_FILE_LEN);
     sprintf(path, "%s/%x/%02x", global.nuster.cache.directory, idx / 16, idx);
 
     return opendir(path);
