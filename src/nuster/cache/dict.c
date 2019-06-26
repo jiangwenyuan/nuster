@@ -345,6 +345,12 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
 
     memset(entry, 0, sizeof(*entry));
 
+    entry->file = nuster_memory_alloc(global.nuster.cache.memory, strlen(file));
+
+    if(!entry->file) {
+        return NUSTER_ERR;
+    }
+
     idx = hash % dict->size;
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
@@ -356,7 +362,7 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
     entry->key    = key;
     entry->hash   = hash;
     entry->expire = nuster_persist_meta_get_expire(meta);
-    entry->file   = file;
+    memcpy(entry->file, file, strlen(file));
 
     entry->header_len = nuster_persist_meta_get_header_len(meta);
 
