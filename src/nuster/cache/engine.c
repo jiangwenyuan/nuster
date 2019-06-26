@@ -488,6 +488,7 @@ void nst_cache_housekeeping() {
             nst_cache_persist_cleanup();
         }
 
+        disk_loader = 100;
         while(disk_loader--) {
             nst_cache_persist_load();
         }
@@ -1309,13 +1310,64 @@ void nst_cache_persist_load() {
 
     if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
         char *file = nuster.cache->disk.file;
-        char *meta, *key;
+        char *key;
+        char meta[NUSTER_PERSIST_META_SIZE];
+        int fd;
 
         if(nuster.cache->disk.dir) {
             struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
-                nuster_persist_load(file, de, &meta, &key);
+                DIR *dir2;
+                struct dirent *de2;
+
+                if(strcmp(de->d_name, ".") == 0
+                        || strcmp(de->d_name, "..") == 0) {
+
+                    return;
+                }
+
+                memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
+                memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN + 1, de->d_name,
+                        strlen(de->d_name));
+
+                dir2 = opendir(file);
+
+                if(!dir2) {
+                    return;
+                }
+
+                while((de2 = readdir(dir2)) != NULL) {
+                    if(strcmp(de2->d_name, ".") == 0
+                            || strcmp(de2->d_name, "..") == 0) {
+
+                        continue;
+                    }
+
+                    memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
+                    memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
+                            strlen(de2->d_name));
+
+                    fd = nuster_persist_open(file);
+
+                    if(fd == -1) {
+                        return;
+                    }
+
+                    if(nuster_persist_get_meta(fd, meta) != NUSTER_OK) {
+                        close(fd);
+                        return;
+                    }
+
+                    key = nuster_persist_get_key(fd, meta);
+
+                    if(key == NULL) {
+                        close(fd);
+                        return;
+                    }
+
+                    nuster_debug_key(key);
+                }
             } else {
                 nuster.cache->disk.idx++;
                 closedir(nuster.cache->disk.dir);
