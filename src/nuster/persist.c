@@ -154,83 +154,52 @@ struct dirent *nuster_persist_dir_next(DIR *dir) {
     return readdir(dir);
 }
 
-void
-nuster_persist_load(char *path, struct dirent *de1, char **meta, char **key) {
-    DIR *dir2;
-    struct dirent *de2;
-    int fd, ret, key_len;
+int nuster_persist_get_meta(int fd, char *meta) {
+    int ret;
+
+    ret = pread(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
+
+    if(ret != NUSTER_PERSIST_META_SIZE) {
+        return NUSTER_ERR;
+    }
+
+    if(memcmp(meta, "NUSTER", 6) !=0) {
+        return NUSTER_ERR;
+    }
+
+    if(nuster_persist_meta_check_expire(meta) != NUSTER_OK) {
+        return NUSTER_ERR;
+    }
+
+    return NUSTER_OK;
+}
+
+char *nuster_persist_get_key(int fd, char *meta) {
+
     char *buf;
+    int len, ret;
 
-    if (strcmp(de1->d_name, ".") == 0
-            || strcmp(de1->d_name, "..") == 0) {
+    len = nuster_persist_meta_get_key_len(meta);
+    buf = nuster_memory_alloc(global.nuster.cache.memory, len);
 
-        return;
+    if(!buf) {
+        goto err;
     }
 
-    memcpy(path + NUSTER_PERSIST_PATH_BASE_LEN, "/", 1);
-    memcpy(path + NUSTER_PERSIST_PATH_BASE_LEN + 1, de1->d_name,
-            strlen(de1->d_name));
+    ret = pread(fd, buf, len, NUSTER_PERSIST_POS_KEY);
 
-    dir2 = opendir(path);
-
-    if(!dir2) {
-        return;
+    if(ret != len) {
+        goto err;
     }
 
-    *meta = nuster_memory_alloc(global.nuster.cache.memory,
-            NUSTER_PERSIST_META_SIZE);
-
-    while((de2 = readdir(dir2)) != NULL) {
-
-        if(strcmp(de2->d_name, ".") != 0
-                && strcmp(de2->d_name, "..") != 0) {
-
-            memcpy(path + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
-            memcpy(path + NUSTER_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
-                    strlen(de2->d_name));
-
-            fd = nuster_persist_open(path);
-
-            if(fd == -1) {
-                return;
-            }
-
-            ret = pread(fd, *meta, NUSTER_PERSIST_META_SIZE, 0);
-
-            if(ret != NUSTER_PERSIST_META_SIZE) {
-                goto err;
-            }
-
-            if(memcmp(*meta, "NUSTER", 6) !=0) {
-                goto err;
-            }
-
-            if(nuster_persist_meta_check_expire(*meta) != NUSTER_OK) {
-                goto err;
-            }
-
-            key_len = nuster_persist_meta_get_key_len(*meta);
-
-            buf = nuster_memory_alloc(global.nuster.cache.memory, key_len);
-
-            if(!buf) {
-                goto err;
-            }
-
-            ret = pread(fd, buf, key_len, NUSTER_PERSIST_POS_KEY);
-
-            if(ret != key_len) {
-                goto err;
-            }
-
-            *key = buf;
-        }
-    }
-
-    closedir(dir2);
+    return buf;
 
 err:
-    close(fd);
+    if(buf) {
+        nuster_memory_free(global.nuster.cache.memory, buf);
+    }
+
+    return NULL;
 }
 
 void nuster_persist_cleanup(char *path, DIR *dir1) {
