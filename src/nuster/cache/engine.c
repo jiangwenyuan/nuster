@@ -1312,7 +1312,6 @@ void nst_cache_persist_load() {
         char *file;
         char meta[NUSTER_PERSIST_META_SIZE];
         struct buffer *key;
-        DIR *dir;
         int fd;
 
         file = nuster.cache->disk.file;

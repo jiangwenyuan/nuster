@@ -231,7 +231,7 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash);
 struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
 void nst_cache_dict_rehash();
 void nst_cache_dict_cleanup();
-void nst_cache_persist_async();
+int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key);
 
 /* engine */
 void nst_cache_init();
@@ -257,6 +257,10 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
 struct nuster_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nuster_rule *rule);
 int nst_cache_check_uri(struct http_msg *msg);
+void nst_cache_persist_cleanup();
+void nst_cache_persist_load();
+void nst_cache_persist_async();
+
 
 /* manager */
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
