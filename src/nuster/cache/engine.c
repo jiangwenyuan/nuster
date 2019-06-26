@@ -1327,8 +1327,8 @@ void nst_cache_persist_load() {
                     return;
                 }
 
-                memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
-                memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN + 1, de->d_name,
+                memcpy(file + NUSTER_PERSIST_PATH_BASE_LEN, "/", 1);
+                memcpy(file + NUSTER_PERSIST_PATH_BASE_LEN + 1, de->d_name,
                         strlen(de->d_name));
 
                 dir2 = opendir(file);
@@ -1366,7 +1366,6 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    nuster_debug_key(key);
                 }
             } else {
                 nuster.cache->disk.idx++;
