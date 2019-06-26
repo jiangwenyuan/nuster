@@ -327,3 +327,39 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
     return NULL;
 }
 
+int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
+    struct nst_cache_dict  *dict  = NULL;
+    struct nst_cache_data  *data  = NULL;
+    struct nst_cache_entry *entry = NULL;
+    int idx;
+    uint64_t hash = nuster_persist_meta_get_hash(meta);
+
+    dict = _nst_cache_dict_rehashing()
+        ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
+
+    entry = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*entry));
+
+    if(!entry) {
+        return NUSTER_ERR;
+    }
+
+    memset(entry, 0, sizeof(*entry));
+
+    idx = hash % dict->size;
+    /* prepend entry to dict->entry[idx] */
+    entry->next      = dict->entry[idx];
+    dict->entry[idx] = entry;
+    dict->used++;
+
+    /* init entry */
+    entry->state  = NST_CACHE_ENTRY_STATE_INVALID;
+    entry->key    = key;
+    entry->hash   = hash;
+    entry->expire = nuster_persist_meta_get_expire(meta);
+    entry->file   = file;
+
+    entry->header_len = nuster_persist_meta_get_header_len(meta);
+
+    return NUSTER_OK;
+}
+
