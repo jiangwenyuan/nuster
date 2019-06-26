@@ -1369,6 +1369,8 @@ void nst_cache_persist_load() {
                         return;
                     }
 
+                    nst_cache_dict_set_from_disk(file, meta, key);
+
                 }
             } else {
                 nuster.cache->disk.idx++;
