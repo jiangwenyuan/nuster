@@ -484,11 +484,12 @@ void nst_cache_housekeeping() {
             nuster_shctx_unlock(nuster.cache);
         }
 
+        disk_cleaner = 1000;
         while(disk_cleaner--) {
             nst_cache_persist_cleanup();
         }
 
-        disk_loader = 1000;
+        disk_loader  = 1000;
         while(disk_loader--) {
             nst_cache_persist_load();
         }
@@ -1394,9 +1395,8 @@ void nst_cache_persist_load() {
 }
 
 void nst_cache_persist_cleanup() {
-    return;
 
-    if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
+    if(global.nuster.cache.directory && nuster.cache->disk.loaded) {
         char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
@@ -1404,6 +1404,10 @@ void nst_cache_persist_cleanup() {
         } else {
             nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
                     nuster.cache->disk.idx);
+
+            if(!nuster.cache->disk.dir) {
+                nuster.cache->disk.idx++;
+            }
         }
 
         if(nuster.cache->disk.idx == 16 * 16) {
