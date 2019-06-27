@@ -1400,7 +1400,15 @@ void nst_cache_persist_cleanup() {
         char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
-            nuster_persist_cleanup(file, nuster.cache->disk.dir);
+            struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);
+
+            if(de) {
+                nuster_persist_cleanup(file, de);
+            } else {
+                nuster.cache->disk.idx++;
+                closedir(nuster.cache->disk.dir);
+                nuster.cache->disk.dir = NULL;
+            }
         } else {
             nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
                     nuster.cache->disk.idx);
