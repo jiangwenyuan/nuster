@@ -231,8 +231,8 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
         return;
     }
 
-    memcpy(path + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
-    memcpy(path + NUSTER_PERSIST_PATH_HASH_LEN + 1, de1->d_name,
+    memcpy(path + NUSTER_PERSIST_PATH_BASE_LEN, "/", 1);
+    memcpy(path + NUSTER_PERSIST_PATH_BASE_LEN + 1, de1->d_name,
             strlen(de1->d_name));
 
     dir2 = opendir(path);
