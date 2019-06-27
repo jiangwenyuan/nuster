@@ -1679,6 +1679,11 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				break;
 
 			case HTX_BLK_EOD:
+				/* If the message is not chunked, ignore
+				 * trailers. It may happen with H2 messages. */
+				if (!(h1m->flags & H1_MF_CHNK))
+					break;
+
 				if (!chunk_memcat(&tmp, "0\r\n", 3))
 					goto copy;
 				h1s->flags |= H1S_F_HAVE_O_EOD;
@@ -1686,6 +1691,11 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				break;
 
 			case HTX_BLK_TLR:
+				/* If the message is not chunked, ignore
+				 * trailers. It may happen with H2 messages. */
+				if (!(h1m->flags & H1_MF_CHNK))
+					break;
+
 				if (!(h1s->flags & H1S_F_HAVE_O_EOD)) {
 					if (!chunk_memcat(&tmp, "0\r\n", 3))
 						goto copy;
