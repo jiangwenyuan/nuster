@@ -484,12 +484,10 @@ void nst_cache_housekeeping() {
             nuster_shctx_unlock(nuster.cache);
         }
 
-        disk_cleaner = 1000;
         while(disk_cleaner--) {
             nst_cache_persist_cleanup();
         }
 
-        disk_loader  = 1000;
         while(disk_loader--) {
             nst_cache_persist_load();
         }
