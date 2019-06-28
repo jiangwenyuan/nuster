@@ -1419,8 +1419,7 @@ void nst_cache_persist_cleanup() {
         }
 
         if(nuster.cache->disk.idx == 16 * 16) {
-            nuster.cache->disk.loaded = 1;
-            nuster.cache->disk.idx    = 0;
+            nuster.cache->disk.idx = 0;
         }
 
     }
