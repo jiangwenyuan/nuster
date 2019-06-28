@@ -27,7 +27,7 @@ int nuster_persist_init(char *path, uint64_t hash, char *dir) {
     sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, dir,
             hash >> 60, hash >> 56, hash);
 
-    nuster_debug("[CACHE] Path: %s\n", path);
+    nuster_debug("[nuster] Persist path: %s\n", path);
 
     if(nuster_create_path(path) != NUSTER_OK) {
         return NUSTER_ERR;
@@ -37,7 +37,7 @@ int nuster_persist_init(char *path, uint64_t hash, char *dir) {
             get_current_timestamp() * random() * random() & hash,
             get_current_timestamp());
 
-    nuster_debug("[CACHE] File: %s\n", path);
+    nuster_debug("[nuster] Persist file: %s\n", path);
 
     return NUSTER_OK;
 }
