@@ -260,17 +260,14 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
             ret = pread(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
 
             if(ret != NUSTER_PERSIST_META_SIZE) {
-                unlink(path);
-                close(fd);
                 continue;
             }
 
             if(memcmp(meta, "NUSTER", 6) !=0) {
-                unlink(path);
-                close(fd);
                 continue;
             }
 
+            /* cache is complete */
             if(nuster_persist_meta_check_expire(meta) != NUSTER_OK) {
                 unlink(path);
                 close(fd);
