@@ -253,6 +253,7 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
             fd = nuster_persist_open(path);
 
             if(fd == -1) {
+                close(dir2);
                 return;
             }
 
