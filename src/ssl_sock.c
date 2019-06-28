@@ -6160,6 +6160,9 @@ ssl_sock_get_dn_oneline(X509_NAME *a, struct buffer *out)
 void ssl_sock_set_alpn(struct connection *conn, const unsigned char *alpn, int len)
 {
 #ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
+	if (!ssl_sock_is_ssl(conn))
+		return;
+
 	SSL_set_alpn_protos(conn->xprt_ctx, alpn, len);
 #endif
 }
