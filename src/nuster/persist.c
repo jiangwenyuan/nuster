@@ -223,7 +223,7 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
     DIR *dir2;
     struct dirent *de2;
     int fd, ret;
-    char *meta;
+    char meta[NUSTER_PERSIST_META_SIZE];
 
     if (strcmp(de1->d_name, ".") == 0
             || strcmp(de1->d_name, "..") == 0) {
@@ -240,9 +240,6 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
     if(!dir2) {
         return;
     }
-
-    meta = nuster_memory_alloc(global.nuster.cache.memory,
-            NUSTER_PERSIST_META_SIZE);
 
     while((de2 = readdir(dir2)) != NULL) {
 
