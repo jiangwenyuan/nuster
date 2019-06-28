@@ -253,29 +253,35 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
             fd = nuster_persist_open(path);
 
             if(fd == -1) {
-                close(dir2);
+                closedir(dir2);
                 return;
             }
 
             ret = pread(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
 
             if(ret != NUSTER_PERSIST_META_SIZE) {
-                goto err;
+                unlink(path);
+                close(fd);
+                continue;
             }
 
             if(memcmp(meta, "NUSTER", 6) !=0) {
-                goto err;
+                unlink(path);
+                close(fd);
+                continue;
             }
 
             if(nuster_persist_meta_check_expire(meta) != NUSTER_OK) {
-                goto err;
+                unlink(path);
+                close(fd);
+                continue;
             }
+
+            close(fd);
 
         }
     }
 
     closedir(dir2);
 
-err:
-    close(fd);
 }
