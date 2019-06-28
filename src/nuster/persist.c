@@ -108,10 +108,6 @@ nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash) {
         struct dirent *de;
         DIR *dir;
 
-        if(nuster.cache->disk.loaded) {
-            return NUSTER_ERR;
-        }
-
         disk->file = nuster_memory_alloc(global.nuster.cache.memory,
                 NUSTER_PERSIST_PATH_FILE_LEN + 1);
 
