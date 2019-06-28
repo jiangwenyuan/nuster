@@ -1358,6 +1358,7 @@ void nst_cache_persist_load() {
                     }
 
                     if(nuster_persist_get_meta(fd, meta) != NUSTER_OK) {
+                        unlink(file);
                         close(fd);
                         return;
                     }
@@ -1365,6 +1366,7 @@ void nst_cache_persist_load() {
                     key = nuster_persist_get_key(fd, meta);
 
                     if(key == NULL) {
+                        unlink(file);
                         close(fd);
                         return;
                     }
