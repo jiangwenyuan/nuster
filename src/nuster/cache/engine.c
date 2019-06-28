@@ -1068,8 +1068,18 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             && (ctx->rule->disk == NUSTER_DISK_SYNC
                 || ctx->rule->disk == NUSTER_DISK_ONLY)) {
 
-        ctx->disk.file = nuster_persist_init(global.nuster.cache.memory,
-                ctx->hash);
+        ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory,
+                NUSTER_PERSIST_PATH_FILE_LEN + 1);
+
+        if(!ctx->disk.file) {
+            return;
+        }
+
+        if(nuster_persist_init(ctx->disk.file, ctx->hash,
+                global.nuster.cache.directory) != NUSTER_OK) {
+            return;
+        }
+
 
         ctx->disk.fd = nuster_persist_create(ctx->disk.file);
 
@@ -1262,8 +1272,17 @@ void nst_cache_persist_async() {
             uint64_t cache_len = 0;
             struct persist disk;
 
-            entry->file = nuster_persist_init(global.nuster.cache.memory,
-                    entry->hash);
+            entry->file = nuster_memory_alloc(global.nuster.cache.memory,
+                    NUSTER_PERSIST_PATH_FILE_LEN + 1);
+
+            if(!entry->file) {
+                return;
+            }
+
+            if(nuster_persist_init(entry->file, entry->hash,
+                        global.nuster.cache.directory) != NUSTER_OK) {
+                return;
+            }
 
             disk.fd = nuster_persist_create(entry->file);
 
