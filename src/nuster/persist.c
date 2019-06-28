@@ -42,8 +42,8 @@ int nuster_persist_init(char *path, uint64_t hash, char *dir) {
     return NUSTER_OK;
 }
 
-static int
-_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
+int
+nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
 
     char *buf;
     int ret;
@@ -103,7 +103,7 @@ int
 nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash) {
 
     if(disk->file) {
-        return _persist_valid(disk, key, hash);
+        return nuster_persist_valid(disk, key, hash);
     } else {
         struct dirent *de;
         DIR *dir;
@@ -127,7 +127,7 @@ nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash) {
                 memcpy(disk->file + NUSTER_PERSIST_PATH_HASH_LEN + 1,
                         de->d_name, strlen(de->d_name));
 
-                if(_persist_valid(disk, key, hash) == NUSTER_OK) {
+                if(nuster_persist_valid(disk, key, hash) == NUSTER_OK) {
                     closedir(dir);
                     return NUSTER_OK;
                 }

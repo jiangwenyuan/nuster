@@ -202,5 +202,7 @@ struct buffer *nuster_persist_get_key(int fd, char *meta);
 DIR *nuster_persist_opendir_by_idx(char *path, int idx);
 void nuster_persist_cleanup(char *path, struct dirent *de);
 struct dirent *nuster_persist_dir_next(DIR *dir);
+int
+nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash);
 
 #endif /* _NUSTER_PERSIST_H */
