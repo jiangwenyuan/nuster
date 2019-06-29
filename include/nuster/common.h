@@ -138,7 +138,7 @@ struct nst_rule {
     int                     *state;      /* enabled or disabled */
     int                      id;         /* same for identical names */
     int                      uuid;       /* unique cache-rule ID */
-    int                      disk;       /* NUSTER_DISK_* */
+    int                      disk;       /* NST_DISK_* */
 };
 
 struct nst_rule_stash {
@@ -148,7 +148,7 @@ struct nst_rule_stash {
     uint64_t               hash;
 };
 
-struct nuster_flt_conf {
+struct nst_flt_conf {
     int status;
 };
 
