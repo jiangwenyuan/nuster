@@ -171,7 +171,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
 
 struct nst_nosql_data *nst_nosql_data_new() {
     struct nst_nosql_data *data =
-        nuster_memory_alloc(global.nuster.nosql.memory, sizeof(*data));
+        nst_memory_alloc(global.nuster.nosql.memory, sizeof(*data));
 
     nuster_shctx_lock(nuster.nosql);
 
@@ -307,7 +307,7 @@ void nst_nosql_init() {
             goto shm_err;
         }
 
-        nuster.nosql = nuster_memory_alloc(global.nuster.nosql.memory,
+        nuster.nosql = nst_memory_alloc(global.nuster.nosql.memory,
                 sizeof(struct nst_nosql));
 
         if(!nuster.nosql) {
@@ -481,7 +481,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
     hdr.idx            = 0;
 
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data = nuster_memory_alloc(global.nuster.nosql.memory,
+        ctx->req.host.data = nst_memory_alloc(global.nuster.nosql.memory,
                 hdr.vlen);
 
         if(!ctx->req.host.data) {
@@ -512,7 +512,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
         ctx->req.uri.len  = uri_end - uri_begin;
 
         /* extra 1 char as required by regex_exec_match2 */
-        ctx->req.path.data = nuster_memory_alloc(global.nuster.nosql.memory,
+        ctx->req.path.data = nst_memory_alloc(global.nuster.nosql.memory,
                 ctx->req.path.len + 1);
 
         if(!ctx->req.path.data) {
@@ -715,7 +715,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
                 &txn->hdr_idx, &hdr)) {
 
         ctx->req.content_type.data =
-            nuster_memory_alloc(global.nuster.nosql.memory, hdr.vlen);
+            nst_memory_alloc(global.nuster.nosql.memory, hdr.vlen);
 
         if(!ctx->req.content_type.data) {
             return 0;
@@ -735,7 +735,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
             : ctx->req.transfer_encoding.len + hdr.vlen;
 
         ctx->req.transfer_encoding.data =
-            nuster_memory_alloc(global.nuster.nosql.memory, len);
+            nst_memory_alloc(global.nuster.nosql.memory, len);
 
         if(!ctx->req.transfer_encoding.data) {
 
@@ -820,14 +820,14 @@ static struct nst_nosql_element *_nst_nosql_data_append(struct http_msg *msg,
         long msg_len) {
 
     struct nst_nosql_element *element =
-        nuster_memory_alloc(global.nuster.nosql.memory, sizeof(*element));
+        nst_memory_alloc(global.nuster.nosql.memory, sizeof(*element));
 
     if(element) {
         char *data = b_orig(&msg->chn->buf);
         char *p    = ci_head(msg->chn);
         int size   = msg->chn->buf.size;
 
-        element->msg.data = nuster_memory_alloc(global.nuster.nosql.memory,
+        element->msg.data = nst_memory_alloc(global.nuster.nosql.memory,
                 msg_len);
 
         if(!element->msg.data) {

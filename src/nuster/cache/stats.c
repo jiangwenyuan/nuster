@@ -238,7 +238,7 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 }
 
 int nst_cache_stats_init() {
-    global.nuster.cache.stats = nuster_memory_alloc(global.nuster.cache.memory,
+    global.nuster.cache.stats = nst_memory_alloc(global.nuster.cache.memory,
             sizeof(struct nst_cache_stats));
 
     if(!global.nuster.cache.stats) {

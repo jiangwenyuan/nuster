@@ -20,7 +20,7 @@
 #include <nuster/nuster.h>
 
 char *nuster_persist_alloc(struct nuster_memory *m) {
-    return nuster_memory_alloc(m, NUSTER_PERSIST_PATH_FILE_LEN + 1);
+    return nst_memory_alloc(m, NUSTER_PERSIST_PATH_FILE_LEN + 1);
 }
 
 int nuster_persist_init(char *path, uint64_t hash, char *dir) {

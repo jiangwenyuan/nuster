@@ -263,7 +263,7 @@ purge:
                 mode == NST_CACHE_PURGE_REGEX_HOST) {
 
             appctx->ctx.nuster.cache_manager.host.data =
-                nuster_memory_alloc(global.nuster.cache.memory, host_len);
+                nst_memory_alloc(global.nuster.cache.memory, host_len);
 
             appctx->ctx.nuster.cache_manager.host.len  = host_len;
 
@@ -278,7 +278,7 @@ purge:
                 mode == NST_CACHE_PURGE_PATH_HOST) {
 
             appctx->ctx.nuster.cache_manager.path.data =
-                nuster_memory_alloc(global.nuster.cache.memory, path_len);
+                nst_memory_alloc(global.nuster.cache.memory, path_len);
 
             appctx->ctx.nuster.cache_manager.path.len  = path_len;
 
