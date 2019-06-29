@@ -91,7 +91,7 @@ static inline int nst_persist_open(const char *pathname) {
     return open(pathname, O_RDONLY);
 }
 
-static inline void nuster_persist_meta_set_hash(char *p, uint64_t v) {
+static inline void nst_persist_meta_set_hash(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_HASH) = v;
 }
 
@@ -157,7 +157,7 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     p[6] = mode;
     p[7] = (char)NST_PERSIST_VERSION;
 
-    nuster_persist_meta_set_hash(p, hash);
+    nst_persist_meta_set_hash(p, hash);
     nuster_persist_meta_set_expire(p, expire);
     nuster_persist_meta_set_cache_len(p, cache_len);
     nuster_persist_meta_set_header_len(p, header_len);
