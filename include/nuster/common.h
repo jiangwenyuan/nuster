@@ -81,7 +81,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_PATH,
 
     /* delimiter: '?' or '' */
-    NUSTER_RULE_KEY_DELIMITER,
+    NST_RULE_KEY_DELIMITER,
 
     /*query: question mark to end of the url, or empty */
     NUSTER_RULE_KEY_QUERY,

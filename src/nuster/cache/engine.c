@@ -780,7 +780,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 }
 
                 break;
-            case NUSTER_RULE_KEY_DELIMITER:
+            case NST_RULE_KEY_DELIMITER:
                 nuster_debug("delimiter.");
 
                 if(ctx->req.delimiter) {

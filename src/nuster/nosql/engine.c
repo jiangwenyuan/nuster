@@ -611,7 +611,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                             ctx->req.path.data, ctx->req.path.len);
                 }
                 break;
-            case NUSTER_RULE_KEY_DELIMITER:
+            case NST_RULE_KEY_DELIMITER:
                 nuster_debug("delimiter.");
                 key = _nst_nosql_key_append(key, &key_len, &key_size,
                         ctx->req.delimiter ? "?": "", ctx->req.delimiter);
