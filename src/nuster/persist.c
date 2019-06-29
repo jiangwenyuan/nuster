@@ -33,7 +33,7 @@ int nuster_persist_init(char *path, uint64_t hash, char *dir) {
         return NST_ERR;
     }
 
-    sprintf(path + NUSTER_PERSIST_PATH_HASH_LEN, "/%"PRIx64"-%"PRIx64,
+    sprintf(path + NST_PERSIST_PATH_HASH_LEN, "/%"PRIx64"-%"PRIx64,
             get_current_timestamp() * random() * random() & hash,
             get_current_timestamp());
 
@@ -117,8 +117,8 @@ int nuster_persist_exists(struct persist *disk, struct buffer *key,
     while((de = readdir(dirp)) != NULL) {
 
         if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-            memcpy(disk->file + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
-            memcpy(disk->file + NUSTER_PERSIST_PATH_HASH_LEN + 1,
+            memcpy(disk->file + NST_PERSIST_PATH_HASH_LEN, "/", 1);
+            memcpy(disk->file + NST_PERSIST_PATH_HASH_LEN + 1,
                     de->d_name, strlen(de->d_name));
 
             if(nuster_persist_valid(disk, key, hash) == NST_OK) {
@@ -201,8 +201,8 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
         if(strcmp(de2->d_name, ".") != 0
                 && strcmp(de2->d_name, "..") != 0) {
 
-            memcpy(path + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
-            memcpy(path + NUSTER_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
+            memcpy(path + NST_PERSIST_PATH_HASH_LEN, "/", 1);
+            memcpy(path + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
                     strlen(de2->d_name));
 
             fd = nuster_persist_open(path);

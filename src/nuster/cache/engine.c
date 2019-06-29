@@ -1385,8 +1385,8 @@ void nst_cache_persist_load() {
                         continue;
                     }
 
-                    memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
-                    memcpy(file + NUSTER_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
+                    memcpy(file + NST_PERSIST_PATH_HASH_LEN, "/", 1);
+                    memcpy(file + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
                             strlen(de2->d_name));
 
                     fd = nuster_persist_open(file);
