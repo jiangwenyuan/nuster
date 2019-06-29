@@ -59,15 +59,15 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
 
         if(!key) {
             txn->status = 500;
-            nuster_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
         } else {
             uint64_t hash = nuster_hash(key->area, key->data);
             txn->status = _nst_cache_purge_by_key(key, hash);
 
             if(txn->status == 200) {
-                nuster_response(s, &nst_http_msg_chunks[NST_HTTP_200]);
+                nst_response(s, &nst_http_msg_chunks[NST_HTTP_200]);
             } else {
-                nuster_response(s, &nst_http_msg_chunks[NST_HTTP_404]);
+                nst_response(s, &nst_http_msg_chunks[NST_HTTP_404]);
             }
         }
 
@@ -382,19 +382,19 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
 
     switch(txn->status) {
         case 200:
-            nuster_response(s, &nst_http_msg_chunks[NST_HTTP_200]);
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_200]);
             break;
         case 400:
-            nuster_response(s, &nst_http_msg_chunks[NST_HTTP_400]);
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_400]);
             break;
         case 404:
-            nuster_response(s, &nst_http_msg_chunks[NST_HTTP_404]);
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_404]);
             break;
         case 500:
-            nuster_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
             break;
         default:
-            nuster_response(s, &nst_http_msg_chunks[NST_HTTP_400]);
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_400]);
     }
     return 1;
 }
