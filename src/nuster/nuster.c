@@ -58,7 +58,7 @@ void nuster_debug(const char *fmt, ...) {
     }
 }
 
-void nuster_debug_key(struct buffer *key) {
+void nst_debug_key(struct buffer *key) {
 
     if((global.mode & MODE_DEBUG)) {
         int i;
