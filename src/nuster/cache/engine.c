@@ -1389,7 +1389,7 @@ void nst_cache_persist_load() {
                     memcpy(file + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
                             strlen(de2->d_name));
 
-                    fd = nuster_persist_open(file);
+                    fd = nst_persist_open(file);
 
                     if(fd == -1) {
                         return;
@@ -1437,7 +1437,7 @@ void nst_cache_persist_load() {
                 nuster.cache->disk.dir = NULL;
             }
         } else {
-            nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
+            nuster.cache->disk.dir = nst_persist_opendir_by_idx(file,
                     nuster.cache->disk.idx, global.nuster.cache.directory);
 
             if(!nuster.cache->disk.dir) {
@@ -1469,7 +1469,7 @@ void nst_cache_persist_cleanup() {
                 nuster.cache->disk.dir = NULL;
             }
         } else {
-            nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
+            nuster.cache->disk.dir = nst_persist_opendir_by_idx(file,
                     nuster.cache->disk.idx, global.nuster.cache.directory);
 
             if(!nuster.cache->disk.dir) {

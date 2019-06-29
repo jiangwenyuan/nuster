@@ -48,7 +48,7 @@ nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
     char *buf;
     int ret;
 
-    disk->fd = nuster_persist_open(disk->file);
+    disk->fd = nst_persist_open(disk->file);
 
     if(disk->fd == -1) {
         goto err;
@@ -132,7 +132,7 @@ int nuster_persist_exists(struct persist *disk, struct buffer *key,
     return NST_ERR;
 }
 
-DIR *nuster_persist_opendir_by_idx(char *path, int idx, char *dir) {
+DIR *nst_persist_opendir_by_idx(char *path, int idx, char *dir) {
     memset(path, 0, NST_PERSIST_PATH_FILE_LEN);
     sprintf(path, "%s/%x/%02x", dir, idx / 16, idx);
 
@@ -205,7 +205,7 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
             memcpy(path + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
                     strlen(de2->d_name));
 
-            fd = nuster_persist_open(path);
+            fd = nst_persist_open(path);
 
             if(fd == -1) {
                 closedir(dir2);
