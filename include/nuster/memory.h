@@ -96,7 +96,7 @@ _nst_memory_block_set_type(struct nst_memory_ctrl *block, uint8_t type) {
     *(uint8_t *)(&block->info) = type;
 }
 static inline void
-_nuster_memory_block_set_inited(struct nst_memory_ctrl *block) {
+_nst_memory_block_set_inited(struct nst_memory_ctrl *block) {
     bit_set(block->info, 9);
 }
 static inline int
