@@ -64,7 +64,7 @@ struct nst_str {
     int   len;
 };
 
-enum nuster_rule_key_type {
+enum nst_rule_key_type {
     /* method: GET, POST... */
     NUSTER_RULE_KEY_METHOD = 1,
 
@@ -100,8 +100,8 @@ enum nuster_rule_key_type {
 };
 
 struct nuster_rule_key {
-    enum nuster_rule_key_type  type;
-    char                      *data;
+    enum nst_rule_key_type  type;
+    char                   *data;
 };
 
 struct nuster_rule_code {
