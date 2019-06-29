@@ -783,7 +783,7 @@ int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
     return 0;
 }
 
-int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
+int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     struct nst_rule *rule = NULL;
@@ -1004,7 +1004,7 @@ int nuster_parse_proxy(char **args, int section, struct proxy *px,
                     line, err);
 
         } else if(!strcmp(args[1], "rule")) {
-            return nuster_parse_proxy_rule(args, section, px, defpx, file,
+            return nst_parse_proxy_rule(args, section, px, defpx, file,
                     line, err);
 
         } else {
