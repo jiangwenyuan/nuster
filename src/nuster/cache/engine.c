@@ -121,7 +121,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     }
 
     switch(appctx->st0) {
-        case NUSTER_PERSIST_APPLET_HEADER:
+        case NST_PERSIST_APPLET_HEADER:
             ret = pread(fd, buf, header_len, offset);
 
             if(ret != header_len) {
@@ -1263,7 +1263,7 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
         appctx->ctx.nuster.cache_disk_engine.header_len =
             nuster_persist_meta_get_header_len(ctx->disk.meta);
 
-        appctx->st0 = NUSTER_PERSIST_APPLET_HEADER;
+        appctx->st0 = NST_PERSIST_APPLET_HEADER;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
