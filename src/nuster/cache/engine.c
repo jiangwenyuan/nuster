@@ -1096,7 +1096,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             return;
         }
 
-        if(nuster_persist_init(ctx->disk.file, ctx->hash,
+        if(nst_persist_init(ctx->disk.file, ctx->hash,
                 global.nuster.cache.directory) != NST_OK) {
             return;
         }
@@ -1300,7 +1300,7 @@ void nst_cache_persist_async() {
                 return;
             }
 
-            if(nuster_persist_init(entry->file, entry->hash,
+            if(nst_persist_init(entry->file, entry->hash,
                         global.nuster.cache.directory) != NST_OK) {
                 return;
             }
