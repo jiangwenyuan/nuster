@@ -24,7 +24,7 @@
 void nst_cache_stats_update_used_mem(int i) {
     nst_shctx_lock(global.nuster.cache.stats);
     global.nuster.cache.stats->used_mem += i;
-    nuster_shctx_unlock(global.nuster.cache.stats);
+    nst_shctx_unlock(global.nuster.cache.stats);
 }
 
 void nst_cache_stats_update_request(int state) {
@@ -45,7 +45,7 @@ void nst_cache_stats_update_request(int state) {
             break;
     }
 
-    nuster_shctx_unlock(global.nuster.cache.stats);
+    nst_shctx_unlock(global.nuster.cache.stats);
 }
 
 int nst_cache_stats_full() {
@@ -53,7 +53,7 @@ int nst_cache_stats_full() {
 
     nst_shctx_lock(global.nuster.cache.stats);
     i =  global.nuster.cache.data_size <= global.nuster.cache.stats->used_mem;
-    nuster_shctx_unlock(global.nuster.cache.stats);
+    nst_shctx_unlock(global.nuster.cache.stats);
 
     return i;
 }

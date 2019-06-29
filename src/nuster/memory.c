@@ -302,7 +302,7 @@ void *nst_memory_alloc(struct nst_memory *memory, int size) {
     void *p;
     nst_shctx_lock(memory);
     p = nst_memory_alloc_locked(memory, size);
-    nuster_shctx_unlock(memory);
+    nst_shctx_unlock(memory);
     return p;
 }
 
@@ -447,6 +447,6 @@ void nst_memory_free_locked(struct nst_memory *memory, void *p) {
 void nst_memory_free(struct nst_memory *memory, void *p) {
     nst_shctx_lock(memory);
     nst_memory_free_locked(memory, p);
-    nuster_shctx_unlock(memory);
+    nst_shctx_unlock(memory);
 }
 
