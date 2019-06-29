@@ -78,7 +78,7 @@ static inline void nst_res_header_server() {
             nst_headers.server.data);
 }
 
-static inline void nuster_res_header_date() {
+static inline void nst_res_header_date() {
     const char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
         "Aug", "Sep", "Oct", "Nov", "Dec" };
 
