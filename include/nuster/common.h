@@ -72,7 +72,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_SCHEME,
 
     /* host: Host header */
-    NUSTER_RULE_KEY_HOST,
+    NST_RULE_KEY_HOST,
 
     /* uri: first slash to end of the url */
     NUSTER_RULE_KEY_URI,

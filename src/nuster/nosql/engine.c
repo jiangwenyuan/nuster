@@ -590,7 +590,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                         ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
                         ctx->req.scheme == SCH_HTTPS ? 5 : 4);
                 break;
-            case NUSTER_RULE_KEY_HOST:
+            case NST_RULE_KEY_HOST:
                 nuster_debug("host.");
                 if(ctx->req.host.data) {
                     key = _nst_nosql_key_append(key, &key_len, &key_size,
