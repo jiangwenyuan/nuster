@@ -76,7 +76,7 @@ void nuster_init() {
     int i, uuid;
     struct proxy *p;
 
-    for (i = 0; i < NUSTER_HTTP_SIZE; i++) {
+    for (i = 0; i < NST_HTTP_SIZE; i++) {
         nuster_http_msg_chunks[i].area = (char *)nuster_http_msgs[i];
         nuster_http_msg_chunks[i].data = strlen(nuster_http_msgs[i]);
     }

@@ -38,7 +38,7 @@ enum {
     NST_HTTP_405,
     NST_HTTP_500,
     NST_HTTP_507,
-    NUSTER_HTTP_SIZE
+    NST_HTTP_SIZE
 };
 
 struct nuster_headers {
@@ -53,8 +53,8 @@ struct nuster_headers {
     struct nst_str etag;
 };
 
-extern const char *nuster_http_msgs[NUSTER_HTTP_SIZE];
-extern struct buffer nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
+extern const char *nuster_http_msgs[NST_HTTP_SIZE];
+extern struct buffer nuster_http_msg_chunks[NST_HTTP_SIZE];
 extern struct nuster_headers nuster_headers;
 
 /*
