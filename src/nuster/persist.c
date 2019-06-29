@@ -68,7 +68,7 @@ nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    if(nuster_persist_meta_get_hash(disk->meta) != hash
+    if(nst_persist_meta_get_hash(disk->meta) != hash
             || nuster_persist_meta_get_key_len(disk->meta) != key->data) {
 
         goto err;
