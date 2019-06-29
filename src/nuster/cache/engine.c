@@ -712,13 +712,13 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     return NUSTER_OK;
 }
 
-int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nuster_rule_key **pck,
+int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
     struct hdr_ctx hdr;
-    struct nuster_rule_key *ck = NULL;
+    struct nst_rule_key *ck = NULL;
 
     ctx->key  = _nst_key_init();
     if(!ctx->key) {
