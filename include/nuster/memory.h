@@ -27,7 +27,7 @@
 #define NST_MEMORY_BLOCK_MIN_SIZE      4096ULL
 #define NST_MEMORY_BLOCK_MIN_SHIFT     12
 #define NST_MEMORY_CHUNK_MIN_SIZE      8ULL
-#define NUSTER_MEMORY_CHUNK_MIN_SHIFT     3
+#define NST_MEMORY_CHUNK_MIN_SHIFT     3
 #define NUSTER_MEMORY_BLOCK_MAX_SIZE      1024 * 1024 * 2
 #define NUSTER_MEMORY_BLOCK_MAX_SHIFT     21
 #define NUSTER_MEMORY_INFO_BITMAP_BITS    32
@@ -46,7 +46,7 @@
  * info:
  * | bitmap: 32 | reserved: 16 | 5 | full: 1 | bitmap: 1 | inited: 1 | type: 8 |
  * bitmap: points to bitmap area, doesn't change once set
- * chunk size[n]: 1<<(NUSTER_MEMORY_CHUNK_MIN_SHIFT + n)
+ * chunk size[n]: 1<<(NST_MEMORY_CHUNK_MIN_SHIFT + n)
  */
 struct nuster_memory_ctrl {
     uint64_t                   info;
