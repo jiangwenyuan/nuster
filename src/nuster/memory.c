@@ -226,7 +226,7 @@ void *_nst_memory_block_alloc(struct nuster_memory *memory,
             + chunk_size * bits_idx);
 }
 
-void _nuster_memory_block_init(struct nuster_memory * memory,
+void _nst_memory_block_init(struct nuster_memory * memory,
         struct nst_memory_ctrl *block, int chunk_idx) {
 
     struct nst_memory_ctrl *chunk;
@@ -275,7 +275,7 @@ void *nst_memory_alloc_locked(struct nuster_memory *memory, int size) {
             memory->empty->prev = NULL;
         }
 
-        _nuster_memory_block_init(memory, block, chunk_idx);
+        _nst_memory_block_init(memory, block, chunk_idx);
     }
     /* require new block from unused */
     else if (memory->data.free <= memory->data.end) {
@@ -288,7 +288,7 @@ void *nst_memory_alloc_locked(struct nuster_memory *memory, int size) {
         if (_nst_memory_block_is_inited(block)) {
             return NULL;
         } else {
-            _nuster_memory_block_init(memory, block, chunk_idx);
+            _nst_memory_block_init(memory, block, chunk_idx);
         }
     }
     else {
