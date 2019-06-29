@@ -708,7 +708,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     struct flt_conf *fconf;
-    struct nuster_flt_conf *conf;
+    struct nst_flt_conf *conf;
     int cur_arg = 1;
 
     list_for_each_entry(fconf, &px->filter_configs, list) {
