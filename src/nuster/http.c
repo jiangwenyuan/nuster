@@ -56,7 +56,7 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
         "\r\n"
         "500 Internal Server Error\n",
 
-    [NUSTER_HTTP_507] =
+    [NST_HTTP_507] =
         "HTTP/1.0 507 Insufficient Storage\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"
