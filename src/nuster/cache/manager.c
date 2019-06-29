@@ -385,7 +385,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_200]);
             break;
         case 400:
-            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_400]);
+            nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_400]);
             break;
         case 404:
             nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_404]);
@@ -394,7 +394,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
             break;
         default:
-            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_400]);
+            nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_400]);
     }
     return 1;
 }
