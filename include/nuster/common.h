@@ -66,7 +66,7 @@ struct nst_str {
 
 enum nst_rule_key_type {
     /* method: GET, POST... */
-    NUSTER_RULE_KEY_METHOD = 1,
+    NST_RULE_KEY_METHOD = 1,
 
     /* scheme: http, https */
     NUSTER_RULE_KEY_SCHEME,

@@ -578,7 +578,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
     nuster_debug("[NOSQL] Calculate key: ");
     while((ck = *pck++)) {
         switch(ck->type) {
-            case NUSTER_RULE_KEY_METHOD:
+            case NST_RULE_KEY_METHOD:
                 nuster_debug("method.");
                 key = _nst_nosql_key_append(key, &key_len, &key_size,
                         http_known_methods[HTTP_METH_GET].ptr,

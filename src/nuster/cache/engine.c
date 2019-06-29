@@ -731,7 +731,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         int ret;
 
         switch(ck->type) {
-            case NUSTER_RULE_KEY_METHOD:
+            case NST_RULE_KEY_METHOD:
                 nuster_debug("method.");
                 ret = _nst_key_append(ctx->key,
                         http_known_methods[txn->meth].ptr,
