@@ -185,7 +185,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 /* test acls to see if we should cache it */
                 nst_debug("[CACHE] [REQ] Checking if rule pass: ");
 
-                if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
+                if(nst_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
                     nst_debug("PASS\n");
@@ -215,7 +215,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
             list_for_each_entry(rule, &px->nuster.rules, list) {
 
                 /* test acls to see if we should cache it */
-                if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
+                if(nst_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
                     nst_debug("PASS\n");
