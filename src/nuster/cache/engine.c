@@ -1008,7 +1008,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
                 ret = NST_CACHE_CTX_STATE_INIT;
             }
 
-            if(nuster_persist_exists(&ctx->disk, ctx->key, ctx->hash,
+            if(nst_persist_exists(&ctx->disk, ctx->key, ctx->hash,
                         global.nuster.cache.directory) == NST_OK) {
 
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
