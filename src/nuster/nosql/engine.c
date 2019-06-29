@@ -73,7 +73,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
         case NST_NOSQL_APPCTX_STATE_HIT:
 
             if(appctx->st1 == 0) {
-                nuster_res_begin(200);
+                nst_res_begin(200);
 
                 if(appctx->ctx.nuster.nosql_engine.data->info.flags
                         & NST_NOSQL_DATA_FLAG_CHUNKED) {
