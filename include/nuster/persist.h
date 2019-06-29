@@ -95,7 +95,7 @@ static inline void nst_persist_meta_set_hash(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_HASH) = v;
 }
 
-static inline uint64_t nuster_persist_meta_get_hash(char *p) {
+static inline uint64_t nst_persist_meta_get_hash(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_HASH);
 }
 
