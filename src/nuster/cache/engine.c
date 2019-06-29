@@ -820,7 +820,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 ret = _nst_key_advance(ctx->key, 2);
                 break;
-            case NUSTER_RULE_KEY_HEADER:
+            case NST_RULE_KEY_HEADER:
                 hdr.idx = 0;
                 nuster_debug("header_%s.", ck->data);
 
