@@ -137,7 +137,7 @@ static inline uint64_t nst_persist_meta_get_header_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_HEADER_LEN);
 }
 
-static inline void nuster_persist_meta_set_key_len(char *p, uint64_t v) {
+static inline void nst_persist_meta_set_key_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_KEY_LEN) = v;
 }
 
@@ -161,7 +161,7 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_expire(p, expire);
     nst_persist_meta_set_cache_len(p, cache_len);
     nst_persist_meta_set_header_len(p, header_len);
-    nuster_persist_meta_set_key_len(p, key_len);
+    nst_persist_meta_set_key_len(p, key_len);
 }
 
 int nuster_persist_exists(struct persist *disk, struct buffer *key,
