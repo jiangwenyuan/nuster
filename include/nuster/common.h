@@ -125,7 +125,7 @@ enum {
     NST_DISK_SYNC   = 2,
 
     /* cache in memory first and persist on disk later */
-    NUSTER_DISK_ASYNC  = 3,
+    NST_DISK_ASYNC  = 3,
 };
 
 struct nst_rule {

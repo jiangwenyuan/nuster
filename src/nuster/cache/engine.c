@@ -1286,7 +1286,7 @@ void nst_cache_persist_async() {
     while(entry) {
 
         if(!nst_cache_entry_invalid(entry)
-                && entry->rule->disk == NUSTER_DISK_ASYNC
+                && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
             struct nst_cache_element *element = entry->data->element;
