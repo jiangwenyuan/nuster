@@ -100,7 +100,7 @@ _nst_memory_block_set_inited(struct nst_memory_ctrl *block) {
     bit_set(block->info, 9);
 }
 static inline int
-_nuster_memory_block_is_inited(struct nst_memory_ctrl *block) {
+_nst_memory_block_is_inited(struct nst_memory_ctrl *block) {
     return bit_used(block->info, 9);
 }
 static inline void
