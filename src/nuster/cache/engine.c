@@ -150,7 +150,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
 
             if(ret == 0) {
                 close(fd);
-                appctx->st0 = NUSTER_PERSIST_APPLET_DONE;
+                appctx->st0 = NST_PERSIST_APPLET_DONE;
                 break;
             }
 
@@ -165,7 +165,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 res->flags |= CF_READ_NULL;
             }
             break;
-        case NUSTER_PERSIST_APPLET_DONE:
+        case NST_PERSIST_APPLET_DONE:
             co_skip(si_oc(si), co_data(si_oc(si)));
             si_shutr(si);
             res->flags |= CF_READ_NULL;
