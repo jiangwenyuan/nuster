@@ -118,7 +118,7 @@ static inline void nst_res_end(struct stream_interface *si) {
     si_ic(si)->flags |= CF_READ_NULL;
 }
 
-static inline int nuster_res_send(struct channel *chn, const char *blk,
+static inline int nst_res_send(struct channel *chn, const char *blk,
         int len) {
 
     return ci_putblk(chn, blk, len);
@@ -135,7 +135,7 @@ static inline void nuster_res_simple(struct stream_interface *si, int status,
         chunk_appendf(&trash, "%.*s", len, content);
     }
 
-    nuster_res_send(si_ic(si), trash.area, trash.data);
+    nst_res_send(si_ic(si), trash.area, trash.data);
     nst_res_end(si);
 }
 
