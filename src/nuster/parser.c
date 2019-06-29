@@ -1021,6 +1021,6 @@ static struct cfg_kw_list cfg_kws = {ILH, {
     { CFG_LISTEN, "nuster", nst_parse_proxy}, { 0, NULL, NULL }, }
 };
 
-__attribute__((constructor)) static void __nuster_parser_init(void) {
+__attribute__((constructor)) static void __nst_parser_init(void) {
     cfg_register_keywords(&cfg_kws);
 }
