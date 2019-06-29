@@ -69,7 +69,7 @@ static inline void nst_response(struct stream *s, struct buffer *msg) {
 }
 
 
-static inline void nuster_res_begin(int status) {
+static inline void nst_res_begin(int status) {
     chunk_printf(&trash, "HTTP/1.1 %d %s\r\n", status, http_get_reason(status));
 }
 
@@ -127,7 +127,7 @@ static inline int nuster_res_send(struct channel *chn, const char *blk,
 static inline void nuster_res_simple(struct stream_interface *si, int status,
         const char *content, int len) {
 
-    nuster_res_begin(status);
+    nst_res_begin(status);
     nuster_res_header_content_length(len);
     nuster_res_header_end();
 
