@@ -74,20 +74,20 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
         }
 
         if(ctx->req.host.data) {
-            nuster_memory_free(global.nuster.nosql.memory, ctx->req.host.data);
+            nst_memory_free(global.nuster.nosql.memory, ctx->req.host.data);
         }
 
         if(ctx->req.path.data) {
-            nuster_memory_free(global.nuster.nosql.memory, ctx->req.path.data);
+            nst_memory_free(global.nuster.nosql.memory, ctx->req.path.data);
         }
 
         if(ctx->req.content_type.data) {
-            nuster_memory_free(global.nuster.nosql.memory,
+            nst_memory_free(global.nuster.nosql.memory,
                     ctx->req.content_type.data);
         }
 
         if(ctx->req.transfer_encoding.data) {
-            nuster_memory_free(global.nuster.nosql.memory,
+            nst_memory_free(global.nuster.nosql.memory,
                     ctx->req.transfer_encoding.data);
         }
 

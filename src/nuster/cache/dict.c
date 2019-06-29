@@ -199,10 +199,10 @@ void nst_cache_dict_cleanup() {
             }
 
             entry = entry->next;
-            nuster_memory_free(global.nuster.cache.memory, tmp->key);
-            nuster_memory_free(global.nuster.cache.memory, tmp->host.data);
-            nuster_memory_free(global.nuster.cache.memory, tmp->path.data);
-            nuster_memory_free(global.nuster.cache.memory, tmp);
+            nst_memory_free(global.nuster.cache.memory, tmp->key);
+            nst_memory_free(global.nuster.cache.memory, tmp->host.data);
+            nst_memory_free(global.nuster.cache.memory, tmp->path.data);
+            nst_memory_free(global.nuster.cache.memory, tmp);
             nuster.cache->dict[0].used--;
         } else {
             prev  = entry;
@@ -242,7 +242,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
         data = nst_cache_data_new();
 
         if(!data) {
-            nuster_memory_free(global.nuster.cache.memory, entry);
+            nst_memory_free(global.nuster.cache.memory, entry);
             return NULL;
         }
     }
