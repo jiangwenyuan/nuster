@@ -194,7 +194,7 @@ nst_persist_write_key(struct persist *disk, struct buffer *key) {
 }
 
 void
-nuster_persist_load(char *path, struct dirent *de1, char **meta, char **key);
+nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
 
 int nuster_persist_get_meta(int fd, char *meta);
 int nuster_persist_get_key(int fd, char *meta, struct buffer *key);
