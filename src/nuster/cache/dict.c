@@ -360,7 +360,7 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
     entry->state  = NST_CACHE_ENTRY_STATE_INVALID;
     entry->key    = key;
     entry->hash   = hash;
-    entry->expire = nuster_persist_meta_get_expire(meta);
+    entry->expire = nst_persist_meta_get_expire(meta);
     memcpy(entry->file, file, strlen(file));
 
     entry->header_len = nuster_persist_meta_get_header_len(meta);
