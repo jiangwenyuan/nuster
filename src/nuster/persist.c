@@ -20,7 +20,7 @@
 #include <nuster/nuster.h>
 
 char *nuster_persist_alloc(struct nst_memory *m) {
-    return nst_memory_alloc(m, NUSTER_PERSIST_PATH_FILE_LEN + 1);
+    return nst_memory_alloc(m, NST_PERSIST_PATH_FILE_LEN + 1);
 }
 
 int nuster_persist_init(char *path, uint64_t hash, char *dir) {
@@ -133,7 +133,7 @@ int nuster_persist_exists(struct persist *disk, struct buffer *key,
 }
 
 DIR *nuster_persist_opendir_by_idx(char *path, int idx, char *dir) {
-    memset(path, 0, NUSTER_PERSIST_PATH_FILE_LEN);
+    memset(path, 0, NST_PERSIST_PATH_FILE_LEN);
     sprintf(path, "%s/%x/%02x", dir, idx / 16, idx);
 
     return opendir(path);
