@@ -90,7 +90,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_PARAM,
 
     /* header */
-    NUSTER_RULE_KEY_HEADER,
+    NST_RULE_KEY_HEADER,
 
     /* cookie */
     NUSTER_RULE_KEY_COOKIE,

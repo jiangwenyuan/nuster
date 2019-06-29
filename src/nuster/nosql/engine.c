@@ -643,7 +643,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                 }
 
                 break;
-            case NUSTER_RULE_KEY_HEADER:
+            case NST_RULE_KEY_HEADER:
                 hdr.idx = 0;
                 nuster_debug("header_%s.", ck->data);
 
