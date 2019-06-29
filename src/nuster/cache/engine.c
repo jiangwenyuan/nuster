@@ -1462,7 +1462,7 @@ void nst_cache_persist_cleanup() {
             struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
-                nuster_persist_cleanup(file, de);
+                nst_persist_cleanup(file, de);
             } else {
                 nuster.cache->disk.idx++;
                 closedir(nuster.cache->disk.dir);
