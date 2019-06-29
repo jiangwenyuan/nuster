@@ -68,15 +68,15 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
 struct buffer nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
 
 struct nuster_headers nuster_headers = {
-    .server            = nuster_str_set("Server"),
-    .date              = nuster_str_set("Date"),
-    .content_length    = nuster_str_set("Content-Length"),
-    .content_type      = nuster_str_set("Content-Type"),
-    .transfer_encoding = nuster_str_set("Transfer-Encoding"),
-    .last_modified     = nuster_str_set("Last-Modified"),
-    .expires           = nuster_str_set("Expires"),
-    .cache_control     = nuster_str_set("Cache-Control"),
-    .etag              = nuster_str_set("ETag"),
+    .server            = nst_str_set("Server"),
+    .date              = nst_str_set("Date"),
+    .content_length    = nst_str_set("Content-Length"),
+    .content_type      = nst_str_set("Content-Type"),
+    .transfer_encoding = nst_str_set("Transfer-Encoding"),
+    .last_modified     = nst_str_set("Last-Modified"),
+    .expires           = nst_str_set("Expires"),
+    .cache_control     = nst_str_set("Cache-Control"),
+    .etag              = nst_str_set("ETag"),
 };
 
 

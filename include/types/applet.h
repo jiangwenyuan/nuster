@@ -81,9 +81,9 @@ struct appctx {
 				struct nst_cache_element *element;
 			} cache_engine;
 			struct {
-				struct nuster_str host;
-				struct nuster_str path;
-				struct my_regex  *regex;
+				struct nst_str   host;
+				struct nst_str   path;
+				struct my_regex *regex;
 			} cache_manager;
 			struct {
 				struct nst_nosql_entry   *entry;

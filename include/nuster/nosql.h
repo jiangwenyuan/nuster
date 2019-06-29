@@ -47,7 +47,7 @@ enum {
 
 struct nst_nosql_element {
     struct nst_nosql_element *next;
-    struct nuster_str         msg;
+    struct nst_str            msg;
 };
 
 /*
@@ -62,8 +62,8 @@ struct nst_nosql_data {
     struct nst_nosql_element *element;
     struct nst_nosql_data    *next;
     struct {
-        struct nuster_str     content_type;
-        struct nuster_str     transfer_encoding;
+        struct nst_str        content_type;
+        struct nst_str        transfer_encoding;
         uint64_t              content_length;
         unsigned int          flags;
     } info;
@@ -86,8 +86,8 @@ struct nst_nosql_entry {
     struct nst_nosql_data  *data;
     uint64_t                expire;
     uint64_t                atime;
-    struct nuster_str       host;
-    struct nuster_str       path;
+    struct nst_str          host;
+    struct nst_str          path;
     struct nst_nosql_entry *next;
     struct nuster_rule     *rule;        /* rule */
     int                     pid;         /* proxy uuid */
@@ -128,14 +128,14 @@ struct nst_nosql_ctx {
 
     struct {
         int                   scheme;
-        struct nuster_str     host;
-        struct nuster_str     uri;
-        struct nuster_str     path;
+        struct nst_str        host;
+        struct nst_str        uri;
+        struct nst_str        path;
         int                   delimiter;
-        struct nuster_str     query;
-        struct nuster_str     cookie;
-        struct nuster_str     content_type;
-        struct nuster_str     transfer_encoding;
+        struct nst_str        query;
+        struct nst_str        cookie;
+        struct nst_str        content_type;
+        struct nst_str        transfer_encoding;
     } req;
     int                       pid;         /* proxy uuid */
 };

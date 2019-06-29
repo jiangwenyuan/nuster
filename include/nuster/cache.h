@@ -54,7 +54,7 @@
 
 struct nst_cache_element {
     struct nst_cache_element *next;
-    struct nuster_str         msg;
+    struct nst_str            msg;
 };
 
 /*
@@ -86,8 +86,8 @@ struct nst_cache_entry {
     struct nst_cache_data  *data;
     uint64_t                expire;
     uint64_t                atime;
-    struct nuster_str       host;
-    struct nuster_str       path;
+    struct nst_str          host;
+    struct nst_str          path;
     struct nst_cache_entry *next;
     struct nuster_rule     *rule;        /* rule */
     int                     pid;         /* proxy uuid */
@@ -137,12 +137,12 @@ struct nst_cache_ctx {
 
     struct {
         int                   scheme;
-        struct nuster_str     host;
-        struct nuster_str     uri;
-        struct nuster_str     path;
+        struct nst_str        host;
+        struct nst_str        uri;
+        struct nst_str        path;
         int                   delimiter;
-        struct nuster_str     query;
-        struct nuster_str     cookie;
+        struct nst_str        query;
+        struct nst_str        cookie;
     } req;
 
     int                       pid;              /* proxy uuid */
