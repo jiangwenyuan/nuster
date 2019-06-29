@@ -104,7 +104,7 @@ _nst_memory_block_is_inited(struct nst_memory_ctrl *block) {
     return bit_used(block->info, 9);
 }
 static inline void
-_nuster_memory_block_set_bitmap(struct nst_memory_ctrl *block) {
+_nst_memory_block_set_bitmap(struct nst_memory_ctrl *block) {
     bit_set(block->info, 10);
 }
 static inline void
