@@ -346,7 +346,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
                 } else if(ctx.vlen == 7
                         && !memcmp(ctx.line + ctx.val, "disable", 7)) {
 
-                    state = NUSTER_RULE_DISABLED;
+                    state = NST_RULE_DISABLED;
                 }
             }
 
