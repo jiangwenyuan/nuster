@@ -256,23 +256,23 @@ static void _nst_nosql_data_cleanup() {
 
             if(tmp->msg.data) {
                 nst_nosql_stats_update_used_mem(-tmp->msg.len);
-                nuster_memory_free(global.nuster.nosql.memory, tmp->msg.data);
+                nst_memory_free(global.nuster.nosql.memory, tmp->msg.data);
             }
 
-            nuster_memory_free(global.nuster.nosql.memory, tmp);
+            nst_memory_free(global.nuster.nosql.memory, tmp);
         }
 
         if(data->info.content_type.data) {
-            nuster_memory_free(global.nuster.nosql.memory,
+            nst_memory_free(global.nuster.nosql.memory,
                     data->info.content_type.data);
         }
 
         if(data->info.transfer_encoding.data) {
-            nuster_memory_free(global.nuster.nosql.memory,
+            nst_memory_free(global.nuster.nosql.memory,
                     data->info.transfer_encoding.data);
         }
 
-        nuster_memory_free(global.nuster.nosql.memory, data);
+        nst_memory_free(global.nuster.nosql.memory, data);
     }
 }
 
@@ -740,7 +740,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
         if(!ctx->req.transfer_encoding.data) {
 
             if(p) {
-                nuster_memory_free(global.nuster.nosql.memory, p);
+                nst_memory_free(global.nuster.nosql.memory, p);
             }
 
             return 0;
@@ -753,7 +753,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
             ctx->req.transfer_encoding.data[ctx->req.transfer_encoding.len] =
                 ',';
 
-            nuster_memory_free(global.nuster.nosql.memory, p);
+            nst_memory_free(global.nuster.nosql.memory, p);
             memcpy(ctx->req.transfer_encoding.data
                     + ctx->req.transfer_encoding.len + 1,
                     hdr.line + hdr.val, hdr.vlen);
@@ -831,7 +831,7 @@ static struct nst_nosql_element *_nst_nosql_data_append(struct http_msg *msg,
                 msg_len);
 
         if(!element->msg.data) {
-            nuster_memory_free(global.nuster.nosql.memory, element);
+            nst_memory_free(global.nuster.nosql.memory, element);
             return NULL;
         }
 

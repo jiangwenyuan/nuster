@@ -518,12 +518,12 @@ static void nst_cache_manager_release_handler(struct appctx *appctx) {
     }
 
     if(appctx->ctx.nuster.cache_manager.host.data) {
-        nuster_memory_free(global.nuster.cache.memory,
+        nst_memory_free(global.nuster.cache.memory,
                 appctx->ctx.nuster.cache_manager.host.data);
     }
 
     if(appctx->ctx.nuster.cache_manager.path.data) {
-        nuster_memory_free(global.nuster.cache.memory,
+        nst_memory_free(global.nuster.cache.memory,
                 appctx->ctx.nuster.cache_manager.path.data);
     }
 }

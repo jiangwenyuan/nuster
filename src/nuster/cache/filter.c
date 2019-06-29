@@ -94,18 +94,18 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
             ctx->stash = ctx->stash->next;
 
             if(stash->key) {
-                nuster_memory_free(global.nuster.cache.memory, stash->key);
+                nst_memory_free(global.nuster.cache.memory, stash->key);
             }
 
             pool_free(global.nuster.cache.pool.stash, stash);
         }
 
         if(ctx->req.host.data) {
-            nuster_memory_free(global.nuster.cache.memory, ctx->req.host.data);
+            nst_memory_free(global.nuster.cache.memory, ctx->req.host.data);
         }
 
         if(ctx->req.path.data) {
-            nuster_memory_free(global.nuster.cache.memory, ctx->req.path.data);
+            nst_memory_free(global.nuster.cache.memory, ctx->req.path.data);
         }
 
         pool_free(global.nuster.cache.pool.ctx, ctx);

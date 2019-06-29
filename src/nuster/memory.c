@@ -444,7 +444,7 @@ void nst_memory_free_locked(struct nuster_memory *memory, void *p) {
     }
 }
 
-void nuster_memory_free(struct nuster_memory *memory, void *p) {
+void nst_memory_free(struct nuster_memory *memory, void *p) {
     nuster_shctx_lock(memory);
     nst_memory_free_locked(memory, p);
     nuster_shctx_unlock(memory);

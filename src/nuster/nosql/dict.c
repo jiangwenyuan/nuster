@@ -210,10 +210,10 @@ void nst_nosql_dict_cleanup() {
             }
 
             entry = entry->next;
-            nuster_memory_free(global.nuster.nosql.memory, tmp->key);
-            nuster_memory_free(global.nuster.nosql.memory, tmp->host.data);
-            nuster_memory_free(global.nuster.nosql.memory, tmp->path.data);
-            nuster_memory_free(global.nuster.nosql.memory, tmp);
+            nst_memory_free(global.nuster.nosql.memory, tmp->key);
+            nst_memory_free(global.nuster.nosql.memory, tmp->host.data);
+            nst_memory_free(global.nuster.nosql.memory, tmp->path.data);
+            nst_memory_free(global.nuster.nosql.memory, tmp);
             nuster.nosql->dict[0].used--;
         } else {
             prev  = entry;
@@ -253,14 +253,14 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
             strlen(key) + 1);
 
     if(!entry_key) {
-        nuster_memory_free(global.nuster.nosql.memory, entry_key);
+        nst_memory_free(global.nuster.nosql.memory, entry_key);
         return NULL;
     }
 
     data = nst_nosql_data_new();
     if(!data) {
-        nuster_memory_free(global.nuster.nosql.memory, entry_key);
-        nuster_memory_free(global.nuster.nosql.memory, entry);
+        nst_memory_free(global.nuster.nosql.memory, entry_key);
+        nst_memory_free(global.nuster.nosql.memory, entry);
         return NULL;
     }
 
