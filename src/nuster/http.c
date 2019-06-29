@@ -110,6 +110,6 @@ int nuster_req_find_param(char *query_beg, char *query_end,
         ptr++;
     }
 
-    return NUSTER_ERR;
+    return NST_ERR;
 }
 

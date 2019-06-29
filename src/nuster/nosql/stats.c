@@ -42,11 +42,11 @@ int nst_nosql_stats_init() {
             sizeof(struct nst_nosql_stats));
 
     if(!global.nuster.nosql.stats) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(nuster_shctx_init(global.nuster.nosql.stats) != NST_OK) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     global.nuster.nosql.stats->used_mem = 0;

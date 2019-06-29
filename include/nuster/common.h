@@ -42,7 +42,7 @@
 #include <types/acl.h>
 
 #define NST_OK               0
-#define NUSTER_ERR              1
+#define NST_ERR              1
 
 #define NST_DEFAULT_TTL         0
 

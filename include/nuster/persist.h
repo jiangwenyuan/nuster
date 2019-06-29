@@ -117,7 +117,7 @@ static inline int nuster_persist_meta_check_expire(char *p) {
     if(expire * 1000 > get_current_timestamp()) {
         return NST_OK;
     } else {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 }
 
@@ -173,7 +173,7 @@ nuster_persist_write(struct persist *disk, char *buf, int len) {
     ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
 
     if(ret != len) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     disk->offset += len;

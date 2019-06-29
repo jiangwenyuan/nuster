@@ -29,7 +29,7 @@ int nuster_create_path(char *path) {
             if(mkdir(path, S_IRWXU) == -1 && errno != EEXIST) {
                 *p = '/';
 
-                return NUSTER_ERR;
+                return NST_ERR;
             }
 
             *p = '/';
@@ -38,7 +38,7 @@ int nuster_create_path(char *path) {
     }
 
     if(mkdir(path, S_IRWXU) == -1 && errno != EEXIST) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     return NST_OK;
