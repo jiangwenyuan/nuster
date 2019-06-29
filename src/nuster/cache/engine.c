@@ -836,7 +836,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                         hdr.idx == 0 ? 2 : 1);
 
                 break;
-            case NUSTER_RULE_KEY_COOKIE:
+            case NST_RULE_KEY_COOKIE:
                 nuster_debug("cookie_%s.", ck->data);
 
                 if(ctx->req.cookie.data) {

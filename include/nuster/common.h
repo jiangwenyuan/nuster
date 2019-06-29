@@ -93,7 +93,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_HEADER,
 
     /* cookie */
-    NUSTER_RULE_KEY_COOKIE,
+    NST_RULE_KEY_COOKIE,
 
     /* body */
     NUSTER_RULE_KEY_BODY,
