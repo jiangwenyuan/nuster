@@ -78,7 +78,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                 if(appctx->ctx.nuster.nosql_engine.data->info.flags
                         & NST_NOSQL_DATA_FLAG_CHUNKED) {
 
-                    nuster_res_header(&nuster_headers.transfer_encoding,
+                    nuster_res_header(&nst_headers.transfer_encoding,
                             &appctx->ctx.nuster.nosql_engine.data
                             ->info.transfer_encoding);
                 } else {
@@ -89,7 +89,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                     if(appctx->ctx.nuster.nosql_engine.data
                             ->info.transfer_encoding.data) {
 
-                        nuster_res_header(&nuster_headers.transfer_encoding,
+                        nuster_res_header(&nst_headers.transfer_encoding,
                                 &appctx->ctx.nuster.nosql_engine.data
                                 ->info.transfer_encoding);
                     }
@@ -98,7 +98,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                 if(appctx->ctx.nuster.nosql_engine.data
                         ->info.content_type.data) {
 
-                    nuster_res_header(&nuster_headers.content_type,
+                    nuster_res_header(&nst_headers.content_type,
                             &appctx->ctx.nuster.nosql_engine.data
                             ->info.content_type);
                 }

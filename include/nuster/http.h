@@ -41,7 +41,7 @@ enum {
     NST_HTTP_SIZE
 };
 
-struct nuster_headers {
+struct nst_headers {
     struct nst_str server;
     struct nst_str date;
     struct nst_str content_length;
@@ -55,7 +55,7 @@ struct nuster_headers {
 
 extern const char *nuster_http_msgs[NST_HTTP_SIZE];
 extern struct buffer nuster_http_msg_chunks[NST_HTTP_SIZE];
-extern struct nuster_headers nuster_headers;
+extern struct nst_headers nst_headers;
 
 /*
  * simply response and close
@@ -74,8 +74,8 @@ static inline void nuster_res_begin(int status) {
 }
 
 static inline void nuster_res_header_server() {
-    chunk_appendf(&trash, "%.*s: nuster\r\n", nuster_headers.server.len,
-            nuster_headers.server.data);
+    chunk_appendf(&trash, "%.*s: nuster\r\n", nst_headers.server.len,
+            nst_headers.server.data);
 }
 
 static inline void nuster_res_header_date() {
@@ -89,15 +89,15 @@ static inline void nuster_res_header_date() {
     time(&now);
     tm = gmtime(&now);
     chunk_appendf(&trash, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT",
-            nuster_headers.date.len, nuster_headers.date.data, day[tm->tm_wday],
+            nst_headers.date.len, nst_headers.date.data, day[tm->tm_wday],
             tm->tm_mday, mon[tm->tm_mon], 1900 + tm->tm_year,
             tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
 
 static inline void nuster_res_header_content_length(uint64_t len) {
     chunk_appendf(&trash, "%.*s: %" PRIu64 "\r\n",
-            nuster_headers.content_length.len,
-            nuster_headers.content_length.data, len);
+            nst_headers.content_length.len,
+            nst_headers.content_length.data, len);
 }
 
 static inline void nuster_res_header(struct nst_str *k, struct nst_str *v) {
