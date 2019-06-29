@@ -111,11 +111,11 @@ static inline int nuster_persist_meta_check_expire(char *p) {
     uint64_t expire = *(uint64_t *)(p + NUSTER_PERSIST_META_POS_EXPIRE);
 
     if(expire == 0) {
-        return NUSTER_OK;
+        return NST_OK;
     }
 
     if(expire * 1000 > get_current_timestamp()) {
-        return NUSTER_OK;
+        return NST_OK;
     } else {
         return NUSTER_ERR;
     }
@@ -178,7 +178,7 @@ nuster_persist_write(struct persist *disk, char *buf, int len) {
 
     disk->offset += len;
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 
 static inline int

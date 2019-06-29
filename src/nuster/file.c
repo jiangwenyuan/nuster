@@ -41,5 +41,5 @@ int nuster_create_path(char *path) {
         return NUSTER_ERR;
     }
 
-    return NUSTER_OK;
+    return NST_OK;
 }
