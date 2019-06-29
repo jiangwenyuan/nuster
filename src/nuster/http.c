@@ -67,7 +67,7 @@ const char *nuster_http_msgs[NST_HTTP_SIZE] = {
 
 struct buffer nuster_http_msg_chunks[NST_HTTP_SIZE];
 
-struct nuster_headers nuster_headers = {
+struct nst_headers nst_headers = {
     .server            = nst_str_set("Server"),
     .date              = nst_str_set("Date"),
     .content_length    = nst_str_set("Content-Length"),
