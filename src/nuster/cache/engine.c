@@ -790,7 +790,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 }
 
                 break;
-            case NUSTER_RULE_KEY_QUERY:
+            case NST_RULE_KEY_QUERY:
                 nuster_debug("query.");
 
                 if(ctx->req.query.data && ctx->req.query.len) {
