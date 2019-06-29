@@ -48,7 +48,7 @@ struct nuster nuster = {
     },
 };
 
-void nuster_debug(const char *fmt, ...) {
+void nst_debug(const char *fmt, ...) {
 
     if((global.mode & MODE_DEBUG)) {
         va_list args;
