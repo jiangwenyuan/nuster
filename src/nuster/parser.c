@@ -301,7 +301,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
     int err_code = 0;
     int cur_arg  = 1;
 
-    if (global.nuster.cache.status != NUSTER_STATUS_UNDEFINED) {
+    if (global.nuster.cache.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file,
                 linenum, args[0]);
 
@@ -611,7 +611,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
     int err_code = 0;
     int cur_arg  = 1;
 
-    if (global.nuster.nosql.status != NUSTER_STATUS_UNDEFINED) {
+    if (global.nuster.nosql.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file,
                 linenum, args[0]);
 

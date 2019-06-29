@@ -173,7 +173,7 @@ struct global global = {
 #endif
 	.nuster = {
 		.cache = {
-			.status       = NUSTER_STATUS_UNDEFINED,
+			.status       = NST_STATUS_UNDEFINED,
 			.data_size    = NST_CACHE_DEFAULT_SIZE,
 			.dict_size    = NST_CACHE_DEFAULT_SIZE,
 			.dict_cleaner = NST_CACHE_DEFAULT_DICT_CLEANER,
@@ -186,7 +186,7 @@ struct global global = {
 			.directory    = NULL,
 		},
 		.nosql = {
-			.status       = NUSTER_STATUS_UNDEFINED,
+			.status       = NST_STATUS_UNDEFINED,
 			.dict_size    = NST_CACHE_DEFAULT_SIZE,
 			.data_size    = NST_CACHE_DEFAULT_SIZE,
 		},
