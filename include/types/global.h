@@ -201,7 +201,7 @@ struct global {
 				struct pool_head *entry;
 			} pool;
 
-			struct nuster_memory   *memory;        /* memory */
+			struct nst_memory   *memory;        /* memory */
 			struct nst_cache_stats *stats;
 		} cache;
 		struct {
@@ -218,7 +218,7 @@ struct global {
 				struct pool_head *entry;
 			} pool;
 
-			struct nuster_memory   *memory;        /* memory */
+			struct nst_memory   *memory;        /* memory */
 			struct nst_nosql_stats *stats;
 		} nosql;
 	} nuster;

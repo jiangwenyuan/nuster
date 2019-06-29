@@ -92,7 +92,7 @@ void nuster_init() {
     while(p) {
         struct nst_rule *rule = NULL;
         uint32_t ttl;
-        struct nuster_memory *m  = NULL;
+        struct nst_memory *m  = NULL;
 
         list_for_each_entry(rule, &p->nuster.rules, list) {
             struct proxy *pt;

@@ -17,11 +17,11 @@
 
 #include <common/standard.h>
 
-struct nuster_memory *nst_memory_create(char *name, uint64_t size,
+struct nst_memory *nst_memory_create(char *name, uint64_t size,
         uint32_t block_size, uint32_t chunk_size) {
 
     uint8_t *p;
-    struct nuster_memory *memory;
+    struct nst_memory *memory;
     uint64_t n;
     uint8_t *begin, *end;
     uint32_t bitmap_size;
@@ -64,7 +64,7 @@ struct nuster_memory *nst_memory_create(char *name, uint64_t size,
         return NULL;
     }
 
-    memory = (struct nuster_memory *)p;
+    memory = (struct nst_memory *)p;
 
     /* init header */
     if(name) {
@@ -76,7 +76,7 @@ struct nuster_memory *nst_memory_create(char *name, uint64_t size,
     memory->block_size = block_size;
     memory->chunk_size = chunk_size;
 
-    p += sizeof(struct nuster_memory);
+    p += sizeof(struct nst_memory);
 
     /* calculate */
     for(n = NST_MEMORY_CHUNK_MIN_SHIFT; (1ULL << n) < chunk_size; n++) { }
@@ -122,7 +122,7 @@ struct nuster_memory *nst_memory_create(char *name, uint64_t size,
     memory->data.free   = begin;
     memory->data.end    = begin + block_size * (n - 1);
 
-    n = sizeof(struct nuster_memory)
+    n = sizeof(struct nst_memory)
         + sizeof(struct nst_memory_ctrl *) * memory->chunks
         + sizeof(struct nst_memory_ctrl) * n;
 
@@ -146,7 +146,7 @@ struct nuster_memory *nst_memory_create(char *name, uint64_t size,
     return memory;
 }
 
-void *_nst_memory_block_alloc(struct nuster_memory *memory,
+void *_nst_memory_block_alloc(struct nst_memory *memory,
         struct nst_memory_ctrl *block, int chunk_idx) {
 
     int chunk_size = 1<<(memory->chunk_shift + chunk_idx);
@@ -226,7 +226,7 @@ void *_nst_memory_block_alloc(struct nuster_memory *memory,
             + chunk_size * bits_idx);
 }
 
-void _nst_memory_block_init(struct nuster_memory * memory,
+void _nst_memory_block_init(struct nst_memory * memory,
         struct nst_memory_ctrl *block, int chunk_idx) {
 
     struct nst_memory_ctrl *chunk;
@@ -249,7 +249,7 @@ void _nst_memory_block_init(struct nuster_memory * memory,
     memory->chunk[chunk_idx] = block;
 }
 
-void *nst_memory_alloc_locked(struct nuster_memory *memory, int size) {
+void *nst_memory_alloc_locked(struct nst_memory *memory, int size) {
     int i, chunk_idx = 0;
     struct nst_memory_ctrl *chunk, *block;
 
@@ -298,7 +298,7 @@ void *nst_memory_alloc_locked(struct nuster_memory *memory, int size) {
     return _nst_memory_block_alloc(memory, block, chunk_idx);
 }
 
-void *nst_memory_alloc(struct nuster_memory *memory, int size) {
+void *nst_memory_alloc(struct nst_memory *memory, int size) {
     void *p;
     nuster_shctx_lock(memory);
     p = nst_memory_alloc_locked(memory, size);
@@ -306,7 +306,7 @@ void *nst_memory_alloc(struct nuster_memory *memory, int size) {
     return p;
 }
 
-void nst_memory_free_locked(struct nuster_memory *memory, void *p) {
+void nst_memory_free_locked(struct nst_memory *memory, void *p) {
     int block_idx, chunk_size, bits, bits_idx, empty, full;
     struct nst_memory_ctrl *chunk, *block;
     uint8_t chunk_idx;
@@ -444,7 +444,7 @@ void nst_memory_free_locked(struct nuster_memory *memory, void *p) {
     }
 }
 
-void nst_memory_free(struct nuster_memory *memory, void *p) {
+void nst_memory_free(struct nst_memory *memory, void *p) {
     nuster_shctx_lock(memory);
     nst_memory_free_locked(memory, p);
     nuster_shctx_unlock(memory);
