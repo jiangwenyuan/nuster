@@ -78,7 +78,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_URI,
 
     /* path: first slach to question mark */
-    NUSTER_RULE_KEY_PATH,
+    NST_RULE_KEY_PATH,
 
     /* delimiter: '?' or '' */
     NUSTER_RULE_KEY_DELIMITER,
