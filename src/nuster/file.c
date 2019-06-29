@@ -13,7 +13,7 @@
 #include <nuster/common.h>
 #include <nuster/file.h>
 
-int nuster_create_path(char *path) {
+int nst_create_path(char *path) {
     char *p = path;
 
     while(*p != '\0') {

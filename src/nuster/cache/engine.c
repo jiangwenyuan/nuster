@@ -518,7 +518,7 @@ void nst_cache_init() {
 
         if(global.nuster.cache.directory) {
 
-            if(nuster_create_path(global.nuster.cache.directory) ==
+            if(nst_create_path(global.nuster.cache.directory) ==
                     NST_ERR) {
 
                 ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
