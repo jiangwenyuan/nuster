@@ -76,7 +76,7 @@ static int _nst_nosql_dict_alloc(uint64_t size) {
         nuster.nosql->dict[0].entry[i] = NULL;
     }
 
-    return nuster_shctx_init((&nuster.nosql->dict[0]));
+    return nst_shctx_init((&nuster.nosql->dict[0]));
 }
 
 int nst_nosql_dict_init() {
