@@ -510,7 +510,7 @@ void nst_cache_init() {
         if(global.nuster.cache.share == NST_STATUS_UNDEFINED) {
 
             if(global.nbproc == 1) {
-                global.nuster.cache.share = NUSTER_STATUS_OFF;
+                global.nuster.cache.share = NST_STATUS_OFF;
             } else {
                 global.nuster.cache.share = NUSTER_STATUS_ON;
             }
