@@ -24,7 +24,7 @@
 static const char *nuster_cache_id = "cache filter";
 static const char *nuster_nosql_id = "nosql filter";
 
-static struct nst_rule_key *_nuster_parse_rule_key_cast(char *str) {
+static struct nst_rule_key *_nst_parse_rule_key_cast(char *str) {
     struct nst_rule_key *key = NULL;
 
     if(!strcmp(str, "method")) {
@@ -84,7 +84,7 @@ static struct nst_rule_key **_nuster_parse_rule_key(char *str) {
     m = strtok(tmp, ".");
 
     while(m) {
-        struct nst_rule_key *key = _nuster_parse_rule_key_cast(m);
+        struct nst_rule_key *key = _nst_parse_rule_key_cast(m);
 
         if(!key) {
             goto err;
