@@ -597,7 +597,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                             ctx->req.host.data, ctx->req.host.len);
                 }
                 break;
-            case NUSTER_RULE_KEY_URI:
+            case NST_RULE_KEY_URI:
                 nuster_debug("uri.");
                 if(ctx->req.uri.data) {
                     key = _nst_nosql_key_append(key, &key_len, &key_size,
