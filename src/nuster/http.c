@@ -81,7 +81,7 @@ struct nst_headers nst_headers = {
 
 
 
-int nuster_req_find_param(char *query_beg, char *query_end,
+int nst_req_find_param(char *query_beg, char *query_end,
         char *name, char **value, int *value_len) {
 
     char equal   = '=';
