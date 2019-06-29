@@ -196,7 +196,7 @@ nst_persist_write_key(struct persist *disk, struct buffer *key) {
 void
 nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
 
-int nuster_persist_get_meta(int fd, char *meta);
+int nst_persist_get_meta(int fd, char *meta);
 int nuster_persist_get_key(int fd, char *meta, struct buffer *key);
 
 DIR *nst_persist_opendir_by_idx(char *path, int idx, char *dir);
