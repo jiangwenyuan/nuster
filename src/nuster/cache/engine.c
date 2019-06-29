@@ -312,7 +312,7 @@ struct nst_cache_data *nst_cache_data_new() {
     struct nst_cache_data *data =
         nst_memory_alloc(global.nuster.cache.memory, sizeof(*data));
 
-    nuster_shctx_lock(nuster.cache);
+    nst_shctx_lock(nuster.cache);
 
     if(data) {
         data->clients  = 0;
@@ -472,13 +472,13 @@ void nst_cache_housekeeping() {
 
         while(dict_cleaner--) {
             nst_cache_dict_rehash();
-            nuster_shctx_lock(&nuster.cache->dict[0]);
+            nst_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_dict_cleanup();
             nuster_shctx_unlock(&nuster.cache->dict[0]);
         }
 
         while(data_cleaner--) {
-            nuster_shctx_lock(nuster.cache);
+            nst_shctx_lock(nuster.cache);
             _nst_cache_data_cleanup();
             nuster_shctx_unlock(nuster.cache);
         }
@@ -492,7 +492,7 @@ void nst_cache_housekeeping() {
         }
 
         while(disk_saver--) {
-            nuster_shctx_lock(&nuster.cache->dict[0]);
+            nst_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_persist_async();
             nuster_shctx_unlock(&nuster.cache->dict[0]);
         }
@@ -950,7 +950,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
         return ret;
     }
 
-    nuster_shctx_lock(&nuster.cache->dict[0]);
+    nst_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(ctx->key, ctx->hash);
 
     if(entry) {
@@ -1031,7 +1031,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
 void nst_cache_create(struct nst_cache_ctx *ctx) {
     struct nst_cache_entry *entry = NULL;
 
-    nuster_shctx_lock(&nuster.cache->dict[0]);
+    nst_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(ctx->key, ctx->hash);
 
     if(entry) {

@@ -28,7 +28,7 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
     struct nst_cache_entry *entry = NULL;
     int ret;
 
-    nuster_shctx_lock(&nuster.cache->dict[0]);
+    nst_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
 
     if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
@@ -467,7 +467,7 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
     uint64_t start                = get_current_timestamp();
 
     while(1) {
-        nuster_shctx_lock(&nuster.cache->dict[0]);
+        nst_shctx_lock(&nuster.cache->dict[0]);
 
         while(appctx->st2 < nuster.cache->dict[0].size && max--) {
             entry = nuster.cache->dict[0].entry[appctx->st2];
