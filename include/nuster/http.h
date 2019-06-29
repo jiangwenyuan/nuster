@@ -60,7 +60,7 @@ extern struct nst_headers nst_headers;
 /*
  * simply response and close
  */
-static inline void nuster_response(struct stream *s, struct buffer *msg) {
+static inline void nst_response(struct stream *s, struct buffer *msg) {
     s->txn->flags &= ~TX_WAIT_NEXT_RQ;
     si_retnclose(&s->si[0], msg);
     if(!(s->flags & SF_ERR_MASK)) {

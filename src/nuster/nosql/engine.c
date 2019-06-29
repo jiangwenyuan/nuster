@@ -366,7 +366,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req,
 
         if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
             txn->status = 500;
-            nuster_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
             return 1;
         } else {
             appctx      = si_appctx(si);
