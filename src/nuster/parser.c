@@ -29,7 +29,7 @@ static struct nst_rule_key *_nuster_parse_rule_key_cast(char *str) {
 
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
-        key->type = NUSTER_RULE_KEY_METHOD;
+        key->type = NST_RULE_KEY_METHOD;
         key->data = NULL;
     } else if(!strcmp(str, "scheme")) {
         key       = malloc(sizeof(*key));
