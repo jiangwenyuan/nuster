@@ -1128,10 +1128,10 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
             int right = data + size - p;
             int left  = msg_len - right;
 
-            nuster_persist_write(&ctx->disk, p, right);
-            nuster_persist_write(&ctx->disk, data, left);
+            nst_persist_write(&ctx->disk, p, right);
+            nst_persist_write(&ctx->disk, data, left);
         } else {
-            nuster_persist_write(&ctx->disk, p, msg_len);
+            nst_persist_write(&ctx->disk, p, msg_len);
         }
         ctx->cache_len += msg_len;
     } else {
@@ -1149,7 +1149,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
             ctx->element = element;
 
             if(ctx->rule->disk == NST_DISK_SYNC) {
-                nuster_persist_write(&ctx->disk, element->msg.data,
+                nst_persist_write(&ctx->disk, element->msg.data,
                         element->msg.len);
 
                 ctx->cache_len += element->msg.len;
@@ -1316,7 +1316,7 @@ void nst_cache_persist_async() {
             while(element) {
 
                 if(element->msg.data) {
-                    nuster_persist_write(&disk, element->msg.data,
+                    nst_persist_write(&disk, element->msg.data,
                             element->msg.len);
 
                     cache_len += element->msg.len;

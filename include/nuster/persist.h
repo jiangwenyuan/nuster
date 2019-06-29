@@ -168,7 +168,7 @@ int nst_persist_exists(struct persist *disk, struct buffer *key,
         uint64_t hash, char *dir);
 
 static inline int
-nuster_persist_write(struct persist *disk, char *buf, int len) {
+nst_persist_write(struct persist *disk, char *buf, int len) {
 
     ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
 
@@ -184,13 +184,13 @@ nuster_persist_write(struct persist *disk, char *buf, int len) {
 static inline int
 nst_persist_write_meta(struct persist *disk) {
     disk->offset = 0;
-    return nuster_persist_write(disk, disk->meta, NST_PERSIST_META_SIZE);
+    return nst_persist_write(disk, disk->meta, NST_PERSIST_META_SIZE);
 }
 
 static inline int
 nst_persist_write_key(struct persist *disk, struct buffer *key) {
     disk->offset = NST_PERSIST_POS_KEY;
-    return nuster_persist_write(disk, key->area, key->data);
+    return nst_persist_write(disk, key->area, key->data);
 }
 
 void
