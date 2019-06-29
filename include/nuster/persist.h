@@ -46,7 +46,7 @@
    48 + key_len cache_len       cache
  */
 
-#define NUSTER_PERSIST_META_POS_HASH            8 * 1
+#define NST_PERSIST_META_POS_HASH            8 * 1
 #define NUSTER_PERSIST_META_POS_EXPIRE          8 * 2
 #define NUSTER_PERSIST_META_POS_CACHE_LEN       8 * 3
 #define NUSTER_PERSIST_META_POS_HEADER_LEN      8 * 4
@@ -92,11 +92,11 @@ static inline int nuster_persist_open(const char *pathname) {
 }
 
 static inline void nuster_persist_meta_set_hash(char *p, uint64_t v) {
-    *(uint64_t *)(p + NUSTER_PERSIST_META_POS_HASH) = v;
+    *(uint64_t *)(p + NST_PERSIST_META_POS_HASH) = v;
 }
 
 static inline uint64_t nuster_persist_meta_get_hash(char *p) {
-    return *(uint64_t *)(p + NUSTER_PERSIST_META_POS_HASH);
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_HASH);
 }
 
 static inline void nuster_persist_meta_set_expire(char *p, uint64_t v) {
