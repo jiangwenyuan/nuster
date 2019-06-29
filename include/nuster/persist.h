@@ -121,7 +121,7 @@ static inline int nst_persist_meta_check_expire(char *p) {
     }
 }
 
-static inline void nuster_persist_meta_set_cache_len(char *p, uint64_t v) {
+static inline void nst_persist_meta_set_cache_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_CACHE_LEN) = v;
 }
 
@@ -159,7 +159,7 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
 
     nst_persist_meta_set_hash(p, hash);
     nst_persist_meta_set_expire(p, expire);
-    nuster_persist_meta_set_cache_len(p, cache_len);
+    nst_persist_meta_set_cache_len(p, cache_len);
     nuster_persist_meta_set_header_len(p, header_len);
     nuster_persist_meta_set_key_len(p, key_len);
 }

@@ -1188,7 +1188,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 
         nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
-        nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
+        nst_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
 
         nuster_persist_write_meta(&ctx->disk);
 
@@ -1325,7 +1325,7 @@ void nst_cache_persist_async() {
                 element = element->next;
             }
 
-            nuster_persist_meta_set_cache_len(disk.meta, cache_len);
+            nst_persist_meta_set_cache_len(disk.meta, cache_len);
 
             nuster_persist_write_meta(&disk);
 
