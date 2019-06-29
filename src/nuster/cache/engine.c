@@ -979,7 +979,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
             ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
         }
     } else {
-        if(mode != NUSTER_DISK_OFF) {
+        if(mode != NST_DISK_OFF) {
             ctx->disk.file = NULL;
             if(nuster.cache->disk.loaded) {
                 ret = NST_CACHE_CTX_STATE_INIT;

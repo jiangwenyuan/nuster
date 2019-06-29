@@ -906,7 +906,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             }
 
             if(!strcmp(args[cur_arg], "off")) {
-                disk = NUSTER_DISK_OFF;
+                disk = NST_DISK_OFF;
             } else if(!strcmp(args[cur_arg], "only")) {
                 disk = NUSTER_DISK_ONLY;
             } else if(!strcmp(args[cur_arg], "sync")) {
@@ -972,7 +972,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         goto out;
     }
 
-    rule->disk = disk == -1 ? NUSTER_DISK_OFF : disk;
+    rule->disk = disk == -1 ? NST_DISK_OFF : disk;
     rule->id   = -1;
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->nuster.rules, &rule->list);

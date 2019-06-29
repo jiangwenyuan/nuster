@@ -116,7 +116,7 @@ enum {
 
 enum {
     /* no disk persistence */
-    NUSTER_DISK_OFF    = 0,
+    NST_DISK_OFF    = 0,
 
     /* disk persistence only, do not cache in memory */
     NUSTER_DISK_ONLY   = 1,
