@@ -786,14 +786,15 @@ int nuster_parse_proxy_nosql(char **args, int section, struct proxy *px,
 int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         struct proxy *defpx, const char *file, int line, char **err) {
 
-    struct nuster_rule *rule = NULL;
-    struct acl_cond *cond    = NULL;
-    char *name               = NULL;
-    char *key                = NULL;
-    char *code               = NULL;
-    int ttl                  = -1;
-    int disk                 = -1;
-    int cur_arg              = 2;
+    struct nst_rule *rule = NULL;
+    struct acl_cond *cond = NULL;
+
+    char *name  = NULL;
+    char *key   = NULL;
+    char *code  = NULL;
+    int ttl     = -1;
+    int disk    = -1;
+    int cur_arg = 2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' "

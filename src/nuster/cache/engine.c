@@ -183,7 +183,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
  * Cache the keys which calculated in request for response use
  */
 struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nuster_rule *rule) {
+        struct nst_rule *rule) {
 
     struct nst_rule_stash *stash = pool_alloc(global.nuster.cache.pool.stash);
 

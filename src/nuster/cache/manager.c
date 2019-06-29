@@ -100,7 +100,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
 
         p = proxies_list;
         while(p) {
-            struct nuster_rule *rule = NULL;
+            struct nst_rule *rule = NULL;
 
             if(mode != NST_CACHE_PURGE_NAME_ALL
                     && strlen(p->id) == ctx.vlen
@@ -182,7 +182,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
 
         p = proxies_list;
         while(p) {
-            struct nuster_rule *rule = NULL;
+            struct nst_rule *rule = NULL;
 
             if(p->nuster.mode == NUSTER_MODE_CACHE) {
 

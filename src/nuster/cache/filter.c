@@ -120,7 +120,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
     struct proxy *px            = s->be;
     struct stream_interface *si = &s->si[1];
     struct nst_cache_ctx *ctx   = filter->ctx;
-    struct nuster_rule *rule    = NULL;
+    struct nst_rule *rule       = NULL;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
 

@@ -104,7 +104,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
     struct stream_interface *si = &s->si[1];
     struct nst_nosql_ctx *ctx   = filter->ctx;
-    struct nuster_rule *rule    = NULL;
+    struct nst_rule *rule       = NULL;
     struct proxy *px            = s->be;
     uint64_t hash               = 0;
     struct appctx *appctx       = si_appctx(si);
