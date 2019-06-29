@@ -83,7 +83,7 @@ char *nst_persist_alloc(struct nst_memory *p);
 
 int nst_persist_init(char *path, uint64_t hash, char *dir);
 
-static inline int nuster_persist_create(const char *pathname) {
+static inline int nst_persist_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 
