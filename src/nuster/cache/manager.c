@@ -59,7 +59,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
 
         if(!key) {
             txn->status = 500;
-            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
+            nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_500]);
         } else {
             uint64_t hash = nuster_hash(key->area, key->data);
             txn->status = _nst_cache_purge_by_key(key, hash);
@@ -391,7 +391,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_404]);
             break;
         case 500:
-            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_500]);
+            nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_500]);
             break;
         default:
             nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_400]);
