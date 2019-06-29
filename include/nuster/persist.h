@@ -107,7 +107,7 @@ static inline uint64_t nst_persist_meta_get_expire(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE);
 }
 
-static inline int nuster_persist_meta_check_expire(char *p) {
+static inline int nst_persist_meta_check_expire(char *p) {
     uint64_t expire = *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE);
 
     if(expire == 0) {
