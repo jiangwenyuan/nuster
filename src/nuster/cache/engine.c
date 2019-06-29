@@ -768,7 +768,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 }
 
                 break;
-            case NUSTER_RULE_KEY_PATH:
+            case NST_RULE_KEY_PATH:
                 nuster_debug("path.");
 
                 if(ctx->req.path.data) {
