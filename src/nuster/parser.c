@@ -318,7 +318,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
     }
 
     if (!strcmp(args[cur_arg], "off")) {
-        global.nuster.cache.status = NUSTER_STATUS_OFF;
+        global.nuster.cache.status = NST_STATUS_OFF;
     } else if (!strcmp(args[cur_arg], "on")) {
         global.nuster.cache.status = NUSTER_STATUS_ON;
     } else {
@@ -356,7 +356,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                 goto out;
             }
             if (!strcmp(args[cur_arg], "off")) {
-                global.nuster.cache.share = NUSTER_STATUS_OFF;
+                global.nuster.cache.share = NST_STATUS_OFF;
             } else if (!strcmp(args[cur_arg], "on")) {
                 global.nuster.cache.share = NUSTER_STATUS_ON;
             } else {
@@ -628,7 +628,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
     }
 
     if (!strcmp(args[cur_arg], "off")) {
-        global.nuster.nosql.status = NUSTER_STATUS_OFF;
+        global.nuster.nosql.status = NST_STATUS_OFF;
     } else if (!strcmp(args[cur_arg], "on")) {
         global.nuster.nosql.status = NUSTER_STATUS_ON;
     } else {
@@ -739,7 +739,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
     if(*args[cur_arg]) {
 
         if(!strcmp(args[cur_arg], "off")) {
-            conf->status = NUSTER_STATUS_OFF;
+            conf->status = NST_STATUS_OFF;
         } else if(!strcmp(args[cur_arg], "on")) {
             conf->status = NUSTER_STATUS_ON;
         } else {

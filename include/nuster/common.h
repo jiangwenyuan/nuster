@@ -48,7 +48,7 @@
 
 enum {
     NST_STATUS_UNDEFINED = -1,
-    NUSTER_STATUS_OFF       =  0,
+    NST_STATUS_OFF       =  0,
     NUSTER_STATUS_ON        =  1,
 };
 
