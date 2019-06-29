@@ -33,7 +33,7 @@ static struct nst_rule_key *_nuster_parse_rule_key_cast(char *str) {
         key->data = NULL;
     } else if(!strcmp(str, "scheme")) {
         key       = malloc(sizeof(*key));
-        key->type = NUSTER_RULE_KEY_SCHEME;
+        key->type = NST_RULE_KEY_SCHEME;
         key->data = NULL;
     } else if(!strcmp(str, "host")) {
         key       = malloc(sizeof(*key));
