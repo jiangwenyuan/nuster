@@ -133,7 +133,7 @@ static inline void nst_persist_meta_set_header_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_HEADER_LEN) = v;
 }
 
-static inline uint64_t nuster_persist_meta_get_header_len(char *p) {
+static inline uint64_t nst_persist_meta_get_header_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_HEADER_LEN);
 }
 
