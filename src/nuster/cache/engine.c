@@ -855,7 +855,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 ret = _nst_key_advance(ctx->key, 2);
                 break;
-            case NUSTER_RULE_KEY_BODY:
+            case NST_RULE_KEY_BODY:
                 nuster_debug("body.");
 
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {

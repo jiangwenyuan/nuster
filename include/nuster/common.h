@@ -96,7 +96,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_COOKIE,
 
     /* body */
-    NUSTER_RULE_KEY_BODY,
+    NST_RULE_KEY_BODY,
 };
 
 struct nst_rule_key {
