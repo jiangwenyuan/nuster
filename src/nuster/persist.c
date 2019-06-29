@@ -71,9 +71,7 @@ int nst_persist_init(char *path, uint64_t hash, char *dir) {
     return NST_OK;
 }
 
-int
-nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
-
+int nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
     char *buf;
     int ret;
 
@@ -128,8 +126,8 @@ err:
 }
 
 
-int nst_persist_exists(struct persist *disk, struct buffer *key,
-        uint64_t hash, char *dir) {
+int nst_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash,
+        char *dir) {
 
     struct dirent *de;
     DIR *dirp;
@@ -145,7 +143,7 @@ int nst_persist_exists(struct persist *disk, struct buffer *key,
 
     while((de = readdir(dirp)) != NULL) {
 
-        if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
+        if(strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
             memcpy(disk->file + NST_PERSIST_PATH_HASH_LEN, "/", 1);
             memcpy(disk->file + NST_PERSIST_PATH_HASH_LEN + 1,
                     de->d_name, strlen(de->d_name));
@@ -209,8 +207,7 @@ void nst_persist_cleanup(char *path, struct dirent *de1) {
     int fd, ret;
     char meta[NST_PERSIST_META_SIZE];
 
-    if (strcmp(de1->d_name, ".") == 0
-            || strcmp(de1->d_name, "..") == 0) {
+    if(strcmp(de1->d_name, ".") == 0 || strcmp(de1->d_name, "..") == 0) {
 
         return;
     }

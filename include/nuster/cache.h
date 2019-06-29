@@ -74,9 +74,9 @@ struct nst_cache_data {
  */
 enum {
     NST_CACHE_ENTRY_STATE_CREATING = 0,
-    NST_CACHE_ENTRY_STATE_VALID    = 1,
-    NST_CACHE_ENTRY_STATE_INVALID  = 2,
-    NST_CACHE_ENTRY_STATE_EXPIRED  = 3,
+    NST_CACHE_ENTRY_STATE_VALID,
+    NST_CACHE_ENTRY_STATE_INVALID,
+    NST_CACHE_ENTRY_STATE_EXPIRED,
 };
 
 struct nst_cache_entry {
@@ -89,7 +89,7 @@ struct nst_cache_entry {
     struct nst_str          host;
     struct nst_str          path;
     struct nst_cache_entry *next;
-    struct nst_rule     *rule;        /* rule */
+    struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
@@ -107,7 +107,7 @@ struct nst_cache_dict {
 };
 
 enum {
-    NST_CACHE_CTX_STATE_INIT        = 0,   /* init */
+    NST_CACHE_CTX_STATE_INIT = 0,          /* init */
     NST_CACHE_CTX_STATE_BYPASS,            /* do not cached */
     NST_CACHE_CTX_STATE_WAIT,              /* caching, wait */
     NST_CACHE_CTX_STATE_HIT,               /* cached, use cache */
@@ -128,7 +128,7 @@ struct nst_cache_ctx {
     struct buffer            *key;
     uint64_t                  hash;
 
-    struct nst_rule       *rule;
+    struct nst_rule          *rule;
     struct nst_rule_stash    *stash;
 
     struct nst_cache_entry   *entry;
@@ -162,6 +162,7 @@ struct nst_cache_stats {
         uint64_t    hit;
         uint64_t    abort;
     } request;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t mutex;
 #else
@@ -197,11 +198,11 @@ struct nst_cache {
 
     /* for disk_loader and disk_cleaner */
     struct {
-        int                    loaded;
-        int                    idx;
-        DIR                   *dir;
-        struct dirent         *de;
-        char                  *file;
+        int                loaded;
+        int                idx;
+        DIR               *dir;
+        struct dirent     *de;
+        char              *file;
     } disk;
 };
 
@@ -238,24 +239,32 @@ void nst_cache_init();
 void nst_cache_housekeeping();
 int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
+
 int nst_cache_build_key(struct nst_cache_ctx *ctx,
         struct nst_rule_key **pck, struct stream *s, struct http_msg *msg);
+
 struct buffer *nst_cache_build_purge_key(struct stream *s,
         struct http_msg *msg);
+
 uint64_t nst_cache_hash_key(const char *key);
 void nst_cache_create(struct nst_cache_ctx *ctx);
+
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         long msg_len);
+
 void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);
 int nst_cache_exists(struct nst_cache_ctx *ctx, int mode);
 struct nst_cache_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_data *data);
+
 void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_ctx *ctx);
+
 struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_rule *rule);
+
 int nst_cache_check_uri(struct http_msg *msg);
 void nst_cache_persist_cleanup();
 void nst_cache_persist_load();

@@ -328,6 +328,7 @@ static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
             && (msg->chn->flags & CF_ISRESP)) {
+
         nst_cache_finish(ctx);
     }
 

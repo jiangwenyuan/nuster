@@ -49,40 +49,41 @@
  * chunk size[n]: 1<<(NST_MEMORY_CHUNK_MIN_SHIFT + n)
  */
 struct nst_memory_ctrl {
-    uint64_t                   info;
-    uint8_t                   *bitmap;
+    uint64_t                info;
+    uint8_t                *bitmap;
 
     struct nst_memory_ctrl *prev;
     struct nst_memory_ctrl *next;
 };
 
 struct nst_memory {
-    uint8_t                    *start;
-    uint8_t                    *stop;
-    uint8_t                    *bitmap;
-    char                        name[16];
+    uint8_t                 *start;
+    uint8_t                 *stop;
+    uint8_t                 *bitmap;
+    char                     name[16];
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t             mutex;
+    pthread_mutex_t          mutex;
 #else
-    unsigned int                waiters;
+    unsigned int             waiters;
 #endif
 
-    uint32_t                    block_size;  /* max memory can be allocated */
-    uint32_t                    chunk_size;  /* min memory can be allocated */
-    int                         chunk_shift;
-    int                         block_shift;
+    uint32_t                 block_size;  /* max memory can be allocated */
+    uint32_t                 chunk_size;  /* min memory can be allocated */
+    int                      chunk_shift;
+    int                      block_shift;
 
-    int                         chunks;
-    int                         blocks;
+    int                      chunks;
+    int                      blocks;
     struct nst_memory_ctrl **chunk;
     struct nst_memory_ctrl  *block;
     struct nst_memory_ctrl  *empty;
     struct nst_memory_ctrl  *full;
 
     struct {
-        uint8_t                *begin;
-        uint8_t                *free;
-        uint8_t                *end;
+        uint8_t             *begin;
+        uint8_t             *free;
+        uint8_t             *end;
     } data;
 };
 
@@ -95,33 +96,34 @@ static inline void
 _nst_memory_block_set_type(struct nst_memory_ctrl *block, uint8_t type) {
     *(uint8_t *)(&block->info) = type;
 }
-static inline void
-_nst_memory_block_set_inited(struct nst_memory_ctrl *block) {
+
+static inline void _nst_memory_block_set_inited(struct nst_memory_ctrl *block) {
     bit_set(block->info, 9);
 }
-static inline int
-_nst_memory_block_is_inited(struct nst_memory_ctrl *block) {
+
+static inline int _nst_memory_block_is_inited(struct nst_memory_ctrl *block) {
     return bit_used(block->info, 9);
 }
-static inline void
-_nst_memory_block_set_bitmap(struct nst_memory_ctrl *block) {
+
+static inline void _nst_memory_block_set_bitmap(struct nst_memory_ctrl *block) {
     bit_set(block->info, 10);
 }
-static inline void
-_nst_memory_block_set_full(struct nst_memory_ctrl *block) {
+
+static inline void _nst_memory_block_set_full(struct nst_memory_ctrl *block) {
     bit_set(block->info, 11);
 }
-static inline int
-_nst_memory_block_is_full(struct nst_memory_ctrl *block) {
+
+static inline int _nst_memory_block_is_full(struct nst_memory_ctrl *block) {
     return bit_used(block->info, 11);
 }
-static inline void
-_nst_memory_block_clear_full(struct nst_memory_ctrl *block) {
+
+static inline void _nst_memory_block_clear_full(struct nst_memory_ctrl *block) {
     bit_clear(block->info, 11);
 }
 
 struct nst_memory *nst_memory_create(char *name, uint64_t size,
         uint32_t block_size, uint32_t chunk_size);
+
 void *nst_memory_alloc(struct nst_memory *memory, int size);
 void nst_memory_free(struct nst_memory *memory, void *p);
 

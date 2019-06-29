@@ -426,8 +426,7 @@ static char *_string_append(char *dst, int *dst_len, int *dst_size,
     int old_size = *dst_size;
 
     if(left < need) {
-        *dst_size += ((need - left)
-                / NST_NOSQL_DEFAULT_KEY_SIZE + 1)
+        *dst_size += ((need - left) / NST_NOSQL_DEFAULT_KEY_SIZE + 1)
             * NST_NOSQL_DEFAULT_KEY_SIZE;
     }
 
@@ -726,7 +725,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
     }
 
     hdr.idx = 0;
-    while (http_find_header2("Transfer-Encoding", 17, ci_head(msg->chn),
+    while(http_find_header2("Transfer-Encoding", 17, ci_head(msg->chn),
                 &txn->hdr_idx, &hdr)) {
 
         char *p = ctx->req.transfer_encoding.data;

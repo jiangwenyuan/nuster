@@ -249,8 +249,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
         return NULL;
     }
 
-    entry_key = nst_memory_alloc(global.nuster.nosql.memory,
-            strlen(key) + 1);
+    entry_key = nst_memory_alloc(global.nuster.nosql.memory, strlen(key) + 1);
 
     if(!entry_key) {
         nst_memory_free(global.nuster.nosql.memory, entry_key);

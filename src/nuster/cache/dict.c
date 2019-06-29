@@ -84,6 +84,7 @@ int nst_cache_dict_init() {
                 + global.nuster.cache.dict_size - 1)
             / global.nuster.cache.memory->block_size
             * global.nuster.cache.memory->block_size;
+
         return _nst_cache_dict_alloc(size);
     } else {
         return _nst_cache_dict_resize(NST_CACHE_DEFAULT_DICT_SIZE);
