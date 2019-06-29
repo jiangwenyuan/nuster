@@ -145,7 +145,7 @@ static inline uint64_t nst_persist_meta_get_key_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_KEY_LEN);
 }
 
-static inline int nuster_persist_get_header_pos(char *p) {
+static inline int nst_persist_get_header_pos(char *p) {
     return (int)(NST_PERSIST_META_SIZE + nst_persist_meta_get_key_len(p));
 }
 

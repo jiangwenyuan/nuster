@@ -1258,7 +1258,7 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
 
         appctx->ctx.nuster.cache_disk_engine.fd = ctx->disk.fd;
         appctx->ctx.nuster.cache_disk_engine.offset =
-            nuster_persist_get_header_pos(ctx->disk.meta);
+            nst_persist_get_header_pos(ctx->disk.meta);
 
         appctx->ctx.nuster.cache_disk_engine.header_len =
             nst_persist_meta_get_header_len(ctx->disk.meta);
