@@ -119,7 +119,7 @@ err:
     return NULL;
 }
 
-static struct nst_rule_code *_nuster_parse_rule_code(char *str) {
+static struct nst_rule_code *_nst_parse_rule_code(char *str) {
 
     if(!strcmp(str, "all")) {
         return NULL;
@@ -961,7 +961,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         goto out;
     }
 
-    rule->code = _nuster_parse_rule_code(code == NULL
+    rule->code = _nst_parse_rule_code(code == NULL
             ? NST_CACHE_DEFAULT_CODE : code);
 
     rule->ttl  = malloc(sizeof(*rule->ttl));
