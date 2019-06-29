@@ -303,7 +303,7 @@ void nst_nosql_init() {
             goto shm_err;
         }
 
-        if(nuster_shctx_init(global.nuster.nosql.memory) != NUSTER_OK) {
+        if(nuster_shctx_init(global.nuster.nosql.memory) != NST_OK) {
             goto shm_err;
         }
 
@@ -323,15 +323,15 @@ void nst_nosql_init() {
         nuster.nosql->rehash_idx    = -1;
         nuster.nosql->cleanup_idx   = 0;
 
-        if(nuster_shctx_init(nuster.nosql) != NUSTER_OK) {
+        if(nuster_shctx_init(nuster.nosql) != NST_OK) {
             goto shm_err;
         }
 
-        if(nst_nosql_dict_init() != NUSTER_OK) {
+        if(nst_nosql_dict_init() != NST_OK) {
             goto err;
         }
 
-        if(nst_nosql_stats_init() != NUSTER_OK) {
+        if(nst_nosql_stats_init() != NST_OK) {
             goto err;
         }
 
@@ -634,7 +634,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
 
                     if(nuster_req_find_param(ctx->req.query.data,
                                 ctx->req.query.data + ctx->req.query.len,
-                                ck->data, &v, &v_l) == NUSTER_OK) {
+                                ck->data, &v, &v_l) == NST_OK) {
 
                         key = _nst_nosql_key_append(key, &key_len, &key_size,
                                 v, v_l);

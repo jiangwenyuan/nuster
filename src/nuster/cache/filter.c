@@ -134,7 +134,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
         /* request */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
 
-            if(nst_cache_prebuild_key(ctx, s, msg) != NUSTER_OK) {
+            if(nst_cache_prebuild_key(ctx, s, msg) != NST_OK) {
                 return 1;
             }
 
@@ -147,7 +147,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 }
 
                 /* build key */
-                if(nst_cache_build_key(ctx, rule->key, s, msg) != NUSTER_OK) {
+                if(nst_cache_build_key(ctx, rule->key, s, msg) != NST_OK) {
                     return 1;
                 }
 
@@ -186,7 +186,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 nuster_debug("[CACHE] [REQ] Checking if rule pass: ");
 
                 if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
-                        NUSTER_OK) {
+                        NST_OK) {
 
                     nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
@@ -216,7 +216,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                 /* test acls to see if we should cache it */
                 if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
-                        NUSTER_OK) {
+                        NST_OK) {
 
                     nuster_debug("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
@@ -307,7 +307,7 @@ static int _nst_cache_filter_http_forward_data(struct stream *s,
             ctx->header_len = 0;
         }
 
-        if(nst_cache_update(ctx, msg, ret) != NUSTER_OK) {
+        if(nst_cache_update(ctx, msg, ret) != NST_OK) {
             goto err;
         }
     }

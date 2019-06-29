@@ -72,7 +72,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     }
 
     /* GET stats uri */
-    if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg) == NUSTER_OK) {
+    if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg) == NST_OK) {
         s->target = &nuster.applet.cache_stats.obj_type;
 
         if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
@@ -245,7 +245,7 @@ int nst_cache_stats_init() {
         return NUSTER_ERR;
     }
 
-    if(nuster_shctx_init(global.nuster.cache.stats) != NUSTER_OK) {
+    if(nuster_shctx_init(global.nuster.cache.stats) != NST_OK) {
         return NUSTER_ERR;
     }
 
@@ -256,6 +256,6 @@ int nst_cache_stats_init() {
     global.nuster.cache.stats->request.abort = 0;
     nuster.applet.cache_stats.fct            = nst_cache_stats_handler;
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 

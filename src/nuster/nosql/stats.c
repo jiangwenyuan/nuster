@@ -45,12 +45,12 @@ int nst_nosql_stats_init() {
         return NUSTER_ERR;
     }
 
-    if(nuster_shctx_init(global.nuster.nosql.stats) != NUSTER_OK) {
+    if(nuster_shctx_init(global.nuster.nosql.stats) != NST_OK) {
         return NUSTER_ERR;
     }
 
     global.nuster.nosql.stats->used_mem = 0;
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 

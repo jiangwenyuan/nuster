@@ -36,12 +36,12 @@ static int _nst_cache_dict_resize(uint64_t size) {
         if(!nuster.cache->dict[0].entry) {
             nuster.cache->dict[0] = dict;
 
-            return NUSTER_OK;
+            return NST_OK;
         } else {
             nuster.cache->dict[1] = dict;
             nuster.cache->rehash_idx = 0;
 
-            return NUSTER_OK;
+            return NST_OK;
         }
 
     }
@@ -365,6 +365,6 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
 
     entry->header_len = nuster_persist_meta_get_header_len(meta);
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 

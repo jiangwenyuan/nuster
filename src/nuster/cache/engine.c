@@ -245,7 +245,7 @@ static int _nst_key_expand(struct buffer *key) {
         key->area = p;
         key->size = key->size * 2;
 
-        return NUSTER_OK;
+        return NST_OK;
     }
 
 err:
@@ -259,7 +259,7 @@ static int _nst_key_advance(struct buffer *key, int step) {
 
     if(b_room(key) < step) {
 
-        if(_nst_key_expand(key) != NUSTER_OK) {
+        if(_nst_key_expand(key) != NST_OK) {
             return NUSTER_ERR;
         }
 
@@ -267,14 +267,14 @@ static int _nst_key_advance(struct buffer *key, int step) {
 
     key->data += step;
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 
 static int _nst_key_append(struct buffer *key, char *str, int str_len) {
 
     if(b_room(key) < str_len + 1) {
 
-        if(_nst_key_expand(key) != NUSTER_OK) {
+        if(_nst_key_expand(key) != NST_OK) {
             return NUSTER_ERR;
         }
 
@@ -283,7 +283,7 @@ static int _nst_key_append(struct buffer *key, char *str, int str_len) {
     memcpy(key->area + key->data, str, str_len);
     key->data += str_len + 1;
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 
 int nst_cache_check_uri(struct http_msg *msg) {
@@ -301,7 +301,7 @@ int nst_cache_check_uri(struct http_msg *msg) {
         return NUSTER_ERR;
     }
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 
 /*
@@ -542,7 +542,7 @@ void nst_cache_init() {
                 goto shm_err;
             }
 
-            if(nuster_shctx_init(global.nuster.cache.memory) != NUSTER_OK) {
+            if(nuster_shctx_init(global.nuster.cache.memory) != NST_OK) {
                 goto shm_err;
             }
 
@@ -557,7 +557,7 @@ void nst_cache_init() {
                 goto shm_err;
             }
 
-            if(nuster_shctx_init(global.nuster.cache.memory) != NUSTER_OK) {
+            if(nuster_shctx_init(global.nuster.cache.memory) != NST_OK) {
                 goto shm_err;
             }
 
@@ -589,15 +589,15 @@ void nst_cache_init() {
             goto err;
         }
 
-        if(nuster_shctx_init(nuster.cache) != NUSTER_OK) {
+        if(nuster_shctx_init(nuster.cache) != NST_OK) {
             goto shm_err;
         }
 
-        if(nst_cache_dict_init() != NUSTER_OK) {
+        if(nst_cache_dict_init() != NST_OK) {
             goto err;
         }
 
-        if(nst_cache_stats_init() !=NUSTER_OK) {
+        if(nst_cache_stats_init() !=NST_OK) {
             goto err;
         }
 
@@ -709,7 +709,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         ctx->req.cookie.len  = hdr.vlen;
     }
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 
 int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
@@ -810,7 +810,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                     int v_l = 0;
                     if(nuster_req_find_param(ctx->req.query.data,
                                 ctx->req.query.data + ctx->req.query.len,
-                                ck->data, &v, &v_l) == NUSTER_OK) {
+                                ck->data, &v, &v_l) == NST_OK) {
 
                         ret = _nst_key_append(ctx->key, v, v_l);
                         break;
@@ -832,7 +832,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 }
 
-                ret = ret == NUSTER_OK && _nst_key_advance(ctx->key,
+                ret = ret == NST_OK && _nst_key_advance(ctx->key,
                         hdr.idx == 0 ? 2 : 1);
 
                 break;
@@ -875,13 +875,13 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
             default:
                 break;
         }
-        if(ret != NUSTER_OK) {
+        if(ret != NST_OK) {
             return NUSTER_ERR;
         }
     }
 
     nuster_debug("\n");
-    return NUSTER_OK;
+    return NST_OK;
 }
 
 struct buffer *nst_cache_build_purge_key(struct stream *s,
@@ -901,7 +901,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     }
 
     ret = _nst_key_append(key, "GET", 3);
-    if(ret != NUSTER_OK) {
+    if(ret != NST_OK) {
         return NULL;
     }
 
@@ -914,14 +914,14 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
 
     ret = _nst_key_append(key, https ? "HTTPS": "HTTP",
             strlen(https ? "HTTPS": "HTTP"));
-    if(ret != NUSTER_OK) {
+    if(ret != NST_OK) {
         return NULL;
     }
 
     ctx.idx  = 0;
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
         ret = _nst_key_append(key, ctx.line + ctx.val, ctx.vlen);
-        if(ret != NUSTER_OK) {
+        if(ret != NST_OK) {
             return NULL;
         }
     }
@@ -931,7 +931,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     if(path_beg) {
         url_end = ci_head(msg->chn) + msg->sl.rq.u + msg->sl.rq.u_l;
         ret     = _nst_key_append(key, path_beg, url_end - path_beg);
-        if(ret != NUSTER_OK) {
+        if(ret != NST_OK) {
             return NULL;
         }
     }
@@ -994,7 +994,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
     if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
             if(nuster_persist_valid(&ctx->disk, ctx->key, ctx->hash) ==
-                    NUSTER_OK) {
+                    NST_OK) {
 
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
             } else {
@@ -1009,7 +1009,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
             }
 
             if(nuster_persist_exists(&ctx->disk, ctx->key, ctx->hash,
-                        global.nuster.cache.directory) == NUSTER_OK) {
+                        global.nuster.cache.directory) == NST_OK) {
 
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
             } else {
@@ -1097,7 +1097,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         }
 
         if(nuster_persist_init(ctx->disk.file, ctx->hash,
-                global.nuster.cache.directory) != NUSTER_OK) {
+                global.nuster.cache.directory) != NST_OK) {
             return;
         }
 
@@ -1162,7 +1162,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         }
     }
 
-    return NUSTER_OK;
+    return NST_OK;
 }
 
 /*
@@ -1301,7 +1301,7 @@ void nst_cache_persist_async() {
             }
 
             if(nuster_persist_init(entry->file, entry->hash,
-                        global.nuster.cache.directory) != NUSTER_OK) {
+                        global.nuster.cache.directory) != NST_OK) {
                 return;
             }
 
@@ -1395,7 +1395,7 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    if(nuster_persist_get_meta(fd, meta) != NUSTER_OK) {
+                    if(nuster_persist_get_meta(fd, meta) != NST_OK) {
                         unlink(file);
                         close(fd);
                         return;
@@ -1417,7 +1417,7 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    if(nuster_persist_get_key(fd, meta, key) != NUSTER_OK) {
+                    if(nuster_persist_get_key(fd, meta, key) != NST_OK) {
                         nuster_memory_free(global.nuster.cache.memory,
                                 key->area);
 
