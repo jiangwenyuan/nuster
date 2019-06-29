@@ -37,7 +37,7 @@ enum {
     NST_HTTP_404,
     NST_HTTP_405,
     NST_HTTP_500,
-    NUSTER_HTTP_507,
+    NST_HTTP_507,
     NUSTER_HTTP_SIZE
 };
 
