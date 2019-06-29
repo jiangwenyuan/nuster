@@ -616,7 +616,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                 key = _nst_nosql_key_append(key, &key_len, &key_size,
                         ctx->req.delimiter ? "?": "", ctx->req.delimiter);
                 break;
-            case NUSTER_RULE_KEY_QUERY:
+            case NST_RULE_KEY_QUERY:
                 nuster_debug("query.");
 
                 if(ctx->req.query.data && ctx->req.query.len) {

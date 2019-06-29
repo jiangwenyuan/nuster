@@ -84,7 +84,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_DELIMITER,
 
     /*query: question mark to end of the url, or empty */
-    NUSTER_RULE_KEY_QUERY,
+    NST_RULE_KEY_QUERY,
 
     /* param: query key/value pair */
     NUSTER_RULE_KEY_PARAM,
