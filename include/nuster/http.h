@@ -33,7 +33,7 @@
 
 enum {
     NST_HTTP_200 = 0,
-    NUSTER_HTTP_400,
+    NST_HTTP_400,
     NUSTER_HTTP_404,
     NUSTER_HTTP_405,
     NUSTER_HTTP_500,

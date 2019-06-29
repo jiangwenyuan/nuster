@@ -24,7 +24,7 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
         "\r\n"
         "200 OK\n",
 
-    [NUSTER_HTTP_400] =
+    [NST_HTTP_400] =
         "HTTP/1.0 400 Bad request\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"
