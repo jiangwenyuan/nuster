@@ -73,7 +73,7 @@ static inline void nst_res_begin(int status) {
     chunk_printf(&trash, "HTTP/1.1 %d %s\r\n", status, http_get_reason(status));
 }
 
-static inline void nuster_res_header_server() {
+static inline void nst_res_header_server() {
     chunk_appendf(&trash, "%.*s: nuster\r\n", nst_headers.server.len,
             nst_headers.server.data);
 }
