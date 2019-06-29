@@ -45,7 +45,7 @@ int nst_nosql_stats_init() {
         return NST_ERR;
     }
 
-    if(nuster_shctx_init(global.nuster.nosql.stats) != NST_OK) {
+    if(nst_shctx_init(global.nuster.nosql.stats) != NST_OK) {
         return NST_ERR;
     }
 

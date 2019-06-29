@@ -75,7 +75,7 @@ static int _nst_cache_dict_alloc(uint64_t size) {
         nuster.cache->dict[0].entry[i] = NULL;
     }
 
-    return nuster_shctx_init((&nuster.cache->dict[0]));
+    return nst_shctx_init((&nuster.cache->dict[0]));
 }
 
 int nst_cache_dict_init() {
