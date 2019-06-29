@@ -983,7 +983,7 @@ out:
     return -1;
 }
 
-int nuster_parse_proxy(char **args, int section, struct proxy *px,
+int nst_parse_proxy(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     if(px->cap != PR_CAP_BE) {
@@ -1018,7 +1018,7 @@ int nuster_parse_proxy(char **args, int section, struct proxy *px,
 }
 
 static struct cfg_kw_list cfg_kws = {ILH, {
-    { CFG_LISTEN, "nuster", nuster_parse_proxy}, { 0, NULL, NULL }, }
+    { CFG_LISTEN, "nuster", nst_parse_proxy}, { 0, NULL, NULL }, }
 };
 
 __attribute__((constructor)) static void __nuster_parser_init(void) {
