@@ -150,7 +150,7 @@ static inline int nst_persist_get_header_pos(char *p) {
 }
 
 static inline void
-nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
+nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
         uint64_t cache_len, uint64_t header_len, uint64_t key_len) {
 
     memcpy(p, "NUSTER", 6);

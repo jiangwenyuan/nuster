@@ -1104,7 +1104,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
-        nuster_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
+        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
                 ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
 
         nuster_persist_write_key(&ctx->disk, ctx->entry->key);
@@ -1307,7 +1307,7 @@ void nst_cache_persist_async() {
 
             disk.fd = nst_persist_create(entry->file);
 
-            nuster_persist_meta_init(disk.meta, (char)entry->rule->disk,
+            nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->hash, entry->expire, 0, entry->header_len,
                     entry->key->data);
 
