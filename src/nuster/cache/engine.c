@@ -745,7 +745,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                         ctx->req.scheme == SCH_HTTPS ? 5 : 4);
 
                 break;
-            case NUSTER_RULE_KEY_HOST:
+            case NST_RULE_KEY_HOST:
                 nuster_debug("host.");
 
                 if(ctx->req.host.data) {
