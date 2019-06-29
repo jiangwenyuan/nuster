@@ -141,11 +141,11 @@ struct nuster_rule {
     int                      disk;       /* NUSTER_DISK_* */
 };
 
-struct nuster_rule_stash {
-    struct nuster_rule_stash *next;
-    struct nuster_rule       *rule;
-    struct buffer            *key;
-    uint64_t                  hash;
+struct nst_rule_stash {
+    struct nst_rule_stash *next;
+    struct nuster_rule    *rule;
+    struct buffer         *key;
+    uint64_t               hash;
 };
 
 struct nuster_flt_conf {
