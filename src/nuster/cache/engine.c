@@ -447,7 +447,7 @@ static void _nst_cache_data_cleanup() {
 
 void nst_cache_housekeeping() {
 
-    if(global.nuster.cache.status == NUSTER_STATUS_ON) {
+    if(global.nuster.cache.status == NST_STATUS_ON) {
         int dict_cleaner = 1;
         int data_cleaner = 1;
         int disk_cleaner = 1;
@@ -505,14 +505,14 @@ void nst_cache_init() {
     nuster.applet.cache_engine.fct = nst_cache_engine_handler;
     nuster.applet.cache_disk_engine.fct = nst_cache_disk_engine_handler;
 
-    if(global.nuster.cache.status == NUSTER_STATUS_ON) {
+    if(global.nuster.cache.status == NST_STATUS_ON) {
 
         if(global.nuster.cache.share == NST_STATUS_UNDEFINED) {
 
             if(global.nbproc == 1) {
                 global.nuster.cache.share = NST_STATUS_OFF;
             } else {
-                global.nuster.cache.share = NUSTER_STATUS_ON;
+                global.nuster.cache.share = NST_STATUS_ON;
             }
         }
 

@@ -278,7 +278,7 @@ static void _nst_nosql_data_cleanup() {
 
 void nst_nosql_housekeeping() {
 
-    if(global.nuster.nosql.status == NUSTER_STATUS_ON) {
+    if(global.nuster.nosql.status == NST_STATUS_ON) {
         nuster_shctx_lock(&nuster.nosql->dict[0]);
         nst_nosql_dict_cleanup();
         nuster_shctx_unlock(&nuster.nosql->dict[0]);
@@ -291,7 +291,7 @@ void nst_nosql_housekeeping() {
 void nst_nosql_init() {
     nuster.applet.nosql_engine.fct = nst_nosql_engine_handler;
 
-    if(global.nuster.nosql.status == NUSTER_STATUS_ON) {
+    if(global.nuster.nosql.status == NST_STATUS_ON) {
         global.nuster.nosql.pool.ctx   = create_pool("np.ctx",
                 sizeof(struct nst_nosql_ctx), MEM_F_SHARED);
 
@@ -354,7 +354,7 @@ shm_err:
 int nst_nosql_check_applet(struct stream *s, struct channel *req,
         struct proxy *px) {
 
-    if(global.nuster.nosql.status == NUSTER_STATUS_ON
+    if(global.nuster.nosql.status == NST_STATUS_ON
             && px->nuster.mode == NUSTER_MODE_NOSQL) {
 
         struct stream_interface *si = &s->si[1];
