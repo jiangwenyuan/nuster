@@ -119,7 +119,7 @@ enum {
     NST_DISK_OFF    = 0,
 
     /* disk persistence only, do not cache in memory */
-    NUSTER_DISK_ONLY   = 1,
+    NST_DISK_ONLY   = 1,
 
     /* persist the response on disk before return to client */
     NUSTER_DISK_SYNC   = 2,
