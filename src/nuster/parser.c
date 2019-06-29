@@ -21,7 +21,7 @@
 
 #include <nuster/nuster.h>
 
-static const char *nuster_cache_id = "cache filter";
+static const char *nst_cache_id = "cache filter";
 static const char *nuster_nosql_id = "nosql filter";
 
 static struct nst_rule_key *_nst_parse_rule_key_cast(char *str) {
@@ -713,7 +713,7 @@ int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
 
     list_for_each_entry(fconf, &px->filter_configs, list) {
 
-        if(fconf->id == nuster_cache_id) {
+        if(fconf->id == nst_cache_id) {
             memprintf(err, "%s: Proxy supports only one cache filter\n",
                     px->id);
 
@@ -750,7 +750,7 @@ int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
         cur_arg++;
     }
 
-    fconf->id   = nuster_cache_id;
+    fconf->id   = nst_cache_id;
     fconf->conf = conf;
     fconf->ops  = &nst_cache_filter_ops;
 
