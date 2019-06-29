@@ -87,7 +87,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_QUERY,
 
     /* param: query key/value pair */
-    NUSTER_RULE_KEY_PARAM,
+    NST_RULE_KEY_PARAM,
 
     /* header */
     NUSTER_RULE_KEY_HEADER,
