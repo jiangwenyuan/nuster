@@ -188,7 +188,7 @@ nst_persist_write_meta(struct persist *disk) {
 }
 
 static inline int
-nuster_persist_write_key(struct persist *disk, struct buffer *key) {
+nst_persist_write_key(struct persist *disk, struct buffer *key) {
     disk->offset = NST_PERSIST_POS_KEY;
     return nuster_persist_write(disk, key->area, key->data);
 }
