@@ -30,7 +30,7 @@
 #define NST_MEMORY_CHUNK_MIN_SHIFT     3
 #define NST_MEMORY_BLOCK_MAX_SIZE      1024 * 1024 * 2
 #define NST_MEMORY_BLOCK_MAX_SHIFT     21
-#define NUSTER_MEMORY_INFO_BITMAP_BITS    32
+#define NST_MEMORY_INFO_BITMAP_BITS    32
 
 
 /* start                                 alignment                   stop
