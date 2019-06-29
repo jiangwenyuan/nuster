@@ -53,8 +53,8 @@
 #define NST_PERSIST_META_POS_KEY_LEN         8 * 5
 
 
-#define NUSTER_PERSIST_META_SIZE        8 * 6
-#define NUSTER_PERSIST_POS_KEY          NUSTER_PERSIST_META_SIZE
+#define NST_PERSIST_META_SIZE        8 * 6
+#define NUSTER_PERSIST_POS_KEY          NST_PERSIST_META_SIZE
 
 enum {
     NUSTER_PERSIST_APPLET_ERROR   = -1,
@@ -67,7 +67,7 @@ struct persist {
     char         *file;             /* cache file */
     int           fd;
     int           offset;
-    char          meta[NUSTER_PERSIST_META_SIZE];
+    char          meta[NST_PERSIST_META_SIZE];
 };
 
 /* /0/00 */
@@ -146,7 +146,7 @@ static inline uint64_t nuster_persist_meta_get_key_len(char *p) {
 }
 
 static inline int nuster_persist_get_header_pos(char *p) {
-    return (int)(NUSTER_PERSIST_META_SIZE + nuster_persist_meta_get_key_len(p));
+    return (int)(NST_PERSIST_META_SIZE + nuster_persist_meta_get_key_len(p));
 }
 
 static inline void
@@ -184,7 +184,7 @@ nuster_persist_write(struct persist *disk, char *buf, int len) {
 static inline int
 nuster_persist_write_meta(struct persist *disk) {
     disk->offset = 0;
-    return nuster_persist_write(disk, disk->meta, NUSTER_PERSIST_META_SIZE);
+    return nuster_persist_write(disk, disk->meta, NST_PERSIST_META_SIZE);
 }
 
 static inline int

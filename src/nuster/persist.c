@@ -54,9 +54,9 @@ nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    ret = pread(disk->fd, disk->meta, NUSTER_PERSIST_META_SIZE, 0);
+    ret = pread(disk->fd, disk->meta, NST_PERSIST_META_SIZE, 0);
 
-    if(ret != NUSTER_PERSIST_META_SIZE) {
+    if(ret != NST_PERSIST_META_SIZE) {
         goto err;
     }
 
@@ -146,9 +146,9 @@ struct dirent *nuster_persist_dir_next(DIR *dir) {
 int nuster_persist_get_meta(int fd, char *meta) {
     int ret;
 
-    ret = pread(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
+    ret = pread(fd, meta, NST_PERSIST_META_SIZE, 0);
 
-    if(ret != NUSTER_PERSIST_META_SIZE) {
+    if(ret != NST_PERSIST_META_SIZE) {
         return NST_ERR;
     }
 
@@ -178,7 +178,7 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
     DIR *dir2;
     struct dirent *de2;
     int fd, ret;
-    char meta[NUSTER_PERSIST_META_SIZE];
+    char meta[NST_PERSIST_META_SIZE];
 
     if (strcmp(de1->d_name, ".") == 0
             || strcmp(de1->d_name, "..") == 0) {
@@ -212,9 +212,9 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
                 return;
             }
 
-            ret = pread(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
+            ret = pread(fd, meta, NST_PERSIST_META_SIZE, 0);
 
-            if(ret != NUSTER_PERSIST_META_SIZE) {
+            if(ret != NST_PERSIST_META_SIZE) {
                 continue;
             }
 

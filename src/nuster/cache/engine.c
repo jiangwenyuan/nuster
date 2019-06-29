@@ -1349,7 +1349,7 @@ void nst_cache_persist_load() {
 
     if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
         char *file;
-        char meta[NUSTER_PERSIST_META_SIZE];
+        char meta[NST_PERSIST_META_SIZE];
         struct buffer *key;
         int fd;
 
