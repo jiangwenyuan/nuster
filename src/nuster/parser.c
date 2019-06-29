@@ -704,7 +704,7 @@ out:
     return err_code;
 }
 
-int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
+int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     struct flt_conf *fconf;
@@ -996,7 +996,7 @@ int nuster_parse_proxy(char **args, int section, struct proxy *px,
     if(*args[1]) {
 
         if(!strcmp(args[1], "cache")) {
-            return nuster_parse_proxy_cache(args, section, px, defpx, file,
+            return nst_parse_proxy_cache(args, section, px, defpx, file,
                     line, err);
 
         } else if(!strcmp(args[1], "nosql")) {
