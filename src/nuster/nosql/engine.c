@@ -558,17 +558,18 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
 }
 
 char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
-        struct nuster_rule_key **pck, struct stream *s,
+        struct nst_rule_key **pck, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
 
     struct hdr_ctx hdr;
 
-    struct nuster_rule_key *ck = NULL;
-    int key_len                = 0;
-    int key_size               = NST_NOSQL_DEFAULT_KEY_SIZE;
-    char *key                  = malloc(key_size);
+    struct nst_rule_key *ck = NULL;
+
+    int key_len  = 0;
+    int key_size = NST_NOSQL_DEFAULT_KEY_SIZE;
+    char *key    = malloc(key_size);
 
     if(!key) {
         return NULL;
