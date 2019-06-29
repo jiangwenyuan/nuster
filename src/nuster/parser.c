@@ -76,7 +76,7 @@ static struct nst_rule_key *_nst_parse_rule_key_cast(char *str) {
     return key;
 }
 
-static struct nst_rule_key **_nuster_parse_rule_key(char *str) {
+static struct nst_rule_key **_nst_parse_rule_key(char *str) {
     struct nst_rule_key **pk = NULL;
     char *m, *tmp = strdup(str);
     int i = 0;
@@ -953,7 +953,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     rule       = malloc(sizeof(*rule));
     rule->cond = cond;
     rule->name = name;
-    rule->key  = _nuster_parse_rule_key(key == NULL
+    rule->key  = _nst_parse_rule_key(key == NULL
             ? NST_CACHE_DEFAULT_KEY : key);
 
     if(!rule->key) {
