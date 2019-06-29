@@ -30,8 +30,8 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
         block_size = NST_MEMORY_BLOCK_MIN_SIZE;
     }
 
-    if(chunk_size < NUSTER_MEMORY_CHUNK_MIN_SIZE) {
-        chunk_size = NUSTER_MEMORY_CHUNK_MIN_SIZE;
+    if(chunk_size < NST_MEMORY_CHUNK_MIN_SIZE) {
+        chunk_size = NST_MEMORY_CHUNK_MIN_SIZE;
     }
 
     /*
@@ -43,10 +43,10 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
 
     /*
      * set chunk_size to minimal number that
-     * 1, > chunk_size , 2, = n * NUSTER_MEMORY_CHUNK_MIN_SIZE
+     * 1, > chunk_size , 2, = n * NST_MEMORY_CHUNK_MIN_SIZE
      */
-    chunk_size = ((chunk_size + NUSTER_MEMORY_CHUNK_MIN_SIZE - 1)
-            / NUSTER_MEMORY_CHUNK_MIN_SIZE) << NUSTER_MEMORY_CHUNK_MIN_SHIFT;
+    chunk_size = ((chunk_size + NST_MEMORY_CHUNK_MIN_SIZE - 1)
+            / NST_MEMORY_CHUNK_MIN_SIZE) << NUSTER_MEMORY_CHUNK_MIN_SHIFT;
 
     if(chunk_size > block_size) {
         fprintf(stderr, "chunk_size cannot be greater than block_size.\n");
