@@ -355,7 +355,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req,
         struct proxy *px) {
 
     if(global.nuster.nosql.status == NST_STATUS_ON
-            && px->nuster.mode == NUSTER_MODE_NOSQL) {
+            && px->nuster.mode == NST_MODE_NOSQL) {
 
         struct stream_interface *si = &s->si[1];
         struct http_txn *txn        = s->txn;
