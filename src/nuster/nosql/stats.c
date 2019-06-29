@@ -22,7 +22,7 @@
 #include <nuster/shctx.h>
 
 void nst_nosql_stats_update_used_mem(int i) {
-    nuster_shctx_lock(global.nuster.nosql.stats);
+    nst_shctx_lock(global.nuster.nosql.stats);
     global.nuster.nosql.stats->used_mem += i;
     nuster_shctx_unlock(global.nuster.nosql.stats);
 }
@@ -30,7 +30,7 @@ void nst_nosql_stats_update_used_mem(int i) {
 int nst_nosql_stats_full() {
     int i;
 
-    nuster_shctx_lock(global.nuster.nosql.stats);
+    nst_shctx_lock(global.nuster.nosql.stats);
     i =  global.nuster.nosql.data_size <= global.nuster.nosql.stats->used_mem;
     nuster_shctx_unlock(global.nuster.nosql.stats);
 

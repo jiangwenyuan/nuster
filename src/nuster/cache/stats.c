@@ -22,13 +22,13 @@
 #include <nuster/shctx.h>
 
 void nst_cache_stats_update_used_mem(int i) {
-    nuster_shctx_lock(global.nuster.cache.stats);
+    nst_shctx_lock(global.nuster.cache.stats);
     global.nuster.cache.stats->used_mem += i;
     nuster_shctx_unlock(global.nuster.cache.stats);
 }
 
 void nst_cache_stats_update_request(int state) {
-    nuster_shctx_lock(global.nuster.cache.stats);
+    nst_shctx_lock(global.nuster.cache.stats);
     global.nuster.cache.stats->request.total++;
 
     switch(state) {
@@ -51,7 +51,7 @@ void nst_cache_stats_update_request(int state) {
 int nst_cache_stats_full() {
     int i;
 
-    nuster_shctx_lock(global.nuster.cache.stats);
+    nst_shctx_lock(global.nuster.cache.stats);
     i =  global.nuster.cache.data_size <= global.nuster.cache.stats->used_mem;
     nuster_shctx_unlock(global.nuster.cache.stats);
 
