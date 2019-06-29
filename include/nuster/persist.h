@@ -182,7 +182,7 @@ nuster_persist_write(struct persist *disk, char *buf, int len) {
 }
 
 static inline int
-nuster_persist_write_meta(struct persist *disk) {
+nst_persist_write_meta(struct persist *disk) {
     disk->offset = 0;
     return nuster_persist_write(disk, disk->meta, NST_PERSIST_META_SIZE);
 }
