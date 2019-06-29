@@ -164,8 +164,8 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nuster_persist_meta_set_key_len(p, key_len);
 }
 
-int
-nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash);
+int nuster_persist_exists(struct persist *disk, struct buffer *key,
+        uint64_t hash, char *dir);
 
 static inline int
 nuster_persist_write(struct persist *disk, char *buf, int len) {
