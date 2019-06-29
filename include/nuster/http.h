@@ -42,15 +42,15 @@ enum {
 };
 
 struct nuster_headers {
-    struct nuster_str server;
-    struct nuster_str date;
-    struct nuster_str content_length;
-    struct nuster_str content_type;
-    struct nuster_str transfer_encoding;
-    struct nuster_str last_modified;
-    struct nuster_str expires;
-    struct nuster_str cache_control;
-    struct nuster_str etag;
+    struct nst_str server;
+    struct nst_str date;
+    struct nst_str content_length;
+    struct nst_str content_type;
+    struct nst_str transfer_encoding;
+    struct nst_str last_modified;
+    struct nst_str expires;
+    struct nst_str cache_control;
+    struct nst_str etag;
 };
 
 extern const char *nuster_http_msgs[NUSTER_HTTP_SIZE];
@@ -100,9 +100,7 @@ static inline void nuster_res_header_content_length(uint64_t len) {
             nuster_headers.content_length.data, len);
 }
 
-static inline void nuster_res_header(struct nuster_str *k,
-        struct nuster_str *v) {
-
+static inline void nuster_res_header(struct nst_str *k, struct nst_str *v) {
     chunk_appendf(&trash, "%.*s: %.*s\r\n", k->len, k->data, v->len, v->data);
 }
 

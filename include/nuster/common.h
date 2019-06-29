@@ -57,9 +57,9 @@ enum {
     NUSTER_MODE_NOSQL,
 };
 
-#define nuster_str_set(str)     { (char *) str, sizeof(str) - 1 }
+#define nst_str_set(str)     { (char *) str, sizeof(str) - 1 }
 
-struct nuster_str {
+struct nst_str {
     char *data;
     int   len;
 };
