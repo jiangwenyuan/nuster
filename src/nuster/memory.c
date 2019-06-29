@@ -306,7 +306,7 @@ void *nuster_memory_alloc(struct nuster_memory *memory, int size) {
     return p;
 }
 
-void nuster_memory_free_locked(struct nuster_memory *memory, void *p) {
+void nst_memory_free_locked(struct nuster_memory *memory, void *p) {
     int block_idx, chunk_size, bits, bits_idx, empty, full;
     struct nst_memory_ctrl *chunk, *block;
     uint8_t chunk_idx;
@@ -446,7 +446,7 @@ void nuster_memory_free_locked(struct nuster_memory *memory, void *p) {
 
 void nuster_memory_free(struct nuster_memory *memory, void *p) {
     nuster_shctx_lock(memory);
-    nuster_memory_free_locked(memory, p);
+    nst_memory_free_locked(memory, p);
     nuster_shctx_unlock(memory);
 }
 
