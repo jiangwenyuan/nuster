@@ -47,7 +47,7 @@
  */
 
 #define NST_PERSIST_META_POS_HASH            8 * 1
-#define NUSTER_PERSIST_META_POS_EXPIRE          8 * 2
+#define NST_PERSIST_META_POS_EXPIRE          8 * 2
 #define NUSTER_PERSIST_META_POS_CACHE_LEN       8 * 3
 #define NUSTER_PERSIST_META_POS_HEADER_LEN      8 * 4
 #define NUSTER_PERSIST_META_POS_KEY_LEN         8 * 5
@@ -100,15 +100,15 @@ static inline uint64_t nuster_persist_meta_get_hash(char *p) {
 }
 
 static inline void nuster_persist_meta_set_expire(char *p, uint64_t v) {
-    *(uint64_t *)(p + NUSTER_PERSIST_META_POS_EXPIRE) = v;
+    *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE) = v;
 }
 
 static inline uint64_t nuster_persist_meta_get_expire(char *p) {
-    return *(uint64_t *)(p + NUSTER_PERSIST_META_POS_EXPIRE);
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE);
 }
 
 static inline int nuster_persist_meta_check_expire(char *p) {
-    uint64_t expire = *(uint64_t *)(p + NUSTER_PERSIST_META_POS_EXPIRE);
+    uint64_t expire = *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE);
 
     if(expire == 0) {
         return NST_OK;
