@@ -808,7 +808,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
                     int v_l = 0;
-                    if(nuster_req_find_param(ctx->req.query.data,
+                    if(nst_req_find_param(ctx->req.query.data,
                                 ctx->req.query.data + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NST_OK) {
 

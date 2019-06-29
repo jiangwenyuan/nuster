@@ -632,7 +632,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                     char *v = NULL;
                     int v_l = 0;
 
-                    if(nuster_req_find_param(ctx->req.query.data,
+                    if(nst_req_find_param(ctx->req.query.data,
                                 ctx->req.query.data + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NST_OK) {
 
