@@ -41,7 +41,7 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
         ret = 404;
     }
 
-    nuster_shctx_unlock(&nuster.cache->dict[0]);
+    nst_shctx_unlock(&nuster.cache->dict[0]);
 
     return ret;
 }
@@ -489,7 +489,7 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
             appctx->st2++;
         }
 
-        nuster_shctx_unlock(&nuster.cache->dict[0]);
+        nst_shctx_unlock(&nuster.cache->dict[0]);
 
         if(get_current_timestamp() - start > 1) {
             break;

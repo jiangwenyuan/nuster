@@ -48,7 +48,7 @@ static inline int _nst_shctx_init(pthread_mutex_t *mutex) {
 
 #define nst_shctx_init(shctx)   _nst_shctx_init(&(shctx)->mutex)
 #define nst_shctx_lock(shctx)   pthread_mutex_lock(&(shctx)->mutex)
-#define nuster_shctx_unlock(shctx) pthread_mutex_unlock(&(shctx)->mutex)
+#define nst_shctx_unlock(shctx) pthread_mutex_unlock(&(shctx)->mutex)
 
 #else
 
@@ -183,7 +183,7 @@ static inline int _nst_shctx_init(unsigned int *waiters) {
 }
 #define nst_shctx_init(shctx)   _nst_shctx_init(&(shctx)->waiters)
 #define nst_shctx_lock(shctx)   _shctx_lock(&(shctx)->waiters)
-#define nuster_shctx_unlock(shctx) _shctx_unlock(&(shctx)->waiters)
+#define nst_shctx_unlock(shctx) _shctx_unlock(&(shctx)->waiters)
 
 #endif
 

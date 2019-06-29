@@ -204,7 +204,7 @@ struct nst_nosql_data *nst_nosql_data_new() {
         }
     }
 
-    nuster_shctx_unlock(nuster.nosql);
+    nst_shctx_unlock(nuster.nosql);
 
     return data;
 }
@@ -281,10 +281,10 @@ void nst_nosql_housekeeping() {
     if(global.nuster.nosql.status == NST_STATUS_ON) {
         nst_shctx_lock(&nuster.nosql->dict[0]);
         nst_nosql_dict_cleanup();
-        nuster_shctx_unlock(&nuster.nosql->dict[0]);
+        nst_shctx_unlock(&nuster.nosql->dict[0]);
         nst_shctx_lock(nuster.nosql);
         _nst_nosql_data_cleanup();
-        nuster_shctx_unlock(nuster.nosql);
+        nst_shctx_unlock(nuster.nosql);
     }
 }
 
@@ -802,7 +802,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
         entry = nst_nosql_dict_set(key, hash, ctx);
     }
 
-    nuster_shctx_unlock(&nuster.nosql->dict[0]);
+    nst_shctx_unlock(&nuster.nosql->dict[0]);
 
     if(!entry || !entry->data) {
         ctx->state   = NST_NOSQL_CTX_STATE_INVALID;
@@ -889,7 +889,7 @@ struct nst_nosql_data *nst_nosql_exists(const char *key, uint64_t hash) {
         data->clients++;
     }
 
-    nuster_shctx_unlock(&nuster.nosql->dict[0]);
+    nst_shctx_unlock(&nuster.nosql->dict[0]);
 
     return data;
 }
@@ -910,7 +910,7 @@ int nst_nosql_delete(const char *key, uint64_t hash) {
         ret = 1;
     }
 
-    nuster_shctx_unlock(&nuster.nosql->dict[0]);
+    nst_shctx_unlock(&nuster.nosql->dict[0]);
 
     return ret;
 }

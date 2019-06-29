@@ -337,7 +337,7 @@ struct nst_cache_data *nst_cache_data_new() {
         }
     }
 
-    nuster_shctx_unlock(nuster.cache);
+    nst_shctx_unlock(nuster.cache);
 
     return data;
 }
@@ -474,13 +474,13 @@ void nst_cache_housekeeping() {
             nst_cache_dict_rehash();
             nst_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_dict_cleanup();
-            nuster_shctx_unlock(&nuster.cache->dict[0]);
+            nst_shctx_unlock(&nuster.cache->dict[0]);
         }
 
         while(data_cleaner--) {
             nst_shctx_lock(nuster.cache);
             _nst_cache_data_cleanup();
-            nuster_shctx_unlock(nuster.cache);
+            nst_shctx_unlock(nuster.cache);
         }
 
         while(disk_cleaner--) {
@@ -494,7 +494,7 @@ void nst_cache_housekeeping() {
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_persist_async();
-            nuster_shctx_unlock(&nuster.cache->dict[0]);
+            nst_shctx_unlock(&nuster.cache->dict[0]);
         }
 
     }
@@ -989,7 +989,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
         }
     }
 
-    nuster_shctx_unlock(&nuster.cache->dict[0]);
+    nst_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
@@ -1083,7 +1083,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         }
     }
 
-    nuster_shctx_unlock(&nuster.cache->dict[0]);
+    nst_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
             && (ctx->rule->disk == NST_DISK_SYNC

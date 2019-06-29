@@ -24,7 +24,7 @@
 void nst_nosql_stats_update_used_mem(int i) {
     nst_shctx_lock(global.nuster.nosql.stats);
     global.nuster.nosql.stats->used_mem += i;
-    nuster_shctx_unlock(global.nuster.nosql.stats);
+    nst_shctx_unlock(global.nuster.nosql.stats);
 }
 
 int nst_nosql_stats_full() {
@@ -32,7 +32,7 @@ int nst_nosql_stats_full() {
 
     nst_shctx_lock(global.nuster.nosql.stats);
     i =  global.nuster.nosql.data_size <= global.nuster.nosql.stats->used_mem;
-    nuster_shctx_unlock(global.nuster.nosql.stats);
+    nst_shctx_unlock(global.nuster.nosql.stats);
 
     return i;
 }
