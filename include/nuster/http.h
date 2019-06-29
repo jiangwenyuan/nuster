@@ -100,7 +100,7 @@ static inline void nst_res_header_content_length(uint64_t len) {
             nst_headers.content_length.data, len);
 }
 
-static inline void nuster_res_header(struct nst_str *k, struct nst_str *v) {
+static inline void nst_res_header(struct nst_str *k, struct nst_str *v) {
     chunk_appendf(&trash, "%.*s: %.*s\r\n", k->len, k->data, v->len, v->data);
 }
 
