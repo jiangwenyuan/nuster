@@ -174,7 +174,7 @@ int nst_persist_get_key(int fd, char *meta, struct buffer *key) {
     return NST_OK;
 }
 
-void nuster_persist_cleanup(char *path, struct dirent *de1) {
+void nst_persist_cleanup(char *path, struct dirent *de1) {
     DIR *dir2;
     struct dirent *de2;
     int fd, ret;
