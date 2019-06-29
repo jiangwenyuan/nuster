@@ -104,9 +104,9 @@ struct nuster_rule_key {
     char                   *data;
 };
 
-struct nuster_rule_code {
-    struct nuster_rule_code *next;
-    int                      code;
+struct nst_rule_code {
+    struct nst_rule_code *next;
+    int                   code;
 };
 
 enum {
@@ -133,7 +133,7 @@ struct nuster_rule {
     struct acl_cond         *cond;       /* acl condition to meet */
     char                    *name;       /* cache name for logging */
     struct nuster_rule_key **key;        /* key */
-    struct nuster_rule_code *code;       /* code */
+    struct nst_rule_code    *code;       /* code */
     uint32_t                *ttl;        /* ttl: seconds, 0: not expire */
     int                     *state;      /* enabled or disabled */
     int                      id;         /* same for identical names */

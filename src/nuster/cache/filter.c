@@ -230,7 +230,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
         if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
             struct nst_rule_stash *stash = ctx->stash;
-            struct nuster_rule_code *cc  = ctx->rule->code;
+            struct nst_rule_code *cc     = ctx->rule->code;
 
             int valid = 0;
 
