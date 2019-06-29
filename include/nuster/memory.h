@@ -120,7 +120,7 @@ _nuster_memory_block_clear_full(struct nst_memory_ctrl *block) {
     bit_clear(block->info, 11);
 }
 
-struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
+struct nuster_memory *nst_memory_create(char *name, uint64_t size,
         uint32_t block_size, uint32_t chunk_size);
 void *nuster_memory_alloc(struct nuster_memory *memory, int size);
 void nuster_memory_free(struct nuster_memory *memory, void *p);
