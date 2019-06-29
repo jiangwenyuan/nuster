@@ -87,10 +87,10 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
 
     memory->block_shift = n;
     memory->chunks      = n - memory->chunk_shift + 1;
-    memory->chunk       = (struct nuster_memory_ctrl **)p;
+    memory->chunk       = (struct nst_memory_ctrl **)p;
 
-    p += memory->chunks * sizeof(struct nuster_memory_ctrl *);
-    memory->block = (struct nuster_memory_ctrl *)p;
+    p += memory->chunks * sizeof(struct nst_memory_ctrl *);
+    memory->block = (struct nst_memory_ctrl *)p;
     memory->empty = NULL;
     memory->full  = NULL;
 
@@ -98,10 +98,10 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
 
     /* set data begin */
     n = (memory->stop - p)
-        / (sizeof(struct nuster_memory_ctrl) + block_size + bitmap_size);
+        / (sizeof(struct nst_memory_ctrl) + block_size + bitmap_size);
 
     begin = (uint8_t *) (((uintptr_t)(p)
-                + n * sizeof(struct nuster_memory_ctrl) + n * bitmap_size
+                + n * sizeof(struct nst_memory_ctrl) + n * bitmap_size
                 + ((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1))
             & ~((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1));
 
@@ -110,7 +110,7 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
     if(memory->stop < end) {
         n--;
         begin = (uint8_t *) (((uintptr_t)(p)
-                    + n * sizeof(struct nuster_memory_ctrl)
+                    + n * sizeof(struct nst_memory_ctrl)
                     + n * bitmap_size
                     + ((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1))
                 & ~((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1));
@@ -123,8 +123,8 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
     memory->data.end    = begin + block_size * (n - 1);
 
     n = sizeof(struct nuster_memory)
-        + sizeof(struct nuster_memory_ctrl *) * memory->chunks
-        + sizeof(struct nuster_memory_ctrl) * n;
+        + sizeof(struct nst_memory_ctrl *) * memory->chunks
+        + sizeof(struct nst_memory_ctrl) * n;
 
     if (memory->blocks == 0 || memory->data.end + block_size > memory->stop) {
         return NULL;
@@ -147,7 +147,7 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
 }
 
 void *_nuster_memory_block_alloc(struct nuster_memory *memory,
-        struct nuster_memory_ctrl *block, int chunk_idx) {
+        struct nst_memory_ctrl *block, int chunk_idx) {
 
     int chunk_size = 1<<(memory->chunk_shift + chunk_idx);
     int block_idx  = block - memory->block;
@@ -227,9 +227,9 @@ void *_nuster_memory_block_alloc(struct nuster_memory *memory,
 }
 
 void _nuster_memory_block_init(struct nuster_memory * memory,
-        struct nuster_memory_ctrl *block, int chunk_idx) {
+        struct nst_memory_ctrl *block, int chunk_idx) {
 
-    struct nuster_memory_ctrl *chunk;
+    struct nst_memory_ctrl *chunk;
     chunk       = memory->chunk[chunk_idx];
     block->info = 0;
     _nuster_memory_block_set_type(block, chunk_idx);
@@ -251,7 +251,7 @@ void _nuster_memory_block_init(struct nuster_memory * memory,
 
 void *nuster_memory_alloc_locked(struct nuster_memory *memory, int size) {
     int i, chunk_idx = 0;
-    struct nuster_memory_ctrl *chunk, *block;
+    struct nst_memory_ctrl *chunk, *block;
 
     if(!size || size > memory->block_size) {
         return NULL;
@@ -308,7 +308,7 @@ void *nuster_memory_alloc(struct nuster_memory *memory, int size) {
 
 void nuster_memory_free_locked(struct nuster_memory *memory, void *p) {
     int block_idx, chunk_size, bits, bits_idx, empty, full;
-    struct nuster_memory_ctrl *chunk, *block;
+    struct nst_memory_ctrl *chunk, *block;
     uint8_t chunk_idx;
 
     if((uint8_t *)p < memory->data.begin || (uint8_t *)p >= memory->data.free) {

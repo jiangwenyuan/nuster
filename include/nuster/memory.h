@@ -48,12 +48,12 @@
  * bitmap: points to bitmap area, doesn't change once set
  * chunk size[n]: 1<<(NST_MEMORY_CHUNK_MIN_SHIFT + n)
  */
-struct nuster_memory_ctrl {
+struct nst_memory_ctrl {
     uint64_t                   info;
     uint8_t                   *bitmap;
 
-    struct nuster_memory_ctrl *prev;
-    struct nuster_memory_ctrl *next;
+    struct nst_memory_ctrl *prev;
+    struct nst_memory_ctrl *next;
 };
 
 struct nuster_memory {
@@ -74,10 +74,10 @@ struct nuster_memory {
 
     int                         chunks;
     int                         blocks;
-    struct nuster_memory_ctrl **chunk;
-    struct nuster_memory_ctrl  *block;
-    struct nuster_memory_ctrl  *empty;
-    struct nuster_memory_ctrl  *full;
+    struct nst_memory_ctrl **chunk;
+    struct nst_memory_ctrl  *block;
+    struct nst_memory_ctrl  *empty;
+    struct nst_memory_ctrl  *full;
 
     struct {
         uint8_t                *begin;
@@ -92,31 +92,31 @@ struct nuster_memory {
 #define bit_unused(bit, i) ((((bit) >> (i)) & 1) == 0)
 
 static inline void
-_nuster_memory_block_set_type(struct nuster_memory_ctrl *block, uint8_t type) {
+_nuster_memory_block_set_type(struct nst_memory_ctrl *block, uint8_t type) {
     *(uint8_t *)(&block->info) = type;
 }
 static inline void
-_nuster_memory_block_set_inited(struct nuster_memory_ctrl *block) {
+_nuster_memory_block_set_inited(struct nst_memory_ctrl *block) {
     bit_set(block->info, 9);
 }
 static inline int
-_nuster_memory_block_is_inited(struct nuster_memory_ctrl *block) {
+_nuster_memory_block_is_inited(struct nst_memory_ctrl *block) {
     return bit_used(block->info, 9);
 }
 static inline void
-_nuster_memory_block_set_bitmap(struct nuster_memory_ctrl *block) {
+_nuster_memory_block_set_bitmap(struct nst_memory_ctrl *block) {
     bit_set(block->info, 10);
 }
 static inline void
-_nuster_memory_block_set_full(struct nuster_memory_ctrl *block) {
+_nuster_memory_block_set_full(struct nst_memory_ctrl *block) {
     bit_set(block->info, 11);
 }
 static inline int
-_nuster_memory_block_is_full(struct nuster_memory_ctrl *block) {
+_nuster_memory_block_is_full(struct nst_memory_ctrl *block) {
     return bit_used(block->info, 11);
 }
 static inline void
-_nuster_memory_block_clear_full(struct nuster_memory_ctrl *block) {
+_nuster_memory_block_clear_full(struct nst_memory_ctrl *block) {
     bit_clear(block->info, 11);
 }
 
