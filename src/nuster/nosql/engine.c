@@ -103,7 +103,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                             ->info.content_type);
                 }
 
-                nuster_res_header_end();
+                nst_res_header_end();
                 nuster_res_send(si_ic(si), trash.area, trash.data);
                 appctx->st1++;
             } else {

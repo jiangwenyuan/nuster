@@ -104,7 +104,7 @@ static inline void nuster_res_header(struct nst_str *k, struct nst_str *v) {
     chunk_appendf(&trash, "%.*s: %.*s\r\n", k->len, k->data, v->len, v->data);
 }
 
-static inline void nuster_res_header_end() {
+static inline void nst_res_header_end() {
     chunk_appendf(&trash, "\r\n");
 }
 
@@ -129,7 +129,7 @@ static inline void nuster_res_simple(struct stream_interface *si, int status,
 
     nst_res_begin(status);
     nst_res_header_content_length(len);
-    nuster_res_header_end();
+    nst_res_header_end();
 
     if(content) {
         chunk_appendf(&trash, "%.*s", len, content);
