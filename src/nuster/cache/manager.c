@@ -354,7 +354,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             if(http_find_header2("ttl", 3, ci_head(msg->chn),
                         &txn->hdr_idx, &ctx)) {
 
-                nuster_parse_time(ctx.line + ctx.val, ctx.vlen,
+                nst_parse_time(ctx.line + ctx.val, ctx.vlen,
                         (unsigned *)&ttl);
             }
 

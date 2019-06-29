@@ -225,7 +225,7 @@ end:
 /*
  * Parse time
  */
-const char *nuster_parse_time(const char *text, int len, unsigned *ret) {
+const char *nst_parse_time(const char *text, int len, unsigned *ret) {
     unsigned imult, idiv, omult, odiv;
     unsigned value;
 
@@ -856,7 +856,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             /* "d", "h", "m", "s"
              * s is returned
              * */
-            if(nuster_parse_time(args[cur_arg], strlen(args[cur_arg]),
+            if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]),
                         (unsigned *)&ttl)) {
 
                 memprintf(err, "'%s %s': invalid ttl.", args[0], name);
