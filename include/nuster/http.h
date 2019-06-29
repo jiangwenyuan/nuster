@@ -124,7 +124,7 @@ static inline int nst_res_send(struct channel *chn, const char *blk,
     return ci_putblk(chn, blk, len);
 }
 
-static inline void nuster_res_simple(struct stream_interface *si, int status,
+static inline void nst_res_simple(struct stream_interface *si, int status,
         const char *content, int len) {
 
     nst_res_begin(status);
