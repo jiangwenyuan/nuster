@@ -77,8 +77,8 @@ void nuster_init() {
     struct proxy *p;
 
     for (i = 0; i < NST_HTTP_SIZE; i++) {
-        nst_http_msg_chunks[i].area = (char *)nuster_http_msgs[i];
-        nst_http_msg_chunks[i].data = strlen(nuster_http_msgs[i]);
+        nst_http_msg_chunks[i].area = (char *)nst_http_msgs[i];
+        nst_http_msg_chunks[i].data = strlen(nst_http_msgs[i]);
     }
 
     nst_cache_init();
