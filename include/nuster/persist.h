@@ -30,7 +30,7 @@
 
 #include <nuster/common.h>
 
-#define NUSTER_PERSIST_VERSION  1
+#define NST_PERSIST_VERSION  1
 
 /*
    Offset       Length(bytes)   Content
@@ -155,7 +155,7 @@ nuster_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
 
     memcpy(p, "NUSTER", 6);
     p[6] = mode;
-    p[7] = (char)NUSTER_PERSIST_VERSION;
+    p[7] = (char)NST_PERSIST_VERSION;
 
     nuster_persist_meta_set_hash(p, hash);
     nuster_persist_meta_set_expire(p, expire);
