@@ -61,7 +61,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
             txn->status = 500;
             nst_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
         } else {
-            uint64_t hash = nuster_hash(key->area, key->data);
+            uint64_t hash = nst_hash(key->area, key->data);
             txn->status = _nst_cache_purge_by_key(key, hash);
 
             if(txn->status == 200) {
