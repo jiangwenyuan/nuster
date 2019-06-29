@@ -161,7 +161,7 @@ struct nst_cache_stats {
         uint64_t    fetch;
         uint64_t    hit;
         uint64_t    abort;
-    } request;
+    } req;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t mutex;
@@ -281,7 +281,7 @@ void nst_cache_stats_update_used_mem(int i);
 int nst_cache_stats_init();
 int nst_cache_stats_full();
 int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
-void nst_cache_stats_update_request(int state);
+void nst_cache_stats_update_req(int state);
 
 static inline int nst_cache_entry_expired(struct nst_cache_entry *entry) {
 
