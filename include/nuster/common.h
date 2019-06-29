@@ -128,7 +128,7 @@ enum {
     NUSTER_DISK_ASYNC  = 3,
 };
 
-struct nuster_rule {
+struct nst_rule {
     struct list              list;       /* list linked to from the proxy */
     struct acl_cond         *cond;       /* acl condition to meet */
     char                    *name;       /* cache name for logging */
@@ -143,7 +143,7 @@ struct nuster_rule {
 
 struct nst_rule_stash {
     struct nst_rule_stash *next;
-    struct nuster_rule    *rule;
+    struct nst_rule       *rule;
     struct buffer         *key;
     uint64_t               hash;
 };

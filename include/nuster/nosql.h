@@ -89,7 +89,7 @@ struct nst_nosql_entry {
     struct nst_str          host;
     struct nst_str          path;
     struct nst_nosql_entry *next;
-    struct nuster_rule     *rule;        /* rule */
+    struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
 };
 
@@ -119,7 +119,7 @@ enum {
 struct nst_nosql_ctx {
     int                       state;
 
-    struct nuster_rule       *rule;
+    struct nst_rule          *rule;
     char                     *key;
 
     struct nst_nosql_entry   *entry;

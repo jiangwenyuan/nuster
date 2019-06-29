@@ -89,7 +89,7 @@ struct nst_cache_entry {
     struct nst_str          host;
     struct nst_str          path;
     struct nst_cache_entry *next;
-    struct nuster_rule     *rule;        /* rule */
+    struct nst_rule     *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
@@ -128,7 +128,7 @@ struct nst_cache_ctx {
     struct buffer            *key;
     uint64_t                  hash;
 
-    struct nuster_rule       *rule;
+    struct nst_rule       *rule;
     struct nst_rule_stash    *stash;
 
     struct nst_cache_entry   *entry;
@@ -255,7 +255,7 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si,
 void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_ctx *ctx);
 struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nuster_rule *rule);
+        struct nst_rule *rule);
 int nst_cache_check_uri(struct http_msg *msg);
 void nst_cache_persist_cleanup();
 void nst_cache_persist_load();

@@ -151,7 +151,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
     p = proxies_list;
     while(p) {
-        struct nuster_rule *rule = NULL;
+        struct nst_rule *rule = NULL;
 
         if(buffer_almost_full(&res->buf)) {
             si_rx_room_blk(si);
@@ -175,7 +175,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
                     if(rule->uuid == appctx->st2) {
 
-                        if((struct nuster_rule *)(&p->nuster.rules)->n == rule) {
+                        if((struct nst_rule *)(&p->nuster.rules)->n == rule) {
                             chunk_printf(&trash, "\n**PROXY %s %d**\n",
                                     p->id, p->uuid);
                             chunk_appendf(&trash, "%s.rule.%s: ",

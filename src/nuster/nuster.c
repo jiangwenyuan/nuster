@@ -90,7 +90,7 @@ void nuster_init() {
     p = proxies_list;
 
     while(p) {
-        struct nuster_rule *rule = NULL;
+        struct nst_rule *rule = NULL;
         uint32_t ttl;
         struct nuster_memory *m  = NULL;
 
@@ -128,7 +128,7 @@ void nuster_init() {
             pt = proxies_list;
 
             while(pt) {
-                struct nuster_rule *rt = NULL;
+                struct nst_rule *rt = NULL;
                 list_for_each_entry(rt, &pt->nuster.rules, list) {
                     if(rt == rule) goto out;
                     if(!strcmp(rt->name, rule->name)) {
@@ -156,7 +156,7 @@ err:
     exit(1);
 }
 
-int nuster_test_rule(struct nuster_rule *rule, struct stream *s, int res) {
+int nuster_test_rule(struct nst_rule *rule, struct stream *s, int res) {
     int ret;
 
     /* no acl defined */
