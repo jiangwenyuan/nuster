@@ -142,7 +142,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 nuster_debug("[CACHE] Checking rule: %s\n", rule->name);
 
                 /* disabled? */
-                if(*rule->state == NUSTER_RULE_DISABLED) {
+                if(*rule->state == NST_RULE_DISABLED) {
                     continue;
                 }
 
