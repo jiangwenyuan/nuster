@@ -1086,7 +1086,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
-            && (ctx->rule->disk == NUSTER_DISK_SYNC
+            && (ctx->rule->disk == NST_DISK_SYNC
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
         ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory,
@@ -1148,7 +1148,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
             ctx->element = element;
 
-            if(ctx->rule->disk == NUSTER_DISK_SYNC) {
+            if(ctx->rule->disk == NST_DISK_SYNC) {
                 nuster_persist_write(&ctx->disk, element->msg.data,
                         element->msg.len);
 
@@ -1183,7 +1183,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
     }
 
-    if(ctx->rule->disk == NUSTER_DISK_SYNC
+    if(ctx->rule->disk == NST_DISK_SYNC
             || ctx->rule->disk == NST_DISK_ONLY) {
 
         nuster_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);

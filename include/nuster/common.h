@@ -122,7 +122,7 @@ enum {
     NST_DISK_ONLY   = 1,
 
     /* persist the response on disk before return to client */
-    NUSTER_DISK_SYNC   = 2,
+    NST_DISK_SYNC   = 2,
 
     /* cache in memory first and persist on disk later */
     NUSTER_DISK_ASYNC  = 3,

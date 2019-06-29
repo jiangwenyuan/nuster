@@ -910,7 +910,7 @@ int nuster_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             } else if(!strcmp(args[cur_arg], "only")) {
                 disk = NST_DISK_ONLY;
             } else if(!strcmp(args[cur_arg], "sync")) {
-                disk = NUSTER_DISK_SYNC;
+                disk = NST_DISK_SYNC;
             } else if(!strcmp(args[cur_arg], "async")) {
                 disk = NUSTER_DISK_ASYNC;
             } else {
