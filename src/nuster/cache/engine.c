@@ -1045,7 +1045,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
             entry->state = NST_CACHE_ENTRY_STATE_CREATING;
 
-            if(ctx->rule->disk != NUSTER_DISK_ONLY) {
+            if(ctx->rule->disk != NST_DISK_ONLY) {
                 entry->data = nst_cache_data_new();
 
                 if(!entry->data) {
@@ -1087,7 +1087,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
             && (ctx->rule->disk == NUSTER_DISK_SYNC
-                || ctx->rule->disk == NUSTER_DISK_ONLY)) {
+                || ctx->rule->disk == NST_DISK_ONLY)) {
 
         ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory,
                 NUSTER_PERSIST_PATH_FILE_LEN + 1);
@@ -1119,7 +1119,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
     struct nst_cache_element *element;
 
-    if(ctx->rule->disk == NUSTER_DISK_ONLY)  {
+    if(ctx->rule->disk == NST_DISK_ONLY)  {
         char *data = b_orig(&msg->chn->buf);
         char *p    = ci_head(msg->chn);
         int size   = msg->chn->buf.size;
@@ -1171,7 +1171,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 void nst_cache_finish(struct nst_cache_ctx *ctx) {
     ctx->state = NST_CACHE_CTX_STATE_DONE;
 
-    if(ctx->rule->disk == NUSTER_DISK_ONLY) {
+    if(ctx->rule->disk == NST_DISK_ONLY) {
         ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
     } else {
         ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
@@ -1184,7 +1184,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     }
 
     if(ctx->rule->disk == NUSTER_DISK_SYNC
-            || ctx->rule->disk == NUSTER_DISK_ONLY) {
+            || ctx->rule->disk == NST_DISK_ONLY) {
 
         nuster_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
