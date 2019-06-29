@@ -29,7 +29,7 @@ int nuster_persist_init(char *path, uint64_t hash, char *dir) {
 
     nst_debug("[nuster] Persist path: %s\n", path);
 
-    if(nuster_create_path(path) != NST_OK) {
+    if(nst_create_path(path) != NST_OK) {
         return NST_ERR;
     }
 

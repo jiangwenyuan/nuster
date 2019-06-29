@@ -28,6 +28,6 @@
 #include <sys/types.h>
 #include <fcntl.h>
 
-int nuster_create_path(char*);
+int nst_create_path(char*);
 
 #endif /* _NUSTER_FILE_H */
