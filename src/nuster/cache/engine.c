@@ -1420,7 +1420,7 @@ void nst_cache_persist_load() {
             }
         } else {
             nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
-                    nuster.cache->disk.idx);
+                    nuster.cache->disk.idx, global.nuster.cache.directory);
 
             if(!nuster.cache->disk.dir) {
                 nuster.cache->disk.idx++;
@@ -1452,7 +1452,7 @@ void nst_cache_persist_cleanup() {
             }
         } else {
             nuster.cache->disk.dir = nuster_persist_opendir_by_idx(file,
-                    nuster.cache->disk.idx);
+                    nuster.cache->disk.idx, global.nuster.cache.directory);
 
             if(!nuster.cache->disk.dir) {
                 nuster.cache->disk.idx++;
