@@ -36,6 +36,7 @@
 struct nuster {
     struct nst_cache *cache;
     struct nst_nosql *nosql;
+
     struct {
         struct applet cache_engine;
         struct applet cache_manager;

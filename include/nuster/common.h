@@ -44,7 +44,7 @@
 #define NST_OK               0
 #define NST_ERR              1
 
-#define NST_DEFAULT_TTL         0
+#define NST_DEFAULT_TTL      0
 
 enum {
     NST_STATUS_UNDEFINED = -1,
@@ -119,13 +119,13 @@ enum {
     NST_DISK_OFF    = 0,
 
     /* disk persistence only, do not cache in memory */
-    NST_DISK_ONLY   = 1,
+    NST_DISK_ONLY,
 
     /* persist the response on disk before return to client */
-    NST_DISK_SYNC   = 2,
+    NST_DISK_SYNC,
 
     /* cache in memory first and persist on disk later */
-    NST_DISK_ASYNC  = 3,
+    NST_DISK_ASYNC,
 };
 
 struct nst_rule {
@@ -161,7 +161,6 @@ static inline uint64_t get_current_timestamp() {
 }
 
 void nst_debug(const char *fmt, ...);
-
 void nst_debug_key(struct buffer *key);
 
 #endif /* _NUSTER_COMMON_H */

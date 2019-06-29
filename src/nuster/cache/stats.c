@@ -135,7 +135,7 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s,
 
     s->txn->status = 200;
 
-    if (ci_putchk(res, &trash) == -1) {
+    if(ci_putchk(res, &trash) == -1) {
         si_rx_room_blk(si);
 
         return 0;
@@ -189,7 +189,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
                                 *rule->state == NST_RULE_ENABLED
                                 ? "on" : "off", *rule->ttl);
 
-                        if (ci_putchk(res, &trash) == -1) {
+                        if(ci_putchk(res, &trash) == -1) {
                             si_rx_room_blk(si);
                             return 0;
                         }

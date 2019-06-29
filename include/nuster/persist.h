@@ -53,8 +53,8 @@
 #define NST_PERSIST_META_POS_KEY_LEN         8 * 5
 
 
-#define NST_PERSIST_META_SIZE        8 * 6
-#define NST_PERSIST_POS_KEY          NST_PERSIST_META_SIZE
+#define NST_PERSIST_META_SIZE                8 * 6
+#define NST_PERSIST_POS_KEY                  NST_PERSIST_META_SIZE
 
 enum {
     NST_PERSIST_APPLET_ERROR   = -1,
@@ -64,10 +64,10 @@ enum {
 };
 
 struct persist {
-    char         *file;             /* cache file */
-    int           fd;
-    int           offset;
-    char          meta[NST_PERSIST_META_SIZE];
+    char *file;             /* cache file */
+    int   fd;
+    int   offset;
+    char  meta[NST_PERSIST_META_SIZE];
 };
 
 /* /0/00 */
@@ -80,9 +80,7 @@ struct persist {
 #define NST_PERSIST_PATH_FILE_LEN NST_PERSIST_PATH_HASH_LEN + 29
 
 int nst_persist_mkdir(char *path);
-
 char *nst_persist_alloc(struct nst_memory *p);
-
 int nst_persist_init(char *path, uint64_t hash, char *dir);
 
 static inline int nst_persist_create(const char *pathname) {
@@ -169,9 +167,7 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
 int nst_persist_exists(struct persist *disk, struct buffer *key,
         uint64_t hash, char *dir);
 
-static inline int
-nst_persist_write(struct persist *disk, char *buf, int len) {
-
+static inline int nst_persist_write(struct persist *disk, char *buf, int len) {
     ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
 
     if(ret != len) {
@@ -183,28 +179,24 @@ nst_persist_write(struct persist *disk, char *buf, int len) {
     return NST_OK;
 }
 
-static inline int
-nst_persist_write_meta(struct persist *disk) {
+static inline int nst_persist_write_meta(struct persist *disk) {
     disk->offset = 0;
     return nst_persist_write(disk, disk->meta, NST_PERSIST_META_SIZE);
 }
 
 static inline int
 nst_persist_write_key(struct persist *disk, struct buffer *key) {
+
     disk->offset = NST_PERSIST_POS_KEY;
     return nst_persist_write(disk, key->area, key->data);
 }
 
-void
-nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
-
+void nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
 int nst_persist_get_meta(int fd, char *meta);
 int nst_persist_get_key(int fd, char *meta, struct buffer *key);
-
 DIR *nst_persist_opendir_by_idx(char *path, int idx, char *dir);
 void nst_persist_cleanup(char *path, struct dirent *de);
 struct dirent *nst_persist_dir_next(DIR *dir);
-int
-nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash);
+int nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash);
 
 #endif /* _NUSTER_PERSIST_H */

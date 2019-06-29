@@ -38,7 +38,7 @@ enum {
     NST_HTTP_405,
     NST_HTTP_500,
     NST_HTTP_507,
-    NST_HTTP_SIZE
+    NST_HTTP_SIZE,
 };
 
 struct nst_headers {

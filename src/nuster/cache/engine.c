@@ -580,8 +580,7 @@ void nst_cache_init() {
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
-        nuster.cache->disk.file = nst_persist_alloc(
-                global.nuster.cache.memory);
+        nuster.cache->disk.file = nst_persist_alloc(global.nuster.cache.memory);
 
         if(!nuster.cache->disk.file) {
             goto err;
@@ -822,7 +821,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 hdr.idx = 0;
                 nst_debug("header_%s.", ck->data);
 
-                while (http_find_header2(ck->data, strlen(ck->data),
+                while(http_find_header2(ck->data, strlen(ck->data),
                             ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
 
                     ret = _nst_key_append(ctx->key, hdr.line + hdr.val,
@@ -991,8 +990,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
 
     if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
-            if(nst_persist_valid(&ctx->disk, ctx->key, ctx->hash) ==
-                    NST_OK) {
+            if(nst_persist_valid(&ctx->disk, ctx->key, ctx->hash) == NST_OK) {
 
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
             } else {
@@ -1096,6 +1094,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         if(nst_persist_init(ctx->disk.file, ctx->hash,
                 global.nuster.cache.directory) != NST_OK) {
+
             return;
         }
 
@@ -1181,8 +1180,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
     }
 
-    if(ctx->rule->disk == NST_DISK_SYNC
-            || ctx->rule->disk == NST_DISK_ONLY) {
+    if(ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY) {
 
         nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 

@@ -104,6 +104,7 @@ static struct nst_rule_key **_nst_parse_rule_key(char *str) {
     free(tmp);
 
     return pk;
+
 err:
     if(pk) {
 
@@ -301,7 +302,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
     int err_code = 0;
     int cur_arg  = 1;
 
-    if (global.nuster.cache.status != NST_STATUS_UNDEFINED) {
+    if(global.nuster.cache.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file,
                 linenum, args[0]);
 
@@ -309,7 +310,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
         goto out;
     }
 
-    if (*(args[cur_arg]) == 0) {
+    if(*(args[cur_arg]) == 0) {
         ha_alert("parsing [%s:%d]: '%s' expects 'on' or 'off' as argument.\n",
                 file, linenum, args[0]);
 
@@ -317,9 +318,9 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
         goto out;
     }
 
-    if (!strcmp(args[cur_arg], "off")) {
+    if(!strcmp(args[cur_arg], "off")) {
         global.nuster.cache.status = NST_STATUS_OFF;
-    } else if (!strcmp(args[cur_arg], "on")) {
+    } else if(!strcmp(args[cur_arg], "on")) {
         global.nuster.cache.status = NST_STATUS_ON;
     } else {
         ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
@@ -346,40 +347,17 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
     global.nuster.cache.uri = NULL;
 
     while(*(args[cur_arg]) !=0) {
-        /*
-        if (!strcmp(args[cur_arg], "share")) {
-            cur_arg++;
-            if (*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `share` expects 'on' or 'off'"
-                    "as augument.\n", file, linenum, args[0]);
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-            if (!strcmp(args[cur_arg], "off")) {
-                global.nuster.cache.share = NST_STATUS_OFF;
-            } else if (!strcmp(args[cur_arg], "on")) {
-                global.nuster.cache.share = NST_STATUS_ON;
-            } else {
-                ha_alert("parsing [%s:%d]: '%s': `share` only supports 'on' "
-                    "and 'off'.\n", file, linenum, args[0]);
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-            cur_arg++;
-            continue;
-        }
-        */
-        if (!strcmp(args[cur_arg], "data-size")) {
+        if(!strcmp(args[cur_arg], "data-size")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' data-size expects a size.\n",
                         file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
-            if (nst_parse_size(args[cur_arg],
+            if(nst_parse_size(args[cur_arg],
                         &global.nuster.cache.data_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects "
@@ -393,10 +371,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "dict-size")) {
+        if(!strcmp(args[cur_arg], "dict-size")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' dict-size expects a size.\n",
                         file, linenum, args[0]);
 
@@ -404,7 +382,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                 goto out;
             }
 
-            if (nst_parse_size(args[cur_arg],
+            if(nst_parse_size(args[cur_arg],
                         &global.nuster.cache.dict_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects "
@@ -418,10 +396,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "purge-method")) {
+        if(!strcmp(args[cur_arg], "purge-method")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' purge-method expects a name."
                         "\n", file, linenum, args[0]);
 
@@ -454,10 +432,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "uri")) {
+        if(!strcmp(args[cur_arg], "uri")) {
             cur_arg++;
 
-            if (*(args[cur_arg]) == 0) {
+            if(*(args[cur_arg]) == 0) {
                 ha_alert("parsing [%s:%d]: '%s': `uri` expect an URI.\n",
                         file, linenum, args[0]);
 
@@ -470,10 +448,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "dir")) {
+        if(!strcmp(args[cur_arg], "dir")) {
             cur_arg++;
 
-            if (*(args[cur_arg]) == 0) {
+            if(*(args[cur_arg]) == 0) {
                 ha_alert("parsing [%s:%d]: '%s': `dir` expects a directory as "
                         "an argument.\n", file, linenum, args[0]);
 
@@ -486,10 +464,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "dict-cleaner")) {
+        if(!strcmp(args[cur_arg], "dict-cleaner")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number."
                         "\n", file, linenum, args[0]);
 
@@ -508,10 +486,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "data-cleaner")) {
+        if(!strcmp(args[cur_arg], "data-cleaner")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number."
                         "\n", file, linenum, args[0]);
 
@@ -530,10 +508,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "disk-cleaner")) {
+        if(!strcmp(args[cur_arg], "disk-cleaner")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number."
                         "\n", file, linenum, args[0]);
 
@@ -552,10 +530,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "disk-loader")) {
+        if(!strcmp(args[cur_arg], "disk-loader")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number."
                         "\n", file, linenum, args[0]);
 
@@ -573,10 +551,10 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "disk-saver")) {
+        if(!strcmp(args[cur_arg], "disk-saver")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number."
                         "\n", file, linenum, args[0]);
 
@@ -587,8 +565,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             global.nuster.cache.disk_saver = atoi(args[cur_arg]);
 
             if(global.nuster.cache.disk_saver <= 0) {
-                global.nuster.cache.disk_saver =
-                    NST_CACHE_DEFAULT_DISK_SAVER;
+                global.nuster.cache.disk_saver = NST_CACHE_DEFAULT_DISK_SAVER;
             }
 
             cur_arg++;
@@ -611,7 +588,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
     int err_code = 0;
     int cur_arg  = 1;
 
-    if (global.nuster.nosql.status != NST_STATUS_UNDEFINED) {
+    if(global.nuster.nosql.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file,
                 linenum, args[0]);
 
@@ -619,7 +596,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
         goto out;
     }
 
-    if (*(args[cur_arg]) == 0) {
+    if(*(args[cur_arg]) == 0) {
         ha_alert("parsing [%s:%d]: '%s' expects 'on' or 'off' as argument.\n",
                 file, linenum, args[0]);
 
@@ -627,9 +604,9 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
         goto out;
     }
 
-    if (!strcmp(args[cur_arg], "off")) {
+    if(!strcmp(args[cur_arg], "off")) {
         global.nuster.nosql.status = NST_STATUS_OFF;
-    } else if (!strcmp(args[cur_arg], "on")) {
+    } else if(!strcmp(args[cur_arg], "on")) {
         global.nuster.nosql.status = NST_STATUS_ON;
     } else {
         ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
@@ -643,10 +620,10 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
 
     while(*(args[cur_arg]) !=0) {
 
-        if (!strcmp(args[cur_arg], "dict-size")) {
+        if(!strcmp(args[cur_arg], "dict-size")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' dict-size expects a size.\n",
                         file, linenum, args[0]);
 
@@ -654,8 +631,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                 goto out;
             }
 
-            if (nst_parse_size(args[cur_arg],
-                        &global.nuster.nosql.dict_size)) {
+            if(nst_parse_size(args[cur_arg], &global.nuster.nosql.dict_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects "
                         "[m|M|g|G].\n", file, linenum, args[0]);
@@ -668,10 +644,10 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             continue;
         }
 
-        if (!strcmp(args[cur_arg], "data-size")) {
+        if(!strcmp(args[cur_arg], "data-size")) {
             cur_arg++;
 
-            if (*args[cur_arg] == 0) {
+            if(*args[cur_arg] == 0) {
                 ha_alert("parsing [%s:%d]: '%s' data-size expects a size.\n",
                         file, linenum, args[0]);
 
@@ -679,8 +655,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                 goto out;
             }
 
-            if (nst_parse_size(args[cur_arg],
-                        &global.nuster.nosql.data_size)) {
+            if(nst_parse_size(args[cur_arg], &global.nuster.nosql.data_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects "
                         "[m|M|g|G].\n", file, linenum, args[0]);
