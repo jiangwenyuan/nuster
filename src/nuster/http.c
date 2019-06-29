@@ -16,7 +16,7 @@
  * Used by cache, should move to new one
  */
 const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
-    [NUSTER_HTTP_200] =
+    [NST_HTTP_200] =
         "HTTP/1.0 200 OK\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"

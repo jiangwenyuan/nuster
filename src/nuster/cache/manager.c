@@ -65,7 +65,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
             txn->status = _nst_cache_purge_by_key(key, hash);
 
             if(txn->status == 200) {
-                nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_200]);
+                nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_200]);
             } else {
                 nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_404]);
             }
@@ -382,7 +382,7 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
 
     switch(txn->status) {
         case 200:
-            nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_200]);
+            nuster_response(s, &nuster_http_msg_chunks[NST_HTTP_200]);
             break;
         case 400:
             nuster_response(s, &nuster_http_msg_chunks[NUSTER_HTTP_400]);
@@ -501,8 +501,8 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
     if(appctx->st2 == nuster.cache->dict[0].size) {
-        ci_putblk(res, nuster_http_msgs[NUSTER_HTTP_200],
-                strlen(nuster_http_msgs[NUSTER_HTTP_200]));
+        ci_putblk(res, nuster_http_msgs[NST_HTTP_200],
+                strlen(nuster_http_msgs[NST_HTTP_200]));
 
         co_skip(si_oc(si), co_data(si_oc(si)));
         si_shutr(si);

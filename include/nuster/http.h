@@ -32,7 +32,7 @@
 #include <nuster/nuster.h>
 
 enum {
-    NUSTER_HTTP_200 = 0,
+    NST_HTTP_200 = 0,
     NUSTER_HTTP_400,
     NUSTER_HTTP_404,
     NUSTER_HTTP_405,
