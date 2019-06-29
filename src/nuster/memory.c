@@ -285,7 +285,7 @@ void *nst_memory_alloc_locked(struct nuster_memory *memory, int size) {
         memory->data.free += memory->block_size;
         block              = &memory->block[block_idx];
 
-        if (_nuster_memory_block_is_inited(block)) {
+        if (_nst_memory_block_is_inited(block)) {
             return NULL;
         } else {
             _nuster_memory_block_init(memory, block, chunk_idx);
