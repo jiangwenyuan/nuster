@@ -114,7 +114,7 @@ void nuster_init() {
                 goto err;
             }
 
-            *rule->state = NUSTER_RULE_ENABLED;
+            *rule->state = NST_RULE_ENABLED;
             ttl          = *rule->ttl;
             free(rule->ttl);
             rule->ttl    = nuster_memory_alloc(m, sizeof(*rule->ttl));
