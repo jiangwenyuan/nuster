@@ -146,7 +146,7 @@ struct nuster_memory *nst_memory_create(char *name, uint64_t size,
     return memory;
 }
 
-void *_nuster_memory_block_alloc(struct nuster_memory *memory,
+void *_nst_memory_block_alloc(struct nuster_memory *memory,
         struct nst_memory_ctrl *block, int chunk_idx) {
 
     int chunk_size = 1<<(memory->chunk_shift + chunk_idx);
@@ -295,7 +295,7 @@ void *nst_memory_alloc_locked(struct nuster_memory *memory, int size) {
         return NULL;
     }
 
-    return _nuster_memory_block_alloc(memory, block, chunk_idx);
+    return _nst_memory_block_alloc(memory, block, chunk_idx);
 }
 
 void *nst_memory_alloc(struct nuster_memory *memory, int size) {
