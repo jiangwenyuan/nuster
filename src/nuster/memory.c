@@ -159,8 +159,8 @@ void *_nuster_memory_block_alloc(struct nuster_memory *memory,
     int full       = 1;
 
     /* use info, should not use anymore */
-    if (chunk_size * NUSTER_MEMORY_INFO_BITMAP_BITS >= memory->block_size) {
-        uint32_t mask =  ~0U >> (NUSTER_MEMORY_INFO_BITMAP_BITS - bits_need);
+    if (chunk_size * NST_MEMORY_INFO_BITMAP_BITS >= memory->block_size) {
+        uint32_t mask =  ~0U >> (NST_MEMORY_INFO_BITMAP_BITS - bits_need);
         uint32_t *v   = (uint32_t *)(&block->info) + 1;
         uint32_t t    = *v;
 
@@ -330,7 +330,7 @@ void nuster_memory_free_locked(struct nuster_memory *memory, void *p) {
     _nuster_memory_block_clear_full(block);
 
     /* info used */
-    if (chunk_size * NUSTER_MEMORY_INFO_BITMAP_BITS >= memory->block_size) {
+    if (chunk_size * NST_MEMORY_INFO_BITMAP_BITS >= memory->block_size) {
         block->info &= ~(1ULL << (bits_idx + 32));
 
         if (!(block->info & 0xFFFFFFFF00000000ULL)) {
