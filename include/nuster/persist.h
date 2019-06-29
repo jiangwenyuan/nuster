@@ -197,7 +197,7 @@ void
 nuster_persist_load(char *path, struct dirent *de1, char **meta, char **key);
 
 int nuster_persist_get_meta(int fd, char *meta);
-struct buffer *nuster_persist_get_key(int fd, char *meta);
+int nuster_persist_get_key(int fd, char *meta, struct buffer *key);
 
 DIR *nuster_persist_opendir_by_idx(char *path, int idx, char *dir);
 void nuster_persist_cleanup(char *path, struct dirent *de);

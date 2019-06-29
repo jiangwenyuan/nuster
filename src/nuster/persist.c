@@ -163,44 +163,15 @@ int nuster_persist_get_meta(int fd, char *meta) {
     return NUSTER_OK;
 }
 
-struct buffer *nuster_persist_get_key(int fd, char *meta) {
-
-    struct buffer *key;
-
-    key = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*key));
-
-    if(!key) {
-        goto err;
-    }
-
-    key->size = nuster_persist_meta_get_key_len(meta);
-
-    key->area = nuster_memory_alloc(global.nuster.cache.memory, key->size);
-
-    if(!key->area) {
-        goto err;
-    }
-
-    key->head = 0;
+int nuster_persist_get_key(int fd, char *meta, struct buffer *key) {
 
     key->data = pread(fd, key->area, key->size, NUSTER_PERSIST_POS_KEY);
 
     if(!b_full(key)) {
-        goto err;
+        return NUSTER_ERR;
     }
 
-    return key;
-
-err:
-    if(key) {
-        if(key->area) {
-            nuster_memory_free(global.nuster.cache.memory, key->area);
-        }
-
-        nuster_memory_free(global.nuster.cache.memory, key);
-    }
-
-    return NULL;
+    return NUSTER_OK;
 }
 
 void nuster_persist_cleanup(char *path, struct dirent *de1) {
@@ -251,7 +222,7 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
                 continue;
             }
 
-            /* cache is complete */
+            /* persist is complete */
             if(nuster_persist_meta_check_expire(meta) != NUSTER_OK) {
                 unlink(path);
                 close(fd);
