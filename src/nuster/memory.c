@@ -327,7 +327,7 @@ void nst_memory_free_locked(struct nuster_memory *memory, void *p) {
 
     empty      = 0;
     full       = _nst_memory_block_is_full(block);
-    _nuster_memory_block_clear_full(block);
+    _nst_memory_block_clear_full(block);
 
     /* info used */
     if (chunk_size * NST_MEMORY_INFO_BITMAP_BITS >= memory->block_size) {

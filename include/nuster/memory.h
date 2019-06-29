@@ -116,7 +116,7 @@ _nst_memory_block_is_full(struct nst_memory_ctrl *block) {
     return bit_used(block->info, 11);
 }
 static inline void
-_nuster_memory_block_clear_full(struct nst_memory_ctrl *block) {
+_nst_memory_block_clear_full(struct nst_memory_ctrl *block) {
     bit_clear(block->info, 11);
 }
 
