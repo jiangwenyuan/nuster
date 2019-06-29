@@ -39,7 +39,7 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
      * 1, > block_size , 2, = n * NST_MEMORY_BLOCK_MIN_SIZE
      */
     block_size = ((block_size + NST_MEMORY_BLOCK_MIN_SIZE - 1)
-            / NST_MEMORY_BLOCK_MIN_SIZE) << NUSTER_MEMORY_BLOCK_MIN_SHIFT;
+            / NST_MEMORY_BLOCK_MIN_SIZE) << NST_MEMORY_BLOCK_MIN_SHIFT;
 
     /*
      * set chunk_size to minimal number that
@@ -83,7 +83,7 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
 
     memory->chunk_shift = n;
 
-    for(n = NUSTER_MEMORY_BLOCK_MIN_SHIFT; (1ULL << n) < block_size; n++) { }
+    for(n = NST_MEMORY_BLOCK_MIN_SHIFT; (1ULL << n) < block_size; n++) { }
 
     memory->block_shift = n;
     memory->chunks      = n - memory->chunk_shift + 1;
