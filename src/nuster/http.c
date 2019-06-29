@@ -32,7 +32,7 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
         "\r\n"
         "400 Bad request\n",
 
-    [NUSTER_HTTP_404] =
+    [NST_HTTP_404] =
         "HTTP/1.0 404 Not Found\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"
