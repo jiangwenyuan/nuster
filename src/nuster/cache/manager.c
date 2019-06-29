@@ -501,8 +501,8 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
     if(appctx->st2 == nuster.cache->dict[0].size) {
-        ci_putblk(res, nuster_http_msgs[NST_HTTP_200],
-                strlen(nuster_http_msgs[NST_HTTP_200]));
+        ci_putblk(res, nst_http_msgs[NST_HTTP_200],
+                strlen(nst_http_msgs[NST_HTTP_200]));
 
         co_skip(si_oc(si), co_data(si_oc(si)));
         si_shutr(si);

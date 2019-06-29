@@ -15,7 +15,7 @@
 /*
  * Used by cache, should move to new one
  */
-const char *nuster_http_msgs[NST_HTTP_SIZE] = {
+const char *nst_http_msgs[NST_HTTP_SIZE] = {
     [NST_HTTP_200] =
         "HTTP/1.0 200 OK\r\n"
         "Cache-Control: no-cache\r\n"

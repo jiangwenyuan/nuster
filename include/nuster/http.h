@@ -53,7 +53,7 @@ struct nst_headers {
     struct nst_str etag;
 };
 
-extern const char *nuster_http_msgs[NST_HTTP_SIZE];
+extern const char *nst_http_msgs[NST_HTTP_SIZE];
 extern struct buffer nst_http_msg_chunks[NST_HTTP_SIZE];
 extern struct nst_headers nst_headers;
 
