@@ -1402,9 +1402,28 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    key = nuster_persist_get_key(fd, meta);
+                    key = nuster_memory_alloc(global.nuster.cache.memory,
+                            sizeof(*key));
 
-                    if(key == NULL) {
+                    if(!key) {
+                        return;
+                    }
+
+                    key->size = nuster_persist_meta_get_key_len(meta);
+                    key->area = nuster_memory_alloc(global.nuster.cache.memory,
+                            key->size);
+
+                    if(!key->area) {
+                        nuster_memory_free(global.nuster.cache.memory, key);
+                        return;
+                    }
+
+                    if(nuster_persist_get_key(fd, meta, key) != NUSTER_OK) {
+                        nuster_memory_free(global.nuster.cache.memory,
+                                key->area);
+
+                        nuster_memory_free(global.nuster.cache.memory, key);
+
                         unlink(file);
                         close(fd);
                         return;
