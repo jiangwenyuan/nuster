@@ -202,7 +202,7 @@ void *_nuster_memory_block_alloc(struct nuster_memory *memory,
 
     /* yes */
     if(full) {
-        _nuster_memory_block_set_full(block);
+        _nst_memory_block_set_full(block);
         /* remove from chunk list */
         memory->chunk[chunk_idx] = block->next;
 

@@ -108,7 +108,7 @@ _nst_memory_block_set_bitmap(struct nst_memory_ctrl *block) {
     bit_set(block->info, 10);
 }
 static inline void
-_nuster_memory_block_set_full(struct nst_memory_ctrl *block) {
+_nst_memory_block_set_full(struct nst_memory_ctrl *block) {
     bit_set(block->info, 11);
 }
 static inline int
