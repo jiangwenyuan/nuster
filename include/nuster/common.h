@@ -54,7 +54,7 @@ enum {
 
 enum {
     NST_MODE_CACHE = 1,
-    NUSTER_MODE_NOSQL,
+    NST_MODE_NOSQL,
 };
 
 #define nst_str_set(str)     { (char *) str, sizeof(str) - 1 }

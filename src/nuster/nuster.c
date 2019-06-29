@@ -101,7 +101,7 @@ void nuster_init() {
                     && p->nuster.mode == NST_MODE_CACHE) {
                 m = global.nuster.cache.memory;
             } else if(global.nuster.nosql.status == NST_STATUS_ON
-                    && p->nuster.mode == NUSTER_MODE_NOSQL) {
+                    && p->nuster.mode == NST_MODE_NOSQL) {
                 m = global.nuster.nosql.memory;
             } else {
                 continue;

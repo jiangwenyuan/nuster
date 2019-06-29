@@ -778,7 +778,7 @@ int nuster_parse_proxy_nosql(char **args, int section, struct proxy *px,
 
     LIST_ADDQ(&px->filter_configs, &fconf->list);
 
-    px->nuster.mode = NUSTER_MODE_NOSQL;
+    px->nuster.mode = NST_MODE_NOSQL;
 
     return 0;
 }
