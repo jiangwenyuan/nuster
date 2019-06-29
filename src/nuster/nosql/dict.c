@@ -58,7 +58,7 @@ static int _nst_nosql_dict_alloc(uint64_t size) {
     nuster.nosql->dict[0].size  = size / entry_size;
     nuster.nosql->dict[0].used  = 0;
     nuster.nosql->dict[0].entry =
-        nuster_memory_alloc(global.nuster.nosql.memory,
+        nst_memory_alloc(global.nuster.nosql.memory,
                 global.nuster.nosql.memory->block_size);
 
     if(!nuster.nosql->dict[0].entry) {
@@ -66,7 +66,7 @@ static int _nst_nosql_dict_alloc(uint64_t size) {
     }
 
     for(i = 1; i < size / global.nuster.nosql.memory->block_size; i++) {
-        if(!nuster_memory_alloc(global.nuster.nosql.memory,
+        if(!nst_memory_alloc(global.nuster.nosql.memory,
                     global.nuster.nosql.memory->block_size)) {
             return NST_ERR;
         }
@@ -244,12 +244,12 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
     dict = _nst_nosql_dict_rehashing()
         ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
 
-    entry = nuster_memory_alloc(global.nuster.nosql.memory, sizeof(*entry));
+    entry = nst_memory_alloc(global.nuster.nosql.memory, sizeof(*entry));
     if(!entry) {
         return NULL;
     }
 
-    entry_key = nuster_memory_alloc(global.nuster.nosql.memory,
+    entry_key = nst_memory_alloc(global.nuster.nosql.memory,
             strlen(key) + 1);
 
     if(!entry_key) {

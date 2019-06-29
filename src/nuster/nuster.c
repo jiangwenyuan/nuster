@@ -108,7 +108,7 @@ void nuster_init() {
             }
 
             rule->uuid  = uuid++;
-            rule->state = nuster_memory_alloc(m, sizeof(*rule->state));
+            rule->state = nst_memory_alloc(m, sizeof(*rule->state));
 
             if(!rule->state) {
                 goto err;
@@ -117,7 +117,7 @@ void nuster_init() {
             *rule->state = NST_RULE_ENABLED;
             ttl          = *rule->ttl;
             free(rule->ttl);
-            rule->ttl    = nuster_memory_alloc(m, sizeof(*rule->ttl));
+            rule->ttl    = nst_memory_alloc(m, sizeof(*rule->ttl));
 
             if(!rule->ttl) {
                 goto err;
