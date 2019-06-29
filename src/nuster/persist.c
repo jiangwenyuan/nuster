@@ -64,7 +64,7 @@ nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    if(nuster_persist_meta_check_expire(disk->meta) != NST_OK) {
+    if(nst_persist_meta_check_expire(disk->meta) != NST_OK) {
         goto err;
     }
 
@@ -156,7 +156,7 @@ int nuster_persist_get_meta(int fd, char *meta) {
         return NST_ERR;
     }
 
-    if(nuster_persist_meta_check_expire(meta) != NST_OK) {
+    if(nst_persist_meta_check_expire(meta) != NST_OK) {
         return NST_ERR;
     }
 
@@ -223,7 +223,7 @@ void nuster_persist_cleanup(char *path, struct dirent *de1) {
             }
 
             /* persist is complete */
-            if(nuster_persist_meta_check_expire(meta) != NST_OK) {
+            if(nst_persist_meta_check_expire(meta) != NST_OK) {
                 unlink(path);
                 close(fd);
                 continue;
