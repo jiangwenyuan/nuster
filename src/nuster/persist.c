@@ -15,10 +15,39 @@
 #include <types/global.h>
 
 #include <nuster/memory.h>
-#include <nuster/file.h>
 #include <nuster/persist.h>
 #include <nuster/nuster.h>
 
+int nst_persist_mkdir(char *path) {
+    char *p = path;
+
+    while(*p != '\0') {
+        p++;
+
+        while(*p != '/' && *p != '\0') {
+            p++;
+        }
+
+        if(*p == '/') {
+            *p = '\0';
+
+            if(mkdir(path, S_IRWXU) == -1 && errno != EEXIST) {
+                *p = '/';
+
+                return NST_ERR;
+            }
+
+            *p = '/';
+        }
+
+    }
+
+    if(mkdir(path, S_IRWXU) == -1 && errno != EEXIST) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
 char *nst_persist_alloc(struct nst_memory *m) {
     return nst_memory_alloc(m, NST_PERSIST_PATH_FILE_LEN + 1);
 }
@@ -29,7 +58,7 @@ int nst_persist_init(char *path, uint64_t hash, char *dir) {
 
     nst_debug("[nuster] Persist path: %s\n", path);
 
-    if(nst_create_path(path) != NST_OK) {
+    if(nst_persist_mkdir(path) != NST_OK) {
         return NST_ERR;
     }
 
