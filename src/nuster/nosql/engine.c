@@ -295,7 +295,7 @@ void nst_nosql_init() {
         global.nuster.nosql.pool.ctx   = create_pool("np.ctx",
                 sizeof(struct nst_nosql_ctx), MEM_F_SHARED);
 
-        global.nuster.nosql.memory = nuster_memory_create("nosql.shm",
+        global.nuster.nosql.memory = nst_memory_create("nosql.shm",
                 global.nuster.nosql.dict_size + global.nuster.nosql.data_size,
                 global.tune.bufsize, NST_NOSQL_DEFAULT_CHUNK_SIZE);
 

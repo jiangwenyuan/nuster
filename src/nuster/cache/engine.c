@@ -533,7 +533,7 @@ void nst_cache_init() {
                 sizeof(struct nst_cache_ctx), MEM_F_SHARED);
 
         if(global.nuster.cache.share) {
-            global.nuster.cache.memory = nuster_memory_create("cache.shm",
+            global.nuster.cache.memory = nst_memory_create("cache.shm",
                     global.nuster.cache.dict_size
                     + global.nuster.cache.data_size, global.tune.bufsize,
                     NST_CACHE_DEFAULT_CHUNK_SIZE);
@@ -550,7 +550,7 @@ void nst_cache_init() {
                     sizeof(struct nst_cache));
 
         } else {
-            global.nuster.cache.memory = nuster_memory_create("cache.shm",
+            global.nuster.cache.memory = nst_memory_create("cache.shm",
                     NST_CACHE_DEFAULT_SIZE, 0, 0);
 
             if(!global.nuster.cache.memory) {
