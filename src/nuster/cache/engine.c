@@ -1368,8 +1368,8 @@ void nst_cache_persist_load() {
                     return;
                 }
 
-                memcpy(file + NUSTER_PERSIST_PATH_BASE_LEN, "/", 1);
-                memcpy(file + NUSTER_PERSIST_PATH_BASE_LEN + 1, de->d_name,
+                memcpy(file + NST_PERSIST_PATH_BASE_LEN, "/", 1);
+                memcpy(file + NST_PERSIST_PATH_BASE_LEN + 1, de->d_name,
                         strlen(de->d_name));
 
                 dir2 = opendir(file);
