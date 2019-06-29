@@ -36,7 +36,7 @@ static int _nst_nosql_filter_check(struct proxy *px, struct flt_conf *fconf) {
 
 static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
 
-    if(global.nuster.nosql.status != NUSTER_STATUS_ON) {
+    if(global.nuster.nosql.status != NST_STATUS_ON) {
         return 0;
     }
 

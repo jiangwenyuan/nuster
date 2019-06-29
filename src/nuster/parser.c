@@ -320,7 +320,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
     if (!strcmp(args[cur_arg], "off")) {
         global.nuster.cache.status = NST_STATUS_OFF;
     } else if (!strcmp(args[cur_arg], "on")) {
-        global.nuster.cache.status = NUSTER_STATUS_ON;
+        global.nuster.cache.status = NST_STATUS_ON;
     } else {
         ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
                 file, linenum, args[0]);
@@ -358,7 +358,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             if (!strcmp(args[cur_arg], "off")) {
                 global.nuster.cache.share = NST_STATUS_OFF;
             } else if (!strcmp(args[cur_arg], "on")) {
-                global.nuster.cache.share = NUSTER_STATUS_ON;
+                global.nuster.cache.share = NST_STATUS_ON;
             } else {
                 ha_alert("parsing [%s:%d]: '%s': `share` only supports 'on' "
                     "and 'off'.\n", file, linenum, args[0]);
@@ -630,7 +630,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
     if (!strcmp(args[cur_arg], "off")) {
         global.nuster.nosql.status = NST_STATUS_OFF;
     } else if (!strcmp(args[cur_arg], "on")) {
-        global.nuster.nosql.status = NUSTER_STATUS_ON;
+        global.nuster.nosql.status = NST_STATUS_ON;
     } else {
         ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
                 file, linenum, args[0]);
@@ -733,7 +733,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
     memset(fconf, 0, sizeof(*fconf));
     memset(conf, 0, sizeof(*conf));
 
-    conf->status = NUSTER_STATUS_ON;
+    conf->status = NST_STATUS_ON;
     cur_arg++;
 
     if(*args[cur_arg]) {
@@ -741,7 +741,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
         if(!strcmp(args[cur_arg], "off")) {
             conf->status = NST_STATUS_OFF;
         } else if(!strcmp(args[cur_arg], "on")) {
-            conf->status = NUSTER_STATUS_ON;
+            conf->status = NST_STATUS_ON;
         } else {
             memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
             return -1;

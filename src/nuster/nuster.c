@@ -97,10 +97,10 @@ void nuster_init() {
         list_for_each_entry(rule, &p->nuster.rules, list) {
             struct proxy *pt;
 
-            if(global.nuster.cache.status == NUSTER_STATUS_ON
+            if(global.nuster.cache.status == NST_STATUS_ON
                     && p->nuster.mode == NUSTER_MODE_CACHE) {
                 m = global.nuster.cache.memory;
-            } else if(global.nuster.nosql.status == NUSTER_STATUS_ON
+            } else if(global.nuster.nosql.status == NST_STATUS_ON
                     && p->nuster.mode == NUSTER_MODE_NOSQL) {
                 m = global.nuster.nosql.memory;
             } else {
