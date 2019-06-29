@@ -363,7 +363,7 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
     entry->expire = nst_persist_meta_get_expire(meta);
     memcpy(entry->file, file, strlen(file));
 
-    entry->header_len = nuster_persist_meta_get_header_len(meta);
+    entry->header_len = nst_persist_meta_get_header_len(meta);
 
     return NST_OK;
 }
