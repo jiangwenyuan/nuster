@@ -756,7 +756,7 @@ int nuster_parse_proxy_cache(char **args, int section, struct proxy *px,
 
     LIST_ADDQ(&px->filter_configs, &fconf->list);
 
-    px->nuster.mode = NUSTER_MODE_CACHE;
+    px->nuster.mode = NST_MODE_CACHE;
 
     return 0;
 }
