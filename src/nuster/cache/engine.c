@@ -1002,7 +1002,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
             }
         } else {
             ctx->disk.file = nst_memory_alloc(global.nuster.cache.memory,
-                    NUSTER_PERSIST_PATH_FILE_LEN + 1);
+                    NST_PERSIST_PATH_FILE_LEN + 1);
 
             if(!ctx->disk.file) {
                 ret = NST_CACHE_CTX_STATE_INIT;
@@ -1090,7 +1090,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
         ctx->disk.file = nst_memory_alloc(global.nuster.cache.memory,
-                NUSTER_PERSIST_PATH_FILE_LEN + 1);
+                NST_PERSIST_PATH_FILE_LEN + 1);
 
         if(!ctx->disk.file) {
             return;
@@ -1294,7 +1294,7 @@ void nst_cache_persist_async() {
             struct persist disk;
 
             entry->file = nst_memory_alloc(global.nuster.cache.memory,
-                    NUSTER_PERSIST_PATH_FILE_LEN + 1);
+                    NST_PERSIST_PATH_FILE_LEN + 1);
 
             if(!entry->file) {
                 return;

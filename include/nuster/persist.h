@@ -77,7 +77,7 @@ struct persist {
 #define NST_PERSIST_PATH_HASH_LEN NST_PERSIST_PATH_BASE_LEN + 17
 
 /* /a/4a/60322ec3e2428e4a/71fabeefebdaaedb-16ae92496e1: + 1 + 16 + 1 + 11 */
-#define NUSTER_PERSIST_PATH_FILE_LEN NST_PERSIST_PATH_HASH_LEN + 29
+#define NST_PERSIST_PATH_FILE_LEN NST_PERSIST_PATH_HASH_LEN + 29
 
 char *nuster_persist_alloc(struct nst_memory *p);
 
