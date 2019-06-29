@@ -143,7 +143,7 @@ struct dirent *nuster_persist_dir_next(DIR *dir) {
     return readdir(dir);
 }
 
-int nuster_persist_get_meta(int fd, char *meta) {
+int nst_persist_get_meta(int fd, char *meta) {
     int ret;
 
     ret = pread(fd, meta, NST_PERSIST_META_SIZE, 0);

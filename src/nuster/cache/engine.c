@@ -1395,7 +1395,7 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    if(nuster_persist_get_meta(fd, meta) != NST_OK) {
+                    if(nst_persist_get_meta(fd, meta) != NST_OK) {
                         unlink(file);
                         close(fd);
                         return;
