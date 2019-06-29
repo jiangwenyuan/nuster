@@ -19,7 +19,7 @@
 #include <nuster/persist.h>
 #include <nuster/nuster.h>
 
-char *nuster_persist_alloc(struct nst_memory *m) {
+char *nst_persist_alloc(struct nst_memory *m) {
     return nst_memory_alloc(m, NST_PERSIST_PATH_FILE_LEN + 1);
 }
 
