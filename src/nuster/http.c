@@ -15,7 +15,7 @@
 /*
  * Used by cache, should move to new one
  */
-const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
+const char *nuster_http_msgs[NST_HTTP_SIZE] = {
     [NST_HTTP_200] =
         "HTTP/1.0 200 OK\r\n"
         "Cache-Control: no-cache\r\n"
@@ -65,7 +65,7 @@ const char *nuster_http_msgs[NUSTER_HTTP_SIZE] = {
         "507 Insufficient Storage\n",
 };
 
-struct buffer nuster_http_msg_chunks[NUSTER_HTTP_SIZE];
+struct buffer nuster_http_msg_chunks[NST_HTTP_SIZE];
 
 struct nuster_headers nuster_headers = {
     .server            = nst_str_set("Server"),
