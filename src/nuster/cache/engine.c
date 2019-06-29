@@ -125,7 +125,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             ret = pread(fd, buf, header_len, offset);
 
             if(ret != header_len) {
-                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
+                appctx->st0 = NST_PERSIST_APPLET_ERROR;
                 break;
             }
 
@@ -135,7 +135,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_PAYLOAD;
                 appctx->ctx.nuster.cache_disk_engine.offset += ret;
             } else if(ret == -2) {
-                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
+                appctx->st0 = NST_PERSIST_APPLET_ERROR;
                 si_shutr(si);
                 res->flags |= CF_READ_NULL;
             }
@@ -144,7 +144,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             ret = pread(fd, buf, max, offset);
 
             if(ret == -1) {
-                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
+                appctx->st0 = NST_PERSIST_APPLET_ERROR;
                 break;
             }
 
@@ -160,7 +160,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 appctx->st0 = NUSTER_PERSIST_APPLET_PAYLOAD;
                 appctx->ctx.nuster.cache_disk_engine.offset += ret;
             } else if(ret == -2) {
-                appctx->st0 = NUSTER_PERSIST_APPLET_ERROR;
+                appctx->st0 = NST_PERSIST_APPLET_ERROR;
                 si_shutr(si);
                 res->flags |= CF_READ_NULL;
             }
@@ -170,7 +170,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             si_shutr(si);
             res->flags |= CF_READ_NULL;
             break;
-        case NUSTER_PERSIST_APPLET_ERROR:
+        case NST_PERSIST_APPLET_ERROR:
             si_shutr(si);
             res->flags |= CF_READ_NULL;
             close(fd);
