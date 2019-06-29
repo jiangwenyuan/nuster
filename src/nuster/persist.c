@@ -163,7 +163,7 @@ int nst_persist_get_meta(int fd, char *meta) {
     return NST_OK;
 }
 
-int nuster_persist_get_key(int fd, char *meta, struct buffer *key) {
+int nst_persist_get_key(int fd, char *meta, struct buffer *key) {
 
     key->data = pread(fd, key->area, key->size, NST_PERSIST_POS_KEY);
 
