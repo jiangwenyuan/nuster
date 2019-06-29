@@ -99,45 +99,37 @@ err:
 }
 
 
-int
-nuster_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash) {
+int nuster_persist_exists(struct persist *disk, struct buffer *key,
+        uint64_t hash, char *dir) {
 
-    if(disk->file) {
-        return nuster_persist_valid(disk, key, hash);
-    } else {
-        struct dirent *de;
-        DIR *dir;
+    struct dirent *de;
+    DIR *dirp;
 
-        disk->file = nuster_memory_alloc(global.nuster.cache.memory,
-                NUSTER_PERSIST_PATH_FILE_LEN + 1);
+    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, dir,
+            hash >> 60, hash >> 56, hash);
 
-        sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64,
-                global.nuster.cache.directory, hash >> 60, hash >> 56, hash);
+    dirp = opendir(disk->file);
 
-        dir = opendir(disk->file);
-
-        if(!dir) {
-            return NUSTER_ERR;
-        }
-
-        while((de = readdir(dir)) != NULL) {
-
-            if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-                memcpy(disk->file + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
-                memcpy(disk->file + NUSTER_PERSIST_PATH_HASH_LEN + 1,
-                        de->d_name, strlen(de->d_name));
-
-                if(nuster_persist_valid(disk, key, hash) == NUSTER_OK) {
-                    closedir(dir);
-                    return NUSTER_OK;
-                }
-            }
-        }
-
-        closedir(dir);
-        nuster_memory_free(global.nuster.cache.memory, disk->file);
+    if(!dirp) {
         return NUSTER_ERR;
     }
+
+    while((de = readdir(dirp)) != NULL) {
+
+        if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
+            memcpy(disk->file + NUSTER_PERSIST_PATH_HASH_LEN, "/", 1);
+            memcpy(disk->file + NUSTER_PERSIST_PATH_HASH_LEN + 1,
+                    de->d_name, strlen(de->d_name));
+
+            if(nuster_persist_valid(disk, key, hash) == NUSTER_OK) {
+                closedir(dirp);
+                return NUSTER_OK;
+            }
+        }
+    }
+
+    closedir(dirp);
+    return NUSTER_ERR;
 }
 
 DIR *nuster_persist_opendir_by_idx(char *path, int idx) {

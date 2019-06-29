@@ -993,12 +993,30 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
     nuster_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
-        if(nuster_persist_exists(&ctx->disk, ctx->key, ctx->hash) ==
-                NUSTER_OK) {
+        if(ctx->disk.file) {
+            if(nuster_persist_valid(&ctx->disk, ctx->key, ctx->hash) ==
+                    NUSTER_OK) {
 
-            ret = NST_CACHE_CTX_STATE_HIT_DISK;
+                ret = NST_CACHE_CTX_STATE_HIT_DISK;
+            } else {
+                ret = NST_CACHE_CTX_STATE_INIT;
+            }
         } else {
-            ret = NST_CACHE_CTX_STATE_INIT;
+            ctx->disk.file = nuster_memory_alloc(global.nuster.cache.memory,
+                    NUSTER_PERSIST_PATH_FILE_LEN + 1);
+
+            if(!ctx->disk.file) {
+                ret = NST_CACHE_CTX_STATE_INIT;
+            }
+
+            if(nuster_persist_exists(&ctx->disk, ctx->key, ctx->hash,
+                        global.nuster.cache.directory) == NUSTER_OK) {
+
+                ret = NST_CACHE_CTX_STATE_HIT_DISK;
+            } else {
+                nuster_memory_free(global.nuster.cache.memory, ctx->disk.file);
+                ret = NST_CACHE_CTX_STATE_INIT;
+            }
         }
     }
 
