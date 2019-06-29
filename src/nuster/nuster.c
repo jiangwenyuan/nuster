@@ -98,7 +98,7 @@ void nuster_init() {
             struct proxy *pt;
 
             if(global.nuster.cache.status == NST_STATUS_ON
-                    && p->nuster.mode == NUSTER_MODE_CACHE) {
+                    && p->nuster.mode == NST_MODE_CACHE) {
                 m = global.nuster.cache.memory;
             } else if(global.nuster.nosql.status == NST_STATUS_ON
                     && p->nuster.mode == NUSTER_MODE_NOSQL) {

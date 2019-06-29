@@ -184,7 +184,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
         while(p) {
             struct nst_rule *rule = NULL;
 
-            if(p->nuster.mode == NUSTER_MODE_CACHE) {
+            if(p->nuster.mode == NST_MODE_CACHE) {
 
                 if(mode != NST_CACHE_PURGE_NAME_ALL
                         && strlen(p->id) == ctx.vlen
