@@ -182,6 +182,6 @@ int nuster_test_rule(struct nst_rule *rule, struct stream *s, int res) {
         return NST_OK;
     }
 
-    return NUSTER_ERR;
+    return NST_ERR;
 }
 

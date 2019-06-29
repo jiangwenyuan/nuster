@@ -46,7 +46,7 @@ static int _nst_cache_dict_resize(uint64_t size) {
 
     }
 
-    return NUSTER_ERR;
+    return NST_ERR;
 }
 
 static int _nst_cache_dict_alloc(uint64_t size) {
@@ -58,7 +58,7 @@ static int _nst_cache_dict_alloc(uint64_t size) {
             global.nuster.cache.memory, global.nuster.cache.memory->block_size);
 
     if(!nuster.cache->dict[0].entry) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     for(i = 1; i < size / global.nuster.cache.memory->block_size; i++) {
@@ -66,7 +66,7 @@ static int _nst_cache_dict_alloc(uint64_t size) {
         if(!nuster_memory_alloc(global.nuster.cache.memory,
                     global.nuster.cache.memory->block_size)) {
 
-            return NUSTER_ERR;
+            return NST_ERR;
         }
 
     }
@@ -339,7 +339,7 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
     entry = nuster_memory_alloc(global.nuster.cache.memory, sizeof(*entry));
 
     if(!entry) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     memset(entry, 0, sizeof(*entry));
@@ -347,7 +347,7 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
     entry->file = nuster_memory_alloc(global.nuster.cache.memory, strlen(file));
 
     if(!entry->file) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     idx = hash % dict->size;

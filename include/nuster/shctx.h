@@ -32,15 +32,15 @@ static inline int _nuster_shctx_init(pthread_mutex_t *mutex) {
     pthread_mutexattr_t attr;
 
     if(pthread_mutexattr_init(&attr)) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED)) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(pthread_mutex_init(mutex, &attr)) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     return NST_OK;

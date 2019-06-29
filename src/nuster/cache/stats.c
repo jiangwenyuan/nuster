@@ -242,11 +242,11 @@ int nst_cache_stats_init() {
             sizeof(struct nst_cache_stats));
 
     if(!global.nuster.cache.stats) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(nuster_shctx_init(global.nuster.cache.stats) != NST_OK) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     global.nuster.cache.stats->used_mem      = 0;

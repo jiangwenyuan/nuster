@@ -62,13 +62,13 @@ static int _nst_nosql_dict_alloc(uint64_t size) {
                 global.nuster.nosql.memory->block_size);
 
     if(!nuster.nosql->dict[0].entry) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     for(i = 1; i < size / global.nuster.nosql.memory->block_size; i++) {
         if(!nuster_memory_alloc(global.nuster.nosql.memory,
                     global.nuster.nosql.memory->block_size)) {
-            return NUSTER_ERR;
+            return NST_ERR;
         }
     }
 

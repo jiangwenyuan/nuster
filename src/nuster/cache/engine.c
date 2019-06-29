@@ -252,7 +252,7 @@ err:
     nuster_memory_free(global.nuster.cache.memory, key->area);
     nuster_memory_free(global.nuster.cache.memory, key);
 
-    return NUSTER_ERR;
+    return NST_ERR;
 }
 
 static int _nst_key_advance(struct buffer *key, int step) {
@@ -260,7 +260,7 @@ static int _nst_key_advance(struct buffer *key, int step) {
     if(b_room(key) < step) {
 
         if(_nst_key_expand(key) != NST_OK) {
-            return NUSTER_ERR;
+            return NST_ERR;
         }
 
     }
@@ -275,7 +275,7 @@ static int _nst_key_append(struct buffer *key, char *str, int str_len) {
     if(b_room(key) < str_len + 1) {
 
         if(_nst_key_expand(key) != NST_OK) {
-            return NUSTER_ERR;
+            return NST_ERR;
         }
 
     }
@@ -290,15 +290,15 @@ int nst_cache_check_uri(struct http_msg *msg) {
     const char *uri = ci_head(msg->chn) + msg->sl.rq.u;
 
     if(!global.nuster.cache.uri) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(strlen(global.nuster.cache.uri) != msg->sl.rq.u_l) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(memcmp(uri, global.nuster.cache.uri, msg->sl.rq.u_l) != 0) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     return NST_OK;
@@ -519,7 +519,7 @@ void nst_cache_init() {
         if(global.nuster.cache.directory) {
 
             if(nuster_create_path(global.nuster.cache.directory) ==
-                    NUSTER_ERR) {
+                    NST_ERR) {
 
                 ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
                 exit(1);
@@ -645,7 +645,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
                 hdr.vlen);
 
         if(!ctx->req.host.data) {
-            return NUSTER_ERR;
+            return NST_ERR;
         }
 
         ctx->req.host.len  = hdr.vlen;
@@ -676,7 +676,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
                 ctx->req.path.len + 1);
 
         if(!ctx->req.path.data) {
-            return NUSTER_ERR;
+            return NST_ERR;
         }
 
         memcpy(ctx->req.path.data, uri_begin, ctx->req.path.len);
@@ -722,7 +722,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
     ctx->key  = _nst_key_init();
     if(!ctx->key) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     nuster_debug("[CACHE] Calculate key: ");
@@ -876,7 +876,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 break;
         }
         if(ret != NST_OK) {
-            return NUSTER_ERR;
+            return NST_ERR;
         }
     }
 
@@ -1158,7 +1158,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         } else {
             ctx->full = 1;
 
-            return NUSTER_ERR;
+            return NST_ERR;
         }
     }
 

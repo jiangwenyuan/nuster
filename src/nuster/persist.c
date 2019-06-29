@@ -30,7 +30,7 @@ int nuster_persist_init(char *path, uint64_t hash, char *dir) {
     nuster_debug("[nuster] Persist path: %s\n", path);
 
     if(nuster_create_path(path) != NST_OK) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     sprintf(path + NUSTER_PERSIST_PATH_HASH_LEN, "/%"PRIx64"-%"PRIx64,
@@ -95,7 +95,7 @@ nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
 
 err:
     close(disk->fd);
-    return NUSTER_ERR;
+    return NST_ERR;
 }
 
 
@@ -111,7 +111,7 @@ int nuster_persist_exists(struct persist *disk, struct buffer *key,
     dirp = opendir(disk->file);
 
     if(!dirp) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     while((de = readdir(dirp)) != NULL) {
@@ -129,7 +129,7 @@ int nuster_persist_exists(struct persist *disk, struct buffer *key,
     }
 
     closedir(dirp);
-    return NUSTER_ERR;
+    return NST_ERR;
 }
 
 DIR *nuster_persist_opendir_by_idx(char *path, int idx, char *dir) {
@@ -149,15 +149,15 @@ int nuster_persist_get_meta(int fd, char *meta) {
     ret = pread(fd, meta, NUSTER_PERSIST_META_SIZE, 0);
 
     if(ret != NUSTER_PERSIST_META_SIZE) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(memcmp(meta, "NUSTER", 6) !=0) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     if(nuster_persist_meta_check_expire(meta) != NST_OK) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     return NST_OK;
@@ -168,7 +168,7 @@ int nuster_persist_get_key(int fd, char *meta, struct buffer *key) {
     key->data = pread(fd, key->area, key->size, NUSTER_PERSIST_POS_KEY);
 
     if(!b_full(key)) {
-        return NUSTER_ERR;
+        return NST_ERR;
     }
 
     return NST_OK;
