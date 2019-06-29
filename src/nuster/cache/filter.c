@@ -80,8 +80,8 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 
     if(filter->ctx) {
-        struct nuster_rule_stash *stash = NULL;
-        struct nst_cache_ctx *ctx       = filter->ctx;
+        struct nst_rule_stash *stash = NULL;
+        struct nst_cache_ctx *ctx    = filter->ctx;
 
         nst_cache_stats_update_request(ctx->state);
 
@@ -229,9 +229,10 @@ static int _nst_cache_filter_http_headers(struct stream *s,
         }
 
         if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
-            struct nuster_rule_stash *stash = ctx->stash;
-            struct nuster_rule_code *cc     = ctx->rule->code;
-            int valid                       = 0;
+            struct nst_rule_stash *stash = ctx->stash;
+            struct nuster_rule_code *cc  = ctx->rule->code;
+
+            int valid = 0;
 
             ctx->pid = px->uuid;
 
