@@ -655,7 +655,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                 }
 
                 break;
-            case NUSTER_RULE_KEY_COOKIE:
+            case NST_RULE_KEY_COOKIE:
                 nuster_debug("cookie_%s.", ck->data);
 
                 if(ctx->req.cookie.data) {
