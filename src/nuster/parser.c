@@ -41,7 +41,7 @@ static struct nst_rule_key *_nuster_parse_rule_key_cast(char *str) {
         key->data = NULL;
     } else if(!strcmp(str, "uri")) {
         key       = malloc(sizeof(*key));
-        key->type = NUSTER_RULE_KEY_URI;
+        key->type = NST_RULE_KEY_URI;
         key->data = NULL;
     } else if(!strcmp(str, "path")) {
         key       = malloc(sizeof(*key));
