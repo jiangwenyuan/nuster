@@ -69,7 +69,7 @@ enum nst_rule_key_type {
     NST_RULE_KEY_METHOD = 1,
 
     /* scheme: http, https */
-    NUSTER_RULE_KEY_SCHEME,
+    NST_RULE_KEY_SCHEME,
 
     /* host: Host header */
     NUSTER_RULE_KEY_HOST,

@@ -738,7 +738,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                         http_known_methods[txn->meth].len);
 
                 break;
-            case NUSTER_RULE_KEY_SCHEME:
+            case NST_RULE_KEY_SCHEME:
                 nuster_debug("scheme.");
                 ret = _nst_key_append(ctx->key,
                         ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",

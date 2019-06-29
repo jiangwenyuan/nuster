@@ -584,7 +584,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                         http_known_methods[HTTP_METH_GET].ptr,
                         http_known_methods[HTTP_METH_GET].len);
                 break;
-            case NUSTER_RULE_KEY_SCHEME:
+            case NST_RULE_KEY_SCHEME:
                 nuster_debug("scheme.");
                 key = _nst_nosql_key_append(key, &key_len, &key_size,
                         ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
