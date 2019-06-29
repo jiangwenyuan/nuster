@@ -154,7 +154,7 @@ static struct nst_rule_code *_nuster_parse_rule_code(char *str) {
 /*
  * Parse size
  */
-const char *nuster_parse_size(const char *text, uint64_t *ret) {
+const char *nst_parse_size(const char *text, uint64_t *ret) {
     uint64_t value = 0;
 
     while(1) {
@@ -379,7 +379,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
-            if (nuster_parse_size(args[cur_arg],
+            if (nst_parse_size(args[cur_arg],
                         &global.nuster.cache.data_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects "
@@ -404,7 +404,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                 goto out;
             }
 
-            if (nuster_parse_size(args[cur_arg],
+            if (nst_parse_size(args[cur_arg],
                         &global.nuster.cache.dict_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects "
@@ -654,7 +654,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                 goto out;
             }
 
-            if (nuster_parse_size(args[cur_arg],
+            if (nst_parse_size(args[cur_arg],
                         &global.nuster.nosql.dict_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects "
@@ -679,7 +679,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                 goto out;
             }
 
-            if (nuster_parse_size(args[cur_arg],
+            if (nst_parse_size(args[cur_arg],
                         &global.nuster.nosql.data_size)) {
 
                 ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects "
