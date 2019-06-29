@@ -672,7 +672,7 @@ char *nst_nosql_build_key(struct nst_nosql_ctx *ctx,
                 }
 
                 break;
-            case NUSTER_RULE_KEY_BODY:
+            case NST_RULE_KEY_BODY:
                 nuster_debug("body.");
 
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {

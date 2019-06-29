@@ -69,7 +69,7 @@ static struct nst_rule_key *_nuster_parse_rule_key_cast(char *str) {
         key->data = strdup(str + 7);
     } else if(!strcmp(str, "body")) {
         key       = malloc(sizeof(*key));
-        key->type = NUSTER_RULE_KEY_BODY;
+        key->type = NST_RULE_KEY_BODY;
         key->data = NULL;
     }
 
