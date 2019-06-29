@@ -15,7 +15,6 @@
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
-#include <nuster/file.h>
 #include <nuster/persist.h>
 
 

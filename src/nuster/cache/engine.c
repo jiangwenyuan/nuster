@@ -26,7 +26,6 @@
 #include <nuster/shctx.h>
 #include <nuster/nuster.h>
 #include <nuster/http.h>
-#include <nuster/file.h>
 #include <nuster/persist.h>
 
 
@@ -518,8 +517,7 @@ void nst_cache_init() {
 
         if(global.nuster.cache.directory) {
 
-            if(nst_create_path(global.nuster.cache.directory) ==
-                    NST_ERR) {
+            if(nst_persist_mkdir(global.nuster.cache.directory) == NST_ERR) {
 
                 ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
                 exit(1);
