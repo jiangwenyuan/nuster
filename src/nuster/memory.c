@@ -26,8 +26,8 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
     uint8_t *begin, *end;
     uint32_t bitmap_size;
 
-    if(block_size < NUSTER_MEMORY_BLOCK_MIN_SIZE) {
-        block_size = NUSTER_MEMORY_BLOCK_MIN_SIZE;
+    if(block_size < NST_MEMORY_BLOCK_MIN_SIZE) {
+        block_size = NST_MEMORY_BLOCK_MIN_SIZE;
     }
 
     if(chunk_size < NUSTER_MEMORY_CHUNK_MIN_SIZE) {
@@ -36,10 +36,10 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
 
     /*
      * set block_size to minimal number that
-     * 1, > block_size , 2, = n * NUSTER_MEMORY_BLOCK_MIN_SIZE
+     * 1, > block_size , 2, = n * NST_MEMORY_BLOCK_MIN_SIZE
      */
-    block_size = ((block_size + NUSTER_MEMORY_BLOCK_MIN_SIZE - 1)
-            / NUSTER_MEMORY_BLOCK_MIN_SIZE) << NUSTER_MEMORY_BLOCK_MIN_SHIFT;
+    block_size = ((block_size + NST_MEMORY_BLOCK_MIN_SIZE - 1)
+            / NST_MEMORY_BLOCK_MIN_SIZE) << NUSTER_MEMORY_BLOCK_MIN_SHIFT;
 
     /*
      * set chunk_size to minimal number that
@@ -102,8 +102,8 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
 
     begin = (uint8_t *) (((uintptr_t)(p)
                 + n * sizeof(struct nuster_memory_ctrl) + n * bitmap_size
-                + ((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1))
-            & ~((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1));
+                + ((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1))
+            & ~((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1));
 
     end = begin + block_size * n;
 
@@ -112,8 +112,8 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size,
         begin = (uint8_t *) (((uintptr_t)(p)
                     + n * sizeof(struct nuster_memory_ctrl)
                     + n * bitmap_size
-                    + ((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1))
-                & ~((uintptr_t) NUSTER_MEMORY_BLOCK_MIN_SIZE - 1));
+                    + ((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1))
+                & ~((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1));
     }
 
     memory->blocks      = n;
