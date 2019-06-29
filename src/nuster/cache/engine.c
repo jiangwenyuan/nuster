@@ -1186,7 +1186,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     if(ctx->rule->disk == NST_DISK_SYNC
             || ctx->rule->disk == NST_DISK_ONLY) {
 
-        nuster_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
+        nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
         nuster_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
 
