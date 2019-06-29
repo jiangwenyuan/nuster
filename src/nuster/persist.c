@@ -80,7 +80,7 @@ nuster_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
         goto err;
     }
 
-    ret = pread(disk->fd, buf, key->data, NUSTER_PERSIST_POS_KEY);
+    ret = pread(disk->fd, buf, key->data, NST_PERSIST_POS_KEY);
 
     if(ret != key->data) {
         goto err;
@@ -165,7 +165,7 @@ int nuster_persist_get_meta(int fd, char *meta) {
 
 int nuster_persist_get_key(int fd, char *meta, struct buffer *key) {
 
-    key->data = pread(fd, key->area, key->size, NUSTER_PERSIST_POS_KEY);
+    key->data = pread(fd, key->area, key->size, NST_PERSIST_POS_KEY);
 
     if(!b_full(key)) {
         return NST_ERR;
