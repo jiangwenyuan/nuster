@@ -1408,7 +1408,7 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    key->size = nuster_persist_meta_get_key_len(meta);
+                    key->size = nst_persist_meta_get_key_len(meta);
                     key->area = nst_memory_alloc(global.nuster.cache.memory,
                             key->size);
 
