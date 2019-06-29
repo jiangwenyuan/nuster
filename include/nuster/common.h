@@ -160,7 +160,7 @@ static inline uint64_t get_current_timestamp() {
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-void nuster_debug(const char *fmt, ...);
+void nst_debug(const char *fmt, ...);
 
 void nst_debug_key(struct buffer *key);
 

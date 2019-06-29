@@ -605,7 +605,7 @@ void nst_cache_init() {
             goto err;
         }
 
-        nuster_debug("[CACHE] on, data_size=%llu\n",
+        nst_debug("[CACHE] on, data_size=%llu\n",
                 global.nuster.cache.data_size);
     }
 
@@ -725,28 +725,28 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         return NST_ERR;
     }
 
-    nuster_debug("[CACHE] Calculate key: ");
+    nst_debug("[CACHE] Calculate key: ");
 
     while((ck = *pck++)) {
         int ret;
 
         switch(ck->type) {
             case NST_RULE_KEY_METHOD:
-                nuster_debug("method.");
+                nst_debug("method.");
                 ret = _nst_key_append(ctx->key,
                         http_known_methods[txn->meth].ptr,
                         http_known_methods[txn->meth].len);
 
                 break;
             case NST_RULE_KEY_SCHEME:
-                nuster_debug("scheme.");
+                nst_debug("scheme.");
                 ret = _nst_key_append(ctx->key,
                         ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
                         ctx->req.scheme == SCH_HTTPS ? 5 : 4);
 
                 break;
             case NST_RULE_KEY_HOST:
-                nuster_debug("host.");
+                nst_debug("host.");
 
                 if(ctx->req.host.data) {
                     ret = _nst_key_append(ctx->key, ctx->req.host.data,
@@ -757,7 +757,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_URI:
-                nuster_debug("uri.");
+                nst_debug("uri.");
 
                 if(ctx->req.uri.data) {
                     ret = _nst_key_append(ctx->key, ctx->req.uri.data,
@@ -769,7 +769,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_PATH:
-                nuster_debug("path.");
+                nst_debug("path.");
 
                 if(ctx->req.path.data) {
                     ret = _nst_key_append(ctx->key, ctx->req.path.data,
@@ -781,7 +781,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_DELIMITER:
-                nuster_debug("delimiter.");
+                nst_debug("delimiter.");
 
                 if(ctx->req.delimiter) {
                     ret = _nst_key_append(ctx->key, "?", 1);
@@ -791,7 +791,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_QUERY:
-                nuster_debug("query.");
+                nst_debug("query.");
 
                 if(ctx->req.query.data && ctx->req.query.len) {
                     ret = _nst_key_append(ctx->key, ctx->req.query.data,
@@ -803,7 +803,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_PARAM:
-                nuster_debug("param_%s.", ck->data);
+                nst_debug("param_%s.", ck->data);
 
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
@@ -822,7 +822,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 break;
             case NST_RULE_KEY_HEADER:
                 hdr.idx = 0;
-                nuster_debug("header_%s.", ck->data);
+                nst_debug("header_%s.", ck->data);
 
                 while (http_find_header2(ck->data, strlen(ck->data),
                             ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
@@ -837,7 +837,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_COOKIE:
-                nuster_debug("cookie_%s.", ck->data);
+                nst_debug("cookie_%s.", ck->data);
 
                 if(ctx->req.cookie.data) {
                     char *v = NULL;
@@ -856,7 +856,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 ret = _nst_key_advance(ctx->key, 2);
                 break;
             case NST_RULE_KEY_BODY:
-                nuster_debug("body.");
+                nst_debug("body.");
 
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
 
@@ -880,7 +880,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         }
     }
 
-    nuster_debug("\n");
+    nst_debug("\n");
     return NST_OK;
 }
 

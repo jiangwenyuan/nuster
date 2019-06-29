@@ -133,7 +133,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
         }
 
         list_for_each_entry(rule, &px->nuster.rules, list) {
-            nuster_debug("[NOSQL] Checking rule: %s\n", rule->name);
+            nst_debug("[NOSQL] Checking rule: %s\n", rule->name);
 
             /* build key */
             if(ctx->key) {
@@ -147,27 +147,27 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 return 1;
             }
 
-            nuster_debug("[NOSQL] Got key: %s\n", ctx->key);
+            nst_debug("[NOSQL] Got key: %s\n", ctx->key);
             hash = nuster_hash(ctx->key, strlen(ctx->key));
 
             if(s->txn->meth == HTTP_METH_GET) {
                 ctx->data = nst_nosql_exists(ctx->key, hash);
 
                 if(ctx->data) {
-                    nuster_debug("EXIST\n[NOSQL] Hit\n");
+                    nst_debug("EXIST\n[NOSQL] Hit\n");
                     /* OK, nosql exists */
                     ctx->state = NST_NOSQL_CTX_STATE_HIT;
                     break;
                 }
 
-                nuster_debug("NOT EXIST\n");
+                nst_debug("NOT EXIST\n");
             } else if(s->txn->meth == HTTP_METH_POST) {
-                nuster_debug("[NOSQL] Checking if rule pass: ");
+                nst_debug("[NOSQL] Checking if rule pass: ");
 
                 if(nuster_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
-                    nuster_debug("PASS\n");
+                    nst_debug("PASS\n");
 
                     if(nst_nosql_get_headers(ctx, s, msg)) {
                         ctx->state = NST_NOSQL_CTX_STATE_PASS;
@@ -179,16 +179,16 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
                     break;
                 }
-                nuster_debug("FAIL\n");
+                nst_debug("FAIL\n");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
                 if(nst_nosql_delete(ctx->key, hash)) {
-                    nuster_debug("EXIST\n[NOSQL] Delete\n");
+                    nst_debug("EXIST\n[NOSQL] Delete\n");
                     ctx->state = NST_NOSQL_CTX_STATE_DELETE;
                     break;
                 }
 
-                nuster_debug("NOT EXIST\n");
+                nst_debug("NOT EXIST\n");
             }
         }
     }
