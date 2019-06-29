@@ -139,7 +139,7 @@ DIR *nst_persist_opendir_by_idx(char *path, int idx, char *dir) {
     return opendir(path);
 }
 
-struct dirent *nuster_persist_dir_next(DIR *dir) {
+struct dirent *nst_persist_dir_next(DIR *dir) {
     return readdir(dir);
 }
 

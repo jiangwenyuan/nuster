@@ -1356,7 +1356,7 @@ void nst_cache_persist_load() {
         file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
-            struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);
+            struct dirent *de = nst_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
                 DIR *dir2;
@@ -1459,7 +1459,7 @@ void nst_cache_persist_cleanup() {
         char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
-            struct dirent *de = nuster_persist_dir_next(nuster.cache->disk.dir);
+            struct dirent *de = nst_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
                 nst_persist_cleanup(file, de);
