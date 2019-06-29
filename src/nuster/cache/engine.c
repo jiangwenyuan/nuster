@@ -802,7 +802,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 }
 
                 break;
-            case NUSTER_RULE_KEY_PARAM:
+            case NST_RULE_KEY_PARAM:
                 nuster_debug("param_%s.", ck->data);
 
                 if(ctx->req.query.data && ctx->req.query.len) {

@@ -57,7 +57,7 @@ static struct nst_rule_key *_nuster_parse_rule_key_cast(char *str) {
         key->data = NULL;
     } else if(!strncmp(str, "param_", 6) && strlen(str) > 6) {
         key       = malloc(sizeof(*key));
-        key->type = NUSTER_RULE_KEY_PARAM;
+        key->type = NST_RULE_KEY_PARAM;
         key->data = strdup(str + 6);
     } else if(!strncmp(str, "header_", 7) && strlen(str) > 7) {
         key       = malloc(sizeof(*key));
