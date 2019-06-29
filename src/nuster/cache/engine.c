@@ -1417,7 +1417,7 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    if(nuster_persist_get_key(fd, meta, key) != NST_OK) {
+                    if(nst_persist_get_key(fd, meta, key) != NST_OK) {
                         nst_memory_free(global.nuster.cache.memory,
                                 key->area);
 
