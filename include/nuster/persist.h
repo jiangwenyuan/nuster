@@ -54,7 +54,7 @@
 
 
 #define NST_PERSIST_META_SIZE        8 * 6
-#define NUSTER_PERSIST_POS_KEY          NST_PERSIST_META_SIZE
+#define NST_PERSIST_POS_KEY          NST_PERSIST_META_SIZE
 
 enum {
     NUSTER_PERSIST_APPLET_ERROR   = -1,
@@ -189,7 +189,7 @@ nuster_persist_write_meta(struct persist *disk) {
 
 static inline int
 nuster_persist_write_key(struct persist *disk, struct buffer *key) {
-    disk->offset = NUSTER_PERSIST_POS_KEY;
+    disk->offset = NST_PERSIST_POS_KEY;
     return nuster_persist_write(disk, key->area, key->data);
 }
 
