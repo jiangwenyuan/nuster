@@ -186,7 +186,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
                         }
 
                         chunk_appendf(&trash, "state=%s ttl=%"PRIu32"\n",
-                                *rule->state == NUSTER_RULE_ENABLED
+                                *rule->state == NST_RULE_ENABLED
                                 ? "on" : "off", *rule->ttl);
 
                         if (ci_putchk(res, &trash) == -1) {

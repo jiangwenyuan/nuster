@@ -111,7 +111,7 @@ struct nst_rule_code {
 
 enum {
     NST_RULE_DISABLED = 0,
-    NUSTER_RULE_ENABLED  = 1,
+    NST_RULE_ENABLED  = 1,
 };
 
 enum {
