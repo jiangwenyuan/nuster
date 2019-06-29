@@ -82,7 +82,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                             &appctx->ctx.nuster.nosql_engine.data
                             ->info.transfer_encoding);
                 } else {
-                    nuster_res_header_content_length(
+                    nst_res_header_content_length(
                             appctx->ctx.nuster.nosql_engine.data
                             ->info.content_length);
 
