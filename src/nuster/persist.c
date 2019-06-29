@@ -99,7 +99,7 @@ err:
 }
 
 
-int nuster_persist_exists(struct persist *disk, struct buffer *key,
+int nst_persist_exists(struct persist *disk, struct buffer *key,
         uint64_t hash, char *dir) {
 
     struct dirent *de;

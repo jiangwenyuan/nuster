@@ -164,7 +164,7 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_key_len(p, key_len);
 }
 
-int nuster_persist_exists(struct persist *disk, struct buffer *key,
+int nst_persist_exists(struct persist *disk, struct buffer *key,
         uint64_t hash, char *dir);
 
 static inline int
