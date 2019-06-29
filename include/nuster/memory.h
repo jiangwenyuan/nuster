@@ -56,7 +56,7 @@ struct nst_memory_ctrl {
     struct nst_memory_ctrl *next;
 };
 
-struct nuster_memory {
+struct nst_memory {
     uint8_t                    *start;
     uint8_t                    *stop;
     uint8_t                    *bitmap;
@@ -120,9 +120,9 @@ _nst_memory_block_clear_full(struct nst_memory_ctrl *block) {
     bit_clear(block->info, 11);
 }
 
-struct nuster_memory *nst_memory_create(char *name, uint64_t size,
+struct nst_memory *nst_memory_create(char *name, uint64_t size,
         uint32_t block_size, uint32_t chunk_size);
-void *nst_memory_alloc(struct nuster_memory *memory, int size);
-void nst_memory_free(struct nuster_memory *memory, void *p);
+void *nst_memory_alloc(struct nst_memory *memory, int size);
+void nst_memory_free(struct nst_memory *memory, void *p);
 
 #endif /* _NUSTER_MEMORY_H */

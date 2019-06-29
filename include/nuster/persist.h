@@ -79,7 +79,7 @@ struct persist {
 /* /a/4a/60322ec3e2428e4a/71fabeefebdaaedb-16ae92496e1: + 1 + 16 + 1 + 11 */
 #define NUSTER_PERSIST_PATH_FILE_LEN NUSTER_PERSIST_PATH_HASH_LEN + 29
 
-char *nuster_persist_alloc(struct nuster_memory *p);
+char *nuster_persist_alloc(struct nst_memory *p);
 
 int nuster_persist_init(char *path, uint64_t hash, char *dir);
 
