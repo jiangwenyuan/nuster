@@ -232,7 +232,7 @@ void _nuster_memory_block_init(struct nuster_memory * memory,
     struct nst_memory_ctrl *chunk;
     chunk       = memory->chunk[chunk_idx];
     block->info = 0;
-    _nuster_memory_block_set_type(block, chunk_idx);
+    _nst_memory_block_set_type(block, chunk_idx);
     _nuster_memory_block_set_inited(block);
 
     memset(block->bitmap, 0, memory->block_size / memory->chunk_size / 8);

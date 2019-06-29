@@ -92,7 +92,7 @@ struct nuster_memory {
 #define bit_unused(bit, i) ((((bit) >> (i)) & 1) == 0)
 
 static inline void
-_nuster_memory_block_set_type(struct nst_memory_ctrl *block, uint8_t type) {
+_nst_memory_block_set_type(struct nst_memory_ctrl *block, uint8_t type) {
     *(uint8_t *)(&block->info) = type;
 }
 static inline void
