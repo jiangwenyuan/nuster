@@ -108,7 +108,7 @@ static inline void nst_res_header_end() {
     chunk_appendf(&trash, "\r\n");
 }
 
-static inline void nuster_res_header_send(struct channel *chn) {
+static inline void nst_res_header_send(struct channel *chn) {
     ci_putblk(chn, trash.area, trash.data);
 }
 
