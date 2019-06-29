@@ -69,7 +69,7 @@ static inline int nuster_check_applet (struct stream *s, struct channel *req,
             nst_cache_stats(s, req, px));
 }
 
-int nuster_test_rule(struct nst_rule *rule, struct stream *s, int res);
+int nst_test_rule(struct nst_rule *rule, struct stream *s, int res);
 
 static inline uint64_t nuster_hash(const char *buf, size_t len) {
     return XXH64(buf, len, 0);

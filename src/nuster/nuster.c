@@ -156,7 +156,7 @@ err:
     exit(1);
 }
 
-int nuster_test_rule(struct nst_rule *rule, struct stream *s, int res) {
+int nst_test_rule(struct nst_rule *rule, struct stream *s, int res) {
     int ret;
 
     /* no acl defined */
