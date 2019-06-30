@@ -220,7 +220,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
     if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
         appctx->st1 = msg->sov;
-        nst_nosql_create(ctx, ctx->key->area, ctx->hash, s, msg);
+        nst_nosql_create(ctx, s, msg);
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
