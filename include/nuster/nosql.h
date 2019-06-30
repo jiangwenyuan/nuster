@@ -217,7 +217,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
 /* dict */
 int nst_nosql_dict_init();
 struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash);
-struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
+struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
         struct nst_nosql_ctx *ctx);
 
 void nst_nosql_dict_rehash();
