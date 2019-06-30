@@ -549,7 +549,7 @@ void nst_cache_init() {
 
         } else {
             global.nuster.cache.memory = nst_memory_create("cache.shm",
-                    NST_DEFAULT_SIZE, 0, 0);
+                    NST_DEFAULT_DATA_SIZE, 0, 0);
 
             if(!global.nuster.cache.memory) {
                 goto shm_err;
