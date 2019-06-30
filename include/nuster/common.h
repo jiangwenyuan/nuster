@@ -41,10 +41,11 @@
 #include <common/mini-clist.h>
 #include <types/acl.h>
 
-#define NST_OK               0
-#define NST_ERR              1
+#define NST_OK          0
+#define NST_ERR         1
 
-#define NST_DEFAULT_TTL      0
+#define NST_DEFAULT_TTL         0
+#define NST_DEFAULT_DICT_SIZE   32
 
 enum {
     NST_STATUS_UNDEFINED = -1,
