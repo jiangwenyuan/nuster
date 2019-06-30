@@ -208,6 +208,12 @@ struct global {
 			int       status;                      /* enable nosql on or off */
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
 			uint64_t  data_size;                   /* max memory used by nosql, in bytes */
+			char     *directory;                   /* directory */
+			int	  dict_cleaner;                /* the number of entries checked once */
+			int	  data_cleaner;                /* the number of data checked once */
+			int	  disk_cleaner;                /* the number of files checked once */
+			int	  disk_loader;                 /* the number of files load once */
+			int	  disk_saver;                  /* the number of entries checked once for persist_async */
 
 			struct {
 				struct pool_head *stash;
