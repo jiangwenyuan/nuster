@@ -225,7 +225,7 @@ void nst_nosql_dict_cleanup() {
 /*
  * Add a new nst_nosql_entry to nosql_dict
  */
-struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
+struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
         struct nst_nosql_ctx *ctx) {
 
     struct nst_nosql_dict  *dict  = NULL;
@@ -242,7 +242,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
         return NULL;
     }
 
-    entry_key = nst_memory_alloc(global.nuster.nosql.memory, strlen(key) + 1);
+    entry_key = nst_memory_alloc(global.nuster.nosql.memory, key->data + 1);
 
     if(!entry_key) {
         nst_memory_free(global.nuster.nosql.memory, entry_key);
@@ -250,6 +250,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
     }
 
     data = nst_nosql_data_new();
+
     if(!data) {
         nst_memory_free(global.nuster.nosql.memory, entry_key);
         nst_memory_free(global.nuster.nosql.memory, entry);
@@ -266,7 +267,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
     entry->data   = data;
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
     entry->key    = entry_key;
-    memcpy(entry->key, key, strlen(key) + 1);
+    memcpy(entry->key, key->area, key->data + 1);
     entry->hash   = hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
