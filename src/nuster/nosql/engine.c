@@ -27,21 +27,6 @@
 #include <proto/acl.h>
 #include <proto/log.h>
 
-/* TODO:
- * Copied from cache/engine.c with little adjustment
- * Move to common when nosql part is fixed
- * */
-
-/*
-static const char HTTP_100[] =
-"HTTP/1.1 100 Continue\r\n\r\n";
-
-static struct chunk http_100_chunk = {
-    .str = (char *)&HTTP_100,
-    .len = sizeof(HTTP_100)-1
-};
-*/
-
 static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct stream_interface *si       = appctx->owner;
     struct stream *s                  = si_strm(si);
@@ -416,48 +401,6 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req,
     }
 
     return 0;
-}
-
-static char *_string_append(char *dst, int *dst_len, int *dst_size,
-        char *src, int src_len) {
-
-    int left     = *dst_size - *dst_len;
-    int need     = src_len + 1;
-    int old_size = *dst_size;
-
-    if(left < need) {
-        *dst_size += ((need - left) / NST_NOSQL_DEFAULT_KEY_SIZE + 1)
-            * NST_NOSQL_DEFAULT_KEY_SIZE;
-    }
-
-    if(old_size != *dst_size) {
-        char *new_dst = realloc(dst, *dst_size);
-
-        if(!new_dst) {
-            free(dst);
-            return NULL;
-        }
-
-        dst = new_dst;
-    }
-
-    memcpy(dst + *dst_len, src, src_len);
-    *dst_len += src_len;
-    dst[*dst_len] = '\0';
-
-    return dst;
-}
-
-static char *_nst_nosql_key_append(char *dst, int *dst_len, int *dst_size,
-        char *src, int src_len) {
-
-    char *key = _string_append(dst, dst_len, dst_size, src, src_len);
-
-    if(key) {
-        return _string_append(key, dst_len, dst_size, ".", 1);
-    }
-
-    return NULL;
 }
 
 int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
