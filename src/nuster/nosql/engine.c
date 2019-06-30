@@ -838,7 +838,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
     }
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
-    entry = nst_nosql_dict_get(ctx->key->area, ctx->hash);
+    entry = nst_nosql_dict_get(ctx->key, ctx->hash);
 
     if(entry) {
 
