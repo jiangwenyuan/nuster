@@ -826,8 +826,8 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
     return 1;
 }
 
-void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
-        struct stream *s, struct http_msg *msg) {
+void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
 
     struct nst_nosql_entry *entry = NULL;
 
@@ -838,7 +838,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
     }
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
-    entry = nst_nosql_dict_get(key, hash);
+    entry = nst_nosql_dict_get(ctx->key->area, ctx->hash);
 
     if(entry) {
 
@@ -856,7 +856,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, char *key, uint64_t hash,
         }
     } else {
         ctx->state = NST_NOSQL_CTX_STATE_CREATE;
-        entry = nst_nosql_dict_set(key, hash, ctx);
+        entry = nst_nosql_dict_set(ctx->key->area, ctx->hash, ctx);
     }
 
     nst_shctx_unlock(&nuster.nosql->dict[0]);
