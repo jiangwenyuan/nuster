@@ -150,7 +150,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             nst_debug("[NOSQL] Got hash: %"PRIu64"\n", ctx->hash);
 
             if(s->txn->meth == HTTP_METH_GET) {
-                ctx->data = nst_nosql_exists(ctx->key->area, ctx->hash);
+                ctx->data = nst_nosql_exists(ctx->key, ctx->hash);
 
                 if(ctx->data) {
                     nst_debug("EXIST\n[NOSQL] Hit\n");
