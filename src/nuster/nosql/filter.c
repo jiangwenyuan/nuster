@@ -182,7 +182,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 nst_debug("FAIL\n");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
-                if(nst_nosql_delete(ctx->key->area, ctx->hash)) {
+                if(nst_nosql_delete(ctx->key, ctx->hash)) {
                     nst_debug("EXIST\n[NOSQL] Delete\n");
                     ctx->state = NST_NOSQL_CTX_STATE_DELETE;
                     break;
