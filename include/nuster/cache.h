@@ -36,7 +36,6 @@
 #include <nuster/common.h>
 #include <nuster/persist.h>
 
-#define NST_CACHE_DEFAULT_SIZE                1024 * 1024
 #define NST_CACHE_DEFAULT_LOAD_FACTOR         0.75
 #define NST_CACHE_DEFAULT_GROWTH_FACTOR       2
 #define NST_CACHE_DEFAULT_KEY                "method.scheme.host.uri"

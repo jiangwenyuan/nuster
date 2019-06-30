@@ -209,8 +209,8 @@ const char *nst_parse_size(const char *text, uint64_t *ret) {
         return text;
     }
 
-    if(value < NST_CACHE_DEFAULT_SIZE) {
-        value = NST_CACHE_DEFAULT_SIZE;
+    if(value < NST_DEFAULT_SIZE) {
+        value = NST_DEFAULT_SIZE;
     }
 
     *ret = value;
@@ -218,7 +218,7 @@ const char *nst_parse_size(const char *text, uint64_t *ret) {
     return NULL;
 
 end:
-    *ret = NST_CACHE_DEFAULT_SIZE;
+    *ret = NST_DEFAULT_SIZE;
 
     return NULL;
 }
