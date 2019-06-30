@@ -87,7 +87,7 @@ int nst_cache_dict_init() {
 
         return _nst_cache_dict_alloc(size);
     } else {
-        return _nst_cache_dict_resize(NST_CACHE_DEFAULT_DICT_SIZE);
+        return _nst_cache_dict_resize(NST_DEFAULT_DICT_SIZE);
     }
 
 }
