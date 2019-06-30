@@ -871,6 +871,31 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
             ctx->element = entry->data->element;
         }
     }
+
+    if(ctx->state == NST_NOSQL_CTX_STATE_CREATE
+            && (ctx->rule->disk == NST_DISK_SYNC
+                || ctx->rule->disk == NST_DISK_ONLY)) {
+
+        ctx->disk.file = nst_memory_alloc(global.nuster.nosql.memory,
+                NST_PERSIST_PATH_FILE_LEN + 1);
+
+        if(!ctx->disk.file) {
+            return;
+        }
+
+        if(nst_persist_init(ctx->disk.file, ctx->hash,
+                global.nuster.nosql.directory) != NST_OK) {
+
+            return;
+        }
+
+        ctx->disk.fd = nst_persist_create(ctx->disk.file);
+
+        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
+                ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
+
+        nst_persist_write_key(&ctx->disk, ctx->entry->key);
+    }
 }
 
 static struct nst_nosql_element *_nst_nosql_data_append(struct http_msg *msg,

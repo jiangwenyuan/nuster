@@ -1099,7 +1099,6 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             return;
         }
 
-
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
