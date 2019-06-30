@@ -231,7 +231,6 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
     struct nst_nosql_dict  *dict  = NULL;
     struct nst_nosql_data  *data  = NULL;
     struct nst_nosql_entry *entry = NULL;
-    char *entry_key               = NULL;
     int idx;
 
     dict = _nst_nosql_dict_rehashing()
@@ -242,17 +241,9 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
         return NULL;
     }
 
-    entry_key = nst_memory_alloc(global.nuster.nosql.memory, key->data + 1);
-
-    if(!entry_key) {
-        nst_memory_free(global.nuster.nosql.memory, entry_key);
-        return NULL;
-    }
-
     data = nst_nosql_data_new();
 
     if(!data) {
-        nst_memory_free(global.nuster.nosql.memory, entry_key);
         nst_memory_free(global.nuster.nosql.memory, entry);
         return NULL;
     }
@@ -266,8 +257,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
     /* init entry */
     entry->data   = data;
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
-    entry->key    = entry_key;
-    memcpy(entry->key, key->area, key->data + 1);
+    entry->key    = key;
     entry->hash   = hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
@@ -301,7 +291,7 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash) {
 
         while(entry) {
 
-            if(entry->hash == hash
+            if(entry->hash == hash && entry->key->data == key->data
                     && !memcmp(entry->key, key->area, key->data)) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
