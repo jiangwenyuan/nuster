@@ -225,8 +225,7 @@ void nst_nosql_dict_cleanup() {
 /*
  * Add a new nst_nosql_entry to nosql_dict
  */
-struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
-        struct nst_nosql_ctx *ctx) {
+struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 
     struct nst_nosql_dict  *dict  = NULL;
     struct nst_nosql_data  *data  = NULL;
@@ -248,7 +247,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
         return NULL;
     }
 
-    idx = hash % dict->size;
+    idx = ctx->hash % dict->size;
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
     dict->entry[idx] = entry;
@@ -257,8 +256,8 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct buffer *key, uint64_t hash,
     /* init entry */
     entry->data   = data;
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
-    entry->key    = key;
-    entry->hash   = hash;
+    entry->key    = ctx->key;
+    entry->hash   = ctx->hash;
     entry->expire = 0;
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;

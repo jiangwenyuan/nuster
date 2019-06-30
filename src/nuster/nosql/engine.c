@@ -856,7 +856,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         }
     } else {
         ctx->state = NST_NOSQL_CTX_STATE_CREATE;
-        entry = nst_nosql_dict_set(ctx->key, ctx->hash, ctx);
+        entry = nst_nosql_dict_set(ctx);
     }
 
     nst_shctx_unlock(&nuster.nosql->dict[0]);
