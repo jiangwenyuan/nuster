@@ -135,7 +135,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
             /* build key */
             if(ctx->key) {
-                free(ctx->key);
+                nst_memory_free(global.nuster.nosql.memory, ctx->key);
             }
 
             if(nst_nosql_build_key(ctx, rule->key, s, msg) != NST_OK) {
