@@ -478,8 +478,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             global.nuster.cache.dict_cleaner = atoi(args[cur_arg]);
 
             if(global.nuster.cache.dict_cleaner <= 0) {
-                global.nuster.cache.dict_cleaner =
-                    NST_DEFAULT_DICT_CLEANER;
+                global.nuster.cache.dict_cleaner = NST_DEFAULT_DICT_CLEANER;
             }
 
             cur_arg++;
@@ -500,8 +499,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             global.nuster.cache.data_cleaner = atoi(args[cur_arg]);
 
             if(global.nuster.cache.data_cleaner <= 0) {
-                global.nuster.cache.data_cleaner =
-                    NST_DEFAULT_DATA_CLEANER;
+                global.nuster.cache.data_cleaner = NST_DEFAULT_DATA_CLEANER;
             }
 
             cur_arg++;
@@ -522,8 +520,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             global.nuster.cache.disk_cleaner = atoi(args[cur_arg]);
 
             if(global.nuster.cache.disk_cleaner <= 0) {
-                global.nuster.cache.disk_cleaner =
-                    NST_DEFAULT_DISK_CLEANER;
+                global.nuster.cache.disk_cleaner = NST_DEFAULT_DISK_CLEANER;
             }
 
             cur_arg++;
@@ -662,6 +659,128 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "dir")) {
+            cur_arg++;
+
+            if(*(args[cur_arg]) == 0) {
+                ha_alert("parsing [%s:%d]: '%s': `dir` expects a directory as "
+                        "an argument.\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.nosql.directory = strdup(args[cur_arg]);
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "dict-cleaner")) {
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.nosql.dict_cleaner = atoi(args[cur_arg]);
+
+            if(global.nuster.nosql.dict_cleaner <= 0) {
+                global.nuster.nosql.dict_cleaner = NST_DEFAULT_DICT_CLEANER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "data-cleaner")) {
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.nosql.data_cleaner = atoi(args[cur_arg]);
+
+            if(global.nuster.nosql.data_cleaner <= 0) {
+                global.nuster.nosql.data_cleaner =
+                    NST_DEFAULT_DATA_CLEANER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "disk-cleaner")) {
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.nosql.disk_cleaner = atoi(args[cur_arg]);
+
+            if(global.nuster.nosql.disk_cleaner <= 0) {
+                global.nuster.nosql.disk_cleaner = NST_DEFAULT_DISK_CLEANER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "disk-loader")) {
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.nosql.disk_loader = atoi(args[cur_arg]);
+
+            if(global.nuster.nosql.disk_loader <= 0) {
+                global.nuster.nosql.disk_loader = NST_DEFAULT_DISK_LOADER;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "disk-saver")) {
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number."
+                        "\n", file, linenum, args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+                goto out;
+            }
+
+            global.nuster.nosql.disk_saver = atoi(args[cur_arg]);
+
+            if(global.nuster.nosql.disk_saver <= 0) {
+                global.nuster.nosql.disk_saver = NST_DEFAULT_DISK_SAVER;
             }
 
             cur_arg++;
