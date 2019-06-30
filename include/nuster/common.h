@@ -52,6 +52,7 @@
 #define NST_DEFAULT_DATA_CLEANER        1024
 #define NST_DEFAULT_DISK_CLEANER        1024
 #define NST_DEFAULT_DISK_LOADER         1024
+#define NST_DEFAULT_DISK_SAVER          1024
 
 enum {
     NST_STATUS_UNDEFINED = -1,
