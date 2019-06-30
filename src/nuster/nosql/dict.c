@@ -286,7 +286,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(const char *key, uint64_t hash,
 /*
  * Get entry
  */
-struct nst_nosql_entry *nst_nosql_dict_get(const char *key, uint64_t hash) {
+struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash) {
     int i, idx;
     struct nst_nosql_entry *entry = NULL;
 
@@ -300,12 +300,14 @@ struct nst_nosql_entry *nst_nosql_dict_get(const char *key, uint64_t hash) {
 
         while(entry) {
 
-            if(entry->hash == hash && !strcmp(entry->key, key)) {
+            if(entry->hash == hash
+                    && !memcmp(entry->key, key->area, key->data)) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */
                 if(entry->state == NST_NOSQL_ENTRY_STATE_VALID
                         && _nst_nosql_dict_entry_expired(entry)) {
+
                     entry->state         = NST_NOSQL_ENTRY_STATE_EXPIRED;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
