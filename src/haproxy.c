@@ -189,6 +189,12 @@ struct global global = {
 			.status       = NST_STATUS_UNDEFINED,
 			.dict_size    = NST_CACHE_DEFAULT_SIZE,
 			.data_size    = NST_CACHE_DEFAULT_SIZE,
+			.directory    = NULL,
+			.dict_cleaner = NST_CACHE_DEFAULT_DICT_CLEANER,
+			.data_cleaner = NST_CACHE_DEFAULT_DATA_CLEANER,
+			.disk_cleaner = NST_CACHE_DEFAULT_DISK_CLEANER,
+			.disk_loader  = NST_CACHE_DEFAULT_DISK_LOADER,
+			.disk_saver   = NST_CACHE_DEFAULT_DISK_SAVER,
 		},
 	},
 	/* others NULL OK */
