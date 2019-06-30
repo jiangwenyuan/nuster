@@ -930,7 +930,7 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
     }
 }
 
-struct nst_nosql_data *nst_nosql_exists(const char *key, uint64_t hash) {
+struct nst_nosql_data *nst_nosql_exists(struct buffer *key, uint64_t hash) {
     struct nst_nosql_entry *entry = NULL;
     struct nst_nosql_data  *data  = NULL;
 
