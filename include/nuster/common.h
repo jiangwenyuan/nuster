@@ -44,10 +44,11 @@
 #define NST_OK          0
 #define NST_ERR         1
 
-#define NST_DEFAULT_TTL         0
-#define NST_DEFAULT_SIZE        1024 * 1024
-#define NST_DEFAULT_DICT_SIZE   NST_DEFAULT_SIZE
-#define NST_DEFAULT_DATA_SIZE   NST_DEFAULT_SIZE
+#define NST_DEFAULT_TTL                 0
+#define NST_DEFAULT_SIZE                1024 * 1024
+#define NST_DEFAULT_DICT_SIZE           NST_DEFAULT_SIZE
+#define NST_DEFAULT_DATA_SIZE           NST_DEFAULT_SIZE
+#define NST_DEFAULT_DICT_CLEANER        1024
 
 enum {
     NST_STATUS_UNDEFINED = -1,
