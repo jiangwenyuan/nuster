@@ -92,7 +92,8 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
         }
 
         if(ctx->key) {
-            free(ctx->key);
+            nst_memory_free(global.nuster.nosql.memory, ctx->key);
+            nst_memory_free(global.nuster.nosql.memory, ctx->key);
         }
 
         pool_free(global.nuster.nosql.pool.ctx, ctx);
