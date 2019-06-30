@@ -143,6 +143,11 @@ struct nst_nosql_ctx {
     } req;
 
     int                       pid;         /* proxy uuid */
+
+    int                       header_len;
+    uint64_t                  cache_len;
+
+    struct persist            disk;
 };
 
 struct nst_nosql_stats {
