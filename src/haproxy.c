@@ -180,7 +180,7 @@ struct global global = {
 			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
 			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
 			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_CACHE_DEFAULT_DISK_SAVER,
+			.disk_saver   = NST_DEFAULT_DISK_SAVER,
 			.share        = NST_STATUS_ON,
 			.purge_method = NULL,
 			.directory    = NULL,
@@ -194,7 +194,7 @@ struct global global = {
 			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
 			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
 			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_CACHE_DEFAULT_DISK_SAVER,
+			.disk_saver   = NST_DEFAULT_DISK_SAVER,
 		},
 	},
 	/* others NULL OK */

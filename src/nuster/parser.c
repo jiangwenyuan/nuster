@@ -479,7 +479,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
 
             if(global.nuster.cache.dict_cleaner <= 0) {
                 global.nuster.cache.dict_cleaner =
-                    NST_CACHE_DEFAULT_DICT_CLEANER;
+                    NST_DEFAULT_DICT_CLEANER;
             }
 
             cur_arg++;
@@ -501,7 +501,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
 
             if(global.nuster.cache.data_cleaner <= 0) {
                 global.nuster.cache.data_cleaner =
-                    NST_CACHE_DEFAULT_DATA_CLEANER;
+                    NST_DEFAULT_DATA_CLEANER;
             }
 
             cur_arg++;
@@ -523,7 +523,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
 
             if(global.nuster.cache.disk_cleaner <= 0) {
                 global.nuster.cache.disk_cleaner =
-                    NST_CACHE_DEFAULT_DISK_CLEANER;
+                    NST_DEFAULT_DISK_CLEANER;
             }
 
             cur_arg++;
@@ -544,7 +544,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             global.nuster.cache.disk_loader = atoi(args[cur_arg]);
 
             if(global.nuster.cache.disk_loader <= 0) {
-                global.nuster.cache.disk_loader = NST_CACHE_DEFAULT_DISK_LOADER;
+                global.nuster.cache.disk_loader = NST_DEFAULT_DISK_LOADER;
             }
 
             cur_arg++;
@@ -565,7 +565,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             global.nuster.cache.disk_saver = atoi(args[cur_arg]);
 
             if(global.nuster.cache.disk_saver <= 0) {
-                global.nuster.cache.disk_saver = NST_CACHE_DEFAULT_DISK_SAVER;
+                global.nuster.cache.disk_saver = NST_DEFAULT_DISK_SAVER;
             }
 
             cur_arg++;
