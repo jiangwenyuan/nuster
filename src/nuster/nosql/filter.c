@@ -106,7 +106,6 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
     struct nst_nosql_ctx *ctx   = filter->ctx;
     struct nst_rule *rule       = NULL;
     struct proxy *px            = s->be;
-    uint64_t hash               = 0;
     struct appctx *appctx       = si_appctx(si);
     struct channel *req         = msg->chn;
     struct channel *res         = &s->res;
@@ -146,10 +145,10 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             }
 
             nst_debug("[NOSQL] Got key: %s\n", ctx->key);
-            hash = nst_hash(ctx->key->area, ctx->key->data);
+            ctx->hash = nst_hash(ctx->key->area, ctx->key->data);
 
             if(s->txn->meth == HTTP_METH_GET) {
-                ctx->data = nst_nosql_exists(ctx->key->area, hash);
+                ctx->data = nst_nosql_exists(ctx->key->area, ctx->hash);
 
                 if(ctx->data) {
                     nst_debug("EXIST\n[NOSQL] Hit\n");
@@ -180,7 +179,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 nst_debug("FAIL\n");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
-                if(nst_nosql_delete(ctx->key->area, hash)) {
+                if(nst_nosql_delete(ctx->key->area, ctx->hash)) {
                     nst_debug("EXIST\n[NOSQL] Delete\n");
                     ctx->state = NST_NOSQL_CTX_STATE_DELETE;
                     break;
@@ -218,7 +217,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
     if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
         appctx->st1 = msg->sov;
-        nst_nosql_create(ctx, ctx->key->area, hash, s, msg);
+        nst_nosql_create(ctx, ctx->key->area, ctx->hash, s, msg);
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
