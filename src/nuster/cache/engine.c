@@ -710,8 +710,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
 }
 
 int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
-        struct stream *s,
-        struct http_msg *msg) {
+        struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
     struct hdr_ctx hdr;
@@ -805,6 +804,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
                     int v_l = 0;
+
                     if(nst_req_find_param(ctx->req.query.data,
                                 ctx->req.query.data + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NST_OK) {
@@ -872,6 +872,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
             default:
                 break;
         }
+
         if(ret != NST_OK) {
             return NST_ERR;
         }
