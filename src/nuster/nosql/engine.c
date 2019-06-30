@@ -951,7 +951,7 @@ struct nst_nosql_data *nst_nosql_exists(struct buffer *key, uint64_t hash) {
     return data;
 }
 
-int nst_nosql_delete(const char *key, uint64_t hash) {
+int nst_nosql_delete(struct buffer *key, uint64_t hash) {
     struct nst_nosql_entry *entry = NULL;
     int ret = 0;
 

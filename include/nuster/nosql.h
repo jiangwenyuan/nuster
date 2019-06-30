@@ -202,7 +202,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
 uint64_t nst_nosql_hash_key(const char *key);
 struct nst_nosql_data *nst_nosql_exists(struct buffer *key, uint64_t hash);
-int nst_nosql_delete(const char *key, uint64_t hash);
+int nst_nosql_delete(struct buffer *key, uint64_t hash);
 void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
