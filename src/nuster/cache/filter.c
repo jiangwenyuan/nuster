@@ -154,7 +154,9 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 //TODO
                 nst_debug("[CACHE] Got key: ");
                 nst_debug_key(ctx->key);
+
                 ctx->hash = nst_hash(ctx->key->area, ctx->key->data);
+
                 nst_debug("[CACHE] Got hash: %"PRIu64"\n", ctx->hash);
 
                 /* stash key */

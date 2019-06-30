@@ -137,15 +137,17 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 free(ctx->key);
             }
 
-            nst_nosql_build_key(ctx, rule->key, s, msg);
-
-            if(!ctx->key) {
+            if(nst_nosql_build_key(ctx, rule->key, s, msg) != NST_OK) {
                 appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
                 return 1;
             }
 
-            nst_debug("[NOSQL] Got key: %s\n", ctx->key);
+            nst_debug("[NOSQL] Got key: ");
+            nst_debug_key(ctx->key);
+
             ctx->hash = nst_hash(ctx->key->area, ctx->key->data);
+
+            nst_debug("[NOSQL] Got hash: %"PRIu64"\n", ctx->hash);
 
             if(s->txn->meth == HTTP_METH_GET) {
                 ctx->data = nst_nosql_exists(ctx->key->area, ctx->hash);
@@ -176,6 +178,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
                     break;
                 }
+
                 nst_debug("FAIL\n");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
