@@ -125,6 +125,7 @@ struct nst_nosql_ctx {
 
     struct nst_rule          *rule;
     struct buffer            *key;
+    uint64_t                  hash;
 
     struct nst_nosql_entry   *entry;
     struct nst_nosql_data    *data;
