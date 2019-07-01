@@ -1667,6 +1667,8 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					 * to the client . Switch the response to tunnel mode. */
 					h1_set_res_tunnel_mode(h1s);
 				}
+				else if ((h1m->flags & H1_MF_RESP) &&  h1s->meth == HTTP_METH_HEAD)
+					h1m->state = H1_MSG_DONE;
 				else
 					h1m->state = H1_MSG_DATA;
 				break;
@@ -1709,7 +1711,7 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				break;
 
 			case HTX_BLK_EOM:
-				if ((h1m->flags & H1_MF_CHNK)) {
+				if ((h1m->flags & H1_MF_CHNK) && h1s->meth != HTTP_METH_HEAD) {
 					if (!(h1s->flags & H1S_F_HAVE_O_EOD)) {
 						if (!chunk_memcat(&tmp, "0\r\n", 3))
 							goto copy;
