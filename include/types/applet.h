@@ -89,6 +89,9 @@ struct appctx {
 				struct nst_nosql_entry   *entry;
 				struct nst_nosql_data    *data;
 				struct nst_nosql_element *element;
+				int fd;
+				int header_len;
+				uint64_t offset;
 			} nosql_engine;
 			struct {
 				int fd;
