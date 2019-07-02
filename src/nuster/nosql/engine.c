@@ -1147,11 +1147,40 @@ void nst_nosql_persist_async() {
 
             disk.fd = nst_persist_create(entry->file);
 
+            /* write header */
+            nst_res_begin(200);
+
+            if(entry->data->info.flags
+                    & NST_NOSQL_DATA_FLAG_CHUNKED) {
+
+                nst_res_header(&nst_headers.transfer_encoding,
+                        &entry->data->info.transfer_encoding);
+            } else {
+                nst_res_header_content_length(entry->data->info.content_length);
+
+                if(entry->data->info.transfer_encoding.data) {
+
+                    nst_res_header(&nst_headers.transfer_encoding,
+                            &entry->data->info.transfer_encoding);
+                }
+            }
+
+            if(entry->data->info.content_type.data) {
+                nst_res_header(&nst_headers.content_type,
+                        &entry->data->info.content_type);
+            }
+
+            nst_res_header_end();
+
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->hash, entry->expire, 0, entry->header_len,
                     entry->key->data);
 
             nst_persist_write_key(&disk, entry->key);
+
+            disk.offset = NST_PERSIST_META_POS_KEY_LEN + NST_PERSIST_META_SIZE;
+
+            nst_persist_write(&disk, trash.area, trash.data);
 
             while(element) {
 
