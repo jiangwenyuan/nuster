@@ -94,6 +94,7 @@ struct nst_nosql_entry {
     struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     char                   *file;
+    int                     header_len;
 };
 
 struct nst_nosql_dict {
@@ -184,6 +185,8 @@ struct nst_nosql {
 
     /* cache dict cleanup index */
     int                    cleanup_idx;
+
+    int                    persist_idx;
 };
 
 extern struct flt_ops  nst_nosql_filter_ops;
