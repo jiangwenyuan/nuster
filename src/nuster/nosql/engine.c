@@ -1069,6 +1069,18 @@ void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct http_msg *msg) {
             ctx->entry->expire = get_current_timestamp() / 1000
                 + *ctx->rule->ttl;
         }
+
+        if(ctx->rule->disk == NST_DISK_SYNC
+                || ctx->rule->disk == NST_DISK_ONLY) {
+
+            nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
+
+            nst_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
+
+            nst_persist_write_meta(&ctx->disk);
+
+            ctx->entry->file = ctx->disk.file;
+        }
     }
 }
 
