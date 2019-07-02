@@ -1115,3 +1115,95 @@ void nst_nosql_abort(struct nst_nosql_ctx *ctx) {
     ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
 }
 
+static int _nst_nosql_dict_entry_expired(struct nst_nosql_entry *entry) {
+
+    if(entry->expire == 0) {
+        return 0;
+    } else {
+        return entry->expire <= get_current_timestamp() / 1000;
+    }
+
+}
+
+static int _nst_nosql_entry_invalid(struct nst_nosql_entry *entry) {
+
+    /* check state */
+    if(entry->state == NST_NOSQL_ENTRY_STATE_INVALID) {
+        return 1;
+    } else if(entry->state == NST_NOSQL_ENTRY_STATE_EXPIRED) {
+        return 1;
+    }
+
+    /* check expire */
+    return _nst_nosql_dict_entry_expired(entry);
+}
+void nst_nosql_persist_async() {
+    struct nst_nosql_entry *entry =
+        nuster.nosql->dict[0].entry[nuster.nosql->persist_idx];
+
+    if(!nuster.nosql->dict[0].used) {
+        return;
+    }
+
+    while(entry) {
+
+        if(!_nst_nosql_entry_invalid(entry)
+                && entry->rule->disk == NST_DISK_ASYNC
+                && entry->file == NULL) {
+
+            struct nst_nosql_element *element = entry->data->element;
+            uint64_t cache_len = 0;
+            struct persist disk;
+
+            entry->file = nst_memory_alloc(global.nuster.nosql.memory,
+                    NST_PERSIST_PATH_FILE_LEN + 1);
+
+            if(!entry->file) {
+                return;
+            }
+
+            if(nst_persist_init(entry->file, entry->hash,
+                        global.nuster.nosql.directory) != NST_OK) {
+                return;
+            }
+
+            disk.fd = nst_persist_create(entry->file);
+
+            nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
+                    entry->hash, entry->expire, 0, entry->header_len,
+                    entry->key->data);
+
+            nst_persist_write_key(&disk, entry->key);
+
+            while(element) {
+
+                if(element->msg.data) {
+                    nst_persist_write(&disk, element->msg.data,
+                            element->msg.len);
+
+                    cache_len += element->msg.len;
+                }
+
+                element = element->next;
+            }
+
+            nst_persist_meta_set_cache_len(disk.meta, cache_len);
+
+            nst_persist_write_meta(&disk);
+
+            close(disk.fd);
+        }
+
+        entry = entry->next;
+
+    }
+
+    nuster.nosql->persist_idx++;
+
+    /* if we have checked the whole dict */
+    if(nuster.nosql->persist_idx == nuster.nosql->dict[0].size) {
+        nuster.nosql->persist_idx = 0;
+    }
+
+}
+
