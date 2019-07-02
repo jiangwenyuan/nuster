@@ -891,10 +891,6 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
 
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
-        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
-                ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
-
-        nst_persist_write_key(&ctx->disk, ctx->entry->key);
         /* write header */
         nst_res_begin(200);
 
@@ -918,6 +914,11 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         }
 
         nst_res_header_end();
+
+        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
+                ctx->hash, 0, 0, trash.data, ctx->entry->key->data);
+
+        nst_persist_write_key(&ctx->disk, ctx->entry->key);
 
         ctx->disk.offset = NST_PERSIST_META_POS_KEY_LEN + NST_PERSIST_META_SIZE;
         nst_persist_write(&ctx->disk, trash.area, trash.data);
