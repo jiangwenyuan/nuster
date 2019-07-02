@@ -270,6 +270,10 @@ void nst_nosql_housekeeping() {
         nst_shctx_lock(nuster.nosql);
         _nst_nosql_data_cleanup();
         nst_shctx_unlock(nuster.nosql);
+
+        nst_shctx_lock(&nuster.cache->dict[0]);
+        nst_nosql_persist_async();
+        nst_shctx_unlock(&nuster.cache->dict[0]);
     }
 }
 
