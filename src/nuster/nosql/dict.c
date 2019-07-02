@@ -270,8 +270,9 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash) {
 
         while(entry) {
 
-            if(entry->hash == hash && entry->key->data == key->data
-                    && !memcmp(entry->key, key->area, key->data)) {
+            if(entry->hash == hash
+                    && entry->key->data == key->data
+                    && !memcmp(entry->key->area, key->area, key->data)) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */
