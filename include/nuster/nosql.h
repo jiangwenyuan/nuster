@@ -93,6 +93,7 @@ struct nst_nosql_entry {
     struct nst_nosql_entry *next;
     struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
+    char                   *file;
 };
 
 struct nst_nosql_dict {
