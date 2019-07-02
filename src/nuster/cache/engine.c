@@ -1105,6 +1105,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
                 ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
+
     }
 }
 
