@@ -218,6 +218,8 @@ void nst_nosql_abort(struct nst_nosql_ctx *ctx);
 int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
+void nst_nosql_persist_async();
+
 /* dict */
 int nst_nosql_dict_init();
 struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash);
