@@ -120,6 +120,8 @@ enum {
     NST_NOSQL_CTX_STATE_FULL,       /* nosql full */
     NST_NOSQL_CTX_STATE_WAIT,       /* wait */
     NST_NOSQL_CTX_STATE_PASS,       /* rule passed */
+    NST_NOSQL_CTX_STATE_HIT_DISK,
+    NST_NOSQL_CTX_STATE_CHECK_PERSIST,
 };
 
 struct nst_nosql_ctx {
@@ -205,7 +207,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s, struct http_msg *msg);
 
 uint64_t nst_nosql_hash_key(const char *key);
-struct nst_nosql_data *nst_nosql_exists(struct buffer *key, uint64_t hash);
+int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode);
 int nst_nosql_delete(struct buffer *key, uint64_t hash);
 void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);

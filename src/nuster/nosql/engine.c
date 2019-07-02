@@ -1014,25 +1014,70 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
     return 1;
 }
 
-struct nst_nosql_data *nst_nosql_exists(struct buffer *key, uint64_t hash) {
+int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
     struct nst_nosql_entry *entry = NULL;
     struct nst_nosql_data  *data  = NULL;
+    int ret = NST_CACHE_CTX_STATE_INIT;
 
-    if(!key) {
-        return NULL;
+    if(!ctx->key) {
+        return ret;
     }
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
-    entry = nst_nosql_dict_get(key, hash);
+    entry = nst_nosql_dict_get(ctx->key, ctx->hash);
 
-    if(entry && entry->state == NST_NOSQL_ENTRY_STATE_VALID) {
-        data = entry->data;
-        data->clients++;
+    if(entry) {
+        if(entry->state == NST_NOSQL_ENTRY_STATE_VALID) {
+            data = entry->data;
+            data->clients++;
+            ret = NST_NOSQL_CTX_STATE_HIT;
+        }
+
+        if(entry->state == NST_NOSQL_CTX_STATE_INVALID && entry->file) {
+            ctx->disk.file = entry->file;
+            ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
+        }
+    } else {
+        if(mode != NST_DISK_OFF) {
+            ctx->disk.file = NULL;
+            //if(nuster.nosql->disk.loaded) {
+            //    ret = NST_NOSQL_CTX_STATE_INIT;
+            //} else {
+                ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
+            //}
+        }
     }
 
     nst_shctx_unlock(&nuster.nosql->dict[0]);
 
-    return data;
+    if(ret == NST_NOSQL_CTX_STATE_CHECK_PERSIST) {
+        if(ctx->disk.file) {
+            if(nst_persist_valid(&ctx->disk, ctx->key, ctx->hash) == NST_OK) {
+
+                ret = NST_NOSQL_CTX_STATE_HIT_DISK;
+            } else {
+                ret = NST_NOSQL_CTX_STATE_INIT;
+            }
+        } else {
+            ctx->disk.file = nst_memory_alloc(global.nuster.nosql.memory,
+                    NST_PERSIST_PATH_FILE_LEN + 1);
+
+            if(!ctx->disk.file) {
+                ret = NST_NOSQL_CTX_STATE_INIT;
+            }
+
+            if(nst_persist_exists(&ctx->disk, ctx->key, ctx->hash,
+                        global.nuster.nosql.directory) == NST_OK) {
+
+                ret = NST_NOSQL_CTX_STATE_HIT_DISK;
+            } else {
+                nst_memory_free(global.nuster.nosql.memory, ctx->disk.file);
+                ret = NST_NOSQL_CTX_STATE_INIT;
+            }
+        }
+    }
+
+    return ret;
 }
 
 int nst_nosql_delete(struct buffer *key, uint64_t hash) {
