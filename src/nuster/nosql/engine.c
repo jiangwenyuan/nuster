@@ -895,6 +895,32 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
                 ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
+        /* write header */
+        nst_res_begin(200);
+
+        if(msg->flags & HTTP_MSGF_TE_CHNK) {
+
+            nst_res_header(&nst_headers.transfer_encoding,
+                    &ctx->req.transfer_encoding);
+        } else {
+            nst_res_header_content_length(msg->body_len);
+
+            if(ctx->req.transfer_encoding.data) {
+
+                nst_res_header(&nst_headers.transfer_encoding,
+                        &ctx->req.transfer_encoding);
+            }
+        }
+
+        if(ctx->req.content_type.data) {
+
+            nst_res_header(&nst_headers.content_type, &ctx->req.content_type);
+        }
+
+        nst_res_header_end();
+
+        ctx->disk.offset = NST_PERSIST_META_POS_KEY_LEN + NST_PERSIST_META_SIZE;
+        nst_persist_write(&ctx->disk, trash.area, trash.data);
     }
 }
 
