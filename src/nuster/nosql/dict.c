@@ -235,6 +235,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
     entry->key    = ctx->key;
     entry->hash   = ctx->hash;
+    ctx->key      = NULL;
     entry->expire = 0;
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
