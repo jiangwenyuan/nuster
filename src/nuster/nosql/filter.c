@@ -151,12 +151,17 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             nst_debug("[NOSQL] Got hash: %"PRIu64"\n", ctx->hash);
 
             if(s->txn->meth == HTTP_METH_GET) {
-                ctx->data = nst_nosql_exists(ctx->key, ctx->hash);
+                ctx->state = nst_nosql_exists(ctx->key, ctx->hash);
 
-                if(ctx->data) {
+                if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
                     nst_debug("EXIST\n[NOSQL] Hit\n");
                     /* OK, nosql exists */
-                    ctx->state = NST_NOSQL_CTX_STATE_HIT;
+                    break;
+                }
+
+                if(ctx->state == NST_NOSQL_CTX_STATE_HIT_DISK) {
+                    nst_debug("EXIST\n[NOSQL] Hit disk\n");
+                    /* OK, cache exists */
                     break;
                 }
 
