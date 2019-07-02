@@ -937,22 +937,50 @@ static struct nst_nosql_element *_nst_nosql_data_append(struct http_msg *msg,
 int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
         long msg_len) {
 
-    struct nst_nosql_element *element = _nst_nosql_data_append(msg, msg_len);
+    if(ctx->rule->disk == NST_DISK_ONLY)  {
+        char *data = b_orig(&msg->chn->buf);
+        char *p    = ci_head(msg->chn);
+        int size   = msg->chn->buf.size;
 
-    if(element) {
+        if(p - data + msg_len > size) {
+            int right = data + size - p;
+            int left  = msg_len - right;
 
-        if(ctx->element) {
-            ctx->element->next = element;
+            nst_persist_write(&ctx->disk, p, right);
+            nst_persist_write(&ctx->disk, data, left);
         } else {
-            ctx->data->element = element;
+            nst_persist_write(&ctx->disk, p, msg_len);
         }
-
-        ctx->element = element;
-
-        return 1;
+        ctx->cache_len += msg_len;
     } else {
-        return 0;
+        struct nst_nosql_element *element;
+
+        element = _nst_nosql_data_append(msg, msg_len);
+
+        if(element) {
+
+            if(ctx->element) {
+                ctx->element->next = element;
+            } else {
+                ctx->data->element = element;
+            }
+
+            ctx->element = element;
+
+            if(ctx->rule->disk == NST_DISK_SYNC) {
+                nst_persist_write(&ctx->disk, element->msg.data,
+                        element->msg.len);
+
+                ctx->cache_len += element->msg.len;
+            }
+
+            return 1;
+        } else {
+            return 0;
+        }
     }
+
+    return 1;
 }
 
 struct nst_nosql_data *nst_nosql_exists(struct buffer *key, uint64_t hash) {
