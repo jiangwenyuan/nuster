@@ -146,29 +146,6 @@ void nst_nosql_dict_rehash() {
     }
 }
 
-static int _nst_nosql_dict_entry_expired(struct nst_nosql_entry *entry) {
-
-    if(entry->expire == 0) {
-        return 0;
-    } else {
-        return entry->expire <= get_current_timestamp() / 1000;
-    }
-
-}
-
-static int _nst_nosql_entry_invalid(struct nst_nosql_entry *entry) {
-
-    /* check state */
-    if(entry->state == NST_NOSQL_ENTRY_STATE_INVALID) {
-        return 1;
-    } else if(entry->state == NST_NOSQL_ENTRY_STATE_EXPIRED) {
-        return 1;
-    }
-
-    /* check expire */
-    return _nst_nosql_dict_entry_expired(entry);
-}
-
 /*
  * Check entry validity, free the entry if its invalid,
  * If its invalid set entry->data->invalid to true,
@@ -186,7 +163,7 @@ void nst_nosql_dict_cleanup() {
 
     while(entry) {
 
-        if(_nst_nosql_entry_invalid(entry)) {
+        if(nst_nosql_entry_invalid(entry)) {
             struct nst_nosql_entry *tmp = entry;
 
             if(entry->data) {
@@ -298,7 +275,7 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash) {
                  * change state only, leave the free stuff to cleanup
                  * */
                 if(entry->state == NST_NOSQL_ENTRY_STATE_VALID
-                        && _nst_nosql_dict_entry_expired(entry)) {
+                        && nst_nosql_dict_entry_expired(entry)) {
 
                     entry->state         = NST_NOSQL_ENTRY_STATE_EXPIRED;
                     entry->data->invalid = 1;
