@@ -262,6 +262,8 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
 
+    entry->header_len = ctx->header_len;
+
     entry->host.data   = ctx->req.host.data;
     entry->host.len    = ctx->req.host.len;
     ctx->req.host.data = NULL;
