@@ -231,7 +231,8 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
         appctx->ctx.nuster.nosql_engine.header_len =
             nst_persist_meta_get_header_len(ctx->disk.meta);
 
-        appctx->st0 = NST_PERSIST_APPLET_HEADER;
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;
+        appctx->st1 = NST_PERSIST_APPLET_HEADER;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;

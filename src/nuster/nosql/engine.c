@@ -118,6 +118,78 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
 
             task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
+        case NST_NOSQL_APPCTX_STATE_HIT_DISK:
+            {
+                int max = b_room(&res->buf) - global.tune.maxrewrite;
+
+                int fd = appctx->ctx.nuster.nosql_engine.fd;
+                int header_len = appctx->ctx.nuster.nosql_engine.header_len;
+                uint64_t offset = appctx->ctx.nuster.nosql_engine.offset;
+
+                char buf[16*1024] = {0};
+
+                if(b_data(&res->buf) != 0) {
+                    return;
+                }
+
+                switch(appctx->st1) {
+                    case NST_PERSIST_APPLET_HEADER:
+                        ret = pread(fd, buf, header_len, offset);
+
+                        if(ret != header_len) {
+                            appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                            break;
+                        }
+
+                        ret = ci_putblk(res, buf, ret);
+
+                        if(ret >= 0) {
+                            appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
+                            appctx->ctx.nuster.nosql_engine.offset += ret;
+                        } else if(ret == -2) {
+                            appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                            si_shutr(si);
+                            res->flags |= CF_READ_NULL;
+                        }
+                        break;
+                    case NST_PERSIST_APPLET_PAYLOAD:
+                        ret = pread(fd, buf, max, offset);
+
+                        if(ret == -1) {
+                            appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                            break;
+                        }
+
+                        if(ret == 0) {
+                            close(fd);
+                            appctx->st1 = NST_PERSIST_APPLET_DONE;
+                            break;
+                        }
+
+                        ret = ci_putblk(res, buf, ret);
+
+                        if(ret >= 0) {
+                            appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
+                            appctx->ctx.nuster.nosql_engine.offset += ret;
+                        } else if(ret == -2) {
+                            appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                            si_shutr(si);
+                            res->flags |= CF_READ_NULL;
+                        }
+                        break;
+                    case NST_PERSIST_APPLET_DONE:
+                        co_skip(si_oc(si), co_data(si_oc(si)));
+                        si_shutr(si);
+                        res->flags |= CF_READ_NULL;
+                        break;
+                    case NST_PERSIST_APPLET_ERROR:
+                        si_shutr(si);
+                        res->flags |= CF_READ_NULL;
+                        close(fd);
+                        break;
+                }
+            }
+            break;
         case NST_NOSQL_APPCTX_STATE_ERROR:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             nst_res_simple(si, 500, NULL, 0);
