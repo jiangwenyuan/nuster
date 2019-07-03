@@ -217,13 +217,11 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
         return NULL;
     }
 
-    if(ctx->rule->disk != NST_DISK_ONLY) {
-        data = nst_nosql_data_new();
+    data = nst_nosql_data_new();
 
-        if(!data) {
-            nst_memory_free(global.nuster.nosql.memory, entry);
-            return NULL;
-        }
+    if(!data) {
+        nst_memory_free(global.nuster.nosql.memory, entry);
+        return NULL;
     }
 
     idx = ctx->hash % dict->size;
