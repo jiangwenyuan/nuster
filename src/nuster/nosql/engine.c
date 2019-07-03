@@ -1304,7 +1304,7 @@ void nst_nosql_persist_async() {
 
             nst_persist_write_key(&disk, entry->key);
 
-            disk.offset = NST_PERSIST_META_POS_KEY_LEN + NST_PERSIST_META_SIZE;
+            disk.offset = NST_PERSIST_META_SIZE + entry->key->data;
 
             nst_persist_write(&disk, trash.area, trash.data);
 
