@@ -223,6 +223,25 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
         res->flags |= CF_NEVER_WAIT;
     }
 
+    if(ctx->state == NST_NOSQL_CTX_STATE_HIT_DISK) {
+        appctx->ctx.nuster.nosql_engine.fd = ctx->disk.fd;
+        appctx->ctx.nuster.nosql_engine.offset =
+            nst_persist_get_header_pos(ctx->disk.meta);
+
+        appctx->ctx.nuster.nosql_engine.header_len =
+            nst_persist_meta_get_header_len(ctx->disk.meta);
+
+        appctx->st0 = NST_PERSIST_APPLET_HEADER;
+
+        req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
+        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+
+        req->analysers |= AN_REQ_FLT_END;
+        req->analyse_exp = TICK_ETERNITY;
+
+        res->flags |= CF_NEVER_WAIT;
+    }
+
     if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
         appctx->st1 = msg->sov;
