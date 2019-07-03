@@ -353,6 +353,15 @@ void nst_nosql_init() {
     nuster.applet.nosql_engine.fct = nst_nosql_engine_handler;
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
+        if(global.nuster.nosql.directory) {
+
+            if(nst_persist_mkdir(global.nuster.nosql.directory) == NST_ERR) {
+
+                ha_alert("Create `%s` failed\n", global.nuster.nosql.directory);
+                exit(1);
+            }
+        }
+
         global.nuster.nosql.pool.ctx   = create_pool("np.ctx",
                 sizeof(struct nst_nosql_ctx), MEM_F_SHARED);
 
