@@ -384,14 +384,7 @@ void nst_nosql_init() {
             goto err;
         }
 
-        nuster.nosql->dict[0].entry = NULL;
-        nuster.nosql->dict[0].used  = 0;
-        nuster.nosql->dict[1].entry = NULL;
-        nuster.nosql->dict[1].used  = 0;
-        nuster.nosql->data_head     = NULL;
-        nuster.nosql->data_tail     = NULL;
-        nuster.nosql->rehash_idx    = -1;
-        nuster.nosql->cleanup_idx   = 0;
+        memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
         if(nst_shctx_init(nuster.nosql) != NST_OK) {
             goto shm_err;
