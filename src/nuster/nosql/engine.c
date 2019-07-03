@@ -1088,7 +1088,6 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
 
 int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
     struct nst_nosql_entry *entry = NULL;
-    struct nst_nosql_data  *data  = NULL;
     int ret = NST_CACHE_CTX_STATE_INIT;
 
     if(!ctx->key) {
@@ -1100,8 +1099,8 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
 
     if(entry) {
         if(entry->state == NST_NOSQL_ENTRY_STATE_VALID) {
-            data = entry->data;
-            data->clients++;
+            ctx->data = entry->data;
+            ctx->data->clients++;
             ret = NST_NOSQL_CTX_STATE_HIT;
         }
 
