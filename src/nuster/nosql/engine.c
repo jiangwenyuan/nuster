@@ -996,7 +996,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
 
-        ctx->disk.offset = NST_PERSIST_META_POS_KEY_LEN + NST_PERSIST_META_SIZE;
+        ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key->data;
         nst_persist_write(&ctx->disk, trash.area, trash.data);
     }
 }
