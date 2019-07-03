@@ -1299,7 +1299,7 @@ void nst_nosql_persist_async() {
             nst_res_header_end();
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
-                    entry->hash, entry->expire, 0, entry->header_len,
+                    entry->hash, entry->expire, 0, trash.data,
                     entry->key->data);
 
             nst_persist_write_key(&disk, entry->key);
