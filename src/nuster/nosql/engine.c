@@ -1104,7 +1104,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
             ret = NST_NOSQL_CTX_STATE_HIT;
         }
 
-        if(entry->state == NST_NOSQL_CTX_STATE_INVALID && entry->file) {
+        if(entry->state == NST_NOSQL_ENTRY_STATE_INVALID && entry->file) {
             ctx->disk.file = entry->file;
             ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
         }
