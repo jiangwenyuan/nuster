@@ -190,6 +190,15 @@ struct nst_nosql {
     int                    cleanup_idx;
 
     int                    persist_idx;
+
+    /* for disk_loader and disk_cleaner */
+    struct {
+        int                loaded;
+        int                idx;
+        DIR               *dir;
+        struct dirent     *de;
+        char              *file;
+    } disk;
 };
 
 extern struct flt_ops  nst_nosql_filter_ops;
