@@ -375,13 +375,13 @@ void nst_nosql_housekeeping() {
         }
 
         while(disk_loader--) {
-            //nst_nosql_persist_load();
+            nst_nosql_persist_load();
         }
 
         while(disk_saver--) {
-            nst_shctx_lock(&nuster.cache->dict[0]);
+            nst_shctx_lock(&nuster.nosql->dict[0]);
             nst_nosql_persist_async();
-            nst_shctx_unlock(&nuster.cache->dict[0]);
+            nst_shctx_unlock(&nuster.nosql->dict[0]);
         }
     }
 }
@@ -1383,6 +1383,114 @@ void nst_nosql_persist_async() {
         nuster.nosql->persist_idx = 0;
     }
 
+}
+
+void nst_nosql_persist_load() {
+
+    if(global.nuster.nosql.directory && !nuster.nosql->disk.loaded) {
+        char *file;
+        char meta[NST_PERSIST_META_SIZE];
+        struct buffer *key;
+        int fd;
+
+        file = nuster.nosql->disk.file;
+
+        if(nuster.nosql->disk.dir) {
+            struct dirent *de = nst_persist_dir_next(nuster.nosql->disk.dir);
+
+            if(de) {
+                DIR *dir2;
+                struct dirent *de2;
+
+                if(strcmp(de->d_name, ".") == 0
+                        || strcmp(de->d_name, "..") == 0) {
+
+                    return;
+                }
+
+                memcpy(file + NST_PERSIST_PATH_BASE_LEN, "/", 1);
+                memcpy(file + NST_PERSIST_PATH_BASE_LEN + 1, de->d_name,
+                        strlen(de->d_name));
+
+                dir2 = opendir(file);
+
+                if(!dir2) {
+                    return;
+                }
+
+                while((de2 = readdir(dir2)) != NULL) {
+                    if(strcmp(de2->d_name, ".") == 0
+                            || strcmp(de2->d_name, "..") == 0) {
+
+                        continue;
+                    }
+
+                    memcpy(file + NST_PERSIST_PATH_HASH_LEN, "/", 1);
+                    memcpy(file + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
+                            strlen(de2->d_name));
+
+                    fd = nst_persist_open(file);
+
+                    if(fd == -1) {
+                        return;
+                    }
+
+                    if(nst_persist_get_meta(fd, meta) != NST_OK) {
+                        unlink(file);
+                        close(fd);
+                        return;
+                    }
+
+                    key = nst_memory_alloc(global.nuster.nosql.memory,
+                            sizeof(*key));
+
+                    if(!key) {
+                        return;
+                    }
+
+                    key->size = nst_persist_meta_get_key_len(meta);
+                    key->area = nst_memory_alloc(global.nuster.nosql.memory,
+                            key->size);
+
+                    if(!key->area) {
+                        nst_memory_free(global.nuster.nosql.memory, key);
+                        return;
+                    }
+
+                    if(nst_persist_get_key(fd, meta, key) != NST_OK) {
+                        nst_memory_free(global.nuster.nosql.memory,
+                                key->area);
+
+                        nst_memory_free(global.nuster.nosql.memory, key);
+
+                        unlink(file);
+                        close(fd);
+                        return;
+                    }
+
+                    nst_nosql_dict_set_from_disk(file, meta, key);
+
+                }
+            } else {
+                nuster.nosql->disk.idx++;
+                closedir(nuster.nosql->disk.dir);
+                nuster.nosql->disk.dir = NULL;
+            }
+        } else {
+            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(file,
+                    nuster.nosql->disk.idx, global.nuster.nosql.directory);
+
+            if(!nuster.nosql->disk.dir) {
+                nuster.nosql->disk.idx++;
+            }
+        }
+
+        if(nuster.nosql->disk.idx == 16 * 16) {
+            nuster.nosql->disk.loaded = 1;
+            nuster.nosql->disk.idx    = 0;
+        }
+
+    }
 }
 
 void nst_nosql_persist_cleanup() {
