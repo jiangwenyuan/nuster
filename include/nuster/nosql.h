@@ -231,12 +231,14 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
 void nst_nosql_persist_async();
+void nst_nosql_persist_cleanup();
+void nst_nosql_persist_load();
 
 /* dict */
 int nst_nosql_dict_init();
 struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash);
 struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx);
-
+int nst_nosql_dict_set_from_disk(char *file, char *meta, struct buffer *key);
 void nst_nosql_dict_rehash();
 void nst_nosql_dict_cleanup();
 
