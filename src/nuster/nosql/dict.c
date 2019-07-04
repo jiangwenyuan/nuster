@@ -300,3 +300,43 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash) {
     return NULL;
 }
 
+int nst_nosql_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
+    struct nst_nosql_dict  *dict  = NULL;
+    struct nst_nosql_entry *entry = NULL;
+    int idx;
+    uint64_t hash = nst_persist_meta_get_hash(meta);
+
+    dict = _nst_nosql_dict_rehashing()
+        ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
+
+    entry = nst_memory_alloc(global.nuster.nosql.memory, sizeof(*entry));
+
+    if(!entry) {
+        return NST_ERR;
+    }
+
+    memset(entry, 0, sizeof(*entry));
+
+    entry->file = nst_memory_alloc(global.nuster.nosql.memory, strlen(file));
+
+    if(!entry->file) {
+        return NST_ERR;
+    }
+
+    idx = hash % dict->size;
+    /* prepend entry to dict->entry[idx] */
+    entry->next      = dict->entry[idx];
+    dict->entry[idx] = entry;
+    dict->used++;
+
+    /* init entry */
+    entry->state  = NST_NOSQL_ENTRY_STATE_INVALID;
+    entry->key    = key;
+    entry->hash   = hash;
+    entry->expire = nst_persist_meta_get_expire(meta);
+    memcpy(entry->file, file, strlen(file));
+
+    entry->header_len = nst_persist_meta_get_header_len(meta);
+
+    return NST_OK;
+}
