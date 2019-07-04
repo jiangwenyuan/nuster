@@ -336,16 +336,53 @@ static void _nst_nosql_data_cleanup() {
 void nst_nosql_housekeeping() {
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
-        nst_shctx_lock(&nuster.nosql->dict[0]);
-        nst_nosql_dict_cleanup();
-        nst_shctx_unlock(&nuster.nosql->dict[0]);
-        nst_shctx_lock(nuster.nosql);
-        _nst_nosql_data_cleanup();
-        nst_shctx_unlock(nuster.nosql);
+        int dict_cleaner = 1;
+        int data_cleaner = 1;
+        int disk_cleaner = 1;
+        int disk_loader  = 1;
+        int disk_saver   = 1;
 
-        nst_shctx_lock(&nuster.cache->dict[0]);
-        nst_nosql_persist_async();
-        nst_shctx_unlock(&nuster.cache->dict[0]);
+        if(global.mode & MODE_MWORKER) {
+            if(master == 1) {
+                dict_cleaner = global.nuster.nosql.dict_cleaner;
+                data_cleaner = global.nuster.nosql.data_cleaner;
+                disk_cleaner = global.nuster.nosql.disk_cleaner;
+                disk_loader  = global.nuster.nosql.disk_loader;
+                disk_saver   = global.nuster.nosql.disk_saver;
+            } else {
+                dict_cleaner = 0;
+                data_cleaner = 0;
+                disk_cleaner = 0;
+                disk_loader  = 0;
+                disk_saver   = 0;
+            }
+        }
+
+        while(dict_cleaner--) {
+            nst_shctx_lock(&nuster.nosql->dict[0]);
+            nst_nosql_dict_cleanup();
+            nst_shctx_unlock(&nuster.nosql->dict[0]);
+        }
+
+        while(data_cleaner--) {
+            nst_shctx_lock(nuster.nosql);
+            _nst_nosql_data_cleanup();
+            nst_shctx_unlock(nuster.nosql);
+        }
+
+        while(disk_cleaner--) {
+            //nst_nosql_persist_cleanup();
+        }
+
+        while(disk_loader--) {
+            //nst_nosql_persist_load();
+        }
+
+        while(disk_saver--) {
+            nst_shctx_lock(&nuster.cache->dict[0]);
+            nst_nosql_persist_async();
+            nst_shctx_unlock(&nuster.cache->dict[0]);
+        }
     }
 }
 
