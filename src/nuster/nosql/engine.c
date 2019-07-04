@@ -371,7 +371,7 @@ void nst_nosql_housekeeping() {
         }
 
         while(disk_cleaner--) {
-            //nst_nosql_persist_cleanup();
+            nst_nosql_persist_cleanup();
         }
 
         while(disk_loader--) {
@@ -1385,3 +1385,33 @@ void nst_nosql_persist_async() {
 
 }
 
+void nst_nosql_persist_cleanup() {
+
+    if(global.nuster.nosql.directory && nuster.nosql->disk.loaded) {
+        char *file = nuster.nosql->disk.file;
+
+        if(nuster.nosql->disk.dir) {
+            struct dirent *de = nst_persist_dir_next(nuster.nosql->disk.dir);
+
+            if(de) {
+                nst_persist_cleanup(file, de);
+            } else {
+                nuster.nosql->disk.idx++;
+                closedir(nuster.nosql->disk.dir);
+                nuster.nosql->disk.dir = NULL;
+            }
+        } else {
+            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(file,
+                    nuster.nosql->disk.idx, global.nuster.nosql.directory);
+
+            if(!nuster.nosql->disk.dir) {
+                nuster.nosql->disk.idx++;
+            }
+        }
+
+        if(nuster.nosql->disk.idx == 16 * 16) {
+            nuster.nosql->disk.idx = 0;
+        }
+
+    }
+}
