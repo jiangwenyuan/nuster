@@ -185,3 +185,23 @@ int nst_test_rule(struct nst_rule *rule, struct stream *s, int res) {
     return NST_ERR;
 }
 
+struct buffer *nst_key_init(struct nst_memory *memory) {
+    struct buffer *key  = nst_memory_alloc(memory, sizeof(*key));
+
+    if(!key) {
+        return NULL;
+    }
+
+    key->area = nst_memory_alloc(memory, NST_CACHE_DEFAULT_KEY_SIZE);
+
+    if(!key->area) {
+        return NULL;
+    }
+
+    key->size = NST_CACHE_DEFAULT_KEY_SIZE;
+    key->data = 0;
+    key->head = 0;
+    memset(key->area, 0, key->size);
+
+    return key;
+}

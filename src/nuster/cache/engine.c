@@ -203,28 +203,6 @@ struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
     return stash;
 }
 
-static struct buffer *_nst_key_init() {
-    struct buffer *key  = nst_memory_alloc(global.nuster.cache.memory,
-            sizeof(*key));
-
-    if(!key) {
-        return NULL;
-    }
-
-    key->area = nst_memory_alloc(global.nuster.cache.memory,
-            NST_CACHE_DEFAULT_KEY_SIZE);
-
-    if(!key->area) {
-        return NULL;
-    }
-
-    key->size = NST_CACHE_DEFAULT_KEY_SIZE;
-    key->data = 0;
-    key->head = 0;
-    memset(key->area, 0, key->size);
-
-    return key;
-}
 
 static int _nst_key_expand(struct buffer *key) {
 
@@ -719,7 +697,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
     struct hdr_ctx hdr;
     struct nst_rule_key *ck = NULL;
 
-    ctx->key  = _nst_key_init();
+    ctx->key = nst_key_init(global.nuster.cache.memory);
 
     if(!ctx->key) {
         return NST_ERR;
@@ -897,7 +875,8 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     struct buffer *key;
 
     /* method.scheme.host.uri */
-    key = _nst_key_init();
+    key = nst_key_init(global.nuster.cache.memory);
+
     if(!key) {
         return NULL;
     }
