@@ -1320,12 +1320,14 @@ void nst_cache_persist_load() {
                     fd = nst_persist_open(file);
 
                     if(fd == -1) {
+                        closedir(dir2);
                         return;
                     }
 
                     if(nst_persist_get_meta(fd, meta) != NST_OK) {
                         unlink(file);
                         close(fd);
+                        closedir(dir2);
                         return;
                     }
 
@@ -1333,6 +1335,9 @@ void nst_cache_persist_load() {
                             sizeof(*key));
 
                     if(!key) {
+                        unlink(file);
+                        close(fd);
+                        closedir(dir2);
                         return;
                     }
 
@@ -1342,6 +1347,9 @@ void nst_cache_persist_load() {
 
                     if(!key->area) {
                         nst_memory_free(global.nuster.cache.memory, key);
+                        unlink(file);
+                        close(fd);
+                        closedir(dir2);
                         return;
                     }
 
@@ -1353,12 +1361,16 @@ void nst_cache_persist_load() {
 
                         unlink(file);
                         close(fd);
+                        closedir(dir2);
                         return;
                     }
 
                     nst_cache_dict_set_from_disk(file, meta, key);
 
+                    close(fd);
                 }
+
+                closedir(dir2);
             } else {
                 nuster.cache->disk.idx++;
                 closedir(nuster.cache->disk.dir);
