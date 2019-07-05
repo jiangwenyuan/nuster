@@ -525,7 +525,7 @@ void nst_cache_init() {
             goto err;
         }
 
-        nst_debug("[CACHE] on, data_size=%llu\n",
+        nst_debug("[nuster|cache] on, data_size=%llu\n",
                 global.nuster.cache.data_size);
     }
 
@@ -648,7 +648,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         return NST_ERR;
     }
 
-    nst_debug("[CACHE] Calculate key: ");
+    nst_debug("[nuster][cache] Calculate key: ");
 
     while((ck = *pck++)) {
         int ret;
