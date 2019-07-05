@@ -195,6 +195,7 @@ struct buffer *nst_key_init(struct nst_memory *memory) {
     key->area = nst_memory_alloc(memory, NST_CACHE_DEFAULT_KEY_SIZE);
 
     if(!key->area) {
+        nst_memory_free(memory, key);
         return NULL;
     }
 
