@@ -126,8 +126,6 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
     if(!(msg->chn->flags & CF_ISRESP)) {
 
-        nst_cache_housekeeping();
-
         /* check http method */
         if(s->txn->meth == HTTP_METH_OTHER) {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
