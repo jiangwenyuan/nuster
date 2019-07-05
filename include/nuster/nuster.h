@@ -77,4 +77,8 @@ static inline uint64_t nst_hash(const char *buf, size_t len) {
 }
 
 struct buffer *nst_key_init(struct nst_memory *memory);
+int nst_key_advance(struct nst_memory *memory, struct buffer *key, int step);
+int nst_key_append(struct nst_memory *memory, struct buffer *key, char *str,
+        int len);
+
 #endif /* _NUSTER_H */
