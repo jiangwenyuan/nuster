@@ -95,6 +95,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
             ctx->stash = ctx->stash->next;
 
             if(stash->key) {
+                nst_memory_free(global.nuster.cache.memory, stash->key->area);
                 nst_memory_free(global.nuster.cache.memory, stash->key);
             }
 

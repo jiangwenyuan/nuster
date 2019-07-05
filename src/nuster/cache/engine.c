@@ -907,6 +907,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
     } else {
         if(mode != NST_DISK_OFF) {
             ctx->disk.file = NULL;
+
             if(nuster.cache->disk.loaded) {
                 ret = NST_CACHE_CTX_STATE_INIT;
             } else {
@@ -918,7 +919,9 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
     nst_shctx_unlock(&nuster.cache->dict[0]);
 
     if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
+
         if(ctx->disk.file) {
+
             if(nst_persist_valid(&ctx->disk, ctx->key, ctx->hash) == NST_OK) {
 
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
