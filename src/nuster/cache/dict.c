@@ -199,6 +199,7 @@ void nst_cache_dict_cleanup() {
             }
 
             entry = entry->next;
+            nst_memory_free(global.nuster.cache.memory, tmp->key->area);
             nst_memory_free(global.nuster.cache.memory, tmp->key);
             nst_memory_free(global.nuster.cache.memory, tmp->host.data);
             nst_memory_free(global.nuster.cache.memory, tmp->path.data);
