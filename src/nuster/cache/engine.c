@@ -369,28 +369,13 @@ static void _nst_cache_data_cleanup() {
 
 void nst_cache_housekeeping() {
 
-    if(global.nuster.cache.status == NST_STATUS_ON) {
-        int dict_cleaner = 1;
-        int data_cleaner = 1;
-        int disk_cleaner = 1;
-        int disk_loader  = 1;
-        int disk_saver   = 1;
+    if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
 
-        if(global.mode & MODE_MWORKER) {
-            if(master == 1) {
-                dict_cleaner = global.nuster.cache.dict_cleaner;
-                data_cleaner = global.nuster.cache.data_cleaner;
-                disk_cleaner = global.nuster.cache.disk_cleaner;
-                disk_loader  = global.nuster.cache.disk_loader;
-                disk_saver   = global.nuster.cache.disk_saver;
-            } else {
-                dict_cleaner = 0;
-                data_cleaner = 0;
-                disk_cleaner = 0;
-                disk_loader  = 0;
-                disk_saver   = 0;
-            }
-        }
+        int dict_cleaner = global.nuster.cache.dict_cleaner;
+        int data_cleaner = global.nuster.cache.data_cleaner;
+        int disk_cleaner = global.nuster.cache.disk_cleaner;
+        int disk_loader  = global.nuster.cache.disk_loader;
+        int disk_saver   = global.nuster.cache.disk_saver;
 
         while(dict_cleaner--) {
             nst_cache_dict_rehash();
