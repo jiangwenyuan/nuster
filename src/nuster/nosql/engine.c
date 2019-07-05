@@ -629,7 +629,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
     nst_debug("[NOSQL] Calculate key: ");
 
     while((ck = *pck++)) {
-        int ret;
+        int ret = NST_OK;
 
         switch(ck->type) {
             case NST_RULE_KEY_METHOD:
@@ -774,6 +774,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             default:
+                ret = NST_ERR;
                 break;
         }
 
