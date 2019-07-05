@@ -485,10 +485,6 @@ static void stream_int_notify(struct stream_interface *si)
 				ic->rex = tick_add_ifset(now_ms, ic->rto);
 	}
 
-	if ((sio->flags & SI_FL_RXBLK_ROOM) &&
-	    ((oc->flags & CF_WRITE_PARTIAL) || channel_is_empty(oc)))
-		si_rx_room_rdy(sio);
-
 	if (oc->flags & CF_DONT_READ)
 		si_rx_chan_blk(sio);
 	else
@@ -716,8 +712,10 @@ int si_cs_send(struct conn_stream *cs)
 	}
 
  end:
-	if (did_send)
+	if (did_send) {
 		oc->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
+		si_rx_room_rdy(si_opposite(si));
+	}
 
 	if (conn->flags & CO_FL_ERROR || cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING)) {
 		si->flags |= SI_FL_ERR;
