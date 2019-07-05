@@ -635,7 +635,8 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
 
     ctx->req.host.data = NULL;
     ctx->req.host.len  = 0;
-    hdr.idx            = 0;
+
+    hdr.idx = 0;
 
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
         ctx->req.host.data = nst_memory_alloc(global.nuster.cache.memory,
@@ -649,8 +650,9 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         memcpy(ctx->req.host.data, hdr.line + hdr.val, hdr.vlen);
     }
 
-    uri_begin          = http_txn_get_path(txn);
-    uri_end            = NULL;
+    uri_begin = http_txn_get_path(txn);
+    uri_end   = NULL;
+
     ctx->req.path.data = NULL;
     ctx->req.path.len  = 0;
     ctx->req.uri.data  = NULL;
@@ -699,7 +701,8 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
 
     ctx->req.cookie.data = NULL;
     ctx->req.cookie.len  = 0;
-    hdr.idx              = 0;
+
+    hdr.idx = 0;
 
     if(http_find_header2("Cookie", 6, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
         ctx->req.cookie.data = hdr.line + hdr.val;
@@ -717,6 +720,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
     struct nst_rule_key *ck = NULL;
 
     ctx->key  = _nst_key_init();
+
     if(!ctx->key) {
         return NST_ERR;
     }
