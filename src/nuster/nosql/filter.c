@@ -74,26 +74,24 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
         }
 
         if(ctx->req.host.data) {
-            nst_memory_free(global.nuster.nosql.memory, ctx->req.host.data);
+            nst_nosql_memory_free(ctx->req.host.data);
         }
 
         if(ctx->req.path.data) {
-            nst_memory_free(global.nuster.nosql.memory, ctx->req.path.data);
+            nst_nosql_memory_free(ctx->req.path.data);
         }
 
         if(ctx->req.content_type.data) {
-            nst_memory_free(global.nuster.nosql.memory,
-                    ctx->req.content_type.data);
+            nst_nosql_memory_free(ctx->req.content_type.data);
         }
 
         if(ctx->req.transfer_encoding.data) {
-            nst_memory_free(global.nuster.nosql.memory,
-                    ctx->req.transfer_encoding.data);
+            nst_nosql_memory_free(ctx->req.transfer_encoding.data);
         }
 
         if(ctx->key) {
-            nst_memory_free(global.nuster.nosql.memory, ctx->key);
-            nst_memory_free(global.nuster.nosql.memory, ctx->key);
+            nst_nosql_memory_free(ctx->key);
+            nst_nosql_memory_free(ctx->key);
         }
 
         pool_free(global.nuster.nosql.pool.ctx, ctx);
@@ -135,7 +133,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
             /* build key */
             if(ctx->key) {
-                nst_memory_free(global.nuster.nosql.memory, ctx->key);
+                nst_nosql_memory_free(ctx->key);
             }
 
             if(nst_nosql_build_key(ctx, rule->key, s, msg) != NST_OK) {
