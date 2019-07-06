@@ -265,7 +265,7 @@ purge:
                 || mode == NST_CACHE_PURGE_REGEX_HOST) {
 
             appctx->ctx.nuster.cache_manager.host.data =
-                nst_memory_alloc(global.nuster.cache.memory, host_len);
+                nst_cache_memory_alloc(host_len);
 
             appctx->ctx.nuster.cache_manager.host.len  = host_len;
 
@@ -279,7 +279,7 @@ purge:
         if(mode == NST_CACHE_PURGE_PATH || mode == NST_CACHE_PURGE_PATH_HOST) {
 
             appctx->ctx.nuster.cache_manager.path.data =
-                nst_memory_alloc(global.nuster.cache.memory, path_len);
+                nst_cache_memory_alloc(path_len);
 
             appctx->ctx.nuster.cache_manager.path.len  = path_len;
 
@@ -520,13 +520,11 @@ static void nst_cache_manager_release_handler(struct appctx *appctx) {
     }
 
     if(appctx->ctx.nuster.cache_manager.host.data) {
-        nst_memory_free(global.nuster.cache.memory,
-                appctx->ctx.nuster.cache_manager.host.data);
+        nst_cache_memory_free(appctx->ctx.nuster.cache_manager.host.data);
     }
 
     if(appctx->ctx.nuster.cache_manager.path.data) {
-        nst_memory_free(global.nuster.cache.memory,
-                appctx->ctx.nuster.cache_manager.path.data);
+        nst_cache_memory_free(appctx->ctx.nuster.cache_manager.path.data);
     }
 }
 

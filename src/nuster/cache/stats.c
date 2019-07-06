@@ -238,8 +238,8 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 }
 
 int nst_cache_stats_init() {
-    global.nuster.cache.stats = nst_memory_alloc(global.nuster.cache.memory,
-            sizeof(struct nst_cache_stats));
+    global.nuster.cache.stats =
+        nst_cache_memory_alloc(sizeof(struct nst_cache_stats));
 
     if(!global.nuster.cache.stats) {
         return NST_ERR;
@@ -249,12 +249,12 @@ int nst_cache_stats_init() {
         return NST_ERR;
     }
 
-    global.nuster.cache.stats->used_mem      = 0;
+    global.nuster.cache.stats->used_mem  = 0;
     global.nuster.cache.stats->req.total = 0;
     global.nuster.cache.stats->req.fetch = 0;
     global.nuster.cache.stats->req.hit   = 0;
     global.nuster.cache.stats->req.abort = 0;
-    nuster.applet.cache_stats.fct            = nst_cache_stats_handler;
+    nuster.applet.cache_stats.fct        = nst_cache_stats_handler;
 
     return NST_OK;
 }
