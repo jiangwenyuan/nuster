@@ -27,12 +27,6 @@
 #include <proto/acl.h>
 #include <proto/log.h>
 
-#define nst_nosql_key_init() nst_key_init(global.nuster.nosql.memory)
-#define nst_nosql_key_advance(key, step)                                      \
-    nst_key_advance(global.nuster.nosql.memory, key, step)
-#define nst_nosql_key_append(key, str, len)                                   \
-    nst_key_append(global.nuster.nosql.memory, key, str, len)
-
 static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct stream_interface *si       = appctx->owner;
     struct stream *s                  = si_strm(si);
@@ -233,8 +227,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
 }
 
 struct nst_nosql_data *nst_nosql_data_new() {
-    struct nst_nosql_data *data =
-        nst_memory_alloc(global.nuster.nosql.memory, sizeof(*data));
+    struct nst_nosql_data *data = nst_nosql_memory_alloc(sizeof(*data));
 
     nst_shctx_lock(nuster.nosql);
 
@@ -319,23 +312,21 @@ static void _nst_nosql_data_cleanup() {
 
             if(tmp->msg.data) {
                 nst_nosql_stats_update_used_mem(-tmp->msg.len);
-                nst_memory_free(global.nuster.nosql.memory, tmp->msg.data);
+                nst_nosql_memory_free(tmp->msg.data);
             }
 
-            nst_memory_free(global.nuster.nosql.memory, tmp);
+            nst_nosql_memory_free(tmp);
         }
 
         if(data->info.content_type.data) {
-            nst_memory_free(global.nuster.nosql.memory,
-                    data->info.content_type.data);
+            nst_nosql_memory_free(data->info.content_type.data);
         }
 
         if(data->info.transfer_encoding.data) {
-            nst_memory_free(global.nuster.nosql.memory,
-                    data->info.transfer_encoding.data);
+            nst_nosql_memory_free(data->info.transfer_encoding.data);
         }
 
-        nst_memory_free(global.nuster.nosql.memory, data);
+        nst_nosql_memory_free(data);
     }
 }
 
@@ -405,8 +396,7 @@ void nst_nosql_init() {
             goto shm_err;
         }
 
-        nuster.nosql = nst_memory_alloc(global.nuster.nosql.memory,
-                sizeof(struct nst_nosql));
+        nuster.nosql = nst_nosql_memory_alloc(sizeof(struct nst_nosql));
 
         if(!nuster.nosql) {
             goto err;
@@ -535,8 +525,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
     hdr.idx            = 0;
 
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data = nst_memory_alloc(global.nuster.nosql.memory,
-                hdr.vlen);
+        ctx->req.host.data = nst_nosql_memory_alloc(hdr.vlen);
 
         if(!ctx->req.host.data) {
             return 0;
@@ -566,8 +555,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
         ctx->req.uri.len  = uri_end - uri_begin;
 
         /* extra 1 char as required by regex_exec_match2 */
-        ctx->req.path.data = nst_memory_alloc(global.nuster.nosql.memory,
-                ctx->req.path.len + 1);
+        ctx->req.path.data = nst_nosql_memory_alloc(ctx->req.path.len + 1);
 
         if(!ctx->req.path.data) {
             return 0;
@@ -802,8 +790,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
     if(http_find_header2("Content-Type", 12, ci_head(msg->chn),
                 &txn->hdr_idx, &hdr)) {
 
-        ctx->req.content_type.data =
-            nst_memory_alloc(global.nuster.nosql.memory, hdr.vlen);
+        ctx->req.content_type.data = nst_nosql_memory_alloc(hdr.vlen);
 
         if(!ctx->req.content_type.data) {
             return 0;
@@ -822,13 +809,12 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
             ? ctx->req.transfer_encoding.len + hdr.vlen + 1
             : ctx->req.transfer_encoding.len + hdr.vlen;
 
-        ctx->req.transfer_encoding.data =
-            nst_memory_alloc(global.nuster.nosql.memory, len);
+        ctx->req.transfer_encoding.data = nst_nosql_memory_alloc(len);
 
         if(!ctx->req.transfer_encoding.data) {
 
             if(p) {
-                nst_memory_free(global.nuster.nosql.memory, p);
+                nst_nosql_memory_free(p);
             }
 
             return 0;
@@ -841,7 +827,7 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
             ctx->req.transfer_encoding.data[ctx->req.transfer_encoding.len] =
                 ',';
 
-            nst_memory_free(global.nuster.nosql.memory, p);
+            nst_nosql_memory_free(p);
             memcpy(ctx->req.transfer_encoding.data
                     + ctx->req.transfer_encoding.len + 1,
                     hdr.line + hdr.val, hdr.vlen);
@@ -907,8 +893,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
             && (ctx->rule->disk == NST_DISK_SYNC
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
-        ctx->disk.file = nst_memory_alloc(global.nuster.nosql.memory,
-                NST_PERSIST_PATH_FILE_LEN + 1);
+        ctx->disk.file = nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
 
         if(!ctx->disk.file) {
             return;
@@ -960,18 +945,17 @@ static struct nst_nosql_element *_nst_nosql_data_append(struct http_msg *msg,
         long msg_len) {
 
     struct nst_nosql_element *element =
-        nst_memory_alloc(global.nuster.nosql.memory, sizeof(*element));
+        nst_nosql_memory_alloc(sizeof(*element));
 
     if(element) {
         char *data = b_orig(&msg->chn->buf);
         char *p    = ci_head(msg->chn);
         int size   = msg->chn->buf.size;
 
-        element->msg.data = nst_memory_alloc(global.nuster.nosql.memory,
-                msg_len);
+        element->msg.data = nst_nosql_memory_alloc(msg_len);
 
         if(!element->msg.data) {
-            nst_memory_free(global.nuster.nosql.memory, element);
+            nst_nosql_memory_free(element);
             return NULL;
         }
 
@@ -1085,8 +1069,8 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
             }
         } else {
-            ctx->disk.file = nst_memory_alloc(global.nuster.nosql.memory,
-                    NST_PERSIST_PATH_FILE_LEN + 1);
+            ctx->disk.file =
+                nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
 
             if(!ctx->disk.file) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
@@ -1097,7 +1081,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
 
                 ret = NST_NOSQL_CTX_STATE_HIT_DISK;
             } else {
-                nst_memory_free(global.nuster.nosql.memory, ctx->disk.file);
+                nst_nosql_memory_free(ctx->disk.file);
                 ret = NST_NOSQL_CTX_STATE_INIT;
             }
         }
@@ -1214,8 +1198,7 @@ void nst_nosql_persist_async() {
             uint64_t cache_len = 0;
             struct persist disk;
 
-            entry->file = nst_memory_alloc(global.nuster.nosql.memory,
-                    NST_PERSIST_PATH_FILE_LEN + 1);
+            entry->file = nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
 
             if(!entry->file) {
                 return;
@@ -1351,27 +1334,24 @@ void nst_nosql_persist_load() {
                         return;
                     }
 
-                    key = nst_memory_alloc(global.nuster.nosql.memory,
-                            sizeof(*key));
+                    key = nst_nosql_memory_alloc(sizeof(*key));
 
                     if(!key) {
                         return;
                     }
 
                     key->size = nst_persist_meta_get_key_len(meta);
-                    key->area = nst_memory_alloc(global.nuster.nosql.memory,
-                            key->size);
+                    key->area = nst_nosql_memory_alloc(key->size);
 
                     if(!key->area) {
-                        nst_memory_free(global.nuster.nosql.memory, key);
+                        nst_nosql_memory_free(key);
                         return;
                     }
 
                     if(nst_persist_get_key(fd, meta, key) != NST_OK) {
-                        nst_memory_free(global.nuster.nosql.memory,
-                                key->area);
+                        nst_nosql_memory_free(key->area);
 
-                        nst_memory_free(global.nuster.nosql.memory, key);
+                        nst_nosql_memory_free(key);
 
                         unlink(file);
                         close(fd);

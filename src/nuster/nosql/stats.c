@@ -38,8 +38,8 @@ int nst_nosql_stats_full() {
 }
 
 int nst_nosql_stats_init() {
-    global.nuster.nosql.stats = nst_memory_alloc(global.nuster.nosql.memory,
-            sizeof(struct nst_nosql_stats));
+    global.nuster.nosql.stats =
+        nst_nosql_memory_alloc(sizeof(struct nst_nosql_stats));
 
     if(!global.nuster.nosql.stats) {
         return NST_ERR;
