@@ -28,12 +28,6 @@
 #include <nuster/http.h>
 #include <nuster/persist.h>
 
-#define nst_cache_key_init() nst_key_init(global.nuster.cache.memory)
-#define nst_cache_key_advance(key, step)                                      \
-    nst_key_advance(global.nuster.cache.memory, key, step)
-#define nst_cache_key_append(key, str, len)                                   \
-    nst_key_append(global.nuster.cache.memory, key, str, len)
-
 /*
  * The cache applet acts like the backend to send cached http data
  */
@@ -231,8 +225,7 @@ int nst_cache_check_uri(struct http_msg *msg) {
  */
 struct nst_cache_data *nst_cache_data_new() {
 
-    struct nst_cache_data *data =
-        nst_memory_alloc(global.nuster.cache.memory, sizeof(*data));
+    struct nst_cache_data *data = nst_cache_memory_alloc(sizeof(*data));
 
     nst_shctx_lock(nuster.cache);
 
@@ -271,18 +264,17 @@ static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg,
         long msg_len) {
 
     struct nst_cache_element *element =
-        nst_memory_alloc(global.nuster.cache.memory, sizeof(*element));
+        nst_cache_memory_alloc(sizeof(*element));
 
     if(element) {
         char *data = b_orig(&msg->chn->buf);
         char *p    = ci_head(msg->chn);
         int size   = msg->chn->buf.size;
 
-        char *msg_data = nst_memory_alloc(global.nuster.cache.memory,
-                msg_len);
+        char *msg_data = nst_cache_memory_alloc(msg_len);
 
         if(!msg_data) {
-            nst_memory_free(global.nuster.cache.memory, element);
+            nst_cache_memory_free(element);
             return NULL;
         }
 
@@ -357,13 +349,13 @@ static void _nst_cache_data_cleanup() {
 
             if(tmp->msg.data) {
                 nst_cache_stats_update_used_mem(-tmp->msg.len);
-                nst_memory_free(global.nuster.cache.memory, tmp->msg.data);
+                nst_cache_memory_free(tmp->msg.data);
             }
 
-            nst_memory_free(global.nuster.cache.memory, tmp);
+            nst_cache_memory_free(tmp);
         }
 
-        nst_memory_free(global.nuster.cache.memory, data);
+        nst_cache_memory_free(data);
     }
 }
 
@@ -452,8 +444,7 @@ void nst_cache_init() {
                 goto shm_err;
             }
 
-            nuster.cache = nst_memory_alloc(global.nuster.cache.memory,
-                    sizeof(struct nst_cache));
+            nuster.cache = nst_cache_memory_alloc(sizeof(struct nst_cache));
 
         } else {
             global.nuster.cache.memory = nst_memory_create("cache.shm",
@@ -547,8 +538,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     hdr.idx = 0;
 
     if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data = nst_memory_alloc(global.nuster.cache.memory,
-                hdr.vlen);
+        ctx->req.host.data = nst_cache_memory_alloc(hdr.vlen);
 
         if(!ctx->req.host.data) {
             return NST_ERR;
@@ -579,8 +569,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         ctx->req.uri.len  = uri_end - uri_begin;
 
         /* extra 1 char as required by regex_exec_match2 */
-        ctx->req.path.data = nst_memory_alloc(global.nuster.cache.memory,
-                ctx->req.path.len + 1);
+        ctx->req.path.data = nst_cache_memory_alloc(ctx->req.path.len + 1);
 
         if(!ctx->req.path.data) {
             return NST_ERR;
@@ -915,8 +904,8 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
                 ret = NST_CACHE_CTX_STATE_INIT;
             }
         } else {
-            ctx->disk.file = nst_memory_alloc(global.nuster.cache.memory,
-                    NST_PERSIST_PATH_FILE_LEN + 1);
+            ctx->disk.file =
+                nst_cache_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
 
             if(!ctx->disk.file) {
                 ret = NST_CACHE_CTX_STATE_INIT;
@@ -927,7 +916,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
 
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
             } else {
-                nst_memory_free(global.nuster.cache.memory, ctx->disk.file);
+                nst_cache_memory_free(ctx->disk.file);
                 ret = NST_CACHE_CTX_STATE_INIT;
             }
         }
@@ -1003,8 +992,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             && (ctx->rule->disk == NST_DISK_SYNC
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
-        ctx->disk.file = nst_memory_alloc(global.nuster.cache.memory,
-                NST_PERSIST_PATH_FILE_LEN + 1);
+        ctx->disk.file = nst_cache_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
 
         if(!ctx->disk.file) {
             return;
@@ -1207,8 +1195,7 @@ void nst_cache_persist_async() {
             uint64_t cache_len = 0;
             struct persist disk;
 
-            entry->file = nst_memory_alloc(global.nuster.cache.memory,
-                    NST_PERSIST_PATH_FILE_LEN + 1);
+            entry->file = nst_cache_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
 
             if(!entry->file) {
                 return;
@@ -1317,8 +1304,7 @@ void nst_cache_persist_load() {
                         return;
                     }
 
-                    key = nst_memory_alloc(global.nuster.cache.memory,
-                            sizeof(*key));
+                    key = nst_cache_memory_alloc(sizeof(*key));
 
                     if(!key) {
                         unlink(file);
@@ -1328,11 +1314,10 @@ void nst_cache_persist_load() {
                     }
 
                     key->size = nst_persist_meta_get_key_len(meta);
-                    key->area = nst_memory_alloc(global.nuster.cache.memory,
-                            key->size);
+                    key->area = nst_cache_memory_alloc(key->size);
 
                     if(!key->area) {
-                        nst_memory_free(global.nuster.cache.memory, key);
+                        nst_cache_memory_free(key);
                         unlink(file);
                         close(fd);
                         closedir(dir2);
@@ -1340,10 +1325,9 @@ void nst_cache_persist_load() {
                     }
 
                     if(nst_persist_get_key(fd, meta, key) != NST_OK) {
-                        nst_memory_free(global.nuster.cache.memory,
-                                key->area);
+                        nst_cache_memory_free(key->area);
 
-                        nst_memory_free(global.nuster.cache.memory, key);
+                        nst_cache_memory_free(key);
 
                         unlink(file);
                         close(fd);
