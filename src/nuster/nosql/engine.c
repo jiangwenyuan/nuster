@@ -1367,8 +1367,8 @@ void nst_nosql_persist_load() {
                 nuster.nosql->disk.dir = NULL;
             }
         } else {
-            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(file,
-                    nuster.nosql->disk.idx, global.nuster.nosql.root);
+            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(
+                    global.nuster.nosql.root, file, nuster.nosql->disk.idx);
 
             if(!nuster.nosql->disk.dir) {
                 nuster.nosql->disk.idx++;
@@ -1399,8 +1399,8 @@ void nst_nosql_persist_cleanup() {
                 nuster.nosql->disk.dir = NULL;
             }
         } else {
-            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(file,
-                    nuster.nosql->disk.idx, global.nuster.nosql.root);
+            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(
+                    global.nuster.nosql.root, file, nuster.nosql->disk.idx);
 
             if(!nuster.nosql->disk.dir) {
                 nuster.nosql->disk.idx++;
