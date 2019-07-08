@@ -404,7 +404,8 @@ void nst_nosql_init() {
 
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
-        nuster.nosql->disk.file = nst_persist_alloc(global.nuster.nosql.memory);
+        nuster.nosql->disk.file =
+                nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
 
         if(!nuster.nosql->disk.file) {
             goto err;
