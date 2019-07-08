@@ -1221,6 +1221,7 @@ int connect_server(struct stream *s)
 			old_conn = srv_conn;
 		} else {
 			srv_conn = NULL;
+			srv_cs = NULL;
 			si_release_endpoint(&s->si[1]);
 		}
 	}
