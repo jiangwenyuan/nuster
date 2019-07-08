@@ -899,8 +899,8 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
             return;
         }
 
-        if(nst_persist_init(ctx->disk.file, ctx->hash,
-                global.nuster.nosql.root) != NST_OK) {
+        if(nst_persist_init(global.nuster.nosql.root, ctx->disk.file,
+                    ctx->hash) != NST_OK) {
 
             return;
         }
@@ -1204,8 +1204,8 @@ void nst_nosql_persist_async() {
                 return;
             }
 
-            if(nst_persist_init(entry->file, entry->hash,
-                        global.nuster.nosql.root) != NST_OK) {
+            if(nst_persist_init(global.nuster.nosql.root, entry->file,
+                        entry->hash) != NST_OK) {
                 return;
             }
 
