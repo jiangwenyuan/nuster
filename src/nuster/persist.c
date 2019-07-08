@@ -141,8 +141,8 @@ int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
     while((de = readdir(dirp)) != NULL) {
 
         if(strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-            memcpy(disk->file + NST_PERSIST_PATH_HASH_LEN, "/", 1);
-            memcpy(disk->file + NST_PERSIST_PATH_HASH_LEN + 1,
+            memcpy(disk->file + nst_persist_path_hash_len(root), "/", 1);
+            memcpy(disk->file + nst_persist_path_hash_len(root) + 1,
                     de->d_name, strlen(de->d_name));
 
             if(nst_persist_valid(disk, key, hash) == NST_OK) {
@@ -157,7 +157,7 @@ int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
 }
 
 DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx) {
-    memset(path, 0, NST_PERSIST_PATH_FILE_LEN);
+    memset(path, 0, nst_persist_path_file_len(root));
     sprintf(path, "%s/%x/%02x", root, idx / 16, idx);
 
     return opendir(path);
