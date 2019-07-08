@@ -59,7 +59,7 @@ int nst_persist_init(char *root, char *path, uint64_t hash) {
         return NST_ERR;
     }
 
-    sprintf(path + NST_PERSIST_PATH_HASH_LEN, "/%"PRIx64"-%"PRIx64,
+    sprintf(path + nst_persist_path_hash_len(root), "/%"PRIx64"-%"PRIx64,
             get_current_timestamp() * random() * random() & hash,
             get_current_timestamp());
 
