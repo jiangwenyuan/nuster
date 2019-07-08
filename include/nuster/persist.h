@@ -79,6 +79,18 @@ struct persist {
 /* /a/4a/60322ec3e2428e4a/71fabeefebdaaedb-16ae92496e1: + 1 + 16 + 1 + 11 */
 #define NST_PERSIST_PATH_FILE_LEN NST_PERSIST_PATH_HASH_LEN + 29
 
+static inline int nst_persist_path_base_len(char *root) {
+    return strlen(root) + 5;
+}
+
+static inline int nst_persist_path_hash_len(char *root) {
+    return strlen(root) + 22;
+}
+
+static inline int nst_persist_path_file_len(char *root) {
+    return strlen(root) + 51;
+}
+
 int nst_persist_mkdir(char *path);
 char *nst_persist_alloc(struct nst_memory *p);
 int nst_persist_init(char *path, uint64_t hash, char *dir);
