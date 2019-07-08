@@ -53,8 +53,8 @@ char *nst_persist_alloc(struct nst_memory *m) {
     return nst_memory_alloc(m, NST_PERSIST_PATH_FILE_LEN + 1);
 }
 
-int nst_persist_init(char *path, uint64_t hash, char *dir) {
-    sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, dir,
+int nst_persist_init(char *root, char *path, uint64_t hash) {
+    sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
             hash >> 60, hash >> 56, hash);
 
     nst_debug("[nuster][persist] Path: %s\n", path);

@@ -93,7 +93,7 @@ static inline int nst_persist_path_file_len(char *root) {
 
 int nst_persist_mkdir(char *path);
 char *nst_persist_alloc(struct nst_memory *p);
-int nst_persist_init(char *path, uint64_t hash, char *dir);
+int nst_persist_init(char *root, char *path, uint64_t hash);
 
 static inline int nst_persist_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
