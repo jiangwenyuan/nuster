@@ -452,14 +452,14 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `dir` expects a directory as "
+                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as "
                         "an argument.\n", file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
 
-            global.nuster.cache.directory = strdup(args[cur_arg]);
+            global.nuster.cache.root = strdup(args[cur_arg]);
             cur_arg++;
             continue;
         }
@@ -669,14 +669,14 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `dir` expects a directory as "
+                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as "
                         "an argument.\n", file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
 
-            global.nuster.nosql.directory = strdup(args[cur_arg]);
+            global.nuster.nosql.root = strdup(args[cur_arg]);
             cur_arg++;
             continue;
         }
@@ -1061,7 +1061,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     rule->ttl  = malloc(sizeof(*rule->ttl));
     *rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
 
-    if(disk > 0 && !global.nuster.cache.directory) {
+    if(disk > 0 && !global.nuster.cache.root) {
         memprintf(err, "rule %s: disk enabled but no `dir` defined", name);
         goto out;
     }

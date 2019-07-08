@@ -71,7 +71,7 @@ struct persist {
 };
 
 /* /0/00 */
-#define NST_PERSIST_PATH_BASE_LEN strlen(global.nuster.cache.directory) + 5
+#define NST_PERSIST_PATH_BASE_LEN strlen(global.nuster.cache.root) + 5
 
 /* /0/00/60322ec3e2428e4a: + 1 + 16 */
 #define NST_PERSIST_PATH_HASH_LEN NST_PERSIST_PATH_BASE_LEN + 17

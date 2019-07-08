@@ -415,11 +415,11 @@ void nst_cache_init() {
             }
         }
 
-        if(global.nuster.cache.directory) {
+        if(global.nuster.cache.root) {
 
-            if(nst_persist_mkdir(global.nuster.cache.directory) == NST_ERR) {
+            if(nst_persist_mkdir(global.nuster.cache.root) == NST_ERR) {
 
-                ha_alert("Create `%s` failed\n", global.nuster.cache.directory);
+                ha_alert("Create `%s` failed\n", global.nuster.cache.root);
                 exit(1);
             }
         }
@@ -912,7 +912,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
             }
 
             if(nst_persist_exists(&ctx->disk, ctx->key, ctx->hash,
-                        global.nuster.cache.directory) == NST_OK) {
+                        global.nuster.cache.root) == NST_OK) {
 
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
             } else {
@@ -999,7 +999,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         }
 
         if(nst_persist_init(ctx->disk.file, ctx->hash,
-                global.nuster.cache.directory) != NST_OK) {
+                global.nuster.cache.root) != NST_OK) {
 
             return;
         }
@@ -1202,7 +1202,7 @@ void nst_cache_persist_async() {
             }
 
             if(nst_persist_init(entry->file, entry->hash,
-                        global.nuster.cache.directory) != NST_OK) {
+                        global.nuster.cache.root) != NST_OK) {
                 return;
             }
 
@@ -1248,7 +1248,7 @@ void nst_cache_persist_async() {
 
 void nst_cache_persist_load() {
 
-    if(global.nuster.cache.directory && !nuster.cache->disk.loaded) {
+    if(global.nuster.cache.root && !nuster.cache->disk.loaded) {
         char *file;
         char meta[NST_PERSIST_META_SIZE];
         struct buffer *key;
@@ -1348,7 +1348,7 @@ void nst_cache_persist_load() {
             }
         } else {
             nuster.cache->disk.dir = nst_persist_opendir_by_idx(file,
-                    nuster.cache->disk.idx, global.nuster.cache.directory);
+                    nuster.cache->disk.idx, global.nuster.cache.root);
 
             if(!nuster.cache->disk.dir) {
                 nuster.cache->disk.idx++;
@@ -1365,7 +1365,7 @@ void nst_cache_persist_load() {
 
 void nst_cache_persist_cleanup() {
 
-    if(global.nuster.cache.directory && nuster.cache->disk.loaded) {
+    if(global.nuster.cache.root && nuster.cache->disk.loaded) {
         char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
@@ -1380,7 +1380,7 @@ void nst_cache_persist_cleanup() {
             }
         } else {
             nuster.cache->disk.dir = nst_persist_opendir_by_idx(file,
-                    nuster.cache->disk.idx, global.nuster.cache.directory);
+                    nuster.cache->disk.idx, global.nuster.cache.root);
 
             if(!nuster.cache->disk.dir) {
                 nuster.cache->disk.idx++;

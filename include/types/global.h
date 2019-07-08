@@ -180,7 +180,7 @@ struct global {
 	struct {
 		struct {
 			int       status;                      /* cache on or off */
-			char     *directory;                   /* directory */
+			char     *root;                        /* persist root directory */
 			uint64_t  data_size;                   /* max memory used by data, in bytes */
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
 			int       share;
@@ -208,7 +208,7 @@ struct global {
 			int       status;                      /* enable nosql on or off */
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
 			uint64_t  data_size;                   /* max memory used by nosql, in bytes */
-			char     *directory;                   /* directory */
+			char     *root;                        /* persist root directory */
 			int	  dict_cleaner;                /* the number of entries checked once */
 			int	  data_cleaner;                /* the number of data checked once */
 			int	  disk_cleaner;                /* the number of files checked once */
