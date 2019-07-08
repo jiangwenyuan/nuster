@@ -160,9 +160,9 @@ int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
     return NST_ERR;
 }
 
-DIR *nst_persist_opendir_by_idx(char *path, int idx, char *dir) {
+DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx) {
     memset(path, 0, NST_PERSIST_PATH_FILE_LEN);
-    sprintf(path, "%s/%x/%02x", dir, idx / 16, idx);
+    sprintf(path, "%s/%x/%02x", root, idx / 16, idx);
 
     return opendir(path);
 }
