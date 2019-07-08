@@ -1076,8 +1076,8 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
             }
 
-            if(nst_persist_exists(&ctx->disk, ctx->key, ctx->hash,
-                        global.nuster.nosql.root) == NST_OK) {
+            if(nst_persist_exists(global.nuster.nosql.root, &ctx->disk,
+                        ctx->key, ctx->hash) == NST_OK) {
 
                 ret = NST_NOSQL_CTX_STATE_HIT_DISK;
             } else {

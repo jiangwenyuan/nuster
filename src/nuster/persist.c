@@ -127,13 +127,13 @@ err:
 }
 
 
-int nst_persist_exists(struct persist *disk, struct buffer *key, uint64_t hash,
-        char *dir) {
+int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
+        uint64_t hash) {
 
     struct dirent *de;
     DIR *dirp;
 
-    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, dir,
+    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
             hash >> 60, hash >> 56, hash);
 
     dirp = opendir(disk->file);

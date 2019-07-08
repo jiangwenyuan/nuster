@@ -176,8 +176,8 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_key_len(p, key_len);
 }
 
-int nst_persist_exists(struct persist *disk, struct buffer *key,
-        uint64_t hash, char *dir);
+int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
+        uint64_t hash);
 
 static inline int nst_persist_write(struct persist *disk, char *buf, int len) {
     ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
