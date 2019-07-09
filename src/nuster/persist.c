@@ -198,7 +198,7 @@ int nst_persist_get_key(int fd, char *meta, struct buffer *key) {
     return NST_OK;
 }
 
-void nst_persist_cleanup(char *path, struct dirent *de1) {
+void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
     DIR *dir2;
     struct dirent *de2;
     int fd, ret;
@@ -209,8 +209,8 @@ void nst_persist_cleanup(char *path, struct dirent *de1) {
         return;
     }
 
-    memcpy(path + NST_PERSIST_PATH_BASE_LEN, "/", 1);
-    memcpy(path + NST_PERSIST_PATH_BASE_LEN + 1, de1->d_name,
+    memcpy(path + nst_persist_path_base_len(root), "/", 1);
+    memcpy(path + nst_persist_path_base_len(root) + 1, de1->d_name,
             strlen(de1->d_name));
 
     dir2 = opendir(path);
@@ -224,8 +224,8 @@ void nst_persist_cleanup(char *path, struct dirent *de1) {
         if(strcmp(de2->d_name, ".") != 0
                 && strcmp(de2->d_name, "..") != 0) {
 
-            memcpy(path + NST_PERSIST_PATH_HASH_LEN, "/", 1);
-            memcpy(path + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
+            memcpy(path + nst_persist_path_hash_len(root), "/", 1);
+            memcpy(path + nst_persist_path_hash_len(root) + 1, de2->d_name,
                     strlen(de2->d_name));
 
             fd = nst_persist_open(path);
