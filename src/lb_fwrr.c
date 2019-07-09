@@ -252,7 +252,7 @@ static void fwrr_update_server_weight(struct server *srv)
  * function is meant to be called when a server is going down or has its
  * weight disabled.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static inline void fwrr_remove_from_tree(struct server *s)
 {
@@ -263,7 +263,7 @@ static inline void fwrr_remove_from_tree(struct server *s)
  * We want to sort them by inverted weights, because we need to place
  * heavy servers first in order to get a smooth distribution.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static inline void fwrr_queue_by_weight(struct eb_root *root, struct server *s)
 {
@@ -323,7 +323,7 @@ void fwrr_init_server_groups(struct proxy *p)
 
 /* simply removes a server from a weight tree.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static inline void fwrr_dequeue_srv(struct server *s)
 {
@@ -334,7 +334,7 @@ static inline void fwrr_dequeue_srv(struct server *s)
  * backup status, and ->npos. If the server is disabled, simply assign
  * it to the NULL tree.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static void fwrr_queue_srv(struct server *s)
 {
@@ -375,7 +375,7 @@ static void fwrr_queue_srv(struct server *s)
 
 /* prepares a server when extracting it from the "init" tree.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static inline void fwrr_get_srv_init(struct server *s)
 {
@@ -384,7 +384,7 @@ static inline void fwrr_get_srv_init(struct server *s)
 
 /* prepares a server when extracting it from the "next" tree.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static inline void fwrr_get_srv_next(struct server *s)
 {
@@ -397,7 +397,7 @@ static inline void fwrr_get_srv_next(struct server *s)
 
 /* prepares a server when it was marked down.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static inline void fwrr_get_srv_down(struct server *s)
 {
@@ -410,7 +410,7 @@ static inline void fwrr_get_srv_down(struct server *s)
 
 /* prepares a server when extracting it from its tree.
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static void fwrr_get_srv(struct server *s)
 {
@@ -433,7 +433,7 @@ static void fwrr_get_srv(struct server *s)
 /* switches trees "init" and "next" for FWRR group <grp>. "init" should be empty
  * when this happens, and "next" filled with servers sorted by weights.
  *
- * The lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static inline void fwrr_switch_trees(struct fwrr_group *grp)
 {
@@ -448,60 +448,61 @@ static inline void fwrr_switch_trees(struct fwrr_group *grp)
 /* return next server from the current tree in FWRR group <grp>, or a server
  * from the "init" tree if appropriate. If both trees are empty, return NULL.
  *
- * The lbprm's lock must be held.
+ * The lbprm's lock must be held. The server's lock is not used.
  */
 static struct server *fwrr_get_server_from_group(struct fwrr_group *grp)
 {
-	struct eb32_node *node;
-	struct server *s;
+	struct eb32_node *node1;
+	struct eb32_node *node2;
+	struct server *s1 = NULL;
+	struct server *s2 = NULL;
 
-	node = eb32_first(&grp->curr);
-	s = eb32_entry(node, struct server, lb_node);
+	node1 = eb32_first(&grp->curr);
+	if (node1) {
+		s1 = eb32_entry(node1, struct server, lb_node);
+		if (s1->cur_eweight && s1->npos <= grp->curr_pos)
+			return s1;
+	}
 
-	if (!node || s->npos > grp->curr_pos) {
-		/* either we have no server left, or we have a hole */
-		struct eb32_node *node2;
-		node2 = eb32_first(grp->init);
-		if (node2) {
-			node = node2;
-			s = eb32_entry(node, struct server, lb_node);
-			fwrr_get_srv_init(s);
-			if (s->cur_eweight == 0) /* FIXME: is it possible at all ? */
-				node = NULL;
+	/* Either we have no server left, or we have a hole. We'll look in the
+	 * init tree or a better proposal. At this point, if <s1> is non-null,
+	 * it is guaranteed to remain available as the tree is locked.
+	 */
+	node2 = eb32_first(grp->init);
+	if (node2) {
+		s2 = eb32_entry(node2, struct server, lb_node);
+		if (s2->cur_eweight) {
+			fwrr_get_srv_init(s2);
+			return s2;
 		}
 	}
-	if (node)
-		return s;
-	else
-		return NULL;
+	return s1;
 }
 
-/* Computes next position of server <s> in the group. It is mandatory for <s>
- * to have a non-zero, positive eweight.
+/* Computes next position of server <s> in the group. Nothing is done if <s>
+ * has a zero weight. 
  *
- * The server's lock and the lbprm's lock must be held.
+ * The lbprm's lock must be held to protect lpos/npos/rweight.
  */
 static inline void fwrr_update_position(struct fwrr_group *grp, struct server *s)
 {
+	unsigned int eweight = *(volatile unsigned int *)&s->cur_eweight;
+
+	if (!eweight)
+		return;
+
 	if (!s->npos) {
 		/* first time ever for this server */
-		s->lpos = grp->curr_pos;
-		s->npos = grp->curr_pos + grp->next_weight / s->cur_eweight;
-		HA_ATOMIC_ADD(&s->rweight, (grp->next_weight % s->cur_eweight));
+		s->npos     = grp->curr_pos;
+	}
 
-		if (s->rweight >= s->cur_eweight) {
-			HA_ATOMIC_SUB(&s->rweight, s->cur_eweight);
-			HA_ATOMIC_ADD(&s->npos, 1);
-		}
-	} else {
-		s->lpos = s->npos;
-		HA_ATOMIC_ADD(&s->npos, (grp->next_weight / s->cur_eweight));
-		HA_ATOMIC_ADD(&s->rweight, (grp->next_weight % s->cur_eweight));
+	s->lpos     = s->npos;
+	s->npos    += grp->next_weight / eweight;
+	s->rweight += grp->next_weight % eweight;
 
-		if (s->rweight >= s->cur_eweight) {
-			HA_ATOMIC_SUB(&s->rweight, s->cur_eweight);
-			HA_ATOMIC_ADD(&s->npos, 1);
-		}
+	if (s->rweight >= eweight) {
+		s->rweight -= eweight;
+		s->npos++;
 	}
 }
 
@@ -509,7 +510,7 @@ static inline void fwrr_update_position(struct fwrr_group *grp, struct server *s
  * the init tree if appropriate. If both trees are empty, return NULL.
  * Saturated servers are skipped and requeued.
  *
- * The server's lock must be held. The lbprm's lock will be used.
+ * The lbprm's lock will be used. The server's lock is not used.
  */
 struct server *fwrr_get_next_server(struct proxy *p, struct server *srvtoavoid)
 {
@@ -557,7 +558,6 @@ struct server *fwrr_get_next_server(struct proxy *p, struct server *srvtoavoid)
 			}
 			switched = 1;
 			fwrr_switch_trees(grp);
-
 		}
 
 		/* OK, we have a server. However, it may be saturated, in which
@@ -576,7 +576,8 @@ struct server *fwrr_get_next_server(struct proxy *p, struct server *srvtoavoid)
 			avoided = srv; /* ...but remember that is was selected yet avoided */
 		}
 
-		/* the server is saturated or avoided, let's chain it for later reinsertion */
+		/* the server is saturated or avoided, let's chain it for later reinsertion.
+		 */
 		srv->next_full = full;
 		full = srv;
 	}
@@ -586,7 +587,9 @@ struct server *fwrr_get_next_server(struct proxy *p, struct server *srvtoavoid)
 
  requeue_servers:
 	/* Requeue all extracted servers. If full==srv then it was
-	 * avoided (unsuccessfully) and chained, omit it now.
+	 * avoided (unsuccessfully) and chained, omit it now. The
+	 * only way to get there is by having <avoided>==NULL or
+	 * <avoided>==<srv>.
 	 */
 	if (unlikely(full != NULL)) {
 		if (switched) {

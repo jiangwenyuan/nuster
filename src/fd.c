@@ -264,7 +264,7 @@ lock_self:
 #ifdef HA_CAS_IS_8B
 	    unlikely(!HA_ATOMIC_CAS(((void **)(void *)&_GET_NEXT(fd, off)), ((void **)(void *)&cur_list), (*(void **)(void *)&next_list))))
 #else
-	    unlikely(!__ha_cas_dw((void *)&_GET_NEXT(fd, off), (void *)&cur_list, (void *)&next_list)))
+	    unlikely(!_HA_ATOMIC_DWCAS(((void **)(void *)&_GET_NEXT(fd, off)), ((void **)(void *)&cur_list), (*(void **)(void *)&next_list))))
 #endif
 	    ;
 	next = cur_list.next;
@@ -405,6 +405,7 @@ void fd_remove(int fd)
 static inline void fdlist_process_cached_events(volatile struct fdlist *fdlist)
 {
 	int fd, old_fd, e;
+	unsigned long locked;
 
 	for (old_fd = fd = fdlist->first; fd != -1; fd = fdtab[fd].cache.next) {
 		if (fd == -2) {
@@ -421,7 +422,8 @@ static inline void fdlist_process_cached_events(volatile struct fdlist *fdlist)
 			continue;
 
 		HA_ATOMIC_OR(&fd_cache_mask, tid_bit);
-		if (atleast2(fdtab[fd].thread_mask) && HA_SPIN_TRYLOCK(FD_LOCK, &fdtab[fd].lock)) {
+		locked = atleast2(fdtab[fd].thread_mask);
+		if (locked && HA_SPIN_TRYLOCK(FD_LOCK, &fdtab[fd].lock)) {
 			activity[tid].fd_lock++;
 			continue;
 		}
@@ -436,13 +438,13 @@ static inline void fdlist_process_cached_events(volatile struct fdlist *fdlist)
 			fdtab[fd].ev |= FD_POLL_OUT;
 
 		if (fdtab[fd].iocb && fdtab[fd].owner && fdtab[fd].ev) {
-			if (atleast2(fdtab[fd].thread_mask))
+			if (locked)
 				HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 			fdtab[fd].iocb(fd);
 		}
 		else {
 			fd_release_cache_entry(fd);
-			if (atleast2(fdtab[fd].thread_mask))
+			if (locked)
 				HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 		}
 	}

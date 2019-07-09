@@ -463,7 +463,7 @@ fail_get:
 /*
  * openssl async fd handler
  */
-static void ssl_async_fd_handler(int fd)
+void ssl_async_fd_handler(int fd)
 {
 	struct connection *conn = fdtab[fd].owner;
 
@@ -484,7 +484,7 @@ static void ssl_async_fd_handler(int fd)
 /*
  * openssl async delayed SSL_free handler
  */
-static void ssl_async_fd_free(int fd)
+void ssl_async_fd_free(int fd)
 {
 	SSL *ssl = fdtab[fd].owner;
 	OSSL_ASYNC_FD all_fd[32];
@@ -4785,7 +4785,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 
 #if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	if (srv->ssl_ctx.ciphersuites &&
-		!SSL_CTX_set_cipher_list(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
+		!SSL_CTX_set_ciphersuites(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
 		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set TLS 1.3 cipher suites to '%s'.\n",
 			 curproxy->id, srv->id,
 			 srv->conf.file, srv->conf.line, srv->ssl_ctx.ciphersuites);
@@ -5186,7 +5186,8 @@ static int ssl_sock_init(struct connection *conn)
 
 		/* leave init state and start handshake */
 		conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
-#if OPENSSL_VERSION_NUMBER >= 0x10101000L || defined(OPENSSL_IS_BORINGSSL)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined(LIBRESSL_VERSION_NUMBER)) || \
+    defined(OPENSSL_IS_BORINGSSL)
 		conn->flags |= CO_FL_EARLY_SSL_HS;
 #endif
 
@@ -5662,7 +5663,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 	if (!conn->xprt_ctx)
 		goto out_error;
 
-	if (conn->flags & CO_FL_HANDSHAKE)
+	if (conn->flags & (CO_FL_HANDSHAKE | CO_FL_EARLY_SSL_HS))
 		/* a handshake was requested */
 		return 0;
 
@@ -5693,7 +5694,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 		}
 
 #if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
-		if (!SSL_is_init_finished(conn->xprt_ctx)) {
+		if (!SSL_is_init_finished(conn->xprt_ctx) && conn_is_back(conn)) {
 			unsigned int max_early;
 
 			if (objt_listener(conn->target))
@@ -5708,8 +5709,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 			if (try + conn->sent_early_data > max_early) {
 				try -= (try + conn->sent_early_data) - max_early;
 				if (try <= 0) {
-					if (!(conn->flags & CO_FL_EARLY_SSL_HS))
-						conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
+					conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
 					break;
 				}
 			}
@@ -5717,10 +5717,8 @@ static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *bu
 			if (ret == 1) {
 				ret = written_data;
 				conn->sent_early_data += ret;
-				if (objt_server(conn->target)) {
-					conn->flags &= ~CO_FL_EARLY_SSL_HS;
+				if (objt_server(conn->target))
 					conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN | CO_FL_EARLY_DATA;
-				}
 
 			}
 
@@ -7654,7 +7652,7 @@ static int parse_tls_method_minmax(char **args, int cur_arg, struct tls_version_
 
 static int ssl_bind_parse_tls_method_minmax(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
-#if (OPENSSL_VERSION_NUMBER < 0x10101000L) || !defined(OPENSSL_IS_BORINGSSL)
+#if (OPENSSL_VERSION_NUMBER < 0x10101000L) && !defined(OPENSSL_IS_BORINGSSL)
 	ha_warning("crt-list: ssl-min-ver and ssl-max-ver are not supported with this Openssl version (skipped).\n");
 #endif
 	return parse_tls_method_minmax(args, cur_arg, &conf->ssl_methods, err);

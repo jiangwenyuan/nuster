@@ -232,11 +232,13 @@ unsigned int dropped_logs = 0;
  * update_log_hdr().
  */
 THREAD_LOCAL char *logheader = NULL;
+THREAD_LOCAL char *logheader_end = NULL;
 
 /* This is a global syslog header for messages in RFC5424 format. It is
  * updated by update_log_hdr_rfc5424().
  */
 THREAD_LOCAL char *logheader_rfc5424 = NULL;
+THREAD_LOCAL char *logheader_rfc5424_end = NULL;
 
 /* This is a global syslog message buffer, common to all outgoing
  * messages. It contains only the data part.
@@ -377,7 +379,7 @@ int parse_logformat_var_args(char *args, struct logformat_node *node, char **err
 int parse_logformat_var(char *arg, int arg_len, char *var, int var_len, struct proxy *curproxy, struct list *list_format, int *defoptions, char **err)
 {
 	int j;
-	struct logformat_node *node;
+	struct logformat_node *node = NULL;
 
 	for (j = 0; logformat_keywords[j].name; j++) { // search a log type
 		if (strlen(logformat_keywords[j].name) == var_len &&
@@ -386,14 +388,14 @@ int parse_logformat_var(char *arg, int arg_len, char *var, int var_len, struct p
 				node = calloc(1, sizeof(*node));
 				if (!node) {
 					memprintf(err, "out of memory error");
-					return 0;
+					goto error_free;
 				}
 				node->type = logformat_keywords[j].type;
 				node->options = *defoptions;
 				if (arg_len) {
 					node->arg = my_strndup(arg, arg_len);
 					if (!parse_logformat_var_args(node->arg, node, err))
-						return 0;
+						goto error_free;
 				}
 				if (node->type == LOG_FMT_GLOBAL) {
 					*defoptions = node->options;
@@ -402,7 +404,7 @@ int parse_logformat_var(char *arg, int arg_len, char *var, int var_len, struct p
 				} else {
 					if (logformat_keywords[j].config_callback &&
 					    logformat_keywords[j].config_callback(node, curproxy) != 0) {
-						return 0;
+						goto error_free;
 					}
 					curproxy->to_log |= logformat_keywords[j].lw;
 					LIST_ADDQ(list_format, &node->list);
@@ -415,7 +417,7 @@ int parse_logformat_var(char *arg, int arg_len, char *var, int var_len, struct p
 			} else {
 				memprintf(err, "format variable '%s' is reserved for HTTP mode",
 				          logformat_keywords[j].name);
-				return 0;
+				goto error_free;
 			}
 		}
 	}
@@ -424,6 +426,12 @@ int parse_logformat_var(char *arg, int arg_len, char *var, int var_len, struct p
 	var[var_len] = 0;
 	memprintf(err, "no such format variable '%s'. If you wanted to emit the '%%' character verbatim, you need to use '%%%%'", var);
 	var[var_len] = j;
+
+  error_free:
+	if (node) {
+		free(node->arg);
+		free(node);
+	}
 	return 0;
 }
 
@@ -476,8 +484,8 @@ int add_to_logformat_list(char *start, char *end, int type, struct list *list_fo
 int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct proxy *curpx, struct list *list_format, int options, int cap, char **err)
 {
 	char *cmd[2];
-	struct sample_expr *expr;
-	struct logformat_node *node;
+	struct sample_expr *expr = NULL;
+	struct logformat_node *node = NULL;
 	int cmd_arg;
 
 	cmd[0] = text;
@@ -487,13 +495,13 @@ int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct prox
 	expr = sample_parse_expr(cmd, &cmd_arg, curpx->conf.args.file, curpx->conf.args.line, err, &curpx->conf.args);
 	if (!expr) {
 		memprintf(err, "failed to parse sample expression <%s> : %s", text, *err);
-		return 0;
+		goto error_free;
 	}
 
 	node = calloc(1, sizeof(*node));
 	if (!node) {
 		memprintf(err, "out of memory error");
-		return 0;
+		goto error_free;
 	}
 	node->type = LOG_FMT_EXPR;
 	node->expr = expr;
@@ -502,7 +510,7 @@ int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct prox
 	if (arg_len) {
 		node->arg = my_strndup(arg, arg_len);
 		if (!parse_logformat_var_args(node->arg, node, err))
-			return 0;
+			goto error_free;
 	}
 	if (expr->fetch->val & cap & SMP_VAL_REQUEST)
 		node->options |= LOG_OPT_REQ_CAP; /* fetch method is request-compatible */
@@ -515,7 +523,7 @@ int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct prox
 		node = NULL;
 		memprintf(err, "sample fetch <%s> may not be reliably used here because it needs '%s' which is not available here",
 		          text, sample_src_names(expr->fetch->use));
-		return 0;
+		goto error_free;
 	}
 
 	/* check if we need to allocate an hdr_idx struct for HTTP parsing */
@@ -530,6 +538,14 @@ int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct prox
 	curpx->to_log |= LW_REQ;
 	LIST_ADDQ(list_format, &node->list);
 	return 1;
+
+  error_free:
+	release_sample_expr(expr);
+	if (node) {
+		free(node->arg);
+		free(node);
+	}
+	return 0;
 }
 
 /*
@@ -567,6 +583,8 @@ int parse_logformat_string(const char *fmt, struct proxy *curproxy, struct list 
 	/* flush the list first. */
 	list_for_each_entry_safe(tmplf, back, list_format, list) {
 		LIST_DEL(&tmplf->list);
+		release_sample_expr(tmplf->expr);
+		free(tmplf->arg);
 		free(tmplf);
 	}
 
@@ -1153,8 +1171,21 @@ char *lf_ip(char *dst, const struct sockaddr *sockaddr, size_t size, const struc
 	char pn[INET6_ADDRSTRLEN];
 
 	if (node->options & LOG_OPT_HEXA) {
-		const unsigned char *addr = (const unsigned char *)&((struct sockaddr_in *)sockaddr)->sin_addr.s_addr;
-		iret = snprintf(dst, size, "%02X%02X%02X%02X", addr[0], addr[1], addr[2], addr[3]);
+		unsigned char *addr = NULL;
+		switch (sockaddr->sa_family) {
+		case AF_INET:
+			addr = (unsigned char *)&((struct sockaddr_in *)sockaddr)->sin_addr.s_addr;
+			iret = snprintf(dst, size, "%02X%02X%02X%02X", addr[0], addr[1], addr[2], addr[3]);
+			break;
+		case AF_INET6:
+			addr = (unsigned char *)&((struct sockaddr_in6 *)sockaddr)->sin6_addr.s6_addr;
+			iret = snprintf(dst, size, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+			                addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7],
+			                addr[8], addr[9], addr[10], addr[11], addr[12], addr[13], addr[14], addr[15]);
+			break;
+		default:
+			return NULL;
+		}
 		if (iret < 0 || iret > size)
 			return NULL;
 		ret += iret;
@@ -1197,11 +1228,10 @@ char *lf_port(char *dst, const struct sockaddr *sockaddr, size_t size, const str
 static char *update_log_hdr(const time_t time)
 {
 	static THREAD_LOCAL long tvsec;
-	static THREAD_LOCAL char *dataptr = NULL; /* backup of last end of header, NULL first time */
 	static THREAD_LOCAL struct buffer host = { };
 	static THREAD_LOCAL int sep = 0;
 
-	if (unlikely(time != tvsec || dataptr == NULL)) {
+	if (unlikely(time != tvsec || logheader_end == NULL)) {
 		/* this string is rebuild only once a second */
 		struct tm tm;
 		int hdr_len;
@@ -1227,12 +1257,12 @@ static char *update_log_hdr(const time_t time)
 		if (hdr_len < 0 || hdr_len > global.max_syslog_len)
 			hdr_len = global.max_syslog_len;
 
-		dataptr = logheader + hdr_len;
+		logheader_end = logheader + hdr_len;
 	}
 
-	dataptr[0] = 0; // ensure we get rid of any previous attempt
+	logheader_end[0] = 0; // ensure we get rid of any previous attempt
 
-	return dataptr;
+	return logheader_end;
 }
 
 /* Re-generate time-based part of the syslog header in RFC5424 format at
@@ -1242,10 +1272,9 @@ static char *update_log_hdr(const time_t time)
 static char *update_log_hdr_rfc5424(const time_t time)
 {
 	static THREAD_LOCAL long tvsec;
-	static THREAD_LOCAL char *dataptr = NULL; /* backup of last end of header, NULL first time */
 	const char *gmt_offset;
 
-	if (unlikely(time != tvsec || dataptr == NULL)) {
+	if (unlikely(time != tvsec || logheader_rfc5424_end == NULL)) {
 		/* this string is rebuild only once a second */
 		struct tm tm;
 		int hdr_len;
@@ -1267,12 +1296,12 @@ static char *update_log_hdr_rfc5424(const time_t time)
 		if (hdr_len < 0 || hdr_len > global.max_syslog_len)
 			hdr_len = global.max_syslog_len;
 
-		dataptr = logheader_rfc5424 + hdr_len;
+		logheader_rfc5424_end = logheader_rfc5424 + hdr_len;
 	}
 
-	dataptr[0] = 0; // ensure we get rid of any previous attempt
+	logheader_rfc5424_end[0] = 0; // ensure we get rid of any previous attempt
 
-	return dataptr;
+	return logheader_rfc5424_end;
 }
 
 /*
@@ -1681,7 +1710,9 @@ static void deinit_log_buffers_per_thread()
 int init_log_buffers()
 {
 	logheader = my_realloc2(logheader, global.max_syslog_len + 1);
+	logheader_end = NULL;
 	logheader_rfc5424 = my_realloc2(logheader_rfc5424, global.max_syslog_len + 1);
+	logheader_rfc5424_end = NULL;
 	logline = my_realloc2(logline, global.max_syslog_len + 1);
 	logline_rfc5424 = my_realloc2(logline_rfc5424, global.max_syslog_len + 1);
 	if (!logheader || !logline_rfc5424 || !logline || !logline_rfc5424)
@@ -1692,11 +1723,15 @@ int init_log_buffers()
 /* Deinitialize log buffers used for syslog messages */
 void deinit_log_buffers()
 {
+	void *tmp_startup_logs;
+
 	free(logheader);
 	free(logheader_rfc5424);
 	free(logline);
 	free(logline_rfc5424);
-	free(startup_logs);
+	tmp_startup_logs = HA_ATOMIC_XCHG(&startup_logs, NULL);
+	free(tmp_startup_logs);
+
 	logheader         = NULL;
 	logheader_rfc5424 = NULL;
 	logline           = NULL;
@@ -2002,7 +2037,6 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_TS: // %Ts
-				get_gmtime(logs->accept_date.tv_sec, &tm);
 				if (tmp->options & LOG_OPT_HEXA) {
 					iret = snprintf(tmplog, dst + maxsize - tmplog, "%04X", (unsigned int)logs->accept_date.tv_sec);
 					if (iret < 0 || iret > dst + maxsize - tmplog)

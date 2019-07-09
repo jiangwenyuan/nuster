@@ -103,11 +103,7 @@ static void disable_listener(struct listener *listener)
 		goto end;
 	if (listener->state == LI_READY)
 		fd_stop_recv(listener->fd);
-	if (listener->state == LI_LIMITED) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_DEL(&listener->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	}
+	LIST_DEL_LOCKED(&listener->wait_queue);
 	listener->state = LI_LISTEN;
   end:
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &listener->lock);
@@ -143,11 +139,7 @@ int pause_listener(struct listener *l)
 			goto end;
 	}
 
-	if (l->state == LI_LIMITED) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_DEL(&l->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	}
+	LIST_DEL_LOCKED(&l->wait_queue);
 
 	fd_stop_recv(l->fd);
 	l->state = LI_PAUSED;
@@ -208,8 +200,7 @@ static int __resume_listener(struct listener *l)
 	if (l->state == LI_READY)
 		goto end;
 
-	if (l->state == LI_LIMITED)
-		LIST_DEL(&l->wait_queue);
+	LIST_DEL_LOCKED(&l->wait_queue);
 
 	if (l->nbconn >= l->maxconn) {
 		l->state = LI_FULL;
@@ -223,16 +214,6 @@ static int __resume_listener(struct listener *l)
 	return ret;
 }
 
-int resume_listener(struct listener *l)
-{
-	int ret;
-
-	HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	ret = __resume_listener(l);
-	HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	return ret;
-}
-
 /* Marks a ready listener as full so that the stream code tries to re-enable
  * it upon next close() using resume_listener().
  *
@@ -241,16 +222,15 @@ int resume_listener(struct listener *l)
  */
 static void listener_full(struct listener *l)
 {
+	HA_SPIN_LOCK(LISTENER_LOCK, &l->lock);
 	if (l->state >= LI_READY) {
-		if (l->state == LI_LIMITED) {
-			HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-			LIST_DEL(&l->wait_queue);
-			HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
+		LIST_DEL_LOCKED(&l->wait_queue);
+		if (l->state != LI_FULL) {
+			fd_stop_recv(l->fd);
+			l->state = LI_FULL;
 		}
-
-		fd_stop_recv(l->fd);
-		l->state = LI_FULL;
 	}
+	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
 }
 
 /* Marks a ready listener as limited so that we only try to re-enable it when
@@ -261,13 +241,13 @@ static void listener_full(struct listener *l)
  */
 static void limit_listener(struct listener *l, struct list *list)
 {
+	HA_SPIN_LOCK(LISTENER_LOCK, &l->lock);
 	if (l->state == LI_READY) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_ADDQ(list, &l->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
+		LIST_ADDQ_LOCKED(list, &l->wait_queue);
 		fd_stop_recv(l->fd);
 		l->state = LI_LIMITED;
 	}
+	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
 }
 
 /* This function adds all of the protocol's listener's file descriptors to the
@@ -302,13 +282,11 @@ int disable_all_listeners(struct protocol *proto)
 /* Dequeues all of the listeners waiting for a resource in wait queue <queue>. */
 void dequeue_all_listeners(struct list *list)
 {
-	struct listener *listener, *l_back;
+	struct listener *listener;
 
-	HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	list_for_each_entry_safe(listener, l_back, list, wait_queue) {
+	while ((listener = LIST_POP_LOCKED(list, struct listener *, wait_queue))) {
 		/* This cannot fail because the listeners are by definition in
-		 * the LI_LIMITED state. The function also removes the entry
-		 * from the queue.
+		 * the LI_LIMITED state.
 		 */
 		__resume_listener(listener);
 	}
@@ -320,14 +298,10 @@ void dequeue_all_listeners(struct list *list)
  */
 void do_unbind_listener(struct listener *listener, int do_close)
 {
-	if (listener->state == LI_READY)
+	if (listener->state == LI_READY && fd_updt)
 		fd_stop_recv(listener->fd);
 
-	if (listener->state == LI_LIMITED) {
-		HA_SPIN_LOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-		LIST_DEL(&listener->wait_queue);
-		HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
-	}
+	LIST_DEL_LOCKED(&listener->wait_queue);
 
 	if (listener->state >= LI_PAUSED) {
 		if (do_close) {
@@ -409,6 +383,7 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 
 		l->fd = fd;
 		memcpy(&l->addr, ss, sizeof(*ss));
+		LIST_INIT(&l->wait_queue);
 		l->state = LI_INIT;
 
 		proto->add(l, port);
@@ -431,15 +406,14 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
  */
 void delete_listener(struct listener *listener)
 {
-	if (listener->state != LI_ASSIGNED)
-		return;
-
 	HA_SPIN_LOCK(LISTENER_LOCK, &listener->lock);
-	listener->state = LI_INIT;
-	LIST_DEL(&listener->proto_list);
-	listener->proto->nb_listeners--;
-	HA_ATOMIC_SUB(&jobs, 1);
-	HA_ATOMIC_SUB(&listeners, 1);
+	if (listener->state == LI_ASSIGNED) {
+		listener->state = LI_INIT;
+		LIST_DEL(&listener->proto_list);
+		listener->proto->nb_listeners--;
+		HA_ATOMIC_SUB(&jobs, 1);
+		HA_ATOMIC_SUB(&listeners, 1);
+	}
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &listener->lock);
 }
 
@@ -450,8 +424,11 @@ void delete_listener(struct listener *listener)
 void listener_accept(int fd)
 {
 	struct listener *l = fdtab[fd].owner;
-	struct proxy *p = l->bind_conf->frontend;
-	int max_accept = l->maxaccept ? l->maxaccept : 1;
+	struct proxy *p;
+	unsigned int max_accept;
+	int next_conn = 0;
+	int next_feconn = 0;
+	int next_actconn = 0;
 	int expire;
 	int cfd;
 	int ret;
@@ -459,13 +436,14 @@ void listener_accept(int fd)
 	static int accept4_broken;
 #endif
 
-	if (HA_SPIN_TRYLOCK(LISTENER_LOCK, &l->lock))
+	if (!l)
 		return;
+	p = l->bind_conf->frontend;
 
-	if (unlikely(l->nbconn >= l->maxconn)) {
-		listener_full(l);
-		goto end;
-	}
+	/* if l->maxaccept is -1, then max_accept is UINT_MAX. It is not really
+	 * illimited, but it is probably enough.
+	 */
+	max_accept = l->maxaccept ? l->maxaccept : 1;
 
 	if (!(l->options & LI_O_UNLIMITED) && global.sps_lim) {
 		int max = freq_ctr_remain(&global.sess_per_sec, global.sps_lim, 0);
@@ -525,20 +503,68 @@ void listener_accept(int fd)
 	 * worst case. If we fail due to system limits or temporary resource
 	 * shortage, we try again 100ms later in the worst case.
 	 */
-	while (max_accept--) {
+	for (; max_accept; next_conn = next_feconn = next_actconn = 0, max_accept--) {
 		struct sockaddr_storage addr;
 		socklen_t laddr = sizeof(addr);
 		unsigned int count;
 
-		if (unlikely(actconn >= global.maxconn) && !(l->options & LI_O_UNLIMITED)) {
-			limit_listener(l, &global_listener_queue);
-			task_schedule(global_listener_queue_task, tick_add(now_ms, 1000)); /* try again in 1 second */
-			goto end;
+		/* pre-increase the number of connections without going too far.
+		 * We process the listener, then the proxy, then the process.
+		 * We know which ones to unroll based on the next_xxx value.
+		 */
+		do {
+			count = l->nbconn;
+			if (count >= l->maxconn) {
+				/* the listener was marked full or another
+				 * thread is going to do it.
+				 */
+				next_conn = 0;
+				goto end;
+			}
+			next_conn = count + 1;
+		} while (!HA_ATOMIC_CAS(&l->nbconn, (int *)&count, next_conn));
+
+		if (next_conn == l->maxconn) {
+			/* we filled it, mark it full */
+			listener_full(l);
 		}
 
-		if (unlikely(p && p->feconn >= p->maxconn)) {
-			limit_listener(l, &p->listener_queue);
-			goto end;
+		if (p) {
+			do {
+				count = p->feconn;
+				if (count >= p->maxconn) {
+					/* the frontend was marked full or another
+					 * thread is going to do it.
+					 */
+					next_feconn = 0;
+					goto end;
+				}
+				next_feconn = count + 1;
+			} while (!HA_ATOMIC_CAS(&p->feconn, &count, next_feconn));
+
+			if (unlikely(next_feconn == p->maxconn)) {
+				/* we just filled it */
+				limit_listener(l, &p->listener_queue);
+			}
+		}
+
+		if (!(l->options & LI_O_UNLIMITED)) {
+			do {
+				count = actconn;
+				if (count >= global.maxconn) {
+					/* the process was marked full or another
+					 * thread is going to do it.
+					 */
+					next_actconn = 0;
+					goto end;
+				}
+				next_actconn = count + 1;
+			} while (!HA_ATOMIC_CAS(&actconn, (int *)&count, next_actconn));
+
+			if (unlikely(next_actconn == global.maxconn)) {
+				limit_listener(l, &global_listener_queue);
+				task_schedule(global_listener_queue_task, tick_add(now_ms, 1000)); /* try again in 1 second */
+			}
 		}
 
 		/* with sockpair@ we don't want to do an accept */
@@ -581,6 +607,11 @@ void listener_accept(int fd)
 				goto transient_error;
 			case EINTR:
 			case ECONNABORTED:
+				HA_ATOMIC_SUB(&l->nbconn, 1);
+				if (p)
+					HA_ATOMIC_SUB(&p->feconn, 1);
+				if (!(l->options & LI_O_UNLIMITED))
+					HA_ATOMIC_SUB(&actconn, 1);
 				continue;
 			case ENFILE:
 				if (p)
@@ -611,6 +642,20 @@ void listener_accept(int fd)
 		if (unlikely(master == 1))
 			fcntl(cfd, F_SETFD, FD_CLOEXEC);
 
+		/* The connection was accepted, it must be counted as such */
+		if (l->counters)
+			HA_ATOMIC_UPDATE_MAX(&l->counters->conn_max, next_conn);
+
+		if (p)
+			HA_ATOMIC_UPDATE_MAX(&p->fe_counters.conn_max, next_feconn);
+
+		proxy_inc_fe_conn_ctr(l, p);
+
+		if (!(l->options & LI_O_UNLIMITED)) {
+			count = update_freq_ctr(&global.conn_per_sec, 1);
+			HA_ATOMIC_UPDATE_MAX(&global.cps_max, count);
+		}
+
 		if (unlikely(cfd >= global.maxsock)) {
 			send_log(p, LOG_EMERG,
 				 "Proxy %s reached the configured maximum connection limit. Please check the global 'maxconn' value.\n",
@@ -621,16 +666,14 @@ void listener_accept(int fd)
 			goto end;
 		}
 
-		/* increase the per-process number of cumulated connections */
-		if (!(l->options & LI_O_UNLIMITED)) {
-			count = update_freq_ctr(&global.conn_per_sec, 1);
-			HA_ATOMIC_UPDATE_MAX(&global.cps_max, count);
-			HA_ATOMIC_ADD(&actconn, 1);
-		}
-
-		count = HA_ATOMIC_ADD(&l->nbconn, 1);
-		if (l->counters)
-			HA_ATOMIC_UPDATE_MAX(&l->counters->conn_max, count);
+		/* past this point, l->accept() will automatically decrement
+		 * l->nbconn, feconn and actconn once done. Setting next_*conn=0
+		 * allows the error path not to rollback on nbconn. It's more
+		 * convenient than duplicating all exit labels.
+		 */
+		next_conn = 0;
+		next_feconn = 0;
+		next_actconn = 0;
 
 		ret = l->accept(l, cfd, &addr);
 		if (unlikely(ret <= 0)) {
@@ -645,12 +688,9 @@ void listener_accept(int fd)
 			goto transient_error;
 		}
 
-		if (l->nbconn >= l->maxconn) {
-			listener_full(l);
-			goto end;
-		}
-
-		/* increase the per-process number of cumulated connections */
+		/* increase the per-process number of cumulated sessions, this
+		 * may only be done once l->accept() has accepted the connection.
+		 */
 		if (!(l->options & LI_O_UNLIMITED)) {
 			count = update_freq_ctr(&global.sess_per_sec, 1);
 			HA_ATOMIC_UPDATE_MAX(&global.sps_max, count);
@@ -662,7 +702,7 @@ void listener_accept(int fd)
 		}
 #endif
 
-	} /* end of while (max_accept--) */
+	} /* end of for (max_accept--) */
 
 	/* we've exhausted max_accept, so there is no need to poll again */
  stop:
@@ -677,7 +717,28 @@ void listener_accept(int fd)
 	limit_listener(l, &global_listener_queue);
 	task_schedule(global_listener_queue_task, tick_first(expire, global_listener_queue_task->expire));
  end:
-	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
+	if (next_conn)
+		HA_ATOMIC_SUB(&l->nbconn, 1);
+
+	if (p && next_feconn)
+		HA_ATOMIC_SUB(&p->feconn, 1);
+
+	if (next_actconn)
+		HA_ATOMIC_SUB(&actconn, 1);
+
+	if ((l->state == LI_FULL && l->nbconn < l->maxconn) ||
+	    (l->state == LI_LIMITED && ((!p || p->feconn < p->maxconn) && (actconn < global.maxconn)))) {
+		/* at least one thread has to this when quitting */
+		resume_listener(l);
+
+		/* Dequeues all of the listeners waiting for a resource */
+		if (!LIST_ISEMPTY(&global_listener_queue))
+			dequeue_all_listeners(&global_listener_queue);
+
+		if (!LIST_ISEMPTY(&p->listener_queue) &&
+		    (!p->fe_sps_lim || freq_ctr_remain(&p->fe_sess_per_sec, p->fe_sps_lim, 0) > 0))
+			dequeue_all_listeners(&p->listener_queue);
+	}
 }
 
 /* Notify the listener that a connection initiated from it was released. This
@@ -690,8 +751,11 @@ void listener_release(struct listener *l)
 
 	if (!(l->options & LI_O_UNLIMITED))
 		HA_ATOMIC_SUB(&actconn, 1);
+	if (fe)
+		HA_ATOMIC_SUB(&fe->feconn, 1);
 	HA_ATOMIC_SUB(&l->nbconn, 1);
-	if (l->state == LI_FULL)
+
+	if (l->state == LI_FULL || l->state == LI_LIMITED)
 		resume_listener(l);
 
 	/* Dequeues all of the listeners waiting for a resource */
@@ -979,7 +1043,7 @@ static int bind_parse_process(char **args, int cur_arg, struct proxy *px, struct
 
 	conf->bind_proc |= proc;
 	if (thread) {
-		for (i = 0; i < MAX_THREADS; i++)
+		for (i = 0; i < LONGBITS; i++)
 			if (!proc || (proc & (1UL << i)))
 				conf->bind_thread[i] |= thread;
 	}

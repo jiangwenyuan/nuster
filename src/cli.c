@@ -69,6 +69,9 @@
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 #include <proto/proto_udp.h>
+#ifdef USE_OPENSSL
+#include <proto/ssl_sock.h>
+#endif
 
 #define PAYLOAD_PATTERN "<<"
 
@@ -935,6 +938,12 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			     (fdt.iocb == listener_accept)  ? "listener_accept" :
 			     (fdt.iocb == poller_pipe_io_handler) ? "poller_pipe_io_handler" :
 			     (fdt.iocb == mworker_accept_wrapper) ? "mworker_accept_wrapper" :
+#ifdef USE_OPENSSL
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+			     (fdt.iocb == ssl_async_fd_free) ? "ssl_async_fd_free" :
+			     (fdt.iocb == ssl_async_fd_handler) ? "ssl_async_fd_handler" :
+#endif
+#endif
 			     "unknown");
 
 		if (fdt.iocb == conn_fd_handler) {
@@ -1078,15 +1087,19 @@ static int cli_io_handler_show_cli_sock(struct appctx *appctx)
 							const struct sockaddr_un *un;
 
 							un = (struct sockaddr_un *)&l->addr;
-							chunk_appendf(&trash, "%s ", un->sun_path);
+							if (un->sun_path[0] == '\0') {
+								chunk_appendf(&trash, "abns@%s ", un->sun_path+1);
+							} else {
+								chunk_appendf(&trash, "unix@%s ", un->sun_path);
+							}
 						} else if (l->addr.ss_family == AF_INET) {
 							addr_to_str(&l->addr, addr, sizeof(addr));
 							port_to_str(&l->addr, port, sizeof(port));
-							chunk_appendf(&trash, "%s:%s ", addr, port);
+							chunk_appendf(&trash, "ipv4@%s:%s ", addr, port);
 						} else if (l->addr.ss_family == AF_INET6) {
 							addr_to_str(&l->addr, addr, sizeof(addr));
 							port_to_str(&l->addr, port, sizeof(port));
-							chunk_appendf(&trash, "[%s]:%s ", addr, port);
+							chunk_appendf(&trash, "ipv6@[%s]:%s ", addr, port);
 						} else if (l->addr.ss_family == AF_CUST_SOCKPAIR) {
 							chunk_appendf(&trash, "sockpair@%d ", ((struct sockaddr_in *)&l->addr)->sin_addr.s_addr);
 						} else

@@ -50,7 +50,6 @@ static void srv_update_status(struct server *s);
 static void srv_update_state(struct server *srv, int version, char **params);
 static int srv_apply_lastaddr(struct server *srv, int *err_code);
 static int srv_set_fqdn(struct server *srv, const char *fqdn, int dns_locked);
-static struct task *cleanup_idle_connections(struct task *task, void *ctx, unsigned short state);
 
 /* List head of all known server keywords */
 static struct srv_kw_list srv_keywords = {
@@ -967,6 +966,40 @@ void srv_append_status(struct buffer *msg, struct server *s,
 	else if (!forced && s->track) {
 		chunk_appendf(msg, " via %s/%s", s->track->proxy->id, s->track->id);
 	}
+}
+
+/* Enables admin flag <mode> (among SRV_ADMF_*) on server <s>. This is used to
+ * enforce either maint mode or drain mode. It is not allowed to set more than
+ * one flag at once. The equivalent "inherited" flag is propagated to all
+ * tracking servers. Maintenance mode disables health checks (but not agent
+ * checks). When either the flag is already set or no flag is passed, nothing
+ * is done. If <cause> is non-null, it will be displayed at the end of the log
+ * lines to justify the state change.
+ *
+ * Must be called with the server lock held.
+ */
+void srv_set_admin_flag(struct server *s, enum srv_admin mode, const char *cause)
+{
+	struct server *srv;
+
+	if (!mode)
+		return;
+
+	/* stop going down as soon as we meet a server already in the same state */
+	if (s->next_admin & mode)
+		return;
+
+	s->next_admin |= mode;
+	if (cause)
+		strlcpy2(s->adm_st_chg_cause, cause, sizeof(s->adm_st_chg_cause));
+
+	/* propagate changes */
+	srv_update_status(s);
+
+	/* stop going down if the equivalent flag was already present (forced or inherited) */
+	if (((mode & SRV_ADMF_MAINT) && (s->next_admin & ~mode & SRV_ADMF_MAINT)) ||
+	    ((mode & SRV_ADMF_DRAIN) && (s->next_admin & ~mode & SRV_ADMF_DRAIN)))
+		return;
 
 	if (xferred >= 0) {
 		if (s->next_state == SRV_ST_STOPPED)
@@ -1634,7 +1667,7 @@ static void srv_settings_cpy(struct server *srv, struct server *src, int srv_tmp
 	srv->check.port               = src->check.port;
 	srv->check.sni                = src->check.sni;
 	srv->check.alpn_str           = src->check.alpn_str;
-	srv->check.alpn_len           = srv->check.alpn_len;
+	srv->check.alpn_len           = src->check.alpn_len;
 	/* Note: 'flags' field has potentially been already initialized. */
 	srv->flags                   |= src->flags;
 	srv->do_check                 = src->do_check;
@@ -1713,7 +1746,6 @@ static void srv_settings_cpy(struct server *srv, struct server *src, int srv_tmp
 struct server *new_server(struct proxy *proxy)
 {
 	struct server *srv;
-	int i;
 
 	srv = calloc(1, sizeof *srv);
 	if (!srv)
@@ -1723,19 +1755,6 @@ struct server *new_server(struct proxy *proxy)
 	srv->proxy = proxy;
 	LIST_INIT(&srv->actconns);
 	srv->pendconns = EB_ROOT;
-
-	if ((srv->priv_conns = calloc(global.nbthread, sizeof(*srv->priv_conns))) == NULL)
-		goto free_srv;
-	if ((srv->idle_conns = calloc(global.nbthread, sizeof(*srv->idle_conns))) == NULL)
-		goto free_priv_conns;
-	if ((srv->safe_conns = calloc(global.nbthread, sizeof(*srv->safe_conns))) == NULL)
-		goto free_idle_conns;
-
-	for (i = 0; i < global.nbthread; i++) {
-		LIST_INIT(&srv->priv_conns[i]);
-		LIST_INIT(&srv->idle_conns[i]);
-		LIST_INIT(&srv->safe_conns[i]);
-	}
 
 	srv->next_state = SRV_ST_RUNNING; /* early server setup */
 	srv->last_change = now.tv_sec;
@@ -1755,14 +1774,6 @@ struct server *new_server(struct proxy *proxy)
 	srv->max_reuse = -1;
 
 	return srv;
-
-  free_idle_conns:
-	free(srv->idle_conns);
-  free_priv_conns:
-	free(srv->priv_conns);
-  free_srv:
-	free(srv);
-	return NULL;
 }
 
 /*
@@ -1960,25 +1971,6 @@ static int server_finalize_init(const char *file, int linenum, char **args, int 
 		px->srv_act++;
 	srv_lb_commit_status(srv);
 
-	if (srv->max_idle_conns != 0) {
-			int i;
-
-			srv->idle_orphan_conns = calloc(global.nbthread, sizeof(*srv->idle_orphan_conns));
-			if (!srv->idle_orphan_conns)
-				goto err;
-			srv->idle_task = calloc(global.nbthread, sizeof(*srv->idle_task));
-			if (!srv->idle_task)
-				goto err;
-			for (i = 0; i < global.nbthread; i++) {
-				LIST_INIT(&srv->idle_orphan_conns[i]);
-				srv->idle_task[i] = task_new(1 << i);
-				if (!srv->idle_task[i])
-					goto err;
-				srv->idle_task[i]->process = cleanup_idle_connections;
-				srv->idle_task[i]->context = srv;
-			}
-		}
-
 	return 0;
 err:
 	return ERR_ALERT | ERR_FATAL;
@@ -2065,24 +2057,6 @@ static int server_template_init(struct server *srv, struct proxy *px)
 		/* Linked backwards first. This will be restablished after parsing. */
 		newsrv->next = px->srv;
 		px->srv = newsrv;
-		if (newsrv->max_idle_conns != 0) {
-			int i;
-
-			newsrv->idle_orphan_conns = calloc(global.nbthread, sizeof(*newsrv->idle_orphan_conns));
-			if (!newsrv->idle_orphan_conns)
-				goto err;
-			newsrv->idle_task = calloc(global.nbthread, sizeof(*newsrv->idle_task));
-			if (!newsrv->idle_task)
-				goto err;
-			for (i = 0; i < global.nbthread; i++) {
-				LIST_INIT(&newsrv->idle_orphan_conns[i]);
-				newsrv->idle_task[i] = task_new(1 << i);
-				if (!newsrv->idle_task[i])
-					goto err;
-				newsrv->idle_task[i]->process = cleanup_idle_connections;
-				newsrv->idle_task[i]->context = newsrv;
-			}
-		}
 	}
 	srv_set_id_from_prefix(srv, srv->tmpl_info.prefix, srv->tmpl_info.nb_low);
 
@@ -5360,11 +5334,11 @@ static void srv_update_status(struct server *s)
 	*s->adm_st_chg_cause = 0;
 }
 
-static struct task *cleanup_idle_connections(struct task *task, void *context, unsigned short state)
+struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsigned short state)
 {
 	struct server *srv = context;
 	struct connection *conn, *conn_back;
-	unsigned int to_destroy = srv->curr_idle_conns / 2 + (srv->curr_idle_conns & 1);
+	unsigned int to_destroy = srv->curr_idle_thr[tid] / 2 + (srv->curr_idle_thr[tid] & 1);
 	unsigned int i = 0;
 
 

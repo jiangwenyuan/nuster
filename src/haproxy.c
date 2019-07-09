@@ -61,6 +61,10 @@
 #endif
 #endif
 
+#if defined(USE_PRCTL)
+#include <sys/prctl.h>
+#endif
+
 #ifdef DEBUG_FULL
 #include <assert.h>
 #endif
@@ -122,9 +126,11 @@
 #include <proto/vars.h>
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
+#include <openssl/rand.h>
 #endif
 
-#include <nuster/nuster.h>
+/* array of init calls for older platforms */
+DECLARE_INIT_STAGES;
 
 /* list of config files */
 static struct list cfg_cfgfiles = LIST_HEAD_INIT(cfg_cfgfiles);
@@ -171,32 +177,6 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
-	.nuster = {
-		.cache = {
-			.status       = NST_STATUS_UNDEFINED,
-			.data_size    = NST_DEFAULT_DATA_SIZE,
-			.dict_size    = NST_DEFAULT_DICT_SIZE,
-			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
-			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
-			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
-			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-			.share        = NST_STATUS_ON,
-			.purge_method = NULL,
-			.root	      = NULL,
-		},
-		.nosql = {
-			.status       = NST_STATUS_UNDEFINED,
-			.data_size    = NST_DEFAULT_DATA_SIZE,
-			.dict_size    = NST_DEFAULT_DICT_SIZE,
-			.root         = NULL,
-			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
-			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
-			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
-			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-		},
-	},
 	/* others NULL OK */
 };
 
@@ -246,6 +226,8 @@ static char **next_argv = NULL;
 struct list proc_list = LIST_HEAD_INIT(proc_list);
 
 int master = 0; /* 1 if in master, 0 if in child */
+unsigned int rlim_fd_cur_at_boot = 0;
+unsigned int rlim_fd_max_at_boot = 0;
 
 struct mworker_proc *proc_self = NULL;
 
@@ -398,8 +380,6 @@ void hap_register_per_thread_deinit(void (*fct)())
 
 static void display_version()
 {
-	printf("nuster version %s\n", NUSTER_VERSION);
-	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE" - https://haproxy.org/\n");
 }
 
@@ -742,6 +722,7 @@ void mworker_reload()
 	int next_argc = 0;
 	int j;
 	char *msg = NULL;
+	struct rlimit limit;
 	struct per_thread_deinit_fct *ptdf;
 
 	mworker_block_signals();
@@ -764,6 +745,21 @@ void mworker_reload()
 		ptdf->fct();
 	if (fdtab)
 		deinit_pollers();
+#if defined(USE_OPENSSL) && (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)
+	if (global.ssl_used_frontend || global.ssl_used_backend)
+		/* close random device FDs */
+		RAND_keep_random_devices_open(0);
+#endif
+
+	/* restore the initial FD limits */
+	limit.rlim_cur = rlim_fd_cur_at_boot;
+	limit.rlim_max = rlim_fd_max_at_boot;
+	if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
+		getrlimit(RLIMIT_NOFILE, &limit);
+		ha_warning("Failed to restore initial FD limits (cur=%u max=%u), using cur=%u max=%u\n",
+			   rlim_fd_cur_at_boot, rlim_fd_max_at_boot,
+			   (unsigned int)limit.rlim_cur, (unsigned int)limit.rlim_max);
+	}
 
 	/* compute length  */
 	while (next_argv[next_argc])
@@ -845,8 +841,11 @@ static void mworker_catch_sigchld(struct sig_handler *sh)
 	int exitpid = -1;
 	int status = 0;
 	struct mworker_proc *child, *it;
+	int childfound;
 
 restart_wait:
+
+	childfound = 0;
 
 	exitpid = waitpid(-1, &status, WNOHANG);
 	if (exitpid > 0) {
@@ -865,10 +864,11 @@ restart_wait:
 
 			LIST_DEL(&child->list);
 			close(child->ipc_fd[0]);
+			childfound = 1;
 			break;
 		}
 
-		if (!children) {
+		if (!children || !childfound) {
 			ha_warning("Worker %d exited with code %d (%s)\n", exitpid, status, (status >= 128) ? strsignal(status - 128) : "Exit");
 		} else {
 			/* check if exited child was in the current children list */
@@ -877,27 +877,28 @@ restart_wait:
 				if (status != 0 && status != 130 && status != 143
 				    && !(global.tune.options & GTUNE_NOEXIT_ONFAILURE)) {
 					ha_alert("exit-on-failure: killing every workers with SIGTERM\n");
-					if (exitcode < 0)
-						exitcode = status;
 					mworker_kill(SIGTERM);
 				}
+				/* 0 & SIGTERM (143) are normal, but we should report SIGINT (130) and other signals */
+				if (exitcode < 0 && status != 0 && status != 143)
+					exitcode = status;
 			} else {
 				ha_warning("Former worker #%d (%d) exited with code %d (%s)\n", child->relative_pid, exitpid, status, (status >= 128) ? strsignal(status - 128) : "Exit");
 				delete_oldpid(exitpid);
 			}
+			free(child);
 		}
-		free(child);
 
 		/* do it again to check if it was the last worker */
 		goto restart_wait;
 	}
 	/* Better rely on the system than on a list of process to check if it was the last one */
 	else if (exitpid == -1 && errno == ECHILD) {
-		ha_warning("All workers exited. Exiting... (%d)\n", (exitcode > 0) ? exitcode : status);
+		ha_warning("All workers exited. Exiting... (%d)\n", (exitcode > 0) ? exitcode : EXIT_SUCCESS);
 		atexit_flag = 0;
 		if (exitcode > 0)
-			exit(exitcode);
-		exit(status); /* parent must leave using the latest status code known */
+			exit(exitcode); /* parent must leave using the status code that provoked the exit */
+		exit(EXIT_SUCCESS);
 	}
 
 }
@@ -909,6 +910,8 @@ static void mworker_loop()
 	if (global.tune.options & GTUNE_USE_SYSTEMD)
 		sd_notifyf(0, "READY=1\nMAINPID=%lu", (unsigned long)getpid());
 #endif
+	/* Busy polling makes no sense in the master :-) */
+	global.tune.options &= ~GTUNE_BUSY_POLLING;
 
 	master = 1;
 
@@ -1820,13 +1823,13 @@ static void init(int argc, char **argv)
 		}
 	}
 
-	pattern_finalize_config();
-
 	err_code |= check_config_validity();
 	if (err_code & (ERR_ABORT|ERR_FATAL)) {
 		ha_alert("Fatal errors found in configuration.\n");
 		exit(1);
 	}
+
+	pattern_finalize_config();
 
 	/* recompute the amount of per-process memory depending on nbproc and
 	 * the shared SSL cache size (allowed to exist in all processes).
@@ -2078,6 +2081,9 @@ static void init(int argc, char **argv)
 	global.hardmaxconn = global.maxconn;  /* keep this max value */
 	global.maxsock += global.maxconn * 2; /* each connection needs two sockets */
 	global.maxsock += global.maxpipes * 2; /* each pipe needs two FDs */
+	global.maxsock += global.nbthread;     /* one epoll_fd/kqueue_fd per thread */
+	global.maxsock += 2 * global.nbthread; /* one wake-up pipe (2 fd) per thread */
+
 	/* compute fd used by async engines */
 	if (global.ssl_used_async_engines) {
 		int sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
@@ -2200,8 +2206,6 @@ static void init(int argc, char **argv)
 
 	if (!hlua_post_init())
 		exit(1);
-
-	nuster_init();
 
 	free(err_msg);
 }
@@ -2376,8 +2380,8 @@ void deinit(void)
 			if (rule->cond) {
 				prune_acl_cond(rule->cond);
 				free(rule->cond);
-				free(rule->file);
 			}
+			free(rule->file);
 			free(rule);
 		}
 
@@ -2402,11 +2406,15 @@ void deinit(void)
 
 		list_for_each_entry_safe(lf, lfb, &p->logformat, list) {
 			LIST_DEL(&lf->list);
+			release_sample_expr(lf->expr);
+			free(lf->arg);
 			free(lf);
 		}
 
 		list_for_each_entry_safe(lf, lfb, &p->logformat_sd, list) {
 			LIST_DEL(&lf->list);
+			release_sample_expr(lf->expr);
+			free(lf->arg);
 			free(lf);
 		}
 
@@ -2448,6 +2456,11 @@ void deinit(void)
 				task_free(s->agent.task);
 			}
 
+			if (s->check.wait_list.task)
+				tasklet_free(s->check.wait_list.task);
+			if (s->agent.wait_list.task)
+				tasklet_free(s->agent.wait_list.task);
+
 			if (s->warmup) {
 				task_delete(s->warmup);
 				task_free(s->warmup);
@@ -2466,6 +2479,7 @@ void deinit(void)
 			free(s->priv_conns);
 			free(s->safe_conns);
 			free(s->idle_orphan_conns);
+			free(s->curr_idle_thr);
 			if (s->idle_task) {
 				int i;
 
@@ -2688,10 +2702,27 @@ static void run_poll_loop()
 			HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 		fd_process_cached_events();
 
-		nuster_housekeeping();
-
 		activity[tid].loops++;
 	}
+
+	if ((global.mode & MODE_MWORKER) && master == 0) {
+		HA_SPIN_LOCK(START_LOCK, &start_lock);
+		mworker_pipe_register();
+		HA_SPIN_UNLOCK(START_LOCK, &start_lock);
+	}
+
+	protocol_enable_all();
+	run_poll_loop();
+
+	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
+		ptdf->fct();
+
+#ifdef USE_THREAD
+	HA_ATOMIC_AND(&all_threads_mask, ~tid_bit);
+	if (tid > 0)
+		pthread_exit(NULL);
+#endif
+	return NULL;
 }
 
 static void *run_thread_poll_loop(void *data)
@@ -2771,6 +2802,11 @@ int main(int argc, char **argv)
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 
+	/* take a copy of initial limits before we possibly change them */
+	getrlimit(RLIMIT_NOFILE, &limit);
+	rlim_fd_cur_at_boot = limit.rlim_cur;
+	rlim_fd_max_at_boot = limit.rlim_max;
+
 	/* process all initcalls in order of potential dependency */
 	RUN_INITCALLS(STG_PREPARE);
 	RUN_INITCALLS(STG_LOCK);
@@ -2796,7 +2832,9 @@ int main(int argc, char **argv)
 		global.rlimit_nofile = global.maxsock;
 
 	if (global.rlimit_nofile) {
-		limit.rlim_cur = limit.rlim_max = global.rlimit_nofile;
+		limit.rlim_cur = global.rlimit_nofile;
+		limit.rlim_max = MAX(rlim_fd_max_at_boot, limit.rlim_cur);
+
 		if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
 			/* try to set it to the max possible at least */
 			getrlimit(RLIMIT_NOFILE, &limit);
@@ -3004,6 +3042,32 @@ int main(int argc, char **argv)
 			exit(1);
 		}
 	}
+
+	/* try our best to re-enable core dumps depending on system capabilities.
+	 * What is addressed here :
+	 *   - remove file size limits
+	 *   - remove core size limits
+	 *   - mark the process dumpable again if it lost it due to user/group
+	 */
+	if (global.tune.options & GTUNE_SET_DUMPABLE) {
+		limit.rlim_cur = limit.rlim_max = RLIM_INFINITY;
+
+#if defined(RLIMIT_FSIZE)
+		if (setrlimit(RLIMIT_FSIZE, &limit) == -1)
+			ha_warning("[%s.main()] Failed to set the raise the maximum file size.\n", argv[0]);
+#endif
+
+#if defined(RLIMIT_CORE)
+		if (setrlimit(RLIMIT_CORE, &limit) == -1)
+			ha_warning("[%s.main()] Failed to set the raise the core dump size.\n", argv[0]);
+#endif
+
+#if defined(USE_PRCTL)
+		if (prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) == -1)
+			ha_warning("[%s.main()] Failed to set the dumpable flag, no core will be dumped.\n", argv[0]);
+#endif
+	}
+
 	/* check ulimits */
 	limit.rlim_cur = limit.rlim_max = 0;
 	getrlimit(RLIMIT_NOFILE, &limit);

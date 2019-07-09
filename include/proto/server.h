@@ -58,6 +58,7 @@ const char *update_server_fqdn(struct server *server, const char *fqdn, const ch
 int snr_resolution_cb(struct dns_requester *requester, struct dns_nameserver *nameserver);
 int snr_resolution_error_cb(struct dns_requester *requester, int error_code);
 struct server *snr_check_ip_callback(struct server *srv, void *ip, unsigned char *ip_family);
+struct task *srv_cleanup_idle_connections(struct task *task, void *ctx, unsigned short state);
 
 /* increase the number of cumulated connections on the designated server */
 static void inline srv_inc_sess_ctr(struct server *s)
@@ -243,9 +244,16 @@ static inline int srv_add_to_idle_list(struct server *srv, struct connection *co
 	    !(conn->flags & CO_FL_PRIVATE) &&
 	    ((srv->proxy->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR) &&
 	    !conn->mux->used_streams(conn) && conn->mux->avail_streams(conn)) {
+		int retadd;
+
+		retadd = HA_ATOMIC_ADD(&srv->curr_idle_conns, 1);
+		if (retadd >= srv->max_idle_conns) {
+			HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
+			return 0;
+		}
 		LIST_DEL(&conn->list);
 		LIST_ADDQ(&srv->idle_orphan_conns[tid], &conn->list);
-		srv->curr_idle_conns++;
+		srv->curr_idle_thr[tid]++;
 
 		conn->idle_time = now_ms;
 		if (!(task_in_wq(srv->idle_task[tid])) &&
