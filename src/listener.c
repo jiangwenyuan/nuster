@@ -42,9 +42,6 @@
 #include <proto/stream.h>
 #include <proto/task.h>
 
- /* listner_queue lock (same for global and per proxy queues) */
-__decl_spinlock(lq_lock);
-
 /* List head of all known bind keywords */
 static struct bind_kw_list bind_keywords = {
 	.list = LIST_HEAD_INIT(bind_keywords.list)
@@ -158,7 +155,7 @@ int pause_listener(struct listener *l)
  * stopped it. If the resume fails, 0 is returned and an error might be
  * displayed.
  */
-static int __resume_listener(struct listener *l)
+int resume_listener(struct listener *l)
 {
 	int ret = 1;
 
@@ -216,9 +213,6 @@ static int __resume_listener(struct listener *l)
 
 /* Marks a ready listener as full so that the stream code tries to re-enable
  * it upon next close() using resume_listener().
- *
- * Note: this function is only called from listener_accept so <l> is already
- *       locked.
  */
 static void listener_full(struct listener *l)
 {
@@ -235,9 +229,6 @@ static void listener_full(struct listener *l)
 
 /* Marks a ready listener as limited so that we only try to re-enable it when
  * resources are free again. It will be queued into the specified queue.
- *
- * Note: this function is only called from listener_accept so <l> is already
- *       locked.
  */
 static void limit_listener(struct listener *l, struct list *list)
 {
@@ -288,9 +279,8 @@ void dequeue_all_listeners(struct list *list)
 		/* This cannot fail because the listeners are by definition in
 		 * the LI_LIMITED state.
 		 */
-		__resume_listener(listener);
+		resume_listener(listener);
 	}
-	HA_SPIN_UNLOCK(LISTENER_QUEUE_LOCK, &lq_lock);
 }
 
 /* Must be called with the lock held. Depending on <do_close> value, it does

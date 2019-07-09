@@ -618,10 +618,7 @@ static void h1_set_cli_conn_mode(struct h1s *h1s, struct h1m *h1m)
 	struct proxy *fe = h1s->h1c->px;
 	int flag = H1S_F_WANT_KAL; /* For client connection: server-close == keepalive */
 
-	/* Tunnel mode can only by set on the frontend */
-	if ((fe->options & PR_O_HTTP_MODE) == PR_O_HTTP_TUN)
-		flag = H1S_F_WANT_TUN;
-	else if ((fe->options & PR_O_HTTP_MODE) == PR_O_HTTP_CLO)
+	if ((fe->options & PR_O_HTTP_MODE) == PR_O_HTTP_CLO)
 		flag = H1S_F_WANT_CLO;
 
 	/* flags order: CLO > SCL > TUN > KAL */
@@ -669,10 +666,6 @@ static void h1_set_srv_conn_mode(struct h1s *h1s, struct h1m *h1m)
 	struct proxy *be = h1c->px;
 	int flag =  H1S_F_WANT_KAL;
 	int fe_flags = sess ? sess->fe->options : 0;
-
-	/* Tunnel mode can only by set on the frontend */
-	if ((fe_flags & PR_O_HTTP_MODE) == PR_O_HTTP_TUN)
-		flag = H1S_F_WANT_TUN;
 
 	/* For the server connection: server-close == httpclose */
 	if ((fe_flags & PR_O_HTTP_MODE) == PR_O_HTTP_SCL ||
@@ -786,13 +779,15 @@ static void h1_update_res_conn_hdr(struct h1s *h1s, struct h1m *h1m,
 			if (htx)
 				h1_remove_conn_hdrs(h1m, htx);
 		}
-		if (!(h1m->flags & (H1_MF_VER_11|H1_MF_CONN_KAL))) {
+		if (!(h1m->flags & H1_MF_CONN_KAL) &&
+		    !((h1m->flags & h1s->req.flags) & H1_MF_VER_11)) {
 			if (conn_val)
 				*conn_val = ist("keep-alive");
 			if (htx)
 				h1_add_conn_hdr(h1m, htx, ist("keep-alive"));
 		}
-		if ((h1m->flags & (H1_MF_VER_11|H1_MF_CONN_KAL)) == (H1_MF_VER_11|H1_MF_CONN_KAL)) {
+		else if ((h1m->flags & H1_MF_CONN_KAL) &&
+		         ((h1m->flags & h1s->req.flags) & H1_MF_VER_11)) {
 			if (conn_val)
 				*conn_val = ist("");
 			if (htx)
@@ -918,6 +913,56 @@ static void h1_emit_chunk_crlf(struct buffer *buf)
 }
 
 /*
+ * Switch the request to tunnel mode. This function must only be called for
+ * CONNECT requests. On the client side, the mux is mark as busy on input,
+ * waiting the response.
+ */
+static void h1_set_req_tunnel_mode(struct h1s *h1s)
+{
+	h1s->req.flags &= ~(H1_MF_XFER_LEN|H1_MF_CLEN|H1_MF_CHNK);
+	h1s->req.state = H1_MSG_TUNNEL;
+	if (!conn_is_back(h1s->h1c->conn))
+		h1s->h1c->flags |= H1C_F_IN_BUSY;
+}
+
+/*
+ * Switch the response to tunnel mode. This function must only be called on
+ * successfull replies to CONNECT requests or on protocol switching. On the
+ * server side, if the request is not finished, the mux is mark as busy on
+ * input.  Otherwise the request is also switch to tunnel mode.
+ */
+static void h1_set_res_tunnel_mode(struct h1s *h1s)
+{
+	h1s->res.flags &= ~(H1_MF_XFER_LEN|H1_MF_CLEN|H1_MF_CHNK);
+	h1s->res.state = H1_MSG_TUNNEL;
+	if (conn_is_back(h1s->h1c->conn) && h1s->req.state < H1_MSG_DONE)
+		h1s->h1c->flags |= H1C_F_IN_BUSY;
+	else {
+		h1s->req.flags &= ~(H1_MF_XFER_LEN|H1_MF_CLEN|H1_MF_CHNK);
+		h1s->req.state = H1_MSG_TUNNEL;
+		if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+			h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+			tasklet_wakeup(h1s->h1c->wait_event.task);
+		}
+	}
+}
+
+/*
+ * Handle 100-Continue responses or any other informational 1xx responses which
+ * is non-final. In such case, this function reset the response parser. It is
+ * the caller responsibility to call this function when appropriate.
+ */
+static void h1_handle_1xx_response(struct h1s *h1s, struct h1m *h1m)
+{
+	if ((h1m->flags & H1_MF_RESP) && h1m->state == H1_MSG_DONE &&
+	    h1s->status < 200 && (h1s->status == 100 || h1s->status >= 102)) {
+		h1m_init_res(&h1s->res);
+		h1m->flags |= H1_MF_NO_PHDR;
+		h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+	}
+}
+
+/*
  * Parse HTTP/1 headers. It returns the number of bytes parsed if > 0, or 0 if
  * it couldn't proceed. Parsing errors are reported by setting H1S_F_*_ERROR
  * flag and filling h1s->err_pos and h1s->err_state fields. This functions is
@@ -962,10 +1007,17 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 	if (!(h1m->flags & H1_MF_RESP)) {
 		h1s->meth = h1sl.rq.meth;
 
-		/* Request have always a known length */
+		/* By default, request have always a known length */
 		h1m->flags |= H1_MF_XFER_LEN;
-		if (!(h1m->flags & H1_MF_CHNK) && !h1m->body_len)
+
+		if (h1s->meth == HTTP_METH_CONNECT) {
+			/* Switch CONNECT requests to tunnel mode */
+			h1_set_req_tunnel_mode(h1s);
+		}
+		else if (!(h1m->flags & H1_MF_CHNK) && !h1m->body_len) {
+			/* Switch requests with no body to done. */
 			h1m->state = H1_MSG_DONE;
+		}
 
 		if (!h1_process_req_vsn(h1s, h1m, h1sl)) {
 			h1m->err_pos = h1sl.rq.v.ptr - b_head(buf);
@@ -976,22 +1028,32 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 	else {
 		h1s->status = h1sl.st.status;
 
-		if ((h1s->meth == HTTP_METH_HEAD) ||
-		    (h1s->status >= 100 && h1s->status < 200) ||
-		    (h1s->status == 204) || (h1s->status == 304) ||
-		    (h1s->meth == HTTP_METH_CONNECT && h1s->status == 200)) {
+		if ((h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) ||
+		    h1s->status == 101) {
+			/* Switch successfull replies to CONNECT requests and
+			 * protocol switching to tunnel mode. */
+			h1_set_res_tunnel_mode(h1s);
+		}
+		else if ((h1s->meth == HTTP_METH_HEAD) ||
+			 (h1s->status >= 100 && h1s->status < 200) ||
+			 (h1s->status == 204) || (h1s->status == 304)) {
+			/* Switch responses without body to done. */
 			h1m->flags &= ~(H1_MF_CLEN|H1_MF_CHNK);
 			h1m->flags |= H1_MF_XFER_LEN;
 			h1m->curr_len = h1m->body_len = 0;
 			h1m->state = H1_MSG_DONE;
 		}
 		else if (h1m->flags & (H1_MF_CLEN|H1_MF_CHNK)) {
+			/* Responses with a known body length. Switch requests
+			 * with no body to done. */
 			h1m->flags |= H1_MF_XFER_LEN;
 			if ((h1m->flags & H1_MF_CLEN) && !h1m->body_len)
 				h1m->state = H1_MSG_DONE;
 		}
-		else
+		else {
+			/* Responses with an unknown body length */
 			h1m->state = H1_MSG_TUNNEL;
+		}
 
 		if (!h1_process_res_vsn(h1s, h1m, h1sl)) {
 			h1m->err_pos = h1sl.st.v.ptr - b_head(buf);
@@ -1033,9 +1095,11 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 		sl->info.res.status = h1s->status;
 	}
 
-	if (h1m->state == H1_MSG_DONE)
+	if (h1m->state == H1_MSG_DONE) {
 		if (!htx_add_endof(htx, HTX_BLK_EOM))
 			goto error;
+		h1s->cs->flags |= CS_FL_EOI;
+	}
 
 	h1_process_conn_mode(h1s, h1m, htx, NULL);
 
@@ -1130,6 +1194,7 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 				if (!htx_add_endof(htx, HTX_BLK_EOM))
 					goto end;
 				h1m->state = H1_MSG_DONE;
+				h1s->cs->flags |= CS_FL_EOI;
 			}
 		}
 		else if (h1m->flags & H1_MF_CHNK) {
@@ -1201,7 +1266,7 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 				if (h1s->flags & H1S_F_HAVE_I_TLR)
 					goto skip_tlr_parsing;
 
-				ret = h1_measure_trailers(buf, *ofs, *ofs + max);
+				ret = h1_measure_trailers(buf, *ofs, max);
 				if (ret > data_space)
 					ret = (htx_is_empty(htx) ? -1 : 0);
 				if (ret <= 0)
@@ -1228,6 +1293,7 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 				if (!htx_add_endof(htx, HTX_BLK_EOM))
 					goto end;
 				h1m->state = H1_MSG_DONE;
+				h1s->cs->flags |= CS_FL_EOI;
 			}
 		}
 		else {
@@ -1237,6 +1303,7 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 			if (!htx_add_endof(htx, HTX_BLK_EOM))
 				goto end;
 			h1m->state = H1_MSG_DONE;
+			h1s->cs->flags |= CS_FL_EOI;
 		}
 	}
 	else {
@@ -1270,43 +1337,6 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 }
 
 /*
- * Synchronize the request and the response before reseting them. Except for 1xx
- * responses, we wait that the request and the response are in DONE state and
- * that all data are forwarded for both. For 1xx responses, only the response is
- * reset, waiting the final one. Many 1xx messages can be sent.
- */
-static void h1_sync_messages(struct h1c *h1c)
-{
-	struct h1s *h1s = h1c->h1s;
-
-	if (!h1s)
-		return;
-
-	if (h1s->res.state == H1_MSG_DONE &&
-	    (h1s->status < 200 && (h1s->status == 100 || h1s->status >= 102)) &&
-	    (conn_is_back(h1c->conn) || !b_data(&h1c->obuf))) {
-		/* For 100-Continue response or any other informational 1xx
-		 * response which is non-final, don't reset the request, the
-		 * transaction is not finished. We take care the response was
-		 * transferred before.
-		 */
-		h1m_init_res(&h1s->res);
-		h1s->res.flags |= H1_MF_NO_PHDR;
-		h1c->flags &= ~H1C_F_IN_BUSY;
-	}
-	else if (!b_data(&h1c->obuf) &&
-		 h1s->req.state == H1_MSG_DONE && h1s->res.state == H1_MSG_DONE) {
-		if (h1s->flags & H1S_F_WANT_TUN) {
-			h1m_init_req(&h1s->req);
-			h1m_init_res(&h1s->res);
-			h1s->req.state = H1_MSG_TUNNEL;
-			h1s->res.state = H1_MSG_TUNNEL;
-			h1c->flags &= ~H1C_F_IN_BUSY;
-		}
-	}
-}
-
-/*
  * Process incoming data. It parses data and transfer them from h1c->ibuf into
  * <buf>. It returns the number of bytes parsed and transferred if > 0, or 0 if
  * it couldn't proceed.
@@ -1316,16 +1346,13 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 	struct h1s *h1s = h1c->h1s;
 	struct h1m *h1m;
 	struct htx *htx;
+	size_t data = 0;
 	size_t total = 0;
 	size_t ret = 0;
 	size_t count, rsv;
 	int errflag;
 
 	htx = htx_from_buf(buf);
-	count = b_data(&h1c->ibuf);
-	if (!count)
-		goto end;
-	rsv = ((flags & CO_RFL_KEEP_RSV) ? global.tune.maxrewrite : 0);
 
 	if (!conn_is_back(h1c->conn)) {
 		h1m = &h1s->req;
@@ -1335,6 +1362,13 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 		h1m = &h1s->res;
 		errflag = H1S_F_RES_ERROR;
 	}
+
+	data = htx->data;
+	count = b_data(&h1c->ibuf);
+	rsv = ((flags & CO_RFL_KEEP_RSV) ? global.tune.maxrewrite : 0);
+
+	if (htx_is_empty(htx))
+		h1_handle_1xx_response(h1s, h1m);
 
 	do {
 		if (h1m->state <= H1_MSG_LAST_LF) {
@@ -1349,7 +1383,8 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 				break;
 		}
 		else if (h1m->state == H1_MSG_DONE) {
-			h1c->flags |= H1C_F_IN_BUSY;
+			if (h1s->req.state < H1_MSG_DONE || h1s->res.state < H1_MSG_DONE)
+				h1c->flags |= H1C_F_IN_BUSY;
 			break;
 		}
 		else if (h1m->state == H1_MSG_TUNNEL) {
@@ -1373,7 +1408,7 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 
   end:
 	htx_to_buf(htx, buf);
-
+	data = (htx->data - data);
 	if (h1c->flags & H1C_F_IN_FULL && buf_room_for_htx_data(&h1c->ibuf)) {
 		h1c->flags &= ~H1C_F_IN_FULL;
 		tasklet_wakeup(h1c->wait_event.task);
@@ -1381,18 +1416,18 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 
 	h1s->cs->flags &= ~(CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
 
-	if (!b_data(&h1c->ibuf)) {
+	if (!b_data(&h1c->ibuf))
 		h1_release_buf(h1c, &h1c->ibuf);
-		h1_sync_messages(h1c);
-	}
 	else if (!htx_is_empty(htx))
 		h1s->cs->flags |= CS_FL_RCV_MORE | CS_FL_WANT_ROOM;
 
 	if ((h1s->cs->flags & CS_FL_REOS) && (!b_data(&h1c->ibuf) || htx_is_empty(htx))) {
 		h1s->cs->flags |= CS_FL_EOS;
+		if (h1m->state > H1_MSG_LAST_LF && h1m->state < H1_MSG_DONE)
+			h1s->cs->flags |= CS_FL_ERROR;
 	}
 
-	return total;
+	return data;
 
   parsing_err:
 	b_reset(&h1c->ibuf);
@@ -1518,6 +1553,8 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				if (!htx_reqline_to_h1(sl, tmp))
 					goto copy;
 				h1m->flags |= H1_MF_XFER_LEN;
+				if (sl->flags & HTX_SL_F_BODYLESS)
+					h1m->flags |= H1_MF_CLEN;
 				h1m->state = H1_MSG_HDR_FIRST;
 				break;
 
@@ -1545,7 +1582,8 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				if (isteqi(n, ist("transfer-encoding")))
 					h1_parse_xfer_enc_header(h1m, v);
 				else if (isteqi(n, ist("content-length"))) {
-					if (h1_parse_cont_len_header(h1m, &v) <= 0)
+					/* Only skip C-L header with invalid value. */
+					if (h1_parse_cont_len_header(h1m, &v) < 0)
 						goto skip_hdr;
 				}
 				else if (isteqi(n, ist("connection"))) {
@@ -1582,10 +1620,13 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					}
 				}
 
-				if (h1s->status >= 200 && h1s->status != 204 && h1s->status != 304 &&
-				    h1s->meth != HTTP_METH_HEAD && !(h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) &&
-				    (h1m->flags & (H1_MF_VER_11|H1_MF_RESP|H1_MF_CLEN|H1_MF_CHNK|H1_MF_XFER_LEN)) ==
-				    (H1_MF_VER_11|H1_MF_RESP|H1_MF_XFER_LEN)) {
+				if ((h1s->meth != HTTP_METH_CONNECT &&
+				     (h1m->flags & (H1_MF_VER_11|H1_MF_RESP|H1_MF_CLEN|H1_MF_CHNK|H1_MF_XFER_LEN)) ==
+				     (H1_MF_VER_11|H1_MF_XFER_LEN)) ||
+				    (h1s->status >= 200 && h1s->status != 204 && h1s->status != 304 &&
+				     h1s->meth != HTTP_METH_HEAD && !(h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) &&
+				     (h1m->flags & (H1_MF_VER_11|H1_MF_RESP|H1_MF_CLEN|H1_MF_CHNK|H1_MF_XFER_LEN)) ==
+				     (H1_MF_VER_11|H1_MF_RESP|H1_MF_XFER_LEN))) {
 					/* chunking needed but header not seen */
 					if (!chunk_memcat(tmp, "transfer-encoding: chunked\r\n", 28))
 						goto copy;
@@ -1596,7 +1637,17 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				if (!chunk_memcat(tmp, "\r\n", 2))
 					goto copy;
 
-				h1m->state = H1_MSG_DATA;
+				if (!(h1m->flags & H1_MF_RESP) && h1s->meth == HTTP_METH_CONNECT) {
+					/* a CONNECT request is sent to the server. Switch it to tunnel mode. */
+					h1_set_req_tunnel_mode(h1s);
+				}
+				else if ((h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) || h1s->status == 101) {
+					/* a successfull reply to a CONNECT or a protocol switching is sent
+					 * to the client . Switch the response to tunnel mode. */
+					h1_set_res_tunnel_mode(h1s);
+				}
+				else
+					h1m->state = H1_MSG_DATA;
 				break;
 
 			case HTX_BLK_DATA:
@@ -1662,6 +1713,9 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 		}
 	}
 
+	if (htx_is_empty(chn_htx))
+		h1_handle_1xx_response(h1s, h1m);
+
   copy:
 	/* when the output buffer is empty, tmp shares the same area so that we
 	 * only have to update pointers and lengths.
@@ -1717,13 +1771,15 @@ static int h1_recv(struct h1c *h1c)
 		goto end;
 	}
 
-	if (h1s && (h1s->flags & (H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA))) {
-		rcvd = 1;
+	if (!h1_get_buf(h1c, &h1c->ibuf)) {
+		h1c->flags |= H1C_F_IN_ALLOC;
 		goto end;
 	}
 
-	if (!h1_get_buf(h1c, &h1c->ibuf)) {
-		h1c->flags |= H1C_F_IN_ALLOC;
+	if (h1s && (h1s->flags & (H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA))) {
+		if (!b_data(&h1c->ibuf))
+			h1_wake_stream_for_recv(h1s);
+		rcvd = 1;
 		goto end;
 	}
 
@@ -1821,7 +1877,6 @@ static int h1_send(struct h1c *h1c)
 	/* We're done, no more to send */
 	if (!b_data(&h1c->obuf)) {
 		h1_release_buf(h1c, &h1c->obuf);
-		h1_sync_messages(h1c);
 		if (h1c->flags & H1C_F_CS_SHUTW_NOW)
 			h1_shutw_conn(conn, CS_SHW_NORMAL);
 	}
@@ -1876,7 +1931,7 @@ static int h1_process(struct h1c * h1c)
 		if (h1c->flags & H1C_F_CS_ERROR || conn->flags & CO_FL_ERROR)
 			flags |= CS_FL_ERROR;
 		if (conn_xprt_read0_pending(conn))
-			flags |= CS_FL_EOS;
+			flags |= CS_FL_REOS;
 		h1s->cs->flags |= flags;
 		h1s->cs->data_cb->wake(h1s->cs);
 	}
@@ -2110,21 +2165,26 @@ static void h1_detach(struct conn_stream *cs)
 static void h1_shutr(struct conn_stream *cs, enum cs_shr_mode mode)
 {
 	struct h1s *h1s = cs->ctx;
+	struct h1c *h1c;
 
 	if (!h1s)
 		return;
+	h1c = h1s->h1c;
 
-	if ((h1s->flags & H1S_F_WANT_KAL) &&
-	    !(cs->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH)))
+	if ((cs->flags & CS_FL_KILL_CONN) || (h1c->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH)))
+		goto do_shutr;
+
+	if (h1s->flags & H1S_F_WANT_KAL)
 		return;
 
+  do_shutr:
 	/* NOTE: Be sure to handle abort (cf. h2_shutr) */
 	if (cs->flags & CS_FL_SHR)
 		return;
 	if (conn_xprt_ready(cs->conn) && cs->conn->xprt->shutr)
 		cs->conn->xprt->shutr(cs->conn, (mode == CS_SHR_DRAIN));
 	if ((cs->conn->flags & (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) == (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH))
-		h1s->h1c->flags = (h1s->h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
+		h1c->flags = (h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
 }
 
 static void h1_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
@@ -2136,12 +2196,13 @@ static void h1_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
 		return;
 	h1c = h1s->h1c;
 
-	if ((h1s->flags & H1S_F_WANT_KAL) &&
-	    !(h1c->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH)) &&
+	if ((cs->flags & CS_FL_KILL_CONN) || (h1c->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH)))
+		goto do_shutw;
 
-	    h1s->req.state == H1_MSG_DONE && h1s->res.state == H1_MSG_DONE)
+	if ((h1s->flags & H1S_F_WANT_KAL) && h1s->req.state == H1_MSG_DONE && h1s->res.state == H1_MSG_DONE)
 		return;
 
+  do_shutw:
 	h1c->flags |= H1C_F_CS_SHUTW_NOW;
 	if ((cs->flags & CS_FL_SHW) || b_data(&h1c->obuf))
 		return;
@@ -2227,8 +2288,12 @@ static size_t h1_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 	if (!(h1c->flags & H1C_F_IN_ALLOC))
 		ret = h1_process_input(h1c, buf, flags);
 
-	if (flags & CO_RFL_BUF_FLUSH)
-		h1s->flags |= H1S_F_BUF_FLUSH;
+	if (flags & CO_RFL_BUF_FLUSH) {
+		struct h1m *h1m = (!conn_is_back(cs->conn) ? &h1s->req : &h1s->res);
+
+		if (h1m->state != H1_MSG_TUNNEL || (h1m->state == H1_MSG_DATA && h1m->curr_len))
+			h1s->flags |= H1S_F_BUF_FLUSH;
+	}
 	else if (ret > 0 || (h1s->flags & H1S_F_SPLICED_DATA)) {
 		h1s->flags &= ~H1S_F_SPLICED_DATA;
 		if (!(h1c->wait_event.events & SUB_RETRY_RECV))
@@ -2275,6 +2340,13 @@ static int h1_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned int c
 	struct h1m *h1m = (!conn_is_back(cs->conn) ? &h1s->req : &h1s->res);
 	int ret = 0;
 
+	if ((h1m->state != H1_MSG_DATA && h1m->state != H1_MSG_TUNNEL) ||
+	    (h1m->state == H1_MSG_DATA && !h1m->curr_len)) {
+		h1s->flags &= ~(H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA);
+		cs->conn->xprt->subscribe(cs->conn, SUB_RETRY_RECV, &h1s->h1c->wait_event);
+		goto end;
+	}
+
 	if (b_data(&h1s->h1c->ibuf)) {
 		h1s->flags |= H1S_F_BUF_FLUSH;
 		goto end;
@@ -2285,11 +2357,19 @@ static int h1_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned int c
 	if (h1m->state == H1_MSG_DATA && count > h1m->curr_len)
 		count = h1m->curr_len;
 	ret = cs->conn->xprt->rcv_pipe(cs->conn, pipe, count);
-	if (h1m->state == H1_MSG_DATA && ret > 0)
+	if (h1m->state == H1_MSG_DATA && ret > 0) {
 		h1m->curr_len -= ret;
-  end:
-	return ret;
+		if (!h1m->curr_len)
+			h1s->flags &= ~(H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA);
+	}
 
+  end:
+	if (conn_xprt_read0_pending(cs->conn)) {
+		cs->flags |= CS_FL_REOS;
+		if (!pipe->data)
+			cs->flags |= CS_FL_EOS;
+	}
+	return ret;
 }
 
 static int h1_snd_pipe(struct conn_stream *cs, struct pipe *pipe)

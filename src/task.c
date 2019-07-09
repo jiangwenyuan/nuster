@@ -290,11 +290,8 @@ void process_runnable_tasks()
 	nb_tasks_cur = nb_tasks;
 	max_processed = global.tune.runqueue_depth;
 
-			/* detach the task from the queue */
-			__task_unlink_rq(t);
-			__task_wakeup(t, &task_per_thread[tid].rqueue);
-		}
-#endif
+	if (likely(niced_tasks))
+		max_processed = (max_processed + 3) / 4;
 
 	/* Note: the grq lock is always held when grq is not null */
 
@@ -312,10 +309,6 @@ void process_runnable_tasks()
 			}
 #endif
 		}
-		t = eb32sc_entry(rq_next, struct task, rq);
-		rq_next = eb32sc_next(rq_next, tid_bit);
-		/* Make sure nobody re-adds the task in the runqueue */
-		HA_ATOMIC_OR(&t->state, TASK_RUNNING);
 
 		/* If a global task is available for this thread, it's in grq
 		 * now and the global RQ is locked.

@@ -4640,62 +4640,6 @@ __LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KCont
 	/* Copy data. */
 	if (!htx_add_data(htx, ist2(data + l, max)))
 		goto snd_yield;
-	res->total += max;
-	res->flags |= CF_READ_PARTIAL;
-	htx_to_buf(htx, &res->buf);
-
-	if (IS_HTX_STRM(si_strm(appctx->appctx->owner))) {
-		/* HTX version */
-		lua_pushinteger(L, len);
-
-		/* Initialise the string catenation. */
-		luaL_buffinit(L, &appctx->b);
-
-		return MAY_LJMP(hlua_applet_htx_recv_yield(L, 0, 0));
-	}
-	else {
-		/* Legacy HTTP version */
-		/* Check the required length */
-		if (len == -1 || len > appctx->appctx->ctx.hlua_apphttp.left_bytes)
-			len = appctx->appctx->ctx.hlua_apphttp.left_bytes;
-		lua_pushinteger(L, len);
-
-		/* Initialise the string catenation. */
-		luaL_buffinit(L, &appctx->b);
-
-		return MAY_LJMP(hlua_applet_http_recv_yield(L, 0, 0));
-	}
-}
-
-/* Append data in the output side of the buffer. This data is immediately
- * sent. The function returns the amount of data written. If the buffer
- * cannot contain the data, the function yields. The function returns -1
- * if the channel is closed.
- */
-__LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KContext ctx)
-{
-	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
-	struct stream_interface *si = appctx->appctx->owner;
-	struct channel *res = si_ic(si);
-	struct htx *htx = htx_from_buf(&res->buf);
-	const char *data;
-	size_t len;
-	int l = MAY_LJMP(luaL_checkinteger(L, 3));
-	int max;
-
-	max = channel_htx_recv_max(res, htx);
-	if (!max)
-		goto snd_yield;
-
-	data = MAY_LJMP(luaL_checklstring(L, 2, &len));
-
-	/* Get the max amount of data which can write as input in the channel. */
-	if (max > (len - l))
-		max = len - l;
-
-	/* Copy data. */
-	if (!htx_add_data(htx, ist2(data + l, max)))
-		goto snd_yield;
 	channel_add_input(res, max);
 
 	/* update counters. */

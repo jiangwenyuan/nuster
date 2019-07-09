@@ -129,6 +129,8 @@
 #include <openssl/rand.h>
 #endif
 
+#include <nuster/nuster.h>
+
 /* array of init calls for older platforms */
 DECLARE_INIT_STAGES;
 
@@ -177,6 +179,32 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
+	.nuster = {
+		.cache = {
+			.status       = NST_STATUS_UNDEFINED,
+			.data_size    = NST_DEFAULT_DATA_SIZE,
+			.dict_size    = NST_DEFAULT_DICT_SIZE,
+			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
+			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
+			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
+			.disk_loader  = NST_DEFAULT_DISK_LOADER,
+			.disk_saver   = NST_DEFAULT_DISK_SAVER,
+			.share        = NST_STATUS_ON,
+			.purge_method = NULL,
+			.root	      = NULL,
+		},
+		.nosql = {
+			.status       = NST_STATUS_UNDEFINED,
+			.data_size    = NST_DEFAULT_DATA_SIZE,
+			.dict_size    = NST_DEFAULT_DICT_SIZE,
+			.root         = NULL,
+			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
+			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
+			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
+			.disk_loader  = NST_DEFAULT_DISK_LOADER,
+			.disk_saver   = NST_DEFAULT_DISK_SAVER,
+		},
+	},
 	/* others NULL OK */
 };
 
@@ -380,6 +408,8 @@ void hap_register_per_thread_deinit(void (*fct)())
 
 static void display_version()
 {
+	printf("nuster version %s\n", NUSTER_VERSION);
+	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE" - https://haproxy.org/\n");
 }
 
@@ -2207,6 +2237,8 @@ static void init(int argc, char **argv)
 	if (!hlua_post_init())
 		exit(1);
 
+	nuster_init();
+
 	free(err_msg);
 }
 
@@ -2702,27 +2734,10 @@ static void run_poll_loop()
 			HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 		fd_process_cached_events();
 
+		nuster_housekeeping();
+
 		activity[tid].loops++;
 	}
-
-	if ((global.mode & MODE_MWORKER) && master == 0) {
-		HA_SPIN_LOCK(START_LOCK, &start_lock);
-		mworker_pipe_register();
-		HA_SPIN_UNLOCK(START_LOCK, &start_lock);
-	}
-
-	protocol_enable_all();
-	run_poll_loop();
-
-	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
-		ptdf->fct();
-
-#ifdef USE_THREAD
-	HA_ATOMIC_AND(&all_threads_mask, ~tid_bit);
-	if (tid > 0)
-		pthread_exit(NULL);
-#endif
-	return NULL;
 }
 
 static void *run_thread_poll_loop(void *data)

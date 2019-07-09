@@ -75,6 +75,8 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
+#include <nuster/nuster.h>
+
 /* This function handles a server error at the stream interface level. The
  * stream interface is assumed to be already in a closed state. An optional
  * message is copied into the input buffer.
@@ -3620,8 +3622,7 @@ int http_sync_req_state(struct stream *s)
 		 */
 		if (((txn->flags & TX_CON_WANT_MSK) != TX_CON_WANT_SCL) &&
 		    ((txn->flags & TX_CON_WANT_MSK) != TX_CON_WANT_KAL) &&
-		    (!(s->be->options & PR_O_ABRT_CLOSE) ||
-		     (s->si[0].flags & SI_FL_CLEAN_ABRT)) &&
+		    !(s->be->options & PR_O_ABRT_CLOSE) &&
 		    txn->meth != HTTP_METH_POST)
 			channel_dont_read(chn);
 
@@ -3716,8 +3717,7 @@ int http_sync_req_state(struct stream *s)
 		/* see above in MSG_DONE why we only do this in these states */
 		if (((txn->flags & TX_CON_WANT_MSK) != TX_CON_WANT_SCL) &&
 		    ((txn->flags & TX_CON_WANT_MSK) != TX_CON_WANT_KAL) &&
-		    (!(s->be->options & PR_O_ABRT_CLOSE) ||
-		     (s->si[0].flags & SI_FL_CLEAN_ABRT)))
+		    !(s->be->options & PR_O_ABRT_CLOSE))
 			channel_dont_read(chn);
 		goto wait_other_side;
 	}
@@ -4078,7 +4078,7 @@ int http_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 	 * server, which will decide whether to close or to go on processing the
 	 * request. We only do that in tunnel mode, and not in other modes since
 	 * it can be abused to exhaust source ports. */
-	if ((s->be->options & PR_O_ABRT_CLOSE) && !(s->si[0].flags & SI_FL_CLEAN_ABRT)) {
+	if (s->be->options & PR_O_ABRT_CLOSE) {
 		channel_auto_read(req);
 		if ((req->flags & (CF_SHUTR|CF_READ_NULL)) &&
 		    ((txn->flags & TX_CON_WANT_MSK) != TX_CON_WANT_TUN))

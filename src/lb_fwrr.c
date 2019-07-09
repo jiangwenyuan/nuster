@@ -354,7 +354,7 @@ static void fwrr_queue_srv(struct server *s)
 		 s->npos >= grp->curr_weight + grp->next_weight) {
 		/* put into next tree, and readjust npos in case we could
 		 * finally take this back to current. */
-		HA_ATOMIC_SUB(&s->npos, grp->curr_weight);
+		s->npos -= grp->curr_weight;
 		fwrr_queue_by_weight(grp->next, s);
 	}
 	else {
@@ -392,7 +392,7 @@ static inline void fwrr_get_srv_next(struct server *s)
 		&s->proxy->lbprm.fwrr.bck :
 		&s->proxy->lbprm.fwrr.act;
 
-	HA_ATOMIC_ADD(&s->npos, grp->curr_weight);
+	s->npos += grp->curr_weight;
 }
 
 /* prepares a server when it was marked down.

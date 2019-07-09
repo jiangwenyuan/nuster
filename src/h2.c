@@ -25,7 +25,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <stdint.h>
+#include <inttypes.h>
 #include <common/config.h>
 #include <common/h2.h>
 #include <common/http-hdr.h>
@@ -492,6 +492,7 @@ static struct htx_sl *h2_prepare_htx_reqline(uint32_t fields, struct ist *phdr, 
 	int uri_idx = H2_PHDR_IDX_PATH;
 	unsigned int flags = HTX_SL_F_NONE;
 	struct htx_sl *sl;
+	size_t i;
 
 	if ((fields & H2_PHDR_FND_METH) && isteq(phdr[H2_PHDR_IDX_METH], ist("CONNECT"))) {
 		/* RFC 7540 #8.2.6 regarding CONNECT: ":scheme" and ":path"
@@ -537,6 +538,13 @@ static struct htx_sl *h2_prepare_htx_reqline(uint32_t fields, struct ist *phdr, 
 	/* 7540#8.1.2.3: :path must not be empty */
 	if (!phdr[uri_idx].len)
 		goto fail;
+
+	/* make sure :path doesn't contain LWS nor CTL characters */
+	for (i = 0; i < phdr[uri_idx].len; i++) {
+		unsigned char c = phdr[uri_idx].ptr[i];
+		if (HTTP_IS_LWS(c) || HTTP_IS_CTL(c))
+			htx->flags |= HTX_FL_PARSING_ERROR;
+	}
 
 	/* Set HTX start-line flags */
 	flags |= HTX_SL_F_VER_11;    // V2 in fact
@@ -684,6 +692,9 @@ int h2_make_htx_request(struct http_hdr *list, struct htx *htx, unsigned int *ms
 			goto fail;
 	}
 
+	if (!(*msgf & H2_MSGF_BODY) || ((*msgf & H2_MSGF_BODY_CL) && *body_len == 0))
+		sl_flags |= HTX_SL_F_BODYLESS;
+
 	/* update the start line with last detected header info */
 	sl->flags |= sl_flags;
 
@@ -776,6 +787,17 @@ static struct htx_sl *h2_prepare_htx_stsline(uint32_t fields, struct ist *phdr, 
 		goto fail;
 
 	sl->info.res.status = h * 100 + t * 10 + u;
+
+	/* On 1xx responses (except 101) there is no ES on the HEADERS frame but
+	 * there is no body. So remove the flag H2_MSGF_BODY and add
+	 * H2_MSGF_RSP_1XX to notify the decoder another HEADERS frame is
+	 * expected.
+	 */
+	if (sl->info.res.status < 200 &&
+	    (sl->info.res.status == 100 || sl->info.res.status >= 102)) {
+		*msgf |= H2_MSGF_RSP_1XX;
+		*msgf &= ~H2_MSGF_BODY;
+	}
 
 	return sl;
  fail:
@@ -889,6 +911,9 @@ int h2_make_htx_response(struct http_hdr *list, struct htx *htx, unsigned int *m
 		if (!sl)
 			goto fail;
 	}
+
+	if (!(*msgf & H2_MSGF_BODY) || ((*msgf & H2_MSGF_BODY_CL) && *body_len == 0))
+		sl_flags |= HTX_SL_F_BODYLESS;
 
 	/* update the start line with last detected header info */
 	sl->flags |= sl_flags;

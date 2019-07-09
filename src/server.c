@@ -966,40 +966,6 @@ void srv_append_status(struct buffer *msg, struct server *s,
 	else if (!forced && s->track) {
 		chunk_appendf(msg, " via %s/%s", s->track->proxy->id, s->track->id);
 	}
-}
-
-/* Enables admin flag <mode> (among SRV_ADMF_*) on server <s>. This is used to
- * enforce either maint mode or drain mode. It is not allowed to set more than
- * one flag at once. The equivalent "inherited" flag is propagated to all
- * tracking servers. Maintenance mode disables health checks (but not agent
- * checks). When either the flag is already set or no flag is passed, nothing
- * is done. If <cause> is non-null, it will be displayed at the end of the log
- * lines to justify the state change.
- *
- * Must be called with the server lock held.
- */
-void srv_set_admin_flag(struct server *s, enum srv_admin mode, const char *cause)
-{
-	struct server *srv;
-
-	if (!mode)
-		return;
-
-	/* stop going down as soon as we meet a server already in the same state */
-	if (s->next_admin & mode)
-		return;
-
-	s->next_admin |= mode;
-	if (cause)
-		strlcpy2(s->adm_st_chg_cause, cause, sizeof(s->adm_st_chg_cause));
-
-	/* propagate changes */
-	srv_update_status(s);
-
-	/* stop going down if the equivalent flag was already present (forced or inherited) */
-	if (((mode & SRV_ADMF_MAINT) && (s->next_admin & ~mode & SRV_ADMF_MAINT)) ||
-	    ((mode & SRV_ADMF_DRAIN) && (s->next_admin & ~mode & SRV_ADMF_DRAIN)))
-		return;
 
 	if (xferred >= 0) {
 		if (s->next_state == SRV_ST_STOPPED)

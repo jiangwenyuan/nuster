@@ -2082,6 +2082,11 @@ int check_config_validity()
 				ha_warning("Proxy '%s': all processes specified on the 'bind-process' directive refer to numbers that are all higher than global.nbproc. The directive was ignored and the proxy will run on all processes.\n", curproxy->id);
 				curproxy->bind_proc = 0;
 			}
+		}
+
+		/* check and reduce the bind-proc of each listener */
+		list_for_each_entry(bind_conf, &curproxy->conf.bind, by_fe) {
+			unsigned long mask;
 
 			/* HTTP frontends with "h2" as ALPN/NPN will work in
 			 * HTTP/2 and absolutely require buffers 16kB or larger.

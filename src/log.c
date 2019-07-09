@@ -519,8 +519,6 @@ int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct prox
 		node->options |= LOG_OPT_RES_CAP; /* fetch method is response-compatible */
 
 	if (!(expr->fetch->val & cap)) {
-		free(node);
-		node = NULL;
 		memprintf(err, "sample fetch <%s> may not be reliably used here because it needs '%s' which is not available here",
 		          text, sample_src_names(expr->fetch->use));
 		goto error_free;
