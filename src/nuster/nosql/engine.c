@@ -404,8 +404,8 @@ void nst_nosql_init() {
 
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
-        nuster.nosql->disk.file =
-                nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+        nuster.nosql->disk.file = nst_nosql_memory_alloc(
+                nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
         if(!nuster.nosql->disk.file) {
             goto err;
@@ -894,7 +894,8 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
             && (ctx->rule->disk == NST_DISK_SYNC
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
-        ctx->disk.file = nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+        ctx->disk.file = nst_nosql_memory_alloc(
+                nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
         if(!ctx->disk.file) {
             return;
@@ -1070,8 +1071,8 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
             }
         } else {
-            ctx->disk.file =
-                nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+            ctx->disk.file = nst_nosql_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
             if(!ctx->disk.file) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
@@ -1199,7 +1200,8 @@ void nst_nosql_persist_async() {
             uint64_t cache_len = 0;
             struct persist disk;
 
-            entry->file = nst_nosql_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+            entry->file = nst_nosql_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
             if(!entry->file) {
                 return;
@@ -1282,11 +1284,13 @@ void nst_nosql_persist_async() {
 void nst_nosql_persist_load() {
 
     if(global.nuster.nosql.root && !nuster.nosql->disk.loaded) {
+        char *root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
         struct buffer *key;
         int fd;
 
+        root = global.nuster.nosql.root;
         file = nuster.nosql->disk.file;
 
         if(nuster.nosql->disk.dir) {
@@ -1302,8 +1306,8 @@ void nst_nosql_persist_load() {
                     return;
                 }
 
-                memcpy(file + NST_PERSIST_PATH_BASE_LEN, "/", 1);
-                memcpy(file + NST_PERSIST_PATH_BASE_LEN + 1, de->d_name,
+                memcpy(file + nst_persist_path_base_len(root), "/", 1);
+                memcpy(file + nst_persist_path_base_len(root) + 1, de->d_name,
                         strlen(de->d_name));
 
                 dir2 = opendir(file);
@@ -1319,9 +1323,9 @@ void nst_nosql_persist_load() {
                         continue;
                     }
 
-                    memcpy(file + NST_PERSIST_PATH_HASH_LEN, "/", 1);
-                    memcpy(file + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
-                            strlen(de2->d_name));
+                    memcpy(file + nst_persist_path_hash_len(root), "/", 1);
+                    memcpy(file + nst_persist_path_hash_len(root) + 1,
+                            de2->d_name, strlen(de2->d_name));
 
                     fd = nst_persist_open(file);
 

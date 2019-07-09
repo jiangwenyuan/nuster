@@ -479,8 +479,8 @@ void nst_cache_init() {
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
-        nuster.cache->disk.file =
-                nst_cache_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+        nuster.cache->disk.file = nst_cache_memory_alloc(
+                nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
         if(!nuster.cache->disk.file) {
             goto err;
@@ -905,8 +905,8 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
                 ret = NST_CACHE_CTX_STATE_INIT;
             }
         } else {
-            ctx->disk.file =
-                nst_cache_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+            ctx->disk.file = nst_cache_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
             if(!ctx->disk.file) {
                 ret = NST_CACHE_CTX_STATE_INIT;
@@ -993,7 +993,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             && (ctx->rule->disk == NST_DISK_SYNC
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
-        ctx->disk.file = nst_cache_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+        ctx->disk.file = nst_cache_memory_alloc(
+                nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
         if(!ctx->disk.file) {
             return;
@@ -1196,7 +1197,8 @@ void nst_cache_persist_async() {
             uint64_t cache_len = 0;
             struct persist disk;
 
-            entry->file = nst_cache_memory_alloc(NST_PERSIST_PATH_FILE_LEN + 1);
+            entry->file = nst_cache_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
             if(!entry->file) {
                 return;
@@ -1250,11 +1252,13 @@ void nst_cache_persist_async() {
 void nst_cache_persist_load() {
 
     if(global.nuster.cache.root && !nuster.cache->disk.loaded) {
+        char *root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
         struct buffer *key;
         int fd;
 
+        root = global.nuster.cache.root;
         file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
@@ -1270,8 +1274,8 @@ void nst_cache_persist_load() {
                     return;
                 }
 
-                memcpy(file + NST_PERSIST_PATH_BASE_LEN, "/", 1);
-                memcpy(file + NST_PERSIST_PATH_BASE_LEN + 1, de->d_name,
+                memcpy(file + nst_persist_path_base_len(root), "/", 1);
+                memcpy(file + nst_persist_path_base_len(root) + 1, de->d_name,
                         strlen(de->d_name));
 
                 dir2 = opendir(file);
@@ -1287,9 +1291,9 @@ void nst_cache_persist_load() {
                         continue;
                     }
 
-                    memcpy(file + NST_PERSIST_PATH_HASH_LEN, "/", 1);
-                    memcpy(file + NST_PERSIST_PATH_HASH_LEN + 1, de2->d_name,
-                            strlen(de2->d_name));
+                    memcpy(file + nst_persist_path_hash_len(root), "/", 1);
+                    memcpy(file + nst_persist_path_hash_len(root) + 1,
+                            de2->d_name, strlen(de2->d_name));
 
                     fd = nst_persist_open(file);
 
