@@ -70,23 +70,17 @@ struct persist {
     char  meta[NST_PERSIST_META_SIZE];
 };
 
-/* /0/00 */
-#define NST_PERSIST_PATH_BASE_LEN strlen(global.nuster.cache.root) + 5
-
-/* /0/00/60322ec3e2428e4a: + 1 + 16 */
-#define NST_PERSIST_PATH_HASH_LEN NST_PERSIST_PATH_BASE_LEN + 17
-
-/* /a/4a/60322ec3e2428e4a/71fabeefebdaaedb-16ae92496e1: + 1 + 16 + 1 + 11 */
-#define NST_PERSIST_PATH_FILE_LEN NST_PERSIST_PATH_HASH_LEN + 29
-
+/* /0/00: 5 */
 static inline int nst_persist_path_base_len(char *root) {
     return strlen(root) + 5;
 }
 
+/* /0/00/00322ec3e2428e4a: 5 + 1 + 16 */
 static inline int nst_persist_path_hash_len(char *root) {
     return strlen(root) + 22;
 }
 
+/* /0/00/00322ec3e2428e4a/71fabeefebdaaedb-16ae92496e1: 22 + 1 + 16 + 1 + 11 */
 static inline int nst_persist_path_file_len(char *root) {
     return strlen(root) + 51;
 }
