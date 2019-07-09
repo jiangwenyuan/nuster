@@ -1393,7 +1393,7 @@ void nst_nosql_persist_cleanup() {
             struct dirent *de = nst_persist_dir_next(nuster.nosql->disk.dir);
 
             if(de) {
-                nst_persist_cleanup(file, de);
+                nst_persist_cleanup(global.nuster.nosql.root, file, de);
             } else {
                 nuster.nosql->disk.idx++;
                 closedir(nuster.nosql->disk.dir);
