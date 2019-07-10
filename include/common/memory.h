@@ -26,7 +26,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
+#include <inttypes.h>
 #include <unistd.h>
 
 #include <common/config.h>
@@ -228,7 +228,7 @@ static inline void *__pool_get_first(struct pool_head *pool)
 		new.seq = cmp.seq + 1;
 		__ha_barrier_load();
 		new.free_list = *POOL_LINK(pool, cmp.free_list);
-	} while (__ha_cas_dw((void *)&pool->free_list, (void *)&cmp, (void *)&new) == 0);
+	} while (HA_ATOMIC_DWCAS((void *)&pool->free_list, (void *)&cmp, (void *)&new) == 0);
 
 	HA_ATOMIC_ADD(&pool->used, 1);
 #ifdef DEBUG_MEMORY_POOLS

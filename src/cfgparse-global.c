@@ -83,6 +83,14 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		else
 			global.tune.options |=  GTUNE_BUSY_POLLING;
 	}
+	else if (!strcmp(args[0], "set-dumpable")) { /* "no set-dumpable" or "set-dumpable" */
+		if (alertif_too_many_args(0, file, linenum, args, &err_code))
+			goto out;
+		if (kwm == KWM_NO)
+			global.tune.options &= ~GTUNE_SET_DUMPABLE;
+		else
+			global.tune.options |=  GTUNE_SET_DUMPABLE;
+	}
 	else if (!strcmp(args[0], "nosplice")) {
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))
 			goto out;
@@ -135,6 +143,8 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		global.tune.maxpollevents = atol(args[1]);
 	}
 	else if (!strcmp(args[0], "tune.maxaccept")) {
+		long max;
+
 		if (alertif_too_many_args(1, file, linenum, args, &err_code))
 			goto out;
 		if (global.tune.maxaccept != 0) {
@@ -147,7 +157,13 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
-		global.tune.maxaccept = atol(args[1]);
+		max = atol(args[1]);
+		if (/*max < -1 || */max > INT_MAX) {
+			ha_alert("parsing [%s:%d] : '%s' expects -1 or an integer from 0 to INT_MAX.\n", file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		global.tune.maxaccept = max;
 	}
 	else if (!strcmp(args[0], "tune.chksize")) {
 		if (alertif_too_many_args(1, file, linenum, args, &err_code))

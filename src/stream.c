@@ -387,6 +387,7 @@ static void stream_free(struct stream *s)
 	}
 
 	pool_free(pool_head_uniqueid, s->unique_id);
+	s->unique_id = NULL;
 
 	hlua_ctx_destroy(s->hlua);
 	s->hlua = NULL;
@@ -642,7 +643,13 @@ static int sess_update_st_con_tcp(struct stream *s)
 			 */
 			si->state    = SI_ST_EST;
 			si->err_type = SI_ET_DATA_ERR;
-			req->flags |= CF_WRITE_ERROR;
+			/* Don't add CF_WRITE_ERROR if we're here because
+			 * early data were rejected by the server, or
+			 * http_wait_for_response() will never be called
+			 * to send a 425.
+			 */
+			if (conn->err_code != CO_ER_SSL_EARLY_FAILED)
+				req->flags |= CF_WRITE_ERROR;
 			rep->flags |= CF_READ_ERROR;
 			return 1;
 		}
@@ -669,13 +676,23 @@ static int sess_update_st_con_tcp(struct stream *s)
 	    unlikely((rep->flags & CF_SHUTW) ||
 		     ((req->flags & CF_SHUTW_NOW) && /* FIXME: this should not prevent a connection from establishing */
 		      ((!(req->flags & CF_WRITE_ACTIVITY) && channel_is_empty(req)) ||
-		       ((s->be->options & PR_O_ABRT_CLOSE) && !(s->si[0].flags & SI_FL_CLEAN_ABRT)))))) {
+		       (s->be->options & PR_O_ABRT_CLOSE))))) {
 		/* give up */
 		si_shutw(si);
 		si->err_type |= SI_ET_CONN_ABRT;
 		if (s->srv_error)
 			s->srv_error(s, si);
 		return 1;
+	}
+
+	/* If the request channel is waiting for the connect(), we mark the read
+	 * side as attached on the response channel and we wake up it once. So
+	 * it will have a chance to forward data now.
+	 */
+	if (req->flags & CF_WAKE_CONNECT) {
+		rep->flags |= CF_READ_ATTACHED;
+		req->flags |= CF_WAKE_ONCE;
+		req->flags &= ~CF_WAKE_CONNECT;
 	}
 
 	/* we need to wait a bit more if there was no activity either */
@@ -792,7 +809,7 @@ static int sess_update_st_cer(struct stream *s)
 		si->state = SI_ST_REQ;
 	} else {
 		if (objt_server(s->target))
-			HA_ATOMIC_ADD(&objt_server(s->target)->counters.retries, 1);
+			HA_ATOMIC_ADD(&__objt_server(s->target)->counters.retries, 1);
 		HA_ATOMIC_ADD(&s->be->be_counters.retries, 1);
 		si->state = SI_ST_ASS;
 	}
@@ -821,6 +838,7 @@ static int sess_update_st_cer(struct stream *s)
 			si->state = SI_ST_TAR;
 			si->exp = tick_add(now_ms, MS_TO_TICKS(delay));
 		}
+		si->flags &= ~SI_FL_ERR;
 		return 0;
 	}
 	return 0;
@@ -866,10 +884,6 @@ static void sess_establish(struct stream *s)
 
 	si_rx_endp_more(si);
 	rep->flags |= CF_READ_ATTACHED; /* producer is now attached */
-	if (req->flags & CF_WAKE_CONNECT) {
-		req->flags |= CF_WAKE_ONCE;
-		req->flags &= ~CF_WAKE_CONNECT;
-	}
 	if (objt_cs(si->end)) {
 		/* real connections have timeouts */
 		req->wto = s->be->timeout.server;
@@ -889,8 +903,7 @@ static int check_req_may_abort(struct channel *req, struct stream *s)
 {
 	return ((req->flags & (CF_READ_ERROR)) ||
 	        ((req->flags & (CF_SHUTW_NOW|CF_SHUTW)) &&  /* empty and client aborted */
-	         (channel_is_empty(req) ||
-		  ((s->be->options & PR_O_ABRT_CLOSE) && !(s->si[0].flags & SI_FL_CLEAN_ABRT)))));
+	         (channel_is_empty(req) || (s->be->options & PR_O_ABRT_CLOSE))));
 }
 
 /* Update back stream interface status for input states SI_ST_ASS, SI_ST_QUE,
@@ -1050,6 +1063,8 @@ static void sess_update_stream_int(struct stream *s)
 		if (!(si->flags & SI_FL_EXP))
 			return;  /* still in turn-around */
 
+		si->flags &= ~SI_FL_EXP;
+
 		si->exp = TICK_ETERNITY;
 
 		/* we keep trying on the same server as long as the stream is
@@ -1144,6 +1159,17 @@ static void sess_prepare_conn_req(struct stream *s)
 			if (s->srv_error)
 				s->srv_error(s, si);
 			return;
+		}
+
+		/* For applets, there is no connection establishment, but if the
+		 * request channel is waiting for it, we mark the read side as
+		 * attached on the response channel and we wake up it once. So
+		 * it will have a chance to forward data now.
+		 */
+		if (s->req.flags & CF_WAKE_CONNECT) {
+			s->res.flags |= CF_READ_ATTACHED;
+			s->req.flags |= CF_WAKE_ONCE;
+			s->req.flags &= ~CF_WAKE_CONNECT;
 		}
 
 		if (tv_iszero(&s->logs.tv_request))
@@ -2122,6 +2148,19 @@ redo:
 				s->flags |= SF_ERR_SRVTO;
 			}
 			sess_set_term_flags(s);
+
+			/* Abort the request if a client error occurred while
+			 * the backend stream-interface is in the SI_ST_INI
+			 * state. It is switched into the SI_ST_CLO state and
+			 * the request channel is erased. */
+			if (si_b->state == SI_ST_INI) {
+				si_b->state = SI_ST_CLO;
+				channel_abort(req);
+				if (IS_HTX_STRM(s))
+					channel_htx_erase(req, htxbuf(&req->buf));
+				else
+					channel_erase(req);
+			}
 		}
 		else if (res->flags & (CF_READ_ERROR|CF_READ_TIMEOUT|CF_WRITE_ERROR|CF_WRITE_TIMEOUT)) {
 			/* Report it if the server got an error or a read timeout expired */
@@ -2495,15 +2534,20 @@ redo:
 
 	if (likely((si_f->state != SI_ST_CLO) ||
 		   (si_b->state > SI_ST_INI && si_b->state < SI_ST_CLO))) {
+		enum si_state si_b_prev_state, si_f_prev_state;
+
+		si_f_prev_state = si_f->prev_state;
+		si_b_prev_state = si_b->prev_state;
 
 		if ((sess->fe->options & PR_O_CONTSTATS) && (s->flags & SF_BE_ASSIGNED))
 			stream_process_counters(s);
 
 		si_update_both(si_f, si_b);
 
-		if (si_f->state == SI_ST_DIS || si_f->state != si_f->prev_state ||
-		    si_b->state == SI_ST_DIS || si_b->state != si_b->prev_state ||
-		    ((si_f->flags | si_b->flags) & SI_FL_ERR) ||
+		if (si_f->state == SI_ST_DIS || si_f->state != si_f_prev_state ||
+		    si_b->state == SI_ST_DIS || si_b->state != si_b_prev_state ||
+		    ((si_f->flags & SI_FL_ERR) && si_f->state != SI_ST_CLO) ||
+		    ((si_b->flags & SI_FL_ERR) && si_b->state != SI_ST_CLO) ||
 		    (((req->flags ^ rqf_last) | (res->flags ^ rpf_last)) & CF_MASK_ANALYSER))
 			goto redo;
 
@@ -2935,7 +2979,7 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 		}
 
 		chunk_appendf(&trash,
-			     "  task=%p (state=0x%02x nice=%d calls=%d exp=%s tmask=0x%lx%s",
+			     "  task=%p (state=0x%02x nice=%d calls=%u exp=%s tmask=0x%lx%s",
 			     strm->task,
 			     strm->task->state,
 			     strm->task->nice, strm->task->calls,
@@ -3275,7 +3319,7 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 			}
 
 			chunk_appendf(&trash,
-				     " ts=%02x age=%s calls=%d cpu=%llu lat=%llu",
+				     " ts=%02x age=%s calls=%u cpu=%llu lat=%llu",
 				     curr_strm->task->state,
 				     human_time(now.tv_sec - curr_strm->logs.tv_accept.tv_sec, 1),
 			             curr_strm->task->calls,

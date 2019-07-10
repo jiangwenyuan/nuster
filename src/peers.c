@@ -30,10 +30,12 @@
 #include <types/listener.h>
 #include <types/obj_type.h>
 #include <types/peers.h>
+#include <types/stats.h>
 
 #include <proto/acl.h>
 #include <proto/applet.h>
 #include <proto/channel.h>
+#include <proto/cli.h>
 #include <proto/fd.h>
 #include <proto/frontend.h>
 #include <proto/log.h>
@@ -170,7 +172,31 @@ enum {
 #define PEER_DWNGRD_MINOR_VER 0
 
 struct peers *cfg_peers = NULL;
-static void peer_session_forceshutdown(struct appctx *appctx);
+static void peer_session_forceshutdown(struct peer *peer);
+
+static const char *statuscode_str(int statuscode)
+{
+	switch (statuscode) {
+	case PEER_SESS_SC_CONNECTCODE:
+		return "CONN";
+	case PEER_SESS_SC_CONNECTEDCODE:
+		return "HSHK";
+	case PEER_SESS_SC_SUCCESSCODE:
+		return "ESTA";
+	case PEER_SESS_SC_TRYAGAIN:
+		return "RETR";
+	case PEER_SESS_SC_ERRPROTO:
+		return "PROT";
+	case PEER_SESS_SC_ERRVERSION:
+		return "VERS";
+	case PEER_SESS_SC_ERRHOST:
+		return "NAME";
+	case PEER_SESS_SC_ERRPEER:
+		return "UNKN";
+	default:
+		return "NONE";
+	}
+}
 
 /* This function encode an uint64 to 'dynamic' length format.
    The encoded value is written at address *str, and the
@@ -181,9 +207,6 @@ static void peer_session_forceshutdown(struct appctx *appctx);
 int intencode(uint64_t i, char **str) {
 	int idx = 0;
 	unsigned char *msg;
-
-	if (!*str)
-		return 0;
 
 	msg = (unsigned char *)*str;
 	if (i < 240) {
@@ -491,14 +514,57 @@ static int peer_prepare_ackmsg(struct shared_table *st, char *msg, size_t size)
 }
 
 /*
+ * Function to deinit connected peer
+ */
+void __peer_session_deinit(struct peer *peer)
+{
+	struct stream_interface *si;
+	struct stream *s;
+	struct peers *peers;
+
+	if (!peer->appctx)
+		return;
+
+	si = peer->appctx->owner;
+	if (!si)
+		return;
+
+	s = si_strm(si);
+	if (!s)
+		return;
+
+	peers = strm_fe(s)->parent;
+	if (!peers)
+		return;
+
+	if (peer->appctx->st0 == PEER_SESS_ST_WAITMSG)
+		HA_ATOMIC_SUB(&connected_peers, 1);
+
+	HA_ATOMIC_SUB(&active_peers, 1);
+
+	/* Re-init current table pointers to force announcement on re-connect */
+	peer->remote_table = peer->last_local_table = NULL;
+	peer->appctx = NULL;
+	if (peer->flags & PEER_F_LEARN_ASSIGN) {
+		/* unassign current peer for learning */
+		peer->flags &= ~(PEER_F_LEARN_ASSIGN);
+		peers->flags &= ~(PEERS_F_RESYNC_ASSIGN|PEERS_F_RESYNC_PROCESS);
+
+		/* reschedule a resync */
+		peers->resync_timeout = tick_add(now_ms, MS_TO_TICKS(5000));
+	}
+	/* reset teaching and learning flags to 0 */
+	peer->flags &= PEER_TEACH_RESET;
+	peer->flags &= PEER_LEARN_RESET;
+	task_wakeup(peers->sync_task, TASK_WOKEN_MSG);
+}
+
+/*
  * Callback to release a session with a peer
  */
 static void peer_session_release(struct appctx *appctx)
 {
-	struct stream_interface *si = appctx->owner;
-	struct stream *s = si_strm(si);
 	struct peer *peer = appctx->ctx.peers.ptr;
-	struct peers *peers = strm_fe(s)->parent;
 
 	/* appctx->ctx.peers.ptr is not a peer session */
 	if (appctx->st0 < PEER_SESS_ST_SENDSUCCESS)
@@ -506,28 +572,10 @@ static void peer_session_release(struct appctx *appctx)
 
 	/* peer session identified */
 	if (peer) {
-		if (appctx->st0 == PEER_SESS_ST_WAITMSG)
-			HA_ATOMIC_SUB(&connected_peers, 1);
-		HA_ATOMIC_SUB(&active_peers, 1);
 		HA_SPIN_LOCK(PEER_LOCK, &peer->lock);
-		if (peer->appctx == appctx) {
-			/* Re-init current table pointers to force announcement on re-connect */
-			peer->remote_table = peer->last_local_table = NULL;
-			peer->appctx = NULL;
-			if (peer->flags & PEER_F_LEARN_ASSIGN) {
-				/* unassign current peer for learning */
-				peer->flags &= ~(PEER_F_LEARN_ASSIGN);
-				peers->flags &= ~(PEERS_F_RESYNC_ASSIGN|PEERS_F_RESYNC_PROCESS);
-
-				/* reschedule a resync */
-				peers->resync_timeout = tick_add(now_ms, MS_TO_TICKS(5000));
-			}
-			/* reset teaching and learning flags to 0 */
-			peer->flags &= PEER_TEACH_RESET;
-			peer->flags &= PEER_LEARN_RESET;
-		}
+		if (peer->appctx == appctx)
+			__peer_session_deinit(peer);
 		HA_SPIN_UNLOCK(PEER_LOCK, &peer->lock);
-		task_wakeup(peers->sync_task, TASK_WOKEN_MSG);
 	}
 }
 
@@ -715,7 +763,7 @@ switchstate:
 					 * for a while.
 					 */
 					curpeer->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
-					peer_session_forceshutdown(curpeer->appctx);
+					peer_session_forceshutdown(curpeer);
 				}
 				if (maj_ver != (unsigned int)-1 && min_ver != (unsigned int)-1) {
 					if (min_ver == PEER_DWNGRD_MINOR_VER) {
@@ -1903,11 +1951,14 @@ static struct applet peer_applet = {
 	.release = peer_session_release,
 };
 
+
 /*
  * Use this function to force a close of a peer session
  */
-static void peer_session_forceshutdown(struct appctx *appctx)
+static void peer_session_forceshutdown(struct peer *peer)
 {
+	struct appctx *appctx = peer->appctx;
+
 	/* Note that the peer sessions which have just been created
 	 * (->st0 == PEER_SESS_ST_CONNECT) must not
 	 * be shutdown, if not, the TCP session will never be closed
@@ -1920,8 +1971,8 @@ static void peer_session_forceshutdown(struct appctx *appctx)
 	if (appctx->applet != &peer_applet)
 		return;
 
-	if (appctx->st0 == PEER_SESS_ST_WAITMSG)
-		HA_ATOMIC_SUB(&connected_peers, 1);
+	__peer_session_deinit(peer);
+
 	appctx->st0 = PEER_SESS_ST_END;
 	appctx_wakeup(appctx);
 }
@@ -2172,8 +2223,7 @@ static struct task *process_peer_sync(struct task * task, void *context, unsigne
 				 */
 				ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
 				if (ps->appctx) {
-					peer_session_forceshutdown(ps->appctx);
-					ps->appctx = NULL;
+					peer_session_forceshutdown(ps);
 				}
 			}
 		}
@@ -2284,4 +2334,264 @@ void peers_register_table(struct peers *peers, struct stktable *table)
 
 	table->sync_task = peers->sync_task;
 }
+
+/*
+ * Parse the "show peers" command arguments.
+ * Returns 0 if succeeded, 1 if not with the ->msg of the appctx set as
+ * error message.
+ */
+static int cli_parse_show_peers(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	appctx->ctx.cfgpeers.target = NULL;
+
+	if (*args[2]) {
+		struct peers *p;
+
+		for (p = cfg_peers; p; p = p->next) {
+			if (!strcmp(p->id, args[2])) {
+				appctx->ctx.cfgpeers.target = p;
+				break;
+			}
+		}
+
+		if (!p) {
+			appctx->ctx.cli.severity = LOG_ERR;
+			appctx->ctx.cli.msg = "No such peers\n";
+			appctx->st0 = CLI_ST_PRINT;
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * This function dumps the peer state information of <peers> "peers" section.
+ * Returns 0 if the output buffer is full and needs to be called again, non-zero if not.
+ * Dedicated to be called by cli_io_handler_show_peers() cli I/O handler.
+ */
+static int peers_dump_head(struct buffer *msg, struct stream_interface *si, struct peers *peers)
+{
+	struct tm tm;
+
+	get_localtime(peers->last_change, &tm);
+	chunk_appendf(msg, "%p: [%02d/%s/%04d:%02d:%02d:%02d] id=%s state=%d flags=0x%x resync_timeout=%s task_calls=%u\n",
+	              peers,
+	              tm.tm_mday, monthname[tm.tm_mon], tm.tm_year+1900,
+	              tm.tm_hour, tm.tm_min, tm.tm_sec,
+	              peers->id, peers->state, peers->flags,
+	              peers->resync_timeout ?
+			             tick_is_expired(peers->resync_timeout, now_ms) ? "<PAST>" :
+			                     human_time(TICKS_TO_MS(peers->resync_timeout - now_ms),
+			                     TICKS_TO_MS(1000)) : "<NEVER>",
+	              peers->sync_task ? peers->sync_task->calls : 0);
+
+	if (ci_putchk(si_ic(si), msg) == -1) {
+		si_rx_room_blk(si);
+		return 0;
+	}
+
+	return 1;
+}
+
+/*
+ * This function dumps <peer> state information.
+ * Returns 0 if the output buffer is full and needs to be called again, non-zero
+ * if not. Dedicated to be called by cli_io_handler_show_peers() cli I/O handler.
+ */
+static int peers_dump_peer(struct buffer *msg, struct stream_interface *si, struct peer *peer)
+{
+	struct connection *conn;
+	char pn[INET6_ADDRSTRLEN];
+	struct stream_interface *peer_si;
+	struct stream *peer_s;
+	struct appctx *appctx;
+	struct shared_table *st;
+
+	addr_to_str(&peer->addr, pn, sizeof pn);
+	chunk_appendf(msg, "  %p: id=%s(%s) addr=%s:%d status=%s reconnect=%s confirm=%u\n",
+	              peer, peer->id,
+	              peer->local ? "local" : "remote",
+	              pn, get_host_port(&peer->addr),
+	              statuscode_str(peer->statuscode),
+	              peer->reconnect ?
+			             tick_is_expired(peer->reconnect, now_ms) ? "<PAST>" :
+			                     human_time(TICKS_TO_MS(peer->reconnect - now_ms),
+			                     TICKS_TO_MS(1000)) : "<NEVER>",
+	              peer->confirm);
+
+	chunk_appendf(&trash, "        flags=0x%x", peer->flags);
+
+	appctx = peer->appctx;
+	if (!appctx)
+		goto end;
+
+	chunk_appendf(&trash, " appctx:%p st0=%d st1=%d task_calls=%u", appctx, appctx->st0, appctx->st1,
+	                                                                appctx->t ? appctx->t->calls : 0);
+
+	peer_si = peer->appctx->owner;
+	if (!peer_si)
+		goto end;
+
+	peer_s = si_strm(peer_si);
+	if (!peer_s)
+		goto end;
+
+	chunk_appendf(&trash, " state=%s", si_state_str(si_opposite(peer_si)->state));
+
+	conn = objt_conn(strm_orig(peer_s));
+	if (conn)
+		chunk_appendf(&trash, "\n        xprt=%s", conn_get_xprt_name(conn));
+
+	switch (conn ? addr_to_str(&conn->addr.from, pn, sizeof(pn)) : AF_UNSPEC) {
+	case AF_INET:
+	case AF_INET6:
+		chunk_appendf(&trash, " src=%s:%d", pn, get_host_port(&conn->addr.from));
+		break;
+	case AF_UNIX:
+		chunk_appendf(&trash, " src=unix:%d", strm_li(peer_s)->luid);
+		break;
+	}
+
+	if (conn)
+		conn_get_to_addr(conn);
+
+	switch (conn ? addr_to_str(&conn->addr.to, pn, sizeof(pn)) : AF_UNSPEC) {
+	case AF_INET:
+	case AF_INET6:
+		chunk_appendf(&trash, " addr=%s:%d", pn, get_host_port(&conn->addr.to));
+		break;
+	case AF_UNIX:
+		chunk_appendf(&trash, " addr=unix:%d", strm_li(peer_s)->luid);
+		break;
+	}
+
+	if (peer->remote_table)
+		chunk_appendf(&trash, "\n        remote_table:%p id=%s local_id=%d remote_id=%d",
+		              peer->remote_table,
+		              peer->remote_table->table->id,
+		              peer->remote_table->local_id,
+		              peer->remote_table->remote_id);
+
+	if (peer->last_local_table)
+		chunk_appendf(&trash, "\n        last_local_table:%p id=%s local_id=%d remote_id=%d",
+		              peer->last_local_table,
+		              peer->last_local_table->table->id,
+		              peer->last_local_table->local_id,
+		              peer->last_local_table->remote_id);
+
+	if (peer->tables) {
+		chunk_appendf(&trash, "\n        shared tables:");
+		for (st = peer->tables; st; st = st->next) {
+			struct stktable *t;
+			t = st->table;
+			chunk_appendf(&trash, "\n          %p local_id=%d remote_id=%d "
+			              "flags=0x%x remote_data=0x%llx",
+			              st, st->local_id, st->remote_id,
+			              st->flags, (unsigned long long)st->remote_data);
+			chunk_appendf(&trash, "\n              last_acked=%u last_pushed=%u last_get=%u"
+			              " teaching_origin=%u update=%u",
+			              st->last_acked, st->last_pushed, st->last_get,
+			              st->teaching_origin, st->update);
+			chunk_appendf(&trash, "\n              table:%p id=%s update=%u localupdate=%u"
+			              " commitupdate=%u syncing=%u",
+			              t, t->id, t->update, t->localupdate, t->commitupdate, t->syncing);
+		}
+	}
+
+ end:
+	chunk_appendf(&trash, "\n");
+	if (ci_putchk(si_ic(si), msg) == -1) {
+		si_rx_room_blk(si);
+		return 0;
+	}
+
+	return 1;
+}
+
+/*
+ * This function dumps all the peers of "peers" section.
+ * Returns 0 if the output buffer is full and needs to be called
+ * again, non-zero if not. It proceeds in an isolated thread, so
+ * there is no thread safety issue here.
+ */
+static int cli_io_handler_show_peers(struct appctx *appctx)
+{
+	int show_all;
+	int ret = 0, first_peers = 1;
+	struct stream_interface *si = appctx->owner;
+
+	thread_isolate();
+
+	show_all = !appctx->ctx.cfgpeers.target;
+
+	chunk_reset(&trash);
+
+	while (appctx->st2 != STAT_ST_FIN) {
+		switch (appctx->st2) {
+		case STAT_ST_INIT:
+			if (show_all)
+				appctx->ctx.cfgpeers.peers = cfg_peers;
+			else
+				appctx->ctx.cfgpeers.peers = appctx->ctx.cfgpeers.target;
+
+			appctx->st2 = STAT_ST_LIST;
+			/* fall through */
+
+		case STAT_ST_LIST:
+			if (!appctx->ctx.cfgpeers.peers) {
+				/* No more peers list. */
+				appctx->st2 = STAT_ST_END;
+			}
+			else {
+				if (!first_peers)
+					chunk_appendf(&trash, "\n");
+				else
+					first_peers = 0;
+				if (!peers_dump_head(&trash, si, appctx->ctx.cfgpeers.peers))
+					goto out;
+
+				appctx->ctx.cfgpeers.peer = appctx->ctx.cfgpeers.peers->remote;
+				appctx->ctx.cfgpeers.peers = appctx->ctx.cfgpeers.peers->next;
+				appctx->st2 = STAT_ST_INFO;
+			}
+			break;
+
+		case STAT_ST_INFO:
+			if (!appctx->ctx.cfgpeers.peer) {
+				/* End of peer list */
+				if (show_all)
+					appctx->st2 = STAT_ST_LIST;
+			    else
+					appctx->st2 = STAT_ST_END;
+			}
+			else {
+				if (!peers_dump_peer(&trash, si, appctx->ctx.cfgpeers.peer))
+					goto out;
+
+				appctx->ctx.cfgpeers.peer = appctx->ctx.cfgpeers.peer->next;
+			}
+		    break;
+
+		case STAT_ST_END:
+			appctx->st2 = STAT_ST_FIN;
+			break;
+		}
+	}
+	ret = 1;
+ out:
+	thread_release();
+	return ret;
+}
+
+/*
+ * CLI keywords.
+ */
+static struct cli_kw_list cli_kws = {{ }, {
+	{ { "show", "peers", NULL }, "show peers [peers section]: dump some information about all the peers or this peers section", cli_parse_show_peers, cli_io_handler_show_peers, },
+	{},
+}};
+
+/* Register cli keywords */
+INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
 

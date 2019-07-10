@@ -37,6 +37,7 @@
 #   USE_FUTEX            : enable use of futex on kernel 2.6. Automatic.
 #   USE_ACCEPT4          : enable use of accept4() on linux. Automatic.
 #   USE_MY_ACCEPT4       : use own implemention of accept4() if glibc < 2.10.
+#   USE_PRCTL            : enable use of prctl(). Automatic.
 #   USE_ZLIB             : enable zlib library support.
 #   USE_SLZ              : enable slz library instead of zlib (pick at most one).
 #   USE_CPU_AFFINITY     : enable pinning processes to CPU on Linux. Automatic.
@@ -48,6 +49,7 @@
 #   USE_51DEGREES        : enable third party device detection library from 51Degrees
 #   USE_WURFL            : enable WURFL detection library from Scientiamobile
 #   USE_SYSTEMD          : enable sd_notify() support.
+#   USE_OBSOLETE_LINKER  : use when the linker fails to emit __start_init/__stop_init
 #
 # Options can be forced by specifying "USE_xxx=1" or can be disabled by using
 # "USE_xxx=" (empty string).
@@ -333,6 +335,7 @@ ifeq ($(TARGET),linux26)
   USE_CRYPT_H     = implicit
   USE_LIBCRYPT    = implicit
   USE_FUTEX       = implicit
+  USE_PRCTL       = implicit
   USE_DL          = implicit
   USE_RT          = implicit
 else
@@ -349,6 +352,7 @@ ifeq ($(TARGET),linux2628)
   USE_ACCEPT4     = implicit
   USE_FUTEX       = implicit
   USE_CPU_AFFINITY= implicit
+  USE_PRCTL       = implicit
   ASSUME_SPLICE_WORKS= implicit
   USE_DL          = implicit
   USE_RT          = implicit
@@ -400,13 +404,16 @@ ifeq ($(TARGET),aix51)
   # This is for AIX 5.1
   USE_POLL        = implicit
   USE_LIBCRYPT    = implicit
-  TARGET_CFLAGS   = -Dss_family=__ss_family
+  USE_OBSOLETE_LINKER = implicit
+  USE_PRIVATE_CACHE = implicit
+  TARGET_CFLAGS   = -Dss_family=__ss_family -Dip6_hdr=ip6hdr -DSTEVENS_API -D_LINUX_SOURCE_COMPAT -Dunsetenv=my_unsetenv
   DEBUG_CFLAGS    =
 else
 ifeq ($(TARGET),aix52)
   # This is for AIX 5.2 and later
   USE_POLL        = implicit
   USE_LIBCRYPT    = implicit
+  USE_OBSOLETE_LINKER = implicit
   TARGET_CFLAGS   = -D_MSGQSUPPORT
   DEBUG_CFLAGS    =
 else
@@ -415,6 +422,7 @@ ifeq ($(TARGET),cygwin)
   # Cygwin adds IPv6 support only in version 1.7 (in beta right now). 
   USE_POLL   = implicit
   USE_TPROXY = implicit
+  USE_OBSOLETE_LINKER = implicit
   TARGET_CFLAGS  = $(if $(filter 1.5.%, $(shell uname -r)), -DUSE_IPV6 -DAF_INET6=23 -DINET6_ADDRSTRLEN=46, )
 endif # cygwin
 endif # aix52
@@ -534,6 +542,11 @@ OPTIONS_CFLAGS  += -DUSE_GETADDRINFO
 BUILD_OPTIONS   += $(call ignore_implicit,USE_GETADDRINFO)
 endif
 
+ifneq ($(USE_OBSOLETE_LINKER),)
+OPTIONS_CFLAGS  += -DUSE_OBSOLETE_LINKER
+BUILD_OPTIONS   += $(call ignore_implicit,USE_OBSOLETE_LINKER)
+endif
+
 ifneq ($(USE_SLZ),)
 # Use SLZ_INC and SLZ_LIB to force path to zlib.h and libz.{a,so} if needed.
 SLZ_INC =
@@ -609,6 +622,10 @@ endif
 ifneq ($(USE_NETFILTER),)
 OPTIONS_CFLAGS += -DNETFILTER
 BUILD_OPTIONS  += $(call ignore_implicit,USE_NETFILTER)
+endif
+
+ifneq ($(USE_PRCTL),)
+OPTIONS_CFLAGS += -DUSE_PRCTL
 endif
 
 ifneq ($(USE_REGPARM),)
@@ -986,7 +1003,8 @@ help:
 	$(Q)sed -ne "/^[^#]*$$/q;s/^#\(.*\)/\1/p" Makefile
 
 # Used only to force a rebuild if some build options change
-.build_opts: $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+.build_opts: $(build_opts)
 
 haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS) $(NUSTER_OBJS)
 	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
@@ -1118,7 +1136,7 @@ endif
 
 # Target to run the regression testing script files.
 reg-tests:
-	@./scripts/run-regtests.sh --LEVEL "$$LEVEL" $(REGTEST_ARGS) $(REG_TEST_FILES)
+	$(Q)./scripts/run-regtests.sh --LEVEL "$(LEVEL)" $(REGTEST_ARGS) $(REG_TEST_FILES)
 .PHONY: $(REGTEST_ARGS)
 
 reg-tests-help:

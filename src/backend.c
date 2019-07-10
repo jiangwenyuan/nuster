@@ -1326,7 +1326,8 @@ int connect_server(struct stream *s)
 	if (reuse && reuse_orphan) {
 		LIST_DEL(&srv_conn->list);
 		srv_conn->idle_time = 0;
-		srv->curr_idle_conns--;
+		HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
+		srv->curr_idle_thr[tid]--;
 		LIST_ADDQ(&srv->idle_conns[tid], &srv_conn->list);
 		if (LIST_ISEMPTY(&srv->idle_orphan_conns[tid]))
 			task_unlink_wq(srv->idle_task[tid]);
@@ -1353,6 +1354,7 @@ int connect_server(struct stream *s)
 				session_unown_conn(s->sess, old_conn);
 				old_conn->owner = sess;
 				if (!session_add_conn(sess, old_conn, old_conn->target)) {
+					old_conn->flags &= ~CO_FL_SESS_IDLE;
 					old_conn->owner = NULL;
 					old_conn->mux->destroy(old_conn);
 				} else
@@ -1528,15 +1530,15 @@ int connect_server(struct stream *s)
 	}
 
 
-#ifdef USE_OPENSSL
+#if USE_OPENSSL && (defined(OPENSSL_IS_BORINGSSL) || \
+    ((OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)))
+
 	if (!reuse && cli_conn && srv &&
 	    (srv->ssl_ctx.options & SRV_SSL_O_EARLY_DATA) &&
 		    (cli_conn->flags & CO_FL_EARLY_DATA) &&
 		    !channel_is_empty(si_oc(&s->si[1])) &&
-		    srv_conn->flags & CO_FL_SSL_WAIT_HS) {
+		    srv_conn->flags & CO_FL_SSL_WAIT_HS)
 		srv_conn->flags &= ~(CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN);
-		srv_conn->flags |= CO_FL_EARLY_SSL_HS;
-	}
 #endif
 
 	if (err != SF_ERR_NONE)

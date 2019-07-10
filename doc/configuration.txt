@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.9
                              willy tarreau
-                              2019/02/06
+                              2019/05/13
 
 
 This document covers the configuration language as implemented in the version
@@ -185,7 +185,7 @@ waiting for new requests, just as if it was a keep-alive HTTP connection.
 HAProxy supports 4 connection modes :
   - keep alive    : all requests and responses are processed (default)
   - tunnel        : only the first request and response are processed,
-                    everything else is forwarded with no analysis.
+                    everything else is forwarded with no analysis (deprecated).
   - server close  : the server-facing connection is closed after the response.
   - close         : the connection is actively closed after end of response.
 
@@ -580,6 +580,7 @@ The following keywords are supported in the "global" section :
    - uid
    - ulimit-n
    - user
+   - set-dumpable
    - setenv
    - stats
    - ssl-default-bind-ciphers
@@ -1024,15 +1025,36 @@ setenv <name> <value>
   the configuration file sees the new value. See also "presetenv", "resetenv",
   and "unsetenv".
 
+set-dumpable
+  This option is better left disabled by default and enabled only upon a
+  developer's request. It has no impact on performance nor stability but will
+  try hard to re-enable core dumps that were possibly disabled by file size
+  limitations (ulimit -f), core size limitations (ulimit -c), or "dumpability"
+  of a process after changing its UID/GID (such as /proc/sys/fs/suid_dumpable
+  on Linux). Core dumps might still be limited by the current directory's
+  permissions (check what directory the file is started from), the chroot
+  directory's permission (it may be needed to temporarily disable the chroot
+  directive or to move it to a dedicated writable location), or any other
+  system-specific constraint. For example, some Linux flavours are notorious
+  for replacing the default core file with a path to an executable not even
+  installed on the system (check /proc/sys/kernel/core_pattern). Often, simply
+  writing "core", "core.%p" or "/var/log/core/core.%p" addresses the issue.
+  When trying to enable this option waiting for a rare issue to re-appear, it's
+  often a good idea to first try to obtain such a dump by issuing, for example,
+  "kill -11" to the haproxy process and verify that it leaves a core where
+  expected when dying.
+
 ssl-default-bind-ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. It sets
   the default string describing the list of cipher algorithms ("cipher suite")
-  that are negotiated during the SSL/TLS handshake except for TLSv1.3 for all
+  that are negotiated during the SSL/TLS handshake up to TLSv1.2 for all
   "bind" lines which do not explicitly define theirs. The format of the string
-  is defined in "man 1 ciphers" from OpenSSL man pages, and can be for instance
-  a string such as "AES:ALL:!aNULL:!eNULL:+RC4:@STRENGTH" (without quotes). For
-  TLSv1.3 cipher configuration, please check the "ssl-default-bind-ciphersuites"
-  keyword. Please check the "bind" keyword for more information.
+  is defined in "man 1 ciphers" from OpenSSL man pages. For background
+  information and recommendations see e.g.
+  (https://wiki.mozilla.org/Security/Server_Side_TLS) and
+  (https://mozilla.github.io/server-side-tls/ssl-config-generator/). For TLSv1.3
+  cipher configuration, please check the "ssl-default-bind-ciphersuites" keyword.
+  Please check the "bind" keyword for more information.
 
 ssl-default-bind-ciphersuites <ciphersuites>
   This setting is only available when support for OpenSSL was built in and
@@ -1040,11 +1062,9 @@ ssl-default-bind-ciphersuites <ciphersuites>
   describing the list of cipher algorithms ("cipher suite") that are negotiated
   during the TLSv1.3 handshake for all "bind" lines which do not explicitly define
   theirs. The format of the string is defined in
-  "man 1 ciphers" from OpenSSL man pages under the section "ciphersuites", and can
-  be for instance a string such as
-  "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"
-  (without quotes). For cipher configuration for TLSv1.2 and earlier, please check
-  the "ssl-default-bind-ciphers" keyword. Please check the "bind" keyword for more
+  "man 1 ciphers" from OpenSSL man pages under the section "ciphersuites". For
+  cipher configuration for TLSv1.2 and earlier, please check the
+  "ssl-default-bind-ciphers" keyword. Please check the "bind" keyword for more
   information.
 
 ssl-default-bind-options [<option>]...
@@ -1059,11 +1079,15 @@ ssl-default-bind-options [<option>]...
 ssl-default-server-ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. It
   sets the default string describing the list of cipher algorithms that are
-  negotiated during the SSL/TLS handshake except for TLSv1.3 with the server,
+  negotiated during the SSL/TLS handshake up to TLSv1.2 with the server,
   for all "server" lines which do not explicitly define theirs. The format of
-  the string is defined in "man 1 ciphers". For TLSv1.3 cipher configuration,
-  please check the "ssl-default-server-ciphersuites" keyword. Please check the
-  "server" keyword for more information.
+  the string is defined in "man 1 ciphers" from OpenSSL man pages. For background
+  information and recommendations see e.g.
+  (https://wiki.mozilla.org/Security/Server_Side_TLS) and
+  (https://mozilla.github.io/server-side-tls/ssl-config-generator/).
+  For TLSv1.3 cipher configuration, please check the
+  "ssl-default-server-ciphersuites" keyword. Please check the "server" keyword
+  for more information.
 
 ssl-default-server-ciphersuites <ciphersuites>
   This setting is only available when support for OpenSSL was built in and
@@ -1071,9 +1095,10 @@ ssl-default-server-ciphersuites <ciphersuites>
   string describing the list of cipher algorithms that are negotiated during
   the TLSv1.3 handshake with the server, for all "server" lines which do not
   explicitly define theirs. The format of the string is defined in
-  "man 1 ciphers" under the "ciphersuites" section. For cipher configuration for
-  TLSv1.2 and earlier, please check the "ssl-default-server-ciphers" keyword.
-  Please check the "server" keyword for more information.
+  "man 1 ciphers" from OpenSSL man pages under the section "ciphersuites". For
+  cipher configuration for TLSv1.2 and earlier, please check the
+  "ssl-default-server-ciphers" keyword. Please check the "server" keyword for
+  more information.
 
 ssl-default-server-options [<option>]...
   This setting is only available when support for OpenSSL was built in. It sets
@@ -2062,8 +2087,10 @@ the backend's. HAProxy supports 4 connection modes :
   - TUN: tunnel ("option http-tunnel") : this was the default mode for versions
     1.0 to 1.5-dev21 : only the first request and response are processed, and
     everything else is forwarded with no analysis at all. This mode should not
-    be used as it creates lots of trouble with logging and HTTP processing. It
-    is supported only on frontends.
+    be used as it creates lots of trouble with logging and HTTP processing.
+    And because it cannot work in HTTP/2, this option is deprecated and it is
+    only supported on legacy HTTP frontends. In HTX, it is ignored and a
+    warning is emitted during HAProxy startup.
 
   - SCL: server close ("option http-server-close") : the server-facing
     connection is closed after the end of the response is received, but the
@@ -2172,7 +2199,7 @@ option clitcpka                      (*)  X          X         X         -
 option contstats                     (*)  X          X         X         -
 option dontlog-normal                (*)  X          X         X         -
 option dontlognull                   (*)  X          X         X         -
-option forceclose      (deprectated) (*)  X          X         X         X
+option forceclose       (deprecated) (*)  X          X         X         X
 -- keyword -------------------------- defaults - frontend - listen -- backend -
 option forwardfor                         X          X         X         X
 option http-buffer-request           (*)  X          X         X         X
@@ -2181,12 +2208,12 @@ option http-keep-alive               (*)  X          X         X         X
 option http-no-delay                 (*)  X          X         X         X
 option http-pretend-keepalive        (*)  X          -         X         X
 option http-server-close             (*)  X          X         X         X
-option http-tunnel                   (*)  X          X         X         -
+option http-tunnel      (deprecated) (*)  X          X         X         -
 option http-use-proxy-header         (*)  X          X         X         -
 option http-use-htx                  (*)  X          X         X         X
 option httpchk                            X          -         X         X
 option httpclose                     (*)  X          X         X         X
-option httplog                            X          X         X         X
+option httplog                            X          X         X         -
 option http_proxy                    (*)  X          X         X         X
 option independent-streams           (*)  X          X         X         X
 option ldap-check                         X          -         X         X
@@ -3740,7 +3767,7 @@ hash-balance-factor <factor>
   Arguments :
     <factor> is the control for the maximum number of concurrent requests to
              send to a server, expressed as a percentage of the average number
-	     of concurrent requests across all of the active servers.
+             of concurrent requests across all of the active servers.
 
   Specifying a "hash-balance-factor" for a server with "hash-type consistent"
   enables an algorithm that prevents any one server from getting too many
@@ -6016,7 +6043,7 @@ no option http-keep-alive
 
   See also : "option httpclose",, "option http-server-close",
              "option prefer-last-server", "option http-pretend-keepalive",
-	     and "1.1. The HTTP transaction model".
+             and "1.1. The HTTP transaction model".
 
 
 option http-no-delay
@@ -6141,12 +6168,16 @@ no option http-server-close
              "option http-keep-alive", and "1.1. The HTTP transaction model".
 
 
-option http-tunnel
-no option http-tunnel
-  Disable or enable HTTP connection processing after first transaction
+option http-tunnel    (deprecated)
+no option http-tunnel (deprecated)
+  Disable or enable HTTP connection processing after first transaction.
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    yes   |   yes  |   no
   Arguments : none
+
+  Warning : Because it cannot work in HTTP/2, this option is deprecated and it
+  is only supported on legacy HTTP frontends. In HTX, it is ignored and a
+  warning is emitted during HAProxy startup.
 
   By default HAProxy operates in keep-alive mode with regards to persistent
   connections: for each connection it processes each request and response, and
@@ -10831,11 +10862,8 @@ ca-sign-pass <passphrase>
 ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. It sets
   the string describing the list of cipher algorithms ("cipher suite") that are
-  negotiated during the SSL/TLS handshake except for TLSv1.3. The format of the
-  string is defined in "man 1 ciphers" from OpenSSL man pages, and can be for
-  instance a string such as "AES:ALL:!aNULL:!eNULL:+RC4:@STRENGTH" (without
-  quotes). Depending on the compatibility and security requirements, the list
-  of suitable ciphers depends on a variety of variables. For background
+  negotiated during the SSL/TLS handshake up to TLSv1.2. The format of the
+  string is defined in "man 1 ciphers" from OpenSSL man pages. For background
   information and recommendations see e.g.
   (https://wiki.mozilla.org/Security/Server_Side_TLS) and
   (https://mozilla.github.io/server-side-tls/ssl-config-generator/). For TLSv1.3
@@ -10846,11 +10874,8 @@ ciphersuites <ciphersuites>
   OpenSSL 1.1.1 or later was used to build HAProxy. It sets the string describing
   the list of cipher algorithms ("cipher suite") that are negotiated during the
   TLSv1.3 handshake. The format of the string is defined in "man 1 ciphers" from
-  OpenSSL man pages under the "ciphersuites" section, and can be for instance a
-  string such as
-  "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"
-  (without quotes). For cipher configuration for TLSv1.2 and earlier, please check
-  the "ciphers" keyword.
+  OpenSSL man pages under the "ciphersuites" section. For cipher configuration
+  for TLSv1.2 and earlier, please check the "ciphers" keyword.
 
 crl-file <crlfile>
   This setting is only available when support for OpenSSL was built in. It
@@ -11523,6 +11548,10 @@ agent-port <port>
 
   See also the "agent-check" and "agent-inter" parameters.
 
+allow-0rtt
+  Allow sending early data to the server when using TLS 1.3.
+  Note that early data will be sent only if the client used early data.
+
 alpn <protocols>
   This enables the TLS ALPN extension and advertises the specified protocol
   list as supported on top of ALPN. The protocol list consists in a comma-
@@ -11599,19 +11628,20 @@ ciphers <ciphers>
   This setting is only available when support for OpenSSL was built in. This
   option sets the string describing the list of cipher algorithms that is
   negotiated during the SSL/TLS handshake with the server. The format of the
-  string is defined in "man 1 ciphers". When SSL is used to communicate with
-  servers on the local network, it is common to see a weaker set of algorithms
-  than what is used over the internet. Doing so reduces CPU usage on both the
-  server and haproxy while still keeping it compatible with deployed software.
-  Some algorithms such as RC4-SHA1 are reasonably cheap. If no security at all
-  is needed and just connectivity, using DES can be appropriate.
+  string is defined in "man 1 ciphers" from OpenSSL man pages. For background
+  information and recommendations see e.g.
+  (https://wiki.mozilla.org/Security/Server_Side_TLS) and
+  (https://mozilla.github.io/server-side-tls/ssl-config-generator/). For TLSv1.3
+  cipher configuration, please check the "ciphersuites" keyword.
 
 ciphersuites <ciphersuites>
   This setting is only available when support for OpenSSL was built in and
   OpenSSL 1.1.1 or later was used to build HAProxy. This option sets the string
   describing the list of cipher algorithms that is negotiated during the TLS
   1.3 handshake with the server. The format of the string is defined in
-  "man 1 ciphers" under the "ciphersuites" section.
+  "man 1 ciphers" from OpenSSL man pages under the "ciphersuites" section.
+  For cipher configuration for TLSv1.2 and earlier, please check the "ciphers"
+  keyword.
 
 cookie <value>
   The "cookie" parameter sets the cookie value assigned to the server to
@@ -11999,8 +12029,8 @@ pool-max-conn <max>
 
 pool-purge-delay <delay>
   Sets the delay to start purging idle connections. Each <delay> interval, half
-  of the idle connections are closed. 0 means it's never purged. The default is
-  1s.
+  of the idle connections are closed. 0 means we don't keep any idle connection.
+  The default is 1s.
 
 port <port>
   Using the "port" parameter, it becomes possible to use a different port to
@@ -12471,11 +12501,11 @@ timeout <event> <time>
   Defines timeouts related to name resolution
      <event> : the event on which the <time> timeout period applies to.
                events available are:
-	       - resolve : default time to trigger name resolutions when no
-	                   other time applied.
+               - resolve : default time to trigger name resolutions when no
+                           other time applied.
                            Default value: 1s
                - retry   : time between two DNS queries, when no valid response
-	                   have been received.
+                           have been received.
                            Default value: 1s
      <time>  : time related to the event. It follows the HAProxy time format.
                <time> is expressed in milliseconds.

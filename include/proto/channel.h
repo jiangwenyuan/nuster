@@ -22,7 +22,7 @@
 #ifndef _PROTO_CHANNEL_H
 #define _PROTO_CHANNEL_H
 
-#include <stdint.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -545,6 +545,7 @@ static inline void channel_check_timeouts(struct channel *chn)
 static inline void channel_erase(struct channel *chn)
 {
 	chn->to_forward = 0;
+	chn->output = 0;
 	b_reset(&chn->buf);
 }
 
@@ -910,7 +911,7 @@ static inline void channel_slow_realign(struct channel *chn, char *swap)
  * when data have been read directly from the buffer. It is illegal to call
  * this function with <len> causing a wrapping at the end of the buffer. It's
  * the caller's responsibility to ensure that <len> is never larger than
- * chn->o. Channel flag WRITE_PARTIAL is set.
+ * chn->o. Channel flags WRITE_PARTIAL and WROTE_DATA are set.
  */
 static inline void co_skip(struct channel *chn, int len)
 {
@@ -919,7 +920,25 @@ static inline void co_skip(struct channel *chn, int len)
 	c_realign_if_empty(chn);
 
 	/* notify that some data was written to the SI from the buffer */
-	chn->flags |= CF_WRITE_PARTIAL;
+	chn->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
+}
+
+/* HTX version of co_skip(). This function skips at most <len> bytes from the
+ * output of the channel <chn>. Depending on how data are stored in <htx> less
+ * than <len> bytes can be skipped. Channel flags WRITE_PARTIAL and WROTE_DATA
+ * are set.
+ */
+static inline void co_htx_skip(struct channel *chn, struct htx *htx, int len)
+{
+	struct htx_ret htxret;
+
+	htxret = htx_drain(htx, len);
+	if (htxret.ret) {
+		chn->output -= htxret.ret;
+
+		/* notify that some data was written to the SI from the buffer */
+		chn->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
+	}
 }
 
 /* Tries to copy chunk <chunk> into the channel's buffer after length controls.

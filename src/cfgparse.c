@@ -369,16 +369,20 @@ int parse_process_number(const char *arg, unsigned long *proc, int *autoinc, cha
 	else if (strcmp(arg, "even") == 0)
 		*proc |= (~0UL/3UL) << 1; /* 0xAAA...AAA */
 	else {
-		char *dash;
+		const char *p, *dash = NULL;
 		unsigned int low, high;
 
-		if (!isdigit((int)*arg)) {
-			memprintf(err, "'%s' is not a valid number.\n", arg);
-			return -1;
+		for (p = arg; *p; p++) {
+			if (*p == '-' && !dash)
+				dash = p;
+			else if (!isdigit((int)*p)) {
+				memprintf(err, "'%s' is not a valid number/range.", arg);
+				return -1;
+			}
 		}
 
 		low = high = str2uic(arg);
-		if ((dash = strchr(arg, '-')) != NULL)
+		if (dash)
 			high = ((!*(dash+1)) ? LONGBITS : str2uic(dash + 1));
 
 		if (high < low) {
@@ -3317,8 +3321,8 @@ out_uri_auth_compat:
 			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
 			const struct mux_proto_list *mux_ent;
 
-			/* Special case for HTX because it is still experimental */
-			if (curproxy->options2 & PR_O2_USE_HTX)
+			/* Special case for HTX because legacy HTTP still exists */
+			if (mode == PROTO_MODE_HTTP && (curproxy->options2 & PR_O2_USE_HTX))
 				mode = PROTO_MODE_HTX;
 
 			if (!bind_conf->mux_proto)
@@ -3346,8 +3350,8 @@ out_uri_auth_compat:
 			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
 			const struct mux_proto_list *mux_ent;
 
-			/* Special case for HTX because it is still experimental */
-			if (curproxy->options2 & PR_O2_USE_HTX)
+			/* Special case for HTX because legacy HTTP still exists */
+			if (mode == PROTO_MODE_HTTP && (curproxy->options2 & PR_O2_USE_HTX))
 				mode = PROTO_MODE_HTX;
 
 			if (!newsrv->mux_proto)
@@ -3370,6 +3374,65 @@ out_uri_auth_compat:
 
 			/* update the mux */
 			newsrv->mux_proto = mux_ent;
+		}
+
+		/* the option "http-tunnel" is ignored when HTX is enabled and
+		 * only works with the legacy HTTP. So emit a warning if the
+		 * option is set on a HTX frontend. */
+		if ((curproxy->cap & PR_CAP_FE) && curproxy->options2 & PR_O2_USE_HTX &&
+		    (curproxy->options & PR_O_HTTP_MODE) == PR_O_HTTP_TUN) {
+			ha_warning("config : %s '%s' : the option 'http-tunnel' is ignored for HTX proxies.\n",
+				   proxy_type_str(curproxy), curproxy->id);
+			curproxy->options &= ~PR_O_HTTP_MODE;
+		}
+
+		/* initialize idle conns lists */
+		for (newsrv = curproxy->srv; newsrv; newsrv = newsrv->next) {
+			int i;
+
+			newsrv->priv_conns = calloc(global.nbthread, sizeof(*newsrv->priv_conns));
+			newsrv->idle_conns = calloc(global.nbthread, sizeof(*newsrv->idle_conns));
+			newsrv->safe_conns = calloc(global.nbthread, sizeof(*newsrv->safe_conns));
+
+			if (!newsrv->priv_conns || !newsrv->idle_conns || !newsrv->safe_conns) {
+				free(newsrv->safe_conns); newsrv->safe_conns = NULL;
+				free(newsrv->idle_conns); newsrv->idle_conns = NULL;
+				free(newsrv->priv_conns); newsrv->priv_conns = NULL;
+				ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
+					 newsrv->conf.file, newsrv->conf.line, newsrv->id);
+				cfgerr++;
+				continue;
+			}
+
+			for (i = 0; i < global.nbthread; i++) {
+				LIST_INIT(&newsrv->priv_conns[i]);
+				LIST_INIT(&newsrv->idle_conns[i]);
+				LIST_INIT(&newsrv->safe_conns[i]);
+			}
+
+			if (newsrv->max_idle_conns != 0) {
+				newsrv->idle_orphan_conns = calloc((unsigned int)global.nbthread, sizeof(*newsrv->idle_orphan_conns));
+				newsrv->idle_task         = calloc(global.nbthread, sizeof(*newsrv->idle_task));
+				if (!newsrv->idle_orphan_conns || !newsrv->idle_task)
+					goto err;
+				for (i = 0; i < global.nbthread; i++) {
+					LIST_INIT(&newsrv->idle_orphan_conns[i]);
+					newsrv->idle_task[i] = task_new(1 << i);
+					if (!newsrv->idle_task[i])
+						goto err;
+					newsrv->idle_task[i]->process = srv_cleanup_idle_connections;
+					newsrv->idle_task[i]->context = newsrv;
+				}
+				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(int));
+				if (!newsrv->curr_idle_thr)
+					goto err;
+				continue;
+			err:
+				ha_alert("parsing [%s:%d] : failed to allocate idle connection tasks for server '%s'.\n",
+					 newsrv->conf.file, newsrv->conf.line, newsrv->id);
+				cfgerr++;
+				continue;
+			}
 		}
 	}
 
@@ -3508,9 +3571,8 @@ out_uri_auth_compat:
 			 * is bound to. Rememeber that maxaccept = -1 must be kept as it is
 			 * used to disable the limit.
 			 */
-			if (listener->maxaccept > 0) {
-				if (nbproc > 1)
-					listener->maxaccept = (listener->maxaccept + 1) / 2;
+			if (listener->maxaccept > 0 && nbproc > 1) {
+				listener->maxaccept = (listener->maxaccept + 1) / 2;
 				listener->maxaccept = (listener->maxaccept + nbproc - 1) / nbproc;
 			}
 

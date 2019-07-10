@@ -315,11 +315,6 @@ static int ha_wurfl_init(void)
 		return ERR_WARN;
 	}
 
-	if (global.nbthread > 1) {
-		ha_alert("WURFL: multithreading is not supported for now.\n");
-		return (ERR_FATAL | ERR_ALERT);
-	}
-
 	if (wurfl_set_root(global_wurfl.handle, global_wurfl.data_file) != WURFL_OK) {
 		ha_warning("WURFL: Engine setting root file failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
 		send_log(NULL, LOG_WARNING, "WURFL: Engine setting root file failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
@@ -783,7 +778,7 @@ static const char *ha_wurfl_retrieve_header(const char *header_name, const void 
 	msg = &smp->strm->txn->req;
 	ctx.idx = 0;
 
-	if (http_find_full_header2(header_name, strlen(header_name), msg->chn->buf->p, idx, &ctx) == 0)
+	if (http_find_full_header2(header_name, strlen(header_name), ci_head(msg->chn), idx, &ctx) == 0)
 		return 0;
 
 	if (header_len > ctx.vlen)

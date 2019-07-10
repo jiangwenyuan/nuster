@@ -48,7 +48,7 @@
 
 const char *cache_store_flt_id = "cache store filter";
 
-struct applet http_cache_applet;
+extern struct applet http_cache_applet;
 
 struct flt_ops cache_ops;
 
@@ -913,6 +913,10 @@ static size_t htx_cache_dump_headers(struct appctx *appctx, struct htx *htx)
 		if (!blk)
 			return 0;
 
+		/* Set the start-line offset */
+		if (type == HTX_BLK_RES_SL)
+			htx->sl_off = blk->addr;
+
 		/* Copy info and data */
 		blk->info = info;
 		memcpy(htx_get_blk_ptr(htx, blk), b_peek(tmp, offset+4), sz);
@@ -1019,7 +1023,11 @@ static void htx_cache_io_handler(struct appctx *appctx)
 			goto error;
 
 		total += ret;
-		if (cache_ptr->data_len)
+		if (si_strm(si)->txn->meth == HTTP_METH_HEAD) {
+			/* Skip response body for HEAD requests */
+			appctx->st0 = HTX_CACHE_EOM;
+		}
+		else if (cache_ptr->data_len)
 			appctx->st0 = HTX_CACHE_DATA;
 		else if (first->len > sizeof(*cache_ptr) + appctx->ctx.cache.sent) {
 			/* Headers have benn sent (hrds_len) and there is no data
@@ -1089,39 +1097,22 @@ static void htx_cache_io_handler(struct appctx *appctx)
 	}
 
   end:
-	if (appctx->st0 == HTX_CACHE_END) {
-		/* eat the whole request */
-		req_htx = htxbuf(&req->buf);
-		htx_reset(req_htx);
-		htx_to_buf(req_htx, &req->buf);
-		co_set_data(req, 0);
+	if (!(res->flags & CF_SHUTR) && appctx->st0 == HTX_CACHE_END) {
 		res->flags |= CF_READ_NULL;
 		si_shutr(si);
 	}
 
-	if ((res->flags & CF_SHUTR) && (si->state == SI_ST_EST))
-		si_shutw(si);
-
-	if (appctx->st0 == HTX_CACHE_END) {
-		if ((req->flags & CF_SHUTW) && (si->state == SI_ST_EST)) {
-			si_shutr(si);
-			res->flags |= CF_READ_NULL;
-		}
-	}
   out:
 	if (total)
 		channel_add_input(res, total);
-
-	/* we have left the request in the buffer for the case where we
-	 * process a POST, and this automatically re-enables activity on
-	 * read. It's better to indicate that we want to stop reading when
-	 * we're sending, so that we know there's at most one direction
-	 * deciding to wake the applet up. It saves it from looping when
-	 * emitting large blocks into small TCP windows.
-	 */
 	htx_to_buf(res_htx, &res->buf);
-	if (!channel_is_empty(res))
-		si_stop_get(si);
+
+	/* eat the whole request */
+	if (co_data(req)) {
+		req_htx = htx_from_buf(&req->buf);
+		co_htx_skip(req, req_htx, co_data(req));
+		htx_to_buf(req_htx, &req->buf);
+	}
 	return;
 
   error:
@@ -1258,17 +1249,17 @@ static void http_cache_io_handler(struct appctx *appctx)
 		}
 	}
 
-	if (appctx->st0 == HTTP_CACHE_FWD) {
-		/* eat the whole request */
-		co_skip(si_oc(si), co_data(si_oc(si)));   // NOTE: when disabled does not repport the  correct status code
+	if (appctx->st0 == HTTP_CACHE_FWD)
+		appctx->st0 = HTTP_CACHE_END;
+
+	if (!(res->flags & CF_SHUTR) && appctx->st0 == HTTP_CACHE_END) {
 		res->flags |= CF_READ_NULL;
 		si_shutr(si);
 	}
-
-	if ((res->flags & CF_SHUTR) && (si->state == SI_ST_EST))
-		si_shutw(si);
 out:
-	;
+	/* eat the whole request */
+	if (co_data(si_oc(si)))
+	    co_skip(si_oc(si), co_data(si_oc(si)));
 }
 
 static int parse_cache_rule(struct proxy *proxy, const char *name, struct act_rule *rule, char **err)
@@ -1397,9 +1388,16 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
                                          struct session *sess, struct stream *s, int flags)
 {
 
+	struct http_txn *txn = s->txn;
 	struct cache_entry *res;
 	struct cache_flt_conf *cconf = rule->arg.act.p[0];
 	struct cache *cache = cconf->c.cache;
+
+	/* Ignore cache for HTTP/1.0 requests and for requests other than GET
+	 * and HEAD */
+	if (!(txn->req.flags & HTTP_MSGF_VER_11) ||
+	    (txn->meth != HTTP_METH_GET && txn->meth != HTTP_METH_HEAD))
+		txn->flags |= TX_CACHE_IGNORE;
 
 	if (IS_HTX_STRM(s))
 		htx_check_request_for_cacheability(s, &s->req);

@@ -171,6 +171,7 @@ struct htx_blk *htx_defrag(struct htx *htx, struct htx_blk *blk);
 struct htx_blk *htx_add_blk(struct htx *htx, enum htx_blk_type type, uint32_t blksz);
 struct htx_blk *htx_remove_blk(struct htx *htx, struct htx_blk *blk);
 void htx_truncate(struct htx *htx, uint32_t offset);
+struct htx_ret htx_drain(struct htx *htx, uint32_t max);
 
 struct htx_blk *htx_replace_blk_value(struct htx *htx, struct htx_blk *blk,
 				      const struct ist old, const struct ist new);
@@ -278,7 +279,7 @@ static inline struct htx_sl *htx_get_stline(struct htx *htx)
 {
 	struct htx_sl *sl = NULL;
 
-	if (htx->sl_off != -1)
+	if (htx->used && htx->sl_off != -1)
 		sl = ((void *)htx->blocks + htx->sl_off);
 
 	return sl;
@@ -726,7 +727,7 @@ static inline struct htx *htx_from_buf(struct buffer *buf)
 /* Upate <buf> accordingly to the HTX message <htx> */
 static inline void htx_to_buf(struct htx *htx, struct buffer *buf)
 {
-	if (!htx->used) {
+	if (!htx->used && !(htx->flags & HTX_FL_PARSING_ERROR)) {
 		htx_reset(htx);
 		b_set_data(buf, 0);
 	}

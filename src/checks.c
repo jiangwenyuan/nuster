@@ -22,6 +22,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -752,7 +753,8 @@ static void __event_srv_chk_w(struct conn_stream *cs)
 		goto out_wakeup;
 
 	if (conn->flags & CO_FL_HANDSHAKE) {
-		cs->conn->mux->subscribe(cs, SUB_RETRY_SEND, &check->wait_list);
+		if (!(conn->flags & CO_FL_ERROR))
+			cs->conn->mux->subscribe(cs, SUB_RETRY_SEND, &check->wait_list);
 		goto out;
 	}
 
@@ -837,7 +839,8 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 		goto out_wakeup;
 
 	if (conn->flags & CO_FL_HANDSHAKE) {
-		cs->conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
+		if (!(conn->flags & CO_FL_ERROR))
+			cs->conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
 		goto out;
 	}
 
@@ -1485,11 +1488,15 @@ static struct task *server_warmup(struct task *t, void *context, unsigned short 
 	    (s->next_state != SRV_ST_STARTING))
 		return t;
 
+	HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
+
 	/* recalculate the weights and update the state */
 	server_recalc_eweight(s, 1);
 
 	/* probably that we can refill this server with a bit more connections */
 	pendconn_grab_from_px(s);
+
+	HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 
 	/* get back there in 1 second or 1/20th of the slowstart interval,
 	 * whichever is greater, resulting in small 5% steps.
@@ -1965,6 +1972,7 @@ static int connect_proc_chk(struct task *t)
 	if (pid == 0) {
 		/* Child */
 		extern char **environ;
+		struct rlimit limit;
 		int fd;
 
 		/* close all FDs. Keep stdin/stdout/stderr in verbose mode */
@@ -1972,6 +1980,16 @@ static int connect_proc_chk(struct task *t)
 
 		while (fd < global.rlimit_nofile)
 			close(fd++);
+
+		/* restore the initial FD limits */
+		limit.rlim_cur = rlim_fd_cur_at_boot;
+		limit.rlim_max = rlim_fd_max_at_boot;
+		if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
+			getrlimit(RLIMIT_NOFILE, &limit);
+			ha_warning("External check: failed to restore initial FD limits (cur=%u max=%u), using cur=%u max=%u\n",
+				   rlim_fd_cur_at_boot, rlim_fd_max_at_boot,
+				   (unsigned int)limit.rlim_cur, (unsigned int)limit.rlim_max);
+		}
 
 		environ = check->envp;
 		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_CURCONN, ultoa_r(s->cur_sess, buf, sizeof(buf)));
@@ -2826,7 +2844,7 @@ static int tcpcheck_main(struct check *check)
 			cs_attach(cs, check, &check_conn_cb);
 
 			ret = SF_ERR_INTERNAL;
-			if (proto->connect)
+			if (proto && proto->connect)
 				ret = proto->connect(conn,
 						     1 /* I/O polling is always needed */,
 						     (next && next->action == TCPCHK_ACT_EXPECT) ? 0 : 2);

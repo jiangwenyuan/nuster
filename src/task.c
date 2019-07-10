@@ -67,65 +67,21 @@ struct task_per_thread task_per_thread[MAX_THREADS];
  */
 void __task_wakeup(struct task *t, struct eb_root *root)
 {
-	void *expected = NULL;
-	int *rq_size;
-	unsigned long __maybe_unused old_active_mask;
-
 #ifdef USE_THREAD
 	if (root == &rqueue) {
-		rq_size = &global_rqueue_size;
 		HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
-	} else
-#endif
-	{
-		int nb = ((void *)root - (void *)&task_per_thread[0].rqueue) / sizeof(task_per_thread[0]);
-		rq_size = &task_per_thread[nb].rqueue_size;
 	}
+#endif
 	/* Make sure if the task isn't in the runqueue, nobody inserts it
 	 * in the meanwhile.
 	 */
-redo:
-	if (unlikely(!HA_ATOMIC_CAS(&t->rq.node.leaf_p, &expected, (void *)0x1))) {
-#ifdef USE_THREAD
-		if (root == &rqueue)
-			HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
-#endif
-		return;
-	}
-	/* There's a small race condition, when running a task, the thread
-	 * first sets TASK_RUNNING, and then unlink the task.
-	 * If an another thread calls task_wakeup() for the same task,
-	 * it may set t->state before TASK_RUNNING was set, and then try
-	 * to set t->rq.nod.leaf_p after it was unlinked.
-	 * To make sure it is not a problem, we check if TASK_RUNNING is set
-	 * again. If it is, we unset t->rq.node.leaf_p.
-	 * We then check for TASK_RUNNING a third time. If it is still there,
-	 * then we can give up, the task will be re-queued later if it needs
-	 * to be. If it's not there, and there is still something in t->state,
-	 * then we have to requeue.
-	 */
-	if (((volatile unsigned short)(t->state)) & TASK_RUNNING) {
-		unsigned short state;
-		t->rq.node.leaf_p = NULL;
-		__ha_barrier_full();
-
-		state = (volatile unsigned short)(t->state);
-		if (unlikely(state != 0 && !(state & TASK_RUNNING)))
-			goto redo;
-#ifdef USE_THREAD
-		if (root == &rqueue)
-			HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
-#endif
-		return;
-	}
 	HA_ATOMIC_ADD(&tasks_run_queue, 1);
 #ifdef USE_THREAD
 	if (root == &rqueue) {
-		HA_ATOMIC_OR(&global_tasks_mask, t->thread_mask);
+		global_tasks_mask |= t->thread_mask;
 		__ha_barrier_store();
 	}
 #endif
-	old_active_mask = active_tasks_mask;
 	HA_ATOMIC_OR(&active_tasks_mask, t->thread_mask);
 	t->rq.key = HA_ATOMIC_ADD(&rqueue_ticks, 1);
 
@@ -133,10 +89,7 @@ redo:
 		int offset;
 
 		HA_ATOMIC_ADD(&niced_tasks, 1);
-		if (likely(t->nice > 0))
-			offset = (unsigned)((*rq_size * (unsigned int)t->nice) / 32U);
-		else
-			offset = -(unsigned)((*rq_size * (unsigned int)-t->nice) / 32U);
+		offset = t->nice * (int)global.tune.runqueue_depth;
 		t->rq.key += offset;
 	}
 
@@ -160,9 +113,13 @@ redo:
 	 * wake one.
 	 */
 	if ((((t->thread_mask & all_threads_mask) & sleeping_thread_mask) ==
-	    (t->thread_mask & all_threads_mask)) &&
-	    !(t->thread_mask & old_active_mask))
-		wake_thread(my_ffsl((t->thread_mask & all_threads_mask) &~ tid_bit) - 1);
+	     (t->thread_mask & all_threads_mask))) {
+		unsigned long m = (t->thread_mask & all_threads_mask) &~ tid_bit;
+
+		m = (m & (m - 1)) ^ m; // keep lowest bit set
+		HA_ATOMIC_AND(&sleeping_thread_mask, ~m);
+		wake_thread(my_ffsl(m) - 1);
+	}
 #endif
 	return;
 }
@@ -309,102 +266,100 @@ int wake_expired_tasks()
  * other variables (eg: nice value) to set the final position in the tree. The
  * counter may wrap without a problem, of course. We then limit the number of
  * tasks processed to 200 in any case, so that general latency remains low and
- * so that task positions have a chance to be considered.
+ * so that task positions have a chance to be considered. The function scans
+ * both the global and local run queues and picks the most urgent task between
+ * the two. We need to grab the global runqueue lock to touch it so it's taken
+ * on the very first access to the global run queue and is released as soon as
+ * it reaches the end.
  *
  * The function adjusts <next> if a new event is closer.
  */
 void process_runnable_tasks()
 {
+	struct eb32sc_node *lrq = NULL; // next local run queue entry
+	struct eb32sc_node *grq = NULL; // next global run queue entry
 	struct task *t;
 	int max_processed;
+
+	if (!(active_tasks_mask & tid_bit)) {
+		activity[tid].empty_rq++;
+		return;
+	}
 
 	tasks_run_queue_cur = tasks_run_queue; /* keep a copy for reporting */
 	nb_tasks_cur = nb_tasks;
 	max_processed = global.tune.runqueue_depth;
 
-	if (likely(global_tasks_mask & tid_bit)) {
-		HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
-		if (!(active_tasks_mask & tid_bit)) {
-			HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
-			activity[tid].empty_rq++;
-			return;
-		}
+	if (likely(niced_tasks))
+		max_processed = (max_processed + 3) / 4;
 
+	/* Note: the grq lock is always held when grq is not null */
+
+	while (task_per_thread[tid].task_list_size < max_processed) {
+		if ((global_tasks_mask & tid_bit) && !grq) {
 #ifdef USE_THREAD
-		/* Get some elements from the global run queue and put it in the
-		 * local run queue. To try to keep a bit of fairness, just get as
-		 * much elements from the global list as to have a bigger local queue
-		 * than the average.
-		 */
-		rq_next = eb32sc_lookup_ge(&rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
-		while ((task_per_thread[tid].task_list_size + task_per_thread[tid].rqueue_size) * global.nbthread <= tasks_run_queue) {
-			if (unlikely(!rq_next)) {
-				/* either we just started or we reached the end
-				 * of the tree, typically because <rqueue_ticks>
-				 * is in the first half and we're first scanning
-				 * the last half. Let's loop back to the beginning
-				 * of the tree now.
-				 */
-				rq_next = eb32sc_first(&rqueue, tid_bit);
-				if (!rq_next) {
-					HA_ATOMIC_AND(&global_tasks_mask, ~tid_bit);
-					break;
+			HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
+			grq = eb32sc_lookup_ge(&rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
+			if (unlikely(!grq)) {
+				grq = eb32sc_first(&rqueue, tid_bit);
+				if (!grq) {
+					global_tasks_mask &= ~tid_bit;
+					HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
 				}
 			}
+#endif
+		}
 
-			t = eb32sc_entry(rq_next, struct task, rq);
-			rq_next = eb32sc_next(rq_next, tid_bit);
+		/* If a global task is available for this thread, it's in grq
+		 * now and the global RQ is locked.
+		 */
 
-			/* detach the task from the queue */
+		if (!lrq) {
+			lrq = eb32sc_lookup_ge(&task_per_thread[tid].rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
+			if (unlikely(!lrq))
+				lrq = eb32sc_first(&task_per_thread[tid].rqueue, tid_bit);
+		}
+
+		if (!lrq && !grq)
+			break;
+
+		if (likely(!grq || (lrq && (int)(lrq->key - grq->key) <= 0))) {
+			t = eb32sc_entry(lrq, struct task, rq);
+			lrq = eb32sc_next(lrq, tid_bit);
 			__task_unlink_rq(t);
-			__task_wakeup(t, &task_per_thread[tid].rqueue);
+		}
+#ifdef USE_THREAD
+		else {
+			t = eb32sc_entry(grq, struct task, rq);
+			grq = eb32sc_next(grq, tid_bit);
+			__task_unlink_rq(t);
+			if (unlikely(!grq)) {
+				grq = eb32sc_first(&rqueue, tid_bit);
+				if (!grq) {
+					global_tasks_mask &= ~tid_bit;
+					HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
+				}
+			}
 		}
 #endif
 
-		HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
-	} else {
-		if (!(active_tasks_mask & tid_bit)) {
-			activity[tid].empty_rq++;
-			return;
-		}
-	}
-	/* Get some tasks from the run queue, make sure we don't
-	 * get too much in the task list, but put a bit more than
-	 * the max that will be run, to give a bit more fairness
-	 */
-	rq_next = eb32sc_lookup_ge(&task_per_thread[tid].rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
-	while (max_processed + (max_processed / 10) > task_per_thread[tid].task_list_size) {
-		/* Note: this loop is one of the fastest code path in
-		 * the whole program. It should not be re-arranged
-		 * without a good reason.
-		 */
-		if (unlikely(!rq_next)) {
-			/* either we just started or we reached the end
-			 * of the tree, typically because <rqueue_ticks>
-			 * is in the first half and we're first scanning
-			 * the last half. Let's loop back to the beginning
-			 * of the tree now.
-			 */
-			rq_next = eb32sc_first(&task_per_thread[tid].rqueue, tid_bit);
-			if (!rq_next)
-				break;
-		}
-		t = eb32sc_entry(rq_next, struct task, rq);
-		rq_next = eb32sc_next(rq_next, tid_bit);
-		/* Make sure nobody re-adds the task in the runqueue */
-		HA_ATOMIC_OR(&t->state, TASK_RUNNING);
-
-		/* detach the task from the queue */
-		__task_unlink_rq(t);
 		/* And add it to the local task list */
 		task_insert_into_tasklet_list(t);
 	}
+
+	/* release the rqueue lock */
+	if (grq) {
+		HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
+		grq = NULL;
+	}
+
 	if (!(global_tasks_mask & tid_bit) && task_per_thread[tid].rqueue_size == 0) {
 		HA_ATOMIC_AND(&active_tasks_mask, ~tid_bit);
 		__ha_barrier_load();
 		if (global_tasks_mask & tid_bit)
 			HA_ATOMIC_OR(&active_tasks_mask, tid_bit);
 	}
+
 	while (max_processed > 0 && !LIST_ISEMPTY(&task_per_thread[tid].task_list)) {
 		struct task *t;
 		unsigned short state;
@@ -414,7 +369,7 @@ void process_runnable_tasks()
 		t = (struct task *)LIST_ELEM(task_per_thread[tid].task_list.n, struct tasklet *, list);
 		state = HA_ATOMIC_XCHG(&t->state, TASK_RUNNING);
 		__ha_barrier_store();
-		task_remove_from_task_list(t);
+		__task_remove_from_tasklet_list(t);
 
 		ctx = t->context;
 		process = t->process;
@@ -450,22 +405,17 @@ void process_runnable_tasks()
 
 			state = HA_ATOMIC_AND(&t->state, ~TASK_RUNNING);
 			if (state)
-#ifdef USE_THREAD
-				__task_wakeup(t, ((t->thread_mask & all_threads_mask) == tid_bit) ?
-				    &task_per_thread[tid].rqueue : &rqueue);
-#else
-				__task_wakeup(t, &task_per_thread[tid].rqueue);
-#endif
+				task_wakeup(t, 0);
 			else
 				task_queue(t);
 		}
 
 		max_processed--;
-		if (max_processed <= 0) {
-			HA_ATOMIC_OR(&active_tasks_mask, tid_bit);
-			activity[tid].long_rq++;
-			break;
-		}
+	}
+
+	if (!LIST_ISEMPTY(&task_per_thread[tid].task_list)) {
+		HA_ATOMIC_OR(&active_tasks_mask, tid_bit);
+		activity[tid].long_rq++;
 	}
 }
 

@@ -143,10 +143,10 @@ int sample_load_map(struct arg *arg, struct sample_conv *conv,
 	                            1, err, file, line))
 		return 0;
 
-	/* the maps of type IP have a string as defaultvalue. This
-	 * string canbe anipv4 or an ipv6, we must convert it.
+	/* the maps of type IP support a string as default value. This
+	 * string can be an ipv4 or an ipv6, we must convert it.
 	 */
-	if (desc->conv->out_type == SMP_T_ADDR) {
+	if (arg[1].type != ARGT_STOP && desc->conv->out_type == SMP_T_ADDR) {
 		struct sample_data data;
 		if (!map_parse_ip(arg[1].data.str.area, &data)) {
 			memprintf(err, "map: cannot parse default ip <%s>.",
@@ -207,6 +207,8 @@ static int sample_conv_map(const struct arg *arg_p, struct sample *smp, void *pr
 				                  tmptrash->area,
 				                  pat->data->u.str.area,
 				                  (regmatch_t *)smp->ctx.a[0]);
+				free_trash_chunk(tmptrash);
+
 				if (len == -1)
 					return 0;
 

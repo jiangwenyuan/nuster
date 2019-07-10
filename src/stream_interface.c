@@ -531,7 +531,7 @@ static void stream_int_notify(struct stream_interface *si)
 	    (si->state != SI_ST_EST && si->state != SI_ST_CON) ||
 	    (si->flags & SI_FL_ERR) ||
 	    ((ic->flags & CF_READ_PARTIAL) &&
-	     (!ic->to_forward || sio->state != SI_ST_EST)) ||
+	     ((ic->flags & CF_EOI) || !ic->to_forward || sio->state != SI_ST_EST)) ||
 
 	    /* changes on the consumption side */
 	    (oc->flags & (CF_WRITE_NULL|CF_WRITE_ERROR)) ||
@@ -594,6 +594,11 @@ static int si_cs_process(struct conn_stream *cs)
 		si->exp = TICK_ETERNITY;
 		oc->flags |= CF_WRITE_NULL;
 	}
+
+	/* Report EOI on the channel if it was reached from the mux point of
+	 * view. */
+	if ((cs->flags & CS_FL_EOI) && !(ic->flags & CF_EOI))
+		ic->flags |= CF_EOI;
 
 	/* Second step : update the stream-int and channels, try to forward any
 	 * pending data, then possibly wake the stream up based on the new
@@ -828,9 +833,6 @@ void si_update_both(struct stream_interface *si_f, struct stream_interface *si_b
 	req->flags &= ~(CF_READ_NULL|CF_READ_PARTIAL|CF_READ_ATTACHED|CF_WRITE_NULL|CF_WRITE_PARTIAL);
 	res->flags &= ~(CF_READ_NULL|CF_READ_PARTIAL|CF_READ_ATTACHED|CF_WRITE_NULL|CF_WRITE_PARTIAL);
 
-	si_f->flags &= ~(SI_FL_ERR|SI_FL_EXP);
-	si_b->flags &= ~(SI_FL_ERR|SI_FL_EXP);
-
 	si_f->prev_state = si_f->state;
 	si_b->prev_state = si_b->state;
 
@@ -1018,7 +1020,8 @@ static void stream_int_shutw_conn(struct stream_interface *si)
 static void stream_int_chk_rcv_conn(struct stream_interface *si)
 {
 	/* (re)start reading */
-	tasklet_wakeup(si->wait_event.task);
+	if (si->state == SI_ST_CON || si->state == SI_ST_EST)
+		tasklet_wakeup(si->wait_event.task);
 }
 
 
@@ -1032,7 +1035,8 @@ static void stream_int_chk_snd_conn(struct stream_interface *si)
 	struct channel *oc = si_oc(si);
 	struct conn_stream *cs = __objt_cs(si->end);
 
-	if (unlikely(si->state > SI_ST_EST || (oc->flags & CF_SHUTW)))
+	if (unlikely((si->state != SI_ST_CON && si->state != SI_ST_EST) ||
+	    (oc->flags & CF_SHUTW)))
 		return;
 
 	if (unlikely(channel_is_empty(oc)))  /* called with nothing to send ! */
@@ -1470,9 +1474,8 @@ void si_applet_wake_cb(struct stream_interface *si)
 	 * appctx but in the case the task is not in runqueue we may have to
 	 * wakeup the appctx immediately.
 	 */
-	if (!task_in_rq(si_task(si)) &&
-	    ((si_rx_endp_ready(si) && !si_rx_blocked(si)) ||
-	     (si_tx_endp_ready(si) && !si_tx_blocked(si))))
+	if ((si_rx_endp_ready(si) && !si_rx_blocked(si)) ||
+	    (si_tx_endp_ready(si) && !si_tx_blocked(si)))
 		appctx_wakeup(si_appctx(si));
 }
 
