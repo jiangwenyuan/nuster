@@ -149,6 +149,8 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             nst_debug("[nuster][nosql] Hash: %"PRIu64"\n", ctx->hash);
 
             if(s->txn->meth == HTTP_METH_GET) {
+                nst_debug("[nuster][nosql] Checking key existence: ");
+
                 ctx->state = nst_nosql_exists(ctx, rule->disk);
 
                 if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
@@ -170,7 +172,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 if(nst_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
-                    nst_debug("PASS\n");
+                    nst_debug("PASS\n[nuster][nosql] To create\n");
 
                     if(nst_nosql_get_headers(ctx, s, msg)) {
                         ctx->state = NST_NOSQL_CTX_STATE_PASS;
@@ -187,12 +189,12 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
                 if(nst_nosql_delete(ctx->key, ctx->hash)) {
-                    nst_debug("EXIST\n[nuster][nosql] Delete\n");
+                    nst_debug("[nuster][nosql] EXIST, to delete\n");
                     ctx->state = NST_NOSQL_CTX_STATE_DELETE;
                     break;
                 }
 
-                nst_debug("NOT EXIST\n");
+                nst_debug("[nuster][nosql] NOT EXIST\n");
             }
         }
     }
