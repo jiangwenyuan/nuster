@@ -1948,7 +1948,7 @@ static int h1_process(struct h1c * h1c)
 	}
 
 	if (!h1s) {
-		if (h1c->flags & H1C_F_CS_ERROR   ||
+		if (h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN) ||
 		    conn->flags & (CO_FL_ERROR | CO_FL_SOCK_WR_SH) ||
 		    conn_xprt_read0_pending(conn))
 			goto release;
@@ -2185,8 +2185,10 @@ static void h1_detach(struct conn_stream *cs)
 	}
 
 	/* We don't want to close right now unless the connection is in error or shut down for writes */
-	if ((h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN)) ||
-	    (h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_WR_SH)) || !h1c->conn->owner)
+	if ((h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN)) ||
+	    (h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_WR_SH)) ||
+	    ((h1c->flags & H1C_F_CS_SHUTW_NOW) && !b_data(&h1c->obuf)) ||
+	    !h1c->conn->owner)
 		h1_release(h1c->conn);
 	else {
 		tasklet_wakeup(h1c->wait_event.task);
