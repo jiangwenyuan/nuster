@@ -110,12 +110,13 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
         return;
     }
 
-    /* check that the output is not closed */
-    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
-    }
-
     if(b_data(&res->buf) != 0) {
         return;
+    }
+
+    /* check that the output is not closed */
+    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
+        appctx->st0 = NST_PERSIST_APPLET_DONE;
     }
 
     switch(appctx->st0) {
