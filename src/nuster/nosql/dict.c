@@ -80,7 +80,8 @@ int nst_nosql_dict_init() {
 }
 
 static int _nst_nosql_dict_rehashing() {
-    return nuster.nosql->rehash_idx != -1;
+    return 0;
+    //return nuster.nosql->rehash_idx != -1;
 }
 
 /*

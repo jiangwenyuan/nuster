@@ -90,8 +90,8 @@ int nst_cache_dict_init() {
 }
 
 static int _nst_cache_dict_rehashing() {
-    return global.nuster.cache.share == NST_STATUS_OFF
-        && nuster.cache->rehash_idx != -1;
+    return 0;
+    //return nuster.cache->rehash_idx != -1;
 }
 
 /*
