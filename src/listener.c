@@ -46,6 +46,12 @@ static struct bind_kw_list bind_keywords = {
 
 struct xfer_sock_list *xfer_sock_list = NULL;
 
+/* there is one listener queue per thread so that a thread unblocking the
+ * global queue can wake up listeners bound only to foreing threads by
+ * moving them to the remote queues and waking up the associated task.
+ */
+static struct work_list *local_listener_queue;
+
 /* This function adds the specified listener's file descriptor to the polling
  * lists if it is in the LI_LISTEN state. The listener enters LI_READY or
  * LI_FULL state depending on its number of connections. In deamon mode, we
@@ -149,8 +155,15 @@ int pause_listener(struct listener *l)
 int resume_listener(struct listener *l)
 {
 	int ret = 1;
+	unsigned long thr_mask;
 
 	HA_SPIN_LOCK(LISTENER_LOCK, &l->lock);
+
+	/* check that another thread didn't to the job in parallel (e.g. at the
+	 * end of listen_accept() while we'd come from dequeue_all_listeners().
+	 */
+	if (!LIST_ISEMPTY(&l->wait_queue))
+		goto end;
 
 	if ((global.mode & (MODE_DAEMON | MODE_MWORKER)) &&
 	    l->bind_conf->bind_proc &&
@@ -192,6 +205,18 @@ int resume_listener(struct listener *l)
 
 	if (l->nbconn >= l->maxconn) {
 		l->state = LI_FULL;
+		goto end;
+	}
+
+	thr_mask = l->bind_conf->bind_thread[relative_pid-1] ?
+	           l->bind_conf->bind_thread[relative_pid-1] : MAX_THREADS_MASK;
+
+	if (!(thr_mask & tid_bit)) {
+		/* we're not allowed to touch this listener's FD, let's requeue
+		 * the listener into one of its owning thread's queue instead.
+		 */
+		int last_thread = my_ffsl(thr_mask) - 1;
+		work_list_add(&local_listener_queue[last_thread], &l->wait_queue);
 		goto end;
 	}
 
@@ -735,6 +760,35 @@ void listener_release(struct listener *l)
 		dequeue_all_listeners(&fe->listener_queue);
 }
 
+/* resume listeners waiting in the local listener queue. They are still in LI_LIMITED state */
+static struct task *listener_queue_process(struct task *t)
+{
+	struct work_list *wl = t->context;
+	struct listener *l;
+
+	while ((l = LIST_POP_LOCKED(&wl->head, struct listener *, wait_queue))) {
+		/* The listeners are still in the LI_LIMITED state */
+		resume_listener(l);
+	}
+	return t;
+}
+
+/* Initializes the listener queues. Returns 0 on success, otherwise ERR_* flags */
+static int listener_queue_init()
+{
+	local_listener_queue = work_list_create(global.nbthread, listener_queue_process, NULL);
+	if (!local_listener_queue) {
+		ha_alert("Out of memory while initializing listener queues.\n");
+		return ERR_FATAL|ERR_ABORT;
+	}
+	return 0;
+}
+
+static void listener_queue_deinit()
+{
+	work_list_destroy(local_listener_queue, global.nbthread);
+}
+
 /*
  * Registers the bind keyword list <kwl> as a list of valid keywords for next
  * parsing sessions.
@@ -1059,6 +1113,8 @@ static void __listener_init(void)
 	sample_register_fetches(&smp_kws);
 	acl_register_keywords(&acl_kws);
 	bind_register_keywords(&bind_kws);
+	hap_register_post_check(listener_queue_init);
+	hap_register_post_deinit(listener_queue_deinit);
 }
 
 /*
