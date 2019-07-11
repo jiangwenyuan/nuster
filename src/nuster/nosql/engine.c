@@ -615,7 +615,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
         return NST_ERR;
     }
 
-    nst_debug("[NOSQL] Calculate key: ");
+    nst_debug("[nuster][nosql] Calculate key: ");
 
     while((ck = *pck++)) {
         int ret = NST_OK;
