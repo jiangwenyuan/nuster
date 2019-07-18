@@ -809,6 +809,7 @@ int htx_process_request(struct stream *s, struct channel *req, int an_bit)
 		 * insignificant.
 		 */
 		istcpy(&uri, (path.len ? path : ist("/")), uri.len);
+		conn->target = &s->be->obj_type;
 	}
 
 	/*
