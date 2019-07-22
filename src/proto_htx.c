@@ -3887,6 +3887,7 @@ static void htx_manage_client_side_cookies(struct stream *s, struct channel *req
 	htx = htxbuf(&req->buf);
 	ctx.blk = NULL;
 	while (http_find_header(htx, ist("Cookie"), &ctx, 1)) {
+		int is_first = 1;
 		del_from = NULL;  /* nothing to be deleted */
 		preserve_hdr = 0; /* assume we may kill the whole header */
 
@@ -3944,8 +3945,9 @@ static void htx_manage_client_side_cookies(struct stream *s, struct channel *req
 
 			/* find att_beg */
 			att_beg = prev;
-			if (prev > hdr_beg)
+			if (!is_first)
 				att_beg++;
+			is_first = 0;
 
 			while (att_beg < hdr_end && HTTP_IS_SPHT(*att_beg))
 				att_beg++;
@@ -4289,6 +4291,8 @@ static void htx_manage_server_side_cookies(struct stream *s, struct channel *res
 
 	ctx.blk = NULL;
 	while (1) {
+		int is_first = 1;
+
 		if (!http_find_header(htx, ist("Set-Cookie"), &ctx, 1)) {
 			if (!http_find_header(htx, ist("Set-Cookie2"), &ctx, 1))
 				break;
@@ -4352,8 +4356,9 @@ static void htx_manage_server_side_cookies(struct stream *s, struct channel *res
 
 			/* find att_beg */
 			att_beg = prev;
-			if (prev > hdr_beg)
+			if (!is_first)
 				att_beg++;
+			is_first = 0;
 
 			while (att_beg < hdr_end && HTTP_IS_SPHT(*att_beg))
 				att_beg++;
