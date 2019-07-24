@@ -84,6 +84,16 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
 
 }
 
+int _putblk(struct channel *chn, int len) {
+    if(unlikely(channel_input_closed(chn))) {
+        return -2;
+    }
+
+    b_add(&chn->buf, len);
+    channel_add_input(chn, len);
+    return len;
+}
+
 /*
  * The cache disk applet acts like the backend to send cached http data
  */
@@ -97,8 +107,6 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     int fd = appctx->ctx.nuster.cache_disk_engine.fd;
     int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
     uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
-
-    char buf[16*1024] = {0};
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         return;
@@ -121,14 +129,14 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
 
     switch(appctx->st0) {
         case NST_PERSIST_APPLET_HEADER:
-            ret = pread(fd, buf, header_len, offset);
+            ret = pread(fd, res->buf.area, header_len, offset);
 
             if(ret != header_len) {
                 appctx->st0 = NST_PERSIST_APPLET_ERROR;
                 break;
             }
 
-            ret = ci_putblk(res, buf, ret);
+            ret = _putblk(res, ret);
 
             if(ret >= 0) {
                 appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
@@ -140,7 +148,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             }
             break;
         case NST_PERSIST_APPLET_PAYLOAD:
-            ret = pread(fd, buf, max, offset);
+            ret = pread(fd, res->buf.area, max, offset);
 
             if(ret == -1) {
                 appctx->st0 = NST_PERSIST_APPLET_ERROR;
@@ -153,7 +161,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 break;
             }
 
-            ret = ci_putblk(res, buf, ret);
+            ret = _putblk(res, ret);
 
             if(ret >= 0) {
                 appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
