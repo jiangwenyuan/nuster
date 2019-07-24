@@ -1109,11 +1109,14 @@ void zombify_proxy(struct proxy *p)
  * to be called when going down in order to release the ports so that another
  * process may bind to them. It must also be called on disabled proxies at the
  * end of start-up. When all listeners are closed, the proxy is set to the
- * PR_STSTOPPED state.
+ * PR_STSTOPPED state. The function takes the proxy's lock so it's safe to
+ * call from multiple places.
  */
 void stop_proxy(struct proxy *p)
 {
 	struct listener *l;
+
+	HA_SPIN_LOCK(PROXY_LOCK, &p->lock);
 
 	list_for_each_entry(l, &p->conf.listeners, by_fe) {
 		unbind_listener(l);
@@ -1121,7 +1124,10 @@ void stop_proxy(struct proxy *p)
 			delete_listener(l);
 		}
 	}
+
 	p->state = PR_STSTOPPED;
+
+	HA_SPIN_UNLOCK(PROXY_LOCK, &p->lock);
 }
 
 /* This function resumes listening on the specified proxy. It scans all of its
@@ -1758,10 +1764,7 @@ static int cli_parse_shutdown_frontend(char **args, struct appctx *appctx, void 
 	send_log(px, LOG_WARNING, "Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
 	         px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
 
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
 	stop_proxy(px);
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
-
 	return 1;
 }
 
