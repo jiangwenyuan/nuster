@@ -119,7 +119,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                             break;
                         }
 
-                        ret = _putblk(res, ret);
+                        ret = nst_ci_send(res, ret);
 
                         if(ret >= 0) {
                             appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
@@ -144,7 +144,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                             break;
                         }
 
-                        ret = _putblk(res, ret);
+                        ret = nst_ci_send(res, ret);
 
                         if(ret >= 0) {
                             appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
