@@ -441,6 +441,7 @@ enum lock_label {
 	START_LOCK,
 	TLSKEYS_REF_LOCK,
 	AUTH_LOCK,
+	PROTO_LOCK,
 	OTHER_LOCK,
 	LOCK_LABELS
 };
@@ -557,6 +558,7 @@ static inline const char *lock_label(enum lock_label label)
 	case START_LOCK:           return "START";
 	case TLSKEYS_REF_LOCK:     return "TLSKEYS_REF";
 	case AUTH_LOCK:            return "AUTH";
+	case PROTO_LOCK:           return "PROTO";
 	case OTHER_LOCK:           return "OTHER";
 	case LOCK_LABELS:          break; /* keep compiler happy */
 	};
