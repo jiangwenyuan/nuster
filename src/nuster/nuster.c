@@ -272,3 +272,12 @@ int nst_key_append(struct nst_memory *memory, struct buffer *key, char *str,
     return NST_OK;
 }
 
+int nst_ci_send(struct channel *chn, int len) {
+    if(unlikely(channel_input_closed(chn))) {
+        return -2;
+    }
+
+    b_add(&chn->buf, len);
+    channel_add_input(chn, len);
+    return len;
+}

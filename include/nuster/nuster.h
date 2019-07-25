@@ -81,4 +81,6 @@ int nst_key_advance(struct nst_memory *memory, struct buffer *key, int step);
 int nst_key_append(struct nst_memory *memory, struct buffer *key, char *str,
         int len);
 
+int nst_ci_send(struct channel *chn, int len);
+
 #endif /* _NUSTER_H */

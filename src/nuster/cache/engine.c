@@ -84,16 +84,6 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
 
 }
 
-int _putblk(struct channel *chn, int len) {
-    if(unlikely(channel_input_closed(chn))) {
-        return -2;
-    }
-
-    b_add(&chn->buf, len);
-    channel_add_input(chn, len);
-    return len;
-}
-
 /*
  * The cache disk applet acts like the backend to send cached http data
  */
@@ -136,7 +126,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 break;
             }
 
-            ret = _putblk(res, ret);
+            ret = nst_ci_send(res, ret);
 
             if(ret >= 0) {
                 appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
@@ -161,7 +151,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 break;
             }
 
-            ret = _putblk(res, ret);
+            ret = nst_ci_send(res, ret);
 
             if(ret >= 0) {
                 appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
