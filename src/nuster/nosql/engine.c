@@ -58,38 +58,18 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
         case NST_NOSQL_APPCTX_STATE_HIT:
 
             if(appctx->st1 == 0) {
-                nst_res_begin(200);
+                struct buffer *header = nst_res_header_create(
+                        200,
+                        appctx->ctx.nuster.nosql_engine.data->info.flags &
+                        NST_NOSQL_DATA_FLAG_CHUNKED,
+                        &appctx->ctx.nuster.nosql_engine.data->
+                        info.transfer_encoding,
+                        appctx->ctx.nuster.nosql_engine.data->
+                        info.content_length,
+                        &appctx->ctx.nuster.nosql_engine.data->
+                        info.content_type);
 
-                if(appctx->ctx.nuster.nosql_engine.data->info.flags
-                        & NST_NOSQL_DATA_FLAG_CHUNKED) {
-
-                    nst_res_header(&nst_headers.transfer_encoding,
-                            &appctx->ctx.nuster.nosql_engine.data
-                            ->info.transfer_encoding);
-                } else {
-                    nst_res_header_content_length(
-                            appctx->ctx.nuster.nosql_engine.data
-                            ->info.content_length);
-
-                    if(appctx->ctx.nuster.nosql_engine.data
-                            ->info.transfer_encoding.data) {
-
-                        nst_res_header(&nst_headers.transfer_encoding,
-                                &appctx->ctx.nuster.nosql_engine.data
-                                ->info.transfer_encoding);
-                    }
-                }
-
-                if(appctx->ctx.nuster.nosql_engine.data
-                        ->info.content_type.data) {
-
-                    nst_res_header(&nst_headers.content_type,
-                            &appctx->ctx.nuster.nosql_engine.data
-                            ->info.content_type);
-                }
-
-                nst_res_header_end();
-                nst_res_send(si_ic(si), trash.area, trash.data);
+                nst_res_send(si_ic(si), header->area, header->data);
                 appctx->st1++;
             } else {
 
@@ -849,6 +829,8 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
 
     struct nst_nosql_entry *entry = NULL;
 
+    struct buffer *header = NULL;
+
     /* Check if nosql is full */
     if(nst_nosql_stats_full()) {
         ctx->state = NST_NOSQL_CTX_STATE_FULL;
@@ -909,37 +891,20 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
 
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
-        /* write header */
-        nst_res_begin(200);
-
-        if(msg->flags & HTTP_MSGF_TE_CHNK) {
-
-            nst_res_header(&nst_headers.transfer_encoding,
-                    &ctx->req.transfer_encoding);
-        } else {
-            nst_res_header_content_length(msg->body_len);
-
-            if(ctx->req.transfer_encoding.data) {
-
-                nst_res_header(&nst_headers.transfer_encoding,
-                        &ctx->req.transfer_encoding);
-            }
-        }
-
-        if(ctx->req.content_type.data) {
-
-            nst_res_header(&nst_headers.content_type, &ctx->req.content_type);
-        }
-
-        nst_res_header_end();
+        header = nst_res_header_create(
+                200,
+                msg->flags & HTTP_MSGF_TE_CHNK,
+                &ctx->req.transfer_encoding,
+                msg->body_len,
+                &ctx->req.content_type);
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
-                ctx->hash, 0, 0, trash.data, ctx->entry->key->data);
+                ctx->hash, 0, 0, header->data, ctx->entry->key->data);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
 
         ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key->data;
-        nst_persist_write(&ctx->disk, trash.area, trash.data);
+        nst_persist_write(&ctx->disk, header->area, header->data);
     }
 }
 
@@ -1199,6 +1164,7 @@ void nst_nosql_persist_async() {
             struct nst_nosql_element *element = entry->data->element;
             uint64_t cache_len = 0;
             struct persist disk;
+            struct buffer *header;
 
             entry->file = nst_nosql_memory_alloc(
                     nst_persist_path_file_len(global.nuster.nosql.root) + 1);
@@ -1215,39 +1181,22 @@ void nst_nosql_persist_async() {
             disk.fd = nst_persist_create(entry->file);
 
             /* write header */
-            nst_res_begin(200);
-
-            if(entry->data->info.flags
-                    & NST_NOSQL_DATA_FLAG_CHUNKED) {
-
-                nst_res_header(&nst_headers.transfer_encoding,
-                        &entry->data->info.transfer_encoding);
-            } else {
-                nst_res_header_content_length(entry->data->info.content_length);
-
-                if(entry->data->info.transfer_encoding.data) {
-
-                    nst_res_header(&nst_headers.transfer_encoding,
-                            &entry->data->info.transfer_encoding);
-                }
-            }
-
-            if(entry->data->info.content_type.data) {
-                nst_res_header(&nst_headers.content_type,
-                        &entry->data->info.content_type);
-            }
-
-            nst_res_header_end();
+            header = nst_res_header_create(
+                    200,
+                    entry->data->info.flags & NST_NOSQL_DATA_FLAG_CHUNKED,
+                    &entry->data->info.transfer_encoding,
+                    entry->data->info.content_length,
+                    &entry->data->info.content_type);
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
-                    entry->hash, entry->expire, 0, trash.data,
+                    entry->hash, entry->expire, 0, header->data,
                     entry->key->data);
 
             nst_persist_write_key(&disk, entry->key);
 
             disk.offset = NST_PERSIST_META_SIZE + entry->key->data;
 
-            nst_persist_write(&disk, trash.area, trash.data);
+            nst_persist_write(&disk, header->area, header->data);
 
             while(element) {
 

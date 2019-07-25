@@ -24,6 +24,7 @@
 
 #include <types/global.h>
 #include <inttypes.h>
+#include <common/chunk.h>
 
 #include <proto/stream_interface.h>
 #include <proto/proto_http.h>
@@ -69,16 +70,16 @@ static inline void nst_response(struct stream *s, struct buffer *msg) {
 }
 
 
-static inline void nst_res_begin(int status) {
-    chunk_printf(&trash, "HTTP/1.1 %d %s\r\n", status, http_get_reason(status));
+static inline void nst_res_begin(struct buffer *header, int status) {
+    chunk_printf(header, "HTTP/1.1 %d %s\r\n", status, http_get_reason(status));
 }
 
-static inline void nst_res_header_server() {
-    chunk_appendf(&trash, "%.*s: nuster\r\n", nst_headers.server.len,
+static inline void nst_res_header_server(struct buffer *header) {
+    chunk_appendf(header, "%.*s: nuster\r\n", nst_headers.server.len,
             nst_headers.server.data);
 }
 
-static inline void nst_res_header_date() {
+static inline void nst_res_header_date(struct buffer *header) {
     const char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
         "Aug", "Sep", "Oct", "Nov", "Dec" };
 
@@ -88,24 +89,28 @@ static inline void nst_res_header_date() {
     time_t now;
     time(&now);
     tm = gmtime(&now);
-    chunk_appendf(&trash, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT",
+    chunk_appendf(header, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT",
             nst_headers.date.len, nst_headers.date.data, day[tm->tm_wday],
             tm->tm_mday, mon[tm->tm_mon], 1900 + tm->tm_year,
             tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
 
-static inline void nst_res_header_content_length(uint64_t len) {
-    chunk_appendf(&trash, "%.*s: %" PRIu64 "\r\n",
+static inline void
+nst_res_header_content_length(struct buffer *header, uint64_t len) {
+
+    chunk_appendf(header, "%.*s: %" PRIu64 "\r\n",
             nst_headers.content_length.len,
             nst_headers.content_length.data, len);
 }
 
-static inline void nst_res_header(struct nst_str *k, struct nst_str *v) {
-    chunk_appendf(&trash, "%.*s: %.*s\r\n", k->len, k->data, v->len, v->data);
+static inline void
+nst_res_header(struct buffer *header, struct nst_str *k, struct nst_str *v) {
+
+    chunk_appendf(header, "%.*s: %.*s\r\n", k->len, k->data, v->len, v->data);
 }
 
-static inline void nst_res_header_end() {
-    chunk_appendf(&trash, "\r\n");
+static inline void nst_res_header_end(struct buffer *header) {
+    chunk_appendf(header, "\r\n");
 }
 
 static inline void nst_res_end(struct stream_interface *si) {
@@ -114,8 +119,8 @@ static inline void nst_res_end(struct stream_interface *si) {
     si_ic(si)->flags |= CF_READ_NULL;
 }
 
-static inline int nst_res_send(struct channel *chn, const char *blk,
-        int len) {
+static inline int
+nst_res_send(struct channel *chn, const char *blk, int len) {
 
     return ci_putblk(chn, blk, len);
 }
@@ -123,16 +128,46 @@ static inline int nst_res_send(struct channel *chn, const char *blk,
 static inline void nst_res_simple(struct stream_interface *si, int status,
         const char *content, int len) {
 
-    nst_res_begin(status);
-    nst_res_header_content_length(len);
-    nst_res_header_end();
+    struct buffer *res = get_trash_chunk();
+
+    nst_res_begin(res, status);
+    nst_res_header_content_length(res, len);
+    nst_res_header_end(res);
 
     if(content) {
-        chunk_appendf(&trash, "%.*s", len, content);
+        chunk_appendf(res, "%.*s", len, content);
     }
 
-    nst_res_send(si_ic(si), trash.area, trash.data);
+    nst_res_send(si_ic(si), res->area, res->data);
     nst_res_end(si);
+}
+
+static inline struct buffer *nst_res_header_create(int status, int chunked,
+        struct nst_str *transfer_encoding, uint64_t content_length,
+        struct nst_str *content_type) {
+
+    struct buffer *header = get_trash_chunk();
+
+    nst_res_begin(header, status);
+
+    if(chunked) {
+        nst_res_header(header, &nst_headers.transfer_encoding,
+                transfer_encoding);
+    } else {
+        nst_res_header_content_length(header, content_length);
+
+        if(transfer_encoding->data) {
+            nst_res_header(header, &nst_headers.transfer_encoding,
+                    transfer_encoding);
+        }
+    }
+
+    if(content_type->data) {
+        nst_res_header(header, &nst_headers.content_type, content_type);
+    }
+
+    nst_res_header_end(header);
+    return header;
 }
 
 int nst_req_find_param(char *query_beg, char *query_end,
