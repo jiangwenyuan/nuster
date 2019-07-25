@@ -108,10 +108,6 @@ static inline void nst_res_header_end() {
     chunk_appendf(&trash, "\r\n");
 }
 
-static inline void nst_res_header_send(struct channel *chn) {
-    ci_putblk(chn, trash.area, trash.data);
-}
-
 static inline void nst_res_end(struct stream_interface *si) {
     co_skip(si_oc(si), co_data(si_oc(si)));
     si_shutr(si);
