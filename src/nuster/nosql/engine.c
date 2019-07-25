@@ -1277,18 +1277,23 @@ void nst_nosql_persist_load() {
                     fd = nst_persist_open(file);
 
                     if(fd == -1) {
+                        closedir(dir2);
                         return;
                     }
 
                     if(nst_persist_get_meta(fd, meta) != NST_OK) {
                         unlink(file);
                         close(fd);
+                        closedir(dir2);
                         return;
                     }
 
                     key = nst_nosql_memory_alloc(sizeof(*key));
 
                     if(!key) {
+                        unlink(file);
+                        close(fd);
+                        closedir(dir2);
                         return;
                     }
 
@@ -1297,6 +1302,9 @@ void nst_nosql_persist_load() {
 
                     if(!key->area) {
                         nst_nosql_memory_free(key);
+                        unlink(file);
+                        close(fd);
+                        closedir(dir2);
                         return;
                     }
 
@@ -1307,12 +1315,16 @@ void nst_nosql_persist_load() {
 
                         unlink(file);
                         close(fd);
+                        closedir(dir2);
                         return;
                     }
 
                     nst_nosql_dict_set_from_disk(file, meta, key);
 
+                    close(fd);
                 }
+
+                closedir(dir2);
             } else {
                 nuster.nosql->disk.idx++;
                 closedir(nuster.nosql->disk.dir);
