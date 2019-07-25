@@ -151,7 +151,6 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     return 1;
                 }
 
-                //TODO
                 nst_debug("[nuster][cache] Key: ");
                 nst_debug_key(ctx->key);
 
