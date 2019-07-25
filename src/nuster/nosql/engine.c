@@ -106,22 +106,20 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                 int header_len = appctx->ctx.nuster.nosql_engine.header_len;
                 uint64_t offset = appctx->ctx.nuster.nosql_engine.offset;
 
-                char buf[16*1024] = {0};
-
                 if(b_data(&res->buf) != 0) {
                     return;
                 }
 
                 switch(appctx->st1) {
                     case NST_PERSIST_APPLET_HEADER:
-                        ret = pread(fd, buf, header_len, offset);
+                        ret = pread(fd, res->buf.area, header_len, offset);
 
                         if(ret != header_len) {
                             appctx->st1 = NST_PERSIST_APPLET_ERROR;
                             break;
                         }
 
-                        ret = ci_putblk(res, buf, ret);
+                        ret = _putblk(res, ret);
 
                         if(ret >= 0) {
                             appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
@@ -133,7 +131,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                         }
                         break;
                     case NST_PERSIST_APPLET_PAYLOAD:
-                        ret = pread(fd, buf, max, offset);
+                        ret = pread(fd, res->buf.area, max, offset);
 
                         if(ret == -1) {
                             appctx->st1 = NST_PERSIST_APPLET_ERROR;
@@ -146,7 +144,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                             break;
                         }
 
-                        ret = ci_putblk(res, buf, ret);
+                        ret = _putblk(res, ret);
 
                         if(ret >= 0) {
                             appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
