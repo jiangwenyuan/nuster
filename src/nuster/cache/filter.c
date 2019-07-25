@@ -65,9 +65,8 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 
         memset(ctx, 0, sizeof(*ctx));
 
-        ctx->cache_len = 0;
-        ctx->pid       = -1;
-        ctx->state     = NST_CACHE_CTX_STATE_INIT;
+        ctx->state = NST_CACHE_CTX_STATE_INIT;
+        ctx->pid   = -1;
 
         filter->ctx = ctx;
     }

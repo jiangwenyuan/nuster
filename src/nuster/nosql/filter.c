@@ -47,16 +47,12 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
             return 0;
         }
 
-        ctx->state         = NST_NOSQL_CTX_STATE_INIT;
-        ctx->rule          = NULL;
-        ctx->key           = NULL;
-        ctx->entry         = NULL;
-        ctx->data          = NULL;
-        ctx->element       = NULL;
-        ctx->pid           = -1;
-        ctx->req.host.data = NULL;
-        ctx->req.path.data = NULL;
-        filter->ctx        = ctx;
+        memset(ctx, 0, sizeof(*ctx));
+
+        ctx->state = NST_NOSQL_CTX_STATE_INIT;
+        ctx->pid   = -1;
+
+        filter->ctx = ctx;
     }
 
     register_data_filter(s, &s->req, filter);
