@@ -167,6 +167,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                         break;
                 }
             }
+            task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
         case NST_NOSQL_APPCTX_STATE_ERROR:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
