@@ -1156,7 +1156,7 @@ void nst_nosql_persist_async() {
 
     while(entry) {
 
-        if(!nst_nosql_entry_invalid(entry)
+        if(entry->state == NST_NOSQL_ENTRY_STATE_VALID
                 && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
