@@ -7134,7 +7134,6 @@ smp_fetch_ssl_fc_cl_bin(const struct arg *args, struct sample *smp, const char *
 	return 1;
 }
 
-#if OPENSSL_VERSION_NUMBER > 0x0090800fL
 static int
 smp_fetch_ssl_fc_cl_hex(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {

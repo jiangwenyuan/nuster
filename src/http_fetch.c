@@ -59,7 +59,7 @@ static THREAD_LOCAL struct http_hdr_ctx static_http_hdr_ctx;
  * have the credentials overwritten by another stream in parallel.
  */
 
-static int get_http_auth(struct sample *smp)
+static int get_http_auth(struct sample *smp, struct htx *htx)
 {
 	struct stream *s = smp->strm;
 	struct http_txn *txn = s->txn;
@@ -75,9 +75,8 @@ static int get_http_auth(struct sample *smp)
 
 	txn->auth.method = HTTP_AUTH_WRONG;
 
-	if (IS_HTX_STRM(s) || (smp->px->mode == PR_MODE_TCP)) {
+	if (htx) {
 		/* HTX version */
-		struct htx *htx = htxbuf(&s->req.buf);
 		struct http_hdr_ctx ctx = { .blk = NULL };
 		struct ist hdr;
 
@@ -219,7 +218,7 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 	else { /* PR_MODE_TCP */
 		struct buffer *buf;
 		struct h1m h1m;
-		struct http_hdr hdrs[MAX_HTTP_HDR];
+		struct http_hdr hdrs[global.tune.max_http_hdr];
 		union h1_sl h1sl;
 		unsigned int flags = HTX_FL_NONE;
 		int ret;
@@ -1436,6 +1435,16 @@ static int smp_fetch_hdr(const struct arg *args, struct sample *smp, const char 
 	return 0;
 }
 
+/* Same than smp_fetch_hdr() but only relies on the sample direction to choose
+ * the right channel. So instead of duplicating the code, we just change the
+ * keyword and then fallback on smp_fetch_hdr().
+ */
+static int smp_fetch_chn_hdr(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	kw = ((smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_REQ ? "req.hdr" : "res.hdr");
+	return smp_fetch_hdr(args, smp, kw, private);
+}
+
 /* 6. Check on HTTP header count. The number of occurrences is returned.
  * Accepts exactly 1 argument of type string.
  */
@@ -1909,14 +1918,16 @@ static int smp_fetch_http_auth(const struct arg *args, struct sample *smp, const
 
 		if (!htx)
 			return 0;
+		if (!get_http_auth(smp, htx))
+			return 0;
 	}
 	else {
 		/* LEGACY version */
 		CHECK_HTTP_MESSAGE_FIRST(chn);
+		if (!get_http_auth(smp, NULL))
+			return 0;
 	}
 
-	if (!get_http_auth(smp))
-		return 0;
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = check_user(args->data.usr, smp->strm->txn->auth.user,
 				      smp->strm->txn->auth.pass);
@@ -1937,14 +1948,15 @@ static int smp_fetch_http_auth_grp(const struct arg *args, struct sample *smp, c
 
 		if (!htx)
 			return 0;
+		if (!get_http_auth(smp, htx))
+			return 0;
 	}
 	else {
 		/* LEGACY version */
 		CHECK_HTTP_MESSAGE_FIRST(chn);
+		if (!get_http_auth(smp, NULL))
+			return 0;
 	}
-
-	if (!get_http_auth(smp))
-		return 0;
 
 	/* if the user does not belong to the userlist or has a wrong password,
 	 * report that it unconditionally does not match. Otherwise we return
@@ -2288,6 +2300,16 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
   out:
 	smp->flags &= ~SMP_F_NOT_LAST;
 	return found;
+}
+
+/* Same than smp_fetch_cookie() but only relies on the sample direction to
+ * choose the right channel. So instead of duplicating the code, we just change
+ * the keyword and then fallback on smp_fetch_cookie().
+ */
+static int smp_fetch_chn_cookie(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	kw = ((smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_REQ ? "req.cook" : "res.cook");
+	return smp_fetch_cookie(args, smp, kw, private);
 }
 
 /* Iterate over all cookies present in a request to count how many occurrences
@@ -2826,7 +2848,7 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	 * for ACL compatibility only.
 	 */
 	{ "cook",               smp_fetch_cookie,             ARG1(0,STR),      NULL,    SMP_T_STR,  SMP_USE_HRQHV },
-	{ "cookie",             smp_fetch_cookie,             ARG1(0,STR),      NULL,    SMP_T_STR,  SMP_USE_HRQHV|SMP_USE_HRSHV },
+	{ "cookie",             smp_fetch_chn_cookie,         ARG1(0,STR),      NULL,    SMP_T_STR,  SMP_USE_HRQHV|SMP_USE_HRSHV },
 	{ "cook_cnt",           smp_fetch_cookie_cnt,         ARG1(0,STR),      NULL,    SMP_T_SINT, SMP_USE_HRQHV },
 	{ "cook_val",           smp_fetch_cookie_val,         ARG1(0,STR),      NULL,    SMP_T_SINT, SMP_USE_HRQHV },
 
@@ -2834,7 +2856,7 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	 * only here to match the ACL's name, are request-only and are used for
 	 * ACL compatibility only.
 	 */
-	{ "hdr",                smp_fetch_hdr,                ARG2(0,STR,SINT), val_hdr, SMP_T_STR,  SMP_USE_HRQHV|SMP_USE_HRSHV },
+	{ "hdr",                smp_fetch_chn_hdr,            ARG2(0,STR,SINT), val_hdr, SMP_T_STR,  SMP_USE_HRQHV|SMP_USE_HRSHV },
 	{ "hdr_cnt",            smp_fetch_hdr_cnt,            ARG1(0,STR),      NULL,    SMP_T_SINT, SMP_USE_HRQHV },
 	{ "hdr_ip",             smp_fetch_hdr_ip,             ARG2(0,STR,SINT), val_hdr, SMP_T_IPV4, SMP_USE_HRQHV },
 	{ "hdr_val",            smp_fetch_hdr_val,            ARG2(0,STR,SINT), val_hdr, SMP_T_SINT, SMP_USE_HRQHV },

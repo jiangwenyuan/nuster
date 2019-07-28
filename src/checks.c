@@ -2850,9 +2850,6 @@ static int tcpcheck_main(struct check *check)
 			}
 
 			conn_prepare(conn, proto, xprt);
-			if (conn_install_mux(conn, &mux_pt_ops, cs, proxy, NULL) < 0)
-				return SF_ERR_RESOURCE;
-			cs_attach(cs, check, &check_conn_cb);
 
 			if (conn_install_mux(conn, &mux_pt_ops, cs, proxy, NULL) < 0) {
 				ret = SF_ERR_RESOURCE;

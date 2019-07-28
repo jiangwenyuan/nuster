@@ -641,21 +641,27 @@ unsigned int http_get_htx_fhdr(const struct htx *htx, const struct ist hdr,
 	return 1;
 }
 
-static struct htx *http_str_to_htx(struct buffer *buf, struct ist raw)
+int http_str_to_htx(struct buffer *buf, struct ist raw)
 {
 	struct htx *htx;
 	struct htx_sl *sl;
 	struct h1m h1m;
-	struct http_hdr hdrs[MAX_HTTP_HDR];
+	struct http_hdr hdrs[global.tune.max_http_hdr];
 	union h1_sl h1sl;
 	unsigned int flags = HTX_SL_F_IS_RESP;
 	int ret = 0;
+
+	b_reset(buf);
+	if (!raw.len) {
+		buf->size = 0;
+		buf->area = malloc(raw.len);
+		return 1;
+	}
 
 	buf->size = global.tune.bufsize;
 	buf->area = (char *)malloc(buf->size);
 	if (!buf->area)
 		goto error;
-	b_reset(buf);
 
 	h1m_init_res(&h1m);
 	h1m.flags |= H1_MF_NO_PHDR;
@@ -697,12 +703,13 @@ static struct htx *http_str_to_htx(struct buffer *buf, struct ist raw)
 	}
 	if (!htx_add_endof(htx, HTX_BLK_EOM))
 		goto error;
-	return htx;
+
+	return 1;
 
 error:
 	if (buf->size)
 		free(buf->area);
-	return NULL;
+	return 0;
 }
 
 static int http_htx_init(void)

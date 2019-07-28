@@ -594,7 +594,6 @@ int conn_recv_proxy(struct connection *conn, int flag)
 			}
 			line++;
 		}
-		__conn_xprt_stop_recv(conn);
 
 		if (!dst_s || !sport_s || !dport_s)
 			goto bad_header;

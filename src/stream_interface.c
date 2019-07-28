@@ -709,11 +709,6 @@ int si_cs_send(struct conn_stream *cs)
 			 * system buffers are full, we will try next time.
 			 */
 		}
-
-		if (conn->flags & CO_FL_ERROR || cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING)) {
-			si->flags |= SI_FL_ERR;
-			return 1;
-		}
 	}
 
  end:
