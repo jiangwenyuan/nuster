@@ -909,15 +909,16 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
 
             if(!ctx->disk.file) {
                 ret = NST_CACHE_CTX_STATE_INIT;
-            }
-
-            if(nst_persist_exists(global.nuster.cache.root, &ctx->disk,
-                        ctx->key, ctx->hash) == NST_OK) {
-
-                ret = NST_CACHE_CTX_STATE_HIT_DISK;
             } else {
-                nst_cache_memory_free(ctx->disk.file);
-                ret = NST_CACHE_CTX_STATE_INIT;
+
+                if(nst_persist_exists(global.nuster.cache.root, &ctx->disk,
+                            ctx->key, ctx->hash) == NST_OK) {
+
+                    ret = NST_CACHE_CTX_STATE_HIT_DISK;
+                } else {
+                    nst_cache_memory_free(ctx->disk.file);
+                    ret = NST_CACHE_CTX_STATE_INIT;
+                }
             }
         }
     }
