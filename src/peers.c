@@ -298,7 +298,7 @@ static int peer_prepare_updatemsg(struct stksess *ts, struct shared_table *st, u
 	unsigned int data_type;
 	void *data_ptr;
 
-	cursor = datamsg = msg + 1 + 5;
+	cursor = datamsg = msg + 2 + 5;
 
 	/* construct message */
 

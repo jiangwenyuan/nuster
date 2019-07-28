@@ -500,7 +500,7 @@ static void usage(char *name)
 		"        -dV disables SSL verify on servers side\n"
 		"        -sf/-st [pid ]* finishes/terminates old pids.\n"
 		"        -x <unix_socket> get listening sockets from a unix socket\n"
-		"        -S <unix_socket>[,<bind options>...] new stats socket for the master\n"
+		"        -S <bind>[,<bind options>...] new master CLI\n"
 		"\n",
 		name, DEFAULT_MAXCONN, cfg_maxpconn);
 	exit(1);
@@ -770,11 +770,14 @@ void mworker_reload()
 
 	/* close the listeners FD */
 	mworker_cli_proxy_stop();
-	/* close the poller FD and the thread waker pipe FD */
-	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
-		ptdf->fct();
-	if (fdtab)
-		deinit_pollers();
+
+	if (getenv("HAPROXY_MWORKER_WAIT_ONLY") == NULL) {
+		/* close the poller FD and the thread waker pipe FD */
+		list_for_each_entry(ptdf, &per_thread_deinit_list, list)
+			ptdf->fct();
+		if (fdtab)
+			deinit_pollers();
+	}
 #if defined(USE_OPENSSL) && (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)
 	if (global.ssl_used_frontend || global.ssl_used_backend)
 		/* close random device FDs */
@@ -2708,6 +2711,10 @@ static void run_poll_loop()
 
 		/* stop when there's nothing left to do */
 		if ((jobs - unstoppable_jobs) == 0)
+			break;
+
+		/* also stop  if we failed to cleanly stop all tasks */
+		if (killed > 1)
 			break;
 
 		/* expire immediately if events are pending */

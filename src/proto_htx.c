@@ -809,6 +809,7 @@ int htx_process_request(struct stream *s, struct channel *req, int an_bit)
 		 * insignificant.
 		 */
 		istcpy(&uri, (path.len ? path : ist("/")), uri.len);
+		conn->target = &s->be->obj_type;
 	}
 
 	/*
@@ -1230,8 +1231,6 @@ int htx_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 		if (ret < 0)
 			goto return_bad_req;
 		c_adv(req, ret);
-		if (htx->data != co_data(req) || htx->extra)
-			goto missing_data_or_waiting;
 	}
 	else {
 		c_adv(req, htx->data - co_data(req));
@@ -1250,12 +1249,17 @@ int htx_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 		goto done;
 	}
 
+
 	/* Check if the end-of-message is reached and if so, switch the message
-	 * in HTTP_MSG_DONE state.
+	 * in HTTP_MSG_ENDING state. Then if all data was marked to be
+	 * forwarded, set the state to HTTP_MSG_DONE.
 	 */
 	if (htx_get_tail_type(htx) != HTX_BLK_EOM)
 		goto missing_data_or_waiting;
 
+	msg->msg_state = HTTP_MSG_ENDING;
+	if (htx->data != co_data(req))
+		goto missing_data_or_waiting;
 	msg->msg_state = HTTP_MSG_DONE;
 
   done:
@@ -1309,7 +1313,7 @@ int htx_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 
  missing_data_or_waiting:
 	/* stop waiting for data if the input is closed before the end */
-	if (msg->msg_state < HTTP_MSG_DONE && req->flags & CF_SHUTR)
+	if (msg->msg_state < HTTP_MSG_ENDING && req->flags & CF_SHUTR)
 		goto return_cli_abort;
 
  waiting:
@@ -1646,8 +1650,17 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	 */
 	if (txn->status < 200 &&
 	    (txn->status == 100 || txn->status >= 102)) {
+		int32_t pos;
+
 		FLT_STRM_CB(s, flt_http_reset(s, msg));
-		c_adv(rep, htx->data);
+		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+			struct htx_blk *blk = htx_get_blk(htx, pos);
+			enum htx_blk_type type = htx_get_blk_type(blk);
+
+			c_adv(rep, htx_get_blksz(blk));
+			if (type == HTX_BLK_EOM)
+				break;
+		}
 		msg->msg_state = HTTP_MSG_RPBEFORE;
 		txn->status = 0;
 		s->logs.t_data = -1; /* was not a response yet */
@@ -1726,8 +1739,10 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 		ctx.blk = NULL;
 		while (http_find_header(htx, hdr, &ctx, 0)) {
 			if ((ctx.value.len >= 9 && word_match(ctx.value.ptr, ctx.value.len, "Negotiate", 9)) ||
-			    (ctx.value.len >= 4 && word_match(ctx.value.ptr, ctx.value.len, "NTLM", 4)))
+			    (ctx.value.len >= 4 && word_match(ctx.value.ptr, ctx.value.len, "NTLM", 4))) {
+				sess->flags |= SESS_FL_PREFER_LAST;
 				srv_conn->flags |= CO_FL_PRIVATE;
+			}
 		}
 	}
 
@@ -2154,8 +2169,6 @@ int htx_response_forward_body(struct stream *s, struct channel *res, int an_bit)
 		if (ret < 0)
 			goto return_bad_res;
 		c_adv(res, ret);
-		if (htx->data != co_data(res) || htx->extra)
-			goto missing_data_or_waiting;
 	}
 	else {
 		c_adv(res, htx->data - co_data(res));
@@ -2176,11 +2189,15 @@ int htx_response_forward_body(struct stream *s, struct channel *res, int an_bit)
 	}
 
 	/* Check if the end-of-message is reached and if so, switch the message
-	 * in HTTP_MSG_DONE state.
+	 * in HTTP_MSG_ENDING state. Then if all data was marked to be
+	 * forwarded, set the state to HTTP_MSG_DONE.
 	 */
 	if (htx_get_tail_type(htx) != HTX_BLK_EOM)
 		goto missing_data_or_waiting;
 
+	msg->msg_state = HTTP_MSG_ENDING;
+	if (htx->data != co_data(res))
+		goto missing_data_or_waiting;
 	msg->msg_state = HTTP_MSG_DONE;
 
   done:
@@ -2223,7 +2240,7 @@ int htx_response_forward_body(struct stream *s, struct channel *res, int an_bit)
 	 * so we don't want to count this as a server abort. Otherwise it's a
 	 * server abort.
 	 */
-	if (msg->msg_state < HTTP_MSG_DONE && res->flags & CF_SHUTR) {
+	if (msg->msg_state < HTTP_MSG_ENDING && res->flags & CF_SHUTR) {
 		if ((s->req.flags & (CF_SHUTR|CF_SHUTW)) == (CF_SHUTR|CF_SHUTW))
 			goto return_cli_abort;
 		/* If we have some pending data, we continue the processing */
@@ -3870,6 +3887,7 @@ static void htx_manage_client_side_cookies(struct stream *s, struct channel *req
 	htx = htxbuf(&req->buf);
 	ctx.blk = NULL;
 	while (http_find_header(htx, ist("Cookie"), &ctx, 1)) {
+		int is_first = 1;
 		del_from = NULL;  /* nothing to be deleted */
 		preserve_hdr = 0; /* assume we may kill the whole header */
 
@@ -3927,8 +3945,9 @@ static void htx_manage_client_side_cookies(struct stream *s, struct channel *req
 
 			/* find att_beg */
 			att_beg = prev;
-			if (prev > hdr_beg)
+			if (!is_first)
 				att_beg++;
+			is_first = 0;
 
 			while (att_beg < hdr_end && HTTP_IS_SPHT(*att_beg))
 				att_beg++;
@@ -4272,6 +4291,8 @@ static void htx_manage_server_side_cookies(struct stream *s, struct channel *res
 
 	ctx.blk = NULL;
 	while (1) {
+		int is_first = 1;
+
 		if (!http_find_header(htx, ist("Set-Cookie"), &ctx, 1)) {
 			if (!http_find_header(htx, ist("Set-Cookie2"), &ctx, 1))
 				break;
@@ -4335,8 +4356,9 @@ static void htx_manage_server_side_cookies(struct stream *s, struct channel *res
 
 			/* find att_beg */
 			att_beg = prev;
-			if (prev > hdr_beg)
+			if (!is_first)
 				att_beg++;
+			is_first = 0;
 
 			while (att_beg < hdr_end && HTTP_IS_SPHT(*att_beg))
 				att_beg++;
@@ -5274,7 +5296,7 @@ void htx_server_error(struct stream *s, struct stream_interface *si, int err,
 
 	/* <msg> is an HTX structure. So we copy it in the response's
 	 * channel */
-	if (msg) {
+	if (msg && !b_is_null(msg)) {
 		struct channel *chn = si_ic(si);
 		struct htx *htx;
 
@@ -5304,7 +5326,7 @@ void htx_reply_and_close(struct stream *s, short status, struct buffer *msg)
 	/* <msg> is an HTX structure. So we copy it in the response's
 	 * channel */
 	/* FIXME: It is a problem for now if there is some outgoing data */
-	if (msg) {
+	if (msg && !b_is_null(msg)) {
 		struct channel *chn = &s->res;
 		struct htx *htx;
 

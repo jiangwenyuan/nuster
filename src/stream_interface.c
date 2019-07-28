@@ -360,6 +360,21 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 			ret = make_proxy_line(trash.area, trash.size,
 					      objt_server(conn->target),
 					      remote_cs ? remote_cs->conn : NULL);
+			/* We may not have a conn_stream yet, if we don't
+			 * know which mux to use, because it will be decided
+			 * during the SSL handshake. In this case, there should
+			 * be a session associated to the connection in
+			 * conn->owner, and we know it is the session that
+			 * initiated that connection, so we can just use
+			 * its origin, which should contain the client
+			 * connection.
+			 */
+		} else if (!cs && conn->owner) {
+			struct session *sess = conn->owner;
+
+			ret = make_proxy_line(trash.area, trash.size,
+			                      objt_server(conn->target),
+					      objt_conn(sess->origin));
 		}
 		else {
 			/* The target server expects a LOCAL line to be sent first. Retrieving
@@ -408,6 +423,7 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 	if (conn->flags & CO_FL_WAIT_L4_CONN)
 		conn->flags &= ~CO_FL_WAIT_L4_CONN;
 	conn->flags &= ~flag;
+	__conn_sock_stop_send(conn);
 	return 1;
 
  out_error:
@@ -417,6 +433,7 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 
  out_wait:
 	__conn_sock_stop_recv(conn);
+	__conn_sock_want_send(conn);
 	return 0;
 }
 
@@ -467,10 +484,6 @@ static void stream_int_notify(struct stream_interface *si)
 			if (tick_isset(ic->rex))
 				ic->rex = tick_add_ifset(now_ms, ic->rto);
 	}
-
-	if ((sio->flags & SI_FL_RXBLK_ROOM) &&
-	    ((oc->flags & CF_WRITE_PARTIAL) || channel_is_empty(oc)))
-		si_rx_room_rdy(sio);
 
 	if (oc->flags & CF_DONT_READ)
 		si_rx_chan_blk(sio);
@@ -598,7 +611,7 @@ static int si_cs_process(struct conn_stream *cs)
 	/* Report EOI on the channel if it was reached from the mux point of
 	 * view. */
 	if ((cs->flags & CS_FL_EOI) && !(ic->flags & CF_EOI))
-		ic->flags |= CF_EOI;
+		ic->flags |= (CF_EOI|CF_READ_PARTIAL);
 
 	/* Second step : update the stream-int and channels, try to forward any
 	 * pending data, then possibly wake the stream up based on the new
@@ -639,19 +652,12 @@ int si_cs_send(struct conn_stream *cs)
 
 	if (oc->pipe && conn->xprt->snd_pipe && conn->mux->snd_pipe) {
 		ret = conn->mux->snd_pipe(cs, oc->pipe);
-		if (ret > 0) {
-			oc->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
+		if (ret > 0)
 			did_send = 1;
-		}
 
 		if (!oc->pipe->data) {
 			put_pipe(oc->pipe);
 			oc->pipe = NULL;
-		}
-
-		if (conn->flags & CO_FL_ERROR || cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING)) {
-			si->flags |= SI_FL_ERR;
-			return 1;
 		}
 
 		if (oc->pipe)
@@ -691,7 +697,6 @@ int si_cs_send(struct conn_stream *cs)
 		ret = cs->conn->mux->snd_buf(cs, &oc->buf, co_data(oc), send_flag);
 		if (ret > 0) {
 			did_send = 1;
-			oc->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
 
 			co_set_data(oc, co_data(oc) - ret);
 			c_realign_if_empty(oc);
@@ -700,19 +705,23 @@ int si_cs_send(struct conn_stream *cs)
 				/* Always clear both flags once everything has been sent, they're one-shot */
 				oc->flags &= ~(CF_EXPECT_MORE | CF_SEND_DONTWAIT);
 			}
-
 			/* if some data remain in the buffer, it's only because the
 			 * system buffers are full, we will try next time.
 			 */
 		}
-
-		if (conn->flags & CO_FL_ERROR || cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING)) {
-			si->flags |= SI_FL_ERR;
-			return 1;
-		}
 	}
 
  end:
+	if (did_send) {
+		oc->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
+		si_rx_room_rdy(si_opposite(si));
+	}
+
+	if (conn->flags & CO_FL_ERROR || cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING)) {
+		si->flags |= SI_FL_ERR;
+		return 1;
+	}
+
 	/* We couldn't send all of our data, let the mux know we'd like to send more */
 	if (!channel_is_empty(oc))
 		conn->mux->subscribe(cs, SUB_RETRY_SEND, &si->wait_event);
@@ -1440,7 +1449,12 @@ static void stream_int_read0(struct stream_interface *si)
 
 	si_done_get(si);
 
-	si->state = SI_ST_DIS;
+	/* Don't change the state to SI_ST_DIS yet if we're still
+	 * in SI_ST_CON, otherwise it means sess_establish() hasn't
+	 * been called yet, and so the analysers would not run.
+	 */
+	if (si->state == SI_ST_EST)
+		si->state = SI_ST_DIS;
 	si->exp = TICK_ETERNITY;
 	return;
 }

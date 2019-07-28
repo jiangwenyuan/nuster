@@ -229,6 +229,19 @@ static int h1_avail_streams(struct connection *conn)
 /*****************************************************************/
 /* functions below are dedicated to the mux setup and management */
 /*****************************************************************/
+
+/* returns non-zero if there are input data pending for stream h1s. */
+static inline size_t h1s_data_pending(const struct h1s *h1s)
+{
+	const struct h1m *h1m;
+
+	h1m = conn_is_back(h1s->h1c->conn) ? &h1s->res : &h1s->req;
+	if (h1m->state == H1_MSG_DONE)
+		return 0; // data not for this stream (e.g. pipelining)
+
+	return b_data(&h1s->h1c->ibuf);
+}
+
 static struct conn_stream *h1s_new_cs(struct h1s *h1s)
 {
 	struct conn_stream *cs;
@@ -309,10 +322,20 @@ static struct h1s *h1s_create(struct h1c *h1c, struct conn_stream *cs, struct se
 		/* For frontend connections we should always have a session */
 		sess = h1c->conn->owner;
 
-		h1s->csinfo.create_date = sess->accept_date;
-		h1s->csinfo.tv_create   = sess->tv_accept;
-		h1s->csinfo.t_handshake = sess->t_handshake;
-		h1s->csinfo.t_idle      = -1;
+		/* Timers for subsequent sessions on the same HTTP 1.x connection
+		 * measure from `now`, not from the connection accept time */
+		if (h1s->flags & H1S_F_NOT_FIRST) {
+			h1s->csinfo.create_date = date;
+			h1s->csinfo.tv_create   = now;
+			h1s->csinfo.t_handshake = 0;
+			h1s->csinfo.t_idle      = -1;
+		}
+		else {
+			h1s->csinfo.create_date = sess->accept_date;
+			h1s->csinfo.tv_create   = sess->tv_accept;
+			h1s->csinfo.t_handshake = sess->t_handshake;
+			h1s->csinfo.t_idle      = -1;
+		}
 
 		cs = h1s_new_cs(h1s);
 		if (!cs)
@@ -958,7 +981,10 @@ static void h1_handle_1xx_response(struct h1s *h1s, struct h1m *h1m)
 	    h1s->status < 200 && (h1s->status == 100 || h1s->status >= 102)) {
 		h1m_init_res(&h1s->res);
 		h1m->flags |= H1_MF_NO_PHDR;
-		h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+		if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+			h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+			tasklet_wakeup(h1s->h1c->wait_event.task);
+		}
 	}
 }
 
@@ -971,7 +997,7 @@ static void h1_handle_1xx_response(struct h1s *h1s, struct h1m *h1m)
 static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 				 struct buffer *buf, size_t *ofs, size_t max)
 {
-	struct http_hdr hdrs[MAX_HTTP_HDR];
+	struct http_hdr hdrs[global.tune.max_http_hdr];
 	union h1_sl h1sl;
 	unsigned int flags = HTX_SL_F_NONE;
 	int ret = 0;
@@ -989,7 +1015,7 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 		/* Incomplete or invalid message. If the buffer is full, it's an
 		 * error because headers are too large to be handled by the
 		 * parser. */
-		if (ret < 0 || (!ret && b_full(buf)))
+		if (ret < 0 || (!ret && !buf_room_for_htx_data(buf)))
 			goto error;
 		goto end;
 	}
@@ -1372,9 +1398,15 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 
 	do {
 		if (h1m->state <= H1_MSG_LAST_LF) {
+			/* Don't start to parse a new message if some part of
+			 * the previous one is still there
+			 */
+			if (!htx_is_empty(htx))
+				goto end;
 			ret = h1_process_headers(h1s, h1m, htx, &h1c->ibuf, &total, count);
 			if (!ret)
 				break;
+			h1_handle_1xx_response(h1s, h1m);
 		}
 		else if (h1m->state <= H1_MSG_TRAILERS) {
 			ret = h1_process_data(h1s, h1m, htx, &h1c->ibuf, &total, count, buf, rsv);
@@ -1418,10 +1450,10 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 
 	if (!b_data(&h1c->ibuf))
 		h1_release_buf(h1c, &h1c->ibuf);
-	else if (!htx_is_empty(htx))
+	else if (h1s_data_pending(h1s) && !htx_is_empty(htx))
 		h1s->cs->flags |= CS_FL_RCV_MORE | CS_FL_WANT_ROOM;
 
-	if ((h1s->cs->flags & CS_FL_REOS) && (!b_data(&h1c->ibuf) || htx_is_empty(htx))) {
+	if ((h1s->cs->flags & CS_FL_REOS) && (!h1s_data_pending(h1s) || htx_is_empty(htx))) {
 		h1s->cs->flags |= CS_FL_EOS;
 		if (h1m->state > H1_MSG_LAST_LF && h1m->state < H1_MSG_DONE)
 			h1s->cs->flags |= CS_FL_ERROR;
@@ -1433,7 +1465,7 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, int flags)
 	b_reset(&h1c->ibuf);
 	htx->flags |= HTX_FL_PARSING_ERROR;
 	htx_to_buf(htx, buf);
-	h1s->cs->flags |= CS_FL_EOS;
+	h1s->cs->flags |= CS_FL_EOI;
 	return 0;
 }
 
@@ -1448,7 +1480,7 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 	struct h1m *h1m;
 	struct htx *chn_htx;
 	struct htx_blk *blk;
-	struct buffer *tmp;
+	struct buffer tmp;
 	size_t total = 0;
 	int process_conn_mode = 1; /* If still 1 on EOH, process the connection mode */
 	int errflag;
@@ -1477,8 +1509,6 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 	/* the htx is non-empty thus has at least one block */
 	blk = htx_get_head_blk(chn_htx);
 
-	tmp = get_trash_chunk();
-
 	/* Perform some optimizations to reduce the number of buffer copies.
 	 * First, if the mux's buffer is empty and the htx area contains
 	 * exactly one data block of the same size as the requested count,
@@ -1496,14 +1526,13 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 	 * the HTX blocks.
 	 */
 	if (!b_data(&h1c->obuf)) {
-		h1c->obuf.head = sizeof(struct htx) + blk->addr;
-
 		if (chn_htx->used == 1 &&
 		    htx_get_blk_type(blk) == HTX_BLK_DATA &&
 		    htx_get_blk_value(chn_htx, blk).len == count) {
 			void *old_area = h1c->obuf.area;
 
 			h1c->obuf.area = buf->area;
+			h1c->obuf.head = sizeof(struct htx) + blk->addr;
 			h1c->obuf.data = count;
 
 			buf->area = old_area;
@@ -1521,11 +1550,13 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 			total += count;
 			goto out;
 		}
-		tmp->area = h1c->obuf.area + h1c->obuf.head;
+		tmp.area = h1c->obuf.area + h1c->obuf.head;
 	}
+	else
+		tmp.area = trash.area;
 
-	tmp->size = b_room(&h1c->obuf);
-
+	tmp.data = 0;
+	tmp.size = b_room(&h1c->obuf);
 	while (count && !(h1s->flags & errflag) && blk) {
 		struct htx_sl *sl;
 		struct ist n, v;
@@ -1550,7 +1581,7 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				sl = htx_get_blk_ptr(chn_htx, blk);
 				h1s->meth = sl->info.req.meth;
 				h1_parse_req_vsn(h1m, sl);
-				if (!htx_reqline_to_h1(sl, tmp))
+				if (!htx_reqline_to_h1(sl, &tmp))
 					goto copy;
 				h1m->flags |= H1_MF_XFER_LEN;
 				if (sl->flags & HTX_SL_F_BODYLESS)
@@ -1564,7 +1595,7 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				sl = htx_get_blk_ptr(chn_htx, blk);
 				h1s->status = sl->info.res.status;
 				h1_parse_res_vsn(h1m, sl);
-				if (!htx_stline_to_h1(sl, tmp))
+				if (!htx_stline_to_h1(sl, &tmp))
 					goto copy;
 				if (sl->flags & HTX_SL_F_XFER_LEN)
 					h1m->flags |= H1_MF_XFER_LEN;
@@ -1594,7 +1625,7 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 						goto skip_hdr;
 				}
 
-				if (!htx_hdr_to_h1(n, v, tmp))
+				if (!htx_hdr_to_h1(n, v, &tmp))
 					goto copy;
 			  skip_hdr:
 				h1m->state = H1_MSG_HDR_L2_LWS;
@@ -1610,12 +1641,12 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					/* There is no "Connection:" header and
 					 * it the conn_mode must be
 					 * processed. So do it */
-					n = ist("Connection");
+					n = ist("connection");
 					v = ist("");
 					h1_process_conn_mode(h1s, h1m, NULL, &v);
 					process_conn_mode = 0;
 					if (v.len) {
-						if (!htx_hdr_to_h1(n, v, tmp))
+						if (!htx_hdr_to_h1(n, v, &tmp))
 							goto copy;
 					}
 				}
@@ -1628,13 +1659,13 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				     (h1m->flags & (H1_MF_VER_11|H1_MF_RESP|H1_MF_CLEN|H1_MF_CHNK|H1_MF_XFER_LEN)) ==
 				     (H1_MF_VER_11|H1_MF_RESP|H1_MF_XFER_LEN))) {
 					/* chunking needed but header not seen */
-					if (!chunk_memcat(tmp, "transfer-encoding: chunked\r\n", 28))
+					if (!chunk_memcat(&tmp, "transfer-encoding: chunked\r\n", 28))
 						goto copy;
 					h1m->flags |= H1_MF_CHNK;
 				}
 
 				h1m->state = H1_MSG_LAST_LF;
-				if (!chunk_memcat(tmp, "\r\n", 2))
+				if (!chunk_memcat(&tmp, "\r\n", 2))
 					goto copy;
 
 				if (!(h1m->flags & H1_MF_RESP) && h1s->meth == HTTP_METH_CONNECT) {
@@ -1646,6 +1677,8 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					 * to the client . Switch the response to tunnel mode. */
 					h1_set_res_tunnel_mode(h1s);
 				}
+				else if ((h1m->flags & H1_MF_RESP) &&  h1s->meth == HTTP_METH_HEAD)
+					h1m->state = H1_MSG_DONE;
 				else
 					h1m->state = H1_MSG_DATA;
 				break;
@@ -1653,54 +1686,72 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 			case HTX_BLK_DATA:
 				v = htx_get_blk_value(chn_htx, blk);
 				v.len = vlen;
-				if (!htx_data_to_h1(v, tmp, !!(h1m->flags & H1_MF_CHNK)))
+				if (!htx_data_to_h1(v, &tmp, !!(h1m->flags & H1_MF_CHNK)))
 					goto copy;
 				break;
 
 			case HTX_BLK_EOD:
-				if (!chunk_memcat(tmp, "0\r\n", 3))
+				/* If the message is not chunked, ignore
+				 * trailers. It may happen with H2 messages. */
+				if (!(h1m->flags & H1_MF_CHNK))
+					break;
+
+				if (!chunk_memcat(&tmp, "0\r\n", 3))
 					goto copy;
 				h1s->flags |= H1S_F_HAVE_O_EOD;
 				h1m->state = H1_MSG_TRAILERS;
 				break;
 
 			case HTX_BLK_TLR:
+				/* If the message is not chunked, ignore
+				 * trailers. It may happen with H2 messages. */
+				if (!(h1m->flags & H1_MF_CHNK))
+					break;
+
 				if (!(h1s->flags & H1S_F_HAVE_O_EOD)) {
-					if (!chunk_memcat(tmp, "0\r\n", 3))
+					if (!chunk_memcat(&tmp, "0\r\n", 3))
 						goto copy;
 					h1s->flags |= H1S_F_HAVE_O_EOD;
 				}
 				v = htx_get_blk_value(chn_htx, blk);
 				v.len = vlen;
-				if (!htx_trailer_to_h1(v, tmp))
+				if (!htx_trailer_to_h1(v, &tmp))
 					goto copy;
 				h1s->flags |= H1S_F_HAVE_O_TLR;
 				break;
 
 			case HTX_BLK_EOM:
-				if ((h1m->flags & H1_MF_CHNK)) {
+				if ((h1m->flags & H1_MF_CHNK) && h1s->meth != HTTP_METH_HEAD) {
 					if (!(h1s->flags & H1S_F_HAVE_O_EOD)) {
-						if (!chunk_memcat(tmp, "0\r\n", 3))
+						if (!chunk_memcat(&tmp, "0\r\n", 3))
 							goto copy;
 						h1s->flags |= H1S_F_HAVE_O_EOD;
 					}
 					if (!(h1s->flags & H1S_F_HAVE_O_TLR)) {
-						if (!chunk_memcat(tmp, "\r\n", 2))
+						if (!chunk_memcat(&tmp, "\r\n", 2))
 							goto copy;
 						h1s->flags |= H1S_F_HAVE_O_TLR;
 					}
 				}
 				h1m->state = H1_MSG_DONE;
+				h1_handle_1xx_response(h1s, h1m);
+				if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+					h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+					tasklet_wakeup(h1s->h1c->wait_event.task);
+				}
 				break;
 
 			case HTX_BLK_OOB:
 				v = htx_get_blk_value(chn_htx, blk);
-				if (!chunk_memcat(tmp, v.ptr, v.len))
+				if (!chunk_memcat(&tmp, v.ptr, v.len))
 					goto copy;
 				break;
 
 			default:
-				h1m->flags |= errflag;
+				/* Unexpected error during output processing */
+				chn_htx->flags |= HTX_FL_PARSING_ERROR;
+				h1s->flags |= errflag;
+				h1c->flags |= H1C_F_CS_ERROR;
 				break;
 		}
 		total += vlen;
@@ -1713,17 +1764,14 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 		}
 	}
 
-	if (htx_is_empty(chn_htx))
-		h1_handle_1xx_response(h1s, h1m);
-
   copy:
 	/* when the output buffer is empty, tmp shares the same area so that we
 	 * only have to update pointers and lengths.
 	 */
-	if (tmp->area == h1c->obuf.area + h1c->obuf.head)
-		h1c->obuf.data = tmp->data;
+	if (tmp.area == h1c->obuf.area + h1c->obuf.head)
+		h1c->obuf.data = tmp.data;
 	else
-		b_putblk(&h1c->obuf, tmp->area, tmp->data);
+		b_putblk(&h1c->obuf, tmp.area, tmp.data);
 
 	htx_to_buf(chn_htx, buf);
  out:
@@ -1777,7 +1825,7 @@ static int h1_recv(struct h1c *h1c)
 	}
 
 	if (h1s && (h1s->flags & (H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA))) {
-		if (!b_data(&h1c->ibuf))
+		if (!h1s_data_pending(h1s))
 			h1_wake_stream_for_recv(h1s);
 		rcvd = 1;
 		goto end;
@@ -1823,8 +1871,11 @@ static int h1_recv(struct h1c *h1c)
 	if (ret > 0 || (conn->flags & CO_FL_ERROR) || conn_xprt_read0_pending(conn))
 		h1_wake_stream_for_recv(h1s);
 
-	if (conn_xprt_read0_pending(conn) && h1s && h1s->cs)
+	if (conn_xprt_read0_pending(conn) && h1s && h1s->cs) {
 		h1s->cs->flags |= CS_FL_REOS;
+		rcvd = 1;
+	}
+
 	if (!b_data(&h1c->ibuf))
 		h1_release_buf(h1c, &h1c->ibuf);
 	else if (!buf_room_for_htx_data(&h1c->ibuf))
@@ -1907,7 +1958,7 @@ static int h1_process(struct h1c * h1c)
 	}
 
 	if (!h1s) {
-		if (h1c->flags & H1C_F_CS_ERROR   ||
+		if (h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN) ||
 		    conn->flags & (CO_FL_ERROR | CO_FL_SOCK_WR_SH) ||
 		    conn_xprt_read0_pending(conn))
 			goto release;
@@ -1923,7 +1974,7 @@ static int h1_process(struct h1c * h1c)
 	if (b_data(&h1c->ibuf) && h1s->csinfo.t_idle == -1)
 		h1s->csinfo.t_idle = tv_ms_elapsed(&h1s->csinfo.tv_create, &now) - h1s->csinfo.t_handshake;
 
-	if (!b_data(&h1c->ibuf) && h1s && h1s->cs && h1s->cs->data_cb->wake &&
+	if (!h1s_data_pending(h1s) && h1s && h1s->cs && h1s->cs->data_cb->wake &&
 	    (conn_xprt_read0_pending(conn) || h1c->flags & H1C_F_CS_ERROR ||
 	    conn->flags & (CO_FL_ERROR | CO_FL_SOCK_WR_SH))) {
 		int flags = 0;
@@ -2098,6 +2149,18 @@ static void h1_detach(struct conn_stream *cs)
 
 	if (conn_is_back(h1c->conn) && has_keepalive &&
 	    !(h1c->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH))) {
+		/* If there are any excess server data in the input buffer,
+		 * release it and close the connection ASAP (some data may
+		 * remain in the output buffer). This happens if a server sends
+		 * invalid responses. So in such case, we don't want to reuse
+		 * the connection
+		 */
+		if (b_data(&h1c->ibuf)) {
+			h1_release_buf(h1c, &h1c->ibuf);
+			h1c->flags |= H1C_F_CS_SHUTW_NOW;
+			goto release;
+		}
+
 		/* Never ever allow to reuse a connection from a non-reuse backend */
 		if ((h1c->px->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
 			h1c->conn->flags |= CO_FL_PRIVATE;
@@ -2143,9 +2206,12 @@ static void h1_detach(struct conn_stream *cs)
 		}
 	}
 
-	/* We don't want to close right now unless the connection is in error */
+  release:
+	/* We don't want to close right now unless the connection is in error or shut down for writes */
 	if ((h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN)) ||
-	    (h1c->conn->flags & CO_FL_ERROR) || !h1c->conn->owner)
+	    (h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_WR_SH)) ||
+	    ((h1c->flags & H1C_F_CS_SHUTW_NOW) && !b_data(&h1c->obuf)) ||
+	    !h1c->conn->owner)
 		h1_release(h1c->conn);
 	else {
 		tasklet_wakeup(h1c->wait_event.task);
@@ -2317,7 +2383,7 @@ static size_t h1_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 	if (h1c->flags & H1C_F_CS_WAIT_CONN)
 		return 0;
 
-	while (total != count) {
+	while (count) {
 		size_t ret = 0;
 
 		if (!(h1c->flags & (H1C_F_OUT_FULL|H1C_F_OUT_ALLOC)))
@@ -2325,6 +2391,7 @@ static size_t h1_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		if (!ret)
 			break;
 		total += ret;
+		count -= ret;
 		if (!h1_send(h1c))
 			break;
 	}
@@ -2340,14 +2407,14 @@ static int h1_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned int c
 	struct h1m *h1m = (!conn_is_back(cs->conn) ? &h1s->req : &h1s->res);
 	int ret = 0;
 
-	if ((h1m->state != H1_MSG_DATA && h1m->state != H1_MSG_TUNNEL) ||
-	    (h1m->state == H1_MSG_DATA && !h1m->curr_len)) {
+	if (h1m->state != H1_MSG_DATA && h1m->state != H1_MSG_TUNNEL) {
 		h1s->flags &= ~(H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA);
-		cs->conn->xprt->subscribe(cs->conn, SUB_RETRY_RECV, &h1s->h1c->wait_event);
+		if (!(h1s->h1c->wait_event.events & SUB_RETRY_RECV))
+			cs->conn->xprt->subscribe(cs->conn, SUB_RETRY_RECV, &h1s->h1c->wait_event);
 		goto end;
 	}
 
-	if (b_data(&h1s->h1c->ibuf)) {
+	if (h1s_data_pending(h1s)) {
 		h1s->flags |= H1S_F_BUF_FLUSH;
 		goto end;
 	}
@@ -2357,7 +2424,7 @@ static int h1_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned int c
 	if (h1m->state == H1_MSG_DATA && count > h1m->curr_len)
 		count = h1m->curr_len;
 	ret = cs->conn->xprt->rcv_pipe(cs->conn, pipe, count);
-	if (h1m->state == H1_MSG_DATA && ret > 0) {
+	if (h1m->state == H1_MSG_DATA && ret >= 0) {
 		h1m->curr_len -= ret;
 		if (!h1m->curr_len)
 			h1s->flags &= ~(H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA);

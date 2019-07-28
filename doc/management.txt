@@ -1691,7 +1691,7 @@ set rate-limit ssl-sessions global <value>
 
 set server <backend>/<server> addr <ip4 or ip6 address> [port <port>]
   Replace the current IP address of a server by the one provided.
-  Optionnaly, the port can be changed using the 'port' parameter.
+  Optionally, the port can be changed using the 'port' parameter.
   Note that changing the port also support switching from/to port mapping
   (notation with +X or -Y), only if a port is configured for the health check.
 
@@ -1829,6 +1829,18 @@ user
   Decrease the CLI level of the current CLI session to user. It can't be
   increase. See also "show cli level"
 
+show activity
+  Reports some counters about internal events that will help developers and
+  more generally people who know haproxy well enough to narrow down the causes
+  of reports of abnormal behaviours. A typical example would be a properly
+  running process never sleeping and eating 100% of the CPU. The output fields
+  will be made of one line per metric, and per-thread counters on the same
+  line. These counters are 32-bit and will wrap during the process' life, which
+  is not a problem since calls to this command will typically be performed
+  twice. The fields are purposely not documented so that their exact meaning is
+  verified in the code where the counters are fed. These values are also reset
+  by the "clear counters" command.
+
 show cli sockets
   List CLI sockets. The output format is composed of 3 fields separated by
   spaces. The first field is the socket address, it can be a unix socket, a
@@ -1953,18 +1965,6 @@ show fd [<fd>]
   that the output format may evolve over time so this output must not be parsed
   by tools designed to be durable.
 
-show activity
-  Reports some counters about internal events that will help developers and
-  more generally people who know haproxy well enough to narrow down the causes
-  of reports of abnormal behaviours. A typical example would be a properly
-  running process never sleeping and eating 100% of the CPU. The output fields
-  will be made of one line per metric, and per-thread counters on the same
-  line. These counters are 32-bit and will wrap during the process' life, which
-  is not a problem since calls to this command will typically be performed
-  twice. The fields are purposely not documented so that their exact meaning is
-  verified in the code where the counters are fed. These values are also reset
-  by the "clear counters" command.
-
 show info [typed|json]
   Dump info about haproxy status on current process. If "typed" is passed as an
   optional argument, field numbers, names and types are emitted as well so that
@@ -2085,7 +2085,7 @@ show peers [<peers section>]
   <peers section> is specified, only the information about the peers belonging
   to this "peers" section are dumped.
 
-  Here are two examples of ouputs where hostA, hostB and hostC peers belong to
+  Here are two examples of outputs where hostA, hostB and hostC peers belong to
   "sharedlb" peers sections. Only hostA and hostB are connected. Only hostA has
   sent data to hostB.
 

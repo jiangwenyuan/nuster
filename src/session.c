@@ -59,6 +59,7 @@ struct session *session_new(struct proxy *fe, struct listener *li, enum obj_type
 		HA_ATOMIC_ADD(&jobs, 1);
 		LIST_INIT(&sess->srv_list);
 		sess->idle_conns = 0;
+		sess->flags = SESS_FL_NONE;
 	}
 	return sess;
 }
@@ -298,12 +299,10 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	conn_free(cli_conn);
  out_close:
 	listener_release(l);
-	if (ret < 0 && l->bind_conf->xprt == xprt_get(XPRT_RAW) && p->mode == PR_MODE_HTTP) {
+	if (ret < 0 && l->bind_conf->xprt == xprt_get(XPRT_RAW) &&
+	    p->mode == PR_MODE_HTTP && l->bind_conf->mux_proto == NULL) {
 		/* critical error, no more memory, try to emit a 500 response */
-		struct buffer *err_msg = &p->errmsg[HTTP_ERR_500];
-		if (!err_msg->area)
-			err_msg = &http_err_chunks[HTTP_ERR_500];
-		send(cfd, err_msg->area, err_msg->data,
+		send(cfd, http_err_msgs[HTTP_ERR_500], strlen(http_err_msgs[HTTP_ERR_500]),
 		     MSG_DONTWAIT|MSG_NOSIGNAL);
 	}
 

@@ -986,6 +986,7 @@ static struct h2s *h2c_frt_stream_new(struct h2c *h2c, int id)
  out_free_cs:
 	h2c->nb_cs--;
 	cs_free(cs);
+	h2s->cs = NULL;
  out_close:
 	h2s_destroy(h2s);
  out:
@@ -2099,7 +2100,7 @@ static int h2c_frt_handle_data(struct h2c *h2c, struct h2s *h2s)
 		goto strm_err;
 	}
 
-	if ((h2s->flags & H2_SF_DATA_CLEN) && h2c->dfl > h2s->body_len) {
+	if ((h2s->flags & H2_SF_DATA_CLEN) && (h2c->dfl - h2c->dpl) > h2s->body_len) {
 		/* RFC7540#8.1.2 */
 		error = H2_ERR_PROTOCOL_ERROR;
 		goto strm_err;
@@ -2242,6 +2243,7 @@ static void h2_process_demux(struct h2c *h2c)
 				break;
 			}
 
+			padlen = 0;
 			if (h2_ft_bit(hdr.ft) & H2_FT_PADDED_MASK && hdr.ff & H2_F_PADDED) {
 				/* If the frame is padded (HEADERS, PUSH_PROMISE or DATA),
 				 * we read the pad length and drop it from the remaining
@@ -2895,12 +2897,8 @@ static int h2_process(struct h2c *h2c)
 		h2_release_buf(h2c, &h2c->mbuf);
 
 	if (h2c->task) {
-		if (eb_is_empty(&h2c->streams_by_id) || b_data(&h2c->mbuf)) {
-			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
-			task_queue(h2c->task);
-		}
-		else
-			h2c->task->expire = TICK_ETERNITY;
+		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		task_queue(h2c->task);
 	}
 
 	h2_send(h2c);
@@ -3137,12 +3135,8 @@ static void h2_detach(struct conn_stream *cs)
 		h2_release(h2c->conn);
 	}
 	else if (h2c->task) {
-		if (eb_is_empty(&h2c->streams_by_id) || b_data(&h2c->mbuf)) {
-			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
-			task_queue(h2c->task);
-		}
-		else
-			h2c->task->expire = TICK_ETERNITY;
+		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		task_queue(h2c->task);
 	}
 }
 
@@ -3365,7 +3359,7 @@ static int h2c_decode_headers(struct h2c *h2c, struct buffer *rxbuf, uint32_t *f
 {
 	const uint8_t *hdrs = (uint8_t *)b_head(&h2c->dbuf);
 	struct buffer *tmp = get_trash_chunk();
-	struct http_hdr list[MAX_HTTP_HDR * 2];
+	struct http_hdr list[global.tune.max_http_hdr * 2];
 	struct buffer *copy = NULL;
 	unsigned int msgf;
 	struct htx *htx = NULL;
@@ -3835,7 +3829,7 @@ try_again:
  */
 static size_t h2s_frt_make_resp_headers(struct h2s *h2s, const struct buffer *buf, size_t ofs, size_t max)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct h1m *h1m = &h2s->h1m;
 	struct buffer outbuf;
@@ -4278,7 +4272,7 @@ static size_t h2s_frt_make_resp_data(struct h2s *h2s, const struct buffer *buf, 
  */
 static size_t h2s_htx_frt_make_resp_headers(struct h2s *h2s, struct htx *htx)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct htx_blk *blk;
 	struct htx_blk *blk_end;
@@ -4454,8 +4448,10 @@ static size_t h2s_htx_frt_make_resp_headers(struct h2s *h2s, struct htx *htx)
 		blk = htx_remove_blk(htx, blk);
 	}
 
-	if (blk_end && htx_get_blk_type(blk_end) == HTX_BLK_EOM)
+	if (blk_end && htx_get_blk_type(blk_end) == HTX_BLK_EOM) {
+		ret += htx_get_blksz(blk_end);
 		htx_remove_blk(htx, blk_end);
+	}
  end:
 	return ret;
  full:
@@ -4483,7 +4479,7 @@ static size_t h2s_htx_frt_make_resp_headers(struct h2s *h2s, struct htx *htx)
  */
 static size_t h2s_htx_bck_make_req_headers(struct h2s *h2s, struct htx *htx)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct htx_blk *blk;
 	struct htx_blk *blk_end;
@@ -4697,8 +4693,10 @@ static size_t h2s_htx_bck_make_req_headers(struct h2s *h2s, struct htx *htx)
 		blk = htx_remove_blk(htx, blk);
 	}
 
-	if (blk_end && htx_get_blk_type(blk_end) == HTX_BLK_EOM)
+	if (blk_end && htx_get_blk_type(blk_end) == HTX_BLK_EOM) {
+		ret += htx_get_blksz(blk_end);
 		htx_remove_blk(htx, blk_end);
+	}
 
  end:
 	return ret;
@@ -4994,7 +4992,7 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
  */
 static size_t h2s_htx_make_trailers(struct h2s *h2s, struct htx *htx)
 {
-	struct http_hdr list[MAX_HTTP_HDR];
+	struct http_hdr list[global.tune.max_http_hdr];
 	struct h2c *h2c = h2s->h2c;
 	struct htx_blk *blk;
 	struct htx_blk *blk_end;
