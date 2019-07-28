@@ -256,7 +256,10 @@ comp_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg,
 					if (htx_compression_buffer_end(st, &trash, 1) < 0)
 						goto error;
 					if (b_data(&trash)) {
-						blk = htx_add_data_before(htx, blk, ist2(b_head(&trash), b_data(&trash)));
+						struct htx_blk *last = htx_add_last_data(htx, ist2(b_head(&trash), b_data(&trash)));
+						if (!last)
+							goto error;
+						blk = htx_get_next_blk(htx, last);
 						if (!blk)
 							goto error;
 						to_forward += b_data(&trash);
@@ -521,6 +524,9 @@ http_set_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg *m
 		}
 	}
 
+	if (http_header_add_tail2(msg, &txn->hdr_idx, "Vary: Accept-Encoding", 21) < 0)
+		goto error;
+
 	return 1;
 
   error:
@@ -574,6 +580,9 @@ htx_set_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg *ms
 				goto error;
 		}
 	}
+
+	if (!http_add_header(htx, ist("Vary"), ist("Accept-Encoding")))
+		goto error;
 
 	return 1;
 

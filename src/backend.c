@@ -633,14 +633,14 @@ int assign_server(struct stream *s)
 	s->target = NULL;
 
 	if ((s->be->lbprm.algo & BE_LB_KIND) != BE_LB_KIND_HI &&
-	    ((s->txn && s->txn->flags & TX_PREFER_LAST) ||
+	    ((s->sess->flags & SESS_FL_PREFER_LAST) ||
 	     (s->be->options & PR_O_PREF_LAST))) {
 		struct sess_srv_list *srv_list;
 		list_for_each_entry(srv_list, &s->sess->srv_list, srv_list) {
 			struct server *tmpsrv = objt_server(srv_list->target);
 
 			if (tmpsrv && tmpsrv->proxy == s->be &&
-			    ((s->txn && s->txn->flags & TX_PREFER_LAST) ||
+			    ((s->sess->flags & SESS_FL_PREFER_LAST) ||
 			     (!s->be->max_ka_queue ||
 			      server_has_room(tmpsrv) || (
 			      tmpsrv->nbpend + 1 < s->be->max_ka_queue))) &&
@@ -1221,6 +1221,7 @@ int connect_server(struct stream *s)
 			old_conn = srv_conn;
 		} else {
 			srv_conn = NULL;
+			srv_cs = NULL;
 			si_release_endpoint(&s->si[1]);
 		}
 	}
@@ -1443,7 +1444,7 @@ int connect_server(struct stream *s)
 #if defined(USE_OPENSSL) && defined(TLSEXT_TYPE_application_layer_protocol_negotiation)
 		if (!srv ||
 		    ((!(srv->ssl_ctx.alpn_str) && !(srv->ssl_ctx.npn_str)) ||
-		    srv->mux_proto))
+		    srv->mux_proto || s->be->mode != PR_MODE_HTTP))
 #endif
 		{
 			srv_cs = objt_cs(s->si[1].end);
@@ -1510,6 +1511,9 @@ int connect_server(struct stream *s)
 	}
 
 	err = si_connect(&s->si[1], srv_conn);
+	if (err != SF_ERR_NONE)
+		return err;
+
 	/* We have to defer the mux initialization until after si_connect()
 	 * has been called, as we need the xprt to have been properly
 	 * initialized, or any attempt to recv during the mux init may
@@ -1533,16 +1537,13 @@ int connect_server(struct stream *s)
 #if USE_OPENSSL && (defined(OPENSSL_IS_BORINGSSL) || \
     ((OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)))
 
-	if (!reuse && cli_conn && srv &&
+	if (!reuse && cli_conn && srv && srv_conn->mux &&
 	    (srv->ssl_ctx.options & SRV_SSL_O_EARLY_DATA) &&
 		    (cli_conn->flags & CO_FL_EARLY_DATA) &&
 		    !channel_is_empty(si_oc(&s->si[1])) &&
 		    srv_conn->flags & CO_FL_SSL_WAIT_HS)
 		srv_conn->flags &= ~(CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN);
 #endif
-
-	if (err != SF_ERR_NONE)
-		return err;
 
 	/* set connect timeout */
 	s->si[1].exp = tick_add_ifset(now_ms, s->be->timeout.connect);

@@ -719,10 +719,11 @@ static struct task *event_srv_chk_io(struct task *t, void *ctx, unsigned short s
 	struct check *check = ctx;
 	struct conn_stream *cs = check->cs;
 	struct email_alertq *q = container_of(check, typeof(*q), check);
+	int ret = 0;
 
 	if (!(check->wait_list.events & SUB_RETRY_SEND))
-		wake_srv_chk(cs);
-	if (!(check->wait_list.events & SUB_RETRY_RECV)) {
+		ret = wake_srv_chk(cs);
+	if (ret == 0 && !(check->wait_list.events & SUB_RETRY_RECV)) {
 		if (check->server)
 			HA_SPIN_LOCK(SERVER_LOCK, &check->server->lock);
 		else
@@ -1385,6 +1386,11 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 	 * range quickly.  To avoid sending RSTs all the time, we first try to
 	 * drain pending data.
 	 */
+	/* Call cs_shutr() first, to add the CO_FL_SOCK_RD_SH flag on the
+	 * connection, to make sure cs_shutw() will not lead to a shutdown()
+	 * that would provoke TIME_WAITs.
+	 */
+	cs_shutr(cs, CS_SHR_DRAIN);
 	cs_shutw(cs, CS_SHW_NORMAL);
 
 	/* OK, let's not stay here forever */
@@ -1451,6 +1457,11 @@ static int wake_srv_chk(struct conn_stream *cs)
 		conn_sock_drain(conn);
 		cs_close(cs);
 		ret = -1;
+		/* We may have been scheduled to run, and the
+		 * I/O handler expects to have a cs, so remove
+		 * the tasklet
+		 */
+		task_remove_from_tasklet_list((struct task *)check->wait_list.task);
 		task_wakeup(check->task, TASK_WOKEN_IO);
 	}
 
@@ -2647,7 +2658,7 @@ static char * tcpcheck_get_step_comment(struct check *check, int stepid)
  * connection, presenting the risk of an fd replacement.
  *
  * Please do NOT place any return statement in this function and only leave
- * via the out_unlock label after setting retcode.
+ * via the out_end_tcpcheck label after setting retcode.
  */
 static int tcpcheck_main(struct check *check)
 {
@@ -2843,6 +2854,13 @@ static int tcpcheck_main(struct check *check)
 				return SF_ERR_RESOURCE;
 			cs_attach(cs, check, &check_conn_cb);
 
+			if (conn_install_mux(conn, &mux_pt_ops, cs, proxy, NULL) < 0) {
+				ret = SF_ERR_RESOURCE;
+				goto fail_check;
+			}
+
+			cs_attach(cs, check, &check_conn_cb);
+
 			ret = SF_ERR_INTERNAL;
 			if (proto && proto->connect)
 				ret = proto->connect(conn,
@@ -2864,6 +2882,7 @@ static int tcpcheck_main(struct check *check)
 			 * Note that we try to prevent the network stack from sending the ACK during the
 			 * connect() when a pure TCP check is used (without PROXY protocol).
 			 */
+		fail_check:
 			switch (ret) {
 			case SF_ERR_NONE:
 				/* we allow up to min(inter, timeout.connect) for a connection
@@ -2912,6 +2931,10 @@ static int tcpcheck_main(struct check *check)
 			if (&check->current_step->list == head)
 				break;
 
+			/* don't do anything until the connection is established */
+			if (!(conn->flags & CO_FL_CONNECTED))
+				break;
+
 		} /* end 'connect' */
 		else if (check->current_step->action == TCPCHK_ACT_SEND) {
 			/* mark the step as started */
@@ -2958,6 +2981,11 @@ static int tcpcheck_main(struct check *check)
 			if (unlikely(check->result == CHK_RES_FAILED))
 				goto out_end_tcpcheck;
 
+			/* If we already subscribed, then we tried to received
+			 * and failed, so there's no point trying again.
+			 */
+			if (check->wait_list.events & SUB_RETRY_RECV)
+				break;
 			if (cs->conn->mux->rcv_buf(cs, &check->bi, b_size(&check->bi), 0) <= 0) {
 				if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH) || cs->flags & CS_FL_ERROR) {
 					done = 1;
@@ -3136,7 +3164,7 @@ static int tcpcheck_main(struct check *check)
 
  out_end_tcpcheck:
 	/* collect possible new errors */
-	if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
+	if ((conn && conn->flags & CO_FL_ERROR) || (cs && cs->flags & CS_FL_ERROR))
 		chk_report_conn_err(check, 0, 0);
 
 	/* cleanup before leaving */

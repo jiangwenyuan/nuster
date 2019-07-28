@@ -6,7 +6,7 @@ HAProxy \- fast and reliable http reverse proxy and load balancer
 
 .SH SYNOPSIS
 
-haproxy \-f <configuration\ file|dir> [\-L\ <name>] [\-n\ maxconn] [\-N\ maxconn] [\-C\ <dir>] [\-v|\-vv] [\-d] [\-D] [\-q] [\-V] [\-c] [\-p\ <pidfile>] [\-dk] [\-ds] [\-de] [\-dp] [\-db] [\-dM[<byte>]] [\-m\ <megs>] [\-x <unix_socket>] [{\-sf|\-st}\ pidlist...]
+haproxy \-f <configuration\ file|dir> [\-L\ <name>] [\-n\ maxconn] [\-N\ maxconn] [\-C\ <dir>] [\-v|\-vv] [\-d] [\-D] [\-W] [\-Ws] [\-q] [\-V] [\-c] [\-p\ <pidfile>] [\-dk] [\-ds] [\-de] [\-dp] [\-db] [\-dM[<byte>]] [\-m\ <megs>] [\-x <unix_socket>] [{\-sf|\-st}\ pidlist...]
 
 .SH DESCRIPTION
 
@@ -43,7 +43,8 @@ LC_COLLATE=C) ; only non hidden files with ".cfg" extension are added.
 Set the local instance's peer name. Peers are defined in the \fBpeers\fP
 configuration section and used for syncing stick tables between different
 instances. If this option is not specified, the local hostname is used as peer
-name.
+name. This name is exported in the $HAPROXY_LOCALPEER environment variable and
+can be used in the configuration file.
 
 .TP
 \fB\-n <maxconn>\fP
@@ -78,8 +79,14 @@ starting up.
 Start in daemon mode.
 
 .TP
-\fB\-Ds\fP
-Start in systemd daemon mode, keeping a process in foreground.
+\fB\-W\fP
+Start in master-worker mode. Could be used either with foreground or daemon
+mode.
+
+.TP
+\fB\-Ws\fP
+Start in master-worker mode with systemd notify support. It tells systemd when
+the process is ready. This mode forces foreground.
 
 .TP
 \fB\-q\fP
@@ -161,6 +168,12 @@ Attempt to connect to the unix socket, and retrieve all the listening sockets
 from the old process. Those sockets will then be used if possible instead of
 binding new ones.
 
+.TP
+\fB\-S <bind>[,<bind options>...]\fP
+In master-worker mode, create a master CLI. This CLI will enable access to the
+CLI of every worker. Useful for debugging, it's a convenient way of accessing a
+leaving process.
+
 .SH LOGGING
 Since HAProxy can run inside a chroot, it cannot reliably access /dev/log.
 For this reason, it uses the UDP protocol to send its logs to the server,
@@ -175,6 +188,9 @@ Some signals have a special meaning for the haproxy daemon. Generally, they are 
 .TP
 \- \fBSIGUSR1\fP
 Tells the daemon to stop all proxies and exit once all sessions are closed. It is often referred to as the "soft-stop" signal.
+.TP
+\- \fBSIGUSR2\fP
+In master-worker mode, reloads the configuration and sends a soft-stop signal to old processes.
 .TP
 \- \fBSIGTTOU\fP
 Tells the daemon to stop listening to all sockets. Used internally by \fB\-sf\fP and \fB\-st\fP.

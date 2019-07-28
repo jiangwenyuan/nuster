@@ -75,8 +75,6 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
-#include <nuster/nuster.h>
-
 /* This function handles a server error at the stream interface level. The
  * stream interface is assumed to be already in a closed state. An optional
  * message is copied into the input buffer.
@@ -2868,6 +2866,7 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 			if (http_parse_reqline(&txn->req, HTTP_MSG_RQMETH,  cur_ptr, cur_end + 1, NULL, NULL) == NULL)
 				goto return_bad_req;
 		}
+		conn->target = &s->be->obj_type;
 	}
 
 	/*
@@ -3546,7 +3545,7 @@ void http_end_txn_clean_session(struct stream *s)
 		 * it's better to do it (at least it helps with debugging), at
 		 * least for non-deterministic load balancing algorithms.
 		 */
-		s->txn->flags |= TX_PREFER_LAST;
+		s->sess->flags |= SESS_FL_PREFER_LAST;
 	}
 
 	/* Never ever allow to reuse a connection from a non-reuse backend */

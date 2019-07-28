@@ -38,6 +38,7 @@
 #include <types/stream.h>
 #include <types/stream_interface.h>
 
+#include <proto/stream.h>
 #include <proto/task.h>
 
 /* perform minimal intializations, report 0 in case of error, 1 if OK. */
@@ -382,20 +383,21 @@ static inline void channel_add_input(struct channel *chn, unsigned int len)
 
 static inline unsigned long long channel_htx_forward(struct channel *chn, struct htx *htx, unsigned long long bytes)
 {
-	unsigned long long ret;
+	unsigned long long ret = 0;
 
-	b_set_data(&chn->buf, htx->data);
-	ret = channel_forward(chn, bytes);
-	b_set_data(&chn->buf, b_size(&chn->buf));
+	if (htx->data) {
+		b_set_data(&chn->buf, htx->data);
+		ret = channel_forward(chn, bytes);
+		b_set_data(&chn->buf, b_size(&chn->buf));
+	}
 	return ret;
 }
 
 
 static inline void channel_htx_forward_forever(struct channel *chn, struct htx *htx)
 {
-	b_set_data(&chn->buf, htx->data);
-	channel_forward_forever(chn);
-	b_set_data(&chn->buf, b_size(&chn->buf));
+	c_adv(chn, htx->data - co_data(chn));
+	chn->to_forward = CHN_INFINITE_FORWARD;
 }
 /*********************************************************************/
 /* These functions are used to compute various channel content sizes */
@@ -747,6 +749,19 @@ static inline int channel_htx_recv_limit(const struct channel *chn, const struct
 	return (htx_max_data_space(htx) - reserve);
 }
 
+/* HTX version of channel_full(). Instead of checking if INPUT data exceeds
+ * (size - reserve), this function checks if the free space for data in <htx>
+ * and the data scheduled for output are lower to the reserve. In such case, the
+ * channel is considered as full.
+ */
+static inline int channel_htx_full(const struct channel *c, const struct htx *htx,
+				   unsigned int reserve)
+{
+	if (!htx->size)
+		return 0;
+	return (htx_free_data_space(htx) + co_data(c) <= reserve);
+}
+
 /* Returns non-zero if the channel's INPUT buffer's is considered full, which
  * means that it holds at least as much INPUT data as (size - reserve). This
  * also means that data that are scheduled for output are considered as potential
@@ -761,20 +776,10 @@ static inline int channel_full(const struct channel *c, unsigned int reserve)
 	if (b_is_null(&c->buf))
 		return 0;
 
-	return (ci_data(c) + reserve >= c_size(c));
-}
+	if (strm_fe((chn_strm(c)))->options2 & PR_O2_USE_HTX)
+		return channel_htx_full(c, htxbuf(&c->buf), reserve);
 
-/* HTX version of channel_full(). Instead of checking if INPUT data exceeds
- * (size - reserve), this function checks if the free space for data in <htx>
- * and the data scheduled for output are lower to the reserve. In such case, the
- * channel is considered as full.
- */
-static inline int channel_htx_full(const struct channel *c, const struct htx *htx,
-				   unsigned int reserve)
-{
-	if (!htx->size)
-		return 0;
-	return (htx_free_data_space(htx) + co_data(c) <= reserve);
+	return (ci_data(c) + reserve >= c_size(c));
 }
 
 
@@ -921,6 +926,7 @@ static inline void co_skip(struct channel *chn, int len)
 
 	/* notify that some data was written to the SI from the buffer */
 	chn->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
+	chn_prod(chn)->flags &= ~SI_FL_RXBLK_ROOM; // si_rx_room_rdy()
 }
 
 /* HTX version of co_skip(). This function skips at most <len> bytes from the
@@ -938,6 +944,7 @@ static inline void co_htx_skip(struct channel *chn, struct htx *htx, int len)
 
 		/* notify that some data was written to the SI from the buffer */
 		chn->flags |= CF_WRITE_PARTIAL | CF_WROTE_DATA;
+		chn_prod(chn)->flags &= ~SI_FL_RXBLK_ROOM; // si_rx_room_rdy()
 	}
 }
 

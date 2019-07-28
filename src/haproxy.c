@@ -129,8 +129,6 @@
 #include <openssl/rand.h>
 #endif
 
-#include <nuster/nuster.h>
-
 /* array of init calls for older platforms */
 DECLARE_INIT_STAGES;
 
@@ -179,32 +177,6 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
-	.nuster = {
-		.cache = {
-			.status       = NST_STATUS_UNDEFINED,
-			.data_size    = NST_DEFAULT_DATA_SIZE,
-			.dict_size    = NST_DEFAULT_DICT_SIZE,
-			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
-			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
-			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
-			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-			.share        = NST_STATUS_ON,
-			.purge_method = NULL,
-			.root	      = NULL,
-		},
-		.nosql = {
-			.status       = NST_STATUS_UNDEFINED,
-			.data_size    = NST_DEFAULT_DATA_SIZE,
-			.dict_size    = NST_DEFAULT_DICT_SIZE,
-			.root         = NULL,
-			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
-			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
-			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
-			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-		},
-	},
 	/* others NULL OK */
 };
 
@@ -408,8 +380,6 @@ void hap_register_per_thread_deinit(void (*fct)())
 
 static void display_version()
 {
-	printf("nuster version %s\n", NUSTER_VERSION);
-	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE" - https://haproxy.org/\n");
 }
 
@@ -500,7 +470,7 @@ static void usage(char *name)
 		"        -dV disables SSL verify on servers side\n"
 		"        -sf/-st [pid ]* finishes/terminates old pids.\n"
 		"        -x <unix_socket> get listening sockets from a unix socket\n"
-		"        -S <unix_socket>[,<bind options>...] new stats socket for the master\n"
+		"        -S <bind>[,<bind options>...] new master CLI\n"
 		"\n",
 		name, DEFAULT_MAXCONN, cfg_maxpconn);
 	exit(1);
@@ -770,11 +740,14 @@ void mworker_reload()
 
 	/* close the listeners FD */
 	mworker_cli_proxy_stop();
-	/* close the poller FD and the thread waker pipe FD */
-	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
-		ptdf->fct();
-	if (fdtab)
-		deinit_pollers();
+
+	if (getenv("HAPROXY_MWORKER_WAIT_ONLY") == NULL) {
+		/* close the poller FD and the thread waker pipe FD */
+		list_for_each_entry(ptdf, &per_thread_deinit_list, list)
+			ptdf->fct();
+		if (fdtab)
+			deinit_pollers();
+	}
 #if defined(USE_OPENSSL) && (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)
 	if (global.ssl_used_frontend || global.ssl_used_backend)
 		/* close random device FDs */
@@ -2237,8 +2210,6 @@ static void init(int argc, char **argv)
 	if (!hlua_post_init())
 		exit(1);
 
-	nuster_init();
-
 	free(err_msg);
 }
 
@@ -2710,6 +2681,10 @@ static void run_poll_loop()
 		if ((jobs - unstoppable_jobs) == 0)
 			break;
 
+		/* also stop  if we failed to cleanly stop all tasks */
+		if (killed > 1)
+			break;
+
 		/* expire immediately if events are pending */
 		exp = now_ms;
 		if (fd_cache_mask & tid_bit)
@@ -2733,8 +2708,6 @@ static void run_poll_loop()
 		if (sleeping_thread_mask & tid_bit)
 			HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 		fd_process_cached_events();
-
-		nuster_housekeeping();
 
 		activity[tid].loops++;
 	}
