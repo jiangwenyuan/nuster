@@ -23,6 +23,7 @@
   * [Set](#set)
   * [Get](#get)
   * [Delete](#delete)
+* [パーシステンス](#パーシステンス)
 * [FAQ](#faq)
 
 # 紹介
@@ -114,6 +115,7 @@ make install PREFIX=/usr/local/nuster
 global
     nuster cache on data-size 100m uri /_nuster
     nuster nosql on data-size 200m
+    master-worker # v3から
 defaults
     mode http
 frontend fe
@@ -240,9 +242,9 @@ backend be
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [purge-method method] [uri uri]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method] [uri uri]
 
-nuster nosql on|off [data-size size] [dict-size size]
+nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
 **default:** *none*
 
@@ -272,6 +274,32 @@ hash tableのサイズを決める.
 でもkeyの数がdict-size(buckets数)を超えると、性能が落ちる可能性がある。`dict-size`は大体の最大key数かける８であれば十分。
 
 > 将来のバージョンはdict-sizeを削除するかもしれない, 初版のような自動リサイズを戻す。
+
+### dir
+
+パーシステンスのrootディレクトリを設定する、パーシステンス使うには必要。
+
+### dict-cleaner
+
+一回で`dict-cleaner`個のentries をチェックして, 無効なentriesは削除する(デフォルト、100).
+
+### data-cleaner
+
+一回で`data-cleaner`個のdataをチェックして, 無効なdataは削除する(デフォルト、100).
+
+### disk-cleaner
+
+一回で`disk-cleaner`個のfileをチェックして, 無効なfileは削除する(デフォルト、100).
+
+### disk-loader
+
+起動後、`disk-loader`個のfileをチェックして、情報をロードする(デフォルト、100).
+
+### disk-saver
+
+一回で`disk-saver`個のdataをチェックして、ディスクに保存する必要あるデータを保存する(デフォルト、100).
+
+詳細は[nuster rule disk mode](#disk-mode)
 
 ### purge-method [cache only]
 
@@ -303,7 +331,7 @@ cache/nosqlの有効無効を決める。
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [if|unless condition]
 
 **default:** *none*
 
@@ -405,6 +433,15 @@ cache-rule only200
 cache-rule 200and404 code 200,404
 cache-rule all code all
 ```
+
+### disk MODE
+
+パーシステンスのモードを設定する
+
+* off:   デフォルト、メモリのみに保存する
+* only:  メモリに保存せず、ディスクだけに保存する
+* sync:  メモリとディスクに保存してからクライアントに返す
+* async: メモリに保存してクライアントに返す、後ほどmaster processによってディスクに保存される
 
 ### if|unless condition
 
@@ -789,11 +826,37 @@ userA data
 
 あらゆるHTTPできるツールやライブラリ: `curl`, `postman`, python `requests`, go `net/http`, etc.
 
+# パーシステンス
+
+```
+global
+    master-worker
+    nuster cache on data-size 10m dir /tmp/cache
+    nuster nosql on data-size 10m dir /tmp/nosql
+backend be
+    nuster cache on
+    nuster rule off   disk off   ttl 1m if { path_beg /disk-off }
+    nuster rule only  disk only  ttl 1d if { path_beg /disk-only }
+    nuster rule sync  disk sync  ttl 1h if { path_beg /disk-sync }
+    nuster rule async disk async ttl 2h if { path_beg /disk-async }
+    nuster rule others ttl 100
+```
+
+1. `/disk-off` はメモリのみに保存される
+2. `/disk-only` はディスクのみに保存される
+3. `/disk-sync` はメモリとディスクに保存してからクライアントに返す
+4. `/disk-async` はメモリに保存してクライアントに返す。後ほどmaster processによってディスクに保存される
+5. ほかはメモリに保存される
+
 # FAQ
+
+## 起動できない: not in master-worker mode
+
+`global`に`master-worker`を設定するか, `-W`で起動する
 
 ## debug方法?
 
-`global`に`debug`を設定か, `haproxy`を`-d`で起動する。
+`global`に`debug`を設定か, `nuster`を`-d`で起動する。
 
 キャッシュに関するメッセージは`[CACHE]`を含む。
 

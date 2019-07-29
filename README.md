@@ -2,7 +2,7 @@
 
 [Wiki](https://github.com/jiangwenyuan/nuster/wiki) | [English](README.md) | [中文](README-CN.md) | [日本語](README-JP.md)
 
-A high performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
+A high-performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
 
 # Table of Contents
 
@@ -21,12 +21,13 @@ A high performance HTTP proxy cache server and RESTful NoSQL cache server based 
   * [Set](#set)
   * [Get](#get)
   * [Delete](#delete)
+* [Disk persistence](#disk-persistence)
 * [FAQ](#faq)
 
 # Introduction
 
-nuster is a high performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
-It is 100% compatible with HAProxy, and takes full advantage of the ACL functionality of HAProxy to provide fine-grained caching policy based on the content of request, response or server status.
+nuster is a high-performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
+It is 100% compatible with HAProxy and takes full advantage of the ACL functionality of HAProxy to provide fine-grained caching policy based on the content of request, response or server status.
 
 ## Features
 
@@ -67,8 +68,8 @@ nuster can also be used as an HTTP proxy cache server like Varnish or Nginx to c
 
 nuster can also be used as a RESTful NoSQL cache server, using HTTP `POST/GET/DELETE` to set/get/delete Key/Value object.
 
-It can be used as an internal NoSQL cache sits between your application and database like Memcached or Redis as well as a user facing NoSQL cache that sits between end user and your application.
-It supports headers, cookies, so you can store per-user data to same endpoint.
+It can be used as an internal NoSQL cache sits between your application and database like Memcached or Redis as well as a user-facing NoSQL cache that sits between end-user and your application.
+It supports headers, cookies, so you can store per-user data to the same endpoint.
 
 * All features from HAProxy(HTTPS, HTTP/2, ACL, etc)
 * Conditional cache
@@ -102,7 +103,7 @@ make install PREFIX=/usr/local/nuster
 
 See [HAProxy README](README) for details.
 
-## Create config file
+## Create a config file
 
 A minimal config file: `nuster.cfg`
 
@@ -110,6 +111,7 @@ A minimal config file: `nuster.cfg`
 global
     nuster cache on data-size 100m uri /_nuster
     nuster nosql on data-size 200m
+    master-worker # since v3
 defaults
     mode http
 frontend fe
@@ -149,7 +151,7 @@ nuster is based on HAProxy, all directives from HAProxy are supported in nuster.
 
 ## Basic
 
-There are four basic `section`s: `global`, `defaults`, `frontend` and `backend` as you can find out in above config file.
+There are four basic `section`s: `global`, `defaults`, `frontend` and `backend` as you can find out in the above config file.
 
 * global
   * defines process-wide and often OS-specific parameters
@@ -235,9 +237,9 @@ backend be
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [purge-method method] [uri uri]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method] [uri uri]
 
-nuster nosql on|off [data-size size] [dict-size size]
+nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
 **default:** *none*
 
@@ -247,34 +249,70 @@ Determines whether to use cache/nosql or not.
 
 A memory zone with a size of `data-size + dict-size` will be created.
 
-Except for temporary data created and destroyed within request, all cache related data including http response data, keys and overheads are stored in this memroy zone and shared between all processes.
-If no more memory can be allocated from this memory zone, new requests that should be cached according to defined rules will not be cached unless some memory are freed.
+Except for temporary data created and destroyed within a request, all cache related data including HTTP response data, keys and overheads are stored in this memory zone and shared between all processes.
+If no more memory can be allocated from this memory zone, new requests that should be cached according to defined rules will not be cached unless some memory is freed.
 Temporary data are stored in a memory pool which allocates memory dynamically from system in case there is no available memory in the pool.
-A global internal counter monitors the memory usage of all http response data across all processes, new requests will not be cached if the counter exceeds `data-size`.
+A global internal counter monitors the memory usage of all HTTP response data across all processes, new requests will not be cached if the counter exceeds `data-size`.
 
 ### data-size
 
-Determines the size of memory zone along with `dict-size`.
+Determines the size of the memory zone along with `dict-size`.
 
 It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024 bytes, which is also the minimal size.
 
 ### dict-size
 
-Determines the size of memory used by hash table.
+Determines the size of memory used by the hash table.
 
 It accepts units like `m`, `M`, `g` and `G`. By default, the size is 1024 * 1024 bytes, which is also the minimal size.
 
-Note that it only decides the memory used by hash table buckets not keys. In fact, keys are stored in memory zone which is limited by `data-size`.
+Note that it only decides the memory used by hash table buckets, not keys. In fact, keys are stored in the memory zone which is limited by `data-size`.
 
-**dict-size(number of buckets)** is different from **number of keys**. New keys can still be added to hash table even if the number of keys exceeds dict-size(number of buckets) as long as there are enough memory.
+**dict-size(number of buckets)** is different from **number of keys**. New keys can still be added to the hash table even if the number of keys exceeds dict-size(number of buckets) as long as there is enough memory.
 
-Nevertheless it may lead to a potential performance drop if `number of keys` is greater than `dict-size(number of buckets)`. An approximate number of keys multiplied by 8 (normally) as `dict-size` should be fine.
+Nevertheless, it may lead to a potential performance drop if `number of keys` is greater than `dict-size(number of buckets)`. An approximate number of keys multiplied by 8 (normally) as `dict-size` should be fine.
 
-> dict-size will be removed in future release, automatically resizing hash table in first version will be added back.
+> dict-size will be removed in a future release, automatically resizing the hash table in the first version will be added back.
+
+### dir
+
+Specify the root directory of the disk persistence. This has to be set in order to use disk persistence.
+
+### dict-cleaner
+
+Prior to v2.x, manager tasks like removing invalid cache data, resetting dict entries are executed in iterations in each HTTP request. Corresponding indicators or pointers are increased or advanced in each iteration.
+
+In v3.x these tasks are moved to the master process and also done in iterations, and these parameters can be set to control the number of times of certain task during one iteration.
+
+During one iteration `dict-cleaner` entries are checked, invalid entries will be deleted (by default, 100).
+
+### data-cleaner
+
+During one iteration `data-cleaner` data are checked, invalid data will be deleted (by default, 100).
+
+### disk-cleaner
+
+If disk persistence is enabled, data are stored in files. These files are checked by master process and will be deleted if invalid, for example, expired.
+
+During one iteration `disk-cleaner` files are checked, invalid files will be deleted (by default, 100).
+
+### disk-loader
+
+After the start of nuster, master process will load information about data previously stored on disk into memory.
+
+During one iteration `disk-loader` files are loaded(by default, 100).
+
+### disk-saver
+
+Master process will save `disk async` cache data periodically.
+
+During one iteration `disk-saver` data are checked and saved to disk if necessary (by default, 100).
+
+See [nuster rule disk mode](#disk-mode) for details.
 
 ### purge-method [cache only]
 
-Define a customized HTTP method with max length of 14 to purge cache, it is `PURGE` by default.
+Define a customized HTTP method with a max length of 14 to purge cache, it is `PURGE` by default.
 
 ### uri [cache only]
 
@@ -282,7 +320,7 @@ Enable cache manager/stats API and define the endpoint:
 
 `nuster cache on uri /_my/_unique/_/_cache/_uri`
 
-By default, the cache manager/stats is disabled. When it is enabled, remember to restrict the access(see [FAQ](#how-to-restrict-access)).
+By default, the cache manager/stats are disabled. When it is enabled, remember to restrict the access(see [FAQ](#how-to-restrict-access)).
 
 See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for details.
 
@@ -303,7 +341,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [if|unless condition]
 
 **default:** *none*
 
@@ -334,13 +372,13 @@ nuster rule all ttl 3600
 nuster rule path01 ttl 60 if pathA
 ```
 
-rule `path01` will never match because first rule will cache everything.
+rule `path01` will never match because the first rule will cache everything.
 
 ### name
 
 Define a name for this rule.
 
-It will be used in cache manager API, it does not have to be unique, but it might be a good idea to make it unique. Rules with same name are treated as one.
+It will be used in cache manager API, it does not have to be unique, but it might be a good idea to make it unique. Rules with the same name are treated as one.
 
 ### key KEY
 
@@ -388,7 +426,7 @@ Should result:
 
 So default key produces `GET.http.www.example.com./q?name=X&type=Y.`, and `key method.scheme.host.path.header_ASDF.cookie_user.param_type` produces `GET.http.www.example.com./q.Z.nuster.Y.`.
 
-If a request has the same key as a cached http response data, then cached data will be sent to the client.
+If a request has the same key as a cached HTTP response data, then cached data will be sent to the client.
 
 ### ttl TTL
 
@@ -408,6 +446,15 @@ nuster rule 200and404 code 200,404
 nuster rule all code all
 ```
 
+### disk MODE
+
+Specify how and where to save the cached data. There are four MODEs.
+
+* off:   default, disable disk persistence, data are stored in memory only
+* only:  save data to disk only, do not store in memory
+* sync:  save data to memory and disk(kernel), then return to the client
+* async: save data to memory and return to the client, cached data will be saved to disk later by the master process
+
 ### if|unless condition
 
 Define when to cache using HAProxy ACL.
@@ -416,8 +463,8 @@ The evaluation involves two stages: request stage and response stage.
 
 Cache will be performed if:
 
-1. The evaluation in request stage is true,
-2. The evaluation in request stage is false but true in response stage.
+1. The evaluation in the request stage is true,
+2. The evaluation in the request stage is false but true in the response stage.
 
 **Please be very careful if you use negation in the condition or samples not available in certain stage**
 
@@ -427,13 +474,13 @@ For example,
 
     nuster rule img if { path_beg /img/ }
 
-This will work because the evaluation in request stage will either be ture or false, and will never be true in response stage as `path` is not available in the response stage.
+This will work because the evaluation in the request stage will either be true or false and will never be true in the response stage as `path` is not available in the response stage.
 
 2. Cache if `Content-Type` in response is `image/jpeg`
 
     nuster rule jpeg if { res.hdr(Content-Type) image/jpeg }
 
-This will work because the evaluation in request stage is always false as `res.hdr` is not available in the request stage, and will be either true or false in response stage.
+This will work because the evaluation in the request stage is always false as `res.hdr` is not available in the request stage, and will be either true or false in the response stage.
 
 3. Cache if the request path begins with `/img/` and `Content-Type` in response is `image/jpeg`
 
@@ -457,7 +504,7 @@ It won't work neither:
     acl NoCache path_beg /api/
     nuster rule r3 if !NoCache
 
-Because the evaluation of `NoCache` against `/api/` in request stage is true, and the negation is false, which is the desired state, but in response stage, the evaluation of `NoCache` is always false as `path` is not available in response stage, and it will be cached as the negation `!NoCache` is true.
+Because the evaluation of `NoCache` against `/api/` in the request stage is true, and the negation is false, which is the desired state, but in response stage, the evaluation of `NoCache` is always false as `path` is not available in response stage, and it will be cached as the negation `!NoCache` is true.
 
 This will work:
 
@@ -465,7 +512,7 @@ This will work:
     acl NoCache var(txn.path) -m beg /api/
     nuster rule r1 if !NoCache
 
-I will add several new sample fetch methods to simplify this kind of tasks in futrue versions.
+I will add several new sample fetch methods to simplify this kind of tasks in future versions.
 
 See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
 
@@ -479,7 +526,7 @@ You can use HAProxy functionalities to terminate SSL, normalize HTTP, support HT
 
 Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making HTTP requests along with some headers.
 
-**Eanble and define the endpoint**
+**Enable and define the endpoint**
 
 ```
 nuster cache on uri /nuster/cache
@@ -553,7 +600,7 @@ curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nust
 
 There are several ways to purge cache by making HTTP `PURGE` requests to the manager uri defined by `uri`.
 
-You can define customized http method using `purge-method MYPURGE` other than the default `PURGE` in case you need to forward `PURGE` to backend servers.
+You can define customized HTTP method using `purge-method MYPURGE` other than the default `PURGE` in case you need to forward `PURGE` to backend servers.
 
 ### Purge one specific url
 
@@ -561,9 +608,9 @@ This method deletes the specific url that is being requested, like this:
 
 `curl -XPURGE https://127.0.0.1/imgs/test.jpg`
 
-It creates a key of `GET.scheme.host.uri`, and deletes the cache with that key.
+It creates a key of `GET.scheme.host.uri` and deletes the cache with that key.
 
-Note by default cache key contains `Host`, if you cache a request like `http://example.com/test` and purge from localhost you need to specify `Host` header:
+Note by default cache key contains `Host` if you cache a request like `http://example.com/test` and purge from localhost you need to specify `Host` header:
 
 `curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
 
@@ -609,7 +656,7 @@ curl -X PURGE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
 
 ### Purge by path
 
-By default, the query part is also used as cache key, so there will be multiple caches if the query differs.
+By default, the query part is also used as a cache key, so there will be multiple caches if the query differs.
 
 For example, for cache rule `nuster rule imgs if { path_beg /imgs/ }`, and request
 
@@ -618,7 +665,7 @@ curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
 curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 
-There will be two cache objects since the default key contains query part.
+There will be two cache objects since the default key contains the query part.
 
 In order to delete that, you can
 
@@ -703,7 +750,7 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/n
 
 Cache stats can be accessed by making HTTP GET request to the endpoint defined by `uri`;
 
-### Eanble and define the endpoint
+### Enable and define the endpoint
 
 ```
 nuster cache on uri /nuster/cache
@@ -766,7 +813,7 @@ Check status code.
 
 ## Per-user data
 
-By using header or cookie in key, you can save per-user data to same endpoint.
+By using header or cookie in key, you can save per-user data to the same endpoint.
 
 ```
 nuster rule r1 key method.scheme.host.uri.header_userId if { path /mypoint }
@@ -803,7 +850,38 @@ userA data
 
 You can use any tools or libs which support HTTP: `curl`, `postman`, python `requests`, go `net/http`, etc.
 
+# Disk persistence
+
+Disk persistence is introduced in v3, it supports 4 persistence mode as described above.
+
+A minimal config file looks like
+
+```
+global
+    master-worker
+    nuster cache on data-size 10m dir /tmp/cache
+    nuster nosql on data-size 10m dir /tmp/nosql
+backend be
+    nuster cache on
+    nuster rule off   disk off   ttl 1m if { path_beg /disk-off }
+    nuster rule only  disk only  ttl 1d if { path_beg /disk-only }
+    nuster rule sync  disk sync  ttl 1h if { path_beg /disk-sync }
+    nuster rule async disk async ttl 2h if { path_beg /disk-async }
+    nuster rule others ttl 100
+```
+
+1. `/disk-off` will be cached only in memory
+2. `/disk-only` will be cached only in disk
+3. `/disk-sync` will be cached in memory and in disk, then return to the client
+4. `/disk-async` will be cached in memory and return to the client, cached data will be saved to disk later
+5. other requests will be cached only in memory
+
+
 # FAQ
+
+## Cannot start: not in master-worker mode
+
+Set `master-worker` in `global` section, or start `nuster` with `-W`.
 
 ## How to debug?
 
@@ -821,11 +899,11 @@ Note that the size of the request body must be smaller than `tune.bufsize - tune
 
 Refer to **option http-buffer-request** and **tune.bufsize** section in [HAProxy configuration](doc/configuration.txt) for details.
 
-Also it might be a good idea to put it separately in a dedicated backend as example does.
+Also, it might be a good idea to put it separately in a dedicated backend as the example does.
 
 ## How to restrict access?
 
-You can use the powerful HAProxy acl, something like this
+You can use the powerful HAProxy ACL, something like this
 
 ```
 acl network_allowed src 127.0.0.1
@@ -845,6 +923,7 @@ bind :443 ssl crt pub.pem alpn h2,http/1.1
 global
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
+    master-worker # since v3
     #daemon
     ## to debug cache
     #debug
@@ -932,7 +1011,7 @@ backend nosql_be
 
 # Conventions
 
-1. Files with same name: those with `.md` extension belong to nuster, otherwise HAProxy
+1. Files with the same name: those with `.md` extension belong to nuster, otherwise HAProxy
 
 # Contributing
 

@@ -23,6 +23,7 @@
   * [Set](#set)
   * [Get](#get)
   * [Delete](#delete)
+* [硬盘持久化](#硬盘持久化)
 * [FAQ](#faq)
 
 # 介绍
@@ -111,6 +112,7 @@ make install PREFIX=/usr/local/nuster
 global
     nuster cache on data-size 100m uri /_nuster
     nuster nosql on data-size 200m
+    master-worker # v3
 defaults
     mode http
 frontend fe
@@ -237,9 +239,9 @@ backend be
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [purge-method method] [uri uri]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method] [uri uri]
 
-nuster nosql on|off [data-size size] [dict-size size]
+nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
 **default:** *none*
 
@@ -269,6 +271,32 @@ nuster nosql on|off [data-size size] [dict-size size]
 不过如果key数超过dict-size(bucket数)性能也许会下降. dict-size可以设为大概的最大key数乘以8。
 
 > 将来版本会删除dict-size, 像第一版本那样自动伸缩
+
+### dir
+
+设置硬盘缓存文件的根目录，必须设置以开启硬盘缓存功能。
+
+### dict-cleaner
+
+每次检查 `dict-cleaner` 个entry，无效的entry将被删除（默认100）
+
+### data-cleaner
+
+每次检查 `data-cleaner` 个entry，无效的data将被删除（默认100）
+
+### disk-cleaner
+
+每次检查 `disk-cleaner` 个硬盘缓存文件，无效的文件将被删除（默认100）
+
+### disk-loader
+
+启动后每次加载 `disk-loader` 个硬盘缓存文件的信息到内存（默认100）
+
+### disk-saver
+
+每次检查 `disk-saver` 个data，并将需要保存至硬盘的data保存到硬盘（默认100）
+
+详细请参考[nuster rule disk mode](#disk-mode).
 
 ### purge-method [cache only]
 
@@ -302,7 +330,7 @@ nuster nosql [on|off]
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [if|unless condition]
 
 **default:** *none*
 
@@ -333,7 +361,7 @@ nuster rule all ttl 3600
 nuster rule path01 ttl 60 if pathA
 ```
 
-rule `path01`永远不会被匹配。 
+rule `path01`永远不会被匹配。
 
 ### name
 
@@ -403,6 +431,15 @@ cache-rule only200
 cache-rule 200and404 code 200,404
 cache-rule all code all
 ```
+
+### disk MODE
+
+定义缓存持久模式
+
+* off:   默认模式，仅保存在内存
+* only:  不保存在内存，仅保存在硬盘
+* sync:  保存到内存和硬盘后返回给客户端
+* async: 保存到内存后立即换回给客户的，内存数据会由master进程在一定时间后保存至硬盘
 
 ### if|unless condition
 
@@ -793,11 +830,39 @@ userA data
 
 支持任何支持HTTP的客户端，库: `curl`, `postman`, python `requests`, go `net/http`, etc.
 
+# 硬盘持久化
+
+配置文件
+
+```
+global
+    master-worker
+    nuster cache on data-size 10m dir /tmp/cache
+    nuster nosql on data-size 10m dir /tmp/nosql
+backend be
+    nuster cache on
+    nuster rule off   disk off   ttl 1m if { path_beg /disk-off }
+    nuster rule only  disk only  ttl 1d if { path_beg /disk-only }
+    nuster rule sync  disk sync  ttl 1h if { path_beg /disk-sync }
+    nuster rule async disk async ttl 2h if { path_beg /disk-async }
+    nuster rule others ttl 100
+```
+
+1. `/disk-off` 仅保存在内存
+2. `/disk-only` 仅保存在硬盘
+3. `/disk-sync` 保存至内存和硬盘后返回给客户端
+4. `/disk-async` 保存至内存后立即换回给客户端，内存数据会在一定时间后被缓存至硬盘
+5. 其他的所有请求都仅保存在内存
+
 # FAQ
+
+## 无法启动，报错: not in master-worker mode
+
+在`global` 添加 `master-worker` 或者启动时使用`-W`参数。
 
 ## 如何调试?
 
-在`global`添加`debug`， 或者带`-d`启动`haproxy`
+在`global`添加`debug`， 或者带`-d`启动`nuster`
 
 缓存相关的调试信息以`[CACHE]`开头
 
@@ -834,6 +899,7 @@ bind :443 ssl crt pub.pem alpn h2,http/1.1
 global
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
+    master-worker # v3
     #daemon
     ## to debug cache
     #debug
