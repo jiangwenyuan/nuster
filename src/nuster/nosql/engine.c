@@ -383,11 +383,13 @@ void nst_nosql_init() {
 
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
-        nuster.nosql->disk.file = nst_nosql_memory_alloc(
-                nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+        if(global.nuster.nosql.root) {
+            nuster.nosql->disk.file = nst_nosql_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
-        if(!nuster.nosql->disk.file) {
-            goto err;
+            if(!nuster.nosql->disk.file) {
+                goto err;
+            }
         }
 
         if(nst_shctx_init(nuster.nosql) != NST_OK) {
