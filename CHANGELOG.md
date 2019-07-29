@@ -1,5 +1,9 @@
 # nuster Changelog
 
+## 3.0.0.19 - 2019-07-29
+
+Add disk persistence, various updates, refactoring
+
 ## 2.1.2.19 - 2019-04-26
 
 ### Fixed
