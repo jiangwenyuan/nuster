@@ -1148,12 +1148,17 @@ void nst_nosql_abort(struct nst_nosql_ctx *ctx) {
 }
 
 void nst_nosql_persist_async() {
-    struct nst_nosql_entry *entry =
-        nuster.nosql->dict[0].entry[nuster.nosql->persist_idx];
+    struct nst_nosql_entry *entry;
+
+    if(!global.nuster.nosql.root || !nuster.nosql->disk.loaded) {
+        return;
+    }
 
     if(!nuster.nosql->dict[0].used) {
         return;
     }
+
+    entry = nuster.nosql->dict[0].entry[nuster.nosql->persist_idx];
 
     while(entry) {
 

@@ -1180,12 +1180,17 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
 }
 
 void nst_cache_persist_async() {
-    struct nst_cache_entry *entry =
-        nuster.cache->dict[0].entry[nuster.cache->persist_idx];
+    struct nst_cache_entry *entry;
+
+    if(!global.nuster.cache.root || !nuster.cache->disk.loaded) {
+        return;
+    }
 
     if(!nuster.cache->dict[0].used) {
         return;
     }
+
+    entry = nuster.cache->dict[0].entry[nuster.cache->persist_idx];
 
     while(entry) {
 
