@@ -161,7 +161,7 @@ LD = $(CC)
 
 #### Debug flags (typically "-g").
 # Those flags only feed CFLAGS so it is not mandatory to use this form.
-DEBUG_CFLAGS = -ggdb3
+DEBUG_CFLAGS = -g
 
 #### Add -Werror when set to non-empty
 ERR =
@@ -245,7 +245,7 @@ EXTRA =
 # feed CPU_CFLAGS, which in turn feed CFLAGS, so it is not mandatory to use
 # them. You should not have to change these options. Better use CPU_CFLAGS or
 # even CFLAGS instead.
-CPU_CFLAGS.generic    = -O0
+CPU_CFLAGS.generic    = -O2
 CPU_CFLAGS.native     = -O2 -march=native
 CPU_CFLAGS.i586       = -O2 -march=i586
 CPU_CFLAGS.i686       = -O2 -march=i686
