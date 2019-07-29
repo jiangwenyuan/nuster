@@ -478,11 +478,13 @@ void nst_cache_init() {
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
-        nuster.cache->disk.file = nst_cache_memory_alloc(
-                nst_persist_path_file_len(global.nuster.cache.root) + 1);
+        if(global.nuster.cache.root) {
+            nuster.cache->disk.file = nst_cache_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
-        if(!nuster.cache->disk.file) {
-            goto err;
+            if(!nuster.cache->disk.file) {
+                goto err;
+            }
         }
 
         if(nst_shctx_init(nuster.cache) != NST_OK) {
