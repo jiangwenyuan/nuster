@@ -823,7 +823,7 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 		}
 		cur_arg += 2;
 	}
-
+	HA_SPIN_INIT(&logsrv->lock);
 	/* parse the facility */
 	logsrv->facility = get_log_facility(args[cur_arg]);
 	if (logsrv->facility < 0) {
@@ -1381,7 +1381,7 @@ void __send_log(struct proxy *p, int level, char *message, size_t size, char *sd
 	/* Send log messages to syslog server. */
 	nblogger = 0;
 	list_for_each_entry(tmp, logsrvs, list) {
-		const struct logsrv *logsrv = tmp;
+		struct logsrv *logsrv = tmp;
 		int *plogfd;
 		char *pid_sep1 = "", *pid_sep2 = "";
 		char logheader_short[3];

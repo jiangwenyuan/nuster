@@ -26,6 +26,7 @@
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <common/config.h>
+#include <common/hathreads.h>
 #include <common/mini-clist.h>
 
 #define NB_LOG_FACILITIES       24
@@ -178,6 +179,7 @@ struct logsrv {
 	int minlvl;
 	int maxlen;
 	struct logsrv *ref;
+	__decl_hathreads(HA_SPINLOCK_T lock);
 };
 
 #endif /* _TYPES_LOG_H */
