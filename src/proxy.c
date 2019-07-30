@@ -1588,17 +1588,18 @@ static int cli_parse_enable_dyncookie_backend(char **args, struct appctx *appctx
 	if (!px)
 		return 1;
 
+	/* Note: this lock is to make sure this doesn't change while another
+	 * thread is in srv_set_dyncookie().
+	 */
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
-
 	px->ck_opts |= PR_CK_DYNAMIC;
+	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
 		srv_set_dyncookie(s);
 		HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 	}
-
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	return 1;
 }
@@ -1619,9 +1620,12 @@ static int cli_parse_disable_dyncookie_backend(char **args, struct appctx *appct
 	if (!px)
 		return 1;
 
+	/* Note: this lock is to make sure this doesn't change while another
+	 * thread is in srv_set_dyncookie().
+	 */
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
-
 	px->ck_opts &= ~PR_CK_DYNAMIC;
+	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
@@ -1631,8 +1635,6 @@ static int cli_parse_disable_dyncookie_backend(char **args, struct appctx *appct
 		}
 		HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 	}
-
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	return 1;
 }
@@ -1669,18 +1671,19 @@ static int cli_parse_set_dyncookie_key_backend(char **args, struct appctx *appct
 		return 1;
 	}
 
+	/* Note: this lock is to make sure this doesn't change while another
+	 * thread is in srv_set_dyncookie().
+	 */
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
-
 	free(px->dyncookie_key);
 	px->dyncookie_key = newkey;
+	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
 		srv_set_dyncookie(s);
 		HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 	}
-
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	return 1;
 }
