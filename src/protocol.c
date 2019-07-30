@@ -15,6 +15,7 @@
 
 #include <common/config.h>
 #include <common/errors.h>
+#include <common/hathreads.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
 
@@ -131,6 +132,12 @@ int protocol_disable_all(void)
 	}
 	HA_SPIN_UNLOCK(PROTO_LOCK, &proto_lock);
 	return err;
+}
+
+__attribute__((constructor))
+static void __protocol_init(void)
+{
+	HA_SPIN_INIT(&proto_lock);
 }
 
 /*
