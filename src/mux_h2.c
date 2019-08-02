@@ -2688,7 +2688,7 @@ static int h2_recv(struct h2c *h2c)
 			ret = 0;
 	} while (ret > 0);
 
-	if (h2_recv_allowed(h2c) && (b_data(buf) < buf->size))
+	if (max && !ret && h2_recv_allowed(h2c))
 		conn->xprt->subscribe(conn, SUB_RETRY_RECV, &h2c->wait_event);
 
 	if (!b_data(buf)) {
