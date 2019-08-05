@@ -195,6 +195,7 @@ static void fd_dodelete(int fd, int do_close)
 	}
 	if (cur_poller.clo)
 		cur_poller.clo(fd);
+	fdtab[fd].polled_mask = 0;
 
 	fd_release_cache_entry(fd);
 	fdtab[fd].state = 0;
@@ -205,7 +206,6 @@ static void fd_dodelete(int fd, int do_close)
 	fdtab[fd].new = 0;
 	fdtab[fd].thread_mask = 0;
 	if (do_close) {
-		fdtab[fd].polled_mask = 0;
 		close(fd);
 	}
 	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
