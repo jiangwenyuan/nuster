@@ -1,6 +1,38 @@
 ChangeLog :
 ===========
 
+2019/08/08 : 1.9.10
+    - BUG/MEDIUM: protocols: add a global lock for the init/deinit stuff
+    - BUG/MINOR: proxy: always lock stop_proxy()
+    - BUILD: threads: add the definition of PROTO_LOCK
+    - BUG/MEDIUM: lb-chash: Fix the realloc() when the number of nodes is increased
+    - BUG/MEDIUM: streams: Don't switch the SI to SI_ST_DIS if we have data to send.
+    - BUG/MINOR: log: make sure writev() is not interrupted on a file output
+    - DOC: improve the wording in CONTRIBUTING about how to document a bug fix
+    - BUG/MINOR: hlua/htx: Reset channels analyzers when txn:done() is called
+    - BUG/MEDIUM: hlua: Check the calling direction in lua functions of the HTTP class
+    - MINOR: hlua: Don't set request analyzers on response channel for lua actions
+    - MINOR: hlua: Add a flag on the lua txn to know in which context it can be used
+    - BUG/MINOR: hlua: Only execute functions of HTTP class if the txn is HTTP ready
+    - BUILD: log/threads: implement the logsrv lock
+    - BUG/MAJOR: queue/threads: avoid an AB/BA locking issue in process_srv_queue()
+    - BUG/MINOR: lua: Set right direction and flags on new HTTP objects
+    - BUG/MEDIUM: lb-chash: Ensure the tree integrity when server weight is increased
+    - BUG/MAJOR: http/sample: use a static buffer for raw -> htx conversion
+    - BUG/MINOR: stream-int: also update analysers timeouts on activity
+    - BUG/MEDIUM: mux-h2: unbreak receipt of large DATA frames
+    - BUG/MEDIUM: mux-h2: split the stream's and connection's window sizes
+    - BUG/MEDIUM: fd: Always reset the polled_mask bits in fd_dodelete().
+    - BUG/MINOR: mux-h2: don't refrain from sending an RST_STREAM after another one
+    - BUG/MINOR: mux-h2: use CANCEL, not STREAM_CLOSED in h2c_frt_handle_data()
+    - BUG/MEDIUM: mux-h2: do not recheck a frame type after a state transition
+    - BUG/MINOR: mux-h2: always send stream window update before connection's
+    - BUG/MINOR: mux-h2: always reset rcvd_s when switching to a new frame
+    - BUG/MEDIUM: checks: make sure to close nicely when we're the last to speak
+    - BUG/MINOR: ssl: fix 0-RTT for BoringSSL
+    - MINOR: ssl: ssl_fc_has_early should work for BoringSSL
+    - BUG/MINOR: buffers/threads: always clear a buffer's head before releasing it
+
 2019/07/23 : 1.9.9
     - BUG/MINOR: http_fetch: Rely on the smp direction for "cookie()" and "hdr()"
     - BUG/MEDIUM: threads: Fix build for 32bits arch with dwcas.
