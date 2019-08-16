@@ -1,6 +1,72 @@
 ChangeLog :
 ===========
 
+2019/08/16 : 1.8.21
+    - BUG/MINOR: http: Call stream_inc_be_http_req_ctr() only one time per request
+    - BUG/MEDIUM: spoe: arg len encoded in previous frag frame but len changed
+    - MINOR: spoe: Use the sample context to pass frag_ctx info during encoding
+    - DOC: contrib/modsecurity: Typos and fix the reject example
+    - BUG/MEDIUM: contrib/modsecurity: If host header is NULL, don't try to strdup it
+    - MINOR: examples: Use right locale for the last changelog date in haproxy.spec
+    - BUG/MAJOR: map/acl: real fix segfault during show map/acl on CLI
+    - BUG/MEDIUM: listener: Fix how unlimited number of consecutive accepts is handled
+    - MINOR: config: Test validity of tune.maxaccept during the config parsing
+    - CLEANUP: config: Don't alter listener->maxaccept when nbproc is set to 1
+    - MINOR: threads: Implement HA_ATOMIC_LOAD().
+    - BUG/MEDIUM: port_range: Make the ring buffer lock-free.
+    - BUG/MINOR: http_fetch: Rely on the smp direction for "cookie()" and "hdr()"
+    - BUG/MEDIUM: dns: make the port numbers unsigned
+    - BUG/MEDIUM: spoe: Don't use the SPOE applet after releasing it
+    - DOC: fix typos
+    - BUG/MINOR: ssl_sock: Fix memory leak when disabling compression
+    - BUILD: ssl: fix latest LibreSSL reg-test error
+    - BUG/MAJOR: lb/threads: make sure the avoided server is not full on second pass
+    - BUG/MEDIUM: http: fix "http-request reject" when not final
+    - BUG/MINOR: deinit/threads: make hard-stop-after perform a clean exit
+    - BUG/MEDIUM: connection: fix multiple handshake polling issues
+    - BUG/MEDIUM: vars: make sure the scope is always valid when accessing vars
+    - BUG/MEDIUM: vars: make the tcp/http unset-var() action support conditions
+    - BUG/MEDIUM: mux-h2: make sure the connection timeout is always set
+    - BUG/MINOR: http-rules: mention "deny_status" for "deny" in the error message
+    - MINOR: doc: Remove -Ds option in man page
+    - MINOR: doc: add master-worker in the man page
+    - BUG/MEDIUM: compression: Set Vary: Accept-Encoding for compressed responses
+    - BUG/MEDIUM: lb_fwlc: Don't test the server's lb_tree from outside the lock
+    - BUILD: makefile: use :space: instead of digits to count commits
+    - BUILD: makefile: do not rely on shell substitutions to determine git version
+    - BUG/MEDIUM: lb_fas: Don't test the server's lb_tree from outside the lock
+    - BUG/MEDIUM: da: cast the chunk to string.
+    - MINOR: task: introduce work lists
+    - BUG/MAJOR: listener: fix thread safety in resume_listener()
+    - BUG/MEDIUM: tcp-check: unbreak multiple connect rules again
+    - BUG/MEDIUM: http/htx: unbreak option http_proxy
+    - BUG/MEDIUM: tcp-checks: do not dereference inexisting conn_stream
+    - BUG/MEDIUM: protocols: add a global lock for the init/deinit stuff
+    - BUG/MINOR: proxy: always lock stop_proxy()
+    - BUILD: threads: add the definition of PROTO_LOCK
+    - BUG/MEDIUM: lb-chash: Fix the realloc() when the number of nodes is increased
+    - DOC: improve the wording in CONTRIBUTING about how to document a bug fix
+    - BUG/MEDIUM: hlua: Check the calling direction in lua functions of the HTTP class
+    - MINOR: hlua: Don't set request analyzers on response channel for lua actions
+    - MINOR: hlua: Add a flag on the lua txn to know in which context it can be used
+    - BUG/MINOR: hlua: Only execute functions of HTTP class if the txn is HTTP ready
+    - BUG/MAJOR: queue/threads: avoid an AB/BA locking issue in process_srv_queue()
+    - BUG/MINOR: lua: Set right direction and flags on new HTTP objects
+    - BUG/MEDIUM: protocols: properly initialize the proto_lock in 1.8
+    - BUG/MEDIUM: lb-chash: Ensure the tree integrity when server weight is increased
+    - BUG/MINOR: stream-int: also update analysers timeouts on activity
+    - BUG/MEDIUM: mux-h2: split the stream's and connection's window sizes
+    - BUG/MEDIUM: fd: Always reset the polled_mask bits in fd_dodelete().
+    - BUG/MINOR: mux-h2: don't refrain from sending an RST_STREAM after another one
+    - BUG/MINOR: mux-h2: use CANCEL, not STREAM_CLOSED in h2c_frt_handle_data()
+    - BUG/MEDIUM: mux-h2: do not recheck a frame type after a state transition
+    - BUG/MINOR: mux-h2: always send stream window update before connection's
+    - BUG/MINOR: mux-h2: always reset rcvd_s when switching to a new frame
+    - MINOR: build: Disable -Wstringop-overflow.
+    - BUG/MINOR: ssl: fix 0-RTT for BoringSSL
+    - MINOR: ssl: ssl_fc_has_early should work for BoringSSL
+    - BUG/MEDIUM: lua: Fix test on the direction to set the channel exp timeout
+
 2019/04/25 : 1.8.20
     - BUG/MAJOR: listener: Make sure the listener exist before using it.
     - BUG/MINOR: listener: keep accept rate counters accurate under saturation
