@@ -5939,8 +5939,6 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 			hflags |= ((stream->txn->rsp.msg_state < HTTP_MSG_BODY) ? 0 : HLUA_TXN_HTTP_RDY);
 	}
 
-	consistency_set(stream, smp->opt, &stream->hlua->cons);
-
 	/* If it is the first run, initialize the data for the call. */
 	if (!HLUA_IS_RUNNING(stream->hlua)) {
 

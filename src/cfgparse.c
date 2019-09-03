@@ -85,6 +85,7 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 
+#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.

@@ -5352,10 +5352,6 @@ reneg_ok:
 		}
 	}
 
-#ifdef OPENSSL_IS_BORINGSSL
-	if ((conn->flags & CO_FL_EARLY_SSL_HS) && !SSL_in_early_data(conn->xprt_ctx))
-		conn->flags &= ~CO_FL_EARLY_SSL_HS;
-#endif
 	/* The connection is now established at both layers, it's time to leave */
 	conn->flags &= ~(flag | CO_FL_WAIT_L4_CONN | CO_FL_WAIT_L6_CONN);
 	return 1;

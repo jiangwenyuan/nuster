@@ -28,7 +28,7 @@
 #ifndef _COMMON_HPACK_ENC_H
 #define _COMMON_HPACK_ENC_H
 
-#include <stdint.h>
+#include <inttypes.h>
 #include <common/chunk.h>
 #include <common/config.h>
 #include <common/ist.h>
