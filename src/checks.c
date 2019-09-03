@@ -2771,7 +2771,7 @@ static int tcpcheck_main(struct check *check)
 			conn_install_mux(conn, &mux_pt_ops, cs);
 
 			ret = SF_ERR_INTERNAL;
-			if (proto->connect)
+			if (proto && proto->connect)
 				ret = proto->connect(conn,
 						     1 /* I/O polling is always needed */,
 						     (next && next->action == TCPCHK_ACT_EXPECT) ? 0 : 2);
@@ -2835,6 +2835,10 @@ static int tcpcheck_main(struct check *check)
 				check->current_step = LIST_NEXT(&check->current_step->list, struct tcpcheck_rule *, list);
 
 			if (&check->current_step->list == head)
+				break;
+
+			/* don't do anything until the connection is established */
+			if (!(conn->flags & CO_FL_CONNECTED))
 				break;
 
 		} /* end 'connect' */
@@ -3062,7 +3066,7 @@ static int tcpcheck_main(struct check *check)
 
  out_end_tcpcheck:
 	/* collect possible new errors */
-	if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
+	if ((conn && conn->flags & CO_FL_ERROR) || (cs && cs->flags & CS_FL_ERROR))
 		chk_report_conn_err(check, 0, 0);
 
 	/* cleanup before leaving */

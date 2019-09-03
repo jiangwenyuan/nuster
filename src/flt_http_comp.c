@@ -555,6 +555,9 @@ select_compression_response_header(struct comp_state *st, struct stream *s, stru
 	if (!(msg->flags & HTTP_MSGF_TE_CHNK))
 		http_header_add_tail2(&txn->rsp, &txn->hdr_idx, "Transfer-Encoding: chunked", 26);
 
+	/* add Vary header */
+	if (http_header_add_tail2(&txn->rsp, &txn->hdr_idx, "Vary: Accept-Encoding", 21) < 0)
+		goto fail;
 	/*
 	 * Add Content-Encoding header when it's not identity encoding.
          * RFC 2616 : Identity encoding: This content-coding is used only in the

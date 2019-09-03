@@ -171,46 +171,6 @@ struct global {
 		unsigned long thread[LONGBITS][MAX_THREADS]; /* list of CPU masks for the 32/64 first threads per process */
 	} cpu_map;
 #endif
-	struct {
-		struct {
-			int       status;                      /* cache on or off */
-			//char   *storage;                     /* memory or directory */
-			uint64_t  data_size;                   /* max memory used by data, in bytes */
-			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
-			int       share;
-			char     *purge_method;
-			char     *uri;                         /* the uri used for stats and manager */
-
-			struct {
-				struct pool_head *stash;
-				struct pool_head *ctx;
-				struct pool_head *data;
-				struct pool_head *element;
-				struct pool_head *chunk;
-				struct pool_head *entry;
-			} pool;
-
-			struct nuster_memory   *memory;        /* memory */
-			struct nst_cache_stats *stats;
-		} cache;
-		struct {
-			int       status;                      /* enable nosql on or off */
-			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
-			uint64_t  data_size;                   /* max memory used by nosql, in bytes */
-
-			struct {
-				struct pool_head *stash;
-				struct pool_head *ctx;
-				struct pool_head *data;
-				struct pool_head *element;
-				struct pool_head *chunk;
-				struct pool_head *entry;
-			} pool;
-
-			struct nuster_memory   *memory;        /* memory */
-			struct nst_nosql_stats *stats;
-		} nosql;
-	} nuster;
 };
 
 /* per-thread activity reports. It's important that it's aligned on cache lines
@@ -253,7 +213,7 @@ extern const int zero;
 extern const int one;
 extern const struct linger nolinger;
 extern int stopping;	/* non zero means stopping in progress */
-extern int killed;	/* non zero means a hard-stop is triggered */
+extern int killed;	/* >0 means a hard-stop is triggered, >1 means hard-stop immediately */
 extern char hostname[MAX_HOSTNAME_LEN];
 extern char localpeer[MAX_HOSTNAME_LEN];
 extern struct list global_listener_queue; /* list of the temporarily limited listeners */

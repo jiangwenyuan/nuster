@@ -171,8 +171,8 @@ void process_srv_queue(struct server *s)
 	struct proxy  *p = s->proxy;
 	int maxconn, remote = 0;
 
-	HA_SPIN_LOCK(PROXY_LOCK,  &p->lock);
 	HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
+	HA_SPIN_LOCK(PROXY_LOCK,  &p->lock);
 	maxconn = srv_dynamic_maxconn(s);
 	while (s->served < maxconn) {
 		int ret = pendconn_process_next_strm(s, p);
@@ -180,8 +180,8 @@ void process_srv_queue(struct server *s)
 			break;
 		remote |= (ret == 2);
 	}
-	HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 	HA_SPIN_UNLOCK(PROXY_LOCK,  &p->lock);
+	HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 
 	if (remote)
 		THREAD_WANT_SYNC();
@@ -279,7 +279,8 @@ int pendconn_redistribute(struct server *s)
 /* Check for pending connections at the backend, and assign some of them to
  * the server coming up. The server's weight is checked before being assigned
  * connections it may not be able to handle. The total number of transferred
- * connections is returned.
+ * connections is returned. It must be called with the server lock held, and
+ * will take the proxy's lock.
  */
 int pendconn_grab_from_px(struct server *s)
 {

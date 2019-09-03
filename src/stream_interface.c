@@ -400,6 +400,7 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 	if (conn->flags & CO_FL_WAIT_L4_CONN)
 		conn->flags &= ~CO_FL_WAIT_L4_CONN;
 	conn->flags &= ~flag;
+	__conn_sock_stop_send(conn);
 	return 1;
 
  out_error:
@@ -409,6 +410,7 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 
  out_wait:
 	__conn_sock_stop_recv(conn);
+	__conn_sock_want_send(conn);
 	return 0;
 }
 
@@ -561,6 +563,16 @@ void stream_int_notify(struct stream_interface *si)
 		task->expire = tick_first((tick_is_expired(task->expire, now_ms) ? 0 : task->expire),
 					  tick_first(tick_first(ic->rex, ic->wex),
 						     tick_first(oc->rex, oc->wex)));
+
+		task->expire = tick_first(task->expire, ic->analyse_exp);
+		task->expire = tick_first(task->expire, oc->analyse_exp);
+
+		if (si->exp)
+			task->expire = tick_first(task->expire, si->exp);
+
+		if (si_opposite(si)->exp)
+			task->expire = tick_first(task->expire, si_opposite(si)->exp);
+
 		task_queue(task);
 	}
 	if (ic->flags & CF_READ_ACTIVITY)

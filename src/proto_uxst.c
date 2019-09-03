@@ -382,6 +382,9 @@ static int uxst_unbind_listener(struct listener *listener)
 /* Add <listener> to the list of unix stream listeners (port is ignored). The
  * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
  * The number of listeners for the protocol is updated.
+ *
+ * Must be called with proto_lock held.
+ *
  */
 static void uxst_add_listener(struct listener *listener, int port)
 {
@@ -603,6 +606,8 @@ static int uxst_connect_server(struct connection *conn, int data, int delack)
  * loose them across the fork(). A call to uxst_enable_listeners() is needed
  * to complete initialization.
  *
+ * Must be called with proto_lock held.
+ *
  * The return value is composed from ERR_NONE, ERR_RETRYABLE and ERR_FATAL.
  */
 static int uxst_bind_listeners(struct protocol *proto, char *errmsg, int errlen)
@@ -622,6 +627,9 @@ static int uxst_bind_listeners(struct protocol *proto, char *errmsg, int errlen)
 /* This function stops all listening UNIX sockets bound to the protocol
  * <proto>. It does not detaches them from the protocol.
  * It always returns ERR_NONE.
+ *
+ * Must be called with proto_lock held.
+ *
  */
 static int uxst_unbind_listeners(struct protocol *proto)
 {

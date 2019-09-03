@@ -248,6 +248,7 @@ static int da_haproxy(const struct arg *args, struct sample *smp, da_deviceinfo_
 
 	smp->data.u.str.str = tmp->str;
 	smp->data.u.str.len = tmp->len;
+	smp->data.type = SMP_T_STR;
 
 	return 1;
 }
@@ -293,7 +294,7 @@ static int da_haproxy_fetch(const struct arg *args, struct sample *smp, const ch
 		return 1;
 	}
 
-	CHECK_HTTP_MESSAGE_FIRST();
+	CHECK_HTTP_MESSAGE_FIRST((smp->strm ? &smp->strm->req : NULL));
 	smp->data.type = SMP_T_STR;
 
 	/**

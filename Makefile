@@ -159,6 +159,7 @@ SPEC_CFLAGS += $(call cc-nowarn,format-truncation)
 SPEC_CFLAGS += $(call cc-nowarn,address-of-packed-member)
 SPEC_CFLAGS += $(call cc-nowarn,null-dereference)
 SPEC_CFLAGS += $(call cc-nowarn,unused-label)
+SPEC_CFLAGS += $(call cc-nowarn,stringop-overflow)
 
 #### Memory usage tuning
 # If small memory footprint is required, you can reduce the buffer size. There
@@ -358,7 +359,8 @@ ifeq ($(TARGET),aix51)
   # This is for AIX 5.1
   USE_POLL        = implicit
   USE_LIBCRYPT    = implicit
-  TARGET_CFLAGS   = -Dss_family=__ss_family
+  USE_PRIVATE_CACHE = implicit
+  TARGET_CFLAGS   = -Dss_family=__ss_family -Dip6_hdr=ip6hdr -DSTEVENS_API -D_LINUX_SOURCE_COMPAT -Dunsetenv=my_unsetenv
   DEBUG_CFLAGS    =
 else
 ifeq ($(TARGET),aix52)
@@ -422,10 +424,10 @@ endif
 # holding the same names in the current directory.
 
 ifeq ($(IGNOREGIT),)
-VERSION := $(shell [ -d .git/. ] && ref=`(git describe --tags --match 'v*' --abbrev=0) 2>/dev/null` && ref=$${ref%-g*} && echo "$${ref\#v}")
+VERSION := $(shell [ -d .git/. ] && (git describe --tags --match 'v*' --abbrev=0 | cut -c 2-) 2>/dev/null)
 ifneq ($(VERSION),)
 # OK git is there and works.
-SUBVERS := $(shell comms=`git log --format=oneline --no-merges v$(VERSION).. 2>/dev/null | wc -l | tr -dc '0-9'`; commit=`(git log -1 --pretty=%h --abbrev=6) 2>/dev/null`; [ $$comms -gt 0 ] && echo "-$$commit-$$comms")
+SUBVERS := $(shell comms=`git log --format=oneline --no-merges v$(VERSION).. 2>/dev/null | wc -l | tr -d '[:space:]'`; commit=`(git log -1 --pretty=%h --abbrev=6) 2>/dev/null`; [ $$comms -gt 0 ] && echo "-$$commit-$$comms")
 VERDATE := $(shell git log -1 --pretty=format:%ci | cut -f1 -d' ' | tr '-' '/')
 endif
 endif
@@ -629,14 +631,6 @@ else
 ifneq ($(USE_FUTEX),)
 OPTIONS_CFLAGS  += -DUSE_SYSCALL_FUTEX
 endif
-endif
-endif
-
-# For nuster
-ifeq ($(USE_OPENSSL),)
-ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
-OPTIONS_LDFLAGS += -lpthread
 endif
 endif
 
@@ -893,15 +887,7 @@ OBJS = src/proto_http.o src/cfgparse.o src/server.o src/stream.o        \
        src/sha1.o src/hpack-tbl.o src/hpack-enc.o src/uri_auth.o        \
        src/time.o src/proto_udp.o src/arg.o src/signal.o                \
        src/protocol.o src/lru.o src/hdr_idx.o src/hpack-huff.o          \
-       src/mailers.o src/h2.o src/base64.o src/hash.o                   \
-                                                                        \
-       src/nuster/cache/dict.o src/nuster/cache/filter.o                \
-       src/nuster/cache/stats.o src/nuster/cache/manager.o              \
-       src/nuster/cache/engine.o                                        \
-       src/nuster/nosql/filter.o  src/nuster/nosql/dict.o               \
-       src/nuster/nosql/stats.o src/nuster/nosql/engine.o               \
-       src/nuster/memory.o src/nuster/parser.o src/nuster/http.o        \
-       src/nuster/nuster.o
+       src/mailers.o src/h2.o src/base64.o src/hash.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
@@ -921,7 +907,8 @@ INCLUDES = $(wildcard include/*/*.h ebtree/*.h)
 DEP = $(INCLUDES) .build_opts
 
 # Used only to force a rebuild if some build options change
-.build_opts: $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+.build_opts: $(build_opts)
 
 haproxy: $(OPTIONS_OBJS) $(EBTREE_OBJS) $(OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
@@ -990,7 +977,6 @@ clean:
 	for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
-	rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
 
 tags:
 	find src include \( -name '*.c' -o -name '*.h' \) -print0 | \

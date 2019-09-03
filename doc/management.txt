@@ -1634,7 +1634,7 @@ set rate-limit ssl-sessions global <value>
 
 set server <backend>/<server> addr <ip4 or ip6 address> [port <port>]
   Replace the current IP address of a server by the one provided.
-  Optionnaly, the port can be changed using the 'port' parameter.
+  Optionally, the port can be changed using the 'port' parameter.
   Note that changing the port also support switching from/to port mapping
   (notation with +X or -Y), only if a port is configured for the health check.
 

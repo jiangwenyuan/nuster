@@ -118,8 +118,6 @@
 #include <proto/ssl_sock.h>
 #endif
 
-#include <nuster/nuster.h>
-
 /* list of config files */
 static struct list cfg_cfgfiles = LIST_HEAD_INIT(cfg_cfgfiles);
 int  pid;			/* current process id */
@@ -164,20 +162,6 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
-	.nuster = {
-		.cache = {
-			.status       = NUSTER_STATUS_UNDEFINED,
-			.data_size    = NST_CACHE_DEFAULT_SIZE,
-			.dict_size    = NST_CACHE_DEFAULT_SIZE,
-			.share        = NUSTER_STATUS_ON,
-			.purge_method = NULL,
-		},
-		.nosql = {
-			.status       = NUSTER_STATUS_UNDEFINED,
-			.dict_size    = NST_CACHE_DEFAULT_SIZE,
-			.data_size    = NST_CACHE_DEFAULT_SIZE,
-		},
-	},
 	/* others NULL OK */
 };
 
@@ -341,6 +325,33 @@ void hap_register_post_deinit(void (*fct)())
 
 /* used to register some initialization functions to call for each thread. */
 void hap_register_per_thread_init(int (*fct)())
+{
+	struct per_thread_init_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&per_thread_init_list, &b->list);
+}
+
+/* used to register some de-initialization functions to call for each thread. */
+void hap_register_per_thread_deinit(void (*fct)())
+{
+	struct per_thread_deinit_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&per_thread_deinit_list, &b->list);
+}
+
+static void display_version()
 {
 	struct per_thread_init_fct *b;
 
@@ -1588,13 +1599,13 @@ static void init(int argc, char **argv)
 		exit(1);
 	}
 
-	pattern_finalize_config();
-
 	err_code |= check_config_validity();
 	if (err_code & (ERR_ABORT|ERR_FATAL)) {
 		ha_alert("Fatal errors found in configuration.\n");
 		exit(1);
 	}
+
+	pattern_finalize_config();
 
 	/* recompute the amount of per-process memory depending on nbproc and
 	 * the shared SSL cache size (allowed to exist in all processes).
@@ -1846,6 +1857,9 @@ static void init(int argc, char **argv)
 	global.hardmaxconn = global.maxconn;  /* keep this max value */
 	global.maxsock += global.maxconn * 2; /* each connection needs two sockets */
 	global.maxsock += global.maxpipes * 2; /* each pipe needs two FDs */
+	global.maxsock += global.nbthread;     /* one epoll_fd/kqueue_fd per thread */
+	global.maxsock += 2 * global.nbthread; /* one wake-up pipe (2 fd) per thread */
+
 	/* compute fd used by async engines */
 	if (global.ssl_used_async_engines) {
 		int sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
@@ -1965,8 +1979,6 @@ static void init(int argc, char **argv)
 
 	if (!hlua_post_init())
 		exit(1);
-
-	nuster_init();
 
 	free(err_msg);
 }
@@ -2448,6 +2460,10 @@ static void run_poll_loop()
 		if (tid == 0 && jobs == 0)
 			THREAD_WANT_SYNC();
 
+		/* also stop  if we failed to cleanly stop all tasks */
+		if (killed > 1)
+			break;
+
 		/* expire immediately if events are pending */
 		exp = now_ms;
 		if (fd_cache_mask & tid_bit)
@@ -2465,7 +2481,6 @@ static void run_poll_loop()
 		cur_poller.poll(&cur_poller, exp);
 		fd_process_cached_events();
 		applet_run_active();
-		nuster_housekeeping();
 
 
 		/* Synchronize all polling loops */

@@ -384,7 +384,7 @@ static int _51d_fetch(const struct arg *args, struct sample *smp, const char *kw
 	 * Data type has to be reset to ensure the string output is processed
 	 * correctly.
 	 */
-	CHECK_HTTP_MESSAGE_FIRST();
+	CHECK_HTTP_MESSAGE_FIRST((smp->strm ? &smp->strm->req : NULL));
 	smp->data.type = SMP_T_STR;
 
 	/* Flags the sample to show it uses constant memory*/
@@ -639,7 +639,8 @@ static void deinit_51degrees(void)
 
 	free(global_51degrees.header_names);
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
-	fiftyoneDegreesWorksetPoolFree(global_51degrees.pool);
+	if (global_51degrees.pool)
+		fiftyoneDegreesWorksetPoolFree(global_51degrees.pool);
 #endif
 #ifdef FIFTYONEDEGREES_H_TRIE_INCLUDED
 	free(global_51degrees.device_offsets.firstOffset);
