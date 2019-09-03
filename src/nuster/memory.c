@@ -25,9 +25,18 @@ struct nuster_memory *nuster_memory_create(char *name, uint64_t size, uint32_t b
     uint32_t bitmap_size;
 
     if(block_size < NUSTER_MEMORY_BLOCK_MIN_SIZE) block_size = NUSTER_MEMORY_BLOCK_MIN_SIZE;
+    if(block_size > NUSTER_MEMORY_BLOCK_MAX_SIZE) {
+        fprintf(stderr, "tune.bufsize exceeds the maximum %d.\n", NUSTER_MEMORY_BLOCK_MAX_SIZE);
+        return NULL;
+    }
     if(chunk_size < NUSTER_MEMORY_CHUNK_MIN_SIZE) chunk_size = NUSTER_MEMORY_CHUNK_MIN_SIZE;
-    /* set block_size to minimal number that 1, > block_size , 2, = n * NUSTER_MEMORY_BLOCK_MIN_SIZE */
-    block_size = ((block_size + NUSTER_MEMORY_BLOCK_MIN_SIZE - 1) / NUSTER_MEMORY_BLOCK_MIN_SIZE) << NUSTER_MEMORY_BLOCK_MIN_SHIFT;
+    /* set block_size to minimal number that 1, > block_size , 2, = (2**n) * NUSTER_MEMORY_BLOCK_MIN_SIZE */
+    for(n = NUSTER_MEMORY_BLOCK_MIN_SHIFT; n <= NUSTER_MEMORY_BLOCK_MAX_SHIFT; n++) {
+        if(1UL << n >= block_size) {
+            block_size = 1UL << n;
+            break;
+        }
+    }
     /* set chunk_size to minimal number that 1, > chunk_size , 2, = n * NUSTER_MEMORY_CHUNK_MIN_SIZE */
     chunk_size = ((chunk_size + NUSTER_MEMORY_CHUNK_MIN_SIZE - 1) / NUSTER_MEMORY_CHUNK_MIN_SIZE) << NUSTER_MEMORY_CHUNK_MIN_SHIFT;
     if(chunk_size > block_size) {
