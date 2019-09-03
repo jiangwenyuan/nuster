@@ -1578,7 +1578,6 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	 * response which at least looks like HTTP. We have an indicator
 	 * of each header's length, so we can parse them quickly.
 	 */
-
 	msg->msg_state = HTTP_MSG_BODY;
 	sl = http_find_stline(htx);
 
@@ -1662,6 +1661,7 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 				break;
 		}
 		msg->msg_state = HTTP_MSG_RPBEFORE;
+		msg->flags = 0;
 		txn->status = 0;
 		s->logs.t_data = -1; /* was not a response yet */
 		return 0;
