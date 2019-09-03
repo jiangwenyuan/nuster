@@ -30,16 +30,26 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
         block_size = NST_MEMORY_BLOCK_MIN_SIZE;
     }
 
+    if(block_size > NST_MEMORY_BLOCK_MAX_SIZE) {
+        fprintf(stderr, "tune.bufsize exceeds the maximum %d.\n",
+                NST_MEMORY_BLOCK_MAX_SIZE);
+        return NULL;
+    }
+
     if(chunk_size < NST_MEMORY_CHUNK_MIN_SIZE) {
         chunk_size = NST_MEMORY_CHUNK_MIN_SIZE;
     }
 
-    /*
-     * set block_size to minimal number that
-     * 1, > block_size , 2, = n * NST_MEMORY_BLOCK_MIN_SIZE
+    /* set block_size to minimal number that
+     * 1: > block_size
+     * 2: = (2**n) * NST_MEMORY_BLOCK_MIN_SIZE
      */
-    block_size = ((block_size + NST_MEMORY_BLOCK_MIN_SIZE - 1)
-            / NST_MEMORY_BLOCK_MIN_SIZE) << NST_MEMORY_BLOCK_MIN_SHIFT;
+    for(n = NST_MEMORY_BLOCK_MIN_SHIFT; n <= NST_MEMORY_BLOCK_MAX_SHIFT; n++) {
+        if(1UL << n >= block_size) {
+            block_size = 1UL << n;
+            break;
+        }
+    }
 
     /*
      * set chunk_size to minimal number that
