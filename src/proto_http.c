@@ -2110,6 +2110,10 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 		}
 	}
 
+	/* "chunked" mandatory if transfer-encoding is used */
+	if (ctx.idx && !(msg->flags & HTTP_MSGF_TE_CHNK))
+		goto return_bad_req;
+
 	/* Chunked requests must have their content-length removed */
 	ctx.idx = 0;
 	if (msg->flags & HTTP_MSGF_TE_CHNK) {
@@ -5566,6 +5570,12 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			msg->flags &= ~(HTTP_MSGF_TE_CHNK | HTTP_MSGF_XFER_LEN);
 			break;
 		}
+	}
+
+	/* "chunked" mandatory if transfer-encoding is used */
+	if (ctx.idx && !(msg->flags & HTTP_MSGF_TE_CHNK)) {
+		use_close_only = 1;
+		msg->flags &= ~(HTTP_MSGF_TE_CHNK | HTTP_MSGF_XFER_LEN);
 	}
 
 	/* Chunked responses must have their content-length removed */
