@@ -213,22 +213,32 @@ struct buffer *nst_key_init(struct nst_memory *memory) {
     return key;
 }
 
-static int _nst_key_expand(struct nst_memory *memory, struct buffer *key) {
+static int
+_nst_key_expand(struct nst_memory *memory, struct buffer *key, int need) {
 
     if(key->size >= global.tune.bufsize) {
         goto err;
     } else {
-        char *p = nst_memory_alloc(memory, key->size * 2);
+        int new_size = key->size;
+        char *p;
+
+        for(; new_size <= global.tune.bufsize; new_size *= 2) {
+            if(new_size >= need + key->data) {
+                break;
+            }
+        }
+
+        p = nst_memory_alloc(memory, new_size);
 
         if(!p) {
             goto err;
         }
 
-        memset(p, 0, key->size * 2);
+        memset(p, 0, new_size);
         memcpy(p, key->area, key->size);
         nst_memory_free(memory, key->area);
         key->area = p;
-        key->size = key->size * 2;
+        key->size = new_size;
 
         return NST_OK;
     }
@@ -244,7 +254,7 @@ int nst_key_advance(struct nst_memory *memory, struct buffer *key, int step) {
 
     if(b_room(key) < step) {
 
-        if(_nst_key_expand(memory, key) != NST_OK) {
+        if(_nst_key_expand(memory, key, step) != NST_OK) {
             return NST_ERR;
         }
 
@@ -260,7 +270,7 @@ int nst_key_append(struct nst_memory *memory, struct buffer *key, char *str,
 
     if(b_room(key) < str_len + 1) {
 
-        if(_nst_key_expand(memory, key) != NST_OK) {
+        if(_nst_key_expand(memory, key, str_len + 1) != NST_OK) {
             return NST_ERR;
         }
 
