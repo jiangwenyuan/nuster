@@ -1121,6 +1121,8 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         nst_persist_write_meta(&ctx->disk);
 
         ctx->entry->file = ctx->disk.file;
+        /* here we should close the handle because it is not closed before */
+        close(ctx->disk.fd);
     }
 }
 
