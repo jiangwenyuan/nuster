@@ -97,6 +97,8 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     int fd = appctx->ctx.nuster.cache_disk_engine.fd;
     int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
     uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
+    int end_of_file;
+    char *tmp_buffer;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         return;
@@ -151,9 +153,28 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 break;
             }
 
+            /* this is for recognize if we reached the end of the file that initiates the APPLET_DONE execution */
+            tmp_buffer = nst_cache_memory_alloc(max);
+            if(!tmp_buffer) {
+                end_of_file = -1;
+            } else {
+                end_of_file = pread(fd, tmp_buffer, max, offset + ret);
+                nst_cache_memory_free(tmp_buffer);
+            }
+
             ret = nst_ci_send(res, ret);
 
-            if(ret >= 0) {
+            if(end_of_file == 0) {
+                /* Temporary fix of the issue that the state machine
+                   never steps into state NST_PERSIST_APPLET_DONE
+                   so we execute the necessary steps here*/
+                close(fd);
+                appctx->st0 = NST_PERSIST_APPLET_DONE;
+                co_skip(si_oc(si), co_data(si_oc(si)));
+                si_shutr(si);
+                res->flags |= CF_READ_NULL;
+                break;
+            } else if(ret >= 0) {
                 appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
                 appctx->ctx.nuster.cache_disk_engine.offset += ret;
             } else if(ret == -2) {
@@ -163,6 +184,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             }
             break;
         case NST_PERSIST_APPLET_DONE:
+            /* it is never executed so there is a temporary fix above */
             co_skip(si_oc(si), co_data(si_oc(si)));
             si_shutr(si);
             res->flags |= CF_READ_NULL;
