@@ -2028,6 +2028,9 @@ static struct h2s *h2c_frt_handle_headers(struct h2c *h2c, struct h2s *h2s)
  */
 static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 {
+	struct buffer rxbuf = BUF_NULL;
+	unsigned long long body_len = 0;
+	uint32_t flags = 0;
 	int error;
 
 	if (!b_size(&h2c->dbuf))
@@ -2036,7 +2039,18 @@ static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 	if (b_data(&h2c->dbuf) < h2c->dfl && !b_full(&h2c->dbuf))
 		return NULL; // incomplete frame
 
-	error = h2c_decode_headers(h2c, &h2s->rxbuf, &h2s->flags, &h2s->body_len);
+	if (h2s->st != H2_SS_CLOSED) {
+		error = h2c_decode_headers(h2c, &h2s->rxbuf, &h2s->flags, &h2s->body_len);
+	}
+	else {
+		/* the connection was already killed by an RST, let's consume
+		 * the data and send another RST.
+		 */
+		error = h2c_decode_headers(h2c, &rxbuf, &flags, &body_len);
+		h2s_error(h2s, H2_ERR_STREAM_CLOSED);
+		h2c->st0 = H2_CS_FRAME_E;
+		goto send_rst;
+	}
 
 	/* unrecoverable error ? */
 	if (h2c->st0 >= H2_CS_ERROR)
@@ -2072,6 +2086,15 @@ static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 	else if ((!h2s->cs || h2s->cs->flags & (CS_FL_EOI|CS_FL_REOS)) && h2s->st == H2_SS_HLOC)
 		h2s_close(h2s);
 
+	return h2s;
+
+ send_rst:
+	/* make the demux send an RST for the current stream. We may only
+	 * do this if we're certain that the HEADERS frame was properly
+	 * decompressed so that the HPACK decoder is still kept up to date.
+	 */
+	h2_release_buf(h2c, &rxbuf);
+	h2c->st0 = H2_CS_FRAME_E;
 	return h2s;
 }
 
@@ -2384,7 +2407,7 @@ static void h2_process_demux(struct h2c *h2c)
 				goto strm_err;
 			}
 
-			if (h2s->flags & H2_SF_RST_RCVD && h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK) {
+			if (h2s->flags & H2_SF_RST_RCVD && !(h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK)) {
 				/* RFC7540#5.1:closed: an endpoint that
 				 * receives any frame other than PRIORITY after
 				 * receiving a RST_STREAM MUST treat that as a
