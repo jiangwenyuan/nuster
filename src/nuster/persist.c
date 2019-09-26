@@ -238,10 +238,14 @@ void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
             ret = pread(fd, meta, NST_PERSIST_META_SIZE, 0);
 
             if(ret != NST_PERSIST_META_SIZE) {
+                unlink(path);
+                close(fd);
                 continue;
             }
 
             if(memcmp(meta, "NUSTER", 6) !=0) {
+                unlink(path);
+                close(fd);
                 continue;
             }
 
