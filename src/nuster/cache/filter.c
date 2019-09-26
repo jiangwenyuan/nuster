@@ -85,6 +85,10 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 
         nst_cache_stats_update_req(ctx->state);
 
+        if(ctx->disk.fd > 0) {
+            close(ctx->disk.fd);
+        }
+
         if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
             nst_cache_abort(ctx);
         }
