@@ -2407,7 +2407,8 @@ static void h2_process_demux(struct h2c *h2c)
 				goto strm_err;
 			}
 
-			if (h2s->flags & H2_SF_RST_RCVD && !(h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK)) {
+			if (h2s->flags & H2_SF_RST_RCVD &&
+			    !(h2_ft_bit(h2c->dft) & (H2_FT_HDR_MASK | H2_FT_RST_STREAM_BIT | H2_FT_PRIORITY_BIT | H2_FT_WINDOW_UPDATE_BIT))) {
 				/* RFC7540#5.1:closed: an endpoint that
 				 * receives any frame other than PRIORITY after
 				 * receiving a RST_STREAM MUST treat that as a
@@ -2422,6 +2423,10 @@ static void h2_process_demux(struct h2c *h2c)
 				 * happen with request trailers received after sending an
 				 * RST_STREAM, or with header/trailers responses received after
 				 * sending RST_STREAM (aborted stream).
+				 *
+				 * In addition, since our CLOSED streams always carry the
+				 * RST_RCVD bit, we don't want to accidently catch valid
+				 * frames for a closed stream, i.e. RST/PRIO/WU.
 				 */
 				h2s_error(h2s, H2_ERR_STREAM_CLOSED);
 				h2c->st0 = H2_CS_FRAME_E;
