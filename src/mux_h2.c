@@ -2573,8 +2573,11 @@ static void h2_process_demux(struct h2c *h2c)
 			break;
 
 		if (h2c->st0 != H2_CS_FRAME_H) {
-			b_del(&h2c->dbuf, h2c->dfl);
-			h2c->st0 = H2_CS_FRAME_H;
+			ret = MIN(b_data(&h2c->dbuf), h2c->dfl);
+			b_del(&h2c->dbuf, ret);
+			h2c->dfl -= ret;
+			if (!h2c->dfl)
+				h2c->st0 = H2_CS_FRAME_H;
 		}
 	}
 
