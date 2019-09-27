@@ -1,6 +1,41 @@
 ChangeLog :
 ===========
 
+2019/09/27 : 1.9.11
+    - BUG/MINOR: lua: fix setting netfilter mark
+    - BUG/MEDIUM: lua: Fix test on the direction to set the channel exp timeout
+    - BUG/MEDIUM: mux-h1: do not truncate trailing 0CRLF on buffer boundary
+    - DOC: fixed typo in management.txt
+    - BUG/MINOR: mworker: disable SIGPROF on re-exec
+    - BUG/MEDIUM: listener/threads: fix an AB/BA locking issue in delete_listener()
+    - BUG/MEDIUM: url32 does not take the path part into account in the returned hash.
+    - BUG/MEDIUM: proto-http: Always start the parsing if there is no outgoing data
+    - BUG/MINOR: http-ana: Reset response flags when 1xx messages are handled
+    - BUG/MINOR: h1: Properly reset h1m when parsing is restarted
+    - BUG/MEDIUM: cache: Don't cache objects if the size of headers is too big
+    - BUG/MINOR: lb/leastconn: ignore the server weights for empty servers
+    - BUG/MEDIUM: connection: don't keep more idle connections than ever needed
+    - MINOR: stats: report the number of idle connections for each server
+    - BUG/MINOR: listener: Fix a possible null pointer dereference
+    - MEDIUM: checks: Make sure we unsubscribe before calling cs_destroy().
+    - BUG/MEDIUM: http: also reject messages where "chunked" is missing from transfer-enoding
+    - BUG/MINOR: filters: Properly set the HTTP status code on analysis error
+    - BUG/MINOR: acl: Fix memory leaks when an ACL expression is parsed
+    - BUG/MINOR: Missing stat_field_names (since f21d17bb)
+    - BUG/MAJOR: mux-h2: Handle HEADERS frames received after a RST_STREAM frame
+    - BUG/MEDIUM: check/threads: make external checks run exclusively on thread 1
+    - BUG/MINOR: mux-h2: do not wake up blocked streams before the mux is ready
+    - BUG/MEDIUM: namespace: close open namespaces during soft shutdown
+    - BUG/MEDIUM: mux-h2: don't reject valid frames on closed streams
+    - BUG/MINOR: mux-h2: Use the dummy error when decoding headers for a closed stream
+    - BUG/MAJOR: mux_h2: Don't consume more payload than received for skipped frames
+    - MINOR: tools: implement my_flsl()
+    - BUG/MEDIUM: spoe: Use a different engine-id per process
+    - MINOR: spoe: Improve generation of the engine-id
+    - MINOR: spoe: Support the async mode with several threads
+    - DOC: Fix documentation about the cli command to get resolver stats
+    - BUG/MEDIUM: namespace: fix fd leak in master-worker mode
+
 2019/08/08 : 1.9.10
     - BUG/MEDIUM: protocols: add a global lock for the init/deinit stuff
     - BUG/MINOR: proxy: always lock stop_proxy()
