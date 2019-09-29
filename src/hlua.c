@@ -397,6 +397,8 @@ static int hlua_lua2arg(lua_State *L, int ud, struct arg *arg)
 	case LUA_TSTRING:
 		arg->type = ARGT_STR;
 		arg->data.str.str = (char *)lua_tolstring(L, ud, (size_t *)&arg->data.str.len);
+		/* We don't know the actual size of the underlying allocation, so be conservative. */
+		arg->data.str.size = arg->data.str.len;
 		break;
 
 	case LUA_TUSERDATA:
@@ -537,6 +539,8 @@ static int hlua_lua2smp(lua_State *L, int ud, struct sample *smp)
 		smp->data.type = SMP_T_STR;
 		smp->flags |= SMP_F_CONST;
 		smp->data.u.str.str = (char *)lua_tolstring(L, ud, (size_t *)&smp->data.u.str.len);
+		/* We don't know the actual size of the underlying allocation, so be conservative. */
+		smp->data.u.str.size = smp->data.u.str.len;
 		break;
 
 	case LUA_TUSERDATA:
