@@ -280,8 +280,28 @@ static struct task *h2_deferred_shut(struct task *t, void *ctx, unsigned short s
 static struct h2s *h2c_bck_stream_new(struct h2c *h2c, struct conn_stream *cs, struct session *sess);
 static void h2s_alert(struct h2s *h2s);
 
+/* returns true if the connection is allowed to expire, false otherwise. A
+ * connection may expire when:
+ *   - it has no stream
+ *   - it has data in the mux buffer
+ *   - it has streams in the blocked list
+ *   - it has streams in the fctl list
+ *   - it has streams in the send list
+ * Otherwise it means some streams are waiting in the data layer and it should
+ * not expire.
+ */
+static inline int h2c_may_expire(const struct h2c *h2c)
+{
+	return eb_is_empty(&h2c->streams_by_id) ||
+	       b_data(&h2c->mbuf) ||
+	       !LIST_ISEMPTY(&h2c->blocked_list) ||
+	       !LIST_ISEMPTY(&h2c->fctl_list) ||
+	       !LIST_ISEMPTY(&h2c->send_list) ||
+	       !LIST_ISEMPTY(&h2c->sending_list);
+}
+
 static __inline int
-h2c_is_dead(struct h2c *h2c)
+h2c_is_dead(const struct h2c *h2c)
 {
 	if (eb_is_empty(&h2c->streams_by_id) &&     /* don't close if streams exist */
 	    ((h2c->conn->flags & CO_FL_ERROR) ||    /* errors close immediately */
@@ -2957,7 +2977,10 @@ static int h2_process(struct h2c *h2c)
 		h2_release_buf(h2c, &h2c->mbuf);
 
 	if (h2c->task) {
-		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		if (h2c_may_expire(h2c))
+			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		else
+			h2c->task->expire = TICK_ETERNITY;
 		task_queue(h2c->task);
 	}
 
@@ -2988,6 +3011,14 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 
 	task_delete(t);
 	task_free(t);
+
+	if (h2c && !h2c_may_expire(h2c)) {
+		/* we do still have streams but all of them are idle, waiting
+		 * for the data layer, so we must not enforce the timeout here.
+		 */
+		t->expire = TICK_ETERNITY;
+		return t;
+	}
 
 	if (!h2c) {
 		/* resources were already deleted */
@@ -3195,7 +3226,10 @@ static void h2_detach(struct conn_stream *cs)
 		h2_release(h2c->conn);
 	}
 	else if (h2c->task) {
-		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		if (h2c_may_expire(h2c))
+			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		else
+			h2c->task->expire = TICK_ETERNITY;
 		task_queue(h2c->task);
 	}
 }
