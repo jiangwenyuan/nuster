@@ -198,6 +198,31 @@ int nst_persist_get_key(int fd, char *meta, struct buffer *key) {
     return NST_OK;
 }
 
+int nst_persist_get_host(int fd, char *meta, struct nst_str *host) {
+
+    int ret = pread(fd, host->data, host->len, NST_PERSIST_POS_KEY
+            + nst_persist_meta_get_key_len(meta));
+
+    if(ret != host->len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int nst_persist_get_path(int fd, char *meta, struct nst_str *path) {
+
+    int ret = pread(fd, path->data, path->len, NST_PERSIST_POS_KEY
+            + nst_persist_meta_get_key_len(meta)
+            + nst_persist_meta_get_host_len(meta));
+
+    if(ret != path->len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
 void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
     DIR *dir2;
     struct dirent *de2;
