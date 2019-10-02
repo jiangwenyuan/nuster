@@ -225,7 +225,8 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash);
 struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
 void nst_cache_dict_rehash();
 void nst_cache_dict_cleanup();
-int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key);
+int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key,
+        struct nst_str *host, struct nst_str *path);
 
 /* engine */
 void nst_cache_init();

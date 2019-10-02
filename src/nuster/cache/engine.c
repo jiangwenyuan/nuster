@@ -1011,9 +1011,12 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
-                ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data);
+                ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data,
+                ctx->entry->host.len, ctx->entry->path.len);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
+        nst_persist_write_host(&ctx->disk, &ctx->entry->host);
+        nst_persist_write_path(&ctx->disk, &ctx->entry->path);
 
     }
 }
@@ -1220,9 +1223,11 @@ void nst_cache_persist_async() {
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->hash, entry->expire, 0, entry->header_len,
-                    entry->key->data);
+                    entry->key->data, entry->host.len, entry->path.len);
 
             nst_persist_write_key(&disk, entry->key);
+            nst_persist_write_host(&disk, &entry->host);
+            nst_persist_write_path(&disk, &entry->path);
 
             while(element) {
 
@@ -1263,7 +1268,15 @@ void nst_cache_persist_load() {
         char *file;
         char meta[NST_PERSIST_META_SIZE];
         struct buffer *key;
+        struct nst_str host;
+        struct nst_str path;
         int fd;
+        DIR *dir2;
+        struct dirent *de2;
+
+        fd = -1;
+        key = NULL;
+        dir2 = NULL;
 
         root = global.nuster.cache.root;
         file = nuster.cache->disk.file;
@@ -1272,8 +1285,6 @@ void nst_cache_persist_load() {
             struct dirent *de = nst_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
-                DIR *dir2;
-                struct dirent *de2;
 
                 if(strcmp(de->d_name, ".") == 0
                         || strcmp(de->d_name, "..") == 0) {
@@ -1310,44 +1321,49 @@ void nst_cache_persist_load() {
                     }
 
                     if(nst_persist_get_meta(fd, meta) != NST_OK) {
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-                        return;
+                        goto err;
                     }
 
                     key = nst_cache_memory_alloc(sizeof(*key));
 
                     if(!key) {
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-                        return;
+                        goto err;
                     }
 
                     key->size = nst_persist_meta_get_key_len(meta);
                     key->area = nst_cache_memory_alloc(key->size);
 
                     if(!key->area) {
-                        nst_cache_memory_free(key);
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-                        return;
+                        goto err;
                     }
 
                     if(nst_persist_get_key(fd, meta, key) != NST_OK) {
-                        nst_cache_memory_free(key->area);
-
-                        nst_cache_memory_free(key);
-
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-                        return;
+                        goto err;
                     }
 
-                    nst_cache_dict_set_from_disk(file, meta, key);
+                    host.len = nst_persist_meta_get_host_len(meta);
+                    host.data = nst_cache_memory_alloc(host.len);
+
+                    if(!host.data) {
+                        goto err;
+                    }
+
+                    if(nst_persist_get_host(fd, meta, &host) != NST_OK) {
+                        goto err;
+                    }
+
+                    path.len = nst_persist_meta_get_path_len(meta);
+                    path.data = nst_cache_memory_alloc(path.len);
+
+                    if(!path.data) {
+                        goto err;
+                    }
+
+                    if(nst_persist_get_path(fd, meta, &path) != NST_OK) {
+                        goto err;
+                    }
+
+                    nst_cache_dict_set_from_disk(file, meta, key, &host, &path);
 
                     close(fd);
                 }
@@ -1370,6 +1386,39 @@ void nst_cache_persist_load() {
         if(nuster.cache->disk.idx == 16 * 16) {
             nuster.cache->disk.loaded = 1;
             nuster.cache->disk.idx    = 0;
+        }
+
+        return;
+
+err:
+
+        if(file) {
+            unlink(file);
+        }
+
+        if(fd) {
+            close(fd);
+        }
+
+        if(dir2) {
+            closedir(dir2);
+        }
+
+        if(key) {
+
+            if(key->area) {
+                nst_cache_memory_free(key->area);
+            }
+
+            nst_cache_memory_free(key);
+        }
+
+        if(host.data) {
+            nst_cache_memory_free(host.data);
+        }
+
+        if(path.data) {
+            nst_cache_memory_free(path.data);
         }
 
     }

@@ -42,8 +42,14 @@
    8 * 3        8               cache length
    8 * 4        8               header length
    8 * 5        8               key length
-   8 * 6        key_len         key
-   48 + key_len cache_len       cache
+   8 * 6        8               host length
+   8 * 7        8               path length
+   8 * 8        key_len         key
+   8 * 9        host_len        host
+   8 * 10       path_len        path
+   64 + key_len
+   + host_len
+   + path_len   cache_len       cache
  */
 
 #define NST_PERSIST_META_POS_HASH            8 * 1
@@ -51,9 +57,11 @@
 #define NST_PERSIST_META_POS_CACHE_LEN       8 * 3
 #define NST_PERSIST_META_POS_HEADER_LEN      8 * 4
 #define NST_PERSIST_META_POS_KEY_LEN         8 * 5
+#define NST_PERSIST_META_POS_HOST_LEN        8 * 6
+#define NST_PERSIST_META_POS_PATH_LEN        8 * 7
 
 
-#define NST_PERSIST_META_SIZE                8 * 6
+#define NST_PERSIST_META_SIZE                8 * 8
 #define NST_PERSIST_POS_KEY                  NST_PERSIST_META_SIZE
 
 enum {
@@ -150,13 +158,32 @@ static inline uint64_t nst_persist_meta_get_key_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_KEY_LEN);
 }
 
+static inline void nst_persist_meta_set_host_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NST_PERSIST_META_POS_HOST_LEN) = v;
+}
+
+static inline uint64_t nst_persist_meta_get_host_len(char *p) {
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_HOST_LEN);
+}
+
+static inline void nst_persist_meta_set_path_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NST_PERSIST_META_POS_PATH_LEN) = v;
+}
+
+static inline uint64_t nst_persist_meta_get_path_len(char *p) {
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_PATH_LEN);
+}
+
 static inline int nst_persist_get_header_pos(char *p) {
-    return (int)(NST_PERSIST_META_SIZE + nst_persist_meta_get_key_len(p));
+    return (int)(NST_PERSIST_META_SIZE + nst_persist_meta_get_key_len(p)
+            + nst_persist_meta_get_host_len(p)
+            + nst_persist_meta_get_path_len(p));
 }
 
 static inline void
 nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
-        uint64_t cache_len, uint64_t header_len, uint64_t key_len) {
+        uint64_t cache_len, uint64_t header_len, uint64_t key_len,
+        uint64_t host_len, uint64_t path_len) {
 
     memcpy(p, "NUSTER", 6);
     p[6] = mode;
@@ -167,6 +194,8 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_cache_len(p, cache_len);
     nst_persist_meta_set_header_len(p, header_len);
     nst_persist_meta_set_key_len(p, key_len);
+    nst_persist_meta_set_host_len(p, host_len);
+    nst_persist_meta_set_path_len(p, path_len);
 }
 
 int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
@@ -196,9 +225,30 @@ nst_persist_write_key(struct persist *disk, struct buffer *key) {
     return nst_persist_write(disk, key->area, key->data);
 }
 
+static inline int
+nst_persist_write_host(struct persist *disk, struct nst_str *host) {
+
+    disk->offset = NST_PERSIST_POS_KEY
+        + nst_persist_meta_get_key_len(disk->meta);
+
+    return nst_persist_write(disk, host->data, host->len);
+}
+
+static inline int
+nst_persist_write_path(struct persist *disk, struct nst_str *path) {
+
+    disk->offset = NST_PERSIST_POS_KEY
+        + nst_persist_meta_get_key_len(disk->meta)
+        + nst_persist_meta_get_host_len(disk->meta);
+
+    return nst_persist_write(disk, path->data, path->len);
+}
+
 void nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
 int nst_persist_get_meta(int fd, char *meta);
 int nst_persist_get_key(int fd, char *meta, struct buffer *key);
+int nst_persist_get_host(int fd, char *meta, struct nst_str *host);
+int nst_persist_get_path(int fd, char *meta, struct nst_str *path);
 DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx);
 void nst_persist_cleanup(char *root, char *path, struct dirent *de);
 struct dirent *nst_persist_dir_next(DIR *dir);

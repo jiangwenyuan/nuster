@@ -325,7 +325,9 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
     return NULL;
 }
 
-int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
+int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key,
+        struct nst_str *host, struct nst_str *path) {
+
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_entry *entry = NULL;
     int idx;
@@ -362,6 +364,12 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
     memcpy(entry->file, file, strlen(file));
 
     entry->header_len = nst_persist_meta_get_header_len(meta);
+
+    entry->host.data  = host->data;
+    entry->host.len   = host->len;
+
+    entry->path.data  = path->data;
+    entry->path.len   = path->len;
 
     return NST_OK;
 }
