@@ -31,17 +31,40 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
     nst_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key, hash);
 
-    if(entry && entry->state == NST_CACHE_ENTRY_STATE_VALID) {
-        entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
-        entry->data->invalid = 1;
-        entry->data          = NULL;
-        entry->expire        = 0;
-        ret                  = 200;
+    if(entry) {
+
+        if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+            entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
+            entry->data->invalid = 1;
+            entry->data          = NULL;
+            entry->expire        = 0;
+            ret                  = 200;
+        }
+
+        if(entry->file) {
+            ret = nst_persist_purge_by_path(entry->file);
+        }
     } else {
         ret = 404;
     }
 
     nst_shctx_unlock(&nuster.cache->dict[0]);
+
+    if(!nuster.cache->disk.loaded){
+        struct persist disk;
+
+        disk.file = nst_cache_memory_alloc(
+                nst_persist_path_file_len(global.nuster.cache.root) + 1);
+
+        if(!disk.file) {
+            ret = 500;
+        } else {
+            ret = nst_persist_purge_by_key(global.nuster.cache.root,
+                    &disk, key, hash);
+        }
+
+        nst_cache_memory_free(disk.file);
+    }
 
     return ret;
 }
@@ -468,13 +491,18 @@ static void nst_cache_manager_handler(struct appctx *appctx) {
 
             while(entry) {
 
-                if(entry->state == NST_CACHE_ENTRY_STATE_VALID
-                        && _nst_cache_manager_should_purge(entry, appctx)) {
+                if(_nst_cache_manager_should_purge(entry, appctx)) {
+                    if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
 
-                    entry->state         = NST_CACHE_ENTRY_STATE_INVALID;
-                    entry->data->invalid = 1;
-                    entry->data          = NULL;
-                    entry->expire        = 0;
+                        entry->state         = NST_CACHE_ENTRY_STATE_INVALID;
+                        entry->data->invalid = 1;
+                        entry->data          = NULL;
+                        entry->expire        = 0;
+                    }
+
+                    if(entry->file) {
+                        nst_persist_purge_by_path(entry->file);
+                    }
                 }
 
                 entry = entry->next;
