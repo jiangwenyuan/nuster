@@ -203,5 +203,8 @@ DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx);
 void nst_persist_cleanup(char *root, char *path, struct dirent *de);
 struct dirent *nst_persist_dir_next(DIR *dir);
 int nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash);
+int nst_persist_purge_by_key(char *root, struct persist *disk,
+        struct buffer *key, uint64_t hash);
+int nst_persist_purge_by_path(char *path);
 
 #endif /* _NUSTER_PERSIST_H */

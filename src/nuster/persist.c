@@ -264,3 +264,82 @@ void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
     closedir(dir2);
 
 }
+
+int nst_persist_purge_by_key(char *root, struct persist *disk,
+        struct buffer *key, uint64_t hash) {
+
+    struct dirent *de;
+    DIR *dirp;
+    char *buf;
+    int ret;
+
+    buf = malloc(key->data);
+
+    if(!buf) {
+        return 500;
+    }
+
+    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
+            hash >> 60, hash >> 56, hash);
+
+    dirp = opendir(disk->file);
+
+    if(!dirp) {
+        free(buf);
+
+        if(errno == ENOENT) {
+            return 404;
+        } else {
+            return 500;
+        }
+    }
+
+    ret = 404;
+
+    while((de = readdir(dirp)) != NULL) {
+
+        if(strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
+            memcpy(disk->file + nst_persist_path_hash_len(root), "/", 1);
+            memcpy(disk->file + nst_persist_path_hash_len(root) + 1,
+                    de->d_name, strlen(de->d_name));
+
+                disk->fd = nst_persist_open(disk->file);
+
+                if(disk->fd == -1) {
+                    ret = 500;
+                    goto done;
+                }
+
+                ret = pread(disk->fd, buf, key->data, NST_PERSIST_POS_KEY);
+
+                if(ret == key->data && memcmp(key->area, buf, key->data) == 0) {
+                    unlink(disk->file);
+                    ret = 200;
+                    goto done;
+                }
+
+                close(disk->fd);
+        }
+    }
+
+done:
+    closedir(dirp);
+    close(disk->fd);
+    free(buf);
+    return ret;
+}
+
+int nst_persist_purge_by_path(char *path) {
+    int ret = unlink(path);
+
+    if(ret == 0) {
+        return 200;
+    } else {
+        if(errno == ENOENT) {
+            return 404;
+        } else {
+            return 500;
+        }
+    }
+}
+
