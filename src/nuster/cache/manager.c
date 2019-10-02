@@ -429,7 +429,7 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry,
             ret = entry->pid == appctx->st1;
             break;
         case NST_CACHE_PURGE_NAME_RULE:
-            ret = entry->rule->id == appctx->st1;
+            ret = entry->rule && entry->rule->id == appctx->st1;
             break;
         case NST_CACHE_PURGE_PATH:
             ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len
