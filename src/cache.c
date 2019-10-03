@@ -716,6 +716,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	if (IS_HTX_STRM(s)) {
 		struct htx *htx = htxbuf(&s->res.buf);
 		struct http_hdr_ctx ctx;
+		size_t hdrs_len = 0;
 		int32_t pos;
 
 		/* Do not cache too big objects. */
@@ -750,11 +751,17 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 			enum htx_blk_type type = htx_get_blk_type(blk);
 			uint32_t sz = htx_get_blksz(blk);
 
+			hdrs_len += sizeof(*blk) + sz;
 			chunk_memcat(&trash, (char *)&blk->info, sizeof(blk->info));
 			if (type == HTX_BLK_EOH)
 				break;
 			chunk_memcat(&trash, htx_get_blk_ptr(htx, blk), sz);
 		}
+
+		/* Do not cache objects if the headers are too big. */
+		if (hdrs_len > htx->size - global.tune.maxrewrite)
+			goto out;
+
 	}
 	else {
 		struct hdr_ctx ctx;
@@ -784,6 +791,10 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 			}
 			http_remove_header2(msg, &txn->hdr_idx, &ctx);
 		}
+
+		/* Do not cache objects if the headers are too big. */
+		if (msg->sov > c_size(txn->rsp.chn) - global.tune.maxrewrite)
+			goto out;
 	}
 
 	shctx_lock(shctx);

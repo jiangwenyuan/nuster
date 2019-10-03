@@ -189,7 +189,7 @@ struct h2s {
 	struct eb32_node by_id; /* place in h2c's streams_by_id */
 	int32_t id; /* stream ID */
 	uint32_t flags;      /* H2_SF_* */
-	int mws;             /* mux window size for this stream */
+	int sws;             /* stream window size, to be added to the mux's initial window size */
 	enum h2_err errcode; /* H2 err code (H2_ERR_*) */
 	enum h2_ss st;
 	uint16_t status;     /* HTTP response status */
@@ -665,6 +665,14 @@ static inline __maybe_unused int h2s_id(const struct h2s *h2s)
 	return h2s ? h2s->id : 0;
 }
 
+/* returns the sum of the stream's own window size and the mux's initial
+ * window, which together form the stream's effective window size.
+ */
+static inline int h2s_mws(const struct h2s *h2s)
+{
+	return h2s->sws + h2s->h2c->miw;
+}
+
 /* returns true of the mux is currently busy as seen from stream <h2s> */
 static inline __maybe_unused int h2c_mux_busy(const struct h2c *h2c, const struct h2s *h2s)
 {
@@ -905,7 +913,7 @@ static struct h2s *h2s_new(struct h2c *h2c, int id)
 	LIST_INIT(&h2s->sending_list);
 	h2s->h2c       = h2c;
 	h2s->cs        = NULL;
-	h2s->mws       = h2c->miw;
+	h2s->sws       = 0;
 	h2s->flags     = H2_SF_NONE;
 	h2s->errcode   = H2_ERR_NO_ERROR;
 	h2s->st        = H2_SS_IDLE;
@@ -1251,7 +1259,7 @@ static int h2s_send_rst_stream(struct h2c *h2c, struct h2s *h2s)
 	/* RFC7540#5.4.2: To avoid looping, an endpoint MUST NOT send a
 	 * RST_STREAM in response to a RST_STREAM frame.
 	 */
-	if (h2c->dft == H2_FT_RST_STREAM) {
+	if (h2c->dsi == h2s->id && h2c->dft == H2_FT_RST_STREAM) {
 		ret = 1;
 		goto ignore;
 	}
@@ -1465,30 +1473,23 @@ static void h2_wake_some_streams(struct h2c *h2c, int last, uint32_t flags)
 	}
 }
 
-/* Increase all streams' outgoing window size by the difference passed in
- * argument. This is needed upon receipt of the settings frame if the initial
- * window size is different. The difference may be negative and the resulting
- * window size as well, for the time it takes to receive some window updates.
+/* Wake up all blocked streams whose window size has become positive after the
+ * mux's initial window was adjusted. This should be done after having processed
+ * SETTINGS frames which have updated the mux's initial window size.
  */
-static void h2c_update_all_ws(struct h2c *h2c, int diff)
+static void h2c_unblock_sfctl(struct h2c *h2c)
 {
 	struct h2s *h2s;
 	struct eb32_node *node;
 
-	if (!diff)
-		return;
-
 	node = eb32_first(&h2c->streams_by_id);
 	while (node) {
 		h2s = container_of(node, struct h2s, by_id);
-		h2s->mws += diff;
-
-		if (h2s->mws > 0 && (h2s->flags & H2_SF_BLK_SFCTL)) {
+		if (h2s->flags & H2_SF_BLK_SFCTL && h2s_mws(h2s) > 0) {
 			h2s->flags &= ~H2_SF_BLK_SFCTL;
 			if (h2s->send_wait && LIST_ISEMPTY(&h2s->list))
 				LIST_ADDQ(&h2c->send_list, &h2s->list);
 		}
-
 		node = eb32_next(node);
 	}
 }
@@ -1529,7 +1530,6 @@ static int h2c_handle_settings(struct h2c *h2c)
 				error = H2_ERR_FLOW_CONTROL_ERROR;
 				goto fail;
 			}
-			h2c_update_all_ws(h2c, arg - h2c->miw);
 			h2c->miw = arg;
 			break;
 		case H2_SETTINGS_MAX_FRAME_SIZE:
@@ -1783,13 +1783,13 @@ static int h2c_handle_window_update(struct h2c *h2c, struct h2s *h2s)
 			goto strm_err;
 		}
 
-		if (h2s->mws >= 0 && h2s->mws + inc < 0) {
+		if (h2s_mws(h2s) >= 0 && h2s_mws(h2s) + inc < 0) {
 			error = H2_ERR_FLOW_CONTROL_ERROR;
 			goto strm_err;
 		}
 
-		h2s->mws += inc;
-		if (h2s->mws > 0 && (h2s->flags & H2_SF_BLK_SFCTL)) {
+		h2s->sws += inc;
+		if (h2s_mws(h2s) > 0 && (h2s->flags & H2_SF_BLK_SFCTL)) {
 			h2s->flags &= ~H2_SF_BLK_SFCTL;
 			if (h2s->send_wait && LIST_ISEMPTY(&h2s->list))
 				LIST_ADDQ(&h2c->send_list, &h2s->list);
@@ -2028,6 +2028,9 @@ static struct h2s *h2c_frt_handle_headers(struct h2c *h2c, struct h2s *h2s)
  */
 static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 {
+	struct buffer rxbuf = BUF_NULL;
+	unsigned long long body_len = 0;
+	uint32_t flags = 0;
 	int error;
 
 	if (!b_size(&h2c->dbuf))
@@ -2036,7 +2039,18 @@ static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 	if (b_data(&h2c->dbuf) < h2c->dfl && !b_full(&h2c->dbuf))
 		return NULL; // incomplete frame
 
-	error = h2c_decode_headers(h2c, &h2s->rxbuf, &h2s->flags, &h2s->body_len);
+	if (h2s->st != H2_SS_CLOSED) {
+		error = h2c_decode_headers(h2c, &h2s->rxbuf, &h2s->flags, &h2s->body_len);
+	}
+	else {
+		/* the connection was already killed by an RST, let's consume
+		 * the data and send another RST.
+		 */
+		error = h2c_decode_headers(h2c, &rxbuf, &flags, &body_len);
+		h2s = (struct h2s*)h2_error_stream;
+		h2c->st0 = H2_CS_FRAME_E;
+		goto send_rst;
+	}
 
 	/* unrecoverable error ? */
 	if (h2c->st0 >= H2_CS_ERROR)
@@ -2072,6 +2086,15 @@ static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 	else if ((!h2s->cs || h2s->cs->flags & (CS_FL_EOI|CS_FL_REOS)) && h2s->st == H2_SS_HLOC)
 		h2s_close(h2s);
 
+	return h2s;
+
+ send_rst:
+	/* make the demux send an RST for the current stream. We may only
+	 * do this if we're certain that the HEADERS frame was properly
+	 * decompressed so that the HPACK decoder is still kept up to date.
+	 */
+	h2_release_buf(h2c, &rxbuf);
+	h2c->st0 = H2_CS_FRAME_E;
 	return h2s;
 }
 
@@ -2113,7 +2136,11 @@ static int h2c_frt_handle_data(struct h2c *h2c, struct h2s *h2s)
 	 * notify the stream about any change.
 	 */
 	if (!h2s->cs) {
-		error = H2_ERR_STREAM_CLOSED;
+		/* The upper layer has already closed, this may happen on
+		 * 4xx/redirects during POST, or when receiving a response
+		 * from an H2 server after the client has aborted.
+		 */
+		error = H2_ERR_CANCEL;
 		goto strm_err;
 	}
 
@@ -2163,6 +2190,7 @@ static void h2_process_demux(struct h2c *h2c)
 	struct h2s *h2s = NULL, *tmp_h2s;
 	struct h2_fh hdr;
 	unsigned int padlen = 0;
+	int32_t old_iw = h2c->miw;
 
 	if (h2c->st0 >= H2_CS_ERROR)
 		return;
@@ -2230,6 +2258,8 @@ static void h2_process_demux(struct h2c *h2c)
 			break;
 
 		if (h2c->st0 == H2_CS_FRAME_H) {
+			h2c->rcvd_s = 0;
+
 			if (!h2_peek_frame_hdr(&h2c->dbuf, 0, &hdr))
 				break;
 
@@ -2298,7 +2328,13 @@ static void h2_process_demux(struct h2c *h2c)
 			}
 		}
 
-		/* Only H2_CS_FRAME_P and H2_CS_FRAME_A here */
+		/* Only H2_CS_FRAME_P, H2_CS_FRAME_A and H2_CS_FRAME_E here.
+		 * H2_CS_FRAME_P indicates an incomplete previous operation
+		 * (most often the first attempt) and requires some validity
+		 * checks for the frame and the current state. The two other
+		 * ones are set after completion (or abortion) and must skip
+		 * validity checks.
+		 */
 		tmp_h2s = h2c_st_by_id(h2c, h2c->dsi);
 
 		if (tmp_h2s != h2s && h2s && h2s->cs &&
@@ -2312,6 +2348,9 @@ static void h2_process_demux(struct h2c *h2c)
 
 		if (h2c->st0 == H2_CS_FRAME_E)
 			goto strm_err;
+
+		if (h2c->st0 == H2_CS_FRAME_A)
+			goto valid_frame_type;
 
 		if (h2s->st == H2_SS_IDLE &&
 		    h2c->dft != H2_FT_HEADERS && h2c->dft != H2_FT_PRIORITY) {
@@ -2368,7 +2407,8 @@ static void h2_process_demux(struct h2c *h2c)
 				goto strm_err;
 			}
 
-			if (h2s->flags & H2_SF_RST_RCVD && h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK) {
+			if (h2s->flags & H2_SF_RST_RCVD &&
+			    !(h2_ft_bit(h2c->dft) & (H2_FT_HDR_MASK | H2_FT_RST_STREAM_BIT | H2_FT_PRIORITY_BIT | H2_FT_WINDOW_UPDATE_BIT))) {
 				/* RFC7540#5.1:closed: an endpoint that
 				 * receives any frame other than PRIORITY after
 				 * receiving a RST_STREAM MUST treat that as a
@@ -2383,6 +2423,10 @@ static void h2_process_demux(struct h2c *h2c)
 				 * happen with request trailers received after sending an
 				 * RST_STREAM, or with header/trailers responses received after
 				 * sending RST_STREAM (aborted stream).
+				 *
+				 * In addition, since our CLOSED streams always carry the
+				 * RST_RCVD bit, we don't want to accidently catch valid
+				 * frames for a closed stream, i.e. RST/PRIO/WU.
 				 */
 				h2s_error(h2s, H2_ERR_STREAM_CLOSED);
 				h2c->st0 = H2_CS_FRAME_E;
@@ -2435,6 +2479,7 @@ static void h2_process_demux(struct h2c *h2c)
 		}
 #endif
 
+	valid_frame_type:
 		switch (h2c->dft) {
 		case H2_FT_SETTINGS:
 			if (h2c->st0 == H2_CS_FRAME_P)
@@ -2528,8 +2573,11 @@ static void h2_process_demux(struct h2c *h2c)
 			break;
 
 		if (h2c->st0 != H2_CS_FRAME_H) {
-			b_del(&h2c->dbuf, h2c->dfl);
-			h2c->st0 = H2_CS_FRAME_H;
+			ret = MIN(b_data(&h2c->dbuf), h2c->dfl);
+			b_del(&h2c->dbuf, ret);
+			h2c->dfl -= ret;
+			if (!h2c->dfl)
+				h2c->st0 = H2_CS_FRAME_H;
 		}
 	}
 
@@ -2546,6 +2594,9 @@ static void h2_process_demux(struct h2c *h2c)
 		h2s->cs->flags |= CS_FL_RCV_MORE;
 		h2s_notify_recv(h2s);
 	}
+
+	if (old_iw != h2c->miw)
+		h2c_unblock_sfctl(h2c);
 
 	h2c_restart_reading(h2c, 0);
 }
@@ -2575,6 +2626,11 @@ static int h2_process_mux(struct h2c *h2c)
 	}
 
 	/* start by sending possibly pending window updates */
+	if (h2c->rcvd_s > 0 &&
+	    !(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_MUX_MALLOC)) &&
+	    h2c_send_strm_wu(h2c) < 0)
+		goto fail;
+
 	if (h2c->rcvd_c > 0 &&
 	    !(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_MUX_MALLOC)) &&
 	    h2c_send_conn_wu(h2c) < 0)
@@ -2688,7 +2744,7 @@ static int h2_recv(struct h2c *h2c)
 			ret = 0;
 	} while (ret > 0);
 
-	if (h2_recv_allowed(h2c) && (b_data(buf) < buf->size))
+	if (max && !ret && h2_recv_allowed(h2c))
 		conn->xprt->subscribe(conn, SUB_RETRY_RECV, &h2c->wait_event);
 
 	if (!b_data(buf)) {
@@ -2775,7 +2831,7 @@ static int h2_send(struct h2c *h2c)
 	/* We're not full anymore, so we can wake any task that are waiting
 	 * for us.
 	 */
-	if (!(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_DEM_MROOM))) {
+	if (!(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_DEM_MROOM)) && h2c->st0 >= H2_CS_FRAME_H) {
 		struct h2s *h2s;
 
 		list_for_each_entry(h2s, &h2c->send_list, list) {
@@ -4131,8 +4187,8 @@ static size_t h2s_frt_make_resp_data(struct h2s *h2s, const struct buffer *buf, 
 	if (size > max)
 		size = max;
 
-	if (size > h2s->mws)
-		size = h2s->mws;
+	if (size > h2s_mws(h2s))
+		size = h2s_mws(h2s);
 
 	if (size <= 0) {
 		h2s->flags |= H2_SF_BLK_SFCTL;
@@ -4229,7 +4285,7 @@ static size_t h2s_frt_make_resp_data(struct h2s *h2s, const struct buffer *buf, 
 		ofs += size;
 		total += size;
 		h1m->curr_len -= size;
-		h2s->mws -= size;
+		h2s->sws -= size;
 		h2c->mws -= size;
 
 		if (size && !h1m->curr_len && (h1m->flags & H1_MF_CHNK)) {
@@ -4257,7 +4313,7 @@ static size_t h2s_frt_make_resp_data(struct h2s *h2s, const struct buffer *buf, 
 	}
 
  end:
-	trace("[%d] sent simple H2 DATA response (sid=%d) = %d bytes out (%u in, st=%s, ep=%u, es=%s, h2cws=%d h2sws=%d) data=%u", h2c->st0, h2s->id, size+9, (unsigned int)total, h1m_state_str(h1m->state), h1m->err_pos, h1m_state_str(h1m->err_state), h2c->mws, h2s->mws, (unsigned int)b_data(buf));
+	trace("[%d] sent simple H2 DATA response (sid=%d) = %d bytes out (%u in, st=%s, ep=%u, es=%s, h2cws=%d h2sws=%d) data=%u", h2c->st0, h2s->id, size+9, (unsigned int)total, h1m_state_str(h1m->state), h1m->err_pos, h1m_state_str(h1m->err_state), h2c->mws, h2s_mws(h2s), (unsigned int)b_data(buf));
 	return total;
 }
 
@@ -4802,7 +4858,7 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
 	 */
 	if (unlikely(fsize == count &&
 	             htx->used == 1 && type == HTX_BLK_DATA &&
-	             fsize <= h2s->mws && fsize <= h2c->mws && fsize <= h2c->mfs)) {
+	             fsize <= h2s_mws(h2s) && fsize <= h2c->mws && fsize <= h2c->mfs)) {
 		void *old_area = h2c->mbuf.area;
 
 		if (b_data(&h2c->mbuf)) {
@@ -4836,7 +4892,7 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
 		h2_set_frame_size(outbuf.area, fsize);
 
 		/* update windows */
-		h2s->mws -= fsize;
+		h2s->sws -= fsize;
 		h2c->mws -= fsize;
 
 		/* and exchange with our old area */
@@ -4889,7 +4945,7 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
 	if (!fsize)
 		goto send_empty;
 
-	if (h2s->mws <= 0) {
+	if (h2s_mws(h2s) <= 0) {
 		h2s->flags |= H2_SF_BLK_SFCTL;
 		if (!LIST_ISEMPTY(&h2s->list))
 			LIST_DEL_INIT(&h2s->list);
@@ -4899,8 +4955,8 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
 	if (fsize > count)
 		fsize = count;
 
-	if (fsize > h2s->mws)
-		fsize = h2s->mws; // >0
+	if (fsize > h2s_mws(h2s))
+		fsize = h2s_mws(h2s); // >0
 
 	if (h2c->mfs && fsize > h2c->mfs)
 		fsize = h2c->mfs; // >0
@@ -4934,7 +4990,7 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
 
 	/* now let's copy this this into the output buffer */
 	memcpy(outbuf.area + 9, htx_get_blk_ptr(htx, blk), fsize);
-	h2s->mws -= fsize;
+	h2s->sws -= fsize;
 	h2c->mws -= fsize;
 	count    -= fsize;
 

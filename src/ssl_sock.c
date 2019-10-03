@@ -5186,8 +5186,7 @@ static int ssl_sock_init(struct connection *conn)
 
 		/* leave init state and start handshake */
 		conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
-#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined(LIBRESSL_VERSION_NUMBER)) || \
-    defined(OPENSSL_IS_BORINGSSL)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined(LIBRESSL_VERSION_NUMBER))
 		conn->flags |= CO_FL_EARLY_SSL_HS;
 #endif
 
@@ -5458,10 +5457,6 @@ reneg_ok:
 		}
 	}
 
-#ifdef OPENSSL_IS_BORINGSSL
-	if ((conn->flags & CO_FL_EARLY_SSL_HS) && !SSL_in_early_data(conn->xprt_ctx))
-		conn->flags &= ~CO_FL_EARLY_SSL_HS;
-#endif
 	/* The connection is now established at both layers, it's time to leave */
 	conn->flags &= ~(flag | CO_FL_WAIT_L4_CONN | CO_FL_WAIT_L6_CONN);
 	return 1;
@@ -5559,16 +5554,7 @@ static size_t ssl_sock_to_buf(struct connection *conn, struct buffer *buf, size_
 		} else
 #endif
 		ret = SSL_read(conn->xprt_ctx, b_tail(buf), try);
-#ifdef OPENSSL_IS_BORINGSSL
-		if (conn->flags & CO_FL_EARLY_SSL_HS) {
-			if (SSL_in_early_data(conn->xprt_ctx)) {
-				if (ret > 0)
-					conn->flags |= CO_FL_EARLY_DATA;
-			} else {
-				conn->flags &= ~(CO_FL_EARLY_SSL_HS);
-			}
-		}
-#endif
+
 		if (conn->flags & CO_FL_ERROR) {
 			/* CO_FL_ERROR may be set by ssl_sock_infocbk */
 			goto out_error;
@@ -6304,9 +6290,13 @@ smp_fetch_ssl_fc_has_early(const struct arg *args, struct sample *smp, const cha
 
 	smp->flags = 0;
 	smp->data.type = SMP_T_BOOL;
+#ifdef OPENSSL_IS_BORINGSSL
+	smp->data.u.sint = (SSL_in_early_data(conn->xprt_ctx) &&
+			    SSL_early_data_accepted(conn->xprt_ctx));
+#else
 	smp->data.u.sint = ((conn->flags & CO_FL_EARLY_DATA)  &&
 	    (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_HANDSHAKE))) ? 1 : 0;
-
+#endif
 	return 1;
 }
 

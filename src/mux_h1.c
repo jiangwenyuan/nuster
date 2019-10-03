@@ -1012,10 +1012,11 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 	ret = h1_headers_to_hdr_list(b_peek(buf, *ofs), b_peek(buf, *ofs) + max,
 				     hdrs, sizeof(hdrs)/sizeof(hdrs[0]), h1m, &h1sl);
 	if (ret <= 0) {
-		/* Incomplete or invalid message. If the buffer is full, it's an
-		 * error because headers are too large to be handled by the
-		 * parser. */
-		if (ret < 0 || (!ret && !buf_room_for_htx_data(buf)))
+		/* Incomplete or invalid message. If the input buffer only
+		 * contains headers and is full, which is detected by it being
+		 * full and the offset to be zero, it's an error because
+		 * headers are too large to be handled by the parser. */
+		if (ret < 0 || (!ret && !*ofs && !buf_room_for_htx_data(buf)))
 			goto error;
 		goto end;
 	}

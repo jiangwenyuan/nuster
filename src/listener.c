@@ -271,6 +271,9 @@ static void limit_listener(struct listener *l, struct list *list)
  * used as a protocol's generic enable_all() primitive, for use after the
  * fork(). It puts the listeners into LI_READY or LI_FULL states depending on
  * their number of connections. It always returns ERR_NONE.
+ *
+ * Must be called with proto_lock held.
+ *
  */
 int enable_all_listeners(struct protocol *proto)
 {
@@ -285,6 +288,9 @@ int enable_all_listeners(struct protocol *proto)
  * the polling lists when they are in the LI_READY or LI_FULL states. It is
  * intended to be used as a protocol's generic disable_all() primitive. It puts
  * the listeners into LI_LISTEN, and always returns ERR_NONE.
+ *
+ * Must be called with proto_lock held.
+ *
  */
 int disable_all_listeners(struct protocol *proto)
 {
@@ -354,6 +360,9 @@ void unbind_listener_no_close(struct listener *listener)
 /* This function closes all listening sockets bound to the protocol <proto>,
  * and the listeners end in LI_ASSIGNED state if they were higher. It does not
  * detach them from the protocol. It always returns ERR_NONE.
+ *
+ * Must be called with proto_lock held.
+ *
  */
 int unbind_all_listeners(struct protocol *proto)
 {
@@ -418,9 +427,13 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
  * number of listeners is updated, as well as the global number of listeners
  * and jobs. Note that the listener must have previously been unbound. This
  * is the generic function to use to remove a listener.
+ *
+ * Will grab the proto_lock.
+ *
  */
 void delete_listener(struct listener *listener)
 {
+	HA_SPIN_LOCK(PROTO_LOCK, &proto_lock);
 	HA_SPIN_LOCK(LISTENER_LOCK, &listener->lock);
 	if (listener->state == LI_ASSIGNED) {
 		listener->state = LI_INIT;
@@ -430,6 +443,7 @@ void delete_listener(struct listener *listener)
 		HA_ATOMIC_SUB(&listeners, 1);
 	}
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &listener->lock);
+	HA_SPIN_UNLOCK(PROTO_LOCK, &proto_lock);
 }
 
 /* This function is called on a read event from a listening socket, corresponding
@@ -750,7 +764,7 @@ void listener_accept(int fd)
 		if (!LIST_ISEMPTY(&global_listener_queue))
 			dequeue_all_listeners(&global_listener_queue);
 
-		if (!LIST_ISEMPTY(&p->listener_queue) &&
+		if (p && !LIST_ISEMPTY(&p->listener_queue) &&
 		    (!p->fe_sps_lim || freq_ctr_remain(&p->fe_sess_per_sec, p->fe_sps_lim, 0) > 0))
 			dequeue_all_listeners(&p->listener_queue);
 	}

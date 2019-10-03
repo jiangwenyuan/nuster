@@ -1,6 +1,73 @@
 ChangeLog :
 ===========
 
+2019/09/27 : 1.9.11
+    - BUG/MINOR: lua: fix setting netfilter mark
+    - BUG/MEDIUM: lua: Fix test on the direction to set the channel exp timeout
+    - BUG/MEDIUM: mux-h1: do not truncate trailing 0CRLF on buffer boundary
+    - DOC: fixed typo in management.txt
+    - BUG/MINOR: mworker: disable SIGPROF on re-exec
+    - BUG/MEDIUM: listener/threads: fix an AB/BA locking issue in delete_listener()
+    - BUG/MEDIUM: url32 does not take the path part into account in the returned hash.
+    - BUG/MEDIUM: proto-http: Always start the parsing if there is no outgoing data
+    - BUG/MINOR: http-ana: Reset response flags when 1xx messages are handled
+    - BUG/MINOR: h1: Properly reset h1m when parsing is restarted
+    - BUG/MEDIUM: cache: Don't cache objects if the size of headers is too big
+    - BUG/MINOR: lb/leastconn: ignore the server weights for empty servers
+    - BUG/MEDIUM: connection: don't keep more idle connections than ever needed
+    - MINOR: stats: report the number of idle connections for each server
+    - BUG/MINOR: listener: Fix a possible null pointer dereference
+    - MEDIUM: checks: Make sure we unsubscribe before calling cs_destroy().
+    - BUG/MEDIUM: http: also reject messages where "chunked" is missing from transfer-enoding
+    - BUG/MINOR: filters: Properly set the HTTP status code on analysis error
+    - BUG/MINOR: acl: Fix memory leaks when an ACL expression is parsed
+    - BUG/MINOR: Missing stat_field_names (since f21d17bb)
+    - BUG/MAJOR: mux-h2: Handle HEADERS frames received after a RST_STREAM frame
+    - BUG/MEDIUM: check/threads: make external checks run exclusively on thread 1
+    - BUG/MINOR: mux-h2: do not wake up blocked streams before the mux is ready
+    - BUG/MEDIUM: namespace: close open namespaces during soft shutdown
+    - BUG/MEDIUM: mux-h2: don't reject valid frames on closed streams
+    - BUG/MINOR: mux-h2: Use the dummy error when decoding headers for a closed stream
+    - BUG/MAJOR: mux_h2: Don't consume more payload than received for skipped frames
+    - MINOR: tools: implement my_flsl()
+    - BUG/MEDIUM: spoe: Use a different engine-id per process
+    - MINOR: spoe: Improve generation of the engine-id
+    - MINOR: spoe: Support the async mode with several threads
+    - DOC: Fix documentation about the cli command to get resolver stats
+    - BUG/MEDIUM: namespace: fix fd leak in master-worker mode
+
+2019/08/08 : 1.9.10
+    - BUG/MEDIUM: protocols: add a global lock for the init/deinit stuff
+    - BUG/MINOR: proxy: always lock stop_proxy()
+    - BUILD: threads: add the definition of PROTO_LOCK
+    - BUG/MEDIUM: lb-chash: Fix the realloc() when the number of nodes is increased
+    - BUG/MEDIUM: streams: Don't switch the SI to SI_ST_DIS if we have data to send.
+    - BUG/MINOR: log: make sure writev() is not interrupted on a file output
+    - DOC: improve the wording in CONTRIBUTING about how to document a bug fix
+    - BUG/MINOR: hlua/htx: Reset channels analyzers when txn:done() is called
+    - BUG/MEDIUM: hlua: Check the calling direction in lua functions of the HTTP class
+    - MINOR: hlua: Don't set request analyzers on response channel for lua actions
+    - MINOR: hlua: Add a flag on the lua txn to know in which context it can be used
+    - BUG/MINOR: hlua: Only execute functions of HTTP class if the txn is HTTP ready
+    - BUILD: log/threads: implement the logsrv lock
+    - BUG/MAJOR: queue/threads: avoid an AB/BA locking issue in process_srv_queue()
+    - BUG/MINOR: lua: Set right direction and flags on new HTTP objects
+    - BUG/MEDIUM: lb-chash: Ensure the tree integrity when server weight is increased
+    - BUG/MAJOR: http/sample: use a static buffer for raw -> htx conversion
+    - BUG/MINOR: stream-int: also update analysers timeouts on activity
+    - BUG/MEDIUM: mux-h2: unbreak receipt of large DATA frames
+    - BUG/MEDIUM: mux-h2: split the stream's and connection's window sizes
+    - BUG/MEDIUM: fd: Always reset the polled_mask bits in fd_dodelete().
+    - BUG/MINOR: mux-h2: don't refrain from sending an RST_STREAM after another one
+    - BUG/MINOR: mux-h2: use CANCEL, not STREAM_CLOSED in h2c_frt_handle_data()
+    - BUG/MEDIUM: mux-h2: do not recheck a frame type after a state transition
+    - BUG/MINOR: mux-h2: always send stream window update before connection's
+    - BUG/MINOR: mux-h2: always reset rcvd_s when switching to a new frame
+    - BUG/MEDIUM: checks: make sure to close nicely when we're the last to speak
+    - BUG/MINOR: ssl: fix 0-RTT for BoringSSL
+    - MINOR: ssl: ssl_fc_has_early should work for BoringSSL
+    - BUG/MINOR: buffers/threads: always clear a buffer's head before releasing it
+
 2019/07/23 : 1.9.9
     - BUG/MINOR: http_fetch: Rely on the smp direction for "cookie()" and "hdr()"
     - BUG/MEDIUM: threads: Fix build for 32bits arch with dwcas.

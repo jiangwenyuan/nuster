@@ -245,6 +245,8 @@ const char *stat_field_names[ST_F_TOTAL_FIELDS] = {
 	[ST_F_REUSE]          = "reuse",
 	[ST_F_CACHE_LOOKUPS]  = "cache_lookups",
 	[ST_F_CACHE_HITS]     = "cache_hits",
+	[ST_F_SRV_ICUR]       = "srv_icur",
+	[ST_F_SRV_ILIM]       = "src_ilim"
 };
 
 /* one line of info */
@@ -978,11 +980,23 @@ static int stats_dump_fields_html(struct buffer *out,
 
 		chunk_appendf(out,
 		              /* sessions: current, max, limit, total */
-		              "<td>%s</td><td>%s</td><td>%s</td>"
+		              "<td><u>%s<div class=tips>"
+			        "<table class=det>"
+		                "<tr><th>Current active connections:</th><td>%s</td></tr>"
+		                "<tr><th>Current idle connections:</th><td>%s</td></tr>"
+		                "<tr><th>Active connections limit:</th><td>%s</td></tr>"
+		                "<tr><th>Idle connections limit:</th><td>%s</td></tr>"
+			        "</table></div></u>"
+			      "</td><td>%s</td><td>%s</td>"
 		              "<td><u>%s<div class=tips><table class=det>"
 		              "<tr><th>Cum. sessions:</th><td>%s</td></tr>"
 		              "",
-		              U2H(stats[ST_F_SCUR].u.u32), U2H(stats[ST_F_SMAX].u.u32), LIM2A(stats[ST_F_SLIM].u.u32, "-"),
+		              U2H(stats[ST_F_SCUR].u.u32),
+		                U2H(stats[ST_F_SCUR].u.u32),
+		                U2H(stats[ST_F_SRV_ICUR].u.u32),
+			        LIM2A(stats[ST_F_SLIM].u.u32, "-"),
+		                stats[ST_F_SRV_ILIM].type ? U2H(stats[ST_F_SRV_ILIM].u.u32) : "-",
+			      U2H(stats[ST_F_SMAX].u.u32), LIM2A(stats[ST_F_SLIM].u.u32, "-"),
 		              U2H(stats[ST_F_STOT].u.u64),
 		              U2H(stats[ST_F_STOT].u.u64));
 
@@ -1644,6 +1658,10 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 
 	if (sv->maxconn)
 		stats[ST_F_SLIM] = mkf_u32(FO_CONFIG|FN_LIMIT, sv->maxconn);
+
+	stats[ST_F_SRV_ICUR] = mkf_u32(0, sv->curr_idle_conns);
+	if (sv->max_idle_conns != -1)
+		stats[ST_F_SRV_ILIM] = mkf_u32(FO_CONFIG|FN_LIMIT, sv->max_idle_conns);
 
 	stats[ST_F_STOT]     = mkf_u64(FN_COUNTER, sv->counters.cum_sess);
 	stats[ST_F_BIN]      = mkf_u64(FN_COUNTER, sv->counters.bytes_in);
