@@ -1310,19 +1310,6 @@ spoe_release_appctx(struct appctx *appctx)
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
 	}
-	list_for_each_entry_safe(ctx, back, &agent->rt[tid].waiting_queue, list) {
-		LIST_DEL(&ctx->list);
-		LIST_INIT(&ctx->list);
-		ctx->state = SPOE_CTX_ST_ERROR;
-		ctx->status_code = (spoe_appctx->status_code + 0x100);
-		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
-	}
-
-  end:
-	/* Release allocated memory */
-	spoe_release_buffer(&spoe_appctx->buffer,
-			    &spoe_appctx->buffer_wait);
-	pool_free(pool_head_spoe_appctx, spoe_appctx);
 
   end:
 	/* Release allocated memory */
@@ -2974,26 +2961,6 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 		HA_SPIN_INIT(&conf->agent->rt[i].lock);
 	}
 
-	/* finish per-thread agent initialization */
-	if (global.nbthread == 1)
-		conf->agent->flags |= SPOE_FL_ASYNC;
-
-	if ((conf->agent->rt = calloc(global.nbthread, sizeof(*conf->agent->rt))) == NULL) {
-		ha_alert("Proxy %s : out of memory initializing SPOE agent '%s' declared at %s:%d.\n",
-			 px->id, conf->agent->id, conf->agent->conf.file, conf->agent->conf.line);
-		return 1;
-	}
-	for (i = 0; i < global.nbthread; ++i) {
-		conf->agent->rt[i].frame_size   = conf->agent->max_frame_size;
-		conf->agent->rt[i].applets_act  = 0;
-		conf->agent->rt[i].applets_idle = 0;
-		conf->agent->rt[i].sending_rate = 0;
-		LIST_INIT(&conf->agent->rt[i].applets);
-		LIST_INIT(&conf->agent->rt[i].sending_queue);
-		LIST_INIT(&conf->agent->rt[i].waiting_queue);
-		HA_SPIN_INIT(&conf->agent->rt[i].lock);
-	}
-
 	free(conf->agent->b.name);
 	conf->agent->b.name = NULL;
 	conf->agent->b.be = target;
@@ -3953,8 +3920,6 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 		}
 		curagent->var_pfx = strdup(curagent->id);
 	}
-	if (curagent->engine_id == NULL)
-		curagent->engine_id = generate_pseudo_uuid();
 
 	if (LIST_ISEMPTY(&curmphs) && LIST_ISEMPTY(&curgphs)) {
 		ha_warning("Proxy '%s': No message/group used by SPOE agent '%s' declared at %s:%d.\n",

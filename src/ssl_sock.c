@@ -7741,8 +7741,6 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	}
 
 	if ((f = fopen(args[cur_arg + 1], "r")) == NULL) {
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : unable to load ssl tickets keys file", args[cur_arg+1]);
 		goto fail;
@@ -7765,9 +7763,6 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 			thisline[--len] = 0;
 
 		if (base64dec(thisline, len, (char *) (keys_ref->tlskeys + i % TLS_TICKETS_NO), sizeof(struct tls_sess_key)) != sizeof(struct tls_sess_key)) {
-			free(keys_ref->filename);
-			free(keys_ref->tlskeys);
-			free(keys_ref);
 			if (err)
 				memprintf(err, "'%s' : unable to decode base64 key on line %d", args[cur_arg+1], i + 1);
 			goto fail;
@@ -7776,9 +7771,6 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	}
 
 	if (i < TLS_TICKETS_NO) {
-		free(keys_ref->filename);
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : please supply at least %d keys in the tls-tickets-file", args[cur_arg+1], TLS_TICKETS_NO);
 		goto fail;
@@ -8023,11 +8015,10 @@ static int srv_parse_allow_0rtt(char **args, int *cur_arg, struct proxy *px, str
 	return 0;
 }
 
-/* parse the "no-send-proxy-v2-ssl" server keyword */
-static int srv_parse_no_send_proxy_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
+/* parse the "no-ssl-reuse" server keyword */
+static int srv_parse_no_ssl_reuse(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
-	newsrv->pp_opts &= ~SRV_PP_V2;
-	newsrv->pp_opts &= ~SRV_PP_V2_SSL;
+	newsrv->ssl_ctx.options |= SRV_SSL_O_NO_REUSE;
 	return 0;
 }
 
@@ -8202,304 +8193,6 @@ static int ssl_parse_default_server_options(char **args, int section_type, struc
 	}
 	return 0;
 }
-
-/* parse the "ca-base" / "crt-base" keywords in global section.
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_ca_crt_base(char **args, int section_type, struct proxy *curpx,
-                                        struct proxy *defpx, const char *file, int line,
-                                        char **err)
-{
-	char **target;
-
-	target = (args[0][1] == 'a') ? &global_ssl.ca_base : &global_ssl.crt_base;
-
-	if (too_many_args(1, args, err, NULL))
-		return -1;
-
-	if (*target) {
-		memprintf(err, "'%s' already specified.", args[0]);
-		return -1;
-	}
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "global statement '%s' expects a directory path as an argument.", args[0]);
-		return -1;
-	}
-	*target = strdup(args[1]);
-	return 0;
-}
-
-/* parse the "ssl-mode-async" keyword in global section.
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_ssl_async(char **args, int section_type, struct proxy *curpx,
-                                       struct proxy *defpx, const char *file, int line,
-                                       char **err)
-{
-#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
-	global_ssl.async = 1;
-	global.ssl_used_async_engines = nb_engines;
-	return 0;
-#else
-	memprintf(err, "'%s': openssl library does not support async mode", args[0]);
-	return -1;
-#endif
-}
-
-#ifndef OPENSSL_NO_ENGINE
-static int ssl_check_async_engine_count(void) {
-	int err_code = 0;
-
-	if (global_ssl.async && (openssl_engines_initialized > 32)) {
-		ha_alert("ssl-mode-async only supports a maximum of 32 engines.\n");
-		err_code = ERR_ABORT;
-	}
-	return err_code;
-}
-
-/* parse the "ssl-engine" keyword in global section.
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_ssl_engine(char **args, int section_type, struct proxy *curpx,
-                                       struct proxy *defpx, const char *file, int line,
-                                       char **err)
-{
-	char *algo;
-	int ret = -1;
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "global statement '%s' expects a valid engine name as an argument.", args[0]);
-		return ret;
-	}
-
-	if (*(args[2]) == 0) {
-		/* if no list of algorithms is given, it defaults to ALL */
-		algo = strdup("ALL");
-		goto add_engine;
-	}
-
-	/* otherwise the expected format is ssl-engine <engine_name> algo <list of algo> */
-	if (strcmp(args[2], "algo") != 0) {
-		memprintf(err, "global statement '%s' expects to have algo keyword.", args[0]);
-		return ret;
-	}
-
-	if (*(args[3]) == 0) {
-		memprintf(err, "global statement '%s' expects algorithm names as an argument.", args[0]);
-		return ret;
-	}
-	algo = strdup(args[3]);
-
-add_engine:
-	if (ssl_init_single_engine(args[1], algo)==0) {
-		openssl_engines_initialized++;
-		ret = 0;
-	}
-	free(algo);
-	return ret;
-}
-#endif
-
-/* parse the "ssl-default-bind-ciphers" / "ssl-default-server-ciphers" keywords
- * in global section. Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_ciphers(char **args, int section_type, struct proxy *curpx,
-                                    struct proxy *defpx, const char *file, int line,
-                                    char **err)
-{
-	char **target;
-
-	target = (args[0][12] == 'b') ? &global_ssl.listen_default_ciphers : &global_ssl.connect_default_ciphers;
-
-	if (too_many_args(1, args, err, NULL))
-		return -1;
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "global statement '%s' expects a cipher suite as an argument.", args[0]);
-		return -1;
-	}
-
-	free(*target);
-	*target = strdup(args[1]);
-	return 0;
-}
-
-#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
-/* parse the "ssl-default-bind-ciphersuites" / "ssl-default-server-ciphersuites" keywords
- * in global section. Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_ciphersuites(char **args, int section_type, struct proxy *curpx,
-                                    struct proxy *defpx, const char *file, int line,
-                                    char **err)
-{
-	char **target;
-
-	target = (args[0][12] == 'b') ? &global_ssl.listen_default_ciphersuites : &global_ssl.connect_default_ciphersuites;
-
-	if (too_many_args(1, args, err, NULL))
-		return -1;
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "global statement '%s' expects a cipher suite as an argument.", args[0]);
-		return -1;
-	}
-
-	free(*target);
-	*target = strdup(args[1]);
-	return 0;
-}
-#endif
-
-/* parse various global tune.ssl settings consisting in positive integers.
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_int(char **args, int section_type, struct proxy *curpx,
-                                struct proxy *defpx, const char *file, int line,
-                                char **err)
-{
-	int *target;
-
-	if (strcmp(args[0], "tune.ssl.cachesize") == 0)
-		target = &global.tune.sslcachesize;
-	else if (strcmp(args[0], "tune.ssl.maxrecord") == 0)
-		target = (int *)&global_ssl.max_record;
-	else if (strcmp(args[0], "tune.ssl.ssl-ctx-cache-size") == 0)
-		target = &global_ssl.ctx_cache;
-	else if (strcmp(args[0], "maxsslconn") == 0)
-		target = &global.maxsslconn;
-	else if (strcmp(args[0], "tune.ssl.capture-cipherlist-size") == 0)
-		target = &global_ssl.capture_cipherlist;
-	else {
-		memprintf(err, "'%s' keyword not unhandled (please report this bug).", args[0]);
-		return -1;
-	}
-
-	if (too_many_args(1, args, err, NULL))
-		return -1;
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "'%s' expects an integer argument.", args[0]);
-		return -1;
-	}
-
-	*target = atoi(args[1]);
-	if (*target < 0) {
-		memprintf(err, "'%s' expects a positive numeric value.", args[0]);
-		return -1;
-	}
-	return 0;
-}
-
-static int ssl_parse_global_capture_cipherlist(char **args, int section_type, struct proxy *curpx,
-                                               struct proxy *defpx, const char *file, int line,
-                                               char **err)
-{
-	int ret;
-
-	ret = ssl_parse_global_int(args, section_type, curpx, defpx, file, line, err);
-	if (ret != 0)
-		return ret;
-
-	if (pool_head_ssl_capture) {
-		memprintf(err, "'%s' is already configured.", args[0]);
-		return -1;
-	}
-
-	pool_head_ssl_capture = create_pool("ssl-capture", sizeof(struct ssl_capture) + global_ssl.capture_cipherlist, MEM_F_SHARED);
-	if (!pool_head_ssl_capture) {
-		memprintf(err, "Out of memory error.");
-		return -1;
-	}
-	return 0;
-}
-
-/* parse "ssl.force-private-cache".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_private_cache(char **args, int section_type, struct proxy *curpx,
-                                          struct proxy *defpx, const char *file, int line,
-                                          char **err)
-{
-	if (too_many_args(0, args, err, NULL))
-		return -1;
-
-	global_ssl.private_cache = 1;
-	return 0;
-}
-
-/* parse "ssl.lifetime".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_lifetime(char **args, int section_type, struct proxy *curpx,
-                                     struct proxy *defpx, const char *file, int line,
-                                     char **err)
-{
-	const char *res;
-
-	if (too_many_args(1, args, err, NULL))
-		return -1;
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "'%s' expects ssl sessions <lifetime> in seconds as argument.", args[0]);
-		return -1;
-	}
-
-	res = parse_time_err(args[1], &global_ssl.life_time, TIME_UNIT_S);
-	if (res) {
-		memprintf(err, "unexpected character '%c' in argument to <%s>.", *res, args[0]);
-		return -1;
-	}
-	return 0;
-}
-
-#ifndef OPENSSL_NO_DH
-/* parse "ssl-dh-param-file".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_dh_param_file(char **args, int section_type, struct proxy *curpx,
-                                       struct proxy *defpx, const char *file, int line,
-                                       char **err)
-{
-	if (too_many_args(1, args, err, NULL))
-		return -1;
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "'%s' expects a file path as an argument.", args[0]);
-		return -1;
-	}
-
-	if (ssl_sock_load_global_dh_param_from_file(args[1])) {
-		memprintf(err, "'%s': unable to load DH parameters from file <%s>.", args[0], args[1]);
-		return -1;
-	}
-	return 0;
-}
-
-/* parse "ssl.default-dh-param".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_default_dh(char **args, int section_type, struct proxy *curpx,
-                                       struct proxy *defpx, const char *file, int line,
-                                       char **err)
-{
-	if (too_many_args(1, args, err, NULL))
-		return -1;
-
-	if (*(args[1]) == 0) {
-		memprintf(err, "'%s' expects an integer argument.", args[0]);
-		return -1;
-	}
-
-	global_ssl.default_dh_param = atoi(args[1]);
-	if (global_ssl.default_dh_param < 1024) {
-		memprintf(err, "'%s' expects a value >= 1024.", args[0]);
-		return -1;
-	}
-	return 0;
-}
-#endif
-
 
 /* parse the "ca-base" / "crt-base" keywords in global section.
  * Returns <0 on alert, >0 on warning, 0 on success.
