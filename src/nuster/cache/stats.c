@@ -33,6 +33,7 @@ void nst_cache_stats_update_req(int state) {
 
     switch(state) {
         case NST_CACHE_CTX_STATE_HIT:
+        case NST_CACHE_CTX_STATE_HIT_DISK:
             global.nuster.cache.stats->req.hit++;
             break;
         case NST_CACHE_CTX_STATE_CREATE:
@@ -133,6 +134,15 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s,
     chunk_appendf(&trash, "global.nuster.cache.stats.req_abort: %"PRIu64"\n",
             global.nuster.cache.stats->req.abort);
 
+    chunk_appendf(&trash, "\n**PERSISTENCE**\n");
+
+    if(global.nuster.cache.root) {
+        chunk_appendf(&trash, "global.nuster.cache.dir: %s\n",
+                global.nuster.cache.root);
+        chunk_appendf(&trash, "global.nuster.cache.loaded: %s\n",
+            nuster.cache->disk.loaded ? "yes" : "no");
+    }
+
     s->txn->status = 200;
 
     if(ci_putchk(res, &trash) == -1) {
@@ -185,9 +195,14 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
                                     p->id, rule->name);
                         }
 
-                        chunk_appendf(&trash, "state=%s ttl=%"PRIu32"\n",
+                        chunk_appendf(&trash, "state=%s ttl=%"PRIu32" disk=%s\n",
                                 *rule->state == NST_RULE_ENABLED
-                                ? "on" : "off", *rule->ttl);
+                                ? "on" : "off", *rule->ttl,
+                                rule->disk == NST_DISK_OFF ? "off"
+                                : rule->disk == NST_DISK_ONLY ? "only"
+                                : rule->disk == NST_DISK_SYNC ? "sync"
+                                : rule->disk == NST_DISK_ASYNC ? "async"
+                                : "invalid");
 
                         if(ci_putchk(res, &trash) == -1) {
                             si_rx_room_blk(si);
