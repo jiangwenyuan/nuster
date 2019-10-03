@@ -365,59 +365,14 @@ static struct eb_root *sh_ssl_sess_tree; /* ssl shared session tree */
 #define sh_ssl_sess_tree_lookup(k)	(struct sh_ssl_sess_hdr *)ebmb_lookup(sh_ssl_sess_tree, \
 								     (k), SSL_MAX_SSL_SESSION_ID_LENGTH);
 
-#ifndef OPENSSL_NO_ENGINE
-static int ssl_init_single_engine(const char *engine_id, const char *def_algorithms)
-{
-	int err_code = ERR_ABORT;
-	ENGINE *engine;
-	struct ssl_engine_list *el;
-
-	/* grab the structural reference to the engine */
-	engine = ENGINE_by_id(engine_id);
-	if (engine  == NULL) {
-		ha_alert("ssl-engine %s: failed to get structural reference\n", engine_id);
-		goto fail_get;
-	}
-
-	if (!ENGINE_init(engine)) {
-		/* the engine couldn't initialise, release it */
-		ha_alert("ssl-engine %s: failed to initialize\n", engine_id);
-		goto fail_init;
-	}
-
-	if (ENGINE_set_default_string(engine, def_algorithms) == 0) {
-		ha_alert("ssl-engine %s: failed on ENGINE_set_default_string\n", engine_id);
-		goto fail_set_method;
-	}
-
-	el = calloc(1, sizeof(*el));
-	el->e = engine;
-	LIST_ADD(&openssl_engines, &el->list);
-	nb_engines++;
-	if (global_ssl.async)
-		global.ssl_used_async_engines = nb_engines;
-	return 0;
-
-fail_set_method:
-	/* release the functional reference from ENGINE_init() */
-	ENGINE_finish(engine);
-
-fail_init:
-	/* release the structural reference from ENGINE_by_id() */
-	ENGINE_free(engine);
-
-fail_get:
-	return err_code;
-}
-#endif
-
-#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 /*
- * openssl async fd handler
+ * This function gives the detail of the SSL error. It is used only
+ * if the debug mode and the verbose mode are activated. It dump all
+ * the SSL error until the stack was empty.
  */
-void ssl_async_fd_handler(int fd)
+static forceinline void ssl_sock_dump_errors(struct connection *conn)
 {
-	struct connection *conn = fdtab[fd].owner;
+	unsigned long ret;
 
 	if (unlikely(global.mode & MODE_DEBUG)) {
 		while(1) {
@@ -429,14 +384,7 @@ void ssl_async_fd_handler(int fd)
 			        ERR_func_error_string(ret), ERR_reason_error_string(ret));
 		}
 	}
-
-	/* We must also prevent the conn_handler
-	 * to be called until a read event was
-	 * polled on an async fd
-	 */
-	__conn_sock_stop_both(conn);
 }
-#endif
 
 
 #ifndef OPENSSL_NO_ENGINE
@@ -7353,11 +7301,10 @@ smp_fetch_ssl_fc_cl_str(const struct arg *args, struct sample *smp, const char *
 	return smp_fetch_ssl_fc_cl_xxh64(args, smp, kw, private);
 #endif
 }
-#endif
 
 #if OPENSSL_VERSION_NUMBER > 0x0090800fL
 static int
-smp_fetch_ssl_fc_cl_bin(const struct arg *args, struct sample *smp, const char *kw, void *private)
+smp_fetch_ssl_fc_unique_id(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
@@ -8034,8 +7981,6 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	}
 
 	if ((f = fopen(args[cur_arg + 1], "r")) == NULL) {
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : unable to load ssl tickets keys file", args[cur_arg+1]);
 		goto fail;
@@ -8079,30 +8024,10 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 				memprintf(err, "'%s' : wrong sized key on line %d", args[cur_arg+1], i + 1);
 			goto fail;
 		}
-		else if (!keys_ref->key_size_bits && (dec_size == sizeof(struct tls_sess_key_128))) {
-			keys_ref->key_size_bits = 128;
-		}
-		else if (!keys_ref->key_size_bits && (dec_size == sizeof(struct tls_sess_key_256))) {
-			keys_ref->key_size_bits = 256;
-		}
-		else if (((dec_size != sizeof(struct tls_sess_key_128)) && (dec_size != sizeof(struct tls_sess_key_256)))
-			 || ((dec_size == sizeof(struct tls_sess_key_128) && (keys_ref->key_size_bits != 128)))
-			 || ((dec_size == sizeof(struct tls_sess_key_256) && (keys_ref->key_size_bits != 256)))) {
-			free(keys_ref->filename);
-			free(keys_ref->tlskeys);
-			free(keys_ref);
-			if (err)
-				memprintf(err, "'%s' : wrong sized key on line %d", args[cur_arg+1], i + 1);
-			fclose(f);
-			return ERR_ALERT | ERR_FATAL;
-		}
 		i++;
 	}
 
 	if (i < TLS_TICKETS_NO) {
-		free(keys_ref->filename);
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : please supply at least %d keys in the tls-tickets-file", args[cur_arg+1], TLS_TICKETS_NO);
 		goto fail;
@@ -8510,11 +8435,11 @@ static int srv_parse_sni(char **args, int *cur_arg, struct proxy *px, struct ser
 	newsrv->sni_expr = strdup(arg);
 
 	return 0;
+#endif
 }
 
-static int ssl_parse_global_capture_cipherlist(char **args, int section_type, struct proxy *curpx,
-                                               struct proxy *defpx, const char *file, int line,
-                                               char **err)
+/* parse the "ssl" server keyword */
+static int srv_parse_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
 	newsrv->use_ssl = 1;
 	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
@@ -8540,75 +8465,52 @@ static int srv_parse_tls_tickets(char **args, int *cur_arg, struct proxy *px, st
 	return 0;
 }
 
-	ret = ssl_parse_global_int(args, section_type, curpx, defpx, file, line, err);
-	if (ret != 0)
-		return ret;
-
-	if (pool_head_ssl_capture) {
-		memprintf(err, "'%s' is already configured.", args[0]);
-		return -1;
+/* parse the "verify" server keyword */
+static int srv_parse_verify(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
+{
+	if (!*args[*cur_arg + 1]) {
+		if (err)
+			memprintf(err, "'%s' : missing verify method", args[*cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
 	}
 
-	pool_head_ssl_capture = create_pool("ssl-capture", sizeof(struct ssl_capture) + global_ssl.capture_cipherlist, MEM_F_SHARED);
-	if (!pool_head_ssl_capture) {
-		memprintf(err, "Out of memory error.");
-		return -1;
+	if (strcmp(args[*cur_arg + 1], "none") == 0)
+		newsrv->ssl_ctx.verify = SSL_SOCK_VERIFY_NONE;
+	else if (strcmp(args[*cur_arg + 1], "required") == 0)
+		newsrv->ssl_ctx.verify = SSL_SOCK_VERIFY_REQUIRED;
+	else {
+		if (err)
+			memprintf(err, "'%s' : unknown verify method '%s', only 'none' and 'required' are supported\n",
+			          args[*cur_arg], args[*cur_arg + 1]);
+		return ERR_ALERT | ERR_FATAL;
 	}
+
 	return 0;
 }
 
-/* parse "ssl.force-private-cache".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_private_cache(char **args, int section_type, struct proxy *curpx,
-                                          struct proxy *defpx, const char *file, int line,
-                                          char **err)
+/* parse the "verifyhost" server keyword */
+static int srv_parse_verifyhost(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
-	if (too_many_args(0, args, err, NULL))
-		return -1;
-
-	global_ssl.private_cache = 1;
-	return 0;
-}
-
-/* parse "ssl.lifetime".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_lifetime(char **args, int section_type, struct proxy *curpx,
-                                     struct proxy *defpx, const char *file, int line,
-                                     char **err)
-{
-	const char *res;
+	if (!*args[*cur_arg + 1]) {
+		if (err)
+			memprintf(err, "'%s' : missing hostname to verify against", args[*cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
 
 	free(newsrv->ssl_ctx.verify_host);
 	newsrv->ssl_ctx.verify_host = strdup(args[*cur_arg + 1]);
 
-	if (*(args[1]) == 0) {
-		memprintf(err, "'%s' expects ssl sessions <lifetime> in seconds as argument.", args[0]);
-		return -1;
-	}
-
-	res = parse_time_err(args[1], &global_ssl.life_time, TIME_UNIT_S);
-	if (res) {
-		memprintf(err, "unexpected character '%c' in argument to <%s>.", *res, args[0]);
-		return -1;
-	}
 	return 0;
 }
 
-#ifndef OPENSSL_NO_DH
-/* parse "ssl-dh-param-file".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_dh_param_file(char **args, int section_type, struct proxy *curpx,
-                                       struct proxy *defpx, const char *file, int line,
-                                       char **err)
-{
-	if (too_many_args(1, args, err, NULL))
-		return -1;
+/* parse the "ssl-default-bind-options" keyword in global section */
+static int ssl_parse_default_bind_options(char **args, int section_type, struct proxy *curpx,
+                                          struct proxy *defpx, const char *file, int line,
+                                          char **err) {
+	int i = 1;
 
-	if (*(args[1]) == 0) {
-		memprintf(err, "'%s' expects a file path as an argument.", args[0]);
+	if (*(args[i]) == 0) {
+		memprintf(err, "global statement '%s' expects an option as an argument.", args[0]);
 		return -1;
 	}
 	while (*(args[i])) {
@@ -8633,18 +8535,14 @@ static int ssl_parse_global_dh_param_file(char **args, int section_type, struct 
 	return 0;
 }
 
-/* parse "ssl.default-dh-param".
- * Returns <0 on alert, >0 on warning, 0 on success.
- */
-static int ssl_parse_global_default_dh(char **args, int section_type, struct proxy *curpx,
-                                       struct proxy *defpx, const char *file, int line,
-                                       char **err)
-{
-	if (too_many_args(1, args, err, NULL))
-		return -1;
+/* parse the "ssl-default-server-options" keyword in global section */
+static int ssl_parse_default_server_options(char **args, int section_type, struct proxy *curpx,
+                                            struct proxy *defpx, const char *file, int line,
+                                            char **err) {
+	int i = 1;
 
-	if (*(args[1]) == 0) {
-		memprintf(err, "'%s' expects an integer argument.", args[0]);
+	if (*(args[i]) == 0) {
+		memprintf(err, "global statement '%s' expects an option as an argument.", args[0]);
 		return -1;
 	}
 	while (*(args[i])) {
@@ -8666,8 +8564,6 @@ static int ssl_parse_global_default_dh(char **args, int section_type, struct pro
 	}
 	return 0;
 }
-#endif
-
 
 /* parse the "ca-base" / "crt-base" keywords in global section.
  * Returns <0 on alert, >0 on warning, 0 on success.
