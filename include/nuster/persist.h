@@ -30,7 +30,7 @@
 
 #include <nuster/common.h>
 
-#define NST_PERSIST_VERSION  1
+#define NST_PERSIST_VERSION  2
 
 /*
    Offset       Length(bytes)   Content
