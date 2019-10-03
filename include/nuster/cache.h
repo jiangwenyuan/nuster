@@ -200,7 +200,7 @@ struct nst_cache {
 };
 
 extern struct flt_ops  nst_cache_filter_ops;
-extern const char *nst_cache_id;
+extern const char *nst_cache_flt_id;
 
 enum {
     NST_CACHE_PURGE_NAME_ALL = 0,

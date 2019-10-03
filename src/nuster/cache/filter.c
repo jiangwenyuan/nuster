@@ -365,7 +365,7 @@ static int nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp,
     struct filter        *filter;
 
     list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
-        if(FLT_ID(filter) != nst_cache_id) {
+        if(FLT_ID(filter) != nst_cache_flt_id) {
             continue;
         }
 
