@@ -21,7 +21,7 @@
 
 #include <nuster/nuster.h>
 
-static const char *nst_cache_id = "cache filter";
+const char *nst_cache_id = "cache filter";
 static const char *nst_nosql_id = "nosql filter";
 
 static struct nst_rule_key *_nst_parse_rule_key_cast(char *str) {

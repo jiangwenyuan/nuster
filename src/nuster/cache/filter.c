@@ -13,6 +13,9 @@
 #include <common/cfgparse.h>
 #include <common/standard.h>
 
+#include <types/sample.h>
+
+#include <proto/sample.h>
 #include <proto/filters.h>
 #include <proto/log.h>
 #include <proto/stream.h>
@@ -354,3 +357,38 @@ struct flt_ops nst_cache_filter_ops = {
     .http_end          = _nst_cache_filter_http_end,
 
 };
+
+static int nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp,
+        const char *kw,  void *private) {
+
+    struct nst_cache_ctx *ctx;
+    struct filter        *filter;
+
+    list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
+        if(FLT_ID(filter) != nst_cache_id) {
+            continue;
+        }
+
+        if(!(ctx = filter->ctx)) {
+            break;
+        }
+
+        smp->data.type = SMP_T_BOOL;
+        smp->data.u.sint = ctx->state == NST_CACHE_CTX_STATE_HIT
+            || ctx->state == NST_CACHE_CTX_STATE_HIT_DISK;;
+
+        return 1;
+    }
+
+    return 0;
+}
+
+static struct sample_fetch_kw_list nst_sample_fetch_keywords = {
+    ILH, {
+        { "nuster.cache.hit", nst_smp_fetch_cache_hit, 0, NULL, SMP_T_BOOL,
+            SMP_USE_HRSHP
+        },
+    }
+};
+
+INITCALL1(STG_REGISTER, sample_register_fetches, &nst_sample_fetch_keywords);
