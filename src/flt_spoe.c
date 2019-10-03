@@ -1292,11 +1292,6 @@ spoe_release_appctx(struct appctx *appctx)
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
 	}
 
-	/* Release allocated memory */
-	spoe_release_buffer(&spoe_appctx->buffer,
-			    &spoe_appctx->buffer_wait);
-	pool_free(pool_head_spoe_appctx, spoe_appctx);
-
 	if (!LIST_ISEMPTY(&agent->rt[tid].applets))
 		goto end;
 
@@ -1317,6 +1312,11 @@ spoe_release_appctx(struct appctx *appctx)
 	}
 
   end:
+	/* Release allocated memory */
+	spoe_release_buffer(&spoe_appctx->buffer,
+			    &spoe_appctx->buffer_wait);
+	pool_free(pool_head_spoe_appctx, spoe_appctx);
+
 	/* Update runtinme agent info */
 	agent->rt[tid].frame_size = agent->max_frame_size;
 	list_for_each_entry(spoe_appctx, &agent->rt[tid].applets, list)
@@ -1929,8 +1929,6 @@ spoe_handle_appctx(struct appctx *appctx)
 
 	if (SPOE_APPCTX(appctx)->task->expire != TICK_ETERNITY)
 		task_queue(SPOE_APPCTX(appctx)->task);
-	si_oc(si)->flags |= CF_READ_DONTWAIT;
-	task_wakeup(si_strm(si)->task, TASK_WOKEN_IO);
 }
 
 struct applet spoe_applet = {
@@ -2086,11 +2084,14 @@ spoe_queue_context(struct spoe_context *ctx)
 		return -1;
 	}
 
-	/* Add the SPOE context in the sending queue and update all running
-	 * info */
-	LIST_ADDQ(&agent->rt[tid].sending_queue, &ctx->list);
+	/* Add the SPOE context in the sending queue if the stream has no applet
+	 * already assigned and wakeup all idle applets. Otherwise, don't queue
+	 * it. */
 	if (agent->rt[tid].sending_rate)
 		agent->rt[tid].sending_rate--;
+	if (ctx->frag_ctx.spoe_appctx)
+		return 1;
+	LIST_ADDQ(&agent->rt[tid].sending_queue, &ctx->list);
 
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
 		    " - Add stream in sending queue"
@@ -2171,6 +2172,7 @@ spoe_encode_message(struct stream *s, struct spoe_context *ctx,
 	list_for_each_entry(arg, &msg->args, list) {
 		ctx->frag_ctx.curarg = arg;
 		ctx->frag_ctx.curoff = UINT_MAX;
+		ctx->frag_ctx.curlen = 0;
 
 	  encode_argument:
 		if (ctx->frag_ctx.curoff != UINT_MAX)
@@ -2185,7 +2187,9 @@ spoe_encode_message(struct stream *s, struct spoe_context *ctx,
 
 		/* Fetch the arguement value */
 		smp = sample_process(s->be, s->sess, s, dir|SMP_OPT_FINAL, arg->expr, NULL);
-		ret = spoe_encode_data(smp, &ctx->frag_ctx.curoff, buf, end);
+		smp->ctx.a[0] = &ctx->frag_ctx.curlen;
+		smp->ctx.a[1] = &ctx->frag_ctx.curoff;
+		ret = spoe_encode_data(smp, buf, end);
 		if (ret == -1 || ctx->frag_ctx.curoff)
 			goto too_big;
 	}
@@ -2273,7 +2277,9 @@ spoe_encode_messages(struct stream *s, struct spoe_context *ctx,
 	return 1;
 
   too_big:
-	if (!(agent->flags & SPOE_FL_SND_FRAGMENTATION)) {
+	/* Return an error if fragmentation is unsupported or if nothing has
+	 * been encoded because its too big and not splittable. */
+	if (!(agent->flags & SPOE_FL_SND_FRAGMENTATION) || p == ctx->buffer->p) {
 		ctx->status_code = SPOE_CTX_ERR_TOO_BIG;
 		return -1;
 	}
@@ -2937,20 +2943,20 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 	if (global.nbthread == 1)
 		conf->agent->flags |= SPOE_FL_ASYNC;
 
-	if ((curagent->rt = calloc(global.nbthread, sizeof(*curagent->rt))) == NULL) {
+	if ((conf->agent->rt = calloc(global.nbthread, sizeof(*conf->agent->rt))) == NULL) {
 		ha_alert("Proxy %s : out of memory initializing SPOE agent '%s' declared at %s:%d.\n",
 			 px->id, conf->agent->id, conf->agent->conf.file, conf->agent->conf.line);
 		return 1;
 	}
 	for (i = 0; i < global.nbthread; ++i) {
-		curagent->rt[i].frame_size   = curagent->max_frame_size;
-		curagent->rt[i].applets_act  = 0;
-		curagent->rt[i].applets_idle = 0;
-		curagent->rt[i].sending_rate = 0;
-		LIST_INIT(&curagent->rt[i].applets);
-		LIST_INIT(&curagent->rt[i].sending_queue);
-		LIST_INIT(&curagent->rt[i].waiting_queue);
-		HA_SPIN_INIT(&curagent->rt[i].lock);
+		conf->agent->rt[i].frame_size   = conf->agent->max_frame_size;
+		conf->agent->rt[i].applets_act  = 0;
+		conf->agent->rt[i].applets_idle = 0;
+		conf->agent->rt[i].sending_rate = 0;
+		LIST_INIT(&conf->agent->rt[i].applets);
+		LIST_INIT(&conf->agent->rt[i].sending_queue);
+		LIST_INIT(&conf->agent->rt[i].waiting_queue);
+		HA_SPIN_INIT(&conf->agent->rt[i].lock);
 	}
 
 	free(conf->agent->b.name);

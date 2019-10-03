@@ -446,7 +446,7 @@ struct proxy {
 		int mode;
 		struct list rules;              /* nuster rules */
 	} nuster;
-	__decl_hathreads(HA_SPINLOCK_T lock);
+	__decl_hathreads(HA_SPINLOCK_T lock);   /* may be taken under the server's lock */
 };
 
 struct switching_rule {

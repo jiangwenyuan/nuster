@@ -1588,13 +1588,13 @@ static void init(int argc, char **argv)
 		exit(1);
 	}
 
-	pattern_finalize_config();
-
 	err_code |= check_config_validity();
 	if (err_code & (ERR_ABORT|ERR_FATAL)) {
 		ha_alert("Fatal errors found in configuration.\n");
 		exit(1);
 	}
+
+	pattern_finalize_config();
 
 	/* recompute the amount of per-process memory depending on nbproc and
 	 * the shared SSL cache size (allowed to exist in all processes).
@@ -1846,6 +1846,9 @@ static void init(int argc, char **argv)
 	global.hardmaxconn = global.maxconn;  /* keep this max value */
 	global.maxsock += global.maxconn * 2; /* each connection needs two sockets */
 	global.maxsock += global.maxpipes * 2; /* each pipe needs two FDs */
+	global.maxsock += global.nbthread;     /* one epoll_fd/kqueue_fd per thread */
+	global.maxsock += 2 * global.nbthread; /* one wake-up pipe (2 fd) per thread */
+
 	/* compute fd used by async engines */
 	if (global.ssl_used_async_engines) {
 		int sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
@@ -2447,6 +2450,10 @@ static void run_poll_loop()
 		 * there is no active jobs anymore */
 		if (tid == 0 && jobs == 0)
 			THREAD_WANT_SYNC();
+
+		/* also stop  if we failed to cleanly stop all tasks */
+		if (killed > 1)
+			break;
 
 		/* expire immediately if events are pending */
 		exp = now_ms;

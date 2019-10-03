@@ -4696,7 +4696,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 
 #if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	if (srv->ssl_ctx.ciphersuites &&
-		!SSL_CTX_set_cipher_list(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
+		!SSL_CTX_set_ciphersuites(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
 		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set TLS 1.3 cipher suites to '%s'.\n",
 			 curproxy->id, srv->id,
 			 srv->conf.file, srv->conf.line, srv->ssl_ctx.ciphersuites);
@@ -5081,7 +5081,7 @@ static int ssl_sock_init(struct connection *conn)
 
 		/* leave init state and start handshake */
 		conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
-#if OPENSSL_VERSION_NUMBER >= 0x10101000L || defined(OPENSSL_IS_BORINGSSL)
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
 		conn->flags |= CO_FL_EARLY_SSL_HS;
 #endif
 
@@ -5352,10 +5352,6 @@ reneg_ok:
 		}
 	}
 
-#ifdef OPENSSL_IS_BORINGSSL
-	if ((conn->flags & CO_FL_EARLY_SSL_HS) && !SSL_in_early_data(conn->xprt_ctx))
-		conn->flags &= ~CO_FL_EARLY_SSL_HS;
-#endif
 	/* The connection is now established at both layers, it's time to leave */
 	conn->flags &= ~(flag | CO_FL_WAIT_L4_CONN | CO_FL_WAIT_L6_CONN);
 	return 1;
@@ -5461,16 +5457,7 @@ static int ssl_sock_to_buf(struct connection *conn, struct buffer *buf, int coun
 		} else
 #endif
 		ret = SSL_read(conn->xprt_ctx, bi_end(buf), try);
-#ifdef OPENSSL_IS_BORINGSSL
-		if (conn->flags & CO_FL_EARLY_SSL_HS) {
-			if (SSL_in_early_data(conn->xprt_ctx)) {
-				if (ret > 0)
-					conn->flags |= CO_FL_EARLY_DATA;
-			} else {
-				conn->flags &= ~(CO_FL_EARLY_SSL_HS);
-			}
-		}
-#endif
+
 		if (conn->flags & CO_FL_ERROR) {
 			/* CO_FL_ERROR may be set by ssl_sock_infocbk */
 			goto out_error;
@@ -6110,8 +6097,12 @@ smp_fetch_ssl_fc_has_early(const struct arg *args, struct sample *smp, const cha
 
 	smp->flags = 0;
 	smp->data.type = SMP_T_BOOL;
+#ifdef OPENSSL_IS_BORINGSSL
+	smp->data.u.sint = (SSL_in_early_data(conn->xprt_ctx) &&
+			    SSL_early_data_accepted(conn->xprt_ctx));
+#else
 	smp->data.u.sint = (conn->flags & CO_FL_EARLY_DATA) ? 1 : 0;
-
+#endif
 	return 1;
 }
 
@@ -7418,7 +7409,7 @@ static int parse_tls_method_minmax(char **args, int cur_arg, struct tls_version_
 
 static int ssl_bind_parse_tls_method_minmax(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
-#if (OPENSSL_VERSION_NUMBER < 0x10101000L) || !defined(OPENSSL_IS_BORINGSSL)
+#if (OPENSSL_VERSION_NUMBER < 0x10101000L) && !defined(OPENSSL_IS_BORINGSSL)
 	ha_warning("crt-list: ssl-min-ver and ssl-max-ver are not supported with this Openssl version (skipped).\n");
 #endif
 	return parse_tls_method_minmax(args, cur_arg, &conf->ssl_methods, err);
@@ -8959,10 +8950,11 @@ static void ssl_sock_capture_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *
 __attribute__((constructor))
 static void __ssl_sock_init(void)
 {
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
+	STACK_OF(SSL_COMP)* cm;
+#endif
 	char *ptr;
 	int i;
-
-	STACK_OF(SSL_COMP)* cm;
 
 	if (global_ssl.listen_default_ciphers)
 		global_ssl.listen_default_ciphers = strdup(global_ssl.listen_default_ciphers);
@@ -8977,8 +8969,14 @@ static void __ssl_sock_init(void)
 
 	xprt_register(XPRT_SSL, &ssl_sock);
 	SSL_library_init();
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
 	cm = SSL_COMP_get_compression_methods();
-	sk_SSL_COMP_zero(cm);
+	i = sk_SSL_COMP_num(cm);
+	while (i--) {
+		(void) sk_SSL_COMP_pop(cm);
+	}
+#endif
+
 #ifdef USE_THREAD
 	ssl_locking_init();
 #endif

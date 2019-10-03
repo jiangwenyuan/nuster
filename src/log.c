@@ -1380,11 +1380,15 @@ int init_log_buffers()
 /* Deinitialize log buffers used for syslog messages */
 void deinit_log_buffers()
 {
+	void *tmp_startup_logs;
+
 	free(logheader);
 	free(logheader_rfc5424);
 	free(logline);
 	free(logline_rfc5424);
-	free(startup_logs);
+	tmp_startup_logs = HA_ATOMIC_XCHG(&startup_logs, NULL);
+	free(tmp_startup_logs);
+
 	logheader         = NULL;
 	logheader_rfc5424 = NULL;
 	logline           = NULL;
@@ -1647,7 +1651,6 @@ int build_logline(struct stream *s, char *dst, size_t maxsize, struct list *list
 				break;
 
 			case LOG_FMT_TS: // %Ts
-				get_gmtime(s->logs.accept_date.tv_sec, &tm);
 				if (tmp->options & LOG_OPT_HEXA) {
 					iret = snprintf(tmplog, dst + maxsize - tmplog, "%04X", (unsigned int)s->logs.accept_date.tv_sec);
 					if (iret < 0 || iret > dst + maxsize - tmplog)

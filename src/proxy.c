@@ -943,9 +943,9 @@ struct task *hard_stop(struct task *t)
 	if (killed) {
 		ha_warning("Some tasks resisted to hard-stop, exiting now.\n");
 		send_log(NULL, LOG_WARNING, "Some tasks resisted to hard-stop, exiting now.\n");
-		/* Do some cleanup and explicitely quit */
-		deinit();
-		exit(0);
+		killed = 2;
+		t->expire = TICK_ETERNITY;
+		return t;
 	}
 
 	ha_warning("soft-stop running for too long, performing a hard-stop.\n");
@@ -1110,11 +1110,14 @@ void zombify_proxy(struct proxy *p)
  * to be called when going down in order to release the ports so that another
  * process may bind to them. It must also be called on disabled proxies at the
  * end of start-up. When all listeners are closed, the proxy is set to the
- * PR_STSTOPPED state.
+ * PR_STSTOPPED state. The function takes the proxy's lock so it's safe to
+ * call from multiple places.
  */
 void stop_proxy(struct proxy *p)
 {
 	struct listener *l;
+
+	HA_SPIN_LOCK(PROXY_LOCK, &p->lock);
 
 	list_for_each_entry(l, &p->conf.listeners, by_fe) {
 		unbind_listener(l);
@@ -1122,7 +1125,10 @@ void stop_proxy(struct proxy *p)
 			delete_listener(l);
 		}
 	}
+
 	p->state = PR_STSTOPPED;
+
+	HA_SPIN_UNLOCK(PROXY_LOCK, &p->lock);
 }
 
 /* This function resumes listening on the specified proxy. It scans all of its
@@ -1583,17 +1589,18 @@ static int cli_parse_enable_dyncookie_backend(char **args, struct appctx *appctx
 	if (!px)
 		return 1;
 
+	/* Note: this lock is to make sure this doesn't change while another
+	 * thread is in srv_set_dyncookie().
+	 */
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
-
 	px->ck_opts |= PR_CK_DYNAMIC;
+	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
 		srv_set_dyncookie(s);
 		HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 	}
-
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	return 1;
 }
@@ -1614,9 +1621,12 @@ static int cli_parse_disable_dyncookie_backend(char **args, struct appctx *appct
 	if (!px)
 		return 1;
 
+	/* Note: this lock is to make sure this doesn't change while another
+	 * thread is in srv_set_dyncookie().
+	 */
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
-
 	px->ck_opts &= ~PR_CK_DYNAMIC;
+	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
@@ -1626,8 +1636,6 @@ static int cli_parse_disable_dyncookie_backend(char **args, struct appctx *appct
 		}
 		HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 	}
-
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	return 1;
 }
@@ -1664,18 +1672,19 @@ static int cli_parse_set_dyncookie_key_backend(char **args, struct appctx *appct
 		return 1;
 	}
 
+	/* Note: this lock is to make sure this doesn't change while another
+	 * thread is in srv_set_dyncookie().
+	 */
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
-
 	free(px->dyncookie_key);
 	px->dyncookie_key = newkey;
+	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
 		srv_set_dyncookie(s);
 		HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 	}
-
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
 	return 1;
 }
@@ -1759,10 +1768,7 @@ static int cli_parse_shutdown_frontend(char **args, struct appctx *appctx, void 
 	send_log(px, LOG_WARNING, "Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
 	         px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
 
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
 	stop_proxy(px);
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
-
 	return 1;
 }
 

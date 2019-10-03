@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.8
                              willy tarreau
-                              2019/02/11
+                              2019/08/16
 
 
 This document covers the configuration language as implemented in the version
@@ -2118,7 +2118,7 @@ option http-tunnel                   (*)  X          X         X         X
 option http-use-proxy-header         (*)  X          X         X         -
 option httpchk                            X          -         X         X
 option httpclose                     (*)  X          X         X         X
-option httplog                            X          X         X         X
+option httplog                            X          X         X         -
 option http_proxy                    (*)  X          X         X         X
 option independent-streams           (*)  X          X         X         X
 option ldap-check                         X          -         X         X
@@ -3051,7 +3051,7 @@ cookie <name> [ rewrite | insert | prefix ] [ indirect ] [ nocache ]
 
               already have a cookie that would have permitted it to access this
               server. When used without the "preserve" option, if the server
-              emits a cookie with the same name, it will be remove before
+              emits a cookie with the same name, it will be removed before
               processing. For this reason, this mode can be used to upgrade
               existing configurations running in the "rewrite" mode. The cookie
               will only be a session cookie and will not be stored on the
@@ -4786,7 +4786,7 @@ http-reuse { never | safe | aggressive | always }
                  proving that the server correctly supports connection reuse.
                  It should only be used when it's sure that the client can
                  retry a failed request once in a while and where the benefit
-                 of aggressive connection reuse significantly outweights the
+                 of aggressive connection reuse significantly outweighs the
                  downsides of rare connection failures.
 
     - "always" : this mode is only recommended when the path to the server is
