@@ -1,5 +1,25 @@
 # nuster Changelog
 
+## 3.1.0.19 - 2019-10-03
+
+### Added
+
+* nuster.cache.hit sample fetch
+* disk support in stats
+* purge persistence files
+* Merge HAProxy v1.9.11
+
+### Changed
+
+* Save host and path in persist file
+
+### Fixed
+
+* Close fd and remove invalid cache files
+* fd is not closed in creating disk cache file
+* Fix incorrect key allocation
+* Fix segfault when tune.bufsize is not 16k
+
 ## 3.0.0.19 - 2019-07-29
 
 Add disk persistence, various updates, refactoring
