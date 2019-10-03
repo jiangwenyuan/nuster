@@ -24,6 +24,7 @@
   * [Get](#get)
   * [Delete](#delete)
 * [硬盘持久化](#硬盘持久化)
+* [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
 
 # 介绍
@@ -64,6 +65,7 @@ nuster也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来�
 * 缓存清除
 * 缓存统计信息
 * 缓存生存时间
+* 持久化
 
 ### RESTful NoSQL缓存服务器
 
@@ -78,6 +80,7 @@ nuster也可以用作RESTful NoSQL缓存服务器, 用HTTP `POST/GET/DELETE` 来
 * 面向用户缓存
 * 支持任何类型的数据
 * 支持所有编程语言，不需要特定的库，只需HTTP支持
+* 持久化
 
 # 性能
 
@@ -413,7 +416,9 @@ Cookie: logged_in=yes; user=nuster;
  * param\_type:  Y
  * body:         (empty)
 
-默认key产生`GET.http.www.example.com./q?name=X&type=Y.`, 而`key method.scheme.host.path.header_ASDF.cookie_user.param_type` 则生成 `GET.http.www.example.com./q.Z.nuster.Y.`.
+默认key产生`GEThttpwww.example.com/q?name=X&type=Y`, 而`key method.scheme.host.path.header_ASDF.cookie_user.param_type` 则生成 `GEThttpwww.example.com/qZnusterY`.
+
+> 实际内部会存储NULL分隔符，`GET\0http\0www.example.com\0/q?name=X&type=Y\0`
 
 相同key的请求则会直接返回cache给客户端。
 
@@ -729,6 +734,10 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/n
 
    比如 /imgs下的.jpg文件是`^/imgs/.*\.jpg$` 而不是 `/imgs/*.jpg`
 
+5. 通过rule name或proxy name删除缓存时，需要注意这两种方法只在当前进程有效。如果重启了进程则无法通过这两种方法删除缓存文件，因为rule name信息和proxy name信息并没有保存在缓存文件中。
+
+6. 只有disk load结束后才能通过host or path or regex 来删除缓存文件。是否已经load结束可以查看stats URL。
+
 ## 缓存统计
 
 可以通过GET `uri`定义的endpoint来获取缓存统计信息。
@@ -854,6 +863,16 @@ backend be
 4. `/disk-async` 保存至内存后立即换回给客户端，内存数据会在一定时间后被缓存至硬盘
 5. 其他的所有请求都仅保存在内存
 
+# Sample fetches
+
+Nuster 加入了一些新的sample fetches
+
+## nuster.cache.hit: boolean
+
+表示是否是HIT缓存，可以像如下使用
+
+    http-response set-header x-cache hit if { nuster.cache.hit }
+
 # FAQ
 
 ## 无法启动，报错: not in master-worker mode
@@ -900,9 +919,8 @@ global
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
     master-worker # v3
-    #daemon
-    ## to debug cache
-    #debug
+    # daemon
+    # debug
 defaults
     retries 3
     option redispatch
