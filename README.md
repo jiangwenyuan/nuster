@@ -22,6 +22,7 @@ A high-performance HTTP proxy cache server and RESTful NoSQL cache server based 
   * [Get](#get)
   * [Delete](#delete)
 * [Disk persistence](#disk-persistence)
+* [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
 
 # Introduction
@@ -63,6 +64,7 @@ nuster can also be used as an HTTP proxy cache server like Varnish or Nginx to c
 * Cache purging
 * Cache stats
 * Cache TTL
+* Disk persistence
 
 ### As RESTful NoSQL cache server
 
@@ -77,6 +79,7 @@ It supports headers, cookies, so you can store per-user data to the same endpoin
 * User facing RESTful cache
 * Support any kind of data
 * Support all programming languages as long as HTTP is supported
+* Disk persistence
 
 # Performance
 
@@ -424,7 +427,9 @@ Should result:
  * param\_type:  Y
  * body:         (empty)
 
-So default key produces `GET.http.www.example.com./q?name=X&type=Y.`, and `key method.scheme.host.path.header_ASDF.cookie_user.param_type` produces `GET.http.www.example.com./q.Z.nuster.Y.`.
+So default key produces `GEThttpwww.example.com/q?name=X&type=Y`, and `key method.scheme.host.path.header_ASDF.cookie_user.param_type` produces `GEThttpwww.example.com/qZnusterY`.
+
+> Internally, a NULL delimiter is placed in between, like `GET\0http\0www.example.com\0/q?name=X&type=Y\0`
 
 If a request has the same key as a cached HTTP response data, then cached data will be sent to the client.
 
@@ -746,6 +751,10 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/n
 
    For example, all jpg files under /imgs should be `^/imgs/.*\.jpg$` instead of `/imgs/*.jpg`
 
+5. Purging cache files by rule name or proxy name only works in current session. If nuster restarts, then cache files cannot be purged by rule name or proxy name as information like rule name and proxy name is not persisted in the cache fiels.
+
+6. Purging cache files by host or path or regex only works after the disk loader process is finished. You can check the status through stats url.
+
 ## Cache Stats
 
 Cache stats can be accessed by making HTTP GET request to the endpoint defined by `uri`;
@@ -852,7 +861,7 @@ You can use any tools or libs which support HTTP: `curl`, `postman`, python `req
 
 # Disk persistence
 
-Disk persistence is introduced in v3, it supports 4 persistence mode as described above.
+Disk persistence is introduced in v3, it supports 4 persistence modes as described above.
 
 A minimal config file looks like
 
@@ -876,6 +885,15 @@ backend be
 4. `/disk-async` will be cached in memory and return to the client, cached data will be saved to disk later
 5. other requests will be cached only in memory
 
+# Sample fetches
+
+Nuster introduced following sample fetches
+
+## nuster.cache.hit: boolean
+
+Returns a boolean indicating whether it's a HIT or not and can be used like
+
+    http-response set-header x-cache hit if { nuster.cache.hit }
 
 # FAQ
 
@@ -887,7 +905,7 @@ Set `master-worker` in `global` section, or start `nuster` with `-W`.
 
 Set `debug` in `global` section, or start `nuster` with `-d`.
 
-Cache related debug messages start with `[CACHE]`.
+Nuster related debug messages start with `[nuster`.
 
 ## How to cache POST request?
 
@@ -924,9 +942,8 @@ global
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
     master-worker # since v3
-    #daemon
-    ## to debug cache
-    #debug
+    # daemon
+    # debug
 defaults
     retries 3
     option redispatch
