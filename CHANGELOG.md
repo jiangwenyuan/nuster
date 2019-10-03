@@ -1,5 +1,13 @@
 # nuster Changelog
 
+## 2.0.11.18 - 2019-10-03
+
+Upgrade to HAProxy v1.8.21
+
+### Fixed
+
+* Fix segfault when tune.bufsize is not 16k
+
 ## 2.0.10.18 - 2019-04-26
 
 ### Fixed
