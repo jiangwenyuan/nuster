@@ -75,8 +75,6 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
-#include <nuster/nuster.h>
-
 /* This function handles a server error at the stream interface level. The
  * stream interface is assumed to be already in a closed state. An optional
  * message is copied into the input buffer.

@@ -365,14 +365,59 @@ static struct eb_root *sh_ssl_sess_tree; /* ssl shared session tree */
 #define sh_ssl_sess_tree_lookup(k)	(struct sh_ssl_sess_hdr *)ebmb_lookup(sh_ssl_sess_tree, \
 								     (k), SSL_MAX_SSL_SESSION_ID_LENGTH);
 
-/*
- * This function gives the detail of the SSL error. It is used only
- * if the debug mode and the verbose mode are activated. It dump all
- * the SSL error until the stack was empty.
- */
-static forceinline void ssl_sock_dump_errors(struct connection *conn)
+#ifndef OPENSSL_NO_ENGINE
+static int ssl_init_single_engine(const char *engine_id, const char *def_algorithms)
 {
-	unsigned long ret;
+	int err_code = ERR_ABORT;
+	ENGINE *engine;
+	struct ssl_engine_list *el;
+
+	/* grab the structural reference to the engine */
+	engine = ENGINE_by_id(engine_id);
+	if (engine  == NULL) {
+		ha_alert("ssl-engine %s: failed to get structural reference\n", engine_id);
+		goto fail_get;
+	}
+
+	if (!ENGINE_init(engine)) {
+		/* the engine couldn't initialise, release it */
+		ha_alert("ssl-engine %s: failed to initialize\n", engine_id);
+		goto fail_init;
+	}
+
+	if (ENGINE_set_default_string(engine, def_algorithms) == 0) {
+		ha_alert("ssl-engine %s: failed on ENGINE_set_default_string\n", engine_id);
+		goto fail_set_method;
+	}
+
+	el = calloc(1, sizeof(*el));
+	el->e = engine;
+	LIST_ADD(&openssl_engines, &el->list);
+	nb_engines++;
+	if (global_ssl.async)
+		global.ssl_used_async_engines = nb_engines;
+	return 0;
+
+fail_set_method:
+	/* release the functional reference from ENGINE_init() */
+	ENGINE_finish(engine);
+
+fail_init:
+	/* release the structural reference from ENGINE_by_id() */
+	ENGINE_free(engine);
+
+fail_get:
+	return err_code;
+}
+#endif
+
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+/*
+ * openssl async fd handler
+ */
+void ssl_async_fd_handler(int fd)
+{
+	struct connection *conn = fdtab[fd].owner;
 
 	if (unlikely(global.mode & MODE_DEBUG)) {
 		while(1) {
@@ -384,34 +429,15 @@ static forceinline void ssl_sock_dump_errors(struct connection *conn)
 			        ERR_func_error_string(ret), ERR_reason_error_string(ret));
 		}
 	}
+
+	/* We must also prevent the conn_handler
+	 * to be called until a read event was
+	 * polled on an async fd
+	 */
+	__conn_sock_stop_both(conn);
 }
+#endif
 
-#if (defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP)
-/*
- * struct alignment works here such that the key.key is the same as key_data
- * Do not change the placement of key_data
- */
-struct certificate_ocsp {
-	struct ebmb_node key;
-	unsigned char key_data[OCSP_MAX_CERTID_ASN1_LENGTH];
-	struct buffer response;
-	long expire;
-};
-
-struct ocsp_cbk_arg {
-	int is_single;
-	int single_kt;
-	union {
-		struct certificate_ocsp *s_ocsp;
-		/*
-		 * m_ocsp will have multiple entries dependent on key type
-		 * Entry 0 - DSA
-		 * Entry 1 - ECDSA
-		 * Entry 2 - RSA
-		 */
-		struct certificate_ocsp *m_ocsp[SSL_SOCK_NUM_KEYTYPES];
-	};
-};
 
 #ifndef OPENSSL_NO_ENGINE
 static int ssl_init_single_engine(const char *engine_id, const char *def_algorithms)
@@ -569,6 +595,7 @@ static void inline ssl_async_process_fds(struct connection *conn, SSL *ssl)
 }
 #endif
 
+#if (defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP)
 /*
  *  This function returns the number of seconds  elapsed
  *  since the Epoch, 1970-01-01 00:00:00 +0000 (UTC) and the
@@ -650,6 +677,32 @@ nosec:
 
 	return -1;
 }
+
+/*
+ * struct alignment works here such that the key.key is the same as key_data
+ * Do not change the placement of key_data
+ */
+struct certificate_ocsp {
+	struct ebmb_node key;
+	unsigned char key_data[OCSP_MAX_CERTID_ASN1_LENGTH];
+	struct buffer response;
+	long expire;
+};
+
+struct ocsp_cbk_arg {
+	int is_single;
+	int single_kt;
+	union {
+		struct certificate_ocsp *s_ocsp;
+		/*
+		 * m_ocsp will have multiple entries dependent on key type
+		 * Entry 0 - DSA
+		 * Entry 1 - ECDSA
+		 * Entry 2 - RSA
+		 */
+		struct certificate_ocsp *m_ocsp[SSL_SOCK_NUM_KEYTYPES];
+	};
+};
 
 static struct eb_root cert_ocsp_tree = EB_ROOT_UNIQUE;
 
@@ -2715,16 +2768,38 @@ int ssl_sock_load_global_dh_param_from_file(const char *filename)
 	return -1;
 }
 
-/* Loads Diffie-Hellman parameter from a file. Returns 1 if loaded, else -1
-   if an error occurred, and 0 if parameter not found. */
-int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file)
-{
-	int ret = -1;
+/* Loads Diffie-Hellman parameter from a ckchs to an SSL_CTX.
+ *  If there is no DH paramater availaible in the ckchs, the global
+ *  DH parameter is loaded into the SSL_CTX and if there is no
+ *  DH parameter available in ckchs nor in global, the default
+ *  DH parameters are applied on the SSL_CTX.
+ * Returns a bitfield containing the flags:
+ *     ERR_FATAL in any fatal error case
+ *     ERR_ALERT if a reason of the error is availabine in err
+ *     ERR_WARN if a warning is available into err
+ * The value 0 means there is no error nor warning and
+ * the operation succeed.
+ */
+static int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file, char **err)
+ {
+	int ret = 0;
 	DH *dh = ssl_sock_get_dh_from_file(file);
 
 	if (dh) {
-		ret = 1;
-		SSL_CTX_set_tmp_dh(ctx, dh);
+		if (!SSL_CTX_set_tmp_dh(ctx, dh)) {
+			memprintf(err, "%sunable to load the DH parameter specified in '%s'",
+				  err && *err ? *err : "", file);
+#if defined(SSL_CTX_set_dh_auto)
+			SSL_CTX_set_dh_auto(ctx, 1);
+			memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
+				  err && *err ? *err : "");
+#else
+			memprintf(err, "%s, DH ciphers won't be available.\n",
+				  err && *err ? *err : "");
+#endif
+			ret |= ERR_WARN;
+			goto end;
+		}
 
 		if (ssl_dh_ptr_index >= 0) {
 			/* store a pointer to the DH params to avoid complaining about
@@ -2733,8 +2808,20 @@ int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file)
 		}
 	}
 	else if (global_dh) {
-		SSL_CTX_set_tmp_dh(ctx, global_dh);
-		ret = 0; /* DH params not found */
+		if (!SSL_CTX_set_tmp_dh(ctx, global_dh)) {
+			memprintf(err, "%sunable to use the global DH parameter for certificate '%s'",
+				  err && *err ? *err : "", file);
+#if defined(SSL_CTX_set_dh_auto)
+			SSL_CTX_set_dh_auto(ctx, 1);
+			memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
+				  err && *err ? *err : "");
+#else
+			memprintf(err, "%s, DH ciphers won't be available.\n",
+				  err && *err ? *err : "");
+#endif
+			ret |= ERR_WARN;
+			goto end;
+		}
 	}
 	else {
 		/* Clear openssl global errors stack */
@@ -2745,16 +2832,31 @@ int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file)
 			if (local_dh_1024 == NULL)
 				local_dh_1024 = ssl_get_dh_1024();
 
-			if (local_dh_1024 == NULL)
+			if (local_dh_1024 == NULL) {
+				memprintf(err, "%sunable to load default 1024 bits DH parameter for certificate '%s'.\n",
+					  err && *err ? *err : "", file);
+				ret |= ERR_ALERT | ERR_FATAL;
 				goto end;
+			}
 
-			SSL_CTX_set_tmp_dh(ctx, local_dh_1024);
+			if (!SSL_CTX_set_tmp_dh(ctx, local_dh_1024)) {
+				memprintf(err, "%sunable to load default 1024 bits DH parameter for certificate '%s'.\n",
+					  err && *err ? *err : "", file);
+#if defined(SSL_CTX_set_dh_auto)
+				SSL_CTX_set_dh_auto(ctx, 1);
+				memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
+					  err && *err ? *err : "");
+#else
+				memprintf(err, "%s, DH ciphers won't be available.\n",
+					  err && *err ? *err : "");
+#endif
+				ret |= ERR_WARN;
+				goto end;
+			}
 		}
 		else {
 			SSL_CTX_set_tmp_dh_callback(ctx, ssl_get_tmp_dh);
 		}
-
-		ret = 0; /* DH params not found */
 	}
 
 end:
@@ -2789,7 +2891,7 @@ static int ssl_sock_add_cert_sni(SSL_CTX *ctx, struct bind_conf *s, struct ssl_b
 		for (j = 0; j < len && j < trash.size; j++)
 			trash.area[j] = tolower(name[j]);
 		if (j >= trash.size)
-			return order;
+			return -1;
 		trash.area[j] = 0;
 
 		/* Check for duplicates. */
@@ -2805,7 +2907,7 @@ static int ssl_sock_add_cert_sni(SSL_CTX *ctx, struct bind_conf *s, struct ssl_b
 
 		sc = malloc(sizeof(struct sni_ctx) + len + 1);
 		if (!sc)
-			return order;
+			return -1;
 		memcpy(sc->name.key, trash.area, len + 1);
 		sc->ctx = ctx;
 		sc->conf = conf;
@@ -2981,26 +3083,30 @@ end:
 }
 
 /* Loads the info in ckch into ctx
- * Currently, this does not process any information about ocsp, dhparams or
- * sctl
- * Returns
- *     0 on success
- *     1 on failure
+ * Returns a bitfield containing the flags:
+ *     ERR_FATAL in any fatal error case
+ *     ERR_ALERT if the reason of the error is available in err
+ *     ERR_WARN if a warning is available into err
+ * The value 0 means there is no error nor warning and
+ * the operation succeed.
  */
 static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_and_chain *ckch, SSL_CTX *ctx, char **err)
 {
 	int i = 0;
+	int errcode = 0;
 
 	if (SSL_CTX_use_PrivateKey(ctx, ckch->key) <= 0) {
 		memprintf(err, "%sunable to load SSL private key into SSL Context '%s'.\n",
 				err && *err ? *err : "", path);
-		return 1;
+		errcode |= ERR_ALERT | ERR_FATAL;
+		return errcode;
 	}
 
 	if (!SSL_CTX_use_certificate(ctx, ckch->cert)) {
 		memprintf(err, "%sunable to load SSL certificate into SSL Context '%s'.\n",
 				err && *err ? *err : "", path);
-		return 1;
+		errcode |= ERR_ALERT | ERR_FATAL;
+		goto end;
 	}
 
 	/* Load all certs in the ckch into the ctx_chain for the ssl_ctx */
@@ -3008,21 +3114,23 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 		if (!SSL_CTX_add1_chain_cert(ctx, ckch->chain_certs[i])) {
 			memprintf(err, "%sunable to load chain certificate #%d into SSL Context '%s'. Make sure you are linking against Openssl >= 1.0.2.\n",
 					err && *err ? *err : "", (i+1), path);
-			return 1;
+			errcode |= ERR_ALERT | ERR_FATAL;
+			goto end;
 		}
 	}
 
 	if (SSL_CTX_check_private_key(ctx) <= 0) {
 		memprintf(err, "%sinconsistencies between private key and certificate loaded from PEM file '%s'.\n",
 				err && *err ? *err : "", path);
-		return 1;
+		errcode |= ERR_ALERT | ERR_FATAL;
 	}
 
-	return 0;
+ end:
+	return errcode;
 }
 
 
-static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
+static int ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
 {
 	struct sni_keytype *s_kt = NULL;
 	struct ebmb_node *node;
@@ -3042,6 +3150,9 @@ static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root 
 		 * strncpy will cause sig_abrt errors under certain versions of gcc with -O2
 		 * See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=60792
 		 */
+		if (!s_kt)
+			return -1;
+
 		memcpy(s_kt->name.key, trash.area, i+1);
 		s_kt->keytypes = 0;
 		ebst_insert(sni_keytypes, &s_kt->name);
@@ -3053,6 +3164,8 @@ static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root 
 	/* Mark that this CN has the keytype of key_index via keytypes mask */
 	s_kt->keytypes |= 1<<key_index;
 
+	return 0;
+
 }
 
 
@@ -3062,9 +3175,8 @@ static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root 
  *
  * This will allow the user to explicitly group multiple cert/keys for a single purpose
  *
- * Returns
- *     0 on success
- *     1 on failure
+ * Returns a set of ERR_* flags possibly with an error in <err>.
+ *
  */
 static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
 				    char **sni_filter, int fcount, char **err)
@@ -3080,7 +3192,7 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 	 * of keytypes
 	 */
 	struct key_combo_ctx key_combos[SSL_SOCK_POSSIBLE_KT_COMBOS] = { {0} };
-	int rv = 0;
+	int errcode = 0;
 	X509_NAME *xname = NULL;
 	char *str = NULL;
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
@@ -3094,7 +3206,7 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 		snprintf(fp, sizeof(fp), "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
 		if (stat(fp, &buf) == 0) {
 			if (ssl_sock_load_crt_file_into_ckch(fp, &certs_and_keys[n], err) == 1) {
-				rv = 1;
+				errcode |= ERR_ALERT | ERR_FATAL;
 				goto end;
 			}
 		}
@@ -3107,13 +3219,21 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 	 *     keyindex = 0 | 1 | 4 = 5
 	 */
 	for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
+		int ret;
 
 		if (!ssl_sock_is_ckch_valid(&certs_and_keys[n]))
 			continue;
 
 		if (fcount) {
-			for (i = 0; i < fcount; i++)
-				ssl_sock_populate_sni_keytypes_hplr(sni_filter[i], &sni_keytypes_map, n);
+			for (i = 0; i < fcount; i++) {
+				ret = ssl_sock_populate_sni_keytypes_hplr(sni_filter[i], &sni_keytypes_map, n);
+				if (ret < 0) {
+					memprintf(err, "%sunable to allocate SSL context.\n",
+					          err && *err ? *err : "");
+					errcode |= ERR_ALERT | ERR_FATAL;
+					goto end;
+				}
+			}
 		} else {
 			/* A lot of the following code is OpenSSL boilerplate for processing CN's and SAN's,
 			 * so the line that contains logic is marked via comments
@@ -3126,10 +3246,16 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 				value = X509_NAME_ENTRY_get_data(entry);
 				if (ASN1_STRING_to_UTF8((unsigned char **)&str, value) >= 0) {
 					/* Important line is here */
-					ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
+					ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
 
 					OPENSSL_free(str);
 					str = NULL;
+					if (ret < 0) {
+						memprintf(err, "%sunable to allocate SSL context.\n",
+						          err && *err ? *err : "");
+						errcode |= ERR_ALERT | ERR_FATAL;
+						goto end;
+					}
 				}
 			}
 
@@ -3143,10 +3269,16 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 					if (name->type == GEN_DNS) {
 						if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
 							/* Important line is here */
-							ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
+							ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
 
 							OPENSSL_free(str);
 							str = NULL;
+							if (ret < 0) {
+								memprintf(err, "%sunable to allocate SSL context.\n",
+								          err && *err ? *err : "");
+								errcode |= ERR_ALERT | ERR_FATAL;
+								goto end;
+							}
 						}
 					}
 				}
@@ -3159,7 +3291,7 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 	if (eb_is_empty(&sni_keytypes_map)) {
 		memprintf(err, "%sunable to load SSL certificate file '%s' file does not exist.\n",
 		          err && *err ? *err : "", path);
-		rv = 1;
+		errcode |= ERR_ALERT | ERR_FATAL;
 		goto end;
 	}
 
@@ -3193,7 +3325,7 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 			if (cur_ctx == NULL) {
 				memprintf(err, "%sunable to allocate SSL context.\n",
 				          err && *err ? *err : "");
-				rv = 1;
+				errcode |= ERR_ALERT | ERR_FATAL;
 				goto end;
 			}
 
@@ -3202,9 +3334,9 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 				if (i & (1<<n)) {
 					/* Key combo contains ckch[n] */
 					snprintf(cur_file, MAXPATHLEN+1, "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
-					if (ssl_sock_put_ckch_into_ctx(cur_file, &certs_and_keys[n], cur_ctx, err) != 0) {
+					errcode |= ssl_sock_put_ckch_into_ctx(cur_file, &certs_and_keys[n], cur_ctx, err);
+					if (errcode & ERR_CODE) {
 						SSL_CTX_free(cur_ctx);
-						rv = 1;
 						goto end;
 					}
 
@@ -3215,7 +3347,7 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 							memprintf(err, "%s '%s.ocsp' is present and activates OCSP but it is impossible to compute the OCSP certificate ID (maybe the issuer could not be found)'.\n",
 							          *err ? *err : "", cur_file);
 						SSL_CTX_free(cur_ctx);
-						rv = 1;
+						errcode |= ERR_ALERT | ERR_FATAL;
 						goto end;
 					}
 #elif (defined OPENSSL_IS_BORINGSSL)
@@ -3229,12 +3361,11 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 			if (ssl_dh_ptr_index >= 0)
 				SSL_CTX_set_ex_data(cur_ctx, ssl_dh_ptr_index, NULL);
 
-			rv = ssl_sock_load_dh_params(cur_ctx, NULL);
-			if (rv < 0) {
+			errcode |= ssl_sock_load_dh_params(cur_ctx, NULL, err);
+			if (errcode & ERR_CODE) {
 				if (err)
 					memprintf(err, "%sunable to load DH parameters from file '%s'.\n",
 							*err ? *err : "", path);
-				rv = 1;
 				goto end;
 			}
 #endif
@@ -3245,7 +3376,12 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 
 		/* Update SNI Tree */
 		key_combos[i-1].order = ssl_sock_add_cert_sni(cur_ctx, bind_conf, ssl_conf,
-							      kinfo, str, key_combos[i-1].order);
+		                                              kinfo, str, key_combos[i-1].order);
+		if (key_combos[i-1].order < 0) {
+			memprintf(err, "%sunable to create a sni context.\n", err && *err ? *err : "");
+			errcode |= ERR_ALERT | ERR_FATAL;
+			goto end;
+		}
 		node = ebmb_next(node);
 	}
 
@@ -3273,10 +3409,11 @@ end:
 	while (node) {
 		next = ebmb_next(node);
 		ebmb_delete(node);
+		free(ebmb_entry(node, struct sni_keytype, name));
 		node = next;
 	}
 
-	return rv;
+	return errcode;
 }
 #else
 /* This is a dummy, that just logs an error and returns error */
@@ -3345,8 +3482,11 @@ static int ssl_sock_load_cert_chain_file(SSL_CTX *ctx, const char *file, struct 
 	}
 
 	if (fcount) {
-		while (fcount--)
+		while (fcount--) {
 			order = ssl_sock_add_cert_sni(ctx, s, ssl_conf, kinfo, sni_filter[fcount], order);
+			if (order < 0)
+				goto end;
+		}
 	}
 	else {
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
@@ -3358,6 +3498,8 @@ static int ssl_sock_load_cert_chain_file(SSL_CTX *ctx, const char *file, struct 
 					if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
 						order = ssl_sock_add_cert_sni(ctx, s, ssl_conf, kinfo, str, order);
 						OPENSSL_free(str);
+						if (order < 0)
+							goto end;
 					}
 				}
 			}
@@ -3374,6 +3516,8 @@ static int ssl_sock_load_cert_chain_file(SSL_CTX *ctx, const char *file, struct 
 			if (ASN1_STRING_to_UTF8((unsigned char **)&str, value) >= 0) {
 				order = ssl_sock_add_cert_sni(ctx, s, ssl_conf, kinfo, str, order);
 				OPENSSL_free(str);
+				if (order < 0)
+					goto end;
 			}
 		}
 	}
@@ -3415,9 +3559,11 @@ end:
 	return ret;
 }
 
+/* Returns a set of ERR_* flags possibly with an error in <err>. */
 static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
 				   char **sni_filter, int fcount, char **err)
 {
+	int errcode = 0;
 	int ret;
 	SSL_CTX *ctx;
 
@@ -3425,14 +3571,14 @@ static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf
 	if (!ctx) {
 		memprintf(err, "%sunable to allocate SSL context for cert '%s'.\n",
 		          err && *err ? *err : "", path);
-		return 1;
+		return ERR_ALERT | ERR_FATAL;
 	}
 
 	if (SSL_CTX_use_PrivateKey_file(ctx, path, SSL_FILETYPE_PEM) <= 0) {
 		memprintf(err, "%sunable to load SSL private key from PEM file '%s'.\n",
 		          err && *err ? *err : "", path);
 		SSL_CTX_free(ctx);
-		return 1;
+		return ERR_ALERT | ERR_FATAL;
 	}
 
 	ret = ssl_sock_load_cert_chain_file(ctx, path, bind_conf, ssl_conf, sni_filter, fcount);
@@ -3441,13 +3587,13 @@ static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf
 		          err && *err ? *err : "", path);
 		if (ret < 0) /* serious error, must do that ourselves */
 			SSL_CTX_free(ctx);
-		return 1;
+		return ERR_ALERT | ERR_FATAL;
 	}
 
 	if (SSL_CTX_check_private_key(ctx) <= 0) {
 		memprintf(err, "%sinconsistencies between private key and certificate loaded from PEM file '%s'.\n",
 		          err && *err ? *err : "", path);
-		return 1;
+		return ERR_ALERT | ERR_FATAL;
 	}
 
 	/* we must not free the SSL_CTX anymore below, since it's already in
@@ -3460,12 +3606,12 @@ static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf
 		SSL_CTX_set_ex_data(ctx, ssl_dh_ptr_index, NULL);
 	}
 
-	ret = ssl_sock_load_dh_params(ctx, path);
-	if (ret < 0) {
+	errcode |= ssl_sock_load_dh_params(ctx, path, err);
+	if (errcode & ERR_CODE) {
 		if (err)
 			memprintf(err, "%sunable to load DH parameters from file '%s'.\n",
 				  *err ? *err : "", path);
-		return 1;
+		return errcode;
 	}
 #endif
 
@@ -3475,7 +3621,7 @@ static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf
 		if (err)
 			memprintf(err, "%s '%s.ocsp' is present and activates OCSP but it is impossible to compute the OCSP certificate ID (maybe the issuer could not be found)'.\n",
 				  *err ? *err : "", path);
-		return 1;
+		return ERR_ALERT | ERR_FATAL;
 	}
 #elif (defined OPENSSL_IS_BORINGSSL)
 	ssl_sock_set_ocsp_response_from_file(ctx, path);
@@ -3488,7 +3634,7 @@ static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf
 			if (err)
 				memprintf(err, "%s '%s.sctl' is present but cannot be read or parsed'.\n",
 					  *err ? *err : "", path);
-			return 1;
+			return ERR_ALERT | ERR_FATAL;
 		}
 	}
 #endif
@@ -3497,7 +3643,7 @@ static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf
 	if (bind_conf->default_ctx) {
 		memprintf(err, "%sthis version of openssl cannot load multiple SSL certificates.\n",
 		          err && *err ? *err : "");
-		return 1;
+		return ERR_ALERT | ERR_FATAL;
 	}
 #endif
 	if (!bind_conf->default_ctx) {
@@ -3505,9 +3651,11 @@ static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf
 		bind_conf->default_ssl_conf = ssl_conf;
 	}
 
-	return 0;
+	return errcode;
 }
 
+
+/* Returns a set of ERR_* flags possibly with an error in <err>. */
 int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 {
 	struct dirent **de_list;
@@ -3535,7 +3683,7 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 		if (n < 0) {
 			memprintf(err, "%sunable to scan directory '%s' : %s.\n",
 			          err && *err ? *err : "", path, strerror(errno));
-			cfgerr++;
+			cfgerr |= ERR_ALERT | ERR_FATAL;
 		}
 		else {
 			for (i = 0; i < n; i++) {
@@ -3549,7 +3697,7 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 				if (stat(fp, &buf) != 0) {
 					memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
 					          err && *err ? *err : "", fp, strerror(errno));
-					cfgerr++;
+					cfgerr |= ERR_ALERT | ERR_FATAL;
 					goto ignore_entry;
 				}
 				if (!S_ISREG(buf.st_mode))
@@ -3585,7 +3733,7 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 						}
 
 						snprintf(fp, sizeof(fp), "%s/%s", path, dp);
-						cfgerr += ssl_sock_load_multi_cert(fp, bind_conf, NULL, NULL, 0, err);
+						cfgerr |= ssl_sock_load_multi_cert(fp, bind_conf, NULL, NULL, 0, err);
 
 						/* Successfully processed the bundle */
 						goto ignore_entry;
@@ -3593,7 +3741,7 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 				}
 
 #endif
-				cfgerr += ssl_sock_load_cert_file(fp, bind_conf, NULL, NULL, 0, err);
+				cfgerr |= ssl_sock_load_cert_file(fp, bind_conf, NULL, NULL, 0, err);
 ignore_entry:
 				free(de);
 			}
@@ -3603,7 +3751,7 @@ ignore_entry:
 		return cfgerr;
 	}
 
-	cfgerr = ssl_sock_load_multi_cert(path, bind_conf, NULL, NULL, 0, err);
+	cfgerr |= ssl_sock_load_multi_cert(path, bind_conf, NULL, NULL, 0, err);
 
 	return cfgerr;
 }
@@ -3653,6 +3801,7 @@ void ssl_sock_free_ssl_conf(struct ssl_bind_conf *conf)
 	}
 }
 
+/* Returns a set of ERR_* flags possibly with an error in <err>. */
 int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct proxy *curproxy, char **err)
 {
 	char thisline[CRT_LINESIZE];
@@ -3664,7 +3813,7 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 
 	if ((f = fopen(file, "r")) == NULL) {
 		memprintf(err, "cannot open file '%s' : %s", file, strerror(errno));
-		return 1;
+		return ERR_ALERT | ERR_FATAL;
 	}
 
 	while (fgets(thisline, sizeof(thisline), f) != NULL) {
@@ -3683,7 +3832,7 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			 */
 			memprintf(err, "line %d too long in file '%s', limit is %d characters",
 				  linenum, file, (int)sizeof(thisline)-1);
-			cfgerr = 1;
+			cfgerr |= ERR_ALERT | ERR_FATAL;
 			break;
 		}
 
@@ -3700,12 +3849,12 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			} else if (*line == '[') {
 				if (ssl_b) {
 					memprintf(err, "too many '[' on line %d in file '%s'.", linenum, file);
-					cfgerr = 1;
+					cfgerr |= ERR_ALERT | ERR_FATAL;
 					break;
 				}
 				if (!arg) {
 					memprintf(err, "file must start with a cert on line %d in file '%s'", linenum, file);
-					cfgerr = 1;
+					cfgerr |= ERR_ALERT | ERR_FATAL;
 					break;
 				}
 				ssl_b = arg;
@@ -3714,12 +3863,12 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			} else if (*line == ']') {
 				if (ssl_e) {
 					memprintf(err, "too many ']' on line %d in file '%s'.", linenum, file);
-					cfgerr = 1;
+					cfgerr |= ERR_ALERT | ERR_FATAL;
 					break;
 				}
 				if (!ssl_b) {
 					memprintf(err, "missing '[' in line %d in file '%s'.", linenum, file);
-					cfgerr = 1;
+					cfgerr |= ERR_ALERT | ERR_FATAL;
 					break;
 				}
 				ssl_e = arg;
@@ -3728,7 +3877,7 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			} else if (newarg) {
 				if (arg == MAX_CRT_ARGS) {
 					memprintf(err, "too many args on line %d in file '%s'.", linenum, file);
-					cfgerr = 1;
+					cfgerr |= ERR_ALERT | ERR_FATAL;
 					break;
 				}
 				newarg = 0;
@@ -3736,7 +3885,7 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			}
 			line++;
 		}
-		if (cfgerr)
+		if (cfgerr & ERR_CODE)
 			break;
 		args[arg++] = line;
 
@@ -3749,7 +3898,7 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			if ((strlen(global_ssl.crt_base) + 1 + strlen(crt_path)) > MAXPATHLEN) {
 				memprintf(err, "'%s' : path too long on line %d in file '%s'",
 					  crt_path, linenum, file);
-				cfgerr = 1;
+				cfgerr |= ERR_ALERT | ERR_FATAL;
 				break;
 			}
 			snprintf(path, sizeof(path), "%s/%s",  global_ssl.crt_base, crt_path);
@@ -3763,11 +3912,11 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			for (i = 0; ssl_bind_kws[i].kw != NULL; i++) {
 				if (strcmp(ssl_bind_kws[i].kw, args[cur_arg]) == 0) {
 					newarg = 1;
-					cfgerr = ssl_bind_kws[i].parse(args, cur_arg, curproxy, ssl_conf, err);
+					cfgerr |= ssl_bind_kws[i].parse(args, cur_arg, curproxy, ssl_conf, err);
 					if (cur_arg + 1 + ssl_bind_kws[i].skip > ssl_e) {
 						memprintf(err, "ssl args out of '[]' for %s on line %d in file '%s'",
 							  args[cur_arg], linenum, file);
-						cfgerr = 1;
+						cfgerr |= ERR_ALERT | ERR_FATAL;
 					}
 					cur_arg += 1 + ssl_bind_kws[i].skip;
 					break;
@@ -3776,11 +3925,12 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			if (!cfgerr && !newarg) {
 				memprintf(err, "unknown ssl keyword %s on line %d in file '%s'.",
 					  args[cur_arg], linenum, file);
-				cfgerr = 1;
+				cfgerr |= ERR_ALERT | ERR_FATAL;
 				break;
 			}
 		}
-		if (cfgerr) {
+
+		if (cfgerr & ERR_CODE) {
 			ssl_sock_free_ssl_conf(ssl_conf);
 			free(ssl_conf);
 			ssl_conf = NULL;
@@ -3788,14 +3938,14 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 		}
 
 		if (stat(crt_path, &buf) == 0) {
-			cfgerr = ssl_sock_load_cert_file(crt_path, bind_conf, ssl_conf,
-							 &args[cur_arg], arg - cur_arg - 1, err);
-		} else {
-			cfgerr = ssl_sock_load_multi_cert(crt_path, bind_conf, ssl_conf,
+			cfgerr |= ssl_sock_load_cert_file(crt_path, bind_conf, ssl_conf,
 							  &args[cur_arg], arg - cur_arg - 1, err);
+		} else {
+			cfgerr |= ssl_sock_load_multi_cert(crt_path, bind_conf, ssl_conf,
+							   &args[cur_arg], arg - cur_arg - 1, err);
 		}
 
-		if (cfgerr) {
+		if (cfgerr & ERR_CODE) {
 			memprintf(err, "error processing line %d in file '%s' : %s", linenum, file, *err);
 			break;
 		}
@@ -4038,18 +4188,31 @@ int sh_ssl_sess_new_cb(SSL *ssl, SSL_SESSION *sess)
 	unsigned char encid[SSL_MAX_SSL_SESSION_ID_LENGTH];   /* encoded id */
 	unsigned char *p;
 	int data_len;
-	unsigned int sid_length, sid_ctx_length;
+	unsigned int sid_length;
 	const unsigned char *sid_data;
-	const unsigned char *sid_ctx_data;
 
 	/* Session id is already stored in to key and session id is known
 	 * so we dont store it to keep size.
+	 * note: SSL_SESSION_set1_id is using
+	 * a memcpy so we need to use a different pointer
+	 * than sid_data or sid_ctx_data to avoid valgrind
+	 * complaining.
 	 */
 
 	sid_data = SSL_SESSION_get_id(sess, &sid_length);
-	sid_ctx_data = SSL_SESSION_get0_id_context(sess, &sid_ctx_length);
-	SSL_SESSION_set1_id(sess, sid_data, 0);
-	SSL_SESSION_set1_id_context(sess, sid_ctx_data, 0);
+
+	/* copy value in an other buffer */
+	memcpy(encid, sid_data, sid_length);
+
+	/* pad with 0 */
+	if (sid_length < SSL_MAX_SSL_SESSION_ID_LENGTH)
+		memset(encid + sid_length, 0, SSL_MAX_SSL_SESSION_ID_LENGTH-sid_length);
+
+	/* force length to zero to avoid ASN1 encoding */
+	SSL_SESSION_set1_id(sess, encid, 0);
+
+	/* force length to zero to avoid ASN1 encoding */
+	SSL_SESSION_set1_id_context(sess, (const unsigned char *)SHCTX_APPNAME, 0);
 
 	/* check if buffer is large enough for the ASN1 encoded session */
 	data_len = i2d_SSL_SESSION(sess, NULL);
@@ -4061,9 +4224,6 @@ int sh_ssl_sess_new_cb(SSL *ssl, SSL_SESSION *sess)
 	/* process ASN1 session encoding before the lock */
 	i2d_SSL_SESSION(sess, &p);
 
-	memcpy(encid, sid_data, sid_length);
-	if (sid_length < SSL_MAX_SSL_SESSION_ID_LENGTH)
-		memset(encid + sid_length, 0, SSL_MAX_SSL_SESSION_ID_LENGTH-sid_length);
 
 	shctx_lock(ssl_shctx);
 	/* store to cache */
@@ -4071,8 +4231,8 @@ int sh_ssl_sess_new_cb(SSL *ssl, SSL_SESSION *sess)
 	shctx_unlock(ssl_shctx);
 err:
 	/* reset original length values */
-	SSL_SESSION_set1_id(sess, sid_data, sid_length);
-	SSL_SESSION_set1_id_context(sess, sid_ctx_data, sid_ctx_length);
+	SSL_SESSION_set1_id(sess, encid, sid_length);
+	SSL_SESSION_set1_id_context(sess, (const unsigned char *)SHCTX_APPNAME, strlen(SHCTX_APPNAME));
 
 	return 0; /* do not increment session reference count */
 }
@@ -4412,7 +4572,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 			 NULL);
 
 		if (ecdhe == NULL) {
-			SSL_CTX_set_dh_auto(ctx, 1);
+			SSL_CTX_set_ecdh_auto(ctx, 1);
 			return cfgerr;
 		}
 #else
@@ -7193,10 +7353,11 @@ smp_fetch_ssl_fc_cl_str(const struct arg *args, struct sample *smp, const char *
 	return smp_fetch_ssl_fc_cl_xxh64(args, smp, kw, private);
 #endif
 }
+#endif
 
 #if OPENSSL_VERSION_NUMBER > 0x0090800fL
 static int
-smp_fetch_ssl_fc_unique_id(const struct arg *args, struct sample *smp, const char *kw, void *private)
+smp_fetch_ssl_fc_cl_bin(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
@@ -7410,7 +7571,7 @@ static int bind_parse_ciphersuites(char **args, int cur_arg, struct proxy *px, s
 }
 #endif
 
-/* parse the "crt" bind keyword */
+/* parse the "crt" bind keyword. Returns a set of ERR_* flags possibly with an error in <err>. */
 static int bind_parse_crt(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
 	char path[MAXPATHLEN];
@@ -7426,32 +7587,27 @@ static int bind_parse_crt(char **args, int cur_arg, struct proxy *px, struct bin
 			return ERR_ALERT | ERR_FATAL;
 		}
 		snprintf(path, sizeof(path), "%s/%s",  global_ssl.crt_base, args[cur_arg + 1]);
-		if (ssl_sock_load_cert(path, conf, err) > 0)
-			return ERR_ALERT | ERR_FATAL;
-
-		return 0;
+		return ssl_sock_load_cert(path, conf, err);
 	}
 
-	if (ssl_sock_load_cert(args[cur_arg + 1], conf, err) > 0)
-		return ERR_ALERT | ERR_FATAL;
-
-	return 0;
+	return ssl_sock_load_cert(args[cur_arg + 1], conf, err);
 }
 
-/* parse the "crt-list" bind keyword */
+/* parse the "crt-list" bind keyword. Returns a set of ERR_* flags possibly with an error in <err>. */
 static int bind_parse_crt_list(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
+	int err_code;
+
 	if (!*args[cur_arg + 1]) {
 		memprintf(err, "'%s' : missing certificate location", args[cur_arg]);
 		return ERR_ALERT | ERR_FATAL;
 	}
 
-	if (ssl_sock_load_cert_list_file(args[cur_arg + 1], conf, px, err) > 0) {
+	err_code = ssl_sock_load_cert_list_file(args[cur_arg + 1], conf, px, err);
+	if (err_code)
 		memprintf(err, "'%s' : %s", args[cur_arg], *err);
-		return ERR_ALERT | ERR_FATAL;
-	}
 
-	return 0;
+	return err_code;
 }
 
 /* parse the "crl-file" bind keyword */
@@ -7845,15 +8001,15 @@ static int bind_parse_strict_sni(char **args, int cur_arg, struct proxy *px, str
 static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
-	FILE *f;
+	FILE *f = NULL;
 	int i = 0;
 	char thisline[LINESIZE];
-	struct tls_keys_ref *keys_ref;
+	struct tls_keys_ref *keys_ref = NULL;
 
 	if (!*args[cur_arg + 1]) {
 		if (err)
 			memprintf(err, "'%s' : missing TLS ticket keys file path", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref = tlskeys_ref_lookup(args[cur_arg + 1]);
@@ -7863,19 +8019,18 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 		return 0;
 	}
 
-	keys_ref = malloc(sizeof(*keys_ref));
+	keys_ref = calloc(1, sizeof(*keys_ref));
 	if (!keys_ref) {
 		if (err)
 			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref->tlskeys = malloc(TLS_TICKETS_NO * sizeof(union tls_sess_key));
 	if (!keys_ref->tlskeys) {
-		free(keys_ref);
 		if (err)
 			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	if ((f = fopen(args[cur_arg + 1], "r")) == NULL) {
@@ -7883,16 +8038,14 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : unable to load ssl tickets keys file", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref->filename = strdup(args[cur_arg + 1]);
 	if (!keys_ref->filename) {
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref->key_size_bits = 0;
@@ -7909,13 +8062,22 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 
 		dec_size = base64dec(thisline, len, (char *) (keys_ref->tlskeys + i % TLS_TICKETS_NO), sizeof(union tls_sess_key));
 		if (dec_size < 0) {
-			free(keys_ref->filename);
-			free(keys_ref->tlskeys);
-			free(keys_ref);
 			if (err)
 				memprintf(err, "'%s' : unable to decode base64 key on line %d", args[cur_arg+1], i + 1);
-			fclose(f);
-			return ERR_ALERT | ERR_FATAL;
+			goto fail;
+		}
+		else if (!keys_ref->key_size_bits && (dec_size == sizeof(struct tls_sess_key_128))) {
+			keys_ref->key_size_bits = 128;
+		}
+		else if (!keys_ref->key_size_bits && (dec_size == sizeof(struct tls_sess_key_256))) {
+			keys_ref->key_size_bits = 256;
+		}
+		else if (((dec_size != sizeof(struct tls_sess_key_128)) && (dec_size != sizeof(struct tls_sess_key_256)))
+			 || ((dec_size == sizeof(struct tls_sess_key_128) && (keys_ref->key_size_bits != 128)))
+			 || ((dec_size == sizeof(struct tls_sess_key_256) && (keys_ref->key_size_bits != 256)))) {
+			if (err)
+				memprintf(err, "'%s' : wrong sized key on line %d", args[cur_arg+1], i + 1);
+			goto fail;
 		}
 		else if (!keys_ref->key_size_bits && (dec_size == sizeof(struct tls_sess_key_128))) {
 			keys_ref->key_size_bits = 128;
@@ -7943,8 +8105,7 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : please supply at least %d keys in the tls-tickets-file", args[cur_arg+1], TLS_TICKETS_NO);
-		fclose(f);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	fclose(f);
@@ -7960,6 +8121,17 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	LIST_ADD(&tlskeys_reference, &keys_ref->list);
 
 	return 0;
+
+  fail:
+	if (f)
+		fclose(f);
+	if (keys_ref) {
+		free(keys_ref->filename);
+		free(keys_ref->tlskeys);
+		free(keys_ref);
+	}
+	return ERR_ALERT | ERR_FATAL;
+
 #else
 	if (err)
 		memprintf(err, "'%s' : TLS ticket callback extension not supported", args[cur_arg]);
@@ -8338,11 +8510,11 @@ static int srv_parse_sni(char **args, int *cur_arg, struct proxy *px, struct ser
 	newsrv->sni_expr = strdup(arg);
 
 	return 0;
-#endif
 }
 
-/* parse the "ssl" server keyword */
-static int srv_parse_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
+static int ssl_parse_global_capture_cipherlist(char **args, int section_type, struct proxy *curpx,
+                                               struct proxy *defpx, const char *file, int line,
+                                               char **err)
 {
 	newsrv->use_ssl = 1;
 	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
@@ -8368,52 +8540,75 @@ static int srv_parse_tls_tickets(char **args, int *cur_arg, struct proxy *px, st
 	return 0;
 }
 
-/* parse the "verify" server keyword */
-static int srv_parse_verify(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
-{
-	if (!*args[*cur_arg + 1]) {
-		if (err)
-			memprintf(err, "'%s' : missing verify method", args[*cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
+	ret = ssl_parse_global_int(args, section_type, curpx, defpx, file, line, err);
+	if (ret != 0)
+		return ret;
+
+	if (pool_head_ssl_capture) {
+		memprintf(err, "'%s' is already configured.", args[0]);
+		return -1;
 	}
 
-	if (strcmp(args[*cur_arg + 1], "none") == 0)
-		newsrv->ssl_ctx.verify = SSL_SOCK_VERIFY_NONE;
-	else if (strcmp(args[*cur_arg + 1], "required") == 0)
-		newsrv->ssl_ctx.verify = SSL_SOCK_VERIFY_REQUIRED;
-	else {
-		if (err)
-			memprintf(err, "'%s' : unknown verify method '%s', only 'none' and 'required' are supported\n",
-			          args[*cur_arg], args[*cur_arg + 1]);
-		return ERR_ALERT | ERR_FATAL;
+	pool_head_ssl_capture = create_pool("ssl-capture", sizeof(struct ssl_capture) + global_ssl.capture_cipherlist, MEM_F_SHARED);
+	if (!pool_head_ssl_capture) {
+		memprintf(err, "Out of memory error.");
+		return -1;
 	}
-
 	return 0;
 }
 
-/* parse the "verifyhost" server keyword */
-static int srv_parse_verifyhost(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
+/* parse "ssl.force-private-cache".
+ * Returns <0 on alert, >0 on warning, 0 on success.
+ */
+static int ssl_parse_global_private_cache(char **args, int section_type, struct proxy *curpx,
+                                          struct proxy *defpx, const char *file, int line,
+                                          char **err)
 {
-	if (!*args[*cur_arg + 1]) {
-		if (err)
-			memprintf(err, "'%s' : missing hostname to verify against", args[*cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
+	if (too_many_args(0, args, err, NULL))
+		return -1;
+
+	global_ssl.private_cache = 1;
+	return 0;
+}
+
+/* parse "ssl.lifetime".
+ * Returns <0 on alert, >0 on warning, 0 on success.
+ */
+static int ssl_parse_global_lifetime(char **args, int section_type, struct proxy *curpx,
+                                     struct proxy *defpx, const char *file, int line,
+                                     char **err)
+{
+	const char *res;
 
 	free(newsrv->ssl_ctx.verify_host);
 	newsrv->ssl_ctx.verify_host = strdup(args[*cur_arg + 1]);
 
+	if (*(args[1]) == 0) {
+		memprintf(err, "'%s' expects ssl sessions <lifetime> in seconds as argument.", args[0]);
+		return -1;
+	}
+
+	res = parse_time_err(args[1], &global_ssl.life_time, TIME_UNIT_S);
+	if (res) {
+		memprintf(err, "unexpected character '%c' in argument to <%s>.", *res, args[0]);
+		return -1;
+	}
 	return 0;
 }
 
-/* parse the "ssl-default-bind-options" keyword in global section */
-static int ssl_parse_default_bind_options(char **args, int section_type, struct proxy *curpx,
-                                          struct proxy *defpx, const char *file, int line,
-                                          char **err) {
-	int i = 1;
+#ifndef OPENSSL_NO_DH
+/* parse "ssl-dh-param-file".
+ * Returns <0 on alert, >0 on warning, 0 on success.
+ */
+static int ssl_parse_global_dh_param_file(char **args, int section_type, struct proxy *curpx,
+                                       struct proxy *defpx, const char *file, int line,
+                                       char **err)
+{
+	if (too_many_args(1, args, err, NULL))
+		return -1;
 
-	if (*(args[i]) == 0) {
-		memprintf(err, "global statement '%s' expects an option as an argument.", args[0]);
+	if (*(args[1]) == 0) {
+		memprintf(err, "'%s' expects a file path as an argument.", args[0]);
 		return -1;
 	}
 	while (*(args[i])) {
@@ -8438,14 +8633,18 @@ static int ssl_parse_default_bind_options(char **args, int section_type, struct 
 	return 0;
 }
 
-/* parse the "ssl-default-server-options" keyword in global section */
-static int ssl_parse_default_server_options(char **args, int section_type, struct proxy *curpx,
-                                            struct proxy *defpx, const char *file, int line,
-                                            char **err) {
-	int i = 1;
+/* parse "ssl.default-dh-param".
+ * Returns <0 on alert, >0 on warning, 0 on success.
+ */
+static int ssl_parse_global_default_dh(char **args, int section_type, struct proxy *curpx,
+                                       struct proxy *defpx, const char *file, int line,
+                                       char **err)
+{
+	if (too_many_args(1, args, err, NULL))
+		return -1;
 
-	if (*(args[i]) == 0) {
-		memprintf(err, "global statement '%s' expects an option as an argument.", args[0]);
+	if (*(args[1]) == 0) {
+		memprintf(err, "'%s' expects an integer argument.", args[0]);
 		return -1;
 	}
 	while (*(args[i])) {
@@ -8467,6 +8666,8 @@ static int ssl_parse_default_server_options(char **args, int section_type, struc
 	}
 	return 0;
 }
+#endif
+
 
 /* parse the "ca-base" / "crt-base" keywords in global section.
  * Returns <0 on alert, >0 on warning, 0 on success.
