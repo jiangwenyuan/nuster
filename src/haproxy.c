@@ -116,9 +116,8 @@
 #include <proto/vars.h>
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
+#include <openssl/rand.h>
 #endif
-
-#include <nuster/nuster.h>
 
 /* list of config files */
 static struct list cfg_cfgfiles = LIST_HEAD_INIT(cfg_cfgfiles);
@@ -164,20 +163,6 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
-	.nuster = {
-		.cache = {
-			.status       = NUSTER_STATUS_UNDEFINED,
-			.data_size    = NST_CACHE_DEFAULT_SIZE,
-			.dict_size    = NST_CACHE_DEFAULT_SIZE,
-			.share        = NUSTER_STATUS_ON,
-			.purge_method = NULL,
-		},
-		.nosql = {
-			.status       = NUSTER_STATUS_UNDEFINED,
-			.dict_size    = NST_CACHE_DEFAULT_SIZE,
-			.data_size    = NST_CACHE_DEFAULT_SIZE,
-		},
-	},
 	/* others NULL OK */
 };
 
@@ -296,6 +281,78 @@ struct per_thread_deinit_fct {
  * non-zero if the string must be freed upon exit.
  */
 void hap_register_build_opts(const char *str, int must_free)
+{
+	struct build_opts_str *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->str = str;
+	b->must_free = must_free;
+	LIST_ADDQ(&build_opts_list, &b->list);
+}
+
+/* used to register some initialization functions to call after the checks. */
+void hap_register_post_check(int (*fct)())
+{
+	struct post_check_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&post_check_list, &b->list);
+}
+
+/* used to register some de-initialization functions to call after everything
+ * has stopped.
+ */
+void hap_register_post_deinit(void (*fct)())
+{
+	struct post_deinit_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&post_deinit_list, &b->list);
+}
+
+/* used to register some initialization functions to call for each thread. */
+void hap_register_per_thread_init(int (*fct)())
+{
+	struct per_thread_init_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&per_thread_init_list, &b->list);
+}
+
+/* used to register some de-initialization functions to call for each thread. */
+void hap_register_per_thread_deinit(void (*fct)())
+{
+	struct per_thread_deinit_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&per_thread_deinit_list, &b->list);
+}
+
+static void display_version()
 {
 	struct build_opts_str *b;
 
@@ -684,6 +741,11 @@ static void mworker_reload()
 #endif
 	setenv("HAPROXY_MWORKER_REEXEC", "1", 1);
 
+#if defined(USE_OPENSSL) && (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)
+	/* close random device FDs */
+	RAND_keep_random_devices_open(0);
+#endif
+
 	/* compute length  */
 	while (next_argv[next_argc])
 		next_argc++;
@@ -723,6 +785,7 @@ static void mworker_reload()
 	}
 
 	ha_warning("Reexecuting Master process\n");
+	signal(SIGPROF, SIG_IGN);
 	execvp(next_argv[0], next_argv);
 
 	ha_warning("Failed to reexecute the master process [%d]: %s\n", pid, strerror(errno));
@@ -1969,8 +2032,6 @@ static void init(int argc, char **argv)
 	if (!hlua_post_init())
 		exit(1);
 
-	nuster_init();
-
 	free(err_msg);
 }
 
@@ -2143,8 +2204,8 @@ void deinit(void)
 			if (rule->cond) {
 				prune_acl_cond(rule->cond);
 				free(rule->cond);
-				free(rule->file);
 			}
+			free(rule->file);
 			free(rule);
 		}
 
@@ -2472,7 +2533,6 @@ static void run_poll_loop()
 		cur_poller.poll(&cur_poller, exp);
 		fd_process_cached_events();
 		applet_run_active();
-		nuster_housekeeping();
 
 
 		/* Synchronize all polling loops */

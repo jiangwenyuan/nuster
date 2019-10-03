@@ -253,7 +253,7 @@ generate_pseudo_uuid()
 		return NULL;
 
 	if (!init) {
-		srand(now_ms);
+		srand(now_ms * pid);
 		init = 1;
 	}
 
@@ -1310,6 +1310,19 @@ spoe_release_appctx(struct appctx *appctx)
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
 	}
+	list_for_each_entry_safe(ctx, back, &agent->rt[tid].waiting_queue, list) {
+		LIST_DEL(&ctx->list);
+		LIST_INIT(&ctx->list);
+		ctx->state = SPOE_CTX_ST_ERROR;
+		ctx->status_code = (spoe_appctx->status_code + 0x100);
+		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
+	}
+
+  end:
+	/* Release allocated memory */
+	spoe_release_buffer(&spoe_appctx->buffer,
+			    &spoe_appctx->buffer_wait);
+	pool_free(pool_head_spoe_appctx, spoe_appctx);
 
   end:
 	/* Release allocated memory */
@@ -2187,8 +2200,10 @@ spoe_encode_message(struct stream *s, struct spoe_context *ctx,
 
 		/* Fetch the arguement value */
 		smp = sample_process(s->be, s->sess, s, dir|SMP_OPT_FINAL, arg->expr, NULL);
-		smp->ctx.a[0] = &ctx->frag_ctx.curlen;
-		smp->ctx.a[1] = &ctx->frag_ctx.curoff;
+		if (smp) {
+			smp->ctx.a[0] = &ctx->frag_ctx.curlen;
+			smp->ctx.a[1] = &ctx->frag_ctx.curoff;
+		}
 		ret = spoe_encode_data(smp, buf, end);
 		if (ret == -1 || ctx->frag_ctx.curoff)
 			goto too_big;
@@ -2959,9 +2974,45 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 		HA_SPIN_INIT(&conf->agent->rt[i].lock);
 	}
 
+	/* finish per-thread agent initialization */
+	if (global.nbthread == 1)
+		conf->agent->flags |= SPOE_FL_ASYNC;
+
+	if ((conf->agent->rt = calloc(global.nbthread, sizeof(*conf->agent->rt))) == NULL) {
+		ha_alert("Proxy %s : out of memory initializing SPOE agent '%s' declared at %s:%d.\n",
+			 px->id, conf->agent->id, conf->agent->conf.file, conf->agent->conf.line);
+		return 1;
+	}
+	for (i = 0; i < global.nbthread; ++i) {
+		conf->agent->rt[i].frame_size   = conf->agent->max_frame_size;
+		conf->agent->rt[i].applets_act  = 0;
+		conf->agent->rt[i].applets_idle = 0;
+		conf->agent->rt[i].sending_rate = 0;
+		LIST_INIT(&conf->agent->rt[i].applets);
+		LIST_INIT(&conf->agent->rt[i].sending_queue);
+		LIST_INIT(&conf->agent->rt[i].waiting_queue);
+		HA_SPIN_INIT(&conf->agent->rt[i].lock);
+	}
+
 	free(conf->agent->b.name);
 	conf->agent->b.name = NULL;
 	conf->agent->b.be = target;
+	return 0;
+}
+
+/* Initializes the SPOE filter for a proxy for a specific thread.
+ * Returns a negative value if an error occurs. */
+static int
+spoe_init_per_thread(struct proxy *p, struct flt_conf *fconf)
+{
+	struct spoe_config *conf = fconf->conf;
+	struct spoe_agent *agent = conf->agent;
+
+	if (agent->engine_id == NULL) {
+		agent->engine_id = generate_pseudo_uuid();
+		if (agent->engine_id == NULL)
+			return -1;
+	}
 	return 0;
 }
 
@@ -3168,6 +3219,7 @@ struct flt_ops spoe_ops = {
 	.init   = spoe_init,
 	.deinit = spoe_deinit,
 	.check  = spoe_check,
+	.init_per_thread = spoe_init_per_thread,
 
 	/* Handle start/stop of SPOE */
 	.attach         = spoe_start,
