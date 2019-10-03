@@ -883,8 +883,7 @@ Nuster 加入了一些新的sample fetches
 
 在`global`添加`debug`， 或者带`-d`启动`nuster`
 
-缓存相关的调试信息以`[CACHE]`开头
-
+nuster相关的调试信息以`[nuster`开头
 
 ## 如何缓存POST请求?
 

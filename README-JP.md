@@ -24,6 +24,7 @@
   * [Get](#get)
   * [Delete](#delete)
 * [パーシステンス](#パーシステンス)
+* [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
 
 # 紹介
@@ -65,6 +66,7 @@ nusterはVarnishやNginxのように動的や静的なHTTPコンテンツをキ�
 * キャッシュ削除
 * キャッシュ統計
 * キャッシュ生存期間
+* パーシステンス
 
 ### RESTful NoSQLキャッシュサーバー
 
@@ -79,6 +81,7 @@ headerやcookieなど識別できるので、同じエンドポイントにユ�
 * ユーザー向けRESTfulキャッシュ
 * あらゆる種類のデータをサポート
 * すべてHTTPができるプログラミング言語をサポート
+* パーシステンス
 
 # 性能
 
@@ -416,6 +419,8 @@ Cookie: logged_in=yes; user=nuster;
 
 ディフォルトkeyは`GET.http.www.example.com./q?name=X&type=Y.` で `key method.scheme.host.path.header_ASDF.cookie_user.param_type` は `GET.http.www.example.com./q.Z.nuster.Y.`.
 
+> 内部はNULLデリミタが保存されてます、 `GET\0http\0www.example.com\0/q?name=X&type=Y\0`
+
 リクエストのkeyが同じなら、キャッシュを返す。
 
 ### ttl TTL
@@ -727,6 +732,10 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/n
 
    /imgs配下のjpgファイルは  `/imgs/*.jpg`　ではなく、`^/imgs/.*\.jpg$` である。
 
+5. rule nameやproxy nameでキャッシュファイルを削除するのは同じプロセスでなることが必要です。例えば、再起動したら、保存されたキャッシュファイルはrule nameやproxy nameで削除できないです。rule nameやproxy nameの情報は保存してないので。
+
+6. host or path or regexでキャッシュファイルを削除するのはdisk loadが完了してからじゃないといけないです。disk loadが完了しているかどうかはstats URLで確認できます。
+
 ## キャッシュ統計
 
 `uri`で定義したエンドポイントにGETする
@@ -848,6 +857,16 @@ backend be
 4. `/disk-async` はメモリに保存してクライアントに返す。後ほどmaster processによってディスクに保存される
 5. ほかはメモリに保存される
 
+# Sample fetches
+
+下記のsample fetchesが使えます
+
+## nuster.cache.hit: boolean
+
+キャッシュHITかどうかを表します。
+
+    http-response set-header x-cache hit if { nuster.cache.hit }
+
 # FAQ
 
 ## 起動できない: not in master-worker mode
@@ -858,7 +877,7 @@ backend be
 
 `global`に`debug`を設定か, `nuster`を`-d`で起動する。
 
-キャッシュに関するメッセージは`[CACHE]`を含む。
+nusterに関するメッセージは`[nuster`を含む。
 
 ## どうやってPOSTリクエストをキャッシュする?
 
@@ -891,9 +910,8 @@ bind :443 ssl crt pub.pem alpn h2,http/1.1
 global
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
-    #daemon
-    ## to debug cache
-    #debug
+    # daemon
+    # debug
 defaults
     retries 3
     option redispatch
