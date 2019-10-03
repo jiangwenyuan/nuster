@@ -370,6 +370,7 @@ static void fd_dodelete(int fd, int do_close)
 	}
 	if (cur_poller.clo)
 		cur_poller.clo(fd);
+	polled_mask[fd] = 0;
 
 	fd_release_cache_entry(fd);
 	fdtab[fd].state = 0;
@@ -379,7 +380,6 @@ static void fd_dodelete(int fd, int do_close)
 	fdtab[fd].owner = NULL;
 	fdtab[fd].thread_mask = 0;
 	if (do_close) {
-		polled_mask[fd] = 0;
 		close(fd);
 	}
 	if (locked)

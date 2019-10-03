@@ -4666,18 +4666,24 @@ __LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KCont
  * cannot contain the data, the function yields. The function returns -1
  * if the channel is closed.
  */
-__LJMP static int hlua_applet_http_send_yield(lua_State *L, int status, lua_KContext ctx)
+__LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KContext ctx)
 {
-	size_t len;
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
-	const char *str = MAY_LJMP(luaL_checklstring(L, 2, &len));
-	int l = MAY_LJMP(luaL_checkinteger(L, 3));
 	struct stream_interface *si = appctx->appctx->owner;
-	struct channel *chn = si_ic(si);
+	struct channel *res = si_ic(si);
+	struct htx *htx = htx_from_buf(&res->buf);
+	const char *data;
+	size_t len;
+	int l = MAY_LJMP(luaL_checkinteger(L, 3));
 	int max;
 
+	max = channel_htx_recv_max(res, htx);
+	if (!max)
+		goto snd_yield;
+
+	data = MAY_LJMP(luaL_checklstring(L, 2, &len));
+
 	/* Get the max amount of data which can write as input in the channel. */
-	max = channel_recv_max(chn);
 	if (max > (len - l))
 		max = len - l;
 
@@ -4697,14 +4703,16 @@ __LJMP static int hlua_applet_http_send_yield(lua_State *L, int status, lua_KCon
 		MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_http_send_yield, TICK_ETERNITY, 0));
 	}
 
+	htx_to_buf(htx, &res->buf);
 	return 1;
 }
 
-/* Just a wraper of "hlua_applet_send_yield". This wrapper permits
- * yield the LUA process, and resume it without checking the
- * input arguments.
+/* Append data in the output side of the buffer. This data is immediately
+ * sent. The function returns the amount of data written. If the buffer
+ * cannot contain the data, the function yields. The function returns -1
+ * if the channel is closed.
  */
-__LJMP static int hlua_applet_http_send(lua_State *L)
+__LJMP static int hlua_applet_http_send_yield(lua_State *L, int status, lua_KContext ctx)
 {
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
 
@@ -4813,6 +4821,214 @@ __LJMP static int hlua_applet_http_status(lua_State *L)
 	appctx->appctx->ctx.hlua_apphttp.reason = reason;
 	lua_pushboolean(L, 1);
 	return 1;
+}
+
+
+__LJMP static int hlua_applet_htx_send_response(lua_State *L)
+{
+	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
+	struct stream_interface *si = appctx->appctx->owner;
+	struct channel *res = si_ic(si);
+	struct htx *htx;
+	struct htx_sl *sl;
+	struct h1m h1m;
+	const char *status, *reason;
+	const char *name, *value;
+	size_t nlen, vlen;
+        unsigned int flags;
+
+	/* Send the message at once. */
+	htx = htx_from_buf(&res->buf);
+	h1m_init_res(&h1m);
+
+	/* Use the same http version than the request. */
+	status = ultoa_r(appctx->appctx->ctx.hlua_apphttp.status, trash.area, trash.size);
+	reason = appctx->appctx->ctx.hlua_apphttp.reason;
+	if (reason == NULL)
+		reason = http_get_reason(appctx->appctx->ctx.hlua_apphttp.status);
+	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_HTTP11) {
+		flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
+		sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), ist(status), ist(reason));
+	}
+	else {
+		flags = HTX_SL_F_IS_RESP;
+		sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.0"), ist(status), ist(reason));
+	}
+	if (!sl) {
+		hlua_pusherror(L, "Lua applet http '%s': Failed to create response.\n",
+		               appctx->appctx->rule->arg.hlua_rule->fcn.name);
+		WILL_LJMP(lua_error(L));
+	}
+	sl->info.res.status = appctx->appctx->ctx.hlua_apphttp.status;
+
+	/* Get the array associated to the field "response" in the object AppletHTTP. */
+	lua_pushvalue(L, 0);
+	if (lua_getfield(L, 1, "response") != LUA_TTABLE) {
+		hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response'] missing.\n",
+		               appctx->appctx->rule->arg.hlua_rule->fcn.name);
+		WILL_LJMP(lua_error(L));
+	}
+
+	/* Browse the list of headers. */
+	lua_pushnil(L);
+	while(lua_next(L, -2) != 0) {
+		/* We expect a string as -2. */
+		if (lua_type(L, -2) != LUA_TSTRING) {
+			hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response'][] element must be a string. got %s.\n",
+				       appctx->appctx->rule->arg.hlua_rule->fcn.name,
+			               lua_typename(L, lua_type(L, -2)));
+			WILL_LJMP(lua_error(L));
+		}
+		name = lua_tolstring(L, -2, &nlen);
+
+		/* We expect an array as -1. */
+		if (lua_type(L, -1) != LUA_TTABLE) {
+			hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response']['%s'] element must be an table. got %s.\n",
+				       appctx->appctx->rule->arg.hlua_rule->fcn.name,
+				       name,
+			               lua_typename(L, lua_type(L, -1)));
+			WILL_LJMP(lua_error(L));
+		}
+
+		/* Browse the table who is on the top of the stack. */
+		lua_pushnil(L);
+		while(lua_next(L, -2) != 0) {
+			int id;
+
+			/* We expect a number as -2. */
+			if (lua_type(L, -2) != LUA_TNUMBER) {
+				hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response']['%s'][] element must be a number. got %s.\n",
+					       appctx->appctx->rule->arg.hlua_rule->fcn.name,
+					       name,
+				               lua_typename(L, lua_type(L, -2)));
+				WILL_LJMP(lua_error(L));
+			}
+			id = lua_tointeger(L, -2);
+
+			/* We expect a string as -2. */
+			if (lua_type(L, -1) != LUA_TSTRING) {
+				hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response']['%s'][%d] element must be a string. got %s.\n",
+					       appctx->appctx->rule->arg.hlua_rule->fcn.name,
+					       name, id,
+				               lua_typename(L, lua_type(L, -1)));
+				WILL_LJMP(lua_error(L));
+			}
+			value = lua_tolstring(L, -1, &vlen);
+
+			/* Simple Protocol checks. */
+			if (isteqi(ist2(name, nlen), ist("transfer-encoding")))
+				h1_parse_xfer_enc_header(&h1m, ist2(name, nlen));
+			else if (isteqi(ist2(name, nlen), ist("content-length"))) {
+				struct ist v = ist2(value, vlen);
+				int ret;
+
+				ret = h1_parse_cont_len_header(&h1m, &v);
+				if (ret < 0) {
+					hlua_pusherror(L, "Lua applet http '%s': Invalid '%s' header.\n",
+						       appctx->appctx->rule->arg.hlua_rule->fcn.name,
+						       name);
+					WILL_LJMP(lua_error(L));
+				}
+				else if (ret == 0)
+					goto next; /* Skip it */
+			}
+
+			/* Add a new header */
+			if (!htx_add_header(htx, ist2(name, nlen), ist2(value, vlen))) {
+				hlua_pusherror(L, "Lua applet http '%s': Failed to add header '%s' in the response.\n",
+					       appctx->appctx->rule->arg.hlua_rule->fcn.name,
+					       name);
+				WILL_LJMP(lua_error(L));
+			}
+		  next:
+			/* Remove the array from the stack, and get next element with a remaining string. */
+			lua_pop(L, 1);
+		}
+
+		/* Remove the array from the stack, and get next element with a remaining string. */
+		lua_pop(L, 1);
+	}
+
+	if (h1m.flags & H1_MF_CHNK)
+		h1m.flags &= ~H1_MF_CLEN;
+	if (h1m.flags & (H1_MF_CLEN|H1_MF_CHNK))
+		h1m.flags |= H1_MF_XFER_LEN;
+
+	/* Uset HTX start-line flags */
+	if (h1m.flags & H1_MF_XFER_ENC)
+		flags |= HTX_SL_F_XFER_ENC;
+	if (h1m.flags & H1_MF_XFER_LEN) {
+		flags |= HTX_SL_F_XFER_LEN;
+		if (h1m.flags & H1_MF_CHNK)
+			flags |= HTX_SL_F_CHNK;
+		else if (h1m.flags & H1_MF_CLEN)
+			flags |= HTX_SL_F_CLEN;
+		if (h1m.body_len == 0)
+			flags |= HTX_SL_F_BODYLESS;
+	}
+	sl->flags |= flags;
+
+	/* If we dont have a content-length set, and the HTTP version is 1.1
+	 * and the status code implies the presence of a message body, we must
+	 * announce a transfer encoding chunked. This is required by haproxy
+	 * for the keepalive compliance. If the applet annouces a transfer-encoding
+	 * chunked itslef, don't do anything.
+	 */
+	if ((flags & (HTX_SL_F_VER_11|HTX_SL_F_XFER_LEN)) == HTX_SL_F_VER_11 &&
+	    appctx->appctx->ctx.hlua_apphttp.status >= 200 &&
+	    appctx->appctx->ctx.hlua_apphttp.status != 204 &&
+	    appctx->appctx->ctx.hlua_apphttp.status != 304) {
+		/* Add a new header */
+		sl->flags |= (HTX_SL_F_XFER_ENC|H1_MF_CHNK|H1_MF_XFER_LEN);
+		if (!htx_add_header(htx, ist("transfer-encoding"), ist("chunked"))) {
+			hlua_pusherror(L, "Lua applet http '%s': Failed to add header 'transfer-encoding' in the response.\n",
+				       appctx->appctx->rule->arg.hlua_rule->fcn.name);
+			WILL_LJMP(lua_error(L));
+		}
+	}
+
+	/* Finalize headers. */
+	if (!htx_add_endof(htx, HTX_BLK_EOH)) {
+		hlua_pusherror(L, "Lua applet http '%s': Failed create the response.\n",
+			       appctx->appctx->rule->arg.hlua_rule->fcn.name);
+		WILL_LJMP(lua_error(L));
+	}
+
+	if (htx_used_space(htx) > b_size(&res->buf) - global.tune.maxrewrite) {
+		b_reset(&res->buf);
+		hlua_pusherror(L, "Lua: 'start_response': response header block too big");
+		WILL_LJMP(lua_error(L));
+	}
+
+	htx_to_buf(htx, &res->buf);
+	channel_add_input(res, htx->data);
+
+	/* Headers sent, set the flag. */
+	appctx->appctx->ctx.hlua_apphttp.flags |= APPLET_HDR_SENT;
+	return 0;
+
+}
+/* We will build the status line and the headers of the HTTP response.
+ * We will try send at once if its not possible, we give back the hand
+ * waiting for more room.
+ */
+__LJMP static int hlua_applet_htx_start_response_yield(lua_State *L, int status, lua_KContext ctx)
+{
+	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
+	struct stream_interface *si = appctx->appctx->owner;
+	struct channel *res = si_ic(si);
+
+	if (co_data(res)) {
+		si_rx_room_blk(si);
+		MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_htx_start_response_yield, TICK_ETERNITY, 0));
+	}
+	return MAY_LJMP(hlua_applet_htx_send_response(L));
+}
+
+
+__LJMP static int hlua_applet_htx_start_response(lua_State *L)
+{
+	return MAY_LJMP(hlua_applet_htx_start_response_yield(L, 0, 0));
 }
 
 
@@ -5245,6 +5461,8 @@ static int hlua_http_new(lua_State *L, struct hlua_txn *txn)
 
 	htxn->s = txn->s;
 	htxn->p = txn->p;
+	htxn->dir = txn->dir;
+	htxn->flags = txn->flags;
 
 	/* Pop a class stream metatable and affect it to the table. */
 	lua_rawgeti(L, LUA_REGISTRYINDEX, class_http_ref);
@@ -5417,6 +5635,9 @@ __LJMP static int hlua_http_req_get_headers(lua_State *L)
 	MAY_LJMP(check_args(L, 1, "req_get_headers"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	return hlua_http_get_headers(L, htxn, &htxn->s->txn->req);
 }
 
@@ -5426,6 +5647,9 @@ __LJMP static int hlua_http_res_get_headers(lua_State *L)
 
 	MAY_LJMP(check_args(L, 1, "res_get_headers"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
+
+	if (htxn->dir != SMP_OPT_DIR_RES || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	return hlua_http_get_headers(L, htxn, &htxn->s->txn->rsp);
 }
@@ -5464,6 +5688,9 @@ __LJMP static int hlua_http_req_rep_hdr(lua_State *L)
 	MAY_LJMP(check_args(L, 4, "req_rep_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	return MAY_LJMP(hlua_http_rep_hdr(L, htxn, &htxn->s->txn->req, ACT_HTTP_REPLACE_HDR));
 }
 
@@ -5473,6 +5700,9 @@ __LJMP static int hlua_http_res_rep_hdr(lua_State *L)
 
 	MAY_LJMP(check_args(L, 4, "res_rep_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
+
+	if (htxn->dir != SMP_OPT_DIR_RES || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	return MAY_LJMP(hlua_http_rep_hdr(L, htxn, &htxn->s->txn->rsp, ACT_HTTP_REPLACE_HDR));
 }
@@ -5484,6 +5714,9 @@ __LJMP static int hlua_http_req_rep_val(lua_State *L)
 	MAY_LJMP(check_args(L, 4, "req_rep_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	return MAY_LJMP(hlua_http_rep_hdr(L, htxn, &htxn->s->txn->req, ACT_HTTP_REPLACE_VAL));
 }
 
@@ -5493,6 +5726,9 @@ __LJMP static int hlua_http_res_rep_val(lua_State *L)
 
 	MAY_LJMP(check_args(L, 4, "res_rep_val"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
+
+	if (htxn->dir != SMP_OPT_DIR_RES || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	return MAY_LJMP(hlua_http_rep_hdr(L, htxn, &htxn->s->txn->rsp, ACT_HTTP_REPLACE_VAL));
 }
@@ -5533,6 +5769,9 @@ __LJMP static int hlua_http_req_del_hdr(lua_State *L)
 	MAY_LJMP(check_args(L, 2, "req_del_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	return hlua_http_del_hdr(L, htxn, &htxn->s->txn->req);
 }
 
@@ -5540,8 +5779,11 @@ __LJMP static int hlua_http_res_del_hdr(lua_State *L)
 {
 	struct hlua_txn *htxn;
 
-	MAY_LJMP(check_args(L, 2, "req_del_hdr"));
+	MAY_LJMP(check_args(L, 2, "res_del_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
+
+	if (htxn->dir != SMP_OPT_DIR_RES || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	return hlua_http_del_hdr(L, htxn, &htxn->s->txn->rsp);
 }
@@ -5594,6 +5836,9 @@ __LJMP static int hlua_http_req_add_hdr(lua_State *L)
 	MAY_LJMP(check_args(L, 3, "req_add_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	return hlua_http_add_hdr(L, htxn, &htxn->s->txn->req);
 }
 
@@ -5604,6 +5849,9 @@ __LJMP static int hlua_http_res_add_hdr(lua_State *L)
 	MAY_LJMP(check_args(L, 3, "res_add_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 
+	if (htxn->dir != SMP_OPT_DIR_RES || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	return hlua_http_add_hdr(L, htxn, &htxn->s->txn->rsp);
 }
 
@@ -5613,6 +5861,9 @@ static int hlua_http_req_set_hdr(lua_State *L)
 
 	MAY_LJMP(check_args(L, 3, "req_set_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
+
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	hlua_http_del_hdr(L, htxn, &htxn->s->txn->req);
 	return hlua_http_add_hdr(L, htxn, &htxn->s->txn->req);
@@ -5625,6 +5876,9 @@ static int hlua_http_res_set_hdr(lua_State *L)
 	MAY_LJMP(check_args(L, 3, "res_set_hdr"));
 	htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 
+	if (htxn->dir != SMP_OPT_DIR_RES || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	hlua_http_del_hdr(L, htxn, &htxn->s->txn->rsp);
 	return hlua_http_add_hdr(L, htxn, &htxn->s->txn->rsp);
 }
@@ -5635,6 +5889,9 @@ static int hlua_http_req_set_meth(lua_State *L)
 	struct hlua_txn *htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 	size_t name_len;
 	const char *name = MAY_LJMP(luaL_checklstring(L, 2, &name_len));
+
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	lua_pushboolean(L, http_replace_req_line(0, name, name_len, htxn->p, htxn->s) != -1);
 	return 1;
@@ -5647,6 +5904,9 @@ static int hlua_http_req_set_path(lua_State *L)
 	size_t name_len;
 	const char *name = MAY_LJMP(luaL_checklstring(L, 2, &name_len));
 
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	lua_pushboolean(L, http_replace_req_line(1, name, name_len, htxn->p, htxn->s) != -1);
 	return 1;
 }
@@ -5657,6 +5917,9 @@ static int hlua_http_req_set_query(lua_State *L)
 	struct hlua_txn *htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 	size_t name_len;
 	const char *name = MAY_LJMP(luaL_checklstring(L, 2, &name_len));
+
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	/* Check length. */
 	if (name_len > trash.size - 1) {
@@ -5682,6 +5945,9 @@ static int hlua_http_req_set_uri(lua_State *L)
 	size_t name_len;
 	const char *name = MAY_LJMP(luaL_checklstring(L, 2, &name_len));
 
+	if (htxn->dir != SMP_OPT_DIR_REQ || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
+
 	lua_pushboolean(L, http_replace_req_line(3, name, name_len, htxn->p, htxn->s) != -1);
 	return 1;
 }
@@ -5692,6 +5958,9 @@ static int hlua_http_res_set_status(lua_State *L)
 	struct hlua_txn *htxn = MAY_LJMP(hlua_checkhttp(L, 1));
 	unsigned int code = MAY_LJMP(luaL_checkinteger(L, 2));
 	const char *reason = MAY_LJMP(luaL_optlstring(L, 3, NULL, NULL));
+
+	if (htxn->dir != SMP_OPT_DIR_RES || !(htxn->flags & HLUA_TXN_HTTP_RDY))
+		WILL_LJMP(lua_error(L));
 
 	http_set_status(code, reason, htxn->s);
 	return 0;
@@ -6018,7 +6287,7 @@ __LJMP static int hlua_txn_set_mark(lua_State *L)
 	htxn = MAY_LJMP(hlua_checktxn(L, 1));
 	mark = MAY_LJMP(luaL_checkinteger(L, 2));
 
-	conn_set_tos(objt_conn(htxn->s->sess->origin), mark);
+	conn_set_mark(objt_conn(htxn->s->sess->origin), mark);
 	return 0;
 }
 
@@ -6067,8 +6336,12 @@ __LJMP static int hlua_txn_done(lua_State *L)
 	ic = &htxn->s->req;
 	oc = &htxn->s->res;
 
-	if (IS_HTX_STRM(htxn->s))
-		htx_reply_and_close(htxn->s, 0, NULL);
+	if (IS_HTX_STRM(htxn->s)) {
+		htxn->s->txn->status = 0;
+		http_reply_and_close(htxn->s, 0, NULL);
+		ic->analysers &= AN_REQ_FLT_END;
+		oc->analysers &= AN_RES_FLT_END;
+	}
 	else {
 		if (htxn->s->txn) {
 			/* HTTP mode, let's stay in sync with the stream */
@@ -6101,6 +6374,9 @@ __LJMP static int hlua_txn_done(lua_State *L)
 
 		ic->analysers = 0;
 	}
+
+	if (!(htxn->s->flags & SF_ERR_MASK))      // this is not really an error but it is
+		htxn->s->flags |= SF_ERR_LOCAL;   // to mark that it comes from the proxy
 
 	hlua->flags |= HLUA_STOP;
 	WILL_LJMP(hlua_done(L));
@@ -6510,6 +6786,7 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 	struct stream *stream = smp->strm;
 	const char *error;
 	const struct buffer msg = { };
+	unsigned int hflags = HLUA_TXN_NOTERM;
 
 	if (!stream)
 		return 0;
@@ -6529,6 +6806,15 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 			SEND_ERR(stream->be, "Lua sample-fetch '%s': can't initialize Lua context.\n", fcn->name);
 			return 0;
 		}
+	}
+
+	consistency_set(stream, smp->opt, &stream->hlua->cons);
+
+	if (stream->be->mode == PR_MODE_HTTP) {
+		if ((smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_REQ)
+			hflags |= ((stream->txn->req.msg_state < HTTP_MSG_BODY) ? 0 : HLUA_TXN_HTTP_RDY);
+		else
+			hflags |= ((stream->txn->rsp.msg_state < HTTP_MSG_BODY) ? 0 : HLUA_TXN_HTTP_RDY);
 	}
 
 	consistency_set(stream, smp->opt, &stream->hlua->cons);
@@ -6557,8 +6843,7 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 		lua_rawgeti(stream->hlua->T, LUA_REGISTRYINDEX, fcn->function_ref);
 
 		/* push arguments in the stack. */
-		if (!hlua_txn_new(stream->hlua->T, stream, smp->px, smp->opt & SMP_OPT_DIR,
-		                  HLUA_TXN_NOTERM)) {
+		if (!hlua_txn_new(stream->hlua->T, stream, smp->px, smp->opt & SMP_OPT_DIR, hflags)) {
 			SEND_ERR(smp->px, "Lua sample-fetch '%s': full stack.\n", fcn->name);
 			RESET_SAFE_LJMP(stream->hlua->T);
 			return 0;
@@ -6775,16 +7060,16 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
                                    struct session *sess, struct stream *s, int flags)
 {
 	char **arg;
-	unsigned int analyzer;
+	unsigned int hflags = 0;
 	int dir;
 	const char *error;
 	const struct buffer msg = { };
 
 	switch (rule->from) {
-	case ACT_F_TCP_REQ_CNT: analyzer = AN_REQ_INSPECT_FE     ; dir = SMP_OPT_DIR_REQ; break;
-	case ACT_F_TCP_RES_CNT: analyzer = AN_RES_INSPECT        ; dir = SMP_OPT_DIR_RES; break;
-	case ACT_F_HTTP_REQ:    analyzer = AN_REQ_HTTP_PROCESS_FE; dir = SMP_OPT_DIR_REQ; break;
-	case ACT_F_HTTP_RES:    analyzer = AN_RES_HTTP_PROCESS_BE; dir = SMP_OPT_DIR_RES; break;
+	case ACT_F_TCP_REQ_CNT:                            ; dir = SMP_OPT_DIR_REQ; break;
+	case ACT_F_TCP_RES_CNT:                            ; dir = SMP_OPT_DIR_RES; break;
+	case ACT_F_HTTP_REQ:    hflags = HLUA_TXN_HTTP_RDY ; dir = SMP_OPT_DIR_REQ; break;
+	case ACT_F_HTTP_RES:    hflags = HLUA_TXN_HTTP_RDY ; dir = SMP_OPT_DIR_RES; break;
 	default:
 		SEND_ERR(px, "Lua: internal error while execute action.\n");
 		return ACT_RET_CONT;
@@ -6837,7 +7122,7 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 		lua_rawgeti(s->hlua->T, LUA_REGISTRYINDEX, rule->arg.hlua_rule->fcn.function_ref);
 
 		/* Create and and push object stream in the stack. */
-		if (!hlua_txn_new(s->hlua->T, s, px, dir, 0)) {
+		if (!hlua_txn_new(s->hlua->T, s, px, dir, hflags)) {
 			SEND_ERR(px, "Lua function '%s': full stack.\n",
 			         rule->arg.hlua_rule->fcn.name);
 			RESET_SAFE_LJMP(s->hlua->T);
@@ -6880,20 +7165,17 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 	case HLUA_E_AGAIN:
 		/* Set timeout in the required channel. */
 		if (s->hlua->wake_time != TICK_ETERNITY) {
-			if (analyzer & (AN_REQ_INSPECT_FE|AN_REQ_HTTP_PROCESS_FE))
+			if (dir == SMP_OPT_DIR_REQ)
 				s->req.analyse_exp = s->hlua->wake_time;
-			else if (analyzer & (AN_RES_INSPECT|AN_RES_HTTP_PROCESS_BE))
+			else
 				s->res.analyse_exp = s->hlua->wake_time;
 		}
 		/* Some actions can be wake up when a "write" event
 		 * is detected on a response channel. This is useful
 		 * only for actions targeted on the requests.
 		 */
-		if (HLUA_IS_WAKERESWR(s->hlua)) {
+		if (HLUA_IS_WAKERESWR(s->hlua))
 			s->res.flags |= CF_WAKE_WRITE;
-			if ((analyzer & (AN_REQ_INSPECT_FE|AN_REQ_HTTP_PROCESS_FE)))
-				s->res.analysers |= analyzer;
-		}
 		if (HLUA_IS_WAKEREQWR(s->hlua))
 			s->req.flags |= CF_WAKE_WRITE;
 		/* We can quit the function without consistency check

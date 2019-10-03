@@ -944,6 +944,10 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 		if (!done && b_data(&check->bi) < strlen("000\r"))
 			goto wait_more_data;
 
+		/* do not reset when closing, servers don't like this */
+		if (conn_ctrl_ready(cs->conn))
+			fdtab[cs->conn->handle.fd].linger_risk = 0;
+
 		/* Check if the server speaks SMTP */
 		if ((b_data(&check->bi) < strlen("000\r")) ||
 		    (*(b_head(&check->bi) + 3) != ' ' && *(b_head(&check->bi) + 3) != '\r') ||
@@ -1177,6 +1181,10 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 		if (!done && b_data(&check->bi) < 9)
 			goto wait_more_data;
 
+		/* do not reset when closing, servers don't like this */
+		if (conn_ctrl_ready(cs->conn))
+			fdtab[cs->conn->handle.fd].linger_risk = 0;
+
 		if (b_head(&check->bi)[0] == 'R') {
 			set_server_check_status(check, HCHK_STATUS_L7OKD, "PostgreSQL server is ok");
 		}
@@ -1205,6 +1213,10 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 	case PR_O2_MYSQL_CHK:
 		if (!done && b_data(&check->bi) < 5)
 			goto wait_more_data;
+
+		/* do not reset when closing, servers don't like this */
+		if (conn_ctrl_ready(cs->conn))
+			fdtab[cs->conn->handle.fd].linger_risk = 0;
 
 		if (s->proxy->check_len == 0) { // old mode
 			if (*(b_head(&check->bi) + 4) != '\xff') {
@@ -2145,7 +2157,7 @@ static struct task *process_chk_proc(struct task *t, void *context, unsigned sho
 			/* a success was detected */
 			check_notify_success(check);
 		}
-		task_set_affinity(t, MAX_THREADS_MASK);
+		task_set_affinity(t, 1);
 		check->state &= ~CHK_ST_INPROGRESS;
 
 		pid_list_del(check->curpid);
@@ -2252,6 +2264,15 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 
 		/* here, we have seen a synchronous error, no fd was allocated */
 		if (cs) {
+			if (check->wait_list.events)
+				cs->conn->xprt->unsubscribe(cs->conn,
+							    check->wait_list.events,
+							    &check->wait_list);
+			/* We may have been scheduled to run, and the
+			 * I/O handler expects to have a cs, so remove
+			 * the tasklet
+			 */
+			task_remove_from_tasklet_list((struct task *)check->wait_list.task);
 			cs_destroy(cs);
 			cs = check->cs = NULL;
 			conn = NULL;
@@ -2306,6 +2327,15 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 		}
 
 		if (cs) {
+			if (check->wait_list.events)
+				cs->conn->xprt->unsubscribe(cs->conn,
+				    check->wait_list.events,
+				    &check->wait_list);
+			/* We may have been scheduled to run, and the
+                         * I/O handler expects to have a cs, so remove
+                         * the tasklet
+                         */
+                        task_remove_from_tasklet_list((struct task *)check->wait_list.task);
 			cs_destroy(cs);
 			cs = check->cs = NULL;
 			conn = NULL;
@@ -2365,8 +2395,13 @@ static int start_check_task(struct check *check, int mininter,
 			    int nbcheck, int srvpos)
 {
 	struct task *t;
+	unsigned long thread_mask = MAX_THREADS_MASK;
+
+	if (check->type == PR_O2_EXT_CHK)
+		thread_mask = 1;
+
 	/* task for the check */
-	if ((t = task_new(MAX_THREADS_MASK)) == NULL) {
+	if ((t = task_new(thread_mask)) == NULL) {
 		ha_alert("Starting [%s:%s] check: out of memory.\n",
 			 check->server->proxy->id, check->server->id);
 		return 0;
@@ -2812,8 +2847,20 @@ static int tcpcheck_main(struct check *check)
 				goto out;
 			}
 
-			if (check->cs)
+			if (check->cs) {
+				if (check->wait_list.events)
+					cs->conn->xprt->unsubscribe(cs->conn,
+								    check->wait_list.events,
+								    &check->wait_list);
+			/* We may have been scheduled to run, and the
+                         * I/O handler expects to have a cs, so remove
+                         * the tasklet
+                         */
+                        task_remove_from_tasklet_list((struct task *)check->wait_list.task);
+
+
 				cs_destroy(check->cs);
+			}
 
 			check->cs = cs;
 			conn = cs->conn;

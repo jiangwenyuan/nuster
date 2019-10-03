@@ -111,7 +111,7 @@ static inline void srv_check_for_dup_dyncookie(struct server *s)
 }
 
 /*
- * Must be called with the server lock held.
+ * Must be called with the server lock held, and will grab the proxy lock.
  */
 void srv_set_dyncookie(struct server *s)
 {
@@ -123,15 +123,17 @@ void srv_set_dyncookie(struct server *s)
 	int addr_len;
 	int port;
 
+	HA_SPIN_LOCK(PROXY_LOCK, &p->lock);
+
 	if ((s->flags & SRV_F_COOKIESET) ||
 	    !(s->proxy->ck_opts & PR_CK_DYNAMIC) ||
 	    s->proxy->dyncookie_key == NULL)
-		return;
+		goto out;
 	key_len = strlen(p->dyncookie_key);
 
 	if (s->addr.ss_family != AF_INET &&
 	    s->addr.ss_family != AF_INET6)
-		return;
+		goto out;
 	/*
 	 * Buffer to calculate the cookie value.
 	 * The buffer contains the secret key + the server IP address
@@ -160,7 +162,7 @@ void srv_set_dyncookie(struct server *s)
 	hash_value = XXH64(tmpbuf, buffer_len, 0);
 	memprintf(&s->cookie, "%016llx", hash_value);
 	if (!s->cookie)
-		return;
+		goto out;
 	s->cklen = 16;
 
 	/* Don't bother checking if the dyncookie is duplicated if
@@ -169,6 +171,8 @@ void srv_set_dyncookie(struct server *s)
 	 */
 	if (!(s->next_admin & SRV_ADMF_FMAINT))
 		srv_check_for_dup_dyncookie(s);
+ out:
+	HA_SPIN_UNLOCK(PROXY_LOCK, &p->lock);
 }
 
 /*
@@ -1144,11 +1148,21 @@ void srv_set_admin_flag(struct server *s, enum srv_admin mode, const char *cause
 	    ((mode & SRV_ADMF_DRAIN) && (s->next_admin & ~mode & SRV_ADMF_DRAIN)))
 		return;
 
-	/* compute the inherited flag to propagate */
-	if (mode & SRV_ADMF_MAINT)
-		mode = SRV_ADMF_IMAINT;
-	else if (mode & SRV_ADMF_DRAIN)
-		mode = SRV_ADMF_IDRAIN;
+	if (xferred >= 0) {
+		if (s->next_state == SRV_ST_STOPPED)
+			chunk_appendf(msg, ". %d active and %d backup servers left.%s"
+				" %d sessions active, %d requeued, %d remaining in queue",
+				s->proxy->srv_act, s->proxy->srv_bck,
+				(s->proxy->srv_bck && !s->proxy->srv_act) ? " Running on backup." : "",
+				s->cur_sess, xferred, s->nbpend);
+		else
+			chunk_appendf(msg, ". %d active and %d backup servers online.%s"
+				" %d sessions requeued, %d total in queue",
+				s->proxy->srv_act, s->proxy->srv_bck,
+				(s->proxy->srv_bck && !s->proxy->srv_act) ? " Running on backup." : "",
+				xferred, s->nbpend);
+	}
+}
 
 	for (srv = s->trackers; srv; srv = srv->tracknext) {
 		HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
@@ -1165,11 +1179,11 @@ void srv_set_admin_flag(struct server *s, enum srv_admin mode, const char *cause
  *
  * Must be called with the server lock held.
  */
-void srv_clr_admin_flag(struct server *s, enum srv_admin mode)
+void srv_set_running(struct server *s, const char *reason, struct check *check)
 {
 	struct server *srv;
 
-	if (!mode)
+	if (s->cur_admin & SRV_ADMF_MAINT)
 		return;
 
 	/* stop going down as soon as we see the flag is not there anymore */

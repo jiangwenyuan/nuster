@@ -75,8 +75,6 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
-#include <nuster/nuster.h>
-
 /* This function handles a server error at the stream interface level. The
  * stream interface is assumed to be already in a closed state. An optional
  * message is copied into the input buffer.
@@ -600,7 +598,7 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 	 */
 	if (c_data(req) && msg->msg_state < HTTP_MSG_ERROR) {
 		if (txn->flags & TX_NOT_FIRST) {
-			if (unlikely(!channel_is_rewritable(req))) {
+			if (unlikely(!channel_is_rewritable(req) && co_data(req))) {
 				if (req->flags & (CF_SHUTW|CF_SHUTW_NOW|CF_WRITE_ERROR|CF_WRITE_TIMEOUT))
 					goto failed_keep_alive;
 				/* some data has still not left the buffer, wake us once that's done */
@@ -1074,6 +1072,10 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 			goto return_bad_req;
 		}
 	}
+
+	/* "chunked" mandatory if transfer-encoding is used */
+	if (ctx.idx && !(msg->flags & HTTP_MSGF_TE_CHNK))
+		goto return_bad_req;
 
 	/* Chunked requests must have their content-length removed */
 	ctx.idx = 0;
@@ -3518,6 +3520,12 @@ void http_end_txn_clean_session(struct stream *s)
 		if (session_check_idle_conn(s->sess, srv_conn) != 0)
 			srv_conn = NULL;
 	}
+	si_release_endpoint(&s->si[1]);
+	if (srv_conn && srv_conn->owner == s->sess) {
+		if (session_check_idle_conn(s->sess, srv_conn) != 0)
+			srv_conn = NULL;
+	}
+
 
 
 	s->si[1].state     = s->si[1].prev_state = SI_ST_INI;
@@ -4228,7 +4236,7 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	 * data later, which is much more complicated.
 	 */
 	if (c_data(rep) && msg->msg_state < HTTP_MSG_ERROR) {
-		if (unlikely(!channel_is_rewritable(rep))) {
+		if (unlikely(!channel_is_rewritable(rep) && co_data(rep))) {
 			/* some data has still not left the buffer, wake us once that's done */
 			if (rep->flags & (CF_SHUTW|CF_SHUTW_NOW|CF_WRITE_ERROR|CF_WRITE_TIMEOUT))
 				goto abort_response;
@@ -4692,6 +4700,12 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			msg->flags &= ~(HTTP_MSGF_TE_CHNK | HTTP_MSGF_XFER_LEN);
 			break;
 		}
+	}
+
+	/* "chunked" mandatory if transfer-encoding is used */
+	if (ctx.idx && !(msg->flags & HTTP_MSGF_TE_CHNK)) {
+		use_close_only = 1;
+		msg->flags &= ~(HTTP_MSGF_TE_CHNK | HTTP_MSGF_XFER_LEN);
 	}
 
 	/* Chunked responses must have their content-length removed */
