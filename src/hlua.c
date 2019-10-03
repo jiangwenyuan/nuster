@@ -4666,24 +4666,18 @@ __LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KCont
  * cannot contain the data, the function yields. The function returns -1
  * if the channel is closed.
  */
-__LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KContext ctx)
+__LJMP static int hlua_applet_http_send_yield(lua_State *L, int status, lua_KContext ctx)
 {
-	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
-	struct stream_interface *si = appctx->appctx->owner;
-	struct channel *res = si_ic(si);
-	struct htx *htx = htx_from_buf(&res->buf);
-	const char *data;
 	size_t len;
+	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
+	const char *str = MAY_LJMP(luaL_checklstring(L, 2, &len));
 	int l = MAY_LJMP(luaL_checkinteger(L, 3));
+	struct stream_interface *si = appctx->appctx->owner;
+	struct channel *chn = si_ic(si);
 	int max;
 
-	max = channel_htx_recv_max(res, htx);
-	if (!max)
-		goto snd_yield;
-
-	data = MAY_LJMP(luaL_checklstring(L, 2, &len));
-
 	/* Get the max amount of data which can write as input in the channel. */
+	max = channel_recv_max(chn);
 	if (max > (len - l))
 		max = len - l;
 
@@ -4703,16 +4697,14 @@ __LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KCont
 		MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_http_send_yield, TICK_ETERNITY, 0));
 	}
 
-	htx_to_buf(htx, &res->buf);
 	return 1;
 }
 
-/* Append data in the output side of the buffer. This data is immediately
- * sent. The function returns the amount of data written. If the buffer
- * cannot contain the data, the function yields. The function returns -1
- * if the channel is closed.
+/* Just a wraper of "hlua_applet_send_yield". This wrapper permits
+ * yield the LUA process, and resume it without checking the
+ * input arguments.
  */
-__LJMP static int hlua_applet_http_send_yield(lua_State *L, int status, lua_KContext ctx)
+__LJMP static int hlua_applet_http_send(lua_State *L)
 {
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
 
@@ -4821,214 +4813,6 @@ __LJMP static int hlua_applet_http_status(lua_State *L)
 	appctx->appctx->ctx.hlua_apphttp.reason = reason;
 	lua_pushboolean(L, 1);
 	return 1;
-}
-
-
-__LJMP static int hlua_applet_htx_send_response(lua_State *L)
-{
-	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
-	struct stream_interface *si = appctx->appctx->owner;
-	struct channel *res = si_ic(si);
-	struct htx *htx;
-	struct htx_sl *sl;
-	struct h1m h1m;
-	const char *status, *reason;
-	const char *name, *value;
-	size_t nlen, vlen;
-        unsigned int flags;
-
-	/* Send the message at once. */
-	htx = htx_from_buf(&res->buf);
-	h1m_init_res(&h1m);
-
-	/* Use the same http version than the request. */
-	status = ultoa_r(appctx->appctx->ctx.hlua_apphttp.status, trash.area, trash.size);
-	reason = appctx->appctx->ctx.hlua_apphttp.reason;
-	if (reason == NULL)
-		reason = http_get_reason(appctx->appctx->ctx.hlua_apphttp.status);
-	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_HTTP11) {
-		flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
-		sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), ist(status), ist(reason));
-	}
-	else {
-		flags = HTX_SL_F_IS_RESP;
-		sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.0"), ist(status), ist(reason));
-	}
-	if (!sl) {
-		hlua_pusherror(L, "Lua applet http '%s': Failed to create response.\n",
-		               appctx->appctx->rule->arg.hlua_rule->fcn.name);
-		WILL_LJMP(lua_error(L));
-	}
-	sl->info.res.status = appctx->appctx->ctx.hlua_apphttp.status;
-
-	/* Get the array associated to the field "response" in the object AppletHTTP. */
-	lua_pushvalue(L, 0);
-	if (lua_getfield(L, 1, "response") != LUA_TTABLE) {
-		hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response'] missing.\n",
-		               appctx->appctx->rule->arg.hlua_rule->fcn.name);
-		WILL_LJMP(lua_error(L));
-	}
-
-	/* Browse the list of headers. */
-	lua_pushnil(L);
-	while(lua_next(L, -2) != 0) {
-		/* We expect a string as -2. */
-		if (lua_type(L, -2) != LUA_TSTRING) {
-			hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response'][] element must be a string. got %s.\n",
-				       appctx->appctx->rule->arg.hlua_rule->fcn.name,
-			               lua_typename(L, lua_type(L, -2)));
-			WILL_LJMP(lua_error(L));
-		}
-		name = lua_tolstring(L, -2, &nlen);
-
-		/* We expect an array as -1. */
-		if (lua_type(L, -1) != LUA_TTABLE) {
-			hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response']['%s'] element must be an table. got %s.\n",
-				       appctx->appctx->rule->arg.hlua_rule->fcn.name,
-				       name,
-			               lua_typename(L, lua_type(L, -1)));
-			WILL_LJMP(lua_error(L));
-		}
-
-		/* Browse the table who is on the top of the stack. */
-		lua_pushnil(L);
-		while(lua_next(L, -2) != 0) {
-			int id;
-
-			/* We expect a number as -2. */
-			if (lua_type(L, -2) != LUA_TNUMBER) {
-				hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response']['%s'][] element must be a number. got %s.\n",
-					       appctx->appctx->rule->arg.hlua_rule->fcn.name,
-					       name,
-				               lua_typename(L, lua_type(L, -2)));
-				WILL_LJMP(lua_error(L));
-			}
-			id = lua_tointeger(L, -2);
-
-			/* We expect a string as -2. */
-			if (lua_type(L, -1) != LUA_TSTRING) {
-				hlua_pusherror(L, "Lua applet http '%s': AppletHTTP['response']['%s'][%d] element must be a string. got %s.\n",
-					       appctx->appctx->rule->arg.hlua_rule->fcn.name,
-					       name, id,
-				               lua_typename(L, lua_type(L, -1)));
-				WILL_LJMP(lua_error(L));
-			}
-			value = lua_tolstring(L, -1, &vlen);
-
-			/* Simple Protocol checks. */
-			if (isteqi(ist2(name, nlen), ist("transfer-encoding")))
-				h1_parse_xfer_enc_header(&h1m, ist2(name, nlen));
-			else if (isteqi(ist2(name, nlen), ist("content-length"))) {
-				struct ist v = ist2(value, vlen);
-				int ret;
-
-				ret = h1_parse_cont_len_header(&h1m, &v);
-				if (ret < 0) {
-					hlua_pusherror(L, "Lua applet http '%s': Invalid '%s' header.\n",
-						       appctx->appctx->rule->arg.hlua_rule->fcn.name,
-						       name);
-					WILL_LJMP(lua_error(L));
-				}
-				else if (ret == 0)
-					goto next; /* Skip it */
-			}
-
-			/* Add a new header */
-			if (!htx_add_header(htx, ist2(name, nlen), ist2(value, vlen))) {
-				hlua_pusherror(L, "Lua applet http '%s': Failed to add header '%s' in the response.\n",
-					       appctx->appctx->rule->arg.hlua_rule->fcn.name,
-					       name);
-				WILL_LJMP(lua_error(L));
-			}
-		  next:
-			/* Remove the array from the stack, and get next element with a remaining string. */
-			lua_pop(L, 1);
-		}
-
-		/* Remove the array from the stack, and get next element with a remaining string. */
-		lua_pop(L, 1);
-	}
-
-	if (h1m.flags & H1_MF_CHNK)
-		h1m.flags &= ~H1_MF_CLEN;
-	if (h1m.flags & (H1_MF_CLEN|H1_MF_CHNK))
-		h1m.flags |= H1_MF_XFER_LEN;
-
-	/* Uset HTX start-line flags */
-	if (h1m.flags & H1_MF_XFER_ENC)
-		flags |= HTX_SL_F_XFER_ENC;
-	if (h1m.flags & H1_MF_XFER_LEN) {
-		flags |= HTX_SL_F_XFER_LEN;
-		if (h1m.flags & H1_MF_CHNK)
-			flags |= HTX_SL_F_CHNK;
-		else if (h1m.flags & H1_MF_CLEN)
-			flags |= HTX_SL_F_CLEN;
-		if (h1m.body_len == 0)
-			flags |= HTX_SL_F_BODYLESS;
-	}
-	sl->flags |= flags;
-
-	/* If we dont have a content-length set, and the HTTP version is 1.1
-	 * and the status code implies the presence of a message body, we must
-	 * announce a transfer encoding chunked. This is required by haproxy
-	 * for the keepalive compliance. If the applet annouces a transfer-encoding
-	 * chunked itslef, don't do anything.
-	 */
-	if ((flags & (HTX_SL_F_VER_11|HTX_SL_F_XFER_LEN)) == HTX_SL_F_VER_11 &&
-	    appctx->appctx->ctx.hlua_apphttp.status >= 200 &&
-	    appctx->appctx->ctx.hlua_apphttp.status != 204 &&
-	    appctx->appctx->ctx.hlua_apphttp.status != 304) {
-		/* Add a new header */
-		sl->flags |= (HTX_SL_F_XFER_ENC|H1_MF_CHNK|H1_MF_XFER_LEN);
-		if (!htx_add_header(htx, ist("transfer-encoding"), ist("chunked"))) {
-			hlua_pusherror(L, "Lua applet http '%s': Failed to add header 'transfer-encoding' in the response.\n",
-				       appctx->appctx->rule->arg.hlua_rule->fcn.name);
-			WILL_LJMP(lua_error(L));
-		}
-	}
-
-	/* Finalize headers. */
-	if (!htx_add_endof(htx, HTX_BLK_EOH)) {
-		hlua_pusherror(L, "Lua applet http '%s': Failed create the response.\n",
-			       appctx->appctx->rule->arg.hlua_rule->fcn.name);
-		WILL_LJMP(lua_error(L));
-	}
-
-	if (htx_used_space(htx) > b_size(&res->buf) - global.tune.maxrewrite) {
-		b_reset(&res->buf);
-		hlua_pusherror(L, "Lua: 'start_response': response header block too big");
-		WILL_LJMP(lua_error(L));
-	}
-
-	htx_to_buf(htx, &res->buf);
-	channel_add_input(res, htx->data);
-
-	/* Headers sent, set the flag. */
-	appctx->appctx->ctx.hlua_apphttp.flags |= APPLET_HDR_SENT;
-	return 0;
-
-}
-/* We will build the status line and the headers of the HTTP response.
- * We will try send at once if its not possible, we give back the hand
- * waiting for more room.
- */
-__LJMP static int hlua_applet_htx_start_response_yield(lua_State *L, int status, lua_KContext ctx)
-{
-	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
-	struct stream_interface *si = appctx->appctx->owner;
-	struct channel *res = si_ic(si);
-
-	if (co_data(res)) {
-		si_rx_room_blk(si);
-		MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_htx_start_response_yield, TICK_ETERNITY, 0));
-	}
-	return MAY_LJMP(hlua_applet_htx_send_response(L));
-}
-
-
-__LJMP static int hlua_applet_htx_start_response(lua_State *L)
-{
-	return MAY_LJMP(hlua_applet_htx_start_response_yield(L, 0, 0));
 }
 
 
@@ -6816,8 +6600,6 @@ static int hlua_sample_fetch_wrapper(const struct arg *arg_p, struct sample *smp
 		else
 			hflags |= ((stream->txn->rsp.msg_state < HTTP_MSG_BODY) ? 0 : HLUA_TXN_HTTP_RDY);
 	}
-
-	consistency_set(stream, smp->opt, &stream->hlua->cons);
 
 	/* If it is the first run, initialize the data for the call. */
 	if (!HLUA_IS_RUNNING(stream->hlua)) {

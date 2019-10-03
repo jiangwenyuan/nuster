@@ -75,6 +75,8 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
+#include <nuster/nuster.h>
+
 /* This function handles a server error at the stream interface level. The
  * stream interface is assumed to be already in a closed state. An optional
  * message is copied into the input buffer.
@@ -3520,12 +3522,6 @@ void http_end_txn_clean_session(struct stream *s)
 		if (session_check_idle_conn(s->sess, srv_conn) != 0)
 			srv_conn = NULL;
 	}
-	si_release_endpoint(&s->si[1]);
-	if (srv_conn && srv_conn->owner == s->sess) {
-		if (session_check_idle_conn(s->sess, srv_conn) != 0)
-			srv_conn = NULL;
-	}
-
 
 
 	s->si[1].state     = s->si[1].prev_state = SI_ST_INI;

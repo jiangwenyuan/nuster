@@ -172,7 +172,6 @@ spoe_release_agent(struct spoe_agent *agent)
 	free(agent->id);
 	free(agent->conf.file);
 	free(agent->var_pfx);
-	free(agent->engine_id);
 	free(agent->var_on_error);
 	free(agent->var_t_process);
 	free(agent->var_t_total);
@@ -2489,34 +2488,11 @@ spoe_process_actions(struct stream *s, struct spoe_context *ctx, int dir)
 			default:
 				goto skip;
 		}
-		else
-			sa->cur_fpa--;
 	}
 
-	/* Reset the flag to allow next processing */
-	agent->rt[tid].processing--;
-	ctx->flags &= ~(SPOE_CTX_FL_PROCESS|SPOE_CTX_FL_FRAGMENTED);
-
-	/* Reset processing timer */
-	ctx->process_exp = TICK_ETERNITY;
-
-	spoe_release_buffer(&ctx->buffer, &ctx->buffer_wait);
-
-	ctx->spoe_appctx          = NULL;
-	ctx->frag_ctx.curmsg      = NULL;
-	ctx->frag_ctx.curarg      = NULL;
-	ctx->frag_ctx.curoff      = 0;
-	ctx->frag_ctx.flags       = 0;
-
-	if (!LIST_ISEMPTY(&ctx->list)) {
-		if (ctx->state == SPOE_CTX_ST_SENDING_MSGS)
-			HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
-		else
-			HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
-
-		LIST_DEL(&ctx->list);
-		LIST_INIT(&ctx->list);
-	}
+	return 1;
+  skip:
+	return 0;
 }
 
 /***************************************************************************
@@ -4199,59 +4175,6 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 			tmp++;
 		}
 		curagent->var_pfx = strdup(curagent->id);
-	}
-	if (curagent->engine_id == NULL)
-		curagent->engine_id = generate_pseudo_uuid();
-
-	if (curagent->var_on_error) {
-		struct arg arg;
-
-		trash.data = snprintf(trash.area, trash.size, "txn.%s.%s",
-				     curagent->var_pfx, curagent->var_on_error);
-
-		arg.type = ARGT_STR;
-		arg.data.str.area = trash.area;
-		arg.data.str.data = trash.data;
-		arg.data.str.size = 0; /* Set it to 0 to not release it in vars_check_args() */
-		if (!vars_check_arg(&arg, err)) {
-			memprintf(err, "SPOE agent '%s': failed to register variable %s.%s (%s)",
-				  curagent->id, curagent->var_pfx, curagent->var_on_error, *err);
-			goto error;
-		}
-	}
-
-	if (curagent->var_t_process) {
-		struct arg arg;
-
-		trash.data = snprintf(trash.area, trash.size, "txn.%s.%s",
-				     curagent->var_pfx, curagent->var_t_process);
-
-		arg.type = ARGT_STR;
-		arg.data.str.area = trash.area;
-		arg.data.str.data = trash.data;
-		arg.data.str.size = 0;  /* Set it to 0 to not release it in vars_check_args() */
-		if (!vars_check_arg(&arg, err)) {
-			memprintf(err, "SPOE agent '%s': failed to register variable %s.%s (%s)",
-				  curagent->id, curagent->var_pfx, curagent->var_t_process, *err);
-			goto error;
-		}
-	}
-
-	if (curagent->var_t_total) {
-		struct arg arg;
-
-		trash.data = snprintf(trash.area, trash.size, "txn.%s.%s",
-				     curagent->var_pfx, curagent->var_t_total);
-
-		arg.type = ARGT_STR;
-		arg.data.str.area = trash.area;
-		arg.data.str.data = trash.data;
-		arg.data.str.size = 0;  /* Set it to 0 to not release it in vars_check_args() */
-		if (!vars_check_arg(&arg, err)) {
-			memprintf(err, "SPOE agent '%s': failed to register variable %s.%s (%s)",
-				  curagent->id, curagent->var_pfx, curagent->var_t_process, *err);
-			goto error;
-		}
 	}
 
 	if (curagent->var_on_error) {

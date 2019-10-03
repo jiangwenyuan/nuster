@@ -1148,21 +1148,11 @@ void srv_set_admin_flag(struct server *s, enum srv_admin mode, const char *cause
 	    ((mode & SRV_ADMF_DRAIN) && (s->next_admin & ~mode & SRV_ADMF_DRAIN)))
 		return;
 
-	if (xferred >= 0) {
-		if (s->next_state == SRV_ST_STOPPED)
-			chunk_appendf(msg, ". %d active and %d backup servers left.%s"
-				" %d sessions active, %d requeued, %d remaining in queue",
-				s->proxy->srv_act, s->proxy->srv_bck,
-				(s->proxy->srv_bck && !s->proxy->srv_act) ? " Running on backup." : "",
-				s->cur_sess, xferred, s->nbpend);
-		else
-			chunk_appendf(msg, ". %d active and %d backup servers online.%s"
-				" %d sessions requeued, %d total in queue",
-				s->proxy->srv_act, s->proxy->srv_bck,
-				(s->proxy->srv_bck && !s->proxy->srv_act) ? " Running on backup." : "",
-				xferred, s->nbpend);
-	}
-}
+	/* compute the inherited flag to propagate */
+	if (mode & SRV_ADMF_MAINT)
+		mode = SRV_ADMF_IMAINT;
+	else if (mode & SRV_ADMF_DRAIN)
+		mode = SRV_ADMF_IDRAIN;
 
 	for (srv = s->trackers; srv; srv = srv->tracknext) {
 		HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
@@ -1179,11 +1169,11 @@ void srv_set_admin_flag(struct server *s, enum srv_admin mode, const char *cause
  *
  * Must be called with the server lock held.
  */
-void srv_set_running(struct server *s, const char *reason, struct check *check)
+void srv_clr_admin_flag(struct server *s, enum srv_admin mode)
 {
 	struct server *srv;
 
-	if (s->cur_admin & SRV_ADMF_MAINT)
+	if (!mode)
 		return;
 
 	/* stop going down as soon as we see the flag is not there anymore */

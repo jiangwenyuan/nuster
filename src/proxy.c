@@ -1934,8 +1934,6 @@ static int cli_parse_shutdown_frontend(char **args, char *payload, struct appctx
 	         px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
 
 	stop_proxy(px);
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
-
 	return 1;
 }
 
