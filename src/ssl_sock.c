@@ -3278,6 +3278,7 @@ end:
 	while (node) {
 		next = ebmb_next(node);
 		ebmb_delete(node);
+		free(ebmb_entry(node, struct sni_keytype, name));
 		node = next;
 	}
 
