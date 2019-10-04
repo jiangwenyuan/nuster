@@ -3022,7 +3022,7 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 }
 
 
-static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
+static int ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
 {
 	struct sni_keytype *s_kt = NULL;
 	struct ebmb_node *node;
@@ -3042,6 +3042,9 @@ static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root 
 		 * strncpy will cause sig_abrt errors under certain versions of gcc with -O2
 		 * See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=60792
 		 */
+		if (!s_kt)
+			return -1;
+
 		memcpy(s_kt->name.key, trash.area, i+1);
 		s_kt->keytypes = 0;
 		ebst_insert(sni_keytypes, &s_kt->name);
@@ -3052,6 +3055,8 @@ static void ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root 
 
 	/* Mark that this CN has the keytype of key_index via keytypes mask */
 	s_kt->keytypes |= 1<<key_index;
+
+	return 0;
 
 }
 
@@ -3107,13 +3112,21 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 	 *     keyindex = 0 | 1 | 4 = 5
 	 */
 	for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
+		int ret;
 
 		if (!ssl_sock_is_ckch_valid(&certs_and_keys[n]))
 			continue;
 
 		if (fcount) {
-			for (i = 0; i < fcount; i++)
-				ssl_sock_populate_sni_keytypes_hplr(sni_filter[i], &sni_keytypes_map, n);
+			for (i = 0; i < fcount; i++) {
+				ret = ssl_sock_populate_sni_keytypes_hplr(sni_filter[i], &sni_keytypes_map, n);
+				if (ret < 0) {
+					memprintf(err, "%sunable to allocate SSL context.\n",
+					          err && *err ? *err : "");
+					rv = 1;
+					goto end;
+				}
+			}
 		} else {
 			/* A lot of the following code is OpenSSL boilerplate for processing CN's and SAN's,
 			 * so the line that contains logic is marked via comments
@@ -3126,10 +3139,16 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 				value = X509_NAME_ENTRY_get_data(entry);
 				if (ASN1_STRING_to_UTF8((unsigned char **)&str, value) >= 0) {
 					/* Important line is here */
-					ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
+					ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
 
 					OPENSSL_free(str);
 					str = NULL;
+					if (ret < 0) {
+						memprintf(err, "%sunable to allocate SSL context.\n",
+						          err && *err ? *err : "");
+						rv = 1;
+						goto end;
+					}
 				}
 			}
 
@@ -3143,10 +3162,16 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 					if (name->type == GEN_DNS) {
 						if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
 							/* Important line is here */
-							ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
+							ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
 
 							OPENSSL_free(str);
 							str = NULL;
+							if (ret < 0) {
+								memprintf(err, "%sunable to allocate SSL context.\n",
+								          err && *err ? *err : "");
+								rv = 1;
+								goto end;
+							}
 						}
 					}
 				}
