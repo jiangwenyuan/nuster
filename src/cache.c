@@ -1393,9 +1393,9 @@ int sha1_hosturi(struct stream *s)
 		chunk_memcat(trash, ctx.value.ptr, ctx.value.len);
 
 		sl = http_find_stline(htx);
-                path = http_get_path(htx_sl_req_uri(sl));
-                if (!path.ptr)
-                        return 0;
+		path = htx_sl_req_uri(sl); // whole uri
+		if (!path.len || *path.ptr != '/')
+			return 0;
 		chunk_memcat(trash, path.ptr, path.len);
 	}
 	else {
@@ -1411,8 +1411,8 @@ int sha1_hosturi(struct stream *s)
 
 		/* now retrieve the path */
 		end = ci_head(txn->req.chn) + txn->req.sl.rq.u + txn->req.sl.rq.u_l;
-		path = http_txn_get_path(txn);
-		if (!path)
+		path = ci_head(txn->req.chn) + txn->req.sl.rq.u;
+		if (!txn->req.sl.rq.u_l || *path != '/')
 			return 0;
 		chunk_strncat(trash, path, end - path);
 	}
