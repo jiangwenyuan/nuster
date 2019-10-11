@@ -1021,6 +1021,14 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 		goto end;
 	}
 
+	if (h1m->err_pos >= 0)  {
+		/* Maybe we found an error during the parsing while we were
+		 * configured not to block on that, so we have to capture it
+		 * now.
+		 */
+		h1_capture_bad_message(h1s->h1c, h1s, h1m, buf);
+	}
+
 	/* messages headers fully parsed, do some checks to prepare the body
 	 * parsing.
 	 */
