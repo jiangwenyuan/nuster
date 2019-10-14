@@ -103,7 +103,7 @@ static inline void chunk_initstr(struct chunk *chk, const char *str)
  */
 static inline int chunk_memcpy(struct chunk *chk, const char *src, size_t len)
 {
-	if (unlikely(len >= chk->size))
+	if (unlikely(len > chk->size))
 		return 0;
 
 	chk->len  = len;
@@ -117,7 +117,7 @@ static inline int chunk_memcpy(struct chunk *chk, const char *src, size_t len)
  */
 static inline int chunk_memcat(struct chunk *chk, const char *src, size_t len)
 {
-	if (unlikely(chk->len < 0 || chk->len + len >= chk->size))
+	if (unlikely(chk->len < 0 || chk->len + len > chk->size))
 		return 0;
 
 	memcpy(chk->str + chk->len, src, len);
