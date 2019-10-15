@@ -668,9 +668,8 @@ static void mworker_reload()
 	setenv("HAPROXY_MWORKER_REEXEC", "1", 1);
 
 #if defined(USE_OPENSSL) && (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)
-	if (global.ssl_used_frontend || global.ssl_used_backend)
-		/* close random device FDs */
-		RAND_keep_random_devices_open(0);
+	/* close random device FDs */
+	RAND_keep_random_devices_open(0);
 #endif
 
 	/* compute length  */
