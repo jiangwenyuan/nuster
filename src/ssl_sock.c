@@ -2651,7 +2651,20 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file, char **err)
 	DH *dh = ssl_sock_get_dh_from_file(file);
 
 	if (dh) {
-		SSL_CTX_set_tmp_dh(ctx, dh);
+		if (!SSL_CTX_set_tmp_dh(ctx, dh)) {
+			memprintf(err, "%sunable to load the DH parameter specified in '%s'",
+				  err && *err ? *err : "", file);
+#if defined(SSL_CTX_set_dh_auto)
+			SSL_CTX_set_dh_auto(ctx, 1);
+			memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
+				  err && *err ? *err : "");
+#else
+			memprintf(err, "%s, DH ciphers won't be available.\n",
+				  err && *err ? *err : "");
+#endif
+			ret |= ERR_WARN;
+			goto end;
+		}
 
 		if (ssl_dh_ptr_index >= 0) {
 			/* store a pointer to the DH params to avoid complaining about
@@ -2660,7 +2673,20 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file, char **err)
 		}
 	}
 	else if (global_dh) {
-		SSL_CTX_set_tmp_dh(ctx, global_dh);
+		if (!SSL_CTX_set_tmp_dh(ctx, global_dh)) {
+			memprintf(err, "%sunable to use the global DH parameter for certificate '%s'",
+				  err && *err ? *err : "", file);
+#if defined(SSL_CTX_set_dh_auto)
+			SSL_CTX_set_dh_auto(ctx, 1);
+			memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
+				  err && *err ? *err : "");
+#else
+			memprintf(err, "%s, DH ciphers won't be available.\n",
+				  err && *err ? *err : "");
+#endif
+			ret |= ERR_WARN;
+			goto end;
+		}
 	}
 	else {
 		/* Clear openssl global errors stack */
@@ -2678,7 +2704,20 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file, char **err)
 				goto end;
 			}
 
-			SSL_CTX_set_tmp_dh(ctx, local_dh_1024);
+			if (!SSL_CTX_set_tmp_dh(ctx, local_dh_1024)) {
+				memprintf(err, "%sunable to load default 1024 bits DH parameter for certificate '%s'.\n",
+					  err && *err ? *err : "", file);
+#if defined(SSL_CTX_set_dh_auto)
+				SSL_CTX_set_dh_auto(ctx, 1);
+				memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
+					  err && *err ? *err : "");
+#else
+				memprintf(err, "%s, DH ciphers won't be available.\n",
+					  err && *err ? *err : "");
+#endif
+				ret |= ERR_WARN;
+				goto end;
+			}
 		}
 		else {
 			SSL_CTX_set_tmp_dh_callback(ctx, ssl_get_tmp_dh);
@@ -4381,7 +4420,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 			 NULL);
 
 		if (ecdhe == NULL) {
-			SSL_CTX_set_dh_auto(ctx, 1);
+			SSL_CTX_set_ecdh_auto(ctx, 1);
 			return cfgerr;
 		}
 #else
