@@ -2982,26 +2982,30 @@ end:
 }
 
 /* Loads the info in ckch into ctx
- * Currently, this does not process any information about ocsp, dhparams or
- * sctl
- * Returns
- *     0 on success
- *     1 on failure
+ * Returns a bitfield containing the flags:
+ *     ERR_FATAL in any fatal error case
+ *     ERR_ALERT if the reason of the error is available in err
+ *     ERR_WARN if a warning is available into err
+ * The value 0 means there is no error nor warning and
+ * the operation succeed.
  */
 static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_and_chain *ckch, SSL_CTX *ctx, char **err)
 {
 	int i = 0;
+	int errcode = 0;
 
 	if (SSL_CTX_use_PrivateKey(ctx, ckch->key) <= 0) {
 		memprintf(err, "%sunable to load SSL private key into SSL Context '%s'.\n",
 				err && *err ? *err : "", path);
-		return 1;
+		errcode |= ERR_ALERT | ERR_FATAL;
+		return errcode;
 	}
 
 	if (!SSL_CTX_use_certificate(ctx, ckch->cert)) {
 		memprintf(err, "%sunable to load SSL certificate into SSL Context '%s'.\n",
 				err && *err ? *err : "", path);
-		return 1;
+		errcode |= ERR_ALERT | ERR_FATAL;
+		goto end;
 	}
 
 	/* Load all certs in the ckch into the ctx_chain for the ssl_ctx */
@@ -3009,17 +3013,19 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 		if (!SSL_CTX_add1_chain_cert(ctx, ckch->chain_certs[i])) {
 			memprintf(err, "%sunable to load chain certificate #%d into SSL Context '%s'. Make sure you are linking against Openssl >= 1.0.2.\n",
 					err && *err ? *err : "", (i+1), path);
-			return 1;
+			errcode |= ERR_ALERT | ERR_FATAL;
+			goto end;
 		}
 	}
 
 	if (SSL_CTX_check_private_key(ctx) <= 0) {
 		memprintf(err, "%sinconsistencies between private key and certificate loaded from PEM file '%s'.\n",
 				err && *err ? *err : "", path);
-		return 1;
+		errcode |= ERR_ALERT | ERR_FATAL;
 	}
 
-	return 0;
+ end:
+	return errcode;
 }
 
 
@@ -3227,9 +3233,9 @@ static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_con
 				if (i & (1<<n)) {
 					/* Key combo contains ckch[n] */
 					snprintf(cur_file, MAXPATHLEN+1, "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
-					if (ssl_sock_put_ckch_into_ctx(cur_file, &certs_and_keys[n], cur_ctx, err) != 0) {
+					errcode |= ssl_sock_put_ckch_into_ctx(cur_file, &certs_and_keys[n], cur_ctx, err);
+					if (errcode & ERR_CODE) {
 						SSL_CTX_free(cur_ctx);
-						errcode |= ERR_ALERT | ERR_FATAL;
 						goto end;
 					}
 
