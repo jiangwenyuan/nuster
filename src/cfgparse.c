@@ -3417,7 +3417,7 @@ out_uri_auth_compat:
 					goto err;
 				for (i = 0; i < global.nbthread; i++) {
 					LIST_INIT(&newsrv->idle_orphan_conns[i]);
-					newsrv->idle_task[i] = task_new(1 << i);
+					newsrv->idle_task[i] = task_new(1UL << i);
 					if (!newsrv->idle_task[i])
 						goto err;
 					newsrv->idle_task[i]->process = srv_cleanup_idle_connections;
