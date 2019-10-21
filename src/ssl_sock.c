@@ -5591,15 +5591,15 @@ static int bind_parse_strict_sni(char **args, int cur_arg, struct proxy *px, str
 static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
-	FILE *f;
+	FILE *f = NULL;
 	int i = 0;
 	char thisline[LINESIZE];
-	struct tls_keys_ref *keys_ref;
+	struct tls_keys_ref *keys_ref = NULL;
 
 	if (!*args[cur_arg + 1]) {
 		if (err)
 			memprintf(err, "'%s' : missing TLS ticket keys file path", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref = tlskeys_ref_lookup(args[cur_arg + 1]);
@@ -5608,36 +5608,31 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 		return 0;
 	}
 
-	keys_ref = malloc(sizeof(*keys_ref));
+	keys_ref = calloc(1, sizeof(*keys_ref));
 	if (!keys_ref) {
 		if (err)
 			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref->tlskeys = malloc(TLS_TICKETS_NO * sizeof(struct tls_sess_key));
 	if (!keys_ref->tlskeys) {
-		free(keys_ref);
 		if (err)
 			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	if ((f = fopen(args[cur_arg + 1], "r")) == NULL) {
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : unable to load ssl tickets keys file", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	keys_ref->filename = strdup(args[cur_arg + 1]);
 	if (!keys_ref->filename) {
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			 memprintf(err, "'%s' : allocation error", args[cur_arg+1]);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	while (fgets(thisline, sizeof(thisline), f) != NULL) {
@@ -5650,25 +5645,17 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 			thisline[--len] = 0;
 
 		if (base64dec(thisline, len, (char *) (keys_ref->tlskeys + i % TLS_TICKETS_NO), sizeof(struct tls_sess_key)) != sizeof(struct tls_sess_key)) {
-			free(keys_ref->filename);
-			free(keys_ref->tlskeys);
-			free(keys_ref);
 			if (err)
 				memprintf(err, "'%s' : unable to decode base64 key on line %d", args[cur_arg+1], i + 1);
-			fclose(f);
-			return ERR_ALERT | ERR_FATAL;
+			goto fail;
 		}
 		i++;
 	}
 
 	if (i < TLS_TICKETS_NO) {
-		free(keys_ref->filename);
-		free(keys_ref->tlskeys);
-		free(keys_ref);
 		if (err)
 			memprintf(err, "'%s' : please supply at least %d keys in the tls-tickets-file", args[cur_arg+1], TLS_TICKETS_NO);
-		fclose(f);
-		return ERR_ALERT | ERR_FATAL;
+		goto fail;
 	}
 
 	fclose(f);
@@ -5682,6 +5669,17 @@ static int bind_parse_tls_ticket_keys(char **args, int cur_arg, struct proxy *px
 	LIST_ADD(&tlskeys_reference, &keys_ref->list);
 
 	return 0;
+
+  fail:
+	if (f)
+		fclose(f);
+	if (keys_ref) {
+		free(keys_ref->filename);
+		free(keys_ref->tlskeys);
+		free(keys_ref);
+	}
+	return ERR_ALERT | ERR_FATAL;
+
 #else
 	if (err)
 		memprintf(err, "'%s' : TLS ticket callback extension not supported", args[cur_arg]);
