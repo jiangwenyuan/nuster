@@ -4232,6 +4232,7 @@ static size_t h2s_frt_make_resp_data(struct h2s *h2s, const struct buffer *buf, 
 		h2s->flags |= H2_SF_BLK_SFCTL;
 		if (!LIST_ISEMPTY(&h2s->list))
 			LIST_DEL_INIT(&h2s->list);
+		LIST_ADDQ(&h2c->blocked_list, &h2s->list);
 		goto end;
 	}
 
