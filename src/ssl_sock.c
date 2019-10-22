@@ -2736,7 +2736,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, SSL_CTX *ctx, struct proxy
 		SSL_MODE_RELEASE_BUFFERS |
 		SSL_MODE_SMALL_BUFFERS;
 	STACK_OF(SSL_CIPHER) * ciphers = NULL;
-	SSL_CIPHER * cipher = NULL;
+	const SSL_CIPHER * cipher = NULL;
 	char cipher_description[128];
 	/* The description of ciphers using an Ephemeral Diffie Hellman key exchange
 	   contains " Kx=DH " or " Kx=DH(". Beware of " Kx=DH/",
