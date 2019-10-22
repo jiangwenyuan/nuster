@@ -3009,9 +3009,6 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 	if (!expired && h2c)
 		return t;
 
-	task_delete(t);
-	task_free(t);
-
 	if (h2c && !h2c_may_expire(h2c)) {
 		/* we do still have streams but all of them are idle, waiting
 		 * for the data layer, so we must not enforce the timeout here.
@@ -3019,6 +3016,9 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 		t->expire = TICK_ETERNITY;
 		return t;
 	}
+
+	task_delete(t);
+	task_free(t);
 
 	if (!h2c) {
 		/* resources were already deleted */
