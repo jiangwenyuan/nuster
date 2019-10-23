@@ -1583,7 +1583,8 @@ static int h2c_handle_settings(struct h2c *h2c)
 	h2c->st0 = H2_CS_FRAME_A;
 	return 1;
  fail:
-	sess_log(h2c->conn->owner);
+	if (!(h2c->flags & H2_CF_IS_BACK))
+		sess_log(h2c->conn->owner);
 	h2c_error(h2c, error);
 	return 0;
 }
@@ -2244,7 +2245,8 @@ static void h2_process_demux(struct h2c *h2c)
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
 				if (h2c->st0 == H2_CS_ERROR) {
 					h2c->st0 = H2_CS_ERROR2;
-					sess_log(h2c->conn->owner);
+					if (!(h2c->flags & H2_CF_IS_BACK))
+						sess_log(h2c->conn->owner);
 				}
 				goto fail;
 			}
@@ -2253,7 +2255,8 @@ static void h2_process_demux(struct h2c *h2c)
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
 				h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
 				h2c->st0 = H2_CS_ERROR2;
-				sess_log(h2c->conn->owner);
+				if (!(h2c->flags & H2_CF_IS_BACK))
+					sess_log(h2c->conn->owner);
 				goto fail;
 			}
 
@@ -2261,7 +2264,8 @@ static void h2_process_demux(struct h2c *h2c)
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
 				h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
 				h2c->st0 = H2_CS_ERROR2;
-				sess_log(h2c->conn->owner);
+				if (!(h2c->flags & H2_CF_IS_BACK))
+					sess_log(h2c->conn->owner);
 				goto fail;
 			}
 
@@ -2290,7 +2294,7 @@ static void h2_process_demux(struct h2c *h2c)
 			if ((int)hdr.len < 0 || (int)hdr.len > global.tune.bufsize) {
 				h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
 				h2c->st0 = H2_CS_ERROR;
-				if (!h2c->nb_streams) {
+				if (!h2c->nb_streams && !(h2c->flags & H2_CF_IS_BACK)) {
 					/* only log if no other stream can report the error */
 					sess_log(h2c->conn->owner);
 				}
@@ -2308,7 +2312,8 @@ static void h2_process_demux(struct h2c *h2c)
 				 */
 				if (hdr.len < 1) {
 					h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
-					sess_log(h2c->conn->owner);
+					if (!(h2c->flags & H2_CF_IS_BACK))
+						sess_log(h2c->conn->owner);
 					goto fail;
 				}
 				hdr.len--;
@@ -2323,7 +2328,8 @@ static void h2_process_demux(struct h2c *h2c)
 					 * frame payload or greater => error.
 					 */
 					h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
-					sess_log(h2c->conn->owner);
+					if (!(h2c->flags & H2_CF_IS_BACK))
+						sess_log(h2c->conn->owner);
 					goto fail;
 				}
 
@@ -2347,7 +2353,8 @@ static void h2_process_demux(struct h2c *h2c)
 			ret = h2_frame_check(h2c->dft, 1, h2c->dsi, h2c->dfl, global.tune.bufsize);
 			if (ret != H2_ERR_NO_ERROR) {
 				h2c_error(h2c, ret);
-				sess_log(h2c->conn->owner);
+				if (!(h2c->flags & H2_CF_IS_BACK))
+					sess_log(h2c->conn->owner);
 				goto fail;
 			}
 		}
@@ -2383,7 +2390,7 @@ static void h2_process_demux(struct h2c *h2c)
 			 */
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
 			h2c->st0 = H2_CS_ERROR;
-			if (!h2c->nb_streams) {
+			if (!h2c->nb_streams && !(h2c->flags & H2_CF_IS_BACK)) {
 				/* only log if no other stream can report the error */
 				sess_log(h2c->conn->owner);
 			}
@@ -2533,7 +2540,8 @@ static void h2_process_demux(struct h2c *h2c)
 			 * frames so this one is out of sequence.
 			 */
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
-			sess_log(h2c->conn->owner);
+			if (!(h2c->flags & H2_CF_IS_BACK))
+				sess_log(h2c->conn->owner);
 			goto fail;
 
 		case H2_FT_HEADERS:
@@ -2636,10 +2644,8 @@ static int h2_process_mux(struct h2c *h2c)
 		if (unlikely(h2c->st0 == H2_CS_PREFACE && (h2c->flags & H2_CF_IS_BACK))) {
 			if (unlikely(h2c_bck_send_preface(h2c) <= 0)) {
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
-				if (h2c->st0 == H2_CS_ERROR) {
+				if (h2c->st0 == H2_CS_ERROR)
 					h2c->st0 = H2_CS_ERROR2;
-					sess_log(h2c->conn->owner);
-				}
 				goto fail;
 			}
 			h2c->st0 = H2_CS_SETTINGS1;
