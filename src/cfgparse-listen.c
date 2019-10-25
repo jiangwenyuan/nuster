@@ -300,6 +300,12 @@ static int create_cond_regex_rule(const char *file, int line,
 		goto err_free;
 	}
 
+	if (repl && strchr(repl, '\n')) {
+		ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in replacement string will fail with HTTP/2.\n",
+			 file, line, cmd);
+		ret_code |= ERR_WARN;
+	}
+
 	if (dir == SMP_OPT_DIR_REQ && warnif_misplaced_reqxxx(px, file, line, cmd))
 		ret_code |= ERR_WARN;
 
@@ -4089,6 +4095,12 @@ stats_error_parsing:
 			goto out;
 		}
 
+		if (strchr(args[1], '\n')) {
+			ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in new header value will fail with HTTP/2.\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
+		}
+
 		wl = calloc(1, sizeof(*wl));
 		wl->cond = cond;
 		wl->s = strdup(args[1]);
@@ -4184,6 +4196,12 @@ stats_error_parsing:
 				 file, linenum, args[0], args[2]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
+		}
+
+		if (strchr(args[1], '\n')) {
+			ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in new header value will fail with HTTP/2.\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
 		}
 
 		wl = calloc(1, sizeof(*wl));
