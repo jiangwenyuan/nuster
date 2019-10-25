@@ -1151,6 +1151,10 @@ int si_cs_recv(struct conn_stream *cs)
 	int read_poll = MAX_READ_POLL_LOOPS;
 	int flags = 0;
 
+	/* If not established yet, do nothing. */
+	if (si->state != SI_ST_EST)
+		return 0;
+
 	/* If another call to si_cs_recv() failed, and we subscribed to
 	 * recv events already, give up now.
 	 */
@@ -1459,12 +1463,7 @@ static void stream_int_read0(struct stream_interface *si)
 
 	si_done_get(si);
 
-	/* Don't change the state to SI_ST_DIS yet if we're still
-	 * in SI_ST_CON, otherwise it means sess_establish() hasn't
-	 * been called yet, and so the analysers would not run.
-	 */
-	if (si->state == SI_ST_EST)
-		si->state = SI_ST_DIS;
+	si->state = SI_ST_DIS;
 	si->exp = TICK_ETERNITY;
 	return;
 }
