@@ -5471,6 +5471,11 @@ static size_t h2_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 	if (h2s->h2c->st0 < H2_CS_FRAME_H)
 		return 0;
 
+	if (h2s->h2c->st0 >= H2_CS_ERROR) {
+		cs->flags |= CS_FL_ERROR;
+		return 0;
+	}
+
 	/* htx will be enough to decide if we're using HTX or legacy */
 	htx = (h2s->h2c->proxy->options2 & PR_O2_USE_HTX) ? htx_from_buf(buf) : NULL;
 
