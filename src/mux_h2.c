@@ -2972,6 +2972,13 @@ static int h2_process(struct h2c *h2c)
 			h2_release(conn);
 			return -1;
 		}
+
+		/* connections in error must be removed from the idle lists */
+		LIST_DEL_INIT(&conn->list);
+	}
+	else if (h2c->st0 == H2_CS_ERROR) {
+		/* connections in error must be removed from the idle lists */
+		LIST_DEL_INIT(&conn->list);
 	}
 
 	if (!b_data(&h2c->dbuf))
@@ -3055,6 +3062,9 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 			b_realign_if_empty(&h2c->mbuf);
 		}
 	}
+
+	/* in any case this connection must not be considered idle anymore */
+	LIST_DEL_INIT(&h2c->conn->list);
 
 	/* either we can release everything now or it will be done later once
 	 * the last stream closes.
