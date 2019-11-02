@@ -4397,6 +4397,21 @@ void http_end_txn_clean_session(struct stream *s)
 	hlua_ctx_destroy(s->hlua);
 	s->hlua = NULL;
 
+	/* cleanup and reinit capture arrays, if any */
+	if (s->req_cap) {
+		struct cap_hdr *h;
+		for (h = fe->req_cap; h; h = h->next)
+			pool_free(h->pool, s->req_cap[h->index]);
+		memset(s->req_cap, 0, fe->nb_req_cap * sizeof(void *));
+	}
+
+	if (s->res_cap) {
+		struct cap_hdr *h;
+		for (h = fe->rsp_cap; h; h = h->next)
+			pool_free(h->pool, s->res_cap[h->index]);
+		memset(s->res_cap, 0, fe->nb_rsp_cap * sizeof(void *));
+	}
+
 	s->txn->meth = 0;
 	http_reset_txn(s);
 	s->txn->flags |= TX_NOT_FIRST | TX_WAIT_NEXT_RQ;
@@ -7823,6 +7838,101 @@ void check_request_for_cacheability(struct stream *s, struct channel *chn)
 			continue;
 		}
 
+					val_beg[srv->cklen] = COOKIE_DELIM;
+					txn->flags &= ~TX_SCK_MASK;
+					txn->flags |= TX_SCK_REPLACED;
+				}
+			}
+			/* that's done for this cookie, check the next one on the same
+			 * line when next != hdr_end (only if is_cookie2).
+			 */
+		}
+		/* check next header */
+		old_idx = cur_idx;
+	}
+}
+
+
+/*
+ * Parses the Cache-Control and Pragma request header fields to determine if
+ * the request may be served from the cache and/or if it is cacheable. Updates
+ * s->txn->flags.
+ */
+void check_request_for_cacheability(struct stream *s, struct channel *chn)
+{
+	struct http_txn *txn = s->txn;
+	char *p1, *p2;
+	char *cur_ptr, *cur_end, *cur_next;
+	int pragma_found;
+	int cc_found;
+	int cur_idx;
+
+	if ((txn->flags & (TX_CACHEABLE|TX_CACHE_IGNORE)) == TX_CACHE_IGNORE)
+		return; /* nothing more to do here */
+
+	cur_idx = 0;
+	pragma_found = cc_found = 0;
+	cur_next = chn->buf->p + hdr_idx_first_pos(&txn->hdr_idx);
+
+	while ((cur_idx = txn->hdr_idx.v[cur_idx].next)) {
+		struct hdr_idx_elem *cur_hdr;
+		int val;
+
+		cur_hdr  = &txn->hdr_idx.v[cur_idx];
+		cur_ptr  = cur_next;
+		cur_end  = cur_ptr + cur_hdr->len;
+		cur_next = cur_end + cur_hdr->cr + 1;
+
+		/* We have one full header between cur_ptr and cur_end, and the
+		 * next header starts at cur_next.
+		 */
+
+		val = http_header_match2(cur_ptr, cur_end, "Pragma", 6);
+		if (val) {
+			if ((cur_end - (cur_ptr + val) >= 8) &&
+			    strncasecmp(cur_ptr + val, "no-cache", 8) == 0) {
+				pragma_found = 1;
+				continue;
+			}
+		}
+
+		/* Don't use the cache and don't try to store if we found the
+		 * Authorization header */
+		val = http_header_match2(cur_ptr, cur_end, "Authorization", 13);
+		if (val) {
+			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
+			txn->flags |= TX_CACHE_IGNORE;
+			continue;
+		}
+
+		val = http_header_match2(cur_ptr, cur_end, "Cache-control", 13);
+		if (!val)
+			continue;
+
+		/* OK, right now we know we have a cache-control header at cur_ptr */
+		cc_found = 1;
+		p1 = cur_ptr + val; /* first non-space char after 'cache-control:' */
+
+		if (p1 >= cur_end)	/* no more info */
+			continue;
+
+		/* p1 is at the beginning of the value */
+		p2 = p1;
+		while (p2 < cur_end && *p2 != '=' && *p2 != ',' && !isspace((unsigned char)*p2))
+			p2++;
+
+		/* we have a complete value between p1 and p2. We don't check the
+		 * values after max-age, max-stale nor min-fresh, we simply don't
+		 * use the cache when they're specified.
+		 */
+		if (((p2 - p1 == 7) && strncasecmp(p1, "max-age",   7) == 0) ||
+		    ((p2 - p1 == 8) && strncasecmp(p1, "no-cache",  8) == 0) ||
+		    ((p2 - p1 == 9) && strncasecmp(p1, "max-stale", 9) == 0) ||
+		    ((p2 - p1 == 9) && strncasecmp(p1, "min-fresh", 9) == 0)) {
+			txn->flags |= TX_CACHE_IGNORE;
+			continue;
+		}
+
 		if ((p2 - p1 == 8) && strncasecmp(p1, "no-store", 8) == 0) {
 			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
 			continue;
@@ -8274,7 +8384,6 @@ void http_init_txn(struct stream *s)
 void http_end_txn(struct stream *s)
 {
 	struct http_txn *txn = s->txn;
-	struct proxy *fe = strm_fe(s);
 
 	/* these ones will have been dynamically allocated */
 	pool_free(pool_head_requri, txn->uri);
@@ -8286,20 +8395,6 @@ void http_end_txn(struct stream *s)
 	txn->uri = NULL;
 	txn->srv_cookie = NULL;
 	txn->cli_cookie = NULL;
-
-	if (s->req_cap) {
-		struct cap_hdr *h;
-		for (h = fe->req_cap; h; h = h->next)
-			pool_free(h->pool, s->req_cap[h->index]);
-		memset(s->req_cap, 0, fe->nb_req_cap * sizeof(void *));
-	}
-
-	if (s->res_cap) {
-		struct cap_hdr *h;
-		for (h = fe->rsp_cap; h; h = h->next)
-			pool_free(h->pool, s->res_cap[h->index]);
-		memset(s->res_cap, 0, fe->nb_rsp_cap * sizeof(void *));
-	}
 
 	vars_prune(&s->vars_txn, s->sess, s);
 	vars_prune(&s->vars_reqres, s->sess, s);

@@ -85,7 +85,6 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 
-#include <nuster/nuster.h>
 
 /* This is the SSLv3 CLIENT HELLO packet used in conjunction with the
  * ssl-hello-chk option to ensure that the remote server speaks SSL.
@@ -3388,6 +3387,20 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		free(curproxy->dyncookie_key);
 		curproxy->dyncookie_key = strdup(args[1]);
 	}
+	else if (!strcmp(args[0], "dynamic-cookie-key")) { /* Dynamic cookies secret key */
+
+		if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
+			err_code |= ERR_WARN;
+
+		if (*(args[1]) == 0) {
+			ha_alert("parsing [%s:%d] : '%s' expects <secret_key> as argument.\n",
+				 file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		free(curproxy->dyncookie_key);
+		curproxy->dyncookie_key = strdup(args[1]);
+	}
 	else if (!strcmp(args[0], "cookie")) {  /* cookie name */
 		int cur_arg;
 
@@ -3445,11 +3458,10 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 					goto out;
 				}
 
-				if (*args[cur_arg + 1] != '.' || !strchr(args[cur_arg + 1] + 1, '.')) {
-					/* rfc2109, 4.3.2 Rejecting Cookies */
-					ha_warning("parsing [%s:%d]: domain '%s' contains no embedded"
-						   " dots nor does not start with a dot."
-						   " RFC forbids it, this configuration may not work properly.\n",
+				if (!strchr(args[cur_arg + 1], '.')) {
+					/* rfc6265, 5.2.3 The Domain Attribute */
+					ha_warning("parsing [%s:%d]: domain '%s' contains no embedded dot,"
+						   " this configuration may not work properly (see RFC6265#5.2.3).\n",
 						   file, linenum, args[cur_arg + 1]);
 					err_code |= ERR_WARN;
 				}
