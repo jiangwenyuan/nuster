@@ -1,5 +1,9 @@
 # Nuster Changelog
 
+## 1.0.3.17 - 2019-11-02
+
+Merge HAProxy v1.7.12
+
 ## 1.0.0.17 - 2018-07-05
 
 Previously nuster used HAPROXY_VERSION.NUSTER_VERSION(eg, v1.8.8.3) which is very straightforward to find out the base HAProxy version, but very hard to tell whether it is a major r
