@@ -653,9 +653,9 @@ int sha1_hosturi(struct http_txn *txn)
 	chunk_strncat(trash, ctx.line + ctx.val, ctx.vlen);
 
 	/* now retrieve the path */
-	end = txn->req.chn->buf->p + txn->req.sl.rq.u + txn->req.sl.rq.u_l;
-	path = http_get_path(txn);
-	if (!path)
+	path = txn->req.chn->buf->p + txn->req.sl.rq.u;
+	end  = path + txn->req.sl.rq.u_l;
+	if (end == path || *path != '/')
 		return 0;
 	chunk_strncat(trash, path, end - path);
 

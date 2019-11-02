@@ -253,7 +253,7 @@ generate_pseudo_uuid()
 		return NULL;
 
 	if (!init) {
-		srand(now_ms);
+		srand(now_ms * pid);
 		init = 1;
 	}
 
@@ -2187,8 +2187,10 @@ spoe_encode_message(struct stream *s, struct spoe_context *ctx,
 
 		/* Fetch the arguement value */
 		smp = sample_process(s->be, s->sess, s, dir|SMP_OPT_FINAL, arg->expr, NULL);
-		smp->ctx.a[0] = &ctx->frag_ctx.curlen;
-		smp->ctx.a[1] = &ctx->frag_ctx.curoff;
+		if (smp) {
+			smp->ctx.a[0] = &ctx->frag_ctx.curlen;
+			smp->ctx.a[1] = &ctx->frag_ctx.curoff;
+		}
 		ret = spoe_encode_data(smp, buf, end);
 		if (ret == -1 || ctx->frag_ctx.curoff)
 			goto too_big;
@@ -2965,6 +2967,22 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 	return 0;
 }
 
+/* Initializes the SPOE filter for a proxy for a specific thread.
+ * Returns a negative value if an error occurs. */
+static int
+spoe_init_per_thread(struct proxy *p, struct flt_conf *fconf)
+{
+	struct spoe_config *conf = fconf->conf;
+	struct spoe_agent *agent = conf->agent;
+
+	if (agent->engine_id == NULL) {
+		agent->engine_id = generate_pseudo_uuid();
+		if (agent->engine_id == NULL)
+			return -1;
+	}
+	return 0;
+}
+
 /**************************************************************************
  * Hooks attached to a stream
  *************************************************************************/
@@ -3168,6 +3186,7 @@ struct flt_ops spoe_ops = {
 	.init   = spoe_init,
 	.deinit = spoe_deinit,
 	.check  = spoe_check,
+	.init_per_thread = spoe_init_per_thread,
 
 	/* Handle start/stop of SPOE */
 	.attach         = spoe_start,
@@ -3901,8 +3920,6 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 		}
 		curagent->var_pfx = strdup(curagent->id);
 	}
-	if (curagent->engine_id == NULL)
-		curagent->engine_id = generate_pseudo_uuid();
 
 	if (LIST_ISEMPTY(&curmphs) && LIST_ISEMPTY(&curgphs)) {
 		ha_warning("Proxy '%s': No message/group used by SPOE agent '%s' declared at %s:%d.\n",

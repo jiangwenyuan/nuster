@@ -116,6 +116,7 @@
 #include <proto/vars.h>
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
+#include <openssl/rand.h>
 #endif
 
 #include <nuster/nuster.h>
@@ -684,6 +685,11 @@ static void mworker_reload()
 #endif
 	setenv("HAPROXY_MWORKER_REEXEC", "1", 1);
 
+#if defined(USE_OPENSSL) && (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)
+	/* close random device FDs */
+	RAND_keep_random_devices_open(0);
+#endif
+
 	/* compute length  */
 	while (next_argv[next_argc])
 		next_argc++;
@@ -723,6 +729,7 @@ static void mworker_reload()
 	}
 
 	ha_warning("Reexecuting Master process\n");
+	signal(SIGPROF, SIG_IGN);
 	execvp(next_argv[0], next_argv);
 
 	ha_warning("Failed to reexecute the master process [%d]: %s\n", pid, strerror(errno));
@@ -2143,8 +2150,8 @@ void deinit(void)
 			if (rule->cond) {
 				prune_acl_cond(rule->cond);
 				free(rule->cond);
-				free(rule->file);
 			}
+			free(rule->file);
 			free(rule);
 		}
 

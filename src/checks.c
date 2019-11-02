@@ -1445,11 +1445,15 @@ static struct task *server_warmup(struct task *t)
 	    (s->next_state != SRV_ST_STARTING))
 		return t;
 
+	HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
+
 	/* recalculate the weights and update the state */
 	server_recalc_eweight(s);
 
 	/* probably that we can refill this server with a bit more connections */
 	pendconn_grab_from_px(s);
+
+	HA_SPIN_UNLOCK(SERVER_LOCK, &s->lock);
 
 	/* get back there in 1 second or 1/20th of the slowstart interval,
 	 * whichever is greater, resulting in small 5% steps.
@@ -2071,7 +2075,7 @@ static struct task *process_chk_proc(struct task *t)
 			/* a success was detected */
 			check_notify_success(check);
 		}
-		task_set_affinity(t, MAX_THREADS_MASK);
+		task_set_affinity(t, 1);
 		check->state &= ~CHK_ST_INPROGRESS;
 
 		pid_list_del(check->curpid);
@@ -2287,8 +2291,13 @@ static int start_check_task(struct check *check, int mininter,
 			    int nbcheck, int srvpos)
 {
 	struct task *t;
+	unsigned long thread_mask = MAX_THREADS_MASK;
+
+	if (check->type == PR_O2_EXT_CHK)
+		thread_mask = 1;
+
 	/* task for the check */
-	if ((t = task_new(MAX_THREADS_MASK)) == NULL) {
+	if ((t = task_new(thread_mask)) == NULL) {
 		ha_alert("Starting [%s:%s] check: out of memory.\n",
 			 check->server->proxy->id, check->server->id);
 		return 0;
