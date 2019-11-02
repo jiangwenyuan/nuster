@@ -1,6 +1,47 @@
 ChangeLog :
 ===========
 
+2019/10/24 : 1.9.12
+    - BUG/MINOR: lua: Properly initialize the buffer's fields for string samples in hlua_lua2(smp|arg)
+    - MINOR: mux-h2: add a per-connection list of blocked streams
+    - BUILD: ebtree: make eb_is_empty() and eb_is_dup() take a const
+    - BUG/MEDIUM: mux-h2: do not enforce timeout on long connections
+    - BUG/MEDIUM: cache: make sure not to cache requests with absolute-uri
+    - DOC: clarify some points around http-send-name-header's behavior
+    - MINOR: stats: mention in the help message support for "json" and "typed"
+    - BUG/MINOR: ssl: abort on sni allocation failure
+    - BUG/MINOR: ssl: free the sni_keytype nodes
+    - BUG/MINOR: ssl: abort on sni_keytypes allocation failure
+    - BUILD: ssl: wrong #ifdef for SSL engines code
+    - BUG/MEDIUM: htx: Catch chunk_memcat() failures when HTX data are formatted to h1
+    - BUG/MINOR: chunk: Fix tests on the chunk size in functions copying data
+    - BUG/MINOR: mux-h1: Mark the output buffer as full when the xfer is interrupted
+    - BUG/MINOR: mux-h1: Capture ignored parsing errors
+    - BUG/MINOR: WURFL: fix send_log() function arguments
+    - BUG/MINOR: http-htx: Properly set htx flags on error files to support keep-alive
+    - BUG/MINOR: mworker/ssl: close openssl FDs unconditionally
+    - BUG/MINOR: tcp: Don't alter counters returned by tcp info fetchers
+    - BUG/MEDIUM: mux_pt: Make sure we don't have a conn_stream before freeing.
+    - BUG/MAJOR: idle conns: schedule the cleanup task on the correct threads
+    - Revert e8826ded5fea3593d89da2be5c2d81c522070995.
+    - BUG/MEDIUM: mux_pt: Don't destroy the connection if we have a stream attached.
+    - BUG/MEDIUM: mux_pt: Only call the wake emthod if nobody subscribed to receive.
+    - CLEANUP: ssl: make ssl_sock_load_cert*() return real error codes
+    - CLEANUP: ssl: make ssl_sock_put_ckch_into_ctx handle errcode/warn
+    - CLEANUP: ssl: make ssl_sock_load_dh_params handle errcode/warn
+    - CLEANUP: bind: handle warning label on bind keywords parsing.
+    - BUG/MEDIUM: ssl: 'tune.ssl.default-dh-param' value ignored with openssl > 1.1.1
+    - BUG/MINOR: mworker/cli: reload fail with inherited FD
+    - BUG/MINOR: ssl: Fix fd leak on error path when a TLS ticket keys file is parsed
+    - BUG/MINOR: stick-table: Never exceed (MAX_SESS_STKCTR-1) when fetching a stkctr
+    - BUG/MINOR: cache: alloc shctx after check config
+    - BUG/MINOR: sample: Make the `field` converter compatible with `-m found`
+    - BUG/MAJOR: mux-h2: fix incorrect backport of connection timeout fix
+    - BUG/MINOR: mux-h2: also make sure blocked legacy connections may expire
+    - BUG/MINOR: ssl: fix memcpy overlap without consequences.
+    - BUG/MINOR: stick-table: fix an incorrect 32 to 64 bit key conversion
+    - BUG/MEDIUM: pattern: make the pattern LRU cache thread-local and lockless
+
 2019/09/27 : 1.9.11
     - BUG/MINOR: lua: fix setting netfilter mark
     - BUG/MEDIUM: lua: Fix test on the direction to set the channel exp timeout

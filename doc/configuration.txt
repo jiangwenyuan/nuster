@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.9
                              willy tarreau
-                              2019/09/27
+                              2019/10/24
 
 
 This document covers the configuration language as implemented in the version
@@ -1714,7 +1714,8 @@ tune.pattern.cache-size <number>
   configuration line (including all those loaded from files). It automatically
   invalidates entries which are updated using HTTP actions or on the CLI. The
   default cache size is set to 10000 entries, which limits its footprint to
-  about 5 MB on 32-bit systems and 8 MB on 64-bit systems. There is a very low
+  about 5 MB per process/thread on 32-bit systems and 8 MB per process/thread
+  on 64-bit systems, as caches are thread/process local. There is a very low
   risk of collision in this cache, which is in the order of the size of the
   cache divided by 2^64. Typically, at 10000 requests per second with the
   default cache size of 10000 entries, there's 1% chance that a brute force
@@ -5027,17 +5028,27 @@ http-reuse { never | safe | aggressive | always }
 
 http-send-name-header [<header>]
   Add the server name to a request. Use the header string given by <header>
-
   May be used in sections:   defaults | frontend | listen | backend
                                yes    |    no    |   yes  |   yes
-
   Arguments :
-
     <header>  The header string to use to send the server name
 
-  The "http-send-name-header" statement causes the name of the target
-  server to be added to the headers of an HTTP request. The name
-  is added with the header string proved.
+  The "http-send-name-header" statement causes the header field named <header>
+  to be set to the name of the target server at the moment the request is about
+  to be sent on the wire. Any existing occurrences of this header are removed.
+  Upon retries and redispatches, the header field is updated to always reflect
+  the server being attempted to connect to. Given that this header is modified
+  very late in the connection setup, it may have unexpected effects on already
+  modified headers. For example using it with transport-level header such as
+  connection, content-length, transfer-encoding and so on will likely result in
+  invalid requests being sent to the server. Additionally it has been reported
+  that this directive is currently being used as a way to overwrite the Host
+  header field in outgoing requests; while this trick has been known to work
+  as a side effect of the feature for some time, it is not officially supported
+  and might possibly not work anymore in a future version depending on the
+  technical difficulties this feature induces. A long-term solution instead
+  consists in fixing the application which required this trick so that it binds
+  to the correct host name.
 
   See also : "server"
 
@@ -14494,37 +14505,37 @@ fc_rttvar(<unit>) : integer
   operating system does not support TCP_INFO, for example Linux kernels before
   2.4, the sample fetch fails.
 
-fc_unacked(<unit>) : integer
+fc_unacked : integer
   Returns the unacked counter measured by the kernel for the client connection.
   If the server connection is not established, if the connection is not TCP or
   if the operating system does not support TCP_INFO, for example Linux kernels
   before 2.4, the sample fetch fails.
 
-fc_sacked(<unit>) : integer
+fc_sacked : integer
   Returns the sacked counter measured by the kernel for the client connection.
   If the server connection is not established, if the connection is not TCP or
   if the operating system does not support TCP_INFO, for example Linux kernels
   before 2.4, the sample fetch fails.
 
-fc_retrans(<unit>) : integer
+fc_retrans : integer
   Returns the retransmits counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example
   Linux kernels before 2.4, the sample fetch fails.
 
-fc_fackets(<unit>) : integer
+fc_fackets : integer
   Returns the fack counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example
   Linux kernels before 2.4, the sample fetch fails.
 
-fc_lost(<unit>) : integer
+fc_lost : integer
   Returns the lost counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example
   Linux kernels before 2.4, the sample fetch fails.
 
-fc_reordering(<unit>) : integer
+fc_reordering : integer
   Returns the reordering counter measured by the kernel for the client
   connection. If the server connection is not established, if the connection is
   not TCP or if the operating system does not support TCP_INFO, for example

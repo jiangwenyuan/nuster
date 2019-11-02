@@ -126,6 +126,7 @@ struct h2c {
 	struct eb_root streams_by_id; /* all active streams by their ID */
 	struct list send_list; /* list of blocked streams requesting to send */
 	struct list fctl_list; /* list of streams blocked by connection's fctl */
+	struct list blocked_list; /* list of streams blocked for other reasons (e.g. sfctl, dep) */
 	struct list sending_list; /* list of h2s scheduled to send data */
 	struct buffer_wait buf_wait; /* wait list for buffer allocations */
 	struct wait_event wait_event;  /* To be used if we're waiting for I/Os */
@@ -154,9 +155,9 @@ enum h2_ss {
 
 /* stream flags indicating the reason the stream is blocked */
 #define H2_SF_BLK_MBUSY         0x00000010 // blocked waiting for mux access (transient)
-#define H2_SF_BLK_MROOM         0x00000020 // blocked waiting for room in the mux
-#define H2_SF_BLK_MFCTL         0x00000040 // blocked due to mux fctl
-#define H2_SF_BLK_SFCTL         0x00000080 // blocked due to stream fctl
+#define H2_SF_BLK_MROOM         0x00000020 // blocked waiting for room in the mux (must be in send list)
+#define H2_SF_BLK_MFCTL         0x00000040 // blocked due to mux fctl (must be in fctl list)
+#define H2_SF_BLK_SFCTL         0x00000080 // blocked due to stream fctl (must be in blocked list)
 #define H2_SF_BLK_ANY           0x000000F0 // any of the reasons above
 
 /* stream flags indicating how data is supposed to be sent */
@@ -279,8 +280,28 @@ static struct task *h2_deferred_shut(struct task *t, void *ctx, unsigned short s
 static struct h2s *h2c_bck_stream_new(struct h2c *h2c, struct conn_stream *cs, struct session *sess);
 static void h2s_alert(struct h2s *h2s);
 
+/* returns true if the connection is allowed to expire, false otherwise. A
+ * connection may expire when:
+ *   - it has no stream
+ *   - it has data in the mux buffer
+ *   - it has streams in the blocked list
+ *   - it has streams in the fctl list
+ *   - it has streams in the send list
+ * Otherwise it means some streams are waiting in the data layer and it should
+ * not expire.
+ */
+static inline int h2c_may_expire(const struct h2c *h2c)
+{
+	return eb_is_empty(&h2c->streams_by_id) ||
+	       b_data(&h2c->mbuf) ||
+	       !LIST_ISEMPTY(&h2c->blocked_list) ||
+	       !LIST_ISEMPTY(&h2c->fctl_list) ||
+	       !LIST_ISEMPTY(&h2c->send_list) ||
+	       !LIST_ISEMPTY(&h2c->sending_list);
+}
+
 static __inline int
-h2c_is_dead(struct h2c *h2c)
+h2c_is_dead(const struct h2c *h2c)
 {
 	if (eb_is_empty(&h2c->streams_by_id) &&     /* don't close if streams exist */
 	    ((h2c->conn->flags & CO_FL_ERROR) ||    /* errors close immediately */
@@ -545,6 +566,7 @@ static int h2_init(struct connection *conn, struct proxy *prx, struct session *s
 	h2c->streams_by_id = EB_ROOT;
 	LIST_INIT(&h2c->send_list);
 	LIST_INIT(&h2c->fctl_list);
+	LIST_INIT(&h2c->blocked_list);
 	LIST_INIT(&h2c->sending_list);
 	LIST_INIT(&h2c->buf_wait.list);
 
@@ -1487,7 +1509,8 @@ static void h2c_unblock_sfctl(struct h2c *h2c)
 		h2s = container_of(node, struct h2s, by_id);
 		if (h2s->flags & H2_SF_BLK_SFCTL && h2s_mws(h2s) > 0) {
 			h2s->flags &= ~H2_SF_BLK_SFCTL;
-			if (h2s->send_wait && LIST_ISEMPTY(&h2s->list))
+			LIST_DEL_INIT(&h2s->list);
+			if (h2s->send_wait)
 				LIST_ADDQ(&h2c->send_list, &h2s->list);
 		}
 		node = eb32_next(node);
@@ -1791,7 +1814,8 @@ static int h2c_handle_window_update(struct h2c *h2c, struct h2s *h2s)
 		h2s->sws += inc;
 		if (h2s_mws(h2s) > 0 && (h2s->flags & H2_SF_BLK_SFCTL)) {
 			h2s->flags &= ~H2_SF_BLK_SFCTL;
-			if (h2s->send_wait && LIST_ISEMPTY(&h2s->list))
+			LIST_DEL_INIT(&h2s->list);
+			if (h2s->send_wait)
 				LIST_ADDQ(&h2c->send_list, &h2s->list);
 		}
 	}
@@ -2953,7 +2977,10 @@ static int h2_process(struct h2c *h2c)
 		h2_release_buf(h2c, &h2c->mbuf);
 
 	if (h2c->task) {
-		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		if (h2c_may_expire(h2c))
+			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		else
+			h2c->task->expire = TICK_ETERNITY;
 		task_queue(h2c->task);
 	}
 
@@ -2981,6 +3008,14 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 
 	if (!expired && h2c)
 		return t;
+
+	if (h2c && !h2c_may_expire(h2c)) {
+		/* we do still have streams but all of them are idle, waiting
+		 * for the data layer, so we must not enforce the timeout here.
+		 */
+		t->expire = TICK_ETERNITY;
+		return t;
+	}
 
 	task_delete(t);
 	task_free(t);
@@ -3191,7 +3226,10 @@ static void h2_detach(struct conn_stream *cs)
 		h2_release(h2c->conn);
 	}
 	else if (h2c->task) {
-		h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		if (h2c_may_expire(h2c))
+			h2c->task->expire = tick_add(now_ms, h2c->last_sid < 0 ? h2c->timeout : h2c->shut_timeout);
+		else
+			h2c->task->expire = TICK_ETERNITY;
 		task_queue(h2c->task);
 	}
 }
@@ -4194,6 +4232,7 @@ static size_t h2s_frt_make_resp_data(struct h2s *h2s, const struct buffer *buf, 
 		h2s->flags |= H2_SF_BLK_SFCTL;
 		if (!LIST_ISEMPTY(&h2s->list))
 			LIST_DEL_INIT(&h2s->list);
+		LIST_ADDQ(&h2c->blocked_list, &h2s->list);
 		goto end;
 	}
 
@@ -4949,6 +4988,7 @@ static size_t h2s_htx_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, si
 		h2s->flags |= H2_SF_BLK_SFCTL;
 		if (!LIST_ISEMPTY(&h2s->list))
 			LIST_DEL_INIT(&h2s->list);
+		LIST_ADDQ(&h2c->blocked_list, &h2s->list);
 		goto end;
 	}
 
@@ -5579,8 +5619,9 @@ static size_t h2_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		else
 			cs->flags |= CS_FL_ERR_PENDING;
 	}
-	if (total > 0) {
-		/* Ok we managed to send something, leave the send_list */
+
+	if (total > 0 && !(h2s->flags & H2_SF_BLK_SFCTL)) {
+		/* Ok we managed to send something, leave the send_list if we were still there */
 		LIST_DEL_INIT(&h2s->list);
 	}
 	return total;
