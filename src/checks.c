@@ -275,7 +275,7 @@ static void set_server_check_status(struct check *check, short status, const cha
 		 */
 		if ((!(check->state & CHK_ST_AGENT) ||
 		    (check->status >= HCHK_STATUS_L57DATA)) &&
-		    (check->health >= check->rise)) {
+		    (check->health > 0)) {
 			s->counters.failed_checks++;
 			report = 1;
 			check->health--;
@@ -1408,11 +1408,12 @@ static int wake_srv_chk(struct connection *conn)
 	}
 
 	if (check->result != CHK_RES_UNKNOWN) {
-		/* We're here because nobody wants to handle the error, so we
-		 * sure want to abort the hard way.
-		 */
+		/* Check complete or aborted. If connection not yet closed do it
+		 * now and wake the check task up to be sure the result is
+		 * handled ASAP. */
 		conn_sock_drain(conn);
 		conn_force_close(conn);
+		task_wakeup(check->task, TASK_WOKEN_IO);
 	}
 	return 0;
 }
@@ -2780,7 +2781,7 @@ static void tcpcheck_main(struct check *check)
 			conn_prepare(conn, proto, xprt);
 
 			ret = SF_ERR_INTERNAL;
-			if (proto->connect)
+			if (proto && proto->connect)
 				ret = proto->connect(conn,
 						     1 /* I/O polling is always needed */,
 						     (next && next->action == TCPCHK_ACT_EXPECT) ? 0 : 2);
@@ -2845,6 +2846,10 @@ static void tcpcheck_main(struct check *check)
 				check->current_step = LIST_NEXT(&check->current_step->list, struct tcpcheck_rule *, list);
 
 			if (&check->current_step->list == head)
+				break;
+
+			/* don't do anything until the connection is established */
+			if (!(conn->flags & CO_FL_CONNECTED))
 				break;
 
 		} /* end 'connect' */

@@ -1594,7 +1594,7 @@ int pat_ref_delete_by_id(struct pat_ref *ref, struct pat_ref_elt *refelt)
 				LIST_DEL(&bref->users);
 				LIST_INIT(&bref->users);
 				if (elt->list.n != &ref->head)
-					LIST_ADDQ(&LIST_ELEM(elt->list.n, struct stream *, list)->back_refs, &bref->users);
+					LIST_ADDQ(&LIST_ELEM(elt->list.n, typeof(elt), list)->back_refs, &bref->users);
 				bref->ref = elt->list.n;
 			}
 			list_for_each_entry(expr, &ref->pat, list)
@@ -1632,7 +1632,7 @@ int pat_ref_delete(struct pat_ref *ref, const char *key)
 				LIST_DEL(&bref->users);
 				LIST_INIT(&bref->users);
 				if (elt->list.n != &ref->head)
-					LIST_ADDQ(&LIST_ELEM(elt->list.n, struct stream *, list)->back_refs, &bref->users);
+					LIST_ADDQ(&LIST_ELEM(elt->list.n, typeof(elt), list)->back_refs, &bref->users);
 				bref->ref = elt->list.n;
 			}
 			list_for_each_entry(expr, &ref->pat, list)
@@ -1750,12 +1750,14 @@ int pat_ref_set(struct pat_ref *ref, const char *key, const char *value, char **
 	list_for_each_entry(elt, &ref->head, list) {
 		if (strcmp(key, elt->pattern) == 0) {
 			if (!pat_ref_set_elt(ref, elt, value, merr)) {
-				if (!found)
-					*err = *merr;
-				else {
-					memprintf(err, "%s, %s", *err, *merr);
-					free(*merr);
-					*merr = NULL;
+				if (err && merr) {
+					if (!found) {
+						*err = *merr;
+					} else {
+						memprintf(err, "%s, %s", *err, *merr);
+						free(*merr);
+						*merr = NULL;
+					}
 				}
 			}
 			found = 1;
@@ -2032,7 +2034,7 @@ void pat_ref_prune(struct pat_ref *ref)
 			LIST_DEL(&bref->users);
 			LIST_INIT(&bref->users);
 			if (elt->list.n != &ref->head)
-				LIST_ADDQ(&LIST_ELEM(elt->list.n, struct stream *, list)->back_refs, &bref->users);
+				LIST_ADDQ(&LIST_ELEM(elt->list.n, typeof(elt), list)->back_refs, &bref->users);
 			bref->ref = elt->list.n;
 		}
 		LIST_DEL(&elt->list);

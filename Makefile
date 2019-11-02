@@ -394,10 +394,10 @@ endif
 # holding the same names in the current directory.
 
 ifeq ($(IGNOREGIT),)
-VERSION := $(shell [ -d .git/. ] && ref=`(git describe --tags --match 'v*' --abbrev=0) 2>/dev/null` && ref=$${ref%-g*} && echo "$${ref\#v}")
+VERSION := $(shell [ -d .git/. ] && (git describe --tags --match 'v*' --abbrev=0 | cut -c 2-) 2>/dev/null)
 ifneq ($(VERSION),)
 # OK git is there and works.
-SUBVERS := $(shell comms=`git log --format=oneline --no-merges v$(VERSION).. 2>/dev/null | wc -l | tr -dc '0-9'`; commit=`(git log -1 --pretty=%h --abbrev=6) 2>/dev/null`; [ $$comms -gt 0 ] && echo "-$$commit-$$comms")
+SUBVERS := $(shell comms=`git log --format=oneline --no-merges v$(VERSION).. 2>/dev/null | wc -l | tr -d '[:space:]'`; commit=`(git log -1 --pretty=%h --abbrev=6) 2>/dev/null`; [ $$comms -gt 0 ] && echo "-$$commit-$$comms")
 VERDATE := $(shell git log -1 --pretty=format:%ci | cut -f1 -d' ' | tr '-' '/')
 endif
 endif
@@ -820,7 +820,8 @@ INCLUDES = $(wildcard include/*/*.h ebtree/*.h)
 DEP = $(INCLUDES) .build_opts
 
 # Used only to force a rebuild if some build options change
-.build_opts: $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+.build_opts: $(build_opts)
 
 haproxy: $(OBJS) $(OPTIONS_OBJS) $(EBTREE_OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)

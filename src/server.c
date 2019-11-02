@@ -953,7 +953,7 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 			goto out;
 		}
 		else if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
-			err_code |= ERR_ALERT | ERR_FATAL;
+			err_code |= ERR_WARN;
 
 		if (!defsrv && !*args[2]) {
 			Alert("parsing [%s:%d] : '%s' expects <name> and <addr>[:<port>] as arguments.\n",
@@ -2254,16 +2254,37 @@ static void srv_update_state(struct server *srv, int version, char **params)
 
 			/* recover operational state and apply it to this server
 			 * and all servers tracking this one */
+			srv->check.health = srv_check_health;
 			switch (srv_op_state) {
 				case SRV_ST_STOPPED:
 					srv->check.health = 0;
 					srv_set_stopped(srv, "changed from server-state after a reload");
 					break;
 				case SRV_ST_STARTING:
+					/* If rise == 1 there is no STARTING state, let's switch to
+					 * RUNNING
+					 */
+					if (srv->check.rise == 1) {
+						srv->check.health = srv->check.rise + srv->check.fall - 1;
+						srv_set_running(srv, "");
+						break;
+					}
+					if (srv->check.health < 1 || srv->check.health >= srv->check.rise)
+						srv->check.health = srv->check.rise - 1;
 					srv->state = srv_op_state;
 					break;
 				case SRV_ST_STOPPING:
-					srv->check.health = srv->check.rise + srv->check.fall - 1;
+					/* If fall == 1 there is no STOPPING state, let's switch to
+					 * STOPPED
+					 */
+					if (srv->check.fall == 1) {
+						srv->check.health = 0;
+						srv_set_stopped(srv, "changed from server-state after a reload");
+						break;
+					}
+					if (srv->check.health < srv->check.rise ||
+					    srv->check.health > srv->check.rise + srv->check.fall - 2)
+						srv->check.health = srv->check.rise;
 					srv_set_stopping(srv, "changed from server-state after a reload");
 					break;
 				case SRV_ST_RUNNING:
@@ -2317,7 +2338,6 @@ static void srv_update_state(struct server *srv, int version, char **params)
 			srv->last_change = date.tv_sec - srv_last_time_change;
 			srv->check.status = srv_check_status;
 			srv->check.result = srv_check_result;
-			srv->check.health = srv_check_health;
 
 			/* Only case we want to apply is removing ENABLED flag which could have been
 			 * done by the "disable health" command over the stats socket
@@ -2415,7 +2435,7 @@ void apply_server_state(void)
 				globalfilepathlen = 0;
 				goto globalfileerror;
 			}
-			strncpy(globalfilepath, global.server_state_base, len);
+			memcpy(globalfilepath, global.server_state_base, len);
 			globalfilepath[globalfilepathlen] = 0;
 
 			/* append a slash if needed */
@@ -2484,7 +2504,7 @@ void apply_server_state(void)
 						localfilepathlen = 0;
 						goto localfileerror;
 					}
-					strncpy(localfilepath, global.server_state_base, len);
+					memcpy(localfilepath, global.server_state_base, len);
 					localfilepath[localfilepathlen] = 0;
 
 					/* append a slash if needed */

@@ -110,7 +110,9 @@ struct stream *pendconn_get_next_strm(struct server *srv, struct proxy *px)
 	ps = pendconn_from_srv(srv);
 	pp = pendconn_from_px(px);
 	/* we want to get the definitive pendconn in <ps> */
-	if (!pp || !srv_is_usable(rsrv)) {
+	if (!pp || !srv_is_usable(rsrv) ||
+            ((srv->flags & SRV_F_BACKUP) &&
+             (px->srv_act || (srv != px->lbprm.fbck && !(px->options & PR_O_USE_ALL_BK))))) {
 		if (!ps)
 			return NULL;
 	} else {

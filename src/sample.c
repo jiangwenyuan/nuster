@@ -660,11 +660,13 @@ int smp_dup(struct sample *smp)
 
 	case SMP_T_STR:
 		trash = get_trash_chunk();
-		trash->len = smp->data.u.str.len;
+		trash->len = (smp->data.type == SMP_T_STR) ?
+		             smp->data.u.str.len : smp->data.u.meth.str.len;
 		if (trash->len > trash->size - 1)
 			trash->len = trash->size - 1;
 
-		memcpy(trash->str, smp->data.u.str.str, trash->len);
+		memcpy(trash->str, (smp->data.type == SMP_T_STR) ?
+		       smp->data.u.str.str : smp->data.u.meth.str.str, trash->len);
 		trash->str[trash->len] = 0;
 		smp->data.u.str = *trash;
 		break;
@@ -1250,6 +1252,13 @@ int smp_resolve_args(struct proxy *p)
 				Alert("parsing [%s:%d] : no table in proxy '%s' referenced in arg %d of %s%s%s%s '%s' %s proxy '%s'.\n",
 				      cur->file, cur->line, pname,
 				      cur->arg_pos + 1, conv_pre, conv_ctx, conv_pos, ctx, cur->kw, where, p->id);
+				cfgerr++;
+				break;
+			}
+
+			if (p->bind_proc & ~px->bind_proc) {
+				Alert("parsing [%s:%d] : stick-table '%s' not present on all processes covered by proxy '%s'.\n",
+				      cur->file, cur->line, px->id, p->id);
 				cfgerr++;
 				break;
 			}
@@ -1895,7 +1904,7 @@ static int sample_conv_field(const struct arg *arg_p, struct sample *smp, void *
 	/* Field not found */
 	if (field != arg_p[0].data.sint) {
 		smp->data.u.str.len = 0;
-		return 1;
+		return 0;
 	}
 found:
 	smp->data.u.str.len = end - start;

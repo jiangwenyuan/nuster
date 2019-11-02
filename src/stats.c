@@ -130,6 +130,9 @@ const char *info_field_names[INF_TOTAL_FIELDS] = {
 	[INF_IDLE_PCT]                       = "Idle_pct",
 	[INF_NODE]                           = "node",
 	[INF_DESCRIPTION]                    = "description",
+	[INF_STOPPING]                       = "Stopping",
+	[INF_JOBS]                           = "Jobs",
+	[INF_LISTENERS]                      = "Listeners",
 };
 
 const char *stat_field_names[ST_F_TOTAL_FIELDS] = {
@@ -2207,6 +2210,7 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 			              "Action not processed because of invalid parameters."
 			              "<ul>"
 			              "<li>The action is maybe unknown.</li>"
+				      "<li>Invalid key parameter (empty or too long).</li>"
 			              "<li>The backend name is probably unknown or ambiguous (duplicated names).</li>"
 			              "<li>Some server names are probably unknown or ambiguous (duplicated names in the backend).</li>"
 			              "</ul>"
@@ -2378,17 +2382,21 @@ static int stats_process_http_post(struct stream_interface *si)
 	int reql;
 
 	temp = get_trash_chunk();
-	if (temp->size < s->txn->req.body_len) {
-		/* too large request */
-		appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
-		goto out;
+
+	/* we need more data */
+	if (s->txn->req.msg_state < HTTP_MSG_DONE) {
+		/* check if we can receive more */
+		if (buffer_total_space(s->req.buf) <= global.tune.maxrewrite) {
+			appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
+			goto out;
+		}
+		goto wait;
 	}
 
 	reql = bo_getblk(si_oc(si), temp->str, s->txn->req.body_len, s->txn->req.eoh + 2);
 	if (reql <= 0) {
-		/* we need more data */
-		appctx->ctx.stats.st_code = STAT_STATUS_NONE;
-		return 0;
+		appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
+		goto out;
 	}
 
 	first_param = temp->str;
@@ -2417,7 +2425,7 @@ static int stats_process_http_post(struct stream_interface *si)
 				strncpy(key, cur_param + poffset, plen);
 				key[plen - 1] = '\0';
 			} else {
-				appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
+				appctx->ctx.stats.st_code = STAT_STATUS_ERRP;
 				goto out;
 			}
 
@@ -2671,6 +2679,9 @@ static int stats_process_http_post(struct stream_interface *si)
 	}
  out:
 	return 1;
+ wait:
+	appctx->ctx.stats.st_code = STAT_STATUS_NONE;
+	return 0;
 }
 
 
@@ -2874,7 +2885,15 @@ static void http_stats_io_handler(struct appctx *appctx)
 		}
 	}
  out:
-	/* just to make gcc happy */ ;
+	/* we have left the request in the buffer for the case where we
+	 * process a POST, and this automatically re-enables activity on
+	 * read. It's better to indicate that we want to stop reading when
+	 * we're sending, so that we know there's at most one direction
+	 * deciding to wake the applet up. It saves it from looping when
+	 * emitting large blocks into small TCP windows.
+	 */
+	if (!channel_is_empty(res))
+		si_applet_stop_get(si);
 }
 
 /* Dump all fields from <info> into <out> using the "show info" format (name: value) */
@@ -3007,6 +3026,9 @@ int stats_fill_info(struct field *info, int len)
 	info[INF_NODE]                           = mkf_str(FO_CONFIG|FN_OUTPUT|FS_SERVICE, global.node);
 	if (global.desc)
 		info[INF_DESCRIPTION]            = mkf_str(FO_CONFIG|FN_OUTPUT|FS_SERVICE, global.desc);
+	info[INF_STOPPING]                       = mkf_u32(0, stopping);
+	info[INF_JOBS]                           = mkf_u32(0, jobs);
+	info[INF_LISTENERS]                      = mkf_u32(0, listeners);
 
 	return 1;
 }

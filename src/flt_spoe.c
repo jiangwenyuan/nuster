@@ -2397,6 +2397,14 @@ spoe_check(struct proxy *px, struct flt_conf *fconf)
 		return 1;
 	}
 
+	if (px->bind_proc & ~target->bind_proc) {
+		Alert("Proxy %s : backend '%s' used by SPOE agent '%s' declared"
+		      " at %s:%d does not cover all of its processes.\n",
+		      px->id, target->id, conf->agent->id,
+		      conf->agent->conf.file, conf->agent->conf.line);
+		return 1;
+	}
+
 	free(conf->agent->b.name);
 	conf->agent->b.name = NULL;
 	conf->agent->b.be = target;
@@ -2793,8 +2801,8 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 			tmp = args[2];
 			while (*tmp) {
 				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
-					Alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z_-.] chars.\n",
-					      file, linenum, args[0], args[1]);
+					Alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
+						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
 					goto out;
 				}
@@ -2824,8 +2832,8 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 			tmp = args[2];
 			while (*tmp) {
 				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
-					Alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z_-.] chars.\n",
-					      file, linenum, args[0], args[1]);
+					Alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
+						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
 					goto out;
 				}

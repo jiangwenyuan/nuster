@@ -54,7 +54,7 @@ static inline void session_store_counters(struct session *sess)
 			continue;
 
 		ptr = stktable_data_ptr(stkctr->table, stkctr_entry(stkctr), STKTABLE_DT_CONN_CUR);
-		if (ptr)
+		if (ptr && stktable_data_cast(ptr, conn_cur) > 0)
 			stktable_data_cast(ptr, conn_cur)--;
 		stkctr_entry(stkctr)->ref_cnt--;
 		stksess_kill_if_expired(stkctr->table, stkctr_entry(stkctr));

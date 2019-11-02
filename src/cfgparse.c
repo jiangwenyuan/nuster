@@ -694,6 +694,8 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		global.tune.maxpollevents = atol(args[1]);
 	}
 	else if (!strcmp(args[0], "tune.maxaccept")) {
+		long max;
+
 		if (alertif_too_many_args(1, file, linenum, args, &err_code))
 			goto out;
 		if (global.tune.maxaccept != 0) {
@@ -706,7 +708,13 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
-		global.tune.maxaccept = atol(args[1]);
+		max = atol(args[1]);
+		if (/*max < -1 || */max > INT_MAX) {
+			Alert("parsing [%s:%d] : '%s' expects -1 or an integer from 0 to INT_MAX.\n", file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		global.tune.maxaccept = max;
 	}
 	else if (!strcmp(args[0], "tune.chksize")) {
 		if (alertif_too_many_args(1, file, linenum, args, &err_code))
@@ -2826,14 +2834,14 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			curproxy->server_id_hdr_name = strdup(defproxy.server_id_hdr_name);
 		}
 
+		/* initialize error relocations */
+		for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
+			chunk_dup(&curproxy->errmsg[rc], &defproxy.errmsg[rc]);
+
 		if (curproxy->cap & PR_CAP_FE) {
 			curproxy->maxconn = defproxy.maxconn;
 			curproxy->backlog = defproxy.backlog;
 			curproxy->fe_sps_lim = defproxy.fe_sps_lim;
-
-			/* initialize error relocations */
-			for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
-				chunk_dup(&curproxy->errmsg[rc], &defproxy.errmsg[rc]);
 
 			curproxy->to_log = defproxy.to_log & ~LW_COOKIE & ~LW_REQHDR & ~ LW_RSPHDR;
 		}
@@ -2880,7 +2888,10 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 			if (defproxy.url_param_name)
 				curproxy->url_param_name = strdup(defproxy.url_param_name);
-			curproxy->url_param_len = defproxy.url_param_len;
+			curproxy->url_param_len   = defproxy.url_param_len;
+			curproxy->uri_whole       = defproxy.uri_whole;
+			curproxy->uri_len_limit   = defproxy.uri_len_limit;
+			curproxy->uri_dirs_depth1 = defproxy.uri_dirs_depth1;
 
 			if (defproxy.hh_name)
 				curproxy->hh_name = strdup(defproxy.hh_name);
@@ -4120,6 +4131,13 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		int myidx = 1;
 		struct proxy *other;
 
+		if (curproxy == &defproxy) {
+			Alert("parsing [%s:%d] : 'stick-table' is not supported in 'defaults' section.\n",
+				 file, linenum);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+
 		other = proxy_tbl_by_name(curproxy->id);
 		if (other) {
 			Alert("parsing [%s:%d] : stick-table name '%s' conflicts with table declared in %s '%s' at %s:%d.\n",
@@ -5106,7 +5124,7 @@ stats_error_parsing:
 									((unsigned char) (packetlen >> 16) & 0xff));
 
 								curproxy->check_req[3] = 1;
-								curproxy->check_req[5] = 130;
+								curproxy->check_req[5] = 0x82; // 130
 								curproxy->check_req[11] = 1;
 								curproxy->check_req[12] = 33;
 								memcpy(&curproxy->check_req[36], mysqluser, userlen);
@@ -5132,7 +5150,7 @@ stats_error_parsing:
 								((unsigned char) (packetlen >> 16) & 0xff));
 
 							curproxy->check_req[3] = 1;
-							curproxy->check_req[5] = 128;
+							curproxy->check_req[5] = 0x80;
 							curproxy->check_req[8] = 1;
 							memcpy(&curproxy->check_req[9], mysqluser, userlen);
 							curproxy->check_req[9 + userlen + 1 + 1]     = 1;
@@ -7936,6 +7954,11 @@ int check_config_validity()
 				      curproxy->id, mrule->table.name ? mrule->table.name : curproxy->id);
 				cfgerr++;
 			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				Alert("Proxy '%s': stick-table '%s' referenced 'stick-store' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, curproxy->id);
+				cfgerr++;
+			}
 			else {
 				free((void *)mrule->table.name);
 				mrule->table.t = &(target->table);
@@ -7967,6 +7990,11 @@ int check_config_validity()
 			else if (!stktable_compatible_sample(mrule->expr, target->table.type)) {
 				Alert("Proxy '%s': type of fetch not usable with type of stick-table '%s'.\n",
 				      curproxy->id, mrule->table.name ? mrule->table.name : curproxy->id);
+				cfgerr++;
+			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				Alert("Proxy '%s': stick-table '%s' referenced 'stick-store' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, curproxy->id);
 				cfgerr++;
 			}
 			else {
@@ -8003,6 +8031,11 @@ int check_config_validity()
 				Alert("Proxy '%s': stick-table '%s' uses a type incompatible with the 'track-sc%d' rule.\n",
 				      curproxy->id, trule->arg.trk_ctr.table.n ? trule->arg.trk_ctr.table.n : curproxy->id,
 				      tcp_trk_idx(trule->action));
+				cfgerr++;
+			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				Alert("Proxy '%s': stick-table '%s' referenced by the 'track-sc%d' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, tcp_trk_idx(trule->action), curproxy->id);
 				cfgerr++;
 			}
 			else {
@@ -8044,6 +8077,11 @@ int check_config_validity()
 				      tcp_trk_idx(trule->action));
 				cfgerr++;
 			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				Alert("Proxy '%s': stick-table '%s' referenced by the 'track-sc%d' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, tcp_trk_idx(trule->action), curproxy->id);
+				cfgerr++;
+			}
 			else {
 				free(trule->arg.trk_ctr.table.n);
 				trule->arg.trk_ctr.table.t = &target->table;
@@ -8081,6 +8119,11 @@ int check_config_validity()
 				Alert("Proxy '%s': stick-table '%s' uses a type incompatible with the 'track-sc%d' rule.\n",
 				      curproxy->id, trule->arg.trk_ctr.table.n ? trule->arg.trk_ctr.table.n : curproxy->id,
 				      tcp_trk_idx(trule->action));
+				cfgerr++;
+			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				Alert("Proxy '%s': stick-table '%s' referenced by the 'track-sc%d' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, tcp_trk_idx(trule->action), curproxy->id);
 				cfgerr++;
 			}
 			else {
@@ -8148,6 +8191,11 @@ int check_config_validity()
 				      http_trk_idx(hrqrule->action));
 				cfgerr++;
 			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				Alert("Proxy '%s': stick-table '%s' referenced by the 'track-sc%d' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, http_trk_idx(hrqrule->action), curproxy->id);
+				cfgerr++;
+			}
 			else {
 				free(hrqrule->arg.trk_ctr.table.n);
 				hrqrule->arg.trk_ctr.table.t = &target->table;
@@ -8185,6 +8233,11 @@ int check_config_validity()
 				Alert("Proxy '%s': stick-table '%s' uses a type incompatible with the 'track-sc%d' rule.\n",
 				      curproxy->id, hrqrule->arg.trk_ctr.table.n ? hrqrule->arg.trk_ctr.table.n : curproxy->id,
 				      http_trk_idx(hrqrule->action));
+				cfgerr++;
+			}
+			else if (curproxy->bind_proc & ~target->bind_proc) {
+				Alert("Proxy '%s': stick-table '%s' referenced by the 'track-sc%d' rule not present on all processes covered by proxy '%s'.\n",
+				         curproxy->id, target->id, http_trk_idx(hrqrule->action), curproxy->id);
 				cfgerr++;
 			}
 			else {
@@ -9127,9 +9180,8 @@ out_uri_auth_compat:
 			 * is bound to. Rememeber that maxaccept = -1 must be kept as it is
 			 * used to disable the limit.
 			 */
-			if (listener->maxaccept > 0) {
-				if (nbproc > 1)
-					listener->maxaccept = (listener->maxaccept + 1) / 2;
+			if (listener->maxaccept > 0 && nbproc > 1) {
+				listener->maxaccept = (listener->maxaccept + 1) / 2;
 				listener->maxaccept = (listener->maxaccept + nbproc - 1) / nbproc;
 			}
 

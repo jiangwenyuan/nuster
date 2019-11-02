@@ -524,7 +524,7 @@ struct stktable_key *smp_to_stkey(struct sample *smp, struct stktable *t)
 		/* The stick table require a 32bit unsigned int, "sint" is a
 		 * signed 64 it, so we can convert it inplace.
 		 */
-		*(unsigned int *)&smp->data.u.sint = (unsigned int)smp->data.u.sint;
+		smp->data.u.sint = (unsigned int)smp->data.u.sint;
 		static_table_key->key = &smp->data.u.sint;
 		static_table_key->key_len = 4;
 		break;
@@ -1574,8 +1574,6 @@ smp_fetch_sc_stkctr(struct session *sess, struct stream *strm, const struct arg 
 	if (num == '_' - '0') {
 		/* sc_* variant, args[0] = ctr# (mandatory) */
 		num = args[arg++].data.sint;
-		if (num >= MAX_SESS_STKCTR)
-			return NULL;
 	}
 	else if (num > 9) { /* src_* variant, args[0] = table */
 		struct stktable_key *key;
@@ -1606,7 +1604,10 @@ smp_fetch_sc_stkctr(struct session *sess, struct stream *strm, const struct arg 
 	 * the sc[0-9]_ form, or even higher using sc_(num) if needed.
 	 * args[arg] is the first optional argument. We first lookup the
 	 * ctr form the stream, then from the session if it was not there.
+	 * But we must be sure the counter does not exceed MAX_SESS_STKCTR.
 	 */
+	if (num >= MAX_SESS_STKCTR)
+		return NULL;
 
 	if (strm)
 		stkptr = &strm->stkctr[num];
