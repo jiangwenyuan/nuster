@@ -4,15 +4,15 @@
 Branch | nuster version | Released        | Download                     | Notes
 ------ | -------------- | --------        | --------                     | -----
 master |                |                 |                              | maybe broken
-H1.8.x | 2.0.11.18      | [2019-10-03][3] | [nuster-2.0.11.18.tar.gz][4] | stable: cache, nosql, http2
-H1.7.x | 1.0.2.17       | [2018-10-05][5] | [nuster-1.0.2.17.tar.gz][6]  | stable: cache only
+H1.8.x | 2.0.12.18      | [2019-11-02][3] | [nuster-2.0.12.18.tar.gz][4] | stable: cache, nosql, http2
+H1.7.x | 1.0.3.17       | [2019-11-02][5] | [nuster-1.0.3.17.tar.gz][6]  | stable: cache only
 disk   |                |                 |                              | disk persistence
 sync   |                |                 |                              | replication
 
-[3]:https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.11.18
-[4]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.11.18/nuster-2.0.11.18.tar.gz
-[5]:https://github.com/jiangwenyuan/nuster/releases/tag/v1.0.2.17
-[6]:https://github.com/jiangwenyuan/nuster/releases/download/v1.0.2.17/nuster-1.0.2.17.tar.gz
+[3]:https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.12.18
+[4]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.12.18/nuster-2.0.12.18.tar.gz
+[5]:https://github.com/jiangwenyuan/nuster/releases/tag/v1.0.3.17
+[6]:https://github.com/jiangwenyuan/nuster/releases/download/v1.0.3.17/nuster-1.0.3.17.tar.gz
 
 ## Versioning
 
@@ -29,6 +29,7 @@ https://github.com/jiangwenyuan/nuster/releases
 
 | nuster version | HAProxy version
 | -------------- | ---------------
+| 2.0.12.18      | 1.8.22
 | 2.0.11.18      | 1.8.21
 | 2.0.10.18      | 1.8.19
 | 2.0.9.18       | 1.8.19
