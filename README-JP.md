@@ -417,9 +417,9 @@ Cookie: logged_in=yes; user=nuster;
  * param\_type:  Y
  * body:         (empty)
 
-ディフォルトkeyは`GET.http.www.example.com./q?name=X&type=Y.` で `key method.scheme.host.path.header_ASDF.cookie_user.param_type` は `GET.http.www.example.com./q.Z.nuster.Y.`.
+ディフォルトkeyは`GET\0http.www.example.com\0/q?name=X&type=Y\0` で `key method.scheme.host.path.header_ASDF.cookie_user.param_type` は `GET\0http.www.example.com\0/q\0Z\0nuster\0Y\0`.
 
-> 内部はNULLデリミタが保存されてます、 `GET\0http\0www.example.com\0/q?name=X&type=Y\0`
+> `\0`はNULLキャラクター
 
 リクエストのkeyが同じなら、キャッシュを返す。
 
@@ -993,10 +993,6 @@ backend nosql_be
     nuster nosql on
     nuster rule r1 ttl 3600
 ```
-
-# Conventions
-
-1. Files with same name: those with `.md` extension belong to nuster, otherwise HAProxy
 
 # Contributing
 

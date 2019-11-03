@@ -416,9 +416,9 @@ Cookie: logged_in=yes; user=nuster;
  * param\_type:  Y
  * body:         (empty)
 
-默认key产生`GEThttpwww.example.com/q?name=X&type=Y`, 而`key method.scheme.host.path.header_ASDF.cookie_user.param_type` 则生成 `GEThttpwww.example.com/qZnusterY`.
+默认key产生`GET\0http\0www.example.com\0/q?name=X&type=Y\0`, 而`key method.scheme.host.path.header_ASDF.cookie_user.param_type` 则生成 `GET\0http\0www.example.com\0/q\0Z\0nuster\0Y\0`.
 
-> 实际内部会存储NULL分隔符，`GET\0http\0www.example.com\0/q?name=X&type=Y\0`
+> `\0`是NULL字符
 
 相同key的请求则会直接返回cache给客户端。
 
@@ -1001,10 +1001,6 @@ backend nosql_be
     nuster nosql on
     nuster rule r1 ttl 3600
 ```
-
-# Conventions
-
-1. Files with same name: those with `.md` extension belong to nuster, otherwise HAProxy
 
 # Contributing
 
