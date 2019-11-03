@@ -1,5 +1,9 @@
 # nuster Changelog
 
+## 3.1.2.19 - 2019-11-03
+
+* Enable response rule evaluation for nuster handler
+
 ## 3.1.1.19 - 2019-11-02
 
 Upgrade to HAProxy v1.9.12
