@@ -427,9 +427,9 @@ Should result:
  * param\_type:  Y
  * body:         (empty)
 
-So default key produces `GEThttpwww.example.com/q?name=X&type=Y`, and `key method.scheme.host.path.header_ASDF.cookie_user.param_type` produces `GEThttpwww.example.com/qZnusterY`.
+So default key produces `GET\0http\0www.example.com\0/q?name=X&type=Y\0`, and `key method.scheme.host.path.header_ASDF.cookie_user.param_type` produces `GET\0http\0www.example.com\0/q\0Z\0nuster\0Y\0`.
 
-> Internally, a NULL delimiter is placed in between, like `GET\0http\0www.example.com\0/q?name=X&type=Y\0`
+> `\0` is NULL character
 
 If a request has the same key as a cached HTTP response data, then cached data will be sent to the client.
 
@@ -1025,10 +1025,6 @@ backend nosql_be
     nuster nosql on
     nuster rule r1 ttl 3600
 ```
-
-# Conventions
-
-1. Files with the same name: those with `.md` extension belong to nuster, otherwise HAProxy
 
 # Contributing
 
