@@ -50,7 +50,7 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
 
     nst_shctx_unlock(&nuster.cache->dict[0]);
 
-    if(!nuster.cache->disk.loaded){
+    if(!nuster.cache->disk.loaded && global.nuster.cache.root){
         struct persist disk;
 
         disk.file = nst_cache_memory_alloc(
