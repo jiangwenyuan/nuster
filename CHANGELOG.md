@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 3.1.3.19 - 2019-11-16
+
+### Fixed
+
+* Fix Segmentation fault on send PURGE
+
 ## 3.1.2.19 - 2019-11-03
 
 * Enable response rule evaluation for nuster handler
