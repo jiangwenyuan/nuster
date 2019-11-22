@@ -149,6 +149,12 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/types.h>
+#include <sys/resource.h>
+
+#if defined(USE_POLL)
+#include <poll.h>
+#include <errno.h>
+#endif
 
 #include <common/compat.h>
 #include <common/config.h>
@@ -180,6 +186,8 @@ THREAD_LOCAL int  fd_nbupdt = 0;   // number of updates in the list
 THREAD_LOCAL int poller_rd_pipe = -1; // Pipe to wake the thread
 int poller_wr_pipe[MAX_THREADS]; // Pipe to wake the threads
 
+volatile int ha_used_fds = 0; // Number of FD we're currently using
+
 #define _GET_NEXT(fd, off) ((struct fdlist_entry *)(void *)((char *)(&fdtab[fd]) + off))->next
 #define _GET_PREV(fd, off) ((struct fdlist_entry *)(void *)((char *)(&fdtab[fd]) + off))->prev
 /* adds fd <fd> to fd list <list> if it was not yet in it */
@@ -195,9 +203,9 @@ redo_next:
 	/* Check that we're not already in the cache, and if not, lock us. */
 	if (next >= -2)
 		goto done;
-	if (!HA_ATOMIC_CAS(&_GET_NEXT(fd, off), &next, -2))
+	if (!_HA_ATOMIC_CAS(&_GET_NEXT(fd, off), &next, -2))
 		goto redo_next;
-	__ha_barrier_store();
+	__ha_barrier_atomic_store();
 
 	new = fd;
 redo_last:
@@ -211,7 +219,7 @@ redo_last:
 
 	if (unlikely(last == -1)) {
 		/* list is empty, try to add ourselves alone so that list->last=fd */
-		if (unlikely(!HA_ATOMIC_CAS(&list->last, &old, new)))
+		if (unlikely(!_HA_ATOMIC_CAS(&list->last, &old, new)))
 			    goto redo_last;
 
 		/* list->first was necessary -1, we're guaranteed to be alone here */
@@ -221,7 +229,7 @@ redo_last:
 		 * The CAS will only succeed if its next is -1,
 		 * which means it's in the cache, and the last element.
 		 */
-		if (unlikely(!HA_ATOMIC_CAS(&_GET_NEXT(last, off), &old, new)))
+		if (unlikely(!_HA_ATOMIC_CAS(&_GET_NEXT(last, off), &old, new)))
 			goto redo_last;
 
 		/* Then, update the last entry */
@@ -262,9 +270,9 @@ lock_self:
 			goto lock_self;
 	} while (
 #ifdef HA_CAS_IS_8B
-	    unlikely(!HA_ATOMIC_CAS(((void **)(void *)&_GET_NEXT(fd, off)), ((void **)(void *)&cur_list), (*(void **)(void *)&next_list))))
+	    unlikely(!_HA_ATOMIC_CAS(((void **)(void *)&_GET_NEXT(fd, off)), ((void **)(void *)&cur_list), (*(void **)(void *)&next_list))))
 #else
-	    unlikely(!HA_ATOMIC_DWCAS(((void *)&_GET_NEXT(fd, off)), ((void *)&cur_list), ((void *)&next_list))))
+	    unlikely(!_HA_ATOMIC_DWCAS(((void *)&_GET_NEXT(fd, off)), ((void *)&cur_list), ((void *)&next_list))))
 #endif
 	    ;
 	next = cur_list.next;
@@ -277,23 +285,23 @@ lock_self_next:
 		goto lock_self_next;
 	if (next <= -3)
 		goto done;
-	if (unlikely(!HA_ATOMIC_CAS(&_GET_NEXT(fd, off), &next, -2)))
+	if (unlikely(!_HA_ATOMIC_CAS(&_GET_NEXT(fd, off), &next, -2)))
 		goto lock_self_next;
 lock_self_prev:
 	prev = ({ volatile int *prev = &_GET_PREV(fd, off); *prev; });
 	if (prev == -2)
 		goto lock_self_prev;
-	if (unlikely(!HA_ATOMIC_CAS(&_GET_PREV(fd, off), &prev, -2)))
+	if (unlikely(!_HA_ATOMIC_CAS(&_GET_PREV(fd, off), &prev, -2)))
 		goto lock_self_prev;
 #endif
-	__ha_barrier_store();
+	__ha_barrier_atomic_store();
 
 	/* Now, lock the entries of our neighbours */
 	if (likely(prev != -1)) {
 redo_prev:
 		old = fd;
 
-		if (unlikely(!HA_ATOMIC_CAS(&_GET_NEXT(prev, off), &old, new))) {
+		if (unlikely(!_HA_ATOMIC_CAS(&_GET_NEXT(prev, off), &old, new))) {
 			if (unlikely(old == -2)) {
 				/* Neighbour already locked, give up and
 				 * retry again once he's done
@@ -310,7 +318,7 @@ redo_prev:
 	if (likely(next != -1)) {
 redo_next:
 		old = fd;
-		if (unlikely(!HA_ATOMIC_CAS(&_GET_PREV(next, off), &old, new))) {
+		if (unlikely(!_HA_ATOMIC_CAS(&_GET_PREV(next, off), &old, new))) {
 			if (unlikely(old == -2)) {
 				/* Neighbour already locked, give up and
 				 * retry again once he's done
@@ -332,7 +340,7 @@ redo_next:
 		list->first = next;
 	__ha_barrier_store();
 	last = list->last;
-	while (unlikely(last == fd && (!HA_ATOMIC_CAS(&list->last, &last, prev))))
+	while (unlikely(last == fd && (!_HA_ATOMIC_CAS(&list->last, &last, prev))))
 		__ha_compiler_barrier();
 	/* Make sure we let other threads know we're no longer in cache,
 	 * before releasing our neighbours.
@@ -381,6 +389,7 @@ static void fd_dodelete(int fd, int do_close)
 	fdtab[fd].thread_mask = 0;
 	if (do_close) {
 		close(fd);
+		_HA_ATOMIC_SUB(&ha_used_fds, 1);
 	}
 	if (locked)
 		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
@@ -421,7 +430,7 @@ static inline void fdlist_process_cached_events(volatile struct fdlist *fdlist)
 		if (fdtab[fd].cache.next < -3)
 			continue;
 
-		HA_ATOMIC_OR(&fd_cache_mask, tid_bit);
+		_HA_ATOMIC_OR(&fd_cache_mask, tid_bit);
 		locked = atleast2(fdtab[fd].thread_mask);
 		if (locked && HA_SPIN_TRYLOCK(FD_LOCK, &fdtab[fd].lock)) {
 			activity[tid].fd_lock++;
@@ -447,8 +456,108 @@ static inline void fdlist_process_cached_events(volatile struct fdlist *fdlist)
 			if (locked)
 				HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 		}
+		ti->flags &= ~TI_FL_STUCK; // this thread is still running
 	}
 }
+
+/* Scan and process the cached events. This should be called right after
+ * the poller. The loop may cause new entries to be created, for example
+ * if a listener causes an accept() to initiate a new incoming connection
+ * wanting to attempt an recv().
+ */
+void fd_process_cached_events()
+{
+	_HA_ATOMIC_AND(&fd_cache_mask, ~tid_bit);
+	fdlist_process_cached_events(&fd_cache_local[tid]);
+	fdlist_process_cached_events(&fd_cache);
+}
+
+#if defined(USE_CLOSEFROM)
+void my_closefrom(int start)
+{
+	closefrom(start);
+}
+
+#elif defined(USE_POLL)
+/* This is a portable implementation of closefrom(). It closes all open file
+ * descriptors starting at <start> and above. It relies on the fact that poll()
+ * will return POLLNVAL for each invalid (hence close) file descriptor passed
+ * in argument in order to skip them. It acts with batches of FDs and will
+ * typically perform one poll() call per 1024 FDs so the overhead is low in
+ * case all FDs have to be closed.
+ */
+void my_closefrom(int start)
+{
+	struct pollfd poll_events[1024];
+	struct rlimit limit;
+	int nbfds, fd, ret, idx;
+	int step, next;
+
+	if (getrlimit(RLIMIT_NOFILE, &limit) == 0)
+		step = nbfds = limit.rlim_cur;
+	else
+		step = nbfds = 0;
+
+	if (nbfds <= 0) {
+		/* set safe limit */
+		nbfds = 1024;
+		step = 256;
+	}
+
+	if (step > sizeof(poll_events) / sizeof(poll_events[0]))
+		step = sizeof(poll_events) / sizeof(poll_events[0]);
+
+	while (start < nbfds) {
+		next = (start / step + 1) * step;
+
+		for (fd = start; fd < next && fd < nbfds; fd++) {
+			poll_events[fd - start].fd = fd;
+			poll_events[fd - start].events = 0;
+		}
+
+		do {
+			ret = poll(poll_events, fd - start, 0);
+			if (ret >= 0)
+				break;
+		} while (errno == EAGAIN || errno == EINTR || errno == ENOMEM);
+
+		if (ret)
+			ret = fd - start;
+
+		for (idx = 0; idx < ret; idx++) {
+			if (poll_events[idx].revents & POLLNVAL)
+				continue; /* already closed */
+
+			fd = poll_events[idx].fd;
+			close(fd);
+		}
+		start = next;
+	}
+}
+
+#else // defined(USE_POLL)
+
+/* This is a portable implementation of closefrom(). It closes all open file
+ * descriptors starting at <start> and above. This is a naive version for use
+ * when the operating system provides no alternative.
+ */
+void my_closefrom(int start)
+{
+	struct rlimit limit;
+	int nbfds;
+
+	if (getrlimit(RLIMIT_NOFILE, &limit) == 0)
+		nbfds = limit.rlim_cur;
+	else
+		nbfds = 0;
+
+	if (nbfds <= 0)
+		nbfds = 1024; /* safe limit */
+
+	while (start < nbfds)
+		close(start++);
+}
+#endif // defined(USE_POLL)
 
 /* Scan and process the cached events. This should be called right after
  * the poller. The loop may cause new entries to be created, for example
@@ -480,17 +589,23 @@ void poller_pipe_io_handler(int fd)
 	fd_cant_recv(fd);
 }
 
-/* Initialize the pollers per thread */
+/* allocate the per-thread fd_updt thus needs to be called early after
+ * thread creation.
+ */
+static int alloc_pollers_per_thread()
+{
+	fd_updt = calloc(global.maxsock, sizeof(*fd_updt));
+	return fd_updt != NULL;
+}
+
+/* Initialize the pollers per thread.*/
 static int init_pollers_per_thread()
 {
 	int mypipe[2];
-	if ((fd_updt = calloc(global.maxsock, sizeof(*fd_updt))) == NULL)
+
+	if (pipe(mypipe) < 0)
 		return 0;
-	if (pipe(mypipe) < 0) {
-		free(fd_updt);
-		fd_updt = NULL;
-		return 0;
-	}
+
 	poller_rd_pipe = mypipe[0];
 	poller_wr_pipe[tid] = mypipe[1];
 	fcntl(poller_rd_pipe, F_SETFL, O_NONBLOCK);
@@ -503,9 +618,6 @@ static int init_pollers_per_thread()
 /* Deinitialize the pollers per thread */
 static void deinit_pollers_per_thread()
 {
-	free(fd_updt);
-	fd_updt = NULL;
-
 	/* rd and wr are init at the same place, but only rd is init to -1, so
 	  we rely to rd to close.   */
 	if (poller_rd_pipe > -1) {
@@ -514,6 +626,13 @@ static void deinit_pollers_per_thread()
 		close(poller_wr_pipe[tid]);
 		poller_wr_pipe[tid] = -1;
 	}
+}
+
+/* Release the pollers per thread, to be called late */
+static void free_pollers_per_thread()
+{
+	free(fd_updt);
+	fd_updt = NULL;
 }
 
 /*
@@ -673,8 +792,10 @@ int fork_poller()
 	return 1;
 }
 
+REGISTER_PER_THREAD_ALLOC(alloc_pollers_per_thread);
 REGISTER_PER_THREAD_INIT(init_pollers_per_thread);
 REGISTER_PER_THREAD_DEINIT(deinit_pollers_per_thread);
+REGISTER_PER_THREAD_FREE(free_pollers_per_thread);
 
 /*
  * Local variables:

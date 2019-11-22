@@ -21,11 +21,12 @@
 
 #ifndef _TYPES_SSL_SOCK_H
 #define _TYPES_SSL_SOCK_H
+#ifdef USE_OPENSSL
 
-#include <openssl/ssl.h>
 #include <ebmbtree.h>
 
 #include <common/hathreads.h>
+#include <common/openssl-compat.h>
 
 struct pkey_info {
 	uint8_t sig;          /* TLSEXT_signature_[rsa,ecdsa,...] */
@@ -84,4 +85,5 @@ struct sh_ssl_sess_hdr {
 	unsigned char key_data[SSL_MAX_SSL_SESSION_ID_LENGTH];
 };
 
+#endif /* USE_OPENSSL */
 #endif /* _TYPES_SSL_SOCK_H */

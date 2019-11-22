@@ -83,7 +83,7 @@
 
 /* a few exported variables */
 extern unsigned int nb_tasks;     /* total number of tasks */
-extern volatile unsigned long active_tasks_mask; /* Mask of threads with active tasks */
+extern volatile unsigned long global_tasks_mask; /* Mask of threads with tasks in the global runqueue */
 extern unsigned int tasks_run_queue;    /* run queue size */
 extern unsigned int tasks_run_queue_cur;
 extern unsigned int nb_tasks_cur;
@@ -92,30 +92,17 @@ extern struct pool_head *pool_head_task;
 extern struct pool_head *pool_head_tasklet;
 extern struct pool_head *pool_head_notification;
 extern THREAD_LOCAL struct task *curr_task; /* task currently running or NULL */
-extern THREAD_LOCAL struct eb32sc_node *rq_next; /* Next task to be potentially run */
 #ifdef USE_THREAD
 extern struct eb_root timers;      /* sorted timers tree, global */
 extern struct eb_root rqueue;      /* tree constituting the run queue */
 extern int global_rqueue_size; /* Number of element sin the global runqueue */
 #endif
 
-/* force to split per-thread stuff into separate cache lines */
-struct task_per_thread {
-	struct eb_root timers;  /* tree constituting the per-thread wait queue */
-	struct eb_root rqueue;  /* tree constituting the per-thread run queue */
-	struct list task_list;  /* List of tasks to be run, mixing tasks and tasklets */
-	int task_list_size;     /* Number of tasks in the task_list */
-	int rqueue_size;        /* Number of elements in the per-thread run queue */
-	__attribute__((aligned(64))) char end[0];
-};
-
 extern struct task_per_thread task_per_thread[MAX_THREADS];
 
 __decl_hathreads(extern HA_SPINLOCK_T rq_lock);  /* spin lock related to run queue */
-__decl_hathreads(extern HA_SPINLOCK_T wq_lock);  /* spin lock related to wait queue */
+__decl_hathreads(extern HA_RWLOCK_T wq_lock);    /* RW lock related to the wait queue */
 
-
-static inline void task_insert_into_tasklet_list(struct task *t);
 
 /* return 0 if task is in run queue, otherwise non-zero */
 static inline int task_in_rq(struct task *t)
@@ -152,13 +139,13 @@ static inline void task_wakeup(struct task *t, unsigned int f)
 	struct eb_root *root = &task_per_thread[tid].rqueue;
 #endif
 
-	state = HA_ATOMIC_OR(&t->state, f);
+	state = _HA_ATOMIC_OR(&t->state, f);
 	while (!(state & (TASK_RUNNING | TASK_QUEUED))) {
-		if (HA_ATOMIC_CAS(&t->state, &state, state | TASK_QUEUED))
+		if (_HA_ATOMIC_CAS(&t->state, &state, state | TASK_QUEUED)) {
+			__task_wakeup(t, root);
 			break;
+		}
 	}
-	if (!(state & (TASK_QUEUED | TASK_RUNNING)))
-		__task_wakeup(t, root);
 }
 
 /* change the thread affinity of a task to <thread_mask> */
@@ -190,10 +177,10 @@ static inline struct task *task_unlink_wq(struct task *t)
 	if (likely(task_in_wq(t))) {
 		locked = atleast2(t->thread_mask);
 		if (locked)
-			HA_SPIN_LOCK(TASK_WQ_LOCK, &wq_lock);
+			HA_RWLOCK_WRLOCK(TASK_WQ_LOCK, &wq_lock);
 		__task_unlink_wq(t);
 		if (locked)
-			HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
+			HA_RWLOCK_WRUNLOCK(TASK_WQ_LOCK, &wq_lock);
 	}
 	return t;
 }
@@ -207,17 +194,17 @@ static inline struct task *task_unlink_wq(struct task *t)
  */
 static inline struct task *__task_unlink_rq(struct task *t)
 {
-	HA_ATOMIC_SUB(&tasks_run_queue, 1);
+	_HA_ATOMIC_SUB(&tasks_run_queue, 1);
 #ifdef USE_THREAD
 	if (t->state & TASK_GLOBAL) {
-		HA_ATOMIC_AND(&t->state, ~TASK_GLOBAL);
+		_HA_ATOMIC_AND(&t->state, ~TASK_GLOBAL);
 		global_rqueue_size--;
 	} else
 #endif
 		task_per_thread[tid].rqueue_size--;
 	eb32sc_delete(&t->rq);
 	if (likely(t->nice))
-		HA_ATOMIC_SUB(&niced_tasks, 1);
+		_HA_ATOMIC_SUB(&niced_tasks, 1);
 	return t;
 }
 
@@ -230,11 +217,8 @@ static inline struct task *task_unlink_rq(struct task *t)
 
 	if (is_global)
 		HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
-	if (likely(task_in_rq(t))) {
-		if (&t->rq == rq_next)
-			rq_next = eb32sc_next(rq_next, tid_bit);
+	if (likely(task_in_rq(t)))
 		__task_unlink_rq(t);
-	}
 	if (is_global)
 		HA_SPIN_UNLOCK(TASK_RQ_LOCK, &rq_lock);
 	return t;
@@ -245,48 +229,33 @@ static inline void tasklet_wakeup(struct tasklet *tl)
 	if (!LIST_ISEMPTY(&tl->list))
 		return;
 	LIST_ADDQ(&task_per_thread[tid].task_list, &tl->list);
-	task_per_thread[tid].task_list_size++;
-	HA_ATOMIC_OR(&active_tasks_mask, tid_bit);
-	HA_ATOMIC_ADD(&tasks_run_queue, 1);
+	_HA_ATOMIC_ADD(&tasks_run_queue, 1);
 
 }
 
-static inline void task_insert_into_tasklet_list(struct task *t)
+/* Insert a tasklet into the tasklet list. If used with a plain task instead,
+ * the caller must update the task_list_size.
+ */
+static inline void tasklet_insert_into_tasklet_list(struct tasklet *tl)
 {
-	struct tasklet *tl;
-
-	HA_ATOMIC_ADD(&tasks_run_queue, 1);
-	task_per_thread[tid].task_list_size++;
-	tl = (struct tasklet *)t;
+	_HA_ATOMIC_ADD(&tasks_run_queue, 1);
 	LIST_ADDQ(&task_per_thread[tid].task_list, &tl->list);
 }
 
-/* remove the task from the tasklet list. The task MUST already be there. If
- * unsure, use task_remove_from_task_list() instead.
+/* Remove the tasklet from the tasklet list. The tasklet MUST already be there.
+ * If unsure, use tasklet_remove_from_tasklet_list() instead. If used with a
+ * plain task, the caller must update the task_list_size.
  */
-static inline void __task_remove_from_tasklet_list(struct task *t)
+static inline void __tasklet_remove_from_tasklet_list(struct tasklet *t)
 {
-	LIST_DEL(&((struct tasklet *)t)->list);
-	LIST_INIT(&((struct tasklet *)t)->list);
-	task_per_thread[tid].task_list_size--;
-	HA_ATOMIC_SUB(&tasks_run_queue, 1);
+	LIST_DEL_INIT(&t->list);
+	_HA_ATOMIC_SUB(&tasks_run_queue, 1);
 }
 
-static inline void task_remove_from_tasklet_list(struct task *t)
+static inline void tasklet_remove_from_tasklet_list(struct tasklet *t)
 {
-	if (likely(!LIST_ISEMPTY(&((struct tasklet *)t)->list)))
-		__task_remove_from_tasklet_list(t);
-}
-
-/*
- * Unlinks the task and adjusts run queue stats.
- * A pointer to the task itself is returned.
- */
-static inline struct task *task_delete(struct task *t)
-{
-	task_unlink_wq(t);
-	task_unlink_rq(t);
-	return t;
+	if (likely(!LIST_ISEMPTY(&t->list)))
+		__tasklet_remove_from_tasklet_list(t);
 }
 
 /*
@@ -337,26 +306,44 @@ static inline struct task *task_new(unsigned long thread_mask)
 {
 	struct task *t = pool_alloc(pool_head_task);
 	if (t) {
-		HA_ATOMIC_ADD(&nb_tasks, 1);
+		_HA_ATOMIC_ADD(&nb_tasks, 1);
 		task_init(t, thread_mask);
 	}
 	return t;
 }
 
 /*
- * Free a task. Its context must have been freed since it will be lost.
- * The task count is decremented.
+ * Free a task. Its context must have been freed since it will be lost. The
+ * task count is decremented. It it is the current task, this one is reset.
  */
 static inline void __task_free(struct task *t)
 {
+	if (t == curr_task) {
+		curr_task = NULL;
+		__ha_barrier_store();
+	}
 	pool_free(pool_head_task, t);
 	if (unlikely(stopping))
 		pool_flush(pool_head_task);
-	HA_ATOMIC_SUB(&nb_tasks, 1);
+	_HA_ATOMIC_SUB(&nb_tasks, 1);
 }
 
-static inline void task_free(struct task *t)
+/* Destroys a task : it's unlinked from the wait queues and is freed if it's
+ * the current task or not queued otherwise it's marked to be freed by the
+ * scheduler. It does nothing if <t> is NULL.
+ */
+static inline void task_destroy(struct task *t)
 {
+	if (!t)
+		return;
+
+	task_unlink_wq(t);
+	/* We don't have to explicitely remove from the run queue.
+	 * If we are in the runqueue, the test below will set t->process
+	 * to NULL, and the task will be free'd when it'll be its turn
+	 * to run.
+	 */
+
 	/* There's no need to protect t->state with a lock, as the task
 	 * has to run on the current thread.
 	 */
@@ -369,11 +356,14 @@ static inline void task_free(struct task *t)
 static inline void tasklet_free(struct tasklet *tl)
 {
 	if (!LIST_ISEMPTY(&tl->list)) {
-		task_per_thread[tid].task_list_size--;
-		HA_ATOMIC_SUB(&tasks_run_queue, 1);
+		LIST_DEL(&tl->list);
+		_HA_ATOMIC_SUB(&tasks_run_queue, 1);
 	}
-	LIST_DEL(&tl->list);
 
+	if ((struct task *)tl == curr_task) {
+		curr_task = NULL;
+		__ha_barrier_store();
+	}
 	pool_free(pool_head_tasklet, tl);
 	if (unlikely(stopping))
 		pool_flush(pool_head_tasklet);
@@ -403,10 +393,10 @@ static inline void task_queue(struct task *task)
 
 #ifdef USE_THREAD
 	if (atleast2(task->thread_mask)) {
-		HA_SPIN_LOCK(TASK_WQ_LOCK, &wq_lock);
+		HA_RWLOCK_WRLOCK(TASK_WQ_LOCK, &wq_lock);
 		if (!task_in_wq(task) || tick_is_lt(task->expire, task->wq.key))
 			__task_queue(task, &timers);
-		HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
+		HA_RWLOCK_WRUNLOCK(TASK_WQ_LOCK, &wq_lock);
 	} else
 #endif
 	{
@@ -427,14 +417,15 @@ static inline void task_schedule(struct task *task, int when)
 
 #ifdef USE_THREAD
 	if (atleast2(task->thread_mask)) {
-		HA_SPIN_LOCK(TASK_WQ_LOCK, &wq_lock);
+		/* FIXME: is it really needed to lock the WQ during the check ? */
+		HA_RWLOCK_WRLOCK(TASK_WQ_LOCK, &wq_lock);
 		if (task_in_wq(task))
 			when = tick_first(when, task->expire);
 
 		task->expire = when;
 		if (!task_in_wq(task) || tick_is_lt(task->expire, task->wq.key))
 			__task_queue(task, &timers);
-		HA_SPIN_UNLOCK(TASK_WQ_LOCK, &wq_lock);
+		HA_RWLOCK_WRUNLOCK(TASK_WQ_LOCK, &wq_lock);
 	} else
 #endif
 	{
@@ -541,6 +532,13 @@ static inline void notification_wake(struct list *wake)
 static inline int notification_registered(struct list *wake)
 {
 	return !LIST_ISEMPTY(wake);
+}
+
+static inline int thread_has_tasks(void)
+{
+	return (!!(global_tasks_mask & tid_bit) |
+	        (task_per_thread[tid].rqueue_size > 0) |
+	        !LIST_ISEMPTY(&task_per_thread[tid].task_list));
 }
 
 /* adds list item <item> to work list <work> and wake up the associated task */

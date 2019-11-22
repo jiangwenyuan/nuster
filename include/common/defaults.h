@@ -22,6 +22,14 @@
 #ifndef _COMMON_DEFAULTS_H
 #define _COMMON_DEFAULTS_H
 
+/* MAX_PROCS defines the highest limit for the global "nbproc" value. It
+ * defaults to the number of bits in a long integer but may be lowered to save
+ * resources on embedded systems.
+ */
+#ifndef MAX_PROCS
+#define MAX_PROCS LONGBITS
+#endif
+
 /*
  * BUFSIZE defines the size of a read and write buffer. It is the maximum
  * amount of bytes which can be stored by the proxy for each stream. However,
@@ -184,15 +192,15 @@
  * absolute limit accepted by the system. If the configuration specifies a
  * higher value, it will be capped to SYSTEM_MAXCONN and a warning will be
  * emitted. The only way to override this limit will be to set it via the
- * command-line '-n' argument.
+ * command-line '-n' argument. If SYSTEM_MAXCONN is not set, a minimum value
+ * of 100 will be used for DEFAULT_MAXCONN which almost guarantees that a
+ * process will correctly start in any situation.
  */
-#ifndef SYSTEM_MAXCONN
-#ifndef DEFAULT_MAXCONN
-#define DEFAULT_MAXCONN 2000
-#endif
-#else
+#ifdef SYSTEM_MAXCONN
 #undef  DEFAULT_MAXCONN
 #define DEFAULT_MAXCONN SYSTEM_MAXCONN
+#elif !defined(DEFAULT_MAXCONN)
+#define DEFAULT_MAXCONN 100
 #endif
 
 /* Minimum check interval for spread health checks. Servers with intervals

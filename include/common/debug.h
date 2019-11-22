@@ -40,20 +40,41 @@
 /* This abort is more efficient than abort() because it does not mangle the
  * stack and stops at the exact location we need.
  */
-#define ABORT_NOW() (*(volatile int*)0=0)
+#define ABORT_NOW() (*(volatile int*)1=0)
 
-/* this one is provided for easy code tracing.
- * Usage: TRACE(strm||0, fmt, args...);
- *        TRACE(strm, "");
+/* BUG_ON: complains if <cond> is true when DEBUG_STRICT or DEBUG_STRICT_NOCRASH
+ * are set, does nothing otherwise. With DEBUG_STRICT in addition it immediately
+ * crashes using ABORT_NOW() above.
  */
-#define TRACE(strm, fmt, args...) do {                            \
-	fprintf(stderr,                                           \
-		"%d.%06d [%s:%d %s] [strm %p(%x)] " fmt "\n",      \
-		(int)now.tv_sec, (int)now.tv_usec,                \
-		__FILE__, __LINE__, __FUNCTION__,                 \
-		strm, strm?((struct stream *)strm)->uniq_id:~0U, \
-		##args);                                           \
-        } while (0)
+#if defined(DEBUG_STRICT) || defined(DEBUG_STRICT_NOCRASH)
+#if defined(DEBUG_STRICT)
+#define CRASH_NOW() ABORT_NOW()
+#else
+#define CRASH_NOW()
+#endif
+
+#define BUG_ON(cond) _BUG_ON(cond, __FILE__, __LINE__)
+#define _BUG_ON(cond, file, line) __BUG_ON(cond, file, line)
+#define __BUG_ON(cond, file, line)                                             \
+	do {                                                                   \
+		if (unlikely(cond)) {					       \
+			const char msg[] = "\nFATAL: bug condition \"" #cond "\" matched at " file ":" #line "\n"; \
+			(void)write(2, msg, strlen(msg));                      \
+			CRASH_NOW();                                           \
+		}                                                              \
+	} while (0)
+#else
+#undef CRASH_NOW
+#define BUG_ON(cond)
+#endif
+
+struct task;
+struct buffer;
+extern volatile unsigned long threads_to_dump;
+void ha_task_dump(struct buffer *buf, const struct task *task, const char *pfx);
+void ha_thread_dump(struct buffer *buf, int thr, int calling_tid);
+void ha_thread_dump_all_to_trash();
+void ha_panic();
 
 /* This one is useful to automatically apply poisonning on an area returned
  * by malloc(). Only "p_" is required to make it work, and to define a poison

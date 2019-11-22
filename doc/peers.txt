@@ -227,9 +227,10 @@
      *** Control message class ***
 
      At this time of writing, control messages are fixed-length messages used
-     only to control the synchonrizations between local and/or remote processes.
+     only to control the synchronizations between local and/or remote processes
+     and to emit heartbeat messages.
 
-     There exist four types of such control messages:
+     There exists five types of such control messages:
 
        +------------+--------------------------------------------------------+
        | type byte  |                   signification                        |
@@ -248,7 +249,17 @@
        |      3     | synchronization confirmed: acknowledge a finished or   |
        |            | partial synchronization message.                       |
        +------------+--------------------------------------------------------+
+       |      4     | Heartbeat message.                                     |
+       +------------+--------------------------------------------------------+
 
+     About hearbeat messages: a peer sends heartbeat messages to peers it is
+     connected to after periods of 3s of inactivity (i.e. when there is no
+     stick-table to synchronize for 3s). After a successful peer protocol
+     handshake between two peers, if one of them does not send any other peer
+     protocol messages (i.e. no heartbeat and no stick-table update messages)
+     during a 5s period, it is considered as no more alive by its remote peer
+     which closes the session and then tries to reconnect to the peer which
+     has just disappeared.
 
      *** Error message class ***
 
@@ -405,6 +416,27 @@
        +xxxxxxxxxxxxxxxxxxxx+xxxxxxxxxxxxxxxxxxxx+      +xxxxxxxxxxxxxxxxxxxx+
 
 
+     Most of these fields are internally stored as uint32_t (see STD_T_SINT,
+     STD_T_UINT, STD_T_ULL C enumerations) or structures made of several uint32_t
+     (see STD_T_FRQP C enumeration). The remaining one STD_T_DICT is internally
+     used to store entries of LRU caches for others literal dictionary entries
+     (couples of IDs associated to strings). It is used to transmit these cache
+     entries as follows:
+
+                    +xxxxxxxxxxx+xxxx+xxxxxxxxxxxxxxx+========+
+                    |   length  | ID | string length | string |
+                    +xxxxxxxxxxx+xxxx+xxxxxxxxxxxxxxx+========+
+
+     "length" is the length in bytes of the remaining data after this "length" field.
+     "string length" is the length of "string" field which follows.
+
+     Here the cache is used so that not to have to send again and again an already
+     sent string. Indeed, the second time we have to send the same dictionary entry,
+     if still cached, a peer sends only its ID:
+
+                              +xxxxxxxxxxx+xxxx+
+                              |   length  | ID |
+                              +xxxxxxxxxxx+xxxx+
 
      - Update message acknowledgement format:
 

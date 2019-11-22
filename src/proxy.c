@@ -77,7 +77,7 @@ const struct cfg_opt cfg_opts[] =
 	{ "nolinger",     PR_O_TCP_NOLING, PR_CAP_FE | PR_CAP_BE, 0, 0 },
 	{ "persist",      PR_O_PERSIST,    PR_CAP_BE, 0, 0 },
 	{ "srvtcpka",     PR_O_TCP_SRV_KA, PR_CAP_BE, 0, 0 },
-#ifdef TPROXY
+#ifdef USE_TPROXY
 	{ "transparent",  PR_O_TRANSP,     PR_CAP_BE, 0, 0 },
 #else
 	{ "transparent",  0, 0, 0, 0 },
@@ -89,7 +89,7 @@ const struct cfg_opt cfg_opts[] =
 /* proxy->options2 */
 const struct cfg_opt cfg_opts2[] =
 {
-#ifdef CONFIG_HAP_LINUX_SPLICE
+#ifdef USE_LINUX_SPLICE
 	{ "splice-request",  PR_O2_SPLIC_REQ, PR_CAP_FE|PR_CAP_BE, 0, 0 },
 	{ "splice-response", PR_O2_SPLIC_RTR, PR_CAP_FE|PR_CAP_BE, 0, 0 },
 	{ "splice-auto",     PR_O2_SPLIC_AUT, PR_CAP_FE|PR_CAP_BE, 0, 0 },
@@ -111,7 +111,7 @@ const struct cfg_opt cfg_opts2[] =
 	{ "http-use-proxy-header",        PR_O2_USE_PXHDR, PR_CAP_FE, 0, PR_MODE_HTTP },
 	{ "http-pretend-keepalive",       PR_O2_FAKE_KA,   PR_CAP_BE, 0, PR_MODE_HTTP },
 	{ "http-no-delay",                PR_O2_NODELAY,   PR_CAP_FE|PR_CAP_BE, 0, PR_MODE_HTTP },
-	{ "http-use-htx",                 PR_O2_USE_HTX,   PR_CAP_FE|PR_CAP_BE, 0, PR_MODE_HTTP },
+	{ "http-use-htx",                 PR_O2_USE_HTX,   PR_CAP_FE|PR_CAP_BE, 0, 0 },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -275,7 +275,17 @@ static int proxy_parse_timeout(char **args, int section, struct proxy *proxy,
 	}
 
 	res = parse_time_err(args[1], &timeout, TIME_UNIT_MS);
-	if (res) {
+	if (res == PARSE_TIME_OVER) {
+		memprintf(err, "timer overflow in argument '%s' to 'timeout %s' (maximum value is 2147483647 ms or ~24.8 days)",
+			  args[1], name);
+		return -1;
+	}
+	else if (res == PARSE_TIME_UNDER) {
+		memprintf(err, "timer underflow in argument '%s' to 'timeout %s' (minimum non-null value is 1 ms)",
+			  args[1], name);
+		return -1;
+	}
+	else if (res) {
 		memprintf(err, "unexpected character '%c' in 'timeout %s'", *res, name);
 		return -1;
 	}
@@ -501,6 +511,71 @@ static int proxy_parse_declare(char **args, int section, struct proxy *curpx,
 	}
 }
 
+/* This function parses a "retry-on" statement */
+static int
+proxy_parse_retry_on(char **args, int section, struct proxy *curpx,
+                               struct proxy *defpx, const char *file, int line,
+                               char **err)
+{
+	int i;
+
+	if (!(*args[1])) {
+		memprintf(err, "'%s' needs at least one keyword to specify when to retry", args[0]);
+		return -1;
+	}
+	if (!(curpx->cap & PR_CAP_BE)) {
+		memprintf(err, "'%s' only available in backend or listen section", args[0]);
+		return -1;
+	}
+	curpx->retry_type = 0;
+	for (i = 1; *(args[i]); i++) {
+		if (!strcmp(args[i], "conn-failure"))
+			curpx->retry_type |= PR_RE_CONN_FAILED;
+		else if (!strcmp(args[i], "empty-response"))
+			curpx->retry_type |= PR_RE_DISCONNECTED;
+		else if (!strcmp(args[i], "response-timeout"))
+			curpx->retry_type |= PR_RE_TIMEOUT;
+		else if (!strcmp(args[i], "404"))
+			curpx->retry_type |= PR_RE_404;
+		else if (!strcmp(args[i], "408"))
+			curpx->retry_type |= PR_RE_408;
+		else if (!strcmp(args[i], "425"))
+			curpx->retry_type |= PR_RE_425;
+		else if (!strcmp(args[i], "500"))
+			curpx->retry_type |= PR_RE_500;
+		else if (!strcmp(args[i], "501"))
+			curpx->retry_type |= PR_RE_501;
+		else if (!strcmp(args[i], "502"))
+			curpx->retry_type |= PR_RE_502;
+		else if (!strcmp(args[i], "503"))
+			curpx->retry_type |= PR_RE_503;
+		else if (!strcmp(args[i], "504"))
+			curpx->retry_type |= PR_RE_504;
+		else if (!strcmp(args[i], "0rtt-rejected"))
+			curpx->retry_type |= PR_RE_EARLY_ERROR;
+		else if (!strcmp(args[i], "junk-response"))
+			curpx->retry_type |= PR_RE_JUNK_REQUEST;
+		else if (!(strcmp(args[i], "all-retryable-errors")))
+			curpx->retry_type |= PR_RE_CONN_FAILED | PR_RE_DISCONNECTED |
+			                     PR_RE_TIMEOUT | PR_RE_500 | PR_RE_502 |
+					     PR_RE_503 | PR_RE_504 | PR_RE_EARLY_ERROR |
+					     PR_RE_JUNK_REQUEST;
+		else if (!strcmp(args[i], "none")) {
+			if (i != 1 || *args[i + 1]) {
+				memprintf(err, "'%s' 'none' keyworld only usable alone", args[0]);
+				return -1;
+			}
+		} else {
+			memprintf(err, "'%s': unknown keyword '%s'", args[0], args[i]);
+			return -1;
+		}
+
+	}
+
+
+	return 0;
+}
+
 /* This function inserts proxy <px> into the tree of known proxies. The proxy's
  * name is used as the storing key so it must already have been initialized.
  */
@@ -527,7 +602,7 @@ struct proxy *proxy_find_by_id(int id, int cap, int table)
 		if ((px->cap & cap) != cap)
 			continue;
 
-		if (table && !px->table.size)
+		if (table && (!px->table || !px->table->size))
 			continue;
 
 		return px;
@@ -560,7 +635,7 @@ struct proxy *proxy_find_by_name(const char *name, int cap, int table)
 			if ((curproxy->cap & cap) != cap)
 				continue;
 
-			if (table && !curproxy->table.size)
+			if (table && (!curproxy->table || !curproxy->table->size))
 				continue;
 
 			return curproxy;
@@ -821,6 +896,12 @@ void init_new_proxy(struct proxy *p)
 	/* initial uuid is unassigned (-1) */
 	p->uuid = -1;
 
+	/* HTX is the default mode, for HTTP and TCP */
+	p->options2 |= PR_O2_USE_HTX;
+
+	/* Default to only allow L4 retries */
+	p->retry_type = PR_RE_CONN_FAILED;
+
 	HA_SPIN_INIT(&p->lock);
 }
 
@@ -928,12 +1009,12 @@ struct task *manage_proxy(struct task *t, void *context, unsigned short state)
 	 * be in neither list. Any entry being dumped will have ref_cnt > 0.
 	 * However we protect tables that are being synced to peers.
 	 */
-	if (unlikely(stopping && p->state == PR_STSTOPPED && p->table.current)) {
-		if (!p->table.syncing) {
-			stktable_trash_oldest(&p->table, p->table.current);
+	if (unlikely(stopping && p->state == PR_STSTOPPED && p->table && p->table->current)) {
+		if (!p->table->syncing) {
+			stktable_trash_oldest(p->table, p->table->current);
 			pool_gc(NULL);
 		}
-		if (p->table.current) {
+		if (p->table->current) {
 			/* some entries still remain, let's recheck in one second */
 			next = tick_first(next, tick_add(now_ms, 1000));
 		}
@@ -986,7 +1067,17 @@ static int proxy_parse_hard_stop_after(char **args, int section_type, struct pro
 		return -1;
 	}
 	res = parse_time_err(args[1], &global.hard_stop_after, TIME_UNIT_MS);
-	if (res) {
+	if (res == PARSE_TIME_OVER) {
+		memprintf(err, "timer overflow in argument '%s' to '%s' (maximum value is 2147483647 ms or ~24.8 days)",
+			  args[1], args[0]);
+		return -1;
+	}
+	else if (res == PARSE_TIME_UNDER) {
+		memprintf(err, "timer underflow in argument '%s' to '%s' (minimum non-null value is 1 ms)",
+			  args[1], args[0]);
+		return -1;
+	}
+	else if (res) {
 		memprintf(err, "unexpected character '%c' in argument to <%s>.\n", *res, args[0]);
 		return -1;
 	}
@@ -1073,8 +1164,8 @@ void soft_stop(void)
 			/* Note: do not wake up stopped proxies' task nor their tables'
 			 * tasks as these ones might point to already released entries.
 			 */
-			if (p->table.size && p->table.sync_task)
-				task_wakeup(p->table.sync_task, TASK_WOKEN_MSG);
+			if (p->table && p->table->size && p->table->sync_task)
+				task_wakeup(p->table->sync_task, TASK_WOKEN_MSG);
 
 			if (p->task)
 				task_wakeup(p->task, TASK_WOKEN_MSG);
@@ -1335,7 +1426,7 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 	proxy_inc_be_ctr(be);
 
 	/* HTX/legacy must match */
-	if ((s->sess->fe->options2 ^ be->options2) & PR_O2_USE_HTX)
+	if ((strm_fe(s)->options2 ^ be->options2) & PR_O2_USE_HTX)
 		return 0;
 
 	/* assign new parameters to the stream from the new backend */
@@ -1380,6 +1471,41 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 		if (strm_fe(s)->mode == PR_MODE_HTTP && be->mode == PR_MODE_HTTP &&
 		    ((strm_fe(s)->options & PR_O_HTTP_MODE) != (be->options & PR_O_HTTP_MODE)))
 			http_adjust_conn_mode(s, s->txn, &s->txn->req);
+
+		/* If we chain a TCP frontend to an HTX backend, we must upgrade
+		 * the client mux */
+		if (!IS_HTX_STRM(s) && be->mode == PR_MODE_HTTP && (be->options2 & PR_O2_USE_HTX)) {
+			struct connection  *conn = objt_conn(strm_sess(s)->origin);
+			struct conn_stream *cs   = objt_cs(s->si[0].end);
+
+			if (conn && cs) {
+				si_rx_endp_more(&s->si[0]);
+				/* Make sure we're unsubscribed, the the new
+				 * mux will probably want to subscribe to
+				 * the underlying XPRT
+				 */
+				if (s->si[0].wait_event.events)
+					conn->mux->unsubscribe(cs, s->si[0].wait_event.events,
+					    &s->si[0].wait_event);
+				if (conn_upgrade_mux_fe(conn, cs, &s->req.buf, ist(""), PROTO_MODE_HTX)  == -1)
+					return 0;
+				if (!strcmp(conn->mux->name, "H2")) {
+					/* For HTTP/2, destroy the conn_stream,
+					 * disable logging, and pretend that we
+					 * failed, to that the stream is
+					 * silently destroyed. The new mux
+					 * will create new streams.
+					 */
+					cs_free(cs);
+					si_detach_endpoint(&s->si[0]);
+					s->logs.logwait = 0;
+					s->logs.level = 0;
+					s->flags |= SF_IGNORE;
+					return 0;
+				}
+				s->flags |= SF_HTX;
+			}
+		}
 
 		/* If an LB algorithm needs to access some pre-parsed body contents,
 		 * we must not start to forward anything until the connection is
@@ -1498,6 +1624,80 @@ void proxy_capture_error(struct proxy *proxy, int is_back,
 	HA_SPIN_UNLOCK(PROXY_LOCK, &proxy->lock);
 }
 
+/* Configure all proxies which lack a maxconn setting to use the global one by
+ * default. This avoids the common mistake consisting in setting maxconn only
+ * in the global section and discovering the hard way that it doesn't propagate
+ * through the frontends. These values are also propagated through the various
+ * targetted backends, whose fullconn is finally calculated if not yet set.
+ */
+void proxy_adjust_all_maxconn()
+{
+	struct proxy *curproxy;
+	struct switching_rule *swrule1, *swrule2;
+
+	for (curproxy = proxies_list; curproxy; curproxy = curproxy->next) {
+		if (curproxy->state == PR_STSTOPPED)
+			continue;
+
+		if (!(curproxy->cap & PR_CAP_FE))
+			continue;
+
+		if (!curproxy->maxconn)
+			curproxy->maxconn = global.maxconn;
+
+		/* update the target backend's fullconn count : default_backend */
+		if (curproxy->defbe.be)
+			curproxy->defbe.be->tot_fe_maxconn += curproxy->maxconn;
+		else if ((curproxy->cap & PR_CAP_LISTEN) == PR_CAP_LISTEN)
+			curproxy->tot_fe_maxconn += curproxy->maxconn;
+
+		list_for_each_entry(swrule1, &curproxy->switching_rules, list) {
+			/* For each target of switching rules, we update their
+			 * tot_fe_maxconn, except if a previous rule points to
+			 * the same backend or to the default backend.
+			 */
+			if (swrule1->be.backend != curproxy->defbe.be) {
+				/* note: swrule1->be.backend isn't a backend if the rule
+				 * is dynamic, it's an expression instead, so it must not
+				 * be dereferenced as a backend before being certain it is.
+				 */
+				list_for_each_entry(swrule2, &curproxy->switching_rules, list) {
+					if (swrule2 == swrule1) {
+						if (!swrule1->dynamic)
+							swrule1->be.backend->tot_fe_maxconn += curproxy->maxconn;
+						break;
+					}
+					else if (!swrule2->dynamic && swrule2->be.backend == swrule1->be.backend) {
+						/* there are multiple refs of this backend */
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	/* automatically compute fullconn if not set. We must not do it in the
+	 * loop above because cross-references are not yet fully resolved.
+	 */
+	for (curproxy = proxies_list; curproxy; curproxy = curproxy->next) {
+		if (curproxy->state == PR_STSTOPPED)
+			continue;
+
+		/* If <fullconn> is not set, let's set it to 10% of the sum of
+		 * the possible incoming frontend's maxconns.
+		 */
+		if (!curproxy->fullconn && (curproxy->cap & PR_CAP_BE)) {
+			/* we have the sum of the maxconns in <total>. We only
+			 * keep 10% of that sum to set the default fullconn, with
+			 * a hard minimum of 1 (to avoid a divide by zero).
+			 */
+			curproxy->fullconn = (curproxy->tot_fe_maxconn + 9) / 10;
+			if (!curproxy->fullconn)
+				curproxy->fullconn = 1;
+		}
+	}
+}
+
 /* Config keywords below */
 
 static struct cfg_kw_list cfg_kws = {ILH, {
@@ -1509,6 +1709,7 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 	{ CFG_LISTEN, "rate-limit", proxy_parse_rate_limit },
 	{ CFG_LISTEN, "max-keep-alive-queue", proxy_parse_max_ka_queue },
 	{ CFG_LISTEN, "declare", proxy_parse_declare },
+	{ CFG_LISTEN, "retry-on", proxy_parse_retry_on },
 	{ 0, NULL, NULL },
 }};
 
@@ -1608,7 +1809,7 @@ static int dump_servers_state(struct stream_interface *si, struct buffer *buf)
 	char *srvrecord;
 
 	/* we don't want to report any state if the backend is not enabled on this process */
-	if (px->bind_proc && !(px->bind_proc & pid_bit))
+	if (!(proc_mask(px->bind_proc) & pid_bit))
 		return 1;
 
 	if (!appctx->ctx.cli.p1)
@@ -1729,7 +1930,7 @@ static int cli_io_handler_show_backend(struct appctx *appctx)
 			continue;
 
 		/* we don't want to list a backend which is bound to this process */
-		if (curproxy->bind_proc && !(curproxy->bind_proc & pid_bit))
+		if (!(proc_mask(curproxy->bind_proc) & pid_bit))
 			continue;
 
 		chunk_appendf(&trash, "%s\n", curproxy->id);
@@ -1897,7 +2098,6 @@ static int cli_parse_set_maxconn_frontend(char **args, char *payload, struct app
 
 	px->maxconn = v;
 	list_for_each_entry(l, &px->conf.listeners, by_fe) {
-		l->maxconn = v;
 		if (l->state == LI_FULL)
 			resume_listener(l);
 	}

@@ -1,7 +1,7 @@
                              ------------------------
                              HAProxy Management Guide
                              ------------------------
-                                   version 1.9
+                                   version 2.0
 
 
 This document describes how to start, stop, manage, and troubleshoot HAProxy,
@@ -48,13 +48,21 @@ familiar with troubleshooting utilities such as strace and tcpdump.
 2. Quick reminder about HAProxy's architecture
 ----------------------------------------------
 
-HAProxy is a single-threaded, event-driven, non-blocking daemon. This means is
+HAProxy is a multi-threaded, event-driven, non-blocking daemon. This means is
 uses event multiplexing to schedule all of its activities instead of relying on
 the system to schedule between multiple activities. Most of the time it runs as
 a single process, so the output of "ps aux" on a system will report only one
 "haproxy" process, unless a soft reload is in progress and an older process is
 finishing its job in parallel to the new one. It is thus always easy to trace
-its activity using the strace utility.
+its activity using the strace utility. In order to scale with the number of
+available processors, by default haproxy will start one worker thread per
+processor it is allowed to run on. Unless explicitly configured differently,
+the incoming traffic is spread over all these threads, all running the same
+event loop. A great care is taken to limit inter-thread dependencies to the
+strict minimum, so as to try to achieve near-linear scalability. This has some
+impacts such as the fact that a given connection is served by a single thread.
+Thus in order to use all available processing capacity, it is needed to have at
+least as many connections as there are threads, which is almost always granted.
 
 HAProxy is designed to isolate itself into a chroot jail during startup, where
 it cannot perform any file-system access at all. This is also true for the
@@ -1091,6 +1099,10 @@ S (Servers).
  81: dcon [LF..]: requests denied by "tcp-request connection" rules
  82: dses [LF..]: requests denied by "tcp-request session" rules
  83: wrew [LFBS]: cumulative number of failed header rewriting warnings
+ 84: connect [..BS]: cumulative number of connection establishment attempts
+ 85: reuse [..BS]: cumulative number of connection reuses
+ 86: cache_lookups [.FB.]: cumulative number of cache lookups
+ 87: cache_hits [.FB.]: cumulative number of cache hits
 
 
 9.2) Typed output format
@@ -1446,6 +1458,12 @@ clear table <table> [ data.<type> <operator> <value> ] | [ key <key> ]
         $ echo "show table http_proxy" | socat stdio /tmp/sock1
     >>> # table: http_proxy, type: ip, size:204800, used:1
 
+debug dev <command> [args]*
+  Call a developer-specific command. Only supported when haproxy is built with
+  DEBUG_DEV defined. Supported commands are then listed in the help message.
+  All of these commands require admin privileges, and must never appear on a
+  production system as most of them are unsafe and dangerous.
+
 del acl <acl> [<key>|#<ref>]
   Delete all the acl entries from the acl <acl> corresponding to the key <key>.
   <acl> is the #<id> or the <file> returned by "show acl". If the <ref> is used,
@@ -1659,7 +1677,7 @@ set maxconn global <maxconn>
   delayed until the threshold is reached. A value of zero restores the initial
   setting.
 
-set profiling { tasks } { on | off }
+set profiling { tasks } { auto | on | off }
   Enables or disables CPU profiling for the indicated subsystem. This is
   equivalent to setting or clearing the "profiling" settings in the "global"
   section of the configuration file. Please also see "show profiling".
@@ -2504,6 +2522,26 @@ show table <name> [ data.<type> <operator> <value> ] | [ key <key> ]
           | fgrep 'key=' | cut -d' ' -f2 | cut -d= -f2 > abusers-ip.txt
           ( or | awk '/key/{ print a[split($2,a,"=")]; }' )
 
+show threads
+  Dumps some internal states and structures for each thread, that may be useful
+  to help developers understand a problem. The output tries to be readable by
+  showing one block per thread. When haproxy is built with USE_THREAD_DUMP=1,
+  an advanced dump mechanism involving thread signals is used so that each
+  thread can dump its own state in turn. Without this option, the thread
+  processing the command shows all its details but the other ones are less
+  detailed. A star ('*') is displayed in front of the thread handling the
+  command. A right angle bracket ('>') may also be displayed in front of
+  threads which didn't make any progress since last invocation of this command,
+  indicating a bug in the code which must absolutely be reported. When this
+  happens between two threads it usually indicates a deadlock. If a thread is
+  alone, it's a different bug like a corrupted list. In all cases the process
+  needs is not fully functional anymore and needs to be restarted.
+
+  The output format is purposely not documented so that it can easily evolve as
+  new needs are identified, without having to maintain any form of backwards
+  compatibility, and just like with "show activity", the values are meaningless
+  without the code at hand.
+
 show tls-keys [id|*]
   Dump all loaded TLS ticket keys references. The TLS ticket key reference ID
   and the file from which the keys have been loaded is shown. Both of those
@@ -2578,13 +2616,13 @@ processes:
 Example:
 
   $ echo 'show proc' | socat /var/run/haproxy-master.sock -
-  #<PID>          <type>          <relative PID>  <reloads>       <uptime>
-  1162            master          0               5               0d 00h02m07s
+  #<PID>          <type>          <relative PID>  <reloads>       <uptime>        <version>
+  1162            master          0               5               0d00h02m07s     2.0-dev7-0124c9-7
   # workers
-  1271            worker          1               0               0d 00h00m00s
-  1272            worker          2               0               0d 00h00m00s
+  1271            worker          1               0               0d00h00m00s     2.0-dev7-0124c9-7
+  1272            worker          2               0               0d00h00m00s     2.0-dev7-0124c9-7
   # old workers
-  1233            worker          [was: 1]        3               0d 00h00m43s
+  1233            worker          [was: 1]        3               0d00h00m43s     2.0-dev3-6019f6-289
 
 
 In this example, the master has been reloaded 5 times but one of the old

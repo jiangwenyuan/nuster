@@ -195,6 +195,7 @@ enum field_format {
 	FF_S64      = 0x00000003,
 	FF_U64      = 0x00000004,
 	FF_STR      = 0x00000005,
+	FF_FLT      = 0x00000006,
 	FF_MASK     = 0x000000FF,
 };
 
@@ -242,6 +243,7 @@ struct field {
 		uint32_t    u32; /* FF_U32 */
 		int64_t     s64; /* FF_S64 */
 		uint64_t    u64; /* FF_U64 */
+		double      flt; /* FF_FLT */
 		const char *str; /* FF_STR */
 	} u;
 };
@@ -312,6 +314,9 @@ enum info_field {
 	INF_CONNECTED_PEERS,
 	INF_DROPPED_LOGS,
 	INF_BUSY_POLLING,
+	INF_FAILED_RESOLUTIONS,
+	INF_TOTAL_BYTES_OUT,
+	INF_BYTES_OUT_RATE,
 
 	/* must always be the last one */
 	INF_TOTAL_FIELDS

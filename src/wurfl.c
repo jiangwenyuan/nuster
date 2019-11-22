@@ -10,6 +10,8 @@
 #include <proto/arg.h>
 #include <proto/log.h>
 #include <proto/proto_http.h>
+#include <proto/http_fetch.h>
+#include <proto/http_htx.h>
 #include <proto/sample.h>
 #include <ebsttree.h>
 #include <ebmbtree.h>
@@ -19,8 +21,6 @@
 static struct {
 	char *data_file; /* the WURFL data file */
 	char *cache_size; /* the WURFL cache parameters */
-	int engine_mode; /* the WURFL engine mode */
-	int useragent_priority; /* the WURFL ua priority */
 	struct list patch_file_list; /* the list of WURFL patch file to use */
 	char information_list_separator; /* the separator used in request to separate values */
 	struct list information_list; /* the list of WURFL data to return into request */
@@ -29,8 +29,6 @@ static struct {
 } global_wurfl = {
 	.data_file = NULL,
 	.cache_size = NULL,
-	.engine_mode = -1,
-	.useragent_priority = -1,
 	.information_list_separator = ',',
 	.information_list = LIST_HEAD_INIT(global_wurfl.information_list),
 	.patch_file_list = LIST_HEAD_INIT(global_wurfl.patch_file_list),
@@ -72,14 +70,9 @@ typedef struct {
 	struct ebmb_node nd;
 } wurfl_data_t;
 
-static const char HA_WURFL_MODULE_VERSION[] = "1.0";
+static const char HA_WURFL_MODULE_VERSION[] = "2.0";
 static const char HA_WURFL_ISDEVROOT_FALSE[] = "FALSE";
 static const char HA_WURFL_ISDEVROOT_TRUE[] = "TRUE";
-static const char HA_WURFL_TARGET_ACCURACY[] = "accuracy";
-static const char HA_WURFL_TARGET_PERFORMANCE[] = "performance";
-static const char HA_WURFL_PRIORITY_PLAIN[] = "plain";
-static const char HA_WURFL_PRIORITY_SIDELOADED_BROWSER[] = "sideloaded_browser";
-static const char HA_WURFL_MIN_ENGINE_VERSION_MANDATORY[] = "1.8.0.0";
 
 static const char HA_WURFL_DATA_TYPE_UNKNOWN_STRING[] = "unknown";
 static const char HA_WURFL_DATA_TYPE_CAP_STRING[] = "capability";
@@ -105,15 +98,15 @@ static const struct {
 	const char *(*func)(wurfl_handle wHandle, wurfl_device_handle dHandle);
 } wurfl_properties_function_map [] = {
 	{"wurfl_api_version", ha_wurfl_get_wurfl_api_version},
-	{"wurfl_engine_target", ha_wurfl_get_wurfl_engine_target},
+	{"wurfl_engine_target", ha_wurfl_get_wurfl_engine_target}, // kept for backward conf file compat
 	{"wurfl_id", ha_wurfl_get_wurfl_id },
 	{"wurfl_info", ha_wurfl_get_wurfl_info },
 	{"wurfl_isdevroot", ha_wurfl_get_wurfl_isdevroot},
 	{"wurfl_last_load_time", ha_wurfl_get_wurfl_last_load_time},
 	{"wurfl_normalized_useragent", ha_wurfl_get_wurfl_normalized_useragent},
-	{"wurfl_useragent", ha_wurfl_get_wurfl_useragent},
-	{"wurfl_useragent_priority", ha_wurfl_get_wurfl_useragent_priority },
 	{"wurfl_root_id", ha_wurfl_get_wurfl_root_id},
+	{"wurfl_useragent", ha_wurfl_get_wurfl_useragent},
+	{"wurfl_useragent_priority", ha_wurfl_get_wurfl_useragent_priority }, // kept for backward conf file compat
 };
 static const int HA_WURFL_PROPERTIES_NBR = 10;
 
@@ -166,23 +159,8 @@ static int ha_wurfl_cfg_engine_mode(char **args, int section_type, struct proxy 
                                     struct proxy *defpx, const char *file, int line,
                                     char **err)
 {
-	if (*(args[1]) == 0) {
-		memprintf(err, "WURFL: %s expects a value.\n", args[0]);
-		return -1;
-	}
-
-	if (!strcmp(args[1],HA_WURFL_TARGET_ACCURACY)) {
-		global_wurfl.engine_mode = WURFL_ENGINE_TARGET_HIGH_ACCURACY;
-		return 0;
-	}
-
-	if (!strcmp(args[1],HA_WURFL_TARGET_PERFORMANCE)) {
-		global_wurfl.engine_mode = WURFL_ENGINE_TARGET_HIGH_PERFORMANCE;
-		return 0;
-	}
-
-	memprintf(err, "WURFL: %s valid values are %s or %s.\n", args[0], HA_WURFL_TARGET_PERFORMANCE, HA_WURFL_TARGET_ACCURACY);
-	return -1;
+	// kept for backward conf file compat
+	return 0;
 }
 
 static int ha_wurfl_cfg_information_list_separator(char **args, int section_type, struct proxy *curpx,
@@ -265,23 +243,9 @@ static int ha_wurfl_cfg_useragent_priority(char **args, int section_type, struct
                                            struct proxy *defpx, const char *file, int line,
                                            char **err)
 {
-	if (*(args[1]) == 0) {
-		memprintf(err, "WURFL: %s expects a value.\n", args[0]);
-		return -1;
-	}
-
-	if (!strcmp(args[1],HA_WURFL_PRIORITY_PLAIN)) {
-		global_wurfl.useragent_priority = WURFL_USERAGENT_PRIORITY_USE_PLAIN_USERAGENT;
-		return 0;
-	}
-
-	if (!strcmp(args[1],HA_WURFL_PRIORITY_SIDELOADED_BROWSER)) {
-		global_wurfl.useragent_priority = WURFL_USERAGENT_PRIORITY_OVERRIDE_SIDELOADED_BROWSER_USERAGENT;
-		return 0;
-	}
-
-	memprintf(err, "WURFL: %s valid values are %s or %s.\n", args[0], HA_WURFL_PRIORITY_PLAIN, HA_WURFL_PRIORITY_SIDELOADED_BROWSER);
-	return -1;
+	// this feature is deprecated, keeping only not to break compatibility
+	// with old configuration files.
+	return 0;
 }
 
 /*
@@ -296,39 +260,35 @@ static int ha_wurfl_init(void)
 	int wurfl_result_code = WURFL_OK;
 	int len;
 
-	send_log(NULL, LOG_NOTICE, "WURFL: Loading module v.%s\n", HA_WURFL_MODULE_VERSION);
+	// wurfl-data-file not configured, WURFL is not used so don't try to
+	// configure it.
+	if (global_wurfl.data_file == NULL)
+		return 0;
+
+	ha_notice("WURFL: Loading module v.%s\n", HA_WURFL_MODULE_VERSION);
 	// creating WURFL handler
 	global_wurfl.handle = wurfl_create();
 
 	if (global_wurfl.handle == NULL) {
-		ha_warning("WURFL: Engine handler creation failed");
-		send_log(NULL, LOG_WARNING, "WURFL: Engine handler creation failed\n");
+		ha_warning("WURFL: Engine handler creation failed\n");
 		return ERR_WARN;
 	}
 
-	send_log(NULL, LOG_NOTICE, "WURFL: Engine handler created - API version %s\n", wurfl_get_api_version() );
+	ha_notice("WURFL: Engine handler created - API version %s\n", wurfl_get_api_version() );
 
 	// set wurfl data file
-	if (global_wurfl.data_file == NULL) {
-		ha_warning("WURFL: missing wurfl-data-file parameter in global configuration\n");
-		send_log(NULL, LOG_WARNING, "WURFL: missing wurfl-data-file parameter in global configuration\n");
-		return ERR_WARN;
-	}
-
 	if (wurfl_set_root(global_wurfl.handle, global_wurfl.data_file) != WURFL_OK) {
 		ha_warning("WURFL: Engine setting root file failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-		send_log(NULL, LOG_WARNING, "WURFL: Engine setting root file failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
 		return ERR_WARN;
 	}
 
-	send_log(NULL, LOG_NOTICE, "WURFL: Engine root file set to %s\n", global_wurfl.data_file);
+	ha_notice("WURFL: Engine root file set to %s\n", global_wurfl.data_file);
 	// just a log to inform which separator char has to be used
-	send_log(NULL, LOG_NOTICE, "WURFL: Information list separator set to '%c'\n", global_wurfl.information_list_separator);
+	ha_notice("WURFL: Information list separator set to '%c'\n", global_wurfl.information_list_separator);
 
 	// load wurfl data needed ( and filter whose are supposed to be capabilities )
 	if (LIST_ISEMPTY(&global_wurfl.information_list)) {
 		ha_warning("WURFL: missing wurfl-information-list parameter in global configuration\n");
-		send_log(NULL, LOG_WARNING, "WURFL: missing wurfl-information-list parameter in global configuration\n");
 		return ERR_WARN;
 	} else {
 		// ebtree initialization
@@ -340,21 +300,24 @@ static int ha_wurfl_init(void)
 			if (ebst_lookup(&global_wurfl.btree, wi->data.name) == NULL) {
 				if ((wi->data.func_callback = (PROP_CALLBACK_FUNC) ha_wurfl_get_property_callback(wi->data.name)) != NULL) {
 					wi->data.type = HA_WURFL_DATA_TYPE_PROPERTY;
-					ha_wurfl_log("WURFL: [%s] is a valid wurfl data [property]\n",wi->data.name);
+#ifdef WURFL_DEBUG
+					ha_notice("WURFL: [%s] is a valid wurfl data [property]\n",wi->data.name);
+#endif
 				} else if (wurfl_has_virtual_capability(global_wurfl.handle, wi->data.name)) {
 					wi->data.type = HA_WURFL_DATA_TYPE_VCAP;
-					ha_wurfl_log("WURFL: [%s] is a valid wurfl data [virtual capability]\n",wi->data.name);
+#ifdef WURFL_DEBUG
+					ha_notice("WURFL: [%s] is a valid wurfl data [virtual capability]\n",wi->data.name);
+#endif
 				} else {
 					// by default a cap type is assumed to be and we control it on engine load
 					wi->data.type = HA_WURFL_DATA_TYPE_CAP;
 
 					if (wurfl_add_requested_capability(global_wurfl.handle, wi->data.name) != WURFL_OK) {
 						ha_warning("WURFL: capability filtering failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-						send_log(NULL, LOG_WARNING, "WURFL: capability filtering failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
 						return ERR_WARN;
 					}
 
-					ha_wurfl_log("WURFL: [%s] treated as wurfl capability. Will check its validity later, on engine load\n",wi->data.name);
+					ha_notice("WURFL: [%s] treated as wurfl capability. Will check its validity later, on engine load\n",wi->data.name);
 				}
 
 				// ebtree insert here
@@ -364,7 +327,6 @@ static int ha_wurfl_init(void)
 
 				if (wn == NULL) {
 					ha_warning("WURFL: Error allocating memory for information tree element.\n");
-					send_log(NULL, LOG_WARNING, "WURFL: Error allocating memory for information tree element.\n");
 					return ERR_WARN;
 				}
 
@@ -376,44 +338,19 @@ static int ha_wurfl_init(void)
 
 				if (!ebst_insert(&global_wurfl.btree, &wn->nd)) {
 					ha_warning("WURFL: [%s] not inserted in btree\n",wn->name);
-					send_log(NULL, LOG_WARNING, "WURFL: [%s] not inserted in btree\n",wn->name);
 					return ERR_WARN;
 				}
 
 			} else {
-				ha_wurfl_log("WURFL: [%s] already loaded\n",wi->data.name);
+#ifdef WURFL_DEBUG
+				ha_notice("WURFL: [%s] already loaded\n",wi->data.name);
+#endif
 			}
 
 		}
 
 	}
 
-	// filtering mandatory capabilities if engine version < 1.8.0.0
-	if (strcmp(wurfl_get_api_version(), HA_WURFL_MIN_ENGINE_VERSION_MANDATORY) < 0) {
-		wurfl_capability_enumerator_handle hmandatorycapabilityenumerator;
-		ha_wurfl_log("WURFL: Engine version %s < %s - Filtering mandatory capabilities\n", wurfl_get_api_version(), HA_WURFL_MIN_ENGINE_VERSION_MANDATORY);
-		hmandatorycapabilityenumerator = wurfl_get_mandatory_capability_enumerator(global_wurfl.handle);
-
-		while (wurfl_capability_enumerator_is_valid(hmandatorycapabilityenumerator)) {
-			char *name = (char *)wurfl_capability_enumerator_get_name(hmandatorycapabilityenumerator);
-
-			if (ebst_lookup(&global_wurfl.btree, name) == NULL) {
-				if (wurfl_add_requested_capability(global_wurfl.handle, name) != WURFL_OK) {
-					ha_warning("WURFL: Engine adding mandatory capability [%s] failed - %s\n", name, wurfl_get_error_message(global_wurfl.handle));
-					send_log(NULL, LOG_WARNING, "WURFL: Adding mandatory capability [%s] failed - %s\n", name, wurfl_get_error_message(global_wurfl.handle));
-					return ERR_WARN;
-				}
-
-				ha_wurfl_log("WURFL: Mandatory capability [%s] added\n", name);
-			} else {
-				ha_wurfl_log("WURFL: Mandatory capability [%s] already filtered\n", name);
-			}
-
-			wurfl_capability_enumerator_move_next(hmandatorycapabilityenumerator);
-		}
-
-		wurfl_capability_enumerator_destroy(hmandatorycapabilityenumerator);
-	}
 
 	// adding WURFL patches if needed
 	if (!LIST_ISEMPTY(&global_wurfl.patch_file_list)) {
@@ -421,10 +358,9 @@ static int ha_wurfl_init(void)
 		list_for_each_entry(wp, &global_wurfl.patch_file_list, list) {
 			if (wurfl_add_patch(global_wurfl.handle, wp->patch_file_path) != WURFL_OK) {
 				ha_warning("WURFL: Engine adding patch file failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-				send_log(NULL, LOG_WARNING, "WURFL: Adding engine patch file failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
 				return ERR_WARN;
 			}
-			send_log(NULL, LOG_NOTICE, "WURFL: Engine patch file added %s\n", wp->patch_file_path);
+			ha_notice("WURFL: Engine patch file added %s\n", wp->patch_file_path);
 
 		}
 
@@ -445,46 +381,20 @@ static int ha_wurfl_init(void)
 
 		if (wurfl_result_code != WURFL_OK) {
 			ha_warning("WURFL: Setting cache to [%s] failed - %s\n", global_wurfl.cache_size, wurfl_get_error_message(global_wurfl.handle));
-			send_log(NULL, LOG_WARNING, "WURFL: Setting cache to [%s] failed - %s\n", global_wurfl.cache_size, wurfl_get_error_message(global_wurfl.handle));
 			return ERR_WARN;
 		}
 
-		send_log(NULL, LOG_NOTICE, "WURFL: Cache set to [%s]\n", global_wurfl.cache_size);
+		ha_notice("WURFL: Cache set to [%s]\n", global_wurfl.cache_size);
 	}
-
-	// setting engine mode if specified in cfg, otherwise let engine choose
-	if (global_wurfl.engine_mode != -1) {
-		if (wurfl_set_engine_target(global_wurfl.handle, global_wurfl.engine_mode) != WURFL_OK ) {
-			ha_warning("WURFL: Setting engine target failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-			send_log(NULL, LOG_WARNING, "WURFL: Setting engine target failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-			return ERR_WARN;
-		}
-
-	}
-
-	send_log(NULL, LOG_NOTICE, "WURFL: Engine target set to [%s]\n", (global_wurfl.engine_mode == WURFL_ENGINE_TARGET_HIGH_PERFORMANCE) ? (HA_WURFL_TARGET_PERFORMANCE) : (HA_WURFL_TARGET_ACCURACY) );
-
-	// setting ua priority if specified in cfg, otherwise let engine choose
-	if (global_wurfl.useragent_priority != -1) {
-		if (wurfl_set_useragent_priority(global_wurfl.handle, global_wurfl.useragent_priority) != WURFL_OK ) {
-			ha_warning("WURFL: Setting engine useragent priority failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-			send_log(NULL, LOG_WARNING, "WURFL: Setting engine useragent priority failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-			return ERR_WARN;
-		}
-
-	}
-
-	send_log(NULL, LOG_NOTICE, "WURFL: Engine useragent priority set to [%s]\n", (global_wurfl.useragent_priority == WURFL_USERAGENT_PRIORITY_USE_PLAIN_USERAGENT) ? (HA_WURFL_PRIORITY_PLAIN) : (HA_WURFL_PRIORITY_SIDELOADED_BROWSER) );
 
 	// loading WURFL engine
 	if (wurfl_load(global_wurfl.handle) != WURFL_OK) {
 		ha_warning("WURFL: Engine load failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
-		send_log(NULL, LOG_WARNING, "WURFL: Engine load failed - %s\n", wurfl_get_error_message(global_wurfl.handle));
 		return ERR_WARN;
 	}
 
-	send_log(NULL, LOG_NOTICE, "WURFL: Engine loaded\n");
-	send_log(NULL, LOG_NOTICE, "WURFL: Module load completed\n");
+	ha_notice("WURFL: Engine loaded\n");
+	ha_notice("WURFL: Module load completed\n");
 	return 0;
 }
 
@@ -520,21 +430,38 @@ static int ha_wurfl_get_all(const struct arg *args, struct sample *smp, const ch
 	struct buffer *temp;
 	wurfl_information_t *wi;
 	ha_wurfl_header_t wh;
+	struct channel *chn;
 
 	ha_wurfl_log("WURFL: starting ha_wurfl_get_all\n");
-	wh.wsmp = smp;
-	dHandle = wurfl_lookup(global_wurfl.handle, &ha_wurfl_retrieve_header, &wh);
 
-	if (!dHandle) {
-		ha_wurfl_log("WURFL: unable to retrieve device from request %s\n", wurfl_get_error_message(global_wurfl.handle));
-		return 1;
+	chn = (smp->strm ? &smp->strm->req : NULL);
+
+	if (smp->px->options2 & PR_O2_USE_HTX) {
+		/* HTX version */
+		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+
+		if (!htx) {
+			return 0;
+		}
+
+	} else {
+		/* Legacy version */
+		CHECK_HTTP_MESSAGE_FIRST(chn);
 	}
+
+	wh.wsmp = smp;
+
+	dHandle = wurfl_lookup(global_wurfl.handle, &ha_wurfl_retrieve_header, &wh);
 
 	temp = get_trash_chunk();
 	chunk_reset(temp);
 
+	if (!dHandle) {
+		ha_wurfl_log("WURFL: unable to retrieve device from request %s\n", wurfl_get_error_message(global_wurfl.handle));
+		goto wurfl_get_all_completed;
+	}
+
 	list_for_each_entry(wi, &global_wurfl.information_list, list) {
-		chunk_appendf(temp, "%c", global_wurfl.information_list_separator);
 
 		switch(wi->data.type) {
 		case HA_WURFL_DATA_TYPE_UNKNOWN :
@@ -570,11 +497,23 @@ static int ha_wurfl_get_all(const struct arg *args, struct sample *smp, const ch
 			break;
 		}
 
+		// append wurfl-information-list-separator
+		chunk_appendf(temp, "%c", global_wurfl.information_list_separator);
 	}
+
+wurfl_get_all_completed:
 
 	wurfl_device_destroy(dHandle);
 	smp->data.u.str.area = temp->area;
 	smp->data.u.str.data = temp->data;
+
+	// remove trailing wurfl-information-list-separator
+	if (temp->data) {
+		temp->area[temp->data] = '\0';
+		--smp->data.u.str.data;
+	}
+
+	smp->data.type = SMP_T_STR;
 	return 1;
 }
 
@@ -586,21 +525,38 @@ static int ha_wurfl_get(const struct arg *args, struct sample *smp, const char *
 	struct ebmb_node *node;
 	ha_wurfl_header_t wh;
 	int i = 0;
+	struct channel *chn;
 
 	ha_wurfl_log("WURFL: starting ha_wurfl_get\n");
-	wh.wsmp = smp;
-	dHandle = wurfl_lookup(global_wurfl.handle, &ha_wurfl_retrieve_header, &wh);
 
-	if (!dHandle) {
-		ha_wurfl_log("WURFL: unable to retrieve device from request %s\n", wurfl_get_error_message(global_wurfl.handle));
-		return 1;
+	chn = (smp->strm ? &smp->strm->req : NULL);
+
+	if (smp->px->options2 & PR_O2_USE_HTX) {
+		/* HTX version */
+		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+
+		if (!htx) {
+			return 0;
+		}
+
+	} else {
+		/* Legacy version */
+		CHECK_HTTP_MESSAGE_FIRST(chn);
 	}
+
+	wh.wsmp = smp;
+
+	dHandle = wurfl_lookup(global_wurfl.handle, &ha_wurfl_retrieve_header, &wh);
 
 	temp = get_trash_chunk();
 	chunk_reset(temp);
 
+	if (!dHandle) {
+		ha_wurfl_log("WURFL: unable to retrieve device from request %s\n", wurfl_get_error_message(global_wurfl.handle));
+		goto wurfl_get_completed;
+	}
+
 	while (args[i].data.str.area) {
-		chunk_appendf(temp, "%c", global_wurfl.information_list_separator);
 		node = ebst_lookup(&global_wurfl.btree, args[i].data.str.area);
 
 		if (node) {
@@ -641,6 +597,9 @@ static int ha_wurfl_get(const struct arg *args, struct sample *smp, const char *
 				break;
 			}
 
+			// append wurfl-information-list-separator
+			chunk_appendf(temp, "%c", global_wurfl.information_list_separator);
+
 		} else {
 			ha_wurfl_log("WURFL: %s not in wurfl-information-list \n",
 				     args[i].data.str.area);
@@ -649,9 +608,19 @@ static int ha_wurfl_get(const struct arg *args, struct sample *smp, const char *
 		i++;
 	}
 
+wurfl_get_completed:
+
 	wurfl_device_destroy(dHandle);
 	smp->data.u.str.area = temp->area;
 	smp->data.u.str.data = temp->data;
+
+	// remove trailing wurfl-information-list-separator
+	if (temp->data) {
+		temp->area[temp->data] = '\0';
+		--smp->data.u.str.data;
+	}
+
+	smp->data.type = SMP_T_STR;
 	return 1;
 }
 
@@ -690,7 +659,10 @@ INITCALL1(STG_REGISTER, sample_register_convs, &conv_kws);
 // WURFL properties wrapper functions
 static const char *ha_wurfl_get_wurfl_root_id (wurfl_handle wHandle, wurfl_device_handle dHandle)
 {
-	return wurfl_device_get_root_id(dHandle);
+	if (wurfl_device_get_root_id(dHandle))
+		return wurfl_device_get_root_id(dHandle);
+	else
+		return "";
 }
 
 static const char *ha_wurfl_get_wurfl_id (wurfl_handle wHandle, wurfl_device_handle dHandle)
@@ -718,7 +690,7 @@ static const char *ha_wurfl_get_wurfl_api_version (wurfl_handle wHandle, wurfl_d
 
 static const char *ha_wurfl_get_wurfl_engine_target (wurfl_handle wHandle, wurfl_device_handle dHandle)
 {
-	return wurfl_get_engine_target_as_string(wHandle);
+	return "default";
 }
 
 static const char *ha_wurfl_get_wurfl_info (wurfl_handle wHandle, wurfl_device_handle dHandle)
@@ -738,7 +710,7 @@ static const char *ha_wurfl_get_wurfl_normalized_useragent (wurfl_handle wHandle
 
 static const char *ha_wurfl_get_wurfl_useragent_priority (wurfl_handle wHandle, wurfl_device_handle dHandle)
 {
-	return wurfl_get_useragent_priority_as_string(wHandle);
+	return "default";
 }
 
 // call function for WURFL properties
@@ -768,29 +740,95 @@ static const char *(*ha_wurfl_get_property_callback(char *name)) (wurfl_handle w
 static const char *ha_wurfl_retrieve_header(const char *header_name, const void *wh)
 {
 	struct sample *smp;
-	struct hdr_idx *idx;
-	struct hdr_ctx ctx;
-	const struct http_msg *msg;
+	struct channel *chn;
 	int header_len = HA_WURFL_MAX_HEADER_LENGTH;
 
-	ha_wurfl_log("WURFL: retrieve header request [%s]\n", header_name);
 	smp =  ((ha_wurfl_header_t *)wh)->wsmp;
-	idx = &smp->strm->txn->hdr_idx;
-	msg = &smp->strm->txn->req;
-	ctx.idx = 0;
+	chn = (smp->strm ? &smp->strm->req : NULL);
 
-	if (http_find_full_header2(header_name, strlen(header_name), ci_head(msg->chn), idx, &ctx) == 0)
-		return 0;
+	if (smp->px->options2 & PR_O2_USE_HTX) {
+		/* HTX version */
+		struct htx *htx;
+		struct http_hdr_ctx ctx;
+		struct ist name;
 
-	if (header_len > ctx.vlen)
-		header_len = ctx.vlen;
+		ha_wurfl_log("WURFL: retrieve header (HTX) request [%s]\n", header_name);
 
-	strncpy(((ha_wurfl_header_t *)wh)->header_value, ctx.line + ctx.val, header_len);
+		//the header is searched from the beginning
+		ctx.blk = NULL;
+
+		// We could skip this chek since ha_wurfl_retrieve_header is called from inside
+		// ha_wurfl_get()/ha_wurfl_get_all() that already perform the same check
+		// We choose to keep it in case ha_wurfl_retrieve_header will be called directly
+		htx = smp_prefetch_htx(smp, chn, 1);
+		if (!htx) {
+			return NULL;
+		}
+
+		name.ptr = (char *)header_name;
+		name.len = strlen(header_name);
+
+		// If 4th param is set, it works on full-line headers in whose comma is not a delimiter but is
+		// part of the syntax
+		if (!http_find_header(htx, name, &ctx, 1)) {
+			return NULL;
+		}
+
+		if (header_len > ctx.value.len)
+			header_len = ctx.value.len;
+
+		strncpy(((ha_wurfl_header_t *)wh)->header_value, ctx.value.ptr, header_len);
+
+	} else {
+		/* Legacy version */
+		struct http_txn *txn;
+		struct hdr_idx *idx;
+		struct hdr_ctx ctx;
+		int res;
+
+		ha_wurfl_log("WURFL: retrieve header (legacy) request [%s]\n", header_name);
+
+		// We could skip this chek since ha_wurfl_retrieve_header is called from inside
+		// ha_wurfl_get()/ha_wurfl_get_all() that already perform the same check
+		// We choose to keep it in case ha_wurfl_retrieve_header will be called directly
+		// This is a version of CHECK_HTTP_MESSAGE_FIRST(chn) which returns NULL in case of error
+		res = smp_prefetch_http(smp->px, smp->strm, smp->opt, (chn), smp, 1);
+		if (res <= 0) {
+			return NULL;
+		}
+
+		txn = smp->strm->txn;
+		idx = &txn->hdr_idx;
+
+		ctx.idx = 0;
+
+		if (http_find_full_header2(header_name, strlen(header_name), ci_head(chn), idx, &ctx) == 0)
+			return NULL;
+
+		if (header_len > ctx.vlen)
+			header_len = ctx.vlen;
+
+		strncpy(((ha_wurfl_header_t *)wh)->header_value, ctx.line + ctx.val, header_len);
+
+	}
+
 	((ha_wurfl_header_t *)wh)->header_value[header_len] = '\0';
+
 	ha_wurfl_log("WURFL: retrieve header request returns [%s]\n", ((ha_wurfl_header_t *)wh)->header_value);
 	return ((ha_wurfl_header_t *)wh)->header_value;
 }
 
+static void ha_wurfl_register_build_options()
+{
+	const char *ver = wurfl_get_api_version();
+	char *ptr = NULL;
+
+	memprintf(&ptr, "Built with WURFL support (%sversion %s)",
+		  strcmp(ver, "1.11.2.100") ? "" : "dummy library ",
+		  ver);
+	hap_register_build_opts(ptr, 1);
+}
+
 REGISTER_POST_CHECK(ha_wurfl_init);
 REGISTER_POST_DEINIT(ha_wurfl_deinit);
-REGISTER_BUILD_OPTS("Built with WURFL support.");
+INITCALL0(STG_REGISTER, ha_wurfl_register_build_options);

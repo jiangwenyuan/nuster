@@ -22,6 +22,7 @@
 #ifndef _TYPES_APPLET_H
 #define _TYPES_APPLET_H
 
+#include <types/freq_ctr.h>
 #include <types/hlua.h>
 #include <types/obj_type.h>
 #include <types/proxy.h>
@@ -30,8 +31,6 @@
 #include <common/chunk.h>
 #include <common/config.h>
 #include <common/xref.h>
-
-#include <nuster/common.h>
 
 struct appctx;
 
@@ -73,6 +72,7 @@ struct appctx {
 	struct buffer_wait buffer_wait; /* position in the list of objects waiting for a buffer */
 	unsigned long thread_mask;      /* mask of thread IDs authorized to process the applet */
 	struct task *t;                  /* task associated to the applet */
+	struct freq_ctr call_rate;       /* appctx call rate */
 
 	union {
 		union {
@@ -143,6 +143,49 @@ struct appctx {
 		 * keep the grouped together and avoid adding new ones.
 		 */
 		struct {
+			void *ptr;              /* current peer or NULL, do not use for something else */
+		} peers;                        /* used by the peers applet */
+		struct {
+			int connected;
+			struct xref xref; /* cross reference with the Lua object owner. */
+			struct list wake_on_read;
+			struct list wake_on_write;
+			int die;
+		} hlua_cosocket;                /* used by the Lua cosockets */
+		struct {
+			struct hlua *hlua;
+			int flags;
+			struct task *task;
+		} hlua_apptcp;                  /* used by the Lua TCP services */
+		struct {
+			struct hlua *hlua;
+			int left_bytes;         /* The max amount of bytes that we can read. */
+			int flags;
+			int status;
+			const char *reason;
+			struct task *task;
+		} hlua_apphttp;                 /* used by the Lua HTTP services */
+		struct {
+			void *ptr;              /* private pointer for SPOE filter */
+		} spoe;                         /* used by SPOE filter */
+		struct {
+			const char *msg;        /* pointer to a persistent message to be returned in CLI_ST_PRINT state */
+			int severity;           /* severity of the message to be returned according to (syslog) rfc5424 */
+			char *err;              /* pointer to a 'must free' message to be returned in CLI_ST_PRINT_FREE state */
+			void *p0, *p1;          /* general purpose pointers and integers for registered commands, initialized */
+			int i0, i1;             /* to 0 by the CLI before first invocation of the keyword parser. */
+		} cli;                          /* context used by the CLI */
+		struct {
+			struct cache_entry *entry;  /* Entry to be sent from cache. */
+			unsigned int sent;          /* The number of bytes already sent for this cache entry. */
+			unsigned int offset;        /* start offset of remaining data relative to beginning of the next block */
+			unsigned int rem_data;      /* Remaing bytes for the last data block (HTX only, 0 means process next block) */
+			struct shared_block *next;  /* The next block of data to be sent for this cache entry. */
+		} cache;
+		/* all entries below are used by various CLI commands, please
+		 * keep the grouped together and avoid adding new ones.
+		 */
+		struct {
 			struct proxy *px;
 			struct server *sv;
 			void *l;
@@ -170,7 +213,7 @@ struct appctx {
 		} errors;
 		struct {
 			void *target;		/* table we want to dump, or NULL for all */
-			struct proxy *proxy;	/* table being currently dumped (first if NULL) */
+			struct stktable *t;	/* table being currently dumped (first if NULL) */
 			struct stksess *entry;	/* last entry we were trying to dump (or first if NULL) */
 			long long value;	/* value to compare against */
 			signed char data_type;	/* type of data to compare, or -1 if none */

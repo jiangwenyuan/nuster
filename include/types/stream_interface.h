@@ -38,10 +38,28 @@ enum si_state {
 	SI_ST_ASS,               /* server just assigned to this interface */
 	SI_ST_CON,               /* initiated connection request (resource exists) */
 	SI_ST_CER,               /* [transient] previous connection attempt failed (resource released) */
+	SI_ST_RDY,               /* [transient] ready proven after I/O success during SI_ST_CON */
 	SI_ST_EST,               /* connection established (resource exists) */
 	SI_ST_DIS,               /* [transient] disconnected from other side, but cleanup not done yet */
 	SI_ST_CLO,               /* stream intf closed, might not existing anymore. Buffers shut. */
 } __attribute__((packed));
+
+/* state bits for use with lists of states */
+enum si_state_bit {
+	SI_SB_NONE = 0,
+	SI_SB_INI = 1U << SI_ST_INI,
+	SI_SB_REQ = 1U << SI_ST_REQ,
+	SI_SB_QUE = 1U << SI_ST_QUE,
+	SI_SB_TAR = 1U << SI_ST_TAR,
+	SI_SB_ASS = 1U << SI_ST_ASS,
+	SI_SB_CON = 1U << SI_ST_CON,
+	SI_SB_CER = 1U << SI_ST_CER,
+	SI_SB_RDY = 1U << SI_ST_RDY,
+	SI_SB_EST = 1U << SI_ST_EST,
+	SI_SB_DIS = 1U << SI_ST_DIS,
+	SI_SB_CLO = 1U << SI_ST_CLO,
+	SI_SB_ALL = SI_SB_INI|SI_SB_REQ|SI_SB_QUE|SI_SB_TAR|SI_SB_ASS|SI_SB_CON|SI_SB_CER|SI_SB_RDY|SI_SB_EST|SI_SB_DIS|SI_SB_CLO,
+};
 
 /* error types reported on the streams interface for more accurate reporting */
 enum {
@@ -83,6 +101,8 @@ enum {
 	SI_FL_RXBLK_CONN = 0x00100000,  /* other side is not connected */
 	SI_FL_RXBLK_ANY  = 0x001F0000,  /* any of the RXBLK flags above */
 	SI_FL_RX_WAIT_EP = 0x00200000,  /* stream-int waits for more data from the end point */
+	SI_FL_L7_RETRY   = 0x01000000,  /* The stream interface may attempt L7 retries */
+	SI_FL_D_L7_RETRY = 0x02000000,  /* Disable L7 retries on this stream interface, even if configured to do it */
 };
 
 /* A stream interface has 3 parts :
@@ -111,6 +131,7 @@ struct stream_interface {
 	int conn_retries;	/* number of connect retries left */
 	unsigned int hcto;      /* half-closed timeout (0 = unset) */
 	struct wait_event wait_event; /* We're in a wait list */
+	struct buffer l7_buffer; /* To store the data, in case we have to retry */
 };
 
 /* operations available on a stream-interface */

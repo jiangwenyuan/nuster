@@ -48,7 +48,7 @@
 static int uxst_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int uxst_bind_listeners(struct protocol *proto, char *errmsg, int errlen);
 static int uxst_unbind_listeners(struct protocol *proto);
-static int uxst_connect_server(struct connection *conn, int data, int delack);
+static int uxst_connect_server(struct connection *conn, int flags);
 static void uxst_add_listener(struct listener *listener, int port);
 static int uxst_pause_listener(struct listener *l);
 static int uxst_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir);
@@ -315,7 +315,7 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 		ready = 0;
 
 	if (!(ext && ready) && /* only listen if not already done by external process */
-	    listen(fd, listener->backlog ? listener->backlog : listener->maxconn) < 0) {
+	    listen(fd, listener_backlog(listener)) < 0) {
 		err |= ERR_FATAL | ERR_ALERT;
 		msg = "cannot listen to UNIX socket";
 		goto err_unlink_temp;
@@ -340,8 +340,7 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 	listener->state = LI_LISTEN;
 
 	fd_insert(fd, listener, listener->proto->accept,
-		  listener->bind_conf->bind_thread[relative_pid-1] ?
-		  listener->bind_conf->bind_thread[relative_pid-1] : MAX_THREADS_MASK);
+	          thread_mask(listener->bind_conf->bind_thread));
 
 	return err;
 
@@ -434,7 +433,7 @@ static int uxst_pause_listener(struct listener *l)
  * The connection's fd is inserted only when SF_ERR_NONE is returned, otherwise
  * it's invalid and the caller has nothing to do.
  */
-static int uxst_connect_server(struct connection *conn, int data, int delack)
+static int uxst_connect_server(struct connection *conn, int flags)
 {
 	int fd;
 	struct server *srv;
@@ -514,7 +513,8 @@ static int uxst_connect_server(struct connection *conn, int data, int delack)
 	}
 
 	/* if a send_proxy is there, there are data */
-	data |= conn->send_proxy_ofs;
+	if (conn->send_proxy_ofs)
+		flags |= CONNECT_HAS_DATA;
 
 	if (global.tune.server_sndbuf)
                 setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &global.tune.server_sndbuf, sizeof(global.tune.server_sndbuf));
@@ -581,20 +581,7 @@ static int uxst_connect_server(struct connection *conn, int data, int delack)
 		return SF_ERR_RESOURCE;
 	}
 
-	if (conn->flags & (CO_FL_HANDSHAKE | CO_FL_WAIT_L4_CONN)) {
-		conn_sock_want_send(conn);  /* for connect status, proxy protocol or SSL */
-	}
-	else {
-		/* If there's no more handshake, we need to notify the data
-		 * layer when the connection is already OK otherwise we'll have
-		 * no other opportunity to do it later (eg: health checks).
-		 */
-		data = 1;
-	}
-
-	if (data)
-		conn_xprt_want_send(conn);  /* prepare to send data if any */
-
+	conn_xprt_want_send(conn);  /* for connect status, proxy protocol or SSL */
 	return SF_ERR_NONE;  /* connection is OK */
 }
 

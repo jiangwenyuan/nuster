@@ -202,17 +202,17 @@ comp_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg,
 	struct comp_state *st = filter->ctx;
 	struct htx *htx = htxbuf(&msg->chn->buf);
 	struct htx_blk *blk;
-	struct htx_ret htx_ret;
 	int ret, consumed = 0, to_forward = 0;
 
-	htx_ret = htx_find_blk(htx, offset);
-	blk = htx_ret.blk;
-	offset = htx_ret.ret;
-
-	while (blk && len) {
+	for (blk = htx_get_first_blk(htx); blk && len; blk = htx_get_next_blk(htx, blk)) {
 		enum htx_blk_type type = htx_get_blk_type(blk);
 		uint32_t sz = htx_get_blksz(blk);
 		struct ist v;
+
+		if (offset >= sz) {
+			offset -= sz;
+			continue;
+		}
 
 		switch (type) {
 			case HTX_BLK_UNUSED:
@@ -245,8 +245,8 @@ comp_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg,
 				blk = htx_replace_blk_value(htx, blk, v, ist2(b_head(&trash), b_data(&trash)));
 				break;
 
-			case HTX_BLK_EOD:
 			case HTX_BLK_TLR:
+			case HTX_BLK_EOT:
 			case HTX_BLK_EOM:
 				if (msg->flags & HTTP_MSGF_COMPRESSING) {
 					if (htx_compression_buffer_init(htx, &trash) < 0) {
@@ -280,7 +280,6 @@ comp_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg,
 		}
 
 		offset = 0;
-		blk  = htx_get_next_blk(htx, blk);
 	}
 
   end:
@@ -289,14 +288,14 @@ comp_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg,
 
 	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
 		update_freq_ctr(&global.comp_bps_in, consumed);
-		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_in, consumed);
-		HA_ATOMIC_ADD(&s->be->be_counters.comp_in, consumed);
+		_HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_in, consumed);
+		_HA_ATOMIC_ADD(&s->be->be_counters.comp_in, consumed);
 		update_freq_ctr(&global.comp_bps_out, to_forward);
-		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_out, to_forward);
-		HA_ATOMIC_ADD(&s->be->be_counters.comp_out, to_forward);
+		_HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_out, to_forward);
+		_HA_ATOMIC_ADD(&s->be->be_counters.comp_out, to_forward);
 	} else {
-		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_byp, consumed);
-		HA_ATOMIC_ADD(&s->be->be_counters.comp_byp, consumed);
+		_HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_byp, consumed);
+		_HA_ATOMIC_ADD(&s->be->be_counters.comp_byp, consumed);
 	}
 	return to_forward;
 
@@ -464,9 +463,9 @@ comp_http_end(struct stream *s, struct filter *filter,
 		goto end;
 
 	if (strm_fe(s)->mode == PR_MODE_HTTP)
-		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.p.http.comp_rsp, 1);
+		_HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.p.http.comp_rsp, 1);
 	if ((s->flags & SF_BE_ASSIGNED) && (s->be->mode == PR_MODE_HTTP))
-		HA_ATOMIC_ADD(&s->be->be_counters.p.http.comp_rsp, 1);
+		_HA_ATOMIC_ADD(&s->be->be_counters.p.http.comp_rsp, 1);
  end:
 	return 1;
 }
@@ -938,7 +937,7 @@ http_select_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg
 			goto fail;
 
 	/* limit cpu usage */
-	if (idle_pct < compress_min_idle)
+	if (ti->idle_pct < compress_min_idle)
 		goto fail;
 
 	/* initialize compression */
@@ -1049,7 +1048,7 @@ htx_select_comp_reshdr(struct comp_state *st, struct stream *s, struct http_msg 
 			goto fail;
 
 	/* limit cpu usage */
-	if (idle_pct < compress_min_idle)
+	if (ti->idle_pct < compress_min_idle)
 		goto fail;
 
 	/* initialize compression */
@@ -1274,11 +1273,11 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 	/* update input rate */
 	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
 		update_freq_ctr(&global.comp_bps_in, st->consumed);
-		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_in, st->consumed);
-		HA_ATOMIC_ADD(&s->be->be_counters.comp_in,      st->consumed);
+		_HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_in, st->consumed);
+		_HA_ATOMIC_ADD(&s->be->be_counters.comp_in,      st->consumed);
 	} else {
-		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_byp, st->consumed);
-		HA_ATOMIC_ADD(&s->be->be_counters.comp_byp,      st->consumed);
+		_HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_byp, st->consumed);
+		_HA_ATOMIC_ADD(&s->be->be_counters.comp_byp,      st->consumed);
 	}
 
 	/* copy the remaining data in the tmp buffer. */
@@ -1301,8 +1300,8 @@ http_compression_buffer_end(struct comp_state *st, struct stream *s,
 
 	if (st->comp_ctx && st->comp_ctx->cur_lvl > 0) {
 		update_freq_ctr(&global.comp_bps_out, to_forward);
-		HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_out, to_forward);
-		HA_ATOMIC_ADD(&s->be->be_counters.comp_out,      to_forward);
+		_HA_ATOMIC_ADD(&strm_fe(s)->fe_counters.comp_out, to_forward);
+		_HA_ATOMIC_ADD(&s->be->be_counters.comp_out,      to_forward);
 	}
 
 	return to_forward;

@@ -45,10 +45,12 @@ void si_retnclose(struct stream_interface *si, const struct buffer *msg);
 int conn_si_send_proxy(struct connection *conn, unsigned int flag);
 struct appctx *si_register_handler(struct stream_interface *si, struct applet *app);
 void si_applet_wake_cb(struct stream_interface *si);
-void si_update(struct stream_interface *si);
+void si_update_rx(struct stream_interface *si);
+void si_update_tx(struct stream_interface *si);
 int si_cs_recv(struct conn_stream *cs);
 struct task *si_cs_io_cb(struct task *t, void *ctx, unsigned short state);
 void si_update_both(struct stream_interface *si_f, struct stream_interface *si_b);
+void si_sync_send(struct stream_interface *si);
 
 /* returns the channel which receives data from this stream interface (input channel) */
 static inline struct channel *si_ic(struct stream_interface *si)
@@ -120,11 +122,11 @@ static inline int si_reset(struct stream_interface *si)
 	si->end            = NULL;
 	si->state          = si->prev_state = SI_ST_INI;
 	si->ops            = &si_embedded_ops;
-	si->wait_event.task = tasklet_new();
-	if (!si->wait_event.task)
+	si->wait_event.tasklet = tasklet_new();
+	if (!si->wait_event.tasklet)
 		return -1;
-	si->wait_event.task->process    = si_cs_io_cb;
-	si->wait_event.task->context = si;
+	si->wait_event.tasklet->process = si_cs_io_cb;
+	si->wait_event.tasklet->context = si;
 	si->wait_event.events = 0;
 	return 0;
 }
@@ -136,6 +138,20 @@ static inline int si_reset(struct stream_interface *si)
 static inline void si_set_state(struct stream_interface *si, int state)
 {
 	si->state = si->prev_state = state;
+}
+
+/* returns a bit for a stream-int state, to match against SI_SB_* */
+static inline enum si_state_bit si_state_bit(enum si_state state)
+{
+	BUG_ON(state > SI_ST_CLO);
+	return 1U << state;
+}
+
+/* returns true if <state> matches one of the SI_SB_* bits in <mask> */
+static inline int si_state_in(enum si_state state, enum si_state_bit mask)
+{
+	BUG_ON(mask & ~SI_SB_ALL);
+	return !!(si_state_bit(state) & mask);
 }
 
 /* only detaches the endpoint from the SI, which means that it's set to
@@ -170,7 +186,7 @@ static inline void si_release_endpoint(struct stream_interface *si)
 		cs_destroy(cs);
 	}
 	else if ((appctx = objt_appctx(si->end))) {
-		if (appctx->applet->release && si->state < SI_ST_DIS)
+		if (appctx->applet->release && !si_state_in(si->state, SI_SB_DIS|SI_SB_CLO))
 			appctx->applet->release(appctx);
 		appctx_free(appctx); /* we share the connection pool */
 	} else if ((conn = objt_conn(si->end))) {
@@ -224,7 +240,7 @@ static inline void si_applet_release(struct stream_interface *si)
 	struct appctx *appctx;
 
 	appctx = objt_appctx(si->end);
-	if (appctx && appctx->applet->release && si->state < SI_ST_DIS)
+	if (appctx && appctx->applet->release && !si_state_in(si->state, SI_SB_DIS|SI_SB_CLO))
 		appctx->applet->release(appctx);
 }
 
@@ -434,13 +450,13 @@ static inline void si_must_kill_conn(struct stream_interface *si)
  */
 static inline void si_chk_rcv(struct stream_interface *si)
 {
-	if (si->flags & SI_FL_RXBLK_CONN && (si_opposite(si)->state >= SI_ST_EST))
+	if (si->flags & SI_FL_RXBLK_CONN && si_state_in(si_opposite(si)->state, SI_SB_RDY|SI_SB_EST|SI_SB_DIS|SI_SB_CLO))
 		si_rx_conn_rdy(si);
 
 	if (si_rx_blocked(si) || !si_rx_endp_ready(si))
 		return;
 
-	if (si->state != SI_ST_EST)
+	if (!si_state_in(si->state, SI_SB_RDY|SI_SB_EST))
 		return;
 
 	si->flags |= SI_FL_RX_WAIT_EP;
@@ -458,7 +474,7 @@ static inline int si_sync_recv(struct stream_interface *si)
 {
 	struct conn_stream *cs;
 
-	if (si->state != SI_ST_EST)
+	if (!si_state_in(si->state, SI_SB_RDY|SI_SB_EST))
 		return 0;
 
 	cs = objt_cs(si->end);
@@ -484,12 +500,17 @@ static inline void si_chk_snd(struct stream_interface *si)
 static inline int si_connect(struct stream_interface *si, struct connection *conn)
 {
 	int ret = SF_ERR_NONE;
+	int conn_flags = 0;
 
 	if (unlikely(!conn || !conn->ctrl || !conn->ctrl->connect))
 		return SF_ERR_INTERNAL;
 
+	if (!channel_is_empty(si_oc(si)))
+		conn_flags |= CONNECT_HAS_DATA;
+	if (si->conn_retries == si_strm(si)->be->conn_retries)
+		conn_flags |= CONNECT_CAN_USE_TFO;
 	if (!conn_ctrl_ready(conn) || !conn_xprt_ready(conn)) {
-		ret = conn->ctrl->connect(conn, !channel_is_empty(si_oc(si)), 0);
+		ret = conn->ctrl->connect(conn, conn_flags);
 		if (ret != SF_ERR_NONE)
 			return ret;
 
@@ -500,7 +521,11 @@ static inline int si_connect(struct stream_interface *si, struct connection *con
 		/* try to reuse the existing connection, it will be
 		 * confirmed once we can send on it.
 		 */
-		si->state = SI_ST_CON;
+		/* Is the connection really ready ? */
+		if (conn->mux->ctl(conn, MUX_STATUS, NULL) & MUX_STATUS_READY)
+			si->state = SI_ST_RDY;
+		else
+			si->state = SI_ST_CON;
 	}
 
 	/* needs src ip/port for logging */
@@ -508,6 +533,13 @@ static inline int si_connect(struct stream_interface *si, struct connection *con
 		conn_get_from_addr(conn);
 
 	return ret;
+}
+
+/* Combines both si_update_rx() and si_update_tx() at once */
+static inline void si_update(struct stream_interface *si)
+{
+	si_update_rx(si);
+	si_update_tx(si);
 }
 
 /* Returns info about the conn_stream <cs>, if not NULL. It call the mux layer's
@@ -533,6 +565,7 @@ static inline const char *si_state_str(int state)
 	case SI_ST_ASS: return "ASS";
 	case SI_ST_CON: return "CON";
 	case SI_ST_CER: return "CER";
+	case SI_ST_RDY: return "RDY";
 	case SI_ST_EST: return "EST";
 	case SI_ST_DIS: return "DIS";
 	case SI_ST_CLO: return "CLO";

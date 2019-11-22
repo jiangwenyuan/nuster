@@ -60,6 +60,7 @@
 #include <proto/log.h>
 #include <proto/dns.h>
 #include <proto/proto_udp.h>
+#include <proto/ssl_sock.h>
 
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
@@ -252,7 +253,7 @@ static void set_server_check_status(struct check *check, short status, const cha
 		if ((!(check->state & CHK_ST_AGENT) ||
 		    (check->status >= HCHK_STATUS_L57DATA)) &&
 		    (check->health > 0)) {
-			HA_ATOMIC_ADD(&s->counters.failed_checks, 1);
+			_HA_ATOMIC_ADD(&s->counters.failed_checks, 1);
 			report = 1;
 			check->health--;
 			if (check->health < check->rise)
@@ -420,7 +421,7 @@ void __health_adjust(struct server *s, short status)
 		return;
 	}
 
-	HA_ATOMIC_ADD(&s->consecutive_errors, 1);
+	_HA_ATOMIC_ADD(&s->consecutive_errors, 1);
 
 	if (s->consecutive_errors < s->consecutive_errors_limit)
 		return;
@@ -461,7 +462,7 @@ void __health_adjust(struct server *s, short status)
 	}
 
 	s->consecutive_errors = 0;
-	HA_ATOMIC_ADD(&s->counters.failed_hana, 1);
+	_HA_ATOMIC_ADD(&s->counters.failed_hana, 1);
 
 	if (s->check.fastinter) {
 		expire = tick_add(now_ms, MS_TO_TICKS(s->check.fastinter));
@@ -794,6 +795,9 @@ static void __event_srv_chk_w(struct conn_stream *cs)
 		}
 	}
 
+	if (!b_data(&check->bo))
+		conn_xprt_stop_send(conn);
+
 	/* full request sent, we allow up to <timeout.check> if nonzero for a response */
 	if (s->proxy->timeout.check) {
 		t->expire = tick_add_ifset(now_ms, s->proxy->timeout.check);
@@ -875,6 +879,9 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 		}
 	}
 
+	/* the rest of the code below expects the connection to be ready! */
+	if (!(conn->flags & CO_FL_CONNECTED) && !done)
+		goto wait_more_data;
 
 	/* Intermediate or complete response received.
 	 * Terminate string in b_head(&check->bi) buffer.
@@ -1378,7 +1385,13 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 	}
 
 	default:
-		/* for other checks (eg: pure TCP), delegate to the main task */
+		/* good connection is enough for pure TCP check */
+		if ((conn->flags & CO_FL_CONNECTED) && !check->type) {
+			if (check->use_ssl)
+				set_server_check_status(check, HCHK_STATUS_L6OK, NULL);
+			else
+				set_server_check_status(check, HCHK_STATUS_L4OK, NULL);
+		}
 		break;
 	} /* switch */
 
@@ -1441,8 +1454,12 @@ static int wake_srv_chk(struct conn_stream *cs)
 		ret = tcpcheck_main(check);
 		cs = check->cs;
 		conn = cs->conn;
-	} else if (!(check->wait_list.events & SUB_RETRY_SEND))
-		__event_srv_chk_w(cs);
+	} else {
+		if (!(check->wait_list.events & SUB_RETRY_SEND))
+			__event_srv_chk_w(cs);
+		if (!(check->wait_list.events & SUB_RETRY_RECV))
+			__event_srv_chk_r(cs);
+	}
 
 	if (unlikely(conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)) {
 		/* We may get error reports bypassing the I/O handlers, typically
@@ -1473,7 +1490,7 @@ static int wake_srv_chk(struct conn_stream *cs)
 		 * I/O handler expects to have a cs, so remove
 		 * the tasklet
 		 */
-		task_remove_from_tasklet_list((struct task *)check->wait_list.task);
+		tasklet_remove_from_tasklet_list(check->wait_list.tasklet);
 		task_wakeup(check->task, TASK_WOKEN_IO);
 	}
 
@@ -1568,7 +1585,11 @@ static int connect_conn_chk(struct task *t)
 	struct protocol *proto;
 	struct tcpcheck_rule *tcp_rule = NULL;
 	int ret;
-	int quickack;
+	int connflags = 0;
+
+	/* we cannot have a connection here */
+	if (conn)
+		return SF_ERR_INTERNAL;
 
 	/* we cannot have a connection here */
 	if (conn)
@@ -1638,6 +1659,11 @@ static int connect_conn_chk(struct task *t)
 		conn->addr.to = s->addr;
 	}
 
+	if (s->check.via_socks4 &&  (s->flags & SRV_F_SOCKS4_PROXY)) {
+		conn->send_proxy_ofs = 1;
+		conn->flags |= CO_FL_SOCKS4;
+	}
+
 	proto = protocol_by_family(conn->addr.to.ss_family);
 	conn->target = &s->obj_type;
 
@@ -1660,14 +1686,15 @@ static int connect_conn_chk(struct task *t)
 	cs_attach(cs, check, &check_conn_cb);
 
 	/* only plain tcp-check supports quick ACK */
-	quickack = check->type == 0 || check->type == PR_O2_TCPCHK_CHK;
-
-	if (tcp_rule && tcp_rule->action == TCPCHK_ACT_EXPECT)
-		quickack = 0;
+	if (check->type != 0)
+		connflags |= CONNECT_HAS_DATA;
+	if ((check->type == 0 || check->type == PR_O2_TCPCHK_CHK) &&
+	    (!tcp_rule || tcp_rule->action != TCPCHK_ACT_EXPECT))
+		connflags |= CONNECT_DELACK_ALWAYS;
 
 	ret = SF_ERR_INTERNAL;
 	if (proto && proto->connect)
-		ret = proto->connect(conn, check->type, quickack ? 2 : 0);
+		ret = proto->connect(conn, connflags);
 
 
 #ifdef USE_OPENSSL
@@ -1682,6 +1709,8 @@ static int connect_conn_chk(struct task *t)
 	if (s->check.send_proxy && !(check->state & CHK_ST_AGENT)) {
 		conn->send_proxy_ofs = 1;
 		conn->flags |= CO_FL_SEND_PROXY;
+		if (xprt_add_hs(conn) < 0)
+			ret = SF_ERR_RESOURCE;
 	}
 
 	return ret;
@@ -2001,8 +2030,17 @@ static int connect_proc_chk(struct task *t)
 		/* close all FDs. Keep stdin/stdout/stderr in verbose mode */
 		fd = (global.mode & (MODE_QUIET|MODE_VERBOSE)) == MODE_QUIET ? 0 : 3;
 
-		while (fd < global.rlimit_nofile)
-			close(fd++);
+		my_closefrom(fd);
+
+		/* restore the initial FD limits */
+		limit.rlim_cur = rlim_fd_cur_at_boot;
+		limit.rlim_max = rlim_fd_max_at_boot;
+		if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
+			getrlimit(RLIMIT_NOFILE, &limit);
+			ha_warning("External check: failed to restore initial FD limits (cur=%u max=%u), using cur=%u max=%u\n",
+				   rlim_fd_cur_at_boot, rlim_fd_max_at_boot,
+				   (unsigned int)limit.rlim_cur, (unsigned int)limit.rlim_max);
+		}
 
 		/* restore the initial FD limits */
 		limit.rlim_cur = rlim_fd_cur_at_boot;
@@ -2016,6 +2054,7 @@ static int connect_proc_chk(struct task *t)
 
 		environ = check->envp;
 		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_CURCONN, ultoa_r(s->cur_sess, buf, sizeof(buf)));
+		haproxy_unblock_signals();
 		execvp(px->check_command, check->argv);
 		ha_alert("Failed to exec process for external health check: %s. Aborting.\n",
 			 strerror(errno));
@@ -2238,8 +2277,16 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 				t->expire = tick_first(t->expire, t_con);
 			}
 
-			if (check->type)
-				__event_srv_chk_r(cs);
+			if (check->type) {
+				/* send the request if we have one. We avoid receiving
+				 * if not connected, unless we didn't subscribe for
+				 * sending since otherwise we won't be woken up.
+				 */
+				__event_srv_chk_w(cs);
+				if (!(conn->flags & CO_FL_WAIT_L4_CONN) ||
+				    !(check->wait_list.events & SUB_RETRY_SEND))
+					__event_srv_chk_r(cs);
+			}
 
 			task_set_affinity(t, tid_bit);
 			goto reschedule;
@@ -2266,13 +2313,14 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 		if (cs) {
 			if (check->wait_list.events)
 				cs->conn->xprt->unsubscribe(cs->conn,
+				                            cs->conn->xprt_ctx,
 							    check->wait_list.events,
 							    &check->wait_list);
 			/* We may have been scheduled to run, and the
 			 * I/O handler expects to have a cs, so remove
 			 * the tasklet
 			 */
-			task_remove_from_tasklet_list((struct task *)check->wait_list.task);
+			tasklet_remove_from_tasklet_list(check->wait_list.tasklet);
 			cs_destroy(cs);
 			cs = check->cs = NULL;
 			conn = NULL;
@@ -2329,13 +2377,14 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 		if (cs) {
 			if (check->wait_list.events)
 				cs->conn->xprt->unsubscribe(cs->conn,
+				    cs->conn->xprt_ctx,
 				    check->wait_list.events,
 				    &check->wait_list);
 			/* We may have been scheduled to run, and the
-                         * I/O handler expects to have a cs, so remove
-                         * the tasklet
-                         */
-                        task_remove_from_tasklet_list((struct task *)check->wait_list.task);
+			 * I/O handler expects to have a cs, so remove
+			 * the tasklet
+			 */
+			tasklet_remove_from_tasklet_list(check->wait_list.tasklet);
 			cs_destroy(cs);
 			cs = check->cs = NULL;
 			conn = NULL;
@@ -2850,15 +2899,14 @@ static int tcpcheck_main(struct check *check)
 			if (check->cs) {
 				if (check->wait_list.events)
 					cs->conn->xprt->unsubscribe(cs->conn,
+					                            cs->conn->xprt_ctx,
 								    check->wait_list.events,
 								    &check->wait_list);
-			/* We may have been scheduled to run, and the
-                         * I/O handler expects to have a cs, so remove
-                         * the tasklet
-                         */
-                        task_remove_from_tasklet_list((struct task *)check->wait_list.task);
-
-
+				/* We may have been scheduled to run, and the
+				 * I/O handler expects to have a cs, so remove
+				 * the tasklet
+				 */
+				tasklet_remove_from_tasklet_list(check->wait_list.tasklet);
 				cs_destroy(check->cs);
 			}
 
@@ -2908,11 +2956,12 @@ static int tcpcheck_main(struct check *check)
 			ret = SF_ERR_INTERNAL;
 			if (proto && proto->connect)
 				ret = proto->connect(conn,
-						     1 /* I/O polling is always needed */,
-						     (next && next->action == TCPCHK_ACT_EXPECT) ? 0 : 2);
+						     CONNECT_HAS_DATA /* I/O polling is always needed */ | (next && next->action == TCPCHK_ACT_EXPECT) ? 0 : CONNECT_DELACK_ALWAYS);
 			if (check->current_step->conn_opts & TCPCHK_OPT_SEND_PROXY) {
 				conn->send_proxy_ofs = 1;
 				conn->flags |= CO_FL_SEND_PROXY;
+				if (xprt_add_hs(conn) < 0)
+					ret = SF_ERR_RESOURCE;
 			}
 
 			/* It can return one of :
@@ -3234,12 +3283,12 @@ const char *init_check(struct check *check, int type)
 	if (!check->bi.area || !check->bo.area)
 		return "out of memory while allocating check buffer";
 
-	check->wait_list.task = tasklet_new();
-	if (!check->wait_list.task)
+	check->wait_list.tasklet = tasklet_new();
+	if (!check->wait_list.tasklet)
 		return "out of memroy while allocating check tasklet";
 	check->wait_list.events = 0;
-	check->wait_list.task->process = event_srv_chk_io;
-	check->wait_list.task->context = check;
+	check->wait_list.tasklet->process = event_srv_chk_io;
+	check->wait_list.tasklet->context = check;
 	return NULL;
 }
 
@@ -3266,8 +3315,7 @@ void email_alert_free(struct email_alert *alert)
 		LIST_DEL(&rule->list);
 		free(rule->comment);
 		free(rule->string);
-		if (rule->expect_regex)
-			regex_free(rule->expect_regex);
+		regex_free(rule->expect_regex);
 		pool_free(pool_head_tcpcheck_rule, rule);
 	}
 	pool_free(pool_head_email_alert, alert);
@@ -3377,11 +3425,7 @@ int init_email_alert(struct mailers *mls, struct proxy *p, char **err)
 		struct email_alertq *q     = &queues[i];
 		struct check        *check = &q->check;
 
-		if (check->task) {
-			task_delete(check->task);
-			task_free(check->task);
-			check->task = NULL;
-		}
+		task_destroy(check->task);
 		free_check(check);
 	}
 	free(queues);

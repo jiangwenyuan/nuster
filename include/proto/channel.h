@@ -736,17 +736,17 @@ static inline int channel_htx_recv_limit(const struct channel *chn, const struct
 	 * cause an integer underflow in the comparison since both are unsigned
 	 * while maxrewrite is signed.
 	 * The code below has been verified for being a valid check for this :
-	 *   - if (o + to_forward) overflow => return max_data_space  [ large enough ]
-	 *   - if o + to_forward >= maxrw   => return max_data_space  [ large enough ]
-	 *   - otherwise return max_data_space - (maxrw - (o + to_forward))
+	 *   - if (o + to_forward) overflow => return htx->size  [ large enough ]
+	 *   - if o + to_forward >= maxrw   => return htx->size  [ large enough ]
+	 *   - otherwise return htx->size - (maxrw - (o + to_forward))
 	 */
 	transit = co_data(chn) + chn->to_forward;
 	reserve -= transit;
 	if (transit < chn->to_forward ||                 // addition overflow
 	    transit >= (unsigned)global.tune.maxrewrite) // enough transit data
-		return htx_max_data_space(htx);
+		return htx->size;
  end:
-	return (htx_max_data_space(htx) - reserve);
+	return (htx->size - reserve);
 }
 
 /* HTX version of channel_full(). Instead of checking if INPUT data exceeds
@@ -776,10 +776,21 @@ static inline int channel_full(const struct channel *c, unsigned int reserve)
 	if (b_is_null(&c->buf))
 		return 0;
 
-	if (strm_fe((chn_strm(c)))->options2 & PR_O2_USE_HTX)
+	if (IS_HTX_STRM(chn_strm(c)))
 		return channel_htx_full(c, htxbuf(&c->buf), reserve);
 
 	return (ci_data(c) + reserve >= c_size(c));
+}
+
+/* HTX version of channel_recv_max(). */
+static inline int channel_htx_recv_max(const struct channel *chn, const struct htx *htx)
+{
+	int ret;
+
+	ret = channel_htx_recv_limit(chn, htx) - htx_used_space(htx);
+	if (ret < 0)
+		ret = 0;
+	return ret;
 }
 
 
@@ -792,18 +803,10 @@ static inline int channel_recv_max(const struct channel *chn)
 {
 	int ret;
 
+	if (IS_HTX_STRM(chn_strm(chn)))
+		return channel_htx_recv_max(chn, htxbuf(&chn->buf));
+
 	ret = channel_recv_limit(chn) - b_data(&chn->buf);
-	if (ret < 0)
-		ret = 0;
-	return ret;
-}
-
-/* HTX version of channel_recv_max(). */
-static inline int channel_htx_recv_max(const struct channel *chn, const struct htx *htx)
-{
-	int ret;
-
-	ret = channel_htx_recv_limit(chn, htx) - htx->data;
 	if (ret < 0)
 		ret = 0;
 	return ret;
@@ -909,6 +912,28 @@ static inline void channel_htx_truncate(struct channel *chn, struct htx *htx)
 static inline void channel_slow_realign(struct channel *chn, char *swap)
 {
 	return b_slow_realign(&chn->buf, swap, co_data(chn));
+}
+
+
+/* Forward all headers of an HTX message, starting from the SL to the EOH. This
+ * function returns the position of the block after the EOH, if
+ * found. Otherwise, it returns -1.
+ */
+static inline int32_t channel_htx_fwd_headers(struct channel *chn, struct htx *htx)
+{
+	int32_t pos;
+	size_t  data = 0;
+
+	for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		struct htx_blk *blk = htx_get_blk(htx, pos);
+		data += htx_get_blksz(blk);
+		if (htx_get_blk_type(blk) == HTX_BLK_EOH) {
+			pos = htx_get_next(htx, pos);
+			break;
+		}
+	}
+	c_adv(chn, data);
+	return pos;
 }
 
 /*

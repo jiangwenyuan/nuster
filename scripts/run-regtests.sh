@@ -28,11 +28,20 @@ _help()
     --vtestparams <ARGS>, passes custom ARGS to vtest
       run-regtests.sh --vtestparams "-n 10"
 
+    --type <reg tests types> filter the types of the tests to be run, depending on
+      the commented REGTESTS_TYPE variable value in each VTC file.
+      The value of REGTESTS_TYPE supported are: default, slow, bug, broken and
+      experimental. When not specified, it is set to 'default' as default value.
+
+      run-regtest.sh --type slow,default
+
     --clean to cleanup previous reg-tests log directories and exit
       run-regtests.sh --clean
 
-    --use-htx to use the HTX in tests
-      run-regtests.sh --use-htx, unsets the macro \${no-htx}
+    --use-htx to use the HTX in tests (deprecated, the default mode now)
+
+    --no-htx to use the legacy HTTP in tests
+      run-regtests.sh --no-htx, sets the macro \${no-htx}
       In .vtc files, in HAProxy configuration, you should use the following line
       to "templatize" your tests:
 
@@ -40,12 +49,12 @@ _help()
 
   Including text below into a .vtc file will check for its requirements
   related to haproxy's target and compilation options
-    # Below targets are not capable of completing this test succesfully
+    # Below targets are not capable of completing this test successfully
     #EXCLUDE_TARGET=freebsd, abns sockets are not available on freebsd
 
     #EXCLUDE_TARGETS=dos,freebsd,windows
 
-    # Below option is required to complete this test succesfully
+    # Below option is required to complete this test successfully
     #REQUIRE_OPTION=OPENSSL, this test needs OPENSSL compiled in.
 
     #REQUIRE_OPTIONS=ZLIB|SLZ,OPENSSL,LUA
@@ -103,39 +112,6 @@ add_range_to_test_list()
     echo $list
 }
 
-
-build_test_list()
-{
-    # Remove any spacing character
-    LEVEL="$(echo $LEVEL | tr -d ' ')"
-    # Replave any comma character by a space character
-    LEVEL="$(echo $LEVEL | tr ',' ' ')"
-    list=
-    for range in $LEVEL ; do
-        if [ -z "$list" ] ; then
-            list=$(add_range_to_test_list $range)
-        else
-            list="$list $(add_range_to_test_list $range)"
-        fi
-    done
-
-    echo $list
-}
-
-build_find_expr()
-{
-    expr=
-    for i in $@; do
-        if [ -z "$expr" ] ; then
-            expr="-name \"$i\""
-        else
-            expr="$expr -o -name \"$i\""
-        fi
-    done
-
-    echo $expr
-}
-
 _startswith() {
   _str="$1"
   _sub="$2"
@@ -144,20 +120,25 @@ _startswith() {
 
 _findtests() {
   set -f
-  LEVEL=${LEVEL:-0};
-  list=$(build_test_list "$LEVEL")
-  if [ -z "$list" ] ; then
-      echo "Invalid level specification '"$LEVEL"' or no file was found."
-      exit 1
-  fi
-  EXPR=$(build_find_expr $list)
 
-  for i in $( find "$1" $(eval echo $EXPR) ); do
+  REGTESTS_TYPES="${REGTESTS_TYPES:-any}"
+  any_test=$(echo $REGTESTS_TYPES | grep -cw "any")
+  for i in $( find "$1" -name *.vtc ); do
     skiptest=
     require_version="$(sed -ne 's/^#REQUIRE_VERSION=//p' "$i")"
     require_version_below="$(sed -ne 's/^#REQUIRE_VERSION_BELOW=//p' "$i")"
     require_options="$(sed -ne 's/^#REQUIRE_OPTIONS=//p' "$i" | sed  -e 's/,/ /g')"
     exclude_targets="$(sed -ne 's/^#EXCLUDE_TARGETS=//p' "$i" | sed  -e 's/,/ /g')"
+    if [ $any_test -ne 1 ] ; then
+        regtest_type="$(sed -ne 's/^#REGTEST_TYPE=//p' "$i")"
+        if [ -z $regtest_type ] ; then
+            regtest_type=default
+        fi
+        if ! $(echo $REGTESTS_TYPES | grep -wq $regtest_type) ; then
+            echo "  Skip $i because its type '"$regtest_type"' is excluded"
+            skiptest=1
+        fi
+    fi
 
     requiredoption="$(sed -ne 's/^#REQUIRE_OPTION=//p' "$i" | sed  -e 's/,.*//')"
     if [ -n "$requiredoption" ]; then
@@ -195,7 +176,7 @@ _findtests() {
       alternatives=$(echo "$requiredoption" | sed -e 's/|/ /g')
       found=
       for alt in $alternatives; do
-        if [ -n "$( echo "$OPTIONS" | grep "USE_$alt=1" )" ]; then
+        if echo "$FEATURES" | grep -qw "\+$alt"; then
           found=1;
 	fi
       done
@@ -262,12 +243,15 @@ _process() {
         --keep-logs)
           keep_logs="-L"
           ;;
-        --LEVEL)
-          LEVEL="$2"
-          shift
-          ;;
+        --type)
+	      REGTESTS_TYPES="$2"
+	      shift
+	      ;;
         --use-htx)
           no_htx=""
+          ;;
+        --no-htx)
+          no_htx="no "
           ;;
         --clean)
           _cleanup
@@ -302,7 +286,7 @@ jobcount=""
 verbose="-q"
 debug=""
 keep_logs="-l"
-no_htx="#"
+no_htx=""
 testlist=""
 
 _process "$@";
@@ -323,8 +307,8 @@ if [ $preparefailed ]; then
   exit 1
 fi
 
-{ read HAPROXY_VERSION; read TARGET; read OPTIONS; } << EOF
-$($HAPROXY_PROGRAM -vv |grep 'HA-Proxy version\|TARGET\|OPTIONS' | sed 's/.* = //')
+{ read HAPROXY_VERSION; read TARGET; read FEATURES; } << EOF
+$($HAPROXY_PROGRAM -vv |grep 'HA-Proxy version\|TARGET.*=\|^Feature' | sed 's/.* [:=] //')
 EOF
 
 HAPROXY_VERSION=$(echo $HAPROXY_VERSION | cut -d " " -f 3)
@@ -338,86 +322,17 @@ TESTDIR=$(mktemp -d "$TESTDIR/haregtests-$TESTRUNDATETIME.XXXXXX") || exit 1
 export TMPDIR="$TESTDIR"
 export HAPROXY_PROGRAM="$HAPROXY_PROGRAM"
 
-# Mimic implicit build options from haproxy MakeFile that are present for each target:
-
-if [ $TARGET = generic ] ; then
-  #generic system target has nothing specific
-  OPTIONS="$OPTIONS USE_POLL=1 USE_TPROXY=1"
-fi
-if [ $TARGET = haiku ] ; then
-  #For Haiku
-  OPTIONS="$OPTIONS USE_POLL=1 USE_TPROXY=1"
-fi
-if [ $TARGET = linux22 ] ; then
-  #This is for Linux 2.2
-  OPTIONS="$OPTIONS USE_POLL=1 USE_TPROXY=1 USE_LIBCRYPT=1 USE_DL=1 USE_RT=1"
-fi
-if [ $TARGET = linux24 ] ; then
-  #This is for standard Linux 2.4 with netfilter but without epoll()
-  OPTIONS="$OPTIONS USE_NETFILTER=1 USE_POLL=1 USE_TPROXY=1 USE_CRYPT_H=1 USE_LIBCRYPT=1 USE_DL=1 USE_RT=1"
-fi
-if [ $TARGET = linux24e ] ; then
-  #This is for enhanced Linux 2.4 with netfilter and epoll() patch>0.21
-  OPTIONS="$OPTIONS USE_NETFILTER=1 USE_POLL=1 USE_EPOLL=1 USE_MY_EPOLL=1 USE_TPROXY=1 USE_CRYPT_H=1 USE_LIBCRYPT=1 USE_DL=1 USE_RT=1"
-fi
-if [ $TARGET = linux26 ] ; then
-  #This is for standard Linux 2.6 with netfilter and standard epoll()
-  OPTIONS="$OPTIONS USE_NETFILTER=1 USE_POLL=1 USE_EPOLL=1 USE_TPROXY=1 USE_CRYPT_H=1 USE_LIBCRYPT=1 USE_FUTEX=1 USE_DL=1 USE_RT=1"
-fi
-if [ $TARGET = linux2628 ] ; then
-  #This is for standard Linux >= 2.6.28 with netfilter, epoll, tproxy and splice
-  OPTIONS="$OPTIONS USE_NETFILTER=1 USE_POLL=1 USE_EPOLL=1 USE_TPROXY=1 USE_CRYPT_H=1 USE_LIBCRYPT=1 USE_LINUX_SPLICE=1 USE_LINUX_TPROXY=1 USE_ACCEPT4=1 USE_FUTEX=1 USE_CPU_AFFINITY=1 ASSUME_SPLICE_WORKS=1 USE_DL=1 USE_RT=1 USE_THREAD=1"
-fi
-if [ $TARGET = solaris ] ; then
-  #This is for Solaris8
-  OPTIONS="$OPTIONS USE_POLL=1 USE_TPROXY=1 USE_LIBCRYPT=1 USE_CRYPT_H=1 USE_GETADDRINFO=1 USE_THREAD=1"
-fi
-if [ $TARGET = freebsd ] ; then
-  #This is for FreeBSD
-  OPTIONS="$OPTIONS USE_POLL=1 USE_KQUEUE=1 USE_TPROXY=1 USE_LIBCRYPT=1 USE_THREAD=1 USE_CPU_AFFINITY=1"
-fi
-if [ $TARGET = osx ] ; then
-  #This is for MacOS/X
-  OPTIONS="$OPTIONS USE_POLL=1 USE_KQUEUE=1 USE_TPROXY=1"
-fi
-if [ $TARGET = openbsd ] ; then
-  #This is for OpenBSD >= 5.7
-  OPTIONS="$OPTIONS USE_POLL=1 USE_KQUEUE=1 USE_TPROXY=1 USE_ACCEPT4=1 USE_THREAD=1"
-fi
-if [ $TARGET = netbsd ] ; then
-  #This is for NetBSD
-  OPTIONS="$OPTIONS USE_POLL=1 USE_KQUEUE=1 USE_TPROXY=1"
-fi
-if [ $TARGET = aix51 ] ; then
-  #This is for AIX 5.1
-  OPTIONS="$OPTIONS USE_POLL=1 USE_LIBCRYPT=1"
-fi
-if [ $TARGET = aix52 ] ; then
-  #This is for AIX 5.2 and later
-  OPTIONS="$OPTIONS USE_POLL=1 USE_LIBCRYPT=1"
-fi
-if [ $TARGET = cygwin ] ; then
-  #This is for Cygwin
-  OPTIONS="$OPTIONS USE_POLL=1 USE_TPROXY=1"
-fi
-
 echo "Target : $TARGET"
-echo "Options : $OPTIONS"
+echo "Options : $FEATURES"
 
 echo "########################## Gathering tests to run ##########################"
-# if 'use-htx' option is set, but HAProxy version is lower to 1.9, disable it
-if [ -z "$no_htx" ]; then
-  if [ $(_version "$HAPROXY_VERSION") -lt $(_version "1.9") ]; then
-    echo ""
-    echo "WARNING : Unset HTX for haproxy (version: $HAPROXY_VERSION)"
-    echo "    REASON: this test requires at least version: 1.9"
-    echo ""
-    no_htx="#"
-  fi
+# if htx is enable, but HAProxy version is lower to 1.9, disable it
+if [ $(_version "$HAPROXY_VERSION") -lt $(_version "1.9") ]; then
+  no_htx="#"
 fi
 
 if [ -z "$REGTESTS" ]; then
-  _findtests ./
+  _findtests reg-tests/
 else
   for t in $REGTESTS; do
     _findtests $t
@@ -431,7 +346,7 @@ if [ -n "$testlist" ]; then
   if [ -n "$jobcount" ]; then
     jobcount="-j $jobcount"
   fi
-  cmd="$VTEST_PROGRAM -k -t 10 -Dno-htx=${no_htx} $keep_logs $verbose $debug $jobcount $vtestparams $testlist"
+  cmd="$VTEST_PROGRAM -b $((2<<20)) -k -t 10 -Dno-htx=${no_htx} $keep_logs $verbose $debug $jobcount $vtestparams $testlist"
   eval $cmd
   _vtresult=$?
 else
@@ -440,7 +355,7 @@ fi
 
 
 if [ $_vtresult -eq 0 ]; then
-  # all tests were succesfull, removing tempdir (the last part.)
+  # all tests were successful, removing tempdir (the last part.)
   # ignore errors is the directory is not empty or if it does not exist
    rmdir "$TESTDIR" 2>/dev/null
 fi

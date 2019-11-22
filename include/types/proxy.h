@@ -153,6 +153,7 @@ enum PR_SRV_STATE_FILE {
 
 #define PR_O2_FAKE_KA   0x00200000      /* pretend we do keep-alive with server eventhough we close */
 #define PR_O2_USE_HTX   0x00400000      /* use the HTX representation for the HTTP protocol */
+
 #define PR_O2_EXP_NONE  0x00000000      /* http-check : no expect rule */
 #define PR_O2_EXP_STS   0x00800000      /* http-check expect status */
 #define PR_O2_EXP_RSTS  0x01000000      /* http-check expect rstatus */
@@ -202,6 +203,26 @@ enum PR_SRV_STATE_FILE {
 #define PR_FBM_MISMATCH_NAME      0x02
 #define PR_FBM_MISMATCH_PROXYTYPE 0x04
 
+/* Bits for the different retry causes */
+#define PR_RE_CONN_FAILED         0x00000001 /* Retry if we failed to connect */
+#define PR_RE_DISCONNECTED        0x00000002 /* Retry if we got disconnected with no answer */
+#define PR_RE_TIMEOUT             0x00000004 /* Retry if we got a server timeout before we got any data */
+#define PR_RE_404                 0x00000008 /* Retry if we got a 404 */
+#define PR_RE_408                 0x00000010 /* Retry if we got a 408 */
+#define PR_RE_425                 0x00000020 /* Retry if we got a 425 */
+#define PR_RE_500                 0x00000040 /* Retry if we got a 500 */
+#define PR_RE_501                 0x00000080 /* Retry if we got a 501 */
+#define PR_RE_502                 0x00000100 /* Retry if we got a 502 */
+#define PR_RE_503                 0x00000200 /* Retry if we got a 503 */
+#define PR_RE_504                 0x00000400 /* Retry if we got a 504 */
+#define PR_RE_STATUS_MASK         (PR_RE_404 | PR_RE_408 | PR_RE_425 | \
+                                   PR_RE_425 | PR_RE_500 | PR_RE_501 | \
+                                   PR_RE_502 | PR_RE_503 | PR_RE_504)
+/* 0x00000800, 0x00001000, 0x00002000, 0x00004000 and 0x00008000 unused,
+ * reserved for eventual future status codes
+ */
+#define PR_RE_EARLY_ERROR         0x00010000 /* Retry if we failed at sending early data */
+#define PR_RE_JUNK_REQUEST        0x00020000 /* We received an incomplete or garbage response */
 struct stream;
 
 struct http_snapshot {
@@ -364,6 +385,7 @@ struct proxy {
 	char *server_id_hdr_name;                   /* the header to use to send the server id (name) */
 	int server_id_hdr_len;                      /* the length of the id (name) header... name */
 	int conn_retries;			/* maximum number of connect retries */
+	unsigned int retry_type;                /* Type of retry allowed */
 	int redispatch_after;			/* number of retries before redispatch */
 	unsigned down_trans;			/* up-down transitions */
 	unsigned down_time;			/* total time the proxy was down */
@@ -373,6 +395,7 @@ struct proxy {
 	struct conn_src conn_src;               /* connection source settings */
 	enum obj_type *default_target;		/* default target to use for accepted streams or NULL */
 	struct proxy *next;
+	struct proxy *next_stkt_ref;    /* Link to the list of proxies which refer to the same stick-table. */
 
 	struct list logsrvs;
 	struct list logformat; 			/* log_format linked list */
@@ -394,7 +417,7 @@ struct proxy {
 	struct fe_counters fe_counters;		/* frontend statistics counters */
 
 	struct list listener_queue;		/* list of the temporarily limited listeners because of lack of a proxy resource */
-	struct stktable table;			/* table for storing sticking streams */
+	struct stktable *table;			/* table for storing sticking streams */
 
 	struct task *task;			/* the associated task, mandatory to manage rate limiting, stopping and resource shortage, NULL if disabled */
 	struct list tcpcheck_rules;		/* tcp-check send / expect rules */
@@ -424,6 +447,7 @@ struct proxy {
 		int line;			/* line where the section appears */
 		struct eb_root used_listener_id;/* list of listener IDs in use */
 		struct eb_root used_server_id;	/* list of server IDs in use */
+		struct eb_root used_server_name; /* list of server names in use */
 		struct list bind;		/* list of bind settings */
 		struct list listeners;		/* list of listeners belonging to this frontend */
 		struct arg_list args;           /* sample arg list that need to be resolved */
@@ -463,10 +487,6 @@ struct proxy {
 						 * name is used
 						 */
 	struct list filter_configs;		/* list of the filters that are declared on this proxy */
-	struct {
-		int mode;
-		struct list rules;              /* nuster rules */
-	} nuster;
 	__decl_hathreads(HA_SPINLOCK_T lock);   /* may be taken under the server's lock */
 };
 

@@ -168,7 +168,8 @@ static inline int init_comp_ctx(struct comp_ctx **comp_ctx)
 	(*comp_ctx)->direct_len = 0;
 	(*comp_ctx)->queued = BUF_NULL;
 #elif defined(USE_ZLIB)
-	HA_ATOMIC_ADD(&zlib_used_memory, sizeof(struct comp_ctx));
+	_HA_ATOMIC_ADD(&zlib_used_memory, sizeof(struct comp_ctx));
+	__ha_barrier_atomic_store();
 
 	strm = &(*comp_ctx)->strm;
 	strm->zalloc = alloc_zlib;
@@ -190,7 +191,8 @@ static inline int deinit_comp_ctx(struct comp_ctx **comp_ctx)
 	*comp_ctx = NULL;
 
 #ifdef USE_ZLIB
-	HA_ATOMIC_SUB(&zlib_used_memory, sizeof(struct comp_ctx));
+	_HA_ATOMIC_SUB(&zlib_used_memory, sizeof(struct comp_ctx));
+	__ha_barrier_atomic_store();
 #endif
 	return 0;
 }
@@ -358,7 +360,7 @@ static int rfc195x_flush_or_finish(struct comp_ctx *comp_ctx, struct buffer *out
 
 	/* Verify compression rate limiting and CPU usage */
 	if ((global.comp_rate_lim > 0 && (read_freq_ctr(&global.comp_bps_out) > global.comp_rate_lim)) ||    /* rate */
-	   (idle_pct < compress_min_idle)) {                                                                 /* idle */
+	   (ti->idle_pct < compress_min_idle)) {                                                                 /* idle */
 		if (comp_ctx->cur_lvl > 0)
 			strm->level = --comp_ctx->cur_lvl;
 	}
@@ -459,8 +461,10 @@ static void *alloc_zlib(void *opaque, unsigned int items, unsigned int size)
 			ctx->zlib_pending_buf = buf = pool_alloc(pool);
 		break;
 	}
-	if (buf != NULL)
-		HA_ATOMIC_ADD(&zlib_used_memory, pool->size);
+	if (buf != NULL) {
+		_HA_ATOMIC_ADD(&zlib_used_memory, pool->size);
+		__ha_barrier_atomic_store();
+	}
 
 end:
 
@@ -491,7 +495,8 @@ static void free_zlib(void *opaque, void *ptr)
 		pool = zlib_pool_pending_buf;
 
 	pool_free(pool, ptr);
-	HA_ATOMIC_SUB(&zlib_used_memory, pool->size);
+	_HA_ATOMIC_SUB(&zlib_used_memory, pool->size);
+	__ha_barrier_atomic_store();
 }
 
 /**************************
@@ -608,7 +613,7 @@ static int deflate_flush_or_finish(struct comp_ctx *comp_ctx, struct buffer *out
 
 	/* compression limit */
 	if ((global.comp_rate_lim > 0 && (read_freq_ctr(&global.comp_bps_out) > global.comp_rate_lim)) ||    /* rate */
-	   (idle_pct < compress_min_idle)) {                                                                     /* idle */
+	   (ti->idle_pct < compress_min_idle)) {                                                                     /* idle */
 		/* decrease level */
 		if (comp_ctx->cur_lvl > 0) {
 			comp_ctx->cur_lvl--;

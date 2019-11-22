@@ -66,12 +66,10 @@
 #include <proto/session.h>
 #include <proto/stream.h>
 #include <proto/server.h>
+#include <proto/ssl_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 #include <proto/proto_udp.h>
-#ifdef USE_OPENSSL
-#include <proto/ssl_sock.h>
-#endif
 
 #define PAYLOAD_PATTERN "<<"
 
@@ -300,20 +298,28 @@ static int stats_parse_global(char **args, int section_type, struct proxy *curpx
 		}
 
 		list_for_each_entry(l, &bind_conf->listeners, by_bind) {
-			l->maxconn = global.stats_fe->maxconn;
-			l->backlog = global.stats_fe->backlog;
 			l->accept = session_accept_fd;
 			l->default_target = global.stats_fe->default_target;
 			l->options |= LI_O_UNLIMITED; /* don't make the peers subject to global limits */
 			l->nice = -64;  /* we want to boost priority for local stats */
-			global.maxsock += l->maxconn;
+			global.maxsock++; /* for the listening socket */
 		}
 	}
 	else if (!strcmp(args[1], "timeout")) {
 		unsigned timeout;
 		const char *res = parse_time_err(args[2], &timeout, TIME_UNIT_MS);
 
-		if (res) {
+		if (res == PARSE_TIME_OVER) {
+			memprintf(err, "timer overflow in argument '%s' to '%s %s' (maximum value is 2147483647 ms or ~24.8 days)",
+				 args[2], args[0], args[1]);
+			return -1;
+		}
+		else if (res == PARSE_TIME_UNDER) {
+			memprintf(err, "timer underflow in argument '%s' to '%s %s' (minimum non-null value is 1 ms)",
+				 args[2], args[0], args[1]);
+			return -1;
+		}
+		else if (res) {
 			memprintf(err, "'%s %s' : unexpected character '%c'", args[0], args[1], *res);
 			return -1;
 		}
@@ -362,7 +368,7 @@ static int stats_parse_global(char **args, int section_type, struct proxy *curpx
 				set = 0;
 				break;
 			}
-			if (parse_process_number(args[cur_arg], &set, NULL, err)) {
+			if (parse_process_number(args[cur_arg], &set, MAX_PROCS, NULL, err)) {
 				memprintf(err, "'%s %s' : %s", args[0], args[1], *err);
 				return -1;
 			}
@@ -376,6 +382,71 @@ static int stats_parse_global(char **args, int section_type, struct proxy *curpx
 	}
 	return 0;
 }
+
+/*
+ * This function exports the bound addresses of a <frontend> in the environment
+ * variable <varname>. Those addresses are separated by semicolons and prefixed
+ * with their type (abns@, unix@, sockpair@ etc)
+ * Return -1 upon error, 0 otherwise
+ */
+int listeners_setenv(struct proxy *frontend, const char *varname)
+{
+	struct buffer *trash = get_trash_chunk();
+	struct bind_conf *bind_conf;
+
+	if (frontend) {
+		list_for_each_entry(bind_conf, &frontend->conf.bind, by_fe) {
+			struct listener *l;
+
+			list_for_each_entry(l, &bind_conf->listeners, by_bind) {
+				char addr[46];
+				char port[6];
+
+				/* separate listener by semicolons */
+				if (trash->data)
+					chunk_appendf(trash, ";");
+
+				if (l->addr.ss_family == AF_UNIX) {
+					const struct sockaddr_un *un;
+
+					un = (struct sockaddr_un *)&l->addr;
+					if (un->sun_path[0] == '\0') {
+						chunk_appendf(trash, "abns@%s", un->sun_path+1);
+					} else {
+						chunk_appendf(trash, "unix@%s", un->sun_path);
+					}
+				} else if (l->addr.ss_family == AF_INET) {
+					addr_to_str(&l->addr, addr, sizeof(addr));
+					port_to_str(&l->addr, port, sizeof(port));
+					chunk_appendf(trash, "ipv4@%s:%s", addr, port);
+				} else if (l->addr.ss_family == AF_INET6) {
+					addr_to_str(&l->addr, addr, sizeof(addr));
+					port_to_str(&l->addr, port, sizeof(port));
+					chunk_appendf(trash, "ipv6@[%s]:%s", addr, port);
+				} else if (l->addr.ss_family == AF_CUST_SOCKPAIR) {
+					chunk_appendf(trash, "sockpair@%d", ((struct sockaddr_in *)&l->addr)->sin_addr.s_addr);
+				}
+			}
+		}
+		trash->area[trash->data++] = '\0';
+		if (setenv(varname, trash->area, 1) < 0)
+			return -1;
+	}
+
+	return 0;
+}
+
+int cli_socket_setenv()
+{
+	if (listeners_setenv(global.stats_fe, "HAPROXY_CLI") < 0)
+		return -1;
+	if (listeners_setenv(mworker_proxy, "HAPROXY_MASTER_CLI") < 0)
+		return -1;
+
+	return 0;
+}
+
+REGISTER_CONFIG_POSTPARSER("cli", cli_socket_setenv);
 
 /* Verifies that the CLI at least has a level at least as high as <level>
  * (typically ACCESS_LVL_ADMIN). Returns 1 if OK, otherwise 0. In case of
@@ -499,10 +570,19 @@ static int cli_parse_request(struct appctx *appctx)
 
 	appctx->io_handler = kw->io_handler;
 	appctx->io_release = kw->io_release;
-	/* kw->parse could set its own io_handler or ip_release handler */
-	if ((!kw->parse || kw->parse(args, payload, appctx, kw->private) == 0) && appctx->io_handler) {
-		appctx->st0 = CLI_ST_CALLBACK;
-	}
+
+	if (kw->parse && kw->parse(args, payload, appctx, kw->private) != 0)
+		goto fail;
+
+	/* kw->parse could set its own io_handler or io_release handler */
+	if (!appctx->io_handler)
+		goto fail;
+
+	appctx->st0 = CLI_ST_CALLBACK;
+	return 1;
+fail:
+	appctx->io_handler = NULL;
+	appctx->io_release = NULL;
 	return 1;
 }
 
@@ -941,7 +1021,7 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			     (fdt.iocb == poller_pipe_io_handler) ? "poller_pipe_io_handler" :
 			     (fdt.iocb == mworker_accept_wrapper) ? "mworker_accept_wrapper" :
 #ifdef USE_OPENSSL
-#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 			     (fdt.iocb == ssl_async_fd_free) ? "ssl_async_fd_free" :
 			     (fdt.iocb == ssl_async_fd_handler) ? "ssl_async_fd_handler" :
 #endif
@@ -1009,29 +1089,78 @@ static int cli_io_handler_show_activity(struct appctx *appctx)
 
 	chunk_reset(&trash);
 
-	chunk_appendf(&trash, "thread_id: %u (%u..%u)", tid + 1, 1, global.nbthread);
-	chunk_appendf(&trash, "\ndate_now: %lu.%06lu", (long)now.tv_sec, (long)now.tv_usec);
-	chunk_appendf(&trash, "\nloops:");        for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].loops);
-	chunk_appendf(&trash, "\nwake_cache:");   for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_cache);
-	chunk_appendf(&trash, "\nwake_tasks:");   for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_tasks);
-	chunk_appendf(&trash, "\nwake_signal:");  for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].wake_signal);
-	chunk_appendf(&trash, "\npoll_exp:");     for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_exp);
-	chunk_appendf(&trash, "\npoll_drop:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_drop);
-	chunk_appendf(&trash, "\npoll_dead:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_dead);
-	chunk_appendf(&trash, "\npoll_skip:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].poll_skip);
-	chunk_appendf(&trash, "\nfd_skip:");      for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].fd_skip);
-	chunk_appendf(&trash, "\nfd_lock:");      for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].fd_lock);
-	chunk_appendf(&trash, "\nfd_del:");       for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].fd_del);
-	chunk_appendf(&trash, "\nconn_dead:");    for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].conn_dead);
-	chunk_appendf(&trash, "\nstream:");       for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].stream);
-	chunk_appendf(&trash, "\nempty_rq:");     for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].empty_rq);
-	chunk_appendf(&trash, "\nlong_rq:");      for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].long_rq);
-	chunk_appendf(&trash, "\ncpust_ms_tot:"); for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", activity[thr].cpust_total/2);
-	chunk_appendf(&trash, "\ncpust_ms_1s:");  for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", read_freq_ctr(&activity[thr].cpust_1s)/2);
-	chunk_appendf(&trash, "\ncpust_ms_15s:"); for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", read_freq_ctr_period(&activity[thr].cpust_15s, 15000)/2);
-	chunk_appendf(&trash, "\navg_loop_us:");  for (thr = 0; thr < global.nbthread; thr++) chunk_appendf(&trash, " %u", swrate_avg(activity[thr].avg_loop_us, TIME_STATS_SAMPLES));
+#undef SHOW_TOT
+#define SHOW_TOT(t, x)							\
+	do {								\
+		unsigned int _v[MAX_THREADS];				\
+		unsigned int _tot;					\
+		const unsigned int _nbt = global.nbthread;		\
+		for (_tot = t = 0; t < _nbt; t++)			\
+			_tot += _v[t] = (x);				\
+		if (_nbt == 1) {					\
+			chunk_appendf(&trash, " %u\n", _tot);		\
+			break;						\
+		}							\
+		chunk_appendf(&trash, " %u [", _tot);			\
+		for (t = 0; t < _nbt; t++)				\
+			chunk_appendf(&trash, " %u", _v[t]);		\
+		chunk_appendf(&trash, " ]\n");				\
+	} while (0)
 
-	chunk_appendf(&trash, "\n");
+#undef SHOW_AVG
+#define SHOW_AVG(t, x)							\
+	do {								\
+		unsigned int _v[MAX_THREADS];				\
+		unsigned int _tot;					\
+		const unsigned int _nbt = global.nbthread;		\
+		for (_tot = t = 0; t < _nbt; t++)			\
+			_tot += _v[t] = (x);				\
+		if (_nbt == 1) {					\
+			chunk_appendf(&trash, " %u\n", _tot);		\
+			break;						\
+		}							\
+		chunk_appendf(&trash, " %u [", (_tot + _nbt/2) / _nbt); \
+		for (t = 0; t < _nbt; t++)				\
+			chunk_appendf(&trash, " %u", _v[t]);		\
+		chunk_appendf(&trash, " ]\n");				\
+	} while (0)
+
+	chunk_appendf(&trash, "thread_id: %u (%u..%u)\n", tid + 1, 1, global.nbthread);
+	chunk_appendf(&trash, "date_now: %lu.%06lu\n", (long)now.tv_sec, (long)now.tv_usec);
+	chunk_appendf(&trash, "loops:");        SHOW_TOT(thr, activity[thr].loops);
+	chunk_appendf(&trash, "wake_cache:");   SHOW_TOT(thr, activity[thr].wake_cache);
+	chunk_appendf(&trash, "wake_tasks:");   SHOW_TOT(thr, activity[thr].wake_tasks);
+	chunk_appendf(&trash, "wake_signal:");  SHOW_TOT(thr, activity[thr].wake_signal);
+	chunk_appendf(&trash, "poll_exp:");     SHOW_TOT(thr, activity[thr].poll_exp);
+	chunk_appendf(&trash, "poll_drop:");    SHOW_TOT(thr, activity[thr].poll_drop);
+	chunk_appendf(&trash, "poll_dead:");    SHOW_TOT(thr, activity[thr].poll_dead);
+	chunk_appendf(&trash, "poll_skip:");    SHOW_TOT(thr, activity[thr].poll_skip);
+	chunk_appendf(&trash, "fd_lock:");      SHOW_TOT(thr, activity[thr].fd_lock);
+	chunk_appendf(&trash, "conn_dead:");    SHOW_TOT(thr, activity[thr].conn_dead);
+	chunk_appendf(&trash, "stream:");       SHOW_TOT(thr, activity[thr].stream);
+	chunk_appendf(&trash, "pool_fail:");    SHOW_TOT(thr, activity[thr].pool_fail);
+	chunk_appendf(&trash, "buf_wait:");     SHOW_TOT(thr, activity[thr].buf_wait);
+	chunk_appendf(&trash, "empty_rq:");     SHOW_TOT(thr, activity[thr].empty_rq);
+	chunk_appendf(&trash, "long_rq:");      SHOW_TOT(thr, activity[thr].long_rq);
+	chunk_appendf(&trash, "ctxsw:");        SHOW_TOT(thr, activity[thr].ctxsw);
+	chunk_appendf(&trash, "tasksw:");       SHOW_TOT(thr, activity[thr].tasksw);
+	chunk_appendf(&trash, "cpust_ms_tot:"); SHOW_TOT(thr, activity[thr].cpust_total / 2);
+	chunk_appendf(&trash, "cpust_ms_1s:");  SHOW_TOT(thr, read_freq_ctr(&activity[thr].cpust_1s) / 2);
+	chunk_appendf(&trash, "cpust_ms_15s:"); SHOW_TOT(thr, read_freq_ctr_period(&activity[thr].cpust_15s, 15000) / 2);
+	chunk_appendf(&trash, "avg_loop_us:");  SHOW_AVG(thr, swrate_avg(activity[thr].avg_loop_us, TIME_STATS_SAMPLES));
+	chunk_appendf(&trash, "accepted:");     SHOW_TOT(thr, activity[thr].accepted);
+	chunk_appendf(&trash, "accq_pushed:");  SHOW_TOT(thr, activity[thr].accq_pushed);
+	chunk_appendf(&trash, "accq_full:");    SHOW_TOT(thr, activity[thr].accq_full);
+#ifdef USE_THREAD
+	chunk_appendf(&trash, "accq_ring:");    SHOW_TOT(thr, (accept_queue_rings[thr].tail - accept_queue_rings[thr].head + ACCEPT_QUEUE_SIZE) % ACCEPT_QUEUE_SIZE);
+#endif
+
+#if defined(DEBUG_DEV)
+	/* keep these ones at the end */
+	chunk_appendf(&trash, "ctr0:");         SHOW_TOT(thr, activity[thr].ctr0);
+	chunk_appendf(&trash, "ctr1:");         SHOW_TOT(thr, activity[thr].ctr1);
+	chunk_appendf(&trash, "ctr2:");         SHOW_TOT(thr, activity[thr].ctr2);
+#endif
 
 	if (ci_putchk(si_ic(si), &trash) == -1) {
 		chunk_reset(&trash);
@@ -1039,6 +1168,8 @@ static int cli_io_handler_show_activity(struct appctx *appctx)
 		si_rx_room_blk(si);
 	}
 
+#undef SHOW_AVG
+#undef SHOW_TOT
 	/* dump complete */
 	return 1;
 }
@@ -1343,16 +1474,6 @@ static int cli_parse_set_lvl(char **args, char *payload, struct appctx *appctx, 
 	return 1;
 }
 
-/* reload the master process */
-static int cli_parse_reload(char **args, char *payload, struct appctx *appctx, void *private)
-{
-	if (!cli_has_level(appctx, ACCESS_LVL_OPER))
-		return 1;
-
-	mworker_reload();
-
-	return 1;
-}
 
 int cli_parse_default(char **args, char *payload, struct appctx *appctx, void *private)
 {
@@ -1441,7 +1562,7 @@ static int bind_parse_expose_fd(char **args, int cur_arg, struct proxy *px, stru
 static int bind_parse_level(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
 	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing level", args[cur_arg]);
+		memprintf(err, "'%s' : missing fd type", args[cur_arg]);
 		return ERR_ALERT | ERR_FATAL;
 	}
 
@@ -1480,66 +1601,6 @@ static int bind_parse_severity_output(char **args, int cur_arg, struct proxy *px
 }
 
 
- /*  Displays workers and processes  */
-static int cli_io_handler_show_proc(struct appctx *appctx)
-{
-	struct stream_interface *si = appctx->owner;
-	struct mworker_proc *child;
-	int old = 0;
-	int up = now.tv_sec - proc_self->timestamp;
-
-	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
-		return 1;
-
-	chunk_reset(&trash);
-
-	chunk_printf(&trash, "#%-14s %-15s %-15s %-15s %s\n", "<PID>", "<type>", "<relative PID>", "<reloads>", "<uptime>");
-	chunk_appendf(&trash, "%-15u %-15s %-15u %-15d %dd %02dh%02dm%02ds\n", getpid(), "master", 0, proc_self->reloads, up / 86400, (up % 86400) / 3600, (up % 3600) / 60, (up % 60));
-
-	/* displays current processes */
-
-	chunk_appendf(&trash, "# workers\n");
-	list_for_each_entry(child, &proc_list, list) {
-		up = now.tv_sec - child->timestamp;
-
-		if (child->type != 'w')
-			continue;
-
-		if (child->reloads > 0) {
-			old++;
-			continue;
-		}
-		chunk_appendf(&trash, "%-15u %-15s %-15u %-15d %dd %02dh%02dm%02ds\n", child->pid, "worker", child->relative_pid, child->reloads, up / 86400, (up % 86400) / 3600, (up % 3600) / 60, (up % 60));
-	}
-
-	/* displays old processes */
-
-	if (old) {
-		char *msg = NULL;
-
-		chunk_appendf(&trash, "# old workers\n");
-		list_for_each_entry(child, &proc_list, list) {
-			up = now.tv_sec - child->timestamp;
-
-			if (child->type != 'w')
-				continue;
-
-			if (child->reloads > 0) {
-				memprintf(&msg, "[was: %u]", child->relative_pid);
-				chunk_appendf(&trash, "%-15u %-15s %-15s %-15d %dd %02dh%02dm%02ds\n", child->pid, "worker", msg, child->reloads, up / 86400, (up % 86400) / 3600, (up % 3600) / 60, (up % 60));
-			}
-		}
-		free(msg);
-	}
-
-	if (ci_putchk(si_ic(si), &trash) == -1) {
-		si_rx_room_blk(si);
-		return 0;
-	}
-
-	/* dump complete */
-	return 1;
-}
 
 /* Send all the bound sockets, always returns 1 */
 static int _getsocks(char **args, char *payload, struct appctx *appctx, void *private)
@@ -1661,7 +1722,7 @@ static int _getsocks(char **args, char *payload, struct appctx *appctx, void *pr
 				memcpy(&tmpfd[i % MAX_SEND_FD], &l->fd, sizeof(l->fd));
 				if (!l->netns)
 					tmpbuf[curoff++] = 0;
-#ifdef CONFIG_HAP_NS
+#ifdef USE_NS
 				else {
 					char *name = l->netns->node.key;
 					unsigned char len = l->netns->name_len;
@@ -1819,7 +1880,7 @@ static int pcli_prefix_to_pid(const char *prefix)
 		if (*errtol != '\0')
 			return -1;
 		list_for_each_entry(child, &proc_list, list) {
-			if (child->type != 'w')
+			if (!(child->options & PROC_O_TYPE_WORKER))
 				continue;
 			if (child->pid == proc_pid){
 				return child->pid;
@@ -1839,7 +1900,7 @@ static int pcli_prefix_to_pid(const char *prefix)
 		/* chose the right process, the current one is the one with the
 		 least number of reloads */
 		list_for_each_entry(child, &proc_list, list) {
-			if (child->type != 'w')
+			if (!(child->options & PROC_O_TYPE_WORKER))
 				continue;
 			if (child->relative_pid == proc_pid){
 				if (child->reloads == 0)
@@ -2273,7 +2334,7 @@ int pcli_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 		s->si[1].exp       = TICK_ETERNITY;
 		s->si[1].flags    &= SI_FL_ISBACK | SI_FL_DONT_WAKE; /* we're in the context of process_stream */
 		s->req.flags &= ~(CF_SHUTW|CF_SHUTW_NOW|CF_AUTO_CONNECT|CF_WRITE_ERROR|CF_STREAMER|CF_STREAMER_FAST|CF_NEVER_WAIT|CF_WAKE_CONNECT|CF_WROTE_DATA);
-		s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA);
+		s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA|CF_READ_NULL);
 		s->flags &= ~(SF_DIRECT|SF_ASSIGNED|SF_ADDR_SET|SF_BE_ASSIGNED|SF_FORCE_PRST|SF_IGNORE_PRST);
 		s->flags &= ~(SF_CURR_SESS|SF_REDIRECTABLE|SF_SRV_REUSED);
 		s->flags &= ~(SF_ERR_MASK|SF_FINST_MASK|SF_REDISP);
@@ -2538,15 +2599,14 @@ int mworker_cli_proxy_new_listener(char *line)
 
 
 	list_for_each_entry(l, &bind_conf->listeners, by_bind) {
-		l->maxconn = 10;
-		l->backlog = 10;
 		l->accept = session_accept_fd;
 		l->default_target = mworker_proxy->default_target;
 		/* don't make the peers subject to global limits and don't close it in the master */
 		l->options |= (LI_O_UNLIMITED|LI_O_MWORKER); /* we are keeping this FD in the master */
 		l->nice = -64;  /* we want to boost priority for local stats */
-		global.maxsock += l->maxconn;
+		global.maxsock++; /* for the listening socket */
 	}
+	global.maxsock += mworker_proxy->maxconn;
 
 	return 0;
 
@@ -2607,15 +2667,13 @@ int mworker_cli_sockpair_new(struct mworker_proc *mworker_proc, int proc)
 	path = NULL;
 
 	list_for_each_entry(l, &bind_conf->listeners, by_bind) {
-		l->maxconn = global.stats_fe->maxconn;
-		l->backlog = global.stats_fe->backlog;
 		l->accept = session_accept_fd;
 		l->default_target = global.stats_fe->default_target;
 		l->options |= (LI_O_UNLIMITED | LI_O_NOSTOP);
 		/* it's a sockpair but we don't want to keep the fd in the master */
 		l->options &= ~LI_O_INHERITED;
 		l->nice = -64;  /* we want to boost priority for local stats */
-		global.maxsock += l->maxconn;
+		global.maxsock++; /* for the listening socket */
 	}
 
 	return 0;
@@ -2637,9 +2695,6 @@ static struct applet cli_applet = {
 
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
-	{ { "@<relative pid>", NULL }, "@<relative pid> : send a command to the <relative pid> process", NULL, cli_io_handler_show_proc, NULL, NULL, ACCESS_MASTER_ONLY},
-	{ { "@!<pid>", NULL }, "@!<pid>        : send a command to the <pid> process", cli_parse_default, NULL, NULL, NULL, ACCESS_MASTER_ONLY},
-	{ { "@master", NULL }, "@master        : send a command to the master process", cli_parse_default, NULL, NULL, NULL, ACCESS_MASTER_ONLY},
 	{ { "help", NULL }, NULL, cli_parse_simple, NULL },
 	{ { "prompt", NULL }, NULL, cli_parse_simple, NULL },
 	{ { "quit", NULL }, NULL, cli_parse_simple, NULL },
@@ -2652,10 +2707,8 @@ static struct cli_kw_list cli_kws = {{ },{
 	{ { "show", "cli", "level", NULL },    "show cli level   : display the level of the current CLI session", cli_parse_show_lvl, NULL, NULL, NULL, ACCESS_MASTER},
 	{ { "show", "fd", NULL }, "show fd [num] : dump list of file descriptors in use", cli_parse_show_fd, cli_io_handler_show_fd, NULL },
 	{ { "show", "activity", NULL }, "show activity : show per-thread activity stats (for support/developers)", cli_parse_default, cli_io_handler_show_activity, NULL },
-	{ { "show", "proc", NULL }, "show proc      : show processes status", cli_parse_default, cli_io_handler_show_proc, NULL, NULL, ACCESS_MASTER_ONLY},
 	{ { "operator", NULL },  "operator       : lower the level of the current CLI session to operator", cli_parse_set_lvl, NULL, NULL, NULL, ACCESS_MASTER},
 	{ { "user", NULL },      "user           : lower the level of the current CLI session to user", cli_parse_set_lvl, NULL, NULL, NULL, ACCESS_MASTER},
-	{ { "reload", NULL },    "reload         : reload haproxy", cli_parse_reload, NULL, NULL, NULL, ACCESS_MASTER_ONLY},
 	{ { "_getsocks", NULL }, NULL,  _getsocks, NULL },
 	{{},}
 }};

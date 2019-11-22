@@ -51,6 +51,7 @@
 #include <proto/checks.h>
 #include <proto/cli.h>
 #include <proto/compression.h>
+#include <proto/dns.h>
 #include <proto/stats.h>
 #include <proto/fd.h>
 #include <proto/freq_ctr.h>
@@ -65,17 +66,25 @@
 #include <proto/proxy.h>
 #include <proto/sample.h>
 #include <proto/session.h>
+#include <proto/ssl_sock.h>
 #include <proto/stream.h>
 #include <proto/server.h>
 #include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 
-#ifdef USE_OPENSSL
-#include <proto/ssl_sock.h>
-#include <types/ssl_sock.h>
-#endif
 
+/* status codes available for the stats admin page (strictly 4 chars length) */
+const char *stat_status_codes[STAT_STATUS_SIZE] = {
+	[STAT_STATUS_DENY] = "DENY",
+	[STAT_STATUS_DONE] = "DONE",
+	[STAT_STATUS_ERRP] = "ERRP",
+	[STAT_STATUS_EXCD] = "EXCD",
+	[STAT_STATUS_NONE] = "NONE",
+	[STAT_STATUS_PART] = "PART",
+	[STAT_STATUS_UNKN] = "UNKN",
+	[STAT_STATUS_IVAL] = "IVAL",
+};
 
 /* status codes available for the stats admin page (strictly 4 chars length) */
 const char *stat_status_codes[STAT_STATUS_SIZE] = {
@@ -154,6 +163,9 @@ const char *info_field_names[INF_TOTAL_FIELDS] = {
 	[INF_CONNECTED_PEERS]                = "ConnectedPeers",
 	[INF_DROPPED_LOGS]                   = "DroppedLogs",
 	[INF_BUSY_POLLING]                   = "BusyPolling",
+	[INF_FAILED_RESOLUTIONS]             = "FailedResolutions",
+	[INF_TOTAL_BYTES_OUT]                = "TotalBytesOut",
+	[INF_BYTES_OUT_RATE]                 = "BytesOutRate",
 };
 
 const char *stat_field_names[ST_F_TOTAL_FIELDS] = {
@@ -260,7 +272,7 @@ static int stats_putchk(struct channel *chn, struct htx *htx, struct buffer *chk
 	if (htx) {
 		if (chk->data >= channel_htx_recv_max(chn, htx))
 			return 0;
-		if (!htx_add_data(htx, ist2(chk->area, chk->data)))
+		if (!htx_add_data_atonce(htx, ist2(chk->area, chk->data)))
 			return 0;
 		channel_add_input(chn, chk->data);
 		chk->data = 0;
@@ -279,8 +291,13 @@ static const char *stats_scope_ptr(struct appctx *appctx, struct stream_interfac
 	if (IS_HTX_STRM(si_strm(si))) {
 		struct channel *req = si_oc(si);
 		struct htx *htx = htxbuf(&req->buf);
-		struct ist uri = htx_sl_req_uri(http_find_stline(htx));
+		struct htx_blk *blk;
+		struct ist uri;
 
+		blk = htx_get_head_blk(htx);
+		BUG_ON(htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
+		ALREADY_CHECKED(blk);
+		uri = htx_sl_req_uri(htx_get_blk_ptr(htx, blk));
 		p = uri.ptr;
 	}
 	else
@@ -336,6 +353,7 @@ int stats_emit_raw_data_field(struct buffer *out, const struct field *f)
 	case FF_U32:   return chunk_appendf(out, "%u", f->u.u32);
 	case FF_S64:   return chunk_appendf(out, "%lld", (long long)f->u.s64);
 	case FF_U64:   return chunk_appendf(out, "%llu", (unsigned long long)f->u.u64);
+	case FF_FLT:   return chunk_appendf(out, "%f", f->u.flt);
 	case FF_STR:   return csv_enc_append(field_str(f, 0), 1, out) != NULL;
 	default:       return chunk_appendf(out, "[INCORRECT_FIELD_TYPE_%08x]", f->type);
 	}
@@ -353,6 +371,7 @@ int stats_emit_typed_data_field(struct buffer *out, const struct field *f)
 	case FF_U32:   return chunk_appendf(out, "u32:%u", f->u.u32);
 	case FF_S64:   return chunk_appendf(out, "s64:%lld", (long long)f->u.s64);
 	case FF_U64:   return chunk_appendf(out, "u64:%llu", (unsigned long long)f->u.u64);
+	case FF_FLT:   return chunk_appendf(out, "flt:%f", f->u.flt);
 	case FF_STR:   return chunk_appendf(out, "str:%s", field_str(f, 0));
 	default:       return chunk_appendf(out, "%08x:?", f->type);
 	}
@@ -392,6 +411,9 @@ int stats_emit_json_data_field(struct buffer *out, const struct field *f)
 		       type = "\"u64\"";
 		       snprintf(buf, sizeof(buf), "%llu",
 				(unsigned long long) f->u.u64);
+		       break;
+	case FF_FLT:   type = "\"flt\"";
+		       snprintf(buf, sizeof(buf), "%f", f->u.flt);
 		       break;
 	case FF_STR:   type = "\"str\"";
 		       value = field_str(f, 0);
@@ -1496,7 +1518,7 @@ int stats_fill_li_stats(struct proxy *px, struct listener *l, int flags,
 	stats[ST_F_EREQ]     = mkf_u64(FN_COUNTER, l->counters->failed_req);
 	stats[ST_F_DCON]     = mkf_u64(FN_COUNTER, l->counters->denied_conn);
 	stats[ST_F_DSES]     = mkf_u64(FN_COUNTER, l->counters->denied_sess);
-	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, (l->nbconn < l->maxconn) ? (l->state == LI_LIMITED) ? "WAITING" : "OPEN" : "FULL");
+	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, (!l->maxconn || l->nbconn < l->maxconn) ? (l->state == LI_LIMITED) ? "WAITING" : "OPEN" : "FULL");
 	stats[ST_F_PID]      = mkf_u32(FO_KEY, relative_pid);
 	stats[ST_F_IID]      = mkf_u32(FO_KEY|FS_SERVICE, px->uuid);
 	stats[ST_F_SID]      = mkf_u32(FO_KEY|FS_SERVICE, l->luid);
@@ -2399,6 +2421,18 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 	unsigned int up = (now.tv_sec - start_date.tv_sec);
 	char scope_txt[STAT_SCOPE_TXT_MAXLEN + sizeof STAT_SCOPE_PATTERN];
 	const char *scope_ptr = stats_scope_ptr(appctx, si);
+	unsigned long long bps = (unsigned long long)read_freq_ctr(&global.out_32bps) * 32;
+
+	/* Turn the bytes per second to bits per second and take care of the
+	 * usual ethernet overhead in order to help figure how far we are from
+	 * interface saturation since it's the only case which usually matters.
+	 * For this we count the total size of an Ethernet frame on the wire
+	 * including preamble and IFG (1538) for the largest TCP segment it
+	 * transports (1448 with TCP timestamps). This is not valid for smaller
+	 * packets (under-estimated), but it gives a reasonably accurate
+	 * estimation of how far we are from uplink saturation.
+	 */
+	bps = bps * 8 * 1538 / 1448;
 
 	/* WARNING! this has to fit the first packet too.
 	 * We are around 3.5 kB, add adding entries will
@@ -2415,7 +2449,7 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 	              "<b>uptime = </b> %dd %dh%02dm%02ds<br>\n"
 	              "<b>system limits:</b> memmax = %s%s; ulimit-n = %d<br>\n"
 	              "<b>maxsock = </b> %d; <b>maxconn = </b> %d; <b>maxpipes = </b> %d<br>\n"
-	              "current conns = %d; current pipes = %d/%d; conn rate = %d/sec<br>\n"
+	              "current conns = %d; current pipes = %d/%d; conn rate = %d/sec; bit rate = %.3f %cbps<br>\n"
 	              "Running tasks: %d/%d; idle = %d %%<br>\n"
 	              "</td><td align=\"center\" nowrap>\n"
 	              "<table class=\"lgd\"><tr>\n"
@@ -2440,7 +2474,7 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 	              "<td align=\"left\" valign=\"top\" nowrap width=\"1%%\">"
 	              "<b>Display option:</b><ul style=\"margin-top: 0.25em;\">"
 	              "",
-	              (uri->flags & ST_HIDEVER) ? "" : (STATS_VERSION_STRING),
+	              (uri->flags & ST_HIDEVER) ? "" : (stats_version_string),
 	              pid, (uri->flags & ST_SHNODE) ? " on " : "",
 		      (uri->flags & ST_SHNODE) ? (uri->node ? uri->node : global.node) : "",
 	              (uri->flags & ST_SHDESC) ? ": " : "",
@@ -2453,7 +2487,9 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 	              global.rlimit_nofile,
 	              global.maxsock, global.maxconn, global.maxpipes,
 	              actconn, pipes_used, pipes_used+pipes_free, read_freq_ctr(&global.conn_per_sec),
-	              tasks_run_queue_cur, nb_tasks_cur, idle_pct
+		      bps >= 1000000000UL ? (bps / 1000000000.0) : bps >= 1000000UL ? (bps / 1000000.0) : (bps / 1000.0),
+		      bps >= 1000000000UL ? 'G' : bps >= 1000000UL ? 'M' : 'k',
+	              tasks_run_queue_cur, nb_tasks_cur, ti->idle_pct
 	              );
 
 	/* scope_txt = search query, appctx->ctx.stats.scope_len is always <= STAT_SCOPE_TXT_MAXLEN */
@@ -2796,7 +2832,7 @@ static int stats_process_http_post(struct stream_interface *si)
 		while (blk) {
 			enum htx_blk_type type = htx_get_blk_type(blk);
 
-			if (type == HTX_BLK_EOM || type == HTX_BLK_EOD)
+			if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
 				break;
 			if (type == HTX_BLK_DATA) {
 				struct ist v = htx_get_blk_value(htx, blk);
@@ -3132,8 +3168,7 @@ static int stats_send_htx_headers(struct stream_interface *si, struct htx *htx)
 		goto full;
 	sl->info.res.status = 200;
 
-	if (!htx_add_header(htx, ist("Cache-Control"), ist("no-cache")) ||
-	    !htx_add_header(htx, ist("Connection"), ist("close")))
+	if (!htx_add_header(htx, ist("Cache-Control"), ist("no-cache")))
 		goto full;
 	if (appctx->ctx.stats.flags & STAT_FMT_HTML) {
 		if (!htx_add_header(htx, ist("Content-Type"), ist("text/html")))
@@ -3209,7 +3244,6 @@ static int stats_send_htx_redirect(struct stream_interface *si, struct htx *htx)
 	sl->info.res.status = 303;
 
 	if (!htx_add_header(htx, ist("Cache-Control"), ist("no-cache")) ||
-	    !htx_add_header(htx, ist("Connection"), ist("close")) ||
 	    !htx_add_header(htx, ist("Content-Type"), ist("text/plain")) ||
 	    !htx_add_header(htx, ist("Content-Length"), ist("0")) ||
 	    !htx_add_header(htx, ist("Location"), ist2(trash.area, trash.data)))
@@ -3361,7 +3395,7 @@ static void htx_stats_io_handler(struct appctx *appctx)
 	}
 
 	if (appctx->st0 == STAT_HTTP_DONE) {
-		/* Don't add EOD and TLR because mux-h1 will take care of it */
+		/* Don't add TLR because mux-h1 will take care of it */
 		if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
 			si_rx_room_blk(si);
 			goto out;
@@ -3606,8 +3640,8 @@ int stats_fill_info(struct field *info, int len)
 	memset(info, 0, sizeof(*info) * len);
 
 	info[INF_NAME]                           = mkf_str(FO_PRODUCT|FN_OUTPUT|FS_SERVICE, PRODUCT_NAME);
-	info[INF_VERSION]                        = mkf_str(FO_PRODUCT|FN_OUTPUT|FS_SERVICE, HAPROXY_VERSION);
-	info[INF_RELEASE_DATE]                   = mkf_str(FO_PRODUCT|FN_OUTPUT|FS_SERVICE, HAPROXY_DATE);
+	info[INF_VERSION]                        = mkf_str(FO_PRODUCT|FN_OUTPUT|FS_SERVICE, haproxy_version);
+	info[INF_RELEASE_DATE]                   = mkf_str(FO_PRODUCT|FN_OUTPUT|FS_SERVICE, haproxy_date);
 
 	info[INF_NBTHREAD]                       = mkf_u32(FO_CONFIG|FS_SERVICE, global.nbthread);
 	info[INF_NBPROC]                         = mkf_u32(FO_CONFIG|FS_SERVICE, global.nbproc);
@@ -3665,7 +3699,7 @@ int stats_fill_info(struct field *info, int len)
 #endif
 	info[INF_TASKS]                          = mkf_u32(0, nb_tasks_cur);
 	info[INF_RUN_QUEUE]                      = mkf_u32(0, tasks_run_queue_cur);
-	info[INF_IDLE_PCT]                       = mkf_u32(FN_AVG, idle_pct);
+	info[INF_IDLE_PCT]                       = mkf_u32(FN_AVG, ti->idle_pct);
 	info[INF_NODE]                           = mkf_str(FO_CONFIG|FN_OUTPUT|FS_SERVICE, global.node);
 	if (global.desc)
 		info[INF_DESCRIPTION]            = mkf_str(FO_CONFIG|FN_OUTPUT|FS_SERVICE, global.desc);
@@ -3677,6 +3711,9 @@ int stats_fill_info(struct field *info, int len)
 	info[INF_CONNECTED_PEERS]                = mkf_u32(0, connected_peers);
 	info[INF_DROPPED_LOGS]                   = mkf_u32(0, dropped_logs);
 	info[INF_BUSY_POLLING]                   = mkf_u32(0, !!(global.tune.options & GTUNE_BUSY_POLLING));
+	info[INF_FAILED_RESOLUTIONS]             = mkf_u32(0, dns_failed_resolutions);
+	info[INF_TOTAL_BYTES_OUT]                = mkf_u64(0, global.out_bytes);
+	info[INF_BYTES_OUT_RATE]                 = mkf_u64(FN_RATE, (unsigned long long)read_freq_ctr(&global.out_32bps) * 32);
 
 	return 1;
 }

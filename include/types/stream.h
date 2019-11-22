@@ -56,9 +56,9 @@
 #define SF_CURR_SESS	0x00000040	/* a connection is currently being counted on the server */
 /* unused: 0x00000080 */
 #define SF_REDISP	0x00000100	/* set if this stream was redispatched from one server to another */
-/* unused: 0x00000200 */
+#define SF_IGNORE	0x00000200      /* The stream lead to a mux upgrade, and should be ignored */
 #define SF_REDIRECTABLE	0x00000400	/* set if this stream is redirectable (GET or HEAD) */
-/* unused: 0x00000800 */
+#define SF_HTX          0x00000800      /* set if this stream is an htx stream */
 
 /* stream termination conditions, bits values 0x1000 to 0x7000 (0-9 shift 12) */
 #define SF_ERR_NONE     0x00000000	/* normal end of request */
@@ -146,12 +146,16 @@ struct stream {
 	struct list back_refs;          /* list of users tracking this stream */
 	struct buffer_wait buffer_wait; /* position in the list of objects waiting for a buffer */
 
+	struct freq_ctr call_rate;      /* stream task call rate */
+
 	struct {
 		struct stksess *ts;
 		struct stktable *table;
 	} store[8];                     /* tracked stickiness values to store */
 	int store_count;
-	/* 4 unused bytes here */
+
+	enum obj_type obj_type;         /* object type == OBJ_TYPE_STREAM */
+	/* 3 unused bytes here */
 
 	struct stkctr stkctr[MAX_SESS_STKCTR];  /* content-aware stick counters */
 
@@ -178,6 +182,15 @@ struct stream {
 	struct list *current_rule_list;         /* this is used to store the current executed rule list. */
 	void *current_rule;                     /* this is used to store the current rule to be resumed. */
 	struct hlua *hlua;                      /* lua runtime context */
+
+	/* Context */
+	struct {
+		struct dns_requester *dns_requester; /* owner of the resolution */
+		char *hostname_dn;              /* hostname being resolve, in domain name format */
+		int hostname_dn_len;            /* size of hostname_dn */
+		/* 4 unused bytes here */
+		struct act_rule *parent;        /* rule which requested this resolution */
+	} dns_ctx;                              /* context information for DNS resolution */
 };
 
 #endif /* _TYPES_STREAM_H */

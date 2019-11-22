@@ -276,7 +276,7 @@ generate_pseudo_uuid()
 		last >>= 32u;
 		bits  -= 32;
 	}
-	snprintf(uuid, 36, "%8.8x-%4.4x-%4.4x-%4.4x-%12.12llx",
+	snprintf(uuid, 37, "%8.8x-%4.4x-%4.4x-%4.4x-%12.12llx",
 			     rnd[0],
 			     rnd[1] & 0xFFFF,
 			     ((rnd[1] >> 16u) & 0xFFF) | 0x4000,  // highest 4 bits indicate the uuid version
@@ -1253,7 +1253,7 @@ spoe_release_appctx(struct appctx *appctx)
 		    __FUNCTION__, appctx);
 
 	/* Remove applet from the list of running applets */
-	HA_ATOMIC_SUB(&agent->counters.applets, 1);
+	_HA_ATOMIC_SUB(&agent->counters.applets, 1);
 	HA_SPIN_LOCK(SPOE_APPLET_LOCK, &agent->rt[tid].lock);
 	if (!LIST_ISEMPTY(&spoe_appctx->list)) {
 		LIST_DEL(&spoe_appctx->list);
@@ -1265,7 +1265,7 @@ spoe_release_appctx(struct appctx *appctx)
 	if (appctx->st0 != SPOE_APPCTX_ST_END) {
 		if (appctx->st0 == SPOE_APPCTX_ST_IDLE) {
 			eb32_delete(&spoe_appctx->node);
-			HA_ATOMIC_SUB(&agent->counters.idles, 1);
+			_HA_ATOMIC_SUB(&agent->counters.idles, 1);
 		}
 
 		appctx->st0 = SPOE_APPCTX_ST_END;
@@ -1278,16 +1278,13 @@ spoe_release_appctx(struct appctx *appctx)
 	}
 
 	/* Destroy the task attached to this applet */
-	if (spoe_appctx->task) {
-		task_delete(spoe_appctx->task);
-		task_free(spoe_appctx->task);
-	}
+	task_destroy(spoe_appctx->task);
 
 	/* Notify all waiting streams */
 	list_for_each_entry_safe(ctx, back, &spoe_appctx->waiting_queue, list) {
 		LIST_DEL(&ctx->list);
 		LIST_INIT(&ctx->list);
-		HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+		_HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
 		spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
@@ -1311,7 +1308,7 @@ spoe_release_appctx(struct appctx *appctx)
 	list_for_each_entry_safe(ctx, back, &agent->rt[tid].sending_queue, list) {
 		LIST_DEL(&ctx->list);
 		LIST_INIT(&ctx->list);
-		HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+		_HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
 		spoe_update_stat_time(&ctx->stats.tv_queue, &ctx->stats.t_queue);
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
@@ -1320,7 +1317,7 @@ spoe_release_appctx(struct appctx *appctx)
 	list_for_each_entry_safe(ctx, back, &agent->rt[tid].waiting_queue, list) {
 		LIST_DEL(&ctx->list);
 		LIST_INIT(&ctx->list);
-		HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+		_HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
 		spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
@@ -1347,14 +1344,17 @@ spoe_handle_connect_appctx(struct appctx *appctx)
 	char *frame, *buf;
 	int   ret;
 
-	if (si->state <= SI_ST_CON) {
+	if (si_state_in(si->state, SI_SB_CER|SI_SB_DIS|SI_SB_CLO)) {
+		/* closed */
+		SPOE_APPCTX(appctx)->status_code = SPOE_FRM_ERR_IO;
+		goto exit;
+	}
+
+	if (!si_state_in(si->state, SI_SB_RDY|SI_SB_EST)) {
+		/* not connected yet */
 		si_rx_endp_more(si);
 		task_wakeup(si_strm(si)->task, TASK_WOKEN_MSG);
 		goto stop;
-	}
-	if (si->state != SI_ST_EST) {
-		SPOE_APPCTX(appctx)->status_code = SPOE_FRM_ERR_IO;
-		goto exit;
 	}
 
 	if (appctx->st1 == SPOE_APPCTX_ERR_TOUT) {
@@ -1449,7 +1449,7 @@ spoe_handle_connecting_appctx(struct appctx *appctx)
 		default:
 			/* HELLO handshake is finished, set the idle timeout and
 			 * add the applet in the list of running applets. */
-			HA_ATOMIC_ADD(&agent->counters.idles, 1);
+			_HA_ATOMIC_ADD(&agent->counters.idles, 1);
 			appctx->st0 = SPOE_APPCTX_ST_IDLE;
 			SPOE_APPCTX(appctx)->node.key = 0;
 			eb32_insert(&agent->rt[tid].idle_applets, &SPOE_APPCTX(appctx)->node);
@@ -1519,7 +1519,7 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 			spoe_release_buffer(&ctx->buffer, &ctx->buffer_wait);
 			LIST_DEL(&ctx->list);
 			LIST_INIT(&ctx->list);
-			HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+			_HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
 			spoe_update_stat_time(&ctx->stats.tv_queue, &ctx->stats.t_queue);
 			ctx->spoe_appctx = NULL;
 			ctx->state = SPOE_CTX_ST_ERROR;
@@ -1539,7 +1539,7 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 			spoe_release_buffer(&ctx->buffer, &ctx->buffer_wait);
 			LIST_DEL(&ctx->list);
 			LIST_INIT(&ctx->list);
-			HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+			_HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
 			spoe_update_stat_time(&ctx->stats.tv_queue, &ctx->stats.t_queue);
 			ctx->spoe_appctx = SPOE_APPCTX(appctx);
 			if (!(ctx->flags & SPOE_CTX_FL_FRAGMENTED) ||
@@ -1574,7 +1574,7 @@ spoe_handle_sending_frame_appctx(struct appctx *appctx, int *skip)
 		*skip = 1;
 		LIST_ADDQ(&SPOE_APPCTX(appctx)->waiting_queue, &ctx->list);
 	}
-	HA_ATOMIC_ADD(&agent->counters.nb_waiting, 1);
+	_HA_ATOMIC_ADD(&agent->counters.nb_waiting, 1);
 	ctx->stats.tv_wait = now;
 	SPOE_APPCTX(appctx)->frag_ctx.ctx    = NULL;
 	SPOE_APPCTX(appctx)->frag_ctx.cursid = 0;
@@ -1630,7 +1630,7 @@ spoe_handle_receiving_frame_appctx(struct appctx *appctx, int *skip)
 		default:
 			LIST_DEL(&ctx->list);
 			LIST_INIT(&ctx->list);
-			HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+			_HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
 			spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
 			ctx->stats.tv_response = now;
 			if (ctx->spoe_appctx) {
@@ -1736,7 +1736,7 @@ spoe_handle_processing_appctx(struct appctx *appctx)
 	}
 
 	if (appctx->st0 == SPOE_APPCTX_ST_PROCESSING && SPOE_APPCTX(appctx)->cur_fpa < agent->max_fpa) {
-		HA_ATOMIC_ADD(&agent->counters.idles, 1);
+		_HA_ATOMIC_ADD(&agent->counters.idles, 1);
 		appctx->st0 = SPOE_APPCTX_ST_IDLE;
 		eb32_insert(&agent->rt[tid].idle_applets, &SPOE_APPCTX(appctx)->node);
 	}
@@ -1899,7 +1899,7 @@ spoe_handle_appctx(struct appctx *appctx)
 			goto switchstate;
 
 		case SPOE_APPCTX_ST_IDLE:
-			HA_ATOMIC_SUB(&agent->counters.idles, 1);
+			_HA_ATOMIC_SUB(&agent->counters.idles, 1);
 			eb32_delete(&SPOE_APPCTX(appctx)->node);
 			if (stopping &&
 			    LIST_ISEMPTY(&agent->rt[tid].sending_queue) &&
@@ -2014,7 +2014,7 @@ spoe_create_appctx(struct spoe_config *conf)
 	HA_SPIN_LOCK(SPOE_APPLET_LOCK, &conf->agent->rt[tid].lock);
 	LIST_ADDQ(&conf->agent->rt[tid].applets, &SPOE_APPCTX(appctx)->list);
 	HA_SPIN_UNLOCK(SPOE_APPLET_LOCK, &conf->agent->rt[tid].lock);
-	HA_ATOMIC_ADD(&conf->agent->counters.applets, 1);
+	_HA_ATOMIC_ADD(&conf->agent->counters.applets, 1);
 
 	task_wakeup(SPOE_APPCTX(appctx)->task, TASK_WOKEN_INIT);
 	task_wakeup(strm->task, TASK_WOKEN_INIT);
@@ -2024,7 +2024,7 @@ spoe_create_appctx(struct spoe_config *conf)
  out_free_sess:
 	session_free(sess);
  out_free_spoe:
-	task_free(SPOE_APPCTX(appctx)->task);
+	task_destroy(SPOE_APPCTX(appctx)->task);
  out_free_spoe_appctx:
 	pool_free(pool_head_spoe_appctx, SPOE_APPCTX(appctx));
  out_free_appctx:
@@ -2100,7 +2100,7 @@ spoe_queue_context(struct spoe_context *ctx)
 	/* Add the SPOE context in the sending queue if the stream has no applet
 	 * already assigned and wakeup all idle applets. Otherwise, don't queue
 	 * it. */
-	HA_ATOMIC_ADD(&agent->counters.nb_sending, 1);
+	_HA_ATOMIC_ADD(&agent->counters.nb_sending, 1);
 	spoe_update_stat_time(&ctx->stats.tv_request, &ctx->stats.t_request);
 	ctx->stats.tv_queue = now;
 	if (ctx->spoe_appctx)
@@ -2594,7 +2594,7 @@ spoe_stop_processing(struct spoe_agent *agent, struct spoe_context *ctx)
 
 	if (!(ctx->flags & SPOE_CTX_FL_PROCESS))
 		return;
-	HA_ATOMIC_ADD(&agent->counters.nb_processed, 1);
+	_HA_ATOMIC_ADD(&agent->counters.nb_processed, 1);
 	if (sa) {
 		if (sa->frag_ctx.ctx == ctx) {
 			sa->frag_ctx.ctx = NULL;
@@ -2621,9 +2621,9 @@ spoe_stop_processing(struct spoe_agent *agent, struct spoe_context *ctx)
 
 	if (!LIST_ISEMPTY(&ctx->list)) {
 		if (ctx->state == SPOE_CTX_ST_SENDING_MSGS)
-			HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
+			_HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
 		else
-			HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
+			_HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
 
 		LIST_DEL(&ctx->list);
 		LIST_INIT(&ctx->list);
@@ -2728,7 +2728,7 @@ spoe_process_messages(struct stream *s, struct spoe_context *ctx,
 	spoe_update_stats(s, agent, ctx, dir);
 	spoe_stop_processing(agent, ctx);
 	if (ctx->status_code) {
-		HA_ATOMIC_ADD(&agent->counters.nb_errors, 1);
+		_HA_ATOMIC_ADD(&agent->counters.nb_errors, 1);
 		spoe_handle_processing_error(s, agent, ctx, dir);
 		ret = 1;
 	}
@@ -3500,7 +3500,19 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 		res = parse_time_err(args[2], &timeout, TIME_UNIT_MS);
-		if (res) {
+		if (res == PARSE_TIME_OVER) {
+			ha_alert("parsing [%s:%d]: timer overflow in argument <%s> to <%s %s>, maximum value is 2147483647 ms (~24.8 days).\n",
+				 file, linenum, args[2], args[0], args[1]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		else if (res == PARSE_TIME_UNDER) {
+			ha_alert("parsing [%s:%d]: timer underflow in argument <%s> to <%s %s>, minimum non-null value is 1 ms.\n",
+				 file, linenum, args[2], args[0], args[1]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		else if (res) {
 			ha_alert("parsing [%s:%d] : unexpected character '%c' in 'timeout %s'.\n",
 				 file, linenum, *res, args[1]);
 			err_code |= ERR_ALERT | ERR_FATAL;

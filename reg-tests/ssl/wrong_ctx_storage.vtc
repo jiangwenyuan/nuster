@@ -1,0 +1,46 @@
+# commit 28962c9
+# BUG/MAJOR: ssl: OpenSSL context is stored in non-reserved memory slot
+#
+# We never saw unexplicated crash with SSL, so I suppose that we are
+# luck, or the slot 0 is always reserved. Anyway the usage of the macro
+# SSL_get_app_data() and SSL_set_app_data() seem wrong. This patch change
+# the deprecated functions SSL_get_app_data() and SSL_set_app_data()
+# by the new functions SSL_get_ex_data() and SSL_set_ex_data(), and
+# it reserves the slot in the SSL memory space.
+#
+# For information, this is the two declaration which seems wrong or
+# incomplete in the OpenSSL ssl.h file. We can see the usage of the
+# slot 0 whoch is hardcoded, but never reserved.
+#
+#    #define SSL_set_app_data(s,arg)     (SSL_set_ex_data(s,0,(char *)arg))
+#    #define SSL_get_app_data(s)      (SSL_get_ex_data(s,0))
+
+#REGTEST_TYPE=bug
+
+varnishtest "OpenSSL bug: Random crashes"
+#REQUIRE_OPTIONS=OPENSSL
+feature ignore_unknown_macro
+
+
+haproxy h1 -conf {
+  global
+    tune.ssl.default-dh-param 2048
+    tune.ssl.capture-cipherlist-size 1
+
+  listen frt
+    mode http
+    ${no-htx} option http-use-htx
+    bind "fd@${frt}" ssl crt ${testdir}/common.pem
+    http-request redirect location /
+} -start
+
+shell {
+    HOST=${h1_frt_addr}
+    if [ "${h1_frt_addr}" = "::1" ] ; then
+        HOST="\[::1\]"
+    fi
+    for i in 1 2 3 4 5; do
+        curl -i -k https://$HOST:${h1_frt_port} & pids="$pids $!"
+    done
+    wait $pids
+}

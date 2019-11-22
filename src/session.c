@@ -55,8 +55,8 @@ struct session *session_new(struct proxy *fe, struct listener *li, enum obj_type
 		vars_init(&sess->vars, SCOPE_SESS);
 		sess->task = NULL;
 		sess->t_handshake = -1; /* handshake not done yet */
-		HA_ATOMIC_ADD(&totalconn, 1);
-		HA_ATOMIC_ADD(&jobs, 1);
+		_HA_ATOMIC_ADD(&totalconn, 1);
+		_HA_ATOMIC_ADD(&jobs, 1);
 		LIST_INIT(&sess->srv_list);
 		sess->idle_conns = 0;
 		sess->flags = SESS_FL_NONE;
@@ -75,17 +75,15 @@ void session_free(struct session *sess)
 	vars_prune_per_sess(&sess->vars);
 	conn = objt_conn(sess->origin);
 	if (conn != NULL && conn->mux)
-		conn->mux->destroy(conn);
+		conn->mux->destroy(conn->ctx);
 	list_for_each_entry_safe(srv_list, srv_list_back, &sess->srv_list, srv_list) {
 		list_for_each_entry_safe(conn, conn_back, &srv_list->conn_list, session_list) {
+			LIST_DEL_INIT(&conn->session_list);
 			if (conn->mux) {
-
-				LIST_DEL(&conn->session_list);
-				LIST_INIT(&conn->session_list);
 				conn->owner = NULL;
 				conn->flags &= ~CO_FL_SESS_IDLE;
 				if (!srv_add_to_idle_list(objt_server(conn->target), conn))
-					conn->mux->destroy(conn);
+					conn->mux->destroy(conn->ctx);
 			} else {
 				/* We have a connection, but not yet an associated mux.
 				 * So destroy it now.
@@ -98,7 +96,7 @@ void session_free(struct session *sess)
 		pool_free(pool_head_sess_srv_list, srv_list);
 	}
 	pool_free(pool_head_session, sess);
-	HA_ATOMIC_SUB(&jobs, 1);
+	_HA_ATOMIC_SUB(&jobs, 1);
 }
 
 /* callback used from the connection/mux layer to notify that a connection is
@@ -165,21 +163,22 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	conn_ctrl_init(cli_conn);
 
 	/* wait for a PROXY protocol header */
-	if (l->options & LI_O_ACC_PROXY) {
+	if (l->options & LI_O_ACC_PROXY)
 		cli_conn->flags |= CO_FL_ACCEPT_PROXY;
-		conn_sock_want_recv(cli_conn);
-	}
 
 	/* wait for a NetScaler client IP insertion protocol header */
-	if (l->options & LI_O_ACC_CIP) {
+	if (l->options & LI_O_ACC_CIP)
 		cli_conn->flags |= CO_FL_ACCEPT_CIP;
-		conn_sock_want_recv(cli_conn);
-	}
 
 	conn_xprt_want_recv(cli_conn);
 	if (conn_xprt_init(cli_conn) < 0)
 		goto out_free_conn;
 
+	/* Add the handshake pseudo-XPRT */
+	if (cli_conn->flags & (CO_FL_ACCEPT_PROXY | CO_FL_ACCEPT_CIP)) {
+		if (xprt_add_hs(cli_conn) != 0)
+			goto out_free_conn;
+	}
 	sess = session_new(p, l, &cli_conn->obj_type);
 	if (!sess)
 		goto out_free_conn;
@@ -395,8 +394,7 @@ static void session_kill_embryonic(struct session *sess, unsigned short state)
 	conn_free(conn);
 	sess->origin = NULL;
 
-	task_delete(task);
-	task_free(task);
+	task_destroy(task);
 	session_free(sess);
 }
 
@@ -448,12 +446,8 @@ static int conn_complete_session(struct connection *conn)
 		goto fail;
 
 	/* the embryonic session's task is not needed anymore */
-	if (sess->task) {
-		task_delete(sess->task);
-		task_free(sess->task);
-		sess->task = NULL;
-	}
-
+	task_destroy(sess->task);
+	sess->task = NULL;
 	conn_set_owner(conn, sess, conn_session_free);
 
 	return 0;

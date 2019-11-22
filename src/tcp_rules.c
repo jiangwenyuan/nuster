@@ -168,10 +168,10 @@ resume_execution:
 				channel_abort(&s->res);
 				req->analysers = 0;
 
-				HA_ATOMIC_ADD(&s->be->be_counters.denied_req, 1);
-				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
+				_HA_ATOMIC_ADD(&s->be->be_counters.denied_req, 1);
+				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
 				if (sess->listener && sess->listener->counters)
-					HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
+					_HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
 
 				if (!(s->flags & SF_ERR_MASK))
 					s->flags |= SF_ERR_PRXCOND;
@@ -242,12 +242,13 @@ resume_execution:
 				case ACT_RET_CONT:
 					continue;
 				case ACT_RET_STOP:
+				case ACT_RET_DONE:
 					break;
 				case ACT_RET_YIELD:
 					s->current_rule = rule;
 					goto missing_data;
 				}
-				break; /* ACT_RET_STOP */
+				break; /* ACT_RET_STOP/DONE */
 			}
 		}
 	}
@@ -348,10 +349,10 @@ resume_execution:
 				channel_abort(&s->req);
 				rep->analysers = 0;
 
-				HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
-				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_resp, 1);
+				_HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
+				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_resp, 1);
 				if (sess->listener && sess->listener->counters)
-					HA_ATOMIC_ADD(&sess->listener->counters->denied_resp, 1);
+					_HA_ATOMIC_ADD(&sess->listener->counters->denied_resp, 1);
 
 				if (!(s->flags & SF_ERR_MASK))
 					s->flags |= SF_ERR_PRXCOND;
@@ -379,13 +380,14 @@ resume_execution:
 				case ACT_RET_CONT:
 					continue;
 				case ACT_RET_STOP:
+				case ACT_RET_DONE:
 					break;
 				case ACT_RET_YIELD:
 					channel_dont_close(rep);
 					s->current_rule = rule;
 					return 0;
 				}
-				break; /* ACT_RET_STOP */
+				break; /* ACT_RET_STOP/DONE */
 			}
 		}
 	}
@@ -432,9 +434,9 @@ int tcp_exec_l4_rules(struct session *sess)
 				break;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
-				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_conn, 1);
+				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_conn, 1);
 				if (sess->listener && sess->listener->counters)
-					HA_ATOMIC_ADD(&sess->listener->counters->denied_conn, 1);
+					_HA_ATOMIC_ADD(&sess->listener->counters->denied_conn, 1);
 
 				result = 0;
 				break;
@@ -455,12 +457,22 @@ int tcp_exec_l4_rules(struct session *sess)
 					stream_track_stkctr(&sess->stkctr[trk_idx(rule->action)], t, ts);
 			}
 			else if (rule->action == ACT_TCP_EXPECT_PX) {
+				if (!(conn->flags & (CO_FL_HANDSHAKE_NOSSL))) {
+					if (xprt_add_hs(conn) < 0) {
+						result = 0;
+						break;
+					}
+				}
 				conn->flags |= CO_FL_ACCEPT_PROXY;
-				conn_sock_want_recv(conn);
 			}
 			else if (rule->action == ACT_TCP_EXPECT_CIP) {
+				if (!(conn->flags & (CO_FL_HANDSHAKE_NOSSL))) {
+					if (xprt_add_hs(conn) < 0) {
+						result = 0;
+						break;
+					}
+				}
 				conn->flags |= CO_FL_ACCEPT_CIP;
-				conn_sock_want_recv(conn);
 			}
 			else {
 				/* Custom keywords. */
@@ -474,6 +486,7 @@ int tcp_exec_l4_rules(struct session *sess)
 					send_log(sess->fe, LOG_WARNING,
 					         "Internal error: yield not allowed with tcp-request connection actions.");
 				case ACT_RET_STOP:
+				case ACT_RET_DONE:
 					break;
 				case ACT_RET_CONT:
 					continue;
@@ -481,7 +494,7 @@ int tcp_exec_l4_rules(struct session *sess)
 					result = 0;
 					break;
 				}
-				break; /* ACT_RET_STOP */
+				break; /* ACT_RET_STOP/DONE */
 			}
 		}
 	}
@@ -519,9 +532,9 @@ int tcp_exec_l5_rules(struct session *sess)
 				break;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
-				HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_sess, 1);
+				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_sess, 1);
 				if (sess->listener && sess->listener->counters)
-					HA_ATOMIC_ADD(&sess->listener->counters->denied_sess, 1);
+					_HA_ATOMIC_ADD(&sess->listener->counters->denied_sess, 1);
 
 				result = 0;
 				break;
@@ -553,6 +566,7 @@ int tcp_exec_l5_rules(struct session *sess)
 					send_log(sess->fe, LOG_WARNING,
 					         "Internal error: yield not allowed with tcp-request session actions.");
 				case ACT_RET_STOP:
+				case ACT_RET_DONE:
 					break;
 				case ACT_RET_CONT:
 					continue;
@@ -560,7 +574,7 @@ int tcp_exec_l5_rules(struct session *sess)
 					result = 0;
 					break;
 				}
-				break; /* ACT_RET_STOP */
+				break; /* ACT_RET_STOP/DONE */
 			}
 		}
 	}
@@ -912,7 +926,12 @@ static int tcp_parse_tcp_rep(char **args, int section_type, struct proxy *curpx,
 			memprintf(err,
 			          "'%s %s' expects a positive delay in milliseconds, in %s '%s'",
 			          args[0], args[1], proxy_type_str(curpx), curpx->id);
-			if (ptr)
+
+			if (ptr == PARSE_TIME_OVER)
+				memprintf(err, "%s (timer overflow in '%s', maximum value is 2147483647 ms or ~24.8 days)", *err, args[2]);
+			else if (ptr == PARSE_TIME_UNDER)
+				memprintf(err, "%s (timer underflow in '%s', minimum non-null value is 1 ms)", *err, args[2]);
+			else if (ptr)
 				memprintf(err, "%s (unexpected character '%c')", *err, *ptr);
 			return -1;
 		}
@@ -1021,7 +1040,12 @@ static int tcp_parse_tcp_req(char **args, int section_type, struct proxy *curpx,
 			memprintf(err,
 			          "'%s %s' expects a positive delay in milliseconds, in %s '%s'",
 			          args[0], args[1], proxy_type_str(curpx), curpx->id);
-			if (ptr)
+
+			if (ptr == PARSE_TIME_OVER)
+				memprintf(err, "%s (timer overflow in '%s', maximum value is 2147483647 ms or ~24.8 days)", *err, args[2]);
+			else if (ptr == PARSE_TIME_UNDER)
+				memprintf(err, "%s (timer underflow in '%s', minimum non-null value is 1 ms)", *err, args[2]);
+			else if (ptr)
 				memprintf(err, "%s (unexpected character '%c')", *err, *ptr);
 			return -1;
 		}

@@ -49,7 +49,7 @@
 static void sockpair_add_listener(struct listener *listener, int port);
 static int sockpair_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int sockpair_bind_listeners(struct protocol *proto, char *errmsg, int errlen);
-static int sockpair_connect_server(struct connection *conn, int data, int delack);
+static int sockpair_connect_server(struct connection *conn, int flags);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_sockpair = {
@@ -158,8 +158,7 @@ static int sockpair_bind_listener(struct listener *listener, char *errmsg, int e
 	listener->state = LI_LISTEN;
 
 	fd_insert(fd, listener, listener->proto->accept,
-		  listener->bind_conf->bind_thread[relative_pid-1] ?
-		  listener->bind_conf->bind_thread[relative_pid-1] : MAX_THREADS_MASK);
+	          thread_mask(listener->bind_conf->bind_thread));
 
 	return err;
 
@@ -243,7 +242,7 @@ int send_fd_uxst(int fd, int send_fd)
  * The connection's fd is inserted only when SF_ERR_NONE is returned, otherwise
  * it's invalid and the caller has nothing to do.
  */
-static int sockpair_connect_server(struct connection *conn, int data, int delack)
+static int sockpair_connect_server(struct connection *conn, int flags)
 {
 	int sv[2], fd, dst_fd = -1;
 
@@ -295,7 +294,8 @@ static int sockpair_connect_server(struct connection *conn, int data, int delack
 	}
 
 	/* if a send_proxy is there, there are data */
-	data |= conn->send_proxy_ofs;
+	if (conn->send_proxy_ofs)
+		flags |= CONNECT_HAS_DATA;
 
 	if (global.tune.server_sndbuf)
                 setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &global.tune.server_sndbuf, sizeof(global.tune.server_sndbuf));
@@ -332,20 +332,7 @@ static int sockpair_connect_server(struct connection *conn, int data, int delack
 		return SF_ERR_RESOURCE;
 	}
 
-	if (conn->flags & (CO_FL_HANDSHAKE | CO_FL_WAIT_L4_CONN)) {
-		conn_sock_want_send(conn);  /* for connect status, proxy protocol or SSL */
-	}
-	else {
-		/* If there's no more handshake, we need to notify the data
-		 * layer when the connection is already OK otherwise we'll have
-		 * no other opportunity to do it later (eg: health checks).
-		 */
-		data = 1;
-	}
-
-	if (data)
-		conn_xprt_want_send(conn);  /* prepare to send data if any */
-
+	conn_xprt_want_send(conn);  /* for connect status, proxy protocol or SSL */
 	return SF_ERR_NONE;  /* connection is OK */
 }
 

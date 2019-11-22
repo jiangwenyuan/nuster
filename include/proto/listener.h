@@ -109,6 +109,12 @@ void delete_listener(struct listener *listener);
  */
 void listener_accept(int fd);
 
+/* Returns a suitable value for a listener's backlog. It uses the listener's,
+ * otherwise the frontend's backlog, otherwise the listener's maxconn,
+ * otherwise the frontend's maxconn, otherwise 1024.
+ */
+int listener_backlog(const struct listener *l);
+
 /* Notify the listener that a connection initiated from it was released. This
  * is used to keep the connection count consistent and to possibly re-open
  * listening when it was limited.
@@ -126,6 +132,9 @@ struct bind_kw *bind_find_kw(const char *kw);
 
 /* Dumps all registered "bind" keywords to the <out> string pointer. */
 void bind_dump_kws(char **out);
+
+void bind_recount_thread_bits(struct bind_conf *conf);
+unsigned int bind_map_thread_id(const struct bind_conf *conf, unsigned int r);
 
 /* allocate an bind_conf struct for a bind line, and chain it to the frontend <fe>.
  * If <arg> is not NULL, it is duplicated into ->arg to store useful config
@@ -166,6 +175,9 @@ static inline const char *listener_state_str(const struct listener *l)
 }
 
 extern struct xfer_sock_list *xfer_sock_list;
+
+extern struct accept_queue_ring accept_queue_rings[MAX_THREADS] __attribute__((aligned(64)));
+
 #endif /* _PROTO_LISTENER_H */
 
 /*

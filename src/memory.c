@@ -16,6 +16,7 @@
 #include <types/global.h>
 #include <types/stats.h>
 
+#include <common/cfgparse.h>
 #include <common/config.h>
 #include <common/debug.h>
 #include <common/hathreads.h>
@@ -23,6 +24,8 @@
 #include <common/memory.h>
 #include <common/mini-clist.h>
 #include <common/standard.h>
+
+#include <types/activity.h>
 
 #include <proto/applet.h>
 #include <proto/cli.h>
@@ -45,6 +48,11 @@ THREAD_LOCAL size_t pool_cache_count = 0;                /* #cache objects   */
 
 static struct list pools = LIST_HEAD_INIT(pools);
 int mem_poison_byte = -1;
+
+#ifdef DEBUG_FAIL_ALLOC
+static int mem_fail_rate = 0;
+static int mem_should_fail(const struct pool_head *);
+#endif
 
 /* Try to find an existing shared pool with the same characteristics and
  * returns it, otherwise creates this one. NULL is returned if no memory
@@ -161,15 +169,18 @@ void *__pool_refill_alloc(struct pool_head *pool, unsigned int avail)
 
 	while (1) {
 		if (limit && allocated >= limit) {
-			HA_ATOMIC_ADD(&pool->allocated, allocated - allocated_orig);
+			_HA_ATOMIC_ADD(&pool->allocated, allocated - allocated_orig);
+			activity[tid].pool_fail++;
 			return NULL;
 		}
 
 		ptr = malloc(size + POOL_EXTRA);
 		if (!ptr) {
-			HA_ATOMIC_ADD(&pool->failed, 1);
-			if (failed)
+			_HA_ATOMIC_ADD(&pool->failed, 1);
+			if (failed) {
+				activity[tid].pool_fail++;
 				return NULL;
+			}
 			failed++;
 			pool_gc(pool);
 			continue;
@@ -181,11 +192,12 @@ void *__pool_refill_alloc(struct pool_head *pool, unsigned int avail)
 		do {
 			*POOL_LINK(pool, ptr) = free_list;
 			__ha_barrier_store();
-		} while (HA_ATOMIC_CAS(&pool->free_list, &free_list, ptr) == 0);
+		} while (_HA_ATOMIC_CAS(&pool->free_list, &free_list, ptr) == 0);
 	}
+	__ha_barrier_atomic_store();
 
-	HA_ATOMIC_ADD(&pool->allocated, allocated - allocated_orig);
-	HA_ATOMIC_ADD(&pool->used, 1);
+	_HA_ATOMIC_ADD(&pool->allocated, allocated - allocated_orig);
+	_HA_ATOMIC_ADD(&pool->used, 1);
 
 #ifdef DEBUG_MEMORY_POOLS
 	/* keep track of where the element was allocated from */
@@ -212,7 +224,8 @@ void pool_flush(struct pool_head *pool)
 		return;
 	do {
 		next = pool->free_list;
-	} while (!HA_ATOMIC_CAS(&pool->free_list, &next, NULL));
+	} while (!_HA_ATOMIC_CAS(&pool->free_list, &next, NULL));
+	__ha_barrier_atomic_store();
 	while (next) {
 		temp = next;
 		next = *POOL_LINK(pool, temp);
@@ -220,7 +233,7 @@ void pool_flush(struct pool_head *pool)
 		free(temp);
 	}
 	pool->free_list = next;
-	HA_ATOMIC_SUB(&pool->allocated, removed);
+	_HA_ATOMIC_SUB(&pool->allocated, removed);
 	/* here, we should have pool->allocate == pool->used */
 }
 
@@ -237,7 +250,7 @@ void pool_gc(struct pool_head *pool_ctx)
 	int cur_recurse = 0;
 	struct pool_head *entry;
 
-	if (recurse || !HA_ATOMIC_CAS(&recurse, &cur_recurse, 1))
+	if (recurse || !_HA_ATOMIC_CAS(&recurse, &cur_recurse, 1))
 		return;
 
 	list_for_each_entry(entry, &pools, list) {
@@ -255,11 +268,11 @@ void pool_gc(struct pool_head *pool_ctx)
 			if (HA_ATOMIC_DWCAS(&entry->free_list, &cmp, &new) == 0)
 				continue;
 			free(cmp.free_list);
-			HA_ATOMIC_SUB(&entry->allocated, 1);
+			_HA_ATOMIC_SUB(&entry->allocated, 1);
 		}
 	}
 
-	HA_ATOMIC_STORE(&recurse, 0);
+	_HA_ATOMIC_STORE(&recurse, 0);
 }
 
 /* frees an object to the local cache, possibly pushing oldest objects to the
@@ -309,18 +322,26 @@ void *__pool_refill_alloc(struct pool_head *pool, unsigned int avail)
 	void *ptr = NULL;
 	int failed = 0;
 
+#ifdef DEBUG_FAIL_ALLOC
+	if (mem_should_fail(pool))
+		return NULL;
+#endif
 	/* stop point */
 	avail += pool->used;
 
 	while (1) {
-		if (pool->limit && pool->allocated >= pool->limit)
+		if (pool->limit && pool->allocated >= pool->limit) {
+			activity[tid].pool_fail++;
 			return NULL;
+		}
 
 		ptr = pool_alloc_area(pool->size + POOL_EXTRA);
 		if (!ptr) {
 			pool->failed++;
-			if (failed)
+			if (failed) {
+				activity[tid].pool_fail++;
 				return NULL;
+			}
 			failed++;
 			pool_gc(pool);
 			continue;
@@ -384,7 +405,7 @@ void pool_gc(struct pool_head *pool_ctx)
 	int cur_recurse = 0;
 	struct pool_head *entry;
 
-	if (recurse || !HA_ATOMIC_CAS(&recurse, &cur_recurse, 1))
+	if (recurse || !_HA_ATOMIC_CAS(&recurse, &cur_recurse, 1))
 		return;
 
 	list_for_each_entry(entry, &pools, list) {
@@ -405,7 +426,7 @@ void pool_gc(struct pool_head *pool_ctx)
 			HA_SPIN_UNLOCK(POOL_LOCK, &entry->lock);
 	}
 
-	HA_ATOMIC_STORE(&recurse, 0);
+	_HA_ATOMIC_STORE(&recurse, 0);
 }
 #endif
 
@@ -569,6 +590,70 @@ static struct cli_kw_list cli_kws = {{ },{
 }};
 
 INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
+
+#ifdef DEBUG_FAIL_ALLOC
+#define MEM_FAIL_MAX_CHAR 32
+#define MEM_FAIL_MAX_STR 128
+static int mem_fail_cur_idx;
+static char mem_fail_str[MEM_FAIL_MAX_CHAR * MEM_FAIL_MAX_STR];
+__decl_hathreads(static HA_SPINLOCK_T mem_fail_lock);
+
+int mem_should_fail(const struct pool_head *pool)
+{
+	int ret = 0;
+	int n;
+
+	if (mem_fail_rate > 0 && !(global.mode & MODE_STARTING)) {
+		int randnb = random() % 100;
+
+		if (mem_fail_rate > randnb)
+			ret = 1;
+		else
+			ret = 0;
+	}
+	HA_SPIN_LOCK(OTHER_LOCK, &mem_fail_lock);
+	n = snprintf(&mem_fail_str[mem_fail_cur_idx * MEM_FAIL_MAX_CHAR],
+	    MEM_FAIL_MAX_CHAR - 2,
+	    "%d %.18s %d %d", mem_fail_cur_idx, pool->name, ret, tid);
+	while (n < MEM_FAIL_MAX_CHAR - 1)
+		mem_fail_str[mem_fail_cur_idx * MEM_FAIL_MAX_CHAR + n++] = ' ';
+	if (mem_fail_cur_idx < MEM_FAIL_MAX_STR - 1)
+		mem_fail_str[mem_fail_cur_idx * MEM_FAIL_MAX_CHAR + n] = '\n';
+	else
+		mem_fail_str[mem_fail_cur_idx * MEM_FAIL_MAX_CHAR + n] = 0;
+	mem_fail_cur_idx++;
+	if (mem_fail_cur_idx == MEM_FAIL_MAX_STR)
+		mem_fail_cur_idx = 0;
+	HA_SPIN_UNLOCK(OTHER_LOCK, &mem_fail_lock);
+	return ret;
+
+}
+
+/* config parser for global "tune.fail-alloc" */
+static int mem_parse_global_fail_alloc(char **args, int section_type, struct proxy *curpx,
+                                      struct proxy *defpx, const char *file, int line,
+                                      char **err)
+{
+	if (too_many_args(1, args, err, NULL))
+		return -1;
+	mem_fail_rate = atoi(args[1]);
+	if (mem_fail_rate < 0 || mem_fail_rate > 100) {
+	    memprintf(err, "'%s' expects a numeric value between 0 and 100.", args[0]);
+	    return -1;
+	}
+	return 0;
+}
+#endif
+
+/* register global config keywords */
+static struct cfg_kw_list mem_cfg_kws = {ILH, {
+#ifdef DEBUG_FAIL_ALLOC
+	{ CFG_GLOBAL, "tune.fail-alloc", mem_parse_global_fail_alloc },
+#endif
+	{ 0, NULL, NULL }
+}};
+
+INITCALL1(STG_REGISTER, cfg_register_keywords, &mem_cfg_kws);
 
 /*
  * Local variables:

@@ -924,7 +924,7 @@ struct pattern *pat_match_ip(struct sample *smp, struct pattern_expr *expr, int 
 				static_pattern.ref = elt->ref;
 				static_pattern.sflags = PAT_SF_TREE;
 				static_pattern.type = SMP_T_IPV4;
-				memcpy(&static_pattern.val.ipv4.addr.s_addr, elt->node.key, 4);
+				static_pattern.val.ipv4.addr = *(struct in_addr *)elt->node.key;
 				if (!cidr2dotted(elt->node.node.pfx, &static_pattern.val.ipv4.mask))
 					return NULL;
 			}
@@ -946,7 +946,7 @@ struct pattern *pat_match_ip(struct sample *smp, struct pattern_expr *expr, int 
 				static_pattern.ref = elt->ref;
 				static_pattern.sflags = PAT_SF_TREE;
 				static_pattern.type = SMP_T_IPV6;
-				memcpy(&static_pattern.val.ipv6.addr, elt->node.key, 16);
+				static_pattern.val.ipv6.addr = *(struct in6_addr *)elt->node.key;
 				static_pattern.val.ipv6.mask = elt->node.node.pfx;
 			}
 			return &static_pattern;
@@ -966,7 +966,7 @@ struct pattern *pat_match_ip(struct sample *smp, struct pattern_expr *expr, int 
 				static_pattern.ref = elt->ref;
 				static_pattern.sflags = PAT_SF_TREE;
 				static_pattern.type = SMP_T_IPV6;
-				memcpy(&static_pattern.val.ipv6.addr, elt->node.key, 16);
+				static_pattern.val.ipv6.addr = *(struct in6_addr *)elt->node.key;
 				static_pattern.val.ipv6.mask = elt->node.node.pfx;
 			}
 			return &static_pattern;
@@ -1000,7 +1000,7 @@ struct pattern *pat_match_ip(struct sample *smp, struct pattern_expr *expr, int 
 					static_pattern.ref = elt->ref;
 					static_pattern.sflags = PAT_SF_TREE;
 					static_pattern.type = SMP_T_IPV4;
-					memcpy(&static_pattern.val.ipv4.addr.s_addr, elt->node.key, 4);
+					static_pattern.val.ipv4.addr = *(struct in_addr *)elt->node.key;
 					if (!cidr2dotted(elt->node.node.pfx, &static_pattern.val.ipv4.mask))
 						return NULL;
 				}
@@ -1210,18 +1210,9 @@ int pat_idx_list_reg_cap(struct pattern_expr *expr, struct pattern *pat, int cap
 	/* duplicate pattern */
 	memcpy(&patl->pat, pat, sizeof(*pat));
 
-	/* allocate regex */
-	patl->pat.ptr.reg = calloc(1, sizeof(*patl->pat.ptr.reg));
-	if (!patl->pat.ptr.reg) {
-		free(patl);
-		memprintf(err, "out of memory while indexing pattern");
-		return 0;
-	}
-
 	/* compile regex */
-	if (!regex_comp(pat->ptr.str, patl->pat.ptr.reg,
-	                !(expr->mflags & PAT_MF_IGNORE_CASE), cap, err)) {
-		free(patl->pat.ptr.reg);
+	if (!(patl->pat.ptr.reg = regex_comp(pat->ptr.str, !(expr->mflags & PAT_MF_IGNORE_CASE),
+	                                     cap, err))) {
 		free(patl);
 		return 0;
 	}
@@ -2705,5 +2696,5 @@ static void pattern_per_thread_lru_free()
 	lru64_destroy(pat_lru_tree);
 }
 
-REGISTER_PER_THREAD_INIT(pattern_per_thread_lru_alloc);
-REGISTER_PER_THREAD_DEINIT(pattern_per_thread_lru_free);
+REGISTER_PER_THREAD_ALLOC(pattern_per_thread_lru_alloc);
+REGISTER_PER_THREAD_FREE(pattern_per_thread_lru_free);

@@ -127,7 +127,7 @@ static inline int session_check_idle_conn(struct session *sess, struct connectio
 		conn->flags &= ~CO_FL_SESS_IDLE;
 		if (!srv_add_to_idle_list(objt_server(conn->target), conn)) {
 			/* The server doesn't want it, let's kill the connection right away */
-			conn->mux->destroy(conn);
+			conn->mux->destroy(conn->ctx);
 			return -1;
 		}
 		return 1;

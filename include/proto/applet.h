@@ -48,6 +48,9 @@ static inline void appctx_init(struct appctx *appctx, unsigned long thread_mask)
 	appctx->chunk = NULL;
 	appctx->io_release = NULL;
 	appctx->thread_mask = thread_mask;
+	appctx->call_rate.curr_sec = 0;
+	appctx->call_rate.curr_ctr = 0;
+	appctx->call_rate.prev_ctr = 0;
 	appctx->state = 0;
 }
 
@@ -75,7 +78,7 @@ static inline struct appctx *appctx_new(struct applet *applet, unsigned long thr
 		LIST_INIT(&appctx->buffer_wait.list);
 		appctx->buffer_wait.target = appctx;
 		appctx->buffer_wait.wakeup_cb = appctx_buf_available;
-		HA_ATOMIC_ADD(&nb_applets, 1);
+		_HA_ATOMIC_ADD(&nb_applets, 1);
 	}
 	return appctx;
 }
@@ -85,8 +88,7 @@ static inline struct appctx *appctx_new(struct applet *applet, unsigned long thr
  */
 static inline void __appctx_free(struct appctx *appctx)
 {
-	task_delete(appctx->t);
-	task_free(appctx->t);
+	task_destroy(appctx->t);
 	if (!LIST_ISEMPTY(&appctx->buffer_wait.list)) {
 		HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
 		LIST_DEL(&appctx->buffer_wait.list);
@@ -95,7 +97,7 @@ static inline void __appctx_free(struct appctx *appctx)
 	}
 
 	pool_free(pool_head_connection, appctx);
-	HA_ATOMIC_SUB(&nb_applets, 1);
+	_HA_ATOMIC_SUB(&nb_applets, 1);
 }
 
 static inline void appctx_free(struct appctx *appctx)

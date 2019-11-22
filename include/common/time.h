@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <common/config.h>
+#include <common/hathreads.h>
 #include <common/standard.h>
 
 /* eternity when exprimed in timeval */
@@ -57,14 +58,11 @@ extern THREAD_LOCAL unsigned int   curr_sec_ms_scaled;  /* millisecond of curren
 extern THREAD_LOCAL unsigned int   now_ms;           /* internal date in milliseconds (may wrap) */
 extern THREAD_LOCAL unsigned int   samp_time;        /* total elapsed time over current sample */
 extern THREAD_LOCAL unsigned int   idle_time;        /* total idle time over current sample */
-extern THREAD_LOCAL unsigned int   idle_pct;         /* idle to total ratio over last sample (percent) */
 extern THREAD_LOCAL struct timeval now;              /* internal date is a monotonic function of real clock */
 extern THREAD_LOCAL struct timeval date;             /* the real current date */
 extern struct timeval start_date;       /* the process's start date */
 extern THREAD_LOCAL struct timeval before_poll;      /* system date before calling poll() */
 extern THREAD_LOCAL struct timeval after_poll;       /* system date after leaving poll() */
-extern THREAD_LOCAL uint64_t prev_cpu_time;          /* previous per thread CPU time */
-extern THREAD_LOCAL uint64_t prev_mono_time;         /* previous system wide monotonic time */
 
 
 /**** exported functions *************************************************/
@@ -521,7 +519,7 @@ REGPRM3 static inline struct timeval *__tv_ms_add(struct timeval *tv, const stru
 /* returns the system's monotonic time in nanoseconds if supported, otherwise zero */
 static inline uint64_t now_mono_time()
 {
-#if defined(_POSIX_TIMERS) && defined(_POSIX_MONOTONIC_CLOCK)
+#if (_POSIX_TIMERS > 0) && defined(_POSIX_MONOTONIC_CLOCK)
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
@@ -533,9 +531,21 @@ static inline uint64_t now_mono_time()
 /* returns the current thread's cumulated CPU time in nanoseconds if supported, otherwise zero */
 static inline uint64_t now_cpu_time()
 {
-#if defined(_POSIX_TIMERS) && defined(_POSIX_THREAD_CPUTIME)
+#if (_POSIX_TIMERS > 0) && defined(_POSIX_THREAD_CPUTIME)
 	struct timespec ts;
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+	return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+#else
+	return 0;
+#endif
+}
+
+/* returns another thread's cumulated CPU time in nanoseconds if supported, otherwise zero */
+static inline uint64_t now_cpu_time_thread(const struct thread_info *thr)
+{
+#if (_POSIX_TIMERS > 0) && defined(_POSIX_THREAD_CPUTIME)
+	struct timespec ts;
+	clock_gettime(thr->clock_id, &ts);
 	return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
 #else
 	return 0;
@@ -567,7 +577,7 @@ static inline void measure_idle()
 	if (samp_time < 500000)
 		return;
 
-	idle_pct = (100 * idle_time + samp_time / 2) / samp_time;
+	ti->idle_pct = (100 * idle_time + samp_time / 2) / samp_time;
 	idle_time = samp_time = 0;
 }
 
@@ -587,8 +597,8 @@ static inline void tv_entering_poll()
 static inline void tv_leaving_poll(int timeout, int interrupted)
 {
 	measure_idle();
-	prev_cpu_time  = now_cpu_time();
-	prev_mono_time = now_mono_time();
+	ti->prev_cpu_time  = now_cpu_time();
+	ti->prev_mono_time = now_mono_time();
 }
 
 #endif /* _COMMON_TIME_H */

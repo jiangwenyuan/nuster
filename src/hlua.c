@@ -154,7 +154,7 @@ static int hlua_panic_ljmp(lua_State *L) { longjmp(safe_ljmp_env, 1); }
 
 /* Applet status flags */
 #define APPLET_DONE     0x01 /* applet processing is done. */
-#define APPLET_100C     0x02 /* 100 continue expected. */
+/* unused: 0x02 */
 #define APPLET_HDR_SENT 0x04 /* Response header sent. */
 #define APPLET_CHUNKED  0x08 /* Use transfer encoding chunked. */
 #define APPLET_LAST_CHK 0x10 /* Last chunk sent. */
@@ -723,8 +723,8 @@ __LJMP int hlua_lua2arg_check(lua_State *L, int first, struct arg *argp,
 			memcpy(trash.area, argp[idx].data.str.area,
 			       argp[idx].data.str.data);
 			trash.area[argp[idx].data.str.data] = 0;
-			argp[idx].data.prx = proxy_tbl_by_name(trash.area);
-			if (!argp[idx].data.prx)
+			argp[idx].data.t = stktable_find_by_name(trash.area);
+			if (!argp[idx].data.t)
 				WILL_LJMP(luaL_argerror(L, first + idx, "table doesn't exist"));
 			argp[idx].type = ARGT_TAB;
 			break;
@@ -3950,10 +3950,15 @@ static int hlua_applet_http_new(lua_State *L, struct appctx *ctx)
 	if (IS_HTX_STRM(s)) {
 		/* HTX version */
 		struct htx *htx = htxbuf(&s->req.buf);
-		struct htx_sl *sl = http_find_stline(htx);
+		struct htx_blk *blk;
+		struct htx_sl *sl;
 		struct ist path;
 		unsigned long long len = 0;
 		int32_t pos;
+
+		blk = htx_get_first_blk(htx);
+		BUG_ON(htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
+		sl = htx_get_blk_ptr(htx, blk);
 
 		/* Stores the request method. */
 		lua_pushstring(L, "method");
@@ -3999,11 +4004,11 @@ static int hlua_applet_http_new(lua_State *L, struct appctx *ctx)
 			lua_settable(L, -3);
 		}
 
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 
-			if (type == HTX_BLK_EOM || type == HTX_BLK_EOD)
+			if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
 				break;
 			if (type == HTX_BLK_DATA)
 				len += htx_get_blksz(blk);
@@ -4325,32 +4330,98 @@ __LJMP static int hlua_applet_htx_getline_yield(lua_State *L, int status, lua_KC
  * consumes the data in the buffer. It returns a string containing the
  * data. This string can be empty.
  */
+__LJMP static int hlua_applet_htx_getline_yield(lua_State *L, int status, lua_KContext ctx)
+{
+	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
+	struct stream_interface *si = appctx->appctx->owner;
+	struct channel *req = si_oc(si);
+	struct htx *htx;
+	struct htx_blk *blk;
+	size_t count;
+	int stop = 0;
+
+	htx = htx_from_buf(&req->buf);
+	count = co_data(req);
+	blk = htx_get_first_blk(htx);
+
+	while (count && !stop && blk) {
+		enum htx_blk_type type = htx_get_blk_type(blk);
+		uint32_t sz = htx_get_blksz(blk);
+		struct ist v;
+		uint32_t vlen;
+		char *nl;
+
+		if (type == HTX_BLK_EOM) {
+			stop = 1;
+			break;
+		}
+
+		vlen = sz;
+		if (vlen > count) {
+			if (type != HTX_BLK_DATA)
+				break;
+			vlen = count;
+		}
+
+		switch (type) {
+			case HTX_BLK_UNUSED:
+				break;
+
+			case HTX_BLK_DATA:
+				v = htx_get_blk_value(htx, blk);
+				v.len = vlen;
+				nl = istchr(v, '\n');
+				if (nl != NULL) {
+					stop = 1;
+					vlen = nl - v.ptr + 1;
+				}
+				luaL_addlstring(&appctx->b, v.ptr, vlen);
+				break;
+
+			case HTX_BLK_TLR:
+			case HTX_BLK_EOM:
+				stop = 1;
+				break;
+
+			default:
+				break;
+		}
+
+		co_set_data(req, co_data(req) - vlen);
+		count -= vlen;
+		if (sz == vlen)
+			blk = htx_remove_blk(htx, blk);
+		else {
+			htx_cut_data_blk(htx, blk, vlen);
+			break;
+		}
+	}
+
+	htx_to_buf(htx, &req->buf);
+	if (!stop) {
+		si_cant_get(si);
+		MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_htx_getline_yield, TICK_ETERNITY, 0));
+	}
+
+	/* return the result. */
+	luaL_pushresult(&appctx->b);
+	return 1;
+}
+
+
+/* If expected data not yet available, it returns a yield. This function
+ * consumes the data in the buffer. It returns a string containing the
+ * data. This string can be empty.
+ */
 __LJMP static int hlua_applet_http_getline_yield(lua_State *L, int status, lua_KContext ctx)
 {
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
 	struct stream_interface *si = appctx->appctx->owner;
-	struct channel *chn = si_ic(si);
 	int ret;
 	const char *blk1;
 	size_t len1;
 	const char *blk2;
 	size_t len2;
-
-	/* Maybe we cant send a 100-continue ? */
-	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_100C) {
-		ret = ci_putblk(chn, HTTP_100.ptr, HTTP_100.len);
-		/* if ret == -2 or -3 the channel closed or the message si too
-		 * big for the buffers. We cant send anything. So, we ignoring
-		 * the error, considers that the 100-continue is sent, and try
-		 * to receive.
-		 * If ret is -1, we dont have room in the buffer, so we yield.
-		 */
-		if (ret == -1) {
-			si_rx_room_blk(si);
-			MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_http_getline_yield, TICK_ETERNITY, 0));
-		}
-		appctx->appctx->ctx.hlua_apphttp.flags &= ~APPLET_100C;
-	}
 
 	/* Check for the end of the data. */
 	if (appctx->appctx->ctx.hlua_apphttp.left_bytes <= 0) {
@@ -4423,10 +4494,6 @@ __LJMP static int hlua_applet_htx_recv_yield(lua_State *L, int status, lua_KCont
 	size_t count;
 	int len;
 
-	/* Maybe we cant send a 100-continue ? */
-	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_100C)
-		MAY_LJMP(hlua_applet_htx_reply_100_continue(L));
-
 	htx = htx_from_buf(&req->buf);
 	len = MAY_LJMP(luaL_checkinteger(L, 2));
 	count = co_data(req);
@@ -4460,7 +4527,6 @@ __LJMP static int hlua_applet_htx_recv_yield(lua_State *L, int status, lua_KCont
 				luaL_addlstring(&appctx->b, v.ptr, vlen);
 				break;
 
-			case HTX_BLK_EOD:
 			case HTX_BLK_TLR:
 			case HTX_BLK_EOM:
 				len = 0;
@@ -4508,28 +4574,11 @@ __LJMP static int hlua_applet_http_recv_yield(lua_State *L, int status, lua_KCon
 	struct hlua_appctx *appctx = MAY_LJMP(hlua_checkapplet_http(L, 1));
 	struct stream_interface *si = appctx->appctx->owner;
 	int len = MAY_LJMP(luaL_checkinteger(L, 2));
-	struct channel *chn = si_ic(si);
 	int ret;
 	const char *blk1;
 	size_t len1;
 	const char *blk2;
 	size_t len2;
-
-	/* Maybe we cant send a 100-continue ? */
-	if (appctx->appctx->ctx.hlua_apphttp.flags & APPLET_100C) {
-		ret = ci_putblk(chn, HTTP_100.ptr, HTTP_100.len);
-		/* if ret == -2 or -3 the channel closed or the message si too
-		 * big for the buffers. We cant send anything. So, we ignoring
-		 * the error, considers that the 100-continue is sent, and try
-		 * to receive.
-		 * If ret is -1, we dont have room in the buffer, so we yield.
-		 */
-		if (ret == -1) {
-			si_rx_room_blk(si);
-			MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_applet_http_recv_yield, TICK_ETERNITY, 0));
-		}
-		appctx->appctx->ctx.hlua_apphttp.flags &= ~APPLET_100C;
-	}
 
 	/* Read the maximum amount of data available. */
 	ret = co_getblk_nc(si_oc(si), &blk1, &len1, &blk2, &len2);
@@ -4633,7 +4682,7 @@ __LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KCont
 	int l = MAY_LJMP(luaL_checkinteger(L, 3));
 	int max;
 
-	max = channel_htx_recv_max(res, htx);
+	max = htx_get_max_blksz(htx, channel_htx_recv_max(res, htx));
 	if (!max)
 		goto snd_yield;
 
@@ -4644,8 +4693,7 @@ __LJMP static int hlua_applet_htx_send_yield(lua_State *L, int status, lua_KCont
 		max = len - l;
 
 	/* Copy data. */
-	if (!htx_add_data(htx, ist2(data + l, max)))
-		goto snd_yield;
+	max = htx_add_data(htx, ist2(data + l, max));
 	channel_add_input(res, max);
 
 	/* update counters. */
@@ -5278,7 +5326,7 @@ __LJMP static int hlua_http_get_headers(lua_State *L, struct hlua_txn *htxn, str
 		struct htx *htx = htxbuf(&msg->chn->buf);
 		int32_t pos;
 
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 			struct ist n, v;
@@ -5455,19 +5503,19 @@ __LJMP static inline int hlua_http_rep_hdr(lua_State *L, struct hlua_txn *htxn,
 	const char *name = MAY_LJMP(luaL_checklstring(L, 2, &name_len));
 	const char *reg = MAY_LJMP(luaL_checkstring(L, 3));
 	const char *value = MAY_LJMP(luaL_checkstring(L, 4));
-	struct my_regex re;
+	struct my_regex *re;
 
-	if (!regex_comp(reg, &re, 1, 1, NULL))
+	if (!(re = regex_comp(reg, 1, 1, NULL)))
 		WILL_LJMP(luaL_argerror(L, 3, "invalid regex"));
 
 	if (IS_HTX_STRM(htxn->s)) {
 		struct htx *htx = htxbuf(&msg->chn->buf);
 
-		htx_transform_header_str(htxn->s, msg->chn, htx, ist2(name, name_len), value, &re, action);
+		htx_transform_header_str(htxn->s, msg->chn, htx, ist2(name, name_len), value, re, action);
 	}
 	else
-		http_transform_header_str(htxn->s, msg, name, name_len, value, &re, action);
-	regex_free(&re);
+		http_transform_header_str(htxn->s, msg, name, name_len, value, re, action);
+	regex_free(re);
 	return 0;
 }
 
@@ -6316,7 +6364,7 @@ __LJMP static int hlua_set_nice(lua_State *L)
  * Task wrapper are longjmp safe because the only one Lua code
  * executed is the safe hlua_ctx_resume();
  */
-static struct task *hlua_process_task(struct task *task, void *context, unsigned short state)
+struct task *hlua_process_task(struct task *task, void *context, unsigned short state)
 {
 	struct hlua *hlua = context;
 	enum hlua_exec status;
@@ -6337,8 +6385,7 @@ static struct task *hlua_process_task(struct task *task, void *context, unsigned
 	/* finished or yield */
 	case HLUA_E_OK:
 		hlua_ctx_destroy(hlua);
-		task_delete(task);
-		task_free(task);
+		task_destroy(task);
 		task = NULL;
 		break;
 
@@ -6351,8 +6398,7 @@ static struct task *hlua_process_task(struct task *task, void *context, unsigned
 	case HLUA_E_ERRMSG:
 		SEND_ERR(NULL, "Lua task: %s.\n", lua_tostring(hlua->T, -1));
 		hlua_ctx_destroy(hlua);
-		task_delete(task);
-		task_free(task);
+		task_destroy(task);
 		task = NULL;
 		break;
 
@@ -6360,8 +6406,7 @@ static struct task *hlua_process_task(struct task *task, void *context, unsigned
 	default:
 		SEND_ERR(NULL, "Lua task: unknown error.\n");
 		hlua_ctx_destroy(hlua);
-		task_delete(task);
-		task_free(task);
+		task_destroy(task);
 		task = NULL;
 		break;
 	}
@@ -6946,7 +6991,7 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 			return ACT_RET_ERR;
 		}
 		if (s->hlua->flags & HLUA_STOP)
-			return ACT_RET_STOP;
+			return ACT_RET_DONE;
 		return ACT_RET_CONT;
 
 	/* yield. */
@@ -7127,7 +7172,7 @@ static int hlua_applet_tcp_init(struct appctx *ctx, struct proxy *px, struct str
 	return 1;
 }
 
-static void hlua_applet_tcp_fct(struct appctx *ctx)
+void hlua_applet_tcp_fct(struct appctx *ctx)
 {
 	struct stream_interface *si = ctx->owner;
 	struct stream *strm = si_strm(si);
@@ -7208,8 +7253,7 @@ error:
 
 static void hlua_applet_tcp_release(struct appctx *ctx)
 {
-	task_delete(ctx->ctx.hlua_apptcp.task);
-	task_free(ctx->ctx.hlua_apptcp.task);
+	task_destroy(ctx->ctx.hlua_apptcp.task);
 	ctx->ctx.hlua_apptcp.task = NULL;
 	hlua_ctx_destroy(ctx->ctx.hlua_apptcp.hlua);
 	ctx->ctx.hlua_apptcp.hlua = NULL;
@@ -7222,8 +7266,6 @@ static void hlua_applet_tcp_release(struct appctx *ctx)
 static int hlua_applet_http_init(struct appctx *ctx, struct proxy *px, struct stream *strm)
 {
 	struct stream_interface *si = ctx->owner;
-	struct channel *req = si_oc(si);
-	struct http_msg *msg;
 	struct http_txn *txn;
 	struct hlua *hlua;
 	char **arg;
@@ -7231,7 +7273,6 @@ static int hlua_applet_http_init(struct appctx *ctx, struct proxy *px, struct st
 	const char *error;
 
 	txn = strm->txn;
-	msg = &txn->req;
 
 	/* We want two things in HTTP mode :
 	 *  - enforce server-close mode if we were in keep-alive, so that the
@@ -7313,31 +7354,6 @@ static int hlua_applet_http_init(struct appctx *ctx, struct proxy *px, struct st
 	}
 	hlua->nargs = 1;
 
-	/* Look for a 100-continue expected. */
-	if (msg->flags & HTTP_MSGF_VER_11) {
-		if (IS_HTX_STRM(si_strm(si))) {
-			/* HTX version */
-			struct htx *htx = htxbuf(&req->buf);
-			struct ist hdr = { .ptr = "Expect", .len = 6 };
-                        struct http_hdr_ctx hdr_ctx;
-
-                        hdr_ctx.blk = NULL;
-                        /* Expect is allowed in 1.1, look for it */
-                        if (http_find_header(htx, hdr, &hdr_ctx, 0) &&
-                            unlikely(isteqi(hdr_ctx.value, ist2("100-continue", 12))))
-				ctx->ctx.hlua_apphttp.flags |= APPLET_100C;
-		}
-		else {
-			/* Legacy HTTP version */
-			struct hdr_ctx hdr;
-
-			hdr.idx = 0;
-			if (http_find_header2("Expect", 6, ci_head(req), &txn->hdr_idx, &hdr) &&
-			    unlikely(hdr.vlen == 12 && strncasecmp(hdr.line+hdr.val, "100-continue", 12) == 0))
-				ctx->ctx.hlua_apphttp.flags |= APPLET_100C;
-		}
-	}
-
 	/* push keywords in the stack. */
 	for (arg = ctx->rule->arg.hlua_rule->args; arg && *arg; arg++) {
 		if (!lua_checkstack(hlua->T, 1)) {
@@ -7399,7 +7415,7 @@ static void hlua_applet_htx_fct(struct appctx *ctx)
 		 * the Lua.
 		 */
 		req_htx = htx_from_buf(&req->buf);
-		blk = htx_get_head_blk(req_htx);
+		blk = htx_get_first_blk(req_htx);
 		while (count && blk) {
 			enum htx_blk_type type = htx_get_blk_type(blk);
 			uint32_t sz = htx_get_blksz(blk);
@@ -7477,7 +7493,7 @@ static void hlua_applet_htx_fct(struct appctx *ctx)
 		if (!(ctx->ctx.hlua_apphttp.flags & APPLET_HDR_SENT))
 			goto error;
 
-		/* Don't add EOD and TLR because mux-h1 will take care of it */
+		/* Don't add TLR because mux-h1 will take care of it */
 		if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
 			si_rx_room_blk(si);
 			goto out;
@@ -7528,7 +7544,7 @@ static void hlua_applet_htx_fct(struct appctx *ctx)
 	goto done;
 }
 
-static void hlua_applet_http_fct(struct appctx *ctx)
+void hlua_applet_http_fct(struct appctx *ctx)
 {
 	struct stream_interface *si = ctx->owner;
 	struct stream *strm = si_strm(si);
@@ -7704,8 +7720,7 @@ static void hlua_applet_http_fct(struct appctx *ctx)
 
 static void hlua_applet_http_release(struct appctx *ctx)
 {
-	task_delete(ctx->ctx.hlua_apphttp.task);
-	task_free(ctx->ctx.hlua_apphttp.task);
+	task_destroy(ctx->ctx.hlua_apphttp.task);
 	ctx->ctx.hlua_apphttp.task = NULL;
 	hlua_ctx_destroy(ctx->ctx.hlua_apphttp.hlua);
 	ctx->ctx.hlua_apphttp.hlua = NULL;
@@ -7898,7 +7913,7 @@ static enum act_parse_ret action_register_service_tcp(const char **args, int *cu
 {
 	struct hlua_function *fcn = rule->kw->private;
 
-	if (px->options2 & PR_O2_USE_HTX) {
+	if (px->mode == PR_MODE_HTTP && (px->options2 & PR_O2_USE_HTX)) {
 		memprintf(err, "Lua services cannot be used when the HTX internal representation is enabled");
 		return ACT_RET_PRS_ERR;
 	}
@@ -8258,7 +8273,17 @@ static int hlua_read_timeout(char **args, int section_type, struct proxy *curpx,
 	const char *error;
 
 	error = parse_time_err(args[1], timeout, TIME_UNIT_MS);
-	if (error && *error != '\0') {
+	if (error == PARSE_TIME_OVER) {
+		memprintf(err, "timer overflow in argument <%s> to <%s> (maximum value is 2147483647 ms or ~24.8 days)",
+			  args[1], args[0]);
+		return -1;
+	}
+	else if (error == PARSE_TIME_UNDER) {
+		memprintf(err, "timer underflow in argument <%s> to <%s> (minimum non-null value is 1 ms)",
+			  args[1], args[0]);
+		return -1;
+	}
+	else if (error) {
 		memprintf(err, "%s: invalid timeout", args[0]);
 		return -1;
 	}

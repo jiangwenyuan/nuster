@@ -30,7 +30,9 @@
 #include <ebmbtree.h>
 #include <eb32tree.h>
 #include <common/memory.h>
+#include <types/dict.h>
 #include <types/freq_ctr.h>
+#include <types/peers.h>
 #include <types/sample.h>
 
 /* The types of extra data we can store in a stick table */
@@ -54,6 +56,7 @@ enum {
 	STKTABLE_DT_BYTES_OUT_RATE,/* bytes rate from servers to client */
 	STKTABLE_DT_GPC1,         /* General Purpose Counter 1 (unsigned 32-bit integer) */
 	STKTABLE_DT_GPC1_RATE,    /* General Purpose Counter 1's event rate */
+	STKTABLE_DT_SERVER_NAME,  /* The server name */
 	STKTABLE_STATIC_DATA_TYPES,/* number of types above */
 	/* up to STKTABLE_EXTRA_DATA_TYPES types may be registered here, always
 	 * followed by the number of data types, must always be last.
@@ -67,6 +70,7 @@ enum {
 	STD_T_UINT,               /* data is of type unsigned int */
 	STD_T_ULL,                /* data is of type unsigned long long */
 	STD_T_FRQP,               /* data is of type freq_ctr_period */
+	STD_T_DICT,               /* data is of type key of dictionary entry */
 };
 
 /* The types of optional arguments to stored data */
@@ -83,9 +87,11 @@ union stktable_data {
 	unsigned int std_t_uint;
 	unsigned long long std_t_ull;
 	struct freq_ctr_period std_t_frqp;
+	struct dict_entry *std_t_dict;
 
 	/* types of each storable data */
 	int server_id;
+	struct dict_entry *server_name;
 	unsigned int gpt0;
 	unsigned int gpc0;
 	struct freq_ctr_period gpc0_rate;
@@ -143,7 +149,16 @@ struct stksess {
 
 /* stick table */
 struct stktable {
-	char *id;		  /* table id name */
+	char *id;		  /* local table id name. */
+	char *nid;		  /* table id name sent over the network with peers protocol. */
+	struct stktable *next;    /* The stick-table may be linked when belonging to
+	                           * the same configuration section.
+	                           */
+	struct {
+		const char *file;     /* The file where the stick-table is declared. */
+		int line;             /* The line in this <file> the stick-table is declared. */
+	} conf;
+	struct ebpt_node name;    /* Stick-table are lookup by name here. */
 	struct eb_root keys;      /* head of sticky session tree */
 	struct eb_root exps;      /* head of sticky session expiration tree */
 	struct eb_root updates;   /* head of sticky updates sequence tree */
@@ -175,6 +190,8 @@ struct stktable {
 		unsigned int u;
 		void *p;
 	} data_arg[STKTABLE_DATA_TYPES]; /* optional argument of each data type */
+	struct proxy *proxy;      /* The proxy this stick-table is attached to, if any.*/
+	struct proxy *proxies_list; /* The list of proxies which reference this stick-table. */
 };
 
 extern struct stktable_data_type stktable_data_types[STKTABLE_DATA_TYPES];

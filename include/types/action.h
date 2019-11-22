@@ -41,6 +41,7 @@ enum act_return {
 	ACT_RET_STOP,  /* stop processing. */
 	ACT_RET_YIELD, /* call me again. */
 	ACT_RET_ERR,   /* processing error. */
+	ACT_RET_DONE,  /* processing done, stop processing */
 };
 
 enum act_parse_ret {
@@ -108,13 +109,20 @@ struct act_rule {
 	struct applet applet;                  /* used for the applet registration. */
 	union {
 		struct {
+			struct sample_expr *expr;
+			char *varname;
+			char *resolvers_id;
+			struct dns_resolvers *resolvers;
+			struct dns_options dns_opts;
+		} dns;                        /* dns resolution */
+		struct {
 			char *realm;
 		} auth;                        /* arg used by "auth" */
 		struct {
 			char *name;            /* header name */
 			int name_len;          /* header name's length */
 			struct list fmt;       /* log-format compatible expression */
-			struct my_regex re;    /* used by replace-header and replace-value */
+			struct my_regex *re;   /* used by replace-header and replace-value */
 		} hdr_add;                     /* args used by "add-header" and "set-header" */
 		struct {
 			char *name;            /* header name */

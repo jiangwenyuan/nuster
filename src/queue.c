@@ -141,7 +141,7 @@ static void __pendconn_unlink(struct pendconn *p)
 		p->strm->logs.prx_queue_pos += p->px->queue_idx - p->queue_idx;
 		p->px->nbpend--;
 	}
-	HA_ATOMIC_SUB(&p->px->totpend, 1);
+	_HA_ATOMIC_SUB(&p->px->totpend, 1);
 	eb32_delete(&p->node);
 }
 
@@ -171,16 +171,17 @@ static inline void pendconn_queue_unlock(struct pendconn *p)
 
 /* Removes the pendconn from the server/proxy queue. At this stage, the
  * connection is not really dequeued. It will be done during process_stream().
- * This function takes all the required locks for the operation. The caller is
- * responsible for ensuring that <p> is valid and still in the queue. Use
- * pendconn_cond_unlink() if unsure. When the locks are already held, please
- * use __pendconn_unlink() instead.
+ * This function takes all the required locks for the operation. The pendconn
+ * must be valid, though it doesn't matter if it was already unlinked. Prefer
+ * pendconn_cond_unlink() to first check <p>. When the locks are already held,
+ * please use __pendconn_unlink() instead.
  */
 void pendconn_unlink(struct pendconn *p)
 {
 	pendconn_queue_lock(p);
 
-	__pendconn_unlink(p);
+	if (p->node.node.leaf_p)
+		__pendconn_unlink(p);
 
 	pendconn_queue_unlock(p);
 }
@@ -292,8 +293,9 @@ static int pendconn_process_next_strm(struct server *srv, struct proxy *px)
 	else
 		px->queue_idx++;
 
-	HA_ATOMIC_ADD(&srv->served, 1);
-	HA_ATOMIC_ADD(&srv->proxy->served, 1);
+	_HA_ATOMIC_ADD(&srv->served, 1);
+	_HA_ATOMIC_ADD(&srv->proxy->served, 1);
+	__ha_barrier_atomic_store();
 	if (px->lbprm.server_take_conn)
 		px->lbprm.server_take_conn(srv);
 	__stream_add_srv_conn(p->strm, srv);
@@ -385,7 +387,7 @@ struct pendconn *pendconn_add(struct stream *strm)
 
 	pendconn_queue_unlock(p);
 
-	HA_ATOMIC_ADD(&px->totpend, 1);
+	_HA_ATOMIC_ADD(&px->totpend, 1);
 	return p;
 }
 

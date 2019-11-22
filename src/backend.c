@@ -57,11 +57,8 @@
 #include <proto/session.h>
 #include <proto/stream.h>
 #include <proto/stream_interface.h>
-#include <proto/task.h>
-
-#ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
-#endif /* USE_OPENSSL */
+#include <proto/task.h>
 
 int be_lastsession(const struct proxy *be)
 {
@@ -350,7 +347,7 @@ static struct server *get_server_ph_post(struct stream *s, const struct server *
 
 		p = params = NULL;
 		len = 0;
-		for (blk = htx_get_head_blk(htx); blk; blk = htx_get_next_blk(htx, blk)) {
+		for (blk = htx_get_first_blk(htx); blk; blk = htx_get_next_blk(htx, blk)) {
 			enum htx_blk_type type = htx_get_blk_type(blk);
 			struct ist v;
 
@@ -567,14 +564,31 @@ static struct server *get_server_rnd(struct stream *s, const struct server *avoi
 {
 	unsigned int hash = 0;
 	struct proxy  *px = s->be;
+	struct server *prev, *curr;
+	int draws = px->lbprm.arg_opt1; // number of draws
 
 	/* tot_weight appears to mean srv_count */
 	if (px->lbprm.tot_weight == 0)
 		return NULL;
 
-	/* ensure all 32 bits are covered as long as RAND_MAX >= 65535 */
-	hash = ((uint64_t)random() * ((uint64_t)RAND_MAX + 1)) ^ random();
-	return chash_get_server_hash(px, hash, avoid);
+	curr = NULL;
+	do {
+		prev = curr;
+		/* ensure all 32 bits are covered as long as RAND_MAX >= 65535 */
+		hash = ((uint64_t)random() * ((uint64_t)RAND_MAX + 1)) ^ random();
+		curr = chash_get_server_hash(px, hash, avoid);
+		if (!curr)
+			break;
+
+		/* compare the new server to the previous best choice and pick
+		 * the one with the least currently served requests.
+		 */
+		if (prev && prev != curr &&
+		    curr->served * prev->cur_eweight > prev->served * curr->cur_eweight)
+			curr = prev;
+	} while (--draws > 0);
+
+	return curr;
 }
 
 /*
@@ -729,7 +743,7 @@ int assign_server(struct stream *s)
 				else {
 					struct ist uri;
 
-					uri = htx_sl_req_uri(http_find_stline(htxbuf(&s->req.buf)));
+					uri = htx_sl_req_uri(http_get_stline(htxbuf(&s->req.buf)));
 					srv = get_server_uh(s->be, uri.ptr, uri.len, prev_srv);
 				}
 				break;
@@ -746,7 +760,7 @@ int assign_server(struct stream *s)
 				else {
 					struct ist uri;
 
-					uri = htx_sl_req_uri(http_find_stline(htxbuf(&s->req.buf)));
+					uri = htx_sl_req_uri(http_get_stline(htxbuf(&s->req.buf)));
 					srv = get_server_ph(s->be, uri.ptr, uri.len, prev_srv);
 				}
 
@@ -796,8 +810,8 @@ int assign_server(struct stream *s)
 			goto out;
 		}
 		else if (srv != prev_srv) {
-			HA_ATOMIC_ADD(&s->be->be_counters.cum_lbconn, 1);
-			HA_ATOMIC_ADD(&srv->counters.cum_lbconn, 1);
+			_HA_ATOMIC_ADD(&s->be->be_counters.cum_lbconn, 1);
+			_HA_ATOMIC_ADD(&srv->counters.cum_lbconn, 1);
 		}
 		s->target = &srv->obj_type;
 	}
@@ -977,11 +991,11 @@ int assign_server_and_queue(struct stream *s)
 					s->txn->flags |= TX_CK_DOWN;
 				}
 				s->flags |= SF_REDISP;
-				HA_ATOMIC_ADD(&prev_srv->counters.redispatches, 1);
-				HA_ATOMIC_ADD(&s->be->be_counters.redispatches, 1);
+				_HA_ATOMIC_ADD(&prev_srv->counters.redispatches, 1);
+				_HA_ATOMIC_ADD(&s->be->be_counters.redispatches, 1);
 			} else {
-				HA_ATOMIC_ADD(&prev_srv->counters.retries, 1);
-				HA_ATOMIC_ADD(&s->be->be_counters.retries, 1);
+				_HA_ATOMIC_ADD(&prev_srv->counters.retries, 1);
+				_HA_ATOMIC_ADD(&s->be->be_counters.retries, 1);
 			}
 		}
 	}
@@ -1216,7 +1230,7 @@ int connect_server(struct stream *s)
 		if (!srv_conn->target || srv_conn->target == s->target) {
 			srv_conn->flags &= ~(CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH);
 			if (srv_cs)
-				srv_cs->flags &= ~(CS_FL_ERROR | CS_FL_EOS | CS_FL_REOS);
+				srv_cs->flags &= ~(CS_FL_ERROR | CS_FL_EOS);
 			reuse = 1;
 			old_conn = srv_conn;
 		} else {
@@ -1291,9 +1305,10 @@ int connect_server(struct stream *s)
 		    (((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_ALWS) ||
 		    (((s->be->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR) &&
 		     s->txn && (s->txn->flags & TX_NOT_FIRST)))) {
-			srv_conn = LIST_ELEM(srv->idle_orphan_conns[tid].n,
-			    struct connection *, list);
-			reuse_orphan = 1;
+			srv_conn = LIST_POP_LOCKED(&srv->idle_orphan_conns[tid],
+			                           struct connection *, list);
+			if (srv_conn)
+				reuse_orphan = 1;
 		}
 
 		/* If we've picked a connection from the pool, we now have to
@@ -1321,23 +1336,64 @@ int connect_server(struct stream *s)
 				reuse = 0;
 		}
 	}
+	if (((!reuse || (srv_conn && !(srv_conn->flags & CO_FL_CONNECTED)))
+	    && ha_used_fds > global.tune.pool_high_count) && srv && srv->idle_orphan_conns) {
+		struct connection *tokill_conn;
+
+		/* We can't reuse a connection, and e have more FDs than deemd
+		 * acceptable, attempt to kill an idling connection
+		 */
+		/* First, try from our own idle list */
+		tokill_conn = LIST_POP_LOCKED(&srv->idle_orphan_conns[tid],
+		    struct connection *, list);
+		if (tokill_conn)
+			tokill_conn->mux->destroy(tokill_conn->ctx);
+		/* If not, iterate over other thread's idling pool, and try to grab one */
+		else {
+			int i;
+
+			for (i = 0; i < global.nbthread; i++) {
+				if (i == tid)
+					continue;
+
+				// just silence stupid gcc which reports an absurd
+				// out-of-bounds warning for <i> which is always
+				// exactly zero without threads, but it seems to
+				// see it possibly larger.
+				ALREADY_CHECKED(i);
+
+				tokill_conn = LIST_POP_LOCKED(&srv->idle_orphan_conns[i],
+				    struct connection *, list);
+				if (tokill_conn) {
+					/* We got one, put it into the concerned thread's to kill list, and wake it's kill task */
+
+					LIST_ADDQ_LOCKED(&toremove_connections[i],
+					    &tokill_conn->list);
+					task_wakeup(idle_conn_cleanup[i], TASK_WOKEN_OTHER);
+					break;
+				}
+			}
+		}
+
+	}
 	/* If we're really reusing the connection, remove it from the orphan
 	 * list and add it back to the idle list.
 	 */
-	if (reuse && reuse_orphan) {
-		LIST_DEL(&srv_conn->list);
-		srv_conn->idle_time = 0;
-		HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
-		srv->curr_idle_thr[tid]--;
-		LIST_ADDQ(&srv->idle_conns[tid], &srv_conn->list);
-		if (LIST_ISEMPTY(&srv->idle_orphan_conns[tid]))
-			task_unlink_wq(srv->idle_task[tid]);
-	} else if (reuse) {
-		if (srv_conn->flags & CO_FL_SESS_IDLE) {
-			struct session *sess = srv_conn->owner;
+	if (reuse) {
+		if (reuse_orphan) {
+			srv_conn->idle_time = 0;
+			_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
+			__ha_barrier_atomic_store();
+			srv->curr_idle_thr[tid]--;
+			LIST_ADDQ(&srv->idle_conns[tid], &srv_conn->list);
+		}
+		else {
+			if (srv_conn->flags & CO_FL_SESS_IDLE) {
+				struct session *sess = srv_conn->owner;
 
-			srv_conn->flags &= ~CO_FL_SESS_IDLE;
-			sess->idle_conns--;
+				srv_conn->flags &= ~CO_FL_SESS_IDLE;
+				sess->idle_conns--;
+			}
 		}
 	}
 
@@ -1357,7 +1413,7 @@ int connect_server(struct stream *s)
 				if (!session_add_conn(sess, old_conn, old_conn->target)) {
 					old_conn->flags &= ~CO_FL_SESS_IDLE;
 					old_conn->owner = NULL;
-					old_conn->mux->destroy(old_conn);
+					old_conn->mux->destroy(old_conn->ctx);
 				} else
 					session_check_idle_conn(sess, old_conn);
 			}
@@ -1413,7 +1469,7 @@ int connect_server(struct stream *s)
 			srv_conn->owner = NULL;
 			if (srv_conn->mux && !srv_add_to_idle_list(objt_server(srv_conn->target), srv_conn))
 			/* The server doesn't want it, let's kill the connection right away */
-				srv_conn->mux->destroy(srv_conn);
+				srv_conn->mux->destroy(srv_conn->ctx);
 			srv_conn = NULL;
 
 		}
@@ -1478,16 +1534,29 @@ int connect_server(struct stream *s)
 
 		if (srv && srv->pp_opts) {
 			srv_conn->flags |= CO_FL_PRIVATE;
+			srv_conn->flags |= CO_FL_SEND_PROXY;
 			srv_conn->send_proxy_ofs = 1; /* must compute size */
 			if (cli_conn)
 				conn_get_to_addr(cli_conn);
 		}
 
 		assign_tproxy_address(s);
+
+		if (srv && (srv->flags & SRV_F_SOCKS4_PROXY)) {
+			srv_conn->send_proxy_ofs = 1;
+			srv_conn->flags |= CO_FL_SOCKS4;
+		}
 	}
 	else if (!conn_xprt_ready(srv_conn)) {
 		if (srv_conn->mux->reset)
 			srv_conn->mux->reset(srv_conn);
+	}
+	else {
+		/* Only consider we're doing reuse if the connection was
+		 * ready.
+		 */
+		if (srv_conn->mux->ctl(srv_conn, MUX_STATUS, NULL) & MUX_STATUS_READY)
+			s->flags |= SF_SRV_REUSED;
 	}
 	else
 		s->flags |= SF_SRV_REUSED;
@@ -1501,13 +1570,13 @@ int connect_server(struct stream *s)
 		s->si[1].flags |= SI_FL_NOLINGER;
 
 	if (s->flags & SF_SRV_REUSED) {
-		HA_ATOMIC_ADD(&s->be->be_counters.reuse, 1);
+		_HA_ATOMIC_ADD(&s->be->be_counters.reuse, 1);
 		if (srv)
-			HA_ATOMIC_ADD(&srv->counters.reuse, 1);
+			_HA_ATOMIC_ADD(&srv->counters.reuse, 1);
 	} else {
-		HA_ATOMIC_ADD(&s->be->be_counters.connect, 1);
+		_HA_ATOMIC_ADD(&s->be->be_counters.connect, 1);
 		if (srv)
-			HA_ATOMIC_ADD(&srv->counters.connect, 1);
+			_HA_ATOMIC_ADD(&srv->counters.connect, 1);
 	}
 
 	err = si_connect(&s->si[1], srv_conn);
@@ -1532,16 +1601,31 @@ int connect_server(struct stream *s)
 		    srv_conn->mux->avail_streams(srv_conn) > 0)
 			LIST_ADD(&srv->idle_conns[tid], &srv_conn->list);
 	}
+	/* The CO_FL_SEND_PROXY flag may have been set by the connect method,
+	 * if so, add our handshake pseudo-XPRT now.
+	 */
+	if ((srv_conn->flags & CO_FL_HANDSHAKE_NOSSL)) {
+		if (xprt_add_hs(srv_conn) < 0) {
+			conn_full_close(srv_conn);
+			return SF_ERR_INTERNAL;
+		}
+	}
 
 
-#if USE_OPENSSL && (defined(OPENSSL_IS_BORINGSSL) || \
-    ((OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)))
+#if USE_OPENSSL && (defined(OPENSSL_IS_BORINGSSL) || (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L))
 
 	if (!reuse && cli_conn && srv && srv_conn->mux &&
 	    (srv->ssl_ctx.options & SRV_SSL_O_EARLY_DATA) &&
-		    (cli_conn->flags & CO_FL_EARLY_DATA) &&
-		    !channel_is_empty(si_oc(&s->si[1])) &&
-		    srv_conn->flags & CO_FL_SSL_WAIT_HS)
+	    /* Only attempt to use early data if either the client sent
+	     * early data, so that we know it can handle a 425, or if
+	     * we are allwoed to retry requests on early data failure, and
+	     * it's our first try
+	     */
+	    ((cli_conn->flags & CO_FL_EARLY_DATA) ||
+	     ((s->be->retry_type & PR_RE_EARLY_ERROR) &&
+	      s->si[1].conn_retries == s->be->conn_retries)) &&
+	    !channel_is_empty(si_oc(&s->si[1])) &&
+	    srv_conn->flags & CO_FL_SSL_WAIT_HS)
 		srv_conn->flags &= ~(CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN);
 #endif
 
@@ -1552,7 +1636,7 @@ int connect_server(struct stream *s)
 		int count;
 
 		s->flags |= SF_CURR_SESS;
-		count = HA_ATOMIC_ADD(&srv->cur_sess, 1);
+		count = _HA_ATOMIC_ADD(&srv->cur_sess, 1);
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.cur_sess_max, count);
 		if (s->be->lbprm.server_take_conn)
 			s->be->lbprm.server_take_conn(srv);
@@ -1645,8 +1729,8 @@ int srv_redispatch_connect(struct stream *s)
 			s->si[1].err_type = SI_ET_QUEUE_ERR;
 		}
 
-		HA_ATOMIC_ADD(&srv->counters.failed_conns, 1);
-		HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
+		_HA_ATOMIC_ADD(&srv->counters.failed_conns, 1);
+		_HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
 		return 1;
 
 	case SRV_STATUS_NOSRV:
@@ -1655,7 +1739,7 @@ int srv_redispatch_connect(struct stream *s)
 			s->si[1].err_type = SI_ET_CONN_ERR;
 		}
 
-		HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
+		_HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
 		return 1;
 
 	case SRV_STATUS_QUEUED:
@@ -1675,8 +1759,8 @@ int srv_redispatch_connect(struct stream *s)
 		if (srv)
 			srv_set_sess_last(srv);
 		if (srv)
-			HA_ATOMIC_ADD(&srv->counters.failed_conns, 1);
-		HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
+			_HA_ATOMIC_ADD(&srv->counters.failed_conns, 1);
+		_HA_ATOMIC_ADD(&s->be->be_counters.failed_conns, 1);
 
 		/* release other streams waiting for this server */
 		if (may_dequeue_tasks(srv, s->be))
@@ -1695,7 +1779,7 @@ int srv_redispatch_connect(struct stream *s)
 void set_backend_down(struct proxy *be)
 {
 	be->last_change = now.tv_sec;
-	HA_ATOMIC_ADD(&be->down_trans, 1);
+	_HA_ATOMIC_ADD(&be->down_trans, 1);
 
 	if (!(global.mode & MODE_STARTING)) {
 		ha_alert("%s '%s' has no server available!\n", proxy_type_str(be), be->id);
@@ -1842,9 +1926,31 @@ int backend_parse_balance(const char **args, char **err, struct proxy *curproxy)
 		curproxy->lbprm.algo &= ~BE_LB_ALGO;
 		curproxy->lbprm.algo |= BE_LB_ALGO_LC;
 	}
-	else if (!strcmp(args[0], "random")) {
+	else if (!strncmp(args[0], "random", 6)) {
 		curproxy->lbprm.algo &= ~BE_LB_ALGO;
 		curproxy->lbprm.algo |= BE_LB_ALGO_RND;
+		curproxy->lbprm.arg_opt1 = 2;
+
+		if (*(args[0] + 6) == '(' && *(args[0] + 7) != ')') { /* number of draws */
+			const char *beg;
+			char *end;
+
+			beg = args[0] + 7;
+			curproxy->lbprm.arg_opt1 = strtol(beg, &end, 0);
+
+			if (*end != ')') {
+				if (!*end)
+					memprintf(err, "random : missing closing parenthesis.");
+				else
+					memprintf(err, "random : unexpected character '%c' after argument.", *end);
+				return -1;
+			}
+
+			if (curproxy->lbprm.arg_opt1 < 1) {
+				memprintf(err, "random : number of draws must be at least 1.");
+				return -1;
+			}
+		}
 	}
 	else if (!strcmp(args[0], "source")) {
 		curproxy->lbprm.algo &= ~BE_LB_ALGO;

@@ -23,6 +23,9 @@
 #define _COMMON_COMPAT_H
 
 #include <limits.h>
+#include <signal.h>
+#include <time.h>
+#include <unistd.h>
 /* This is needed on Linux for Netfilter includes */
 #include <sys/param.h>
 #include <sys/types.h>
@@ -30,6 +33,26 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+
+/* set any optional field in a struct to this type to save ifdefs. Its address
+ * will still be valid but it will not reserve any room nor require any
+ * initialization.
+ */
+typedef struct { } empty_t;
+
+// Redefine some limits that are not present everywhere
+#ifndef LLONG_MAX
+# define LLONG_MAX 9223372036854775807LL
+# define LLONG_MIN (-LLONG_MAX - 1LL)
+#endif
+
+#ifndef ULLONG_MAX
+# define ULLONG_MAX	(LLONG_MAX * 2ULL + 1)
+#endif
+
+#ifndef LONGBITS
+#define LONGBITS  ((unsigned int)sizeof(long) * 8)
+#endif
 
 #ifndef BITS_PER_INT
 #define BITS_PER_INT    (8*sizeof(int))
@@ -68,7 +91,7 @@
 /* On Linux 2.4 and above, MSG_TRUNC can be used on TCP sockets to drop any
  * pending data. Let's rely on NETFILTER to detect if this is supported.
  */
-#ifdef NETFILTER
+#ifdef USE_NETFILTER
 #define MSG_TRUNC_CLEARS_INPUT
 #endif
 
@@ -82,14 +105,32 @@
 #define F_SETPIPE_SZ (1024 + 7)
 #endif
 
-#if defined(TPROXY) && defined(NETFILTER)
+/* On FreeBSD we don't have SI_TKILL but SI_LWP instead */
+#if !defined(SI_TKILL) && defined(SI_LWP)
+#define SI_TKILL SI_LWP
+#endif
+
+/* systems without such defines do not know clockid_t or timer_t */
+#if !(_POSIX_TIMERS > 0)
+#undef clockid_t
+#define clockid_t empty_t
+#undef timer_t
+#define timer_t empty_t
+#endif
+
+/* define a dummy value to designate "no timer". Use only 32 bits. */
+#ifndef TIMER_INVALID
+#define TIMER_INVALID ((timer_t)(unsigned long)(0xfffffffful))
+#endif
+
+#if defined(USE_TPROXY) && defined(USE_NETFILTER)
 #include <linux/types.h>
 #include <linux/netfilter_ipv6.h>
 #include <linux/netfilter_ipv4.h>
 #endif
 
 /* On Linux, IP_TRANSPARENT and/or IP_FREEBIND generally require a kernel patch */
-#if defined(CONFIG_HAP_LINUX_TPROXY)
+#if defined(USE_LINUX_TPROXY)
 #if !defined(IP_FREEBIND)
 #define IP_FREEBIND 15
 #endif /* !IP_FREEBIND */
@@ -99,7 +140,7 @@
 #if !defined(IPV6_TRANSPARENT)
 #define IPV6_TRANSPARENT 75
 #endif /* !IPV6_TRANSPARENT */
-#endif /* CONFIG_HAP_LINUX_TPROXY */
+#endif /* USE_LINUX_TPROXY */
 
 #if defined(IP_FREEBIND)       \
  || defined(IP_BINDANY)        \
@@ -113,9 +154,9 @@
 /* We'll try to enable SO_REUSEPORT on Linux 2.4 and 2.6 if not defined.
  * There are two families of values depending on the architecture. Those
  * are at least valid on Linux 2.4 and 2.6, reason why we'll rely on the
- * NETFILTER define.
+ * USE_NETFILTER define.
  */
-#if !defined(SO_REUSEPORT) && defined(NETFILTER)
+#if !defined(SO_REUSEPORT) && defined(USE_NETFILTER)
 #if    (SO_REUSEADDR == 2)
 #define SO_REUSEPORT 15
 #elif  (SO_REUSEADDR == 0x0004)
@@ -127,6 +168,10 @@
 #ifdef USE_TFO
 #ifndef TCP_FASTOPEN
 #define TCP_FASTOPEN 23
+#endif
+
+#ifndef TCP_FASTOPEN_CONNECT
+#define TCP_FASTOPEN_CONNECT 30
 #endif
 #endif
 

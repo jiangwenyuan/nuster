@@ -389,7 +389,7 @@ flt_stream_add_filter(struct stream *s, struct flt_conf *fconf, unsigned int fla
 {
 	struct filter *f;
 
-	if ((strm_fe(s)->options2 & PR_O2_USE_HTX) && !(fconf->flags & FLT_CFG_FL_HTX))
+	if (IS_HTX_STRM(s) && !(fconf->flags & FLT_CFG_FL_HTX))
 		return 0;
 
 	f = pool_alloc(pool_head_filter);
@@ -801,7 +801,6 @@ flt_http_payload(struct stream *s, struct http_msg *msg, unsigned int len)
 		}
 	}
 	*strm_off += ret;
-
  end:
 	return ret;
 }
@@ -929,17 +928,8 @@ flt_analyze_http_headers(struct stream *s, struct channel *chn, unsigned int an_
 		}
 	} RESUME_FILTER_END;
 
-	if (IS_HTX_STRM(s)) {
-		struct htx *htx = htxbuf(&chn->buf);
-		int32_t pos;
-
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-			struct htx_blk *blk = htx_get_blk(htx, pos);
-			c_adv(chn, htx_get_blksz(blk));
-			if (htx_get_blk_type(blk) == HTX_BLK_EOH)
-				break;
-		}
-	}
+	if (IS_HTX_STRM(s))
+		channel_htx_fwd_headers(chn, htxbuf(&chn->buf));
 	else {
 		/* We increase next offset of all "data" filters after all processing on
 		 * headers because any filter can alter them. So the definitive size of
@@ -1153,7 +1143,7 @@ flt_xfer_data(struct stream *s, struct channel *chn, unsigned int an_bit)
 	int ret = 1;
 
 	/* If there is no "data" filters, we do nothing */
-	if (!HAS_DATA_FILTERS(s, chn))
+	if (!HAS_DATA_FILTERS(s, chn) || (s->flags & SF_HTX))
 		goto end;
 
 	/* Be sure that the output is still opened. Else we stop the data

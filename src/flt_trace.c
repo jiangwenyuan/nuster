@@ -131,16 +131,17 @@ trace_raw_hexdump(struct buffer *buf, int len, int out)
 static void
 trace_htx_hexdump(struct htx *htx, unsigned int offset, unsigned int len)
 {
-	struct htx_ret htx_ret;
 	struct htx_blk *blk;
 
-	htx_ret = htx_find_blk(htx, offset);
-	blk = htx_ret.blk;
-	offset = htx_ret.ret;
-
-	while (blk) {
+	for (blk = htx_get_first_blk(htx); blk && len; blk = htx_get_next_blk(htx, blk)) {
 		enum htx_blk_type type = htx_get_blk_type(blk);
+		uint32_t sz = htx_get_blksz(blk);
 		struct ist v;
+
+		if (offset >= sz) {
+			offset -= sz;
+			continue;
+		}
 
 		v = htx_get_blk_value(htx, blk);
 		v.ptr += offset;
@@ -150,9 +151,8 @@ trace_htx_hexdump(struct htx *htx, unsigned int offset, unsigned int len)
 		if (v.len > len)
 			v.len = len;
 		len -= v.len;
-		if (type == HTX_BLK_DATA || type == HTX_BLK_TLR)
+		if (type == HTX_BLK_DATA)
 			trace_hexdump(v);
-		blk = htx_get_next_blk(htx, blk);
 	}
 }
 
@@ -414,7 +414,7 @@ trace_http_headers(struct stream *s, struct filter *filter,
 
 	if (IS_HTX_STRM(s)) {
 		struct htx *htx = htxbuf(&msg->chn->buf);
-		struct htx_sl *sl = http_find_stline(htx);
+		struct htx_sl *sl = http_get_stline(htx);
 		int32_t pos;
 
 		STRM_TRACE(conf, s, "\t%.*s %.*s %.*s",
@@ -422,7 +422,7 @@ trace_http_headers(struct stream *s, struct filter *filter,
 			   HTX_SL_P2_LEN(sl), HTX_SL_P2_PTR(sl),
 			   HTX_SL_P3_LEN(sl), HTX_SL_P3_PTR(sl));
 
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 			struct ist n, v;
@@ -467,19 +467,18 @@ trace_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg
 	if (ret && conf->rand_forwarding) {
 		struct htx *htx = htxbuf(&msg->chn->buf);
 		struct htx_blk *blk;
-		struct htx_ret htx_ret;
 		uint32_t sz, data = 0;
-		unsigned int off;
+		unsigned int off = offset;
 
-		htx_ret = htx_find_blk(htx, offset);
-		blk = htx_ret.blk;
-		off = htx_ret.ret;
-
-		for (; blk; blk = htx_get_next_blk(htx, blk)) {
+		for (blk = htx_get_first_blk(htx); blk; blk = htx_get_next_blk(htx, blk)) {
 			if (htx_get_blk_type(blk) != HTX_BLK_DATA)
 				break;
 
 			sz = htx_get_blksz(blk);
+			if (off >= sz) {
+				off -= sz;
+				continue;
+			}
 			data  += sz - off;
 			off = 0;
 			if (data > len) {

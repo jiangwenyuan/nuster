@@ -33,13 +33,15 @@ static inline int port_range_alloc_port(struct port_range *range)
 	int get;
 	int put;
 
-	get = HA_ATOMIC_LOAD(&range->get);
+	get = _HA_ATOMIC_LOAD(&range->get);
 	do {
-		put = HA_ATOMIC_LOAD(&range->put_t);
+		/* barrier ot make sure get is loaded before put */
+		__ha_barrier_atomic_load();
+		put = _HA_ATOMIC_LOAD(&range->put_t);
 		if (unlikely(put == get))
 			return 0;
 		ret = range->ports[get];
-	} while (!(HA_ATOMIC_CAS(&range->get, &get, GET_NEXT_OFF(range, get))));
+	} while (!(_HA_ATOMIC_CAS(&range->get, &get, GET_NEXT_OFF(range, get))));
 	return ret;
 }
 
@@ -62,15 +64,17 @@ static inline void port_range_release_port(struct port_range *range, int port)
 	/* First reserve or slot, we know the ring buffer can't be full,
 	 * as we will only ever release port we allocated before
 	 */
-	while (!(HA_ATOMIC_CAS(&range->put_h, &put, GET_NEXT_OFF(range, put))));
-	HA_ATOMIC_STORE(&range->ports[put], port);
+	while (!(_HA_ATOMIC_CAS(&range->put_h, &put, GET_NEXT_OFF(range, put))));
+	_HA_ATOMIC_STORE(&range->ports[put], port);
+	/* Barrier to make sure the new port is visible before we change put_t */
+	__ha_barrier_atomic_store();
 	/* Wait until all the threads that got a slot before us are done */
 	while ((volatile int)range->put_t != put)
 		__ha_compiler_barrier();
 	/* Let the world know we're done, and any potential consumer they
 	 * can use that port.
 	 */
-	HA_ATOMIC_STORE(&range->put_t, GET_NEXT_OFF(range, put));
+	_HA_ATOMIC_STORE(&range->put_t, GET_NEXT_OFF(range, put));
 }
 
 /* return a new initialized port range of N ports. The ports are not
