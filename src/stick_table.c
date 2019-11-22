@@ -77,7 +77,6 @@ struct stktable *stktable_find_by_name(const char *name)
 	return NULL;
 }
 
-#define round_ptr_size(i) (((i) + (sizeof(void *) - 1)) &~ (sizeof(void *) - 1))
 /*
  * Free an allocated sticky session <ts>, and decrease sticky sessions counter
  * in table <t>.
@@ -1954,90 +1953,6 @@ static enum act_return action_inc_gpc1(struct act_rule *rule, struct proxy *px,
 			if (ptr1)
 				update_freq_ctr_period(&stktable_data_cast(ptr1, gpc1_rate),
 					       stkctr->table->data_arg[STKTABLE_DT_GPC1_RATE].u, 1);
-
-			if (ptr2)
-				stktable_data_cast(ptr2, gpc1)++;
-
-			HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-			/* If data was modified, we need to touch to re-schedule sync */
-			stktable_touch_local(stkctr->table, ts, 0);
-		}
-	}
-	return ACT_RET_CONT;
-}
-
-/* This function is a common parser for using variables. It understands
- * the formats:
- *
- *   sc-inc-gpc1(<stick-table ID>)
- *
- * It returns 0 if fails and <err> is filled with an error message. Otherwise,
- * it returns 1 and the variable <expr> is filled with the pointer to the
- * expression to execute.
- */
-static enum act_parse_ret parse_inc_gpc1(const char **args, int *arg, struct proxy *px,
-                                         struct act_rule *rule, char **err)
-{
-	const char *cmd_name = args[*arg-1];
-	char *error;
-
-	cmd_name += strlen("sc-inc-gpc1");
-	if (*cmd_name == '\0') {
-		/* default stick table id. */
-		rule->arg.gpc.sc = 0;
-	} else {
-		/* parse the stick table id. */
-		if (*cmd_name != '(') {
-			memprintf(err, "invalid stick table track ID. Expects %s(<Track ID>)", args[*arg-1]);
-			return ACT_RET_PRS_ERR;
-		}
-		cmd_name++; /* jump the '(' */
-		rule->arg.gpc.sc = strtol(cmd_name, &error, 10); /* Convert stick table id. */
-		if (*error != ')') {
-			memprintf(err, "invalid stick table track ID. Expects %s(<Track ID>)", args[*arg-1]);
-			return ACT_RET_PRS_ERR;
-		}
-
-		if (rule->arg.gpc.sc >= ACT_ACTION_TRK_SCMAX) {
-			memprintf(err, "invalid stick table track ID. The max allowed ID is %d",
-			          ACT_ACTION_TRK_SCMAX-1);
-			return ACT_RET_PRS_ERR;
-		}
-	}
-	rule->action = ACT_CUSTOM;
-	rule->action_ptr = action_inc_gpc1;
-	return ACT_RET_PRS_OK;
-}
-
-/* Always returns 1. */
-static enum act_return action_set_gpt0(struct act_rule *rule, struct proxy *px,
-                                       struct session *sess, struct stream *s, int flags)
-{
-	struct stksess *ts;
-	struct stkctr *stkctr;
-
-	/* Extract the stksess, return OK if no stksess available. */
-	if (s)
-		stkctr = &s->stkctr[rule->arg.gpc.sc];
-	else
-		stkctr = &sess->stkctr[rule->arg.gpc.sc];
-
-	ts = stkctr_entry(stkctr);
-	if (ts) {
-		void *ptr1, *ptr2;
-
-	/* Store the sample in the required sc, and ignore errors. */
-	ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_GPT0);
-	if (ptr) {
-		HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-
-		stktable_data_cast(ptr, gpt0) = rule->arg.gpt.value;
-
-		HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-		stktable_touch_local(stkctr->table, ts, 0);
-	}
 
 			if (ptr2)
 				stktable_data_cast(ptr2, gpc1)++;

@@ -25,7 +25,6 @@
 #include <proto/proxy.h>
 #include <proto/stream.h>
 #include <proto/task.h>
-#include <proto/fd.h>
 
 DECLARE_POOL(pool_head_task,    "task",    sizeof(struct task));
 DECLARE_POOL(pool_head_tasklet, "tasklet", sizeof(struct tasklet));
@@ -535,44 +534,6 @@ void mworker_cleantasks()
 			task_destroy(t);
 		}
 	}
-
-	if (!LIST_ISEMPTY(&task_per_thread[tid].task_list)) {
-		HA_ATOMIC_OR(&active_tasks_mask, tid_bit);
-		activity[tid].long_rq++;
-	}
-}
-
-/* create a work list array for <nbthread> threads, using tasks made of
- * function <fct>. The context passed to the function will be the pointer to
- * the thread's work list, which will contain a copy of argument <arg>. The
- * wake up reason will be TASK_WOKEN_OTHER. The pointer to the work_list array
- * is returned on success, otherwise NULL on failure.
- */
-struct work_list *work_list_create(int nbthread,
-                                   struct task *(*fct)(struct task *, void *, unsigned short),
-                                   void *arg)
-{
-	struct work_list *wl;
-	int i;
-
-	wl = calloc(nbthread, sizeof(*wl));
-	if (!wl)
-		goto fail;
-
-	for (i = 0; i < nbthread; i++) {
-		LIST_INIT(&wl[i].head);
-		wl[i].task = task_new(1UL << i);
-		if (!wl[i].task)
-			goto fail;
-		wl[i].task->process = fct;
-		wl[i].task->context = &wl[i];
-		wl[i].arg = arg;
-	}
-	return wl;
-
- fail:
-	work_list_destroy(wl, nbthread);
-	return NULL;
 }
 
 /* perform minimal intializations */

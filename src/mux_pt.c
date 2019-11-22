@@ -26,20 +26,22 @@ DECLARE_STATIC_POOL(pool_head_pt_ctx, "mux_pt", sizeof(struct mux_pt_ctx));
 
 static void mux_pt_destroy(struct mux_pt_ctx *ctx)
 {
-	struct connection *conn = ctx->conn;
+	/* The connection must be aattached to this mux to be released */
+	if (ctx && ctx->conn && ctx->conn->ctx == ctx) {
+		struct connection *conn = ctx->conn;
 
-	LIST_DEL(&conn->list);
-	conn_stop_tracking(conn);
-	conn_full_close(conn);
-	tasklet_free(ctx->wait_event.task);
-	conn->mux = NULL;
-	conn->ctx = NULL;
-	if (conn->destroy_cb)
-		conn->destroy_cb(conn);
-	/* We don't bother unsubscribing here, as we're about to destroy
-	 * both the connection and the mux_pt_ctx
-	 */
-	conn_free(conn);
+		conn_stop_tracking(conn);
+		conn_full_close(conn);
+		tasklet_free(ctx->wait_event.tasklet);
+		conn->mux = NULL;
+		conn->ctx = NULL;
+		if (conn->destroy_cb)
+			conn->destroy_cb(conn);
+		/* We don't bother unsubscribing here, as we're about to destroy
+		 * both the connection and the mux_pt_ctx
+		 */
+		conn_free(conn);
+	}
 	pool_free(pool_head_pt_ctx, ctx);
 }
 
@@ -59,7 +61,7 @@ static struct task *mux_pt_io_cb(struct task *t, void *tctx, unsigned short stat
 		 */
 		if (ctx->conn->recv_wait) {
 			ctx->conn->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(ctx->conn->recv_wait->task);
+			tasklet_wakeup(ctx->conn->recv_wait->tasklet);
 			ctx->conn->recv_wait = NULL;
 		} else if (ctx->cs->data_cb->wake)
 			ctx->cs->data_cb->wake(ctx->cs);
@@ -69,7 +71,7 @@ static struct task *mux_pt_io_cb(struct task *t, void *tctx, unsigned short stat
 	if (ctx->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH))
 		mux_pt_destroy(ctx);
 	else
-		ctx->conn->xprt->subscribe(ctx->conn, SUB_RETRY_RECV,
+		ctx->conn->xprt->subscribe(ctx->conn, ctx->conn->xprt_ctx, SUB_RETRY_RECV,
 		    &ctx->wait_event);
 
 	return NULL;
@@ -80,7 +82,8 @@ static struct task *mux_pt_io_cb(struct task *t, void *tctx, unsigned short stat
  * incoming ones, in which case one will be allocated and a new stream will be
  * instanciated). Returns < 0 on error.
  */
-static int mux_pt_init(struct connection *conn, struct proxy *prx, struct session *sess)
+static int mux_pt_init(struct connection *conn, struct proxy *prx, struct session *sess,
+		       struct buffer *input)
 {
 	struct conn_stream *cs = conn->ctx;
 	struct mux_pt_ctx *ctx = pool_alloc(pool_head_pt_ctx);
@@ -88,11 +91,11 @@ static int mux_pt_init(struct connection *conn, struct proxy *prx, struct sessio
 	if (!ctx)
 		goto fail;
 
-	ctx->wait_event.task = tasklet_new();
-	if (!ctx->wait_event.task)
+	ctx->wait_event.tasklet = tasklet_new();
+	if (!ctx->wait_event.tasklet)
 		goto fail_free_ctx;
-	ctx->wait_event.task->context = ctx;
-	ctx->wait_event.task->process = mux_pt_io_cb;
+	ctx->wait_event.tasklet->context = ctx;
+	ctx->wait_event.tasklet->process = mux_pt_io_cb;
 	ctx->wait_event.events = 0;
 	ctx->conn = conn;
 
@@ -113,8 +116,8 @@ static int mux_pt_init(struct connection *conn, struct proxy *prx, struct sessio
  fail_free:
 	cs_free(cs);
 fail_free_ctx:
-	if (ctx->wait_event.task)
-		tasklet_free(ctx->wait_event.task);
+	if (ctx->wait_event.tasklet)
+		tasklet_free(ctx->wait_event.tasklet);
 	pool_free(pool_head_pt_ctx, ctx);
  fail:
 	return -1;
@@ -160,7 +163,8 @@ static struct conn_stream *mux_pt_attach(struct connection *conn, struct session
 	struct conn_stream *cs;
 	struct mux_pt_ctx *ctx = conn->ctx;
 
-	conn->xprt->unsubscribe(conn, SUB_RETRY_RECV, &ctx->wait_event);
+	if (ctx->wait_event.events)
+		conn->xprt->unsubscribe(ctx->conn, conn->xprt_ctx, SUB_RETRY_RECV, &ctx->wait_event);
 	cs = cs_new(conn);
 	if (!cs)
 		goto fail;
@@ -183,13 +187,14 @@ static const struct conn_stream *mux_pt_get_first_cs(const struct connection *co
 	return cs;
 }
 
-/* Destroy the mux and the associated connection, if no longer used */
-static void mux_pt_destroy_meth(struct connection *conn)
+/* Destroy the mux and the associated connection if still attached to this mux
+ * and no longer used */
+static void mux_pt_destroy_meth(void *ctx)
 {
-	struct mux_pt_ctx *ctx = conn->ctx;
+	struct mux_pt_ctx *pt = ctx;
 
-	if (!(ctx->cs))
-		mux_pt_destroy(ctx);
+	if (!(pt->cs) || !(pt->conn) || pt->conn->ctx != pt)
+		mux_pt_destroy(pt);
 }
 
 /*
@@ -204,7 +209,7 @@ static void mux_pt_detach(struct conn_stream *cs)
 	if (conn->owner != NULL &&
 	    !(conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH))) {
 		ctx->cs = NULL;
-		conn->xprt->subscribe(conn, SUB_RETRY_RECV, &ctx->wait_event);
+		conn->xprt->subscribe(conn, conn->xprt_ctx, SUB_RETRY_RECV, &ctx->wait_event);
 	} else
 		/* There's no session attached to that connection, destroy it */
 		mux_pt_destroy(ctx);
@@ -230,7 +235,8 @@ static void mux_pt_shutr(struct conn_stream *cs, enum cs_shr_mode mode)
 		return;
 	cs->flags &= ~(CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
 	if (conn_xprt_ready(cs->conn) && cs->conn->xprt->shutr)
-		cs->conn->xprt->shutr(cs->conn, (mode == CS_SHR_DRAIN));
+		cs->conn->xprt->shutr(cs->conn, cs->conn->xprt_ctx,
+		    (mode == CS_SHR_DRAIN));
 	if (cs->flags & CS_FL_SHW)
 		conn_full_close(cs->conn);
 	/* Maybe we've been put in the list of available idle connections,
@@ -245,7 +251,8 @@ static void mux_pt_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
 	if (cs->flags & CS_FL_SHW)
 		return;
 	if (conn_xprt_ready(cs->conn) && cs->conn->xprt->shutw)
-		cs->conn->xprt->shutw(cs->conn, (mode == CS_SHW_NORMAL));
+		cs->conn->xprt->shutw(cs->conn, cs->conn->xprt_ctx,
+		    (mode == CS_SHW_NORMAL));
 	if (!(cs->flags & CS_FL_SHR))
 		conn_sock_shutw(cs->conn, (mode == CS_SHW_NORMAL));
 	else
@@ -269,7 +276,7 @@ static size_t mux_pt_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t 
 		return 0;
 	}
 	b_realign_if_empty(buf);
-	ret = cs->conn->xprt->rcv_buf(cs->conn, buf, count, flags);
+	ret = cs->conn->xprt->rcv_buf(cs->conn, cs->conn->xprt_ctx, buf, count, flags);
 	if (conn_xprt_read0_pending(cs->conn)) {
 		cs->flags &= ~(CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
 		cs->flags |= CS_FL_EOS;
@@ -288,7 +295,7 @@ static size_t mux_pt_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t 
 
 	if (cs->conn->flags & CO_FL_HANDSHAKE)
 		return 0;
-	ret = cs->conn->xprt->snd_buf(cs->conn, buf, count, flags);
+	ret = cs->conn->xprt->snd_buf(cs->conn, cs->conn->xprt_ctx, buf, count, flags);
 
 	if (ret > 0)
 		b_del(buf, ret);
@@ -298,21 +305,21 @@ static size_t mux_pt_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t 
 /* Called from the upper layer, to subscribe to events */
 static int mux_pt_subscribe(struct conn_stream *cs, int event_type, void *param)
 {
-	return (cs->conn->xprt->subscribe(cs->conn, event_type, param));
+	return (cs->conn->xprt->subscribe(cs->conn, cs->conn->xprt_ctx, event_type, param));
 }
 
 static int mux_pt_unsubscribe(struct conn_stream *cs, int event_type, void *param)
 {
-	return (cs->conn->xprt->unsubscribe(cs->conn, event_type, param));
+	return (cs->conn->xprt->unsubscribe(cs->conn, cs->conn->xprt_ctx, event_type, param));
 }
 
-#if defined(CONFIG_HAP_LINUX_SPLICE)
+#if defined(USE_LINUX_SPLICE)
 /* Send and get, using splicing */
 static int mux_pt_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned int count)
 {
 	int ret;
 
-	ret = cs->conn->xprt->rcv_pipe(cs->conn, pipe, count);
+	ret = cs->conn->xprt->rcv_pipe(cs->conn, cs->conn->xprt_ctx, pipe, count);
 	if (conn_xprt_read0_pending(cs->conn))
 		cs->flags |= CS_FL_EOS;
 	if (cs->conn->flags & CO_FL_ERROR)
@@ -322,9 +329,22 @@ static int mux_pt_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned i
 
 static int mux_pt_snd_pipe(struct conn_stream *cs, struct pipe *pipe)
 {
-	return (cs->conn->xprt->snd_pipe(cs->conn, pipe));
+	return (cs->conn->xprt->snd_pipe(cs->conn, cs->conn->xprt_ctx, pipe));
 }
 #endif
+
+static int mux_pt_ctl(struct connection *conn, enum mux_ctl_type mux_ctl, void *output)
+{
+	int ret = 0;
+	switch (mux_ctl) {
+	case MUX_STATUS:
+		if (conn->flags & CO_FL_CONNECTED)
+			ret |= MUX_STATUS_READY;
+		return ret;
+	default:
+		return -1;
+	}
+}
 
 /* The mux operations */
 const struct mux_ops mux_pt_ops = {
@@ -334,7 +354,7 @@ const struct mux_ops mux_pt_ops = {
 	.snd_buf = mux_pt_snd_buf,
 	.subscribe = mux_pt_subscribe,
 	.unsubscribe = mux_pt_unsubscribe,
-#if defined(CONFIG_HAP_LINUX_SPLICE)
+#if defined(USE_LINUX_SPLICE)
 	.rcv_pipe = mux_pt_rcv_pipe,
 	.snd_pipe = mux_pt_snd_pipe,
 #endif
@@ -344,6 +364,7 @@ const struct mux_ops mux_pt_ops = {
 	.avail_streams = mux_pt_avail_streams,
 	.used_streams = mux_pt_used_streams,
 	.destroy = mux_pt_destroy_meth,
+	.ctl = mux_pt_ctl,
 	.shutr = mux_pt_shutr,
 	.shutw = mux_pt_shutw,
 	.flags = MX_FL_NONE,

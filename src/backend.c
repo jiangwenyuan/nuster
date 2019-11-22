@@ -1558,8 +1558,6 @@ int connect_server(struct stream *s)
 		if (srv_conn->mux->ctl(srv_conn, MUX_STATUS, NULL) & MUX_STATUS_READY)
 			s->flags |= SF_SRV_REUSED;
 	}
-	else
-		s->flags |= SF_SRV_REUSED;
 
 	/* flag for logging source ip/port */
 	if (strm_fe(s)->options2 & PR_O2_SRC_ADDR)

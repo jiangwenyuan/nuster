@@ -29,9 +29,13 @@
 #include <proto/freq_ctr.h>
 
 /* bit fields for "profiling" */
-#define HA_PROF_TASKS       0x00000001     /* enable per-task CPU profiling */
+#define HA_PROF_TASKS_OFF   0x00000000     /* per-task CPU profiling forced disabled */
+#define HA_PROF_TASKS_AUTO  0x00000001     /* per-task CPU profiling automatic */
+#define HA_PROF_TASKS_ON    0x00000002     /* per-task CPU profiling forced enabled */
+#define HA_PROF_TASKS_MASK  0x00000003     /* per-task CPU profiling mask */
 
 extern unsigned int profiling;
+extern unsigned long task_profiling_mask;
 extern struct activity activity[MAX_THREADS];
 
 
@@ -48,13 +52,20 @@ static inline void activity_count_runtime()
 	uint64_t new_cpu_time;
 	int64_t stolen;
 	uint32_t run_time;
+	uint32_t up, down;
+
+	/* 1 millisecond per loop on average over last 1024 iterations is
+	 * enough to turn on profiling.
+	 */
+	up = 1000;
+	down = up * 99 / 100;
 
 	new_cpu_time   = now_cpu_time();
 	new_mono_time  = now_mono_time();
 
-	if (prev_cpu_time && prev_mono_time) {
-		new_cpu_time  -= prev_cpu_time;
-		new_mono_time -= prev_mono_time;
+	if (ti->prev_cpu_time && ti->prev_mono_time) {
+		new_cpu_time  -= ti->prev_cpu_time;
+		new_mono_time -= ti->prev_mono_time;
 		stolen = new_mono_time - new_cpu_time;
 		if (unlikely(stolen >= 500000)) {
 			stolen /= 500000;
@@ -67,6 +78,24 @@ static inline void activity_count_runtime()
 
 	run_time = (before_poll.tv_sec - after_poll.tv_sec) * 1000000U + (before_poll.tv_usec - after_poll.tv_usec);
 	swrate_add(&activity[tid].avg_loop_us, TIME_STATS_SAMPLES, run_time);
+
+	/* reaching the "up" threshold on average switches profiling to "on"
+	 * when automatic, and going back below the "down" threshold switches
+	 * to off.
+	 */
+	if (!(task_profiling_mask & tid_bit)) {
+		if (unlikely((profiling & HA_PROF_TASKS_MASK) == HA_PROF_TASKS_ON ||
+			     ((profiling & HA_PROF_TASKS_MASK) == HA_PROF_TASKS_AUTO && run_time >= up))) {
+			if (swrate_avg(activity[tid].avg_loop_us, TIME_STATS_SAMPLES) >= up)
+				_HA_ATOMIC_OR(&task_profiling_mask, tid_bit);
+		}
+	} else {
+		if (unlikely((profiling & HA_PROF_TASKS_MASK) == HA_PROF_TASKS_OFF ||
+			     ((profiling & HA_PROF_TASKS_MASK) == HA_PROF_TASKS_AUTO && run_time <= down))) {
+			if (swrate_avg(activity[tid].avg_loop_us, TIME_STATS_SAMPLES) <= down)
+				_HA_ATOMIC_AND(&task_profiling_mask, ~tid_bit);
+		}
+	}
 }
 
 

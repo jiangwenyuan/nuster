@@ -559,18 +559,6 @@ void my_closefrom(int start)
 }
 #endif // defined(USE_POLL)
 
-/* Scan and process the cached events. This should be called right after
- * the poller. The loop may cause new entries to be created, for example
- * if a listener causes an accept() to initiate a new incoming connection
- * wanting to attempt an recv().
- */
-void fd_process_cached_events()
-{
-	HA_ATOMIC_AND(&fd_cache_mask, ~tid_bit);
-	fdlist_process_cached_events(&fd_cache_local[tid]);
-	fdlist_process_cached_events(&fd_cache);
-}
-
 /* disable the specified poller */
 void disable_poller(const char *poller_name)
 {

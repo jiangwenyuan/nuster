@@ -86,18 +86,6 @@ const char *stat_status_codes[STAT_STATUS_SIZE] = {
 	[STAT_STATUS_IVAL] = "IVAL",
 };
 
-/* status codes available for the stats admin page (strictly 4 chars length) */
-const char *stat_status_codes[STAT_STATUS_SIZE] = {
-	[STAT_STATUS_DENY] = "DENY",
-	[STAT_STATUS_DONE] = "DONE",
-	[STAT_STATUS_ERRP] = "ERRP",
-	[STAT_STATUS_EXCD] = "EXCD",
-	[STAT_STATUS_NONE] = "NONE",
-	[STAT_STATUS_PART] = "PART",
-	[STAT_STATUS_UNKN] = "UNKN",
-	[STAT_STATUS_IVAL] = "IVAL",
-};
-
 /* These are the field names for each INF_* field position. Please pay attention
  * to always use the exact same name except that the strings for new names must
  * be lower case or CamelCase while the enum entries must be upper case.

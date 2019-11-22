@@ -860,7 +860,6 @@ int conn_recv_netscaler_cip(struct connection *conn, int flag)
 	} while (0);
 
 	conn->flags &= ~flag;
-	__conn_sock_stop_recv(conn);
 	return 1;
 
  not_ready:

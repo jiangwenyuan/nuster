@@ -42,7 +42,6 @@
 #include <types/cli.h>
 #include <types/filters.h>
 #include <types/global.h>
-#include <types/cache.h>
 #include <types/stats.h>
 
 #include <proto/acl.h>
@@ -2692,11 +2691,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		if (!http_apply_redirect_rule(rule, s, txn))
 			goto return_bad_req;
 		goto done;
-	}
-
-	/* check nuster applets: manager/purge/stats... */
-	if (nuster_check_applet(s, req, px)) {
-		goto return_prx_cond;
 	}
 
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.
@@ -7047,26 +7041,27 @@ void check_response_for_cacheability(struct stream *s, struct channel *rtr)
 		    ((p2 - p1 ==  8) && strncasecmp(p1, "no-cache", 8) == 0) ||
 		    ((p2 - p1 ==  8) && strncasecmp(p1, "no-store", 8) == 0)) {
 			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
+			return;
+		}
+
+		if ((p2 - p1 ==  6) && strncasecmp(p1, "public", 6) == 0) {
+			txn->flags |= TX_CACHEABLE | TX_CACHE_COOK;
 			continue;
 		}
 	}
-
-	/* RFC7234#5.4:
-	 *   When the Cache-Control header field is also present and
-	 *   understood in a request, Pragma is ignored.
-	 *   When the Cache-Control header field is not present in a
-	 *   request, caches MUST consider the no-cache request
-	 *   pragma-directive as having the same effect as if
-	 *   "Cache-Control: no-cache" were present.
-	 */
-	if (!cc_found && pragma_found)
-		txn->flags |= TX_CACHE_IGNORE;
 }
 
+
 /*
- * Check if response is cacheable or not. Updates s->txn->flags.
+ * In a GET, HEAD or POST request, check if the requested URI matches the stats uri
+ * for the current backend.
+ *
+ * It is assumed that the request is either a HEAD, GET, or POST and that the
+ * uri_auth field is valid.
+ *
+ * Returns 1 if stats should be provided, otherwise 0.
  */
-void check_response_for_cacheability(struct stream *s, struct channel *rtr)
+int stats_check_uri(struct stream_interface *si, struct http_txn *txn, struct proxy *backend)
 {
 	struct uri_auth *uri_auth = backend->uri_auth;
 	struct http_msg *msg = &txn->req;
@@ -7075,70 +7070,17 @@ void check_response_for_cacheability(struct stream *s, struct channel *rtr)
 	if (!uri_auth)
 		return 0;
 
-	char *cur_ptr, *cur_end, *cur_next;
-	int cur_idx;
+	if (txn->meth != HTTP_METH_GET && txn->meth != HTTP_METH_HEAD && txn->meth != HTTP_METH_POST)
+		return 0;
 
+	/* check URI size */
+	if (uri_auth->uri_len > msg->sl.rq.u_l)
+		return 0;
 
-	if (IS_HTX_STRM(s))
-		return htx_check_response_for_cacheability(s, rtr);
+	if (memcmp(uri, uri_auth->uri_prefix, uri_auth->uri_len) != 0)
+		return 0;
 
-	if (txn->status < 200) {
-		/* do not try to cache interim responses! */
-		txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
-		return;
-	}
-
-/* Append the description of what is present in error snapshot <es> into <out>.
- * The description must be small enough to always fit in a trash. The output
- * buffer may be the trash so the trash must not be used inside this function.
- */
-void http_show_error_snapshot(struct buffer *out, const struct error_snapshot *es)
-{
-	chunk_appendf(out,
-	              "  stream #%d, stream flags 0x%08x, tx flags 0x%08x\n"
-	              "  HTTP msg state %s(%d), msg flags 0x%08x\n"
-	              "  HTTP chunk len %lld bytes, HTTP body len %lld bytes, channel flags 0x%08x :\n",
-	              es->ctx.http.sid, es->ctx.http.s_flags, es->ctx.http.t_flags,
-	              h1_msg_state_str(es->ctx.http.state), es->ctx.http.state,
-	              es->ctx.http.m_flags, es->ctx.http.m_clen,
-	              es->ctx.http.m_blen, es->ctx.http.b_flags);
-}
-
-/*
- * Capture a bad request or response and archive it in the proxy's structure.
- * By default it tries to report the error position as msg->err_pos. However if
- * this one is not set, it will then report msg->next, which is the last known
- * parsing point. The function is able to deal with wrapping buffers. It always
- * displays buffers as a contiguous area starting at buf->p. The direction is
- * determined thanks to the channel's flags.
- */
-void http_capture_bad_message(struct proxy *proxy, struct stream *s,
-                              struct http_msg *msg,
-			      enum h1_state state, struct proxy *other_end)
-{
-	union error_snapshot_ctx ctx;
-	long ofs;
-
-	/* http-specific part now */
-	ctx.http.sid     = s->uniq_id;
-	ctx.http.state   = state;
-	ctx.http.b_flags = msg->chn->flags;
-	ctx.http.s_flags = s->flags;
-	ctx.http.t_flags = s->txn->flags;
-	ctx.http.m_flags = msg->flags;
-	ctx.http.m_clen  = msg->chunk_len;
-	ctx.http.m_blen  = msg->body_len;
-
-	ofs = msg->chn->total - ci_data(msg->chn);
-	if (ofs < 0)
-		ofs = 0;
-
-	proxy_capture_error(proxy, !!(msg->chn->flags & CF_ISRESP),
-	                    other_end, s->target,
-	                    strm_sess(s), &msg->chn->buf,
-	                    ofs, co_data(msg->chn),
-	                    (msg->err_pos >= 0) ? msg->err_pos : msg->next,
-	                    &ctx, http_show_error_snapshot);
+	return 1;
 }
 
 /* Append the description of what is present in error snapshot <es> into <out>.

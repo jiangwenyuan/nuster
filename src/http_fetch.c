@@ -77,8 +77,8 @@ static void free_raw_htx_chunk_per_thread()
 	static_raw_htx_buf = NULL;
 }
 
-REGISTER_PER_THREAD_INIT(alloc_raw_htx_chunk_per_thread);
-REGISTER_PER_THREAD_DEINIT(free_raw_htx_chunk_per_thread);
+REGISTER_PER_THREAD_ALLOC(alloc_raw_htx_chunk_per_thread);
+REGISTER_PER_THREAD_FREE(free_raw_htx_chunk_per_thread);
 
 /*
  * Returns the data from Authorization header. Function may be called more
@@ -201,7 +201,6 @@ static int get_http_auth(struct sample *smp, struct htx *htx)
  */
 struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 {
-	struct proxy *px = smp->px;
 	struct stream *s = smp->strm;
 	struct http_txn *txn = NULL;
 	struct htx *htx = NULL;
@@ -225,7 +224,7 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 	msg = (!(chn->flags & CF_ISRESP) ? &txn->req : &txn->rsp);
 	smp->data.type = SMP_T_BOOL;
 
-	if (px->mode == PR_MODE_HTTP) {
+	if (IS_HTX_STRM(s)) {
 		htx = htxbuf(&chn->buf);
 
 		if (msg->msg_state == HTTP_MSG_ERROR || (htx->flags & HTX_FL_PARSING_ERROR))
@@ -233,19 +232,19 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 
 		if (msg->msg_state < HTTP_MSG_BODY) {
 			/* Analyse not yet started */
-			if (htx_is_empty(htx) || htx_get_tail_type(htx) < HTX_BLK_EOH) {
+			if (htx_is_empty(htx) || htx->first == -1) {
 				/* Parsing is done by the mux, just wait */
 				smp->flags |= SMP_F_MAY_CHANGE;
 				return NULL;
 			}
 		}
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		if (vol && !sl) {
 			/* The start-line was already forwarded, it is too late to fetch anything */
 			return NULL;
 		}
 	}
-	else { /* PR_MODE_TCP */
+	else { /* RAW mode */
 		struct buffer *buf;
 		struct h1m h1m;
 		struct http_hdr hdrs[global.tune.max_http_hdr];
@@ -446,7 +445,7 @@ static int smp_fetch_meth(const struct arg *args, struct sample *smp, const char
 	int meth;
 	struct http_txn *txn;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 0);
 
@@ -464,7 +463,7 @@ static int smp_fetch_meth(const struct arg *args, struct sample *smp, const char
 				/* ensure the indexes are not affected */
 				return 0;
 			}
-			sl = http_find_stline(htx);
+			sl = http_get_stline(htx);
 			smp->flags |= SMP_F_CONST;
 			smp->data.u.meth.str.area = HTX_SL_REQ_MPTR(sl);
 			smp->data.u.meth.str.data = HTX_SL_REQ_MLEN(sl);
@@ -500,7 +499,7 @@ static int smp_fetch_rqver(const struct arg *args, struct sample *smp, const cha
 	char *ptr;
 	int len;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
@@ -508,7 +507,7 @@ static int smp_fetch_rqver(const struct arg *args, struct sample *smp, const cha
 		if (!htx)
 			return 0;
 
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		len = HTX_SL_REQ_VLEN(sl);
 		ptr = HTX_SL_REQ_VPTR(sl);
 	}
@@ -540,7 +539,7 @@ static int smp_fetch_stver(const struct arg *args, struct sample *smp, const cha
 	char *ptr;
 	int len;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
@@ -548,7 +547,7 @@ static int smp_fetch_stver(const struct arg *args, struct sample *smp, const cha
 		if (!htx)
 			return 0;
 
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		len = HTX_SL_RES_VLEN(sl);
 		ptr = HTX_SL_RES_VPTR(sl);
 	}
@@ -581,7 +580,7 @@ static int smp_fetch_stcode(const struct arg *args, struct sample *smp, const ch
 	char *ptr;
 	int len;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
@@ -589,7 +588,7 @@ static int smp_fetch_stcode(const struct arg *args, struct sample *smp, const ch
 		if (!htx)
 			return 0;
 
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		len = HTX_SL_RES_CLEN(sl);
 		ptr = HTX_SL_RES_CPTR(sl);
 	}
@@ -636,7 +635,7 @@ static int smp_fetch_hdrs(const struct arg *args, struct sample *smp, const char
 	struct channel *chn = SMP_REQ_CHN(smp);
 	struct http_txn *txn;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct buffer *temp;
@@ -645,7 +644,7 @@ static int smp_fetch_hdrs(const struct arg *args, struct sample *smp, const char
 		if (!htx)
 			return 0;
 		temp = get_trash_chunk();
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 
@@ -704,7 +703,7 @@ static int smp_fetch_hdrs_bin(const struct arg *args, struct sample *smp, const 
 	struct http_txn *txn;
 	struct buffer *temp;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct buffer *temp;
@@ -717,7 +716,7 @@ static int smp_fetch_hdrs_bin(const struct arg *args, struct sample *smp, const 
 		temp = get_trash_chunk();
 		p = temp->area;
 		end = temp->area + temp->size;
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 			struct ist n, v;
@@ -865,7 +864,7 @@ static int smp_fetch_body(const struct arg *args, struct sample *smp, const char
 	struct channel *chn = SMP_REQ_CHN(smp);
 	struct buffer *temp;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		int32_t pos;
@@ -874,11 +873,11 @@ static int smp_fetch_body(const struct arg *args, struct sample *smp, const char
 			return 0;
 
 		temp = get_trash_chunk();
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 
-			if (type == HTX_BLK_EOM || type == HTX_BLK_EOD)
+			if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
 				break;
 			if (type == HTX_BLK_DATA) {
 				if (!htx_data_to_h1(htx_get_blk_value(htx, blk), temp, 0))
@@ -936,7 +935,7 @@ static int smp_fetch_body_len(const struct arg *args, struct sample *smp, const 
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		int32_t pos;
@@ -945,11 +944,11 @@ static int smp_fetch_body_len(const struct arg *args, struct sample *smp, const 
 		if (!htx)
 			return 0;
 
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 
-			if (type == HTX_BLK_EOM || type == HTX_BLK_EOD)
+			if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
 				break;
 			if (type == HTX_BLK_DATA)
 				len += htx_get_blksz(blk);
@@ -984,7 +983,7 @@ static int smp_fetch_body_size(const struct arg *args, struct sample *smp, const
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		int32_t pos;
@@ -993,11 +992,11 @@ static int smp_fetch_body_size(const struct arg *args, struct sample *smp, const
 		if (!htx)
 			return 0;
 
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 
-			if (type == HTX_BLK_EOM || type == HTX_BLK_EOD)
+			if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
 				break;
 			if (type == HTX_BLK_DATA)
 				len += htx_get_blksz(blk);
@@ -1032,14 +1031,14 @@ static int smp_fetch_url(const struct arg *args, struct sample *smp, const char 
 	struct channel *chn = SMP_REQ_CHN(smp);
 	struct http_txn *txn;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
 
 		if (!htx)
 			return 0;
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		smp->data.type = SMP_T_STR;
 		smp->data.u.str.area = HTX_SL_REQ_UPTR(sl);
 		smp->data.u.str.data = HTX_SL_REQ_ULEN(sl);
@@ -1064,14 +1063,14 @@ static int smp_fetch_url_ip(const struct arg *args, struct sample *smp, const ch
 	struct http_txn *txn;
 	struct sockaddr_storage addr;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
 
 		if (!htx)
 			return 0;
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		url2sa(HTX_SL_REQ_UPTR(sl), HTX_SL_REQ_ULEN(sl), &addr, NULL);
 	}
 	else {
@@ -1097,14 +1096,14 @@ static int smp_fetch_url_port(const struct arg *args, struct sample *smp, const 
 	struct http_txn *txn;
 	struct sockaddr_storage addr;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
 
 		if (!htx)
 			return 0;
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		url2sa(HTX_SL_REQ_UPTR(sl), HTX_SL_REQ_ULEN(sl), &addr, NULL);
 	}
 	else {
@@ -1136,7 +1135,7 @@ static int smp_fetch_fhdr(const struct arg *args, struct sample *smp, const char
 	struct channel *chn = ((kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
 	int occ = 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct http_hdr_ctx *ctx = smp->ctx.a[0];
@@ -1240,7 +1239,7 @@ static int smp_fetch_fhdr_cnt(const struct arg *args, struct sample *smp, const 
 	struct channel *chn = ((kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
 	int cnt;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct http_hdr_ctx ctx;
@@ -1299,7 +1298,7 @@ static int smp_fetch_hdr_names(const struct arg *args, struct sample *smp, const
 	struct buffer *temp;
 	char del = ',';
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		int32_t pos;
@@ -1311,7 +1310,7 @@ static int smp_fetch_hdr_names(const struct arg *args, struct sample *smp, const
 			del = *args[0].data.str.area;
 
 		temp = get_trash_chunk();
-		for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+		for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 			struct htx_blk *blk = htx_get_blk(htx, pos);
 			enum htx_blk_type type = htx_get_blk_type(blk);
 			struct ist n;
@@ -1370,7 +1369,7 @@ static int smp_fetch_hdr(const struct arg *args, struct sample *smp, const char 
 	struct channel *chn = ((kw[0] == 'h' || kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
 	int occ = 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct http_hdr_ctx *ctx = smp->ctx.a[0];
@@ -1484,7 +1483,7 @@ static int smp_fetch_hdr_cnt(const struct arg *args, struct sample *smp, const c
 	struct channel *chn = ((kw[0] == 'h' || kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
 	int cnt;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct http_hdr_ctx ctx;
@@ -1593,7 +1592,7 @@ static int smp_fetch_path(const struct arg *args, struct sample *smp, const char
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
@@ -1603,7 +1602,7 @@ static int smp_fetch_path(const struct arg *args, struct sample *smp, const char
 		if (!htx)
 			return 0;
 
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		path = http_get_path(htx_sl_req_uri(sl));
 		if (!path.ptr)
 			return 0;
@@ -1654,7 +1653,7 @@ static int smp_fetch_base(const struct arg *args, struct sample *smp, const char
 	struct channel *chn = SMP_REQ_CHN(smp);
 	struct buffer *temp;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
@@ -1673,7 +1672,7 @@ static int smp_fetch_base(const struct arg *args, struct sample *smp, const char
 		chunk_memcat(temp, ctx.value.ptr, ctx.value.len);
 
 		/* now retrieve the path */
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		path = http_get_path(htx_sl_req_uri(sl));
 		if (path.ptr) {
 			size_t len;
@@ -1740,7 +1739,7 @@ static int smp_fetch_base32(const struct arg *args, struct sample *smp, const ch
 	struct channel *chn = SMP_REQ_CHN(smp);
 	unsigned int hash = 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
@@ -1758,7 +1757,7 @@ static int smp_fetch_base32(const struct arg *args, struct sample *smp, const ch
 		}
 
 		/* now retrieve the path */
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		path = http_get_path(htx_sl_req_uri(sl));
 		if (path.ptr) {
 			size_t len;
@@ -1866,7 +1865,7 @@ static int smp_fetch_query(const struct arg *args, struct sample *smp, const cha
 	struct channel *chn = SMP_REQ_CHN(smp);
 	char *ptr, *end;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct htx_sl *sl;
@@ -1874,7 +1873,7 @@ static int smp_fetch_query(const struct arg *args, struct sample *smp, const cha
 		if (!htx)
 			return 0;
 
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		ptr = HTX_SL_REQ_UPTR(sl);
 		end = HTX_SL_REQ_UPTR(sl) + HTX_SL_REQ_ULEN(sl);
 	}
@@ -1906,7 +1905,7 @@ static int smp_fetch_proto_http(const struct arg *args, struct sample *smp, cons
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 0);
 
@@ -1942,7 +1941,7 @@ static int smp_fetch_http_auth(const struct arg *args, struct sample *smp, const
 	if (!args || args->type != ARGT_USR)
 		return 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 
@@ -1972,7 +1971,7 @@ static int smp_fetch_http_auth_grp(const struct arg *args, struct sample *smp, c
 	if (!args || args->type != ARGT_USR)
 		return 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 
@@ -2181,7 +2180,7 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
 	if (!args || args->type != ARGT_STR)
 		return 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct http_hdr_ctx *ctx = smp->ctx.a[2];
@@ -2357,7 +2356,7 @@ static int smp_fetch_cookie_cnt(const struct arg *args, struct sample *smp, cons
 	if (!args || args->type != ARGT_STR)
 		return 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct http_hdr_ctx ctx;
@@ -2548,7 +2547,7 @@ static int smp_fetch_url_param(const struct arg *args, struct sample *smp, const
 		delim = *args[1].data.str.area;
 
 	if (!smp->ctx.a[0]) { // first call, find the query string
-		if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+		if (smp->px->options2 & PR_O2_USE_HTX) {
 			/* HTX version */
 			struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 			struct htx_sl *sl;
@@ -2556,7 +2555,7 @@ static int smp_fetch_url_param(const struct arg *args, struct sample *smp, const
 			if (!htx)
 				return 0;
 
-			sl = http_find_stline(htx);
+			sl = http_get_stline(htx);
 			smp->ctx.a[0] = http_find_param_list(HTX_SL_REQ_UPTR(sl), HTX_SL_REQ_ULEN(sl), delim);
 			if (!smp->ctx.a[0])
 				return 0;
@@ -2613,7 +2612,7 @@ static int smp_fetch_body_param(const struct arg *args, struct sample *smp, cons
 	}
 
 	if (!smp->ctx.a[0]) { // first call, find the query string
-		if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+		if (smp->px->options2 & PR_O2_USE_HTX) {
 			/* HTX version */
 			struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 			struct buffer *temp;
@@ -2623,11 +2622,11 @@ static int smp_fetch_body_param(const struct arg *args, struct sample *smp, cons
 				return 0;
 
 			temp   = get_trash_chunk();
-			for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+			for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 				struct htx_blk   *blk  = htx_get_blk(htx, pos);
 				enum htx_blk_type type = htx_get_blk_type(blk);
 
-				if (type == HTX_BLK_EOM || type == HTX_BLK_EOD)
+				if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
 					break;
 				if (type == HTX_BLK_DATA) {
 					if (!htx_data_to_h1(htx_get_blk_value(htx, blk), temp, 0))
@@ -2716,7 +2715,7 @@ static int smp_fetch_url32(const struct arg *args, struct sample *smp, const cha
 	struct channel *chn = SMP_REQ_CHN(smp);
 	unsigned int hash = 0;
 
-	if (IS_HTX_SMP(smp) || (smp->px->mode == PR_MODE_TCP)) {
+	if (smp->px->options2 & PR_O2_USE_HTX) {
 		/* HTX version */
 		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 		struct http_hdr_ctx ctx;
@@ -2734,7 +2733,7 @@ static int smp_fetch_url32(const struct arg *args, struct sample *smp, const cha
 		}
 
 		/* now retrieve the path */
-		sl = http_find_stline(htx);
+		sl = http_get_stline(htx);
 		path = http_get_path(htx_sl_req_uri(sl));
 		if (path.len && *(path.ptr) == '/') {
 			while (path.len--)

@@ -70,6 +70,11 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		global.tune.options &= ~GTUNE_USE_KQUEUE;
 	}
+	else if (!strcmp(args[0], "noevports")) {
+		if (alertif_too_many_args(0, file, linenum, args, &err_code))
+			goto out;
+		global.tune.options &= ~GTUNE_USE_EVPORTS;
+	}
 	else if (!strcmp(args[0], "nopoll")) {
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))
 			goto out;
@@ -260,9 +265,21 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		}
 
 		res = parse_time_err(args[1], &idle, TIME_UNIT_MS);
-		if (res) {
+		if (res == PARSE_TIME_OVER) {
+			ha_alert("parsing [%s:%d]: timer overflow in argument <%s> to <%s>, maximum value is 65535 ms.\n",
+			         file, linenum, args[1], args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		else if (res == PARSE_TIME_UNDER) {
+			ha_alert("parsing [%s:%d]: timer underflow in argument <%s> to <%s>, minimum non-null value is 1 ms.\n",
+			         file, linenum, args[1], args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		else if (res) {
 			ha_alert("parsing [%s:%d]: unexpected character '%c' in argument to <%s>.\n",
-			      file, linenum, *res, args[0]);
+			         file, linenum, *res, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -507,9 +524,10 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 		global.nbproc = atol(args[1]);
-		if (global.nbproc < 1 || global.nbproc > LONGBITS) {
+		all_proc_mask = nbits(global.nbproc);
+		if (global.nbproc < 1 || global.nbproc > MAX_PROCS) {
 			ha_alert("parsing [%s:%d] : '%s' must be between 1 and %d (was %d).\n",
-				 file, linenum, args[0], LONGBITS, global.nbproc);
+				 file, linenum, args[0], MAX_PROCS, global.nbproc);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -545,9 +563,9 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		}
 		global.maxconn = atol(args[1]);
 #ifdef SYSTEM_MAXCONN
-		if (global.maxconn > DEFAULT_MAXCONN && cfg_maxconn <= DEFAULT_MAXCONN) {
-			ha_alert("parsing [%s:%d] : maxconn value %d too high for this system.\nLimiting to %d. Please use '-n' to force the value.\n", file, linenum, global.maxconn, DEFAULT_MAXCONN);
-			global.maxconn = DEFAULT_MAXCONN;
+		if (global.maxconn > SYSTEM_MAXCONN && cfg_maxconn <= SYSTEM_MAXCONN) {
+			ha_alert("parsing [%s:%d] : maxconn value %d too high for this system.\nLimiting to %d. Please use '-n' to force the value.\n", file, linenum, global.maxconn, SYSTEM_MAXCONN);
+			global.maxconn = SYSTEM_MAXCONN;
 			err_code |= ERR_ALERT;
 		}
 #endif /* SYSTEM_MAXCONN */
@@ -938,15 +956,21 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		}
 
 		err = parse_time_err(args[1], &val, TIME_UNIT_MS);
-		if (err) {
+		if (err == PARSE_TIME_OVER) {
+			ha_alert("parsing [%s:%d]: timer overflow in argument <%s> to <%s>, maximum value is 2147483647 ms (~24.8 days).\n",
+			         file, linenum, args[1], args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+		}
+		else if (err == PARSE_TIME_UNDER) {
+			ha_alert("parsing [%s:%d]: timer underflow in argument <%s> to <%s>, minimum non-null value is 1 ms.\n",
+			         file, linenum, args[1], args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+		}
+		else if (err) {
 			ha_alert("parsing [%s:%d]: unsupported character '%c' in '%s' (wants an integer delay).\n", file, linenum, *err, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 		}
 		global.max_spread_checks = val;
-		if (global.max_spread_checks < 0) {
-			ha_alert("parsing [%s:%d]: '%s' needs a positive delay in milliseconds.\n",file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-		}
 	}
 	else if (strcmp(args[0], "cpu-map") == 0) {
 		/* map a process list to a CPU set */
@@ -967,14 +991,18 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		if ((slash = strchr(args[1], '/')) != NULL)
 			*slash = 0;
 
-		if (parse_process_number(args[1], &proc, &autoinc, &errmsg)) {
+		/* note: we silently ignore processes over MAX_PROCS and
+		 * threads over MAX_THREADS so as not to make configurations a
+		 * pain to maintain.
+		 */
+		if (parse_process_number(args[1], &proc, LONGBITS, &autoinc, &errmsg)) {
 			ha_alert("parsing [%s:%d] : %s : %s\n", file, linenum, args[0], errmsg);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
 
 		if (slash) {
-			if (parse_process_number(slash+1, &thread, NULL, &errmsg)) {
+			if (parse_process_number(slash+1, &thread, LONGBITS, NULL, &errmsg)) {
 				ha_alert("parsing [%s:%d] : %s : %s\n", file, linenum, args[0], errmsg);
 				err_code |= ERR_ALERT | ERR_FATAL;
 				goto out;
@@ -1006,33 +1034,64 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
-		for (i = n = 0; i < LONGBITS; i++) {
-			/* No mapping for this process */
-			if (!(proc & (1UL << i)))
-				continue;
+		/* we now have to deal with 3 real cases :
+		 *    cpu-map P-Q    => mapping for whole processes, numbers P to Q
+		 *    cpu-map P-Q/1  => mapping of first thread of processes P to Q
+		 *    cpu-map 1/T-U  => mapping of threads T to U of process 1
+		 * Otherwise other combinations are silently ignored since nbthread
+		 * and nbproc cannot both be >1 :
+		 *    cpu-map P-Q/T  => mapping for thread T for processes P to Q.
+		 *                      Only one of T,Q may be > 1, others ignored.
+		 *    cpu-map P/T-U  => mapping for threads T to U of process P. Only
+		 *                      one of P,U may be > 1, others ignored.
+		 */
+		if (!thread) {
+			/* mapping for whole processes. E.g. cpu-map 1-4 0-3 */
+			for (i = n = 0; i < MAX_PROCS; i++) {
+				/* No mapping for this process */
+				if (!(proc & (1UL << i)))
+					continue;
 
-			/* Mapping at the process level */
-			if (!thread) {
 				if (!autoinc)
 					global.cpu_map.proc[i] = cpus;
 				else {
 					n += my_ffsl(cpus >> n);
 					global.cpu_map.proc[i] = (1UL << (n-1));
 				}
-				continue;
+			}
+		} else {
+			/* Mapping at the thread level. All threads are retained
+			 * for process 1, and only thread 1 is retained for other
+			 * processes.
+			 */
+			if (thread == 0x1) {
+				/* first thread, iterate on processes. E.g. cpu-map 1-4/1 0-3 */
+				for (i = n = 0; i < MAX_PROCS; i++) {
+					/* No mapping for this process */
+					if (!(proc & (1UL << i)))
+						continue;
+					if (!autoinc)
+						global.cpu_map.proc_t1[i] = cpus;
+					else {
+						n += my_ffsl(cpus >> n);
+						global.cpu_map.proc_t1[i] = (1UL << (n-1));
+					}
+				}
 			}
 
-			/* Mapping at the thread level */
-			for (j = 0; j < MAX_THREADS; j++) {
-				/* Np mapping for this thread */
-				if (!(thread & (1UL << j)))
-					continue;
+			if (proc == 0x1) {
+				/* first process, iterate on threads. E.g. cpu-map 1/1-4 0-3 */
+				for (j = n = 0; j < MAX_THREADS; j++) {
+					/* No mapping for this thread */
+					if (!(thread & (1UL << j)))
+						continue;
 
-				if (!autoinc)
-					global.cpu_map.thread[i][j] = cpus;
-				else {
-					n += my_ffsl(cpus >> n);
-					global.cpu_map.thread[i][j] = (1UL << (n-1));
+					if (!autoinc)
+						global.cpu_map.thread[j] = cpus;
+					else {
+						n += my_ffsl(cpus >> n);
+						global.cpu_map.thread[j] = (1UL << (n-1));
+					}
 				}
 			}
 		}

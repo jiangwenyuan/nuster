@@ -793,7 +793,6 @@ static inline int channel_htx_recv_max(const struct channel *chn, const struct h
 	return ret;
 }
 
-
 /* Returns the amount of space available at the input of the buffer, taking the
  * reserved space into account if ->to_forward indicates that an end of transfer
  * is close to happen. The test is optimized to avoid as many operations as

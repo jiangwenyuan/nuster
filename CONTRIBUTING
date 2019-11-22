@@ -158,16 +158,6 @@ occasionally break eventhough a great care is taken. In other words, if you
 provide a patch for OpenSSL you don't need to test its derivatives, but if you
 provide a patch for a derivative you also need to test with OpenSSL.
 
-When modifying some optional subsystem (SSL, Lua, compression, device detection
-engines), please make sure the code continues to build (and to work) when these
-features are disabled. Similarly, when modifying the SSL stack, please always
-ensure that supported OpenSSL versions continue to build and to work, especially
-if you modify support for alternate libraries. Clean support for the legacy
-OpenSSL libraries is mandatory, support for its derivatives is a bonus and may
-occasionally break eventhough a great care is taken. In other words, if you
-provide a patch for OpenSSL you don't need to test its derivatives, but if you
-provide a patch for a derivative you also need to test with OpenSSL.
-
 If your work is very confidential and you can't publicly discuss it, you can
 also mail willy@haproxy.org directly about it, but your mail may be waiting
 several days in the queue before you get a response, if you get a response at

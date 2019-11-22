@@ -22,14 +22,25 @@
 #ifndef _COMMON_HATHREADS_H
 #define _COMMON_HATHREADS_H
 
+#include <signal.h>
+#include <unistd.h>
+#ifdef _POSIX_PRIORITY_SCHEDULING
+#include <sched.h>
+#endif
+
 #include <common/config.h>
 #include <common/initcall.h>
 
 /* Note about all_threads_mask :
- *    - with threads support disabled, this symbol is defined as zero (0UL).
- *    - with threads enabled, this variable is never zero, it contains the mask
- *      of enabled threads. Thus if only one thread is enabled, it equals 1.
+ *    - this variable is comprised between 1 and LONGBITS.
+ *    - with threads support disabled, this symbol is defined as constant 1UL.
+ *    - with threads enabled, it contains the mask of enabled threads. Thus if
+ *      only one thread is enabled, it equals 1.
  */
+
+/* thread info flags, for thread_info[].flags */
+#define TI_FL_STUCK             0x00000001
+
 
 #ifndef USE_THREAD
 
@@ -40,8 +51,25 @@
  * at build time.
  */
 enum { all_threads_mask = 1UL };
+enum { threads_harmless_mask = 0 };
+enum { threads_want_rdv_mask = 0 };
+enum { threads_sync_mask = 0 };
 enum { tid_bit = 1UL };
 enum { tid = 0 };
+
+extern struct thread_info {
+	clockid_t clock_id;
+	timer_t wd_timer;          /* valid timer or TIMER_INVALID if not set */
+	uint64_t prev_cpu_time;    /* previous per thread CPU time */
+	uint64_t prev_mono_time;   /* previous system wide monotonic time  */
+	unsigned int idle_pct;     /* idle to total ratio over last sample (percent) */
+	unsigned int flags;        /* thread info flags, TI_FL_* */
+	/* pad to cache line (64B) */
+	char __pad[0];            /* unused except to check remaining room */
+	char __end[0] __attribute__((aligned(64)));
+} thread_info[MAX_THREADS];
+
+extern THREAD_LOCAL struct thread_info *ti; /* thread_info for the current thread */
 
 #define __decl_hathreads(decl)
 #define __decl_spinlock(lock)
@@ -139,6 +167,38 @@ enum { tid = 0 };
 
 static inline void ha_set_tid(unsigned int tid)
 {
+	ti = &thread_info[tid];
+}
+
+static inline void ha_thread_relax(void)
+{
+#if _POSIX_PRIORITY_SCHEDULING
+	sched_yield();
+#endif
+}
+
+/* send signal <sig> to thread <thr> */
+static inline void ha_tkill(unsigned int thr, int sig)
+{
+	raise(sig);
+}
+
+/* send signal <sig> to all threads */
+static inline void ha_tkillall(int sig)
+{
+	raise(sig);
+}
+
+static inline void __ha_barrier_atomic_load(void)
+{
+}
+
+static inline void __ha_barrier_atomic_store(void)
+{
+}
+
+static inline void __ha_barrier_atomic_full(void)
+{
 }
 
 static inline void __ha_barrier_load(void)
@@ -169,6 +229,10 @@ static inline void thread_release()
 {
 }
 
+static inline void thread_sync_release()
+{
+}
+
 static inline unsigned long thread_isolated()
 {
 	return 1;
@@ -182,8 +246,11 @@ static inline unsigned long thread_isolated()
 #include <pthread.h>
 #include <import/plock.h>
 
+#ifndef MAX_THREADS
 #define MAX_THREADS LONGBITS
-#define MAX_THREADS_MASK ((unsigned long)-1)
+#endif
+
+#define MAX_THREADS_MASK (~0UL >> (LONGBITS - MAX_THREADS))
 
 #define __decl_hathreads(decl) decl
 
@@ -311,7 +378,25 @@ static inline unsigned long thread_isolated()
 #define HA_ATOMIC_STORE(val, new)    __atomic_store_n(val, new, __ATOMIC_SEQ_CST)
 #define HA_ATOMIC_LOAD(val)          __atomic_load_n(val, __ATOMIC_SEQ_CST)
 
-#endif
+/* Variants that don't generate any memory barrier.
+ * If you're unsure how to deal with barriers, just use the HA_ATOMIC_* version,
+ * that will always generate correct code.
+ * Usually it's fine to use those when updating data that have no dependency,
+ * ie updating a counter. Otherwise a barrier is required.
+ */
+#define _HA_ATOMIC_CAS(val, old, new) __atomic_compare_exchange_n(val, old, new, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)
+/* warning, n is a pointer to the double value for dwcas */
+#define _HA_ATOMIC_DWCAS(val, o, n)   __ha_cas_dw(val, o, n)
+#define _HA_ATOMIC_ADD(val, i)        __atomic_add_fetch(val, i, __ATOMIC_RELAXED)
+#define _HA_ATOMIC_XADD(val, i)       __atomic_fetch_add(val, i, __ATOMIC_RELAXED)
+#define _HA_ATOMIC_SUB(val, i)        __atomic_sub_fetch(val, i, __ATOMIC_RELAXED)
+#define _HA_ATOMIC_AND(val, flags)    __atomic_and_fetch(val, flags, __ATOMIC_RELAXED)
+#define _HA_ATOMIC_OR(val, flags)     __atomic_or_fetch(val,  flags, __ATOMIC_RELAXED)
+#define _HA_ATOMIC_XCHG(val, new)     __atomic_exchange_n(val, new, __ATOMIC_RELAXED)
+#define _HA_ATOMIC_STORE(val, new)    __atomic_store_n(val, new, __ATOMIC_RELAXED)
+#define _HA_ATOMIC_LOAD(val)          __atomic_load_n(val, __ATOMIC_RELAXED)
+
+#endif /* gcc >= 4.7 */
 
 #define HA_ATOMIC_UPDATE_MAX(val, new)					\
 	({								\
@@ -337,18 +422,40 @@ static inline unsigned long thread_isolated()
 void thread_harmless_till_end();
 void thread_isolate();
 void thread_release();
+void thread_sync_release();
+void ha_tkill(unsigned int thr, int sig);
+void ha_tkillall(int sig);
+
+extern struct thread_info {
+	pthread_t pthread;
+	clockid_t clock_id;
+	timer_t wd_timer;          /* valid timer or TIMER_INVALID if not set */
+	uint64_t prev_cpu_time;    /* previous per thread CPU time */
+	uint64_t prev_mono_time;   /* previous system wide monotonic time  */
+	unsigned int idle_pct;     /* idle to total ratio over last sample (percent) */
+	unsigned int flags;        /* thread info flags, TI_FL_* */
+	/* pad to cache line (64B) */
+	char __pad[0];            /* unused except to check remaining room */
+	char __end[0] __attribute__((aligned(64)));
+} thread_info[MAX_THREADS];
 
 extern THREAD_LOCAL unsigned int tid;     /* The thread id */
 extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the thread id */
+extern THREAD_LOCAL struct thread_info *ti; /* thread_info for the current thread */
 extern volatile unsigned long all_threads_mask;
 extern volatile unsigned long threads_want_rdv_mask;
 extern volatile unsigned long threads_harmless_mask;
+extern volatile unsigned long threads_sync_mask;
 
-/* explanation for threads_want_rdv_mask and threads_harmless_mask :
+/* explanation for threads_want_rdv_mask, threads_harmless_mask, and
+ * threads_sync_mask :
  * - threads_want_rdv_mask is a bit field indicating all threads that have
  *   requested a rendez-vous of other threads using thread_isolate().
  * - threads_harmless_mask is a bit field indicating all threads that are
  *   currently harmless in that they promise not to access a shared resource.
+ * - threads_sync_mask is a bit field indicating that a thread waiting for
+ *   others to finish wants to leave synchronized with others and as such
+ *   promises to do so as well using thread_sync_release().
  *
  * For a given thread, its bits in want_rdv and harmless can be translated like
  * this :
@@ -361,6 +468,9 @@ extern volatile unsigned long threads_harmless_mask;
  *       1    |     1    | thread interested in RDV and waiting for its turn
  *       1    |     0    | thread currently working isolated from others
  *  ----------+----------+----------------------------------------------------
+ *
+ * thread_sync_mask only delays the leaving of threads_sync_release() to make
+ * sure that each thread's harmless bit is cleared before leaving the function.
  */
 
 #define ha_sigmask(how, set, oldset)  pthread_sigmask(how, set, oldset)
@@ -370,6 +480,16 @@ static inline void ha_set_tid(unsigned int data)
 {
 	tid     = data;
 	tid_bit = (1UL << tid);
+	ti      = &thread_info[tid];
+}
+
+static inline void ha_thread_relax(void)
+{
+#if _POSIX_PRIORITY_SCHEDULING
+	sched_yield();
+#else
+	pl_cpu_relax();
+#endif
 }
 
 /* Marks the thread as harmless. Note: this must be true, i.e. the thread must
@@ -437,10 +557,10 @@ enum lock_label {
 	PID_LIST_LOCK,
 	EMAIL_ALERTS_LOCK,
 	PIPES_LOCK,
-	START_LOCK,
 	TLSKEYS_REF_LOCK,
 	AUTH_LOCK,
 	LOGSRV_LOCK,
+	DICT_LOCK,
 	PROTO_LOCK,
 	OTHER_LOCK,
 	LOCK_LABELS
@@ -554,10 +674,10 @@ static inline const char *lock_label(enum lock_label label)
 	case PID_LIST_LOCK:        return "PID_LIST";
 	case EMAIL_ALERTS_LOCK:    return "EMAIL_ALERTS";
 	case PIPES_LOCK:           return "PIPES";
-	case START_LOCK:           return "START";
 	case TLSKEYS_REF_LOCK:     return "TLSKEYS_REF";
 	case AUTH_LOCK:            return "AUTH";
 	case LOGSRV_LOCK:          return "LOGSRV";
+	case DICT_LOCK:            return "DICT";
 	case PROTO_LOCK:           return "PROTO";
 	case OTHER_LOCK:           return "OTHER";
 	case LOCK_LABELS:          break; /* keep compiler happy */
@@ -894,6 +1014,27 @@ __ha_cas_dw(void *target, void *compare, const void *set)
         return (ret);
 }
 
+/* Use __ha_barrier_atomic* when you're trying to protect data that are
+ * are modified using HA_ATOMIC* (except HA_ATOMIC_STORE)
+ */
+static __inline void
+__ha_barrier_atomic_load(void)
+{
+	__asm __volatile("" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_atomic_store(void)
+{
+	__asm __volatile("" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_atomic_full(void)
+{
+	__asm __volatile("" ::: "memory");
+}
+
 static __inline void
 __ha_barrier_load(void)
 {
@@ -913,6 +1054,27 @@ __ha_barrier_full(void)
 }
 
 #elif defined(__arm__) && (defined(__ARM_ARCH_7__) || defined(__ARM_ARCH_7A__))
+
+/* Use __ha_barrier_atomic* when you're trying to protect data that are
+ * are modified using HA_ATOMIC* (except HA_ATOMIC_STORE)
+ */
+static __inline void
+__ha_barrier_atomic_load(void)
+{
+	__asm __volatile("dmb" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_atomic_store(void)
+{
+	__asm __volatile("dsb" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_atomic_full(void)
+{
+	__asm __volatile("dmb" ::: "memory");
+}
 
 static __inline void
 __ha_barrier_load(void)
@@ -954,6 +1116,27 @@ static __inline int __ha_cas_dw(void *target, void *compare, const void *set)
 }
 
 #elif defined (__aarch64__)
+
+/* Use __ha_barrier_atomic* when you're trying to protect data that are
+ * are modified using HA_ATOMIC* (except HA_ATOMIC_STORE)
+ */
+static __inline void
+__ha_barrier_atomic_load(void)
+{
+	__asm __volatile("dmb ishld" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_atomic_store(void)
+{
+	__asm __volatile("dmb ishst" ::: "memory");
+}
+
+static __inline void
+__ha_barrier_atomic_full(void)
+{
+	__asm __volatile("dmb ish" ::: "memory");
+}
 
 static __inline void
 __ha_barrier_load(void)
@@ -1000,6 +1183,9 @@ static __inline int __ha_cas_dw(void *target, void *compare, void *set)
 }
 
 #else
+#define __ha_barrier_atomic_load __sync_synchronize
+#define __ha_barrier_atomic_store __sync_synchronize
+#define __ha_barrier_atomic_full __sync_synchronize
 #define __ha_barrier_load __sync_synchronize
 #define __ha_barrier_store __sync_synchronize
 #define __ha_barrier_full __sync_synchronize
@@ -1010,11 +1196,53 @@ void ha_rwlock_init(HA_RWLOCK_T *l);
 
 #endif /* USE_THREAD */
 
+extern int thread_cpus_enabled_at_boot;
+
 static inline void __ha_compiler_barrier(void)
 {
 	__asm __volatile("" ::: "memory");
 }
 
 int parse_nbthread(const char *arg, char **err);
+int thread_get_default_count();
 
+#ifndef _HA_ATOMIC_CAS
+#define _HA_ATOMIC_CAS HA_ATOMIC_CAS
+#endif /* !_HA_ATOMIC_CAS */
+
+#ifndef _HA_ATOMIC_DWCAS
+#define _HA_ATOMIC_DWCAS HA_ATOMIC_DWCAS
+#endif /* !_HA_ATOMIC_CAS */
+
+#ifndef _HA_ATOMIC_ADD
+#define _HA_ATOMIC_ADD HA_ATOMIC_ADD
+#endif /* !_HA_ATOMIC_ADD */
+
+#ifndef _HA_ATOMIC_XADD
+#define _HA_ATOMIC_XADD HA_ATOMIC_XADD
+#endif /* !_HA_ATOMIC_SUB */
+
+#ifndef _HA_ATOMIC_SUB
+#define _HA_ATOMIC_SUB HA_ATOMIC_SUB
+#endif /* !_HA_ATOMIC_SUB */
+
+#ifndef _HA_ATOMIC_AND
+#define _HA_ATOMIC_AND HA_ATOMIC_AND
+#endif /* !_HA_ATOMIC_AND */
+
+#ifndef _HA_ATOMIC_OR
+#define _HA_ATOMIC_OR HA_ATOMIC_OR
+#endif /* !_HA_ATOMIC_OR */
+
+#ifndef _HA_ATOMIC_XCHG
+#define _HA_ATOMIC_XCHG HA_ATOMIC_XCHG
+#endif /* !_HA_ATOMIC_XCHG */
+
+#ifndef _HA_ATOMIC_STORE
+#define _HA_ATOMIC_STORE HA_ATOMIC_STORE
+#endif /* !_HA_ATOMIC_STORE */
+
+#ifndef _HA_ATOMIC_LOAD
+#define _HA_ATOMIC_LOAD HA_ATOMIC_LOAD
+#endif /* !_HA_ATOMIC_LOAD */
 #endif /* _COMMON_HATHREADS_H */

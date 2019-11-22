@@ -11,6 +11,7 @@
  */
 
 #include <common/config.h>
+#include <common/debug.h>
 #include <common/cfgparse.h>
 #include <common/h1.h>
 #include <common/http.h>
@@ -20,35 +21,20 @@
 
 struct buffer htx_err_chunks[HTTP_ERR_SIZE];
 
-/* Finds the start line in the HTX message stopping at the first
- * end-of-message. It returns NULL when not found, otherwise, it returns the
- * pointer on the htx_sl structure. The HTX message may be updated if the
- * start-line is returned following a lookup.
+/* Returns the next unporocessed start line in the HTX message. It returns NULL
+ * if the start-line is undefined (first == -1). Otherwise, it returns the
+ * pointer on the htx_sl structure.
  */
-struct htx_sl *http_find_stline(struct htx *htx)
+struct htx_sl *http_get_stline(struct htx *htx)
 {
-	struct htx_sl *sl = NULL;
-	int32_t pos;
+	struct htx_blk *blk;
 
-	sl = htx_get_stline(htx);
-	if (sl)
-		return sl;
-
-	for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-		struct htx_blk    *blk  = htx_get_blk(htx, pos);
-		enum htx_blk_type  type = htx_get_blk_type(blk);
-
-		if (type == HTX_BLK_REQ_SL || type == HTX_BLK_RES_SL) {
-			sl = htx_get_blk_ptr(htx, blk);
-			htx->sl_off = blk->addr;
-			break;
-		}
-
-		if (type == HTX_BLK_EOH || type == HTX_BLK_EOM)
-			break;
-	}
-
-	return sl;
+	BUG_ON(htx->first == -1);
+	blk = htx_get_first_blk(htx);
+	if (!blk)
+		return NULL;
+	BUG_ON(htx_get_blk_type(blk) != HTX_BLK_REQ_SL && htx_get_blk_type(blk) != HTX_BLK_RES_SL);
+	return htx_get_blk_ptr(htx, blk);
 }
 
 /* Finds the first or next occurrence of header <name> in the HTX message <htx>
@@ -68,12 +54,10 @@ int http_find_header(const struct htx *htx, const struct ist name,
 	struct htx_blk *blk = ctx->blk;
 	struct ist n, v;
 	enum htx_blk_type type;
-	uint32_t pos;
 
 	if (blk) {
 		char *p;
 
-		pos = htx_get_blk_pos(htx, blk);
 		if (!ctx->value.ptr)
 			goto rescan_hdr;
 		if (full)
@@ -96,15 +80,13 @@ int http_find_header(const struct htx *htx, const struct ist name,
 	if (!htx->used)
 		return 0;
 
-	pos = htx_get_head(htx);
-	while (1) {
+	for (blk = htx_get_first_blk(htx); blk; blk = htx_get_next_blk(htx, blk)) {
 	  rescan_hdr:
-		blk  = htx_get_blk(htx, pos);
 		type = htx_get_blk_type(blk);
 		if (type == HTX_BLK_EOH || type == HTX_BLK_EOM)
 			break;
 		if (type != HTX_BLK_HDR)
-			goto next_blk;
+			continue;
 		if (name.len) {
 			/* If no name was passed, we want any header. So skip the comparison */
 			n = htx_get_blk_name(htx, blk);
@@ -128,17 +110,13 @@ int http_find_header(const struct htx *htx, const struct ist name,
 			ctx->lws_after++;
 		}
 		if (!v.len)
-			goto next_blk;
+			continue;
 		ctx->blk   = blk;
 		ctx->value = v;
 		return 1;
 
 	  next_blk:
-		if (pos == htx->tail)
-			break;
-		pos++;
-		if (pos >= htx->wrap)
-			pos = 0;
+		;
 	}
 
 	ctx->blk   = NULL;
@@ -165,7 +143,7 @@ int http_add_header(struct htx *htx, const struct ist n, const struct ist v)
 
 	/* <blk> is the head, swap it iteratively with its predecessor to place
 	 * it just before the end-of-header block. So blocks remains ordered. */
-	for (prev = htx_get_prev(htx, htx->tail); prev != -1; prev = htx_get_prev(htx, prev)) {
+	for (prev = htx_get_prev(htx, htx->tail); prev != htx->first; prev = htx_get_prev(htx, prev)) {
 		struct htx_blk   *pblk = htx_get_blk(htx, prev);
 		enum htx_blk_type type = htx_get_blk_type(pblk);
 
@@ -175,7 +153,6 @@ int http_add_header(struct htx *htx, const struct ist n, const struct ist v)
 
 		if (blk->addr == pblk->addr)
 			blk->addr += htx_get_blksz(pblk);
-		htx->front = prev;
 
 		/* Stop when end-of-header is reached */
 		if (type == HTX_BLK_EOH)
@@ -184,35 +161,20 @@ int http_add_header(struct htx *htx, const struct ist n, const struct ist v)
 		blk = pblk;
 	}
 
-	if (htx_get_blk_pos(htx, blk) != htx->front)
-		htx_defrag(htx, NULL);
-
 	return 1;
 }
 
 /* Replaces parts of the start-line of the HTX message <htx>. It returns 1 on
- * success, otherwise it returns 0. The right block is search in the HTX
- * message.
+ * success, otherwise it returns 0.
  */
 int http_replace_stline(struct htx *htx, const struct ist p1, const struct ist p2, const struct ist p3)
 {
-	int32_t pos;
+	struct htx_blk *blk;
 
-	for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-		struct htx_blk *blk = htx_get_blk(htx, pos);
-		enum htx_blk_type type = htx_get_blk_type(blk);
-
-		if (htx->sl_off == blk->addr) {
-			if (!htx_replace_stline(htx, blk, p1, p2, p3))
-				return 0;
-			return 1;
-		}
-
-		if (type == HTX_BLK_EOM)
-			break;
-	}
-
-	return 0;
+	blk = htx_get_first_blk(htx);
+	if (!blk || !htx_replace_stline(htx, blk, p1, p2, p3))
+		return 0;
+	return 1;
 }
 
 /* Replace the request method in the HTX message <htx> by <meth>. It returns 1
@@ -221,7 +183,7 @@ int http_replace_stline(struct htx *htx, const struct ist p1, const struct ist p
 int http_replace_req_meth(struct htx *htx, const struct ist meth)
 {
 	struct buffer *temp = get_trash_chunk();
-	struct htx_sl *sl = http_find_stline(htx);
+	struct htx_sl *sl = http_get_stline(htx);
 	struct ist uri, vsn;
 
 	if (!sl)
@@ -245,7 +207,7 @@ int http_replace_req_meth(struct htx *htx, const struct ist meth)
 int http_replace_req_uri(struct htx *htx, const struct ist uri)
 {
 	struct buffer *temp = get_trash_chunk();
-	struct htx_sl *sl = http_find_stline(htx);
+	struct htx_sl *sl = http_get_stline(htx);
 	struct ist meth, vsn;
 
 	if (!sl)
@@ -268,7 +230,7 @@ int http_replace_req_uri(struct htx *htx, const struct ist uri)
 int http_replace_req_path(struct htx *htx, const struct ist path)
 {
 	struct buffer *temp = get_trash_chunk();
-	struct htx_sl *sl = http_find_stline(htx);
+	struct htx_sl *sl = http_get_stline(htx);
 	struct ist meth, uri, vsn, p;
 	size_t plen = 0;
 
@@ -305,7 +267,7 @@ int http_replace_req_path(struct htx *htx, const struct ist path)
 int http_replace_req_query(struct htx *htx, const struct ist query)
 {
 	struct buffer *temp = get_trash_chunk();
-	struct htx_sl *sl = http_find_stline(htx);
+	struct htx_sl *sl = http_get_stline(htx);
 	struct ist meth, uri, vsn, q;
 	int offset = 1;
 
@@ -350,7 +312,7 @@ int http_replace_req_query(struct htx *htx, const struct ist query)
 int http_replace_res_status(struct htx *htx, const struct ist status)
 {
 	struct buffer *temp = get_trash_chunk();
-	struct htx_sl *sl = http_find_stline(htx);
+	struct htx_sl *sl = http_get_stline(htx);
 	struct ist vsn, reason;
 
 	if (!sl)
@@ -374,7 +336,7 @@ int http_replace_res_status(struct htx *htx, const struct ist status)
 int http_replace_res_reason(struct htx *htx, const struct ist reason)
 {
 	struct buffer *temp = get_trash_chunk();
-	struct htx_sl *sl = http_find_stline(htx);
+	struct htx_sl *sl = http_get_stline(htx);
 	struct ist vsn, status;
 
 	if (!sl)
@@ -499,10 +461,7 @@ int http_remove_header(struct htx *htx, struct http_hdr_ctx *ctx)
 	}
 	/* Update the block content and its len */
 	memmove(start, start+len, v.len-len);
-	htx_set_blk_value_len(blk, v.len-len);
-
-	/* Update HTX msg */
-	htx->data -= len;
+	htx_change_blk_value_len(htx, blk, v.len-len);
 
 	/* Finally update the ctx */
 	ctx->value.ptr = start;
@@ -676,6 +635,9 @@ int http_str_to_htx(struct buffer *buf, struct ist raw)
 	    ((*(h1sl.st.v.ptr + 5) == '1') && (*(h1sl.st.v.ptr + 7) >= '1')))
 		h1m.flags |= H1_MF_VER_11;
 
+	if (h1sl.st.status < 200 && (h1sl.st.status == 100 || h1sl.st.status >= 102))
+		goto error;
+
 	if (h1m.flags & H1_MF_VER_11)
 		flags |= HTX_SL_F_VER_11;
 	if (h1m.flags & H1_MF_XFER_ENC)
@@ -694,10 +656,13 @@ int http_str_to_htx(struct buffer *buf, struct ist raw)
 		goto error;
 	sl->info.res.status = h1sl.st.status;
 
-	if (raw.len > ret) {
-		if (!htx_add_data(htx, ist2(raw.ptr + ret, raw.len - ret)))
+	while (raw.len > ret) {
+		int sent = htx_add_data(htx, ist2(raw.ptr + ret, raw.len - ret));
+		if (!sent)
 			goto error;
+		ret += sent;
 	}
+
 	if (!htx_add_endof(htx, HTX_BLK_EOM))
 		goto error;
 
@@ -718,7 +683,7 @@ static int http_htx_init(void)
 	int err_code = 0;
 
 	for (px = proxies_list; px; px = px->next) {
-		if (px->mode != PR_MODE_HTTP || !(px->options2 & PR_O2_USE_HTX))
+		if (!(px->options2 & PR_O2_USE_HTX))
 			continue;
 
 		for (rc = 0; rc < HTTP_ERR_SIZE; rc++) {

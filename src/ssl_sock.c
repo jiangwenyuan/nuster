@@ -136,26 +136,6 @@ enum {
 	CONF_TLSV_MAX  = 5,
 };
 
-/* ssl_methods flags for ssl options */
-#define MC_SSL_O_ALL            0x0000
-#define MC_SSL_O_NO_SSLV3       0x0001	/* disable SSLv3 */
-#define MC_SSL_O_NO_TLSV10      0x0002	/* disable TLSv10 */
-#define MC_SSL_O_NO_TLSV11      0x0004	/* disable TLSv11 */
-#define MC_SSL_O_NO_TLSV12      0x0008	/* disable TLSv12 */
-#define MC_SSL_O_NO_TLSV13      0x0010	/* disable TLSv13 */
-
-/* ssl_methods versions */
-enum {
-	CONF_TLSV_NONE = 0,
-	CONF_TLSV_MIN  = 1,
-	CONF_SSLV3     = 1,
-	CONF_TLSV10    = 2,
-	CONF_TLSV11    = 3,
-	CONF_TLSV12    = 4,
-	CONF_TLSV13    = 5,
-	CONF_TLSV_MAX  = 5,
-};
-
 /* server and bind verify method, it uses a global value as default */
 enum {
 	SSL_SOCK_VERIFY_DEFAULT  = 0,
@@ -1761,114 +1741,6 @@ void ssl_sock_msgcbk(int write_p, int version, int content_type, const void *buf
 		unsigned int payload;
 
 		ctx->xprt_st |= SSL_SOCK_RECV_HEARTBEAT;
-
-	/* "write_p" is set to 0 is the bytes are received messages,
-	 * otherwise it is set to 1.
-	 */
-	if (write_p != 0)
-		return;
-
-	/* content_type contains the type of message received or sent
-	 * according with the SSL/TLS protocol spec. This message is
-	 * encoded with one byte. The value 256 (two bytes) is used
-	 * for designing the SSL/TLS record layer. According with the
-	 * rfc6101, the expected message (other than 256) are:
-	 *  - change_cipher_spec(20)
-	 *  - alert(21)
-	 *  - handshake(22)
-	 *  - application_data(23)
-	 *  - (255)
-	 * We are interessed by the handshake and specially the client
-	 * hello.
-	 */
-	if (content_type != 22)
-		return;
-
-	/* The message length is at least 4 bytes, containing the
-	 * message type and the message length.
-	 */
-	if (len < 4)
-		return;
-
-	/* First byte of the handshake message id the type of
-	 * message. The konwn types are:
-	 *  - hello_request(0)
-	 *  - client_hello(1)
-	 *  - server_hello(2)
-	 *  - certificate(11)
-	 *  - server_key_exchange (12)
-	 *  - certificate_request(13)
-	 *  - server_hello_done(14)
-	 * We are interested by the client hello.
-	 */
-	msg = (unsigned char *)buf;
-	if (msg[0] != 1)
-		return;
-
-	/* Next three bytes are the length of the message. The total length
-	 * must be this decoded length + 4. If the length given as argument
-	 * is not the same, we abort the protocol dissector.
-	 */
-	rec_len = (msg[1] << 16) + (msg[2] << 8) + msg[3];
-	if (len < rec_len + 4)
-		return;
-	msg += 4;
-	end = msg + rec_len;
-	if (end < msg)
-		return;
-
-	/* Expect 2 bytes for protocol version (1 byte for major and 1 byte
-	 * for minor, the random, composed by 4 bytes for the unix time and
-	 * 28 bytes for unix payload. So we jump 1 + 1 + 4 + 28.
-	 */
-	msg += 1 + 1 + 4 + 28;
-	if (msg > end)
-		return;
-
-	/* Next, is session id:
-	 * if present, we have to jump by length + 1 for the size information
-	 * if not present, we have to jump by 1 only
-	 */
-	if (msg[0] > 0)
-		msg += msg[0];
-	msg += 1;
-	if (msg > end)
-		return;
-
-	/* Next two bytes are the ciphersuite length. */
-	if (msg + 2 > end)
-		return;
-	rec_len = (msg[0] << 8) + msg[1];
-	msg += 2;
-	if (msg + rec_len > end || msg + rec_len < msg)
-		return;
-
-	capture = pool_alloc_dirty(pool_head_ssl_capture);
-	if (!capture)
-		return;
-	/* Compute the xxh64 of the ciphersuite. */
-	capture->xxh64 = XXH64(msg, rec_len, 0);
-
-	/* Capture the ciphersuite. */
-	capture->ciphersuite_len = (global_ssl.capture_cipherlist < rec_len) ?
-		global_ssl.capture_cipherlist : rec_len;
-	memcpy(capture->ciphersuite, msg, capture->ciphersuite_len);
-
-	SSL_set_ex_data(ssl, ssl_capture_ptr_index, capture);
-}
-
-/* Callback is called for ssl protocol analyse */
-void ssl_sock_msgcbk(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg)
-{
-#ifdef TLS1_RT_HEARTBEAT
-	/* test heartbeat received (write_p is set to 0
-	   for a received record) */
-	if ((content_type == TLS1_RT_HEARTBEAT) && (write_p == 0)) {
-		struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
-		const unsigned char *p = buf;
-		unsigned int payload;
-
-		conn->xprt_st |= SSL_SOCK_RECV_HEARTBEAT;
 
 		/* Check if this is a CVE-2014-0160 exploitation attempt. */
 		if (*p != TLS1_HB_REQUEST)
@@ -6447,12 +6319,10 @@ const char *ssl_sock_get_proto_version(struct connection *conn)
 static int
 ssl_sock_get_serial(X509 *crt, struct buffer *out)
 {
-	struct pkey_info *pkinfo;
-	int bits = 0;
-	int sig = TLSEXT_signature_anonymous;
-	int len = -1;
+	ASN1_INTEGER *serial;
 
-	if (!ssl_sock_is_ssl(conn))
+	serial = X509_get_serialNumber(crt);
+	if (!serial)
 		return 0;
 
 	if (out->size < serial->length)
@@ -6788,32 +6658,6 @@ static int ssl_sock_get_alpn(const struct connection *conn, void *xprt_ctx, cons
 	if (*str)
 		return 1;
 #endif
-#endif
-	return 0;
-}
-
-/* Returns the application layer protocol name in <str> and <len> when known.
- * Zero is returned if the protocol name was not found, otherwise non-zero is
- * returned. The string is allocated in the SSL context and doesn't have to be
- * freed by the caller. NPN is also checked if available since older versions
- * of openssl (1.0.1) which are more common in field only support this one.
- */
-static int ssl_sock_get_alpn(const struct connection *conn, const char **str, int *len)
-{
-	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
-		return 0;
-
-	*str = NULL;
-
-#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
-	SSL_get0_alpn_selected(conn->xprt_ctx, (const unsigned char **)str, (unsigned *)len);
-	if (*str)
-		return 1;
-#endif
-#if defined(OPENSSL_NPN_NEGOTIATED) && !defined(OPENSSL_NO_NEXTPROTONEG)
-	SSL_get0_next_proto_negotiated(conn->xprt_ctx, (const unsigned char **)str, (unsigned *)len);
-	if (*str)
-		return 1;
 #endif
 	return 0;
 }
@@ -7667,9 +7511,7 @@ smp_fetch_ssl_fc_random(const struct arg *args, struct sample *smp, const char *
 
 	return 1;
 }
-#endif
 
-#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 static int
 smp_fetch_ssl_fc_session_key(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {

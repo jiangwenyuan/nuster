@@ -212,8 +212,6 @@ struct listener {
 
 	__decl_hathreads(HA_SPINLOCK_T lock);
 
-	__decl_hathreads(HA_SPINLOCK_T lock);
-
 	const struct netns_entry *netns; /* network namespace of the listener*/
 
 	/* cache line boundary */

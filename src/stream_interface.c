@@ -423,7 +423,6 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 	if (conn->flags & CO_FL_WAIT_L4_CONN)
 		conn->flags &= ~CO_FL_WAIT_L4_CONN;
 	conn->flags &= ~flag;
-	__conn_sock_stop_send(conn);
 	return 1;
 
  out_error:
@@ -878,8 +877,6 @@ void si_update_tx(struct stream_interface *si)
 		}
 		return;
 	}
-	else
-		si_rx_shut_blk(si);
 
 	/* (re)start writing and update timeout. Note: we don't recompute the timeout
 	 * everytime we get here, otherwise it would risk never to expire. We only
@@ -1547,12 +1544,7 @@ static void stream_int_read0(struct stream_interface *si)
 
 	si_done_get(si);
 
-	/* Don't change the state to SI_ST_DIS yet if we're still
-	 * in SI_ST_CON, otherwise it means sess_establish() hasn't
-	 * been called yet, and so the analysers would not run.
-	 */
-	if (si->state == SI_ST_EST)
-		si->state = SI_ST_DIS;
+	si->state = SI_ST_DIS;
 	si->exp = TICK_ETERNITY;
 	return;
 }

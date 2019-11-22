@@ -177,32 +177,6 @@ void show_cs_flags(unsigned int f)
 	}
 	putchar('\n');
 }
-void show_cs_flags(unsigned int f)
-{
-	printf("cs->flags = ");
-	if (!f) {
-		printf("0\n");
-		return;
-	}
-	SHOW_FLAG(f, CS_FL_NOT_FIRST);
-	SHOW_FLAG(f, CS_FL_WAIT_FOR_HS);
-	SHOW_FLAG(f, CS_FL_EOI);
-	SHOW_FLAG(f, CS_FL_REOS);
-	SHOW_FLAG(f, CS_FL_EOS);
-	SHOW_FLAG(f, CS_FL_ERR_PENDING);
-	SHOW_FLAG(f, CS_FL_WANT_ROOM);
-	SHOW_FLAG(f, CS_FL_RCV_MORE);
-	SHOW_FLAG(f, CS_FL_ERROR);
-	SHOW_FLAG(f, CS_FL_SHWS);
-	SHOW_FLAG(f, CS_FL_SHWN);
-	SHOW_FLAG(f, CS_FL_SHRR);
-	SHOW_FLAG(f, CS_FL_SHRD);
-
-	if (f) {
-		printf("EXTRA(0x%08x)", f);
-	}
-	putchar('\n');
-}
 
 void show_si_et(unsigned int f)
 {

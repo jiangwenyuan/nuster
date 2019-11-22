@@ -889,35 +889,6 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 				dns_answer_record->target[len] = 0;
 				break;
 
-
-			case DNS_RTYPE_SRV:
-				/* Answer must contain :
-				 * - 2 bytes for the priority
-				 * - 2 bytes for the weight
-				 * - 2 bytes for the port
-				 * - the target hostname
-				 */
-				if (dns_answer_record->data_len <= 6) {
-					pool_free(dns_answer_item_pool, dns_answer_record);
-					return DNS_RESP_INVALID;
-				}
-				dns_answer_record->priority = read_n16(reader);
-				reader += sizeof(uint16_t);
-				dns_answer_record->weight = read_n16(reader);
-				reader += sizeof(uint16_t);
-				dns_answer_record->port = read_n16(reader);
-				reader += sizeof(uint16_t);
-				offset = 0;
-				len = dns_read_name(resp, bufend, reader, tmpname, DNS_MAX_NAME_SIZE, &offset, 0);
-				if (len == 0) {
-					pool_free(dns_answer_item_pool, dns_answer_record);
-					return DNS_RESP_INVALID;
-				}
-				dns_answer_record->data_len = len;
-				memcpy(dns_answer_record->target, tmpname, len);
-				dns_answer_record->target[len] = 0;
-				break;
-
 			case DNS_RTYPE_AAAA:
 				/* ipv6 is stored on 16 bytes */
 				if (dns_answer_record->data_len != 16) {

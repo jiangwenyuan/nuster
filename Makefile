@@ -518,13 +518,6 @@ ifeq ($(USE_PRIVATE_CACHE),)
 ifneq ($(USE_PTHREAD_PSHARED),)
 OPTIONS_LDFLAGS += -lpthread
 endif
-
-# For nuster
-ifeq ($(USE_OPENSSL),)
-ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
-OPTIONS_LDFLAGS += -lpthread
-endif
 endif
 
 ifneq ($(USE_LUA),)
@@ -790,14 +783,6 @@ EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
               $(EBTREE_DIR)/ebmbtree.o $(EBTREE_DIR)/ebsttree.o \
               $(EBTREE_DIR)/ebimtree.o $(EBTREE_DIR)/ebistree.o
-
-NUSTER_OBJS = src/nuster/cache/dict.o src/nuster/cache/filter.o               \
-              src/nuster/cache/stats.o src/nuster/cache/manager.o             \
-              src/nuster/cache/engine.o                                       \
-              src/nuster/nosql/filter.o  src/nuster/nosql/dict.o              \
-              src/nuster/nosql/stats.o src/nuster/nosql/engine.o              \
-              src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
-              src/nuster/persist.o src/nuster/nuster.o
 
 ifneq ($(TRACE),)
 OBJS += src/trace.o

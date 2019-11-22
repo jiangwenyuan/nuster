@@ -62,10 +62,6 @@
 #include <proto/proto_udp.h>
 #include <proto/ssl_sock.h>
 
-#ifdef USE_OPENSSL
-#include <proto/ssl_sock.h>
-#endif /* USE_OPENSSL */
-
 static int httpchk_expect(struct server *s, int done);
 static int tcpcheck_get_step_id(struct check *);
 static char * tcpcheck_get_step_comment(struct check *, int);
@@ -1591,10 +1587,6 @@ static int connect_conn_chk(struct task *t)
 	if (conn)
 		return SF_ERR_INTERNAL;
 
-	/* we cannot have a connection here */
-	if (conn)
-		return SF_ERR_INTERNAL;
-
 	/* tcpcheck send/expect initialisation */
 	if (check->type == PR_O2_TCPCHK_CHK) {
 		check->current_step = NULL;
@@ -2031,16 +2023,6 @@ static int connect_proc_chk(struct task *t)
 		fd = (global.mode & (MODE_QUIET|MODE_VERBOSE)) == MODE_QUIET ? 0 : 3;
 
 		my_closefrom(fd);
-
-		/* restore the initial FD limits */
-		limit.rlim_cur = rlim_fd_cur_at_boot;
-		limit.rlim_max = rlim_fd_max_at_boot;
-		if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
-			getrlimit(RLIMIT_NOFILE, &limit);
-			ha_warning("External check: failed to restore initial FD limits (cur=%u max=%u), using cur=%u max=%u\n",
-				   rlim_fd_cur_at_boot, rlim_fd_max_at_boot,
-				   (unsigned int)limit.rlim_cur, (unsigned int)limit.rlim_max);
-		}
 
 		/* restore the initial FD limits */
 		limit.rlim_cur = rlim_fd_cur_at_boot;

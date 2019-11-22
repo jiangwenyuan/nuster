@@ -1562,7 +1562,7 @@ static int bind_parse_expose_fd(char **args, int cur_arg, struct proxy *px, stru
 static int bind_parse_level(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
 	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing fd type", args[cur_arg]);
+		memprintf(err, "'%s' : missing level", args[cur_arg]);
 		return ERR_ALERT | ERR_FATAL;
 	}
 

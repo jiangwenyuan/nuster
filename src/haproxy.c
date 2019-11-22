@@ -1632,68 +1632,6 @@ static void init(int argc, char **argv)
 
 	/* in wait mode, we don't try to read the configuration files */
 	if (!(global.mode & MODE_MWORKER_WAIT)) {
-
-		/* handle cfgfiles that are actually directories */
-		cfgfiles_expand_directories();
-
-		if (LIST_ISEMPTY(&cfg_cfgfiles))
-			usage(progname);
-
-
-		list_for_each_entry(wl, &cfg_cfgfiles, list) {
-			int ret;
-
-			ret = readcfgfile(wl->s);
-			if (ret == -1) {
-				ha_alert("Could not open configuration file %s : %s\n",
-					 wl->s, strerror(errno));
-				exit(1);
-			}
-			if (ret & (ERR_ABORT|ERR_FATAL))
-				ha_alert("Error(s) found in configuration file : %s\n", wl->s);
-			err_code |= ret;
-			if (err_code & ERR_ABORT)
-				exit(1);
-		}
-
-		/* do not try to resolve arguments nor to spot inconsistencies when
-		 * the configuration contains fatal errors caused by files not found
-		 * or failed memory allocations.
-		 */
-		if (err_code & (ERR_ABORT|ERR_FATAL)) {
-			ha_alert("Fatal errors found in configuration.\n");
-			exit(1);
-		}
-	}
-	if (global.mode & MODE_MWORKER) {
-		int proc;
-		struct mworker_proc *tmproc;
-
-	global.mode |= (arg_mode & (MODE_DAEMON | MODE_MWORKER | MODE_FOREGROUND | MODE_VERBOSE
-				    | MODE_QUIET | MODE_CHECK | MODE_DEBUG));
-
-	if (getenv("HAPROXY_MWORKER_WAIT_ONLY")) {
-		unsetenv("HAPROXY_MWORKER_WAIT_ONLY");
-		global.mode |= MODE_MWORKER_WAIT;
-		global.mode &= ~MODE_MWORKER;
-	}
-
-	if ((global.mode & MODE_MWORKER) && (getenv("HAPROXY_MWORKER_REEXEC") != NULL)) {
-		atexit_flag = 1;
-		atexit(reexec_on_failure);
-	}
-
-	if (change_dir && chdir(change_dir) < 0) {
-		ha_alert("Could not change to directory %s : %s\n", change_dir, strerror(errno));
-		exit(1);
-	}
-
-	global.maxsock = 10; /* reserve 10 fds ; will be incremented by socket eaters */
-
-	init_default_instance();
-
-	/* in wait mode, we don't try to read the configuration files */
-	if (!(global.mode & MODE_MWORKER_WAIT)) {
 		struct buffer *trash = get_trash_chunk();
 
 		/* handle cfgfiles that are actually directories */
@@ -1810,8 +1748,6 @@ static void init(int argc, char **argv)
 			}
 		}
 	}
-	if (global.mode & (MODE_MWORKER|MODE_MWORKER_WAIT)) {
-		struct wordlist *it, *c;
 
 	err_code |= check_config_validity();
 	if (err_code & (ERR_ABORT|ERR_FATAL)) {
@@ -2708,42 +2644,6 @@ static void *run_thread_poll_loop(void *data)
 
 #ifdef USE_THREAD
 	_HA_ATOMIC_AND(&all_threads_mask, ~tid_bit);
-	if (tid > 0)
-		pthread_exit(NULL);
-#endif
-	return NULL;
-}
-
-static void *run_thread_poll_loop(void *data)
-{
-	struct per_thread_init_fct   *ptif;
-	struct per_thread_deinit_fct *ptdf;
-	__decl_hathreads(static HA_SPINLOCK_T start_lock);
-
-	ha_set_tid(*((unsigned int *)data));
-	tv_update_date(-1,-1);
-
-	list_for_each_entry(ptif, &per_thread_init_list, list) {
-		if (!ptif->fct()) {
-			ha_alert("failed to initialize thread %u.\n", tid);
-			exit(1);
-		}
-	}
-
-	if ((global.mode & MODE_MWORKER) && master == 0) {
-		HA_SPIN_LOCK(START_LOCK, &start_lock);
-		mworker_pipe_register();
-		HA_SPIN_UNLOCK(START_LOCK, &start_lock);
-	}
-
-	protocol_enable_all();
-	run_poll_loop();
-
-	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
-		ptdf->fct();
-
-#ifdef USE_THREAD
-	HA_ATOMIC_AND(&all_threads_mask, ~tid_bit);
 	if (tid > 0)
 		pthread_exit(NULL);
 #endif

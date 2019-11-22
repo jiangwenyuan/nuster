@@ -150,11 +150,6 @@ static inline void *stktable_data_ptr(struct stktable *t, struct stksess *ts, in
 /* kill an entry if it's expired and its ref_cnt is zero */
 static inline int __stksess_kill_if_expired(struct stktable *t, struct stksess *ts)
 {
-	HA_SPIN_LOCK(STK_TABLE_LOCK, &t->lock);
-
-	if (decrefcnt)
-		ts->ref_cnt--;
-
 	if (t->expire != TICK_ETERNITY && tick_is_expired(ts->expire, now_ms))
 		return __stksess_kill(t, ts);
 

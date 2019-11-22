@@ -25,6 +25,7 @@
 #include <proto/protocol.h>
 #include <proto/proxy.h>
 #include <proto/server.h>
+#include <proto/stick_table.h>
 
 /* Report a warning if a rule is placed after a 'tcp-request session' rule.
  * Return 1 if the warning has been emitted, otherwise 0.
@@ -274,17 +275,10 @@ static int create_cond_regex_rule(const char *file, int line,
 	                                  ((px->cap & PR_CAP_BE) ? SMP_VAL_BE_HRS_HDR : SMP_VAL_FE_HRS_HDR),
 	                                  file, line);
 
-	preg = calloc(1, sizeof(*preg));
-	if (!preg) {
-		ha_alert("parsing [%s:%d] : '%s' : not enough memory to build regex.\n", file, line, cmd);
-		ret_code = ERR_ALERT | ERR_FATAL;
-		goto err;
-	}
-
 	cs = !(flags & REG_ICASE);
 	cap = !(flags & REG_NOSUB);
 	error = NULL;
-	if (!regex_comp(reg, preg, cs, cap, &error)) {
+	if (!(preg = regex_comp(reg, cs, cap, &error))) {
 		ha_alert("parsing [%s:%d] : '%s' : regular expression '%s' : %s\n", file, line, cmd, reg, error);
 		free(error);
 		ret_code = ERR_ALERT | ERR_FATAL;
@@ -300,6 +294,12 @@ static int create_cond_regex_rule(const char *file, int line,
 		goto err_free;
 	}
 
+	if (repl && strchr(repl, '\n')) {
+		ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in replacement string will fail with HTTP/2.\n",
+			 file, line, cmd);
+		ret_code |= ERR_WARN;
+	}
+
 	if (dir == SMP_OPT_DIR_REQ && warnif_misplaced_reqxxx(px, file, line, cmd))
 		ret_code |= ERR_WARN;
 
@@ -308,7 +308,6 @@ static int create_cond_regex_rule(const char *file, int line,
  err_free:
 	regex_free(preg);
  err:
-	free(preg);
 	free(errmsg);
 	return ret_code;
 }
@@ -395,6 +394,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		curproxy->except_mask = defproxy.except_mask;
 		curproxy->except_to = defproxy.except_to;
 		curproxy->except_mask_to = defproxy.except_mask_to;
+		curproxy->retry_type = defproxy.retry_type;
 
 		if (defproxy.fwdfor_hdr_len) {
 			curproxy->fwdfor_hdr_len  = defproxy.fwdfor_hdr_len;
@@ -442,8 +442,14 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 				curproxy->expect_str = strdup(defproxy.expect_str);
 				if (defproxy.expect_regex) {
 					/* note: this regex is known to be valid */
-					curproxy->expect_regex = calloc(1, sizeof(*curproxy->expect_regex));
-					regex_comp(defproxy.expect_str, curproxy->expect_regex, 1, 1, NULL);
+					error = NULL;
+					if (!(curproxy->expect_regex = regex_comp(defproxy.expect_str, 1, 1, &error))) {
+						ha_alert("parsing [%s:%d] : regular expression '%s' : %s\n", file, linenum,
+						         defproxy.expect_str, error);
+						free(error);
+						err_code |= ERR_ALERT | ERR_FATAL;
+						goto out;
+					}
 				}
 			}
 
@@ -629,11 +635,8 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		free(defproxy.server_id_hdr_name);
 		defproxy.server_id_hdr_len = 0;
 		free(defproxy.expect_str);
-		if (defproxy.expect_regex) {
-			regex_free(defproxy.expect_regex);
-			free(defproxy.expect_regex);
-			defproxy.expect_regex = NULL;
-		}
+		regex_free(defproxy.expect_regex);
+		defproxy.expect_regex = NULL;
 
 		if (defproxy.conf.logformat_string != default_http_log_format &&
 		    defproxy.conf.logformat_string != default_tcp_log_format &&
@@ -675,7 +678,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 	if (!strcmp(args[0], "server")         ||
 	    !strcmp(args[0], "default-server") ||
 	    !strcmp(args[0], "server-template")) {
-		err_code |= parse_server(file, linenum, args, curproxy, &defproxy);
+		err_code |= parse_server(file, linenum, args, curproxy, &defproxy, 1);
 		if (err_code & ERR_FATAL)
 			goto out;
 	}
@@ -925,7 +928,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 				set = 0;
 				break;
 			}
-			if (parse_process_number(args[cur_arg], &set, NULL, &errmsg)) {
+			if (parse_process_number(args[cur_arg], &set, MAX_PROCS, NULL, &errmsg)) {
 				ha_alert("parsing [%s:%d] : %s : %s\n", file, linenum, args[0], errmsg);
 				err_code |= ERR_ALERT | ERR_FATAL;
 				goto out;
@@ -1027,11 +1030,10 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 					goto out;
 				}
 
-				if (*args[cur_arg + 1] != '.' || !strchr(args[cur_arg + 1] + 1, '.')) {
-					/* rfc2109, 4.3.2 Rejecting Cookies */
-					ha_warning("parsing [%s:%d]: domain '%s' contains no embedded"
-						   " dots nor does not start with a dot."
-						   " RFC forbids it, this configuration may not work properly.\n",
+				if (!strchr(args[cur_arg + 1], '.')) {
+					/* rfc6265, 5.2.3 The Domain Attribute */
+					ha_warning("parsing [%s:%d]: domain '%s' contains no embedded dot,"
+						   " this configuration may not work properly (see RFC6265#5.2.3).\n",
 						   file, linenum, args[cur_arg + 1]);
 					err_code |= ERR_WARN;
 				}
@@ -1073,7 +1075,19 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 				}
 
 				res = parse_time_err(args[cur_arg + 1], &maxidle, TIME_UNIT_S);
-				if (res) {
+				if (res == PARSE_TIME_OVER) {
+					ha_alert("parsing [%s:%d]: timer overflow in argument <%s> to <%s>, maximum value is 2147483647 s (~68 years).\n",
+						 file, linenum, args[cur_arg+1], args[cur_arg]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				else if (res == PARSE_TIME_UNDER) {
+					ha_alert("parsing [%s:%d]: timer underflow in argument <%s> to <%s>, minimum non-null value is 1 s.\n",
+						 file, linenum, args[cur_arg+1], args[cur_arg]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				else if (res) {
 					ha_alert("parsing [%s:%d]: unexpected character '%c' in argument to <%s>.\n",
 						 file, linenum, *res, args[cur_arg]);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -1093,8 +1107,21 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 					goto out;
 				}
 
+
 				res = parse_time_err(args[cur_arg + 1], &maxlife, TIME_UNIT_S);
-				if (res) {
+				if (res == PARSE_TIME_OVER) {
+					ha_alert("parsing [%s:%d]: timer overflow in argument <%s> to <%s>, maximum value is 2147483647 s (~68 years).\n",
+						 file, linenum, args[cur_arg+1], args[cur_arg]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				else if (res == PARSE_TIME_UNDER) {
+					ha_alert("parsing [%s:%d]: timer underflow in argument <%s> to <%s>, minimum non-null value is 1 s.\n",
+						 file, linenum, args[cur_arg+1], args[cur_arg]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				else if (res) {
 					ha_alert("parsing [%s:%d]: unexpected character '%c' in argument to <%s>.\n",
 						 file, linenum, *res, args[cur_arg]);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -1292,7 +1319,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		}
 	}
 	else if (!strcmp(args[0], "appsession")) {  /* cookie name */
-		ha_alert("parsing [%s:%d] : '%s' is not supported anymore, please check the documentation.\n", file, linenum, args[0]);
+		ha_alert("parsing [%s:%d] : '%s' is not supported anymore since HAProxy 1.6.\n", file, linenum, args[0]);
 		err_code |= ERR_ALERT | ERR_FATAL;
 		goto out;
 	}
@@ -1712,8 +1739,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		LIST_ADDQ(&curproxy->persist_rules, &rule->list);
 	}
 	else if (!strcmp(args[0], "stick-table")) {
-		int myidx = 1;
-		struct proxy *other;
+		struct stktable *other;
 
 		if (curproxy == &defproxy) {
 			ha_alert("parsing [%s:%d] : 'stick-table' is not supported in 'defaults' section.\n",
@@ -1722,170 +1748,41 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
-		other = proxy_tbl_by_name(curproxy->id);
+		other = stktable_find_by_name(curproxy->id);
 		if (other) {
 			ha_alert("parsing [%s:%d] : stick-table name '%s' conflicts with table declared in %s '%s' at %s:%d.\n",
-				 file, linenum, curproxy->id, proxy_type_str(other), other->id, other->conf.file, other->conf.line);
+				 file, linenum, curproxy->id,
+				 other->proxy ? proxy_cap_str(other->proxy->cap) : "peers",
+				 other->proxy ? other->id : other->peers.p->id,
+				 other->conf.file, other->conf.line);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
 
-		curproxy->table.id =  curproxy->id;
-		curproxy->table.type = (unsigned int)-1;
-		while (*args[myidx]) {
-			const char *err;
-
-			if (strcmp(args[myidx], "size") == 0) {
-				myidx++;
-				if (!*(args[myidx])) {
-					ha_alert("parsing [%s:%d] : stick-table: missing argument after '%s'.\n",
-						 file, linenum, args[myidx-1]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				if ((err = parse_size_err(args[myidx], &curproxy->table.size))) {
-					ha_alert("parsing [%s:%d] : stick-table: unexpected character '%c' in argument of '%s'.\n",
-						 file, linenum, *err, args[myidx-1]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				myidx++;
-			}
-			else if (strcmp(args[myidx], "peers") == 0) {
-				myidx++;
-				if (!*(args[myidx])) {
-					ha_alert("parsing [%s:%d] : stick-table: missing argument after '%s'.\n",
-						 file, linenum, args[myidx-1]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				curproxy->table.peers.name = strdup(args[myidx++]);
-			}
-			else if (strcmp(args[myidx], "expire") == 0) {
-				myidx++;
-				if (!*(args[myidx])) {
-					ha_alert("parsing [%s:%d] : stick-table: missing argument after '%s'.\n",
-						 file, linenum, args[myidx-1]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				err = parse_time_err(args[myidx], &val, TIME_UNIT_MS);
-				if (err) {
-					ha_alert("parsing [%s:%d] : stick-table: unexpected character '%c' in argument of '%s'.\n",
-						 file, linenum, *err, args[myidx-1]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				if (val > INT_MAX) {
-					ha_alert("parsing [%s:%d] : Expire value [%u]ms exceeds maxmimum value of 24.85 days.\n",
-						 file, linenum, val);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				curproxy->table.expire = val;
-				myidx++;
-			}
-			else if (strcmp(args[myidx], "nopurge") == 0) {
-				curproxy->table.nopurge = 1;
-				myidx++;
-			}
-			else if (strcmp(args[myidx], "type") == 0) {
-				myidx++;
-				if (stktable_parse_type(args, &myidx, &curproxy->table.type, &curproxy->table.key_size) != 0) {
-					ha_alert("parsing [%s:%d] : stick-table: unknown type '%s'.\n",
-						 file, linenum, args[myidx]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				/* myidx already points to next arg */
-			}
-			else if (strcmp(args[myidx], "store") == 0) {
-				int type, err;
-				char *cw, *nw, *sa;
-
-				myidx++;
-				nw = args[myidx];
-				while (*nw) {
-					/* the "store" keyword supports a comma-separated list */
-					cw = nw;
-					sa = NULL; /* store arg */
-					while (*nw && *nw != ',') {
-						if (*nw == '(') {
-							*nw = 0;
-							sa = ++nw;
-							while (*nw != ')') {
-								if (!*nw) {
-									ha_alert("parsing [%s:%d] : %s: missing closing parenthesis after store option '%s'.\n",
-										 file, linenum, args[0], cw);
-									err_code |= ERR_ALERT | ERR_FATAL;
-									goto out;
-								}
-								nw++;
-							}
-							*nw = '\0';
-						}
-						nw++;
-					}
-					if (*nw)
-						*nw++ = '\0';
-					type = stktable_get_data_type(cw);
-					if (type < 0) {
-						ha_alert("parsing [%s:%d] : %s: unknown store option '%s'.\n",
-							 file, linenum, args[0], cw);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-
-					err = stktable_alloc_data_type(&curproxy->table, type, sa);
-					switch (err) {
-					case PE_NONE: break;
-					case PE_EXIST:
-						ha_warning("parsing [%s:%d]: %s: store option '%s' already enabled, ignored.\n",
-							   file, linenum, args[0], cw);
-						err_code |= ERR_WARN;
-						break;
-
-					case PE_ARG_MISSING:
-						ha_alert("parsing [%s:%d] : %s: missing argument to store option '%s'.\n",
-							 file, linenum, args[0], cw);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-
-					case PE_ARG_NOT_USED:
-						ha_alert("parsing [%s:%d] : %s: unexpected argument to store option '%s'.\n",
-							 file, linenum, args[0], cw);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-
-					default:
-						ha_alert("parsing [%s:%d] : %s: error when processing store option '%s'.\n",
-							 file, linenum, args[0], cw);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-				}
-				myidx++;
-			}
-			else {
-				ha_alert("parsing [%s:%d] : stick-table: unknown argument '%s'.\n",
-					 file, linenum, args[myidx]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-		}
-
-		if (!curproxy->table.size) {
-			ha_alert("parsing [%s:%d] : stick-table: missing size.\n",
-				 file, linenum);
+		curproxy->table = calloc(1, sizeof *curproxy->table);
+		if (!curproxy->table) {
+			ha_alert("parsing [%s:%d]: '%s %s' : memory allocation failed\n",
+			         file, linenum, args[0], args[1]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
 
-		if (curproxy->table.type == (unsigned int)-1) {
-			ha_alert("parsing [%s:%d] : stick-table: missing type.\n",
-				 file, linenum);
-			err_code |= ERR_ALERT | ERR_FATAL;
+		err_code |= parse_stick_table(file, linenum, args, curproxy->table,
+		                              curproxy->id, curproxy->id, NULL);
+		if (err_code & ERR_FATAL)
 			goto out;
+
+		/* Store the proxy in the stick-table. */
+		curproxy->table->proxy = curproxy;
+
+		stktable_store_name(curproxy->table);
+		curproxy->table->next = stktables_list;
+		stktables_list = curproxy->table;
+
+		/* Add this proxy to the list of proxies which refer to its stick-table. */
+		if (curproxy->table->proxies_list != curproxy) {
+			curproxy->next_stkt_ref = curproxy->table->proxies_list;
+			curproxy->table->proxies_list = curproxy;
 		}
 	}
 	else if (!strcmp(args[0], "stick")) {
@@ -2068,8 +1965,20 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			unsigned interval;
 
 			err = parse_time_err(args[2], &interval, TIME_UNIT_S);
-			if (err) {
-				ha_alert("parsing [%s:%d] : unexpected character '%c' in stats refresh interval.\n",
+			if (err == PARSE_TIME_OVER) {
+				ha_alert("parsing [%s:%d]: timer overflow in argument <%s> to stats refresh interval, maximum value is 2147483647 s (~68 years).\n",
+					 file, linenum, args[2]);
+				err_code |= ERR_ALERT | ERR_FATAL;
+				goto out;
+			}
+			else if (err == PARSE_TIME_UNDER) {
+				ha_alert("parsing [%s:%d]: timer underflow in argument <%s> to stats refresh interval, minimum non-null value is 1 s.\n",
+					 file, linenum, args[2]);
+				err_code |= ERR_ALERT | ERR_FATAL;
+				goto out;
+			}
+			else if (err) {
+				ha_alert("parsing [%s:%d]: unexpected character '%c' in argument to stats refresh interval.\n",
 					 file, linenum, *err);
 				err_code |= ERR_ALERT | ERR_FATAL;
 				goto out;
@@ -2296,6 +2205,12 @@ stats_error_parsing:
 		 * sections).
 		 */
 		if (strcmp(args[1], "httpclose") == 0 || strcmp(args[1], "forceclose") == 0) {
+			if (strcmp(args[1], "forceclose") == 0) {
+				if (!already_warned(WARN_FORCECLOSE_DEPRECATED))
+					ha_warning("parsing [%s:%d]: keyword '%s' is deprecated in favor of 'httpclose', and will not be supported by future versions.\n",
+					  file, linenum, args[1]);
+				err_code |= ERR_WARN;
+			}
 			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
 				goto out;
 			if (kwm == KWM_STD) {
@@ -3058,16 +2973,11 @@ stats_error_parsing:
 				}
 				curproxy->options2 |= PR_O2_EXP_RSTS;
 				free(curproxy->expect_str);
-				if (curproxy->expect_regex) {
-					regex_free(curproxy->expect_regex);
-					free(curproxy->expect_regex);
-					curproxy->expect_regex = NULL;
-				}
+				regex_free(curproxy->expect_regex);
 				curproxy->expect_str = strdup(args[cur_arg + 1]);
-				curproxy->expect_regex = calloc(1, sizeof(*curproxy->expect_regex));
 				error = NULL;
-				if (!regex_comp(args[cur_arg + 1], curproxy->expect_regex, 1, 1, &error)) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' : bad regular expression '%s': %s.\n",
+				if (!(curproxy->expect_regex = regex_comp(args[cur_arg + 1], 1, 1, &error))) {
+					ha_alert("parsing [%s:%d] : '%s %s %s' : regular expression '%s': %s.\n",
 						 file, linenum, args[0], args[1], ptr_arg, args[cur_arg + 1], error);
 					free(error);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -3083,16 +2993,11 @@ stats_error_parsing:
 				}
 				curproxy->options2 |= PR_O2_EXP_RSTR;
 				free(curproxy->expect_str);
-				if (curproxy->expect_regex) {
-					regex_free(curproxy->expect_regex);
-					free(curproxy->expect_regex);
-					curproxy->expect_regex = NULL;
-				}
+				regex_free(curproxy->expect_regex);
 				curproxy->expect_str = strdup(args[cur_arg + 1]);
-				curproxy->expect_regex = calloc(1, sizeof(*curproxy->expect_regex));
 				error = NULL;
-				if (!regex_comp(args[cur_arg + 1], curproxy->expect_regex, 1, 1, &error)) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' : bad regular expression '%s': %s.\n",
+				if (!(curproxy->expect_regex = regex_comp(args[cur_arg + 1], 1, 1, &error))) {
+					ha_alert("parsing [%s:%d] : '%s %s %s' : regular expression '%s': %s.\n",
 						 file, linenum, args[0], args[1], ptr_arg, args[cur_arg + 1], error);
 					free(error);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -3389,10 +3294,9 @@ stats_error_parsing:
 				tcpcheck->action = TCPCHK_ACT_EXPECT;
 				tcpcheck->string_len = 0;
 				tcpcheck->string = NULL;
-				tcpcheck->expect_regex = calloc(1, sizeof(*tcpcheck->expect_regex));
 				error = NULL;
-				if (!regex_comp(args[cur_arg + 1], tcpcheck->expect_regex, 1, 1, &error)) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' : bad regular expression '%s': %s.\n",
+				if (!(tcpcheck->expect_regex = regex_comp(args[cur_arg + 1], 1, 1, &error))) {
+					ha_alert("parsing [%s:%d] : '%s %s %s' : regular expression '%s': %s.\n",
 						 file, linenum, args[0], args[1], ptr_arg, args[cur_arg + 1], error);
 					free(error);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -3461,7 +3365,7 @@ stats_error_parsing:
 			goto out;
 		}
 	}
-#ifdef TPROXY
+#ifdef USE_TPROXY
 	else if (!strcmp(args[0], "transparent")) {
 		/* enable transparent proxy connections */
 		curproxy->options |= PR_O_TRANSP;
@@ -3515,7 +3419,19 @@ stats_error_parsing:
 			goto out;
 		}
 		err = parse_time_err(args[1], &val, TIME_UNIT_MS);
-		if (err) {
+		if (err == PARSE_TIME_OVER) {
+			ha_alert("parsing [%s:%d]: timer overflow in argument <%s> to grace time, maximum value is 2147483647 ms (~24.8 days).\n",
+			         file, linenum, args[1]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		else if (err == PARSE_TIME_UNDER) {
+			ha_alert("parsing [%s:%d]: timer underflow in argument <%s> to grace time, minimum non-null value is 1 ms.\n",
+			         file, linenum, args[1]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		else if (err) {
 			ha_alert("parsing [%s:%d] : unexpected character '%c' in grace time.\n",
 				 file, linenum, *err);
 			err_code |= ERR_ALERT | ERR_FATAL;
@@ -3957,6 +3873,9 @@ stats_error_parsing:
 		goto out;
 	}
 	else if (!strcmp(args[0], "cliexp") || !strcmp(args[0], "reqrep")) {  /* replace request header from a regex */
+		if (!already_warned(WARN_REQREP_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request replace-uri' and 'http-request replace-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		if (*(args[2]) == 0) {
 			ha_alert("parsing [%s:%d] : '%s' expects <search> and <replace> as arguments.\n",
 				 file, linenum, args[0]);
@@ -3971,6 +3890,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqdel")) {  /* delete request header from a regex */
+		if (!already_warned(WARN_REQDEL_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request del-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_REMOVE, 0,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -3978,6 +3900,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqdeny")) {  /* deny a request if a header matches this regex */
+		if (!already_warned(WARN_REQDENY_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request deny' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_DENY, 0,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -3985,6 +3910,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqpass")) {  /* pass this header without allowing or denying the request */
+		if (!already_warned(WARN_REQPASS_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_PASS, 0,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -3992,6 +3920,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqallow")) {  /* allow a request if a header matches this regex */
+		if (!already_warned(WARN_REQALLOW_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request allow' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_ALLOW, 0,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -3999,6 +3930,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqtarpit")) {  /* tarpit a request if a header matches this regex */
+		if (!already_warned(WARN_REQTARPIT_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request tarpit' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_TARPIT, 0,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4006,6 +3940,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqirep")) {  /* replace request header from a regex, ignoring case */
+		if (!already_warned(WARN_REQREP_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request replace-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		if (*(args[2]) == 0) {
 			ha_alert("parsing [%s:%d] : '%s' expects <search> and <replace> as arguments.\n",
 				 file, linenum, args[0]);
@@ -4020,6 +3957,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqidel")) {  /* delete request header from a regex ignoring case */
+		if (!already_warned(WARN_REQDEL_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request del-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_REMOVE, REG_ICASE,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4027,6 +3967,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqideny")) {  /* deny a request if a header matches this regex ignoring case */
+		if (!already_warned(WARN_REQDENY_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request deny' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_DENY, REG_ICASE,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4034,6 +3977,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqipass")) {  /* pass this header without allowing or denying the request */
+		if (!already_warned(WARN_REQPASS_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_PASS, REG_ICASE,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4041,6 +3987,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqiallow")) {  /* allow a request if a header matches this regex ignoring case */
+		if (!already_warned(WARN_REQALLOW_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request allow' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_ALLOW, REG_ICASE,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4048,6 +3997,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "reqitarpit")) {  /* tarpit a request if a header matches this regex ignoring case */
+		if (!already_warned(WARN_REQTARPIT_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request tarpit' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_REQ, ACT_TARPIT, REG_ICASE,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4056,6 +4008,9 @@ stats_error_parsing:
 	}
 	else if (!strcmp(args[0], "reqadd")) {  /* add request header */
 		struct cond_wordlist *wl;
+
+		if (!already_warned(WARN_REQADD_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request add-header' and will be removed in next version.\n", file, linenum, args[0]);
 
 		if (curproxy == &defproxy) {
 			ha_alert("parsing [%s:%d] : '%s' not allowed in 'defaults' section.\n", file, linenum, args[0]);
@@ -4089,6 +4044,12 @@ stats_error_parsing:
 			goto out;
 		}
 
+		if (strchr(args[1], '\n')) {
+			ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in new header value will fail with HTTP/2.\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
+		}
+
 		wl = calloc(1, sizeof(*wl));
 		wl->cond = cond;
 		wl->s = strdup(args[1]);
@@ -4096,6 +4057,9 @@ stats_error_parsing:
 		warnif_misplaced_reqadd(curproxy, file, linenum, args[0]);
 	}
 	else if (!strcmp(args[0], "srvexp") || !strcmp(args[0], "rsprep")) {  /* replace response header from a regex */
+		if (!already_warned(WARN_RSPREP_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-response replace-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		if (*(args[2]) == 0) {
 			ha_alert("parsing [%s:%d] : '%s' expects <search> and <replace> as arguments.\n",
 				 file, linenum, args[0]);
@@ -4110,6 +4074,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "rspdel")) {  /* delete response header from a regex */
+		if (!already_warned(WARN_RSPDEL_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-response del-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_RES, ACT_REMOVE, 0,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4117,6 +4084,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "rspdeny")) {  /* block response header from a regex */
+		if (!already_warned(WARN_RSPDENY_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-response deny' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_RES, ACT_DENY, 0,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4124,6 +4094,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "rspirep")) {  /* replace response header from a regex ignoring case */
+		if (!already_warned(WARN_RSPREP_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-response replace-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		if (*(args[2]) == 0) {
 			ha_alert("parsing [%s:%d] : '%s' expects <search> and <replace> as arguments.\n",
 				 file, linenum, args[0]);
@@ -4138,6 +4111,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "rspidel")) {  /* delete response header from a regex ignoring case */
+		if (!already_warned(WARN_RSPDEL_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-response del-header' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_RES, ACT_REMOVE, REG_ICASE,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4145,6 +4121,9 @@ stats_error_parsing:
 			goto out;
 	}
 	else if (!strcmp(args[0], "rspideny")) {  /* block response header from a regex ignoring case */
+		if (!already_warned(WARN_RSPDENY_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-response deny' and will be removed in next version.\n", file, linenum, args[0]);
+
 		err_code |= create_cond_regex_rule(file, linenum, curproxy,
 						   SMP_OPT_DIR_RES, ACT_DENY, REG_ICASE,
 						   args[0], args[1], NULL, (const char **)args+2);
@@ -4153,6 +4132,9 @@ stats_error_parsing:
 	}
 	else if (!strcmp(args[0], "rspadd")) {  /* add response header */
 		struct cond_wordlist *wl;
+
+		if (!already_warned(WARN_RSPADD_DEPRECATED))
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-response add-header' and will be removed in next version.\n", file, linenum, args[0]);
 
 		if (curproxy == &defproxy) {
 			ha_alert("parsing [%s:%d] : '%s' not allowed in 'defaults' section.\n", file, linenum, args[0]);
@@ -4184,6 +4166,12 @@ stats_error_parsing:
 				 file, linenum, args[0], args[2]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
+		}
+
+		if (strchr(args[1], '\n')) {
+			ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in new header value will fail with HTTP/2.\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
 		}
 
 		wl = calloc(1, sizeof(*wl));

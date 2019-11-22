@@ -446,7 +446,6 @@ unsigned long parse_cpu_set(const char **args, unsigned long *cpu_set, char **er
 
 		cur_arg++;
 	}
-
 	return 0;
 }
 #endif
@@ -527,7 +526,6 @@ static int init_peers_frontend(const char *file, int linenum,
 
 	return 0;
 }
-#endif
 
 /* Only change ->file, ->line and ->arg struct bind_conf member values
  * if already present.
@@ -591,7 +589,6 @@ static struct peer *cfg_peers_add_peer(struct peers *peers,
 
 	return p;
 }
-
 
 /*
  * Parse a line in a <listen>, <frontend> or <backend> section.
@@ -913,7 +910,6 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 		err_code |= parse_stick_table(file, linenum, args, t, id, id + prefix_len, curpeers);
 		if (err_code & ERR_FATAL)
 			goto out;
-		}
 
 		stktable_store_name(t);
 		t->next = stktables_list;
@@ -2633,14 +2629,6 @@ int check_config_validity()
 			}
 		}
 
-		if (!curproxy->defbe.be && (curproxy->cap & PR_CAP_LISTEN) == PR_CAP_LISTEN) {
-			/* Case of listen without default backend
-			 * The curproxy will be its own default backend
-			 * so we update tot_fe_maxconn for a further
-			 * fullconn's computation */
-			curproxy->tot_fe_maxconn += curproxy->maxconn;
-		}
-
 		/* find the target proxy for 'use_backend' rules */
 		list_for_each_entry(rule, &curproxy->switching_rules, list) {
 			struct proxy *target;
@@ -3715,126 +3703,6 @@ out_uri_auth_compat:
 					goto err;
 				for (i = 0; i < global.nbthread; i++)
 					LIST_INIT(&newsrv->idle_orphan_conns[i]);
-				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(int));
-				if (!newsrv->curr_idle_thr)
-					goto err;
-				continue;
-			err:
-				ha_alert("parsing [%s:%d] : failed to allocate idle connection tasks for server '%s'.\n",
-					 newsrv->conf.file, newsrv->conf.line, newsrv->id);
-				cfgerr++;
-				continue;
-			}
-		}
-
-		/* Check the mux protocols, if any, for each listener and server
-		 * attached to the current proxy */
-		list_for_each_entry(bind_conf, &curproxy->conf.bind, by_fe) {
-			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
-			const struct mux_proto_list *mux_ent;
-
-			/* Special case for HTX because legacy HTTP still exists */
-			if (mode == PROTO_MODE_HTTP && (curproxy->options2 & PR_O2_USE_HTX))
-				mode = PROTO_MODE_HTX;
-
-			if (!bind_conf->mux_proto)
-				continue;
-
-			/* it is possible that an incorrect mux was referenced
-			 * due to the proxy's mode not being taken into account
-			 * on first pass. Let's adjust it now.
-			 */
-			mux_ent = conn_get_best_mux_entry(bind_conf->mux_proto->token, PROTO_SIDE_FE, mode);
-
-			if (!mux_ent || !isteq(mux_ent->token, bind_conf->mux_proto->token)) {
-				ha_alert("config : %s '%s' : MUX protocol '%.*s' is not usable for 'bind %s' at [%s:%d].\n",
-					 proxy_type_str(curproxy), curproxy->id,
-					 (int)bind_conf->mux_proto->token.len,
-					 bind_conf->mux_proto->token.ptr,
-					 bind_conf->arg, bind_conf->file, bind_conf->line);
-				cfgerr++;
-			}
-
-			/* update the mux */
-			bind_conf->mux_proto = mux_ent;
-		}
-		for (newsrv = curproxy->srv; newsrv; newsrv = newsrv->next) {
-			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
-			const struct mux_proto_list *mux_ent;
-
-			/* Special case for HTX because legacy HTTP still exists */
-			if (mode == PROTO_MODE_HTTP && (curproxy->options2 & PR_O2_USE_HTX))
-				mode = PROTO_MODE_HTX;
-
-			if (!newsrv->mux_proto)
-				continue;
-
-			/* it is possible that an incorrect mux was referenced
-			 * due to the proxy's mode not being taken into account
-			 * on first pass. Let's adjust it now.
-			 */
-			mux_ent = conn_get_best_mux_entry(newsrv->mux_proto->token, PROTO_SIDE_BE, mode);
-
-			if (!mux_ent || !isteq(mux_ent->token, newsrv->mux_proto->token)) {
-				ha_alert("config : %s '%s' : MUX protocol '%.*s' is not usable for server '%s' at [%s:%d].\n",
-					 proxy_type_str(curproxy), curproxy->id,
-					 (int)newsrv->mux_proto->token.len,
-					 newsrv->mux_proto->token.ptr,
-					 newsrv->id, newsrv->conf.file, newsrv->conf.line);
-				cfgerr++;
-			}
-
-			/* update the mux */
-			newsrv->mux_proto = mux_ent;
-		}
-
-		/* the option "http-tunnel" is ignored when HTX is enabled and
-		 * only works with the legacy HTTP. So emit a warning if the
-		 * option is set on a HTX frontend. */
-		if ((curproxy->cap & PR_CAP_FE) && curproxy->options2 & PR_O2_USE_HTX &&
-		    (curproxy->options & PR_O_HTTP_MODE) == PR_O_HTTP_TUN) {
-			ha_warning("config : %s '%s' : the option 'http-tunnel' is ignored for HTX proxies.\n",
-				   proxy_type_str(curproxy), curproxy->id);
-			curproxy->options &= ~PR_O_HTTP_MODE;
-		}
-
-		/* initialize idle conns lists */
-		for (newsrv = curproxy->srv; newsrv; newsrv = newsrv->next) {
-			int i;
-
-			newsrv->priv_conns = calloc(global.nbthread, sizeof(*newsrv->priv_conns));
-			newsrv->idle_conns = calloc(global.nbthread, sizeof(*newsrv->idle_conns));
-			newsrv->safe_conns = calloc(global.nbthread, sizeof(*newsrv->safe_conns));
-
-			if (!newsrv->priv_conns || !newsrv->idle_conns || !newsrv->safe_conns) {
-				free(newsrv->safe_conns); newsrv->safe_conns = NULL;
-				free(newsrv->idle_conns); newsrv->idle_conns = NULL;
-				free(newsrv->priv_conns); newsrv->priv_conns = NULL;
-				ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
-					 newsrv->conf.file, newsrv->conf.line, newsrv->id);
-				cfgerr++;
-				continue;
-			}
-
-			for (i = 0; i < global.nbthread; i++) {
-				LIST_INIT(&newsrv->priv_conns[i]);
-				LIST_INIT(&newsrv->idle_conns[i]);
-				LIST_INIT(&newsrv->safe_conns[i]);
-			}
-
-			if (newsrv->max_idle_conns != 0) {
-				newsrv->idle_orphan_conns = calloc((unsigned int)global.nbthread, sizeof(*newsrv->idle_orphan_conns));
-				newsrv->idle_task         = calloc(global.nbthread, sizeof(*newsrv->idle_task));
-				if (!newsrv->idle_orphan_conns || !newsrv->idle_task)
-					goto err;
-				for (i = 0; i < global.nbthread; i++) {
-					LIST_INIT(&newsrv->idle_orphan_conns[i]);
-					newsrv->idle_task[i] = task_new(1UL << i);
-					if (!newsrv->idle_task[i])
-						goto err;
-					newsrv->idle_task[i]->process = srv_cleanup_idle_connections;
-					newsrv->idle_task[i]->context = newsrv;
-				}
 				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(int));
 				if (!newsrv->curr_idle_thr)
 					goto err;

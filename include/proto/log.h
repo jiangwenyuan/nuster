@@ -53,10 +53,6 @@ extern THREAD_LOCAL char *logheader_rfc5424;
 extern THREAD_LOCAL char *logline;
 extern THREAD_LOCAL char *logline_rfc5424;
 
-extern THREAD_LOCAL char *logheader;
-extern THREAD_LOCAL char *logheader_rfc5424;
-extern THREAD_LOCAL char *logline;
-extern THREAD_LOCAL char *logline_rfc5424;
 
 /*
  * Test if <idx> index numbered from 0 is in <rg> range with low and high
