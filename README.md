@@ -164,7 +164,7 @@ There are four basic `section`s: `global`, `defaults`, `frontend` and `backend` 
   * and can be overwritten in specific `frontend` or `backend` section
 * frontend
   * describes a set of listening sockets accepting client connections
-* bankend
+* backend
   * describes a set of servers to which the proxy will connect to forward incoming connections
   * `nuster cache on` or `nuster nosql on` must be declared in this section
   * `nuster rule` must be declared here
