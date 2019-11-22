@@ -32,6 +32,23 @@
 #include <common/ist.h>
 
 
+/* Looks into <ist> for forbidden characters for header values (0x00, 0x0A,
+ * 0x0D), starting at pointer <start> which must be within <ist>. Returns
+ * non-zero if such a character is found, 0 otherwise. When run on unlikely
+ * header match, it's recommended to first check for the presence of control
+ * chars using ist_find_ctl().
+ */
+static int has_forbidden_char(const struct ist ist, const char *start)
+{
+	do {
+		if ((uint8_t)*start <= 0x0d &&
+		    (1U << (uint8_t)*start) & ((1<<13) | (1<<10) | (1<<0)))
+			return 1;
+		start++;
+	} while (start < ist.ptr + ist.len);
+	return 0;
+}
+
 /* Prepare the request line into <*ptr> (stopping at <end>) from pseudo headers
  * stored in <phdr[]>. <fields> indicates what was found so far. This should be
  * called once at the detection of the first general header field or at the end
@@ -134,6 +151,7 @@ int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int
 {
 	struct ist phdr_val[H2_PHDR_NUM_ENTRIES];
 	char *out_end = out + osize;
+	const char *ctl;
 	uint32_t fields; /* bit mask of H2_PHDR_FND_* */
 	uint32_t idx;
 	int ck, lck; /* cookie index and last cookie index */
@@ -157,6 +175,13 @@ int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int
 
 			phdr = h2_str_to_phdr(list[idx].n);
 		}
+
+		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
+		 * rejecting NUL, CR and LF characters.
+		 */
+		ctl = ist_find_ctl(list[idx].v);
+		if (unlikely(ctl) && has_forbidden_char(list[idx].v, ctl))
+			goto fail;
 
 		if (phdr > 0 && phdr < H2_PHDR_NUM_ENTRIES) {
 			/* insert a pseudo header by its index (in phdr) and value (in value) */
