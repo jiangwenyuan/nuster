@@ -44,6 +44,23 @@ struct h2_frame_definition h2_frame_definition[H2_FT_ENTRIES] =	{
 	 [H2_FT_CONTINUATION ] = { .dir = 3, .min_id = 1, .max_id = H2_MAX_STREAM_ID, .min_len = 0, .max_len = H2_MAX_FRAME_LEN, },
 };
 
+/* Looks into <ist> for forbidden characters for header values (0x00, 0x0A,
+ * 0x0D), starting at pointer <start> which must be within <ist>. Returns
+ * non-zero if such a character is found, 0 otherwise. When run on unlikely
+ * header match, it's recommended to first check for the presence of control
+ * chars using ist_find_ctl().
+ */
+static int has_forbidden_char(const struct ist ist, const char *start)
+{
+	do {
+		if ((uint8_t)*start <= 0x0d &&
+		    (1U << (uint8_t)*start) & ((1<<13) | (1<<10) | (1<<0)))
+			return 1;
+		start++;
+	} while (start < ist.ptr + ist.len);
+	return 0;
+}
+
 /* Prepare the request line into <*ptr> (stopping at <end>) from pseudo headers
  * stored in <phdr[]>. <fields> indicates what was found so far. This should be
  * called once at the detection of the first general header field or at the end
@@ -146,6 +163,7 @@ int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int
 {
 	struct ist phdr_val[H2_PHDR_NUM_ENTRIES];
 	char *out_end = out + osize;
+	const char *ctl;
 	uint32_t fields; /* bit mask of H2_PHDR_FND_* */
 	uint32_t idx;
 	int ck, lck; /* cookie index and last cookie index */
@@ -169,6 +187,13 @@ int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int
 
 			phdr = h2_str_to_phdr(list[idx].n);
 		}
+
+		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
+		 * rejecting NUL, CR and LF characters.
+		 */
+		ctl = ist_find_ctl(list[idx].v);
+		if (unlikely(ctl) && has_forbidden_char(list[idx].v, ctl))
+			goto fail;
 
 		if (phdr > 0 && phdr < H2_PHDR_NUM_ENTRIES) {
 			/* insert a pseudo header by its index (in phdr) and value (in value) */
@@ -355,6 +380,7 @@ int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int
 int h2_make_h1_trailers(struct http_hdr *list, char *out, int osize)
 {
 	char *out_end = out + osize;
+	const char *ctl;
 	uint32_t idx;
 	int i;
 
@@ -389,6 +415,13 @@ int h2_make_h1_trailers(struct http_hdr *list, char *out, int osize)
 			/* too large */
 			goto fail;
 		}
+
+		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
+		 * rejecting NUL, CR and LF characters.
+		 */
+		ctl = ist_find_ctl(list[idx].v);
+		if (unlikely(ctl) && has_forbidden_char(list[idx].v, ctl))
+			goto fail;
 
 		/* copy "name: value" */
 		memcpy(out, list[idx].n.ptr, list[idx].n.len);
@@ -592,6 +625,7 @@ int h2_make_htx_request(struct http_hdr *list, struct htx *htx, unsigned int *ms
 	int i;
 	struct htx_sl *sl = NULL;
 	unsigned int sl_flags = 0;
+	const char *ctl;
 
 	lck = ck = -1; // no cookie for now
 	fields = 0;
@@ -609,6 +643,13 @@ int h2_make_htx_request(struct http_hdr *list, struct htx *htx, unsigned int *ms
 
 			phdr = h2_str_to_phdr(list[idx].n);
 		}
+
+		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
+		 * rejecting NUL, CR and LF characters.
+		 */
+		ctl = ist_find_ctl(list[idx].v);
+		if (unlikely(ctl) && has_forbidden_char(list[idx].v, ctl))
+			goto fail;
 
 		if (phdr > 0 && phdr < H2_PHDR_NUM_ENTRIES) {
 			/* insert a pseudo header by its index (in phdr) and value (in value) */
@@ -833,6 +874,7 @@ int h2_make_htx_response(struct http_hdr *list, struct htx *htx, unsigned int *m
 	int i;
 	struct htx_sl *sl = NULL;
 	unsigned int sl_flags = 0;
+	const char *ctl;
 
 	fields = 0;
 	for (idx = 0; list[idx].n.len != 0; idx++) {
@@ -849,6 +891,13 @@ int h2_make_htx_response(struct http_hdr *list, struct htx *htx, unsigned int *m
 
 			phdr = h2_str_to_phdr(list[idx].n);
 		}
+
+		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
+		 * rejecting NUL, CR and LF characters.
+		 */
+		ctl = ist_find_ctl(list[idx].v);
+		if (unlikely(ctl) && has_forbidden_char(list[idx].v, ctl))
+			goto fail;
 
 		if (phdr > 0 && phdr < H2_PHDR_NUM_ENTRIES) {
 			/* insert a pseudo header by its index (in phdr) and value (in value) */
@@ -956,6 +1005,7 @@ int h2_make_htx_trailers(struct http_hdr *list, struct htx *htx)
 {
 	struct htx_blk *blk;
 	char *out;
+	const char *ctl;
 	uint32_t idx;
 	int len;
 	int i;
@@ -986,6 +1036,13 @@ int h2_make_htx_trailers(struct http_hdr *list, struct htx *htx)
 		    isteq(list[idx].n, ist("upgrade")) ||
 		    isteq(list[idx].n, ist("te")) ||
 		    isteq(list[idx].n, ist("transfer-encoding")))
+			goto fail;
+
+		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
+		 * rejecting NUL, CR and LF characters.
+		 */
+		ctl = ist_find_ctl(list[idx].v);
+		if (unlikely(ctl) && has_forbidden_char(list[idx].v, ctl))
 			goto fail;
 
 		len += list[idx].n.len + 2 + list[idx].v.len + 2;
