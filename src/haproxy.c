@@ -128,6 +128,8 @@
 #include <proto/vars.h>
 #include <proto/ssl_sock.h>
 
+#include <nuster/nuster.h>
+
 /* array of init calls for older platforms */
 DECLARE_INIT_STAGES;
 
@@ -180,6 +182,32 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
+	.nuster = {
+		.cache = {
+			.status       = NST_STATUS_UNDEFINED,
+			.data_size    = NST_DEFAULT_DATA_SIZE,
+			.dict_size    = NST_DEFAULT_DICT_SIZE,
+			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
+			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
+			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
+			.disk_loader  = NST_DEFAULT_DISK_LOADER,
+			.disk_saver   = NST_DEFAULT_DISK_SAVER,
+			.share        = NST_STATUS_ON,
+			.purge_method = NULL,
+			.root         = NULL,
+		},
+		.nosql = {
+			.status       = NST_STATUS_UNDEFINED,
+			.data_size    = NST_DEFAULT_DATA_SIZE,
+			.dict_size    = NST_DEFAULT_DICT_SIZE,
+			.root         = NULL,
+			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
+			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
+			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
+			.disk_loader  = NST_DEFAULT_DISK_LOADER,
+			.disk_saver   = NST_DEFAULT_DISK_SAVER,
+		},
+	},
 	/* others NULL OK */
 };
 
@@ -429,6 +457,8 @@ void hap_register_per_thread_free(int (*fct)())
 
 static void display_version()
 {
+	printf("nuster version %s\n", NUSTER_VERSION);
+	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version %s %s - https://haproxy.org/\n", haproxy_version, haproxy_date);
 }
 
@@ -2129,6 +2159,8 @@ static void init(int argc, char **argv)
 	if (!hlua_post_init())
 		exit(1);
 
+	nuster_init();
+
 	free(err_msg);
 }
 
@@ -2554,6 +2586,8 @@ static void run_poll_loop()
 		if (sleeping_thread_mask & tid_bit)
 			_HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 		fd_process_cached_events();
+
+		nuster_housekeeping();
 
 		activity[tid].loops++;
 	}

@@ -75,6 +75,8 @@
 #include <proto/pattern.h>
 #include <proto/vars.h>
 
+#include <nuster/nuster.h>
+
 /* This function handles a server error at the stream interface level. The
  * stream interface is assumed to be already in a closed state. An optional
  * message is copied into the input buffer.
@@ -2691,6 +2693,11 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		if (!http_apply_redirect_rule(rule, s, txn))
 			goto return_bad_req;
 		goto done;
+	}
+
+	/* check nuster applets: manager/purge/stats... */
+	if (nuster_check_applet(s, req, px)) {
+		goto return_prx_cond;
 	}
 
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.
