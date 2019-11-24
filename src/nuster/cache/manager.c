@@ -239,20 +239,20 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
                 &ctx)) {
 
         regex_str = malloc(ctx.vlen + 1);
-        regex     = calloc(1, sizeof(*regex));
 
-        if(!regex_str || !regex) {
+        if(!regex_str) {
             goto err;
         }
 
         memcpy(regex_str, ctx.line + ctx.val, ctx.vlen);
         regex_str[ctx.vlen] = '\0';
 
-        if(!regex_comp(regex_str, regex, 1, 0, &error)) {
+        if(!(regex = regex_comp(regex_str, 1, 0, &error))) {
             goto err;
         }
 
         free(regex_str);
+        regex_free(regex);
 
         mode = host ? NST_CACHE_PURGE_REGEX_HOST : NST_CACHE_PURGE_REGEX;
     } else if(host) {
