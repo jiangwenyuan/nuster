@@ -180,12 +180,17 @@ int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int
 		}
 		else {
 			/* this can be any type of header */
-			/* RFC7540#8.1.2: upper case not allowed in header field names */
-			for (i = 0; i < list[idx].n.len; i++)
-				if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A')
-					goto fail;
-
+			/* RFC7540#8.1.2: upper case not allowed in header field names.
+			 * #10.3: header names must be valid (i.e. match a token).
+			 * For pseudo-headers we check from 2nd char and for other ones
+			 * from the first char, because HTTP_IS_TOKEN() also excludes
+			 * the colon.
+			 */
 			phdr = h2_str_to_phdr(list[idx].n);
+
+			for (i = !!phdr; i < list[idx].n.len; i++)
+				if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A' || !HTTP_IS_TOKEN(list[idx].n.ptr[i]))
+					goto fail;
 		}
 
 		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
@@ -390,15 +395,13 @@ int h2_make_h1_trailers(struct http_hdr *list, char *out, int osize)
 			goto fail;
 		}
 
-		/* RFC7540#8.1.2: upper case not allowed in header field names */
+		/* RFC7540#8.1.2: upper case not allowed in header field names.
+		 * #10.3: header names must be valid (i.e. match a token). This
+		 * also catches pseudo-headers which are forbidden in trailers.
+		 */
 		for (i = 0; i < list[idx].n.len; i++)
-			if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A')
+			if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A' || !HTTP_IS_TOKEN(list[idx].n.ptr[i]))
 				goto fail;
-
-		if (h2_str_to_phdr(list[idx].n) != 0) {
-			/* This is a pseudo-header (RFC7540#8.1.2.1) */
-			goto fail;
-		}
 
 		/* these ones are forbidden in trailers (RFC7540#8.1.2.2) */
 		if (isteq(list[idx].n, ist("host")) ||
@@ -636,12 +639,17 @@ int h2_make_htx_request(struct http_hdr *list, struct htx *htx, unsigned int *ms
 		}
 		else {
 			/* this can be any type of header */
-			/* RFC7540#8.1.2: upper case not allowed in header field names */
-			for (i = 0; i < list[idx].n.len; i++)
-				if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A')
-					goto fail;
-
+			/* RFC7540#8.1.2: upper case not allowed in header field names.
+			 * #10.3: header names must be valid (i.e. match a token).
+			 * For pseudo-headers we check from 2nd char and for other ones
+			 * from the first char, because HTTP_IS_TOKEN() also excludes
+			 * the colon.
+			 */
 			phdr = h2_str_to_phdr(list[idx].n);
+
+			for (i = !!phdr; i < list[idx].n.len; i++)
+				if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A' || !HTTP_IS_TOKEN(list[idx].n.ptr[i]))
+					goto fail;
 		}
 
 		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
@@ -884,12 +892,17 @@ int h2_make_htx_response(struct http_hdr *list, struct htx *htx, unsigned int *m
 		}
 		else {
 			/* this can be any type of header */
-			/* RFC7540#8.1.2: upper case not allowed in header field names */
-			for (i = 0; i < list[idx].n.len; i++)
-				if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A')
-					goto fail;
-
+			/* RFC7540#8.1.2: upper case not allowed in header field names.
+			 * #10.3: header names must be valid (i.e. match a token).
+			 * For pseudo-headers we check from 2nd char and for other ones
+			 * from the first char, because HTTP_IS_TOKEN() also excludes
+			 * the colon.
+			 */
 			phdr = h2_str_to_phdr(list[idx].n);
+
+			for (i = !!phdr; i < list[idx].n.len; i++)
+				if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A' || !HTTP_IS_TOKEN(list[idx].n.ptr[i]))
+					goto fail;
 		}
 
 		/* RFC7540#10.3: intermediaries forwarding to HTTP/1 must take care of
@@ -1017,15 +1030,13 @@ int h2_make_htx_trailers(struct http_hdr *list, struct htx *htx)
 			goto fail;
 		}
 
-		/* RFC7540#8.1.2: upper case not allowed in header field names */
+		/* RFC7540#8.1.2: upper case not allowed in header field names.
+		 * #10.3: header names must be valid (i.e. match a token). This
+		 * also catches pseudo-headers which are forbidden in trailers.
+		 */
 		for (i = 0; i < list[idx].n.len; i++)
-			if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A')
+			if ((uint8_t)(list[idx].n.ptr[i] - 'A') < 'Z' - 'A' || !HTTP_IS_TOKEN(list[idx].n.ptr[i]))
 				goto fail;
-
-		if (h2_str_to_phdr(list[idx].n) != 0) {
-			/* This is a pseudo-header (RFC7540#8.1.2.1) */
-			goto fail;
-		}
 
 		/* these ones are forbidden in trailers (RFC7540#8.1.2.2) */
 		if (isteq(list[idx].n, ist("host")) ||
