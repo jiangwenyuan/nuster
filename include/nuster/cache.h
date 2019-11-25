@@ -141,6 +141,11 @@ struct nst_cache_ctx {
         struct nst_str        cookie;
     } req;
 
+    struct {
+        struct nst_str        last_modified;
+        struct nst_str        etag;
+    } res;
+
     int                       pid;              /* proxy uuid */
     int                       full;             /* memory full */
     int                       header_len;
