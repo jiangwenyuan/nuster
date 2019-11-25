@@ -46,8 +46,9 @@
 #define NST_CACHE_DEFAULT_PURGE_METHOD_SIZE   16
 
 struct nst_cache_element {
-    struct nst_cache_element *next;
     struct nst_str            msg;
+
+    struct nst_cache_element *next;
 };
 
 /*
@@ -59,6 +60,7 @@ struct nst_cache_data {
     int                       clients;
     int                       invalid;
     struct nst_cache_element *element;
+
     struct nst_cache_data    *next;
 };
 
@@ -81,11 +83,12 @@ struct nst_cache_entry {
     uint64_t                atime;
     struct nst_str          host;
     struct nst_str          path;
-    struct nst_cache_entry *next;
     struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
+
+    struct nst_cache_entry *next;
 };
 
 struct nst_cache_dict {
