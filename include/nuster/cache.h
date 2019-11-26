@@ -275,6 +275,9 @@ void nst_cache_persist_async();
 void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
+void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg);
+
 
 /* manager */
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
