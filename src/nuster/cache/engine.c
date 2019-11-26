@@ -503,7 +503,7 @@ void nst_cache_init() {
             goto err;
         }
 
-        nst_debug("[nuster|cache] on, data_size=%llu\n",
+        nst_debug("[nuster][cache] on, data_size=%llu\n",
                 global.nuster.cache.data_size);
     }
 
