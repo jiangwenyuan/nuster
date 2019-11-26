@@ -1454,3 +1454,45 @@ void nst_cache_persist_cleanup() {
 
     }
 }
+
+void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+
+    struct http_txn *txn = s->txn;
+
+    struct hdr_ctx hdr;
+
+
+    int len  = sizeof("Mon, 01 JAN 1970 00:00:00 GMT") - 1;
+    ctx->res.last_modified.len  = len;
+    ctx->res.last_modified.data = nst_cache_memory_alloc(len);
+
+    if(!ctx->res.last_modified.data) {
+        ctx->res.last_modified.len = 0;
+        return;
+    }
+
+    hdr.idx = 0;
+
+    if(http_find_full_header2("Last-Modified", 13, ci_head(msg->chn),
+                &txn->hdr_idx, &hdr)) {
+
+        if(hdr.vlen == len) {
+            memcpy(ctx->res.last_modified.data, hdr.line + hdr.val, hdr.vlen);
+        }
+    } else {
+        char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+            "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+        char day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+
+        struct tm *tm;
+        time_t now;
+        time(&now);
+        tm = gmtime(&now);
+        sprintf(ctx->res.last_modified.data,
+                "%s, %02d %s %04d %02d:%02d:%02d GMT",
+                day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
+                1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
+    }
+}

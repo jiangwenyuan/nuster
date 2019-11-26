@@ -285,6 +285,8 @@ static int _nst_cache_filter_http_headers(struct stream *s,
             ctx->header_len = msg->sov;
             nst_debug("PASS\n[nuster][cache] To create\n");
 
+            nst_cache_build_last_modified(ctx, s, msg);
+
             /* start to build cache */
             nst_cache_create(ctx);
         }
