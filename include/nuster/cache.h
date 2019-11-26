@@ -272,6 +272,8 @@ int nst_cache_check_uri(struct http_msg *msg);
 void nst_cache_persist_cleanup();
 void nst_cache_persist_load();
 void nst_cache_persist_async();
+void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg);
 
 
 /* manager */
