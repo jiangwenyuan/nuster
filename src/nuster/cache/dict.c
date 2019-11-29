@@ -272,6 +272,14 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->path.len    = ctx->req.path.len;
     ctx->req.path.data = NULL;
 
+    entry->last_modified.data   = ctx->res.last_modified.data;
+    entry->last_modified.len    = ctx->res.last_modified.len;
+    ctx->res.last_modified.data = NULL;
+
+    entry->etag.data   = ctx->res.etag.data;
+    entry->etag.len    = ctx->res.etag.len;
+    ctx->res.etag.data = NULL;
+
     return entry;
 }
 
