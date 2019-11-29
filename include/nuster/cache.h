@@ -87,6 +87,8 @@ struct nst_cache_entry {
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
+    struct nst_str          last_modified;
+    struct nst_str          etag;
 
     struct nst_cache_entry *next;
 };
