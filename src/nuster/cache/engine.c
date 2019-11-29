@@ -1543,6 +1543,14 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
         if(ctx->res.etag.data) {
             uint64_t t = get_current_timestamp();
             sprintf(ctx->res.etag.data, "\"%08x\"", XXH32(&t, 8, 0));
+
+            trash.data = 6;
+            memcpy(trash.area, "ETag: ", trash.data);
+            memcpy(trash.area + trash.data, ctx->res.etag.data,
+                    ctx->res.etag.len);
+            trash.data += ctx->res.etag.len;
+            trash.area[trash.data] = '\0';
+            http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
         }
     }
 }
