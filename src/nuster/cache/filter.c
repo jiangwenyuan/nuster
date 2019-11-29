@@ -282,8 +282,13 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 return 1;
             }
 
-            nst_cache_build_etag(ctx, s, msg);
-            nst_cache_build_last_modified(ctx, s, msg);
+            if(ctx->rule->etag == NST_STATUS_ON) {
+                nst_cache_build_etag(ctx, s, msg);
+            }
+
+            if(ctx->rule->last_modified == NST_STATUS_ON) {
+                nst_cache_build_last_modified(ctx, s, msg);
+            }
 
             ctx->header_len = msg->sov;
             nst_debug("PASS\n[nuster][cache] To create\n");
