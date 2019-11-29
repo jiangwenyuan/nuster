@@ -137,16 +137,18 @@ enum {
 };
 
 struct nst_rule {
-    struct list              list;       /* list linked to from the proxy */
-    struct acl_cond         *cond;       /* acl condition to meet */
-    char                    *name;       /* cache name for logging */
-    struct nst_rule_key    **key;        /* key */
-    struct nst_rule_code    *code;       /* code */
-    uint32_t                *ttl;        /* ttl: seconds, 0: not expire */
-    int                     *state;      /* enabled or disabled */
-    int                      id;         /* same for identical names */
-    int                      uuid;       /* unique cache-rule ID */
-    int                      disk;       /* NST_DISK_* */
+    struct list              list;          /* list linked to from the proxy */
+    struct acl_cond         *cond;          /* acl condition to meet */
+    char                    *name;          /* cache name for logging */
+    struct nst_rule_key    **key;           /* key */
+    struct nst_rule_code    *code;          /* code */
+    uint32_t                *ttl;           /* ttl: seconds, 0: not expire */
+    int                     *state;         /* enabled or disabled */
+    int                      id;            /* same for identical names */
+    int                      uuid;          /* unique cache-rule ID */
+    int                      disk;          /* NST_DISK_* */
+    int                      last_modified; /* last_modified on|off */
+    int                      etag;          /* etag on|off */
 };
 
 struct nst_rule_stash {
