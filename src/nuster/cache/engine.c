@@ -962,13 +962,13 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
                     ctx->state   = NST_CACHE_CTX_STATE_CREATE;
                     ctx->entry   = entry;
 
-                    entry->last_modified.data   = ctx->res.last_modified.data;
-                    entry->last_modified.len    = ctx->res.last_modified.len;
-                    ctx->res.last_modified.data = NULL;
-
                     entry->etag.data   = ctx->res.etag.data;
                     entry->etag.len    = ctx->res.etag.len;
                     ctx->res.etag.data = NULL;
+
+                    entry->last_modified.data   = ctx->res.last_modified.data;
+                    entry->last_modified.len    = ctx->res.last_modified.len;
+                    ctx->res.last_modified.data = NULL;
 
                     ctx->data    = entry->data;
                     ctx->element = entry->data->element;
@@ -1464,6 +1464,47 @@ void nst_cache_persist_cleanup() {
     }
 }
 
+void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+
+    struct http_txn *txn = s->txn;
+
+    struct hdr_ctx hdr;
+
+
+    ctx->res.etag.len  = 0;
+    ctx->res.etag.data = NULL;
+
+    hdr.idx = 0;
+
+    if(http_find_full_header2("ETag", 4, ci_head(msg->chn), &txn->hdr_idx,
+                &hdr)) {
+
+        ctx->res.etag.len  = hdr.vlen;
+        ctx->res.etag.data = nst_cache_memory_alloc(hdr.vlen);
+
+        if(ctx->res.etag.data) {
+            memcpy(ctx->res.etag.data, hdr.line + hdr.val, hdr.vlen);
+        }
+    } else {
+        ctx->res.etag.len  = 10;
+        ctx->res.etag.data = nst_cache_memory_alloc(ctx->res.etag.len);
+
+        if(ctx->res.etag.data) {
+            uint64_t t = get_current_timestamp();
+            sprintf(ctx->res.etag.data, "\"%08x\"", XXH32(&t, 8, 0));
+
+            trash.data = 6;
+            memcpy(trash.area, "ETag: ", trash.data);
+            memcpy(trash.area + trash.data, ctx->res.etag.data,
+                    ctx->res.etag.len);
+            trash.data += ctx->res.etag.len;
+            trash.area[trash.data] = '\0';
+            http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
+        }
+    }
+}
+
 void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
@@ -1511,46 +1552,5 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         trash.data += ctx->res.last_modified.len;
         trash.area[trash.data] = '\0';
         http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
-    }
-}
-
-void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-
-    struct hdr_ctx hdr;
-
-
-    ctx->res.etag.len  = 0;
-    ctx->res.etag.data = NULL;
-
-    hdr.idx = 0;
-
-    if(http_find_full_header2("ETag", 4, ci_head(msg->chn), &txn->hdr_idx,
-                &hdr)) {
-
-        ctx->res.etag.len  = hdr.vlen;
-        ctx->res.etag.data = nst_cache_memory_alloc(hdr.vlen);
-
-        if(ctx->res.etag.data) {
-            memcpy(ctx->res.etag.data, hdr.line + hdr.val, hdr.vlen);
-        }
-    } else {
-        ctx->res.etag.len  = 10;
-        ctx->res.etag.data = nst_cache_memory_alloc(ctx->res.etag.len);
-
-        if(ctx->res.etag.data) {
-            uint64_t t = get_current_timestamp();
-            sprintf(ctx->res.etag.data, "\"%08x\"", XXH32(&t, 8, 0));
-
-            trash.data = 6;
-            memcpy(trash.area, "ETag: ", trash.data);
-            memcpy(trash.area + trash.data, ctx->res.etag.data,
-                    ctx->res.etag.len);
-            trash.data += ctx->res.etag.len;
-            trash.area[trash.data] = '\0';
-            http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
-        }
     }
 }
