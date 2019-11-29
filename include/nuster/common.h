@@ -147,8 +147,8 @@ struct nst_rule {
     int                      id;            /* same for identical names */
     int                      uuid;          /* unique cache-rule ID */
     int                      disk;          /* NST_DISK_* */
-    int                      last_modified; /* last_modified on|off */
     int                      etag;          /* etag on|off */
+    int                      last_modified; /* last_modified on|off */
 };
 
 struct nst_rule_stash {
