@@ -961,6 +961,15 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
                 } else {
                     ctx->state   = NST_CACHE_CTX_STATE_CREATE;
                     ctx->entry   = entry;
+
+                    entry->last_modified.data   = ctx->res.last_modified.data;
+                    entry->last_modified.len    = ctx->res.last_modified.len;
+                    ctx->res.last_modified.data = NULL;
+
+                    entry->etag.data   = ctx->res.etag.data;
+                    entry->etag.len    = ctx->res.etag.len;
+                    ctx->res.etag.data = NULL;
+
                     ctx->data    = entry->data;
                     ctx->element = entry->data->element;
                 }
