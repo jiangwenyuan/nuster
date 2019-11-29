@@ -874,6 +874,13 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
         if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
             ctx->data = entry->data;
             ctx->data->clients++;
+
+            ctx->res.etag.len  = entry->etag.len;
+            ctx->res.etag.data = entry->etag.data;
+
+            ctx->res.last_modified.len  = entry->last_modified.len;
+            ctx->res.last_modified.data = entry->last_modified.data;
+
             ret = NST_CACHE_CTX_STATE_HIT;
         }
 
