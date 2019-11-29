@@ -883,11 +883,15 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     struct nst_rule *rule = NULL;
     struct acl_cond *cond = NULL;
 
-    char *name  = NULL;
-    char *key   = NULL;
-    char *code  = NULL;
-    int ttl     = -1;
-    int disk    = -1;
+    char *name = NULL;
+    char *key  = NULL;
+    char *code = NULL;
+    int ttl    = -1;
+    int disk   = -1;
+    int etag   = -1;
+
+    int last_modified = -1;
+
     int cur_arg = 2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
@@ -1018,6 +1022,70 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             continue;
         }
 
+        if(!strcmp(args[cur_arg], "etag")) {
+
+            if(etag != -1) {
+                memprintf(err, "'%s %s': etag already specified.",
+                        args[0], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+            if(*args[cur_arg] == 0) {
+                memprintf(err, "'%s %s': expects [on|off], default off.",
+                        args[0], name);
+
+                goto out;
+            }
+
+            if(!strcmp(args[cur_arg], "on")) {
+                etag = NST_STATUS_ON;
+            } else if(!strcmp(args[cur_arg], "off")) {
+                etag = NST_STATUS_OFF;
+            } else {
+                memprintf(err, "'%s %s': expects [on|off], default off.",
+                        args[0], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "last-modified")) {
+
+            if(last_modified != -1) {
+                memprintf(err, "'%s %s': last-modified already specified.",
+                        args[0], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+            if(*args[cur_arg] == 0) {
+                memprintf(err, "'%s %s': expects [on|off], default off.",
+                        args[0], name);
+
+                goto out;
+            }
+
+            if(!strcmp(args[cur_arg], "on")) {
+                last_modified = NST_STATUS_ON;
+            } else if(!strcmp(args[cur_arg], "off")) {
+                last_modified = NST_STATUS_OFF;
+            } else {
+                memprintf(err, "'%s %s': expects [on|off], default off.",
+                        args[0], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
         memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name,
                 args[cur_arg]);
         goto out;
@@ -1067,6 +1135,10 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     }
 
     rule->disk = disk == -1 ? NST_DISK_OFF : disk;
+    rule->etag = etag == -1 ? NST_STATUS_OFF : etag;
+
+    rule->last_modified = last_modified == -1 ? NST_STATUS_OFF : last_modified;
+
     rule->id   = -1;
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->nuster.rules, &rule->list);
