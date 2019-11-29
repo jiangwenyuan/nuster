@@ -1503,6 +1503,14 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
                 "%s, %02d %s %04d %02d:%02d:%02d GMT",
                 day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
                 1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+        trash.data = 15;
+        memcpy(trash.area, "Last-Modified: ", trash.data);
+        memcpy(trash.area + trash.data, ctx->res.last_modified.data,
+                ctx->res.last_modified.len);
+        trash.data += ctx->res.last_modified.len;
+        trash.area[trash.data] = '\0';
+        http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
     }
 }
 
