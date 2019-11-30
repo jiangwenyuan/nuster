@@ -89,7 +89,7 @@ static inline void nst_res_header_date(struct buffer *header) {
     time_t now;
     time(&now);
     tm = gmtime(&now);
-    chunk_appendf(header, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT",
+    chunk_appendf(header, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT\r\n",
             nst_headers.date.len, nst_headers.date.data, day[tm->tm_wday],
             tm->tm_mday, mon[tm->tm_mon], 1900 + tm->tm_year,
             tm->tm_hour, tm->tm_min, tm->tm_sec);
