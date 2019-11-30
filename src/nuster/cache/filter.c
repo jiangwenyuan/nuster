@@ -25,6 +25,7 @@
 #include <nuster/memory.h>
 #include <nuster/cache.h>
 #include <nuster/nuster.h>
+#include <nuster/http.h>
 
 static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
     return 0;
@@ -176,6 +177,27 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                 if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
                     nst_debug("EXIST\n[nuster][cache] Hit memory\n");
+
+                    if(nst_cache_handle_conditional_req(ctx, rule, s, msg)
+                            != 200) {
+
+                        struct buffer *buf = get_trash_chunk();
+
+                        nst_res_begin(buf, 304);
+                        nst_res_header_server(buf);
+                        nst_res_header_date(buf);
+                        nst_res_header(buf, &nst_headers.last_modified,
+                                &ctx->res.last_modified);
+
+                        nst_res_header(buf, &nst_headers.etag, &ctx->res.etag);
+                        nst_res_header_end(buf);
+
+                        nst_res_send(si_ic(si), buf->area, buf->data);
+                        nst_res_end(si);
+
+                        return 1;
+                    }
+
                     /* OK, cache exists */
                     break;
                 }
