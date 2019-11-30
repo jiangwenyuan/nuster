@@ -176,14 +176,16 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 ctx->state = nst_cache_exists(ctx, rule->disk);
 
                 if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
+                    int ret;
+
                     nst_debug("EXIST\n[nuster][cache] Hit memory\n");
 
-                    if(nst_cache_handle_conditional_req(ctx, rule, s, msg)
-                            != 200) {
+                    ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
 
+                    if(ret != 200) {
                         struct buffer *buf = get_trash_chunk();
 
-                        nst_res_begin(buf, 304);
+                        nst_res_begin(buf, ret);
                         nst_res_header_server(buf);
                         nst_res_header_date(buf);
                         nst_res_header(buf, &nst_headers.last_modified,
