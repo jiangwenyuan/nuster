@@ -280,6 +280,9 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
 void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
+int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
+        struct nst_rule *rule, struct stream *s, struct http_msg *msg);
+
 
 /* manager */
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);

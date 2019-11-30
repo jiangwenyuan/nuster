@@ -1561,3 +1561,78 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
     }
 }
+
+int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
+        struct nst_rule *rule, struct stream *s, struct http_msg *msg) {
+
+    struct http_txn *txn = s->txn;
+    struct hdr_ctx hdr;
+
+    if(rule->etag != NST_STATUS_ON && rule->last_modified != NST_STATUS_ON) {
+        return 200;
+    }
+
+    if(rule->etag == NST_STATUS_ON) {
+
+        hdr.idx = 0;
+
+        if(http_find_full_header2("If-Match", 8, ci_head(msg->chn),
+                    &txn->hdr_idx, &hdr)) {
+
+            if(ctx->res.etag.len != hdr.vlen || memcmp(ctx->res.etag.data,
+                        hdr.line + hdr.val, hdr.vlen) != 0) {
+
+                return 412;
+            }
+        }
+    }
+
+    if(rule->last_modified == NST_STATUS_ON) {
+
+        hdr.idx = 0;
+
+        if(http_find_full_header2("If-Unmodified-Since", 19, ci_head(msg->chn),
+                    &txn->hdr_idx, &hdr)) {
+
+            if(ctx->res.last_modified.len != hdr.vlen
+                    || memcmp(ctx->res.last_modified.data,
+                        hdr.line + hdr.val, hdr.vlen) != 0) {
+
+                return 412;
+            }
+        }
+    }
+
+    if(rule->etag == NST_STATUS_ON) {
+        hdr.idx = 0;
+
+        if(http_find_full_header2("If-None-Match", 13, ci_head(msg->chn),
+                    &txn->hdr_idx, &hdr)) {
+
+            if(ctx->res.etag.len != hdr.vlen || memcmp(ctx->res.etag.data,
+                        hdr.line + hdr.val, hdr.vlen) != 0) {
+
+                return 200;
+            }
+        }
+    }
+
+    if(rule->last_modified == NST_STATUS_ON) {
+
+        hdr.idx = 0;
+
+        if(http_find_full_header2("If-Modified-Since", 17, ci_head(msg->chn),
+                    &txn->hdr_idx, &hdr)) {
+
+            if(ctx->res.last_modified.len != hdr.vlen
+                    || memcmp(ctx->res.last_modified.data,
+                        hdr.line + hdr.val, hdr.vlen) != 0) {
+
+                return 200;
+            }
+        }
+    }
+
+    return 304;
+}
+
