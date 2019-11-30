@@ -1568,6 +1568,9 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
     struct http_txn *txn = s->txn;
     struct hdr_ctx hdr;
 
+    int if_none_match     = -1;
+    int if_modified_since = -1;;
+
     if(rule->etag != NST_STATUS_ON && rule->last_modified != NST_STATUS_ON) {
         return 200;
     }
@@ -1609,10 +1612,12 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
         if(http_find_full_header2("If-None-Match", 13, ci_head(msg->chn),
                     &txn->hdr_idx, &hdr)) {
 
-            if(ctx->res.etag.len != hdr.vlen || memcmp(ctx->res.etag.data,
-                        hdr.line + hdr.val, hdr.vlen) != 0) {
+            if(ctx->res.etag.len == hdr.vlen && memcmp(ctx->res.etag.data,
+                        hdr.line + hdr.val, hdr.vlen) == 0) {
 
-                return 200;
+                if_none_match = 304;
+            } else {
+                if_none_match = 200;
             }
         }
     }
@@ -1624,15 +1629,25 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
         if(http_find_full_header2("If-Modified-Since", 17, ci_head(msg->chn),
                     &txn->hdr_idx, &hdr)) {
 
-            if(ctx->res.last_modified.len != hdr.vlen
-                    || memcmp(ctx->res.last_modified.data,
-                        hdr.line + hdr.val, hdr.vlen) != 0) {
+            if(ctx->res.last_modified.len == hdr.vlen
+                    && memcmp(ctx->res.last_modified.data,
+                        hdr.line + hdr.val, hdr.vlen) == 0) {
 
-                return 200;
+                if_modified_since = 304;
+            } else {
+                if_modified_since = 200;
             }
         }
     }
 
-    return 304;
+    if(if_none_match == 304 && if_modified_since != 200) {
+        return 304;
+    }
+
+    if(if_none_match != 200 && if_modified_since == 304) {
+        return 304;
+    }
+
+    return 200;
 }
 
