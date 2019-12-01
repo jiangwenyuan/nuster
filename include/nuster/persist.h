@@ -44,8 +44,8 @@
    8 * 5        8               key length
    8 * 6        8               host length
    8 * 7        8               path length
-   8 * 8        4,4             etag pos, length
-   8 * 9        4,4             last-modified pos, length
+   8 * 8        8               etag length
+   8 * 9        8               last-modified length
    8 * 10       key_len         key
    8 * 11       host_len        host
    8 * 12       path_len        path
@@ -55,15 +55,15 @@
    + path_len   cache_len       cache
  */
 
-#define NST_PERSIST_META_POS_HASH            8 * 1
-#define NST_PERSIST_META_POS_EXPIRE          8 * 2
-#define NST_PERSIST_META_POS_CACHE_LEN       8 * 3
-#define NST_PERSIST_META_POS_HEADER_LEN      8 * 4
-#define NST_PERSIST_META_POS_KEY_LEN         8 * 5
-#define NST_PERSIST_META_POS_HOST_LEN        8 * 6
-#define NST_PERSIST_META_POS_PATH_LEN        8 * 7
-#define NST_PERSIST_META_POS_ETAG            8 * 8
-#define NST_PERSIST_META_POS_LAST_MODIFIED   8 * 9
+#define NST_PERSIST_META_POS_HASH               8 * 1
+#define NST_PERSIST_META_POS_EXPIRE             8 * 2
+#define NST_PERSIST_META_POS_CACHE_LEN          8 * 3
+#define NST_PERSIST_META_POS_HEADER_LEN         8 * 4
+#define NST_PERSIST_META_POS_KEY_LEN            8 * 5
+#define NST_PERSIST_META_POS_HOST_LEN           8 * 6
+#define NST_PERSIST_META_POS_PATH_LEN           8 * 7
+#define NST_PERSIST_META_POS_ETAG_LEN           8 * 8
+#define NST_PERSIST_META_POS_LAST_MODIFIED_LEN  8 * 9
 
 
 #define NST_PERSIST_META_SIZE                8 * 10
@@ -177,6 +177,22 @@ static inline void nst_persist_meta_set_path_len(char *p, uint64_t v) {
 
 static inline uint64_t nst_persist_meta_get_path_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_PATH_LEN);
+}
+
+static inline void nst_persist_meta_set_etag_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NST_PERSIST_META_POS_ETAG_LEN) = v;
+}
+
+static inline uint64_t nst_persist_meta_get_etag_len(char *p) {
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_ETAG_LEN);
+}
+
+static inline void nst_persist_meta_set_last_modified_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NST_PERSIST_META_POS_LAST_MODIFIED_LEN) = v;
+}
+
+static inline uint64_t nst_persist_meta_get_last_modified_len(char *p) {
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_LAST_MODIFIED_LEN);
 }
 
 static inline int nst_persist_get_header_pos(char *p) {
