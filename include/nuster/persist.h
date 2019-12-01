@@ -30,7 +30,7 @@
 
 #include <nuster/common.h>
 
-#define NST_PERSIST_VERSION  2
+#define NST_PERSIST_VERSION  3
 
 /*
    Offset       Length(bytes)   Content
@@ -44,10 +44,13 @@
    8 * 5        8               key length
    8 * 6        8               host length
    8 * 7        8               path length
-   8 * 8        key_len         key
-   8 * 9        host_len        host
-   8 * 10       path_len        path
-   64 + key_len
+   8 * 8        4,4             etag pos, length
+   8 * 9        4,4             last-modified pos, length
+   8 * 10       key_len         key
+   8 * 11       host_len        host
+   8 * 12       path_len        path
+   meta_size
+   + key_len
    + host_len
    + path_len   cache_len       cache
  */
@@ -59,9 +62,11 @@
 #define NST_PERSIST_META_POS_KEY_LEN         8 * 5
 #define NST_PERSIST_META_POS_HOST_LEN        8 * 6
 #define NST_PERSIST_META_POS_PATH_LEN        8 * 7
+#define NST_PERSIST_META_POS_ETAG            8 * 8
+#define NST_PERSIST_META_POS_LAST_MODIFIED   8 * 9
 
 
-#define NST_PERSIST_META_SIZE                8 * 8
+#define NST_PERSIST_META_SIZE                8 * 10
 #define NST_PERSIST_POS_KEY                  NST_PERSIST_META_SIZE
 
 enum {
