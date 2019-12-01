@@ -1569,6 +1569,7 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
     struct hdr_ctx hdr;
 
     int if_none_match     = -1;
+    int if_match          = -1;
     int if_modified_since = -1;;
 
     if(rule->etag != NST_STATUS_ON && rule->last_modified != NST_STATUS_ON) {
@@ -1579,14 +1580,21 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
 
         hdr.idx = 0;
 
-        if(http_find_full_header2("If-Match", 8, ci_head(msg->chn),
+        while(http_find_header2("If-Match", 8, ci_head(msg->chn),
                     &txn->hdr_idx, &hdr)) {
 
-            if(ctx->res.etag.len != hdr.vlen || memcmp(ctx->res.etag.data,
-                        hdr.line + hdr.val, hdr.vlen) != 0) {
+            if_match = 412;
 
-                return 412;
+            if(ctx->res.etag.len == hdr.vlen && memcmp(ctx->res.etag.data,
+                        hdr.line + hdr.val, hdr.vlen) == 0) {
+
+                if_match = 200;
+                break;
             }
+        }
+
+        if(if_match == 412) {
+            return if_match;
         }
     }
 
@@ -1609,15 +1617,16 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
     if(rule->etag == NST_STATUS_ON) {
         hdr.idx = 0;
 
-        if(http_find_full_header2("If-None-Match", 13, ci_head(msg->chn),
+        while(http_find_header2("If-None-Match", 13, ci_head(msg->chn),
                     &txn->hdr_idx, &hdr)) {
+
+            if_none_match = 200;
 
             if(ctx->res.etag.len == hdr.vlen && memcmp(ctx->res.etag.data,
                         hdr.line + hdr.val, hdr.vlen) == 0) {
 
                 if_none_match = 304;
-            } else {
-                if_none_match = 200;
+                break;
             }
         }
     }
