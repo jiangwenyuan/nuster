@@ -1585,6 +1585,11 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
 
             if_match = 412;
 
+            if(1 == hdr.vlen && *(hdr.line + hdr.val) == '*') {
+                if_match = 200;
+                break;
+            }
+
             if(ctx->res.etag.len == hdr.vlen && memcmp(ctx->res.etag.data,
                         hdr.line + hdr.val, hdr.vlen) == 0) {
 
@@ -1621,6 +1626,11 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
                     &txn->hdr_idx, &hdr)) {
 
             if_none_match = 200;
+
+            if(1 == hdr.vlen && *(hdr.line + hdr.val) == '*') {
+                if_none_match = 304;
+                break;
+            }
 
             if(ctx->res.etag.len == hdr.vlen && memcmp(ctx->res.etag.data,
                         hdr.line + hdr.val, hdr.vlen) == 0) {
