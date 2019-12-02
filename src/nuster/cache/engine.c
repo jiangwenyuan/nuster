@@ -1028,7 +1028,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
                 ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data,
-                ctx->entry->host.len, ctx->entry->path.len);
+                ctx->entry->host.len, ctx->entry->path.len,
+                ctx->entry->etag.len, ctx->entry->last_modified.len);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
         nst_persist_write_host(&ctx->disk, &ctx->entry->host);
@@ -1239,7 +1240,8 @@ void nst_cache_persist_async() {
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->hash, entry->expire, 0, entry->header_len,
-                    entry->key->data, entry->host.len, entry->path.len);
+                    entry->key->data, entry->host.len, entry->path.len,
+                    entry->etag.len, entry->last_modified.len);
 
             nst_persist_write_key(&disk, entry->key);
             nst_persist_write_host(&disk, &entry->host);
