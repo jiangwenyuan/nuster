@@ -204,7 +204,8 @@ static inline int nst_persist_get_header_pos(char *p) {
 static inline void
 nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
         uint64_t cache_len, uint64_t header_len, uint64_t key_len,
-        uint64_t host_len, uint64_t path_len) {
+        uint64_t host_len, uint64_t path_len, uint64_t etag_len,
+        uint64_t last_modified_len) {
 
     memcpy(p, "NUSTER", 6);
     p[6] = mode;
@@ -217,6 +218,8 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_key_len(p, key_len);
     nst_persist_meta_set_host_len(p, host_len);
     nst_persist_meta_set_path_len(p, path_len);
+    nst_persist_meta_set_etag_len(p, etag_len);
+    nst_persist_meta_set_last_modified_len(p, last_modified_len);
 }
 
 int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
