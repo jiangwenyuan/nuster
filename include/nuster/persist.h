@@ -33,26 +33,30 @@
 #define NST_PERSIST_VERSION  3
 
 /*
-   Offset       Length(bytes)   Content
-   0            6               NUSTER
-   6            1               Mode: NUSTER_DISK_*, 1, 2, 3
-   7            1               Version: 1
-   8 * 1        8               hash
-   8 * 2        8               expire time
-   8 * 3        8               cache length
-   8 * 4        8               header length
-   8 * 5        8               key length
-   8 * 6        8               host length
-   8 * 7        8               path length
-   8 * 8        8               etag length
-   8 * 9        8               last-modified length
-   8 * 10       key_len         key
-   8 * 11       host_len        host
-   8 * 12       path_len        path
+   Offset              Length(bytes)           Content
+   0                   6                       NUSTER
+   6                   1                       Mode: NUSTER_DISK_*, 1, 2, 3
+   7                   1                       Version: 1
+   8 * 1               8                       hash
+   8 * 2               8                       expire time
+   8 * 3               8                       cache length
+   8 * 4               8                       header length
+   8 * 5               8                       key length
+   8 * 6               8                       host length
+   8 * 7               8                       path length
+   8 * 8               8                       etag length
+   8 * 9               8                       last-modified length
+   8 * 10              key_len                 key
+   8 * 11              host_len                host
+   8 * 12              path_len                path
+   8 * 13              etag_len                etag
+   8 * 14              last_modified_len       last_modified
    meta_size
    + key_len
    + host_len
-   + path_len   cache_len       cache
+   + path_len
+   + etag_len
+   + last_modified      cache_len       cache
  */
 
 #define NST_PERSIST_META_POS_HASH               8 * 1
