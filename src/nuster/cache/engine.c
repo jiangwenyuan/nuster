@@ -1034,6 +1034,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
         nst_persist_write_host(&ctx->disk, &ctx->entry->host);
         nst_persist_write_path(&ctx->disk, &ctx->entry->path);
+        nst_persist_write_etag(&ctx->disk, &ctx->entry->etag);
+        nst_persist_write_last_modified(&ctx->disk, &ctx->entry->last_modified);
 
     }
 }
@@ -1246,6 +1248,8 @@ void nst_cache_persist_async() {
             nst_persist_write_key(&disk, entry->key);
             nst_persist_write_host(&disk, &entry->host);
             nst_persist_write_path(&disk, &entry->path);
+            nst_persist_write_etag(&disk, &entry->etag);
+            nst_persist_write_last_modified(&disk, &entry->last_modified);
 
             while(element) {
 
