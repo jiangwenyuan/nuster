@@ -206,7 +206,9 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                         nst_res_begin(buf, ret);
                         nst_res_header_server(buf);
                         nst_res_header_date(buf);
-                        nst_res_header_content_length(buf, strlen(http_get_reason(412)));
+                        nst_res_header_content_length(buf,
+                                strlen(http_get_reason(412)));
+
                         nst_res_header_end(buf);
 
                         chunk_appendf(buf, "%s", http_get_reason(412));
