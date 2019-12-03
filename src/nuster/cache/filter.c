@@ -184,37 +184,14 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
 
                     if(ret == 304) {
-                        struct buffer *buf = get_trash_chunk();
-
-                        nst_res_begin(buf, ret);
-                        nst_res_header_server(buf);
-                        nst_res_header_date(buf);
-                        nst_res_header(buf, &nst_headers.last_modified,
-                                &ctx->res.last_modified);
-
-                        nst_res_header(buf, &nst_headers.etag, &ctx->res.etag);
-                        nst_res_header_end(buf);
-
-                        nst_res_send(si_ic(si), buf->area, buf->data);
-                        nst_res_end(si);
+                        nst_res_304(si, &ctx->res.last_modified,
+                                &ctx->res.etag);
 
                         return 1;
                     }
 
                     if(ret == 412) {
-                        struct buffer *buf = get_trash_chunk();
-
-                        nst_res_begin(buf, ret);
-                        nst_res_header_server(buf);
-                        nst_res_header_date(buf);
-                        nst_res_header_content_length(buf,
-                                strlen(http_get_reason(412)));
-
-                        nst_res_header_end(buf);
-
-                        chunk_appendf(buf, "%s", http_get_reason(412));
-                        nst_res_send(si_ic(si), buf->area, buf->data);
-                        nst_res_end(si);
+                        nst_res_412(si);
 
                         return 1;
                     }
@@ -269,37 +246,14 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
 
                     if(ret == 304) {
-                        struct buffer *buf = get_trash_chunk();
-
-                        nst_res_begin(buf, ret);
-                        nst_res_header_server(buf);
-                        nst_res_header_date(buf);
-                        nst_res_header(buf, &nst_headers.last_modified,
-                                &ctx->res.last_modified);
-
-                        nst_res_header(buf, &nst_headers.etag, &ctx->res.etag);
-                        nst_res_header_end(buf);
-
-                        nst_res_send(si_ic(si), buf->area, buf->data);
-                        nst_res_end(si);
+                        nst_res_304(si, &ctx->res.last_modified,
+                                &ctx->res.etag);
 
                         return 1;
                     }
 
                     if(ret == 412) {
-                        struct buffer *buf = get_trash_chunk();
-
-                        nst_res_begin(buf, ret);
-                        nst_res_header_server(buf);
-                        nst_res_header_date(buf);
-                        nst_res_header_content_length(buf,
-                                strlen(http_get_reason(412)));
-
-                        nst_res_header_end(buf);
-
-                        chunk_appendf(buf, "%s", http_get_reason(412));
-                        nst_res_send(si_ic(si), buf->area, buf->data);
-                        nst_res_end(si);
+                        nst_res_412(si);
 
                         return 1;
                     }

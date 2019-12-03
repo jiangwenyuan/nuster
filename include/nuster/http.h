@@ -170,6 +170,42 @@ static inline struct buffer *nst_res_header_create(int status, int chunked,
     return header;
 }
 
+/*
+ * TODO
+ */
+static inline void nst_res_304(struct stream_interface *si,
+        struct nst_str *last_modified, struct nst_str *etag) {
+
+    struct buffer *buf = get_trash_chunk();
+
+    nst_res_begin(buf, 304);
+    nst_res_header_server(buf);
+    nst_res_header_date(buf);
+    nst_res_header(buf, &nst_headers.last_modified, last_modified);
+
+    nst_res_header(buf, &nst_headers.etag, etag);
+    nst_res_header_end(buf);
+
+    nst_res_send(si_ic(si), buf->area, buf->data);
+    nst_res_end(si);
+}
+
+static inline void nst_res_412(struct stream_interface *si) {
+
+    struct buffer *buf = get_trash_chunk();
+
+    nst_res_begin(buf, 412);
+    nst_res_header_server(buf);
+    nst_res_header_date(buf);
+    nst_res_header_content_length(buf, strlen(http_get_reason(412)));
+
+    nst_res_header_end(buf);
+
+    chunk_appendf(buf, "%s", http_get_reason(412));
+    nst_res_send(si_ic(si), buf->area, buf->data);
+    nst_res_end(si);
+}
+
 int nst_req_find_param(char *query_beg, char *query_end,
         char *name, char **value, int *value_len);
 
