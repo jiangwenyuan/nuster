@@ -223,6 +223,37 @@ int nst_persist_get_path(int fd, char *meta, struct nst_str *path) {
     return NST_OK;
 }
 
+int nst_persist_get_etag(int fd, char *meta, struct nst_str *etag) {
+
+    int ret = pread(fd, etag->data, etag->len, NST_PERSIST_POS_KEY
+            + nst_persist_meta_get_key_len(meta)
+            + nst_persist_meta_get_host_len(meta)
+            + nst_persist_meta_get_path_len(meta));
+
+    if(ret != etag->len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int nst_persist_get_last_modified(int fd, char *meta,
+        struct nst_str *last_modified) {
+
+    int ret = pread(fd, last_modified->data, last_modified->len,
+            NST_PERSIST_POS_KEY
+            + nst_persist_meta_get_key_len(meta)
+            + nst_persist_meta_get_host_len(meta)
+            + nst_persist_meta_get_path_len(meta)
+            + nst_persist_meta_get_etag_len(meta));
+
+    if(ret != last_modified->len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
 void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
     DIR *dir2;
     struct dirent *de2;
