@@ -179,6 +179,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     int ret;
 
                     nst_debug("EXIST\n[nuster][cache] Hit memory\n");
+                    /* OK, cache exists */
 
                     ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
 
@@ -218,13 +219,100 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                         return 1;
                     }
 
-                    /* OK, cache exists */
                     break;
                 }
 
                 if(ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
+                    int ret;
+
                     nst_debug("EXIST\n[nuster][cache] Hit disk\n");
                     /* OK, cache exists */
+
+                    if(rule->etag == NST_STATUS_ON) {
+                        ctx->res.etag.len  =
+                            nst_persist_meta_get_etag_len(ctx->disk.meta);
+
+                        ctx->res.etag.data =
+                            nst_cache_memory_alloc(ctx->res.etag.len);
+
+                        if(!ctx->res.etag.data) {
+                            goto abort_check;
+                        }
+
+                        if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta,
+                                    &ctx->res.etag) != NST_OK) {
+
+                            goto abort_check;
+                        }
+                    }
+
+                    if(rule->last_modified == NST_STATUS_ON) {
+                        ctx->res.last_modified.len  =
+                            nst_persist_meta_get_last_modified_len(
+                                    ctx->disk.meta);
+
+                        ctx->res.last_modified.data =
+                            nst_cache_memory_alloc(ctx->res.last_modified.len);
+
+                        if(!ctx->res.last_modified.data) {
+                            goto abort_check;
+                        }
+
+                        if(nst_persist_get_last_modified(ctx->disk.fd,
+                                    ctx->disk.meta, &ctx->res.last_modified)
+                                != NST_OK) {
+
+                            goto abort_check;
+                        }
+                    }
+
+                    ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
+
+                    if(ret == 304) {
+                        struct buffer *buf = get_trash_chunk();
+
+                        nst_res_begin(buf, ret);
+                        nst_res_header_server(buf);
+                        nst_res_header_date(buf);
+                        nst_res_header(buf, &nst_headers.last_modified,
+                                &ctx->res.last_modified);
+
+                        nst_res_header(buf, &nst_headers.etag, &ctx->res.etag);
+                        nst_res_header_end(buf);
+
+                        nst_res_send(si_ic(si), buf->area, buf->data);
+                        nst_res_end(si);
+
+                        return 1;
+                    }
+
+                    if(ret == 412) {
+                        struct buffer *buf = get_trash_chunk();
+
+                        nst_res_begin(buf, ret);
+                        nst_res_header_server(buf);
+                        nst_res_header_date(buf);
+                        nst_res_header_content_length(buf,
+                                strlen(http_get_reason(412)));
+
+                        nst_res_header_end(buf);
+
+                        chunk_appendf(buf, "%s", http_get_reason(412));
+                        nst_res_send(si_ic(si), buf->area, buf->data);
+                        nst_res_end(si);
+
+                        return 1;
+                    }
+
+abort_check:
+                    if(ctx->res.etag.data) {
+                        nst_cache_memory_free(ctx->res.etag.data);
+                    }
+
+                    if(ctx->res.last_modified.data) {
+                        nst_cache_memory_free(ctx->res.last_modified.data);
+                    }
+
                     break;
                 }
 
