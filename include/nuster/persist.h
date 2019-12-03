@@ -202,7 +202,9 @@ static inline uint64_t nst_persist_meta_get_last_modified_len(char *p) {
 static inline int nst_persist_get_header_pos(char *p) {
     return (int)(NST_PERSIST_META_SIZE + nst_persist_meta_get_key_len(p)
             + nst_persist_meta_get_host_len(p)
-            + nst_persist_meta_get_path_len(p));
+            + nst_persist_meta_get_path_len(p)
+            + nst_persist_meta_get_etag_len(p)
+            + nst_persist_meta_get_last_modified_len(p));
 }
 
 static inline void
