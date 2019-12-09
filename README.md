@@ -346,7 +346,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
 **default:** *none*
 
@@ -461,6 +461,18 @@ Specify how and where to save the cached data. There are four MODEs.
 * only:  save data to disk only, do not store in memory
 * sync:  save data to memory and disk(kernel), then return to the client
 * async: save data to memory and return to the client, cached data will be saved to disk later by the master process
+
+### etag on|off
+
+Enable etag conditional requests handling. Add `ETag` header if absent.
+
+Default off.
+
+### last-modified on|off
+
+Enable last-modified conditional requests handling. Add `Last-Modified` header if absent.
+
+Default off.
 
 ### if|unless condition
 
