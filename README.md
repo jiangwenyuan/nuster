@@ -4,6 +4,8 @@
 
 A high-performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
 
+WIP: Migration to HAProxy v2.0, need explicitly `no option http-use-htx` defined
+
 # Table of Contents
 
 * [Introduction](#introduction)
