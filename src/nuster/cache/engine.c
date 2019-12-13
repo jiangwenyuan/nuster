@@ -1106,10 +1106,12 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
         ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
     }
 
+    ctx->entry->ctime = get_current_timestamp();
+
     if(*ctx->rule->ttl == 0) {
         ctx->entry->expire = 0;
     } else {
-        ctx->entry->expire = get_current_timestamp() / 1000 + *ctx->rule->ttl;
+        ctx->entry->expire = ctx->entry->ctime / 1000 + *ctx->rule->ttl;
     }
 
     if(ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY) {
