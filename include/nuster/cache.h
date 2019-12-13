@@ -80,7 +80,6 @@ struct nst_cache_entry {
     uint64_t                hash;
     struct nst_cache_data  *data;
     uint64_t                expire;
-    uint64_t                atime;
     struct nst_str          host;
     struct nst_str          path;
     struct nst_rule        *rule;        /* rule */
@@ -89,6 +88,9 @@ struct nst_cache_entry {
     int                     header_len;
     struct nst_str          etag;
     struct nst_str          last_modified;
+
+    uint64_t                ctime;
+    uint64_t                atime;
 
     struct nst_cache_entry *next;
 };
