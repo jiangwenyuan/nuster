@@ -92,6 +92,14 @@ struct nst_cache_entry {
     uint64_t                ctime;
     uint64_t                atime;
 
+    /*
+     * access is splited into 3 parts:
+     * 0: ctime ~ expire - extend[0, 1] * ttl
+     * 1: expire - (extend[0] + extend[1]) * ttl ~ expire - extend[1] * ttl
+     * 2: expire - extend[1] * ttl ~ expire
+    */
+    uint64_t                access[3];
+
     struct nst_cache_entry *next;
 };
 
