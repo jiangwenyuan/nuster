@@ -300,6 +300,12 @@ static int create_cond_regex_rule(const char *file, int line,
 		goto err_free;
 	}
 
+	if (repl && strchr(repl, '\n')) {
+		ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in replacement string will fail with HTTP/2.\n",
+			 file, line, cmd);
+		ret_code |= ERR_WARN;
+	}
+
 	if (dir == SMP_OPT_DIR_REQ && warnif_misplaced_reqxxx(px, file, line, cmd))
 		ret_code |= ERR_WARN;
 
@@ -1027,11 +1033,10 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 					goto out;
 				}
 
-				if (*args[cur_arg + 1] != '.' || !strchr(args[cur_arg + 1] + 1, '.')) {
-					/* rfc2109, 4.3.2 Rejecting Cookies */
-					ha_warning("parsing [%s:%d]: domain '%s' contains no embedded"
-						   " dots nor does not start with a dot."
-						   " RFC forbids it, this configuration may not work properly.\n",
+				if (!strchr(args[cur_arg + 1], '.')) {
+					/* rfc6265, 5.2.3 The Domain Attribute */
+					ha_warning("parsing [%s:%d]: domain '%s' contains no embedded dot,"
+						   " this configuration may not work properly (see RFC6265#5.2.3).\n",
 						   file, linenum, args[cur_arg + 1]);
 					err_code |= ERR_WARN;
 				}
@@ -4089,6 +4094,12 @@ stats_error_parsing:
 			goto out;
 		}
 
+		if (strchr(args[1], '\n')) {
+			ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in new header value will fail with HTTP/2.\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
+		}
+
 		wl = calloc(1, sizeof(*wl));
 		wl->cond = cond;
 		wl->s = strdup(args[1]);
@@ -4184,6 +4195,12 @@ stats_error_parsing:
 				 file, linenum, args[0], args[2]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
+		}
+
+		if (strchr(args[1], '\n')) {
+			ha_warning("parsing [%s:%d] : '%s' : hack involving '\\n' character in new header value will fail with HTTP/2.\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
 		}
 
 		wl = calloc(1, sizeof(*wl));

@@ -547,38 +547,6 @@ static int cli_output_msg(struct channel *chn, const char *msg, int severity, in
 	return ci_putblk(chn, tmp->area, strlen(tmp->area));
 }
 
-/* prepends then outputs the argument msg with a syslog-type severity depending on severity_output value */
-static int cli_output_msg(struct channel *chn, const char *msg, int severity, int severity_output)
-{
-	struct buffer *tmp;
-
-	if (likely(severity_output == CLI_SEVERITY_NONE))
-		return ci_putblk(chn, msg, strlen(msg));
-
-	tmp = get_trash_chunk();
-	chunk_reset(tmp);
-
-	if (severity < 0 || severity > 7) {
-		ha_warning("socket command feedback with invalid severity %d", severity);
-		chunk_printf(tmp, "[%d]: ", severity);
-	}
-	else {
-		switch (severity_output) {
-			case CLI_SEVERITY_NUMBER:
-				chunk_printf(tmp, "[%d]: ", severity);
-				break;
-			case CLI_SEVERITY_STRING:
-				chunk_printf(tmp, "[%s]: ", log_levels[severity]);
-				break;
-			default:
-				ha_warning("Unrecognized severity output %d", severity_output);
-		}
-	}
-	chunk_appendf(tmp, "%s", msg);
-
-	return ci_putblk(chn, tmp->area, strlen(tmp->area));
-}
-
 /* This I/O handler runs as an applet embedded in a stream interface. It is
  * used to processes I/O from/to the stats unix socket. The system relies on a
  * state machine handling requests and various responses. We read a request,

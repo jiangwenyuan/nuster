@@ -472,6 +472,9 @@ static int h2_avail_streams(struct connection *conn)
 	if (h2c->last_sid >= 0)
 		return 0;
 
+	if (h2c->st0 >= H2_CS_ERROR)
+		return 0;
+
 	/* note: may be negative if a SETTINGS frame changes the limit */
 	ret1 = h2c->streams_limit - h2c->nb_streams;
 
@@ -1583,7 +1586,8 @@ static int h2c_handle_settings(struct h2c *h2c)
 	h2c->st0 = H2_CS_FRAME_A;
 	return 1;
  fail:
-	sess_log(h2c->conn->owner);
+	if (!(h2c->flags & H2_CF_IS_BACK))
+		sess_log(h2c->conn->owner);
 	h2c_error(h2c, error);
 	return 0;
 }
@@ -2244,7 +2248,8 @@ static void h2_process_demux(struct h2c *h2c)
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
 				if (h2c->st0 == H2_CS_ERROR) {
 					h2c->st0 = H2_CS_ERROR2;
-					sess_log(h2c->conn->owner);
+					if (!(h2c->flags & H2_CF_IS_BACK))
+						sess_log(h2c->conn->owner);
 				}
 				goto fail;
 			}
@@ -2253,7 +2258,8 @@ static void h2_process_demux(struct h2c *h2c)
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
 				h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
 				h2c->st0 = H2_CS_ERROR2;
-				sess_log(h2c->conn->owner);
+				if (!(h2c->flags & H2_CF_IS_BACK))
+					sess_log(h2c->conn->owner);
 				goto fail;
 			}
 
@@ -2261,7 +2267,8 @@ static void h2_process_demux(struct h2c *h2c)
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
 				h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
 				h2c->st0 = H2_CS_ERROR2;
-				sess_log(h2c->conn->owner);
+				if (!(h2c->flags & H2_CF_IS_BACK))
+					sess_log(h2c->conn->owner);
 				goto fail;
 			}
 
@@ -2290,7 +2297,7 @@ static void h2_process_demux(struct h2c *h2c)
 			if ((int)hdr.len < 0 || (int)hdr.len > global.tune.bufsize) {
 				h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
 				h2c->st0 = H2_CS_ERROR;
-				if (!h2c->nb_streams) {
+				if (!h2c->nb_streams && !(h2c->flags & H2_CF_IS_BACK)) {
 					/* only log if no other stream can report the error */
 					sess_log(h2c->conn->owner);
 				}
@@ -2308,7 +2315,8 @@ static void h2_process_demux(struct h2c *h2c)
 				 */
 				if (hdr.len < 1) {
 					h2c_error(h2c, H2_ERR_FRAME_SIZE_ERROR);
-					sess_log(h2c->conn->owner);
+					if (!(h2c->flags & H2_CF_IS_BACK))
+						sess_log(h2c->conn->owner);
 					goto fail;
 				}
 				hdr.len--;
@@ -2323,7 +2331,8 @@ static void h2_process_demux(struct h2c *h2c)
 					 * frame payload or greater => error.
 					 */
 					h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
-					sess_log(h2c->conn->owner);
+					if (!(h2c->flags & H2_CF_IS_BACK))
+						sess_log(h2c->conn->owner);
 					goto fail;
 				}
 
@@ -2347,7 +2356,8 @@ static void h2_process_demux(struct h2c *h2c)
 			ret = h2_frame_check(h2c->dft, 1, h2c->dsi, h2c->dfl, global.tune.bufsize);
 			if (ret != H2_ERR_NO_ERROR) {
 				h2c_error(h2c, ret);
-				sess_log(h2c->conn->owner);
+				if (!(h2c->flags & H2_CF_IS_BACK))
+					sess_log(h2c->conn->owner);
 				goto fail;
 			}
 		}
@@ -2383,10 +2393,16 @@ static void h2_process_demux(struct h2c *h2c)
 			 */
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
 			h2c->st0 = H2_CS_ERROR;
-			if (!h2c->nb_streams) {
+			if (!h2c->nb_streams && !(h2c->flags & H2_CF_IS_BACK)) {
 				/* only log if no other stream can report the error */
 				sess_log(h2c->conn->owner);
 			}
+			break;
+		}
+
+		if (h2s->st == H2_SS_IDLE && (h2c->flags & H2_CF_IS_BACK)) {
+			/* only PUSH_PROMISE would be permitted here */
+			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
 			break;
 		}
 
@@ -2533,7 +2549,8 @@ static void h2_process_demux(struct h2c *h2c)
 			 * frames so this one is out of sequence.
 			 */
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
-			sess_log(h2c->conn->owner);
+			if (!(h2c->flags & H2_CF_IS_BACK))
+				sess_log(h2c->conn->owner);
 			goto fail;
 
 		case H2_FT_HEADERS:
@@ -2636,10 +2653,8 @@ static int h2_process_mux(struct h2c *h2c)
 		if (unlikely(h2c->st0 == H2_CS_PREFACE && (h2c->flags & H2_CF_IS_BACK))) {
 			if (unlikely(h2c_bck_send_preface(h2c) <= 0)) {
 				/* RFC7540#3.5: a GOAWAY frame MAY be omitted */
-				if (h2c->st0 == H2_CS_ERROR) {
+				if (h2c->st0 == H2_CS_ERROR)
 					h2c->st0 = H2_CS_ERROR2;
-					sess_log(h2c->conn->owner);
-				}
 				goto fail;
 			}
 			h2c->st0 = H2_CS_SETTINGS1;
@@ -2963,6 +2978,13 @@ static int h2_process(struct h2c *h2c)
 			h2_release(conn);
 			return -1;
 		}
+
+		/* connections in error must be removed from the idle lists */
+		LIST_DEL_INIT(&conn->list);
+	}
+	else if (h2c->st0 == H2_CS_ERROR) {
+		/* connections in error must be removed from the idle lists */
+		LIST_DEL_INIT(&conn->list);
 	}
 
 	if (!b_data(&h2c->dbuf))
@@ -3047,6 +3069,9 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 		}
 	}
 
+	/* in any case this connection must not be considered idle anymore */
+	LIST_DEL_INIT(&h2c->conn->list);
+
 	/* either we can release everything now or it will be done later once
 	 * the last stream closes.
 	 */
@@ -3101,6 +3126,24 @@ static const struct conn_stream *h2_get_first_cs(const struct connection *conn)
 		node = eb32_next(node);
 	}
 	return NULL;
+}
+
+static int h2_ctl(struct connection *conn, enum mux_ctl_type mux_ctl, void *output)
+{
+	int ret = 0;
+	struct h2c *h2c = conn->ctx;
+
+	switch (mux_ctl) {
+	case MUX_STATUS:
+		/* Only consider the mux to be ready if we're done with
+		 * the preface and settings, and we had no error.
+		 */
+		if (h2c->st0 >= H2_CS_FRAME_H && h2c->st0 < H2_CS_ERROR)
+			ret |= MUX_STATUS_READY;
+		return ret;
+	default:
+		return -1;
+	}
 }
 
 /*
@@ -5434,6 +5477,11 @@ static size_t h2_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 	if (h2s->h2c->st0 < H2_CS_FRAME_H)
 		return 0;
 
+	if (h2s->h2c->st0 >= H2_CS_ERROR) {
+		cs->flags |= CS_FL_ERROR;
+		return 0;
+	}
+
 	/* htx will be enough to decide if we're using HTX or legacy */
 	htx = (h2s->h2c->proxy->options2 & PR_O2_USE_HTX) ? htx_from_buf(buf) : NULL;
 
@@ -5754,6 +5802,7 @@ static const struct mux_ops h2_ops = {
 	.used_streams = h2_used_streams,
 	.shutr = h2_shutr,
 	.shutw = h2_shutw,
+	.ctl = h2_ctl,
 	.show_fd = h2_show_fd,
 	.flags = MX_FL_CLEAN_ABRT,
 	.name = "H2",
