@@ -142,6 +142,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
 
             if(nst_cache_prebuild_key(ctx, s, msg) != NST_OK) {
+                ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 return 1;
             }
 
@@ -155,6 +156,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                 /* build key */
                 if(nst_cache_build_key(ctx, rule->key, s, msg) != NST_OK) {
+                    ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                     return 1;
                 }
 
@@ -167,6 +169,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                 /* stash key */
                 if(!nst_cache_stash_rule(ctx, rule)) {
+                    ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                     return 1;
                 }
 
