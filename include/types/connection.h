@@ -321,6 +321,12 @@ struct xprt_ops {
 	int (*unsubscribe)(struct connection *conn, int event_type, void *param); /* Unsubscribe to events */
 };
 
+enum mux_ctl_type {
+	MUX_STATUS, /* Expects an int as output, sets it to a combinaison of MUX_STATUS flags */
+};
+
+#define MUX_STATUS_READY (1 << 0)
+
 /* mux_ops describes the mux operations, which are to be performed at the
  * connection level after data are exchanged with the transport layer in order
  * to propagate them to streams. The <init> function will automatically be
@@ -349,6 +355,7 @@ struct mux_ops {
 	void (*destroy)(struct connection *conn); /* Let the mux know one of its users left, so it may have to disappear */
 	void (*reset)(struct connection *conn); /* Reset the mux, because we're re-trying to connect */
 	const struct cs_info *(*get_cs_info)(struct conn_stream *cs); /* Return info on the specified conn_stream or NULL if not defined */
+	int (*ctl)(struct connection *conn, enum mux_ctl_type mux_ctl, void *arg); /* Provides informations about the mux */
 	unsigned int flags;                           /* some flags characterizing the mux's capabilities (MX_FL_*) */
 	char name[8];                                 /* mux layer name, zero-terminated */
 };

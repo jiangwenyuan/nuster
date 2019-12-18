@@ -499,11 +499,52 @@ static int cli_parse_request(struct appctx *appctx)
 
 	appctx->io_handler = kw->io_handler;
 	appctx->io_release = kw->io_release;
-	/* kw->parse could set its own io_handler or ip_release handler */
-	if ((!kw->parse || kw->parse(args, payload, appctx, kw->private) == 0) && appctx->io_handler) {
-		appctx->st0 = CLI_ST_CALLBACK;
-	}
+
+	if (kw->parse && kw->parse(args, payload, appctx, kw->private) != 0)
+		goto fail;
+
+	/* kw->parse could set its own io_handler or io_release handler */
+	if (!appctx->io_handler)
+		goto fail;
+
+	appctx->st0 = CLI_ST_CALLBACK;
 	return 1;
+fail:
+	appctx->io_handler = NULL;
+	appctx->io_release = NULL;
+	return 1;
+}
+
+/* prepends then outputs the argument msg with a syslog-type severity depending on severity_output value */
+static int cli_output_msg(struct channel *chn, const char *msg, int severity, int severity_output)
+{
+	struct buffer *tmp;
+
+	if (likely(severity_output == CLI_SEVERITY_NONE))
+		return ci_putblk(chn, msg, strlen(msg));
+
+	tmp = get_trash_chunk();
+	chunk_reset(tmp);
+
+	if (severity < 0 || severity > 7) {
+		ha_warning("socket command feedback with invalid severity %d", severity);
+		chunk_printf(tmp, "[%d]: ", severity);
+	}
+	else {
+		switch (severity_output) {
+			case CLI_SEVERITY_NUMBER:
+				chunk_printf(tmp, "[%d]: ", severity);
+				break;
+			case CLI_SEVERITY_STRING:
+				chunk_printf(tmp, "[%s]: ", log_levels[severity]);
+				break;
+			default:
+				ha_warning("Unrecognized severity output %d", severity_output);
+		}
+	}
+	chunk_appendf(tmp, "%s", msg);
+
+	return ci_putblk(chn, tmp->area, strlen(tmp->area));
 }
 
 /* prepends then outputs the argument msg with a syslog-type severity depending on severity_output value */
@@ -2468,7 +2509,7 @@ int mworker_cli_proxy_new_listener(char *line)
 	int arg;
 	int cur_arg;
 
-	arg = 0;
+	arg = 1;
 	args[0] = line;
 
 	/* args is a bind configuration with spaces replaced by commas */
@@ -2478,12 +2519,12 @@ int mworker_cli_proxy_new_listener(char *line)
 			*line++ = '\0';
 			while (*line == ',')
 				line++;
-			args[++arg] = line;
+			args[arg++] = line;
 		}
 		line++;
 	}
 
-	args[++arg] = "\0";
+	args[arg] = "\0";
 
 	bind_conf = bind_conf_alloc(mworker_proxy, "master-socket", 0, "", xprt_get(XPRT_RAW));
 	if (!bind_conf)

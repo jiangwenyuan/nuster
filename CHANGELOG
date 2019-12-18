@@ -1,6 +1,47 @@
 ChangeLog :
 ===========
 
+2019/11/25 : 1.9.13
+    - MINOR: config: warn on presence of "\n" in header values/replacements
+    - BUG/MINOR: mux-h2: do not emit logs on backend connections
+    - MINOR: tcp: avoid confusion in time parsing init
+    - BUG/MINOR: cli: don't call the kw->io_release if kw->parse failed
+    - BUG/MAJOR: stream-int: Don't receive data from mux until SI_ST_EST is reached
+    - BUG/MINOR: spoe: fix off-by-one length in UUID format string
+    - MINOR: mux: Add a new method to get informations about a mux.
+    - BUG/MEDIUM: servers: Only set SF_SRV_REUSED if the connection if fully ready.
+    - BUG/MINOR: config: Update cookie domain warn to RFC6265
+    - BUG/MEDIUM: mux-h2: report no available stream on a connection having errors
+    - BUG/MEDIUM: mux-h2: immediately remove a failed connection from the idle list
+    - BUG/MEDIUM: mux-h2: immediately report connection errors on streams
+    - BUG/MEDIUM: mux-h1: Disable splicing for chunked messages
+    - BUG/MEDIUM: stream: Be sure to support splicing at the mux level to enable it
+    - MINOR: doc: http-reuse connection pool fix
+    - BUG/MEDIUM: stream: Be sure to release allocated captures for TCP streams
+    - BUG: dns: timeout resolve not applied for valid resolutions
+    - DOC: management: document reuse and connect counters in the CSV format
+    - DOC: management: document cache_hits and cache_lookups in the CSV format
+    - DOC: management: fix typo on "cache_lookups" stats output
+    - BUG/MINOR: queue/threads: make the queue unlinking atomic
+    - BUG/MEDIUM: Make sure we leave the session list in session_free().
+    - BUG/MEDIUM: listeners: always pause a listener on out-of-resource condition
+    - BUG/MINOR: log: limit the size of the startup-logs
+    - BUG/MEDIUM: filters: Don't call TCP callbacks for HTX streams
+    - BUG/MINOR: mux-h1: Don't set CS_FL_EOS on a read0 when receiving data to pipe
+    - BUG/MINOR: ssl: fix crt-list neg filter for openssl < 1.1.1
+    - BUILD/MINOR: ssl: fix compiler warning about useless statement
+    - BUG/MEDIUM: stream-int: Don't loose events on the CS when an EOS is reported
+    - BUG/MINOR: mux-h1: Fix tunnel mode detection on the response path
+    - BUG/MINOR: stream-int: Fix si_cs_recv() return value
+    - BUG/MINOR: cli: fix out of bounds in -S parser
+    - DOC: Add documentation about the use-service action
+    - MINOR: ist: add ist_find_ctl()
+    - BUG/MAJOR: h2: reject header values containing invalid chars
+    - BUG/MAJOR: h2: make header field name filtering stronger
+    - BUG/MAJOR: mux-h2: don't try to decode a response HEADERS frame in idle state
+    - SCRIPTS: create-release: show the correct origin name in suggested commands
+    - SCRIPTS: git-show-backports: add "-s" to proposed cherry-pick commands
+
 2019/10/24 : 1.9.12
     - BUG/MINOR: lua: Properly initialize the buffer's fields for string samples in hlua_lua2(smp|arg)
     - MINOR: mux-h2: add a per-connection list of blocked streams

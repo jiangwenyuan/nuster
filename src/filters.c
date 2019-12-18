@@ -1153,7 +1153,7 @@ flt_xfer_data(struct stream *s, struct channel *chn, unsigned int an_bit)
 	int ret = 1;
 
 	/* If there is no "data" filters, we do nothing */
-	if (!HAS_DATA_FILTERS(s, chn))
+	if (!HAS_DATA_FILTERS(s, chn) || IS_HTX_STRM(s))
 		goto end;
 
 	/* Be sure that the output is still opened. Else we stop the data

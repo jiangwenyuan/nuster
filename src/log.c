@@ -897,7 +897,8 @@ static void print_message(const char *label, const char *fmt, va_list argp)
 		  label, tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
 	memvprintf(&msg, fmt, argp);
 
-	if (global.mode & MODE_STARTING)
+	if (global.mode & MODE_STARTING &&
+	    (!startup_logs || strlen(startup_logs) + strlen(head) + strlen(msg) < global.tune.bufsize))
 		memprintf(&startup_logs, "%s%s%s", (startup_logs ? startup_logs : ""), head, msg);
 
 	fprintf(stderr, "%s%s", head, msg);
