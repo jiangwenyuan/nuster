@@ -1,5 +1,18 @@
 # nuster Changelog
 
+## 3.2.0.19 - 2019-12-18
+
+Upgrade to HAProxy v1.9.13
+
+### Fixed
+
+* Fix segfault when memory is full
+
+### Added
+
+* Last-Modified and ETAG
+* Conditional request handling
+
 ## 3.1.3.19 - 2019-11-16
 
 ### Fixed
