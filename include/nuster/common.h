@@ -149,7 +149,7 @@ struct nst_rule {
     int                      disk;          /* NST_DISK_* */
     int                      etag;          /* etag on|off */
     int                      last_modified; /* last_modified on|off */
-    int                      extend[2];     /* auto ttl extend */
+    int                      extend[3];     /* auto ttl extend */
 };
 
 struct nst_rule_stash {

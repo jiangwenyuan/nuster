@@ -93,12 +93,13 @@ struct nst_cache_entry {
     uint64_t                atime;
 
     /*
-     * access is splited into 3 parts:
-     * 0: ctime ~ expire - extend[0, 1] * ttl
-     * 1: expire - (extend[0] + extend[1]) * ttl ~ expire - extend[1] * ttl
-     * 2: expire - extend[1] * ttl ~ expire
+     * access is splited into 4 parts:
+     * 0: ctime ~ expire - extend[0 + 1 + 2] * ttl
+     * 1: expire - extend[0 + 1 + 2] * ttl ~ expire - extend[1 + 2] * ttl
+     * 2: expire - extend[1 + 2] * ttl ~ expire - extend[2] * ttl
+     * 3: expire - extend[2] * ttl ~ expire
     */
-    uint64_t                access[3];
+    uint64_t                access[4];
 
     struct nst_cache_entry *next;
 };
