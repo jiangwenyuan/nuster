@@ -236,6 +236,8 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
         return NULL;
     }
 
+    memset(entry, 0, sizeof(*entry));
+
     if(ctx->rule->disk != NST_DISK_ONLY) {
         data = nst_cache_data_new();
 
