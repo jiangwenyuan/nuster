@@ -100,6 +100,7 @@ struct nst_cache_entry {
      * 3: expire - extend[2] * ttl ~ expire
     */
     uint64_t                access[4];
+    int                     extended;
 
     struct nst_cache_entry *next;
 };
