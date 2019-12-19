@@ -845,7 +845,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
 /*
  * Check if valid cache exists
  */
-int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
+int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
     struct nst_cache_entry *entry = NULL;
     int ret = NST_CACHE_CTX_STATE_INIT;
 
@@ -889,7 +889,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, int mode) {
             ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
         }
     } else {
-        if(mode != NST_DISK_OFF) {
+        if(rule->disk != NST_DISK_OFF) {
             ctx->disk.file = NULL;
 
             if(nuster.cache->disk.loaded) {
