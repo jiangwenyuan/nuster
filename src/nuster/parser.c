@@ -892,7 +892,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
     int last_modified = -1;
 
-    int extend[3] = { -1 };
+    int extend[4] = { -1 };
 
     int cur_arg = 2;
 
@@ -1099,16 +1099,16 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
             cur_arg++;
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off|N1,N2], default off.",
-                        args[0], name);
+                memprintf(err, "'%s rule %s': `extend` expects "
+                        "[on|off|N1,N2,N3,N4], default off.", args[0], name);
 
                 goto out;
             }
 
             if(!strcmp(args[cur_arg], "on")) {
-                extend[0] = extend[1] = extend[2] = 33;
+                extend[0] = extend[1] = extend[2] = extend[3] = 33;
             } else if(!strcmp(args[cur_arg], "off")) {
-                extend[0] = extend[1] = extend[3] = 0;
+                extend[0] = extend[1] = extend[2] = extend[3] = 0;
             } else {
                 char *tmp = strdup(args[cur_arg]);
                 char *ptr = tmp;
@@ -1118,11 +1118,12 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
                 while(tmp != NULL) {
                     strsep(&ptr, ",");
-                    extend[i++ % 3] = strtol(tmp, &next, 10);
+                    extend[i++ % 4] = strtol(tmp, &next, 10);
 
                     if((next == tmp) || (*next != '\0')) {
-                        memprintf(err, "'%s %s': expects [on|off|N1,N2,N3],"
-                                "default off.", args[0], name);
+                        memprintf(err, "'%s rule %s': `extend` expects "
+                                "[on|off|N1,N2,N3,N4], default off.",
+                                args[0], name);
 
                         goto out;
                     }
@@ -1130,23 +1131,33 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
                     tmp = ptr;
                 }
 
-                if(i != 3) {
-                    memprintf(err, "'%s %s': expects [on|off|N1,N2,N3],ff "
-                            "default off.", args[0], name);
-
-                    goto out;
-                }
-
-                if(extend[0] < -1 || extend[1] < -1 || extend[2] < -1) {
-                    memprintf(err, "'%s %s': expects positive integer",
+                if(i != 4) {
+                    memprintf(err, "'%s rule %s': `extend` expects "
+                            "[on|off|N1,N2,N3,N4], default off.",
                             args[0], name);
 
                     goto out;
                 }
 
+                if(extend[0] < -1 || extend[1] < -1 || extend[2] < -1
+                        || extend[3] < -1) {
+
+                    memprintf(err, "'%s rule %s': `extend` expects positive "
+                            "integer", args[0], name);
+
+                    goto out;
+                }
+
                 if(extend[0] + extend[1] + extend[2] > 100) {
-                    memprintf(err, "'%s %s': N1 + N2 + N3 cannot be greater "
-                            "than 100", args[0], name);
+                    memprintf(err, "'%s rule %s': `extend`: N1 + N2 + N3 must "
+                            "be less than or equal to 100", args[0], name);
+
+                    goto out;
+                }
+
+                if(extend[3] <= 0 || extend[3] > 100) {
+                    memprintf(err, "'%s rule %s': `extend`: N4 must be between"
+                            " 0 and 100", args[0], name);
 
                     goto out;
                 }
@@ -1212,10 +1223,12 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
     if(extend[0] == -1) {
         rule->extend[0] = rule->extend[1] = 0;
+        rule->extend[2] = rule->extend[3] = 0;
     } else {
         rule->extend[0] = extend[0];
         rule->extend[1] = extend[1];
         rule->extend[2] = extend[2];
+        rule->extend[3] = extend[3];
     }
 
     rule->id   = -1;

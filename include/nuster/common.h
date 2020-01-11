@@ -149,7 +149,25 @@ struct nst_rule {
     int                      disk;          /* NST_DISK_* */
     int                      etag;          /* etag on|off */
     int                      last_modified; /* last_modified on|off */
-    int                      extend[3];     /* auto ttl extend */
+
+    /*
+     * auto ttl extend
+     *        ctime                   expire
+     *        |<-        ttl        ->|
+     * extend |  -  |  0  |  1  |  2  |  3  |
+     * access |  0  |  1  |  2  |  3  |
+     *
+     * access is splited into 4 parts:
+     * 0: ctime ~ expire - extend[0 + 1 + 2] * ttl
+     * 1: expire - extend[0 + 1 + 2] * ttl ~ expire - extend[1 + 2] * ttl
+     * 2: expire - extend[1 + 2] * ttl ~ expire - extend[2] * ttl
+     * 3: expire - extend[2] * ttl ~ expire
+     *
+     * Automatic ttl extend happens if:
+     * 1. access[3] >= access[2] >= access[1]
+     * 2. expire <= atime <= expire + extend[3] * ttl
+     */
+    int                      extend[4];
 };
 
 struct nst_rule_stash {
