@@ -883,6 +883,35 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
 
             entry->atime = get_current_timestamp();
 
+            if(entry->expire == 0) {
+                entry->access[0]++;
+            } else {
+                uint64_t stime, diff;
+                uint32_t ttl = *rule->ttl;
+                float pct;
+
+                stime = entry->expire * 1000 - ttl * entry->extended;
+                diff = entry->atime - stime;
+
+                pct = diff * 1.0 / ttl * 100;
+
+                if(pct < 100 - rule->extend[0] - rule->extend[1]
+                        - rule->extend[2]) {
+
+                    entry->access[0]++;
+                } else if(pct < 100 - rule->extend[1] - rule->extend[2]) {
+                    entry->access[1]++;
+                } else if(pct < 100 - rule->extend[2]) {
+                    entry->access[2]++;
+                } else {
+                    entry->access[3]++;
+                }
+            }
+
+            fprintf(stderr, "%d, %d, %d, %d,\n", entry->access[0],
+                    entry->access[1],entry->access[2],entry->access[3]);
+
+
             ret = NST_CACHE_CTX_STATE_HIT;
         }
 
