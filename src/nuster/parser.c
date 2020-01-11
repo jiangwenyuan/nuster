@@ -1215,6 +1215,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     } else {
         rule->extend[0] = extend[0];
         rule->extend[1] = extend[1];
+        rule->extend[2] = extend[2];
     }
 
     rule->id   = -1;
