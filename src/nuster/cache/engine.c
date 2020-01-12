@@ -910,10 +910,6 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
                 }
             }
 
-            fprintf(stderr, "%d, %d, %d, %d,\n", entry->access[0],
-                    entry->access[1],entry->access[2],entry->access[3]);
-
-
             ret = NST_CACHE_CTX_STATE_HIT;
         }
 
