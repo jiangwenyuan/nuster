@@ -312,10 +312,29 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
                 if(entry->state == NST_CACHE_ENTRY_STATE_VALID
                         && nst_cache_entry_expired(entry)) {
 
-                    entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
-                    entry->data->invalid = 1;
-                    entry->data          = NULL;
-                    entry->expire        = 0;
+                    uint64_t atime = get_current_timestamp();
+                    uint64_t max = entry->expire * 1000 + (*entry->rule->ttl)
+                        * 1000 * entry->rule->extend[3] / 100 ;
+
+                    if(atime <= max && entry->access[3] > entry->access[2]
+                            && entry->access[2] > entry->access[1]) {
+
+                        entry->expire    += (*entry->rule->ttl);
+
+                        entry->access[0] += entry->access[1];
+                        entry->access[0] += entry->access[2];
+                        entry->access[0] += entry->access[3];
+                        entry->access[1]  = 0;
+                        entry->access[2]  = 0;
+                        entry->access[3]  = 0;
+                        entry->extended  += 1;
+
+                    } else {
+                        entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
+                        entry->data->invalid = 1;
+                        entry->data          = NULL;
+                        entry->expire        = 0;
+                    }
 
                     return NULL;
                 }
