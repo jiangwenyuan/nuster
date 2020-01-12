@@ -30,13 +30,13 @@
 
 #include <nuster/common.h>
 
-#define NST_PERSIST_VERSION  3
+#define NST_PERSIST_VERSION  4
 
 /*
    Offset              Length(bytes)           Content
    0                   6                       NUSTER
-   6                   1                       Mode: NUSTER_DISK_*, 1, 2, 3
-   7                   1                       Version: 1
+   6                   1                       mode: NUSTER_DISK_*, 1, 2, 3
+   7                   1                       version
    8 * 1               8                       hash
    8 * 2               8                       expire time
    8 * 3               8                       cache length
@@ -46,17 +46,14 @@
    8 * 7               8                       path length
    8 * 8               8                       etag length
    8 * 9               8                       last-modified length
-   8 * 10              key_len                 key
-   8 * 11              host_len                host
-   8 * 12              path_len                path
-   8 * 13              etag_len                etag
-   8 * 14              last_modified_len       last_modified
-   meta_size
-   + key_len
-   + host_len
-   + path_len
-   + etag_len
-   + last_modified      cache_len       cache
+   8 * 10              8                       ttl: 4, extend: 4
+   8 * 11              40                      reserved
+   8 * 16              key_len                 key
+   + key_len           host_len                host
+   + host_len          path_len                path
+   + path_len          etag_len                etag
+   + etag_len          last_modified_len       last_modified
+   + last_modified_len cache_len               cache
  */
 
 #define NST_PERSIST_META_POS_HASH               8 * 1
@@ -68,10 +65,11 @@
 #define NST_PERSIST_META_POS_PATH_LEN           8 * 7
 #define NST_PERSIST_META_POS_ETAG_LEN           8 * 8
 #define NST_PERSIST_META_POS_LAST_MODIFIED_LEN  8 * 9
+#define NST_PERSIST_META_POS_TTL                8 * 10
 
 
-#define NST_PERSIST_META_SIZE                8 * 10
-#define NST_PERSIST_POS_KEY                  NST_PERSIST_META_SIZE
+#define NST_PERSIST_META_SIZE                   8 * 16
+#define NST_PERSIST_POS_KEY                     NST_PERSIST_META_SIZE
 
 enum {
     NST_PERSIST_APPLET_ERROR   = -1,
