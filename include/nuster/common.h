@@ -167,7 +167,7 @@ struct nst_rule {
      * 1. access[3] >= access[2] >= access[1]
      * 2. expire <= atime <= expire + extend[3] * ttl
      */
-    int                      extend[4];
+    uint8_t                  extend[4];
 };
 
 struct nst_rule_stash {

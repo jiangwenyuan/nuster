@@ -94,7 +94,7 @@ struct nst_cache_entry {
 
     /* For entries loaded from disk */
     uint32_t                ttl;
-    int                     extend[4];
+    uint8_t                 extend[4];
 
     /* see rule.extend */
     uint64_t                access[4];

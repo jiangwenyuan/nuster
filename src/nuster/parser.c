@@ -892,7 +892,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
     int last_modified = -1;
 
-    int extend[4] = { -1 };
+    uint8_t extend[4] = { -1 };
 
     int cur_arg = 2;
 
@@ -1090,7 +1090,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
         if(!strcmp(args[cur_arg], "extend")) {
 
-            if(extend[0] != -1) {
+            if(extend[0] != 0xFF) {
                 memprintf(err, "'%s %s': extend already specified.",
                         args[0], name);
 
@@ -1114,11 +1114,21 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
                 char *ptr = tmp;
                 char *next;
 
-                int i = 0;
+                int t, i = 0;
 
                 while(tmp != NULL) {
                     strsep(&ptr, ",");
-                    extend[i++ % 4] = strtol(tmp, &next, 10);
+                    t = strtol(tmp, &next, 10);
+
+                    if(t < 0 || t > 100) {
+                        memprintf(err, "'%s rule %s': `extend` expects "
+                                "positive integer between 0 and 100", args[0],
+                                name);
+
+                        goto out;
+                    }
+
+                    extend[i++ % 4] = t;
 
                     if((next == tmp) || (*next != '\0')) {
                         memprintf(err, "'%s rule %s': `extend` expects "
@@ -1135,15 +1145,6 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
                     memprintf(err, "'%s rule %s': `extend` expects "
                             "[on|off|N1,N2,N3,N4], default off.",
                             args[0], name);
-
-                    goto out;
-                }
-
-                if(extend[0] < -1 || extend[1] < -1 || extend[2] < -1
-                        || extend[3] < -1) {
-
-                    memprintf(err, "'%s rule %s': `extend` expects positive "
-                            "integer", args[0], name);
 
                     goto out;
                 }
@@ -1221,7 +1222,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
     rule->last_modified = last_modified == -1 ? NST_STATUS_OFF : last_modified;
 
-    if(extend[0] == -1) {
+    if(extend[0] == 0xFF) {
         rule->extend[0] = rule->extend[1] = 0;
         rule->extend[2] = rule->extend[3] = 0;
     } else {
