@@ -79,7 +79,6 @@ struct nst_cache_entry {
     struct buffer          *key;
     uint64_t                hash;
     struct nst_cache_data  *data;
-    uint64_t                expire;
     struct nst_str          host;
     struct nst_str          path;
     struct nst_rule        *rule;        /* rule */
@@ -89,11 +88,19 @@ struct nst_cache_entry {
     struct nst_str          etag;
     struct nst_str          last_modified;
 
+    uint64_t                expire;
     uint64_t                ctime;
     uint64_t                atime;
 
-    uint64_t                access[4];  /* see rule.extend */
-    int                     extended;   /* extended count  */
+    /* For entries loaded from disk */
+    uint32_t                ttl;
+    int                     extend[4];
+
+    /* see rule.extend */
+    uint64_t                access[4];
+
+    /* extended count  */
+    int                     extended;
 
     struct nst_cache_entry *next;
 };
