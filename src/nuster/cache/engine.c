@@ -1041,6 +1041,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
             && (ctx->rule->disk == NST_DISK_SYNC
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
+        uint64_t ttl_extend = *ctx->rule->ttl;
+
         ctx->disk.file = nst_cache_memory_alloc(
                 nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
@@ -1056,10 +1058,17 @@ void nst_cache_create(struct nst_cache_ctx *ctx) {
 
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
+        ttl_extend = ttl_extend << 32;
+        *( uint8_t *)(&ttl_extend)      = ctx->rule->extend[0];
+        *((uint8_t *)(&ttl_extend) + 1) = ctx->rule->extend[1];
+        *((uint8_t *)(&ttl_extend) + 2) = ctx->rule->extend[2];
+        *((uint8_t *)(&ttl_extend) + 3) = ctx->rule->extend[3];
+
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
                 ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data,
                 ctx->entry->host.len, ctx->entry->path.len,
-                ctx->entry->etag.len, ctx->entry->last_modified.len);
+                ctx->entry->etag.len, ctx->entry->last_modified.len,
+                ttl_extend);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
         nst_persist_write_host(&ctx->disk, &ctx->entry->host);
@@ -1257,6 +1266,7 @@ void nst_cache_persist_async() {
             struct nst_cache_element *element = entry->data->element;
             uint64_t cache_len = 0;
             struct persist disk;
+            uint64_t ttl_extend = entry->ttl;
 
             entry->file = nst_cache_memory_alloc(
                     nst_persist_path_file_len(global.nuster.cache.root) + 1);
@@ -1272,10 +1282,16 @@ void nst_cache_persist_async() {
 
             disk.fd = nst_persist_create(entry->file);
 
+            ttl_extend = ttl_extend << 32;
+            *( uint8_t *)(&ttl_extend)      = entry->extend[0];
+            *((uint8_t *)(&ttl_extend) + 1) = entry->extend[1];
+            *((uint8_t *)(&ttl_extend) + 2) = entry->extend[2];
+            *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
+
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->hash, entry->expire, 0, entry->header_len,
                     entry->key->data, entry->host.len, entry->path.len,
-                    entry->etag.len, entry->last_modified.len);
+                    entry->etag.len, entry->last_modified.len, ttl_extend);
 
             nst_persist_write_key(&disk, entry->key);
             nst_persist_write_host(&disk, &entry->host);

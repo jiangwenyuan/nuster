@@ -900,7 +900,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
                 &ctx->req.content_type);
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, ctx->hash,
-                0, 0, header->data, ctx->entry->key->data, 0, 0, 0, 0);
+                0, 0, header->data, ctx->entry->key->data, 0, 0, 0, 0, 0);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
 
@@ -1197,7 +1197,7 @@ void nst_nosql_persist_async() {
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->hash, entry->expire, 0, header->data,
-                    entry->key->data, 0, 0, 0, 0);
+                    entry->key->data, 0, 0, 0, 0, 0);
 
             nst_persist_write_key(&disk, entry->key);
 

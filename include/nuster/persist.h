@@ -65,7 +65,7 @@
 #define NST_PERSIST_META_POS_PATH_LEN           8 * 7
 #define NST_PERSIST_META_POS_ETAG_LEN           8 * 8
 #define NST_PERSIST_META_POS_LAST_MODIFIED_LEN  8 * 9
-#define NST_PERSIST_META_POS_TTL                8 * 10
+#define NST_PERSIST_META_POS_TTL_EXTEND         8 * 10
 
 
 #define NST_PERSIST_META_SIZE                   8 * 16
@@ -197,6 +197,14 @@ static inline uint64_t nst_persist_meta_get_last_modified_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_LAST_MODIFIED_LEN);
 }
 
+static inline void nst_persist_meta_set_ttl_extend(char *p, uint64_t v) {
+    *(uint64_t *)(p + NST_PERSIST_META_POS_TTL_EXTEND) = v;
+}
+
+static inline uint64_t nst_persist_meta_get_ttl_extend(char *p) {
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_TTL_EXTEND);
+}
+
 static inline int nst_persist_get_header_pos(char *p) {
     return (int)(NST_PERSIST_META_SIZE + nst_persist_meta_get_key_len(p)
             + nst_persist_meta_get_host_len(p)
@@ -209,7 +217,7 @@ static inline void
 nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
         uint64_t cache_len, uint64_t header_len, uint64_t key_len,
         uint64_t host_len, uint64_t path_len, uint64_t etag_len,
-        uint64_t last_modified_len) {
+        uint64_t last_modified_len, uint64_t ttl_extend) {
 
     memcpy(p, "NUSTER", 6);
     p[6] = mode;
@@ -224,6 +232,7 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_path_len(p, path_len);
     nst_persist_meta_set_etag_len(p, etag_len);
     nst_persist_meta_set_last_modified_len(p, last_modified_len);
+    nst_persist_meta_set_ttl_extend(p, ttl_extend);
 }
 
 int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
