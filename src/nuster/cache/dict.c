@@ -334,6 +334,11 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
                         entry->data->invalid = 1;
                         entry->data          = NULL;
                         entry->expire        = 0;
+                        entry->access[0]     = 0;
+                        entry->access[1]     = 0;
+                        entry->access[2]     = 0;
+                        entry->access[3]     = 0;
+                        entry->extended      = 0;
                     }
 
                     return NULL;
