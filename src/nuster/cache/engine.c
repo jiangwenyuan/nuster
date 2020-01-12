@@ -887,7 +887,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
                 entry->access[0]++;
             } else {
                 uint64_t stime, diff;
-                uint32_t ttl = *entry->rule->ttl;
+                uint32_t ttl = entry->ttl;
                 float pct;
 
                 stime = entry->ctime + ttl * entry->extended * 1000;
@@ -895,19 +895,20 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
 
                 pct = diff / 1000.0 / ttl * 100;
 
-                if(pct < 100 - entry->rule->extend[0] - entry->rule->extend[1]
-                        - entry->rule->extend[2]) {
+                if(pct < 100 - entry->extend[0] - entry->extend[1]
+                        - entry->extend[2]) {
 
                     entry->access[0]++;
-                } else if(pct < 100 - entry->rule->extend[1]
-                        - entry->rule->extend[2]) {
+                } else if(pct < 100 - entry->extend[1]
+                        - entry->extend[2]) {
 
                     entry->access[1]++;
-                } else if(pct < 100 - entry->rule->extend[2]) {
+                } else if(pct < 100 - entry->extend[2]) {
                     entry->access[2]++;
                 } else {
                     entry->access[3]++;
                 }
+
             }
 
             ret = NST_CACHE_CTX_STATE_HIT;

@@ -263,6 +263,12 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
     entry->file   = NULL;
+    entry->ttl    = *ctx->rule->ttl;
+
+    entry->extend[0] = ctx->rule->extend[0];
+    entry->extend[1] = ctx->rule->extend[1];
+    entry->extend[2] = ctx->rule->extend[2];
+    entry->extend[3] = ctx->rule->extend[3];
 
     entry->header_len = ctx->header_len;
 
@@ -313,13 +319,13 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
                         && nst_cache_entry_expired(entry)) {
 
                     uint64_t atime = get_current_timestamp();
-                    uint64_t max = entry->expire * 1000 + (*entry->rule->ttl)
-                        * 1000 * entry->rule->extend[3] / 100 ;
+                    uint64_t max = 1000 * entry->expire + 1000 * entry->ttl
+                        * entry->extend[3] / 100;
 
                     if(atime <= max && entry->access[3] > entry->access[2]
                             && entry->access[2] > entry->access[1]) {
 
-                        entry->expire    += (*entry->rule->ttl);
+                        entry->expire    += entry->ttl;
 
                         entry->access[0] += entry->access[1];
                         entry->access[0] += entry->access[2];
