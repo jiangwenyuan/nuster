@@ -883,7 +883,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
 
             entry->atime = get_current_timestamp();
 
-            if(entry->expire == 0) {
+            if(entry->expire == 0 || entry->extend[0] == 0xFF) {
                 entry->access[0]++;
             } else {
                 uint64_t stime, diff;
