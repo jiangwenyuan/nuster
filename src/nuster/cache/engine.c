@@ -881,8 +881,6 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
             ctx->res.last_modified.len  = entry->last_modified.len;
             ctx->res.last_modified.data = entry->last_modified.data;
 
-            entry->atime = get_current_timestamp();
-
             if(entry->expire == 0 || entry->extend[0] == 0xFF) {
                 entry->access[0]++;
             } else {
