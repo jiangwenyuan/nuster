@@ -373,6 +373,8 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key,
     int idx;
     uint64_t hash = nst_persist_meta_get_hash(meta);
 
+    uint64_t ttl_extend = nst_persist_meta_get_ttl_extend(meta);
+
     dict = _nst_cache_dict_rehashing()
         ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
 
@@ -410,6 +412,13 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key,
 
     entry->path.data  = path->data;
     entry->path.len   = path->len;
+
+    entry->extend[0] = *( uint8_t *)(&ttl_extend);
+    entry->extend[1] = *((uint8_t *)(&ttl_extend) + 1);
+    entry->extend[2] = *((uint8_t *)(&ttl_extend) + 2);
+    entry->extend[3] = *((uint8_t *)(&ttl_extend) + 3);
+
+    entry->ttl = ttl_extend >> 32;
 
     return NST_OK;
 }
