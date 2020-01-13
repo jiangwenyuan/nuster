@@ -322,7 +322,8 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
                     uint64_t max = 1000 * entry->expire + 1000 * entry->ttl
                         * entry->extend[3] / 100;
 
-                    if(atime <= max && entry->access[3] > entry->access[2]
+                    if(entry->extend[0] != 0xFF && atime <= max
+                            && entry->access[3] > entry->access[2]
                             && entry->access[2] > entry->access[1]) {
 
                         entry->expire    += entry->ttl;
