@@ -312,42 +312,43 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
                     && entry->key->data == key->data
                     && !memcmp(entry->key->area, key->area, key->data)) {
 
+                int expired = nst_cache_entry_expired(entry);
+
+                uint64_t max = 1000 * entry->expire + 1000 * entry->ttl
+                    * entry->extend[3] / 100;
+
                 entry->atime = get_current_timestamp();
+
+                if(expired && entry->extend[0] != 0xFF && entry->atime <= max
+                        && entry->access[3] > entry->access[2]
+                        && entry->access[2] > entry->access[1]) {
+
+                    entry->expire    += entry->ttl;
+
+                    entry->access[0] += entry->access[1];
+                    entry->access[0] += entry->access[2];
+                    entry->access[0] += entry->access[3];
+                    entry->access[1]  = 0;
+                    entry->access[2]  = 0;
+                    entry->access[3]  = 0;
+                    entry->extended  += 1;
+
+                    expired = 0;
+                }
 
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */
-                if(entry->state == NST_CACHE_ENTRY_STATE_VALID
-                        && nst_cache_entry_expired(entry)) {
-
-                    uint64_t max = 1000 * entry->expire + 1000 * entry->ttl
-                        * entry->extend[3] / 100;
-
-                    if(entry->extend[0] != 0xFF && entry->atime <= max
-                            && entry->access[3] > entry->access[2]
-                            && entry->access[2] > entry->access[1]) {
-
-                        entry->expire    += entry->ttl;
-
-                        entry->access[0] += entry->access[1];
-                        entry->access[0] += entry->access[2];
-                        entry->access[0] += entry->access[3];
-                        entry->access[1]  = 0;
-                        entry->access[2]  = 0;
-                        entry->access[3]  = 0;
-                        entry->extended  += 1;
-
-                    } else {
-                        entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
-                        entry->data->invalid = 1;
-                        entry->data          = NULL;
-                        entry->expire        = 0;
-                        entry->access[0]     = 0;
-                        entry->access[1]     = 0;
-                        entry->access[2]     = 0;
-                        entry->access[3]     = 0;
-                        entry->extended      = 0;
-                    }
+                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && expired) {
+                    entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
+                    entry->data->invalid = 1;
+                    entry->data          = NULL;
+                    entry->expire        = 0;
+                    entry->access[0]     = 0;
+                    entry->access[1]     = 0;
+                    entry->access[2]     = 0;
+                    entry->access[3]     = 0;
+                    entry->extended      = 0;
 
                     return NULL;
                 }
