@@ -841,6 +841,34 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     return key;
 }
 
+static void _nst_cache_record_access(struct nst_cache_entry *entry) {
+    if(entry->expire == 0 || entry->extend[0] == 0xFF) {
+        entry->access[0]++;
+    } else {
+        uint64_t stime, diff;
+        uint32_t ttl = entry->ttl;
+        float pct;
+
+        stime = entry->ctime + ttl * entry->extended * 1000;
+        diff = entry->atime - stime;
+
+        pct = diff / 1000.0 / ttl * 100;
+
+        if(pct < 100 - entry->extend[0] - entry->extend[1] - entry->extend[2]) {
+            entry->access[0]++;
+        } else if(pct < 100 - entry->extend[1] - entry->extend[2]) {
+            entry->access[1]++;
+        } else if(pct < 100 - entry->extend[2]) {
+            entry->access[2]++;
+        } else {
+            entry->access[3]++;
+        }
+    }
+
+    fprintf(stderr, "%d, %d, %d, %d,\n", entry->access[0],
+            entry->access[1],entry->access[2],entry->access[3]);
+}
+
 /*
  * Check if valid cache exists
  */
@@ -880,33 +908,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
             ctx->res.last_modified.len  = entry->last_modified.len;
             ctx->res.last_modified.data = entry->last_modified.data;
 
-            if(entry->expire == 0 || entry->extend[0] == 0xFF) {
-                entry->access[0]++;
-            } else {
-                uint64_t stime, diff;
-                uint32_t ttl = entry->ttl;
-                float pct;
-
-                stime = entry->ctime + ttl * entry->extended * 1000;
-                diff = entry->atime - stime;
-
-                pct = diff / 1000.0 / ttl * 100;
-
-                if(pct < 100 - entry->extend[0] - entry->extend[1]
-                        - entry->extend[2]) {
-
-                    entry->access[0]++;
-                } else if(pct < 100 - entry->extend[1]
-                        - entry->extend[2]) {
-
-                    entry->access[1]++;
-                } else if(pct < 100 - entry->extend[2]) {
-                    entry->access[2]++;
-                } else {
-                    entry->access[3]++;
-                }
-
-            }
+            _nst_cache_record_access(entry);
 
             ret = NST_CACHE_CTX_STATE_HIT;
         }
@@ -934,7 +936,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
         if(ctx->disk.file) {
 
             if(nst_persist_valid(&ctx->disk, ctx->key, ctx->hash) == NST_OK) {
-
+                _nst_cache_record_access(entry);
                 ret = NST_CACHE_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_CACHE_CTX_STATE_INIT;
@@ -949,6 +951,8 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
 
                 if(nst_persist_exists(global.nuster.cache.root, &ctx->disk,
                             ctx->key, ctx->hash) == NST_OK) {
+
+                    _nst_cache_record_access(entry);
 
                     ret = NST_CACHE_CTX_STATE_HIT_DISK;
                 } else {
