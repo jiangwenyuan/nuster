@@ -145,23 +145,22 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 break;
             }
 
-            if(ret == 0) {
-                close(fd);
-                appctx->st0 = NST_PERSIST_APPLET_DONE;
+            if(ret > 0) {
+                ret = nst_ci_send(res, ret);
+
+                if(ret >= 0) {
+                    appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
+                    appctx->ctx.nuster.cache_disk_engine.offset += ret;
+                } else if(ret == -2) {
+                    appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                    si_shutr(si);
+                    res->flags |= CF_READ_NULL;
+                }
                 break;
             }
 
-            ret = nst_ci_send(res, ret);
-
-            if(ret >= 0) {
-                appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
-                appctx->ctx.nuster.cache_disk_engine.offset += ret;
-            } else if(ret == -2) {
-                appctx->st0 = NST_PERSIST_APPLET_ERROR;
-                si_shutr(si);
-                res->flags |= CF_READ_NULL;
-            }
-            break;
+            close(fd);
+            appctx->st0 = NST_PERSIST_APPLET_DONE;
         case NST_PERSIST_APPLET_DONE:
             co_skip(si_oc(si), co_data(si_oc(si)));
             si_shutr(si);
