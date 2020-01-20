@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 3.2.1.19 - 2020-01-20
+
+### Fixed
+
+* Fix cache.hit not updating in disk only mode
+
 ## 3.2.0.19 - 2019-12-18
 
 Upgrade to HAProxy v1.9.13
