@@ -865,8 +865,6 @@ static void _nst_cache_record_access(struct nst_cache_entry *entry) {
         }
     }
 
-    fprintf(stderr, "%d, %d, %d, %d,\n", entry->access[0],
-            entry->access[1],entry->access[2],entry->access[3]);
 }
 
 /*
