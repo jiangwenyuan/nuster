@@ -320,5 +320,6 @@ int nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash);
 int nst_persist_purge_by_key(char *root, struct persist *disk,
         struct buffer *key, uint64_t hash);
 int nst_persist_purge_by_path(char *path);
+void nst_persist_update_expire(char *file, uint64_t expire);
 
 #endif /* _NUSTER_PERSIST_H */

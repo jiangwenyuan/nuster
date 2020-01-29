@@ -333,6 +333,10 @@ struct nst_cache_entry *nst_cache_dict_get(struct buffer *key, uint64_t hash) {
                     entry->access[3]  = 0;
                     entry->extended  += 1;
 
+                    if(entry->file) {
+                        nst_persist_update_expire(entry->file, entry->expire);
+                    }
+
                     expired = 0;
                 }
 

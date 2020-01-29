@@ -952,8 +952,6 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
                 if(nst_persist_exists(global.nuster.cache.root, &ctx->disk,
                             ctx->key, ctx->hash) == NST_OK) {
 
-                    _nst_cache_record_access(entry);
-
                     ret = NST_CACHE_CTX_STATE_HIT_DISK;
                 } else {
                     nst_cache_memory_free(ctx->disk.file);

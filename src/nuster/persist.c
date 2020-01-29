@@ -399,3 +399,19 @@ int nst_persist_purge_by_path(char *path) {
     }
 }
 
+void nst_persist_update_expire(char *file, uint64_t expire) {
+    int fd;
+    int ret;
+    char meta[NST_PERSIST_META_SIZE];
+
+    fd = open(file, O_WRONLY);
+
+    if(fd == -1) {
+        return;
+    }
+
+    pwrite(fd, &expire, 8, NST_PERSIST_META_POS_EXPIRE);
+
+    close(fd);
+}
+
