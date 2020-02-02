@@ -16,6 +16,8 @@
 #include <proto/stream_interface.h>
 #include <proto/acl.h>
 #include <proto/proxy.h>
+#include <proto/http_htx.h>
+#include <common/htx.h>
 
 #ifdef USE_OPENSSL
 #include <proto/ssl_sock.h>
@@ -31,7 +33,7 @@
 /*
  * The cache applet acts like the backend to send cached http data
  */
-static void nst_cache_engine_handler(struct appctx *appctx) {
+static void nst_cache_engine_handler1(struct appctx *appctx) {
     struct nst_cache_element *element = NULL;
     struct stream_interface *si       = appctx->owner;
     struct channel *res               = si_ic(si);
@@ -56,13 +58,13 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
 
     if(appctx->ctx.nuster.cache_engine.element) {
         /*
-        if(appctx->ctx.nuster.cache_engine.element
-        == appctx->ctx.nuster.cache_engine.data->element) {
-            s->res.analysers = 0;
-            s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE
-            | AN_RES_HTTP_XFER_BODY);
-        }
-        */
+           if(appctx->ctx.nuster.cache_engine.element
+           == appctx->ctx.nuster.cache_engine.data->element) {
+           s->res.analysers = 0;
+           s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE
+           | AN_RES_HTTP_XFER_BODY);
+           }
+           */
         element = appctx->ctx.nuster.cache_engine.element;
 
         ret = ci_putblk(res, element->msg.data, element->msg.len);
@@ -82,6 +84,149 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
         appctx->ctx.nuster.cache_engine.data->clients--;
     }
 
+}
+
+static void nst_cache_engine_handler2(struct appctx *appctx) {
+    struct stream_interface *si = appctx->owner;
+    struct channel *req = si_oc(si);
+    struct channel *res = si_ic(si);
+    struct htx *req_htx, *res_htx;
+    struct buffer *errmsg;
+    size_t total = 0;
+    struct nst_cache_element *element = NULL;
+
+    res_htx = htxbuf(&res->buf);
+    total = res_htx->data;
+
+    if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
+        appctx->ctx.nuster.cache_engine.data->clients--;
+        goto err;
+    }
+
+    /* Check if the input buffer is avalaible. */
+    if (!b_size(&res->buf)) {
+        si_rx_room_blk(si);
+        goto err;
+    }
+
+    if (res->flags & (CF_SHUTW|CF_SHUTR|CF_SHUTW_NOW)) {
+        appctx->ctx.nuster.cache_engine.element = NULL;
+    }
+
+    if(appctx->ctx.nuster.cache_engine.element) {
+        /*
+           if(appctx->ctx.nuster.cache_engine.element
+           == appctx->ctx.nuster.cache_engine.data->element) {
+           s->res.analysers = 0;
+           s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE
+           | AN_RES_HTTP_XFER_BODY);
+           }
+           */
+        element = appctx->ctx.nuster.cache_engine.element;
+
+        if(appctx->st0 == 0) {
+            while(element) {
+                struct htx_blk *blk;
+                char *ptr;
+                uint32_t blksz, sz, info;
+                enum htx_blk_type type;
+
+                struct nst_cache_element *tmp = element;
+                element                       = element->next;
+
+                info = tmp->msg.len;
+                type = (info >> 28);
+                blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
+                        ? (info & 0xff) + ((info >> 8) & 0xfffff)
+                        : info & 0xfffffff);
+                blk = htx_add_blk(res_htx, type, blksz);
+
+                if (!blk) {
+                    si_rx_room_blk(si);
+                    goto err;
+                }
+
+                blk->info = info;
+                ptr = htx_get_blk_ptr(res_htx, blk);
+                sz = htx_get_blksz(blk);
+                memcpy(ptr, (const char *)tmp->msg.data, sz);
+
+                if(type == HTX_BLK_EOH) {
+                    appctx->st0 = 1;
+                    appctx->ctx.nuster.cache_engine.element = element;
+                    total = res_htx->data - total;
+                    channel_add_input(res, total);
+                    htx_to_buf(res_htx, &res->buf);
+                    break;
+                }
+            }
+        }
+
+        if(appctx->st0) {
+            struct htx_blk *blk;
+            char *ptr;
+            uint32_t blksz, sz;
+            uint32_t info = element->msg.len;
+            enum htx_blk_type type = (info >> 28);
+
+            blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
+                    ? (info & 0xff) + ((info >> 8) & 0xfffff)
+                    : info & 0xfffffff);
+            blk = htx_add_blk(res_htx, type, blksz);
+
+            if (!blk) {
+                si_rx_room_blk(si);
+                return;
+            }
+
+            blk->info = info;
+            ptr = htx_get_blk_ptr(res_htx, blk);
+            sz = htx_get_blksz(blk);
+            memcpy(ptr, (const char *)element->msg.data, sz);
+
+            total = res_htx->data - total;
+            channel_add_input(res, res_htx->data);
+            htx_to_buf(res_htx, &res->buf);
+            appctx->ctx.nuster.cache_engine.element = element->next;
+        }
+    } else {
+        appctx->ctx.nuster.cache_engine.data->clients--;
+
+        if (!(res->flags & CF_SHUTR) ) {
+            res->flags |= CF_READ_NULL;
+            si_shutr(si);
+        }
+
+        /* eat the whole request */
+        if (co_data(req)) {
+            req_htx = htx_from_buf(&req->buf);
+            co_htx_skip(req, req_htx, co_data(req));
+            htx_to_buf(req_htx, &req->buf);
+        }
+    }
+
+    return;
+
+err:
+    /* Sent and HTTP error 500 */
+    b_reset(&res->buf);
+    errmsg = &htx_err_chunks[HTTP_ERR_500];
+    res->buf.data = b_data(errmsg);
+    memcpy(res->buf.area, b_head(errmsg), b_data(errmsg));
+    res_htx = htx_from_buf(&res->buf);
+
+    total = 0;
+}
+
+static void nst_cache_engine_handler(struct appctx *appctx) {
+    struct stream_interface *si = appctx->owner;
+    struct stream *s = si_strm(si);
+
+    if (IS_HTX_STRM(s)) {
+        return nst_cache_engine_handler2(appctx);
+    } else {
+        return nst_cache_engine_handler1(appctx);
+    }
 }
 
 /*
@@ -294,6 +439,49 @@ static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg,
     return element;
 }
 
+int _nst_cache_data_append2(struct nst_cache_ctx *ctx, struct http_msg *msg,
+        unsigned int offset, long msg_len) {
+
+    int pos;
+    struct htx *htx = htxbuf(&msg->chn->buf);
+
+    for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+        struct htx_blk *blk  = htx_get_blk(htx, pos);
+        uint32_t        sz   = htx_get_blksz(blk);
+        char *data;
+
+        struct nst_cache_element *element = nst_cache_memory_alloc(sizeof(*element));
+
+        if(!element) {
+            goto err;
+        }
+
+        data = nst_cache_memory_alloc(sz);
+
+        if(!data) {
+            goto err;
+        }
+
+        memcpy(data, htx_get_blk_ptr(htx, blk), sz);
+
+        element->msg.data = data;
+        element->msg.len = blk->info;
+
+        if(ctx->element) {
+            ctx->element->next = element;
+        } else {
+            ctx->data->element = element;
+        }
+
+        ctx->element = element;
+    }
+
+    return NST_OK;
+
+err:
+
+    return NST_ERR;
+}
 
 static int _nst_cache_data_invalid(struct nst_cache_data *data) {
 
@@ -610,6 +798,102 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     return NST_OK;
 }
 
+int nst_cache_prebuild_key2(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+
+    struct htx *htx = htxbuf(&s->req.buf);
+    struct http_hdr_ctx hdr2 = { .blk = NULL };
+
+    char *uri_begin, *uri_end;
+    struct htx_sl *sl;
+    struct ist uri;
+    char *ptr;
+
+    ctx->req.scheme = SCH_HTTP;
+
+#ifdef USE_OPENSSL
+    if(s->sess->listener->bind_conf->is_ssl) {
+        ctx->req.scheme = SCH_HTTPS;
+    }
+#endif
+
+    ctx->req.host.data = NULL;
+    ctx->req.host.len  = 0;
+
+    if(http_find_header(htx, ist("Host"), &hdr2, 0)) {
+        ctx->req.host.data = nst_cache_memory_alloc(hdr2.value.len);
+
+        if(!ctx->req.host.data) {
+            return NST_ERR;
+        }
+
+        ctx->req.host.len  = hdr2.value.len;
+        memcpy(ctx->req.host.data, hdr2.value.ptr, hdr2.value.len);
+    }
+
+    sl = http_get_stline(htx);
+    uri = htx_sl_req_uri(sl);
+
+    if (!uri.len || *uri.ptr != '/') {
+        return NST_ERR;
+    }
+
+    uri_begin = uri.ptr;
+    uri_end   = uri.ptr + uri.len;
+
+    ctx->req.path.data = NULL;
+    ctx->req.path.len  = 0;
+    ctx->req.uri.data  = NULL;
+    ctx->req.uri.len   = 0;
+
+    ptr = uri_begin;
+
+    while(ptr < uri_end && *ptr != '?') {
+        ptr++;
+    }
+
+    ctx->req.path.len = ptr - uri_begin;
+    ctx->req.uri.data = uri_begin;
+    ctx->req.uri.len  = uri.len;
+
+    /* extra 1 char as required by regex_exec_match2 */
+    ctx->req.path.data = nst_cache_memory_alloc(ctx->req.path.len + 1);
+
+    if(!ctx->req.path.data) {
+        return NST_ERR;
+    }
+
+    memcpy(ctx->req.path.data, uri_begin, ctx->req.path.len);
+
+    ctx->req.query.data = NULL;
+    ctx->req.query.len  = 0;
+    ctx->req.delimiter  = 0;
+
+    if(ctx->req.uri.data) {
+        ctx->req.query.data = memchr(ctx->req.uri.data, '?',
+                uri_end - ctx->req.uri.data);
+
+        if(ctx->req.query.data) {
+            ctx->req.query.data++;
+            ctx->req.query.len = uri_end - ctx->req.query.data;
+
+            if(ctx->req.query.len) {
+                ctx->req.delimiter = 1;
+            }
+        }
+    }
+
+    ctx->req.cookie.data = NULL;
+    ctx->req.cookie.len  = 0;
+
+    if(http_find_header(htx, ist("Cookie"), &hdr2, 1)) {
+        ctx->req.cookie.data = hdr2.value.ptr;
+        ctx->req.cookie.len  = hdr2.value.len;
+    }
+
+    return NST_OK;
+}
+
 int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s, struct http_msg *msg) {
 
@@ -734,6 +1018,187 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                 ret = ret == NST_OK && nst_cache_key_advance(ctx->key,
                         hdr.idx == 0 ? 2 : 1);
 
+                break;
+            case NST_RULE_KEY_COOKIE:
+                nst_debug("cookie_%s.", ck->data);
+
+                if(ctx->req.cookie.data) {
+                    char *v = NULL;
+                    size_t v_l = 0;
+
+                    if(http_extract_cookie_value(ctx->req.cookie.data,
+                                ctx->req.cookie.data + ctx->req.cookie.len,
+                                ck->data, strlen(ck->data), 1, &v, &v_l)) {
+
+                        ret = nst_cache_key_append(ctx->key, v, v_l);
+                        break;
+                    }
+
+                }
+
+                ret = nst_cache_key_advance(ctx->key, 2);
+                break;
+            case NST_RULE_KEY_BODY:
+                nst_debug("body.");
+
+                if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
+
+                    if((s->be->options & PR_O_WREQ_BODY)
+                            && ci_data(msg->chn) - msg->sov > 0) {
+
+                        ret = nst_cache_key_append(ctx->key,
+                                ci_head(msg->chn) + msg->sov,
+                                ci_data(msg->chn) - msg->sov);
+
+                    } else {
+                        ret = nst_cache_key_advance(ctx->key, 2);
+                    }
+                }
+                break;
+            default:
+                ret = NST_ERR;
+                break;
+        }
+
+        if(ret != NST_OK) {
+            return NST_ERR;
+        }
+    }
+
+    nst_debug("\n");
+    return NST_OK;
+}
+
+int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
+        struct stream *s, struct http_msg *msg) {
+
+    struct http_txn *txn = s->txn;
+    struct hdr_ctx hdr;
+    struct nst_rule_key *ck = NULL;
+
+    ctx->key = nst_cache_key_init();
+
+    if(!ctx->key) {
+        return NST_ERR;
+    }
+
+    nst_debug("[nuster][cache] Calculate key: ");
+
+    while((ck = *pck++)) {
+        int ret = NST_OK;
+
+        switch(ck->type) {
+            case NST_RULE_KEY_METHOD:
+                nst_debug("method.");
+                ret = nst_cache_key_append(ctx->key,
+                        http_known_methods[txn->meth].ptr,
+                        http_known_methods[txn->meth].len);
+
+                break;
+            case NST_RULE_KEY_SCHEME:
+                nst_debug("scheme.");
+                ret = nst_cache_key_append(ctx->key,
+                        ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
+                        ctx->req.scheme == SCH_HTTPS ? 5 : 4);
+
+                break;
+            case NST_RULE_KEY_HOST:
+                nst_debug("host.");
+
+                if(ctx->req.host.data) {
+                    ret = nst_cache_key_append(ctx->key, ctx->req.host.data,
+                            ctx->req.host.len);
+                } else {
+                    ret = nst_cache_key_advance(ctx->key, 2);
+                }
+
+                break;
+            case NST_RULE_KEY_URI:
+                nst_debug("uri.");
+
+                if(ctx->req.uri.data) {
+                    ret = nst_cache_key_append(ctx->key, ctx->req.uri.data,
+                            ctx->req.uri.len);
+
+                } else {
+                    ret = nst_cache_key_advance(ctx->key, 2);
+                }
+
+                break;
+            case NST_RULE_KEY_PATH:
+                nst_debug("path.");
+
+                if(ctx->req.path.data) {
+                    ret = nst_cache_key_append(ctx->key, ctx->req.path.data,
+                            ctx->req.path.len);
+
+                } else {
+                    ret = nst_cache_key_advance(ctx->key, 2);
+                }
+
+                break;
+            case NST_RULE_KEY_DELIMITER:
+                nst_debug("delimiter.");
+
+                if(ctx->req.delimiter) {
+                    ret = nst_cache_key_append(ctx->key, "?", 1);
+                } else {
+                    ret = nst_cache_key_advance(ctx->key, 2);
+                }
+
+                break;
+            case NST_RULE_KEY_QUERY:
+                nst_debug("query.");
+
+                if(ctx->req.query.data && ctx->req.query.len) {
+                    ret = nst_cache_key_append(ctx->key, ctx->req.query.data,
+                            ctx->req.query.len);
+
+                } else {
+                    ret = nst_cache_key_advance(ctx->key, 2);
+                }
+
+                break;
+            case NST_RULE_KEY_PARAM:
+                nst_debug("param_%s.", ck->data);
+
+                if(ctx->req.query.data && ctx->req.query.len) {
+                    char *v = NULL;
+                    int v_l = 0;
+
+                    if(nst_req_find_param(ctx->req.query.data,
+                                ctx->req.query.data + ctx->req.query.len,
+                                ck->data, &v, &v_l) == NST_OK) {
+
+                        ret = nst_cache_key_append(ctx->key, v, v_l);
+                        break;
+                    }
+
+                }
+
+                ret = nst_cache_key_advance(ctx->key, 2);
+                break;
+            case NST_RULE_KEY_HEADER:
+                {
+                    struct htx *htx = htxbuf(&s->req.buf);
+                    struct http_hdr_ctx hdr2 = { .blk = NULL };
+                    struct ist h = {
+                        .ptr = ck->data,
+                        .len = strlen(ck->data),
+                    };
+
+                    hdr.idx = 0;
+                    nst_debug("header_%s.", ck->data);
+
+                    while (http_find_header(htx, h, &hdr2, 0)) {
+                        ret = nst_cache_key_append(ctx->key, hdr2.value.ptr,
+                                hdr2.value.len);
+                    }
+
+                    ret = ret == NST_OK && nst_cache_key_advance(ctx->key,
+                            hdr.idx == 0 ? 2 : 1);
+
+                }
                 break;
             case NST_RULE_KEY_COOKIE:
                 nst_debug("cookie_%s.", ck->data);
@@ -1119,6 +1584,47 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
                 ctx->cache_len += element->msg.len;
             }
+
+        } else {
+            ctx->full = 1;
+
+            return NST_ERR;
+        }
+    }
+
+    return NST_OK;
+}
+
+int nst_cache_update2(struct nst_cache_ctx *ctx, struct http_msg *msg,
+        unsigned int offset, unsigned int msg_len) {
+
+    if(ctx->rule->disk == NST_DISK_ONLY)  {
+        char *data = b_orig(&msg->chn->buf);
+        char *p    = ci_head(msg->chn);
+        int size   = msg->chn->buf.size;
+
+        if(p - data + msg_len > size) {
+            int right = data + size - p;
+            int left  = msg_len - right;
+
+            nst_persist_write(&ctx->disk, p, right);
+            nst_persist_write(&ctx->disk, data, left);
+        } else {
+            nst_persist_write(&ctx->disk, p, msg_len);
+        }
+        ctx->cache_len += msg_len;
+    } else {
+
+        int ret = _nst_cache_data_append2(ctx, msg, offset, msg_len);
+
+        if(ret == NST_OK) {
+
+            //if(ctx->rule->disk == NST_DISK_SYNC) {
+            //    nst_persist_write(&ctx->disk, element->msg.data,
+            //            element->msg.len);
+
+            //    ctx->cache_len += element->msg.len;
+            //}
 
         } else {
             ctx->full = 1;
