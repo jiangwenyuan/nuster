@@ -416,12 +416,13 @@ int _nst_cache_data_append2(struct nst_cache_ctx *ctx, struct http_msg *msg,
     struct htx *htx = htxbuf(&msg->chn->buf);
 
     for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-        struct htx_blk *blk  = htx_get_blk(htx, pos);
-        enum htx_blk_type type = htx_get_blk_type(blk);
-        uint32_t        sz   = htx_get_blksz(blk);
+        struct htx_blk *blk = htx_get_blk(htx, pos);
+        uint32_t        sz  = htx_get_blksz(blk);
+
+        struct nst_cache_element *element;
         char *data;
 
-        struct nst_cache_element *element = nst_cache_memory_alloc(sizeof(*element));
+        element = nst_cache_memory_alloc(sizeof(*element));
 
         if(!element) {
             goto err;
@@ -436,7 +437,7 @@ int _nst_cache_data_append2(struct nst_cache_ctx *ctx, struct http_msg *msg,
         memcpy(data, htx_get_blk_ptr(htx, blk), sz);
 
         element->msg.data = data;
-        element->msg.len = blk->info;
+        element->msg.len  = blk->info;
 
         if(ctx->element) {
             ctx->element->next = element;
