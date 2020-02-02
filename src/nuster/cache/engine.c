@@ -86,14 +86,42 @@ static void nst_cache_engine_handler1(struct appctx *appctx) {
 
 }
 
+static int _nst_cache_element_to_htx(struct nst_cache_element *element,
+        struct htx *htx) {
+
+    struct htx_blk *blk;
+    char *ptr;
+    uint32_t blksz, sz, info;
+    enum htx_blk_type type;
+
+    info = element->msg.len;
+    type = (info >> 28);
+    blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
+            ? (info & 0xff) + ((info >> 8) & 0xfffff)
+            : info & 0xfffffff);
+
+    blk = htx_add_blk(htx, type, blksz);
+
+    if(!blk) {
+        return NST_ERR;
+    }
+
+    blk->info = info;
+    ptr = htx_get_blk_ptr(htx, blk);
+    sz = htx_get_blksz(blk);
+    memcpy(ptr, element->msg.data, sz);
+
+    return NST_OK;
+}
+
 static void nst_cache_engine_handler2(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *req = si_oc(si);
     struct channel *res = si_ic(si);
     struct htx *req_htx, *res_htx;
     struct buffer *errmsg;
-    size_t total = 0;
     struct nst_cache_element *element = NULL;
+    int total = 0;
 
     res_htx = htxbuf(&res->buf);
     total = res_htx->data;
@@ -114,81 +142,18 @@ static void nst_cache_engine_handler2(struct appctx *appctx) {
     }
 
     if(appctx->ctx.nuster.cache_engine.element) {
-        /*
-           if(appctx->ctx.nuster.cache_engine.element
-           == appctx->ctx.nuster.cache_engine.data->element) {
-           s->res.analysers = 0;
-           s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE
-           | AN_RES_HTTP_XFER_BODY);
-           }
-           */
         element = appctx->ctx.nuster.cache_engine.element;
 
-        if(appctx->st0 == 0) {
-            while(element) {
-                struct htx_blk *blk;
-                char *ptr;
-                uint32_t blksz, sz, info;
-                enum htx_blk_type type;
-
-                struct nst_cache_element *tmp = element;
-                element                       = element->next;
-
-                info = tmp->msg.len;
-                type = (info >> 28);
-                blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
-                        ? (info & 0xff) + ((info >> 8) & 0xfffff)
-                        : info & 0xfffffff);
-                blk = htx_add_blk(res_htx, type, blksz);
-
-                if (!blk) {
-                    si_rx_room_blk(si);
-                    goto err;
-                }
-
-                blk->info = info;
-                ptr = htx_get_blk_ptr(res_htx, blk);
-                sz = htx_get_blksz(blk);
-                memcpy(ptr, (const char *)tmp->msg.data, sz);
-
-                if(type == HTX_BLK_EOH) {
-                    appctx->st0 = 1;
-                    appctx->ctx.nuster.cache_engine.element = element;
-                    total = res_htx->data - total;
-                    channel_add_input(res, total);
-                    htx_to_buf(res_htx, &res->buf);
-                    break;
-                }
-            }
-        }
-
-        if(appctx->st0) {
-            struct htx_blk *blk;
-            char *ptr;
-            uint32_t blksz, sz;
-            uint32_t info = element->msg.len;
-            enum htx_blk_type type = (info >> 28);
-
-            blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
-                    ? (info & 0xff) + ((info >> 8) & 0xfffff)
-                    : info & 0xfffffff);
-            blk = htx_add_blk(res_htx, type, blksz);
-
-            if (!blk) {
+        while(element) {
+            if(_nst_cache_element_to_htx(element, res_htx) != NST_OK) {
                 si_rx_room_blk(si);
-                return;
+                goto out;
             }
 
-            blk->info = info;
-            ptr = htx_get_blk_ptr(res_htx, blk);
-            sz = htx_get_blksz(blk);
-            memcpy(ptr, (const char *)element->msg.data, sz);
+            element = element->next;
 
-            total = res_htx->data - total;
-            channel_add_input(res, res_htx->data);
-            htx_to_buf(res_htx, &res->buf);
-            appctx->ctx.nuster.cache_engine.element = element->next;
         }
+
     } else {
         appctx->ctx.nuster.cache_engine.data->clients--;
 
@@ -205,6 +170,11 @@ static void nst_cache_engine_handler2(struct appctx *appctx) {
         }
     }
 
+out:
+    appctx->ctx.nuster.cache_engine.element = element;
+    total = res_htx->data - total;
+    channel_add_input(res, total);
+    htx_to_buf(res_htx, &res->buf);
     return;
 
 err:
@@ -447,6 +417,7 @@ int _nst_cache_data_append2(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
     for (pos = htx_get_head(htx); pos != -1; pos = htx_get_next(htx, pos)) {
         struct htx_blk *blk  = htx_get_blk(htx, pos);
+        enum htx_blk_type type = htx_get_blk_type(blk);
         uint32_t        sz   = htx_get_blksz(blk);
         char *data;
 
