@@ -642,9 +642,8 @@ abort_check:
             nst_debug("PASS\n[nuster][cache] To create\n");
 
             /* start to build cache */
-            nst_cache_create(ctx);
+            nst_cache_create2(ctx, msg);
         }
-
     }
 
     return 1;
