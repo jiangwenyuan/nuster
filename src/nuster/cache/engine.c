@@ -418,14 +418,13 @@ int _nst_cache_data_append2(struct nst_cache_ctx *ctx, struct http_msg *msg,
     for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
         struct htx_blk *blk = htx_get_blk(htx, pos);
         uint32_t        sz  = htx_get_blksz(blk);
+        struct nst_cache_element *element;
+        char *data;
 
         if (offset >= sz) {
             offset -= sz;
             continue;
         }
-
-        struct nst_cache_element *element;
-        char *data;
 
         element = nst_cache_memory_alloc(sizeof(*element));
 
@@ -1584,48 +1583,50 @@ void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg) {
 
     nst_shctx_unlock(&nuster.cache->dict[0]);
 
-    int pos;
-    struct htx *htx = htxbuf(&msg->chn->buf);
-    ctx->header_len = 0;
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
+        int pos;
+        struct htx *htx = htxbuf(&msg->chn->buf);
+        ctx->header_len = 0;
 
-    for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-        struct htx_blk *blk = htx_get_blk(htx, pos);
-        uint32_t        sz  = htx_get_blksz(blk);
-        enum htx_blk_type type = htx_get_blk_type(blk);
+        for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+            struct htx_blk *blk = htx_get_blk(htx, pos);
+            uint32_t        sz  = htx_get_blksz(blk);
+            enum htx_blk_type type = htx_get_blk_type(blk);
 
-        struct nst_cache_element *element = NULL;
-        char *data = NULL;
+            struct nst_cache_element *element = NULL;
+            char *data = NULL;
 
-        element = nst_cache_memory_alloc(sizeof(*element));
+            element = nst_cache_memory_alloc(sizeof(*element));
 
-        if(!element) {
-            goto err;
+            if(!element) {
+                goto err;
+            }
+
+            data = nst_cache_memory_alloc(sz);
+
+            if(!data) {
+                goto err;
+            }
+
+            memcpy(data, htx_get_blk_ptr(htx, blk), sz);
+
+            element->msg.data = data;
+            element->msg.len  = blk->info;
+
+            if(ctx->element) {
+                ctx->element->next = element;
+            } else {
+                ctx->data->element = element;
+            }
+
+            ctx->element = element;
+            ctx->header_len += 4 + sz;
+
+            if (type == HTX_BLK_EOH) {
+                break;
+            }
+
         }
-
-        data = nst_cache_memory_alloc(sz);
-
-        if(!data) {
-            goto err;
-        }
-
-        memcpy(data, htx_get_blk_ptr(htx, blk), sz);
-
-        element->msg.data = data;
-        element->msg.len  = blk->info;
-
-        if(ctx->element) {
-            ctx->element->next = element;
-        } else {
-            ctx->data->element = element;
-        }
-
-        ctx->element = element;
-        ctx->header_len += 4 + sz;
-
-        if (type == HTX_BLK_EOH) {
-            break;
-        }
-
     }
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
