@@ -233,7 +233,7 @@ void *_nst_memory_block_alloc(struct nst_memory *memory,
         memory->full = block;
     }
 
-    return (void *)(memory->data.begin + memory->block_size * block_idx
+    return (void *)(memory->data.begin + 1ULL * memory->block_size * block_idx
             + chunk_size * bits_idx);
 }
 
