@@ -296,19 +296,16 @@ static void nst_cache_disk_engine_handler2(struct appctx *appctx) {
     struct channel *req = si_oc(si);
     struct channel *res = si_ic(si);
     struct htx *req_htx, *res_htx;
-    struct buffer *errmsg;
-    struct nst_cache_element *element = NULL;
     int total = 0;
-
-    res_htx = htxbuf(&res->buf);
-    total = res_htx->data;
-
     int ret;
     int max;
 
     int fd = appctx->ctx.nuster.cache_disk_engine.fd;
     int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
     uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
+
+    res_htx = htxbuf(&res->buf);
+    total = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         return;
@@ -408,6 +405,7 @@ static void nst_cache_disk_engine_handler2(struct appctx *appctx) {
             appctx->st0 = NST_PERSIST_APPLET_EOM;
 
         case NST_PERSIST_APPLET_EOM:
+
             if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
                 si_rx_room_blk(si);
                 goto out;
@@ -415,10 +413,18 @@ static void nst_cache_disk_engine_handler2(struct appctx *appctx) {
 
             appctx->st0 = NST_PERSIST_APPLET_DONE;
         case NST_PERSIST_APPLET_DONE:
+
             if (!(res->flags & CF_SHUTR) ) {
                 res->flags |= CF_READ_NULL;
                 si_shutr(si);
             }
+
+            if (co_data(req)) {
+                req_htx = htx_from_buf(&req->buf);
+                co_htx_skip(req, req_htx, co_data(req));
+                htx_to_buf(req_htx, &req->buf);
+            }
+
             break;
         case NST_PERSIST_APPLET_ERROR:
             si_shutr(si);
