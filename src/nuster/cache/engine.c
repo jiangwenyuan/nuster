@@ -202,7 +202,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
 /*
  * The cache disk applet acts like the backend to send cached http data
  */
-static void nst_cache_disk_engine_handler(struct appctx *appctx) {
+static void nst_cache_disk_engine_handler1(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *res         = si_ic(si);
 
@@ -288,6 +288,161 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             break;
     }
 
+}
+
+static void nst_cache_disk_engine_handler2(struct appctx *appctx) {
+    struct stream_interface *si = appctx->owner;
+
+    struct channel *req = si_oc(si);
+    struct channel *res = si_ic(si);
+    struct htx *req_htx, *res_htx;
+    struct buffer *errmsg;
+    struct nst_cache_element *element = NULL;
+    int total = 0;
+
+    res_htx = htxbuf(&res->buf);
+    total = res_htx->data;
+
+    int ret;
+    int max;
+
+    int fd = appctx->ctx.nuster.cache_disk_engine.fd;
+    int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
+    uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
+
+    if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
+        return;
+    }
+
+    /* Check if the input buffer is avalaible. */
+    if(res->buf.size == 0) {
+        si_rx_room_blk(si);
+        return;
+    }
+
+    /* check that the output is not closed */
+    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
+        appctx->st0 = NST_PERSIST_APPLET_DONE;
+    }
+
+    switch(appctx->st0) {
+        case NST_PERSIST_APPLET_HEADER:
+            {
+                char *p = trash.area;
+                ret = pread(fd, p, header_len, offset);
+
+                if(ret != header_len) {
+                    appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                    break;
+                }
+
+                while(header_len != 0) {
+                    struct htx_blk *blk;
+                    char *ptr;
+                    uint32_t blksz, sz, info;
+                    enum htx_blk_type type;
+
+                    info = *(uint32_t *)p;
+                    type = (info >> 28);
+                    blksz = (info & 0xff) + ((info >> 8) & 0xfffff);
+
+                    blk = htx_add_blk(res_htx, type, blksz);
+
+                    if(!blk) {
+                        appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                        break;
+                    }
+
+                    blk->info = info;
+                    ptr = htx_get_blk_ptr(res_htx, blk);
+                    sz = htx_get_blksz(blk);
+                    p += 4;
+                    memcpy(ptr, p, sz);
+                    p += sz;
+
+                    header_len -= 4 + sz;
+                }
+
+                appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
+                appctx->ctx.nuster.cache_disk_engine.offset += ret;
+            }
+
+            break;
+        case NST_PERSIST_APPLET_PAYLOAD:
+            max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
+            ret = pread(fd, trash.area, max, offset);
+
+            if(ret == -1) {
+                appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                break;
+            }
+
+            if(ret > 0) {
+                struct htx_blk *blk;
+                char *ptr;
+                uint32_t blksz, sz, info;
+                enum htx_blk_type type;
+
+                type = HTX_BLK_DATA;
+                info = (type << 28) + ret;
+                blksz = info & 0xfffffff;
+
+                blk = htx_add_blk(res_htx, type, blksz);
+
+                if(!blk) {
+                    appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                    break;
+                }
+
+                blk->info = info;
+                ptr = htx_get_blk_ptr(res_htx, blk);
+                sz = htx_get_blksz(blk);
+                memcpy(ptr, trash.area, sz);
+
+                appctx->ctx.nuster.cache_disk_engine.offset += ret;
+                break;
+            }
+
+            close(fd);
+
+            appctx->st0 = NST_PERSIST_APPLET_EOM;
+
+        case NST_PERSIST_APPLET_EOM:
+            if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
+                si_rx_room_blk(si);
+                goto out;
+            }
+
+            appctx->st0 = NST_PERSIST_APPLET_DONE;
+        case NST_PERSIST_APPLET_DONE:
+            if (!(res->flags & CF_SHUTR) ) {
+                res->flags |= CF_READ_NULL;
+                si_shutr(si);
+            }
+            break;
+        case NST_PERSIST_APPLET_ERROR:
+            si_shutr(si);
+            res->flags |= CF_READ_NULL;
+            close(fd);
+            return;
+    }
+
+out:
+    total = res_htx->data - total;
+    channel_add_input(res, total);
+    htx_to_buf(res_htx, &res->buf);
+    return;
+}
+
+static void nst_cache_disk_engine_handler(struct appctx *appctx) {
+    struct stream_interface *si = appctx->owner;
+    struct stream *s = si_strm(si);
+
+    if (IS_HTX_STRM(s)) {
+        return nst_cache_disk_engine_handler2(appctx);
+    } else {
+        return nst_cache_disk_engine_handler1(appctx);
+    }
 }
 
 /*
