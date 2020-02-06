@@ -1587,6 +1587,8 @@ void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg) {
                 || ctx->rule->disk == NST_DISK_ONLY)) {
 
         uint64_t ttl_extend = *ctx->rule->ttl;
+        int pos;
+        struct htx *htx;
 
         ctx->disk.file = nst_cache_memory_alloc(
                 nst_persist_path_file_len(global.nuster.cache.root) + 1);
@@ -1621,14 +1623,13 @@ void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg) {
         nst_persist_write_etag(&ctx->disk, &ctx->entry->etag);
         nst_persist_write_last_modified(&ctx->disk, &ctx->entry->last_modified);
 
-        int pos;
-        struct htx *htx = htxbuf(&msg->chn->buf);
+        htx = htxbuf(&msg->chn->buf);
 
         for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
             struct htx_blk *blk = htx_get_blk(htx, pos);
             uint32_t        sz  = htx_get_blksz(blk);
 
-            nst_persist_write(&ctx->disk, &blk->info, 4);
+            nst_persist_write(&ctx->disk, (char *)&blk->info, 4);
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
         }
     }
