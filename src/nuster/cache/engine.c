@@ -409,67 +409,6 @@ static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg,
     return element;
 }
 
-int _nst_cache_data_append2(struct nst_cache_ctx *ctx, struct http_msg *msg,
-        unsigned int offset, long msg_len) {
-
-    int pos;
-    struct htx *htx = htxbuf(&msg->chn->buf);
-
-    for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-        struct htx_blk *blk = htx_get_blk(htx, pos);
-        uint32_t        sz  = htx_get_blksz(blk);
-        struct nst_cache_element *element;
-        char *data;
-
-        if (offset >= sz) {
-            offset -= sz;
-            continue;
-        }
-
-        if(ctx->rule->disk == NST_DISK_ONLY)  {
-            nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
-            ctx->cache_len += sz;
-        } else {
-            element = nst_cache_memory_alloc(sizeof(*element));
-
-            if(!element) {
-                goto err;
-            }
-
-            data = nst_cache_memory_alloc(sz);
-
-            if(!data) {
-                goto err;
-            }
-
-            memcpy(data, htx_get_blk_ptr(htx, blk), sz);
-
-            element->msg.data = data;
-            element->msg.len  = blk->info;
-
-            if(ctx->element) {
-                ctx->element->next = element;
-            } else {
-                ctx->data->element = element;
-            }
-
-            ctx->element = element;
-
-            if(ctx->rule->disk == NST_DISK_SYNC) {
-                nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
-                ctx->cache_len += sz;
-            }
-
-        }
-    }
-
-    return NST_OK;
-
-err:
-
-    return NST_ERR;
-}
-
 static int _nst_cache_data_invalid(struct nst_cache_data *data) {
 
     if(data->invalid) {
@@ -1755,7 +1694,62 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 int nst_cache_update2(struct nst_cache_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len) {
 
-    return _nst_cache_data_append2(ctx, msg, offset, msg_len);
+    int pos;
+    struct htx *htx = htxbuf(&msg->chn->buf);
+
+    for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+        struct htx_blk *blk = htx_get_blk(htx, pos);
+        uint32_t        sz  = htx_get_blksz(blk);
+        struct nst_cache_element *element;
+        char *data;
+
+        if (offset >= sz) {
+            offset -= sz;
+            continue;
+        }
+
+        if(ctx->rule->disk == NST_DISK_ONLY)  {
+            nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
+            ctx->cache_len += sz;
+        } else {
+            element = nst_cache_memory_alloc(sizeof(*element));
+
+            if(!element) {
+                goto err;
+            }
+
+            data = nst_cache_memory_alloc(sz);
+
+            if(!data) {
+                goto err;
+            }
+
+            memcpy(data, htx_get_blk_ptr(htx, blk), sz);
+
+            element->msg.data = data;
+            element->msg.len  = blk->info;
+
+            if(ctx->element) {
+                ctx->element->next = element;
+            } else {
+                ctx->data->element = element;
+            }
+
+            ctx->element = element;
+
+            if(ctx->rule->disk == NST_DISK_SYNC) {
+                nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
+                ctx->cache_len += sz;
+            }
+
+        }
+    }
+
+    return NST_OK;
+
+err:
+
+    return NST_ERR;
 }
 
 /*

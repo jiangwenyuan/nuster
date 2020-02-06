@@ -709,7 +709,7 @@ static int _nst_cache_filter_http_payload(struct stream *s,
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
             && (msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_cache_update2(ctx, msg, offset,ret) != NST_OK) {
+        if(nst_cache_update2(ctx, msg, offset, ret) != NST_OK) {
             goto err;
         }
     }

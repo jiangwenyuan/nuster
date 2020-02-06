@@ -298,8 +298,6 @@ int nst_cache_prebuild_key2(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 int nst_cache_update2(struct nst_cache_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len);
-int _nst_cache_data_append2(struct nst_cache_ctx *ctx, struct http_msg *msg,
-        unsigned int offset, long msg_len);
 int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s, struct http_msg *msg);
 void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg);
