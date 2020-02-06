@@ -2379,11 +2379,10 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv)
 	}
 	trash.str[i] = 0;
 
+	node = NULL;
 	/* lookup in full qualified names */
-	node = ebst_lookup(&s->sni_ctx, trash.str);
-
-	/* lookup a not neg filter */
-	for (n = node; n; n = ebmb_next_dup(n)) {
+	for (n = ebst_lookup(&s->sni_ctx, trash.str); n; n = ebmb_next_dup(n)) {
+		/* lookup a not neg filter */
 		if (!container_of(n, struct sni_ctx, name)->neg) {
 			node = n;
 			break;
@@ -2391,9 +2390,15 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv)
 	}
 	if (!node && wildp) {
 		/* lookup in wildcards names */
-		node = ebst_lookup(&s->sni_w_ctx, wildp);
+		for (n = ebst_lookup(&s->sni_w_ctx, wildp); n; n = ebmb_next_dup(n)) {
+			/* lookup a not neg filter */
+			if (!container_of(n, struct sni_ctx, name)->neg) {
+				node = n;
+				break;
+			}
+		}
 	}
-	if (!node || container_of(node, struct sni_ctx, name)->neg) {
+	if (!node) {
 #if (!defined SSL_NO_GENERATE_CERTIFICATES)
 		if (s->generate_certs && ssl_sock_generate_certificate(servername, s, ssl)) {
 			/* switch ctx done in ssl_sock_generate_certificate */
@@ -4430,7 +4435,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 			 NULL);
 
 		if (ecdhe == NULL) {
-			SSL_CTX_set_ecdh_auto(ctx, 1);
+			(void)SSL_CTX_set_ecdh_auto(ctx, 1);
 			return cfgerr;
 		}
 #else

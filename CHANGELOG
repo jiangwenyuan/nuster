@@ -1,6 +1,22 @@
 ChangeLog :
 ===========
 
+2019/11/25 : 1.8.23
+    - MINOR: tcp: avoid confusion in time parsing init
+    - BUG/MINOR: cli: don't call the kw->io_release if kw->parse failed
+    - BUG/MINOR: config: Update cookie domain warn to RFC6265
+    - BUG/MEDIUM: stream: Be sure to support splicing at the mux level to enable it
+    - BUG/MEDIUM: stream: Be sure to release allocated captures for TCP streams
+    - BUG: dns: timeout resolve not applied for valid resolutions
+    - BUG/MEDIUM: listeners: always pause a listener on out-of-resource condition
+    - BUG/MINOR: ssl: fix crt-list neg filter for openssl < 1.1.1
+    - BUILD/MINOR: ssl: fix compiler warning about useless statement
+    - MINOR: ist: add ist_find_ctl()
+    - BUG/MAJOR: h2: reject header values containing invalid chars
+    - BUG/MAJOR: h2: make header field name filtering stronger
+    - SCRIPTS: create-release: show the correct origin name in suggested commands
+    - SCRIPTS: git-show-backports: add "-s" to proposed cherry-pick commands
+
 2019/10/25 : 1.8.22
     - BUILD/MINOR: stream: avoid a build warning with threads disabled
     - BUG/MINOR: haproxy: fix rule->file memory leak
