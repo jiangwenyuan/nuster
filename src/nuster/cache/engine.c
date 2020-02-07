@@ -155,6 +155,12 @@ static void nst_cache_engine_handler2(struct appctx *appctx) {
         }
 
     } else {
+
+        if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
+            si_rx_room_blk(si);
+            goto out;
+        }
+
         appctx->ctx.nuster.cache_engine.data->clients--;
 
         if (!(res->flags & CF_SHUTR) ) {
