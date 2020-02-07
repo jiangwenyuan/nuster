@@ -214,6 +214,8 @@ struct global {
 
 			struct nst_memory   *memory;        /* memory */
 			struct nst_cache_stats *stats;
+
+			int htx;
 		} cache;
 		struct {
 			int       status;                      /* enable nosql on or off */
