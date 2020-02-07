@@ -43,9 +43,24 @@ static void _nst_cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
 }
 
 static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
+    struct proxy *p;
 
     if(px->mode != PR_MODE_HTTP) {
         ha_warning("Proxy [%s]: mode should be http to enable cache\n", px->id);
+    }
+
+    for (p = proxies_list; p; p = p->next) {
+
+        if(p->nuster.mode == px->nuster.mode) {
+
+            if((px->options2 & PR_O2_USE_HTX)
+                    != (p->options2 & PR_O2_USE_HTX)) {
+
+                ha_alert("nuster cache: either use HTX or no HTX.\n");
+
+                return 1;
+            }
+        }
     }
 
     return 0;
