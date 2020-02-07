@@ -2430,7 +2430,7 @@ void nst_cache_persist_cleanup() {
     }
 }
 
-void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
+void nst_cache_build_etag1(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
@@ -2473,6 +2473,51 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
                         trash.data);
             }
         }
+    }
+}
+
+void nst_cache_build_etag2(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+
+    struct htx *htx;
+
+    struct http_hdr_ctx hdr2 = { .blk = NULL };
+
+    ctx->res.etag.len  = 0;
+    ctx->res.etag.data = NULL;
+
+    htx = htxbuf(&s->res.buf);
+
+    if(http_find_header(htx, ist("ETag"), &hdr2, 1)) {
+        ctx->res.etag.len  = hdr2.value.len;
+        ctx->res.etag.data = nst_cache_memory_alloc(hdr2.value.len);
+
+        if(ctx->res.etag.data) {
+            memcpy(ctx->res.etag.data, hdr2.value.ptr, hdr2.value.len);
+        }
+    } else {
+        ctx->res.etag.len  = 10;
+        ctx->res.etag.data = nst_cache_memory_alloc(ctx->res.etag.len);
+
+        if(ctx->res.etag.data) {
+            uint64_t t = get_current_timestamp();
+            sprintf(ctx->res.etag.data, "\"%08x\"", XXH32(&t, 8, 0));
+
+            if(ctx->rule->etag == NST_STATUS_ON) {
+                struct ist v = ist2(ctx->res.etag.data, ctx->res.etag.len);
+
+                http_add_header(htx, ist("Etag"), v);
+            }
+        }
+    }
+}
+
+void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+    if (IS_HTX_STRM(s)) {
+        nst_cache_build_etag2(ctx, s, msg);
+    } else {
+        nst_cache_build_etag1(ctx, s, msg);
     }
 }
 
