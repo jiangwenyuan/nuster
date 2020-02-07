@@ -361,10 +361,10 @@ static void nst_cache_disk_engine_handler2(struct appctx *appctx) {
                 }
 
                 appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
-                appctx->ctx.nuster.cache_disk_engine.offset += ret;
+                offset += ret;
+                appctx->ctx.nuster.cache_disk_engine.offset = offset;
             }
 
-            break;
         case NST_PERSIST_APPLET_PAYLOAD:
             max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
             ret = pread(fd, trash.area, max, offset);
