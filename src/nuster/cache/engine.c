@@ -665,7 +665,11 @@ void nst_cache_housekeeping() {
 
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict[0]);
-            nst_cache_persist_async();
+            if(global.nuster.cache.htx) {
+                nst_cache_persist_async2();
+            } else {
+                nst_cache_persist_async1();
+            }
             nst_shctx_unlock(&nuster.cache->dict[0]);
         }
 
@@ -2039,7 +2043,7 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
     }
 }
 
-void nst_cache_persist_async() {
+void nst_cache_persist_async1() {
     struct nst_cache_entry *entry;
 
     if(!global.nuster.cache.root || !nuster.cache->disk.loaded) {
@@ -2107,6 +2111,106 @@ void nst_cache_persist_async() {
             }
 
             nst_persist_meta_set_cache_len(disk.meta, cache_len);
+
+            nst_persist_write_meta(&disk);
+
+            close(disk.fd);
+        }
+
+        entry = entry->next;
+
+    }
+
+    nuster.cache->persist_idx++;
+
+    /* if we have checked the whole dict */
+    if(nuster.cache->persist_idx == nuster.cache->dict[0].size) {
+        nuster.cache->persist_idx = 0;
+    }
+
+}
+
+void nst_cache_persist_async2() {
+    struct nst_cache_entry *entry;
+
+    if(!global.nuster.cache.root || !nuster.cache->disk.loaded) {
+        return;
+    }
+
+    if(!nuster.cache->dict[0].used) {
+        return;
+    }
+
+    entry = nuster.cache->dict[0].entry[nuster.cache->persist_idx];
+
+    while(entry) {
+
+        if(!nst_cache_entry_invalid(entry)
+                && entry->rule->disk == NST_DISK_ASYNC
+                && entry->file == NULL) {
+
+            struct nst_cache_element *element = entry->data->element;
+            uint64_t cache_len = 0;
+            struct persist disk;
+            uint64_t ttl_extend = entry->ttl;
+            uint64_t header_len = 0;
+
+            entry->file = nst_cache_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.cache.root) + 1);
+
+            if(!entry->file) {
+                return;
+            }
+
+            if(nst_persist_init(global.nuster.cache.root, entry->file,
+                        entry->hash) != NST_OK) {
+                return;
+            }
+
+            disk.fd = nst_persist_create(entry->file);
+
+            ttl_extend = ttl_extend << 32;
+            *( uint8_t *)(&ttl_extend)      = entry->extend[0];
+            *((uint8_t *)(&ttl_extend) + 1) = entry->extend[1];
+            *((uint8_t *)(&ttl_extend) + 2) = entry->extend[2];
+            *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
+
+            nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
+                    entry->hash, entry->expire, 0, 0,
+                    entry->key->data, entry->host.len, entry->path.len,
+                    entry->etag.len, entry->last_modified.len, ttl_extend);
+
+            nst_persist_write_key(&disk, entry->key);
+            nst_persist_write_host(&disk, &entry->host);
+            nst_persist_write_path(&disk, &entry->path);
+            nst_persist_write_etag(&disk, &entry->etag);
+            nst_persist_write_last_modified(&disk, &entry->last_modified);
+
+            while(element) {
+                uint32_t blksz, info;
+                enum htx_blk_type type;
+
+                info = element->msg.len;
+                type = (info >> 28);
+                blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
+                        ? (info & 0xff) + ((info >> 8) & 0xfffff)
+                        : info & 0xfffffff);
+
+                if(type != HTX_BLK_DATA) {
+                    nst_persist_write(&disk, (char *)&info, 4);
+                    cache_len += 4;
+                    header_len += 4 + blksz;
+                }
+
+                nst_persist_write(&disk, element->msg.data, blksz);
+
+                cache_len += blksz;
+
+                element = element->next;
+            }
+
+            nst_persist_meta_set_cache_len(disk.meta, cache_len);
+            nst_persist_meta_set_header_len(disk.meta, header_len);
 
             nst_persist_write_meta(&disk);
 
