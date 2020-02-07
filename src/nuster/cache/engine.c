@@ -1867,11 +1867,11 @@ int nst_cache_update2(struct nst_cache_ctx *ctx, struct http_msg *msg,
     for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
         struct htx_blk *blk = htx_get_blk(htx, pos);
         uint32_t        sz  = htx_get_blksz(blk);
+        enum htx_blk_type type = htx_get_blk_type(blk);
         struct nst_cache_element *element;
         char *data;
 
-        if (offset >= sz) {
-            offset -= sz;
+        if(type != HTX_BLK_DATA) {
             continue;
         }
 
