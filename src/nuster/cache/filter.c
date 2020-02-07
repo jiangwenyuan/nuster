@@ -63,8 +63,6 @@ static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
         }
     }
 
-    global.nuster.cache.htx = p->options2 & PR_O2_USE_HTX;
-
     return 0;
 }
 

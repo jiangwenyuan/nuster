@@ -678,6 +678,15 @@ void nst_cache_init() {
     nuster.applet.cache_disk_engine.fct = nst_cache_disk_engine_handler;
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
+        struct proxy *p;
+
+        for(p = proxies_list; p; p = p->next) {
+
+            if(p->nuster.mode == NST_MODE_CACHE) {
+                global.nuster.cache.htx = p->options2 & PR_O2_USE_HTX;
+                break;
+            }
+        }
 
         if(global.nuster.cache.share == NST_STATUS_UNDEFINED) {
 
