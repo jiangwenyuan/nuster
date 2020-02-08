@@ -283,6 +283,7 @@ struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_rule *rule);
 
 int nst_cache_check_uri(struct http_msg *msg);
+int nst_cache_check_uri2(struct http_msg *msg);
 void nst_cache_persist_cleanup();
 void nst_cache_persist_load();
 void nst_cache_persist_async1();
@@ -313,6 +314,7 @@ void nst_cache_stats_update_used_mem(int i);
 int nst_cache_stats_init();
 int nst_cache_stats_full();
 int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
+int nst_cache_stats2(struct stream *s, struct channel *req, struct proxy *px);
 void nst_cache_stats_update_req(int state);
 
 static inline int nst_cache_entry_expired(struct nst_cache_entry *entry) {
