@@ -98,19 +98,19 @@ int nst_cache_purge2(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
 
-    struct buffer *key = nst_cache_build_purge_key(s, msg);
+    struct buffer *key = nst_cache_build_purge_key2(s, msg);
 
     if(!key) {
         txn->status = 500;
-        nst_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
+        htx_reply_and_close(s, txn->status, htx_error_message(s));
     } else {
         uint64_t hash = nst_hash(key->area, key->data);
         txn->status = _nst_cache_purge_by_key(key, hash);
 
         if(txn->status == 200) {
-            nst_response(s, &nst_http_msg_chunks[NST_HTTP_200]);
+            htx_reply_and_close(s, txn->status, htx_error_message(s));
         } else {
-            nst_response(s, &nst_http_msg_chunks[NST_HTTP_404]);
+            htx_reply_and_close(s, txn->status, htx_error_message(s));
         }
     }
 
@@ -184,10 +184,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
 int _nst_cache_manager_state_ttl2(struct stream *s, struct channel *req,
         struct proxy *px, int state, int ttl) {
 
-    struct http_txn *txn = s->txn;
-    struct http_msg *msg = &txn->req;
     int found, mode      = NST_CACHE_PURGE_NAME_RULE;
-    struct hdr_ctx ctx;
     struct proxy *p;
 
     struct htx *htx = htxbuf(&s->req.buf);
@@ -197,7 +194,6 @@ int _nst_cache_manager_state_ttl2(struct stream *s, struct channel *req,
         return 400;
     }
 
-    ctx.idx = 0;
     if(http_find_header(htx, ist("name"), &hdr2, 0)) {
 
         if(hdr2.value.len == 1 && !memcmp(hdr2.value.ptr, "*", 1)) {
@@ -211,7 +207,7 @@ int _nst_cache_manager_state_ttl2(struct stream *s, struct channel *req,
 
             if(mode != NST_CACHE_PURGE_NAME_ALL
                     && strlen(p->id) == hdr2.value.len
-                    && !memcmp(hdr2.value.len, p->id, hdr2.value.len)) {
+                    && !memcmp(hdr2.value.ptr, p->id, hdr2.value.len)) {
 
                 found = 1;
                 mode  = NST_CACHE_PURGE_NAME_PROXY;
@@ -262,9 +258,10 @@ static inline int _nst_cache_manager_purge_method2(struct http_txn *txn,
     struct htx *htx = htxbuf(&msg->chn->buf);
     struct htx_sl *sl = http_get_stline(htx);
 
+    // parser.c:345: memcpy(global.nuster.cache.purge_method + 5, " ", 1);
     return txn->meth == HTTP_METH_OTHER
-	&& isteqi(htx_sl_req_meth(sl), ist2(global.nuster.cache.purge_method,
-                    strlen(global.nuster.cache.purge_method)));
+        && isteqi(htx_sl_req_meth(sl), ist2(global.nuster.cache.purge_method,
+                    strlen(global.nuster.cache.purge_method) - 1));
 }
 
 int _nst_cache_manager_purge(struct stream *s, struct channel *req,
@@ -524,7 +521,6 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
     struct http_msg *msg = &txn->req;
     int state            = -1;
     int ttl              = -1;
-    struct hdr_ctx ctx;
     struct htx *htx = htxbuf(&s->req.buf);
     struct http_hdr_ctx hdr2 = { .blk = NULL };
 
@@ -537,7 +533,6 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
         /* POST */
         if(nst_cache_check_uri2(msg) == NST_OK) {
             /* manager uri */
-            ctx.idx = 0;
             if(http_find_header(htx, ist("state"), &hdr2, 0)) {
 
                 if(hdr2.value.len == 6
@@ -551,7 +546,6 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
                 }
             }
 
-            ctx.idx = 0;
             if(http_find_header(htx, ist("ttl"), &hdr2, 0)) {
 
                 nst_parse_time(hdr2.value.ptr, hdr2.value.len, (unsigned *)&ttl);

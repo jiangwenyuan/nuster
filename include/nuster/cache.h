@@ -262,6 +262,8 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx,
 
 struct buffer *nst_cache_build_purge_key(struct stream *s,
         struct http_msg *msg);
+struct buffer *nst_cache_build_purge_key2(struct stream *s,
+        struct http_msg *msg);
 
 uint64_t nst_cache_hash_key(const char *key);
 void nst_cache_create(struct nst_cache_ctx *ctx);

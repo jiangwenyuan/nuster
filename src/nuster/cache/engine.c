@@ -1436,6 +1436,72 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     return key;
 }
 
+struct buffer *nst_cache_build_purge_key2(struct stream *s,
+        struct http_msg *msg) {
+
+    int https;
+    char *uri_begin;
+    int ret;
+    struct buffer *key;
+    struct htx_sl *sl;
+    struct ist uri;
+
+    struct htx *htx = htxbuf(&s->req.buf);
+    struct http_hdr_ctx hdr2 = { .blk = NULL };
+
+    /* method.scheme.host.uri */
+    key = nst_cache_key_init();
+
+    if(!key) {
+        return NULL;
+    }
+
+    ret = nst_cache_key_append(key, "GET", 3);
+    if(ret != NST_OK) {
+        return NULL;
+    }
+
+    https = 0;
+#ifdef USE_OPENSSL
+    if(s->sess->listener->bind_conf->is_ssl) {
+        https = 1;
+    }
+#endif
+
+    ret = nst_cache_key_append(key, https ? "HTTPS": "HTTP",
+            strlen(https ? "HTTPS": "HTTP"));
+    if(ret != NST_OK) {
+        return NULL;
+    }
+
+    if(http_find_header(htx, ist("Host"), &hdr2, 0)) {
+        ret = nst_cache_key_append(key, hdr2.value.ptr, hdr2.value.len);
+
+        if(ret != NST_OK) {
+            return NULL;
+        }
+    }
+
+    sl = http_get_stline(htx);
+    uri = htx_sl_req_uri(sl);
+
+    if (!uri.len || *uri.ptr != '/') {
+        return NULL;
+    }
+
+    uri_begin = uri.ptr;
+
+    if(uri_begin) {
+        ret = nst_cache_key_append(key, uri_begin, uri.len);
+
+        if(ret != NST_OK) {
+            return NULL;
+        }
+    }
+
+    return key;
+}
+
 static void _nst_cache_record_access(struct nst_cache_entry *entry) {
     if(entry->expire == 0 || entry->extend[0] == 0xFF) {
         entry->access[0]++;
