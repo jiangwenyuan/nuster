@@ -2521,7 +2521,7 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
     }
 }
 
-void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
+void nst_cache_build_last_modified1(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
@@ -2570,6 +2570,63 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
             trash.area[trash.data] = '\0';
             http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
         }
+    }
+}
+
+void nst_cache_build_last_modified2(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+
+    struct htx *htx;
+
+    struct http_hdr_ctx hdr2 = { .blk = NULL };
+
+    int len  = sizeof("Mon, 01 JAN 1970 00:00:00 GMT") - 1;
+
+    htx = htxbuf(&s->res.buf);
+
+    ctx->res.last_modified.len  = len;
+    ctx->res.last_modified.data = nst_cache_memory_alloc(len);
+
+    if(!ctx->res.last_modified.data) {
+        ctx->res.last_modified.len = 0;
+        return;
+    }
+
+    if(http_find_header(htx, ist("Last-Modified"), &hdr2, 1)) {
+
+        if(hdr2.value.len == len) {
+            memcpy(ctx->res.last_modified.data, hdr2.value.ptr, hdr2.value.len);
+        }
+    } else {
+        char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+            "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+        char day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+
+        struct tm *tm;
+        time_t now;
+        time(&now);
+        tm = gmtime(&now);
+        sprintf(ctx->res.last_modified.data,
+                "%s, %02d %s %04d %02d:%02d:%02d GMT",
+                day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
+                1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+        if(ctx->rule->last_modified == NST_STATUS_ON) {
+            struct ist v = ist2(ctx->res.last_modified.data,
+                    ctx->res.last_modified.len);
+
+            http_add_header(htx, ist("Last-Modified"), v);
+        }
+    }
+}
+
+void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+    if (IS_HTX_STRM(s)) {
+        nst_cache_build_last_modified2(ctx, s, msg);
+    } else {
+        nst_cache_build_last_modified1(ctx, s, msg);
     }
 }
 
