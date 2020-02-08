@@ -307,6 +307,7 @@ void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg);
 /* manager */
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
 int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px);
+int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px);
 int nst_cache_manager_init();
 
 /* stats */

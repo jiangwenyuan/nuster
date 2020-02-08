@@ -15,6 +15,8 @@
 #include <proto/proto_http.h>
 #include <proto/stream_interface.h>
 #include <proto/proxy.h>
+#include <proto/http_htx.h>
+#include <common/htx.h>
 
 #include <nuster/nuster.h>
 #include <nuster/memory.h>
@@ -132,6 +134,73 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
                     *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
                 } else if(strlen(rule->name) == ctx.vlen
                         && !memcmp(ctx.line + ctx.val, rule->name, ctx.vlen)) {
+
+                    *rule->state = state == -1 ? *rule->state : state;
+                    *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
+                    found        = 1;
+                }
+            }
+
+            if(mode == NST_CACHE_PURGE_NAME_PROXY) {
+                break;
+            }
+
+            p = p->next;
+        }
+
+        if(found) {
+            return 200;
+        } else {
+            return 404;
+        }
+    }
+
+    return 400;
+}
+
+int _nst_cache_manager_state_ttl2(struct stream *s, struct channel *req,
+        struct proxy *px, int state, int ttl) {
+
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+    int found, mode      = NST_CACHE_PURGE_NAME_RULE;
+    struct hdr_ctx ctx;
+    struct proxy *p;
+
+    struct htx *htx = htxbuf(&s->req.buf);
+    struct http_hdr_ctx hdr2 = { .blk = NULL };
+
+    if(state == -1 && ttl == -1) {
+        return 400;
+    }
+
+    ctx.idx = 0;
+    if(http_find_header(htx, ist("name"), &hdr2, 0)) {
+
+        if(hdr2.value.len == 1 && !memcmp(hdr2.value.ptr, "*", 1)) {
+            found = 1;
+            mode  = NST_CACHE_PURGE_NAME_ALL;
+        }
+
+        p = proxies_list;
+        while(p) {
+            struct nst_rule *rule = NULL;
+
+            if(mode != NST_CACHE_PURGE_NAME_ALL
+                    && strlen(p->id) == hdr2.value.len
+                    && !memcmp(hdr2.value.len, p->id, hdr2.value.len)) {
+
+                found = 1;
+                mode  = NST_CACHE_PURGE_NAME_PROXY;
+            }
+
+            list_for_each_entry(rule, &p->nuster.rules, list) {
+
+                if(mode != NST_CACHE_PURGE_NAME_RULE) {
+                    *rule->state = state == -1 ? *rule->state : state;
+                    *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
+                } else if(strlen(rule->name) == hdr2.value.len
+                        && !memcmp(hdr2.value.ptr, rule->name, hdr2.value.len)) {
 
                     *rule->state = state == -1 ? *rule->state : state;
                     *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
@@ -412,6 +481,87 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             break;
         default:
             nst_response(s, &nst_http_msg_chunks[NST_HTTP_400]);
+    }
+    return 1;
+}
+
+int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) {
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+    int state            = -1;
+    int ttl              = -1;
+    struct hdr_ctx ctx;
+    struct htx *htx = htxbuf(&s->req.buf);
+    struct http_hdr_ctx hdr2 = { .blk = NULL };
+
+    if(global.nuster.cache.status != NST_STATUS_ON) {
+        return 0;
+    }
+
+    if(txn->meth == HTTP_METH_POST) {
+
+        /* POST */
+        if(nst_cache_check_uri2(msg) == NST_OK) {
+            /* manager uri */
+            ctx.idx = 0;
+            if(http_find_header(htx, ist("state"), &hdr2, 0)) {
+
+                if(hdr2.value.len == 6
+                        && !memcmp(hdr2.value.ptr, "enable", 6)) {
+
+                    state = NST_RULE_ENABLED;
+                } else if(hdr2.value.len == 7
+                        && !memcmp(hdr2.value.ptr, "disable", 7)) {
+
+                    state = NST_RULE_DISABLED;
+                }
+            }
+
+            ctx.idx = 0;
+            if(http_find_header(htx, ist("ttl"), &hdr2, 0)) {
+
+                nst_parse_time(hdr2.value.ptr, hdr2.value.len, (unsigned *)&ttl);
+            }
+
+            txn->status = _nst_cache_manager_state_ttl2(s, req, px, state, ttl);
+        } else {
+            return 0;
+        }
+    } else if(_nst_cache_manager_purge_method(txn, msg)) {
+
+        /* purge */
+        if(nst_cache_check_uri(msg) == NST_OK) {
+
+            /* manager uri */
+            txn->status = _nst_cache_manager_purge(s, req, px);
+
+            if(txn->status == 0) {
+                return 0;
+            }
+        } else {
+            /* single uri */
+            return nst_cache_purge(s, req, px);
+        }
+    } else {
+        return 0;
+    }
+
+    txn->status = 404;
+    switch(txn->status) {
+        case 200:
+            htx_reply_and_close(s, txn->status, htx_error_message(s));
+            break;
+        case 400:
+            htx_reply_and_close(s, txn->status, htx_error_message(s));
+            break;
+        case 404:
+            htx_reply_and_close(s, txn->status, htx_error_message(s));
+            break;
+        case 500:
+            htx_reply_and_close(s, txn->status, htx_error_message(s));
+            break;
+        default:
+            htx_reply_and_close(s, txn->status, htx_error_message(s));
     }
     return 1;
 }
