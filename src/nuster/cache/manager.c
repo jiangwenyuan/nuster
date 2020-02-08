@@ -94,6 +94,29 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     return 1;
 }
 
+int nst_cache_purge2(struct stream *s, struct channel *req, struct proxy *px) {
+    struct http_txn *txn = s->txn;
+    struct http_msg *msg = &txn->req;
+
+    struct buffer *key = nst_cache_build_purge_key(s, msg);
+
+    if(!key) {
+        txn->status = 500;
+        nst_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
+    } else {
+        uint64_t hash = nst_hash(key->area, key->data);
+        txn->status = _nst_cache_purge_by_key(key, hash);
+
+        if(txn->status == 200) {
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_200]);
+        } else {
+            nst_response(s, &nst_http_msg_chunks[NST_HTTP_404]);
+        }
+    }
+
+    return 1;
+}
+
 int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
         struct proxy *px, int state, int ttl) {
 
@@ -231,6 +254,17 @@ static inline int _nst_cache_manager_purge_method(struct http_txn *txn,
     return txn->meth == HTTP_METH_OTHER &&
             memcmp(ci_head(msg->chn), global.nuster.cache.purge_method,
                     strlen(global.nuster.cache.purge_method)) == 0;
+}
+
+static inline int _nst_cache_manager_purge_method2(struct http_txn *txn,
+        struct http_msg *msg) {
+
+    struct htx *htx = htxbuf(&msg->chn->buf);
+    struct htx_sl *sl = http_get_stline(htx);
+
+    return txn->meth == HTTP_METH_OTHER
+	&& isteqi(htx_sl_req_meth(sl), ist2(global.nuster.cache.purge_method,
+                    strlen(global.nuster.cache.purge_method)));
 }
 
 int _nst_cache_manager_purge(struct stream *s, struct channel *req,
@@ -527,10 +561,10 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
         } else {
             return 0;
         }
-    } else if(_nst_cache_manager_purge_method(txn, msg)) {
+    } else if(_nst_cache_manager_purge_method2(txn, msg)) {
 
         /* purge */
-        if(nst_cache_check_uri(msg) == NST_OK) {
+        if(nst_cache_check_uri2(msg) == NST_OK) {
 
             /* manager uri */
             txn->status = _nst_cache_manager_purge(s, req, px);
@@ -540,7 +574,7 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
             }
         } else {
             /* single uri */
-            return nst_cache_purge(s, req, px);
+            return nst_cache_purge2(s, req, px);
         }
     } else {
         return 0;
