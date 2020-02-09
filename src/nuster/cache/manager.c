@@ -740,7 +740,6 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
         return 0;
     }
 
-    txn->status = 404;
     switch(txn->status) {
         case 200:
             htx_reply_and_close(s, txn->status, htx_error_message(s));
