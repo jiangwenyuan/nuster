@@ -211,7 +211,7 @@ static int _nst_cache_filter_http_headers(struct stream *s, struct filter *filte
 
             /* get cache key */
             while(stash) {
-                if(ctx->stash->rule == ctx->rule) {
+                if(stash->rule == ctx->rule) {
                     key  = stash->key;
                     hash = stash->hash;
                     break;
