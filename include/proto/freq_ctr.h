@@ -248,11 +248,52 @@ unsigned int freq_ctr_remain_period(struct freq_ctr_period *ctr, unsigned int pe
  */
 
 /* Adds sample value <v> to sliding window sum <sum> configured for <n> samples.
- * The sample is returned. Better if <n> is a power of two.
+ * The sample is returned. Better if <n> is a power of two. This function is
+ * thread-safe.
  */
 static inline unsigned int swrate_add(unsigned int *sum, unsigned int n, unsigned int v)
 {
-	return *sum = *sum - (*sum + n - 1) / n + v;
+	unsigned int new_sum, old_sum;
+
+	old_sum = *sum;
+	do {
+		new_sum = old_sum - (old_sum + n - 1) / n + v;
+	} while (!_HA_ATOMIC_CAS(sum, &old_sum, new_sum));
+	return new_sum;
+}
+
+/* Adds sample value <v> spanning <s> samples to sliding window sum <sum>
+ * configured for <n> samples, where <n> is supposed to be "much larger" than
+ * <s>. The sample is returned. Better if <n> is a power of two. Note that this
+ * is only an approximate. Indeed, as can be seen with two samples only over a
+ * 8-sample window, the original function would return :
+ *  sum1 = sum  - (sum + 7) / 8 + v
+ *  sum2 = sum1 - (sum1 + 7) / 8 + v
+ *       = (sum - (sum + 7) / 8 + v) - (sum - (sum + 7) / 8 + v + 7) / 8 + v
+ *      ~= 7sum/8 - 7/8 + v - sum/8 + sum/64 - 7/64 - v/8 - 7/8 + v
+ *      ~= (3sum/4 + sum/64) - (7/4 + 7/64) + 15v/8
+ *
+ * while the function below would return :
+ *  sum  = sum + 2*v - (sum + 8) * 2 / 8
+ *       = 3sum/4 + 2v - 2
+ *
+ * this presents an error of ~ (sum/64 + 9/64 + v/8) = (sum+n+1)/(n^s) + v/n
+ *
+ * Thus the simplified function effectively replaces a part of the history with
+ * a linear sum instead of applying the exponential one. But as long as s/n is
+ * "small enough", the error fades away and remains small for both small and
+ * large values of n and s (typically < 0.2% measured).  This function is
+ * thread-safe.
+ */
+static inline unsigned int swrate_add_scaled(unsigned int *sum, unsigned int n, unsigned int v, unsigned int s)
+{
+	unsigned int new_sum, old_sum;
+
+	old_sum = *sum;
+	do {
+		new_sum = old_sum + v * s - div64_32((unsigned long long)(old_sum + n) * s, n);
+	} while (!_HA_ATOMIC_CAS(sum, &old_sum, new_sum));
+	return new_sum;
 }
 
 /* Adds sample value <v> spanning <s> samples to sliding window sum <sum>

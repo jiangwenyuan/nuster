@@ -387,7 +387,8 @@ void process_runnable_tasks()
 		struct task *(*process)(struct task *t, void *ctx, unsigned short state);
 
 		t = (struct task *)LIST_ELEM(task_per_thread[tid].task_list.n, struct tasklet *, list);
-		state = _HA_ATOMIC_XCHG(&t->state, TASK_RUNNING);
+		state = (t->state & TASK_SHARED_WQ) | TASK_RUNNING;
+		state = _HA_ATOMIC_XCHG(&t->state, state);
 		__ha_barrier_atomic_store();
 		__tasklet_remove_from_tasklet_list((struct tasklet *)t);
 		if (!TASK_IS_TASKLET(t))
@@ -434,7 +435,7 @@ void process_runnable_tasks()
 			}
 
 			state = _HA_ATOMIC_AND(&t->state, ~TASK_RUNNING);
-			if (state)
+			if (state & TASK_WOKEN_ANY)
 				task_wakeup(t, 0);
 			else
 				task_queue(t);

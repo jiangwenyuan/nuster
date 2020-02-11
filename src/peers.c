@@ -531,8 +531,11 @@ static int peer_prepare_updatemsg(char *msg, size_t size, struct peer_prep_param
 					struct dcache *dc;
 
 					de = stktable_data_cast(data_ptr, std_t_dict);
-					if (!de)
+					if (!de) {
+						/* No entry */
+						intencode(0, &cursor);
 						break;
+					}
 
 					dc = peer->dcache;
 					cde.entry.key = de;
@@ -752,6 +755,8 @@ void __peer_session_deinit(struct peer *peer)
 	/* reset teaching and learning flags to 0 */
 	peer->flags &= PEER_TEACH_RESET;
 	peer->flags &= PEER_LEARN_RESET;
+	/* set this peer as dead from heartbeat point of view */
+	peer->flags &= ~PEER_F_ALIVE;
 	task_wakeup(peers->sync_task, TASK_WOKEN_MSG);
 }
 
@@ -1447,6 +1452,10 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 			struct dcache *dc;
 			char *end;
 
+			if (!decoded_int) {
+				/* No entry. */
+				break;
+			}
 			data_len = decoded_int;
 			if (*msg_cur + data_len > msg_end)
 				goto malformed_unlock;
@@ -1820,6 +1829,7 @@ static inline int peer_treat_awaited_msg(struct appctx *appctx, struct peer *pee
 		}
 		else if (msg_head[1] == PEER_MSG_CTRL_HEARTBEAT) {
 			peer->reconnect = tick_add(now_ms, MS_TO_TICKS(PEER_RECONNECT_TIMEOUT));
+			peer->rx_hbt++;
 		}
 	}
 	else if (msg_head[0] == PEER_MSG_CLASS_STICKTABLE) {
@@ -2372,6 +2382,7 @@ send_msgs:
 							goto out;
 						goto switchstate;
 					}
+					curpeer->tx_hbt++;
 				}
 				/* we get here when a peer_recv_msg() returns 0 in reql */
 				repl = peer_send_msgs(appctx, curpeer);
@@ -2402,6 +2413,8 @@ send_msgs:
 				goto switchstate;
 			}
 			case PEER_SESS_ST_ERRPROTO: {
+				if (curpeer)
+					curpeer->proto_err++;
 				if (prev_state == PEER_SESS_ST_WAITMSG)
 					_HA_ATOMIC_SUB(&connected_peers, 1);
 				prev_state = appctx->st0;
@@ -2639,6 +2652,7 @@ static struct task *process_peer_sync(struct task * task, void *context, unsigne
 
 						/* reschedule task for reconnect */
 						task->expire = tick_first(task->expire, ps->reconnect);
+						ps->new_conn++;
 					}
 					/* else do nothing */
 				} /* !ps->appctx */
@@ -2697,6 +2711,7 @@ static struct task *process_peer_sync(struct task * task, void *context, unsigne
 								else  {
 									ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
 									peer_session_forceshutdown(ps);
+									ps->no_hbt++;
 								}
 							}
 							else if (tick_is_expired(ps->heartbeat, now_ms)) {
@@ -3095,7 +3110,7 @@ static int peers_dump_peer(struct buffer *msg, struct stream_interface *si, stru
 	struct shared_table *st;
 
 	addr_to_str(&peer->addr, pn, sizeof pn);
-	chunk_appendf(msg, "  %p: id=%s(%s) addr=%s:%d status=%s reconnect=%s confirm=%u\n",
+	chunk_appendf(msg, "  %p: id=%s(%s) addr=%s:%d status=%s reconnect=%s confirm=%u tx_hbt=%u rx_hbt=%u no_hbt=%u new_conn=%u proto_err=%u\n",
 	              peer, peer->id,
 	              peer->local ? "local" : "remote",
 	              pn, get_host_port(&peer->addr),
@@ -3104,24 +3119,25 @@ static int peers_dump_peer(struct buffer *msg, struct stream_interface *si, stru
 			             tick_is_expired(peer->reconnect, now_ms) ? "<PAST>" :
 			                     human_time(TICKS_TO_MS(peer->reconnect - now_ms),
 			                     TICKS_TO_MS(1000)) : "<NEVER>",
-	              peer->confirm);
+	              peer->confirm, peer->tx_hbt, peer->rx_hbt,
+	              peer->no_hbt, peer->new_conn, peer->proto_err);
 
 	chunk_appendf(&trash, "        flags=0x%x", peer->flags);
 
 	appctx = peer->appctx;
 	if (!appctx)
-		goto end;
+		goto table_info;
 
 	chunk_appendf(&trash, " appctx:%p st0=%d st1=%d task_calls=%u", appctx, appctx->st0, appctx->st1,
 	                                                                appctx->t ? appctx->t->calls : 0);
 
 	peer_si = peer->appctx->owner;
 	if (!peer_si)
-		goto end;
+		goto table_info;
 
 	peer_s = si_strm(peer_si);
 	if (!peer_s)
-		goto end;
+		goto table_info;
 
 	chunk_appendf(&trash, " state=%s", si_state_str(si_opposite(peer_si)->state));
 
@@ -3152,6 +3168,7 @@ static int peers_dump_peer(struct buffer *msg, struct stream_interface *si, stru
 		break;
 	}
 
+ table_info:
 	if (peer->remote_table)
 		chunk_appendf(&trash, "\n        remote_table:%p id=%s local_id=%d remote_id=%d",
 		              peer->remote_table,

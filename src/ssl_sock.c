@@ -217,7 +217,7 @@ struct ssl_sock_ctx {
 	struct wait_event *recv_wait;
 	struct wait_event *send_wait;
 	int xprt_st;                  /* transport layer state, initialized to zero */
-	int tmp_early_data;           /* 1st byte of early data, if any */
+	struct buffer early_buf;      /* buffer to store the early data received */
 	int sent_early_data;          /* Amount of early data we sent so far */
 
 };
@@ -2358,32 +2358,16 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 	}
 	trash.area[i] = 0;
 
-	/* lookup in full qualified names */
-	node = ebst_lookup(&s->sni_ctx, trash.area);
 
-	/* lookup a not neg filter */
-	for (n = node; n; n = ebmb_next_dup(n)) {
-		if (!container_of(n, struct sni_ctx, name)->neg) {
-			switch(container_of(n, struct sni_ctx, name)->kinfo.sig) {
-			case TLSEXT_signature_ecdsa:
-				if (!node_ecdsa)
-					node_ecdsa = n;
-				break;
-			case TLSEXT_signature_rsa:
-				if (!node_rsa)
-					node_rsa = n;
-				break;
-			default: /* TLSEXT_signature_anonymous|dsa */
-				if (!node_anonymous)
-					node_anonymous = n;
-				break;
-			}
-		}
-	}
-	if (wildp) {
-		/* lookup in wildcards names */
-		node = ebst_lookup(&s->sni_w_ctx, wildp);
+	for (i = 0; i < 2; i++) {
+		if (i == 0) 	/* lookup in full qualified names */
+			node = ebst_lookup(&s->sni_ctx, trash.area);
+		else if (i == 1 && wildp) /* lookup in wildcards names */
+			node = ebst_lookup(&s->sni_w_ctx, wildp);
+		else
+			break;
 		for (n = node; n; n = ebmb_next_dup(n)) {
+			/* lookup a not neg filter */
 			if (!container_of(n, struct sni_ctx, name)->neg) {
 				switch(container_of(n, struct sni_ctx, name)->kinfo.sig) {
 				case TLSEXT_signature_ecdsa:
@@ -2401,18 +2385,17 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 				}
 			}
 		}
-	}
-	/* select by key_signature priority order */
-	node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
-		: ((has_rsa_sig && node_rsa) ? node_rsa
-		   : (node_anonymous ? node_anonymous
-		      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
-			 : node_rsa                   /* no rsa signature case (far far away) */
-			 )));
-	if (node) {
-		/* switch ctx */
-		struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
-		ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
+		/* select by key_signature priority order */
+		node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
+			: ((has_rsa_sig && node_rsa) ? node_rsa
+			   : (node_anonymous ? node_anonymous
+			      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
+				 : node_rsa                   /* no rsa signature case (far far away) */
+				 )));
+		if (node) {
+			/* switch ctx */
+			struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
+			ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
 			if (conf) {
 				methodVersions[conf->ssl_methods.min].ssl_set_version(ssl, SET_MIN);
 				methodVersions[conf->ssl_methods.max].ssl_set_version(ssl, SET_MAX);
@@ -2420,6 +2403,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 					allow_early = 1;
 			}
 			goto allow_early;
+		}
 	}
 #if (!defined SSL_NO_GENERATE_CERTIFICATES)
 	if (s->generate_certs && ssl_sock_generate_certificate(trash.area, s, ssl)) {
@@ -2487,11 +2471,10 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv)
 	}
 	trash.area[i] = 0;
 
+	node = NULL;
 	/* lookup in full qualified names */
-	node = ebst_lookup(&s->sni_ctx, trash.area);
-
-	/* lookup a not neg filter */
-	for (n = node; n; n = ebmb_next_dup(n)) {
+	for (n = ebst_lookup(&s->sni_ctx, trash.area); n; n = ebmb_next_dup(n)) {
+		/* lookup a not neg filter */
 		if (!container_of(n, struct sni_ctx, name)->neg) {
 			node = n;
 			break;
@@ -2499,9 +2482,15 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv)
 	}
 	if (!node && wildp) {
 		/* lookup in wildcards names */
-		node = ebst_lookup(&s->sni_w_ctx, wildp);
+		for (n = ebst_lookup(&s->sni_w_ctx, wildp); n; n = ebmb_next_dup(n)) {
+			/* lookup a not neg filter */
+			if (!container_of(n, struct sni_ctx, name)->neg) {
+				node = n;
+				break;
+			}
+		}
 	}
-	if (!node || container_of(node, struct sni_ctx, name)->neg) {
+	if (!node) {
 #if (!defined SSL_NO_GENERATE_CERTIFICATES)
 		if (s->generate_certs && ssl_sock_generate_certificate(servername, s, ssl)) {
 			/* switch ctx done in ssl_sock_generate_certificate */
@@ -3689,25 +3678,23 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 					}
 
 					if (is_bundle) {
-						char dp[MAXPATHLEN+1] = {0}; /* this will be the filename w/o the keytype */
 						int dp_len;
 
 						dp_len = end - de->d_name;
-						snprintf(dp, dp_len + 1, "%s", de->d_name);
 
 						/* increment i and free de until we get to a non-bundle cert
 						 * Note here that we look at de_list[i + 1] before freeing de
-						 * this is important since ignore_entry will free de
+						 * this is important since ignore_entry will free de. This also
+						 * guarantees that de->d_name continues to hold the same prefix.
 						 */
-						while (i + 1 < n && !strncmp(de_list[i + 1]->d_name, dp, dp_len)) {
+						while (i + 1 < n && !strncmp(de_list[i + 1]->d_name, de->d_name, dp_len)) {
 							free(de);
 							i++;
 							de = de_list[i];
 						}
 
-						snprintf(fp, sizeof(fp), "%s/%s", path, dp);
+						snprintf(fp, sizeof(fp), "%s/%.*s", path, dp_len, de->d_name);
 						cfgerr |= ssl_sock_load_multi_cert(fp, bind_conf, NULL, NULL, 0, err);
-
 						/* Successfully processed the bundle */
 						goto ignore_entry;
 					}
@@ -4043,10 +4030,8 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 	SSL_CTX_set_select_certificate_cb(ctx, ssl_sock_switchctx_cbk);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
 #elif (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-	if (bind_conf->ssl_conf.early_data) {
+	if (bind_conf->ssl_conf.early_data)
 		SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
-		SSL_CTX_set_max_early_data(ctx, global.tune.bufsize - global.tune.maxrewrite);
-	}
 	SSL_CTX_set_client_hello_cb(ctx, ssl_sock_switchctx_cbk, NULL);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
 #else
@@ -4522,7 +4507,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 	if (ssl_conf_cur)
 		SSL_CTX_set_alpn_select_cb(ctx, ssl_sock_advertise_alpn_protos, ssl_conf_cur);
 #endif
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
+#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
 	conf_curves = (ssl_conf && ssl_conf->curves) ? ssl_conf->curves : bind_conf->ssl_conf.curves;
 	if (conf_curves) {
 		if (!SSL_CTX_set1_curves_list(ctx, conf_curves)) {
@@ -4530,9 +4515,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 				 curproxy->id, conf_curves, bind_conf->arg, bind_conf->file, bind_conf->line);
 			cfgerr++;
 		}
-#if defined(SSL_CTX_set_ecdh_auto)
 		(void)SSL_CTX_set_ecdh_auto(ctx, 1);
-#endif
 	}
 #endif
 #if defined(SSL_CTX_set_tmp_ecdh) && !defined(OPENSSL_NO_ECDH)
@@ -4545,7 +4528,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 			 NULL);
 
 		if (ecdhe == NULL) {
-			SSL_CTX_set_ecdh_auto(ctx, 1);
+			(void)SSL_CTX_set_ecdh_auto(ctx, 1);
 			return cfgerr;
 		}
 #else
@@ -5228,7 +5211,7 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 	ctx->wait_event.tasklet->context = ctx;
 	ctx->wait_event.events = 0;
 	ctx->sent_early_data = 0;
-	ctx->tmp_early_data = -1;
+	ctx->early_buf = BUF_NULL;
 	ctx->conn = conn;
 	ctx->send_wait = NULL;
 	ctx->recv_wait = NULL;
@@ -5329,6 +5312,17 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 			conn->err_code = CO_ER_SSL_NO_MEM;
 			goto err;
 		}
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+		if (__objt_listener(conn->target)->bind_conf->ssl_conf.early_data) {
+			b_alloc(&ctx->early_buf);
+			SSL_set_max_early_data(ctx->ssl,
+			    /* Only allow early data if we managed to allocate
+			     * a buffer.
+			     */
+			    (!b_is_null(&ctx->early_buf)) ?
+			    global.tune.bufsize - global.tune.maxrewrite : 0);
+		}
+#endif
 
 		ctx->bio = BIO_new(ha_meth);
 		if (!ctx->bio) {
@@ -5405,17 +5399,25 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 	 * detect early data, except to try to read them
 	 */
 	if (conn->flags & CO_FL_EARLY_SSL_HS) {
-		size_t read_data;
+		size_t read_data = 0;
 
-		ret = SSL_read_early_data(ctx->ssl, &ctx->tmp_early_data,
-		    1, &read_data);
-		if (ret == SSL_READ_EARLY_DATA_ERROR)
-			goto check_error;
-		if (ret == SSL_READ_EARLY_DATA_SUCCESS) {
-			conn->flags &= ~(CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN);
-			return 1;
-		} else
-			conn->flags &= ~CO_FL_EARLY_SSL_HS;
+		while (1) {
+			ret = SSL_read_early_data(ctx->ssl,
+			    b_tail(&ctx->early_buf), b_room(&ctx->early_buf),
+			    &read_data);
+			if (ret == SSL_READ_EARLY_DATA_ERROR)
+				goto check_error;
+			if (read_data > 0) {
+				conn->flags |= CO_FL_EARLY_DATA;
+				b_add(&ctx->early_buf, read_data);
+			}
+			if (ret == SSL_READ_EARLY_DATA_FINISH) {
+				conn->flags &= ~CO_FL_EARLY_SSL_HS;
+				if (!b_data(&ctx->early_buf))
+					b_free(&ctx->early_buf);
+				break;
+			}
+		}
 	}
 #endif
 	/* If we use SSL_do_handshake to process a reneg initiated by
@@ -5805,6 +5807,15 @@ static struct task *ssl_sock_io_cb(struct task *t, void *context, unsigned short
 			return NULL;
 		}
 	}
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	/* If we have early data and somebody wants to receive, let them */
+	else if (b_data(&ctx->early_buf) && ctx->recv_wait) {
+		ctx->recv_wait->events &= ~SUB_RETRY_RECV;
+			tasklet_wakeup(ctx->recv_wait->tasklet);
+			ctx->recv_wait = NULL;
+
+	}
+#endif
 	return NULL;
 }
 
@@ -5827,6 +5838,20 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 	if (!ctx)
 		goto out_error;
 
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	if (b_data(&ctx->early_buf)) {
+		try = b_contig_space(buf);
+		if (try > b_data(&ctx->early_buf))
+			try = b_data(&ctx->early_buf);
+		memcpy(b_tail(buf), b_head(&ctx->early_buf), try);
+		b_add(buf, try);
+		b_del(&ctx->early_buf, try);
+		if (b_data(&ctx->early_buf) == 0)
+			b_free(&ctx->early_buf);
+		return try;
+	}
+#endif
+
 	if (conn->flags & CO_FL_HANDSHAKE)
 		/* a handshake was requested */
 		return 0;
@@ -5846,45 +5871,6 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 		if (try > count)
 			try = count;
 
-		if (((conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_EARLY_DATA)) == CO_FL_EARLY_SSL_HS) &&
-		    ctx->tmp_early_data != -1) {
-			*b_tail(buf) = ctx->tmp_early_data;
-			done++;
-			try--;
-			count--;
-			b_add(buf, 1);
-			ctx->tmp_early_data = -1;
-			continue;
-		}
-
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-		if (conn->flags & CO_FL_EARLY_SSL_HS) {
-			size_t read_length;
-
-			ret = SSL_read_early_data(ctx->ssl,
-			    b_tail(buf), try, &read_length);
-			if (ret == SSL_READ_EARLY_DATA_SUCCESS &&
-			    read_length > 0)
-				conn->flags |= CO_FL_EARLY_DATA;
-			if (ret == SSL_READ_EARLY_DATA_SUCCESS ||
-			    ret == SSL_READ_EARLY_DATA_FINISH) {
-				if (ret == SSL_READ_EARLY_DATA_FINISH) {
-					/*
-					 * We're done reading the early data,
-					 * let's make the handshake
-					 */
-					conn->flags &= ~CO_FL_EARLY_SSL_HS;
-					conn->flags |= CO_FL_SSL_WAIT_HS;
-					need_out = 1;
-					/* Now initiate the handshake */
-					tasklet_wakeup(ctx->wait_event.tasklet);
-					if (read_length == 0)
-						break;
-				}
-				ret = read_length;
-			}
-		} else
-#endif
 		ret = SSL_read(ctx->ssl, b_tail(buf), try);
 
 		if (conn->flags & CO_FL_ERROR) {
@@ -6172,6 +6158,7 @@ static void ssl_sock_close(struct connection *conn, void *xprt_ctx) {
 		}
 #endif
 		SSL_free(ctx->ssl);
+		b_free(&ctx->early_buf);
 		tasklet_free(ctx->wait_event.tasklet);
 		pool_free(ssl_sock_ctx_pool, ctx);
 		_HA_ATOMIC_SUB(&sslconns, 1);
@@ -7960,7 +7947,7 @@ static int bind_parse_crl_file(char **args, int cur_arg, struct proxy *px, struc
 /* parse the "curves" bind keyword keyword */
 static int ssl_bind_parse_curves(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
+#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
 	if (!*args[cur_arg + 1]) {
 		if (err)
 			memprintf(err, "'%s' : missing curve suite", args[cur_arg]);

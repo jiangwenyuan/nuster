@@ -64,6 +64,13 @@ enum {
 #define PROMEX_FL_METRIC_HDR    0x00000001
 #define PROMEX_FL_INFO_METRIC   0x00000002
 #define PROMEX_FL_STATS_METRIC  0x00000004
+#define PROMEX_FL_SCOPE_GLOBAL  0x00000008
+#define PROMEX_FL_SCOPE_FRONT   0x00000010
+#define PROMEX_FL_SCOPE_BACK    0x00000020
+#define PROMEX_FL_SCOPE_SERVER  0x00000040
+#define PROMEX_FL_NO_MAINT_SRV  0x00000080
+
+#define PROMEX_FL_SCOPE_ALL (PROMEX_FL_SCOPE_GLOBAL|PROMEX_FL_SCOPE_FRONT|PROMEX_FL_SCOPE_BACK|PROMEX_FL_SCOPE_SERVER)
 
 /* The max length for metrics name. It is a hard limit but it should be
  * enougth.
@@ -232,6 +239,12 @@ const int promex_front_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_REUSE]          = 0,
 	[ST_F_CACHE_LOOKUPS]  = ST_F_CACHE_HITS,
 	[ST_F_CACHE_HITS]     = ST_F_COMP_IN,
+	[ST_F_SRV_ICUR]       = 0,
+	[ST_F_SRV_ILIM]       = 0,
+	[ST_F_QT_MAX]         = 0,
+	[ST_F_CT_MAX]         = 0,
+	[ST_F_RT_MAX]         = 0,
+	[ST_F_TT_MAX]         = 0,
 };
 
 /* Matrix used to dump backend metrics. Each metric points to the next one to be
@@ -298,7 +311,7 @@ const int promex_back_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_QTIME]          = ST_F_CTIME,
 	[ST_F_CTIME]          = ST_F_RTIME,
 	[ST_F_RTIME]          = ST_F_TTIME,
-	[ST_F_TTIME]          = ST_F_DREQ,
+	[ST_F_TTIME]          = ST_F_QT_MAX,
 	[ST_F_AGENT_STATUS]   = 0,
 	[ST_F_AGENT_CODE]     = 0,
 	[ST_F_AGENT_DURATION] = 0,
@@ -325,6 +338,12 @@ const int promex_back_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_REUSE]          = ST_F_BIN,
 	[ST_F_CACHE_LOOKUPS]  = ST_F_CACHE_HITS,
 	[ST_F_CACHE_HITS]     = ST_F_COMP_IN,
+	[ST_F_SRV_ICUR]       = 0,
+	[ST_F_SRV_ILIM]       = 0,
+	[ST_F_QT_MAX]         = ST_F_CT_MAX,
+	[ST_F_CT_MAX]         = ST_F_RT_MAX,
+	[ST_F_RT_MAX]         = ST_F_TT_MAX,
+	[ST_F_TT_MAX]         = ST_F_DREQ,
 };
 
 /* Matrix used to dump server metrics. Each metric points to the next one to be
@@ -374,7 +393,7 @@ const int promex_srv_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_HRSP_3XX]       = ST_F_HRSP_4XX,
 	[ST_F_HRSP_4XX]       = ST_F_HRSP_5XX,
 	[ST_F_HRSP_5XX]       = ST_F_HRSP_OTHER,
-	[ST_F_HRSP_OTHER]     = 0,
+	[ST_F_HRSP_OTHER]     = ST_F_SRV_ICUR,
 	[ST_F_HANAFAIL]       = 0,
 	[ST_F_REQ_RATE]       = 0,
 	[ST_F_REQ_RATE_MAX]   = 0,
@@ -391,7 +410,7 @@ const int promex_srv_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_QTIME]          = ST_F_CTIME,
 	[ST_F_CTIME]          = ST_F_RTIME,
 	[ST_F_RTIME]          = ST_F_TTIME,
-	[ST_F_TTIME]          = ST_F_CONNECT,
+	[ST_F_TTIME]          = ST_F_QT_MAX,
 	[ST_F_AGENT_STATUS]   = 0,
 	[ST_F_AGENT_CODE]     = 0,
 	[ST_F_AGENT_DURATION] = 0,
@@ -418,6 +437,12 @@ const int promex_srv_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_REUSE]          = ST_F_DRESP,
 	[ST_F_CACHE_LOOKUPS]  = 0,
 	[ST_F_CACHE_HITS]     = 0,
+	[ST_F_SRV_ICUR]       = ST_F_SRV_ILIM,
+	[ST_F_SRV_ILIM]       = 0,
+	[ST_F_QT_MAX]         = ST_F_CT_MAX,
+	[ST_F_CT_MAX]         = ST_F_RT_MAX,
+	[ST_F_RT_MAX]         = ST_F_TT_MAX,
+	[ST_F_TT_MAX]         = ST_F_CONNECT,
 };
 
 /* Name of all info fields */
@@ -544,10 +569,10 @@ const struct ist promex_st_metric_names[ST_F_TOTAL_FIELDS] = {
 	[ST_F_LASTSESS]       = IST("last_session_seconds"),
 	[ST_F_LAST_CHK]       = IST("check_last_content"),
 	[ST_F_LAST_AGT]       = IST("agentcheck_last_content"),
-	[ST_F_QTIME]          = IST("http_queue_time_average_seconds"),
-	[ST_F_CTIME]          = IST("http_connect_time_average_seconds"),
-	[ST_F_RTIME]          = IST("http_response_time_average_seconds"),
-	[ST_F_TTIME]          = IST("http_total_time_average_seconds"),
+	[ST_F_QTIME]          = IST("queue_time_average_seconds"),
+	[ST_F_CTIME]          = IST("connect_time_average_seconds"),
+	[ST_F_RTIME]          = IST("response_time_average_seconds"),
+	[ST_F_TTIME]          = IST("total_time_average_seconds"),
 	[ST_F_AGENT_STATUS]   = IST("agentcheck_status"),
 	[ST_F_AGENT_CODE]     = IST("agentcheck_code"),
 	[ST_F_AGENT_DURATION] = IST("agentcheck_duration_milliseconds"),
@@ -574,6 +599,12 @@ const struct ist promex_st_metric_names[ST_F_TOTAL_FIELDS] = {
 	[ST_F_REUSE]          = IST("connection_reuses_total"),
 	[ST_F_CACHE_LOOKUPS]  = IST("http_cache_lookups_total"),
 	[ST_F_CACHE_HITS]     = IST("http_cache_hits_total"),
+	[ST_F_SRV_ICUR]       = IST("server_idle_connections_current"),
+	[ST_F_SRV_ILIM]       = IST("server_idle_connections_limit"),
+	[ST_F_QT_MAX]         = IST("max_queue_time_seconds"),
+	[ST_F_CT_MAX]         = IST("max_connect_time_seconds"),
+	[ST_F_RT_MAX]         = IST("max_response_time_seconds"),
+	[ST_F_TT_MAX]         = IST("max_total_time_seconds"),
 };
 
 /* Description of all info fields */
@@ -730,6 +761,12 @@ const struct ist promex_st_metric_desc[ST_F_TOTAL_FIELDS] = {
 	[ST_F_REUSE]          = IST("Total number of connection reuses."),
 	[ST_F_CACHE_LOOKUPS]  = IST("Total number of HTTP cache lookups."),
 	[ST_F_CACHE_HITS]     = IST("Total number of HTTP cache hits."),
+	[ST_F_SRV_ICUR]       = IST("Current number of idle connections available for reuse"),
+	[ST_F_SRV_ILIM]       = IST("Limit on the number of available idle connections"),
+	[ST_F_QT_MAX]         = IST("Maximum observed time spent in the queue"),
+	[ST_F_CT_MAX]         = IST("Maximum observed time spent waiting for a connection to complete"),
+	[ST_F_RT_MAX]         = IST("Maximum observed time spent waiting for a server response"),
+	[ST_F_TT_MAX]         = IST("Maximum observed total request+response time (request+queue+connect+response+processing)"),
 };
 
 /* Specific labels for all info fields. Empty by default. */
@@ -1042,6 +1079,12 @@ const struct ist promex_st_metric_types[ST_F_TOTAL_FIELDS] = {
 	[ST_F_REUSE]          = IST("counter"),
 	[ST_F_CACHE_LOOKUPS]  = IST("counter"),
 	[ST_F_CACHE_HITS]     = IST("counter"),
+	[ST_F_SRV_ICUR]       = IST("gauge"),
+	[ST_F_SRV_ILIM]       = IST("gauge"),
+	[ST_F_QT_MAX]         = IST("gauge"),
+	[ST_F_CT_MAX]         = IST("gauge"),
+	[ST_F_RT_MAX]         = IST("gauge"),
+	[ST_F_TT_MAX]         = IST("gauge"),
 };
 
 /* Return the server status: 0=DOWN, 1=UP, 2=MAINT, 3=DRAIN, 4=NOLB. */
@@ -1674,6 +1717,22 @@ static int promex_dump_back_metrics(struct appctx *appctx, struct htx *htx)
 					secs = (double)swrate_avg(px->be_counters.t_time, TIME_STATS_SAMPLES) / 1000.0;
 					metric = mkf_flt(FN_AVG, secs);
 					break;
+				case ST_F_QT_MAX:
+					secs = (double)px->be_counters.qtime_max / 1000.0;
+					metric = mkf_flt(FN_MAX, secs);
+					break;
+				case ST_F_CT_MAX:
+					secs = (double)px->be_counters.ctime_max / 1000.0;
+					metric = mkf_flt(FN_MAX, secs);
+					break;
+				case ST_F_RT_MAX:
+					secs = (double)px->be_counters.dtime_max / 1000.0;
+					metric = mkf_flt(FN_MAX, secs);
+					break;
+				case ST_F_TT_MAX:
+					secs = (double)px->be_counters.ttime_max / 1000.0;
+					metric = mkf_flt(FN_MAX, secs);
+					break;
 				case ST_F_DREQ:
 					metric = mkf_u64(FN_COUNTER, px->be_counters.denied_req);
 					break;
@@ -1847,6 +1906,9 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 			while (appctx->ctx.stats.sv) {
 				sv = appctx->ctx.stats.sv;
 
+				if ((appctx->ctx.stats.flags & PROMEX_FL_NO_MAINT_SRV) && (sv->cur_admin & SRV_ADMF_MAINT))
+					goto next_sv;
+
 				switch (appctx->st2) {
 					case ST_F_STATUS:
 						metric = mkf_u32(FO_STATUS, promex_srv_status(sv));
@@ -1899,6 +1961,22 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 					case ST_F_TTIME:
 						secs = (double)swrate_avg(sv->counters.t_time, TIME_STATS_SAMPLES) / 1000.0;
 						metric = mkf_flt(FN_AVG, secs);
+						break;
+					case ST_F_QT_MAX:
+						secs = (double)sv->counters.qtime_max / 1000.0;
+						metric = mkf_flt(FN_MAX, secs);
+						break;
+					case ST_F_CT_MAX:
+						secs = (double)sv->counters.ctime_max / 1000.0;
+						metric = mkf_flt(FN_MAX, secs);
+						break;
+					case ST_F_RT_MAX:
+						secs = (double)sv->counters.dtime_max / 1000.0;
+						metric = mkf_flt(FN_MAX, secs);
+						break;
+					case ST_F_TT_MAX:
+						secs = (double)sv->counters.ttime_max / 1000.0;
+						metric = mkf_flt(FN_MAX, secs);
 						break;
 					case ST_F_CONNECT:
 						metric = mkf_u64(FN_COUNTER, sv->counters.connect);
@@ -1987,6 +2065,12 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 						appctx->ctx.stats.flags &= ~PROMEX_FL_METRIC_HDR;
 						metric = mkf_u64(FN_COUNTER, sv->counters.p.http.rsp[0]);
 						break;
+					case ST_F_SRV_ICUR:
+						metric = mkf_u32(0, sv->curr_idle_conns);
+						break;
+					case ST_F_SRV_ILIM:
+						metric = mkf_u32(FO_CONFIG|FN_LIMIT, (sv->max_idle_conns == -1) ? 0 : sv->max_idle_conns);
+						break;
 
 					default:
 						goto next_metric;
@@ -1995,6 +2079,7 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 				if (!promex_dump_metric(appctx, htx, prefix, &metric, &out, max))
 					goto full;
 
+			  next_sv:
 				appctx->ctx.stats.sv = sv->next;
 			}
 
@@ -2028,72 +2113,81 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 static int promex_dump_metrics(struct appctx *appctx, struct stream_interface *si, struct htx *htx)
 {
 	int ret;
+	int flags = appctx->ctx.stats.flags;
 
 	switch (appctx->st1) {
 		case PROMEX_DUMPER_INIT:
 			appctx->ctx.stats.px = NULL;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = (PROMEX_FL_METRIC_HDR|PROMEX_FL_INFO_METRIC);
+			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_INFO_METRIC);
 			appctx->st2 = promex_global_metrics[INF_NAME];
 			appctx->st1 = PROMEX_DUMPER_GLOBAL;
 			/* fall through */
 
 		case PROMEX_DUMPER_GLOBAL:
-			ret = promex_dump_global_metrics(appctx, htx);
-			if (ret <= 0) {
-				if (ret == -1)
-					goto error;
-				goto full;
+			if (appctx->ctx.stats.flags & PROMEX_FL_SCOPE_GLOBAL) {
+				ret = promex_dump_global_metrics(appctx, htx);
+				if (ret <= 0) {
+					if (ret == -1)
+						goto error;
+					goto full;
+				}
 			}
 
 			appctx->ctx.stats.px = proxies_list;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = (PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
+			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
 			appctx->st2 = promex_front_metrics[ST_F_PXNAME];
 			appctx->st1 = PROMEX_DUMPER_FRONT;
 			/* fall through */
 
 		case PROMEX_DUMPER_FRONT:
-			ret = promex_dump_front_metrics(appctx, htx);
-			if (ret <= 0) {
-				if (ret == -1)
-					goto error;
-				goto full;
+			if (appctx->ctx.stats.flags & PROMEX_FL_SCOPE_FRONT) {
+				ret = promex_dump_front_metrics(appctx, htx);
+				if (ret <= 0) {
+					if (ret == -1)
+						goto error;
+					goto full;
+				}
 			}
 
 			appctx->ctx.stats.px = proxies_list;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = (PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
+			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
 			appctx->st2 = promex_back_metrics[ST_F_PXNAME];
 			appctx->st1 = PROMEX_DUMPER_BACK;
 			/* fall through */
 
 		case PROMEX_DUMPER_BACK:
-			ret = promex_dump_back_metrics(appctx, htx);
-			if (ret <= 0) {
-				if (ret == -1)
-					goto error;
-				goto full;
+			if (appctx->ctx.stats.flags & PROMEX_FL_SCOPE_BACK) {
+				ret = promex_dump_back_metrics(appctx, htx);
+				if (ret <= 0) {
+					if (ret == -1)
+						goto error;
+					goto full;
+				}
 			}
 
 			appctx->ctx.stats.px = proxies_list;
 			appctx->ctx.stats.sv = (appctx->ctx.stats.px ? appctx->ctx.stats.px->srv : NULL);
-			appctx->ctx.stats.flags = (PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
+			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
 			appctx->st2 = promex_srv_metrics[ST_F_PXNAME];
 			appctx->st1 = PROMEX_DUMPER_SRV;
 			/* fall through */
 
 		case PROMEX_DUMPER_SRV:
-			ret = promex_dump_srv_metrics(appctx, htx);
-			if (ret <= 0) {
-				if (ret == -1)
-					goto error;
-				goto full;
+			if (appctx->ctx.stats.flags & PROMEX_FL_SCOPE_SERVER) {
+				ret = promex_dump_srv_metrics(appctx, htx);
+				if (ret <= 0) {
+					if (ret == -1)
+						goto error;
+					goto full;
+				}
 			}
 
 			appctx->ctx.stats.px = NULL;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = 0;
+			appctx->ctx.stats.flags = flags;
 			appctx->st2 = 0;
 			appctx->st1 = PROMEX_DUMPER_DONE;
 			/* fall through */
@@ -2115,6 +2209,112 @@ static int promex_dump_metrics(struct appctx *appctx, struct stream_interface *s
 	appctx->ctx.stats.flags = 0;
 	appctx->st2 = 0;
 	appctx->st1 = PROMEX_DUMPER_DONE;
+	return -1;
+}
+
+/* Parse the query stirng of request URI to filter the metrics. It returns 1 on
+ * success and -1 on error. */
+static int promex_parse_uri(struct appctx *appctx, struct stream_interface *si)
+{
+	struct channel *req = si_oc(si);
+	struct channel *res = si_ic(si);
+	struct htx *req_htx, *res_htx;
+	struct htx_sl *sl;
+	char *p, *key, *value;
+	const char *end;
+	struct buffer *err;
+	int default_scopes = PROMEX_FL_SCOPE_ALL;
+	int len;
+
+	/* Get the query-string */
+	req_htx = htxbuf(&req->buf);
+	sl = http_get_stline(req_htx);
+	if (!sl)
+		goto error;
+	p = http_find_param_list(HTX_SL_REQ_UPTR(sl), HTX_SL_REQ_ULEN(sl), '?');
+	if (!p)
+		goto end;
+	end = HTX_SL_REQ_UPTR(sl) + HTX_SL_REQ_ULEN(sl);
+
+	/* copy the query-string */
+	len = end - p;
+	chunk_reset(&trash);
+	memcpy(trash.area, p, len);
+	trash.area[len] = 0;
+	p = trash.area;
+	end = trash.area + len;
+
+	/* Parse the query-string */
+	while (p < end && *p && *p != '#') {
+		value = NULL;
+
+		/* decode parameter name */
+		key = p;
+		while (p < end && *p != '=' && *p != '&' && *p != '#')
+			++p;
+		/* found a value */
+		if (*p == '=') {
+			*(p++) = 0;
+			value = p;
+		}
+		else if (*p == '&')
+			*(p++) = 0;
+		else if (*p == '#')
+			*p = 0;
+		len = url_decode(key);
+		if (len == -1)
+			goto error;
+
+		/* decode value */
+		if (value) {
+			while (p < end && *p != '=' && *p != '&' && *p != '#')
+				++p;
+			if (*p == '=')
+				goto error;
+			if (*p == '&')
+				*(p++) = 0;
+			else if (*p == '#')
+				*p = 0;
+			len = url_decode(value);
+			if (len == -1)
+				goto error;
+		}
+
+		if (!strcmp(key, "scope")) {
+			default_scopes = 0; /* at least a scope defined, unset default scopes */
+			if (!value)
+				goto error;
+			else if (*value == 0)
+				appctx->ctx.stats.flags &= ~PROMEX_FL_SCOPE_ALL;
+			else if (*value == '*')
+				appctx->ctx.stats.flags |= PROMEX_FL_SCOPE_ALL;
+			else if (!strcmp(value, "global"))
+				appctx->ctx.stats.flags |= PROMEX_FL_SCOPE_GLOBAL;
+			else if (!strcmp(value, "server"))
+				appctx->ctx.stats.flags |= PROMEX_FL_SCOPE_SERVER;
+			else if (!strcmp(value, "backend"))
+				appctx->ctx.stats.flags |= PROMEX_FL_SCOPE_BACK;
+			else if (!strcmp(value, "frontend"))
+				appctx->ctx.stats.flags |= PROMEX_FL_SCOPE_FRONT;
+			else
+				goto error;
+		}
+		else if (!strcmp(key, "no-maint"))
+			appctx->ctx.stats.flags |= PROMEX_FL_NO_MAINT_SRV;
+	}
+
+  end:
+	appctx->ctx.stats.flags |= default_scopes;
+	return 1;
+
+  error:
+	err = &htx_err_chunks[HTTP_ERR_400];
+	channel_erase(res);
+	res->buf.data = b_data(err);
+	memcpy(res->buf.area, b_head(err), b_data(err));
+	res_htx = htx_from_buf(&res->buf);
+	channel_add_input(res, res_htx->data);
+	appctx->st0 = PROMEX_ST_END;
 	return -1;
 }
 
@@ -2178,6 +2378,12 @@ static void promex_appctx_handle_io(struct appctx *appctx)
 
 	switch (appctx->st0) {
 		case PROMEX_ST_INIT:
+			ret = promex_parse_uri(appctx, si);
+			if (ret <= 0) {
+				if (ret == -1)
+					goto error;
+				goto out;
+			}
 			appctx->st0 = PROMEX_ST_HEAD;
 			appctx->st1 = PROMEX_DUMPER_INIT;
 			/* fall through */

@@ -3957,7 +3957,7 @@ static int hlua_applet_http_new(lua_State *L, struct appctx *ctx)
 		int32_t pos;
 
 		blk = htx_get_first_blk(htx);
-		BUG_ON(htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
+		BUG_ON(!blk || htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
 		sl = htx_get_blk_ptr(htx, blk);
 
 		/* Stores the request method. */

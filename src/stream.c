@@ -2399,10 +2399,9 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 	if (si_state_in(si_b->state, SI_SB_REQ|SI_SB_QUE|SI_SB_TAR|SI_SB_ASS)) {
 		/* prune the request variables and swap to the response variables. */
 		if (s->vars_reqres.scope != SCOPE_RES) {
-			if (!LIST_ISEMPTY(&s->vars_reqres.head)) {
+			if (!LIST_ISEMPTY(&s->vars_reqres.head))
 				vars_prune(&s->vars_reqres, s->sess, s);
-				vars_init(&s->vars_reqres, SCOPE_RES);
-			}
+			vars_init(&s->vars_reqres, SCOPE_RES);
 		}
 
 		do {
@@ -2794,13 +2793,20 @@ void stream_update_time_stats(struct stream *s)
 		swrate_add(&srv->counters.c_time, TIME_STATS_SAMPLES, t_connect);
 		swrate_add(&srv->counters.d_time, TIME_STATS_SAMPLES, t_data);
 		swrate_add(&srv->counters.t_time, TIME_STATS_SAMPLES, t_close);
+		HA_ATOMIC_UPDATE_MAX(&srv->counters.qtime_max, t_queue);
+		HA_ATOMIC_UPDATE_MAX(&srv->counters.ctime_max, t_connect);
+		HA_ATOMIC_UPDATE_MAX(&srv->counters.dtime_max, t_data);
+		HA_ATOMIC_UPDATE_MAX(&srv->counters.ttime_max, t_close);
 	}
 	HA_SPIN_LOCK(PROXY_LOCK, &s->be->lock);
 	swrate_add(&s->be->be_counters.q_time, TIME_STATS_SAMPLES, t_queue);
 	swrate_add(&s->be->be_counters.c_time, TIME_STATS_SAMPLES, t_connect);
 	swrate_add(&s->be->be_counters.d_time, TIME_STATS_SAMPLES, t_data);
 	swrate_add(&s->be->be_counters.t_time, TIME_STATS_SAMPLES, t_close);
-	HA_SPIN_UNLOCK(PROXY_LOCK, &s->be->lock);
+	HA_ATOMIC_UPDATE_MAX(&s->be->be_counters.qtime_max, t_queue);
+	HA_ATOMIC_UPDATE_MAX(&s->be->be_counters.ctime_max, t_connect);
+	HA_ATOMIC_UPDATE_MAX(&s->be->be_counters.dtime_max, t_data);
+	HA_ATOMIC_UPDATE_MAX(&s->be->be_counters.ttime_max, t_close);
 }
 
 /*

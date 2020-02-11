@@ -182,7 +182,6 @@ REG_TEST_SCRIPT=./scripts/run-regtests.sh
 # to be sure we get the intended behavior.
 SPEC_CFLAGS := -fno-strict-aliasing -Wdeclaration-after-statement
 SPEC_CFLAGS += $(call cc-opt-alt,-fwrapv,$(call cc-opt,-fno-strict-overflow))
-SPEC_CFLAGS += $(call cc-nowarn,format-truncation)
 SPEC_CFLAGS += $(call cc-nowarn,address-of-packed-member)
 SPEC_CFLAGS += $(call cc-nowarn,unused-label)
 SPEC_CFLAGS += $(call cc-nowarn,sign-compare)
@@ -520,14 +519,6 @@ OPTIONS_LDFLAGS += -lpthread
 endif
 endif
 
-# For nuster
-ifeq ($(USE_OPENSSL),)
-ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
-OPTIONS_LDFLAGS += -lpthread
-endif
-endif
-
 ifneq ($(USE_LUA),)
 check_lua_lib = $(shell echo "int main(){}" | $(CC) -o /dev/null -x c - $(2) -l$(1) 2>/dev/null && echo $(1))
 check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
@@ -838,8 +829,7 @@ help:
 build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 .build_opts: $(build_opts)
 
-haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS) $(NUSTER_OBJS)
-
+haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS)
 	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
 
 $(LIB_EBTREE): $(EBTREE_OBJS)
@@ -890,7 +880,6 @@ install-bin:
 	done
 	$(Q)install -v -d "$(DESTDIR)$(SBINDIR)"
 	$(Q)install -v haproxy $(EXTRA) "$(DESTDIR)$(SBINDIR)"
-	$(Q)ln -s "$(DESTDIR)$(SBINDIR)/haproxy" "$(DESTDIR)$(SBINDIR)/nuster"
 
 install: install-bin install-man install-doc
 
@@ -901,14 +890,12 @@ uninstall:
 	done
 	$(Q)-rmdir "$(DESTDIR)$(DOCDIR)"
 	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/haproxy
-	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/nuster
 
 clean:
 	$(Q)rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
 	$(Q)for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
-	$(Q)rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
 
 tags:
 	$(Q)find src include \( -name '*.c' -o -name '*.h' \) -print0 | \

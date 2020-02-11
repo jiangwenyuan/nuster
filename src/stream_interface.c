@@ -599,6 +599,10 @@ static int si_cs_process(struct conn_stream *cs)
 	 * after process_stream() noticed there were an error, and decided
 	 * to retry to connect, the connection may still have CO_FL_ERROR,
 	 * and we don't want to add SI_FL_ERR back
+	 *
+	 * Note: This test is only required because si_cs_process is also the SI
+	 *       wake callback. Otherwise si_cs_recv()/si_cs_send() already take
+	 *       care of it.
 	 */
 	if (si->state >= SI_ST_CON &&
 	    (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR))
@@ -624,7 +628,12 @@ static int si_cs_process(struct conn_stream *cs)
 	}
 
 	/* Report EOI on the channel if it was reached from the mux point of
-	 * view. */
+	 * view.
+	 *
+	 * Note: This test is only required because si_cs_process is also the SI
+	 *       wake callback. Otherwise si_cs_recv()/si_cs_send() already take
+	 *       care of it.
+	 */
 	if ((cs->flags & CS_FL_EOI) && !(ic->flags & CF_EOI))
 		ic->flags |= (CF_EOI|CF_READ_PARTIAL);
 
@@ -1231,7 +1240,7 @@ int si_cs_recv(struct conn_stream *cs)
 
 	/* stop here if we reached the end of data */
 	if (cs->flags & CS_FL_EOS)
-		goto out_shutdown_r;
+		goto end_recv;
 
 	/* stop immediately on errors. Note that we DON'T want to stop on
 	 * POLL_ERR, as the poller might report a write error while there
@@ -1243,7 +1252,7 @@ int si_cs_recv(struct conn_stream *cs)
 		if (!conn_xprt_ready(conn))
 			return 0;
 		if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
-			return 1; // We want to make sure si_cs_wake() is called, so that process_strema is woken up, on failure
+			goto end_recv;
 	}
 
 	/* prepare to detect if the mux needs more room */
@@ -1299,11 +1308,8 @@ int si_cs_recv(struct conn_stream *cs)
 			ic->flags |= CF_READ_PARTIAL;
 		}
 
-		if (cs->flags & CS_FL_EOS)
-			goto out_shutdown_r;
-
-		if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
-			return 1;
+		if (conn->flags & CO_FL_ERROR || cs->flags & (CS_FL_EOS|CS_FL_ERROR))
+			goto end_recv;
 
 		if (conn->flags & CO_FL_WAIT_ROOM) {
 			/* the pipe is full or we have read enough data that it
@@ -1324,6 +1330,13 @@ int si_cs_recv(struct conn_stream *cs)
 	if (ic->pipe && unlikely(!ic->pipe->data)) {
 		put_pipe(ic->pipe);
 		ic->pipe = NULL;
+	}
+
+	if (ic->pipe && ic->to_forward && !(flags & CO_RFL_BUF_FLUSH)) {
+		/* don't break splicing by reading, but still call rcv_buf()
+		 * to pass the flag.
+		 */
+		goto done_recv;
 	}
 
 	/* now we'll need a input buffer for the stream */
@@ -1354,6 +1367,13 @@ int si_cs_recv(struct conn_stream *cs)
 		}
 
 		if (ret <= 0) {
+			/* if we refrained from reading because we asked for a
+			 * flush to satisfy rcv_pipe(), we must not subscribe
+			 * and instead report that there's not enough room
+			 * here to proceed.
+			 */
+			if (flags & CO_RFL_BUF_FLUSH)
+				si_rx_room_blk(si);
 			break;
 		}
 
@@ -1473,32 +1493,40 @@ int si_cs_recv(struct conn_stream *cs)
 	}
 
  end_recv:
-	if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
-		return 1;
+	ret = (cur_read != 0);
 
-	if (cs->flags & CS_FL_EOS)
+	/* Report EOI on the channel if it was reached from the mux point of
+	 * view. */
+	if ((cs->flags & CS_FL_EOI) && !(ic->flags & CF_EOI)) {
+		ic->flags |= (CF_EOI|CF_READ_PARTIAL);
+		ret = 1;
+	}
+
+	if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR) {
+		cs->flags |= CS_FL_ERROR;
+		si->flags |= SI_FL_ERR;
+		ret = 1;
+	}
+	else if (cs->flags & CS_FL_EOS) {
 		/* connection closed */
-		goto out_shutdown_r;
-
-	/* Subscribe to receive events if we're blocking on I/O */
-	if (!si_rx_blocked(si)) {
+		if (conn->flags & CO_FL_CONNECTED) {
+			/* we received a shutdown */
+			ic->flags |= CF_READ_NULL;
+			if (ic->flags & CF_AUTO_CLOSE)
+				channel_shutw_now(ic);
+			stream_int_read0(si);
+		}
+		ret = 1;
+	}
+	else if (!si_rx_blocked(si)) {
+		/* Subscribe to receive events if we're blocking on I/O */
 		conn->mux->subscribe(cs, SUB_RETRY_RECV, &si->wait_event);
 		si_rx_endp_done(si);
 	} else {
 		si_rx_endp_more(si);
+		ret = 1;
 	}
-
-	return (cur_read != 0) || si_rx_blocked(si) || (cs->flags & CS_FL_EOI);
-
- out_shutdown_r:
-	if (conn->flags & CO_FL_CONNECTED) {
-		/* we received a shutdown */
-		ic->flags |= CF_READ_NULL;
-		if (ic->flags & CF_AUTO_CLOSE)
-			channel_shutw_now(ic);
-		stream_int_read0(si);
-	}
-	return 1;
+	return ret;
 }
 
 /*

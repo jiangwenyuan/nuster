@@ -217,7 +217,8 @@ static inline int EVP_PKEY_base_id(EVP_PKEY *pkey)
 #define TLSEXT_signature_ecdsa      3
 #endif
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L) || (LIBRESSL_VERSION_NUMBER < 0x20700000L)
+#if ((HA_OPENSSL_VERSION_NUMBER < 0x1010000fL) && (LIBRESSL_VERSION_NUMBER < 0x2070000fL)) ||\
+	defined(OPENSSL_IS_BORINGSSL)
 #define X509_getm_notBefore     X509_get_notBefore
 #define X509_getm_notAfter      X509_get_notAfter
 #endif
@@ -310,6 +311,10 @@ static inline int EVP_PKEY_base_id(EVP_PKEY *pkey)
 #define BIO_meth_set_create(m, f)  do { (m)->create  = (f); } while (0)
 #define BIO_meth_set_ctrl(m, f)    do { (m)->ctrl    = (f); } while (0)
 #define BIO_meth_set_destroy(m, f) do { (m)->destroy = (f); } while (0)
+#endif
+
+#ifndef SSL_CTX_set_ecdh_auto
+#define SSL_CTX_set_ecdh_auto(dummy, onoff)      ((onoff) != 0)
 #endif
 
 #endif /* USE_OPENSSL */

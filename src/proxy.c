@@ -112,6 +112,8 @@ const struct cfg_opt cfg_opts2[] =
 	{ "http-pretend-keepalive",       PR_O2_FAKE_KA,   PR_CAP_BE, 0, PR_MODE_HTTP },
 	{ "http-no-delay",                PR_O2_NODELAY,   PR_CAP_FE|PR_CAP_BE, 0, PR_MODE_HTTP },
 	{ "http-use-htx",                 PR_O2_USE_HTX,   PR_CAP_FE|PR_CAP_BE, 0, 0 },
+	{"h1-case-adjust-bogus-client",   PR_O2_H1_ADJ_BUGCLI, PR_CAP_FE, 0, PR_MODE_HTTP },
+	{"h1-case-adjust-bogus-server",   PR_O2_H1_ADJ_BUGSRV, PR_CAP_BE, 0, PR_MODE_HTTP },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -1147,10 +1149,10 @@ void soft_stop(void)
 		if (p->state == PR_STSTOPPED &&
 		    !LIST_ISEMPTY(&p->conf.listeners) &&
 		    LIST_ELEM(p->conf.listeners.n,
-		    struct listener *, by_fe)->state >= LI_ZOMBIE) {
+		    struct listener *, by_fe)->state > LI_ASSIGNED) {
 			struct listener *l;
 			list_for_each_entry(l, &p->conf.listeners, by_fe) {
-				if (l->state >= LI_ZOMBIE)
+				if (l->state > LI_ASSIGNED)
 					close(l->fd);
 				l->state = LI_INIT;
 			}
@@ -1505,6 +1507,14 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 				}
 				s->flags |= SF_HTX;
 			}
+		}
+		else if (IS_HTX_STRM(s) && be->mode != PR_MODE_HTTP) {
+			/* If a TCP backend is assgiend to an HTX stream, return
+			 * an error. It may happens for a new stream on a
+			 * previously upgraded connnections. */
+			if (!(s->flags & SF_ERR_MASK))
+				s->flags |= SF_ERR_INTERNAL;
+			return 0;
 		}
 
 		/* If an LB algorithm needs to access some pre-parsed body contents,

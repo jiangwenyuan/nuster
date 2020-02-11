@@ -246,7 +246,11 @@ const char *stat_field_names[ST_F_TOTAL_FIELDS] = {
 	[ST_F_CACHE_LOOKUPS]  = "cache_lookups",
 	[ST_F_CACHE_HITS]     = "cache_hits",
 	[ST_F_SRV_ICUR]       = "srv_icur",
-	[ST_F_SRV_ILIM]       = "src_ilim"
+	[ST_F_SRV_ILIM]       = "src_ilim",
+	[ST_F_QT_MAX]         = "qtime_max",
+	[ST_F_CT_MAX]         = "ctime_max",
+	[ST_F_RT_MAX]         = "rtime_max",
+	[ST_F_TT_MAX]         = "ttime_max",
 };
 
 /* one line of info */
@@ -283,7 +287,7 @@ static const char *stats_scope_ptr(struct appctx *appctx, struct stream_interfac
 		struct ist uri;
 
 		blk = htx_get_head_blk(htx);
-		BUG_ON(htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
+		BUG_ON(!blk || htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
 		ALREADY_CHECKED(blk);
 		uri = htx_sl_req_uri(htx_get_blk_ptr(htx, blk));
 		p = uri.ptr;
@@ -1047,12 +1051,16 @@ static int stats_dump_fields_html(struct buffer *out,
 			              U2H(stats[ST_F_WREW].u.u64));
 		}
 
-		chunk_appendf(out, "<tr><th colspan=3>Avg over last 1024 success. conn.</th></tr>");
-		chunk_appendf(out, "<tr><th>- Queue time:</th><td>%s</td><td>ms</td></tr>",   U2H(stats[ST_F_QTIME].u.u32));
-		chunk_appendf(out, "<tr><th>- Connect time:</th><td>%s</td><td>ms</td></tr>", U2H(stats[ST_F_CTIME].u.u32));
+		chunk_appendf(out, "<tr><th colspan=3>Max / Avg over last 1024 success. conn.</th></tr>");
+		chunk_appendf(out, "<tr><th>- Queue time:</th><td>%s / %s</td><td>ms</td></tr>",
+			      U2H(stats[ST_F_QT_MAX].u.u32), U2H(stats[ST_F_QTIME].u.u32));
+		chunk_appendf(out, "<tr><th>- Connect time:</th><td>%s / %s</td><td>ms</td></tr>",
+			      U2H(stats[ST_F_CT_MAX].u.u32), U2H(stats[ST_F_CTIME].u.u32));
 		if (strcmp(field_str(stats, ST_F_MODE), "http") == 0)
-			chunk_appendf(out, "<tr><th>- Response time:</th><td>%s</td><td>ms</td></tr>", U2H(stats[ST_F_RTIME].u.u32));
-		chunk_appendf(out, "<tr><th>- Total time:</th><td>%s</td><td>ms</td></tr>",   U2H(stats[ST_F_TTIME].u.u32));
+			chunk_appendf(out, "<tr><th>- Responses time:</th><td>%s / %s</td><td>ms</td></tr>",
+				      U2H(stats[ST_F_RT_MAX].u.u32), U2H(stats[ST_F_RTIME].u.u32));
+		chunk_appendf(out, "<tr><th>- Total time:</th><td>%s / %s</td><td>ms</td></tr>",
+			      U2H(stats[ST_F_TT_MAX].u.u32), U2H(stats[ST_F_TTIME].u.u32));
 
 		chunk_appendf(out,
 		              "</table></div></u></td>"
@@ -1261,8 +1269,7 @@ static int stats_dump_fields_html(struct buffer *out,
 			              "<tr><th>Cache lookups:</th><td>%s</td></tr>"
 			              "<tr><th>Cache hits:</th><td>%s</td><td>(%d%%)</td></tr>"
 			              "<tr><th>Failed hdr rewrites:</th><td>%s</td></tr>"
-				      "<tr><th colspan=3>Avg over last 1024 success. conn.</th></tr>"
-			              "",
+				      "",
 			              U2H(stats[ST_F_CONNECT].u.u64),
 			              U2H(stats[ST_F_REUSE].u.u64),
 			              (stats[ST_F_CONNECT].u.u64 + stats[ST_F_REUSE].u.u64) ?
@@ -1284,11 +1291,16 @@ static int stats_dump_fields_html(struct buffer *out,
 			              U2H(stats[ST_F_WREW].u.u64));
 		}
 
-		chunk_appendf(out, "<tr><th>- Queue time:</th><td>%s</td><td>ms</td></tr>",   U2H(stats[ST_F_QTIME].u.u32));
-		chunk_appendf(out, "<tr><th>- Connect time:</th><td>%s</td><td>ms</td></tr>", U2H(stats[ST_F_CTIME].u.u32));
+		chunk_appendf(out, "<tr><th colspan=3>Max / Avg over last 1024 success. conn.</th></tr>");
+		chunk_appendf(out, "<tr><th>- Queue time:</th><td>%s / %s</td><td>ms</td></tr>",
+			      U2H(stats[ST_F_QT_MAX].u.u32), U2H(stats[ST_F_QTIME].u.u32));
+		chunk_appendf(out, "<tr><th>- Connect time:</th><td>%s / %s</td><td>ms</td></tr>",
+			      U2H(stats[ST_F_CT_MAX].u.u32), U2H(stats[ST_F_CTIME].u.u32));
 		if (strcmp(field_str(stats, ST_F_MODE), "http") == 0)
-			chunk_appendf(out, "<tr><th>- Response time:</th><td>%s</td><td>ms</td></tr>", U2H(stats[ST_F_RTIME].u.u32));
-		chunk_appendf(out, "<tr><th>- Total time:</th><td>%s</td><td>ms</td></tr>",   U2H(stats[ST_F_TTIME].u.u32));
+			chunk_appendf(out, "<tr><th>- Responses time:</th><td>%s / %s</td><td>ms</td></tr>",
+				      U2H(stats[ST_F_RT_MAX].u.u32), U2H(stats[ST_F_RTIME].u.u32));
+		chunk_appendf(out, "<tr><th>- Total time:</th><td>%s / %s</td><td>ms</td></tr>",
+			      U2H(stats[ST_F_TT_MAX].u.u32), U2H(stats[ST_F_TTIME].u.u32));
 
 		chunk_appendf(out,
 		              "</table></div></u></td>"
@@ -1803,6 +1815,11 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 	stats[ST_F_RTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.d_time, TIME_STATS_SAMPLES));
 	stats[ST_F_TTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.t_time, TIME_STATS_SAMPLES));
 
+	stats[ST_F_QT_MAX] = mkf_u32(FN_MAX, sv->counters.qtime_max);
+	stats[ST_F_CT_MAX] = mkf_u32(FN_MAX, sv->counters.ctime_max);
+	stats[ST_F_RT_MAX] = mkf_u32(FN_MAX, sv->counters.dtime_max);
+	stats[ST_F_TT_MAX] = mkf_u32(FN_MAX, sv->counters.ttime_max);
+
 	if (flags & ST_SHLGNDS) {
 		switch (addr_to_str(&sv->addr, str, sizeof(str))) {
 		case AF_INET:
@@ -1929,6 +1946,11 @@ int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int le
 	stats[ST_F_CTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.c_time, TIME_STATS_SAMPLES));
 	stats[ST_F_RTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.d_time, TIME_STATS_SAMPLES));
 	stats[ST_F_TTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.t_time, TIME_STATS_SAMPLES));
+
+	stats[ST_F_QT_MAX]       = mkf_u32(FN_MAX, px->be_counters.qtime_max);
+	stats[ST_F_CT_MAX]       = mkf_u32(FN_MAX, px->be_counters.ctime_max);
+	stats[ST_F_RT_MAX]       = mkf_u32(FN_MAX, px->be_counters.dtime_max);
+	stats[ST_F_TT_MAX]       = mkf_u32(FN_MAX, px->be_counters.ttime_max);
 
 	return 1;
 }
@@ -3988,6 +4010,10 @@ static int cli_parse_clear_counters(char **args, char *payload, struct appctx *a
 			px->be_counters.sps_max = 0;
 			px->be_counters.cps_max = 0;
 			px->be_counters.nbpend_max = 0;
+			px->be_counters.qtime_max = 0;
+			px->be_counters.ctime_max = 0;
+			px->be_counters.dtime_max = 0;
+			px->be_counters.ttime_max = 0;
 
 			px->fe_counters.conn_max = 0;
 			px->fe_counters.p.http.rps_max = 0;
@@ -4002,6 +4028,10 @@ static int cli_parse_clear_counters(char **args, char *payload, struct appctx *a
 				sv->counters.cur_sess_max = 0;
 				sv->counters.nbpend_max = 0;
 				sv->counters.sps_max = 0;
+				sv->counters.qtime_max = 0;
+				sv->counters.ctime_max = 0;
+				sv->counters.dtime_max = 0;
+				sv->counters.ttime_max = 0;
 			}
 
 		list_for_each_entry(li, &px->conf.listeners, by_fe)

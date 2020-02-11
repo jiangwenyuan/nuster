@@ -35,8 +35,6 @@
 #include <proto/stream_interface.h>
 #include <proto/stats.h>
 
-#include <nuster/nuster.h>
-
 extern const char *stat_status_codes[];
 
 static void htx_end_request(struct stream *s);
@@ -637,11 +635,6 @@ int htx_process_req_common(struct stream *s, struct channel *req, int an_bit, st
 		goto done;
 	}
 
-	/* check nuster applets: manager/purge/stats... */
-	if (nuster_check_applet2(s, req, px)) {
-		goto return_prx_cond;
-	}
-
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.
 	 * If this happens, then the data will not come immediately, so we must
 	 * send all what we have without waiting. Note that due to the small gain
@@ -1211,7 +1204,7 @@ int htx_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 
 	if (req->to_forward) {
 		if (req->to_forward == CHN_INFINITE_FORWARD) {
-			if (req->flags & (CF_SHUTR|CF_EOI)) {
+			if (req->flags & CF_EOI) {
 				msg->msg_state = HTTP_MSG_DONE;
 				req->to_forward = 0;
 				goto done;
@@ -2212,7 +2205,7 @@ int htx_response_forward_body(struct stream *s, struct channel *res, int an_bit)
 
 	if (res->to_forward) {
 		if (res->to_forward == CHN_INFINITE_FORWARD) {
-			if (res->flags & (CF_SHUTR|CF_EOI)) {
+			if (res->flags & CF_EOI) {
 				msg->msg_state = HTTP_MSG_DONE;
 				res->to_forward = 0;
 				goto done;

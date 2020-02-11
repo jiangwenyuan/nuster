@@ -1,6 +1,100 @@
 ChangeLog :
 ===========
 
+2019/12/21 : 2.0.12
+    - DOC: Improve documentation of http-re(quest|sponse) replace-(header|value|uri)
+    - DOC: clarify the fact that replace-uri works on a full URI
+    - BUG/MINOR: sample: fix the closing bracket and LF in the debug converter
+    - BUG/MINOR: sample: always check converters' arguments
+    - BUG/MEDIUM: ssl: Don't set the max early data we can receive too early.
+    - MINOR: task: only check TASK_WOKEN_ANY to decide to requeue a task
+    - BUG/MAJOR: task: add a new TASK_SHARED_WQ flag to fix foreing requeuing
+    - BUG/MEDIUM: ssl: Revamp the way early data are handled.
+    - MINOR: fd/threads: make _GET_NEXT()/_GET_PREV() use the volatile attribute
+    - BUG/MEDIUM: fd/threads: fix a concurrency issue between add and rm on the same fd
+    - BUG/MINOR: ssl: openssl-compat: Fix getm_ defines
+    - BUG/MEDIUM: stream: Be sure to never assign a TCP backend to an HTX stream
+    - BUILD: ssl: improve SSL_CTX_set_ecdh_auto compatibility
+
+2019/12/11 : 2.0.11
+    - BUG/MINOR: stream: init variables when the list is empty
+    - BUG/MINOR: contrib/prometheus-exporter: Use HTX errors and not legacy ones
+    - BUG/MINOR: contrib/prometheus-exporter: decode parameter and value only
+    - BUG/MINOR: http-htx: Don't make http_find_header() fail if the value is empty
+    - DOC: Clarify behavior of server maxconn in HTTP mode
+    - DOC: clarify matching strings on binary fetches
+    - DOC: move the "group" keyword at the right place
+    - BUG/MEDIUM: stream-int: don't subscribed for recv when we're trying to flush data
+    - BUG/MINOR: stream-int: avoid calling rcv_buf() when splicing is still possible
+    - BUG/MEDIUM: listener/thread: fix a race when pausing a listener
+    - BUG/MINOR: ssl: certificate choice can be unexpected with openssl >= 1.1.1
+    - BUG/MEDIUM: mux-h1: Never reuse H1 connection if a shutw is pending
+    - BUG/MINOR: mux-h1: Don't rely on CO_FL_SOCK_RD_SH to set H1C_F_CS_SHUTDOWN
+    - BUG/MINOR: mux-h1: Fix conditions to know whether or not we may receive data
+    - BUG/MEDIUM: tasks: Make sure we switch wait queues in task_set_affinity().
+    - BUG/MEDIUM: checks: Make sure we set the task affinity just before connecting.
+    - BUG/MINOR: mux-h1: Be sure to set CS_FL_WANT_ROOM when EOM can't be added
+    - BUG/MINOR: proxy: make soft_stop() also close FDs in LI_PAUSED state
+    - BUG/MINOR: listener/threads: always use atomic ops to clear the FD events
+    - BUG/MINOR: listener: also clear the error flag on a paused listener
+    - BUG/MEDIUM: listener/threads: fix a remaining race in the listener's accept()
+    - DOC: document the listener state transitions
+    - BUG/MAJOR: dns: add minimalist error processing on the Rx path
+    - BUG/MEDIUM: proto_udp/threads: recv() and send() must not be exclusive.
+    - BUG/MEDIUM: kqueue: Make sure we report read events even when no data.
+    - DOC: listeners: add a few missing transitions
+    - BUG/MINOR: tasks: only requeue a task if it was already in the queue
+    - DOC: proxies: HAProxy only supports 3 connection modes
+    - BUILD/MINOR: ssl: shut up a build warning about format truncation
+    - BUILD/MINOR: tools: shut up the format truncation warning in get_gmt_offset()
+    - BUILD: do not disable -Wformat-truncation anymore
+    - DOC: remove references to the outdated architecture.txt
+    - BUG/MINOR: log: fix minor resource leaks on logformat error path
+    - BUG/MINOR: mworker: properly pass SIGTTOU/SIGTTIN to workers
+    - BUG/MINOR: listener: do not immediately resume on transient error
+    - BUG/MINOR: server: make "agent-addr" work on default-server line
+    - BUG/MINOR: listener: fix off-by-one in state name check
+    - BUILD/MINOR: unix sockets: silence an absurd gcc warning about strncpy()
+
+2019/11/25 : 2.0.10
+    - BUG/MINOR: init: fix set-dumpable when using uid/gid
+    - MINOR: peers: Alway show the table info for disconnected peers.
+    - MINOR: peers: Add TX/RX heartbeat counters.
+    - MINOR: peers: Add debugging information to "show peers".
+    - BUG/MINOR: peers: Wrong null "server_name" data field handling.
+    - BUG/MINOR: ssl: fix crt-list neg filter for openssl < 1.1.1
+    - BUG/MEDIUM: mworker: don't fill the -sf argument with -1 during the reexec
+    - BUG/MINOR: peers: "peer alive" flag not reset when deconnecting.
+    - BUILD/MINOR: ssl: fix compiler warning about useless statement
+    - BUG/MEDIUM: stream-int: Don't loose events on the CS when an EOS is reported
+    - BUILD: debug: Avoid warnings in dev mode with -02 because of some BUG_ON tests
+    - BUG/MINOR: mux-h1: Fix tunnel mode detection on the response path
+    - BUG/MINOR: http-ana: Properly catch aborts during the payload forwarding
+    - MINOR: freq_ctr: Make the sliding window sums thread-safe
+    - MINOR: stream: Remove the lock on the proxy to update time stats
+    - MINOR: counters: Add fields to store the max observed for {q,c,d,t}_time
+    - MINOR: contrib/prometheus-exporter: Report metrics about max times for sessions
+    - BUG/MINOR: contrib/prometheus-exporter: Rename some metrics
+    - MINOR: contrib/prometheus-exporter: report the number of idle conns per server
+    - MINOR: contrib/prometheus-exporter: filter exported metrics by scope
+    - MINOR: contrib/prometheus-exporter: Add a param to ignore servers in maintenance
+    - BUG/MINOR: stream-int: Fix si_cs_recv() return value
+    - MINOR: stats: Report max times in addition of the averages for sessions
+    - REGTEST: vtest can now enable mcli with its own flag
+    - MEDIUM: mux-h1: Add the support of headers adjustment for bogus HTTP/1 apps
+    - BUG/MINOR: mux-h1: Fix a UAF in cfg_h1_headers_case_adjust_postparser()
+    - BUG/MINOR: mux-h1: Adjust header case when chunked encoding is add to a message
+    - DOC: Add missing stats fields in the management manual
+    - DOC: Add documentation about the use-service action
+    - BUG/MINOR: cli: fix out of bounds in -S parser
+    - BUG/MINOR: ssl: fix curve setup with LibreSSL
+    - MINOR: ist: add ist_find_ctl()
+    - BUG/MAJOR: h2: reject header values containing invalid chars
+    - BUG/MAJOR: h2: make header field name filtering stronger
+    - BUG/MAJOR: mux-h2: don't try to decode a response HEADERS frame in idle state
+    - SCRIPTS: create-release: show the correct origin name in suggested commands
+    - SCRIPTS: git-show-backports: add "-s" to proposed cherry-pick commands
+
 2019/11/15 : 2.0.9
     - MINOR: config: warn on presence of "\n" in header values/replacements
     - BUG/MINOR: mux-h2: do not emit logs on backend connections

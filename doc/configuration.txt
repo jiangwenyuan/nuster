@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.0
                              willy tarreau
-                              2019/11/15
+                              2019/12/21
 
 
 This document covers the configuration language as implemented in the version
@@ -584,6 +584,8 @@ The following keywords are supported in the "global" section :
    - gid
    - group
    - hard-stop-after
+   - h1-case-adjust
+   - h1-case-adjust-file
    - log
    - log-tag
    - log-send-hostname
@@ -841,6 +843,71 @@ hard-stop-after <time>
 group <group name>
   Similar to "gid" but uses the GID of group name <group name> from /etc/group.
   See also "gid" and "user".
+
+hard-stop-after <time>
+  Defines the maximum time allowed to perform a clean soft-stop.
+
+  Arguments :
+    <time>  is the maximum time (by default in milliseconds) for which the
+            instance will remain alive when a soft-stop is received via the
+            SIGUSR1 signal.
+
+  This may be used to ensure that the instance will quit even if connections
+  remain opened during a soft-stop (for example with long timeouts for a proxy
+  in tcp mode). It applies both in TCP and HTTP mode.
+
+  Example:
+    global
+      hard-stop-after 30s
+
+h1-case-adjust <from> <to>
+  Defines the case adjustment to apply, when enabled, to the header name
+  <from>, to change it to <to> before sending it to HTTP/1 clients or
+  servers. <from> must be in lower case, and <from> and <to> must not differ
+  except for their case. It may be repeated if several header names need to be
+  ajusted. Duplicate entries are not allowed. If a lot of header names have to
+  be adjusted, it might be more convenient to use "h1-case-adjust-file".
+  Please note that no transformation will be applied unless "option
+  h1-case-adjust-bogus-client" or "option h1-case-adjust-bogus-server" is
+  specified in a proxy.
+
+  There is no standard case for header names because, as stated in RFC7230,
+  they are case-insensitive. So applications must handle them in a case-
+  insensitive manner. But some bogus applications violate the standards and
+  erroneously rely on the cases most commonly used by browsers. This problem
+  becomes critical with HTTP/2 because all header names must be exchanged in
+  lower case, and HAProxy follows the same convention. All header names are
+  sent in lower case to clients and servers, regardless of the HTTP version.
+
+  Applications which fail to properly process requests or responses may require
+  to temporarily use such workarounds to adjust header names sent to them for
+  the time it takes the application to be fixed. Please note that an
+  application which requires such workarounds might be vulnerable to content
+  smuggling attacks and must absolutely be fixed.
+
+  Example:
+    global
+      h1-case-adjust content-length Content-Length
+
+  See "h1-case-adjust-file", "option h1-case-adjust-bogus-client" and
+  "option h1-case-adjust-bogus-server".
+
+h1-case-adjust-file <hdrs-file>
+  Defines a file containing a list of key/value pairs used to adjust the case
+  of some header names before sending them to HTTP/1 clients or servers. The
+  file <hdrs-file> must contain 2 header names per line. The first one must be
+  in lower case and both must not differ except for their case. Lines which
+  start with '#' are ignored, just like empty lines. Leading and trailing tabs
+  and spaces are stripped. Duplicate entries are not allowed. Please note that
+  no transformation will be applied unless "option h1-case-adjust-bogus-client"
+  or "option h1-case-adjust-bogus-server" is specified in a proxy.
+
+  If this directive is repeated, only the last one will be processed.  It is an
+  alternative to the directive "h1-case-adjust" if a lot of header names need
+  to be adjusted. Please read the risks associated with using this.
+
+  See "h1-case-adjust", "option h1-case-adjust-bogus-client" and
+  "option h1-case-adjust-bogus-server".
 
 log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
     <facility> [max level [min level]]
@@ -2282,7 +2349,7 @@ arbitrary criteria.
 
 In HTTP mode, the processing applied to requests and responses flowing over
 a connection depends in the combination of the frontend's HTTP options and
-the backend's. HAProxy supports 4 connection modes :
+the backend's. HAProxy supports 3 connection modes :
 
   - KAL : keep alive ("option http-keep-alive") which is the default mode : all
     requests and responses are processed, and connections remain open but idle
@@ -2404,6 +2471,8 @@ option dontlog-normal                (*)  X          X         X         -
 option dontlognull                   (*)  X          X         X         -
 -- keyword -------------------------- defaults - frontend - listen -- backend -
 option forwardfor                         X          X         X         X
+option h1-case-adjust-bogus-client   (*)  X          X         X         -
+option h1-case-adjust-bogus-server   (*)  X          -         X         X
 option http-buffer-request           (*)  X          X         X         X
 option http-ignore-probes            (*)  X          X         X         -
 option http-keep-alive               (*)  X          X         X         X
@@ -4444,69 +4513,84 @@ http-request reject [ { if | unless } <condition> ]
 http-request replace-header <name> <match-regex> <replace-fmt>
                             [ { if | unless } <condition> ]
 
-    This  matches the regular expression in all occurrences of header field
-    <name> according to <match-regex>, and replaces them with the
-    <replace-fmt> argument. Format characters are allowed in replace-fmt and
-    work like in <fmt> arguments in "http-request add-header". The match is
-    only case-sensitive. It is important to understand that this action only
-    considers whole header lines, regardless of the number of values they may
-    contain. This usage is suited to headers naturally containing commas in
-    their value, such as If-Modified-Since and so on.
+  This matches the value of all occurences of header field <name> against
+  <match-regex>. Matching is performed case-sensitively. Matching values are
+  completely replaced by <replace-fmt>. Format characters are allowed in
+  <replace-fmt> and work like <fmt> arguments in "http-request add-header".
+  Standard back-references using the backslash ('\') followed by a number are
+  supported.
 
-    Example:
-      http-request replace-header Cookie foo=([^;]*);(.*) foo=\1;ip=%bi;\2
+  This action acts on whole header lines, regardless of the number of values
+  they may contain. Thus it is well-suited to process headers naturally
+  containing commas in their value, such as If-Modified-Since. Headers that
+  contain a comma-separated list of values, such as Accept, should be processed
+  using "http-request replace-value".
 
-      # applied to:
-      Cookie: foo=foobar; expires=Tue, 14-Jun-2016 01:40:45 GMT;
+  Example:
+    http-request replace-header Cookie foo=([^;]*);(.*) foo=\1;ip=%bi;\2
 
-      # outputs:
-      Cookie: foo=foobar;ip=192.168.1.20; expires=Tue, 14-Jun-2016 01:40:45 GMT;
+    # applied to:
+    Cookie: foo=foobar; expires=Tue, 14-Jun-2016 01:40:45 GMT;
 
-      # assuming the backend IP is 192.168.1.20
+    # outputs:
+    Cookie: foo=foobar;ip=192.168.1.20; expires=Tue, 14-Jun-2016 01:40:45 GMT;
+
+    # assuming the backend IP is 192.168.1.20
+
+    http-request replace-header User-Agent curl foo
+
+    # applied to:
+    User-Agent: curl/7.47.0
+
+    # outputs:
+    User-Agent: foo
 
 http-request replace-uri <match-regex> <replace-fmt>
                            [ { if | unless } <condition> ]
 
-    This matches the regular expression in the URI part of the request
-    according to <match-regex>, and replaces it with the <replace-fmt>
-    argument. Standard back-references using the backslash ('\') followed by a
-    number are supported. The <fmt> field is interpreted as a log-format string
-    so it may contain special expressions just like the <fmt> argument passed
-    to "http-request set-uri". The match is exclusively case-sensitive. Any
-    optional scheme, authority or query string are considered in the matching
-    part of the URI. It is worth noting that regular expressions may be more
-    expensive to evaluate than certain ACLs, so rare replacements may benefit
-    from a condition to avoid performing the evaluation at all if it does not
-    match.
+  This works like "replace-header" except that it works on the request's URI part
+  instead of a header. The URI part may contain an optional scheme, authority or
+  query string. These are considered to be part of the value that is matched
+  against.
 
-    Example:
-        # prefix /foo : turn /bar?q=1 into /foo/bar?q=1 :
-        http-request replace-uri (.*) /foo\1
+  It is worth noting that regular expressions may be more expensive to evaluate
+  than certain ACLs, so rare replacements may benefit from a condition to avoid
+  performing the evaluation at all if it does not match.
 
-        # suffix /foo : turn /bar?q=1 into /bar/foo?q=1 :
-        http-request replace-uri ([^?]*)(\?(.*))? \1/foo\2
+  IMPORTANT NOTE: historically in HTTP/1.x, the vast majority of requests sent
+  by browsers use the "origin form", which differs from the "absolute form" in
+  that they do not contain a scheme nor authority in the URI portion. Mostly
+  only requests sent to proxies, those forged by hand and some emitted by
+  certain applications use the absolute form. As such, "replace-uri" usually
+  works fine most of the time in HTTP/1.x with rules starting with a "/". But
+  with HTTP/2, clients are encouraged to send absolute URIs only, which look
+  like the ones HTTP/1 clients use to talk to proxies. Such partial replace-uri
+  rules may then fail in HTTP/2 when they work in HTTP/1. Either the rules need
+  to be adapted to optionally match a scheme and authority.
 
-        # strip /foo : turn /foo/bar?q=1 into /bar?q=1
-        http-request replace-uri /foo/(.*) /\1
-        # or more efficient if only some requests match :
-        http-request replace-uri /foo/(.*) /\1 if { url_beg /foo/ }
+  Example:
+    # rewrite all "http" absolute requests to "https":
+    http-request replace-uri ^http://(.*) https://\1
+
+    # prefix /foo : turn /bar?q=1 into /foo/bar?q=1 :
+    http-request replace-uri ([^/:]*://[^/]*)?(.*) \1/foo\2
 
 http-request replace-value <name> <match-regex> <replace-fmt>
                            [ { if | unless } <condition> ]
 
-    This works like "replace-header" except that it matches the regex against
-    every comma-delimited value of the header field <name> instead of the
-    entire header. This is suited for all headers which are allowed to carry
-    more than one value. An example could be the Accept header.
+  This works like "replace-header" except that it matches the regex against
+  every comma-delimited value of the header field <name> instead of the
+  entire header. This is suited for all headers which are allowed to carry
+  more than one value. An example could be the Accept header.
 
-    Example:
-      http-request replace-value X-Forwarded-For ^192\.168\.(.*)$ 172.16.\1
+  Example:
+    http-request replace-value X-Forwarded-For ^192\.168\.(.*)$ 172.16.\1
 
-      # applied to:
-      X-Forwarded-For: 192.168.10.1, 192.168.13.24, 10.0.0.37
+    # applied to:
+    X-Forwarded-For: 192.168.10.1, 192.168.13.24, 10.0.0.37
 
-      # outputs:
-      X-Forwarded-For: 172.16.10.1, 172.16.13.24, 10.0.0.37
+    # outputs:
+    X-Forwarded-For: 172.16.10.1, 172.16.13.24, 10.0.0.37
 
 http-request sc-inc-gpc0(<sc-id>) [ { if | unless } <condition> ]
 http-request sc-inc-gpc1(<sc-id>) [ { if | unless } <condition> ]
@@ -4857,6 +4941,21 @@ http-request unset-var(<var-name>) [ { if | unless } <condition> ]
   Example:
     http-request unset-var(req.my_var)
 
+http-request use-service <service-name> [ { if | unless } <condition> ]
+
+  This directive executes the configured HTTP service to reply to the request
+  and stops the evaluation of the rules. An HTTP service may choose to reply by
+  sending any valid HTTP response or it may immediately close the connection
+  without sending any response. Outside natives services, for instance the
+  Prometheus exporter, it is possible to write your own services in Lua. No
+  further "http-request" rules are evaluated.
+
+  Arguments :
+    <service-name>  is mandatory. It is the service to call
+
+  Example:
+    http-request use-service prometheus-exporter if { path /metrics }
+
 http-request wait-for-handshake [ { if | unless } <condition> ]
 
   This will delay the processing of the request until the SSL handshake
@@ -4998,14 +5097,8 @@ http-response redirect <rule> [ { if | unless } <condition> ]
 http-response replace-header <name> <regex-match> <replace-fmt>
                              [ { if | unless } <condition> ]
 
-  This matches the regular expression in all occurrences of header field <name>
-  according to <match-regex>, and replaces them with the <replace-fmt> argument.
-  Format characters are allowed in replace-fmt and work like in <fmt> arguments
-  in "add-header". The match is only case-sensitive. It is important to
-  understand that this action only considers whole header lines, regardless of
-  the number of values they may contain. This usage is suited to headers
-  naturally containing commas in their value, such as Set-Cookie, Expires and
-  so on.
+  This works like "http-request replace-header" except that it works on the
+  server's response instead of the client's request.
 
   Example:
     http-response replace-header Set-Cookie (C=[^;]*);(.*) \1;ip=%bi;\2
@@ -5021,10 +5114,8 @@ http-response replace-header <name> <regex-match> <replace-fmt>
 http-response replace-value <name> <regex-match> <replace-fmt>
                             [ { if | unless } <condition> ]
 
-  This works like "replace-header" except that it matches the regex against
-  every comma-delimited value of the header field <name> instead of the entire
-  header. This is suited for all headers which are allowed to carry more than
-  one value. An example could be the Accept header.
+  This works like "http-response replace-value" except that it works on the
+  server's response instead of the client's request.
 
   Example:
     http-response replace-value Cache-control ^public$ private
@@ -6202,6 +6293,76 @@ option forwardfor [ except <network> ] [ header <name> ] [ if-none ]
 
   See also : "option httpclose", "option http-server-close",
              "option http-keep-alive"
+
+
+option h1-case-adjust-bogus-client
+no option h1-case-adjust-bogus-client
+  Enable or disable the case adjustment of HTTP/1 headers sent to bogus clients
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    yes   |   yes  |   no
+  Arguments : none
+
+  There is no standard case for header names because, as stated in RFC7230,
+  they are case-insensitive. So applications must handle them in a case-
+  insensitive manner. But some bogus applications violate the standards and
+  erroneously rely on the cases most commonly used by browsers. This problem
+  becomes critical with HTTP/2 because all header names must be exchanged in
+  lower case, and HAProxy follows the same convention. All header names are
+  sent in lower case to clients and servers, regardless of the HTTP version.
+
+  When HAProxy receives an HTTP/1 response, its header names are converted to
+  lower case and manipulated and sent this way to the clients. If a client is
+  known to violate the HTTP standards and to fail to process a response coming
+  from HAProxy, it is possible to transform the lower case header names to a
+  different format when the response is formatted and sent to the client, by
+  enabling this option and specifying the list of headers to be reformatted
+  using the global directives "h1-case-adjust" or "h1-case-adjust-file". This
+  must only be a temporary workaround for the time it takes the client to be
+  fixed, because clients which require such workarounds might be vulnerable to
+  content smuggling attacks and must absolutely be fixed.
+
+  Please note that this option will not affect standards-compliant clients.
+
+  If this option has been enabled in a "defaults" section, it can be disabled
+  in a specific instance by prepending the "no" keyword before it.
+
+  See also: "option h1-case-adjust-bogus-server", "h1-case-adjust",
+  "h1-case-adjust-file".
+
+
+option h1-case-adjust-bogus-server
+no option h1-case-adjust-bogus-server
+  Enable or disable the case adjustment of HTTP/1 headers sent to bogus servers
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no   |   yes  |   yes
+  Arguments : none
+
+  There is no standard case for header names because, as stated in RFC7230,
+  they are case-insensitive. So applications must handle them in a case-
+  insensitive manner. But some bogus applications violate the standards and
+  erroneously rely on the cases most commonly used by browsers. This problem
+  becomes critical with HTTP/2 because all header names must be exchanged in
+  lower case, and HAProxy follows the same convention. All header names are
+  sent in lower case to clients and servers, regardless of the HTTP version.
+
+  When HAProxy receives an HTTP/1 request, its header names are converted to
+  lower case and manipulated and sent this way to the servers. If a server is
+  known to violate the HTTP standards and to fail to process a request coming
+  from HAProxy, it is possible to transform the lower case header names to a
+  different format when the request is formatted and sent to the server, by
+  enabling this option and specifying the list of headers to be reformatted
+  using the global directives "h1-case-adjust" or "h1-case-adjust-file". This
+  must only be a temporary workaround for the time it takes the server to be
+  fixed, because servers which require such workarounds might be vulnerable to
+  content smuggling attacks and must absolutely be fixed.
+
+  Please note that this option will not affect standards-compliant servers.
+
+  If this option has been enabled in a "defaults" section, it can be disabled
+  in a specific instance by prepending the "no" keyword before it.
+
+  See also: "option h1-case-adjust-bogus-client", "h1-case-adjust",
+  "h1-case-adjust-file".
 
 
 option http-buffer-request
@@ -10092,6 +10253,7 @@ tcp-request content <action> [{if | unless} <condition>]
     - unset-var(<var-name>)
     - silent-drop
     - send-spoe-group <engine-name> <group-name>
+    - use-service <service-name>
 
   They have the same meaning as their counter-parts in "tcp-request connection"
   so please refer to that section for a complete description.
@@ -10177,6 +10339,16 @@ tcp-request content <action> [{if | unless} <condition>]
     <engine-name> The SPOE engine name.
 
     <group-name>  The SPOE group name as specified in the engine configuration.
+
+  The "use-service" is used to executes a TCP service which will reply to the
+  request and stop the evaluation of the rules. This service may choose to
+  reply by sending any valid response or it may immediately close the
+  connection without sending anything. Outside natives services, it is possible
+  to write your own services in Lua. No further "tcp-request" rules are
+  evaluated.
+
+  Example:
+    tcp-request content use-service lua.deny { src -f /etc/haproxy/blacklist.lst }
 
   Example:
 
@@ -12152,12 +12324,18 @@ downinter <delay>
 maxconn <maxconn>
   The "maxconn" parameter specifies the maximal number of concurrent
   connections that will be sent to this server. If the number of incoming
-  concurrent requests goes higher than this value, they will be queued, waiting
-  for a connection to be released. This parameter is very important as it can
+  concurrent connections goes higher than this value, they will be queued,
+  waiting for a slot to be released. This parameter is very important as it can
   save fragile servers from going down under extreme loads. If a "minconn"
   parameter is specified, the limit becomes dynamic. The default value is "0"
   which means unlimited. See also the "minconn" and "maxqueue" parameters, and
   the backend's "fullconn" keyword.
+
+  In HTTP mode this parameter limits the number of concurrent requests instead
+  of the number of connections. Multiple requests might be multiplexed over a
+  single TCP connection to the server. As an example if you specify a maxconn
+  of 50 you might see between 1 and 50 actual server connections, but no more
+  than 50 concurrent requests.
 
 maxqueue <maxqueue>
   The "maxqueue" parameter specifies the maximal number of connections which
@@ -13378,6 +13556,14 @@ characters such as the space. If the "-i" flag is passed before the first
 string, then the matching will be performed ignoring the case. In order
 to match the string "-i", either set it second, or pass the "--" flag
 before the first string. Same applies of course to match the string "--".
+
+Do not use string matches for binary fetches which might contain null bytes
+(0x00), as the comparison stops at the occurrence of the first null byte.
+Instead, convert the binary fetch to a hex string with the hex converter first.
+
+Example:
+    # matches if the string <tag> is present in the binary sample
+    acl tag_found req.payload(0,0),hex -m sub 3C7461673E
 
 
 7.1.4. Matching regular expressions (regexes)
