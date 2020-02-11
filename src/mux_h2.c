@@ -2475,6 +2475,12 @@ static void h2_process_demux(struct h2c *h2c)
 			break;
 		}
 
+		if (h2s->st == H2_SS_IDLE && (h2c->flags & H2_CF_IS_BACK)) {
+			/* only PUSH_PROMISE would be permitted here */
+			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+			break;
+		}
+
 		if (h2s->st == H2_SS_HREM && h2c->dft != H2_FT_WINDOW_UPDATE &&
 		    h2c->dft != H2_FT_RST_STREAM && h2c->dft != H2_FT_PRIORITY) {
 			/* RFC7540#5.1: any frame other than WU/PRIO/RST in
@@ -4586,7 +4592,7 @@ static size_t h2s_htx_frt_make_resp_headers(struct h2s *h2s, struct htx *htx)
 
 	/* get the start line, we do have one */
 	blk = htx_get_head_blk(htx);
-	BUG_ON(htx_get_blk_type(blk) != HTX_BLK_RES_SL);
+	BUG_ON(!blk || htx_get_blk_type(blk) != HTX_BLK_RES_SL);
 	ALREADY_CHECKED(blk);
 	sl = htx_get_blk_ptr(htx, blk);
 	h2s->status = sl->info.res.status;
@@ -4795,7 +4801,7 @@ static size_t h2s_htx_bck_make_req_headers(struct h2s *h2s, struct htx *htx)
 
 	/* get the start line, we do have one */
 	blk = htx_get_head_blk(htx);
-	BUG_ON(htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
+	BUG_ON(!blk || htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
 	ALREADY_CHECKED(blk);
 	sl = htx_get_blk_ptr(htx, blk);
 	meth = htx_sl_req_meth(sl);

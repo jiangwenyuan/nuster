@@ -50,6 +50,38 @@ spend much more ressources to produce the Prometheus metrics than the CSV export
 through the stats page. To give a comparison order, quick benchmarks shown that
 a PROMEX dump is 5x slower and 20x more verbose than a CSV export.
 
+
+metrics filtering
+-------------------
+
+It is possible to dynamically select the metrics to export if you don't use all
+of them passing parameters in the query-string.
+
+* Filtering on scopes
+
+The metrics may be filtered by scopes. Multiple parameters with "scope" as name
+may be passed in the query-string to filter exported metrics, with one of those
+values: global, frontend, backend, server or '*' (means all). A scope parameter
+with no value means to filter out all scopes (nothing is returned). The scope
+parameters are parsed in their appearance order in the query-string. So an empty
+scope will reset all scopes already parsed. But it can be overridden by
+following scope parameters in the query-string. By default everything is
+exported. Here are examples:
+
+  /metrics?scope=server                 # ==> server metrics will be exported
+  /metrics?scope=frontend&scope=backend # ==> Frontend and backend metrics will be exported
+  /metrics?scope=*&scope=               # ==> no metrics will be exported
+  /metrics?scope=&scope=global          # ==> global metrics will be exported
+
+* Filtering on servers state
+
+It is possible to exclude from returned metrics all servers in maintenance mode
+passing the parameter "no-maint" in the query-string. This parameter may help to
+solve performance issues of configuration that use the server templates to
+manage dynamic provisionning. Note there is no consistency check on the servers
+state. So, if the state of a server changes while the exporter is running, only
+a part of the metrics for this server will be dumped.
+
 Exported metrics
 ------------------
 
@@ -166,10 +198,14 @@ Exported metrics
 | haproxy_backend_connection_reuses_total             | Total number of connection reuses.                                       |
 | haproxy_backend_bytes_in_total                      | Current total of incoming bytes.                                         |
 | haproxy_backend_bytes_out_total                     | Current total of outgoing bytes.                                         |
-| haproxy_backend_http_queue_time_average_seconds     | Avg. queue time for last 1024 successful connections.                    |
-| haproxy_backend_http_connect_time_average_seconds   | Avg. connect time for last 1024 successful connections.                  |
-| haproxy_backend_http_response_time_average_seconds  | Avg. response time for last 1024 successful connections.                 |
-| haproxy_backend_http_total_time_average_seconds     | Avg. total time for last 1024 successful connections.                    |
+| haproxy_backend_queue_time_average_seconds          | Avg. queue time for last 1024 successful connections.                    |
+| haproxy_backend_connect_time_average_seconds        | Avg. connect time for last 1024 successful connections.                  |
+| haproxy_backend_response_time_average_seconds       | Avg. response time for last 1024 successful connections. (0 for TCP)     |
+| haproxy_backend_total_time_average_seconds          | Avg. total time for last 1024 successful connections.                    |
+| haproxy_backend_max_queue_time_seconds              | Maximum observed queue time.                                             |
+| haproxy_backend_max_connect_time_seconds            | Maximum observed connect time.                                           |
+| haproxy_backend_max_response_time_seconds           | Maximum observed response time. (0 for TCP)                              |
+| haproxy_backend_max_total_time_seconds              | Maximum observed total time.                                             |
 | haproxy_backend_requests_denied_total               | Total number of denied requests.                                         |
 | haproxy_backend_responses_denied_total              | Total number of denied responses.                                        |
 | haproxy_backend_connection_errors_total             | Total number of connection errors.                                       |
@@ -213,10 +249,14 @@ Exported metrics
 | haproxy_server_queue_limit                         | Configured maxqueue for the server (0 meaning no limit).                  |
 | haproxy_server_bytes_in_total                      | Current total of incoming bytes.                                          |
 | haproxy_server_bytes_out_total                     | Current total of outgoing bytes.                                          |
-| haproxy_server_http_queue_time_average_seconds     | Avg. queue time for last 1024 successful connections.                     |
-| haproxy_server_http_connect_time_average_seconds   | Avg. connect time for last 1024 successful connections.                   |
-| haproxy_server_http_response_time_average_seconds  | Avg. response time for last 1024 successful connections.                  |
-| haproxy_server_http_total_time_average_seconds     | Avg. total time for last 1024 successful connections.                     |
+| haproxy_server_queue_time_average_seconds          | Avg. queue time for last 1024 successful connections.                     |
+| haproxy_server_connect_time_average_seconds        | Avg. connect time for last 1024 successful connections.                   |
+| haproxy_server_response_time_average_seconds       | Avg. response time for last 1024 successful connections. (0 for TCP)      |
+| haproxy_server_total_time_average_seconds          | Avg. total time for last 1024 successful connections.                     |
+| haproxy_server_max_queue_time_seconds              | Maximum observed queue time.                                              |
+| haproxy_server_max_connect_time_seconds            | Maximum observed connect time.                                            |
+| haproxy_server_max_response_time_seconds           | Maximum observed response time.  (0 for TCP)                              |
+| haproxy_server_max_total_time_seconds              | Maximum observed total time.                                              |
 | haproxy_server_connection_attempts_total           | Total number of connection establishment attempts.                        |
 | haproxy_server_connection_reuses_total             | Total number of connection reuses.                                        |
 | haproxy_server_responses_denied_total              | Total number of denied responses.                                         |
@@ -235,4 +275,6 @@ Exported metrics
 | haproxy_server_current_throttle                    | Current throttle percentage for the server, when slowstart is active.     |
 | haproxy_server_loadbalanced_total                  | Total number of times a service was selected.                             |
 | haproxy_server_http_responses_total                | Total number of HTTP responses.                                           |
+| haproxy_server_idle_connections_current            | Current number of idle connections available for reuse.                   |
+| haproxy_server_idle_connections_limit              | Limit on the number of available idle connections.                        |
 +----------------------------------------------------+---------------------------------------------------------------------------+

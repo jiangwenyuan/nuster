@@ -35,6 +35,8 @@
 #include <proto/stream_interface.h>
 #include <proto/stats.h>
 
+#include <nuster/nuster.h>
+
 extern const char *stat_status_codes[];
 
 static void htx_end_request(struct stream *s);
@@ -633,6 +635,11 @@ int htx_process_req_common(struct stream *s, struct channel *req, int an_bit, st
 		if (!htx_apply_redirect_rule(rule, s, txn))
 			goto return_bad_req;
 		goto done;
+	}
+
+	/* check nuster applets: manager/purge/stats... */
+	if (nuster_check_applet2(s, req, px)) {
+		goto return_prx_cond;
 	}
 
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.

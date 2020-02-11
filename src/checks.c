@@ -2271,7 +2271,6 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 					__event_srv_chk_r(cs);
 			}
 
-			task_set_affinity(t, tid_bit);
 			goto reschedule;
 
 		case SF_ERR_SRVTO: /* ETIMEDOUT */

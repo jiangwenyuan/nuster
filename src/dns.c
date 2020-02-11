@@ -1558,8 +1558,6 @@ static void dns_resolve_recv(struct dgram_conn *dgram)
 			ns->counters.too_big++;
 			continue;
 		}
-		else
-			req = stream->dns_ctx.dns_requester;
 
 		/* initializing variables */
 		bufend = buf + buflen;	/* pointer to mark the end of the buffer */

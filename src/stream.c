@@ -2798,7 +2798,6 @@ void stream_update_time_stats(struct stream *s)
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.dtime_max, t_data);
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.ttime_max, t_close);
 	}
-	HA_SPIN_LOCK(PROXY_LOCK, &s->be->lock);
 	swrate_add(&s->be->be_counters.q_time, TIME_STATS_SAMPLES, t_queue);
 	swrate_add(&s->be->be_counters.c_time, TIME_STATS_SAMPLES, t_connect);
 	swrate_add(&s->be->be_counters.d_time, TIME_STATS_SAMPLES, t_data);

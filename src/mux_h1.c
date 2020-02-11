@@ -16,6 +16,8 @@
 #include <common/htx.h>
 #include <common/initcall.h>
 
+#include <ebistree.h>
+
 #include <types/pipe.h>
 #include <types/proxy.h>
 #include <types/session.h>
@@ -40,13 +42,15 @@
 /* Flags indicating why reading input data are blocked. */
 #define H1C_F_IN_ALLOC       0x00000010 /* mux is blocked on lack of input buffer */
 #define H1C_F_IN_FULL        0x00000020 /* mux is blocked on input buffer full */
-#define H1C_F_IN_BUSY        0x00000040
-/* 0x00000040 - 0x00000800 unused */
+#define H1C_F_IN_BUSY        0x00000040 /* mux is blocked on input waiting the other side */
+/* 0x00000040 - 0x00000400 unused */
 
+#define H1C_F_CS_WAIT_CONN   0x00000800 /* waiting for the connection establishment */
 #define H1C_F_CS_ERROR       0x00001000 /* connection must be closed ASAP because an error occurred */
 #define H1C_F_CS_SHUTW_NOW   0x00002000 /* connection must be shut down for writes ASAP */
-#define H1C_F_CS_SHUTDOWN    0x00004000 /* connection is shut down for read and writes */
-#define H1C_F_CS_WAIT_CONN   0x00008000 /* waiting for the connection establishment */
+#define H1C_F_CS_SHUTDOWN    0x00004000 /* connection is shut down */
+#define H1C_F_CS_IDLE        0x00008000 /* connection is idle and may be reused
+					 * (exclusive to all H1C_F_CS flags and never set when an h1s is attached) */
 
 #define H1C_F_WAIT_NEXT_REQ  0x00010000 /*  waiting for the next request to start, use keep-alive timeout */
 #define H1C_F_UPG_H2C        0x00020000 /* set if an upgrade to h2 should be done */
@@ -107,6 +111,22 @@ struct h1s {
 	uint16_t status;       /* HTTP response status */
 };
 
+/* Map of headers used to convert outgoing headers */
+struct h1_hdrs_map {
+	char *name;
+	struct eb_root map;
+};
+
+/* An entry in a headers map */
+struct h1_hdr_entry  {
+	struct ist name;
+	struct ebpt_node node;
+};
+
+/* Declare the headers map */
+static struct h1_hdrs_map hdrs_map = { .name = NULL, .map  = EB_ROOT };
+
+
 /* the h1c and h1s pools */
 DECLARE_STATIC_POOL(pool_head_h1c, "h1c", sizeof(struct h1c));
 DECLARE_STATIC_POOL(pool_head_h1s, "h1s", sizeof(struct h1s));
@@ -122,29 +142,21 @@ static struct task *h1_timeout_task(struct task *t, void *context, unsigned shor
 /* functions below are for dynamic buffer management */
 /*****************************************************/
 /*
- * Indicates whether or not the we may call the h1_recv() function to
- * attempt to receive data into the buffer and/or parse pending data. The
- * condition is a bit complex due to some API limits for now. The rules are the
- * following :
- *   - if an error or a shutdown was detected on the connection and the buffer
- *     is empty, we must not attempt to receive
- *   - if the input buffer failed to be allocated, we must not try to receive
- *      and we know there is nothing pending
- *   - if no flag indicates a blocking condition, we may attempt to receive,
- *     regardless of whether the input buffer is full or not, so that only de
- *     receiving part decides whether or not to block. This is needed because
- *     the connection API indeed prevents us from re-enabling receipt that is
- *     already enabled in a polled state, so we must always immediately stop as
- *     soon as the mux can't proceed so as never to hit an end of read with data
- *     pending in the buffers.
+ * Indicates whether or not we may receive data. The rules are the following :
+ *   - if an error or a shutdown for reads was detected on the connection we
+       must not attempt to receive
+ *   - if the input buffer failed to be allocated or is full , we must not try
+ *     to receive
+ *   - if he input processing is busy waiting for the output side, we may
+ *     attemp to receive
  *   - otherwise must may not attempt to receive
  */
 static inline int h1_recv_allowed(const struct h1c *h1c)
 {
-	if (b_data(&h1c->ibuf) == 0 && (h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN)))
+	if (h1c->flags & H1C_F_CS_ERROR)
 		return 0;
 
-	if (h1c->conn->flags & CO_FL_ERROR || conn_xprt_read0_pending(h1c->conn))
+	if (h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH))
 		return 0;
 
 	if (!(h1c->flags & (H1C_F_IN_ALLOC|H1C_F_IN_FULL|H1C_F_IN_BUSY)))
@@ -210,15 +222,16 @@ static inline void h1_release_buf(struct h1c *h1c, struct buffer *bptr)
 	}
 }
 
-/* returns the number of streams in use on a connection to figure if it's
- * idle or not. We can't have an h1s without a CS so checking h1s is fine,
- * as the caller will want to know if it was the last one after a detach().
+/* returns the number of streams in use on a connection to figure if it's idle
+ * or not. We rely on H1C_F_CS_IDLE to know if the connection is in-use or
+ * not. This flag is only set when no H1S is attached and when the previous
+ * stream, if any, was fully terminated without any error and in K/A mode.
  */
 static int h1_used_streams(struct connection *conn)
 {
 	struct h1c *h1c = conn->ctx;
 
-	return h1c->h1s ? 1 : 0;
+	return ((h1c->flags & H1C_F_CS_IDLE) ? 0 : 1);
 }
 
 /* returns the number of streams still available on a connection */
@@ -297,7 +310,7 @@ static struct h1s *h1s_create(struct h1c *h1c, struct conn_stream *cs, struct se
 
 	if (h1c->flags & H1C_F_WAIT_NEXT_REQ)
 		h1s->flags |= H1S_F_NOT_FIRST;
-	h1c->flags &= ~H1C_F_WAIT_NEXT_REQ;
+	h1c->flags &= ~(H1C_F_CS_IDLE|H1C_F_WAIT_NEXT_REQ);
 
 	if (!conn_is_back(h1c->conn)) {
 		if (h1c->px->options2 & PR_O2_REQBUG_OK)
@@ -364,9 +377,15 @@ static void h1s_destroy(struct h1s *h1s)
 			h1s->send_wait->events &= ~SUB_RETRY_SEND;
 
 		h1c->flags &= ~H1C_F_IN_BUSY;
-		h1c->flags |= H1C_F_WAIT_NEXT_REQ;
 		if (h1s->flags & (H1S_F_REQ_ERROR|H1S_F_RES_ERROR))
 			h1c->flags |= H1C_F_CS_ERROR;
+
+		if (!(h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN)) && /* No error/shutdown on h1c */
+		    !(h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) && /* No error/shutdown on conn */
+		    (h1s->flags & H1S_F_WANT_KAL) &&                                         /* K/A possible */
+		    h1s->req.state == H1_MSG_DONE && h1s->res.state == H1_MSG_DONE) {        /* req/res in DONE state */
+			h1c->flags |= (H1C_F_CS_IDLE|H1C_F_WAIT_NEXT_REQ);
+		}
 		pool_free(pool_head_h1s, h1s);
 	}
 }
@@ -400,7 +419,7 @@ static int h1_init(struct connection *conn, struct proxy *proxy, struct session 
 	h1c->conn = conn;
 	h1c->px   = proxy;
 
-	h1c->flags = H1C_F_NONE;
+	h1c->flags = H1C_F_CS_IDLE;
 	h1c->ibuf  = *input;
 	h1c->obuf  = BUF_NULL;
 	h1c->h1s   = NULL;
@@ -803,6 +822,34 @@ static void h1_process_output_conn_mode(struct h1s *h1s, struct h1m *h1m, struct
 		h1_update_res_conn_value(h1s, h1m, conn_val);
 }
 
+/* Try to adjust the case of the message header name using the global map
+ * <hdrs_map>.
+ */
+static void h1_adjust_case_outgoing_hdr(struct h1s *h1s, struct h1m *h1m, struct ist *name)
+{
+	struct ebpt_node *node;
+	struct h1_hdr_entry *entry;
+
+	/* No entry in the map, do nothing */
+	if (eb_is_empty(&hdrs_map.map))
+		return;
+
+	/* No conversion fo the request headers */
+	if (!(h1m->flags & H1_MF_RESP) && !(h1s->h1c->px->options2 & PR_O2_H1_ADJ_BUGSRV))
+		return;
+
+	/* No conversion fo the response headers */
+	if ((h1m->flags & H1_MF_RESP) && !(h1s->h1c->px->options2 & PR_O2_H1_ADJ_BUGCLI))
+		return;
+
+	node = ebis_lookup_len(&hdrs_map.map, name->ptr, name->len);
+	if (!node)
+		return;
+	entry = container_of(node, struct h1_hdr_entry, node);
+	name->ptr = entry->name.ptr;
+	name->len = entry->name.len;
+}
+
 /* Append the description of what is present in error snapshot <es> into <out>.
  * The description must be small enough to always fit in a buffer. The output
  * buffer may be the trash so the trash must not be used inside this function.
@@ -880,36 +927,46 @@ static void h1_emit_chunk_crlf(struct buffer *buf)
 
 /*
  * Switch the request to tunnel mode. This function must only be called for
- * CONNECT requests. On the client side, the mux is mark as busy on input,
- * waiting the response.
+ * CONNECT requests. On the client side, if the response is not finished, the
+ * mux is mark as busy on input.
  */
 static void h1_set_req_tunnel_mode(struct h1s *h1s)
 {
 	h1s->req.flags &= ~(H1_MF_XFER_LEN|H1_MF_CLEN|H1_MF_CHNK);
 	h1s->req.state = H1_MSG_TUNNEL;
-	if (!conn_is_back(h1s->h1c->conn))
+	if (!conn_is_back(h1s->h1c->conn)  && h1s->res.state < H1_MSG_DONE)
 		h1s->h1c->flags |= H1C_F_IN_BUSY;
+	else if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+		h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+		tasklet_wakeup(h1s->h1c->wait_event.tasklet);
+	}
 }
 
 /*
  * Switch the response to tunnel mode. This function must only be called on
- * successfull replies to CONNECT requests or on protocol switching. On the
- * server side, if the request is not finished, the mux is mark as busy on
- * input.  Otherwise the request is also switch to tunnel mode.
+ * successfull replies to CONNECT requests or on protocol switching. In this
+ * last case, this function takes care to switch the request to tunnel mode if
+ * possible. On the server side, if the request is not finished, the mux is mark
+ * as busy on input.
  */
 static void h1_set_res_tunnel_mode(struct h1s *h1s)
 {
+	/* On protocol switching, switch the request to tunnel mode if it is in
+	 * DONE state. Otherwise we will wait the end of the request to switch
+	 * it in tunnel mode.
+	 */
+	if (h1s->status == 101 && h1s->req.state == H1_MSG_DONE) {
+		h1s->req.flags &= ~(H1_MF_XFER_LEN|H1_MF_CLEN|H1_MF_CHNK);
+		h1s->req.state = H1_MSG_TUNNEL;
+	}
+
 	h1s->res.flags &= ~(H1_MF_XFER_LEN|H1_MF_CLEN|H1_MF_CHNK);
 	h1s->res.state = H1_MSG_TUNNEL;
 	if (conn_is_back(h1s->h1c->conn) && h1s->req.state < H1_MSG_DONE)
 		h1s->h1c->flags |= H1C_F_IN_BUSY;
-	else {
-		h1s->req.flags &= ~(H1_MF_XFER_LEN|H1_MF_CLEN|H1_MF_CHNK);
-		h1s->req.state = H1_MSG_TUNNEL;
-		if (h1s->h1c->flags & H1C_F_IN_BUSY) {
-			h1s->h1c->flags &= ~H1C_F_IN_BUSY;
-			tasklet_wakeup(h1s->h1c->wait_event.tasklet);
-		}
+	else if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+		h1s->h1c->flags &= ~H1C_F_IN_BUSY;
+		tasklet_wakeup(h1s->h1c->wait_event.tasklet);
 	}
 }
 
@@ -1446,7 +1503,9 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, size_t count
 				break;
 		}
 		else if (h1m->state == H1_MSG_DONE) {
-			if (h1s->req.state < H1_MSG_DONE || h1s->res.state < H1_MSG_DONE)
+			if (!(h1m->flags & H1_MF_RESP) && h1s->status == 101)
+				h1_set_req_tunnel_mode(h1s);
+			else if (h1s->req.state < H1_MSG_DONE || h1s->res.state < H1_MSG_DONE)
 				h1c->flags |= H1C_F_IN_BUSY;
 			break;
 		}
@@ -1481,7 +1540,8 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, size_t count
 
 	if (!b_data(&h1c->ibuf))
 		h1_release_buf(h1c, &h1c->ibuf);
-	else if (h1s_data_pending(h1s) && !htx_is_empty(htx))
+
+	if ((h1s_data_pending(h1s) && !htx_is_empty(htx)) || (h1s->flags & H1S_F_APPEND_EOM))
 		h1s->cs->flags |= CS_FL_RCV_MORE | CS_FL_WANT_ROOM;
 
 	if (((h1s->flags & (H1S_F_REOS|H1S_F_APPEND_EOM)) == H1S_F_REOS) &&
@@ -1661,6 +1721,9 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 						goto skip_hdr;
 				}
 
+				/* Try to adjust the case of the header name */
+				if (h1c->px->options2 & (PR_O2_H1_ADJ_BUGCLI|PR_O2_H1_ADJ_BUGSRV))
+					h1_adjust_case_outgoing_hdr(h1s, h1m, &n);
 				if (!htx_hdr_to_h1(n, v, &tmp))
 					goto full;
 			  skip_hdr:
@@ -1680,6 +1743,9 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					v = ist("");
 					h1_process_output_conn_mode(h1s, h1m, &v);
 					if (v.len) {
+						/* Try to adjust the case of the header name */
+						if (h1c->px->options2 & (PR_O2_H1_ADJ_BUGCLI|PR_O2_H1_ADJ_BUGSRV))
+							h1_adjust_case_outgoing_hdr(h1s, h1m, &n);
 						if (!htx_hdr_to_h1(n, v, &tmp))
 							goto full;
 					}
@@ -1694,7 +1760,11 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				     (h1m->flags & (H1_MF_VER_11|H1_MF_RESP|H1_MF_CLEN|H1_MF_CHNK|H1_MF_XFER_LEN)) ==
 				     (H1_MF_VER_11|H1_MF_RESP|H1_MF_XFER_LEN))) {
 					/* chunking needed but header not seen */
-					if (!chunk_memcat(&tmp, "transfer-encoding: chunked\r\n", 28))
+					n = ist("transfer-encoding");
+					v = ist("chunked");
+					if (h1c->px->options2 & (PR_O2_H1_ADJ_BUGCLI|PR_O2_H1_ADJ_BUGSRV))
+						h1_adjust_case_outgoing_hdr(h1s, h1m, &n);
+					if (!htx_hdr_to_h1(n, v, &tmp))
 						goto full;
 					h1m->flags |= H1_MF_CHNK;
 				}
@@ -1706,9 +1776,11 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					/* a CONNECT request is sent to the server. Switch it to tunnel mode. */
 					h1_set_req_tunnel_mode(h1s);
 				}
-				else if ((h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) || h1s->status == 101) {
+				else if ((h1m->flags & H1_MF_RESP) &&
+					 ((h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) || h1s->status == 101)) {
 					/* a successfull reply to a CONNECT or a protocol switching is sent
-					 * to the client . Switch the response to tunnel mode. */
+					 * to the client. Switch the response to tunnel mode.
+					 */
 					h1_set_res_tunnel_mode(h1s);
 				}
 				else if ((h1m->flags & H1_MF_RESP) &&
@@ -1767,6 +1839,10 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				else { // HTX_BLK_TLR
 					n = htx_get_blk_name(chn_htx, blk);
 					v = htx_get_blk_value(chn_htx, blk);
+
+					/* Try to adjust the case of the header name */
+					if (h1c->px->options2 & (PR_O2_H1_ADJ_BUGCLI|PR_O2_H1_ADJ_BUGSRV))
+						h1_adjust_case_outgoing_hdr(h1s, h1m, &n);
 					if (!htx_hdr_to_h1(n, v, &tmp))
 						goto full;
 				}
@@ -1777,7 +1853,9 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					goto error;
 			  done:
 				h1m->state = H1_MSG_DONE;
-				if (h1s->h1c->flags & H1C_F_IN_BUSY) {
+				if (!(h1m->flags & H1_MF_RESP) && h1s->status == 101)
+					h1_set_req_tunnel_mode(h1s);
+				else if (h1s->h1c->flags & H1C_F_IN_BUSY) {
 					h1s->h1c->flags &= ~H1C_F_IN_BUSY;
 					tasklet_wakeup(h1s->h1c->wait_event.tasklet);
 				}
@@ -2006,10 +2084,9 @@ static int h1_process(struct h1c * h1c)
 
 	if (!h1s) {
 		if (h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN) ||
-		    conn->flags & (CO_FL_ERROR | CO_FL_SOCK_WR_SH) ||
-		    conn_xprt_read0_pending(conn))
+		    conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH))
 			goto release;
-		if (!conn_is_back(conn) && !(h1c->flags & (H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN))) {
+		if (!conn_is_back(conn) && (h1c->flags & H1C_F_CS_IDLE)) {
 			if (!h1s_create(h1c, NULL, NULL))
 				goto release;
 		}
@@ -2177,7 +2254,6 @@ static void h1_detach(struct conn_stream *cs)
 	struct h1s *h1s = cs->ctx;
 	struct h1c *h1c;
 	struct session *sess;
-	int has_keepalive;
 	int is_not_first;
 
 	cs->ctx = NULL;
@@ -2188,12 +2264,10 @@ static void h1_detach(struct conn_stream *cs)
 	h1c = h1s->h1c;
 	h1s->cs = NULL;
 
-	has_keepalive = h1s->flags & H1S_F_WANT_KAL;
 	is_not_first = h1s->flags & H1S_F_NOT_FIRST;
 	h1s_destroy(h1s);
 
-	if (conn_is_back(h1c->conn) && has_keepalive &&
-	    !(h1c->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH))) {
+	if (conn_is_back(h1c->conn) && (h1c->flags & H1C_F_CS_IDLE)) {
 		/* If there are any excess server data in the input buffer,
 		 * release it and close the connection ASAP (some data may
 		 * remain in the output buffer). This happens if a server sends
@@ -2202,7 +2276,7 @@ static void h1_detach(struct conn_stream *cs)
 		 */
 		if (b_data(&h1c->ibuf)) {
 			h1_release_buf(h1c, &h1c->ibuf);
-			h1c->flags |= H1C_F_CS_SHUTW_NOW;
+			h1c->flags = (h1c->flags & ~H1C_F_CS_IDLE) | H1C_F_CS_SHUTW_NOW;
 			goto release;
 		}
 
@@ -2294,9 +2368,7 @@ static void h1_shutr(struct conn_stream *cs, enum cs_shr_mode mode)
 		return;
 	if (conn_xprt_ready(cs->conn) && cs->conn->xprt->shutr)
 		cs->conn->xprt->shutr(cs->conn, cs->conn->xprt_ctx,
-		    (mode == CS_SHR_DRAIN));
-	if ((cs->conn->flags & (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) == (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH))
-		h1c->flags = (h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
+				      (mode == CS_SHR_DRAIN));
 }
 
 static void h1_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
@@ -2329,8 +2401,7 @@ static void h1_shutw_conn(struct connection *conn, enum cs_shw_mode mode)
 
 	conn_xprt_shutw(conn);
 	conn_sock_shutw(conn, (mode == CS_SHW_NORMAL));
-	if ((conn->flags & (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) == (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH))
-		h1c->flags = (h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
+	h1c->flags = (h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
 }
 
 /* Called from the upper layer, to unsubscribe to events */
@@ -2474,6 +2545,7 @@ static int h1_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned int c
   end:
 	if (conn_xprt_read0_pending(cs->conn)) {
 		h1s->flags |= H1S_F_REOS;
+		h1s->flags &= ~(H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA);
 	}
 	return ret;
 }
@@ -2539,6 +2611,195 @@ static void h1_show_fd(struct buffer *msg, struct connection *conn)
 				      h1s->cs->flags, h1s->cs->data);
 	}
 }
+
+
+/* Add an entry in the headers map. Returns -1 on error and 0 on success. */
+static int add_hdr_case_adjust(const char *from, const char *to, char **err)
+{
+	struct h1_hdr_entry *entry;
+
+	/* Be sure there is a non-empty <to> */
+	if (!strlen(to)) {
+		memprintf(err, "expect <to>");
+		return -1;
+	}
+
+	/* Be sure only the case differs between <from> and <to> */
+	if (strcasecmp(from, to)) {
+		memprintf(err, "<from> and <to> must not differ execpt the case");
+		return -1;
+	}
+
+	/* Be sure <from> does not already existsin the tree */
+	if (ebis_lookup(&hdrs_map.map, from)) {
+		memprintf(err, "duplicate entry '%s'", from);
+		return -1;
+	}
+
+	/* Create the entry and insert it in the tree */
+	entry = malloc(sizeof(*entry));
+	if (!entry) {
+		memprintf(err, "out of memory");
+		return -1;
+	}
+
+	entry->node.key = strdup(from);
+	entry->name.ptr = strdup(to);
+	entry->name.len = strlen(to);
+	if (!entry->node.key || !entry->name.ptr) {
+		free(entry->node.key);
+		free(entry->name.ptr);
+		free(entry);
+		memprintf(err, "out of memory");
+		return -1;
+	}
+	ebis_insert(&hdrs_map.map, &entry->node);
+	return 0;
+}
+
+static void h1_hdeaders_case_adjust_deinit()
+{
+	struct ebpt_node *node, *next;
+	struct h1_hdr_entry *entry;
+
+	node = ebpt_first(&hdrs_map.map);
+	while (node) {
+		next = ebpt_next(node);
+		ebpt_delete(node);
+		entry = container_of(node, struct h1_hdr_entry, node);
+		free(entry->node.key);
+		free(entry->name.ptr);
+		free(entry);
+		node = next;
+	}
+	free(hdrs_map.name);
+}
+
+static int cfg_h1_headers_case_adjust_postparser()
+{
+	FILE *file = NULL;
+	char *c, *key_beg, *key_end, *value_beg, *value_end;
+	char *err;
+	int rc, line = 0, err_code = 0;
+
+	if (!hdrs_map.name)
+		goto end;
+
+	file = fopen(hdrs_map.name, "r");
+	if (!file) {
+		ha_alert("config : h1-outgoing-headers-case-adjust-file '%s': failed to open file.\n",
+			 hdrs_map.name);
+                err_code |= ERR_ALERT | ERR_FATAL;
+		goto end;
+	}
+
+	/* now parse all lines. The file may contain only two header name per
+	 * line, separated by spaces. All heading and trailing spaces will be
+	 * ignored. Lines starting with a # are ignored.
+	 */
+	while (fgets(trash.area, trash.size, file) != NULL) {
+		line++;
+		c = trash.area;
+
+		/* strip leading spaces and tabs */
+		while (*c == ' ' || *c == '\t')
+			c++;
+
+		/* ignore emptu lines, or lines beginning with a dash */
+		if (*c == '#' || *c == '\0' || *c == '\r' || *c == '\n')
+			continue;
+
+		/* look for the end of the key */
+		key_beg = c;
+		while (*c != '\0' && *c != ' ' && *c != '\t' && *c != '\n' && *c != '\r')
+			c++;
+		key_end = c;
+
+		/* strip middle spaces and tabs */
+		while (*c == ' ' || *c == '\t')
+			c++;
+
+		/* look for the end of the value, it is the end of the line */
+		value_beg = c;
+		while (*c && *c != '\n' && *c != '\r')
+			c++;
+		value_end = c;
+
+		/* trim possibly trailing spaces and tabs */
+		while (value_end > value_beg && (value_end[-1] == ' ' || value_end[-1] == '\t'))
+			value_end--;
+
+		/* set final \0 and check entries */
+		*key_end = '\0';
+		*value_end = '\0';
+
+		err = NULL;
+		rc = add_hdr_case_adjust(key_beg, value_beg, &err);
+		if (rc < 0) {
+			ha_alert("config : h1-outgoing-headers-case-adjust-file '%s' : %s at line %d.\n",
+				 hdrs_map.name, err, line);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			free(err);
+			goto end;
+		}
+		if (rc > 0) {
+			ha_warning("config : h1-outgoing-headers-case-adjust-file '%s' : %s at line %d.\n",
+				   hdrs_map.name, err, line);
+			err_code |= ERR_WARN;
+			free(err);
+		}
+	}
+
+  end:
+	if (file)
+		fclose(file);
+	hap_register_post_deinit(h1_hdeaders_case_adjust_deinit);
+	return err_code;
+}
+
+
+/* config parser for global "h1-outgoing-header-case-adjust" */
+static int cfg_parse_h1_header_case_adjust(char **args, int section_type, struct proxy *curpx,
+					   struct proxy *defpx, const char *file, int line,
+					   char **err)
+{
+        if (too_many_args(2, args, err, NULL))
+                return -1;
+        if (!*(args[1]) || !*(args[2])) {
+                memprintf(err, "'%s' expects <from> and <to> as argument.", args[0]);
+		return -1;
+	}
+	return add_hdr_case_adjust(args[1], args[2], err);
+}
+
+/* config parser for global "h1-outgoing-headers-case-adjust-file" */
+static int cfg_parse_h1_headers_case_adjust_file(char **args, int section_type, struct proxy *curpx,
+						 struct proxy *defpx, const char *file, int line,
+						 char **err)
+{
+        if (too_many_args(1, args, err, NULL))
+                return -1;
+        if (!*(args[1])) {
+                memprintf(err, "'%s' expects <file> as argument.", args[0]);
+		return -1;
+	}
+	free(hdrs_map.name);
+	hdrs_map.name = strdup(args[1]);
+        return 0;
+}
+
+
+/* config keyword parsers */
+static struct cfg_kw_list cfg_kws = {{ }, {
+		{ CFG_GLOBAL, "h1-case-adjust", cfg_parse_h1_header_case_adjust },
+		{ CFG_GLOBAL, "h1-case-adjust-file", cfg_parse_h1_headers_case_adjust_file },
+		{ 0, NULL, NULL },
+	}
+};
+
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
+REGISTER_CONFIG_POSTPARSER("h1-headers-map", cfg_h1_headers_case_adjust_postparser);
+
 
 /****************************************/
 /* MUX initialization and instanciation */
