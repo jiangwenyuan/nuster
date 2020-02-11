@@ -1,5 +1,13 @@
 # nuster Changelog
 
+## 3.2.2.19 - 2020-02-11
+
+### Fixed
+
+* Fix incorrect rule comparison
+* Fix memory corruption
+* Fix segfault when free temp key
+
 ## 3.2.1.19 - 2020-01-20
 
 ### Fixed
