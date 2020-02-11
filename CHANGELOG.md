@@ -1,5 +1,14 @@
 # nuster Changelog
 
+## 2.0.13.18 - 2020-02-11
+
+Upgrade to HAProxy 1.8.23
+
+### Fixed
+
+* Fix incorrect rule comparison
+* Fix memory corruption
+
 ## 2.0.12.18 - 2019-11-02
 
 Upgrade to HAProxy v1.8.22
