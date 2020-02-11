@@ -1,5 +1,32 @@
 # nuster Changelog
 
+## 3.2.2.19 - 2020-02-11
+
+### Fixed
+
+* Fix incorrect rule comparison
+* Fix memory corruption
+* Fix segfault when free temp key
+
+## 3.2.1.19 - 2020-01-20
+
+### Fixed
+
+* Fix cache.hit not updating in disk only mode
+
+## 3.2.0.19 - 2019-12-18
+
+Upgrade to HAProxy v1.9.13
+
+### Fixed
+
+* Fix segfault when memory is full
+
+### Added
+
+* Last-Modified and ETAG
+* Conditional request handling
+
 ## 3.1.3.19 - 2019-11-16
 
 ### Fixed
