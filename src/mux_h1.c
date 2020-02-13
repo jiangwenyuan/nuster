@@ -270,6 +270,9 @@ static struct conn_stream *h1s_new_cs(struct h1s *h1s)
 	if (h1s->flags & H1S_F_NOT_FIRST)
 		cs->flags |= CS_FL_NOT_FIRST;
 
+	if (global.tune.options & GTUNE_USE_SPLICE)
+		cs->flags |= CS_FL_MAY_SPLICE;
+
 	if (stream_create_from_cs(cs) < 0)
 		goto err;
 	return cs;
@@ -1379,6 +1382,12 @@ static size_t h1_process_data(struct h1s *h1s, struct h1m *h1m, struct htx *htx,
 		h1_capture_bad_message(h1s->h1c, h1s, h1m, buf);
 		return 0;
 	}
+
+	if (h1m->state == H1_MSG_DATA && h1m->curr_len && h1s->cs)
+		h1s->cs->flags |= CS_FL_MAY_SPLICE;
+	else if (h1s->cs)
+		h1s->cs->flags &= ~CS_FL_MAY_SPLICE;
+
 	/* update htx->extra, only when the body length is known */
 	if (h1m->flags & H1_MF_XFER_LEN)
 		htx->extra = h1m->curr_len;
@@ -2504,7 +2513,7 @@ static size_t h1_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 			break;
 		total += ret;
 		count -= ret;
-		if (!h1_send(h1c))
+		if ((h1c->wait_event.events & SUB_RETRY_SEND) || !h1_send(h1c))
 			break;
 	}
 
@@ -2547,6 +2556,10 @@ static int h1_rcv_pipe(struct conn_stream *cs, struct pipe *pipe, unsigned int c
 		h1s->flags |= H1S_F_REOS;
 		h1s->flags &= ~(H1S_F_BUF_FLUSH|H1S_F_SPLICED_DATA);
 	}
+
+	if (h1m->state != H1_MSG_DATA || !h1m->curr_len)
+		cs->flags &= ~CS_FL_MAY_SPLICE;
+
 	return ret;
 }
 

@@ -8,12 +8,40 @@
 #include <types/stream_interface.h>
 #include <types/task.h>
 
+// 1 bit per flag, no hole permitted here
+#define SHOW_AS_ANA   0x00000001
+#define SHOW_AS_CHN   0x00000002
+#define SHOW_AS_CONN  0x00000004
+#define SHOW_AS_CS    0x00000008
+#define SHOW_AS_SI    0x00000010
+#define SHOW_AS_SIET  0x00000020
+#define SHOW_AS_STRM  0x00000040
+#define SHOW_AS_TASK  0x00000080
+#define SHOW_AS_TXN   0x00000100
+
+// command line names, must be in exact same order as the SHOW_AS_* flags above
+// so that show_as_words[i] matches flag 1U<<i.
+const char *show_as_words[] = { "ana", "chn", "conn", "cs", "si", "siet", "strm", "task", "txn", };
+
 #define SHOW_FLAG(f,n)					\
 	do {				 		\
 		if (!((f) & (n))) break; 		\
 		(f) &= ~(n);				\
 		printf(#n"%s", (f) ? " | " : "");	\
 	} while (0)
+
+unsigned int get_show_as(const char *word)
+{
+	int w = 0;
+
+	while (1) {
+		if (w == sizeof(show_as_words) / sizeof(*show_as_words))
+			return 0;
+		if (strcmp(word, show_as_words[w]) == 0)
+			return 1U << w;
+		w++;
+	}
+}
 
 void show_chn_ana(unsigned int f)
 {
@@ -364,7 +392,9 @@ void show_strm_flags(unsigned int f)
 	case SF_ERR_CHK_PORT: f &= ~SF_ERR_MASK ; printf("SF_ERR_CHK_PORT%s",       f ? " | " : ""); break;
 	}
 
+	SHOW_FLAG(f, SF_HTX);
 	SHOW_FLAG(f, SF_REDIRECTABLE);
+	SHOW_FLAG(f, SF_IGNORE);
 	SHOW_FLAG(f, SF_REDISP);
 	SHOW_FLAG(f, SF_CURR_SESS);
 	SHOW_FLAG(f, SF_MONITOR);
@@ -380,26 +410,84 @@ void show_strm_flags(unsigned int f)
 	putchar('\n');
 }
 
+void usage_exit(const char *name)
+{
+	fprintf(stderr, "Usage: %s [ana|chn|conn|cs|si|sierr|strm|task|txn]* { [+-][0x]value* | - }\n", name);
+	exit(1);
+}
+
 int main(int argc, char **argv)
 {
 	unsigned int flags;
+	unsigned int show_as = 0;
+	unsigned int f;
+	const char *name = argv[0];
+	char line[20];
+	char *value;
+	int multi = 0;
+	int use_stdin = 0;
+	char *err;
 
-	if (argc < 2) {
-		fprintf(stderr, "Usage: %s 0x<flags|state>\n", argv[0]);
-		exit(1);
+	while (argc > 0) {
+		argv++; argc--;
+		if (argc < 1)
+			usage_exit(name);
+
+		f = get_show_as(argv[0]);
+		if (!f)
+			break;
+		show_as |= f;
 	}
 
-	flags = strtoul(argv[1], NULL, 0);
+	if (!show_as)
+		show_as = ~0U;
 
-	show_task_state(flags);
-	show_txn_flags(flags);
-	show_strm_flags(flags);
-	show_si_et(flags);
-	show_si_flags(flags);
-	show_cs_flags(flags);
-	show_conn_flags(flags);
-	show_chn_flags(flags);
-	show_chn_ana(flags);
+	if (argc > 1)
+		multi = 1;
 
+	if (strcmp(argv[0], "-") == 0)
+		use_stdin = 1;
+
+	while (argc > 0) {
+		if (use_stdin) {
+			value = fgets(line, sizeof(line), stdin);
+			if (!value)
+				break;
+
+			/* skip common leading delimitors that slip from copy-paste */
+			while (*value == ' ' || *value == '\t' || *value == ':' || *value == '=')
+				value++;
+
+			/* stop at the end of the number and trim any C suffix like "UL" */
+			err = value;
+			while (*err == '-' || *err == '+' ||
+			       (isalnum(*err) && toupper(*err) != 'U' && toupper(*err) != 'L'))
+				err++;
+			if (err)
+				*err = 0;
+		} else {
+			value = argv[0];
+			argv++; argc--;
+		}
+
+		flags = strtoul(value, &err, 0);
+		if (!*value || *err) {
+			fprintf(stderr, "Unparsable value: <%s>\n", value);
+			usage_exit(name);
+		}
+
+		if (multi || use_stdin)
+			printf("### 0x%08x:\n", flags);
+
+		if (show_as & SHOW_AS_ANA)   show_chn_ana(flags);
+		if (show_as & SHOW_AS_CHN)   show_chn_flags(flags);
+		if (show_as & SHOW_AS_CONN)  show_conn_flags(flags);
+		if (show_as & SHOW_AS_CS)    show_cs_flags(flags);
+		if (show_as & SHOW_AS_SI)    show_si_flags(flags);
+		if (show_as & SHOW_AS_SIET)  show_si_et(flags);
+		if (show_as & SHOW_AS_STRM)  show_strm_flags(flags);
+		if (show_as & SHOW_AS_TASK)  show_task_state(flags);
+		if (show_as & SHOW_AS_TXN)   show_txn_flags(flags);
+	}
 	return 0;
 }

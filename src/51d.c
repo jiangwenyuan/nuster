@@ -461,6 +461,21 @@ static void _51d_process_match(const struct arg *args, struct sample *smp, fifty
 	smp->data.u.str.data = temp->data;
 }
 
+/* Sets the sample data as a constant string. This ensures that the
+ * string will be processed correctly.
+ */
+static void _51d_set_smp(struct sample *smp)
+{
+	/*
+	 * Data type has to be set to ensure the string output is processed
+	 * correctly.
+	 */
+	smp->data.type = SMP_T_STR;
+
+	/* Flags the sample to show it uses constant memory. */
+	smp->flags |= SMP_F_CONST;
+}
+
 static int _51d_fetch(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
@@ -484,14 +499,6 @@ static int _51d_fetch(const struct arg *args, struct sample *smp, const char *kw
 		/* Legacy version */
 		CHECK_HTTP_MESSAGE_FIRST(chn);
 	}
-	/*
-	 * Data type has to be reset to ensure the string output is processed
-	 * correctly.
-	 */
-	smp->data.type = SMP_T_STR;
-
-	/* Flags the sample to show it uses constant memory*/
-	smp->flags |= SMP_F_CONST;
 
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
 
@@ -519,6 +526,8 @@ static int _51d_fetch(const struct arg *args, struct sample *smp, const char *kw
 			fiftyoneDegreesWorksetPoolRelease(global_51degrees.pool, ws);
 			_51d_retrieve_cache_entry(smp, lru);
 			HA_SPIN_UNLOCK(OTHER_LOCK, &_51d_lru_lock);
+
+			_51d_set_smp(smp);
 			return 1;
 		}
 		HA_SPIN_UNLOCK(OTHER_LOCK, &_51d_lru_lock);
@@ -556,6 +565,7 @@ static int _51d_fetch(const struct arg *args, struct sample *smp, const char *kw
 		_51d_insert_cache_entry(smp, lru, (void*)args);
 #endif
 
+	_51d_set_smp(smp);
 	return 1;
 }
 
@@ -568,8 +578,6 @@ static int _51d_conv(const struct arg *args, struct sample *smp, void *private)
 #ifdef FIFTYONEDEGREES_H_TRIE_INCLUDED
 	fiftyoneDegreesDeviceOffsets *offsets; /* Offsets for detection */
 #endif
-	/* Flags the sample to show it uses constant memory*/
-	smp->flags |= SMP_F_CONST;
 
 #ifdef FIFTYONEDEGREES_H_PATTERN_INCLUDED
 
@@ -631,6 +639,7 @@ static int _51d_conv(const struct arg *args, struct sample *smp, void *private)
 #endif
 #endif
 
+	_51d_set_smp(smp);
 	return 1;
 }
 

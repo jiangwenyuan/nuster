@@ -1273,7 +1273,7 @@ int si_cs_recv(struct conn_stream *cs)
 	/* First, let's see if we may splice data across the channel without
 	 * using a buffer.
 	 */
-	if (conn->xprt->rcv_pipe && conn->mux->rcv_pipe &&
+	if (cs->flags & CS_FL_MAY_SPLICE &&
 	    (ic->pipe || ic->to_forward >= MIN_SPLICE_FORWARD) &&
 	    ic->flags & CF_KERN_SPLICING) {
 		if (c_data(ic)) {
@@ -1332,7 +1332,7 @@ int si_cs_recv(struct conn_stream *cs)
 		ic->pipe = NULL;
 	}
 
-	if (ic->pipe && ic->to_forward && !(flags & CO_RFL_BUF_FLUSH)) {
+	if (ic->pipe && ic->to_forward && !(flags & CO_RFL_BUF_FLUSH) && cs->flags & CS_FL_MAY_SPLICE) {
 		/* don't break splicing by reading, but still call rcv_buf()
 		 * to pass the flag.
 		 */
@@ -1377,7 +1377,8 @@ int si_cs_recv(struct conn_stream *cs)
 			break;
 		}
 
-		if (si->flags & SI_FL_L7_RETRY) {
+		/* L7 retries enabled and maximum connection retries not reached */
+		if ((si->flags & SI_FL_L7_RETRY) && si->conn_retries) {
 			struct htx *htx;
 			struct htx_sl *sl;
 

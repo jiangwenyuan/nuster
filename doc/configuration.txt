@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.0
                              willy tarreau
-                              2019/12/21
+                              2020/02/13
 
 
 This document covers the configuration language as implemented in the version
@@ -1410,6 +1410,10 @@ busy-polling
   default. If it has been enabled, it may still be forcibly disabled by
   prefixing it with the "no" keyword. It is ignored by the "select" and
   "poll" pollers.
+
+  This option is automatically disabled on old processes in the context of
+  seamless reload; it avoids too much cpu conflicts when multiple processes
+  stay around for some time waiting for the end of their current connections.
 
 max-spread-checks <delay in milliseconds>
   By default, haproxy tries to spread the start of health checks across the
@@ -3347,7 +3351,7 @@ contimeout <timeout> (deprecated)
 cookie <name> [ rewrite | insert | prefix ] [ indirect ] [ nocache ]
               [ postonly ] [ preserve ] [ httponly ] [ secure ]
               [ domain <domain> ]* [ maxidle <idle> ] [ maxlife <life> ]
-              [ dynamic ]
+              [ dynamic ] [ attr <value> ]*
   Enable cookie-based persistence in a backend.
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
@@ -3505,6 +3509,11 @@ cookie <name> [ rewrite | insert | prefix ] [ indirect ] [ nocache ]
               "dynamic-cookie-key" backend directive.
               The cookie will be regenerated each time the IP address change,
               and is only generated for IPv4/IPv6.
+
+    attr      This option tells haproxy to add an extra attribute when a
+              cookie is inserted. The attribute value can contain any
+              characters except control ones or ";". This option may be
+              repeated.
 
   There can be only one persistence cookie per HTTP backend, and it can be
   declared in a defaults section. The value of the cookie will be the value
@@ -4375,9 +4384,12 @@ http-request capture <sample> [ len <length> | id <id> ]
   If the keyword "id" is used instead of "len", the action tries to store the
   captured string in a previously declared capture slot. This is useful to run
   captures in backends. The slot id can be declared by a previous directive
-  "http-request capture" or with the "declare capture" keyword. If the slot
-  <id> doesn't exist, then HAProxy fails parsing the configuration to prevent
-  unexpected behavior at run time.
+  "http-request capture" or with the "declare capture" keyword.
+
+  When using this action in a backend, double check that the relevant
+  frontend(s) have the required capture slots otherwise, this rule will be
+  ignored at run time. This can't be detected at configuration parsing time
+  due to HAProxy's ability to dynamically resolve backend name at runtime.
 
 http-request del-acl(<file-name>) <key fmt> [ { if | unless } <condition> ]
 
@@ -4529,6 +4541,30 @@ http-request replace-header <name> <match-regex> <replace-fmt>
     # outputs:
     User-Agent: foo
 
+http-request replace-path <match-regex> <replace-fmt>
+                           [ { if | unless } <condition> ]
+
+  This works like "replace-header" except that it works on the request's path
+  component instead of a header. The path component starts at the first '/'
+  after an optional scheme+authority. It does contain the query string if any
+  is present. The replacement does not modify the scheme nor authority.
+
+  It is worth noting that regular expressions may be more expensive to evaluate
+  than certain ACLs, so rare replacements may benefit from a condition to avoid
+  performing the evaluation at all if it does not match.
+
+  Example:
+    # prefix /foo : turn /bar?q=1 into /foo/bar?q=1 :
+    http-request replace-path (.*) /foo\1
+
+    # suffix /foo : turn /bar?q=1 into /bar/foo?q=1 :
+    http-request replace-path ([^?]*)(\?(.*))? \1/foo\2
+
+    # strip /foo : turn /foo/bar?q=1 into /bar?q=1
+    http-request replace-path /foo/(.*) /\1
+    # or more efficient if only some requests match :
+    http-request replace-path /foo/(.*) /\1 if { url_beg /foo/ }
+
 http-request replace-uri <match-regex> <replace-fmt>
                            [ { if | unless } <condition> ]
 
@@ -4550,7 +4586,8 @@ http-request replace-uri <match-regex> <replace-fmt>
   with HTTP/2, clients are encouraged to send absolute URIs only, which look
   like the ones HTTP/1 clients use to talk to proxies. Such partial replace-uri
   rules may then fail in HTTP/2 when they work in HTTP/1. Either the rules need
-  to be adapted to optionally match a scheme and authority.
+  to be adapted to optionally match a scheme and authority, or replace-path
+  should be used.
 
   Example:
     # rewrite all "http" absolute requests to "https":
@@ -5039,8 +5076,11 @@ http-response capture <sample> id <id> [ { if | unless } <condition> ]
   This is useful to run captures in backends. The slot id can be declared by a
   previous directive "http-response capture" or with the "declare capture"
   keyword.
-  If the slot <id> doesn't exist, then HAProxy fails parsing the configuration
-  to prevent unexpected behavior at run time.
+
+  When using this action in a backend, double check that the relevant
+  frontend(s) have the required capture slots otherwise, this rule will be
+  ignored at run time. This can't be detected at configuration parsing time
+  due to HAProxy's ability to dynamically resolve backend name at runtime.
 
 http-response del-acl(<file-name>) <key fmt> [ { if | unless } <condition> ]
 
@@ -14564,6 +14604,7 @@ word(<index>,<delimiters>[,<count>])
   Extracts the nth word counting from the beginning (positive index) or from
   the end (negative index) considering given delimiters from an input string.
   Indexes start at 1 or -1 and delimiters are a string formatted list of chars.
+  Delimiters at the beginning or end of the input string are ignored.
   Optionally you can specify <count> of words to extract (default: 1).
   Value of 0 indicates extraction of all remaining words.
 
@@ -14573,6 +14614,7 @@ word(<index>,<delimiters>[,<count>])
       str(f1_f2_f3__f5),word(3,_,2)  # f3__f5
       str(f1_f2_f3__f5),word(-2,_,3) # f1_f2_f3
       str(f1_f2_f3__f5),word(-3,_,0) # f1_f2
+      str(/f1/f2/f3/f4),word(1,/)    # f1
 
 wt6([<avalanche>])
   Hashes a binary input sample into an unsigned 32-bit quantity using the WT6

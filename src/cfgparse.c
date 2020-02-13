@@ -2729,7 +2729,7 @@ int check_config_validity()
 
 			if (!target) {
 				ha_alert("Proxy '%s': unable to find stick-table '%s'.\n",
-					 curproxy->id, mrule->table.name);
+					 curproxy->id, mrule->table.name ? mrule->table.name : curproxy->id);
 				cfgerr++;
 			}
 			else if (!stktable_compatible_sample(mrule->expr,  target->type)) {
@@ -2767,7 +2767,7 @@ int check_config_validity()
 
 			if (!target) {
 				ha_alert("Proxy '%s': unable to find store table '%s'.\n",
-					 curproxy->id, mrule->table.name);
+					 curproxy->id, mrule->table.name ? mrule->table.name : curproxy->id);
 				cfgerr++;
 			}
 			else if (!stktable_compatible_sample(mrule->expr, target->type)) {
@@ -3698,7 +3698,7 @@ out_uri_auth_compat:
 						LIST_INIT(&toremove_connections[i]);
 					}
 				}
-				newsrv->idle_orphan_conns = calloc((unsigned int)global.nbthread, sizeof(*newsrv->idle_orphan_conns));
+				newsrv->idle_orphan_conns = calloc((unsigned short)global.nbthread, sizeof(*newsrv->idle_orphan_conns));
 				if (!newsrv->idle_orphan_conns)
 					goto err;
 				for (i = 0; i < global.nbthread; i++)

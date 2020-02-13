@@ -473,6 +473,8 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 				 curproxy->rdp_cookie_name = strdup(defproxy.rdp_cookie_name);
 			curproxy->rdp_cookie_len = defproxy.rdp_cookie_len;
 
+			if (defproxy.cookie_attrs)
+				curproxy->cookie_attrs = strdup(defproxy.cookie_attrs);
 
 			if (defproxy.lbprm.arg_str)
 				curproxy->lbprm.arg_str = strdup(defproxy.lbprm.arg_str);
@@ -623,6 +625,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		free(defproxy.rdp_cookie_name);
 		free(defproxy.dyncookie_key);
 		free(defproxy.cookie_domain);
+		free(defproxy.cookie_attrs);
 		free(defproxy.lbprm.arg_str);
 		free(defproxy.capture_name);
 		free(defproxy.monitor_uri);
@@ -952,6 +955,13 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
+		if (strcasecmp(args[1], "or") == 0) {
+			ha_warning("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
+				   "logical disjunction within a condition.\n",
+				   file, linenum, args[1]);
+			err_code |= ERR_WARN;
+		}
+
 		if (parse_acl((const char **)args + 1, &curproxy->acl, &errmsg, &curproxy->conf.args, file, linenum) == NULL) {
 			ha_alert("parsing [%s:%d] : error detected while parsing ACL '%s' : %s.\n",
 				 file, linenum, args[1], errmsg);
@@ -1136,9 +1146,34 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 					err_code |= ERR_WARN;
 				curproxy->ck_opts |= PR_CK_DYNAMIC;
 			}
+			else if (!strcmp(args[cur_arg], "attr")) {
+				char *val;
+				if (!*args[cur_arg + 1]) {
+					ha_alert("parsing [%s:%d]: '%s' expects <value> as argument.\n",
+						 file, linenum, args[cur_arg]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				val = args[cur_arg + 1];
+				while (*val) {
+					if (iscntrl(*val) || *val == ';') {
+						ha_alert("parsing [%s:%d]: character '%%x%02X' is not permitted in attribute value.\n",
+							 file, linenum, *val);
+						err_code |= ERR_ALERT | ERR_FATAL;
+						goto out;
+					}
+					val++;
+				}
+				/* don't add ';' for the first attribute */
+				if (!curproxy->cookie_attrs)
+					curproxy->cookie_attrs = strdup(args[cur_arg + 1]);
+				else
+					memprintf(&curproxy->cookie_attrs, "%s; %s", curproxy->cookie_attrs, args[cur_arg + 1]);
+				cur_arg++;
+			}
 
 			else {
-				ha_alert("parsing [%s:%d] : '%s' supports 'rewrite', 'insert', 'prefix', 'indirect', 'nocache', 'postonly', 'domain', 'maxidle', 'dynamic' and 'maxlife' options.\n",
+				ha_alert("parsing [%s:%d] : '%s' supports 'rewrite', 'insert', 'prefix', 'indirect', 'nocache', 'postonly', 'domain', 'maxidle', 'dynamic', 'maxlife' and 'attr' options.\n",
 					 file, linenum, args[0]);
 				err_code |= ERR_ALERT | ERR_FATAL;
 				goto out;
@@ -3874,7 +3909,7 @@ stats_error_parsing:
 	}
 	else if (!strcmp(args[0], "cliexp") || !strcmp(args[0], "reqrep")) {  /* replace request header from a regex */
 		if (!already_warned(WARN_REQREP_DEPRECATED))
-			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request replace-uri' and 'http-request replace-header' and will be removed in next version.\n", file, linenum, args[0]);
+			ha_warning("parsing [%s:%d] : The '%s' directive is deprecated in favor of 'http-request replace-uri', 'http-request replace-path', and 'http-request replace-header' and will be removed in next version.\n", file, linenum, args[0]);
 
 		if (*(args[2]) == 0) {
 			ha_alert("parsing [%s:%d] : '%s' expects <search> and <replace> as arguments.\n",

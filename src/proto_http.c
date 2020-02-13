@@ -5084,6 +5084,9 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 		if (s->be->ck_opts & PR_CK_SECURE)
 			chunk_appendf(&trash, "; Secure");
 
+		if (s->be->cookie_attrs)
+			chunk_appendf(&trash, "; %s", s->be->cookie_attrs);
+
 		if (unlikely(http_header_add_tail2(&txn->rsp, &txn->hdr_idx, trash.area, trash.data) < 0))
 			goto return_bad_resp;
 

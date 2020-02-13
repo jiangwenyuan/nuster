@@ -1132,6 +1132,8 @@ void soft_stop(void)
 	struct task *task;
 
 	stopping = 1;
+	/* disable busy polling to avoid cpu eating for the new process */
+	global.tune.options &= ~GTUNE_BUSY_POLLING;
 	if (tick_isset(global.hard_stop_after)) {
 		task = task_new(MAX_THREADS_MASK);
 		if (task) {
@@ -1584,7 +1586,7 @@ void proxy_capture_error(struct proxy *proxy, int is_back,
 	es->buf_len = buf_len;
 	es->ev_id   = ev_id;
 
-	len1 = b_size(buf) - buf_len;
+	len1 = b_size(buf) - b_peek_ofs(buf, buf_out);
 	if (len1 > buf_len)
 		len1 = buf_len;
 

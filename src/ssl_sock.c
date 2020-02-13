@@ -1595,7 +1595,7 @@ int ssl_sock_bind_verifycbk(int ok, X509_STORE_CTX *x_store)
 			ctx->xprt_st |= SSL_SOCK_CAEDEPTH_TO_ST(depth);
 		}
 
-		if (__objt_listener(conn->target)->bind_conf->ca_ignerr & (1ULL << err)) {
+		if (err < 64 && __objt_listener(conn->target)->bind_conf->ca_ignerr & (1ULL << err)) {
 			ssl_sock_dump_errors(conn);
 			ERR_clear_error();
 			return 1;
@@ -1609,7 +1609,7 @@ int ssl_sock_bind_verifycbk(int ok, X509_STORE_CTX *x_store)
 		ctx->xprt_st |= SSL_SOCK_CRTERROR_TO_ST(err);
 
 	/* check if certificate error needs to be ignored */
-	if (__objt_listener(conn->target)->bind_conf->crt_ignerr & (1ULL << err)) {
+	if (err < 64 && __objt_listener(conn->target)->bind_conf->crt_ignerr & (1ULL << err)) {
 		ssl_sock_dump_errors(conn);
 		ERR_clear_error();
 		return 1;
@@ -5250,6 +5250,8 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 		}
 		ctx->bio = BIO_new(ha_meth);
 		if (!ctx->bio) {
+			SSL_free(ctx->ssl);
+			ctx->ssl = NULL;
 			if (may_retry--) {
 				pool_gc(NULL);
 				goto retry_connect;
@@ -5312,20 +5314,10 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 			conn->err_code = CO_ER_SSL_NO_MEM;
 			goto err;
 		}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-		if (__objt_listener(conn->target)->bind_conf->ssl_conf.early_data) {
-			b_alloc(&ctx->early_buf);
-			SSL_set_max_early_data(ctx->ssl,
-			    /* Only allow early data if we managed to allocate
-			     * a buffer.
-			     */
-			    (!b_is_null(&ctx->early_buf)) ?
-			    global.tune.bufsize - global.tune.maxrewrite : 0);
-		}
-#endif
-
 		ctx->bio = BIO_new(ha_meth);
 		if (!ctx->bio) {
+			SSL_free(ctx->ssl);
+			ctx->ssl = NULL;
 			if (may_retry--) {
 				pool_gc(NULL);
 				goto retry_accept;
@@ -5347,6 +5339,18 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 			conn->err_code = CO_ER_SSL_NO_MEM;
 			goto err;
 		}
+
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+		if (__objt_listener(conn->target)->bind_conf->ssl_conf.early_data) {
+			b_alloc(&ctx->early_buf);
+			SSL_set_max_early_data(ctx->ssl,
+			    /* Only allow early data if we managed to allocate
+			     * a buffer.
+			     */
+			    (!b_is_null(&ctx->early_buf)) ?
+			    global.tune.bufsize - global.tune.maxrewrite : 0);
+		}
+#endif
 
 		SSL_set_accept_state(ctx->ssl);
 
@@ -5862,7 +5866,6 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 	 * EINTR too.
 	 */
 	while (count > 0) {
-		int need_out = 0;
 
 		try = b_contig_space(buf);
 		if (!try)
@@ -5920,8 +5923,6 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 			/* otherwise it's a real error */
 			goto out_error;
 		}
-		if (need_out)
-			break;
 	}
  leave:
 	return done;
@@ -6670,7 +6671,7 @@ smp_fetch_ssl_fc_has_early(const struct arg *args, struct sample *smp, const cha
 	}
 #else
 	smp->data.u.sint = ((conn->flags & CO_FL_EARLY_DATA)  &&
-	    (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_HANDSHAKE))) ? 1 : 0;
+	    (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_SSL_WAIT_HS))) ? 1 : 0;
 #endif
 	return 1;
 }

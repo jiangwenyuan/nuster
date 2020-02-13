@@ -1,6 +1,75 @@
 ChangeLog :
 ===========
 
+2020/02/13 : 2.0.13
+    - BUG/MINOR: checks: refine which errno values are really errors.
+    - BUG/MEDIUM: checks: Only attempt to do handshakes if the connection is ready.
+    - BUG/MEDIUM: connections: Hold the lock when wanting to kill a connection.
+    - MINOR: config: disable busy polling on old processes
+    - MINOR: ssl: Remove unused variable "need_out".
+    - BUG/MINOR: h1: Report the right error position when a header value is invalid
+    - BUG/MINOR: proxy: Fix input data copy when an error is captured
+    - BUG/MEDIUM: http-ana: Truncate the response when a redirect rule is applied
+    - BUG/MINOR: channel: inject output data at the end of output
+    - BUG/MEDIUM: session: do not report a failure when rejecting a session
+    - BUG/MINOR: stream-int: Don't trigger L7 retry if max retries is already reached
+    - BUG/MINOR: mux-h2: use a safe list_for_each_entry in h2_send()
+    - BUG/MEDIUM: mux-h2: fix missing test on sending_list in previous patch
+    - BUG/MEDIUM: mux-h2: don't stop sending when crossing a buffer boundary
+    - BUG/MINOR: cli/mworker: can't start haproxy with 2 programs
+    - REGTEST: mcli/mcli_start_progs: start 2 programs
+    - BUG/MEDIUM: mworker: remain in mworker mode during reload
+    - BUG/MEDIUM: mux_h1: Don't call h1_send if we subscribed().
+    - BUG/MAJOR: hashes: fix the signedness of the hash inputs
+    - REGTEST: add sample_fetches/hashes.vtc to validate hashes
+    - BUG/MEDIUM: cli: _getsocks must send the peers sockets
+    - BUG/MINOR: stream: don't mistake match rules for store-request rules
+    - BUG/MEDIUM: connection: add a mux flag to indicate splice usability
+    - BUG/MINOR: pattern: handle errors from fgets when trying to load patterns
+    - BUG/MINOR: cache: Fix leak of cache name in error path
+    - BUG/MINOR: dns: Make dns_query_id_seed unsigned
+    - BUG/MINOR: 51d: Fix bug when HTX is enabled
+    - BUILD: pattern: include errno.h
+    - BUG/MINOR: http-ana/filters: Wait end of the http_end callback for all filters
+    - BUG/MINOR: http-rules: Remove buggy deinit functions for HTTP rules
+    - BUG/MINOR: stick-table: Use MAX_SESS_STKCTR as the max track ID during parsing
+    - BUG/MINOR: tcp-rules: Fix memory releases on error path during action parsing
+    - MINOR: proxy/http-ana: Add support of extra attributes for the cookie directive
+    - BUG/MINOR: http_act: don't check capture id in backend
+    - BUG/MEDIUM: 0rtt: Only consider the SSL handshake.
+    - BUG/MINOR: stktable: report the current proxy name in error messages
+    - BUG/MEDIUM: mux-h2: make sure we don't emit TE headers with anything but "trailers"
+    - BUILD: cfgparse: silence a bogus gcc warning on 32-bit machines
+    - BUG/MINOR: dns: allow srv record weight set to 0
+    - BUG/MEDIUM: ssl: Don't forget to free ctx->ssl on failure.
+    - BUG/MINOR: tcpchecks: fix the connect() flags regarding delayed ack
+    - BUG/MEDIUM: pipe: fix a use-after-free in case of pipe creation error
+    - BUG/MINOR: connection: fix ip6 dst_port copy in make_proxy_line_v2
+    - BUG/MEDIUM: connections: Don't forget to unlock when killing a connection.
+    - BUG/MEDIUM: memory_pool: Update the seq number in pool_flush().
+    - MINOR: memory: Only init the pool spinlock once.
+    - BUG/MEDIUM: memory: Add a rwlock before freeing memory.
+    - BUG/MAJOR: memory: Don't forget to unlock the rwlock if the pool is empty.
+    - BUG/MINOR: ssl: we may only ignore the first 64 errors
+    - CONTRIB: debug: add missing flags SF_HTX and SF_MUX
+    - CONTRIB: debug: add the possibility to decode the value as certain types only
+    - CONTRIB: debug: support reporting multiple values at once
+    - MINOR: acl: Warn when an ACL is named 'or'
+    - CONTRIB: debug: also support reading values from stdin
+    - SCRIPTS: announce-release: place the send command in the mail's header
+    - SCRIPTS: announce-release: allow the user to force to overwrite old files
+    - MINOR: build: add linux-glibc-legacy build TARGET
+    - BUG/MINOR: unix: better catch situations where the unix socket path length is close to the limit
+    - MINOR: http: add a new "replace-path" action
+    - BUG/MINOR: ssl: Possible memleak when allowing the 0RTT data buffer.
+    - BUG/MINOR: dns: allow 63 char in hostname
+    - BUG/MEDIUM: listener: only consider running threads when resuming listeners
+    - BUG/MINOR: listener: enforce all_threads_mask on bind_thread on init
+    - BUG/MINOR: tcp: avoid closing fd when socket failed in tcp_bind_listener
+    - DOC: word converter ignores delimiters at the start or end of input string
+    - BUG/MINOR: tcp: don't try to set defaultmss when value is negative
+    - SCRIPTS: make announce-release executable again
+
 2019/12/21 : 2.0.12
     - DOC: Improve documentation of http-re(quest|sponse) replace-(header|value|uri)
     - DOC: clarify the fact that replace-uri works on a full URI
