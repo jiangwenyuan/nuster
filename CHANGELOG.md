@@ -1,5 +1,18 @@
 # nuster Changelog
 
+## 4.0.0.20 - 2020-02-13
+
+Upgrade to HAProxy v2.0.12
+
+### Added
+
+* HTX support
+* Extend, auto extend ttl
+
+## 3.2.3.19 - 2020-02-13
+
+Upgrade to HAProxy v1.9.14
+
 ## 3.2.2.19 - 2020-02-11
 
 ### Fixed
