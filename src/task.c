@@ -41,7 +41,7 @@ unsigned int tasks_run_queue_cur = 0;    /* copy of the run queue size */
 unsigned int nb_tasks_cur = 0;     /* copy of the tasks count */
 unsigned int niced_tasks = 0;      /* number of niced tasks in the run queue */
 
-THREAD_LOCAL struct task *curr_task = NULL; /* task currently running or NULL */
+THREAD_LOCAL struct task_per_thread *sched = &task_per_thread[0]; /* scheduler context for the current thread */
 
 __decl_aligned_spinlock(rq_lock); /* spin lock related to run queue */
 __decl_aligned_rwlock(wq_lock);   /* RW lock related to the wait queue */
@@ -159,6 +159,7 @@ void __task_queue(struct task *task, struct eb_root *wq)
  */
 int wake_expired_tasks()
 {
+	struct task_per_thread * const tt = sched; // thread's tasks
 	struct task *task;
 	struct eb32_node *eb;
 	int ret = TICK_ETERNITY;
@@ -166,13 +167,13 @@ int wake_expired_tasks()
 
 	while (1) {
   lookup_next_local:
-		eb = eb32_lookup_ge(&task_per_thread[tid].timers, now_ms - TIMER_LOOK_BACK);
+		eb = eb32_lookup_ge(&tt->timers, now_ms - TIMER_LOOK_BACK);
 		if (!eb) {
 			/* we might have reached the end of the tree, typically because
 			* <now_ms> is in the first half and we're first scanning the last
 			* half. Let's loop back to the beginning of the tree now.
 			*/
-			eb = eb32_first(&task_per_thread[tid].timers);
+			eb = eb32_first(&tt->timers);
 			if (likely(!eb))
 				break;
 		}
@@ -202,7 +203,7 @@ int wake_expired_tasks()
 		 */
 		if (!tick_is_expired(task->expire, now_ms)) {
 			if (tick_isset(task->expire))
-				__task_queue(task, &task_per_thread[tid].timers);
+				__task_queue(task, &tt->timers);
 			goto lookup_next_local;
 		}
 		task_wakeup(task, TASK_WOKEN_TIMER);
@@ -299,10 +300,12 @@ leave:
  */
 void process_runnable_tasks()
 {
+	struct task_per_thread * const tt = sched;
 	struct eb32sc_node *lrq = NULL; // next local run queue entry
 	struct eb32sc_node *grq = NULL; // next global run queue entry
 	struct task *t;
 	int max_processed;
+	struct mt_list *tmp_list;
 
 	ti->flags &= ~TI_FL_STUCK; // this thread is still running
 
@@ -310,6 +313,12 @@ void process_runnable_tasks()
 		activity[tid].empty_rq++;
 		return;
 	}
+	/* Merge the list of tasklets waken up by other threads to the
+	 * main list.
+	 */
+	tmp_list = MT_LIST_BEHEAD(&sched->shared_tasklet_list);
+	if (tmp_list)
+		LIST_SPLICE_END_DETACHED(&sched->task_list, (struct list *)tmp_list);
 
 	tasks_run_queue_cur = tasks_run_queue; /* keep a copy for reporting */
 	nb_tasks_cur = nb_tasks;
@@ -320,7 +329,7 @@ void process_runnable_tasks()
 
 	/* Note: the grq lock is always held when grq is not null */
 
-	while (task_per_thread[tid].task_list_size < max_processed) {
+	while (tt->task_list_size < max_processed) {
 		if ((global_tasks_mask & tid_bit) && !grq) {
 #ifdef USE_THREAD
 			HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
@@ -340,9 +349,9 @@ void process_runnable_tasks()
 		 */
 
 		if (!lrq) {
-			lrq = eb32sc_lookup_ge(&task_per_thread[tid].rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
+			lrq = eb32sc_lookup_ge(&tt->rqueue, rqueue_ticks - TIMER_LOOK_BACK, tid_bit);
 			if (unlikely(!lrq))
-				lrq = eb32sc_first(&task_per_thread[tid].rqueue, tid_bit);
+				lrq = eb32sc_first(&tt->rqueue, tid_bit);
 		}
 
 		if (!lrq && !grq)
@@ -368,9 +377,11 @@ void process_runnable_tasks()
 		}
 #endif
 
+		/* Make sure the entry doesn't appear to be in a list */
+		LIST_INIT(&((struct tasklet *)t)->list);
 		/* And add it to the local task list */
 		tasklet_insert_into_tasklet_list((struct tasklet *)t);
-		task_per_thread[tid].task_list_size++;
+		tt->task_list_size++;
 		activity[tid].tasksw++;
 	}
 
@@ -380,7 +391,7 @@ void process_runnable_tasks()
 		grq = NULL;
 	}
 
-	while (max_processed > 0 && !LIST_ISEMPTY(&task_per_thread[tid].task_list)) {
+	while (max_processed > 0 && !LIST_ISEMPTY(&tt->task_list)) {
 		struct task *t;
 		unsigned short state;
 		void *ctx;
@@ -391,8 +402,6 @@ void process_runnable_tasks()
 		state = _HA_ATOMIC_XCHG(&t->state, state);
 		__ha_barrier_atomic_store();
 		__tasklet_remove_from_tasklet_list((struct tasklet *)t);
-		if (!TASK_IS_TASKLET(t))
-			task_per_thread[tid].task_list_size--;
 
 		ti->flags &= ~TI_FL_STUCK; // this thread is still running
 		activity[tid].ctxsw++;
@@ -400,22 +409,31 @@ void process_runnable_tasks()
 		process = t->process;
 		t->calls++;
 
-		if (unlikely(!TASK_IS_TASKLET(t) && t->call_date)) {
+		if (TASK_IS_TASKLET(t)) {
+			process(NULL, ctx, state);
+			max_processed--;
+			continue;
+		}
+
+		/* OK then this is a regular task */
+
+		tt->task_list_size--;
+		if (unlikely(t->call_date)) {
 			uint64_t now_ns = now_mono_time();
 
 			t->lat_time += now_ns - t->call_date;
 			t->call_date = now_ns;
 		}
 
-		curr_task = (struct task *)t;
+		sched->current = t;
 		__ha_barrier_store();
 		if (likely(process == process_stream))
 			t = process_stream(t, ctx, state);
 		else if (process != NULL)
-			t = process(TASK_IS_TASKLET(t) ? NULL : t, ctx, state);
+			t = process(t, ctx, state);
 		else {
 			__task_free(t);
-			curr_task = NULL;
+			sched->current = NULL;
 			__ha_barrier_store();
 			/* We don't want max_processed to be decremented if
 			 * we're just freeing a destroyed task, we should only
@@ -423,13 +441,13 @@ void process_runnable_tasks()
 			 */
 			continue;
 		}
-		curr_task = NULL;
+		sched->current = NULL;
 		__ha_barrier_store();
 		/* If there is a pending state  we have to wake up the task
 		 * immediately, else we defer it into wait queue
 		 */
 		if (t != NULL) {
-			if (unlikely(!TASK_IS_TASKLET(t) && t->call_date)) {
+			if (unlikely(t->call_date)) {
 				t->cpu_time += now_mono_time() - t->call_date;
 				t->call_date = 0;
 			}
@@ -444,7 +462,7 @@ void process_runnable_tasks()
 		max_processed--;
 	}
 
-	if (!LIST_ISEMPTY(&task_per_thread[tid].task_list))
+	if (!LIST_ISEMPTY(&tt->task_list))
 		activity[tid].long_rq++;
 }
 
@@ -466,7 +484,7 @@ struct work_list *work_list_create(int nbthread,
 		goto fail;
 
 	for (i = 0; i < nbthread; i++) {
-		LIST_INIT(&wl[i].head);
+		MT_LIST_INIT(&wl[i].head);
 		wl[i].task = task_new(1UL << i);
 		if (!wl[i].task)
 			goto fail;
@@ -549,6 +567,7 @@ static void init_task()
 	memset(&task_per_thread, 0, sizeof(task_per_thread));
 	for (i = 0; i < MAX_THREADS; i++) {
 		LIST_INIT(&task_per_thread[i].task_list);
+		MT_LIST_INIT(&task_per_thread[i].shared_tasklet_list);
 	}
 }
 

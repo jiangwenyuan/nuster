@@ -64,8 +64,10 @@ struct task_per_thread {
 	struct eb_root timers;  /* tree constituting the per-thread wait queue */
 	struct eb_root rqueue;  /* tree constituting the per-thread run queue */
 	struct list task_list;  /* List of tasks to be run, mixing tasks and tasklets */
+	struct mt_list shared_tasklet_list; /* Tasklet to be run, woken up by other threads */
 	int task_list_size;     /* Number of tasks in the task_list */
 	int rqueue_size;        /* Number of elements in the per-thread run queue */
+	struct task *current;   /* current task (not tasklet) */
 	__attribute__((aligned(64))) char end[0];
 };
 
@@ -77,7 +79,6 @@ struct task_per_thread {
 		unsigned short state; /* task state : bitfield of TASK_	*/ \
 		short nice; /* task prio from -1024 to +1024, or -32768 for tasklets */ \
 		unsigned int calls; /* number of times process was called */ \
-		uint64_t cpu_time; /* total CPU time consumed */            \
 		struct task *(*process)(struct task *t, void *ctx, unsigned short state); /* the function which processes the task */ \
 		void *context; /* the task's context */			\
 	}
@@ -91,12 +92,14 @@ struct task {
 	unsigned long thread_mask;	/* mask of thread IDs authorized to process the task */
 	uint64_t call_date;		/* date of the last task wakeup or call */
 	uint64_t lat_time;		/* total latency time experienced */
+	uint64_t cpu_time;              /* total CPU time consumed */
 };
 
 /* lightweight tasks, without priority, mainly used for I/Os */
 struct tasklet {
 	TASK_COMMON;			/* must be at the beginning! */
 	struct list list;
+	int tid;                        /* TID of the tasklet owner, <0 if local */
 };
 
 #define TASK_IS_TASKLET(t) ((t)->nice == -32768)
@@ -120,7 +123,7 @@ struct tasklet {
  * TASK_WOKEN_OTHER and a context pointing to the work_list entry.
  */
 struct work_list {
-	struct list head;
+	struct mt_list head;
 	struct task *task;
 	void *arg;
 };

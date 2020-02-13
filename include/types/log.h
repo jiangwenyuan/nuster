@@ -28,12 +28,18 @@
 #include <common/config.h>
 #include <common/hathreads.h>
 #include <common/mini-clist.h>
+#include <types/ring.h>
 
 #define NB_LOG_FACILITIES       24
 #define NB_LOG_LEVELS           8
 #define NB_MSG_IOVEC_ELEMENTS   8
 #define SYSLOG_PORT             514
 #define UNIQUEID_LEN            128
+
+/* 64kB to archive startup-logs seems way more than enough */
+#ifndef STARTUP_LOG_SIZE
+#define STARTUP_LOG_SIZE        65536
+#endif
 
 /* The array containing the names of the log levels. */
 extern const char *log_levels[];
@@ -45,6 +51,13 @@ enum {
 	LOG_FORMAT_SHORT,
 	LOG_FORMAT_RAW,
 	LOG_FORMATS,          /* number of supported log formats, must always be last */
+};
+
+/* log target types */
+enum log_tgt {
+	LOG_TARGET_DGRAM = 0, // datagram address (udp, unix socket)
+	LOG_TARGET_FD,        // file descriptor
+	LOG_TARGET_BUFFER,    // ring buffer
 };
 
 /* lists of fields that can be logged */
@@ -197,6 +210,8 @@ struct logsrv {
 	struct list list;
 	struct sockaddr_storage addr;
 	struct smp_info lb;
+	struct ring *ring;
+	enum log_tgt type;
 	int format;
 	int facility;
 	int level;

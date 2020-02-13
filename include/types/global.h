@@ -72,19 +72,8 @@
 #define GTUNE_BUSY_POLLING       (1<<11)
 #define GTUNE_LISTENER_MQ        (1<<12)
 #define GTUNE_SET_DUMPABLE       (1<<13)
-
 #define GTUNE_USE_EVPORTS        (1<<14)
-
-/* Access level for a stats socket */
-#define ACCESS_LVL_NONE     0
-#define ACCESS_LVL_USER     1
-#define ACCESS_LVL_OPER     2
-#define ACCESS_LVL_ADMIN    3
-#define ACCESS_LVL_MASK     0x3
-
-#define ACCESS_FD_LISTENERS 0x4  /* expose listeners FDs on stats socket */
-#define ACCESS_MASTER       0x8  /* works with the master (and every other processes) */
-#define ACCESS_MASTER_ONLY  0x10 /* only works with the worker */
+#define GTUNE_STRICT_LIMITS      (1<<15)
 
 /* SSL server verify mode */
 enum {
@@ -188,61 +177,6 @@ struct global {
 		unsigned long thread[MAX_THREADS];  /* list of CPU masks for the 32/64 first threads of the 1st process */
 	} cpu_map;
 #endif
-	struct {
-		struct {
-			int       status;                      /* cache on or off */
-			char     *root;                        /* persist root directory */
-			uint64_t  data_size;                   /* max memory used by data, in bytes */
-			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
-			int       share;
-			char     *purge_method;
-			char     *uri;                         /* the uri used for stats and manager */
-			int   dict_cleaner;                /* the number of entries checked once */
-			int   data_cleaner;                /* the number of data checked once */
-			int   disk_cleaner;                /* the number of files checked once */
-			int   disk_loader;                 /* the number of files load once */
-			int   disk_saver;                  /* the number of entries checked once for persist_async */
-
-			struct {
-				struct pool_head *stash;
-				struct pool_head *ctx;
-				struct pool_head *data;
-				struct pool_head *element;
-				struct pool_head *chunk;
-				struct pool_head *entry;
-			} pool;
-
-			struct nst_memory   *memory;        /* memory */
-			struct nst_cache_stats *stats;
-
-			int htx;
-		} cache;
-		struct {
-			int       status;                      /* enable nosql on or off */
-			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
-			uint64_t  data_size;                   /* max memory used by nosql, in bytes */
-			char     *root;                        /* persist root directory */
-			int   dict_cleaner;                /* the number of entries checked once */
-			int   data_cleaner;                /* the number of data checked once */
-			int   disk_cleaner;                /* the number of files checked once */
-			int   disk_loader;                 /* the number of files load once */
-			int   disk_saver;                  /* the number of entries checked once for persist_async */
-
-			struct {
-				struct pool_head *stash;
-				struct pool_head *ctx;
-				struct pool_head *data;
-				struct pool_head *element;
-				struct pool_head *chunk;
-				struct pool_head *entry;
-			} pool;
-
-			struct nst_memory   *memory;        /* memory */
-			struct nst_nosql_stats *stats;
-
-			int htx;
-		} nosql;
-	} nuster;
 };
 
 /* options for mworker_proc */
@@ -271,6 +205,8 @@ struct mworker_proc {
 	int timestamp;
 	struct server *srv; /* the server entry in the master proxy */
 	struct list list;
+	int uid;
+	int gid;
 };
 
 extern struct global global;
@@ -293,7 +229,7 @@ extern int stopping;	/* non zero means stopping in progress */
 extern int killed;	/* >0 means a hard-stop is triggered, >1 means hard-stop immediately */
 extern char hostname[MAX_HOSTNAME_LEN];
 extern char localpeer[MAX_HOSTNAME_LEN];
-extern struct list global_listener_queue; /* list of the temporarily limited listeners */
+extern struct mt_list global_listener_queue; /* list of the temporarily limited listeners */
 extern struct task *global_listener_queue_task;
 extern unsigned int warned;     /* bitfield of a few warnings to emit just once */
 extern volatile unsigned long sleeping_thread_mask;
@@ -305,25 +241,14 @@ extern unsigned int rlim_fd_max_at_boot;
 extern int atexit_flag;
 
 /* bit values to go with "warned" above */
-#define WARN_BLOCK_DEPRECATED       0x00000001
+/* unassigned : 0x00000001 (previously: WARN_BLOCK_DEPRECATED) */
 /* unassigned : 0x00000002 */
-#define WARN_REDISPATCH_DEPRECATED  0x00000004
-#define WARN_CLITO_DEPRECATED       0x00000008
-#define WARN_SRVTO_DEPRECATED       0x00000010
-#define WARN_CONTO_DEPRECATED       0x00000020
+/* unassigned : 0x00000004 (previously: WARN_REDISPATCH_DEPRECATED) */
+/* unassigned : 0x00000008 (previously: WARN_CLITO_DEPRECATED) */
+/* unassigned : 0x00000010 (previously: WARN_SRVTO_DEPRECATED) */
+/* unassigned : 0x00000020 (previously: WARN_CONTO_DEPRECATED) */
 #define WARN_FORCECLOSE_DEPRECATED  0x00000040
 
-#define WARN_REQREP_DEPRECATED      0x00000080
-#define WARN_REQDEL_DEPRECATED      0x00000100
-#define WARN_REQDENY_DEPRECATED     0x00000200
-#define WARN_REQPASS_DEPRECATED     0x00000400
-#define WARN_REQALLOW_DEPRECATED    0x00000800
-#define WARN_REQTARPIT_DEPRECATED   0x00001000
-#define WARN_REQADD_DEPRECATED      0x00002000
-#define WARN_RSPREP_DEPRECATED      0x00004000
-#define WARN_RSPDEL_DEPRECATED      0x00008000
-#define WARN_RSPDENY_DEPRECATED     0x00010000
-#define WARN_RSPADD_DEPRECATED      0x00020000
 
 /* to be used with warned and WARN_* */
 static inline int already_warned(unsigned int warning)
@@ -352,7 +277,11 @@ int delete_oldpid(int pid);
 void deinit(void);
 void hap_register_build_opts(const char *str, int must_free);
 void hap_register_post_check(int (*fct)());
+void hap_register_post_proxy_check(int (*fct)(struct proxy *));
+void hap_register_post_server_check(int (*fct)(struct server *));
 void hap_register_post_deinit(void (*fct)());
+void hap_register_proxy_deinit(void (*fct)(struct proxy *));
+void hap_register_server_deinit(void (*fct)(struct server *));
 
 void hap_register_per_thread_alloc(int (*fct)());
 void hap_register_per_thread_init(int (*fct)());
@@ -370,9 +299,25 @@ void mworker_reload();
 #define REGISTER_POST_CHECK(fct) \
 	INITCALL1(STG_REGISTER, hap_register_post_check, (fct))
 
+/* simplified way to declare a post-proxy-check callback in a file */
+#define REGISTER_POST_PROXY_CHECK(fct) \
+	INITCALL1(STG_REGISTER, hap_register_post_proxy_check, (fct))
+
+/* simplified way to declare a post-server-check callback in a file */
+#define REGISTER_POST_SERVER_CHECK(fct) \
+	INITCALL1(STG_REGISTER, hap_register_post_server_check, (fct))
+
 /* simplified way to declare a post-deinit callback in a file */
 #define REGISTER_POST_DEINIT(fct) \
 	INITCALL1(STG_REGISTER, hap_register_post_deinit, (fct))
+
+/* simplified way to declare a proxy-deinit callback in a file */
+#define REGISTER_PROXY_DEINIT(fct) \
+	INITCALL1(STG_REGISTER, hap_register_proxy_deinit, (fct))
+
+/* simplified way to declare a proxy-deinit callback in a file */
+#define REGISTER_SERVER_DEINIT(fct) \
+	INITCALL1(STG_REGISTER, hap_register_server_deinit, (fct))
 
 /* simplified way to declare a per-thread allocation callback in a file */
 #define REGISTER_PER_THREAD_ALLOC(fct) \

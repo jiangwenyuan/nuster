@@ -381,12 +381,7 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 			/* The target server expects a LOCAL line to be sent first. Retrieving
 			 * local or remote addresses may fail until the connection is established.
 			 */
-			conn_get_from_addr(conn);
-			if (!(conn->flags & CO_FL_ADDR_FROM_SET))
-				goto out_wait;
-
-			conn_get_to_addr(conn);
-			if (!(conn->flags & CO_FL_ADDR_TO_SET))
+			if (!conn_get_src(conn) || !conn_get_dst(conn))
 				goto out_wait;
 
 			ret = make_proxy_line(trash.area, trash.size,
@@ -642,8 +637,7 @@ static int si_cs_process(struct conn_stream *cs)
 	 * stream-int status.
 	 */
 	stream_int_notify(si);
-	channel_release_buffer(ic, &(si_strm(si)->buffer_wait));
-
+	stream_release_buffers(si_strm(si));
 	return 0;
 }
 
@@ -812,6 +806,7 @@ struct task *si_cs_io_cb(struct task *t, void *ctx, unsigned short state)
 	if (ret != 0)
 		si_cs_process(cs);
 
+	stream_release_buffers(si_strm(si));
 	return (NULL);
 }
 
@@ -1601,6 +1596,7 @@ void si_applet_wake_cb(struct stream_interface *si)
 
 	/* update the stream-int, channels, and possibly wake the stream up */
 	stream_int_notify(si);
+	stream_release_buffers(si_strm(si));
 
 	/* stream_int_notify may have passed through chk_snd and released some
 	 * RXBLK flags. Process_stream will consider those flags to wake up the

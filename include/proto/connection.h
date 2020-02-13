@@ -34,6 +34,8 @@
 
 extern struct pool_head *pool_head_connection;
 extern struct pool_head *pool_head_connstream;
+extern struct pool_head *pool_head_sockaddr;
+extern struct pool_head *pool_head_authority;
 extern struct xprt_ops *registered_xprt[XPRT_ENTRIES];
 extern struct mux_proto_list mux_proto_list;
 
@@ -121,9 +123,6 @@ static inline void conn_ctrl_init(struct connection *conn)
 		int fd = conn->handle.fd;
 
 		fd_insert(fd, conn, conn_fd_handler, tid_bit);
-		/* mark the fd as ready so as not to needlessly poll at the beginning */
-		fd_may_recv(fd);
-		fd_may_send(fd);
 		conn->flags |= CO_FL_CTRL_READY;
 	}
 }
@@ -264,20 +263,6 @@ static inline void __conn_xprt_want_recv(struct connection *c)
 static inline void __conn_xprt_stop_recv(struct connection *c)
 {
 	c->flags &= ~CO_FL_XPRT_RD_ENA;
-}
-
-/* this one is used only to stop speculative recv(). It doesn't stop it if the
- * fd is already polled in order to avoid expensive polling status changes.
- * Since it might require the upper layer to re-enable reading, we'll return 1
- * if we've really stopped something otherwise zero.
- */
-static inline int __conn_xprt_done_recv(struct connection *c)
-{
-	if (!conn_ctrl_ready(c) || !fd_recv_polled(c->handle.fd)) {
-		c->flags &= ~CO_FL_XPRT_RD_ENA;
-		return 1;
-	}
-	return 0;
 }
 
 static inline void __conn_xprt_want_send(struct connection *c)
@@ -468,6 +453,9 @@ static inline void conn_init(struct connection *conn)
 	conn->send_wait = NULL;
 	conn->recv_wait = NULL;
 	conn->idle_time = 0;
+	conn->src = NULL;
+	conn->dst = NULL;
+	conn->proxy_authority = NULL;
 }
 
 /* sets <owner> as the connection's owner */
@@ -487,6 +475,37 @@ static inline void conn_set_xprt_done_cb(struct connection *conn, int (*cb)(stru
 static inline void conn_clear_xprt_done_cb(struct connection *conn)
 {
 	conn->xprt_done_cb = NULL;
+}
+
+/* Allocates a struct sockaddr from the pool if needed, assigns it to *sap and
+ * returns it. If <sap> is NULL, the address is always allocated and returned.
+ * if <sap> is non-null, an address will only be allocated if it points to a
+ * non-null pointer. In this case the allocated address will be assigned there.
+ * In both situations the new pointer is returned.
+ */
+static inline struct sockaddr_storage *sockaddr_alloc(struct sockaddr_storage **sap)
+{
+	struct sockaddr_storage *sa;
+
+	if (sap && *sap)
+		return *sap;
+
+	sa = pool_alloc(pool_head_sockaddr);
+	if (sap)
+		*sap = sa;
+	return sa;
+}
+
+/* Releases the struct sockaddr potentially pointed to by <sap> to the pool. It
+ * may be NULL or may point to NULL. If <sap> is not NULL, a NULL is placed
+ * there.
+ */
+static inline void sockaddr_free(struct sockaddr_storage **sap)
+{
+	if (!sap)
+		return;
+	pool_free(pool_head_sockaddr, *sap);
+	*sap = NULL;
 }
 
 /* Tries to allocate a new connection and initialized its main fields. The
@@ -580,6 +599,14 @@ static inline void conn_free(struct connection *conn)
 		session_unown_conn(sess, conn);
 	}
 
+	sockaddr_free(&conn->src);
+	sockaddr_free(&conn->dst);
+
+	if (conn->proxy_authority != NULL) {
+		pool_free(pool_head_authority, conn->proxy_authority);
+		conn->proxy_authority = NULL;
+	}
+
 	/* By convention we always place a NULL where the ctx points to if the
 	 * mux is null. It may have been used to store the connection as a
 	 * stream_interface's end point for example.
@@ -598,7 +625,7 @@ static inline void conn_free(struct connection *conn)
 
 	conn_force_unsubscribe(conn);
 	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
-	LIST_DEL_LOCKED(&conn->list);
+	MT_LIST_DEL((struct mt_list *)&conn->list);
 	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
 	pool_free(pool_head_connection, conn);
 }
@@ -629,36 +656,50 @@ static inline struct connection *cs_conn(const struct conn_stream *cs)
 	return cs ? cs->conn : NULL;
 }
 
-/* Retrieves the connection's source address */
-static inline void conn_get_from_addr(struct connection *conn)
+/* Retrieves the connection's original source address. Returns non-zero on
+ * success or zero on failure. The operation is only performed once and the
+ * address is stored in the connection for future use.
+ */
+static inline int conn_get_src(struct connection *conn)
 {
 	if (conn->flags & CO_FL_ADDR_FROM_SET)
-		return;
+		return 1;
 
 	if (!conn_ctrl_ready(conn) || !conn->ctrl->get_src)
-		return;
+		return 0;
 
-	if (conn->ctrl->get_src(conn->handle.fd, (struct sockaddr *)&conn->addr.from,
-	                        sizeof(conn->addr.from),
+	if (!sockaddr_alloc(&conn->src))
+		return 0;
+
+	if (conn->ctrl->get_src(conn->handle.fd, (struct sockaddr *)conn->src,
+	                        sizeof(*conn->src),
 	                        obj_type(conn->target) != OBJ_TYPE_LISTENER) == -1)
-		return;
+		return 0;
 	conn->flags |= CO_FL_ADDR_FROM_SET;
+	return 1;
 }
 
-/* Retrieves the connection's original destination address */
-static inline void conn_get_to_addr(struct connection *conn)
+/* Retrieves the connection's original destination address. Returns non-zero on
+ * success or zero on failure. The operation is only performed once and the
+ * address is stored in the connection for future use.
+ */
+static inline int conn_get_dst(struct connection *conn)
 {
 	if (conn->flags & CO_FL_ADDR_TO_SET)
-		return;
+		return 1;
 
 	if (!conn_ctrl_ready(conn) || !conn->ctrl->get_dst)
-		return;
+		return 0;
 
-	if (conn->ctrl->get_dst(conn->handle.fd, (struct sockaddr *)&conn->addr.to,
-	                        sizeof(conn->addr.to),
+	if (!sockaddr_alloc(&conn->dst))
+		return 0;
+
+	if (conn->ctrl->get_dst(conn->handle.fd, (struct sockaddr *)conn->dst,
+	                        sizeof(*conn->dst),
 	                        obj_type(conn->target) != OBJ_TYPE_LISTENER) == -1)
-		return;
+		return 0;
 	conn->flags |= CO_FL_ADDR_TO_SET;
+	return 1;
 }
 
 /* Sets the TOS header in IPv4 and the traffic class header in IPv6 packets
@@ -671,12 +712,12 @@ static inline void conn_set_tos(const struct connection *conn, int tos)
 		return;
 
 #ifdef IP_TOS
-	if (conn->addr.from.ss_family == AF_INET)
+	if (conn->src->ss_family == AF_INET)
 		setsockopt(conn->handle.fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
 #endif
 #ifdef IPV6_TCLASS
-	if (conn->addr.from.ss_family == AF_INET6) {
-		if (IN6_IS_ADDR_V4MAPPED(&((struct sockaddr_in6 *)&conn->addr.from)->sin6_addr))
+	if (conn->src->ss_family == AF_INET6) {
+		if (IN6_IS_ADDR_V4MAPPED(&((struct sockaddr_in6 *)conn->src)->sin6_addr))
 			/* v4-mapped addresses need IP_TOS */
 			setsockopt(conn->handle.fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
 		else
@@ -929,10 +970,6 @@ static inline void list_mux_proto(FILE *out)
 			mode = "TCP";
 		else if (item->mode == PROTO_MODE_HTTP)
 			mode = "HTTP";
-		else if (item->mode == PROTO_MODE_HTX)
-			mode = "HTX";
-		else if (item->mode == (PROTO_MODE_HTTP | PROTO_MODE_HTX))
-			mode = "HTTP|HTX";
 		else
 			mode = "NONE";
 
@@ -1043,7 +1080,7 @@ static inline int conn_install_mux_fe(struct connection *conn, void *ctx)
 		int mode;
 
 		if (bind_conf->frontend->mode == PR_MODE_HTTP)
-			mode = ((bind_conf->frontend->options2 & PR_O2_USE_HTX) ? PROTO_MODE_HTX : PROTO_MODE_HTTP);
+			mode = PROTO_MODE_HTTP;
 		else
 			mode = PROTO_MODE_TCP;
 
@@ -1081,7 +1118,7 @@ static inline int conn_install_mux_be(struct connection *conn, void *ctx, struct
 		int mode;
 
 		if (prx->mode == PR_MODE_HTTP)
-			mode = ((prx->options2 & PR_O2_USE_HTX) ? PROTO_MODE_HTX : PROTO_MODE_HTTP);
+			mode = PROTO_MODE_HTTP;
 		else
 			mode = PROTO_MODE_TCP;
 

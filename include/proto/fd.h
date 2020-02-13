@@ -35,14 +35,13 @@
 
 /* public variables */
 
-extern volatile struct fdlist fd_cache;
-extern volatile struct fdlist fd_cache_local[MAX_THREADS];
-
 extern volatile struct fdlist update_list;
 
-extern unsigned long *polled_mask;
 
-extern unsigned long fd_cache_mask; // Mask of threads with events in the cache
+extern struct polled_mask {
+	unsigned long poll_recv;
+	unsigned long poll_send;
+} *polled_mask;
 
 extern THREAD_LOCAL int *fd_updt;  // FD updates list
 extern THREAD_LOCAL int fd_nbupdt; // number of updates in the list
@@ -50,8 +49,6 @@ extern THREAD_LOCAL int fd_nbupdt; // number of updates in the list
 extern int poller_wr_pipe[MAX_THREADS];
 
 extern volatile int ha_used_fds; // Number of FDs we're currently using
-
-__decl_hathreads(extern HA_RWLOCK_T   __attribute__((aligned(64))) fdcache_lock);    /* global lock to protect fd_cache array */
 
 /* Deletes an FD from the fdsets.
  * The file descriptor is also closed.
@@ -62,6 +59,8 @@ void fd_delete(int fd);
  * The file descriptor is kept open.
  */
 void fd_remove(int fd);
+
+ssize_t fd_write_frag_line(int fd, size_t maxlen, const struct ist pfx[], size_t npfx, const struct ist msg[], size_t nmsg, int nl);
 
 /* close all FDs starting from <start> */
 void my_closefrom(int start);
@@ -103,38 +102,9 @@ int list_pollers(FILE *out);
  */
 void run_poller();
 
-/* Scan and process the cached events. This should be called right after
- * the poller.
- */
-void fd_process_cached_events();
-
 void fd_add_to_fd_list(volatile struct fdlist *list, int fd, int off);
 void fd_rm_from_fd_list(volatile struct fdlist *list, int fd, int off);
-
-/* Mark fd <fd> as updated for polling and allocate an entry in the update list
- * for this if it was not already there. This can be done at any time.
- */
-static inline void updt_fd_polling(const int fd)
-{
-	if ((fdtab[fd].thread_mask & all_threads_mask) == tid_bit) {
-
-		/* note: we don't have a test-and-set yet in hathreads */
-
-		if (HA_ATOMIC_BTS(&fdtab[fd].update_mask, tid))
-			return;
-
-		fd_updt[fd_nbupdt++] = fd;
-	} else {
-		unsigned long update_mask = fdtab[fd].update_mask;
-		do {
-			if (update_mask == fdtab[fd].thread_mask)
-				return;
-		} while (!_HA_ATOMIC_CAS(&fdtab[fd].update_mask, &update_mask,
-		    fdtab[fd].thread_mask));
-		fd_add_to_fd_list(&update_list, fd, offsetof(struct fdtab, update));
-	}
-
-}
+void updt_fd_polling(const int fd);
 
 /* Called from the poller to acknoledge we read an entry from the global
  * update list, to remove our bit from the update_mask, and remove it from
@@ -165,45 +135,6 @@ static inline void done_update_polling(int fd)
 	}
 }
 
-/* Allocates a cache entry for a file descriptor if it does not yet have one.
- * This can be done at any time.
- */
-static inline void fd_alloc_cache_entry(const int fd)
-{
-	_HA_ATOMIC_OR(&fd_cache_mask, fdtab[fd].thread_mask);
-	if (!(fdtab[fd].thread_mask & (fdtab[fd].thread_mask - 1)))
-		fd_add_to_fd_list(&fd_cache_local[my_ffsl(fdtab[fd].thread_mask) - 1], fd,  offsetof(struct fdtab, cache));
-	else
-		fd_add_to_fd_list(&fd_cache, fd,  offsetof(struct fdtab, cache));
-}
-
-/* Removes entry used by fd <fd> from the FD cache and replaces it with the
- * last one.
- * If the fd has no entry assigned, return immediately.
- */
-static inline void fd_release_cache_entry(const int fd)
-{
-	if (!(fdtab[fd].thread_mask & (fdtab[fd].thread_mask - 1)))
-		fd_rm_from_fd_list(&fd_cache_local[my_ffsl(fdtab[fd].thread_mask) - 1], fd, offsetof(struct fdtab, cache));
-	else
-		fd_rm_from_fd_list(&fd_cache, fd, offsetof(struct fdtab, cache));
-}
-
-/* This function automatically enables/disables caching for an entry depending
- * on its state. It is only called on state changes.
- */
-static inline void fd_update_cache(int fd)
-{
-	/* only READY and ACTIVE states (the two with both flags set) require a cache entry */
-	if (((fdtab[fd].state & (FD_EV_READY_R | FD_EV_ACTIVE_R)) == (FD_EV_READY_R | FD_EV_ACTIVE_R)) ||
-	    ((fdtab[fd].state & (FD_EV_READY_W | FD_EV_ACTIVE_W)) == (FD_EV_READY_W | FD_EV_ACTIVE_W))) {
-		fd_alloc_cache_entry(fd);
-	}
-	else {
-		fd_release_cache_entry(fd);
-	}
-}
-
 /*
  * returns the FD's recv state (FD_EV_*)
  */
@@ -226,14 +157,6 @@ static inline int fd_recv_active(const int fd)
 static inline int fd_recv_ready(const int fd)
 {
 	return (unsigned)fdtab[fd].state & FD_EV_READY_R;
-}
-
-/*
- * returns true if the FD is polled for recv
- */
-static inline int fd_recv_polled(const int fd)
-{
-	return (unsigned)fdtab[fd].state & FD_EV_POLLED_R;
 }
 
 /*
@@ -261,14 +184,6 @@ static inline int fd_send_ready(const int fd)
 }
 
 /*
- * returns true if the FD is polled for send
- */
-static inline int fd_send_polled(const int fd)
-{
-	return (unsigned)fdtab[fd].state & FD_EV_POLLED_W;
-}
-
-/*
  * returns true if the FD is active for recv or send
  */
 static inline int fd_active(const int fd)
@@ -279,262 +194,159 @@ static inline int fd_active(const int fd)
 /* Disable processing recv events on fd <fd> */
 static inline void fd_stop_recv(int fd)
 {
-	unsigned char old, new;
-	unsigned long locked;
-
-	old = fdtab[fd].state;
-	do {
-		if (!(old & FD_EV_ACTIVE_R))
-			return;
-		new = old & ~FD_EV_ACTIVE_R;
-		new &= ~FD_EV_POLLED_R;
-	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_R)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	if (!(fdtab[fd].state & FD_EV_ACTIVE_R) ||
+	    !HA_ATOMIC_BTR(&fdtab[fd].state, FD_EV_ACTIVE_R_BIT))
+		return;
+	updt_fd_polling(fd);
 }
 
 /* Disable processing send events on fd <fd> */
 static inline void fd_stop_send(int fd)
 {
-	unsigned char old, new;
-	unsigned long locked;
-
-	old = fdtab[fd].state;
-	do {
-		if (!(old & FD_EV_ACTIVE_W))
-			return;
-		new = old & ~FD_EV_ACTIVE_W;
-		new &= ~FD_EV_POLLED_W;
-	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_W)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	if (!(fdtab[fd].state & FD_EV_ACTIVE_W) ||
+	    !HA_ATOMIC_BTR(&fdtab[fd].state, FD_EV_ACTIVE_W_BIT))
+		return;
+	updt_fd_polling(fd);
 }
 
 /* Disable processing of events on fd <fd> for both directions. */
 static inline void fd_stop_both(int fd)
 {
 	unsigned char old, new;
-	unsigned long locked;
 
 	old = fdtab[fd].state;
 	do {
 		if (!(old & FD_EV_ACTIVE_RW))
 			return;
 		new = old & ~FD_EV_ACTIVE_RW;
-		new &= ~FD_EV_POLLED_RW;
 	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_RW)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	updt_fd_polling(fd);
 }
 
 /* Report that FD <fd> cannot receive anymore without polling (EAGAIN detected). */
 static inline void fd_cant_recv(const int fd)
 {
-	unsigned char old, new;
-	unsigned long locked;
-
-	old = fdtab[fd].state;
-	do {
-		if (!(old & FD_EV_READY_R))
-			return;
-		new = old & ~FD_EV_READY_R;
-		if (new & FD_EV_ACTIVE_R)
-			new |= FD_EV_POLLED_R;
-	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_R)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	/* marking ready never changes polled status */
+	if (!(fdtab[fd].state & FD_EV_READY_R) ||
+	    !HA_ATOMIC_BTR(&fdtab[fd].state, FD_EV_READY_R_BIT))
+		return;
 }
 
 /* Report that FD <fd> may receive again without polling. */
 static inline void fd_may_recv(const int fd)
 {
-	unsigned long locked;
-
 	/* marking ready never changes polled status */
 	if ((fdtab[fd].state & FD_EV_READY_R) ||
 	    HA_ATOMIC_BTS(&fdtab[fd].state, FD_EV_READY_R_BIT))
 		return;
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
-/* Disable readiness when polled. This is useful to interrupt reading when it
+/* Report that FD <fd> may receive again without polling but only if its not
+ * active yet. This is in order to speculatively try to enable I/Os when it's
+ * highly likely that these will succeed, but without interfering with polling.
+ */
+static inline void fd_cond_recv(const int fd)
+{
+	if ((fdtab[fd].state & (FD_EV_ACTIVE_R|FD_EV_READY_R)) == 0)
+		HA_ATOMIC_BTS(&fdtab[fd].state, FD_EV_READY_R_BIT);
+}
+
+/* Report that FD <fd> may send again without polling but only if its not
+ * active yet. This is in order to speculatively try to enable I/Os when it's
+ * highly likely that these will succeed, but without interfering with polling.
+ */
+static inline void fd_cond_send(const int fd)
+{
+	if ((fdtab[fd].state & (FD_EV_ACTIVE_W|FD_EV_READY_W)) == 0)
+		HA_ATOMIC_BTS(&fdtab[fd].state, FD_EV_READY_W_BIT);
+}
+
+/* Report that FD <fd> may receive and send without polling. Used at FD
+ * initialization.
+ */
+static inline void fd_may_both(const int fd)
+{
+	HA_ATOMIC_OR(&fdtab[fd].state, FD_EV_READY_RW);
+}
+
+/* Disable readiness when active. This is useful to interrupt reading when it
  * is suspected that the end of data might have been reached (eg: short read).
  * This can only be done using level-triggered pollers, so if any edge-triggered
  * is ever implemented, a test will have to be added here.
  */
 static inline void fd_done_recv(const int fd)
 {
-	unsigned char old, new;
-	unsigned long locked;
-
-	old = fdtab[fd].state;
-	do {
-		if ((old & (FD_EV_POLLED_R|FD_EV_READY_R)) != (FD_EV_POLLED_R|FD_EV_READY_R))
-			return;
-		new = old & ~FD_EV_READY_R;
-		if (new & FD_EV_ACTIVE_R)
-			new |= FD_EV_POLLED_R;
-	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_R)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	/* removing ready never changes polled status */
+	if ((fdtab[fd].state & (FD_EV_ACTIVE_R|FD_EV_READY_R)) != (FD_EV_ACTIVE_R|FD_EV_READY_R) ||
+	    !HA_ATOMIC_BTR(&fdtab[fd].state, FD_EV_READY_R_BIT))
+		return;
 }
 
 /* Report that FD <fd> cannot send anymore without polling (EAGAIN detected). */
 static inline void fd_cant_send(const int fd)
 {
-	unsigned char old, new;
-	unsigned long locked;
-
-	old = fdtab[fd].state;
-	do {
-		if (!(old & FD_EV_READY_W))
-			return;
-		new = old & ~FD_EV_READY_W;
-		if (new & FD_EV_ACTIVE_W)
-			new |= FD_EV_POLLED_W;
-	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_W)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	/* removing ready never changes polled status */
+	if (!(fdtab[fd].state & FD_EV_READY_W) ||
+	    !HA_ATOMIC_BTR(&fdtab[fd].state, FD_EV_READY_W_BIT))
+		return;
 }
 
 /* Report that FD <fd> may send again without polling (EAGAIN not detected). */
 static inline void fd_may_send(const int fd)
 {
-	unsigned long locked;
-
 	/* marking ready never changes polled status */
 	if ((fdtab[fd].state & FD_EV_READY_W) ||
 	    HA_ATOMIC_BTS(&fdtab[fd].state, FD_EV_READY_W_BIT))
 		return;
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
 }
 
 /* Prepare FD <fd> to try to receive */
 static inline void fd_want_recv(int fd)
 {
-	unsigned char old, new;
-	unsigned long locked;
-
-	old = fdtab[fd].state;
-	do {
-		if (old & FD_EV_ACTIVE_R)
-			return;
-		new = old | FD_EV_ACTIVE_R;
-		if (!(new & FD_EV_READY_R))
-			new |= FD_EV_POLLED_R;
-	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_R)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	if ((fdtab[fd].state & FD_EV_ACTIVE_R) ||
+	    HA_ATOMIC_BTS(&fdtab[fd].state, FD_EV_ACTIVE_R_BIT))
+		return;
+	updt_fd_polling(fd);
 }
 
 /* Prepare FD <fd> to try to send */
 static inline void fd_want_send(int fd)
 {
-	unsigned char old, new;
-	unsigned long locked;
-
-	old = fdtab[fd].state;
-	do {
-		if (old & FD_EV_ACTIVE_W)
-			return;
-		new = old | FD_EV_ACTIVE_W;
-		if (!(new & FD_EV_READY_W))
-			new |= FD_EV_POLLED_W;
-	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-
-	if ((old ^ new) & FD_EV_POLLED_W)
-		updt_fd_polling(fd);
-
-	locked = atleast2(fdtab[fd].thread_mask);
-	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
-	fd_update_cache(fd); /* need an update entry to change the state */
-	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	if ((fdtab[fd].state & FD_EV_ACTIVE_W) ||
+	    HA_ATOMIC_BTS(&fdtab[fd].state, FD_EV_ACTIVE_W_BIT))
+		return;
+	updt_fd_polling(fd);
 }
 
-/* Update events seen for FD <fd> and its state if needed. This should be called
- * by the poller to set FD_POLL_* flags. */
-static inline void fd_update_events(int fd, int evts)
+/* Update events seen for FD <fd> and its state if needed. This should be
+ * called by the poller, passing FD_EV_*_{R,W,RW} in <evts>. FD_EV_ERR_*
+ * doesn't need to also pass FD_EV_SHUT_*, it's implied. ERR and SHUT are
+ * allowed to be reported regardless of R/W readiness.
+ */
+static inline void fd_update_events(int fd, unsigned char evts)
 {
 	unsigned long locked = atleast2(fdtab[fd].thread_mask);
 	unsigned char old, new;
+	int new_flags;
+
+	new_flags =
+	      ((evts & FD_EV_READY_R) ? FD_POLL_IN  : 0) |
+	      ((evts & FD_EV_READY_W) ? FD_POLL_OUT : 0) |
+	      ((evts & FD_EV_SHUT_R)  ? FD_POLL_HUP : 0) |
+	      ((evts & FD_EV_ERR_R)   ? FD_POLL_ERR : 0) |
+	      ((evts & FD_EV_ERR_W)   ? FD_POLL_ERR : 0);
+
+	/* SHUTW reported while FD was active for writes is an error */
+	if ((fdtab[fd].ev & FD_EV_ACTIVE_W) && (evts & FD_EV_SHUT_W))
+		new_flags |= FD_POLL_ERR;
 
 	old = fdtab[fd].ev;
-	new = (old & FD_POLL_STICKY) | evts;
+	new = (old & FD_POLL_STICKY) | new_flags;
 
 	if (unlikely(locked)) {
 		/* Locked FDs (those with more than 2 threads) are atomically updated */
 		while (unlikely(new != old && !_HA_ATOMIC_CAS(&fdtab[fd].ev, &old, new)))
-			new = (old & FD_POLL_STICKY) | evts;
+			new = (old & FD_POLL_STICKY) | new_flags;
 	} else {
 		if (new != old)
 			fdtab[fd].ev = new;
@@ -545,6 +357,11 @@ static inline void fd_update_events(int fd, int evts)
 
 	if (fdtab[fd].ev & (FD_POLL_OUT | FD_POLL_ERR))
 		fd_may_send(fd);
+
+	if (fdtab[fd].iocb)
+		fdtab[fd].iocb(fd);
+
+	ti->flags &= ~TI_FL_STUCK; // this thread is still running
 }
 
 /* Prepares <fd> for being polled */
@@ -565,6 +382,8 @@ static inline void fd_insert(int fd, void *owner, void (*iocb)(int fd), unsigned
 	 */
 	if (locked)
 		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	/* the two directions are ready until proven otherwise */
+	fd_may_both(fd);
 	_HA_ATOMIC_ADD(&ha_used_fds, 1);
 }
 

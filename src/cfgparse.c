@@ -63,7 +63,6 @@
 #include <proto/stats.h>
 #include <proto/filters.h>
 #include <proto/frontend.h>
-#include <proto/hdr_idx.h>
 #include <proto/http_rules.h>
 #include <proto/lb_chash.h>
 #include <proto/lb_fas.h>
@@ -73,7 +72,7 @@
 #include <proto/listener.h>
 #include <proto/log.h>
 #include <proto/protocol.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/proxy.h>
 #include <proto/peers.h>
 #include <proto/sample.h>
@@ -714,6 +713,17 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, 0);
+	}
+	else if (strcmp(args[0], "log") == 0) {
+		if (init_peers_frontend(file, linenum, NULL, curpeers) != 0) {
+			err_code |= ERR_ALERT | ERR_ABORT;
+			goto out;
+		}
+		if (!parse_logsrv(args, &curpeers->peers_fe->logsrvs, (kwm == KWM_NO), &errmsg)) {
+			ha_alert("parsing [%s:%d] : %s : %s\n", file, linenum, args[0], errmsg);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
 	}
 	else if (strcmp(args[0], "peers") == 0) { /* new peers section */
 		/* Initialize these static variables when entering a new "peers" section*/
@@ -2148,9 +2158,12 @@ next_line:
 				args[arg] = args[arg+1];		// shift args after inversion
 		}
 
-		if (kwm != KWM_STD && strcmp(args[0], "option") != 0 && 	\
-		    strcmp(args[0], "log") != 0 && strcmp(args[0], "busy-polling")) {
-			ha_alert("parsing [%s:%d]: negation/default currently supported only for options, log, and busy-polling.\n", file, linenum);
+		if (kwm != KWM_STD && strcmp(args[0], "option") != 0 &&
+		    strcmp(args[0], "log") != 0 && strcmp(args[0], "busy-polling") != 0 &&
+		    strcmp(args[0], "set-dumpable") != 0 && strcmp(args[0], "strict-limits") != 0) {
+			ha_alert("parsing [%s:%d]: negation/default currently "
+				 "supported only for options, log, busy-polling, "
+				 "set-dumpable and strict-limits.\n", file, linenum);
 			err_code |= ERR_ALERT | ERR_FATAL;
 		}
 
@@ -2538,12 +2551,6 @@ int check_config_validity()
 			}
 		}
 
-		if ((curproxy->retry_type &~ PR_RE_CONN_FAILED) &&
-		    !(curproxy->options2 & PR_O2_USE_HTX)) {
-			ha_warning("Proxy '%s' : retry-on with any other keywords than 'conn-failure' will be ignored, requires 'option http-use-htx'.\n", curproxy->id);
-			err_code |= ERR_WARN;
-			curproxy->retry_type &= PR_RE_CONN_FAILED;
-		}
 		if (curproxy->email_alert.set) {
 		    if (!(curproxy->email_alert.mailers.name && curproxy->email_alert.from && curproxy->email_alert.to)) {
 			    ha_warning("config : 'email-alert' will be ignored for %s '%s' (the presence any of "
@@ -2605,13 +2612,6 @@ int check_config_validity()
 				   !(curproxy->mode == PR_MODE_TCP && target->mode == PR_MODE_HTTP)) {
 
 				ha_alert("%s %s '%s' (%s:%d) tries to use incompatible %s %s '%s' (%s:%d) as its default backend (see 'mode').\n",
-					 proxy_mode_str(curproxy->mode), proxy_type_str(curproxy), curproxy->id,
-					 curproxy->conf.file, curproxy->conf.line,
-					 proxy_mode_str(target->mode), proxy_type_str(target), target->id,
-					 target->conf.file, target->conf.line);
-				cfgerr++;
-			} else if ((curproxy->options2 ^ target->options2) & PR_O2_USE_HTX) {
-				ha_alert("%s %s '%s' (%s:%d) tries to use %s %s '%s' (%s:%d) as its default backend, both of which disagree on 'option http-use-htx'.\n",
 					 proxy_mode_str(curproxy->mode), proxy_type_str(curproxy), curproxy->id,
 					 curproxy->conf.file, curproxy->conf.line,
 					 proxy_mode_str(target->mode), proxy_type_str(target), target->id,
@@ -2682,13 +2682,6 @@ int check_config_validity()
 				   !(curproxy->mode == PR_MODE_TCP && target->mode == PR_MODE_HTTP)) {
 
 				ha_alert("%s %s '%s' (%s:%d) tries to use incompatible %s %s '%s' (%s:%d) in a 'use_backend' rule (see 'mode').\n",
-					 proxy_mode_str(curproxy->mode), proxy_type_str(curproxy), curproxy->id,
-					 curproxy->conf.file, curproxy->conf.line,
-					 proxy_mode_str(target->mode), proxy_type_str(target), target->id,
-					 target->conf.file, target->conf.line);
-				cfgerr++;
-			} else if ((curproxy->options2 ^ target->options2) & PR_O2_USE_HTX) {
-				ha_alert("%s %s '%s' (%s:%d) tries to use %s %s '%s' (%s:%d) in a 'use_backend' rule, both of which disagree on 'option http-use-htx'.\n",
 					 proxy_mode_str(curproxy->mode), proxy_type_str(curproxy), curproxy->id,
 					 curproxy->conf.file, curproxy->conf.line,
 					 proxy_mode_str(target->mode), proxy_type_str(target), target->id,
@@ -2842,16 +2835,6 @@ int check_config_validity()
 			}
 		}
 
-		/* move any "block" rules at the beginning of the http-request rules */
-		if (!LIST_ISEMPTY(&curproxy->block_rules)) {
-			/* insert block_rules into http_req_rules at the beginning */
-			curproxy->block_rules.p->n    = curproxy->http_req_rules.n;
-			curproxy->http_req_rules.n->p = curproxy->block_rules.p;
-			curproxy->block_rules.n->p    = &curproxy->http_req_rules;
-			curproxy->http_req_rules.n    = curproxy->block_rules.n;
-			LIST_INIT(&curproxy->block_rules);
-		}
-
 		if (curproxy->table && curproxy->table->peers.name) {
 			struct peers *curpeers;
 
@@ -2906,7 +2889,7 @@ int check_config_validity()
 			}
 		}
 
-		if (curproxy->uri_auth && !(curproxy->uri_auth->flags & ST_CONVDONE) &&
+		if (curproxy->uri_auth && curproxy->uri_auth != defproxy.uri_auth &&
 		    !LIST_ISEMPTY(&curproxy->uri_auth->http_req_rules) &&
 		    (curproxy->uri_auth->userlist || curproxy->uri_auth->auth_realm )) {
 			ha_alert("%s '%s': stats 'auth'/'realm' and 'http-request' can't be used at the same time.\n",
@@ -2915,11 +2898,12 @@ int check_config_validity()
 			goto out_uri_auth_compat;
 		}
 
-		if (curproxy->uri_auth && curproxy->uri_auth->userlist && !(curproxy->uri_auth->flags & ST_CONVDONE)) {
+		if (curproxy->uri_auth && curproxy->uri_auth->userlist &&
+		    (curproxy->uri_auth != defproxy.uri_auth ||
+		     LIST_ISEMPTY(&curproxy->uri_auth->http_req_rules))) {
 			const char *uri_auth_compat_req[10];
 			struct act_rule *rule;
 			int i = 0;
-
 			/* build the ACL condition from scratch. We're relying on anonymous ACLs for that */
 			uri_auth_compat_req[i++] = "auth";
 
@@ -2946,8 +2930,6 @@ int check_config_validity()
 				free(curproxy->uri_auth->auth_realm);
 				curproxy->uri_auth->auth_realm = NULL;
 			}
-
-			curproxy->uri_auth->flags |= ST_CONVDONE;
 		}
 out_uri_auth_compat:
 
@@ -3403,12 +3385,6 @@ out_uri_auth_compat:
 				err_code |= ERR_WARN;
 			}
 
-			if (!LIST_ISEMPTY(&curproxy->block_rules)) {
-				ha_warning("config : 'block' rules ignored for %s '%s' as they require HTTP mode.\n",
-					   proxy_type_str(curproxy), curproxy->id);
-				err_code |= ERR_WARN;
-			}
-
 			if (!LIST_ISEMPTY(&curproxy->redirect_rules)) {
 				ha_warning("config : 'redirect' rules ignored for %s '%s' as they require HTTP mode.\n",
 					   proxy_type_str(curproxy), curproxy->id);
@@ -3593,10 +3569,6 @@ out_uri_auth_compat:
 			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
 			const struct mux_proto_list *mux_ent;
 
-			/* Special case for HTX because legacy HTTP still exists */
-			if (mode == PROTO_MODE_HTTP && (curproxy->options2 & PR_O2_USE_HTX))
-				mode = PROTO_MODE_HTX;
-
 			if (!bind_conf->mux_proto)
 				continue;
 
@@ -3622,10 +3594,6 @@ out_uri_auth_compat:
 			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
 			const struct mux_proto_list *mux_ent;
 
-			/* Special case for HTX because legacy HTTP still exists */
-			if (mode == PROTO_MODE_HTTP && (curproxy->options2 & PR_O2_USE_HTX))
-				mode = PROTO_MODE_HTX;
-
 			if (!newsrv->mux_proto)
 				continue;
 
@@ -3646,16 +3614,6 @@ out_uri_auth_compat:
 
 			/* update the mux */
 			newsrv->mux_proto = mux_ent;
-		}
-
-		/* the option "http-tunnel" is ignored when HTX is enabled and
-		 * only works with the legacy HTTP. So emit a warning if the
-		 * option is set on a HTX frontend. */
-		if ((curproxy->cap & PR_CAP_FE) && curproxy->options2 & PR_O2_USE_HTX &&
-		    (curproxy->options & PR_O_HTTP_MODE) == PR_O_HTTP_TUN) {
-			ha_warning("config : %s '%s' : the option 'http-tunnel' is ignored for HTX proxies.\n",
-				   proxy_type_str(curproxy), curproxy->id);
-			curproxy->options &= ~PR_O_HTTP_MODE;
 		}
 
 		/* initialize idle conns lists */
@@ -3695,14 +3653,14 @@ out_uri_auth_compat:
 							goto err;
 						idle_conn_cleanup[i]->process = srv_cleanup_toremove_connections;
 						idle_conn_cleanup[i]->context = NULL;
-						LIST_INIT(&toremove_connections[i]);
+						MT_LIST_INIT(&toremove_connections[i]);
 					}
 				}
 				newsrv->idle_orphan_conns = calloc((unsigned short)global.nbthread, sizeof(*newsrv->idle_orphan_conns));
 				if (!newsrv->idle_orphan_conns)
 					goto err;
 				for (i = 0; i < global.nbthread; i++)
-					LIST_INIT(&newsrv->idle_orphan_conns[i]);
+					MT_LIST_INIT(&newsrv->idle_orphan_conns[i]);
 				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(int));
 				if (!newsrv->curr_idle_thr)
 					goto err;
@@ -4094,10 +4052,6 @@ out_uri_auth_compat:
 		    curproxy->server_state_file_name == NULL)
 			curproxy->server_state_file_name = strdup(curproxy->id);
 	}
-
-	pool_head_hdr_idx = create_pool("hdr_idx",
-				    global.tune.max_http_hdr * sizeof(struct hdr_idx_elem),
-				    MEM_F_SHARED);
 
 	list_for_each_entry(curr_resolvers, &dns_resolvers, list) {
 		if (LIST_ISEMPTY(&curr_resolvers->nameservers)) {

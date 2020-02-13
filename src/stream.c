@@ -46,7 +46,6 @@
 #include <proto/filters.h>
 #include <proto/freq_ctr.h>
 #include <proto/frontend.h>
-#include <proto/hdr_idx.h>
 #include <proto/hlua.h>
 #include <proto/http_rules.h>
 #include <proto/listener.h>
@@ -55,7 +54,7 @@
 #include <proto/session.h>
 #include <proto/stream.h>
 #include <proto/pipe.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/proxy.h>
 #include <proto/queue.h>
 #include <proto/server.h>
@@ -74,6 +73,199 @@ __decl_spinlock(streams_lock);
 /* List of all use-service keywords. */
 static struct list service_keywords = LIST_HEAD_INIT(service_keywords);
 
+
+/* trace source and events */
+static void strm_trace(enum trace_level level, uint64_t mask,
+		       const struct trace_source *src,
+		       const struct ist where, const struct ist func,
+		       const void *a1, const void *a2, const void *a3, const void *a4);
+
+/* The event representation is split like this :
+ *   strm  - stream
+ *   si    - stream interface
+ *   http  - http analyzis
+ *   tcp   - tcp analyzis
+ *
+ * STRM_EV_* macros are defined in <proto/stream.h>
+ */
+static const struct trace_event strm_trace_events[] = {
+	{ .mask = STRM_EV_STRM_NEW,     .name = "strm_new",     .desc = "new stream" },
+	{ .mask = STRM_EV_STRM_FREE,    .name = "strm_free",    .desc = "release stream" },
+	{ .mask = STRM_EV_STRM_ERR,     .name = "strm_err",     .desc = "error during stream processing" },
+	{ .mask = STRM_EV_STRM_ANA,     .name = "strm_ana",     .desc = "stream analyzers" },
+	{ .mask = STRM_EV_STRM_PROC,    .name = "strm_proc",    .desc = "stream processing" },
+
+	{ .mask = STRM_EV_SI_ST,        .name = "si_state",     .desc = "processing stream-interface states" },
+
+	{ .mask = STRM_EV_HTTP_ANA,     .name = "http_ana",     .desc = "HTTP analyzers" },
+	{ .mask = STRM_EV_HTTP_ERR,     .name = "http_err",     .desc = "error during HTTP analyzis" },
+
+	{ .mask = STRM_EV_TCP_ANA,      .name = "tcp_ana",      .desc = "TCP analyzers" },
+	{ .mask = STRM_EV_TCP_ERR,      .name = "tcp_err",      .desc = "error during TCP analyzis" },
+	{}
+};
+
+static const struct name_desc strm_trace_lockon_args[4] = {
+	/* arg1 */ { /* already used by the stream */ },
+	/* arg2 */ { },
+	/* arg3 */ { },
+	/* arg4 */ { }
+};
+
+static const struct name_desc strm_trace_decoding[] = {
+#define STRM_VERB_CLEAN    1
+	{ .name="clean",    .desc="only user-friendly stuff, generally suitable for level \"user\"" },
+#define STRM_VERB_MINIMAL  2
+	{ .name="minimal",  .desc="report info on stream and stream-interfaces" },
+#define STRM_VERB_SIMPLE   3
+	{ .name="simple",   .desc="add info on request and response channels" },
+#define STRM_VERB_ADVANCED 4
+	{ .name="advanced", .desc="add info on channel's buffer for data and developer levels only" },
+#define STRM_VERB_COMPLETE 5
+	{ .name="complete", .desc="add info on channel's buffer" },
+	{ /* end */ }
+};
+
+struct trace_source trace_strm = {
+	.name = IST("stream"),
+	.desc = "Applicative stream",
+	.arg_def = TRC_ARG1_STRM,  // TRACE()'s first argument is always a stream
+	.default_cb = strm_trace,
+	.known_events = strm_trace_events,
+	.lockon_args = strm_trace_lockon_args,
+	.decoding = strm_trace_decoding,
+	.report_events = ~0,  // report everything by default
+};
+
+#define TRACE_SOURCE &trace_strm
+INITCALL1(STG_REGISTER, trace_register_source, TRACE_SOURCE);
+
+/* the stream traces always expect that arg1, if non-null, is of a stream (from
+ * which we can derive everything), that arg2, if non-null, is an http
+ * transaction, that arg3, if non-null, is an http message.
+ */
+static void strm_trace(enum trace_level level, uint64_t mask, const struct trace_source *src,
+		       const struct ist where, const struct ist func,
+		       const void *a1, const void *a2, const void *a3, const void *a4)
+{
+	const struct stream *s = a1;
+	const struct http_txn *txn = a2;
+	const struct http_msg *msg = a3;
+	struct task *task;
+	const struct stream_interface *si_f, *si_b;
+	const struct channel *req, *res;
+	struct htx *htx;
+
+	if (!s || src->verbosity < STRM_VERB_CLEAN)
+		return;
+
+	task = s->task;
+	si_f = &s->si[0];
+	si_b = &s->si[1];
+	req  = &s->req;
+	res  = &s->res;
+	htx  = (msg ? htxbuf(&msg->chn->buf) : NULL);
+
+	/* General info about the stream (htx/tcp, id...) */
+	chunk_appendf(&trace_buf, " : [%u,%s]",
+		      s->uniq_id, ((s->flags & SF_HTX) ? "HTX" : "TCP"));
+	if (s->unique_id)
+		chunk_appendf(&trace_buf, " id=%s", s->unique_id);
+
+	/* Front and back stream-int state */
+	chunk_appendf(&trace_buf, " SI=(%s,%s)",
+		      si_state_str(si_f->state), si_state_str(si_b->state));
+
+	/* If txn is defined, HTTP req/rep states */
+	if (txn)
+		chunk_appendf(&trace_buf, " HTTP=(%s,%s)",
+			      h1_msg_state_str(txn->req.msg_state), h1_msg_state_str(txn->rsp.msg_state));
+	if (msg)
+		chunk_appendf(&trace_buf, " %s", ((msg->chn->flags & CF_ISRESP) ? "RESPONSE" : "REQUEST"));
+
+	if (src->verbosity == STRM_VERB_CLEAN)
+		return;
+
+	/* If msg defined, display status-line if possible (verbosity > MINIMAL) */
+	if (src->verbosity > STRM_VERB_MINIMAL && htx && htx_nbblks(htx)) {
+		const struct htx_blk *blk = htx_get_head_blk(htx);
+		const struct htx_sl  *sl  = htx_get_blk_ptr(htx, blk);
+		enum htx_blk_type    type = htx_get_blk_type(blk);
+
+		if (type == HTX_BLK_REQ_SL || type == HTX_BLK_RES_SL)
+			chunk_appendf(&trace_buf, " - \"%.*s %.*s %.*s\"",
+				      HTX_SL_P1_LEN(sl), HTX_SL_P1_PTR(sl),
+				      HTX_SL_P2_LEN(sl), HTX_SL_P2_PTR(sl),
+				      HTX_SL_P3_LEN(sl), HTX_SL_P3_PTR(sl));
+	}
+
+
+	/* If txn defined info about HTTP msgs, otherwise info about SI. */
+	if (txn) {
+		chunk_appendf(&trace_buf, " - t=%p s=(%p,0x%08x) txn.flags=0x%08x, http.flags=(0x%08x,0x%08x) status=%d",
+			      task, s, s->flags, txn->flags, txn->req.flags, txn->rsp.flags, txn->status);
+	}
+	else {
+		chunk_appendf(&trace_buf, " - t=%p s=(%p,0x%08x) si_f=(%p,0x%08x,0x%x) si_b=(%p,0x%08x,0x%x) retries=%d",
+			      task, s, s->flags, si_f, si_f->flags, si_f->err_type,
+			      si_b, si_b->flags, si_b->err_type, si_b->conn_retries);
+	}
+
+	if (src->verbosity == STRM_VERB_MINIMAL)
+		return;
+
+
+	/* If txn defined, don't display all channel info */
+	if (src->verbosity == STRM_VERB_SIMPLE || txn) {
+		chunk_appendf(&trace_buf, " req=(%p .fl=0x%08x .exp(r,w,a)=(%u,%u,%u))",
+			      req, req->flags, req->rex, req->wex, req->analyse_exp);
+		chunk_appendf(&trace_buf, " res=(%p .fl=0x%08x .exp(r,w,a)=(%u,%u,%u))",
+			      res, res->flags, res->rex, res->wex, res->analyse_exp);
+	}
+	else {
+		chunk_appendf(&trace_buf, " req=(%p .fl=0x%08x .ana=0x%08x .exp(r,w,a)=(%u,%u,%u) .o=%lu .tot=%llu .to_fwd=%u)",
+			      req, req->flags, req->analysers, req->rex, req->wex, req->analyse_exp,
+			      (long)req->output, req->total, req->to_forward);
+		chunk_appendf(&trace_buf, " res=(%p .fl=0x%08x .ana=0x%08x .exp(r,w,a)=(%u,%u,%u) .o=%lu .tot=%llu .to_fwd=%u)",
+			      res, res->flags, res->analysers, res->rex, res->wex, res->analyse_exp,
+			      (long)res->output, res->total, res->to_forward);
+	}
+
+	if (src->verbosity == STRM_VERB_SIMPLE ||
+	    (src->verbosity == STRM_VERB_ADVANCED && src->level < TRACE_LEVEL_DATA))
+		return;
+
+	/* channels' buffer info */
+	if (s->flags & SF_HTX) {
+		struct htx *rqhtx = htxbuf(&req->buf);
+		struct htx *rphtx = htxbuf(&res->buf);
+
+		chunk_appendf(&trace_buf, " htx=(%u/%u#%u, %u/%u#%u)",
+			      rqhtx->data, rqhtx->size, htx_nbblks(rqhtx),
+			      rphtx->data, rphtx->size, htx_nbblks(rphtx));
+	}
+	else {
+		chunk_appendf(&trace_buf, " buf=(%u@%p+%u/%u, %u@%p+%u/%u)",
+			      (unsigned int)b_data(&req->buf), b_orig(&req->buf),
+			      (unsigned int)b_head_ofs(&req->buf), (unsigned int)b_size(&req->buf),
+			      (unsigned int)b_data(&req->buf), b_orig(&req->buf),
+			      (unsigned int)b_head_ofs(&req->buf), (unsigned int)b_size(&req->buf));
+	}
+
+	/* If msg defined, display htx info if defined (level > USER) */
+	if (src->level > TRACE_LEVEL_USER && htx && htx_nbblks(htx)) {
+		int full = 0;
+
+		/* Full htx info (level > STATE && verbosity > SIMPLE) */
+		if (src->level > TRACE_LEVEL_STATE) {
+			if (src->verbosity == STRM_VERB_COMPLETE)
+				full = 1;
+		}
+
+		chunk_memcat(&trace_buf, "\n\t", 2);
+		htx_dump(&trace_buf, htx, full);
+	}
+}
 
 /* Create a new stream for connection <conn>. Return < 0 on error. This is only
  * valid right after the handshake, before the connection's data layer is
@@ -133,6 +325,7 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	struct appctx *appctx   = objt_appctx(origin);
 	const struct cs_info *csinfo;
 
+	DBG_TRACE_ENTER(STRM_EV_STRM_NEW);
 	if (unlikely((s = pool_alloc(pool_head_stream)) == NULL))
 		goto out_fail_alloc;
 
@@ -246,8 +439,8 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 		if (cs->conn->mux->flags & MX_FL_HTX)
 			s->flags |= SF_HTX;
 	}
-	/* Set SF_HTX flag for HTX frontends. */
-	if (sess->fe->mode == PR_MODE_HTTP && sess->fe->options2 & PR_O2_USE_HTX)
+        /* Set SF_HTX flag for HTTP frontends. */
+	if (sess->fe->mode == PR_MODE_HTTP)
 		s->flags |= SF_HTX;
 
 	/* attach the incoming connection to the stream interface now. */
@@ -271,6 +464,7 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 
 	stream_init_srv_conn(s);
 	s->target = sess->listener ? sess->listener->default_target : NULL;
+	s->target_addr = NULL;
 
 	s->pend_pos = NULL;
 	s->priority_class = 0;
@@ -338,6 +532,7 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	 * stream is fully initialized before calling task_wakeup. So
 	 * the caller must handle the task_wakeup
 	 */
+	DBG_TRACE_LEAVE(STRM_EV_STRM_NEW, s);
 	return s;
 
 	/* Error unrolling */
@@ -350,6 +545,7 @@ out_fail_alloc_si1:
 	tasklet_free(s->si[0].wait_event.tasklet);
  out_fail_alloc:
 	pool_free(pool_head_stream, s);
+	DBG_TRACE_DEVEL("leaving on error", STRM_EV_STRM_NEW|STRM_EV_STRM_ERR);
 	return NULL;
 }
 
@@ -364,6 +560,8 @@ static void stream_free(struct stream *s)
 	struct conn_stream *cli_cs = objt_cs(s->si[0].end);
 	int must_free_sess;
 	int i;
+
+	DBG_TRACE_POINT(STRM_EV_STRM_FREE, s);
 
 	/* detach the stream from its own task before even releasing it so
 	 * that walking over a task list never exhibits a dying stream.
@@ -404,8 +602,8 @@ static void stream_free(struct stream *s)
 		HA_SPIN_UNLOCK(BUF_WQ_LOCK, &buffer_wq_lock);
 	}
 	if (s->req.buf.size || s->res.buf.size) {
-		b_drop(&s->req.buf);
-		b_drop(&s->res.buf);
+		b_free(&s->req.buf);
+		b_free(&s->res.buf);
 		offer_buffers(NULL, tasks_run_queue);
 	}
 
@@ -429,7 +627,6 @@ static void stream_free(struct stream *s)
 	}
 
 	if (s->txn) {
-		pool_free(pool_head_hdr_idx, s->txn->hdr_idx.v);
 		pool_free(pool_head_http_txn, s->txn);
 		s->txn = NULL;
 	}
@@ -501,13 +698,13 @@ static void stream_free(struct stream *s)
 		session_free(sess);
 	}
 
+	sockaddr_free(&s->target_addr);
 	pool_free(pool_head_stream, s);
 
 	/* We may want to free the maximum amount of pools if the proxy is stopping */
 	if (fe && unlikely(fe->state == PR_STSTOPPED)) {
 		pool_flush(pool_head_buffer);
 		pool_flush(pool_head_http_txn);
-		pool_flush(pool_head_hdr_idx);
 		pool_flush(pool_head_requri);
 		pool_flush(pool_head_capture);
 		pool_flush(pool_head_stream);
@@ -676,6 +873,8 @@ static void sess_update_st_con_tcp(struct stream *s)
 	struct conn_stream *srv_cs = objt_cs(si->end);
 	struct connection *conn = srv_cs ? srv_cs->conn : objt_conn(si->end);
 
+	DBG_TRACE_ENTER(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
+
 	/* the client might want to abort */
 	if ((rep->flags & CF_SHUTW) ||
 	    ((req->flags & CF_SHUTW_NOW) &&
@@ -686,11 +885,11 @@ static void sess_update_st_con_tcp(struct stream *s)
 		if (s->srv_error)
 			s->srv_error(s, si);
 		/* Note: state = SI_ST_DIS now */
-		return;
+		DBG_TRACE_STATE("client abort during connection attempt", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 	}
 
 	/* retryable error ? */
-	if (si->flags & (SI_FL_EXP|SI_FL_ERR)) {
+	else if (si->flags & (SI_FL_EXP|SI_FL_ERR)) {
 		if (!(s->flags & SF_SRV_REUSED) && conn) {
 			conn_stop_tracking(conn);
 			conn_full_close(conn);
@@ -704,8 +903,10 @@ static void sess_update_st_con_tcp(struct stream *s)
 		}
 
 		si->state  = SI_ST_CER;
-		return;
+		DBG_TRACE_STATE("connection failed, retry", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 	}
+
+	DBG_TRACE_LEAVE(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 }
 
 /* This function is called with (si->state == SI_ST_CER) meaning that a
@@ -722,6 +923,8 @@ static void sess_update_st_cer(struct stream *s)
 	struct stream_interface *si = &s->si[1];
 	struct conn_stream *cs = objt_cs(si->end);
 	struct connection *conn = cs_conn(cs);
+
+	DBG_TRACE_ENTER(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 
 	si->exp    = TICK_ETERNITY;
 	si->flags &= ~SI_FL_EXP;
@@ -754,6 +957,7 @@ static void sess_update_st_cer(struct stream *s)
 			 * client provoke retries.
 			 */
 			si->conn_retries = 0;
+			DBG_TRACE_DEVEL("Bad SSL cert, disable connection retries", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 		}
 	}
 
@@ -779,7 +983,9 @@ static void sess_update_st_cer(struct stream *s)
 		si->state = SI_ST_CLO;
 		if (s->srv_error)
 			s->srv_error(s, si);
-		return;
+
+		DBG_TRACE_STATE("connection failed", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
+		goto end;
 	}
 
 	stream_choose_redispatch(s);
@@ -809,7 +1015,11 @@ static void sess_update_st_cer(struct stream *s)
 			si->exp = tick_add(now_ms, MS_TO_TICKS(delay));
 		}
 		si->flags &= ~SI_FL_ERR;
+		DBG_TRACE_STATE("retry a new connection", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 	}
+
+  end:
+	DBG_TRACE_LEAVE(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 }
 
 /* This function is called with (si->state == SI_ST_RDY) meaning that a
@@ -827,6 +1037,7 @@ static void sess_update_st_rdy_tcp(struct stream *s)
 	struct conn_stream *srv_cs = objt_cs(si->end);
 	struct connection *conn = srv_cs ? srv_cs->conn : objt_conn(si->end);
 
+	DBG_TRACE_ENTER(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 	/* We know the connection at least succeeded, though it could have
 	 * since met an error for any other reason. At least it didn't time out
 	 * eventhough the timeout might have been reported right after success.
@@ -856,7 +1067,8 @@ static void sess_update_st_rdy_tcp(struct stream *s)
 			si->err_type |= SI_ET_CONN_ABRT;
 			if (s->srv_error)
 				s->srv_error(s, si);
-			return;
+			DBG_TRACE_STATE("client abort during connection attempt", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
+			goto end;
 		}
 
 		/* retryable error ? */
@@ -869,15 +1081,20 @@ static void sess_update_st_rdy_tcp(struct stream *s)
 			if (!si->err_type)
 				si->err_type = SI_ET_CONN_ERR;
 			si->state = SI_ST_CER;
-			return;
+			DBG_TRACE_STATE("connection failed, retry", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
+			goto end;
 		}
 	}
 
 	/* data were sent and/or we had no error, sess_establish() will
 	 * now take over.
 	 */
+	DBG_TRACE_STATE("connection established", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 	si->err_type = SI_ET_NONE;
 	si->state    = SI_ST_EST;
+
+  end:
+	DBG_TRACE_LEAVE(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 }
 
 /*
@@ -900,6 +1117,7 @@ static void sess_establish(struct stream *s)
 	struct channel *req = &s->req;
 	struct channel *rep = &s->res;
 
+	DBG_TRACE_ENTER(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 	/* First, centralize the timers information, and clear any irrelevant
 	 * timeout.
 	 */
@@ -918,15 +1136,7 @@ static void sess_establish(struct stream *s)
 			req->flags |= CF_WRITE_ERROR;
 		rep->flags |= CF_READ_ERROR;
 		si->err_type = SI_ET_DATA_ERR;
-	}
-
-	/* If the request channel is waiting for the connect(), we mark the read
-	 * side as attached on the response channel and we wake up it once. So
-	 * it will have a chance to forward data now.
-	 */
-	if (req->flags & CF_WAKE_CONNECT) {
-		req->flags |= CF_WAKE_ONCE;
-		req->flags &= ~CF_WAKE_CONNECT;
+		DBG_TRACE_STATE("read/write error", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 	}
 
 	if (objt_server(s->target))
@@ -968,8 +1178,12 @@ static void sess_establish(struct stream *s)
 	req->wex = TICK_ETERNITY;
 	/* If we managed to get the whole response, and we don't have anything
 	 * left to send, or can't, switch to SI_ST_DIS now. */
-	if (rep->flags & (CF_SHUTR | CF_SHUTW))
+	if (rep->flags & (CF_SHUTR | CF_SHUTW)) {
 		si->state = SI_ST_DIS;
+		DBG_TRACE_STATE("response channel shutdwn for read/write", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
+	}
+
+	DBG_TRACE_LEAVE(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 }
 
 /* Check if the connection request is in such a state that it can be aborted. */
@@ -992,13 +1206,7 @@ static void sess_update_stream_int(struct stream *s)
 	struct stream_interface *si = &s->si[1];
 	struct channel *req = &s->req;
 
-	DPRINTF(stderr,"[%u] %s: sess=%p rq=%p, rp=%p, exp(r,w)=%u,%u rqf=%08x rpf=%08x rqh=%lu rqt=%lu rph=%lu rpt=%lu cs=%d ss=%d\n",
-		now_ms, __FUNCTION__,
-		s,
-		req, &s->res,
-		req->rex, s->res.wex,
-		req->flags, s->res.flags,
-		ci_data(req), co_data(req), ci_data(&s->res), co_data(&s->res), s->si[0].state, s->si[1].state);
+	DBG_TRACE_ENTER(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 
 	if (si->state == SI_ST_ASS) {
 		/* Server assigned to connection request, we have to try to connect now */
@@ -1009,6 +1217,7 @@ static void sess_update_stream_int(struct stream *s)
 		 */
 		if (check_req_may_abort(req, s)) {
 			si->err_type |= SI_ET_CONN_ABRT;
+			DBG_TRACE_STATE("connection aborted", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 			goto abort_connection;
 		}
 
@@ -1021,7 +1230,8 @@ static void sess_update_stream_int(struct stream *s)
 				srv_inc_sess_ctr(srv);
 			if (srv)
 				srv_set_sess_last(srv);
-			return;
+			DBG_TRACE_STATE("connection attempt", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
+			goto end;
 		}
 
 		/* We have received a synchronous error. We might have to
@@ -1059,7 +1269,8 @@ static void sess_update_stream_int(struct stream *s)
 			si->state = SI_ST_CLO;
 			if (s->srv_error)
 				s->srv_error(s, si);
-			return;
+			DBG_TRACE_STATE("internal error during connection", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
+			goto end;
 		}
 
 		/* We are facing a retryable error, but we don't want to run a
@@ -1069,8 +1280,9 @@ static void sess_update_stream_int(struct stream *s)
 		si->state = SI_ST_CER;
 		si->flags &= ~SI_FL_ERR;
 		sess_update_st_cer(s);
+
+		DBG_TRACE_STATE("connection error, retry", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 		/* now si->state is one of SI_ST_CLO, SI_ST_TAR, SI_ST_ASS, SI_ST_REQ */
-		return;
 	}
 	else if (si->state == SI_ST_QUE) {
 		/* connection request was queued, check for any update */
@@ -1087,7 +1299,8 @@ static void sess_update_stream_int(struct stream *s)
 				s->logs.t_queue = tv_ms_elapsed(&s->logs.tv_accept, &now);
 				si->state = SI_ST_ASS;
 			}
-			return;
+			DBG_TRACE_STATE("dequeue connection request", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
+			goto end;
 		}
 
 		/* Connection request still in queue... */
@@ -1111,7 +1324,8 @@ static void sess_update_stream_int(struct stream *s)
 			si->state = SI_ST_CLO;
 			if (s->srv_error)
 				s->srv_error(s, si);
-			return;
+			DBG_TRACE_STATE("connection request still queued", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
+			goto end;
 		}
 
 		/* Connection remains in queue, check if we have to abort it */
@@ -1122,16 +1336,17 @@ static void sess_update_stream_int(struct stream *s)
 			pendconn_cond_unlink(s->pend_pos);
 
 			si->err_type |= SI_ET_QUEUE_ABRT;
+			DBG_TRACE_STATE("abort queued connection request", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 			goto abort_connection;
 		}
 
 		/* Nothing changed */
-		return;
 	}
 	else if (si->state == SI_ST_TAR) {
 		/* Connection request might be aborted */
 		if (check_req_may_abort(req, s)) {
 			si->err_type |= SI_ET_CONN_ABRT;
+			DBG_TRACE_STATE("connection aborted", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 			goto abort_connection;
 		}
 
@@ -1149,8 +1364,12 @@ static void sess_update_stream_int(struct stream *s)
 			si->state = SI_ST_ASS;
 		else
 			si->state = SI_ST_REQ;
-		return;
+
+		DBG_TRACE_STATE("retry connection now", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 	}
+
+  end:
+	DBG_TRACE_LEAVE(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 	return;
 
 abort_connection:
@@ -1162,6 +1381,7 @@ abort_connection:
 	si->state = SI_ST_CLO;
 	if (s->srv_error)
 		s->srv_error(s, si);
+	DBG_TRACE_DEVEL("leaving on error", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
 	return;
 }
 
@@ -1201,16 +1421,10 @@ static void sess_prepare_conn_req(struct stream *s)
 {
 	struct stream_interface *si = &s->si[1];
 
-	DPRINTF(stderr,"[%u] %s: sess=%p rq=%p, rp=%p, exp(r,w)=%u,%u rqf=%08x rpf=%08x rqh=%lu rqt=%lu rph=%lu rpt=%lu cs=%d ss=%d\n",
-		now_ms, __FUNCTION__,
-		s,
-		&s->req, &s->res,
-		s->req.rex, s->res.wex,
-		s->req.flags, s->res.flags,
-		ci_data(&s->req), co_data(&s->req), ci_data(&s->res), co_data(&s->res), s->si[0].state, s->si[1].state);
-
 	if (si->state != SI_ST_REQ)
 		return;
+
+	DBG_TRACE_ENTER(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 
 	if (unlikely(obj_type(s->target) == OBJ_TYPE_APPLET)) {
 		/* the applet directly goes to the EST state */
@@ -1233,7 +1447,8 @@ static void sess_prepare_conn_req(struct stream *s)
 			si->state = SI_ST_CLO;
 			if (s->srv_error)
 				s->srv_error(s, si);
-			return;
+			DBG_TRACE_STATE("failed to register applet", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
+			goto end;
 		}
 
 		if (tv_iszero(&s->logs.tv_request))
@@ -1242,8 +1457,10 @@ static void sess_prepare_conn_req(struct stream *s)
 		si->state         = SI_ST_EST;
 		si->err_type      = SI_ET_NONE;
 		be_set_sess_last(s->be);
+
+		DBG_TRACE_STATE("applet registered", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 		/* let sess_establish() finish the job */
-		return;
+		goto end;
 	}
 
 	/* Try to assign a server */
@@ -1251,8 +1468,10 @@ static void sess_prepare_conn_req(struct stream *s)
 		/* We did not get a server. Either we queued the
 		 * connection request, or we encountered an error.
 		 */
-		if (si->state == SI_ST_QUE)
-			return;
+		if (si->state == SI_ST_QUE) {
+			DBG_TRACE_STATE("connection request queued", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
+			goto end;
+		}
 
 		/* we did not get any server, let's check the cause */
 		si_shutr(si);
@@ -1263,13 +1482,18 @@ static void sess_prepare_conn_req(struct stream *s)
 		si->state = SI_ST_CLO;
 		if (s->srv_error)
 			s->srv_error(s, si);
-		return;
+		DBG_TRACE_STATE("connection request failed", STRM_EV_STRM_PROC|STRM_EV_SI_ST|STRM_EV_STRM_ERR, s);
+		goto end;
 	}
 
 	/* The server is assigned */
 	s->logs.t_queue = tv_ms_elapsed(&s->logs.tv_accept, &now);
 	si->state = SI_ST_ASS;
 	be_set_sess_last(s->be);
+	DBG_TRACE_STATE("connection request assigned to a server", STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
+
+  end:
+	DBG_TRACE_LEAVE(STRM_EV_STRM_PROC|STRM_EV_SI_ST, s);
 }
 
 /* This function parses the use-service action ruleset. It executes
@@ -1342,14 +1566,7 @@ static int process_switching_rules(struct stream *s, struct channel *req, int an
 	req->analysers &= ~an_bit;
 	req->analyse_exp = TICK_ETERNITY;
 
-	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%lu analysers=%02x\n",
-		now_ms, __FUNCTION__,
-		s,
-		req,
-		req->rex, req->wex,
-		req->flags,
-		ci_data(req),
-		req->analysers);
+	DBG_TRACE_ENTER(STRM_EV_STRM_ANA, s);
 
 	/* now check whether we have some switching rules for this request */
 	if (!(s->flags & SF_BE_ASSIGNED)) {
@@ -1438,6 +1655,7 @@ static int process_switching_rules(struct stream *s, struct channel *req, int an
 		}
 	}
 
+	DBG_TRACE_LEAVE(STRM_EV_STRM_ANA, s);
 	return 1;
 
  sw_failed:
@@ -1454,6 +1672,7 @@ static int process_switching_rules(struct stream *s, struct channel *req, int an
 		s->txn->status = 500;
 	s->req.analysers &= AN_REQ_FLT_END;
 	s->req.analyse_exp = TICK_ETERNITY;
+	DBG_TRACE_DEVEL("leaving on error", STRM_EV_STRM_ANA|STRM_EV_STRM_ERR, s);
 	return 0;
 }
 
@@ -1467,14 +1686,7 @@ static int process_server_rules(struct stream *s, struct channel *req, int an_bi
 	struct session *sess = s->sess;
 	struct server_rule *rule;
 
-	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bl=%lu analysers=%02x\n",
-		now_ms, __FUNCTION__,
-		s,
-		req,
-		req->rex, req->wex,
-		req->flags,
-		c_data(req),
-		req->analysers);
+	DBG_TRACE_ENTER(STRM_EV_STRM_ANA, s);
 
 	if (!(s->flags & SF_ASSIGNED)) {
 		list_for_each_entry(rule, &px->server_rules, list) {
@@ -1504,6 +1716,7 @@ static int process_server_rules(struct stream *s, struct channel *req, int an_bi
 
 	req->analysers &= ~an_bit;
 	req->analyse_exp = TICK_ETERNITY;
+	DBG_TRACE_LEAVE(STRM_EV_STRM_ANA, s);
 	return 1;
 }
 
@@ -1560,14 +1773,7 @@ static int process_sticking_rules(struct stream *s, struct channel *req, int an_
 	struct session *sess  = s->sess;
 	struct sticking_rule  *rule;
 
-	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%lu analysers=%02x\n",
-		now_ms, __FUNCTION__,
-		s,
-		req,
-		req->rex, req->wex,
-		req->flags,
-		ci_data(req),
-		req->analysers);
+	DBG_TRACE_ENTER(STRM_EV_STRM_ANA, s);
 
 	list_for_each_entry(rule, &px->sticking_rules, list) {
 		int ret = 1 ;
@@ -1629,6 +1835,7 @@ static int process_sticking_rules(struct stream *s, struct channel *req, int an_
 
 	req->analysers &= ~an_bit;
 	req->analyse_exp = TICK_ETERNITY;
+	DBG_TRACE_LEAVE(STRM_EV_STRM_ANA, s);
 	return 1;
 }
 
@@ -1644,14 +1851,7 @@ static int process_store_rules(struct stream *s, struct channel *rep, int an_bit
 	int i;
 	int nbreq = s->store_count;
 
-	DPRINTF(stderr,"[%u] %s: stream=%p b=%p, exp(r,w)=%u,%u bf=%08x bh=%lu analysers=%02x\n",
-		now_ms, __FUNCTION__,
-		s,
-		rep,
-		rep->rex, rep->wex,
-		rep->flags,
-		ci_data(rep),
-		rep->analysers);
+	DBG_TRACE_ENTER(STRM_EV_STRM_ANA, s);
 
 	list_for_each_entry(rule, &px->storersp_rules, list) {
 		int ret = 1 ;
@@ -1741,6 +1941,8 @@ static int process_store_rules(struct stream *s, struct channel *rep, int an_bit
 
 	rep->analysers &= ~an_bit;
 	rep->analyse_exp = TICK_ETERNITY;
+
+	DBG_TRACE_LEAVE(STRM_EV_STRM_ANA, s);
 	return 1;
 }
 
@@ -1812,6 +2014,8 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 	struct stream_interface *si_f, *si_b;
 	unsigned int rate;
 
+	DBG_TRACE_ENTER(STRM_EV_STRM_PROC, s);
+
 	activity[tid].stream++;
 
 	req = &s->req;
@@ -1828,9 +2032,6 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 	if (rate >= 100000 && s->call_rate.prev_ctr) { // make sure to wait at least a full second
 		stream_dump_and_crash(&s->obj_type, read_freq_ctr(&s->call_rate));
 	}
-
-	//DPRINTF(stderr, "%s:%d: cs=%d ss=%d(%d) rqf=0x%08x rpf=0x%08x\n", __FUNCTION__, __LINE__,
-	//        si_f->state, si_b->state, si_b->err_type, req->flags, res->flags);
 
 	/* this data may be no longer valid, clear it */
 	if (s->txn)
@@ -1996,18 +2197,7 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 	rp_prod_last = si_b->state;
 
 	/* Check for connection closure */
-
-	DPRINTF(stderr,
-		"[%u] %s:%d: task=%p s=%p, sfl=0x%08x, rq=%p, rp=%p, exp(r,w)=%u,%u rqf=%08x rpf=%08x rqh=%lu rqt=%lu rph=%lu rpt=%lu cs=%d ss=%d, cet=0x%x set=0x%x retr=%d\n",
-		now_ms, __FUNCTION__, __LINE__,
-		t,
-		s, s->flags,
-		req, res,
-		req->rex, res->wex,
-		req->flags, res->flags,
-		ci_data(req), co_data(req), ci_data(res), co_data(res), si_f->state, si_b->state,
-		si_f->err_type, si_b->err_type,
-		si_b->conn_retries);
+	DBG_TRACE_POINT(STRM_EV_STRM_PROC, s);
 
 	/* nothing special to be done on client side */
 	if (unlikely(si_f->state == SI_ST_DIS))
@@ -2338,14 +2528,6 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 			c_adv(req, ci_data(req));
 			if (!(req->flags & (CF_SHUTR|CF_SHUTW_NOW)))
 				channel_forward_forever(req);
-
-			/* Just in order to support fetching HTTP contents after start
-			 * of forwarding when the HTTP forwarding analyser is not used,
-			 * we simply reset msg->sov so that HTTP rewinding points to the
-			 * headers.
-			 */
-			if (s->txn)
-				s->txn->req.sov = s->txn->req.eoh + s->txn->req.eol - co_data(req);
 		}
 	}
 
@@ -2421,15 +2603,6 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 			 */
 			if (unlikely(si_b->state == SI_ST_EST))
 				sess_establish(s);
-
-			/* Now we can add the server name to a header (if requested) */
-			/* check for HTTP mode and proxy server_name_hdr_name != NULL */
-			if (si_state_in(si_b->state, SI_SB_CON|SI_SB_RDY|SI_SB_EST) &&
-			    (s->be->server_id_hdr_name != NULL) &&
-			    (s->be->mode == PR_MODE_HTTP) &&
-			    objt_server(s->target)) {
-				http_send_name_header(s, s->be, objt_server(s->target)->id);
-			}
 
 			srv = objt_server(s->target);
 			if (si_b->state == SI_ST_ASS && srv && srv->rdr_len && (s->flags & SF_REDIRECTABLE))
@@ -2520,14 +2693,6 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 			c_adv(res, ci_data(res));
 			if (!(res->flags & (CF_SHUTR|CF_SHUTW_NOW)))
 				channel_forward_forever(res);
-
-			/* Just in order to support fetching HTTP contents after start
-			 * of forwarding when the HTTP forwarding analyser is not used,
-			 * we simply reset msg->sov so that HTTP rewinding points to the
-			 * headers.
-			 */
-			if (s->txn)
-				s->txn->rsp.sov = s->txn->rsp.eoh + s->txn->rsp.eol - co_data(res);
 		}
 
 		/* if we have no analyser anymore in any direction and have a
@@ -2698,16 +2863,14 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 		if (si_b->exp)
 			t->expire = tick_first(t->expire, si_b->exp);
 
-		DPRINTF(stderr,
-			"[%u] queuing with exp=%u req->rex=%u req->wex=%u req->ana_exp=%u"
-			" rep->rex=%u rep->wex=%u, si[0].exp=%u, si[1].exp=%u, cs=%d, ss=%d\n",
-			now_ms, t->expire, req->rex, req->wex, req->analyse_exp,
-			res->rex, res->wex, si_f->exp, si_b->exp, si_f->state, si_b->state);
-
 		s->pending_events &= ~(TASK_WOKEN_TIMER | TASK_WOKEN_RES);
 		stream_release_buffers(s);
+
+		DBG_TRACE_DEVEL("queuing", STRM_EV_STRM_PROC, s);
 		return t; /* nothing more to do */
 	}
+
+	DBG_TRACE_DEVEL("releasing", STRM_EV_STRM_PROC, s);
 
 	if (s->flags & SF_BE_ASSIGNED)
 		_HA_ATOMIC_SUB(&s->be->beconn, 1);
@@ -2939,7 +3102,7 @@ void stream_dump(struct buffer *buf, const struct stream *s, const char *pfx, ch
 	csf = objt_cs(si_f->end);
 	cof = cs_conn(csf);
 	acf = objt_appctx(si_f->end);
-	if (cof && addr_to_str(&cof->addr.from, pn, sizeof(pn)) >= 0)
+	if (cof && cof->src && addr_to_str(cof->src, pn, sizeof(pn)) >= 0)
 		src = pn;
 	else if (acf)
 		src = acf->applet->name;
@@ -3110,11 +3273,11 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 			     strm_li(strm) ? strm_li(strm)->proto->name : "?");
 
 		conn = objt_conn(strm_orig(strm));
-		switch (conn ? addr_to_str(&conn->addr.from, pn, sizeof(pn)) : AF_UNSPEC) {
+		switch (conn && conn_get_src(conn) ? addr_to_str(conn->src, pn, sizeof(pn)) : AF_UNSPEC) {
 		case AF_INET:
 		case AF_INET6:
 			chunk_appendf(&trash, " source=%s:%d\n",
-			              pn, get_host_port(&conn->addr.from));
+			              pn, get_host_port(conn->src));
 			break;
 		case AF_UNIX:
 			chunk_appendf(&trash, " source=unix:%d\n", strm_li(strm)->luid);
@@ -3136,14 +3299,11 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 			     strm_li(strm) ? strm_li(strm)->name ? strm_li(strm)->name : "?" : "?",
 			     strm_li(strm) ? strm_li(strm)->luid : 0);
 
-		if (conn)
-			conn_get_to_addr(conn);
-
-		switch (conn ? addr_to_str(&conn->addr.to, pn, sizeof(pn)) : AF_UNSPEC) {
+		switch (conn && conn_get_dst(conn) ? addr_to_str(conn->dst, pn, sizeof(pn)) : AF_UNSPEC) {
 		case AF_INET:
 		case AF_INET6:
 			chunk_appendf(&trash, " addr=%s:%d\n",
-				     pn, get_host_port(&conn->addr.to));
+				     pn, get_host_port(conn->dst));
 			break;
 		case AF_UNIX:
 			chunk_appendf(&trash, " addr=unix:%d\n", strm_li(strm)->luid);
@@ -3165,14 +3325,11 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 		cs = objt_cs(strm->si[1].end);
 		conn = cs_conn(cs);
 
-		if (conn)
-			conn_get_from_addr(conn);
-
-		switch (conn ? addr_to_str(&conn->addr.from, pn, sizeof(pn)) : AF_UNSPEC) {
+		switch (conn && conn_get_src(conn) ? addr_to_str(conn->src, pn, sizeof(pn)) : AF_UNSPEC) {
 		case AF_INET:
 		case AF_INET6:
 			chunk_appendf(&trash, " addr=%s:%d\n",
-				     pn, get_host_port(&conn->addr.from));
+				     pn, get_host_port(conn->src));
 			break;
 		case AF_UNIX:
 			chunk_appendf(&trash, " addr=unix\n");
@@ -3191,14 +3348,11 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 		else
 			chunk_appendf(&trash, "  server=<NONE> (id=-1)");
 
-		if (conn)
-			conn_get_to_addr(conn);
-
-		switch (conn ? addr_to_str(&conn->addr.to, pn, sizeof(pn)) : AF_UNSPEC) {
+		switch (conn && conn_get_dst(conn) ? addr_to_str(conn->dst, pn, sizeof(pn)) : AF_UNSPEC) {
 		case AF_INET:
 		case AF_INET6:
 			chunk_appendf(&trash, " addr=%s:%d\n",
-				     pn, get_host_port(&conn->addr.to));
+				     pn, get_host_port(conn->dst));
 			break;
 		case AF_UNIX:
 			chunk_appendf(&trash, " addr=unix\n");
@@ -3227,13 +3381,10 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 
 		if (strm->txn)
 			chunk_appendf(&trash,
-			      "  txn=%p flags=0x%x meth=%d status=%d req.st=%s rsp.st=%s\n"
-			      "      req.f=0x%02x blen=%llu chnk=%llu next=%u\n"
-			      "      rsp.f=0x%02x blen=%llu chnk=%llu next=%u\n",
+			      "  txn=%p flags=0x%x meth=%d status=%d req.st=%s rsp.st=%s req.f=0x%02x rsp.f=0x%02x\n",
 			      strm->txn, strm->txn->flags, strm->txn->meth, strm->txn->status,
 			      h1_msg_state_str(strm->txn->req.msg_state), h1_msg_state_str(strm->txn->rsp.msg_state),
-			      strm->txn->req.flags, strm->txn->req.body_len, strm->txn->req.chunk_len, strm->txn->req.next,
-			      strm->txn->rsp.flags, strm->txn->rsp.body_len, strm->txn->rsp.chunk_len, strm->txn->rsp.next);
+			      strm->txn->req.flags, strm->txn->rsp.flags);
 
 		chunk_appendf(&trash,
 			     "  si[0]=%p (state=%s flags=0x%02x endp0=%s:%p exp=%s et=0x%03x sub=%d)\n",
@@ -3275,11 +3426,10 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 			              obj_base_ptr(conn->target));
 
 			chunk_appendf(&trash,
-			              "      flags=0x%08x fd=%d fd.state=%02x fd.cache=%d updt=%d fd.tmask=0x%lx\n",
+			              "      flags=0x%08x fd=%d fd.state=%02x updt=%d fd.tmask=0x%lx\n",
 			              conn->flags,
 			              conn->handle.fd,
 			              conn->handle.fd >= 0 ? fdtab[conn->handle.fd].state : 0,
-			              conn->handle.fd >= 0 ? fdtab[conn->handle.fd].cache.next >= -2 : 0,
 			              conn->handle.fd >= 0 ? !!(fdtab[conn->handle.fd].update_mask & tid_bit) : 0,
 				      conn->handle.fd >= 0 ? fdtab[conn->handle.fd].thread_mask: 0);
 
@@ -3312,11 +3462,10 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 			              obj_base_ptr(conn->target));
 
 			chunk_appendf(&trash,
-			              "      flags=0x%08x fd=%d fd.state=%02x fd.cache=%d updt=%d fd.tmask=0x%lx\n",
+			              "      flags=0x%08x fd=%d fd.state=%02x updt=%d fd.tmask=0x%lx\n",
 			              conn->flags,
 			              conn->handle.fd,
 			              conn->handle.fd >= 0 ? fdtab[conn->handle.fd].state : 0,
-			              conn->handle.fd >= 0 ? fdtab[conn->handle.fd].cache.next >= -2 : 0,
 			              conn->handle.fd >= 0 ? !!(fdtab[conn->handle.fd].update_mask & tid_bit) : 0,
 				      conn->handle.fd >= 0 ? fdtab[conn->handle.fd].thread_mask: 0);
 
@@ -3354,14 +3503,13 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 
 		chunk_appendf(&trash,
 			     " wex=%s\n"
-			     "      buf=%p data=%p o=%u p=%u req.next=%d i=%u size=%u\n",
+			     "      buf=%p data=%p o=%u p=%u i=%u size=%u\n",
 			     strm->req.wex ?
 			     human_time(TICKS_TO_MS(strm->req.wex - now_ms),
 					TICKS_TO_MS(1000)) : "<NEVER>",
 			     &strm->req.buf,
 		             b_orig(&strm->req.buf), (unsigned int)co_data(&strm->req),
-			     (unsigned int)ci_head_ofs(&strm->req),
-		             strm->txn ? strm->txn->req.next : 0, (unsigned int)ci_data(&strm->req),
+			     (unsigned int)ci_head_ofs(&strm->req), (unsigned int)ci_data(&strm->req),
 			     (unsigned int)strm->req.buf.size);
 
 		if (IS_HTX_STRM(strm)) {
@@ -3369,7 +3517,7 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 
 			chunk_appendf(&trash,
 				      "      htx=%p flags=0x%x size=%u data=%u used=%u wrap=%s extra=%llu\n",
-				      htx, htx->flags, htx->size, htx->data, htx->used,
+				      htx, htx->flags, htx->size, htx->data, htx_nbblks(htx),
 				      (htx->tail >= htx->head) ? "NO" : "YES",
 				      (unsigned long long)htx->extra);
 		}
@@ -3393,14 +3541,13 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 
 		chunk_appendf(&trash,
 			     " wex=%s\n"
-			     "      buf=%p data=%p o=%u p=%u rsp.next=%d i=%u size=%u\n",
+			     "      buf=%p data=%p o=%u p=%u i=%u size=%u\n",
 			     strm->res.wex ?
 			     human_time(TICKS_TO_MS(strm->res.wex - now_ms),
 					TICKS_TO_MS(1000)) : "<NEVER>",
 			     &strm->res.buf,
 		             b_orig(&strm->res.buf), (unsigned int)co_data(&strm->res),
-		             (unsigned int)ci_head_ofs(&strm->res),
-		             strm->txn ? strm->txn->rsp.next : 0, (unsigned int)ci_data(&strm->res),
+		             (unsigned int)ci_head_ofs(&strm->res), (unsigned int)ci_data(&strm->res),
 			     (unsigned int)strm->res.buf.size);
 
 		if (IS_HTX_STRM(strm)) {
@@ -3408,7 +3555,7 @@ static int stats_dump_full_strm_to_buffer(struct stream_interface *si, struct st
 
 			chunk_appendf(&trash,
 				      "      htx=%p flags=0x%x size=%u data=%u used=%u wrap=%s extra=%llu\n",
-				      htx, htx->flags, htx->size, htx->data, htx->used,
+				      htx, htx->flags, htx->size, htx->data, htx_nbblks(htx),
 				      (htx->tail >= htx->head) ? "NO" : "YES",
 				      (unsigned long long)htx->extra);
 		}
@@ -3526,13 +3673,13 @@ static int cli_io_handler_dump_sess(struct appctx *appctx)
 				     strm_li(curr_strm) ? strm_li(curr_strm)->proto->name : "?");
 
 			conn = objt_conn(strm_orig(curr_strm));
-			switch (conn ? addr_to_str(&conn->addr.from, pn, sizeof(pn)) : AF_UNSPEC) {
+			switch (conn && conn_get_src(conn) ? addr_to_str(conn->src, pn, sizeof(pn)) : AF_UNSPEC) {
 			case AF_INET:
 			case AF_INET6:
 				chunk_appendf(&trash,
 					     " src=%s:%d fe=%s be=%s srv=%s",
 					     pn,
-					     get_host_port(&conn->addr.from),
+					     get_host_port(conn->src),
 					     strm_fe(curr_strm)->id,
 					     (curr_strm->be->cap & PR_CAP_BE) ? curr_strm->be->id : "<NONE>",
 					     objt_server(curr_strm->target) ? objt_server(curr_strm->target)->id : "<none>"
@@ -3687,12 +3834,8 @@ static int cli_parse_shutdown_session(char **args, char *payload, struct appctx 
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
-	if (!*args[2]) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Session pointer expected (use 'show sess').\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!*args[2])
+		return cli_err(appctx, "Session pointer expected (use 'show sess').\n");
 
 	ptr = (void *)strtoul(args[2], NULL, 0);
 
@@ -3703,12 +3846,8 @@ static int cli_parse_shutdown_session(char **args, char *payload, struct appctx 
 	}
 
 	/* do we have the stream ? */
-	if (strm != ptr) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "No such session (use 'show sess').\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (strm != ptr)
+		return cli_err(appctx, "No such session (use 'show sess').\n");
 
 	stream_shutdown(strm, SF_ERR_KILLED);
 	return 1;
@@ -3718,7 +3857,6 @@ static int cli_parse_shutdown_session(char **args, char *payload, struct appctx 
 static int cli_parse_shutdown_sessions_server(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	struct server *sv;
-	struct stream *strm, *strm_bck;
 
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
@@ -3729,9 +3867,7 @@ static int cli_parse_shutdown_sessions_server(char **args, char *payload, struct
 
 	/* kill all the stream that are on this server */
 	HA_SPIN_LOCK(SERVER_LOCK, &sv->lock);
-	list_for_each_entry_safe(strm, strm_bck, &sv->actconns, by_srv)
-		if (strm->srv_conn == sv)
-			stream_shutdown(strm, SF_ERR_KILLED);
+	srv_shutdown_streams(sv, SF_ERR_KILLED);
 	HA_SPIN_UNLOCK(SERVER_LOCK, &sv->lock);
 	return 1;
 }

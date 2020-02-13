@@ -201,8 +201,6 @@ extern struct h2_frame_definition h2_frame_definition[H2_FT_ENTRIES];
 
 /* various protocol processing functions */
 
-int h2_make_h1_request(struct http_hdr *list, char *out, int osize, unsigned int *msgf, unsigned long long *body_len);
-int h2_make_h1_trailers(struct http_hdr *list, char *out, int osize);
 int h2_parse_cont_len_header(unsigned int *msgf, struct ist *value, unsigned long long *body_len);
 int h2_make_htx_request(struct http_hdr *list, struct htx *htx, unsigned int *msgf, unsigned long long *body_len);
 int h2_make_htx_response(struct http_hdr *list, struct htx *htx, unsigned int *msgf, unsigned long long *body_len);
@@ -232,6 +230,28 @@ static inline const char *h2_ft_str(int type)
 	case H2_FT_GOAWAY        : return "GOAWAY";
 	case H2_FT_WINDOW_UPDATE : return "WINDOW_UPDATE";
 	default                  : return "_UNKNOWN_";
+	}
+}
+
+/* returns the error code as a string */
+static inline const char *h2_err_str(enum h2_err err)
+{
+	switch (err) {
+	case H2_ERR_NO_ERROR            : return "NO_ERROR";
+	case H2_ERR_PROTOCOL_ERROR      : return "PROTOCOL_ERROR";
+	case H2_ERR_INTERNAL_ERROR      : return "INTERNAL_ERROR";
+	case H2_ERR_FLOW_CONTROL_ERROR  : return "FLOW_CONTROL_ERROR";
+	case H2_ERR_SETTINGS_TIMEOUT    : return "SETTINGS_TIMEOUT";
+	case H2_ERR_STREAM_CLOSED       : return "STREAM_CLOSED";
+	case H2_ERR_FRAME_SIZE_ERROR    : return "FRAME_SIZE_ERROR";
+	case H2_ERR_REFUSED_STREAM      : return "REFUSED_STREAM";
+	case H2_ERR_CANCEL              : return "CANCEL";
+	case H2_ERR_COMPRESSION_ERROR   : return "COMPRESSION_ERROR";
+	case H2_ERR_CONNECT_ERROR       : return "CONNECT_ERROR";
+	case H2_ERR_ENHANCE_YOUR_CALM   : return "ENHANCE_YOUR_CALM";
+	case H2_ERR_INADEQUATE_SECURITY : return "INADEQUATE_SECURITY";
+	case H2_ERR_HTTP_1_1_REQUIRED   : return "HTTP_1_1_REQUIRED";
+	default                         : return "_UNKNOWN_";
 	}
 }
 

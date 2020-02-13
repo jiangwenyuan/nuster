@@ -41,7 +41,6 @@
 #include <common/base64.h>
 
 #include <types/applet.h>
-#include <types/cli.h>
 #include <types/global.h>
 #include <types/dns.h>
 #include <types/stats.h>
@@ -50,6 +49,7 @@
 #include <proto/backend.h>
 #include <proto/channel.h>
 #include <proto/checks.h>
+#include <proto/cli.h>
 #include <proto/compression.h>
 #include <proto/stats.h>
 #include <proto/fd.h>
@@ -123,6 +123,10 @@ static char *cli_gen_usage_msg(struct appctx *appctx)
 
 			/* in master don't displays if we don't have the master bits */
 			if (master == 1 && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
+				goto next_kw;
+
+			/* only show expert commands in expert mode */
+			if ((kw->level & ~appctx->cli_level) & ACCESS_EXPERT)
 				goto next_kw;
 
 			if (kw->usage)
@@ -457,9 +461,7 @@ int cli_has_level(struct appctx *appctx, int level)
 {
 
 	if ((appctx->cli_level & ACCESS_LVL_MASK) < level) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = stats_permission_denied_msg;
-		appctx->st0 = CLI_ST_PRINT;
+		cli_err(appctx, stats_permission_denied_msg);
 		return 0;
 	}
 	return 1;
@@ -500,6 +502,7 @@ static int cli_parse_request(struct appctx *appctx)
 
 	appctx->st2 = 0;
 	memset(&appctx->ctx.cli, 0, sizeof(appctx->ctx.cli));
+	LIST_INIT(&appctx->ctx.cli.l0);
 
 	p = appctx->chunk->area;
 	end = p + appctx->chunk->data;
@@ -566,6 +569,10 @@ static int cli_parse_request(struct appctx *appctx)
 
 	/* in master don't displays if we don't have the master bits */
 	if (master == 1 && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
+		return 0;
+
+	/* only accept expert commands in expert mode */
+	if ((kw->level & ~appctx->cli_level) & ACCESS_EXPERT)
 		return 0;
 
 	appctx->io_handler = kw->io_handler;
@@ -776,30 +783,47 @@ static void cli_io_handler(struct appctx *appctx)
 			req->flags |= CF_READ_DONTWAIT; /* we plan to read small requests */
 		}
 		else {	/* output functions */
+			const char *msg;
+			int sev;
+
 			switch (appctx->st0) {
 			case CLI_ST_PROMPT:
 				break;
-			case CLI_ST_PRINT:
-				if (cli_output_msg(res, appctx->ctx.cli.msg, appctx->ctx.cli.severity,
-							cli_get_severity_output(appctx)) != -1)
-					appctx->st0 = CLI_ST_PROMPT;
-				else
-					si_rx_room_blk(si);
-				break;
-			case CLI_ST_PRINT_FREE: {
-				const char *msg = appctx->ctx.cli.err;
+			case CLI_ST_PRINT:       /* print const message in msg */
+			case CLI_ST_PRINT_ERR:   /* print const error in msg */
+			case CLI_ST_PRINT_DYN:   /* print dyn message in msg, free */
+			case CLI_ST_PRINT_FREE:  /* print dyn error in err, free */
+				if (appctx->st0 == CLI_ST_PRINT || appctx->st0 == CLI_ST_PRINT_ERR) {
+					sev = appctx->st0 == CLI_ST_PRINT_ERR ?
+						LOG_ERR : appctx->ctx.cli.severity;
+					msg = appctx->ctx.cli.msg;
+				}
+				else if (appctx->st0 == CLI_ST_PRINT_DYN || appctx->st0 == CLI_ST_PRINT_FREE) {
+					sev = appctx->st0 == CLI_ST_PRINT_FREE ?
+						LOG_ERR : appctx->ctx.cli.severity;
+					msg = appctx->ctx.cli.err;
+					if (!msg) {
+						sev = LOG_ERR;
+						msg = "Out of memory.\n";
+					}
+				}
+				else {
+					sev = LOG_ERR;
+					msg = "Internal error.\n";
+				}
 
-				if (!msg)
-					msg = "Out of memory.\n";
-
-				if (cli_output_msg(res, msg, LOG_ERR, cli_get_severity_output(appctx)) != -1) {
-					free(appctx->ctx.cli.err);
+				if (cli_output_msg(res, msg, sev, cli_get_severity_output(appctx)) != -1) {
+					if (appctx->st0 == CLI_ST_PRINT_FREE ||
+					    appctx->st0 == CLI_ST_PRINT_DYN) {
+						free(appctx->ctx.cli.err);
+						appctx->ctx.cli.err = NULL;
+					}
 					appctx->st0 = CLI_ST_PROMPT;
 				}
 				else
 					si_rx_room_blk(si);
 				break;
-			}
+
 			case CLI_ST_CALLBACK: /* use custom pointer */
 				if (appctx->io_handler)
 					if (appctx->io_handler(appctx)) {
@@ -900,7 +924,7 @@ static void cli_release_handler(struct appctx *appctx)
 		appctx->io_release(appctx);
 		appctx->io_release = NULL;
 	}
-	else if (appctx->st0 == CLI_ST_PRINT_FREE) {
+	else if (appctx->st0 == CLI_ST_PRINT_FREE || appctx->st0 == CLI_ST_PRINT_DYN) {
 		free(appctx->ctx.cli.err);
 		appctx->ctx.cli.err = NULL;
 	}
@@ -993,13 +1017,11 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			li = fdt.owner;
 
 		chunk_printf(&trash,
-			     "  %5d : st=0x%02x(R:%c%c%c W:%c%c%c) ev=0x%02x(%c%c%c%c%c) [%c%c] cnext=%d cprev=%d tmask=0x%lx umask=0x%lx owner=%p iocb=%p(%s)",
+			     "  %5d : st=0x%02x(R:%c%c W:%c%c) ev=0x%02x(%c%c%c%c%c) [%c%c] tmask=0x%lx umask=0x%lx owner=%p iocb=%p(%s)",
 			     fd,
 			     fdt.state,
-			     (fdt.state & FD_EV_POLLED_R) ? 'P' : 'p',
 			     (fdt.state & FD_EV_READY_R)  ? 'R' : 'r',
 			     (fdt.state & FD_EV_ACTIVE_R) ? 'A' : 'a',
-			     (fdt.state & FD_EV_POLLED_W) ? 'P' : 'p',
 			     (fdt.state & FD_EV_READY_W)  ? 'R' : 'r',
 			     (fdt.state & FD_EV_ACTIVE_W) ? 'A' : 'a',
 			     fdt.ev,
@@ -1010,8 +1032,6 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			     (fdt.ev & FD_POLL_IN)  ? 'I' : 'i',
 			     fdt.linger_risk ? 'L' : 'l',
 			     fdt.cloned ? 'C' : 'c',
-			     fdt.cache.next,
-			     fdt.cache.prev,
 			     fdt.thread_mask, fdt.update_mask,
 			     fdt.owner,
 			     fdt.iocb,
@@ -1128,7 +1148,6 @@ static int cli_io_handler_show_activity(struct appctx *appctx)
 	chunk_appendf(&trash, "thread_id: %u (%u..%u)\n", tid + 1, 1, global.nbthread);
 	chunk_appendf(&trash, "date_now: %lu.%06lu\n", (long)now.tv_sec, (long)now.tv_usec);
 	chunk_appendf(&trash, "loops:");        SHOW_TOT(thr, activity[thr].loops);
-	chunk_appendf(&trash, "wake_cache:");   SHOW_TOT(thr, activity[thr].wake_cache);
 	chunk_appendf(&trash, "wake_tasks:");   SHOW_TOT(thr, activity[thr].wake_tasks);
 	chunk_appendf(&trash, "wake_signal:");  SHOW_TOT(thr, activity[thr].wake_signal);
 	chunk_appendf(&trash, "poll_exp:");     SHOW_TOT(thr, activity[thr].poll_exp);
@@ -1298,12 +1317,9 @@ static int cli_parse_show_env(char **args, char *payload, struct appctx *appctx,
 			    (*var)[len] == '=')
 				break;
 		}
-		if (!*var) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "Variable not found\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (!*var)
+			return cli_err(appctx, "Variable not found\n");
+
 		appctx->st2 = STAT_ST_END;
 	}
 	appctx->ctx.cli.p0 = var;
@@ -1338,31 +1354,19 @@ static int cli_parse_set_timeout(char **args, char *payload, struct appctx *appc
 		unsigned timeout;
 		const char *res;
 
-		if (!*args[3]) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "Expects an integer value.\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (!*args[3])
+			return cli_err(appctx, "Expects an integer value.\n");
 
 		res = parse_time_err(args[3], &timeout, TIME_UNIT_S);
-		if (res || timeout < 1) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "Invalid timeout value.\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (res || timeout < 1)
+			return cli_err(appctx, "Invalid timeout value.\n");
 
 		s->req.rto = s->res.wto = 1 + MS_TO_TICKS(timeout*1000);
 		task_wakeup(s->task, TASK_WOKEN_MSG); // recompute timeouts
 		return 1;
 	}
-	else {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "'set timeout' only supports 'cli'.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+
+	return cli_err(appctx, "'set timeout' only supports 'cli'.\n");
 }
 
 /* parse a "set maxconn global" command. It always returns 1. */
@@ -1373,20 +1377,12 @@ static int cli_parse_set_maxconn_global(char **args, char *payload, struct appct
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
-	if (!*args[3]) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Expects an integer value.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!*args[3])
+		return cli_err(appctx, "Expects an integer value.\n");
 
 	v = atoi(args[3]);
-	if (v > global.hardmaxconn) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Value out of range.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (v > global.hardmaxconn)
+		return cli_err(appctx, "Value out of range.\n");
 
 	/* check for unlimited values */
 	if (v <= 0)
@@ -1395,7 +1391,7 @@ static int cli_parse_set_maxconn_global(char **args, char *payload, struct appct
 	global.maxconn = v;
 
 	/* Dequeues all of the listeners waiting for a resource */
-	if (!LIST_ISEMPTY(&global_listener_queue))
+	if (!MT_LIST_ISEMPTY(&global_listener_queue))
 		dequeue_all_listeners(&global_listener_queue);
 
 	return 1;
@@ -1424,30 +1420,21 @@ static int cli_parse_set_severity_output(char **args, char *payload, struct appc
 	if (*args[2] && set_severity_output(&appctx->cli_severity_output, args[2]))
 		return 0;
 
-	appctx->ctx.cli.severity = LOG_ERR;
-	appctx->ctx.cli.msg = "one of 'none', 'number', 'string' is a required argument\n";
-	appctx->st0 = CLI_ST_PRINT;
-	return 1;
+	return cli_err(appctx, "one of 'none', 'number', 'string' is a required argument\n");
 }
 
 
 /* show the level of the current CLI session */
 static int cli_parse_show_lvl(char **args, char *payload, struct appctx *appctx, void *private)
 {
-
-	appctx->ctx.cli.severity = LOG_INFO;
 	if ((appctx->cli_level & ACCESS_LVL_MASK) == ACCESS_LVL_ADMIN)
-		appctx->ctx.cli.msg = "admin\n";
+		return cli_msg(appctx, LOG_INFO, "admin\n");
 	else if ((appctx->cli_level & ACCESS_LVL_MASK) == ACCESS_LVL_OPER)
-		appctx->ctx.cli.msg = "operator\n";
+		return cli_msg(appctx, LOG_INFO, "operator\n");
 	else if ((appctx->cli_level & ACCESS_LVL_MASK) == ACCESS_LVL_USER)
-		appctx->ctx.cli.msg = "user\n";
+		return cli_msg(appctx, LOG_INFO, "user\n");
 	else
-		appctx->ctx.cli.msg = "unknown\n";
-
-	appctx->st0 = CLI_ST_PRINT;
-	return 1;
-
+		return cli_msg(appctx, LOG_INFO, "unknown\n");
 }
 
 /* parse and set the CLI level dynamically */
@@ -1471,6 +1458,25 @@ static int cli_parse_set_lvl(char **args, char *payload, struct appctx *appctx, 
 		appctx->cli_level &= ~ACCESS_LVL_MASK;
 		appctx->cli_level |= ACCESS_LVL_USER;
 	}
+	appctx->cli_level &= ~ACCESS_EXPERT;
+	return 1;
+}
+
+
+/* parse and set the CLI expert-mode dynamically */
+static int cli_parse_expert_mode(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
+		return 1;
+
+	if (!*args[1])
+		return (appctx->cli_level & ACCESS_EXPERT)
+			? cli_msg(appctx, LOG_INFO, "expert-mode is ON\n")
+			: cli_msg(appctx, LOG_INFO, "expert-mode is OFF\n");
+
+	appctx->cli_level &= ~ACCESS_EXPERT;
+	if (strcmp(args[1], "on") == 0)
+		appctx->cli_level |= ACCESS_EXPERT;
 	return 1;
 }
 
@@ -1503,38 +1509,27 @@ static int cli_parse_set_ratelimit(char **args, char *payload, struct appctx *ap
 		mul = 1024;
 	}
 	else {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg =
+		return cli_err(appctx,
 			"'set rate-limit' only supports :\n"
 			"   - 'connections global' to set the per-process maximum connection rate\n"
 			"   - 'sessions global' to set the per-process maximum session rate\n"
 #ifdef USE_OPENSSL
 			"   - 'ssl-sessions global' to set the per-process maximum SSL session rate\n"
 #endif
-			"   - 'http-compression global' to set the per-process maximum compression speed in kB/s\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
+			"   - 'http-compression global' to set the per-process maximum compression speed in kB/s\n");
 	}
 
-	if (!*args[4]) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Expects an integer value.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!*args[4])
+		return cli_err(appctx, "Expects an integer value.\n");
 
 	v = atoi(args[4]);
-	if (v < 0) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Value out of range.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (v < 0)
+		return cli_err(appctx, "Value out of range.\n");
 
 	*res = v * mul;
 
 	/* Dequeues all of the listeners waiting for a resource */
-	if (!LIST_ISEMPTY(&global_listener_queue))
+	if (!MT_LIST_ISEMPTY(&global_listener_queue))
 		dequeue_all_listeners(&global_listener_queue);
 
 	return 1;
@@ -2404,12 +2399,14 @@ int pcli_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			s->srv_conn = NULL;
 		}
 
+		sockaddr_free(&s->target_addr);
+
 		s->si[1].state     = s->si[1].prev_state = SI_ST_INI;
 		s->si[1].err_type  = SI_ET_NONE;
 		s->si[1].conn_retries = 0;  /* used for logging too */
 		s->si[1].exp       = TICK_ETERNITY;
 		s->si[1].flags    &= SI_FL_ISBACK | SI_FL_DONT_WAKE; /* we're in the context of process_stream */
-		s->req.flags &= ~(CF_SHUTW|CF_SHUTW_NOW|CF_AUTO_CONNECT|CF_WRITE_ERROR|CF_STREAMER|CF_STREAMER_FAST|CF_NEVER_WAIT|CF_WAKE_CONNECT|CF_WROTE_DATA);
+		s->req.flags &= ~(CF_SHUTW|CF_SHUTW_NOW|CF_AUTO_CONNECT|CF_WRITE_ERROR|CF_STREAMER|CF_STREAMER_FAST|CF_NEVER_WAIT|CF_WROTE_DATA);
 		s->res.flags &= ~(CF_SHUTR|CF_SHUTR_NOW|CF_READ_ATTACHED|CF_READ_ERROR|CF_READ_NOEXP|CF_STREAMER|CF_STREAMER_FAST|CF_WRITE_PARTIAL|CF_NEVER_WAIT|CF_WROTE_DATA|CF_READ_NULL);
 		s->flags &= ~(SF_DIRECT|SF_ASSIGNED|SF_ADDR_SET|SF_BE_ASSIGNED|SF_FORCE_PRST|SF_IGNORE_PRST);
 		s->flags &= ~(SF_CURR_SESS|SF_REDIRECTABLE|SF_SRV_REUSED);
@@ -2790,6 +2787,7 @@ static struct cli_kw_list cli_kws = {{ },{
 	{ { "operator", NULL },  "operator       : lower the level of the current CLI session to operator", cli_parse_set_lvl, NULL, NULL, NULL, ACCESS_MASTER},
 	{ { "user", NULL },      "user           : lower the level of the current CLI session to user", cli_parse_set_lvl, NULL, NULL, NULL, ACCESS_MASTER},
 	{ { "_getsocks", NULL }, NULL,  _getsocks, NULL },
+	{ { "expert-mode", NULL },  NULL,  cli_parse_expert_mode, NULL }, // not listed
 	{{},}
 }};
 

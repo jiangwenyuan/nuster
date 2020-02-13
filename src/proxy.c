@@ -41,11 +41,10 @@
 #include <proto/backend.h>
 #include <proto/fd.h>
 #include <proto/filters.h>
-#include <proto/hdr_idx.h>
 #include <proto/listener.h>
 #include <proto/log.h>
 #include <proto/proto_tcp.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/proxy.h>
 #include <proto/server.h>
 #include <proto/signal.h>
@@ -106,12 +105,12 @@ const struct cfg_opt cfg_opts2[] =
 	{ "socket-stats",                 PR_O2_SOCKSTAT,  PR_CAP_FE, 0, 0 },
 	{ "tcp-smart-accept",             PR_O2_SMARTACC,  PR_CAP_FE, 0, 0 },
 	{ "tcp-smart-connect",            PR_O2_SMARTCON,  PR_CAP_BE, 0, 0 },
-	{ "independant-streams",          PR_O2_INDEPSTR,  PR_CAP_FE|PR_CAP_BE, 0, 0 },
 	{ "independent-streams",          PR_O2_INDEPSTR,  PR_CAP_FE|PR_CAP_BE, 0, 0 },
 	{ "http-use-proxy-header",        PR_O2_USE_PXHDR, PR_CAP_FE, 0, PR_MODE_HTTP },
 	{ "http-pretend-keepalive",       PR_O2_FAKE_KA,   PR_CAP_BE, 0, PR_MODE_HTTP },
 	{ "http-no-delay",                PR_O2_NODELAY,   PR_CAP_FE|PR_CAP_BE, 0, PR_MODE_HTTP },
-	{ "http-use-htx",                 PR_O2_USE_HTX,   PR_CAP_FE|PR_CAP_BE, 0, 0 },
+	{ "http-use-htx",                 0,               PR_CAP_FE|PR_CAP_BE, 0, 0 }, // deprecated
+
 	{"h1-case-adjust-bogus-client",   PR_O2_H1_ADJ_BUGCLI, PR_CAP_FE, 0, PR_MODE_HTTP },
 	{"h1-case-adjust-bogus-server",   PR_O2_H1_ADJ_BUGSRV, PR_CAP_BE, 0, PR_MODE_HTTP },
 	{ NULL, 0, 0, 0 }
@@ -206,7 +205,6 @@ static int proxy_parse_timeout(char **args, int section, struct proxy *proxy,
 	const char *res, *name;
 	int *tv = NULL;
 	int *td = NULL;
-	int warn = 0;
 
 	retval = 0;
 
@@ -215,7 +213,7 @@ static int proxy_parse_timeout(char **args, int section, struct proxy *proxy,
 		args++;
 
 	name = args[0];
-	if (!strcmp(args[0], "client") || (!strcmp(args[0], "clitimeout") && (warn = WARN_CLITO_DEPRECATED))) {
+	if (!strcmp(args[0], "client")) {
 		name = "client";
 		tv = &proxy->timeout.client;
 		td = &defpx->timeout.client;
@@ -232,12 +230,12 @@ static int proxy_parse_timeout(char **args, int section, struct proxy *proxy,
 		tv = &proxy->timeout.httpreq;
 		td = &defpx->timeout.httpreq;
 		cap = PR_CAP_FE | PR_CAP_BE;
-	} else if (!strcmp(args[0], "server") || (!strcmp(args[0], "srvtimeout") && (warn = WARN_SRVTO_DEPRECATED))) {
+	} else if (!strcmp(args[0], "server")) {
 		name = "server";
 		tv = &proxy->timeout.server;
 		td = &defpx->timeout.server;
 		cap = PR_CAP_BE;
-	} else if (!strcmp(args[0], "connect") || (!strcmp(args[0], "contimeout") && (warn = WARN_CONTO_DEPRECATED))) {
+	} else if (!strcmp(args[0], "connect")) {
 		name = "connect";
 		tv = &proxy->timeout.connect;
 		td = &defpx->timeout.connect;
@@ -262,6 +260,15 @@ static int proxy_parse_timeout(char **args, int section, struct proxy *proxy,
 		tv = &proxy->timeout.serverfin;
 		td = &defpx->timeout.serverfin;
 		cap = PR_CAP_BE;
+	} else if (!strcmp(args[0], "clitimeout")) {
+		memprintf(err, "the '%s' directive is not supported anymore since HAProxy 2.1. Use 'timeout client'.", args[0]);
+		return -1;
+	} else if (!strcmp(args[0], "srvtimeout")) {
+		memprintf(err, "the '%s' directive is not supported anymore since HAProxy 2.1. Use 'timeout server'.", args[0]);
+		return -1;
+	} else if (!strcmp(args[0], "contimeout")) {
+		memprintf(err, "the '%s' directive is not supported anymore since HAProxy 2.1. Use 'timeout connect'.", args[0]);
+		return -1;
 	} else {
 		memprintf(err,
 		          "'timeout' supports 'client', 'server', 'connect', 'check', "
@@ -301,13 +308,6 @@ static int proxy_parse_timeout(char **args, int section, struct proxy *proxy,
 	else if (defpx && *tv != *td) {
 		memprintf(err, "overwriting 'timeout %s' which was already specified", name);
 		retval = 1;
-	}
-	else if (warn) {
-		if (!already_warned(warn)) {
-			memprintf(err, "the '%s' directive is now deprecated in favor of 'timeout %s', and will not be supported in future versions.",
-				  args[0], name);
-			retval = 1;
-		}
 	}
 
 	if (*args[2] != 0) {
@@ -817,14 +817,6 @@ int proxy_cfg_ensure_no_http(struct proxy *curproxy)
 		ha_warning("config : cookie will be ignored for %s '%s' (needs 'mode http').\n",
 			   proxy_type_str(curproxy), curproxy->id);
 	}
-	if (curproxy->rsp_exp != NULL) {
-		ha_warning("config : server regular expressions will be ignored for %s '%s' (needs 'mode http').\n",
-			   proxy_type_str(curproxy), curproxy->id);
-	}
-	if (curproxy->req_exp != NULL) {
-		ha_warning("config : client regular expressions will be ignored for %s '%s' (needs 'mode http').\n",
-			   proxy_type_str(curproxy), curproxy->id);
-	}
 	if (curproxy->monitor_uri != NULL) {
 		ha_warning("config : monitor-uri will be ignored for %s '%s' (needs 'mode http').\n",
 			   proxy_type_str(curproxy), curproxy->id);
@@ -865,7 +857,6 @@ void init_new_proxy(struct proxy *p)
 	LIST_INIT(&p->acl);
 	LIST_INIT(&p->http_req_rules);
 	LIST_INIT(&p->http_res_rules);
-	LIST_INIT(&p->block_rules);
 	LIST_INIT(&p->redirect_rules);
 	LIST_INIT(&p->mon_fail_cond);
 	LIST_INIT(&p->switching_rules);
@@ -877,9 +868,7 @@ void init_new_proxy(struct proxy *p)
 	LIST_INIT(&p->tcp_rep.inspect_rules);
 	LIST_INIT(&p->tcp_req.l4_rules);
 	LIST_INIT(&p->tcp_req.l5_rules);
-	LIST_INIT(&p->req_add);
-	LIST_INIT(&p->rsp_add);
-	LIST_INIT(&p->listener_queue);
+	MT_LIST_INIT(&p->listener_queue);
 	LIST_INIT(&p->logsrvs);
 	LIST_INIT(&p->logformat);
 	LIST_INIT(&p->logformat_sd);
@@ -889,7 +878,6 @@ void init_new_proxy(struct proxy *p)
 	LIST_INIT(&p->conf.args.list);
 	LIST_INIT(&p->tcpcheck_rules);
 	LIST_INIT(&p->filter_configs);
-	LIST_INIT(&p->nuster.rules);
 
 	/* Timeouts are defined as -1 */
 	proxy_reset_timeouts(p);
@@ -897,9 +885,6 @@ void init_new_proxy(struct proxy *p)
 
 	/* initial uuid is unassigned (-1) */
 	p->uuid = -1;
-
-	/* HTX is the default mode, for HTTP and TCP */
-	p->options2 |= PR_O2_USE_HTX;
 
 	/* Default to only allow L4 retries */
 	p->retry_type = PR_RE_CONN_FAILED;
@@ -1049,7 +1034,7 @@ struct task *manage_proxy(struct task *t, void *context, unsigned short state)
 	}
 
 	/* The proxy is not limited so we can re-enable any waiting listener */
-	if (!LIST_ISEMPTY(&p->listener_queue))
+	if (!MT_LIST_ISEMPTY(&p->listener_queue))
 		dequeue_all_listeners(&p->listener_queue);
  out:
 	t->expire = next;
@@ -1429,10 +1414,6 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 			     HA_ATOMIC_ADD(&be->beconn, 1));
 	proxy_inc_be_ctr(be);
 
-	/* HTX/legacy must match */
-	if ((strm_fe(s)->options2 ^ be->options2) & PR_O2_USE_HTX)
-		return 0;
-
 	/* assign new parameters to the stream from the new backend */
 	s->si[1].flags &= ~SI_FL_INDEP_STR;
 	if (be->options2 & PR_O2_INDEPSTR)
@@ -1449,7 +1430,7 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 	s->req.analysers |= be->be_req_ana & ~(strm_li(s) ? strm_li(s)->analysers : 0);
 
 	/* If the target backend requires HTTP processing, we have to allocate
-	 * the HTTP transaction and hdr_idx if we did not have one.
+	 * the HTTP transaction if we did not have one.
 	 */
 	if (unlikely(!s->txn && be->http_needed)) {
 		if (unlikely(!http_alloc_txn(s)))
@@ -1465,20 +1446,9 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 		s->req.analysers |= AN_REQ_FLT_HTTP_HDRS;
 
 	if (s->txn) {
-		if (be->options2 & PR_O2_RSPBUG_OK)
-			s->txn->rsp.err_pos = -1; /* let buggy responses pass */
-
-		/* If we chain to an HTTP backend running a different HTTP mode, we
-		 * have to re-adjust the desired keep-alive/close mode to accommodate
-		 * both the frontend's and the backend's modes.
-		 */
-		if (strm_fe(s)->mode == PR_MODE_HTTP && be->mode == PR_MODE_HTTP &&
-		    ((strm_fe(s)->options & PR_O_HTTP_MODE) != (be->options & PR_O_HTTP_MODE)))
-			http_adjust_conn_mode(s, s->txn, &s->txn->req);
-
 		/* If we chain a TCP frontend to an HTX backend, we must upgrade
 		 * the client mux */
-		if (!IS_HTX_STRM(s) && be->mode == PR_MODE_HTTP && (be->options2 & PR_O2_USE_HTX)) {
+		if (!IS_HTX_STRM(s) && be->mode == PR_MODE_HTTP) {
 			struct connection  *conn = objt_conn(strm_sess(s)->origin);
 			struct conn_stream *cs   = objt_cs(s->si[0].end);
 
@@ -1491,7 +1461,7 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 				if (s->si[0].wait_event.events)
 					conn->mux->unsubscribe(cs, s->si[0].wait_event.events,
 					    &s->si[0].wait_event);
-				if (conn_upgrade_mux_fe(conn, cs, &s->req.buf, ist(""), PROTO_MODE_HTX)  == -1)
+				if (conn_upgrade_mux_fe(conn, cs, &s->req.buf, ist(""), PROTO_MODE_HTTP)  == -1)
 					return 0;
 				if (!strcmp(conn->mux->name, "H2")) {
 					/* For HTTP/2, destroy the conn_stream,
@@ -1519,18 +1489,8 @@ int stream_set_backend(struct stream *s, struct proxy *be)
 			return 0;
 		}
 
-		/* If an LB algorithm needs to access some pre-parsed body contents,
-		 * we must not start to forward anything until the connection is
-		 * confirmed otherwise we'll lose the pointer to these data and
-		 * prevent the hash from being doable again after a redispatch.
-		 */
-		if (be->mode == PR_MODE_HTTP &&
-		    (be->lbprm.algo & (BE_LB_KIND | BE_LB_PARM)) == (BE_LB_KIND_HI | BE_LB_HASH_PRM))
-			s->txn->req.flags |= HTTP_MSGF_WAIT_CONN;
-
 		/* we may request to parse a request body */
-		if ((be->options & PR_O_WREQ_BODY) &&
-		    (s->txn->req.body_len || (s->txn->req.flags & HTTP_MSGF_TE_CHNK)))
+		if (be->options & PR_O_WREQ_BODY)
 			s->req.analysers |= AN_REQ_HTTP_BODY;
 	}
 
@@ -1601,8 +1561,8 @@ void proxy_capture_error(struct proxy *proxy, int is_back,
 	es->when    = date; // user-visible date
 	es->srv     = objt_server(target);
 	es->oe      = other_end;
-	if (objt_conn(sess->origin))
-		es->src  = __objt_conn(sess->origin)->addr.from;
+	if (objt_conn(sess->origin) && conn_get_src(__objt_conn(sess->origin)))
+		es->src  = *__objt_conn(sess->origin)->src;
 	else
 		memset(&es->src, 0, sizeof(es->src));
 
@@ -1715,9 +1675,9 @@ void proxy_adjust_all_maxconn()
 static struct cfg_kw_list cfg_kws = {ILH, {
 	{ CFG_GLOBAL, "hard-stop-after", proxy_parse_hard_stop_after },
 	{ CFG_LISTEN, "timeout", proxy_parse_timeout },
-	{ CFG_LISTEN, "clitimeout", proxy_parse_timeout },
-	{ CFG_LISTEN, "contimeout", proxy_parse_timeout },
-	{ CFG_LISTEN, "srvtimeout", proxy_parse_timeout },
+	{ CFG_LISTEN, "clitimeout", proxy_parse_timeout }, /* This keyword actually fails to parse, this line remains for better error messages. */
+	{ CFG_LISTEN, "contimeout", proxy_parse_timeout }, /* This keyword actually fails to parse, this line remains for better error messages. */
+	{ CFG_LISTEN, "srvtimeout", proxy_parse_timeout }, /* This keyword actually fails to parse, this line remains for better error messages. */
 	{ CFG_LISTEN, "rate-limit", proxy_parse_rate_limit },
 	{ CFG_LISTEN, "max-keep-alive-queue", proxy_parse_max_ka_queue },
 	{ CFG_LISTEN, "declare", proxy_parse_declare },
@@ -1736,17 +1696,13 @@ struct proxy *cli_find_frontend(struct appctx *appctx, const char *arg)
 	struct proxy *px;
 
 	if (!*arg) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "A frontend name is expected.\n";
-		appctx->st0 = CLI_ST_PRINT;
+		cli_err(appctx, "A frontend name is expected.\n");
 		return NULL;
 	}
 
 	px = proxy_fe_by_name(arg);
 	if (!px) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "No such frontend.\n";
-		appctx->st0 = CLI_ST_PRINT;
+		cli_err(appctx, "No such frontend.\n");
 		return NULL;
 	}
 	return px;
@@ -1761,17 +1717,13 @@ struct proxy *cli_find_backend(struct appctx *appctx, const char *arg)
 	struct proxy *px;
 
 	if (!*arg) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "A backend name is expected.\n";
-		appctx->st0 = CLI_ST_PRINT;
+		cli_err(appctx, "A backend name is expected.\n");
 		return NULL;
 	}
 
 	px = proxy_be_by_name(arg);
 	if (!px) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "No such backend.\n";
-		appctx->st0 = CLI_ST_PRINT;
+		cli_err(appctx, "No such backend.\n");
 		return NULL;
 	}
 	return px;
@@ -1791,12 +1743,9 @@ static int cli_parse_show_servers(char **args, char *payload, struct appctx *app
 		/* read server state from local file */
 		px = proxy_be_by_name(args[3]);
 
-		if (!px) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "Can't find backend.\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (!px)
+			return cli_err(appctx, "Can't find backend.\n");
+
 		appctx->ctx.cli.p0 = px;
 		appctx->ctx.cli.i0 = px->uuid;
 	}
@@ -2039,20 +1988,12 @@ static int cli_parse_set_dyncookie_key_backend(char **args, char *payload, struc
 	if (!px)
 		return 1;
 
-	if (!*args[4]) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "String value expected.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!*args[4])
+		return cli_err(appctx, "String value expected.\n");
 
 	newkey = strdup(args[4]);
-	if (!newkey) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Failed to allocate memory.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!newkey)
+		return cli_err(appctx, "Failed to allocate memory.\n");
 
 	/* Note: this lock is to make sure this doesn't change while another
 	 * thread is in srv_set_dyncookie().
@@ -2088,20 +2029,12 @@ static int cli_parse_set_maxconn_frontend(char **args, char *payload, struct app
 	if (!px)
 		return 1;
 
-	if (!*args[4]) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Integer value expected.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!*args[4])
+		return cli_err(appctx, "Integer value expected.\n");
 
 	v = atoi(args[4]);
-	if (v < 0) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Value out of range.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (v < 0)
+		return cli_err(appctx, "Value out of range.\n");
 
 	/* OK, the value is fine, so we assign it to the proxy and to all of
 	 * its listeners. The blocked ones will be dequeued.
@@ -2114,7 +2047,7 @@ static int cli_parse_set_maxconn_frontend(char **args, char *payload, struct app
 			resume_listener(l);
 	}
 
-	if (px->maxconn > px->feconn && !LIST_ISEMPTY(&px->listener_queue))
+	if (px->maxconn > px->feconn && !MT_LIST_ISEMPTY(&px->listener_queue))
 		dequeue_all_listeners(&px->listener_queue);
 
 	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
@@ -2137,12 +2070,8 @@ static int cli_parse_shutdown_frontend(char **args, char *payload, struct appctx
 	if (!px)
 		return 1;
 
-	if (px->state == PR_STSTOPPED) {
-		appctx->ctx.cli.severity = LOG_NOTICE;
-		appctx->ctx.cli.msg = "Frontend was already shut down.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (px->state == PR_STSTOPPED)
+		return cli_msg(appctx, LOG_NOTICE, "Frontend was already shut down.\n");
 
 	ha_warning("Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
 		   px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
@@ -2169,30 +2098,19 @@ static int cli_parse_disable_frontend(char **args, char *payload, struct appctx 
 	if (!px)
 		return 1;
 
-	if (px->state == PR_STSTOPPED) {
-		appctx->ctx.cli.severity = LOG_NOTICE;
-		appctx->ctx.cli.msg = "Frontend was previously shut down, cannot disable.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (px->state == PR_STSTOPPED)
+		return cli_msg(appctx, LOG_NOTICE, "Frontend was previously shut down, cannot disable.\n");
 
-	if (px->state == PR_STPAUSED) {
-		appctx->ctx.cli.severity = LOG_NOTICE;
-		appctx->ctx.cli.msg = "Frontend is already disabled.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (px->state == PR_STPAUSED)
+		return cli_msg(appctx, LOG_NOTICE, "Frontend is already disabled.\n");
 
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
 	ret = pause_proxy(px);
 	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
-	if (!ret) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Failed to pause frontend, check logs for precise cause.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!ret)
+		return cli_err(appctx, "Failed to pause frontend, check logs for precise cause.\n");
+
 	return 1;
 }
 
@@ -2212,30 +2130,18 @@ static int cli_parse_enable_frontend(char **args, char *payload, struct appctx *
 	if (!px)
 		return 1;
 
-	if (px->state == PR_STSTOPPED) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Frontend was previously shut down, cannot enable.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (px->state == PR_STSTOPPED)
+		return cli_err(appctx, "Frontend was previously shut down, cannot enable.\n");
 
-	if (px->state != PR_STPAUSED) {
-		appctx->ctx.cli.severity = LOG_NOTICE;
-		appctx->ctx.cli.msg = "Frontend is already enabled.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (px->state != PR_STPAUSED)
+		return cli_msg(appctx, LOG_NOTICE, "Frontend is already enabled.\n");
 
 	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
 	ret = resume_proxy(px);
 	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
-	if (!ret) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Failed to resume frontend, check logs for precise cause (port conflict?).\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!ret)
+		return cli_err(appctx, "Failed to resume frontend, check logs for precise cause (port conflict?).\n");
 	return 1;
 }
 
@@ -2256,12 +2162,8 @@ static int cli_parse_show_errors(char **args, char *payload, struct appctx *appc
 		else
 			appctx->ctx.errors.iid = atoi(args[2]);
 
-		if (!appctx->ctx.errors.iid) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "No such proxy.\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (!appctx->ctx.errors.iid)
+			return cli_err(appctx, "No such proxy.\n");
 	}
 	else
 		appctx->ctx.errors.iid	= -1; // dump all proxies

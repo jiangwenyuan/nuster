@@ -46,9 +46,9 @@ static inline int evports_state_to_events(int state)
 {
 	int events = 0;
 
-	if (state & FD_EV_POLLED_W)
+	if (state & FD_EV_ACTIVE_W)
 		events |= POLLOUT;
-	if (state & FD_EV_POLLED_R)
+	if (state & FD_EV_ACTIVE_R)
 		events |= POLLIN;
 
 	return (events);
@@ -73,19 +73,37 @@ static void _update_fd(int fd)
 
 	en = fdtab[fd].state;
 
-	if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
-		if (!(polled_mask[fd] & tid_bit)) {
+	if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_ACTIVE_RW)) {
+		if (!(polled_mask[fd].poll_recv & tid_bit) &&
+		    !(polled_mask[fd].poll_send & tid_bit)) {
 			/* fd was not watched, it's still not */
 			return;
 		}
 		/* fd totally removed from poll list */
 		events = 0;
-		_HA_ATOMIC_AND(&polled_mask[fd], ~tid_bit);
+		if (polled_mask[fd].poll_recv & tid_bit)
+			_HA_ATOMIC_AND(&polled_mask[fd].poll_recv, ~tid_bit);
+		if (polled_mask[fd].poll_send & tid_bit)
+			_HA_ATOMIC_AND(&polled_mask[fd].poll_send, ~tid_bit);
 	}
 	else {
 		/* OK fd has to be monitored, it was either added or changed */
 		events = evports_state_to_events(en);
-		_HA_ATOMIC_OR(&polled_mask[fd], tid_bit);
+		if (en & FD_EV_ACTIVE_R) {
+			if (!(polled_mask[fd].poll_recv & tid_bit))
+				_HA_ATOMIC_OR(&polled_mask[fd].poll_recv, tid_bit);
+		} else {
+			if (polled_mask[fd].poll_recv & tid_bit)
+				_HA_ATOMIC_AND(&polled_mask[fd].poll_recv, ~tid_bit);
+		}
+		if (en & FD_EV_ACTIVE_W) {
+			if (!(polled_mask[fd].poll_send & tid_bit))
+				_HA_ATOMIC_OR(&polled_mask[fd].poll_send, tid_bit);
+		} else {
+			if (polled_mask[fd].poll_send & tid_bit)
+				_HA_ATOMIC_AND(&polled_mask[fd].poll_send, ~tid_bit);
+		}
+
 	}
 	evports_resync_fd(fd, events);
 }
@@ -140,6 +158,8 @@ REGPRM3 static void _do_poll(struct poller *p, int exp, int wake)
 	}
 
 	thread_harmless_now();
+	if (sleeping_thread_mask & tid_bit)
+		_HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 
 	/*
 	 * Determine how long to wait for events to materialise on the port.
@@ -221,14 +241,10 @@ REGPRM3 static void _do_poll(struct poller *p, int exp, int wake)
 		/*
 		 * Set bits based on the events we received from the port:
 		 */
-		if (events & POLLIN)
-			n |= FD_POLL_IN;
-		if (events & POLLOUT)
-			n |= FD_POLL_OUT;
-		if (events & POLLERR)
-			n |= FD_POLL_ERR;
-		if (events & POLLHUP)
-			n |= FD_POLL_HUP;
+		n = ((events & POLLIN)  ? FD_EV_READY_R : 0) |
+		    ((events & POLLOUT) ? FD_EV_READY_W : 0) |
+		    ((events & POLLHUP) ? FD_EV_SHUT_RW : 0) |
+		    ((events & POLLERR) ? FD_EV_ERR_RW  : 0);
 
 		/*
 		 * Call connection processing callbacks.  Note that it's

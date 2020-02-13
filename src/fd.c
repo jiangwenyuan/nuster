@@ -8,140 +8,70 @@
  * as published by the Free Software Foundation; either version
  * 2 of the License, or (at your option) any later version.
  *
- * This code implements an events cache for file descriptors. It remembers the
- * readiness of a file descriptor after a return from poll() and the fact that
- * an I/O attempt failed on EAGAIN. Events in the cache which are still marked
- * ready and active are processed just as if they were reported by poll().
- *
- * This serves multiple purposes. First, it significantly improves performance
- * by avoiding to subscribe to polling unless absolutely necessary, so most
- * events are processed without polling at all, especially send() which
- * benefits from the socket buffers. Second, it is the only way to support
- * edge-triggered pollers (eg: EPOLL_ET). And third, it enables I/O operations
- * that are backed by invisible buffers. For example, SSL is able to read a
- * whole socket buffer and not deliver it to the application buffer because
- * it's full. Unfortunately, it won't be reported by a poller anymore until
- * some new activity happens. The only way to call it again thus is to keep
- * this readiness information in the cache and to access it without polling
- * once the FD is enabled again.
- *
- * One interesting feature of the cache is that it maintains the principle
- * of speculative I/O introduced in haproxy 1.3 : the first time an event is
- * enabled, the FD is considered as ready so that the I/O attempt is performed
- * via the cache without polling. And the polling happens only when EAGAIN is
- * first met. This avoids polling for HTTP requests, especially when the
- * defer-accept mode is used. It also avoids polling for sending short data
- * such as requests to servers or short responses to clients.
- *
- * The cache consists in a list of active events and a list of updates.
- * Active events are events that are expected to come and that we must report
- * to the application until it asks to stop or asks to poll. Updates are new
- * requests for changing an FD state. Updates are the only way to create new
- * events. This is important because it means that the number of cached events
- * cannot increase between updates and will only grow one at a time while
- * processing updates. All updates must always be processed, though events
- * might be processed by small batches if required.
- *
  * There is no direct link between the FD and the updates list. There is only a
  * bit in the fdtab[] to indicate than a file descriptor is already present in
  * the updates list. Once an fd is present in the updates list, it will have to
  * be considered even if its changes are reverted in the middle or if the fd is
  * replaced.
  *
- * It is important to understand that as long as all expected events are
- * processed, they might starve the polled events, especially because polled
- * I/O starvation quickly induces more cached I/O. One solution to this
- * consists in only processing a part of the events at once, but one drawback
- * is that unhandled events will still wake the poller up. Using an edge-
- * triggered poller such as EPOLL_ET will solve this issue though.
- *
- * Since we do not want to scan all the FD list to find cached I/O events,
- * we store them in a list consisting in a linear array holding only the FD
- * indexes right now. Note that a closed FD cannot exist in the cache, because
- * it is closed by fd_delete() which in turn calls fd_release_cache_entry()
- * which always removes it from the list.
- *
- * The FD array has to hold a back reference to the cache. This reference is
- * always valid unless the FD is not in the cache and is not updated, in which
- * case the reference points to index 0.
- *
  * The event state for an FD, as found in fdtab[].state, is maintained for each
  * direction. The state field is built this way, with R bits in the low nibble
  * and W bits in the high nibble for ease of access and debugging :
  *
  *               7    6    5    4   3    2    1    0
- *             [ 0 | PW | RW | AW | 0 | PR | RR | AR ]
+ *             [ 0 |  0 | RW | AW | 0 |  0 | RR | AR ]
  *
  *                   A* = active     *R = read
- *                   P* = polled     *W = write
- *                   R* = ready
+ *                   R* = ready      *W = write
  *
  * An FD is marked "active" when there is a desire to use it.
- * An FD is marked "polled" when it is registered in the polling.
  * An FD is marked "ready" when it has not faced a new EAGAIN since last wake-up
- * (it is a cache of the last EAGAIN regardless of polling changes).
+ * (it is a cache of the last EAGAIN regardless of polling changes). Each poller
+ * has its own "polled" state for the same fd, as stored in the polled_mask.
  *
- * We have 8 possible states for each direction based on these 3 flags :
+ * We have 4 possible states for each direction based on these 2 flags :
  *
- *   +---+---+---+----------+---------------------------------------------+
- *   | P | R | A | State    | Description				  |
- *   +---+---+---+----------+---------------------------------------------+
- *   | 0 | 0 | 0 | DISABLED | No activity desired, not ready.		  |
- *   | 0 | 0 | 1 | MUSTPOLL | Activity desired via polling.		  |
- *   | 0 | 1 | 0 | STOPPED  | End of activity without polling.		  |
- *   | 0 | 1 | 1 | ACTIVE   | Activity desired without polling.		  |
- *   | 1 | 0 | 0 | ABORT    | Aborted poll(). Not frequently seen.	  |
- *   | 1 | 0 | 1 | POLLED   | FD is being polled.			  |
- *   | 1 | 1 | 0 | PAUSED   | FD was paused while ready (eg: buffer full) |
- *   | 1 | 1 | 1 | READY    | FD was marked ready by poll()		  |
- *   +---+---+---+----------+---------------------------------------------+
+ *   +---+---+----------+---------------------------------------------+
+ *   | R | A | State    | Description                                 |
+ *   +---+---+----------+---------------------------------------------+
+ *   | 0 | 0 | DISABLED | No activity desired, not ready.             |
+ *   | 0 | 1 | ACTIVE   | Activity desired.                           |
+ *   | 1 | 0 | STOPPED  | End of activity.                            |
+ *   | 1 | 1 | READY    | Activity desired and reported.              |
+ *   +---+---+----------+---------------------------------------------+
  *
  * The transitions are pretty simple :
  *   - fd_want_*() : set flag A
  *   - fd_stop_*() : clear flag A
  *   - fd_cant_*() : clear flag R (when facing EAGAIN)
  *   - fd_may_*()  : set flag R (upon return from poll())
- *   - sync()      : if (A) { if (!R) P := 1 } else { P := 0 }
  *
- * The PAUSED, ABORT and MUSTPOLL states are transient for level-trigerred
- * pollers and are fixed by the sync() which happens at the beginning of the
- * poller. For event-triggered pollers, only the MUSTPOLL state will be
- * transient and ABORT will lead to PAUSED. The ACTIVE state is the only stable
- * one which has P != A.
+ * Each poller then computes its own polled state :
+ *     if (A) { if (!R) P := 1 } else { P := 0 }
  *
- * The READY state is a bit special as activity on the FD might be notified
- * both by the poller or by the cache. But it is needed for some multi-layer
- * protocols (eg: SSL) where connection activity is not 100% linked to FD
- * activity. Also some pollers might prefer to implement it as ACTIVE if
- * enabling/disabling the FD is cheap. The READY and ACTIVE states are the
- * two states for which a cache entry is allocated.
+ * The state transitions look like the diagram below.
  *
- * The state transitions look like the diagram below. Only the 4 right states
- * have polling enabled :
- *
- *          (POLLED=0)          (POLLED=1)
- *
- *          +----------+  sync  +-------+
- *          | DISABLED | <----- | ABORT |         (READY=0, ACTIVE=0)
- *          +----------+        +-------+
- *         clr |  ^           set |  ^
- *             |  |               |  |
- *             v  | set           v  | clr
- *          +----------+  sync  +--------+
- *          | MUSTPOLL | -----> | POLLED |        (READY=0, ACTIVE=1)
- *          +----------+        +--------+
- *                ^          poll |  ^
- *                |               |  |
- *                | EAGAIN        v  | EAGAIN
- *           +--------+         +-------+
- *           | ACTIVE |         | READY |         (READY=1, ACTIVE=1)
- *           +--------+         +-------+
- *         clr |  ^           set |  ^
- *             |  |               |  |
- *             v  | set           v  | clr
- *          +---------+   sync  +--------+
- *          | STOPPED | <------ | PAUSED |        (READY=1, ACTIVE=0)
- *          +---------+         +--------+
+ *     may  +----------+
+ *     ,----| DISABLED |    (READY=0, ACTIVE=0)
+ *     |    +----------+
+ *     |  want |  ^
+ *     |       |  |
+ *     |       v  | stop
+ *     |    +----------+
+ *     |    |  ACTIVE  |    (READY=0, ACTIVE=1)
+ *     |    +----------+
+ *     |       |  ^
+ *     |  may  |  |
+ *     |       v  | EAGAIN (cant)
+ *     |     +--------+
+ *     |     | READY  |     (READY=1, ACTIVE=1)
+ *     |     +--------+
+ *     |  stop |  ^
+ *     |       |  |
+ *     |       v  | want
+ *     |    +---------+
+ *     `--->| STOPPED |     (READY=1, ACTIVE=0)
+ *          +---------+
  */
 
 #include <stdio.h>
@@ -150,6 +80,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/resource.h>
+#include <sys/uio.h>
 
 #if defined(USE_POLL)
 #include <poll.h>
@@ -166,7 +97,7 @@
 #include <proto/port_range.h>
 
 struct fdtab *fdtab = NULL;     /* array of all the file descriptors */
-unsigned long *polled_mask = NULL; /* Array for the polled_mask of each fd */
+struct polled_mask *polled_mask = NULL; /* Array for the polled_mask of each fd */
 struct fdinfo *fdinfo = NULL;   /* less-often used infos for file descriptors */
 int totalconn;                  /* total # of terminated sessions */
 int actconn;                    /* # of active sessions */
@@ -175,11 +106,7 @@ struct poller pollers[MAX_POLLERS];
 struct poller cur_poller;
 int nbpollers = 0;
 
-volatile struct fdlist fd_cache ; // FD events cache
-volatile struct fdlist fd_cache_local[MAX_THREADS]; // FD events local for each thread
 volatile struct fdlist update_list; // Global update list
-
-unsigned long fd_cache_mask = 0; // Mask of threads with events in the cache
 
 THREAD_LOCAL int *fd_updt  = NULL;  // FD updates list
 THREAD_LOCAL int  fd_nbupdt = 0;   // number of updates in the list
@@ -380,9 +307,8 @@ static void fd_dodelete(int fd, int do_close)
 	}
 	if (cur_poller.clo)
 		cur_poller.clo(fd);
-	polled_mask[fd] = 0;
+	polled_mask[fd].poll_recv = polled_mask[fd].poll_send = 0;
 
-	fd_release_cache_entry(fd);
 	fdtab[fd].state = 0;
 
 	port_range_release_port(fdinfo[fd].port_range, fdinfo[fd].local_port);
@@ -413,65 +339,90 @@ void fd_remove(int fd)
 	fd_dodelete(fd, 0);
 }
 
-static inline void fdlist_process_cached_events(volatile struct fdlist *fdlist)
+void updt_fd_polling(const int fd)
 {
-	int fd, old_fd, e;
-	unsigned long locked;
+	if ((fdtab[fd].thread_mask & all_threads_mask) == tid_bit) {
 
-	for (old_fd = fd = fdlist->first; fd != -1; fd = fdtab[fd].cache.next) {
-		if (fd == -2) {
-			fd = old_fd;
-			continue;
-		} else if (fd <= -3)
-			fd = -fd - 4;
-		if (fd == -1)
-			break;
-		old_fd = fd;
-		if (!(fdtab[fd].thread_mask & tid_bit))
-			continue;
-		if (fdtab[fd].cache.next < -3)
-			continue;
+		/* note: we don't have a test-and-set yet in hathreads */
 
-		_HA_ATOMIC_OR(&fd_cache_mask, tid_bit);
-		locked = atleast2(fdtab[fd].thread_mask);
-		if (locked && HA_SPIN_TRYLOCK(FD_LOCK, &fdtab[fd].lock)) {
-			activity[tid].fd_lock++;
-			continue;
-		}
+		if (HA_ATOMIC_BTS(&fdtab[fd].update_mask, tid))
+			return;
 
-		e = fdtab[fd].state;
-		fdtab[fd].ev &= FD_POLL_STICKY;
-
-		if ((e & (FD_EV_READY_R | FD_EV_ACTIVE_R)) == (FD_EV_READY_R | FD_EV_ACTIVE_R))
-			fdtab[fd].ev |= FD_POLL_IN;
-
-		if ((e & (FD_EV_READY_W | FD_EV_ACTIVE_W)) == (FD_EV_READY_W | FD_EV_ACTIVE_W))
-			fdtab[fd].ev |= FD_POLL_OUT;
-
-		if (fdtab[fd].iocb && fdtab[fd].owner && fdtab[fd].ev) {
-			if (locked)
-				HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
-			fdtab[fd].iocb(fd);
-		}
-		else {
-			fd_release_cache_entry(fd);
-			if (locked)
-				HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
-		}
-		ti->flags &= ~TI_FL_STUCK; // this thread is still running
+		fd_updt[fd_nbupdt++] = fd;
+	} else {
+		unsigned long update_mask = fdtab[fd].update_mask;
+		do {
+			if (update_mask == fdtab[fd].thread_mask)
+				return;
+		} while (!_HA_ATOMIC_CAS(&fdtab[fd].update_mask, &update_mask,
+		    fdtab[fd].thread_mask));
+		fd_add_to_fd_list(&update_list, fd, offsetof(struct fdtab, update));
 	}
 }
 
-/* Scan and process the cached events. This should be called right after
- * the poller. The loop may cause new entries to be created, for example
- * if a listener causes an accept() to initiate a new incoming connection
- * wanting to attempt an recv().
+/* Tries to send <npfx> parts from <prefix> followed by <nmsg> parts from <msg>
+ * optionally followed by a newline if <nl> is non-null, to file descriptor
+ * <fd>. The message is sent atomically using writev(). It may be truncated to
+ * <maxlen> bytes if <maxlen> is non-null. There is no distinction between the
+ * two lists, it's just a convenience to help the caller prepend some prefixes
+ * when necessary. It takes the fd's lock to make sure no other thread will
+ * write to the same fd in parallel. Returns the number of bytes sent, or <=0
+ * on failure. A limit to 31 total non-empty segments is enforced. The caller
+ * is responsible for taking care of making the fd non-blocking.
  */
-void fd_process_cached_events()
+ssize_t fd_write_frag_line(int fd, size_t maxlen, const struct ist pfx[], size_t npfx, const struct ist msg[], size_t nmsg, int nl)
 {
-	_HA_ATOMIC_AND(&fd_cache_mask, ~tid_bit);
-	fdlist_process_cached_events(&fd_cache_local[tid]);
-	fdlist_process_cached_events(&fd_cache);
+	struct iovec iovec[32];
+	size_t totlen = 0;
+	size_t sent = 0;
+	int vec = 0;
+
+	if (!maxlen)
+		maxlen = ~0;
+
+	/* keep one char for a possible trailing '\n' in any case */
+	maxlen--;
+
+	/* make an iovec from the concatenation of all parts of the original
+	 * message. Skip empty fields and truncate the whole message to maxlen,
+	 * leaving one spare iovec for the '\n'.
+	 */
+	while (vec < (sizeof(iovec) / sizeof(iovec[0]) - 1)) {
+		if (!npfx) {
+			pfx = msg;
+			npfx = nmsg;
+			nmsg = 0;
+			if (!npfx)
+				break;
+		}
+
+		iovec[vec].iov_base = pfx->ptr;
+		iovec[vec].iov_len  = MIN(maxlen, pfx->len);
+		maxlen -= iovec[vec].iov_len;
+		totlen += iovec[vec].iov_len;
+		if (iovec[vec].iov_len)
+			vec++;
+		pfx++; npfx--;
+	};
+
+	if (nl) {
+		iovec[vec].iov_base = "\n";
+		iovec[vec].iov_len  = 1;
+		vec++;
+	}
+
+	if (unlikely(!fdtab[fd].initialized)) {
+		fdtab[fd].initialized = 1;
+		if (!isatty(fd))
+			fcntl(fd, F_SETFL, O_NONBLOCK);
+	}
+
+	HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+	sent = writev(fd, iovec, vec);
+	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+
+	/* sent > 0 if the message was delivered */
+	return sent;
 }
 
 #if defined(USE_CLOSEFROM)
@@ -637,23 +588,19 @@ int init_pollers()
 	if ((fdtab = calloc(global.maxsock, sizeof(struct fdtab))) == NULL)
 		goto fail_tab;
 
-	if ((polled_mask = calloc(global.maxsock, sizeof(unsigned long))) == NULL)
+	if ((polled_mask = calloc(global.maxsock, sizeof(*polled_mask))) == NULL)
 		goto fail_polledmask;
 
 	if ((fdinfo = calloc(global.maxsock, sizeof(struct fdinfo))) == NULL)
 		goto fail_info;
 
-	fd_cache.first = fd_cache.last = -1;
 	update_list.first = update_list.last = -1;
 
 	for (p = 0; p < global.maxsock; p++) {
 		HA_SPIN_INIT(&fdtab[p].lock);
 		/* Mark the fd as out of the fd cache */
-		fdtab[p].cache.next = -3;
 		fdtab[p].update.next = -3;
 	}
-	for (p = 0; p < global.nbthread; p++)
-		fd_cache_local[p].first = fd_cache_local[p].last = -1;
 
 	do {
 		bp = NULL;

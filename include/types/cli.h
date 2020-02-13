@@ -23,6 +23,19 @@
 #include <common/mini-clist.h>
 #include <types/applet.h>
 
+/* Access level for a stats socket */
+#define ACCESS_LVL_NONE     0
+#define ACCESS_LVL_USER     1
+#define ACCESS_LVL_OPER     2
+#define ACCESS_LVL_ADMIN    3
+#define ACCESS_LVL_MASK     0x3
+
+#define ACCESS_FD_LISTENERS 0x4  /* expose listeners FDs on stats socket */
+#define ACCESS_MASTER       0x8  /* works with the master (and every other processes) */
+#define ACCESS_MASTER_ONLY  0x10 /* only works with the worker */
+
+#define ACCESS_EXPERT       0x20 /* access to dangerous commands reserved to experts */
+
 struct cli_kw {
 	const char *str_kw[5];   /* keywords ended by NULL, limited to 5
 				 separated keywords combination */
@@ -46,8 +59,10 @@ enum {
 	CLI_ST_GETREQ,     /* wait for a request */
 	CLI_ST_OUTPUT,     /* all states after this one are responses */
 	CLI_ST_PROMPT,     /* display the prompt (first output, same code) */
-	CLI_ST_PRINT,      /* display message in cli->msg */
-	CLI_ST_PRINT_FREE, /* display message in cli->msg. After the display, free the pointer */
+	CLI_ST_PRINT,      /* display const message in cli->msg */
+	CLI_ST_PRINT_ERR,  /* display const error in cli->msg */
+	CLI_ST_PRINT_DYN,  /* display dynamic message in cli->err. After the display, free the pointer */
+	CLI_ST_PRINT_FREE, /* display dynamic error in cli->err. After the display, free the pointer */
 	CLI_ST_CALLBACK,   /* custom callback pointer */
 };
 

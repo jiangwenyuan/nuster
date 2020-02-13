@@ -466,11 +466,11 @@ struct connection {
 
 	/* third cache line and beyond */
 	void (*destroy_cb)(struct connection *conn);  /* callback to notify of imminent death of the connection */
-	struct {
-		struct sockaddr_storage from;	/* client address, or address to spoof when connecting to the server */
-		struct sockaddr_storage to;	/* address reached by the client, or address to connect to */
-	} addr; /* addresses of the remote side, client for producer and server for consumer */
+	struct sockaddr_storage *src; /* source address (pool), when known, otherwise NULL */
+	struct sockaddr_storage *dst; /* destination address (pool), when known, otherwise NULL */
+	char *proxy_authority;	      /* Value of authority TLV received via PROXYv2 */
 	unsigned int idle_time;                 /* Time the connection was added to the idle list, or 0 if not in the idle list */
+	uint8_t proxy_authority_len;  /* Length of authority TLV received via PROXYv2 */
 };
 
 /* PROTO token registration */
@@ -478,8 +478,7 @@ enum proto_proxy_mode {
 	PROTO_MODE_NONE = 0,
 	PROTO_MODE_TCP  = 1 << 0, // must not be changed!
 	PROTO_MODE_HTTP = 1 << 1, // must not be changed!
-	PROTO_MODE_HTX  = 1 << 2, // must not be changed!
-	PROTO_MODE_ANY  = PROTO_MODE_TCP | PROTO_MODE_HTTP, // note: HTX is experimental and must not appear here
+	PROTO_MODE_ANY  = PROTO_MODE_TCP | PROTO_MODE_HTTP,
 };
 
 enum proto_proxy_side {
@@ -588,6 +587,8 @@ struct tlv_ssl {
 #define PP2_CLIENT_CERT_CONN     0x02
 #define PP2_CLIENT_CERT_SESS     0x04
 
+/* Max length of the authority TLV */
+#define PP2_AUTHORITY_MAX 255
 
 /*
  * Linux seems to be able to send 253 fds per sendmsg(), not sure

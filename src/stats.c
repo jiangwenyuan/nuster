@@ -62,7 +62,6 @@
 #include <proto/pipe.h>
 #include <proto/listener.h>
 #include <proto/map.h>
-#include <proto/proto_http.h>
 #include <proto/proxy.h>
 #include <proto/sample.h>
 #include <proto/session.h>
@@ -72,7 +71,6 @@
 #include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
-
 
 /* status codes available for the stats admin page (strictly 4 chars length) */
 const char *stat_status_codes[STAT_STATUS_SIZE] = {
@@ -90,167 +88,168 @@ const char *stat_status_codes[STAT_STATUS_SIZE] = {
  * to always use the exact same name except that the strings for new names must
  * be lower case or CamelCase while the enum entries must be upper case.
  */
-const char *info_field_names[INF_TOTAL_FIELDS] = {
-	[INF_NAME]                           = "Name",
-	[INF_VERSION]                        = "Version",
-	[INF_RELEASE_DATE]                   = "Release_date",
-	[INF_NBTHREAD]                       = "Nbthread",
-	[INF_NBPROC]                         = "Nbproc",
-	[INF_PROCESS_NUM]                    = "Process_num",
-	[INF_PID]                            = "Pid",
-	[INF_UPTIME]                         = "Uptime",
-	[INF_UPTIME_SEC]                     = "Uptime_sec",
-	[INF_MEMMAX_MB]                      = "Memmax_MB",
-	[INF_POOL_ALLOC_MB]                  = "PoolAlloc_MB",
-	[INF_POOL_USED_MB]                   = "PoolUsed_MB",
-	[INF_POOL_FAILED]                    = "PoolFailed",
-	[INF_ULIMIT_N]                       = "Ulimit-n",
-	[INF_MAXSOCK]                        = "Maxsock",
-	[INF_MAXCONN]                        = "Maxconn",
-	[INF_HARD_MAXCONN]                   = "Hard_maxconn",
-	[INF_CURR_CONN]                      = "CurrConns",
-	[INF_CUM_CONN]                       = "CumConns",
-	[INF_CUM_REQ]                        = "CumReq",
-	[INF_MAX_SSL_CONNS]                  = "MaxSslConns",
-	[INF_CURR_SSL_CONNS]                 = "CurrSslConns",
-	[INF_CUM_SSL_CONNS]                  = "CumSslConns",
-	[INF_MAXPIPES]                       = "Maxpipes",
-	[INF_PIPES_USED]                     = "PipesUsed",
-	[INF_PIPES_FREE]                     = "PipesFree",
-	[INF_CONN_RATE]                      = "ConnRate",
-	[INF_CONN_RATE_LIMIT]                = "ConnRateLimit",
-	[INF_MAX_CONN_RATE]                  = "MaxConnRate",
-	[INF_SESS_RATE]                      = "SessRate",
-	[INF_SESS_RATE_LIMIT]                = "SessRateLimit",
-	[INF_MAX_SESS_RATE]                  = "MaxSessRate",
-	[INF_SSL_RATE]                       = "SslRate",
-	[INF_SSL_RATE_LIMIT]                 = "SslRateLimit",
-	[INF_MAX_SSL_RATE]                   = "MaxSslRate",
-	[INF_SSL_FRONTEND_KEY_RATE]          = "SslFrontendKeyRate",
-	[INF_SSL_FRONTEND_MAX_KEY_RATE]      = "SslFrontendMaxKeyRate",
-	[INF_SSL_FRONTEND_SESSION_REUSE_PCT] = "SslFrontendSessionReuse_pct",
-	[INF_SSL_BACKEND_KEY_RATE]           = "SslBackendKeyRate",
-	[INF_SSL_BACKEND_MAX_KEY_RATE]       = "SslBackendMaxKeyRate",
-	[INF_SSL_CACHE_LOOKUPS]              = "SslCacheLookups",
-	[INF_SSL_CACHE_MISSES]               = "SslCacheMisses",
-	[INF_COMPRESS_BPS_IN]                = "CompressBpsIn",
-	[INF_COMPRESS_BPS_OUT]               = "CompressBpsOut",
-	[INF_COMPRESS_BPS_RATE_LIM]          = "CompressBpsRateLim",
-	[INF_ZLIB_MEM_USAGE]                 = "ZlibMemUsage",
-	[INF_MAX_ZLIB_MEM_USAGE]             = "MaxZlibMemUsage",
-	[INF_TASKS]                          = "Tasks",
-	[INF_RUN_QUEUE]                      = "Run_queue",
-	[INF_IDLE_PCT]                       = "Idle_pct",
-	[INF_NODE]                           = "node",
-	[INF_DESCRIPTION]                    = "description",
-	[INF_STOPPING]                       = "Stopping",
-	[INF_JOBS]                           = "Jobs",
-	[INF_UNSTOPPABLE_JOBS]               = "Unstoppable Jobs",
-	[INF_LISTENERS]                      = "Listeners",
-	[INF_ACTIVE_PEERS]                   = "ActivePeers",
-	[INF_CONNECTED_PEERS]                = "ConnectedPeers",
-	[INF_DROPPED_LOGS]                   = "DroppedLogs",
-	[INF_BUSY_POLLING]                   = "BusyPolling",
-	[INF_FAILED_RESOLUTIONS]             = "FailedResolutions",
-	[INF_TOTAL_BYTES_OUT]                = "TotalBytesOut",
-	[INF_BYTES_OUT_RATE]                 = "BytesOutRate",
+const struct name_desc info_fields[INF_TOTAL_FIELDS] = {
+	[INF_NAME]                           = { .name = "Name",                        .desc = "Product name" },
+	[INF_VERSION]                        = { .name = "Version",                     .desc = "Product version" },
+	[INF_RELEASE_DATE]                   = { .name = "Release_date",                .desc = "Date of latest source code update" },
+	[INF_NBTHREAD]                       = { .name = "Nbthread",                    .desc = "Number of started threads (global.nbthread)" },
+	[INF_NBPROC]                         = { .name = "Nbproc",                      .desc = "Number of started worker processes (global.nbproc)" },
+	[INF_PROCESS_NUM]                    = { .name = "Process_num",                 .desc = "Relative worker process number (1..Nbproc)" },
+	[INF_PID]                            = { .name = "Pid",                         .desc = "This worker process identifier for the system" },
+	[INF_UPTIME]                         = { .name = "Uptime",                      .desc = "How long ago this worker process was started (days+hours+minutes+seconds)" },
+	[INF_UPTIME_SEC]                     = { .name = "Uptime_sec",                  .desc = "How long ago this worker process was started (seconds)" },
+	[INF_MEMMAX_MB]                      = { .name = "Memmax_MB",                   .desc = "Worker process's hard limit on memory usage in MB (-m on command line)" },
+	[INF_POOL_ALLOC_MB]                  = { .name = "PoolAlloc_MB",                .desc = "Amount of memory allocated in pools (in MB)" },
+	[INF_POOL_USED_MB]                   = { .name = "PoolUsed_MB",                 .desc = "Amount of pool memory currently used (in MB)" },
+	[INF_POOL_FAILED]                    = { .name = "PoolFailed",                  .desc = "Number of failed pool allocations since this worker was started" },
+	[INF_ULIMIT_N]                       = { .name = "Ulimit-n",                    .desc = "Hard limit on the number of per-process file descriptors" },
+	[INF_MAXSOCK]                        = { .name = "Maxsock",                     .desc = "Hard limit on the number of per-process sockets" },
+	[INF_MAXCONN]                        = { .name = "Maxconn",                     .desc = "Hard limit on the number of per-process connections (configured or imposed by Ulimit-n)" },
+	[INF_HARD_MAXCONN]                   = { .name = "Hard_maxconn",                .desc = "Hard limit on the number of per-process connections (imposed by Memmax_MB or Ulimit-n)" },
+	[INF_CURR_CONN]                      = { .name = "CurrConns",                   .desc = "Current number of connections on this worker process" },
+	[INF_CUM_CONN]                       = { .name = "CumConns",                    .desc = "Total number of connections on this worker process since started" },
+	[INF_CUM_REQ]                        = { .name = "CumReq",                      .desc = "Total number of requests on this worker process since started" },
+	[INF_MAX_SSL_CONNS]                  = { .name = "MaxSslConns",                 .desc = "Hard limit on the number of per-process SSL endpoints (front+back), 0=unlimited" },
+	[INF_CURR_SSL_CONNS]                 = { .name = "CurrSslConns",                .desc = "Current number of SSL endpoints on this worker process (front+back)" },
+	[INF_CUM_SSL_CONNS]                  = { .name = "CumSslConns",                 .desc = "Total number of SSL endpoints on this worker process since started (front+back)" },
+	[INF_MAXPIPES]                       = { .name = "Maxpipes",                    .desc = "Hard limit on the number of pipes for splicing, 0=unlimited" },
+	[INF_PIPES_USED]                     = { .name = "PipesUsed",                   .desc = "Current number of pipes in use in this worker process" },
+	[INF_PIPES_FREE]                     = { .name = "PipesFree",                   .desc = "Current number of allocated and available pipes in this worker process" },
+	[INF_CONN_RATE]                      = { .name = "ConnRate",                    .desc = "Number of front connections created on this worker process over the last second" },
+	[INF_CONN_RATE_LIMIT]                = { .name = "ConnRateLimit",               .desc = "Hard limit for ConnRate (global.maxconnrate)" },
+	[INF_MAX_CONN_RATE]                  = { .name = "MaxConnRate",                 .desc = "Highest ConnRate reached on this worker process since started (in connections per second)" },
+	[INF_SESS_RATE]                      = { .name = "SessRate",                    .desc = "Number of sessions created on this worker process over the last second" },
+	[INF_SESS_RATE_LIMIT]                = { .name = "SessRateLimit",               .desc = "Hard limit for SessRate (global.maxsessrate)" },
+	[INF_MAX_SESS_RATE]                  = { .name = "MaxSessRate",                 .desc = "Highest SessRate reached on this worker process since started (in sessions per second)" },
+	[INF_SSL_RATE]                       = { .name = "SslRate",                     .desc = "Number of SSL connections created on this worker process over the last second" },
+	[INF_SSL_RATE_LIMIT]                 = { .name = "SslRateLimit",                .desc = "Hard limit for SslRate (global.maxsslrate)" },
+	[INF_MAX_SSL_RATE]                   = { .name = "MaxSslRate",                  .desc = "Highest SslRate reached on this worker process since started (in connections per second)" },
+	[INF_SSL_FRONTEND_KEY_RATE]          = { .name = "SslFrontendKeyRate",          .desc = "Number of SSL keys created on frontends in this worker process over the last second" },
+	[INF_SSL_FRONTEND_MAX_KEY_RATE]      = { .name = "SslFrontendMaxKeyRate",       .desc = "Highest SslFrontendKeyRate reached on this worker process since started (in SSL keys per second)" },
+	[INF_SSL_FRONTEND_SESSION_REUSE_PCT] = { .name = "SslFrontendSessionReuse_pct", .desc = "Percent of frontend SSL connections which did not require a new key" },
+	[INF_SSL_BACKEND_KEY_RATE]           = { .name = "SslBackendKeyRate",           .desc = "Number of SSL keys created on backends in this worker process over the last second" },
+	[INF_SSL_BACKEND_MAX_KEY_RATE]       = { .name = "SslBackendMaxKeyRate",        .desc = "Highest SslBackendKeyRate reached on this worker process since started (in SSL keys per second)" },
+	[INF_SSL_CACHE_LOOKUPS]              = { .name = "SslCacheLookups",             .desc = "Total number of SSL session ID lookups in the SSL session cache on this worker since started" },
+	[INF_SSL_CACHE_MISSES]               = { .name = "SslCacheMisses",              .desc = "Total number of SSL session ID lookups that didn't find a session in the SSL session cache on this worker since started" },
+	[INF_COMPRESS_BPS_IN]                = { .name = "CompressBpsIn",               .desc = "Number of bytes submitted to the HTTP compressor in this worker process over the last second" },
+	[INF_COMPRESS_BPS_OUT]               = { .name = "CompressBpsOut",              .desc = "Number of bytes emitted by the HTTP compressor in this worker process over the last second" },
+	[INF_COMPRESS_BPS_RATE_LIM]          = { .name = "CompressBpsRateLim",          .desc = "Limit of CompressBpsOut beyond which HTTP compression is automatically disabled" },
+	[INF_ZLIB_MEM_USAGE]                 = { .name = "ZlibMemUsage",                .desc = "Amount of memory currently used by HTTP compression on the current worker process (in bytes)" },
+	[INF_MAX_ZLIB_MEM_USAGE]             = { .name = "MaxZlibMemUsage",             .desc = "Limit on the amount of memory used by HTTP compression above which it is automatically disabled (in bytes, see global.maxzlibmem)" },
+	[INF_TASKS]                          = { .name = "Tasks",                       .desc = "Total number of tasks in the current worker process (active + sleeping)" },
+	[INF_RUN_QUEUE]                      = { .name = "Run_queue",                   .desc = "Total number of active tasks+tasklets in the current worker process" },
+	[INF_IDLE_PCT]                       = { .name = "Idle_pct",                    .desc = "Percentage of last second spent waiting in the current worker thread" },
+	[INF_NODE]                           = { .name = "node",                        .desc = "Node name (global.node)" },
+	[INF_DESCRIPTION]                    = { .name = "description",                 .desc = "Node description (global.description)" },
+	[INF_STOPPING]                       = { .name = "Stopping",                    .desc = "1 if the worker process is currently stopping, otherwise zero" },
+	[INF_JOBS]                           = { .name = "Jobs",                        .desc = "Current number of active jobs on the current worker process (frontend connections, master connections, listeners)" },
+	[INF_UNSTOPPABLE_JOBS]               = { .name = "Unstoppable Jobs",            .desc = "Current number of unstoppable jobs on the current worker process (master connections)" },
+	[INF_LISTENERS]                      = { .name = "Listeners",                   .desc = "Current number of active listeners on the current worker process" },
+	[INF_ACTIVE_PEERS]                   = { .name = "ActivePeers",                 .desc = "Current number of verified active peers connections on the current worker process" },
+	[INF_CONNECTED_PEERS]                = { .name = "ConnectedPeers",              .desc = "Current number of peers having passed the connection step on the current worker process" },
+	[INF_DROPPED_LOGS]                   = { .name = "DroppedLogs",                 .desc = "Total number of dropped logs for current worker process since started" },
+	[INF_BUSY_POLLING]                   = { .name = "BusyPolling",                 .desc = "1 if busy-polling is currently in use on the worker process, otherwise zero (config.busy-polling)" },
+	[INF_FAILED_RESOLUTIONS]             = { .name = "FailedResolutions",           .desc = "Total number of failed DNS resolutions in current worker process since started" },
+	[INF_TOTAL_BYTES_OUT]                = { .name = "TotalBytesOut",               .desc = "Total number of bytes emitted by current worker process since started" },
+	[INF_BYTES_OUT_RATE]                 = { .name = "BytesOutRate",                .desc = "Number of bytes emitted by current worker process over the last second" },
+	[INF_DEBUG_COMMANDS_ISSUED]          = { .name = "DebugCommandsIssued",         .desc = "Number of debug commands issued on this process (anything > 0 is unsafe)" },
 };
 
-const char *stat_field_names[ST_F_TOTAL_FIELDS] = {
-	[ST_F_PXNAME]         = "pxname",
-	[ST_F_SVNAME]         = "svname",
-	[ST_F_QCUR]           = "qcur",
-	[ST_F_QMAX]           = "qmax",
-	[ST_F_SCUR]           = "scur",
-	[ST_F_SMAX]           = "smax",
-	[ST_F_SLIM]           = "slim",
-	[ST_F_STOT]           = "stot",
-	[ST_F_BIN]            = "bin",
-	[ST_F_BOUT]           = "bout",
-	[ST_F_DREQ]           = "dreq",
-	[ST_F_DRESP]          = "dresp",
-	[ST_F_EREQ]           = "ereq",
-	[ST_F_ECON]           = "econ",
-	[ST_F_ERESP]          = "eresp",
-	[ST_F_WRETR]          = "wretr",
-	[ST_F_WREDIS]         = "wredis",
-	[ST_F_STATUS]         = "status",
-	[ST_F_WEIGHT]         = "weight",
-	[ST_F_ACT]            = "act",
-	[ST_F_BCK]            = "bck",
-	[ST_F_CHKFAIL]        = "chkfail",
-	[ST_F_CHKDOWN]        = "chkdown",
-	[ST_F_LASTCHG]        = "lastchg",
-	[ST_F_DOWNTIME]       = "downtime",
-	[ST_F_QLIMIT]         = "qlimit",
-	[ST_F_PID]            = "pid",
-	[ST_F_IID]            = "iid",
-	[ST_F_SID]            = "sid",
-	[ST_F_THROTTLE]       = "throttle",
-	[ST_F_LBTOT]          = "lbtot",
-	[ST_F_TRACKED]        = "tracked",
-	[ST_F_TYPE]           = "type",
-	[ST_F_RATE]           = "rate",
-	[ST_F_RATE_LIM]       = "rate_lim",
-	[ST_F_RATE_MAX]       = "rate_max",
-	[ST_F_CHECK_STATUS]   = "check_status",
-	[ST_F_CHECK_CODE]     = "check_code",
-	[ST_F_CHECK_DURATION] = "check_duration",
-	[ST_F_HRSP_1XX]       = "hrsp_1xx",
-	[ST_F_HRSP_2XX]       = "hrsp_2xx",
-	[ST_F_HRSP_3XX]       = "hrsp_3xx",
-	[ST_F_HRSP_4XX]       = "hrsp_4xx",
-	[ST_F_HRSP_5XX]       = "hrsp_5xx",
-	[ST_F_HRSP_OTHER]     = "hrsp_other",
-	[ST_F_HANAFAIL]       = "hanafail",
-	[ST_F_REQ_RATE]       = "req_rate",
-	[ST_F_REQ_RATE_MAX]   = "req_rate_max",
-	[ST_F_REQ_TOT]        = "req_tot",
-	[ST_F_CLI_ABRT]       = "cli_abrt",
-	[ST_F_SRV_ABRT]       = "srv_abrt",
-	[ST_F_COMP_IN]        = "comp_in",
-	[ST_F_COMP_OUT]       = "comp_out",
-	[ST_F_COMP_BYP]       = "comp_byp",
-	[ST_F_COMP_RSP]       = "comp_rsp",
-	[ST_F_LASTSESS]       = "lastsess",
-	[ST_F_LAST_CHK]       = "last_chk",
-	[ST_F_LAST_AGT]       = "last_agt",
-	[ST_F_QTIME]          = "qtime",
-	[ST_F_CTIME]          = "ctime",
-	[ST_F_RTIME]          = "rtime",
-	[ST_F_TTIME]          = "ttime",
-	[ST_F_AGENT_STATUS]   = "agent_status",
-	[ST_F_AGENT_CODE]     = "agent_code",
-	[ST_F_AGENT_DURATION] = "agent_duration",
-	[ST_F_CHECK_DESC]     = "check_desc",
-	[ST_F_AGENT_DESC]     = "agent_desc",
-	[ST_F_CHECK_RISE]     = "check_rise",
-	[ST_F_CHECK_FALL]     = "check_fall",
-	[ST_F_CHECK_HEALTH]   = "check_health",
-	[ST_F_AGENT_RISE]     = "agent_rise",
-	[ST_F_AGENT_FALL]     = "agent_fall",
-	[ST_F_AGENT_HEALTH]   = "agent_health",
-	[ST_F_ADDR]           = "addr",
-	[ST_F_COOKIE]         = "cookie",
-	[ST_F_MODE]           = "mode",
-	[ST_F_ALGO]           = "algo",
-	[ST_F_CONN_RATE]      = "conn_rate",
-	[ST_F_CONN_RATE_MAX]  = "conn_rate_max",
-	[ST_F_CONN_TOT]       = "conn_tot",
-	[ST_F_INTERCEPTED]    = "intercepted",
-	[ST_F_DCON]           = "dcon",
-	[ST_F_DSES]           = "dses",
-	[ST_F_WREW]           = "wrew",
-	[ST_F_CONNECT]        = "connect",
-	[ST_F_REUSE]          = "reuse",
-	[ST_F_CACHE_LOOKUPS]  = "cache_lookups",
-	[ST_F_CACHE_HITS]     = "cache_hits",
-	[ST_F_SRV_ICUR]       = "srv_icur",
-	[ST_F_SRV_ILIM]       = "src_ilim",
-	[ST_F_QT_MAX]         = "qtime_max",
-	[ST_F_CT_MAX]         = "ctime_max",
-	[ST_F_RT_MAX]         = "rtime_max",
-	[ST_F_TT_MAX]         = "ttime_max",
+const struct name_desc stat_fields[ST_F_TOTAL_FIELDS] = {
+	[ST_F_PXNAME]                        = { .name = "pxname",                      .desc = "Proxy name" },
+	[ST_F_SVNAME]                        = { .name = "svname",                      .desc = "Server name" },
+	[ST_F_QCUR]                          = { .name = "qcur",                        .desc = "Current number of connections waiting in the server of backend queue" },
+	[ST_F_QMAX]                          = { .name = "qmax",                        .desc = "Highest value of qcur encountered since process started" },
+	[ST_F_SCUR]                          = { .name = "scur",                        .desc = "Current number of sessions on the frontend, backend or server" },
+	[ST_F_SMAX]                          = { .name = "smax",                        .desc = "Highest value of scur encountered since process started" },
+	[ST_F_SLIM]                          = { .name = "slim",                        .desc = "Frontend/listener/server's maxconn, backend's fullconn" },
+	[ST_F_STOT]                          = { .name = "stot",                        .desc = "Total number of sessions since process started" },
+	[ST_F_BIN]                           = { .name = "bin",                         .desc = "Total number of request bytes since process started" },
+	[ST_F_BOUT]                          = { .name = "bout",                        .desc = "Total number of response bytes since process started" },
+	[ST_F_DREQ]                          = { .name = "dreq",                        .desc = "Total number of denied requests since process started" },
+	[ST_F_DRESP]                         = { .name = "dresp",                       .desc = "Total number of denied responses since process started" },
+	[ST_F_EREQ]                          = { .name = "ereq",                        .desc = "Total number of invalid requests since process started" },
+	[ST_F_ECON]                          = { .name = "econ",                        .desc = "Total number of failed connections to server since the worker process started" },
+	[ST_F_ERESP]                         = { .name = "eresp",                       .desc = "Total number of invalid responses since the worker process started" },
+	[ST_F_WRETR]                         = { .name = "wretr",                       .desc = "Total number of server connection retries since the worker process started" },
+	[ST_F_WREDIS]                        = { .name = "wredis",                      .desc = "Total number of server redispatches due to connection failures since the worker process started" },
+	[ST_F_STATUS]                        = { .name = "status",                      .desc = "Frontend/listen status: OPEN/WAITING/FULL/STOP; backend: UP/DOWN; server: last check status" },
+	[ST_F_WEIGHT]                        = { .name = "weight",                      .desc = "Server weight, or sum of active servers' weights for a backend" },
+	[ST_F_ACT]                           = { .name = "act",                         .desc = "Total number of active UP servers with a non-zero weight" },
+	[ST_F_BCK]                           = { .name = "bck",                         .desc = "Total number of backup UP servers with a non-zero weight" },
+	[ST_F_CHKFAIL]                       = { .name = "chkfail",                     .desc = "Total number of failed individual health checks per server/backend, since the worker process started" },
+	[ST_F_CHKDOWN]                       = { .name = "chkdown",                     .desc = "Total number of failed checks causing UP to DOWN server transitions, per server/backend, since the worker process started" },
+	[ST_F_LASTCHG]                       = { .name = "lastchg",                     .desc = "How long ago the last server state changed, in seconds" },
+	[ST_F_DOWNTIME]                      = { .name = "downtime",                    .desc = "Total time spent in DOWN state, for server or backend" },
+	[ST_F_QLIMIT]                        = { .name = "qlimit",                      .desc = "Limit on the number of connections in queue, for servers only (maxqueue argument)" },
+	[ST_F_PID]                           = { .name = "pid",                         .desc = "Relative worker process number (1..nbproc)" },
+	[ST_F_IID]                           = { .name = "iid",                         .desc = "Frontend or Backend numeric identifier ('id' setting)" },
+	[ST_F_SID]                           = { .name = "sid",                         .desc = "Server numeric identifier ('id' setting)" },
+	[ST_F_THROTTLE]                      = { .name = "throttle",                    .desc = "Throttling ratio applied to a server's maxconn and weight during the slowstart period (0 to 100%)" },
+	[ST_F_LBTOT]                         = { .name = "lbtot",                       .desc = "Total number of requests routed by load balancing since the worker process started (ignores queue pop and stickiness)" },
+	[ST_F_TRACKED]                       = { .name = "tracked",                     .desc = "Name of the other server this server tracks for its state" },
+	[ST_F_TYPE]                          = { .name = "type",                        .desc = "Type of the object (Listener, Frontend, Backend, Server)" },
+	[ST_F_RATE]                          = { .name = "rate",                        .desc = "Total number of sessions processed by this object over the last second (sessions for listeners/frontends, requests for backends/servers)" },
+	[ST_F_RATE_LIM]                      = { .name = "rate_lim",                    .desc = "Limit on the number of sessions accepted in a second (frontend only, 'rate-limit sessions' setting)" },
+	[ST_F_RATE_MAX]                      = { .name = "rate_max",                    .desc = "Highest value of 'rate' observed since the worker process started" },
+	[ST_F_CHECK_STATUS]                  = { .name = "check_status",                .desc = "Status report of the server's latest health check, prefixed with '*' if a check is currently in progress" },
+	[ST_F_CHECK_CODE]                    = { .name = "check_code",                  .desc = "HTTP/SMTP/LDAP status code reported by the latest server health check" },
+	[ST_F_CHECK_DURATION]                = { .name = "check_duration",              .desc = "Total duration of the latest server health check, in milliseconds" },
+	[ST_F_HRSP_1XX]                      = { .name = "hrsp_1xx",                    .desc = "Total number of HTTP responses with status 100-199 returned by this object since the worker process started" },
+	[ST_F_HRSP_2XX]                      = { .name = "hrsp_2xx",                    .desc = "Total number of HTTP responses with status 200-299 returned by this object since the worker process started" },
+	[ST_F_HRSP_3XX]                      = { .name = "hrsp_3xx",                    .desc = "Total number of HTTP responses with status 300-399 returned by this object since the worker process started" },
+	[ST_F_HRSP_4XX]                      = { .name = "hrsp_4xx",                    .desc = "Total number of HTTP responses with status 400-499 returned by this object since the worker process started" },
+	[ST_F_HRSP_5XX]                      = { .name = "hrsp_5xx",                    .desc = "Total number of HTTP responses with status 500-599 returned by this object since the worker process started" },
+	[ST_F_HRSP_OTHER]                    = { .name = "hrsp_other",                  .desc = "Total number of HTTP responses with status <100, >599 returned by this object since the worker process started (error -1 included)" },
+	[ST_F_HANAFAIL]                      = { .name = "hanafail",                    .desc = "Total number of failed checks caused by an 'on-error' directive after an 'observe' condition matched" },
+	[ST_F_REQ_RATE]                      = { .name = "req_rate",                    .desc = "Number of HTTP requests processed over the last second on this object" },
+	[ST_F_REQ_RATE_MAX]                  = { .name = "req_rate_max",                .desc = "Highest value of 'req_rate' observed since the worker process started" },
+	[ST_F_REQ_TOT]                       = { .name = "req_tot",                     .desc = "Total number of HTTP requests processed by this object since the worker process started" },
+	[ST_F_CLI_ABRT]                      = { .name = "cli_abrt",                    .desc = "Total number of requests or connections aborted by the client since the worker process started" },
+	[ST_F_SRV_ABRT]                      = { .name = "srv_abrt",                    .desc = "Total number of requests or connections aborted by the server since the worker process started" },
+	[ST_F_COMP_IN]                       = { .name = "comp_in",                     .desc = "Total number of bytes submitted to the HTTP compressor for this object since the worker process started" },
+	[ST_F_COMP_OUT]                      = { .name = "comp_out",                    .desc = "Total number of bytes emitted by the HTTP compressor for this object since the worker process started" },
+	[ST_F_COMP_BYP]                      = { .name = "comp_byp",                    .desc = "Total number of bytes that bypassed HTTP compression for this object since the worker process started (CPU/memory/bandwidth limitation)" },
+	[ST_F_COMP_RSP]                      = { .name = "comp_rsp",                    .desc = "Total number of HTTP responses that were compressed for this object since the worker process started" },
+	[ST_F_LASTSESS]                      = { .name = "lastsess",                    .desc = "How long ago some traffic was seen on this object on this worker process, in seconds" },
+	[ST_F_LAST_CHK]                      = { .name = "last_chk",                    .desc = "Short description of the latest health check report for this server (see also check_desc)" },
+	[ST_F_LAST_AGT]                      = { .name = "last_agt",                    .desc = "Short description of the latest agent check report for this server (see also agent_desc)" },
+	[ST_F_QTIME]                         = { .name = "qtime",                       .desc = "Time spent in the queue, in milliseconds, averaged over the 1024 last requests (backend/server)" },
+	[ST_F_CTIME]                         = { .name = "ctime",                       .desc = "Time spent waiting for a connection to complete, in milliseconds, averaged over the 1024 last requests (backend/server)" },
+	[ST_F_RTIME]                         = { .name = "rtime",                       .desc = "Time spent waiting for a server response, in milliseconds, averaged over the 1024 last requests (backend/server)" },
+	[ST_F_TTIME]                         = { .name = "ttime",                       .desc = "Total request+response time (request+queue+connect+response+processing), in milliseconds, averaged over the 1024 last requests (backend/server)" },
+	[ST_F_AGENT_STATUS]                  = { .name = "agent_status",                .desc = "Status report of the server's latest agent check, prefixed with '*' if a check is currently in progress" },
+	[ST_F_AGENT_CODE]                    = { .name = "agent_code",                  .desc = "Status code reported by the latest server agent check" },
+	[ST_F_AGENT_DURATION]                = { .name = "agent_duration",              .desc = "Total duration of the latest server agent check, in milliseconds" },
+	[ST_F_CHECK_DESC]                    = { .name = "check_desc",                  .desc = "Textual description of the latest health check report for this server" },
+	[ST_F_AGENT_DESC]                    = { .name = "agent_desc",                  .desc = "Textual description of the latest agent check report for this server" },
+	[ST_F_CHECK_RISE]                    = { .name = "check_rise",                  .desc = "Number of successful health checks before declaring a server UP (server 'rise' setting)" },
+	[ST_F_CHECK_FALL]                    = { .name = "check_fall",                  .desc = "Number of failed health checks before declaring a server DOWN (server 'fall' setting)" },
+	[ST_F_CHECK_HEALTH]                  = { .name = "check_health",                .desc = "Current server health check level (0..fall-1=DOWN, fall..rise-1=UP)" },
+	[ST_F_AGENT_RISE]                    = { .name = "agent_rise",                  .desc = "Number of successful agent checks before declaring a server UP (server 'rise' setting)" },
+	[ST_F_AGENT_FALL]                    = { .name = "agent_fall",                  .desc = "Number of failed agent checks before declaring a server DOWN (server 'fall' setting)" },
+	[ST_F_AGENT_HEALTH]                  = { .name = "agent_health",                .desc = "Current server agent check level (0..fall-1=DOWN, fall..rise-1=UP)" },
+	[ST_F_ADDR]                          = { .name = "addr",                        .desc = "Server's address:port, shown only if show-legends is set, or at levels oper/admin for the CLI" },
+	[ST_F_COOKIE]                        = { .name = "cookie",                      .desc = "Backend's cookie name or Server's cookie value, shown only if show-legends is set, or at levels oper/admin for the CLI" },
+	[ST_F_MODE]                          = { .name = "mode",                        .desc = "'mode' setting (tcp/http/health/cli)" },
+	[ST_F_ALGO]                          = { .name = "algo",                        .desc = "Backend's load balancing algorithm, shown only if show-legends is set, or at levels oper/admin for the CLI" },
+	[ST_F_CONN_RATE]                     = { .name = "conn_rate",                   .desc = "Number of new connections accepted over the last second on the frontend for this worker process" },
+	[ST_F_CONN_RATE_MAX]                 = { .name = "conn_rate_max",               .desc = "Highest value of 'conn_rate' observed since the worker process started" },
+	[ST_F_CONN_TOT]                      = { .name = "conn_tot",                    .desc = "Total number of new connections accepted on this frontend since the worker process started" },
+	[ST_F_INTERCEPTED]                   = { .name = "intercepted",                 .desc = "Total number of HTTP requests intercepted on the frontend (redirects/stats/services) since the worker process started" },
+	[ST_F_DCON]                          = { .name = "dcon",                        .desc = "Total number of incoming connections blocked on a listener/frontend by a tcp-request connection rule since the worker process started" },
+	[ST_F_DSES]                          = { .name = "dses",                        .desc = "Total number of incoming sessions blocked on a listener/frontend by a tcp-request connection rule since the worker process started" },
+	[ST_F_WREW]                          = { .name = "wrew",                        .desc = "Total number of failed HTTP header rewrites since the worker process started" },
+	[ST_F_CONNECT]                       = { .name = "connect",                     .desc = "Total number of outgoing connection attempts on this backend/server since the worker process started" },
+	[ST_F_REUSE]                         = { .name = "reuse",                       .desc = "Total number of reused connection on this backend/server since the worker process started" },
+	[ST_F_CACHE_LOOKUPS]                 = { .name = "cache_lookups",               .desc = "Total number of HTTP requests looked up in the cache on this frontend/backend since the worker process started" },
+	[ST_F_CACHE_HITS]                    = { .name = "cache_hits",                  .desc = "Total number of HTTP requests not found in the cache on this frontend/backend since the worker process started" },
+	[ST_F_SRV_ICUR]                      = { .name = "srv_icur",                    .desc = "Current number of idle connections available for reuse on this server" },
+	[ST_F_SRV_ILIM]                      = { .name = "src_ilim",                    .desc = "Limit on the number of available idle connections on this server (server 'pool_max_conn' directive)" },
+	[ST_F_QT_MAX]                        = { .name = "qtime_max",                   .desc = "Maximum observed time spent in the queue, in milliseconds (backend/server)" },
+	[ST_F_CT_MAX]                        = { .name = "ctime_max",                   .desc = "Maximum observed time spent waiting for a connection to complete, in milliseconds (backend/server)" },
+	[ST_F_RT_MAX]                        = { .name = "rtime_max",                   .desc = "Maximum observed time spent waiting for a server response, in milliseconds (backend/server)" },
+	[ST_F_TT_MAX]                        = { .name = "ttime_max",                   .desc = "Maximum observed total request+response time (request+queue+connect+response+processing), in milliseconds (backend/server)" },
 };
 
 /* one line of info */
@@ -258,6 +257,7 @@ static THREAD_LOCAL struct field info[INF_TOTAL_FIELDS];
 /* one line of stats */
 static THREAD_LOCAL struct field stats[ST_F_TOTAL_FIELDS];
 
+static void stats_dump_json_schema(struct buffer *out);
 
 static int stats_putchk(struct channel *chn, struct htx *htx, struct buffer *chk)
 {
@@ -278,24 +278,16 @@ static int stats_putchk(struct channel *chn, struct htx *htx, struct buffer *chk
 
 static const char *stats_scope_ptr(struct appctx *appctx, struct stream_interface *si)
 {
-	const char *p;
+	struct channel *req = si_oc(si);
+	struct htx *htx = htxbuf(&req->buf);
+	struct htx_blk *blk;
+	struct ist uri;
 
-	if (IS_HTX_STRM(si_strm(si))) {
-		struct channel *req = si_oc(si);
-		struct htx *htx = htxbuf(&req->buf);
-		struct htx_blk *blk;
-		struct ist uri;
-
-		blk = htx_get_head_blk(htx);
-		BUG_ON(!blk || htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
-		ALREADY_CHECKED(blk);
-		uri = htx_sl_req_uri(htx_get_blk_ptr(htx, blk));
-		p = uri.ptr;
-	}
-	else
-		p = co_head(si_oc(si));
-
-	return p + appctx->ctx.stats.scope_str;
+	blk = htx_get_head_blk(htx);
+	BUG_ON(!blk || htx_get_blk_type(blk) != HTX_BLK_REQ_SL);
+	ALREADY_CHECKED(blk);
+	uri = htx_sl_req_uri(htx_get_blk_ptr(htx, blk));
+	return uri.ptr + appctx->ctx.stats.scope_str;
 }
 
 /*
@@ -328,7 +320,7 @@ static void stats_dump_csv_header()
 
 	chunk_appendf(&trash, "# ");
 	for (field = 0; field < ST_F_TOTAL_FIELDS; field++)
-		chunk_appendf(&trash, "%s,", stat_field_names[field]);
+		chunk_appendf(&trash, "%s,", stat_fields[field].name);
 
 	chunk_appendf(&trash, "\n");
 }
@@ -520,7 +512,7 @@ int stats_emit_json_field_tags(struct buffer *out, const struct field *f)
 
 /* Dump all fields from <stats> into <out> using CSV format */
 static int stats_dump_fields_csv(struct buffer *out,
-				 const struct field *stats)
+				 const struct field *stats, unsigned int flags)
 {
 	int field;
 
@@ -536,7 +528,7 @@ static int stats_dump_fields_csv(struct buffer *out,
 
 /* Dump all fields from <stats> into <out> using a typed "field:desc:type:value" format */
 static int stats_dump_fields_typed(struct buffer *out,
-				   const struct field *stats)
+				   const struct field *stats, unsigned int flags)
 {
 	int field;
 
@@ -551,11 +543,13 @@ static int stats_dump_fields_typed(struct buffer *out,
 		              stats[ST_F_TYPE].u.u32 == STATS_TYPE_SV ? 'S' :
 		              '?',
 		              stats[ST_F_IID].u.u32, stats[ST_F_SID].u.u32,
-		              field, stat_field_names[field], stats[ST_F_PID].u.u32);
+		              field, stat_fields[field].name, stats[ST_F_PID].u.u32);
 
 		if (!stats_emit_field_tags(out, &stats[field], ':'))
 			return 0;
 		if (!stats_emit_typed_data_field(out, &stats[field]))
+			return 0;
+		if ((flags & STAT_SHOW_FDESC) && !chunk_appendf(out, ":\"%s\"", stat_fields[field].desc))
 			return 0;
 		if (!chunk_strcat(out, "\n"))
 			return 0;
@@ -565,7 +559,7 @@ static int stats_dump_fields_typed(struct buffer *out,
 
 /* Dump all fields from <stats> into <out> using the "show info json" format */
 static int stats_dump_json_info_fields(struct buffer *out,
-				       const struct field *info)
+				       const struct field *info, unsigned int flags)
 {
 	int field;
 	int started = 0;
@@ -587,7 +581,7 @@ static int stats_dump_json_info_fields(struct buffer *out,
 		chunk_appendf(out,
 			      "{\"field\":{\"pos\":%d,\"name\":\"%s\"},"
 			      "\"processNum\":%u,",
-			      field, info_field_names[field],
+			      field, info_fields[field].name,
 			      info[INF_PROCESS_NUM].u.u32);
 		if (old_len == out->data)
 			goto err;
@@ -615,12 +609,12 @@ err:
 /* Dump all fields from <stats> into <out> using a typed "field:desc:type:value" format */
 static int stats_dump_fields_json(struct buffer *out,
 				  const struct field *stats,
-				  int first_stat)
+				  unsigned int flags)
 {
 	int field;
 	int started = 0;
 
-	if (!first_stat && !chunk_strcat(out, ","))
+	if ((flags & STAT_STARTED) && !chunk_strcat(out, ","))
 		return 0;
 	if (!chunk_strcat(out, "["))
 		return 0;
@@ -654,7 +648,7 @@ static int stats_dump_fields_json(struct buffer *out,
 				"\"processNum\":%u,",
 			       obj_type, stats[ST_F_IID].u.u32,
 			       stats[ST_F_SID].u.u32, field,
-			       stat_field_names[field], stats[ST_F_PID].u.u32);
+			       stat_fields[field].name, stats[ST_F_PID].u.u32);
 		if (old_len == out->data)
 			goto err;
 
@@ -675,15 +669,15 @@ static int stats_dump_fields_json(struct buffer *out,
 
 err:
 	chunk_reset(out);
-	if (!first_stat)
-	    chunk_strcat(out, ",");
+	if (flags & STAT_STARTED)
+		chunk_strcat(out, ",");
 	chunk_appendf(out, "{\"errorStr\":\"output buffer too short\"}");
 	return 0;
 }
 
 /* Dump all fields from <stats> into <out> using the HTML format. A column is
- * reserved for the checkbox is ST_SHOWADMIN is set in <flags>. Some extra info
- * are provided if ST_SHLGNDS is present in <flags>.
+ * reserved for the checkbox is STAT_ADMIN is set in <flags>. Some extra info
+ * are provided if STAT_SHLGNDS is present in <flags>.
  */
 static int stats_dump_fields_html(struct buffer *out,
 				  const struct field *stats,
@@ -696,7 +690,7 @@ static int stats_dump_fields_html(struct buffer *out,
 		              /* name, queue */
 		              "<tr class=\"frontend\">");
 
-		if (flags & ST_SHOWADMIN) {
+		if (flags & STAT_ADMIN) {
 			/* Column sub-heading for Enable or Disable server */
 			chunk_appendf(out, "<td></td>");
 		}
@@ -839,7 +833,7 @@ static int stats_dump_fields_html(struct buffer *out,
 	}
 	else if (stats[ST_F_TYPE].u.u32 == STATS_TYPE_SO) {
 		chunk_appendf(out, "<tr class=socket>");
-		if (flags & ST_SHOWADMIN) {
+		if (flags & STAT_ADMIN) {
 			/* Column sub-heading for Enable or Disable server */
 			chunk_appendf(out, "<td></td>");
 		}
@@ -850,10 +844,10 @@ static int stats_dump_fields_html(struct buffer *out,
 		              "<a class=lfsb href=\"#%s/+%s\">%s</a>"
 		              "",
 		              field_str(stats, ST_F_PXNAME), field_str(stats, ST_F_SVNAME),
-		              (flags & ST_SHLGNDS)?"<u>":"",
+		              (flags & STAT_SHLGNDS)?"<u>":"",
 		              field_str(stats, ST_F_PXNAME), field_str(stats, ST_F_SVNAME), field_str(stats, ST_F_SVNAME));
 
-		if (flags & ST_SHLGNDS) {
+		if (flags & STAT_SHLGNDS) {
 			chunk_appendf(out, "<div class=tips>");
 
 			if (isdigit(*field_str(stats, ST_F_ADDR)))
@@ -878,7 +872,7 @@ static int stats_dump_fields_html(struct buffer *out,
 		              /* bytes: in, out */
 		              "<td>%s</td><td>%s</td>"
 		              "",
-		              (flags & ST_SHLGNDS)?"</u>":"",
+		              (flags & STAT_SHLGNDS)?"</u>":"",
 		              U2H(stats[ST_F_SCUR].u.u32), U2H(stats[ST_F_SMAX].u.u32), U2H(stats[ST_F_SLIM].u.u32),
 		              U2H(stats[ST_F_STOT].u.u64), U2H(stats[ST_F_BIN].u.u64), U2H(stats[ST_F_BOUT].u.u64));
 
@@ -944,7 +938,7 @@ static int stats_dump_fields_html(struct buffer *out,
 			              (stats[ST_F_BCK].u.u32) ? "backup" : "active", style);
 
 
-		if (flags & ST_SHOWADMIN)
+		if (flags & STAT_ADMIN)
 			chunk_appendf(out,
 			              "<td><input class='%s-checkbox' type=\"checkbox\" name=\"s\" value=\"%s\"></td>",
 			              field_str(stats, ST_F_PXNAME),
@@ -955,10 +949,10 @@ static int stats_dump_fields_html(struct buffer *out,
 		              "<a class=lfsb href=\"#%s/%s\">%s</a>"
 		              "",
 		              field_str(stats, ST_F_PXNAME), field_str(stats, ST_F_SVNAME),
-		              (flags & ST_SHLGNDS) ? "<u>" : "",
+		              (flags & STAT_SHLGNDS) ? "<u>" : "",
 		              field_str(stats, ST_F_PXNAME), field_str(stats, ST_F_SVNAME), field_str(stats, ST_F_SVNAME));
 
-		if (flags & ST_SHLGNDS) {
+		if (flags & STAT_SHLGNDS) {
 			chunk_appendf(out, "<div class=tips>");
 
 			if (isdigit(*field_str(stats, ST_F_ADDR)))
@@ -988,7 +982,7 @@ static int stats_dump_fields_html(struct buffer *out,
 		              /* sessions rate : current, max, limit */
 		              "<td>%s</td><td>%s</td><td></td>"
 		              "",
-		              (flags & ST_SHLGNDS) ? "</u>" : "",
+		              (flags & STAT_SHLGNDS) ? "</u>" : "",
 		              U2H(stats[ST_F_QCUR].u.u32), U2H(stats[ST_F_QMAX].u.u32), LIM2A(stats[ST_F_QLIMIT].u.u32, "-"),
 		              U2H(stats[ST_F_RATE].u.u32), U2H(stats[ST_F_RATE_MAX].u.u32));
 
@@ -1204,7 +1198,7 @@ static int stats_dump_fields_html(struct buffer *out,
 	}
 	else if (stats[ST_F_TYPE].u.u32 == STATS_TYPE_BE) {
 		chunk_appendf(out, "<tr class=\"backend\">");
-		if (flags & ST_SHOWADMIN) {
+		if (flags & STAT_ADMIN) {
 			/* Column sub-heading for Enable or Disable server */
 			chunk_appendf(out, "<td></td>");
 		}
@@ -1214,10 +1208,10 @@ static int stats_dump_fields_html(struct buffer *out,
 		              "%s<a name=\"%s/Backend\"></a>"
 		              "<a class=lfsb href=\"#%s/Backend\">Backend</a>"
 		              "",
-		              (flags & ST_SHLGNDS)?"<u>":"",
+		              (flags & STAT_SHLGNDS)?"<u>":"",
 		              field_str(stats, ST_F_PXNAME), field_str(stats, ST_F_PXNAME));
 
-		if (flags & ST_SHLGNDS) {
+		if (flags & STAT_SHLGNDS) {
 			/* balancing */
 			chunk_appendf(out, "<div class=tips>balancing: %s",
 			              field_str(stats, ST_F_ALGO));
@@ -1239,7 +1233,7 @@ static int stats_dump_fields_html(struct buffer *out,
 		              /* sessions rate : current, max, limit */
 		              "<td>%s</td><td>%s</td><td></td>"
 		              "",
-		              (flags & ST_SHLGNDS)?"</u>":"",
+		              (flags & STAT_SHLGNDS)?"</u>":"",
 		              U2H(stats[ST_F_QCUR].u.u32), U2H(stats[ST_F_QMAX].u.u32),
 		              U2H(stats[ST_F_RATE].u.u32), U2H(stats[ST_F_RATE_MAX].u.u32));
 
@@ -1372,23 +1366,18 @@ static int stats_dump_fields_html(struct buffer *out,
 	return 1;
 }
 
-int stats_dump_one_line(const struct field *stats, unsigned int flags, struct proxy *px, struct appctx *appctx)
+static int stats_dump_one_line(const struct field *stats, struct proxy *px, struct appctx *appctx)
 {
 	int ret;
 
-	if ((px->cap & PR_CAP_BE) && px->srv && (appctx->ctx.stats.flags & STAT_ADMIN))
-		flags |= ST_SHOWADMIN;
-
 	if (appctx->ctx.stats.flags & STAT_FMT_HTML)
-		ret = stats_dump_fields_html(&trash, stats, flags);
+		ret = stats_dump_fields_html(&trash, stats, appctx->ctx.stats.flags);
 	else if (appctx->ctx.stats.flags & STAT_FMT_TYPED)
-		ret = stats_dump_fields_typed(&trash, stats);
+		ret = stats_dump_fields_typed(&trash, stats, appctx->ctx.stats.flags);
 	else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
-		ret = stats_dump_fields_json(&trash, stats,
-					     !(appctx->ctx.stats.flags &
-					       STAT_STARTED));
+		ret = stats_dump_fields_json(&trash, stats, appctx->ctx.stats.flags);
 	else
-		ret = stats_dump_fields_csv(&trash, stats);
+		ret = stats_dump_fields_csv(&trash, stats, appctx->ctx.stats.flags);
 
 	if (ret)
 		appctx->ctx.stats.flags |= STAT_STARTED;
@@ -1481,14 +1470,14 @@ static int stats_dump_fe_stats(struct stream_interface *si, struct proxy *px)
 	if (!stats_fill_fe_stats(px, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, 0, px, appctx);
+	return stats_dump_one_line(stats, px, appctx);
 }
 
 /* Fill <stats> with the listener statistics. <stats> is
  * preallocated array of length <len>. The length of the array
  * must be at least ST_F_TOTAL_FIELDS. If this length is less
  * then this value, the function returns 0, otherwise, it
- * returns 1. <flags> can take the value ST_SHLGNDS.
+ * returns 1. <flags> can take the value STAT_SHLGNDS.
  */
 int stats_fill_li_stats(struct proxy *px, struct listener *l, int flags,
                         struct field *stats, int len)
@@ -1525,7 +1514,7 @@ int stats_fill_li_stats(struct proxy *px, struct listener *l, int flags,
 	stats[ST_F_TYPE]     = mkf_u32(FO_CONFIG|FS_SERVICE, STATS_TYPE_SO);
 	stats[ST_F_WREW]     = mkf_u64(FN_COUNTER, l->counters->failed_rewrites);
 
-	if (flags & ST_SHLGNDS) {
+	if (flags & STAT_SHLGNDS) {
 		char str[INET6_ADDRSTRLEN];
 		int port;
 
@@ -1555,18 +1544,17 @@ int stats_fill_li_stats(struct proxy *px, struct listener *l, int flags,
 }
 
 /* Dumps a line for listener <l> and proxy <px> to the trash and uses the state
- * from stream interface <si>, and stats flags <flags>. The caller is responsible
- * for clearing the trash if needed. Returns non-zero if it emits anything, zero
- * otherwise.
+ * from stream interface <si>. The caller is responsible for clearing the trash
+ * if needed. Returns non-zero if it emits anything, zero otherwise.
  */
-static int stats_dump_li_stats(struct stream_interface *si, struct proxy *px, struct listener *l, int flags)
+static int stats_dump_li_stats(struct stream_interface *si, struct proxy *px, struct listener *l)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
 
-	if (!stats_fill_li_stats(px, l, flags, stats, ST_F_TOTAL_FIELDS))
+	if (!stats_fill_li_stats(px, l, appctx->ctx.stats.flags, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, flags, px, appctx);
+	return stats_dump_one_line(stats, px, appctx);
 }
 
 enum srv_stats_state {
@@ -1603,7 +1591,7 @@ static const char *srv_hlt_st[SRV_STATS_STATE_COUNT] = {
  * preallocated array of length <len>. The length of the array
  * must be at least ST_F_TOTAL_FIELDS. If this length is less
  * then this value, the function returns 0, otherwise, it
- * returns 1. <flags> can take the value ST_SHLGNDS.
+ * returns 1. <flags> can take the value STAT_SHLGNDS.
  */
 int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
                         struct field *stats, int len)
@@ -1820,7 +1808,7 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 	stats[ST_F_RT_MAX] = mkf_u32(FN_MAX, sv->counters.dtime_max);
 	stats[ST_F_TT_MAX] = mkf_u32(FN_MAX, sv->counters.ttime_max);
 
-	if (flags & ST_SHLGNDS) {
+	if (flags & STAT_SHLGNDS) {
 		switch (addr_to_str(&sv->addr, str, sizeof(str))) {
 		case AF_INET:
 			stats[ST_F_ADDR] = mkf_str(FO_CONFIG|FS_SERVICE, chunk_newstr(out));
@@ -1849,25 +1837,25 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 }
 
 /* Dumps a line for server <sv> and proxy <px> to the trash and uses the state
- * from stream interface <si>, stats flags <flags>, and server state <state>.
- * The caller is responsible for clearing the trash if needed. Returns non-zero
- * if it emits anything, zero otherwise.
+ * from stream interface <si>, and server state <state>. The caller is
+ * responsible for clearing the trash if needed. Returns non-zero if it emits
+ * anything, zero otherwise.
  */
-static int stats_dump_sv_stats(struct stream_interface *si, struct proxy *px, int flags, struct server *sv)
+static int stats_dump_sv_stats(struct stream_interface *si, struct proxy *px, struct server *sv)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
 
-	if (!stats_fill_sv_stats(px, sv, flags, stats, ST_F_TOTAL_FIELDS))
+	if (!stats_fill_sv_stats(px, sv, appctx->ctx.stats.flags, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, flags, px, appctx);
+	return stats_dump_one_line(stats, px, appctx);
 }
 
 /* Fill <stats> with the backend statistics. <stats> is
  * preallocated array of length <len>. The length of the array
  * must be at least ST_F_TOTAL_FIELDS. If this length is less
  * then this value, the function returns 0, otherwise, it
- * returns 1. <flags> can take the value ST_SHLGNDS.
+ * returns 1. <flags> can take the value STAT_SHLGNDS.
  */
 int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int len)
 {
@@ -1913,7 +1901,7 @@ int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int le
 	stats[ST_F_RATE]     = mkf_u32(0, read_freq_ctr(&px->be_sess_per_sec));
 	stats[ST_F_RATE_MAX] = mkf_u32(0, px->be_counters.sps_max);
 
-	if (flags & ST_SHLGNDS) {
+	if (flags & STAT_SHLGNDS) {
 		if (px->cookie_name)
 			stats[ST_F_COOKIE] = mkf_str(FO_CONFIG|FN_NAME|FS_SERVICE, px->cookie_name);
 		stats[ST_F_ALGO] = mkf_str(FO_CONFIG|FS_SERVICE, backend_lb_algo_str(px->lbprm.algo & BE_LB_ALGO));
@@ -1956,10 +1944,10 @@ int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int le
 }
 
 /* Dumps a line for backend <px> to the trash for and uses the state from stream
- * interface <si> and stats flags <flags>. The caller is responsible for clearing
- * the trash if needed. Returns non-zero if it emits anything, zero otherwise.
+ * interface <si>. The caller is responsible for clearing the trash if needed.
+ * Returns non-zero if it emits anything, zero otherwise.
  */
-static int stats_dump_be_stats(struct stream_interface *si, struct proxy *px, int flags)
+static int stats_dump_be_stats(struct stream_interface *si, struct proxy *px)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
 
@@ -1969,17 +1957,17 @@ static int stats_dump_be_stats(struct stream_interface *si, struct proxy *px, in
 	if ((appctx->ctx.stats.flags & STAT_BOUND) && !(appctx->ctx.stats.type & (1 << STATS_TYPE_BE)))
 		return 0;
 
-	if (!stats_fill_be_stats(px, flags, stats, ST_F_TOTAL_FIELDS))
+	if (!stats_fill_be_stats(px, appctx->ctx.stats.flags, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, flags, px, appctx);
+	return stats_dump_one_line(stats, px, appctx);
 }
 
 /* Dumps the HTML table header for proxy <px> to the trash for and uses the state from
  * stream interface <si> and per-uri parameters <uri>. The caller is responsible
  * for clearing the trash if needed.
  */
-static void stats_dump_html_px_hdr(struct stream_interface *si, struct proxy *px, struct uri_auth *uri)
+static void stats_dump_html_px_hdr(struct stream_interface *si, struct proxy *px)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
 	char scope_txt[STAT_SCOPE_TXT_MAXLEN + sizeof STAT_SCOPE_PATTERN];
@@ -2011,10 +1999,10 @@ static void stats_dump_html_px_hdr(struct stream_interface *si, struct proxy *px
 	              "<a name=\"%s\"></a>%s"
 	              "<a class=px href=\"#%s\">%s</a>",
 	              px->id,
-	              (uri->flags & ST_SHLGNDS) ? "<u>":"",
+	              (appctx->ctx.stats.flags & STAT_SHLGNDS) ? "<u>":"",
 	              px->id, px->id);
 
-	if (uri->flags & ST_SHLGNDS) {
+	if (appctx->ctx.stats.flags & STAT_SHLGNDS) {
 		/* cap, mode, id */
 		chunk_appendf(&trash, "<div class=tips>cap: %s, mode: %s, id: %d",
 		              proxy_cap_str(px->cap), proxy_mode_str(px->mode),
@@ -2029,17 +2017,20 @@ static void stats_dump_html_px_hdr(struct stream_interface *si, struct proxy *px
 	              "</table>\n"
 	              "<table class=\"tbl\" width=\"100%%\">\n"
 	              "<tr class=\"titre\">",
-	              (uri->flags & ST_SHLGNDS) ? "</u>":"",
+	              (appctx->ctx.stats.flags & STAT_SHLGNDS) ? "</u>":"",
 	              px->desc ? "desc" : "empty", px->desc ? px->desc : "");
 
-	if ((px->cap & PR_CAP_BE) && px->srv && (appctx->ctx.stats.flags & STAT_ADMIN)) {
+	if (appctx->ctx.stats.flags & STAT_ADMIN) {
 		/* Column heading for Enable or Disable server */
-        chunk_appendf(&trash,
-                "<th rowspan=2 width=1><input type=\"checkbox\" \
-                onclick=\"for(c in document.getElementsByClassName('%s-checkbox')) \
-                document.getElementsByClassName('%s-checkbox').item(c).checked = this.checked\"></th>",
-                px->id,
-                px->id);
+		if ((px->cap & PR_CAP_BE) && px->srv)
+			chunk_appendf(&trash,
+				      "<th rowspan=2 width=1><input type=\"checkbox\" "
+				      "onclick=\"for(c in document.getElementsByClassName('%s-checkbox')) "
+				      "document.getElementsByClassName('%s-checkbox').item(c).checked = this.checked\"></th>",
+				      px->id,
+				      px->id);
+		else
+			chunk_appendf(&trash, "<th rowspan=2></th>");
 	}
 
 	chunk_appendf(&trash,
@@ -2114,14 +2105,6 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 	struct channel *rep = si_ic(si);
 	struct server *sv, *svs;	/* server and server-state, server-state=server or server->track */
 	struct listener *l;
-	unsigned int flags;
-
-	if (uri)
-		flags = uri->flags;
-	else if ((strm_li(s)->bind_conf->level & ACCESS_LVL_MASK) >= ACCESS_LVL_OPER)
-		flags = ST_SHLGNDS | ST_SHNODE | ST_SHDESC;
-	else
-		flags = ST_SHNODE | ST_SHDESC;
 
 	chunk_reset(&trash);
 
@@ -2172,7 +2155,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 
 	case STAT_PX_ST_TH:
 		if (appctx->ctx.stats.flags & STAT_FMT_HTML) {
-			stats_dump_html_px_hdr(si, px, uri);
+			stats_dump_html_px_hdr(si, px);
 			if (!stats_putchk(rep, htx, &trash))
 				goto full;
 		}
@@ -2216,7 +2199,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 			}
 
 			/* print the frontend */
-			if (stats_dump_li_stats(si, px, l, flags)) {
+			if (stats_dump_li_stats(si, px, l)) {
 				if (!stats_putchk(rep, htx, &trash))
 					goto full;
 			}
@@ -2262,7 +2245,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 				continue;
 			}
 
-			if (stats_dump_sv_stats(si, px, flags, sv)) {
+			if (stats_dump_sv_stats(si, px, sv)) {
 				if (!stats_putchk(rep, htx, &trash))
 					goto full;
 			}
@@ -2273,7 +2256,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 
 	case STAT_PX_ST_BE:
 		/* print the backend */
-		if (stats_dump_be_stats(si, px, flags)) {
+		if (stats_dump_be_stats(si, px)) {
 			if (!stats_putchk(rep, htx, &trash))
 				goto full;
 		}
@@ -2307,7 +2290,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 /* Dumps the HTTP stats head block to the trash for and uses the per-uri
  * parameters <uri>. The caller is responsible for clearing the trash if needed.
  */
-static void stats_dump_html_head(struct uri_auth *uri)
+static void stats_dump_html_head(struct appctx *appctx, struct uri_auth *uri)
 {
 	/* WARNING! This must fit in the first buffer !!! */
 	chunk_appendf(&trash,
@@ -2416,8 +2399,8 @@ static void stats_dump_html_head(struct uri_auth *uri)
 		      "u:hover div.tips {visibility:visible;}\n"
 	              "-->\n"
 	              "</style></head>\n",
-	              (uri->flags & ST_SHNODE) ? " on " : "",
-	              (uri->flags & ST_SHNODE) ? (uri->node ? uri->node : global.node) : ""
+	              (appctx->ctx.stats.flags & STAT_SHNODE) ? " on " : "",
+	              (appctx->ctx.stats.flags & STAT_SHNODE) ? (uri && uri->node ? uri->node : global.node) : ""
 	              );
 }
 
@@ -2484,11 +2467,11 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 	              "<td align=\"left\" valign=\"top\" nowrap width=\"1%%\">"
 	              "<b>Display option:</b><ul style=\"margin-top: 0.25em;\">"
 	              "",
-	              (uri->flags & ST_HIDEVER) ? "" : (stats_version_string),
-	              pid, (uri->flags & ST_SHNODE) ? " on " : "",
-		      (uri->flags & ST_SHNODE) ? (uri->node ? uri->node : global.node) : "",
-	              (uri->flags & ST_SHDESC) ? ": " : "",
-		      (uri->flags & ST_SHDESC) ? (uri->desc ? uri->desc : global.desc) : "",
+	              (appctx->ctx.stats.flags & STAT_HIDEVER) ? "" : (stats_version_string),
+	              pid, (appctx->ctx.stats.flags & STAT_SHNODE) ? " on " : "",
+		      (appctx->ctx.stats.flags & STAT_SHNODE) ? (uri->node ? uri->node : global.node) : "",
+	              (appctx->ctx.stats.flags & STAT_SHDESC) ? ": " : "",
+		      (appctx->ctx.stats.flags & STAT_SHDESC) ? (uri->desc ? uri->desc : global.desc) : "",
 	              pid, relative_pid, global.nbproc, global.nbthread,
 	              up / 86400, (up % 86400) / 3600,
 	              (up % 3600) / 60, (up % 60),
@@ -2563,6 +2546,12 @@ static void stats_dump_html_info(struct stream_interface *si, struct uri_auth *u
 	              uri->uri_prefix,
 	              (uri->refresh > 0) ? ";norefresh" : "",
 		      scope_txt);
+
+	chunk_appendf(&trash,
+	              "<li><a href=\"%s;json%s%s\">JSON export</a> (<a href=\"%s;json-schema\">schema</a>)<br>\n",
+	              uri->uri_prefix,
+	              (uri->refresh > 0) ? ";norefresh" : "",
+		      scope_txt, uri->uri_prefix);
 
 	chunk_appendf(&trash,
 	              "</ul></td>"
@@ -2719,7 +2708,9 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct htx *ht
 
 	case STAT_ST_HEAD:
 		if (appctx->ctx.stats.flags & STAT_FMT_HTML)
-			stats_dump_html_head(uri);
+			stats_dump_html_head(appctx, uri);
+		else if (appctx->ctx.stats.flags & STAT_JSON_SCHM)
+			stats_dump_json_schema(&trash);
 		else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
 			stats_dump_json_header();
 		else if (!(appctx->ctx.stats.flags & STAT_FMT_TYPED))
@@ -2728,6 +2719,10 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct htx *ht
 		if (!stats_putchk(rep, htx, &trash))
 			goto full;
 
+		if (appctx->ctx.stats.flags & STAT_JSON_SCHM) {
+			appctx->st2 = STAT_ST_FIN;
+			return 1;
+		}
 		appctx->st2 = STAT_ST_INFO;
 		/* fall through */
 
@@ -2823,57 +2818,35 @@ static int stats_process_http_post(struct stream_interface *si)
 
 	struct buffer *temp = get_trash_chunk();
 
-	if (IS_HTX_STRM(s)) {
-		struct htx *htx = htxbuf(&s->req.buf);
-		struct htx_blk *blk;
+	struct htx *htx = htxbuf(&s->req.buf);
+	struct htx_blk *blk;
 
-		/*  we need more data */
-		if (s->txn->req.msg_state < HTTP_MSG_DONE) {
-			/* check if we can receive more */
-			if (htx_free_data_space(htx) <= global.tune.maxrewrite) {
-				appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
-				goto out;
-			}
-			goto wait;
-		}
-
-		/* The request was fully received. Copy data */
-		blk = htx_get_head_blk(htx);
-		while (blk) {
-			enum htx_blk_type type = htx_get_blk_type(blk);
-
-			if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
-				break;
-			if (type == HTX_BLK_DATA) {
-				struct ist v = htx_get_blk_value(htx, blk);
-
-				if (!chunk_memcat(temp, v.ptr, v.len)) {
-					appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
-					goto out;
-				}
-			}
-			blk = htx_get_next_blk(htx, blk);
-		}
-	}
-	else {
-		int reql;
-
-		/* we need more data */
-		if (s->txn->req.msg_state < HTTP_MSG_DONE) {
-			/* check if we can receive more */
-			if (c_room(&s->req) <= global.tune.maxrewrite) {
-				appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
-				goto out;
-			}
-			goto wait;
-		}
-		reql = co_getblk(si_oc(si), temp->area, s->txn->req.body_len,
-				 s->txn->req.eoh + 2);
-		if (reql <= 0) {
+	/*  we need more data */
+	if (s->txn->req.msg_state < HTTP_MSG_DONE) {
+		/* check if we can receive more */
+		if (htx_free_data_space(htx) <= global.tune.maxrewrite) {
 			appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
 			goto out;
 		}
-		temp->data = reql;
+		goto wait;
+	}
+
+	/* The request was fully received. Copy data */
+	blk = htx_get_head_blk(htx);
+	while (blk) {
+		enum htx_blk_type type = htx_get_blk_type(blk);
+
+		if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
+			break;
+		if (type == HTX_BLK_DATA) {
+			struct ist v = htx_get_blk_value(htx, blk);
+
+			if (!chunk_memcat(temp, v.ptr, v.len)) {
+				appctx->ctx.stats.st_code = STAT_STATUS_EXCD;
+				goto out;
+			}
+		}
+		blk = htx_get_next_blk(htx, blk);
 	}
 
 	first_param = temp->area;
@@ -3112,12 +3085,7 @@ static int stats_process_http_post(struct stream_interface *si)
 						break;
 					case ST_ADM_ACTION_SHUTDOWN:
 						if (px->state != PR_STSTOPPED) {
-							struct stream *sess, *sess_bck;
-
-							list_for_each_entry_safe(sess, sess_bck, &sv->actconns, by_srv)
-								if (sess->srv_conn == sv)
-									stream_shutdown(sess, SF_ERR_KILLED);
-
+							srv_shutdown_streams(sv, SF_ERR_KILLED);
 							altered_servers++;
 							total_servers++;
 						}
@@ -3164,7 +3132,7 @@ static int stats_process_http_post(struct stream_interface *si)
 }
 
 
-static int stats_send_htx_headers(struct stream_interface *si, struct htx *htx)
+static int stats_send_http_headers(struct stream_interface *si, struct htx *htx)
 {
 	struct stream *s = si_strm(si);
 	struct uri_auth *uri = s->be->uri_auth;
@@ -3182,6 +3150,10 @@ static int stats_send_htx_headers(struct stream_interface *si, struct htx *htx)
 		goto full;
 	if (appctx->ctx.stats.flags & STAT_FMT_HTML) {
 		if (!htx_add_header(htx, ist("Content-Type"), ist("text/html")))
+			goto full;
+	}
+	else if (appctx->ctx.stats.flags & (STAT_FMT_JSON|STAT_JSON_SCHM)) {
+		if (!htx_add_header(htx, ist("Content-Type"), ist("application/json")))
 			goto full;
 	}
 	else {
@@ -3213,7 +3185,7 @@ static int stats_send_htx_headers(struct stream_interface *si, struct htx *htx)
 }
 
 
-static int stats_send_htx_redirect(struct stream_interface *si, struct htx *htx)
+static int stats_send_http_redirect(struct stream_interface *si, struct htx *htx)
 {
 	char scope_txt[STAT_SCOPE_TXT_MAXLEN + sizeof STAT_SCOPE_PATTERN];
 	struct stream *s = si_strm(si);
@@ -3271,90 +3243,13 @@ full:
 	return 0;
 }
 
-static int stats_send_http_headers(struct stream_interface *si)
-{
-	struct stream *s = si_strm(si);
-	struct uri_auth *uri = s->be->uri_auth;
-	struct appctx *appctx = __objt_appctx(si->end);
-
-	chunk_printf(&trash,
-		     "HTTP/1.1 200 OK\r\n"
-		     "Cache-Control: no-cache\r\n"
-		     "Connection: close\r\n"
-		     "Content-Type: %s\r\n",
-		     (appctx->ctx.stats.flags & STAT_FMT_HTML) ? "text/html" : "text/plain");
-
-	if (uri->refresh > 0 && !(appctx->ctx.stats.flags & STAT_NO_REFRESH))
-		chunk_appendf(&trash, "Refresh: %d\r\n",
-			      uri->refresh);
-
-	/* we don't send the CRLF in chunked mode, it will be sent with the first chunk's size */
-
-	if (appctx->ctx.stats.flags & STAT_CHUNKED)
-		chunk_appendf(&trash, "Transfer-Encoding: chunked\r\n");
-	else
-		chunk_appendf(&trash, "\r\n");
-
-	if (ci_putchk(si_ic(si), &trash) == -1) {
-		si_rx_room_blk(si);
-		return 0;
-	}
-
-	return 1;
-}
-
-static int stats_send_http_redirect(struct stream_interface *si)
-{
-	char scope_txt[STAT_SCOPE_TXT_MAXLEN + sizeof STAT_SCOPE_PATTERN];
-	struct stream *s = si_strm(si);
-	struct uri_auth *uri = s->be->uri_auth;
-	struct appctx *appctx = __objt_appctx(si->end);
-
-	/* scope_txt = search pattern + search query, appctx->ctx.stats.scope_len is always <= STAT_SCOPE_TXT_MAXLEN */
-	scope_txt[0] = 0;
-	if (appctx->ctx.stats.scope_len) {
-		strcpy(scope_txt, STAT_SCOPE_PATTERN);
-		memcpy(scope_txt + strlen(STAT_SCOPE_PATTERN), co_head(si_oc(si)) + appctx->ctx.stats.scope_str, appctx->ctx.stats.scope_len);
-		scope_txt[strlen(STAT_SCOPE_PATTERN) + appctx->ctx.stats.scope_len] = 0;
-	}
-
-	/* We don't want to land on the posted stats page because a refresh will
-	 * repost the data. We don't want this to happen on accident so we redirect
-	 * the browse to the stats page with a GET.
-	 */
-	chunk_printf(&trash,
-		     "HTTP/1.1 303 See Other\r\n"
-		     "Cache-Control: no-cache\r\n"
-		     "Content-Type: text/plain\r\n"
-		     "Connection: close\r\n"
-		     "Location: %s;st=%s%s%s%s\r\n"
-		     "Content-length: 0\r\n"
-		     "\r\n",
-		     uri->uri_prefix,
-		     ((appctx->ctx.stats.st_code > STAT_STATUS_INIT) &&
-		      (appctx->ctx.stats.st_code < STAT_STATUS_SIZE) &&
-		      stat_status_codes[appctx->ctx.stats.st_code]) ?
-		     stat_status_codes[appctx->ctx.stats.st_code] :
-		     stat_status_codes[STAT_STATUS_UNKN],
-		     (appctx->ctx.stats.flags & STAT_HIDE_DOWN) ? ";up" : "",
-		     (appctx->ctx.stats.flags & STAT_NO_REFRESH) ? ";norefresh" : "",
-		     scope_txt);
-
-	if (ci_putchk(si_ic(si), &trash) == -1) {
-		si_rx_room_blk(si);
-		return 0;
-	}
-
-	return 1;
-}
-
 
 /* This I/O handler runs as an applet embedded in a stream interface. It is
  * used to send HTTP stats over a TCP socket. The mechanism is very simple.
  * appctx->st0 contains the operation in progress (dump, done). The handler
  * automatically unregisters itself once transfer is complete.
  */
-static void htx_stats_io_handler(struct appctx *appctx)
+static void http_stats_io_handler(struct appctx *appctx)
 {
 	struct stream_interface *si = appctx->owner;
 	struct stream *s = si_strm(si);
@@ -3379,7 +3274,7 @@ static void htx_stats_io_handler(struct appctx *appctx)
 
 	/* all states are processed in sequence */
 	if (appctx->st0 == STAT_HTTP_HEAD) {
-		if (stats_send_htx_headers(si, res_htx)) {
+		if (stats_send_http_headers(si, res_htx)) {
 			if (s->txn->meth == HTTP_METH_HEAD)
 				appctx->st0 = STAT_HTTP_DONE;
 			else
@@ -3400,7 +3295,7 @@ static void htx_stats_io_handler(struct appctx *appctx)
 	}
 
 	if (appctx->st0 == STAT_HTTP_LAST) {
-		if (stats_send_htx_redirect(si, res_htx))
+		if (stats_send_http_redirect(si, res_htx))
 			appctx->st0 = STAT_HTTP_DONE;
 	}
 
@@ -3441,148 +3336,9 @@ static void htx_stats_io_handler(struct appctx *appctx)
 		si_stop_get(si);
 }
 
-
-/* This I/O handler runs as an applet embedded in a stream interface. It is
- * used to send HTTP stats over a TCP socket. The mechanism is very simple.
- * appctx->st0 contains the operation in progress (dump, done). The handler
- * automatically unregisters itself once transfer is complete.
- */
-static void http_stats_io_handler(struct appctx *appctx)
-{
-	struct stream_interface *si = appctx->owner;
-	struct stream *s = si_strm(si);
-	struct channel *req = si_oc(si);
-	struct channel *res = si_ic(si);
-
-	if (IS_HTX_STRM(s))
-		return htx_stats_io_handler(appctx);
-
-	if (unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO))
-		goto out;
-
-	/* Check if the input buffer is available. */
-	if (res->buf.size == 0) {
-		/* already subscribed, we'll be called later once the buffer is
-		 * available.
-		 */
-		goto out;
-	}
-
-	/* check that the output is not closed */
-	if (res->flags & (CF_SHUTW|CF_SHUTW_NOW|CF_SHUTR))
-		appctx->st0 = STAT_HTTP_END;
-
-	/* all states are processed in sequence */
-	if (appctx->st0 == STAT_HTTP_HEAD) {
-		if (stats_send_http_headers(si)) {
-			if (s->txn->meth == HTTP_METH_HEAD)
-				appctx->st0 = STAT_HTTP_DONE;
-			else
-				appctx->st0 = STAT_HTTP_DUMP;
-		}
-	}
-
-	if (appctx->st0 == STAT_HTTP_DUMP) {
-		unsigned int prev_len = ci_data(si_ic(si));
-		unsigned int data_len;
-		unsigned int last_len;
-		unsigned int last_fwd = 0;
-
-		if (appctx->ctx.stats.flags & STAT_CHUNKED) {
-			/* One difficulty we're facing is that we must prevent
-			 * the input data from being automatically forwarded to
-			 * the output area. For this, we temporarily disable
-			 * forwarding on the channel.
-			 */
-			last_fwd = si_ic(si)->to_forward;
-			si_ic(si)->to_forward = 0;
-			chunk_printf(&trash, "\r\n000000\r\n");
-			if (ci_putchk(si_ic(si), &trash) == -1) {
-				si_rx_room_blk(si);
-				si_ic(si)->to_forward = last_fwd;
-				goto out;
-			}
-		}
-
-		data_len = ci_data(si_ic(si));
-		if (stats_dump_stat_to_buffer(si, NULL, s->be->uri_auth))
-			appctx->st0 = STAT_HTTP_DONE;
-
-		last_len = ci_data(si_ic(si));
-
-		/* Now we must either adjust or remove the chunk size. This is
-		 * not easy because the chunk size might wrap at the end of the
-		 * buffer, so we pretend we have nothing in the buffer, we write
-		 * the size, then restore the buffer's contents. Note that we can
-		 * only do that because no forwarding is scheduled on the stats
-		 * applet.
-		 */
-		if (appctx->ctx.stats.flags & STAT_CHUNKED) {
-			si_ic(si)->total -= (last_len - prev_len);
-			b_sub(si_ib(si), (last_len - prev_len));
-
-			if (last_len != data_len) {
-				chunk_printf(&trash, "\r\n%06x\r\n", (last_len - data_len));
-				if (ci_putchk(si_ic(si), &trash) == -1)
-					si_rx_room_blk(si);
-
-				si_ic(si)->total += (last_len - data_len);
-				b_add(si_ib(si), last_len - data_len);
-			}
-			/* now re-enable forwarding */
-			channel_forward(si_ic(si), last_fwd);
-		}
-	}
-
-	if (appctx->st0 == STAT_HTTP_POST) {
-		if (stats_process_http_post(si))
-			appctx->st0 = STAT_HTTP_LAST;
-		else if (si_oc(si)->flags & CF_SHUTR)
-			appctx->st0 = STAT_HTTP_DONE;
-	}
-
-	if (appctx->st0 == STAT_HTTP_LAST) {
-		if (stats_send_http_redirect(si))
-			appctx->st0 = STAT_HTTP_DONE;
-	}
-
-	if (appctx->st0 == STAT_HTTP_DONE) {
-		if (appctx->ctx.stats.flags & STAT_CHUNKED) {
-			chunk_printf(&trash, "\r\n0\r\n\r\n");
-			if (ci_putchk(si_ic(si), &trash) == -1) {
-				si_rx_room_blk(si);
-				goto out;
-			}
-		}
-		appctx->st0 = STAT_HTTP_END;
-	}
-
-	if (appctx->st0 == STAT_HTTP_END) {
-		if (!(res->flags & CF_SHUTR)) {
-			res->flags |= CF_READ_NULL;
-			si_shutr(si);
-		}
-
-		/* eat the whole request */
-		if (co_data(req))
-			co_skip(si_oc(si), co_data(si_oc(si)));
-	}
-
- out:
-	/* we have left the request in the buffer for the case where we
-	 * process a POST, and this automatically re-enables activity on
-	 * read. It's better to indicate that we want to stop reading when
-	 * we're sending, so that we know there's at most one direction
-	 * deciding to wake the applet up. It saves it from looping when
-	 * emitting large blocks into small TCP windows.
-	 */
-	if (!channel_is_empty(res))
-		si_stop_get(si);
-}
-
 /* Dump all fields from <info> into <out> using the "show info" format (name: value) */
 static int stats_dump_info_fields(struct buffer *out,
-				  const struct field *info)
+				  const struct field *info, unsigned int flags)
 {
 	int field;
 
@@ -3590,9 +3346,11 @@ static int stats_dump_info_fields(struct buffer *out,
 		if (!field_format(info, field))
 			continue;
 
-		if (!chunk_appendf(out, "%s: ", info_field_names[field]))
+		if (!chunk_appendf(out, "%s: ", info_fields[field].name))
 			return 0;
 		if (!stats_emit_raw_data_field(out, &info[field]))
+			return 0;
+		if ((flags & STAT_SHOW_FDESC) && !chunk_appendf(out, ":\"%s\"", info_fields[field].desc))
 			return 0;
 		if (!chunk_strcat(out, "\n"))
 			return 0;
@@ -3602,7 +3360,7 @@ static int stats_dump_info_fields(struct buffer *out,
 
 /* Dump all fields from <info> into <out> using the "show info typed" format */
 static int stats_dump_typed_info_fields(struct buffer *out,
-					const struct field *info)
+					const struct field *info, unsigned int flags)
 {
 	int field;
 
@@ -3610,11 +3368,13 @@ static int stats_dump_typed_info_fields(struct buffer *out,
 		if (!field_format(info, field))
 			continue;
 
-		if (!chunk_appendf(out, "%d.%s.%u:", field, info_field_names[field], info[INF_PROCESS_NUM].u.u32))
+		if (!chunk_appendf(out, "%d.%s.%u:", field, info_fields[field].name, info[INF_PROCESS_NUM].u.u32))
 			return 0;
 		if (!stats_emit_field_tags(out, &info[field], ':'))
 			return 0;
 		if (!stats_emit_typed_data_field(out, &info[field]))
+			return 0;
+		if ((flags & STAT_SHOW_FDESC) && !chunk_appendf(out, ":\"%s\"", info_fields[field].desc))
 			return 0;
 		if (!chunk_strcat(out, "\n"))
 			return 0;
@@ -3724,6 +3484,7 @@ int stats_fill_info(struct field *info, int len)
 	info[INF_FAILED_RESOLUTIONS]             = mkf_u32(0, dns_failed_resolutions);
 	info[INF_TOTAL_BYTES_OUT]                = mkf_u64(0, global.out_bytes);
 	info[INF_BYTES_OUT_RATE]                 = mkf_u64(FN_RATE, (unsigned long long)read_freq_ctr(&global.out_32bps) * 32);
+	info[INF_DEBUG_COMMANDS_ISSUED]          = mkf_u32(0, debug_commands_issued);
 
 	return 1;
 }
@@ -3742,11 +3503,11 @@ static int stats_dump_info_to_buffer(struct stream_interface *si)
 	chunk_reset(&trash);
 
 	if (appctx->ctx.stats.flags & STAT_FMT_TYPED)
-		stats_dump_typed_info_fields(&trash, info);
+		stats_dump_typed_info_fields(&trash, info, appctx->ctx.stats.flags);
 	else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
-		stats_dump_json_info_fields(&trash, info);
+		stats_dump_json_info_fields(&trash, info, appctx->ctx.stats.flags);
 	else
-		stats_dump_info_fields(&trash, info);
+		stats_dump_info_fields(&trash, info, appctx->ctx.stats.flags);
 
 	if (ci_putchk(si_ic(si), &trash) == -1) {
 		si_rx_room_blk(si);
@@ -4056,52 +3817,63 @@ static int cli_parse_clear_counters(char **args, char *payload, struct appctx *a
 
 static int cli_parse_show_info(char **args, char *payload, struct appctx *appctx, void *private)
 {
+	int arg = 2;
+
 	appctx->ctx.stats.scope_str = 0;
 	appctx->ctx.stats.scope_len = 0;
 	appctx->ctx.stats.flags = 0;
 
-	if (strcmp(args[2], "typed") == 0)
-		appctx->ctx.stats.flags |= STAT_FMT_TYPED;
-	else if (strcmp(args[2], "json") == 0)
-		appctx->ctx.stats.flags |= STAT_FMT_JSON;
+	while (*args[arg]) {
+		if (strcmp(args[arg], "typed") == 0)
+			appctx->ctx.stats.flags = (appctx->ctx.stats.flags & ~STAT_FMT_MASK) | STAT_FMT_TYPED;
+		else if (strcmp(args[arg], "json") == 0)
+			appctx->ctx.stats.flags = (appctx->ctx.stats.flags & ~STAT_FMT_MASK) | STAT_FMT_JSON;
+		else if (strcmp(args[arg], "desc") == 0)
+			appctx->ctx.stats.flags |= STAT_SHOW_FDESC;
+		arg++;
+	}
 	return 0;
 }
 
 
 static int cli_parse_show_stat(char **args, char *payload, struct appctx *appctx, void *private)
 {
+	int arg = 2;
+
 	appctx->ctx.stats.scope_str = 0;
 	appctx->ctx.stats.scope_len = 0;
-	appctx->ctx.stats.flags = 0;
+	appctx->ctx.stats.flags = STAT_SHNODE | STAT_SHDESC;
 
-	if (*args[2] && *args[3] && *args[4]) {
+	if ((strm_li(si_strm(appctx->owner))->bind_conf->level & ACCESS_LVL_MASK) >= ACCESS_LVL_OPER)
+		appctx->ctx.stats.flags |= STAT_SHLGNDS;
+
+	if (*args[arg] && *args[arg+1] && *args[arg+2]) {
 		struct proxy *px;
 
-		px = proxy_find_by_name(args[2], 0, 0);
+		px = proxy_find_by_name(args[arg], 0, 0);
 		if (px)
 			appctx->ctx.stats.iid = px->uuid;
 		else
-			appctx->ctx.stats.iid = atoi(args[2]);
+			appctx->ctx.stats.iid = atoi(args[arg]);
 
-		if (!appctx->ctx.stats.iid) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "No such proxy.\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (!appctx->ctx.stats.iid)
+			return cli_err(appctx, "No such proxy.\n");
 
 		appctx->ctx.stats.flags |= STAT_BOUND;
-		appctx->ctx.stats.type = atoi(args[3]);
-		appctx->ctx.stats.sid = atoi(args[4]);
-		if (strcmp(args[5], "typed") == 0)
-			appctx->ctx.stats.flags |= STAT_FMT_TYPED;
-		else if (strcmp(args[5], "json") == 0)
-			appctx->ctx.stats.flags |= STAT_FMT_JSON;
+		appctx->ctx.stats.type = atoi(args[arg+1]);
+		appctx->ctx.stats.sid = atoi(args[arg+2]);
+		arg += 3;
 	}
-	else if (strcmp(args[2], "typed") == 0)
-		appctx->ctx.stats.flags |= STAT_FMT_TYPED;
-	else if (strcmp(args[2], "json") == 0)
-		appctx->ctx.stats.flags |= STAT_FMT_JSON;
+
+	while (*args[arg]) {
+		if (strcmp(args[arg], "typed") == 0)
+			appctx->ctx.stats.flags = (appctx->ctx.stats.flags & ~STAT_FMT_MASK) | STAT_FMT_TYPED;
+		else if (strcmp(args[arg], "json") == 0)
+			appctx->ctx.stats.flags = (appctx->ctx.stats.flags & ~STAT_FMT_MASK) | STAT_FMT_JSON;
+		else if (strcmp(args[arg], "desc") == 0)
+			appctx->ctx.stats.flags |= STAT_SHOW_FDESC;
+		arg++;
+	}
 
 	return 0;
 }
@@ -4127,8 +3899,8 @@ static int cli_io_handler_dump_json_schema(struct appctx *appctx)
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
 	{ { "clear", "counters",  NULL }, "clear counters : clear max statistics counters (add 'all' for all counters)", cli_parse_clear_counters, NULL, NULL },
-	{ { "show", "info",  NULL }, "show info      : report information about the running process [json|typed]", cli_parse_show_info, cli_io_handler_dump_info, NULL },
-	{ { "show", "stat",  NULL }, "show stat      : report counters for each proxy and server [json|typed]", cli_parse_show_stat, cli_io_handler_dump_stat, NULL },
+	{ { "show", "info",  NULL }, "show info      : report information about the running process [desc|json|typed]*", cli_parse_show_info, cli_io_handler_dump_info, NULL },
+	{ { "show", "stat",  NULL }, "show stat      : report counters for each proxy and server [desc|json|typed]*", cli_parse_show_stat, cli_io_handler_dump_stat, NULL },
 	{ { "show", "schema",  "json", NULL }, "show schema json : report schema used for stats", NULL, cli_io_handler_dump_json_schema, NULL },
 	{{},}
 }};

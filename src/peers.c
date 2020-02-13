@@ -40,7 +40,6 @@
 #include <proto/fd.h>
 #include <proto/frontend.h>
 #include <proto/log.h>
-#include <proto/hdr_idx.h>
 #include <proto/mux_pt.h>
 #include <proto/peers.h>
 #include <proto/proxy.h>
@@ -2503,8 +2502,6 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 	struct appctx *appctx;
 	struct session *sess;
 	struct stream *s;
-	struct connection *conn;
-	struct conn_stream *cs;
 
 	peer->reconnect = tick_add(now_ms, MS_TO_TICKS(PEER_RECONNECT_TIMEOUT));
 	peer->heartbeat = tick_add(now_ms, MS_TO_TICKS(PEER_HEARTBEAT_TIMEOUT));
@@ -2529,35 +2526,17 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 		goto out_free_sess;
 	}
 
-	/* The tasks below are normally what is supposed to be done by
-	 * fe->accept().
-	 */
-	s->flags = SF_ASSIGNED|SF_ADDR_SET;
-
 	/* applet is waiting for data */
 	si_cant_get(&s->si[0]);
 	appctx_wakeup(appctx);
 
 	/* initiate an outgoing connection */
-	s->si[1].flags |= SI_FL_NOLINGER;
-	si_set_state(&s->si[1], SI_ST_ASS);
-
-	/* automatically prepare the stream interface to connect to the
-	 * pre-initialized connection in si->conn.
-	 */
-	if (unlikely((conn = conn_new()) == NULL))
+	s->target = peer_session_target(peer, s);
+	if (!sockaddr_alloc(&s->target_addr))
 		goto out_free_strm;
-
-	if (unlikely((cs = cs_new(conn)) == NULL))
-		goto out_free_conn;
-
-	conn->target = s->target = peer_session_target(peer, s);
-	memcpy(&conn->addr.to, &peer->addr, sizeof(conn->addr.to));
-
-	conn_prepare(conn, peer->proto, peer_xprt(peer));
-	if (conn_install_mux(conn, &mux_pt_ops, cs, s->be, NULL) < 0)
-		goto out_free_cs;
-	si_attach_cs(&s->si[1], cs);
+	*s->target_addr = peer->addr;
+	s->flags = SF_ASSIGNED|SF_ADDR_SET;
+	s->si[1].flags |= SI_FL_NOLINGER;
 
 	s->do_log = NULL;
 	s->uniq_id = 0;
@@ -2570,10 +2549,6 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 	return appctx;
 
 	/* Error unrolling */
-out_free_cs:
-	cs_free(cs);
- out_free_conn:
-	conn_free(conn);
  out_free_strm:
 	LIST_DEL(&s->list);
 	pool_free(pool_head_stream, s);
@@ -3055,12 +3030,8 @@ static int cli_parse_show_peers(char **args, char *payload, struct appctx *appct
 			}
 		}
 
-		if (!p) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "No such peers\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (!p)
+			return cli_err(appctx, "No such peers\n");
 	}
 
 	return 0;
@@ -3145,23 +3116,20 @@ static int peers_dump_peer(struct buffer *msg, struct stream_interface *si, stru
 	if (conn)
 		chunk_appendf(&trash, "\n        xprt=%s", conn_get_xprt_name(conn));
 
-	switch (conn ? addr_to_str(&conn->addr.from, pn, sizeof(pn)) : AF_UNSPEC) {
+	switch (conn && conn_get_src(conn) ? addr_to_str(conn->src, pn, sizeof(pn)) : AF_UNSPEC) {
 	case AF_INET:
 	case AF_INET6:
-		chunk_appendf(&trash, " src=%s:%d", pn, get_host_port(&conn->addr.from));
+		chunk_appendf(&trash, " src=%s:%d", pn, get_host_port(conn->src));
 		break;
 	case AF_UNIX:
 		chunk_appendf(&trash, " src=unix:%d", strm_li(peer_s)->luid);
 		break;
 	}
 
-	if (conn)
-		conn_get_to_addr(conn);
-
-	switch (conn ? addr_to_str(&conn->addr.to, pn, sizeof(pn)) : AF_UNSPEC) {
+	switch (conn && conn_get_dst(conn) ? addr_to_str(conn->dst, pn, sizeof(pn)) : AF_UNSPEC) {
 	case AF_INET:
 	case AF_INET6:
-		chunk_appendf(&trash, " addr=%s:%d", pn, get_host_port(&conn->addr.to));
+		chunk_appendf(&trash, " addr=%s:%d", pn, get_host_port(conn->dst));
 		break;
 	case AF_UNIX:
 		chunk_appendf(&trash, " addr=unix:%d", strm_li(peer_s)->luid);

@@ -38,6 +38,8 @@
 #include <types/global.h>
 #include <types/task.h>
 
+#include <proto/fd.h>
+
 /* Principle of the wait queue.
  *
  * We want to be able to tell whether an expiration date is before of after the
@@ -91,7 +93,7 @@ extern unsigned int niced_tasks;  /* number of niced tasks in the run queue */
 extern struct pool_head *pool_head_task;
 extern struct pool_head *pool_head_tasklet;
 extern struct pool_head *pool_head_notification;
-extern THREAD_LOCAL struct task *curr_task; /* task currently running or NULL */
+extern THREAD_LOCAL struct task_per_thread *sched; /* current's thread scheduler context */
 #ifdef USE_THREAD
 extern struct eb_root timers;      /* sorted timers tree, global */
 extern struct eb_root rqueue;      /* tree constituting the run queue */
@@ -134,11 +136,11 @@ static inline void task_wakeup(struct task *t, unsigned int f)
 	struct eb_root *root;
 
 	if (t->thread_mask == tid_bit || global.nbthread == 1)
-		root = &task_per_thread[tid].rqueue;
+		root = &sched->rqueue;
 	else
 		root = &rqueue;
 #else
-	struct eb_root *root = &task_per_thread[tid].rqueue;
+	struct eb_root *root = &sched->rqueue;
 #endif
 
 	state = _HA_ATOMIC_OR(&t->state, f);
@@ -215,7 +217,7 @@ static inline struct task *__task_unlink_rq(struct task *t)
 		global_rqueue_size--;
 	} else
 #endif
-		task_per_thread[tid].rqueue_size--;
+		sched->rqueue_size--;
 	eb32sc_delete(&t->rq);
 	if (likely(t->nice))
 		_HA_ATOMIC_SUB(&niced_tasks, 1);
@@ -240,10 +242,22 @@ static inline struct task *task_unlink_rq(struct task *t)
 
 static inline void tasklet_wakeup(struct tasklet *tl)
 {
-	if (!LIST_ISEMPTY(&tl->list))
-		return;
-	LIST_ADDQ(&task_per_thread[tid].task_list, &tl->list);
-	_HA_ATOMIC_ADD(&tasks_run_queue, 1);
+	if (likely(tl->tid < 0)) {
+		/* this tasklet runs on the caller thread */
+		if (LIST_ISEMPTY(&tl->list)) {
+			LIST_ADDQ(&task_per_thread[tid].task_list, &tl->list);
+			_HA_ATOMIC_ADD(&tasks_run_queue, 1);
+		}
+	} else {
+		/* this tasklet runs on a specific thread */
+		if (MT_LIST_ADDQ(&task_per_thread[tl->tid].shared_tasklet_list, (struct mt_list *)&tl->list) == 1) {
+			_HA_ATOMIC_ADD(&tasks_run_queue, 1);
+			if (sleeping_thread_mask & (1UL << tl->tid)) {
+				_HA_ATOMIC_AND(&sleeping_thread_mask, ~(1UL << tl->tid));
+				wake_thread(tl->tid);
+			}
+		}
+	}
 
 }
 
@@ -253,12 +267,14 @@ static inline void tasklet_wakeup(struct tasklet *tl)
 static inline void tasklet_insert_into_tasklet_list(struct tasklet *tl)
 {
 	_HA_ATOMIC_ADD(&tasks_run_queue, 1);
-	LIST_ADDQ(&task_per_thread[tid].task_list, &tl->list);
+	LIST_ADDQ(&sched->task_list, &tl->list);
 }
 
 /* Remove the tasklet from the tasklet list. The tasklet MUST already be there.
  * If unsure, use tasklet_remove_from_tasklet_list() instead. If used with a
  * plain task, the caller must update the task_list_size.
+ * This should only be used by the thread that owns the tasklet, any other
+ * thread should use tasklet_cancel().
  */
 static inline void __tasklet_remove_from_tasklet_list(struct tasklet *t)
 {
@@ -268,8 +284,8 @@ static inline void __tasklet_remove_from_tasklet_list(struct tasklet *t)
 
 static inline void tasklet_remove_from_tasklet_list(struct tasklet *t)
 {
-	if (likely(!LIST_ISEMPTY(&t->list)))
-		__tasklet_remove_from_tasklet_list(t);
+	if (MT_LIST_DEL((struct mt_list *)&t->list))
+		_HA_ATOMIC_SUB(&tasks_run_queue, 1);
 }
 
 /*
@@ -295,15 +311,23 @@ static inline struct task *task_init(struct task *t, unsigned long thread_mask)
 	return t;
 }
 
+/* Initialize a new tasklet. It's identified as a tasklet by ->nice=-32768. It
+ * is expected to run on the calling thread by default, it's up to the caller
+ * to change ->tid if it wants to own it.
+ */
 static inline void tasklet_init(struct tasklet *t)
 {
 	t->nice = -32768;
 	t->calls = 0;
 	t->state = 0;
 	t->process = NULL;
+	t->tid = -1;
 	LIST_INIT(&t->list);
 }
 
+/* Allocate and initialize a new tasklet, local to the thread by default. The
+ * caller may assing its tid if it wants to own the tasklet.
+ */
 static inline struct tasklet *tasklet_new(void)
 {
 	struct tasklet *t = pool_alloc(pool_head_tasklet);
@@ -335,8 +359,8 @@ static inline struct task *task_new(unsigned long thread_mask)
  */
 static inline void __task_free(struct task *t)
 {
-	if (t == curr_task) {
-		curr_task = NULL;
+	if (t == sched->current) {
+		sched->current = NULL;
 		__ha_barrier_store();
 	}
 	pool_free(pool_head_task, t);
@@ -364,26 +388,26 @@ static inline void task_destroy(struct task *t)
 	/* There's no need to protect t->state with a lock, as the task
 	 * has to run on the current thread.
 	 */
-	if (t == curr_task || !(t->state & (TASK_QUEUED | TASK_RUNNING)))
+	if (t == sched->current || !(t->state & (TASK_QUEUED | TASK_RUNNING)))
 		__task_free(t);
 	else
 		t->process = NULL;
 }
 
+/* Should only be called by the thread responsible for the tasklet */
 static inline void tasklet_free(struct tasklet *tl)
 {
-	if (!LIST_ISEMPTY(&tl->list)) {
-		LIST_DEL(&tl->list);
+	if (MT_LIST_DEL((struct mt_list *)&tl->list))
 		_HA_ATOMIC_SUB(&tasks_run_queue, 1);
-	}
 
-	if ((struct task *)tl == curr_task) {
-		curr_task = NULL;
-		__ha_barrier_store();
-	}
 	pool_free(pool_head_tasklet, tl);
 	if (unlikely(stopping))
 		pool_flush(pool_head_tasklet);
+}
+
+static inline void tasklet_set_tid(struct tasklet *tl, int tid)
+{
+	tl->tid = tid;
 }
 
 void __task_queue(struct task *task, struct eb_root *wq);
@@ -419,7 +443,7 @@ static inline void task_queue(struct task *task)
 	{
 		BUG_ON((task->thread_mask & tid_bit) == 0); // should have TASK_SHARED_WQ
 		if (!task_in_wq(task) || tick_is_lt(task->expire, task->wq.key))
-			__task_queue(task, &task_per_thread[tid].timers);
+			__task_queue(task, &sched->timers);
 	}
 }
 
@@ -453,7 +477,7 @@ static inline void task_schedule(struct task *task, int when)
 
 		task->expire = when;
 		if (!task_in_wq(task) || tick_is_lt(task->expire, task->wq.key))
-			__task_queue(task, &task_per_thread[tid].timers);
+			__task_queue(task, &sched->timers);
 	}
 }
 
@@ -556,14 +580,14 @@ static inline int notification_registered(struct list *wake)
 static inline int thread_has_tasks(void)
 {
 	return (!!(global_tasks_mask & tid_bit) |
-	        (task_per_thread[tid].rqueue_size > 0) |
-	        !LIST_ISEMPTY(&task_per_thread[tid].task_list));
+	        (sched->rqueue_size > 0) |
+	        !LIST_ISEMPTY(&sched->task_list) | !MT_LIST_ISEMPTY(&sched->shared_tasklet_list));
 }
 
 /* adds list item <item> to work list <work> and wake up the associated task */
-static inline void work_list_add(struct work_list *work, struct list *item)
+static inline void work_list_add(struct work_list *work, struct mt_list *item)
 {
-	LIST_ADDQ_LOCKED(&work->head, item);
+	MT_LIST_ADDQ(&work->head, item);
 	task_wakeup(work->task, TASK_WOKEN_OTHER);
 }
 

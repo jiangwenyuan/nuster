@@ -59,6 +59,11 @@
 #endif
 #include <pthread_np.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach_types.h>
+#include <mach/thread_act.h>
+#include <mach/thread_policy.h>
+#endif
 #endif
 
 #if defined(USE_PRCTL)
@@ -108,7 +113,6 @@
 #include <proto/connection.h>
 #include <proto/fd.h>
 #include <proto/filters.h>
-#include <proto/hdr_idx.h>
 #include <proto/hlua.h>
 #include <proto/http_rules.h>
 #include <proto/listener.h>
@@ -116,7 +120,7 @@
 #include <proto/mworker.h>
 #include <proto/pattern.h>
 #include <proto/protocol.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/proxy.h>
 #include <proto/queue.h>
 #include <proto/server.h>
@@ -127,8 +131,6 @@
 #include <proto/dns.h>
 #include <proto/vars.h>
 #include <proto/ssl_sock.h>
-
-#include <nuster/nuster.h>
 
 /* array of init calls for older platforms */
 DECLARE_INIT_STAGES;
@@ -167,6 +169,7 @@ struct global global = {
 		.pattern_cache = DEFAULT_PAT_LRU_SIZE,
 		.pool_low_ratio  = 20,
 		.pool_high_ratio = 25,
+		.max_http_hdr = MAX_HTTP_HDR,
 #ifdef USE_OPENSSL
 		.sslcachesize = SSLCACHESIZE,
 #endif
@@ -182,32 +185,6 @@ struct global global = {
 	.maxsslconn = DEFAULT_MAXSSLCONN,
 #endif
 #endif
-	.nuster = {
-		.cache = {
-			.status       = NST_STATUS_UNDEFINED,
-			.data_size    = NST_DEFAULT_DATA_SIZE,
-			.dict_size    = NST_DEFAULT_DICT_SIZE,
-			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
-			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
-			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
-			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-			.share        = NST_STATUS_ON,
-			.purge_method = NULL,
-			.root         = NULL,
-		},
-		.nosql = {
-			.status       = NST_STATUS_UNDEFINED,
-			.data_size    = NST_DEFAULT_DATA_SIZE,
-			.dict_size    = NST_DEFAULT_DICT_SIZE,
-			.root         = NULL,
-			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
-			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
-			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
-			.disk_loader  = NST_DEFAULT_DISK_LOADER,
-			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-		},
-	},
 	/* others NULL OK */
 };
 
@@ -259,7 +236,7 @@ unsigned int rlim_fd_max_at_boot = 0;
 struct mworker_proc *proc_self = NULL;
 
 /* list of the temporarily limited listeners because of lack of resource */
-struct list global_listener_queue = LIST_HEAD_INIT(global_listener_queue);
+struct mt_list global_listener_queue = MT_LIST_HEAD_INIT(global_listener_queue);
 struct task *global_listener_queue_task;
 static struct task *manage_global_listener_queue(struct task *t, void *context, unsigned short state);
 
@@ -296,6 +273,28 @@ struct post_check_fct {
 	int (*fct)();
 };
 
+/* These functions are called for each proxy just after the config validity
+ * check. The functions must return 0 on success, or a combination of ERR_*
+ * flags (ERR_WARN, ERR_ABORT, ERR_FATAL, ...). The 2 latter cause and immediate
+ * exit, so the function must have emitted any useful error.
+ */
+struct list post_proxy_check_list = LIST_HEAD_INIT(post_proxy_check_list);
+struct post_proxy_check_fct {
+	struct list list;
+	int (*fct)(struct proxy *);
+};
+
+/* These functions are called for each server just after the config validity
+ * check. The functions must return 0 on success, or a combination of ERR_*
+ * flags (ERR_WARN, ERR_ABORT, ERR_FATAL, ...). The 2 latter cause and immediate
+ * exit, so the function must have emitted any useful error.
+ */
+struct list post_server_check_list = LIST_HEAD_INIT(post_server_check_list);
+struct post_server_check_fct {
+	struct list list;
+	int (*fct)(struct server *);
+};
+
 /* These functions are called for each thread just after the thread creation
  * and before running the init functions. They should be used to do per-thread
  * (re-)allocations that are needed by subsequent functoins. They must return 0
@@ -325,6 +324,28 @@ struct list post_deinit_list = LIST_HEAD_INIT(post_deinit_list);
 struct post_deinit_fct {
 	struct list list;
 	void (*fct)();
+};
+
+/* These functions are called when freeing a proxy during the deinit, after
+ * everything isg stopped. They don't return anything. They should not release
+ * the proxy itself or any shared resources that are possibly used by other
+ * deinit functions, only close/release what is private.
+ */
+struct list proxy_deinit_list = LIST_HEAD_INIT(proxy_deinit_list);
+struct proxy_deinit_fct {
+	struct list list;
+	void (*fct)(struct proxy *);
+};
+
+/* These functions are called when freeing a server during the deinit, after
+ * everything isg stopped. They don't return anything. They should not release
+ * the proxy itself or any shared resources that are possibly used by other
+ * deinit functions, only close/release what is private.
+ */
+struct list server_deinit_list = LIST_HEAD_INIT(server_deinit_list);
+struct server_deinit_fct {
+	struct list list;
+	void (*fct)(struct server *);
 };
 
 /* These functions are called when freeing the global sections at the end of
@@ -383,6 +404,38 @@ void hap_register_post_check(int (*fct)())
 	LIST_ADDQ(&post_check_list, &b->list);
 }
 
+/* used to register some initialization functions to call for each proxy after
+ * the checks.
+ */
+void hap_register_post_proxy_check(int (*fct)(struct proxy *))
+{
+	struct post_proxy_check_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&post_proxy_check_list, &b->list);
+}
+
+/* used to register some initialization functions to call for each server after
+ * the checks.
+ */
+void hap_register_post_server_check(int (*fct)(struct server *))
+{
+	struct post_server_check_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&post_server_check_list, &b->list);
+}
+
 /* used to register some de-initialization functions to call after everything
  * has stopped.
  */
@@ -397,6 +450,39 @@ void hap_register_post_deinit(void (*fct)())
 	}
 	b->fct = fct;
 	LIST_ADDQ(&post_deinit_list, &b->list);
+}
+
+/* used to register some per proxy de-initialization functions to call after
+ * everything has stopped.
+ */
+void hap_register_proxy_deinit(void (*fct)(struct proxy *))
+{
+	struct proxy_deinit_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&proxy_deinit_list, &b->list);
+}
+
+
+/* used to register some per server de-initialization functions to call after
+ * everything has stopped.
+ */
+void hap_register_server_deinit(void (*fct)(struct server *))
+{
+	struct server_deinit_fct *b;
+
+	b = calloc(1, sizeof(*b));
+	if (!b) {
+		fprintf(stderr, "out of memory\n");
+		exit(1);
+	}
+	b->fct = fct;
+	LIST_ADDQ(&server_deinit_list, &b->list);
 }
 
 /* used to register some allocation functions to call for each thread. */
@@ -457,9 +543,28 @@ void hap_register_per_thread_free(int (*fct)())
 
 static void display_version()
 {
-	printf("nuster version %s\n", NUSTER_VERSION);
-	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
-	printf("HA-Proxy version %s %s - https://haproxy.org/\n", haproxy_version, haproxy_date);
+	printf("HA-Proxy version %s %s - https://haproxy.org/\n"
+	       PRODUCT_STATUS "\n", haproxy_version, haproxy_date);
+
+	if (strlen(PRODUCT_URL_BUGS) > 0) {
+		char base_version[20];
+		int dots = 0;
+		char *del;
+
+		/* only retrieve the base version without distro-specific extensions */
+		for (del = haproxy_version; *del; del++) {
+			if (*del == '.')
+				dots++;
+			else if (*del < '0' || *del > '9')
+				break;
+		}
+
+		strlcpy2(base_version, haproxy_version, del - haproxy_version + 1);
+		if (dots < 2)
+			printf("Known bugs: https://github.com/haproxy/haproxy/issues?q=is:issue+is:open\n");
+		else
+			printf("Known bugs: " PRODUCT_URL_BUGS "\n", base_version);
+	}
 }
 
 static void display_build_opts()
@@ -1421,13 +1526,6 @@ static void init(int argc, char **argv)
 	if (init_acl() != 0)
 		exit(1);
 
-	/* warning, we init buffers later */
-	if (!init_http(&err_msg)) {
-		ha_alert("%s. Aborting.\n", err_msg);
-		free(err_msg);
-		abort();
-	}
-
 	/* Initialise lua. */
 	hlua_init();
 
@@ -1788,6 +1886,18 @@ static void init(int argc, char **argv)
 	}
 
 	err_code |= check_config_validity();
+	for (px = proxies_list; px; px = px->next) {
+		struct server *srv;
+		struct post_proxy_check_fct *ppcf;
+		struct post_server_check_fct *pscf;
+
+		list_for_each_entry(pscf, &post_server_check_list, list) {
+			for (srv = px->srv; srv; srv = srv->next)
+				err_code |= pscf->fct(srv);
+		}
+		list_for_each_entry(ppcf, &post_proxy_check_list, list)
+			err_code |= ppcf->fct(px);
+	}
 	if (err_code & (ERR_ABORT|ERR_FATAL)) {
 		ha_alert("Fatal errors found in configuration.\n");
 		exit(1);
@@ -2167,8 +2277,6 @@ static void init(int argc, char **argv)
 	if (!hlua_post_init())
 		exit(1);
 
-	nuster_init();
-
 	free(err_msg);
 }
 
@@ -2222,19 +2330,19 @@ void deinit(void)
 	struct server *s,*s_next;
 	struct listener *l,*l_next;
 	struct acl_cond *cond, *condb;
-	struct hdr_exp *exp, *expb;
 	struct acl *acl, *aclb;
 	struct switching_rule *rule, *ruleb;
 	struct server_rule *srule, *sruleb;
 	struct redirect_rule *rdr, *rdrb;
 	struct wordlist *wl, *wlb;
-	struct cond_wordlist *cwl, *cwlb;
 	struct uri_auth *uap, *ua = NULL;
 	struct logsrv *log, *logb;
 	struct logformat_node *lf, *lfb;
 	struct bind_conf *bind_conf, *bind_back;
 	struct build_opts_str *bol, *bolb;
 	struct post_deinit_fct *pdf;
+	struct proxy_deinit_fct *pxdf;
+	struct server_deinit_fct *srvdf;
 	int i;
 
 	deinit_signals();
@@ -2267,38 +2375,10 @@ void deinit(void)
 		for (i = 0; i < HTTP_ERR_SIZE; i++)
 			chunk_destroy(&p->errmsg[i]);
 
-		list_for_each_entry_safe(cwl, cwlb, &p->req_add, list) {
-			LIST_DEL(&cwl->list);
-			free(cwl->s);
-			free(cwl);
-		}
-
-		list_for_each_entry_safe(cwl, cwlb, &p->rsp_add, list) {
-			LIST_DEL(&cwl->list);
-			free(cwl->s);
-			free(cwl);
-		}
-
 		list_for_each_entry_safe(cond, condb, &p->mon_fail_cond, list) {
 			LIST_DEL(&cond->list);
 			prune_acl_cond(cond);
 			free(cond);
-		}
-
-		for (exp = p->req_exp; exp != NULL; ) {
-			regex_free(exp->preg);
-			free((char *)exp->replace);
-			expb = exp;
-			exp = exp->next;
-			free(expb);
-		}
-
-		for (exp = p->rsp_exp; exp != NULL; ) {
-			regex_free(exp->preg);
-			free((char *)exp->replace);
-			expb = exp;
-			exp = exp->next;
-			free(expb);
 		}
 
 		/* build a list of unique uri_auths */
@@ -2435,6 +2515,10 @@ void deinit(void)
 					xprt_get(XPRT_SSL)->destroy_srv(s);
 			}
 			HA_SPIN_DESTROY(&s->lock);
+
+			list_for_each_entry(srvdf, &server_deinit_list, list)
+				srvdf->fct(s);
+
 			free(s);
 			s = s_next;
 		}/* end while(s) */
@@ -2469,6 +2553,9 @@ void deinit(void)
 		}
 
 		flt_deinit(p);
+
+		list_for_each_entry(pxdf, &proxy_deinit_list, list)
+			pxdf->fct(p);
 
 		free(p->desc);
 		free(p->fwdfor_hdr_name);
@@ -2575,16 +2662,14 @@ static void run_poll_loop()
 
 		/* expire immediately if events are pending */
 		wake = 1;
-		if (fd_cache_mask & tid_bit)
-			activity[tid].wake_cache++;
-		else if (thread_has_tasks())
+		if (thread_has_tasks())
 			activity[tid].wake_tasks++;
 		else if (signal_queue_len && tid == 0)
 			activity[tid].wake_signal++;
 		else {
 			_HA_ATOMIC_OR(&sleeping_thread_mask, tid_bit);
 			__ha_barrier_atomic_store();
-			if (global_tasks_mask & tid_bit) {
+			if ((global_tasks_mask & tid_bit) || thread_has_tasks()) {
 				activity[tid].wake_tasks++;
 				_HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 			} else
@@ -2593,11 +2678,6 @@ static void run_poll_loop()
 
 		/* The poller will ensure it returns around <next> */
 		cur_poller.poll(&cur_poller, next, wake);
-		if (sleeping_thread_mask & tid_bit)
-			_HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
-		fd_process_cached_events();
-
-		nuster_housekeeping();
 
 		activity[tid].loops++;
 	}
@@ -2614,6 +2694,7 @@ static void *run_thread_poll_loop(void *data)
 	__decl_hathreads(static pthread_cond_t  init_cond  = PTHREAD_COND_INITIALIZER);
 
 	ha_set_tid((unsigned long)data);
+	sched = &task_per_thread[tid];
 
 #if (_POSIX_TIMERS > 0) && defined(_POSIX_THREAD_CPUTIME)
 #ifdef USE_THREAD
@@ -2702,7 +2783,7 @@ static struct task *manage_global_listener_queue(struct task *t, void *context, 
 {
 	int next = TICK_ETERNITY;
 	/* queue is empty, nothing to do */
-	if (LIST_ISEMPTY(&global_listener_queue))
+	if (MT_LIST_ISEMPTY(&global_listener_queue))
 		goto out;
 
 	/* If there are still too many concurrent connections, let's wait for
@@ -2724,6 +2805,28 @@ static struct task *manage_global_listener_queue(struct task *t, void *context, 
 	t->expire = next;
 	task_queue(t);
 	return t;
+}
+
+/* set uid/gid depending on global settings */
+static void set_identity(const char *program_name)
+{
+	if (global.gid) {
+		if (getgroups(0, NULL) > 0 && setgroups(0, NULL) == -1)
+			ha_warning("[%s.main()] Failed to drop supplementary groups. Using 'gid'/'group'"
+				   " without 'uid'/'user' is generally useless.\n", program_name);
+
+		if (setgid(global.gid) == -1) {
+			ha_alert("[%s.main()] Cannot set gid %d.\n", program_name, global.gid);
+			protocol_unbind_all();
+			exit(1);
+		}
+	}
+
+	if (global.uid && setuid(global.uid) == -1) {
+		ha_alert("[%s.main()] Cannot set uid %d.\n", program_name, global.uid);
+		protocol_unbind_all();
+		exit(1);
+	}
 }
 
 int main(int argc, char **argv)
@@ -2779,14 +2882,24 @@ int main(int argc, char **argv)
 		limit.rlim_max = MAX(rlim_fd_max_at_boot, limit.rlim_cur);
 
 		if (setrlimit(RLIMIT_NOFILE, &limit) == -1) {
-			/* try to set it to the max possible at least */
 			getrlimit(RLIMIT_NOFILE, &limit);
-			limit.rlim_cur = limit.rlim_max;
-			if (setrlimit(RLIMIT_NOFILE, &limit) != -1)
-				getrlimit(RLIMIT_NOFILE, &limit);
+			if (global.tune.options & GTUNE_STRICT_LIMITS) {
+				ha_alert("[%s.main()] Cannot raise FD limit to %d, limit is %d.\n",
+					 argv[0], global.rlimit_nofile, (int)limit.rlim_cur);
+				if (!(global.mode & MODE_MWORKER))
+					exit(1);
+			}
+			else {
+				/* try to set it to the max possible at least */
+				limit.rlim_cur = limit.rlim_max;
+				if (setrlimit(RLIMIT_NOFILE, &limit) != -1)
+					getrlimit(RLIMIT_NOFILE, &limit);
 
-			ha_warning("[%s.main()] Cannot raise FD limit to %d, limit is %d.\n", argv[0], global.rlimit_nofile, (int)limit.rlim_cur);
-			global.rlimit_nofile = limit.rlim_cur;
+				ha_warning("[%s.main()] Cannot raise FD limit to %d, limit is %d. "
+				           "This will fail in >= v2.3\n",
+					   argv[0], global.rlimit_nofile, (int)limit.rlim_cur);
+				global.rlimit_nofile = limit.rlim_cur;
+			}
 		}
 	}
 
@@ -2795,13 +2908,29 @@ int main(int argc, char **argv)
 			global.rlimit_memmax * 1048576ULL;
 #ifdef RLIMIT_AS
 		if (setrlimit(RLIMIT_AS, &limit) == -1) {
-			ha_warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
-				   argv[0], global.rlimit_memmax);
+			if (global.tune.options & GTUNE_STRICT_LIMITS) {
+				ha_alert("[%s.main()] Cannot fix MEM limit to %d megs.\n",
+					 argv[0], global.rlimit_memmax);
+				if (!(global.mode & MODE_MWORKER))
+					exit(1);
+			}
+			else
+				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs."
+					   "This will fail in >= v2.3\n",
+					   argv[0], global.rlimit_memmax);
 		}
 #else
 		if (setrlimit(RLIMIT_DATA, &limit) == -1) {
-			ha_warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
-				   argv[0], global.rlimit_memmax);
+			if (global.tune.options & GTUNE_STRICT_LIMITS) {
+				ha_alert("[%s.main()] Cannot fix MEM limit to %d megs.\n",
+					 argv[0], global.rlimit_memmax);
+				if (!(global.mode & MODE_MWORKER))
+					exit(1);
+			}
+			else
+				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs.",
+					   "This will fail in >= v2.3\n",
+					   argv[0], global.rlimit_memmax);
 		}
 #endif
 	}
@@ -2969,33 +3098,27 @@ int main(int argc, char **argv)
 	 * be able to restart the old pids.
 	 */
 
-	if ((global.mode & (MODE_MWORKER|MODE_DAEMON)) == 0) {
-		/* setgid / setuid */
-		if (global.gid) {
-			if (getgroups(0, NULL) > 0 && setgroups(0, NULL) == -1)
-				ha_warning("[%s.main()] Failed to drop supplementary groups. Using 'gid'/'group'"
-					   " without 'uid'/'user' is generally useless.\n", argv[0]);
-
-			if (setgid(global.gid) == -1) {
-				ha_alert("[%s.main()] Cannot set gid %d.\n", argv[0], global.gid);
-				protocol_unbind_all();
-				exit(1);
-			}
-		}
-
-		if (global.uid && setuid(global.uid) == -1) {
-			ha_alert("[%s.main()] Cannot set uid %d.\n", argv[0], global.uid);
-			protocol_unbind_all();
-			exit(1);
-		}
-	}
+	if ((global.mode & (MODE_MWORKER | MODE_DAEMON)) == 0)
+		set_identity(argv[0]);
 
 	/* check ulimits */
 	limit.rlim_cur = limit.rlim_max = 0;
 	getrlimit(RLIMIT_NOFILE, &limit);
 	if (limit.rlim_cur < global.maxsock) {
-		ha_warning("[%s.main()] FD limit (%d) too low for maxconn=%d/maxsock=%d. Please raise 'ulimit-n' to %d or more to avoid any trouble.\n",
-			   argv[0], (int)limit.rlim_cur, global.maxconn, global.maxsock, global.maxsock);
+		if (global.tune.options & GTUNE_STRICT_LIMITS) {
+			ha_alert("[%s.main()] FD limit (%d) too low for maxconn=%d/maxsock=%d. "
+				 "Please raise 'ulimit-n' to %d or more to avoid any trouble.\n",
+			         argv[0], (int)limit.rlim_cur, global.maxconn, global.maxsock,
+				 global.maxsock);
+			if (!(global.mode & MODE_MWORKER))
+				exit(1);
+		}
+		else
+			ha_alert("[%s.main()] FD limit (%d) too low for maxconn=%d/maxsock=%d. "
+				 "Please raise 'ulimit-n' to %d or more to avoid any trouble."
+				 "This will fail in >= v2.3\n",
+			         argv[0], (int)limit.rlim_cur, global.maxconn, global.maxsock,
+				 global.maxsock);
 	}
 
 	if (global.mode & (MODE_DAEMON | MODE_MWORKER | MODE_MWORKER_WAIT)) {
@@ -3093,7 +3216,7 @@ int main(int argc, char **argv)
 			}
 			ret = cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, -1, sizeof(cpuset), &cpuset);
 		}
-#else
+#elif defined(__linux__)
 			sched_setaffinity(0, sizeof(unsigned long), (void *)&global.cpu_map.proc[proc]);
 #endif
 #endif
@@ -3181,25 +3304,7 @@ int main(int argc, char **argv)
 
 		free(global.chroot);
 		global.chroot = NULL;
-
-		/* setgid / setuid */
-		if (global.gid) {
-			if (getgroups(0, NULL) > 0 && setgroups(0, NULL) == -1)
-				ha_warning("[%s.main()] Failed to drop supplementary groups. Using 'gid'/'group'"
-					   " without 'uid'/'user' is generally useless.\n", argv[0]);
-
-			if (setgid(global.gid) == -1) {
-				ha_alert("[%s.main()] Cannot set gid %d.\n", argv[0], global.gid);
-				protocol_unbind_all();
-				exit(1);
-			}
-		}
-
-		if (global.uid && setuid(global.uid) == -1) {
-			ha_alert("[%s.main()] Cannot set uid %d.\n", argv[0], global.uid);
-			protocol_unbind_all();
-			exit(1);
-		}
+		set_identity(argv[0]);
 
 		/* pass through every cli socket, and check if it's bound to
 		 * the current process and if it exposes listeners sockets.
@@ -3282,18 +3387,37 @@ int main(int argc, char **argv)
 		limit.rlim_cur = limit.rlim_max = RLIM_INFINITY;
 
 #if defined(RLIMIT_FSIZE)
-		if (setrlimit(RLIMIT_FSIZE, &limit) == -1)
-			ha_warning("[%s.main()] Failed to set the raise the maximum file size.\n", argv[0]);
+		if (setrlimit(RLIMIT_FSIZE, &limit) == -1) {
+			if (global.tune.options & GTUNE_STRICT_LIMITS) {
+				ha_alert("[%s.main()] Failed to set the raise the maximum "
+					 "file size.\n", argv[0]);
+				if (!(global.mode & MODE_MWORKER))
+					exit(1);
+			}
+			else
+				ha_warning("[%s.main()] Failed to set the raise the maximum "
+					   "file size. This will fail in >= v2.3\n", argv[0]);
+		}
 #endif
 
 #if defined(RLIMIT_CORE)
-		if (setrlimit(RLIMIT_CORE, &limit) == -1)
-			ha_warning("[%s.main()] Failed to set the raise the core dump size.\n", argv[0]);
+		if (setrlimit(RLIMIT_CORE, &limit) == -1) {
+			if (global.tune.options & GTUNE_STRICT_LIMITS) {
+				ha_alert("[%s.main()] Failed to set the raise the core "
+					 "dump size.\n", argv[0]);
+				if (!(global.mode & MODE_MWORKER))
+					exit(1);
+			}
+			else
+				ha_warning("[%s.main()] Failed to set the raise the core "
+					   "dump size. This will fail in >= v2.3\n", argv[0]);
+		}
 #endif
 
 #if defined(USE_PRCTL)
 		if (prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) == -1)
-			ha_warning("[%s.main()] Failed to set the dumpable flag, no core will be dumped.\n", argv[0]);
+			ha_warning("[%s.main()] Failed to set the dumpable flag, "
+				   "no core will be dumped.\n", argv[0]);
 #endif
 	}
 
@@ -3316,9 +3440,9 @@ int main(int argc, char **argv)
 		pthread_sigmask(SIG_SETMASK, &blocked_sig, &old_sig);
 
 		/* Create nbthread-1 thread. The first thread is the current process */
-		thread_info[0].pthread = pthread_self();
+		ha_thread_info[0].pthread = pthread_self();
 		for (i = 1; i < global.nbthread; i++)
-			pthread_create(&thread_info[i].pthread, NULL, &run_thread_poll_loop, (void *)(long)i);
+			pthread_create(&ha_thread_info[i].pthread, NULL, &run_thread_poll_loop, (void *)(long)i);
 
 #ifdef USE_CPU_AFFINITY
 		/* Now the CPU affinity for all threads */
@@ -3331,6 +3455,17 @@ int main(int argc, char **argv)
 
 			if (i < MAX_THREADS &&       /* only the first 32/64 threads may be pinned */
 			    global.cpu_map.thread[i]) {/* only do this if the thread has a THREAD map */
+#if defined(__APPLE__)
+				int j;
+				unsigned long cpu_map = global.cpu_map.thread[i];
+
+				while ((j = ffsl(cpu_map)) > 0) {
+					thread_affinity_policy_data_t cpu_set = { j - 1 };
+					thread_port_t mthread = pthread_mach_thread_np(ha_thread_info[i].pthread);
+					thread_policy_set(mthread, THREAD_AFFINITY_POLICY, (thread_policy_t)&cpu_set, 1);
+					cpu_map &= ~(1UL << (j - 1));
+				}
+#else
 #if defined(__FreeBSD__) || defined(__NetBSD__)
 				cpuset_t cpuset;
 #else
@@ -3345,8 +3480,9 @@ int main(int argc, char **argv)
 					CPU_SET(j - 1, &cpuset);
 					cpu_map &= ~(1UL << (j - 1));
 				}
-				pthread_setaffinity_np(thread_info[i].pthread,
+				pthread_setaffinity_np(ha_thread_info[i].pthread,
 						       sizeof(cpuset), &cpuset);
+#endif
 			}
 		}
 #endif /* !USE_CPU_AFFINITY */
@@ -3359,7 +3495,7 @@ int main(int argc, char **argv)
 
 		/* Wait the end of other threads */
 		for (i = 1; i < global.nbthread; i++)
-			pthread_join(thread_info[i].pthread, NULL);
+			pthread_join(ha_thread_info[i].pthread, NULL);
 
 #if defined(DEBUG_THREAD) || defined(DEBUG_FULL)
 		show_lock_stats();

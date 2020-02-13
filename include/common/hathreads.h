@@ -38,7 +38,7 @@
  *      only one thread is enabled, it equals 1.
  */
 
-/* thread info flags, for thread_info[].flags */
+/* thread info flags, for ha_thread_info[].flags */
 #define TI_FL_STUCK             0x00000001
 
 
@@ -67,7 +67,7 @@ extern struct thread_info {
 	/* pad to cache line (64B) */
 	char __pad[0];            /* unused except to check remaining room */
 	char __end[0] __attribute__((aligned(64)));
-} thread_info[MAX_THREADS];
+} ha_thread_info[MAX_THREADS];
 
 extern THREAD_LOCAL struct thread_info *ti; /* thread_info for the current thread */
 
@@ -167,7 +167,7 @@ extern THREAD_LOCAL struct thread_info *ti; /* thread_info for the current threa
 
 static inline void ha_set_tid(unsigned int tid)
 {
-	ti = &thread_info[tid];
+	ti = &ha_thread_info[tid];
 }
 
 static inline void ha_thread_relax(void)
@@ -437,7 +437,7 @@ extern struct thread_info {
 	/* pad to cache line (64B) */
 	char __pad[0];            /* unused except to check remaining room */
 	char __end[0] __attribute__((aligned(64)));
-} thread_info[MAX_THREADS];
+} ha_thread_info[MAX_THREADS];
 
 extern THREAD_LOCAL unsigned int tid;     /* The thread id */
 extern THREAD_LOCAL unsigned long tid_bit; /* The bit corresponding to the thread id */
@@ -480,7 +480,7 @@ static inline void ha_set_tid(unsigned int data)
 {
 	tid     = data;
 	tid_bit = (1UL << tid);
-	ti      = &thread_info[tid];
+	ti      = &ha_thread_info[tid];
 }
 
 static inline void ha_thread_relax(void)
@@ -562,6 +562,8 @@ enum lock_label {
 	LOGSRV_LOCK,
 	DICT_LOCK,
 	PROTO_LOCK,
+	CKCH_LOCK,
+	SNI_LOCK,
 	OTHER_LOCK,
 	LOCK_LABELS
 };
@@ -679,6 +681,8 @@ static inline const char *lock_label(enum lock_label label)
 	case LOGSRV_LOCK:          return "LOGSRV";
 	case DICT_LOCK:            return "DICT";
 	case PROTO_LOCK:           return "PROTO";
+	case CKCH_LOCK:            return "CKCH";
+	case SNI_LOCK:             return "SNI";
 	case OTHER_LOCK:           return "OTHER";
 	case LOCK_LABELS:          break; /* keep compiler happy */
 	};

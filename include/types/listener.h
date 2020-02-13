@@ -150,6 +150,7 @@ struct bind_conf {
 	struct ssl_bind_conf *default_ssl_conf; /* custom SSL conf of default_ctx */
 	int strict_sni;            /* refuse negotiation if sni doesn't match a certificate */
 	int ssl_options;           /* ssl options */
+	__decl_hathreads(HA_RWLOCK_T sni_lock); /* lock the SNI trees during add/del operations */
 	struct eb_root sni_ctx;    /* sni_ctx tree of all known certs full-names sorted by name */
 	struct eb_root sni_w_ctx;  /* sni_ctx tree of all known certs wildcards sorted by name */
 	struct tls_keys_ref *keys_ref; /* TLS ticket keys reference */
@@ -202,7 +203,7 @@ struct listener {
 	int (*accept)(struct listener *l, int fd, struct sockaddr_storage *addr); /* upper layer's accept() */
 	enum obj_type *default_target;  /* default target to use for accepted sessions or NULL */
 	/* cache line boundary */
-	struct list wait_queue;		/* link element to make the listener wait for something (LI_LIMITED)  */
+	struct mt_list wait_queue;	/* link element to make the listener wait for something (LI_LIMITED)  */
 	unsigned int thr_idx;           /* thread indexes for queue distribution : (t2<<16)+t1 */
 	unsigned int analysers;		/* bitmap of required protocol analysers */
 	int maxseg;			/* for TCP, advertised MSS */
@@ -292,7 +293,7 @@ struct accept_queue_entry {
 struct accept_queue_ring {
 	unsigned int head;
 	unsigned int tail;
-	struct task *task;  /* task of the thread owning this ring */
+	struct tasklet *tasklet;  /* tasklet of the thread owning this ring */
 	struct accept_queue_entry entry[ACCEPT_QUEUE_SIZE] __attribute((aligned(64)));
 };
 

@@ -2308,7 +2308,7 @@ static int promex_parse_uri(struct appctx *appctx, struct stream_interface *si)
 	return 1;
 
   error:
-	err = &htx_err_chunks[HTTP_ERR_400];
+	err = &http_err_chunks[HTTP_ERR_400];
 	channel_erase(res);
 	res->buf.data = b_data(err);
 	memcpy(res->buf.area, b_head(err), b_data(err));
@@ -2450,10 +2450,6 @@ static enum act_parse_ret service_parse_prometheus_exporter(const char **args, i
 	/* Prometheus exporter service is only available on "http-request" rulesets */
 	if (rule->from != ACT_F_HTTP_REQ) {
 		memprintf(err, "Prometheus exporter service only available on 'http-request' rulesets");
-		return ACT_RET_PRS_ERR;
-	}
-	if (!(px->options2 & PR_O2_USE_HTX)) {
-		memprintf(err, "Prometheus exporter service only available for HTX proxies");
 		return ACT_RET_PRS_ERR;
 	}
 

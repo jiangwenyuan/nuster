@@ -32,8 +32,6 @@
 #include <common/config.h>
 #include <common/xref.h>
 
-#include <nuster/common.h>
-
 struct appctx;
 
 /* Applet descriptor */
@@ -77,31 +75,6 @@ struct appctx {
 	struct freq_ctr call_rate;       /* appctx call rate */
 
 	union {
-		union {
-			struct {
-				struct nst_cache_entry   *entry;
-				struct nst_cache_data    *data;
-				struct nst_cache_element *element;
-			} cache_engine;
-			struct {
-				struct nst_str   host;
-				struct nst_str   path;
-				struct my_regex *regex;
-			} cache_manager;
-			struct {
-				struct nst_nosql_entry   *entry;
-				struct nst_nosql_data    *data;
-				struct nst_nosql_element *element;
-				int fd;
-				int header_len;
-				uint64_t offset;
-			} nosql_engine;
-			struct {
-				int fd;
-				int header_len;
-				uint64_t offset;
-			} cache_disk_engine;
-		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */
 		} peers;                        /* used by the peers applet */
@@ -132,8 +105,10 @@ struct appctx {
 			const char *msg;        /* pointer to a persistent message to be returned in CLI_ST_PRINT state */
 			int severity;           /* severity of the message to be returned according to (syslog) rfc5424 */
 			char *err;              /* pointer to a 'must free' message to be returned in CLI_ST_PRINT_FREE state */
-			void *p0, *p1;          /* general purpose pointers and integers for registered commands, initialized */
-			int i0, i1;             /* to 0 by the CLI before first invocation of the keyword parser. */
+			struct list l0;         /* General purpose list element, pointers, offsets and integers for... */
+			void *p0, *p1;          /* ...registered commands, initialized to 0 by the CLI before first... */
+			size_t o0, o1;          /* ...invocation of the keyword parser, except for the list element which... */
+			int i0, i1;             /* ...is initialized with LIST_INIT(). */
 		} cli;                          /* context used by the CLI */
 		struct {
 			struct cache_entry *entry;  /* Entry to be sent from cache. */
@@ -197,6 +172,12 @@ struct appctx {
 			struct peers *peers; /* "peers" section being currently dumped. */
 			struct peer *peer;   /* "peer" being currently dumped. */
 		} cfgpeers;
+		struct {
+			char *path;
+			struct ckch_store *old_ckchs;
+			struct ckch_store *new_ckchs;
+			struct ckch_inst *next_ckchi;
+		} ssl;
 		/* NOTE: please add regular applet contexts (ie: not
 		 * CLI-specific ones) above, before "cli".
 		 */

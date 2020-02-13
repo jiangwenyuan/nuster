@@ -155,11 +155,6 @@ const unsigned char http_char_classes[256] = {
 	[127] = HTTP_FLG_CTL,
 };
 
-/* We must put the messages here since GCC cannot initialize consts depending
- * on strlen().
- */
-struct buffer http_err_chunks[HTTP_ERR_SIZE];
-
 const struct ist HTTP_100 = IST("HTTP/1.1 100 Continue\r\n\r\n");
 
 const struct ist HTTP_103 = IST("HTTP/1.1 103 Early Hints\r\n");
@@ -479,6 +474,62 @@ const char *http_get_reason(unsigned int status)
 		default:          return "Other";
 		}
 	}
+}
+
+/* Parse the uri and looks for the authority, between the scheme and the
+ * path. if no_userinfo is not zero, the part before the '@' (including it) is
+ * skipped. If not found, an empty ist is returned. Otherwise, the ist pointing
+ * on the authority is returned.
+ */
+struct ist http_get_authority(const struct ist uri, int no_userinfo)
+{
+	const char *ptr, *start, *end;
+
+	if (!uri.len)
+		goto not_found;
+
+	ptr = uri.ptr;
+	start = ptr;
+	end = ptr + uri.len;
+
+	/* RFC7230, par. 2.7 :
+	 * Request-URI = "*" | absuri | abspath | authority
+	 */
+
+	if (*ptr == '*' || *ptr == '/')
+		goto not_found;
+
+	if (isalpha((unsigned char)*ptr)) {
+		/* this is a scheme as described by RFC3986, par. 3.1, or only
+		 * an authority (in case of a CONNECT method).
+		 */
+		ptr++;
+		while (ptr < end &&
+		       (isalnum((unsigned char)*ptr) || *ptr == '+' || *ptr == '-' || *ptr == '.'))
+			ptr++;
+		/* skip '://' or take the whole as authority if not found */
+		if (ptr == end || *ptr++ != ':')
+			goto authority;
+		if (ptr == end || *ptr++ != '/')
+			goto authority;
+		if (ptr == end || *ptr++ != '/')
+			goto authority;
+	}
+
+	start = ptr;
+	while (ptr < end && *ptr != '/') {
+		if (*ptr++ == '@' && no_userinfo)
+			start = ptr;
+	}
+
+	/* OK, ptr point on the '/' or the end */
+	end = ptr;
+
+  authority:
+	return ist2(start, end - start);
+
+  not_found:
+	return ist2(NULL, 0);
 }
 
 /* Parse the URI from the given transaction (which is assumed to be in request
@@ -986,22 +1037,33 @@ int http_parse_stline(const struct ist line, struct ist *p1, struct ist *p2, str
         return 1;
 }
 
-
-/* post-initializes the HTTP parts. Returns zero on error, with <err>
- * pointing to the error message.
+/* Parses value of a Status header with the following format: "Status: Code[
+ * Reason]".  The parsing is pretty naive and just skip spaces. It return the
+ * numeric value of the status code.
  */
-int init_http(char **err)
+int http_parse_status_val(const struct ist value, struct ist *status, struct ist *reason)
 {
-	int msg;
+	char *p   = value.ptr;
+        char *end = p + value.len;
+	uint16_t code;
 
-	for (msg = 0; msg < HTTP_ERR_SIZE; msg++) {
-		if (!http_err_msgs[msg]) {
-			memprintf(err, "Internal error: no message defined for HTTP return code %d", msg);
-			return 0;
-		}
+	status->len = reason->len = 0;
 
-		http_err_chunks[msg].area = (char *)http_err_msgs[msg];
-		http_err_chunks[msg].data = strlen(http_err_msgs[msg]);
-	}
-	return 1;
+	/* Skip leading spaces */
+        for (; p < end && HTTP_IS_SPHT(*p); p++);
+
+        /* Set the status part */
+        status->ptr = p;
+        for (; p < end && HTTP_IS_TOKEN(*p); p++);
+        status->len = p - status->ptr;
+
+	/* Skip spaces between status and reason */
+        for (; p < end && HTTP_IS_SPHT(*p); p++);
+
+	/* the remaining is the reason */
+        reason->ptr = p;
+        reason->len = end - p;
+
+	code = strl2ui(status->ptr, status->len);
+	return code;
 }

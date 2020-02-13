@@ -116,6 +116,26 @@ static inline int SSL_SESSION_set1_id_context(SSL_SESSION *s, const unsigned cha
 }
 #endif
 
+
+#if (HA_OPENSSL_VERSION_NUMBER < 0x1000200fL) && (LIBRESSL_VERSION_NUMBER < 0x2070500fL)
+/* introduced in openssl 1.0.2 */
+
+static inline STACK_OF(X509) *X509_chain_up_ref(STACK_OF(X509) *chain)
+{
+	STACK_OF(X509) *ret;
+	int i;
+
+	if ((ret = sk_X509_dup(chain)) == NULL)
+		return NULL;
+	for (i = 0; i < sk_X509_num(ret); i++) {
+		X509 *x = sk_X509_value(ret, i);
+		CRYPTO_add(&x->references, 1, CRYPTO_LOCK_X509);
+	}
+	return ret;
+}
+
+#endif
+
 #if (HA_OPENSSL_VERSION_NUMBER < 0x1010000fL) && (LIBRESSL_VERSION_NUMBER < 0x2070000fL)
 /*
  * Functions introduced in OpenSSL 1.1.0 and in LibreSSL 2.7.0
@@ -171,20 +191,21 @@ static inline const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *x)
 	return x->data;
 }
 
+static inline void X509_up_ref(X509 *x)
+{
+	CRYPTO_add(&x->references, 1, CRYPTO_LOCK_X509);
+}
+
+static inline void EVP_PKEY_up_ref(EVP_PKEY *pkey)
+{
+	CRYPTO_add(&pkey->references, 1, CRYPTO_LOCK_EVP_PKEY);
+}
 #endif
 
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) || (LIBRESSL_VERSION_NUMBER >= 0x2070200fL)
 #define __OPENSSL_110_CONST__ const
 #else
 #define __OPENSSL_110_CONST__
-#endif
-
-#ifdef OPENSSL_IS_BORINGSSL
-
-static inline int EVP_PKEY_base_id(EVP_PKEY *pkey)
-{
-	return EVP_PKEY_type(pkey->type);
-}
 #endif
 
 /* ERR_remove_state() was deprecated in 1.0.0 in favor of

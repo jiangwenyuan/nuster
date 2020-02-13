@@ -43,30 +43,45 @@ static int _update_fd(int fd, int start)
 
 	en = fdtab[fd].state;
 
-	if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
-		if (!(polled_mask[fd] & tid_bit)) {
+	if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_ACTIVE_RW)) {
+		if (!(polled_mask[fd].poll_recv & tid_bit) &&
+		    !(polled_mask[fd].poll_send & tid_bit)) {
 			/* fd was not watched, it's still not */
 			return changes;
 		}
 		/* fd totally removed from poll list */
 		EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
 		EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
-		_HA_ATOMIC_AND(&polled_mask[fd], ~tid_bit);
+		if (polled_mask[fd].poll_recv & tid_bit)
+			_HA_ATOMIC_AND(&polled_mask[fd].poll_recv, ~tid_bit);
+		if (polled_mask[fd].poll_send & tid_bit)
+			_HA_ATOMIC_AND(&polled_mask[fd].poll_send, ~tid_bit);
 	}
 	else {
 		/* OK fd has to be monitored, it was either added or changed */
 
-		if (en & FD_EV_POLLED_R)
-			EV_SET(&kev[changes++], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-		else if (polled_mask[fd] & tid_bit)
+		if (en & FD_EV_ACTIVE_R) {
+			if (!(polled_mask[fd].poll_recv & tid_bit)) {
+				EV_SET(&kev[changes++], fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+				_HA_ATOMIC_OR(&polled_mask[fd].poll_recv, tid_bit);
+			}
+		}
+		else if (polled_mask[fd].poll_recv & tid_bit) {
 			EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+			HA_ATOMIC_AND(&polled_mask[fd].poll_recv, ~tid_bit);
+		}
 
-		if (en & FD_EV_POLLED_W)
-			EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
-		else if (polled_mask[fd] & tid_bit)
+		if (en & FD_EV_ACTIVE_W) {
+			if (!(polled_mask[fd].poll_send & tid_bit)) {
+				EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+				_HA_ATOMIC_OR(&polled_mask[fd].poll_send, tid_bit);
+			}
+		}
+		else if (polled_mask[fd].poll_send & tid_bit) {
 			EV_SET(&kev[changes++], fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+			_HA_ATOMIC_AND(&polled_mask[fd].poll_send, ~tid_bit);
+		}
 
-		_HA_ATOMIC_OR(&polled_mask[fd], tid_bit);
 	}
 	return changes;
 }
@@ -164,6 +179,8 @@ REGPRM3 static void _do_poll(struct poller *p, int exp, int wake)
 	tv_leaving_poll(wait_time, status);
 
 	thread_harmless_end();
+	if (sleeping_thread_mask & tid_bit)
+		_HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 
 	for (count = 0; count < status; count++) {
 		unsigned int n = 0;
@@ -179,16 +196,16 @@ REGPRM3 static void _do_poll(struct poller *p, int exp, int wake)
 			continue;
 		}
 
-		if (kev[count].filter ==  EVFILT_READ) {
+		if (kev[count].filter == EVFILT_READ) {
 			if (kev[count].data || !(kev[count].flags & EV_EOF))
-				n |= FD_POLL_IN;
+				n |= FD_EV_READY_R;
 			if (kev[count].flags & EV_EOF)
-				n |= FD_POLL_HUP;
+				n |= FD_EV_SHUT_R;
 		}
-		else if (kev[count].filter ==  EVFILT_WRITE) {
-			n |= FD_POLL_OUT;
+		else if (kev[count].filter == EVFILT_WRITE) {
+			n |= FD_EV_READY_W;
 			if (kev[count].flags & EV_EOF)
-				n |= FD_POLL_ERR;
+				n |= FD_EV_ERR_RW;
 		}
 
 		fd_update_events(fd, n);

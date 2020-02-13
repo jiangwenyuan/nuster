@@ -88,6 +88,8 @@
 #           installation only.
 #   DOCDIR  is set to "$(PREFIX)/doc/haproxy" by default and is used for
 #           installation only.
+#   HLUA_PREPEND_PATH may be used to prepend a folder to Lua's default package.path.
+#   HLUA_PREPEND_CPATH may be used to prepend a folder to Lua's default package.cpath.
 #
 # Other variables :
 #   PCRE_CONFIG    : force the binary path to get pcre config (by default
@@ -142,13 +144,13 @@ DOCDIR = $(PREFIX)/doc/haproxy
 # Use TARGET=<target_name> to optimize for a specifc target OS among the
 # following list (use the default "generic" if uncertain) :
 #    linux-glibc, linux-glibc-legacy, solaris, freebsd, openbsd, netbsd,
-#    cygwin, haiku, aix51, aix52, osx, generic, custom
+#    cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic, custom
 TARGET =
 
 #### TARGET CPU
 # Use CPU=<cpu_name> to optimize for a particular CPU, among the following
 # list :
-#    generic, native, i586, i686, ultrasparc, custom
+#    generic, native, i586, i686, ultrasparc, power8, power9, custom
 CPU = generic
 
 #### Architecture, used when not building for native architecture
@@ -193,6 +195,7 @@ SPEC_CFLAGS += $(call cc-nowarn,missing-field-initializers)
 SPEC_CFLAGS += $(call cc-nowarn,implicit-fallthrough)
 SPEC_CFLAGS += $(call cc-nowarn,stringop-overflow)
 SPEC_CFLAGS += $(call cc-nowarn,cast-function-type)
+SPEC_CFLAGS += $(call cc-nowarn,string-plus-int)
 SPEC_CFLAGS += $(call cc-opt,-Wtype-limits)
 SPEC_CFLAGS += $(call cc-opt,-Wshift-negative-value)
 SPEC_CFLAGS += $(call cc-opt,-Wshift-overflow=2)
@@ -254,6 +257,8 @@ CPU_CFLAGS.native     = -O2 -march=native
 CPU_CFLAGS.i586       = -O2 -march=i586
 CPU_CFLAGS.i686       = -O2 -march=i686
 CPU_CFLAGS.ultrasparc = -O6 -mcpu=v9 -mtune=ultrasparc
+CPU_CFLAGS.power8     = -O2 -mcpu=power8 -mtune=power8
+CPU_CFLAGS.power9     = -O2 -mcpu=power9 -mtune=power9
 CPU_CFLAGS            = $(CPU_CFLAGS.$(CPU))
 
 #### ARCH dependant flags, may be overridden by CPU flags
@@ -354,7 +359,7 @@ endif
 # Mac OS/X
 ifeq ($(TARGET),osx)
   set_target_defaults = $(call default_opts, \
-    USE_POLL USE_TPROXY USE_KQUEUE)
+    USE_POLL USE_TPROXY USE_LIBCRYPT USE_THREAD USE_CPU_AFFINITY USE_KQUEUE)
   EXPORT_SYMBOL  = -export_dynamic
 endif
 
@@ -378,12 +383,20 @@ ifeq ($(TARGET),aix51)
   DEBUG_CFLAGS    =
 endif
 
-# AIX 5.2 and above
+# AIX 5.2
 ifeq ($(TARGET),aix52)
   set_target_defaults = $(call default_opts, \
     USE_POLL USE_LIBCRYPT USE_OBSOLETE_LINKER)
   TARGET_CFLAGS   = -D_MSGQSUPPORT
   DEBUG_CFLAGS    =
+endif
+
+# AIX 7.2 and above
+ifeq ($(TARGET),aix72-gcc)
+  set_target_defaults = $(call default_opts, \
+    USE_POLL USE_THREAD USE_LIBCRYPT USE_OBSOLETE_LINKER USE_GETADDRINFO)
+  TARGET_CFLAGS   = -D_H_XMEM -D_H_VAR
+  TARGET_LDFLAGS  = -latomic
 endif
 
 # Cygwin
@@ -451,7 +464,9 @@ BUILD_FEATURES := $(foreach opt,$(patsubst USE_%,%,$(use_opts)),$(if $(USE_$(opt
 OPTIONS_CFLAGS += $(foreach opt,$(use_opts),$(if $($(opt)),-D$(opt),))
 
 ifneq ($(USE_LIBCRYPT),)
+ifneq ($(TARGET),osx)
 OPTIONS_LDFLAGS += -lcrypt
+endif
 endif
 
 ifneq ($(USE_SLZ),)
@@ -527,14 +542,6 @@ OPTIONS_LDFLAGS += -lpthread
 endif
 endif
 
-# For nuster
-ifeq ($(USE_OPENSSL),)
-ifneq ($(USE_PTHREAD_PSHARED),)
-OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
-OPTIONS_LDFLAGS += -lpthread
-endif
-endif
-
 ifneq ($(USE_LUA),)
 check_lua_lib = $(shell echo "int main(){}" | $(CC) -o /dev/null -x c - $(2) -l$(1) 2>/dev/null && echo $(1))
 check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
@@ -550,6 +557,14 @@ endif
 LUA_INC := $(firstword $(foreach lib,lua5.3 lua53 lua,$(call check_lua_inc,$(lib),"/usr/include/")))
 ifneq ($(LUA_INC),)
 OPTIONS_CFLAGS  += -I$(LUA_INC)
+endif
+ifneq ($(HLUA_PREPEND_PATH),)
+OPTIONS_CFLAGS  += -DHLUA_PREPEND_PATH=$(HLUA_PREPEND_PATH)
+BUILD_OPTIONS += HLUA_PREPEND_PATH=$(HLUA_PREPEND_PATH)
+endif
+ifneq ($(HLUA_PREPEND_CPATH),)
+OPTIONS_CFLAGS  += -DHLUA_PREPEND_CPATH=$(HLUA_PREPEND_CPATH)
+BUILD_OPTIONS += HLUA_PREPEND_CPATH=$(HLUA_PREPEND_CPATH)
 endif
 endif
 
@@ -749,7 +764,7 @@ all:
 	@echo "Please choose the target among the following supported list :"
 	@echo
 	@echo "   linux-glibc, linux-glibc-legacy, solaris, freebsd, openbsd, netbsd,"
-	@echo "   cygwin, haiku, aix51, aix52, osx, generic, custom"
+	@echo "   cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic, custom"
 	@echo
 	@echo "Use \"generic\" if you don't want any optimization, \"custom\" if you"
 	@echo "want to precisely tweak every option, or choose the target which"
@@ -771,44 +786,37 @@ all: haproxy $(EXTRA)
 endif
 endif
 
-OBJS = src/proto_http.o src/cfgparse-listen.o src/proto_htx.o src/stream.o    \
-       src/mux_h2.o src/stats.o src/flt_spoe.o src/server.o src/checks.o      \
-       src/haproxy.o src/cfgparse.o src/flt_http_comp.o src/http_fetch.o      \
-       src/dns.o src/stick_table.o src/mux_h1.o src/peers.o src/standard.o    \
-       src/proxy.o src/cli.o src/log.o src/backend.o src/pattern.o            \
-       src/sample.o src/stream_interface.o src/proto_tcp.o src/listener.o     \
-       src/h1.o src/cfgparse-global.o src/cache.o src/http_rules.o            \
-       src/http_act.o src/tcp_rules.o src/filters.o src/connection.o          \
-       src/session.o src/acl.o src/vars.o src/raw_sock.o src/map.o            \
-       src/proto_uxst.o src/payload.o src/fd.o src/queue.o src/flt_trace.o    \
-       src/task.o src/lb_chash.o src/frontend.o src/applet.o src/mux_pt.o     \
-       src/signal.o src/ev_select.o src/proto_sockpair.o src/compression.o    \
-       src/http_conv.o src/memory.o src/lb_fwrr.o src/channel.o src/htx.o     \
-       src/uri_auth.o src/regex.o src/chunk.o src/pipe.o src/lb_fas.o         \
-       src/lb_map.o src/lb_fwlc.o src/auth.o src/time.o src/hathreads.o       \
-       src/http_htx.o src/buffer.o src/hpack-tbl.o src/shctx.o src/sha1.o     \
-       src/http.o src/hpack-dec.o src/action.o src/proto_udp.o src/http_acl.o \
-       src/xxhash.o src/hpack-enc.o src/h2.o src/freq_ctr.o src/lru.o         \
-       src/protocol.o src/arg.o src/hpack-huff.o src/hdr_idx.o src/base64.o   \
-       src/hash.o src/mailers.o src/activity.o src/http_msg.o src/version.o   \
-       src/mworker.o src/mworker-prog.o src/debug.o src/wdt.o src/dict.o      \
-       src/xprt_handshake.o
+OBJS = src/mux_h2.o src/stream.o src/mux_fcgi.o src/cfgparse-listen.o         \
+       src/http_ana.o src/stats.o src/mux_h1.o src/flt_spoe.o src/server.o    \
+       src/cfgparse.o src/checks.o src/backend.o src/log.o src/peers.o        \
+       src/cli.o src/haproxy.o src/stick_table.o src/standard.o src/sample.o  \
+       src/proxy.o src/stream_interface.o src/pattern.o src/dns.o             \
+       src/proto_tcp.o src/listener.o src/cfgparse-global.o src/h1.o          \
+       src/http_rules.o src/http_fetch.o src/cache.o src/session.o            \
+       src/fcgi-app.o src/connection.o src/tcp_rules.o src/filters.o          \
+       src/task.o src/mworker.o src/map.o src/h1_htx.o src/trace.o            \
+       src/flt_trace.o src/acl.o src/http_htx.o src/flt_http_comp.o           \
+       src/payload.o src/vars.o src/debug.o src/mux_pt.o src/http_act.o       \
+       src/h2.o src/queue.o src/fd.o src/proto_uxst.o src/lb_chash.o          \
+       src/ring.o src/frontend.o src/raw_sock.o src/xprt_handshake.o          \
+       src/htx.o src/memory.o src/applet.o src/channel.o src/signal.o         \
+       src/lb_fwrr.o src/ev_select.o src/sink.o src/http_conv.o               \
+       src/proto_sockpair.o src/mworker-prog.o src/activity.o src/lb_fwlc.o   \
+       src/http.o src/lb_fas.o src/uri_auth.o src/hathreads.o src/regex.o     \
+       src/auth.o src/buffer.o src/compression.o src/proto_udp.o src/lb_map.o \
+       src/chunk.o src/wdt.o src/hpack-dec.o src/action.o src/xxhash.o        \
+       src/pipe.o src/shctx.o src/hpack-tbl.o src/http_acl.o src/sha1.o       \
+       src/time.o src/hpack-enc.o src/fcgi.o src/arg.o src/base64.o           \
+       src/protocol.o src/freq_ctr.o src/lru.o src/hpack-huff.o src/dict.o    \
+       src/hash.o src/mailers.o src/version.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
               $(EBTREE_DIR)/ebmbtree.o $(EBTREE_DIR)/ebsttree.o \
               $(EBTREE_DIR)/ebimtree.o $(EBTREE_DIR)/ebistree.o
 
-NUSTER_OBJS = src/nuster/cache/dict.o src/nuster/cache/filter.o               \
-              src/nuster/cache/stats.o src/nuster/cache/manager.o             \
-              src/nuster/cache/engine.o                                       \
-              src/nuster/nosql/filter.o  src/nuster/nosql/dict.o              \
-              src/nuster/nosql/stats.o src/nuster/nosql/engine.o              \
-              src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
-              src/nuster/persist.o src/nuster/nuster.o
-
 ifneq ($(TRACE),)
-OBJS += src/trace.o
+OBJS += src/calltrace.o
 endif
 
 ifneq ($(EXTRA_OBJS),)
@@ -823,7 +831,7 @@ INCLUDES = $(wildcard include/*/*.h ebtree/*.h)
 DEP = $(INCLUDES) .build_opts
 
 help:
-	$(Q)sed -ne "/^[^#]*$$/q;s/^# \?\(.*\)/\1/p" Makefile
+	$(Q)sed -ne "/^[^#]*$$/q;s/^# \{0,1\}\(.*\)/\1/;p" Makefile
 	$(Q)echo; \
 	   if [ -n "$(TARGET)" ]; then \
 	     if [ -n "$(set_target_defaults)" ]; then \
@@ -834,7 +842,7 @@ help:
 	   else \
 	     echo "TARGET not set, you may pass 'TARGET=xxx' to set one among :";\
 	     echo "  linux-glibc, linux-glibc-legacy, solaris, freebsd, netbsd, osx,"; \
-	     echo "  openbsd, aix51, aix52, cygwin, haiku, generic, custom"; \
+	     echo "  openbsd, aix51, aix52, aix72-gcc, cygwin, haiku, generic, custom"; \
 	   fi
 	$(Q)echo;echo "Enabled features for TARGET '$(TARGET)' (disable with 'USE_xxx=') :"
 	$(Q)set -- $(foreach opt,$(patsubst USE_%,%,$(use_opts)),$(if $(USE_$(opt)),$(opt),)); echo "  $$*" | (fmt || cat) 2>/dev/null
@@ -845,8 +853,7 @@ help:
 build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 .build_opts: $(build_opts)
 
-haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS) $(NUSTER_OBJS)
-
+haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS)
 	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
 
 $(LIB_EBTREE): $(EBTREE_OBJS)
@@ -861,7 +868,7 @@ objsize: haproxy
 # rebuild it every time
 .PHONY: src/version.c
 
-src/trace.o: src/trace.c $(DEP)
+src/calltrace.o: src/calltrace.c $(DEP)
 	$(cmd_CC) $(TRACE_COPTS) -c -o $@ $<
 
 src/haproxy.o:	src/haproxy.c $(DEP)
@@ -897,7 +904,6 @@ install-bin:
 	done
 	$(Q)install -v -d "$(DESTDIR)$(SBINDIR)"
 	$(Q)install -v haproxy $(EXTRA) "$(DESTDIR)$(SBINDIR)"
-	$(Q)ln -s "$(DESTDIR)$(SBINDIR)/haproxy" "$(DESTDIR)$(SBINDIR)/nuster"
 
 install: install-bin install-man install-doc
 
@@ -908,14 +914,12 @@ uninstall:
 	done
 	$(Q)-rmdir "$(DESTDIR)$(DOCDIR)"
 	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/haproxy
-	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/nuster
 
 clean:
 	$(Q)rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
 	$(Q)for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
-	$(Q)rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
 
 tags:
 	$(Q)find src include \( -name '*.c' -o -name '*.h' \) -print0 | \

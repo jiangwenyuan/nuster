@@ -34,7 +34,7 @@
 #include <proto/http_rules.h>
 #include <proto/http_htx.h>
 #include <proto/log.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/stream_interface.h>
 
 
@@ -62,8 +62,8 @@ static enum act_return http_action_set_req_line(struct act_rule *rule, struct pr
 				       replace->size - replace->data,
 				       &rule->arg.http.logfmt);
 
-	http_replace_req_line(rule->arg.http.action, replace->area,
-			      replace->data, px, s);
+	http_req_replace_stline(rule->arg.http.action, replace->area,
+				replace->data, px, s);
 
 	ret = ACT_RET_CONT;
 
@@ -150,11 +150,7 @@ static enum act_return http_action_replace_uri(struct act_rule *rule, struct pro
 	output  = alloc_trash_chunk();
 	if (!replace || !output)
 		goto leave;
-
-	if (IS_HTX_STRM(s))
-		uri = htx_sl_req_uri(http_get_stline(htxbuf(&s->req.buf)));
-	else
-		uri = ist2(ci_head(&s->req) + s->txn->req.sl.rq.u, s->txn->req.sl.rq.u_l);
+	uri = htx_sl_req_uri(http_get_stline(htxbuf(&s->req.buf)));
 
 	if (rule->arg.act.p[0] == (void *)1)
 		uri = http_get_path(uri); // replace path
@@ -171,7 +167,7 @@ static enum act_return http_action_replace_uri(struct act_rule *rule, struct pro
 	if (len == -1)
 		goto leave;
 
-	http_replace_req_line((long)rule->arg.act.p[0], output->area, len, px, s);
+	http_req_replace_stline((long)rule->arg.act.p[0], output->area, len, px, s);
 
 	ret = ACT_RET_CONT;
 
@@ -228,7 +224,7 @@ static enum act_parse_ret parse_replace_uri(const char **args, int *orig_arg, st
 static enum act_return action_http_set_status(struct act_rule *rule, struct proxy *px,
                                               struct session *sess, struct stream *s, int flags)
 {
-	http_set_status(rule->arg.status.code, rule->arg.status.reason, s);
+	http_res_set_status(rule->arg.status.code, rule->arg.status.reason, s);
 	return ACT_RET_CONT;
 }
 

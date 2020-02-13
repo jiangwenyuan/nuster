@@ -117,8 +117,8 @@ enum PR_SRV_STATE_FILE {
 #define PR_O_HTTP_KAL   0x00000000      /* HTTP keep-alive mode (http-keep-alive) */
 #define PR_O_HTTP_CLO   0x01000000      /* HTTP close mode (httpclose) */
 #define PR_O_HTTP_SCL   0x02000000      /* HTTP server close mode (http-server-close) */
-#define PR_O_HTTP_TUN   0x04000000      /* HTTP tunnel mode : no analysis past first request/response */
-#define PR_O_HTTP_MODE  0x07000000      /* MASK to retrieve the HTTP mode */
+#define PR_O_HTTP_MODE  0x03000000      /* MASK to retrieve the HTTP mode */
+/* unused: 0x04000000 */
 
 #define PR_O_TCPCHK_SSL 0x08000000	/* at least one TCPCHECK connect rule requires SSL */
 #define PR_O_CONTSTATS	0x10000000	/* continuous counters */
@@ -155,7 +155,7 @@ enum PR_SRV_STATE_FILE {
 #define PR_O2_SRC_ADDR	0x00100000	/* get the source ip and port for logs */
 
 #define PR_O2_FAKE_KA   0x00200000      /* pretend we do keep-alive with server eventhough we close */
-#define PR_O2_USE_HTX   0x00400000      /* use the HTX representation for the HTTP protocol */
+/* unused : 0x00400000 */
 
 #define PR_O2_EXP_NONE  0x00000000      /* http-check : no expect rule */
 #define PR_O2_EXP_STS   0x00800000      /* http-check expect status */
@@ -315,7 +315,6 @@ struct proxy {
 	struct list acl;                        /* ACL declared on this proxy */
 	struct list http_req_rules;		/* HTTP request rules: allow/deny/... */
 	struct list http_res_rules;		/* HTTP response rules: allow/deny/... */
-	struct list block_rules;                /* http-request block rules to be inserted before other ones */
 	struct list redirect_rules;             /* content redirecting rules (chained) */
 	struct list switching_rules;            /* content switching rules (chained) */
 	struct list persist_rules;		/* 'force-persist' and 'ignore-persist' rules (chained) */
@@ -409,18 +408,15 @@ struct proxy {
 	struct list format_unique_id;		/* unique-id format */
 	int to_log;				/* things to be logged (LW_*) */
 	int stop_time;                          /* date to stop listening, when stopping != 0 (int ticks) */
-	struct hdr_exp *req_exp;		/* regular expressions for request headers */
-	struct hdr_exp *rsp_exp;		/* regular expressions for response headers */
 	int nb_req_cap, nb_rsp_cap;		/* # of headers to be captured */
 	struct cap_hdr *req_cap;		/* chained list of request headers to be captured */
 	struct cap_hdr *rsp_cap;		/* chained list of response headers to be captured */
 	struct pool_head *req_cap_pool,		/* pools of pre-allocated char ** used to build the streams */
 	                 *rsp_cap_pool;
-	struct list req_add, rsp_add;           /* headers to be added */
 	struct be_counters be_counters;		/* backend statistics counters */
 	struct fe_counters fe_counters;		/* frontend statistics counters */
 
-	struct list listener_queue;		/* list of the temporarily limited listeners because of lack of a proxy resource */
+	struct mt_list listener_queue;		/* list of the temporarily limited listeners because of lack of a proxy resource */
 	struct stktable *table;			/* table for storing sticking streams */
 
 	struct task *task;			/* the associated task, mandatory to manage rate limiting, stopping and resource shortage, NULL if disabled */
@@ -491,10 +487,6 @@ struct proxy {
 						 * name is used
 						 */
 	struct list filter_configs;		/* list of the filters that are declared on this proxy */
-	struct {
-		int mode;
-		struct list rules;              /* nuster rules */
-	} nuster;
 	__decl_hathreads(HA_SPINLOCK_T lock);   /* may be taken under the server's lock */
 };
 

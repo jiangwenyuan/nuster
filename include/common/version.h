@@ -33,7 +33,19 @@
 #ifdef  CONFIG_PRODUCT_BRANCH
 #define PRODUCT_BRANCH    CONFIG_PRODUCT_BRANCH
 #else
-#define PRODUCT_BRANCH   "2.0"
+#define PRODUCT_BRANCH   "2.1"
+#endif
+
+#ifdef  CONFIG_PRODUCT_STATUS
+#define PRODUCT_STATUS    CONFIG_PRODUCT_STATUS
+#else
+#define PRODUCT_STATUS   "Status: stable branch - will stop receiving fixes around Q1 2021."
+#endif
+
+#ifdef CONFIG_PRODUCT_URL_BUGS
+#define PRODUCT_URL_BUGS  CONFIG_PRODUCT_URL_BUGS
+#else
+#define PRODUCT_URL_BUGS "http://www.haproxy.org/bugs/bugs-%s.html"
 #endif
 
 #ifdef  CONFIG_PRODUCT_URL

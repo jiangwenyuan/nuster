@@ -415,7 +415,7 @@ static int uxst_pause_listener(struct listener *l)
 
 /*
  * This function initiates a UNIX connection establishment to the target assigned
- * to connection <conn> using (si->{target,addr.to}). The source address is ignored
+ * to connection <conn> using (si->{target,dst}). The source address is ignored
  * and will be selected by the system. conn->target may point either to a valid
  * server or to a backend, depending on conn->target. Only OBJ_TYPE_PROXY and
  * OBJ_TYPE_SERVER are supported. The <data> parameter is a boolean indicating
@@ -525,7 +525,7 @@ static int uxst_connect_server(struct connection *conn, int flags)
 	if (global.tune.server_rcvbuf)
                 setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &global.tune.server_rcvbuf, sizeof(global.tune.server_rcvbuf));
 
-	if (connect(fd, (struct sockaddr *)&conn->addr.to, get_addr_len(&conn->addr.to)) == -1) {
+	if (connect(fd, (struct sockaddr *)conn->dst, get_addr_len(conn->dst)) == -1) {
 		if (errno == EINPROGRESS || errno == EALREADY) {
 			conn->flags |= CO_FL_WAIT_L4_CONN;
 		}
@@ -577,6 +577,9 @@ static int uxst_connect_server(struct connection *conn, int flags)
 
 	conn_ctrl_init(conn);       /* registers the FD */
 	fdtab[fd].linger_risk = 0;  /* no need to disable lingering */
+
+	if (conn->flags & CO_FL_WAIT_L4_CONN)
+		fd_cant_recv(fd); // we'll change this once the connection is validated
 
 	if (conn_xprt_init(conn) < 0) {
 		conn_full_close(conn);

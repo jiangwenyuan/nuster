@@ -16,7 +16,6 @@
 #include <common/http-hdr.h>
 
 #include <proto/channel.h>
-#include <proto/hdr_idx.h>
 
 /* Parse the Content-Length header field of an HTTP/1 request. The function
  * checks all possible occurrences of a comma-delimited value, and verifies
@@ -283,6 +282,7 @@ int h1_headers_to_hdr_list(char *start, const char *stop,
 	union h1_sl sl;
 	int skip_update;
 	int restarting;
+	int host_idx;
 	struct ist n, v;       /* header name and value during parsing */
 
 	skip = 0; // do it only once to keep track of the leading CRLF.
@@ -291,6 +291,7 @@ int h1_headers_to_hdr_list(char *start, const char *stop,
 	hdr_count = sol = col = eol = sov = 0;
 	sl.st.status = 0;
 	skip_update = restarting = 0;
+	host_idx = -1;
 
 	if (h1m->flags & H1_MF_HDRS_ONLY) {
 		state = H1_MSG_HDR_FIRST;
@@ -830,6 +831,32 @@ int h1_headers_to_hdr_list(char *start, const char *stop,
 					h1_parse_connection_header(h1m, &v);
 					if (!v.len) {
 						/* skip it */
+						break;
+					}
+				}
+				else if (!(h1m->flags & H1_MF_RESP) && isteqi(n, ist("host"))) {
+					if (host_idx == -1) {
+						struct ist authority;
+
+						authority = http_get_authority(sl.rq.u, 1);
+						if (authority.len && !isteqi(v, authority)) {
+							if (h1m->err_pos < -1) {
+								state = H1_MSG_HDR_L2_LWS;
+								ptr = v.ptr; /* Set ptr on the error */
+								goto http_msg_invalid;
+							}
+							if (h1m->err_pos == -1) /* capture the error pointer */
+								h1m->err_pos = v.ptr - start + skip; /* >= 0 now */
+						}
+						host_idx = hdr_count;
+					}
+					else {
+						if (!isteqi(v, hdr[host_idx].v)) {
+							state = H1_MSG_HDR_L2_LWS;
+							ptr = v.ptr; /* Set ptr on the error */
+							goto http_msg_invalid;
+						}
+						/* if the same host, skip it */
 						break;
 					}
 				}

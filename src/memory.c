@@ -346,7 +346,17 @@ void *__pool_refill_alloc(struct pool_head *pool, unsigned int avail)
 			return NULL;
 		}
 
+		HA_SPIN_UNLOCK(POOL_LOCK, &pool->lock);
 		ptr = pool_alloc_area(pool->size + POOL_EXTRA);
+#ifdef DEBUG_MEMORY_POOLS
+		/* keep track of where the element was allocated from. This
+		 * is done out of the lock so that the system really allocates
+		 * the data without harming other threads waiting on the lock.
+		 */
+		if (ptr)
+			*POOL_LINK(pool, ptr) = (void *)pool;
+#endif
+		HA_SPIN_LOCK(POOL_LOCK, &pool->lock);
 		if (!ptr) {
 			pool->failed++;
 			if (failed) {
@@ -364,10 +374,6 @@ void *__pool_refill_alloc(struct pool_head *pool, unsigned int avail)
 		pool->free_list = ptr;
 	}
 	pool->used++;
-#ifdef DEBUG_MEMORY_POOLS
-	/* keep track of where the element was allocated from */
-	*POOL_LINK(pool, ptr) = (void *)pool;
-#endif
 	return ptr;
 }
 void *pool_refill_alloc(struct pool_head *pool, unsigned int avail)
@@ -384,21 +390,24 @@ void *pool_refill_alloc(struct pool_head *pool, unsigned int avail)
  */
 void pool_flush(struct pool_head *pool)
 {
-	void *temp, *next;
+	void *temp;
+
 	if (!pool)
 		return;
 
-	HA_SPIN_LOCK(POOL_LOCK, &pool->lock);
-	next = pool->free_list;
-	while (next) {
-		temp = next;
-		next = *POOL_LINK(pool, temp);
+	while (1) {
+		HA_SPIN_LOCK(POOL_LOCK, &pool->lock);
+		temp = pool->free_list;
+		if (!temp) {
+			HA_SPIN_UNLOCK(POOL_LOCK, &pool->lock);
+			break;
+		}
+		pool->free_list = *POOL_LINK(pool, temp);
 		pool->allocated--;
+		HA_SPIN_UNLOCK(POOL_LOCK, &pool->lock);
 		pool_free_area(temp, pool->size + POOL_EXTRA);
 	}
-	pool->free_list = next;
-	HA_SPIN_UNLOCK(POOL_LOCK, &pool->lock);
-	/* here, we should have pool->allocate == pool->used */
+	/* here, we should have pool->allocated == pool->used */
 }
 
 /*
@@ -430,7 +439,11 @@ void pool_gc(struct pool_head *pool_ctx)
 			temp = next;
 			next = *POOL_LINK(entry, temp);
 			entry->allocated--;
+			if (entry != pool_ctx)
+				HA_SPIN_UNLOCK(POOL_LOCK, &entry->lock);
 			pool_free_area(temp, entry->size + POOL_EXTRA);
+			if (entry != pool_ctx)
+				HA_SPIN_LOCK(POOL_LOCK, &entry->lock);
 		}
 		entry->free_list = next;
 		if (entry != pool_ctx)

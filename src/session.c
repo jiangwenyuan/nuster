@@ -153,8 +153,11 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	if (unlikely((cli_conn = conn_new()) == NULL))
 		goto out_close;
 
+	if (!sockaddr_alloc(&cli_conn->src))
+		goto out_free_conn;
+
 	cli_conn->handle.fd = cfd;
-	cli_conn->addr.from = *addr;
+	*cli_conn->src = *addr;
 	cli_conn->flags |= CO_FL_ADDR_FROM_SET;
 	cli_conn->target = &l->obj_type;
 	cli_conn->proxy_netns = l->netns;
@@ -170,7 +173,6 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	if (l->options & LI_O_ACC_CIP)
 		cli_conn->flags |= CO_FL_ACCEPT_CIP;
 
-	conn_xprt_want_recv(cli_conn);
 	if (conn_xprt_init(cli_conn) < 0)
 		goto out_free_conn;
 
@@ -331,13 +333,13 @@ static void session_prepare_log_prefix(struct session *sess)
 	char *end;
 	struct connection *cli_conn = __objt_conn(sess->origin);
 
-	ret = addr_to_str(&cli_conn->addr.from, pn, sizeof(pn));
+	ret = conn_get_src(cli_conn) ? addr_to_str(cli_conn->src, pn, sizeof(pn)) : 0;
 	if (ret <= 0)
 		chunk_printf(&trash, "unknown [");
 	else if (ret == AF_UNIX)
 		chunk_printf(&trash, "%s:%d [", pn, sess->listener->luid);
 	else
-		chunk_printf(&trash, "%s:%d [", pn, get_host_port(&cli_conn->addr.from));
+		chunk_printf(&trash, "%s:%d [", pn, get_host_port(cli_conn->src));
 
 	get_localtime(sess->accept_date.tv_sec, &tm);
 	end = date2str_log(trash.area + trash.data, &tm, &(sess->accept_date),

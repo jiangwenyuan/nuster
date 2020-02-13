@@ -120,7 +120,6 @@ struct http_method_desc {
 
 extern const int http_err_codes[HTTP_ERR_SIZE];
 extern const char *http_err_msgs[HTTP_ERR_SIZE];
-extern struct buffer http_err_chunks[HTTP_ERR_SIZE];
 extern const struct ist http_known_methods[HTTP_METH_OTHER];
 extern const uint8_t http_char_classes[256];
 
@@ -134,10 +133,10 @@ extern const char *HTTP_308;
 extern const char *HTTP_401_fmt;
 extern const char *HTTP_407_fmt;
 
-int init_http(char **err);
 enum http_meth_t find_http_meth(const char *str, const int len);
 int http_get_status_idx(unsigned int status);
 const char *http_get_reason(unsigned int status);
+struct ist http_get_authority(const struct ist uri, int no_userinfo);
 struct ist http_get_path(const struct ist uri);
 int http_header_match2(const char *hdr, const char *end,
                        const char *name, int len);
@@ -156,6 +155,7 @@ int http_find_next_url_param(const char **chunks,
 
 int http_parse_header(const struct ist hdr, struct ist *name, struct ist *value);
 int http_parse_stline(const struct ist line, struct ist *p1, struct ist *p2, struct ist *p3);
+int http_parse_status_val(const struct ist value, struct ist *status, struct ist *reason);
 
 /*
  * Given a path string and its length, find the position of beginning of the

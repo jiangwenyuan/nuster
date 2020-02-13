@@ -36,9 +36,12 @@
 
 #include <proto/applet.h>
 #include <proto/cli.h>
+#include <proto/fd.h>
 #include <proto/frontend.h>
 #include <proto/log.h>
+#include <proto/ring.h>
 #include <proto/sample.h>
+#include <proto/sink.h>
 #include <proto/ssl_sock.h>
 #include <proto/stream.h>
 #include <proto/stream_interface.h>
@@ -245,7 +248,7 @@ THREAD_LOCAL char *logline_rfc5424 = NULL;
 
 /* A global buffer used to store all startup alerts/warnings. It will then be
  * retrieve on the CLI. */
-static char *startup_logs = NULL;
+static struct ring *startup_logs = NULL;
 
 struct logformat_var_args {
 	char *name;
@@ -517,7 +520,7 @@ int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct prox
 		goto error_free;
 	}
 
-	/* check if we need to allocate an hdr_idx struct for HTTP parsing */
+	/* check if we need to allocate an http_txn struct for HTTP parsing */
 	/* Note, we may also need to set curpx->to_log with certain fetches */
 	curpx->http_needed |= !!(expr->fetch->use & SMP_USE_HTTP_ANY);
 
@@ -1001,6 +1004,24 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 	}
 
 	/* now, back to the address */
+	logsrv->type = LOG_TARGET_DGRAM;
+	if (strncmp(args[1], "ring@", 5) == 0) {
+		struct sink *sink = sink_find(args[1] + 5);
+
+		if (!sink || sink->type != SINK_TYPE_BUFFER) {
+			memprintf(err, "cannot find ring buffer '%s'", args[1] + 5);
+			goto error;
+		}
+
+		logsrv->addr.ss_family = AF_UNSPEC;
+		logsrv->type = LOG_TARGET_BUFFER;
+		logsrv->ring = sink->ctx.ring;
+		goto done;
+	}
+
+	if (strncmp(args[1], "fd@", 3) == 0)
+		logsrv->type = LOG_TARGET_FD;
+
 	sk = str2sa_range(args[1], NULL, &port1, &port2, err, NULL, NULL, 1);
 	if (!sk)
 		goto error;
@@ -1015,6 +1036,7 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 		if (!port1)
 			set_host_port(&logsrv->addr, SYSLOG_PORT);
 	}
+ done:
 	LIST_ADDQ(logsrvs, &logsrv->list);
 	return 1;
 
@@ -1037,9 +1059,21 @@ static void print_message(const char *label, const char *fmt, va_list argp)
 		  label, tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
 	memvprintf(&msg, fmt, argp);
 
-	if (global.mode & MODE_STARTING &&
-	    (!startup_logs || strlen(startup_logs) + strlen(head) + strlen(msg) < global.tune.bufsize))
-		memprintf(&startup_logs, "%s%s%s", (startup_logs ? startup_logs : ""), head, msg);
+	if (global.mode & MODE_STARTING) {
+		if (unlikely(!startup_logs))
+			startup_logs = ring_new(STARTUP_LOG_SIZE);
+
+		if (likely(startup_logs)) {
+			struct ist m[2];
+
+			m[0] = ist(head);
+			m[1] = ist(msg);
+			/* trim the trailing '\n' */
+			if (m[1].len > 0 && m[1].ptr[m[1].len - 1] == '\n')
+				m[1].len--;
+			ring_write(startup_logs, ~0, 0, 0, m, 2);
+		}
+	}
 
 	fprintf(stderr, "%s%s", head, msg);
 	fflush(stderr);
@@ -1461,7 +1495,8 @@ void send_log(struct proxy *p, int level, const char *format, ...)
 		data_len = global.max_syslog_len;
 	va_end(argp);
 
-	__send_log(p, level, logline, data_len, default_rfc5424_sd_log_format, 2);
+	__send_log((p ? &p->logsrvs : NULL), (p ? &p->log_tag : NULL), level,
+		   logline, data_len, default_rfc5424_sd_log_format, 2);
 }
 
 /*
@@ -1505,24 +1540,19 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 
 	dataptr = message;
 
-	if (logsrv->addr.ss_family == AF_UNSPEC) {
+	if (logsrv->type == LOG_TARGET_FD) {
 		/* the socket's address is a file descriptor */
 		plogfd = (int *)&((struct sockaddr_in *)&logsrv->addr)->sin_addr.s_addr;
-		if (unlikely(!((struct sockaddr_in *)&logsrv->addr)->sin_port)) {
-			/* FD not yet initialized to non-blocking mode.
-			 * DON'T DO IT ON A TERMINAL!
-			 */
-			if (!isatty(*plogfd))
-				fcntl(*plogfd, F_SETFL, O_NONBLOCK);
-			((struct sockaddr_in *)&logsrv->addr)->sin_port = 1;
-		}
+	}
+	else if (logsrv->type == LOG_TARGET_BUFFER) {
+		plogfd = NULL;
 	}
 	else if (logsrv->addr.ss_family == AF_UNIX)
 		plogfd = &logfdunix;
 	else
 		plogfd = &logfdinet;
 
-	if (unlikely(*plogfd < 0)) {
+	if (plogfd && unlikely(*plogfd < 0)) {
 		/* socket not successfully initialized yet */
 		if ((*plogfd = socket(logsrv->addr.ss_family, SOCK_DGRAM,
 							  (logsrv->addr.ss_family == AF_UNIX) ? 0 : IPPROTO_UDP)) < 0) {
@@ -1658,35 +1688,41 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 
 	max = MIN(size, maxlen - sd_max) - 1;
 send:
-	iovec[0].iov_base = hdr_ptr;
-	iovec[0].iov_len  = hdr_max;
-	iovec[1].iov_base = tag_str;
-	iovec[1].iov_len  = tag_max;
-	iovec[2].iov_base = pid_sep1;
-	iovec[2].iov_len  = pid_sep1_max;
-	iovec[3].iov_base = pid_str;
-	iovec[3].iov_len  = pid_max;
-	iovec[4].iov_base = pid_sep2;
-	iovec[4].iov_len  = pid_sep2_max;
-	iovec[5].iov_base = sd;
-	iovec[5].iov_len  = sd_max;
-	iovec[6].iov_base = dataptr;
-	iovec[6].iov_len  = max;
-	iovec[7].iov_base = "\n"; /* insert a \n at the end of the message */
-	iovec[7].iov_len  = 1;
-
 	if (logsrv->addr.ss_family == AF_UNSPEC) {
-		/* the target is a direct file descriptor. While writev() guarantees
-		 * to write everything, it doesn't guarantee that it will not be
-		 * interrupted while doing so. This occasionally results in interleaved
-		 * messages when the output is a tty, hence the lock. There's no real
-		 * performance concern here for such type of output.
-		 */
-		HA_SPIN_LOCK(LOGSRV_LOCK, &logsrv->lock);
-		sent = writev(*plogfd, iovec, 8);
-		HA_SPIN_UNLOCK(LOGSRV_LOCK, &logsrv->lock);
+		/* the target is a file descriptor or a ring buffer */
+		struct ist msg[7];
+
+		msg[0].ptr = hdr_ptr;  msg[0].len = hdr_max;
+		msg[1].ptr = tag_str;  msg[1].len = tag_max;
+		msg[2].ptr = pid_sep1; msg[2].len = pid_sep1_max;
+		msg[3].ptr = pid_str;  msg[3].len = pid_max;
+		msg[4].ptr = pid_sep2; msg[4].len = pid_sep2_max;
+		msg[5].ptr = sd;       msg[5].len = sd_max;
+		msg[6].ptr = dataptr;  msg[6].len = max;
+
+		if (logsrv->type == LOG_TARGET_BUFFER)
+			sent = ring_write(logsrv->ring, ~0, NULL, 0, msg, 7);
+		else /* LOG_TARGET_FD */
+			sent = fd_write_frag_line(*plogfd, ~0, NULL, 0, msg, 7, 1);
 	}
 	else {
+		iovec[0].iov_base = hdr_ptr;
+		iovec[0].iov_len  = hdr_max;
+		iovec[1].iov_base = tag_str;
+		iovec[1].iov_len  = tag_max;
+		iovec[2].iov_base = pid_sep1;
+		iovec[2].iov_len  = pid_sep1_max;
+		iovec[3].iov_base = pid_str;
+		iovec[3].iov_len  = pid_max;
+		iovec[4].iov_base = pid_sep2;
+		iovec[4].iov_len  = pid_sep2_max;
+		iovec[5].iov_base = sd;
+		iovec[5].iov_len  = sd_max;
+		iovec[6].iov_base = dataptr;
+		iovec[6].iov_len  = max;
+		iovec[7].iov_base = "\n"; /* insert a \n at the end of the message */
+		iovec[7].iov_len  = 1;
+
 		msghdr.msg_name = (struct sockaddr *)&logsrv->addr;
 		msghdr.msg_namelen = get_addr_len(&logsrv->addr);
 
@@ -1712,30 +1748,24 @@ send:
  * The arguments <sd> and <sd_size> are used for the structured-data part
  * in RFC5424 formatted syslog messages.
  */
-void __send_log(struct proxy *p, int level, char *message, size_t size, char *sd, size_t sd_size)
+void __send_log(struct list *logsrvs, struct buffer *tag, int level,
+		char *message, size_t size, char *sd, size_t sd_size)
 {
-	struct list *logsrvs = NULL;
 	struct logsrv *logsrv;
 	int nblogger;
 	static THREAD_LOCAL int curr_pid;
 	static THREAD_LOCAL char pidstr[100];
 	static THREAD_LOCAL struct buffer pid;
-	struct buffer *tag = &global.log_tag;
 
-	if (p == NULL) {
+	if (logsrvs == NULL) {
 		if (!LIST_ISEMPTY(&global.logsrvs)) {
 			logsrvs = &global.logsrvs;
 		}
-	} else {
-		if (!LIST_ISEMPTY(&p->logsrvs)) {
-			logsrvs = &p->logsrvs;
-		}
-		if (p->log_tag.area) {
-			tag = &p->log_tag;
-		}
 	}
+	if (!tag || !tag->area)
+		tag = &global.log_tag;
 
-	if (!logsrvs)
+	if (!logsrvs || LIST_ISEMPTY(logsrvs))
 		return;
 
 	if (unlikely(curr_pid != getpid())) {
@@ -1887,20 +1917,15 @@ int init_log_buffers()
 /* Deinitialize log buffers used for syslog messages */
 void deinit_log_buffers()
 {
-	void *tmp_startup_logs;
-
 	free(logheader);
 	free(logheader_rfc5424);
 	free(logline);
 	free(logline_rfc5424);
-	tmp_startup_logs = _HA_ATOMIC_XCHG(&startup_logs, NULL);
-	free(tmp_startup_logs);
-
+	ring_free(_HA_ATOMIC_XCHG(&startup_logs, NULL));
 	logheader         = NULL;
 	logheader_rfc5424 = NULL;
 	logline           = NULL;
 	logline_rfc5424   = NULL;
-	startup_logs      = NULL;
 }
 
 /* Builds a log line in <dst> based on <list_format>, and stops before reaching
@@ -1915,7 +1940,7 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 	struct proxy *be;
 	struct http_txn *txn;
 	const struct strm_logs *logs;
-	const struct connection *be_conn;
+	struct connection *be_conn;
 	unsigned int s_flags;
 	unsigned int uniq_id;
 	struct buffer chunk;
@@ -2032,8 +2057,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case LOG_FMT_CLIENTIP:  // %ci
 				conn = objt_conn(sess->origin);
-				if (conn)
-					ret = lf_ip(tmplog, (struct sockaddr *)&conn->addr.from, dst + maxsize - tmplog, tmp);
+				if (conn && conn_get_src(conn))
+					ret = lf_ip(tmplog, (struct sockaddr *)conn->src, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 				if (ret == NULL)
@@ -2044,11 +2069,11 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case LOG_FMT_CLIENTPORT:  // %cp
 				conn = objt_conn(sess->origin);
-				if (conn) {
-					if (conn->addr.from.ss_family == AF_UNIX) {
+				if (conn && conn_get_src(conn)) {
+					if (conn->src->ss_family == AF_UNIX) {
 						ret = ltoa_o(sess->listener->luid, tmplog, dst + maxsize - tmplog);
 					} else {
-						ret = lf_port(tmplog, (struct sockaddr *)&conn->addr.from,
+						ret = lf_port(tmplog, (struct sockaddr *)conn->src,
 						              dst + maxsize - tmplog, tmp);
 					}
 				}
@@ -2063,9 +2088,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case LOG_FMT_FRONTENDIP: // %fi
 				conn = objt_conn(sess->origin);
-				if (conn) {
-					conn_get_to_addr(conn);
-					ret = lf_ip(tmplog, (struct sockaddr *)&conn->addr.to, dst + maxsize - tmplog, tmp);
+				if (conn && conn_get_dst(conn)) {
+					ret = lf_ip(tmplog, (struct sockaddr *)conn->dst, dst + maxsize - tmplog, tmp);
 				}
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
@@ -2078,12 +2102,11 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case  LOG_FMT_FRONTENDPORT: // %fp
 				conn = objt_conn(sess->origin);
-				if (conn) {
-					conn_get_to_addr(conn);
-					if (conn->addr.to.ss_family == AF_UNIX)
+				if (conn && conn_get_dst(conn)) {
+					if (conn->dst->ss_family == AF_UNIX)
 						ret = ltoa_o(sess->listener->luid, tmplog, dst + maxsize - tmplog);
 					else
-						ret = lf_port(tmplog, (struct sockaddr *)&conn->addr.to, dst + maxsize - tmplog, tmp);
+						ret = lf_port(tmplog, (struct sockaddr *)conn->dst, dst + maxsize - tmplog, tmp);
 				}
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
@@ -2095,8 +2118,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_BACKENDIP:  // %bi
-				if (be_conn)
-					ret = lf_ip(tmplog, (const struct sockaddr *)&be_conn->addr.from, dst + maxsize - tmplog, tmp);
+				if (be_conn && conn_get_src(be_conn))
+					ret = lf_ip(tmplog, (const struct sockaddr *)be_conn->src, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2107,8 +2130,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_BACKENDPORT:  // %bp
-				if (be_conn)
-					ret = lf_port(tmplog, (struct sockaddr *)&be_conn->addr.from, dst + maxsize - tmplog, tmp);
+				if (be_conn && conn_get_src(be_conn))
+					ret = lf_port(tmplog, (struct sockaddr *)be_conn->src, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2119,8 +2142,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_SERVERIP: // %si
-				if (be_conn)
-					ret = lf_ip(tmplog, (struct sockaddr *)&be_conn->addr.to, dst + maxsize - tmplog, tmp);
+				if (be_conn && conn_get_dst(be_conn))
+					ret = lf_ip(tmplog, (struct sockaddr *)be_conn->dst, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2131,8 +2154,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_SERVERPORT: // %sp
-				if (be_conn)
-					ret = lf_port(tmplog, (struct sockaddr *)&be_conn->addr.to, dst + maxsize - tmplog, tmp);
+				if (be_conn && conn_get_dst(be_conn))
+					ret = lf_port(tmplog, (struct sockaddr *)be_conn->dst, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2954,7 +2977,8 @@ void strm_log(struct stream *s)
 	size = build_logline(s, logline, global.max_syslog_len, &sess->fe->logformat);
 	if (size > 0) {
 		_HA_ATOMIC_ADD(&sess->fe->log_count, 1);
-		__send_log(sess->fe, level, logline, size + 1, logline_rfc5424, sd_size);
+		__send_log(&sess->fe->logsrvs, &sess->fe->log_tag, level,
+			   logline, size + 1, logline_rfc5424, sd_size);
 		s->logs.logwait = 0;
 	}
 }
@@ -2992,27 +3016,44 @@ void sess_log(struct session *sess)
 	size = sess_build_logline(sess, NULL, logline, global.max_syslog_len, &sess->fe->logformat);
 	if (size > 0) {
 		_HA_ATOMIC_ADD(&sess->fe->log_count, 1);
-		__send_log(sess->fe, level, logline, size + 1, logline_rfc5424, sd_size);
+		__send_log(&sess->fe->logsrvs, &sess->fe->log_tag, level,
+			   logline, size + 1, logline_rfc5424, sd_size);
 	}
 }
 
-static int cli_io_handler_show_startup_logs(struct appctx *appctx)
+void app_log(struct list *logsrvs, struct buffer *tag, int level, const char *format, ...)
 {
-	struct stream_interface *si = appctx->owner;
-	const char *msg = (startup_logs ? startup_logs : "No startup alerts/warnings.\n");
+	va_list argp;
+	int  data_len;
 
-	if (ci_putstr(si_ic(si), msg) == -1) {
-		si_rx_room_blk(si);
-		return 0;
-	}
-	return 1;
+	if (level < 0 || format == NULL || logline == NULL)
+		return;
+
+	va_start(argp, format);
+	data_len = vsnprintf(logline, global.max_syslog_len, format, argp);
+	if (data_len < 0 || data_len > global.max_syslog_len)
+		data_len = global.max_syslog_len;
+	va_end(argp);
+
+	__send_log(logsrvs, tag, level, logline, data_len, default_rfc5424_sd_log_format, 2);
+}
+
+/* parse the "show startup-logs" command, returns 1 if a message is returned, otherwise zero */
+static int cli_parse_show_startup_logs(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	if (!cli_has_level(appctx, ACCESS_LVL_OPER))
+		return 1;
+
+	if (!startup_logs)
+		return cli_msg(appctx, LOG_INFO, "\n"); // nothing to print
+
+	return ring_attach_cli(startup_logs, appctx);
 }
 
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
 	{ { "show", "startup-logs",  NULL },
-	  "show startup-logs : report logs emitted during HAProxy startup",
-	  NULL, cli_io_handler_show_startup_logs },
+	  "show startup-logs : report logs emitted during HAProxy startup", cli_parse_show_startup_logs, NULL, NULL },
 	{{},}
 }};
 

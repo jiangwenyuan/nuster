@@ -32,6 +32,7 @@
 #include <proto/proxy.h>
 #include <proto/protocol_buffers.h>
 #include <proto/sample.h>
+#include <proto/sink.h>
 #include <proto/stick_table.h>
 #include <proto/vars.h>
 
@@ -1436,45 +1437,85 @@ void release_sample_expr(struct sample_expr *expr)
 /*    These functions set the data type on return.               */
 /*****************************************************************/
 
-#ifdef DEBUG_EXPR
 static int sample_conv_debug(const struct arg *arg_p, struct sample *smp, void *private)
 {
 	int i;
 	struct sample tmp;
+	struct buffer *buf;
+	struct sink *sink;
+	struct ist line;
+	char *pfx;
 
-	if (!(global.mode & MODE_QUIET) || (global.mode & (MODE_VERBOSE | MODE_STARTING))) {
-		fprintf(stderr, "[debug converter] type: %s ", smp_to_type[smp->data.type]);
-		if (!sample_casts[smp->data.type][SMP_T_STR]) {
-			fprintf(stderr, "(undisplayable)");
-		} else {
+	buf = alloc_trash_chunk();
+	if (!buf)
+		goto end;
 
-			/* Copy sample fetch. This put the sample as const, the
-			 * cast will copy data if a transformation is required.
-			 */
-			memcpy(&tmp, smp, sizeof(struct sample));
-			tmp.flags = SMP_F_CONST;
+	sink = (struct sink *)arg_p[1].data.str.area;
+	BUG_ON(!sink);
 
-			if (!sample_casts[smp->data.type][SMP_T_STR](&tmp))
-				fprintf(stderr, "(undisplayable)");
+	pfx = arg_p[0].data.str.area;
+	BUG_ON(!pfx);
 
-			else {
-				/* Display the displayable chars*. */
-				fputc('<', stderr);
-				for (i = 0; i < tmp.data.u.str.data; i++) {
-					if (isprint(tmp.data.u.str.area[i]))
-						fputc(tmp.data.u.str.area[i],
-						      stderr);
-					else
-						fputc('.', stderr);
-				}
-				fputc('>', stderr);
-			}
-		}
-		fputc('\n', stderr);
+	chunk_printf(buf, "[debug] %s: type=%s ", pfx, smp_to_type[smp->data.type]);
+	if (!sample_casts[smp->data.type][SMP_T_STR])
+		goto nocast;
+
+	/* Copy sample fetch. This puts the sample as const, the
+	 * cast will copy data if a transformation is required.
+	 */
+	memcpy(&tmp, smp, sizeof(struct sample));
+	tmp.flags = SMP_F_CONST;
+
+	if (!sample_casts[smp->data.type][SMP_T_STR](&tmp))
+		goto nocast;
+
+	/* Display the displayable chars*. */
+	b_putchr(buf, '<');
+	for (i = 0; i < tmp.data.u.str.data; i++) {
+		if (isprint(tmp.data.u.str.area[i]))
+			b_putchr(buf, tmp.data.u.str.area[i]);
+		else
+			b_putchr(buf, '.');
 	}
+	b_putchr(buf, '>');
+
+ done:
+	line = ist2(buf->area, buf->data);
+	sink_write(sink, &line, 1);
+ end:
+	free_trash_chunk(buf);
+	return 1;
+ nocast:
+	chunk_appendf(buf, "(undisplayable)");
+	goto done;
+}
+
+// This function checks the "debug" converter's arguments.
+static int smp_check_debug(struct arg *args, struct sample_conv *conv,
+                           const char *file, int line, char **err)
+{
+	const char *name = "buf0";
+	struct sink *sink = NULL;
+
+	if (args[0].type != ARGT_STR) {
+		/* optional prefix */
+		args[0].data.str.area = "";
+		args[0].data.str.data = 0;
+	}
+
+	if (args[1].type == ARGT_STR)
+		name = args[1].data.str.area;
+
+	sink = sink_find(name);
+	if (!sink) {
+		memprintf(err, "No such sink '%s'", name);
+		return 0;
+	}
+
+	args[1].data.str.area = (char *)sink;
+	args[1].data.str.data = 0; // that's not a string anymore
 	return 1;
 }
-#endif
 
 static int sample_conv_base642bin(const struct arg *arg_p, struct sample *smp, void *private)
 {
@@ -1529,6 +1570,93 @@ static int sample_conv_sha1(const struct arg *arg_p, struct sample *smp, void *p
 	smp->flags &= ~SMP_F_CONST;
 	return 1;
 }
+
+#ifdef USE_OPENSSL
+static int smp_check_sha2(struct arg *args, struct sample_conv *conv,
+                          const char *file, int line, char **err)
+{
+	if (args[0].type == ARGT_STOP)
+		return 1;
+	if (args[0].type != ARGT_SINT) {
+		memprintf(err, "Invalid type '%s'", arg_type_names[args[0].type]);
+		return 0;
+	}
+
+	switch (args[0].data.sint) {
+		case 224:
+		case 256:
+		case 384:
+		case 512:
+			/* this is okay */
+			return 1;
+		default:
+			memprintf(err, "Unsupported number of bits: '%lld'", args[0].data.sint);
+			return 0;
+	}
+}
+
+static int sample_conv_sha2(const struct arg *arg_p, struct sample *smp, void *private)
+{
+	struct buffer *trash = get_trash_chunk();
+	int bits = 256;
+	if (arg_p && arg_p->data.sint)
+		bits = arg_p->data.sint;
+
+	switch (bits) {
+	case 224: {
+		SHA256_CTX ctx;
+
+		memset(&ctx, 0, sizeof(ctx));
+
+		SHA224_Init(&ctx);
+		SHA224_Update(&ctx, smp->data.u.str.area, smp->data.u.str.data);
+		SHA224_Final((unsigned char *) trash->area, &ctx);
+		trash->data = SHA224_DIGEST_LENGTH;
+		break;
+	}
+	case 256: {
+		SHA256_CTX ctx;
+
+		memset(&ctx, 0, sizeof(ctx));
+
+		SHA256_Init(&ctx);
+		SHA256_Update(&ctx, smp->data.u.str.area, smp->data.u.str.data);
+		SHA256_Final((unsigned char *) trash->area, &ctx);
+		trash->data = SHA256_DIGEST_LENGTH;
+		break;
+	}
+	case 384: {
+		SHA512_CTX ctx;
+
+		memset(&ctx, 0, sizeof(ctx));
+
+		SHA384_Init(&ctx);
+		SHA384_Update(&ctx, smp->data.u.str.area, smp->data.u.str.data);
+		SHA384_Final((unsigned char *) trash->area, &ctx);
+		trash->data = SHA384_DIGEST_LENGTH;
+		break;
+	}
+	case 512: {
+		SHA512_CTX ctx;
+
+		memset(&ctx, 0, sizeof(ctx));
+
+		SHA512_Init(&ctx);
+		SHA512_Update(&ctx, smp->data.u.str.area, smp->data.u.str.data);
+		SHA512_Final((unsigned char *) trash->area, &ctx);
+		trash->data = SHA512_DIGEST_LENGTH;
+		break;
+	}
+	default:
+		return 0;
+	}
+
+	smp->data.u.str = *trash;
+	smp->data.type = SMP_T_BIN;
+	smp->flags &= ~SMP_F_CONST;
+	return 1;
+}
+#endif
 
 static int sample_conv_bin2hex(const struct arg *arg_p, struct sample *smp, void *private)
 {
@@ -2873,13 +3001,59 @@ smp_fetch_env(const struct arg *args, struct sample *smp, const char *kw, void *
 	return 1;
 }
 
-/* retrieve the current local date in epoch time, and applies an optional offset
- * of args[0] seconds.
+/* Validates the data unit argument passed to "date" fetch. Argument 1 support an
+ * optional string representing the unit of the result: "s" for seconds, "ms" for
+ * milliseconds and "us" for microseconds.
+ * Returns 0 on error and non-zero if OK.
+ */
+int smp_check_date_unit(struct arg *args, char **err)
+{
+        if (args[1].type == ARGT_STR) {
+                if (strcmp(args[1].data.str.area, "s") == 0) {
+                        args[1].data.sint = TIME_UNIT_S;
+                }
+                else if (strcmp(args[1].data.str.area, "ms") == 0) {
+                        args[1].data.sint = TIME_UNIT_MS;
+                }
+                else if (strcmp(args[1].data.str.area, "us") == 0) {
+                        args[1].data.sint = TIME_UNIT_US;
+                }
+                else {
+                        memprintf(err, "expects 's', 'ms' or 'us', got '%s'",
+                                  args[1].data.str.area);
+                        return 0;
+                }
+                free(args[1].data.str.area);
+                args[1].data.str.area = NULL;
+                args[1].type = ARGT_SINT;
+        }
+        else if (args[1].type != ARGT_STOP) {
+                memprintf(err, "Unexpected arg type");
+                return 0;
+        }
+
+        return 1;
+}
+
+/* retrieve the current local date in epoch time, converts it to milliseconds
+ * or microseconds if asked to in optional args[1] unit param, and applies an
+ * optional args[0] offset.
  */
 static int
 smp_fetch_date(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	smp->data.u.sint = date.tv_sec;
+
+	/* report in milliseconds */
+	if (args && args[1].type == ARGT_SINT && args[1].data.sint == TIME_UNIT_MS) {
+		smp->data.u.sint *= 1000;
+		smp->data.u.sint += date.tv_usec / 1000;
+	}
+	/* report in microseconds */
+	else if (args && args[1].type == ARGT_SINT && args[1].data.sint == TIME_UNIT_US) {
+		smp->data.u.sint *= 1000000;
+		smp->data.u.sint += date.tv_usec;
+	}
 
 	/* add offset */
 	if (args && args[0].type == ARGT_SINT)
@@ -3192,7 +3366,7 @@ static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ "always_false", smp_fetch_false, 0,            NULL, SMP_T_BOOL, SMP_USE_INTRN },
 	{ "always_true",  smp_fetch_true,  0,            NULL, SMP_T_BOOL, SMP_USE_INTRN },
 	{ "env",          smp_fetch_env,   ARG1(1,STR),  NULL, SMP_T_STR,  SMP_USE_INTRN },
-	{ "date",         smp_fetch_date,  ARG1(0,SINT), NULL, SMP_T_SINT, SMP_USE_INTRN },
+	{ "date",         smp_fetch_date,  ARG2(0,SINT,STR), smp_check_date_unit, SMP_T_SINT, SMP_USE_INTRN },
 	{ "date_us",      smp_fetch_date_us,  0,         NULL, SMP_T_SINT, SMP_USE_INTRN },
 	{ "hostname",     smp_fetch_hostname, 0,         NULL, SMP_T_STR,  SMP_USE_INTRN },
 	{ "nbproc",       smp_fetch_nbproc,0,            NULL, SMP_T_SINT, SMP_USE_INTRN },
@@ -3224,10 +3398,7 @@ INITCALL1(STG_REGISTER, sample_register_fetches, &smp_kws);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct sample_conv_kw_list sample_conv_kws = {ILH, {
-#ifdef DEBUG_EXPR
-	{ "debug",  sample_conv_debug,     0,            NULL, SMP_T_ANY,  SMP_T_ANY  },
-#endif
-
+	{ "debug",  sample_conv_debug,     ARG2(0,STR,STR), smp_check_debug, SMP_T_ANY,  SMP_T_ANY },
 	{ "b64dec", sample_conv_base642bin,0,            NULL, SMP_T_STR,  SMP_T_BIN  },
 	{ "base64", sample_conv_bin2base64,0,            NULL, SMP_T_BIN,  SMP_T_STR  },
 	{ "upper",  sample_conv_str2upper, 0,            NULL, SMP_T_STR,  SMP_T_STR  },
@@ -3251,6 +3422,9 @@ static struct sample_conv_kw_list sample_conv_kws = {ILH, {
 	{ "word",   sample_conv_word,      ARG3(2,SINT,STR,SINT), sample_conv_field_check, SMP_T_STR,  SMP_T_STR },
 	{ "regsub", sample_conv_regsub,    ARG3(2,REG,STR,STR), sample_conv_regsub_check, SMP_T_STR, SMP_T_STR },
 	{ "sha1",   sample_conv_sha1,      0,            NULL, SMP_T_BIN,  SMP_T_BIN  },
+#ifdef USE_OPENSSL
+	{ "sha2",   sample_conv_sha2,      ARG1(0, SINT), smp_check_sha2, SMP_T_BIN,  SMP_T_BIN  },
+#endif
 	{ "concat", sample_conv_concat,    ARG3(1,STR,STR,STR), smp_check_concat, SMP_T_STR,  SMP_T_STR },
 	{ "strcmp", sample_conv_strcmp,    ARG1(1,STR), smp_check_strcmp, SMP_T_STR,  SMP_T_SINT },
 

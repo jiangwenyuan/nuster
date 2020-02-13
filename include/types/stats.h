@@ -28,8 +28,18 @@
 #define STAT_NO_REFRESH 0x00000010	/* do not automatically refresh the stats page */
 #define STAT_ADMIN      0x00000020	/* indicate a stats admin level */
 #define STAT_CHUNKED    0x00000040      /* use chunked encoding (HTTP/1.1) */
+#define STAT_JSON_SCHM  0x00000080      /* dump the json schema */
+
+#define STAT_HIDEVER    0x00000100      /* conf: do not report the version and reldate */
+#define STAT_SHNODE     0x00000200      /* conf: show node name */
+#define STAT_SHDESC     0x00000400      /* conf: show description */
+#define STAT_SHLGNDS    0x00000800      /* conf: show legends */
+#define STAT_SHOW_FDESC 0x00001000      /* show the field descriptions when possible */
+
 #define STAT_BOUND      0x00800000	/* bound statistics to selected proxies/types/services */
 #define STAT_STARTED    0x01000000	/* some output has occurred */
+
+#define STAT_FMT_MASK   0x00000007
 
 #define STATS_TYPE_FE  0
 #define STATS_TYPE_BE  1
@@ -317,6 +327,7 @@ enum info_field {
 	INF_FAILED_RESOLUTIONS,
 	INF_TOTAL_BYTES_OUT,
 	INF_BYTES_OUT_RATE,
+	INF_DEBUG_COMMANDS_ISSUED,
 
 	/* must always be the last one */
 	INF_TOTAL_FIELDS

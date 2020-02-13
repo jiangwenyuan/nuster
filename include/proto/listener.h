@@ -58,7 +58,7 @@ int enable_all_listeners(struct protocol *proto);
 int disable_all_listeners(struct protocol *proto);
 
 /* Dequeues all of the listeners waiting for a resource in wait queue <queue>. */
-void dequeue_all_listeners(struct list *list);
+void dequeue_all_listeners(struct mt_list *list);
 
 /* Must be called with the lock held. Depending on <do_close> value, it does
  * what unbind_listener or unbind_listener_no_close should do.
@@ -157,7 +157,11 @@ static inline struct bind_conf *bind_conf_alloc(struct proxy *fe, const char *fi
 	bind_conf->xprt = xprt;
 	bind_conf->frontend = fe;
 	bind_conf->severity_output = CLI_SEVERITY_NONE;
-
+#ifdef USE_OPENSSL
+	HA_RWLOCK_INIT(&bind_conf->sni_lock);
+	bind_conf->sni_ctx = EB_ROOT;
+	bind_conf->sni_w_ctx = EB_ROOT;
+#endif
 	LIST_INIT(&bind_conf->listeners);
 	return bind_conf;
 }

@@ -61,6 +61,12 @@
  * power of 2, and 0 otherwise */
 #define POWEROF2(x) (((x) & ((x)-1)) == 0)
 
+/* DEFNULL() returns either the argument as-is, or NULL if absent. This is for
+ * use in macros arguments.
+ */
+#define DEFNULL(...) _FIRST_ARG(NULL, ##__VA_ARGS__, NULL)
+#define _FIRST_ARG(a, b, ...) b
+
 /* operators to compare values. They're ordered that way so that the lowest bit
  * serves as a negation for the test and contains all tests that are not equal.
  */
@@ -79,6 +85,12 @@ struct split_url {
 	enum http_scheme scheme;
 	const char *host;
 	int host_len;
+};
+
+/* generic structure associating a name and a value, for use in arrays */
+struct name_desc {
+	const char *name;
+	const char *desc;
 };
 
 extern THREAD_LOCAL int itoa_idx; /* index of next itoa_str to use */
@@ -193,6 +205,27 @@ static inline const char *LIM2A(unsigned long n, const char *alt)
 	if (++itoa_idx >= NB_ITOA_STR)
 		itoa_idx = 0;
 	return ret;
+}
+
+/* returns the number of bytes needed to encode <v> as a varint. Be careful, use
+ * it only with constants as it generates a large code (typ. 180 bytes). Use the
+ * varint_bytes() version instead in case of doubt.
+ */
+int varint_bytes(uint64_t v);
+static inline int __varint_bytes(uint64_t v)
+{
+	switch (v) {
+	case 0x0000000000000000 ... 0x00000000000000ef: return 1;
+	case 0x00000000000000f0 ... 0x00000000000008ef: return 2;
+	case 0x00000000000008f0 ... 0x00000000000408ef: return 3;
+	case 0x00000000000408f0 ... 0x00000000020408ef: return 4;
+	case 0x00000000020408f0 ... 0x00000001020408ef: return 5;
+	case 0x00000001020408f0 ... 0x00000081020408ef: return 6;
+	case 0x00000081020408f0 ... 0x00004081020408ef: return 7;
+	case 0x00004081020408f0 ... 0x00204081020408ef: return 8;
+	case 0x00204081020408f0 ... 0x10204081020408ef: return 9;
+	default: return 10;
+	}
 }
 
 /* Encode the integer <i> into a varint (variable-length integer). The encoded
@@ -1269,9 +1302,9 @@ char *env_expand(char *in);
  */
 void debug_hexdump(FILE *out, const char *pfx, const char *buf, unsigned int baseaddr, int len);
 
-/* this is used to emit traces when building with TRACE=1 */
+/* this is used to emit call traces when building with TRACE=1 */
 __attribute__((format(printf, 1, 2)))
-void trace(char *fmt, ...);
+void calltrace(char *fmt, ...);
 
 /* used from everywhere just to drain results we don't want to read and which
  * recent versions of gcc increasingly and annoyingly complain about.

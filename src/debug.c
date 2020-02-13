@@ -20,6 +20,8 @@
 #include <common/debug.h>
 #include <common/hathreads.h>
 #include <common/initcall.h>
+#include <common/ist.h>
+#include <common/net_helper.h>
 #include <common/standard.h>
 
 #include <types/global.h>
@@ -34,6 +36,7 @@
  * when USE_THREAD_DUMP is set.
  */
 volatile unsigned long threads_to_dump = 0;
+unsigned int debug_commands_issued = 0;
 
 /* Dumps to the buffer some known information for the desired thread, and
  * optionally extra info for the current thread. The dump will be appended to
@@ -45,23 +48,23 @@ volatile unsigned long threads_to_dump = 0;
 void ha_thread_dump(struct buffer *buf, int thr, int calling_tid)
 {
 	unsigned long thr_bit = 1UL << thr;
-	unsigned long long p = thread_info[thr].prev_cpu_time;
-	unsigned long long n = now_cpu_time_thread(&thread_info[thr]);
-	int stuck = !!(thread_info[thr].flags & TI_FL_STUCK);
+	unsigned long long p = ha_thread_info[thr].prev_cpu_time;
+	unsigned long long n = now_cpu_time_thread(&ha_thread_info[thr]);
+	int stuck = !!(ha_thread_info[thr].flags & TI_FL_STUCK);
 
 	chunk_appendf(buf,
 	              "%c%cThread %-2u: act=%d glob=%d wq=%d rq=%d tl=%d tlsz=%d rqsz=%d\n"
-	              "             stuck=%d fdcache=%d prof=%d",
+	              "             stuck=%d prof=%d",
 	              (thr == calling_tid) ? '*' : ' ', stuck ? '>' : ' ', thr + 1,
 		      thread_has_tasks(),
 	              !!(global_tasks_mask & thr_bit),
 	              !eb_is_empty(&task_per_thread[thr].timers),
 	              !eb_is_empty(&task_per_thread[thr].rqueue),
-	              !LIST_ISEMPTY(&task_per_thread[thr].task_list),
+	              !(LIST_ISEMPTY(&task_per_thread[thr].task_list) |
+		        MT_LIST_ISEMPTY(&task_per_thread[thr].shared_tasklet_list)),
 	              task_per_thread[thr].task_list_size,
 	              task_per_thread[thr].rqueue_size,
 	              stuck,
-	              !!(fd_cache_mask & thr_bit),
 	              !!(task_profiling_mask & thr_bit));
 
 	chunk_appendf(buf,
@@ -78,7 +81,7 @@ void ha_thread_dump(struct buffer *buf, int thr, int calling_tid)
 		return;
 
 	chunk_appendf(buf, "             curr_task=");
-	ha_task_dump(buf, curr_task, "             ");
+	ha_task_dump(buf, sched->current, "             ");
 }
 
 
@@ -204,7 +207,6 @@ void ha_panic()
 		abort();
 }
 
-#if defined(DEBUG_DEV)
 /* parse a "debug dev exit" command. It always returns 1, though it should never return. */
 static int debug_parse_cli_exit(char **args, char *payload, struct appctx *appctx, void *private)
 {
@@ -213,6 +215,7 @@ static int debug_parse_cli_exit(char **args, char *payload, struct appctx *appct
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	exit(code);
 	return 1;
 }
@@ -225,31 +228,18 @@ static int debug_parse_cli_close(char **args, char *payload, struct appctx *appc
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
-	if (!*args[3]) {
-		appctx->ctx.cli.msg = "Missing file descriptor number.\n";
-		goto reterr;
-	}
+	if (!*args[3])
+		return cli_err(appctx, "Missing file descriptor number.\n");
 
 	fd = atoi(args[3]);
-	if (fd < 0 || fd >= global.maxsock) {
-		appctx->ctx.cli.msg = "File descriptor out of range.\n";
-		goto reterr;
-	}
+	if (fd < 0 || fd >= global.maxsock)
+		return cli_err(appctx, "File descriptor out of range.\n");
 
-	if (!fdtab[fd].owner) {
-		appctx->ctx.cli.msg = "File descriptor was already closed.\n";
-		goto retinfo;
-	}
+	if (!fdtab[fd].owner)
+		return cli_msg(appctx, LOG_INFO, "File descriptor was already closed.\n");
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	fd_delete(fd);
-	return 1;
- retinfo:
-	appctx->ctx.cli.severity = LOG_INFO;
-	appctx->st0 = CLI_ST_PRINT;
-	return 1;
- reterr:
-	appctx->ctx.cli.severity = LOG_ERR;
-	appctx->st0 = CLI_ST_PRINT;
 	return 1;
 }
 
@@ -261,6 +251,7 @@ static int debug_parse_cli_delay(char **args, char *payload, struct appctx *appc
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	usleep((long)delay * 1000);
 	return 1;
 }
@@ -273,6 +264,7 @@ static int debug_parse_cli_log(char **args, char *payload, struct appctx *appctx
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	chunk_reset(&trash);
 	for (arg = 3; *args[arg]; arg++) {
 		if (arg > 3)
@@ -293,6 +285,7 @@ static int debug_parse_cli_loop(char **args, char *payload, struct appctx *appct
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	gettimeofday(&curr, NULL);
 	tv_ms_add(&deadline, &curr, loop);
 
@@ -308,11 +301,13 @@ static int debug_parse_cli_panic(char **args, char *payload, struct appctx *appc
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	ha_panic();
 	return 1;
 }
 
 /* parse a "debug dev exec" command. It always returns 1. */
+#if defined(DEBUG_DEV)
 static int debug_parse_cli_exec(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	FILE *f;
@@ -321,6 +316,7 @@ static int debug_parse_cli_exec(char **args, char *payload, struct appctx *appct
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	chunk_reset(&trash);
 	for (arg = 3; *args[arg]; arg++) {
 		if (arg > 3)
@@ -329,12 +325,8 @@ static int debug_parse_cli_exec(char **args, char *payload, struct appctx *appct
 	}
 
 	f = popen(trash.area, "re");
-	if (!f) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Failed to execute command.\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (!f)
+		return cli_err(appctx, "Failed to execute command.\n");
 
 	chunk_reset(&trash);
 	while (1) {
@@ -350,11 +342,9 @@ static int debug_parse_cli_exec(char **args, char *payload, struct appctx *appct
 
 	fclose(f);
 	trash.area[trash.data] = 0;
-	appctx->ctx.cli.severity = LOG_INFO;
-	appctx->ctx.cli.msg = trash.area;
-	appctx->st0 = CLI_ST_PRINT;
-	return 1;
+	return cli_msg(appctx, LOG_INFO, trash.area);
 }
+#endif
 
 /* parse a "debug dev hex" command. It always returns 1. */
 static int debug_parse_cli_hex(char **args, char *payload, struct appctx *appctx, void *private)
@@ -364,16 +354,14 @@ static int debug_parse_cli_hex(char **args, char *payload, struct appctx *appctx
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
 
-	if (!*args[3]) {
-		appctx->ctx.cli.msg = "Missing memory address to dump from.\n";
-		goto reterr;
-	}
+	if (!*args[3])
+		return cli_err(appctx, "Missing memory address to dump from.\n");
 
 	start = strtoul(args[3], NULL, 0);
-	if (!start) {
-		appctx->ctx.cli.msg = "Will not dump from NULL address.\n";
-		goto reterr;
-	}
+	if (!start)
+		return cli_err(appctx, "Will not dump from NULL address.\n");
+
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 
 	/* by default, dump ~128 till next block of 16 */
 	len = strtoul(args[4], NULL, 0);
@@ -383,14 +371,7 @@ static int debug_parse_cli_hex(char **args, char *payload, struct appctx *appctx
 	chunk_reset(&trash);
 	dump_hex(&trash, "  ", (const void *)start, len, 1);
 	trash.area[trash.data] = 0;
-	appctx->ctx.cli.severity = LOG_INFO;
-	appctx->ctx.cli.msg = trash.area;
-	appctx->st0 = CLI_ST_PRINT;
-	return 1;
- reterr:
-	appctx->ctx.cli.severity = LOG_ERR;
-	appctx->st0 = CLI_ST_PRINT;
-	return 1;
+	return cli_msg(appctx, LOG_INFO, trash.area);
 }
 
 /* parse a "debug dev tkill" command. It always returns 1. */
@@ -405,16 +386,13 @@ static int debug_parse_cli_tkill(char **args, char *payload, struct appctx *appc
 	if (*args[3])
 		thr = atoi(args[3]);
 
-	if (thr < 0 || thr > global.nbthread) {
-		appctx->ctx.cli.severity = LOG_ERR;
-		appctx->ctx.cli.msg = "Thread number out of range (use 0 for current).\n";
-		appctx->st0 = CLI_ST_PRINT;
-		return 1;
-	}
+	if (thr < 0 || thr > global.nbthread)
+		return cli_err(appctx, "Thread number out of range (use 0 for current).\n");
 
 	if (*args[4])
 		sig = atoi(args[4]);
 
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
 	if (thr)
 		ha_tkill(thr - 1, sig);
 	else
@@ -422,7 +400,157 @@ static int debug_parse_cli_tkill(char **args, char *payload, struct appctx *appc
 	return 1;
 }
 
-#endif
+/* parse a "debug dev stream" command */
+/*
+ *  debug dev stream [strm=<ptr>] [strm.f[{+-=}<flags>]] [txn.f[{+-=}<flags>]] \
+ *                   [req.f[{+-=}<flags>]] [res.f[{+-=}<flags>]]               \
+ *                   [sif.f[{+-=<flags>]] [sib.f[{+-=<flags>]]                 \
+ *                   [sif.s[=<state>]] [sib.s[=<state>]]
+ */
+static int debug_parse_cli_stream(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	struct stream *s = si_strm(appctx->owner);
+	int arg;
+	void *ptr;
+	int size;
+	const char *word, *end;
+	struct ist name;
+	char *msg = NULL;
+	char *endarg;
+	unsigned long long old, new;
+
+	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
+		return 1;
+
+	ptr = NULL; size = 0;
+
+	if (!*args[3]) {
+		return cli_err(appctx,
+			       "Usage: debug dev stream { <obj> <op> <value> | wake }*\n"
+			       "     <obj>   = {strm | strm.f | sif.f | sif.s | sif.x | sib.f | sib.s | sib.x |\n"
+			       "                txn.f | req.f | req.r | req.w | res.f | res.r | res.w}\n"
+			       "     <op>    = {'' (show) | '=' (assign) | '^' (xor) | '+' (or) | '-' (andnot)}\n"
+			       "     <value> = 'now' | 64-bit dec/hex integer (0x prefix supported)\n"
+			       "     'wake' wakes the stream asssigned to 'strm' (default: current)\n"
+			       );
+	}
+
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
+	for (arg = 3; *args[arg]; arg++) {
+		old = 0;
+		end = word = args[arg];
+		while (*end && *end != '=' && *end != '^' && *end != '+' && *end != '-')
+			end++;
+		name = ist2(word, end - word);
+		if (isteq(name, ist("strm"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s; size = sizeof(s);
+		} else if (isteq(name, ist("strm.f"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->flags; size = sizeof(s->flags);
+		} else if (isteq(name, ist("txn.f"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->txn->flags; size = sizeof(s->txn->flags);
+		} else if (isteq(name, ist("req.f"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->req.flags; size = sizeof(s->req.flags);
+		} else if (isteq(name, ist("res.f"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->res.flags; size = sizeof(s->res.flags);
+		} else if (isteq(name, ist("req.r"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->req.rex; size = sizeof(s->req.rex);
+		} else if (isteq(name, ist("res.r"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->res.rex; size = sizeof(s->res.rex);
+		} else if (isteq(name, ist("req.w"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->req.wex; size = sizeof(s->req.wex);
+		} else if (isteq(name, ist("res.w"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->res.wex; size = sizeof(s->res.wex);
+		} else if (isteq(name, ist("sif.f"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->si[0].flags; size = sizeof(s->si[0].flags);
+		} else if (isteq(name, ist("sib.f"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->si[1].flags; size = sizeof(s->si[1].flags);
+		} else if (isteq(name, ist("sif.x"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->si[0].exp; size = sizeof(s->si[0].exp);
+		} else if (isteq(name, ist("sib.x"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->si[1].exp; size = sizeof(s->si[1].exp);
+		} else if (isteq(name, ist("sif.s"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->si[0].state; size = sizeof(s->si[0].state);
+		} else if (isteq(name, ist("sib.s"))) {
+			ptr = (!s || !may_access(s)) ? NULL : &s->si[1].state; size = sizeof(s->si[1].state);
+		} else if (isteq(name, ist("wake"))) {
+			if (s && may_access(s) && may_access((void *)s + sizeof(*s) - 1))
+				task_wakeup(s->task, TASK_WOKEN_TIMER|TASK_WOKEN_IO|TASK_WOKEN_MSG);
+			continue;
+		} else
+			return cli_dynerr(appctx, memprintf(&msg, "Unsupported field name: '%s'.\n", word));
+
+		/* read previous value */
+		if ((s || ptr == &s) && ptr && may_access(ptr) && may_access(ptr + size - 1)) {
+			if (size == 8)
+				old = read_u64(ptr);
+			else if (size == 4)
+				old = read_u32(ptr);
+			else if (size == 2)
+				old = read_u16(ptr);
+			else
+				old = *(const uint8_t *)ptr;
+		} else {
+			memprintf(&msg,
+				  "%sSkipping inaccessible pointer %p for field '%.*s'.\n",
+				  msg ? msg : "", ptr, (int)(end - word), word);
+			continue;
+		}
+
+		/* parse the new value . */
+		new = strtoll(end + 1, &endarg, 0);
+		if (end[1] && *endarg) {
+			if (strcmp(end + 1, "now") == 0)
+				new = now_ms;
+			else {
+				memprintf(&msg,
+					  "%sIgnoring unparsable value '%s' for field '%.*s'.\n",
+					  msg ? msg : "", end + 1, (int)(end - word), word);
+				continue;
+			}
+		}
+
+		switch (*end) {
+		case '\0': /* show */
+			memprintf(&msg, "%s%.*s=%#llx ", msg ? msg : "", (int)(end - word), word, old);
+			new = old; // do not change the value
+			break;
+
+		case '=': /* set */
+			break;
+
+		case '^': /* XOR */
+			new = old ^ new;
+			break;
+
+		case '+': /* OR */
+			new = old | new;
+			break;
+
+		case '-': /* AND NOT */
+			new = old & ~new;
+			break;
+
+		default:
+			break;
+		}
+
+		/* write the new value */
+		if (new != old) {
+			if (size == 8)
+				write_u64(ptr, new);
+			else if (size == 4)
+				write_u32(ptr, new);
+			else if (size == 2)
+				write_u16(ptr, new);
+			else
+				*(uint8_t *)ptr = new;
+		}
+	}
+
+	if (msg && *msg)
+		return cli_dynmsg(appctx, LOG_INFO, msg);
+	return 1;
+}
 
 #ifndef USE_THREAD_DUMP
 
@@ -544,18 +672,19 @@ REGISTER_PER_THREAD_INIT(init_debug_per_thread);
 
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
+	{{ "debug", "dev", "close", NULL }, "debug dev close <fd>        : close this file descriptor",      debug_parse_cli_close, NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "delay", NULL }, "debug dev delay [ms]        : sleep this long",                 debug_parse_cli_delay, NULL, NULL, NULL, ACCESS_EXPERT },
 #if defined(DEBUG_DEV)
-	{{ "debug", "dev", "close", NULL }, "debug dev close <fd>        : close this file descriptor",      debug_parse_cli_close, NULL },
-	{{ "debug", "dev", "delay", NULL }, "debug dev delay [ms]        : sleep this long",                 debug_parse_cli_delay, NULL },
-	{{ "debug", "dev", "exec",  NULL }, "debug dev exec  [cmd] ...   : show this command's output",      debug_parse_cli_exec,  NULL },
-	{{ "debug", "dev", "exit",  NULL }, "debug dev exit  [code]      : immediately exit the process",    debug_parse_cli_exit,  NULL },
-	{{ "debug", "dev", "hex",   NULL }, "debug dev hex   <addr> [len]: dump a memory area",              debug_parse_cli_hex,   NULL },
-	{{ "debug", "dev", "log",   NULL }, "debug dev log   [msg] ...   : send this msg to global logs",    debug_parse_cli_log,   NULL },
-	{{ "debug", "dev", "loop",  NULL }, "debug dev loop  [ms]        : loop this long",                  debug_parse_cli_loop,  NULL },
-	{{ "debug", "dev", "panic", NULL }, "debug dev panic             : immediately trigger a panic",     debug_parse_cli_panic, NULL },
-	{{ "debug", "dev", "tkill", NULL }, "debug dev tkill [thr] [sig] : send signal to thread",           debug_parse_cli_tkill, NULL },
+	{{ "debug", "dev", "exec",  NULL }, "debug dev exec  [cmd] ...   : show this command's output",      debug_parse_cli_exec,  NULL, NULL, NULL, ACCESS_EXPERT },
 #endif
-	{ { "show", "threads", NULL },    "show threads   : show some threads debugging information",   NULL, cli_io_handler_show_threads, NULL },
+	{{ "debug", "dev", "exit",  NULL }, "debug dev exit  [code]      : immediately exit the process",    debug_parse_cli_exit,  NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "hex",   NULL }, "debug dev hex   <addr> [len]: dump a memory area",              debug_parse_cli_hex,   NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "log",   NULL }, "debug dev log   [msg] ...   : send this msg to global logs",    debug_parse_cli_log,   NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "loop",  NULL }, "debug dev loop  [ms]        : loop this long",                  debug_parse_cli_loop,  NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "panic", NULL }, "debug dev panic             : immediately trigger a panic",     debug_parse_cli_panic, NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "stream",NULL }, "debug dev stream ...        : show/manipulate stream flags",    debug_parse_cli_stream,NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "tkill", NULL }, "debug dev tkill [thr] [sig] : send signal to thread",           debug_parse_cli_tkill, NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "show", "threads", NULL, NULL }, "show threads   : show some threads debugging information",  NULL, cli_io_handler_show_threads, NULL },
 	{{},}
 }};
 

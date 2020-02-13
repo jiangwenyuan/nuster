@@ -1,17 +1,15 @@
 Installation instructions for HAProxy
 =====================================
 
-HAProxy 2.0 is a long-term supported stable version, which means that it will
-get fixes for bugs as they are discovered during several years and will not
-receive new features. Versions which include the suffix "-dev" are development
-versions and should be avoided in production. If you are not used to build from
-sources or if you are not used to follow updates then it is recommended that
-instead you use the packages provided by your software vendor or Linux
-distribution. Most of them are taking this task seriously and are doing a good
-job at backporting important fixes. If for any reason you'd prefer a different
-version than the one packaged for your system, you want to be certain to have
-all the fixes or to get some commercial support, other choices are available
-at http://www.haproxy.com/.
+HAProxy 2.1 is a stable version, which means that it will get fixes for bugs as
+they are discovered till around Q1 2021 and should not receive new features.
+This version is mostly suited at experienced users who are willing to quickly
+follow updates. New users are encouraged to use long term supported versions
+such as the ones provided by their software vendor or Linux distribution, as
+such versions require far less common updates. If for any reason you'd prefer
+a different version than the one packaged for your system, you want to be
+certain to have all the fixes or to get some commercial support, other choices
+are available at http://www.haproxy.com/.
 
 
 Areas covered in this document
@@ -381,6 +379,7 @@ and assign it to the TARGET variable :
   - openbsd             for OpenBSD 5.7 and above
   - aix51               for AIX 5.1
   - aix52               for AIX 5.2
+  - aix72-gcc           for AIX 7.2 (using gcc)
   - cygwin              for Cygwin
   - haiku               for Haiku
   - generic             for any other OS or version.
@@ -393,6 +392,8 @@ one of the following choices to the CPU variable :
   - i686 for intel PentiumPro, Pentium 2 and above, AMD Athlon (32 bits)
   - i586 for intel Pentium, AMD K6, VIA C3.
   - ultrasparc : Sun UltraSparc I/II/III/IV processor
+  - power8 : IBM POWER8 processor
+  - power9 : IBM POWER9 processor
   - native : use the build machine's specific processor optimizations. Use with
     extreme care, and never in virtualized environments (known to break).
   - generic : any other processor or no CPU-specific optimization. (default)
@@ -517,6 +518,13 @@ otherwise __fd_select() will be used while not being present in the libc, but
 this is easily addressed using the "aix52" target. If you get build errors
 because of strange symbols or section mismatches, simply remove -g from
 DEBUG_CFLAGS.
+
+Building on AIX 7.2 works fine using the "aix72-gcc" TARGET. It adds two
+special CFLAGS to prevent the loading of AIXs xmem.h and var.h. This is done
+by defining the corresponding include-guards _H_XMEM and _H_VAR. Without
+excluding those header-files the build fails because of redefinition errors.
+Futhermore, the atomic library is added to the LDFLAGS to allow for
+multithreading via USE_THREAD.
 
 You can easily define your own target with the GNU Makefile. Unknown targets
 are processed with no default option except USE_POLL=default. So you can very
