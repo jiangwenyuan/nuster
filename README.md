@@ -346,7 +346,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
 **default:** *none*
 
@@ -440,6 +440,34 @@ If a request has the same key as a cached HTTP response data, then cached data w
 Set a TTL on key, after the TTL has expired, the key will be deleted.
 
 It accepts units like `d`, `h`, `m` and `s`. Default ttl is `0` which does not expire the key.
+
+ttl can be automatically extended by using `extend` keyword.
+
+### extend EXTEND
+
+Automatically extend the ttl.
+
+#### Format
+
+extend on|off|n1,n2,n3,n4
+
+Default: off.
+
+n1,n2,n3,n4: positive integer less than 100, and n1 + n2 + n3 is less than 100. Together they define four time slots as following:
+
+```
+time:       0                                                       ttl         ttl * (1 + n4%)
+access:     |            A1             |   A2    |   A3    |   A4    |         |
+            |---------------------------|---------|---------|---------|---------|
+percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->|
+```
+
+ttl will be extended if:
+
+1. A4 > A3 > A2
+2. A new request takes place between `ttl` and `ttl * (1 + n4%)`
+
+> `on` equals to 33,33,33,33
 
 ### code CODE1,CODE2...
 
