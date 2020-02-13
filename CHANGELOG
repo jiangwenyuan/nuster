@@ -1,6 +1,97 @@
 ChangeLog :
 ===========
 
+2020/02/13 : 1.9.14
+    - BUG/MINOR: stream: init variables when the list is empty
+    - BUG/MINOR: http-htx: Don't make http_find_header() fail if the value is empty
+    - BUG/MEDIUM: stream: address a very rare unhandled connection issue
+    - DOC: Clarify behavior of server maxconn in HTTP mode
+    - DOC: clarify matching strings on binary fetches
+    - DOC: move the "group" keyword at the right place
+    - BUG/MEDIUM: stream-int: don't subscribed for recv when we're trying to flush data
+    - BUG/MEDIUM: listener/thread: fix a race when pausing a listener
+    - BUG/MINOR: ssl: certificate choice can be unexpected with openssl >= 1.1.1
+    - BUG/MEDIUM: mux-h1: Never reuse H1 connection if a shutw is pending
+    - BUG/MINOR: mux-h1: Don't rely on CO_FL_SOCK_RD_SH to set H1C_F_CS_SHUTDOWN
+    - BUG/MINOR: mux-h1: Fix conditions to know whether or not we may receive data
+    - BUG/MEDIUM: tasks: Make sure we switch wait queues in task_set_affinity().
+    - BUG/MEDIUM: checks: Make sure we set the task affinity just before connecting.
+    - BUG/MINOR: proxy: make soft_stop() also close FDs in LI_PAUSED state
+    - BUG/MINOR: listener/threads: always use atomic ops to clear the FD events
+    - BUG/MINOR: listener: also clear the error flag on a paused listener
+    - BUG/MEDIUM: listener/threads: fix a remaining race in the listener's accept()
+    - DOC: document the listener state transitions
+    - BUG/MAJOR: dns: add minimalist error processing on the Rx path
+    - BUG/MEDIUM: proto_udp/threads: recv() and send() must not be exclusive.
+    - BUG/MEDIUM: kqueue: Make sure we report read events even when no data.
+    - DOC: listeners: add a few missing transitions
+    - BUG/MINOR: tasks: only requeue a task if it was already in the queue
+    - BUILD/MINOR: ssl: shut up a build warning about format truncation
+    - BUILD/MINOR: tools: shut up the format truncation warning in get_gmt_offset()
+    - BUILD: do not disable -Wformat-truncation anymore
+    - DOC: remove references to the outdated architecture.txt
+    - BUG/MINOR: log: fix minor resource leaks on logformat error path
+    - BUG/MINOR: mworker: properly pass SIGTTOU/SIGTTIN to workers
+    - BUG/MINOR: listener: do not immediately resume on transient error
+    - BUG/MINOR: server: make "agent-addr" work on default-server line
+    - BUG/MINOR: listener: fix off-by-one in state name check
+    - BUILD/MINOR: unix sockets: silence an absurd gcc warning about strncpy()
+    - BUG/MINOR: sample: fix the closing bracket and LF in the debug converter
+    - BUG/MINOR: sample: always check converters' arguments
+    - BUG/MEDIUM: ssl: Don't set the max early data we can receive too early.
+    - MINOR: task: only check TASK_WOKEN_ANY to decide to requeue a task
+    - BUG/MAJOR: task: add a new TASK_SHARED_WQ flag to fix foreing requeuing
+    - MINOR: fd/threads: make _GET_NEXT()/_GET_PREV() use the volatile attribute
+    - BUG/MEDIUM: fd/threads: fix a concurrency issue between add and rm on the same fd
+    - BUG/MINOR: ssl: openssl-compat: Fix getm_ defines
+    - BUG/MINOR: ssl: openssl-compat: 1.9 uses OPENSSL_VERSION, not HA_OPENSSL_VERSION
+    - BUG/MINOR: checks: refine which errno values are really errors.
+    - BUG/MINOR: h1: Report the right error position when a header value is invalid
+    - BUG/MINOR: proxy: Fix input data copy when an error is captured
+    - BUG/MEDIUM: http-ana: Truncate the response when a redirect rule is applied
+    - BUG/MINOR: channel: inject output data at the end of output
+    - BUG/MEDIUM: session: do not report a failure when rejecting a session
+    - BUG/MINOR: mux-h2: use a safe list_for_each_entry in h2_send()
+    - BUG/MEDIUM: mux-h2: fix missing test on sending_list in previous patch
+    - BUG/MEDIUM: mworker: remain in mworker mode during reload
+    - BUG/MEDIUM: mux_h1: Don't call h1_send if we subscribed().
+    - BUG/MAJOR: hashes: fix the signedness of the hash inputs
+    - REGTEST: add sample_fetches/hashes.vtc to validate hashes
+    - BUG/MEDIUM: cli: _getsocks must send the peers sockets
+    - BUG/MINOR: stream: don't mistake match rules for store-request rules
+    - BUG/MINOR: pattern: handle errors from fgets when trying to load patterns
+    - BUG/MINOR: cache: Fix leak of cache name in error path
+    - BUG/MINOR: dns: Make dns_query_id_seed unsigned
+    - BUG/MINOR: 51d: Fix bug when HTX is enabled
+    - BUG/MINOR: http-ana/filters: Wait end of the http_end callback for all filters
+    - BUG/MINOR: http-rules: Remove buggy deinit functions for HTTP rules
+    - BUG/MINOR: stick-table: Use MAX_SESS_STKCTR as the max track ID during parsing
+    - BUG/MINOR: tcp-rules: Fix memory releases on error path during action parsing
+    - MINOR: proxy/http-ana: Add support of extra attributes for the cookie directive
+    - BUG/MINOR: http_act: don't check capture id in backend
+    - BUG/MEDIUM: 0rtt: Only consider the SSL handshake.
+    - BUG/MEDIUM: mux-h2: make sure we don't emit TE headers with anything but "trailers"
+    - BUG/MINOR: dns: allow srv record weight set to 0
+    - BUG/MEDIUM: pipe: fix a use-after-free in case of pipe creation error
+    - BUG/MINOR: connection: fix ip6 dst_port copy in make_proxy_line_v2
+    - BUG/MEDIUM: memory_pool: Update the seq number in pool_flush().
+    - MINOR: memory: Only init the pool spinlock once.
+    - BUG/MEDIUM: memory: Add a rwlock before freeing memory.
+    - BUG/MAJOR: memory: Don't forget to unlock the rwlock if the pool is empty.
+    - BUG/MINOR: ssl: we may only ignore the first 64 errors
+    - MINOR: acl: Warn when an ACL is named 'or'
+    - SCRIPTS: announce-release: place the send command in the mail's header
+    - SCRIPTS: announce-release: allow the user to force to overwrite old files
+    - BUG/MINOR: unix: better catch situations where the unix socket path length is close to the limit
+    - BUG/MINOR: dns: allow 63 char in hostname
+    - BUG/MEDIUM: listener: only consider running threads when resuming listeners
+    - BUG/MINOR: listener: enforce all_threads_mask on bind_thread on init
+    - BUG/MINOR: tcp: avoid closing fd when socket failed in tcp_bind_listener
+    - DOC: word converter ignores delimiters at the start or end of input string
+    - BUG/MINOR: tcp: don't try to set defaultmss when value is negative
+    - SCRIPTS: make announce-release executable again
+    - BUILD: ssl: improve SSL_CTX_set_ecdh_auto compatibility
+
 2019/11/25 : 1.9.13
     - MINOR: config: warn on presence of "\n" in header values/replacements
     - BUG/MINOR: mux-h2: do not emit logs on backend connections

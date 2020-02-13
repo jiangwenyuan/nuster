@@ -1,6 +1,6 @@
 /*
  * HA-Proxy : High Availability-enabled HTTP/TCP proxy
- * Copyright 2000-2019 Willy Tarreau <willy@haproxy.org>.
+ * Copyright 2000-2020 Willy Tarreau <willy@haproxy.org>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -545,6 +545,8 @@ static void mworker_block_signals()
 	sigemptyset(&set);
 	sigaddset(&set, SIGUSR1);
 	sigaddset(&set, SIGUSR2);
+	sigaddset(&set, SIGTTIN);
+	sigaddset(&set, SIGTTOU);
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGCHLD);
 	ha_sigmask(SIG_SETMASK, &set, NULL);
@@ -843,6 +845,12 @@ alloc_error:
 	return;
 }
 
+/* broadcast the configured signal to the workers */
+void mworker_broadcast_signal(struct sig_handler *sh)
+{
+	mworker_kill(sh->arg);
+}
+
 /*
  * When called, this function reexec haproxy with -sf followed by current
  * children PIDs and possibly old children PIDs if they didn't leave yet.
@@ -948,12 +956,16 @@ static void mworker_loop()
 
 	master = 1;
 
+	signal_unregister(SIGTTIN);
+	signal_unregister(SIGTTOU);
 	signal_unregister(SIGUSR1);
 	signal_unregister(SIGHUP);
 	signal_unregister(SIGQUIT);
 
 	signal_register_fct(SIGTERM, mworker_catch_sigterm, SIGTERM);
 	signal_register_fct(SIGUSR1, mworker_catch_sigterm, SIGUSR1);
+	signal_register_fct(SIGTTIN, mworker_broadcast_signal, SIGTTIN);
+	signal_register_fct(SIGTTOU, mworker_broadcast_signal, SIGTTOU);
 	signal_register_fct(SIGINT, mworker_catch_sigterm, SIGINT);
 	signal_register_fct(SIGHUP, mworker_catch_sighup, SIGHUP);
 	signal_register_fct(SIGUSR2, mworker_catch_sighup, SIGUSR2);
@@ -1236,7 +1248,7 @@ static int get_old_sockets(const char *unixsocket)
 			   unixsocket);
 		goto out;
 	}
-	strncpy(addr.sun_path, unixsocket, sizeof(addr.sun_path));
+	strncpy(addr.sun_path, unixsocket, sizeof(addr.sun_path) - 1);
 	addr.sun_path[sizeof(addr.sun_path) - 1] = 0;
 	addr.sun_family = PF_UNIX;
 	ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
@@ -1486,6 +1498,10 @@ static void init(int argc, char **argv)
 	memset(localpeer, 0, sizeof(localpeer));
 	memcpy(localpeer, hostname, (sizeof(hostname) > sizeof(localpeer) ? sizeof(localpeer) : sizeof(hostname)) - 1);
 	setenv("HAPROXY_LOCALPEER", localpeer, 1);
+
+	/* we were in mworker mode, we should restart in mworker mode */
+	if (getenv("HAPROXY_MWORKER_REEXEC") != NULL)
+		global.mode |= MODE_MWORKER;
 
 	/*
 	 * Initialize the previously static variables.
@@ -2265,14 +2281,14 @@ static void deinit_acl_cond(struct acl_cond *cond)
 	free(cond);
 }
 
-static void deinit_tcp_rules(struct list *rules)
+static void deinit_act_rules(struct list *rules)
 {
-	struct act_rule *trule, *truleb;
+	struct act_rule *rule, *ruleb;
 
-	list_for_each_entry_safe(trule, truleb, rules, list) {
-		LIST_DEL(&trule->list);
-		deinit_acl_cond(trule->cond);
-		free(trule);
+	list_for_each_entry_safe(rule, ruleb, rules, list) {
+		LIST_DEL(&rule->list);
+		deinit_acl_cond(rule->cond);
+		free(rule);
 	}
 }
 
@@ -2317,6 +2333,7 @@ void deinit(void)
 		free(p->check_req);
 		free(p->cookie_name);
 		free(p->cookie_domain);
+		free(p->cookie_attrs);
 		free(p->lbprm.arg_str);
 		free(p->capture_name);
 		free(p->monitor_uri);
@@ -2453,9 +2470,12 @@ void deinit(void)
 			free(lf);
 		}
 
-		deinit_tcp_rules(&p->tcp_req.inspect_rules);
-		deinit_tcp_rules(&p->tcp_rep.inspect_rules);
-		deinit_tcp_rules(&p->tcp_req.l4_rules);
+		deinit_act_rules(&p->tcp_req.inspect_rules);
+		deinit_act_rules(&p->tcp_rep.inspect_rules);
+		deinit_act_rules(&p->tcp_req.l4_rules);
+		deinit_act_rules(&p->tcp_req.l5_rules);
+		deinit_act_rules(&p->http_req_rules);
+		deinit_act_rules(&p->http_res_rules);
 
 		deinit_stick_rules(&p->storersp_rules);
 		deinit_stick_rules(&p->sticking_rules);
@@ -2566,8 +2586,6 @@ void deinit(void)
 		free(p->desc);
 		free(p->fwdfor_hdr_name);
 
-		free_http_req_rules(&p->http_req_rules);
-		free_http_res_rules(&p->http_res_rules);
 		task_free(p->task);
 
 		pool_destroy(p->req_cap_pool);
@@ -2591,7 +2609,7 @@ void deinit(void)
 		free(uap->desc);
 
 		userlist_free(uap->userlist);
-		free_http_req_rules(&uap->http_req_rules);
+		deinit_act_rules(&uap->http_req_rules);
 
 		free(uap);
 	}

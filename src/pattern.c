@@ -12,6 +12,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <errno.h>
 
 #include <common/config.h>
 #include <common/standard.h>
@@ -2339,6 +2340,11 @@ int pat_ref_read_from_file_smp(struct pat_ref *ref, const char *filename, char *
 		}
 	}
 
+	if (ferror(file)) {
+		memprintf(err, "error encountered while reading  <%s> : %s",
+				filename, strerror(errno));
+		goto out_close;
+	}
 	/* succes */
 	ret = 1;
 
@@ -2396,6 +2402,11 @@ int pat_ref_read_from_file(struct pat_ref *ref, const char *filename, char **err
 		}
 	}
 
+	if (ferror(file)) {
+		memprintf(err, "error encountered while reading  <%s> : %s",
+				filename, strerror(errno));
+		goto out_close;
+	}
 	ret = 1; /* success */
 
  out_close:

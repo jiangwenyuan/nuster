@@ -2642,13 +2642,41 @@ static void h2_process_demux(struct h2c *h2c)
 	h2c_restart_reading(h2c, 0);
 }
 
+/* resume each h2s eligible for sending in list head <head> */
+static void h2_resume_each_sending_h2s(struct h2c *h2c, struct list *head)
+{
+	struct h2s *h2s, *h2s_back;
+
+	list_for_each_entry_safe(h2s, h2s_back, head, list) {
+		if (h2c->mws <= 0 ||
+		    h2c->flags & H2_CF_MUX_BLOCK_ANY ||
+		    h2c->st0 >= H2_CS_ERROR)
+			break;
+
+		h2s->flags &= ~H2_SF_BLK_ANY;
+
+		if (!LIST_ISEMPTY(&h2s->sending_list))
+			continue;
+
+		/* For some reason, the upper layer failed to subscribe again,
+		 * so remove it from the send_list
+		 */
+		if (!h2s->send_wait) {
+			LIST_DEL_INIT(&h2s->list);
+			continue;
+		}
+
+		h2s->send_wait->events &= ~SUB_RETRY_SEND;
+		LIST_ADDQ(&h2c->sending_list, &h2s->sending_list);
+		tasklet_wakeup(h2s->send_wait->task);
+	}
+}
+
 /* process Tx frames from streams to be multiplexed. Returns > 0 if it reached
  * the end.
  */
 static int h2_process_mux(struct h2c *h2c)
 {
-	struct h2s *h2s, *h2s_back;
-
 	if (unlikely(h2c->st0 < H2_CS_FRAME_H)) {
 		if (unlikely(h2c->st0 == H2_CS_PREFACE && (h2c->flags & H2_CF_IS_BACK))) {
 			if (unlikely(h2c_bck_send_preface(h2c) <= 0)) {
@@ -2679,47 +2707,8 @@ static int h2_process_mux(struct h2c *h2c)
 	 * waiting there were already elected for immediate emission but were
 	 * blocked just on this.
 	 */
-
-	list_for_each_entry_safe(h2s, h2s_back, &h2c->fctl_list, list) {
-		if (h2c->mws <= 0 || h2c->flags & H2_CF_MUX_BLOCK_ANY ||
-		    h2c->st0 >= H2_CS_ERROR)
-			break;
-
-		if (!LIST_ISEMPTY(&h2s->sending_list))
-			continue;
-
-		h2s->flags &= ~H2_SF_BLK_ANY;
-		/* For some reason, the upper layer failed to subsribe again,
-		 * so remove it from the send_list
-		 */
-		if (!h2s->send_wait) {
-			LIST_DEL_INIT(&h2s->list);
-			continue;
-		}
-		h2s->send_wait->events &= ~SUB_RETRY_SEND;
-		LIST_ADDQ(&h2c->sending_list, &h2s->sending_list);
-		tasklet_wakeup(h2s->send_wait->task);
-	}
-
-	list_for_each_entry_safe(h2s, h2s_back, &h2c->send_list, list) {
-		if (h2c->st0 >= H2_CS_ERROR || h2c->flags & H2_CF_MUX_BLOCK_ANY)
-			break;
-
-		if (!LIST_ISEMPTY(&h2s->sending_list))
-			continue;
-
-		/* For some reason, the upper layer failed to subsribe again,
-		 * so remove it from the send_list
-		 */
-		if (!h2s->send_wait) {
-			LIST_DEL_INIT(&h2s->list);
-			continue;
-		}
-		h2s->flags &= ~H2_SF_BLK_ANY;
-		h2s->send_wait->events &= ~SUB_RETRY_SEND;
-		LIST_ADDQ(&h2c->sending_list, &h2s->sending_list);
-		tasklet_wakeup(h2s->send_wait->task);
-	}
+	h2_resume_each_sending_h2s(h2c, &h2c->fctl_list);
+	h2_resume_each_sending_h2s(h2c, &h2c->send_list);
 
  fail:
 	if (unlikely(h2c->st0 >= H2_CS_ERROR)) {
@@ -2870,29 +2859,9 @@ static int h2_send(struct h2c *h2c)
 	/* We're not full anymore, so we can wake any task that are waiting
 	 * for us.
 	 */
-	if (!(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_DEM_MROOM)) && h2c->st0 >= H2_CS_FRAME_H) {
-		struct h2s *h2s;
+	if (!(h2c->flags & (H2_CF_MUX_MFULL | H2_CF_DEM_MROOM)) && h2c->st0 >= H2_CS_FRAME_H)
+		h2_resume_each_sending_h2s(h2c, &h2c->send_list);
 
-		list_for_each_entry(h2s, &h2c->send_list, list) {
-			if (h2c->st0 >= H2_CS_ERROR || h2c->flags & H2_CF_MUX_BLOCK_ANY)
-				break;
-
-			if (!LIST_ISEMPTY(&h2s->sending_list))
-				continue;
-
-			/* For some reason, the upper layer failed to subsribe again,
-			 * so remove it from the send_list
-			 */
-			if (!h2s->send_wait) {
-				LIST_DEL_INIT(&h2s->list);
-				continue;
-			}
-			h2s->flags &= ~H2_SF_BLK_ANY;
-			h2s->send_wait->events &= ~SUB_RETRY_SEND;
-			tasklet_wakeup(h2s->send_wait->task);
-			LIST_ADDQ(&h2c->sending_list, &h2s->sending_list);
-		}
-	}
 	/* We're done, no more to send */
 	if (!b_data(&h2c->mbuf))
 		return sent;
@@ -4763,19 +4732,32 @@ static size_t h2s_htx_bck_make_req_headers(struct h2s *h2s, struct htx *htx)
 
 	/* encode all headers, stop at empty name */
 	for (hdr = 0; hdr < sizeof(list)/sizeof(list[0]); hdr++) {
+		struct ist n = list[hdr].n;
+		struct ist v = list[hdr].v;
+
 		/* these ones do not exist in H2 and must be dropped. */
-		if (isteq(list[hdr].n, ist("connection")) ||
-		    isteq(list[hdr].n, ist("host")) ||
-		    isteq(list[hdr].n, ist("proxy-connection")) ||
-		    isteq(list[hdr].n, ist("keep-alive")) ||
-		    isteq(list[hdr].n, ist("upgrade")) ||
-		    isteq(list[hdr].n, ist("transfer-encoding")))
+		if (isteq(n, ist("connection")) ||
+		    isteq(n, ist("host")) ||
+		    isteq(n, ist("proxy-connection")) ||
+		    isteq(n, ist("keep-alive")) ||
+		    isteq(n, ist("upgrade")) ||
+		    isteq(n, ist("transfer-encoding")))
 			continue;
 
-		if (isteq(list[hdr].n, ist("")))
+		if (isteq(n, ist("te"))) {
+			/* "te" may only be sent with "trailers" if this value
+			 * is present, otherwise it must be deleted.
+			 */
+			v = istist(v, ist("trailers"));
+			if (!v.ptr || (v.len > 8 && v.ptr[8] != ','))
+				continue;
+			v = ist("trailers");
+		}
+
+		if (isteq(n, ist("")))
 			break; // end
 
-		if (!hpack_encode_header(&outbuf, list[hdr].n, list[hdr].v)) {
+		if (!hpack_encode_header(&outbuf, n, v)) {
 			/* output full */
 			if (b_space_wraps(&h2c->mbuf))
 				goto realign_again;

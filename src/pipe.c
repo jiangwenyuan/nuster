@@ -55,6 +55,7 @@ struct pipe *get_pipe()
 
 	if (pipe(pipefd) < 0) {
 		pool_free(pool_head_pipe, ret);
+		ret = NULL;
 		goto out;
 	}
 #ifdef F_SETPIPE_SZ

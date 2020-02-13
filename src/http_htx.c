@@ -127,8 +127,6 @@ int http_find_header(const struct htx *htx, const struct ist name,
 			v.len--;
 			ctx->lws_after++;
 		}
-		if (!v.len)
-			goto next_blk;
 		ctx->blk   = blk;
 		ctx->value = v;
 		return 1;

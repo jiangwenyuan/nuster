@@ -180,7 +180,7 @@ REGPRM2 static void _do_poll(struct poller *p, int exp)
 		}
 
 		if (kev[count].filter ==  EVFILT_READ) {
-			if (kev[count].data)
+			if (kev[count].data || !(kev[count].flags & EV_EOF))
 				n |= FD_POLL_IN;
 			if (kev[count].flags & EV_EOF)
 				n |= FD_POLL_HUP;

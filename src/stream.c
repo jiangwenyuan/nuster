@@ -653,6 +653,13 @@ static int sess_update_st_con_tcp(struct stream *s)
 			 * so we need to pretend we're established to log correctly
 			 * and let later states handle the failure.
 			 */
+
+			/* a shutw is enough to close all during SI_ST_CON */
+			si_shutw(si);
+
+			/* set state to SI_ST_EST in order to have sess_establish()
+			 * set the response analysers.
+			 */
 			si->state    = SI_ST_EST;
 			si->err_type = SI_ET_DATA_ERR;
 			/* Don't add CF_WRITE_ERROR if we're here because
@@ -1502,13 +1509,15 @@ static int process_sticking_rules(struct stream *s, struct channel *req, int an_
 		 * An example could be a store of the IP address from an HTTP
 		 * header first, then from the source if not found.
 		 */
-		for (i = 0; i < s->store_count; i++) {
-			if (rule->table.t == s->store[i].table)
-				break;
-		}
+		if (rule->flags & STK_IS_STORE) {
+			for (i = 0; i < s->store_count; i++) {
+				if (rule->table.t == s->store[i].table)
+					break;
+			}
 
-		if (i !=  s->store_count)
-			continue;
+			if (i !=  s->store_count)
+				continue;
+		}
 
 		if (rule->cond) {
 	                ret = acl_exec_cond(rule->cond, px, sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
@@ -2353,10 +2362,9 @@ redo:
 
 		/* prune the request variables and swap to the response variables. */
 		if (s->vars_reqres.scope != SCOPE_RES) {
-			if (!LIST_ISEMPTY(&s->vars_reqres.head)) {
+			if (!LIST_ISEMPTY(&s->vars_reqres.head))
 				vars_prune(&s->vars_reqres, s->sess, s);
-				vars_init(&s->vars_reqres, SCOPE_RES);
-			}
+			vars_init(&s->vars_reqres, SCOPE_RES);
 		}
 
 		do {

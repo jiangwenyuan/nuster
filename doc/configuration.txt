@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.9
                              willy tarreau
-                              2019/11/25
+                              2020/02/13
 
 
 This document covers the configuration language as implemented in the version
@@ -804,6 +804,10 @@ gid <number>
   Note that if haproxy is started from a user having supplementary groups, it
   will only be able to drop these groups if started with superuser privileges.
   See also "group" and "uid".
+
+group <group name>
+  Similar to "gid" but uses the GID of group name <group name> from /etc/group.
+  See also "gid" and "user".
 
 hard-stop-after <time>
   Defines the maximum time allowed to perform a clean soft-stop.
@@ -3127,7 +3131,7 @@ contimeout <timeout> (deprecated)
 cookie <name> [ rewrite | insert | prefix ] [ indirect ] [ nocache ]
               [ postonly ] [ preserve ] [ httponly ] [ secure ]
               [ domain <domain> ]* [ maxidle <idle> ] [ maxlife <life> ]
-              [ dynamic ]
+              [ dynamic ] [ attr <value> ]*
   Enable cookie-based persistence in a backend.
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
@@ -3285,6 +3289,11 @@ cookie <name> [ rewrite | insert | prefix ] [ indirect ] [ nocache ]
               "dynamic-cookie-key" backend directive.
               The cookie will be regenerated each time the IP address change,
               and is only generated for IPv4/IPv6.
+
+    attr      This option tells haproxy to add an extra attribute when a
+              cookie is inserted. The attribute value can contain any
+              characters except control ones or ";". This option may be
+              repeated.
 
   There can be only one persistence cookie per HTTP backend, and it can be
   declared in a defaults section. The value of the cookie will be the value
@@ -4155,9 +4164,12 @@ http-request capture <sample> [ len <length> | id <id> ]
   If the keyword "id" is used instead of "len", the action tries to store the
   captured string in a previously declared capture slot. This is useful to run
   captures in backends. The slot id can be declared by a previous directive
-  "http-request capture" or with the "declare capture" keyword. If the slot
-  <id> doesn't exist, then HAProxy fails parsing the configuration to prevent
-  unexpected behavior at run time.
+  "http-request capture" or with the "declare capture" keyword.
+
+  When using this action in a backend, double check that the relevant
+  frontend(s) have the required capture slots otherwise, this rule will be
+  ignored at run time. This can't be detected at configuration parsing time
+  due to HAProxy's ability to dynamically resolve backend name at runtime.
 
 http-request del-acl(<file-name>) <key fmt> [ { if | unless } <condition> ]
 
@@ -4718,8 +4730,11 @@ http-response capture <sample> id <id> [ { if | unless } <condition> ]
   This is useful to run captures in backends. The slot id can be declared by a
   previous directive "http-response capture" or with the "declare capture"
   keyword.
-  If the slot <id> doesn't exist, then HAProxy fails parsing the configuration
-  to prevent unexpected behavior at run time.
+
+  When using this action in a backend, double check that the relevant
+  frontend(s) have the required capture slots otherwise, this rule will be
+  ignored at run time. This can't be detected at configuration parsing time
+  due to HAProxy's ability to dynamically resolve backend name at runtime.
 
 http-response del-acl(<file-name>) <key fmt> [ { if | unless } <condition> ]
 
@@ -11817,12 +11832,18 @@ downinter <delay>
 maxconn <maxconn>
   The "maxconn" parameter specifies the maximal number of concurrent
   connections that will be sent to this server. If the number of incoming
-  concurrent requests goes higher than this value, they will be queued, waiting
-  for a connection to be released. This parameter is very important as it can
+  concurrent connections goes higher than this value, they will be queued,
+  waiting for a slot to be released. This parameter is very important as it can
   save fragile servers from going down under extreme loads. If a "minconn"
   parameter is specified, the limit becomes dynamic. The default value is "0"
   which means unlimited. See also the "minconn" and "maxqueue" parameters, and
   the backend's "fullconn" keyword.
+
+  In HTTP mode this parameter limits the number of concurrent requests instead
+  of the number of connections. Multiple requests might be multiplexed over a
+  single TCP connection to the server. As an example if you specify a maxconn
+  of 50 you might see between 1 and 50 actual server connections, but no more
+  than 50 concurrent requests.
 
 maxqueue <maxqueue>
   The "maxqueue" parameter specifies the maximal number of connections which
@@ -13029,6 +13050,14 @@ string, then the matching will be performed ignoring the case. In order
 to match the string "-i", either set it second, or pass the "--" flag
 before the first string. Same applies of course to match the string "--".
 
+Do not use string matches for binary fetches which might contain null bytes
+(0x00), as the comparison stops at the occurrence of the first null byte.
+Instead, convert the binary fetch to a hex string with the hex converter first.
+
+Example:
+    # matches if the string <tag> is present in the binary sample
+    acl tag_found req.payload(0,0),hex -m sub 3C7461673E
+
 
 7.1.4. Matching regular expressions (regexes)
 ---------------------------------------------
@@ -13960,6 +13989,7 @@ word(<index>,<delimiters>[,<count>])
   Extracts the nth word counting from the beginning (positive index) or from
   the end (negative index) considering given delimiters from an input string.
   Indexes start at 1 or -1 and delimiters are a string formatted list of chars.
+  Delimiters at the beginning or end of the input string are ignored.
   Optionally you can specify <count> of words to extract (default: 1).
   Value of 0 indicates extraction of all remaining words.
 
@@ -13969,6 +13999,7 @@ word(<index>,<delimiters>[,<count>])
       str(f1_f2_f3__f5),word(3,_,2)  # f3__f5
       str(f1_f2_f3__f5),word(-2,_,3) # f1_f2_f3
       str(f1_f2_f3__f5),word(-3,_,0) # f1_f2
+      str(/f1/f2/f3/f4),word(1,/)    # f1
 
 wt6([<avalanche>])
   Hashes a binary input sample into an unsigned 32-bit quantity using the WT6

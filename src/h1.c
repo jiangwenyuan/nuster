@@ -794,6 +794,7 @@ int h1_headers_to_hdr_list(char *start, const char *stop,
 
 					if (ret < 0) {
 						state = H1_MSG_HDR_L2_LWS;
+						ptr = v.ptr; /* Set ptr on the error */
 						goto http_msg_invalid;
 					}
 					else if (ret == 0) {

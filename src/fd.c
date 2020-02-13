@@ -180,8 +180,8 @@ THREAD_LOCAL int  fd_nbupdt = 0;   // number of updates in the list
 THREAD_LOCAL int poller_rd_pipe = -1; // Pipe to wake the thread
 int poller_wr_pipe[MAX_THREADS]; // Pipe to wake the threads
 
-#define _GET_NEXT(fd, off) ((struct fdlist_entry *)(void *)((char *)(&fdtab[fd]) + off))->next
-#define _GET_PREV(fd, off) ((struct fdlist_entry *)(void *)((char *)(&fdtab[fd]) + off))->prev
+#define _GET_NEXT(fd, off) ((volatile struct fdlist_entry *)(void *)((char *)(&fdtab[fd]) + off))->next
+#define _GET_PREV(fd, off) ((volatile struct fdlist_entry *)(void *)((char *)(&fdtab[fd]) + off))->prev
 /* adds fd <fd> to fd list <list> if it was not yet in it */
 void fd_add_to_fd_list(volatile struct fdlist *list, int fd, int off)
 {
@@ -193,8 +193,10 @@ void fd_add_to_fd_list(volatile struct fdlist *list, int fd, int off)
 redo_next:
 	next = _GET_NEXT(fd, off);
 	/* Check that we're not already in the cache, and if not, lock us. */
-	if (next >= -2)
+	if (next > -2)
 		goto done;
+	if (next == -2)
+		goto redo_next;
 	if (!HA_ATOMIC_CAS(&_GET_NEXT(fd, off), &next, -2))
 		goto redo_next;
 	__ha_barrier_store();
@@ -272,7 +274,7 @@ lock_self:
 
 #else
 lock_self_next:
-	next = ({ volatile int *next = &_GET_NEXT(fd, off); *next; });
+	next = _GET_NEXT(fd, off);
 	if (next == -2)
 		goto lock_self_next;
 	if (next <= -3)
@@ -280,7 +282,7 @@ lock_self_next:
 	if (unlikely(!HA_ATOMIC_CAS(&_GET_NEXT(fd, off), &next, -2)))
 		goto lock_self_next;
 lock_self_prev:
-	prev = ({ volatile int *prev = &_GET_PREV(fd, off); *prev; });
+	prev = _GET_PREV(fd, off);
 	if (prev == -2)
 		goto lock_self_prev;
 	if (unlikely(!HA_ATOMIC_CAS(&_GET_PREV(fd, off), &prev, -2)))

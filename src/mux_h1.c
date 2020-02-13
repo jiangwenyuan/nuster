@@ -39,13 +39,15 @@
 /* Flags indicating why reading input data are blocked. */
 #define H1C_F_IN_ALLOC       0x00000010 /* mux is blocked on lack of input buffer */
 #define H1C_F_IN_FULL        0x00000020 /* mux is blocked on input buffer full */
-#define H1C_F_IN_BUSY        0x00000040
-/* 0x00000040 - 0x00000800 unused */
+#define H1C_F_IN_BUSY        0x00000040 /* mux is blocked on input waiting the other side */
+/* 0x00000040 - 0x00000400 unused */
 
+#define H1C_F_CS_WAIT_CONN   0x00000800 /* waiting for the connection establishment */
 #define H1C_F_CS_ERROR       0x00001000 /* connection must be closed ASAP because an error occurred */
 #define H1C_F_CS_SHUTW_NOW   0x00002000 /* connection must be shut down for writes ASAP */
-#define H1C_F_CS_SHUTDOWN    0x00004000 /* connection is shut down for read and writes */
-#define H1C_F_CS_WAIT_CONN   0x00008000 /* waiting for the connection establishment */
+#define H1C_F_CS_SHUTDOWN    0x00004000 /* connection is shut down */
+#define H1C_F_CS_IDLE        0x00008000 /* connection is idle and may be reused
+					 * (exclusive to all H1C_F_CS flags and never set when an h1s is attached) */
 
 #define H1C_F_WAIT_NEXT_REQ  0x00010000 /*  waiting for the next request to start, use keep-alive timeout */
 
@@ -120,29 +122,21 @@ static struct task *h1_timeout_task(struct task *t, void *context, unsigned shor
 /* functions below are for dynamic buffer management */
 /*****************************************************/
 /*
- * Indicates whether or not the we may call the h1_recv() function to
- * attempt to receive data into the buffer and/or parse pending data. The
- * condition is a bit complex due to some API limits for now. The rules are the
- * following :
- *   - if an error or a shutdown was detected on the connection and the buffer
- *     is empty, we must not attempt to receive
- *   - if the input buffer failed to be allocated, we must not try to receive
- *      and we know there is nothing pending
- *   - if no flag indicates a blocking condition, we may attempt to receive,
- *     regardless of whether the input buffer is full or not, so that only de
- *     receiving part decides whether or not to block. This is needed because
- *     the connection API indeed prevents us from re-enabling receipt that is
- *     already enabled in a polled state, so we must always immediately stop as
- *     soon as the mux can't proceed so as never to hit an end of read with data
- *     pending in the buffers.
+ * Indicates whether or not we may receive data. The rules are the following :
+ *   - if an error or a shutdown for reads was detected on the connection we
+       must not attempt to receive
+ *   - if the input buffer failed to be allocated or is full , we must not try
+ *     to receive
+ *   - if he input processing is busy waiting for the output side, we may
+ *     attemp to receive
  *   - otherwise must may not attempt to receive
  */
 static inline int h1_recv_allowed(const struct h1c *h1c)
 {
-	if (b_data(&h1c->ibuf) == 0 && (h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN)))
+	if (h1c->flags & H1C_F_CS_ERROR)
 		return 0;
 
-	if (h1c->conn->flags & CO_FL_ERROR || conn_xprt_read0_pending(h1c->conn))
+	if (h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH))
 		return 0;
 
 	if (!(h1c->flags & (H1C_F_IN_ALLOC|H1C_F_IN_FULL|H1C_F_IN_BUSY)))
@@ -208,15 +202,16 @@ static inline void h1_release_buf(struct h1c *h1c, struct buffer *bptr)
 	}
 }
 
-/* returns the number of streams in use on a connection to figure if it's
- * idle or not. We can't have an h1s without a CS so checking h1s is fine,
- * as the caller will want to know if it was the last one after a detach().
+/* returns the number of streams in use on a connection to figure if it's idle
+ * or not. We rely on H1C_F_CS_IDLE to know if the connection is in-use or
+ * not. This flag is only set when no H1S is attached and when the previous
+ * stream, if any, was fully terminated without any error and in K/A mode.
  */
 static int h1_used_streams(struct connection *conn)
 {
 	struct h1c *h1c = conn->ctx;
 
-	return h1c->h1s ? 1 : 0;
+	return ((h1c->flags & H1C_F_CS_IDLE) ? 0 : 1);
 }
 
 /* returns the number of streams still available on a connection */
@@ -295,7 +290,7 @@ static struct h1s *h1s_create(struct h1c *h1c, struct conn_stream *cs, struct se
 
 	if (h1c->flags & H1C_F_WAIT_NEXT_REQ)
 		h1s->flags |= H1S_F_NOT_FIRST;
-	h1c->flags &= ~H1C_F_WAIT_NEXT_REQ;
+	h1c->flags &= ~(H1C_F_CS_IDLE|H1C_F_WAIT_NEXT_REQ);
 
 	if (!conn_is_back(h1c->conn)) {
 		if (h1c->px->options2 & PR_O2_REQBUG_OK)
@@ -361,9 +356,15 @@ static void h1s_destroy(struct h1s *h1s)
 			h1s->send_wait->events &= ~SUB_RETRY_SEND;
 
 		h1c->flags &= ~H1C_F_IN_BUSY;
-		h1c->flags |= H1C_F_WAIT_NEXT_REQ;
 		if (h1s->flags & (H1S_F_REQ_ERROR|H1S_F_RES_ERROR))
 			h1c->flags |= H1C_F_CS_ERROR;
+
+		if (!(h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN)) && /* No error/shutdown on h1c */
+		    !(h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) && /* No error/shutdown on conn */
+		    (h1s->flags & H1S_F_WANT_KAL) &&                                         /* K/A possible */
+		    h1s->req.state == H1_MSG_DONE && h1s->res.state == H1_MSG_DONE) {        /* req/res in DONE state */
+			h1c->flags |= (H1C_F_CS_IDLE|H1C_F_WAIT_NEXT_REQ);
+		}
 
 		cs_free(h1s->cs);
 		pool_free(pool_head_h1s, h1s);
@@ -395,7 +396,7 @@ static int h1_init(struct connection *conn, struct proxy *proxy, struct session 
 	h1c->conn = conn;
 	h1c->px   = proxy;
 
-	h1c->flags = H1C_F_NONE;
+	h1c->flags = H1C_F_CS_IDLE;
 	h1c->ibuf  = BUF_NULL;
 	h1c->obuf  = BUF_NULL;
 	h1c->h1s   = NULL;
@@ -1988,10 +1989,9 @@ static int h1_process(struct h1c * h1c)
 
 	if (!h1s) {
 		if (h1c->flags & (H1C_F_CS_ERROR|H1C_F_CS_SHUTDOWN) ||
-		    conn->flags & (CO_FL_ERROR | CO_FL_SOCK_WR_SH) ||
-		    conn_xprt_read0_pending(conn))
+		    conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH))
 			goto release;
-		if (!conn_is_back(conn) && !(h1c->flags & (H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN))) {
+		if (!conn_is_back(conn) && (h1c->flags & H1C_F_CS_IDLE)) {
 			if (!h1s_create(h1c, NULL, NULL))
 				goto release;
 		}
@@ -2161,7 +2161,6 @@ static void h1_detach(struct conn_stream *cs)
 	struct h1s *h1s = cs->ctx;
 	struct h1c *h1c;
 	struct session *sess;
-	int has_keepalive;
 	int is_not_first;
 
 	cs->ctx = NULL;
@@ -2172,12 +2171,10 @@ static void h1_detach(struct conn_stream *cs)
 	h1c = h1s->h1c;
 	h1s->cs = NULL;
 
-	has_keepalive = h1s->flags & H1S_F_WANT_KAL;
 	is_not_first = h1s->flags & H1S_F_NOT_FIRST;
 	h1s_destroy(h1s);
 
-	if (conn_is_back(h1c->conn) && has_keepalive &&
-	    !(h1c->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH))) {
+	if (conn_is_back(h1c->conn) && (h1c->flags & H1C_F_CS_IDLE)) {
 		/* If there are any excess server data in the input buffer,
 		 * release it and close the connection ASAP (some data may
 		 * remain in the output buffer). This happens if a server sends
@@ -2186,7 +2183,7 @@ static void h1_detach(struct conn_stream *cs)
 		 */
 		if (b_data(&h1c->ibuf)) {
 			h1_release_buf(h1c, &h1c->ibuf);
-			h1c->flags |= H1C_F_CS_SHUTW_NOW;
+			h1c->flags = (h1c->flags & ~H1C_F_CS_IDLE) | H1C_F_CS_SHUTW_NOW;
 			goto release;
 		}
 
@@ -2278,8 +2275,6 @@ static void h1_shutr(struct conn_stream *cs, enum cs_shr_mode mode)
 		return;
 	if (conn_xprt_ready(cs->conn) && cs->conn->xprt->shutr)
 		cs->conn->xprt->shutr(cs->conn, (mode == CS_SHR_DRAIN));
-	if ((cs->conn->flags & (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) == (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH))
-		h1c->flags = (h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
 }
 
 static void h1_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
@@ -2311,8 +2306,7 @@ static void h1_shutw_conn(struct connection *conn, enum cs_shw_mode mode)
 
 	conn_xprt_shutw(conn);
 	conn_sock_shutw(conn, (mode == CS_SHW_NORMAL));
-	if ((conn->flags & (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) == (CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH))
-		h1c->flags = (h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
+	h1c->flags = (h1c->flags & ~H1C_F_CS_SHUTW_NOW) | H1C_F_CS_SHUTDOWN;
 }
 
 /* Called from the upper layer, to unsubscribe to events */
@@ -2421,7 +2415,7 @@ static size_t h1_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 			break;
 		total += ret;
 		count -= ret;
-		if (!h1_send(h1c))
+		if ((h1c->wait_event.events & SUB_RETRY_SEND) || !h1_send(h1c))
 			break;
 	}
 
