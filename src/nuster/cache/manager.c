@@ -12,7 +12,7 @@
 
 #include <types/global.h>
 
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/stream_interface.h>
 #include <proto/proxy.h>
 #include <proto/http_htx.h>

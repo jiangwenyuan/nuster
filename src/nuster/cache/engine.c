@@ -11,7 +11,7 @@
  */
 
 #include <proto/log.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/raw_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/acl.h>

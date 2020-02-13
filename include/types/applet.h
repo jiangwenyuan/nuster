@@ -32,6 +32,8 @@
 #include <common/config.h>
 #include <common/xref.h>
 
+#include <nuster/common.h>
+
 struct appctx;
 
 /* Applet descriptor */
@@ -75,6 +77,31 @@ struct appctx {
 	struct freq_ctr call_rate;       /* appctx call rate */
 
 	union {
+		union {
+			struct {
+				struct nst_cache_entry   *entry;
+				struct nst_cache_data    *data;
+				struct nst_cache_element *element;
+			} cache_engine;
+			struct {
+				struct nst_str   host;
+				struct nst_str   path;
+				struct my_regex *regex;
+			} cache_manager;
+			struct {
+				struct nst_nosql_entry   *entry;
+				struct nst_nosql_data    *data;
+				struct nst_nosql_element *element;
+				int fd;
+				int header_len;
+				uint64_t offset;
+			} nosql_engine;
+			struct {
+				int fd;
+				int header_len;
+				uint64_t offset;
+			} cache_disk_engine;
+		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */
 		} peers;                        /* used by the peers applet */

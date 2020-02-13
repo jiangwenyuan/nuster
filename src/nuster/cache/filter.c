@@ -19,7 +19,7 @@
 #include <proto/filters.h>
 #include <proto/log.h>
 #include <proto/stream.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 #include <proto/stream_interface.h>
 
 #include <nuster/memory.h>

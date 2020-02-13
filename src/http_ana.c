@@ -35,6 +35,8 @@
 #include <proto/stats.h>
 #include <proto/vars.h>
 
+#include <nuster/nuster.h>
+
 #define TRACE_SOURCE &trace_strm
 
 extern const char *stat_status_codes[];
@@ -597,6 +599,11 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		if (!http_apply_redirect_rule(rule, s, txn))
 			goto return_bad_req;
 		goto done;
+	}
+
+	/* check nuster applets: manager/purge/stats... */
+	if (nuster_check_applet2(s, req, px)) {
+		goto return_prx_cond;
 	}
 
 	/* POST requests may be accompanied with an "Expect: 100-Continue" header.

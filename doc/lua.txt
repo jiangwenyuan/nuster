@@ -1,6 +1,6 @@
                    Lua: Architecture and first steps
                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                             version 2.0
+                             version 1.9
 
                         author: Thierry FOURNIER
                  contact: tfournier at arpalert dot org
@@ -597,7 +597,8 @@ embedding the Lua script language:
    cd haproxy-1.6.2
 
  - build HAProxy:
-   make TARGET=linux-glibc \
+   make TARGET=linux \
+        USE_DL=1 \
         USE_LUA=1 \
         LUA_LIB=/opt/lua-5.3.1/lib \
         LUA_INC=/opt/lua-5.3.1/include
@@ -963,4 +964,4 @@ You can load this module with the following Lua syntax:
 When you start HAProxy, this module just print "Hello world" when it is loaded.
 Please, remember that HAProxy doesn't allow blocking method, so if you write a
 function doing filesystem access or synchronous network access, all the HAProxy
-process will fail.
+proces

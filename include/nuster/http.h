@@ -27,7 +27,7 @@
 #include <common/chunk.h>
 
 #include <proto/stream_interface.h>
-#include <proto/proto_http.h>
+#include <proto/http_ana.h>
 
 #include <nuster/common.h>
 #include <nuster/nuster.h>

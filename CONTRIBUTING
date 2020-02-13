@@ -1,96 +1,26 @@
-                    HOW TO GET YOUR CODE ACCEPTED IN HAPROXY
-                   READ THIS CAREFULLY BEFORE SUBMITTING CODE
+                      HOW TO GET YOUR CODE ACCEPTED IN HAPROXY
+                     READ THIS CAREFULLY BEFORE SUBMITTING CODE
 
 THIS DOCUMENT PROVIDES SOME RULES TO FOLLOW WHEN SENDING CONTRIBUTIONS. PATCHES
-NOT FOLLOWING THESE RULES WILL SIMPLY BE IGNORED IN ORDER TO PROTECT ALL OTHER
+NOT FOLLOWING THESE RULES WILL SIMPLY BE REJECTED IN ORDER TO PROTECT ALL OTHER
 RESPECTFUL CONTRIBUTORS' VALUABLE TIME.
-
-
-Abstract
---------
-
-If you have never contributed to HAProxy before, or if you did so and noticed
-that nobody seems to be interested in reviewing your submission, please do read
-this long document carefully. HAProxy maintainers are particularly demanding on
-respecting certain simple rules related to general code and documentation style
-as well as splitting your patches and providing high quality commit messages.
-The reason behind this is that your patch will be met multiple times in the
-future, when doing some backporting work or when bisecting a bug, and it is
-critical that anyone can quickly decide if the patch is right, wrong, if it
-misses something, if it must be reverted or needs to be backported. Maintainers
-are generally benevolent with newcomers and will help them provided their work
-indicates they have at least read this document. Some have improved over time,
-to the point of being totally trusted and gaining commit access so they don't
-need to depend on anyone to pick their code. On the opposite, those who insist
-not making minimal efforts however will simply be ignored.
 
 
 Background
 ----------
 
-HAProxy is a community-driven project. But like most highly technical projects
-it takes a lot of time to develop the skills necessary to be autonomous in the
-project, and there is a very small core team helped by a small set of very
-active participants. While most of the core team members work on the code as
-part of their day job, most participants do it on a voluntary basis during
-their spare time. The ideal model for developers is to spend their time:
-  1) developing new features
-  2) fixing bugs
-  3) doing maintenance backports
-  4) reviewing other people's code
-
-It turns out that on a project like HAProxy, like many other similarly complex
-projects, the time spent is exactly the opposite:
-  1) reviewing other people's code
-  2) doing maintenance backports
-  3) fixing bugs
-  4) developing new features
-
-A large part of the time spent reviewing code often consists in giving basic
-recommendations that are already explained in this file. In addition to taking
-time, it is not appealing for people willing to spend one hour helping others
-to do the same thing over and over instead of discussing the code design, and
-it tends to delay the start of code reviews.
-
-Regarding backports, they are necessary to provide a set of stable branches
-that are deployed in production at many places. Load balancers are complex and
-new features often induce undesired side effects in other areas, which we will
-call bugs. Thus it's common for users to stick to a branch featuring everything
-they need and not to upgrade too often. This backporting job is critical to the
-ecosystem's health and must be done regularly. Very often the person devoting
-some time on backports has little to no information about the relevance (let
-alone importance) of a patch and is unlikely to be an expert in the area
-affected by the patch. It's the role of the commit message to explain WHAT
-problem the patch tries to solve, WHY it is estimated that it is a problem, and
-HOW it tries to address it. With these elements, the person in charge of the
-backports can decide whether or not to pick the patch. And if the patch does
-not apply (which is common for older versions) they have information in the
-commit message about the principle and choices that the initial developer made
-and will try to adapt the patch sticking to these principles. Thus, the time
-spent backporting patches solely depends on the code quality and the commit
-message details and accuracy.
-
-When it turns to fixing bugs, before declaring a bug, there is an analysis
-phase. It starts with "is this behaviour expected", "is it normal", "under what
-circumstances does it happen", "when did it start to happen", "was it intended",
-"was it just overlooked", and "how to fix it without breaking the initial
-intent". A utility called "git bisect" is usually involved in determining when
-the behaviour started to happen. It determines the first patch which introduced
-the new behaviour. If the patch is huge, touches many areas, is really difficult
-to read because it needlessly reindents code or adds/removes line breaks out of
-context, it will be very difficult to figure what part of this patch broke the
-behaviour. Then once the part is figured, if the commit message doesn't provide
-a detailed description about the intent of the patch, i.e. the problem it was
-trying to solve, why and how, the developer landing on that patch will really
-feel powerless. And very often in this case, the fix for the problem will break
-something else or something that depended on the original patch.
-
-But contrary to what it could look like, providing great quality patches is not
-difficult, and developers will always help contributors improve their patches
-quality because it's in their interest as well. History has shown that first
-time contributors can provide an excellent work when they have carefully read
-this document, and that people coming from projects with different practices
-can grow from first-time contributor to trusted committer in about 6 months.
+During the development cycle of version 1.6, much more time was spent reviewing
+poor quality submissions, fixing them and troubleshooting the bugs they
+introduced than doing any development work. This is not acceptable as it ends
+up with people actually slowing down the project for the features they're the
+only ones interested in. On the other end of the scale, there are people who
+make the effort of polishing their work to contribute excellent quality work
+which doesn't even require a review. Contrary to what newcomers may think, it's
+very easy to reach that level of quality and get your changes accepted quickly,
+even late in the development cycle. It only requires that you make your homework
+and not rely on others to do it for you. The most important point is that
+HAProxy is a community-driven project, all involved participants must respect
+all other ones' time and work.
 
 
 Preparation
@@ -110,31 +40,23 @@ subscribe to it by sending an empty e-mail at the following address :
 
                         haproxy+subscribe@formilux.org
 
-It is not even necessary to subscribe, you can post there and verify via the
-public list archives that your message was properly delivered. In this case you
-should indicate in your message that you'd like responders to keep you CCed.
-Please visit http://haproxy.org/ to figure available options to join the list.
-
 If you have an idea about something to implement, *please* discuss it on the
 list first. It has already happened several times that two persons did the same
 thing simultaneously. This is a waste of time for both of them. It's also very
 common to see some changes rejected because they're done in a way that will
 conflict with future evolutions, or that does not leave a good feeling. It's
 always unpleasant for the person who did the work, and it is unpleasant in
-general because people's time and efforts are valuable and would be better
+general because value people's time and efforts are valuable and would be better
 spent working on something else. That would not happen if these were discussed
 first. There is no problem posting work in progress to the list, it happens
-quite often in fact. Just prefix your mail subject with "RFC" (it stands for
-"request for comments") and everyone will understand you'd like some opinion
-on your work in progress. Also, don't waste your time with the doc when
-submitting patches for review, only add the doc with the patch you consider
-ready to merge (unless you need some help on the doc itself, of course).
+quite often in fact. Also, don't waste your time with the doc when submitting
+patches for review, only add the doc with the patch you consider ready to merge.
 
-Another important point concerns code portability. HAProxy requires gcc as the
+Another important point concerns code portability. Haproxy requires gcc as the
 C compiler, and may or may not work with other compilers. However it's known to
 build using gcc 2.95 or any later version. As such, it is important to keep in
 mind that certain facilities offered by recent versions must not be used in the
-code:
+code :
 
   - declarations mixed in the code (requires gcc >= 3.x and is a bad practice)
   - GCC builtins without checking for their availability based on version and
@@ -145,8 +67,7 @@ code:
     "for" statements)
 
 Since most of these restrictions are just a matter of coding style, it is
-normally not a problem to comply. Please read doc/coding-style.txt for all the
-details.
+normally not a problem to comply.
 
 When modifying some optional subsystem (SSL, Lua, compression, device detection
 engines), please make sure the code continues to build (and to work) when these
@@ -163,9 +84,7 @@ also mail willy@haproxy.org directly about it, but your mail may be waiting
 several days in the queue before you get a response, if you get a response at
 all. Retransmit if you don't get a response by one week. Please note that
 direct sent e-mails to this address for non-confidential subjects may simply
-be forwarded to the list or be deleted without notification. An auto-responder
-bot is in place to try to detect e-mails from people asking for help and to
-redirect them to the mailing list. Do not be surprised if this happens to you.
+be forwarded to the list or be deleted without notification.
 
 If you'd like a feature to be added but you think you don't have the skills to
 implement it yourself, you should follow these steps :
@@ -181,16 +100,9 @@ implement it yourself, you should follow these steps :
        consider contacting someone to do the job for you. Some people on the
        list might sometimes be OK with trying to do it.
 
-The version control system used by the project (Git) keeps authorship
-information in the form of the patch author's e-mail address. This way you will
-be credited for your work in the project's history. If you contract with
-someone to implement your idea you may have to discuss such modalities with
-the person doing the work as by default this person will be mentioned as the
-work's author.
 
-
-Rules: the 12 laws of patch contribution
-----------------------------------------
+Rules : the 12 laws of patch contribution
+-----------------------------------------
 
 People contributing patches must apply the following rules. That may sound heavy
 at the beginning but it's common sense more than anything else and contributors
@@ -263,7 +175,7 @@ do not think about them anymore after a few patches.
      necessarily belong to a dirty project. Be careful to the way the text you
      add is presented and indented. Be very careful about typos, usual mistakes
      such as double consonants when only one is needed or "it's" instead of
-     "its", don't mix US English and UK English in the same paragraph, etc.
+     "its", don't mix US english and UK english in the same paragraph, etc.
      When in doubt, check in a dictionary. Fixes for existing typos in the doc
      are always welcome and chasing them is a good way to become familiar with
      the project and to get other participants' respect and consideration.
@@ -449,8 +361,7 @@ do not think about them anymore after a few patches.
 
    If you can, please always put all the bug fixes at the beginning of the
    series. This often makes it easier to backport them because they will not
-   depend on context that your other patches changed. As a hint, if you can't
-   do this, there are little chances that your bug fix can be backported.
+   depend on context that your other patches changed.
 
 11) Real commit messages please!
 
@@ -566,18 +477,6 @@ do not think about them anymore after a few patches.
    painful) handling when they are backported, and at least for this reason
    it's important to keep this in mind.
 
-   Maintainers who pick your patch may slightly adjust the description as they
-   see fit. Do not see this as a failure to do a clean job, it just means they
-   think it will help them do their daily job this way. The code may also be
-   slightly adjusted before being merged (non-functional changes only, fix for
-   typos, tabs vs spaces for example), unless your patch contains a
-   Signed-off-By tag, in which case they will either modify it and mention the
-   changes after your Signed-off-By line, or (more likely) ask you to perform
-   these changes yourself. This ability to slightly adjust a patch before
-   merging is is the main reason for not using pull requests which do not
-   provide this facility and will require to iterate back and forth with the
-   submitter and significantly delay the patch inclusion.
-
    Each patch fixing a bug MUST be tagged with "BUG", a severity level, an
    indication of the affected subsystem and a brief description of the nature
    of the issue in the subject line, and a detailed analysis in the message
@@ -594,18 +493,6 @@ do not think about them anymore after a few patches.
    file.
 
 12) Discuss on the mailing list
-
-   Note, some first-time contributors might feel impressed or scared by posting
-   to a list. This list is frequented only by nice people who are willing to
-   help you polish your work so that it is perfect and can last long. What you
-   think could be perceived as a proof of incompetence or lack of care will
-   instead be a proof of your ability to work with a community. You will not be
-   judged nor blamed for making mistakes. The project maintainers are the ones
-   creating the most bugs and mistakes anyway, and nobody knows the project in
-   its entirety anymore so you're just like anyone else. And people who have no
-   consideration for other's work are quickly ejected from the list so the
-   place is as safe and welcoming to new contributors as it is to long time
-   ones.
 
    When submitting changes, please always CC the mailing list address so that
    everyone gets a chance to spot any issue in your code. It will also serve
@@ -702,9 +589,7 @@ patch types include :
              low and the gains significant, such patches may be merged in the
              stable branch. Depending on the amount of code changed or replaced
              and the level of trust the author has in the change, the risk of
-             regression should be indicated. If the optimization depends on the
-             architecture or on build options, it is important to verify that
-             the code continues to work without it.
+             regression should be indicated.
 
   - RELEASE  release of a new version (development or stable).
 
@@ -754,10 +639,6 @@ The expected length of the commit message grows with the importance of the
 change. While a MINOR patch may sometimes be described in 1 or 2 lines, MAJOR
 or CRITICAL patches cannot have less than 10-15 lines to describe exactly the
 impacts otherwise the submitter's work will be considered as rough sabotage.
-If you are sending a new patch series after a review, it is generally good to
-enumerate at the end of the commit description what changed from the previous
-one as it helps reviewers quickly glance over such changes and not re-read the
-rest.
 
 For BUILD, DOC and CLEANUP types, this tag is not always relevant and may be
 omitted.
@@ -765,6 +646,170 @@ omitted.
 The area the patch applies to is quite important, because some areas are known
 to be similar in older versions, suggesting a backport might be desirable, and
 conversely, some areas are known to be specific to one version. The area is a
+single-word lowercase name the contributor find clear enough to describe what
+part is being touched. The following tags are suggested but not limitative :
+
+  - examples  example files. Be careful, sometimes these files are packaged.
+
+  - tests     regression test files. No code is affected, no need to upgrade.
+
+  - reg-tests regression test files for varnishtest. No code is affected, no
+              need to upgrade.
+
+  - init      initialization code, arguments parsing, etc...
+
+  - config    configuration parser, mostly used when adding new config keywords
+
+  - http      the HTTP engine
+
+  - stats     the stats reporting engine
+
+  - cli       the stats socket CLI
+
+  - checks    the health checks engine (eg: when adding new checks)
+
+  - sample    the sample fetch system (new fetch or converter functions)
+
+  - acl       the ACL processing core or some ACLs from other areas
+
+  - filters   everything related to the filters core
+
+  - peers     the peer synchronization engine
+
+  - lua       the Lua scripting engine
+
+  - listeners everything related to incoming connection settings
+
+  - frontend  everything related to incoming connection processing
+
+  - backend   everything related to LB algorithms and server farm
+
+  - session   session processing and flags (very sensible, be careful)
+
+  - server    server connection management, queueing
+
+  - spoe      SPOE code
+
+  - ssl       the SSL/TLS interface
+
+  - proxy     proxy maintenance (start/stop)
+
+  - log       log management
+
+  - poll      any of the pollers
+
+  - halog     the halog sub-component in the contrib directory
+
+  - contrib   any addition to the contrib directory
+
+Other names may be invented when more precise indications are meaningful, for
+instance : "cookie" which indicates cookie processing in the HTTP core. Last,
+indicating the name of the affected file is also a good way to quickly spot
+changes. Many commits were already tagged with "stream_sock" or "cfgparse" for
+instance.
+
+It is required that the type of change and the severity when relevant are
+indicated, as well as the touched area when relevant as well in the patch
+subject. Normally, we would have the 3 most often. The two first criteria should
+be present before a first colon (':'). If both are present, then they should be
+delimited with a slash ('/'). The 3rd criterion (area) should appear next, also
+followed by a colon. Thus, all of the following subject lines are valid :
+
+Examples of subject lines :
+  - DOC: document options forwardfor to logasap
+  - DOC/MAJOR: reorganize the whole document and change indenting
+  - BUG: stats: connection reset counters must be plain ascii, not HTML
+  - BUG/MINOR: stats: connection reset counters must be plain ascii, not HTML
+  - MEDIUM: checks: support multi-packet health check responses
+  - RELEASE: Released version 1.4.2
+  - BUILD: stats: stdint is not present on solaris
+  - OPTIM/MINOR: halog: make fgets parse more bytes by blocks
+  - REORG/MEDIUM: move syscall redefinition to specific places
+
+Please do not use square brackets anymore around the tags, because they induce
+more work when merging patches, which need to be hand-edited not to lose the
+enclosed part.
+
+In fact, one of the only square bracket tags that still makes sense is '[RFC]'
+at the beginning of the subject, when you're asking for someone to review your
+change before getting it merged. If the patch is OK to be merged, then it can
+be merge as-is and the '[RFC]' tag will automatically be removed. If you don't
+want it to be merged at all, you can simply state it in the message, or use an
+alternate 'WIP/' prefix in front of your tag tag ("work in progress").
+
+The tags are not rigid, follow your intuition first, and they may be readjusted
+when your patch is merged. It may happen that a same patch has a different tag
+in two distinct branches. The reason is that a bug in one branch may just be a
+cleanup or safety measure in the other one because the code cannot be triggered.
+
+
+Working with Git
+----------------
+
+For a more efficient interaction between the mainline code and your code, you
+are strongly encouraged to try the Git version control system :
+
+                        http://git-scm.com/
+
+It's very fast, lightweight and lets you undo/redo your work as often as you
+want, without making your mistakes visible to the rest of the world. It will
+definitely help you contribute quality code and take other people's feedback
+in consideration. In order to clone the HAProxy Git repository :
+
+   $ git clone http://git.haproxy.org/git/haproxy.git/       (development)
+
+If you decide to use Git for your developments, then your commit messages will
+have the subject line in the format described above, then the whole description
+of your work (mainly why you did it) will be in the body. You can directly send
+your commits to the mailing list, the format is convenient to read and process.
+
+It is recommended to create a branch for your work that is based on the master
+branch :
+
+   $ git checkout -b 20150920-fix-stats master
+
+You can then do your work and even experiment with multiple alternatives if you
+are not completely sure that your solution is the best one :
+
+   $ git checkout -b 20150920-fix-stats-v2
+
+Then reorder/merge/edit your patches :
+
+   $ git rebase -i master
+
+When you think you're ready, reread your whole patchset to ensure there is no
+formatting or style issue :
+
+   $ git show master..
+
+And once you're satisfied, you should update your master branch to be sure that
+nothing changed during your work (only needed if you left it unattended for days
+or weeks) :
+
+   $ git checkout -b 20150920-fix-stats-rebased
+   $ git fetch origin master:master
+   $ git rebase master
+
+You can build a list of patches ready for submission like this :
+
+   $ git format-patch master
+
+The output files are the patches ready to be sent over e-mail, either via a
+regular e-mail or via git send-email (carefully check the man page). Don't
+destroy your other work branches until your patches get merged, it may happen
+that earlier designs will be preferred for various reasons. Patches should be
+sent to the mailing list : haproxy@formilux.org and CCed to relevant subsystem
+maintainers or authors of the modified files if their address appears at the
+top of the file.
+
+Please don't send pull-requests, they are really inconvenient. First, a pull
+implies a merge operation and the code doesn't move fast enough to justify the
+use of merges. Second, pull requests are not easily commented on by the
+project's participants, contrary to e-mails where anyone is allowed to have an
+opinion and to express it.
+
+-- end
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     is a
 single-word lowercase name the contributor find clear enough to describe what
 part is being touched. The following list of tags is suggested but not
 exhaustive:

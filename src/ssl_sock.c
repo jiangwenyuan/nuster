@@ -23,7 +23,6 @@
  *
  */
 
-/* Note: do NOT include openssl/xxx.h here, do it in openssl-compat.h */
 #define _GNU_SOURCE
 #include <ctype.h>
 #include <dirent.h>
@@ -40,6 +39,39 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 
+#include <openssl/bn.h>
+#include <openssl/crypto.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <openssl/err.h>
+#include <openssl/rand.h>
+#include <openssl/hmac.h>
+#if (defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP)
+#include <openssl/ocsp.h>
+#endif
+#ifndef OPENSSL_NO_DH
+#include <openssl/dh.h>
+#endif
+#ifndef OPENSSL_NO_ENGINE
+#include <openssl/engine.h>
+#endif
+
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#include <openssl/async.h>
+#endif
+
+#ifndef OPENSSL_VERSION
+#define OPENSSL_VERSION         SSLEAY_VERSION
+#define OpenSSL_version(x)      SSLeay_version(x)
+#define OpenSSL_version_num     SSLeay
+#endif
+
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L) || (LIBRESSL_VERSION_NUMBER < 0x20700000L)
+#define X509_getm_notBefore     X509_get_notBefore
+#define X509_getm_notAfter      X509_get_notAfter
+#endif
+
 #include <import/lru.h>
 #include <import/xxhash.h>
 
@@ -50,7 +82,6 @@
 #include <common/debug.h>
 #include <common/errors.h>
 #include <common/initcall.h>
-#include <common/openssl-compat.h>
 #include <common/standard.h>
 #include <common/ticks.h>
 #include <common/time.h>
@@ -75,9 +106,10 @@
 #include <proto/frontend.h>
 #include <proto/http_rules.h>
 #include <proto/listener.h>
+#include <proto/openssl-compat.h>
 #include <proto/pattern.h>
 #include <proto/proto_tcp.h>
-#include <proto/http_ana.h>
+#include <proto/proto_http.h>
 #include <proto/server.h>
 #include <proto/stream_interface.h>
 #include <proto/log.h>
@@ -86,18 +118,6 @@
 #include <proto/ssl_sock.h>
 #include <proto/stream.h>
 #include <proto/task.h>
-#include <proto/vars.h>
-
-/* ***** READ THIS before adding code here! *****
- *
- * Due to API incompatibilities between multiple OpenSSL versions and their
- * derivatives, it's often tempting to add macros to (re-)define certain
- * symbols. Please do not do this here, and do it in common/openssl-compat.h
- * exclusively so that the whole code consistently uses the same macros.
- *
- * Whenever possible if a macro is missing in certain versions, it's better
- * to conditionally define it in openssl-compat.h than using lots of ifdefs.
- */
 
 /* Warning, these are bits, not integers! */
 #define SSL_SOCK_ST_FL_VERIFY_DONE  0x00000001
@@ -115,6 +135,13 @@
 #define SSL_SOCK_ST_TO_CA_ERROR(s) ((s >> (16)) & 63)
 #define SSL_SOCK_ST_TO_CAEDEPTH(s) ((s >> (6+16)) & 15)
 #define SSL_SOCK_ST_TO_CRTERROR(s) ((s >> (4+6+16)) & 63)
+
+/* Supported hash function for TLS tickets */
+#ifdef OPENSSL_NO_SHA256
+#define HASH_FUNCT EVP_sha1
+#else
+#define HASH_FUNCT EVP_sha256
+#endif /* OPENSSL_NO_SHA256 */
 
 /* ssl_methods flags for ssl options */
 #define MC_SSL_O_ALL            0x0000
@@ -157,7 +184,7 @@ static struct {
 
 	char *listen_default_ciphers;
 	char *connect_default_ciphers;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	char *listen_default_ciphersuites;
 	char *connect_default_ciphersuites;
 #endif
@@ -179,7 +206,7 @@ static struct {
 #ifdef CONNECT_DEFAULT_CIPHERS
 	.connect_default_ciphers = CONNECT_DEFAULT_CIPHERS,
 #endif
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 #ifdef LISTEN_DEFAULT_CIPHERSUITES
 	.listen_default_ciphersuites = LISTEN_DEFAULT_CIPHERSUITES,
 #endif
@@ -205,110 +232,7 @@ static struct {
 	.capture_cipherlist = 0,
 };
 
-static BIO_METHOD *ha_meth;
-
-struct ssl_sock_ctx {
-	struct connection *conn;
-	SSL *ssl;
-	BIO *bio;
-	const struct xprt_ops *xprt;
-	void *xprt_ctx;
-	struct wait_event wait_event;
-	struct wait_event *recv_wait;
-	struct wait_event *send_wait;
-	int xprt_st;                  /* transport layer state, initialized to zero */
-	struct buffer early_buf;      /* buffer to store the early data received */
-	int sent_early_data;          /* Amount of early data we sent so far */
-
-};
-
-DECLARE_STATIC_POOL(ssl_sock_ctx_pool, "ssl_sock_ctx_pool", sizeof(struct ssl_sock_ctx));
-
-static struct task *ssl_sock_io_cb(struct task *, void *, unsigned short);
-static int ssl_sock_handshake(struct connection *conn, unsigned int flag);
-
-/* Methods to implement OpenSSL BIO */
-static int ha_ssl_write(BIO *h, const char *buf, int num)
-{
-	struct buffer tmpbuf;
-	struct ssl_sock_ctx *ctx;
-	int ret;
-
-	ctx = BIO_get_data(h);
-	tmpbuf.size = num;
-	tmpbuf.area = (void *)(uintptr_t)buf;
-	tmpbuf.data = num;
-	tmpbuf.head = 0;
-	ret = ctx->xprt->snd_buf(ctx->conn, ctx->xprt_ctx, &tmpbuf, num, 0);
-	if (ret == 0 && !(ctx->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_WR_SH))) {
-		BIO_set_retry_write(h);
-		ret = -1;
-	} else if (ret == 0)
-		 BIO_clear_retry_flags(h);
-	return ret;
-}
-
-static int ha_ssl_gets(BIO *h, char *buf, int size)
-{
-
-	return 0;
-}
-
-static int ha_ssl_puts(BIO *h, const char *str)
-{
-
-	return ha_ssl_write(h, str, strlen(str));
-}
-
-static int ha_ssl_read(BIO *h, char *buf, int size)
-{
-	struct buffer tmpbuf;
-	struct ssl_sock_ctx *ctx;
-	int ret;
-
-	ctx = BIO_get_data(h);
-	tmpbuf.size = size;
-	tmpbuf.area = buf;
-	tmpbuf.data = 0;
-	tmpbuf.head = 0;
-	ret = ctx->xprt->rcv_buf(ctx->conn, ctx->xprt_ctx, &tmpbuf, size, 0);
-	if (ret == 0 && !(ctx->conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH))) {
-		BIO_set_retry_read(h);
-		ret = -1;
-	} else if (ret == 0)
-		BIO_clear_retry_flags(h);
-
-	return ret;
-}
-
-static long ha_ssl_ctrl(BIO *h, int cmd, long arg1, void *arg2)
-{
-	int ret = 0;
-	switch (cmd) {
-	case BIO_CTRL_DUP:
-	case BIO_CTRL_FLUSH:
-		ret = 1;
-		break;
-	}
-	return ret;
-}
-
-static int ha_ssl_new(BIO *h)
-{
-	BIO_set_init(h, 1);
-	BIO_set_data(h, NULL);
-	BIO_clear_flags(h, ~0);
-	return 1;
-}
-
-static int ha_ssl_free(BIO *data)
-{
-
-	return 1;
-}
-
-
-#if defined(USE_THREAD) && (HA_OPENSSL_VERSION_NUMBER < 0x10100000L)
+#if defined(USE_THREAD) && ((OPENSSL_VERSION_NUMBER < 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER))
 
 static HA_RWLOCK_T *ssl_rwlocks;
 
@@ -353,15 +277,7 @@ static int ssl_locking_init(void)
 
 #endif
 
-__decl_hathreads(HA_SPINLOCK_T ckch_lock);
 
-/* Uncommitted CKCH transaction */
-
-static struct {
-	struct ckch_store *new_ckchs;
-	struct ckch_store *old_ckchs;
-	char *path;
-} ckchs_transaction;
 
 /* This memory pool is used for capturing clienthello parameters. */
 struct ssl_capture {
@@ -372,6 +288,8 @@ struct ssl_capture {
 struct pool_head *pool_head_ssl_capture = NULL;
 static int ssl_capture_ptr_index = -1;
 static int ssl_app_data_index = -1;
+
+static int ssl_pkey_info_index = -1;
 
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 struct list tlskeys_reference = LIST_HEAD_INIT(tlskeys_reference);
@@ -422,7 +340,7 @@ __decl_rwlock(ssl_ctx_lru_rwlock);
 
 static struct ssl_bind_kw ssl_bind_kws[];
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL
 /* The order here matters for picking a default context,
  * keep the most common keytype at the bottom of the list
  */
@@ -515,13 +433,13 @@ fail_get:
 }
 #endif
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 /*
  * openssl async fd handler
  */
 void ssl_async_fd_handler(int fd)
 {
-	struct ssl_sock_ctx *ctx = fdtab[fd].owner;
+	struct connection *conn = fdtab[fd].owner;
 
 	/* fd is an async enfine fd, we must stop
 	 * to poll this fd until it is requested
@@ -532,7 +450,9 @@ void ssl_async_fd_handler(int fd)
 	/* crypto engine is available, let's notify the associated
 	 * connection that it can pursue its processing.
 	 */
-	ssl_sock_io_cb(NULL, ctx, 0);
+	__conn_sock_want_recv(conn);
+	__conn_sock_want_send(conn);
+	conn_update_sock_polling(conn);
 }
 
 /*
@@ -562,18 +482,17 @@ void ssl_async_fd_free(int fd)
 
 	/* Now we can safely call SSL_free, no more pending job in engines */
 	SSL_free(ssl);
-	_HA_ATOMIC_SUB(&sslconns, 1);
-	_HA_ATOMIC_SUB(&jobs, 1);
+	HA_ATOMIC_SUB(&sslconns, 1);
+	HA_ATOMIC_SUB(&jobs, 1);
 }
 /*
  * function used to manage a returned SSL_ERROR_WANT_ASYNC
  * and enable/disable polling for async fds
  */
-static inline void ssl_async_process_fds(struct ssl_sock_ctx *ctx)
+static void inline ssl_async_process_fds(struct connection *conn, SSL *ssl)
 {
 	OSSL_ASYNC_FD add_fd[32];
 	OSSL_ASYNC_FD del_fd[32];
-	SSL *ssl = ctx->ssl;
 	size_t num_add_fds = 0;
 	size_t num_del_fds = 0;
 	int i;
@@ -593,7 +512,7 @@ static inline void ssl_async_process_fds(struct ssl_sock_ctx *ctx)
 
 	/* We add new fds to the fdtab */
 	for (i=0 ; i < num_add_fds ; i++) {
-		fd_insert(add_fd[i], ctx, ssl_async_fd_handler, tid_bit);
+		fd_insert(add_fd[i], conn, ssl_async_fd_handler, tid_bit);
 	}
 
 	num_add_fds = 0;
@@ -616,6 +535,11 @@ static inline void ssl_async_process_fds(struct ssl_sock_ctx *ctx)
 		fd_cant_recv(add_fd[i]);
 	}
 
+	/* We must also prevent the conn_handler
+	 * to be called until a read event was
+	 * polled on an async fd
+	 */
+	__conn_sock_stop_both(conn);
 }
 #endif
 
@@ -876,83 +800,44 @@ int ssl_sock_update_ocsp_response(struct buffer *ocsp_response, char **err)
 	return ssl_sock_load_ocsp_response(ocsp_response, NULL, NULL, err);
 }
 
-#endif
-
-#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
 /*
  * This function load the OCSP Resonse in DER format contained in file at
- * path 'ocsp_path' or base64 in a buffer <buf>
+ * path 'ocsp_path' and call 'ssl_sock_load_ocsp_response'
  *
  * Returns 0 on success, 1 in error case.
  */
-static int ssl_sock_load_ocsp_response_from_file(const char *ocsp_path, char *buf, struct cert_key_and_chain *ckch, char **err)
+static int ssl_sock_load_ocsp_response_from_file(const char *ocsp_path, struct certificate_ocsp *ocsp, OCSP_CERTID *cid, char **err)
 {
 	int fd = -1;
 	int r = 0;
 	int ret = 1;
-	struct buffer *ocsp_response;
-	struct buffer *src = NULL;
 
-	if (buf) {
-		int i, j;
-		/* if it's from a buffer it will be base64 */
-
-		/* remove \r and \n from the payload */
-		for (i = 0, j = 0; buf[i]; i++) {
-			if (buf[i] == '\r' || buf[i] == '\n')
-				continue;
-			buf[j++] = buf[i];
-		}
-		buf[j] = 0;
-
-		ret = base64dec(buf, j, trash.area, trash.size);
-		if (ret < 0) {
-			memprintf(err, "Error reading OCSP response in base64 format");
-			goto end;
-		}
-		trash.data = ret;
-		src = &trash;
-	} else {
-		fd = open(ocsp_path, O_RDONLY);
-		if (fd == -1) {
-			memprintf(err, "Error opening OCSP response file");
-			goto end;
-		}
-
-		trash.data = 0;
-		while (trash.data < trash.size) {
-			r = read(fd, trash.area + trash.data, trash.size - trash.data);
-			if (r < 0) {
-				if (errno == EINTR)
-					continue;
-
-				memprintf(err, "Error reading OCSP response from file");
-				goto end;
-			}
-			else if (r == 0) {
-				break;
-			}
-			trash.data += r;
-		}
-		close(fd);
-		fd = -1;
-		src = &trash;
-	}
-
-	ocsp_response = calloc(1, sizeof(*ocsp_response));
-	if (!chunk_dup(ocsp_response, src)) {
-		free(ocsp_response);
-		ocsp_response = NULL;
+	fd = open(ocsp_path, O_RDONLY);
+	if (fd == -1) {
+		memprintf(err, "Error opening OCSP response file");
 		goto end;
 	}
-	/* no error, fill ckch with new context, old context must be free */
-	if (ckch->ocsp_response) {
-		free(ckch->ocsp_response->area);
-		ckch->ocsp_response->area = NULL;
-		free(ckch->ocsp_response);
+
+	trash.data = 0;
+	while (trash.data < trash.size) {
+		r = read(fd, trash.area + trash.data, trash.size - trash.data);
+		if (r < 0) {
+			if (errno == EINTR)
+				continue;
+
+			memprintf(err, "Error reading OCSP response from file");
+			goto end;
+		}
+		else if (r == 0) {
+			break;
+		}
+		trash.data += r;
 	}
-	ckch->ocsp_response = ocsp_response;
-	ret = 0;
+
+	close(fd);
+	fd = -1;
+
+	ret = ssl_sock_load_ocsp_response(&trash, ocsp, cid, err);
 end:
 	if (fd != -1)
 		close(fd);
@@ -989,7 +874,7 @@ static int ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16], unsigned
 			if(!EVP_EncryptInit_ex(ectx, EVP_aes_128_cbc(), NULL, keys[head].key_128.aes_key, iv))
 				goto end;
 
-			HMAC_Init_ex(hctx, keys[head].key_128.hmac_key, 16, TLS_TICKET_HASH_FUNCT(), NULL);
+			HMAC_Init_ex(hctx, keys[head].key_128.hmac_key, 16, HASH_FUNCT(), NULL);
 			ret = 1;
 		}
 		else if (ref->key_size_bits == 256 ) {
@@ -997,7 +882,7 @@ static int ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16], unsigned
 			if(!EVP_EncryptInit_ex(ectx, EVP_aes_256_cbc(), NULL, keys[head].key_256.aes_key, iv))
 				goto end;
 
-			HMAC_Init_ex(hctx, keys[head].key_256.hmac_key, 32, TLS_TICKET_HASH_FUNCT(), NULL);
+			HMAC_Init_ex(hctx, keys[head].key_256.hmac_key, 32, HASH_FUNCT(), NULL);
 			ret = 1;
 		}
 	} else {
@@ -1010,14 +895,14 @@ static int ssl_tlsext_ticket_key_cb(SSL *s, unsigned char key_name[16], unsigned
 
 	  found:
 		if (ref->key_size_bits == 128) {
-			HMAC_Init_ex(hctx, keys[(head + i) % TLS_TICKETS_NO].key_128.hmac_key, 16, TLS_TICKET_HASH_FUNCT(), NULL);
+			HMAC_Init_ex(hctx, keys[(head + i) % TLS_TICKETS_NO].key_128.hmac_key, 16, HASH_FUNCT(), NULL);
 			if(!EVP_DecryptInit_ex(ectx, EVP_aes_128_cbc(), NULL, keys[(head + i) % TLS_TICKETS_NO].key_128.aes_key, iv))
 				goto end;
 			/* 2 for key renewal, 1 if current key is still valid */
 			ret = i ? 2 : 1;
 		}
 		else if (ref->key_size_bits == 256) {
-			HMAC_Init_ex(hctx, keys[(head + i) % TLS_TICKETS_NO].key_256.hmac_key, 32, TLS_TICKET_HASH_FUNCT(), NULL);
+			HMAC_Init_ex(hctx, keys[(head + i) % TLS_TICKETS_NO].key_256.hmac_key, 32, HASH_FUNCT(), NULL);
 			if(!EVP_DecryptInit_ex(ectx, EVP_aes_256_cbc(), NULL, keys[(head + i) % TLS_TICKETS_NO].key_256.aes_key, iv))
 				goto end;
 			/* 2 for key renewal, 1 if current key is still valid */
@@ -1209,42 +1094,91 @@ int ssl_sock_ocsp_stapling_cbk(SSL *ssl, void *arg)
 	return SSL_TLSEXT_ERR_OK;
 }
 
-#endif
-
-#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
 /*
  * This function enables the handling of OCSP status extension on 'ctx' if a
- * ocsp_response buffer was found in the cert_key_and_chain.  To enable OCSP
- * status extension, the issuer's certificate is mandatory.  It should be
- * present in ckch->ocsp_issuer.
+ * file name 'cert_path' suffixed using ".ocsp" is present.
+ * To enable OCSP status extension, the issuer's certificate is mandatory.
+ * It should be present in the certificate's extra chain builded from file
+ * 'cert_path'. If not found, the issuer certificate is loaded from a file
+ * named 'cert_path' suffixed using '.issuer'.
  *
- * In addition, the ckch->ocsp_reponse buffer is loaded as a DER format of an
- * OCSP response. If file is empty or content is not a valid OCSP response,
- * OCSP status extension is enabled but OCSP response is ignored (a warning is
- * displayed).
+ * In addition, ".ocsp" file content is loaded as a DER format of an OCSP
+ * response. If file is empty or content is not a valid OCSP response,
+ * OCSP status extension is enabled but OCSP response is ignored (a warning
+ * is displayed).
  *
  * Returns 1 if no ".ocsp" file found, 0 if OCSP status extension is
  * successfully enabled, or -1 in other error case.
  */
-#ifndef OPENSSL_IS_BORINGSSL
-static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckch)
+static int ssl_sock_load_ocsp(SSL_CTX *ctx, const char *cert_path)
 {
-	X509 *x = NULL, *issuer = NULL;
+
+	BIO *in = NULL;
+	X509 *x, *xi = NULL, *issuer = NULL;
+	STACK_OF(X509) *chain = NULL;
 	OCSP_CERTID *cid = NULL;
+	SSL *ssl;
+	char ocsp_path[MAXPATHLEN+1];
 	int i, ret = -1;
+	struct stat st;
 	struct certificate_ocsp *ocsp = NULL, *iocsp;
 	char *warn = NULL;
 	unsigned char *p;
+	pem_password_cb *passwd_cb;
+	void *passwd_cb_userdata;
 	void (*callback) (void);
 
+	snprintf(ocsp_path, MAXPATHLEN+1, "%s.ocsp", cert_path);
 
-	x = ckch->cert;
+	if (stat(ocsp_path, &st))
+		return 1;
+
+	ssl = SSL_new(ctx);
+	if (!ssl)
+		goto out;
+
+	x = SSL_get_certificate(ssl);
 	if (!x)
 		goto out;
 
-	issuer = ckch->ocsp_issuer;
-	if (!issuer)
-		goto out;
+	/* Try to lookup for issuer in certificate extra chain */
+#ifdef SSL_CTRL_GET_EXTRA_CHAIN_CERTS
+	SSL_CTX_get_extra_chain_certs(ctx, &chain);
+#else
+	chain = ctx->extra_certs;
+#endif
+	for (i = 0; i < sk_X509_num(chain); i++) {
+		issuer = sk_X509_value(chain, i);
+		if (X509_check_issued(issuer, x) == X509_V_OK)
+			break;
+		else
+			issuer = NULL;
+	}
+
+	/* If not found try to load issuer from a suffixed file */
+	if (!issuer) {
+		char issuer_path[MAXPATHLEN+1];
+
+		in = BIO_new(BIO_s_file());
+		if (!in)
+			goto out;
+
+		snprintf(issuer_path, MAXPATHLEN+1, "%s.issuer", cert_path);
+		if (BIO_read_filename(in, issuer_path) <= 0)
+			goto out;
+
+		passwd_cb = SSL_CTX_get_default_passwd_cb(ctx);
+		passwd_cb_userdata = SSL_CTX_get_default_passwd_cb_userdata(ctx);
+
+		xi = PEM_read_bio_X509_AUX(in, NULL, passwd_cb, passwd_cb_userdata);
+		if (!xi)
+			goto out;
+
+		if (X509_check_issued(xi, x) != X509_V_OK)
+			goto out;
+
+		issuer = xi;
+	}
 
 	cid = OCSP_cert_to_id(0, x, issuer);
 	if (!cid)
@@ -1325,12 +1259,21 @@ static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckc
 	ret = 0;
 
 	warn = NULL;
-	if (ssl_sock_load_ocsp_response(ckch->ocsp_response, ocsp, cid, &warn)) {
-		memprintf(&warn, "Loading: %s. Content will be ignored", warn ? warn : "failure");
+	if (ssl_sock_load_ocsp_response_from_file(ocsp_path, iocsp, cid, &warn)) {
+		memprintf(&warn, "Loading '%s': %s. Content will be ignored", ocsp_path, warn ? warn : "failure");
 		ha_warning("%s.\n", warn);
 	}
 
 out:
+	if (ssl)
+		SSL_free(ssl);
+
+	if (in)
+		BIO_free(in);
+
+	if (xi)
+		X509_free(xi);
+
 	if (cid)
 		OCSP_CERTID_free(cid);
 
@@ -1340,19 +1283,51 @@ out:
 	if (warn)
 		free(warn);
 
+
 	return ret;
 }
-#else /* OPENSSL_IS_BORINGSSL */
-static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckch)
+
+#endif
+
+#ifdef OPENSSL_IS_BORINGSSL
+static int ssl_sock_set_ocsp_response_from_file(SSL_CTX *ctx, const char *cert_path)
 {
-	return SSL_CTX_set_ocsp_response(ctx, (const uint8_t *)ckch->ocsp_response->area, ckch->ocsp_response->data);
+	char ocsp_path[MAXPATHLEN+1];
+	struct stat st;
+	int fd = -1, r = 0;
+
+	snprintf(ocsp_path, MAXPATHLEN+1, "%s.ocsp", cert_path);
+	if (stat(ocsp_path, &st))
+		return 0;
+
+	fd = open(ocsp_path, O_RDONLY);
+	if (fd == -1) {
+		ha_warning("Error opening OCSP response file %s.\n", ocsp_path);
+		return -1;
+	}
+
+	trash.data = 0;
+	while (trash.data < trash.size) {
+		r = read(fd, trash.area + trash.data, trash.size - trash.data);
+		if (r < 0) {
+			if (errno == EINTR)
+				continue;
+			ha_warning("Error reading OCSP response from file %s.\n", ocsp_path);
+			close(fd);
+			return -1;
+		}
+		else if (r == 0) {
+			break;
+		}
+		trash.data += r;
+	}
+	close(fd);
+	return SSL_CTX_set_ocsp_response(ctx, (const uint8_t *) trash.area,
+					 trash.data);
 }
 #endif
 
-#endif
-
-
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
+#if (OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 
 #define CT_EXTENSION_TYPE 18
 
@@ -1397,62 +1372,45 @@ out:
 	return ret;
 }
 
-/* Try to load a sctl from a buffer <buf> if not NULL, or read the file <sctl_path>
- * It fills the ckch->sctl buffer
- * return 0 on success or != 0 on failure */
-static int ssl_sock_load_sctl_from_file(const char *sctl_path, char *buf, struct cert_key_and_chain *ckch, char **err)
+static int ssl_sock_load_sctl_from_file(const char *sctl_path,
+					struct buffer **sctl)
 {
 	int fd = -1;
 	int r = 0;
 	int ret = 1;
-	struct buffer tmp;
-	struct buffer *src;
-	struct buffer *sctl;
 
-	if (buf) {
-		tmp.area = buf;
-		tmp.data = strlen(buf);
-		tmp.size = tmp.data + 1;
-		src = &tmp;
-	} else {
-		fd = open(sctl_path, O_RDONLY);
-		if (fd == -1)
+	*sctl = NULL;
+
+	fd = open(sctl_path, O_RDONLY);
+	if (fd == -1)
+		goto end;
+
+	trash.data = 0;
+	while (trash.data < trash.size) {
+		r = read(fd, trash.area + trash.data, trash.size - trash.data);
+		if (r < 0) {
+			if (errno == EINTR)
+				continue;
+
 			goto end;
-
-		trash.data = 0;
-		while (trash.data < trash.size) {
-			r = read(fd, trash.area + trash.data, trash.size - trash.data);
-			if (r < 0) {
-				if (errno == EINTR)
-					continue;
-				goto end;
-			}
-			else if (r == 0) {
-				break;
-			}
-			trash.data += r;
 		}
-		src = &trash;
+		else if (r == 0) {
+			break;
+		}
+		trash.data += r;
 	}
 
-	ret = ssl_sock_parse_sctl(src);
+	ret = ssl_sock_parse_sctl(&trash);
 	if (ret)
 		goto end;
 
-	sctl = calloc(1, sizeof(*sctl));
-	if (!chunk_dup(sctl, src)) {
-		free(sctl);
-		sctl = NULL;
+	*sctl = calloc(1, sizeof(**sctl));
+	if (!chunk_dup(*sctl, &trash)) {
+		free(*sctl);
+		*sctl = NULL;
 		goto end;
 	}
-	/* no error, fill ckch with new context, old context must be free */
-	if (ckch->sctl) {
-		free(ckch->sctl->area);
-		ckch->sctl->area = NULL;
-		free(ckch->sctl);
-	}
-	ckch->sctl = sctl;
-	ret = 0;
+
 end:
 	if (fd != -1)
 		close(fd);
@@ -1475,12 +1433,25 @@ int ssl_sock_sctl_parse_cbk(SSL *s, unsigned int ext_type, const unsigned char *
 	return 1;
 }
 
-static int ssl_sock_load_sctl(SSL_CTX *ctx, struct buffer *sctl)
+static int ssl_sock_load_sctl(SSL_CTX *ctx, const char *cert_path)
 {
+	char sctl_path[MAXPATHLEN+1];
 	int ret = -1;
+	struct stat st;
+	struct buffer *sctl = NULL;
 
-	if (!SSL_CTX_add_server_custom_ext(ctx, CT_EXTENSION_TYPE, ssl_sock_sctl_add_cbk, NULL, sctl, ssl_sock_sctl_parse_cbk, NULL))
+	snprintf(sctl_path, MAXPATHLEN+1, "%s.sctl", cert_path);
+
+	if (stat(sctl_path, &st))
+		return 1;
+
+	if (ssl_sock_load_sctl_from_file(sctl_path, &sctl))
 		goto out;
+
+	if (!SSL_CTX_add_server_custom_ext(ctx, CT_EXTENSION_TYPE, ssl_sock_sctl_add_cbk, NULL, sctl, ssl_sock_sctl_parse_cbk, NULL)) {
+		free(sctl);
+		goto out;
+	}
 
 	SSL_CTX_set_ex_data(ctx, sctl_ex_index, sctl);
 
@@ -1495,7 +1466,6 @@ out:
 void ssl_sock_infocbk(const SSL *ssl, int where, int ret)
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
-	struct ssl_sock_ctx *ctx = conn->xprt_ctx;
 	BIO *write_bio;
 	(void)ret; /* shut gcc stupid warning */
 
@@ -1513,7 +1483,7 @@ void ssl_sock_infocbk(const SSL *ssl, int where, int ret)
 #endif
 
 	if ((where & SSL_CB_ACCEPT_LOOP) == SSL_CB_ACCEPT_LOOP) {
-		if (!(ctx->xprt_st & SSL_SOCK_ST_FL_16K_WBFSIZE)) {
+		if (!(conn->xprt_st & SSL_SOCK_ST_FL_16K_WBFSIZE)) {
 			/* Long certificate chains optimz
 			   If write and read bios are differents, we
 			   consider that the buffering was activated,
@@ -1522,7 +1492,7 @@ void ssl_sock_infocbk(const SSL *ssl, int where, int ret)
 			write_bio = SSL_get_wbio(ssl);
 			if (write_bio != SSL_get_rbio(ssl)) {
 				BIO_set_write_buffer_size(write_bio, 16384);
-				ctx->xprt_st |= SSL_SOCK_ST_FL_16K_WBFSIZE;
+				conn->xprt_st |= SSL_SOCK_ST_FL_16K_WBFSIZE;
 			}
 		}
 	}
@@ -1535,15 +1505,12 @@ int ssl_sock_bind_verifycbk(int ok, X509_STORE_CTX *x_store)
 {
 	SSL *ssl;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 	int err, depth;
 
 	ssl = X509_STORE_CTX_get_ex_data(x_store, SSL_get_ex_data_X509_STORE_CTX_idx());
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 
-	ctx = conn->xprt_ctx;
-
-	ctx->xprt_st |= SSL_SOCK_ST_FL_VERIFY_DONE;
+	conn->xprt_st |= SSL_SOCK_ST_FL_VERIFY_DONE;
 
 	if (ok) /* no errors */
 		return ok;
@@ -1553,12 +1520,12 @@ int ssl_sock_bind_verifycbk(int ok, X509_STORE_CTX *x_store)
 
 	/* check if CA error needs to be ignored */
 	if (depth > 0) {
-		if (!SSL_SOCK_ST_TO_CA_ERROR(ctx->xprt_st)) {
-			ctx->xprt_st |= SSL_SOCK_CA_ERROR_TO_ST(err);
-			ctx->xprt_st |= SSL_SOCK_CAEDEPTH_TO_ST(depth);
+		if (!SSL_SOCK_ST_TO_CA_ERROR(conn->xprt_st)) {
+			conn->xprt_st |= SSL_SOCK_CA_ERROR_TO_ST(err);
+			conn->xprt_st |= SSL_SOCK_CAEDEPTH_TO_ST(depth);
 		}
 
-		if (err < 64 && __objt_listener(conn->target)->bind_conf->ca_ignerr & (1ULL << err)) {
+		if (__objt_listener(conn->target)->bind_conf->ca_ignerr & (1ULL << err)) {
 			ssl_sock_dump_errors(conn);
 			ERR_clear_error();
 			return 1;
@@ -1568,11 +1535,11 @@ int ssl_sock_bind_verifycbk(int ok, X509_STORE_CTX *x_store)
 		return 0;
 	}
 
-	if (!SSL_SOCK_ST_TO_CRTERROR(ctx->xprt_st))
-		ctx->xprt_st |= SSL_SOCK_CRTERROR_TO_ST(err);
+	if (!SSL_SOCK_ST_TO_CRTERROR(conn->xprt_st))
+		conn->xprt_st |= SSL_SOCK_CRTERROR_TO_ST(err);
 
 	/* check if certificate error needs to be ignored */
-	if (err < 64 && __objt_listener(conn->target)->bind_conf->crt_ignerr & (1ULL << err)) {
+	if (__objt_listener(conn->target)->bind_conf->crt_ignerr & (1ULL << err)) {
 		ssl_sock_dump_errors(conn);
 		ERR_clear_error();
 		return 1;
@@ -1699,11 +1666,10 @@ void ssl_sock_msgcbk(int write_p, int version, int content_type, const void *buf
 	   for a received record) */
 	if ((content_type == TLS1_RT_HEARTBEAT) && (write_p == 0)) {
 		struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
-		struct ssl_sock_ctx *ctx = conn->xprt_ctx;
 		const unsigned char *p = buf;
 		unsigned int payload;
 
-		ctx->xprt_st |= SSL_SOCK_RECV_HEARTBEAT;
+		conn->xprt_st |= SSL_SOCK_RECV_HEARTBEAT;
 
 		/* Check if this is a CVE-2014-0160 exploitation attempt. */
 		if (*p != TLS1_HB_REQUEST)
@@ -1807,7 +1773,7 @@ ssl_sock_do_create_cert(const char *servername, struct bind_conf *bind_conf, SSL
 	int 	      key_type;
 
 	/* Get the private key of the default certificate and use it */
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10002000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10002000L && !defined LIBRESSL_VERSION_NUMBER)
 	pkey = SSL_CTX_get0_privatekey(bind_conf->default_ctx);
 #else
 	tmp_ssl = SSL_new(bind_conf->default_ctx);
@@ -1825,7 +1791,7 @@ ssl_sock_do_create_cert(const char *servername, struct bind_conf *bind_conf, SSL
 	 * number */
 	if (X509_set_version(newcrt, 2L) != 1)
 		goto mkcert_error;
-	ASN1_INTEGER_set(X509_get_serialNumber(newcrt), _HA_ATOMIC_ADD(&ssl_ctx_serial, 1));
+	ASN1_INTEGER_set(X509_get_serialNumber(newcrt), HA_ATOMIC_ADD(&ssl_ctx_serial, 1));
 
 	/* Set duration for the certificate */
 	if (!X509_gmtime_adj(X509_getm_notBefore(newcrt), (long)-60*60*24) ||
@@ -1882,7 +1848,7 @@ ssl_sock_do_create_cert(const char *servername, struct bind_conf *bind_conf, SSL
 	else if (key_type == EVP_PKEY_EC)
 		digest = EVP_sha256();
 	else {
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000000fL) && !defined(OPENSSL_IS_BORINGSSL)
+#if (OPENSSL_VERSION_NUMBER >= 0x1000000fL) && !defined(OPENSSL_IS_BORINGSSL)
 		int nid;
 
 		if (EVP_PKEY_get_default_digest_nid(capkey, &nid) <= 0)
@@ -1941,9 +1907,8 @@ SSL_CTX *
 ssl_sock_create_cert(struct connection *conn, const char *servername, unsigned int key)
 {
 	struct bind_conf *bind_conf = __objt_listener(conn->target)->bind_conf;
-	struct ssl_sock_ctx *ctx = conn->xprt_ctx;
 
-	return ssl_sock_do_create_cert(servername, bind_conf, ctx->ssl);
+	return ssl_sock_do_create_cert(servername, bind_conf, conn->xprt_ctx);
 }
 
 /* Do a lookup for a certificate in the LRU cache used to store generated
@@ -2047,8 +2012,9 @@ ssl_sock_generate_certificate_from_conn(struct bind_conf *bind_conf, SSL *ssl)
 	unsigned int key;
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 
-	if (conn_get_dst(conn)) {
-		key = ssl_sock_generated_cert_key(conn->dst, get_addr_len(conn->dst));
+	conn_get_to_addr(conn);
+	if (conn->flags & CO_FL_ADDR_TO_SET) {
+		key = ssl_sock_generated_cert_key(&conn->addr.to, get_addr_len(&conn->addr.to));
 		if (ssl_sock_assign_generated_cert(key, bind_conf, ssl))
 			return 1;
 	}
@@ -2056,7 +2022,54 @@ ssl_sock_generate_certificate_from_conn(struct bind_conf *bind_conf, SSL *ssl)
 }
 #endif /* !defined SSL_NO_GENERATE_CERTIFICATES */
 
-#if (HA_OPENSSL_VERSION_NUMBER < 0x1010000fL)
+
+#ifndef SSL_OP_CIPHER_SERVER_PREFERENCE                 /* needs OpenSSL >= 0.9.7 */
+#define SSL_OP_CIPHER_SERVER_PREFERENCE 0
+#endif
+
+#ifndef SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION   /* needs OpenSSL >= 0.9.7 */
+#define SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION 0
+#define SSL_renegotiate_pending(arg) 0
+#endif
+#ifndef SSL_OP_SINGLE_ECDH_USE                          /* needs OpenSSL >= 0.9.8 */
+#define SSL_OP_SINGLE_ECDH_USE 0
+#endif
+#ifndef SSL_OP_NO_TICKET                                /* needs OpenSSL >= 0.9.8 */
+#define SSL_OP_NO_TICKET 0
+#endif
+#ifndef SSL_OP_NO_COMPRESSION                           /* needs OpenSSL >= 0.9.9 */
+#define SSL_OP_NO_COMPRESSION 0
+#endif
+#ifdef OPENSSL_NO_SSL3                                  /* SSLv3 support removed */
+#undef  SSL_OP_NO_SSLv3
+#define SSL_OP_NO_SSLv3 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_1                               /* needs OpenSSL >= 1.0.1 */
+#define SSL_OP_NO_TLSv1_1 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_2                               /* needs OpenSSL >= 1.0.1 */
+#define SSL_OP_NO_TLSv1_2 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_3                               /* needs OpenSSL >= 1.1.1 */
+#define SSL_OP_NO_TLSv1_3 0
+#endif
+#ifndef SSL_OP_SINGLE_DH_USE                            /* needs OpenSSL >= 0.9.6 */
+#define SSL_OP_SINGLE_DH_USE 0
+#endif
+#ifndef SSL_OP_SINGLE_ECDH_USE                            /* needs OpenSSL >= 1.0.0 */
+#define SSL_OP_SINGLE_ECDH_USE 0
+#endif
+#ifndef SSL_MODE_RELEASE_BUFFERS                        /* needs OpenSSL >= 1.0.0 */
+#define SSL_MODE_RELEASE_BUFFERS 0
+#endif
+#ifndef SSL_MODE_SMALL_BUFFERS                          /* needs small_records.patch */
+#define SSL_MODE_SMALL_BUFFERS 0
+#endif
+#ifndef SSL_OP_PRIORITIZE_CHACHA                        /* needs OpenSSL >= 1.1.1 */
+#define SSL_OP_PRIORITIZE_CHACHA 0
+#endif
+
+#if (OPENSSL_VERSION_NUMBER < 0x1010000fL)
 typedef enum { SET_CLIENT, SET_SERVER } set_context_func;
 
 static void ctx_set_SSLv3_func(SSL_CTX *ctx, set_context_func c)
@@ -2163,7 +2176,7 @@ static void ssl_sock_switchctx_set(SSL *ssl, SSL_CTX *ctx)
 	SSL_set_SSL_CTX(ssl, ctx);
 }
 
-#if ((HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL))
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL)
 
 static int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
 {
@@ -2244,9 +2257,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 #endif
 		/* without SNI extension, is the default_ctx (need SSL_TLSEXT_ERR_NOACK) */
 		if (!s->strict_sni) {
-			HA_RWLOCK_RDLOCK(SNI_LOCK, &s->sni_lock);
 			ssl_sock_switchctx_set(ssl, s->default_ctx);
-			HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 			goto allow_early;
 		}
 		goto abort;
@@ -2322,17 +2333,32 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 	}
 	trash.area[i] = 0;
 
-	HA_RWLOCK_RDLOCK(SNI_LOCK, &s->sni_lock);
+	/* lookup in full qualified names */
+	node = ebst_lookup(&s->sni_ctx, trash.area);
 
-	for (i = 0; i < 2; i++) {
-		if (i == 0) 	/* lookup in full qualified names */
-			node = ebst_lookup(&s->sni_ctx, trash.area);
-		else if (i == 1 && wildp) /* lookup in wildcards names */
-			node = ebst_lookup(&s->sni_w_ctx, wildp);
-		else
-			break;
+	/* lookup a not neg filter */
+	for (n = node; n; n = ebmb_next_dup(n)) {
+		if (!container_of(n, struct sni_ctx, name)->neg) {
+			switch(container_of(n, struct sni_ctx, name)->kinfo.sig) {
+			case TLSEXT_signature_ecdsa:
+				if (!node_ecdsa)
+					node_ecdsa = n;
+				break;
+			case TLSEXT_signature_rsa:
+				if (!node_rsa)
+					node_rsa = n;
+				break;
+			default: /* TLSEXT_signature_anonymous|dsa */
+				if (!node_anonymous)
+					node_anonymous = n;
+				break;
+			}
+		}
+	}
+	if (wildp) {
+		/* lookup in wildcards names */
+		node = ebst_lookup(&s->sni_w_ctx, wildp);
 		for (n = node; n; n = ebmb_next_dup(n)) {
-			/* lookup a not neg filter */
 			if (!container_of(n, struct sni_ctx, name)->neg) {
 				switch(container_of(n, struct sni_ctx, name)->kinfo.sig) {
 				case TLSEXT_signature_ecdsa:
@@ -2350,29 +2376,26 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 				}
 			}
 		}
-		/* select by key_signature priority order */
-		node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
-			: ((has_rsa_sig && node_rsa) ? node_rsa
-			   : (node_anonymous ? node_anonymous
-			      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
-				 : node_rsa                   /* no rsa signature case (far far away) */
-				 )));
-		if (node) {
-			/* switch ctx */
-			struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
-			ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
+	}
+	/* select by key_signature priority order */
+	node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
+		: ((has_rsa_sig && node_rsa) ? node_rsa
+		   : (node_anonymous ? node_anonymous
+		      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
+			 : node_rsa                   /* no rsa signature case (far far away) */
+			 )));
+	if (node) {
+		/* switch ctx */
+		struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
+		ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
 			if (conf) {
 				methodVersions[conf->ssl_methods.min].ssl_set_version(ssl, SET_MIN);
 				methodVersions[conf->ssl_methods.max].ssl_set_version(ssl, SET_MAX);
 				if (conf->early_data)
 					allow_early = 1;
 			}
-			HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 			goto allow_early;
-		}
 	}
-
-	HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 #if (!defined SSL_NO_GENERATE_CERTIFICATES)
 	if (s->generate_certs && ssl_sock_generate_certificate(trash.area, s, ssl)) {
 		/* switch ctx done in ssl_sock_generate_certificate */
@@ -2381,9 +2404,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 #endif
 	if (!s->strict_sni) {
 		/* no certificate match, is the default_ctx */
-		HA_RWLOCK_RDLOCK(SNI_LOCK, &s->sni_lock);
 		ssl_sock_switchctx_set(ssl, s->default_ctx);
-		HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 	}
 allow_early:
 #ifdef OPENSSL_IS_BORINGSSL
@@ -2428,9 +2449,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv)
 #endif
 		if (s->strict_sni)
 			return SSL_TLSEXT_ERR_ALERT_FATAL;
-		HA_RWLOCK_RDLOCK(SNI_LOCK, &s->sni_lock);
 		ssl_sock_switchctx_set(ssl, s->default_ctx);
-		HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 		return SSL_TLSEXT_ERR_NOACK;
 	}
 
@@ -2443,7 +2462,6 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv)
 	}
 	trash.area[i] = 0;
 
-	HA_RWLOCK_RDLOCK(SNI_LOCK, &s->sni_lock);
 	node = NULL;
 	/* lookup in full qualified names */
 	for (n = ebst_lookup(&s->sni_ctx, trash.area); n; n = ebmb_next_dup(n)) {
@@ -2467,22 +2485,17 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv)
 #if (!defined SSL_NO_GENERATE_CERTIFICATES)
 		if (s->generate_certs && ssl_sock_generate_certificate(servername, s, ssl)) {
 			/* switch ctx done in ssl_sock_generate_certificate */
-			HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 			return SSL_TLSEXT_ERR_OK;
 		}
 #endif
-		if (s->strict_sni) {
-			HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
+		if (s->strict_sni)
 			return SSL_TLSEXT_ERR_ALERT_FATAL;
-		}
 		ssl_sock_switchctx_set(ssl, s->default_ctx);
-		HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 		return SSL_TLSEXT_ERR_OK;
 	}
 
 	/* switch ctx */
 	ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
-	HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
 	return SSL_TLSEXT_ERR_OK;
 }
 #endif /* (!) OPENSSL_IS_BORINGSSL */
@@ -2707,125 +2720,6 @@ int ssl_sock_load_global_dh_param_from_file(const char *filename)
 
 	return -1;
 }
-#endif
-
-/* Alloc and init a ckch_inst */
-static struct ckch_inst *ckch_inst_new()
-{
-	struct ckch_inst *ckch_inst;
-
-	ckch_inst = calloc(1, sizeof *ckch_inst);
-	if (ckch_inst)
-		LIST_INIT(&ckch_inst->sni_ctx);
-
-	return ckch_inst;
-}
-
-
-/* This function allocates a sni_ctx and adds it to the ckch_inst */
-static int ckch_inst_add_cert_sni(SSL_CTX *ctx, struct ckch_inst *ckch_inst,
-                                 struct bind_conf *s, struct ssl_bind_conf *conf,
-                                 struct pkey_info kinfo, char *name, int order)
-{
-	struct sni_ctx *sc;
-	int wild = 0, neg = 0;
-
-	if (*name == '!') {
-		neg = 1;
-		name++;
-	}
-	if (*name == '*') {
-		wild = 1;
-		name++;
-	}
-	/* !* filter is a nop */
-	if (neg && wild)
-		return order;
-	if (*name) {
-		int j, len;
-		len = strlen(name);
-		for (j = 0; j < len && j < trash.size; j++)
-			trash.area[j] = tolower(name[j]);
-		if (j >= trash.size)
-			return -1;
-		trash.area[j] = 0;
-
-		sc = malloc(sizeof(struct sni_ctx) + len + 1);
-		if (!sc)
-			return -1;
-		memcpy(sc->name.key, trash.area, len + 1);
-		sc->ctx = ctx;
-		sc->conf = conf;
-		sc->kinfo = kinfo;
-		sc->order = order++;
-		sc->neg = neg;
-		sc->wild = wild;
-		sc->name.node.leaf_p = NULL;
-		LIST_ADDQ(&ckch_inst->sni_ctx, &sc->by_ckch_inst);
-	}
-	return order;
-}
-
-/*
- * Insert the sni_ctxs that are listed in the ckch_inst, in the bind_conf's sni_ctx tree
- * This function can't return an error.
- *
- * *CAUTION*: The caller must lock the sni tree if called in multithreading mode
- */
-static void ssl_sock_load_cert_sni(struct ckch_inst *ckch_inst, struct bind_conf *bind_conf)
-{
-
-	struct sni_ctx *sc0, *sc0b, *sc1;
-	struct ebmb_node *node;
-	int def = 0;
-
-	list_for_each_entry_safe(sc0, sc0b, &ckch_inst->sni_ctx, by_ckch_inst) {
-
-		/* ignore if sc0 was already inserted in a tree */
-		if (sc0->name.node.leaf_p)
-			continue;
-
-		/* Check for duplicates. */
-		if (sc0->wild)
-			node = ebst_lookup(&bind_conf->sni_w_ctx, (char *)sc0->name.key);
-		else
-			node = ebst_lookup(&bind_conf->sni_ctx, (char *)sc0->name.key);
-
-		for (; node; node = ebmb_next_dup(node)) {
-			sc1 = ebmb_entry(node, struct sni_ctx, name);
-			if (sc1->ctx == sc0->ctx && sc1->conf == sc0->conf
-			    && sc1->neg == sc0->neg && sc1->wild == sc0->wild) {
-				/* it's a duplicate, we should remove and free it */
-				LIST_DEL(&sc0->by_ckch_inst);
-				free(sc0);
-				sc0 = NULL;
-				break;
-			}
-		}
-
-		/* if duplicate, ignore the insertion */
-		if (!sc0)
-			continue;
-
-		if (sc0->wild)
-			ebst_insert(&bind_conf->sni_w_ctx, &sc0->name);
-		else
-			ebst_insert(&bind_conf->sni_ctx, &sc0->name);
-
-		/* replace the default_ctx if required with the first ctx */
-		if (ckch_inst->is_default && !def) {
-			/* we don't need to free the default_ctx because the refcount was not incremented */
-			bind_conf->default_ctx = sc0->ctx;
-			def = 1;
-		}
-	}
-}
-
-/*
- * tree used to store the ckchs ordered by filename/bundle name
- */
-struct eb_root ckchs_tree = EB_ROOT_UNIQUE;
-
 
 /* Loads Diffie-Hellman parameter from a ckchs to an SSL_CTX.
  *  If there is no DH paramater availaible in the ckchs, the global
@@ -2839,18 +2733,15 @@ struct eb_root ckchs_tree = EB_ROOT_UNIQUE;
  * The value 0 means there is no error nor warning and
  * the operation succeed.
  */
-#ifndef OPENSSL_NO_DH
-static int ssl_sock_load_dh_params(SSL_CTX *ctx, const struct cert_key_and_chain *ckch,
-                                   const char *path, char **err)
-{
+static int ssl_sock_load_dh_params(SSL_CTX *ctx, const char *file, char **err)
+ {
 	int ret = 0;
-	DH *dh = NULL;
+	DH *dh = ssl_sock_get_dh_from_file(file);
 
-	if (ckch && ckch->dh) {
-		dh = ckch->dh;
+	if (dh) {
 		if (!SSL_CTX_set_tmp_dh(ctx, dh)) {
 			memprintf(err, "%sunable to load the DH parameter specified in '%s'",
-				  err && *err ? *err : "", path);
+				  err && *err ? *err : "", file);
 #if defined(SSL_CTX_set_dh_auto)
 			SSL_CTX_set_dh_auto(ctx, 1);
 			memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
@@ -2872,7 +2763,7 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const struct cert_key_and_chain
 	else if (global_dh) {
 		if (!SSL_CTX_set_tmp_dh(ctx, global_dh)) {
 			memprintf(err, "%sunable to use the global DH parameter for certificate '%s'",
-				  err && *err ? *err : "", path);
+				  err && *err ? *err : "", file);
 #if defined(SSL_CTX_set_dh_auto)
 			SSL_CTX_set_dh_auto(ctx, 1);
 			memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
@@ -2896,14 +2787,14 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const struct cert_key_and_chain
 
 			if (local_dh_1024 == NULL) {
 				memprintf(err, "%sunable to load default 1024 bits DH parameter for certificate '%s'.\n",
-					  err && *err ? *err : "", path);
+					  err && *err ? *err : "", file);
 				ret |= ERR_ALERT | ERR_FATAL;
 				goto end;
 			}
 
 			if (!SSL_CTX_set_tmp_dh(ctx, local_dh_1024)) {
 				memprintf(err, "%sunable to load default 1024 bits DH parameter for certificate '%s'.\n",
-					  err && *err ? *err : "", path);
+					  err && *err ? *err : "", file);
 #if defined(SSL_CTX_set_dh_auto)
 				SSL_CTX_set_dh_auto(ctx, 1);
 				memprintf(err, "%s, SSL library will use an automatically generated DH parameter.\n",
@@ -2922,15 +2813,112 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const struct cert_key_and_chain
 	}
 
 end:
-	ERR_clear_error();
+	if (dh)
+		DH_free(dh);
+
 	return ret;
 }
 #endif
+
+static int ssl_sock_add_cert_sni(SSL_CTX *ctx, struct bind_conf *s, struct ssl_bind_conf *conf,
+				 struct pkey_info kinfo, char *name, int order)
+{
+	struct sni_ctx *sc;
+	int wild = 0, neg = 0;
+	struct ebmb_node *node;
+
+	if (*name == '!') {
+		neg = 1;
+		name++;
+	}
+	if (*name == '*') {
+		wild = 1;
+		name++;
+	}
+	/* !* filter is a nop */
+	if (neg && wild)
+		return order;
+	if (*name) {
+		int j, len;
+		len = strlen(name);
+		for (j = 0; j < len && j < trash.size; j++)
+			trash.area[j] = tolower(name[j]);
+		if (j >= trash.size)
+			return -1;
+		trash.area[j] = 0;
+
+		/* Check for duplicates. */
+		if (wild)
+			node = ebst_lookup(&s->sni_w_ctx, trash.area);
+		else
+			node = ebst_lookup(&s->sni_ctx, trash.area);
+		for (; node; node = ebmb_next_dup(node)) {
+			sc = ebmb_entry(node, struct sni_ctx, name);
+			if (sc->ctx == ctx && sc->conf == conf && sc->neg == neg)
+				return order;
+		}
+
+		sc = malloc(sizeof(struct sni_ctx) + len + 1);
+		if (!sc)
+			return -1;
+		memcpy(sc->name.key, trash.area, len + 1);
+		sc->ctx = ctx;
+		sc->conf = conf;
+		sc->kinfo = kinfo;
+		sc->order = order++;
+		sc->neg = neg;
+		if (kinfo.sig != TLSEXT_signature_anonymous)
+			SSL_CTX_set_ex_data(ctx, ssl_pkey_info_index, &sc->kinfo);
+		if (wild)
+			ebst_insert(&s->sni_w_ctx, &sc->name);
+		else
+			ebst_insert(&s->sni_ctx, &sc->name);
+	}
+	return order;
+}
+
+
+/* The following code is used for loading multiple crt files into
+ * SSL_CTX's based on CN/SAN
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined(LIBRESSL_VERSION_NUMBER)
+/* This is used to preload the certifcate, private key
+ * and Cert Chain of a file passed in via the crt
+ * argument
+ *
+ * This way, we do not have to read the file multiple times
+ */
+struct cert_key_and_chain {
+	X509 *cert;
+	EVP_PKEY *key;
+	unsigned int num_chain_certs;
+	/* This is an array of X509 pointers */
+	X509 **chain_certs;
+};
+
+#define SSL_SOCK_POSSIBLE_KT_COMBOS (1<<(SSL_SOCK_NUM_KEYTYPES))
+
+struct key_combo_ctx {
+	SSL_CTX *ctx;
+	int order;
+};
+
+/* Map used for processing multiple keypairs for a single purpose
+ *
+ * This maps CN/SNI name to certificate type
+ */
+struct sni_keytype {
+	int keytypes;			  /* BITMASK for keytypes */
+	struct ebmb_node name;    /* node holding the servername value */
+};
+
 
 /* Frees the contents of a cert_key_and_chain
  */
 static void ssl_sock_free_cert_key_and_chain_contents(struct cert_key_and_chain *ckch)
 {
+	int i;
+
 	if (!ckch)
 		return;
 
@@ -2945,219 +2933,60 @@ static void ssl_sock_free_cert_key_and_chain_contents(struct cert_key_and_chain 
 	ckch->key = NULL;
 
 	/* Free each certificate in the chain */
-	if (ckch->chain)
-		sk_X509_pop_free(ckch->chain, X509_free);
-	ckch->chain = NULL;
-
-	if (ckch->dh)
-		DH_free(ckch->dh);
-	ckch->dh = NULL;
-
-	if (ckch->sctl) {
-		free(ckch->sctl->area);
-		ckch->sctl->area = NULL;
-		free(ckch->sctl);
-		ckch->sctl = NULL;
+	for (i = 0; i < ckch->num_chain_certs; i++) {
+		if (ckch->chain_certs[i])
+			X509_free(ckch->chain_certs[i]);
 	}
 
-	if (ckch->ocsp_response) {
-		free(ckch->ocsp_response->area);
-		ckch->ocsp_response->area = NULL;
-		free(ckch->ocsp_response);
-		ckch->ocsp_response = NULL;
+	/* Free the chain obj itself and set to NULL */
+	if (ckch->num_chain_certs > 0) {
+		free(ckch->chain_certs);
+		ckch->num_chain_certs = 0;
+		ckch->chain_certs = NULL;
 	}
 
-	if (ckch->ocsp_issuer)
-		X509_free(ckch->ocsp_issuer);
-	ckch->ocsp_issuer = NULL;
 }
-
-/*
- *
- * This function copy a cert_key_and_chain in memory
- *
- * It's used to try to apply changes on a ckch before committing them, because
- * most of the time it's not possible to revert those changes
- *
- * Return a the dst or NULL
- */
-static struct cert_key_and_chain *ssl_sock_copy_cert_key_and_chain(struct cert_key_and_chain *src,
-                                                                   struct cert_key_and_chain *dst)
-{
-	if (src->cert) {
-		dst->cert = src->cert;
-		X509_up_ref(src->cert);
-	}
-
-	if (src->key) {
-		dst->key = src->key;
-		EVP_PKEY_up_ref(src->key);
-	}
-
-	if (src->chain) {
-		dst->chain = X509_chain_up_ref(src->chain);
-	}
-
-	if (src->dh) {
-		DH_up_ref(src->dh);
-		dst->dh = src->dh;
-	}
-
-	if (src->sctl) {
-		struct buffer *sctl;
-
-		sctl = calloc(1, sizeof(*sctl));
-		if (!chunk_dup(sctl, src->sctl)) {
-			free(sctl);
-			sctl = NULL;
-			goto error;
-		}
-		dst->sctl = sctl;
-	}
-
-	if (src->ocsp_response) {
-		struct buffer *ocsp_response;
-
-		ocsp_response = calloc(1, sizeof(*ocsp_response));
-		if (!chunk_dup(ocsp_response, src->ocsp_response)) {
-			free(ocsp_response);
-			ocsp_response = NULL;
-			goto error;
-		}
-		dst->ocsp_response = ocsp_response;
-	}
-
-	if (src->ocsp_issuer) {
-		X509_up_ref(src->ocsp_issuer);
-		dst->ocsp_issuer = src->ocsp_issuer;
-	}
-
-	return dst;
-
-error:
-
-	/* free everything */
-	ssl_sock_free_cert_key_and_chain_contents(dst);
-
-	return NULL;
-}
-
 
 /* checks if a key and cert exists in the ckch
  */
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
 static int ssl_sock_is_ckch_valid(struct cert_key_and_chain *ckch)
 {
 	return (ckch->cert != NULL && ckch->key != NULL);
 }
-#endif
 
-/*
- * return 0 on success or != 0 on failure
+
+/* Loads the contents of a crt file (path) into a cert_key_and_chain
+ * This allows us to carry the contents of the file without having to
+ * read the file multiple times.
+ *
+ * returns:
+ *      0 on Success
+ *      1 on SSL Failure
+ *      2 on file not found
  */
-static int ssl_sock_load_issuer_file_into_ckch(const char *path, char *buf, struct cert_key_and_chain *ckch, char **err)
+static int ssl_sock_load_crt_file_into_ckch(const char *path, struct cert_key_and_chain *ckch, char **err)
 {
+
+	BIO *in;
+	X509 *ca = NULL;
 	int ret = 1;
-	BIO *in = NULL;
-	X509 *issuer;
 
-	if (buf) {
-		/* reading from a buffer */
-		in = BIO_new_mem_buf(buf, -1);
-		if (in == NULL) {
-			memprintf(err, "%sCan't allocate memory\n", err && *err ? *err : "");
-			goto end;
-		}
+	ssl_sock_free_cert_key_and_chain_contents(ckch);
 
-	} else {
-		/* reading from a file */
-		in = BIO_new(BIO_s_file());
-		if (in == NULL)
-			goto end;
-
-		if (BIO_read_filename(in, path) <= 0)
-			goto end;
-	}
-
-	issuer = PEM_read_bio_X509_AUX(in, NULL, NULL, NULL);
-	if (!issuer) {
-		memprintf(err, "%s'%s' cannot be read or parsed'.\n",
-		          *err ? *err : "", path);
+	in = BIO_new(BIO_s_file());
+	if (in == NULL)
 		goto end;
-	}
-	/* no error, fill ckch with new context, old context must be free */
-	if (ckch->ocsp_issuer)
-		X509_free(ckch->ocsp_issuer);
-	ckch->ocsp_issuer = issuer;
-	ret = 0;
 
-end:
-
-	ERR_clear_error();
-	if (in)
-		BIO_free(in);
-
-	return ret;
-}
-
-
-/*
- *  Try to load a PEM file from a <path> or a buffer <buf>
- *  The PEM must contain at least a Private Key and a Certificate,
- *  It could contain a DH and a certificate chain.
- *
- *  If it failed you should not attempt to use the ckch but free it.
- *
- *  Return 0 on success or != 0 on failure
- */
-static int ssl_sock_load_pem_into_ckch(const char *path, char *buf, struct cert_key_and_chain *ckch , char **err)
-{
-	BIO *in = NULL;
-	int ret = 1;
-	int i;
-	X509 *ca;
-	X509 *cert = NULL;
-	EVP_PKEY *key = NULL;
-	DH *dh = NULL;
-	STACK_OF(X509) *chain = NULL;
-
-	if (buf) {
-		/* reading from a buffer */
-		in = BIO_new_mem_buf(buf, -1);
-		if (in == NULL) {
-			memprintf(err, "%sCan't allocate memory\n", err && *err ? *err : "");
-			goto end;
-		}
-
-	} else {
-		/* reading from a file */
-		in = BIO_new(BIO_s_file());
-		if (in == NULL)
-			goto end;
-
-		if (BIO_read_filename(in, path) <= 0)
-			goto end;
-	}
+	if (BIO_read_filename(in, path) <= 0)
+		goto end;
 
 	/* Read Private Key */
-	key = PEM_read_bio_PrivateKey(in, NULL, NULL, NULL);
-	if (key == NULL) {
+	ckch->key = PEM_read_bio_PrivateKey(in, NULL, NULL, NULL);
+	if (ckch->key == NULL) {
 		memprintf(err, "%sunable to load private key from file '%s'.\n",
-		          err && *err ? *err : "", path);
+				err && *err ? *err : "", path);
 		goto end;
 	}
-
-#ifndef OPENSSL_NO_DH
-	/* Seek back to beginning of file */
-	if (BIO_reset(in) == -1) {
-		memprintf(err, "%san error occurred while reading the file '%s'.\n",
-		          err && *err ? *err : "", path);
-		goto end;
-	}
-
-	dh = PEM_read_bio_DHparams(in, NULL, NULL, NULL);
-	/* no need to return an error there, dh is not mandatory */
-#endif
 
 	/* Seek back to beginning of file */
 	if (BIO_reset(in) == -1) {
@@ -3167,76 +2996,30 @@ static int ssl_sock_load_pem_into_ckch(const char *path, char *buf, struct cert_
 	}
 
 	/* Read Certificate */
-	cert = PEM_read_bio_X509_AUX(in, NULL, NULL, NULL);
-	if (cert == NULL) {
+	ckch->cert = PEM_read_bio_X509_AUX(in, NULL, NULL, NULL);
+	if (ckch->cert == NULL) {
 		memprintf(err, "%sunable to load certificate from file '%s'.\n",
-		          err && *err ? *err : "", path);
+				err && *err ? *err : "", path);
 		goto end;
 	}
 
-	if (!X509_check_private_key(cert, key)) {
-		memprintf(err, "%sinconsistencies between private key and certificate loaded from PEM file '%s'.\n",
-		          err && *err ? *err : "", path);
-		goto end;
-	}
-
-	/* Look for a Certificate Chain */
+	/* Read Certificate Chain */
 	while ((ca = PEM_read_bio_X509(in, NULL, NULL, NULL))) {
-		if (chain == NULL)
-			chain = sk_X509_new_null();
-		if (!sk_X509_push(chain, ca)) {
-			X509_free(ca);
-			goto end;
-		}
-	}
+		/* Grow the chain certs */
+		ckch->num_chain_certs++;
+		ckch->chain_certs = realloc(ckch->chain_certs, (ckch->num_chain_certs * sizeof(X509 *)));
 
-	/* no chain */
-	if (chain == NULL) {
-		chain = sk_X509_new_null();
+		/* use - 1 here since we just incremented it above */
+		ckch->chain_certs[ckch->num_chain_certs - 1] = ca;
 	}
-
 	ret = ERR_get_error();
 	if (ret && (ERR_GET_LIB(ret) != ERR_LIB_PEM && ERR_GET_REASON(ret) != PEM_R_NO_START_LINE)) {
 		memprintf(err, "%sunable to load certificate chain from file '%s'.\n",
-		          err && *err ? *err : "", path);
+				err && *err ? *err : "", path);
+		ret = 1;
 		goto end;
 	}
 
-	/* once it loaded the PEM, it should remove everything else in the ckch */
-	if (ckch->ocsp_response) {
-		free(ckch->ocsp_response->area);
-		ckch->ocsp_response->area = NULL;
-		free(ckch->ocsp_response);
-		ckch->ocsp_response = NULL;
-	}
-
-	if (ckch->sctl) {
-		free(ckch->sctl->area);
-		ckch->sctl->area = NULL;
-		free(ckch->sctl);
-		ckch->sctl = NULL;
-	}
-
-	if (ckch->ocsp_issuer) {
-		X509_free(ckch->ocsp_issuer);
-		ckch->ocsp_issuer = NULL;
-	}
-
-	/* no error, fill ckch with new context, old context will be free at end: */
-	SWAP(ckch->key, key);
-	SWAP(ckch->dh, dh);
-	SWAP(ckch->cert, cert);
-	SWAP(ckch->chain, chain);
-
-	/* check if one of the certificate of the chain is the issuer */
-	for (i = 0; i < sk_X509_num(ckch->chain); i++) {
-		X509 *issuer = sk_X509_value(ckch->chain, i);
-		if (X509_check_issued(issuer, ckch->cert) == X509_V_OK) {
-			ckch->ocsp_issuer = issuer;
-			X509_up_ref(issuer);
-			break;
-		}
-	}
 	ret = 0;
 
 end:
@@ -3244,109 +3027,6 @@ end:
 	ERR_clear_error();
 	if (in)
 		BIO_free(in);
-	if (key)
-		EVP_PKEY_free(key);
-	if (dh)
-		DH_free(dh);
-	if (cert)
-		X509_free(cert);
-	if (chain)
-		sk_X509_pop_free(chain, X509_free);
-
-	return ret;
-}
-
-/*
- * Try to load in a ckch every files related to a ckch.
- * (PEM, sctl, ocsp, issuer etc.)
- *
- * This function is only used to load files during the configuration parsing,
- * it is not used with the CLI.
- *
- * This allows us to carry the contents of the file without having to read the
- * file multiple times.  The caller must call
- * ssl_sock_free_cert_key_and_chain_contents.
- *
- * returns:
- *      0 on Success
- *      1 on SSL Failure
- */
-static int ssl_sock_load_files_into_ckch(const char *path, struct cert_key_and_chain *ckch, char **err)
-{
-	int ret = 1;
-
-	/* try to load the PEM */
-	if (ssl_sock_load_pem_into_ckch(path, NULL, ckch , err) != 0) {
-		goto end;
-	}
-
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
-	/* try to load the sctl file */
-	{
-		char fp[MAXPATHLEN+1];
-		struct stat st;
-
-		snprintf(fp, MAXPATHLEN+1, "%s.sctl", path);
-		if (stat(fp, &st) == 0) {
-			if (ssl_sock_load_sctl_from_file(fp, NULL, ckch, err)) {
-				memprintf(err, "%s '%s.sctl' is present but cannot be read or parsed'.\n",
-					  *err ? *err : "", fp);
-				ret = 1;
-				goto end;
-			}
-		}
-	}
-#endif
-
-	/* try to load an ocsp response file */
-	{
-		char fp[MAXPATHLEN+1];
-		struct stat st;
-
-		snprintf(fp, MAXPATHLEN+1, "%s.ocsp", path);
-		if (stat(fp, &st) == 0) {
-			if (ssl_sock_load_ocsp_response_from_file(fp, NULL, ckch, err)) {
-				ret = 1;
-				goto end;
-			}
-		}
-	}
-
-#ifndef OPENSSL_IS_BORINGSSL /* Useless for BoringSSL */
-	if (ckch->ocsp_response) {
-		/* if no issuer was found, try to load an issuer from the .issuer */
-		if (!ckch->ocsp_issuer) {
-			struct stat st;
-			char fp[MAXPATHLEN+1];
-
-			snprintf(fp, MAXPATHLEN+1, "%s.issuer", path);
-			if (stat(fp, &st) == 0) {
-				if (ssl_sock_load_issuer_file_into_ckch(fp, NULL, ckch, err)) {
-					ret = 1;
-					goto end;
-				}
-
-				if (X509_check_issued(ckch->ocsp_issuer, ckch->cert) != X509_V_OK) {
-					memprintf(err, "%s '%s' is not an issuer'.\n",
-						  *err ? *err : "", fp);
-					ret = 1;
-					goto end;
-				}
-			} else {
-				memprintf(err, "%sNo issuer found, cannot use the OCSP response'.\n",
-				          *err ? *err : "");
-				ret = 1;
-				goto end;
-			}
-		}
-	}
-#endif
-
-	ret = 0;
-
-end:
-
-	ERR_clear_error();
 
 	/* Something went wrong in one of the reads */
 	if (ret != 0)
@@ -3365,6 +3045,7 @@ end:
  */
 static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_and_chain *ckch, SSL_CTX *ctx, char **err)
 {
+	int i = 0;
 	int errcode = 0;
 
 	if (SSL_CTX_use_PrivateKey(ctx, ckch->key) <= 0) {
@@ -3382,74 +3063,25 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 	}
 
 	/* Load all certs in the ckch into the ctx_chain for the ssl_ctx */
-#ifdef SSL_CTX_set1_chain
-        if (!SSL_CTX_set1_chain(ctx, ckch->chain)) {
-		memprintf(err, "%sunable to load chain certificate into SSL Context '%s'. Make sure you are linking against Openssl >= 1.0.2.\n",
-			  err && *err ? *err : "", path);
+	for (i = 0; i < ckch->num_chain_certs; i++) {
+		if (!SSL_CTX_add1_chain_cert(ctx, ckch->chain_certs[i])) {
+			memprintf(err, "%sunable to load chain certificate #%d into SSL Context '%s'. Make sure you are linking against Openssl >= 1.0.2.\n",
+					err && *err ? *err : "", (i+1), path);
+			errcode |= ERR_ALERT | ERR_FATAL;
+			goto end;
+		}
+	}
+
+	if (SSL_CTX_check_private_key(ctx) <= 0) {
+		memprintf(err, "%sinconsistencies between private key and certificate loaded from PEM file '%s'.\n",
+				err && *err ? *err : "", path);
 		errcode |= ERR_ALERT | ERR_FATAL;
-		goto end;
 	}
-#else
-	{ /* legacy compat (< openssl 1.0.2) */
-		X509 *ca;
-		STACK_OF(X509) *chain;
-		chain = X509_chain_up_ref(ckch->chain);
-		while ((ca = sk_X509_shift(chain)))
-			if (!SSL_CTX_add_extra_chain_cert(ctx, ca)) {
-				memprintf(err, "%sunable to load chain certificate into SSL Context '%s'.\n",
-					  err && *err ? *err : "", path);
-				X509_free(ca);
-				sk_X509_pop_free(chain, X509_free);
-				errcode |= ERR_ALERT | ERR_FATAL;
-				goto end;
-			}
-	}
-#endif
-
-#ifndef OPENSSL_NO_DH
-	/* store a NULL pointer to indicate we have not yet loaded
-	   a custom DH param file */
-	if (ssl_dh_ptr_index >= 0) {
-		SSL_CTX_set_ex_data(ctx, ssl_dh_ptr_index, NULL);
-	}
-
-	errcode |= ssl_sock_load_dh_params(ctx, ckch, path, err);
-	if (errcode & ERR_CODE) {
-		memprintf(err, "%sunable to load DH parameters from file '%s'.\n",
-		          err && *err ? *err : "", path);
-		goto end;
-	}
-#endif
-
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
-	if (sctl_ex_index >= 0 && ckch->sctl) {
-		if (ssl_sock_load_sctl(ctx, ckch->sctl) < 0) {
-			memprintf(err, "%s '%s.sctl' is present but cannot be read or parsed'.\n",
-			          *err ? *err : "", path);
-			errcode |= ERR_ALERT | ERR_FATAL;
-			goto end;
-		}
-	}
-#endif
-
-#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
-	/* Load OCSP Info into context */
-	if (ckch->ocsp_response) {
-		if (ssl_sock_load_ocsp(ctx, ckch) < 0) {
-			if (err)
-				memprintf(err, "%s '%s.ocsp' is present and activates OCSP but it is impossible to compute the OCSP certificate ID (maybe the issuer could not be found)'.\n",
-				          *err ? *err : "", path);
-			errcode |= ERR_ALERT | ERR_FATAL;
-			goto end;
-		}
-	}
-#endif
 
  end:
 	return errcode;
 }
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
 
 static int ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
 {
@@ -3489,182 +3121,24 @@ static int ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *
 
 }
 
-#endif
-/*
- * Free a ckch_store and its ckch(s)
- * The linked ckch_inst are not free'd
- */
-void ckchs_free(struct ckch_store *ckchs)
-{
-	if (!ckchs)
-		return;
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-	if (ckchs->multi) {
-		int n;
-
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++)
-			ssl_sock_free_cert_key_and_chain_contents(&ckchs->ckch[n]);
-	} else
-#endif
-	{
-		ssl_sock_free_cert_key_and_chain_contents(ckchs->ckch);
-		ckchs->ckch = NULL;
-	}
-
-	free(ckchs);
-}
-
-/* allocate and duplicate a ckch_store
- * Return a new ckch_store or NULL */
-static struct ckch_store *ckchs_dup(const struct ckch_store *src)
-{
-	struct ckch_store *dst;
-	int pathlen;
-
-	pathlen = strlen(src->path);
-	dst = calloc(1, sizeof(*dst) + pathlen + 1);
-	if (!dst)
-		return NULL;
-	/* copy previous key */
-	memcpy(dst->path, src->path, pathlen + 1);
-	dst->multi = src->multi;
-	LIST_INIT(&dst->ckch_inst);
-
-	dst->ckch = calloc((src->multi ? SSL_SOCK_NUM_KEYTYPES : 1), sizeof(*dst->ckch));
-	if (!dst->ckch)
-		goto error;
-
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-	if (src->multi) {
-		int n;
-
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-			if (&src->ckch[n]) {
-				if (!ssl_sock_copy_cert_key_and_chain(&src->ckch[n], &dst->ckch[n]))
-					goto error;
-			}
-		}
-	} else
-#endif
-	{
-		if (!ssl_sock_copy_cert_key_and_chain(src->ckch, dst->ckch))
-			goto error;
-	}
-
-	return dst;
-
-error:
-	ckchs_free(dst);
-
-	return NULL;
-}
-
-/*
- * lookup a path into the ckchs tree.
- */
-static inline struct ckch_store *ckchs_lookup(char *path)
-{
-	struct ebmb_node *eb;
-
-	eb = ebst_lookup(&ckchs_tree, path);
-	if (!eb)
-		return NULL;
-
-	return ebmb_entry(eb, struct ckch_store, node);
-}
-
-/*
- * This function allocate a ckch_store and populate it with certificates from files.
- */
-static struct ckch_store *ckchs_load_cert_file(char *path, int multi, char **err)
-{
-	struct ckch_store *ckchs;
-
-	ckchs = calloc(1, sizeof(*ckchs) + strlen(path) + 1);
-	if (!ckchs) {
-		memprintf(err, "%sunable to allocate memory.\n", err && *err ? *err : "");
-		goto end;
-	}
-	ckchs->ckch = calloc(1, sizeof(*ckchs->ckch) * (multi ? SSL_SOCK_NUM_KEYTYPES : 1));
-
-	if (!ckchs->ckch) {
-		memprintf(err, "%sunable to allocate memory.\n", err && *err ? *err : "");
-		goto end;
-	}
-
-	LIST_INIT(&ckchs->ckch_inst);
-
-	if (!multi) {
-
-		if (ssl_sock_load_files_into_ckch(path, ckchs->ckch, err) == 1)
-			goto end;
-
-		/* insert into the ckchs tree */
-		memcpy(ckchs->path, path, strlen(path) + 1);
-		ebst_insert(&ckchs_tree, &ckchs->node);
-	} else {
-		int found = 0;
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-		char fp[MAXPATHLEN+1] = {0};
-		int n = 0;
-
-		/* Load all possible certs and keys */
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-			struct stat buf;
-			snprintf(fp, sizeof(fp), "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
-			if (stat(fp, &buf) == 0) {
-				if (ssl_sock_load_files_into_ckch(fp, &ckchs->ckch[n], err) == 1)
-					goto end;
-				found = 1;
-				ckchs->multi = 1;
-			}
-		}
-#endif
-
-		if (!found) {
-			memprintf(err, "%sDidn't find any certificate for bundle '%s'.\n", err && *err ? *err : "", path);
-			goto end;
-		}
-		/* insert into the ckchs tree */
-		memcpy(ckchs->path, path, strlen(path) + 1);
-		ebst_insert(&ckchs_tree, &ckchs->node);
-	}
-	return ckchs;
-
-end:
-	if (ckchs) {
-		free(ckchs->ckch);
-		ebmb_delete(&ckchs->node);
-	}
-
-	free(ckchs);
-
-	return NULL;
-}
-
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-
-/*
- * Take a ckch_store which contains a multi-certificate bundle.
- * Group these certificates into a set of SSL_CTX*
+/* Given a path that does not exist, try to check for path.rsa, path.dsa and path.ecdsa files.
+ * If any are found, group these files into a set of SSL_CTX*
  * based on shared and unique CN and SAN entries. Add these SSL_CTX* to the SNI tree.
  *
  * This will allow the user to explicitly group multiple cert/keys for a single purpose
  *
- * Returns a bitfield containing the flags:
- *     ERR_FATAL in any fatal error case
- *     ERR_ALERT if the reason of the error is available in err
- *     ERR_WARN if a warning is available into err
+ * Returns a set of ERR_* flags possibly with an error in <err>.
  *
  */
-static int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *ckchs,
-                                          struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
-                                          char **sni_filter, int fcount, struct ckch_inst **ckchi, char **err)
+static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
+				    char **sni_filter, int fcount, char **err)
 {
-	int i = 0, n = 0;
-	struct cert_key_and_chain *certs_and_keys;
-	struct eb_root sni_keytypes_map = EB_ROOT;
+	char fp[MAXPATHLEN+1] = {0};
+	int n = 0;
+	int i = 0;
+	struct cert_key_and_chain certs_and_keys[SSL_SOCK_NUM_KEYTYPES] = { {0} };
+	struct eb_root sni_keytypes_map = { {0} };
 	struct ebmb_node *node;
 	struct ebmb_node *next;
 	/* Array of SSL_CTX pointers corresponding to each possible combo
@@ -3677,29 +3151,19 @@ static int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *c
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 	STACK_OF(GENERAL_NAME) *names = NULL;
 #endif
-	struct ckch_inst *ckch_inst;
 
-	*ckchi = NULL;
+	/* Load all possible certs and keys */
+	for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
+		struct stat buf;
 
-	if (!ckchs || !ckchs->ckch || !ckchs->multi) {
-		memprintf(err, "%sunable to load SSL certificate file '%s' file does not exist.\n",
-		          err && *err ? *err : "", path);
-		return ERR_ALERT | ERR_FATAL;
+		snprintf(fp, sizeof(fp), "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
+		if (stat(fp, &buf) == 0) {
+			if (ssl_sock_load_crt_file_into_ckch(fp, &certs_and_keys[n], err) == 1) {
+				errcode |= ERR_ALERT | ERR_FATAL;
+				goto end;
+			}
+		}
 	}
-
-	ckch_inst = ckch_inst_new();
-	if (!ckch_inst) {
-		memprintf(err, "%sunable to allocate SSL context for cert '%s'.\n",
-		          err && *err ? *err : "", path);
-		errcode |= ERR_ALERT | ERR_FATAL;
-		goto end;
-	}
-
-	certs_and_keys = ckchs->ckch;
-
-	/* at least one of the instances is using filters during the config
-	 * parsing, that's ok to inherit this during loading on CLI */
-	ckchs->filters |= !!fcount;
 
 	/* Process each ckch and update keytypes for each CN/SAN
 	 * for example, if CN/SAN www.a.com is associated with
@@ -3824,18 +3288,47 @@ static int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *c
 					/* Key combo contains ckch[n] */
 					snprintf(cur_file, MAXPATHLEN+1, "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
 					errcode |= ssl_sock_put_ckch_into_ctx(cur_file, &certs_and_keys[n], cur_ctx, err);
-					if (errcode & ERR_CODE)
+					if (errcode & ERR_CODE) {
+						SSL_CTX_free(cur_ctx);
 						goto end;
+					}
+
+#if (defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP)
+					/* Load OCSP Info into context */
+					if (ssl_sock_load_ocsp(cur_ctx, cur_file) < 0) {
+						if (err)
+							memprintf(err, "%s '%s.ocsp' is present and activates OCSP but it is impossible to compute the OCSP certificate ID (maybe the issuer could not be found)'.\n",
+							          *err ? *err : "", cur_file);
+						SSL_CTX_free(cur_ctx);
+						errcode |= ERR_ALERT | ERR_FATAL;
+						goto end;
+					}
+#elif (defined OPENSSL_IS_BORINGSSL)
+					ssl_sock_set_ocsp_response_from_file(cur_ctx, cur_file);
+#endif
 				}
 			}
+
+			/* Load DH params into the ctx to support DHE keys */
+#ifndef OPENSSL_NO_DH
+			if (ssl_dh_ptr_index >= 0)
+				SSL_CTX_set_ex_data(cur_ctx, ssl_dh_ptr_index, NULL);
+
+			errcode |= ssl_sock_load_dh_params(cur_ctx, NULL, err);
+			if (errcode & ERR_CODE) {
+				if (err)
+					memprintf(err, "%sunable to load DH parameters from file '%s'.\n",
+							*err ? *err : "", path);
+				goto end;
+			}
+#endif
 
 			/* Update key_combos */
 			key_combos[i-1].ctx = cur_ctx;
 		}
 
 		/* Update SNI Tree */
-
-		key_combos[i-1].order = ckch_inst_add_cert_sni(cur_ctx, ckch_inst, bind_conf, ssl_conf,
+		key_combos[i-1].order = ssl_sock_add_cert_sni(cur_ctx, bind_conf, ssl_conf,
 		                                              kinfo, str, key_combos[i-1].order);
 		if (key_combos[i-1].order < 0) {
 			memprintf(err, "%sunable to create a sni context.\n", err && *err ? *err : "");
@@ -3852,18 +3345,18 @@ static int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *c
 			if (key_combos[i].ctx) {
 				bind_conf->default_ctx = key_combos[i].ctx;
 				bind_conf->default_ssl_conf = ssl_conf;
-				ckch_inst->is_default = 1;
 				break;
 			}
 		}
 	}
 
-	ckch_inst->bind_conf = bind_conf;
-	ckch_inst->ssl_conf = ssl_conf;
 end:
 
 	if (names)
 		sk_GENERAL_NAME_pop_free(names, GENERAL_NAME_free);
+
+	for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++)
+		ssl_sock_free_cert_key_and_chain_contents(&certs_and_keys[n]);
 
 	node = ebmb_first(&sni_keytypes_map);
 	while (node) {
@@ -3873,99 +3366,58 @@ end:
 		node = next;
 	}
 
-	if (errcode & ERR_CODE && ckch_inst) {
-		struct sni_ctx *sc0, *sc0b;
-
-		/* free the SSL_CTX in case of error */
-		for (i = 0; i < SSL_SOCK_POSSIBLE_KT_COMBOS; i++) {
-			if (key_combos[i].ctx)
-				SSL_CTX_free(key_combos[i].ctx);
-		}
-
-		/* free the sni_ctx in case of error */
-		list_for_each_entry_safe(sc0, sc0b, &ckch_inst->sni_ctx, by_ckch_inst) {
-
-			ebmb_delete(&sc0->name);
-			LIST_DEL(&sc0->by_ckch_inst);
-			free(sc0);
-		}
-		free(ckch_inst);
-		ckch_inst = NULL;
-	}
-
-	*ckchi = ckch_inst;
 	return errcode;
 }
 #else
 /* This is a dummy, that just logs an error and returns error */
-static int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *ckchs,
-                                          struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
-                                          char **sni_filter, int fcount, struct ckch_inst **ckchi, char **err)
+static int ssl_sock_load_multi_cert(const char *path, struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
+				    char **sni_filter, int fcount, char **err)
 {
 	memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
 	          err && *err ? *err : "", path, strerror(errno));
-	return ERR_ALERT | ERR_FATAL;
+	return 1;
 }
 
-#endif /* #if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL: Support for loading multiple certs into a single SSL_CTX */
+#endif /* #if OPENSSL_VERSION_NUMBER >= 0x1000200fL: Support for loading multiple certs into a single SSL_CTX */
 
-/*
- * This function allocate a ckch_inst and create its snis
- *
- * Returns a bitfield containing the flags:
- *     ERR_FATAL in any fatal error case
- *     ERR_ALERT if the reason of the error is available in err
- *     ERR_WARN if a warning is available into err
+/* Loads a certificate key and CA chain from a file. Returns 0 on error, -1 if
+ * an early error happens and the caller must call SSL_CTX_free() by itelf.
  */
-static int ckch_inst_new_load_store(const char *path, struct ckch_store *ckchs, struct bind_conf *bind_conf,
-                                    struct ssl_bind_conf *ssl_conf, char **sni_filter, int fcount, struct ckch_inst **ckchi, char **err)
+static int ssl_sock_load_cert_chain_file(SSL_CTX *ctx, const char *file, struct bind_conf *s,
+					 struct ssl_bind_conf *ssl_conf, char **sni_filter, int fcount)
 {
-	SSL_CTX *ctx;
-	int i;
+	BIO *in;
+	X509 *x = NULL, *ca;
+	int i, err;
+	int ret = -1;
 	int order = 0;
 	X509_NAME *xname;
 	char *str;
+	pem_password_cb *passwd_cb;
+	void *passwd_cb_userdata;
 	EVP_PKEY *pkey;
 	struct pkey_info kinfo = { .sig = TLSEXT_signature_anonymous, .bits = 0 };
+
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 	STACK_OF(GENERAL_NAME) *names;
 #endif
-	struct cert_key_and_chain *ckch;
-	struct ckch_inst *ckch_inst = NULL;
-	int errcode = 0;
 
-	*ckchi = NULL;
+	in = BIO_new(BIO_s_file());
+	if (in == NULL)
+		goto end;
 
-	if (!ckchs || !ckchs->ckch)
-		return ERR_FATAL;
+	if (BIO_read_filename(in, file) <= 0)
+		goto end;
 
-	ckch = ckchs->ckch;
 
-	/* at least one of the instances is using filters during the config
-	 * parsing, that's ok to inherit this during loading on CLI */
-	ckchs->filters |= !!fcount;
+	passwd_cb = SSL_CTX_get_default_passwd_cb(ctx);
+	passwd_cb_userdata = SSL_CTX_get_default_passwd_cb_userdata(ctx);
 
-	ctx = SSL_CTX_new(SSLv23_server_method());
-	if (!ctx) {
-		memprintf(err, "%sunable to allocate SSL context for cert '%s'.\n",
-		          err && *err ? *err : "", path);
-		errcode |= ERR_ALERT | ERR_FATAL;
-		goto error;
-	}
+	x = PEM_read_bio_X509_AUX(in, NULL, passwd_cb, passwd_cb_userdata);
+	if (x == NULL)
+		goto end;
 
-	errcode |= ssl_sock_put_ckch_into_ctx(path, ckch, ctx, err);
-	if (errcode & ERR_CODE)
-		goto error;
-
-	ckch_inst = ckch_inst_new();
-	if (!ckch_inst) {
-		memprintf(err, "%sunable to allocate SSL context for cert '%s'.\n",
-		          err && *err ? *err : "", path);
-		errcode |= ERR_ALERT | ERR_FATAL;
-		goto error;
-	}
-
-	pkey = X509_get_pubkey(ckch->cert);
+	pkey = X509_get_pubkey(x);
 	if (pkey) {
 		kinfo.bits = EVP_PKEY_bits(pkey);
 		switch(EVP_PKEY_base_id(pkey)) {
@@ -3984,36 +3436,30 @@ static int ckch_inst_new_load_store(const char *path, struct ckch_store *ckchs, 
 
 	if (fcount) {
 		while (fcount--) {
-			order = ckch_inst_add_cert_sni(ctx, ckch_inst, bind_conf, ssl_conf, kinfo, sni_filter[fcount], order);
-			if (order < 0) {
-				memprintf(err, "%sunable to create a sni context.\n", err && *err ? *err : "");
-				errcode |= ERR_ALERT | ERR_FATAL;
-				goto error;
-			}
+			order = ssl_sock_add_cert_sni(ctx, s, ssl_conf, kinfo, sni_filter[fcount], order);
+			if (order < 0)
+				goto end;
 		}
 	}
 	else {
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-		names = X509_get_ext_d2i(ckch->cert, NID_subject_alt_name, NULL, NULL);
+		names = X509_get_ext_d2i(x, NID_subject_alt_name, NULL, NULL);
 		if (names) {
 			for (i = 0; i < sk_GENERAL_NAME_num(names); i++) {
 				GENERAL_NAME *name = sk_GENERAL_NAME_value(names, i);
 				if (name->type == GEN_DNS) {
 					if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
-						order = ckch_inst_add_cert_sni(ctx, ckch_inst, bind_conf, ssl_conf, kinfo, str, order);
+						order = ssl_sock_add_cert_sni(ctx, s, ssl_conf, kinfo, str, order);
 						OPENSSL_free(str);
-						if (order < 0) {
-							memprintf(err, "%sunable to create a sni context.\n", err && *err ? *err : "");
-							errcode |= ERR_ALERT | ERR_FATAL;
-							goto error;
-						}
+						if (order < 0)
+							goto end;
 					}
 				}
 			}
 			sk_GENERAL_NAME_pop_free(names, GENERAL_NAME_free);
 		}
 #endif /* SSL_CTRL_SET_TLSEXT_HOSTNAME */
-		xname = X509_get_subject_name(ckch->cert);
+		xname = X509_get_subject_name(x);
 		i = -1;
 		while ((i = X509_NAME_get_index_by_NID(xname, NID_commonName, i)) != -1) {
 			X509_NAME_ENTRY *entry = X509_NAME_get_entry(xname, i);
@@ -4021,82 +3467,143 @@ static int ckch_inst_new_load_store(const char *path, struct ckch_store *ckchs, 
 
 			value = X509_NAME_ENTRY_get_data(entry);
 			if (ASN1_STRING_to_UTF8((unsigned char **)&str, value) >= 0) {
-				order = ckch_inst_add_cert_sni(ctx, ckch_inst, bind_conf, ssl_conf, kinfo, str, order);
+				order = ssl_sock_add_cert_sni(ctx, s, ssl_conf, kinfo, str, order);
 				OPENSSL_free(str);
-				if (order < 0) {
-					memprintf(err, "%sunable to create a sni context.\n", err && *err ? *err : "");
-					errcode |= ERR_ALERT | ERR_FATAL;
-					goto error;
-				}
+				if (order < 0)
+					goto end;
 			}
 		}
 	}
+
+	ret = 0; /* the caller must not free the SSL_CTX argument anymore */
+	if (!SSL_CTX_use_certificate(ctx, x))
+		goto end;
+
+#ifdef SSL_CTX_clear_extra_chain_certs
+	SSL_CTX_clear_extra_chain_certs(ctx);
+#else
+	if (ctx->extra_certs != NULL) {
+		sk_X509_pop_free(ctx->extra_certs, X509_free);
+		ctx->extra_certs = NULL;
+	}
+#endif
+
+	while ((ca = PEM_read_bio_X509(in, NULL, passwd_cb, passwd_cb_userdata))) {
+		if (!SSL_CTX_add_extra_chain_cert(ctx, ca)) {
+			X509_free(ca);
+			goto end;
+		}
+	}
+
+	err = ERR_get_error();
+	if (!err || (ERR_GET_LIB(err) == ERR_LIB_PEM && ERR_GET_REASON(err) == PEM_R_NO_START_LINE)) {
+		/* we successfully reached the last cert in the file */
+		ret = 1;
+	}
+	ERR_clear_error();
+
+end:
+	if (x)
+		X509_free(x);
+
+	if (in)
+		BIO_free(in);
+
+	return ret;
+}
+
+/* Returns a set of ERR_* flags possibly with an error in <err>. */
+static int ssl_sock_load_cert_file(const char *path, struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
+				   char **sni_filter, int fcount, char **err)
+{
+	int errcode = 0;
+	int ret;
+	SSL_CTX *ctx;
+
+	ctx = SSL_CTX_new(SSLv23_server_method());
+	if (!ctx) {
+		memprintf(err, "%sunable to allocate SSL context for cert '%s'.\n",
+		          err && *err ? *err : "", path);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	if (SSL_CTX_use_PrivateKey_file(ctx, path, SSL_FILETYPE_PEM) <= 0) {
+		memprintf(err, "%sunable to load SSL private key from PEM file '%s'.\n",
+		          err && *err ? *err : "", path);
+		SSL_CTX_free(ctx);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	ret = ssl_sock_load_cert_chain_file(ctx, path, bind_conf, ssl_conf, sni_filter, fcount);
+	if (ret <= 0) {
+		memprintf(err, "%sunable to load SSL certificate from PEM file '%s'.\n",
+		          err && *err ? *err : "", path);
+		if (ret < 0) /* serious error, must do that ourselves */
+			SSL_CTX_free(ctx);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	if (SSL_CTX_check_private_key(ctx) <= 0) {
+		memprintf(err, "%sinconsistencies between private key and certificate loaded from PEM file '%s'.\n",
+		          err && *err ? *err : "", path);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
 	/* we must not free the SSL_CTX anymore below, since it's already in
 	 * the tree, so it will be discovered and cleaned in time.
 	 */
+#ifndef OPENSSL_NO_DH
+	/* store a NULL pointer to indicate we have not yet loaded
+	   a custom DH param file */
+	if (ssl_dh_ptr_index >= 0) {
+		SSL_CTX_set_ex_data(ctx, ssl_dh_ptr_index, NULL);
+	}
+
+	errcode |= ssl_sock_load_dh_params(ctx, path, err);
+	if (errcode & ERR_CODE) {
+		if (err)
+			memprintf(err, "%sunable to load DH parameters from file '%s'.\n",
+				  *err ? *err : "", path);
+		return errcode;
+	}
+#endif
+
+#if (defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP)
+	ret = ssl_sock_load_ocsp(ctx, path);
+	if (ret < 0) {
+		if (err)
+			memprintf(err, "%s '%s.ocsp' is present and activates OCSP but it is impossible to compute the OCSP certificate ID (maybe the issuer could not be found)'.\n",
+				  *err ? *err : "", path);
+		return ERR_ALERT | ERR_FATAL;
+	}
+#elif (defined OPENSSL_IS_BORINGSSL)
+	ssl_sock_set_ocsp_response_from_file(ctx, path);
+#endif
+
+#if (OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (sctl_ex_index >= 0) {
+		ret = ssl_sock_load_sctl(ctx, path);
+		if (ret < 0) {
+			if (err)
+				memprintf(err, "%s '%s.sctl' is present but cannot be read or parsed'.\n",
+					  *err ? *err : "", path);
+			return ERR_ALERT | ERR_FATAL;
+		}
+	}
+#endif
 
 #ifndef SSL_CTRL_SET_TLSEXT_HOSTNAME
 	if (bind_conf->default_ctx) {
 		memprintf(err, "%sthis version of openssl cannot load multiple SSL certificates.\n",
 		          err && *err ? *err : "");
-		errcode |= ERR_ALERT | ERR_FATAL;
-		goto error;
+		return ERR_ALERT | ERR_FATAL;
 	}
 #endif
 	if (!bind_conf->default_ctx) {
 		bind_conf->default_ctx = ctx;
 		bind_conf->default_ssl_conf = ssl_conf;
-		ckch_inst->is_default = 1;
 	}
 
-	/* everything succeed, the ckch instance can be used */
-	ckch_inst->bind_conf = bind_conf;
-	ckch_inst->ssl_conf = ssl_conf;
-
-	*ckchi = ckch_inst;
-	return errcode;
-
-error:
-	/* free the allocated sni_ctxs */
-	if (ckch_inst) {
-		struct sni_ctx *sc0, *sc0b;
-
-		list_for_each_entry_safe(sc0, sc0b, &ckch_inst->sni_ctx, by_ckch_inst) {
-
-			ebmb_delete(&sc0->name);
-			LIST_DEL(&sc0->by_ckch_inst);
-			free(sc0);
-		}
-		free(ckch_inst);
-		ckch_inst = NULL;
-	}
-	/* We only created 1 SSL_CTX so we can free it there */
-	SSL_CTX_free(ctx);
-
-	return errcode;
-}
-
-/* Returns a set of ERR_* flags possibly with an error in <err>. */
-static int ssl_sock_load_ckchs(const char *path, struct ckch_store *ckchs,
-                               struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
-                               char **sni_filter, int fcount, char **err)
-{
-	struct ckch_inst *ckch_inst = NULL;
-	int errcode = 0;
-
-	/* we found the ckchs in the tree, we can use it directly */
-	if (ckchs->multi)
-		errcode |= ckch_inst_new_load_multi_store(path, ckchs, bind_conf, ssl_conf, sni_filter, fcount, &ckch_inst, err);
-	else
-		errcode |= ckch_inst_new_load_store(path, ckchs, bind_conf, ssl_conf, sni_filter, fcount, &ckch_inst, err);
-
-	if (errcode & ERR_CODE)
-		return errcode;
-
-	ssl_sock_load_cert_sni(ckch_inst, bind_conf);
-
-	/* succeed, add the instance to the ckch_store's list of instance */
-	LIST_ADDQ(&ckchs->ckch_inst, &ckch_inst->by_ckchs);
 	return errcode;
 }
 
@@ -4111,25 +3618,15 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 	char *end;
 	char fp[MAXPATHLEN+1];
 	int cfgerr = 0;
-	struct ckch_store *ckchs;
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL
 	int is_bundle;
 	int j;
 #endif
-	if ((ckchs = ckchs_lookup(path))) {
-		/* we found the ckchs in the tree, we can use it directly */
-		return ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, err);
-	}
 
 	if (stat(path, &buf) == 0) {
 		dir = opendir(path);
-		if (!dir) {
-			ckchs =  ckchs_load_cert_file(path, 0,  err);
-			if (!ckchs)
-				return ERR_ALERT | ERR_FATAL;
-
-			return ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, err);
-		}
+		if (!dir)
+			return ssl_sock_load_cert_file(path, bind_conf, NULL, NULL, 0, err);
 
 		/* strip trailing slashes, including first one */
 		for (end = path + strlen(path) - 1; end >= path && *end == '/'; end--)
@@ -4159,7 +3656,7 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 				if (!S_ISREG(buf.st_mode))
 					goto ignore_entry;
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL
 				is_bundle = 0;
 				/* Check if current entry in directory is part of a multi-cert bundle */
 
@@ -4172,41 +3669,32 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 					}
 
 					if (is_bundle) {
+						char dp[MAXPATHLEN+1] = {0}; /* this will be the filename w/o the keytype */
 						int dp_len;
 
 						dp_len = end - de->d_name;
+						snprintf(dp, dp_len + 1, "%s", de->d_name);
 
 						/* increment i and free de until we get to a non-bundle cert
 						 * Note here that we look at de_list[i + 1] before freeing de
-						 * this is important since ignore_entry will free de. This also
-						 * guarantees that de->d_name continues to hold the same prefix.
+						 * this is important since ignore_entry will free de
 						 */
-						while (i + 1 < n && !strncmp(de_list[i + 1]->d_name, de->d_name, dp_len)) {
+						while (i + 1 < n && !strncmp(de_list[i + 1]->d_name, dp, dp_len)) {
 							free(de);
 							i++;
 							de = de_list[i];
 						}
 
-						snprintf(fp, sizeof(fp), "%s/%.*s", path, dp_len, de->d_name);
-						if ((ckchs = ckchs_lookup(fp)) == NULL)
-							ckchs =  ckchs_load_cert_file(fp, 1,  err);
-						if (!ckchs)
-							cfgerr |= ERR_ALERT | ERR_FATAL;
-						else
-							cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, err);
+						snprintf(fp, sizeof(fp), "%s/%s", path, dp);
+						cfgerr |= ssl_sock_load_multi_cert(fp, bind_conf, NULL, NULL, 0, err);
+
 						/* Successfully processed the bundle */
 						goto ignore_entry;
 					}
 				}
 
 #endif
-				if ((ckchs = ckchs_lookup(fp)) == NULL)
-					ckchs =  ckchs_load_cert_file(fp, 0,  err);
-				if (!ckchs)
-					cfgerr |= ERR_ALERT | ERR_FATAL;
-				else
-					cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, err);
-
+				cfgerr |= ssl_sock_load_cert_file(fp, bind_conf, NULL, NULL, 0, err);
 ignore_entry:
 				free(de);
 			}
@@ -4216,11 +3704,7 @@ ignore_entry:
 		return cfgerr;
 	}
 
-	ckchs =  ckchs_load_cert_file(path, 1,  err);
-	if (!ckchs)
-		return ERR_ALERT | ERR_FATAL;
-
-	cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, err);
+	cfgerr |= ssl_sock_load_multi_cert(path, bind_conf, NULL, NULL, 0, err);
 
 	return cfgerr;
 }
@@ -4259,7 +3743,7 @@ void ssl_sock_free_ssl_conf(struct ssl_bind_conf *conf)
 		conf->crl_file = NULL;
 		free(conf->ciphers);
 		conf->ciphers = NULL;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 		free(conf->ciphersuites);
 		conf->ciphersuites = NULL;
 #endif
@@ -4279,7 +3763,6 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 	struct stat buf;
 	int linenum = 0;
 	int cfgerr = 0;
-	struct ckch_store *ckchs;
 
 	if ((f = fopen(file, "r")) == NULL) {
 		memprintf(err, "cannot open file '%s' : %s", file, strerror(errno));
@@ -4355,7 +3838,7 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			}
 			line++;
 		}
-		if (cfgerr)
+		if (cfgerr & ERR_CODE)
 			break;
 		args[arg++] = line;
 
@@ -4400,26 +3883,22 @@ int ssl_sock_load_cert_list_file(char *file, struct bind_conf *bind_conf, struct
 			}
 		}
 
-		if (cfgerr) {
+		if (cfgerr & ERR_CODE) {
 			ssl_sock_free_ssl_conf(ssl_conf);
 			free(ssl_conf);
 			ssl_conf = NULL;
 			break;
 		}
 
-		if ((ckchs = ckchs_lookup(crt_path)) == NULL) {
-			if (stat(crt_path, &buf) == 0)
-				ckchs = ckchs_load_cert_file(crt_path, 0,  err);
-			else
-				ckchs = ckchs_load_cert_file(crt_path, 1,  err);
+		if (stat(crt_path, &buf) == 0) {
+			cfgerr |= ssl_sock_load_cert_file(crt_path, bind_conf, ssl_conf,
+							  &args[cur_arg], arg - cur_arg - 1, err);
+		} else {
+			cfgerr |= ssl_sock_load_multi_cert(crt_path, bind_conf, ssl_conf,
+							   &args[cur_arg], arg - cur_arg - 1, err);
 		}
 
-		if (!ckchs)
-			cfgerr |= ERR_ALERT | ERR_FATAL;
-		else
-			cfgerr |= ssl_sock_load_ckchs(crt_path, ckchs, bind_conf, ssl_conf, &args[cur_arg], arg - cur_arg - 1, err);
-
-		if (cfgerr) {
+		if (cfgerr & ERR_CODE) {
 			memprintf(err, "error processing line %d in file '%s' : %s", linenum, file, *err);
 			break;
 		}
@@ -4505,7 +3984,7 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 	conf_ssl_methods->min = min;
 	conf_ssl_methods->max = max;
 
-#if (HA_OPENSSL_VERSION_NUMBER < 0x1010000fL)
+#if (OPENSSL_VERSION_NUMBER < 0x1010000fL)
 	/* Keep force-xxx implementation as it is in older haproxy. It's a
 	   precautionary measure to avoid any surprise with older openssl version. */
 	if (min == max)
@@ -4531,7 +4010,7 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 
 	SSL_CTX_set_options(ctx, options);
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 	if (global_ssl.async)
 		mode |= SSL_MODE_ASYNC;
 #endif
@@ -4543,9 +4022,11 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 #ifdef OPENSSL_IS_BORINGSSL
 	SSL_CTX_set_select_certificate_cb(ctx, ssl_sock_switchctx_cbk);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
-#elif (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-	if (bind_conf->ssl_conf.early_data)
+#elif (OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	if (bind_conf->ssl_conf.early_data) {
 		SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
+		SSL_CTX_set_max_early_data(ctx, global.tune.bufsize - global.tune.maxrewrite);
+	}
 	SSL_CTX_set_client_hello_cb(ctx, ssl_sock_switchctx_cbk, NULL);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
 #else
@@ -4814,18 +4295,14 @@ void ssl_set_shctx(SSL_CTX *ctx)
 	SSL_CTX_sess_set_remove_cb(ctx, sh_ssl_sess_remove_cb);
 }
 
-/*
- * This function applies the SSL configuration on a SSL_CTX
- * It returns an error code and fills the <err> buffer
- */
-int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf, SSL_CTX *ctx, char **err)
+int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf, SSL_CTX *ctx)
 {
 	struct proxy *curproxy = bind_conf->frontend;
 	int cfgerr = 0;
 	int verify = SSL_VERIFY_NONE;
 	struct ssl_bind_conf __maybe_unused *ssl_conf_cur;
 	const char *conf_ciphers;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	const char *conf_ciphersuites;
 #endif
 	const char *conf_curves = NULL;
@@ -4854,10 +4331,9 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 		conf_ssl_methods->min = min;
 		conf_ssl_methods->max = max;
 		if (!min) {
-			if (err)
-				memprintf(err, "%sProxy '%s': all SSL/TLS versions are disabled for bind '%s' at [%s:%d].\n",
-				          *err ? *err : "", bind_conf->frontend->id, bind_conf->arg, bind_conf->file, bind_conf->line);
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+			ha_alert("Proxy '%s': all SSL/TLS versions are disabled for bind '%s' at [%s:%d].\n",
+				 bind_conf->frontend->id, bind_conf->arg, bind_conf->file, bind_conf->line);
+			cfgerr += 1;
 		}
 	}
 
@@ -4879,10 +4355,9 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 		if (ca_file) {
 			/* load CAfile to verify */
 			if (!SSL_CTX_load_verify_locations(ctx, ca_file, NULL)) {
-				if (err)
-					memprintf(err, "%sProxy '%s': unable to load CA file '%s' for bind '%s' at [%s:%d].\n",
-					          *err ? *err : "", curproxy->id, ca_file, bind_conf->arg, bind_conf->file, bind_conf->line);
-				cfgerr |= ERR_ALERT | ERR_FATAL;
+				ha_alert("Proxy '%s': unable to load CA file '%s' for bind '%s' at [%s:%d].\n",
+					 curproxy->id, ca_file, bind_conf->arg, bind_conf->file, bind_conf->line);
+				cfgerr++;
 			}
 			if (!((ssl_conf && ssl_conf->no_ca_names) || bind_conf->ssl_conf.no_ca_names)) {
 				/* set CA names for client cert request, function returns void */
@@ -4890,20 +4365,18 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 			}
 		}
 		else {
-			if (err)
-				memprintf(err, "%sProxy '%s': verify is enabled but no CA file specified for bind '%s' at [%s:%d].\n",
-				          *err ? *err : "", curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line);
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+			ha_alert("Proxy '%s': verify is enabled but no CA file specified for bind '%s' at [%s:%d].\n",
+				 curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line);
+			cfgerr++;
 		}
 #ifdef X509_V_FLAG_CRL_CHECK
 		if (crl_file) {
 			X509_STORE *store = SSL_CTX_get_cert_store(ctx);
 
 			if (!store || !X509_STORE_load_locations(store, crl_file, NULL)) {
-				if (err)
-					memprintf(err, "%sProxy '%s': unable to configure CRL file '%s' for bind '%s' at [%s:%d].\n",
-					          *err ? *err : "", curproxy->id, crl_file, bind_conf->arg, bind_conf->file, bind_conf->line);
-				cfgerr |= ERR_ALERT | ERR_FATAL;
+				ha_alert("Proxy '%s': unable to configure CRL file '%s' for bind '%s' at [%s:%d].\n",
+					 curproxy->id, crl_file, bind_conf->arg, bind_conf->file, bind_conf->line);
+				cfgerr++;
 			}
 			else {
 				X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK|X509_V_FLAG_CRL_CHECK_ALL);
@@ -4915,10 +4388,9 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 	if(bind_conf->keys_ref) {
 		if (!SSL_CTX_set_tlsext_ticket_key_cb(ctx, ssl_tlsext_ticket_key_cb)) {
-			if (err)
-				memprintf(err, "%sProxy '%s': unable to set callback for TLS ticket validation for bind '%s' at [%s:%d].\n",
-				          *err ? *err : "", curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line);
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+			ha_alert("Proxy '%s': unable to set callback for TLS ticket validation for bind '%s' at [%s:%d].\n",
+				 curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line);
+			cfgerr++;
 		}
 	}
 #endif
@@ -4927,20 +4399,18 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 	conf_ciphers = (ssl_conf && ssl_conf->ciphers) ? ssl_conf->ciphers : bind_conf->ssl_conf.ciphers;
 	if (conf_ciphers &&
 	    !SSL_CTX_set_cipher_list(ctx, conf_ciphers)) {
-		if (err)
-			memprintf(err, "%sProxy '%s': unable to set SSL cipher list to '%s' for bind '%s' at [%s:%d].\n",
-			          *err ? *err : "", curproxy->id, conf_ciphers, bind_conf->arg, bind_conf->file, bind_conf->line);
-		cfgerr |= ERR_ALERT | ERR_FATAL;
+		ha_alert("Proxy '%s': unable to set SSL cipher list to '%s' for bind '%s' at [%s:%d].\n",
+			 curproxy->id, conf_ciphers, bind_conf->arg, bind_conf->file, bind_conf->line);
+		cfgerr++;
 	}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	conf_ciphersuites = (ssl_conf && ssl_conf->ciphersuites) ? ssl_conf->ciphersuites : bind_conf->ssl_conf.ciphersuites;
 	if (conf_ciphersuites &&
 	    !SSL_CTX_set_ciphersuites(ctx, conf_ciphersuites)) {
-		if (err)
-			memprintf(err, "%sProxy '%s': unable to set TLS 1.3 cipher suites to '%s' for bind '%s' at [%s:%d].\n",
-				  *err ? *err : "", curproxy->id, conf_ciphersuites, bind_conf->arg, bind_conf->file, bind_conf->line);
-		cfgerr |= ERR_ALERT | ERR_FATAL;
+		ha_alert("Proxy '%s': unable to set TLS 1.3 cipher suites to '%s' for bind '%s' at [%s:%d].\n",
+			 curproxy->id, conf_ciphersuites, bind_conf->arg, bind_conf->file, bind_conf->line);
+		cfgerr++;
 	}
 #endif
 
@@ -4986,9 +4456,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 		}
 
 		if (dhe_found) {
-			if (err)
-				memprintf(err, "%sSetting tune.ssl.default-dh-param to 1024 by default, if your workload permits it you should set it to at least 2048. Please set a value >= 1024 to make this warning disappear.\n", *err ? *err : "");
-			cfgerr |= ERR_WARN;
+			ha_warning("Setting tune.ssl.default-dh-param to 1024 by default, if your workload permits it you should set it to at least 2048. Please set a value >= 1024 to make this warning disappear.\n");
 		}
 
 		global_ssl.default_dh_param = 1024;
@@ -5012,7 +4480,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 #endif /* OPENSSL_NO_DH */
 
 	SSL_CTX_set_info_callback(ctx, ssl_sock_infocbk);
-#if HA_OPENSSL_VERSION_NUMBER >= 0x00907000L
+#if OPENSSL_VERSION_NUMBER >= 0x00907000L
 	SSL_CTX_set_msg_callback(ctx, ssl_sock_msgcbk);
 #endif
 
@@ -5034,23 +4502,24 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 	if (ssl_conf_cur)
 		SSL_CTX_set_alpn_select_cb(ctx, ssl_sock_advertise_alpn_protos, ssl_conf_cur);
 #endif
-#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL
 	conf_curves = (ssl_conf && ssl_conf->curves) ? ssl_conf->curves : bind_conf->ssl_conf.curves;
 	if (conf_curves) {
 		if (!SSL_CTX_set1_curves_list(ctx, conf_curves)) {
-			if (err)
-				memprintf(err, "%sProxy '%s': unable to set SSL curves list to '%s' for bind '%s' at [%s:%d].\n",
-					  *err ? *err : "", curproxy->id, conf_curves, bind_conf->arg, bind_conf->file, bind_conf->line);
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+			ha_alert("Proxy '%s': unable to set SSL curves list to '%s' for bind '%s' at [%s:%d].\n",
+				 curproxy->id, conf_curves, bind_conf->arg, bind_conf->file, bind_conf->line);
+			cfgerr++;
 		}
+#if defined(SSL_CTX_set_ecdh_auto)
 		(void)SSL_CTX_set_ecdh_auto(ctx, 1);
+#endif
 	}
 #endif
 #if defined(SSL_CTX_set_tmp_ecdh) && !defined(OPENSSL_NO_ECDH)
 	if (!conf_curves) {
 		int i;
 		EC_KEY  *ecdh;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
 		const char *ecdhe = (ssl_conf && ssl_conf->ecdhe) ? ssl_conf->ecdhe :
 			(bind_conf->ssl_conf.ecdhe ? bind_conf->ssl_conf.ecdhe :
 			 NULL);
@@ -5067,10 +4536,9 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 
 		i = OBJ_sn2nid(ecdhe);
 		if (!i || ((ecdh = EC_KEY_new_by_curve_name(i)) == NULL)) {
-			if (err)
-				memprintf(err, "%sProxy '%s': unable to set elliptic named curve to '%s' for bind '%s' at [%s:%d].\n",
-					  *err ? *err : "", curproxy->id, ecdhe, bind_conf->arg, bind_conf->file, bind_conf->line);
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+			ha_alert("Proxy '%s': unable to set elliptic named curve to '%s' for bind '%s' at [%s:%d].\n",
+				 curproxy->id, ecdhe, bind_conf->arg, bind_conf->file, bind_conf->line);
+			cfgerr++;
 		}
 		else {
 			SSL_CTX_set_tmp_ecdh(ctx, ecdh);
@@ -5142,7 +4610,6 @@ static int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx)
 {
 	SSL *ssl;
 	struct connection *conn;
-	struct ssl_sock_ctx *ssl_ctx;
 	const char *servername;
 	const char *sni;
 
@@ -5158,7 +4625,6 @@ static int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx)
 
 	ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
-	ssl_ctx = conn->xprt_ctx;
 
 	/* We're checking if the provided hostnames match the desired one. The
 	 * desired hostname comes from the SNI we presented if any, or if not
@@ -5166,7 +4632,7 @@ static int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx)
 	 * directive. If neither is set, we don't care about the name so the
 	 * verification is OK.
 	 */
-	servername = SSL_get_servername(ssl_ctx->ssl, TLSEXT_NAMETYPE_host_name);
+	servername = SSL_get_servername(conn->xprt_ctx, TLSEXT_NAMETYPE_host_name);
 	sni = servername;
 	if (!servername) {
 		servername = __objt_server(conn->target)->ssl_ctx.verify_host;
@@ -5194,7 +4660,7 @@ static int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx)
 		for (i = 0; !ok && i < sk_GENERAL_NAME_num(alt_names); i++) {
 			GENERAL_NAME *name = sk_GENERAL_NAME_value(alt_names, i);
 			if (name->type == GEN_DNS) {
-#if HA_OPENSSL_VERSION_NUMBER < 0x00907000L
+#if OPENSSL_VERSION_NUMBER < 0x00907000L
 				if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.ia5) >= 0) {
 #else
 				if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
@@ -5321,7 +4787,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 		cfgerr += 1;
 	}
 
-#if (HA_OPENSSL_VERSION_NUMBER < 0x1010000fL)
+#if (OPENSSL_VERSION_NUMBER < 0x1010000fL)
 	/* Keep force-xxx implementation as it is in older haproxy. It's a
 	   precautionary measure to avoid any surprise with older openssl version. */
 	if (min == max)
@@ -5340,7 +4806,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 		options |= SSL_OP_NO_TICKET;
 	SSL_CTX_set_options(ctx, options);
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 	if (global_ssl.async)
 		mode |= SSL_MODE_ASYNC;
 #endif
@@ -5430,7 +4896,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 		cfgerr++;
 	}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	if (srv->ssl_ctx.ciphersuites &&
 		!SSL_CTX_set_ciphersuites(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
 		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set TLS 1.3 cipher suites to '%s'.\n",
@@ -5461,8 +4927,6 @@ int ssl_sock_prepare_all_ctx(struct bind_conf *bind_conf)
 	struct ebmb_node *node;
 	struct sni_ctx *sni;
 	int err = 0;
-	int errcode = 0;
-	char *errmsg = NULL;
 
 	/* Automatic memory computations need to know we use SSL there */
 	global.ssl_used_frontend = 1;
@@ -5478,10 +4942,10 @@ int ssl_sock_prepare_all_ctx(struct bind_conf *bind_conf)
 		/* It should not be necessary to call this function, but it's
 		   necessary first to check and move all initialisation related
 		   to initial_ctx in ssl_sock_initial_ctx. */
-		errcode |= ssl_sock_prepare_ctx(bind_conf, NULL, bind_conf->initial_ctx, &errmsg);
+		err += ssl_sock_prepare_ctx(bind_conf, NULL, bind_conf->initial_ctx);
 	}
 	if (bind_conf->default_ctx)
-		errcode |= ssl_sock_prepare_ctx(bind_conf, bind_conf->default_ssl_conf, bind_conf->default_ctx, &errmsg);
+		err += ssl_sock_prepare_ctx(bind_conf, bind_conf->default_ssl_conf, bind_conf->default_ctx);
 
 	node = ebmb_first(&bind_conf->sni_ctx);
 	while (node) {
@@ -5489,29 +4953,19 @@ int ssl_sock_prepare_all_ctx(struct bind_conf *bind_conf)
 		if (!sni->order && sni->ctx != bind_conf->default_ctx)
 			/* only initialize the CTX on its first occurrence and
 			   if it is not the default_ctx */
-			errcode |= ssl_sock_prepare_ctx(bind_conf, sni->conf, sni->ctx, &errmsg);
+			err += ssl_sock_prepare_ctx(bind_conf, sni->conf, sni->ctx);
 		node = ebmb_next(node);
 	}
 
 	node = ebmb_first(&bind_conf->sni_w_ctx);
 	while (node) {
 		sni = ebmb_entry(node, struct sni_ctx, name);
-		if (!sni->order && sni->ctx != bind_conf->default_ctx) {
+		if (!sni->order && sni->ctx != bind_conf->default_ctx)
 			/* only initialize the CTX on its first occurrence and
 			   if it is not the default_ctx */
-			errcode |= ssl_sock_prepare_ctx(bind_conf, sni->conf, sni->ctx, &errmsg);
-		}
+			err += ssl_sock_prepare_ctx(bind_conf, sni->conf, sni->ctx);
 		node = ebmb_next(node);
 	}
-
-	if (errcode & ERR_WARN) {
-		ha_warning("%s", errmsg);
-	} else if (errcode & ERR_CODE) {
-		ha_alert("%s", errmsg);
-		err++;
-	}
-
-	free(errmsg);
 	return err;
 }
 
@@ -5727,50 +5181,18 @@ ssl_sock_free_ca(struct bind_conf *bind_conf)
  * handshake flag on the connection. It is safe to call it multiple times.
  * It returns 0 on success and -1 in error case.
  */
-static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
+static int ssl_sock_init(struct connection *conn)
 {
-	struct ssl_sock_ctx *ctx;
 	/* already initialized */
-	if (*xprt_ctx)
+	if (conn->xprt_ctx)
 		return 0;
 
 	if (!conn_ctrl_ready(conn))
 		return 0;
 
-	ctx = pool_alloc(ssl_sock_ctx_pool);
-	if (!ctx) {
-		conn->err_code = CO_ER_SSL_NO_MEM;
-		return -1;
-	}
-	ctx->wait_event.tasklet = tasklet_new();
-	if (!ctx->wait_event.tasklet) {
-		conn->err_code = CO_ER_SSL_NO_MEM;
-		pool_free(ssl_sock_ctx_pool, ctx);
-		return -1;
-	}
-	ctx->wait_event.tasklet->process = ssl_sock_io_cb;
-	ctx->wait_event.tasklet->context = ctx;
-	ctx->wait_event.events = 0;
-	ctx->sent_early_data = 0;
-	ctx->early_buf = BUF_NULL;
-	ctx->conn = conn;
-	ctx->send_wait = NULL;
-	ctx->recv_wait = NULL;
-	ctx->xprt_st = 0;
-	ctx->xprt_ctx = NULL;
-
-	/* Only work with sockets for now, this should be adapted when we'll
-	 * add QUIC support.
-	 */
-	ctx->xprt = xprt_get(XPRT_RAW);
-	if (ctx->xprt->init) {
-		if (ctx->xprt->init(conn, &ctx->xprt_ctx) != 0)
-			goto err;
-	}
-
 	if (global.maxsslconn && sslconns >= global.maxsslconn) {
 		conn->err_code = CO_ER_SSL_TOO_MANY;
-		goto err;
+		return -1;
 	}
 
 	/* If it is in client mode initiate SSL session
@@ -5780,47 +5202,45 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 
 	retry_connect:
 		/* Alloc a new SSL session ctx */
-		ctx->ssl = SSL_new(__objt_server(conn->target)->ssl_ctx.ctx);
-		if (!ctx->ssl) {
+		conn->xprt_ctx = SSL_new(__objt_server(conn->target)->ssl_ctx.ctx);
+		if (!conn->xprt_ctx) {
 			if (may_retry--) {
 				pool_gc(NULL);
 				goto retry_connect;
 			}
 			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
+			return -1;
 		}
-		ctx->bio = BIO_new(ha_meth);
-		if (!ctx->bio) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
-			if (may_retry--) {
-				pool_gc(NULL);
-				goto retry_connect;
-			}
-			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
-		}
-		BIO_set_data(ctx->bio, ctx);
-		SSL_set_bio(ctx->ssl, ctx->bio, ctx->bio);
 
-		/* set connection pointer */
-		if (!SSL_set_ex_data(ctx->ssl, ssl_app_data_index, conn)) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
+		/* set fd on SSL session context */
+		if (!SSL_set_fd(conn->xprt_ctx, conn->handle.fd)) {
+			SSL_free(conn->xprt_ctx);
 			conn->xprt_ctx = NULL;
 			if (may_retry--) {
 				pool_gc(NULL);
 				goto retry_connect;
 			}
 			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
+			return -1;
 		}
 
-		SSL_set_connect_state(ctx->ssl);
+		/* set connection pointer */
+		if (!SSL_set_ex_data(conn->xprt_ctx, ssl_app_data_index, conn)) {
+			SSL_free(conn->xprt_ctx);
+			conn->xprt_ctx = NULL;
+			if (may_retry--) {
+				pool_gc(NULL);
+				goto retry_connect;
+			}
+			conn->err_code = CO_ER_SSL_NO_MEM;
+			return -1;
+		}
+
+		SSL_set_connect_state(conn->xprt_ctx);
 		if (__objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr) {
 			const unsigned char *ptr = __objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr;
 			SSL_SESSION *sess = d2i_SSL_SESSION(NULL, &ptr, __objt_server(conn->target)->ssl_ctx.reused_sess[tid].size);
-			if (sess && !SSL_set_session(ctx->ssl, sess)) {
+			if (sess && !SSL_set_session(conn->xprt_ctx, sess)) {
 				SSL_SESSION_free(sess);
 				free(__objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr);
 				__objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr = NULL;
@@ -5832,13 +5252,8 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 		/* leave init state and start handshake */
 		conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
 
-		_HA_ATOMIC_ADD(&sslconns, 1);
-		_HA_ATOMIC_ADD(&totalsslconns, 1);
-		*xprt_ctx = ctx;
-		/* Start the handshake */
-		tasklet_wakeup(ctx->wait_event.tasklet);
-		if (conn->flags & CO_FL_ERROR)
-			goto err;
+		HA_ATOMIC_ADD(&sslconns, 1);
+		HA_ATOMIC_ADD(&totalsslconns, 1);
 		return 0;
 	}
 	else if (objt_listener(conn->target)) {
@@ -5846,76 +5261,54 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 
 	retry_accept:
 		/* Alloc a new SSL session ctx */
-		ctx->ssl = SSL_new(__objt_listener(conn->target)->bind_conf->initial_ctx);
-		if (!ctx->ssl) {
+		conn->xprt_ctx = SSL_new(__objt_listener(conn->target)->bind_conf->initial_ctx);
+		if (!conn->xprt_ctx) {
 			if (may_retry--) {
 				pool_gc(NULL);
 				goto retry_accept;
 			}
 			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
+			return -1;
 		}
-		ctx->bio = BIO_new(ha_meth);
-		if (!ctx->bio) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
+
+		/* set fd on SSL session context */
+		if (!SSL_set_fd(conn->xprt_ctx, conn->handle.fd)) {
+			SSL_free(conn->xprt_ctx);
+			conn->xprt_ctx = NULL;
 			if (may_retry--) {
 				pool_gc(NULL);
 				goto retry_accept;
 			}
 			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
+			return -1;
 		}
-		BIO_set_data(ctx->bio, ctx);
-		SSL_set_bio(ctx->ssl, ctx->bio, ctx->bio);
 
 		/* set connection pointer */
-		if (!SSL_set_ex_data(ctx->ssl, ssl_app_data_index, conn)) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
+		if (!SSL_set_ex_data(conn->xprt_ctx, ssl_app_data_index, conn)) {
+			SSL_free(conn->xprt_ctx);
+			conn->xprt_ctx = NULL;
 			if (may_retry--) {
 				pool_gc(NULL);
 				goto retry_accept;
 			}
 			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
+			return -1;
 		}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-		if (__objt_listener(conn->target)->bind_conf->ssl_conf.early_data) {
-			b_alloc(&ctx->early_buf);
-			SSL_set_max_early_data(ctx->ssl,
-			    /* Only allow early data if we managed to allocate
-			     * a buffer.
-			     */
-			    (!b_is_null(&ctx->early_buf)) ?
-			    global.tune.bufsize - global.tune.maxrewrite : 0);
-		}
-#endif
-
-		SSL_set_accept_state(ctx->ssl);
+		SSL_set_accept_state(conn->xprt_ctx);
 
 		/* leave init state and start handshake */
 		conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined(LIBRESSL_VERSION_NUMBER))
 		conn->flags |= CO_FL_EARLY_SSL_HS;
 #endif
 
-		_HA_ATOMIC_ADD(&sslconns, 1);
-		_HA_ATOMIC_ADD(&totalsslconns, 1);
-		*xprt_ctx = ctx;
-		/* Start the handshake */
-		tasklet_wakeup(ctx->wait_event.tasklet);
-		if (conn->flags & CO_FL_ERROR)
-			goto err;
+		HA_ATOMIC_ADD(&sslconns, 1);
+		HA_ATOMIC_ADD(&totalsslconns, 1);
 		return 0;
 	}
 	/* don't know how to handle such a target */
 	conn->err_code = CO_ER_SSL_NO_TARGET;
-err:
-	if (ctx && ctx->wait_event.tasklet)
-		tasklet_free(ctx->wait_event.tasklet);
-	pool_free(ssl_sock_ctx_pool, ctx);
 	return -1;
 }
 
@@ -5926,9 +5319,8 @@ err:
  * otherwise it returns non-zero and removes itself from the connection's
  * flags (the bit is provided in <flag> by the caller).
  */
-static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
+int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 {
-	struct ssl_sock_ctx *ctx = conn->xprt_ctx;
 	int ret;
 
 	if (!conn_ctrl_ready(conn))
@@ -5937,32 +5329,24 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 	if (!conn->xprt_ctx)
 		goto out_error;
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x10101000L
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
 	/*
 	 * Check if we have early data. If we do, we have to read them
 	 * before SSL_do_handshake() is called, And there's no way to
 	 * detect early data, except to try to read them
 	 */
 	if (conn->flags & CO_FL_EARLY_SSL_HS) {
-		size_t read_data = 0;
+		size_t read_data;
 
-		while (1) {
-			ret = SSL_read_early_data(ctx->ssl,
-			    b_tail(&ctx->early_buf), b_room(&ctx->early_buf),
-			    &read_data);
-			if (ret == SSL_READ_EARLY_DATA_ERROR)
-				goto check_error;
-			if (read_data > 0) {
-				conn->flags |= CO_FL_EARLY_DATA;
-				b_add(&ctx->early_buf, read_data);
-			}
-			if (ret == SSL_READ_EARLY_DATA_FINISH) {
-				conn->flags &= ~CO_FL_EARLY_SSL_HS;
-				if (!b_data(&ctx->early_buf))
-					b_free(&ctx->early_buf);
-				break;
-			}
-		}
+		ret = SSL_read_early_data(conn->xprt_ctx, &conn->tmp_early_data,
+		    1, &read_data);
+		if (ret == SSL_READ_EARLY_DATA_ERROR)
+			goto check_error;
+		if (ret == SSL_READ_EARLY_DATA_SUCCESS) {
+			conn->flags &= ~(CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN);
+			return 1;
+		} else
+			conn->flags &= ~CO_FL_EARLY_SSL_HS;
 	}
 #endif
 	/* If we use SSL_do_handshake to process a reneg initiated by
@@ -5971,36 +5355,40 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 	 * the reneg handshake.
 	 * Here we use SSL_peek as a workaround for reneg.
 	 */
-	if ((conn->flags & CO_FL_CONNECTED) && SSL_renegotiate_pending(ctx->ssl)) {
+	if ((conn->flags & CO_FL_CONNECTED) && SSL_renegotiate_pending(conn->xprt_ctx)) {
 		char c;
 
-		ret = SSL_peek(ctx->ssl, &c, 1);
+		ret = SSL_peek(conn->xprt_ctx, &c, 1);
 		if (ret <= 0) {
 			/* handshake may have not been completed, let's find why */
-			ret = SSL_get_error(ctx->ssl, ret);
+			ret = SSL_get_error(conn->xprt_ctx, ret);
 
 			if (ret == SSL_ERROR_WANT_WRITE) {
 				/* SSL handshake needs to write, L4 connection may not be ready */
-				if (!(ctx->wait_event.events & SUB_RETRY_SEND))
-					ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND, &ctx->wait_event);
+				__conn_sock_stop_recv(conn);
+				__conn_sock_want_send(conn);
+				fd_cant_send(conn->handle.fd);
 				return 0;
 			}
 			else if (ret == SSL_ERROR_WANT_READ) {
 				/* handshake may have been completed but we have
 				 * no more data to read.
                                  */
-				if (!SSL_renegotiate_pending(ctx->ssl)) {
+				if (!SSL_renegotiate_pending(conn->xprt_ctx)) {
 					ret = 1;
 					goto reneg_ok;
 				}
 				/* SSL handshake needs to read, L4 connection is ready */
-				if (!(ctx->wait_event.events & SUB_RETRY_RECV))
-					ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_RECV, &ctx->wait_event);
+				if (conn->flags & CO_FL_WAIT_L4_CONN)
+					conn->flags &= ~CO_FL_WAIT_L4_CONN;
+				__conn_sock_stop_send(conn);
+				__conn_sock_want_recv(conn);
+				fd_cant_recv(conn->handle.fd);
 				return 0;
 			}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 			else if (ret == SSL_ERROR_WANT_ASYNC) {
-				ssl_async_process_fds(ctx);
+				ssl_async_process_fds(conn, conn->xprt_ctx);
 				return 0;
 			}
 #endif
@@ -6009,40 +5397,37 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 				if (!errno && conn->flags & CO_FL_WAIT_L4_CONN)
 					conn->flags &= ~CO_FL_WAIT_L4_CONN;
 				if (!conn->err_code) {
-#if defined(OPENSSL_IS_BORINGSSL) || defined(LIBRESSL_VERSION_NUMBER)
-					/* do not handle empty handshakes in BoringSSL or LibreSSL */
+#ifdef OPENSSL_IS_BORINGSSL /* BoringSSL */
 					conn->err_code = CO_ER_SSL_HANDSHAKE;
 #else
 					int empty_handshake;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL)
-					/* use SSL_get_state() in OpenSSL >= 1.1.0; SSL_state() is broken */
-					OSSL_HANDSHAKE_STATE state = SSL_get_state((SSL *)ctx->ssl);
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(LIBRESSL_VERSION_NUMBER)
+					OSSL_HANDSHAKE_STATE state = SSL_get_state((SSL *)conn->xprt_ctx);
 					empty_handshake = state == TLS_ST_BEFORE;
 #else
-					/* access packet_length directly in OpenSSL <= 1.0.2; SSL_state() is broken */
-					empty_handshake = !ctx->ssl->packet_length;
+					empty_handshake = !((SSL *)conn->xprt_ctx)->packet_length;
 #endif
 					if (empty_handshake) {
 						if (!errno) {
-							if (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
+							if (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
 								conn->err_code = CO_ER_SSL_HANDSHAKE_HB;
 							else
 								conn->err_code = CO_ER_SSL_EMPTY;
 						}
 						else {
-							if (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
+							if (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
 								conn->err_code = CO_ER_SSL_HANDSHAKE_HB;
 							else
 								conn->err_code = CO_ER_SSL_ABORT;
 						}
 					}
 					else {
-						if (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
+						if (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
 							conn->err_code = CO_ER_SSL_HANDSHAKE_HB;
 						else
 							conn->err_code = CO_ER_SSL_HANDSHAKE;
 					}
-#endif /* BoringSSL or LibreSSL */
+#endif
 				}
 				goto out_error;
 			}
@@ -6055,7 +5440,7 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 				 */
 				conn_sock_drain(conn);
 				if (!conn->err_code)
-					conn->err_code = (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT) ?
+					conn->err_code = (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT) ?
 						CO_ER_SSL_KILLED_HB : CO_ER_SSL_HANDSHAKE;
 				goto out_error;
 			}
@@ -6063,28 +5448,31 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 		/* read some data: consider handshake completed */
 		goto reneg_ok;
 	}
-	ret = SSL_do_handshake(ctx->ssl);
+	ret = SSL_do_handshake(conn->xprt_ctx);
 check_error:
 	if (ret != 1) {
 		/* handshake did not complete, let's find why */
-		ret = SSL_get_error(ctx->ssl, ret);
+		ret = SSL_get_error(conn->xprt_ctx, ret);
 
 		if (ret == SSL_ERROR_WANT_WRITE) {
 			/* SSL handshake needs to write, L4 connection may not be ready */
-			if (!(ctx->wait_event.events & SUB_RETRY_SEND))
-				ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND, &ctx->wait_event);
+			__conn_sock_stop_recv(conn);
+			__conn_sock_want_send(conn);
+			fd_cant_send(conn->handle.fd);
 			return 0;
 		}
 		else if (ret == SSL_ERROR_WANT_READ) {
 			/* SSL handshake needs to read, L4 connection is ready */
-			if (!(ctx->wait_event.events & SUB_RETRY_RECV))
-				ctx->xprt->subscribe(conn, ctx->xprt_ctx,
-				    SUB_RETRY_RECV, &ctx->wait_event);
+			if (conn->flags & CO_FL_WAIT_L4_CONN)
+				conn->flags &= ~CO_FL_WAIT_L4_CONN;
+			__conn_sock_stop_send(conn);
+			__conn_sock_want_recv(conn);
+			fd_cant_recv(conn->handle.fd);
 			return 0;
 		}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 		else if (ret == SSL_ERROR_WANT_ASYNC) {
-			ssl_async_process_fds(ctx);
+			ssl_async_process_fds(conn, conn->xprt_ctx);
 			return 0;
 		}
 #endif
@@ -6093,40 +5481,37 @@ check_error:
 			if (!errno && conn->flags & CO_FL_WAIT_L4_CONN)
 				conn->flags &= ~CO_FL_WAIT_L4_CONN;
 			if (!conn->err_code) {
-#if defined(OPENSSL_IS_BORINGSSL) || defined(LIBRESSL_VERSION_NUMBER)
-				/* do not handle empty handshakes in BoringSSL or LibreSSL */
+#ifdef OPENSSL_IS_BORINGSSL  /* BoringSSL */
 				conn->err_code = CO_ER_SSL_HANDSHAKE;
 #else
 				int empty_handshake;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL)
-				/* use SSL_get_state() in OpenSSL >= 1.1.0; SSL_state() is broken */
-				OSSL_HANDSHAKE_STATE state = SSL_get_state(ctx->ssl);
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(LIBRESSL_VERSION_NUMBER)
+				OSSL_HANDSHAKE_STATE state = SSL_get_state((SSL *)conn->xprt_ctx);
 				empty_handshake = state == TLS_ST_BEFORE;
 #else
-				/* access packet_length directly in OpenSSL <= 1.0.2; SSL_state() is broken */
-				empty_handshake = !ctx->ssl->packet_length;
+				empty_handshake = !((SSL *)conn->xprt_ctx)->packet_length;
 #endif
 				if (empty_handshake) {
 					if (!errno) {
-						if (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
+						if (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
 							conn->err_code = CO_ER_SSL_HANDSHAKE_HB;
 						else
 							conn->err_code = CO_ER_SSL_EMPTY;
 					}
 					else {
-						if (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
+						if (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
 							conn->err_code = CO_ER_SSL_HANDSHAKE_HB;
 						else
 							conn->err_code = CO_ER_SSL_ABORT;
 					}
 				}
 				else {
-					if (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
+					if (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT)
 						conn->err_code = CO_ER_SSL_HANDSHAKE_HB;
 					else
 						conn->err_code = CO_ER_SSL_HANDSHAKE;
 				}
-#endif /* BoringSSL or LibreSSL */
+#endif
 			}
 			goto out_error;
 		}
@@ -6139,12 +5524,12 @@ check_error:
 			 */
 			conn_sock_drain(conn);
 			if (!conn->err_code)
-				conn->err_code = (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT) ?
+				conn->err_code = (conn->xprt_st & SSL_SOCK_RECV_HEARTBEAT) ?
 					CO_ER_SSL_KILLED_HB : CO_ER_SSL_HANDSHAKE;
 			goto out_error;
 		}
 	}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
 	else {
 		/*
 		 * If the server refused the early data, we have to send a
@@ -6152,7 +5537,7 @@ check_error:
 		 * them again.
 		 */
 		if ((conn->flags & CO_FL_EARLY_DATA) && (objt_server(conn->target))) {
-			if (SSL_get_early_data_status(ctx->ssl) == SSL_EARLY_DATA_REJECTED) {
+			if (SSL_get_early_data_status(conn->xprt_ctx) == SSL_EARLY_DATA_REJECTED) {
 				conn->err_code = CO_ER_SSL_EARLY_FAILED;
 				goto out_error;
 			}
@@ -6163,16 +5548,16 @@ check_error:
 
 reneg_ok:
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 	/* ASYNC engine API doesn't support moving read/write
 	 * buffers. So we disable ASYNC mode right after
 	 * the handshake to avoid buffer oveflows.
 	 */
 	if (global_ssl.async)
-		SSL_clear_mode(ctx->ssl, SSL_MODE_ASYNC);
+		SSL_clear_mode(conn->xprt_ctx, SSL_MODE_ASYNC);
 #endif
 	/* Handshake succeeded */
-	if (!SSL_session_reused(ctx->ssl)) {
+	if (!SSL_session_reused(conn->xprt_ctx)) {
 		if (objt_server(conn->target)) {
 			update_freq_ctr(&global.ssl_be_keys_per_sec, 1);
 			if (global.ssl_be_keys_per_sec.curr_ctr > global.ssl_be_keys_max)
@@ -6207,163 +5592,6 @@ reneg_ok:
 	return 0;
 }
 
-static int ssl_subscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
-{
-	struct wait_event *sw;
-	struct ssl_sock_ctx *ctx = xprt_ctx;
-
-	if (!ctx)
-		return -1;
-
-	if (event_type & SUB_RETRY_RECV) {
-		sw = param;
-		BUG_ON(ctx->recv_wait !=  NULL || (sw->events & SUB_RETRY_RECV));
-		sw->events |= SUB_RETRY_RECV;
-		ctx->recv_wait = sw;
-		if (!(conn->flags & CO_FL_SSL_WAIT_HS) &&
-		    !(ctx->wait_event.events & SUB_RETRY_RECV))
-			ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_RECV, &ctx->wait_event);
-		event_type &= ~SUB_RETRY_RECV;
-	}
-	if (event_type & SUB_RETRY_SEND) {
-sw = param;
-		BUG_ON(ctx->send_wait !=  NULL || (sw->events & SUB_RETRY_SEND));
-		sw->events |= SUB_RETRY_SEND;
-		ctx->send_wait = sw;
-		if (!(conn->flags & CO_FL_SSL_WAIT_HS) &&
-		    !(ctx->wait_event.events & SUB_RETRY_SEND))
-			ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND, &ctx->wait_event);
-		event_type &= ~SUB_RETRY_SEND;
-
-	}
-	if (event_type != 0)
-		return -1;
-	return 0;
-}
-
-static int ssl_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
-{
-	struct wait_event *sw;
-	struct ssl_sock_ctx *ctx = xprt_ctx;
-
-	if (event_type & SUB_RETRY_RECV) {
-		sw = param;
-		BUG_ON(ctx->recv_wait != sw);
-		ctx->recv_wait = NULL;
-		sw->events &= ~SUB_RETRY_RECV;
-		/* If we subscribed, and we're not doing the handshake,
-		 * then we subscribed because the upper layer asked for it,
-		 * as the upper layer is no longer interested, we can
-		 * unsubscribe too.
-		 */
-		if (!(ctx->conn->flags & CO_FL_SSL_WAIT_HS) &&
-		    (ctx->wait_event.events & SUB_RETRY_RECV))
-			conn_unsubscribe(conn, ctx->xprt_ctx, SUB_RETRY_RECV,
-			                 &ctx->wait_event);
-	}
-	if (event_type & SUB_RETRY_SEND) {
-		sw = param;
-		BUG_ON(ctx->send_wait != sw);
-		ctx->send_wait = NULL;
-		sw->events &= ~SUB_RETRY_SEND;
-		if (!(ctx->conn->flags & CO_FL_SSL_WAIT_HS) &&
-		    (ctx->wait_event.events & SUB_RETRY_SEND))
-			conn_unsubscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND,
-			                 &ctx->wait_event);
-
-	}
-
-	return 0;
-}
-
-/* Use the provided XPRT as an underlying XPRT, and provide the old one.
- * Returns 0 on success, and non-zero on failure.
- */
-static int ssl_add_xprt(struct connection *conn, void *xprt_ctx, void *toadd_ctx, const struct xprt_ops *toadd_ops, void **oldxprt_ctx, const struct xprt_ops **oldxprt_ops)
-{
-	struct ssl_sock_ctx *ctx = xprt_ctx;
-
-	if (oldxprt_ops != NULL)
-		*oldxprt_ops = ctx->xprt;
-	if (oldxprt_ctx != NULL)
-		*oldxprt_ctx = ctx->xprt_ctx;
-	ctx->xprt = toadd_ops;
-	ctx->xprt_ctx = toadd_ctx;
-	return 0;
-}
-
-/* Remove the specified xprt. If if it our underlying XPRT, remove it and
- * return 0, otherwise just call the remove_xprt method from the underlying
- * XPRT.
- */
-static int ssl_remove_xprt(struct connection *conn, void *xprt_ctx, void *toremove_ctx, const struct xprt_ops *newops, void *newctx)
-{
-	struct ssl_sock_ctx *ctx = xprt_ctx;
-
-	if (ctx->xprt_ctx == toremove_ctx) {
-		ctx->xprt_ctx = newctx;
-		ctx->xprt = newops;
-		return 0;
-	}
-	return (ctx->xprt->remove_xprt(conn, ctx->xprt_ctx, toremove_ctx, newops, newctx));
-}
-
-static struct task *ssl_sock_io_cb(struct task *t, void *context, unsigned short state)
-{
-	struct ssl_sock_ctx *ctx = context;
-
-	/* First if we're doing an handshake, try that */
-	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
-		ssl_sock_handshake(ctx->conn, CO_FL_SSL_WAIT_HS);
-	/* If we had an error, or the handshake is done and I/O is available,
-	 * let the upper layer know.
-	 * If no mux was set up yet, and nobody subscribed, then call
-	 * xprt_done_cb() ourself if it's set, or destroy the connection,
-	 * we can't be sure conn_fd_handler() will be called again.
-	 */
-	if ((ctx->conn->flags & CO_FL_ERROR) ||
-	    !(ctx->conn->flags & CO_FL_SSL_WAIT_HS)) {
-		int ret = 0;
-		int woke = 0;
-
-		/* On error, wake any waiter */
-		if (ctx->recv_wait) {
-			ctx->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(ctx->recv_wait->tasklet);
-			ctx->recv_wait = NULL;
-			woke = 1;
-		}
-		if (ctx->send_wait) {
-			ctx->send_wait->events &= ~SUB_RETRY_SEND;
-			tasklet_wakeup(ctx->send_wait->tasklet);
-			ctx->send_wait = NULL;
-			woke = 1;
-		}
-		/* If we're the first xprt for the connection, let the
-		 * upper layers know. If xprt_done_cb() is set, call it,
-		 * otherwise, we should have a mux, so call its wake
-		 * method if we didn't woke a tasklet already.
-		 */
-		if (ctx->conn->xprt_ctx == ctx) {
-			if (ctx->conn->xprt_done_cb)
-				ret = ctx->conn->xprt_done_cb(ctx->conn);
-			if (ret >= 0 && !woke && ctx->conn->mux && ctx->conn->mux->wake)
-				ctx->conn->mux->wake(ctx->conn);
-			return NULL;
-		}
-	}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-	/* If we have early data and somebody wants to receive, let them */
-	else if (b_data(&ctx->early_buf) && ctx->recv_wait) {
-		ctx->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(ctx->recv_wait->tasklet);
-			ctx->recv_wait = NULL;
-
-	}
-#endif
-	return NULL;
-}
-
 /* Receive up to <count> bytes from connection <conn>'s socket and store them
  * into buffer <buf>. Only one call to recv() is performed, unless the
  * buffer wraps, in which case a second call may be performed. The connection's
@@ -6372,30 +5600,15 @@ static struct task *ssl_sock_io_cb(struct task *t, void *context, unsigned short
  * avoiding the call if inappropriate. The function does not call the
  * connection's polling update function, so the caller is responsible for this.
  */
-static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct buffer *buf, size_t count, int flags)
+static size_t ssl_sock_to_buf(struct connection *conn, struct buffer *buf, size_t count, int flags)
 {
-	struct ssl_sock_ctx *ctx = xprt_ctx;
 	ssize_t ret;
 	size_t try, done = 0;
 
 	conn_refresh_polling_flags(conn);
 
-	if (!ctx)
+	if (!conn->xprt_ctx)
 		goto out_error;
-
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-	if (b_data(&ctx->early_buf)) {
-		try = b_contig_space(buf);
-		if (try > b_data(&ctx->early_buf))
-			try = b_data(&ctx->early_buf);
-		memcpy(b_tail(buf), b_head(&ctx->early_buf), try);
-		b_add(buf, try);
-		b_del(&ctx->early_buf, try);
-		if (b_data(&ctx->early_buf) == 0)
-			b_free(&ctx->early_buf);
-		return try;
-	}
-#endif
 
 	if (conn->flags & CO_FL_HANDSHAKE)
 		/* a handshake was requested */
@@ -6407,6 +5620,7 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 	 * EINTR too.
 	 */
 	while (count > 0) {
+		int need_out = 0;
 
 		try = b_contig_space(buf);
 		if (!try)
@@ -6415,7 +5629,44 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 		if (try > count)
 			try = count;
 
-		ret = SSL_read(ctx->ssl, b_tail(buf), try);
+		if (((conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_EARLY_DATA)) == CO_FL_EARLY_SSL_HS) &&
+		    conn->tmp_early_data != -1) {
+			*b_tail(buf) = conn->tmp_early_data;
+			done++;
+			try--;
+			count--;
+			b_add(buf, 1);
+			conn->tmp_early_data = -1;
+			continue;
+		}
+
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
+		if (conn->flags & CO_FL_EARLY_SSL_HS) {
+			size_t read_length;
+
+			ret = SSL_read_early_data(conn->xprt_ctx,
+			    b_tail(buf), try, &read_length);
+			if (ret == SSL_READ_EARLY_DATA_SUCCESS &&
+			    read_length > 0)
+				conn->flags |= CO_FL_EARLY_DATA;
+			if (ret == SSL_READ_EARLY_DATA_SUCCESS ||
+			    ret == SSL_READ_EARLY_DATA_FINISH) {
+				if (ret == SSL_READ_EARLY_DATA_FINISH) {
+					/*
+					 * We're done reading the early data,
+					 * let's make the handshake
+					 */
+					conn->flags &= ~CO_FL_EARLY_SSL_HS;
+					conn->flags |= CO_FL_SSL_WAIT_HS;
+					need_out = 1;
+					if (read_length == 0)
+						break;
+				}
+				ret = read_length;
+			}
+		} else
+#endif
+		ret = SSL_read(conn->xprt_ctx, b_tail(buf), try);
 
 		if (conn->flags & CO_FL_ERROR) {
 			/* CO_FL_ERROR may be set by ssl_sock_infocbk */
@@ -6427,32 +5678,32 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 			count -= ret;
 		}
 		else {
-			ret =  SSL_get_error(ctx->ssl, ret);
+			ret =  SSL_get_error(conn->xprt_ctx, ret);
 			if (ret == SSL_ERROR_WANT_WRITE) {
 				/* handshake is running, and it needs to enable write */
 				conn->flags |= CO_FL_SSL_WAIT_HS;
-				ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND, &ctx->wait_event);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+				__conn_sock_want_send(conn);
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 				/* Async mode can be re-enabled, because we're leaving data state.*/
 				if (global_ssl.async)
-					SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
+					SSL_set_mode(conn->xprt_ctx, SSL_MODE_ASYNC);
 #endif
 				break;
 			}
 			else if (ret == SSL_ERROR_WANT_READ) {
-				if (SSL_renegotiate_pending(ctx->ssl)) {
-					ctx->xprt->subscribe(conn, ctx->xprt_ctx,
-					                     SUB_RETRY_RECV,
-							     &ctx->wait_event);
+				if (SSL_renegotiate_pending(conn->xprt_ctx)) {
 					/* handshake is running, and it may need to re-enable read */
 					conn->flags |= CO_FL_SSL_WAIT_HS;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+					__conn_sock_want_recv(conn);
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 					/* Async mode can be re-enabled, because we're leaving data state.*/
 					if (global_ssl.async)
-						SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
+						SSL_set_mode(conn->xprt_ctx, SSL_MODE_ASYNC);
 #endif
 					break;
 				}
+				/* we need to poll for retry a read later */
+				fd_cant_recv(conn->handle.fd);
 				break;
 			} else if (ret == SSL_ERROR_ZERO_RETURN)
 				goto read0;
@@ -6464,8 +5715,11 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 			/* otherwise it's a real error */
 			goto out_error;
 		}
+		if (need_out)
+			break;
 	}
  leave:
+	conn_cond_update_sock_polling(conn);
 	return done;
 
  clear_ssl_error:
@@ -6497,16 +5751,15 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
  * caller to take care of this. It's up to the caller to update the buffer's
  * contents based on the return value.
  */
-static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const struct buffer *buf, size_t count, int flags)
+static size_t ssl_sock_from_buf(struct connection *conn, const struct buffer *buf, size_t count, int flags)
 {
-	struct ssl_sock_ctx *ctx = xprt_ctx;
 	ssize_t ret;
 	size_t try, done;
 
 	done = 0;
 	conn_refresh_polling_flags(conn);
 
-	if (!ctx)
+	if (!conn->xprt_ctx)
 		goto out_error;
 
 	if (conn->flags & (CO_FL_HANDSHAKE | CO_FL_EARLY_SSL_HS))
@@ -6518,7 +5771,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 	 * in which case we accept to do it once again.
 	 */
 	while (count) {
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
 		size_t written_data;
 #endif
 
@@ -6527,7 +5780,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 			try = count;
 
 		if (!(flags & CO_SFL_STREAMER) &&
-		    !(ctx->xprt_st & SSL_SOCK_SEND_UNLIMITED) &&
+		    !(conn->xprt_st & SSL_SOCK_SEND_UNLIMITED) &&
 		    global_ssl.max_record && try > global_ssl.max_record) {
 			try = global_ssl.max_record;
 		}
@@ -6536,45 +5789,41 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 			 * we're not limiting the upcoming send(), because if it
 			 * fails, we'll have to retry with at least as many data.
 			 */
-			ctx->xprt_st |= SSL_SOCK_SEND_UNLIMITED;
+			conn->xprt_st |= SSL_SOCK_SEND_UNLIMITED;
 		}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-		if (!SSL_is_init_finished(ctx->ssl) && conn_is_back(conn)) {
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
+		if (!SSL_is_init_finished(conn->xprt_ctx) && conn_is_back(conn)) {
 			unsigned int max_early;
 
 			if (objt_listener(conn->target))
-				max_early = SSL_get_max_early_data(ctx->ssl);
+				max_early = SSL_get_max_early_data(conn->xprt_ctx);
 			else {
-				if (SSL_get0_session(ctx->ssl))
-					max_early = SSL_SESSION_get_max_early_data(SSL_get0_session(ctx->ssl));
+				if (SSL_get0_session(conn->xprt_ctx))
+					max_early = SSL_SESSION_get_max_early_data(SSL_get0_session(conn->xprt_ctx));
 				else
 					max_early = 0;
 			}
 
-			if (try + ctx->sent_early_data > max_early) {
-				try -= (try + ctx->sent_early_data) - max_early;
+			if (try + conn->sent_early_data > max_early) {
+				try -= (try + conn->sent_early_data) - max_early;
 				if (try <= 0) {
 					conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
-					tasklet_wakeup(ctx->wait_event.tasklet);
 					break;
 				}
 			}
-			ret = SSL_write_early_data(ctx->ssl, b_peek(buf, done), try, &written_data);
+			ret = SSL_write_early_data(conn->xprt_ctx, b_peek(buf, done), try, &written_data);
 			if (ret == 1) {
 				ret = written_data;
-				ctx->sent_early_data += ret;
-				if (objt_server(conn->target)) {
+				conn->sent_early_data += ret;
+				if (objt_server(conn->target))
 					conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN | CO_FL_EARLY_DATA;
-					/* Initiate the handshake, now */
-					tasklet_wakeup(ctx->wait_event.tasklet);
-				}
 
 			}
 
 		} else
 #endif
-			ret = SSL_write(ctx->ssl, b_peek(buf, done), try);
+			ret = SSL_write(conn->xprt_ctx, b_peek(buf, done), try);
 
 		if (conn->flags & CO_FL_ERROR) {
 			/* CO_FL_ERROR may be set by ssl_sock_infocbk */
@@ -6583,38 +5832,37 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 		if (ret > 0) {
 			/* A send succeeded, so we can consier ourself connected */
 			conn->flags |= CO_FL_CONNECTED;
-			ctx->xprt_st &= ~SSL_SOCK_SEND_UNLIMITED;
+			conn->xprt_st &= ~SSL_SOCK_SEND_UNLIMITED;
 			count -= ret;
 			done += ret;
 		}
 		else {
-			ret = SSL_get_error(ctx->ssl, ret);
+			ret = SSL_get_error(conn->xprt_ctx, ret);
 
 			if (ret == SSL_ERROR_WANT_WRITE) {
-				if (SSL_renegotiate_pending(ctx->ssl)) {
+				if (SSL_renegotiate_pending(conn->xprt_ctx)) {
 					/* handshake is running, and it may need to re-enable write */
 					conn->flags |= CO_FL_SSL_WAIT_HS;
-					ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND, &ctx->wait_event);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+					__conn_sock_want_send(conn);
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 					/* Async mode can be re-enabled, because we're leaving data state.*/
 					if (global_ssl.async)
-						SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
+						SSL_set_mode(conn->xprt_ctx, SSL_MODE_ASYNC);
 #endif
 					break;
 				}
-
+				/* we need to poll to retry a write later */
+				fd_cant_send(conn->handle.fd);
 				break;
 			}
 			else if (ret == SSL_ERROR_WANT_READ) {
 				/* handshake is running, and it needs to enable read */
 				conn->flags |= CO_FL_SSL_WAIT_HS;
-				ctx->xprt->subscribe(conn, ctx->xprt_ctx,
-				                     SUB_RETRY_RECV,
-						     &ctx->wait_event);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+				__conn_sock_want_recv(conn);
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 				/* Async mode can be re-enabled, because we're leaving data state.*/
 				if (global_ssl.async)
-					SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
+					SSL_set_mode(conn->xprt_ctx, SSL_MODE_ASYNC);
 #endif
 				break;
 			}
@@ -6622,6 +5870,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 		}
 	}
  leave:
+	conn_cond_update_sock_polling(conn);
 	return done;
 
  out_error:
@@ -6633,60 +5882,42 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 	goto leave;
 }
 
-static void ssl_sock_close(struct connection *conn, void *xprt_ctx) {
+static void ssl_sock_close(struct connection *conn) {
 
-	struct ssl_sock_ctx *ctx = xprt_ctx;
-
-
-	if (ctx) {
-		if (ctx->wait_event.events != 0)
-			ctx->xprt->unsubscribe(ctx->conn, ctx->xprt_ctx,
-			                       ctx->wait_event.events,
-					       &ctx->wait_event);
-		if (ctx->send_wait) {
-			ctx->send_wait->events &= ~SUB_RETRY_SEND;
-			tasklet_wakeup(ctx->send_wait->tasklet);
-		}
-		if (ctx->recv_wait) {
-			ctx->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(ctx->recv_wait->tasklet);
-		}
-		if (ctx->xprt->close)
-			ctx->xprt->close(conn, ctx->xprt_ctx);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+	if (conn->xprt_ctx) {
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 		if (global_ssl.async) {
 			OSSL_ASYNC_FD all_fd[32], afd;
 			size_t num_all_fds = 0;
 			int i;
 
-			SSL_get_all_async_fds(ctx->ssl, NULL, &num_all_fds);
+			SSL_get_all_async_fds(conn->xprt_ctx, NULL, &num_all_fds);
 			if (num_all_fds > 32) {
 				send_log(NULL, LOG_EMERG, "haproxy: openssl returns too many async fds. It seems a bug. Process may crash\n");
 				return;
 			}
 
-			SSL_get_all_async_fds(ctx->ssl, all_fd, &num_all_fds);
+			SSL_get_all_async_fds(conn->xprt_ctx, all_fd, &num_all_fds);
 
 			/* If an async job is pending, we must try to
 			   to catch the end using polling before calling
 			   SSL_free */
-			if (num_all_fds && SSL_waiting_for_async(ctx->ssl)) {
+			if (num_all_fds && SSL_waiting_for_async(conn->xprt_ctx)) {
 				for (i=0 ; i < num_all_fds ; i++) {
 					/* switch on an handler designed to
 					 * handle the SSL_free
 					 */
 					afd = all_fd[i];
 					fdtab[afd].iocb = ssl_async_fd_free;
-					fdtab[afd].owner = ctx->ssl;
+					fdtab[afd].owner = conn->xprt_ctx;
 					fd_want_recv(afd);
 					/* To ensure that the fd cache won't be used
 					 * and we'll catch a real RD event.
 					 */
 					fd_cant_recv(afd);
 				}
-				tasklet_free(ctx->wait_event.tasklet);
-				pool_free(ssl_sock_ctx_pool, ctx);
-				_HA_ATOMIC_ADD(&jobs, 1);
+				conn->xprt_ctx = NULL;
+				HA_ATOMIC_ADD(&jobs, 1);
 				return;
 			}
 			/* Else we can remove the fds from the fdtab
@@ -6699,28 +5930,24 @@ static void ssl_sock_close(struct connection *conn, void *xprt_ctx) {
 				fd_remove(all_fd[i]);
 		}
 #endif
-		SSL_free(ctx->ssl);
-		b_free(&ctx->early_buf);
-		tasklet_free(ctx->wait_event.tasklet);
-		pool_free(ssl_sock_ctx_pool, ctx);
-		_HA_ATOMIC_SUB(&sslconns, 1);
+		SSL_free(conn->xprt_ctx);
+		conn->xprt_ctx = NULL;
+		HA_ATOMIC_SUB(&sslconns, 1);
 	}
 }
 
 /* This function tries to perform a clean shutdown on an SSL connection, and in
  * any case, flags the connection as reusable if no handshake was in progress.
  */
-static void ssl_sock_shutw(struct connection *conn, void *xprt_ctx, int clean)
+static void ssl_sock_shutw(struct connection *conn, int clean)
 {
-	struct ssl_sock_ctx *ctx = xprt_ctx;
-
 	if (conn->flags & CO_FL_HANDSHAKE)
 		return;
 	if (!clean)
 		/* don't sent notify on SSL_shutdown */
-		SSL_set_quiet_shutdown(ctx->ssl, 1);
+		SSL_set_quiet_shutdown(conn->xprt_ctx, 1);
 	/* no handshake was in progress, try a clean ssl shutdown */
-	if (SSL_shutdown(ctx->ssl) <= 0) {
+	if (SSL_shutdown(conn->xprt_ctx) <= 0) {
 		/* Clear openssl global errors stack */
 		ssl_sock_dump_errors(conn);
 		ERR_clear_error();
@@ -6730,35 +5957,41 @@ static void ssl_sock_shutw(struct connection *conn, void *xprt_ctx, int clean)
 /* used for ppv2 pkey alog (can be used for logging) */
 int ssl_sock_get_pkey_algo(struct connection *conn, struct buffer *out)
 {
-	struct ssl_sock_ctx *ctx;
+	struct pkey_info *pkinfo;
 	int bits = 0;
 	int sig = TLSEXT_signature_anonymous;
 	int len = -1;
-	X509 *crt;
-	EVP_PKEY *pkey;
 
 	if (!ssl_sock_is_ssl(conn))
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	crt = SSL_get_certificate(ctx->ssl);
-	if (!crt)
-		return 0;
-	pkey = X509_get_pubkey(crt);
-	if (pkey) {
-		bits = EVP_PKEY_bits(pkey);
-		switch(EVP_PKEY_base_id(pkey)) {
-		case EVP_PKEY_RSA:
-			sig = TLSEXT_signature_rsa;
-			break;
-		case EVP_PKEY_EC:
-			sig = TLSEXT_signature_ecdsa;
-			break;
-		case EVP_PKEY_DSA:
-			sig = TLSEXT_signature_dsa;
-			break;
+	pkinfo = SSL_CTX_get_ex_data(SSL_get_SSL_CTX(conn->xprt_ctx), ssl_pkey_info_index);
+	if (pkinfo) {
+		sig = pkinfo->sig;
+		bits = pkinfo->bits;
+	} else {
+		/* multicert and generated cert have no pkey info */
+		X509 *crt;
+		EVP_PKEY *pkey;
+		crt = SSL_get_certificate(conn->xprt_ctx);
+		if (!crt)
+			return 0;
+		pkey = X509_get_pubkey(crt);
+		if (pkey) {
+			bits = EVP_PKEY_bits(pkey);
+			switch(EVP_PKEY_base_id(pkey)) {
+			case EVP_PKEY_RSA:
+				sig = TLSEXT_signature_rsa;
+				break;
+			case EVP_PKEY_EC:
+				sig = TLSEXT_signature_ecdsa;
+				break;
+			case EVP_PKEY_DSA:
+				sig = TLSEXT_signature_dsa;
+				break;
+			}
+			EVP_PKEY_free(pkey);
 		}
-		EVP_PKEY_free(pkey);
 	}
 
 	switch(sig) {
@@ -6782,15 +6015,12 @@ int ssl_sock_get_pkey_algo(struct connection *conn, struct buffer *out)
 /* used for ppv2 cert signature (can be used for logging) */
 const char *ssl_sock_get_cert_sig(struct connection *conn)
 {
-	struct ssl_sock_ctx *ctx;
-
 	__OPENSSL_110_CONST__ ASN1_OBJECT *algorithm;
 	X509 *crt;
 
 	if (!ssl_sock_is_ssl(conn))
 		return NULL;
-	ctx = conn->xprt_ctx;
-	crt = SSL_get_certificate(ctx->ssl);
+	crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		return NULL;
 	X509_ALGOR_get0(&algorithm, NULL, NULL, X509_get0_tbs_sigalg(crt));
@@ -6801,37 +6031,30 @@ const char *ssl_sock_get_cert_sig(struct connection *conn)
 const char *ssl_sock_get_sni(struct connection *conn)
 {
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-	struct ssl_sock_ctx *ctx;
-
 	if (!ssl_sock_is_ssl(conn))
 		return NULL;
-	ctx = conn->xprt_ctx;
-	return SSL_get_servername(ctx->ssl, TLSEXT_NAMETYPE_host_name);
+	return SSL_get_servername(conn->xprt_ctx, TLSEXT_NAMETYPE_host_name);
 #else
-	return NULL;
+	return 0;
 #endif
 }
 
 /* used for logging/ppv2, may be changed for a sample fetch later */
 const char *ssl_sock_get_cipher_name(struct connection *conn)
 {
-	struct ssl_sock_ctx *ctx;
-
 	if (!ssl_sock_is_ssl(conn))
 		return NULL;
-	ctx = conn->xprt_ctx;
-	return SSL_get_cipher_name(ctx->ssl);
+
+	return SSL_get_cipher_name(conn->xprt_ctx);
 }
 
 /* used for logging/ppv2, may be changed for a sample fetch later */
 const char *ssl_sock_get_proto_version(struct connection *conn)
 {
-	struct ssl_sock_ctx *ctx;
-
 	if (!ssl_sock_is_ssl(conn))
 		return NULL;
-	ctx = conn->xprt_ctx;
-	return SSL_get_version(ctx->ssl);
+
+	return SSL_get_version(conn->xprt_ctx);
 }
 
 /* Extract a serial from a cert, and copy it to a chunk.
@@ -7036,12 +6259,10 @@ ssl_sock_get_dn_oneline(X509_NAME *a, struct buffer *out)
 void ssl_sock_set_alpn(struct connection *conn, const unsigned char *alpn, int len)
 {
 #ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
-	struct ssl_sock_ctx *ctx;
-
 	if (!ssl_sock_is_ssl(conn))
 		return;
-	ctx = conn->xprt_ctx;
-	SSL_set_alpn_protos(ctx->ssl, alpn, len);
+
+	SSL_set_alpn_protos(conn->xprt_ctx, alpn, len);
 #endif
 }
 
@@ -7051,25 +6272,22 @@ void ssl_sock_set_alpn(struct connection *conn, const unsigned char *alpn, int l
 void ssl_sock_set_servername(struct connection *conn, const char *hostname)
 {
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-	struct ssl_sock_ctx *ctx;
-
 	char *prev_name;
 
 	if (!ssl_sock_is_ssl(conn))
 		return;
-	ctx = conn->xprt_ctx;
 
 	/* if the SNI changes, we must destroy the reusable context so that a
 	 * new connection will present a new SNI. As an optimization we could
 	 * later imagine having a small cache of ssl_ctx to hold a few SNI per
 	 * server.
 	 */
-	prev_name = (char *)SSL_get_servername(ctx->ssl, TLSEXT_NAMETYPE_host_name);
+	prev_name = (char *)SSL_get_servername(conn->xprt_ctx, TLSEXT_NAMETYPE_host_name);
 	if ((!prev_name && hostname) ||
 	    (prev_name && (!hostname || strcmp(hostname, prev_name) != 0)))
-		SSL_set_session(ctx->ssl, NULL);
+		SSL_set_session(conn->xprt_ctx, NULL);
 
-	SSL_set_tlsext_host_name(ctx->ssl, hostname);
+	SSL_set_tlsext_host_name(conn->xprt_ctx, hostname);
 #endif
 }
 
@@ -7082,7 +6300,6 @@ void ssl_sock_set_servername(struct connection *conn, const char *hostname)
 int ssl_sock_get_remote_common_name(struct connection *conn,
 				    struct buffer *dest)
 {
-	struct ssl_sock_ctx *ctx;
 	X509 *crt = NULL;
 	X509_NAME *name;
 	const char find_cn[] = "CN";
@@ -7094,10 +6311,9 @@ int ssl_sock_get_remote_common_name(struct connection *conn,
 
 	if (!ssl_sock_is_ssl(conn))
 		goto out;
-	ctx = conn->xprt_ctx;
 
 	/* SSL_get_peer_certificate, it increase X509 * ref count */
-	crt = SSL_get_peer_certificate(ctx->ssl);
+	crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	if (!crt)
 		goto out;
 
@@ -7116,15 +6332,13 @@ out:
 /* returns 1 if client passed a certificate for this session, 0 if not */
 int ssl_sock_get_cert_used_sess(struct connection *conn)
 {
-	struct ssl_sock_ctx *ctx;
 	X509 *crt = NULL;
 
 	if (!ssl_sock_is_ssl(conn))
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	/* SSL_get_peer_certificate, it increase X509 * ref count */
-	crt = SSL_get_peer_certificate(ctx->ssl);
+	crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	if (!crt)
 		return 0;
 
@@ -7135,23 +6349,19 @@ int ssl_sock_get_cert_used_sess(struct connection *conn)
 /* returns 1 if client passed a certificate for this connection, 0 if not */
 int ssl_sock_get_cert_used_conn(struct connection *conn)
 {
-	struct ssl_sock_ctx *ctx;
-
 	if (!ssl_sock_is_ssl(conn))
 		return 0;
-	ctx = conn->xprt_ctx;
-	return SSL_SOCK_ST_FL_VERIFY_DONE & ctx->xprt_st ? 1 : 0;
+
+	return SSL_SOCK_ST_FL_VERIFY_DONE & conn->xprt_st ? 1 : 0;
 }
 
 /* returns result from SSL verify */
 unsigned int ssl_sock_get_verify_result(struct connection *conn)
 {
-	struct ssl_sock_ctx *ctx;
-
 	if (!ssl_sock_is_ssl(conn))
 		return (unsigned int)X509_V_ERR_APPLICATION_VERIFICATION;
-	ctx = conn->xprt_ctx;
-	return (unsigned int)SSL_get_verify_result(ctx->ssl);
+
+	return (unsigned int)SSL_get_verify_result(conn->xprt_ctx);
 }
 
 /* Returns the application layer protocol name in <str> and <len> when known.
@@ -7160,26 +6370,22 @@ unsigned int ssl_sock_get_verify_result(struct connection *conn)
  * freed by the caller. NPN is also checked if available since older versions
  * of openssl (1.0.1) which are more common in field only support this one.
  */
-static int ssl_sock_get_alpn(const struct connection *conn, void *xprt_ctx, const char **str, int *len)
+static int ssl_sock_get_alpn(const struct connection *conn, const char **str, int *len)
 {
-#if defined(TLSEXT_TYPE_application_layer_protocol_negotiation) || \
-	defined(OPENSSL_NPN_NEGOTIATED) && !defined(OPENSSL_NO_NEXTPROTONEG)
-	struct ssl_sock_ctx *ctx = xprt_ctx;
-	if (!ctx)
+	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
 
 	*str = NULL;
 
 #ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
-	SSL_get0_alpn_selected(ctx->ssl, (const unsigned char **)str, (unsigned *)len);
+	SSL_get0_alpn_selected(conn->xprt_ctx, (const unsigned char **)str, (unsigned *)len);
 	if (*str)
 		return 1;
 #endif
 #if defined(OPENSSL_NPN_NEGOTIATED) && !defined(OPENSSL_NO_NEXTPROTONEG)
-	SSL_get0_next_proto_negotiated(ctx->ssl, (const unsigned char **)str, (unsigned *)len);
+	SSL_get0_next_proto_negotiated(conn->xprt_ctx, (const unsigned char **)str, (unsigned *)len);
 	if (*str)
 		return 1;
-#endif
 #endif
 	return 0;
 }
@@ -7198,14 +6404,11 @@ smp_fetch_ssl_fc_has_early(const struct arg *args, struct sample *smp, const cha
 	smp->flags = 0;
 	smp->data.type = SMP_T_BOOL;
 #ifdef OPENSSL_IS_BORINGSSL
-	{
-		struct ssl_sock_ctx *ctx = conn->xprt_ctx;
-		smp->data.u.sint = (SSL_in_early_data(ctx->ssl) &&
-				    SSL_early_data_accepted(ctx->ssl));
-	}
+	smp->data.u.sint = (SSL_in_early_data(conn->xprt_ctx) &&
+			    SSL_early_data_accepted(conn->xprt_ctx));
 #else
 	smp->data.u.sint = ((conn->flags & CO_FL_EARLY_DATA)  &&
-	    (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_SSL_WAIT_HS))) ? 1 : 0;
+	    (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_HANDSHAKE))) ? 1 : 0;
 #endif
 	return 1;
 }
@@ -7215,13 +6418,10 @@ static int
 smp_fetch_ssl_fc_has_crt(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7230,7 +6430,7 @@ smp_fetch_ssl_fc_has_crt(const struct arg *args, struct sample *smp, const char 
 
 	smp->flags = 0;
 	smp->data.type = SMP_T_BOOL;
-	smp->data.u.sint = SSL_SOCK_ST_FL_VERIFY_DONE & ctx->xprt_st ? 1 : 0;
+	smp->data.u.sint = SSL_SOCK_ST_FL_VERIFY_DONE & conn->xprt_st ? 1 : 0;
 
 	return 1;
 }
@@ -7247,12 +6447,10 @@ smp_fetch_ssl_x_der(const struct arg *args, struct sample *smp, const char *kw, 
 	int ret = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7260,9 +6458,9 @@ smp_fetch_ssl_x_der(const struct arg *args, struct sample *smp, const char *kw, 
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 
 	if (!crt)
 		goto out;
@@ -7293,13 +6491,10 @@ smp_fetch_ssl_x_serial(const struct arg *args, struct sample *smp, const char *k
 	int ret = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7307,9 +6502,9 @@ smp_fetch_ssl_x_serial(const struct arg *args, struct sample *smp, const char *k
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 
 	if (!crt)
 		goto out;
@@ -7341,12 +6536,10 @@ smp_fetch_ssl_x_sha1(const struct arg *args, struct sample *smp, const char *kw,
 	int ret = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7354,9 +6547,9 @@ smp_fetch_ssl_x_sha1(const struct arg *args, struct sample *smp, const char *kw,
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		goto out;
 
@@ -7387,12 +6580,10 @@ smp_fetch_ssl_x_notafter(const struct arg *args, struct sample *smp, const char 
 	int ret = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7400,9 +6591,9 @@ smp_fetch_ssl_x_notafter(const struct arg *args, struct sample *smp, const char 
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		goto out;
 
@@ -7433,12 +6624,10 @@ smp_fetch_ssl_x_i_dn(const struct arg *args, struct sample *smp, const char *kw,
 	int ret = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7446,9 +6635,9 @@ smp_fetch_ssl_x_i_dn(const struct arg *args, struct sample *smp, const char *kw,
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		goto out;
 
@@ -7491,12 +6680,10 @@ smp_fetch_ssl_x_notbefore(const struct arg *args, struct sample *smp, const char
 	int ret = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7504,9 +6691,9 @@ smp_fetch_ssl_x_notbefore(const struct arg *args, struct sample *smp, const char
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		goto out;
 
@@ -7537,12 +6724,10 @@ smp_fetch_ssl_x_s_dn(const struct arg *args, struct sample *smp, const char *kw,
 	int ret = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7550,9 +6735,9 @@ smp_fetch_ssl_x_s_dn(const struct arg *args, struct sample *smp, const char *kw,
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		goto out;
 
@@ -7589,12 +6774,10 @@ smp_fetch_ssl_c_used(const struct arg *args, struct sample *smp, const char *kw,
 {
 	X509 *crt;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7602,7 +6785,7 @@ smp_fetch_ssl_c_used(const struct arg *args, struct sample *smp, const char *kw,
 	}
 
 	/* SSL_get_peer_certificate returns a ptr on allocated X509 struct */
-	crt = SSL_get_peer_certificate(ctx->ssl);
+	crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	if (crt) {
 		X509_free(crt);
 	}
@@ -7622,12 +6805,10 @@ smp_fetch_ssl_x_version(const struct arg *args, struct sample *smp, const char *
 	int cert_peer = (kw[4] == 'c') ? 1 : 0;
 	X509 *crt;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7635,9 +6816,9 @@ smp_fetch_ssl_x_version(const struct arg *args, struct sample *smp, const char *
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		return 0;
 
@@ -7662,12 +6843,10 @@ smp_fetch_ssl_x_sig_alg(const struct arg *args, struct sample *smp, const char *
 	__OPENSSL_110_CONST__ ASN1_OBJECT *algorithm;
 	int nid;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7675,9 +6854,9 @@ smp_fetch_ssl_x_sig_alg(const struct arg *args, struct sample *smp, const char *
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		return 0;
 
@@ -7714,12 +6893,10 @@ smp_fetch_ssl_x_key_alg(const struct arg *args, struct sample *smp, const char *
 	ASN1_OBJECT *algorithm;
 	int nid;
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -7727,9 +6904,9 @@ smp_fetch_ssl_x_key_alg(const struct arg *args, struct sample *smp, const char *
 	}
 
 	if (cert_peer)
-		crt = SSL_get_peer_certificate(ctx->ssl);
+		crt = SSL_get_peer_certificate(conn->xprt_ctx);
 	else
-		crt = SSL_get_certificate(ctx->ssl);
+		crt = SSL_get_certificate(conn->xprt_ctx);
 	if (!crt)
 		return 0;
 
@@ -7774,12 +6951,11 @@ smp_fetch_ssl_fc_has_sni(const struct arg *args, struct sample *smp, const char 
 {
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 	struct connection *conn = objt_conn(smp->sess->origin);
-	struct ssl_sock_ctx *ctx = conn ? conn->xprt_ctx : NULL;
 
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = (conn && conn->xprt == &ssl_sock) &&
 		conn->xprt_ctx &&
-		SSL_get_servername(ctx->ssl, TLSEXT_NAMETYPE_host_name) != NULL;
+		SSL_get_servername(conn->xprt_ctx, TLSEXT_NAMETYPE_host_name) != NULL;
 	return 1;
 #else
 	return 0;
@@ -7795,13 +6971,12 @@ smp_fetch_ssl_fc_is_resumed(const struct arg *args, struct sample *smp, const ch
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
-	struct ssl_sock_ctx *ctx = conn ? conn->xprt_ctx : NULL;
 
 
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = (conn && conn->xprt == &ssl_sock) &&
 		conn->xprt_ctx &&
-		SSL_session_reused(ctx->ssl);
+		SSL_session_reused(conn->xprt_ctx);
 	return 1;
 }
 
@@ -7814,14 +6989,12 @@ smp_fetch_ssl_fc_cipher(const struct arg *args, struct sample *smp, const char *
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	smp->data.u.str.area = (char *)SSL_get_cipher_name(ctx->ssl);
+	smp->data.u.str.area = (char *)SSL_get_cipher_name(conn->xprt_ctx);
 	if (!smp->data.u.str.area)
 		return 0;
 
@@ -7842,15 +7015,13 @@ smp_fetch_ssl_fc_alg_keysize(const struct arg *args, struct sample *smp, const c
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
-	struct ssl_sock_ctx *ctx;
 	int sint;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	if (!SSL_get_cipher_bits(ctx->ssl, &sint))
+	if (!SSL_get_cipher_bits(conn->xprt_ctx, &sint))
 		return 0;
 
 	smp->data.u.sint = sint;
@@ -7868,14 +7039,12 @@ smp_fetch_ssl_fc_use_keysize(const struct arg *args, struct sample *smp, const c
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	smp->data.u.sint = (unsigned int)SSL_get_cipher_bits(ctx->ssl, NULL);
+	smp->data.u.sint = (unsigned int)SSL_get_cipher_bits(conn->xprt_ctx, NULL);
 	if (!smp->data.u.sint)
 		return 0;
 
@@ -7889,7 +7058,6 @@ static int
 smp_fetch_ssl_fc_npn(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_STR;
@@ -7898,10 +7066,9 @@ smp_fetch_ssl_fc_npn(const struct arg *args, struct sample *smp, const char *kw,
 	    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	smp->data.u.str.area = NULL;
-	SSL_get0_next_proto_negotiated(ctx->ssl,
+	SSL_get0_next_proto_negotiated(conn->xprt_ctx,
 	                                (const unsigned char **)&smp->data.u.str.area,
 	                                (unsigned *)&smp->data.u.str.data);
 
@@ -7917,7 +7084,6 @@ static int
 smp_fetch_ssl_fc_alpn(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_STR;
@@ -7927,10 +7093,9 @@ smp_fetch_ssl_fc_alpn(const struct arg *args, struct sample *smp, const char *kw
 
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	smp->data.u.str.area = NULL;
-	SSL_get0_alpn_selected(ctx->ssl,
+	SSL_get0_alpn_selected(conn->xprt_ctx,
 	                         (const unsigned char **)&smp->data.u.str.area,
 	                         (unsigned *)&smp->data.u.str.data);
 
@@ -7950,14 +7115,12 @@ smp_fetch_ssl_fc_protocol(const struct arg *args, struct sample *smp, const char
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	smp->data.u.str.area = (char *)SSL_get_version(ctx->ssl);
+	smp->data.u.str.area = (char *)SSL_get_version(conn->xprt_ctx);
 	if (!smp->data.u.str.area)
 		return 0;
 
@@ -7972,23 +7135,21 @@ smp_fetch_ssl_fc_protocol(const struct arg *args, struct sample *smp, const char
  * This function is also usable on backend conn if the fetch keyword 5th
  * char is 'b'.
  */
-#if HA_OPENSSL_VERSION_NUMBER > 0x0090800fL
+#if OPENSSL_VERSION_NUMBER > 0x0090800fL
 static int
 smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 	SSL_SESSION *ssl_sess;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_BIN;
 
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	ssl_sess = SSL_get_session(ctx->ssl);
+	ssl_sess = SSL_get_session(conn->xprt_ctx);
 	if (!ssl_sess)
 		return 0;
 
@@ -8002,38 +7163,7 @@ smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const ch
 #endif
 
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x10100000L
-static int
-smp_fetch_ssl_fc_random(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                           smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
-	struct buffer *data;
-	struct ssl_sock_ctx *ctx;
-
-	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
-		return 0;
-	ctx = conn->xprt_ctx;
-
-	data = get_trash_chunk();
-	if (kw[7] == 'c')
-		data->data = SSL_get_client_random(ctx->ssl,
-		                                   (unsigned char *) data->area,
-		                                   data->size);
-	else
-		data->data = SSL_get_server_random(ctx->ssl,
-		                                   (unsigned char *) data->area,
-		                                   data->size);
-	if (!data->data)
-		return 0;
-
-	smp->flags = 0;
-	smp->data.type = SMP_T_BIN;
-	smp->data.u.str = *data;
-
-	return 1;
-}
-
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(OPENSSL_IS_BORINGSSL)
 static int
 smp_fetch_ssl_fc_session_key(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
@@ -8041,13 +7171,11 @@ smp_fetch_ssl_fc_session_key(const struct arg *args, struct sample *smp, const c
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 	SSL_SESSION *ssl_sess;
 	struct buffer *data;
-	struct ssl_sock_ctx *ctx;
 
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	ssl_sess = SSL_get_session(ctx->ssl);
+	ssl_sess = SSL_get_session(conn->xprt_ctx);
 	if (!ssl_sess)
 		return 0;
 
@@ -8071,7 +7199,6 @@ static int
 smp_fetch_ssl_fc_sni(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_STR;
@@ -8079,9 +7206,8 @@ smp_fetch_ssl_fc_sni(const struct arg *args, struct sample *smp, const char *kw,
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	smp->data.u.str.area = (char *)SSL_get_servername(ctx->ssl, TLSEXT_NAMETYPE_host_name);
+	smp->data.u.str.area = (char *)SSL_get_servername(conn->xprt_ctx, TLSEXT_NAMETYPE_host_name);
 	if (!smp->data.u.str.area)
 		return 0;
 
@@ -8095,14 +7221,12 @@ smp_fetch_ssl_fc_cl_bin(const struct arg *args, struct sample *smp, const char *
 {
 	struct connection *conn;
 	struct ssl_capture *capture;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	capture = SSL_get_ex_data(ctx->ssl, ssl_capture_ptr_index);
+	capture = SSL_get_ex_data(conn->xprt_ctx, ssl_capture_ptr_index);
 	if (!capture)
 		return 0;
 
@@ -8133,14 +7257,12 @@ smp_fetch_ssl_fc_cl_xxh64(const struct arg *args, struct sample *smp, const char
 {
 	struct connection *conn;
 	struct ssl_capture *capture;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
-	capture = SSL_get_ex_data(ctx->ssl, ssl_capture_ptr_index);
+	capture = SSL_get_ex_data(conn->xprt_ctx, ssl_capture_ptr_index);
 	if (!capture)
 		return 0;
 
@@ -8152,7 +7274,7 @@ smp_fetch_ssl_fc_cl_xxh64(const struct arg *args, struct sample *smp, const char
 static int
 smp_fetch_ssl_fc_cl_str(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL)
+#if (OPENSSL_VERSION_NUMBER >= 0x1000200fL) && !defined(LIBRESSL_VERSION_NUMBER)
 	struct buffer *data;
 	int i;
 
@@ -8169,8 +7291,7 @@ smp_fetch_ssl_fc_cl_str(const struct arg *args, struct sample *smp, const char *
 		cipher = SSL_get_cipher_by_value(id);
 #else
 		struct connection *conn = __objt_conn(smp->sess->origin);
-		struct ssl_sock_ctx *ctx = conn->xprt_ctx;
-		cipher = SSL_CIPHER_find(ctx->ssl, bin);
+		cipher = SSL_CIPHER_find(conn->xprt_ctx, bin);
 #endif
 		str = SSL_CIPHER_get_name(cipher);
 		if (!str || strcmp(str, "(NONE)") == 0)
@@ -8186,7 +7307,7 @@ smp_fetch_ssl_fc_cl_str(const struct arg *args, struct sample *smp, const char *
 #endif
 }
 
-#if HA_OPENSSL_VERSION_NUMBER > 0x0090800fL
+#if OPENSSL_VERSION_NUMBER > 0x0090800fL
 static int
 smp_fetch_ssl_fc_unique_id(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
@@ -8194,12 +7315,10 @@ smp_fetch_ssl_fc_unique_id(const struct arg *args, struct sample *smp, const cha
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 	int finished_len;
 	struct buffer *finished_trash;
-	struct ssl_sock_ctx *ctx;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags |= SMP_F_MAY_CHANGE;
@@ -8207,12 +7326,12 @@ smp_fetch_ssl_fc_unique_id(const struct arg *args, struct sample *smp, const cha
 	}
 
 	finished_trash = get_trash_chunk();
-	if (!SSL_session_reused(ctx->ssl))
-		finished_len = SSL_get_peer_finished(ctx->ssl,
+	if (!SSL_session_reused(conn->xprt_ctx))
+		finished_len = SSL_get_peer_finished(conn->xprt_ctx,
 						     finished_trash->area,
 						     finished_trash->size);
 	else
-		finished_len = SSL_get_finished(ctx->ssl,
+		finished_len = SSL_get_finished(conn->xprt_ctx,
 						finished_trash->area,
 						finished_trash->size);
 
@@ -8232,12 +7351,10 @@ static int
 smp_fetch_ssl_c_ca_err(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	if (!(conn->flags & CO_FL_CONNECTED)) {
 		smp->flags = SMP_F_MAY_CHANGE;
@@ -8245,7 +7362,7 @@ smp_fetch_ssl_c_ca_err(const struct arg *args, struct sample *smp, const char *k
 	}
 
 	smp->data.type = SMP_T_SINT;
-	smp->data.u.sint = (unsigned long long int)SSL_SOCK_ST_TO_CA_ERROR(ctx->xprt_st);
+	smp->data.u.sint = (unsigned long long int)SSL_SOCK_ST_TO_CA_ERROR(conn->xprt_st);
 	smp->flags = 0;
 
 	return 1;
@@ -8256,7 +7373,6 @@ static int
 smp_fetch_ssl_c_ca_err_depth(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
@@ -8266,10 +7382,9 @@ smp_fetch_ssl_c_ca_err_depth(const struct arg *args, struct sample *smp, const c
 		smp->flags = SMP_F_MAY_CHANGE;
 		return 0;
 	}
-	ctx = conn->xprt_ctx;
 
 	smp->data.type = SMP_T_SINT;
-	smp->data.u.sint = (long long int)SSL_SOCK_ST_TO_CAEDEPTH(ctx->xprt_st);
+	smp->data.u.sint = (long long int)SSL_SOCK_ST_TO_CAEDEPTH(conn->xprt_st);
 	smp->flags = 0;
 
 	return 1;
@@ -8280,7 +7395,6 @@ static int
 smp_fetch_ssl_c_err(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
@@ -8291,10 +7405,8 @@ smp_fetch_ssl_c_err(const struct arg *args, struct sample *smp, const char *kw, 
 		return 0;
 	}
 
-	ctx = conn->xprt_ctx;
-
 	smp->data.type = SMP_T_SINT;
-	smp->data.u.sint = (long long int)SSL_SOCK_ST_TO_CRTERROR(ctx->xprt_st);
+	smp->data.u.sint = (long long int)SSL_SOCK_ST_TO_CRTERROR(conn->xprt_st);
 	smp->flags = 0;
 
 	return 1;
@@ -8305,7 +7417,6 @@ static int
 smp_fetch_ssl_c_verify(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
-	struct ssl_sock_ctx *ctx;
 
 	conn = objt_conn(smp->sess->origin);
 	if (!conn || conn->xprt != &ssl_sock)
@@ -8318,10 +7429,9 @@ smp_fetch_ssl_c_verify(const struct arg *args, struct sample *smp, const char *k
 
 	if (!conn->xprt_ctx)
 		return 0;
-	ctx = conn->xprt_ctx;
 
 	smp->data.type = SMP_T_SINT;
-	smp->data.u.sint = (long long int)SSL_get_verify_result(ctx->ssl);
+	smp->data.u.sint = (long long int)SSL_get_verify_result(conn->xprt_ctx);
 	smp->flags = 0;
 
 	return 1;
@@ -8394,7 +7504,7 @@ static int bind_parse_ciphers(char **args, int cur_arg, struct proxy *px, struct
 	return ssl_bind_parse_ciphers(args, cur_arg, px, &conf->ssl_conf, err);
 }
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 /* parse the "ciphersuites" bind keyword */
 static int ssl_bind_parse_ciphersuites(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
@@ -8482,7 +7592,7 @@ static int bind_parse_crl_file(char **args, int cur_arg, struct proxy *px, struc
 /* parse the "curves" bind keyword keyword */
 static int ssl_bind_parse_curves(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
-#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+#if OPENSSL_VERSION_NUMBER >= 0x1000200fL
 	if (!*args[cur_arg + 1]) {
 		if (err)
 			memprintf(err, "'%s' : missing curve suite", args[cur_arg]);
@@ -8504,7 +7614,7 @@ static int bind_parse_curves(char **args, int cur_arg, struct proxy *px, struct 
 /* parse the "ecdhe" bind keyword keyword */
 static int ssl_bind_parse_ecdhe(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
-#if HA_OPENSSL_VERSION_NUMBER < 0x0090800fL
+#if OPENSSL_VERSION_NUMBER < 0x0090800fL
 	if (err)
 		memprintf(err, "'%s' : library does not support elliptic curve Diffie-Hellman (too old)", args[cur_arg]);
 	return ERR_ALERT | ERR_FATAL;
@@ -8643,7 +7753,7 @@ static int parse_tls_method_minmax(char **args, int cur_arg, struct tls_version_
 
 static int ssl_bind_parse_tls_method_minmax(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
-#if (HA_OPENSSL_VERSION_NUMBER < 0x10101000L) && !defined(OPENSSL_IS_BORINGSSL)
+#if (OPENSSL_VERSION_NUMBER < 0x10101000L) && !defined(OPENSSL_IS_BORINGSSL)
 	ha_warning("crt-list: ssl-min-ver and ssl-max-ver are not supported with this Openssl version (skipped).\n");
 #endif
 	return parse_tls_method_minmax(args, cur_arg, &conf->ssl_methods, err);
@@ -8799,7 +7909,7 @@ static int bind_parse_ssl(char **args, int cur_arg, struct proxy *px, struct bin
 
 	if (global_ssl.listen_default_ciphers && !conf->ssl_conf.ciphers)
 		conf->ssl_conf.ciphers = strdup(global_ssl.listen_default_ciphers);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	if (global_ssl.listen_default_ciphersuites && !conf->ssl_conf.ciphersuites)
 		conf->ssl_conf.ciphersuites = strdup(global_ssl.listen_default_ciphersuites);
 #endif
@@ -9156,7 +8266,7 @@ static int srv_parse_check_ssl(char **args, int *cur_arg, struct proxy *px, stru
 	newsrv->check.use_ssl = 1;
 	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
 		newsrv->ssl_ctx.ciphers = strdup(global_ssl.connect_default_ciphers);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
 		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
 #endif
@@ -9183,7 +8293,7 @@ static int srv_parse_ciphers(char **args, int *cur_arg, struct proxy *px, struct
 	return 0;
 }
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 /* parse the "ciphersuites" server keyword */
 static int srv_parse_ciphersuites(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
@@ -9339,7 +8449,7 @@ static int srv_parse_ssl(char **args, int *cur_arg, struct proxy *px, struct ser
 	newsrv->use_ssl = 1;
 	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
 		newsrv->ssl_ctx.ciphers = strdup(global_ssl.connect_default_ciphers);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
 		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
 #endif
@@ -9494,7 +8604,7 @@ static int ssl_parse_global_ssl_async(char **args, int section_type, struct prox
                                        struct proxy *defpx, const char *file, int line,
                                        char **err)
 {
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
 	global_ssl.async = 1;
 	global.ssl_used_async_engines = nb_engines;
 	return 0;
@@ -9582,7 +8692,7 @@ static int ssl_parse_global_ciphers(char **args, int section_type, struct proxy 
 	return 0;
 }
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
 /* parse the "ssl-default-bind-ciphersuites" / "ssl-default-server-ciphersuites" keywords
  * in global section. Returns <0 on alert, >0 on warning, 0 on success.
  */
@@ -9703,17 +8813,7 @@ static int ssl_parse_global_lifetime(char **args, int section_type, struct proxy
 	}
 
 	res = parse_time_err(args[1], &global_ssl.life_time, TIME_UNIT_S);
-	if (res == PARSE_TIME_OVER) {
-		memprintf(err, "timer overflow in argument '%s' to <%s> (maximum value is 2147483647 s or ~68 years).",
-			  args[1], args[0]);
-		return -1;
-	}
-	else if (res == PARSE_TIME_UNDER) {
-		memprintf(err, "timer underflow in argument '%s' to <%s> (minimum non-null value is 1 s).",
-			  args[1], args[0]);
-		return -1;
-	}
-	else if (res) {
+	if (res) {
 		memprintf(err, "unexpected character '%c' in argument to <%s>.", *res, args[0]);
 		return -1;
 	}
@@ -9953,8 +9053,12 @@ static int cli_parse_show_tlskeys(char **args, char *payload, struct appctx *app
 		appctx->ctx.cli.i0 = 1;
 	} else {
 		appctx->ctx.cli.p0 = tlskeys_ref_lookup_ref(args[2]);
-		if (!appctx->ctx.cli.p0)
-			return cli_err(appctx, "'show tls-keys' unable to locate referenced filename\n");
+		if (!appctx->ctx.cli.p0) {
+			appctx->ctx.cli.severity = LOG_ERR;
+			appctx->ctx.cli.msg = "'show tls-keys' unable to locate referenced filename\n";
+			appctx->st0 = CLI_ST_PRINT;
+			return 1;
+		}
 	}
 	appctx->io_handler = cli_io_handler_tlskeys_entries;
 	return 0;
@@ -9966,332 +9070,610 @@ static int cli_parse_set_tlskeys(char **args, char *payload, struct appctx *appc
 	int ret;
 
 	/* Expect two parameters: the filename and the new new TLS key in encoding */
-	if (!*args[3] || !*args[4])
-		return cli_err(appctx, "'set ssl tls-key' expects a filename and the new TLS key in base64 encoding.\n");
+	if (!*args[3] || !*args[4]) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "'set ssl tls-key' expects a filename and the new TLS key in base64 encoding.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return 1;
+	}
 
 	ref = tlskeys_ref_lookup_ref(args[3]);
-	if (!ref)
-		return cli_err(appctx, "'set ssl tls-key' unable to locate referenced filename\n");
+	if (!ref) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "'set ssl tls-key' unable to locate referenced filename\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return 1;
+	}
 
 	ret = base64dec(args[4], strlen(args[4]), trash.area, trash.size);
-	if (ret < 0)
-		return cli_err(appctx, "'set ssl tls-key' received invalid base64 encoded TLS key.\n");
+	if (ret < 0) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "'set ssl tls-key' received invalid base64 encoded TLS key.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return 1;
+	}
 
 	trash.data = ret;
-	if (ssl_sock_update_tlskey_ref(ref, &trash) < 0)
-		return cli_err(appctx, "'set ssl tls-key' received a key of wrong size.\n");
-
-	return cli_msg(appctx, LOG_INFO, "TLS ticket key updated!\n");
-}
-#endif
-
-
-/* Type of SSL payloads that can be updated over the CLI */
-
-enum {
-	CERT_TYPE_PEM = 0,
-#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
-	CERT_TYPE_OCSP,
-#endif
-	CERT_TYPE_ISSUER,
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
-	CERT_TYPE_SCTL,
-#endif
-	CERT_TYPE_MAX,
-};
-
-struct {
-	const char *ext;
-	int type;
-	int (*load)(const char *path, char *payload, struct cert_key_and_chain *ckch, char **err);
-	/* add a parsing callback */
-} cert_exts[CERT_TYPE_MAX+1] = {
-	[CERT_TYPE_PEM]    = { "",        CERT_TYPE_PEM,      &ssl_sock_load_pem_into_ckch }, /* default mode, no extensions */
-#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
-	[CERT_TYPE_OCSP]   = { "ocsp",    CERT_TYPE_OCSP,     &ssl_sock_load_ocsp_response_from_file },
-#endif
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
-	[CERT_TYPE_SCTL]   = { "sctl",    CERT_TYPE_SCTL,     &ssl_sock_load_sctl_from_file },
-#endif
-	[CERT_TYPE_ISSUER] = { "issuer",  CERT_TYPE_ISSUER,   &ssl_sock_load_issuer_file_into_ckch },
-	[CERT_TYPE_MAX]    = { NULL,      CERT_TYPE_MAX,      NULL },
-};
-
-/* states of the CLI IO handler for 'set ssl cert' */
-enum {
-	SETCERT_ST_INIT = 0,
-	SETCERT_ST_GEN,
-	SETCERT_ST_INSERT,
-	SETCERT_ST_FIN,
-};
-
-/* release function of the  `set ssl cert' command, free things and unlock the spinlock */
-static void cli_release_commit_cert(struct appctx *appctx)
-{
-	struct ckch_store *new_ckchs;
-	struct ckch_inst *ckchi, *ckchis;
-
-	HA_SPIN_UNLOCK(CKCH_LOCK, &ckch_lock);
-
-	if (appctx->st2 != SETCERT_ST_FIN) {
-		/* free every new sni_ctx and the new store, which are not in the trees so no spinlock there */
-		new_ckchs = appctx->ctx.ssl.new_ckchs;
-
-		if (!new_ckchs)
-			return;
-
-		/* if the allocation failed, we need to free everything from the temporary list */
-		list_for_each_entry_safe(ckchi, ckchis, &new_ckchs->ckch_inst, by_ckchs) {
-			struct sni_ctx *sc0, *sc0s;
-
-			list_for_each_entry_safe(sc0, sc0s, &ckchi->sni_ctx, by_ckch_inst) {
-				if (sc0->order == 0) /* we only free if it's the first inserted */
-					SSL_CTX_free(sc0->ctx);
-				LIST_DEL(&sc0->by_ckch_inst);
-				free(sc0);
-			}
-			LIST_DEL(&ckchi->by_ckchs);
-			free(ckchi);
-		}
-		ckchs_free(new_ckchs);
-	}
-}
-
-
-/*
- * This function tries to create the new ckch_inst and their SNIs
- */
-static int cli_io_handler_commit_cert(struct appctx *appctx)
-{
-	struct stream_interface *si = appctx->owner;
-	int y = 0;
-	char *err = NULL;
-	int errcode = 0;
-	struct ckch_store *old_ckchs, *new_ckchs = NULL;
-	struct ckch_inst *ckchi, *ckchis;
-	struct buffer *trash = alloc_trash_chunk();
-	struct sni_ctx *sc0, *sc0s;
-
-	if (trash == NULL)
-		goto error;
-
-	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
-		goto error;
-
-	while (1) {
-		switch (appctx->st2) {
-			case SETCERT_ST_INIT:
-				/* This state just print the update message */
-				chunk_printf(trash, "Committing %s", ckchs_transaction.path);
-				if (ci_putchk(si_ic(si), trash) == -1) {
-					si_rx_room_blk(si);
-					goto yield;
-				}
-				appctx->st2 = SETCERT_ST_GEN;
-				/* fallthrough */
-			case SETCERT_ST_GEN:
-				/*
-				 * This state generates the ckch instances with their
-				 * sni_ctxs and SSL_CTX.
-				 *
-				 * Since the SSL_CTX generation can be CPU consumer, we
-				 * yield every 10 instances.
-				 */
-
-				old_ckchs = appctx->ctx.ssl.old_ckchs;
-				new_ckchs = appctx->ctx.ssl.new_ckchs;
-
-				if (!new_ckchs)
-					continue;
-
-				/* get the next ckchi to regenerate */
-				ckchi = appctx->ctx.ssl.next_ckchi;
-				/* we didn't start yet, set it to the first elem */
-				if (ckchi == NULL)
-					ckchi = LIST_ELEM(old_ckchs->ckch_inst.n, typeof(ckchi), by_ckchs);
-
-				/* walk through the old ckch_inst and creates new ckch_inst using the updated ckchs */
-				list_for_each_entry_from(ckchi, &old_ckchs->ckch_inst, by_ckchs) {
-					struct ckch_inst *new_inst;
-					int verify = 0;
-
-					/* it takes a lot of CPU to creates SSL_CTXs, so we yield every 10 CKCH instances */
-					if (y >= 10) {
-						/* save the next ckchi to compute */
-						appctx->ctx.ssl.next_ckchi = ckchi;
-						goto yield;
-					}
-
-					/* prevent ssl_sock_prepare_ctx() to do file access which is only for verify (crl/ca file) */
-					verify = (ckchi->ssl_conf && ckchi->ssl_conf->verify) ? ckchi->ssl_conf->verify : ckchi->bind_conf->ssl_conf.verify;
-					if (verify & SSL_VERIFY_PEER) {
-						memprintf(&err, "%sCan't commit a certificate which use the 'verify' bind SSL option [%s:%d]\n", err ? err : "", ckchi->bind_conf->file, ckchi->bind_conf->line);
-						errcode |= ERR_FATAL | ERR_ABORT;
-						goto error;
-					}
-
-
-					if (new_ckchs->multi)
-						errcode |= ckch_inst_new_load_multi_store(new_ckchs->path, new_ckchs, ckchi->bind_conf, ckchi->ssl_conf, NULL, 0, &new_inst, &err);
-					else
-						errcode |= ckch_inst_new_load_store(new_ckchs->path, new_ckchs, ckchi->bind_conf, ckchi->ssl_conf, NULL, 0, &new_inst, &err);
-
-					if (errcode & ERR_CODE)
-						goto error;
-
-					/* if the previous ckchi was used as the default */
-					if (ckchi->is_default)
-						new_inst->is_default = 1;
-
-					/* we need to initialize the SSL_CTX generated */
-					/* this iterate on the newly generated SNIs in the new instance to prepare their SSL_CTX */
-					list_for_each_entry_safe(sc0, sc0s, &new_inst->sni_ctx, by_ckch_inst) {
-						if (!sc0->order) { /* we initiliazed only the first SSL_CTX because it's the same in the other sni_ctx's */
-							errcode |= ssl_sock_prepare_ctx(ckchi->bind_conf, ckchi->ssl_conf, sc0->ctx, &err);
-							if (errcode & ERR_CODE)
-								goto error;
-						}
-					}
-
-
-					/* display one dot per new instance */
-					chunk_appendf(trash, ".");
-					/* link the new ckch_inst to the duplicate */
-					LIST_ADDQ(&new_ckchs->ckch_inst, &new_inst->by_ckchs);
-					y++;
-				}
-				appctx->st2 = SETCERT_ST_INSERT;
-				/* fallthrough */
-			case SETCERT_ST_INSERT:
-				/* The generation is finished, we can insert everything */
-
-				old_ckchs = appctx->ctx.ssl.old_ckchs;
-				new_ckchs = appctx->ctx.ssl.new_ckchs;
-
-				if (!new_ckchs)
-					continue;
-
-				/* First, we insert every new SNIs in the trees, also replace the default_ctx */
-				list_for_each_entry_safe(ckchi, ckchis, &new_ckchs->ckch_inst, by_ckchs) {
-					HA_RWLOCK_WRLOCK(SNI_LOCK, &ckchi->bind_conf->sni_lock);
-					ssl_sock_load_cert_sni(ckchi, ckchi->bind_conf);
-					HA_RWLOCK_WRUNLOCK(SNI_LOCK, &ckchi->bind_conf->sni_lock);
-				}
-
-				/* delete the old sni_ctx, the old ckch_insts and the ckch_store */
-				list_for_each_entry_safe(ckchi, ckchis, &old_ckchs->ckch_inst, by_ckchs) {
-
-					HA_RWLOCK_WRLOCK(SNI_LOCK, &ckchi->bind_conf->sni_lock);
-					list_for_each_entry_safe(sc0, sc0s, &ckchi->sni_ctx, by_ckch_inst) {
-						ebmb_delete(&sc0->name);
-						LIST_DEL(&sc0->by_ckch_inst);
-						free(sc0);
-					}
-					HA_RWLOCK_WRUNLOCK(SNI_LOCK, &ckchi->bind_conf->sni_lock);
-					LIST_DEL(&ckchi->by_ckchs);
-					free(ckchi);
-				}
-
-				/* Replace the old ckchs by the new one */
-				ebmb_delete(&old_ckchs->node);
-				ckchs_free(old_ckchs);
-				ebst_insert(&ckchs_tree, &new_ckchs->node);
-				appctx->st2 = SETCERT_ST_FIN;
-				/* fallthrough */
-			case SETCERT_ST_FIN:
-				/* we achieved the transaction, we can set everything to NULL */
-				free(ckchs_transaction.path);
-				ckchs_transaction.path = NULL;
-				ckchs_transaction.new_ckchs = NULL;
-				ckchs_transaction.old_ckchs = NULL;
-				goto end;
-		}
-	}
-end:
-
-	chunk_appendf(trash, "\n");
-	if (errcode & ERR_WARN)
-		chunk_appendf(trash, "%s", err);
-	chunk_appendf(trash, "Success!\n");
-	if (ci_putchk(si_ic(si), trash) == -1)
-		si_rx_room_blk(si);
-	free_trash_chunk(trash);
-	/* success: call the release function and don't come back */
-	return 1;
-yield:
-	/* store the state */
-	if (ci_putchk(si_ic(si), trash) == -1)
-		si_rx_room_blk(si);
-	free_trash_chunk(trash);
-	si_rx_endp_more(si); /* let's come back later */
-	return 0; /* should come back */
-
-error:
-	/* spin unlock and free are done in the release  function */
-	if (trash) {
-		chunk_appendf(trash, "\n%sFailed!\n", err);
-		if (ci_putchk(si_ic(si), trash) == -1)
-			si_rx_room_blk(si);
-		free_trash_chunk(trash);
-	}
-	/* error: call the release function and don't come back */
-	return 1;
-}
-
-/*
- * Parsing function of 'commit ssl cert'
- */
-static int cli_parse_commit_cert(char **args, char *payload, struct appctx *appctx, void *private)
-{
-	char *err = NULL;
-
-	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
+	if (ssl_sock_update_tlskey_ref(ref, &trash) < 0) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "'set ssl tls-key' received a key of wrong size.\n";
+		appctx->st0 = CLI_ST_PRINT;
 		return 1;
+	}
+	appctx->ctx.cli.severity = LOG_INFO;
+	appctx->ctx.cli.msg = "TLS ticket key updated!\n";
+	appctx->st0 = CLI_ST_PRINT;
+	return 1;
 
-	if (!*args[3])
-		return cli_err(appctx, "'commit ssl cert expects a filename\n");
+}
+#endif
 
-	/* The operations on the CKCH architecture are locked so we can
-	 * manipulate ckch_store and ckch_inst */
-	if (HA_SPIN_TRYLOCK(CKCH_LOCK, &ckch_lock))
-		return cli_err(appctx, "Can't commit the certificate!\nOperations on certificates are currently locked!\n");
+static int cli_parse_set_ocspresponse(char **args, char *payload, struct appctx *appctx, void *private)
+{
+#if (defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP)
+	char *err = NULL;
+	int i, j, ret;
 
-	if (!ckchs_transaction.path) {
-		memprintf(&err, "No ongoing transaction! !\n");
-		goto error;
+	if (!payload)
+		payload = args[3];
+
+	/* Expect one parameter: the new response in base64 encoding */
+	if (!*payload) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "'set ssl ocsp-response' expects response in base64 encoding.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return 1;
 	}
 
-	if (strcmp(ckchs_transaction.path, args[3]) != 0) {
-		memprintf(&err, "The ongoing transaction is about '%s' but you are trying to set '%s'\n", ckchs_transaction.path, args[3]);
-		goto error;
+	/* remove \r and \n from the payload */
+	for (i = 0, j = 0; payload[i]; i++) {
+		if (payload[i] == '\r' || payload[i] == '\n')
+			continue;
+		payload[j++] = payload[i];
+	}
+	payload[j] = 0;
+
+	ret = base64dec(payload, j, trash.area, trash.size);
+	if (ret < 0) {
+		appctx->ctx.cli.severity = LOG_ERR;
+		appctx->ctx.cli.msg = "'set ssl ocsp-response' received invalid base64 encoded response.\n";
+		appctx->st0 = CLI_ST_PRINT;
+		return 1;
 	}
 
-	/* init the appctx structure */
-	appctx->st2 = SETCERT_ST_INIT;
-	appctx->ctx.ssl.next_ckchi = NULL;
-	appctx->ctx.ssl.new_ckchs = ckchs_transaction.new_ckchs;
-	appctx->ctx.ssl.old_ckchs = ckchs_transaction.old_ckchs;
+	trash.data = ret;
+	if (ssl_sock_update_ocsp_response(&trash, &err)) {
+		if (err) {
+			memprintf(&err, "%s.\n", err);
+			appctx->ctx.cli.err = err;
+			appctx->st0 = CLI_ST_PRINT_FREE;
+		}
+		else {
+			appctx->ctx.cli.severity = LOG_ERR;
+			appctx->ctx.cli.msg = "Failed to update OCSP response.\n";
+			appctx->st0 = CLI_ST_PRINT;
+		}
+		return 1;
+	}
+	appctx->ctx.cli.severity = LOG_INFO;
+	appctx->ctx.cli.msg = "OCSP Response updated!\n";
+	appctx->st0 = CLI_ST_PRINT;
+	return 1;
+#else
+	appctx->ctx.cli.severity = LOG_ERR;
+	appctx->ctx.cli.msg = "HAProxy was compiled against a version of OpenSSL that doesn't support OCSP stapling.\n";
+	appctx->st0 = CLI_ST_PRINT;
+	return 1;
+#endif
 
-	/* we don't unlock there, it will be unlock after the IO handler, in the release handler */
-	return 0;
+}
 
-error:
+/* register cli keywords */
+static struct cli_kw_list cli_kws = {{ },{
+#if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
+	{ { "show", "tls-keys", NULL }, "show tls-keys [id|*]: show tls keys references or dump tls ticket keys when id specified", cli_parse_show_tlskeys, NULL },
+	{ { "set", "ssl", "tls-key", NULL }, "set ssl tls-key [id|keyfile] <tlskey>: set the next TLS key for the <id> or <keyfile> listener to <tlskey>", cli_parse_set_tlskeys, NULL },
+#endif
+	{ { "set", "ssl", "ocsp-response", NULL }, NULL, cli_parse_set_ocspresponse, NULL },
+	{ { NULL }, NULL, NULL, NULL }
+}};
 
-	HA_SPIN_UNLOCK(CKCH_LOCK, &ckch_lock);
-	err = memprintf(&err, "%sCan't commit %s!\n", err ? err : "", args[3]);
+INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
 
-	return cli_dynerr(appctx, err);
+/* Note: must not be declared <const> as its list will be overwritten.
+ * Please take care of keeping this list alphabetically sorted.
+ */
+static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
+	{ "ssl_bc",                 smp_fetch_ssl_fc,             0,                   NULL,    SMP_T_BOOL, SMP_USE_L5SRV },
+	{ "ssl_bc_alg_keysize",     smp_fetch_ssl_fc_alg_keysize, 0,                   NULL,    SMP_T_SINT, SMP_USE_L5SRV },
+#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
+	{ "ssl_bc_alpn",            smp_fetch_ssl_fc_alpn,        0,                   NULL,    SMP_T_STR,  SMP_USE_L5SRV },
+#endif
+	{ "ssl_bc_cipher",          smp_fetch_ssl_fc_cipher,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5SRV },
+#if defined(OPENSSL_NPN_NEGOTIATED) && !defined(OPENSSL_NO_NEXTPROTONEG)
+	{ "ssl_bc_npn",             smp_fetch_ssl_fc_npn,         0,                   NULL,    SMP_T_STR,  SMP_USE_L5SRV },
+#endif
+	{ "ssl_bc_is_resumed",      smp_fetch_ssl_fc_is_resumed,  0,                   NULL,    SMP_T_BOOL, SMP_USE_L5SRV },
+	{ "ssl_bc_protocol",        smp_fetch_ssl_fc_protocol,    0,                   NULL,    SMP_T_STR,  SMP_USE_L5SRV },
+	{ "ssl_bc_unique_id",       smp_fetch_ssl_fc_unique_id,   0,                   NULL,    SMP_T_BIN,  SMP_USE_L5SRV },
+	{ "ssl_bc_use_keysize",     smp_fetch_ssl_fc_use_keysize, 0,                   NULL,    SMP_T_SINT, SMP_USE_L5SRV },
+#if OPENSSL_VERSION_NUMBER > 0x0090800fL
+	{ "ssl_bc_session_id",      smp_fetch_ssl_fc_session_id,  0,                   NULL,    SMP_T_BIN,  SMP_USE_L5SRV },
+#endif
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(OPENSSL_IS_BORINGSSL)
+	{ "ssl_bc_session_key",     smp_fetch_ssl_fc_session_key, 0,                   NULL,    SMP_T_BIN,  SMP_USE_L5SRV },
+#endif
+	{ "ssl_c_ca_err",           smp_fetch_ssl_c_ca_err,       0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ "ssl_c_ca_err_depth",     smp_fetch_ssl_c_ca_err_depth, 0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ "ssl_c_der",              smp_fetch_ssl_x_der,          0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_c_err",              smp_fetch_ssl_c_err,          0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ "ssl_c_i_dn",             smp_fetch_ssl_x_i_dn,         ARG2(0,STR,SINT),    NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_c_key_alg",          smp_fetch_ssl_x_key_alg,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_c_notafter",         smp_fetch_ssl_x_notafter,     0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_c_notbefore",        smp_fetch_ssl_x_notbefore,    0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_c_sig_alg",          smp_fetch_ssl_x_sig_alg,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_c_s_dn",             smp_fetch_ssl_x_s_dn,         ARG2(0,STR,SINT),    NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_c_serial",           smp_fetch_ssl_x_serial,       0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_c_sha1",             smp_fetch_ssl_x_sha1,         0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_c_used",             smp_fetch_ssl_c_used,         0,                   NULL,    SMP_T_BOOL, SMP_USE_L5CLI },
+	{ "ssl_c_verify",           smp_fetch_ssl_c_verify,       0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ "ssl_c_version",          smp_fetch_ssl_x_version,      0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ "ssl_f_der",              smp_fetch_ssl_x_der,          0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_f_i_dn",             smp_fetch_ssl_x_i_dn,         ARG2(0,STR,SINT),    NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_f_key_alg",          smp_fetch_ssl_x_key_alg,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_f_notafter",         smp_fetch_ssl_x_notafter,     0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_f_notbefore",        smp_fetch_ssl_x_notbefore,    0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_f_sig_alg",          smp_fetch_ssl_x_sig_alg,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_f_s_dn",             smp_fetch_ssl_x_s_dn,         ARG2(0,STR,SINT),    NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_f_serial",           smp_fetch_ssl_x_serial,       0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_f_sha1",             smp_fetch_ssl_x_sha1,         0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_f_version",          smp_fetch_ssl_x_version,      0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ "ssl_fc",                 smp_fetch_ssl_fc,             0,                   NULL,    SMP_T_BOOL, SMP_USE_L5CLI },
+	{ "ssl_fc_alg_keysize",     smp_fetch_ssl_fc_alg_keysize, 0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ "ssl_fc_cipher",          smp_fetch_ssl_fc_cipher,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_fc_has_crt",         smp_fetch_ssl_fc_has_crt,     0,                   NULL,    SMP_T_BOOL, SMP_USE_L5CLI },
+	{ "ssl_fc_has_early",       smp_fetch_ssl_fc_has_early,   0,                   NULL,    SMP_T_BOOL, SMP_USE_L5CLI },
+	{ "ssl_fc_has_sni",         smp_fetch_ssl_fc_has_sni,     0,                   NULL,    SMP_T_BOOL, SMP_USE_L5CLI },
+	{ "ssl_fc_is_resumed",      smp_fetch_ssl_fc_is_resumed,  0,                   NULL,    SMP_T_BOOL, SMP_USE_L5CLI },
+#if defined(OPENSSL_NPN_NEGOTIATED) && !defined(OPENSSL_NO_NEXTPROTONEG)
+	{ "ssl_fc_npn",             smp_fetch_ssl_fc_npn,         0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+#endif
+#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
+	{ "ssl_fc_alpn",            smp_fetch_ssl_fc_alpn,        0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+#endif
+	{ "ssl_fc_protocol",        smp_fetch_ssl_fc_protocol,    0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+#if OPENSSL_VERSION_NUMBER > 0x0090800fL
+	{ "ssl_fc_unique_id",       smp_fetch_ssl_fc_unique_id,   0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+#endif
+	{ "ssl_fc_use_keysize",     smp_fetch_ssl_fc_use_keysize, 0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+#if OPENSSL_VERSION_NUMBER > 0x0090800fL
+	{ "ssl_fc_session_id",      smp_fetch_ssl_fc_session_id,  0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+#endif
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(OPENSSL_IS_BORINGSSL)
+	{ "ssl_fc_session_key",     smp_fetch_ssl_fc_session_key, 0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+#endif
+#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
+	{ "ssl_fc_sni",             smp_fetch_ssl_fc_sni,         0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+#endif
+	{ "ssl_fc_cipherlist_bin",  smp_fetch_ssl_fc_cl_bin,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_fc_cipherlist_hex",  smp_fetch_ssl_fc_cl_hex,      0,                   NULL,    SMP_T_BIN,  SMP_USE_L5CLI },
+	{ "ssl_fc_cipherlist_str",  smp_fetch_ssl_fc_cl_str,      0,                   NULL,    SMP_T_STR,  SMP_USE_L5CLI },
+	{ "ssl_fc_cipherlist_xxh",  smp_fetch_ssl_fc_cl_xxh64,    0,                   NULL,    SMP_T_SINT, SMP_USE_L5CLI },
+	{ NULL, NULL, 0, 0, 0 },
+}};
+
+INITCALL1(STG_REGISTER, sample_register_fetches, &sample_fetch_keywords);
+
+/* Note: must not be declared <const> as its list will be overwritten.
+ * Please take care of keeping this list alphabetically sorted.
+ */
+static struct acl_kw_list acl_kws = {ILH, {
+	{ "ssl_fc_sni_end",         "ssl_fc_sni", PAT_MATCH_END },
+	{ "ssl_fc_sni_reg",         "ssl_fc_sni", PAT_MATCH_REG },
+	{ /* END */ },
+}};
+
+INITCALL1(STG_REGISTER, acl_register_keywords, &acl_kws);
+
+/* Note: must not be declared <const> as its list will be overwritten.
+ * Please take care of keeping this list alphabetically sorted, doing so helps
+ * all code contributors.
+ * Optional keywords are also declared with a NULL ->parse() function so that
+ * the config parser can report an appropriate error when a known keyword was
+ * not enabled.
+ */
+static struct ssl_bind_kw ssl_bind_kws[] = {
+	{ "allow-0rtt",            ssl_bind_parse_allow_0rtt,       0 }, /* allow 0-RTT */
+	{ "alpn",                  ssl_bind_parse_alpn,             1 }, /* set ALPN supported protocols */
+	{ "ca-file",               ssl_bind_parse_ca_file,          1 }, /* set CAfile to process verify on client cert */
+	{ "ciphers",               ssl_bind_parse_ciphers,          1 }, /* set SSL cipher suite */
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ "ciphersuites",          ssl_bind_parse_ciphersuites,     1 }, /* set TLS 1.3 cipher suite */
+#endif
+	{ "crl-file",              ssl_bind_parse_crl_file,         1 }, /* set certificat revocation list file use on client cert verify */
+	{ "curves",                ssl_bind_parse_curves,           1 }, /* set SSL curve suite */
+	{ "ecdhe",                 ssl_bind_parse_ecdhe,            1 }, /* defines named curve for elliptic curve Diffie-Hellman */
+	{ "no-ca-names",           ssl_bind_parse_no_ca_names,      0 }, /* do not send ca names to clients (ca_file related) */
+	{ "npn",                   ssl_bind_parse_npn,              1 }, /* set NPN supported protocols */
+	{ "ssl-min-ver",           ssl_bind_parse_tls_method_minmax,1 }, /* minimum version */
+	{ "ssl-max-ver",           ssl_bind_parse_tls_method_minmax,1 }, /* maximum version */
+	{ "verify",                ssl_bind_parse_verify,           1 }, /* set SSL verify method */
+	{ NULL, NULL, 0 },
+};
+
+/* no initcall for ssl_bind_kws, these ones are parsed in the parser loop */
+
+static struct bind_kw_list bind_kws = { "SSL", { }, {
+	{ "allow-0rtt",            bind_parse_allow_0rtt,         0 }, /* Allow 0RTT */
+	{ "alpn",                  bind_parse_alpn,               1 }, /* set ALPN supported protocols */
+	{ "ca-file",               bind_parse_ca_file,            1 }, /* set CAfile to process verify on client cert */
+	{ "ca-ignore-err",         bind_parse_ignore_err,         1 }, /* set error IDs to ignore on verify depth > 0 */
+	{ "ca-sign-file",          bind_parse_ca_sign_file,       1 }, /* set CAFile used to generate and sign server certs */
+	{ "ca-sign-pass",          bind_parse_ca_sign_pass,       1 }, /* set CAKey passphrase */
+	{ "ciphers",               bind_parse_ciphers,            1 }, /* set SSL cipher suite */
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ "ciphersuites",          bind_parse_ciphersuites,       1 }, /* set TLS 1.3 cipher suite */
+#endif
+	{ "crl-file",              bind_parse_crl_file,           1 }, /* set certificat revocation list file use on client cert verify */
+	{ "crt",                   bind_parse_crt,                1 }, /* load SSL certificates from this location */
+	{ "crt-ignore-err",        bind_parse_ignore_err,         1 }, /* set error IDs to ingore on verify depth == 0 */
+	{ "crt-list",              bind_parse_crt_list,           1 }, /* load a list of crt from this location */
+	{ "curves",                bind_parse_curves,             1 }, /* set SSL curve suite */
+	{ "ecdhe",                 bind_parse_ecdhe,              1 }, /* defines named curve for elliptic curve Diffie-Hellman */
+	{ "force-sslv3",           bind_parse_tls_method_options, 0 }, /* force SSLv3 */
+	{ "force-tlsv10",          bind_parse_tls_method_options, 0 }, /* force TLSv10 */
+	{ "force-tlsv11",          bind_parse_tls_method_options, 0 }, /* force TLSv11 */
+	{ "force-tlsv12",          bind_parse_tls_method_options, 0 }, /* force TLSv12 */
+	{ "force-tlsv13",          bind_parse_tls_method_options, 0 }, /* force TLSv13 */
+	{ "generate-certificates", bind_parse_generate_certs,     0 }, /* enable the server certificates generation */
+	{ "no-ca-names",           bind_parse_no_ca_names,        0 }, /* do not send ca names to clients (ca_file related) */
+	{ "no-sslv3",              bind_parse_tls_method_options, 0 }, /* disable SSLv3 */
+	{ "no-tlsv10",             bind_parse_tls_method_options, 0 }, /* disable TLSv10 */
+	{ "no-tlsv11",             bind_parse_tls_method_options, 0 }, /* disable TLSv11 */
+	{ "no-tlsv12",             bind_parse_tls_method_options, 0 }, /* disable TLSv12 */
+	{ "no-tlsv13",             bind_parse_tls_method_options, 0 }, /* disable TLSv13 */
+	{ "no-tls-tickets",        bind_parse_no_tls_tickets,     0 }, /* disable session resumption tickets */
+	{ "ssl",                   bind_parse_ssl,                0 }, /* enable SSL processing */
+	{ "ssl-min-ver",           bind_parse_tls_method_minmax,  1 }, /* minimum version */
+	{ "ssl-max-ver",           bind_parse_tls_method_minmax,  1 }, /* maximum version */
+	{ "strict-sni",            bind_parse_strict_sni,         0 }, /* refuse negotiation if sni doesn't match a certificate */
+	{ "tls-ticket-keys",       bind_parse_tls_ticket_keys,    1 }, /* set file to load TLS ticket keys from */
+	{ "verify",                bind_parse_verify,             1 }, /* set SSL verify method */
+	{ "npn",                   bind_parse_npn,                1 }, /* set NPN supported protocols */
+	{ "prefer-client-ciphers", bind_parse_pcc,                0 }, /* prefer client ciphers */
+	{ NULL, NULL, 0 },
+}};
+
+INITCALL1(STG_REGISTER, bind_register_keywords, &bind_kws);
+
+/* Note: must not be declared <const> as its list will be overwritten.
+ * Please take care of keeping this list alphabetically sorted, doing so helps
+ * all code contributors.
+ * Optional keywords are also declared with a NULL ->parse() function so that
+ * the config parser can report an appropriate error when a known keyword was
+ * not enabled.
+ */
+static struct srv_kw_list srv_kws = { "SSL", { }, {
+	{ "allow-0rtt",              srv_parse_allow_0rtt,         0, 1 }, /* Allow using early data on this server */
+	{ "alpn",                    srv_parse_alpn,               1, 1 }, /* Set ALPN supported protocols */
+	{ "ca-file",                 srv_parse_ca_file,            1, 1 }, /* set CAfile to process verify server cert */
+	{ "check-alpn",              srv_parse_alpn,               1, 1 }, /* Set ALPN used for checks */
+	{ "check-sni",               srv_parse_check_sni,          1, 1 }, /* set SNI */
+	{ "check-ssl",               srv_parse_check_ssl,          0, 1 }, /* enable SSL for health checks */
+	{ "ciphers",                 srv_parse_ciphers,            1, 1 }, /* select the cipher suite */
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ "ciphersuites",            srv_parse_ciphersuites,       1, 1 }, /* select the cipher suite */
+#endif
+	{ "crl-file",                srv_parse_crl_file,           1, 1 }, /* set certificate revocation list file use on server cert verify */
+	{ "crt",                     srv_parse_crt,                1, 1 }, /* set client certificate */
+	{ "force-sslv3",             srv_parse_tls_method_options, 0, 1 }, /* force SSLv3 */
+	{ "force-tlsv10",            srv_parse_tls_method_options, 0, 1 }, /* force TLSv10 */
+	{ "force-tlsv11",            srv_parse_tls_method_options, 0, 1 }, /* force TLSv11 */
+	{ "force-tlsv12",            srv_parse_tls_method_options, 0, 1 }, /* force TLSv12 */
+	{ "force-tlsv13",            srv_parse_tls_method_options, 0, 1 }, /* force TLSv13 */
+	{ "no-check-ssl",            srv_parse_no_check_ssl,       0, 1 }, /* disable SSL for health checks */
+	{ "no-send-proxy-v2-ssl",    srv_parse_no_send_proxy_ssl,  0, 1 }, /* do not send PROXY protocol header v2 with SSL info */
+	{ "no-send-proxy-v2-ssl-cn", srv_parse_no_send_proxy_cn,   0, 1 }, /* do not send PROXY protocol header v2 with CN */
+	{ "no-ssl",                  srv_parse_no_ssl,             0, 1 }, /* disable SSL processing */
+	{ "no-ssl-reuse",            srv_parse_no_ssl_reuse,       0, 1 }, /* disable session reuse */
+	{ "no-sslv3",                srv_parse_tls_method_options, 0, 0 }, /* disable SSLv3 */
+	{ "no-tlsv10",               srv_parse_tls_method_options, 0, 0 }, /* disable TLSv10 */
+	{ "no-tlsv11",               srv_parse_tls_method_options, 0, 0 }, /* disable TLSv11 */
+	{ "no-tlsv12",               srv_parse_tls_method_options, 0, 0 }, /* disable TLSv12 */
+	{ "no-tlsv13",               srv_parse_tls_method_options, 0, 0 }, /* disable TLSv13 */
+	{ "no-tls-tickets",          srv_parse_no_tls_tickets,     0, 1 }, /* disable session resumption tickets */
+	{ "npn",                     srv_parse_npn,                1, 1 }, /* Set NPN supported protocols */
+	{ "send-proxy-v2-ssl",       srv_parse_send_proxy_ssl,     0, 1 }, /* send PROXY protocol header v2 with SSL info */
+	{ "send-proxy-v2-ssl-cn",    srv_parse_send_proxy_cn,      0, 1 }, /* send PROXY protocol header v2 with CN */
+	{ "sni",                     srv_parse_sni,                1, 1 }, /* send SNI extension */
+	{ "ssl",                     srv_parse_ssl,                0, 1 }, /* enable SSL processing */
+	{ "ssl-min-ver",             srv_parse_tls_method_minmax,  1, 1 }, /* minimum version */
+	{ "ssl-max-ver",             srv_parse_tls_method_minmax,  1, 1 }, /* maximum version */
+	{ "ssl-reuse",               srv_parse_ssl_reuse,          0, 1 }, /* enable session reuse */
+	{ "tls-tickets",             srv_parse_tls_tickets,        0, 1 }, /* enable session resumption tickets */
+	{ "verify",                  srv_parse_verify,             1, 1 }, /* set SSL verify method */
+	{ "verifyhost",              srv_parse_verifyhost,         1, 1 }, /* require that SSL cert verifies for hostname */
+	{ NULL, NULL, 0, 0 },
+}};
+
+INITCALL1(STG_REGISTER, srv_register_keywords, &srv_kws);
+
+static struct cfg_kw_list cfg_kws = {ILH, {
+	{ CFG_GLOBAL, "ca-base",  ssl_parse_global_ca_crt_base },
+	{ CFG_GLOBAL, "crt-base", ssl_parse_global_ca_crt_base },
+	{ CFG_GLOBAL, "maxsslconn", ssl_parse_global_int },
+	{ CFG_GLOBAL, "ssl-default-bind-options", ssl_parse_default_bind_options },
+	{ CFG_GLOBAL, "ssl-default-server-options", ssl_parse_default_server_options },
+#ifndef OPENSSL_NO_DH
+	{ CFG_GLOBAL, "ssl-dh-param-file", ssl_parse_global_dh_param_file },
+#endif
+	{ CFG_GLOBAL, "ssl-mode-async",  ssl_parse_global_ssl_async },
+#ifndef OPENSSL_NO_ENGINE
+	{ CFG_GLOBAL, "ssl-engine",  ssl_parse_global_ssl_engine },
+#endif
+	{ CFG_GLOBAL, "tune.ssl.cachesize", ssl_parse_global_int },
+#ifndef OPENSSL_NO_DH
+	{ CFG_GLOBAL, "tune.ssl.default-dh-param", ssl_parse_global_default_dh },
+#endif
+	{ CFG_GLOBAL, "tune.ssl.force-private-cache",  ssl_parse_global_private_cache },
+	{ CFG_GLOBAL, "tune.ssl.lifetime", ssl_parse_global_lifetime },
+	{ CFG_GLOBAL, "tune.ssl.maxrecord", ssl_parse_global_int },
+	{ CFG_GLOBAL, "tune.ssl.ssl-ctx-cache-size", ssl_parse_global_int },
+	{ CFG_GLOBAL, "tune.ssl.capture-cipherlist-size", ssl_parse_global_capture_cipherlist },
+	{ CFG_GLOBAL, "ssl-default-bind-ciphers", ssl_parse_global_ciphers },
+	{ CFG_GLOBAL, "ssl-default-server-ciphers", ssl_parse_global_ciphers },
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	{ CFG_GLOBAL, "ssl-default-bind-ciphersuites", ssl_parse_global_ciphersuites },
+	{ CFG_GLOBAL, "ssl-default-server-ciphersuites", ssl_parse_global_ciphersuites },
+#endif
+	{ 0, NULL, NULL },
+}};
+
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
+
+/* transport-layer operations for SSL sockets */
+static struct xprt_ops ssl_sock = {
+	.snd_buf  = ssl_sock_from_buf,
+	.rcv_buf  = ssl_sock_to_buf,
+	.subscribe = conn_subscribe,
+	.unsubscribe = conn_unsubscribe,
+	.rcv_pipe = NULL,
+	.snd_pipe = NULL,
+	.shutr    = NULL,
+	.shutw    = ssl_sock_shutw,
+	.close    = ssl_sock_close,
+	.init     = ssl_sock_init,
+	.prepare_bind_conf = ssl_sock_prepare_bind_conf,
+	.destroy_bind_conf = ssl_sock_destroy_bind_conf,
+	.prepare_srv = ssl_sock_prepare_srv_ctx,
+	.destroy_srv = ssl_sock_free_srv_ctx,
+	.get_alpn = ssl_sock_get_alpn,
+	.name     = "SSL",
+};
+
+enum act_return ssl_action_wait_for_hs(struct act_rule *rule, struct proxy *px,
+                                       struct session *sess, struct stream *s, int flags)
+{
+	struct connection *conn;
+	struct conn_stream *cs;
+
+	conn = objt_conn(sess->origin);
+	cs = objt_cs(s->si[0].end);
+
+	if (conn && cs) {
+		if (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_SSL_WAIT_HS)) {
+			cs->flags |= CS_FL_WAIT_FOR_HS;
+			s->req.flags |= CF_READ_NULL;
+			return ACT_RET_YIELD;
+		}
+	}
+	return (ACT_RET_CONT);
+}
+
+static enum act_parse_ret ssl_parse_wait_for_hs(const char **args, int *orig_arg, struct proxy *px, struct act_rule *rule, char **err)
+{
+	rule->action_ptr = ssl_action_wait_for_hs;
+
+	return ACT_RET_PRS_OK;
+}
+
+static struct action_kw_list http_req_actions = {ILH, {
+	{ "wait-for-handshake", ssl_parse_wait_for_hs },
+	{ /* END */ }
+}};
+
+INITCALL1(STG_REGISTER, http_req_keywords_register, &http_req_actions);
+
+#if (OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+
+static void ssl_sock_sctl_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx, long argl, void *argp)
+{
+	if (ptr) {
+		chunk_destroy(ptr);
+		free(ptr);
+	}
+}
+
+#endif
+static void ssl_sock_capture_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx, long argl, void *argp)
+{
+	pool_free(pool_head_ssl_capture, ptr);
+}
+
+__attribute__((constructor))
+static void __ssl_sock_init(void)
+{
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
+	STACK_OF(SSL_COMP)* cm;
+	int n;
+#endif
+
+	if (global_ssl.listen_default_ciphers)
+		global_ssl.listen_default_ciphers = strdup(global_ssl.listen_default_ciphers);
+	if (global_ssl.connect_default_ciphers)
+		global_ssl.connect_default_ciphers = strdup(global_ssl.connect_default_ciphers);
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	if (global_ssl.listen_default_ciphersuites)
+		global_ssl.listen_default_ciphersuites = strdup(global_ssl.listen_default_ciphersuites);
+	if (global_ssl.connect_default_ciphersuites)
+		global_ssl.connect_default_ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
+#endif
+
+	xprt_register(XPRT_SSL, &ssl_sock);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	SSL_library_init();
+#endif
+#if (!defined(OPENSSL_NO_COMP) && !defined(SSL_OP_NO_COMPRESSION))
+	cm = SSL_COMP_get_compression_methods();
+	n = sk_SSL_COMP_num(cm);
+	while (n--) {
+		(void) sk_SSL_COMP_pop(cm);
+	}
+#endif
+
+#if defined(USE_THREAD) && ((OPENSSL_VERSION_NUMBER < 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER))
+	ssl_locking_init();
+#endif
+#if (OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+	sctl_ex_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_sctl_free_func);
+#endif
+	ssl_app_data_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+	ssl_capture_ptr_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_capture_free_func);
+	ssl_pkey_info_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+#ifndef OPENSSL_NO_ENGINE
+	ENGINE_load_builtin_engines();
+	hap_register_post_check(ssl_check_async_engine_count);
+#endif
+#if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
+	hap_register_post_check(tlskeys_finalize_config);
+#endif
+
+	global.ssl_session_max_cost   = SSL_SESSION_MAX_COST;
+	global.ssl_handshake_max_cost = SSL_HANDSHAKE_MAX_COST;
+
+#ifndef OPENSSL_NO_DH
+	ssl_dh_ptr_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+	hap_register_post_deinit(ssl_free_dh);
+#endif
+#ifndef OPENSSL_NO_ENGINE
+	hap_register_post_deinit(ssl_free_engines);
+#endif
+	/* Load SSL string for the verbose & debug mode. */
+	ERR_load_SSL_strings();
+}
+
+/* Compute and register the version string */
+static void ssl_register_build_options()
+{
+	char *ptr = NULL;
+	int i;
+
+	memprintf(&ptr, "Built with OpenSSL version : "
+#ifdef OPENSSL_IS_BORINGSSL
+		"BoringSSL");
+#else /* OPENSSL_IS_BORINGSSL */
+	        OPENSSL_VERSION_TEXT
+		"\nRunning on OpenSSL version : %s%s",
+	       OpenSSL_version(OPENSSL_VERSION),
+	       ((OPENSSL_VERSION_NUMBER ^ OpenSSL_version_num()) >> 8) ? " (VERSIONS DIFFER!)" : "");
+#endif
+	memprintf(&ptr, "%s\nOpenSSL library supports TLS extensions : "
+#if OPENSSL_VERSION_NUMBER < 0x00907000L
+		"no (library version too old)"
+#elif defined(OPENSSL_NO_TLSEXT)
+		"no (disabled via OPENSSL_NO_TLSEXT)"
+#else
+		"yes"
+#endif
+		"", ptr);
+
+	memprintf(&ptr, "%s\nOpenSSL library supports SNI : "
+#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
+		"yes"
+#else
+#ifdef OPENSSL_NO_TLSEXT
+		"no (because of OPENSSL_NO_TLSEXT)"
+#else
+		"no (version might be too old, 0.9.8f min needed)"
+#endif
+#endif
+	       "", ptr);
+
+	memprintf(&ptr, "%s\nOpenSSL library supports :", ptr);
+	for (i = CONF_TLSV_MIN; i <= CONF_TLSV_MAX; i++)
+		if (methodVersions[i].option)
+			memprintf(&ptr, "%s %s", ptr, methodVersions[i].name);
+
+	hap_register_build_opts(ptr, 1);
+}
+
+INITCALL0(STG_REGISTER, ssl_register_build_options);
+
+
+#ifndef OPENSSL_NO_ENGINE
+void ssl_free_engines(void) {
+	struct ssl_engine_list *wl, *wlb;
+	/* free up engine list */
+	list_for_each_entry_safe(wl, wlb, &openssl_engines, list) {
+		ENGINE_finish(wl->e);
+		ENGINE_free(wl->e);
+		LIST_DEL(&wl->list);
+		free(wl);
+	}
+}
+#endif
+
+#ifndef OPENSSL_NO_DH
+void ssl_free_dh(void) {
+	if (local_dh_1024) {
+		DH_free(local_dh_1024);
+		local_dh_1024 = NULL;
+	}
+	if (local_dh_2048) {
+		DH_free(local_dh_2048);
+		local_dh_2048 = NULL;
+	}
+	if (local_dh_4096) {
+		DH_free(local_dh_4096);
+		local_dh_4096 = NULL;
+	}
+	if (global_dh) {
+		DH_free(global_dh);
+		global_dh = NULL;
+	}
+}
+#endif
+
+__attribute__((destructor))
+static void __ssl_sock_deinit(void)
+{
+#if (defined SSL_CTRL_SET_TLSEXT_HOSTNAME && !defined SSL_NO_GENERATE_CERTIFICATES)
+	if (ssl_ctx_lru_tree) {
+		lru64_destroy(ssl_ctx_lru_tree);
+		HA_RWLOCK_DESTROY(&ssl_ctx_lru_rwlock);
+	}
+#endif
+
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L) || defined(LIBRESSL_VERSION_NUMBER)
+        ERR_remove_state(0);
+        ERR_free_strings();
+
+        EVP_cleanup();
+#endif
+
+#if ((OPENSSL_VERSION_NUMBER >= 0x00907000L) && (OPENSSL_VERSION_NUMBER < 0x10100000L)) || defined(LIBRESSL_VERSION_NUMBER)
+        CRYPTO_cleanup_all_ex_data();
+#endif
 }
 
 
 /*
- * Parsing function of `set ssl cert`, it updates or creates a temporary ckch.
+ * Local variables:
+ *  c-indent-level: 8
+ *  c-basic-offset: 8
+ * End:
  */
-static int cli_parse_set_cert(char **args, char *payload, struct appctx *appctx, void *private)
-{
-	struct ckch_store *new_ckchs = NULL;
-	struct ckch_store *old_ckchs = NULL;
-	char *err = NULL;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                	char *err = NULL;
 	int i;
 	int bundle = -1; /* TRUE if >= 0 (ckch index) */
 	int errcode = 0;

@@ -25,7 +25,7 @@
 #include <dirent.h>
 
 #include <types/stream.h>
-#include <types/proto_http.h>
+#include <types/http_ana.h>
 #include <types/channel.h>
 #include <types/stream_interface.h>
 #include <types/proxy.h>

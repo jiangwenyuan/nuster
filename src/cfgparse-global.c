@@ -14,6 +14,8 @@
 #include <common/cfgparse.h>
 #include <proto/compression.h>
 
+#include <nuster/nuster.h>
+
 /*
  * parse a line in a <global> section. Returns the error code, 0 if OK, or
  * any combination of :
@@ -1179,6 +1181,32 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			global.tune.options &= ~GTUNE_STRICT_LIMITS;
 		else
 			global.tune.options |= GTUNE_STRICT_LIMITS;
+	}
+	else if (!strcmp(args[0], "nuster")) {
+		int cur_arg = 1;
+		if (!strcmp(args[cur_arg], "cache")) {
+			if (alertif_too_many_args(22, file, linenum, args, &err_code)) {
+				goto out;
+			}
+			args++;
+			err_code = nuster_parse_global_cache(file, linenum, args);
+			if (err_code) {
+				goto out;
+			}
+		} else if (!strcmp(args[cur_arg], "nosql")) {
+			if (alertif_too_many_args(18, file, linenum, args, &err_code)) {
+				goto out;
+			}
+			args++;
+			err_code = nuster_parse_global_nosql(file, linenum, args);
+			if (err_code) {
+				goto out;
+			}
+		} else {
+			ha_alert("parsing [%s:%d] : [global] '%s' only supports 'cache|nosql' .\n", file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
 	}
 	else {
 		struct cfg_kw_list *kwl;

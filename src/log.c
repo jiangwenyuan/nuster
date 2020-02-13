@@ -36,15 +36,14 @@
 
 #include <proto/applet.h>
 #include <proto/cli.h>
-#include <proto/fd.h>
 #include <proto/frontend.h>
 #include <proto/log.h>
-#include <proto/ring.h>
 #include <proto/sample.h>
-#include <proto/sink.h>
-#include <proto/ssl_sock.h>
 #include <proto/stream.h>
 #include <proto/stream_interface.h>
+#ifdef USE_OPENSSL
+#include <proto/ssl_sock.h>
+#endif
 
 struct log_fmt {
 	char *name;
@@ -85,18 +84,23 @@ static const struct log_fmt log_formats[LOG_FORMATS] = {
 	},
 };
 
+#define FD_SETS_ARE_BITFIELDS
+#ifdef FD_SETS_ARE_BITFIELDS
 /*
  * This map is used with all the FD_* macros to check whether a particular bit
- * is set or not. Each bit represents an ACSII code. ha_bit_set() sets those
- * bytes which should be escaped. When ha_bit_test() returns non-zero, it means
- * that the byte should be escaped. Be careful to always pass bytes from 0 to
- * 255 exclusively to the macros.
+ * is set or not. Each bit represents an ACSII code. FD_SET() sets those bytes
+ * which should be escaped. When FD_ISSET() returns non-zero, it means that the
+ * byte should be escaped. Be careful to always pass bytes from 0 to 255
+ * exclusively to the macros.
  */
-long rfc5424_escape_map[(256/8) / sizeof(long)];
-long hdr_encode_map[(256/8) / sizeof(long)];
-long url_encode_map[(256/8) / sizeof(long)];
-long http_encode_map[(256/8) / sizeof(long)];
+fd_set rfc5424_escape_map[(sizeof(fd_set) > (256/8)) ? 1 : ((256/8) / sizeof(fd_set))];
+fd_set hdr_encode_map[(sizeof(fd_set) > (256/8)) ? 1 : ((256/8) / sizeof(fd_set))];
+fd_set url_encode_map[(sizeof(fd_set) > (256/8)) ? 1 : ((256/8) / sizeof(fd_set))];
+fd_set http_encode_map[(sizeof(fd_set) > (256/8)) ? 1 : ((256/8) / sizeof(fd_set))];
 
+#else
+#error "Check if your OS uses bitfields for fd_sets"
+#endif
 
 const char *log_facilities[NB_LOG_FACILITIES] = {
 	"kern", "user", "mail", "daemon",
@@ -248,7 +252,7 @@ THREAD_LOCAL char *logline_rfc5424 = NULL;
 
 /* A global buffer used to store all startup alerts/warnings. It will then be
  * retrieve on the CLI. */
-static struct ring *startup_logs = NULL;
+static char *startup_logs = NULL;
 
 struct logformat_var_args {
 	char *name;
@@ -520,7 +524,7 @@ int add_sample_to_logformat_list(char *text, char *arg, int arg_len, struct prox
 		goto error_free;
 	}
 
-	/* check if we need to allocate an http_txn struct for HTTP parsing */
+	/* check if we need to allocate an hdr_idx struct for HTTP parsing */
 	/* Note, we may also need to set curpx->to_log with certain fetches */
 	curpx->http_needed |= !!(expr->fetch->use & SMP_USE_HTTP_ANY);
 
@@ -618,7 +622,7 @@ int parse_logformat_string(const char *fmt, struct proxy *curproxy, struct list 
 				sp = str - 1; /* send both the '%' and the current char */
 				memprintf(err, "unexpected variable name near '%c' at position %d line : '%s'. Maybe you want to write a single '%%', use the syntax '%%%%'",
 				          *str, (int)(str - backfmt), fmt);
-				goto fail;
+				return 0;
 
 			}
 			else
@@ -645,7 +649,7 @@ int parse_logformat_string(const char *fmt, struct proxy *curproxy, struct list 
 				break;
 			}
 			memprintf(err, "parse argument modifier without variable name near '%%{%s}'", arg);
-			goto fail;
+			return 0;
 
 		case LF_STEXPR:                        // text immediately following '%['
 			if (*str == ']') {             // end of arg
@@ -678,16 +682,16 @@ int parse_logformat_string(const char *fmt, struct proxy *curproxy, struct list 
 			switch (pformat) {
 			case LF_VAR:
 				if (!parse_logformat_var(arg, arg_len, var, var_len, curproxy, list_format, &options, err))
-					goto fail;
+					return 0;
 				break;
 			case LF_STEXPR:
 				if (!add_sample_to_logformat_list(var, arg, arg_len, curproxy, list_format, options, cap, err))
-					goto fail;
+					return 0;
 				break;
 			case LF_TEXT:
 			case LF_SEPARATOR:
 				if (!add_to_logformat_list(sp, str, pformat, list_format, err))
-					goto fail;
+					return 0;
 				break;
 			}
 			sp = str; /* new start of text at every state switch and at every separator */
@@ -696,87 +700,11 @@ int parse_logformat_string(const char *fmt, struct proxy *curproxy, struct list 
 
 	if (pformat == LF_STARTVAR || pformat == LF_STARG || pformat == LF_STEXPR) {
 		memprintf(err, "truncated line after '%s'", var ? var : arg ? arg : "%");
-		goto fail;
+		return 0;
 	}
 	free(backfmt);
 
 	return 1;
- fail:
-	free(backfmt);
-	return 0;
-}
-
-/*
- * Parse the first range of indexes from a string made of a list of comma seperated
- * ranges of indexes. Note that an index may be considered as a particular range
- * with a high limit to the low limit.
- */
-int get_logsrv_smp_range(unsigned int *low, unsigned int *high, char **arg, char **err)
-{
-	char *end, *p;
-
-	*low = *high = 0;
-
-	p = *arg;
-	end = strchr(p, ',');
-	if (!end)
-		end = p + strlen(p);
-
-	*high = *low = read_uint((const char **)&p, end);
-	if (!*low || (p != end && *p != '-'))
-		goto err;
-
-	if (p == end)
-		goto done;
-
-	p++;
-	*high = read_uint((const char **)&p, end);
-	if (!*high || *high <= *low || p != end)
-		goto err;
-
- done:
-	if (*end == ',')
-		end++;
-	*arg = end;
-	return 1;
-
- err:
-	memprintf(err, "wrong sample range '%s'", *arg);
-	return 0;
-}
-
-/*
- * Returns 1 if the range defined by <low> and <high> overlaps
- * one of them in <rgs> array of ranges with <sz> the size of this
- * array, 0 if not.
- */
-int smp_log_ranges_overlap(struct smp_log_range *rgs, size_t sz,
-                           unsigned int low, unsigned int high, char **err)
-{
-	size_t i;
-
-	for (i = 0; i < sz; i++) {
-		if ((low  >= rgs[i].low && low  <= rgs[i].high) ||
-		    (high >= rgs[i].low && high <= rgs[i].high)) {
-			memprintf(err, "ranges are overlapping");
-			return 1;
-		}
-	}
-
-	return 0;
-}
-
-int smp_log_range_cmp(const void *a, const void *b)
-{
-	const struct smp_log_range *rg_a = a;
-	const struct smp_log_range *rg_b = b;
-
-	if (rg_a->high < rg_b->low)
-		return -1;
-	else if (rg_a->low > rg_b->high)
-		return 1;
-
-	return 0;
 }
 
 /*
@@ -895,77 +823,6 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 		}
 		cur_arg += 2;
 	}
-
-	if (strcmp(args[cur_arg], "sample") == 0) {
-		unsigned low, high;
-		char *p, *beg, *end, *smp_sz_str;
-		struct smp_log_range *smp_rgs = NULL;
-		size_t smp_rgs_sz = 0, smp_sz = 0, new_smp_sz;
-
-		p = args[cur_arg+1];
-		smp_sz_str = strchr(p, ':');
-		if (!smp_sz_str) {
-			memprintf(err, "Missing sample size");
-			goto error;
-		}
-
-		*smp_sz_str++ = '\0';
-
-		end = p + strlen(p);
-
-		while (p != end) {
-			if (!get_logsrv_smp_range(&low, &high, &p, err))
-				goto error;
-
-			if (smp_rgs && smp_log_ranges_overlap(smp_rgs, smp_rgs_sz, low, high, err))
-				goto error;
-
-			smp_rgs = my_realloc2(smp_rgs, (smp_rgs_sz + 1) * sizeof *smp_rgs);
-			if (!smp_rgs) {
-				memprintf(err, "out of memory error");
-				goto error;
-			}
-
-			smp_rgs[smp_rgs_sz].low = low;
-			smp_rgs[smp_rgs_sz].high = high;
-			smp_rgs[smp_rgs_sz].sz = high - low + 1;
-			smp_rgs[smp_rgs_sz].curr_idx = 0;
-			if (smp_rgs[smp_rgs_sz].high > smp_sz)
-				smp_sz = smp_rgs[smp_rgs_sz].high;
-			smp_rgs_sz++;
-		}
-
-		if (smp_rgs == NULL) {
-			memprintf(err, "no sampling ranges given");
-			goto error;
-		}
-
-		beg = smp_sz_str;
-		end = beg + strlen(beg);
-		new_smp_sz = read_uint((const char **)&beg, end);
-		if (!new_smp_sz || beg != end) {
-			memprintf(err, "wrong sample size '%s' for sample range '%s'",
-						   smp_sz_str, args[cur_arg+1]);
-			goto error;
-		}
-
-		if (new_smp_sz < smp_sz) {
-			memprintf(err, "sample size %zu should be greater or equal to "
-						   "%zu the maximum of the high ranges limits",
-						   new_smp_sz, smp_sz);
-			goto error;
-		}
-		smp_sz = new_smp_sz;
-
-		/* Let's order <smp_rgs> array. */
-		qsort(smp_rgs, smp_rgs_sz, sizeof(struct smp_log_range), smp_log_range_cmp);
-
-		logsrv->lb.smp_rgs = smp_rgs;
-		logsrv->lb.smp_rgs_sz = smp_rgs_sz;
-		logsrv->lb.smp_sz = smp_sz;
-
-		cur_arg += 2;
-	}
 	HA_SPIN_INIT(&logsrv->lock);
 	/* parse the facility */
 	logsrv->facility = get_log_facility(args[cur_arg]);
@@ -1004,24 +861,6 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 	}
 
 	/* now, back to the address */
-	logsrv->type = LOG_TARGET_DGRAM;
-	if (strncmp(args[1], "ring@", 5) == 0) {
-		struct sink *sink = sink_find(args[1] + 5);
-
-		if (!sink || sink->type != SINK_TYPE_BUFFER) {
-			memprintf(err, "cannot find ring buffer '%s'", args[1] + 5);
-			goto error;
-		}
-
-		logsrv->addr.ss_family = AF_UNSPEC;
-		logsrv->type = LOG_TARGET_BUFFER;
-		logsrv->ring = sink->ctx.ring;
-		goto done;
-	}
-
-	if (strncmp(args[1], "fd@", 3) == 0)
-		logsrv->type = LOG_TARGET_FD;
-
 	sk = str2sa_range(args[1], NULL, &port1, &port2, err, NULL, NULL, 1);
 	if (!sk)
 		goto error;
@@ -1036,7 +875,6 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 		if (!port1)
 			set_host_port(&logsrv->addr, SYSLOG_PORT);
 	}
- done:
 	LIST_ADDQ(logsrvs, &logsrv->list);
 	return 1;
 
@@ -1059,21 +897,9 @@ static void print_message(const char *label, const char *fmt, va_list argp)
 		  label, tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
 	memvprintf(&msg, fmt, argp);
 
-	if (global.mode & MODE_STARTING) {
-		if (unlikely(!startup_logs))
-			startup_logs = ring_new(STARTUP_LOG_SIZE);
-
-		if (likely(startup_logs)) {
-			struct ist m[2];
-
-			m[0] = ist(head);
-			m[1] = ist(msg);
-			/* trim the trailing '\n' */
-			if (m[1].len > 0 && m[1].ptr[m[1].len - 1] == '\n')
-				m[1].len--;
-			ring_write(startup_logs, ~0, 0, 0, m, 2);
-		}
-	}
+	if (global.mode & MODE_STARTING &&
+	    (!startup_logs || strlen(startup_logs) + strlen(head) + strlen(msg) < global.tune.bufsize))
+		memprintf(&startup_logs, "%s%s%s", (startup_logs ? startup_logs : ""), head, msg);
 
 	fprintf(stderr, "%s%s", head, msg);
 	fflush(stderr);
@@ -1191,7 +1017,7 @@ int get_log_facility(const char *fac)
  * <escape>.
  */
 static char *lf_encode_string(char *start, char *stop,
-                              const char escape, const long *map,
+                              const char escape, const fd_set *map,
                               const char *string,
                               struct logformat_node *node)
 {
@@ -1199,8 +1025,8 @@ static char *lf_encode_string(char *start, char *stop,
 		if (start < stop) {
 			stop--; /* reserve one byte for the final '\0' */
 			while (start < stop && *string != '\0') {
-				if (!ha_bit_test((unsigned char)(*string), map)) {
-					if (!ha_bit_test((unsigned char)(*string), rfc5424_escape_map))
+				if (!FD_ISSET((unsigned char)(*string), map)) {
+					if (!FD_ISSET((unsigned char)(*string), rfc5424_escape_map))
 						*start++ = *string;
 					else {
 						if (start + 2 >= stop)
@@ -1236,7 +1062,7 @@ static char *lf_encode_string(char *start, char *stop,
  * <escape>.
  */
 static char *lf_encode_chunk(char *start, char *stop,
-                             const char escape, const long *map,
+                             const char escape, const fd_set *map,
                              const struct buffer *chunk,
                              struct logformat_node *node)
 {
@@ -1249,8 +1075,8 @@ static char *lf_encode_chunk(char *start, char *stop,
 
 			stop--; /* reserve one byte for the final '\0' */
 			while (start < stop && str < end) {
-				if (!ha_bit_test((unsigned char)(*str), map)) {
-					if (!ha_bit_test((unsigned char)(*str), rfc5424_escape_map))
+				if (!FD_ISSET((unsigned char)(*str), map)) {
+					if (!FD_ISSET((unsigned char)(*str), rfc5424_escape_map))
 						*start++ = *str;
 					else {
 						if (start + 2 >= stop)
@@ -1495,21 +1321,17 @@ void send_log(struct proxy *p, int level, const char *format, ...)
 		data_len = global.max_syslog_len;
 	va_end(argp);
 
-	__send_log((p ? &p->logsrvs : NULL), (p ? &p->log_tag : NULL), level,
-		   logline, data_len, default_rfc5424_sd_log_format, 2);
+	__send_log(p, level, logline, data_len, default_rfc5424_sd_log_format, 2);
 }
 
 /*
- * This function sends a syslog message to <logsrv>.
- * <pid_str> is the string to be used for the PID of the caller, <pid_size> is length.
- * Same thing for <sd> and <sd_size> which are used for the structured-data part
- * in RFC5424 formatted syslog messages, and <tag_str> and <tag_size> the syslog tag.
+ * This function sends a syslog message.
+ * It doesn't care about errors nor does it report them.
  * It overrides the last byte of the message vector with an LF character.
- * Does not return any error,
+ * The arguments <sd> and <sd_size> are used for the structured-data part
+ * in RFC5424 formatted syslog messages.
  */
-static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_str, size_t pid_size,
-                                 int level, char *message, size_t size, char *sd, size_t sd_size,
-                                 char *tag_str, size_t tag_size)
+void __send_log(struct proxy *p, int level, char *message, size_t size, char *sd, size_t sd_size)
 {
 	static THREAD_LOCAL struct iovec iovec[NB_MSG_IOVEC_ELEMENTS] = { };
 	static THREAD_LOCAL struct msghdr msghdr = {
@@ -1519,253 +1341,36 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 	static THREAD_LOCAL int logfdunix = -1;	/* syslog to AF_UNIX socket */
 	static THREAD_LOCAL int logfdinet = -1;	/* syslog to AF_INET socket */
 	static THREAD_LOCAL char *dataptr = NULL;
-	time_t time = date.tv_sec;
+	int fac_level;
+	struct list *logsrvs = NULL;
+	struct logsrv *tmp = NULL;
+	int nblogger;
 	char *hdr, *hdr_ptr;
 	size_t hdr_size;
-	int fac_level;
-	int *plogfd;
-	char *pid_sep1 = "", *pid_sep2 = "";
-	char logheader_short[3];
-	int sent;
-	int maxlen;
-	int hdr_max = 0;
-	int tag_max = 0;
-	int pid_sep1_max = 0;
-	int pid_max = 0;
-	int pid_sep2_max = 0;
-	int sd_max = 0;
-	int max = 0;
+	time_t time = date.tv_sec;
+	struct buffer *tag = &global.log_tag;
+	static THREAD_LOCAL int curr_pid;
+	static THREAD_LOCAL char pidstr[100];
+	static THREAD_LOCAL struct buffer pid;
 
 	msghdr.msg_iov = iovec;
 
 	dataptr = message;
 
-	if (logsrv->type == LOG_TARGET_FD) {
-		/* the socket's address is a file descriptor */
-		plogfd = (int *)&((struct sockaddr_in *)&logsrv->addr)->sin_addr.s_addr;
-	}
-	else if (logsrv->type == LOG_TARGET_BUFFER) {
-		plogfd = NULL;
-	}
-	else if (logsrv->addr.ss_family == AF_UNIX)
-		plogfd = &logfdunix;
-	else
-		plogfd = &logfdinet;
-
-	if (plogfd && unlikely(*plogfd < 0)) {
-		/* socket not successfully initialized yet */
-		if ((*plogfd = socket(logsrv->addr.ss_family, SOCK_DGRAM,
-							  (logsrv->addr.ss_family == AF_UNIX) ? 0 : IPPROTO_UDP)) < 0) {
-			static char once;
-
-			if (!once) {
-				once = 1; /* note: no need for atomic ops here */
-				ha_alert("socket() failed in logger #%d: %s (errno=%d)\n",
-						 nblogger, strerror(errno), errno);
-			}
-			return;
-		} else {
-			/* we don't want to receive anything on this socket */
-			setsockopt(*plogfd, SOL_SOCKET, SO_RCVBUF, &zero, sizeof(zero));
-			/* does nothing under Linux, maybe needed for others */
-			shutdown(*plogfd, SHUT_RD);
-			fcntl(*plogfd, F_SETFD, fcntl(*plogfd, F_GETFD, FD_CLOEXEC) | FD_CLOEXEC);
-		}
-	}
-
-	switch (logsrv->format) {
-	case LOG_FORMAT_RFC3164:
-		hdr = logheader;
-		hdr_ptr = update_log_hdr(time);
-		break;
-
-	case LOG_FORMAT_RFC5424:
-		hdr = logheader_rfc5424;
-		hdr_ptr = update_log_hdr_rfc5424(time);
-		sd_max = sd_size; /* the SD part allowed only in RFC5424 */
-		break;
-
-	case LOG_FORMAT_SHORT:
-		/* all fields are known, skip the header generation */
-		hdr = logheader_short;
-		hdr[0] = '<';
-		hdr[1] = '0' + MAX(level, logsrv->minlvl);
-		hdr[2] = '>';
-		hdr_ptr = hdr;
-		hdr_max = 3;
-		maxlen = logsrv->maxlen - hdr_max;
-		max = MIN(size, maxlen) - 1;
-		goto send;
-
-	case LOG_FORMAT_RAW:
-		/* all fields are known, skip the header generation */
-		hdr_ptr = hdr = "";
-		hdr_max = 0;
-		maxlen = logsrv->maxlen;
-		max = MIN(size, maxlen) - 1;
-		goto send;
-
-	default:
-		return; /* must never happen */
-	}
-
-	hdr_size = hdr_ptr - hdr;
-
-	/* For each target, we may have a different facility.
-	 * We can also have a different log level for each message.
-	 * This induces variations in the message header length.
-	 * Since we don't want to recompute it each time, nor copy it every
-	 * time, we only change the facility in the pre-computed header,
-	 * and we change the pointer to the header accordingly.
-	 */
-	fac_level = (logsrv->facility << 3) + MAX(level, logsrv->minlvl);
-	hdr_ptr = hdr + 3; /* last digit of the log level */
-	do {
-		*hdr_ptr = '0' + fac_level % 10;
-		fac_level /= 10;
-		hdr_ptr--;
-	} while (fac_level && hdr_ptr > hdr);
-	*hdr_ptr = '<';
-
-	hdr_max = hdr_size - (hdr_ptr - hdr);
-
-	/* time-based header */
-	if (unlikely(hdr_size >= logsrv->maxlen)) {
-		hdr_max = MIN(hdr_max, logsrv->maxlen) - 1;
-		sd_max = 0;
-		goto send;
-	}
-
-	maxlen = logsrv->maxlen - hdr_max;
-
-	/* tag */
-	tag_max = tag_size;
-	if (unlikely(tag_max >= maxlen)) {
-		tag_max = maxlen - 1;
-		sd_max = 0;
-		goto send;
-	}
-
-	maxlen -= tag_max;
-
-	/* first pid separator */
-	pid_sep1_max = log_formats[logsrv->format].pid.sep1.data;
-	if (unlikely(pid_sep1_max >= maxlen)) {
-		pid_sep1_max = maxlen - 1;
-		sd_max = 0;
-		goto send;
-	}
-
-	pid_sep1 = log_formats[logsrv->format].pid.sep1.area;
-	maxlen -= pid_sep1_max;
-
-	/* pid */
-	pid_max = pid_size;
-	if (unlikely(pid_size >= maxlen)) {
-		pid_size = maxlen - 1;
-		sd_max = 0;
-		goto send;
-	}
-
-	maxlen -= pid_size;
-
-	/* second pid separator */
-	pid_sep2_max = log_formats[logsrv->format].pid.sep2.data;
-	if (unlikely(pid_sep2_max >= maxlen)) {
-		pid_sep2_max = maxlen - 1;
-		sd_max = 0;
-		goto send;
-	}
-
-	pid_sep2 = log_formats[logsrv->format].pid.sep2.area;
-	maxlen -= pid_sep2_max;
-
-	/* structured-data */
-	if (sd_max >= maxlen) {
-		sd_max = maxlen - 1;
-		goto send;
-	}
-
-	max = MIN(size, maxlen - sd_max) - 1;
-send:
-	if (logsrv->addr.ss_family == AF_UNSPEC) {
-		/* the target is a file descriptor or a ring buffer */
-		struct ist msg[7];
-
-		msg[0].ptr = hdr_ptr;  msg[0].len = hdr_max;
-		msg[1].ptr = tag_str;  msg[1].len = tag_max;
-		msg[2].ptr = pid_sep1; msg[2].len = pid_sep1_max;
-		msg[3].ptr = pid_str;  msg[3].len = pid_max;
-		msg[4].ptr = pid_sep2; msg[4].len = pid_sep2_max;
-		msg[5].ptr = sd;       msg[5].len = sd_max;
-		msg[6].ptr = dataptr;  msg[6].len = max;
-
-		if (logsrv->type == LOG_TARGET_BUFFER)
-			sent = ring_write(logsrv->ring, ~0, NULL, 0, msg, 7);
-		else /* LOG_TARGET_FD */
-			sent = fd_write_frag_line(*plogfd, ~0, NULL, 0, msg, 7, 1);
-	}
-	else {
-		iovec[0].iov_base = hdr_ptr;
-		iovec[0].iov_len  = hdr_max;
-		iovec[1].iov_base = tag_str;
-		iovec[1].iov_len  = tag_max;
-		iovec[2].iov_base = pid_sep1;
-		iovec[2].iov_len  = pid_sep1_max;
-		iovec[3].iov_base = pid_str;
-		iovec[3].iov_len  = pid_max;
-		iovec[4].iov_base = pid_sep2;
-		iovec[4].iov_len  = pid_sep2_max;
-		iovec[5].iov_base = sd;
-		iovec[5].iov_len  = sd_max;
-		iovec[6].iov_base = dataptr;
-		iovec[6].iov_len  = max;
-		iovec[7].iov_base = "\n"; /* insert a \n at the end of the message */
-		iovec[7].iov_len  = 1;
-
-		msghdr.msg_name = (struct sockaddr *)&logsrv->addr;
-		msghdr.msg_namelen = get_addr_len(&logsrv->addr);
-
-		sent = sendmsg(*plogfd, &msghdr, MSG_DONTWAIT | MSG_NOSIGNAL);
-	}
-
-	if (sent < 0) {
-		static char once;
-
-		if (errno == EAGAIN)
-			_HA_ATOMIC_ADD(&dropped_logs, 1);
-		else if (!once) {
-			once = 1; /* note: no need for atomic ops here */
-			ha_alert("sendmsg()/writev() failed in logger #%d: %s (errno=%d)\n",
-					 nblogger, strerror(errno), errno);
-		}
-	}
-}
-
-/*
- * This function sends a syslog message.
- * It doesn't care about errors nor does it report them.
- * The arguments <sd> and <sd_size> are used for the structured-data part
- * in RFC5424 formatted syslog messages.
- */
-void __send_log(struct list *logsrvs, struct buffer *tag, int level,
-		char *message, size_t size, char *sd, size_t sd_size)
-{
-	struct logsrv *logsrv;
-	int nblogger;
-	static THREAD_LOCAL int curr_pid;
-	static THREAD_LOCAL char pidstr[100];
-	static THREAD_LOCAL struct buffer pid;
-
-	if (logsrvs == NULL) {
+	if (p == NULL) {
 		if (!LIST_ISEMPTY(&global.logsrvs)) {
 			logsrvs = &global.logsrvs;
 		}
+	} else {
+		if (!LIST_ISEMPTY(&p->logsrvs)) {
+			logsrvs = &p->logsrvs;
+		}
+		if (p->log_tag.area) {
+			tag = &p->log_tag;
+		}
 	}
-	if (!tag || !tag->area)
-		tag = &global.log_tag;
 
-	if (!logsrvs || LIST_ISEMPTY(logsrvs))
+	if (!logsrvs)
 		return;
 
 	if (unlikely(curr_pid != getpid())) {
@@ -1776,35 +1381,232 @@ void __send_log(struct list *logsrvs, struct buffer *tag, int level,
 
 	/* Send log messages to syslog server. */
 	nblogger = 0;
-	list_for_each_entry(logsrv, logsrvs, list) {
-		static THREAD_LOCAL int in_range = 1;
+	list_for_each_entry(tmp, logsrvs, list) {
+		struct logsrv *logsrv = tmp;
+		int *plogfd;
+		char *pid_sep1 = "", *pid_sep2 = "";
+		char logheader_short[3];
+		int sent;
+		int maxlen;
+		int hdr_max = 0;
+		int tag_max = 0;
+		int pid_sep1_max = 0;
+		int pid_max = 0;
+		int pid_sep2_max = 0;
+		int sd_max = 0;
+		int max = 0;
+
+		nblogger++;
 
 		/* we can filter the level of the messages that are sent to each logger */
 		if (level > logsrv->level)
 			continue;
 
-		if (logsrv->lb.smp_rgs) {
-			struct smp_log_range *curr_rg;
-
-			HA_SPIN_LOCK(LOGSRV_LOCK, &logsrv->lock);
-			curr_rg = &logsrv->lb.smp_rgs[logsrv->lb.curr_rg];
-			in_range = in_smp_log_range(curr_rg, logsrv->lb.curr_idx);
-			if (in_range) {
-				/* Let's consume this range. */
-				curr_rg->curr_idx = (curr_rg->curr_idx + 1) % curr_rg->sz;
-				if (!curr_rg->curr_idx) {
-					/* If consumed, let's select the next range. */
-					logsrv->lb.curr_rg = (logsrv->lb.curr_rg + 1) % logsrv->lb.smp_rgs_sz;
-				}
+		if (logsrv->addr.ss_family == AF_UNSPEC) {
+			/* the socket's address is a file descriptor */
+			plogfd = (int *)&((struct sockaddr_in *)&logsrv->addr)->sin_addr.s_addr;
+			if (unlikely(!((struct sockaddr_in *)&logsrv->addr)->sin_port)) {
+				/* FD not yet initialized to non-blocking mode.
+				 * DON'T DO IT ON A TERMINAL!
+				 */
+				if (!isatty(*plogfd))
+					fcntl(*plogfd, F_SETFL, O_NONBLOCK);
+				((struct sockaddr_in *)&logsrv->addr)->sin_port = 1;
 			}
-			logsrv->lb.curr_idx = (logsrv->lb.curr_idx + 1) % logsrv->lb.smp_sz;
+		}
+		else if (logsrv->addr.ss_family == AF_UNIX)
+			plogfd = &logfdunix;
+		else
+			plogfd = &logfdinet;
+
+		if (unlikely(*plogfd < 0)) {
+			/* socket not successfully initialized yet */
+			if ((*plogfd = socket(logsrv->addr.ss_family, SOCK_DGRAM,
+			                      (logsrv->addr.ss_family == AF_UNIX) ? 0 : IPPROTO_UDP)) < 0) {
+				static char once;
+
+				if (!once) {
+					once = 1; /* note: no need for atomic ops here */
+					ha_alert("socket() failed in logger #%d: %s (errno=%d)\n",
+					         nblogger, strerror(errno), errno);
+				}
+				continue;
+			} else {
+				/* we don't want to receive anything on this socket */
+				setsockopt(*plogfd, SOL_SOCKET, SO_RCVBUF, &zero, sizeof(zero));
+				/* does nothing under Linux, maybe needed for others */
+				shutdown(*plogfd, SHUT_RD);
+				fcntl(*plogfd, F_SETFD, fcntl(*plogfd, F_GETFD, FD_CLOEXEC) | FD_CLOEXEC);
+			}
+		}
+
+		switch (logsrv->format) {
+		case LOG_FORMAT_RFC3164:
+			hdr = logheader;
+			hdr_ptr = update_log_hdr(time);
+			break;
+
+		case LOG_FORMAT_RFC5424:
+			hdr = logheader_rfc5424;
+			hdr_ptr = update_log_hdr_rfc5424(time);
+			sd_max = sd_size; /* the SD part allowed only in RFC5424 */
+			break;
+
+		case LOG_FORMAT_SHORT:
+			/* all fields are known, skip the header generation */
+			hdr = logheader_short;
+			hdr[0] = '<';
+			hdr[1] = '0' + MAX(level, logsrv->minlvl);
+			hdr[2] = '>';
+			hdr_ptr = hdr;
+			hdr_max = 3;
+			maxlen = logsrv->maxlen - hdr_max;
+			max = MIN(size, maxlen) - 1;
+			goto send;
+
+		case LOG_FORMAT_RAW:
+			/* all fields are known, skip the header generation */
+			hdr_ptr = hdr = "";
+			hdr_max = 0;
+			maxlen = logsrv->maxlen;
+			max = MIN(size, maxlen) - 1;
+			goto send;
+
+		default:
+			continue; /* must never happen */
+		}
+
+		hdr_size = hdr_ptr - hdr;
+
+		/* For each target, we may have a different facility.
+		 * We can also have a different log level for each message.
+		 * This induces variations in the message header length.
+		 * Since we don't want to recompute it each time, nor copy it every
+		 * time, we only change the facility in the pre-computed header,
+		 * and we change the pointer to the header accordingly.
+		 */
+		fac_level = (logsrv->facility << 3) + MAX(level, logsrv->minlvl);
+		hdr_ptr = hdr + 3; /* last digit of the log level */
+		do {
+			*hdr_ptr = '0' + fac_level % 10;
+			fac_level /= 10;
+			hdr_ptr--;
+		} while (fac_level && hdr_ptr > hdr);
+		*hdr_ptr = '<';
+
+		hdr_max = hdr_size - (hdr_ptr - hdr);
+
+		/* time-based header */
+		if (unlikely(hdr_size >= logsrv->maxlen)) {
+			hdr_max = MIN(hdr_max, logsrv->maxlen) - 1;
+			sd_max = 0;
+			goto send;
+		}
+
+		maxlen = logsrv->maxlen - hdr_max;
+
+		/* tag */
+		tag_max = tag->data;
+		if (unlikely(tag_max >= maxlen)) {
+			tag_max = maxlen - 1;
+			sd_max = 0;
+			goto send;
+		}
+
+		maxlen -= tag_max;
+
+		/* first pid separator */
+		pid_sep1_max = log_formats[logsrv->format].pid.sep1.data;
+		if (unlikely(pid_sep1_max >= maxlen)) {
+			pid_sep1_max = maxlen - 1;
+			sd_max = 0;
+			goto send;
+		}
+
+		pid_sep1 = log_formats[logsrv->format].pid.sep1.area;
+		maxlen -= pid_sep1_max;
+
+		/* pid */
+		pid_max = pid.data;
+		if (unlikely(pid_max >= maxlen)) {
+			pid_max = maxlen - 1;
+			sd_max = 0;
+			goto send;
+		}
+
+		maxlen -= pid_max;
+
+		/* second pid separator */
+		pid_sep2_max = log_formats[logsrv->format].pid.sep2.data;
+		if (unlikely(pid_sep2_max >= maxlen)) {
+			pid_sep2_max = maxlen - 1;
+			sd_max = 0;
+			goto send;
+		}
+
+		pid_sep2 = log_formats[logsrv->format].pid.sep2.area;
+		maxlen -= pid_sep2_max;
+
+		/* structured-data */
+		if (sd_max >= maxlen) {
+			sd_max = maxlen - 1;
+			goto send;
+		}
+
+		max = MIN(size, maxlen - sd_max) - 1;
+send:
+		iovec[0].iov_base = hdr_ptr;
+		iovec[0].iov_len  = hdr_max;
+		iovec[1].iov_base = tag->area;
+		iovec[1].iov_len  = tag_max;
+		iovec[2].iov_base = pid_sep1;
+		iovec[2].iov_len  = pid_sep1_max;
+		iovec[3].iov_base = pid.area;
+		iovec[3].iov_len  = pid_max;
+		iovec[4].iov_base = pid_sep2;
+		iovec[4].iov_len  = pid_sep2_max;
+		iovec[5].iov_base = sd;
+		iovec[5].iov_len  = sd_max;
+		iovec[6].iov_base = dataptr;
+		iovec[6].iov_len  = max;
+		iovec[7].iov_base = "\n"; /* insert a \n at the end of the message */
+		iovec[7].iov_len  = 1;
+
+		if (logsrv->addr.ss_family == AF_UNSPEC) {
+			/* the target is a direct file descriptor. While writev() guarantees
+			 * to write everything, it doesn't guarantee that it will not be
+			 * interrupted while doing so. This occasionally results in interleaved
+			 * messages when the output is a tty, hence the lock. There's no real
+			 * performance concern here for such type of output.
+			 */
+			HA_SPIN_LOCK(LOGSRV_LOCK, &logsrv->lock);
+			sent = writev(*plogfd, iovec, 8);
 			HA_SPIN_UNLOCK(LOGSRV_LOCK, &logsrv->lock);
 		}
-		if (in_range)
-			__do_send_log(logsrv, ++nblogger, pid.area, pid.data, level,
-			              message, size, sd, sd_size, tag->area, tag->data);
+		else {
+			msghdr.msg_name = (struct sockaddr *)&logsrv->addr;
+			msghdr.msg_namelen = get_addr_len(&logsrv->addr);
+
+			sent = sendmsg(*plogfd, &msghdr, MSG_DONTWAIT | MSG_NOSIGNAL);
+		}
+
+		if (sent < 0) {
+			static char once;
+
+			if (errno == EAGAIN)
+				HA_ATOMIC_ADD(&dropped_logs, 1);
+			else if (!once) {
+				once = 1; /* note: no need for atomic ops here */
+				ha_alert("sendmsg()/writev() failed in logger #%d: %s (errno=%d)\n",
+				         nblogger, strerror(errno), errno);
+			}
+		}
 	}
 }
+
+extern fd_set hdr_encode_map[];
+extern fd_set url_encode_map[];
+extern fd_set http_encode_map[];
 
 
 const char sess_cookie[8]     = "NIDVEOU7";	/* No cookie, Invalid cookie, cookie for a Down server, Valid cookie, Expired cookie, Old cookie, Unused, unknown */
@@ -1839,7 +1641,7 @@ static void init_log()
 
 	tmp = "\"\\]";
 	while (*tmp) {
-		ha_bit_set(*tmp, rfc5424_escape_map);
+		FD_SET(*tmp, rfc5424_escape_map);
 		tmp++;
 	}
 
@@ -1851,23 +1653,23 @@ static void init_log()
 	memset(hdr_encode_map, 0, sizeof(hdr_encode_map));
 	memset(url_encode_map, 0, sizeof(url_encode_map));
 	for (i = 0; i < 32; i++) {
-		ha_bit_set(i, hdr_encode_map);
-		ha_bit_set(i, url_encode_map);
+		FD_SET(i, hdr_encode_map);
+		FD_SET(i, url_encode_map);
 	}
 	for (i = 127; i < 256; i++) {
-		ha_bit_set(i, hdr_encode_map);
-		ha_bit_set(i, url_encode_map);
+		FD_SET(i, hdr_encode_map);
+		FD_SET(i, url_encode_map);
 	}
 
 	tmp = "\"#{|}";
 	while (*tmp) {
-		ha_bit_set(*tmp, hdr_encode_map);
+		FD_SET(*tmp, hdr_encode_map);
 		tmp++;
 	}
 
 	tmp = "\"#";
 	while (*tmp) {
-		ha_bit_set(*tmp, url_encode_map);
+		FD_SET(*tmp, url_encode_map);
 		tmp++;
 	}
 
@@ -1892,13 +1694,23 @@ static void init_log()
 	 */
 	memset(http_encode_map, 0, sizeof(http_encode_map));
 	for (i = 0x00; i <= 0x08; i++)
-		ha_bit_set(i, http_encode_map);
+		FD_SET(i, http_encode_map);
 	for (i = 0x0a; i <= 0x1f; i++)
-		ha_bit_set(i, http_encode_map);
-	ha_bit_set(0x7f, http_encode_map);
+		FD_SET(i, http_encode_map);
+	FD_SET(0x7f, http_encode_map);
 }
 
 INITCALL0(STG_PREPARE, init_log);
+
+static int init_log_buffers_per_thread()
+{
+	return init_log_buffers();
+}
+
+static void deinit_log_buffers_per_thread()
+{
+	deinit_log_buffers();
+}
 
 /* Initialize log buffers used for syslog messages */
 int init_log_buffers()
@@ -1917,15 +1729,20 @@ int init_log_buffers()
 /* Deinitialize log buffers used for syslog messages */
 void deinit_log_buffers()
 {
+	void *tmp_startup_logs;
+
 	free(logheader);
 	free(logheader_rfc5424);
 	free(logline);
 	free(logline_rfc5424);
-	ring_free(_HA_ATOMIC_XCHG(&startup_logs, NULL));
+	tmp_startup_logs = HA_ATOMIC_XCHG(&startup_logs, NULL);
+	free(tmp_startup_logs);
+
 	logheader         = NULL;
 	logheader_rfc5424 = NULL;
 	logline           = NULL;
 	logline_rfc5424   = NULL;
+	startup_logs      = NULL;
 }
 
 /* Builds a log line in <dst> based on <list_format>, and stops before reaching
@@ -1940,7 +1757,7 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 	struct proxy *be;
 	struct http_txn *txn;
 	const struct strm_logs *logs;
-	struct connection *be_conn;
+	const struct connection *be_conn;
 	unsigned int s_flags;
 	unsigned int uniq_id;
 	struct buffer chunk;
@@ -1981,7 +1798,7 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 		txn = NULL;
 		be_conn = NULL;
 		s_flags = SF_ERR_PRXCOND | SF_FINST_R;
-		uniq_id = _HA_ATOMIC_XADD(&global.req_count, 1);
+		uniq_id = HA_ATOMIC_XADD(&global.req_count, 1);
 
 		/* prepare a valid log structure */
 		tmp_strm_log.tv_accept = sess->tv_accept;
@@ -2057,8 +1874,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case LOG_FMT_CLIENTIP:  // %ci
 				conn = objt_conn(sess->origin);
-				if (conn && conn_get_src(conn))
-					ret = lf_ip(tmplog, (struct sockaddr *)conn->src, dst + maxsize - tmplog, tmp);
+				if (conn)
+					ret = lf_ip(tmplog, (struct sockaddr *)&conn->addr.from, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 				if (ret == NULL)
@@ -2069,11 +1886,11 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case LOG_FMT_CLIENTPORT:  // %cp
 				conn = objt_conn(sess->origin);
-				if (conn && conn_get_src(conn)) {
-					if (conn->src->ss_family == AF_UNIX) {
+				if (conn) {
+					if (conn->addr.from.ss_family == AF_UNIX) {
 						ret = ltoa_o(sess->listener->luid, tmplog, dst + maxsize - tmplog);
 					} else {
-						ret = lf_port(tmplog, (struct sockaddr *)conn->src,
+						ret = lf_port(tmplog, (struct sockaddr *)&conn->addr.from,
 						              dst + maxsize - tmplog, tmp);
 					}
 				}
@@ -2088,8 +1905,9 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case LOG_FMT_FRONTENDIP: // %fi
 				conn = objt_conn(sess->origin);
-				if (conn && conn_get_dst(conn)) {
-					ret = lf_ip(tmplog, (struct sockaddr *)conn->dst, dst + maxsize - tmplog, tmp);
+				if (conn) {
+					conn_get_to_addr(conn);
+					ret = lf_ip(tmplog, (struct sockaddr *)&conn->addr.to, dst + maxsize - tmplog, tmp);
 				}
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
@@ -2102,11 +1920,12 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 
 			case  LOG_FMT_FRONTENDPORT: // %fp
 				conn = objt_conn(sess->origin);
-				if (conn && conn_get_dst(conn)) {
-					if (conn->dst->ss_family == AF_UNIX)
+				if (conn) {
+					conn_get_to_addr(conn);
+					if (conn->addr.to.ss_family == AF_UNIX)
 						ret = ltoa_o(sess->listener->luid, tmplog, dst + maxsize - tmplog);
 					else
-						ret = lf_port(tmplog, (struct sockaddr *)conn->dst, dst + maxsize - tmplog, tmp);
+						ret = lf_port(tmplog, (struct sockaddr *)&conn->addr.to, dst + maxsize - tmplog, tmp);
 				}
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
@@ -2118,8 +1937,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_BACKENDIP:  // %bi
-				if (be_conn && conn_get_src(be_conn))
-					ret = lf_ip(tmplog, (const struct sockaddr *)be_conn->src, dst + maxsize - tmplog, tmp);
+				if (be_conn)
+					ret = lf_ip(tmplog, (const struct sockaddr *)&be_conn->addr.from, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2130,8 +1949,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_BACKENDPORT:  // %bp
-				if (be_conn && conn_get_src(be_conn))
-					ret = lf_port(tmplog, (struct sockaddr *)be_conn->src, dst + maxsize - tmplog, tmp);
+				if (be_conn)
+					ret = lf_port(tmplog, (struct sockaddr *)&be_conn->addr.from, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2142,8 +1961,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_SERVERIP: // %si
-				if (be_conn && conn_get_dst(be_conn))
-					ret = lf_ip(tmplog, (struct sockaddr *)be_conn->dst, dst + maxsize - tmplog, tmp);
+				if (be_conn)
+					ret = lf_ip(tmplog, (struct sockaddr *)&be_conn->addr.to, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2154,8 +1973,8 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_SERVERPORT: // %sp
-				if (be_conn && conn_get_dst(be_conn))
-					ret = lf_port(tmplog, (struct sockaddr *)be_conn->dst, dst + maxsize - tmplog, tmp);
+				if (be_conn)
+					ret = lf_port(tmplog, (struct sockaddr *)&be_conn->addr.to, dst + maxsize - tmplog, tmp);
 				else
 					ret = lf_text_len(tmplog, NULL, 0, dst + maxsize - tmplog, tmp);
 
@@ -2976,9 +2795,8 @@ void strm_log(struct stream *s)
 
 	size = build_logline(s, logline, global.max_syslog_len, &sess->fe->logformat);
 	if (size > 0) {
-		_HA_ATOMIC_ADD(&sess->fe->log_count, 1);
-		__send_log(&sess->fe->logsrvs, &sess->fe->log_tag, level,
-			   logline, size + 1, logline_rfc5424, sd_size);
+		HA_ATOMIC_ADD(&sess->fe->log_count, 1);
+		__send_log(sess->fe, level, logline, size + 1, logline_rfc5424, sd_size);
 		s->logs.logwait = 0;
 	}
 }
@@ -3002,6 +2820,56 @@ void sess_log(struct session *sess)
 
 	if (LIST_ISEMPTY(&sess->fe->logsrvs))
 		return;
+
+	level = LOG_INFO;
+	if (sess->fe->options2 & PR_O2_LOGERRORS)
+		level = LOG_ERR;
+
+	if (!LIST_ISEMPTY(&sess->fe->logformat_sd)) {
+		sd_size = sess_build_logline(sess, NULL,
+		                             logline_rfc5424, global.max_syslog_len,
+		                             &sess->fe->logformat_sd);
+	}
+
+	size = sess_build_logline(sess, NULL, logline, global.max_syslog_len, &sess->fe->logformat);
+	if (size > 0) {
+		HA_ATOMIC_ADD(&sess->fe->log_count, 1);
+		__send_log(sess->fe, level, logline, size + 1, logline_rfc5424, sd_size);
+	}
+}
+
+static int cli_io_handler_show_startup_logs(struct appctx *appctx)
+{
+	struct stream_interface *si = appctx->owner;
+	const char *msg = (startup_logs ? startup_logs : "No startup alerts/warnings.\n");
+
+	if (ci_putstr(si_ic(si), msg) == -1) {
+		si_rx_room_blk(si);
+		return 0;
+	}
+	return 1;
+}
+
+/* register cli keywords */
+static struct cli_kw_list cli_kws = {{ },{
+	{ { "show", "startup-logs",  NULL },
+	  "show startup-logs : report logs emitted during HAProxy startup",
+	  NULL, cli_io_handler_show_startup_logs },
+	{{},}
+}};
+
+INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
+
+REGISTER_PER_THREAD_INIT(init_log_buffers_per_thread);
+REGISTER_PER_THREAD_DEINIT(deinit_log_buffers_per_thread);
+
+/*
+ * Local variables:
+ *  c-indent-level: 8
+ *  c-basic-offset: 8
+ * End:
+ */
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        turn;
 
 	level = LOG_INFO;
 	if (sess->fe->options2 & PR_O2_LOGERRORS)

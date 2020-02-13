@@ -1,7 +1,7 @@
                              -----------------------
                               HAProxy Starter Guide
                              -----------------------
-                                   version 2.1
+                                   version 1.9
 
 
 This document is an introduction to HAProxy for all those who don't know it, as
@@ -84,6 +84,9 @@ to the mailing list whose responses are present in these documents.
 
   - configuration.txt : the reference manual details all configuration keywords
     and their options. It is used when a configuration change is needed.
+
+  - architecture.txt : the architecture manual explains how to best architect a
+    load-balanced infrastructure and how to interact with third party products.
 
   - coding-style.txt : this is for developers who want to propose some code to
     the project. It explains the style to adopt for the code. It is not very
@@ -1068,7 +1071,7 @@ components.
 
 HAProxy provides very detailed logs, with millisecond accuracy and the exact
 connection accept time that can be searched in firewalls logs (e.g. for NAT
-correlation). By default, TCP and HTTP logs are quite detailed and contain
+correlation). By default, TCP and HTTP logs are quite detailed an contain
 everything needed for troubleshooting, such as source IP address and port,
 frontend, backend, server, timers (request receipt duration, queue duration,
 connection setup time, response headers time, data transfer time), global
@@ -1563,7 +1566,4 @@ reached.
 
 Varnish also does some load balancing of its backend servers and does support
 real health checks. It doesn't implement stickiness however, so just like with
-NGINX, as long as stickiness is not needed that can be enough to start with.
-And similarly, since HAProxy and Varnish integrate so well together, it's easy
-to add it later into the mix to complement the feature set.
-
+NGINX, as long as stickiness is not needed that can be en

@@ -4,8 +4,6 @@
 
 A high-performance HTTP proxy cache server and RESTful NoSQL cache server based on HAProxy.
 
-WIP: Migration to HAProxy v2.0, need explicitly `no option http-use-htx` defined
-
 # Table of Contents
 
 * [Introduction](#introduction)
@@ -346,7 +344,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
 **default:** *none*
 
@@ -440,34 +438,6 @@ If a request has the same key as a cached HTTP response data, then cached data w
 Set a TTL on key, after the TTL has expired, the key will be deleted.
 
 It accepts units like `d`, `h`, `m` and `s`. Default ttl is `0` which does not expire the key.
-
-ttl can be automatically extended by using `extend` keyword.
-
-### extend EXTEND
-
-Automatically extend the ttl.
-
-#### Format
-
-extend on|off|n1,n2,n3,n4
-
-Default: off.
-
-n1,n2,n3,n4: positive integer less than 100, and n1 + n2 + n3 is less than 100. Together they define four time slots as following:
-
-```
-time:       0                                                       ttl         ttl * (1 + n4%)
-access:     |            A1             |   A2    |   A3    |   A4    |         |
-            |---------------------------|---------|---------|---------|---------|
-percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->|
-```
-
-ttl will be extended if:
-
-1. A4 > A3 > A2
-2. A new request takes place between `ttl` and `ttl * (1 + n4%)`
-
-> `on` equals to 33,33,33,33
 
 ### code CODE1,CODE2...
 
@@ -1053,6 +1023,39 @@ frontend web2
 backend app2
     balance     roundrobin
     mode http
+
+    # disable cache on this proxy
+    nuster cache off
+    nuster rule all
+
+    server s2 10.0.0.11:8080
+
+frontend nosql_fe
+    bind *:9090
+    default_backend nosql_be
+backend nosql_be
+    nuster nosql on
+    nuster rule r1 ttl 3600
+```
+
+# Contributing
+
+* Join the development
+* Give feedback
+* Report issues
+* Send pull requests
+* Spread nuster
+
+# License
+
+Copyright (C) 2017-2019, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+
+All rights reserved.
+
+Licensed under GPL, the same as HAProxy
+
+HAProxy and other sources license notices: see relevant individual files.
+                                                                                                                                                                                                                                                                                          
 
     # disable cache on this proxy
     nuster cache off
