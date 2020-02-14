@@ -71,7 +71,7 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
     return ret;
 }
 
-int nst_cache_purge2(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
 
@@ -94,7 +94,7 @@ int nst_cache_purge2(struct stream *s, struct channel *req, struct proxy *px) {
     return 1;
 }
 
-int _nst_cache_manager_state_ttl2(struct stream *s, struct channel *req,
+int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
         struct proxy *px, int state, int ttl) {
 
     int found, mode      = NST_CACHE_PURGE_NAME_RULE;
@@ -157,7 +157,7 @@ int _nst_cache_manager_state_ttl2(struct stream *s, struct channel *req,
     return 400;
 }
 
-static inline int _nst_cache_manager_purge_method2(struct http_txn *txn,
+static inline int _nst_cache_manager_purge_method(struct http_txn *txn,
         struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&msg->chn->buf);
@@ -169,7 +169,7 @@ static inline int _nst_cache_manager_purge_method2(struct http_txn *txn,
                     strlen(global.nuster.cache.purge_method) - 1));
 }
 
-int _nst_cache_manager_purge2(struct stream *s, struct channel *req,
+int _nst_cache_manager_purge(struct stream *s, struct channel *req,
         struct proxy *px) {
 
     struct stream_interface *si = &s->si[1];
@@ -373,24 +373,24 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
                 nst_parse_time(hdr2.value.ptr, hdr2.value.len, (unsigned *)&ttl);
             }
 
-            txn->status = _nst_cache_manager_state_ttl2(s, req, px, state, ttl);
+            txn->status = _nst_cache_manager_state_ttl(s, req, px, state, ttl);
         } else {
             return 0;
         }
-    } else if(_nst_cache_manager_purge_method2(txn, msg)) {
+    } else if(_nst_cache_manager_purge_method(txn, msg)) {
 
         /* purge */
         if(nst_cache_check_uri(msg) == NST_OK) {
 
             /* manager uri */
-            txn->status = _nst_cache_manager_purge2(s, req, px);
+            txn->status = _nst_cache_manager_purge(s, req, px);
 
             if(txn->status == 0) {
                 return 0;
             }
         } else {
             /* single uri */
-            return nst_cache_purge2(s, req, px);
+            return nst_cache_purge(s, req, px);
         }
     } else {
         return 0;

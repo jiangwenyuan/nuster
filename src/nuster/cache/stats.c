@@ -96,7 +96,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     return 0;
 }
 
-int _nst_cache_stats_head2(struct appctx *appctx, struct stream *s,
+int _nst_cache_stats_head(struct appctx *appctx, struct stream *s,
         struct stream_interface *si, struct channel *res) {
 
     struct htx *res_htx;
@@ -187,7 +187,7 @@ full:
     return 0;
 }
 
-int _nst_cache_stats_data2(struct appctx *appctx, struct stream *s,
+int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
         struct stream_interface *si, struct channel *res) {
 
     struct htx *htx;
@@ -285,14 +285,14 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 
     if(appctx->st0 == NST_CACHE_STATS_HEAD) {
 
-        if(_nst_cache_stats_head2(appctx, s, si, res)) {
+        if(_nst_cache_stats_head(appctx, s, si, res)) {
             appctx->st0 = NST_CACHE_STATS_DATA;
         }
     }
 
     if(appctx->st0 == NST_CACHE_STATS_DATA) {
 
-        if(_nst_cache_stats_data2(appctx, s, si, res)) {
+        if(_nst_cache_stats_data(appctx, s, si, res)) {
             appctx->st0 = NST_CACHE_STATS_DONE;
         }
     }
