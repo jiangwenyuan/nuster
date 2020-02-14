@@ -1,5 +1,13 @@
 # nuster Changelog
 
+## 5.0.0.20-dev1 - 2020-02-14
+
+Upgrade to HAProxy v2.1.3
+
+### Changed
+
+* Remove legacy HTTP mode code
+
 ## 4.0.0.20 - 2020-02-13
 
 Upgrade to HAProxy v2.0.12

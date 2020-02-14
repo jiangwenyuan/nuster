@@ -334,7 +334,7 @@ cache/nosqlの有効無効を決める。
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
 **default:** *none*
 
@@ -475,6 +475,18 @@ cache-rule all code all
 * only:  メモリに保存せず、ディスクだけに保存する
 * sync:  メモリとディスクに保存してからクライアントに返す
 * async: メモリに保存してクライアントに返す、後ほどmaster processによってディスクに保存される
+
+### etag on|off
+
+etag条件付きリクエストの処理、 `ETag` なければ、追加する.
+
+ディフォルトoff.
+
+### last-modified on|off
+
+last-modified条件付きリクエストの処理、 `Last-Modified` なければ、追加する.
+
+ディフォルトoff.
 
 ### if|unless condition
 
@@ -1032,7 +1044,7 @@ backend nosql_be
 
 # License
 
-Copyright (C) 2017-2018, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+Copyright (C) 2017-present, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
 
 All rights reserved.
 

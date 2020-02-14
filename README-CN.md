@@ -333,7 +333,7 @@ nuster nosql [on|off]
 
 ## nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [code CODE] [disk MODE] [if|unless condition]
+**syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
 **default:** *none*
 
@@ -473,6 +473,18 @@ cache-rule all code all
 * only:  不保存在内存，仅保存在硬盘
 * sync:  保存到内存和硬盘后返回给客户端
 * async: 保存到内存后立即换回给客户的，内存数据会由master进程在一定时间后保存至硬盘
+
+### etag on|off
+
+定义是否处理etag条件请求. 如果没有 `ETag` 则添加。
+
+默认off.
+
+### last-modified on|off
+
+定义是否处理last-modified条件请求. 如果没有 `Last-Modified` 则添加.
+
+默认off.
 
 ### if|unless condition
 
@@ -1040,7 +1052,7 @@ backend nosql_be
 
 # License
 
-Copyright (C) 2017-2018, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
+Copyright (C) 2017-present, [Jiang Wenyuan](https://github.com/jiangwenyuan), < koubunen AT gmail DOT com >
 
 All rights reserved.
 
