@@ -611,7 +611,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
 
     char *uri_begin, *uri_end;
     struct htx_sl *sl;
-    struct ist uri;
+    struct ist url, uri;
     char *ptr;
 
     ctx->req.scheme = SCH_HTTP;
@@ -637,9 +637,10 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     }
 
     sl = http_get_stline(htx);
-    uri = htx_sl_req_uri(sl);
+    url = htx_sl_req_uri(sl);
+    uri = http_get_path(url);
 
-    if (!uri.len || *uri.ptr != '/') {
+    if(!uri.len || *uri.ptr != '/') {
         return NST_ERR;
     }
 
@@ -658,7 +659,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     }
 
     ctx->req.path.len = ptr - uri_begin;
-    ctx->req.uri.data = uri_begin;
+    ctx->req.uri.data = uri.ptr;
     ctx->req.uri.len  = uri.len;
 
     /* extra 1 char as required by regex_exec_match2 */
