@@ -319,7 +319,7 @@ struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
     return stash;
 }
 
-int nst_cache_check_uri2(struct http_msg *msg) {
+int nst_cache_check_uri(struct http_msg *msg) {
     struct htx *htx;
     struct htx_sl *sl;
     struct ist uri;
@@ -603,7 +603,7 @@ shm_err:
 }
 
 
-int nst_cache_prebuild_key2(struct nst_cache_ctx *ctx, struct stream *s,
+int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&s->req.buf);
@@ -699,7 +699,7 @@ int nst_cache_prebuild_key2(struct nst_cache_ctx *ctx, struct stream *s,
     return NST_OK;
 }
 
-int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
+int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
@@ -878,7 +878,7 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
     return NST_OK;
 }
 
-struct buffer *nst_cache_build_purge_key2(struct stream *s,
+struct buffer *nst_cache_build_purge_key(struct stream *s,
         struct http_msg *msg) {
 
     int https;
@@ -1071,7 +1071,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
  * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
-void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg) {
+void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
     struct nst_cache_entry *entry = NULL;
 
     nst_shctx_lock(&nuster.cache->dict[0]);
@@ -1250,7 +1250,7 @@ err:
 /*
  * Add partial http data to nst_cache_data
  */
-int nst_cache_update2(struct nst_cache_ctx *ctx, struct http_msg *msg,
+int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len) {
 
     int pos;

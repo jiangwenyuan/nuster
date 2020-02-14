@@ -63,7 +63,7 @@ int nst_cache_stats_full() {
  * return 1 if the req is done, otherwise 0
  */
 
-int nst_cache_stats2(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     struct stream_interface *si = &s->si[1];
     struct http_txn *txn        = s->txn;
     struct http_msg *msg        = &txn->req;
@@ -74,7 +74,7 @@ int nst_cache_stats2(struct stream *s, struct channel *req, struct proxy *px) {
     }
 
     /* GET stats uri */
-    if(txn->meth == HTTP_METH_GET && nst_cache_check_uri2(msg) == NST_OK) {
+    if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg) == NST_OK) {
         s->target = &nuster.applet.cache_stats.obj_type;
 
         if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {

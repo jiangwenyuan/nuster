@@ -602,7 +602,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	}
 
 	/* check nuster applets: manager/purge/stats... */
-	if (nuster_check_applet2(s, req, px)) {
+	if (nuster_check_applet(s, req, px)) {
 		goto return_prx_cond;
 	}
 

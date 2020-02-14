@@ -634,7 +634,7 @@ static int htx_handle_expect_hdr
 /*
  * return 1 if the request is done, otherwise 0
  */
-int nst_nosql_check_applet2(struct stream *s, struct channel *req,
+int nst_nosql_check_applet(struct stream *s, struct channel *req,
         struct proxy *px) {
 
     if(global.nuster.nosql.status == NST_STATUS_ON
@@ -676,7 +676,7 @@ int nst_nosql_check_applet2(struct stream *s, struct channel *req,
     return 0;
 }
 
-int nst_nosql_prebuild_key2(struct nst_nosql_ctx *ctx, struct stream *s,
+int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&s->req.buf);
@@ -776,7 +776,7 @@ int nst_nosql_prebuild_key2(struct nst_nosql_ctx *ctx, struct stream *s,
     return 1;
 }
 
-int nst_nosql_build_key2(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
+int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
@@ -960,7 +960,7 @@ void nst_nosql_hit(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_nosql_data *data) {
 }
 
-int nst_nosql_get_headers2(struct nst_nosql_ctx *ctx, struct stream *s,
+int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&s->req.buf);
@@ -1019,7 +1019,7 @@ int nst_nosql_get_headers2(struct nst_nosql_ctx *ctx, struct stream *s,
     return 1;
 }
 
-void nst_res_header_create2(struct nst_nosql_ctx *ctx, struct stream *s,
+void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
         int status, struct ist ctv) {
 
     struct htx_sl  *sl;
@@ -1172,7 +1172,7 @@ void nst_res_header_create2(struct nst_nosql_ctx *ctx, struct stream *s,
 
 }
 
-void nst_nosql_create2(struct nst_nosql_ctx *ctx, struct stream *s,
+void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct nst_nosql_entry *entry = NULL;
@@ -1235,7 +1235,7 @@ void nst_nosql_create2(struct nst_nosql_ctx *ctx, struct stream *s,
                 entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
             }
 
-            nst_res_header_create2(ctx, s, 200, hdr2.value);
+            nst_res_header_create(ctx, s, 200, hdr2.value);
 
         }
     }
@@ -1285,7 +1285,7 @@ err:
     return;
 }
 
-int nst_nosql_update2(struct nst_nosql_ctx *ctx, struct http_msg *msg,
+int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len) {
 
     int pos;
@@ -1434,7 +1434,7 @@ int nst_nosql_delete(struct buffer *key, uint64_t hash) {
     return ret;
 }
 
-void nst_nosql_finish2(struct nst_nosql_ctx *ctx, struct stream *s,
+void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     if(ctx->cache_len == 0 && ctx->cache_len2 == 0) {

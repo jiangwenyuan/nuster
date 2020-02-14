@@ -210,50 +210,32 @@ void nst_nosql_housekeeping();
 int nst_nosql_check_applet(struct stream *s, struct channel *req,
         struct proxy *px);
 
-int nst_nosql_check_applet2(struct stream *s, struct channel *req,
-        struct proxy *px);
-
 struct nst_nosql_data *nst_nosql_data_new();
 int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
-
-int nst_nosql_prebuild_key2(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
 int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s, struct http_msg *msg);
 
-int nst_nosql_build_key2(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
-        struct stream *s, struct http_msg *msg);
-
 uint64_t nst_nosql_hash_key(const char *key);
 int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode);
 int nst_nosql_delete(struct buffer *key, uint64_t hash);
+
 void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
-void nst_nosql_create2(struct nst_nosql_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
-
 int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
-        long msg_len);
-
-int nst_nosql_update2(struct nst_nosql_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len);
 
-void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct http_msg *msg);
-void nst_nosql_finish2(struct nst_nosql_ctx *ctx, struct stream *s,
+void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
 void nst_nosql_abort(struct nst_nosql_ctx *ctx);
+
 int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
-int nst_nosql_get_headers2(struct nst_nosql_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
-
 void nst_nosql_persist_async();
-void nst_nosql_persist_async2();
 void nst_nosql_persist_cleanup();
 void nst_nosql_persist_load();
 

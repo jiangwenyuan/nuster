@@ -75,7 +75,7 @@ int nst_cache_purge2(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
 
-    struct buffer *key = nst_cache_build_purge_key2(s, msg);
+    struct buffer *key = nst_cache_build_purge_key(s, msg);
 
     if(!key) {
         txn->status = 500;
@@ -338,7 +338,7 @@ badreq:
 /*
  * return 1 if the request is done, otherwise 0
  */
-int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
     int state            = -1;
@@ -353,7 +353,7 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
     if(txn->meth == HTTP_METH_POST) {
 
         /* POST */
-        if(nst_cache_check_uri2(msg) == NST_OK) {
+        if(nst_cache_check_uri(msg) == NST_OK) {
             /* manager uri */
             if(http_find_header(htx, ist("state"), &hdr2, 0)) {
 
@@ -380,7 +380,7 @@ int nst_cache_manager2(struct stream *s, struct channel *req, struct proxy *px) 
     } else if(_nst_cache_manager_purge_method2(txn, msg)) {
 
         /* purge */
-        if(nst_cache_check_uri2(msg) == NST_OK) {
+        if(nst_cache_check_uri(msg) == NST_OK) {
 
             /* manager uri */
             txn->status = _nst_cache_manager_purge2(s, req, px);

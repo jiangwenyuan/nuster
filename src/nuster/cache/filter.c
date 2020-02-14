@@ -268,7 +268,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
         /* request */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
 
-            if(nst_cache_prebuild_key2(ctx, s, msg) != NST_OK) {
+            if(nst_cache_prebuild_key(ctx, s, msg) != NST_OK) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 return 1;
             }
@@ -282,7 +282,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 }
 
                 /* build key */
-                if(nst_cache_build_key2(ctx, rule->key, s, msg) != NST_OK) {
+                if(nst_cache_build_key(ctx, rule->key, s, msg) != NST_OK) {
                     ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                     return 1;
                 }
@@ -376,14 +376,14 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
 
                     if(ret == 304) {
-                        nst_res_304(si, &ctx->res.last_modified,
+                        nst_res_304_2(s, &ctx->res.last_modified,
                                 &ctx->res.etag);
 
                         return 1;
                     }
 
                     if(ret == 412) {
-                        nst_res_412(si);
+                        nst_res_412_2(s);
 
                         return 1;
                     }
@@ -503,7 +503,7 @@ abort_check:
             nst_debug("PASS\n[nuster][cache] To create\n");
 
             /* start to build cache */
-            nst_cache_create2(ctx, msg);
+            nst_cache_create(ctx, msg);
         }
     }
 
@@ -525,7 +525,7 @@ static int _nst_cache_filter_http_payload(struct stream *s,
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE
             && (msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_cache_update2(ctx, msg, offset, ret) != NST_OK) {
+        if(nst_cache_update(ctx, msg, offset, ret) != NST_OK) {
             goto err;
         }
     }

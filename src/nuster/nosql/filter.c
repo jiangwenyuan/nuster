@@ -125,7 +125,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
 
-        if(!nst_nosql_prebuild_key2(ctx, s, msg)) {
+        if(!nst_nosql_prebuild_key(ctx, s, msg)) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
             return 1;
         }
@@ -138,7 +138,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 nst_nosql_memory_free(ctx->key);
             }
 
-            if(nst_nosql_build_key2(ctx, rule->key, s, msg) != NST_OK) {
+            if(nst_nosql_build_key(ctx, rule->key, s, msg) != NST_OK) {
                 appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
                 return 1;
             }
@@ -176,7 +176,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
                     nst_debug("PASS\n[nuster][nosql] To create\n");
 
-                    if(nst_nosql_get_headers2(ctx, s, msg)) {
+                    if(nst_nosql_get_headers(ctx, s, msg)) {
                         ctx->state = NST_NOSQL_CTX_STATE_PASS;
                         ctx->rule  = rule;
                         ctx->pid   = px->uuid;
@@ -247,7 +247,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
     if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
-        nst_nosql_create2(ctx, s, msg);
+        nst_nosql_create(ctx, s, msg);
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
@@ -287,7 +287,7 @@ static int _nst_nosql_filter_http_payload(struct stream *s,
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE
             && !(msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_nosql_update2(ctx, msg, offset, len) != NST_OK) {
+        if(nst_nosql_update(ctx, msg, offset, len) != NST_OK) {
             ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
             appctx->st0       = NST_NOSQL_APPCTX_STATE_FULL;
             ctx->state        = NST_NOSQL_CTX_STATE_INVALID;
@@ -307,7 +307,7 @@ static int _nst_nosql_filter_http_end(struct stream *s, struct filter *filter,
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE
             && !(msg->chn->flags & CF_ISRESP)) {
 
-        nst_nosql_finish2(ctx, s, msg);
+        nst_nosql_finish(ctx, s, msg);
 
         if(ctx->state == NST_NOSQL_CTX_STATE_DONE) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
