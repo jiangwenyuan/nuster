@@ -26,33 +26,42 @@
 #include <common/ticks.h>
 #include <common/net_helper.h>
 
+#include <types/action.h>
 #include <types/applet.h>
 #include <types/cli.h>
 #include <types/global.h>
 #include <types/dns.h>
 #include <types/stats.h>
 
+#include <proto/action.h>
 #include <proto/channel.h>
 #include <proto/cli.h>
 #include <proto/checks.h>
 #include <proto/dns.h>
 #include <proto/fd.h>
+#include <proto/http_ana.h>
+#include <proto/http_rules.h>
 #include <proto/log.h>
+#include <proto/sample.h>
 #include <proto/server.h>
 #include <proto/task.h>
 #include <proto/proto_udp.h>
 #include <proto/proxy.h>
 #include <proto/stream_interface.h>
+#include <proto/tcp_rules.h>
+#include <proto/vars.h>
 
 struct list dns_resolvers  = LIST_HEAD_INIT(dns_resolvers);
 struct list dns_srvrq_list = LIST_HEAD_INIT(dns_srvrq_list);
 
-static THREAD_LOCAL int64_t dns_query_id_seed = 0; /* random seed */
+static THREAD_LOCAL uint64_t dns_query_id_seed = 0; /* random seed */
 
 DECLARE_STATIC_POOL(dns_answer_item_pool, "dns_answer_item", sizeof(struct dns_answer_item));
 DECLARE_STATIC_POOL(dns_resolution_pool,  "dns_resolution",  sizeof(struct dns_resolution));
+DECLARE_POOL(dns_requester_pool,  "dns_requester",  sizeof(struct dns_requester));
 
 static unsigned int resolution_uuid = 1;
+unsigned int dns_failed_resolutions = 0;
 
 /* Returns a pointer to the resolvers matching the id <id>. NULL is returned if
  * no match is found.
@@ -528,13 +537,16 @@ static void dns_check_dns_response(struct dns_resolution *res)
 				HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 				if (srv->srvrq == srvrq && srv->svc_port == item->port &&
 				    item->data_len == srv->hostname_dn_len &&
-				    !memcmp(srv->hostname_dn, item->target, item->data_len)) {
+				    !memcmp(srv->hostname_dn, item->target, item->data_len) &&
+				    !srv->dns_opts.ignore_weight) {
 					int ha_weight;
 
-					/* Make sure weight is at least 1, so
-					 * that the server will be used.
+					/* DNS weight range if from 0 to 65535
+					 * HAProxy weight is from 0 to 256
+					 * The rule below ensures that weight 0 is well respected
+					 * while allowing a "mapping" from DNS weight into HAProxy's one.
 					 */
-					ha_weight = item->weight / 256 + 1;
+					ha_weight = (item->weight + 255) / 256;
 					if (srv->uweight != ha_weight) {
 						char weight[9];
 
@@ -578,13 +590,17 @@ static void dns_check_dns_response(struct dns_resolution *res)
 				    !(srv->flags & SRV_F_CHECKPORT))
 					srv->check.port = item->port;
 
-				/* Make sure weight is at least 1, so
-				 * that the server will be used.
-				 */
-				ha_weight = item->weight / 256 + 1;
+				if (!srv->dns_opts.ignore_weight) {
+					/* DNS weight range if from 0 to 65535
+					 * HAProxy weight is from 0 to 256
+					 * The rule below ensures that weight 0 is well respected
+					 * while allowing a "mapping" from DNS weight into HAProxy's one.
+					 */
+					ha_weight = (item->weight + 255) / 256;
 
-				snprintf(weight, sizeof(weight), "%d", ha_weight);
-				server_parse_weight_change_request(srv, weight);
+					snprintf(weight, sizeof(weight), "%d", ha_weight);
+					server_parse_weight_change_request(srv, weight);
+				}
 				HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 			}
 		}
@@ -1212,7 +1228,6 @@ int dns_str_to_dn_label(const char *str, int str_len, char *dn, int dn_len)
  */
 int dns_hostname_validation(const char *string, char **err)
 {
-	const char *c, *d;
 	int i;
 
 	if (strlen(string) > DNS_MAX_NAME_SIZE) {
@@ -1221,36 +1236,32 @@ int dns_hostname_validation(const char *string, char **err)
 		return 0;
 	}
 
-	c = string;
-	while (*c) {
-		d = c;
-
+	while (*string) {
 		i = 0;
-		while (*d != '.' && *d && i <= DNS_MAX_LABEL_SIZE) {
-			i++;
-			if (!((*d == '-') || (*d == '_') ||
-			      ((*d >= 'a') && (*d <= 'z')) ||
-			      ((*d >= 'A') && (*d <= 'Z')) ||
-			      ((*d >= '0') && (*d <= '9')))) {
+		while (*string && *string != '.' && i < DNS_MAX_LABEL_SIZE) {
+			if (!(*string == '-' || *string == '_' ||
+			      (*string >= 'a' && *string <= 'z') ||
+			      (*string >= 'A' && *string <= 'Z') ||
+			      (*string >= '0' && *string <= '9'))) {
 				if (err)
 					*err = DNS_INVALID_CHARACTER;
 				return 0;
 			}
-			d++;
+			i++;
+			string++;
 		}
 
-		if ((i >= DNS_MAX_LABEL_SIZE) && (d[i] != '.')) {
+		if (!(*string))
+			break;
+
+		if (*string != '.' && i >= DNS_MAX_LABEL_SIZE) {
 			if (err)
 				*err = DNS_LABEL_TOO_LONG;
 			return 0;
 		}
 
-		if (*d == '\0')
-			goto out;
-
-		c = ++d;
+		string++;
 	}
- out:
 	return 1;
 }
 
@@ -1347,6 +1358,7 @@ int dns_link_resolution(void *requester, int requester_type, int requester_locke
 	struct dns_resolvers  *resolvers;
 	struct server         *srv   = NULL;
 	struct dns_srvrq      *srvrq = NULL;
+	struct stream         *stream = NULL;
 	char **hostname_dn;
 	int   hostname_dn_len, query_type;
 
@@ -1369,6 +1381,15 @@ int dns_link_resolution(void *requester, int requester_type, int requester_locke
 			query_type      = DNS_RTYPE_SRV;
 			break;
 
+		case OBJ_TYPE_STREAM:
+			stream          = (struct stream *)requester;
+			hostname_dn     = &stream->dns_ctx.hostname_dn;
+			hostname_dn_len = stream->dns_ctx.hostname_dn_len;
+			resolvers       = stream->dns_ctx.parent->arg.dns.resolvers;
+			query_type      = ((stream->dns_ctx.parent->arg.dns.dns_opts.family_prio == AF_INET)
+					   ? DNS_RTYPE_A
+					   : DNS_RTYPE_AAAA);
+			break;
 		default:
 			goto err;
 	}
@@ -1381,7 +1402,7 @@ int dns_link_resolution(void *requester, int requester_type, int requester_locke
 		if (!requester_locked)
 			HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 		if (srv->dns_requester == NULL) {
-			if ((req = calloc(1, sizeof(*req))) == NULL) {
+			if ((req = pool_alloc(dns_requester_pool)) == NULL) {
 				if (!requester_locked)
 					HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 				goto err;
@@ -1393,23 +1414,40 @@ int dns_link_resolution(void *requester, int requester_type, int requester_locke
 			req = srv->dns_requester;
 		if (!requester_locked)
 			HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
+
+		req->requester_cb       = snr_resolution_cb;
+		req->requester_error_cb = snr_resolution_error_cb;
 	}
 	else if (srvrq) {
 		if (srvrq->dns_requester == NULL) {
-			if ((req = calloc(1, sizeof(*req))) == NULL)
+			if ((req = pool_alloc(dns_requester_pool)) == NULL)
 				goto err;
 			req->owner           = &srvrq->obj_type;
 			srvrq->dns_requester = req;
 		}
 		else
 			req = srvrq->dns_requester;
+
+		req->requester_cb       = snr_resolution_cb;
+		req->requester_error_cb = snr_resolution_error_cb;
+	}
+	else if (stream) {
+		if (stream->dns_ctx.dns_requester == NULL) {
+			if ((req = pool_alloc(dns_requester_pool)) == NULL)
+				goto err;
+			req->owner           = &stream->obj_type;
+			stream->dns_ctx.dns_requester = req;
+		}
+		else
+			req = stream->dns_ctx.dns_requester;
+
+		req->requester_cb       = act_resolution_cb;
+		req->requester_error_cb = act_resolution_error_cb;
 	}
 	else
 		goto err;
 
 	req->resolution         = res;
-	req->requester_cb       = snr_resolution_cb;
-	req->requester_error_cb = snr_resolution_error_cb;
 
 	LIST_ADDQ(&res->requesters, &req->list);
 	return 0;
@@ -1455,6 +1493,10 @@ void dns_unlink_resolution(struct dns_requester *requester)
 			res->hostname_dn     = __objt_dns_srvrq(req->owner)->hostname_dn;
 			res->hostname_dn_len = __objt_dns_srvrq(req->owner)->hostname_dn_len;
 			break;
+		case OBJ_TYPE_STREAM:
+			res->hostname_dn     = __objt_stream(req->owner)->dns_ctx.hostname_dn;
+			res->hostname_dn_len = __objt_stream(req->owner)->dns_ctx.hostname_dn_len;
+			break;
 		default:
 			res->hostname_dn     = NULL;
 			res->hostname_dn_len = 0;
@@ -1490,18 +1532,25 @@ static void dns_resolve_recv(struct dgram_conn *dgram)
 		return;
 
 	/* no need to go further if we can't retrieve the nameserver */
-	if ((ns = dgram->owner) == NULL)
+	if ((ns = dgram->owner) == NULL) {
+		_HA_ATOMIC_AND(&fdtab[fd].ev, ~(FD_POLL_HUP|FD_POLL_ERR));
+		fd_stop_recv(fd);
 		return;
+	}
 
 	resolvers = ns->resolvers;
 	HA_SPIN_LOCK(DNS_LOCK, &resolvers->lock);
 
 	/* process all pending input messages */
-	while (1) {
+	while (fd_recv_ready(fd)) {
 		/* read message received */
 		memset(buf, '\0', resolvers->accepted_payload_size + 1);
 		if ((buflen = recv(fd, (char*)buf , resolvers->accepted_payload_size + 1, 0)) < 0) {
-			/* FIXME : for now we consider EAGAIN only */
+			/* FIXME : for now we consider EAGAIN only, but at
+			 * least we purge sticky errors that would cause us to
+			 * be called in loops.
+			 */
+			_HA_ATOMIC_AND(&fdtab[fd].ev, ~(FD_POLL_HUP|FD_POLL_ERR));
 			fd_cant_recv(fd);
 			break;
 		}
@@ -1823,7 +1872,7 @@ static void dns_deinit(void)
 		list_for_each_entry_safe(res, resback, &resolvers->resolutions.curr, list) {
 			list_for_each_entry_safe(req, reqback, &res->requesters, list) {
 				LIST_DEL(&req->list);
-				free(req);
+				pool_free(dns_requester_pool, req);
 			}
 			dns_free_resolution(res);
 		}
@@ -1831,15 +1880,14 @@ static void dns_deinit(void)
 		list_for_each_entry_safe(res, resback, &resolvers->resolutions.wait, list) {
 			list_for_each_entry_safe(req, reqback, &res->requesters, list) {
 				LIST_DEL(&req->list);
-				free(req);
+				pool_free(dns_requester_pool, req);
 			}
 			dns_free_resolution(res);
 		}
 
 		free(resolvers->id);
 		free((char *)resolvers->conf.file);
-		task_delete(resolvers->t);
-		task_free(resolvers->t);
+		task_destroy(resolvers->t);
 		LIST_DEL(&resolvers->list);
 		free(resolvers);
 	}
@@ -1976,12 +2024,8 @@ static int cli_parse_stat_resolvers(char **args, char *payload, struct appctx *a
 				break;
 			}
 		}
-		if (appctx->ctx.cli.p0 == NULL) {
-			appctx->ctx.cli.severity = LOG_ERR;
-			appctx->ctx.cli.msg = "Can't find that resolvers section\n";
-			appctx->st0 = CLI_ST_PRINT;
-			return 1;
-		}
+		if (appctx->ctx.cli.p0 == NULL)
+			return cli_err(appctx, "Can't find that resolvers section\n");
 	}
 	return 0;
 }
@@ -2056,16 +2100,6 @@ static int cli_io_handler_dump_resolvers_to_buffer(struct appctx *appctx)
 static struct cli_kw_list cli_kws = {{ }, {
 		{ { "show", "resolvers", NULL }, "show resolvers [id]: dumps counters from all resolvers section and\n"
 		  "                     associated name servers",
-		  cli_parse_stat_resolvers, cli_io_handler_dump_resolvers_to_buffer },
-		{{},}
-	}
-};
-
-INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
-
-REGISTER_POST_DEINIT(dns_deinit);
-REGISTER_CONFIG_POSTPARSER("dns runtime resolver", dns_finalize_config);
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              associated name servers",
 		  cli_parse_stat_resolvers, cli_io_handler_dump_resolvers_to_buffer },
 		{{},}
 	}

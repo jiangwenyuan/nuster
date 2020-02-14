@@ -33,59 +33,6 @@
 /*
  * The cache applet acts like the backend to send cached http data
  */
-static void nst_cache_engine_handler1(struct appctx *appctx) {
-    struct nst_cache_element *element = NULL;
-    struct stream_interface *si       = appctx->owner;
-    struct channel *res               = si_ic(si);
-    /* struct stream *s                  = si_strm(si); */
-    int ret;
-
-    if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        appctx->ctx.nuster.cache_engine.data->clients--;
-        return;
-    }
-
-    /* Check if the input buffer is avalaible. */
-    if(res->buf.size == 0) {
-        si_rx_room_blk(si);
-        return;
-    }
-
-    /* check that the output is not closed */
-    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
-        appctx->ctx.nuster.cache_engine.element = NULL;
-    }
-
-    if(appctx->ctx.nuster.cache_engine.element) {
-        /*
-           if(appctx->ctx.nuster.cache_engine.element
-           == appctx->ctx.nuster.cache_engine.data->element) {
-           s->res.analysers = 0;
-           s->res.analysers |= (AN_RES_WAIT_HTTP | AN_RES_HTTP_PROCESS_BE
-           | AN_RES_HTTP_XFER_BODY);
-           }
-           */
-        element = appctx->ctx.nuster.cache_engine.element;
-
-        ret = ci_putblk(res, element->msg.data, element->msg.len);
-
-        if(ret >= 0) {
-            appctx->ctx.nuster.cache_engine.element = element->next;
-        } else if(ret == -2) {
-            appctx->ctx.nuster.cache_engine.data->clients--;
-            si_shutr(si);
-            res->flags |= CF_READ_NULL;
-        }
-
-    } else {
-        co_skip(si_oc(si), co_data(si_oc(si)));
-        si_shutr(si);
-        res->flags |= CF_READ_NULL;
-        appctx->ctx.nuster.cache_engine.data->clients--;
-    }
-
-}
-
 static int _nst_cache_element_to_htx(struct nst_cache_element *element,
         struct htx *htx) {
 
@@ -114,7 +61,7 @@ static int _nst_cache_element_to_htx(struct nst_cache_element *element,
     return NST_OK;
 }
 
-static void nst_cache_engine_handler2(struct appctx *appctx) {
+static void nst_cache_engine_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *req = si_oc(si);
     struct channel *res = si_ic(si);
@@ -186,7 +133,7 @@ out:
 err:
     /* Sent and HTTP error 500 */
     b_reset(&res->buf);
-    errmsg = &htx_err_chunks[HTTP_ERR_500];
+    errmsg = &http_err_chunks[HTTP_ERR_500];
     res->buf.data = b_data(errmsg);
     memcpy(res->buf.area, b_head(errmsg), b_data(errmsg));
     res_htx = htx_from_buf(&res->buf);
@@ -194,109 +141,10 @@ err:
     total = 0;
 }
 
-static void nst_cache_engine_handler(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
-    struct stream *s = si_strm(si);
-
-    if (IS_HTX_STRM(s)) {
-        return nst_cache_engine_handler2(appctx);
-    } else {
-        return nst_cache_engine_handler1(appctx);
-    }
-}
-
 /*
  * The cache disk applet acts like the backend to send cached http data
  */
-static void nst_cache_disk_engine_handler1(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
-    struct channel *res         = si_ic(si);
-
-    int ret;
-    int max = b_room(&res->buf) - global.tune.maxrewrite;
-
-    int fd = appctx->ctx.nuster.cache_disk_engine.fd;
-    int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
-    uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
-
-    if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        return;
-    }
-
-    /* Check if the input buffer is avalaible. */
-    if(res->buf.size == 0) {
-        si_rx_room_blk(si);
-        return;
-    }
-
-    if(b_data(&res->buf) != 0) {
-        return;
-    }
-
-    /* check that the output is not closed */
-    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
-        appctx->st0 = NST_PERSIST_APPLET_DONE;
-    }
-
-    switch(appctx->st0) {
-        case NST_PERSIST_APPLET_HEADER:
-            ret = pread(fd, res->buf.area, header_len, offset);
-
-            if(ret != header_len) {
-                appctx->st0 = NST_PERSIST_APPLET_ERROR;
-                break;
-            }
-
-            ret = nst_ci_send(res, ret);
-
-            if(ret >= 0) {
-                appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
-                appctx->ctx.nuster.cache_disk_engine.offset += ret;
-            } else if(ret == -2) {
-                appctx->st0 = NST_PERSIST_APPLET_ERROR;
-                si_shutr(si);
-                res->flags |= CF_READ_NULL;
-            }
-            break;
-        case NST_PERSIST_APPLET_PAYLOAD:
-            ret = pread(fd, res->buf.area, max, offset);
-
-            if(ret == -1) {
-                appctx->st0 = NST_PERSIST_APPLET_ERROR;
-                break;
-            }
-
-            if(ret > 0) {
-                ret = nst_ci_send(res, ret);
-
-                if(ret >= 0) {
-                    appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
-                    appctx->ctx.nuster.cache_disk_engine.offset += ret;
-                } else if(ret == -2) {
-                    appctx->st0 = NST_PERSIST_APPLET_ERROR;
-                    si_shutr(si);
-                    res->flags |= CF_READ_NULL;
-                }
-                break;
-            }
-
-            close(fd);
-            appctx->st0 = NST_PERSIST_APPLET_DONE;
-        case NST_PERSIST_APPLET_DONE:
-            co_skip(si_oc(si), co_data(si_oc(si)));
-            si_shutr(si);
-            res->flags |= CF_READ_NULL;
-            break;
-        case NST_PERSIST_APPLET_ERROR:
-            si_shutr(si);
-            res->flags |= CF_READ_NULL;
-            close(fd);
-            break;
-    }
-
-}
-
-static void nst_cache_disk_engine_handler2(struct appctx *appctx) {
+static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
 
     struct channel *req = si_oc(si);
@@ -446,17 +294,6 @@ out:
     return;
 }
 
-static void nst_cache_disk_engine_handler(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
-    struct stream *s = si_strm(si);
-
-    if (IS_HTX_STRM(s)) {
-        return nst_cache_disk_engine_handler2(appctx);
-    } else {
-        return nst_cache_disk_engine_handler1(appctx);
-    }
-}
-
 /*
  * Cache the keys which calculated in request for response use
  */
@@ -480,24 +317,6 @@ struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
     }
 
     return stash;
-}
-
-int nst_cache_check_uri(struct http_msg *msg) {
-    const char *uri = ci_head(msg->chn) + msg->sl.rq.u;
-
-    if(!global.nuster.cache.uri) {
-        return NST_ERR;
-    }
-
-    if(strlen(global.nuster.cache.uri) != msg->sl.rq.u_l) {
-        return NST_ERR;
-    }
-
-    if(memcmp(uri, global.nuster.cache.uri, msg->sl.rq.u_l) != 0) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
 }
 
 int nst_cache_check_uri2(struct http_msg *msg) {
@@ -559,45 +378,6 @@ struct nst_cache_data *nst_cache_data_new() {
     nst_shctx_unlock(nuster.cache);
 
     return data;
-}
-
-/*
- * Append partial http response data
- */
-static struct nst_cache_element *_nst_cache_data_append(struct http_msg *msg,
-        long msg_len) {
-
-    struct nst_cache_element *element =
-        nst_cache_memory_alloc(sizeof(*element));
-
-    if(element) {
-        char *data = b_orig(&msg->chn->buf);
-        char *p    = ci_head(msg->chn);
-        int size   = msg->chn->buf.size;
-
-        char *msg_data = nst_cache_memory_alloc(msg_len);
-
-        if(!msg_data) {
-            nst_cache_memory_free(element);
-            return NULL;
-        }
-
-        if(p - data + msg_len > size) {
-            int right = data + size - p;
-            int left  = msg_len - right;
-            memcpy(msg_data, p, right);
-            memcpy(msg_data + right, data, left);
-        } else {
-            memcpy(msg_data, p, msg_len);
-        }
-
-        element->msg.data = msg_data;
-        element->msg.len  = msg_len;
-        element->next     = NULL;
-        nst_cache_stats_update_used_mem(msg_len);
-    }
-
-    return element;
 }
 
 static int _nst_cache_data_invalid(struct nst_cache_data *data) {
@@ -695,11 +475,7 @@ void nst_cache_housekeeping() {
 
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict[0]);
-            if(global.nuster.cache.htx) {
-                nst_cache_persist_async2();
-            } else {
-                nst_cache_persist_async1();
-            }
+            nst_cache_persist_async();
             nst_shctx_unlock(&nuster.cache->dict[0]);
         }
 
@@ -712,15 +488,6 @@ void nst_cache_init() {
     nuster.applet.cache_disk_engine.fct = nst_cache_disk_engine_handler;
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
-        struct proxy *p;
-
-        for(p = proxies_list; p; p = p->next) {
-
-            if(p->nuster.mode == NST_MODE_CACHE) {
-                global.nuster.cache.htx = p->options2 & PR_O2_USE_HTX;
-                break;
-            }
-        }
 
         if(global.nuster.cache.share == NST_STATUS_UNDEFINED) {
 
@@ -835,98 +602,6 @@ shm_err:
     exit(1);
 }
 
-int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-
-    char *uri_begin, *uri_end;
-    struct hdr_ctx hdr;
-
-    ctx->req.scheme = SCH_HTTP;
-
-#ifdef USE_OPENSSL
-    if(s->sess->listener->bind_conf->is_ssl) {
-        ctx->req.scheme = SCH_HTTPS;
-    }
-#endif
-
-    ctx->req.host.data = NULL;
-    ctx->req.host.len  = 0;
-
-    hdr.idx = 0;
-
-    if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-        ctx->req.host.data = nst_cache_memory_alloc(hdr.vlen);
-
-        if(!ctx->req.host.data) {
-            return NST_ERR;
-        }
-
-        ctx->req.host.len  = hdr.vlen;
-        memcpy(ctx->req.host.data, hdr.line + hdr.val, hdr.vlen);
-    }
-
-    uri_begin = http_txn_get_path(txn);
-    uri_end   = NULL;
-
-    ctx->req.path.data = NULL;
-    ctx->req.path.len  = 0;
-    ctx->req.uri.data  = NULL;
-    ctx->req.uri.len   = 0;
-
-    if(uri_begin) {
-        char *ptr = uri_begin;
-        uri_end   = ci_head(msg->chn) + msg->sl.rq.u + msg->sl.rq.u_l;
-
-        while(ptr < uri_end && *ptr != '?') {
-            ptr++;
-        }
-
-        ctx->req.path.len = ptr - uri_begin;
-        ctx->req.uri.data = uri_begin;
-        ctx->req.uri.len  = uri_end - uri_begin;
-
-        /* extra 1 char as required by regex_exec_match2 */
-        ctx->req.path.data = nst_cache_memory_alloc(ctx->req.path.len + 1);
-
-        if(!ctx->req.path.data) {
-            return NST_ERR;
-        }
-
-        memcpy(ctx->req.path.data, uri_begin, ctx->req.path.len);
-    }
-
-    ctx->req.query.data = NULL;
-    ctx->req.query.len  = 0;
-    ctx->req.delimiter  = 0;
-
-    if(ctx->req.uri.data) {
-        ctx->req.query.data = memchr(ctx->req.uri.data, '?',
-                uri_end - ctx->req.uri.data);
-
-        if(ctx->req.query.data) {
-            ctx->req.query.data++;
-            ctx->req.query.len = uri_end - ctx->req.query.data;
-
-            if(ctx->req.query.len) {
-                ctx->req.delimiter = 1;
-            }
-        }
-    }
-
-    ctx->req.cookie.data = NULL;
-    ctx->req.cookie.len  = 0;
-
-    hdr.idx = 0;
-
-    if(http_find_header2("Cookie", 6, ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-        ctx->req.cookie.data = hdr.line + hdr.val;
-        ctx->req.cookie.len  = hdr.vlen;
-    }
-
-    return NST_OK;
-}
 
 int nst_cache_prebuild_key2(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
@@ -1024,186 +699,10 @@ int nst_cache_prebuild_key2(struct nst_cache_ctx *ctx, struct stream *s,
     return NST_OK;
 }
 
-int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
-        struct stream *s, struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-    struct hdr_ctx hdr;
-    struct nst_rule_key *ck = NULL;
-
-    ctx->key = nst_cache_key_init();
-
-    if(!ctx->key) {
-        return NST_ERR;
-    }
-
-    nst_debug("[nuster][cache] Calculate key: ");
-
-    while((ck = *pck++)) {
-        int ret = NST_OK;
-
-        switch(ck->type) {
-            case NST_RULE_KEY_METHOD:
-                nst_debug("method.");
-                ret = nst_cache_key_append(ctx->key,
-                        http_known_methods[txn->meth].ptr,
-                        http_known_methods[txn->meth].len);
-
-                break;
-            case NST_RULE_KEY_SCHEME:
-                nst_debug("scheme.");
-                ret = nst_cache_key_append(ctx->key,
-                        ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
-                        ctx->req.scheme == SCH_HTTPS ? 5 : 4);
-
-                break;
-            case NST_RULE_KEY_HOST:
-                nst_debug("host.");
-
-                if(ctx->req.host.data) {
-                    ret = nst_cache_key_append(ctx->key, ctx->req.host.data,
-                            ctx->req.host.len);
-                } else {
-                    ret = nst_cache_key_advance(ctx->key, 2);
-                }
-
-                break;
-            case NST_RULE_KEY_URI:
-                nst_debug("uri.");
-
-                if(ctx->req.uri.data) {
-                    ret = nst_cache_key_append(ctx->key, ctx->req.uri.data,
-                            ctx->req.uri.len);
-
-                } else {
-                    ret = nst_cache_key_advance(ctx->key, 2);
-                }
-
-                break;
-            case NST_RULE_KEY_PATH:
-                nst_debug("path.");
-
-                if(ctx->req.path.data) {
-                    ret = nst_cache_key_append(ctx->key, ctx->req.path.data,
-                            ctx->req.path.len);
-
-                } else {
-                    ret = nst_cache_key_advance(ctx->key, 2);
-                }
-
-                break;
-            case NST_RULE_KEY_DELIMITER:
-                nst_debug("delimiter.");
-
-                if(ctx->req.delimiter) {
-                    ret = nst_cache_key_append(ctx->key, "?", 1);
-                } else {
-                    ret = nst_cache_key_advance(ctx->key, 2);
-                }
-
-                break;
-            case NST_RULE_KEY_QUERY:
-                nst_debug("query.");
-
-                if(ctx->req.query.data && ctx->req.query.len) {
-                    ret = nst_cache_key_append(ctx->key, ctx->req.query.data,
-                            ctx->req.query.len);
-
-                } else {
-                    ret = nst_cache_key_advance(ctx->key, 2);
-                }
-
-                break;
-            case NST_RULE_KEY_PARAM:
-                nst_debug("param_%s.", ck->data);
-
-                if(ctx->req.query.data && ctx->req.query.len) {
-                    char *v = NULL;
-                    int v_l = 0;
-
-                    if(nst_req_find_param(ctx->req.query.data,
-                                ctx->req.query.data + ctx->req.query.len,
-                                ck->data, &v, &v_l) == NST_OK) {
-
-                        ret = nst_cache_key_append(ctx->key, v, v_l);
-                        break;
-                    }
-
-                }
-
-                ret = nst_cache_key_advance(ctx->key, 2);
-                break;
-            case NST_RULE_KEY_HEADER:
-                hdr.idx = 0;
-                nst_debug("header_%s.", ck->data);
-
-                while(http_find_header2(ck->data, strlen(ck->data),
-                            ci_head(msg->chn), &txn->hdr_idx, &hdr)) {
-
-                    ret = nst_cache_key_append(ctx->key, hdr.line + hdr.val,
-                            hdr.vlen);
-
-                }
-
-                ret = ret == NST_OK && nst_cache_key_advance(ctx->key,
-                        hdr.idx == 0 ? 2 : 1);
-
-                break;
-            case NST_RULE_KEY_COOKIE:
-                nst_debug("cookie_%s.", ck->data);
-
-                if(ctx->req.cookie.data) {
-                    char *v = NULL;
-                    size_t v_l = 0;
-
-                    if(http_extract_cookie_value(ctx->req.cookie.data,
-                                ctx->req.cookie.data + ctx->req.cookie.len,
-                                ck->data, strlen(ck->data), 1, &v, &v_l)) {
-
-                        ret = nst_cache_key_append(ctx->key, v, v_l);
-                        break;
-                    }
-
-                }
-
-                ret = nst_cache_key_advance(ctx->key, 2);
-                break;
-            case NST_RULE_KEY_BODY:
-                nst_debug("body.");
-
-                if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
-
-                    if((s->be->options & PR_O_WREQ_BODY)
-                            && ci_data(msg->chn) - msg->sov > 0) {
-
-                        ret = nst_cache_key_append(ctx->key,
-                                ci_head(msg->chn) + msg->sov,
-                                ci_data(msg->chn) - msg->sov);
-
-                    } else {
-                        ret = nst_cache_key_advance(ctx->key, 2);
-                    }
-                }
-                break;
-            default:
-                ret = NST_ERR;
-                break;
-        }
-
-        if(ret != NST_OK) {
-            return NST_ERR;
-        }
-    }
-
-    nst_debug("\n");
-    return NST_OK;
-}
-
 int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
         struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
-    struct hdr_ctx hdr;
     struct nst_rule_key *ck = NULL;
 
     ctx->key = nst_cache_key_init();
@@ -1317,7 +816,6 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                         .len = strlen(ck->data),
                     };
 
-                    hdr.idx = 0;
                     nst_debug("header_%s.", ck->data);
 
                     while (http_find_header(htx, h, &hdr2, 0)) {
@@ -1326,7 +824,7 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
                     }
 
                     ret = ret == NST_OK && nst_cache_key_advance(ctx->key,
-                            hdr.idx == 0 ? 2 : 1);
+                            hdr2.value.len == 0 ? 2 : 1);
 
                 }
                 break;
@@ -1354,16 +852,16 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
 
-                    if((s->be->options & PR_O_WREQ_BODY)
-                            && ci_data(msg->chn) - msg->sov > 0) {
+                    //if((s->be->options & PR_O_WREQ_BODY)
+                    //        && ci_data(msg->chn) - msg->sov > 0) {
 
-                        ret = nst_cache_key_append(ctx->key,
-                                ci_head(msg->chn) + msg->sov,
-                                ci_data(msg->chn) - msg->sov);
+                    //    ret = nst_cache_key_append(ctx->key,
+                    //            ci_head(msg->chn) + msg->sov,
+                    //            ci_data(msg->chn) - msg->sov);
 
-                    } else {
-                        ret = nst_cache_key_advance(ctx->key, 2);
-                    }
+                    //} else {
+                    //    ret = nst_cache_key_advance(ctx->key, 2);
+                    //}
                 }
                 break;
             default:
@@ -1378,62 +876,6 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
     nst_debug("\n");
     return NST_OK;
-}
-
-struct buffer *nst_cache_build_purge_key(struct stream *s,
-        struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-    int https;
-    char *path_beg, *url_end;
-    struct hdr_ctx ctx;
-    int ret;
-    struct buffer *key;
-
-    /* method.scheme.host.uri */
-    key = nst_cache_key_init();
-
-    if(!key) {
-        return NULL;
-    }
-
-    ret = nst_cache_key_append(key, "GET", 3);
-    if(ret != NST_OK) {
-        return NULL;
-    }
-
-    https = 0;
-#ifdef USE_OPENSSL
-    if(s->sess->listener->bind_conf->is_ssl) {
-        https = 1;
-    }
-#endif
-
-    ret = nst_cache_key_append(key, https ? "HTTPS": "HTTP",
-            strlen(https ? "HTTPS": "HTTP"));
-    if(ret != NST_OK) {
-        return NULL;
-    }
-
-    ctx.idx  = 0;
-    if(http_find_header2("Host", 4, ci_head(msg->chn), &txn->hdr_idx, &ctx)) {
-        ret = nst_cache_key_append(key, ctx.line + ctx.val, ctx.vlen);
-        if(ret != NST_OK) {
-            return NULL;
-        }
-    }
-
-    path_beg = http_txn_get_path(txn);
-    url_end  = NULL;
-    if(path_beg) {
-        url_end = ci_head(msg->chn) + msg->sl.rq.u + msg->sl.rq.u_l;
-        ret     = nst_cache_key_append(key, path_beg, url_end - path_beg);
-        if(ret != NST_OK) {
-            return NULL;
-        }
-    }
-
-    return key;
 }
 
 struct buffer *nst_cache_build_purge_key2(struct stream *s,
@@ -1629,114 +1071,6 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
  * if cache exists but expired, add a new nst_cache_data to the entry
  * otherwise, set the corresponding state: bypass, wait
  */
-void nst_cache_create(struct nst_cache_ctx *ctx) {
-    struct nst_cache_entry *entry = NULL;
-
-    nst_shctx_lock(&nuster.cache->dict[0]);
-    entry = nst_cache_dict_get(ctx->key, ctx->hash);
-
-    if(entry) {
-
-        if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
-            ctx->state = NST_CACHE_CTX_STATE_WAIT;
-        } else if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
-            ctx->state = NST_CACHE_CTX_STATE_HIT;
-        } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED
-                || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
-
-            entry->state = NST_CACHE_ENTRY_STATE_CREATING;
-
-            if(ctx->rule->disk != NST_DISK_ONLY) {
-                entry->data = nst_cache_data_new();
-
-                if(!entry->data) {
-                    entry->state = NST_CACHE_ENTRY_STATE_INVALID;
-                    ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
-                    ctx->full    = 1;
-                } else {
-                    ctx->state   = NST_CACHE_CTX_STATE_CREATE;
-                    ctx->entry   = entry;
-
-                    entry->etag.data   = ctx->res.etag.data;
-                    entry->etag.len    = ctx->res.etag.len;
-                    ctx->res.etag.data = NULL;
-
-                    entry->last_modified.data   = ctx->res.last_modified.data;
-                    entry->last_modified.len    = ctx->res.last_modified.len;
-                    ctx->res.last_modified.data = NULL;
-
-                    ctx->data    = entry->data;
-                    ctx->element = entry->data->element;
-                }
-            } else {
-                ctx->state = NST_CACHE_CTX_STATE_CREATE;
-                ctx->entry = entry;
-            }
-
-        } else {
-            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
-        }
-    } else {
-        entry = nst_cache_dict_set(ctx);
-
-        if(entry) {
-            ctx->state = NST_CACHE_CTX_STATE_CREATE;
-            ctx->entry = entry;
-            ctx->data  = entry->data;
-
-            if(ctx->data) {
-                ctx->element = entry->data->element;
-            }
-        } else {
-            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
-            ctx->full  = 1;
-        }
-    }
-
-    nst_shctx_unlock(&nuster.cache->dict[0]);
-
-    if(ctx->state == NST_CACHE_CTX_STATE_CREATE
-            && (ctx->rule->disk == NST_DISK_SYNC
-                || ctx->rule->disk == NST_DISK_ONLY)) {
-
-        uint64_t ttl_extend = *ctx->rule->ttl;
-
-        ctx->disk.file = nst_cache_memory_alloc(
-                nst_persist_path_file_len(global.nuster.cache.root) + 1);
-
-        if(!ctx->disk.file) {
-            return;
-        }
-
-        if(nst_persist_init(global.nuster.cache.root, ctx->disk.file,
-                    ctx->hash) != NST_OK) {
-
-            return;
-        }
-
-        ctx->disk.fd = nst_persist_create(ctx->disk.file);
-
-        ttl_extend = ttl_extend << 32;
-        *( uint8_t *)(&ttl_extend)      = ctx->rule->extend[0];
-        *((uint8_t *)(&ttl_extend) + 1) = ctx->rule->extend[1];
-        *((uint8_t *)(&ttl_extend) + 2) = ctx->rule->extend[2];
-        *((uint8_t *)(&ttl_extend) + 3) = ctx->rule->extend[3];
-
-        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
-                ctx->hash, 0, 0, ctx->header_len, ctx->entry->key->data,
-                ctx->entry->host.len, ctx->entry->path.len,
-                ctx->entry->etag.len, ctx->entry->last_modified.len,
-                ttl_extend);
-
-        nst_persist_write_key(&ctx->disk, ctx->entry->key);
-        nst_persist_write_host(&ctx->disk, &ctx->entry->host);
-        nst_persist_write_path(&ctx->disk, &ctx->entry->path);
-        nst_persist_write_etag(&ctx->disk, &ctx->entry->etag);
-        nst_persist_write_last_modified(&ctx->disk, &ctx->entry->last_modified);
-
-    }
-}
-
 void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg) {
     struct nst_cache_entry *entry = NULL;
 
@@ -1916,57 +1250,6 @@ err:
 /*
  * Add partial http data to nst_cache_data
  */
-int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
-        long msg_len) {
-
-    struct nst_cache_element *element;
-
-    if(ctx->rule->disk == NST_DISK_ONLY)  {
-        char *data = b_orig(&msg->chn->buf);
-        char *p    = ci_head(msg->chn);
-        int size   = msg->chn->buf.size;
-
-        if(p - data + msg_len > size) {
-            int right = data + size - p;
-            int left  = msg_len - right;
-
-            nst_persist_write(&ctx->disk, p, right);
-            nst_persist_write(&ctx->disk, data, left);
-        } else {
-            nst_persist_write(&ctx->disk, p, msg_len);
-        }
-        ctx->cache_len += msg_len;
-    } else {
-
-        element = _nst_cache_data_append(msg, msg_len);
-
-        if(element) {
-
-            if(ctx->element) {
-                ctx->element->next = element;
-            } else {
-                ctx->data->element = element;
-            }
-
-            ctx->element = element;
-
-            if(ctx->rule->disk == NST_DISK_SYNC) {
-                nst_persist_write(&ctx->disk, element->msg.data,
-                        element->msg.len);
-
-                ctx->cache_len += element->msg.len;
-            }
-
-        } else {
-            ctx->full = 1;
-
-            return NST_ERR;
-        }
-    }
-
-    return NST_OK;
-}
-
 int nst_cache_update2(struct nst_cache_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len) {
 
@@ -2139,94 +1422,7 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
     }
 }
 
-void nst_cache_persist_async1() {
-    struct nst_cache_entry *entry;
-
-    if(!global.nuster.cache.root || !nuster.cache->disk.loaded) {
-        return;
-    }
-
-    if(!nuster.cache->dict[0].used) {
-        return;
-    }
-
-    entry = nuster.cache->dict[0].entry[nuster.cache->persist_idx];
-
-    while(entry) {
-
-        if(!nst_cache_entry_invalid(entry)
-                && entry->rule->disk == NST_DISK_ASYNC
-                && entry->file == NULL) {
-
-            struct nst_cache_element *element = entry->data->element;
-            uint64_t cache_len = 0;
-            struct persist disk;
-            uint64_t ttl_extend = entry->ttl;
-
-            entry->file = nst_cache_memory_alloc(
-                    nst_persist_path_file_len(global.nuster.cache.root) + 1);
-
-            if(!entry->file) {
-                return;
-            }
-
-            if(nst_persist_init(global.nuster.cache.root, entry->file,
-                        entry->hash) != NST_OK) {
-                return;
-            }
-
-            disk.fd = nst_persist_create(entry->file);
-
-            ttl_extend = ttl_extend << 32;
-            *( uint8_t *)(&ttl_extend)      = entry->extend[0];
-            *((uint8_t *)(&ttl_extend) + 1) = entry->extend[1];
-            *((uint8_t *)(&ttl_extend) + 2) = entry->extend[2];
-            *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
-
-            nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
-                    entry->hash, entry->expire, 0, entry->header_len,
-                    entry->key->data, entry->host.len, entry->path.len,
-                    entry->etag.len, entry->last_modified.len, ttl_extend);
-
-            nst_persist_write_key(&disk, entry->key);
-            nst_persist_write_host(&disk, &entry->host);
-            nst_persist_write_path(&disk, &entry->path);
-            nst_persist_write_etag(&disk, &entry->etag);
-            nst_persist_write_last_modified(&disk, &entry->last_modified);
-
-            while(element) {
-
-                if(element->msg.data) {
-                    nst_persist_write(&disk, element->msg.data,
-                            element->msg.len);
-
-                    cache_len += element->msg.len;
-                }
-
-                element = element->next;
-            }
-
-            nst_persist_meta_set_cache_len(disk.meta, cache_len);
-
-            nst_persist_write_meta(&disk);
-
-            close(disk.fd);
-        }
-
-        entry = entry->next;
-
-    }
-
-    nuster.cache->persist_idx++;
-
-    /* if we have checked the whole dict */
-    if(nuster.cache->persist_idx == nuster.cache->dict[0].size) {
-        nuster.cache->persist_idx = 0;
-    }
-
-}
-
-void nst_cache_persist_async2() {
+void nst_cache_persist_async() {
     struct nst_cache_entry *entry;
 
     if(!global.nuster.cache.root || !nuster.cache->disk.loaded) {
@@ -2520,53 +1716,7 @@ void nst_cache_persist_cleanup() {
     }
 }
 
-void nst_cache_build_etag1(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-
-    struct hdr_ctx hdr;
-
-
-    ctx->res.etag.len  = 0;
-    ctx->res.etag.data = NULL;
-
-    hdr.idx = 0;
-
-    if(http_find_full_header2("ETag", 4, ci_head(msg->chn), &txn->hdr_idx,
-                &hdr)) {
-
-        ctx->res.etag.len  = hdr.vlen;
-        ctx->res.etag.data = nst_cache_memory_alloc(hdr.vlen);
-
-        if(ctx->res.etag.data) {
-            memcpy(ctx->res.etag.data, hdr.line + hdr.val, hdr.vlen);
-        }
-    } else {
-        ctx->res.etag.len  = 10;
-        ctx->res.etag.data = nst_cache_memory_alloc(ctx->res.etag.len);
-
-        if(ctx->res.etag.data) {
-            uint64_t t = get_current_timestamp();
-            sprintf(ctx->res.etag.data, "\"%08x\"", XXH32(&t, 8, 0));
-
-            if(ctx->rule->etag == NST_STATUS_ON) {
-                trash.data = 6;
-                memcpy(trash.area, "ETag: ", trash.data);
-                memcpy(trash.area + trash.data, ctx->res.etag.data,
-                        ctx->res.etag.len);
-
-                trash.data += ctx->res.etag.len;
-                trash.area[trash.data] = '\0';
-
-                http_header_add_tail2(msg, &txn->hdr_idx, trash.area,
-                        trash.data);
-            }
-        }
-    }
-}
-
-void nst_cache_build_etag2(struct nst_cache_ctx *ctx, struct stream *s,
+void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx;
@@ -2602,68 +1752,7 @@ void nst_cache_build_etag2(struct nst_cache_ctx *ctx, struct stream *s,
     }
 }
 
-void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg) {
-    if (IS_HTX_STRM(s)) {
-        nst_cache_build_etag2(ctx, s, msg);
-    } else {
-        nst_cache_build_etag1(ctx, s, msg);
-    }
-}
-
-void nst_cache_build_last_modified1(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-
-    struct hdr_ctx hdr;
-
-
-    int len  = sizeof("Mon, 01 JAN 1970 00:00:00 GMT") - 1;
-    ctx->res.last_modified.len  = len;
-    ctx->res.last_modified.data = nst_cache_memory_alloc(len);
-
-    if(!ctx->res.last_modified.data) {
-        ctx->res.last_modified.len = 0;
-        return;
-    }
-
-    hdr.idx = 0;
-
-    if(http_find_full_header2("Last-Modified", 13, ci_head(msg->chn),
-                &txn->hdr_idx, &hdr)) {
-
-        if(hdr.vlen == len) {
-            memcpy(ctx->res.last_modified.data, hdr.line + hdr.val, hdr.vlen);
-        }
-    } else {
-        char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
-            "Aug", "Sep", "Oct", "Nov", "Dec" };
-
-        char day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-
-        struct tm *tm;
-        time_t now;
-        time(&now);
-        tm = gmtime(&now);
-        sprintf(ctx->res.last_modified.data,
-                "%s, %02d %s %04d %02d:%02d:%02d GMT",
-                day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
-                1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
-
-        if(ctx->rule->last_modified == NST_STATUS_ON) {
-            trash.data = 15;
-            memcpy(trash.area, "Last-Modified: ", trash.data);
-            memcpy(trash.area + trash.data, ctx->res.last_modified.data,
-                    ctx->res.last_modified.len);
-            trash.data += ctx->res.last_modified.len;
-            trash.area[trash.data] = '\0';
-            http_header_add_tail2(msg, &txn->hdr_idx, trash.area, trash.data);
-        }
-    }
-}
-
-void nst_cache_build_last_modified2(struct nst_cache_ctx *ctx, struct stream *s,
+void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx;
@@ -2711,124 +1800,7 @@ void nst_cache_build_last_modified2(struct nst_cache_ctx *ctx, struct stream *s,
     }
 }
 
-void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg) {
-    if (IS_HTX_STRM(s)) {
-        nst_cache_build_last_modified2(ctx, s, msg);
-    } else {
-        nst_cache_build_last_modified1(ctx, s, msg);
-    }
-}
-
-int nst_cache_handle_conditional_req1(struct nst_cache_ctx *ctx,
-        struct nst_rule *rule, struct stream *s, struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-    struct hdr_ctx hdr;
-
-    int if_none_match     = -1;
-    int if_match          = -1;
-    int if_modified_since = -1;;
-
-    if(rule->etag != NST_STATUS_ON && rule->last_modified != NST_STATUS_ON) {
-        return 200;
-    }
-
-    if(rule->etag == NST_STATUS_ON) {
-
-        hdr.idx = 0;
-
-        while(http_find_header2("If-Match", 8, ci_head(msg->chn),
-                    &txn->hdr_idx, &hdr)) {
-
-            if_match = 412;
-
-            if(1 == hdr.vlen && *(hdr.line + hdr.val) == '*') {
-                if_match = 200;
-                break;
-            }
-
-            if(ctx->res.etag.len == hdr.vlen && memcmp(ctx->res.etag.data,
-                        hdr.line + hdr.val, hdr.vlen) == 0) {
-
-                if_match = 200;
-                break;
-            }
-        }
-
-        if(if_match == 412) {
-            return if_match;
-        }
-    }
-
-    if(rule->last_modified == NST_STATUS_ON) {
-
-        hdr.idx = 0;
-
-        if(http_find_full_header2("If-Unmodified-Since", 19, ci_head(msg->chn),
-                    &txn->hdr_idx, &hdr)) {
-
-            if(ctx->res.last_modified.len != hdr.vlen
-                    || memcmp(ctx->res.last_modified.data,
-                        hdr.line + hdr.val, hdr.vlen) != 0) {
-
-                return 412;
-            }
-        }
-    }
-
-    if(rule->etag == NST_STATUS_ON) {
-        hdr.idx = 0;
-
-        while(http_find_header2("If-None-Match", 13, ci_head(msg->chn),
-                    &txn->hdr_idx, &hdr)) {
-
-            if_none_match = 200;
-
-            if(1 == hdr.vlen && *(hdr.line + hdr.val) == '*') {
-                if_none_match = 304;
-                break;
-            }
-
-            if(ctx->res.etag.len == hdr.vlen && memcmp(ctx->res.etag.data,
-                        hdr.line + hdr.val, hdr.vlen) == 0) {
-
-                if_none_match = 304;
-                break;
-            }
-        }
-    }
-
-    if(rule->last_modified == NST_STATUS_ON) {
-
-        hdr.idx = 0;
-
-        if(http_find_full_header2("If-Modified-Since", 17, ci_head(msg->chn),
-                    &txn->hdr_idx, &hdr)) {
-
-            if(ctx->res.last_modified.len == hdr.vlen
-                    && memcmp(ctx->res.last_modified.data,
-                        hdr.line + hdr.val, hdr.vlen) == 0) {
-
-                if_modified_since = 304;
-            } else {
-                if_modified_since = 200;
-            }
-        }
-    }
-
-    if(if_none_match == 304 && if_modified_since != 200) {
-        return 304;
-    }
-
-    if(if_none_match != 200 && if_modified_since == 304) {
-        return 304;
-    }
-
-    return 200;
-}
-
-int nst_cache_handle_conditional_req2(struct nst_cache_ctx *ctx,
+int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
         struct nst_rule *rule, struct stream *s, struct http_msg *msg) {
 
     struct htx *htx;
@@ -2934,12 +1906,4 @@ int nst_cache_handle_conditional_req2(struct nst_cache_ctx *ctx,
     return 200;
 }
 
-int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
-        struct nst_rule *rule, struct stream *s, struct http_msg *msg) {
-    if (IS_HTX_STRM(s)) {
-        return nst_cache_handle_conditional_req2(ctx, rule, s, msg);
-    } else {
-        return nst_cache_handle_conditional_req1(ctx, rule, s, msg);
-    }
-}
 

@@ -260,8 +260,6 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
 int nst_cache_build_key(struct nst_cache_ctx *ctx,
         struct nst_rule_key **pck, struct stream *s, struct http_msg *msg);
 
-struct buffer *nst_cache_build_purge_key(struct stream *s,
-        struct http_msg *msg);
 struct buffer *nst_cache_build_purge_key2(struct stream *s,
         struct http_msg *msg);
 
@@ -284,12 +282,10 @@ void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
 struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
         struct nst_rule *rule);
 
-int nst_cache_check_uri(struct http_msg *msg);
 int nst_cache_check_uri2(struct http_msg *msg);
 void nst_cache_persist_cleanup();
 void nst_cache_persist_load();
-void nst_cache_persist_async1();
-void nst_cache_persist_async2();
+void nst_cache_persist_async();
 void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
@@ -316,7 +312,6 @@ int nst_cache_manager_init();
 void nst_cache_stats_update_used_mem(int i);
 int nst_cache_stats_init();
 int nst_cache_stats_full();
-int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
 int nst_cache_stats2(struct stream *s, struct channel *req, struct proxy *px);
 void nst_cache_stats_update_req(int state);
 

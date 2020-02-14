@@ -62,14 +62,6 @@ static inline void nuster_housekeeping() {
     nst_nosql_housekeeping();
 }
 
-static inline int nuster_check_applet (struct stream *s, struct channel *req,
-        struct proxy *px) {
-
-    return (nst_nosql_check_applet(s, req, px) ||
-            nst_cache_manager(s, req, px) ||
-            nst_cache_stats(s, req, px));
-}
-
 static inline int nuster_check_applet2(struct stream *s, struct channel *req,
         struct proxy *px) {
 
