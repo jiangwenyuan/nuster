@@ -487,7 +487,7 @@ abort_check:
             /* get cache key */
             while(stash) {
 
-                if(ctx->stash->rule == ctx->rule) {
+                if(stash->rule == ctx->rule) {
                     ctx->key  = stash->key;
                     ctx->hash = stash->hash;
                     stash->key = NULL;
