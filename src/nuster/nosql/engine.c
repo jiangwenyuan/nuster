@@ -789,26 +789,26 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
         return NST_ERR;
     }
 
-    nst_debug("[nuster][nosql] Calculate key: ");
+    nst_debug(s, "[nosql] Calculate key: ");
 
     while((ck = *pck++)) {
         int ret = NST_OK;
 
         switch(ck->type) {
             case NST_RULE_KEY_METHOD:
-                nst_debug("method.");
+                nst_debug2("method.");
                 ret = nst_nosql_key_append(ctx->key,
                         http_known_methods[HTTP_METH_GET].ptr,
                         http_known_methods[HTTP_METH_GET].len);
                 break;
             case NST_RULE_KEY_SCHEME:
-                nst_debug("scheme.");
+                nst_debug2("scheme.");
                 ret = nst_nosql_key_append(ctx->key,
                         ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
                         ctx->req.scheme == SCH_HTTPS ? 5 : 4);
                 break;
             case NST_RULE_KEY_HOST:
-                nst_debug("host.");
+                nst_debug2("host.");
 
                 if(ctx->req.host.data) {
                     ret = nst_nosql_key_append(ctx->key, ctx->req.host.data,
@@ -819,7 +819,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_URI:
-                nst_debug("uri.");
+                nst_debug2("uri.");
 
                 if(ctx->req.uri.data) {
                     ret = nst_nosql_key_append(ctx->key, ctx->req.uri.data,
@@ -831,7 +831,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_PATH:
-                nst_debug("path.");
+                nst_debug2("path.");
 
                 if(ctx->req.path.data) {
                     ret = nst_nosql_key_append(ctx->key, ctx->req.path.data,
@@ -843,7 +843,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_DELIMITER:
-                nst_debug("delimiter.");
+                nst_debug2("delimiter.");
 
                 if(ctx->req.delimiter) {
                     ret = nst_nosql_key_append(ctx->key, "?", 1);
@@ -853,7 +853,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_QUERY:
-                nst_debug("query.");
+                nst_debug2("query.");
 
                 if(ctx->req.query.data && ctx->req.query.len) {
                     ret = nst_nosql_key_append(ctx->key, ctx->req.query.data,
@@ -865,7 +865,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_PARAM:
-                nst_debug("param_%s.", ck->data);
+                nst_debug2("param_%s.", ck->data);
 
                 if(ctx->req.query.data && ctx->req.query.len) {
                     char *v = NULL;
@@ -893,7 +893,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                         .len = strlen(ck->data),
                     };
 
-                    nst_debug("header_%s.", ck->data);
+                    nst_debug2("header_%s.", ck->data);
 
                     while (http_find_header(htx, h, &hdr2, 0)) {
                         ret = nst_nosql_key_append(ctx->key, hdr2.value.ptr,
@@ -906,7 +906,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                 }
                 break;
             case NST_RULE_KEY_COOKIE:
-                nst_debug("cookie_%s.", ck->data);
+                nst_debug2("cookie_%s.", ck->data);
 
                 if(ctx->req.cookie.data) {
                     char *v = NULL;
@@ -924,7 +924,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                 break;
             case NST_RULE_KEY_BODY:
-                nst_debug("body.");
+                nst_debug2("body.");
 
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
 
@@ -951,7 +951,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
         }
     }
 
-    nst_debug("\n");
+    nst_debug2("\n");
 
     return NST_OK;
 }

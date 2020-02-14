@@ -53,7 +53,7 @@ int nst_persist_init(char *root, char *path, uint64_t hash) {
     sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
             hash >> 60, hash >> 56, hash);
 
-    nst_debug("[nuster][persist] Path: %s\n", path);
+    nst_debug2("[nuster][persist] Path: %s\n", path);
 
     if(nst_persist_mkdir(path) != NST_OK) {
         return NST_ERR;
@@ -63,7 +63,7 @@ int nst_persist_init(char *root, char *path, uint64_t hash) {
             get_current_timestamp() * random() * random() & hash,
             get_current_timestamp());
 
-    nst_debug("[nuster][persist] File: %s\n", path);
+    nst_debug2("[nuster][persist] File: %s\n", path);
 
     return NST_OK;
 }

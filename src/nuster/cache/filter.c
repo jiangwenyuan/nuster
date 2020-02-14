@@ -274,7 +274,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
             }
 
             list_for_each_entry(rule, &px->nuster.rules, list) {
-                nst_debug("[nuster][cache] Checking rule: %s\n", rule->name);
+                nst_debug(s, "[cache] ====== Check rule: %s ======\n", rule->name);
 
                 /* disabled? */
                 if(*rule->state == NST_RULE_DISABLED) {
@@ -287,12 +287,12 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     return 1;
                 }
 
-                nst_debug("[nuster][cache] Key: ");
+                nst_debug(s, "[cache] Key: ");
                 nst_debug_key(ctx->key);
 
                 ctx->hash = nst_hash(ctx->key->area, ctx->key->data);
 
-                nst_debug("[nuster][cache] Hash: %"PRIu64"\n", ctx->hash);
+                nst_debug(s, "[cache] Hash: %"PRIu64"\n", ctx->hash);
 
                 /* stash key */
                 if(!nst_cache_stash_rule(ctx, rule)) {
@@ -301,14 +301,14 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 }
 
                 /* check if cache exists  */
-                nst_debug("[nuster][cache] Checking key existence: ");
-
+                nst_debug(s, "[cache] Check key existence: ");
                 ctx->state = nst_cache_exists(ctx, rule);
 
                 if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
                     int ret;
 
-                    nst_debug("EXIST\n[nuster][cache] Hit memory\n");
+                    nst_debug2("HIT memory\n");
+
                     /* OK, cache exists */
 
                     ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
@@ -332,7 +332,8 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 if(ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
                     int ret;
 
-                    nst_debug("EXIST\n[nuster][cache] Hit disk\n");
+                    nst_debug2("HIT disk\n");
+
                     /* OK, cache exists */
 
                     if(rule->etag == NST_STATUS_ON) {
@@ -400,22 +401,23 @@ abort_check:
                     break;
                 }
 
-                nst_debug("NOT EXIST\n");
+                nst_debug2("MISS\n");
+
                 /* no, there's no cache yet */
 
                 /* test acls to see if we should cache it */
-                nst_debug("[nuster][cache] Checking if rule pass: ");
+                nst_debug(s, "[cache] Test rule ACL (req): ");
 
                 if(nst_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
-                    nst_debug("PASS\n");
+                    nst_debug2("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
                     break;
                 }
 
-                nst_debug("FAIL\n");
+                nst_debug2("FAIL\n");
             }
         }
 
@@ -433,19 +435,20 @@ abort_check:
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
 
             list_for_each_entry(rule, &px->nuster.rules, list) {
-                nst_debug("[nuster][cache] Checking if rule pass: ");
+                nst_debug(s, "[cache] ====== Check rule: %s ======\n", rule->name);
+                nst_debug(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
                 if(nst_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
-                    nst_debug("PASS\n");
+                    nst_debug2("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     ctx->rule  = rule;
                     break;
                 }
 
-                nst_debug("FAIL\n");
+                nst_debug2("FAIL\n");
             }
         }
 
@@ -458,7 +461,7 @@ abort_check:
             ctx->pid = px->uuid;
 
             /* check if code is valid */
-            nst_debug("[nuster][cache] Checking status code: ");
+            nst_debug(s, "[cache] Check status code: ");
 
             if(!cc) {
                 valid = 1;
@@ -475,9 +478,11 @@ abort_check:
             }
 
             if(!valid) {
-                nst_debug("FAIL\n");
+                nst_debug2("FAIL\n");
                 return 1;
             }
+
+            nst_debug2("PASS\n");
 
             /* get cache key */
             while(stash) {
@@ -500,7 +505,7 @@ abort_check:
 
             nst_cache_build_last_modified(ctx, s, msg);
 
-            nst_debug("PASS\n[nuster][cache] To create\n");
+            nst_debug(s, "[cache] To create\n");
 
             /* start to build cache */
             nst_cache_create(ctx, msg);
@@ -548,6 +553,7 @@ static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
             && (msg->chn->flags & CF_ISRESP)) {
 
         nst_cache_finish(ctx);
+        nst_debug(s, "[cache] Created\n");
     }
 
     return 1;

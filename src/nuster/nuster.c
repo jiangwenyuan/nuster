@@ -48,30 +48,6 @@ struct nuster nuster = {
     },
 };
 
-void nst_debug(const char *fmt, ...) {
-
-    if((global.mode & MODE_DEBUG)) {
-        va_list args;
-        va_start(args, fmt);
-        vfprintf(stderr, fmt, args);
-        va_end(args);
-    }
-}
-
-void nst_debug_key(struct buffer *key) {
-
-    if((global.mode & MODE_DEBUG)) {
-        int i;
-        for(i = 0; i < key->data; i++) {
-            char c = key->area[i];
-            if(c != 0) {
-                printf("%c", c);
-            }
-        }
-        printf("\n");
-    }
-}
-
 void nuster_init() {
     int i, uuid;
     struct proxy *p;
@@ -291,3 +267,50 @@ int nst_ci_send(struct channel *chn, int len) {
     channel_add_input(chn, len);
     return len;
 }
+
+void nst_debug(struct stream *s, const char *fmt, ...) {
+
+    if((global.mode & MODE_DEBUG)) {
+        va_list args;
+        struct session *sess = strm_sess(s);
+
+        fprintf(stderr, "%08x:%s.nuster[%04x:%04x]: ",
+                s->uniq_id, s->be->id,
+                objt_conn(sess->origin) ?
+                (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
+                objt_cs(s->si[1].end) ?
+                (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
+
+        va_start(args, fmt);
+        vfprintf(stderr, fmt, args);
+        va_end(args);
+    }
+}
+
+void nst_debug2(const char *fmt, ...) {
+
+    if((global.mode & MODE_DEBUG)) {
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(stderr, fmt, args);
+        va_end(args);
+    }
+}
+
+void nst_debug_key(struct buffer *key) {
+
+    if((global.mode & MODE_DEBUG)) {
+        int i;
+
+        for(i = 0; i < key->data; i++) {
+            char c = key->area[i];
+
+            if(c != 0) {
+                fprintf(stderr, "%c", c);
+            }
+        }
+
+        fprintf(stderr, "\n");
+    }
+}
+
