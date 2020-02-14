@@ -607,7 +607,7 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr2 = { .blk = NULL };
+    struct http_hdr_ctx hdr = { .blk = NULL };
 
     char *uri_begin, *uri_end;
     struct htx_sl *sl;
@@ -625,15 +625,15 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     ctx->req.host.data = NULL;
     ctx->req.host.len  = 0;
 
-    if(http_find_header(htx, ist("Host"), &hdr2, 0)) {
-        ctx->req.host.data = nst_cache_memory_alloc(hdr2.value.len);
+    if(http_find_header(htx, ist("Host"), &hdr, 0)) {
+        ctx->req.host.data = nst_cache_memory_alloc(hdr.value.len);
 
         if(!ctx->req.host.data) {
             return NST_ERR;
         }
 
-        ctx->req.host.len  = hdr2.value.len;
-        memcpy(ctx->req.host.data, hdr2.value.ptr, hdr2.value.len);
+        ctx->req.host.len  = hdr.value.len;
+        memcpy(ctx->req.host.data, hdr.value.ptr, hdr.value.len);
     }
 
     sl = http_get_stline(htx);
@@ -691,9 +691,9 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     ctx->req.cookie.data = NULL;
     ctx->req.cookie.len  = 0;
 
-    if(http_find_header(htx, ist("Cookie"), &hdr2, 1)) {
-        ctx->req.cookie.data = hdr2.value.ptr;
-        ctx->req.cookie.len  = hdr2.value.len;
+    if(http_find_header(htx, ist("Cookie"), &hdr, 1)) {
+        ctx->req.cookie.data = hdr.value.ptr;
+        ctx->req.cookie.len  = hdr.value.len;
     }
 
     return NST_OK;
@@ -810,7 +810,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
             case NST_RULE_KEY_HEADER:
                 {
                     struct htx *htx = htxbuf(&s->req.buf);
-                    struct http_hdr_ctx hdr2 = { .blk = NULL };
+                    struct http_hdr_ctx hdr = { .blk = NULL };
                     struct ist h = {
                         .ptr = ck->data,
                         .len = strlen(ck->data),
@@ -818,13 +818,13 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct nst_rule_key **pck,
 
                     nst_debug2("header_%s.", ck->data);
 
-                    while (http_find_header(htx, h, &hdr2, 0)) {
-                        ret = nst_cache_key_append(ctx->key, hdr2.value.ptr,
-                                hdr2.value.len);
+                    while (http_find_header(htx, h, &hdr, 0)) {
+                        ret = nst_cache_key_append(ctx->key, hdr.value.ptr,
+                                hdr.value.len);
                     }
 
                     ret = ret == NST_OK && nst_cache_key_advance(ctx->key,
-                            hdr2.value.len == 0 ? 2 : 1);
+                            hdr.value.len == 0 ? 2 : 1);
 
                 }
                 break;
@@ -889,7 +889,7 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
     struct ist uri;
 
     struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr2 = { .blk = NULL };
+    struct http_hdr_ctx hdr = { .blk = NULL };
 
     /* method.scheme.host.uri */
     key = nst_cache_key_init();
@@ -916,8 +916,8 @@ struct buffer *nst_cache_build_purge_key(struct stream *s,
         return NULL;
     }
 
-    if(http_find_header(htx, ist("Host"), &hdr2, 0)) {
-        ret = nst_cache_key_append(key, hdr2.value.ptr, hdr2.value.len);
+    if(http_find_header(htx, ist("Host"), &hdr, 0)) {
+        ret = nst_cache_key_append(key, hdr.value.ptr, hdr.value.len);
 
         if(ret != NST_OK) {
             return NULL;
@@ -1721,19 +1721,19 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
 
     struct htx *htx;
 
-    struct http_hdr_ctx hdr2 = { .blk = NULL };
+    struct http_hdr_ctx hdr = { .blk = NULL };
 
     ctx->res.etag.len  = 0;
     ctx->res.etag.data = NULL;
 
     htx = htxbuf(&s->res.buf);
 
-    if(http_find_header(htx, ist("ETag"), &hdr2, 1)) {
-        ctx->res.etag.len  = hdr2.value.len;
-        ctx->res.etag.data = nst_cache_memory_alloc(hdr2.value.len);
+    if(http_find_header(htx, ist("ETag"), &hdr, 1)) {
+        ctx->res.etag.len  = hdr.value.len;
+        ctx->res.etag.data = nst_cache_memory_alloc(hdr.value.len);
 
         if(ctx->res.etag.data) {
-            memcpy(ctx->res.etag.data, hdr2.value.ptr, hdr2.value.len);
+            memcpy(ctx->res.etag.data, hdr.value.ptr, hdr.value.len);
         }
     } else {
         ctx->res.etag.len  = 10;
@@ -1757,7 +1757,7 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
 
     struct htx *htx;
 
-    struct http_hdr_ctx hdr2 = { .blk = NULL };
+    struct http_hdr_ctx hdr = { .blk = NULL };
 
     int len  = sizeof("Mon, 01 JAN 1970 00:00:00 GMT") - 1;
 
@@ -1771,10 +1771,10 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         return;
     }
 
-    if(http_find_header(htx, ist("Last-Modified"), &hdr2, 1)) {
+    if(http_find_header(htx, ist("Last-Modified"), &hdr, 1)) {
 
-        if(hdr2.value.len == len) {
-            memcpy(ctx->res.last_modified.data, hdr2.value.ptr, hdr2.value.len);
+        if(hdr.value.len == len) {
+            memcpy(ctx->res.last_modified.data, hdr.value.ptr, hdr.value.len);
         }
     } else {
         char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
@@ -1804,10 +1804,12 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
         struct nst_rule *rule, struct stream *s, struct http_msg *msg) {
 
     struct htx *htx;
+    struct http_hdr_ctx hdr = { .blk = NULL };
 
     int if_none_match     = -1;
     int if_match          = -1;
     int if_modified_since = -1;;
+
 
     htx = htxbuf(&s->req.buf);
 
@@ -1817,19 +1819,17 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
 
     if(rule->etag == NST_STATUS_ON) {
 
-        struct http_hdr_ctx hdr2 = { .blk = NULL };
-
-        while(http_find_header(htx, ist("If-Match"), &hdr2, 0)) {
+        while(http_find_header(htx, ist("If-Match"), &hdr, 0)) {
 
             if_match = 412;
 
-            if(1 == hdr2.value.len && *(hdr2.value.ptr) == '*') {
+            if(1 == hdr.value.len && *(hdr.value.ptr) == '*') {
                 if_match = 200;
                 break;
             }
 
-            if(ctx->res.etag.len == hdr2.value.len && memcmp(ctx->res.etag.data,
-                        hdr2.value.ptr, hdr2.value.len) == 0) {
+            if(ctx->res.etag.len == hdr.value.len && memcmp(ctx->res.etag.data,
+                        hdr.value.ptr, hdr.value.len) == 0) {
 
                 if_match = 200;
                 break;
@@ -1843,13 +1843,11 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
 
     if(rule->last_modified == NST_STATUS_ON) {
 
-        struct http_hdr_ctx hdr2 = { .blk = NULL };
+        if(http_find_header(htx, ist("If-Unmodified-Since"), &hdr, 1)) {
 
-        if(http_find_header(htx, ist("If-Unmodified-Since"), &hdr2, 1)) {
-
-            if(ctx->res.last_modified.len != hdr2.value.len
+            if(ctx->res.last_modified.len != hdr.value.len
                     || memcmp(ctx->res.last_modified.data,
-                        hdr2.value.ptr, hdr2.value.len) != 0) {
+                        hdr.value.ptr, hdr.value.len) != 0) {
 
                 return 412;
             }
@@ -1858,19 +1856,17 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
 
     if(rule->etag == NST_STATUS_ON) {
 
-        struct http_hdr_ctx hdr2 = { .blk = NULL };
-
-        while(http_find_header(htx, ist("If-None-Match"), &hdr2, 0)) {
+        while(http_find_header(htx, ist("If-None-Match"), &hdr, 0)) {
 
             if_none_match = 200;
 
-            if(1 == hdr2.value.len && *(hdr2.value.ptr) == '*') {
+            if(1 == hdr.value.len && *(hdr.value.ptr) == '*') {
                 if_none_match = 304;
                 break;
             }
 
-            if(ctx->res.etag.len == hdr2.value.len && memcmp(ctx->res.etag.data,
-                        hdr2.value.ptr, hdr2.value.len) == 0) {
+            if(ctx->res.etag.len == hdr.value.len && memcmp(ctx->res.etag.data,
+                        hdr.value.ptr, hdr.value.len) == 0) {
 
                 if_none_match = 304;
                 break;
@@ -1880,13 +1876,11 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
 
     if(rule->last_modified == NST_STATUS_ON) {
 
-        struct http_hdr_ctx hdr2 = { .blk = NULL };
+        if(http_find_header(htx, ist("If-Modified-Since"), &hdr, 1)) {
 
-        if(http_find_header(htx, ist("If-Modified-Since"), &hdr2, 1)) {
-
-            if(ctx->res.last_modified.len == hdr2.value.len
+            if(ctx->res.last_modified.len == hdr.value.len
                     && memcmp(ctx->res.last_modified.data,
-                        hdr2.value.ptr, hdr2.value.len) == 0) {
+                        hdr.value.ptr, hdr.value.len) == 0) {
 
                 if_modified_since = 304;
             } else {

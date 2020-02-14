@@ -131,7 +131,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
         }
 
         list_for_each_entry(rule, &px->nuster.rules, list) {
-            nst_debug(s, "[nosql] ====== Check rule: %s ======\n", rule->name);
+            nst_debug(s, "[nosql] ==== Check rule: %s ====\n", rule->name);
 
             /* build key */
             if(ctx->key) {

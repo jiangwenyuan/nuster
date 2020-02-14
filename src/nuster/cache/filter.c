@@ -124,7 +124,10 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
     }
 }
 
-static void nst_res_304_2(struct stream *s, struct nst_str *last_modified,
+/*
+ * XXX
+ */
+static void nst_res_304(struct stream *s, struct nst_str *last_modified,
         struct nst_str *etag) {
 
     struct channel *res = &s->res;
@@ -182,7 +185,7 @@ fail:
     channel_htx_truncate(res, htx);
 }
 
-static void nst_res_412_2(struct stream *s) {
+static void nst_res_412(struct stream *s) {
 
     struct channel *res = &s->res;
     struct htx *htx = htx_from_buf(&res->buf);
@@ -274,7 +277,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
             }
 
             list_for_each_entry(rule, &px->nuster.rules, list) {
-                nst_debug(s, "[cache] ====== Check rule: %s ======\n", rule->name);
+                nst_debug(s, "[cache] ==== Check rule: %s ====\n", rule->name);
 
                 /* disabled? */
                 if(*rule->state == NST_RULE_DISABLED) {
@@ -314,14 +317,14 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
 
                     if(ret == 304) {
-                        nst_res_304_2(s, &ctx->res.last_modified,
+                        nst_res_304(s, &ctx->res.last_modified,
                                 &ctx->res.etag);
 
                         return 1;
                     }
 
                     if(ret == 412) {
-                        nst_res_412_2(s);
+                        nst_res_412(s);
 
                         return 1;
                     }
@@ -377,14 +380,14 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     ret = nst_cache_handle_conditional_req(ctx, rule, s, msg);
 
                     if(ret == 304) {
-                        nst_res_304_2(s, &ctx->res.last_modified,
+                        nst_res_304(s, &ctx->res.last_modified,
                                 &ctx->res.etag);
 
                         return 1;
                     }
 
                     if(ret == 412) {
-                        nst_res_412_2(s);
+                        nst_res_412(s);
 
                         return 1;
                     }

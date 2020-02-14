@@ -680,7 +680,7 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr2 = { .blk = NULL };
+    struct http_hdr_ctx hdr = { .blk = NULL };
 
     struct htx_sl *sl;
     struct ist uri;
@@ -697,15 +697,15 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
     ctx->req.host.data = NULL;
     ctx->req.host.len  = 0;
 
-    if(http_find_header(htx, ist("Host"), &hdr2, 0)) {
-        ctx->req.host.data = nst_nosql_memory_alloc(hdr2.value.len);
+    if(http_find_header(htx, ist("Host"), &hdr, 0)) {
+        ctx->req.host.data = nst_nosql_memory_alloc(hdr.value.len);
 
         if(!ctx->req.host.data) {
             return 0;
         }
 
-        ctx->req.host.len  = hdr2.value.len;
-        memcpy(ctx->req.host.data, hdr2.value.ptr, hdr2.value.len);
+        ctx->req.host.len  = hdr.value.len;
+        memcpy(ctx->req.host.data, hdr.value.ptr, hdr.value.len);
     }
 
     sl = http_get_stline(htx);
@@ -763,9 +763,9 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
     ctx->req.cookie.data = NULL;
     ctx->req.cookie.len  = 0;
 
-    if(http_find_header(htx, ist("Cookie"), &hdr2, 1)) {
-        ctx->req.cookie.data = hdr2.value.ptr;
-        ctx->req.cookie.len  = hdr2.value.len;
+    if(http_find_header(htx, ist("Cookie"), &hdr, 1)) {
+        ctx->req.cookie.data = hdr.value.ptr;
+        ctx->req.cookie.len  = hdr.value.len;
     }
 
     ctx->req.transfer_encoding.data = NULL;
@@ -887,7 +887,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
             case NST_RULE_KEY_HEADER:
                 {
                     struct htx *htx = htxbuf(&s->req.buf);
-                    struct http_hdr_ctx hdr2 = { .blk = NULL };
+                    struct http_hdr_ctx hdr = { .blk = NULL };
                     struct ist h = {
                         .ptr = ck->data,
                         .len = strlen(ck->data),
@@ -895,13 +895,13 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
 
                     nst_debug2("header_%s.", ck->data);
 
-                    while (http_find_header(htx, h, &hdr2, 0)) {
-                        ret = nst_nosql_key_append(ctx->key, hdr2.value.ptr,
-                                hdr2.value.len);
+                    while (http_find_header(htx, h, &hdr, 0)) {
+                        ret = nst_nosql_key_append(ctx->key, hdr.value.ptr,
+                                hdr.value.len);
                     }
 
                     ret = ret == NST_OK && nst_nosql_key_advance(ctx->key,
-                            hdr2.value.len == 0 ? 2 : 1);
+                            hdr.value.len == 0 ? 2 : 1);
 
                 }
                 break;
@@ -964,26 +964,26 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr2 = { .blk = NULL };
+    struct http_hdr_ctx hdr = { .blk = NULL };
 
-    if(http_find_header(htx, ist("Content-Type"), &hdr2, 0)) {
+    if(http_find_header(htx, ist("Content-Type"), &hdr, 0)) {
 
-        ctx->req.content_type.data = nst_nosql_memory_alloc(hdr2.value.len);
+        ctx->req.content_type.data = nst_nosql_memory_alloc(hdr.value.len);
 
         if(!ctx->req.content_type.data) {
             return 0;
         }
 
-        ctx->req.content_type.len = hdr2.value.len;
-        memcpy(ctx->req.content_type.data, hdr2.value.ptr, hdr2.value.len);
+        ctx->req.content_type.len = hdr.value.len;
+        memcpy(ctx->req.content_type.data, hdr.value.ptr, hdr.value.len);
     }
 
-    while(http_find_header(htx, ist("Transfer-Encoding"), &hdr2, 0)) {
+    while(http_find_header(htx, ist("Transfer-Encoding"), &hdr, 0)) {
 
         char *p = ctx->req.transfer_encoding.data;
         int len = p
-            ? ctx->req.transfer_encoding.len + hdr2.value.len + 1
-            : ctx->req.transfer_encoding.len + hdr2.value.len;
+            ? ctx->req.transfer_encoding.len + hdr.value.len + 1
+            : ctx->req.transfer_encoding.len + hdr.value.len;
 
         ctx->req.transfer_encoding.data = nst_nosql_memory_alloc(len);
 
@@ -1006,11 +1006,11 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
             nst_nosql_memory_free(p);
             memcpy(ctx->req.transfer_encoding.data
                     + ctx->req.transfer_encoding.len + 1,
-                    hdr2.value.ptr, hdr2.value.len);
+                    hdr.value.ptr, hdr.value.len);
 
         } else {
-            memcpy(ctx->req.transfer_encoding.data, hdr2.value.ptr,
-                    hdr2.value.len);
+            memcpy(ctx->req.transfer_encoding.data, hdr.value.ptr,
+                    hdr.value.len);
         }
 
         ctx->req.transfer_encoding.len = len;
@@ -1215,7 +1215,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         if(ctx->state == NST_NOSQL_CTX_STATE_CREATE) {
             struct htx *htx = htxbuf(&msg->chn->buf);
             struct htx_sl *sl;
-            struct http_hdr_ctx hdr2 = { .blk = NULL };
+            struct http_hdr_ctx hdr = { .blk = NULL };
 
             ctx->entry   = entry;
             ctx->data    = entry->data;
@@ -1224,9 +1224,9 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
             sl = http_get_stline(htx);
 
             if(sl->flags & HTX_SL_F_CLEN) {
-                if(http_find_header(htx, ist("Content-Length"), &hdr2, 0)) {
+                if(http_find_header(htx, ist("Content-Length"), &hdr, 0)) {
                     long long cl;
-                    strl2llrc(hdr2.value.ptr, hdr2.value.len, &cl);
+                    strl2llrc(hdr.value.ptr, hdr.value.len, &cl);
                     ctx->cache_len = cl;
                 }
             }
@@ -1235,7 +1235,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
                 entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
             }
 
-            nst_res_header_create(ctx, s, 200, hdr2.value);
+            nst_res_header_create(ctx, s, 200, hdr.value);
 
         }
     }
