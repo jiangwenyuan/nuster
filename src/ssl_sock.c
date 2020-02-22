@@ -2250,32 +2250,16 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 	}
 	trash.str[i] = 0;
 
-	/* lookup in full qualified names */
-	node = ebst_lookup(&s->sni_ctx, trash.str);
 
-	/* lookup a not neg filter */
-	for (n = node; n; n = ebmb_next_dup(n)) {
-		if (!container_of(n, struct sni_ctx, name)->neg) {
-			switch(container_of(n, struct sni_ctx, name)->key_sig) {
-			case TLSEXT_signature_ecdsa:
-				if (!node_ecdsa)
-					node_ecdsa = n;
-				break;
-			case TLSEXT_signature_rsa:
-				if (!node_rsa)
-					node_rsa = n;
-				break;
-			default: /* TLSEXT_signature_anonymous */
-				if (!node_anonymous)
-					node_anonymous = n;
-				break;
-			}
-		}
-	}
-	if (wildp) {
-		/* lookup in wildcards names */
-		node = ebst_lookup(&s->sni_w_ctx, wildp);
+	for (i = 0; i < 2; i++) {
+		if (i == 0) 	/* lookup in full qualified names */
+			node = ebst_lookup(&s->sni_ctx, trash.str);
+		else if (i == 1 && wildp) /* lookup in wildcards names */
+			node = ebst_lookup(&s->sni_w_ctx, wildp);
+		else
+			break;
 		for (n = node; n; n = ebmb_next_dup(n)) {
+			/* lookup a not neg filter */
 			if (!container_of(n, struct sni_ctx, name)->neg) {
 				switch(container_of(n, struct sni_ctx, name)->key_sig) {
 				case TLSEXT_signature_ecdsa:
@@ -2293,18 +2277,17 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 				}
 			}
 		}
-	}
-	/* select by key_signature priority order */
-	node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
-		: ((has_rsa_sig && node_rsa) ? node_rsa
-		   : (node_anonymous ? node_anonymous
-		      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
-			 : node_rsa                   /* no rsa signature case (far far away) */
-			 )));
-	if (node) {
-		/* switch ctx */
-		struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
-		ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
+		/* select by key_signature priority order */
+		node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
+			: ((has_rsa_sig && node_rsa) ? node_rsa
+			   : (node_anonymous ? node_anonymous
+			      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
+				 : node_rsa                   /* no rsa signature case (far far away) */
+				 )));
+		if (node) {
+			/* switch ctx */
+			struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
+			ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
 			if (conf) {
 				methodVersions[conf->ssl_methods.min].ssl_set_version(ssl, SET_MIN);
 				methodVersions[conf->ssl_methods.max].ssl_set_version(ssl, SET_MAX);
@@ -2312,6 +2295,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 					allow_early = 1;
 			}
 			goto allow_early;
+		}
 	}
 #if (!defined SSL_NO_GENERATE_CERTIFICATES)
 	if (s->generate_certs && ssl_sock_generate_certificate(trash.str, s, ssl)) {
@@ -3580,25 +3564,23 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 					}
 
 					if (is_bundle) {
-						char dp[MAXPATHLEN+1] = {0}; /* this will be the filename w/o the keytype */
 						int dp_len;
 
 						dp_len = end - de->d_name;
-						snprintf(dp, dp_len + 1, "%s", de->d_name);
 
 						/* increment i and free de until we get to a non-bundle cert
 						 * Note here that we look at de_list[i + 1] before freeing de
-						 * this is important since ignore_entry will free de
+						 * this is important since ignore_entry will free de. This also
+						 * guarantees that de->d_name continues to hold the same prefix.
 						 */
-						while (i + 1 < n && !strncmp(de_list[i + 1]->d_name, dp, dp_len)) {
+						while (i + 1 < n && !strncmp(de_list[i + 1]->d_name, de->d_name, dp_len)) {
 							free(de);
 							i++;
 							de = de_list[i];
 						}
 
-						snprintf(fp, sizeof(fp), "%s/%s", path, dp);
+						snprintf(fp, sizeof(fp), "%s/%.*s", path, dp_len, de->d_name);
 						cfgerr |= ssl_sock_load_multi_cert(fp, bind_conf, NULL, NULL, 0, err);
-
 						/* Successfully processed the bundle */
 						goto ignore_entry;
 					}
@@ -3933,10 +3915,8 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 	SSL_CTX_set_select_certificate_cb(ctx, ssl_sock_switchctx_cbk);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
 #elif (OPENSSL_VERSION_NUMBER >= 0x10101000L)
-	if (bind_conf->ssl_conf.early_data) {
+	if (bind_conf->ssl_conf.early_data)
 		SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
-		SSL_CTX_set_max_early_data(ctx, global.tune.bufsize - global.tune.maxrewrite);
-	}
 	SSL_CTX_set_client_hello_cb(ctx, ssl_sock_switchctx_cbk, NULL);
 	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
 #else
@@ -5164,6 +5144,10 @@ static int ssl_sock_init(struct connection *conn)
 			conn->err_code = CO_ER_SSL_NO_MEM;
 			return -1;
 		}
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L)
+		if (__objt_listener(conn->target)->bind_conf->ssl_conf.early_data)
+			SSL_set_max_early_data(conn->xprt_ctx, global.tune.bufsize - global.tune.maxrewrite);
+#endif
 
 		/* set fd on SSL session context */
 		if (!SSL_set_fd(conn->xprt_ctx, conn->handle.fd)) {

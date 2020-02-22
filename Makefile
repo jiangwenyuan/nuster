@@ -1043,5 +1043,4 @@ opts:
 	@echo 'COPTS="$(strip $(COPTS))"'
 	@echo 'LDFLAGS="$(strip $(LDFLAGS))"'
 	@echo 'LDOPTS="$(strip $(LDOPTS))"'
-	@echo 'OPTIONS_OBJS="$(strip $(OPTIONS_OBJS))"'
-	@echo 'OBJS="$(strip $(OBJS))"'
+	@echo 'OPTIONS_OBJS="$(strip $

@@ -3367,6 +3367,13 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
+		if (strcasecmp(args[1], "or") == 0) {
+			ha_warning("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
+				   "logical disjunction within a condition.\n",
+				   file, linenum, args[1]);
+			err_code |= ERR_WARN;
+		}
+
 		if (parse_acl((const char **)args + 1, &curproxy->acl, &errmsg, &curproxy->conf.args, file, linenum) == NULL) {
 			ha_alert("parsing [%s:%d] : error detected while parsing ACL '%s' : %s.\n",
 				 file, linenum, args[1], errmsg);
@@ -3526,9 +3533,34 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 					err_code |= ERR_WARN;
 				curproxy->ck_opts |= PR_CK_DYNAMIC;
 			}
+			else if (!strcmp(args[cur_arg], "attr")) {
+				char *val;
+				if (!*args[cur_arg + 1]) {
+					ha_alert("parsing [%s:%d]: '%s' expects <value> as argument.\n",
+						 file, linenum, args[cur_arg]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
+				val = args[cur_arg + 1];
+				while (*val) {
+					if (iscntrl(*val) || *val == ';') {
+						ha_alert("parsing [%s:%d]: character '%%x%02X' is not permitted in attribute value.\n",
+							 file, linenum, *val);
+						err_code |= ERR_ALERT | ERR_FATAL;
+						goto out;
+					}
+					val++;
+				}
+				/* don't add ';' for the first attribute */
+				if (!curproxy->cookie_attrs)
+					curproxy->cookie_attrs = strdup(args[cur_arg + 1]);
+				else
+					memprintf(&curproxy->cookie_attrs, "%s; %s", curproxy->cookie_attrs, args[cur_arg + 1]);
+				cur_arg++;
+			}
 
 			else {
-				ha_alert("parsing [%s:%d] : '%s' supports 'rewrite', 'insert', 'prefix', 'indirect', 'nocache', 'postonly', 'domain', 'maxidle', 'dynamic' and 'maxlife' options.\n",
+				ha_alert("parsing [%s:%d] : '%s' supports 'rewrite', 'insert', 'prefix', 'indirect', 'nocache', 'postonly', 'domain', 'maxidle', 'dynamic', 'maxlife' and 'attr' options.\n",
 					 file, linenum, args[0]);
 				err_code |= ERR_ALERT | ERR_FATAL;
 				goto out;

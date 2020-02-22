@@ -5966,6 +5966,9 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 		if (s->be->ck_opts & PR_CK_SECURE)
 			chunk_appendf(&trash, "; Secure");
 
+		if (s->be->cookie_attrs)
+			chunk_appendf(&trash, "; %s", s->be->cookie_attrs);
+
 		if (unlikely(http_header_add_tail2(&txn->rsp, &txn->hdr_idx, trash.str, trash.len) < 0))
 			goto return_bad_resp;
 
@@ -8354,31 +8357,6 @@ void http_reset_txn(struct stream *s)
 	s->res.wex = TICK_ETERNITY;
 	s->res.analyse_exp = TICK_ETERNITY;
 	s->si[1].hcto = TICK_ETERNITY;
-}
-
-void free_http_res_rules(struct list *r)
-{
-	struct act_rule *tr, *pr;
-
-	list_for_each_entry_safe(pr, tr, r, list) {
-		LIST_DEL(&pr->list);
-		regex_free(&pr->arg.hdr_add.re);
-		free(pr);
-	}
-}
-
-void free_http_req_rules(struct list *r)
-{
-	struct act_rule *tr, *pr;
-
-	list_for_each_entry_safe(pr, tr, r, list) {
-		LIST_DEL(&pr->list);
-		if (pr->action == ACT_HTTP_REQ_AUTH)
-			free(pr->arg.auth.realm);
-
-		regex_free(&pr->arg.hdr_add.re);
-		free(pr);
-	}
 }
 
 /* parse an "http-request" rule */
@@ -12280,7 +12258,10 @@ int check_http_req_capture(struct act_rule *rule, struct proxy *px, char **err)
 	if (rule->action_ptr != http_action_req_capture_by_id)
 		return 1;
 
-	if (rule->arg.capid.idx >= px->nb_req_cap) {
+	/* capture slots can only be declared in frontends, so we can't check their
+	 * existence in backends at configuration parsing step
+	 */
+	if (px->cap & PR_CAP_FE && rule->arg.capid.idx >= px->nb_req_cap) {
 		memprintf(err, "unable to find capture id '%d' referenced by http-request capture rule",
 			  rule->arg.capid.idx);
 		return 0;

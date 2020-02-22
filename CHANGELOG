@@ -1,6 +1,57 @@
 ChangeLog :
 ===========
 
+2020/02/15 : 1.8.24
+    - DOC: clarify matching strings on binary fetches
+    - BUG/MEDIUM: listener/thread: fix a race when pausing a listener
+    - BUG/MINOR: ssl: certificate choice can be unexpected with openssl >= 1.1.1
+    - BUG/MINOR: proxy: make soft_stop() also close FDs in LI_PAUSED state
+    - BUG/MINOR: listener/threads: always use atomic ops to clear the FD events
+    - BUG/MINOR: listener: also clear the error flag on a paused listener
+    - BUG/MEDIUM: listener/threads: fix a remaining race in the listener's accept()
+    - DOC: document the listener state transitions
+    - BUG/MAJOR: dns: add minimalist error processing on the Rx path
+    - BUG/MEDIUM: proto_udp/threads: recv() and send() must not be exclusive.
+    - BUG/MEDIUM: kqueue: Make sure we report read events even when no data.
+    - DOC: listeners: add a few missing transitions
+    - BUILD/MINOR: ssl: shut up a build warning about format truncation
+    - BUILD/MINOR: tools: shut up the format truncation warning in get_gmt_offset()
+    - BUILD: do not disable -Wformat-truncation anymore
+    - DOC: remove references to the outdated architecture.txt
+    - BUG/MINOR: log: fix minor resource leaks on logformat error path
+    - BUG/MINOR: mworker: properly pass SIGTTOU/SIGTTIN to workers
+    - BUG/MINOR: listener: do not immediately resume on transient error
+    - BUG/MINOR: server: make "agent-addr" work on default-server line
+    - BUG/MINOR: listener: fix off-by-one in state name check
+    - BUILD/MINOR: unix sockets: silence an absurd gcc warning about strncpy()
+    - BUG/MINOR: sample: fix the closing bracket and LF in the debug converter
+    - BUG/MINOR: sample: always check converters' arguments
+    - BUG/MEDIUM: ssl: Don't set the max early data we can receive too early.
+    - BUG/MEDIUM: session: do not report a failure when rejecting a session
+    - BUG/MEDIUM: mworker: remain in mworker mode during reload
+    - BUG/MAJOR: hashes: fix the signedness of the hash inputs
+    - BUG/MEDIUM: cli: _getsocks must send the peers sockets
+    - BUG/MINOR: stream: don't mistake match rules for store-request rules
+    - BUG/MINOR: pattern: handle errors from fgets when trying to load patterns
+    - BUG/MINOR: dns: Make dns_query_id_seed unsigned
+    - BUG/MINOR: http-rules: Remove buggy deinit functions for HTTP rules
+    - BUG/MINOR: stick-table: Use MAX_SESS_STKCTR as the max track ID during parsing
+    - BUG/MINOR: tcp-rules: Fix memory releases on error path during action parsing
+    - MINOR: proxy/http-ana: Add support of extra attributes for the cookie directive
+    - BUG/MINOR: http_act: don't check capture id in backend
+    - BUG/MINOR: dns: allow srv record weight set to 0
+    - BUG/MEDIUM: pipe: fix a use-after-free in case of pipe creation error
+    - BUG/MINOR: connection: fix ip6 dst_port copy in make_proxy_line_v2
+    - MINOR: acl: Warn when an ACL is named 'or'
+    - SCRIPTS: announce-release: place the send command in the mail's header
+    - SCRIPTS: announce-release: allow the user to force to overwrite old files
+    - BUG/MINOR: unix: better catch situations where the unix socket path length is close to the limit
+    - BUG/MINOR: dns: allow 63 char in hostname
+    - BUG/MEDIUM: listener: only consider running threads when resuming listeners
+    - BUG/MINOR: tcp: avoid closing fd when socket failed in tcp_bind_listener
+    - BUG/MINOR: tcp: don't try to set defaultmss when value is negative
+    - SCRIPTS: make announce-release executable again
+
 2019/11/25 : 1.8.23
     - MINOR: tcp: avoid confusion in time parsing init
     - BUG/MINOR: cli: don't call the kw->io_release if kw->parse failed

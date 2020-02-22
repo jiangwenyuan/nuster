@@ -918,7 +918,7 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 		 */
 		prefix_path_len = (pfx && !abstract) ? strlen(pfx) : 0;
 		max_path_len = (sizeof(((struct sockaddr_un *)&ss)->sun_path) - 1) -
-			(prefix_path_len ? prefix_path_len + 1 + 5 + 1 + 3 : 0);
+			(abstract ? 0 : prefix_path_len + 1 + 5 + 1 + 3);
 
 		adr_len = strlen(str2);
 		if (adr_len > max_path_len) {
@@ -2864,11 +2864,12 @@ const char *get_gmt_offset(time_t t, struct tm *tm)
 		} else {
 			*gmt_offset = '+';
 		}
+		diff %= 86400U;
 		diff /= 60; /* Convert to minutes */
 		snprintf(gmt_offset+1, 4+1, "%02d%02d", diff/60, diff%60);
 	}
 
-    return gmt_offset;
+	return gmt_offset;
 }
 
 /* gmt2str_log: write a date in the format :

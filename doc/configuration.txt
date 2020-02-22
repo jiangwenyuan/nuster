@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.8
                              willy tarreau
-                              2019/11/25
+                              2020/02/15
 
 
 This document covers the configuration language as implemented in the version
@@ -3020,7 +3020,7 @@ contimeout <timeout> (deprecated)
 cookie <name> [ rewrite | insert | prefix ] [ indirect ] [ nocache ]
               [ postonly ] [ preserve ] [ httponly ] [ secure ]
               [ domain <domain> ]* [ maxidle <idle> ] [ maxlife <life> ]
-              [ dynamic ]
+              [ dynamic ] [ attr <value> ]*
   Enable cookie-based persistence in a backend.
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
@@ -3178,6 +3178,11 @@ cookie <name> [ rewrite | insert | prefix ] [ indirect ] [ nocache ]
               "dynamic-cookie-key" backend directive.
               The cookie will be regenerated each time the IP address change,
               and is only generated for IPv4/IPv6.
+
+    attr      This option tells haproxy to add an extra attribute when a
+              cookie is inserted. The attribute value can contain any
+              characters except control ones or ";". This option may be
+              repeated.
 
   There can be only one persistence cookie per HTTP backend, and it can be
   declared in a defaults section. The value of the cookie will be the value
@@ -4176,8 +4181,11 @@ http-request { allow | auth [realm <realm>] | redirect <rule> | reject |
       the captured string in a previously declared capture slot. This is useful
       to run captures in backends. The slot id can be declared by a previous
       directive "http-request capture" or with the "declare capture" keyword.
-      If the slot <id> doesn't exist, then HAProxy fails parsing the
-      configuration to prevent unexpected behavior at run time.
+
+      When using this action in a backend, double check that the relevant
+      frontend(s) have the required capture slots otherwise, this rule will be
+      ignored at run time. This can't be detected at configuration parsing time
+      due to HAProxy's ability to dynamically resolve backend name at runtime.
 
     - cache-use <name> :
       See section 10.2 about cache setup.
@@ -4620,8 +4628,11 @@ http-response { allow | deny | add-header <name> <fmt> | set-nice <nice> |
       This is useful to run captures in backends. The slot id can be declared by
       a previous directive "http-response capture" or with the "declare capture"
       keyword.
-      If the slot <id> doesn't exist, then HAProxy fails parsing the
-      configuration to prevent unexpected behavior at run time.
+
+      When using this action in a backend, double check that the relevant
+      frontend(s) have the required capture slots otherwise, this rule will be
+      ignored at run time. This can't be detected at configuration parsing time
+      due to HAProxy's ability to dynamically resolve backend name at runtime.
 
     - cache-store <name> :
       See section 10.2 about cache setup.
@@ -12604,6 +12615,14 @@ characters such as the space. If the "-i" flag is passed before the first
 string, then the matching will be performed ignoring the case. In order
 to match the string "-i", either set it second, or pass the "--" flag
 before the first string. Same applies of course to match the string "--".
+
+Do not use string matches for binary fetches which might contain null bytes
+(0x00), as the comparison stops at the occurrence of the first null byte.
+Instead, convert the binary fetch to a hex string with the hex converter first.
+
+Example:
+    # matches if the string <tag> is present in the binary sample
+    acl tag_found req.payload(0,0),hex -m sub 3C7461673E
 
 
 7.1.4. Matching regular expressions (regexes)

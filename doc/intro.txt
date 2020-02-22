@@ -1566,7 +1566,4 @@ reached.
 
 Varnish also does some load balancing of its backend servers and does support
 real health checks. It doesn't implement stickiness however, so just like with
-NGINX, as long as stickiness is not needed that can be enough to start with.
-And similarly, since HAProxy and Varnish integrate so well together, it's easy
-to add it later into the mix to complement the feature set.
-
+NGINX, as long as stickiness is not needed that can be e

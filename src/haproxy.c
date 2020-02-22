@@ -1,6 +1,6 @@
 /*
  * HA-Proxy : High Availability-enabled HTTP/TCP proxy
- * Copyright 2000-2019 Willy Tarreau <willy@haproxy.org>.
+ * Copyright 2000-2020 Willy Tarreau <willy@haproxy.org>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -373,7 +373,7 @@ static void display_version()
 	printf("nuster version %s\n", NUSTER_VERSION);
 	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version " HAPROXY_VERSION " " HAPROXY_DATE"\n");
-	printf("Copyright 2000-2019 Willy Tarreau <willy@haproxy.org>\n\n");
+	printf("Copyright 2000-2020 Willy Tarreau <willy@haproxy.org>\n\n");
 }
 
 static void display_build_opts()
@@ -514,6 +514,8 @@ static void mworker_register_signals()
 	sigaction(SIGHUP, &sa, NULL);
 	sigaction(SIGUSR1, &sa, NULL);
 	sigaction(SIGUSR2, &sa, NULL);
+	sigaction(SIGTTIN, &sa, NULL);
+	sigaction(SIGTTOU, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 }
@@ -525,6 +527,8 @@ static void mworker_block_signals()
 	sigemptyset(&set);
 	sigaddset(&set, SIGUSR1);
 	sigaddset(&set, SIGUSR2);
+	sigaddset(&set, SIGTTIN);
+	sigaddset(&set, SIGTTOU);
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGINT);
 	sigaddset(&set, SIGTERM);
@@ -538,6 +542,8 @@ static void mworker_unblock_signals()
 	sigemptyset(&set);
 	sigaddset(&set, SIGUSR1);
 	sigaddset(&set, SIGUSR2);
+	sigaddset(&set, SIGTTIN);
+	sigaddset(&set, SIGTTOU);
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGINT);
 	sigaddset(&set, SIGTERM);
@@ -551,6 +557,8 @@ static void mworker_unregister_signals()
 	signal(SIGHUP,  SIG_IGN);
 	signal(SIGUSR1, SIG_IGN);
 	signal(SIGUSR2, SIG_IGN);
+	signal(SIGTTIN, SIG_IGN);
+	signal(SIGTTOU, SIG_IGN);
 }
 
 /*
@@ -768,6 +776,8 @@ restart_wait:
 				mworker_reload();
 				/* should reach there only if it fail */
 				goto restart_wait;
+			} else if (sig == SIGTTIN || sig == SIGTTOU) {
+				mworker_kill(sig);
 			} else {
 #if defined(USE_SYSTEMD)
 				if ((global.tune.options & GTUNE_USE_SYSTEMD) && (sig == SIGUSR1 || sig == SIGTERM)) {
@@ -1069,7 +1079,7 @@ static int get_old_sockets(const char *unixsocket)
 			   unixsocket);
 		goto out;
 	}
-	strncpy(addr.sun_path, unixsocket, sizeof(addr.sun_path));
+	strncpy(addr.sun_path, unixsocket, sizeof(addr.sun_path) - 1);
 	addr.sun_path[sizeof(addr.sun_path) - 1] = 0;
 	addr.sun_family = PF_UNIX;
 	ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
@@ -1318,6 +1328,10 @@ static void init(int argc, char **argv)
 	gethostname(hostname, sizeof(hostname) - 1);
 	memset(localpeer, 0, sizeof(localpeer));
 	memcpy(localpeer, hostname, (sizeof(hostname) > sizeof(localpeer) ? sizeof(localpeer) : sizeof(hostname)) - 1);
+
+	/* we were in mworker mode, we should restart in mworker mode */
+	if (getenv("HAPROXY_MWORKER_REEXEC") != NULL)
+		global.mode |= MODE_MWORKER;
 
 	/*
 	 * Initialize the previously static variables.
@@ -2001,14 +2015,14 @@ static void deinit_acl_cond(struct acl_cond *cond)
 	free(cond);
 }
 
-static void deinit_tcp_rules(struct list *rules)
+static void deinit_act_rules(struct list *rules)
 {
-	struct act_rule *trule, *truleb;
+	struct act_rule *rule, *ruleb;
 
-	list_for_each_entry_safe(trule, truleb, rules, list) {
-		LIST_DEL(&trule->list);
-		deinit_acl_cond(trule->cond);
-		free(trule);
+	list_for_each_entry_safe(rule, ruleb, rules, list) {
+		LIST_DEL(&rule->list);
+		deinit_acl_cond(rule->cond);
+		free(rule);
 	}
 }
 
@@ -2053,6 +2067,7 @@ void deinit(void)
 		free(p->check_req);
 		free(p->cookie_name);
 		free(p->cookie_domain);
+		free(p->cookie_attrs);
 		free(p->url_param_name);
 		free(p->capture_name);
 		free(p->monitor_uri);
@@ -2184,9 +2199,12 @@ void deinit(void)
 			free(lf);
 		}
 
-		deinit_tcp_rules(&p->tcp_req.inspect_rules);
-		deinit_tcp_rules(&p->tcp_rep.inspect_rules);
-		deinit_tcp_rules(&p->tcp_req.l4_rules);
+		deinit_act_rules(&p->tcp_req.inspect_rules);
+		deinit_act_rules(&p->tcp_rep.inspect_rules);
+		deinit_act_rules(&p->tcp_req.l4_rules);
+		deinit_act_rules(&p->tcp_req.l5_rules);
+		deinit_act_rules(&p->http_req_rules);
+		deinit_act_rules(&p->http_res_rules);
 
 		deinit_stick_rules(&p->storersp_rules);
 		deinit_stick_rules(&p->sticking_rules);
@@ -2283,8 +2301,6 @@ void deinit(void)
 		free(p->desc);
 		free(p->fwdfor_hdr_name);
 
-		free_http_req_rules(&p->http_req_rules);
-		free_http_res_rules(&p->http_res_rules);
 		task_free(p->task);
 
 		pool_destroy(p->req_cap_pool);
@@ -2308,7 +2324,7 @@ void deinit(void)
 		free(uap->desc);
 
 		userlist_free(uap->userlist);
-		free_http_req_rules(&uap->http_req_rules);
+		deinit_act_rules(&uap->http_req_rules);
 
 		free(uap);
 	}

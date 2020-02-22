@@ -856,8 +856,8 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 			if (getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &default_tcp_maxseg,
 			    &ready_len) == -1)
 				ha_warning("Failed to get the default value of TCP_MAXSEG\n");
+			close(fd);
 		}
-		close(fd);
 	}
 	if (default_tcp6_maxseg == -1) {
 		default_tcp6_maxseg = -2;
@@ -1013,9 +1013,9 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 			defaultmss = default_tcp6_maxseg;
 
 		getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &tmpmaxseg, &len);
-		if (tmpmaxseg != defaultmss && setsockopt(fd, IPPROTO_TCP,
-						TCP_MAXSEG, &defaultmss,
-						sizeof(defaultmss)) == -1) {
+		if (defaultmss > 0 &&
+		    tmpmaxseg != defaultmss &&
+		    setsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &defaultmss, sizeof(defaultmss)) == -1) {
 			msg = "cannot set MSS";
 			err |= ERR_WARN;
 		}

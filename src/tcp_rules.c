@@ -682,7 +682,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 			memprintf(err,
 			          "'%s %s %s' : fetch method '%s' extracts information from '%s', none of which is available here",
 			          args[0], args[1], args[kw], args[arg-1], sample_src_names(expr->fetch->use));
-			free(expr);
+			release_sample_expr(expr);
 			return -1;
 		}
 
@@ -692,7 +692,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 				memprintf(err,
 					  "'%s %s %s' : missing length value",
 					  args[0], args[1], args[kw]);
-				free(expr);
+				release_sample_expr(expr);
 				return -1;
 			}
 			/* we copy the table name for now, it will be resolved later */
@@ -701,7 +701,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 				memprintf(err,
 					  "'%s %s %s' : length must be > 0",
 					  args[0], args[1], args[kw]);
-				free(expr);
+				release_sample_expr(expr);
 				return -1;
 			}
 			arg++;
@@ -754,7 +754,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 			memprintf(err,
 			          "'%s %s %s' : fetch method '%s' extracts information from '%s', none of which is available here",
 			          args[0], args[1], args[kw], args[arg-1], sample_src_names(expr->fetch->use));
-			free(expr);
+			release_sample_expr(expr);
 			return -1;
 		}
 
@@ -767,7 +767,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 				memprintf(err,
 					  "'%s %s %s' : missing table name",
 					  args[0], args[1], args[kw]);
-				free(expr);
+				release_sample_expr(expr);
 				return -1;
 			}
 			/* we copy the table name for now, it will be resolved later */

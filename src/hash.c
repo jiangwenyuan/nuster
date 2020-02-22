@@ -17,8 +17,9 @@
 #include <common/hash.h>
 
 
-unsigned int hash_wt6(const char *key, int len)
+unsigned int hash_wt6(const void *input, int len)
 {
+	const unsigned char *key = input;
 	unsigned h0 = 0xa53c965aUL;
 	unsigned h1 = 0x5ca6953aUL;
 	unsigned step0 = 6;
@@ -27,7 +28,7 @@ unsigned int hash_wt6(const char *key, int len)
 	for (; len > 0; len--) {
 		unsigned int t;
 
-		t = ((unsigned int)*key);
+		t = *key;
 		key++;
 
 		h0 = ~(h0 ^ t);
@@ -44,8 +45,9 @@ unsigned int hash_wt6(const char *key, int len)
 	return h0 ^ h1;
 }
 
-unsigned int hash_djb2(const char *key, int len)
+unsigned int hash_djb2(const void *input, int len)
 {
+	const unsigned char *key = input;
 	unsigned int hash = 5381;
 
 	/* the hash unrolled eight times */
@@ -72,8 +74,9 @@ unsigned int hash_djb2(const char *key, int len)
 	return hash;
 }
 
-unsigned int hash_sdbm(const char *key, int len)
+unsigned int hash_sdbm(const void *input, int len)
 {
+	const unsigned char *key = input;
 	unsigned int hash = 0;
 	int c;
 
@@ -92,8 +95,9 @@ unsigned int hash_sdbm(const char *key, int len)
  * this hash already sustains gigabit speed which is far faster than what
  * we'd ever need. Better preserve the CPU's cache instead.
  */
-unsigned int hash_crc32(const char *key, int len)
+unsigned int hash_crc32(const void *input, int len)
 {
+	const unsigned char *key = input;
 	unsigned int hash;
 	int bit;
 
