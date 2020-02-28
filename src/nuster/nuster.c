@@ -20,6 +20,7 @@
 #include <nuster/memory.h>
 #include <nuster/nuster.h>
 #include <nuster/http.h>
+#include <nuster/shctx.h>
 
 struct nuster nuster = {
     .cache = NULL,
@@ -46,11 +47,13 @@ struct nuster nuster = {
             .name     = "<NUSTER.CACHE.ENGINE2>",
         },
     },
+    .proxy = NULL,
 };
 
 void nuster_init() {
-    int i, uuid;
+    int i, uuid, proxy_cnt;
     struct proxy *p;
+    struct nst_memory *memory;
 
     if(!(global.mode & MODE_MWORKER)) {
         ha_alert("[nuster] Not in master-worker mode."
@@ -128,6 +131,130 @@ out:
                 rule->id = i++;
             }
         }
+        p = p->next;
+    }
+
+    /* new rule init */
+    global.nuster.memory = nst_memory_create("nuster.shm", NST_DEFAULT_SIZE,
+            global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
+
+    if(!global.nuster.memory) {
+        goto err;
+    }
+
+    if(nst_shctx_init(global.nuster.memory) != NST_OK) {
+        goto err;
+    }
+
+    memory = global.nuster.memory;
+
+    i = uuid = proxy_cnt = 0;
+    p = proxies_list;
+
+    while(p) {
+        proxy_cnt++;
+
+        p = p->next;
+    }
+
+    nuster.proxy = nst_memory_alloc(memory, proxy_cnt * sizeof(struct nst_proxy *));
+
+    if(!nuster.proxy) {
+        goto err;
+    }
+
+    memset(nuster.proxy, 0, proxy_cnt * sizeof(struct nst_proxy *));
+
+    p = proxies_list;
+
+    while(p) {
+        if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
+            struct nst_rule *rule = NULL;
+            struct nst_rule2 *rule2 = NULL;
+            struct nst_rule2 *rule2_tail = NULL;
+
+            nuster.proxy[p->uuid] = nst_memory_alloc(memory, sizeof(struct nst_proxy));
+
+            if(!nuster.proxy[p->uuid]) {
+                goto err;
+            }
+
+            memset(nuster.proxy[p->uuid], 0, sizeof(struct nst_proxy));
+
+            list_for_each_entry(rule, &p->nuster.rules, list) {
+                struct nst_key2 *key = NULL;
+
+                rule2 = nst_memory_alloc(memory, sizeof(struct nst_rule2));
+
+                if(!rule2) {
+                    goto err;
+                }
+
+                rule2->uuid  = uuid++;
+                rule2->idx   = nuster.proxy[p->uuid]->rule_cnt++;
+                rule2->id    = rule->id;
+                rule2->state = NST_RULE_ENABLED;
+                rule2->name  = rule->name;
+
+                key = nuster.proxy[p->uuid]->key;
+
+                while(key) {
+                    if(strcmp(key->name, rule->raw_key) == 0) {
+                        break;
+                    }
+
+                    key = key->next;
+                }
+
+                if(key) {
+                    rule2->key = key;
+                } else {
+                    key = nst_memory_alloc(memory, sizeof(struct nst_key2));
+
+                    if(!key) {
+                        goto err;
+                    }
+
+                    key->name = rule->raw_key;
+                    key->data = rule->key;
+                    key->idx  = nuster.proxy[p->uuid]->key_cnt++;
+                    key->next = NULL;
+
+                    if(nuster.proxy[p->uuid]->key) {
+                        key->next = nuster.proxy[p->uuid]->key;
+                    }
+
+                    nuster.proxy[p->uuid]->key = key;
+                }
+
+                rule2->key = key;
+
+                rule2->code = rule->code;
+                rule2->ttl  = *rule->ttl;
+                rule2->disk = rule->disk;
+                rule2->etag = rule->etag;
+
+                rule2->last_modified = rule->last_modified;
+
+                rule2->extend[0] = rule->extend[0];
+                rule2->extend[1] = rule->extend[1];
+                rule2->extend[2] = rule->extend[2];
+                rule2->extend[3] = rule->extend[3];
+
+                rule2->cond = rule->cond;
+
+                rule2->next = NULL;
+
+                if(nuster.proxy[p->uuid]->rule) {
+                    rule2_tail->next = rule2;
+                } else {
+                    nuster.proxy[p->uuid]->rule = rule2;
+                }
+
+                rule2_tail = rule2;
+            }
+        }
+
         p = p->next;
     }
 

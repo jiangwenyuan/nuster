@@ -33,6 +33,14 @@
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
 
+struct nst_proxy {
+    struct nst_rule2 *rule;
+    struct nst_key2  *key;
+
+    int               rule_cnt;
+    int               key_cnt;
+};
+
 struct nuster {
     struct nst_cache *cache;
     struct nst_nosql *nosql;
@@ -44,6 +52,8 @@ struct nuster {
         struct applet nosql_engine;
         struct applet cache_disk_engine;
     } applet;
+
+    struct nst_proxy **proxy;
 };
 
 extern struct nuster nuster;

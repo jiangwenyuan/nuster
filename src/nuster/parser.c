@@ -1198,8 +1198,8 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     rule       = malloc(sizeof(*rule));
     rule->cond = cond;
     rule->name = name;
-    rule->key  = _nst_parse_rule_key(key == NULL
-            ? NST_CACHE_DEFAULT_KEY : key);
+    rule->raw_key = strdup(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
+    rule->key  = _nst_parse_rule_key(rule->raw_key);
 
     if(!rule->key) {
         memprintf(err, "'%s %s': invalid key.", args[0], name);

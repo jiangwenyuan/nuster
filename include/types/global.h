@@ -227,6 +227,8 @@ struct global {
 			struct nst_memory      *memory;        /* memory */
 			struct nst_nosql_stats *stats;
 		} nosql;
+
+		struct nst_memory      *memory;                /* for common usage */
 	} nuster;
 };
 
