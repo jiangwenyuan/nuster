@@ -132,6 +132,12 @@ enum {
     NST_CACHE_CTX_STATE_CHECK_PERSIST,     /* check persistence */
 };
 
+struct nst_key {
+    uint32_t    size;
+    char       *data;
+    uint64_t    hash;
+};
+
 struct nst_cache_ctx {
     int                       state;
 
@@ -166,6 +172,11 @@ struct nst_cache_ctx {
     uint64_t                  cache_len;
 
     struct persist            disk;
+
+    int                       rule_cnt;
+    int                       key_cnt;
+    struct nst_rule2         *rule2;
+    struct nst_key            keys[0];
 };
 
 struct nst_cache_stats {
