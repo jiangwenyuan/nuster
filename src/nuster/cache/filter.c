@@ -65,7 +65,11 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     }
 
     if(!filter->ctx) {
-        struct nst_cache_ctx *ctx = pool_alloc(global.nuster.cache.pool.ctx);
+        int rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
+        int key_cnt  = nuster.proxy[conf->pid]->key_cnt;
+
+        int size = sizeof(struct nst_cache_ctx) + key_cnt * sizeof(struct nst_key);
+        struct nst_cache_ctx *ctx = nst_cache_memory_alloc(size);
 
         if(ctx == NULL ) {
             return 0;
@@ -73,8 +77,10 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 
         memset(ctx, 0, sizeof(*ctx));
 
-        ctx->state = NST_CACHE_CTX_STATE_INIT;
-        ctx->pid   = -1;
+        ctx->state    = NST_CACHE_CTX_STATE_INIT;
+        ctx->pid      = conf->pid;
+        ctx->rule_cnt = rule_cnt;
+        ctx->key_cnt  = key_cnt;
 
         filter->ctx = ctx;
     }
@@ -123,7 +129,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
             nst_cache_memory_free(ctx->req.path.data);
         }
 
-        pool_free(global.nuster.cache.pool.ctx, ctx);
+        nst_cache_memory_free(ctx);
     }
 }
 
