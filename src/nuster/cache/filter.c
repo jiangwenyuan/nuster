@@ -28,7 +28,10 @@
 #include <nuster/http.h>
 
 static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
+    struct nst_flt_conf *conf = fconf->conf;
+
     fconf->flags |= FLT_CFG_FL_HTX;
+    conf->pid = px->uuid;
     return 0;
 }
 

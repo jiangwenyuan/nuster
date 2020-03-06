@@ -228,6 +228,7 @@ struct nst_rule_stash {
 
 struct nst_flt_conf {
     int status;
+    int pid;
 };
 
 
