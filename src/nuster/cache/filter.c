@@ -269,6 +269,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
     struct stream_interface *si = &s->si[1];
     struct nst_cache_ctx *ctx   = filter->ctx;
     struct nst_rule *rule       = NULL;
+    struct nst_rule2 *rule2     = NULL;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
 
@@ -279,10 +280,31 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
         /* request */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
+            int i = 0;
 
             if(nst_cache_prebuild_key(ctx, s, msg) != NST_OK) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                 return 1;
+            }
+
+            ctx->rule2 = nuster.proxy[px->uuid]->rule;
+
+            for(i = 0; i < ctx->rule_cnt; i++) {
+                nst_debug(s, "[cache2] ==== Check rule: %s ====\n", ctx->rule2->name);
+                if(ctx->rule2->state == NST_RULE_DISABLED) {
+                    continue;
+                }
+
+                /* build key */
+                if(nst_cache_build_key2(ctx, s, msg) != NST_OK) {
+                    ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+                    return 1;
+                }
+
+                nst_debug(s, "[cache2] Key: ");
+                nst_debug_key(&trash);
+
+                ctx->rule2 = ctx->rule2->next;
             }
 
             list_for_each_entry(rule, &px->nuster.rules, list) {
@@ -447,7 +469,7 @@ abort_check:
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
 
             list_for_each_entry(rule, &px->nuster.rules, list) {
-                nst_debug(s, "[cache] ====== Check rule: %s ======\n", rule->name);
+                nst_debug(s, "[cache] ==== Check rule: %s ====\n", rule->name);
                 nst_debug(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
