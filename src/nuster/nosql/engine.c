@@ -871,8 +871,6 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                     }
                 }
 
-                ret = nst_nosql_key_advance(ctx->key, 2);
-
                 ret = nst_key_catdel();
                 break;
             case NST_RULE_KEY_HEADER:
@@ -1259,8 +1257,8 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
 
 
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE
-            && (ctx->rule->disk == NST_DISK_SYNC
-                || ctx->rule->disk == NST_DISK_ONLY)) {
+            && (ctx->rule2->disk == NST_DISK_SYNC
+                || ctx->rule2->disk == NST_DISK_ONLY)) {
 
         ctx->disk.file = nst_nosql_memory_alloc(
                 nst_persist_path_file_len(global.nuster.nosql.root) + 1);
@@ -1541,7 +1539,7 @@ void nst_nosql_persist_async() {
     while(entry) {
 
         if(entry->state == NST_NOSQL_ENTRY_STATE_VALID
-                && entry->rule->disk == NST_DISK_ASYNC
+                && entry->rule2->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
             struct nst_nosql_element *element = entry->data->element;
@@ -1563,11 +1561,11 @@ void nst_nosql_persist_async() {
 
             disk.fd = nst_persist_create(entry->file);
 
-            nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
+            nst_persist_meta_init(disk.meta, (char)entry->rule2->disk,
                     entry->hash, entry->expire, 0, 0,
-                    entry->key->data, 0, 0, 0, 0, 0);
+                    entry->key2->size, 0, 0, 0, 0, 0);
 
-            nst_persist_write_key(&disk, entry->key);
+            nst_persist_write_key2(&disk, entry->key2);
 
             while(element) {
                 uint32_t blksz, info;

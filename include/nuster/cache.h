@@ -79,7 +79,6 @@ struct nst_cache_entry {
     struct nst_cache_data  *data;
     struct nst_str          host;
     struct nst_str          path;
-    struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;

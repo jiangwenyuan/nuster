@@ -228,7 +228,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
         return NULL;
     }
 
-    idx = ctx->hash % dict->size;
+    idx = key->hash % dict->size;
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
     dict->entry[idx] = entry;

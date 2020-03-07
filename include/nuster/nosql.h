@@ -91,7 +91,6 @@ struct nst_nosql_entry {
     uint64_t                atime;
     struct nst_str          host;
     struct nst_str          path;
-    struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
@@ -130,10 +129,6 @@ enum {
 
 struct nst_nosql_ctx {
     int                       state;
-
-    struct nst_rule          *rule;
-    struct buffer            *key;
-    uint64_t                  hash;
 
     struct nst_nosql_entry   *entry;
     struct nst_nosql_data    *data;

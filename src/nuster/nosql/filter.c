@@ -110,11 +110,6 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
             nst_nosql_memory_free(ctx->req.transfer_encoding.data);
         }
 
-        if(ctx->key) {
-            nst_nosql_memory_free(ctx->key->area);
-            nst_nosql_memory_free(ctx->key);
-        }
-
         nst_cache_memory_free(ctx);
     }
 }
