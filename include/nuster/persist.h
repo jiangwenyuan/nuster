@@ -238,6 +238,7 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
 
 int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
         uint64_t hash);
+int nst_persist_exists2(char *root, struct persist *disk, struct nst_key *key);
 
 static inline int nst_persist_write(struct persist *disk, char *buf, int len) {
     ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
@@ -326,6 +327,7 @@ DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx);
 void nst_persist_cleanup(char *root, char *path, struct dirent *de);
 struct dirent *nst_persist_dir_next(DIR *dir);
 int nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash);
+int nst_persist_valid2(struct persist *disk, struct nst_key *key);
 int nst_persist_purge_by_key(char *root, struct persist *disk, struct nst_key key);
 int nst_persist_purge_by_path(char *path);
 void nst_persist_update_expire(char *file, uint64_t expire);

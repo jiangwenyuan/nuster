@@ -137,9 +137,6 @@ enum {
 struct nst_cache_ctx {
     int                       state;
 
-    struct buffer            *key;
-    uint64_t                  hash;
-
     struct nst_cache_entry   *entry;
     struct nst_cache_data    *data;
     struct nst_cache_element *element;
@@ -333,11 +330,6 @@ static inline int nst_cache_entry_invalid(struct nst_cache_entry *entry) {
     return nst_cache_entry_expired(entry);
 }
 
-#define nst_cache_key_init() nst_key_init(global.nuster.cache.memory)
-#define nst_cache_key_advance(key, step)                                      \
-    nst_key_advance(global.nuster.cache.memory, key, step)
-#define nst_cache_key_append(key, str, len)                                   \
-    nst_key_append(global.nuster.cache.memory, key, str, len)
 #define nst_cache_memory_alloc(size)                                          \
     nst_memory_alloc(global.nuster.cache.memory, size)
 #define nst_cache_memory_free(p) nst_memory_free(global.nuster.cache.memory, p);
