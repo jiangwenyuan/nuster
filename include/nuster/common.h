@@ -146,8 +146,7 @@ struct nst_rule {
     char                    *raw_key;
     struct nst_rule_key    **key;           /* key */
     struct nst_rule_code    *code;          /* code */
-    uint32_t                *ttl;           /* ttl: seconds, 0: not expire */
-    int                     *state;         /* enabled or disabled */
+    uint32_t                 ttl;           /* ttl: seconds, 0: not expire */
     int                      id;            /* same for identical names */
     int                      uuid;          /* unique cache-rule ID */
     int                      disk;          /* NST_DISK_* */
@@ -203,23 +202,6 @@ struct nst_rule2 {
     int                      etag;          /* etag on|off */
     int                      last_modified; /* last_modified on|off */
 
-    /*
-     * auto ttl extend
-     *        ctime                   expire
-     *        |<-        ttl        ->|
-     * extend |  -  |  0  |  1  |  2  |  3  |
-     * access |  0  |  1  |  2  |  3  |
-     *
-     * access is splited into 4 parts:
-     * 0: ctime ~ expire - extend[0 + 1 + 2] * ttl
-     * 1: expire - extend[0 + 1 + 2] * ttl ~ expire - extend[1 + 2] * ttl
-     * 2: expire - extend[1 + 2] * ttl ~ expire - extend[2] * ttl
-     * 3: expire - extend[2] * ttl ~ expire
-     *
-     * Automatic ttl extend happens if:
-     * 1. access[3] >= access[2] >= access[1]
-     * 2. expire <= atime <= expire + extend[3] * ttl
-     */
     uint8_t                  extend[4];
 
     struct acl_cond         *cond;          /* acl condition to meet */

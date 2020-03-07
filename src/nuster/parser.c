@@ -1244,8 +1244,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     rule->code = _nst_parse_rule_code(code == NULL
             ? NST_CACHE_DEFAULT_CODE : code);
 
-    rule->ttl  = malloc(sizeof(*rule->ttl));
-    *rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
+    rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
 
     if(disk > 0 && !global.nuster.cache.root) {
         memprintf(err, "rule %s: disk enabled but no `dir` defined", name);

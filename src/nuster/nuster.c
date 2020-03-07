@@ -76,42 +76,11 @@ void nuster_init() {
 
     while(p) {
         struct nst_rule *rule = NULL;
-        uint32_t ttl;
-        struct nst_memory *m  = NULL;
 
         list_for_each_entry(rule, &p->nuster.rules, list) {
             struct proxy *pt;
 
-            if(global.nuster.cache.status == NST_STATUS_ON
-                    && p->nuster.mode == NST_MODE_CACHE) {
-                m = global.nuster.cache.memory;
-            } else if(global.nuster.nosql.status == NST_STATUS_ON
-                    && p->nuster.mode == NST_MODE_NOSQL) {
-                m = global.nuster.nosql.memory;
-            } else {
-                continue;
-            }
-
-            rule->uuid  = uuid++;
-            rule->state = nst_memory_alloc(m, sizeof(*rule->state));
-
-            if(!rule->state) {
-                goto err;
-            }
-
-            *rule->state = NST_RULE_ENABLED;
-            ttl          = *rule->ttl;
-            free(rule->ttl);
-            rule->ttl    = nst_memory_alloc(m, sizeof(*rule->ttl));
-
-            if(!rule->ttl) {
-                goto err;
-            }
-
-            *rule->ttl = ttl;
-
             pt = proxies_list;
-
             while(pt) {
                 struct nst_rule *rt = NULL;
                 list_for_each_entry(rt, &pt->nuster.rules, list) {
@@ -230,7 +199,7 @@ out:
                 rule2->key = key;
 
                 rule2->code = rule->code;
-                rule2->ttl  = *rule->ttl;
+                rule2->ttl  = rule->ttl;
                 rule2->disk = rule->disk;
                 rule2->etag = rule->etag;
 
