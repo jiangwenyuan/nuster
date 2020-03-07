@@ -261,7 +261,6 @@ struct nst_cache_entry *nst_cache_dict_set2(struct nst_cache_ctx *ctx) {
     ctx->key      = NULL;
     entry->hash   = ctx->hash;
     entry->expire = 0;
-    entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
     entry->file   = NULL;
     entry->ttl    = ctx->rule2->ttl;

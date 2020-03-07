@@ -1961,7 +1961,7 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s,
             uint64_t t = get_current_timestamp();
             sprintf(ctx->res.etag.data, "\"%08x\"", XXH32(&t, 8, 0));
 
-            if(ctx->rule->etag == NST_STATUS_ON) {
+            if(ctx->rule2->etag == NST_STATUS_ON) {
                 struct ist v = ist2(ctx->res.etag.data, ctx->res.etag.len);
 
                 http_add_header(htx, ist("Etag"), v);
@@ -2009,7 +2009,7 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
                 day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
                 1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
 
-        if(ctx->rule->last_modified == NST_STATUS_ON) {
+        if(ctx->rule2->last_modified == NST_STATUS_ON) {
             struct ist v = ist2(ctx->res.last_modified.data,
                     ctx->res.last_modified.len);
 
