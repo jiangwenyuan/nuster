@@ -193,7 +193,6 @@ struct global {
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
 
 			struct {
-				struct pool_head *stash;
 				struct pool_head *ctx;
 				struct pool_head *data;
 				struct pool_head *element;
@@ -216,7 +215,6 @@ struct global {
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
 
 			struct {
-				struct pool_head *stash;
 				struct pool_head *ctx;
 				struct pool_head *data;
 				struct pool_head *element;

@@ -294,31 +294,6 @@ out:
     return;
 }
 
-/*
- * Cache the keys which calculated in request for response use
- */
-struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nst_rule *rule) {
-
-    struct nst_rule_stash *stash = pool_alloc(global.nuster.cache.pool.stash);
-
-    if(stash) {
-        stash->rule = rule;
-        stash->key  = ctx->key;
-        stash->hash = ctx->hash;
-
-        if(ctx->stash) {
-            stash->next = ctx->stash;
-        } else {
-            stash->next = NULL;
-        }
-
-        ctx->stash = stash;
-    }
-
-    return stash;
-}
-
 int nst_cache_check_uri(struct http_msg *msg) {
     struct htx *htx;
     struct htx_sl *sl;
@@ -506,9 +481,6 @@ void nst_cache_init() {
                 exit(1);
             }
         }
-
-        global.nuster.cache.pool.stash = create_pool("cp.stash",
-                sizeof(struct nst_rule_stash), MEM_F_SHARED);
 
         global.nuster.cache.pool.ctx   = create_pool("cp.ctx",
                 sizeof(struct nst_cache_ctx), MEM_F_SHARED);

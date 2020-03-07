@@ -141,7 +141,6 @@ struct nst_cache_ctx {
     uint64_t                  hash;
 
     struct nst_rule          *rule;
-    struct nst_rule_stash    *stash;
 
     struct nst_cache_entry   *entry;
     struct nst_cache_data    *data;
@@ -284,9 +283,6 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si,
 
 void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
         struct channel *req, struct channel *res, struct nst_cache_ctx *ctx);
-
-struct nst_rule_stash *nst_cache_stash_rule(struct nst_cache_ctx *ctx,
-        struct nst_rule *rule);
 
 int nst_cache_check_uri(struct http_msg *msg);
 void nst_cache_persist_cleanup();

@@ -225,13 +225,6 @@ struct nst_rule2 {
     struct nst_rule2        *next;
 };
 
-struct nst_rule_stash {
-    struct nst_rule_stash *next;
-    struct nst_rule       *rule;
-    struct buffer         *key;
-    uint64_t               hash;
-};
-
 struct nst_flt_conf {
     int status;
     int pid;

@@ -296,8 +296,10 @@ struct nst_cache_entry *nst_cache_dict_set2(struct nst_cache_ctx *ctx) {
     struct nst_cache_data  *data  = NULL;
     struct nst_cache_entry *entry = NULL;
     int idx;
+    struct nst_key *key;
+
     idx = ctx->rule2->key->idx;
-    struct nst_key *key = &(ctx->keys[idx]);
+    key = &(ctx->keys[idx]);
 
     dict = _nst_cache_dict_rehashing()
         ? &nuster.cache->dict[1] : &nuster.cache->dict[0];

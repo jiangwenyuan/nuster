@@ -94,7 +94,6 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 
     if(filter->ctx) {
-        struct nst_rule_stash *stash = NULL;
         struct nst_cache_ctx *ctx    = filter->ctx;
 
         nst_cache_stats_update_req(ctx->state);
@@ -105,20 +104,6 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 
         if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
             nst_cache_abort(ctx);
-        }
-
-        while(ctx->stash) {
-            stash      = ctx->stash;
-            ctx->stash = ctx->stash->next;
-
-            if(stash->key) {
-                if(!ctx->entry || ctx->entry->key != stash->key) {
-                    nst_cache_memory_free(stash->key->area);
-                    nst_cache_memory_free(stash->key);
-                }
-            }
-
-            pool_free(global.nuster.cache.pool.stash, stash);
         }
 
         if(ctx->req.host.data) {
