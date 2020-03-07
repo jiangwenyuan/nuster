@@ -264,6 +264,13 @@ nst_persist_write_key(struct persist *disk, struct buffer *key) {
 }
 
 static inline int
+nst_persist_write_key2(struct persist *disk, struct nst_key *key) {
+
+    disk->offset = NST_PERSIST_POS_KEY;
+    return nst_persist_write(disk, key->data, key->size);
+}
+
+static inline int
 nst_persist_write_host(struct persist *disk, struct nst_str *host) {
 
     disk->offset = NST_PERSIST_POS_KEY
@@ -308,6 +315,7 @@ nst_persist_write_last_modified(struct persist *disk, struct nst_str *lm) {
 void nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
 int nst_persist_get_meta(int fd, char *meta);
 int nst_persist_get_key(int fd, char *meta, struct buffer *key);
+int nst_persist_get_key2(int fd, char *meta, struct nst_key *key);
 int nst_persist_get_host(int fd, char *meta, struct nst_str *host);
 int nst_persist_get_path(int fd, char *meta, struct nst_str *path);
 int nst_persist_get_etag(int fd, char *meta, struct nst_str *etag);

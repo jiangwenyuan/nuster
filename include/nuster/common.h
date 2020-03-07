@@ -173,6 +173,12 @@ struct nst_rule {
 };
 
 
+struct nst_key {
+    uint32_t    size;
+    char       *data;
+    uint64_t    hash;
+};
+
 struct nst_key2 {
     char                    *name;
     struct nst_rule_key    **data;           /* parsed key */
@@ -242,5 +248,6 @@ static inline uint64_t get_current_timestamp() {
 void nst_debug(struct stream *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
 void nst_debug_key(struct buffer *key);
+void nst_debug_key2(struct nst_key *key);
 
 #endif /* _NUSTER_COMMON_H */

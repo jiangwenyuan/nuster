@@ -1109,6 +1109,19 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct stream *s, struct htt
     return NST_OK;
 }
 
+int nst_cache_store_key(struct nst_cache_ctx *ctx, struct nst_key *key) {
+    key->size = trash.data;
+    key->data = nst_cache_memory_alloc(key->size);
+
+    if(!key->data) {
+        return NST_ERR;
+    }
+
+    memcpy(key->data, trash.area, trash.data);
+
+    return NST_OK;
+}
+
 struct buffer *nst_cache_build_purge_key(struct stream *s,
         struct http_msg *msg) {
 
@@ -1251,6 +1264,101 @@ int nst_cache_exists(struct nst_cache_ctx *ctx, struct nst_rule *rule) {
         }
     } else {
         if(rule->disk != NST_DISK_OFF) {
+            ctx->disk.file = NULL;
+
+            if(nuster.cache->disk.loaded) {
+                ret = NST_CACHE_CTX_STATE_INIT;
+            } else {
+                ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
+            }
+        }
+    }
+
+    nst_shctx_unlock(&nuster.cache->dict[0]);
+
+    if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
+
+        if(ctx->disk.file) {
+
+            if(nst_persist_valid(&ctx->disk, ctx->key, ctx->hash) == NST_OK) {
+                _nst_cache_record_access(entry);
+                ret = NST_CACHE_CTX_STATE_HIT_DISK;
+            } else {
+                ret = NST_CACHE_CTX_STATE_INIT;
+            }
+        } else {
+            ctx->disk.file = nst_cache_memory_alloc(
+                    nst_persist_path_file_len(global.nuster.cache.root) + 1);
+
+            if(!ctx->disk.file) {
+                ret = NST_CACHE_CTX_STATE_INIT;
+            } else {
+
+                if(nst_persist_exists(global.nuster.cache.root, &ctx->disk,
+                            ctx->key, ctx->hash) == NST_OK) {
+
+                    ret = NST_CACHE_CTX_STATE_HIT_DISK;
+                } else {
+                    nst_cache_memory_free(ctx->disk.file);
+                    ret = NST_CACHE_CTX_STATE_INIT;
+                }
+            }
+        }
+    }
+
+    return ret;
+}
+
+int nst_cache_exists2(struct nst_cache_ctx *ctx) {
+    struct nst_cache_entry *entry = NULL;
+    int ret = NST_CACHE_CTX_STATE_INIT;
+
+    int idx = ctx->rule2->key->idx;
+    struct nst_key *key = &(ctx->keys[idx]);
+
+    if(!key) {
+        return ret;
+    }
+
+    nst_shctx_lock(&nuster.cache->dict[0]);
+    entry = nst_cache_dict_get2(key);
+
+    if(entry) {
+
+        /*
+         * before disk, entry is set to valid after response is cached to memory
+         * now we can save cache to both memory and disk, and we can also save
+         * cache to disk only.
+         * To keep from big changes, we still use valid to indicate the cache is
+         * in memory, and use another *file to indicate the disk persistence.
+         * So if valid, return memory cache
+         * if invalid and file is set, return disk cache
+         * if entry is null, check disk and return cache if exists
+         * Since valid only indicates whether or not cached is in memory, the
+         * state is set to invalid even if the cache is successfully saved to
+         * disk in disk_only mode
+         */
+        if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+            ctx->data = entry->data;
+            ctx->data->clients++;
+
+            ctx->res.etag.len  = entry->etag.len;
+            ctx->res.etag.data = entry->etag.data;
+
+            ctx->res.last_modified.len  = entry->last_modified.len;
+            ctx->res.last_modified.data = entry->last_modified.data;
+
+            _nst_cache_record_access(entry);
+
+            ret = NST_CACHE_CTX_STATE_HIT;
+        }
+
+        if(entry->state == NST_CACHE_ENTRY_STATE_INVALID && entry->file) {
+            ctx->disk.file = entry->file;
+            ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
+        }
+    } else {
+        if(ctx->rule2->disk != NST_DISK_OFF) {
             ctx->disk.file = NULL;
 
             if(nuster.cache->disk.loaded) {
@@ -1478,6 +1586,185 @@ err:
     return;
 }
 
+void nst_cache_create2(struct nst_cache_ctx *ctx, struct http_msg *msg) {
+    struct nst_cache_entry *entry = NULL;
+
+    int idx = ctx->rule2->key->idx;
+    struct nst_key *key = &(ctx->keys[idx]);
+
+    nst_shctx_lock(&nuster.cache->dict[0]);
+    entry = nst_cache_dict_get2(key);
+
+    if(entry) {
+
+        if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
+            ctx->state = NST_CACHE_CTX_STATE_WAIT;
+        } else if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+            ctx->state = NST_CACHE_CTX_STATE_HIT;
+        } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED
+                || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
+
+            entry->state = NST_CACHE_ENTRY_STATE_CREATING;
+
+            if(ctx->rule2->disk != NST_DISK_ONLY) {
+                entry->data = nst_cache_data_new();
+
+                if(!entry->data) {
+                    entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+                    ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
+                    ctx->full    = 1;
+                } else {
+                    ctx->state   = NST_CACHE_CTX_STATE_CREATE;
+                    ctx->entry   = entry;
+
+                    entry->etag.data   = ctx->res.etag.data;
+                    entry->etag.len    = ctx->res.etag.len;
+                    ctx->res.etag.data = NULL;
+
+                    entry->last_modified.data   = ctx->res.last_modified.data;
+                    entry->last_modified.len    = ctx->res.last_modified.len;
+                    ctx->res.last_modified.data = NULL;
+
+                    ctx->data    = entry->data;
+                    ctx->element = entry->data->element;
+                }
+            } else {
+                ctx->state = NST_CACHE_CTX_STATE_CREATE;
+                ctx->entry = entry;
+            }
+
+        } else {
+            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+        }
+    } else {
+        entry = nst_cache_dict_set2(ctx);
+
+        if(entry) {
+            ctx->state = NST_CACHE_CTX_STATE_CREATE;
+            ctx->entry = entry;
+            ctx->data  = entry->data;
+
+            if(ctx->data) {
+                ctx->element = entry->data->element;
+            }
+        } else {
+            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+            ctx->full  = 1;
+        }
+    }
+
+    nst_shctx_unlock(&nuster.cache->dict[0]);
+
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
+        int pos;
+        struct htx *htx = htxbuf(&msg->chn->buf);
+        ctx->header_len = 0;
+
+        for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+            struct htx_blk *blk = htx_get_blk(htx, pos);
+            uint32_t        sz  = htx_get_blksz(blk);
+            enum htx_blk_type type = htx_get_blk_type(blk);
+
+            struct nst_cache_element *element = NULL;
+            char *data = NULL;
+
+            if(ctx->rule2->disk != NST_DISK_ONLY)  {
+                element = nst_cache_memory_alloc(sizeof(*element));
+
+                if(!element) {
+                    goto err;
+                }
+
+                data = nst_cache_memory_alloc(sz);
+
+                if(!data) {
+                    goto err;
+                }
+
+                memcpy(data, htx_get_blk_ptr(htx, blk), sz);
+
+                element->msg.data = data;
+                element->msg.len  = blk->info;
+
+                if(ctx->element) {
+                    ctx->element->next = element;
+                } else {
+                    ctx->data->element = element;
+                }
+
+                ctx->element = element;
+            }
+
+            ctx->header_len += 4 + sz;
+
+            if (type == HTX_BLK_EOH) {
+                break;
+            }
+
+        }
+    }
+
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE
+            && (ctx->rule2->disk == NST_DISK_SYNC
+                || ctx->rule2->disk == NST_DISK_ONLY)) {
+
+        uint64_t ttl_extend = ctx->rule2->ttl;
+        int pos;
+        struct htx *htx;
+
+        ctx->disk.file = nst_cache_memory_alloc(
+                nst_persist_path_file_len(global.nuster.cache.root) + 1);
+
+        if(!ctx->disk.file) {
+            return;
+        }
+
+        if(nst_persist_init(global.nuster.cache.root, ctx->disk.file,
+                    ctx->hash) != NST_OK) {
+
+            return;
+        }
+
+        ctx->disk.fd = nst_persist_create(ctx->disk.file);
+
+        ttl_extend = ttl_extend << 32;
+        *( uint8_t *)(&ttl_extend)      = ctx->rule2->extend[0];
+        *((uint8_t *)(&ttl_extend) + 1) = ctx->rule2->extend[1];
+        *((uint8_t *)(&ttl_extend) + 2) = ctx->rule2->extend[2];
+        *((uint8_t *)(&ttl_extend) + 3) = ctx->rule2->extend[3];
+
+        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule2->disk,
+                ctx->hash, 0, 0, ctx->header_len, ctx->entry->key2->size,
+                ctx->entry->host.len, ctx->entry->path.len,
+                ctx->entry->etag.len, ctx->entry->last_modified.len,
+                ttl_extend);
+
+        nst_persist_write_key2(&ctx->disk, ctx->entry->key2);
+        nst_persist_write_host(&ctx->disk, &ctx->entry->host);
+        nst_persist_write_path(&ctx->disk, &ctx->entry->path);
+        nst_persist_write_etag(&ctx->disk, &ctx->entry->etag);
+        nst_persist_write_last_modified(&ctx->disk, &ctx->entry->last_modified);
+
+        htx = htxbuf(&msg->chn->buf);
+
+        for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+            struct htx_blk *blk = htx_get_blk(htx, pos);
+            uint32_t        sz  = htx_get_blksz(blk);
+            enum htx_blk_type type = htx_get_blk_type(blk);
+
+            nst_persist_write(&ctx->disk, (char *)&blk->info, 4);
+            nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
+
+            if (type == HTX_BLK_EOH) {
+                break;
+            }
+        }
+    }
+
+err:
+    return;
+}
+
 /*
  * Add partial http data to nst_cache_data
  */
@@ -1498,7 +1785,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
             continue;
         }
 
-        if(ctx->rule->disk == NST_DISK_ONLY)  {
+        if(ctx->rule2->disk == NST_DISK_ONLY)  {
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             ctx->cache_len += sz;
         } else {
@@ -1527,7 +1814,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 
             ctx->element = element;
 
-            if(ctx->rule->disk == NST_DISK_SYNC) {
+            if(ctx->rule2->disk == NST_DISK_SYNC) {
                 nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
                 ctx->cache_len += sz;
             }
@@ -1548,7 +1835,7 @@ err:
 void nst_cache_finish(struct nst_cache_ctx *ctx) {
     ctx->state = NST_CACHE_CTX_STATE_DONE;
 
-    if(ctx->rule->disk == NST_DISK_ONLY) {
+    if(ctx->rule2->disk == NST_DISK_ONLY) {
         ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
     } else {
         ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
@@ -1556,13 +1843,13 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 
     ctx->entry->ctime = get_current_timestamp();
 
-    if(*ctx->rule->ttl == 0) {
+    if(ctx->rule2->ttl == 0) {
         ctx->entry->expire = 0;
     } else {
-        ctx->entry->expire = ctx->entry->ctime / 1000 + *ctx->rule->ttl;
+        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->rule2->ttl;
     }
 
-    if(ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY) {
+    if(ctx->rule2->disk == NST_DISK_SYNC || ctx->rule2->disk == NST_DISK_ONLY) {
 
         nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
@@ -1669,7 +1956,7 @@ void nst_cache_persist_async() {
     while(entry) {
 
         if(!nst_cache_entry_invalid(entry)
-                && entry->rule->disk == NST_DISK_ASYNC
+                && entry->rule2->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
             struct nst_cache_element *element = entry->data->element;
@@ -1698,12 +1985,12 @@ void nst_cache_persist_async() {
             *((uint8_t *)(&ttl_extend) + 2) = entry->extend[2];
             *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
 
-            nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
+            nst_persist_meta_init(disk.meta, (char)entry->rule2->disk,
                     entry->hash, entry->expire, 0, 0,
-                    entry->key->data, entry->host.len, entry->path.len,
+                    entry->key2->size, entry->host.len, entry->path.len,
                     entry->etag.len, entry->last_modified.len, ttl_extend);
 
-            nst_persist_write_key(&disk, entry->key);
+            nst_persist_write_key2(&disk, entry->key2);
             nst_persist_write_host(&disk, &entry->host);
             nst_persist_write_path(&disk, &entry->path);
             nst_persist_write_etag(&disk, &entry->etag);
@@ -1765,6 +2052,7 @@ void nst_cache_persist_load() {
         int fd;
         DIR *dir2;
         struct dirent *de2;
+        struct nst_key *key2;
 
         fd = -1;
         key = NULL;
@@ -1816,20 +2104,20 @@ void nst_cache_persist_load() {
                         goto err;
                     }
 
-                    key = nst_cache_memory_alloc(sizeof(*key));
+                    key2 = nst_cache_memory_alloc(sizeof(*key2));
 
-                    if(!key) {
+                    if(!key2) {
                         goto err;
                     }
 
-                    key->size = nst_persist_meta_get_key_len(meta);
-                    key->area = nst_cache_memory_alloc(key->size);
+                    key2->size = nst_persist_meta_get_key_len(meta);
+                    key2->data = nst_cache_memory_alloc(key->size);
 
-                    if(!key->area) {
+                    if(!key->data) {
                         goto err;
                     }
 
-                    if(nst_persist_get_key(fd, meta, key) != NST_OK) {
+                    if(nst_persist_get_key2(fd, meta, key2) != NST_OK) {
                         goto err;
                     }
 
@@ -2041,6 +2329,106 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx,
     int if_match          = -1;
     int if_modified_since = -1;;
 
+
+    htx = htxbuf(&s->req.buf);
+
+    if(rule->etag != NST_STATUS_ON && rule->last_modified != NST_STATUS_ON) {
+        return 200;
+    }
+
+    if(rule->etag == NST_STATUS_ON) {
+
+        while(http_find_header(htx, ist("If-Match"), &hdr, 0)) {
+
+            if_match = 412;
+
+            if(1 == hdr.value.len && *(hdr.value.ptr) == '*') {
+                if_match = 200;
+                break;
+            }
+
+            if(ctx->res.etag.len == hdr.value.len && memcmp(ctx->res.etag.data,
+                        hdr.value.ptr, hdr.value.len) == 0) {
+
+                if_match = 200;
+                break;
+            }
+        }
+
+        if(if_match == 412) {
+            return if_match;
+        }
+    }
+
+    if(rule->last_modified == NST_STATUS_ON) {
+
+        if(http_find_header(htx, ist("If-Unmodified-Since"), &hdr, 1)) {
+
+            if(ctx->res.last_modified.len != hdr.value.len
+                    || memcmp(ctx->res.last_modified.data,
+                        hdr.value.ptr, hdr.value.len) != 0) {
+
+                return 412;
+            }
+        }
+    }
+
+    if(rule->etag == NST_STATUS_ON) {
+
+        while(http_find_header(htx, ist("If-None-Match"), &hdr, 0)) {
+
+            if_none_match = 200;
+
+            if(1 == hdr.value.len && *(hdr.value.ptr) == '*') {
+                if_none_match = 304;
+                break;
+            }
+
+            if(ctx->res.etag.len == hdr.value.len && memcmp(ctx->res.etag.data,
+                        hdr.value.ptr, hdr.value.len) == 0) {
+
+                if_none_match = 304;
+                break;
+            }
+        }
+    }
+
+    if(rule->last_modified == NST_STATUS_ON) {
+
+        if(http_find_header(htx, ist("If-Modified-Since"), &hdr, 1)) {
+
+            if(ctx->res.last_modified.len == hdr.value.len
+                    && memcmp(ctx->res.last_modified.data,
+                        hdr.value.ptr, hdr.value.len) == 0) {
+
+                if_modified_since = 304;
+            } else {
+                if_modified_since = 200;
+            }
+        }
+    }
+
+    if(if_none_match == 304 && if_modified_since != 200) {
+        return 304;
+    }
+
+    if(if_none_match != 200 && if_modified_since == 304) {
+        return 304;
+    }
+
+    return 200;
+}
+
+int nst_cache_handle_conditional_req2(struct nst_cache_ctx *ctx, struct stream *s,
+        struct http_msg *msg) {
+
+    struct htx *htx;
+    struct http_hdr_ctx hdr = { .blk = NULL };
+    struct nst_rule2 *rule = ctx->rule2;
+
+    int if_none_match     = -1;
+    int if_match          = -1;
+    int if_modified_since = -1;;
 
     htx = htxbuf(&s->req.buf);
 

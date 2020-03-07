@@ -198,6 +198,18 @@ int nst_persist_get_key(int fd, char *meta, struct buffer *key) {
     return NST_OK;
 }
 
+int nst_persist_get_key2(int fd, char *meta, struct nst_key *key) {
+    int ret;
+
+    ret = pread(fd, key->data, key->size, NST_PERSIST_POS_KEY);
+
+    if(ret != key->size) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
 int nst_persist_get_host(int fd, char *meta, struct nst_str *host) {
 
     int ret = pread(fd, host->data, host->len, NST_PERSIST_POS_KEY
