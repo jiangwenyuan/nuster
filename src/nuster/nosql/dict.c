@@ -207,11 +207,16 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     struct nst_nosql_data  *data  = NULL;
     struct nst_nosql_entry *entry = NULL;
     int idx;
+    struct nst_key *key;
+
+    idx = ctx->rule2->key->idx;
+    key = &(ctx->keys[idx]);
 
     dict = _nst_nosql_dict_rehashing()
         ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
 
     entry = nst_nosql_memory_alloc(sizeof(*entry));
+
     if(!entry) {
         return NULL;
     }
@@ -232,12 +237,10 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     /* init entry */
     entry->data   = data;
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
-    entry->key    = ctx->key;
-    entry->hash   = ctx->hash;
-    ctx->key      = NULL;
     entry->expire = 0;
-    entry->rule   = ctx->rule;
+    entry->rule2  = ctx->rule2;
     entry->pid    = ctx->pid;
+    entry->key2   = key;
 
     entry->header_len = ctx->header_len;
 
@@ -255,7 +258,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 /*
  * Get entry
  */
-struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash) {
+struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
     int i, idx;
     struct nst_nosql_entry *entry = NULL;
 
@@ -264,14 +267,14 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash) {
     }
 
     for(i = 0; i <= 1; i++) {
-        idx   = hash % nuster.nosql->dict[i].size;
+        idx   = key->hash % nuster.nosql->dict[i].size;
         entry = nuster.nosql->dict[i].entry[idx];
 
         while(entry) {
 
-            if(entry->hash == hash
-                    && entry->key->data == key->data
-                    && !memcmp(entry->key->area, key->area, key->data)) {
+            if(entry->key2->hash == key->hash
+                    && entry->key2->size == key->size
+                    && !memcmp(entry->key2->data, key->data, key->size)) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */

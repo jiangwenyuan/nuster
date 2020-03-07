@@ -671,56 +671,6 @@ int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
     return NST_OK;
 }
 
-void nst_key_init2() {
-    trash.head = 0;
-    trash.data = 0;
-    memset(trash.area, 0, trash.size);
-}
-
-int nst_key_cat(const char *ptr, int len) {
-    if(trash.data + len > trash.size) {
-        return NST_ERR;
-    }
-
-    memcpy(trash.area + trash.data, ptr, len);
-    trash.data += len;
-
-    return NST_OK;
-}
-
-int nst_key_catist(struct ist v) {
-    /* additional one NULL delimiter */
-    if(trash.data + v.len + 1 > trash.size) {
-        return NST_ERR;
-    }
-
-    memcpy(trash.area + trash.data, v.ptr, v.len);
-    trash.data += v.len + 1;
-
-    return NST_OK;
-}
-
-int nst_key_catstr(struct nst_str v) {
-    /* additional one NULL delimiter */
-    if(trash.data + v.len + 1 > trash.size) {
-        return NST_ERR;
-    }
-
-    memcpy(trash.area + trash.data, v.data, v.len);
-    trash.data += v.len + 1;
-
-    return NST_OK;
-}
-
-int nst_key_catdel() {
-    if(trash.data + 1 > trash.size) {
-        return NST_ERR;
-    }
-    trash.data += 1;
-
-    return NST_OK;
-}
-
 int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
@@ -813,7 +763,6 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct stream *s, struct htt
                         ret = nst_key_catist(ist2(v, v_l));
                         break;
                     }
-
                 }
 
                 ret = nst_key_catdel();
@@ -836,7 +785,6 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct stream *s, struct htt
                             break;
                         }
                     }
-
                 }
 
                 ret = nst_key_catdel();
@@ -1091,7 +1039,6 @@ int nst_cache_exists2(struct nst_cache_ctx *ctx) {
             } else {
 
                 if(nst_persist_exists2(global.nuster.cache.root, &ctx->disk, key) == NST_OK) {
-
                     ret = NST_CACHE_CTX_STATE_HIT_DISK;
                 } else {
                     nst_cache_memory_free(ctx->disk.file);

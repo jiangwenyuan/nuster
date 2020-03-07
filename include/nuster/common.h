@@ -38,6 +38,8 @@
 #endif
 #endif
 
+#include <types/global.h>
+
 #include <common/mini-clist.h>
 #include <types/acl.h>
 
@@ -242,5 +244,55 @@ void nst_debug(struct stream *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
 void nst_debug_key(struct buffer *key);
 void nst_debug_key2(struct nst_key *key);
+
+static inline void nst_key_init2() {
+    trash.head = 0;
+    trash.data = 0;
+    memset(trash.area, 0, trash.size);
+}
+
+static inline int nst_key_cat(const char *ptr, int len) {
+    if(trash.data + len > trash.size) {
+        return NST_ERR;
+    }
+
+    memcpy(trash.area + trash.data, ptr, len);
+    trash.data += len;
+
+    return NST_OK;
+}
+
+static inline int nst_key_catist(struct ist v) {
+    /* additional one NULL delimiter */
+    if(trash.data + v.len + 1 > trash.size) {
+        return NST_ERR;
+    }
+
+    memcpy(trash.area + trash.data, v.ptr, v.len);
+    trash.data += v.len + 1;
+
+    return NST_OK;
+}
+
+static inline int nst_key_catstr(struct nst_str v) {
+    /* additional one NULL delimiter */
+    if(trash.data + v.len + 1 > trash.size) {
+        return NST_ERR;
+    }
+
+    memcpy(trash.area + trash.data, v.data, v.len);
+    trash.data += v.len + 1;
+
+    return NST_OK;
+}
+
+static inline int nst_key_catdel() {
+    if(trash.data + 1 > trash.size) {
+        return NST_ERR;
+    }
+    trash.data += 1;
+
+    return NST_OK;
+}
 
 #endif /* _NUSTER_COMMON_H */

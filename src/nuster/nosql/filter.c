@@ -24,11 +24,21 @@
 #include <nuster/nosql.h>
 
 static int _nst_nosql_filter_init(struct proxy *px, struct flt_conf *fconf) {
+    struct nst_flt_conf *conf = fconf->conf;
+
     fconf->flags |= FLT_CFG_FL_HTX;
+    conf->pid = px->uuid;
     return 0;
 }
 
 static void _nst_nosql_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
+    struct nst_flt_conf *conf = fconf->conf;
+
+    if(conf) {
+        free(conf);
+    }
+
+    fconf->conf = NULL;
 }
 
 static int _nst_nosql_filter_check(struct proxy *px, struct flt_conf *fconf) {
@@ -41,22 +51,31 @@ static int _nst_nosql_filter_check(struct proxy *px, struct flt_conf *fconf) {
 }
 
 static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
+    struct nst_flt_conf *conf = FLT_CONF(filter);
 
-    if(global.nuster.nosql.status != NST_STATUS_ON) {
+    if(global.nuster.nosql.status != NST_STATUS_ON
+            || conf->status != NST_STATUS_ON) {
+
         return 0;
     }
 
     if(!filter->ctx) {
-        struct nst_nosql_ctx *ctx = pool_alloc(global.nuster.nosql.pool.ctx);
+        int rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
+        int key_cnt  = nuster.proxy[conf->pid]->key_cnt;
+
+        int size = sizeof(struct nst_cache_ctx) + key_cnt * sizeof(struct nst_key);
+        struct nst_cache_ctx *ctx = nst_cache_memory_alloc(size);
 
         if(ctx == NULL ) {
             return 0;
         }
 
-        memset(ctx, 0, sizeof(*ctx));
+        memset(ctx, 0, size);
 
-        ctx->state = NST_NOSQL_CTX_STATE_INIT;
-        ctx->pid   = -1;
+        ctx->state    = NST_NOSQL_CTX_STATE_INIT;
+        ctx->pid      = conf->pid;
+        ctx->rule_cnt = rule_cnt;
+        ctx->key_cnt  = key_cnt;
 
         filter->ctx = ctx;
     }
@@ -96,7 +115,7 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
             nst_nosql_memory_free(ctx->key);
         }
 
-        pool_free(global.nuster.nosql.pool.ctx, ctx);
+        nst_cache_memory_free(ctx);
     }
 }
 
@@ -105,7 +124,6 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
     struct stream_interface *si = &s->si[1];
     struct nst_nosql_ctx *ctx   = filter->ctx;
-    struct nst_rule *rule       = NULL;
     struct proxy *px            = s->be;
     struct appctx *appctx       = si_appctx(si);
     struct channel *req         = msg->chn;
@@ -124,36 +142,46 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
+        int i = 0;
 
         if(!nst_nosql_prebuild_key(ctx, s, msg)) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
             return 1;
         }
 
-        list_for_each_entry(rule, &px->nuster.rules, list) {
-            nst_debug(s, "[nosql] ==== Check rule: %s ====\n", rule->name);
+        ctx->rule2 = nuster.proxy[px->uuid]->rule;
 
-            /* build key */
-            if(ctx->key) {
-                nst_nosql_memory_free(ctx->key);
+        for(i = 0; i < ctx->rule_cnt; i++) {
+            int idx = ctx->rule2->key->idx;
+            struct nst_key *key = &(ctx->keys[idx]);
+
+            nst_debug(s, "[nosql] ==== Check rule: %s ====\n", ctx->rule2->name);
+
+            if(key->data) {
+                nst_debug(s, "[cache2] Key checked, continue.\n");
+            } else {
+                if(nst_nosql_build_key(ctx, s, msg) != NST_OK) {
+                    ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
+                    return 1;
+                }
+
+                if(nst_nosql_store_key(ctx, key) != NST_OK) {
+                    ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+                    return 1;
+                }
+
+                nst_debug(s, "[nosql] Key: ");
+                nst_debug_key2(key);
+
+                key->hash = nst_hash(key->data, key->size);
+
+                nst_debug(s, "[nosql] Hash: %"PRIu64"\n", key->hash);
             }
-
-            if(nst_nosql_build_key(ctx, rule->key, s, msg) != NST_OK) {
-                appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
-                return 1;
-            }
-
-            nst_debug(s, "[nosql] Key: ");
-            nst_debug_key(ctx->key);
-
-            ctx->hash = nst_hash(ctx->key->area, ctx->key->data);
-
-            nst_debug(s, "[nosql] Hash: %"PRIu64"\n", ctx->hash);
 
             if(s->txn->meth == HTTP_METH_GET) {
                 nst_debug(s, "[nosql] Check key existence: ");
 
-                ctx->state = nst_nosql_exists(ctx, rule->disk);
+                ctx->state = nst_nosql_exists(ctx, ctx->rule2->disk);
 
                 if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
                     nst_debug2("HIT memory\n");
@@ -173,7 +201,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             } else if(s->txn->meth == HTTP_METH_POST) {
                 nst_debug(s, "[nosql] Test rule ACL: ");
 
-                if(nst_test_rule(rule, s, msg->chn->flags & CF_ISRESP) ==
+                if(nst_test_rule2(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
                     nst_debug2("PASS\n");
@@ -181,7 +209,6 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
                     if(nst_nosql_get_headers(ctx, s, msg)) {
                         ctx->state = NST_NOSQL_CTX_STATE_PASS;
-                        ctx->rule  = rule;
                         ctx->pid   = px->uuid;
                     } else {
                         ctx->state = NST_NOSQL_CTX_STATE_INVALID;
@@ -193,7 +220,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 nst_debug2("FAIL\n");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
-                if(nst_nosql_delete(ctx->key, ctx->hash)) {
+                if(nst_nosql_delete(key)) {
                     nst_debug(s, "[nosql] EXIST, to delete\n");
                     ctx->state = NST_NOSQL_CTX_STATE_DELETE;
                     break;

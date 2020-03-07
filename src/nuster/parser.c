@@ -859,15 +859,50 @@ int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     struct flt_conf *fconf;
-    fconf = calloc(1, sizeof(*fconf));
+    struct nst_flt_conf *conf;
+    int cur_arg = 1;
 
-    if(!fconf) {
+    list_for_each_entry(fconf, &px->filter_configs, list) {
+
+        if(fconf->id == nst_nosql_flt_id) {
+            memprintf(err, "%s: Proxy supports only one nosql filter\n",
+                    px->id);
+
+            return -1;
+        }
+
+    }
+
+    fconf = calloc(1, sizeof(*fconf));
+    conf  = malloc(sizeof(*conf));
+
+    if(!fconf || !conf) {
         memprintf(err, "out of memory");
         return -1;
     }
 
     memset(fconf, 0, sizeof(*fconf));
+    memset(conf, 0, sizeof(*conf));
+
+    conf->status = NST_STATUS_ON;
+    cur_arg++;
+
+    if(*args[cur_arg]) {
+
+        if(!strcmp(args[cur_arg], "off")) {
+            conf->status = NST_STATUS_OFF;
+        } else if(!strcmp(args[cur_arg], "on")) {
+            conf->status = NST_STATUS_ON;
+        } else {
+            memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
+            return -1;
+        }
+
+        cur_arg++;
+    }
+
     fconf->id   = nst_nosql_flt_id;
+    fconf->conf = conf;
     fconf->ops  = &nst_nosql_filter_ops;
 
     LIST_ADDQ(&px->filter_configs, &fconf->list);

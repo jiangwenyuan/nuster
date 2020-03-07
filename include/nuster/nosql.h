@@ -91,11 +91,14 @@ struct nst_nosql_entry {
     uint64_t                atime;
     struct nst_str          host;
     struct nst_str          path;
-    struct nst_nosql_entry *next;
     struct nst_rule        *rule;        /* rule */
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
+
+    struct nst_key         *key2;
+    struct nst_rule2       *rule2;        /* rule */
+    struct nst_nosql_entry *next;
 };
 
 struct nst_nosql_dict {
@@ -155,6 +158,11 @@ struct nst_nosql_ctx {
     uint64_t                  cache_len2;
 
     struct persist            disk;
+
+    int                       rule_cnt;
+    int                       key_cnt;
+    struct nst_rule2         *rule2;
+    struct nst_key            keys[0];
 };
 
 struct nst_nosql_stats {
@@ -214,12 +222,12 @@ struct nst_nosql_data *nst_nosql_data_new();
 int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
-int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
-        struct stream *s, struct http_msg *msg);
+int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
+int nst_nosql_store_key(struct nst_nosql_ctx *ctx, struct nst_key *key);
 
 uint64_t nst_nosql_hash_key(const char *key);
 int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode);
-int nst_nosql_delete(struct buffer *key, uint64_t hash);
+int nst_nosql_delete(struct nst_key *key);
 
 void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         struct http_msg *msg);
@@ -241,7 +249,7 @@ void nst_nosql_persist_load();
 
 /* dict */
 int nst_nosql_dict_init();
-struct nst_nosql_entry *nst_nosql_dict_get(struct buffer *key, uint64_t hash);
+struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key);
 struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx);
 int nst_nosql_dict_set_from_disk(char *file, char *meta, struct buffer *key);
 void nst_nosql_dict_rehash();

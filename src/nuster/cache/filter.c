@@ -278,6 +278,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 struct nst_key *key = &(ctx->keys[idx]);
 
                 nst_debug(s, "[cache2] ==== Check rule: %s ====\n", ctx->rule2->name);
+
                 if(ctx->rule2->state == NST_RULE_DISABLED) {
                     nst_debug(s, "[cache2] Disabled, continue.\n");
                     ctx->rule2 = ctx->rule2->next;

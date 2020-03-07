@@ -776,18 +776,14 @@ int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
     return 1;
 }
 
-int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
-        struct stream *s, struct http_msg *msg) {
+int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
 
     struct nst_rule_key *ck = NULL;
+    struct nst_rule_key **pck = ctx->rule2->key->data;
 
-    ctx->key  = nst_nosql_key_init();
-
-    if(!ctx->key) {
-        return NST_ERR;
-    }
+    nst_key_init2();
 
     nst_debug(s, "[nosql] Calculate key: ");
 
@@ -797,24 +793,24 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
         switch(ck->type) {
             case NST_RULE_KEY_METHOD:
                 nst_debug2("method.");
-                ret = nst_nosql_key_append(ctx->key,
-                        http_known_methods[HTTP_METH_GET].ptr,
-                        http_known_methods[HTTP_METH_GET].len);
+                ret = nst_key_catist(http_known_methods[HTTP_METH_GET]);
+
                 break;
             case NST_RULE_KEY_SCHEME:
-                nst_debug2("scheme.");
-                ret = nst_nosql_key_append(ctx->key,
-                        ctx->req.scheme == SCH_HTTPS ? "HTTPS" : "HTTP",
-                        ctx->req.scheme == SCH_HTTPS ? 5 : 4);
+                {
+                    struct ist https = IST("HTTPS");
+                    struct ist http  = IST("HTTP");
+                    nst_debug2("scheme.");
+                    ret = nst_key_catist(ctx->req.scheme == SCH_HTTPS ? https : http);
+                }
                 break;
             case NST_RULE_KEY_HOST:
                 nst_debug2("host.");
 
                 if(ctx->req.host.data) {
-                    ret = nst_nosql_key_append(ctx->key, ctx->req.host.data,
-                            ctx->req.host.len);
+                    ret = nst_key_catstr(ctx->req.host);
                 } else {
-                    ret = nst_nosql_key_advance(ctx->key, 2);
+                    ret = nst_key_catdel();
                 }
 
                 break;
@@ -822,11 +818,9 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                 nst_debug2("uri.");
 
                 if(ctx->req.uri.data) {
-                    ret = nst_nosql_key_append(ctx->key, ctx->req.uri.data,
-                            ctx->req.uri.len);
-
+                    ret = nst_key_catstr(ctx->req.uri);
                 } else {
-                    ret = nst_nosql_key_advance(ctx->key, 2);
+                    ret = nst_key_catdel();
                 }
 
                 break;
@@ -834,11 +828,9 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                 nst_debug2("path.");
 
                 if(ctx->req.path.data) {
-                    ret = nst_nosql_key_append(ctx->key, ctx->req.path.data,
-                            ctx->req.path.len);
-
+                    ret = nst_key_catstr(ctx->req.path);
                 } else {
-                    ret = nst_nosql_key_advance(ctx->key, 2);
+                    ret = nst_key_catdel();
                 }
 
                 break;
@@ -846,9 +838,10 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                 nst_debug2("delimiter.");
 
                 if(ctx->req.delimiter) {
-                    ret = nst_nosql_key_append(ctx->key, "?", 1);
+                    struct ist delimiter = IST("?");
+                    ret = nst_key_catist(delimiter);
                 } else {
-                    ret = nst_nosql_key_advance(ctx->key, 2);
+                    ret = nst_key_catdel();
                 }
 
                 break;
@@ -856,11 +849,9 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                 nst_debug2("query.");
 
                 if(ctx->req.query.data && ctx->req.query.len) {
-                    ret = nst_nosql_key_append(ctx->key, ctx->req.query.data,
-                            ctx->req.query.len);
-
+                    ret = nst_key_catstr(ctx->req.query);
                 } else {
-                    ret = nst_nosql_key_advance(ctx->key, 2);
+                    ret = nst_key_catdel();
                 }
 
                 break;
@@ -875,14 +866,14 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                                 ctx->req.query.data + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NST_OK) {
 
-                        ret = nst_nosql_key_append(ctx->key, v, v_l);
+                        ret = nst_key_catist(ist2(v, v_l));
                         break;
                     }
-
                 }
 
                 ret = nst_nosql_key_advance(ctx->key, 2);
 
+                ret = nst_key_catdel();
                 break;
             case NST_RULE_KEY_HEADER:
                 {
@@ -896,14 +887,15 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                     nst_debug2("header_%s.", ck->data);
 
                     while (http_find_header(htx, h, &hdr, 0)) {
-                        ret = nst_nosql_key_append(ctx->key, hdr.value.ptr,
-                                hdr.value.len);
+                        ret = nst_key_catist(hdr.value);
+
+                        if(ret == NST_ERR) {
+                            break;
+                        }
                     }
-
-                    ret = ret == NST_OK && nst_nosql_key_advance(ctx->key,
-                            hdr.value.len == 0 ? 2 : 1);
-
                 }
+
+                ret = nst_key_catdel();
                 break;
             case NST_RULE_KEY_COOKIE:
                 nst_debug2("cookie_%s.", ck->data);
@@ -916,30 +908,40 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
                                 ctx->req.cookie.data + ctx->req.cookie.len,
                                 ck->data, strlen(ck->data), 1, &v, &v_l)) {
 
-                        ret = nst_nosql_key_append(ctx->key, v, v_l);
+                        ret = nst_key_catist(ist2(v, v_l));
                         break;
                     }
 
                 }
 
+                ret = nst_key_catdel();
                 break;
             case NST_RULE_KEY_BODY:
                 nst_debug2("body.");
 
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
 
-                    //if((s->be->options & PR_O_WREQ_BODY)
-                    //        && ci_data(msg->chn) - msg->sov > 0) {
+                    int pos;
+                    struct htx *htx = htxbuf(&msg->chn->buf);
 
-                    //    ret = nst_nosql_key_append(ctx->key,
-                    //            ci_head(msg->chn) + msg->sov,
-                    //            ci_data(msg->chn) - msg->sov);
+                    for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
+                        struct htx_blk *blk = htx_get_blk(htx, pos);
+                        uint32_t        sz  = htx_get_blksz(blk);
+                        enum htx_blk_type type = htx_get_blk_type(blk);
 
-                    //} else {
-                    //    ret = nst_nosql_key_advance(ctx->key, 2);
-                    //}
+                        if(type != HTX_BLK_DATA) {
+                            continue;
+                        }
+
+                        ret = nst_key_cat(htx_get_blk_ptr(htx, blk), sz);
+
+                        if(ret != NST_OK) {
+                            break;
+                        }
+                    }
                 }
 
+                ret = nst_key_catdel();
                 break;
             default:
                 ret = NST_ERR;
@@ -952,6 +954,19 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct nst_rule_key **pck,
     }
 
     nst_debug2("\n");
+
+    return NST_OK;
+}
+
+int nst_nosql_store_key(struct nst_nosql_ctx *ctx, struct nst_key *key) {
+    key->size = trash.data;
+    key->data = nst_nosql_memory_alloc(key->size);
+
+    if(!key->data) {
+        return NST_ERR;
+    }
+
+    memcpy(key->data, trash.area, trash.data);
 
     return NST_OK;
 }
@@ -1177,6 +1192,8 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
 
     struct nst_nosql_entry *entry = NULL;
     struct nst_nosql_element *element = NULL;
+    int idx = ctx->rule2->key->idx;
+    struct nst_key *key = &(ctx->keys[idx]);
 
     /* Check if nosql is full */
     if(nst_nosql_stats_full()) {
@@ -1185,7 +1202,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
     }
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
-    entry = nst_nosql_dict_get(ctx->key, ctx->hash);
+    entry = nst_nosql_dict_get(key);
 
     if(entry) {
 
@@ -1253,19 +1270,19 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         }
 
         if(nst_persist_init(global.nuster.nosql.root, ctx->disk.file,
-                    ctx->hash) != NST_OK) {
+                    key->hash) != NST_OK) {
 
             return;
         }
 
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
-        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, ctx->hash,
-                0, 0, ctx->header_len, ctx->entry->key->data, 0, 0, 0, 0, 0);
+        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule2->disk, key->hash,
+                0, 0, ctx->header_len, ctx->entry->key2->size, 0, 0, 0, 0, 0);
 
         nst_persist_write_key(&ctx->disk, ctx->entry->key);
 
-        ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key->data;
+        ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key2->size;
 
         element = ctx->data->element;
 
@@ -1302,7 +1319,7 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
             continue;
         }
 
-        if(ctx->rule->disk == NST_DISK_ONLY)  {
+        if(ctx->rule2->disk == NST_DISK_ONLY)  {
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             ctx->cache_len2 += sz;
         } else {
@@ -1331,7 +1348,7 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
 
             ctx->element = element;
 
-            if(ctx->rule->disk == NST_DISK_SYNC) {
+            if(ctx->rule2->disk == NST_DISK_SYNC) {
                 nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             }
 
@@ -1351,12 +1368,15 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
     struct nst_nosql_entry *entry = NULL;
     int ret = NST_CACHE_CTX_STATE_INIT;
 
-    if(!ctx->key) {
+    int idx = ctx->rule2->key->idx;
+    struct nst_key *key = &(ctx->keys[idx]);
+
+    if(!key) {
         return ret;
     }
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
-    entry = nst_nosql_dict_get(ctx->key, ctx->hash);
+    entry = nst_nosql_dict_get(key);
 
     if(entry) {
         if(entry->state == NST_NOSQL_ENTRY_STATE_VALID) {
@@ -1372,11 +1392,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
     } else {
         if(mode != NST_DISK_OFF) {
             ctx->disk.file = NULL;
-            //if(nuster.nosql->disk.loaded) {
-            //    ret = NST_NOSQL_CTX_STATE_INIT;
-            //} else {
-                ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
-            //}
+            ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
         }
     }
 
@@ -1384,8 +1400,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
 
     if(ret == NST_NOSQL_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
-            if(nst_persist_valid(&ctx->disk, ctx->key, ctx->hash) == NST_OK) {
-
+            if(nst_persist_valid2(&ctx->disk, key) == NST_OK) {
                 ret = NST_NOSQL_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_NOSQL_CTX_STATE_INIT;
@@ -1398,9 +1413,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
             } else {
 
-                if(nst_persist_exists(global.nuster.nosql.root, &ctx->disk,
-                            ctx->key, ctx->hash) == NST_OK) {
-
+                if(nst_persist_exists2(global.nuster.nosql.root, &ctx->disk, key) == NST_OK) {
                     ret = NST_NOSQL_CTX_STATE_HIT_DISK;
                 } else {
                     nst_nosql_memory_free(ctx->disk.file);
@@ -1413,7 +1426,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
     return ret;
 }
 
-int nst_nosql_delete(struct buffer *key, uint64_t hash) {
+int nst_nosql_delete(struct nst_key *key) {
     struct nst_nosql_entry *entry = NULL;
     int ret = 0;
 
@@ -1422,7 +1435,7 @@ int nst_nosql_delete(struct buffer *key, uint64_t hash) {
     }
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
-    entry = nst_nosql_dict_get(key, hash);
+    entry = nst_nosql_dict_get(key);
 
     if(entry) {
         entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
@@ -1476,22 +1489,22 @@ void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s,
 
         ctx->state = NST_NOSQL_CTX_STATE_DONE;
 
-        if(ctx->rule->disk == NST_DISK_ONLY) {
+        if(ctx->rule2->disk == NST_DISK_ONLY) {
             ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
         } else {
             ctx->entry->state = NST_NOSQL_ENTRY_STATE_VALID;
         }
 
 
-        if(*ctx->rule->ttl == 0) {
+        if(ctx->rule2->ttl == 0) {
             ctx->entry->expire = 0;
         } else {
             ctx->entry->expire = get_current_timestamp() / 1000
-                + *ctx->rule->ttl;
+                + ctx->rule2->ttl;
         }
 
-        if(ctx->rule->disk == NST_DISK_SYNC
-                || ctx->rule->disk == NST_DISK_ONLY) {
+        if(ctx->rule2->disk == NST_DISK_SYNC
+                || ctx->rule2->disk == NST_DISK_ONLY) {
 
             nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
