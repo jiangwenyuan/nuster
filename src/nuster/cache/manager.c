@@ -116,7 +116,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
 
         p = proxies_list;
         while(p) {
-            struct nst_rule *rule = NULL;
+            struct nst_rule2 *rule = NULL;
 
             if(mode != NST_CACHE_PURGE_NAME_ALL
                     && strlen(p->id) == hdr.value.len
@@ -126,18 +126,22 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
                 mode  = NST_CACHE_PURGE_NAME_PROXY;
             }
 
-            list_for_each_entry(rule, &p->nuster.rules, list) {
+            rule = nuster.proxy[p->uuid]->rule;
+
+            while(rule) {
 
                 if(mode != NST_CACHE_PURGE_NAME_RULE) {
-                    *rule->state = state == -1 ? *rule->state : state;
-                    *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
+                    rule->state = state == -1 ? rule->state : state;
+                    rule->ttl   = ttl   == -1 ? rule->ttl   : ttl;
                 } else if(strlen(rule->name) == hdr.value.len
                         && !memcmp(hdr.value.ptr, rule->name, hdr.value.len)) {
 
-                    *rule->state = state == -1 ? *rule->state : state;
-                    *rule->ttl   = ttl   == -1 ? *rule->ttl   : ttl;
+                    rule->state = state == -1 ? rule->state : state;
+                    rule->ttl   = ttl   == -1 ? rule->ttl   : ttl;
                     found        = 1;
                 }
+
+                rule = rule->next;
             }
 
             if(mode == NST_CACHE_PURGE_NAME_PROXY) {
@@ -202,7 +206,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
 
         p = proxies_list;
         while(p) {
-            struct nst_rule *rule = NULL;
+            struct nst_rule2 *rule = NULL;
 
             if(p->nuster.mode == NST_MODE_CACHE) {
 
@@ -215,7 +219,9 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
                     goto purge;
                 }
 
-                list_for_each_entry(rule, &p->nuster.rules, list) {
+                rule = nuster.proxy[p->uuid]->rule;
+
+                while(rule) {
 
                     if(strlen(rule->name) == hdr.value.len
                             && !memcmp(hdr.value.ptr, rule->name,
@@ -225,6 +231,8 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
                         st1  = rule->id;
                         goto purge;
                     }
+
+                    rule = rule->next;
                 }
             }
 
@@ -428,7 +436,7 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry,
             ret = entry->pid == appctx->st1;
             break;
         case NST_CACHE_PURGE_NAME_RULE:
-            ret = entry->rule && entry->rule->id == appctx->st1;
+            ret = entry->rule2 && entry->rule2->id == appctx->st1;
             break;
         case NST_CACHE_PURGE_PATH:
             ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len
