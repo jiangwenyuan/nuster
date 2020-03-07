@@ -95,75 +95,6 @@ static int _nst_cache_dict_rehashing() {
 }
 
 /*
- * Rehash dict if cache->dict[0] is almost full
- */
-void nst_cache_dict_rehash() {
-
-    if(_nst_cache_dict_rehashing()) {
-        int max_empty = 10;
-        struct nst_cache_entry *entry = NULL;
-
-        /* check max_empty entryies */
-        while(!nuster.cache->dict[0].entry[nuster.cache->rehash_idx]) {
-            nuster.cache->rehash_idx++;
-            max_empty--;
-
-            if(nuster.cache->rehash_idx >= nuster.cache->dict[0].size) {
-                return;
-            }
-
-            if(!max_empty) {
-                return;
-            }
-
-        }
-
-        /* move all entries in this bucket to dict[1] */
-        entry = nuster.cache->dict[0].entry[nuster.cache->rehash_idx];
-
-        while(entry) {
-            int idx = entry->hash % nuster.cache->dict[1].size;
-            struct nst_cache_entry *entry_next = entry->next;
-
-            entry->next = nuster.cache->dict[1].entry[idx];
-            nuster.cache->dict[1].entry[idx] = entry;
-            nuster.cache->dict[1].used++;
-            nuster.cache->dict[0].used--;
-            entry = entry_next;
-        }
-
-        nuster.cache->dict[0].entry[nuster.cache->rehash_idx] = NULL;
-        nuster.cache->rehash_idx++;
-
-        /* have we rehashed the whole dict? */
-        if(nuster.cache->dict[0].used == 0) {
-            free(nuster.cache->dict[0].entry);
-            nuster.cache->dict[0]       = nuster.cache->dict[1];
-            nuster.cache->rehash_idx    = -1;
-            nuster.cache->cleanup_idx   = 0;
-            nuster.cache->dict[1].entry = NULL;
-            nuster.cache->dict[1].size  = 0;
-            nuster.cache->dict[1].used  = 0;
-        }
-
-    } else {
-
-        /* should we rehash? */
-        if(global.nuster.cache.share) {
-            return;
-        }
-
-        if(nuster.cache->dict[0].used
-                >= nuster.cache->dict[0].size * NST_CACHE_DEFAULT_LOAD_FACTOR) {
-
-            _nst_cache_dict_resize(nuster.cache->dict[0].size
-                    * NST_CACHE_DEFAULT_GROWTH_FACTOR);
-        }
-
-    }
-}
-
-/*
  * Check entry validity, free the entry if its invalid,
  * If its invalid set entry->data->invalid to true,
  * entry->data is freed by _cache_data_cleanup
@@ -196,8 +127,6 @@ void nst_cache_dict_cleanup() {
             }
 
             entry = entry->next;
-            nst_cache_memory_free(tmp->key->area);
-            nst_cache_memory_free(tmp->key);
             nst_cache_memory_free(tmp->host.data);
             nst_cache_memory_free(tmp->path.data);
             nst_cache_memory_free(tmp);
@@ -409,7 +338,6 @@ int nst_cache_dict_set_from_disk2(char *file, char *meta, struct nst_key *key,
     /* init entry */
     entry->state  = NST_CACHE_ENTRY_STATE_INVALID;
     entry->key2   = key;
-    entry->hash   = hash;
     entry->expire = nst_persist_meta_get_expire(meta);
     memcpy(entry->file, file, strlen(file));
 

@@ -428,7 +428,6 @@ void nst_cache_housekeeping() {
         int disk_saver   = global.nuster.cache.disk_saver;
 
         while(dict_cleaner--) {
-            nst_cache_dict_rehash();
             nst_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_dict_cleanup();
             nst_shctx_unlock(&nuster.cache->dict[0]);
@@ -1491,7 +1490,7 @@ void nst_cache_persist_async() {
             }
 
             if(nst_persist_init(global.nuster.cache.root, entry->file,
-                        entry->hash) != NST_OK) {
+                        entry->key2->hash) != NST_OK) {
                 return;
             }
 
@@ -1504,7 +1503,7 @@ void nst_cache_persist_async() {
             *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
 
             nst_persist_meta_init(disk.meta, (char)entry->rule2->disk,
-                    entry->hash, entry->expire, 0, 0,
+                    entry->key2->hash, entry->expire, 0, 0,
                     entry->key2->size, entry->host.len, entry->path.len,
                     entry->etag.len, entry->last_modified.len, ttl_extend);
 
