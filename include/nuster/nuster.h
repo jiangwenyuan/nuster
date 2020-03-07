@@ -35,7 +35,7 @@
 
 struct nst_proxy {
     struct nst_rule2 *rule;
-    struct nst_key2  *key;
+    struct nst_rule_key  *key;
 
     int               rule_cnt;
     int               key_cnt;

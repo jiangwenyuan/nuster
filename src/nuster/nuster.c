@@ -151,7 +151,7 @@ out:
             memset(nuster.proxy[p->uuid], 0, sizeof(struct nst_proxy));
 
             list_for_each_entry(rule, &p->nuster.rules, list) {
-                struct nst_key2 *key = NULL;
+                struct nst_rule_key *key = NULL;
 
                 rule2 = nst_memory_alloc(memory, sizeof(struct nst_rule2));
 
@@ -178,7 +178,7 @@ out:
                 if(key) {
                     rule2->key = key;
                 } else {
-                    key = nst_memory_alloc(memory, sizeof(struct nst_key2));
+                    key = nst_memory_alloc(memory, sizeof(struct nst_rule_key));
 
                     if(!key) {
                         goto err;

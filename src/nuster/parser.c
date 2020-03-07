@@ -24,73 +24,73 @@
 const char *nst_cache_flt_id = "cache filter id";
 static const char *nst_nosql_flt_id = "nosql filter id";
 
-static struct nst_rule_key *_nst_parse_rule_key_cast(char *str) {
-    struct nst_rule_key *key = NULL;
+static struct nst_key_element *_nst_parse_rule_key_cast(char *str) {
+    struct nst_key_element *key = NULL;
 
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_METHOD;
+        key->type = NST_KEY_ELEMENT_METHOD;
         key->data = NULL;
     } else if(!strcmp(str, "scheme")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_SCHEME;
+        key->type = NST_KEY_ELEMENT_SCHEME;
         key->data = NULL;
     } else if(!strcmp(str, "host")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_HOST;
+        key->type = NST_KEY_ELEMENT_HOST;
         key->data = NULL;
     } else if(!strcmp(str, "uri")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_URI;
+        key->type = NST_KEY_ELEMENT_URI;
         key->data = NULL;
     } else if(!strcmp(str, "path")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_PATH;
+        key->type = NST_KEY_ELEMENT_PATH;
         key->data = NULL;
     } else if(!strcmp(str, "delimiter")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_DELIMITER;
+        key->type = NST_KEY_ELEMENT_DELIMITER;
         key->data = NULL;
     } else if(!strcmp(str, "query")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_QUERY;
+        key->type = NST_KEY_ELEMENT_QUERY;
         key->data = NULL;
     } else if(!strncmp(str, "param_", 6) && strlen(str) > 6) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_PARAM;
+        key->type = NST_KEY_ELEMENT_PARAM;
         key->data = strdup(str + 6);
     } else if(!strncmp(str, "header_", 7) && strlen(str) > 7) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_HEADER;
+        key->type = NST_KEY_ELEMENT_HEADER;
         key->data = strdup(str + 7);
     } else if(!strncmp(str, "cookie_", 7) && strlen(str) > 7) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_COOKIE;
+        key->type = NST_KEY_ELEMENT_COOKIE;
         key->data = strdup(str + 7);
     } else if(!strcmp(str, "body")) {
         key       = malloc(sizeof(*key));
-        key->type = NST_RULE_KEY_BODY;
+        key->type = NST_KEY_ELEMENT_BODY;
         key->data = NULL;
     }
 
     return key;
 }
 
-static struct nst_rule_key **_nst_parse_rule_key(char *str) {
-    struct nst_rule_key **pk = NULL;
+static struct nst_key_element **_nst_parse_rule_key(char *str) {
+    struct nst_key_element **pk = NULL;
     char *m, *tmp = strdup(str);
     int i = 0;
 
     m = strtok(tmp, ".");
 
     while(m) {
-        struct nst_rule_key *key = _nst_parse_rule_key_cast(m);
+        struct nst_key_element *key = _nst_parse_rule_key_cast(m);
 
         if(!key) {
             goto err;
         }
 
-        pk = realloc(pk, (i + 1) * sizeof(struct nst_rule_key *));
+        pk = realloc(pk, (i + 1) * sizeof(struct nst_key_element *));
         pk[i++] = key;
         m = strtok(NULL, ".");
     }
@@ -99,7 +99,7 @@ static struct nst_rule_key **_nst_parse_rule_key(char *str) {
         goto err;
     }
 
-    pk = realloc(pk, (i + 1) * sizeof(struct nst_rule_key *));
+    pk = realloc(pk, (i + 1) * sizeof(struct nst_key_element *));
     pk[i] = NULL;
     free(tmp);
 

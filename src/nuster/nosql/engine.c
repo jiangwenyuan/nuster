@@ -780,8 +780,8 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
 
     struct http_txn *txn = s->txn;
 
-    struct nst_rule_key *ck = NULL;
-    struct nst_rule_key **pck = ctx->rule2->key->data;
+    struct nst_key_element *ck = NULL;
+    struct nst_key_element **pck = ctx->rule2->key->data;
 
     nst_key_init2();
 
@@ -791,12 +791,12 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
         int ret = NST_OK;
 
         switch(ck->type) {
-            case NST_RULE_KEY_METHOD:
+            case NST_KEY_ELEMENT_METHOD:
                 nst_debug2("method.");
                 ret = nst_key_catist(http_known_methods[HTTP_METH_GET]);
 
                 break;
-            case NST_RULE_KEY_SCHEME:
+            case NST_KEY_ELEMENT_SCHEME:
                 {
                     struct ist https = IST("HTTPS");
                     struct ist http  = IST("HTTP");
@@ -804,7 +804,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                     ret = nst_key_catist(ctx->req.scheme == SCH_HTTPS ? https : http);
                 }
                 break;
-            case NST_RULE_KEY_HOST:
+            case NST_KEY_ELEMENT_HOST:
                 nst_debug2("host.");
 
                 if(ctx->req.host.data) {
@@ -814,7 +814,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 }
 
                 break;
-            case NST_RULE_KEY_URI:
+            case NST_KEY_ELEMENT_URI:
                 nst_debug2("uri.");
 
                 if(ctx->req.uri.data) {
@@ -824,7 +824,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 }
 
                 break;
-            case NST_RULE_KEY_PATH:
+            case NST_KEY_ELEMENT_PATH:
                 nst_debug2("path.");
 
                 if(ctx->req.path.data) {
@@ -834,7 +834,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 }
 
                 break;
-            case NST_RULE_KEY_DELIMITER:
+            case NST_KEY_ELEMENT_DELIMITER:
                 nst_debug2("delimiter.");
 
                 if(ctx->req.delimiter) {
@@ -845,7 +845,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 }
 
                 break;
-            case NST_RULE_KEY_QUERY:
+            case NST_KEY_ELEMENT_QUERY:
                 nst_debug2("query.");
 
                 if(ctx->req.query.data && ctx->req.query.len) {
@@ -855,7 +855,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 }
 
                 break;
-            case NST_RULE_KEY_PARAM:
+            case NST_KEY_ELEMENT_PARAM:
                 nst_debug2("param_%s.", ck->data);
 
                 if(ctx->req.query.data && ctx->req.query.len) {
@@ -873,7 +873,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
 
                 ret = nst_key_catdel();
                 break;
-            case NST_RULE_KEY_HEADER:
+            case NST_KEY_ELEMENT_HEADER:
                 {
                     struct htx *htx = htxbuf(&s->req.buf);
                     struct http_hdr_ctx hdr = { .blk = NULL };
@@ -895,7 +895,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
 
                 ret = nst_key_catdel();
                 break;
-            case NST_RULE_KEY_COOKIE:
+            case NST_KEY_ELEMENT_COOKIE:
                 nst_debug2("cookie_%s.", ck->data);
 
                 if(ctx->req.cookie.data) {
@@ -914,7 +914,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
 
                 ret = nst_key_catdel();
                 break;
-            case NST_RULE_KEY_BODY:
+            case NST_KEY_ELEMENT_BODY:
                 nst_debug2("body.");
 
                 if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {

@@ -75,49 +75,39 @@ struct nst_str {
     int   len;
 };
 
-enum nst_rule_key_type {
+enum nst_key_element_type {
     /* method: GET, POST... */
-    NST_RULE_KEY_METHOD = 1,
+    NST_KEY_ELEMENT_METHOD = 1,
 
     /* scheme: http, https */
-    NST_RULE_KEY_SCHEME,
+    NST_KEY_ELEMENT_SCHEME,
 
     /* host: Host header */
-    NST_RULE_KEY_HOST,
+    NST_KEY_ELEMENT_HOST,
 
     /* uri: first slash to end of the url */
-    NST_RULE_KEY_URI,
+    NST_KEY_ELEMENT_URI,
 
     /* path: first slach to question mark */
-    NST_RULE_KEY_PATH,
+    NST_KEY_ELEMENT_PATH,
 
     /* delimiter: '?' or '' */
-    NST_RULE_KEY_DELIMITER,
+    NST_KEY_ELEMENT_DELIMITER,
 
     /*query: question mark to end of the url, or empty */
-    NST_RULE_KEY_QUERY,
+    NST_KEY_ELEMENT_QUERY,
 
     /* param: query key/value pair */
-    NST_RULE_KEY_PARAM,
+    NST_KEY_ELEMENT_PARAM,
 
     /* header */
-    NST_RULE_KEY_HEADER,
+    NST_KEY_ELEMENT_HEADER,
 
     /* cookie */
-    NST_RULE_KEY_COOKIE,
+    NST_KEY_ELEMENT_COOKIE,
 
     /* body */
-    NST_RULE_KEY_BODY,
-};
-
-struct nst_rule_key {
-    enum nst_rule_key_type  type;
-    char                   *data;
-};
-
-struct nst_rule_code {
-    struct nst_rule_code *next;
-    int                   code;
+    NST_KEY_ELEMENT_BODY,
 };
 
 enum {
@@ -139,12 +129,30 @@ enum {
     NST_DISK_ASYNC,
 };
 
+struct nst_key_element {
+    enum nst_key_element_type  type;
+    char                      *data;
+};
+
+struct nst_rule_key {
+    char                    *name;
+    struct nst_key_element    **data;           /* parsed key */
+    int                      idx;
+
+    struct nst_rule_key         *next;
+};
+
+struct nst_rule_code {
+    struct nst_rule_code *next;
+    int                   code;
+};
+
 struct nst_rule {
     struct list              list;          /* list linked to from the proxy */
     struct acl_cond         *cond;          /* acl condition to meet */
     char                    *name;          /* cache name for logging */
     char                    *raw_key;
-    struct nst_rule_key    **key;           /* key */
+    struct nst_key_element    **key;           /* key */
     struct nst_rule_code    *code;          /* code */
     uint32_t                 ttl;           /* ttl: seconds, 0: not expire */
     int                      id;            /* same for identical names */
@@ -180,14 +188,6 @@ struct nst_key {
     uint64_t    hash;
 };
 
-struct nst_key2 {
-    char                    *name;
-    struct nst_rule_key    **data;           /* parsed key */
-    int                      idx;
-
-    struct nst_key2         *next;
-};
-
 struct nst_rule2 {
     int                      uuid;          /* unique rule ID */
     int                      idx;           /* index in specific proxy */
@@ -195,7 +195,7 @@ struct nst_rule2 {
 
     int                      state;         /* enabled or disabled */
     char                    *name;          /* rule name for logging */
-    struct nst_key2         *key;
+    struct nst_rule_key     *key;
     struct nst_rule_code    *code;          /* code */
     uint32_t                 ttl;           /* ttl: seconds, 0: not expire */
     int                      disk;          /* NST_DISK_* */
