@@ -1278,7 +1278,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule2->disk, key->hash,
                 0, 0, ctx->header_len, ctx->entry->key2->size, 0, 0, 0, 0, 0);
 
-        nst_persist_write_key(&ctx->disk, ctx->entry->key);
+        nst_persist_write_key2(&ctx->disk, ctx->entry->key2);
 
         ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key2->size;
 
@@ -1555,14 +1555,14 @@ void nst_nosql_persist_async() {
             }
 
             if(nst_persist_init(global.nuster.nosql.root, entry->file,
-                        entry->hash) != NST_OK) {
+                        entry->key2->hash) != NST_OK) {
                 return;
             }
 
             disk.fd = nst_persist_create(entry->file);
 
             nst_persist_meta_init(disk.meta, (char)entry->rule2->disk,
-                    entry->hash, entry->expire, 0, 0,
+                    entry->key2->hash, entry->expire, 0, 0,
                     entry->key2->size, 0, 0, 0, 0, 0);
 
             nst_persist_write_key2(&disk, entry->key2);

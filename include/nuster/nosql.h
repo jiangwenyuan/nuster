@@ -84,8 +84,6 @@ enum {
 
 struct nst_nosql_entry {
     int                     state;
-    struct buffer          *key;
-    uint64_t                hash;
     struct nst_nosql_data  *data;
     uint64_t                expire;
     uint64_t                atime;
