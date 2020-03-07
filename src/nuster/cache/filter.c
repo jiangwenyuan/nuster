@@ -253,7 +253,6 @@ static int _nst_cache_filter_http_headers(struct stream *s,
     struct proxy *px            = s->be;
     struct stream_interface *si = &s->si[1];
     struct nst_cache_ctx *ctx   = filter->ctx;
-    struct nst_rule *rule       = NULL;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
 
@@ -360,7 +359,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                             }
                         }
 
-                        if(rule->last_modified == NST_STATUS_ON) {
+                        if(ctx->rule2->last_modified == NST_STATUS_ON) {
                             ctx->res.last_modified.len  =
                                 nst_persist_meta_get_last_modified_len(
                                         ctx->disk.meta);

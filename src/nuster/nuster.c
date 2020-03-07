@@ -265,35 +265,6 @@ err:
     exit(1);
 }
 
-int nst_test_rule(struct nst_rule *rule, struct stream *s, int res) {
-    int ret;
-
-    /* no acl defined */
-    if(!rule->cond) {
-        return NST_OK;
-    }
-
-    if(res) {
-        ret = acl_exec_cond(rule->cond, s->be, s->sess, s,
-                SMP_OPT_DIR_RES|SMP_OPT_FINAL);
-    } else {
-        ret = acl_exec_cond(rule->cond, s->be, s->sess, s,
-                SMP_OPT_DIR_REQ|SMP_OPT_FINAL);
-    }
-
-    ret = acl_pass(ret);
-
-    if(rule->cond->pol == ACL_COND_UNLESS) {
-        ret = !ret;
-    }
-
-    if(ret) {
-        return NST_OK;
-    }
-
-    return NST_ERR;
-}
-
 int nst_test_rule2(struct nst_rule2 *rule, struct stream *s, int res) {
     int ret;
 
