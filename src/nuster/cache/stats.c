@@ -200,7 +200,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
     p = proxies_list;
     while(p) {
-        struct nst_rule *rule = NULL;
+        struct nst_rule2 *rule2 = NULL;
 
         if(htx_almost_full(htx)) {
             si_rx_room_blk(si);
@@ -213,55 +213,53 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
         if(p->cap & PR_CAP_BE && p->nuster.mode == NST_MODE_CACHE) {
 
-            if(!LIST_ISEMPTY(&p->nuster.rules)) {
+            rule2 = nuster.proxy[p->uuid]->rule;
 
-                list_for_each_entry(rule, &p->nuster.rules, list) {
+            chunk_printf(&trash, "\n**PROXY %s %d**\n", p->id, p->uuid);
 
-                    if(htx_almost_full(htx)) {
+            if(!htx_add_data_atonce(htx, ist2(trash.area, trash.data))) {
+                si_rx_room_blk(si);
+                return 0;
+            }
+
+            channel_add_input(res, trash.data);
+
+            while(rule2) {
+                if(htx_almost_full(htx)) {
+                    si_rx_room_blk(si);
+                    return 0;
+                }
+
+                if(rule2->uuid == appctx->st2) {
+
+                    chunk_printf(&trash, "%s.rule.%s: ", p->id, rule2->name);
+
+                    chunk_appendf(&trash, "state=%s ttl=%"PRIu32" disk=%s\n",
+                            rule2->state == NST_RULE_ENABLED
+                            ? "on" : "off", rule2->ttl,
+                            rule2->disk == NST_DISK_OFF ? "off"
+                            : rule2->disk == NST_DISK_ONLY ? "only"
+                            : rule2->disk == NST_DISK_SYNC ? "sync"
+                            : rule2->disk == NST_DISK_ASYNC ? "async"
+                            : "invalid");
+
+                    if(trash.data >= channel_htx_recv_max(res, htx)) {
                         si_rx_room_blk(si);
                         return 0;
                     }
 
-                    if(rule->uuid == appctx->st2) {
-
-                        if((struct nst_rule *)(&p->nuster.rules)->n == rule) {
-                            chunk_printf(&trash, "\n**PROXY %s %d**\n",
-                                    p->id, p->uuid);
-                            chunk_appendf(&trash, "%s.rule.%s: ",
-                                    p->id, rule->name);
-                        } else {
-                            chunk_printf(&trash, "%s.rule.%s: ",
-                                    p->id, rule->name);
-                        }
-
-                        chunk_appendf(&trash, "state=%s ttl=%"PRIu32" disk=%s\n",
-                                *rule->state == NST_RULE_ENABLED
-                                ? "on" : "off", *rule->ttl,
-                                rule->disk == NST_DISK_OFF ? "off"
-                                : rule->disk == NST_DISK_ONLY ? "only"
-                                : rule->disk == NST_DISK_SYNC ? "sync"
-                                : rule->disk == NST_DISK_ASYNC ? "async"
-                                : "invalid");
-
-                        if(trash.data >= channel_htx_recv_max(res, htx)) {
-                            si_rx_room_blk(si);
-                            return 0;
-                        }
-
-                        if(!htx_add_data_atonce(htx, ist2(trash.area,
-                                        trash.data))) {
-
-                            si_rx_room_blk(si);
-                            return 0;
-                        }
-
-                        channel_add_input(res, trash.data);
-
-                        appctx->st2++;
+                    if(!htx_add_data_atonce(htx, ist2(trash.area, trash.data))) {
+                        si_rx_room_blk(si);
+                        return 0;
                     }
-                }
-            }
 
+                    channel_add_input(res, trash.data);
+
+                    appctx->st2++;
+                }
+
+                rule2 = rule2->next;
+            }
         }
 
         appctx->st1 = p->next ? p->next->uuid : 0;
