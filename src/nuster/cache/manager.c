@@ -26,12 +26,12 @@
 /*
  * purge cache by key
  */
-int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
+int _nst_cache_purge_by_key(struct nst_key key) {
     struct nst_cache_entry *entry = NULL;
     int ret;
 
     nst_shctx_lock(&nuster.cache->dict[0]);
-    entry = nst_cache_dict_get(key, hash);
+    entry = nst_cache_dict_get2(&key);
 
     if(entry) {
 
@@ -62,7 +62,7 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
             ret = 500;
         } else {
             ret = nst_persist_purge_by_key(global.nuster.cache.root,
-                    &disk, key, hash);
+                    &disk, key);
         }
 
         nst_cache_memory_free(disk.file);
@@ -74,15 +74,17 @@ int _nst_cache_purge_by_key(struct buffer *key, uint64_t hash) {
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
+    struct nst_key key;
 
-    struct buffer *key = nst_cache_build_purge_key(s, msg);
+    int ret = nst_cache_build_purge_key(s, msg, &key);
 
-    if(!key) {
+    if(ret != NST_OK) {
         txn->status = 500;
         http_reply_and_close(s, txn->status, http_error_message(s));
     } else {
-        uint64_t hash = nst_hash(key->area, key->data);
-        txn->status = _nst_cache_purge_by_key(key, hash);
+        key.hash = nst_hash(key.data, key.size);
+
+        txn->status = _nst_cache_purge_by_key(key);
 
         if(txn->status == 200) {
             http_reply_and_close(s, txn->status, http_error_message(s));

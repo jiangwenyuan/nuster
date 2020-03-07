@@ -334,21 +334,21 @@ void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
 }
 
 int nst_persist_purge_by_key(char *root, struct persist *disk,
-        struct buffer *key, uint64_t hash) {
+        struct nst_key key) {
 
     struct dirent *de;
     DIR *dirp;
     char *buf;
     int ret;
 
-    buf = malloc(key->data);
+    buf = malloc(key.size);
 
     if(!buf) {
         return 500;
     }
 
     sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
-            hash >> 60, hash >> 56, hash);
+            key.hash >> 60, key.hash >> 56, key.hash);
 
     dirp = opendir(disk->file);
 
@@ -378,9 +378,9 @@ int nst_persist_purge_by_key(char *root, struct persist *disk,
                     goto done;
                 }
 
-                ret = pread(disk->fd, buf, key->data, NST_PERSIST_POS_KEY);
+                ret = pread(disk->fd, buf, key.size, NST_PERSIST_POS_KEY);
 
-                if(ret == key->data && memcmp(key->area, buf, key->data) == 0) {
+                if(ret == key.size && memcmp(key.data, buf, key.size) == 0) {
                     unlink(disk->file);
                     ret = 200;
                     goto done;
