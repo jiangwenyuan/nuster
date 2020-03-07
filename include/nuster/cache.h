@@ -256,7 +256,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
 struct nst_cache_entry *nst_cache_dict_set2(struct nst_cache_ctx *ctx);
 void nst_cache_dict_rehash();
 void nst_cache_dict_cleanup();
-int nst_cache_dict_set_from_disk(char *file, char *meta, struct buffer *key,
+int nst_cache_dict_set_from_disk2(char *file, char *meta, struct nst_key *key,
         struct nst_str *host, struct nst_str *path);
 
 /* engine */

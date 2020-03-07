@@ -1842,7 +1842,7 @@ void nst_cache_persist_load() {
                         goto err;
                     }
 
-                    nst_cache_dict_set_from_disk(file, meta, key, &host, &path);
+                    nst_cache_dict_set_from_disk2(file, meta, key2, &host, &path);
 
                     close(fd);
                 }
