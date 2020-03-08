@@ -270,17 +270,17 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 return 1;
             }
 
-            ctx->rule2 = nuster.proxy[px->uuid]->rule;
+            ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
-                int idx = ctx->rule2->key->idx;
+                int idx = ctx->rule->key->idx;
                 struct nst_key *key = &(ctx->keys[idx]);
 
-                nst_debug(s, "[cache2] ==== Check rule: %s ====\n", ctx->rule2->name);
+                nst_debug(s, "[cache2] ==== Check rule: %s ====\n", ctx->rule->name);
 
-                if(ctx->rule2->state == NST_RULE_DISABLED) {
+                if(ctx->rule->state == NST_RULE_DISABLED) {
                     nst_debug(s, "[cache2] Disabled, continue.\n");
-                    ctx->rule2 = ctx->rule2->next;
+                    ctx->rule = ctx->rule->next;
                     continue;
                 }
 
@@ -341,7 +341,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                         /* OK, cache exists */
 
-                        if(ctx->rule2->etag == NST_STATUS_ON) {
+                        if(ctx->rule->etag == NST_STATUS_ON) {
                             ctx->res.etag.len  =
                                 nst_persist_meta_get_etag_len(ctx->disk.meta);
 
@@ -359,7 +359,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                             }
                         }
 
-                        if(ctx->rule2->last_modified == NST_STATUS_ON) {
+                        if(ctx->rule->last_modified == NST_STATUS_ON) {
                             ctx->res.last_modified.len  =
                                 nst_persist_meta_get_last_modified_len(
                                         ctx->disk.meta);
@@ -413,7 +413,7 @@ abort_check2:
                     /* test acls to see if we should cache it */
                     nst_debug(s, "[cache] Test rule ACL (req): ");
 
-                    if(nst_test_rule(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
+                    if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) ==
                             NST_OK) {
 
                         nst_debug2("PASS\n");
@@ -424,7 +424,7 @@ abort_check2:
                     nst_debug2("FAIL\n");
                 }
 
-                ctx->rule2 = ctx->rule2->next;
+                ctx->rule = ctx->rule->next;
             }
 
         }
@@ -443,14 +443,14 @@ abort_check2:
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
             int i = 0;
 
-            ctx->rule2 = nuster.proxy[px->uuid]->rule;
+            ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
-                nst_debug(s, "[cache] ==== Check rule: %s ====\n", ctx->rule2->name);
+                nst_debug(s, "[cache] ==== Check rule: %s ====\n", ctx->rule->name);
                 nst_debug(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
-                if(nst_test_rule(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
+                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
                     nst_debug2("PASS\n");
@@ -459,13 +459,13 @@ abort_check2:
                 }
 
                 nst_debug2("FAIL\n");
-                ctx->rule2 = ctx->rule2->next;
+                ctx->rule = ctx->rule->next;
             }
 
         }
 
         if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
-            struct nst_rule_code *cc     = ctx->rule2->code;
+            struct nst_rule_code *cc     = ctx->rule->code;
 
             int valid = 0;
 

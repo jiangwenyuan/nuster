@@ -183,7 +183,6 @@ struct global {
 			char     *root;                        /* persist root directory */
 			uint64_t  data_size;                   /* max memory used by data, in bytes */
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
-			int       share;
 			char     *purge_method;
 			char     *uri;                         /* the uri used for stats and manager */
 			int       dict_cleaner;                /* the number of entries checked once */
@@ -191,14 +190,6 @@ struct global {
 			int       disk_cleaner;                /* the number of files checked once */
 			int       disk_loader;                 /* the number of files load once */
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
-
-			struct {
-				struct pool_head *ctx;
-				struct pool_head *data;
-				struct pool_head *element;
-				struct pool_head *chunk;
-				struct pool_head *entry;
-			} pool;
 
 			struct nst_memory      *memory;        /* memory */
 			struct nst_cache_stats *stats;
@@ -213,14 +204,6 @@ struct global {
 			int       disk_cleaner;                /* the number of files checked once */
 			int       disk_loader;                 /* the number of files load once */
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
-
-			struct {
-				struct pool_head *ctx;
-				struct pool_head *data;
-				struct pool_head *element;
-				struct pool_head *chunk;
-				struct pool_head *entry;
-			} pool;
 
 			struct nst_memory      *memory;        /* memory */
 			struct nst_nosql_stats *stats;

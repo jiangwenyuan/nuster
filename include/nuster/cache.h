@@ -76,6 +76,9 @@ enum {
 
 struct nst_cache_entry {
     int                     state;
+
+    struct nst_key         *key;
+    struct nst_rule        *rule;        /* rule */
     struct nst_cache_data  *data;
     struct nst_str          host;
     struct nst_str          path;
@@ -99,8 +102,6 @@ struct nst_cache_entry {
     /* extended count  */
     int                     extended;
 
-    struct nst_key         *key2;
-    struct nst_rule       *rule2;        /* rule */
     struct nst_cache_entry *next;
 };
 
@@ -162,7 +163,7 @@ struct nst_cache_ctx {
 
     int                       rule_cnt;
     int                       key_cnt;
-    struct nst_rule         *rule2;
+    struct nst_rule          *rule;
     struct nst_key            keys[0];
 };
 
