@@ -247,7 +247,7 @@ void nuster_init() {
 
 }
 
-int nst_test_rule2(struct nst_rule *rule, struct stream *s, int res) {
+int nst_test_rule(struct nst_rule *rule, struct stream *s, int res) {
     int ret;
 
     /* no acl defined */

@@ -413,7 +413,7 @@ abort_check2:
                     /* test acls to see if we should cache it */
                     nst_debug(s, "[cache] Test rule ACL (req): ");
 
-                    if(nst_test_rule2(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
+                    if(nst_test_rule(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
                             NST_OK) {
 
                         nst_debug2("PASS\n");
@@ -450,7 +450,7 @@ abort_check2:
                 nst_debug(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
-                if(nst_test_rule2(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
+                if(nst_test_rule(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
                     nst_debug2("PASS\n");
