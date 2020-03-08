@@ -93,8 +93,8 @@ struct nst_nosql_entry {
     char                   *file;
     int                     header_len;
 
-    struct nst_key         *key2;
-    struct nst_rule       *rule2;        /* rule */
+    struct nst_key         *key;
+    struct nst_rule        *rule;        /* rule */
     struct nst_nosql_entry *next;
 };
 
@@ -154,7 +154,7 @@ struct nst_nosql_ctx {
 
     int                       rule_cnt;
     int                       key_cnt;
-    struct nst_rule         *rule2;
+    struct nst_rule          *rule;
     struct nst_key            keys[0];
 };
 

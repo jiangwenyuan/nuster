@@ -144,13 +144,13 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             return 1;
         }
 
-        ctx->rule2 = nuster.proxy[px->uuid]->rule;
+        ctx->rule = nuster.proxy[px->uuid]->rule;
 
         for(i = 0; i < ctx->rule_cnt; i++) {
-            int idx = ctx->rule2->key->idx;
+            int idx = ctx->rule->key->idx;
             struct nst_key *key = &(ctx->keys[idx]);
 
-            nst_debug(s, "[nosql] ==== Check rule: %s ====\n", ctx->rule2->name);
+            nst_debug(s, "[nosql] ==== Check rule: %s ====\n", ctx->rule->name);
 
             if(key->data) {
                 nst_debug(s, "[nosql] Key checked, continue.\n");
@@ -176,7 +176,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             if(s->txn->meth == HTTP_METH_GET) {
                 nst_debug(s, "[nosql] Check key existence: ");
 
-                ctx->state = nst_nosql_exists(ctx, ctx->rule2->disk);
+                ctx->state = nst_nosql_exists(ctx, ctx->rule->disk);
 
                 if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
                     nst_debug2("HIT memory\n");
@@ -196,7 +196,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             } else if(s->txn->meth == HTTP_METH_POST) {
                 nst_debug(s, "[nosql] Test rule ACL: ");
 
-                if(nst_test_rule(ctx->rule2, s, msg->chn->flags & CF_ISRESP) ==
+                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) ==
                         NST_OK) {
 
                     nst_debug2("PASS\n");
