@@ -120,8 +120,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     idx = ctx->rule->key->idx;
     key = &(ctx->keys[idx]);
 
-    dict = _nst_cache_dict_rehashing()
-        ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
+    dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
 
     entry = nst_cache_memory_alloc(sizeof(*entry));
 
@@ -154,8 +153,9 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->file   = NULL;
     entry->ttl    = ctx->rule->ttl;
 
-    entry->key   = key;
-    entry->rule  = ctx->rule;
+    entry->key  = *key;
+    key->data   = NULL;
+    entry->rule = ctx->rule;
 
     entry->extend[0] = ctx->rule->extend[0];
     entry->extend[1] = ctx->rule->extend[1];
@@ -201,9 +201,9 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
 
         while(entry) {
 
-            if(entry->key->hash == key->hash
-                    && entry->key->size == key->size
-                    && !memcmp(entry->key->data, key->data, key->size)) {
+            if(entry->key.hash == key->hash
+                    && entry->key.size == key->size
+                    && !memcmp(entry->key.data, key->data, key->size)) {
 
                 int expired = nst_cache_entry_expired(entry);
 
@@ -300,7 +300,7 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key,
 
     /* init entry */
     entry->state  = NST_CACHE_ENTRY_STATE_INVALID;
-    entry->key   = key;
+    entry->key   = *key;
     entry->expire = nst_persist_meta_get_expire(meta);
     memcpy(entry->file, file, strlen(file));
 

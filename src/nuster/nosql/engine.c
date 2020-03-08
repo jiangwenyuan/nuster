@@ -1273,11 +1273,11 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash,
-                0, 0, ctx->header_len, ctx->entry->key->size, 0, 0, 0, 0, 0);
+                0, 0, ctx->header_len, ctx->entry->key.size, 0, 0, 0, 0, 0);
 
-        nst_persist_write_key(&ctx->disk, ctx->entry->key);
+        nst_persist_write_key(&ctx->disk, &ctx->entry->key);
 
-        ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key->size;
+        ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key.size;
 
         element = ctx->data->element;
 
@@ -1552,17 +1552,17 @@ void nst_nosql_persist_async() {
             }
 
             if(nst_persist_init(global.nuster.nosql.root, entry->file,
-                        entry->key->hash) != NST_OK) {
+                        entry->key.hash) != NST_OK) {
                 return;
             }
 
             disk.fd = nst_persist_create(entry->file);
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
-                    entry->key->hash, entry->expire, 0, 0,
-                    entry->key->size, 0, 0, 0, 0, 0);
+                    entry->key.hash, entry->expire, 0, 0,
+                    entry->key.size, 0, 0, 0, 0, 0);
 
-            nst_persist_write_key(&disk, entry->key);
+            nst_persist_write_key(&disk, &entry->key);
 
             while(element) {
                 uint32_t blksz, info;

@@ -1154,12 +1154,12 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
         *((uint8_t *)(&ttl_extend) + 3) = ctx->rule->extend[3];
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk,
-                key->hash, 0, 0, ctx->header_len, ctx->entry->key->size,
+                key->hash, 0, 0, ctx->header_len, ctx->entry->key.size,
                 ctx->entry->host.len, ctx->entry->path.len,
                 ctx->entry->etag.len, ctx->entry->last_modified.len,
                 ttl_extend);
 
-        nst_persist_write_key(&ctx->disk, ctx->entry->key);
+        nst_persist_write_key(&ctx->disk, &ctx->entry->key);
         nst_persist_write_host(&ctx->disk, &ctx->entry->host);
         nst_persist_write_path(&ctx->disk, &ctx->entry->path);
         nst_persist_write_etag(&ctx->disk, &ctx->entry->etag);
@@ -1393,7 +1393,7 @@ void nst_cache_persist_async() {
             }
 
             if(nst_persist_init(global.nuster.cache.root, entry->file,
-                        entry->key->hash) != NST_OK) {
+                        entry->key.hash) != NST_OK) {
                 return;
             }
 
@@ -1406,11 +1406,11 @@ void nst_cache_persist_async() {
             *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
-                    entry->key->hash, entry->expire, 0, 0,
-                    entry->key->size, entry->host.len, entry->path.len,
+                    entry->key.hash, entry->expire, 0, 0,
+                    entry->key.size, entry->host.len, entry->path.len,
                     entry->etag.len, entry->last_modified.len, ttl_extend);
 
-            nst_persist_write_key(&disk, entry->key);
+            nst_persist_write_key(&disk,  &entry->key);
             nst_persist_write_host(&disk, &entry->host);
             nst_persist_write_path(&disk, &entry->path);
             nst_persist_write_etag(&disk, &entry->etag);

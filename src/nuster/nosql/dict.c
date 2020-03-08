@@ -148,9 +148,10 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     entry->data   = data;
     entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
     entry->expire = 0;
-    entry->rule  = ctx->rule;
+    entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
-    entry->key   = key;
+    entry->key    = *key;
+    key->data     = NULL;
 
     entry->header_len = ctx->header_len;
 
@@ -182,9 +183,9 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
 
         while(entry) {
 
-            if(entry->key->hash == key->hash
-                    && entry->key->size == key->size
-                    && !memcmp(entry->key->data, key->data, key->size)) {
+            if(entry->key.hash == key->hash
+                    && entry->key.size == key->size
+                    && !memcmp(entry->key.data, key->data, key->size)) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */

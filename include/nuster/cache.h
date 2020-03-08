@@ -77,7 +77,7 @@ enum {
 struct nst_cache_entry {
     int                     state;
 
-    struct nst_key         *key;
+    struct nst_key          key;
     struct nst_rule        *rule;        /* rule */
     struct nst_cache_data  *data;
     struct nst_str          host;

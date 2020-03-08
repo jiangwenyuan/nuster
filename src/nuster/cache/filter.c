@@ -94,6 +94,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 
     if(filter->ctx) {
+        int i;
         struct nst_cache_ctx *ctx    = filter->ctx;
 
         nst_cache_stats_update_req(ctx->state);
@@ -112,6 +113,14 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 
         if(ctx->req.path.data) {
             nst_cache_memory_free(ctx->req.path.data);
+        }
+
+        for(i = 0; i < ctx->key_cnt; i++) {
+            struct nst_key key = ctx->keys[i];
+
+            if(key.data) {
+                nst_cache_memory_free(ctx);
+            }
         }
 
         nst_cache_memory_free(ctx);
@@ -342,20 +351,18 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                         /* OK, cache exists */
 
                         if(ctx->rule->etag == NST_STATUS_ON) {
-                            ctx->res.etag.len  =
-                                nst_persist_meta_get_etag_len(ctx->disk.meta);
+                            ctx->res.etag.len  = nst_persist_meta_get_etag_len(ctx->disk.meta);
 
-                            ctx->res.etag.data =
-                                nst_cache_memory_alloc(ctx->res.etag.len);
+                            ctx->res.etag.data = nst_cache_memory_alloc(ctx->res.etag.len);
 
                             if(!ctx->res.etag.data) {
-                                goto abort_check2;
+                                goto abort_check;
                             }
 
-                            if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta,
-                                        &ctx->res.etag) != NST_OK) {
+                            if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, &ctx->res.etag)
+                                    != NST_OK) {
 
-                                goto abort_check2;
+                                goto abort_check;
                             }
                         }
 
@@ -368,14 +375,14 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                                 nst_cache_memory_alloc(ctx->res.last_modified.len);
 
                             if(!ctx->res.last_modified.data) {
-                                goto abort_check2;
+                                goto abort_check;
                             }
 
                             if(nst_persist_get_last_modified(ctx->disk.fd,
                                         ctx->disk.meta, &ctx->res.last_modified)
                                     != NST_OK) {
 
-                                goto abort_check2;
+                                goto abort_check;
                             }
                         }
 
@@ -394,7 +401,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                             return 1;
                         }
 
-abort_check2:
+abort_check:
                         if(ctx->res.etag.data) {
                             nst_cache_memory_free(ctx->res.etag.data);
                         }
@@ -413,9 +420,7 @@ abort_check2:
                     /* test acls to see if we should cache it */
                     nst_debug(s, "[cache] Test rule ACL (req): ");
 
-                    if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) ==
-                            NST_OK) {
-
+                    if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
                         nst_debug2("PASS\n");
                         ctx->state = NST_CACHE_CTX_STATE_PASS;
                         break;
@@ -450,9 +455,7 @@ abort_check2:
                 nst_debug(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
-                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) ==
-                        NST_OK) {
-
+                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
                     nst_debug2("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
                     break;
@@ -465,7 +468,7 @@ abort_check2:
         }
 
         if(ctx->state == NST_CACHE_CTX_STATE_PASS) {
-            struct nst_rule_code *cc     = ctx->rule->code;
+            struct nst_rule_code *cc = ctx->rule->code;
 
             int valid = 0;
 
