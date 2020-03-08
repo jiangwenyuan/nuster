@@ -136,10 +136,10 @@ struct nst_key_element {
 
 struct nst_rule_key {
     char                    *name;
-    struct nst_key_element    **data;           /* parsed key */
+    struct nst_key_element **data;           /* parsed key */
     int                      idx;
 
-    struct nst_rule_key         *next;
+    struct nst_rule_key     *next;
 };
 
 struct nst_rule_code {
@@ -147,16 +147,14 @@ struct nst_rule_code {
     int                   code;
 };
 
-struct nst_rule {
+struct nst_rule_config {
     struct list              list;          /* list linked to from the proxy */
-    struct acl_cond         *cond;          /* acl condition to meet */
+
+    int                      id;            /* same for identical names */
     char                    *name;          /* cache name for logging */
-    char                    *raw_key;
-    struct nst_key_element    **key;           /* key */
+    struct nst_rule_key      key;
     struct nst_rule_code    *code;          /* code */
     uint32_t                 ttl;           /* ttl: seconds, 0: not expire */
-    int                      id;            /* same for identical names */
-    int                      uuid;          /* unique cache-rule ID */
     int                      disk;          /* NST_DISK_* */
     int                      etag;          /* etag on|off */
     int                      last_modified; /* last_modified on|off */
@@ -179,6 +177,8 @@ struct nst_rule {
      * 2. expire <= atime <= expire + extend[3] * ttl
      */
     uint8_t                  extend[4];
+
+    struct acl_cond         *cond;          /* acl condition to meet */
 };
 
 
@@ -188,12 +188,13 @@ struct nst_key {
     uint64_t    hash;
 };
 
-struct nst_rule2 {
+struct nst_rule {
     int                      uuid;          /* unique rule ID */
     int                      idx;           /* index in specific proxy */
     int                      id;            /* same for identical names */
 
     int                      state;         /* enabled or disabled */
+
     char                    *name;          /* rule name for logging */
     struct nst_rule_key     *key;
     struct nst_rule_code    *code;          /* code */
@@ -201,12 +202,10 @@ struct nst_rule2 {
     int                      disk;          /* NST_DISK_* */
     int                      etag;          /* etag on|off */
     int                      last_modified; /* last_modified on|off */
-
     uint8_t                  extend[4];
-
     struct acl_cond         *cond;          /* acl condition to meet */
 
-    struct nst_rule2        *next;
+    struct nst_rule         *next;
 };
 
 struct nst_flt_conf {

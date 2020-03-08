@@ -118,7 +118,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
 
         p = proxies_list;
         while(p) {
-            struct nst_rule2 *rule = NULL;
+            struct nst_rule *rule = NULL;
 
             if(mode != NST_CACHE_PURGE_NAME_ALL
                     && strlen(p->id) == hdr.value.len
@@ -208,7 +208,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
 
         p = proxies_list;
         while(p) {
-            struct nst_rule2 *rule = NULL;
+            struct nst_rule *rule = NULL;
 
             if(p->nuster.mode == NST_MODE_CACHE) {
 

@@ -912,18 +912,19 @@ int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
     return 0;
 }
 
-int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
-        struct proxy *defpx, const char *file, int line, char **err) {
+int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct proxy *defpx,
+        const char *file, int line, char **err) {
 
-    struct nst_rule *rule = NULL;
+    struct nst_rule_config *rule = NULL;
+
     struct acl_cond *cond = NULL;
 
     char *name = NULL;
     char *key  = NULL;
     char *code = NULL;
-    int ttl    = -1;
-    int disk   = -1;
-    int etag   = -1;
+    int   ttl  = -1;
+    int   disk = -1;
+    int   etag = -1;
 
     int last_modified = -1;
 
@@ -932,9 +933,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
     int cur_arg = 2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
-        memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' "
-                "section.");
-
+        memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' section.");
         return -1;
     }
 
@@ -943,7 +942,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         return -1;
     }
 
-    name = strdup(args[cur_arg]);
+    name = args[cur_arg];
     cur_arg = 3;
 
     while(*(args[cur_arg]) !=0 && strcmp(args[cur_arg], "if") !=0
@@ -952,9 +951,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         if(!strcmp(args[cur_arg], "key")) {
 
             if(key != NULL) {
-                memprintf(err, "'%s %s': key already specified.", args[0],
-                        name);
-
+                memprintf(err, "'%s %s': key already specified.", args[0], name);
                 goto out;
             }
 
@@ -974,16 +971,14 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
 
             if(ttl != -1) {
                 /* except this case: ttl 4294967295 ttl 4294967295 */
-                memprintf(err, "'%s %s': ttl already specified.", args[0],
-                        name);
-
+                memprintf(err, "'%s %s': ttl already specified.", args[0], name);
                 goto out;
             }
+
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects a ttl(in seconds).", args[0],
-                        name);
+                memprintf(err, "'%s %s': expects a ttl(in seconds).", args[0], name);
 
                 goto out;
             }
@@ -991,9 +986,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             /* "d", "h", "m", "s"
              * s is returned
              * */
-            if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]),
-                        (unsigned *)&ttl)) {
-
+            if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&ttl)) {
                 memprintf(err, "'%s %s': invalid ttl.", args[0], name);
                 goto out;
             }
@@ -1005,9 +998,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         if(!strcmp(args[cur_arg], "code")) {
 
             if(code != NULL) {
-                memprintf(err, "'%s %s': code already specified.", args[0],
-                        name);
-
+                memprintf(err, "'%s %s': code already specified.", args[0], name);
                 goto out;
             }
 
@@ -1026,16 +1017,15 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         if(!strcmp(args[cur_arg], "disk")) {
 
             if(disk != -1) {
-                memprintf(err, "'%s %s': disk already specified.", args[0],
-                        name);
-
+                memprintf(err, "'%s %s': disk already specified.", args[0], name);
                 goto out;
             }
 
             cur_arg++;
+
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [off|only|sync|async], "
-                        "default off.", args[0], name);
+                memprintf(err, "'%s %s': expects [off|only|sync|async], default off.", args[0],
+                        name);
 
                 goto out;
             }
@@ -1049,8 +1039,8 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             } else if(!strcmp(args[cur_arg], "async")) {
                 disk = NST_DISK_ASYNC;
             } else {
-                memprintf(err, "'%s %s': expects [off|only|sync|async], "
-                        "default off.", args[0], name);
+                memprintf(err, "'%s %s': expects [off|only|sync|async], " "default off.", args[0],
+                        name);
 
                 goto out;
             }
@@ -1062,16 +1052,14 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         if(!strcmp(args[cur_arg], "etag")) {
 
             if(etag != -1) {
-                memprintf(err, "'%s %s': etag already specified.",
-                        args[0], name);
-
+                memprintf(err, "'%s %s': etag already specified.", args[0], name);
                 goto out;
             }
 
             cur_arg++;
+
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off], default off.",
-                        args[0], name);
+                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
 
                 goto out;
             }
@@ -1081,9 +1069,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             } else if(!strcmp(args[cur_arg], "off")) {
                 etag = NST_STATUS_OFF;
             } else {
-                memprintf(err, "'%s %s': expects [on|off], default off.",
-                        args[0], name);
-
+                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
                 goto out;
             }
 
@@ -1094,17 +1080,13 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         if(!strcmp(args[cur_arg], "last-modified")) {
 
             if(last_modified != -1) {
-                memprintf(err, "'%s %s': last-modified already specified.",
-                        args[0], name);
-
+                memprintf(err, "'%s %s': last-modified already specified.", args[0], name);
                 goto out;
             }
 
             cur_arg++;
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off], default off.",
-                        args[0], name);
-
+                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
                 goto out;
             }
 
@@ -1113,9 +1095,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             } else if(!strcmp(args[cur_arg], "off")) {
                 last_modified = NST_STATUS_OFF;
             } else {
-                memprintf(err, "'%s %s': expects [on|off], default off.",
-                        args[0], name);
-
+                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
                 goto out;
             }
 
@@ -1126,16 +1106,16 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         if(!strcmp(args[cur_arg], "extend")) {
 
             if(extend[0] != 0xFF) {
-                memprintf(err, "'%s %s': extend already specified.",
-                        args[0], name);
+                memprintf(err, "'%s %s': extend already specified.", args[0], name);
 
                 goto out;
             }
 
             cur_arg++;
+
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s rule %s': `extend` expects "
-                        "[on|off|N1,N2,N3,N4], default off.", args[0], name);
+                memprintf(err, "'%s rule %s': `extend` expects [on|off|N1,N2,N3,N4], default off.",
+                        args[0], name);
 
                 goto out;
             }
@@ -1156,9 +1136,8 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
                     t = strtol(tmp, &next, 10);
 
                     if(t < 0 || t > 100) {
-                        memprintf(err, "'%s rule %s': `extend` expects "
-                                "positive integer between 0 and 100", args[0],
-                                name);
+                        memprintf(err, "'%s rule %s': `extend` expects positive integer between"
+                                " 0 and 100", args[0], name);
 
                         goto out;
                     }
@@ -1166,9 +1145,8 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
                     extend[i++ % 4] = t;
 
                     if((next == tmp) || (*next != '\0')) {
-                        memprintf(err, "'%s rule %s': `extend` expects "
-                                "[on|off|N1,N2,N3,N4], default off.",
-                                args[0], name);
+                        memprintf(err, "'%s rule %s': `extend` expects [on|off|N1,N2,N3,N4],"
+                                " default off.", args[0], name);
 
                         goto out;
                     }
@@ -1177,23 +1155,22 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
                 }
 
                 if(i != 4) {
-                    memprintf(err, "'%s rule %s': `extend` expects "
-                            "[on|off|N1,N2,N3,N4], default off.",
-                            args[0], name);
+                    memprintf(err, "'%s rule %s': `extend` expects [on|off|N1,N2,N3,N4],"
+                            " default off.", args[0], name);
 
                     goto out;
                 }
 
                 if(extend[0] + extend[1] + extend[2] > 100) {
-                    memprintf(err, "'%s rule %s': `extend`: N1 + N2 + N3 must "
-                            "be less than or equal to 100", args[0], name);
+                    memprintf(err, "'%s rule %s': `extend`: N1 + N2 + N3 must be less than or equal"
+                            " to 100", args[0], name);
 
                     goto out;
                 }
 
                 if(extend[3] <= 0 || extend[3] > 100) {
-                    memprintf(err, "'%s rule %s': `extend`: N4 must be between"
-                            " 0 and 100", args[0], name);
+                    memprintf(err, "'%s rule %s': `extend`: N4 must be between 0 and 100",
+                            args[0], name);
 
                     goto out;
                 }
@@ -1204,8 +1181,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             continue;
         }
 
-        memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name,
-                args[cur_arg]);
+        memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name, args[cur_arg]);
         goto out;
     }
 
@@ -1214,8 +1190,8 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         if(*args[cur_arg + 1] != 0) {
             char *errmsg = NULL;
 
-            if((cond = build_acl_cond(file, line, &proxy->acl, proxy,
-                            (const char **)args + cur_arg, &errmsg)) == NULL) {
+            if((cond = build_acl_cond(file, line, &proxy->acl, proxy, (const char **)args + cur_arg,
+                            &errmsg)) == NULL) {
 
                 memprintf(err, "%s", errmsg);
                 free(errmsg);
@@ -1223,26 +1199,25 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
             }
 
         } else {
-            memprintf(err, "'%s %s': [if|unless] expects an acl.", args[0],
-                    name);
-
+            memprintf(err, "'%s %s': [if|unless] expects an acl.", args[0], name);
             goto out;
         }
     }
 
     rule       = malloc(sizeof(*rule));
-    rule->cond = cond;
-    rule->name = name;
-    rule->raw_key = strdup(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
-    rule->key  = _nst_parse_rule_key(rule->raw_key);
 
-    if(!rule->key) {
+    rule->id   = -1;
+    rule->name = strdup(name);
+
+    rule->key.name = strdup(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
+    rule->key.data = _nst_parse_rule_key(rule->key.name);
+
+    if(!rule->key.data) {
         memprintf(err, "'%s %s': invalid key.", args[0], name);
         goto out;
     }
 
-    rule->code = _nst_parse_rule_code(code == NULL
-            ? NST_CACHE_DEFAULT_CODE : code);
+    rule->code = _nst_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
 
     rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
 
@@ -1251,7 +1226,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         goto out;
     }
 
-    rule->disk = disk == -1 ? NST_DISK_OFF : disk;
+    rule->disk = disk == -1 ? NST_DISK_OFF   : disk;
     rule->etag = etag == -1 ? NST_STATUS_OFF : etag;
 
     rule->last_modified = last_modified == -1 ? NST_STATUS_OFF : last_modified;
@@ -1266,7 +1241,8 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy,
         rule->extend[3] = extend[3];
     }
 
-    rule->id   = -1;
+    rule->cond = cond;
+
     LIST_INIT(&rule->list);
     LIST_ADDQ(&proxy->nuster.rules, &rule->list);
 

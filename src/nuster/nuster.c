@@ -50,58 +50,10 @@ struct nuster nuster = {
     .proxy = NULL,
 };
 
-void nuster_init() {
+void nuster_proxy_init() {
+    struct proxy *px1;
     int i, uuid, proxy_cnt;
-    struct proxy *p;
     struct nst_memory *memory;
-
-    if(!(global.mode & MODE_MWORKER)) {
-        ha_alert("[nuster] Not in master-worker mode."
-                "Add master-worker to conf file  or run with -W.\n");
-        exit(1);
-    }
-
-    for(i = 0; i < NST_HTTP_SIZE; i++) {
-        nst_http_msg_chunks[i].area = (char *)nst_http_msgs[i];
-        nst_http_msg_chunks[i].data = strlen(nst_http_msgs[i]);
-    }
-
-    nst_cache_init();
-    nst_nosql_init();
-
-
-    /* init rule */
-    i = uuid = 0;
-    p = proxies_list;
-
-    while(p) {
-        struct nst_rule *rule = NULL;
-
-        list_for_each_entry(rule, &p->nuster.rules, list) {
-            struct proxy *pt;
-
-            pt = proxies_list;
-            while(pt) {
-                struct nst_rule *rt = NULL;
-                list_for_each_entry(rt, &pt->nuster.rules, list) {
-                    if(rt == rule) goto out;
-                    if(!strcmp(rt->name, rule->name)) {
-                        ha_alert("nuster rule with same name=[%s] found.\n",
-                                rule->name);
-                        rule->id = rt->id;
-                        goto out;
-                    }
-                }
-                pt = pt->next;
-            }
-
-out:
-            if(rule->id == -1) {
-                rule->id = i++;
-            }
-        }
-        p = p->next;
-    }
 
     /* new rule init */
     global.nuster.memory = nst_memory_create("nuster.shm", NST_DEFAULT_SIZE,
@@ -117,13 +69,45 @@ out:
 
     memory = global.nuster.memory;
 
-    i = uuid = proxy_cnt = 0;
-    p = proxies_list;
+    i = proxy_cnt = 0;
 
-    while(p) {
+    px1 = proxies_list;
+
+    while(px1) {
+        struct nst_rule_config *r1 = NULL;
+
+        list_for_each_entry(r1, &px1->nuster.rules, list) {
+            struct proxy *px2;
+
+            px2 = proxies_list;
+
+            while(px2) {
+                struct nst_rule_config *r2 = NULL;
+
+                list_for_each_entry(r2, &px2->nuster.rules, list) {
+
+                    if(r2 == r1) {
+                        goto out;
+                    }
+
+                    if(!strcmp(r2->name, r1->name)) {
+                        ha_alert("nuster rule with same name=[%s] found.\n", r1->name);
+                        r1->id = r2->id;
+                        goto out;
+                    }
+                }
+
+                px2 = px2->next;
+            }
+
+out:
+            if(r1->id == -1) {
+                r1->id = i++;
+            }
+        }
+
         proxy_cnt++;
-
-        p = p->next;
+        px1 = px1->next;
     }
 
     nuster.proxy = nst_memory_alloc(memory, proxy_cnt * sizeof(struct nst_proxy *));
@@ -134,41 +118,47 @@ out:
 
     memset(nuster.proxy, 0, proxy_cnt * sizeof(struct nst_proxy *));
 
-    p = proxies_list;
+    i = uuid = 0;
 
-    while(p) {
-        if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
+    px1 = proxies_list;
+
+    while(px1) {
+        if(px1->nuster.mode == NST_MODE_CACHE || px1->nuster.mode == NST_MODE_NOSQL) {
+            struct nst_rule_config *rc = NULL;
+
             struct nst_rule *rule = NULL;
-            struct nst_rule2 *rule2 = NULL;
-            struct nst_rule2 *rule2_tail = NULL;
+            struct nst_rule *tail = NULL;
+            struct nst_proxy *px  = NULL;
 
-            nuster.proxy[p->uuid] = nst_memory_alloc(memory, sizeof(struct nst_proxy));
+            nuster.proxy[px1->uuid] = nst_memory_alloc(memory, sizeof(struct nst_proxy));
 
-            if(!nuster.proxy[p->uuid]) {
+            px = nuster.proxy[px1->uuid];
+
+            if(!px) {
                 goto err;
             }
 
-            memset(nuster.proxy[p->uuid], 0, sizeof(struct nst_proxy));
+            memset(px, 0, sizeof(struct nst_proxy));
 
-            list_for_each_entry(rule, &p->nuster.rules, list) {
+            list_for_each_entry(rc, &px1->nuster.rules, list) {
                 struct nst_rule_key *key = NULL;
 
-                rule2 = nst_memory_alloc(memory, sizeof(struct nst_rule2));
+                rule = nst_memory_alloc(memory, sizeof(struct nst_rule));
 
-                if(!rule2) {
+                if(!rule) {
                     goto err;
                 }
 
-                rule2->uuid  = uuid++;
-                rule2->idx   = nuster.proxy[p->uuid]->rule_cnt++;
-                rule2->id    = rule->id;
-                rule2->state = NST_RULE_ENABLED;
-                rule2->name  = rule->name;
+                rule->uuid  = uuid++;
+                rule->idx   = px->rule_cnt++;
+                rule->id    = rc->id;
+                rule->state = NST_RULE_ENABLED;
+                rule->name  = rc->name;
 
-                key = nuster.proxy[p->uuid]->key;
+                key = px->key;
 
                 while(key) {
-                    if(strcmp(key->name, rule->raw_key) == 0) {
+                    if(strcmp(key->name, rc->key.name) == 0) {
                         break;
                     }
 
@@ -176,7 +166,7 @@ out:
                 }
 
                 if(key) {
-                    rule2->key = key;
+                    rule->key = key;
                 } else {
                     key = nst_memory_alloc(memory, sizeof(struct nst_rule_key));
 
@@ -184,47 +174,47 @@ out:
                         goto err;
                     }
 
-                    key->name = rule->raw_key;
-                    key->data = rule->key;
-                    key->idx  = nuster.proxy[p->uuid]->key_cnt++;
+                    key->name = rc->key.name;
+                    key->data = rc->key.data;
+                    key->idx  = px->key_cnt++;
                     key->next = NULL;
 
-                    if(nuster.proxy[p->uuid]->key) {
-                        key->next = nuster.proxy[p->uuid]->key;
+                    if(px->key) {
+                        key->next = px->key;
                     }
 
-                    nuster.proxy[p->uuid]->key = key;
+                    px->key = key;
                 }
 
-                rule2->key = key;
+                rule->key = key;
 
-                rule2->code = rule->code;
-                rule2->ttl  = rule->ttl;
-                rule2->disk = rule->disk;
-                rule2->etag = rule->etag;
+                rule->code = rc->code;
+                rule->ttl  = rc->ttl;
+                rule->disk = rc->disk;
+                rule->etag = rc->etag;
 
-                rule2->last_modified = rule->last_modified;
+                rule->last_modified = rc->last_modified;
 
-                rule2->extend[0] = rule->extend[0];
-                rule2->extend[1] = rule->extend[1];
-                rule2->extend[2] = rule->extend[2];
-                rule2->extend[3] = rule->extend[3];
+                rule->extend[0] = rc->extend[0];
+                rule->extend[1] = rc->extend[1];
+                rule->extend[2] = rc->extend[2];
+                rule->extend[3] = rc->extend[3];
 
-                rule2->cond = rule->cond;
+                rule->cond = rc->cond;
 
-                rule2->next = NULL;
+                rule->next = NULL;
 
-                if(nuster.proxy[p->uuid]->rule) {
-                    rule2_tail->next = rule2;
+                if(px->rule) {
+                    tail->next = rule;
                 } else {
-                    nuster.proxy[p->uuid]->rule = rule2;
+                    px->rule = rule;
                 }
 
-                rule2_tail = rule2;
+                tail = rule;
             }
         }
 
-        p = p->next;
+        px1 = px1->next;
     }
 
     return;
@@ -234,7 +224,30 @@ err:
     exit(1);
 }
 
-int nst_test_rule2(struct nst_rule2 *rule, struct stream *s, int res) {
+void nuster_init() {
+    int i;
+
+    if(!(global.mode & MODE_MWORKER)) {
+        ha_alert("[nuster] Not in master-worker mode."
+                "Add master-worker to conf file  or run with -W.\n");
+        exit(1);
+    }
+
+    for(i = 0; i < NST_HTTP_SIZE; i++) {
+        nst_http_msg_chunks[i].area = (char *)nst_http_msgs[i];
+        nst_http_msg_chunks[i].data = strlen(nst_http_msgs[i]);
+    }
+
+    nst_cache_init();
+    nst_nosql_init();
+
+    nuster_proxy_init();
+
+    return;
+
+}
+
+int nst_test_rule2(struct nst_rule *rule, struct stream *s, int res) {
     int ret;
 
     /* no acl defined */

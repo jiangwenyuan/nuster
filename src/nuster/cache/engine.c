@@ -1788,7 +1788,7 @@ int nst_cache_handle_conditional_req2(struct nst_cache_ctx *ctx, struct stream *
 
     struct htx *htx;
     struct http_hdr_ctx hdr = { .blk = NULL };
-    struct nst_rule2 *rule = ctx->rule2;
+    struct nst_rule *rule = ctx->rule2;
 
     int if_none_match     = -1;
     int if_match          = -1;

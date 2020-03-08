@@ -34,11 +34,11 @@
 #include <nuster/nosql.h>
 
 struct nst_proxy {
-    struct nst_rule2 *rule;
-    struct nst_rule_key  *key;
+    struct nst_rule     *rule;
+    struct nst_rule_key *key;
 
-    int               rule_cnt;
-    int               key_cnt;
+    int                  rule_cnt;
+    int                  key_cnt;
 };
 
 struct nuster {
@@ -80,7 +80,7 @@ static inline int nuster_check_applet(struct stream *s, struct channel *req,
             nst_cache_stats(s, req, px));
 }
 
-int nst_test_rule2(struct nst_rule2 *rule, struct stream *s, int res);
+int nst_test_rule2(struct nst_rule *rule, struct stream *s, int res);
 
 static inline uint64_t nst_hash(const char *buf, size_t len) {
     return XXH64(buf, len, 0);

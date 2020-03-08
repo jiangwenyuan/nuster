@@ -200,7 +200,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
     p = proxies_list;
     while(p) {
-        struct nst_rule2 *rule2 = NULL;
+        struct nst_rule *rule2 = NULL;
 
         if(htx_almost_full(htx)) {
             si_rx_room_blk(si);

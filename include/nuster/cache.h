@@ -100,7 +100,7 @@ struct nst_cache_entry {
     int                     extended;
 
     struct nst_key         *key2;
-    struct nst_rule2       *rule2;        /* rule */
+    struct nst_rule       *rule2;        /* rule */
     struct nst_cache_entry *next;
 };
 
@@ -162,7 +162,7 @@ struct nst_cache_ctx {
 
     int                       rule_cnt;
     int                       key_cnt;
-    struct nst_rule2         *rule2;
+    struct nst_rule         *rule2;
     struct nst_key            keys[0];
 };
 
