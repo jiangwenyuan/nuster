@@ -226,7 +226,7 @@ void nst_debug2(const char *fmt, ...);
 void nst_debug_key(struct buffer *key);
 void nst_debug_key2(struct nst_key *key);
 
-static inline void nst_key_init2() {
+static inline void nst_key_init() {
     trash.head = 0;
     trash.data = 0;
     memset(trash.area, 0, trash.size);

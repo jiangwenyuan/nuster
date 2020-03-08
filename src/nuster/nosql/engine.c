@@ -783,7 +783,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
     struct nst_key_element *ck = NULL;
     struct nst_key_element **pck = ctx->rule2->key->data;
 
-    nst_key_init2();
+    nst_key_init();
 
     nst_debug(s, "[nosql] Calculate key: ");
 

@@ -276,11 +276,6 @@ static inline int nst_nosql_entry_invalid(struct nst_nosql_entry *entry) {
     return nst_nosql_dict_entry_expired(entry);
 }
 
-#define nst_nosql_key_init() nst_key_init(global.nuster.nosql.memory)
-#define nst_nosql_key_advance(key, step)                                      \
-    nst_key_advance(global.nuster.nosql.memory, key, step)
-#define nst_nosql_key_append(key, str, len)                                   \
-    nst_key_append(global.nuster.nosql.memory, key, str, len)
 #define nst_nosql_memory_alloc(size)                                          \
     nst_memory_alloc(global.nuster.nosql.memory, size)
 #define nst_nosql_memory_free(p) nst_memory_free(global.nuster.nosql.memory, p);

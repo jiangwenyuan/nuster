@@ -677,7 +677,7 @@ int nst_cache_build_key2(struct nst_cache_ctx *ctx, struct stream *s, struct htt
     struct nst_key_element *ck = NULL;
     struct nst_key_element **pck = ctx->rule2->key->data;
 
-    nst_key_init2();
+    nst_key_init();
 
     nst_debug(s, "[cache] Calculate key: ");
 
@@ -877,7 +877,7 @@ int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst
     struct ist ist_http  = IST("HTTP");
 
     /* method.scheme.host.uri */
-    nst_key_init2();
+    nst_key_init();
 
     ret = nst_key_catist(ist_method);
 
