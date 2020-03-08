@@ -82,7 +82,7 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
         txn->status = 500;
         http_reply_and_close(s, txn->status, http_error_message(s));
     } else {
-        key.hash = nst_hash(key.data, key.size);
+        nst_hash(&key);
 
         txn->status = _nst_cache_purge_by_key(key);
 

@@ -82,8 +82,8 @@ static inline int nuster_check_applet(struct stream *s, struct channel *req,
 
 int nst_test_rule(struct nst_rule *rule, struct stream *s, int res);
 
-static inline uint64_t nst_hash(const char *buf, size_t len) {
-    return XXH64(buf, len, 0);
+static inline void nst_hash(struct nst_key *key) {
+    key->hash = XXH64(key->data, key->size, 0);
 }
 
 int nst_ci_send(struct channel *chn, int len);

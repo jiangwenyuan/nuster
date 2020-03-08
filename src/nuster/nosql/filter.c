@@ -168,7 +168,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 nst_debug(s, "[nosql] Key: ");
                 nst_debug_key2(key);
 
-                key->hash = nst_hash(key->data, key->size);
+                nst_hash(key);
 
                 nst_debug(s, "[nosql] Hash: %"PRIu64"\n", key->hash);
             }

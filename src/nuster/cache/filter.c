@@ -301,7 +301,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     nst_debug(s, "[cache2] Key: ");
                     nst_debug_key2(key);
 
-                    key->hash = nst_hash(key->data, key->size);
+                    nst_hash(key);
 
                     nst_debug(s, "[cache] Hash: %"PRIu64"\n", key->hash);
 
