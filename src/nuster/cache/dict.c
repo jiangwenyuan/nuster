@@ -63,8 +63,7 @@ static int _nst_cache_dict_rehashing() {
  * entry->data is freed by _cache_data_cleanup
  */
 void nst_cache_dict_cleanup() {
-    struct nst_cache_entry *entry =
-        nuster.cache->dict[0].entry[nuster.cache->cleanup_idx];
+    struct nst_cache_entry *entry = nuster.cache->dict[0].entry[nuster.cache->cleanup_idx];
 
     struct nst_cache_entry *prev  = entry;
 
@@ -82,8 +81,7 @@ void nst_cache_dict_cleanup() {
             }
 
             if(prev == entry) {
-                nuster.cache->dict[0].entry[nuster.cache->cleanup_idx] =
-                    entry->next;
+                nuster.cache->dict[0].entry[nuster.cache->cleanup_idx] = entry->next;
                 prev = entry->next;
             } else {
                 prev->next = entry->next;
@@ -201,14 +199,12 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
 
         while(entry) {
 
-            if(entry->key.hash == key->hash
-                    && entry->key.size == key->size
+            if(entry->key.hash == key->hash && entry->key.size == key->size
                     && !memcmp(entry->key.data, key->data, key->size)) {
 
                 int expired = nst_cache_entry_expired(entry);
 
-                uint64_t max = 1000 * entry->expire + 1000 * entry->ttl
-                    * entry->extend[3] / 100;
+                uint64_t max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
 
                 entry->atime = get_current_timestamp();
 
@@ -265,8 +261,8 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
     return NULL;
 }
 
-int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key,
-        struct nst_str *host, struct nst_str *path) {
+int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key, struct nst_str *host,
+        struct nst_str *path) {
 
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_entry *entry = NULL;
@@ -275,8 +271,7 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key,
 
     uint64_t ttl_extend = nst_persist_meta_get_ttl_extend(meta);
 
-    dict = _nst_cache_dict_rehashing()
-        ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
+    dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
 
     entry = nst_cache_memory_alloc(sizeof(*entry));
 

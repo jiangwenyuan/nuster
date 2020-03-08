@@ -145,4 +145,7 @@ static inline void nst_res_simple(struct stream_interface *si, int status,
 int nst_req_find_param(char *query_beg, char *query_end,
         char *name, char **value, int *value_len);
 
+void nst_res_304(struct stream *s, struct nst_str *last_modified, struct nst_str *etag);
+void nst_res_412(struct stream *s);
+
 #endif /* _NUSTER_HTTP_H */

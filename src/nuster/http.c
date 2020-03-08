@@ -113,3 +113,126 @@ int nst_req_find_param(char *query_beg, char *query_end,
     return NST_ERR;
 }
 
+void nst_res_304(struct stream *s, struct nst_str *last_modified, struct nst_str *etag) {
+
+    struct channel *res = &s->res;
+    struct htx *htx = htx_from_buf(&res->buf);
+    struct htx_sl *sl;
+    struct ist code;
+    int status;
+    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
+    size_t data;
+
+    status = 304;
+    code = ist("304");
+
+    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), code,
+            ist("Not Modified"));
+
+    if(!sl) {
+        goto fail;
+    }
+
+    sl->info.res.status = status;
+    s->txn->status = status;
+
+    if(!htx_add_header(htx, ist("Last-Modified"),
+                ist2(last_modified->data, last_modified->len)) ||
+            !htx_add_header(htx, ist("ETag"), ist2(etag->data, etag->len))) {
+
+        goto fail;
+    }
+
+    if(!htx_add_endof(htx, HTX_BLK_EOH)) {
+        goto fail;
+    }
+
+    if(!htx_add_endof(htx, HTX_BLK_EOM)) {
+        goto fail;
+    }
+
+    data = htx->data - co_data(res);
+    c_adv(res, data);
+    res->total += data;
+
+    channel_auto_read(&s->req);
+    channel_abort(&s->req);
+    channel_auto_close(&s->req);
+    channel_htx_erase(&s->req, htxbuf(&s->req.buf));
+
+    res->wex = tick_add_ifset(now_ms, res->wto);
+    channel_auto_read(res);
+    channel_auto_close(res);
+    channel_shutr_now(res);
+    return;
+
+fail:
+    channel_htx_truncate(res, htx);
+}
+
+void nst_res_412(struct stream *s) {
+
+    struct channel *res = &s->res;
+    struct htx *htx = htx_from_buf(&res->buf);
+    struct htx_sl *sl;
+    struct ist code, body;
+    int status;
+    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
+    size_t data;
+
+    status = 412;
+    code = ist("412");
+    body = ist("412 Precondition Failed");
+
+    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), code,
+            ist("Precondition Failed"));
+
+    if(!sl) {
+        goto fail;
+    }
+
+    sl->info.res.status = status;
+    s->txn->status = status;
+
+    if(!htx_add_header(htx, ist("Content-Length"), ist("23"))) {
+        goto fail;
+    }
+
+    if(!htx_add_endof(htx, HTX_BLK_EOH)) {
+        goto fail;
+    }
+
+    while(body.len) {
+        size_t sent = htx_add_data(htx, body);
+
+        if(!sent) {
+            goto fail;
+        }
+
+        body.ptr += sent;
+        body.len -= sent;
+    }
+
+    if(!htx_add_endof(htx, HTX_BLK_EOM)) {
+        goto fail;
+    }
+
+    data = htx->data - co_data(res);
+    c_adv(res, data);
+    res->total += data;
+
+    channel_auto_read(&s->req);
+    channel_abort(&s->req);
+    channel_auto_close(&s->req);
+    channel_htx_erase(&s->req, htxbuf(&s->req.buf));
+
+    res->wex = tick_add_ifset(now_ms, res->wto);
+    channel_auto_read(res);
+    channel_auto_close(res);
+    channel_shutr_now(res);
+    return;
+
+fail:
+    channel_htx_truncate(res, htx);
+}
+

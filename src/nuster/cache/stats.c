@@ -85,9 +85,7 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
             appctx->st1 = proxies_list->uuid;
             appctx->st2 = 0;
 
-            req->analysers &=
-                (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
-
+            req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
             req->analysers &= ~AN_REQ_FLT_XFER_DATA;
             req->analysers |= AN_REQ_HTTP_XFER_BODY;
         }
@@ -96,8 +94,8 @@ int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
     return 0;
 }
 
-int _nst_cache_stats_head(struct appctx *appctx, struct stream *s,
-        struct stream_interface *si, struct channel *res) {
+int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_interface *si,
+        struct channel *res) {
 
     struct htx *res_htx;
 
@@ -163,8 +161,7 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s,
     chunk_appendf(&trash, "\n**PERSISTENCE**\n");
 
     if(global.nuster.cache.root) {
-        chunk_appendf(&trash, "global.nuster.cache.dir: %s\n",
-                global.nuster.cache.root);
+        chunk_appendf(&trash, "global.nuster.cache.dir: %s\n", global.nuster.cache.root);
         chunk_appendf(&trash, "global.nuster.cache.loaded: %s\n",
             nuster.cache->disk.loaded ? "yes" : "no");
     }
@@ -184,6 +181,7 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s,
 full:
     htx_reset(res_htx);
     si_rx_room_blk(si);
+
     return 0;
 }
 
@@ -204,6 +202,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
         if(htx_almost_full(htx)) {
             si_rx_room_blk(si);
+
             return 0;
         }
 
@@ -219,6 +218,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
             if(!htx_add_data_atonce(htx, ist2(trash.area, trash.data))) {
                 si_rx_room_blk(si);
+
                 return 0;
             }
 
@@ -227,6 +227,7 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
             while(rule) {
                 if(htx_almost_full(htx)) {
                     si_rx_room_blk(si);
+
                     return 0;
                 }
 
@@ -235,8 +236,8 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
                     chunk_printf(&trash, "%s.rule.%s: ", p->id, rule->name);
 
                     chunk_appendf(&trash, "state=%s ttl=%"PRIu32" disk=%s\n",
-                            rule->state == NST_RULE_ENABLED
-                            ? "on" : "off", rule->ttl,
+                            rule->state == NST_RULE_ENABLED ? "on" : "off",
+                            rule->ttl,
                             rule->disk == NST_DISK_OFF ? "off"
                             : rule->disk == NST_DISK_ONLY ? "only"
                             : rule->disk == NST_DISK_SYNC ? "sync"
@@ -245,11 +246,13 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
 
                     if(trash.data >= channel_htx_recv_max(res, htx)) {
                         si_rx_room_blk(si);
+
                         return 0;
                     }
 
                     if(!htx_add_data_atonce(htx, ist2(trash.area, trash.data))) {
                         si_rx_room_blk(si);
+
                         return 0;
                     }
 

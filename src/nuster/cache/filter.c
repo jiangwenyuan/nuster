@@ -32,6 +32,7 @@ static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
 
     fconf->flags |= FLT_CFG_FL_HTX;
     conf->pid = px->uuid;
+
     return 0;
 }
 
@@ -58,9 +59,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     struct nst_flt_conf *conf = FLT_CONF(filter);
 
     /* disable cache if state is not NST_STATUS_ON */
-    if(global.nuster.cache.status != NST_STATUS_ON
-            || conf->status != NST_STATUS_ON) {
-
+    if(global.nuster.cache.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
         return 0;
     }
 
@@ -127,136 +126,8 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
     }
 }
 
-/*
- * XXX
- */
-static void nst_res_304(struct stream *s, struct nst_str *last_modified,
-        struct nst_str *etag) {
-
-    struct channel *res = &s->res;
-    struct htx *htx = htx_from_buf(&res->buf);
-    struct htx_sl *sl;
-    struct ist code;
-    int status;
-    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
-    size_t data;
-
-    status = 304;
-    code = ist("304");
-
-    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), code,
-            ist("Not Modified"));
-
-    if(!sl) {
-        goto fail;
-    }
-
-    sl->info.res.status = status;
-    s->txn->status = status;
-
-    if(!htx_add_header(htx, ist("Last-Modified"),
-                ist2(last_modified->data, last_modified->len)) ||
-            !htx_add_header(htx, ist("ETag"), ist2(etag->data, etag->len))) {
-
-        goto fail;
-    }
-
-    if(!htx_add_endof(htx, HTX_BLK_EOH)) {
-        goto fail;
-    }
-
-    if(!htx_add_endof(htx, HTX_BLK_EOM)) {
-        goto fail;
-    }
-
-    data = htx->data - co_data(res);
-    c_adv(res, data);
-    res->total += data;
-
-    channel_auto_read(&s->req);
-    channel_abort(&s->req);
-    channel_auto_close(&s->req);
-    channel_htx_erase(&s->req, htxbuf(&s->req.buf));
-
-    res->wex = tick_add_ifset(now_ms, res->wto);
-    channel_auto_read(res);
-    channel_auto_close(res);
-    channel_shutr_now(res);
-    return;
-
-fail:
-    channel_htx_truncate(res, htx);
-}
-
-static void nst_res_412(struct stream *s) {
-
-    struct channel *res = &s->res;
-    struct htx *htx = htx_from_buf(&res->buf);
-    struct htx_sl *sl;
-    struct ist code, body;
-    int status;
-    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
-    size_t data;
-
-    status = 412;
-    code = ist("412");
-    body = ist("412 Precondition Failed");
-
-    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), code,
-            ist("Precondition Failed"));
-
-    if(!sl) {
-        goto fail;
-    }
-
-    sl->info.res.status = status;
-    s->txn->status = status;
-
-    if(!htx_add_header(htx, ist("Content-Length"), ist("23"))) {
-        goto fail;
-    }
-
-    if(!htx_add_endof(htx, HTX_BLK_EOH)) {
-        goto fail;
-    }
-
-    while(body.len) {
-        size_t sent = htx_add_data(htx, body);
-
-        if(!sent) {
-            goto fail;
-        }
-
-        body.ptr += sent;
-        body.len -= sent;
-    }
-
-    if(!htx_add_endof(htx, HTX_BLK_EOM)) {
-        goto fail;
-    }
-
-    data = htx->data - co_data(res);
-    c_adv(res, data);
-    res->total += data;
-
-    channel_auto_read(&s->req);
-    channel_abort(&s->req);
-    channel_auto_close(&s->req);
-    channel_htx_erase(&s->req, htxbuf(&s->req.buf));
-
-    res->wex = tick_add_ifset(now_ms, res->wto);
-    channel_auto_read(res);
-    channel_auto_close(res);
-    channel_shutr_now(res);
-    return;
-
-fail:
-    channel_htx_truncate(res, htx);
-}
-
-static int _nst_cache_filter_http_headers(struct stream *s,
-        struct filter *filter, struct http_msg *msg) {
-
+static int
+_nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct http_msg *msg) {
     struct channel *req         = msg->chn;
     struct channel *res         = &s->res;
     struct proxy *px            = s->be;
@@ -276,6 +147,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
             if(nst_cache_prebuild_key(ctx, s, msg) != NST_OK) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+
                 return 1;
             }
 
@@ -290,6 +162,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 if(ctx->rule->state == NST_RULE_DISABLED) {
                     nst_debug(s, "[cache] Disabled, continue.\n");
                     ctx->rule = ctx->rule->next;
+
                     continue;
                 }
 
@@ -299,11 +172,13 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                     /* build key */
                     if(nst_cache_build_key(ctx, s, msg) != NST_OK) {
                         ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+
                         return 1;
                     }
 
                     if(nst_cache_store_key(ctx, key) != NST_OK) {
                         ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+
                         return 1;
                     }
 
@@ -316,6 +191,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                     /* check if cache exists  */
                     nst_debug(s, "[cache] Check key existence: ");
+
                     ctx->state = nst_cache_exists(ctx);
 
                     if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
@@ -328,8 +204,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                         ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
-                            nst_res_304(s, &ctx->res.last_modified,
-                                    &ctx->res.etag);
+                            nst_res_304(s, &ctx->res.last_modified, &ctx->res.etag);
 
                             return 1;
                         }
@@ -367,9 +242,8 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                         }
 
                         if(ctx->rule->last_modified == NST_STATUS_ON) {
-                            ctx->res.last_modified.len  =
-                                nst_persist_meta_get_last_modified_len(
-                                        ctx->disk.meta);
+                            ctx->res.last_modified.len =
+                                nst_persist_meta_get_last_modified_len(ctx->disk.meta);
 
                             ctx->res.last_modified.data =
                                 nst_cache_memory_alloc(ctx->res.last_modified.len);
@@ -378,9 +252,8 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                                 goto abort_check;
                             }
 
-                            if(nst_persist_get_last_modified(ctx->disk.fd,
-                                        ctx->disk.meta, &ctx->res.last_modified)
-                                    != NST_OK) {
+                            if(nst_persist_get_last_modified(ctx->disk.fd, ctx->disk.meta,
+                                        &ctx->res.last_modified) != NST_OK) {
 
                                 goto abort_check;
                             }
@@ -389,8 +262,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                         ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
-                            nst_res_304(s, &ctx->res.last_modified,
-                                    &ctx->res.etag);
+                            nst_res_304(s, &ctx->res.last_modified, &ctx->res.etag);
 
                             return 1;
                         }
@@ -423,6 +295,7 @@ abort_check:
                     if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
                         nst_debug2("PASS\n");
                         ctx->state = NST_CACHE_CTX_STATE_PASS;
+
                         break;
                     }
 
@@ -458,6 +331,7 @@ abort_check:
                 if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
                     nst_debug2("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
+
                     break;
                 }
 
@@ -491,6 +365,7 @@ abort_check:
 
             if(!valid) {
                 nst_debug2("FAIL\n");
+
                 return 1;
             }
 
@@ -511,9 +386,8 @@ abort_check:
     return 1;
 }
 
-static int _nst_cache_filter_http_payload(struct stream *s,
-        struct filter *filter, struct http_msg *msg, unsigned int offset,
-        unsigned int len) {
+static int _nst_cache_filter_http_payload(struct stream *s, struct filter *filter,
+        struct http_msg *msg, unsigned int offset, unsigned int len) {
 
     struct nst_cache_ctx *ctx = filter->ctx;
 
@@ -523,12 +397,12 @@ static int _nst_cache_filter_http_payload(struct stream *s,
         return 0;
     }
 
-    if(ctx->state == NST_CACHE_CTX_STATE_CREATE
-            && (msg->chn->flags & CF_ISRESP)) {
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
 
         if(nst_cache_update(ctx, msg, offset, ret) != NST_OK) {
             goto err;
         }
+
     }
 
     return ret;
@@ -537,17 +411,16 @@ err:
     ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
     ctx->entry->data  = NULL;
     ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
+
     return ret;
 }
 
-static int _nst_cache_filter_http_end(struct stream *s, struct filter *filter,
-        struct http_msg *msg) {
+static int
+_nst_cache_filter_http_end(struct stream *s, struct filter *filter, struct http_msg *msg) {
 
     struct nst_cache_ctx *ctx = filter->ctx;
 
-    if(ctx->state == NST_CACHE_CTX_STATE_CREATE
-            && (msg->chn->flags & CF_ISRESP)) {
-
+    if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         nst_cache_finish(ctx);
         nst_debug(s, "[cache] Created\n");
     }
@@ -565,14 +438,14 @@ struct flt_ops nst_cache_filter_ops = {
     .detach = _nst_cache_filter_detach,
 
     /* Filter HTTP requests and responses */
-    .http_headers      = _nst_cache_filter_http_headers,
-    .http_payload      = _nst_cache_filter_http_payload,
-    .http_end          = _nst_cache_filter_http_end,
+    .http_headers = _nst_cache_filter_http_headers,
+    .http_payload = _nst_cache_filter_http_payload,
+    .http_end     = _nst_cache_filter_http_end,
 
 };
 
-static int nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp,
-        const char *kw,  void *private) {
+static int
+nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp, const char *kw, void *private) {
 
     struct nst_cache_ctx *ctx;
     struct filter        *filter;

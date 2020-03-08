@@ -55,14 +55,12 @@ int _nst_cache_purge_by_key(struct nst_key key) {
     if(!nuster.cache->disk.loaded && global.nuster.cache.root){
         struct persist disk;
 
-        disk.file = nst_cache_memory_alloc(
-                nst_persist_path_file_len(global.nuster.cache.root) + 1);
+        disk.file = nst_cache_memory_alloc(nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
         if(!disk.file) {
             ret = 500;
         } else {
-            ret = nst_persist_purge_by_key(global.nuster.cache.root,
-                    &disk, key);
+            ret = nst_persist_purge_by_key(global.nuster.cache.root, &disk, key);
         }
 
         nst_cache_memory_free(disk.file);
@@ -96,10 +94,10 @@ int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px) {
     return 1;
 }
 
-int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
-        struct proxy *px, int state, int ttl) {
+int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req, struct proxy *px,
+        int state, int ttl) {
 
-    int found, mode      = NST_CACHE_PURGE_NAME_RULE;
+    int found, mode = NST_CACHE_PURGE_NAME_RULE;
     struct proxy *p;
 
     struct htx *htx = htxbuf(&s->req.buf);
@@ -120,8 +118,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
         while(p) {
             struct nst_rule *rule = NULL;
 
-            if(mode != NST_CACHE_PURGE_NAME_ALL
-                    && strlen(p->id) == hdr.value.len
+            if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == hdr.value.len
                     && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
 
                 found = 1;
@@ -163,8 +160,7 @@ int _nst_cache_manager_state_ttl(struct stream *s, struct channel *req,
     return 400;
 }
 
-static inline int _nst_cache_manager_purge_method(struct http_txn *txn,
-        struct http_msg *msg) {
+static inline int _nst_cache_manager_purge_method(struct http_txn *txn, struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&msg->chn->buf);
     struct htx_sl *sl = http_get_stline(htx);
@@ -175,9 +171,7 @@ static inline int _nst_cache_manager_purge_method(struct http_txn *txn,
                     strlen(global.nuster.cache.purge_method) - 1));
 }
 
-int _nst_cache_manager_purge(struct stream *s, struct channel *req,
-        struct proxy *px) {
-
+int _nst_cache_manager_purge(struct stream *s, struct channel *req, struct proxy *px) {
     struct stream_interface *si = &s->si[1];
     struct appctx *appctx       = NULL;
     int mode                    = NST_CACHE_PURGE_NAME_RULE;
@@ -207,13 +201,13 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
         }
 
         p = proxies_list;
+
         while(p) {
             struct nst_rule *rule = NULL;
 
             if(p->nuster.mode == NST_MODE_CACHE) {
 
-                if(mode != NST_CACHE_PURGE_NAME_ALL
-                        && strlen(p->id) == hdr.value.len
+                if(mode != NST_CACHE_PURGE_NAME_ALL && strlen(p->id) == hdr.value.len
                         && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
 
                     mode = NST_CACHE_PURGE_NAME_PROXY;
@@ -226,8 +220,7 @@ int _nst_cache_manager_purge(struct stream *s, struct channel *req,
                 while(rule) {
 
                     if(strlen(rule->name) == hdr.value.len
-                            && !memcmp(hdr.value.ptr, rule->name,
-                                hdr.value.len)) {
+                            && !memcmp(hdr.value.ptr, rule->name, hdr.value.len)) {
 
                         mode = NST_CACHE_PURGE_NAME_RULE;
                         st1  = rule->id;
@@ -278,19 +271,16 @@ purge:
         goto err;
     } else {
         appctx      = si_appctx(si);
-        memset(&appctx->ctx.nuster.cache_manager, 0,
-                sizeof(appctx->ctx.nuster.cache_manager));
+        memset(&appctx->ctx.nuster.cache_manager, 0, sizeof(appctx->ctx.nuster.cache_manager));
 
         appctx->st0 = mode;
         appctx->st1 = st1;
         appctx->st2 = 0;
 
-        if(mode == NST_CACHE_PURGE_HOST
-                || mode == NST_CACHE_PURGE_PATH_HOST
+        if(mode == NST_CACHE_PURGE_HOST || mode == NST_CACHE_PURGE_PATH_HOST
                 || mode == NST_CACHE_PURGE_REGEX_HOST) {
 
-            appctx->ctx.nuster.cache_manager.host.data =
-                nst_cache_memory_alloc(host_len);
+            appctx->ctx.nuster.cache_manager.host.data = nst_cache_memory_alloc(host_len);
 
             appctx->ctx.nuster.cache_manager.host.len  = host_len;
 
@@ -303,8 +293,7 @@ purge:
 
         if(mode == NST_CACHE_PURGE_PATH || mode == NST_CACHE_PURGE_PATH_HOST) {
 
-            appctx->ctx.nuster.cache_manager.path.data =
-                nst_cache_memory_alloc(path_len);
+            appctx->ctx.nuster.cache_manager.path.data = nst_cache_memory_alloc(path_len);
 
             appctx->ctx.nuster.cache_manager.path.len  = path_len;
 
@@ -313,15 +302,11 @@ purge:
             }
 
             memcpy(appctx->ctx.nuster.cache_manager.path.data, path, path_len);
-        } else if(mode == NST_CACHE_PURGE_REGEX ||
-                mode == NST_CACHE_PURGE_REGEX_HOST) {
-
+        } else if(mode == NST_CACHE_PURGE_REGEX || mode == NST_CACHE_PURGE_REGEX_HOST) {
             appctx->ctx.nuster.cache_manager.regex = regex;
         }
 
-        req->analysers &=
-            (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
-
+        req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
         req->analysers |= AN_REQ_HTTP_XFER_BODY;
     }
@@ -367,13 +352,9 @@ int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
             /* manager uri */
             if(http_find_header(htx, ist("state"), &hdr, 0)) {
 
-                if(hdr.value.len == 6
-                        && !memcmp(hdr.value.ptr, "enable", 6)) {
-
+                if(hdr.value.len == 6 && !memcmp(hdr.value.ptr, "enable", 6)) {
                     state = NST_RULE_ENABLED;
-                } else if(hdr.value.len == 7
-                        && !memcmp(hdr.value.ptr, "disable", 7)) {
-
+                } else if(hdr.value.len == 7 && !memcmp(hdr.value.ptr, "disable", 7)) {
                     state = NST_RULE_DISABLED;
                 }
             }
@@ -448,8 +429,7 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry,
 
             break;
         case NST_CACHE_PURGE_REGEX:
-            ret = regex_exec(appctx->ctx.nuster.cache_manager.regex,
-                    entry->path.data);
+            ret = regex_exec(appctx->ctx.nuster.cache_manager.regex, entry->path.data);
 
             break;
         case NST_CACHE_PURGE_HOST:
