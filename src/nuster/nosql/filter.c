@@ -153,7 +153,7 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             nst_debug(s, "[nosql] ==== Check rule: %s ====\n", ctx->rule2->name);
 
             if(key->data) {
-                nst_debug(s, "[cache2] Key checked, continue.\n");
+                nst_debug(s, "[nosql] Key checked, continue.\n");
             } else {
                 if(nst_nosql_build_key(ctx, s, msg) != NST_OK) {
                     ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
@@ -161,12 +161,12 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
                 }
 
                 if(nst_nosql_store_key(ctx, key) != NST_OK) {
-                    ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+                    ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
                     return 1;
                 }
 
                 nst_debug(s, "[nosql] Key: ");
-                nst_debug_key2(key);
+                nst_debug_key(key);
 
                 nst_hash(key);
 

@@ -31,7 +31,7 @@ int _nst_cache_purge_by_key(struct nst_key key) {
     int ret;
 
     nst_shctx_lock(&nuster.cache->dict[0]);
-    entry = nst_cache_dict_get2(&key);
+    entry = nst_cache_dict_get(&key);
 
     if(entry) {
 

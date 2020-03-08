@@ -315,24 +315,7 @@ void nst_debug2(const char *fmt, ...) {
     }
 }
 
-void nst_debug_key(struct buffer *key) {
-
-    if((global.mode & MODE_DEBUG)) {
-        int i;
-
-        for(i = 0; i < key->data; i++) {
-            char c = key->area[i];
-
-            if(c != 0) {
-                fprintf(stderr, "%c", c);
-            }
-        }
-
-        fprintf(stderr, "\n");
-    }
-}
-
-void nst_debug_key2(struct nst_key *key) {
+void nst_debug_key(struct nst_key *key) {
 
     if((global.mode & MODE_DEBUG)) {
         int i;

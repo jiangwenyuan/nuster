@@ -223,8 +223,7 @@ static inline uint64_t get_current_timestamp() {
 
 void nst_debug(struct stream *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
-void nst_debug_key(struct buffer *key);
-void nst_debug_key2(struct nst_key *key);
+void nst_debug_key(struct nst_key *key);
 
 static inline void nst_key_init() {
     trash.head = 0;

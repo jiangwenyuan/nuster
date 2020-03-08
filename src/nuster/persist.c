@@ -68,61 +68,7 @@ int nst_persist_init(char *root, char *path, uint64_t hash) {
     return NST_OK;
 }
 
-int nst_persist_valid(struct persist *disk, struct buffer *key, uint64_t hash) {
-    char *buf;
-    int ret;
-
-    disk->fd = nst_persist_open(disk->file);
-
-    if(disk->fd == -1) {
-        goto err;
-    }
-
-    ret = pread(disk->fd, disk->meta, NST_PERSIST_META_SIZE, 0);
-
-    if(ret != NST_PERSIST_META_SIZE) {
-        goto err;
-    }
-
-    if(memcmp(disk->meta, "NUSTER", 6) !=0) {
-        goto err;
-    }
-
-    if(nst_persist_meta_check_expire(disk->meta) != NST_OK) {
-        goto err;
-    }
-
-    if(nst_persist_meta_get_hash(disk->meta) != hash
-            || nst_persist_meta_get_key_len(disk->meta) != key->data) {
-
-        goto err;
-    }
-
-    buf = malloc(key->data);
-
-    if(!buf) {
-        goto err;
-    }
-
-    ret = pread(disk->fd, buf, key->data, NST_PERSIST_POS_KEY);
-
-    if(ret != key->data) {
-        goto err;
-    }
-
-    if(memcmp(key->area, buf, key->data) != 0) {
-        goto err;
-    }
-
-    free(buf);
-    return NST_OK;
-
-err:
-    close(disk->fd);
-    return NST_ERR;
-}
-
-int nst_persist_valid2(struct persist *disk, struct nst_key *key) {
+int nst_persist_valid(struct persist *disk, struct nst_key *key) {
     char *buf;
     int ret;
 
@@ -176,40 +122,7 @@ err:
     return NST_ERR;
 }
 
-int nst_persist_exists(char *root, struct persist *disk, struct buffer *key,
-        uint64_t hash) {
-
-    struct dirent *de;
-    DIR *dirp;
-
-    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
-            hash >> 60, hash >> 56, hash);
-
-    dirp = opendir(disk->file);
-
-    if(!dirp) {
-        return NST_ERR;
-    }
-
-    while((de = readdir(dirp)) != NULL) {
-
-        if(strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-            memcpy(disk->file + nst_persist_path_hash_len(root), "/", 1);
-            memcpy(disk->file + nst_persist_path_hash_len(root) + 1,
-                    de->d_name, strlen(de->d_name));
-
-            if(nst_persist_valid(disk, key, hash) == NST_OK) {
-                closedir(dirp);
-                return NST_OK;
-            }
-        }
-    }
-
-    closedir(dirp);
-    return NST_ERR;
-}
-
-int nst_persist_exists2(char *root, struct persist *disk, struct nst_key *key) {
+int nst_persist_exists(char *root, struct persist *disk, struct nst_key *key) {
     struct dirent *de;
     DIR *dirp;
 
@@ -229,7 +142,7 @@ int nst_persist_exists2(char *root, struct persist *disk, struct nst_key *key) {
             memcpy(disk->file + nst_persist_path_hash_len(root) + 1,
                     de->d_name, strlen(de->d_name));
 
-            if(nst_persist_valid2(disk, key) == NST_OK) {
+            if(nst_persist_valid(disk, key) == NST_OK) {
                 closedir(dirp);
                 return NST_OK;
             }
@@ -271,18 +184,7 @@ int nst_persist_get_meta(int fd, char *meta) {
     return NST_OK;
 }
 
-int nst_persist_get_key(int fd, char *meta, struct buffer *key) {
-
-    key->data = pread(fd, key->area, key->size, NST_PERSIST_POS_KEY);
-
-    if(!b_full(key)) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int nst_persist_get_key2(int fd, char *meta, struct nst_key *key) {
+int nst_persist_get_key(int fd, char *meta, struct nst_key *key) {
     int ret;
 
     ret = pread(fd, key->data, key->size, NST_PERSIST_POS_KEY);

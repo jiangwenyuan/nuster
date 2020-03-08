@@ -1275,7 +1275,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule2->disk, key->hash,
                 0, 0, ctx->header_len, ctx->entry->key2->size, 0, 0, 0, 0, 0);
 
-        nst_persist_write_key2(&ctx->disk, ctx->entry->key2);
+        nst_persist_write_key(&ctx->disk, ctx->entry->key2);
 
         ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key2->size;
 
@@ -1395,7 +1395,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
 
     if(ret == NST_NOSQL_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
-            if(nst_persist_valid2(&ctx->disk, key) == NST_OK) {
+            if(nst_persist_valid(&ctx->disk, key) == NST_OK) {
                 ret = NST_NOSQL_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_NOSQL_CTX_STATE_INIT;
@@ -1408,7 +1408,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
             } else {
 
-                if(nst_persist_exists2(global.nuster.nosql.root, &ctx->disk, key) == NST_OK) {
+                if(nst_persist_exists(global.nuster.nosql.root, &ctx->disk, key) == NST_OK) {
                     ret = NST_NOSQL_CTX_STATE_HIT_DISK;
                 } else {
                     nst_nosql_memory_free(ctx->disk.file);
@@ -1562,7 +1562,7 @@ void nst_nosql_persist_async() {
                     entry->key2->hash, entry->expire, 0, 0,
                     entry->key2->size, 0, 0, 0, 0, 0);
 
-            nst_persist_write_key2(&disk, entry->key2);
+            nst_persist_write_key(&disk, entry->key2);
 
             while(element) {
                 uint32_t blksz, info;
@@ -1614,7 +1614,7 @@ void nst_nosql_persist_load() {
         char *root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
-        struct buffer *key;
+        struct nst_key *key;
         int fd;
 
         root = global.nuster.nosql.root;
@@ -1678,9 +1678,9 @@ void nst_nosql_persist_load() {
                     }
 
                     key->size = nst_persist_meta_get_key_len(meta);
-                    key->area = nst_nosql_memory_alloc(key->size);
+                    key->data = nst_nosql_memory_alloc(key->size);
 
-                    if(!key->area) {
+                    if(!key->data) {
                         nst_nosql_memory_free(key);
                         unlink(file);
                         close(fd);
@@ -1689,7 +1689,7 @@ void nst_nosql_persist_load() {
                     }
 
                     if(nst_persist_get_key(fd, meta, key) != NST_OK) {
-                        nst_nosql_memory_free(key->area);
+                        nst_nosql_memory_free(key->data);
 
                         nst_nosql_memory_free(key);
 

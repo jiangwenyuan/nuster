@@ -276,19 +276,19 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                 int idx = ctx->rule->key->idx;
                 struct nst_key *key = &(ctx->keys[idx]);
 
-                nst_debug(s, "[cache2] ==== Check rule: %s ====\n", ctx->rule->name);
+                nst_debug(s, "[cache] ==== Check rule: %s ====\n", ctx->rule->name);
 
                 if(ctx->rule->state == NST_RULE_DISABLED) {
-                    nst_debug(s, "[cache2] Disabled, continue.\n");
+                    nst_debug(s, "[cache] Disabled, continue.\n");
                     ctx->rule = ctx->rule->next;
                     continue;
                 }
 
                 if(key->data) {
-                    nst_debug(s, "[cache2] Key checked, continue.\n");
+                    nst_debug(s, "[cache] Key checked, continue.\n");
                 } else {
                     /* build key */
-                    if(nst_cache_build_key2(ctx, s, msg) != NST_OK) {
+                    if(nst_cache_build_key(ctx, s, msg) != NST_OK) {
                         ctx->state = NST_CACHE_CTX_STATE_BYPASS;
                         return 1;
                     }
@@ -298,8 +298,8 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                         return 1;
                     }
 
-                    nst_debug(s, "[cache2] Key: ");
-                    nst_debug_key2(key);
+                    nst_debug(s, "[cache] Key: ");
+                    nst_debug_key(key);
 
                     nst_hash(key);
 
@@ -307,7 +307,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                     /* check if cache exists  */
                     nst_debug(s, "[cache] Check key existence: ");
-                    ctx->state = nst_cache_exists2(ctx);
+                    ctx->state = nst_cache_exists(ctx);
 
                     if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
                         int ret;
@@ -316,7 +316,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
 
                         /* OK, cache exists */
 
-                        ret = nst_cache_handle_conditional_req2(ctx, s, msg);
+                        ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
                             nst_res_304(s, &ctx->res.last_modified,
@@ -379,7 +379,7 @@ static int _nst_cache_filter_http_headers(struct stream *s,
                             }
                         }
 
-                        ret = nst_cache_handle_conditional_req2(ctx, s, msg);
+                        ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
                             nst_res_304(s, &ctx->res.last_modified,
@@ -500,7 +500,7 @@ abort_check2:
             nst_debug(s, "[cache] To create\n");
 
             /* start to build cache */
-            nst_cache_create2(ctx, msg);
+            nst_cache_create(ctx, msg);
         }
 
     }

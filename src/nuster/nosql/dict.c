@@ -212,7 +212,7 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
     return NULL;
 }
 
-int nst_nosql_dict_set_from_disk(char *file, char *meta, struct buffer *key) {
+int nst_nosql_dict_set_from_disk(char *file, char *meta, struct nst_key *key) {
     struct nst_nosql_dict  *dict  = NULL;
     struct nst_nosql_entry *entry = NULL;
     int idx;
