@@ -38,10 +38,10 @@
 #endif
 #endif
 
-#include <types/global.h>
-
 #include <common/mini-clist.h>
 #include <types/acl.h>
+#include <types/global.h>
+#include <import/xxhash.h>
 
 #define NST_OK          0
 #define NST_ERR         1
@@ -270,9 +270,16 @@ static inline int nst_key_catdel() {
     if(trash.data + 1 > trash.size) {
         return NST_ERR;
     }
+
     trash.data += 1;
 
     return NST_OK;
+}
+
+int nst_test_rule(struct nst_rule *rule, struct stream *s, int res);
+
+static inline void nst_hash(struct nst_key *key) {
+    key->hash = XXH64(key->data, key->size, 0);
 }
 
 #endif /* _NUSTER_COMMON_H */

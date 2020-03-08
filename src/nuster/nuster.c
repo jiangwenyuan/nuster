@@ -276,16 +276,6 @@ int nst_test_rule(struct nst_rule *rule, struct stream *s, int res) {
     return NST_ERR;
 }
 
-int nst_ci_send(struct channel *chn, int len) {
-    if(unlikely(channel_input_closed(chn))) {
-        return -2;
-    }
-
-    b_add(&chn->buf, len);
-    channel_add_input(chn, len);
-    return len;
-}
-
 void nst_debug(struct stream *s, const char *fmt, ...) {
 
     if((global.mode & MODE_DEBUG)) {

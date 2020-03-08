@@ -28,7 +28,6 @@
 
 #include <common/chunk.h>
 #include <types/applet.h>
-#include <import/xxhash.h>
 
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
@@ -79,13 +78,5 @@ static inline int nuster_check_applet(struct stream *s, struct channel *req,
             nst_cache_manager(s, req, px) ||
             nst_cache_stats(s, req, px));
 }
-
-int nst_test_rule(struct nst_rule *rule, struct stream *s, int res);
-
-static inline void nst_hash(struct nst_key *key) {
-    key->hash = XXH64(key->data, key->size, 0);
-}
-
-int nst_ci_send(struct channel *chn, int len);
 
 #endif /* _NUSTER_H */
