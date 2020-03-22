@@ -422,41 +422,42 @@ static int _nst_cache_manager_should_purge(struct nst_cache_entry *entry,
             ret = entry->rule && entry->rule->id == appctx->st1;
             break;
         case NST_CACHE_PURGE_PATH:
-            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len
-                && !memcmp(entry->path.data,
+            ret = entry->path2.len == appctx->ctx.nuster.cache_manager.path.len
+                && !memcmp(entry->path2.ptr,
                         appctx->ctx.nuster.cache_manager.path.data,
-                        entry->path.len);
+                        entry->path2.len);
 
             break;
         case NST_CACHE_PURGE_REGEX:
-            ret = regex_exec(appctx->ctx.nuster.cache_manager.regex, entry->path.data);
+            ret = regex_exec2(appctx->ctx.nuster.cache_manager.regex, entry->path2.ptr,
+                    entry->path2.len);
 
             break;
         case NST_CACHE_PURGE_HOST:
-            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len
-                && !memcmp(entry->host.data,
+            ret = entry->host2.len == appctx->ctx.nuster.cache_manager.host.len
+                && !memcmp(entry->host2.ptr,
                         appctx->ctx.nuster.cache_manager.host.data,
-                        entry->host.len);
+                        entry->host2.len);
 
             break;
         case NST_CACHE_PURGE_PATH_HOST:
-            ret = entry->path.len == appctx->ctx.nuster.cache_manager.path.len
-                && entry->host.len == appctx->ctx.nuster.cache_manager.host.len
-                && !memcmp(entry->path.data,
+            ret = entry->path2.len == appctx->ctx.nuster.cache_manager.path.len
+                && entry->host2.len == appctx->ctx.nuster.cache_manager.host.len
+                && !memcmp(entry->path2.ptr,
                         appctx->ctx.nuster.cache_manager.path.data,
-                        entry->path.len)
-                && !memcmp(entry->host.data,
+                        entry->path2.len)
+                && !memcmp(entry->host2.ptr,
                         appctx->ctx.nuster.cache_manager.host.data,
-                        entry->host.len);
+                        entry->host2.len);
 
             break;
         case NST_CACHE_PURGE_REGEX_HOST:
-            ret = entry->host.len == appctx->ctx.nuster.cache_manager.host.len
-                && !memcmp(entry->host.data,
+            ret = entry->host2.len == appctx->ctx.nuster.cache_manager.host.len
+                && !memcmp(entry->host2.ptr,
                         appctx->ctx.nuster.cache_manager.host.data,
-                        entry->host.len)
-                && regex_exec(appctx->ctx.nuster.cache_manager.regex,
-                        entry->path.data);
+                        entry->host2.len)
+                && regex_exec2(appctx->ctx.nuster.cache_manager.regex,
+                        entry->path2.ptr, entry->path2.len);
 
             break;
     }

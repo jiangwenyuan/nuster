@@ -296,8 +296,8 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
     return NULL;
 }
 
-int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key, struct nst_str *host,
-        struct nst_str *path) {
+int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, struct buffer buf,
+        struct ist host, struct ist path) {
 
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_entry *entry = NULL;
@@ -330,17 +330,16 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key, st
 
     /* init entry */
     entry->state  = NST_CACHE_ENTRY_STATE_INVALID;
-    entry->key   = *key;
+    entry->key    = key;
     entry->expire = nst_persist_meta_get_expire(meta);
     memcpy(entry->file, file, strlen(file));
 
     entry->header_len = nst_persist_meta_get_header_len(meta);
 
-    entry->host.data  = host->data;
-    entry->host.len   = host->len;
+    entry->buf = buf;
 
-    entry->path.data  = path->data;
-    entry->path.len   = path->len;
+    entry->host2 = host;
+    entry->path2 = path;
 
     entry->extend[0] = *( uint8_t *)(&ttl_extend);
     entry->extend[1] = *((uint8_t *)(&ttl_extend) + 1);

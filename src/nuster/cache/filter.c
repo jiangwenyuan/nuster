@@ -210,7 +210,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
-                            nst_res_304(s, &ctx->res.last_modified, &ctx->res.etag);
+                            nst_res_304(s, ctx->res.last_modified2, ctx->res.etag2);
 
                             return 1;
                         }
@@ -257,7 +257,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
-                            nst_res_304(s, &ctx->res.last_modified, &ctx->res.etag);
+                            nst_res_304(s, ctx->res.last_modified2, ctx->res.etag2);
 
                             return 1;
                         }

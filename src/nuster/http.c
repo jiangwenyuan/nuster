@@ -113,7 +113,7 @@ int nst_req_find_param(char *query_beg, char *query_end,
     return NST_ERR;
 }
 
-void nst_res_304(struct stream *s, struct nst_str *last_modified, struct nst_str *etag) {
+void nst_res_304(struct stream *s, struct ist last_modified, struct ist etag) {
 
     struct channel *res = &s->res;
     struct htx *htx = htx_from_buf(&res->buf);
@@ -136,9 +136,8 @@ void nst_res_304(struct stream *s, struct nst_str *last_modified, struct nst_str
     sl->info.res.status = status;
     s->txn->status = status;
 
-    if(!htx_add_header(htx, ist("Last-Modified"),
-                ist2(last_modified->data, last_modified->len)) ||
-            !htx_add_header(htx, ist("ETag"), ist2(etag->data, etag->len))) {
+    if(!htx_add_header(htx, ist("Last-Modified"), last_modified)
+            || !htx_add_header(htx, ist("ETag"), etag)) {
 
         goto fail;
     }

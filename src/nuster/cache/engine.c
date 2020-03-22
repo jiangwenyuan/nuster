@@ -941,11 +941,9 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
             ctx->data = entry->data;
             ctx->data->clients++;
 
-            ctx->res.etag.len  = entry->etag.len;
-            ctx->res.etag.data = entry->etag.data;
+            ctx->res.etag2  = entry->etag2;
 
-            ctx->res.last_modified.len  = entry->last_modified.len;
-            ctx->res.last_modified.data = entry->last_modified.data;
+            ctx->res.last_modified2 = entry->last_modified2;
 
             _nst_cache_record_access(entry);
 
@@ -1006,6 +1004,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
 
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
+    struct buffer buf = { .area = NULL };
 
     nst_shctx_lock(&nuster.cache->dict[0]);
     entry = nst_cache_dict_get(key);
@@ -1024,7 +1023,11 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
             if(ctx->rule->disk != NST_DISK_ONLY) {
                 entry->data = nst_cache_data_new();
 
-                if(!entry->data) {
+                buf.size = ctx->buf->data;
+                buf.data = ctx->buf->data;
+                buf.area = nst_cache_memory_alloc(buf.size);
+
+                if(!entry->data || !buf.area) {
                     entry->state = NST_CACHE_ENTRY_STATE_INVALID;
                     ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
                     ctx->full    = 1;
@@ -1032,13 +1035,21 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
                     ctx->state   = NST_CACHE_CTX_STATE_CREATE;
                     ctx->entry   = entry;
 
-                    entry->etag.data   = ctx->res.etag.data;
-                    entry->etag.len    = ctx->res.etag.len;
-                    ctx->res.etag.data = NULL;
+                    memcpy(buf.area, ctx->buf->area, buf.data);
 
-                    entry->last_modified.data   = ctx->res.last_modified.data;
-                    entry->last_modified.len    = ctx->res.last_modified.len;
-                    ctx->res.last_modified.data = NULL;
+                    entry->buf = buf;
+
+                    entry->host2.ptr = buf.area + (ctx->req.host2.ptr - ctx->buf->area);
+                    entry->host2.len = ctx->req.host2.len;
+
+                    entry->path2.ptr = buf.area + (ctx->req.path2.ptr - ctx->buf->area);
+                    entry->path2.len = ctx->req.path2.len;
+
+                    entry->etag2.ptr = buf.area + (ctx->res.etag2.ptr - ctx->buf->area);
+                    entry->etag2.len = ctx->res.etag2.len;
+
+                    entry->last_modified2.ptr = buf.area + (ctx->res.last_modified2.ptr - ctx->buf->area);
+                    entry->last_modified2.len = ctx->res.last_modified2.len;
 
                     ctx->data    = entry->data;
                     ctx->element = entry->data->element;
@@ -1146,14 +1157,14 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
         *((uint8_t *)(&ttl_extend) + 3) = ctx->rule->extend[3];
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash, 0, 0,
-                ctx->header_len, ctx->entry->key.size, ctx->entry->host.len, ctx->entry->path.len,
-                ctx->entry->etag.len, ctx->entry->last_modified.len, ttl_extend);
+                ctx->header_len, ctx->entry->key.size, ctx->entry->host2.len, ctx->entry->path2.len,
+                ctx->entry->etag2.len, ctx->entry->last_modified2.len, ttl_extend);
 
         nst_persist_write_key(&ctx->disk, &ctx->entry->key);
-        nst_persist_write_host(&ctx->disk, &ctx->entry->host);
-        nst_persist_write_path(&ctx->disk, &ctx->entry->path);
-        nst_persist_write_etag(&ctx->disk, &ctx->entry->etag);
-        nst_persist_write_last_modified(&ctx->disk, &ctx->entry->last_modified);
+        nst_persist_write_host(&ctx->disk, ctx->entry->host2);
+        nst_persist_write_path(&ctx->disk, ctx->entry->path2);
+        nst_persist_write_etag(&ctx->disk, ctx->entry->etag2);
+        nst_persist_write_last_modified2(&ctx->disk, ctx->entry->last_modified2);
 
         htx = htxbuf(&msg->chn->buf);
 
@@ -1392,14 +1403,14 @@ void nst_cache_persist_async() {
             *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
 
             nst_persist_meta_init(disk.meta, (char)entry->rule->disk, entry->key.hash,
-                    entry->expire, 0, 0, entry->key.size, entry->host.len, entry->path.len,
-                    entry->etag.len, entry->last_modified.len, ttl_extend);
+                    entry->expire, 0, 0, entry->key.size, entry->host2.len, entry->path2.len,
+                    entry->etag2.len, entry->last_modified2.len, ttl_extend);
 
             nst_persist_write_key(&disk,  &entry->key);
-            nst_persist_write_host(&disk, &entry->host);
-            nst_persist_write_path(&disk, &entry->path);
-            nst_persist_write_etag(&disk, &entry->etag);
-            nst_persist_write_last_modified(&disk, &entry->last_modified);
+            nst_persist_write_host(&disk, entry->host2);
+            nst_persist_write_path(&disk, entry->path2);
+            nst_persist_write_etag(&disk, entry->etag2);
+            nst_persist_write_last_modified2(&disk, entry->last_modified2);
 
             while(element) {
                 uint32_t blksz, info;
@@ -1451,15 +1462,15 @@ void nst_cache_persist_load() {
         char *root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
-        struct nst_str host;
-        struct nst_str path;
         int fd;
         DIR *dir2;
         struct dirent *de2;
-        struct nst_key *key;
+        struct nst_key key = { .data = NULL };
+        struct buffer buf = { .area = NULL };
+        struct ist host;
+        struct ist path;
 
         fd = -1;
-        key = NULL;
         dir2 = NULL;
 
         root = global.nuster.cache.root;
@@ -1507,46 +1518,41 @@ void nst_cache_persist_load() {
                         goto err;
                     }
 
-                    key = nst_cache_memory_alloc(sizeof(*key));
+                    key.size = nst_persist_meta_get_key_len(meta);
+                    key.data = nst_cache_memory_alloc(key.size);
 
-                    if(!key) {
+                    if(!key.data) {
                         goto err;
                     }
 
-                    key->size = nst_persist_meta_get_key_len(meta);
-                    key->data = nst_cache_memory_alloc(key->size);
-
-                    if(!key->data) {
-                        goto err;
-                    }
-
-                    if(nst_persist_get_key(fd, meta, key) != NST_OK) {
+                    if(nst_persist_get_key(fd, meta, &key) != NST_OK) {
                         goto err;
                     }
 
                     host.len = nst_persist_meta_get_host_len(meta);
-                    host.data = nst_cache_memory_alloc(host.len);
+                    path.len = nst_persist_meta_get_host_len(meta);
 
-                    if(!host.data) {
+                    buf.size = host.len + path.len;
+                    buf.data = buf.size;
+                    buf.area = nst_cache_memory_alloc(buf.size);
+
+                    if(!buf.area) {
                         goto err;
                     }
 
-                    if(nst_persist_get_host(fd, meta, &host) != NST_OK) {
+                    host.ptr = buf.area + buf.data;
+
+                    if(nst_persist_get_host2(fd, meta, host) != NST_OK) {
                         goto err;
                     }
 
-                    path.len = nst_persist_meta_get_path_len(meta);
-                    path.data = nst_cache_memory_alloc(path.len);
+                    path.ptr = buf.area + buf.data;
 
-                    if(!path.data) {
+                    if(nst_persist_get_path2(fd, meta, path) != NST_OK) {
                         goto err;
                     }
 
-                    if(nst_persist_get_path(fd, meta, &path) != NST_OK) {
-                        goto err;
-                    }
-
-                    nst_cache_dict_set_from_disk(file, meta, key, &host, &path);
+                    nst_cache_dict_set_from_disk(file, meta, key, buf, host, path);
 
                     close(fd);
                 }
@@ -1587,21 +1593,12 @@ err:
             closedir(dir2);
         }
 
-        if(key) {
-
-            if(key->data) {
-                nst_cache_memory_free(key->data);
-            }
-
-            nst_cache_memory_free(key);
+        if(key.data) {
+            nst_cache_memory_free(key.data);
         }
 
-        if(host.data) {
-            nst_cache_memory_free(host.data);
-        }
-
-        if(path.data) {
-            nst_cache_memory_free(path.data);
+        if(buf.area) {
+            nst_cache_memory_free(buf.area);
         }
 
     }

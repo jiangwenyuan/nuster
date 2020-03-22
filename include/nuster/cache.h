@@ -88,13 +88,9 @@ struct nst_cache_entry {
     struct ist              etag2;
     struct ist              last_modified2;
 
-    struct nst_str          host;
-    struct nst_str          path;
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
-    struct nst_str          etag;
-    struct nst_str          last_modified;
 
     uint64_t                expire;
     uint64_t                ctime;
@@ -161,9 +157,6 @@ struct nst_cache_ctx {
     } req;
 
     struct {
-        struct nst_str        etag;
-        struct nst_str        last_modified;
-
         struct ist            etag2;
         struct ist            last_modified2;
     } res;
@@ -260,8 +253,8 @@ int nst_cache_dict_init();
 struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key);
 struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
 void nst_cache_dict_cleanup();
-int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key,
-        struct nst_str *host, struct nst_str *path);
+int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, struct buffer buf,
+        struct ist host, struct ist path);
 
 /* engine */
 void nst_cache_init();
