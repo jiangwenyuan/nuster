@@ -83,10 +83,10 @@ struct nst_cache_entry {
 
     struct buffer           buf;
 
-    struct ist              host2;
-    struct ist              path2;
-    struct ist              etag2;
-    struct ist              last_modified2;
+    struct ist              host;
+    struct ist              path;
+    struct ist              etag;
+    struct ist              last_modified;
 
     int                     pid;         /* proxy uuid */
     char                   *file;
@@ -146,19 +146,19 @@ struct nst_cache_ctx {
     struct buffer            *buf;
 
     struct {
-        struct ist            host2;
-        struct ist            uri2;
-        struct ist            path2;
-        struct ist            query2;
-        struct ist            cookie2;
+        struct ist            host;
+        struct ist            uri;
+        struct ist            path;
+        struct ist            query;
+        struct ist            cookie;
 
         int                   scheme;
         int                   delimiter;
     } req;
 
     struct {
-        struct ist            etag2;
-        struct ist            last_modified2;
+        struct ist            etag;
+        struct ist            last_modified;
     } res;
 
     int                       pid;              /* proxy uuid */

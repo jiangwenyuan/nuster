@@ -210,7 +210,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
-                            nst_res_304(s, ctx->res.last_modified2, ctx->res.etag2);
+                            nst_res_304(s, ctx->res.last_modified, ctx->res.etag);
 
                             return 1;
                         }
@@ -232,10 +232,10 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         /* OK, cache exists */
 
                         if(ctx->rule->etag == NST_STATUS_ON) {
-                            ctx->res.etag2.ptr = ctx->buf->area + ctx->buf->data;
-                            ctx->res.etag2.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
+                            ctx->res.etag.ptr = ctx->buf->area + ctx->buf->data;
+                            ctx->res.etag.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
 
-                            if(nst_persist_get_etag2(ctx->disk.fd, ctx->disk.meta, ctx->res.etag2)
+                            if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, ctx->res.etag)
                                     != NST_OK) {
 
                                 break;
@@ -243,12 +243,12 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         }
 
                         if(ctx->rule->last_modified == NST_STATUS_ON) {
-                            ctx->res.last_modified2.ptr = ctx->buf->area + ctx->buf->data;
-                            ctx->res.last_modified2.len =
+                            ctx->res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
+                            ctx->res.last_modified.len =
                                 nst_persist_meta_get_last_modified_len(ctx->disk.meta);
 
-                            if(nst_persist_get_last_modified2(ctx->disk.fd, ctx->disk.meta,
-                                        ctx->res.last_modified2) != NST_OK) {
+                            if(nst_persist_get_last_modified(ctx->disk.fd, ctx->disk.meta,
+                                        ctx->res.last_modified) != NST_OK) {
 
                                 break;
                             }
@@ -257,7 +257,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         ret = nst_cache_handle_conditional_req(ctx, s, msg);
 
                         if(ret == 304) {
-                            nst_res_304(s, ctx->res.last_modified2, ctx->res.etag2);
+                            nst_res_304(s, ctx->res.last_modified, ctx->res.etag);
 
                             return 1;
                         }

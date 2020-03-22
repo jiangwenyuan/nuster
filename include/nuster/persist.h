@@ -293,19 +293,7 @@ nst_persist_write_etag(struct persist *disk, struct ist etag) {
 }
 
 static inline int
-nst_persist_write_last_modified(struct persist *disk, struct nst_str *lm) {
-
-    disk->offset = NST_PERSIST_POS_KEY
-        + nst_persist_meta_get_key_len(disk->meta)
-        + nst_persist_meta_get_host_len(disk->meta)
-        + nst_persist_meta_get_path_len(disk->meta)
-        + nst_persist_meta_get_etag_len(disk->meta);
-
-    return nst_persist_write(disk, lm->data, lm->len);
-}
-
-static inline int
-nst_persist_write_last_modified2(struct persist *disk, struct ist lm) {
+nst_persist_write_last_modified(struct persist *disk, struct ist lm) {
 
     disk->offset = NST_PERSIST_POS_KEY
         + nst_persist_meta_get_key_len(disk->meta)
@@ -319,14 +307,10 @@ nst_persist_write_last_modified2(struct persist *disk, struct ist lm) {
 void nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
 int nst_persist_get_meta(int fd, char *meta);
 int nst_persist_get_key(int fd, char *meta, struct nst_key *key);
-int nst_persist_get_host(int fd, char *meta, struct nst_str *host);
-int nst_persist_get_host2(int fd, char *meta, struct ist host);
-int nst_persist_get_path(int fd, char *meta, struct nst_str *path);
-int nst_persist_get_path2(int fd, char *meta, struct ist path);
-int nst_persist_get_etag(int fd, char *meta, struct nst_str *etag);
-int nst_persist_get_etag2(int fd, char *meta, struct ist etag);
-int nst_persist_get_last_modified(int fd, char *meta, struct nst_str *last_modified);
-int nst_persist_get_last_modified2(int fd, char *meta, struct ist last_modified);
+int nst_persist_get_host(int fd, char *meta, struct ist host);
+int nst_persist_get_path(int fd, char *meta, struct ist path);
+int nst_persist_get_etag(int fd, char *meta, struct ist etag);
+int nst_persist_get_last_modified(int fd, char *meta, struct ist last_modified);
 
 DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx);
 void nst_persist_cleanup(char *root, char *path, struct dirent *de);

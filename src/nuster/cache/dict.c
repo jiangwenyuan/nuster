@@ -185,17 +185,17 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
 
     entry->buf = buf;
 
-    entry->host2.ptr = buf.area + (ctx->req.host2.ptr - ctx->buf->area);
-    entry->host2.len = ctx->req.host2.len;
+    entry->host.ptr = buf.area + (ctx->req.host.ptr - ctx->buf->area);
+    entry->host.len = ctx->req.host.len;
 
-    entry->path2.ptr = buf.area + (ctx->req.path2.ptr - ctx->buf->area);
-    entry->path2.len = ctx->req.path2.len;
+    entry->path.ptr = buf.area + (ctx->req.path.ptr - ctx->buf->area);
+    entry->path.len = ctx->req.path.len;
 
-    entry->etag2.ptr = buf.area + (ctx->res.etag2.ptr - ctx->buf->area);
-    entry->etag2.len = ctx->res.etag2.len;
+    entry->etag.ptr = buf.area + (ctx->res.etag.ptr - ctx->buf->area);
+    entry->etag.len = ctx->res.etag.len;
 
-    entry->last_modified2.ptr = buf.area + (ctx->res.last_modified2.ptr - ctx->buf->area);
-    entry->last_modified2.len = ctx->res.last_modified2.len;
+    entry->last_modified.ptr = buf.area + (ctx->res.last_modified.ptr - ctx->buf->area);
+    entry->last_modified.len = ctx->res.last_modified.len;
 
     return entry;
 
@@ -338,8 +338,8 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, str
 
     entry->buf = buf;
 
-    entry->host2 = host;
-    entry->path2 = path;
+    entry->host = host;
+    entry->path = path;
 
     entry->extend[0] = *( uint8_t *)(&ttl_extend);
     entry->extend[1] = *((uint8_t *)(&ttl_extend) + 1);

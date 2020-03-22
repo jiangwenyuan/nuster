@@ -196,19 +196,7 @@ int nst_persist_get_key(int fd, char *meta, struct nst_key *key) {
     return NST_OK;
 }
 
-int nst_persist_get_host(int fd, char *meta, struct nst_str *host) {
-
-    int ret = pread(fd, host->data, host->len, NST_PERSIST_POS_KEY
-            + nst_persist_meta_get_key_len(meta));
-
-    if(ret != host->len) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int nst_persist_get_host2(int fd, char *meta, struct ist host) {
+int nst_persist_get_host(int fd, char *meta, struct ist host) {
 
     int ret = pread(fd, host.ptr, host.len, NST_PERSIST_POS_KEY
             + nst_persist_meta_get_key_len(meta));
@@ -220,20 +208,7 @@ int nst_persist_get_host2(int fd, char *meta, struct ist host) {
     return NST_OK;
 }
 
-int nst_persist_get_path(int fd, char *meta, struct nst_str *path) {
-
-    int ret = pread(fd, path->data, path->len, NST_PERSIST_POS_KEY
-            + nst_persist_meta_get_key_len(meta)
-            + nst_persist_meta_get_host_len(meta));
-
-    if(ret != path->len) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int nst_persist_get_path2(int fd, char *meta, struct ist path) {
+int nst_persist_get_path(int fd, char *meta, struct ist path) {
 
     int ret = pread(fd, path.ptr, path.len, NST_PERSIST_POS_KEY
             + nst_persist_meta_get_key_len(meta)
@@ -246,21 +221,7 @@ int nst_persist_get_path2(int fd, char *meta, struct ist path) {
     return NST_OK;
 }
 
-int nst_persist_get_etag(int fd, char *meta, struct nst_str *etag) {
-
-    int ret = pread(fd, etag->data, etag->len, NST_PERSIST_POS_KEY
-            + nst_persist_meta_get_key_len(meta)
-            + nst_persist_meta_get_host_len(meta)
-            + nst_persist_meta_get_path_len(meta));
-
-    if(ret != etag->len) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int nst_persist_get_etag2(int fd, char *meta, struct ist etag) {
+int nst_persist_get_etag(int fd, char *meta, struct ist etag) {
 
     int ret = pread(fd, etag.ptr, etag.len, NST_PERSIST_POS_KEY
             + nst_persist_meta_get_key_len(meta)
@@ -274,23 +235,7 @@ int nst_persist_get_etag2(int fd, char *meta, struct ist etag) {
     return NST_OK;
 }
 
-int nst_persist_get_last_modified(int fd, char *meta, struct nst_str *last_modified) {
-
-    int ret = pread(fd, last_modified->data, last_modified->len,
-            NST_PERSIST_POS_KEY
-            + nst_persist_meta_get_key_len(meta)
-            + nst_persist_meta_get_host_len(meta)
-            + nst_persist_meta_get_path_len(meta)
-            + nst_persist_meta_get_etag_len(meta));
-
-    if(ret != last_modified->len) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int nst_persist_get_last_modified2(int fd, char *meta, struct ist last_modified) {
+int nst_persist_get_last_modified(int fd, char *meta, struct ist last_modified) {
 
     int ret = pread(fd, last_modified.ptr, last_modified.len,
             NST_PERSIST_POS_KEY
