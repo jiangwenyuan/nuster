@@ -221,6 +221,9 @@ static inline uint64_t get_current_timestamp() {
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+const char *nst_parse_size(const char *text, uint64_t *ret);
+const char *nst_parse_time(const char *text, int len, unsigned *ret);
+
 void nst_debug(struct stream *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
 void nst_debug_key(struct nst_key *key);

@@ -80,6 +80,14 @@ struct nst_cache_entry {
     struct nst_key          key;
     struct nst_rule        *rule;        /* rule */
     struct nst_cache_data  *data;
+
+    struct buffer           buf;
+
+    struct ist              host2;
+    struct ist              path2;
+    struct ist              etag2;
+    struct ist              last_modified2;
+
     struct nst_str          host;
     struct nst_str          path;
     int                     pid;         /* proxy uuid */
@@ -139,19 +147,25 @@ struct nst_cache_ctx {
     struct nst_cache_data    *data;
     struct nst_cache_element *element;
 
+    struct buffer            *buf;
+
     struct {
+        struct ist            host2;
+        struct ist            uri2;
+        struct ist            path2;
+        struct ist            query2;
+        struct ist            cookie2;
+
         int                   scheme;
-        struct nst_str        host;
-        struct nst_str        uri;
-        struct nst_str        path;
         int                   delimiter;
-        struct nst_str        query;
-        struct nst_str        cookie;
     } req;
 
     struct {
         struct nst_str        etag;
         struct nst_str        last_modified;
+
+        struct ist            etag2;
+        struct ist            last_modified2;
     } res;
 
     int                       pid;              /* proxy uuid */
@@ -252,8 +266,8 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key *key,
 /* engine */
 void nst_cache_init();
 void nst_cache_housekeeping();
-int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
+
+int nst_cache_parse_htx(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
 
 int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst_key *key);
 
@@ -280,8 +294,6 @@ void nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 
 int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
-int nst_cache_prebuild_key(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg);
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len);

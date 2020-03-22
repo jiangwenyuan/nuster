@@ -310,8 +310,9 @@ int nst_persist_get_key(int fd, char *meta, struct nst_key *key);
 int nst_persist_get_host(int fd, char *meta, struct nst_str *host);
 int nst_persist_get_path(int fd, char *meta, struct nst_str *path);
 int nst_persist_get_etag(int fd, char *meta, struct nst_str *etag);
-int nst_persist_get_last_modified(int fd, char *meta,
-        struct nst_str *last_modified);
+int nst_persist_get_etag2(int fd, char *meta, struct ist etag);
+int nst_persist_get_last_modified(int fd, char *meta, struct nst_str *last_modified);
+int nst_persist_get_last_modified2(int fd, char *meta, struct ist last_modified);
 
 DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx);
 void nst_persist_cleanup(char *root, char *path, struct dirent *de);

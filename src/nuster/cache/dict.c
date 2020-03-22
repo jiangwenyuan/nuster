@@ -88,9 +88,11 @@ void nst_cache_dict_cleanup() {
             }
 
             entry = entry->next;
-            nst_cache_memory_free(tmp->host.data);
-            nst_cache_memory_free(tmp->path.data);
+
+            nst_cache_memory_free(tmp->buf.area);
+            nst_cache_memory_free(tmp->key.data);
             nst_cache_memory_free(tmp);
+
             nuster.cache->dict[0].used--;
         } else {
             prev  = entry;
@@ -113,17 +115,37 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     struct nst_cache_data  *data  = NULL;
     struct nst_cache_entry *entry = NULL;
     int idx;
-    struct nst_key *key;
-
-    idx = ctx->rule->key->idx;
-    key = &(ctx->keys[idx]);
+    struct nst_key key = { .data = NULL };
+    struct buffer buf = { .area = NULL };
 
     dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
+
+    idx = ctx->rule->key->idx;
+
+    key.size = ctx->keys[idx].size;
+    key.hash = ctx->keys[idx].hash;
+    key.data = nst_cache_memory_alloc(key.size);
+
+    if(!key.data) {
+        goto err;
+    }
+
+    memcpy(key.data, ctx->keys[idx].data, key.size);
+
+    buf.size = ctx->buf->data;
+    buf.data = ctx->buf->data;
+    buf.area = nst_cache_memory_alloc(buf.size);
+
+    if(!buf.area) {
+        goto err;
+    }
+
+    memcpy(buf.area, ctx->buf->area, buf.data);
 
     entry = nst_cache_memory_alloc(sizeof(*entry));
 
     if(!entry) {
-        return NULL;
+        goto err;
     }
 
     memset(entry, 0, sizeof(*entry));
@@ -132,12 +154,12 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
         data = nst_cache_data_new();
 
         if(!data) {
-            nst_cache_memory_free(entry);
-            return NULL;
+            goto err;
         }
     }
 
-    idx = key->hash % dict->size;
+    idx = key.hash % dict->size;
+
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
     dict->entry[idx] = entry;
@@ -151,8 +173,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->file   = NULL;
     entry->ttl    = ctx->rule->ttl;
 
-    entry->key  = *key;
-    key->data   = NULL;
+    entry->key  = key;
     entry->rule = ctx->rule;
 
     entry->extend[0] = ctx->rule->extend[0];
@@ -162,23 +183,37 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
 
     entry->header_len = ctx->header_len;
 
-    entry->host.data   = ctx->req.host.data;
-    entry->host.len    = ctx->req.host.len;
-    ctx->req.host.data = NULL;
+    entry->buf = buf;
 
-    entry->path.data   = ctx->req.path.data;
-    entry->path.len    = ctx->req.path.len;
-    ctx->req.path.data = NULL;
+    entry->host2.ptr = buf.area + (ctx->req.host2.ptr - ctx->buf->area);
+    entry->host2.len = ctx->req.host2.len;
 
-    entry->etag.data   = ctx->res.etag.data;
-    entry->etag.len    = ctx->res.etag.len;
-    ctx->res.etag.data = NULL;
+    entry->path2.ptr = buf.area + (ctx->req.path2.ptr - ctx->buf->area);
+    entry->path2.len = ctx->req.path2.len;
 
-    entry->last_modified.data   = ctx->res.last_modified.data;
-    entry->last_modified.len    = ctx->res.last_modified.len;
-    ctx->res.last_modified.data = NULL;
+    entry->etag2.ptr = buf.area + (ctx->res.etag2.ptr - ctx->buf->area);
+    entry->etag2.len = ctx->res.etag2.len;
+
+    entry->last_modified2.ptr = buf.area + (ctx->res.last_modified2.ptr - ctx->buf->area);
+    entry->last_modified2.len = ctx->res.last_modified2.len;
 
     return entry;
+
+err:
+
+    if(key.data) {
+        nst_cache_memory_free(key.data);
+    }
+
+    if(buf.area) {
+        nst_cache_memory_free(buf.area);
+    }
+
+    if(entry) {
+        nst_cache_memory_free(entry);
+    }
+
+    return NULL;
 }
 
 /*

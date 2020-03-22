@@ -64,11 +64,22 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     }
 
     if(!filter->ctx) {
-        int rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
-        int key_cnt  = nuster.proxy[conf->pid]->key_cnt;
+        struct buffer *buf;
+        int rule_cnt, key_cnt, size;
+        struct nst_cache_ctx *ctx;
 
-        int size = sizeof(struct nst_cache_ctx) + key_cnt * sizeof(struct nst_key);
-        struct nst_cache_ctx *ctx = nst_cache_memory_alloc(size);
+        buf = alloc_trash_chunk();
+
+        if(buf == NULL ) {
+            return 0;
+        }
+
+        rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
+        key_cnt  = nuster.proxy[conf->pid]->key_cnt;
+
+        size = sizeof(struct nst_cache_ctx) + key_cnt * sizeof(struct nst_key);
+
+        ctx = malloc(size);
 
         if(ctx == NULL ) {
             return 0;
@@ -80,6 +91,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
         ctx->pid      = conf->pid;
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
+        ctx->buf      = buf;
 
         filter->ctx = ctx;
     }
@@ -106,23 +118,17 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
             nst_cache_abort(ctx);
         }
 
-        if(ctx->req.host.data) {
-            nst_cache_memory_free(ctx->req.host.data);
-        }
-
-        if(ctx->req.path.data) {
-            nst_cache_memory_free(ctx->req.path.data);
-        }
+        free_trash_chunk(ctx->buf);
 
         for(i = 0; i < ctx->key_cnt; i++) {
             struct nst_key key = ctx->keys[i];
 
             if(key.data) {
-                nst_cache_memory_free(ctx);
+                free(ctx);
             }
         }
 
-        nst_cache_memory_free(ctx);
+        free(ctx);
     }
 }
 
@@ -145,7 +151,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
             int i = 0;
 
-            if(nst_cache_prebuild_key(ctx, s, msg) != NST_OK) {
+            if(nst_cache_parse_htx(ctx, s, msg) != NST_OK) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
 
                 return 1;
@@ -226,36 +232,25 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         /* OK, cache exists */
 
                         if(ctx->rule->etag == NST_STATUS_ON) {
-                            ctx->res.etag.len  = nst_persist_meta_get_etag_len(ctx->disk.meta);
+                            ctx->res.etag2.ptr = ctx->buf->area + ctx->buf->data;
+                            ctx->res.etag2.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
 
-                            ctx->res.etag.data = nst_cache_memory_alloc(ctx->res.etag.len);
-
-                            if(!ctx->res.etag.data) {
-                                goto abort_check;
-                            }
-
-                            if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, &ctx->res.etag)
+                            if(nst_persist_get_etag2(ctx->disk.fd, ctx->disk.meta, ctx->res.etag2)
                                     != NST_OK) {
 
-                                goto abort_check;
+                                break;
                             }
                         }
 
                         if(ctx->rule->last_modified == NST_STATUS_ON) {
-                            ctx->res.last_modified.len =
+                            ctx->res.last_modified2.ptr = ctx->buf->area + ctx->buf->data;
+                            ctx->res.last_modified2.len =
                                 nst_persist_meta_get_last_modified_len(ctx->disk.meta);
 
-                            ctx->res.last_modified.data =
-                                nst_cache_memory_alloc(ctx->res.last_modified.len);
+                            if(nst_persist_get_last_modified2(ctx->disk.fd, ctx->disk.meta,
+                                        ctx->res.last_modified2) != NST_OK) {
 
-                            if(!ctx->res.last_modified.data) {
-                                goto abort_check;
-                            }
-
-                            if(nst_persist_get_last_modified(ctx->disk.fd, ctx->disk.meta,
-                                        &ctx->res.last_modified) != NST_OK) {
-
-                                goto abort_check;
+                                break;
                             }
                         }
 
@@ -273,16 +268,6 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                             return 1;
                         }
 
-abort_check:
-                        if(ctx->res.etag.data) {
-                            nst_cache_memory_free(ctx->res.etag.data);
-                        }
-
-                        if(ctx->res.last_modified.data) {
-                            nst_cache_memory_free(ctx->res.last_modified.data);
-                        }
-
-                        break;
                     }
 
                     nst_debug2("MISS\n");
