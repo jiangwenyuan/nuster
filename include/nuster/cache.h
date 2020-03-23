@@ -46,9 +46,10 @@
 #define NST_CACHE_DEFAULT_PURGE_METHOD_SIZE   16
 
 struct nst_cache_element {
-    struct nst_str            msg;
-
     struct nst_cache_element *next;
+
+    int   info;
+    char  data[0];
 };
 
 /*

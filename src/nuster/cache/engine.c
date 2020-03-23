@@ -39,7 +39,7 @@ static int _nst_cache_element_to_htx(struct nst_cache_element *element, struct h
     uint32_t blksz, sz, info;
     enum htx_blk_type type;
 
-    info = element->msg.len;
+    info = element->info;
     type = (info >> 28);
     blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
             ? (info & 0xff) + ((info >> 8) & 0xfffff)
@@ -54,7 +54,7 @@ static int _nst_cache_element_to_htx(struct nst_cache_element *element, struct h
     blk->info = info;
     ptr = htx_get_blk_ptr(htx, blk);
     sz = htx_get_blksz(blk);
-    memcpy(ptr, element->msg.data, sz);
+    memcpy(ptr, element->data, sz);
 
     return NST_OK;
 }
@@ -415,11 +415,6 @@ static void _nst_cache_data_cleanup() {
         while(element) {
             struct nst_cache_element *tmp = element;
             element                       = element->next;
-
-            if(tmp->msg.data) {
-                nst_cache_stats_update_used_mem(-tmp->msg.len);
-                nst_cache_memory_free(tmp->msg.data);
-            }
 
             nst_cache_memory_free(tmp);
         }
@@ -1090,25 +1085,17 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
             enum htx_blk_type type = htx_get_blk_type(blk);
 
             struct nst_cache_element *element = NULL;
-            char *data = NULL;
 
             if(ctx->rule->disk != NST_DISK_ONLY)  {
-                element = nst_cache_memory_alloc(sizeof(*element));
+                element = nst_cache_memory_alloc(sizeof(struct nst_cache_element) + sz);
 
                 if(!element) {
                     goto err;
                 }
 
-                data = nst_cache_memory_alloc(sz);
+                memcpy(element->data, htx_get_blk_ptr(htx, blk), sz);
 
-                if(!data) {
-                    goto err;
-                }
-
-                memcpy(data, htx_get_blk_ptr(htx, blk), sz);
-
-                element->msg.data = data;
-                element->msg.len  = blk->info;
+                element->info = blk->info;
 
                 if(ctx->element) {
                     ctx->element->next = element;
@@ -1198,7 +1185,6 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned i
         uint32_t        sz  = htx_get_blksz(blk);
         enum htx_blk_type type = htx_get_blk_type(blk);
         struct nst_cache_element *element;
-        char *data;
 
         if(type != HTX_BLK_DATA) {
             continue;
@@ -1208,22 +1194,15 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned i
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             ctx->cache_len += sz;
         } else {
-            element = nst_cache_memory_alloc(sizeof(*element));
+            element = nst_cache_memory_alloc(sizeof(*element) + sz);
 
             if(!element) {
                 goto err;
             }
 
-            data = nst_cache_memory_alloc(sz);
+            memcpy(element->data, htx_get_blk_ptr(htx, blk), sz);
 
-            if(!data) {
-                goto err;
-            }
-
-            memcpy(data, htx_get_blk_ptr(htx, blk), sz);
-
-            element->msg.data = data;
-            element->msg.len  = blk->info;
+            element->info = blk->info;
 
             if(ctx->element) {
                 ctx->element->next = element;
@@ -1414,7 +1393,7 @@ void nst_cache_persist_async() {
                 uint32_t blksz, info;
                 enum htx_blk_type type;
 
-                info = element->msg.len;
+                info = element->info;
                 type = (info >> 28);
                 blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
                         ? (info & 0xff) + ((info >> 8) & 0xfffff)
@@ -1426,7 +1405,7 @@ void nst_cache_persist_async() {
                     header_len += 4 + blksz;
                 }
 
-                nst_persist_write(&disk, element->msg.data, blksz);
+                nst_persist_write(&disk, element->data, blksz);
 
                 cache_len += blksz;
 
