@@ -70,7 +70,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 
         buf = alloc_trash_chunk();
 
-        if(buf == NULL ) {
+        if(buf == NULL) {
             return 0;
         }
 

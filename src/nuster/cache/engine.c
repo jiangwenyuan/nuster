@@ -340,9 +340,7 @@ struct nst_cache_data *nst_cache_data_new() {
     nst_shctx_lock(nuster.cache);
 
     if(data) {
-        data->clients  = 0;
-        data->invalid  = 0;
-        data->element  = NULL;
+        memset(data, 0, sizeof(*data));
 
         if(nuster.cache->data_head == NULL) {
             nuster.cache->data_head = data;
@@ -571,7 +569,7 @@ int nst_cache_parse_htx(struct nst_cache_ctx *ctx, struct stream *s, struct http
         chunk_istcat(ctx->buf, hdr.value);
     }
 
-    sl = http_get_stline(htx);
+    sl  = http_get_stline(htx);
     url = htx_sl_req_uri(sl);
     uri = http_get_path(url);
 
@@ -596,7 +594,7 @@ int nst_cache_parse_htx(struct nst_cache_ctx *ctx, struct stream *s, struct http
     ctx->req.path.ptr = ctx->req.uri.ptr;
     ctx->req.path.len = ptr - uri_begin;
 
-    ctx->req.delimiter  = 0;
+    ctx->req.delimiter = 0;
 
     if(ctx->req.uri.ptr) {
         ctx->req.query.ptr = memchr(ctx->req.uri.ptr, '?', uri.len);

@@ -64,9 +64,11 @@ struct nst_nosql_data {
     struct nst_nosql_element *element;
     struct nst_nosql_data    *next;
 
+    struct buffer             buf;
+
     struct {
-        struct nst_str        content_type;
-        struct nst_str        transfer_encoding;
+        struct ist            content_type;
+        struct ist            transfer_encoding;
         uint64_t              content_length;
         unsigned int          flags;
     } info;
@@ -87,11 +89,14 @@ struct nst_nosql_entry {
     struct nst_nosql_data  *data;
     uint64_t                expire;
     uint64_t                atime;
-    struct nst_str          host;
-    struct nst_str          path;
     int                     pid;         /* proxy uuid */
     char                   *file;
     int                     header_len;
+
+    struct buffer           buf;
+
+    struct ist              host;
+    struct ist              path;
 
     struct nst_key          key;
     struct nst_rule        *rule;        /* rule */
@@ -132,16 +137,18 @@ struct nst_nosql_ctx {
     struct nst_nosql_data    *data;
     struct nst_nosql_element *element;
 
+    struct buffer            *buf;
+
     struct {
         int                   scheme;
-        struct nst_str        host;
-        struct nst_str        uri;
-        struct nst_str        path;
+        struct ist            host;
+        struct ist            uri;
+        struct ist            path;
         int                   delimiter;
-        struct nst_str        query;
-        struct nst_str        cookie;
-        struct nst_str        content_type;
-        struct nst_str        transfer_encoding;
+        struct ist            query;
+        struct ist            cookie;
+        struct ist            content_type;
+        struct ist            transfer_encoding;
     } req;
 
     int                       pid;         /* proxy uuid */
@@ -212,9 +219,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req,
         struct proxy *px);
 
 struct nst_nosql_data *nst_nosql_data_new();
-int nst_nosql_prebuild_key(struct nst_nosql_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
-
+int nst_nosql_parse_htx(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
 int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
 int nst_nosql_store_key(struct nst_nosql_ctx *ctx, struct nst_key *key);
 
@@ -228,8 +233,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
 int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
         unsigned int offset, unsigned int msg_len);
 
-void nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
+int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
 
 void nst_nosql_abort(struct nst_nosql_ctx *ctx);
 

@@ -62,8 +62,7 @@ static int _nst_nosql_dict_rehashing() {
  * entry->data is freed by _nosql_data_cleanup
  */
 void nst_nosql_dict_cleanup() {
-    struct nst_nosql_entry *entry =
-        nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx];
+    struct nst_nosql_entry *entry = nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx];
 
     struct nst_nosql_entry *prev  = entry;
 
@@ -81,8 +80,7 @@ void nst_nosql_dict_cleanup() {
             }
 
             if(prev == entry) {
-                nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx] =
-                    entry->next;
+                nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx] = entry->next;
 
                 prev = entry->next;
             } else {
@@ -90,9 +88,11 @@ void nst_nosql_dict_cleanup() {
             }
 
             entry = entry->next;
-            nst_nosql_memory_free(tmp->host.data);
-            nst_nosql_memory_free(tmp->path.data);
+
+            nst_nosql_memory_free(tmp->buf.area);
+            nst_nosql_memory_free(tmp->key.data);
             nst_nosql_memory_free(tmp);
+
             nuster.nosql->dict[0].used--;
         } else {
             prev  = entry;
@@ -117,28 +117,49 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     struct nst_nosql_data  *data  = NULL;
     struct nst_nosql_entry *entry = NULL;
     int idx;
-    struct nst_key *key;
+    struct nst_key key = { .data = NULL };
+    struct buffer buf = { .area = NULL };
+
+    dict = _nst_nosql_dict_rehashing() ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
 
     idx = ctx->rule->key->idx;
-    key = &(ctx->keys[idx]);
 
-    dict = _nst_nosql_dict_rehashing()
-        ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
+    key.size = ctx->keys[idx].size;
+    key.hash = ctx->keys[idx].hash;
+    key.data = nst_nosql_memory_alloc(key.size);
+
+    if(!key.data) {
+        goto err;
+    }
+
+    memcpy(key.data, ctx->keys[idx].data, key.size);
+
+    buf.size = ctx->buf->data;
+    buf.data = ctx->buf->data;
+    buf.area = nst_nosql_memory_alloc(buf.size);
+
+    if(!buf.area) {
+        goto err;
+    }
+
+    memcpy(buf.area, ctx->buf->area, buf.data);
 
     entry = nst_nosql_memory_alloc(sizeof(*entry));
 
     if(!entry) {
-        return NULL;
+        goto err;
     }
 
     data = nst_nosql_data_new();
 
     if(!data) {
-        nst_nosql_memory_free(entry);
-        return NULL;
+        goto err;
     }
 
-    idx = key->hash % dict->size;
+    memset(entry, 0, sizeof(*entry));
+
+    idx = key.hash % dict->size;
+
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
     dict->entry[idx] = entry;
@@ -150,20 +171,35 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     entry->expire = 0;
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
-    entry->key    = *key;
-    key->data     = NULL;
+    entry->key    = key;
 
     entry->header_len = ctx->header_len;
 
-    entry->host.data   = ctx->req.host.data;
-    entry->host.len    = ctx->req.host.len;
-    ctx->req.host.data = NULL;
+    entry->buf = buf;
 
-    entry->path.data   = ctx->req.path.data;
-    entry->path.len    = ctx->req.path.len;
-    ctx->req.path.data = NULL;
+    entry->host.ptr = buf.area + (ctx->req.host.ptr - ctx->buf->area);
+    entry->host.len = ctx->req.host.len;
+
+    entry->path.ptr = buf.area + (ctx->req.path.ptr - ctx->buf->area);
+    entry->path.len = ctx->req.path.len;
 
     return entry;
+
+err:
+
+    if(key.data) {
+        nst_nosql_memory_free(key.data);
+    }
+
+    if(buf.area) {
+        nst_nosql_memory_free(buf.area);
+    }
+
+    if(entry) {
+        nst_nosql_memory_free(entry);
+    }
+
+    return NULL;
 }
 
 /*
