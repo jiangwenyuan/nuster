@@ -95,7 +95,7 @@ static int _nst_nosql_element_to_htx(struct nst_nosql_element *element,
     uint32_t blksz, sz, info;
     enum htx_blk_type type;
 
-    info = element->msg.len;
+    info = element->info;
     type = (info >> 28);
     blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
             ? (info & 0xff) + ((info >> 8) & 0xfffff)
@@ -110,7 +110,7 @@ static int _nst_nosql_element_to_htx(struct nst_nosql_element *element,
     blk->info = info;
     ptr = htx_get_blk_ptr(htx, blk);
     sz = htx_get_blksz(blk);
-    memcpy(ptr, element->msg.data, sz);
+    memcpy(ptr, element->data, sz);
 
     return NST_OK;
 }
@@ -441,11 +441,6 @@ static void _nst_nosql_data_cleanup() {
         while(element) {
             struct nst_nosql_element *tmp = element;
             element                       = element->next;
-
-            if(tmp->msg.data) {
-                nst_nosql_stats_update_used_mem(-tmp->msg.len);
-                nst_nosql_memory_free(tmp->msg.data);
-            }
 
             nst_nosql_memory_free(tmp);
         }
@@ -983,26 +978,22 @@ void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
     size = sizeof(*sl) + p1.len + p2.len + p3.len;
     info += size;
 
-    element = nst_nosql_memory_alloc(sizeof(*element));
+    element = nst_nosql_memory_alloc(sizeof(*element) + size);
 
     if(!element) {
         return;
     }
 
-    data = nst_nosql_memory_alloc(size);
+    data = element->data;
+
     ctx->header_len += 4 + size;
     ctx->cache_len2 += 4 + size;
-
-    if(!data) {
-        return;
-    }
 
     sl = (struct htx_sl *)data;
     sl->hdrs_bytes = -1;
 
     if(ctx->cache_len) {
-        sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_LEN
-                |HTX_SL_F_CLEN);
+        sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_LEN |HTX_SL_F_CLEN);
     } else {
         sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_ENC
                 | HTX_SL_F_XFER_LEN | HTX_SL_F_CHNK);
@@ -1015,8 +1006,7 @@ void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
     memcpy(HTX_SL_P2_PTR(sl), p2.ptr, p2.len);
     memcpy(HTX_SL_P3_PTR(sl), p3.ptr, p3.len);
 
-    element->msg.data = data;
-    element->msg.len  = info;
+    element->info = info;
 
     ctx->data->element = element;
     ctx->element = element;
@@ -1030,25 +1020,17 @@ void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
         size = ctv.len + ctk.len;
         info += (ctv.len << 8) + ctk.len;
 
-        element = nst_nosql_memory_alloc(sizeof(*element));
+        element = nst_nosql_memory_alloc(sizeof(*element) + size);
 
-        if(!element) {
-            return;
-        }
+        data = element->data;
 
-        data = nst_nosql_memory_alloc(size);
         ctx->header_len += 4 + size;
         ctx->cache_len2 += 4 + size;
-
-        if(!data) {
-            return;
-        }
 
         ist2bin_lc(data, ctk);
         memcpy(data + ctk.len, ctv.ptr, ctv.len);
 
-        element->msg.data = data;
-        element->msg.len  = info;
+        element->info = info;
 
         ctx->element->next = element;
         ctx->element = element;
@@ -1062,25 +1044,21 @@ void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
         size = k.len + v.len;
         info += (v.len << 8) + k.len;
 
-        element = nst_nosql_memory_alloc(sizeof(*element));
+        element = nst_nosql_memory_alloc(sizeof(*element) + size);
 
         if(!element) {
             return;
         }
 
-        data = nst_nosql_memory_alloc(size);
+        data = element->data;
+
         ctx->header_len += 4 + size;
         ctx->cache_len2 += 4 + size;
-
-        if(!data) {
-            return;
-        }
 
         ist2bin_lc(data, k);
         memcpy(data + k.len, v.ptr, v.len);
 
-        element->msg.data = data;
-        element->msg.len  = info;
+        element->info = info;
 
         ctx->element->next = element;
         ctx->element = element;
@@ -1092,21 +1070,17 @@ void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
     size = 1;
     info += size;
 
-    element = nst_nosql_memory_alloc(sizeof(*element));
+    element = nst_nosql_memory_alloc(sizeof(*element) + size);
 
     if(!element) {
         return;
     }
 
-    data = nst_nosql_memory_alloc(size);
+    data = element->data;
+
     ctx->header_len += 4 + size;
 
-    if(!data) {
-        return;
-    }
-
-    element->msg.data = data;
-    element->msg.len  = info;
+    element->info = info;
 
     ctx->element->next = element;
     ctx->element = element;
@@ -1211,11 +1185,10 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
         element = ctx->data->element;
 
         while(element) {
-            int sz = ((element->msg.len & 0xff)
-                    + ((element->msg.len >> 8) & 0xfffff));
+            int sz = ((element->info & 0xff) + ((element->info >> 8) & 0xfffff));
 
-            nst_persist_write(&ctx->disk, (char *)&element->msg.len, 4);
-            nst_persist_write(&ctx->disk, element->msg.data, sz);
+            nst_persist_write(&ctx->disk, (char *)&element->info, 4);
+            nst_persist_write(&ctx->disk, element->data, sz);
 
             element = element->next;
         }
@@ -1237,7 +1210,6 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
         uint32_t        sz  = htx_get_blksz(blk);
         enum htx_blk_type type = htx_get_blk_type(blk);
         struct nst_nosql_element *element;
-        char *data;
 
         if(type != HTX_BLK_DATA) {
             continue;
@@ -1247,22 +1219,15 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             ctx->cache_len2 += sz;
         } else {
-            element = nst_nosql_memory_alloc(sizeof(*element));
+            element = nst_nosql_memory_alloc(sizeof(*element) + sz);
 
             if(!element) {
                 goto err;
             }
 
-            data = nst_nosql_memory_alloc(sz);
+            memcpy(element->data, htx_get_blk_ptr(htx, blk), sz);
 
-            if(!data) {
-                goto err;
-            }
-
-            memcpy(data, htx_get_blk_ptr(htx, blk), sz);
-
-            element->msg.data = data;
-            element->msg.len  = blk->info;
+            element->info = blk->info;
 
             if(ctx->element) {
                 ctx->element->next = element;
@@ -1498,7 +1463,7 @@ void nst_nosql_persist_async() {
                 uint32_t blksz, info;
                 enum htx_blk_type type;
 
-                info = element->msg.len;
+                info = element->info;
                 type = (info >> 28);
                 blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
                         ? (info & 0xff) + ((info >> 8) & 0xfffff)
@@ -1510,7 +1475,7 @@ void nst_nosql_persist_async() {
                     header_len += 4 + blksz;
                 }
 
-                nst_persist_write(&disk, element->msg.data, blksz);
+                nst_persist_write(&disk, element->data, blksz);
 
                 cache_len += blksz;
 

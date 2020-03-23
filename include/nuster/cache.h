@@ -48,8 +48,8 @@
 struct nst_cache_element {
     struct nst_cache_element *next;
 
-    int   info;
-    char  data[0];
+    int                       info;
+    char                      data[0];
 };
 
 /*

@@ -48,7 +48,9 @@ enum {
 
 struct nst_nosql_element {
     struct nst_nosql_element *next;
-    struct nst_str            msg;
+
+    int                       info;
+    char                      data[0];
 };
 
 /*
