@@ -12,78 +12,7 @@
 
 #include <nuster/http.h>
 
-/*
- * Used by cache, should move to new one
- */
-const char *nst_http_msgs[NST_HTTP_SIZE] = {
-    [NST_HTTP_200] =
-        "HTTP/1.0 200 OK\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "200 OK\n",
-
-    [NST_HTTP_400] =
-        "HTTP/1.0 400 Bad request\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "400 Bad request\n",
-
-    [NST_HTTP_404] =
-        "HTTP/1.0 404 Not Found\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "404 Not Found\n",
-
-    [NST_HTTP_405] =
-        "HTTP/1.0 405 Method Not Allowed\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "405 Method Not Allowed\n",
-
-    [NST_HTTP_500] =
-        "HTTP/1.0 500 Internal Server Error\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "500 Internal Server Error\n",
-
-    [NST_HTTP_507] =
-        "HTTP/1.0 507 Insufficient Storage\r\n"
-        "Cache-Control: no-cache\r\n"
-        "Connection: close\r\n"
-        "Content-Type: text/plain\r\n"
-        "\r\n"
-        "507 Insufficient Storage\n",
-};
-
-struct buffer nst_http_msg_chunks[NST_HTTP_SIZE];
-
-struct nst_headers nst_headers = {
-    .server            = nst_str_set("Server"),
-    .date              = nst_str_set("Date"),
-    .content_length    = nst_str_set("Content-Length"),
-    .content_type      = nst_str_set("Content-Type"),
-    .transfer_encoding = nst_str_set("Transfer-Encoding"),
-    .last_modified     = nst_str_set("Last-Modified"),
-    .expires           = nst_str_set("Expires"),
-    .cache_control     = nst_str_set("Cache-Control"),
-    .etag              = nst_str_set("ETag"),
-};
-
-
-
-int nst_req_find_param(char *query_beg, char *query_end,
-        char *name, char **value, int *value_len) {
-
+int nst_req_find_param(char *query_beg, char *query_end, char *name, char **value, int *value_len) {
     char equal   = '=';
     char and     = '&';
     char *ptr    = query_beg;
@@ -229,6 +158,63 @@ void nst_res_412(struct stream *s) {
     channel_auto_read(res);
     channel_auto_close(res);
     channel_shutr_now(res);
+    return;
+
+fail:
+    channel_htx_truncate(res, htx);
+}
+
+void nst_res_simple(struct stream *s, int status) {
+
+    struct channel *res = &s->res;
+    struct htx *htx = htx_from_buf(&res->buf);
+    struct htx_sl *sl;
+    struct ist code;
+    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
+
+    switch(status) {
+        case 200:
+            code = ist("200");
+            break;
+        case 500:
+            code = ist("500");
+            break;
+        case 405:
+            code = ist("405");
+            break;
+        case 404:
+            code = ist("404");
+            break;
+        case 400:
+            code = ist("400");
+            break;
+        case 507:
+            code = ist("507");
+            break;
+        default:
+            code = ist("500");
+    }
+
+    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), code,
+            ist2(http_get_reason(status), strlen(http_get_reason(status))));
+
+    if(!sl) {
+        goto fail;
+    }
+
+    sl->info.res.status = status;
+    s->txn->status = status;
+
+    if(!htx_add_endof(htx, HTX_BLK_EOH)) {
+        goto fail;
+    }
+
+    if(!htx_add_endof(htx, HTX_BLK_EOM)) {
+        goto fail;
+    }
+
+    channel_add_input(res, htx->data);
+    htx_to_buf(htx, &res->buf);
     return;
 
 fail:

@@ -30,63 +30,6 @@
 #include <proto/http_htx.h>
 #include <common/htx.h>
 
-static void nst_res_simple2(struct stream *s, int status) {
-
-    struct channel *res = &s->res;
-    struct htx *htx = htx_from_buf(&res->buf);
-    struct htx_sl *sl;
-    struct ist code;
-    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
-
-    switch(status) {
-        case 200:
-            code = ist("200");
-            break;
-        case 500:
-            code = ist("500");
-            break;
-        case 405:
-            code = ist("405");
-            break;
-        case 404:
-            code = ist("404");
-            break;
-        case 400:
-            code = ist("400");
-            break;
-        case 507:
-            code = ist("507");
-            break;
-        default:
-            code = ist("500");
-    }
-
-    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), code,
-            ist2(http_get_reason(status), strlen(http_get_reason(status))));
-
-    if(!sl) {
-        goto fail;
-    }
-
-    sl->info.res.status = status;
-    s->txn->status = status;
-
-    if(!htx_add_endof(htx, HTX_BLK_EOH)) {
-        goto fail;
-    }
-
-    if(!htx_add_endof(htx, HTX_BLK_EOM)) {
-        goto fail;
-    }
-
-    channel_add_input(res, htx->data);
-    htx_to_buf(htx, &res->buf);
-    return;
-
-fail:
-    channel_htx_truncate(res, htx);
-}
-
 static int _nst_nosql_element_to_htx(struct nst_nosql_element *element,
         struct htx *htx) {
 
@@ -321,27 +264,27 @@ out2:
             break;
         case NST_NOSQL_APPCTX_STATE_ERROR:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_res_simple2(s, 500);
+            nst_res_simple(s, 500);
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_res_simple2(s, 405);
+            nst_res_simple(s, 405);
             break;
         case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_res_simple2(s, 404);
+            nst_res_simple(s, 404);
             break;
         case NST_NOSQL_APPCTX_STATE_EMPTY:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_res_simple2(s, 400);
+            nst_res_simple(s, 400);
             break;
         case NST_NOSQL_APPCTX_STATE_FULL:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_res_simple2(s, 507);
+            nst_res_simple(s, 507);
             break;
         case NST_NOSQL_APPCTX_STATE_END:
             appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_res_simple2(s, 200);
+            nst_res_simple(s, 200);
             break;
         case NST_NOSQL_APPCTX_STATE_WAIT:
             break;
@@ -626,7 +569,13 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req,
 
         if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
             txn->status = 500;
-            nst_response(s, &nst_http_msg_chunks[NST_HTTP_500]);
+
+            http_reply_and_close(s, txn->status, http_error_message(s));
+
+            if(!(s->flags & SF_ERR_MASK)) {
+                s->flags |= SF_ERR_LOCAL;
+            }
+
             return 1;
         } else {
             appctx      = si_appctx(si);
