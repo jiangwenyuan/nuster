@@ -1682,6 +1682,11 @@ nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s, struc
     }
 }
 
+/*
+ * return:
+ * 1: http_headers should return 1 immediately
+ * 0: http_headers should proceed
+ */
 int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s,
         struct http_msg *msg) {
 
@@ -1696,7 +1701,7 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s
     htx = htxbuf(&s->req.buf);
 
     if(rule->etag != NST_STATUS_ON && rule->last_modified != NST_STATUS_ON) {
-        return 200;
+        return 0;
     }
 
     if(rule->etag == NST_STATUS_ON) {
@@ -1707,6 +1712,7 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s
 
             if(1 == hdr.value.len && *(hdr.value.ptr) == '*') {
                 if_match = 200;
+
                 break;
             }
 
@@ -1718,7 +1724,7 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s
         }
 
         if(if_match == 412) {
-            return if_match;
+            goto code412;
         }
     }
 
@@ -1727,7 +1733,7 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s
         if(http_find_header(htx, ist("If-Unmodified-Since"), &hdr, 1)) {
 
             if(!isteq(ctx->res.last_modified, hdr.value)) {
-                return 412;
+                goto code412;
             }
         }
     }
@@ -1765,14 +1771,26 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s
     }
 
     if(if_none_match == 304 && if_modified_since != 200) {
-        return 304;
+        goto code304;
     }
 
     if(if_none_match != 200 && if_modified_since == 304) {
-        return 304;
+        goto code304;
     }
 
-    return 200;
+    return 0;
+
+code304:
+
+    nst_res_304(s, ctx->res.last_modified, ctx->res.etag);
+
+    return 1;
+
+code412:
+
+    nst_res_412(s);
+
+    return 1;
 }
 
 

@@ -201,23 +201,11 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     ctx->state = nst_cache_exists(ctx);
 
                     if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
-                        int ret;
+                        /* OK, cache exists */
 
                         nst_debug2("HIT memory\n");
 
-                        /* OK, cache exists */
-
-                        ret = nst_cache_handle_conditional_req(ctx, s, msg);
-
-                        if(ret == 304) {
-                            nst_res_304(s, ctx->res.last_modified, ctx->res.etag);
-
-                            return 1;
-                        }
-
-                        if(ret == 412) {
-                            nst_res_412(s);
-
+                        if(nst_cache_handle_conditional_req(ctx, s, msg)) {
                             return 1;
                         }
 
@@ -225,11 +213,9 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     }
 
                     if(ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
-                        int ret;
+                        /* OK, cache exists */
 
                         nst_debug2("HIT disk\n");
-
-                        /* OK, cache exists */
 
                         if(ctx->rule->etag == NST_STATUS_ON) {
                             ctx->res.etag.ptr = ctx->buf->area + ctx->buf->data;
@@ -254,20 +240,11 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                             }
                         }
 
-                        ret = nst_cache_handle_conditional_req(ctx, s, msg);
-
-                        if(ret == 304) {
-                            nst_res_304(s, ctx->res.last_modified, ctx->res.etag);
-
+                        if(nst_cache_handle_conditional_req(ctx, s, msg)) {
                             return 1;
                         }
 
-                        if(ret == 412) {
-                            nst_res_412(s);
-
-                            return 1;
-                        }
-
+                        break;
                     }
 
                     nst_debug2("MISS\n");
