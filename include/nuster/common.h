@@ -68,13 +68,6 @@ enum {
     NST_MODE_NOSQL,
 };
 
-#define nst_str_set(str)     { (char *) str, sizeof(str) - 1 }
-
-struct nst_str {
-    char *data;
-    int   len;
-};
-
 enum nst_key_element_type {
     /* method: GET, POST... */
     NST_KEY_ELEMENT_METHOD = 1,
@@ -252,18 +245,6 @@ static inline int nst_key_catist(struct ist v) {
     }
 
     memcpy(trash.area + trash.data, v.ptr, v.len);
-    trash.data += v.len + 1;
-
-    return NST_OK;
-}
-
-static inline int nst_key_catstr(struct nst_str v) {
-    /* additional one NULL delimiter */
-    if(trash.data + v.len + 1 > trash.size) {
-        return NST_ERR;
-    }
-
-    memcpy(trash.area + trash.data, v.data, v.len);
     trash.data += v.len + 1;
 
     return NST_OK;

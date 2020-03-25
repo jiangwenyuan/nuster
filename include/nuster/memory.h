@@ -121,8 +121,8 @@ static inline void _nst_memory_block_clear_full(struct nst_memory_ctrl *block) {
     bit_clear(block->info, 11);
 }
 
-struct nst_memory *nst_memory_create(char *name, uint64_t size,
-        uint32_t block_size, uint32_t chunk_size);
+struct nst_memory *
+nst_memory_create(char *name, uint64_t size, uint32_t block_size, uint32_t chunk_size);
 
 void *nst_memory_alloc(struct nst_memory *memory, int size);
 void nst_memory_free(struct nst_memory *memory, void *p);

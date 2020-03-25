@@ -217,8 +217,7 @@ extern struct flt_ops  nst_nosql_filter_ops;
 /* engine */
 void nst_nosql_init();
 void nst_nosql_housekeeping();
-int nst_nosql_check_applet(struct stream *s, struct channel *req,
-        struct proxy *px);
+int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);
 
 struct nst_nosql_data *nst_nosql_data_new();
 int nst_nosql_parse_htx(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
@@ -229,18 +228,16 @@ uint64_t nst_nosql_hash_key(const char *key);
 int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode);
 int nst_nosql_delete(struct nst_key *key);
 
-void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
+void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
 
-int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
-        unsigned int offset, unsigned int msg_len);
+int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg, unsigned int offset,
+        unsigned int msg_len);
 
 int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
 
 void nst_nosql_abort(struct nst_nosql_ctx *ctx);
 
-int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s,
-        struct http_msg *msg);
+int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);
 
 void nst_nosql_persist_async();
 void nst_nosql_persist_cleanup();
@@ -282,8 +279,7 @@ static inline int nst_nosql_entry_invalid(struct nst_nosql_entry *entry) {
     return nst_nosql_dict_entry_expired(entry);
 }
 
-#define nst_nosql_memory_alloc(size)                                          \
-    nst_memory_alloc(global.nuster.nosql.memory, size)
-#define nst_nosql_memory_free(p) nst_memory_free(global.nuster.nosql.memory, p);
+#define nst_nosql_memory_alloc(size)    nst_memory_alloc(global.nuster.nosql.memory, size)
+#define nst_nosql_memory_free(p)        nst_memory_free(global.nuster.nosql.memory, p)
 
 #endif /* _NUSTER_NOSQL_H */
