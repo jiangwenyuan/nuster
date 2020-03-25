@@ -147,14 +147,13 @@ struct nst_cache_ctx {
     struct buffer            *buf;
 
     struct {
+        int                   scheme;
         struct ist            host;
         struct ist            uri;
         struct ist            path;
+        int                   delimiter;
         struct ist            query;
         struct ist            cookie;
-
-        int                   scheme;
-        int                   delimiter;
     } req;
 
     struct {
@@ -171,6 +170,7 @@ struct nst_cache_ctx {
 
     int                       rule_cnt;
     int                       key_cnt;
+    struct buffer            *key;
     struct nst_rule          *rule;
     struct nst_key            keys[0];
 };

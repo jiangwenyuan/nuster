@@ -221,41 +221,43 @@ void nst_debug(struct stream *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
 void nst_debug_key(struct nst_key *key);
 
-static inline void nst_key_init() {
-    trash.head = 0;
-    trash.data = 0;
-    memset(trash.area, 0, trash.size);
+static inline struct buffer *nst_key_init() {
+    struct buffer *key = get_trash_chunk();
+
+    memset(key->area, 0, key->size);
+
+    return key;
 }
 
-static inline int nst_key_cat(const char *ptr, int len) {
-    if(trash.data + len > trash.size) {
+static inline int nst_key_cat(struct buffer *key, const char *ptr, int len) {
+    if(key->data + len > key->size) {
         return NST_ERR;
     }
 
-    memcpy(trash.area + trash.data, ptr, len);
-    trash.data += len;
+    memcpy(key->area + key->data, ptr, len);
+    key->data += len;
 
     return NST_OK;
 }
 
-static inline int nst_key_catist(struct ist v) {
+static inline int nst_key_catist(struct buffer *key, struct ist v) {
     /* additional one NULL delimiter */
-    if(trash.data + v.len + 1 > trash.size) {
+    if(key->data + v.len + 1 > key->size) {
         return NST_ERR;
     }
 
-    memcpy(trash.area + trash.data, v.ptr, v.len);
-    trash.data += v.len + 1;
+    memcpy(key->area + key->data, v.ptr, v.len);
+    key->data += v.len + 1;
 
     return NST_OK;
 }
 
-static inline int nst_key_catdel() {
-    if(trash.data + 1 > trash.size) {
+static inline int nst_key_catdel(struct buffer *key) {
+    if(key->data + 1 > key->size) {
         return NST_ERR;
     }
 
-    trash.data += 1;
+    key->data += 1;
 
     return NST_OK;
 }

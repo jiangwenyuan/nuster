@@ -608,8 +608,7 @@ int nst_nosql_parse_htx(struct nst_nosql_ctx *ctx, struct stream *s, struct http
 
     struct htx_sl *sl;
     struct ist url, uri;
-    char *uri_begin, *uri_end;
-    char *ptr;
+    char *uri_begin, *uri_end, *ptr;
 
     ctx->req.scheme = SCH_HTTP;
 
@@ -630,7 +629,7 @@ int nst_nosql_parse_htx(struct nst_nosql_ctx *ctx, struct stream *s, struct http
     url = htx_sl_req_uri(sl);
     uri = http_get_path(url);
 
-    if (!uri.len || *uri.ptr != '/') {
+    if(!uri.len || *uri.ptr != '/') {
         return NST_ERR;
     }
 
@@ -683,7 +682,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
     struct nst_key_element *ck = NULL;
     struct nst_key_element **pck = ctx->rule->key->data;
 
-    nst_key_init();
+    ctx->key = nst_key_init();
 
     nst_debug(s, "[nosql] Calculate key: ");
 
@@ -693,24 +692,26 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
         switch(ck->type) {
             case NST_KEY_ELEMENT_METHOD:
                 nst_debug2("method.");
-                ret = nst_key_catist(http_known_methods[HTTP_METH_GET]);
+
+                ret = nst_key_catist(ctx->key, http_known_methods[HTTP_METH_GET]);
 
                 break;
             case NST_KEY_ELEMENT_SCHEME:
+                nst_debug2("scheme.");
+
                 {
-                    struct ist https = IST("HTTPS");
-                    struct ist http  = IST("HTTP");
-                    nst_debug2("scheme.");
-                    ret = nst_key_catist(ctx->req.scheme == SCH_HTTPS ? https : http);
+                    struct ist scheme = ctx->req.scheme == SCH_HTTPS ? ist("HTTPS") : ist("HTTP");
+                    ret = nst_key_catist(ctx->key, scheme);
                 }
+
                 break;
             case NST_KEY_ELEMENT_HOST:
                 nst_debug2("host.");
 
                 if(ctx->req.host.len) {
-                    ret = nst_key_catist(ctx->req.host);
+                    ret = nst_key_catist(ctx->key, ctx->req.host);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -718,9 +719,9 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 nst_debug2("uri.");
 
                 if(ctx->req.uri.len) {
-                    ret = nst_key_catist(ctx->req.uri);
+                    ret = nst_key_catist(ctx->key, ctx->req.uri);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -728,9 +729,9 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 nst_debug2("path.");
 
                 if(ctx->req.path.len) {
-                    ret = nst_key_catist(ctx->req.path);
+                    ret = nst_key_catist(ctx->key, ctx->req.path);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -738,10 +739,9 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 nst_debug2("delimiter.");
 
                 if(ctx->req.delimiter) {
-                    struct ist delimiter = IST("?");
-                    ret = nst_key_catist(delimiter);
+                    ret = nst_key_catist(ctx->key, ist("?"));
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -749,9 +749,9 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                 nst_debug2("query.");
 
                 if(ctx->req.query.len) {
-                    ret = nst_key_catist(ctx->req.query);
+                    ret = nst_key_catist(ctx->key, ctx->req.query);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -766,12 +766,12 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                                 ctx->req.query.ptr + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NST_OK) {
 
-                        ret = nst_key_catist(ist2(v, v_l));
+                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
                         break;
                     }
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             case NST_KEY_ELEMENT_HEADER:
                 {
@@ -785,7 +785,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                     nst_debug2("header_%s.", ck->data);
 
                     while (http_find_header(htx, h, &hdr, 0)) {
-                        ret = nst_key_catist(hdr.value);
+                        ret = nst_key_catist(ctx->key, hdr.value);
 
                         if(ret == NST_ERR) {
                             break;
@@ -793,7 +793,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                     }
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             case NST_KEY_ELEMENT_COOKIE:
                 nst_debug2("cookie_%s.", ck->data);
@@ -806,13 +806,13 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                                 ctx->req.cookie.ptr + ctx->req.cookie.len,
                                 ck->data, strlen(ck->data), 1, &v, &v_l)) {
 
-                        ret = nst_key_catist(ist2(v, v_l));
+                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
                         break;
                     }
 
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             case NST_KEY_ELEMENT_BODY:
                 nst_debug2("body.");
@@ -831,7 +831,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                             continue;
                         }
 
-                        ret = nst_key_cat(htx_get_blk_ptr(htx, blk), sz);
+                        ret = nst_key_cat(ctx->key, htx_get_blk_ptr(htx, blk), sz);
 
                         if(ret != NST_OK) {
                             break;
@@ -839,7 +839,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
                     }
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             default:
                 ret = NST_ERR;

@@ -303,8 +303,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
     int cur_arg  = 1;
 
     if(global.nuster.cache.status != NST_STATUS_UNDEFINED) {
-        ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file,
-                linenum, args[0]);
+        ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
 
         err_code |= ERR_ALERT;
         goto out;
@@ -334,8 +333,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
         calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
 
     if(!global.nuster.cache.purge_method) {
-        ha_alert("parsing [%s:%d]: '%s' : out of memory.\n", file, linenum,
-                args[0]);
+        ha_alert("parsing [%s:%d]: '%s' : out of memory.\n", file, linenum, args[0]);
 
         err_code = ERR_ALERT | ERR_FATAL;
         goto out;
@@ -407,17 +405,13 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                 goto out;
             }
 
-            memset(global.nuster.cache.purge_method, 0,
-                    NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
+            memset(global.nuster.cache.purge_method, 0, NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
 
-            if(strlen(args[cur_arg])
-                    <= NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
+            if(strlen(args[cur_arg]) <= NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
 
-                memcpy(global.nuster.cache.purge_method, args[cur_arg],
-                        strlen(args[cur_arg]));
+                memcpy(global.nuster.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
 
-                memcpy(global.nuster.cache.purge_method + strlen(args[cur_arg]),
-                        " ", 1);
+                memcpy(global.nuster.cache.purge_method + strlen(args[cur_arg]), " ", 1);
 
             } else {
                 memcpy(global.nuster.cache.purge_method, args[cur_arg],
@@ -436,8 +430,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `uri` expect an URI.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s': `uri` expect an URI.\n", file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
@@ -569,8 +562,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum,
-                args[cur_arg]);
+        ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
         goto out;
@@ -787,8 +779,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             continue;
         }
 
-        ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum,
-                args[cur_arg]);
+        ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
         goto out;
@@ -808,8 +799,7 @@ int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
     list_for_each_entry(fconf, &px->filter_configs, list) {
 
         if(fconf->id == nst_cache_flt_id) {
-            memprintf(err, "%s: Proxy supports only one cache filter\n",
-                    px->id);
+            memprintf(err, "%s: Proxy supports only one cache filter\n", px->id);
 
             return -1;
         }
@@ -865,8 +855,7 @@ int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
     list_for_each_entry(fconf, &px->filter_configs, list) {
 
         if(fconf->id == nst_nosql_flt_id) {
-            memprintf(err, "%s: Proxy supports only one nosql filter\n",
-                    px->id);
+            memprintf(err, "%s: Proxy supports only one nosql filter\n", px->id);
 
             return -1;
         }
@@ -983,9 +972,10 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
                 goto out;
             }
 
-            /* "d", "h", "m", "s"
+            /*
+             * "d", "h", "m", "s"
              * s is returned
-             * */
+             */
             if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&ttl)) {
                 memprintf(err, "'%s %s': invalid ttl.", args[0], name);
                 goto out;
@@ -1204,7 +1194,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
         }
     }
 
-    rule       = malloc(sizeof(*rule));
+    rule = malloc(sizeof(*rule));
 
     rule->id   = -1;
     rule->name = strdup(name);
@@ -1256,8 +1246,7 @@ int nst_parse_proxy(char **args, int section, struct proxy *px,
         struct proxy *defpx, const char *file, int line, char **err) {
 
     if(px->cap != PR_CAP_BE) {
-        memprintf(err, "[proxy] '%s' is only allowed in 'backend' section.",
-                args[0]);
+        memprintf(err, "[proxy] '%s' is only allowed in 'backend' section.", args[0]);
 
         return -1;
     }
@@ -1265,17 +1254,11 @@ int nst_parse_proxy(char **args, int section, struct proxy *px,
     if(*args[1]) {
 
         if(!strcmp(args[1], "cache")) {
-            return nst_parse_proxy_cache(args, section, px, defpx, file,
-                    line, err);
-
+            return nst_parse_proxy_cache(args, section, px, defpx, file, line, err);
         } else if(!strcmp(args[1], "nosql")) {
-            return nst_parse_proxy_nosql(args, section, px, defpx, file,
-                    line, err);
-
+            return nst_parse_proxy_nosql(args, section, px, defpx, file, line, err);
         } else if(!strcmp(args[1], "rule")) {
-            return nst_parse_proxy_rule(args, section, px, defpx, file,
-                    line, err);
-
+            return nst_parse_proxy_rule(args, section, px, defpx, file, line, err);
         } else {
             memprintf(err, "%s: expects [cache|rule]", args[0]);
             return -1;

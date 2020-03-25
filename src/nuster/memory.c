@@ -31,8 +31,8 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
     }
 
     if(block_size > NST_MEMORY_BLOCK_MAX_SIZE) {
-        fprintf(stderr, "tune.bufsize exceeds the maximum %d.\n",
-                NST_MEMORY_BLOCK_MAX_SIZE);
+        fprintf(stderr, "tune.bufsize exceeds the maximum %d.\n", NST_MEMORY_BLOCK_MAX_SIZE);
+
         return NULL;
     }
 
@@ -45,8 +45,10 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
      * 2: = (2**n) * NST_MEMORY_BLOCK_MIN_SIZE
      */
     for(n = NST_MEMORY_BLOCK_MIN_SHIFT; n <= NST_MEMORY_BLOCK_MAX_SHIFT; n++) {
+
         if(1UL << n >= block_size) {
             block_size = 1UL << n;
+
             break;
         }
     }
@@ -60,17 +62,18 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
 
     if(chunk_size > block_size) {
         fprintf(stderr, "chunk_size cannot be greater than block_size.\n");
+
         return NULL;
     }
 
     size = (size + block_size - 1) / block_size * block_size;
 
     /* create shared memory */
-    p = (uint8_t *) mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_ANON|MAP_SHARED,
-            -1, 0);
+    p = (uint8_t *) mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_ANON|MAP_SHARED, -1, 0);
 
     if(p == MAP_FAILED) {
         fprintf(stderr, "Out of memory when initialization.\n");
+
         return NULL;
     }
 
@@ -108,8 +111,7 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
     bitmap_size = block_size / chunk_size / 8;
 
     /* set data begin */
-    n = (memory->stop - p)
-        / (sizeof(struct nst_memory_ctrl) + block_size + bitmap_size);
+    n = (memory->stop - p) / (sizeof(struct nst_memory_ctrl) + block_size + bitmap_size);
 
     begin = (uint8_t *) (((uintptr_t)(p)
                 + n * sizeof(struct nst_memory_ctrl) + n * bitmap_size
@@ -120,10 +122,8 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
 
     if(memory->stop < end) {
         n--;
-        begin = (uint8_t *) (((uintptr_t)(p)
-                    + n * sizeof(struct nst_memory_ctrl)
-                    + n * bitmap_size
-                    + ((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1))
+        begin = (uint8_t *) (((uintptr_t)(p) + n * sizeof(struct nst_memory_ctrl)
+                    + n * bitmap_size + ((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1))
                 & ~((uintptr_t) NST_MEMORY_BLOCK_MIN_SIZE - 1));
     }
 
@@ -133,8 +133,7 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
     memory->data.free  = begin;
     memory->data.end   = begin + block_size * (n - 1);
 
-    n = sizeof(struct nst_memory)
-        + sizeof(struct nst_memory_ctrl *) * memory->chunks
+    n = sizeof(struct nst_memory) + sizeof(struct nst_memory_ctrl *) * memory->chunks
         + sizeof(struct nst_memory_ctrl) * n;
 
     if(memory->blocks == 0 || memory->data.end + block_size > memory->stop) {
@@ -194,6 +193,7 @@ void *_nst_memory_block_alloc(struct nst_memory *memory,
 
             if(*v == ~0ULL && unset) {
                 bits_idx += 64;
+
                 continue;
             }
 
@@ -206,6 +206,7 @@ void *_nst_memory_block_alloc(struct nst_memory *memory,
 
             if(*v != ~0ULL) {
                 full = 0;
+
                 break;
             }
         }
@@ -237,10 +238,11 @@ void *_nst_memory_block_alloc(struct nst_memory *memory,
             + chunk_size * bits_idx);
 }
 
-void _nst_memory_block_init(struct nst_memory * memory,
-        struct nst_memory_ctrl *block, int chunk_idx) {
+void
+_nst_memory_block_init(struct nst_memory * memory, struct nst_memory_ctrl *block, int chunk_idx) {
 
     struct nst_memory_ctrl *chunk;
+
     chunk       = memory->chunk[chunk_idx];
     block->info = 0;
     _nst_memory_block_set_type(block, chunk_idx);
@@ -290,8 +292,7 @@ void *nst_memory_alloc_locked(struct nst_memory *memory, int size) {
     }
     /* require new block from unused */
     else if(memory->data.free <= memory->data.end) {
-        int block_idx      = (memory->data.free - memory->data.begin)
-            / memory->block_size;
+        int block_idx = (memory->data.free - memory->data.begin) / memory->block_size;
 
         memory->data.free += memory->block_size;
         block              = &memory->block[block_idx];
@@ -311,9 +312,11 @@ void *nst_memory_alloc_locked(struct nst_memory *memory, int size) {
 
 void *nst_memory_alloc(struct nst_memory *memory, int size) {
     void *p;
+
     nst_shctx_lock(memory);
     p = nst_memory_alloc_locked(memory, size);
     nst_shctx_unlock(memory);
+
     return p;
 }
 
@@ -332,12 +335,12 @@ void nst_memory_free_locked(struct nst_memory *memory, void *p) {
     chunk      = memory->chunk[chunk_idx];
     chunk_size = 1<<(memory->chunk_shift + chunk_idx);
     bits       = memory->block_size / chunk_size;
-    bits_idx   = ((uint8_t *)p
-            - (memory->data.begin + block_idx * memory->block_size))
-        / chunk_size;
 
-    empty      = 0;
-    full       = _nst_memory_block_is_full(block);
+    bits_idx = ((uint8_t *)p - (memory->data.begin + block_idx * memory->block_size)) / chunk_size;
+
+    empty = 0;
+    full  = _nst_memory_block_is_full(block);
+
     _nst_memory_block_clear_full(block);
 
     /* info used */
@@ -351,8 +354,7 @@ void nst_memory_free_locked(struct nst_memory *memory, void *p) {
     /* bitmap used */
     else {
         int i;
-        *((uint64_t *)block->bitmap + bits_idx / 64 ) &=
-            ~(1ULL<<(bits_idx % 64));
+        *((uint64_t *)block->bitmap + bits_idx / 64 ) &= ~(1ULL<<(bits_idx % 64));
 
         for(i = 0; i < bits / 64; i++) {
 

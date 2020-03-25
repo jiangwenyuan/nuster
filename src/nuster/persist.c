@@ -50,8 +50,7 @@ int nst_persist_mkdir(char *path) {
 }
 
 int nst_persist_init(char *root, char *path, uint64_t hash) {
-    sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
-            hash >> 60, hash >> 56, hash);
+    sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root, hash >> 60, hash >> 56, hash);
 
     nst_debug2("[nuster][persist] Path: %s\n", path);
 
@@ -197,9 +196,9 @@ int nst_persist_get_key(int fd, char *meta, struct nst_key *key) {
 }
 
 int nst_persist_get_host(int fd, char *meta, struct ist host) {
+    int ret;
 
-    int ret = pread(fd, host.ptr, host.len, NST_PERSIST_POS_KEY
-            + nst_persist_meta_get_key_len(meta));
+    ret = pread(fd, host.ptr, host.len, NST_PERSIST_POS_KEY + nst_persist_meta_get_key_len(meta));
 
     if(ret != host.len) {
         return NST_ERR;
@@ -274,12 +273,10 @@ void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
 
     while((de2 = readdir(dir2)) != NULL) {
 
-        if(strcmp(de2->d_name, ".") != 0
-                && strcmp(de2->d_name, "..") != 0) {
+        if(strcmp(de2->d_name, ".") != 0 && strcmp(de2->d_name, "..") != 0) {
 
             memcpy(path + nst_persist_path_hash_len(root), "/", 1);
-            memcpy(path + nst_persist_path_hash_len(root) + 1, de2->d_name,
-                    strlen(de2->d_name));
+            memcpy(path + nst_persist_path_hash_len(root) + 1, de2->d_name, strlen(de2->d_name));
 
             fd = nst_persist_open(path);
 

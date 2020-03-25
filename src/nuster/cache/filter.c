@@ -81,7 +81,7 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
 
         ctx = malloc(size);
 
-        if(ctx == NULL ) {
+        if(ctx == NULL) {
             return 0;
         }
 
@@ -106,7 +106,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 
     if(filter->ctx) {
         int i;
-        struct nst_cache_ctx *ctx    = filter->ctx;
+        struct nst_cache_ctx *ctx = filter->ctx;
 
         nst_cache_stats_update_req(ctx->state);
 
@@ -141,13 +141,13 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
     struct nst_cache_ctx *ctx   = filter->ctx;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
+        /* request */
 
         /* check http method */
         if(s->txn->meth == HTTP_METH_OTHER) {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
         }
 
-        /* request */
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
             int i = 0;
 

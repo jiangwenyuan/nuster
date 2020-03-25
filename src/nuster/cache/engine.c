@@ -544,10 +544,9 @@ int nst_cache_parse_htx(struct nst_cache_ctx *ctx, struct stream *s, struct http
     struct htx *htx = htxbuf(&s->req.buf);
     struct http_hdr_ctx hdr = { .blk = NULL };
 
-    char *uri_begin, *uri_end;
     struct htx_sl *sl;
     struct ist url, uri;
-    char *ptr;
+    char *uri_begin, *uri_end, *ptr;
 
     ctx->req.scheme = SCH_HTTP;
 
@@ -617,10 +616,11 @@ int nst_cache_parse_htx(struct nst_cache_ctx *ctx, struct stream *s, struct http
 int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
     struct http_txn *txn = s->txn;
+
     struct nst_key_element *ck = NULL;
     struct nst_key_element **pck = ctx->rule->key->data;
 
-    nst_key_init();
+    ctx->key = nst_key_init();
 
     nst_debug(s, "[cache] Calculate key: ");
 
@@ -630,24 +630,26 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
         switch(ck->type) {
             case NST_KEY_ELEMENT_METHOD:
                 nst_debug2("method.");
-                ret = nst_key_catist(http_known_methods[txn->meth]);
+
+                ret = nst_key_catist(ctx->key, http_known_methods[txn->meth]);
 
                 break;
             case NST_KEY_ELEMENT_SCHEME:
+                nst_debug2("scheme.");
+
                 {
-                    struct ist https = IST("HTTPS");
-                    struct ist http  = IST("HTTP");
-                    nst_debug2("scheme.");
-                    ret = nst_key_catist(ctx->req.scheme == SCH_HTTPS ? https : http);
+                    struct ist scheme = ctx->req.scheme == SCH_HTTPS ? ist("HTTPS") : ist("HTTP");
+                    ret = nst_key_catist(ctx->key, scheme);
                 }
+
                 break;
             case NST_KEY_ELEMENT_HOST:
                 nst_debug2("host.");
 
                 if(ctx->req.host.len) {
-                    ret = nst_key_catist(ctx->req.host);
+                    ret = nst_key_catist(ctx->key, ctx->req.host);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -655,9 +657,9 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                 nst_debug2("uri.");
 
                 if(ctx->req.uri.len) {
-                    ret = nst_key_catist(ctx->req.uri);
+                    ret = nst_key_catist(ctx->key, ctx->req.uri);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -665,9 +667,9 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                 nst_debug2("path.");
 
                 if(ctx->req.path.len) {
-                    ret = nst_key_catist(ctx->req.path);
+                    ret = nst_key_catist(ctx->key, ctx->req.path);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -675,10 +677,9 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                 nst_debug2("delimiter.");
 
                 if(ctx->req.delimiter) {
-                    struct ist delimiter = IST("?");
-                    ret = nst_key_catist(delimiter);
+                    ret = nst_key_catist(ctx->key, ist("?"));
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -686,9 +687,9 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                 nst_debug2("query.");
 
                 if(ctx->req.query.len) {
-                    ret = nst_key_catist(ctx->req.query);
+                    ret = nst_key_catist(ctx->key, ctx->req.query);
                 } else {
-                    ret = nst_key_catdel();
+                    ret = nst_key_catdel(ctx->key);
                 }
 
                 break;
@@ -703,12 +704,12 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                                 ctx->req.query.ptr + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NST_OK) {
 
-                        ret = nst_key_catist(ist2(v, v_l));
+                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
                         break;
                     }
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             case NST_KEY_ELEMENT_HEADER:
                 {
@@ -722,7 +723,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                     nst_debug2("header_%s.", ck->data);
 
                     while(http_find_header(htx, h, &hdr, 0)) {
-                        ret = nst_key_catist(hdr.value);
+                        ret = nst_key_catist(ctx->key, hdr.value);
 
                         if(ret == NST_ERR) {
                             break;
@@ -730,7 +731,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                     }
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             case NST_KEY_ELEMENT_COOKIE:
                 nst_debug2("cookie_%s.", ck->data);
@@ -743,13 +744,13 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                                 ctx->req.cookie.ptr + ctx->req.cookie.len,
                                 ck->data, strlen(ck->data), 1, &v, &v_l)) {
 
-                        ret = nst_key_catist(ist2(v, v_l));
+                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
                         break;
                     }
 
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             case NST_KEY_ELEMENT_BODY:
                 nst_debug2("body.");
@@ -768,7 +769,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                             continue;
                         }
 
-                        ret = nst_key_cat(htx_get_blk_ptr(htx, blk), sz);
+                        ret = nst_key_cat(ctx->key, htx_get_blk_ptr(htx, blk), sz);
 
                         if(ret != NST_OK) {
                             break;
@@ -776,7 +777,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                     }
                 }
 
-                ret = nst_key_catdel();
+                ret = nst_key_catdel(ctx->key);
                 break;
             default:
                 ret = NST_ERR;
@@ -793,14 +794,14 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
 }
 
 int nst_cache_store_key(struct nst_cache_ctx *ctx, struct nst_key *key) {
-    key->size = trash.data;
+    key->size = ctx->key->data;
     key->data = malloc(key->size);
 
     if(!key->data) {
         return NST_ERR;
     }
 
-    memcpy(key->data, trash.area, trash.data);
+    memcpy(key->data, ctx->key->area, ctx->key->data);
 
     return NST_OK;
 }
@@ -815,14 +816,12 @@ int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst
 
     struct htx *htx = htxbuf(&s->req.buf);
     struct http_hdr_ctx hdr = { .blk = NULL };
-    struct ist ist_method = IST("GET");
-    struct ist ist_https = IST("HTTPS");
-    struct ist ist_http  = IST("HTTP");
+    struct buffer *buf;
 
     /* method.scheme.host.uri */
-    nst_key_init();
+    buf = nst_key_init();
 
-    ret = nst_key_catist(ist_method);
+    ret = nst_key_catist(buf, ist("GET"));
 
     if(ret != NST_OK) {
         return NST_ERR;
@@ -835,14 +834,14 @@ int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst
     }
 #endif
 
-    ret = nst_key_catist(https ? ist_https : ist_http);
+    ret = nst_key_catist(buf, https ? ist("HTTPS") : ist("HTTP"));
 
     if(ret != NST_OK) {
         return NST_ERR;
     }
 
     if(http_find_header(htx, ist("Host"), &hdr, 0)) {
-        ret = nst_key_catist(hdr.value);
+        ret = nst_key_catist(buf, hdr.value);
 
         if(ret != NST_OK) {
             return NST_ERR;
@@ -859,15 +858,15 @@ int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst
     uri_begin = uri.ptr;
 
     if(uri_begin) {
-        ret = nst_key_cat(uri_begin, uri.len);
+        ret = nst_key_cat(buf, uri_begin, uri.len);
 
         if(ret != NST_OK) {
             return NST_ERR;
         }
     }
 
-    key->size = trash.data;
-    key->data = trash.area;
+    key->size = buf->data;
+    key->data = buf->area;
 
     return NST_OK;
 }

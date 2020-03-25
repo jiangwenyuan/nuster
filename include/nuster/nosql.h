@@ -163,6 +163,7 @@ struct nst_nosql_ctx {
 
     int                       rule_cnt;
     int                       key_cnt;
+    struct buffer            *key;
     struct nst_rule          *rule;
     struct nst_key            keys[0];
 };
