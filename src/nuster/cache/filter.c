@@ -124,7 +124,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
             struct nst_key key = ctx->keys[i];
 
             if(key.data) {
-                free(ctx);
+                free(key.data);
             }
         }
 
