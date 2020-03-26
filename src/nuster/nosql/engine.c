@@ -30,7 +30,7 @@
 #include <proto/http_htx.h>
 #include <common/htx.h>
 
-static int _nst_nosql_element_to_htx(struct nst_nosql_element *element,
+static int _nst_data_element_to_htx(struct nst_data_element *element,
         struct htx *htx) {
 
     struct htx_blk *blk;
@@ -63,7 +63,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct stream *s                  = si_strm(si);
     struct channel *req               = si_oc(si);
     struct channel *res               = si_ic(si);
-    struct nst_nosql_element *element = NULL;
+    struct nst_data_element *element = NULL;
     struct htx *req_htx, *res_htx;
     int ret;
     int total = 0;
@@ -99,7 +99,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
                 element = appctx->ctx.nuster.nosql_engine.element;
 
                 while(element) {
-                    if(_nst_nosql_element_to_htx(element, res_htx) != NST_OK) {
+                    if(_nst_data_element_to_htx(element, res_htx) != NST_OK) {
                         si_rx_room_blk(si);
                         goto out;
                     }
@@ -379,10 +379,10 @@ static void _nst_nosql_data_cleanup() {
     }
 
     if(data) {
-        struct nst_nosql_element *element = data->element;
+        struct nst_data_element *element = data->element;
 
         while(element) {
-            struct nst_nosql_element *tmp = element;
+            struct nst_data_element *tmp = element;
             element                       = element->next;
 
             nst_nosql_memory_free(tmp);
@@ -914,7 +914,7 @@ void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
     struct ist p2;
     struct ist p3;
     uint32_t info;
-    struct nst_nosql_element *element = NULL;
+    struct nst_data_element *element = NULL;
     char *data = NULL;
 
     p1 = ist("HTTP/1.1");
@@ -1038,7 +1038,7 @@ void nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s,
 
 void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
     struct nst_nosql_entry *entry = NULL;
-    struct nst_nosql_element *element = NULL;
+    struct nst_data_element *element = NULL;
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
 
@@ -1158,7 +1158,7 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
         struct htx_blk *blk = htx_get_blk(htx, pos);
         uint32_t        sz  = htx_get_blksz(blk);
         enum htx_blk_type type = htx_get_blk_type(blk);
-        struct nst_nosql_element *element;
+        struct nst_data_element *element;
 
         if(type != HTX_BLK_DATA) {
             continue;
@@ -1383,7 +1383,7 @@ void nst_nosql_persist_async() {
                 && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
-            struct nst_nosql_element *element = entry->data->element;
+            struct nst_data_element *element = entry->data->element;
             uint64_t cache_len = 0;
             struct persist disk;
             uint64_t header_len = 0;

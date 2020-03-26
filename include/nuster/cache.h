@@ -45,13 +45,6 @@
 #define NST_CACHE_DEFAULT_PURGE_METHOD       "PURGE"
 #define NST_CACHE_DEFAULT_PURGE_METHOD_SIZE   16
 
-struct nst_cache_element {
-    struct nst_cache_element *next;
-
-    int                       info;
-    char                      data[0];
-};
-
 /*
  * A nst_cache_data contains a complete http response data,
  * and is pointed by nst_cache_entry->data.
@@ -60,7 +53,7 @@ struct nst_cache_element {
 struct nst_cache_data {
     int                       clients;
     int                       invalid;
-    struct nst_cache_element *element;
+    struct nst_data_element  *element;
 
     struct nst_cache_data    *next;
 };
@@ -142,7 +135,7 @@ struct nst_cache_ctx {
 
     struct nst_cache_entry   *entry;
     struct nst_cache_data    *data;
-    struct nst_cache_element *element;
+    struct nst_data_element  *element;
 
     struct buffer            *buf;
 
@@ -290,7 +283,7 @@ int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s
         struct http_msg *msg);
 
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
-        unsigned int offset, unsigned int msg_len);
+        unsigned int offset, unsigned int len);
 
 int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
 int nst_cache_store_key(struct nst_cache_ctx *ctx, struct nst_key *key);

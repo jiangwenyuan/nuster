@@ -79,9 +79,9 @@ struct appctx {
 	union {
 		union {
 			struct {
-				struct nst_cache_entry   *entry;
-				struct nst_cache_data    *data;
-				struct nst_cache_element *element;
+				struct nst_cache_entry  *entry;
+				struct nst_cache_data   *data;
+				struct nst_data_element *element;
 			} cache_engine;
 			struct {
 				struct buffer    buf;
@@ -90,9 +90,9 @@ struct appctx {
 				struct my_regex *regex;
 			} cache_manager;
 			struct {
-				struct nst_nosql_entry   *entry;
-				struct nst_nosql_data    *data;
-				struct nst_nosql_element *element;
+				struct nst_nosql_entry  *entry;
+				struct nst_nosql_data   *data;
+				struct nst_data_element *element;
 				int fd;
 				int header_len;
 				uint64_t offset;

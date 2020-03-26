@@ -174,6 +174,12 @@ struct nst_rule_config {
     struct acl_cond           *cond;          /* acl condition to meet */
 };
 
+struct nst_data_element {
+    struct nst_data_element   *next;
+
+    int                        info;
+    char                       data[0];
+};
 
 struct nst_key {
     uint32_t                   size;

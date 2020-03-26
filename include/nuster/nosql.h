@@ -46,13 +46,6 @@ enum {
     NST_NOSQL_APPCTX_STATE_HIT_DISK,
 };
 
-struct nst_nosql_element {
-    struct nst_nosql_element *next;
-
-    int                       info;
-    char                      data[0];
-};
-
 /*
  * A nst_nosql_data contains a complete http response data,
  * and is pointed by nst_nosql_entry->data.
@@ -63,7 +56,7 @@ struct nst_nosql_element {
 struct nst_nosql_data {
     int                       clients;
     int                       invalid;
-    struct nst_nosql_element *element;
+    struct nst_data_element  *element;
     struct nst_nosql_data    *next;
 
     struct buffer             buf;
@@ -137,7 +130,7 @@ struct nst_nosql_ctx {
 
     struct nst_nosql_entry   *entry;
     struct nst_nosql_data    *data;
-    struct nst_nosql_element *element;
+    struct nst_data_element  *element;
 
     struct buffer            *buf;
 

@@ -353,28 +353,26 @@ static int _nst_cache_filter_http_payload(struct stream *s, struct filter *filte
 
     struct nst_cache_ctx *ctx = filter->ctx;
 
-    int ret = len;
-
     if(len <= 0) {
         return 0;
     }
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_cache_update(ctx, msg, offset, ret) != NST_OK) {
+        if(nst_cache_update(ctx, msg, offset, len) != NST_OK) {
             goto err;
         }
 
     }
 
-    return ret;
+    return len;
 
 err:
     ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
     ctx->entry->data  = NULL;
     ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
 
-    return ret;
+    return len;
 }
 
 static int

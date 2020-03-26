@@ -33,7 +33,7 @@
 /*
  * The cache applet acts like the backend to send cached http data
  */
-static int _nst_cache_element_to_htx(struct nst_cache_element *element, struct htx *htx) {
+static int _nst_data_element_to_htx(struct nst_data_element *element, struct htx *htx) {
     struct htx_blk *blk;
     char *ptr;
     uint32_t blksz, sz, info;
@@ -65,7 +65,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
     struct channel *res = si_ic(si);
     struct htx *req_htx, *res_htx;
     struct buffer *errmsg;
-    struct nst_cache_element *element = NULL;
+    struct nst_data_element *element = NULL;
     int total = 0;
 
     res_htx = htxbuf(&res->buf);
@@ -92,7 +92,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
         element = appctx->ctx.nuster.cache_engine.element;
 
         while(element) {
-            if(_nst_cache_element_to_htx(element, res_htx) != NST_OK) {
+            if(_nst_data_element_to_htx(element, res_htx) != NST_OK) {
                 si_rx_room_blk(si);
 
                 goto out;
@@ -410,10 +410,10 @@ static void _nst_cache_data_cleanup() {
     }
 
     if(data) {
-        struct nst_cache_element *element = data->element;
+        struct nst_data_element *element = data->element;
 
         while(element) {
-            struct nst_cache_element *tmp = element;
+            struct nst_data_element *tmp = element;
             element                       = element->next;
 
             nst_cache_memory_free(tmp);
@@ -1083,10 +1083,10 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
             uint32_t        sz  = htx_get_blksz(blk);
             enum htx_blk_type type = htx_get_blk_type(blk);
 
-            struct nst_cache_element *element = NULL;
+            struct nst_data_element *element = NULL;
 
             if(ctx->rule->disk != NST_DISK_ONLY)  {
-                element = nst_cache_memory_alloc(sizeof(struct nst_cache_element) + sz);
+                element = nst_cache_memory_alloc(sizeof(struct nst_data_element) + sz);
 
                 if(!element) {
                     goto err;
@@ -1107,7 +1107,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
 
             ctx->header_len += 4 + sz;
 
-            if (type == HTX_BLK_EOH) {
+            if(type == HTX_BLK_EOH) {
                 break;
             }
 
@@ -1174,7 +1174,7 @@ err:
  * Add partial http data to nst_cache_data
  */
 int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned int offset,
-        unsigned int msg_len) {
+        unsigned int len) {
 
     int pos;
     struct htx *htx = htxbuf(&msg->chn->buf);
@@ -1183,7 +1183,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned i
         struct htx_blk *blk = htx_get_blk(htx, pos);
         uint32_t        sz  = htx_get_blksz(blk);
         enum htx_blk_type type = htx_get_blk_type(blk);
-        struct nst_cache_element *element;
+        struct nst_data_element *element;
 
         if(type != HTX_BLK_DATA) {
             continue;
@@ -1353,7 +1353,7 @@ void nst_cache_persist_async() {
         if(!nst_cache_entry_invalid(entry) && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
-            struct nst_cache_element *element = entry->data->element;
+            struct nst_data_element *element = entry->data->element;
             uint64_t cache_len = 0;
             struct persist disk;
             uint64_t ttl_extend = entry->ttl;
