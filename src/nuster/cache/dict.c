@@ -181,7 +181,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     entry->extend[2] = ctx->rule->extend[2];
     entry->extend[3] = ctx->rule->extend[3];
 
-    entry->header_len = ctx->header_len;
+    entry->header_len = ctx->res.header_len;
 
     entry->buf = buf;
 

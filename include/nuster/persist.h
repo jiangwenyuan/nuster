@@ -39,8 +39,8 @@
    7                   1                       version
    8 * 1               8                       hash
    8 * 2               8                       expire time
-   8 * 3               8                       cache length
-   8 * 4               8                       header length
+   8 * 3               8                       header length
+   8 * 4               8                       payload length
    8 * 5               8                       key length
    8 * 6               8                       host length
    8 * 7               8                       path length
@@ -53,13 +53,14 @@
    + host_len          path_len                path
    + path_len          etag_len                etag
    + etag_len          last_modified_len       last_modified
-   + last_modified_len cache_len               cache
+   + last_modified_len header_len              header
+   header + header_len payload_len             payload
  */
 
 #define NST_PERSIST_META_POS_HASH               8 * 1
 #define NST_PERSIST_META_POS_EXPIRE             8 * 2
-#define NST_PERSIST_META_POS_CACHE_LEN          8 * 3
-#define NST_PERSIST_META_POS_HEADER_LEN         8 * 4
+#define NST_PERSIST_META_POS_HEADER_LEN         8 * 3
+#define NST_PERSIST_META_POS_PAYLOAD_LEN        8 * 4
 #define NST_PERSIST_META_POS_KEY_LEN            8 * 5
 #define NST_PERSIST_META_POS_HOST_LEN           8 * 6
 #define NST_PERSIST_META_POS_PATH_LEN           8 * 7
@@ -142,12 +143,12 @@ static inline int nst_persist_meta_check_expire(char *p) {
     }
 }
 
-static inline void nst_persist_meta_set_cache_len(char *p, uint64_t v) {
-    *(uint64_t *)(p + NST_PERSIST_META_POS_CACHE_LEN) = v;
+static inline void nst_persist_meta_set_payload_len(char *p, uint64_t v) {
+    *(uint64_t *)(p + NST_PERSIST_META_POS_PAYLOAD_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_cache_len(char *p) {
-    return *(uint64_t *)(p + NST_PERSIST_META_POS_CACHE_LEN);
+static inline uint64_t nst_persist_meta_get_payload_len(char *p) {
+    return *(uint64_t *)(p + NST_PERSIST_META_POS_PAYLOAD_LEN);
 }
 
 static inline void nst_persist_meta_set_header_len(char *p, uint64_t v) {
@@ -216,7 +217,7 @@ static inline int nst_persist_get_header_pos(char *p) {
 
 static inline void
 nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
-        uint64_t cache_len, uint64_t header_len, uint64_t key_len,
+        uint64_t header_len, uint64_t payload_len, uint64_t key_len,
         uint64_t host_len, uint64_t path_len, uint64_t etag_len,
         uint64_t last_modified_len, uint64_t ttl_extend) {
 
@@ -226,8 +227,8 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
 
     nst_persist_meta_set_hash(p, hash);
     nst_persist_meta_set_expire(p, expire);
-    nst_persist_meta_set_cache_len(p, cache_len);
     nst_persist_meta_set_header_len(p, header_len);
+    nst_persist_meta_set_payload_len(p, payload_len);
     nst_persist_meta_set_key_len(p, key_len);
     nst_persist_meta_set_host_len(p, host_len);
     nst_persist_meta_set_path_len(p, path_len);

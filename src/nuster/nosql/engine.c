@@ -159,8 +159,7 @@ out:
 
                         break;
                     case NST_PERSIST_APPLET_PAYLOAD:
-                        max = htx_get_max_blksz(res_htx,
-                                channel_htx_recv_max(res, res_htx));
+                        max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
 
                         ret = pread(fd, trash.area, max, offset);
 
@@ -1097,7 +1096,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash,
-                0, 0, ctx->header_len, ctx->entry->key.size, 0, 0, 0, 0, 0);
+                0, ctx->header_len, 0, ctx->entry->key.size, 0, 0, 0, 0, 0);
 
         nst_persist_write_key(&ctx->disk, &ctx->entry->key);
 
@@ -1318,9 +1317,9 @@ int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_ms
             nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
             if(ctx->cache_len) {
-                nst_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
+                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->cache_len);
             } else {
-                nst_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len2);
+                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->cache_len2);
             }
 
             nst_persist_write_meta(&ctx->disk);
@@ -1404,7 +1403,7 @@ void nst_nosql_persist_async() {
             }
 
             nst_persist_meta_set_header_len(disk.meta, header_len);
-            nst_persist_meta_set_cache_len(disk.meta, cache_len);
+            nst_persist_meta_set_payload_len(disk.meta, cache_len);
 
             nst_persist_write_meta(&disk);
 

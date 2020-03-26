@@ -152,12 +152,12 @@ struct nst_cache_ctx {
     struct {
         struct ist            etag;
         struct ist            last_modified;
+        int                   header_len;
+        uint64_t              payload_len;
     } res;
 
     int                       pid;              /* proxy uuid */
     int                       full;             /* memory full */
-    int                       header_len;
-    uint64_t                  cache_len;
 
     struct persist            disk;
 

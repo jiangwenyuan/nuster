@@ -1014,7 +1014,9 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
                     entry->etag.ptr = buf.area + (ctx->res.etag.ptr - ctx->buf->area);
                     entry->etag.len = ctx->res.etag.len;
 
-                    entry->last_modified.ptr = buf.area + (ctx->res.last_modified.ptr - ctx->buf->area);
+                    entry->last_modified.ptr = buf.area
+                        + (ctx->res.last_modified.ptr - ctx->buf->area);
+
                     entry->last_modified.len = ctx->res.last_modified.len;
 
                     ctx->data    = entry->data;
@@ -1050,7 +1052,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
         int pos;
         struct htx *htx = htxbuf(&msg->chn->buf);
-        ctx->header_len = 0;
+        ctx->res.header_len = 0;
 
         for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
             struct htx_blk *blk = htx_get_blk(htx, pos);
@@ -1080,7 +1082,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
                 ctx->element = element;
             }
 
-            ctx->header_len += 4 + sz;
+            ctx->res.header_len += 4 + sz;
 
             if(type == HTX_BLK_EOH) {
                 break;
@@ -1115,9 +1117,10 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
         *((uint8_t *)(&ttl_extend) + 2) = ctx->rule->extend[2];
         *((uint8_t *)(&ttl_extend) + 3) = ctx->rule->extend[3];
 
-        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash, 0, 0,
-                ctx->header_len, ctx->entry->key.size, ctx->entry->host.len, ctx->entry->path.len,
-                ctx->entry->etag.len, ctx->entry->last_modified.len, ttl_extend);
+        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash, 0,
+                ctx->res.header_len, 0, ctx->entry->key.size, ctx->entry->host.len,
+                ctx->entry->path.len, ctx->entry->etag.len, ctx->entry->last_modified.len,
+                ttl_extend);
 
         nst_persist_write_key(&ctx->disk, &ctx->entry->key);
         nst_persist_write_host(&ctx->disk, ctx->entry->host);
@@ -1166,7 +1169,6 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned i
 
         if(ctx->rule->disk == NST_DISK_ONLY)  {
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
-            ctx->cache_len += sz;
         } else {
             element = nst_cache_memory_alloc(sizeof(*element) + sz);
 
@@ -1189,10 +1191,11 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned i
 
             if(ctx->rule->disk == NST_DISK_SYNC) {
                 nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
-                ctx->cache_len += sz;
             }
 
         }
+
+        ctx->res.payload_len += sz;
     }
 
     return NST_OK;
@@ -1226,7 +1229,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 
         nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
-        nst_persist_meta_set_cache_len(ctx->disk.meta, ctx->cache_len);
+        nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->res.payload_len);
 
         nst_persist_write_meta(&ctx->disk);
 
@@ -1330,10 +1333,10 @@ void nst_cache_persist_async() {
                 && entry->file == NULL) {
 
             struct nst_data_element *element = entry->data->element;
-            uint64_t cache_len = 0;
             struct persist disk;
-            uint64_t ttl_extend = entry->ttl;
-            uint64_t header_len = 0;
+            uint64_t ttl_extend  = entry->ttl;
+            uint64_t header_len  = 0;
+            uint64_t payload_len = 0;
 
             entry->file = nst_cache_memory_alloc(
                     nst_persist_path_file_len(global.nuster.cache.root) + 1);
@@ -1376,19 +1379,18 @@ void nst_cache_persist_async() {
 
                 if(type != HTX_BLK_DATA) {
                     nst_persist_write(&disk, (char *)&info, 4);
-                    cache_len += 4;
                     header_len += 4 + blksz;
                 }
 
                 nst_persist_write(&disk, element->data, blksz);
 
-                cache_len += blksz;
+                payload_len += blksz;
 
                 element = element->next;
             }
 
-            nst_persist_meta_set_cache_len(disk.meta, cache_len);
             nst_persist_meta_set_header_len(disk.meta, header_len);
+            nst_persist_meta_set_payload_len(disk.meta, payload_len);
 
             nst_persist_write_meta(&disk);
 
