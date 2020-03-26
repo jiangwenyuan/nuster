@@ -42,6 +42,32 @@ int nst_req_find_param(char *query_beg, char *query_end, char *name, char **valu
     return NST_ERR;
 }
 
+int nst_data_element_to_htx(struct nst_data_element *element, struct htx *htx) {
+    struct htx_blk *blk;
+    char *ptr;
+    uint32_t blksz, sz, info;
+    enum htx_blk_type type;
+
+    info = element->info;
+    type = (info >> 28);
+    blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
+            ? (info & 0xff) + ((info >> 8) & 0xfffff)
+            : info & 0xfffffff);
+
+    blk = htx_add_blk(htx, type, blksz);
+
+    if(!blk) {
+        return NST_ERR;
+    }
+
+    blk->info = info;
+    ptr = htx_get_blk_ptr(htx, blk);
+    sz = htx_get_blksz(blk);
+    memcpy(ptr, element->data, sz);
+
+    return NST_OK;
+}
+
 void nst_res_304(struct stream *s, struct ist last_modified, struct ist etag) {
 
     struct channel *res = &s->res;

@@ -33,32 +33,6 @@
 /*
  * The cache applet acts like the backend to send cached http data
  */
-static int _nst_data_element_to_htx(struct nst_data_element *element, struct htx *htx) {
-    struct htx_blk *blk;
-    char *ptr;
-    uint32_t blksz, sz, info;
-    enum htx_blk_type type;
-
-    info = element->info;
-    type = (info >> 28);
-    blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
-            ? (info & 0xff) + ((info >> 8) & 0xfffff)
-            : info & 0xfffffff);
-
-    blk = htx_add_blk(htx, type, blksz);
-
-    if(!blk) {
-        return NST_ERR;
-    }
-
-    blk->info = info;
-    ptr = htx_get_blk_ptr(htx, blk);
-    sz = htx_get_blksz(blk);
-    memcpy(ptr, element->data, sz);
-
-    return NST_OK;
-}
-
 static void nst_cache_engine_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *req = si_oc(si);
@@ -92,7 +66,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
         element = appctx->ctx.nuster.cache_engine.element;
 
         while(element) {
-            if(_nst_data_element_to_htx(element, res_htx) != NST_OK) {
+            if(nst_data_element_to_htx(element, res_htx) != NST_OK) {
                 si_rx_room_blk(si);
 
                 goto out;

@@ -51,6 +51,7 @@ static inline void nst_res_header_date(struct buffer *header) {
 */
 
 int nst_req_find_param(char *query_beg, char *query_end, char *name, char **value, int *value_len);
+int nst_data_element_to_htx(struct nst_data_element *element, struct htx *htx);
 
 void nst_res_simple(struct stream *s, int status);
 void nst_res_304(struct stream *s, struct ist last_modified, struct ist etag);
