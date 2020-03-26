@@ -388,7 +388,7 @@ static void _nst_cache_data_cleanup() {
 
         while(element) {
             struct nst_data_element *tmp = element;
-            element                       = element->next;
+            element                      = element->next;
 
             nst_cache_memory_free(tmp);
         }
@@ -1069,6 +1069,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
                 memcpy(element->data, htx_get_blk_ptr(htx, blk), sz);
 
                 element->info = blk->info;
+                element->next = NULL;
 
                 if(ctx->element) {
                     ctx->element->next = element;
@@ -1176,6 +1177,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned i
             memcpy(element->data, htx_get_blk_ptr(htx, blk), sz);
 
             element->info = blk->info;
+            element->next = NULL;
 
             if(ctx->element) {
                 ctx->element->next = element;
