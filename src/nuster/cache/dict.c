@@ -302,7 +302,8 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, str
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_entry *entry = NULL;
     int idx;
-    uint64_t hash = nst_persist_meta_get_hash(meta);
+
+    key.hash = nst_persist_meta_get_hash(meta);
 
     uint64_t ttl_extend = nst_persist_meta_get_ttl_extend(meta);
 
@@ -319,10 +320,12 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, str
     entry->file = nst_cache_memory_alloc(strlen(file));
 
     if(!entry->file) {
+        nst_cache_memory_free(entry);
+
         return NST_ERR;
     }
 
-    idx = hash % dict->size;
+    idx = key.hash % dict->size;
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
     dict->entry[idx] = entry;

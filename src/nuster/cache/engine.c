@@ -1452,7 +1452,6 @@ void nst_cache_persist_load() {
                 while((de2 = readdir(dir2)) != NULL) {
 
                     if(strcmp(de2->d_name, ".") == 0 || strcmp(de2->d_name, "..") == 0) {
-
                         continue;
                     }
 
@@ -1484,10 +1483,10 @@ void nst_cache_persist_load() {
                     }
 
                     host.len = nst_persist_meta_get_host_len(meta);
-                    path.len = nst_persist_meta_get_host_len(meta);
+                    path.len = nst_persist_meta_get_path_len(meta);
 
                     buf.size = host.len + path.len;
-                    buf.data = buf.size;
+                    buf.data = 0;
                     buf.area = nst_cache_memory_alloc(buf.size);
 
                     if(!buf.area) {
@@ -1506,7 +1505,9 @@ void nst_cache_persist_load() {
                         goto err;
                     }
 
-                    nst_cache_dict_set_from_disk(file, meta, key, buf, host, path);
+                    if(nst_cache_dict_set_from_disk(file, meta, key, buf, host, path) != NST_OK) {
+                        goto err;
+                    }
 
                     close(fd);
                 }
