@@ -172,9 +172,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     continue;
                 }
 
-                if(key->data) {
-                    nst_debug(s, "[cache] Key checked, continue.\n");
-                } else {
+                if(!key->data) {
                     /* build key */
                     if(nst_cache_build_key(ctx, s, msg) != NST_OK) {
                         ctx->state = NST_CACHE_CTX_STATE_BYPASS;
@@ -187,86 +185,85 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                         return 1;
                     }
-
-                    nst_debug(s, "[cache] Key: ");
-                    nst_debug_key(key);
-
-                    nst_hash(key);
-
-                    nst_debug(s, "[cache] Hash: %"PRIu64"\n", key->hash);
-
-                    /* check if cache exists  */
-                    nst_debug(s, "[cache] Check key existence: ");
-
-                    ctx->state = nst_cache_exists(ctx);
-
-                    if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
-                        /* OK, cache exists */
-
-                        nst_debug2("HIT memory\n");
-
-                        if(nst_cache_handle_conditional_req(ctx, s, msg)) {
-                            return 1;
-                        }
-
-                        break;
-                    }
-
-                    if(ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
-                        /* OK, cache exists */
-
-                        nst_debug2("HIT disk\n");
-
-                        if(ctx->rule->etag == NST_STATUS_ON) {
-                            ctx->res.etag.ptr = ctx->buf->area + ctx->buf->data;
-                            ctx->res.etag.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
-
-                            if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, ctx->res.etag)
-                                    != NST_OK) {
-
-                                break;
-                            }
-                        }
-
-                        if(ctx->rule->last_modified == NST_STATUS_ON) {
-                            ctx->res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
-                            ctx->res.last_modified.len =
-                                nst_persist_meta_get_last_modified_len(ctx->disk.meta);
-
-                            if(nst_persist_get_last_modified(ctx->disk.fd, ctx->disk.meta,
-                                        ctx->res.last_modified) != NST_OK) {
-
-                                break;
-                            }
-                        }
-
-                        if(nst_cache_handle_conditional_req(ctx, s, msg)) {
-                            return 1;
-                        }
-
-                        break;
-                    }
-
-                    nst_debug2("MISS\n");
-
-                    /* no, there's no cache yet */
-
-                    /* test acls to see if we should cache it */
-                    nst_debug(s, "[cache] Test rule ACL (req): ");
-
-                    if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
-                        nst_debug2("PASS\n");
-                        ctx->state = NST_CACHE_CTX_STATE_PASS;
-
-                        break;
-                    }
-
-                    nst_debug2("FAIL\n");
                 }
+
+                nst_debug(s, "[cache] Key: ");
+                nst_debug_key(key);
+
+                nst_hash(key);
+
+                nst_debug(s, "[cache] Hash: %"PRIu64"\n", key->hash);
+
+                /* check if cache exists  */
+                nst_debug(s, "[cache] Check key existence: ");
+
+                ctx->state = nst_cache_exists(ctx);
+
+                if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
+                    /* OK, cache exists */
+
+                    nst_debug2("HIT memory\n");
+
+                    if(nst_cache_handle_conditional_req(ctx, s, msg)) {
+                        return 1;
+                    }
+
+                    break;
+                }
+
+                if(ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
+                    /* OK, cache exists */
+
+                    nst_debug2("HIT disk\n");
+
+                    if(ctx->rule->etag == NST_STATUS_ON) {
+                        ctx->res.etag.ptr = ctx->buf->area + ctx->buf->data;
+                        ctx->res.etag.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
+
+                        if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, ctx->res.etag)
+                                != NST_OK) {
+
+                            break;
+                        }
+                    }
+
+                    if(ctx->rule->last_modified == NST_STATUS_ON) {
+                        ctx->res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
+                        ctx->res.last_modified.len =
+                            nst_persist_meta_get_last_modified_len(ctx->disk.meta);
+
+                        if(nst_persist_get_last_modified(ctx->disk.fd, ctx->disk.meta,
+                                    ctx->res.last_modified) != NST_OK) {
+
+                            break;
+                        }
+                    }
+
+                    if(nst_cache_handle_conditional_req(ctx, s, msg)) {
+                        return 1;
+                    }
+
+                    break;
+                }
+
+                nst_debug2("MISS\n");
+
+                /* no, there's no cache yet */
+
+                /* test acls to see if we should cache it */
+                nst_debug(s, "[cache] Test rule ACL (req): ");
+
+                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
+                    nst_debug2("PASS\n");
+                    ctx->state = NST_CACHE_CTX_STATE_PASS;
+
+                    break;
+                }
+
+                nst_debug2("FAIL\n");
 
                 ctx->rule = ctx->rule->next;
             }
-
         }
 
         if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
