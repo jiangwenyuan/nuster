@@ -302,10 +302,11 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, str
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_entry *entry = NULL;
     int idx;
+    uint64_t ttl_extend;
 
     key.hash = nst_persist_meta_get_hash(meta);
 
-    uint64_t ttl_extend = nst_persist_meta_get_ttl_extend(meta);
+    ttl_extend = nst_persist_meta_get_ttl_extend(meta);
 
     dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
 
