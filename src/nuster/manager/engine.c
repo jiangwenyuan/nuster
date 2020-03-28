@@ -521,9 +521,12 @@ static void nst_cache_manager_release_handler(struct appctx *appctx) {
     }
 }
 
-int nst_cache_manager_init() {
+void nst_manager_init() {
     nuster.applet.cache_manager.fct     = nst_cache_manager_handler;
     nuster.applet.cache_manager.release = nst_cache_manager_release_handler;
 
-    return 1;
+    if(nst_cache_stats_init() != NST_OK) {
+        ha_alert("Out of memory when initializing stats.\n");
+        exit(1);
+    }
 }

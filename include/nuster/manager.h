@@ -70,7 +70,7 @@ enum {
 /* manager */
 int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
 int nst_manager(struct stream *s, struct channel *req, struct proxy *px);
-int nst_cache_manager_init();
+void nst_manager_init();
 
 /* stats */
 void nst_cache_stats_update_used_mem(int i);
