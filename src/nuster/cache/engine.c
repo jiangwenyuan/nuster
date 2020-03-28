@@ -26,10 +26,7 @@
 
 #include <nuster/nuster.h>
 
-/*
- * The cache applet acts like the backend to send cached http data
- */
-static void nst_cache_engine_handler(struct appctx *appctx) {
+static void _nst_cache_memory_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *req = si_oc(si);
     struct channel *res = si_ic(si);
@@ -42,7 +39,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
     total = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        appctx->ctx.nuster.cache_engine.data->clients--;
+        appctx->ctx.nuster.cache.data->clients--;
 
         goto err;
     }
@@ -55,11 +52,11 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
     }
 
     if (res->flags & (CF_SHUTW|CF_SHUTR|CF_SHUTW_NOW)) {
-        appctx->ctx.nuster.cache_engine.element = NULL;
+        appctx->ctx.nuster.cache.element = NULL;
     }
 
-    if(appctx->ctx.nuster.cache_engine.element) {
-        element = appctx->ctx.nuster.cache_engine.element;
+    if(appctx->ctx.nuster.cache.element) {
+        element = appctx->ctx.nuster.cache.element;
 
         while(element) {
             if(nst_data_element_to_htx(element, res_htx) != NST_OK) {
@@ -80,7 +77,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
             goto out;
         }
 
-        appctx->ctx.nuster.cache_engine.data->clients--;
+        appctx->ctx.nuster.cache.data->clients--;
 
         if (!(res->flags & CF_SHUTR) ) {
             res->flags |= CF_READ_NULL;
@@ -96,7 +93,7 @@ static void nst_cache_engine_handler(struct appctx *appctx) {
     }
 
 out:
-    appctx->ctx.nuster.cache_engine.element = element;
+    appctx->ctx.nuster.cache.element = element;
     total = res_htx->data - total;
     channel_add_input(res, total);
     htx_to_buf(res_htx, &res->buf);
@@ -117,7 +114,7 @@ err:
 /*
  * The cache disk applet acts like the backend to send cached http data
  */
-static void nst_cache_disk_engine_handler(struct appctx *appctx) {
+static void _nst_cache_disk_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
 
     struct channel *req = si_oc(si);
@@ -127,9 +124,9 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
     int ret;
     int max;
 
-    int fd = appctx->ctx.nuster.cache_disk_engine.fd;
-    int header_len = appctx->ctx.nuster.cache_disk_engine.header_len;
-    uint64_t offset = appctx->ctx.nuster.cache_disk_engine.offset;
+    int fd = appctx->ctx.nuster.cache.fd;
+    int header_len = appctx->ctx.nuster.cache.header_len;
+    uint64_t offset = appctx->ctx.nuster.cache.offset;
 
     res_htx = htxbuf(&res->buf);
     total = res_htx->data;
@@ -147,17 +144,17 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
 
     /* check that the output is not closed */
     if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
-        appctx->st0 = NST_PERSIST_APPLET_DONE;
+        appctx->st1 = NST_PERSIST_APPLET_DONE;
     }
 
-    switch(appctx->st0) {
+    switch(appctx->st1) {
         case NST_PERSIST_APPLET_HEADER:
             {
                 char *p = trash.area;
                 ret = pread(fd, p, header_len, offset);
 
                 if(ret != header_len) {
-                    appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                    appctx->st1 = NST_PERSIST_APPLET_ERROR;
 
                     break;
                 }
@@ -175,7 +172,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                     blk = htx_add_blk(res_htx, type, blksz);
 
                     if(!blk) {
-                        appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                        appctx->st1 = NST_PERSIST_APPLET_ERROR;
 
                         break;
                     }
@@ -190,9 +187,9 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                     header_len -= 4 + sz;
                 }
 
-                appctx->st0 = NST_PERSIST_APPLET_PAYLOAD;
+                appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
                 offset += ret;
-                appctx->ctx.nuster.cache_disk_engine.offset = offset;
+                appctx->ctx.nuster.cache.offset = offset;
             }
 
         case NST_PERSIST_APPLET_PAYLOAD:
@@ -200,7 +197,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
             ret = pread(fd, trash.area, max, offset);
 
             if(ret == -1) {
-                appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                appctx->st1 = NST_PERSIST_APPLET_ERROR;
 
                 break;
             }
@@ -218,7 +215,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 blk = htx_add_blk(res_htx, type, blksz);
 
                 if(!blk) {
-                    appctx->st0 = NST_PERSIST_APPLET_ERROR;
+                    appctx->st1 = NST_PERSIST_APPLET_ERROR;
 
                     break;
                 }
@@ -228,14 +225,14 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 sz = htx_get_blksz(blk);
                 memcpy(ptr, trash.area, sz);
 
-                appctx->ctx.nuster.cache_disk_engine.offset += ret;
+                appctx->ctx.nuster.cache.offset += ret;
 
                 break;
             }
 
             close(fd);
 
-            appctx->st0 = NST_PERSIST_APPLET_EOM;
+            appctx->st1 = NST_PERSIST_APPLET_EOM;
 
         case NST_PERSIST_APPLET_EOM:
 
@@ -245,7 +242,7 @@ static void nst_cache_disk_engine_handler(struct appctx *appctx) {
                 goto out;
             }
 
-            appctx->st0 = NST_PERSIST_APPLET_DONE;
+            appctx->st1 = NST_PERSIST_APPLET_DONE;
         case NST_PERSIST_APPLET_DONE:
 
             if (!(res->flags & CF_SHUTR) ) {
@@ -274,6 +271,17 @@ out:
     htx_to_buf(res_htx, &res->buf);
 
     return;
+}
+
+/*
+ * The cache applet acts like the backend to send cached http data
+ */
+static void nst_cache_handler(struct appctx *appctx) {
+    if(appctx->st0 == NST_CACHE_CTX_STATE_HIT_MEMORY) {
+        _nst_cache_memory_handler(appctx);
+    } else {
+        _nst_cache_disk_handler(appctx);
+    }
 }
 
 /*
@@ -399,6 +407,7 @@ void nst_cache_housekeeping() {
             nst_cache_persist_load();
         }
 
+        disk_saver = 10000;
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_persist_async();
@@ -410,8 +419,7 @@ void nst_cache_housekeeping() {
 
 void nst_cache_init() {
 
-    nuster.applet.cache_engine.fct = nst_cache_engine_handler;
-    nuster.applet.cache_disk_engine.fct = nst_cache_disk_engine_handler;
+    nuster.applet.cache.fct = nst_cache_handler;
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
 
@@ -877,7 +885,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
 
             _nst_cache_record_access(entry);
 
-            ret = NST_CACHE_CTX_STATE_HIT;
+            ret = NST_CACHE_CTX_STATE_HIT_MEMORY;
         }
 
         if(entry->state == NST_CACHE_ENTRY_STATE_INVALID && entry->file) {
@@ -944,7 +952,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
         if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
             ctx->state = NST_CACHE_CTX_STATE_WAIT;
         } else if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
-            ctx->state = NST_CACHE_CTX_STATE_HIT;
+            ctx->state = NST_CACHE_CTX_STATE_HIT_MEMORY;
         } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED
                 || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
 
@@ -1209,64 +1217,36 @@ void nst_cache_abort(struct nst_cache_ctx *ctx) {
  * Create cache applet to handle the request
  */
 void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
-        struct channel *res, struct nst_cache_data *data) {
+        struct channel *res, struct nst_cache_ctx *ctx) {
 
     struct appctx *appctx = NULL;
 
     /*
-     * set backend to nuster.applet.cache_engine
+     * set backend to nuster.applet.cache
      */
-    s->target = &nuster.applet.cache_engine.obj_type;
+    s->target = &nuster.applet.cache.obj_type;
 
     if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
         /* return to regular process on error */
-        data->clients--;
+        ctx->data->clients--;
         s->target = NULL;
     } else {
         appctx = si_appctx(si);
-        memset(&appctx->ctx.nuster.cache_engine, 0, sizeof(appctx->ctx.nuster.cache_engine));
+        memset(&appctx->ctx.nuster.cache, 0, sizeof(appctx->ctx.nuster.cache));
 
-        appctx->ctx.nuster.cache_engine.data    = data;
-        appctx->ctx.nuster.cache_engine.element = data->element;
+        appctx->st0 = ctx->state;
 
-        req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
-        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+        if(ctx->state == NST_CACHE_CTX_STATE_HIT_MEMORY) {
+            appctx->ctx.nuster.cache.data    = ctx->data;
+            appctx->ctx.nuster.cache.element = ctx->data->element;
+        } else {
 
-        req->analysers |= AN_REQ_FLT_END;
-        req->analyse_exp = TICK_ETERNITY;
+            appctx->ctx.nuster.cache.fd = ctx->disk.fd;
+            appctx->ctx.nuster.cache.offset = nst_persist_get_header_pos(ctx->disk.meta);
+            appctx->ctx.nuster.cache.header_len = nst_persist_meta_get_header_len(ctx->disk.meta);
+        }
 
-        res->flags |= CF_NEVER_WAIT;
-    }
-}
-
-/*
- * Create cache disk applet to handle the request
- */
-void nst_cache_hit_disk(struct stream *s, struct stream_interface *si,
-        struct channel *req, struct channel *res, struct nst_cache_ctx *ctx) {
-
-    struct appctx *appctx = NULL;
-
-    /*
-     * set backend to nuster.applet.cache_disk_engine
-     */
-    s->target = &nuster.applet.cache_disk_engine.obj_type;
-
-    if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
-        /* return to regular process on error */
-        s->target = NULL;
-    } else {
-        appctx = si_appctx(si);
-        memset(&appctx->ctx.nuster.cache_disk_engine, 0,
-                sizeof(appctx->ctx.nuster.cache_disk_engine));
-
-        appctx->ctx.nuster.cache_disk_engine.fd = ctx->disk.fd;
-        appctx->ctx.nuster.cache_disk_engine.offset = nst_persist_get_header_pos(ctx->disk.meta);
-
-        appctx->ctx.nuster.cache_disk_engine.header_len =
-            nst_persist_meta_get_header_len(ctx->disk.meta);
-
-        appctx->st0 = NST_PERSIST_APPLET_HEADER;
+        appctx->st1 = NST_PERSIST_APPLET_HEADER;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;

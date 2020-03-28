@@ -196,7 +196,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                 ctx->state = nst_cache_exists(ctx);
 
-                if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
+                if(ctx->state == NST_CACHE_CTX_STATE_HIT_MEMORY) {
                     /* OK, cache exists */
 
                     nst_debug2("HIT memory\n");
@@ -263,12 +263,9 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
             }
         }
 
-        if(ctx->state == NST_CACHE_CTX_STATE_HIT) {
-            nst_cache_hit(s, si, req, res, ctx->data);
-        }
-
-        if(ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
-            nst_cache_hit_disk(s, si, req, res, ctx);
+        if(ctx->state == NST_CACHE_CTX_STATE_HIT_MEMORY
+                || ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
+            nst_cache_hit(s, si, req, res, ctx);
         }
 
     } else {
@@ -414,7 +411,7 @@ nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp, const char *
         }
 
         smp->data.type = SMP_T_BOOL;
-        smp->data.u.sint = ctx->state == NST_CACHE_CTX_STATE_HIT
+        smp->data.u.sint = ctx->state == NST_CACHE_CTX_STATE_HIT_MEMORY
             || ctx->state == NST_CACHE_CTX_STATE_HIT_DISK;;
 
         return 1;

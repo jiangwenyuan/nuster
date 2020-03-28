@@ -82,7 +82,11 @@ struct appctx {
 				struct nst_cache_entry  *entry;
 				struct nst_cache_data   *data;
 				struct nst_data_element *element;
-			} cache_engine;
+
+				int fd;
+				int header_len;
+				uint64_t offset;
+			} cache;
 			struct {
 				struct buffer    buf;
 				struct ist	 host;
@@ -96,12 +100,7 @@ struct appctx {
 				int fd;
 				int header_len;
 				uint64_t offset;
-			} nosql_engine;
-			struct {
-				int fd;
-				int header_len;
-				uint64_t offset;
-			} cache_disk_engine;
+			} nosql;
 		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */

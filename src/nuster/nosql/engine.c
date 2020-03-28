@@ -27,7 +27,7 @@
 
 #include <nuster/nuster.h>
 
-static void nst_nosql_engine_handler(struct appctx *appctx) {
+static void nst_nosql_handler(struct appctx *appctx) {
     struct stream_interface *si       = appctx->owner;
     struct stream *s                  = si_strm(si);
     struct channel *req               = si_oc(si);
@@ -39,7 +39,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
     res_htx = htx_from_buf(&res->buf);
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        appctx->ctx.nuster.nosql_engine.data->clients--;
+        appctx->ctx.nuster.nosql.data->clients--;
         return;
     }
 
@@ -64,8 +64,8 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
         case NST_NOSQL_APPCTX_STATE_HIT:
-            if(appctx->ctx.nuster.nosql_engine.element) {
-                element = appctx->ctx.nuster.nosql_engine.element;
+            if(appctx->ctx.nuster.nosql.element) {
+                element = appctx->ctx.nuster.nosql.element;
 
                 while(element) {
                     if(nst_data_element_to_htx(element, res_htx) != NST_OK) {
@@ -98,7 +98,7 @@ static void nst_nosql_engine_handler(struct appctx *appctx) {
             }
 
 out:
-            appctx->ctx.nuster.nosql_engine.element = element;
+            appctx->ctx.nuster.nosql.element = element;
             total = res_htx->data - total;
             channel_add_input(res, total);
             htx_to_buf(res_htx, &res->buf);
@@ -107,9 +107,9 @@ out:
             {
                 int max = b_room(&res->buf) - global.tune.maxrewrite;
 
-                int fd = appctx->ctx.nuster.nosql_engine.fd;
-                int header_len = appctx->ctx.nuster.nosql_engine.header_len;
-                uint64_t offset = appctx->ctx.nuster.nosql_engine.offset;
+                int fd = appctx->ctx.nuster.nosql.fd;
+                int header_len = appctx->ctx.nuster.nosql.header_len;
+                uint64_t offset = appctx->ctx.nuster.nosql.offset;
 
                 switch(appctx->st1) {
                     case NST_PERSIST_APPLET_HEADER:
@@ -151,7 +151,7 @@ out:
 
                         appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
                         offset += ret;
-                        appctx->ctx.nuster.nosql_engine.offset += ret;
+                        appctx->ctx.nuster.nosql.offset += ret;
                         }
 
                         break;
@@ -187,7 +187,7 @@ out:
                             sz = htx_get_blksz(blk);
                             memcpy(ptr, trash.area, sz);
 
-                            appctx->ctx.nuster.nosql_engine.offset += ret;
+                            appctx->ctx.nuster.nosql.offset += ret;
                             break;
                         }
 
@@ -400,7 +400,7 @@ void nst_nosql_housekeeping() {
 }
 
 void nst_nosql_init() {
-    nuster.applet.nosql_engine.fct = nst_nosql_engine_handler;
+    nuster.applet.nosql.fct = nst_nosql_handler;
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
 
@@ -526,7 +526,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *
         struct appctx *appctx       = NULL;
         struct htx *htx;
 
-        s->target = &nuster.applet.nosql_engine.obj_type;
+        s->target = &nuster.applet.nosql.obj_type;
 
         if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
             txn->status = 500;

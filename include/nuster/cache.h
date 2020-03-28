@@ -118,7 +118,7 @@ enum {
     NST_CACHE_CTX_STATE_INIT = 0,          /* init */
     NST_CACHE_CTX_STATE_BYPASS,            /* do not cached */
     NST_CACHE_CTX_STATE_WAIT,              /* caching, wait */
-    NST_CACHE_CTX_STATE_HIT,               /* cached, use cache */
+    NST_CACHE_CTX_STATE_HIT_MEMORY,        /* cached, use memory */
     NST_CACHE_CTX_STATE_HIT_DISK,          /* cached, use disk */
     NST_CACHE_CTX_STATE_PASS,              /* cache rule passed */
     NST_CACHE_CTX_STATE_FULL,              /* cache full */
@@ -230,9 +230,6 @@ void nst_cache_abort(struct nst_cache_ctx *ctx);
 int nst_cache_exists(struct nst_cache_ctx *ctx);
 struct nst_cache_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
-        struct channel *res, struct nst_cache_data *data);
-
-void nst_cache_hit_disk(struct stream *s, struct stream_interface *si, struct channel *req,
         struct channel *res, struct nst_cache_ctx *ctx);
 
 void nst_cache_persist_cleanup();

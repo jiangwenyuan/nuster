@@ -233,8 +233,8 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
     if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT;
         appctx->st1 = 0; /* 0: header unsent, 1: sent */
-        appctx->ctx.nuster.nosql_engine.data = ctx->data;
-        appctx->ctx.nuster.nosql_engine.element = ctx->data->element;
+        appctx->ctx.nuster.nosql.data = ctx->data;
+        appctx->ctx.nuster.nosql.element = ctx->data->element;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
@@ -246,11 +246,11 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_HIT_DISK) {
-        appctx->ctx.nuster.nosql_engine.fd = ctx->disk.fd;
-        appctx->ctx.nuster.nosql_engine.offset =
+        appctx->ctx.nuster.nosql.fd = ctx->disk.fd;
+        appctx->ctx.nuster.nosql.offset =
             nst_persist_get_header_pos(ctx->disk.meta);
 
-        appctx->ctx.nuster.nosql_engine.header_len =
+        appctx->ctx.nuster.nosql.header_len =
             nst_persist_meta_get_header_len(ctx->disk.meta);
 
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;

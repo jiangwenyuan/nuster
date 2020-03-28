@@ -50,9 +50,8 @@ struct nuster {
     struct nst_nosql *nosql;
 
     struct {
-        struct applet cache_engine;
-        struct applet nosql_engine;
-        struct applet cache_disk_engine;
+        struct applet cache;
+        struct applet nosql;
         struct applet purger;
         struct applet stats;
     } applet;

@@ -23,25 +23,21 @@ struct nuster nuster = {
     .cache = NULL,
     .nosql = NULL,
     .applet = {
-        .cache_engine = {
+        .cache = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.CACHE.ENGINE>",
         },
         .purger = {
             .obj_type = OBJ_TYPE_APPLET,
-            .name     = "<NUSTER.CACHE.MANAGER>",
+            .name     = "<NUSTER.MANAGER.PURGER>",
         },
         .stats = {
             .obj_type = OBJ_TYPE_APPLET,
-            .name     = "<NUSTER.CACHE.STATS>",
+            .name     = "<NUSTER.MANAGER.STATS>",
         },
-        .nosql_engine = {
+        .nosql = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.NOSQL.ENGINE>",
-        },
-        .cache_disk_engine = {
-            .obj_type = OBJ_TYPE_APPLET,
-            .name     = "<NUSTER.CACHE.ENGINE2>",
         },
     },
     .proxy = NULL,

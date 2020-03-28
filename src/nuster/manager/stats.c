@@ -25,7 +25,7 @@ void nst_stats_update_cache(int state) {
     global.nuster.stats->cache.total++;
 
     switch(state) {
-        case NST_CACHE_CTX_STATE_HIT:
+        case NST_CACHE_CTX_STATE_HIT_MEMORY:
         case NST_CACHE_CTX_STATE_HIT_DISK:
             global.nuster.stats->cache.hit++;
             break;
