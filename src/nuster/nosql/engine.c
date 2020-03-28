@@ -404,11 +404,11 @@ void nst_nosql_init() {
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
 
-        if(global.nuster.nosql.root) {
+        if(global.nuster.nosql.root.len) {
 
-            if(nst_persist_mkdir(global.nuster.nosql.root) == NST_ERR) {
+            if(nst_persist_mkdir(global.nuster.nosql.root.ptr) == NST_ERR) {
 
-                ha_alert("Create `%s` failed\n", global.nuster.nosql.root);
+                ha_alert("Create `%s` failed\n", global.nuster.nosql.root.ptr);
                 exit(1);
             }
         }
@@ -433,7 +433,7 @@ void nst_nosql_init() {
 
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
-        if(global.nuster.nosql.root) {
+        if(global.nuster.nosql.root.len) {
             nuster.nosql->disk.file = nst_nosql_memory_alloc(
                     nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
@@ -1321,7 +1321,7 @@ void nst_nosql_abort(struct nst_nosql_ctx *ctx) {
 void nst_nosql_persist_async() {
     struct nst_nosql_entry *entry;
 
-    if(!global.nuster.nosql.root || !nuster.nosql->disk.loaded) {
+    if(!global.nuster.nosql.root.len || !nuster.nosql->disk.loaded) {
         return;
     }
 
@@ -1408,8 +1408,8 @@ void nst_nosql_persist_async() {
 
 void nst_nosql_persist_load() {
 
-    if(global.nuster.nosql.root && !nuster.nosql->disk.loaded) {
-        char *root;
+    if(global.nuster.nosql.root.len && !nuster.nosql->disk.loaded) {
+        struct ist root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
         struct nst_key *key;
@@ -1527,7 +1527,7 @@ void nst_nosql_persist_load() {
 
 void nst_nosql_persist_cleanup() {
 
-    if(global.nuster.nosql.root && nuster.nosql->disk.loaded) {
+    if(global.nuster.nosql.root.len && nuster.nosql->disk.loaded) {
         char *file = nuster.nosql->disk.file;
 
         if(nuster.nosql->disk.dir) {

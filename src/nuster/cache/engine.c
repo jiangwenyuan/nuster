@@ -423,10 +423,10 @@ void nst_cache_init() {
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
 
-        if(global.nuster.cache.root) {
+        if(global.nuster.cache.root.len) {
 
-            if(nst_persist_mkdir(global.nuster.cache.root) == NST_ERR) {
-                ha_alert("Create `%s` failed\n", global.nuster.cache.root);
+            if(nst_persist_mkdir(global.nuster.cache.root.ptr) == NST_ERR) {
+                ha_alert("Create `%s` failed\n", global.nuster.cache.root.ptr);
 
                 exit(1);
             }
@@ -451,7 +451,7 @@ void nst_cache_init() {
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
-        if(global.nuster.cache.root) {
+        if(global.nuster.cache.root.len) {
             int len = nst_persist_path_file_len(global.nuster.cache.root) + 1;
 
             nuster.cache->disk.file = nst_cache_memory_alloc(len);
@@ -1261,7 +1261,7 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
 void nst_cache_persist_async() {
     struct nst_cache_entry *entry;
 
-    if(!global.nuster.cache.root || !nuster.cache->disk.loaded) {
+    if(!global.nuster.cache.root.len || !nuster.cache->disk.loaded) {
         return;
     }
 
@@ -1356,8 +1356,8 @@ void nst_cache_persist_async() {
 
 void nst_cache_persist_load() {
 
-    if(global.nuster.cache.root && !nuster.cache->disk.loaded) {
-        char *root;
+    if(global.nuster.cache.root.len && !nuster.cache->disk.loaded) {
+        struct ist root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
         int fd;
@@ -1505,7 +1505,7 @@ err:
 
 void nst_cache_persist_cleanup() {
 
-    if(global.nuster.cache.root && nuster.cache->disk.loaded) {
+    if(global.nuster.cache.root.len && nuster.cache->disk.loaded) {
         char *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {

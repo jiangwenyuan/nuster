@@ -101,6 +101,7 @@ static struct nst_key_element **_nst_parse_rule_key(char *str) {
 
     pk = realloc(pk, (i + 1) * sizeof(struct nst_key_element *));
     pk[i] = NULL;
+
     free(tmp);
 
     return pk;
@@ -191,6 +192,7 @@ const char *nst_parse_size(const char *text, uint64_t *ret) {
             }
 
             value = value << 20;
+
             break;
         case 'G':
         case 'g':
@@ -200,6 +202,7 @@ const char *nst_parse_size(const char *text, uint64_t *ret) {
             }
 
             value = value << 30;
+
             break;
         default:
             return text;
@@ -306,6 +309,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
 
         err_code |= ERR_ALERT;
+
         goto out;
     }
 
@@ -314,6 +318,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
                 file, linenum, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -326,6 +331,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
                 file, linenum, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -343,6 +349,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
                         file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -350,6 +357,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
             global.nuster.manager.purge_method.len = strlen(args[cur_arg]);
 
             cur_arg++;
+
             continue;
         }
 
@@ -361,6 +369,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
                         file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -374,6 +383,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
         ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -390,6 +400,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
 
         err_code |= ERR_ALERT;
+
         goto out;
     }
 
@@ -398,6 +409,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                 file, linenum, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -410,6 +422,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                 file, linenum, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -424,15 +437,17 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                         file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
             if(nst_parse_size(args[cur_arg],
                         &global.nuster.cache.data_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects "
-                        "[m|M|g|G].\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects [m|M|g|G].\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -448,16 +463,18 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
                         file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
             if(nst_parse_size(args[cur_arg],
                         &global.nuster.cache.dict_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects "
-                        "[m|M|g|G].\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects [m|M|g|G].\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -469,14 +486,16 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as "
-                        "an argument.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as an argument.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
-            global.nuster.cache.root = strdup(args[cur_arg]);
+            global.nuster.cache.root.ptr = strdup(args[cur_arg]);
+            global.nuster.cache.root.len = strlen(args[cur_arg]);
             cur_arg++;
             continue;
         }
@@ -485,10 +504,11 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -506,10 +526,11 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -520,6 +541,7 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -527,10 +549,11 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -548,10 +571,11 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -569,10 +593,11 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -583,12 +608,14 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
         ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -602,10 +629,11 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
     int cur_arg  = 1;
 
     if(global.nuster.nosql.status != NST_STATUS_UNDEFINED) {
-        ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file,
-                linenum, args[0]);
+        ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n",
+                file, linenum, args[0]);
 
         err_code |= ERR_ALERT;
+
         goto out;
     }
 
@@ -614,6 +642,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                 file, linenum, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -626,6 +655,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                 file, linenum, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -641,19 +671,22 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                         file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
             if(nst_parse_size(args[cur_arg], &global.nuster.nosql.dict_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects "
-                        "[m|M|g|G].\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects [m|M|g|G].\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -665,15 +698,17 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
                         file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
             if(nst_parse_size(args[cur_arg], &global.nuster.nosql.data_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects "
-                        "[m|M|g|G].\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects [m|M|g|G].\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -685,15 +720,18 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as "
-                        "an argument.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as an argument.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
-            global.nuster.nosql.root = strdup(args[cur_arg]);
+            global.nuster.nosql.root.ptr = strdup(args[cur_arg]);
+            global.nuster.nosql.root.len = strlen(args[cur_arg]);
             cur_arg++;
+
             continue;
         }
 
@@ -701,10 +739,11 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -715,6 +754,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -722,10 +762,11 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -737,6 +778,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -744,10 +786,11 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -758,6 +801,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -765,10 +809,11 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -779,6 +824,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -786,10 +832,11 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
+
                 goto out;
             }
 
@@ -806,6 +853,7 @@ int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
         ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
+
         goto out;
     }
 
@@ -835,6 +883,7 @@ int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
 
     if(!fconf || !conf) {
         memprintf(err, "out of memory");
+
         return -1;
     }
 
@@ -852,6 +901,7 @@ int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
             conf->status = NST_STATUS_ON;
         } else {
             memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
+
             return -1;
         }
 
@@ -891,6 +941,7 @@ int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
 
     if(!fconf || !conf) {
         memprintf(err, "out of memory");
+
         return -1;
     }
 
@@ -908,6 +959,7 @@ int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
             conf->status = NST_STATUS_ON;
         } else {
             memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
+
             return -1;
         }
 
@@ -947,11 +999,13 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' section.");
+
         return -1;
     }
 
     if(*(args[cur_arg]) == 0) {
         memprintf(err, "'%s' expects a name.", args[0]);
+
         return -1;
     }
 
@@ -965,6 +1019,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
             if(key != NULL) {
                 memprintf(err, "'%s %s': key already specified.", args[0], name);
+
                 goto out;
             }
 
@@ -972,11 +1027,13 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
             if(*(args[cur_arg]) == 0) {
                 memprintf(err, "'%s %s': expects a key.", args[0], name);
+
                 goto out;
             }
 
             key = args[cur_arg];
             cur_arg++;
+
             continue;
         }
 
@@ -985,6 +1042,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
             if(ttl != -1) {
                 /* except this case: ttl 4294967295 ttl 4294967295 */
                 memprintf(err, "'%s %s': ttl already specified.", args[0], name);
+
                 goto out;
             }
 
@@ -1002,6 +1060,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
              */
             if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&ttl)) {
                 memprintf(err, "'%s %s': invalid ttl.", args[0], name);
+
                 goto out;
             }
 
@@ -1013,6 +1072,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
             if(code != NULL) {
                 memprintf(err, "'%s %s': code already specified.", args[0], name);
+
                 goto out;
             }
 
@@ -1020,11 +1080,13 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
             if(*(args[cur_arg]) == 0) {
                 memprintf(err, "'%s %s': expects a code.", args[0], name);
+
                 goto out;
             }
 
             code = args[cur_arg];
             cur_arg++;
+
             continue;
         }
 
@@ -1032,14 +1094,15 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
             if(disk != -1) {
                 memprintf(err, "'%s %s': disk already specified.", args[0], name);
+
                 goto out;
             }
 
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [off|only|sync|async], default off.", args[0],
-                        name);
+                memprintf(err, "'%s %s': expects [off|only|sync|async], default off.",
+                        args[0], name);
 
                 goto out;
             }
@@ -1053,8 +1116,8 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
             } else if(!strcmp(args[cur_arg], "async")) {
                 disk = NST_DISK_ASYNC;
             } else {
-                memprintf(err, "'%s %s': expects [off|only|sync|async], " "default off.", args[0],
-                        name);
+                memprintf(err, "'%s %s': expects [off|only|sync|async], " "default off.",
+                        args[0], name);
 
                 goto out;
             }
@@ -1067,6 +1130,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
             if(etag != -1) {
                 memprintf(err, "'%s %s': etag already specified.", args[0], name);
+
                 goto out;
             }
 
@@ -1084,10 +1148,12 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
                 etag = NST_STATUS_OFF;
             } else {
                 memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+
                 goto out;
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -1095,12 +1161,14 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
             if(last_modified != -1) {
                 memprintf(err, "'%s %s': last-modified already specified.", args[0], name);
+
                 goto out;
             }
 
             cur_arg++;
             if(*args[cur_arg] == 0) {
                 memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+
                 goto out;
             }
 
@@ -1110,6 +1178,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
                 last_modified = NST_STATUS_OFF;
             } else {
                 memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+
                 goto out;
             }
 
@@ -1192,10 +1261,12 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
             }
 
             cur_arg++;
+
             continue;
         }
 
         memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name, args[cur_arg]);
+
         goto out;
     }
 
@@ -1209,11 +1280,13 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
                 memprintf(err, "%s", errmsg);
                 free(errmsg);
+
                 goto out;
             }
 
         } else {
             memprintf(err, "'%s %s': [if|unless] expects an acl.", args[0], name);
+
             goto out;
         }
     }
@@ -1228,6 +1301,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
     if(!rule->key.data) {
         memprintf(err, "'%s %s': invalid key.", args[0], name);
+
         goto out;
     }
 
@@ -1235,9 +1309,14 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
 
     rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
 
-    if(disk > 0 && !global.nuster.cache.root) {
-        memprintf(err, "rule %s: disk enabled but no `dir` defined", name);
-        goto out;
+    if(disk > 0) {
+        if((proxy->nuster.mode == NST_MODE_CACHE && !global.nuster.cache.root.len)
+                || (proxy->nuster.mode == NST_MODE_NOSQL && !global.nuster.nosql.root.len)) {
+
+            memprintf(err, "rule %s: disk enabled but no `dir` defined", name);
+
+            goto out;
+        }
     }
 
     rule->disk = disk == -1 ? NST_DISK_OFF   : disk;
@@ -1285,6 +1364,7 @@ int nst_parse_proxy(char **args, int section, struct proxy *px,
             return nst_parse_proxy_rule(args, section, px, defpx, file, line, err);
         } else {
             memprintf(err, "%s: expects [cache|rule]", args[0]);
+
             return -1;
         }
 

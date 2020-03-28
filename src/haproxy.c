@@ -197,18 +197,24 @@ struct global global = {
 			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
 			.disk_loader  = NST_DEFAULT_DISK_LOADER,
 			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-			.root         = NULL,
+			.root         = {
+				.ptr  = NULL,
+				.len  = 0,
+			},
 		},
 		.nosql = {
 			.status       = NST_STATUS_UNDEFINED,
 			.data_size    = NST_DEFAULT_DATA_SIZE,
 			.dict_size    = NST_DEFAULT_DICT_SIZE,
-			.root         = NULL,
 			.dict_cleaner = NST_DEFAULT_DICT_CLEANER,
 			.data_cleaner = NST_DEFAULT_DATA_CLEANER,
 			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
 			.disk_loader  = NST_DEFAULT_DISK_LOADER,
 			.disk_saver   = NST_DEFAULT_DISK_SAVER,
+			.root         = {
+				.ptr  = NULL,
+				.len  = 0,
+			},
 		},
 		.manager = {
 			.status       = NST_STATUS_UNDEFINED,

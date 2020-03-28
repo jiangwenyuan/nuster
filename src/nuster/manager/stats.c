@@ -206,19 +206,21 @@ _nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct ht
                 global.nuster.nosql.memory->used);
     }
 
-    if(global.nuster.cache.root || global.nuster.nosql.root) {
+    if(global.nuster.cache.root.len || global.nuster.nosql.root.len) {
         chunk_appendf(&trash, "\n**PERSISTENCE**\n");
     }
 
-    if(global.nuster.cache.root) {
-        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.dir:", global.nuster.cache.root);
+    if(global.nuster.cache.root.len) {
+        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.dir:",
+                global.nuster.cache.root.ptr);
 
         chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.loaded:",
             nuster.cache->disk.loaded ? "yes" : "no");
     }
 
-    if(global.nuster.nosql.root) {
-        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.dir:", global.nuster.nosql.root);
+    if(global.nuster.nosql.root.len) {
+        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.dir:",
+                global.nuster.nosql.root.ptr);
 
         chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.loaded:",
             nuster.nosql->disk.loaded ? "yes" : "no");

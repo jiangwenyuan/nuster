@@ -49,8 +49,8 @@ int nst_persist_mkdir(char *path) {
     return NST_OK;
 }
 
-int nst_persist_init(char *root, char *path, uint64_t hash) {
-    sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root, hash >> 60, hash >> 56, hash);
+int nst_persist_init(struct ist root, char *path, uint64_t hash) {
+    sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr, hash >> 60, hash >> 56, hash);
 
     nst_debug2("[nuster][persist] Path: %s\n", path);
 
@@ -121,11 +121,11 @@ err:
     return NST_ERR;
 }
 
-int nst_persist_exists(char *root, struct persist *disk, struct nst_key *key) {
+int nst_persist_exists(struct ist root, struct persist *disk, struct nst_key *key) {
     struct dirent *de;
     DIR *dirp;
 
-    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
+    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
             key->hash >> 60, key->hash >> 56, key->hash);
 
     dirp = opendir(disk->file);
@@ -152,9 +152,9 @@ int nst_persist_exists(char *root, struct persist *disk, struct nst_key *key) {
     return NST_ERR;
 }
 
-DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx) {
+DIR *nst_persist_opendir_by_idx(struct ist root, char *path, int idx) {
     memset(path, 0, nst_persist_path_file_len(root));
-    sprintf(path, "%s/%x/%02x", root, idx / 16, idx);
+    sprintf(path, "%s/%x/%02x", root.ptr, idx / 16, idx);
 
     return opendir(path);
 }
@@ -250,7 +250,7 @@ int nst_persist_get_last_modified(int fd, char *meta, struct ist last_modified) 
     return NST_OK;
 }
 
-void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
+void nst_persist_cleanup(struct ist root, char *path, struct dirent *de1) {
     DIR *dir2;
     struct dirent *de2;
     int fd, ret;
@@ -315,7 +315,7 @@ void nst_persist_cleanup(char *root, char *path, struct dirent *de1) {
 
 }
 
-int nst_persist_purge_by_key(char *root, struct persist *disk,
+int nst_persist_purge_by_key(struct ist root, struct persist *disk,
         struct nst_key key) {
 
     struct dirent *de;
@@ -329,7 +329,7 @@ int nst_persist_purge_by_key(char *root, struct persist *disk,
         return 500;
     }
 
-    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root,
+    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
             key.hash >> 60, key.hash >> 56, key.hash);
 
     dirp = opendir(disk->file);

@@ -88,22 +88,22 @@ struct persist {
 };
 
 /* /0/00: 5 */
-static inline int nst_persist_path_base_len(char *root) {
-    return strlen(root) + 5;
+static inline int nst_persist_path_base_len(struct ist root) {
+    return root.len + 5;
 }
 
 /* /0/00/00322ec3e2428e4a: 5 + 1 + 16 */
-static inline int nst_persist_path_hash_len(char *root) {
-    return strlen(root) + 22;
+static inline int nst_persist_path_hash_len(struct ist root) {
+    return root.len + 22;
 }
 
 /* /0/00/00322ec3e2428e4a/71fabeefebdaaedb-16ae92496e1: 22 + 1 + 16 + 1 + 11 */
-static inline int nst_persist_path_file_len(char *root) {
-    return strlen(root) + 51;
+static inline int nst_persist_path_file_len(struct ist root) {
+    return root.len + 51;
 }
 
 int nst_persist_mkdir(char *path);
-int nst_persist_init(char *root, char *path, uint64_t hash);
+int nst_persist_init(struct ist root, char *path, uint64_t hash);
 
 static inline int nst_persist_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
@@ -237,7 +237,7 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_ttl_extend(p, ttl_extend);
 }
 
-int nst_persist_exists(char *root, struct persist *disk, struct nst_key *key);
+int nst_persist_exists(struct ist root, struct persist *disk, struct nst_key *key);
 
 static inline int nst_persist_write(struct persist *disk, char *buf, int len) {
     ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
@@ -313,11 +313,11 @@ int nst_persist_get_path(int fd, char *meta, struct ist path);
 int nst_persist_get_etag(int fd, char *meta, struct ist etag);
 int nst_persist_get_last_modified(int fd, char *meta, struct ist last_modified);
 
-DIR *nst_persist_opendir_by_idx(char *root, char *path, int idx);
-void nst_persist_cleanup(char *root, char *path, struct dirent *de);
+DIR *nst_persist_opendir_by_idx(struct ist root, char *path, int idx);
+void nst_persist_cleanup(struct ist root, char *path, struct dirent *de);
 struct dirent *nst_persist_dir_next(DIR *dir);
 int nst_persist_valid(struct persist *disk, struct nst_key *key);
-int nst_persist_purge_by_key(char *root, struct persist *disk, struct nst_key key);
+int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_key key);
 int nst_persist_purge_by_path(char *path);
 void nst_persist_update_expire(char *file, uint64_t expire);
 
