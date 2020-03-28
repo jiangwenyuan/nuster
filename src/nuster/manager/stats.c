@@ -174,7 +174,7 @@ _nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct ht
             global.nuster.manager.status == NST_STATUS_ON ? "on" : "off");
 
     if(global.nuster.manager.status == NST_STATUS_ON) {
-        chunk_appendf(&trash, "**\nMANAGER**\n");
+        chunk_appendf(&trash, "\n**MANAGER**\n");
 
         chunk_appendf(&trash, "%-*s%s\n", len, "manager.uri:", global.nuster.manager.uri.ptr);
 
