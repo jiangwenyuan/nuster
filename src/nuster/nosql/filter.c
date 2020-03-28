@@ -174,7 +174,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
             if(s->txn->meth == HTTP_METH_GET) {
                 nst_debug(s, "[nosql] Check key existence: ");
 
-                ctx->state = nst_nosql_exists(ctx, ctx->rule->disk);
+                ctx->state = nst_nosql_exists(ctx);
 
                 if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
                     nst_debug2("HIT memory\n");

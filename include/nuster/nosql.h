@@ -208,7 +208,7 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
 int nst_nosql_store_key(struct nst_nosql_ctx *ctx, struct nst_key *key);
 
 uint64_t nst_nosql_hash_key(const char *key);
-int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode);
+int nst_nosql_exists(struct nst_nosql_ctx *ctx);
 int nst_nosql_delete(struct nst_key *key);
 
 void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg);

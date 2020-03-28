@@ -1156,7 +1156,7 @@ err:
     return NST_ERR;
 }
 
-int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
+int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
     struct nst_nosql_entry *entry = NULL;
     int ret = NST_CACHE_CTX_STATE_INIT;
 
@@ -1182,7 +1182,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx, int mode) {
             ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
         }
     } else {
-        if(mode != NST_DISK_OFF) {
+        if(ctx->rule->disk != NST_DISK_OFF) {
             ctx->disk.file = NULL;
             ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
         }
