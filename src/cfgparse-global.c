@@ -1185,7 +1185,7 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 	else if (!strcmp(args[0], "nuster")) {
 		int cur_arg = 1;
 		if (!strcmp(args[cur_arg], "cache")) {
-			if (alertif_too_many_args(22, file, linenum, args, &err_code)) {
+			if (alertif_too_many_args(20, file, linenum, args, &err_code)) {
 				goto out;
 			}
 			args++;
@@ -1202,6 +1202,15 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			if (err_code) {
 				goto out;
 			}
+		} else if (!strcmp(args[cur_arg], "uri")) {
+			char *p;
+			if (alertif_too_many_args(2, file, linenum, args, &err_code)) {
+				goto out;
+			}
+			args++;
+			p = strdup(args[cur_arg]);
+			global.nuster.uri.ptr = p;
+			global.nuster.uri.len = strlen(p);
 		} else {
 			ha_alert("parsing [%s:%d] : [global] '%s' only supports 'cache|nosql' .\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;

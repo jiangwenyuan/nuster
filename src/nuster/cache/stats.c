@@ -120,8 +120,8 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
     chunk_appendf(&trash, "global.nuster.cache.dict.size: %"PRIu64"\n",
             global.nuster.cache.dict_size);
 
-    chunk_appendf(&trash, "global.nuster.cache.uri: %s\n",
-            global.nuster.cache.uri);
+    chunk_appendf(&trash, "global.nuster.uri: %.*s\n", (int)global.nuster.uri.len,
+            global.nuster.uri.ptr);
 
     chunk_appendf(&trash, "global.nuster.cache.purge_method: %.*s\n",
             (int)strlen(global.nuster.cache.purge_method) - 1,

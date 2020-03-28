@@ -342,7 +342,6 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
     memcpy(global.nuster.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
     memcpy(global.nuster.cache.purge_method + 5, " ", 1);
     cur_arg++;
-    global.nuster.cache.uri = NULL;
 
     while(*(args[cur_arg]) !=0) {
         if(!strcmp(args[cur_arg], "data-size")) {
@@ -422,21 +421,6 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
 
             }
 
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "uri")) {
-            cur_arg++;
-
-            if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `uri` expect an URI.\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            global.nuster.cache.uri = strdup(args[cur_arg]);
             cur_arg++;
             continue;
         }

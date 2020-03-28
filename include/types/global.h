@@ -209,7 +209,8 @@ struct global {
 			struct nst_nosql_stats *stats;
 		} nosql;
 
-		struct nst_memory      *memory;                /* for common usage */
+		struct nst_memory *memory;                     /* for common usage */
+		struct ist	   uri;                        /* the uri used for stats and manager */
 	} nuster;
 };
 

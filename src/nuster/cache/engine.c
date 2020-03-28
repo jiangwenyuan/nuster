@@ -283,21 +283,18 @@ out:
 int nst_cache_check_uri(struct http_msg *msg) {
     struct htx *htx;
     struct htx_sl *sl;
-    struct ist uri;
+    struct ist url, uri;
 
-    if(!global.nuster.cache.uri) {
+    if(!global.nuster.uri.len) {
         return NST_ERR;
     }
 
     htx = htxbuf(&msg->chn->buf);
-    sl = http_get_stline(htx);
-    uri = htx_sl_req_uri(sl);
+    sl  = http_get_stline(htx);
+    url = htx_sl_req_uri(sl);
+    uri = http_get_path(url);
 
-    if(strlen(global.nuster.cache.uri) != uri.len) {
-        return NST_ERR;
-    }
-
-    if(memcmp(global.nuster.cache.uri, uri.ptr, uri.len) != 0) {
+    if(!isteq(global.nuster.uri, uri)) {
         return NST_ERR;
     }
 
