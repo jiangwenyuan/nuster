@@ -482,14 +482,6 @@ void nst_cache_init() {
             goto err;
         }
 
-        if(nst_cache_stats_init() !=NST_OK) {
-            goto err;
-        }
-
-        if(!nst_cache_manager_init()) {
-            goto err;
-        }
-
         ha_notice("[nuster][cache] on, data_size=%"PRIu64"\n", global.nuster.cache.data_size);
 
     }

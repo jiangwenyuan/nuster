@@ -332,13 +332,15 @@ badreq:
 /*
  * return 1 if the request is done, otherwise 0
  */
-int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
     struct http_txn *txn = s->txn;
     struct http_msg *msg = &txn->req;
-    int state            = -1;
-    int ttl              = -1;
-    struct htx *htx = htxbuf(&s->req.buf);
+    struct htx *htx      = htxbuf(&s->req.buf);
+
     struct http_hdr_ctx hdr = { .blk = NULL };
+
+    int state = -1;
+    int ttl   = -1;
 
     if(global.nuster.cache.status != NST_STATUS_ON) {
         return 0;

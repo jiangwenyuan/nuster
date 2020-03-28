@@ -76,7 +76,7 @@ static inline void nuster_housekeeping() {
 
 static inline int nuster_check_applet(struct stream *s, struct channel *req, struct proxy *px) {
     return (nst_nosql_check_applet(s, req, px) ||
-            nst_cache_manager(s, req, px) ||
+            nst_manager(s, req, px) ||
             nst_cache_stats(s, req, px));
 }
 

@@ -192,7 +192,6 @@ struct global {
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
 
 			struct nst_memory      *memory;        /* memory */
-			struct nst_cache_stats *stats;
 		} cache;
 		struct {
 			int       status;                      /* enable nosql on or off */
@@ -206,11 +205,11 @@ struct global {
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
 
 			struct nst_memory      *memory;        /* memory */
-			struct nst_nosql_stats *stats;
 		} nosql;
 
-		struct nst_memory *memory;                     /* for common usage */
-		struct ist	   uri;                        /* the uri used for stats and manager */
+		struct nst_cache_stats *stats;
+		struct nst_memory       *memory;               /* for common usage */
+		struct ist	         uri;                  /* the uri used for stats and manager */
 	} nuster;
 };
 

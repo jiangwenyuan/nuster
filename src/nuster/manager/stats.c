@@ -20,25 +20,25 @@
 #include <nuster/nuster.h>
 
 void nst_cache_stats_update_req(int state) {
-    nst_shctx_lock(global.nuster.cache.stats);
-    global.nuster.cache.stats->req.total++;
+    nst_shctx_lock(global.nuster.stats);
+    global.nuster.stats->req.total++;
 
     switch(state) {
         case NST_CACHE_CTX_STATE_HIT:
         case NST_CACHE_CTX_STATE_HIT_DISK:
-            global.nuster.cache.stats->req.hit++;
+            global.nuster.stats->req.hit++;
             break;
         case NST_CACHE_CTX_STATE_CREATE:
-            global.nuster.cache.stats->req.abort++;
+            global.nuster.stats->req.abort++;
             break;
         case NST_CACHE_CTX_STATE_DONE:
-            global.nuster.cache.stats->req.fetch++;
+            global.nuster.stats->req.fetch++;
             break;
         default:
             break;
     }
 
-    nst_shctx_unlock(global.nuster.cache.stats);
+    nst_shctx_unlock(global.nuster.stats);
 }
 
 /*
@@ -132,16 +132,16 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
             global.nuster.cache.memory->used);
 
     chunk_appendf(&trash, "global.nuster.cache.stats.req_total: %"PRIu64"\n",
-            global.nuster.cache.stats->req.total);
+            global.nuster.stats->req.total);
 
     chunk_appendf(&trash, "global.nuster.cache.stats.req_hit: %"PRIu64"\n",
-            global.nuster.cache.stats->req.hit);
+            global.nuster.stats->req.hit);
 
     chunk_appendf(&trash, "global.nuster.cache.stats.req_fetch: %"PRIu64"\n",
-            global.nuster.cache.stats->req.fetch);
+            global.nuster.stats->req.fetch);
 
     chunk_appendf(&trash, "global.nuster.cache.stats.req_abort: %"PRIu64"\n",
-            global.nuster.cache.stats->req.abort);
+            global.nuster.stats->req.abort);
 
     chunk_appendf(&trash, "\n**PERSISTENCE**\n");
 
@@ -313,22 +313,21 @@ out:
 }
 
 int nst_cache_stats_init() {
-    global.nuster.cache.stats =
-        nst_cache_memory_alloc(sizeof(struct nst_cache_stats));
+    global.nuster.stats = nst_memory_alloc(global.nuster.memory, sizeof(struct nst_cache_stats));
 
-    if(!global.nuster.cache.stats) {
+    if(!global.nuster.stats) {
         return NST_ERR;
     }
 
-    if(nst_shctx_init(global.nuster.cache.stats) != NST_OK) {
+    if(nst_shctx_init(global.nuster.stats) != NST_OK) {
         return NST_ERR;
     }
 
-    global.nuster.cache.stats->req.total = 0;
-    global.nuster.cache.stats->req.fetch = 0;
-    global.nuster.cache.stats->req.hit   = 0;
-    global.nuster.cache.stats->req.abort = 0;
-    nuster.applet.cache_stats.fct        = nst_cache_stats_handler;
+    global.nuster.stats->req.total = 0;
+    global.nuster.stats->req.fetch = 0;
+    global.nuster.stats->req.hit   = 0;
+    global.nuster.stats->req.abort = 0;
+    nuster.applet.cache_stats.fct  = nst_cache_stats_handler;
 
     return NST_OK;
 }

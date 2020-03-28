@@ -229,13 +229,24 @@ void nuster_init() {
         exit(1);
     }
 
+    nuster_proxy_init();
+
+    if(nst_cache_stats_init() !=NST_OK) {
+        goto err;
+    }
+
+    if(!nst_cache_manager_init()) {
+        goto err;
+    }
+
     nst_cache_init();
     nst_nosql_init();
 
-    nuster_proxy_init();
-
     return;
 
+err:
+    ha_alert("Out of memory when initializing rules.\n");
+    exit(1);
 }
 
 int nst_test_rule(struct nst_rule *rule, struct stream *s, int res) {
