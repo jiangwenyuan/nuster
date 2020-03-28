@@ -14,16 +14,13 @@
 * [使用方法](#使用方法)
 * [ディレクティブ](#ディレクティブ)
 * [Cache](#cache)
-  * [管理](#キャッシュ管理)
-  * [有効無効](#キャッシュ有効無効)
-  * [生存期間](#キャッシュ生存期間)
-  * [削除](#キャッシュ削除)
-  * [統計](#キャッシュ統計)
 * [NoSQL](#nosql)
-  * [Set](#set)
-  * [Get](#get)
-  * [Delete](#delete)
-* [パーシステンス](#パーシステンス)
+* [管理](#管理)
+  * [統計](#統計)
+  * [Ruleの有効無効](#Ruleの有効無効)
+  * [生存期間更新](#生存期間更新)
+  * [削除](#削除)
+* [永続性](#永続性)
 * [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
 
@@ -100,7 +97,7 @@ headerやcookieなど識別できるので、同じエンドポイントにユ�
 ## Build
 
 ```
-make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
+make TARGET=linux-glibc USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
 make install PREFIX=/usr/local/nuster
 ```
 
@@ -108,7 +105,7 @@ make install PREFIX=/usr/local/nuster
 
 > 必要なければ`USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1`削除してもいい
 
-詳細は[HAProxy README](README)。
+詳細は[HAProxy INSTALL](INSTALL)。
 
 ## コンフィグファイル
 
@@ -241,29 +238,35 @@ backend be
 
 # ディレクティブ
 
-## global: nuster uri URI
+## global: nuster manager
 
 **syntax**
 
-nuster uri URI
+nuster manager on|off [uri URI] [purge-method method]
 
-**default:** *none*
+**default:** *off*
 
 **context:** *global*
 
-manager/stats/purge APIを定義そして有効にする。
+manager/stats/purge APIを有効にする、URIとpurge methodを定義する
 
-`nuster uri /_my/_unique/_uri`
+ディフォルトは無効で、有効にしたら、アクセス制御をしてください(see [FAQ](#how-to-restrict-access)).
 
-ディフォルトはcache manager/stats は無効で、有効にしたら、アクセス制御をしてください(see [FAQ](#how-to-restrict-access)).
+詳細は[管理](#管理)。
 
-詳細は[キャッシュ管理](#キャッシュ管理) と　[キャッシュ統計](#キャッシュ統計)。
+### uri
+
+URIを定義する、ディフォルトは `/nuster`
+
+### purge-method
+
+HTTP methodを定義する。ディフォルトは `PURGE`。
 
 ## global: nuster cache|nosql
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
 nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
@@ -322,10 +325,6 @@ hash tableのサイズを決める.
 
 詳細は[nuster rule disk mode](#disk-mode)
 
-### purge-method [cache only]
-
-長さ14バイトのHTTP methodを定義する。ディフォルトは`PURGE`。
-
 ## proxy: nuster cache|nosql
 
 **syntax:**
@@ -339,7 +338,7 @@ nuster nosql [on|off]
 cache/nosqlの有効無効を決める。
 他のfilterがある場合は、一番後ろ置く。
 
-## nuster rule
+## proxy: nuster rule
 
 **syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
@@ -562,246 +561,23 @@ nusterはVarnishやNginxのように動的や静的なHTTPコンテンツをキ�
 
 HAProxyのSSL, HTTP, HTTP2, リライト、リダイレクトなどの機能の他、nusterは下記も提供する。
 
-## キャッシュ管理
-
-cacheはランタイムでAPIで管理できる。uriを定義して、このURIにたいしてHTTPを投げることで、管理できる。
-
-
-**Eanble and define the endpoint**
-
 ```
-nuster uri /nuster/cache
-```
+global
+    nuster cache on data-size 200m
+frontend fe
+    bind *:8080
+    default_backend be
+backend be
+    nuster cache on
+    nuster rule r1 if { path /a1 }
+    nuster rule r2 key method.scheme.host.path.delimiter.query.cookie_userId if { path /a2 }
+    nuster rule r3 ttl 10 if { path /a3 }
+    nuster rule r4 disk only if { path /a4 }
 
-**Basic usage**
-
-`curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
-
-**REMEMBER to enable access restriction**
-
-## キャッシュ有効無効
-
-***headers***
-
-| header | value      | description
-| ------ | -----      | -----------
-| state  | enable     | 有効にする
-|        | disable    | 無効にする
-| name   | rule NAME  | NAMEという名前のruleを有効無効にする
-|        | proxy NAME | NAMEという名前のProxyのすべてのruleを
-|        | *          | すべてのrulesを
-
-***Examples***
-
-* rule r1を無効にする
-
-  `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster/cache`
-
-* proxy app1bのすべてのruleを無効
-
-  `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster/cache`
-
-* すべてのruleを有効
-
-  `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster/cache`
-
-## キャッシュ生存期間
-
-cacheのTTLを変更する、既存のキャッシュは変更されない。
-
-***headers***
-
-| header | value      | description
-| ------ | -----      | -----------
-| ttl    | new TTL    | TTLに変更
-| name   | rule NAME  | NAMEという名前のruleのTTLを変更
-|        | proxy NAME | NAMEという名前のProxyのすべてのruleを
-|        | *          | すべてのrulesを
-
-***Examples***
-
-```
-curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster/cache
-curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster/cache
+    server s1 127.0.0.1:8081
 ```
 
-## stateとTTLを同時に変更
-
-```
-curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster/cache
-```
-
-## キャッシュ削除
-
-いくつかの方法でPurgeできる。Purge機能はディフォルトでOffなので、Onにする必要がある。
-
-`global`セクションで `nuster uri /nuster/cache`のようにPurge用のuriを設定することでPurgeを有効にする。uriはなんでもいい。
-
-そしてディフォルトのPurgeメソッドは`PURGE`で、`purge-method MYPURGE`で別のメソッドも設定できる。
-
-### １つURLをPurge
-
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
-
-`GET /imgs/test.jpg`で生成したキャッシュをPurgeする、HEADERなどは問わない。
-
-### nameでPurge
-
-ruleのname、proxyのname、もしくは`*`でPurgeできる。
-
-***headers***
-
-| header | value      | description
-| ------ | -----      | -----------
-| name   | rule NAME  | rule ${NAME} で生成したキャッシュをPurge
-|        | proxy NAME | proxy ${NAME}のキャッシュをPurge
-|        | *          | すべてのキャッシュをPurge
-
-***Examples***
-
-```
-# すべてのキャッシュをPurge
-curl -X PURGE -H "name: *" http://127.0.0.1/nuster/cache
-
-# proxy app1bのすべてのキャッシュをPurge
-curl -X PURGE -H "name: app1b" http://127.0.0.1/nuster/cache
-
-# nuster-rule r1が生成したキャッシュをすべてPurgeする
-# つまり /imgs/* のキャッシュをすべてPurgeする
-# nuster-rule r1 imgs if { path_beg /imgs/ }
-curl -X PURGE -H "name: r1" http://127.0.0.1/nuster/cache
-```
-
-### HostでPurge
-
-そのHostのすべてのキャッシュをPurgeできる。
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| x-host | HOST  | the ${HOST}
-
-***Examples***
-
-```
-# 127.0.0.1:8080のすべてのキャッシュをPurge
-curl -X PURGE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-### pathでPurge
-
-ディフォルトで同じpathでもqueryが違うなら、生成したキャッシュも違う。
-
-例えば `nuster-rule imgs if { path_beg /imgs/ }`,そして
-
-```
-curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
-```
-すると、２つのキャッシュが生成される。
-
-pathでpurge以外は、いくつかの方法でPurgeできる。
-
-***一つずつ***
-
-```
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
-```
-でもqueryがわからない場合はできない。
-
-***もしqueryが重要ではないなら、カスタマイズのkeyを使う***
-
-`nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`,すると１つのキャッシュしか生成されない。そして、queryなしでpurgeできる。
-
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
-
-でもqueryが重要の場合はできない。
-
-***ruleでpurge***
-
-`curl -X PURGE -H "name: imgs" http://127.0.0.1/nuster/cache`
-
-すると、 `/imgs/test.jpg`だけでなく、他の `/imgs/*`もPurgeされる。
-
-なので、pathでPurge
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| path   | PATH  | pathが${PATH}のキャッシュをpurge
-| x-host | HOST  | そして host が ${HOST}
-
-***Examples***
-
-```
-# pathが/imgs/test.jpg のキャッシュをPurge
-curl -X PURGE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster/cache
-
-# pathが/imgs/test.jpgで hostが127.0.0.1:8080のキャッシュをPurge
-curl -X PURGE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-### regexでPurge
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| regex  | REGEX | pathが${REGEX} matchならPurge
-| x-host | HOST  | そして host が ${HOST}
-
-***Examples***
-
-```
-# /img下の.jpgファイルのキャッシュをPurge
-curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster/cache
-
-#/img下の.jpgファイルかつHostが 127.0.0.1:8080のキャッシュをPurge
-curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-**PURGE注意事項**
-
-1. **アクセス制御必ずを**
-
-2. 複数のheaderがある場合、`name`, `path & host`, `path`, `regex & host`, `regex`, `host`の順序で処理
-
-   `curl -XPURGE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
-
-3. 重複のheaderがある場合, 一番目のheaderを使う
-
-   `curl -XPURGE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
-
-4. `regex` は `glob` **ではない**
-
-   /imgs配下のjpgファイルは  `/imgs/*.jpg`　ではなく、`^/imgs/.*\.jpg$` である。
-
-5. rule nameやproxy nameでキャッシュファイルを削除するのは同じプロセスでなることが必要です。例えば、再起動したら、保存されたキャッシュファイルはrule nameやproxy nameで削除できないです。rule nameやproxy nameの情報は保存してないので。
-
-6. host or path or regexでキャッシュファイルを削除するのはdisk loadが完了してからじゃないといけないです。disk loadが完了しているかどうかはstats URLで確認できます。
-
-## キャッシュ統計
-
-`uri`で定義したエンドポイントにGETする
-
-### Eanble and define the endpoint
-
-```
-nuster uri /nuster/cache
-```
-
-`curl http://127.0.0.1/nuster/cache`
-
-## Output
-
-* used\_mem:  HTTPリスポンスが使っているメモリ
-* req\_total: トータルrequest数、cacheが有効にしてないproxyのrequestは含まない
-* req\_hit:   cache hitのrequest数
-* req\_fetch: バックエンドから取得して返すrequest数
-* req\_abort: abrotしたrequest数
+Ruleを順番にチェックして、まずKeyを生成して探す。見つかったらキャッシュを返す。なければACLをテストして、Passした場合はバックエンドのレスポンスをキャッシュする。
 
 # NoSQL
 
@@ -882,7 +658,281 @@ userA data
 
 あらゆるHTTPできるツールやライブラリ: `curl`, `postman`, python `requests`, go `net/http`, etc.
 
-# パーシステンス
+# 管理
+
+NusterはランタイムでAPIで管理できる。uriを定義して、このURIにたいしてHTTPを投げることで、管理できる。
+
+**定義**
+
+```
+nuster manager on uri /internal/nuster purge-method PURGEX
+```
+
+## Usage matrix
+
+| METHOD | Endpoint         | description
+| ------ | --------         | -----------
+| GET    | /internal/nuster | get stats
+| POST   | /internal/nuster | enable and disable rule, update ttl
+| DELETE | /internal/nuster | advanced purge cache
+| PURGEX | /any/real/path   | basic purge
+
+## 統計
+
+
+### Usage
+
+`curl http://127.0.0.1/nuster`
+
+### Output
+
+```
+**NUSTER**
+nuster.cache:                   on
+nuster.nosql:                   on
+nuster.manager:                 on
+
+**MANAGER**
+manager.uri:                    /nuster
+manager.purge_method:           PURGE
+
+**MEMORY**
+memory.common.total:            1048576
+memory.common.used:             1600
+memory.cache.total:             3145728
+memory.cache.total:             1048832
+memory.nosql.total:             105906176
+memory.nosql.total:             1048768
+
+**PERSISTENCE**
+persistence.cache.dir:          /tmp/nuster/cache
+persistence.cache.loaded:       yes
+persistence.nosql.dir:          /tmp/nuster/nosql
+persistence.nosql.loaded:       yes
+
+**STATISTICS**
+statistics.cache.total:         0
+statistics.cache.hit:           0
+statistics.cache.fetch:         0
+statistics.cache.abort:         0
+
+**PROXY cache app1**
+app1.rule.r1:                  state=on  disk=off   ttl=100
+app1.rule.r2:                  state=on  disk=only  ttl=200
+app1.rule.r2:                  state=on  disk=sync  ttl=300
+app1.rule.r4:                  state=on  disk=async ttl=400
+
+**PROXY nosql app2**
+app2.rule.ra:                   state=on  disk=off   ttl=0
+app2.rule.rb:                   state=on  disk=only  ttl=1000
+app2.rule.rc:                   state=on  disk=sync  ttl=1000
+app2.rule.rd:                   state=on  disk=async ttl=1000
+```
+
+## Ruleの有効無効
+
+***headers***
+
+| header | value      | description
+| ------ | -----      | -----------
+| state  | enable     | 有効にする
+|        | disable    | 無効にする
+| name   | rule NAME  | NAMEという名前のruleを有効無効にする
+|        | proxy NAME | NAMEという名前のProxyのすべてのruleを
+|        | *          | すべてのrulesを
+
+***Examples***
+
+* rule r1を無効にする
+
+  `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster`
+
+* proxy app1bのすべてのruleを無効
+
+  `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster`
+
+* すべてのruleを有効
+
+  `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster`
+
+## 生存期間更新
+
+cacheのTTLを変更する、既存のキャッシュは変更されない。
+
+***headers***
+
+| header | value      | description
+| ------ | -----      | -----------
+| ttl    | new TTL    | TTLに変更
+| name   | rule NAME  | NAMEという名前のruleのTTLを変更
+|        | proxy NAME | NAMEという名前のProxyのすべてのruleを
+|        | *          | すべてのrulesを
+
+***Examples***
+
+```
+curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster
+curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster
+```
+
+### stateとTTLを同時に変更
+
+```
+curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster
+```
+
+## 削除
+
+２つもモードある:
+
+* basic: 削除したいPATHにHTTP method `purge-method MYPURGE` を送る
+* advanced: manager uri にDELETEを送る
+
+### Basic purge: １つURLをPurge
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+`GET /imgs/test.jpg`で生成したキャッシュをPurgeする、HEADERなどは問わない。
+
+### Advanced purge: nameでPurge
+
+ruleのname、proxyのname、もしくは`*`でPurgeできる。
+
+***headers***
+
+| header | value      | description
+| ------ | -----      | -----------
+| name   | rule NAME  | rule ${NAME} で生成したキャッシュをPurge
+|        | proxy NAME | proxy ${NAME}のキャッシュをPurge
+|        | *          | すべてのキャッシュをPurge
+
+***Examples***
+
+```
+# すべてのキャッシュをPurge
+curl -X DELETE -H "name: *" http://127.0.0.1/nuster
+
+# proxy app1bのすべてのキャッシュをPurge
+curl -X DELETE -H "name: app1b" http://127.0.0.1/nuster
+
+# nuster-rule r1が生成したキャッシュをすべてPurgeする
+# つまり /imgs/* のキャッシュをすべてPurgeする
+# nuster-rule r1 imgs if { path_beg /imgs/ }
+curl -X DELETE -H "name: r1" http://127.0.0.1/nuster
+```
+
+### Advanced purge: HostでPurge
+
+そのHostのすべてのキャッシュをPurgeできる。
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| x-host | HOST  | the ${HOST}
+
+***Examples***
+
+```
+# 127.0.0.1:8080のすべてのキャッシュをPurge
+curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+### Advanced purge: pathでPurge
+
+ディフォルトで同じpathでもqueryが違うなら、生成したキャッシュも違う。
+
+例えば `nuster-rule imgs if { path_beg /imgs/ }`,そして
+
+```
+curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+すると、２つのキャッシュが生成される。
+
+pathでpurge以外は、いくつかの方法でPurgeできる。
+
+***一つずつ***
+
+```
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+でもqueryがわからない場合はできない。
+
+***もしqueryが重要ではないなら、カスタマイズのkeyを使う***
+
+`nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`,すると１つのキャッシュしか生成されない。そして、queryなしでpurgeできる。
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+でもqueryが重要の場合はできない。
+
+***ruleでpurge***
+
+`curl -X DELETE -H "name: imgs" http://127.0.0.1/nuster
+
+すると、 `/imgs/test.jpg`だけでなく、他の `/imgs/*`もPurgeされる。
+
+なので、pathでPurge
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| path   | PATH  | pathが${PATH}のキャッシュをpurge
+| x-host | HOST  | そして host が ${HOST}
+
+***Examples***
+
+```
+# pathが/imgs/test.jpg のキャッシュをPurge
+curl -X DELETE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster
+
+# pathが/imgs/test.jpgで hostが127.0.0.1:8080のキャッシュをPurge
+curl -X DELETE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+### Advanced purge: regexでPurge
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| regex  | REGEX | pathが${REGEX} matchならPurge
+| x-host | HOST  | そして host が ${HOST}
+
+***Examples***
+
+```
+# /img下の.jpgファイルのキャッシュをPurge
+curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster
+
+#/img下の.jpgファイルかつHostが 127.0.0.1:8080のキャッシュをPurge
+curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+**PURGE注意事項**
+
+1. **アクセス制御必ずを**
+
+2. 複数のheaderがある場合、`name`, `path & host`, `path`, `regex & host`, `regex`, `host`の順序で処理
+
+   `curl -X DELETE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
+
+3. 重複のheaderがある場合, 一番目のheaderを使う
+
+   `curl -X DELETE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
+
+4. `regex` は `glob` **ではない**
+
+   /imgs配下のjpgファイルは  `/imgs/*.jpg`　ではなく、`^/imgs/.*\.jpg$` である。
+
+5. rule nameやproxy nameでキャッシュファイルを削除するのは同じプロセスでなることが必要です。例えば、再起動したら、保存されたキャッシュファイルはrule nameやproxy nameで削除できないです。rule nameやproxy nameの情報は保存してないので。
+
+6. host or path or regexでキャッシュファイルを削除するのはdisk loadが完了してからじゃないといけないです。disk loadが完了しているかどうかはstats URLで確認できます。
+
+# 永続性
 
 ```
 global
@@ -955,6 +1005,7 @@ bind :443 ssl crt pub.pem alpn h2,http/1.1
 
 ```
 global
+    nuster manager on uri /_/nuster purge-method MYPURGE
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
     # daemon

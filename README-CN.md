@@ -14,15 +14,12 @@
 * [使用方法](#使用方法)
 * [指令](#指令)
 * [Cache](#cache)
-  * [管理](#缓存管理)
-  * [开启关闭](#缓存开启关闭)
-  * [生存时间](#缓存生存时间)
-  * [清除](#缓存清除)
-  * [统计](#缓存统计)
 * [NoSQL](#nosql)
-  * [Set](#set)
-  * [Get](#get)
-  * [Delete](#delete)
+* [管理](#管理)
+  * [统计](#统计)
+  * [开启关闭rule](#开启关闭rule)
+  * [更新生存时间](#更新生存时间)
+  * [清除](#清除)
 * [硬盘持久化](#硬盘持久化)
 * [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
@@ -105,7 +102,7 @@ make install PREFIX=/usr/local/nuster
 
 > 如果不需要可以删除`USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1`
 
-具体可以参考[HAProxy README](README)。
+具体可以参考[HAProxy INSTALL](INSTALL)。
 
 ## 配置文件
 
@@ -238,29 +235,35 @@ backend be
 
 # 指令
 
-## global: nuster uri URI
+## global: nuster manager
 
 **syntax**
 
-nuster uri URI
+nuster manager on|off [uri URI] [purge-method method]
 
-**default:** *none*
+**default:** *off*
 
 **context:** *global*
 
-定义并开启manager/stats/purge API
+定义并开启manager/stats/purge API, uri 和 purge method。
 
-`nuster uri /_my/_unique/_uri`
+默认是关闭的. 如果开启了，注意开启访问控制(see [FAQ](#how-to-restrict-access)).
 
-manager/stats/purge默认是关闭的. 如果开启了，注意开启访问控制(see [FAQ](#how-to-restrict-access)).
+具体请参考[管理](#管理).
 
-具体请参考[缓存管理](#缓存管理) 和 [缓存统计](#缓存统计).
+### uri
+
+自定义管理URI, 默认是 `/nuster`
+
+### purge-method
+
+自定义PURGE用的HTTP method，默认是 `PURGE`.
 
 ## global: nuster cache|nosql
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
 nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
@@ -319,11 +322,6 @@ nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n]
 
 详细请参考[nuster rule disk mode](#disk-mode).
 
-### purge-method [cache only]
-
-自定义PURGE用的HTTP method，最大14个字符，默认是 `PURGE`.
-
-
 ## proxy: nuster cache|nosql
 
 **syntax:**
@@ -339,7 +337,7 @@ nuster nosql [on|off]
 决定是否在这个backend开启cache/nosql。
 如果这个section有filter，记得放在最后。
 
-## nuster rule
+## proxy: nuster rule
 
 **syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
@@ -560,253 +558,23 @@ ACL分别在请求阶段和响应阶段执行。
 nuster也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来缓存动态或者静态的HTTP资源。
 出了HAProxy的SSL, HTTP, HTTP2, 重写重定向，增删改Header等等，还提供了下面的功能。
 
-## 缓存管理
-
-缓存可以通过`uri`定义一个endpoint并发送HTTP请求来进行管理。
-
-**定义并且开启**
-
 ```
-nuster uri /nuster/cache
-```
+global
+    nuster cache on data-size 200m
+frontend fe
+    bind *:8080
+    default_backend be
+backend be
+    nuster cache on
+    nuster rule r1 if { path /a1 }
+    nuster rule r2 key method.scheme.host.path.delimiter.query.cookie_userId if { path /a2 }
+    nuster rule r3 ttl 10 if { path /a3 }
+    nuster rule r4 disk only if { path /a4 }
 
-**基本用法**
-
-`curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
-
-**记得进行访问控制**
-
-## 缓存开启关闭
-
-rule可以通过manager uri动态开启关闭，关闭的rule不会再进行匹配。
-
-***headers***
-
-| header | value       | description
-| ------ | -----       | -----------
-| state  | enable      | enable  rule
-|        | disable     | disable rule
-| name   | rule NAME   | the rule to be enabled/disabled
-|        | proxy NAME  | all rules belong to proxy NAME
-|        | *           | all rules
-
-相同name的rule都会被开启关闭。
-
-***Examples***
-
-* 关闭rule r1
-
-  `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster/cache`
-
-* 关闭backend app1b的所有rule
-
-  `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster/cache`
-
-* 开启所有的rule
-
-  `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster/cache`
-
-## 缓存生存时间
-
-更改缓存TTL，只会影响后续的新缓存，不会影响已经存在的缓存。
-
-***headers***
-
-| header | value      | description
-| ------ | -----      | -----------
-| ttl    | new TTL    | see `ttl` in `nuster rule`
-| name   | rule NAME  | the rule to be changed
-|        | proxy NAME | all rules belong to proxy NAME
-|        | *          | all rules
-
-***Examples***
-
-```
-curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster/cache
-curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster/cache
+    server s1 127.0.0.1:8081
 ```
 
-## 同时设置state和ttl
-
-同时设置state和ttl
-
-```
-curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster/cache
-```
-
-## 缓存清除
-
-There are several ways to purge cache by making HTTP `PURGE` requests to the manager uri defined by `uri`.
-
-You can define customized http method using `purge-method MYPURGE` other than the default `PURGE` in case you need to forward `PURGE` to backend servers.
-
-### 删除一个特定URL
-
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
-
-生成key `GET.scheme.host.uri`, 并删除那个key。
-
-默认key 包含`Host`, 如果缓存时用了`http://example.com/test` 而在localhost删除是需要`Host` header:
-
-`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
-
-
-### 通过name删除
-
-可以通过带上`name` header来 `PURGE`
-
-***headers***
-
-| header | value            | description
-| ------ | -----            | -----------
-| name   | nuster rule NAME | caches belong to rule ${NAME} will be purged
-|        | proxy NAME       | caches belong to proxy ${NAME}
-|        | *                | all caches
-
-***Examples***
-
-```
-# 删除所有缓存
-curl -X PURGE -H "name: *" http://127.0.0.1/nuster/cache
-# 删除backend applb的所有缓存
-curl -X PURGE -H "name: app1b" http://127.0.0.1/nuster/cache
-# 删除所有rule r1生成的缓存
-curl -X PURGE -H "name: r1" http://127.0.0.1/nuster/cache
-```
-
-### 通过host删除
-
-通过带上`x-host`header来删除所有属于这个host的缓存。
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| x-host | HOST  | the ${HOST}
-
-***Examples***
-
-```
-curl -X PURGE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-### 通过path删除
-
-默认情况下，query部分也包含在key中，所以相同的path不同的query会产生不同的缓存。
-
-比如`nuster rule imgs if { path_beg /imgs/ }`, 然后请求
-
-```
-curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
-```
-
-会生成两个缓存，因为query不一样。
-
-如果要删除这些缓存，可以
-
-***如果知道所有的query，那么可以一个一个删除***
-
-```
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
-```
-
-大多数情况下不知道所有的query
-
-***如果query部分不重要，则可以从key里面删除query***
-
-定义`nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`, 这样的话只会生成一个缓存，那么就可以不用query删除缓存
-
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
-
-大多数情况需要query
-
-***通过rule name删除***
-
-`curl -X PURGE -H "name: imgs" http://127.0.0.1/nuster/cache`
-
-但是如果rule被定义成了 `nuster rule static if { path_beg /imgs/ /css/ }`，则无法只删除imgs
-
-因此，可以通过path删除
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| path   | PATH  | caches with ${PATH} will be purged
-| x-host | HOST  | and host is ${HOST}
-
-***Examples***
-
-```
-# 删除所有path是/imgs/test.jpg的缓存
-curl -X PURGE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster/cache
-# 删除所有path是/imgs/test.jpg 并且host是127.0.0.1:8080的缓存
-curl -X PURGE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-### 通过正则删除
-
-也可以通过正则删除，所有匹配正则的缓存将被删除。
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| regex  | REGEX | caches which path match with ${REGEX} will be purged
-| x-host | HOST  | and host is ${HOST}
-
-***Examples***
-
-```
-# 删除所有 /imgs 开头 .jpg结尾的缓存
-curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster/cache
-#delete all caches which path starts with /imgs and ends with .jpg and belongs to 127.0.0.1:8080
-curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-**PURGE 注意事项**
-
-1. **开启访问控制**
-
-2. 如果有多个header，按照`name`, `path & host`, `path`, `regex & host`, `regex`, `host`的顺序处理
-
-   `curl -XPURGE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
-
-3. 如果有重复的header，处理第一个
-
-   `curl -XPURGE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
-
-4. `regex` **不是 glob**
-
-   比如 /imgs下的.jpg文件是`^/imgs/.*\.jpg$` 而不是 `/imgs/*.jpg`
-
-5. 通过rule name或proxy name删除缓存时，需要注意这两种方法只在当前进程有效。如果重启了进程则无法通过这两种方法删除缓存文件，因为rule name信息和proxy name信息并没有保存在缓存文件中。
-
-6. 只有disk load结束后才能通过host or path or regex 来删除缓存文件。是否已经load结束可以查看stats URL。
-
-## 缓存统计
-
-可以通过GET `uri`定义的endpoint来获取缓存统计信息。
-
-### Eanble and define the endpoint
-
-```
-nuster uri /nuster/cache
-```
-
-### Usage
-
-`curl http://127.0.0.1/nuster/cache`
-
-### Output
-
-* used\_mem:  http缓存使用的内存，不包括overhead
-* req\_total: 开启了cache的所有的backend的总请求数，不包含那些没有cache的backend的请求数
-* req\_hit:   cache击中数
-* req\_fetch: 从后端取得数量
-* req\_abort: 中断的请求
+nuster会依次检查rule, 先生成key然后查找，如果找到则返回缓存，否则就测试ACL, 如果ACL通过则缓存响应。
 
 # NoSQL
 
@@ -887,6 +655,289 @@ userA data
 
 支持任何支持HTTP的客户端，库: `curl`, `postman`, python `requests`, go `net/http`, etc.
 
+# 管理
+
+可以通过`uri`定义一个endpoint并发送HTTP请求来进行管理。
+
+**定义并且开启**
+
+```
+nuster manager on uri /internal/nuster purge-method PURGEX
+```
+
+## 方法一览
+
+| METHOD | Endpoint         | description
+| ------ | --------         | -----------
+| GET    | /internal/nuster | 获得stats
+| POST   | /internal/nuster | 开启关闭rule, 更新ttl
+| DELETE | /internal/nuster | 高级Purge
+| PURGEX | /any/real/path   | 基础Purge
+
+## 统计
+
+可以通过GET `uri`定义的endpoint来获取统计信息。
+
+### Usage
+
+`curl http://127.0.0.1/nuster`
+
+### Output
+
+```
+**NUSTER**
+nuster.cache:                   on
+nuster.nosql:                   on
+nuster.manager:                 on
+
+**MANAGER**
+manager.uri:                    /nuster
+manager.purge_method:           PURGE
+
+**MEMORY**
+memory.common.total:            1048576
+memory.common.used:             1600
+memory.cache.total:             3145728
+memory.cache.total:             1048832
+memory.nosql.total:             105906176
+memory.nosql.total:             1048768
+
+**PERSISTENCE**
+persistence.cache.dir:          /tmp/nuster/cache
+persistence.cache.loaded:       yes
+persistence.nosql.dir:          /tmp/nuster/nosql
+persistence.nosql.loaded:       yes
+
+**STATISTICS**
+statistics.cache.total:         0
+statistics.cache.hit:           0
+statistics.cache.fetch:         0
+statistics.cache.abort:         0
+
+**PROXY cache app1**
+app1.rule.r1:                  state=on  disk=off   ttl=100
+app1.rule.r2:                  state=on  disk=only  ttl=200
+app1.rule.r2:                  state=on  disk=sync  ttl=300
+app1.rule.r4:                  state=on  disk=async ttl=400
+
+**PROXY nosql app2**
+app2.rule.ra:                   state=on  disk=off   ttl=0
+app2.rule.rb:                   state=on  disk=only  ttl=1000
+app2.rule.rc:                   state=on  disk=sync  ttl=1000
+app2.rule.rd:                   state=on  disk=async ttl=1000
+```
+
+## 开启关闭rule
+
+rule可以通过manager uri动态开启关闭，关闭的rule不会再进行匹配。
+
+***headers***
+
+| header | value       | description
+| ------ | -----       | -----------
+| state  | enable      | enable  rule
+|        | disable     | disable rule
+| name   | rule NAME   | the rule to be enabled/disabled
+|        | proxy NAME  | all rules of proxy NAME
+|        | *           | all rules
+
+相同name的rule都会被开启关闭。
+
+***Examples***
+
+* 关闭rule r1
+
+  `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster`
+
+* 关闭backend app1b的所有rule
+
+  `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster`
+
+* 开启所有的rule
+
+  `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster`
+
+## 更新生存时间
+
+更改TTL，只会影响后续的新缓存，不会影响已经存在的缓存。
+
+***headers***
+
+| header | value      | description
+| ------ | -----      | -----------
+| ttl    | new TTL    | see `ttl` in `nuster rule`
+| name   | rule NAME  | the rule to be changed
+|        | proxy NAME | all rules of proxy NAME
+|        | *          | all rules
+
+***Examples***
+
+```
+curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster
+curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster
+```
+
+### 同时设置state和ttl
+
+同时设置state和ttl
+
+```
+curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster
+```
+
+## 清除
+
+有两种清除模式:
+
+* 基础Purge: 发送 `purge-method MYPURGE` 定义的方法到想要删除的Path
+* 高级Purge: 发送DELETE 到manager uri
+
+### 基础Purge: 删除一个特定URL
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+生成key `GET.scheme.host.uri`, 并删除那个key。
+
+默认key 包含`Host`, 如果缓存时用了`http://example.com/test` 而在localhost删除是需要`Host` header:
+
+`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
+
+
+### 高级Purge: 通过name删除
+
+可以通过带上`name` header来 `PURGE`
+
+***headers***
+
+| header | value            | description
+| ------ | -----            | -----------
+| name   | nuster rule NAME | caches of rule ${NAME} will be purged
+|        | proxy NAME       | caches of proxy ${NAME}
+|        | *                | all caches
+
+***Examples***
+
+```
+# 删除所有缓存
+curl -X DELETE -H "name: *" http://127.0.0.1/nuster
+# 删除backend applb的所有缓存
+curl -X DELETE -H "name: app1b" http://127.0.0.1/nuster
+# 删除所有rule r1生成的缓存
+curl -X DELETE -H "name: r1" http://127.0.0.1/nuster
+```
+
+### 高级Purge: 通过host删除
+
+通过带上`x-host`header来删除所有属于这个host的缓存。
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| x-host | HOST  | the ${HOST}
+
+***Examples***
+
+```
+curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+### 高级Purge: 通过path删除
+
+默认情况下，query部分也包含在key中，所以相同的path不同的query会产生不同的缓存。
+
+比如`nuster rule imgs if { path_beg /imgs/ }`, 然后请求
+
+```
+curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+
+会生成两个缓存，因为query不一样。
+
+如果要删除这些缓存，可以
+
+***如果知道所有的query，那么可以一个一个删除***
+
+```
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+
+大多数情况下不知道所有的query
+
+***如果query部分不重要，则可以从key里面删除query***
+
+定义`nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`, 这样的话只会生成一个缓存，那么就可以不用query删除缓存
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+大多数情况需要query
+
+***通过rule name删除***
+
+`curl -X PURGE -H "name: imgs" http://127.0.0.1/nuster/cache`
+
+但是如果rule被定义成了 `nuster rule static if { path_beg /imgs/ /css/ }`，则无法只删除imgs
+
+因此，可以通过path删除
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| path   | PATH  | caches with ${PATH} will be purged
+| x-host | HOST  | and host is ${HOST}
+
+***Examples***
+
+```
+# 删除所有path是/imgs/test.jpg的缓存
+curl -X DELETE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster
+# 删除所有path是/imgs/test.jpg 并且host是127.0.0.1:8080的缓存
+curl -X DELETE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+### 高级Purge: 通过正则删除
+
+也可以通过正则删除，所有匹配正则的缓存将被删除。
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| regex  | REGEX | caches which path match with ${REGEX} will be purged
+| x-host | HOST  | and host is ${HOST}
+
+***Examples***
+
+```
+# 删除所有 /imgs 开头 .jpg结尾的缓存
+curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster
+#delete all caches which path starts with /imgs and ends with .jpg and with host of 127.0.0.1:8080
+curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+**PURGE 注意事项**
+
+1. **开启访问控制**
+
+2. 如果有多个header，按照`name`, `path & host`, `path`, `regex & host`, `regex`, `host`的顺序处理
+
+   `curl -X DELETE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
+
+3. 如果有重复的header，处理第一个
+
+   `curl -X DELETE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
+
+4. `regex` **不是 glob**
+
+   比如 /imgs下的.jpg文件是`^/imgs/.*\.jpg$` 而不是 `/imgs/*.jpg`
+
+5. 通过rule name或proxy name删除缓存时，需要注意这两种方法只在当前进程有效。如果重启了进程则无法通过这两种方法删除缓存文件，因为rule name信息和proxy name信息并没有保存在缓存文件中。
+
+6. 只有disk load结束后才能通过host or path or regex 来删除缓存文件。是否已经load结束可以查看stats URL。
+
 # 硬盘持久化
 
 配置文件
@@ -894,6 +945,7 @@ userA data
 ```
 global
     master-worker
+    nuster manager on uri /_/nuster purge-method MYPURGE
     nuster cache on data-size 10m dir /tmp/cache
     nuster nosql on data-size 10m dir /tmp/nosql
 backend be

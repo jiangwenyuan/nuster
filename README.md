@@ -12,15 +12,12 @@ A high-performance HTTP proxy cache server and RESTful NoSQL cache server based 
 * [Usage](#usage)
 * [Directives](#directives)
 * [Cache](#cache)
-  * [Management](#cache-management)
-  * [Enable/Disable](#cache-rule-enable-and-disable)
-  * [TTL](#cache-ttl)
-  * [Purging](#cache-purging)
-  * [Stats](#cache-stats)
 * [NoSQL](#nosql)
-  * [Set](#set)
-  * [Get](#get)
-  * [Delete](#delete)
+* [Manager](#manager)
+  * [Stats](#stats)
+  * [Enable disable rules](#enable-and-disable-rule)
+  * [Update ttl](#update-ttl)
+  * [Purging](#purging)
 * [Disk persistence](#disk-persistence)
 * [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
@@ -96,7 +93,7 @@ Download stable version from [Download](Download.md) page for production use, ot
 ## Build
 
 ```
-make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
+make TARGET=linux-glibc USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
 make install PREFIX=/usr/local/nuster
 ```
 
@@ -104,7 +101,7 @@ make install PREFIX=/usr/local/nuster
 
 > omit `USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1` if unnecessary
 
-See [HAProxy README](README) for details.
+See [HAProxy INSTALL](INSTALL) for details.
 
 ## Create a config file
 
@@ -236,29 +233,35 @@ backend be
 
 # Directives
 
-## global: nuster uri URI
+## global: nuster manager
 
 **syntax**
 
-nuster uri URI
+nuster manager on|off [uri URI] [purge-method method]
 
-**default:** *none*
+**default:** *off*
 
 **context:** *global*
 
-Enable manager/stats/purge API and define the endpoint:
+Enable manager/stats/purge API, define the endpoint and purge method.
 
-`nuster uri /_my/_unique/_uri`
+By default, it is disabled. When it is enabled, remember to restrict the access(see [FAQ](#how-to-restrict-access)).
 
-By default, the manager/stats/purge API are disabled. When it is enabled, remember to restrict the access(see [FAQ](#how-to-restrict-access)).
+See [Manager](#manager) for details.
 
-See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for details.
+### uri
+
+Define endpoint URI, `/nuster` by default.
+
+### purge-method
+
+Define a customized HTTP method to purge, it is `PURGE` by default.
 
 ## global: nuster cache|nosql
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
 nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
@@ -331,10 +334,6 @@ During one iteration `disk-saver` data are checked and saved to disk if necessar
 
 See [nuster rule disk mode](#disk-mode) for details.
 
-### purge-method [cache only]
-
-Define a customized HTTP method with a max length of 14 to purge cache, it is `PURGE` by default.
-
 ## proxy: nuster cache|nosql
 
 **syntax:**
@@ -350,7 +349,7 @@ nuster nosql [on|off]
 Determines whether or not to use cache/nosql on this proxy, additional `nuster rule` should be defined.
 If there are filters on this proxy, put this directive after all other filters.
 
-## nuster rule
+## proxy: nuster rule
 
 **syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
 
@@ -575,257 +574,23 @@ nuster can be used as an HTTP proxy cache server like Varnish or Nginx to cache 
 
 You can use HAProxy functionalities to terminate SSL, normalize HTTP, support HTTP2, rewrite the URL or modify headers and so on, and additional functionalities provided by nuster to control cache.
 
-## Cache Management
-
-Cache can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making HTTP requests along with some headers.
-
-**Enable and define the endpoint**
-
 ```
-nuster uri /nuster/cache
-```
+global
+    nuster cache on data-size 200m
+frontend fe
+    bind *:8080
+    default_backend be
+backend be
+    nuster cache on
+    nuster rule r1 if { path /a1 }
+    nuster rule r2 key method.scheme.host.path.delimiter.query.cookie_userId if { path /a2 }
+    nuster rule r3 ttl 10 if { path /a3 }
+    nuster rule r4 disk only if { path /a4 }
 
-**Basic usage**
-
-`curl -X POST -H "X: Y" http://127.0.0.1/nuster/cache`
-
-**REMEMBER to enable access restriction**
-
-## Cache rule enable and disable
-
-Rule can be disabled at run time through manager uri. Disabled rule will not be processed, nor will the cache created by that.
-
-***headers***
-
-| header | value       | description
-| ------ | -----       | -----------
-| state  | enable      | enable  rule
-|        | disable     | disable rule
-| name   | rule NAME   | the rule to be enabled/disabled
-|        | proxy NAME  | all rules belong to proxy NAME
-|        | *           | all rules
-
-Keep in mind that if name is not unique, **all** rules with that name will be disabled/enabled.
-
-***Examples***
-
-* Disable cache rule r1
-
-  `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster/cache`
-
-* Disable all cache rule defined in proxy app1b
-
-  `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster/cache`
-
-* Enable all cache rule
-
-  `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster/cache`
-
-## Cache TTL
-
-Change the TTL. It only affects the TTL of the responses to be cached, **does not** update the TTL of existing caches.
-
-***headers***
-
-| header | value      | description
-| ------ | -----      | -----------
-| ttl    | new TTL    | see `ttl` in `nuster rule`
-| name   | rule NAME  | the cache rule to be changed
-|        | proxy NAME | all cache rules belong to proxy NAME
-|        | *          | all cache rules
-
-***Examples***
-
-```
-curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster/cache
-curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster/cache
+    server s1 127.0.0.1:8081
 ```
 
-## Update state and TTL
-
-state and ttl can be updated at the same time
-
-```
-curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster/cache
-```
-
-## Cache Purging
-
-There are several ways to purge cache by making HTTP `PURGE` requests to the manager uri defined by `uri`.
-
-You can define customized HTTP method using `purge-method MYPURGE` other than the default `PURGE` in case you need to forward `PURGE` to backend servers.
-
-### Purge one specific url
-
-This method deletes the specific url that is being requested, like this:
-
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
-
-It creates a key of `GET.scheme.host.uri` and deletes the cache with that key.
-
-Note by default cache key contains `Host` if you cache a request like `http://example.com/test` and purge from localhost you need to specify `Host` header:
-
-`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
-
-
-### Purge by name
-
-Cache can be purged by making HTTP `PURGE`(or `purge-method`) requests to the manager uri along with a `name` HEADER.
-
-***headers***
-
-| header | value            | description
-| ------ | -----            | -----------
-| name   | nuster rule NAME | caches belong to rule ${NAME} will be purged
-|        | proxy NAME       | caches belong to proxy ${NAME}
-|        | *                | all caches
-
-***Examples***
-
-```
-# purge all caches
-curl -X PURGE -H "name: *" http://127.0.0.1/nuster/cache
-# purge all caches belong to proxy applb
-curl -X PURGE -H "name: app1b" http://127.0.0.1/nuster/cache
-# purge all caches belong to rule r1
-curl -X PURGE -H "name: r1" http://127.0.0.1/nuster/cache
-```
-
-### Purge by host
-
-You can also purge cache by host, all caches belong to that host will be deleted:
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| x-host | HOST  | the ${HOST}
-
-***Examples***
-
-```
-curl -X PURGE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-### Purge by path
-
-By default, the query part is also used as a cache key, so there will be multiple caches if the query differs.
-
-For example, for cache rule `nuster rule imgs if { path_beg /imgs/ }`, and request
-
-```
-curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
-```
-
-There will be two cache objects since the default key contains the query part.
-
-In order to delete that, you can
-
-***delete one by one in case you know all queries***
-
-```
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
-```
-
-It does not work if you don't know all queries.
-
-***use a customized key and delete once in case that the query part is irrelevant***
-
-Define a key like `nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`, in this way only one cache will be created, and you can purge without query:
-
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
-
-It does not work if the query part is required.
-
-***delete by rule NAME***
-
-`curl -X PURGE -H "name: imgs" http://127.0.0.1/nuster/cache`
-
-It does not work if the nuster rule is defined something like `nuster rule static if { path_beg /imgs/ /css/ }`.
-
-This method provides a way to purge just by path:
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| path   | PATH  | caches with ${PATH} will be purged
-| x-host | HOST  | and host is ${HOST}
-
-***Examples***
-
-```
-#delete all caches which path is /imgs/test.jpg
-curl -X PURGE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster/cache
-#delete all caches which path is /imgs/test.jpg and belongs to 127.0.0.1:8080
-curl -X PURGE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-### Purge by regex
-
-You can also purge cache by regex, the caches which path match the regex will be deleted.
-
-***headers***
-
-| header | value | description
-| ------ | ----- | -----------
-| regex  | REGEX | caches which path match with ${REGEX} will be purged
-| x-host | HOST  | and host is ${HOST}
-
-***Examples***
-
-```
-#delete all caches which path starts with /imgs and ends with .jpg
-curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster/cache
-#delete all caches which path starts with /imgs and ends with .jpg and belongs to 127.0.0.1:8080
-curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster/cache
-```
-
-**PURGE CAUTION**
-
-1. **ENABLE ACCESS RESTRICTION**
-
-2. If there are mixed headers, use the precedence of `name`, `path & host`, `path`, `regex & host`, `regex`, `host`
-
-   `curl -XPURGE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
-
-3. If there are redundant headers, use the first occurrence
-
-   `curl -XPURGE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
-
-4. `regex` is **NOT glob**
-
-   For example, all jpg files under /imgs should be `^/imgs/.*\.jpg$` instead of `/imgs/*.jpg`
-
-5. Purging cache files by rule name or proxy name only works in current session. If nuster restarts, then cache files cannot be purged by rule name or proxy name as information like rule name and proxy name is not persisted in the cache fiels.
-
-6. Purging cache files by host or path or regex only works after the disk loader process is finished. You can check the status through stats url.
-
-## Cache Stats
-
-Cache stats can be accessed by making HTTP GET request to the endpoint defined by `uri`;
-
-### Enable and define the endpoint
-
-```
-nuster uri /nuster/cache
-```
-
-### Usage
-
-`curl http://127.0.0.1/nuster/cache`
-
-### Output
-
-* used\_mem:  The memory used for response, not include overheads.
-* req\_total: Total request number handled by cache enabled backends, not include the requests handled by backends without cache enabled
-* req\_hit:   Number of requests handled by cache
-* req\_fetch: Fetched from backends
-* req\_abort: Aborted when fetching from backends
-
-Others are very straightforward.
+When a request is accepted, nuster will check the rules one by one. Key will be created and used to lookup in the cache, and if it's a HIT, the cached data will be returned to client. Otherwise the ACL will be tested, and if it passes the test, response will be cached.
 
 # NoSQL
 
@@ -907,6 +672,291 @@ userA data
 
 You can use any tools or libs which support HTTP: `curl`, `postman`, python `requests`, go `net/http`, etc.
 
+# Manager
+
+Nuster can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making HTTP requests along with some headers.
+
+**Enable and define the endpoint uri and purge method**
+
+```
+nuster manager on uri /internal/nuster purge-method PURGEX
+```
+
+## Usage matrix
+
+| METHOD | Endpoint         | description
+| ------ | --------         | -----------
+| GET    | /internal/nuster | get stats
+| POST   | /internal/nuster | enable and disable rule, update ttl
+| DELETE | /internal/nuster | advanced purge cache
+| PURGEX | /any/real/path   | basic purge
+
+## Stats
+
+Nuster stats can be accessed by making HTTP GET request to the endpoint defined by `uri`;
+
+### Usage
+
+`curl http://127.0.0.1/internal/nuster`
+
+### Output
+
+```
+**NUSTER**
+nuster.cache:                   on
+nuster.nosql:                   on
+nuster.manager:                 on
+
+**MANAGER**
+manager.uri:                    /nuster
+manager.purge_method:           PURGE
+
+**MEMORY**
+memory.common.total:            1048576
+memory.common.used:             1600
+memory.cache.total:             3145728
+memory.cache.total:             1048832
+memory.nosql.total:             105906176
+memory.nosql.total:             1048768
+
+**PERSISTENCE**
+persistence.cache.dir:          /tmp/nuster/cache
+persistence.cache.loaded:       yes
+persistence.nosql.dir:          /tmp/nuster/nosql
+persistence.nosql.loaded:       yes
+
+**STATISTICS**
+statistics.cache.total:         0
+statistics.cache.hit:           0
+statistics.cache.fetch:         0
+statistics.cache.abort:         0
+
+**PROXY cache app1**
+app1.rule.r1:                  state=on  disk=off   ttl=100
+app1.rule.r2:                  state=on  disk=only  ttl=200
+app1.rule.r2:                  state=on  disk=sync  ttl=300
+app1.rule.r4:                  state=on  disk=async ttl=400
+
+**PROXY nosql app2**
+app2.rule.ra:                   state=on  disk=off   ttl=0
+app2.rule.rb:                   state=on  disk=only  ttl=1000
+app2.rule.rc:                   state=on  disk=sync  ttl=1000
+app2.rule.rd:                   state=on  disk=async ttl=1000
+```
+
+## Enable and disable rule
+
+Rule can be disabled at run time through manager uri. Disabled rule will not be processed, nor will the cache created by that.
+
+***headers***
+
+| header | value       | description
+| ------ | -----       | -----------
+| state  | enable      | enable  rule
+|        | disable     | disable rule
+| name   | rule NAME   | the rule to be enabled/disabled
+|        | proxy NAME  | all rules of proxy NAME
+|        | *           | all rules
+
+Keep in mind that if name is not unique, **all** rules with that name will be disabled/enabled.
+
+***Examples***
+
+* Disable rule r1
+
+  `curl -X POST -H "name: r1" -H "state: disable" http://127.0.0.1/nuster`
+
+* Disable all rules defined in proxy app1b
+
+  `curl -X POST -H "name: app1b" -H "state: disable" http://127.0.0.1/nuster`
+
+* Enable all rules
+
+  `curl -X POST -H "name: *" -H "state: enable" http://127.0.0.1/nuster`
+
+## Update ttl
+
+Change the TTL. It only affects the TTL of the responses to be cached, **does not** update the TTL of existing caches.
+
+***headers***
+
+| header | value      | description
+| ------ | -----      | -----------
+| ttl    | new TTL    | see `ttl` in `nuster rule`
+| name   | rule NAME  | the rule to be changed
+|        | proxy NAME | all rules of proxy NAME
+|        | *          | all rules
+
+***Examples***
+
+```
+curl -X POST -H "name: r1" -H "ttl: 0" http://127.0.0.1/nuster
+curl -X POST -H "name: r2" -H "ttl: 2h" http://127.0.0.1/nuster
+```
+
+### Update state and TTL
+
+state and ttl can be updated at the same time
+
+```
+curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nuster
+```
+
+## Purging
+
+There are two purging mode: basic and advanced.
+
+* basic: Send HTTP method defined by `purge-method MYPURGE` to the path you want to delete
+* advanced: Send DELETE method to the manager uri defined by `uri`
+
+### Basic purging
+
+This method deletes the specific url that is being requested, like this:
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+It creates a key of `GET.scheme.host.uri` and deletes the cache with that key.
+
+Note by default cache key contains `Host` if you cache a request like `http://example.com/test` and purge from localhost you need to specify `Host` header:
+
+`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
+
+
+### Advanced purging: purge by name
+
+Cache can be purged by making HTTP `DELETE` requests to the manager uri along with a `name` HEADER.
+
+***headers***
+
+| header | value            | description
+| ------ | -----            | -----------
+| name   | nuster rule NAME | caches created by rule ${NAME} will be purged
+|        | proxy NAME       | caches of proxy ${NAME}
+|        | *                | all caches
+
+***Examples***
+
+```
+# purge all caches
+curl -X DELETE -H "name: *" http://127.0.0.1/nuster
+# purge all caches of proxy applb
+curl -X DELETE -H "name: app1b" http://127.0.0.1/nuster
+# purge all caches of rule r1
+curl -X DELETE -H "name: r1" http://127.0.0.1/nuster
+```
+
+### Advanced purging: purge by host
+
+You can also purge cache by host, all caches with that host will be deleted:
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| x-host | HOST  | the ${HOST}
+
+***Examples***
+
+```
+curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+### Advanced purging: purge by path
+
+By default, the query part is also used as a cache key, so there will be multiple caches if the query differs.
+
+For example, for rule `nuster rule imgs if { path_beg /imgs/ }`, and request
+
+```
+curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+
+There will be two cache objects since the default key contains the query part.
+
+In order to delete that, you can
+
+***delete one by one in case you know all queries***
+
+```
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
+```
+
+It does not work if you don't know all queries.
+
+***use a customized key and delete once in case that the query part is irrelevant***
+
+Define a key like `nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`, in this way only one cache will be created, and you can purge without query:
+
+`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+
+It does not work if the query part is required.
+
+***delete by rule NAME***
+
+`curl -X DELETE -H "name: imgs" http://127.0.0.1/nuster`
+
+It does not work if the nuster rule is defined something like `nuster rule static if { path_beg /imgs/ /css/ }`.
+
+This method provides a way to purge just by path:
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| path   | PATH  | caches with ${PATH} will be purged
+| x-host | HOST  | and host is ${HOST}
+
+***Examples***
+
+```
+#delete all caches which path is /imgs/test.jpg
+curl -X DELETE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster
+#delete all caches which path is /imgs/test.jpg and with host of 127.0.0.1:8080
+curl -X DELETE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+### Advanced purging: purge by regex
+
+You can also purge cache by regex, the caches which path match the regex will be deleted.
+
+***headers***
+
+| header | value | description
+| ------ | ----- | -----------
+| regex  | REGEX | caches which path match with ${REGEX} will be purged
+| x-host | HOST  | and host is ${HOST}
+
+***Examples***
+
+```
+#delete all caches which path starts with /imgs and ends with .jpg
+curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" http://127.0.0.1/nuster
+#delete all caches which path starts with /imgs and ends with .jpg and with host of 127.0.0.1:8080
+curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/nuster
+```
+
+**PURGE CAUTION**
+
+1. **ENABLE ACCESS RESTRICTION**
+
+2. If there are mixed headers, use the precedence of `name`, `path & host`, `path`, `regex & host`, `regex`, `host`
+
+   `curl -X DELETE -H "name: rule1" -H "path: /imgs/a.jpg"`: purge by name
+
+3. If there are redundant headers, use the first occurrence
+
+   `curl -X DELETE -H "name: rule1" -H "name: rule2"`: purge by `rule1`
+
+4. `regex` is **NOT glob**
+
+   For example, all jpg files under /imgs should be `^/imgs/.*\.jpg$` instead of `/imgs/*.jpg`
+
+5. Purging cache files by rule name or proxy name only works in current session. If nuster restarts, then cache files cannot be purged by rule name or proxy name as information like rule name and proxy name is not persisted in the cache fiels.
+
+6. Purging cache files by host or path or regex only works after the disk loader process is finished. You can check the status through stats url.
+
 # Disk persistence
 
 Disk persistence is introduced in v3, it supports 4 persistence modes as described above.
@@ -987,6 +1037,7 @@ bind :443 ssl crt pub.pem alpn h2,http/1.1
 
 ```
 global
+    nuster manager on uri /_/nuster purge-method MYPURGE
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
     master-worker # since v3
