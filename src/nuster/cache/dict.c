@@ -12,10 +12,7 @@
 
 #include <types/global.h>
 
-#include <nuster/memory.h>
-#include <nuster/shctx.h>
 #include <nuster/nuster.h>
-#include <nuster/persist.h>
 
 static int _nst_cache_dict_alloc(uint64_t size) {
     int i;

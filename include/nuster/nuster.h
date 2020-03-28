@@ -23,15 +23,19 @@
 #define _NUSTER_H
 
 #define NUSTER_VERSION    "5.0.0.21"
-#define NUSTER_COPYRIGHT                                                     \
-    "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
+#define NUSTER_COPYRIGHT  "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
 #include <common/chunk.h>
 #include <types/applet.h>
 
+#include <nuster/common.h>
+#include <nuster/shctx.h>
+#include <nuster/memory.h>
+#include <nuster/http.h>
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
 #include <nuster/manager.h>
+#include <nuster/persist.h>
 
 struct nst_proxy {
     struct nst_rule     *rule;

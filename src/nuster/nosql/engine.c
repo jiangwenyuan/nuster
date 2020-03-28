@@ -12,11 +12,6 @@
 
 #include <inttypes.h>
 
-#include <nuster/memory.h>
-#include <nuster/shctx.h>
-#include <nuster/nuster.h>
-#include <nuster/http.h>
-
 #include <types/global.h>
 #include <types/stream.h>
 #include <types/channel.h>
@@ -29,6 +24,8 @@
 #include <proto/proxy.h>
 #include <proto/http_htx.h>
 #include <common/htx.h>
+
+#include <nuster/nuster.h>
 
 static void nst_nosql_engine_handler(struct appctx *appctx) {
     struct stream_interface *si       = appctx->owner;

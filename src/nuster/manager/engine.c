@@ -1,5 +1,5 @@
 /*
- * nuster cache manager functions.
+ * nuster manager functions.
  *
  * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
@@ -19,9 +19,6 @@
 #include <common/htx.h>
 
 #include <nuster/nuster.h>
-#include <nuster/memory.h>
-#include <nuster/shctx.h>
-#include <nuster/http.h>
 
 /*
  * purge cache by key

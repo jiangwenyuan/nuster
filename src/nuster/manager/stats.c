@@ -1,5 +1,5 @@
 /*
- * nuster cache stats functions.
+ * nuster stats functions.
  *
  * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
@@ -18,8 +18,6 @@
 #include <proto/proxy.h>
 
 #include <nuster/nuster.h>
-#include <nuster/memory.h>
-#include <nuster/shctx.h>
 
 void nst_cache_stats_update_req(int state) {
     nst_shctx_lock(global.nuster.cache.stats);

@@ -22,10 +22,7 @@
 #include <proto/http_ana.h>
 #include <proto/stream_interface.h>
 
-#include <nuster/memory.h>
-#include <nuster/cache.h>
 #include <nuster/nuster.h>
-#include <nuster/http.h>
 
 static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
     struct nst_flt_conf *conf = fconf->conf;

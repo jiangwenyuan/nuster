@@ -30,7 +30,6 @@
 #include <proto/http_ana.h>
 
 #include <nuster/common.h>
-#include <nuster/nuster.h>
 
 /*
 static inline void nst_res_header_date(struct buffer *header) {

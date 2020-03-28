@@ -19,9 +19,7 @@
 #include <proto/http_ana.h>
 #include <proto/stream_interface.h>
 
-#include <nuster/memory.h>
 #include <nuster/nuster.h>
-#include <nuster/nosql.h>
 
 static int _nst_nosql_filter_init(struct proxy *px, struct flt_conf *fconf) {
     struct nst_flt_conf *conf = fconf->conf;

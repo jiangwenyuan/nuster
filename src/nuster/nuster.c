@@ -17,10 +17,7 @@
 #include <proto/log.h>
 #include <proto/acl.h>
 
-#include <nuster/memory.h>
 #include <nuster/nuster.h>
-#include <nuster/http.h>
-#include <nuster/shctx.h>
 
 struct nuster nuster = {
     .cache = NULL,

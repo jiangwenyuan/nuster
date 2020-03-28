@@ -24,11 +24,7 @@
 #include <types/ssl_sock.h>
 #endif
 
-#include <nuster/memory.h>
-#include <nuster/shctx.h>
 #include <nuster/nuster.h>
-#include <nuster/http.h>
-#include <nuster/persist.h>
 
 /*
  * The cache applet acts like the backend to send cached http data
