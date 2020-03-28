@@ -824,10 +824,10 @@ EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/ebimtree.o $(EBTREE_DIR)/ebistree.o
 
 NUSTER_OBJS = src/nuster/cache/dict.o src/nuster/cache/filter.o               \
-              src/nuster/cache/stats.o src/nuster/cache/manager.o             \
               src/nuster/cache/engine.o                                       \
               src/nuster/nosql/filter.o  src/nuster/nosql/dict.o              \
-              src/nuster/nosql/stats.o src/nuster/nosql/engine.o              \
+              src/nuster/nosql/engine.o                                       \
+              src/nuster/manager/stats.o src/nuster/manager/engine.o          \
               src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
               src/nuster/persist.o src/nuster/nuster.o
 

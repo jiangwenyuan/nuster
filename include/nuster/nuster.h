@@ -31,6 +31,7 @@
 
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
+#include <nuster/manager.h>
 
 struct nst_proxy {
     struct nst_rule     *rule;

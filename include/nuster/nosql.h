@@ -161,17 +161,6 @@ struct nst_nosql_ctx {
     struct nst_key            keys[0];
 };
 
-struct nst_nosql_stats {
-    uint64_t        used_mem;
-
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t mutex;
-#else
-    unsigned int    waiters;
-#endif
-
-};
-
 struct nst_nosql {
     /* 0: using, 1: rehashing */
     struct nst_nosql_dict  dict[2];
@@ -244,11 +233,6 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx);
 int nst_nosql_dict_set_from_disk(char *file, char *meta, struct nst_key *key);
 void nst_nosql_dict_rehash();
 void nst_nosql_dict_cleanup();
-
-/* stats */
-void nst_nosql_stats_update_used_mem(int i);
-int nst_nosql_stats_init();
-int nst_nosql_stats_full();
 
 static inline int nst_nosql_dict_entry_expired(struct nst_nosql_entry *entry) {
 

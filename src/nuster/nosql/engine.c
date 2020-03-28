@@ -453,10 +453,6 @@ void nst_nosql_init() {
             goto err;
         }
 
-        if(nst_nosql_stats_init() != NST_OK) {
-            goto err;
-        }
-
     }
 
     return;
@@ -499,8 +495,7 @@ fail:
     return -1;
 }
 
-static int htx_handle_expect_hdr
-(struct stream *s, struct htx *htx, struct http_msg *msg) {
+static int htx_handle_expect_hdr(struct stream *s, struct htx *htx, struct http_msg *msg) {
     /* If we have HTTP/1.1 message with a body and Expect: 100-continue,
      * then we must send an HTTP/1.1 100 Continue intermediate response.
      */
@@ -524,11 +519,9 @@ static int htx_handle_expect_hdr
 /*
  * return 1 if the request is done, otherwise 0
  */
-int nst_nosql_check_applet(struct stream *s, struct channel *req,
-        struct proxy *px) {
+int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px) {
 
-    if(global.nuster.nosql.status == NST_STATUS_ON
-            && px->nuster.mode == NST_MODE_NOSQL) {
+    if(global.nuster.nosql.status == NST_STATUS_ON && px->nuster.mode == NST_MODE_NOSQL) {
 
         struct stream_interface *si = &s->si[1];
         struct http_txn *txn        = s->txn;
@@ -560,8 +553,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req,
                 return 1;
             }
 
-            req->analysers &=
-                (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+            req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
 
             req->analysers &= ~AN_REQ_FLT_XFER_DATA;
             req->analysers |= AN_REQ_HTTP_XFER_BODY;
@@ -1012,12 +1004,6 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
     struct nst_data_element *element = NULL;
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
-
-    /* Check if nosql is full */
-    if(nst_nosql_stats_full()) {
-        ctx->state = NST_NOSQL_CTX_STATE_FULL;
-        return;
-    }
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
     entry = nst_nosql_dict_get(key);

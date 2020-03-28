@@ -168,21 +168,6 @@ struct nst_cache_ctx {
     struct nst_key            keys[0];
 };
 
-struct nst_cache_stats {
-    struct {
-        uint64_t    total;
-        uint64_t    fetch;
-        uint64_t    hit;
-        uint64_t    abort;
-    } req;
-
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t mutex;
-#else
-    unsigned int    waiters;
-#endif
-};
-
 struct nst_cache {
     /* 0: using, 1: rehashing */
     struct nst_cache_dict  dict[2];
@@ -221,24 +206,6 @@ struct nst_cache {
 
 extern struct flt_ops  nst_cache_filter_ops;
 extern const char *nst_cache_flt_id;
-
-enum {
-    NST_CACHE_PURGE_NAME_ALL = 0,
-    NST_CACHE_PURGE_NAME_PROXY,
-    NST_CACHE_PURGE_NAME_RULE,
-    NST_CACHE_PURGE_PATH,
-    NST_CACHE_PURGE_REGEX,
-    NST_CACHE_PURGE_HOST,
-    NST_CACHE_PURGE_PATH_HOST,
-    NST_CACHE_PURGE_REGEX_HOST,
-};
-
-enum {
-    NST_CACHE_STATS_HEAD,
-    NST_CACHE_STATS_DATA,
-    NST_CACHE_STATS_DONE,
-};
-
 
 /* dict */
 int nst_cache_dict_init();
@@ -286,18 +253,6 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg,
 int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg);
 int nst_cache_store_key(struct nst_cache_ctx *ctx, struct nst_key *key);
 void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg);
-
-/* manager */
-int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
-int nst_cache_manager(struct stream *s, struct channel *req, struct proxy *px);
-int nst_cache_manager_init();
-
-/* stats */
-void nst_cache_stats_update_used_mem(int i);
-int nst_cache_stats_init();
-int nst_cache_stats_full();
-int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
-void nst_cache_stats_update_req(int state);
 
 static inline int nst_cache_entry_expired(struct nst_cache_entry *entry) {
 
