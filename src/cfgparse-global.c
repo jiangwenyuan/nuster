@@ -1202,15 +1202,15 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			if (err_code) {
 				goto out;
 			}
-		} else if (!strcmp(args[cur_arg], "uri")) {
-			char *p;
-			if (alertif_too_many_args(2, file, linenum, args, &err_code)) {
+		} else if (!strcmp(args[cur_arg], "manager")) {
+			if (alertif_too_many_args(6, file, linenum, args, &err_code)) {
 				goto out;
 			}
 			args++;
-			p = strdup(args[cur_arg]);
-			global.nuster.manager.uri.ptr = p;
-			global.nuster.manager.uri.len = strlen(p);
+			err_code = nuster_parse_global_manager(file, linenum, args);
+			if (err_code) {
+				goto out;
+			}
 		} else {
 			ha_alert("parsing [%s:%d] : [global] '%s' only supports 'cache|nosql' .\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;

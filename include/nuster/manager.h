@@ -34,6 +34,9 @@
 #include <nuster/common.h>
 #include <nuster/persist.h>
 
+#define NST_MANAGER_DEFAULT_PURGE_METHOD "PURGE"
+#define NST_MANAGER_DEFAULT_URI          "/nuster"
+
 struct nst_stats {
     struct {
         uint64_t    total;

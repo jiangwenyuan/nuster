@@ -197,7 +197,6 @@ struct global global = {
 			.disk_cleaner = NST_DEFAULT_DISK_CLEANER,
 			.disk_loader  = NST_DEFAULT_DISK_LOADER,
 			.disk_saver   = NST_DEFAULT_DISK_SAVER,
-			.purge_method = NULL,
 			.root         = NULL,
 		},
 		.nosql = {
@@ -212,9 +211,14 @@ struct global global = {
 			.disk_saver   = NST_DEFAULT_DISK_SAVER,
 		},
 		.manager = {
-			.uri = {
+			.status       = NST_STATUS_UNDEFINED,
+			.purge_method = {
 				.ptr  = NULL,
-				.len  = 1,
+				.len  = 0,
+			},
+			.uri          = {
+				.ptr  = NULL,
+				.len  = 0,
 			},
 		},
 	},

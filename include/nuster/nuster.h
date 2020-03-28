@@ -67,6 +67,7 @@ void nuster_init();
 /* parser */
 int nuster_parse_global_cache(const char *file, int linenum, char **args);
 int nuster_parse_global_nosql(const char *file, int linenum, char **args);
+int nuster_parse_global_manager(const char *file, int linenum, char **args);
 
 static inline void nuster_housekeeping() {
     nst_cache_housekeeping();

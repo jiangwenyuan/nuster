@@ -123,7 +123,7 @@ static int _nst_stats_putdata(struct channel *chn, struct htx *htx, struct buffe
 
 static int _getMaxPaddingLen() {
     struct proxy *p;
-    int max = 26;
+    int max = 32;
 
     p = proxies_list;
 
@@ -162,7 +162,7 @@ _nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct ht
 
     chunk_reset(&trash);
 
-    chunk_appendf(&trash, "**GLOBAL**\n");
+    chunk_appendf(&trash, "**NUSTER**\n");
 
     chunk_appendf(&trash, "%-*s%s\n", len, "nuster.cache:",
             global.nuster.cache.status == NST_STATUS_ON ? "on" : "off");
@@ -170,14 +170,17 @@ _nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct ht
     chunk_appendf(&trash, "%-*s%s\n", len, "nuster.nosql:",
             global.nuster.nosql.status == NST_STATUS_ON ? "on" : "off");
 
-    chunk_appendf(&trash, "%-*s%s\n", len, "nuster.manager:", "on");
+    chunk_appendf(&trash, "%-*s%s\n", len, "nuster.manager:",
+            global.nuster.manager.status == NST_STATUS_ON ? "on" : "off");
 
-    chunk_appendf(&trash, "%-*s%.*s\n", len, "nuster.manager.uri:",
-            (int)global.nuster.manager.uri.len, global.nuster.manager.uri.ptr);
+    if(global.nuster.manager.status == NST_STATUS_ON) {
+        chunk_appendf(&trash, "**\nMANAGER**\n");
 
-    chunk_appendf(&trash, "%-*s%.*s\n", len, "nuster.purge_method:",
-            (int)strlen(global.nuster.cache.purge_method) - 1,
-            global.nuster.cache.purge_method);
+        chunk_appendf(&trash, "%-*s%s\n", len, "manager.uri:", global.nuster.manager.uri.ptr);
+
+        chunk_appendf(&trash, "%-*s%s\n", len, "manager.purge_method:",
+                global.nuster.manager.purge_method.ptr);
+    }
 
     chunk_appendf(&trash, "\n**MEMORY**\n");
 
@@ -187,17 +190,21 @@ _nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct ht
     chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.used:",
             global.nuster.memory->used);
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
-            global.nuster.cache.memory->total);
+    if(global.nuster.cache.status == NST_STATUS_ON) {
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
+                global.nuster.cache.memory->total);
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
-            global.nuster.cache.memory->used);
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
+                global.nuster.cache.memory->used);
+    }
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
-            global.nuster.nosql.memory->total);
+    if(global.nuster.nosql.status == NST_STATUS_ON) {
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
+                global.nuster.nosql.memory->total);
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
-            global.nuster.nosql.memory->used);
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
+                global.nuster.nosql.memory->used);
+    }
 
     if(global.nuster.cache.root || global.nuster.nosql.root) {
         chunk_appendf(&trash, "\n**PERSISTENCE**\n");
@@ -217,19 +224,23 @@ _nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct ht
             nuster.nosql->disk.loaded ? "yes" : "no");
     }
 
-    chunk_appendf(&trash, "\n**STATISTICS**\n");
+    if(global.nuster.cache.status == NST_STATUS_ON || global.nuster.nosql.status == NST_STATUS_ON) {
+        chunk_appendf(&trash, "\n**STATISTICS**\n");
+    }
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.total:",
-            global.nuster.stats->cache.total);
+    if(global.nuster.cache.status == NST_STATUS_ON) {
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.total:",
+                global.nuster.stats->cache.total);
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.hit:",
-            global.nuster.stats->cache.hit);
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.hit:",
+                global.nuster.stats->cache.hit);
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.fetch:",
-            global.nuster.stats->cache.fetch);
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.fetch:",
+                global.nuster.stats->cache.fetch);
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.abort:",
-            global.nuster.stats->cache.abort);
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.abort:",
+                global.nuster.stats->cache.abort);
+    }
 
     if(!_nst_stats_putdata(res, htx, &trash)) {
         goto full;

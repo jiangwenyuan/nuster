@@ -118,10 +118,8 @@ static inline int _nst_manager_check_purge_method(struct http_txn *txn, struct h
     struct htx *htx = htxbuf(&msg->chn->buf);
     struct htx_sl *sl = http_get_stline(htx);
 
-    // parser.c:345: memcpy(global.nuster.cache.purge_method + 5, " ", 1);
     if(txn->meth == HTTP_METH_OTHER
-        && isteqi(htx_sl_req_meth(sl), ist2(global.nuster.cache.purge_method,
-                    strlen(global.nuster.cache.purge_method) - 1))) {
+        && isteqi(htx_sl_req_meth(sl), global.nuster.manager.purge_method)) {
         return NST_OK;
     } else {
         return NST_ERR;
@@ -137,6 +135,10 @@ int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
     struct htx *htx      = htxbuf(&s->req.buf);
 
     struct http_hdr_ctx hdr = { .blk = NULL };
+
+    if(global.nuster.manager.status != NST_STATUS_ON) {
+        return 0;
+    }
 
     if(_nst_manager_check_purge_method(txn, msg) == NST_OK) {
         /* single uri */

@@ -302,7 +302,7 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
     int err_code = 0;
     int cur_arg  = 1;
 
-    if(global.nuster.cache.status != NST_STATUS_UNDEFINED) {
+    if(global.nuster.manager.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
 
         err_code |= ERR_ALERT;
@@ -318,9 +318,9 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
     }
 
     if(!strcmp(args[cur_arg], "off")) {
-        global.nuster.cache.status = NST_STATUS_OFF;
+        global.nuster.manager.status = NST_STATUS_OFF;
     } else if(!strcmp(args[cur_arg], "on")) {
-        global.nuster.cache.status = NST_STATUS_ON;
+        global.nuster.manager.status = NST_STATUS_ON;
     } else {
         ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
                 file, linenum, args[0]);
@@ -329,218 +329,43 @@ int nuster_parse_global_manager(const char *file, int linenum, char **args) {
         goto out;
     }
 
-    global.nuster.cache.purge_method =
-        calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
+    global.nuster.manager.purge_method = ist(NST_MANAGER_DEFAULT_PURGE_METHOD);
+    global.nuster.manager.uri          = ist(NST_MANAGER_DEFAULT_URI);
 
-    if(!global.nuster.cache.purge_method) {
-        ha_alert("parsing [%s:%d]: '%s' : out of memory.\n", file, linenum, args[0]);
-
-        err_code = ERR_ALERT | ERR_FATAL;
-        goto out;
-    }
-
-    memcpy(global.nuster.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
-    memcpy(global.nuster.cache.purge_method + 5, " ", 1);
     cur_arg++;
 
     while(*(args[cur_arg]) !=0) {
-        if(!strcmp(args[cur_arg], "data-size")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-size expects a size.\n",
-                        file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-            if(nst_parse_size(args[cur_arg],
-                        &global.nuster.cache.data_size)) {
-
-                ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects "
-                        "[m|M|g|G].\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "dict-size")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-size expects a size.\n",
-                        file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            if(nst_parse_size(args[cur_arg],
-                        &global.nuster.cache.dict_size)) {
-
-                ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects "
-                        "[m|M|g|G].\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            cur_arg++;
-            continue;
-        }
-
         if(!strcmp(args[cur_arg], "purge-method")) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' purge-method expects a name."
-                        "\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s' purge-method expects a name.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
 
-            memset(global.nuster.cache.purge_method, 0, NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
-
-            if(strlen(args[cur_arg]) <= NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
-
-                memcpy(global.nuster.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
-
-                memcpy(global.nuster.cache.purge_method + strlen(args[cur_arg]), " ", 1);
-
-            } else {
-                memcpy(global.nuster.cache.purge_method, args[cur_arg],
-                        NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
-
-                memcpy(global.nuster.cache.purge_method
-                        + NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
-
-            }
+            global.nuster.manager.purge_method.ptr = strdup(args[cur_arg]);
+            global.nuster.manager.purge_method.len = strlen(args[cur_arg]);
 
             cur_arg++;
             continue;
         }
 
-        if(!strcmp(args[cur_arg], "dir")) {
+        if(!strcmp(args[cur_arg], "uri")) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as "
-                        "an argument.\n", file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: '%s': `uri` expects a uri as an argument.\n",
+                        file, linenum, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
             }
 
-            global.nuster.cache.root = strdup(args[cur_arg]);
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "dict-cleaner")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            global.nuster.cache.dict_cleaner = atoi(args[cur_arg]);
-
-            if(global.nuster.cache.dict_cleaner <= 0) {
-                global.nuster.cache.dict_cleaner = NST_DEFAULT_DICT_CLEANER;
-            }
-
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "data-cleaner")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            global.nuster.cache.data_cleaner = atoi(args[cur_arg]);
-
-            if(global.nuster.cache.data_cleaner <= 0) {
-                global.nuster.cache.data_cleaner = NST_DEFAULT_DATA_CLEANER;
-            }
-
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "disk-cleaner")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number."
-                        "\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            global.nuster.cache.disk_cleaner = atoi(args[cur_arg]);
-
-            if(global.nuster.cache.disk_cleaner <= 0) {
-                global.nuster.cache.disk_cleaner = NST_DEFAULT_DISK_CLEANER;
-            }
-
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "disk-loader")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number."
-                        "\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            global.nuster.cache.disk_loader = atoi(args[cur_arg]);
-
-            if(global.nuster.cache.disk_loader <= 0) {
-                global.nuster.cache.disk_loader = NST_DEFAULT_DISK_LOADER;
-            }
-
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "disk-saver")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number."
-                        "\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            global.nuster.cache.disk_saver = atoi(args[cur_arg]);
-
-            if(global.nuster.cache.disk_saver <= 0) {
-                global.nuster.cache.disk_saver = NST_DEFAULT_DISK_SAVER;
-            }
+            global.nuster.manager.uri.ptr = strdup(args[cur_arg]);
+            global.nuster.manager.uri.len = strlen(args[cur_arg]);
 
             cur_arg++;
             continue;
@@ -588,18 +413,6 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
         goto out;
     }
 
-    global.nuster.cache.purge_method =
-        calloc(NST_CACHE_DEFAULT_PURGE_METHOD_SIZE, sizeof(char));
-
-    if(!global.nuster.cache.purge_method) {
-        ha_alert("parsing [%s:%d]: '%s' : out of memory.\n", file, linenum, args[0]);
-
-        err_code = ERR_ALERT | ERR_FATAL;
-        goto out;
-    }
-
-    memcpy(global.nuster.cache.purge_method, NST_CACHE_DEFAULT_PURGE_METHOD, 5);
-    memcpy(global.nuster.cache.purge_method + 5, " ", 1);
     cur_arg++;
 
     while(*(args[cur_arg]) !=0) {
@@ -646,38 +459,6 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args) {
 
                 err_code |= ERR_ALERT | ERR_FATAL;
                 goto out;
-            }
-
-            cur_arg++;
-            continue;
-        }
-
-        if(!strcmp(args[cur_arg], "purge-method")) {
-            cur_arg++;
-
-            if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' purge-method expects a name."
-                        "\n", file, linenum, args[0]);
-
-                err_code |= ERR_ALERT | ERR_FATAL;
-                goto out;
-            }
-
-            memset(global.nuster.cache.purge_method, 0, NST_CACHE_DEFAULT_PURGE_METHOD_SIZE);
-
-            if(strlen(args[cur_arg]) <= NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2) {
-
-                memcpy(global.nuster.cache.purge_method, args[cur_arg], strlen(args[cur_arg]));
-
-                memcpy(global.nuster.cache.purge_method + strlen(args[cur_arg]), " ", 1);
-
-            } else {
-                memcpy(global.nuster.cache.purge_method, args[cur_arg],
-                        NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2);
-
-                memcpy(global.nuster.cache.purge_method
-                        + NST_CACHE_DEFAULT_PURGE_METHOD_SIZE - 2, " ", 1);
-
             }
 
             cur_arg++;
