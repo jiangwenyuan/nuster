@@ -917,6 +917,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
                 ret = NST_CACHE_CTX_STATE_INIT;
             }
         } else {
+            //XXX
             ctx->disk.file = nst_cache_memory_alloc(
                     nst_persist_path_file_len(global.nuster.cache.root) + 1);
 

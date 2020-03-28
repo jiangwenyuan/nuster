@@ -97,6 +97,7 @@ int nst_persist_valid(struct persist *disk, struct nst_key *key) {
         goto err;
     }
 
+    //XXX
     buf = malloc(key->size);
 
     if(!buf) {

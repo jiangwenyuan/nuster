@@ -171,7 +171,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     entry->pid    = ctx->pid;
     entry->key    = key;
 
-    entry->header_len = ctx->header_len;
+    entry->header_len = ctx->res.header_len;
 
     entry->buf = buf;
 

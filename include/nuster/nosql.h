@@ -112,15 +112,15 @@ struct nst_nosql_dict {
 };
 
 enum {
-    NST_NOSQL_CTX_STATE_INIT = 0,   /* init */
-    NST_NOSQL_CTX_STATE_HIT,        /* key exists */
-    NST_NOSQL_CTX_STATE_CREATE,     /* to cache */
-    NST_NOSQL_CTX_STATE_DELETE,     /* to delete */
-    NST_NOSQL_CTX_STATE_DONE,       /* set done */
-    NST_NOSQL_CTX_STATE_INVALID,    /* invalid */
-    NST_NOSQL_CTX_STATE_FULL,       /* nosql full */
-    NST_NOSQL_CTX_STATE_WAIT,       /* wait */
-    NST_NOSQL_CTX_STATE_PASS,       /* rule passed */
+    NST_NOSQL_CTX_STATE_INIT        = 0,   /* init */
+    NST_NOSQL_CTX_STATE_HIT_MEMORY,        /* key exists */
+    NST_NOSQL_CTX_STATE_CREATE,            /* to cache */
+    NST_NOSQL_CTX_STATE_DELETE,            /* to delete */
+    NST_NOSQL_CTX_STATE_DONE,              /* set done */
+    NST_NOSQL_CTX_STATE_INVALID,           /* invalid */
+    NST_NOSQL_CTX_STATE_FULL,              /* nosql full */
+    NST_NOSQL_CTX_STATE_WAIT,              /* wait */
+    NST_NOSQL_CTX_STATE_PASS,              /* rule passed */
     NST_NOSQL_CTX_STATE_HIT_DISK,
     NST_NOSQL_CTX_STATE_CHECK_PERSIST,
 };
@@ -144,13 +144,15 @@ struct nst_nosql_ctx {
         struct ist            cookie;
         struct ist            content_type;
         struct ist            transfer_encoding;
+        uint64_t              content_length;
     } req;
 
-    int                       pid;         /* proxy uuid */
+    struct {
+        int                       header_len;
+        uint64_t                  payload_len;
+    } res;
 
-    int                       header_len;
-    uint64_t                  cache_len;
-    uint64_t                  cache_len2;
+    int                       pid;         /* proxy uuid */
 
     struct persist            disk;
 

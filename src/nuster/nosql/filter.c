@@ -176,7 +176,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                 ctx->state = nst_nosql_exists(ctx);
 
-                if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
+                if(ctx->state == NST_NOSQL_CTX_STATE_HIT_MEMORY) {
                     nst_debug2("HIT memory\n");
 
                     /* OK, nosql exists */
@@ -232,10 +232,12 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
         return 1;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_HIT) {
+    if(ctx->state == NST_NOSQL_CTX_STATE_HIT_MEMORY) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT;
-        appctx->st1 = 0; /* 0: header unsent, 1: sent */
-        appctx->ctx.nuster.nosql.data = ctx->data;
+        /* 0: header unsent, 1: sent */
+        appctx->st1 = 0;
+
+        appctx->ctx.nuster.nosql.data    = ctx->data;
         appctx->ctx.nuster.nosql.element = ctx->data->element;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
@@ -248,15 +250,13 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_HIT_DISK) {
-        appctx->ctx.nuster.nosql.fd = ctx->disk.fd;
-        appctx->ctx.nuster.nosql.offset =
-            nst_persist_get_header_pos(ctx->disk.meta);
-
-        appctx->ctx.nuster.nosql.header_len =
-            nst_persist_meta_get_header_len(ctx->disk.meta);
-
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;
         appctx->st1 = NST_PERSIST_APPLET_HEADER;
+
+        appctx->ctx.nuster.nosql.fd         = ctx->disk.fd;
+        appctx->ctx.nuster.nosql.offset     = nst_persist_get_header_pos(ctx->disk.meta);
+        appctx->ctx.nuster.nosql.header_len = nst_persist_meta_get_header_len(ctx->disk.meta);
+
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
