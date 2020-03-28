@@ -169,8 +169,6 @@ struct nst_cache_ctx {
 };
 
 struct nst_cache_stats {
-    uint64_t        used_mem;
-
     struct {
         uint64_t    total;
         uint64_t    fetch;

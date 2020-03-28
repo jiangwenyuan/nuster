@@ -89,6 +89,9 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
     memory->block_size = block_size;
     memory->chunk_size = chunk_size;
 
+    memory->total      = size;
+    memory->used       = 0;
+
     p += sizeof(struct nst_memory);
 
     /* calculate */
@@ -167,6 +170,8 @@ void *_nst_memory_block_alloc(struct nst_memory *memory,
     int i          = 0;
     int unset      = 1;
     int full       = 1;
+
+    memory->used += chunk_size;
 
     /* use info, should not use anymore */
     if(chunk_size * NST_MEMORY_INFO_BITMAP_BITS >= memory->block_size) {
@@ -337,6 +342,8 @@ void nst_memory_free_locked(struct nst_memory *memory, void *p) {
     bits       = memory->block_size / chunk_size;
 
     bits_idx = ((uint8_t *)p - (memory->data.begin + block_idx * memory->block_size)) / chunk_size;
+
+    memory->used -= chunk_size;
 
     empty = 0;
     full  = _nst_memory_block_is_full(block);

@@ -68,6 +68,9 @@ struct nst_memory {
     unsigned int             waiters;
 #endif
 
+    uint64_t                 total;
+    uint64_t                 used;
+
     uint32_t                 block_size;  /* max memory can be allocated */
     uint32_t                 chunk_size;  /* min memory can be allocated */
     int                      chunk_shift;

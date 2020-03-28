@@ -21,12 +21,6 @@
 #include <nuster/memory.h>
 #include <nuster/shctx.h>
 
-void nst_cache_stats_update_used_mem(int i) {
-    nst_shctx_lock(global.nuster.cache.stats);
-    global.nuster.cache.stats->used_mem += i;
-    nst_shctx_unlock(global.nuster.cache.stats);
-}
-
 void nst_cache_stats_update_req(int state) {
     nst_shctx_lock(global.nuster.cache.stats);
     global.nuster.cache.stats->req.total++;
@@ -47,16 +41,6 @@ void nst_cache_stats_update_req(int state) {
     }
 
     nst_shctx_unlock(global.nuster.cache.stats);
-}
-
-int nst_cache_stats_full() {
-    int i;
-
-    nst_shctx_lock(global.nuster.cache.stats);
-    i =  global.nuster.cache.data_size <= global.nuster.cache.stats->used_mem;
-    nst_shctx_unlock(global.nuster.cache.stats);
-
-    return i;
 }
 
 /*
@@ -143,8 +127,11 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
             (int)strlen(global.nuster.cache.purge_method) - 1,
             global.nuster.cache.purge_method);
 
+    chunk_appendf(&trash, "global.nuster.cache.stats.total_mem: %"PRIu64"\n",
+            global.nuster.cache.memory->total);
+
     chunk_appendf(&trash, "global.nuster.cache.stats.used_mem: %"PRIu64"\n",
-            global.nuster.cache.stats->used_mem);
+            global.nuster.cache.memory->used);
 
     chunk_appendf(&trash, "global.nuster.cache.stats.req_total: %"PRIu64"\n",
             global.nuster.cache.stats->req.total);
@@ -339,7 +326,6 @@ int nst_cache_stats_init() {
         return NST_ERR;
     }
 
-    global.nuster.cache.stats->used_mem  = 0;
     global.nuster.cache.stats->req.total = 0;
     global.nuster.cache.stats->req.fetch = 0;
     global.nuster.cache.stats->req.hit   = 0;
