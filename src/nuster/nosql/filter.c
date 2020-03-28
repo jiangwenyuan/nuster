@@ -26,6 +26,7 @@ static int _nst_nosql_filter_init(struct proxy *px, struct flt_conf *fconf) {
 
     fconf->flags |= FLT_CFG_FL_HTX;
     conf->pid = px->uuid;
+
     return 0;
 }
 
@@ -51,9 +52,7 @@ static int _nst_nosql_filter_check(struct proxy *px, struct flt_conf *fconf) {
 static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
     struct nst_flt_conf *conf = FLT_CONF(filter);
 
-    if(global.nuster.nosql.status != NST_STATUS_ON
-            || conf->status != NST_STATUS_ON) {
-
+    if(global.nuster.nosql.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
         return 0;
     }
 
@@ -110,8 +109,8 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
     }
 }
 
-static int _nst_nosql_filter_http_headers(struct stream *s,
-        struct filter *filter, struct http_msg *msg) {
+static int
+_nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct http_msg *msg) {
 
     struct stream_interface *si = &s->si[1];
     struct nst_nosql_ctx *ctx   = filter->ctx;
@@ -129,14 +128,16 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
             s->txn->meth != HTTP_METH_DELETE) {
 
         appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_ALLOWED;
+
         return 1;
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
         int i = 0;
 
-        if(!nst_nosql_parse_htx(ctx, s, msg)) {
+        if(nst_nosql_parse_htx(ctx, s, msg) != NST_OK) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
+
             return 1;
         }
 
@@ -148,26 +149,27 @@ static int _nst_nosql_filter_http_headers(struct stream *s,
 
             nst_debug(s, "[nosql] ==== Check rule: %s ====\n", ctx->rule->name);
 
-            if(key->data) {
-                nst_debug(s, "[nosql] Key checked, continue.\n");
-            } else {
+            if(!key->data) {
+                /* build key */
                 if(nst_nosql_build_key(ctx, s, msg) != NST_OK) {
                     ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
+
                     return 1;
                 }
 
                 if(nst_nosql_store_key(ctx, key) != NST_OK) {
                     ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
+
                     return 1;
                 }
-
-                nst_debug(s, "[nosql] Key: ");
-                nst_debug_key(key);
-
-                nst_hash(key);
-
-                nst_debug(s, "[nosql] Hash: %"PRIu64"\n", key->hash);
             }
+
+            nst_debug(s, "[nosql] Key: ");
+            nst_debug_key(key);
+
+            nst_hash(key);
+
+            nst_debug(s, "[nosql] Hash: %"PRIu64"\n", key->hash);
 
             if(s->txn->meth == HTTP_METH_GET) {
                 nst_debug(s, "[nosql] Check key existence: ");

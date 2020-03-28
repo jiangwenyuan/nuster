@@ -817,14 +817,14 @@ int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http
 }
 
 int nst_nosql_store_key(struct nst_nosql_ctx *ctx, struct nst_key *key) {
-    key->size = trash.data;
+    key->size = ctx->key->data;
     key->data = malloc(key->size);
 
     if(!key->data) {
         return NST_ERR;
     }
 
-    memcpy(key->data, trash.area, trash.data);
+    memcpy(key->data, ctx->key->area, ctx->key->data);
 
     return NST_OK;
 }
