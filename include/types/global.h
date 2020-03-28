@@ -188,7 +188,7 @@ struct global {
 			int       disk_cleaner;                /* the number of files checked once */
 			int       disk_loader;                 /* the number of files load once */
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
-			char     *purge_method;
+			char        *purge_method;
 
 			struct nst_memory      *memory;        /* memory */
 		} cache;
@@ -206,9 +206,15 @@ struct global {
 			struct nst_memory      *memory;        /* memory */
 		} nosql;
 
-		struct nst_memory *memory;                     /* for common usage */
+		struct {
+			int          status;                      /* enable nosql on or off */
+			struct ist   purge_method;
+			struct ist   uri;                        /* the uri used for stats and manager */
+		} manager;
+
 		struct nst_stats  *stats;
-		struct ist	   uri;                        /* the uri used for stats and manager */
+
+		struct nst_memory *memory;                     /* for common usage */
 	} nuster;
 };
 

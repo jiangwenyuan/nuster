@@ -211,9 +211,11 @@ struct global global = {
 			.disk_loader  = NST_DEFAULT_DISK_LOADER,
 			.disk_saver   = NST_DEFAULT_DISK_SAVER,
 		},
-		.uri = {
-			.ptr          = NULL,
-			.len          = 1,
+		.manager = {
+			.uri = {
+				.ptr  = NULL,
+				.len  = 1,
+			},
 		},
 	},
 	/* others NULL OK */

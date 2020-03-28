@@ -97,7 +97,7 @@ static int _nst_manager_check_uri(struct http_msg *msg) {
     struct htx_sl *sl;
     struct ist url, uri;
 
-    if(!global.nuster.uri.len) {
+    if(!global.nuster.manager.uri.len) {
         return NST_ERR;
     }
 
@@ -106,7 +106,7 @@ static int _nst_manager_check_uri(struct http_msg *msg) {
     url = htx_sl_req_uri(sl);
     uri = http_get_path(url);
 
-    if(!isteq(global.nuster.uri, uri)) {
+    if(!isteq(global.nuster.manager.uri, uri)) {
         return NST_ERR;
     }
 

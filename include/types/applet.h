@@ -88,12 +88,6 @@ struct appctx {
 				uint64_t offset;
 			} cache;
 			struct {
-				struct buffer    buf;
-				struct ist	 host;
-				struct ist	 path;
-				struct my_regex *regex;
-			} manager;
-			struct {
 				struct nst_nosql_entry  *entry;
 				struct nst_nosql_data   *data;
 				struct nst_data_element *element;
@@ -101,6 +95,12 @@ struct appctx {
 				int header_len;
 				uint64_t offset;
 			} nosql;
+			struct {
+				struct buffer    buf;
+				struct ist	 host;
+				struct ist	 path;
+				struct my_regex *regex;
+			} manager;
 		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */

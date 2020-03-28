@@ -172,8 +172,8 @@ _nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct ht
 
     chunk_appendf(&trash, "%-*s%s\n", len, "nuster.manager:", "on");
 
-    chunk_appendf(&trash, "%-*s%.*s\n", len, "nuster.uri:",
-            (int)global.nuster.uri.len, global.nuster.uri.ptr);
+    chunk_appendf(&trash, "%-*s%.*s\n", len, "nuster.manager.uri:",
+            (int)global.nuster.manager.uri.len, global.nuster.manager.uri.ptr);
 
     chunk_appendf(&trash, "%-*s%.*s\n", len, "nuster.purge_method:",
             (int)strlen(global.nuster.cache.purge_method) - 1,

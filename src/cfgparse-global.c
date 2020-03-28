@@ -1209,8 +1209,8 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			}
 			args++;
 			p = strdup(args[cur_arg]);
-			global.nuster.uri.ptr = p;
-			global.nuster.uri.len = strlen(p);
+			global.nuster.manager.uri.ptr = p;
+			global.nuster.manager.uri.len = strlen(p);
 		} else {
 			ha_alert("parsing [%s:%d] : [global] '%s' only supports 'cache|nosql' .\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
