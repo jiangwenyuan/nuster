@@ -113,7 +113,7 @@ make install PREFIX=/usr/local/nuster
 
 ```
 global
-    nuster cache on data-size 100m uri /_nuster
+    nuster cache on data-size 100m
     nuster nosql on data-size 200m
     master-worker # v3
 defaults
@@ -238,11 +238,29 @@ backend be
 
 # 指令
 
+## global: nuster uri URI
+
+**syntax**
+
+nuster uri URI
+
+**default:** *none*
+
+**context:** *global*
+
+定义并开启manager/stats/purge API
+
+`nuster uri /_my/_unique/_uri`
+
+manager/stats/purge默认是关闭的. 如果开启了，注意开启访问控制(see [FAQ](#how-to-restrict-access)).
+
+具体请参考[缓存管理](#缓存管理) 和 [缓存统计](#缓存统计).
+
 ## global: nuster cache|nosql
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method] [uri uri]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method]
 
 nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
@@ -304,16 +322,6 @@ nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n]
 ### purge-method [cache only]
 
 自定义PURGE用的HTTP method，最大14个字符，默认是 `PURGE`.
-
-### uri [cache only]
-
-定义并开启cache manager/stats API
-
-`nuster cache on uri /_my/_unique/_/_cache/_uri`
-
-cache manager/stats默认是关闭的. 如果开启了，主义开启访问控制(see [FAQ](#how-to-restrict-access)).
-
-具体请参考[缓存管理](#缓存管理) 和 [缓存统计](#缓存统计).
 
 
 ## proxy: nuster cache|nosql
@@ -439,7 +447,7 @@ extend on|off|n1,n2,n3,n4
 
 默认: off.
 
-n1,n2,n3,n4: 小于100的正整数, n1 + n2 + n3之和也小于100. 他们定义四个时间段： 
+n1,n2,n3,n4: 小于100的正整数, n1 + n2 + n3之和也小于100. 他们定义四个时间段：
 
 ```
 time:       0                                                       ttl         ttl * (1 + n4%)
@@ -559,7 +567,7 @@ nuster也可以用作类似Varnish或者Nginx那样的HTTP缓存服务器，来�
 **定义并且开启**
 
 ```
-nuster cache on uri /nuster/cache
+nuster uri /nuster/cache
 ```
 
 **基本用法**
@@ -785,7 +793,7 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/n
 ### Eanble and define the endpoint
 
 ```
-nuster cache on uri /nuster/cache
+nuster uri /nuster/cache
 ```
 
 ### Usage

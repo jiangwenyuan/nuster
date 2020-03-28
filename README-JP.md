@@ -116,7 +116,7 @@ make install PREFIX=/usr/local/nuster
 
 ```
 global
-    nuster cache on data-size 100m uri /_nuster
+    nuster cache on data-size 100m
     nuster nosql on data-size 200m
     master-worker # v3から
 defaults
@@ -241,11 +241,29 @@ backend be
 
 # ディレクティブ
 
+## global: nuster uri URI
+
+**syntax**
+
+nuster uri URI
+
+**default:** *none*
+
+**context:** *global*
+
+manager/stats/purge APIを定義そして有効にする。
+
+`nuster uri /_my/_unique/_uri`
+
+ディフォルトはcache manager/stats は無効で、有効にしたら、アクセス制御をしてください(see [FAQ](#how-to-restrict-access)).
+
+詳細は[キャッシュ管理](#キャッシュ管理) と　[キャッシュ統計](#キャッシュ統計)。
+
 ## global: nuster cache|nosql
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method] [uri uri]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method]
 
 nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
@@ -307,17 +325,6 @@ hash tableのサイズを決める.
 ### purge-method [cache only]
 
 長さ14バイトのHTTP methodを定義する。ディフォルトは`PURGE`。
-
-### uri [cache only]
-
-cache manager/stats APIを定義そして有効にする。
-
-`nuster cache on uri /_my/_unique/_/_cache/_uri`
-
-ディフォルトはcache manager/stats は無効で、有効にしたら、アクセス制御をしてください(see [FAQ](#how-to-restrict-access)).
-
-詳細は[キャッシュ管理](#キャッシュ管理) と　[キャッシュ統計](#キャッシュ統計)。
-
 
 ## proxy: nuster cache|nosql
 
@@ -563,7 +570,7 @@ cacheはランタイムでAPIで管理できる。uriを定義して、このURI
 **Eanble and define the endpoint**
 
 ```
-nuster cache on uri /nuster/cache
+nuster uri /nuster/cache
 ```
 
 **Basic usage**
@@ -628,7 +635,7 @@ curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nust
 
 いくつかの方法でPurgeできる。Purge機能はディフォルトでOffなので、Onにする必要がある。
 
-`global`セクションで `nuster cache on uri /nuster/cache`のようにPurge用のuriを設定することでPurgeを有効にする。uriはなんでもいい。
+`global`セクションで `nuster uri /nuster/cache`のようにPurge用のuriを設定することでPurgeを有効にする。uriはなんでもいい。
 
 そしてディフォルトのPurgeメソッドは`PURGE`で、`purge-method MYPURGE`で別のメソッドも設定できる。
 
@@ -783,7 +790,7 @@ curl -X PURGE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/n
 ### Eanble and define the endpoint
 
 ```
-nuster cache on uri /nuster/cache
+nuster uri /nuster/cache
 ```
 
 `curl http://127.0.0.1/nuster/cache`

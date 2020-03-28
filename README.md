@@ -112,7 +112,7 @@ A minimal config file: `nuster.cfg`
 
 ```
 global
-    nuster cache on data-size 100m uri /_nuster
+    nuster cache on data-size 100m
     nuster nosql on data-size 200m
     master-worker # since v3
 defaults
@@ -236,11 +236,29 @@ backend be
 
 # Directives
 
+## global: nuster uri URI
+
+**syntax**
+
+nuster uri URI
+
+**default:** *none*
+
+**context:** *global*
+
+Enable manager/stats/purge API and define the endpoint:
+
+`nuster uri /_my/_unique/_uri`
+
+By default, the manager/stats/purge API are disabled. When it is enabled, remember to restrict the access(see [FAQ](#how-to-restrict-access)).
+
+See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for details.
+
 ## global: nuster cache|nosql
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method] [uri uri]
+nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [purge-method method]
 
 nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
 
@@ -316,16 +334,6 @@ See [nuster rule disk mode](#disk-mode) for details.
 ### purge-method [cache only]
 
 Define a customized HTTP method with a max length of 14 to purge cache, it is `PURGE` by default.
-
-### uri [cache only]
-
-Enable cache manager/stats API and define the endpoint:
-
-`nuster cache on uri /_my/_unique/_/_cache/_uri`
-
-By default, the cache manager/stats are disabled. When it is enabled, remember to restrict the access(see [FAQ](#how-to-restrict-access)).
-
-See [Cache Management](#cache-management) and [Cache stats](#cache-stats) for details.
 
 ## proxy: nuster cache|nosql
 
@@ -574,7 +582,7 @@ Cache can be managed via a manager API which endpoints is defined by `uri` and c
 **Enable and define the endpoint**
 
 ```
-nuster cache on uri /nuster/cache
+nuster uri /nuster/cache
 ```
 
 **Basic usage**
@@ -802,7 +810,7 @@ Cache stats can be accessed by making HTTP GET request to the endpoint defined b
 ### Enable and define the endpoint
 
 ```
-nuster cache on uri /nuster/cache
+nuster uri /nuster/cache
 ```
 
 ### Usage
