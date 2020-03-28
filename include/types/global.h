@@ -183,21 +183,20 @@ struct global {
 			char     *root;                        /* persist root directory */
 			uint64_t  data_size;                   /* max memory used by data, in bytes */
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
-			char     *purge_method;
-			char     *uri;                         /* the uri used for stats and manager */
 			int       dict_cleaner;                /* the number of entries checked once */
 			int       data_cleaner;                /* the number of data checked once */
 			int       disk_cleaner;                /* the number of files checked once */
 			int       disk_loader;                 /* the number of files load once */
 			int       disk_saver;                  /* the number of entries checked once for persist_async */
+			char     *purge_method;
 
 			struct nst_memory      *memory;        /* memory */
 		} cache;
 		struct {
 			int       status;                      /* enable nosql on or off */
+			char     *root;                        /* persist root directory */
 			uint64_t  dict_size;                   /* max memory used by dict, in bytes */
 			uint64_t  data_size;                   /* max memory used by nosql, in bytes */
-			char     *root;                        /* persist root directory */
 			int       dict_cleaner;                /* the number of entries checked once */
 			int       data_cleaner;                /* the number of data checked once */
 			int       disk_cleaner;                /* the number of files checked once */
@@ -207,9 +206,9 @@ struct global {
 			struct nst_memory      *memory;        /* memory */
 		} nosql;
 
-		struct nst_cache_stats *stats;
-		struct nst_memory       *memory;               /* for common usage */
-		struct ist	         uri;                  /* the uri used for stats and manager */
+		struct nst_memory *memory;                     /* for common usage */
+		struct nst_stats  *stats;
+		struct ist	   uri;                        /* the uri used for stats and manager */
 	} nuster;
 };
 

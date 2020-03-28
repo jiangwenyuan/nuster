@@ -276,27 +276,6 @@ out:
     return;
 }
 
-int nst_cache_check_uri(struct http_msg *msg) {
-    struct htx *htx;
-    struct htx_sl *sl;
-    struct ist url, uri;
-
-    if(!global.nuster.uri.len) {
-        return NST_ERR;
-    }
-
-    htx = htxbuf(&msg->chn->buf);
-    sl  = http_get_stline(htx);
-    url = htx_sl_req_uri(sl);
-    uri = http_get_path(url);
-
-    if(!isteq(global.nuster.uri, uri)) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
 /*
  * create a new nst_cache_data and insert it to cache->data list
  */

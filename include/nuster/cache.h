@@ -235,7 +235,6 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
 void nst_cache_hit_disk(struct stream *s, struct stream_interface *si, struct channel *req,
         struct channel *res, struct nst_cache_ctx *ctx);
 
-int nst_cache_check_uri(struct http_msg *msg);
 void nst_cache_persist_cleanup();
 void nst_cache_persist_load();
 void nst_cache_persist_async();

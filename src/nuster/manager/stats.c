@@ -19,20 +19,21 @@
 
 #include <nuster/nuster.h>
 
-void nst_cache_stats_update_req(int state) {
+void nst_stats_update_cache(int state) {
     nst_shctx_lock(global.nuster.stats);
-    global.nuster.stats->req.total++;
+
+    global.nuster.stats->cache.total++;
 
     switch(state) {
         case NST_CACHE_CTX_STATE_HIT:
         case NST_CACHE_CTX_STATE_HIT_DISK:
-            global.nuster.stats->req.hit++;
+            global.nuster.stats->cache.hit++;
             break;
         case NST_CACHE_CTX_STATE_CREATE:
-            global.nuster.stats->req.abort++;
+            global.nuster.stats->cache.abort++;
             break;
         case NST_CACHE_CTX_STATE_DONE:
-            global.nuster.stats->req.fetch++;
+            global.nuster.stats->cache.fetch++;
             break;
         default:
             break;
@@ -45,49 +46,36 @@ void nst_cache_stats_update_req(int state) {
  * return 1 if the req is done, otherwise 0
  */
 
-int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px) {
+int nst_stats_applet(struct stream *s, struct channel *req, struct proxy *px) {
     struct stream_interface *si = &s->si[1];
-    struct http_txn *txn        = s->txn;
-    struct http_msg *msg        = &txn->req;
     struct appctx *appctx       = NULL;
 
-    if(global.nuster.cache.status != NST_STATUS_ON) {
+    s->target = &nuster.applet.stats.obj_type;
+
+    if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
+        return 1;
+    } else {
+        appctx      = si_appctx(si);
+        appctx->st0 = NST_STATS_HEADER;
+        appctx->st1 = proxies_list->uuid;
+        appctx->st2 = 0;
+
+        req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
+        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+        req->analysers |= AN_REQ_HTTP_XFER_BODY;
+
         return 0;
     }
 
-    /* GET stats uri */
-    if(txn->meth == HTTP_METH_GET && nst_cache_check_uri(msg) == NST_OK) {
-        s->target = &nuster.applet.cache_stats.obj_type;
-
-        if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
-            return 1;
-        } else {
-            appctx      = si_appctx(si);
-            appctx->st0 = NST_CACHE_STATS_HEAD;
-            appctx->st1 = proxies_list->uuid;
-            appctx->st2 = 0;
-
-            req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
-            req->analysers &= ~AN_REQ_FLT_XFER_DATA;
-            req->analysers |= AN_REQ_HTTP_XFER_BODY;
-        }
-    }
-
-    return 0;
 }
 
-int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream_interface *si,
-        struct channel *res) {
-
-    struct htx *res_htx;
-
+static int _nst_stats_header(struct appctx *appctx, struct stream_interface *si, struct htx *htx) {
+    struct stream *s = si_strm(si);
     struct htx_sl *sl;
     unsigned int flags;
 
-    res_htx = htx_from_buf(&res->buf);
-
     flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_ENC|HTX_SL_F_XFER_LEN|HTX_SL_F_CHNK);
-    sl = htx_add_stline(res_htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), ist("200"), ist("OK"));
+    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), ist("200"), ist("OK"));
 
     if(!sl) {
         goto full;
@@ -95,93 +83,176 @@ int _nst_cache_stats_head(struct appctx *appctx, struct stream *s, struct stream
 
     sl->info.res.status = 200;
 
-    if(!htx_add_header(res_htx, ist("Cache-Control"), ist("no-cache"))) {
+    if(!htx_add_header(htx, ist("Cache-Control"), ist("no-cache"))) {
         goto full;
     }
 
-    if(!htx_add_header(res_htx, ist("Content-Type"), ist("text/plain"))) {
+    if(!htx_add_header(htx, ist("Content-Type"), ist("text/plain"))) {
         goto full;
     }
 
-    if(!htx_add_endof(res_htx, HTX_BLK_EOH)) {
+    if(!htx_add_endof(htx, HTX_BLK_EOH)) {
         goto full;
     }
 
-    channel_add_input(&s->res, res_htx->data);
-
-    chunk_reset(&trash);
-
-    chunk_appendf(&trash, "**GLOBAL**\n");
-    chunk_appendf(&trash, "global.nuster.cache.data.size: %"PRIu64"\n",
-            global.nuster.cache.data_size);
-
-    chunk_appendf(&trash, "global.nuster.cache.dict.size: %"PRIu64"\n",
-            global.nuster.cache.dict_size);
-
-    chunk_appendf(&trash, "global.nuster.uri: %.*s\n", (int)global.nuster.uri.len,
-            global.nuster.uri.ptr);
-
-    chunk_appendf(&trash, "global.nuster.cache.purge_method: %.*s\n",
-            (int)strlen(global.nuster.cache.purge_method) - 1,
-            global.nuster.cache.purge_method);
-
-    chunk_appendf(&trash, "global.nuster.cache.stats.total_mem: %"PRIu64"\n",
-            global.nuster.cache.memory->total);
-
-    chunk_appendf(&trash, "global.nuster.cache.stats.used_mem: %"PRIu64"\n",
-            global.nuster.cache.memory->used);
-
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_total: %"PRIu64"\n",
-            global.nuster.stats->req.total);
-
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_hit: %"PRIu64"\n",
-            global.nuster.stats->req.hit);
-
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_fetch: %"PRIu64"\n",
-            global.nuster.stats->req.fetch);
-
-    chunk_appendf(&trash, "global.nuster.cache.stats.req_abort: %"PRIu64"\n",
-            global.nuster.stats->req.abort);
-
-    chunk_appendf(&trash, "\n**PERSISTENCE**\n");
-
-    if(global.nuster.cache.root) {
-        chunk_appendf(&trash, "global.nuster.cache.dir: %s\n", global.nuster.cache.root);
-        chunk_appendf(&trash, "global.nuster.cache.loaded: %s\n",
-            nuster.cache->disk.loaded ? "yes" : "no");
-    }
-
-    if(trash.data >= channel_htx_recv_max(res, res_htx)) {
-        goto full;
-    }
-
-    if(!htx_add_data_atonce(res_htx, ist2(trash.area, trash.data))) {
-        goto full;
-    }
-
-    channel_add_input(res, trash.data);
+    channel_add_input(&s->res, htx->data);
 
     return 1;
 
 full:
-    htx_reset(res_htx);
+    htx_reset(htx);
+    si_rx_room_blk(si);
+    return 0;
+}
+
+static int _nst_stats_putdata(struct channel *chn, struct htx *htx, struct buffer *chk) {
+
+    if(chk->data >= channel_htx_recv_max(chn, htx)) {
+        return 0;
+    }
+
+    if(!htx_add_data_atonce(htx, ist2(chk->area, chk->data))) {
+        return 0;
+    }
+
+    channel_add_input(chn, chk->data);
+    chk->data = 0;
+
+    return 1;
+}
+
+static int _getMaxPaddingLen() {
+    struct proxy *p;
+    int max = 26;
+
+    p = proxies_list;
+
+    while(p) {
+
+        if((p->cap & PR_CAP_BE)
+                && (p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL)) {
+
+            struct nst_rule *rule = NULL;
+            int s1 = strlen(p->id);
+
+            rule = nuster.proxy[p->uuid]->rule;
+
+            while(rule) {
+                int s2 = s1 + 8 + strlen(rule->name);
+
+                if(s2 > max) {
+                    max = s2;
+                }
+
+                rule = rule->next;
+            }
+        }
+
+        p = p->next;
+    }
+
+    return max;
+}
+
+static int
+_nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct htx *htx) {
+    struct channel *res = si_ic(si);
+
+    int len = _getMaxPaddingLen();
+
+    chunk_reset(&trash);
+
+    chunk_appendf(&trash, "**GLOBAL**\n");
+
+    chunk_appendf(&trash, "%-*s%s\n", len, "nuster.cache:",
+            global.nuster.cache.status == NST_STATUS_ON ? "on" : "off");
+
+    chunk_appendf(&trash, "%-*s%s\n", len, "nuster.nosql:",
+            global.nuster.nosql.status == NST_STATUS_ON ? "on" : "off");
+
+    chunk_appendf(&trash, "%-*s%s\n", len, "nuster.manager:", "on");
+
+    chunk_appendf(&trash, "%-*s%.*s\n", len, "nuster.uri:",
+            (int)global.nuster.uri.len, global.nuster.uri.ptr);
+
+    chunk_appendf(&trash, "%-*s%.*s\n", len, "nuster.purge_method:",
+            (int)strlen(global.nuster.cache.purge_method) - 1,
+            global.nuster.cache.purge_method);
+
+    chunk_appendf(&trash, "\n**MEMORY**\n");
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.total:",
+            global.nuster.memory->total);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.used:",
+            global.nuster.memory->used);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
+            global.nuster.cache.memory->total);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
+            global.nuster.cache.memory->used);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
+            global.nuster.nosql.memory->total);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
+            global.nuster.nosql.memory->used);
+
+    if(global.nuster.cache.root || global.nuster.nosql.root) {
+        chunk_appendf(&trash, "\n**PERSISTENCE**\n");
+    }
+
+    if(global.nuster.cache.root) {
+        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.dir:", global.nuster.cache.root);
+
+        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.loaded:",
+            nuster.cache->disk.loaded ? "yes" : "no");
+    }
+
+    if(global.nuster.nosql.root) {
+        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.dir:", global.nuster.nosql.root);
+
+        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.loaded:",
+            nuster.nosql->disk.loaded ? "yes" : "no");
+    }
+
+    chunk_appendf(&trash, "\n**STATISTICS**\n");
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.total:",
+            global.nuster.stats->cache.total);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.hit:",
+            global.nuster.stats->cache.hit);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.fetch:",
+            global.nuster.stats->cache.fetch);
+
+    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.abort:",
+            global.nuster.stats->cache.abort);
+
+    if(!_nst_stats_putdata(res, htx, &trash)) {
+        goto full;
+    }
+
+    return 1;
+
+full:
     si_rx_room_blk(si);
 
     return 0;
 }
 
-int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
-        struct stream_interface *si, struct channel *res) {
-
-    struct htx *htx;
-
+static int _nst_stats_proxy(struct appctx *appctx, struct stream_interface *si, struct htx *htx) {
+    struct channel *res = si_ic(si);
     struct proxy *p;
 
-    htx = htx_from_buf(&res->buf);
+    int len = _getMaxPaddingLen();
 
     chunk_reset(&trash);
 
     p = proxies_list;
+
     while(p) {
         struct nst_rule *rule = NULL;
 
@@ -195,21 +266,13 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
             goto next;
         }
 
-        if(p->cap & PR_CAP_BE && p->nuster.mode == NST_MODE_CACHE) {
+        if((p->cap & PR_CAP_BE)
+                && (p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL)) {
 
             rule = nuster.proxy[p->uuid]->rule;
 
-            chunk_printf(&trash, "\n**PROXY %s %d**\n", p->id, p->uuid);
-
-            if(!htx_add_data_atonce(htx, ist2(trash.area, trash.data))) {
-                si_rx_room_blk(si);
-
-                return 0;
-            }
-
-            channel_add_input(res, trash.data);
-
             while(rule) {
+
                 if(htx_almost_full(htx)) {
                     si_rx_room_blk(si);
 
@@ -217,31 +280,33 @@ int _nst_cache_stats_data(struct appctx *appctx, struct stream *s,
                 }
 
                 if(rule->uuid == appctx->st2) {
+                    int i = len - strlen(p->id) - 8 - strlen(rule->name);
 
-                    chunk_printf(&trash, "%s.rule.%s: ", p->id, rule->name);
+                    if(rule->idx == 0) {
+                        chunk_printf(&trash, "\n**PROXY %s %s**\n",
+                                p->nuster.mode == NST_MODE_CACHE ? "cache" : "nosql",
+                                p->id);
+                    }
 
-                    chunk_appendf(&trash, "state=%s ttl=%"PRIu32" disk=%s\n",
+                    chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->name);
+
+                    while(i--) {
+                        chunk_appendf(&trash, " ");
+                    }
+
+                    chunk_appendf(&trash, "state=%-4sdisk=%-6sttl=%"PRIu32"\n",
                             rule->state == NST_RULE_ENABLED ? "on" : "off",
-                            rule->ttl,
                             rule->disk == NST_DISK_OFF ? "off"
                             : rule->disk == NST_DISK_ONLY ? "only"
                             : rule->disk == NST_DISK_SYNC ? "sync"
                             : rule->disk == NST_DISK_ASYNC ? "async"
-                            : "invalid");
+                            : "invalid",
+                            rule->ttl
+                            );
 
-                    if(trash.data >= channel_htx_recv_max(res, htx)) {
-                        si_rx_room_blk(si);
-
-                        return 0;
+                    if(!_nst_stats_putdata(res, htx, &trash)) {
+                        goto full;
                     }
-
-                    if(!htx_add_data_atonce(htx, ist2(trash.area, trash.data))) {
-                        si_rx_room_blk(si);
-
-                        return 0;
-                    }
-
-                    channel_add_input(res, trash.data);
 
                     appctx->st2++;
                 }
@@ -257,9 +322,14 @@ next:
     }
 
     return 1;
+
+full:
+    si_rx_room_blk(si);
+
+    return 0;
 }
 
-static void nst_cache_stats_handler(struct appctx *appctx) {
+static void nst_stats_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *req         = si_oc(si);
     struct channel *res         = si_ic(si);
@@ -267,26 +337,35 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 
     struct htx *req_htx, *res_htx;
 
+    req_htx = htx_from_buf(&req->buf);
     res_htx = htx_from_buf(&res->buf);
 
-    if(appctx->st0 == NST_CACHE_STATS_HEAD) {
+    if(appctx->st0 == NST_STATS_HEADER) {
 
-        if(_nst_cache_stats_head(appctx, s, si, res)) {
-            appctx->st0 = NST_CACHE_STATS_DATA;
+        if(_nst_stats_header(appctx, si, res_htx)) {
+            appctx->st0 = NST_STATS_PAYLOAD;
         }
     }
 
-    if(appctx->st0 == NST_CACHE_STATS_DATA) {
+    if(appctx->st0 == NST_STATS_PAYLOAD) {
 
-        if(_nst_cache_stats_data(appctx, s, si, res)) {
-            appctx->st0 = NST_CACHE_STATS_DONE;
+        if(_nst_stats_payload(appctx, si, res_htx)) {
+            appctx->st0 = NST_STATS_PROXY;
         }
     }
 
-    if(appctx->st0 == NST_CACHE_STATS_DONE) {
+    if(appctx->st0 == NST_STATS_PROXY) {
+
+        if(_nst_stats_proxy(appctx, si, res_htx)) {
+            appctx->st0 = NST_STATS_DONE;
+        }
+    }
+
+    if(appctx->st0 == NST_STATS_DONE) {
 
         if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
             si_rx_room_blk(si);
+
             goto out;
         }
 
@@ -299,7 +378,6 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 
         /* eat the whole request */
         if (co_data(req)) {
-            req_htx = htx_from_buf(&req->buf);
             co_htx_skip(req, req_htx, co_data(req));
             htx_to_buf(req_htx, &req->buf);
         }
@@ -307,27 +385,26 @@ static void nst_cache_stats_handler(struct appctx *appctx) {
 
 out:
     htx_to_buf(res_htx, &res->buf);
+
     if(!channel_is_empty(res)) {
         si_stop_get(si);
     }
 }
 
-int nst_cache_stats_init() {
-    global.nuster.stats = nst_memory_alloc(global.nuster.memory, sizeof(struct nst_cache_stats));
+int nst_stats_init() {
+    global.nuster.stats = nst_memory_alloc(global.nuster.memory, sizeof(struct nst_stats));
 
     if(!global.nuster.stats) {
         return NST_ERR;
     }
 
+    memset(global.nuster.stats, 0, sizeof(struct nst_stats));
+
     if(nst_shctx_init(global.nuster.stats) != NST_OK) {
         return NST_ERR;
     }
 
-    global.nuster.stats->req.total = 0;
-    global.nuster.stats->req.fetch = 0;
-    global.nuster.stats->req.hit   = 0;
-    global.nuster.stats->req.abort = 0;
-    nuster.applet.cache_stats.fct  = nst_cache_stats_handler;
+    nuster.applet.stats.fct = nst_stats_handler;
 
     return NST_OK;
 }

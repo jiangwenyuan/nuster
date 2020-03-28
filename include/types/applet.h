@@ -88,7 +88,7 @@ struct appctx {
 				struct ist	 host;
 				struct ist	 path;
 				struct my_regex *regex;
-			} cache_manager;
+			} manager;
 			struct {
 				struct nst_nosql_entry  *entry;
 				struct nst_nosql_data   *data;

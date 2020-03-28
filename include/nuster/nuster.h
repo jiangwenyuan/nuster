@@ -51,10 +51,10 @@ struct nuster {
 
     struct {
         struct applet cache_engine;
-        struct applet cache_manager;
-        struct applet cache_stats;
         struct applet nosql_engine;
         struct applet cache_disk_engine;
+        struct applet purger;
+        struct applet stats;
     } applet;
 
     struct nst_proxy **proxy;
@@ -75,9 +75,7 @@ static inline void nuster_housekeeping() {
 }
 
 static inline int nuster_check_applet(struct stream *s, struct channel *req, struct proxy *px) {
-    return (nst_nosql_check_applet(s, req, px) ||
-            nst_manager(s, req, px) ||
-            nst_cache_stats(s, req, px));
+    return nst_manager(s, req, px) || nst_nosql_check_applet(s, req, px);
 }
 
 #endif /* _NUSTER_H */

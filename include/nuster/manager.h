@@ -34,13 +34,13 @@
 #include <nuster/common.h>
 #include <nuster/persist.h>
 
-struct nst_cache_stats {
+struct nst_stats {
     struct {
         uint64_t    total;
         uint64_t    fetch;
         uint64_t    hit;
         uint64_t    abort;
-    } req;
+    } cache;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t mutex;
@@ -50,33 +50,37 @@ struct nst_cache_stats {
 };
 
 enum {
-    NST_CACHE_PURGE_NAME_ALL = 0,
-    NST_CACHE_PURGE_NAME_PROXY,
-    NST_CACHE_PURGE_NAME_RULE,
-    NST_CACHE_PURGE_PATH,
-    NST_CACHE_PURGE_REGEX,
-    NST_CACHE_PURGE_HOST,
-    NST_CACHE_PURGE_PATH_HOST,
-    NST_CACHE_PURGE_REGEX_HOST,
+    NST_MANAGER_NAME_ALL = 0,
+    NST_MANAGER_NAME_PROXY,
+    NST_MANAGER_NAME_RULE,
+    NST_MANAGER_PATH,
+    NST_MANAGER_REGEX,
+    NST_MANAGER_HOST,
+    NST_MANAGER_PATH_HOST,
+    NST_MANAGER_REGEX_HOST,
 };
 
 enum {
-    NST_CACHE_STATS_HEAD,
-    NST_CACHE_STATS_DATA,
-    NST_CACHE_STATS_DONE,
+    NST_STATS_HEADER,
+    NST_STATS_PAYLOAD,
+    NST_STATS_PROXY,
+    NST_STATS_DONE,
 };
 
 
 /* manager */
-int nst_cache_purge(struct stream *s, struct channel *req, struct proxy *px);
 int nst_manager(struct stream *s, struct channel *req, struct proxy *px);
 void nst_manager_init();
 
 /* stats */
-void nst_cache_stats_update_used_mem(int i);
-int nst_cache_stats_init();
-int nst_cache_stats_full();
-int nst_cache_stats(struct stream *s, struct channel *req, struct proxy *px);
-void nst_cache_stats_update_req(int state);
+int nst_stats_init();
+int nst_stats_applet(struct stream *s, struct channel *req, struct proxy *px);
+void nst_stats_update_cache(int state);
+
+/* purger */
+void nst_purger_init();
+int nst_purger_check(struct nst_cache_entry *entry, struct appctx *appctx);
+int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px);
+int nst_purger_advanced(struct stream *s, struct channel *req, struct proxy *px);
 
 #endif /* _NUSTER_MANAGER_H */

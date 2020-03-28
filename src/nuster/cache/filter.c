@@ -105,7 +105,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
         int i;
         struct nst_cache_ctx *ctx = filter->ctx;
 
-        nst_cache_stats_update_req(ctx->state);
+        nst_stats_update_cache(ctx->state);
 
         if(ctx->disk.fd > 0) {
             close(ctx->disk.fd);

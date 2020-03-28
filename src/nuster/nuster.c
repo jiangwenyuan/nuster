@@ -27,11 +27,11 @@ struct nuster nuster = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.CACHE.ENGINE>",
         },
-        .cache_manager = {
+        .purger = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.CACHE.MANAGER>",
         },
-        .cache_stats = {
+        .stats = {
             .obj_type = OBJ_TYPE_APPLET,
             .name     = "<NUSTER.CACHE.STATS>",
         },
