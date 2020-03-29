@@ -145,6 +145,10 @@ int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
         return 0;
     }
 
+    if(px->nuster.mode == NST_MODE_CACHE || px->nuster.mode == NST_MODE_NOSQL) {
+        return 0;
+    }
+
     if(_nst_manager_check_purge_method(txn, msg) == NST_OK) {
         /* single uri */
         return nst_purger_basic(s, req, px);
