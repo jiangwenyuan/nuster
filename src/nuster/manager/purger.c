@@ -23,7 +23,7 @@
 /*
  * purge cache by key
  */
-int _nst_cache_purge_by_key(struct nst_key key) {
+int _nst_purge_cache_by_key(struct nst_key key) {
     struct nst_cache_entry *entry = NULL;
     int ret;
 
@@ -78,7 +78,7 @@ int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px) {
     } else {
         nst_hash(&key);
 
-        ret = _nst_cache_purge_by_key(key);
+        ret = _nst_purge_cache_by_key(key);
 
         nst_http_reply(s, ret);
     }

@@ -1179,7 +1179,6 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
                 ret = NST_NOSQL_CTX_STATE_INIT;
             }
         } else {
-            //XXX
             ctx->disk.file = nst_nosql_memory_alloc(
                     nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 

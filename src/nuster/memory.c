@@ -17,8 +17,8 @@
 #include <nuster/shctx.h>
 #include <nuster/memory.h>
 
-struct nst_memory *nst_memory_create(char *name, uint64_t size,
-        uint32_t block_size, uint32_t chunk_size) {
+struct
+nst_memory *nst_memory_create(char *name, uint64_t size, uint32_t block_size, uint32_t chunk_size) {
 
     uint8_t *p;
     struct nst_memory *memory;
@@ -159,8 +159,8 @@ struct nst_memory *nst_memory_create(char *name, uint64_t size,
     return memory;
 }
 
-void *_nst_memory_block_alloc(struct nst_memory *memory,
-        struct nst_memory_ctrl *block, int chunk_idx) {
+void *
+_nst_memory_block_alloc(struct nst_memory *memory, struct nst_memory_ctrl *block, int chunk_idx) {
 
     int chunk_size = 1<<(memory->chunk_shift + chunk_idx);
     int block_idx  = block - memory->block;

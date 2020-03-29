@@ -59,8 +59,7 @@ int nst_persist_init(struct ist root, char *path, uint64_t hash) {
     }
 
     sprintf(path + nst_persist_path_hash_len(root), "/%"PRIx64"-%"PRIx64,
-            get_current_timestamp() * random() * random() & hash,
-            get_current_timestamp());
+            get_current_timestamp() * random() * random() & hash, get_current_timestamp());
 
     nst_debug2("[nuster][persist] File: %s\n", path);
 
@@ -68,7 +67,6 @@ int nst_persist_init(struct ist root, char *path, uint64_t hash) {
 }
 
 int nst_persist_valid(struct persist *disk, struct nst_key *key) {
-    char *buf;
     int ret;
 
     disk->fd = nst_persist_open(disk->file);
@@ -97,24 +95,16 @@ int nst_persist_valid(struct persist *disk, struct nst_key *key) {
         goto err;
     }
 
-    //XXX
-    buf = malloc(key->size);
-
-    if(!buf) {
-        goto err;
-    }
-
-    ret = pread(disk->fd, buf, key->size, NST_PERSIST_POS_KEY);
+    ret = pread(disk->fd, trash.area, key->size, NST_PERSIST_POS_KEY);
 
     if(ret != key->size) {
         goto err;
     }
 
-    if(memcmp(key->data, buf, key->size) != 0) {
+    if(memcmp(key->data, trash.area, key->size) != 0) {
         goto err;
     }
 
-    free(buf);
     return NST_OK;
 
 err:
@@ -320,14 +310,7 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_k
 
     struct dirent *de;
     DIR *dirp;
-    char *buf;
     int ret;
-
-    buf = malloc(key.size);
-
-    if(!buf) {
-        return NST_HTTP_500;
-    }
 
     sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
             key.hash >> 60, key.hash >> 56, key.hash);
@@ -335,8 +318,6 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_k
     dirp = opendir(disk->file);
 
     if(!dirp) {
-        free(buf);
-
         if(errno == ENOENT) {
             return NST_HTTP_404;
         } else {
@@ -361,9 +342,9 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_k
                     goto done;
                 }
 
-                ret = pread(disk->fd, buf, key.size, NST_PERSIST_POS_KEY);
+                ret = pread(disk->fd, trash.area, key.size, NST_PERSIST_POS_KEY);
 
-                if(ret == key.size && memcmp(key.data, buf, key.size) == 0) {
+                if(ret == key.size && memcmp(key.data, trash.area, key.size) == 0) {
                     unlink(disk->file);
                     ret = NST_HTTP_200;
 
@@ -377,7 +358,6 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_k
 done:
     closedir(dirp);
     close(disk->fd);
-    free(buf);
 
     return ret;
 }
