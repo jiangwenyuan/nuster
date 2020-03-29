@@ -186,12 +186,12 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
             } else if(s->txn->meth == HTTP_METH_POST) {
                 nst_debug(s, "[nosql] Test rule ACL: ");
 
-                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
+                if(nst_test_rule(s, ctx->rule, msg->chn->flags & CF_ISRESP) == NST_OK) {
 
                     nst_debug2("PASS\n");
                     nst_debug(s, "[nosql] To create\n");
 
-                    if(nst_nosql_get_headers(ctx, s, msg)) {
+                    if(nst_nosql_get_headers(s, msg, ctx)) {
                         ctx->state = NST_NOSQL_CTX_STATE_PASS;
                         ctx->pid   = px->uuid;
                     } else {
@@ -265,7 +265,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
     if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
-        nst_nosql_create(ctx, s, msg);
+        nst_nosql_create(s, msg, ctx);
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
@@ -303,7 +303,7 @@ static int _nst_nosql_filter_http_payload(struct stream *s, struct filter *filte
 
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_nosql_update(ctx, msg, offset, len) != NST_OK) {
+        if(nst_nosql_update(msg, ctx, offset, len) != NST_OK) {
             ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
             appctx->st0       = NST_NOSQL_APPCTX_STATE_FULL;
             ctx->state        = NST_NOSQL_CTX_STATE_INVALID;
@@ -321,7 +321,7 @@ _nst_nosql_filter_http_end(struct stream *s, struct filter *filter, struct http_
 
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
 
-        nst_nosql_finish(ctx, s, msg);
+        nst_nosql_finish(s, msg, ctx);
 
         if(ctx->state == NST_NOSQL_CTX_STATE_DONE) {
             nst_debug(s, "[nosql] Created\n");

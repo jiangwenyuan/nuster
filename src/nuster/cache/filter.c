@@ -196,8 +196,8 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                     htx = htxbuf(&req->buf);
 
-                    if(nst_http_handle_conditional_req(s, htx, ctx->rule->last_modified,
-                                ctx->txn.res.last_modified, ctx->rule->etag, ctx->txn.res.etag)) {
+                    if(nst_http_handle_conditional_req(s, htx, ctx->txn.res.last_modified,
+                                ctx->txn.res.etag, ctx->rule->last_modified, ctx->rule->etag)) {
 
                         return 1;
                     }
@@ -235,8 +235,8 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                     htx = htxbuf(&req->buf);
 
-                    if(nst_http_handle_conditional_req(s, htx, ctx->rule->last_modified,
-                                ctx->txn.res.last_modified, ctx->rule->etag, ctx->txn.res.etag)) {
+                    if(nst_http_handle_conditional_req(s, htx, ctx->txn.res.last_modified,
+                                ctx->txn.res.etag, ctx->rule->last_modified, ctx->rule->etag)) {
 
                         return 1;
                     }
@@ -251,7 +251,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                 /* test acls to see if we should cache it */
                 nst_debug(s, "[cache] Test rule ACL (req): ");
 
-                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
+                if(nst_test_rule(s, ctx->rule, msg->chn->flags & CF_ISRESP) == NST_OK) {
                     nst_debug2("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
 
@@ -283,7 +283,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                 nst_debug(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
-                if(nst_test_rule(ctx->rule, s, msg->chn->flags & CF_ISRESP) == NST_OK) {
+                if(nst_test_rule(s, ctx->rule, msg->chn->flags & CF_ISRESP) == NST_OK) {
                     nst_debug2("PASS\n");
                     ctx->state = NST_CACHE_CTX_STATE_PASS;
 
@@ -327,14 +327,14 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
             nst_debug2("PASS\n");
 
-            nst_cache_build_etag(ctx, s, msg);
+            nst_cache_build_etag(s, msg, ctx);
 
-            nst_cache_build_last_modified(ctx, s, msg);
+            nst_cache_build_last_modified(s, msg, ctx);
 
             nst_debug(s, "[cache] To create\n");
 
             /* start to build cache */
-            nst_cache_create(ctx, msg);
+            nst_cache_create(msg, ctx);
         }
 
     }
@@ -353,7 +353,7 @@ static int _nst_cache_filter_http_payload(struct stream *s, struct filter *filte
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_cache_update(ctx, msg, offset, len) != NST_OK) {
+        if(nst_cache_update(msg, ctx, offset, len) != NST_OK) {
             goto err;
         }
 

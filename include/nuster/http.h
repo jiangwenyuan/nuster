@@ -96,6 +96,6 @@ void nst_http_reply_304(struct stream *s, struct ist last_modified, struct ist e
 
 int nst_http_handle_expect(struct stream *s, struct htx *htx, struct http_msg *msg);
 int nst_http_handle_conditional_req(struct stream *s, struct htx *htx,
-        int test_last_modified, struct ist last_modified, int test_etag, struct ist etag);
+        struct ist last_modified, struct ist etag, int test_last_modified, int test_etag);
 
 #endif /* _NUSTER_HTTP_H */

@@ -535,7 +535,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *
     return 0;
 }
 
-int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
+int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx) {
 
     struct htx *htx = htxbuf(&s->req.buf);
     struct http_hdr_ctx hdr = { .blk = NULL };
@@ -698,7 +698,7 @@ err:
     return NST_ERR;
 }
 
-void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
+void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx) {
     struct nst_nosql_entry *entry = NULL;
     struct nst_data_element *element = NULL;
     int idx = ctx->rule->key->idx;
@@ -810,8 +810,8 @@ err:
     return;
 }
 
-int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
-        unsigned int offset, unsigned int msg_len) {
+int nst_nosql_update(struct http_msg *msg, struct nst_nosql_ctx *ctx, unsigned int offset,
+        unsigned int msg_len) {
 
     int pos;
     struct htx *htx = htxbuf(&msg->chn->buf);
@@ -949,7 +949,7 @@ int nst_nosql_delete(struct nst_key *key) {
     return ret;
 }
 
-int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
+int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx) {
 
     if(ctx->txn.res.content_length == 0 && ctx->txn.res.payload_len == 0) {
         ctx->state = NST_NOSQL_CTX_STATE_INVALID;
@@ -1125,7 +1125,7 @@ void nst_nosql_persist_load() {
         struct ist root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
-        struct nst_key *key;
+        struct nst_key key;
         int fd;
 
         root = global.nuster.nosql.root;
@@ -1169,6 +1169,7 @@ void nst_nosql_persist_load() {
 
                     if(fd == -1) {
                         closedir(dir2);
+
                         return;
                     }
 
@@ -1176,41 +1177,31 @@ void nst_nosql_persist_load() {
                         unlink(file);
                         close(fd);
                         closedir(dir2);
+
                         return;
                     }
 
-                    key = nst_nosql_memory_alloc(sizeof(*key));
+                    key.size = nst_persist_meta_get_key_len(meta);
+                    key.data = nst_nosql_memory_alloc(key.size);
 
-                    if(!key) {
+                    if(!key.data) {
                         unlink(file);
                         close(fd);
                         closedir(dir2);
+
                         return;
                     }
 
-                    key->size = nst_persist_meta_get_key_len(meta);
-                    key->data = nst_nosql_memory_alloc(key->size);
-
-                    if(!key->data) {
-                        nst_nosql_memory_free(key);
+                    if(nst_persist_get_key(fd, meta, &key) != NST_OK) {
+                        nst_nosql_memory_free(key.data);
                         unlink(file);
                         close(fd);
                         closedir(dir2);
+
                         return;
                     }
 
-                    if(nst_persist_get_key(fd, meta, key) != NST_OK) {
-                        nst_nosql_memory_free(key->data);
-
-                        nst_nosql_memory_free(key);
-
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-                        return;
-                    }
-
-                    nst_nosql_dict_set_from_disk(file, meta, key);
+                    nst_nosql_dict_set_from_disk(key, file, meta);
 
                     close(fd);
                 }

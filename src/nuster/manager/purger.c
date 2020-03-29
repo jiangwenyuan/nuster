@@ -257,7 +257,7 @@ badreq:
     return 1;
 }
 
-int nst_purger_check(struct nst_cache_entry *entry, struct appctx *appctx) {
+int nst_purger_check(struct appctx *appctx, struct nst_cache_entry *entry) {
     int ret = 0;
 
     switch(appctx->st0) {
@@ -317,7 +317,7 @@ static void nst_purger_handler(struct appctx *appctx) {
 
             while(entry) {
 
-                if(nst_purger_check(entry, appctx)) {
+                if(nst_purger_check(appctx, entry)) {
                     if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
 
                         entry->state         = NST_CACHE_ENTRY_STATE_INVALID;

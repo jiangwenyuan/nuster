@@ -270,7 +270,7 @@ static inline int nst_key_catdel(struct buffer *key) {
     return NST_OK;
 }
 
-int nst_test_rule(struct nst_rule *rule, struct stream *s, int res);
+int nst_test_rule(struct stream *s, struct nst_rule *rule, int res);
 
 static inline void nst_key_hash(struct nst_key *key) {
     key->hash = XXH64(key->data, key->size, 0);

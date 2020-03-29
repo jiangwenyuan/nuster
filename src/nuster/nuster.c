@@ -235,7 +235,7 @@ void nuster_init() {
     nst_nosql_init();
 }
 
-int nst_test_rule(struct nst_rule *rule, struct stream *s, int res) {
+int nst_test_rule(struct stream *s, struct nst_rule *rule, int res) {
     int ret;
 
     /* no acl defined */

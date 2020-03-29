@@ -654,7 +654,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
     return ret;
 }
 
-void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
+void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
     struct nst_cache_entry *entry = NULL;
 
     int idx = ctx->rule->key->idx;
@@ -840,7 +840,7 @@ err:
 /*
  * Add partial http data to nst_cache_data
  */
-int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned int offset,
+int nst_cache_update(struct http_msg *msg, struct nst_cache_ctx *ctx, unsigned int offset,
         unsigned int len) {
 
     int pos;
@@ -1166,7 +1166,7 @@ void nst_cache_persist_load() {
                         goto err;
                     }
 
-                    if(nst_cache_dict_set_from_disk(file, meta, key, buf, host, path) != NST_OK) {
+                    if(nst_cache_dict_set_from_disk(buf, host, path, key, file, meta) != NST_OK) {
                         goto err;
                     }
 
@@ -1246,7 +1246,7 @@ void nst_cache_persist_cleanup() {
     }
 }
 
-void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
+void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_cache_ctx *ctx) {
 
     struct htx *htx;
 
@@ -1275,7 +1275,7 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s, struct ht
 }
 
 void
-nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
+nst_cache_build_last_modified(struct stream *s, struct http_msg *msg, struct nst_cache_ctx *ctx) {
 
     struct htx *htx;
 

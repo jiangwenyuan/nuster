@@ -285,8 +285,8 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
     return NULL;
 }
 
-int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, struct buffer buf,
-        struct ist host, struct ist path) {
+int nst_cache_dict_set_from_disk(struct buffer buf, struct ist host, struct ist path,
+        struct nst_key key, char *file, char *meta) {
 
     struct nst_cache_dict  *dict  = NULL;
     struct nst_cache_entry *entry = NULL;
@@ -343,4 +343,3 @@ int nst_cache_dict_set_from_disk(char *file, char *meta, struct nst_key key, str
 
     return NST_OK;
 }
-
