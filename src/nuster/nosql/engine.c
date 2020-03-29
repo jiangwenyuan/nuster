@@ -864,21 +864,20 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct ht
     return 1;
 }
 
-void
-nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s, int status, struct ist ctv) {
-    struct htx_sl  *sl;
-    uint32_t size;
+int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct ist clv) {
+    struct htx_sl *sl;
     enum htx_blk_type type;
-    struct ist p1;
-    struct ist p2;
-    struct ist p3;
-    uint32_t info;
-    struct nst_data_element *element = NULL;
+    uint32_t size, info;
     char *data = NULL;
 
-    p1 = ist("HTTP/1.1");
-    p2 = ist("200");
-    p3 = ist("OK");
+    struct nst_data_element *ele_sl, *ele_cl, *ele_te, *ele_eoh;
+
+    struct ist clk = ist("Content-Length");
+    struct ist tek = ist("Transfer-Encoding");
+    struct ist tev = ist("Chunked");
+    struct ist p1  = ist("HTTP/1.1");
+    struct ist p2  = ist("200");
+    struct ist p3  = ist("OK");
 
     type = HTX_BLK_RES_SL;
 
@@ -886,16 +885,15 @@ nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s, int status, s
     size = sizeof(*sl) + p1.len + p2.len + p3.len;
     info += size;
 
-    element = nst_nosql_memory_alloc(sizeof(*element) + size);
+    ele_sl = nst_nosql_memory_alloc(sizeof(*ele_sl) + size);
 
-    if(!element) {
-        return;
+    if(!ele_sl) {
+        goto err;
     }
 
-    data = element->data;
+    data = ele_sl->data;
 
     ctx->res.header_len += 4 + size;
-    ctx->res.payload_len += 4 + size;
 
     sl = (struct htx_sl *)data;
     sl->hdrs_bytes = -1;
@@ -914,85 +912,88 @@ nst_res_header_create(struct nst_nosql_ctx *ctx, struct stream *s, int status, s
     memcpy(HTX_SL_P2_PTR(sl), p2.ptr, p2.len);
     memcpy(HTX_SL_P3_PTR(sl), p3.ptr, p3.len);
 
-    element->info = info;
+    ele_sl->info = info;
 
-    ctx->data->element = element;
-    ctx->element = element;
+    ctx->data->element = ele_sl;
+    ctx->element = ele_sl;
 
     if(ctx->req.content_length) {
-        struct ist ctk = ist("Content-Length");
-
         type = HTX_BLK_HDR;
         info = type << 28;
+        size = clk.len + clv.len;
+        info += (clv.len << 8) + clk.len;
 
-        size = ctv.len + ctk.len;
-        info += (ctv.len << 8) + ctk.len;
+        ele_cl = nst_nosql_memory_alloc(sizeof(*ele_cl) + size);
 
-        element = nst_nosql_memory_alloc(sizeof(*element) + size);
-
-        data = element->data;
-
-        ctx->res.header_len += 4 + size;
-        ctx->res.payload_len += 4 + size;
-
-        ist2bin_lc(data, ctk);
-        memcpy(data + ctk.len, ctv.ptr, ctv.len);
-
-        element->info = info;
-
-        ctx->element->next = element;
-        ctx->element = element;
-    } else if(ctx->data->info.flags & NST_NOSQL_DATA_FLAG_CHUNKED) {
-        struct ist k = ist("Transfer-Encoding");
-        struct ist v = ist("Chunked");
-
-        type = HTX_BLK_HDR;
-        info = type << 28;
-
-        size = k.len + v.len;
-        info += (v.len << 8) + k.len;
-
-        element = nst_nosql_memory_alloc(sizeof(*element) + size);
-
-        if(!element) {
-            return;
+        if(!ele_sl) {
+            goto err;
         }
 
-        data = element->data;
+        data = ele_cl->data;
 
         ctx->res.header_len += 4 + size;
-        ctx->res.payload_len += 4 + size;
 
-        ist2bin_lc(data, k);
-        memcpy(data + k.len, v.ptr, v.len);
+        ist2bin_lc(data, clk);
+        memcpy(data + clk.len, clv.ptr, clv.len);
 
-        element->info = info;
+        ele_cl->info = info;
 
-        ctx->element->next = element;
-        ctx->element = element;
+        ctx->element->next = ele_cl;
+        ctx->element = ele_cl;
+    } else if(ctx->data->info.flags & NST_NOSQL_DATA_FLAG_CHUNKED) {
+        type = HTX_BLK_HDR;
+        info = type << 28;
+        size = tek.len + tev.len;
+        info += (tev.len << 8) + tek.len;
+
+        ele_te = nst_nosql_memory_alloc(sizeof(*ele_te) + size);
+
+        if(!ele_te) {
+            goto err;
+        }
+
+        data = ele_te->data;
+
+        ctx->res.header_len += 4 + size;
+
+        ist2bin_lc(data, tek);
+        memcpy(data + tek.len, tev.ptr, tev.len);
+
+        ele_te->info = info;
+
+        ctx->element->next = ele_te;
+        ctx->element = ele_te;
     }
 
     type = HTX_BLK_EOH;
-
     info = type << 28;
     size = 1;
     info += size;
 
-    element = nst_nosql_memory_alloc(sizeof(*element) + size);
+    ele_eoh = nst_nosql_memory_alloc(sizeof(*ele_eoh) + size);
 
-    if(!element) {
-        return;
+    if(!ele_eoh) {
+        goto err;
     }
 
-    data = element->data;
+    data = ele_eoh->data;
 
     ctx->res.header_len += 4 + size;
 
-    element->info = info;
+    ele_eoh->info = info;
 
-    ctx->element->next = element;
-    ctx->element = element;
+    ctx->element->next = ele_eoh;
+    ctx->element = ele_eoh;
 
+    return NST_OK;
+
+err:
+    nst_nosql_memory_free(ele_sl);
+    nst_nosql_memory_free(ele_cl);
+    nst_nosql_memory_free(ele_te);
+    nst_nosql_memory_free(ele_eoh);
+
+    return NST_ERR;
 }
 
 void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
@@ -1053,7 +1054,11 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
                 entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
             }
 
-            nst_res_header_create(ctx, s, 200, hdr.value);
+            if(_nst_nosql_create_header(ctx, s, hdr.value) != NST_OK) {
+                ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+
+                return;
+            }
 
         }
     }
@@ -1066,10 +1071,14 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
                 nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
         if(!ctx->disk.file) {
+            ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+
             return;
         }
 
         if(nst_persist_init(global.nuster.nosql.root, ctx->disk.file, key->hash) != NST_OK) {
+            ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+
             return;
         }
 
