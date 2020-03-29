@@ -220,6 +220,8 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                 nst_debug(s, "[nosql] NOT EXIST\n");
             }
+
+            ctx->rule = ctx->rule->next;
         }
     }
 
@@ -327,10 +329,12 @@ _nst_nosql_filter_http_end(struct stream *s, struct filter *filter, struct http_
         nst_nosql_finish(ctx, s, msg);
 
         if(ctx->state == NST_NOSQL_CTX_STATE_DONE) {
+            nst_debug(s, "[nosql] Created\n");
             appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
         } else {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_EMPTY;
         }
+
     }
 
     return 1;

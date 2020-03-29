@@ -1266,13 +1266,15 @@ int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_ms
         memcpy(ctx->entry->data->buf.area, ctx->buf->area, ctx->entry->data->buf.size);
 
         if(ctx->req.content_type.len) {
-            ctx->entry->data->info.content_type.ptr = ctx->entry->data->buf.area + (ctx->req.content_type.ptr - ctx->buf->area);
+            ctx->entry->data->info.content_type.ptr = ctx->entry->data->buf.area
+                + (ctx->req.content_type.ptr - ctx->buf->area);
 
             ctx->entry->data->info.content_type.len = ctx->req.content_type.len;
         }
 
         if(ctx->req.transfer_encoding.len) {
-            ctx->entry->data->info.transfer_encoding.ptr = ctx->entry->data->buf.area + (ctx->req.transfer_encoding.ptr - ctx->buf->area);
+            ctx->entry->data->info.transfer_encoding.ptr = ctx->entry->data->buf.area
+                + (ctx->req.transfer_encoding.ptr - ctx->buf->area);
 
             ctx->entry->data->info.transfer_encoding.len = ctx->req.transfer_encoding.len;
         }
@@ -1358,8 +1360,7 @@ void nst_nosql_persist_async() {
                 return;
             }
 
-            if(nst_persist_init(global.nuster.nosql.root, entry->file,
-                        entry->key.hash) != NST_OK) {
+            if(nst_persist_init(global.nuster.nosql.root, entry->file, entry->key.hash) != NST_OK) {
                 return;
             }
 

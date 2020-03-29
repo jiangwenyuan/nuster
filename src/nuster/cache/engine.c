@@ -407,7 +407,6 @@ void nst_cache_housekeeping() {
             nst_cache_persist_load();
         }
 
-        disk_saver = 10000;
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict[0]);
             nst_cache_persist_async();
