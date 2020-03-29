@@ -145,7 +145,7 @@ int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
         return 0;
     }
 
-    if(px->nuster.mode == NST_MODE_CACHE || px->nuster.mode == NST_MODE_NOSQL) {
+    if(px->nuster.mode != NST_MODE_CACHE && px->nuster.mode != NST_MODE_NOSQL) {
         return 0;
     }
 
