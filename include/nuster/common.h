@@ -43,6 +43,7 @@
 #include <types/global.h>
 #include <import/xxhash.h>
 
+
 #define NST_OK          0
 #define NST_ERR         1
 
@@ -226,7 +227,7 @@ const char *nst_parse_time(const char *text, int len, unsigned *ret);
 
 void nst_debug(struct stream *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
-void nst_debug_key(struct nst_key *key);
+void nst_key_debug(struct nst_key *key);
 
 static inline struct buffer *nst_key_init() {
     struct buffer *key = get_trash_chunk();
@@ -271,7 +272,7 @@ static inline int nst_key_catdel(struct buffer *key) {
 
 int nst_test_rule(struct nst_rule *rule, struct stream *s, int res);
 
-static inline void nst_hash(struct nst_key *key) {
+static inline void nst_key_hash(struct nst_key *key) {
     key->hash = XXH64(key->data, key->size, 0);
 }
 

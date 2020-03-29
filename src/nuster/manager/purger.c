@@ -76,7 +76,7 @@ int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px) {
     if(ret != NST_OK) {
         nst_http_reply(s, NST_HTTP_500);
     } else {
-        nst_hash(&key);
+        nst_key_hash(&key);
 
         ret = _nst_purge_cache_by_key(key);
 

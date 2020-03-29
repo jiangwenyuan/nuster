@@ -12,6 +12,14 @@
 
 #include <common/http.h>
 
+#include <types/stream.h>
+#include <types/http_ana.h>
+#include <types/channel.h>
+#include <types/stream_interface.h>
+#include <types/proxy.h>
+
+#include <proto/stream_interface.h>
+#include <proto/http_ana.h>
 #include <proto/http_htx.h>
 
 #include <nuster/http.h>
@@ -363,4 +371,76 @@ code412:
     return 1;
 }
 
+int nst_http_parse_htx(struct stream *s, struct http_msg *msg, struct nst_http_txn *txn) {
+    struct htx *htx = htxbuf(&s->req.buf);
+    struct http_hdr_ctx hdr = { .blk = NULL };
+
+    struct htx_sl *sl;
+    struct ist url, uri;
+    char *uri_begin, *uri_end, *ptr;
+
+    txn->req.scheme = SCH_HTTP;
+
+#ifdef USE_OPENSSL
+    if(s->sess->listener->bind_conf->is_ssl) {
+        txn->req.scheme = SCH_HTTPS;
+    }
+#endif
+
+    if(http_find_header(htx, ist("Host"), &hdr, 0)) {
+        txn->req.host.ptr = txn->buf->area + txn->buf->data;
+        txn->req.host.len = hdr.value.len;
+
+        chunk_istcat(txn->buf, hdr.value);
+    }
+
+    sl  = http_get_stline(htx);
+    url = htx_sl_req_uri(sl);
+    uri = http_get_path(url);
+
+    if(!uri.len || *uri.ptr != '/') {
+        return NST_ERR;
+    }
+
+    txn->req.uri.ptr = txn->buf->area + txn->buf->data;
+    txn->req.uri.len = uri.len;
+
+    chunk_istcat(txn->buf, uri);
+
+    uri_begin = txn->req.uri.ptr;
+    uri_end   = txn->req.uri.ptr + uri.len;
+
+    ptr = uri_begin;
+
+    while(ptr < uri_end && *ptr != '?') {
+        ptr++;
+    }
+
+    txn->req.path.ptr = txn->req.uri.ptr;
+    txn->req.path.len = ptr - uri_begin;
+
+    txn->req.delimiter = 0;
+
+    if(txn->req.uri.ptr) {
+        txn->req.query.ptr = memchr(txn->req.uri.ptr, '?', uri.len);
+
+        if(txn->req.query.ptr) {
+            txn->req.query.ptr++;
+            txn->req.query.len = uri_end - txn->req.query.ptr;
+
+            if(txn->req.query.len) {
+                txn->req.delimiter = 1;
+            }
+        }
+    }
+
+    if(http_find_header(htx, ist("Cookie"), &hdr, 1)) {
+        txn->req.cookie.ptr = txn->buf->area + txn->buf->data;
+        txn->req.cookie.len = hdr.value.len;
+
+        chunk_istcat(txn->buf, hdr.value);
+    }
+
+    return NST_OK;
+}
 

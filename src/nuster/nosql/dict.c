@@ -133,15 +133,15 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 
     memcpy(key.data, ctx->keys[idx].data, key.size);
 
-    buf.size = ctx->buf->data;
-    buf.data = ctx->buf->data;
+    buf.size = ctx->txn.buf->data;
+    buf.data = ctx->txn.buf->data;
     buf.area = nst_nosql_memory_alloc(buf.size);
 
     if(!buf.area) {
         goto err;
     }
 
-    memcpy(buf.area, ctx->buf->area, buf.data);
+    memcpy(buf.area, ctx->txn.buf->area, buf.data);
 
     entry = nst_nosql_memory_alloc(sizeof(*entry));
 
@@ -172,15 +172,15 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     entry->pid    = ctx->pid;
     entry->key    = key;
 
-    entry->header_len = ctx->res.header_len;
+    entry->header_len = ctx->txn.res.header_len;
 
     entry->buf = buf;
 
-    entry->host.ptr = buf.area + (ctx->req.host.ptr - ctx->buf->area);
-    entry->host.len = ctx->req.host.len;
+    entry->host.ptr = buf.area + (ctx->txn.req.host.ptr - ctx->txn.buf->area);
+    entry->host.len = ctx->txn.req.host.len;
 
-    entry->path.ptr = buf.area + (ctx->req.path.ptr - ctx->buf->area);
-    entry->path.len = ctx->req.path.len;
+    entry->path.ptr = buf.area + (ctx->txn.req.path.ptr - ctx->txn.buf->area);
+    entry->path.len = ctx->txn.req.path.len;
 
     return entry;
 

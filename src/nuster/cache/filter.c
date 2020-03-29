@@ -61,15 +61,8 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     }
 
     if(!filter->ctx) {
-        struct buffer *buf;
         int rule_cnt, key_cnt, size;
         struct nst_cache_ctx *ctx;
-
-        buf = alloc_trash_chunk();
-
-        if(buf == NULL) {
-            return 0;
-        }
 
         rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
         key_cnt  = nuster.proxy[conf->pid]->key_cnt;
@@ -88,7 +81,12 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
         ctx->pid      = conf->pid;
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
-        ctx->buf      = buf;
+
+        if(nst_http_txn_attach(&ctx->txn) != NST_OK) {
+            free(ctx);
+
+            return 0;
+        }
 
         filter->ctx = ctx;
     }
@@ -115,8 +113,6 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
             nst_cache_abort(ctx);
         }
 
-        free_trash_chunk(ctx->buf);
-
         for(i = 0; i < ctx->key_cnt; i++) {
             struct nst_key key = ctx->keys[i];
 
@@ -124,6 +120,8 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
                 free(key.data);
             }
         }
+
+        nst_http_txn_detach(&ctx->txn);
 
         free(ctx);
     }
@@ -149,7 +147,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
         if(ctx->state == NST_CACHE_CTX_STATE_INIT) {
             int i = 0;
 
-            if(nst_cache_parse_htx(ctx, s, msg) != NST_OK) {
+            if(nst_http_parse_htx(s, msg, &ctx->txn) != NST_OK) {
                 ctx->state = NST_CACHE_CTX_STATE_BYPASS;
 
                 return 1;
@@ -172,13 +170,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                 if(!key->data) {
                     /* build key */
-                    if(nst_cache_build_key(ctx, s, msg) != NST_OK) {
-                        ctx->state = NST_CACHE_CTX_STATE_BYPASS;
-
-                        return 1;
-                    }
-
-                    if(nst_cache_store_key(ctx, key) != NST_OK) {
+                    if(nst_key_build(s, msg, ctx->rule, &ctx->txn, key, s->txn->meth) != NST_OK) {
                         ctx->state = NST_CACHE_CTX_STATE_BYPASS;
 
                         return 1;
@@ -186,9 +178,9 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                 }
 
                 nst_debug(s, "[cache] Key: ");
-                nst_debug_key(key);
+                nst_key_debug(key);
 
-                nst_hash(key);
+                nst_key_hash(key);
 
                 nst_debug(s, "[cache] Hash: %"PRIu64"\n", key->hash);
 
@@ -205,7 +197,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     htx = htxbuf(&req->buf);
 
                     if(nst_http_handle_conditional_req(s, htx, ctx->rule->last_modified,
-                                ctx->res.last_modified, ctx->rule->etag, ctx->res.etag)) {
+                                ctx->txn.res.last_modified, ctx->rule->etag, ctx->txn.res.etag)) {
 
                         return 1;
                     }
@@ -219,10 +211,10 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     nst_debug2("HIT disk\n");
 
                     if(ctx->rule->etag == NST_STATUS_ON) {
-                        ctx->res.etag.ptr = ctx->buf->area + ctx->buf->data;
-                        ctx->res.etag.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
+                        ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                        ctx->txn.res.etag.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
 
-                        if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, ctx->res.etag)
+                        if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, ctx->txn.res.etag)
                                 != NST_OK) {
 
                             break;
@@ -230,12 +222,12 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     }
 
                     if(ctx->rule->last_modified == NST_STATUS_ON) {
-                        ctx->res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
-                        ctx->res.last_modified.len =
+                        ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                        ctx->txn.res.last_modified.len =
                             nst_persist_meta_get_last_modified_len(ctx->disk.meta);
 
                         if(nst_persist_get_last_modified(ctx->disk.fd, ctx->disk.meta,
-                                    ctx->res.last_modified) != NST_OK) {
+                                    ctx->txn.res.last_modified) != NST_OK) {
 
                             break;
                         }
@@ -244,7 +236,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     htx = htxbuf(&req->buf);
 
                     if(nst_http_handle_conditional_req(s, htx, ctx->rule->last_modified,
-                                ctx->res.last_modified, ctx->rule->etag, ctx->res.etag)) {
+                                ctx->txn.res.last_modified, ctx->rule->etag, ctx->txn.res.etag)) {
 
                         return 1;
                     }

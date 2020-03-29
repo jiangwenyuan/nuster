@@ -24,17 +24,9 @@
 
 #include <dirent.h>
 
-#include <types/stream.h>
-#include <types/http_ana.h>
-#include <types/channel.h>
-#include <types/stream_interface.h>
-#include <types/proxy.h>
-#include <types/filters.h>
-
-#include <common/memory.h>
-
 #include <nuster/common.h>
 #include <nuster/persist.h>
+#include <nuster/http.h>
 
 #define NST_CACHE_DEFAULT_LOAD_FACTOR         0.75
 #define NST_CACHE_DEFAULT_GROWTH_FACTOR       2
@@ -135,24 +127,7 @@ struct nst_cache_ctx {
     struct nst_cache_data    *data;
     struct nst_data_element  *element;
 
-    struct buffer            *buf;
-
-    struct {
-        int                   scheme;
-        struct ist            host;
-        struct ist            uri;
-        struct ist            path;
-        int                   delimiter;
-        struct ist            query;
-        struct ist            cookie;
-    } req;
-
-    struct {
-        struct ist            etag;
-        struct ist            last_modified;
-        int                   header_len;
-        uint64_t              payload_len;
-    } res;
+    struct nst_http_txn       txn;
 
     int                       pid;              /* proxy uuid */
     int                       full;             /* memory full */

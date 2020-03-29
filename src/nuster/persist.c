@@ -14,8 +14,6 @@
 
 #include <types/global.h>
 
-#include <nuster/memory.h>
-#include <nuster/persist.h>
 #include <nuster/nuster.h>
 
 int nst_persist_mkdir(char *path) {

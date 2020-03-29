@@ -469,274 +469,6 @@ shm_err:
     exit(1);
 }
 
-
-int nst_cache_parse_htx(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
-
-    struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr = { .blk = NULL };
-
-    struct htx_sl *sl;
-    struct ist url, uri;
-    char *uri_begin, *uri_end, *ptr;
-
-    ctx->req.scheme = SCH_HTTP;
-
-#ifdef USE_OPENSSL
-    if(s->sess->listener->bind_conf->is_ssl) {
-        ctx->req.scheme = SCH_HTTPS;
-    }
-#endif
-
-    if(http_find_header(htx, ist("Host"), &hdr, 0)) {
-        ctx->req.host.ptr = ctx->buf->area + ctx->buf->data;
-        ctx->req.host.len = hdr.value.len;
-
-        chunk_istcat(ctx->buf, hdr.value);
-    }
-
-    sl  = http_get_stline(htx);
-    url = htx_sl_req_uri(sl);
-    uri = http_get_path(url);
-
-    if(!uri.len || *uri.ptr != '/') {
-        return NST_ERR;
-    }
-
-    ctx->req.uri.ptr = ctx->buf->area + ctx->buf->data;
-    ctx->req.uri.len = uri.len;
-
-    chunk_istcat(ctx->buf, uri);
-
-    uri_begin = ctx->req.uri.ptr;
-    uri_end   = ctx->req.uri.ptr + uri.len;
-
-    ptr = uri_begin;
-
-    while(ptr < uri_end && *ptr != '?') {
-        ptr++;
-    }
-
-    ctx->req.path.ptr = ctx->req.uri.ptr;
-    ctx->req.path.len = ptr - uri_begin;
-
-    ctx->req.delimiter = 0;
-
-    if(ctx->req.uri.ptr) {
-        ctx->req.query.ptr = memchr(ctx->req.uri.ptr, '?', uri.len);
-
-        if(ctx->req.query.ptr) {
-            ctx->req.query.ptr++;
-            ctx->req.query.len = uri_end - ctx->req.query.ptr;
-
-            if(ctx->req.query.len) {
-                ctx->req.delimiter = 1;
-            }
-        }
-    }
-
-    if(http_find_header(htx, ist("Cookie"), &hdr, 1)) {
-        ctx->req.cookie.ptr = ctx->buf->area + ctx->buf->data;
-        ctx->req.cookie.len = hdr.value.len;
-
-        chunk_istcat(ctx->buf, hdr.value);
-    }
-
-    return NST_OK;
-}
-
-int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-
-    struct nst_key_element *ck = NULL;
-    struct nst_key_element **pck = ctx->rule->key->data;
-
-    ctx->key = nst_key_init();
-
-    nst_debug(s, "[cache] Calculate key: ");
-
-    while((ck = *pck++)) {
-        int ret = NST_ERR;
-
-        switch(ck->type) {
-            case NST_KEY_ELEMENT_METHOD:
-                nst_debug2("method.");
-
-                ret = nst_key_catist(ctx->key, http_known_methods[txn->meth]);
-
-                break;
-            case NST_KEY_ELEMENT_SCHEME:
-                nst_debug2("scheme.");
-
-                {
-                    struct ist scheme = ctx->req.scheme == SCH_HTTPS ? ist("HTTPS") : ist("HTTP");
-                    ret = nst_key_catist(ctx->key, scheme);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_HOST:
-                nst_debug2("host.");
-
-                if(ctx->req.host.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.host);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_URI:
-                nst_debug2("uri.");
-
-                if(ctx->req.uri.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.uri);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_PATH:
-                nst_debug2("path.");
-
-                if(ctx->req.path.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.path);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_DELIMITER:
-                nst_debug2("delimiter.");
-
-                if(ctx->req.delimiter) {
-                    ret = nst_key_catist(ctx->key, ist("?"));
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_QUERY:
-                nst_debug2("query.");
-
-                if(ctx->req.query.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.query);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_PARAM:
-                nst_debug2("param_%s.", ck->data);
-
-                if(ctx->req.query.len) {
-                    char *v = NULL;
-                    int v_l = 0;
-
-                    if(nst_http_find_param(ctx->req.query.ptr,
-                                ctx->req.query.ptr + ctx->req.query.len,
-                                ck->data, &v, &v_l) == NST_OK) {
-
-                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
-                        break;
-                    }
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            case NST_KEY_ELEMENT_HEADER:
-                {
-                    struct htx *htx = htxbuf(&s->req.buf);
-                    struct http_hdr_ctx hdr = { .blk = NULL };
-                    struct ist h = {
-                        .ptr = ck->data,
-                        .len = strlen(ck->data),
-                    };
-
-                    nst_debug2("header_%s.", ck->data);
-
-                    while(http_find_header(htx, h, &hdr, 0)) {
-                        ret = nst_key_catist(ctx->key, hdr.value);
-
-                        if(ret == NST_ERR) {
-                            break;
-                        }
-                    }
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            case NST_KEY_ELEMENT_COOKIE:
-                nst_debug2("cookie_%s.", ck->data);
-
-                if(ctx->req.cookie.len) {
-                    char *v = NULL;
-                    size_t v_l = 0;
-
-                    if(http_extract_cookie_value(ctx->req.cookie.ptr,
-                                ctx->req.cookie.ptr + ctx->req.cookie.len,
-                                ck->data, strlen(ck->data), 1, &v, &v_l)) {
-
-                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
-                        break;
-                    }
-
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            case NST_KEY_ELEMENT_BODY:
-                nst_debug2("body.");
-
-                if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
-
-                    int pos;
-                    struct htx *htx = htxbuf(&msg->chn->buf);
-
-                    for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-                        struct htx_blk *blk = htx_get_blk(htx, pos);
-                        uint32_t        sz  = htx_get_blksz(blk);
-                        enum htx_blk_type type = htx_get_blk_type(blk);
-
-                        if(type != HTX_BLK_DATA) {
-                            continue;
-                        }
-
-                        ret = nst_key_cat(ctx->key, htx_get_blk_ptr(htx, blk), sz);
-
-                        if(ret != NST_OK) {
-                            break;
-                        }
-                    }
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            default:
-                ret = NST_ERR;
-                break;
-        }
-
-        if(ret != NST_OK) {
-            return NST_ERR;
-        }
-    }
-
-    nst_debug2("\n");
-    return NST_OK;
-}
-
-int nst_cache_store_key(struct nst_cache_ctx *ctx, struct nst_key *key) {
-    key->size = ctx->key->data;
-    key->data = malloc(key->size);
-
-    if(!key->data) {
-        return NST_ERR;
-    }
-
-    memcpy(key->data, ctx->key->area, ctx->key->data);
-
-    return NST_OK;
-}
-
 int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst_key *key) {
 
     int https;
@@ -864,9 +596,9 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
             ctx->data = entry->data;
             ctx->data->clients++;
 
-            ctx->res.etag  = entry->etag;
+            ctx->txn.res.etag  = entry->etag;
 
-            ctx->res.last_modified = entry->last_modified;
+            ctx->txn.res.last_modified = entry->last_modified;
 
             _nst_cache_record_access(entry);
 
@@ -946,8 +678,8 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
             if(ctx->rule->disk != NST_DISK_ONLY) {
                 entry->data = nst_cache_data_new();
 
-                buf.size = ctx->buf->data;
-                buf.data = ctx->buf->data;
+                buf.size = ctx->txn.buf->data;
+                buf.data = ctx->txn.buf->data;
                 buf.area = nst_cache_memory_alloc(buf.size);
 
                 if(!entry->data || !buf.area) {
@@ -958,23 +690,23 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
                     ctx->state   = NST_CACHE_CTX_STATE_CREATE;
                     ctx->entry   = entry;
 
-                    memcpy(buf.area, ctx->buf->area, buf.data);
+                    memcpy(buf.area, ctx->txn.buf->area, buf.data);
 
                     entry->buf = buf;
 
-                    entry->host.ptr = buf.area + (ctx->req.host.ptr - ctx->buf->area);
-                    entry->host.len = ctx->req.host.len;
+                    entry->host.ptr = buf.area + (ctx->txn.req.host.ptr - ctx->txn.buf->area);
+                    entry->host.len = ctx->txn.req.host.len;
 
-                    entry->path.ptr = buf.area + (ctx->req.path.ptr - ctx->buf->area);
-                    entry->path.len = ctx->req.path.len;
+                    entry->path.ptr = buf.area + (ctx->txn.req.path.ptr - ctx->txn.buf->area);
+                    entry->path.len = ctx->txn.req.path.len;
 
-                    entry->etag.ptr = buf.area + (ctx->res.etag.ptr - ctx->buf->area);
-                    entry->etag.len = ctx->res.etag.len;
+                    entry->etag.ptr = buf.area + (ctx->txn.res.etag.ptr - ctx->txn.buf->area);
+                    entry->etag.len = ctx->txn.res.etag.len;
 
                     entry->last_modified.ptr = buf.area
-                        + (ctx->res.last_modified.ptr - ctx->buf->area);
+                        + (ctx->txn.res.last_modified.ptr - ctx->txn.buf->area);
 
-                    entry->last_modified.len = ctx->res.last_modified.len;
+                    entry->last_modified.len = ctx->txn.res.last_modified.len;
 
                     ctx->data    = entry->data;
                     ctx->element = entry->data->element;
@@ -1009,7 +741,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
         int pos;
         struct htx *htx = htxbuf(&msg->chn->buf);
-        ctx->res.header_len = 0;
+        ctx->txn.res.header_len = 0;
 
         for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
             struct htx_blk *blk = htx_get_blk(htx, pos);
@@ -1039,7 +771,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
                 ctx->element = element;
             }
 
-            ctx->res.header_len += 4 + sz;
+            ctx->txn.res.header_len += 4 + sz;
 
             if(type == HTX_BLK_EOH) {
                 break;
@@ -1075,7 +807,7 @@ void nst_cache_create(struct nst_cache_ctx *ctx, struct http_msg *msg) {
         *((uint8_t *)(&ttl_extend) + 3) = ctx->rule->extend[3];
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash, 0,
-                ctx->res.header_len, 0, ctx->entry->key.size, ctx->entry->host.len,
+                ctx->txn.res.header_len, 0, ctx->entry->key.size, ctx->entry->host.len,
                 ctx->entry->path.len, ctx->entry->etag.len, ctx->entry->last_modified.len,
                 ttl_extend);
 
@@ -1152,7 +884,7 @@ int nst_cache_update(struct nst_cache_ctx *ctx, struct http_msg *msg, unsigned i
 
         }
 
-        ctx->res.payload_len += sz;
+        ctx->txn.res.payload_len += sz;
     }
 
     return NST_OK;
@@ -1186,7 +918,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 
         nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
-        nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->res.payload_len);
+        nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->txn.res.payload_len);
 
         nst_persist_write_meta(&ctx->disk);
 
@@ -1520,24 +1252,24 @@ void nst_cache_build_etag(struct nst_cache_ctx *ctx, struct stream *s, struct ht
 
     struct http_hdr_ctx hdr = { .blk = NULL };
 
-    ctx->res.etag.ptr = ctx->buf->area + ctx->buf->data;
-    ctx->res.etag.len = 0;
+    ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+    ctx->txn.res.etag.len = 0;
 
     htx = htxbuf(&s->res.buf);
 
     if(http_find_header(htx, ist("ETag"), &hdr, 1)) {
-        ctx->res.etag.len = hdr.value.len;
+        ctx->txn.res.etag.len = hdr.value.len;
 
-        chunk_istcat(ctx->buf, hdr.value);
+        chunk_istcat(ctx->txn.buf, hdr.value);
     } else {
         uint64_t t = get_current_timestamp();
 
-        sprintf(ctx->res.etag.ptr, "\"%08x\"", XXH32(&t, 8, 0));
-        ctx->res.etag.len = 10;
-        b_add(ctx->buf, ctx->res.etag.len);
+        sprintf(ctx->txn.res.etag.ptr, "\"%08x\"", XXH32(&t, 8, 0));
+        ctx->txn.res.etag.len = 10;
+        b_add(ctx->txn.buf, ctx->txn.res.etag.len);
 
         if(ctx->rule->etag == NST_STATUS_ON) {
-            http_add_header(htx, ist("Etag"), ctx->res.etag);
+            http_add_header(htx, ist("Etag"), ctx->txn.res.etag);
         }
     }
 }
@@ -1553,13 +1285,13 @@ nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s, struc
 
     htx = htxbuf(&s->res.buf);
 
-    ctx->res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
-    ctx->res.last_modified.len = len;
+    ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+    ctx->txn.res.last_modified.len = len;
 
     if(http_find_header(htx, ist("Last-Modified"), &hdr, 1)) {
 
         if(hdr.value.len == len) {
-            chunk_istcat(ctx->buf, hdr.value);
+            chunk_istcat(ctx->txn.buf, hdr.value);
         }
 
     } else {
@@ -1573,13 +1305,13 @@ nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s, struc
         time(&now);
         tm = gmtime(&now);
 
-        sprintf(ctx->res.last_modified.ptr, "%s, %02d %s %04d %02d:%02d:%02d GMT",
+        sprintf(ctx->txn.res.last_modified.ptr, "%s, %02d %s %04d %02d:%02d:%02d GMT",
                 day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
                 1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
-        b_add(ctx->buf, ctx->res.last_modified.len);
+        b_add(ctx->txn.buf, ctx->txn.res.last_modified.len);
 
         if(ctx->rule->last_modified == NST_STATUS_ON) {
-            http_add_header(htx, ist("Last-Modified"), ctx->res.last_modified);
+            http_add_header(htx, ist("Last-Modified"), ctx->txn.res.last_modified);
         }
     }
 }

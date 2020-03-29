@@ -23,6 +23,8 @@
 #define _NUSTER_NOSQL_H
 
 #include <nuster/common.h>
+#include <nuster/persist.h>
+#include <nuster/http.h>
 
 #define NST_NOSQL_DEFAULT_CHUNK_SIZE            32
 #define NST_NOSQL_DEFAULT_LOAD_FACTOR           0.75
@@ -132,25 +134,7 @@ struct nst_nosql_ctx {
     struct nst_nosql_data    *data;
     struct nst_data_element  *element;
 
-    struct buffer            *buf;
-
-    struct {
-        int                   scheme;
-        struct ist            host;
-        struct ist            uri;
-        struct ist            path;
-        int                   delimiter;
-        struct ist            query;
-        struct ist            cookie;
-        struct ist            content_type;
-    } req;
-
-    struct {
-        int                   header_len;
-        uint64_t              payload_len;
-        uint64_t              content_length;
-        struct ist            transfer_encoding;
-    } res;
+    struct nst_http_txn       txn;
 
     int                       pid;         /* proxy uuid */
 

@@ -57,15 +57,8 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
     }
 
     if(!filter->ctx) {
-        struct buffer *buf;
         int rule_cnt, key_cnt, size;
         struct nst_nosql_ctx *ctx;
-
-        buf = alloc_trash_chunk();
-
-        if(buf == NULL ) {
-            return 0;
-        }
 
         rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
         key_cnt  = nuster.proxy[conf->pid]->key_cnt;
@@ -84,7 +77,12 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
         ctx->pid      = conf->pid;
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
-        ctx->buf      = buf;
+
+        if(nst_http_txn_attach(&ctx->txn) != NST_OK) {
+            free(ctx);
+
+            return 0;
+        }
 
         filter->ctx = ctx;
     }
@@ -103,7 +101,7 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
             nst_nosql_abort(ctx);
         }
 
-        free_trash_chunk(ctx->buf);
+        nst_http_txn_detach(&ctx->txn);
 
         free(ctx);
     }
@@ -135,7 +133,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
         int i = 0;
 
-        if(nst_nosql_parse_htx(ctx, s, msg) != NST_OK) {
+        if(nst_http_parse_htx(s, msg, &ctx->txn) != NST_OK) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
 
             return 1;
@@ -151,13 +149,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
             if(!key->data) {
                 /* build key */
-                if(nst_nosql_build_key(ctx, s, msg) != NST_OK) {
-                    ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
-
-                    return 1;
-                }
-
-                if(nst_nosql_store_key(ctx, key) != NST_OK) {
+                if(nst_key_build(s, msg, ctx->rule, &ctx->txn, key, HTTP_METH_GET) != NST_OK) {
                     ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
 
                     return 1;
@@ -165,9 +157,9 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
             }
 
             nst_debug(s, "[nosql] Key: ");
-            nst_debug_key(key);
+            nst_key_debug(key);
 
-            nst_hash(key);
+            nst_key_hash(key);
 
             nst_debug(s, "[nosql] Hash: %"PRIu64"\n", key->hash);
 

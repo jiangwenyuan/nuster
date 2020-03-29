@@ -535,303 +535,31 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *
     return 0;
 }
 
-int nst_nosql_parse_htx(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
-
-    struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr = { .blk = NULL };
-
-    struct htx_sl *sl;
-    struct ist url, uri;
-    char *uri_begin, *uri_end, *ptr;
-
-    ctx->req.scheme = SCH_HTTP;
-
-#ifdef USE_OPENSSL
-    if(s->sess->listener->bind_conf->is_ssl) {
-        ctx->req.scheme = SCH_HTTPS;
-    }
-#endif
-
-    if(http_find_header(htx, ist("Host"), &hdr, 0)) {
-        ctx->req.host.ptr = ctx->buf->area + ctx->buf->data;
-        ctx->req.host.len = hdr.value.len;
-
-        chunk_istcat(ctx->buf, hdr.value);
-    }
-
-    sl  = http_get_stline(htx);
-    url = htx_sl_req_uri(sl);
-    uri = http_get_path(url);
-
-    if(!uri.len || *uri.ptr != '/') {
-        return NST_ERR;
-    }
-
-    ctx->req.uri.ptr = ctx->buf->area + ctx->buf->data;
-    ctx->req.uri.len = uri.len;
-
-    chunk_istcat(ctx->buf, uri);
-
-    uri_begin = ctx->req.uri.ptr;
-    uri_end   = ctx->req.uri.ptr + uri.len;
-
-    ptr = uri_begin;
-
-    while(ptr < uri_end && *ptr != '?') {
-        ptr++;
-    }
-
-    ctx->req.path.ptr = ctx->req.uri.ptr;
-    ctx->req.path.len = ptr - uri_begin;
-
-    ctx->req.delimiter = 0;
-
-    if(ctx->req.uri.ptr) {
-        ctx->req.query.ptr = memchr(ctx->req.uri.ptr, '?', uri.len);
-
-        if(ctx->req.query.ptr) {
-            ctx->req.query.ptr++;
-            ctx->req.query.len = uri_end - ctx->req.query.ptr;
-
-            if(ctx->req.query.len) {
-                ctx->req.delimiter = 1;
-            }
-        }
-    }
-
-    if(http_find_header(htx, ist("Cookie"), &hdr, 1)) {
-        ctx->req.cookie.ptr = ctx->buf->area + ctx->buf->data;
-        ctx->req.cookie.len = hdr.value.len;
-
-        chunk_istcat(ctx->buf, hdr.value);
-    }
-
-    return NST_OK;
-}
-
-int nst_nosql_build_key(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
-
-    struct http_txn *txn = s->txn;
-
-    struct nst_key_element *ck = NULL;
-    struct nst_key_element **pck = ctx->rule->key->data;
-
-    ctx->key = nst_key_init();
-
-    nst_debug(s, "[nosql] Calculate key: ");
-
-    while((ck = *pck++)) {
-        int ret = NST_OK;
-
-        switch(ck->type) {
-            case NST_KEY_ELEMENT_METHOD:
-                nst_debug2("method.");
-
-                ret = nst_key_catist(ctx->key, http_known_methods[HTTP_METH_GET]);
-
-                break;
-            case NST_KEY_ELEMENT_SCHEME:
-                nst_debug2("scheme.");
-
-                {
-                    struct ist scheme = ctx->req.scheme == SCH_HTTPS ? ist("HTTPS") : ist("HTTP");
-                    ret = nst_key_catist(ctx->key, scheme);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_HOST:
-                nst_debug2("host.");
-
-                if(ctx->req.host.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.host);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_URI:
-                nst_debug2("uri.");
-
-                if(ctx->req.uri.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.uri);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_PATH:
-                nst_debug2("path.");
-
-                if(ctx->req.path.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.path);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_DELIMITER:
-                nst_debug2("delimiter.");
-
-                if(ctx->req.delimiter) {
-                    ret = nst_key_catist(ctx->key, ist("?"));
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_QUERY:
-                nst_debug2("query.");
-
-                if(ctx->req.query.len) {
-                    ret = nst_key_catist(ctx->key, ctx->req.query);
-                } else {
-                    ret = nst_key_catdel(ctx->key);
-                }
-
-                break;
-            case NST_KEY_ELEMENT_PARAM:
-                nst_debug2("param_%s.", ck->data);
-
-                if(ctx->req.query.len) {
-                    char *v = NULL;
-                    int v_l = 0;
-
-                    if(nst_http_find_param(ctx->req.query.ptr,
-                                ctx->req.query.ptr + ctx->req.query.len,
-                                ck->data, &v, &v_l) == NST_OK) {
-
-                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
-                        break;
-                    }
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            case NST_KEY_ELEMENT_HEADER:
-                {
-                    struct htx *htx = htxbuf(&s->req.buf);
-                    struct http_hdr_ctx hdr = { .blk = NULL };
-                    struct ist h = {
-                        .ptr = ck->data,
-                        .len = strlen(ck->data),
-                    };
-
-                    nst_debug2("header_%s.", ck->data);
-
-                    while(http_find_header(htx, h, &hdr, 0)) {
-                        ret = nst_key_catist(ctx->key, hdr.value);
-
-                        if(ret == NST_ERR) {
-                            break;
-                        }
-                    }
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            case NST_KEY_ELEMENT_COOKIE:
-                nst_debug2("cookie_%s.", ck->data);
-
-                if(ctx->req.cookie.len) {
-                    char *v = NULL;
-                    size_t v_l = 0;
-
-                    if(http_extract_cookie_value(ctx->req.cookie.ptr,
-                                ctx->req.cookie.ptr + ctx->req.cookie.len,
-                                ck->data, strlen(ck->data), 1, &v, &v_l)) {
-
-                        ret = nst_key_catist(ctx->key, ist2(v, v_l));
-                        break;
-                    }
-
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            case NST_KEY_ELEMENT_BODY:
-                nst_debug2("body.");
-
-                if(txn->meth == HTTP_METH_POST || txn->meth == HTTP_METH_PUT) {
-
-                    int pos;
-                    struct htx *htx = htxbuf(&msg->chn->buf);
-
-                    for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-                        struct htx_blk *blk = htx_get_blk(htx, pos);
-                        uint32_t        sz  = htx_get_blksz(blk);
-                        enum htx_blk_type type = htx_get_blk_type(blk);
-
-                        if(type != HTX_BLK_DATA) {
-                            continue;
-                        }
-
-                        ret = nst_key_cat(ctx->key, htx_get_blk_ptr(htx, blk), sz);
-
-                        if(ret != NST_OK) {
-                            break;
-                        }
-                    }
-                }
-
-                ret = nst_key_catdel(ctx->key);
-                break;
-            default:
-                ret = NST_ERR;
-                break;
-        }
-
-        if(ret != NST_OK) {
-            return NST_ERR;
-        }
-    }
-
-    nst_debug2("\n");
-
-    return NST_OK;
-}
-
-int nst_nosql_store_key(struct nst_nosql_ctx *ctx, struct nst_key *key) {
-    key->size = ctx->key->data;
-    key->data = malloc(key->size);
-
-    if(!key->data) {
-        return NST_ERR;
-    }
-
-    memcpy(key->data, ctx->key->area, ctx->key->data);
-
-    return NST_OK;
-}
-
-void nst_nosql_hit(struct stream *s, struct stream_interface *si,
-        struct channel *req, struct channel *res, struct nst_nosql_data *data) {
-}
-
 int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
     struct htx *htx = htxbuf(&s->req.buf);
     struct http_hdr_ctx hdr = { .blk = NULL };
 
     if(http_find_header(htx, ist("Content-Type"), &hdr, 0)) {
-        ctx->req.content_type.ptr = ctx->buf->area + ctx->buf->data;
-        ctx->req.content_type.len = hdr.value.len;
+        ctx->txn.req.content_type.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+        ctx->txn.req.content_type.len = hdr.value.len;
 
-        chunk_istcat(ctx->buf, hdr.value);
+        chunk_istcat(ctx->txn.buf, hdr.value);
     }
 
-    ctx->res.transfer_encoding.ptr = ctx->buf->area + ctx->buf->data;
+    ctx->txn.res.transfer_encoding.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
 
     while(http_find_header(htx, ist("Transfer-Encoding"), &hdr, 0)) {
 
-        if(ctx->res.transfer_encoding.len) {
-            chunk_istcat(ctx->buf, ist(","));
+        if(ctx->txn.res.transfer_encoding.len) {
+            chunk_istcat(ctx->txn.buf, ist(","));
         }
 
-        chunk_istcat(ctx->buf, hdr.value);
+        chunk_istcat(ctx->txn.buf, hdr.value);
 
-        ctx->res.transfer_encoding.len = ctx->res.transfer_encoding.len
-            ? ctx->res.transfer_encoding.len + hdr.value.len + 1
-            : ctx->res.transfer_encoding.len + hdr.value.len;
+        ctx->txn.res.transfer_encoding.len = ctx->txn.res.transfer_encoding.len
+            ? ctx->txn.res.transfer_encoding.len + hdr.value.len + 1
+            : ctx->txn.res.transfer_encoding.len + hdr.value.len;
 
     }
 
@@ -867,12 +595,12 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
 
     data = ele_sl->data;
 
-    ctx->res.header_len += 4 + size;
+    ctx->txn.res.header_len += 4 + size;
 
     sl = (struct htx_sl *)data;
     sl->hdrs_bytes = -1;
 
-    if(ctx->res.content_length) {
+    if(ctx->txn.res.content_length) {
         sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_LEN |HTX_SL_F_CLEN);
     } else {
         sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_ENC
@@ -891,7 +619,7 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
     ctx->data->element = ele_sl;
     ctx->element = ele_sl;
 
-    if(ctx->res.content_length) {
+    if(ctx->txn.res.content_length) {
         type = HTX_BLK_HDR;
         info = type << 28;
         size = clk.len + clv.len;
@@ -905,7 +633,7 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
 
         data = ele_cl->data;
 
-        ctx->res.header_len += 4 + size;
+        ctx->txn.res.header_len += 4 + size;
 
         ist2bin_lc(data, clk);
         memcpy(data + clk.len, clv.ptr, clv.len);
@@ -928,7 +656,7 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
 
         data = ele_te->data;
 
-        ctx->res.header_len += 4 + size;
+        ctx->txn.res.header_len += 4 + size;
 
         ist2bin_lc(data, tek);
         memcpy(data + tek.len, tev.ptr, tev.len);
@@ -952,7 +680,7 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
 
     data = ele_eoh->data;
 
-    ctx->res.header_len += 4 + size;
+    ctx->txn.res.header_len += 4 + size;
 
     ele_eoh->info = info;
 
@@ -1020,7 +748,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
                     long long cl;
 
                     strl2llrc(hdr.value.ptr, hdr.value.len, &cl);
-                    ctx->res.content_length = cl;
+                    ctx->txn.res.content_length = cl;
                 }
             }
 
@@ -1059,7 +787,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
         ctx->disk.fd = nst_persist_create(ctx->disk.file);
 
         nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash,
-                0, ctx->res.header_len, 0, ctx->entry->key.size, 0, 0, 0, 0, 0);
+                0, ctx->txn.res.header_len, 0, ctx->entry->key.size, 0, 0, 0, 0, 0);
 
         nst_persist_write_key(&ctx->disk, &ctx->entry->key);
 
@@ -1100,7 +828,7 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
 
         if(ctx->rule->disk == NST_DISK_ONLY)  {
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
-            ctx->res.payload_len += sz;
+            ctx->txn.res.payload_len += sz;
         } else {
             element = nst_nosql_memory_alloc(sizeof(*element) + sz);
 
@@ -1124,7 +852,7 @@ int nst_nosql_update(struct nst_nosql_ctx *ctx, struct http_msg *msg,
                 nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             }
 
-            ctx->res.payload_len += sz;
+            ctx->txn.res.payload_len += sz;
 
         }
     }
@@ -1223,12 +951,14 @@ int nst_nosql_delete(struct nst_key *key) {
 
 int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
-    if(ctx->res.content_length == 0 && ctx->res.payload_len == 0) {
+    if(ctx->txn.res.content_length == 0 && ctx->txn.res.payload_len == 0) {
         ctx->state = NST_NOSQL_CTX_STATE_INVALID;
         ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
     } else {
 
-        ctx->entry->data->buf.size = ctx->req.content_type.len + ctx->res.transfer_encoding.len;
+        ctx->entry->data->buf.size = ctx->txn.req.content_type.len
+            + ctx->txn.res.transfer_encoding.len;
+
         ctx->entry->data->buf.data = ctx->entry->data->buf.size;
         ctx->entry->data->buf.area = nst_nosql_memory_alloc(ctx->entry->data->buf.size);
 
@@ -1236,26 +966,26 @@ int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_ms
             return NST_ERR;
         }
 
-        memcpy(ctx->entry->data->buf.area, ctx->buf->area, ctx->entry->data->buf.size);
+        memcpy(ctx->entry->data->buf.area, ctx->txn.buf->area, ctx->entry->data->buf.size);
 
-        if(ctx->req.content_type.len) {
+        if(ctx->txn.req.content_type.len) {
             ctx->entry->data->info.content_type.ptr = ctx->entry->data->buf.area
-                + (ctx->req.content_type.ptr - ctx->buf->area);
+                + (ctx->txn.req.content_type.ptr - ctx->txn.buf->area);
 
-            ctx->entry->data->info.content_type.len = ctx->req.content_type.len;
+            ctx->entry->data->info.content_type.len = ctx->txn.req.content_type.len;
         }
 
-        if(ctx->res.transfer_encoding.len) {
+        if(ctx->txn.res.transfer_encoding.len) {
             ctx->entry->data->info.transfer_encoding.ptr = ctx->entry->data->buf.area
-                + (ctx->res.transfer_encoding.ptr - ctx->buf->area);
+                + (ctx->txn.res.transfer_encoding.ptr - ctx->txn.buf->area);
 
-            ctx->entry->data->info.transfer_encoding.len = ctx->res.transfer_encoding.len;
+            ctx->entry->data->info.transfer_encoding.len = ctx->txn.res.transfer_encoding.len;
         }
 
-        if(ctx->res.content_length) {
-            ctx->entry->data->info.content_length = ctx->res.content_length;
+        if(ctx->txn.res.content_length) {
+            ctx->entry->data->info.content_length = ctx->txn.res.content_length;
         } else {
-            ctx->entry->data->info.content_length = ctx->res.payload_len;
+            ctx->entry->data->info.content_length = ctx->txn.res.payload_len;
         }
 
         if(msg->flags & HTTP_MSGF_TE_CHNK) {
@@ -1283,10 +1013,10 @@ int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_ms
 
             nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
-            if(ctx->res.content_length) {
-                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->res.content_length);
+            if(ctx->txn.res.content_length) {
+                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->txn.res.content_length);
             } else {
-                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->res.payload_len);
+                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->txn.res.payload_len);
             }
 
             nst_persist_write_meta(&ctx->disk);
