@@ -66,21 +66,104 @@ int _nst_purge_cache_by_key(struct nst_key key) {
     return ret;
 }
 
-int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px) {
-    struct http_txn *txn = s->txn;
-    struct http_msg *msg = &txn->req;
-    struct nst_key key;
+int _nst_purge_nosql_by_key(struct nst_key key) {
+    struct nst_nosql_entry *entry = NULL;
+    int ret;
 
-    int ret = nst_cache_build_purge_key(s, msg, &key);
+    nst_shctx_lock(&nuster.nosql->dict[0]);
+    entry = nst_nosql_dict_get(&key);
 
-    if(ret != NST_OK) {
-        nst_http_reply(s, NST_HTTP_500);
+    if(entry) {
+
+        if(entry->state == NST_NOSQL_ENTRY_STATE_VALID) {
+            entry->state         = NST_NOSQL_ENTRY_STATE_INVALID;
+            entry->data->invalid = 1;
+            entry->data          = NULL;
+            entry->expire        = 0;
+            ret                  = 200;
+        }
+
+        if(entry->file) {
+            ret = nst_persist_purge_by_path(entry->file);
+        }
     } else {
-        nst_key_hash(&key);
+        ret = NST_HTTP_404;
+    }
 
-        ret = _nst_purge_cache_by_key(key);
+    nst_shctx_unlock(&nuster.nosql->dict[0]);
 
-        nst_http_reply(s, ret);
+    if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
+        struct persist disk;
+
+        disk.file = nst_nosql_memory_alloc(nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+
+        if(!disk.file) {
+            ret = NST_HTTP_500;
+        } else {
+            ret = nst_persist_purge_by_key(global.nuster.nosql.root, &disk, key);
+        }
+
+        nst_cache_memory_free(disk.file);
+    }
+
+    return ret;
+}
+
+int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px) {
+    struct http_msg *msg = &s->txn->req;
+    struct nst_key key;
+    int ret;
+
+    struct nst_http_txn txn;
+
+    if(nst_http_txn_attach(&txn) != NST_OK) {
+        goto err;
+    }
+
+    if((px->cap & PR_CAP_BE)
+            && (px->nuster.mode == NST_MODE_CACHE || px->nuster.mode == NST_MODE_NOSQL)) {
+
+        struct nst_rule *rule = nuster.proxy[px->uuid]->rule;
+
+        if(nst_http_parse_htx(s, msg, &txn) != NST_OK) {
+            goto err;
+        }
+
+        while(rule) {
+            nst_debug(s, "[manager] ==== Check rule: %s ====\n", rule->name);
+
+            if(nst_key_build(s, msg, rule, &txn, &key, HTTP_METH_GET) != NST_OK) {
+                goto err;
+            }
+
+            nst_key_hash(&key);
+            nst_debug(s, "[manager] Key: ");
+
+            nst_key_debug(&key);
+            nst_debug(s, "[manager] Hash: %"PRIu64"\n", key.hash);
+
+            if(px->nuster.mode == NST_MODE_CACHE) {
+                ret = _nst_purge_cache_by_key(key);
+            } else {
+                ret = _nst_purge_nosql_by_key(key);
+            }
+
+            nst_http_reply(s, ret);
+
+            goto end;
+
+            rule = rule->next;
+        }
+    }
+
+err:
+    nst_http_reply(s, NST_HTTP_500);
+
+end:
+    nst_http_txn_detach(&txn);
+
+    if(key.data) {
+        free(key.data);
     }
 
     return 1;

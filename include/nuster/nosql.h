@@ -83,20 +83,23 @@ enum {
 
 struct nst_nosql_entry {
     int                     state;
+
+    struct nst_key          key;
+    struct nst_rule        *rule;        /* rule */
     struct nst_nosql_data  *data;
-    uint64_t                expire;
-    uint64_t                atime;
-    int                     pid;         /* proxy uuid */
-    char                   *file;
-    int                     header_len;
 
     struct buffer           buf;
 
     struct ist              host;
     struct ist              path;
 
-    struct nst_key          key;
-    struct nst_rule        *rule;        /* rule */
+    int                     pid;         /* proxy uuid */
+    char                   *file;
+    int                     header_len;
+
+    uint64_t                expire;
+    uint64_t                atime;
+
     struct nst_nosql_entry *next;
 };
 

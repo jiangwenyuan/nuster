@@ -206,8 +206,6 @@ void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_cac
 void
 nst_cache_build_last_modified(struct stream *s, struct http_msg *msg, struct nst_cache_ctx *ctx);
 
-int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst_key *key);
-
 int nst_cache_update(struct http_msg *msg, struct nst_cache_ctx *ctx,
         unsigned int offset, unsigned int len);
 
