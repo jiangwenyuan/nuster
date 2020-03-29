@@ -271,6 +271,7 @@ void nst_persist_cleanup(struct ist root, char *path, struct dirent *de1) {
 
             if(fd == -1) {
                 closedir(dir2);
+
                 return;
             }
 
@@ -279,12 +280,14 @@ void nst_persist_cleanup(struct ist root, char *path, struct dirent *de1) {
             if(ret != NST_PERSIST_META_SIZE) {
                 unlink(path);
                 close(fd);
+
                 continue;
             }
 
             if(memcmp(meta, "NUSTER", 6) !=0) {
                 unlink(path);
                 close(fd);
+
                 continue;
             }
 
@@ -292,6 +295,7 @@ void nst_persist_cleanup(struct ist root, char *path, struct dirent *de1) {
             if(nst_persist_meta_check_expire(meta) != NST_OK) {
                 unlink(path);
                 close(fd);
+
                 continue;
             }
 

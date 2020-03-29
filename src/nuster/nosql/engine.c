@@ -962,15 +962,9 @@ int nst_nosql_delete(struct nst_key *key) {
     if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
         struct persist disk;
 
-        disk.file = nst_nosql_memory_alloc(nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+        disk.file = trash.area;
 
-        if(!disk.file) {
-            ret = -1;
-        } else {
-            ret = nst_persist_purge_by_key(global.nuster.nosql.root, &disk, key);
-        }
-
-        nst_cache_memory_free(disk.file);
+        ret = nst_persist_purge_by_key(global.nuster.nosql.root, &disk, key);
     }
 
     return ret;

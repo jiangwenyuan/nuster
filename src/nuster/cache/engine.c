@@ -898,15 +898,10 @@ int nst_cache_delete(struct nst_key *key) {
     if(!nuster.cache->disk.loaded && global.nuster.cache.root.len){
         struct persist disk;
 
-        disk.file = nst_cache_memory_alloc(nst_persist_path_file_len(global.nuster.cache.root) + 1);
+        disk.file = trash.area;
 
-        if(!disk.file) {
-            ret = -1;
-        } else {
-            ret = nst_persist_purge_by_key(global.nuster.cache.root, &disk, key);
-        }
+        ret = nst_persist_purge_by_key(global.nuster.cache.root, &disk, key);
 
-        nst_cache_memory_free(disk.file);
     }
 
     return ret;
