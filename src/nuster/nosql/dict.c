@@ -185,17 +185,9 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 
 err:
 
-    if(key.data) {
-        nst_nosql_memory_free(key.data);
-    }
-
-    if(buf.area) {
-        nst_nosql_memory_free(buf.area);
-    }
-
-    if(entry) {
-        nst_nosql_memory_free(entry);
-    }
+    nst_nosql_memory_free(key.data);
+    nst_nosql_memory_free(buf.area);
+    nst_nosql_memory_free(entry);
 
     return NULL;
 }

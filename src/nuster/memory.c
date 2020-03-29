@@ -465,6 +465,11 @@ void nst_memory_free_locked(struct nst_memory *memory, void *p) {
 }
 
 void nst_memory_free(struct nst_memory *memory, void *p) {
+
+    if(p == NULL) {
+        return;
+    }
+
     nst_shctx_lock(memory);
     nst_memory_free_locked(memory, p);
     nst_shctx_unlock(memory);

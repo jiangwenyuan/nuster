@@ -1493,13 +1493,8 @@ err:
             closedir(dir2);
         }
 
-        if(key.data) {
-            nst_cache_memory_free(key.data);
-        }
-
-        if(buf.area) {
-            nst_cache_memory_free(buf.area);
-        }
+        nst_cache_memory_free(key.data);
+        nst_cache_memory_free(buf.area);
 
     }
 }

@@ -361,9 +361,7 @@ static void nst_purger_release_handler(struct appctx *appctx) {
         free(appctx->ctx.nuster.manager.regex);
     }
 
-    if(appctx->ctx.nuster.manager.buf.area) {
-        nst_cache_memory_free(appctx->ctx.nuster.manager.buf.area);
-    }
+    nst_cache_memory_free(appctx->ctx.nuster.manager.buf.area);
 }
 
 void nst_purger_init() {
