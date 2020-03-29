@@ -130,7 +130,6 @@ struct nst_cache_ctx {
     struct nst_http_txn       txn;
 
     int                       pid;              /* proxy uuid */
-    int                       full;             /* memory full */
 
     struct persist            disk;
 

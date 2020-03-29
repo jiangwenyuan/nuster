@@ -685,7 +685,6 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
                 if(!entry->data || !buf.area) {
                     entry->state = NST_CACHE_ENTRY_STATE_INVALID;
                     ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
-                    ctx->full    = 1;
                 } else {
                     ctx->state   = NST_CACHE_CTX_STATE_CREATE;
                     ctx->entry   = entry;
@@ -732,7 +731,6 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
             }
         } else {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
-            ctx->full  = 1;
         }
     }
 
