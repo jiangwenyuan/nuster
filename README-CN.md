@@ -796,12 +796,13 @@ curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nust
 
 `curl -XPURGE https://127.0.0.1/imgs/test.jpg`
 
-生成key `GET.scheme.host.uri`, 并删除那个key。
+根据rule生成key并删除那个key。只对GET请求生成的缓存有效。
 
 默认key 包含`Host`, 如果缓存时用了`http://example.com/test` 而在localhost删除是需要`Host` header:
 
 `curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
 
+对cache和nosql都有效，nosql模式相当于 `DELETE`。
 
 ### 高级Purge: 通过name删除
 

@@ -674,7 +674,7 @@ You can use any tools or libs which support HTTP: `curl`, `postman`, python `req
 
 # Manager
 
-Nuster can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making HTTP requests along with some headers.
+Nuster can be managed via a manager API which endpoints is defined by `uri` and can be accessed by making HTTP requests along with some headers
 
 **Enable and define the endpoint uri and purge method**
 
@@ -815,12 +815,13 @@ This method deletes the specific url that is being requested, like this:
 
 `curl -XPURGE https://127.0.0.1/imgs/test.jpg`
 
-It creates a key of `GET.scheme.host.uri` and deletes the cache with that key.
+Key is created in the same way when the cache created except that the `method` is `GET`.
 
 Note by default cache key contains `Host` if you cache a request like `http://example.com/test` and purge from localhost you need to specify `Host` header:
 
 `curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
 
+It works for both cache and nosql, it is an alias of `DELETE` in nosql mode.
 
 ### Advanced purging: purge by name
 

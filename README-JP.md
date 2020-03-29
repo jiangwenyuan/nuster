@@ -792,7 +792,13 @@ curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nust
 
 `curl -XPURGE https://127.0.0.1/imgs/test.jpg`
 
-`GET /imgs/test.jpg`で生成したキャッシュをPurgeする、HEADERなどは問わない。
+ruleでキーを生成して、キャッシュを探して、あったらPurgeする。GETで生成したキャッシュのみ有効。
+
+Hostを注意してください、例えば、 `http://example.com/test` のキャッシュの場合は：
+
+`curl -XPURGE -H "Host: example.com" http://127.0.0.1/test`
+
+cache とnosql両方使える。Nosqlの場合は `DELETE` と同様。
 
 ### Advanced purge: nameでPurge
 
