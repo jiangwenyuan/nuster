@@ -317,7 +317,7 @@ DIR *nst_persist_opendir_by_idx(struct ist root, char *path, int idx);
 void nst_persist_cleanup(struct ist root, char *path, struct dirent *de);
 struct dirent *nst_persist_dir_next(DIR *dir);
 int nst_persist_valid(struct persist *disk, struct nst_key *key);
-int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_key key);
+int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_key *key);
 int nst_persist_purge_by_path(char *path);
 void nst_persist_update_expire(char *file, uint64_t expire);
 

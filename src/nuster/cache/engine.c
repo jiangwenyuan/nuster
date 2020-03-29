@@ -864,6 +864,55 @@ void nst_cache_abort(struct nst_cache_ctx *ctx) {
 }
 
 /*
+ * -1: error
+ *  0: not found
+ *  1: ok
+ */
+int nst_cache_delete(struct nst_key *key) {
+    struct nst_cache_entry *entry = NULL;
+    int ret;
+
+    nst_shctx_lock(&nuster.cache->dict[0]);
+    entry = nst_cache_dict_get(key);
+
+    if(entry) {
+
+        if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+            entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
+            entry->data->invalid = 1;
+            entry->data          = NULL;
+            entry->expire        = 0;
+
+            ret = 1;
+        }
+
+        if(entry->file) {
+            ret = nst_persist_purge_by_path(entry->file);
+        }
+    } else {
+        ret = 0;
+    }
+
+    nst_shctx_unlock(&nuster.cache->dict[0]);
+
+    if(!nuster.cache->disk.loaded && global.nuster.cache.root.len){
+        struct persist disk;
+
+        disk.file = nst_cache_memory_alloc(nst_persist_path_file_len(global.nuster.cache.root) + 1);
+
+        if(!disk.file) {
+            ret = -1;
+        } else {
+            ret = nst_persist_purge_by_key(global.nuster.cache.root, &disk, key);
+        }
+
+        nst_cache_memory_free(disk.file);
+    }
+
+    return ret;
+}
+
+/*
  * Create cache applet to handle the request
  */
 void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,

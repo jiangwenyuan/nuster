@@ -927,27 +927,55 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
     return ret;
 }
 
+/*
+ * -1: error
+ *  0: not found
+ *  1: ok
+ */
 int nst_nosql_delete(struct nst_key *key) {
     struct nst_nosql_entry *entry = NULL;
-    int ret = 0;
-
-    if(!key) {
-        return 0;
-    }
+    int ret;
 
     nst_shctx_lock(&nuster.nosql->dict[0]);
-
     entry = nst_nosql_dict_get(key);
 
     if(entry) {
-        entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
-        ret = 1;
+
+        if(entry->state == NST_NOSQL_ENTRY_STATE_VALID) {
+            entry->state         = NST_NOSQL_ENTRY_STATE_INVALID;
+            entry->data->invalid = 1;
+            entry->data          = NULL;
+            entry->expire        = 0;
+
+            ret = 1;
+        }
+
+        if(entry->file) {
+            ret = nst_persist_purge_by_path(entry->file);
+        }
+    } else {
+        ret = 0;
     }
 
     nst_shctx_unlock(&nuster.nosql->dict[0]);
 
+    if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
+        struct persist disk;
+
+        disk.file = nst_nosql_memory_alloc(nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+
+        if(!disk.file) {
+            ret = -1;
+        } else {
+            ret = nst_persist_purge_by_key(global.nuster.nosql.root, &disk, key);
+        }
+
+        nst_cache_memory_free(disk.file);
+    }
+
     return ret;
 }
+
 
 int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx) {
 

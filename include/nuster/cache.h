@@ -194,6 +194,7 @@ void nst_cache_housekeeping();
 void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);
 int nst_cache_exists(struct nst_cache_ctx *ctx);
+int nst_cache_delete(struct nst_key *key);
 struct nst_cache_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
         struct channel *res, struct nst_cache_ctx *ctx);
