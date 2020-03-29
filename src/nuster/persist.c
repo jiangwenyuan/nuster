@@ -316,8 +316,7 @@ void nst_persist_cleanup(struct ist root, char *path, struct dirent *de1) {
 
 }
 
-int nst_persist_purge_by_key(struct ist root, struct persist *disk,
-        struct nst_key key) {
+int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_key key) {
 
     struct dirent *de;
     DIR *dirp;
@@ -327,7 +326,7 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk,
     buf = malloc(key.size);
 
     if(!buf) {
-        return 500;
+        return NST_HTTP_500;
     }
 
     sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
@@ -339,13 +338,13 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk,
         free(buf);
 
         if(errno == ENOENT) {
-            return 404;
+            return NST_HTTP_404;
         } else {
-            return 500;
+            return NST_HTTP_500;
         }
     }
 
-    ret = 404;
+    ret = NST_HTTP_404;
 
     while((de = readdir(dirp)) != NULL) {
 
@@ -357,7 +356,8 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk,
                 disk->fd = nst_persist_open(disk->file);
 
                 if(disk->fd == -1) {
-                    ret = 500;
+                    ret = NST_HTTP_500;
+
                     goto done;
                 }
 
@@ -365,7 +365,8 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk,
 
                 if(ret == key.size && memcmp(key.data, buf, key.size) == 0) {
                     unlink(disk->file);
-                    ret = 200;
+                    ret = NST_HTTP_200;
+
                     goto done;
                 }
 
@@ -377,6 +378,7 @@ done:
     closedir(dirp);
     close(disk->fd);
     free(buf);
+
     return ret;
 }
 
@@ -384,12 +386,12 @@ int nst_persist_purge_by_path(char *path) {
     int ret = unlink(path);
 
     if(ret == 0) {
-        return 200;
+        return NST_HTTP_200;
     } else {
         if(errno == ENOENT) {
-            return 404;
+            return NST_HTTP_404;
         } else {
-            return 500;
+            return NST_HTTP_500;
         }
     }
 }

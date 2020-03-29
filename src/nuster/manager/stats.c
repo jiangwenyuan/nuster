@@ -102,6 +102,7 @@ static int _nst_stats_header(struct appctx *appctx, struct stream_interface *si,
 full:
     htx_reset(htx);
     si_rx_room_blk(si);
+
     return 0;
 }
 
@@ -376,7 +377,7 @@ static void nst_stats_handler(struct appctx *appctx) {
 
     if(appctx->st0 == NST_STATS_DONE) {
 
-        if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
+        if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
             si_rx_room_blk(si);
 
             goto out;
@@ -384,13 +385,13 @@ static void nst_stats_handler(struct appctx *appctx) {
 
         channel_add_input(&s->res, 1);
 
-        if (!(res->flags & CF_SHUTR)) {
+        if(!(res->flags & CF_SHUTR)) {
             res->flags |= CF_READ_NULL;
             si_shutr(si);
         }
 
         /* eat the whole request */
-        if (co_data(req)) {
+        if(co_data(req)) {
             co_htx_skip(req, req_htx, co_data(req));
             htx_to_buf(req_htx, &req->buf);
         }

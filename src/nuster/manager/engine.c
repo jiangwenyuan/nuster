@@ -28,9 +28,10 @@ static int _nst_manager_set_state_ttl(struct stream *s, struct channel *req, str
 
     struct htx *htx = htxbuf(&s->req.buf);
     struct http_hdr_ctx hdr = { .blk = NULL };
+    int ret = NST_HTTP_400;
 
     if(state == -1 && ttl == -1) {
-        return 400;
+        goto end;
     }
 
     if(http_find_header(htx, ist("name"), &hdr, 0)) {
@@ -83,13 +84,17 @@ static int _nst_manager_set_state_ttl(struct stream *s, struct channel *req, str
         }
 
         if(found) {
-            return 200;
+            ret = NST_HTTP_200;
         } else {
-            return 404;
+            ret = NST_HTTP_404;
         }
     }
 
-    return 400;
+end:
+
+    nst_http_reply(s, ret);
+
+    return 1;
 }
 
 static int _nst_manager_check_uri(struct http_msg *msg) {
@@ -167,37 +172,16 @@ int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
                     nst_parse_time(hdr.value.ptr, hdr.value.len, (unsigned *)&ttl);
                 }
 
-                txn->status = _nst_manager_set_state_ttl(s, req, px, state, ttl);
+                return _nst_manager_set_state_ttl(s, req, px, state, ttl);
             } else if(txn->meth == HTTP_METH_DELETE) {
                 /* purge */
-                txn->status = nst_purger_advanced(s, req, px);
-
-                if(txn->status == 0) {
-                    return 0;
-                }
+                return nst_purger_advanced(s, req, px);
             } else {
                 return 0;
             }
         } else {
             return 0;
         }
-    }
-
-    switch(txn->status) {
-        case 200:
-            http_reply_and_close(s, txn->status, http_error_message(s));
-            break;
-        case 400:
-            http_reply_and_close(s, txn->status, http_error_message(s));
-            break;
-        case 404:
-            http_reply_and_close(s, txn->status, http_error_message(s));
-            break;
-        case 500:
-            http_reply_and_close(s, txn->status, http_error_message(s));
-            break;
-        default:
-            http_reply_and_close(s, txn->status, http_error_message(s));
     }
 
     return 1;

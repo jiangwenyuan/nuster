@@ -136,6 +136,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
     struct proxy *px            = s->be;
     struct stream_interface *si = &s->si[1];
     struct nst_cache_ctx *ctx   = filter->ctx;
+    struct htx *htx;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
         /* request */
@@ -201,7 +202,11 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                     nst_debug2("HIT memory\n");
 
-                    if(nst_cache_handle_conditional_req(ctx, s, msg)) {
+                    htx = htxbuf(&req->buf);
+
+                    if(nst_http_handle_conditional_req(s, htx, ctx->rule->last_modified,
+                                ctx->res.last_modified, ctx->rule->etag, ctx->res.etag)) {
+
                         return 1;
                     }
 
@@ -236,7 +241,11 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
                         }
                     }
 
-                    if(nst_cache_handle_conditional_req(ctx, s, msg)) {
+                    htx = htxbuf(&req->buf);
+
+                    if(nst_http_handle_conditional_req(s, htx, ctx->rule->last_modified,
+                                ctx->res.last_modified, ctx->rule->etag, ctx->res.etag)) {
+
                         return 1;
                     }
 
@@ -265,6 +274,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
         if(ctx->state == NST_CACHE_CTX_STATE_HIT_MEMORY
                 || ctx->state == NST_CACHE_CTX_STATE_HIT_DISK) {
+
             nst_cache_hit(s, si, req, res, ctx);
         }
 
@@ -310,6 +320,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                 if(cc->code == s->txn->status) {
                     valid = 1;
+
                     break;
                 }
 
@@ -422,9 +433,7 @@ nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp, const char *
 
 static struct sample_fetch_kw_list nst_sample_fetch_keywords = {
     ILH, {
-        { "nuster.cache.hit", nst_smp_fetch_cache_hit, 0, NULL, SMP_T_BOOL,
-            SMP_USE_HRSHP
-        },
+        { "nuster.cache.hit", nst_smp_fetch_cache_hit, 0, NULL, SMP_T_BOOL, SMP_USE_HRSHP },
     }
 };
 

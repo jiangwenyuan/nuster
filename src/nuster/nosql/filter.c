@@ -215,6 +215,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
                 if(nst_nosql_delete(key)) {
                     nst_debug(s, "[nosql] EXIST, to delete\n");
                     ctx->state = NST_NOSQL_CTX_STATE_DELETE;
+
                     break;
                 }
 
@@ -231,11 +232,12 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
      * */
     if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_FOUND;
+
         return 1;
     }
 
     if(ctx->state == NST_NOSQL_CTX_STATE_HIT_MEMORY) {
-        appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT;
+        appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_MEMORY;
         /* 0: header unsent, 1: sent */
         appctx->st1 = 0;
 
@@ -277,6 +279,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
     if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
         ctx->state  = NST_NOSQL_CTX_STATE_PASS;
         appctx->st0 = NST_NOSQL_APPCTX_STATE_WAIT;
+
         return 0;
     }
 

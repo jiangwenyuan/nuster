@@ -114,9 +114,10 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     struct nst_nosql_dict  *dict  = NULL;
     struct nst_nosql_data  *data  = NULL;
     struct nst_nosql_entry *entry = NULL;
-    int idx;
+
     struct nst_key key = { .data = NULL };
-    struct buffer buf = { .area = NULL };
+    struct buffer buf  = { .area = NULL };
+    int idx;
 
     dict = _nst_nosql_dict_rehashing() ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
 
@@ -222,6 +223,7 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
                     entry->data->invalid = 1;
                     entry->data          = NULL;
                     entry->expire        = 0;
+
                     return NULL;
                 }
 
@@ -240,13 +242,12 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
 }
 
 int nst_nosql_dict_set_from_disk(char *file, char *meta, struct nst_key *key) {
+    int idx;
     struct nst_nosql_dict  *dict  = NULL;
     struct nst_nosql_entry *entry = NULL;
-    int idx;
     uint64_t hash = nst_persist_meta_get_hash(meta);
 
-    dict = _nst_nosql_dict_rehashing()
-        ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
+    dict = _nst_nosql_dict_rehashing() ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
 
     entry = nst_nosql_memory_alloc(sizeof(*entry));
 

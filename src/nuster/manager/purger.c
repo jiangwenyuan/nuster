@@ -44,7 +44,7 @@ int _nst_cache_purge_by_key(struct nst_key key) {
             ret = nst_persist_purge_by_path(entry->file);
         }
     } else {
-        ret = 404;
+        ret = NST_HTTP_404;
     }
 
     nst_shctx_unlock(&nuster.cache->dict[0]);
@@ -55,7 +55,7 @@ int _nst_cache_purge_by_key(struct nst_key key) {
         disk.file = nst_cache_memory_alloc(nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
         if(!disk.file) {
-            ret = 500;
+            ret = NST_HTTP_500;
         } else {
             ret = nst_persist_purge_by_key(global.nuster.cache.root, &disk, key);
         }
@@ -74,18 +74,13 @@ int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px) {
     int ret = nst_cache_build_purge_key(s, msg, &key);
 
     if(ret != NST_OK) {
-        txn->status = 500;
-        http_reply_and_close(s, txn->status, http_error_message(s));
+        nst_http_reply(s, NST_HTTP_500);
     } else {
         nst_hash(&key);
 
-        txn->status = _nst_cache_purge_by_key(key);
+        ret = _nst_cache_purge_by_key(key);
 
-        if(txn->status == 200) {
-            http_reply_and_close(s, txn->status, http_error_message(s));
-        } else {
-            http_reply_and_close(s, txn->status, http_error_message(s));
-        }
+        nst_http_reply(s, ret);
     }
 
     return 1;
@@ -240,7 +235,9 @@ purge:
     return 0;
 
 notfound:
-    return 404;
+    nst_http_reply(s, NST_HTTP_404);
+
+    return 1;
 
 err:
     free(error);
@@ -250,10 +247,14 @@ err:
         regex_free(regex);
     }
 
-    return 500;
+    nst_http_reply(s, NST_HTTP_500);
+
+    return 1;
 
 badreq:
-    return 400;
+    nst_http_reply(s, NST_HTTP_400);
+
+    return 1;
 }
 
 int nst_purger_check(struct nst_cache_entry *entry, struct appctx *appctx) {
@@ -303,11 +304,10 @@ static void nst_purger_handler(struct appctx *appctx) {
     struct nst_cache_entry *entry = NULL;
     struct stream_interface *si   = appctx->owner;
 
-    struct stream *s     = si_strm(si);
-    struct http_txn *txn = s->txn;
+    struct stream *s = si_strm(si);
+    uint64_t start   = get_current_timestamp();
 
-    uint64_t start = get_current_timestamp();
-    int max        = 1000;
+    int max = 1000;
 
     while(1) {
         nst_shctx_lock(&nuster.cache->dict[0]);
@@ -349,8 +349,7 @@ static void nst_purger_handler(struct appctx *appctx) {
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
     if(appctx->st2 == nuster.cache->dict[0].size) {
-        txn->status = 200;
-        http_reply_and_close(s, txn->status, http_error_message(s));
+        nst_http_reply(s, NST_HTTP_200);
     }
 }
 

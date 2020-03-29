@@ -30,8 +30,8 @@ static void _nst_cache_memory_handler(struct appctx *appctx) {
     struct stream_interface *si = appctx->owner;
     struct channel *req = si_oc(si);
     struct channel *res = si_ic(si);
+
     struct htx *req_htx, *res_htx;
-    struct buffer *errmsg;
     struct nst_data_element *element = NULL;
     int total = 0;
 
@@ -41,17 +41,17 @@ static void _nst_cache_memory_handler(struct appctx *appctx) {
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         appctx->ctx.nuster.cache.data->clients--;
 
-        goto err;
+        goto out;
     }
 
     /* Check if the input buffer is avalaible. */
-    if (!b_size(&res->buf)) {
+    if(!b_size(&res->buf)) {
         si_rx_room_blk(si);
 
-        goto err;
+        goto out;
     }
 
-    if (res->flags & (CF_SHUTW|CF_SHUTR|CF_SHUTW_NOW)) {
+    if(res->flags & (CF_SHUTW|CF_SHUTR|CF_SHUTW_NOW)) {
         appctx->ctx.nuster.cache.element = NULL;
     }
 
@@ -59,7 +59,7 @@ static void _nst_cache_memory_handler(struct appctx *appctx) {
         element = appctx->ctx.nuster.cache.element;
 
         while(element) {
-            if(nst_data_element_to_htx(element, res_htx) != NST_OK) {
+            if(nst_http_data_element_to_htx(element, res_htx) != NST_OK) {
                 si_rx_room_blk(si);
 
                 goto out;
@@ -71,7 +71,7 @@ static void _nst_cache_memory_handler(struct appctx *appctx) {
 
     } else {
 
-        if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
+        if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
             si_rx_room_blk(si);
 
             goto out;
@@ -79,13 +79,13 @@ static void _nst_cache_memory_handler(struct appctx *appctx) {
 
         appctx->ctx.nuster.cache.data->clients--;
 
-        if (!(res->flags & CF_SHUTR) ) {
+        if(!(res->flags & CF_SHUTR) ) {
             res->flags |= CF_READ_NULL;
             si_shutr(si);
         }
 
         /* eat the whole request */
-        if (co_data(req)) {
+        if(co_data(req)) {
             req_htx = htx_from_buf(&req->buf);
             co_htx_skip(req, req_htx, co_data(req));
             htx_to_buf(req_htx, &req->buf);
@@ -97,18 +97,6 @@ out:
     total = res_htx->data - total;
     channel_add_input(res, total);
     htx_to_buf(res_htx, &res->buf);
-
-    return;
-
-err:
-    /* Sent and HTTP error 500 */
-    b_reset(&res->buf);
-    errmsg = &http_err_chunks[HTTP_ERR_500];
-    res->buf.data = b_data(errmsg);
-    memcpy(res->buf.area, b_head(errmsg), b_data(errmsg));
-    res_htx = htx_from_buf(&res->buf);
-
-    total = 0;
 }
 
 /*
@@ -132,14 +120,14 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
     total = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        return;
+        goto out;
     }
 
     /* Check if the input buffer is avalaible. */
     if(res->buf.size == 0) {
         si_rx_room_blk(si);
 
-        return;
+        goto out;
     }
 
     /* check that the output is not closed */
@@ -236,7 +224,7 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
 
         case NST_PERSIST_APPLET_EOM:
 
-            if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
+            if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
                 si_rx_room_blk(si);
 
                 goto out;
@@ -245,12 +233,12 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
             appctx->st1 = NST_PERSIST_APPLET_DONE;
         case NST_PERSIST_APPLET_DONE:
 
-            if (!(res->flags & CF_SHUTR) ) {
+            if(!(res->flags & CF_SHUTR) ) {
                 res->flags |= CF_READ_NULL;
                 si_shutr(si);
             }
 
-            if (co_data(req)) {
+            if(co_data(req)) {
                 req_htx = htx_from_buf(&req->buf);
                 co_htx_skip(req, req_htx, co_data(req));
                 htx_to_buf(req_htx, &req->buf);
@@ -269,8 +257,6 @@ out:
     total = res_htx->data - total;
     channel_add_input(res, total);
     htx_to_buf(res_htx, &res->buf);
-
-    return;
 }
 
 /*
@@ -645,7 +631,7 @@ int nst_cache_build_key(struct nst_cache_ctx *ctx, struct stream *s, struct http
                     char *v = NULL;
                     int v_l = 0;
 
-                    if(nst_req_find_param(ctx->req.query.ptr,
+                    if(nst_http_find_param(ctx->req.query.ptr,
                                 ctx->req.query.ptr + ctx->req.query.len,
                                 ck->data, &v, &v_l) == NST_OK) {
 
@@ -796,7 +782,7 @@ int nst_cache_build_purge_key(struct stream *s, struct http_msg *msg, struct nst
     sl = http_get_stline(htx);
     uri = htx_sl_req_uri(sl);
 
-    if (!uri.len || *uri.ptr != '/') {
+    if(!uri.len || *uri.ptr != '/') {
         return NST_ERR;
     }
 
@@ -1598,116 +1584,4 @@ nst_cache_build_last_modified(struct nst_cache_ctx *ctx, struct stream *s, struc
         }
     }
 }
-
-/*
- * return:
- * 1: http_headers should return 1 immediately
- * 0: http_headers should proceed
- */
-int nst_cache_handle_conditional_req(struct nst_cache_ctx *ctx, struct stream *s,
-        struct http_msg *msg) {
-
-    struct htx *htx;
-    struct http_hdr_ctx hdr = { .blk = NULL };
-    struct nst_rule *rule = ctx->rule;
-
-    int if_none_match     = -1;
-    int if_match          = -1;
-    int if_modified_since = -1;;
-
-    htx = htxbuf(&s->req.buf);
-
-    if(rule->etag != NST_STATUS_ON && rule->last_modified != NST_STATUS_ON) {
-        return 0;
-    }
-
-    if(rule->etag == NST_STATUS_ON) {
-
-        while(http_find_header(htx, ist("If-Match"), &hdr, 0)) {
-
-            if_match = 412;
-
-            if(1 == hdr.value.len && *(hdr.value.ptr) == '*') {
-                if_match = 200;
-
-                break;
-            }
-
-            if(isteq(ctx->res.etag, hdr.value)) {
-                if_match = 200;
-
-                break;
-            }
-        }
-
-        if(if_match == 412) {
-            goto code412;
-        }
-    }
-
-    if(rule->last_modified == NST_STATUS_ON) {
-
-        if(http_find_header(htx, ist("If-Unmodified-Since"), &hdr, 1)) {
-
-            if(!isteq(ctx->res.last_modified, hdr.value)) {
-                goto code412;
-            }
-        }
-    }
-
-    if(rule->etag == NST_STATUS_ON) {
-
-        while(http_find_header(htx, ist("If-None-Match"), &hdr, 0)) {
-
-            if_none_match = 200;
-
-            if(1 == hdr.value.len && *(hdr.value.ptr) == '*') {
-                if_none_match = 304;
-
-                break;
-            }
-
-            if(isteq(ctx->res.etag, hdr.value)) {
-                if_none_match = 304;
-
-                break;
-            }
-        }
-    }
-
-    if(rule->last_modified == NST_STATUS_ON) {
-
-        if(http_find_header(htx, ist("If-Modified-Since"), &hdr, 1)) {
-
-            if(isteq(ctx->res.last_modified, hdr.value)) {
-                if_modified_since = 304;
-            } else {
-                if_modified_since = 200;
-            }
-        }
-    }
-
-    if(if_none_match == 304 && if_modified_since != 200) {
-        goto code304;
-    }
-
-    if(if_none_match != 200 && if_modified_since == 304) {
-        goto code304;
-    }
-
-    return 0;
-
-code304:
-
-    nst_res_304(s, ctx->res.last_modified, ctx->res.etag);
-
-    return 1;
-
-code412:
-
-    nst_res_412(s);
-
-    return 1;
-}
-
 

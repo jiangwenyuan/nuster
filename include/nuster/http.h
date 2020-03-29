@@ -31,29 +31,35 @@
 
 #include <nuster/common.h>
 
-/*
-static inline void nst_res_header_date(struct buffer *header) {
-    const char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
-        "Aug", "Sep", "Oct", "Nov", "Dec" };
+enum {
+    NST_HTTP_100 = 0,
+    NST_HTTP_200,
+    NST_HTTP_304,
+    NST_HTTP_400,
+    NST_HTTP_404,
+    NST_HTTP_405,
+    NST_HTTP_412,
+    NST_HTTP_500,
+    NST_HTTP_507,
+    NST_HTTP_SIZE
+};
 
-    const char day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+struct nst_http_code {
+    int        status;
+    struct ist code;
+    struct ist reason;
+    struct ist length;
+};
 
-    struct tm *tm;
-    time_t now;
-    time(&now);
-    tm = gmtime(&now);
-    chunk_appendf(header, "%.*s: %s, %02d %s %04d %02d:%02d:%02d GMT\r\n",
-            nst_headers.date.len, nst_headers.date.data, day[tm->tm_wday],
-            tm->tm_mday, mon[tm->tm_mon], 1900 + tm->tm_year,
-            tm->tm_hour, tm->tm_min, tm->tm_sec);
-}
-*/
+int nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, int *val_len);
+int nst_http_data_element_to_htx(struct nst_data_element *element, struct htx *htx);
 
-int nst_req_find_param(char *query_beg, char *query_end, char *name, char **value, int *value_len);
-int nst_data_element_to_htx(struct nst_data_element *element, struct htx *htx);
+void nst_http_reply(struct stream *s, int idx);
+int nst_http_reply_100(struct stream *s);
+void nst_http_reply_304(struct stream *s, struct ist last_modified, struct ist etag);
 
-void nst_res_simple(struct stream *s, int status);
-void nst_res_304(struct stream *s, struct ist last_modified, struct ist etag);
-void nst_res_412(struct stream *s);
+int nst_http_handle_expect(struct stream *s, struct htx *htx, struct http_msg *msg);
+int nst_http_handle_conditional_req(struct stream *s, struct htx *htx,
+        int test_last_modified, struct ist last_modified, int test_etag, struct ist etag);
 
 #endif /* _NUSTER_HTTP_H */
