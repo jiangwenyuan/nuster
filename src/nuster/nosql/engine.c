@@ -819,19 +819,19 @@ int nst_nosql_get_headers(struct nst_nosql_ctx *ctx, struct stream *s, struct ht
         chunk_istcat(ctx->buf, hdr.value);
     }
 
-    ctx->req.transfer_encoding.ptr = ctx->buf->area + ctx->buf->data;
+    ctx->res.transfer_encoding.ptr = ctx->buf->area + ctx->buf->data;
 
     while(http_find_header(htx, ist("Transfer-Encoding"), &hdr, 0)) {
 
-        if(ctx->req.transfer_encoding.len) {
+        if(ctx->res.transfer_encoding.len) {
             chunk_istcat(ctx->buf, ist(","));
         }
 
         chunk_istcat(ctx->buf, hdr.value);
 
-        ctx->req.transfer_encoding.len = ctx->req.transfer_encoding.len
-            ? ctx->req.transfer_encoding.len + hdr.value.len + 1
-            : ctx->req.transfer_encoding.len + hdr.value.len;
+        ctx->res.transfer_encoding.len = ctx->res.transfer_encoding.len
+            ? ctx->res.transfer_encoding.len + hdr.value.len + 1
+            : ctx->res.transfer_encoding.len + hdr.value.len;
 
     }
 
@@ -872,7 +872,7 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
     sl = (struct htx_sl *)data;
     sl->hdrs_bytes = -1;
 
-    if(ctx->req.content_length) {
+    if(ctx->res.content_length) {
         sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_LEN |HTX_SL_F_CLEN);
     } else {
         sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_ENC
@@ -891,7 +891,7 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
     ctx->data->element = ele_sl;
     ctx->element = ele_sl;
 
-    if(ctx->req.content_length) {
+    if(ctx->res.content_length) {
         type = HTX_BLK_HDR;
         info = type << 28;
         size = clk.len + clv.len;
@@ -1020,7 +1020,7 @@ void nst_nosql_create(struct nst_nosql_ctx *ctx, struct stream *s, struct http_m
                     long long cl;
 
                     strl2llrc(hdr.value.ptr, hdr.value.len, &cl);
-                    ctx->req.content_length = cl;
+                    ctx->res.content_length = cl;
                 }
             }
 
@@ -1223,12 +1223,12 @@ int nst_nosql_delete(struct nst_key *key) {
 
 int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_msg *msg) {
 
-    if(ctx->req.content_length == 0 && ctx->res.payload_len == 0) {
+    if(ctx->res.content_length == 0 && ctx->res.payload_len == 0) {
         ctx->state = NST_NOSQL_CTX_STATE_INVALID;
         ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
     } else {
 
-        ctx->entry->data->buf.size = ctx->req.content_type.len + ctx->req.transfer_encoding.len;
+        ctx->entry->data->buf.size = ctx->req.content_type.len + ctx->res.transfer_encoding.len;
         ctx->entry->data->buf.data = ctx->entry->data->buf.size;
         ctx->entry->data->buf.area = nst_nosql_memory_alloc(ctx->entry->data->buf.size);
 
@@ -1245,15 +1245,15 @@ int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_ms
             ctx->entry->data->info.content_type.len = ctx->req.content_type.len;
         }
 
-        if(ctx->req.transfer_encoding.len) {
+        if(ctx->res.transfer_encoding.len) {
             ctx->entry->data->info.transfer_encoding.ptr = ctx->entry->data->buf.area
-                + (ctx->req.transfer_encoding.ptr - ctx->buf->area);
+                + (ctx->res.transfer_encoding.ptr - ctx->buf->area);
 
-            ctx->entry->data->info.transfer_encoding.len = ctx->req.transfer_encoding.len;
+            ctx->entry->data->info.transfer_encoding.len = ctx->res.transfer_encoding.len;
         }
 
-        if(ctx->req.content_length) {
-            ctx->entry->data->info.content_length = ctx->req.content_length;
+        if(ctx->res.content_length) {
+            ctx->entry->data->info.content_length = ctx->res.content_length;
         } else {
             ctx->entry->data->info.content_length = ctx->res.payload_len;
         }
@@ -1283,8 +1283,8 @@ int nst_nosql_finish(struct nst_nosql_ctx *ctx, struct stream *s, struct http_ms
 
             nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
-            if(ctx->req.content_length) {
-                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->req.content_length);
+            if(ctx->res.content_length) {
+                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->res.content_length);
             } else {
                 nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->res.payload_len);
             }

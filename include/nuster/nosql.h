@@ -143,13 +143,13 @@ struct nst_nosql_ctx {
         struct ist            query;
         struct ist            cookie;
         struct ist            content_type;
-        struct ist            transfer_encoding;
-        uint64_t              content_length;
     } req;
 
     struct {
-        int                       header_len;
-        uint64_t                  payload_len;
+        int                   header_len;
+        uint64_t              payload_len;
+        uint64_t              content_length;
+        struct ist            transfer_encoding;
     } res;
 
     int                       pid;         /* proxy uuid */
