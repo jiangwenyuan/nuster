@@ -213,7 +213,7 @@ void nst_nosql_persist_load();
 int nst_nosql_dict_init();
 struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key);
 struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx);
-int nst_nosql_dict_set_from_disk(struct nst_key key, char *file, char *meta);
+int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta);
 void nst_nosql_dict_rehash();
 void nst_nosql_dict_cleanup();
 

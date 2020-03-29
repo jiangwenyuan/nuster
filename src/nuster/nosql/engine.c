@@ -1229,7 +1229,7 @@ void nst_nosql_persist_load() {
                         return;
                     }
 
-                    nst_nosql_dict_set_from_disk(key, file, meta);
+                    nst_nosql_dict_set_from_disk(&key, file, meta);
 
                     close(fd);
                 }

@@ -31,6 +31,7 @@
 #include <nuster/common.h>
 #include <nuster/shctx.h>
 #include <nuster/memory.h>
+#include <nuster/key.h>
 #include <nuster/http.h>
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
@@ -77,8 +78,5 @@ static inline void nuster_housekeeping() {
 static inline int nuster_check_applet(struct stream *s, struct channel *req, struct proxy *px) {
     return nst_manager(s, req, px) || nst_nosql_check_applet(s, req, px);
 }
-
-int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
-        struct nst_http_txn *txn, struct nst_key *key, enum http_meth_t method);
 
 #endif /* _NUSTER_H */

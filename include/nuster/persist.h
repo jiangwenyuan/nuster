@@ -29,6 +29,7 @@
 #include <fcntl.h>
 
 #include <nuster/common.h>
+#include <nuster/key.h>
 
 #define NST_PERSIST_VERSION  4
 
@@ -253,21 +254,21 @@ static inline int nst_persist_write(struct persist *disk, char *buf, int len) {
 
 static inline int nst_persist_write_meta(struct persist *disk) {
     disk->offset = 0;
+
     return nst_persist_write(disk, disk->meta, NST_PERSIST_META_SIZE);
 }
 
 static inline int
 nst_persist_write_key(struct persist *disk, struct nst_key *key) {
-
     disk->offset = NST_PERSIST_POS_KEY;
+
     return nst_persist_write(disk, key->data, key->size);
 }
 
 static inline int
 nst_persist_write_host(struct persist *disk, struct ist host) {
 
-    disk->offset = NST_PERSIST_POS_KEY
-        + nst_persist_meta_get_key_len(disk->meta);
+    disk->offset = NST_PERSIST_POS_KEY + nst_persist_meta_get_key_len(disk->meta);
 
     return nst_persist_write(disk, host.ptr, host.len);
 }

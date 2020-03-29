@@ -1148,7 +1148,7 @@ void nst_cache_persist_load() {
                         goto err;
                     }
 
-                    if(nst_cache_dict_set_from_disk(buf, host, path, key, file, meta) != NST_OK) {
+                    if(nst_cache_dict_set_from_disk(&buf, host, path, &key, file, meta) != NST_OK) {
                         goto err;
                     }
 
