@@ -215,6 +215,18 @@ struct nst_data {
     struct nst_data          *next;
 };
 
+static inline int nst_data_invalid(struct nst_data *data) {
+
+    if(data->invalid) {
+
+        if(!data->clients) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 struct nst_flt_conf {
     int status;
     int pid;

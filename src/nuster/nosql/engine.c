@@ -336,18 +336,6 @@ struct nst_data *nst_nosql_data_new() {
     return data;
 }
 
-static int _nst_data_invalid(struct nst_data *data) {
-
-    if(data->invalid) {
-
-        if(!data->clients) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
 static void _nst_data_cleanup() {
     struct nst_data *data = NULL;
 
@@ -355,7 +343,7 @@ static void _nst_data_cleanup() {
 
         if(nuster.nosql->data_head == nuster.nosql->data_tail) {
 
-            if(_nst_data_invalid(nuster.nosql->data_head)) {
+            if(nst_data_invalid(nuster.nosql->data_head)) {
                 data                    = nuster.nosql->data_head;
                 nuster.nosql->data_head = NULL;
                 nuster.nosql->data_tail = NULL;
@@ -363,7 +351,7 @@ static void _nst_data_cleanup() {
 
         } else {
 
-            if(_nst_data_invalid(nuster.nosql->data_head)) {
+            if(nst_data_invalid(nuster.nosql->data_head)) {
                 data                          = nuster.nosql->data_head;
                 nuster.nosql->data_tail->next = nuster.nosql->data_head->next;
                 nuster.nosql->data_head       = nuster.nosql->data_head->next;
