@@ -271,11 +271,11 @@ static void nst_cache_handler(struct appctx *appctx) {
 }
 
 /*
- * create a new nst_cache_data and insert it to cache->data list
+ * create a new nst_data and insert it to cache->data list
  */
-struct nst_cache_data *nst_cache_data_new() {
+struct nst_data *nst_cache_data_new() {
 
-    struct nst_cache_data *data = nst_cache_memory_alloc(sizeof(*data));
+    struct nst_data *data = nst_cache_memory_alloc(sizeof(*data));
 
     nst_shctx_lock(nuster.cache);
 
@@ -305,7 +305,7 @@ struct nst_cache_data *nst_cache_data_new() {
     return data;
 }
 
-static int _nst_cache_data_invalid(struct nst_cache_data *data) {
+static int _nst_data_invalid(struct nst_data *data) {
 
     if(data->invalid) {
 
@@ -319,16 +319,16 @@ static int _nst_cache_data_invalid(struct nst_cache_data *data) {
 }
 
 /*
- * free invalid nst_cache_data
+ * free invalid nst_data
  */
-static void _nst_cache_data_cleanup() {
-    struct nst_cache_data *data = NULL;
+static void _nst_data_cleanup() {
+    struct nst_data *data = NULL;
 
     if(nuster.cache->data_head) {
 
         if(nuster.cache->data_head == nuster.cache->data_tail) {
 
-            if(_nst_cache_data_invalid(nuster.cache->data_head)) {
+            if(_nst_data_invalid(nuster.cache->data_head)) {
                 data                    = nuster.cache->data_head;
                 nuster.cache->data_head = NULL;
                 nuster.cache->data_tail = NULL;
@@ -336,7 +336,7 @@ static void _nst_cache_data_cleanup() {
 
         } else {
 
-            if(_nst_cache_data_invalid(nuster.cache->data_head)) {
+            if(_nst_data_invalid(nuster.cache->data_head)) {
                 data                          = nuster.cache->data_head;
                 nuster.cache->data_tail->next = nuster.cache->data_head->next;
                 nuster.cache->data_head       = nuster.cache->data_head->next;
@@ -381,7 +381,7 @@ void nst_cache_housekeeping() {
 
         while(data_cleaner--) {
             nst_shctx_lock(nuster.cache);
-            _nst_cache_data_cleanup();
+            _nst_data_cleanup();
             nst_shctx_unlock(nuster.cache);
         }
 
@@ -771,7 +771,7 @@ err:
 }
 
 /*
- * Add partial http data to nst_cache_data
+ * Add partial http data to nst_data
  */
 int nst_cache_update(struct http_msg *msg, struct nst_cache_ctx *ctx, unsigned int offset,
         unsigned int len) {

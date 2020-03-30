@@ -80,7 +80,7 @@ struct appctx {
 		union {
 			struct {
 				struct nst_cache_entry  *entry;
-				struct nst_cache_data   *data;
+				struct nst_data   *data;
 				struct nst_data_element *element;
 
 				int fd;
@@ -89,7 +89,7 @@ struct appctx {
 			} cache;
 			struct {
 				struct nst_nosql_entry  *entry;
-				struct nst_nosql_data   *data;
+				struct nst_data   *data;
 				struct nst_data_element *element;
 				int fd;
 				int header_len;

@@ -305,8 +305,8 @@ end:
     return;
 }
 
-struct nst_nosql_data *nst_nosql_data_new() {
-    struct nst_nosql_data *data = nst_nosql_memory_alloc(sizeof(*data));
+struct nst_data *nst_nosql_data_new() {
+    struct nst_data *data = nst_nosql_memory_alloc(sizeof(*data));
 
     nst_shctx_lock(nuster.nosql);
 
@@ -336,7 +336,7 @@ struct nst_nosql_data *nst_nosql_data_new() {
     return data;
 }
 
-static int _nst_nosql_data_invalid(struct nst_nosql_data *data) {
+static int _nst_data_invalid(struct nst_data *data) {
 
     if(data->invalid) {
 
@@ -348,14 +348,14 @@ static int _nst_nosql_data_invalid(struct nst_nosql_data *data) {
     return 0;
 }
 
-static void _nst_nosql_data_cleanup() {
-    struct nst_nosql_data *data = NULL;
+static void _nst_data_cleanup() {
+    struct nst_data *data = NULL;
 
     if(nuster.nosql->data_head) {
 
         if(nuster.nosql->data_head == nuster.nosql->data_tail) {
 
-            if(_nst_nosql_data_invalid(nuster.nosql->data_head)) {
+            if(_nst_data_invalid(nuster.nosql->data_head)) {
                 data                    = nuster.nosql->data_head;
                 nuster.nosql->data_head = NULL;
                 nuster.nosql->data_tail = NULL;
@@ -363,7 +363,7 @@ static void _nst_nosql_data_cleanup() {
 
         } else {
 
-            if(_nst_nosql_data_invalid(nuster.nosql->data_head)) {
+            if(_nst_data_invalid(nuster.nosql->data_head)) {
                 data                          = nuster.nosql->data_head;
                 nuster.nosql->data_tail->next = nuster.nosql->data_head->next;
                 nuster.nosql->data_head       = nuster.nosql->data_head->next;
@@ -407,7 +407,7 @@ void nst_nosql_housekeeping() {
 
         while(data_cleaner--) {
             nst_shctx_lock(nuster.nosql);
-            _nst_nosql_data_cleanup();
+            _nst_data_cleanup();
             nst_shctx_unlock(nuster.nosql);
         }
 

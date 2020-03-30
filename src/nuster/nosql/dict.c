@@ -112,7 +112,7 @@ void nst_nosql_dict_cleanup() {
 struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 
     struct nst_nosql_dict  *dict  = NULL;
-    struct nst_nosql_data  *data  = NULL;
+    struct nst_data  *data  = NULL;
     struct nst_nosql_entry *entry = NULL;
 
     struct nst_key key = { .data = NULL };

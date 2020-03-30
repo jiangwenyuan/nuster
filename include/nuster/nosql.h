@@ -49,20 +49,6 @@ enum {
 };
 
 /*
- * A nst_nosql_data contains a complete http response data,
- * and is pointed by nst_nosql_entry->data.
- * All nst_nosql_data are stored in a circular singly linked list
- */
-#define NST_NOSQL_DATA_FLAG_CHUNKED    0x00000001
-
-struct nst_nosql_data {
-    int                       clients;
-    int                       invalid;
-    struct nst_data_element  *element;
-    struct nst_nosql_data    *next;
-};
-
-/*
  * A nst_nosql_entry is an entry in nst_nosql_dict hash table
  */
 enum {
@@ -77,7 +63,7 @@ struct nst_nosql_entry {
 
     struct nst_key          key;
     struct nst_rule        *rule;        /* rule */
-    struct nst_nosql_data  *data;
+    struct nst_data  *data;
 
     struct buffer           buf;
 
@@ -125,7 +111,7 @@ struct nst_nosql_ctx {
     int                       state;
 
     struct nst_nosql_entry   *entry;
-    struct nst_nosql_data    *data;
+    struct nst_data    *data;
     struct nst_data_element  *element;
 
     struct nst_http_txn       txn;
@@ -146,10 +132,10 @@ struct nst_nosql {
     struct nst_nosql_dict  dict[2];
 
     /* point to the circular linked list, tail->next ===  head */
-    struct nst_nosql_data *data_head;
+    struct nst_data *data_head;
 
     /* and will be moved together constantly to check invalid data */
-    struct nst_nosql_data *data_tail;
+    struct nst_data *data_tail;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t        mutex;
@@ -182,7 +168,7 @@ void nst_nosql_init();
 void nst_nosql_housekeeping();
 int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);
 
-struct nst_nosql_data *nst_nosql_data_new();
+struct nst_data *nst_nosql_data_new();
 
 void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx);
 int nst_nosql_exists(struct nst_nosql_ctx *ctx);

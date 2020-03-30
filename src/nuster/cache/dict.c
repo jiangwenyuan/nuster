@@ -109,7 +109,7 @@ void nst_cache_dict_cleanup() {
 
 struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     struct nst_cache_dict  *dict  = NULL;
-    struct nst_cache_data  *data  = NULL;
+    struct nst_data  *data  = NULL;
     struct nst_cache_entry *entry = NULL;
     struct nst_key key = { .data = NULL };
     struct buffer buf  = { .area = NULL };

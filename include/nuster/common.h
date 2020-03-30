@@ -202,6 +202,19 @@ struct nst_rule {
     struct nst_rule           *next;
 };
 
+/*
+ * A nst_data contains a complete http response data,
+ * and is pointed by nst_nosql_entry->data.
+ * All nst_data are stored in a circular singly linked list
+ */
+struct nst_data {
+    int                       clients;
+    int                       invalid;
+    struct nst_data_element  *element;
+
+    struct nst_data          *next;
+};
+
 struct nst_flt_conf {
     int status;
     int pid;

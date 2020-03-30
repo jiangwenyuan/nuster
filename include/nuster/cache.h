@@ -36,19 +36,6 @@
 #define NST_CACHE_DEFAULT_CHUNK_SIZE          32
 
 /*
- * A nst_cache_data contains a complete http response data,
- * and is pointed by nst_cache_entry->data.
- * All nst_cache_data are stored in a circular singly linked list
- */
-struct nst_cache_data {
-    int                       clients;
-    int                       invalid;
-    struct nst_data_element  *element;
-
-    struct nst_cache_data    *next;
-};
-
-/*
  * A nst_cache_entry is an entry in nst_cache_dict hash table
  */
 enum {
@@ -63,7 +50,7 @@ struct nst_cache_entry {
 
     struct nst_key          key;
     struct nst_rule        *rule;        /* rule */
-    struct nst_cache_data  *data;
+    struct nst_data  *data;
 
     struct buffer           buf;
 
@@ -124,7 +111,7 @@ struct nst_cache_ctx {
     int                       state;
 
     struct nst_cache_entry   *entry;
-    struct nst_cache_data    *data;
+    struct nst_data    *data;
     struct nst_data_element  *element;
 
     struct nst_http_txn       txn;
@@ -148,8 +135,8 @@ struct nst_cache {
      * point to the circular linked list, tail->next ===  head,
      * and will be moved together constantly to check invalid data
      */
-    struct nst_cache_data *data_head;
-    struct nst_cache_data *data_tail;
+    struct nst_data *data_head;
+    struct nst_data *data_tail;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t        mutex;
@@ -195,7 +182,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx);
 void nst_cache_abort(struct nst_cache_ctx *ctx);
 int nst_cache_exists(struct nst_cache_ctx *ctx);
 int nst_cache_delete(struct nst_key *key);
-struct nst_cache_data *nst_cache_data_new();
+struct nst_data *nst_cache_data_new();
 void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
         struct channel *res, struct nst_cache_ctx *ctx);
 
