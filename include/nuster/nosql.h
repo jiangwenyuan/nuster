@@ -60,15 +60,6 @@ struct nst_nosql_data {
     int                       invalid;
     struct nst_data_element  *element;
     struct nst_nosql_data    *next;
-
-    struct buffer             buf;
-
-    struct {
-        struct ist            content_type;
-        struct ist            transfer_encoding;
-        uint64_t              content_length;
-        unsigned int          flags;
-    } info;
 };
 
 /*

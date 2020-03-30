@@ -566,7 +566,7 @@ int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_nos
     return 1;
 }
 
-int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct ist clv) {
+int _nst_nosql_create_header(struct stream *s, struct nst_nosql_ctx *ctx, struct ist clv) {
     struct htx_sl *sl;
     enum htx_blk_type type;
     uint32_t size, info;
@@ -642,7 +642,7 @@ int _nst_nosql_create_header(struct nst_nosql_ctx *ctx, struct stream *s, struct
 
         ctx->element->next = ele_cl;
         ctx->element = ele_cl;
-    } else if(ctx->data->info.flags & NST_NOSQL_DATA_FLAG_CHUNKED) {
+    } else {
         type = HTX_BLK_HDR;
         info = type << 28;
         size = tek.len + tev.len;
@@ -752,11 +752,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
                 }
             }
 
-            if(sl->flags & HTX_SL_F_CHNK) {
-                entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
-            }
-
-            if(_nst_nosql_create_header(ctx, s, hdr.value) != NST_OK) {
+            if(_nst_nosql_create_header(s, ctx, hdr.value) != NST_OK) {
                 ctx->state = NST_NOSQL_CTX_STATE_INVALID;
 
                 return;
@@ -977,45 +973,6 @@ int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_nosql_ct
         ctx->state = NST_NOSQL_CTX_STATE_INVALID;
         ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
     } else {
-
-        ctx->entry->data->buf.size = ctx->txn.req.content_type.len
-            + ctx->txn.res.transfer_encoding.len;
-
-        ctx->entry->data->buf.data = ctx->entry->data->buf.size;
-        ctx->entry->data->buf.area = nst_nosql_memory_alloc(ctx->entry->data->buf.size);
-
-        if(!ctx->entry->data->buf.area) {
-            return NST_ERR;
-        }
-
-        memcpy(ctx->entry->data->buf.area, ctx->txn.buf->area, ctx->entry->data->buf.size);
-
-        if(ctx->txn.req.content_type.len) {
-            ctx->entry->data->info.content_type.ptr = ctx->entry->data->buf.area
-                + (ctx->txn.req.content_type.ptr - ctx->txn.buf->area);
-
-            ctx->entry->data->info.content_type.len = ctx->txn.req.content_type.len;
-        }
-
-        if(ctx->txn.res.transfer_encoding.len) {
-            ctx->entry->data->info.transfer_encoding.ptr = ctx->entry->data->buf.area
-                + (ctx->txn.res.transfer_encoding.ptr - ctx->txn.buf->area);
-
-            ctx->entry->data->info.transfer_encoding.len = ctx->txn.res.transfer_encoding.len;
-        }
-
-        if(ctx->txn.res.content_length) {
-            ctx->entry->data->info.content_length = ctx->txn.res.content_length;
-        } else {
-            ctx->entry->data->info.content_length = ctx->txn.res.payload_len;
-        }
-
-        if(msg->flags & HTTP_MSGF_TE_CHNK) {
-            ctx->entry->data->info.flags = NST_NOSQL_DATA_FLAG_CHUNKED;
-        } else {
-            ctx->entry->data->info.flags = 0;
-        }
-
         ctx->state = NST_NOSQL_CTX_STATE_DONE;
 
         if(ctx->rule->disk == NST_DISK_ONLY) {
