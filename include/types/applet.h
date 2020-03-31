@@ -79,7 +79,7 @@ struct appctx {
 	union {
 		union {
 			struct {
-				struct nst_cache_entry  *entry;
+				struct nst_dict_entry  *entry;
 				struct nst_data   *data;
 				struct nst_data_element *element;
 
@@ -88,7 +88,7 @@ struct appctx {
 				uint64_t offset;
 			} cache;
 			struct {
-				struct nst_nosql_entry  *entry;
+				struct nst_dict_entry *entry;
 				struct nst_data   *data;
 				struct nst_data_element *element;
 				int fd;

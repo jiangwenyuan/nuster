@@ -16,7 +16,7 @@
 
 static int _nst_cache_dict_alloc(uint64_t size) {
     int i;
-    int entry_size = sizeof(struct nst_cache_entry*);
+    int entry_size = sizeof(struct nst_dict_entry*);
     int block_size = global.nuster.cache.memory->block_size;
 
     nuster.cache->dict[0].size  = size / entry_size;
@@ -60,9 +60,9 @@ static int _nst_cache_dict_rehashing() {
  * entry->data is freed by _cache_data_cleanup
  */
 void nst_cache_dict_cleanup() {
-    struct nst_cache_entry *entry = nuster.cache->dict[0].entry[nuster.cache->cleanup_idx];
+    struct nst_dict_entry *entry = nuster.cache->dict[0].entry[nuster.cache->cleanup_idx];
 
-    struct nst_cache_entry *prev  = entry;
+    struct nst_dict_entry *prev  = entry;
 
     if(!nuster.cache->dict[0].used) {
         return;
@@ -70,8 +70,8 @@ void nst_cache_dict_cleanup() {
 
     while(entry) {
 
-        if(nst_cache_entry_invalid(entry)) {
-            struct nst_cache_entry *tmp = entry;
+        if(nst_dict_entry_invalid(entry)) {
+            struct nst_dict_entry *tmp = entry;
 
             if(entry->data) {
                 entry->data->invalid = 1;
@@ -107,10 +107,10 @@ void nst_cache_dict_cleanup() {
 
 }
 
-struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
-    struct nst_cache_dict  *dict  = NULL;
+struct nst_dict_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
+    struct nst_dict  *dict  = NULL;
     struct nst_data  *data  = NULL;
-    struct nst_cache_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
     struct nst_key key = { .data = NULL };
     struct buffer buf  = { .area = NULL };
     int idx;
@@ -164,7 +164,7 @@ struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
 
     /* init entry */
     entry->data   = data;
-    entry->state  = NST_CACHE_ENTRY_STATE_CREATING;
+    entry->state  = NST_DICT_ENTRY_STATE_CREATING;
     entry->expire = 0;
     entry->pid    = ctx->pid;
     entry->file   = NULL;
@@ -209,9 +209,9 @@ err:
  * Get entry
  */
 
-struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
+struct nst_dict_entry *nst_cache_dict_get(struct nst_key *key) {
     int i, idx;
-    struct nst_cache_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
 
     if(nuster.cache->dict[0].used + nuster.cache->dict[1].used == 0) {
         return NULL;
@@ -226,7 +226,7 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
             if(entry->key.hash == key->hash && entry->key.size == key->size
                     && !memcmp(entry->key.data, key->data, key->size)) {
 
-                int expired = nst_cache_entry_expired(entry);
+                int expired = nst_dict_entry_expired(entry);
 
                 uint64_t max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
 
@@ -256,8 +256,8 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */
-                if(entry->state == NST_CACHE_ENTRY_STATE_VALID && expired) {
-                    entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
+                if(entry->state == NST_DICT_ENTRY_STATE_VALID && expired) {
+                    entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
                     entry->expire        = 0;
@@ -288,8 +288,8 @@ struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key) {
 int nst_cache_dict_set_from_disk(struct buffer *buf, struct ist host, struct ist path,
         struct nst_key *key, char *file, char *meta) {
 
-    struct nst_cache_dict  *dict  = NULL;
-    struct nst_cache_entry *entry = NULL;
+    struct nst_dict  *dict  = NULL;
+    struct nst_dict_entry *entry = NULL;
     int idx;
     uint64_t ttl_extend;
 
@@ -322,7 +322,7 @@ int nst_cache_dict_set_from_disk(struct buffer *buf, struct ist host, struct ist
     dict->used++;
 
     /* init entry */
-    entry->state  = NST_CACHE_ENTRY_STATE_INVALID;
+    entry->state  = NST_DICT_ENTRY_STATE_INVALID;
     entry->key    = *key;
     entry->expire = nst_persist_meta_get_expire(meta);
     memcpy(entry->file, file, strlen(file));

@@ -17,7 +17,7 @@
 
 static int _nst_nosql_dict_alloc(uint64_t size) {
     int i;
-    int entry_size = sizeof(struct nst_nosql_entry*);
+    int entry_size = sizeof(struct nst_dict_entry*);
     int block_size = global.nuster.nosql.memory->block_size;
 
     nuster.nosql->dict[0].size  = size / entry_size;
@@ -60,9 +60,9 @@ static int _nst_nosql_dict_rehashing() {
  * entry->data is freed by _nosql_data_cleanup
  */
 void nst_nosql_dict_cleanup() {
-    struct nst_nosql_entry *entry = nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx];
+    struct nst_dict_entry *entry = nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx];
 
-    struct nst_nosql_entry *prev  = entry;
+    struct nst_dict_entry *prev  = entry;
 
     if(!nuster.nosql->dict[0].used) {
         return;
@@ -70,8 +70,8 @@ void nst_nosql_dict_cleanup() {
 
     while(entry) {
 
-        if(nst_nosql_entry_invalid(entry)) {
-            struct nst_nosql_entry *tmp = entry;
+        if(nst_dict_entry_invalid(entry)) {
+            struct nst_dict_entry *tmp = entry;
 
             if(entry->data) {
                 entry->data->invalid = 1;
@@ -107,13 +107,13 @@ void nst_nosql_dict_cleanup() {
 }
 
 /*
- * Add a new nst_nosql_entry to nosql_dict
+ * Add a new nst_dict_entry to nosql_dict
  */
-struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
+struct nst_dict_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 
-    struct nst_nosql_dict  *dict  = NULL;
+    struct nst_dict *dict  = NULL;
     struct nst_data  *data  = NULL;
-    struct nst_nosql_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
 
     struct nst_key key = { .data = NULL };
     struct buffer buf  = { .area = NULL };
@@ -166,7 +166,7 @@ struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 
     /* init entry */
     entry->data   = data;
-    entry->state  = NST_NOSQL_ENTRY_STATE_CREATING;
+    entry->state  = NST_DICT_ENTRY_STATE_CREATING;
     entry->expire = 0;
     entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
@@ -196,9 +196,9 @@ err:
 /*
  * Get entry
  */
-struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
+struct nst_dict_entry *nst_nosql_dict_get(struct nst_key *key) {
     int i, idx;
-    struct nst_nosql_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
 
     if(nuster.nosql->dict[0].used + nuster.nosql->dict[1].used == 0) {
         return NULL;
@@ -216,10 +216,10 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
                 /* check expire
                  * change state only, leave the free stuff to cleanup
                  * */
-                if(entry->state == NST_NOSQL_ENTRY_STATE_VALID
-                        && nst_nosql_dict_entry_expired(entry)) {
+                if(entry->state == NST_DICT_ENTRY_STATE_VALID
+                        && nst_dict_entry_expired(entry)) {
 
-                    entry->state         = NST_NOSQL_ENTRY_STATE_EXPIRED;
+                    entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
                     entry->data->invalid = 1;
                     entry->data          = NULL;
                     entry->expire        = 0;
@@ -243,8 +243,8 @@ struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key) {
 
 int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta) {
     int idx;
-    struct nst_nosql_dict  *dict  = NULL;
-    struct nst_nosql_entry *entry = NULL;
+    struct nst_dict  *dict  = NULL;
+    struct nst_dict_entry *entry = NULL;
 
     key->hash = nst_persist_meta_get_hash(meta);
 
@@ -271,7 +271,7 @@ int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta) {
     dict->used++;
 
     /* init entry */
-    entry->state  = NST_NOSQL_ENTRY_STATE_INVALID;
+    entry->state  = NST_DICT_ENTRY_STATE_INVALID;
     entry->key    = *key;
     entry->expire = nst_persist_meta_get_expire(meta);
     memcpy(entry->file, file, strlen(file));

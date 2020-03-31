@@ -260,7 +260,7 @@ badreq:
     return 1;
 }
 
-int nst_purger_check(struct appctx *appctx, struct nst_cache_entry *entry) {
+int nst_purger_check(struct appctx *appctx, struct nst_dict_entry *entry) {
     int ret = 0;
 
     switch(appctx->st0) {
@@ -304,7 +304,7 @@ int nst_purger_check(struct appctx *appctx, struct nst_cache_entry *entry) {
 }
 
 static void nst_purger_handler(struct appctx *appctx) {
-    struct nst_cache_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
     struct stream_interface *si   = appctx->owner;
 
     struct stream *s = si_strm(si);
@@ -321,9 +321,9 @@ static void nst_purger_handler(struct appctx *appctx) {
             while(entry) {
 
                 if(nst_purger_check(appctx, entry)) {
-                    if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+                    if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
 
-                        entry->state         = NST_CACHE_ENTRY_STATE_INVALID;
+                        entry->state         = NST_DICT_ENTRY_STATE_INVALID;
                         entry->data->invalid = 1;
                         entry->data          = NULL;
                         entry->expire        = 0;

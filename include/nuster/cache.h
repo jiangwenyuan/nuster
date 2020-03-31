@@ -22,11 +22,9 @@
 #ifndef _NUSTER_CACHE_H
 #define _NUSTER_CACHE_H
 
-#include <dirent.h>
-
 #include <nuster/common.h>
+#include <nuster/dict.h>
 #include <nuster/persist.h>
-#include <nuster/http.h>
 
 #define NST_CACHE_DEFAULT_LOAD_FACTOR         0.75
 #define NST_CACHE_DEFAULT_GROWTH_FACTOR       2
@@ -34,62 +32,6 @@
 #define NST_CACHE_DEFAULT_CODE               "200"
 #define NST_CACHE_DEFAULT_KEY_SIZE            128
 #define NST_CACHE_DEFAULT_CHUNK_SIZE          32
-
-/*
- * A nst_cache_entry is an entry in nst_cache_dict hash table
- */
-enum {
-    NST_CACHE_ENTRY_STATE_CREATING = 0,
-    NST_CACHE_ENTRY_STATE_VALID,
-    NST_CACHE_ENTRY_STATE_INVALID,
-    NST_CACHE_ENTRY_STATE_EXPIRED,
-};
-
-struct nst_cache_entry {
-    int                     state;
-
-    struct nst_key          key;
-    struct nst_rule        *rule;        /* rule */
-    struct nst_data  *data;
-
-    struct buffer           buf;
-
-    struct ist              host;
-    struct ist              path;
-    struct ist              etag;
-    struct ist              last_modified;
-
-    int                     pid;         /* proxy uuid */
-    char                   *file;
-    int                     header_len;
-
-    uint64_t                expire;
-    uint64_t                ctime;
-    uint64_t                atime;
-
-    /* For entries loaded from disk */
-    uint32_t                ttl;
-    uint8_t                 extend[4];
-
-    /* see rule.extend */
-    uint64_t                access[4];
-
-    /* extended count  */
-    int                     extended;
-
-    struct nst_cache_entry *next;
-};
-
-struct nst_cache_dict {
-    struct nst_cache_entry **entry;
-    uint64_t                 size;      /* number of entries */
-    uint64_t                 used;      /* number of used entries */
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t          mutex;
-#else
-    unsigned int             waiters;
-#endif
-};
 
 enum {
     NST_CACHE_CTX_STATE_INIT = 0,          /* init */
@@ -110,8 +52,8 @@ enum {
 struct nst_cache_ctx {
     int                       state;
 
-    struct nst_cache_entry   *entry;
-    struct nst_data    *data;
+    struct nst_dict_entry   *entry;
+    struct nst_data          *data;
     struct nst_data_element  *element;
 
     struct nst_http_txn       txn;
@@ -129,14 +71,14 @@ struct nst_cache_ctx {
 
 struct nst_cache {
     /* 0: using, 1: rehashing */
-    struct nst_cache_dict  dict[2];
+    struct nst_dict        dict[2];
 
     /*
      * point to the circular linked list, tail->next ===  head,
      * and will be moved together constantly to check invalid data
      */
-    struct nst_data *data_head;
-    struct nst_data *data_tail;
+    struct nst_data       *data_head;
+    struct nst_data       *data_tail;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t        mutex;
@@ -168,8 +110,8 @@ extern const char *nst_cache_flt_id;
 
 /* dict */
 int nst_cache_dict_init();
-struct nst_cache_entry *nst_cache_dict_get(struct nst_key *key);
-struct nst_cache_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
+struct nst_dict_entry *nst_cache_dict_get(struct nst_key *key);
+struct nst_dict_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx);
 void nst_cache_dict_cleanup();
 int nst_cache_dict_set_from_disk(struct buffer *buf, struct ist host, struct ist path,
         struct nst_key *key, char *file, char *meta);
@@ -198,29 +140,6 @@ int nst_cache_update(struct http_msg *msg, struct nst_cache_ctx *ctx,
         unsigned int offset, unsigned int len);
 
 void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx);
-
-static inline int nst_cache_entry_expired(struct nst_cache_entry *entry) {
-
-    if(entry->expire == 0) {
-        return 0;
-    } else {
-        return entry->expire <= get_current_timestamp() / 1000;
-    }
-
-}
-
-static inline int nst_cache_entry_invalid(struct nst_cache_entry *entry) {
-
-    /* check state */
-    if(entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
-        return 1;
-    } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED) {
-        return 1;
-    }
-
-    /* check expire */
-    return nst_cache_entry_expired(entry);
-}
 
 #define nst_cache_memory_alloc(size)    nst_memory_alloc(global.nuster.cache.memory, size)
 #define nst_cache_memory_free(p)        nst_memory_free(global.nuster.cache.memory, p)

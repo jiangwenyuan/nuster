@@ -82,7 +82,7 @@ void nst_stats_update_cache(int state);
 
 /* purger */
 void nst_purger_init();
-int nst_purger_check(struct appctx *appctx, struct nst_cache_entry *entry);
+int nst_purger_check(struct appctx *appctx, struct nst_dict_entry *entry);
 int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px);
 int nst_purger_advanced(struct stream *s, struct channel *req, struct proxy *px);
 

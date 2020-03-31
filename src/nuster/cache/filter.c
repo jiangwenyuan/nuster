@@ -362,7 +362,7 @@ static int _nst_cache_filter_http_payload(struct stream *s, struct filter *filte
     return len;
 
 err:
-    ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+    ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
     ctx->entry->data  = NULL;
     ctx->state        = NST_CACHE_CTX_STATE_BYPASS;
 

@@ -456,7 +456,7 @@ shm_err:
     exit(1);
 }
 
-static void _nst_cache_record_access(struct nst_cache_entry *entry) {
+static void _nst_cache_record_access(struct nst_dict_entry *entry) {
     if(entry->expire == 0 || entry->extend[0] == 0xFF) {
         entry->access[0]++;
     } else {
@@ -486,7 +486,7 @@ static void _nst_cache_record_access(struct nst_cache_entry *entry) {
  * Check if valid cache exists
  */
 int nst_cache_exists(struct nst_cache_ctx *ctx) {
-    struct nst_cache_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
     int ret = NST_CACHE_CTX_STATE_INIT;
 
     int idx = ctx->rule->key->idx;
@@ -514,7 +514,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
          * state is set to invalid even if the cache is successfully saved to
          * disk in disk_only mode
          */
-        if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
             ctx->data = entry->data;
             ctx->data->clients++;
 
@@ -527,7 +527,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
             ret = NST_CACHE_CTX_STATE_HIT_MEMORY;
         }
 
-        if(entry->state == NST_CACHE_ENTRY_STATE_INVALID && entry->file) {
+        if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->file) {
             ctx->disk.file = entry->file;
             ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
         }
@@ -577,7 +577,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
 }
 
 void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
-    struct nst_cache_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
 
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
@@ -588,14 +588,14 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
 
     if(entry) {
 
-        if(entry->state == NST_CACHE_ENTRY_STATE_CREATING) {
+        if(entry->state == NST_DICT_ENTRY_STATE_CREATING) {
             ctx->state = NST_CACHE_CTX_STATE_WAIT;
-        } else if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
+        } else if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
             ctx->state = NST_CACHE_CTX_STATE_HIT_MEMORY;
-        } else if(entry->state == NST_CACHE_ENTRY_STATE_EXPIRED
-                || entry->state == NST_CACHE_ENTRY_STATE_INVALID) {
+        } else if(entry->state == NST_DICT_ENTRY_STATE_EXPIRED
+                || entry->state == NST_DICT_ENTRY_STATE_INVALID) {
 
-            entry->state = NST_CACHE_ENTRY_STATE_CREATING;
+            entry->state = NST_DICT_ENTRY_STATE_CREATING;
 
             if(ctx->rule->disk != NST_DISK_ONLY) {
                 entry->data = nst_cache_data_new();
@@ -605,7 +605,7 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
                 buf.area = nst_cache_memory_alloc(buf.size);
 
                 if(!entry->data || !buf.area) {
-                    entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+                    entry->state = NST_DICT_ENTRY_STATE_INVALID;
                     ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
                 } else {
                     ctx->state   = NST_CACHE_CTX_STATE_CREATE;
@@ -821,9 +821,9 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     ctx->state = NST_CACHE_CTX_STATE_DONE;
 
     if(ctx->rule->disk == NST_DISK_ONLY) {
-        ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+        ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
     } else {
-        ctx->entry->state = NST_CACHE_ENTRY_STATE_VALID;
+        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
     }
 
     ctx->entry->ctime = get_current_timestamp();
@@ -847,7 +847,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
 }
 
 void nst_cache_abort(struct nst_cache_ctx *ctx) {
-    ctx->entry->state = NST_CACHE_ENTRY_STATE_INVALID;
+    ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
 /*
@@ -856,7 +856,7 @@ void nst_cache_abort(struct nst_cache_ctx *ctx) {
  *  1: ok
  */
 int nst_cache_delete(struct nst_key *key) {
-    struct nst_cache_entry *entry = NULL;
+    struct nst_dict_entry *entry = NULL;
     int ret;
 
     nst_shctx_lock(&nuster.cache->dict[0]);
@@ -864,8 +864,8 @@ int nst_cache_delete(struct nst_key *key) {
 
     if(entry) {
 
-        if(entry->state == NST_CACHE_ENTRY_STATE_VALID) {
-            entry->state         = NST_CACHE_ENTRY_STATE_EXPIRED;
+        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+            entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
             entry->data->invalid = 1;
             entry->data          = NULL;
             entry->expire        = 0;
@@ -940,7 +940,7 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
 }
 
 void nst_cache_persist_async() {
-    struct nst_cache_entry *entry;
+    struct nst_dict_entry *entry;
 
     if(!global.nuster.cache.root.len || !nuster.cache->disk.loaded) {
         return;
@@ -954,7 +954,7 @@ void nst_cache_persist_async() {
 
     while(entry) {
 
-        if(!nst_cache_entry_invalid(entry) && entry->rule->disk == NST_DISK_ASYNC
+        if(!nst_dict_entry_invalid(entry) && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
             struct nst_data_element *element = entry->data->element;

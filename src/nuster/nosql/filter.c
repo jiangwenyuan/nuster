@@ -304,7 +304,7 @@ static int _nst_nosql_filter_http_payload(struct stream *s, struct filter *filte
     if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
 
         if(nst_nosql_update(msg, ctx, offset, len) != NST_OK) {
-            ctx->entry->state = NST_NOSQL_ENTRY_STATE_INVALID;
+            ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
             appctx->st0       = NST_NOSQL_APPCTX_STATE_FULL;
             ctx->state        = NST_NOSQL_CTX_STATE_INVALID;
         }

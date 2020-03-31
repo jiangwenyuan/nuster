@@ -204,7 +204,7 @@ struct nst_rule {
 
 /*
  * A nst_data contains a complete http response data,
- * and is pointed by nst_nosql_entry->data.
+ * and is pointed by nst_entry->data.
  * All nst_data are stored in a circular singly linked list
  */
 struct nst_data {

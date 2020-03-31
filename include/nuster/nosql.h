@@ -23,8 +23,8 @@
 #define _NUSTER_NOSQL_H
 
 #include <nuster/common.h>
+#include <nuster/dict.h>
 #include <nuster/persist.h>
-#include <nuster/http.h>
 
 #define NST_NOSQL_DEFAULT_CHUNK_SIZE            32
 #define NST_NOSQL_DEFAULT_LOAD_FACTOR           0.75
@@ -48,51 +48,6 @@ enum {
     NST_NOSQL_APPCTX_STATE_HIT_DISK,
 };
 
-/*
- * A nst_nosql_entry is an entry in nst_nosql_dict hash table
- */
-enum {
-    NST_NOSQL_ENTRY_STATE_CREATING = 0,
-    NST_NOSQL_ENTRY_STATE_VALID,
-    NST_NOSQL_ENTRY_STATE_INVALID,
-    NST_NOSQL_ENTRY_STATE_EXPIRED,
-};
-
-struct nst_nosql_entry {
-    int                     state;
-
-    struct nst_key          key;
-    struct nst_rule        *rule;        /* rule */
-    struct nst_data  *data;
-
-    struct buffer           buf;
-
-    struct ist              host;
-    struct ist              path;
-
-    int                     pid;         /* proxy uuid */
-    char                   *file;
-    int                     header_len;
-
-    uint64_t                expire;
-    uint64_t                atime;
-
-    struct nst_nosql_entry *next;
-};
-
-struct nst_nosql_dict {
-    struct nst_nosql_entry **entry;
-    uint64_t                 size;      /* number of entries */
-    uint64_t                 used;      /* number of used entries */
-
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t          mutex;
-#else
-    unsigned int             waiters;
-#endif
-
-};
-
 enum {
     NST_NOSQL_CTX_STATE_INIT        = 0,   /* init */
     NST_NOSQL_CTX_STATE_HIT_MEMORY,        /* key exists */
@@ -110,8 +65,8 @@ enum {
 struct nst_nosql_ctx {
     int                       state;
 
-    struct nst_nosql_entry   *entry;
-    struct nst_data    *data;
+    struct nst_dict_entry    *entry;
+    struct nst_data          *data;
     struct nst_data_element  *element;
 
     struct nst_http_txn       txn;
@@ -129,13 +84,14 @@ struct nst_nosql_ctx {
 
 struct nst_nosql {
     /* 0: using, 1: rehashing */
-    struct nst_nosql_dict  dict[2];
+    struct nst_dict          dict[2];
 
-    /* point to the circular linked list, tail->next ===  head */
-    struct nst_data *data_head;
-
-    /* and will be moved together constantly to check invalid data */
-    struct nst_data *data_tail;
+    /*
+     * point to the circular linked list, tail->next ===  head,
+     * and will be moved together constantly to check invalid data
+     */
+    struct nst_data       *data_head;
+    struct nst_data       *data_tail;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t        mutex;
@@ -188,34 +144,11 @@ void nst_nosql_persist_load();
 
 /* dict */
 int nst_nosql_dict_init();
-struct nst_nosql_entry *nst_nosql_dict_get(struct nst_key *key);
-struct nst_nosql_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx);
+struct nst_dict_entry *nst_nosql_dict_get(struct nst_key *key);
+struct nst_dict_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx);
 int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta);
 void nst_nosql_dict_rehash();
 void nst_nosql_dict_cleanup();
-
-static inline int nst_nosql_dict_entry_expired(struct nst_nosql_entry *entry) {
-
-    if(entry->expire == 0) {
-        return 0;
-    } else {
-        return entry->expire <= get_current_timestamp() / 1000;
-    }
-
-}
-
-static inline int nst_nosql_entry_invalid(struct nst_nosql_entry *entry) {
-
-    /* check state */
-    if(entry->state == NST_NOSQL_ENTRY_STATE_INVALID) {
-        return 1;
-    } else if(entry->state == NST_NOSQL_ENTRY_STATE_EXPIRED) {
-        return 1;
-    }
-
-    /* check expire */
-    return nst_nosql_dict_entry_expired(entry);
-}
 
 #define nst_nosql_memory_alloc(size)    nst_memory_alloc(global.nuster.nosql.memory, size)
 #define nst_nosql_memory_free(p)        nst_memory_free(global.nuster.nosql.memory, p)
