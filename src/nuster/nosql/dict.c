@@ -20,11 +20,11 @@ static int _nst_nosql_dict_alloc(uint64_t size) {
     int entry_size = sizeof(struct nst_dict_entry*);
     int block_size = global.nuster.nosql.memory->block_size;
 
-    nuster.nosql->dict[0].size  = size / entry_size;
-    nuster.nosql->dict[0].used  = 0;
-    nuster.nosql->dict[0].entry = nst_nosql_memory_alloc(block_size);
+    nuster.nosql->dict.size  = size / entry_size;
+    nuster.nosql->dict.used  = 0;
+    nuster.nosql->dict.entry = nst_nosql_memory_alloc(block_size);
 
-    if(!nuster.nosql->dict[0].entry) {
+    if(!nuster.nosql->dict.entry) {
         return NST_ERR;
     }
 
@@ -34,11 +34,11 @@ static int _nst_nosql_dict_alloc(uint64_t size) {
         }
     }
 
-    for(i = 0; i < nuster.nosql->dict[0].size; i++) {
-        nuster.nosql->dict[0].entry[i] = NULL;
+    for(i = 0; i < nuster.nosql->dict.size; i++) {
+        nuster.nosql->dict.entry[i] = NULL;
     }
 
-    return nst_shctx_init((&nuster.nosql->dict[0]));
+    return nst_shctx_init((&nuster.nosql->dict));
 }
 
 int nst_nosql_dict_init() {
@@ -49,22 +49,17 @@ int nst_nosql_dict_init() {
     return _nst_nosql_dict_alloc(size);
 }
 
-static int _nst_nosql_dict_rehashing() {
-    return 0;
-    //return nuster.nosql->rehash_idx != -1;
-}
-
 /*
  * Check entry validity, free the entry if its invalid,
  * If its invalid set entry->data->invalid to true,
  * entry->data is freed by _nosql_data_cleanup
  */
 void nst_nosql_dict_cleanup() {
-    struct nst_dict_entry *entry = nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx];
+    struct nst_dict_entry *entry = nuster.nosql->dict.entry[nuster.nosql->cleanup_idx];
 
     struct nst_dict_entry *prev  = entry;
 
-    if(!nuster.nosql->dict[0].used) {
+    if(!nuster.nosql->dict.used) {
         return;
     }
 
@@ -78,8 +73,7 @@ void nst_nosql_dict_cleanup() {
             }
 
             if(prev == entry) {
-                nuster.nosql->dict[0].entry[nuster.nosql->cleanup_idx] = entry->next;
-
+                nuster.nosql->dict.entry[nuster.nosql->cleanup_idx] = entry->next;
                 prev = entry->next;
             } else {
                 prev->next = entry->next;
@@ -91,7 +85,7 @@ void nst_nosql_dict_cleanup() {
             nst_nosql_memory_free(tmp->key.data);
             nst_nosql_memory_free(tmp);
 
-            nuster.nosql->dict[0].used--;
+            nuster.nosql->dict.used--;
         } else {
             prev  = entry;
             entry = entry->next;
@@ -101,25 +95,20 @@ void nst_nosql_dict_cleanup() {
     nuster.nosql->cleanup_idx++;
 
     /* if we have checked the whole dict */
-    if(nuster.nosql->cleanup_idx == nuster.nosql->dict[0].size) {
+    if(nuster.nosql->cleanup_idx == nuster.nosql->dict.size) {
         nuster.nosql->cleanup_idx = 0;
     }
 }
 
-/*
- * Add a new nst_dict_entry to nosql_dict
- */
 struct nst_dict_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
-
     struct nst_dict *dict  = NULL;
     struct nst_data  *data  = NULL;
     struct nst_dict_entry *entry = NULL;
-
     struct nst_key key = { .data = NULL };
     struct buffer buf  = { .area = NULL };
     int idx;
 
-    dict = _nst_nosql_dict_rehashing() ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
+    dict = &nuster.nosql->dict;
 
     idx = ctx->rule->key->idx;
 
@@ -149,13 +138,15 @@ struct nst_dict_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
         goto err;
     }
 
-    data = nst_nosql_data_new();
-
-    if(!data) {
-        goto err;
-    }
-
     memset(entry, 0, sizeof(*entry));
+
+    if(ctx->rule->disk != NST_DISK_ONLY) {
+        data = nst_nosql_data_new();
+
+        if(!data) {
+            goto err;
+        }
+    }
 
     idx = key.hash % dict->size;
 
@@ -168,9 +159,17 @@ struct nst_dict_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
     entry->data   = data;
     entry->state  = NST_DICT_ENTRY_STATE_CREATING;
     entry->expire = 0;
-    entry->rule   = ctx->rule;
     entry->pid    = ctx->pid;
+    entry->file   = NULL;
+    entry->ttl    = ctx->rule->ttl;
+
     entry->key    = key;
+    entry->rule   = ctx->rule;
+
+    entry->extend[0] = ctx->rule->extend[0];
+    entry->extend[1] = ctx->rule->extend[1];
+    entry->extend[2] = ctx->rule->extend[2];
+    entry->extend[3] = ctx->rule->extend[3];
 
     entry->header_len = ctx->txn.res.header_len;
 
@@ -181,6 +180,12 @@ struct nst_dict_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx) {
 
     entry->path.ptr = buf.area + (ctx->txn.req.path.ptr - ctx->txn.buf->area);
     entry->path.len = ctx->txn.req.path.len;
+
+    entry->etag.ptr = buf.area + (ctx->txn.res.etag.ptr - ctx->txn.buf->area);
+    entry->etag.len = ctx->txn.res.etag.len;
+
+    entry->last_modified.ptr = buf.area + (ctx->txn.res.last_modified.ptr - ctx->txn.buf->area);
+    entry->last_modified.len = ctx->txn.res.last_modified.len;
 
     return entry;
 
@@ -197,45 +202,39 @@ err:
  * Get entry
  */
 struct nst_dict_entry *nst_nosql_dict_get(struct nst_key *key) {
-    int i, idx;
-    struct nst_dict_entry *entry = NULL;
+    struct nst_dict_entry  *entry = NULL;
+    int                     idx;
 
-    if(nuster.nosql->dict[0].used + nuster.nosql->dict[1].used == 0) {
+    if(nuster.nosql->dict.used == 0) {
         return NULL;
     }
 
-    for(i = 0; i <= 1; i++) {
-        idx   = key->hash % nuster.nosql->dict[i].size;
-        entry = nuster.nosql->dict[i].entry[idx];
+    idx   = key->hash % nuster.nosql->dict.size;
+    entry = nuster.nosql->dict.entry[idx];
 
-        while(entry) {
+    while(entry) {
 
-            if(entry->key.hash == key->hash
-                    && entry->key.size == key->size
-                    && !memcmp(entry->key.data, key->data, key->size)) {
-                /* check expire
-                 * change state only, leave the free stuff to cleanup
-                 * */
-                if(entry->state == NST_DICT_ENTRY_STATE_VALID
-                        && nst_dict_entry_expired(entry)) {
+        if(entry->key.hash == key->hash
+                && entry->key.size == key->size
+                && !memcmp(entry->key.data, key->data, key->size)) {
+            /* check expire
+             * change state only, leave the free stuff to cleanup
+             * */
+            if(entry->state == NST_DICT_ENTRY_STATE_VALID
+                    && nst_dict_entry_expired(entry)) {
 
-                    entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
-                    entry->data->invalid = 1;
-                    entry->data          = NULL;
-                    entry->expire        = 0;
+                entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
+                entry->data->invalid = 1;
+                entry->data          = NULL;
+                entry->expire        = 0;
 
-                    return NULL;
-                }
-
-                return entry;
+                return NULL;
             }
 
-            entry = entry->next;
+            return entry;
         }
 
-        if(!_nst_nosql_dict_rehashing()) {
-            return NULL;
-        }
+        entry = entry->next;
     }
 
     return NULL;
@@ -248,7 +247,7 @@ int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta) {
 
     key->hash = nst_persist_meta_get_hash(meta);
 
-    dict = _nst_nosql_dict_rehashing() ? &nuster.nosql->dict[1] : &nuster.nosql->dict[0];
+    dict = &nuster.nosql->dict;
 
     entry = nst_nosql_memory_alloc(sizeof(*entry));
 

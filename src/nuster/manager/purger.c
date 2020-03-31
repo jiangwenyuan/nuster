@@ -313,10 +313,10 @@ static void nst_purger_handler(struct appctx *appctx) {
     int max = 1000;
 
     while(1) {
-        nst_shctx_lock(&nuster.cache->dict[0]);
+        nst_shctx_lock(&nuster.cache->dict);
 
-        while(appctx->st2 < nuster.cache->dict[0].size && max--) {
-            entry = nuster.cache->dict[0].entry[appctx->st2];
+        while(appctx->st2 < nuster.cache->dict.size && max--) {
+            entry = nuster.cache->dict.entry[appctx->st2];
 
             while(entry) {
 
@@ -340,7 +340,7 @@ static void nst_purger_handler(struct appctx *appctx) {
             appctx->st2++;
         }
 
-        nst_shctx_unlock(&nuster.cache->dict[0]);
+        nst_shctx_unlock(&nuster.cache->dict);
 
         if(get_current_timestamp() - start > 1) {
             break;
@@ -351,7 +351,7 @@ static void nst_purger_handler(struct appctx *appctx) {
 
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
-    if(appctx->st2 == nuster.cache->dict[0].size) {
+    if(appctx->st2 == nuster.cache->dict.size) {
         nst_http_reply(s, NST_HTTP_200);
     }
 }

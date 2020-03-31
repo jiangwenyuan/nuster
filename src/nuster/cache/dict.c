@@ -19,11 +19,11 @@ static int _nst_cache_dict_alloc(uint64_t size) {
     int entry_size = sizeof(struct nst_dict_entry*);
     int block_size = global.nuster.cache.memory->block_size;
 
-    nuster.cache->dict[0].size  = size / entry_size;
-    nuster.cache->dict[0].used  = 0;
-    nuster.cache->dict[0].entry = nst_cache_memory_alloc(block_size);
+    nuster.cache->dict.size  = size / entry_size;
+    nuster.cache->dict.used  = 0;
+    nuster.cache->dict.entry = nst_cache_memory_alloc(block_size);
 
-    if(!nuster.cache->dict[0].entry) {
+    if(!nuster.cache->dict.entry) {
         return NST_ERR;
     }
 
@@ -34,11 +34,11 @@ static int _nst_cache_dict_alloc(uint64_t size) {
         }
     }
 
-    for(i = 0; i < nuster.cache->dict[0].size; i++) {
-        nuster.cache->dict[0].entry[i] = NULL;
+    for(i = 0; i < nuster.cache->dict.size; i++) {
+        nuster.cache->dict.entry[i] = NULL;
     }
 
-    return nst_shctx_init((&nuster.cache->dict[0]));
+    return nst_shctx_init((&nuster.cache->dict));
 }
 
 int nst_cache_dict_init() {
@@ -49,22 +49,17 @@ int nst_cache_dict_init() {
     return _nst_cache_dict_alloc(size);
 }
 
-static int _nst_cache_dict_rehashing() {
-    return 0;
-    //return nuster.cache->rehash_idx != -1;
-}
-
 /*
  * Check entry validity, free the entry if its invalid,
  * If its invalid set entry->data->invalid to true,
  * entry->data is freed by _cache_data_cleanup
  */
 void nst_cache_dict_cleanup() {
-    struct nst_dict_entry *entry = nuster.cache->dict[0].entry[nuster.cache->cleanup_idx];
+    struct nst_dict_entry *entry = nuster.cache->dict.entry[nuster.cache->cleanup_idx];
 
     struct nst_dict_entry *prev  = entry;
 
-    if(!nuster.cache->dict[0].used) {
+    if(!nuster.cache->dict.used) {
         return;
     }
 
@@ -78,7 +73,7 @@ void nst_cache_dict_cleanup() {
             }
 
             if(prev == entry) {
-                nuster.cache->dict[0].entry[nuster.cache->cleanup_idx] = entry->next;
+                nuster.cache->dict.entry[nuster.cache->cleanup_idx] = entry->next;
                 prev = entry->next;
             } else {
                 prev->next = entry->next;
@@ -90,21 +85,19 @@ void nst_cache_dict_cleanup() {
             nst_cache_memory_free(tmp->key.data);
             nst_cache_memory_free(tmp);
 
-            nuster.cache->dict[0].used--;
+            nuster.cache->dict.used--;
         } else {
             prev  = entry;
             entry = entry->next;
         }
-
     }
 
     nuster.cache->cleanup_idx++;
 
     /* if we have checked the whole dict */
-    if(nuster.cache->cleanup_idx == nuster.cache->dict[0].size) {
+    if(nuster.cache->cleanup_idx == nuster.cache->dict.size) {
         nuster.cache->cleanup_idx = 0;
     }
-
 }
 
 struct nst_dict_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
@@ -115,7 +108,7 @@ struct nst_dict_entry *nst_cache_dict_set(struct nst_cache_ctx *ctx) {
     struct buffer buf  = { .area = NULL };
     int idx;
 
-    dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
+    dict = &nuster.cache->dict;
 
     idx = ctx->rule->key->idx;
 
@@ -210,76 +203,69 @@ err:
  */
 
 struct nst_dict_entry *nst_cache_dict_get(struct nst_key *key) {
-    int i, idx;
-    struct nst_dict_entry *entry = NULL;
+    struct nst_dict_entry  *entry = NULL;
+    int                     idx;
 
-    if(nuster.cache->dict[0].used + nuster.cache->dict[1].used == 0) {
+    if(nuster.cache->dict.used == 0) {
         return NULL;
     }
 
-    for(i = 0; i <= 1; i++) {
-        idx   = key->hash % nuster.cache->dict[i].size;
-        entry = nuster.cache->dict[i].entry[idx];
+    idx   = key->hash % nuster.cache->dict.size;
+    entry = nuster.cache->dict.entry[idx];
 
-        while(entry) {
+    while(entry) {
 
-            if(entry->key.hash == key->hash && entry->key.size == key->size
-                    && !memcmp(entry->key.data, key->data, key->size)) {
+        if(entry->key.hash == key->hash && entry->key.size == key->size
+                && !memcmp(entry->key.data, key->data, key->size)) {
 
-                int expired = nst_dict_entry_expired(entry);
+            int expired = nst_dict_entry_expired(entry);
 
-                uint64_t max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
+            uint64_t max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
 
-                entry->atime = get_current_timestamp();
+            entry->atime = get_current_timestamp();
 
-                if(expired && entry->extend[0] != 0xFF && entry->atime <= max
-                        && entry->access[3] > entry->access[2]
-                        && entry->access[2] > entry->access[1]) {
+            if(expired && entry->extend[0] != 0xFF && entry->atime <= max
+                    && entry->access[3] > entry->access[2]
+                    && entry->access[2] > entry->access[1]) {
 
-                    entry->expire    += entry->ttl;
+                entry->expire    += entry->ttl;
 
-                    entry->access[0] += entry->access[1];
-                    entry->access[0] += entry->access[2];
-                    entry->access[0] += entry->access[3];
-                    entry->access[1]  = 0;
-                    entry->access[2]  = 0;
-                    entry->access[3]  = 0;
-                    entry->extended  += 1;
+                entry->access[0] += entry->access[1];
+                entry->access[0] += entry->access[2];
+                entry->access[0] += entry->access[3];
+                entry->access[1]  = 0;
+                entry->access[2]  = 0;
+                entry->access[3]  = 0;
+                entry->extended  += 1;
 
-                    if(entry->file) {
-                        nst_persist_update_expire(entry->file, entry->expire);
-                    }
-
-                    expired = 0;
+                if(entry->file) {
+                    nst_persist_update_expire(entry->file, entry->expire);
                 }
 
-                /* check expire
-                 * change state only, leave the free stuff to cleanup
-                 * */
-                if(entry->state == NST_DICT_ENTRY_STATE_VALID && expired) {
-                    entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
-                    entry->data->invalid = 1;
-                    entry->data          = NULL;
-                    entry->expire        = 0;
-                    entry->access[0]     = 0;
-                    entry->access[1]     = 0;
-                    entry->access[2]     = 0;
-                    entry->access[3]     = 0;
-                    entry->extended      = 0;
-
-                    return NULL;
-                }
-
-                return entry;
+                expired = 0;
             }
 
-            entry = entry->next;
+            /* check expire
+             * change state only, leave the free stuff to cleanup
+             * */
+            if(entry->state == NST_DICT_ENTRY_STATE_VALID && expired) {
+                entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
+                entry->data->invalid = 1;
+                entry->data          = NULL;
+                entry->expire        = 0;
+                entry->access[0]     = 0;
+                entry->access[1]     = 0;
+                entry->access[2]     = 0;
+                entry->access[3]     = 0;
+                entry->extended      = 0;
+
+                return NULL;
+            }
+
+            return entry;
         }
 
-        if(!_nst_cache_dict_rehashing()) {
-            return NULL;
-        }
-
+        entry = entry->next;
     }
 
     return NULL;
@@ -297,7 +283,7 @@ int nst_cache_dict_set_from_disk(struct buffer *buf, struct ist host, struct ist
 
     ttl_extend = nst_persist_meta_get_ttl_extend(meta);
 
-    dict = _nst_cache_dict_rehashing() ? &nuster.cache->dict[1] : &nuster.cache->dict[0];
+    dict = &nuster.cache->dict;
 
     entry = nst_cache_memory_alloc(sizeof(*entry));
 

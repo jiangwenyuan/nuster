@@ -361,9 +361,9 @@ void nst_cache_housekeeping() {
         int disk_saver   = global.nuster.cache.disk_saver;
 
         while(dict_cleaner--) {
-            nst_shctx_lock(&nuster.cache->dict[0]);
+            nst_shctx_lock(&nuster.cache->dict);
             nst_cache_dict_cleanup();
-            nst_shctx_unlock(&nuster.cache->dict[0]);
+            nst_shctx_unlock(&nuster.cache->dict);
         }
 
         while(data_cleaner--) {
@@ -381,9 +381,9 @@ void nst_cache_housekeeping() {
         }
 
         while(disk_saver--) {
-            nst_shctx_lock(&nuster.cache->dict[0]);
+            nst_shctx_lock(&nuster.cache->dict);
             nst_cache_persist_async();
-            nst_shctx_unlock(&nuster.cache->dict[0]);
+            nst_shctx_unlock(&nuster.cache->dict);
         }
 
     }
@@ -496,7 +496,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
         return ret;
     }
 
-    nst_shctx_lock(&nuster.cache->dict[0]);
+    nst_shctx_lock(&nuster.cache->dict);
     entry = nst_cache_dict_get(key);
 
     if(entry) {
@@ -543,7 +543,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
         }
     }
 
-    nst_shctx_unlock(&nuster.cache->dict[0]);
+    nst_shctx_unlock(&nuster.cache->dict);
 
     if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
 
@@ -583,7 +583,7 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
     struct nst_key *key = &(ctx->keys[idx]);
     struct buffer buf = { .area = NULL };
 
-    nst_shctx_lock(&nuster.cache->dict[0]);
+    nst_shctx_lock(&nuster.cache->dict);
     entry = nst_cache_dict_get(key);
 
     if(entry) {
@@ -656,7 +656,7 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
         }
     }
 
-    nst_shctx_unlock(&nuster.cache->dict[0]);
+    nst_shctx_unlock(&nuster.cache->dict);
 
     if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
         int pos;
@@ -859,7 +859,7 @@ int nst_cache_delete(struct nst_key *key) {
     struct nst_dict_entry *entry = NULL;
     int ret;
 
-    nst_shctx_lock(&nuster.cache->dict[0]);
+    nst_shctx_lock(&nuster.cache->dict);
     entry = nst_cache_dict_get(key);
 
     if(entry) {
@@ -880,7 +880,7 @@ int nst_cache_delete(struct nst_key *key) {
         ret = 0;
     }
 
-    nst_shctx_unlock(&nuster.cache->dict[0]);
+    nst_shctx_unlock(&nuster.cache->dict);
 
     if(!nuster.cache->disk.loaded && global.nuster.cache.root.len){
         struct persist disk;
@@ -946,11 +946,11 @@ void nst_cache_persist_async() {
         return;
     }
 
-    if(!nuster.cache->dict[0].used) {
+    if(!nuster.cache->dict.used) {
         return;
     }
 
-    entry = nuster.cache->dict[0].entry[nuster.cache->persist_idx];
+    entry = nuster.cache->dict.entry[nuster.cache->persist_idx];
 
     while(entry) {
 
@@ -1029,7 +1029,7 @@ void nst_cache_persist_async() {
     nuster.cache->persist_idx++;
 
     /* if we have checked the whole dict */
-    if(nuster.cache->persist_idx == nuster.cache->dict[0].size) {
+    if(nuster.cache->persist_idx == nuster.cache->dict.size) {
         nuster.cache->persist_idx = 0;
     }
 

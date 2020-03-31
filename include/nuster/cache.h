@@ -70,8 +70,7 @@ struct nst_cache_ctx {
 };
 
 struct nst_cache {
-    /* 0: using, 1: rehashing */
-    struct nst_dict        dict[2];
+    struct nst_dict        dict;
 
     /*
      * point to the circular linked list, tail->next ===  head,

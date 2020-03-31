@@ -388,9 +388,9 @@ void nst_nosql_housekeeping() {
         int disk_saver   = global.nuster.nosql.disk_saver;
 
         while(dict_cleaner--) {
-            nst_shctx_lock(&nuster.nosql->dict[0]);
+            nst_shctx_lock(&nuster.nosql->dict);
             nst_nosql_dict_cleanup();
-            nst_shctx_unlock(&nuster.nosql->dict[0]);
+            nst_shctx_unlock(&nuster.nosql->dict);
         }
 
         while(data_cleaner--) {
@@ -408,9 +408,9 @@ void nst_nosql_housekeeping() {
         }
 
         while(disk_saver--) {
-            nst_shctx_lock(&nuster.nosql->dict[0]);
+            nst_shctx_lock(&nuster.nosql->dict);
             nst_nosql_persist_async();
-            nst_shctx_unlock(&nuster.nosql->dict[0]);
+            nst_shctx_unlock(&nuster.nosql->dict);
         }
     }
 }
@@ -692,7 +692,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
 
-    nst_shctx_lock(&nuster.nosql->dict[0]);
+    nst_shctx_lock(&nuster.nosql->dict);
     entry = nst_nosql_dict_get(key);
 
     if(entry) {
@@ -714,7 +714,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
         entry = nst_nosql_dict_set(ctx);
     }
 
-    nst_shctx_unlock(&nuster.nosql->dict[0]);
+    nst_shctx_unlock(&nuster.nosql->dict);
 
     if(!entry || !entry->data) {
         ctx->state = NST_NOSQL_CTX_STATE_INVALID;
@@ -859,7 +859,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
         return ret;
     }
 
-    nst_shctx_lock(&nuster.nosql->dict[0]);
+    nst_shctx_lock(&nuster.nosql->dict);
 
     entry = nst_nosql_dict_get(key);
 
@@ -881,7 +881,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
         }
     }
 
-    nst_shctx_unlock(&nuster.nosql->dict[0]);
+    nst_shctx_unlock(&nuster.nosql->dict);
 
     if(ret == NST_NOSQL_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
@@ -920,7 +920,7 @@ int nst_nosql_delete(struct nst_key *key) {
     struct nst_dict_entry *entry = NULL;
     int ret;
 
-    nst_shctx_lock(&nuster.nosql->dict[0]);
+    nst_shctx_lock(&nuster.nosql->dict);
     entry = nst_nosql_dict_get(key);
 
     if(entry) {
@@ -941,7 +941,7 @@ int nst_nosql_delete(struct nst_key *key) {
         ret = 0;
     }
 
-    nst_shctx_unlock(&nuster.nosql->dict[0]);
+    nst_shctx_unlock(&nuster.nosql->dict);
 
     if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
         struct persist disk;
@@ -1006,11 +1006,11 @@ void nst_nosql_persist_async() {
         return;
     }
 
-    if(!nuster.nosql->dict[0].used) {
+    if(!nuster.nosql->dict.used) {
         return;
     }
 
-    entry = nuster.nosql->dict[0].entry[nuster.nosql->persist_idx];
+    entry = nuster.nosql->dict.entry[nuster.nosql->persist_idx];
 
     while(entry) {
 
@@ -1080,7 +1080,7 @@ void nst_nosql_persist_async() {
     nuster.nosql->persist_idx++;
 
     /* if we have checked the whole dict */
-    if(nuster.nosql->persist_idx == nuster.nosql->dict[0].size) {
+    if(nuster.nosql->persist_idx == nuster.nosql->dict.size) {
         nuster.nosql->persist_idx = 0;
     }
 
