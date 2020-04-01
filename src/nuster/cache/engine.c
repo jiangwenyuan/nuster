@@ -362,7 +362,7 @@ void nst_cache_housekeeping() {
 
         while(dict_cleaner--) {
             nst_shctx_lock(&nuster.cache->dict);
-            nst_cache_dict_cleanup();
+            nst_dict_cleanup(&nuster.cache->dict);
             nst_shctx_unlock(&nuster.cache->dict);
         }
 
@@ -437,7 +437,9 @@ void nst_cache_init() {
             goto shm_err;
         }
 
-        if(nst_cache_dict_init() != NST_OK) {
+        if(nst_dict_init(&nuster.cache->dict, global.nuster.cache.memory,
+                    global.nuster.cache.dict_size) != NST_OK) {
+
             goto err;
         }
 
@@ -497,7 +499,8 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
     }
 
     nst_shctx_lock(&nuster.cache->dict);
-    entry = nst_cache_dict_get(key);
+
+    entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
 
@@ -584,7 +587,7 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
     struct buffer buf = { .area = NULL };
 
     nst_shctx_lock(&nuster.cache->dict);
-    entry = nst_cache_dict_get(key);
+    entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
 
@@ -641,7 +644,8 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
             ctx->state = NST_CACHE_CTX_STATE_BYPASS;
         }
     } else {
-        entry = nst_cache_dict_set(ctx);
+        entry = nst_dict_set(&nuster.cache->dict, key, &ctx->txn, ctx->rule, ctx->pid,
+                NST_MODE_CACHE);
 
         if(entry) {
             ctx->state = NST_CACHE_CTX_STATE_CREATE;
@@ -860,7 +864,7 @@ int nst_cache_delete(struct nst_key *key) {
     int ret;
 
     nst_shctx_lock(&nuster.cache->dict);
-    entry = nst_cache_dict_get(key);
+    entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
 
@@ -1129,7 +1133,9 @@ void nst_cache_persist_load() {
                         goto err;
                     }
 
-                    if(nst_cache_dict_set_from_disk(&buf, host, path, &key, file, meta) != NST_OK) {
+                    if(nst_dict_set_from_disk(&nuster.cache->dict, &buf,
+                                host, path, &key, file, meta) != NST_OK) {
+
                         goto err;
                     }
 

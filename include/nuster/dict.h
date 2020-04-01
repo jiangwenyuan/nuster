@@ -72,9 +72,14 @@ struct nst_dict_entry {
 };
 
 struct nst_dict {
+    struct nst_memory      *memory;
+
     struct nst_dict_entry **entry;
-    uint64_t                 size;      /* number of entries */
-    uint64_t                 used;      /* number of used entries */
+    uint64_t                 size;              /* number of entries */
+    uint64_t                 used;              /* number of used entries */
+
+    uint64_t                 cleanup_idx;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t          mutex;
 #else
@@ -104,5 +109,17 @@ static inline int nst_dict_entry_invalid(struct nst_dict_entry *entry) {
     /* check expire */
     return nst_dict_entry_expired(entry);
 }
+
+int nst_dict_init(struct nst_dict *dict, struct nst_memory *memory, uint64_t dict_size);
+
+struct nst_dict_entry *nst_dict_get(struct nst_dict *dict, struct nst_key *key);
+
+struct nst_dict_entry *nst_dict_set(struct nst_dict *dict, struct nst_key *key,
+        struct nst_http_txn *txn, struct nst_rule *rule, int pid, int mode);
+
+int nst_dict_set_from_disk(struct nst_dict *dict, struct buffer *buf,
+        struct ist host, struct ist path, struct nst_key *key, char *file, char *meta);
+
+void nst_dict_cleanup(struct nst_dict *dict);
 
 #endif /* _NUSTER_DICT_H */

@@ -141,15 +141,6 @@ void nst_nosql_persist_async();
 void nst_nosql_persist_cleanup();
 void nst_nosql_persist_load();
 
-/* dict */
-int nst_nosql_dict_init();
-struct nst_dict_entry *nst_nosql_dict_get(struct nst_key *key);
-struct nst_dict_entry *nst_nosql_dict_set(struct nst_nosql_ctx *ctx);
-int nst_nosql_dict_set_from_disk(struct buffer *buf, struct ist host, struct ist path,
-        struct nst_key *key, char *file, char *meta);
-void nst_nosql_dict_rehash();
-void nst_nosql_dict_cleanup();
-
 #define nst_nosql_memory_alloc(size)    nst_memory_alloc(global.nuster.nosql.memory, size)
 #define nst_nosql_memory_free(p)        nst_memory_free(global.nuster.nosql.memory, p)
 

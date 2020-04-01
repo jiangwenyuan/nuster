@@ -389,7 +389,7 @@ void nst_nosql_housekeeping() {
 
         while(dict_cleaner--) {
             nst_shctx_lock(&nuster.nosql->dict);
-            nst_nosql_dict_cleanup();
+            nst_dict_cleanup(&nuster.nosql->dict);
             nst_shctx_unlock(&nuster.nosql->dict);
         }
 
@@ -461,7 +461,9 @@ void nst_nosql_init() {
             goto shm_err;
         }
 
-        if(nst_nosql_dict_init() != NST_OK) {
+        if(nst_dict_init(&nuster.nosql->dict, global.nuster.nosql.memory,
+                    global.nuster.nosql.dict_size) != NST_OK) {
+
             goto err;
         }
 
@@ -693,7 +695,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
     struct nst_key *key = &(ctx->keys[idx]);
 
     nst_shctx_lock(&nuster.nosql->dict);
-    entry = nst_nosql_dict_get(key);
+    entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
 
@@ -711,7 +713,8 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
         }
     } else {
         ctx->state = NST_NOSQL_CTX_STATE_CREATE;
-        entry = nst_nosql_dict_set(ctx);
+        entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, ctx->rule, ctx->pid,
+                NST_MODE_NOSQL);
     }
 
     nst_shctx_unlock(&nuster.nosql->dict);
@@ -861,7 +864,7 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
 
     nst_shctx_lock(&nuster.nosql->dict);
 
-    entry = nst_nosql_dict_get(key);
+    entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
         if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
@@ -921,7 +924,7 @@ int nst_nosql_delete(struct nst_key *key) {
     int ret;
 
     nst_shctx_lock(&nuster.nosql->dict);
-    entry = nst_nosql_dict_get(key);
+    entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
 
@@ -1180,7 +1183,9 @@ void nst_nosql_persist_load() {
                         goto err;
                     }
 
-                    if(nst_nosql_dict_set_from_disk(&buf, host, path, &key, file, meta) != NST_OK) {
+                    if(nst_dict_set_from_disk(&nuster.nosql->dict, &buf,
+                                host, path, &key, file, meta) != NST_OK) {
+
                         goto err;
                     }
 
