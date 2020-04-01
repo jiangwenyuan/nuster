@@ -201,7 +201,6 @@ err:
 /*
  * Get entry
  */
-
 struct nst_dict_entry *nst_cache_dict_get(struct nst_key *key) {
     struct nst_dict_entry  *entry = NULL;
     int                     idx;

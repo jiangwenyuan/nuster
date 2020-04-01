@@ -1061,7 +1061,6 @@ void nst_cache_persist_load() {
             if(de) {
 
                 if(strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
-
                     return;
                 }
 

@@ -850,7 +850,7 @@ err:
 
 int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
     struct nst_dict_entry *entry = NULL;
-    int ret = NST_CACHE_CTX_STATE_INIT;
+    int ret = NST_NOSQL_CTX_STATE_INIT;
 
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
@@ -1092,8 +1092,16 @@ void nst_nosql_persist_load() {
         struct ist root;
         char *file;
         char meta[NST_PERSIST_META_SIZE];
-        struct nst_key key;
         int fd;
+        DIR *dir2;
+        struct dirent *de2;
+        struct nst_key key = { .data = NULL };
+        struct buffer buf = { .area = NULL };
+        struct ist host;
+        struct ist path;
+
+        fd = -1;
+        dir2 = NULL;
 
         root = global.nuster.nosql.root;
         file = nuster.nosql->disk.file;
@@ -1102,18 +1110,13 @@ void nst_nosql_persist_load() {
             struct dirent *de = nst_persist_dir_next(nuster.nosql->disk.dir);
 
             if(de) {
-                DIR *dir2;
-                struct dirent *de2;
 
-                if(strcmp(de->d_name, ".") == 0
-                        || strcmp(de->d_name, "..") == 0) {
-
+                if(strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
                     return;
                 }
 
                 memcpy(file + nst_persist_path_base_len(root), "/", 1);
-                memcpy(file + nst_persist_path_base_len(root) + 1, de->d_name,
-                        strlen(de->d_name));
+                memcpy(file + nst_persist_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
 
                 dir2 = opendir(file);
 
@@ -1122,15 +1125,14 @@ void nst_nosql_persist_load() {
                 }
 
                 while((de2 = readdir(dir2)) != NULL) {
-                    if(strcmp(de2->d_name, ".") == 0
-                            || strcmp(de2->d_name, "..") == 0) {
 
+                    if(strcmp(de2->d_name, ".") == 0 || strcmp(de2->d_name, "..") == 0) {
                         continue;
                     }
 
                     memcpy(file + nst_persist_path_hash_len(root), "/", 1);
-                    memcpy(file + nst_persist_path_hash_len(root) + 1,
-                            de2->d_name, strlen(de2->d_name));
+                    memcpy(file + nst_persist_path_hash_len(root) + 1, de2->d_name,
+                            strlen(de2->d_name));
 
                     fd = nst_persist_open(file);
 
@@ -1141,34 +1143,46 @@ void nst_nosql_persist_load() {
                     }
 
                     if(nst_persist_get_meta(fd, meta) != NST_OK) {
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-
-                        return;
+                        goto err;
                     }
 
                     key.size = nst_persist_meta_get_key_len(meta);
                     key.data = nst_nosql_memory_alloc(key.size);
 
                     if(!key.data) {
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-
-                        return;
+                        goto err;
                     }
 
                     if(nst_persist_get_key(fd, meta, &key) != NST_OK) {
-                        nst_nosql_memory_free(key.data);
-                        unlink(file);
-                        close(fd);
-                        closedir(dir2);
-
-                        return;
+                        goto err;
                     }
 
-                    nst_nosql_dict_set_from_disk(&key, file, meta);
+                    host.len = nst_persist_meta_get_host_len(meta);
+                    path.len = nst_persist_meta_get_path_len(meta);
+
+                    buf.size = host.len + path.len;
+                    buf.data = 0;
+                    buf.area = nst_nosql_memory_alloc(buf.size);
+
+                    if(!buf.area) {
+                        goto err;
+                    }
+
+                    host.ptr = buf.area + buf.data;
+
+                    if(nst_persist_get_host(fd, meta, host) != NST_OK) {
+                        goto err;
+                    }
+
+                    path.ptr = buf.area + buf.data;
+
+                    if(nst_persist_get_path(fd, meta, path) != NST_OK) {
+                        goto err;
+                    }
+
+                    if(nst_nosql_dict_set_from_disk(&buf, host, path, &key, file, meta) != NST_OK) {
+                        goto err;
+                    }
 
                     close(fd);
                 }
@@ -1192,6 +1206,25 @@ void nst_nosql_persist_load() {
             nuster.nosql->disk.loaded = 1;
             nuster.nosql->disk.idx    = 0;
         }
+
+        return;
+
+err:
+
+        if(file) {
+            unlink(file);
+        }
+
+        if(fd) {
+            close(fd);
+        }
+
+        if(dir2) {
+            closedir(dir2);
+        }
+
+        nst_nosql_memory_free(key.data);
+        nst_nosql_memory_free(buf.area);
 
     }
 }

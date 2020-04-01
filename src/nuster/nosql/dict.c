@@ -14,7 +14,6 @@
 
 #include <nuster/nuster.h>
 
-
 static int _nst_nosql_dict_alloc(uint64_t size) {
     int i;
     int entry_size = sizeof(struct nst_dict_entry*);
@@ -29,6 +28,7 @@ static int _nst_nosql_dict_alloc(uint64_t size) {
     }
 
     for(i = 1; i < size / block_size; i++) {
+
         if(!nst_nosql_memory_alloc(block_size)) {
             return NST_ERR;
         }
@@ -214,19 +214,49 @@ struct nst_dict_entry *nst_nosql_dict_get(struct nst_key *key) {
 
     while(entry) {
 
-        if(entry->key.hash == key->hash
-                && entry->key.size == key->size
+        if(entry->key.hash == key->hash && entry->key.size == key->size
                 && !memcmp(entry->key.data, key->data, key->size)) {
+
+            int expired = nst_dict_entry_expired(entry);
+
+            uint64_t max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
+
+            entry->atime = get_current_timestamp();
+
+            if(expired && entry->extend[0] != 0xFF && entry->atime <= max
+                    && entry->access[3] > entry->access[2]
+                    && entry->access[2] > entry->access[1]) {
+
+                entry->expire    += entry->ttl;
+
+                entry->access[0] += entry->access[1];
+                entry->access[0] += entry->access[2];
+                entry->access[0] += entry->access[3];
+                entry->access[1]  = 0;
+                entry->access[2]  = 0;
+                entry->access[3]  = 0;
+                entry->extended  += 1;
+
+                if(entry->file) {
+                    nst_persist_update_expire(entry->file, entry->expire);
+                }
+
+                expired = 0;
+            }
+
             /* check expire
              * change state only, leave the free stuff to cleanup
              * */
-            if(entry->state == NST_DICT_ENTRY_STATE_VALID
-                    && nst_dict_entry_expired(entry)) {
-
+            if(entry->state == NST_DICT_ENTRY_STATE_VALID && expired) {
                 entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
                 entry->data->invalid = 1;
                 entry->data          = NULL;
                 entry->expire        = 0;
+                entry->access[0]     = 0;
+                entry->access[1]     = 0;
+                entry->access[2]     = 0;
+                entry->access[3]     = 0;
+                entry->extended      = 0;
 
                 return NULL;
             }
@@ -240,14 +270,19 @@ struct nst_dict_entry *nst_nosql_dict_get(struct nst_key *key) {
     return NULL;
 }
 
-int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta) {
-    int idx;
+int nst_nosql_dict_set_from_disk(struct buffer *buf, struct ist host, struct ist path,
+        struct nst_key *key, char *file, char *meta) {
+
     struct nst_dict  *dict  = NULL;
     struct nst_dict_entry *entry = NULL;
+    int idx;
+    uint64_t ttl_extend;
 
     key->hash = nst_persist_meta_get_hash(meta);
 
-    dict = &nuster.nosql->dict;
+    ttl_extend = nst_persist_meta_get_ttl_extend(meta);
+
+    dict = &nuster.cache->dict;
 
     entry = nst_nosql_memory_alloc(sizeof(*entry));
 
@@ -260,6 +295,8 @@ int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta) {
     entry->file = nst_nosql_memory_alloc(strlen(file));
 
     if(!entry->file) {
+        nst_nosql_memory_free(entry);
+
         return NST_ERR;
     }
 
@@ -276,6 +313,18 @@ int nst_nosql_dict_set_from_disk(struct nst_key *key, char *file, char *meta) {
     memcpy(entry->file, file, strlen(file));
 
     entry->header_len = nst_persist_meta_get_header_len(meta);
+
+    entry->buf = *buf;
+
+    entry->host = host;
+    entry->path = path;
+
+    entry->extend[0] = *( uint8_t *)(&ttl_extend);
+    entry->extend[1] = *((uint8_t *)(&ttl_extend) + 1);
+    entry->extend[2] = *((uint8_t *)(&ttl_extend) + 2);
+    entry->extend[3] = *((uint8_t *)(&ttl_extend) + 3);
+
+    entry->ttl = ttl_extend >> 32;
 
     return NST_OK;
 }
