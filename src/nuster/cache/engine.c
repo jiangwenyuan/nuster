@@ -263,7 +263,7 @@ out:
  * The cache applet acts like the backend to send cached http data
  */
 static void nst_cache_handler(struct appctx *appctx) {
-    if(appctx->st0 == NST_CACHE_CTX_STATE_HIT_MEMORY) {
+    if(appctx->st0 == NST_CTX_STATE_HIT_MEMORY) {
         _nst_cache_memory_handler(appctx);
     } else {
         _nst_cache_disk_handler(appctx);
@@ -486,9 +486,9 @@ static void _nst_cache_record_access(struct nst_dict_entry *entry) {
 /*
  * Check if valid cache exists
  */
-int nst_cache_exists(struct nst_cache_ctx *ctx) {
+int nst_cache_exists(struct nst_ctx *ctx) {
     struct nst_dict_entry *entry = NULL;
-    int ret = NST_CACHE_CTX_STATE_INIT;
+    int ret = NST_CTX_STATE_INIT;
 
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
@@ -526,50 +526,50 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
 
             _nst_cache_record_access(entry);
 
-            ret = NST_CACHE_CTX_STATE_HIT_MEMORY;
+            ret = NST_CTX_STATE_HIT_MEMORY;
         }
 
         if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->file) {
             ctx->disk.file = entry->file;
-            ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
+            ret = NST_CTX_STATE_CHECK_PERSIST;
         }
     } else {
         if(ctx->rule->disk != NST_DISK_OFF) {
             ctx->disk.file = NULL;
 
             if(nuster.cache->disk.loaded) {
-                ret = NST_CACHE_CTX_STATE_INIT;
+                ret = NST_CTX_STATE_INIT;
             } else {
-                ret = NST_CACHE_CTX_STATE_CHECK_PERSIST;
+                ret = NST_CTX_STATE_CHECK_PERSIST;
             }
         }
     }
 
     nst_shctx_unlock(&nuster.cache->dict);
 
-    if(ret == NST_CACHE_CTX_STATE_CHECK_PERSIST) {
+    if(ret == NST_CTX_STATE_CHECK_PERSIST) {
 
         if(ctx->disk.file) {
 
             if(nst_persist_valid(&ctx->disk, key) == NST_OK) {
                 _nst_cache_record_access(entry);
-                ret = NST_CACHE_CTX_STATE_HIT_DISK;
+                ret = NST_CTX_STATE_HIT_DISK;
             } else {
-                ret = NST_CACHE_CTX_STATE_INIT;
+                ret = NST_CTX_STATE_INIT;
             }
         } else {
             ctx->disk.file = nst_cache_memory_alloc(
                     nst_persist_path_file_len(global.nuster.cache.root) + 1);
 
             if(!ctx->disk.file) {
-                ret = NST_CACHE_CTX_STATE_INIT;
+                ret = NST_CTX_STATE_INIT;
             } else {
 
                 if(nst_persist_exists(global.nuster.cache.root, &ctx->disk, key) == NST_OK) {
-                    ret = NST_CACHE_CTX_STATE_HIT_DISK;
+                    ret = NST_CTX_STATE_HIT_DISK;
                 } else {
                     nst_cache_memory_free(ctx->disk.file);
-                    ret = NST_CACHE_CTX_STATE_INIT;
+                    ret = NST_CTX_STATE_INIT;
                 }
             }
         }
@@ -578,7 +578,7 @@ int nst_cache_exists(struct nst_cache_ctx *ctx) {
     return ret;
 }
 
-void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
+void nst_cache_create(struct http_msg *msg, struct nst_ctx *ctx) {
     struct nst_dict_entry *entry = NULL;
 
     int idx = ctx->rule->key->idx;
@@ -591,9 +591,9 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
     if(entry) {
 
         if(entry->state == NST_DICT_ENTRY_STATE_CREATING) {
-            ctx->state = NST_CACHE_CTX_STATE_WAIT;
+            ctx->state = NST_CTX_STATE_WAIT;
         } else if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-            ctx->state = NST_CACHE_CTX_STATE_HIT_MEMORY;
+            ctx->state = NST_CTX_STATE_HIT_MEMORY;
         } else if(entry->state == NST_DICT_ENTRY_STATE_EXPIRED
                 || entry->state == NST_DICT_ENTRY_STATE_INVALID) {
 
@@ -608,9 +608,9 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
 
                 if(!entry->data || !buf.area) {
                     entry->state = NST_DICT_ENTRY_STATE_INVALID;
-                    ctx->state   = NST_CACHE_CTX_STATE_BYPASS;
+                    ctx->state   = NST_CTX_STATE_BYPASS;
                 } else {
-                    ctx->state   = NST_CACHE_CTX_STATE_CREATE;
+                    ctx->state   = NST_CTX_STATE_CREATE;
                     ctx->entry   = entry;
 
                     memcpy(buf.area, ctx->txn.buf->area, buf.data);
@@ -635,19 +635,19 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
                     ctx->element = entry->data->element;
                 }
             } else {
-                ctx->state = NST_CACHE_CTX_STATE_CREATE;
+                ctx->state = NST_CTX_STATE_CREATE;
                 ctx->entry = entry;
             }
 
         } else {
-            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+            ctx->state = NST_CTX_STATE_BYPASS;
         }
     } else {
         entry = nst_dict_set(&nuster.cache->dict, key, &ctx->txn, ctx->rule, ctx->pid,
                 NST_MODE_CACHE);
 
         if(entry) {
-            ctx->state = NST_CACHE_CTX_STATE_CREATE;
+            ctx->state = NST_CTX_STATE_CREATE;
             ctx->entry = entry;
             ctx->data  = entry->data;
 
@@ -655,13 +655,13 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
                 ctx->element = entry->data->element;
             }
         } else {
-            ctx->state = NST_CACHE_CTX_STATE_BYPASS;
+            ctx->state = NST_CTX_STATE_BYPASS;
         }
     }
 
     nst_shctx_unlock(&nuster.cache->dict);
 
-    if(ctx->state == NST_CACHE_CTX_STATE_CREATE) {
+    if(ctx->state == NST_CTX_STATE_CREATE) {
         int pos;
         struct htx *htx = htxbuf(&msg->chn->buf);
         ctx->txn.res.header_len = 0;
@@ -703,7 +703,7 @@ void nst_cache_create(struct http_msg *msg, struct nst_cache_ctx *ctx) {
         }
     }
 
-    if(ctx->state == NST_CACHE_CTX_STATE_CREATE
+    if(ctx->state == NST_CTX_STATE_CREATE
             && (ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY)) {
 
         uint64_t ttl_extend = ctx->rule->ttl;
@@ -763,7 +763,7 @@ err:
 /*
  * Add partial http data to nst_data
  */
-int nst_cache_update(struct http_msg *msg, struct nst_cache_ctx *ctx, unsigned int offset,
+int nst_cache_update(struct http_msg *msg, struct nst_ctx *ctx, unsigned int offset,
         unsigned int len) {
 
     int pos;
@@ -820,8 +820,8 @@ err:
 /*
  * cache done
  */
-void nst_cache_finish(struct nst_cache_ctx *ctx) {
-    ctx->state = NST_CACHE_CTX_STATE_DONE;
+void nst_cache_finish(struct nst_ctx *ctx) {
+    ctx->state = NST_CTX_STATE_DONE;
 
     if(ctx->rule->disk == NST_DISK_ONLY) {
         ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
@@ -849,7 +849,7 @@ void nst_cache_finish(struct nst_cache_ctx *ctx) {
     }
 }
 
-void nst_cache_abort(struct nst_cache_ctx *ctx) {
+void nst_cache_abort(struct nst_ctx *ctx) {
     ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
@@ -901,7 +901,7 @@ int nst_cache_delete(struct nst_key *key) {
  * Create cache applet to handle the request
  */
 void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
-        struct channel *res, struct nst_cache_ctx *ctx) {
+        struct channel *res, struct nst_ctx *ctx) {
 
     struct appctx *appctx = NULL;
 
@@ -920,7 +920,7 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
 
         appctx->st0 = ctx->state;
 
-        if(ctx->state == NST_CACHE_CTX_STATE_HIT_MEMORY) {
+        if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
             appctx->ctx.nuster.cache.data    = ctx->data;
             appctx->ctx.nuster.cache.element = ctx->data->element;
         } else {
@@ -1214,7 +1214,7 @@ void nst_cache_persist_cleanup() {
     }
 }
 
-void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_cache_ctx *ctx) {
+void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
 
     struct htx *htx;
 
@@ -1243,7 +1243,7 @@ void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_cac
 }
 
 void
-nst_cache_build_last_modified(struct stream *s, struct http_msg *msg, struct nst_cache_ctx *ctx) {
+nst_cache_build_last_modified(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
 
     struct htx *htx;
 

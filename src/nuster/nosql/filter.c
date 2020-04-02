@@ -58,12 +58,12 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
 
     if(!filter->ctx) {
         int rule_cnt, key_cnt, size;
-        struct nst_nosql_ctx *ctx;
+        struct nst_ctx *ctx;
 
         rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
         key_cnt  = nuster.proxy[conf->pid]->key_cnt;
 
-        size = sizeof(struct nst_cache_ctx) + key_cnt * sizeof(struct nst_key);
+        size = sizeof(struct nst_ctx) + key_cnt * sizeof(struct nst_key);
 
         ctx = malloc(size);
 
@@ -73,7 +73,7 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
 
         memset(ctx, 0, size);
 
-        ctx->state    = NST_NOSQL_CTX_STATE_INIT;
+        ctx->state    = NST_CTX_STATE_INIT;
         ctx->pid      = conf->pid;
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
@@ -95,9 +95,9 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
 static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
 
     if(filter->ctx) {
-        struct nst_nosql_ctx *ctx = filter->ctx;
+        struct nst_ctx *ctx = filter->ctx;
 
-        if(ctx->state == NST_NOSQL_CTX_STATE_CREATE) {
+        if(ctx->state == NST_CTX_STATE_CREATE) {
             nst_nosql_abort(ctx);
         }
 
@@ -111,7 +111,7 @@ static int
 _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct http_msg *msg) {
 
     struct stream_interface *si = &s->si[1];
-    struct nst_nosql_ctx *ctx   = filter->ctx;
+    struct nst_ctx *ctx   = filter->ctx;
     struct proxy *px            = s->be;
     struct appctx *appctx       = si_appctx(si);
     struct channel *req         = msg->chn;
@@ -130,7 +130,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
         return 1;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
+    if(ctx->state == NST_CTX_STATE_INIT) {
         int i = 0;
 
         if(nst_http_parse_htx(s, msg, &ctx->txn) != NST_OK) {
@@ -168,14 +168,14 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                 ctx->state = nst_nosql_exists(ctx);
 
-                if(ctx->state == NST_NOSQL_CTX_STATE_HIT_MEMORY) {
+                if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
                     nst_debug2("HIT memory\n");
 
                     /* OK, nosql exists */
                     break;
                 }
 
-                if(ctx->state == NST_NOSQL_CTX_STATE_HIT_DISK) {
+                if(ctx->state == NST_CTX_STATE_HIT_DISK) {
                     nst_debug2("HIT disk\n");
 
                     /* OK, cache exists */
@@ -192,10 +192,10 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
                     nst_debug(s, "[nosql] To create\n");
 
                     if(nst_nosql_get_headers(s, msg, ctx)) {
-                        ctx->state = NST_NOSQL_CTX_STATE_PASS;
+                        ctx->state = NST_CTX_STATE_PASS;
                         ctx->pid   = px->uuid;
                     } else {
-                        ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+                        ctx->state = NST_CTX_STATE_INVALID;
                     }
 
                     break;
@@ -206,7 +206,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
 
                 if(nst_nosql_delete(key)) {
                     nst_debug(s, "[nosql] EXIST, to delete\n");
-                    ctx->state = NST_NOSQL_CTX_STATE_DELETE;
+                    ctx->state = NST_CTX_STATE_DELETE;
 
                     break;
                 }
@@ -222,13 +222,13 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
      * if not, either the key does not exist for GET/DELETE
      * or all rules do not pass for POST request
      * */
-    if(ctx->state == NST_NOSQL_CTX_STATE_INIT) {
+    if(ctx->state == NST_CTX_STATE_INIT) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_FOUND;
 
         return 1;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_HIT_MEMORY) {
+    if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_MEMORY;
         /* 0: header unsent, 1: sent */
         appctx->st1 = 0;
@@ -245,7 +245,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
         res->flags |= CF_NEVER_WAIT;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_HIT_DISK) {
+    if(ctx->state == NST_CTX_STATE_HIT_DISK) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;
         appctx->st1 = NST_PERSIST_APPLET_HEADER;
 
@@ -263,27 +263,27 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
         res->flags |= CF_NEVER_WAIT;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_PASS) {
+    if(ctx->state == NST_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
         nst_nosql_create(s, msg, ctx);
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_WAIT) {
-        ctx->state  = NST_NOSQL_CTX_STATE_PASS;
+    if(ctx->state == NST_CTX_STATE_WAIT) {
+        ctx->state  = NST_CTX_STATE_PASS;
         appctx->st0 = NST_NOSQL_APPCTX_STATE_WAIT;
 
         return 0;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_INVALID && ctx->disk.file == NULL) {
+    if(ctx->state == NST_CTX_STATE_INVALID && ctx->disk.file == NULL) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_DELETE) {
+    if(ctx->state == NST_CTX_STATE_DELETE) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_FULL) {
+    if(ctx->state == NST_CTX_STATE_FULL) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_FULL;
     }
 
@@ -295,18 +295,18 @@ static int _nst_nosql_filter_http_payload(struct stream *s, struct filter *filte
 
     struct stream_interface *si = &s->si[1];
     struct appctx *appctx       = si_appctx(si);
-    struct nst_nosql_ctx *ctx   = filter->ctx;
+    struct nst_ctx *ctx   = filter->ctx;
 
     if(len <= 0) {
         return 0;
     }
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
+    if(ctx->state == NST_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
 
         if(nst_nosql_update(msg, ctx, offset, len) != NST_OK) {
             ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
             appctx->st0       = NST_NOSQL_APPCTX_STATE_FULL;
-            ctx->state        = NST_NOSQL_CTX_STATE_INVALID;
+            ctx->state        = NST_CTX_STATE_INVALID;
         }
     }
 
@@ -317,13 +317,13 @@ static int
 _nst_nosql_filter_http_end(struct stream *s, struct filter *filter, struct http_msg *msg) {
     struct stream_interface *si = &s->si[1];
     struct appctx *appctx       = si_appctx(si);
-    struct nst_nosql_ctx *ctx   = filter->ctx;
+    struct nst_ctx *ctx   = filter->ctx;
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
+    if(ctx->state == NST_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
 
         nst_nosql_finish(s, msg, ctx);
 
-        if(ctx->state == NST_NOSQL_CTX_STATE_DONE) {
+        if(ctx->state == NST_CTX_STATE_DONE) {
             nst_debug(s, "[nosql] Created\n");
             appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
         } else {

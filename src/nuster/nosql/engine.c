@@ -54,7 +54,7 @@ static void nst_nosql_handler(struct appctx *appctx) {
 
     /* check that the output is not closed */
     if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
-        appctx->st0 = NST_NOSQL_CTX_STATE_DONE;
+        appctx->st0 = NST_CTX_STATE_DONE;
     }
 
     switch(appctx->st0) {
@@ -528,7 +528,7 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *
     return 0;
 }
 
-int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx) {
+int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
 
     struct htx *htx = htxbuf(&s->req.buf);
     struct http_hdr_ctx hdr = { .blk = NULL };
@@ -559,7 +559,7 @@ int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_nos
     return 1;
 }
 
-int _nst_nosql_create_header(struct stream *s, struct nst_nosql_ctx *ctx, struct ist clv) {
+int _nst_nosql_create_header(struct stream *s, struct nst_ctx *ctx, struct ist clv) {
     struct htx_sl *sl;
     enum htx_blk_type type;
     uint32_t size, info;
@@ -691,7 +691,7 @@ err:
     return NST_ERR;
 }
 
-void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx) {
+void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
     struct nst_dict_entry *entry = NULL;
     struct nst_data_element *element = NULL;
     int idx = ctx->rule->key->idx;
@@ -703,7 +703,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
     if(entry) {
 
         if(entry->state == NST_DICT_ENTRY_STATE_CREATING) {
-            ctx->state = NST_NOSQL_CTX_STATE_WAIT;
+            ctx->state = NST_CTX_STATE_WAIT;
         } else {
             entry->state = NST_DICT_ENTRY_STATE_CREATING;
 
@@ -712,10 +712,10 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
             }
 
             entry->data = nst_nosql_data_new();
-            ctx->state  = NST_NOSQL_CTX_STATE_CREATE;
+            ctx->state  = NST_CTX_STATE_CREATE;
         }
     } else {
-        ctx->state = NST_NOSQL_CTX_STATE_CREATE;
+        ctx->state = NST_CTX_STATE_CREATE;
         entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, ctx->rule, ctx->pid,
                 NST_MODE_NOSQL);
     }
@@ -723,10 +723,10 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
     nst_shctx_unlock(&nuster.nosql->dict);
 
     if(!entry || !entry->data) {
-        ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+        ctx->state = NST_CTX_STATE_INVALID;
     } else {
 
-        if(ctx->state == NST_NOSQL_CTX_STATE_CREATE) {
+        if(ctx->state == NST_CTX_STATE_CREATE) {
             struct htx *htx = htxbuf(&msg->chn->buf);
             struct htx_sl *sl;
             struct http_hdr_ctx hdr = { .blk = NULL };
@@ -747,7 +747,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
             }
 
             if(_nst_nosql_create_header(s, ctx, hdr.value) != NST_OK) {
-                ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+                ctx->state = NST_CTX_STATE_INVALID;
 
                 return;
             }
@@ -756,20 +756,20 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_nosql_c
     }
 
 
-    if(ctx->state == NST_NOSQL_CTX_STATE_CREATE
+    if(ctx->state == NST_CTX_STATE_CREATE
             && (ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY)) {
 
         ctx->disk.file = nst_nosql_memory_alloc(
                 nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
         if(!ctx->disk.file) {
-            ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+            ctx->state = NST_CTX_STATE_INVALID;
 
             return;
         }
 
         if(nst_persist_init(global.nuster.nosql.root, ctx->disk.file, key->hash) != NST_OK) {
-            ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+            ctx->state = NST_CTX_STATE_INVALID;
 
             return;
         }
@@ -800,7 +800,7 @@ err:
     return;
 }
 
-int nst_nosql_update(struct http_msg *msg, struct nst_nosql_ctx *ctx, unsigned int offset,
+int nst_nosql_update(struct http_msg *msg, struct nst_ctx *ctx, unsigned int offset,
         unsigned int msg_len) {
 
     int pos;
@@ -854,9 +854,9 @@ err:
     return NST_ERR;
 }
 
-int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
+int nst_nosql_exists(struct nst_ctx *ctx) {
     struct nst_dict_entry *entry = NULL;
-    int ret = NST_NOSQL_CTX_STATE_INIT;
+    int ret = NST_CTX_STATE_INIT;
 
     int idx = ctx->rule->key->idx;
     struct nst_key *key = &(ctx->keys[idx]);
@@ -873,42 +873,42 @@ int nst_nosql_exists(struct nst_nosql_ctx *ctx) {
         if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
             ctx->data = entry->data;
             ctx->data->clients++;
-            ret = NST_NOSQL_CTX_STATE_HIT_MEMORY;
+            ret = NST_CTX_STATE_HIT_MEMORY;
         }
 
         if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->file) {
             ctx->disk.file = entry->file;
-            ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
+            ret = NST_CTX_STATE_CHECK_PERSIST;
         }
     } else {
         if(ctx->rule->disk != NST_DISK_OFF) {
             ctx->disk.file = NULL;
-            ret = NST_NOSQL_CTX_STATE_CHECK_PERSIST;
+            ret = NST_CTX_STATE_CHECK_PERSIST;
         }
     }
 
     nst_shctx_unlock(&nuster.nosql->dict);
 
-    if(ret == NST_NOSQL_CTX_STATE_CHECK_PERSIST) {
+    if(ret == NST_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
             if(nst_persist_valid(&ctx->disk, key) == NST_OK) {
-                ret = NST_NOSQL_CTX_STATE_HIT_DISK;
+                ret = NST_CTX_STATE_HIT_DISK;
             } else {
-                ret = NST_NOSQL_CTX_STATE_INIT;
+                ret = NST_CTX_STATE_INIT;
             }
         } else {
             ctx->disk.file = nst_nosql_memory_alloc(
                     nst_persist_path_file_len(global.nuster.nosql.root) + 1);
 
             if(!ctx->disk.file) {
-                ret = NST_NOSQL_CTX_STATE_INIT;
+                ret = NST_CTX_STATE_INIT;
             } else {
 
                 if(nst_persist_exists(global.nuster.nosql.root, &ctx->disk, key) == NST_OK) {
-                    ret = NST_NOSQL_CTX_STATE_HIT_DISK;
+                    ret = NST_CTX_STATE_HIT_DISK;
                 } else {
                     nst_nosql_memory_free(ctx->disk.file);
-                    ret = NST_NOSQL_CTX_STATE_INIT;
+                    ret = NST_CTX_STATE_INIT;
                 }
             }
         }
@@ -961,13 +961,13 @@ int nst_nosql_delete(struct nst_key *key) {
 }
 
 
-int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_nosql_ctx *ctx) {
+int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
 
     if(ctx->txn.res.content_length == 0 && ctx->txn.res.payload_len == 0) {
-        ctx->state = NST_NOSQL_CTX_STATE_INVALID;
+        ctx->state = NST_CTX_STATE_INVALID;
         ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
     } else {
-        ctx->state = NST_NOSQL_CTX_STATE_DONE;
+        ctx->state = NST_CTX_STATE_DONE;
 
         if(ctx->rule->disk == NST_DISK_ONLY) {
             ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
@@ -1001,7 +1001,7 @@ int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_nosql_ct
     return NST_OK;
 }
 
-void nst_nosql_abort(struct nst_nosql_ctx *ctx) {
+void nst_nosql_abort(struct nst_ctx *ctx) {
     ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
