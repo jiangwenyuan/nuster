@@ -43,7 +43,6 @@
 #include <types/global.h>
 #include <import/xxhash.h>
 
-
 #define NST_OK          0
 #define NST_ERR         1
 
@@ -177,13 +176,6 @@ struct nst_rule_config {
     struct acl_cond           *cond;          /* acl condition to meet */
 };
 
-struct nst_data_element {
-    struct nst_data_element   *next;
-
-    int                        info;
-    char                       data[0];
-};
-
 struct nst_rule {
     int                        uuid;          /* unique rule ID */
     int                        idx;           /* index in specific proxy */
@@ -204,31 +196,6 @@ struct nst_rule {
     struct nst_rule           *next;
 };
 
-/*
- * A nst_data contains a complete http response data,
- * and is pointed by nst_entry->data.
- * All nst_data are stored in a circular singly linked list
- */
-struct nst_data {
-    int                       clients;
-    int                       invalid;
-    struct nst_data_element  *element;
-
-    struct nst_data          *next;
-};
-
-static inline int nst_data_invalid(struct nst_data *data) {
-
-    if(data->invalid) {
-
-        if(!data->clients) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
 struct nst_flt_conf {
     int status;
     int pid;
@@ -248,7 +215,5 @@ const char *nst_parse_time(const char *text, int len, unsigned *ret);
 
 void nst_debug(struct stream *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
-
-int nst_test_rule(struct stream *s, struct nst_rule *rule, int res);
 
 #endif /* _NUSTER_COMMON_H */

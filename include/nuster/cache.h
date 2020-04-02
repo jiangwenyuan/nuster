@@ -23,8 +23,6 @@
 #define _NUSTER_CACHE_H
 
 #include <nuster/common.h>
-#include <nuster/dict.h>
-#include <nuster/persist.h>
 
 
 enum {
@@ -63,45 +61,10 @@ struct nst_cache_ctx {
     struct nst_key            keys[0];
 };
 
-struct nst_cache {
-    struct nst_dict        dict;
-
-    /*
-     * point to the circular linked list, tail->next ===  head,
-     * and will be moved together constantly to check invalid data
-     */
-    struct nst_data       *data_head;
-    struct nst_data       *data_tail;
-
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t        mutex;
-#else
-    unsigned int           waiters;
-#endif
-
-    /* >=0: rehashing, index, -1: not rehashing */
-    int                    rehash_idx;
-
-    /* cache dict cleanup index */
-    int                    cleanup_idx;
-
-    /* persist async index */
-    int                    persist_idx;
-
-    /* for disk_loader and disk_cleaner */
-    struct {
-        int                loaded;
-        int                idx;
-        DIR               *dir;
-        struct dirent     *de;
-        char              *file;
-    } disk;
-};
-
 extern struct flt_ops  nst_cache_filter_ops;
 extern const char *nst_cache_flt_id;
 
-/* engine */
+
 void nst_cache_init();
 void nst_cache_housekeeping();
 

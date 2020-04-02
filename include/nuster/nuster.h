@@ -32,23 +32,16 @@
 #include <nuster/shctx.h>
 #include <nuster/memory.h>
 #include <nuster/key.h>
+#include <nuster/core.h>
 #include <nuster/http.h>
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
 #include <nuster/manager.h>
 #include <nuster/persist.h>
 
-struct nst_proxy {
-    struct nst_rule     *rule;
-    struct nst_rule_key *key;
-
-    int                  rule_cnt;
-    int                  key_cnt;
-};
-
 struct nuster {
-    struct nst_cache *cache;
-    struct nst_nosql *nosql;
+    struct nst_core *cache;
+    struct nst_core *nosql;
 
     struct {
         struct applet cache;

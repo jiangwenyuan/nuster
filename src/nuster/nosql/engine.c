@@ -440,7 +440,7 @@ void nst_nosql_init() {
             goto shm_err;
         }
 
-        nuster.nosql = nst_nosql_memory_alloc(sizeof(struct nst_nosql));
+        nuster.nosql = nst_nosql_memory_alloc(sizeof(struct nst_core));
 
         if(!nuster.nosql) {
             goto err;

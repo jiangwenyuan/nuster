@@ -23,7 +23,7 @@
 #define _NUSTER_NOSQL_H
 
 #include <nuster/common.h>
-#include <nuster/dict.h>
+#include <nuster/core.h>
 #include <nuster/persist.h>
 
 
@@ -77,44 +77,10 @@ struct nst_nosql_ctx {
     struct nst_key            keys[0];
 };
 
-struct nst_nosql {
-    struct nst_dict          dict;
-
-    /*
-     * point to the circular linked list, tail->next ===  head,
-     * and will be moved together constantly to check invalid data
-     */
-    struct nst_data       *data_head;
-    struct nst_data       *data_tail;
-
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t        mutex;
-#else
-    unsigned int           waiters;
-#endif
-
-    /* >=0: rehashing, index, -1: not rehashing */
-    int                    rehash_idx;
-
-    /* cache dict cleanup index */
-    int                    cleanup_idx;
-
-    int                    persist_idx;
-
-    /* for disk_loader and disk_cleaner */
-    struct {
-        int                loaded;
-        int                idx;
-        DIR               *dir;
-        struct dirent     *de;
-        char              *file;
-    } disk;
-};
-
 extern struct flt_ops  nst_nosql_filter_ops;
 extern const char *nst_nosql_flt_id;
 
-/* engine */
+
 void nst_nosql_init();
 void nst_nosql_housekeeping();
 int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);

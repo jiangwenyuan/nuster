@@ -22,7 +22,7 @@
 #include <proto/http_ana.h>
 #include <proto/http_htx.h>
 
-#include <nuster/http.h>
+#include <nuster/nuster.h>
 
 struct nst_http_code nst_http_codes[NST_HTTP_SIZE] = {
     [NST_HTTP_100] = {
