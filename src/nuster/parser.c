@@ -22,7 +22,7 @@
 #include <nuster/nuster.h>
 
 const char *nst_cache_flt_id = "cache filter id";
-static const char *nst_nosql_flt_id = "nosql filter id";
+const char *nst_nosql_flt_id = "nosql filter id";
 
 static struct nst_key_element *_nst_parse_rule_key_cast(char *str) {
     struct nst_key_element *key = NULL;
@@ -1296,7 +1296,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
     rule->id   = -1;
     rule->name = strdup(name);
 
-    rule->key.name = strdup(key == NULL ? NST_CACHE_DEFAULT_KEY : key);
+    rule->key.name = strdup(key == NULL ? NST_DEFAULT_KEY : key);
     rule->key.data = _nst_parse_rule_key(rule->key.name);
 
     if(!rule->key.data) {
@@ -1305,7 +1305,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
         goto out;
     }
 
-    rule->code = _nst_parse_rule_code(code == NULL ? NST_CACHE_DEFAULT_CODE : code);
+    rule->code = _nst_parse_rule_code(code == NULL ? NST_DEFAULT_CODE : code);
 
     rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
 

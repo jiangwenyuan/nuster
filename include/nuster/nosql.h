@@ -26,11 +26,6 @@
 #include <nuster/dict.h>
 #include <nuster/persist.h>
 
-#define NST_NOSQL_DEFAULT_CHUNK_SIZE            32
-#define NST_NOSQL_DEFAULT_LOAD_FACTOR           0.75
-#define NST_NOSQL_DEFAULT_GROWTH_FACTOR         2
-#define NST_NOSQL_DEFAULT_KEY_SIZE              128
-
 
 enum {
     NST_NOSQL_APPCTX_STATE_INIT = 0,
@@ -117,6 +112,7 @@ struct nst_nosql {
 };
 
 extern struct flt_ops  nst_nosql_filter_ops;
+extern const char *nst_nosql_flt_id;
 
 /* engine */
 void nst_nosql_init();

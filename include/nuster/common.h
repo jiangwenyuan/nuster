@@ -57,6 +57,8 @@
 #define NST_DEFAULT_DISK_CLEANER        100
 #define NST_DEFAULT_DISK_LOADER         100
 #define NST_DEFAULT_DISK_SAVER          100
+#define NST_DEFAULT_KEY                "method.scheme.host.uri"
+#define NST_DEFAULT_CODE               "200"
 
 enum {
     NST_STATUS_UNDEFINED = -1,

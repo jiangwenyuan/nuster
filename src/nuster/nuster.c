@@ -52,7 +52,7 @@ static void _nst_proxy_init() {
 
     /* new rule init */
     global.nuster.memory = nst_memory_create("nuster.shm", NST_DEFAULT_SIZE,
-            global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
+            global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
     if(!global.nuster.memory) {
         goto err;

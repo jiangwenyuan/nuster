@@ -404,7 +404,7 @@ void nst_cache_init() {
 
         global.nuster.cache.memory = nst_memory_create("cache.shm",
                 global.nuster.cache.dict_size + global.nuster.cache.data_size,
-                global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
+                global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
         if(!global.nuster.cache.memory) {
             goto shm_err;

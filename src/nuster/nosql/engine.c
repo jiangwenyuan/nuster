@@ -430,7 +430,7 @@ void nst_nosql_init() {
 
         global.nuster.nosql.memory = nst_memory_create("nosql.shm",
                 global.nuster.nosql.dict_size + global.nuster.nosql.data_size,
-                global.tune.bufsize, NST_NOSQL_DEFAULT_CHUNK_SIZE);
+                global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
         if(!global.nuster.nosql.memory) {
             goto shm_err;
