@@ -235,9 +235,9 @@ backend be
 
 ## global: nuster manager
 
-**syntax**
+**syntax:**
 
-nuster manager on|off [uri URI] [purge-method method]
+*nuster manager on|off [uri URI] [purge-method method]*
 
 **default:** *off*
 
@@ -261,9 +261,9 @@ Define a customized HTTP method to purge, it is `PURGE` by default.
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
+*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
 
-nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
+*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
 
 **default:** *none*
 
@@ -338,9 +338,9 @@ See [nuster rule disk mode](#disk-mode) for details.
 
 **syntax:**
 
-nuster cache [on|off]
+*nuster cache [on|off]*
 
-nuster nosql [on|off]
+*nuster nosql [on|off]*
 
 **default:** *on*
 
@@ -351,7 +351,9 @@ If there are filters on this proxy, put this directive after all other filters.
 
 ## proxy: nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
+**syntax:**
+
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -813,7 +815,7 @@ There are two purging mode: basic and advanced.
 
 This method deletes the specific url that is being requested, like this:
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+`curl -XPURGE http://127.0.0.1/imgs/test.jpg`
 
 Key is created in the same way when the cache created except that the `method` is `GET`.
 
@@ -869,8 +871,8 @@ By default, the query part is also used as a cache key, so there will be multipl
 For example, for rule `nuster rule imgs if { path_beg /imgs/ }`, and request
 
 ```
-curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
+curl http://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl http://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 
 There will be two cache objects since the default key contains the query part.
@@ -880,8 +882,8 @@ In order to delete that, you can
 ***delete one by one in case you know all queries***
 
 ```
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
+curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 
 It does not work if you don't know all queries.
@@ -890,7 +892,7 @@ It does not work if you don't know all queries.
 
 Define a key like `nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`, in this way only one cache will be created, and you can purge without query:
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+`curl -XPURGE http://127.0.0.1/imgs/test.jpg`
 
 It does not work if the query part is required.
 

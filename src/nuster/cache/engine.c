@@ -390,7 +390,6 @@ void nst_cache_housekeeping() {
 }
 
 void nst_cache_init() {
-
     nuster.applet.cache.fct = nst_cache_handler;
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
@@ -399,13 +398,13 @@ void nst_cache_init() {
 
             if(nst_persist_mkdir(global.nuster.cache.root.ptr) == NST_ERR) {
                 ha_alert("Create `%s` failed\n", global.nuster.cache.root.ptr);
-
                 exit(1);
             }
         }
 
-        global.nuster.cache.memory = nst_memory_create("cache.shm", global.nuster.cache.dict_size
-                + global.nuster.cache.data_size, global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
+        global.nuster.cache.memory = nst_memory_create("cache.shm",
+                global.nuster.cache.dict_size + global.nuster.cache.data_size,
+                global.tune.bufsize, NST_CACHE_DEFAULT_CHUNK_SIZE);
 
         if(!global.nuster.cache.memory) {
             goto shm_err;
@@ -443,8 +442,8 @@ void nst_cache_init() {
             goto err;
         }
 
-        ha_notice("[nuster][cache] on, data_size=%"PRIu64"\n", global.nuster.cache.data_size);
-
+        ha_notice("[nuster][cache] on, dict_size=%"PRIu64", data_size=%"PRIu64"\n",
+                global.nuster.cache.dict_size, global.nuster.cache.data_size);
     }
 
     return;

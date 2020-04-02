@@ -449,8 +449,9 @@ void nst_nosql_init() {
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
         if(global.nuster.nosql.root.len) {
-            nuster.nosql->disk.file = nst_nosql_memory_alloc(
-                    nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+            int len = nst_persist_path_file_len(global.nuster.nosql.root) + 1;
+
+            nuster.nosql->disk.file = nst_nosql_memory_alloc(len);
 
             if(!nuster.nosql->disk.file) {
                 goto err;
@@ -467,6 +468,8 @@ void nst_nosql_init() {
             goto err;
         }
 
+        ha_notice("[nuster][nosql] on, dict_size=%"PRIu64", data_size=%"PRIu64"\n",
+                global.nuster.nosql.dict_size, global.nuster.nosql.data_size);
     }
 
     return;
@@ -476,7 +479,7 @@ err:
     exit(1);
 
 shm_err:
-    ha_alert("Error when initializing nuster nosql memory.\n");
+    ha_alert("Error when initializing nosql.\n");
     exit(1);
 }
 

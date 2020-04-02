@@ -240,9 +240,9 @@ backend be
 
 ## global: nuster manager
 
-**syntax**
+**syntax:**
 
-nuster manager on|off [uri URI] [purge-method method]
+*nuster manager on|off [uri URI] [purge-method method]*
 
 **default:** *off*
 
@@ -266,9 +266,9 @@ HTTP methodを定義する。ディフォルトは `PURGE`。
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
+*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
 
-nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
+*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
 
 **default:** *none*
 
@@ -328,8 +328,10 @@ hash tableのサイズを決める.
 ## proxy: nuster cache|nosql
 
 **syntax:**
-nuster cache [on|off]
-nuster nosql [on|off]
+
+*nuster cache [on|off]*
+
+*nuster nosql [on|off]*
 
 **default:** *on*
 
@@ -340,7 +342,9 @@ cache/nosqlの有効無効を決める。
 
 ## proxy: nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
+**syntax:**
+
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -790,7 +794,7 @@ curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nust
 
 ### Basic purge: １つURLをPurge
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+`curl -XPURGE http://127.0.0.1/imgs/test.jpg`
 
 ruleでキーを生成して、キャッシュを探して、あったらPurgeする。GETで生成したキャッシュのみ有効。
 
@@ -851,8 +855,8 @@ curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 例えば `nuster-rule imgs if { path_beg /imgs/ }`,そして
 
 ```
-curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
+curl http://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl http://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 すると、２つのキャッシュが生成される。
 
@@ -861,8 +865,8 @@ pathでpurge以外は、いくつかの方法でPurgeできる。
 ***一つずつ***
 
 ```
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
+curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 でもqueryがわからない場合はできない。
 
@@ -870,7 +874,7 @@ curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
 
 `nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`,すると１つのキャッシュしか生成されない。そして、queryなしでpurgeできる。
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+`curl -XPURGE http://127.0.0.1/imgs/test.jpg`
 
 でもqueryが重要の場合はできない。
 

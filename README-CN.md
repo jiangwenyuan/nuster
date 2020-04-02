@@ -237,9 +237,9 @@ backend be
 
 ## global: nuster manager
 
-**syntax**
+**syntax:**
 
-nuster manager on|off [uri URI] [purge-method method]
+*nuster manager on|off [uri URI] [purge-method method]*
 
 **default:** *off*
 
@@ -263,9 +263,9 @@ nuster manager on|off [uri URI] [purge-method method]
 
 **syntax:**
 
-nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
+*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
 
-nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]
+*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
 
 **default:** *none*
 
@@ -326,9 +326,9 @@ nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n]
 
 **syntax:**
 
-nuster cache [on|off]
+*nuster cache [on|off]*
 
-nuster nosql [on|off]
+*nuster nosql [on|off]*
 
 **default:** *on*
 
@@ -339,7 +339,9 @@ nuster nosql [on|off]
 
 ## proxy: nuster rule
 
-**syntax:** nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]
+**syntax:**
+
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -715,10 +717,10 @@ statistics.cache.fetch:         0
 statistics.cache.abort:         0
 
 **PROXY cache app1**
-app1.rule.r1:                  state=on  disk=off   ttl=100
-app1.rule.r2:                  state=on  disk=only  ttl=200
-app1.rule.r2:                  state=on  disk=sync  ttl=300
-app1.rule.r4:                  state=on  disk=async ttl=400
+app1.rule.r1:                   state=on  disk=off   ttl=100
+app1.rule.r2:                   state=on  disk=only  ttl=200
+app1.rule.r2:                   state=on  disk=sync  ttl=300
+app1.rule.r4:                   state=on  disk=async ttl=400
 
 **PROXY nosql app2**
 app2.rule.ra:                   state=on  disk=off   ttl=0
@@ -794,7 +796,7 @@ curl -X POST -H "name: r1" -H "ttl: 0" -H "state: enabled" http://127.0.0.1/nust
 
 ### 基础Purge: 删除一个特定URL
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+`curl -XPURGE http://127.0.0.1/imgs/test.jpg`
 
 根据rule生成key并删除那个key。只对GET请求生成的缓存有效。
 
@@ -850,8 +852,8 @@ curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 比如`nuster rule imgs if { path_beg /imgs/ }`, 然后请求
 
 ```
-curl https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
+curl http://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl http://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 
 会生成两个缓存，因为query不一样。
@@ -861,8 +863,8 @@ curl https://127.0.0.1/imgs/test.jpg?w=180&h=180
 ***如果知道所有的query，那么可以一个一个删除***
 
 ```
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=120&h=120
-curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
+curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=120&h=120
+curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=180&h=180
 ```
 
 大多数情况下不知道所有的query
@@ -871,7 +873,7 @@ curl -XPURGE https://127.0.0.1/imgs/test.jpg?w=180&h=180
 
 定义`nuster rule imgs key method.scheme.host.path if { path_beg /imgs }`, 这样的话只会生成一个缓存，那么就可以不用query删除缓存
 
-`curl -XPURGE https://127.0.0.1/imgs/test.jpg`
+`curl -XPURGE http://127.0.0.1/imgs/test.jpg`
 
 大多数情况需要query
 
