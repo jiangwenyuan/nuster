@@ -21,7 +21,7 @@
 
 #include <nuster/nuster.h>
 
-struct nuster nuster = {
+nuster_t  nuster = {
     .cache = NULL,
     .nosql = NULL,
     .applet = {
@@ -45,10 +45,11 @@ struct nuster nuster = {
     .proxy = NULL,
 };
 
-static void _nst_proxy_init() {
-    struct proxy *px1;
-    int i, uuid, proxy_cnt;
-    struct nst_memory *memory;
+static void
+_nst_proxy_init() {
+    hpx_proxy_t   *px1;
+    nst_memory_t  *memory;
+    int            i, uuid, proxy_cnt;
 
     /* new rule init */
     global.nuster.memory = nst_memory_create("nuster.shm", NST_DEFAULT_SIZE,
@@ -69,15 +70,15 @@ static void _nst_proxy_init() {
     px1 = proxies_list;
 
     while(px1) {
-        struct nst_rule_config *r1 = NULL;
+        nst_rule_config_t  *r1 = NULL;
 
         list_for_each_entry(r1, &px1->nuster.rules, list) {
-            struct proxy *px2;
+            hpx_proxy_t  *px2;
 
             px2 = proxies_list;
 
             while(px2) {
-                struct nst_rule_config *r2 = NULL;
+                nst_rule_config_t  *r2 = NULL;
 
                 list_for_each_entry(r2, &px2->nuster.rules, list) {
 
@@ -105,13 +106,13 @@ out:
         px1 = px1->next;
     }
 
-    nuster.proxy = nst_memory_alloc(memory, proxy_cnt * sizeof(struct nst_proxy *));
+    nuster.proxy = nst_memory_alloc(memory, proxy_cnt * sizeof(nst_proxy_t *));
 
     if(!nuster.proxy) {
         goto err;
     }
 
-    memset(nuster.proxy, 0, proxy_cnt * sizeof(struct nst_proxy *));
+    memset(nuster.proxy, 0, proxy_cnt * sizeof(nst_proxy_t *));
 
     i = uuid = 0;
 
@@ -119,13 +120,12 @@ out:
 
     while(px1) {
         if(px1->nuster.mode == NST_MODE_CACHE || px1->nuster.mode == NST_MODE_NOSQL) {
-            struct nst_rule_config *rc = NULL;
+            nst_rule_config_t  *rc   = NULL;
+            nst_rule_t         *rule = NULL;
+            nst_rule_t         *tail = NULL;
+            nst_proxy_t        *px   = NULL;
 
-            struct nst_rule *rule = NULL;
-            struct nst_rule *tail = NULL;
-            struct nst_proxy *px  = NULL;
-
-            nuster.proxy[px1->uuid] = nst_memory_alloc(memory, sizeof(struct nst_proxy));
+            nuster.proxy[px1->uuid] = nst_memory_alloc(memory, sizeof(nst_proxy_t));
 
             px = nuster.proxy[px1->uuid];
 
@@ -133,12 +133,12 @@ out:
                 goto err;
             }
 
-            memset(px, 0, sizeof(struct nst_proxy));
+            memset(px, 0, sizeof(nst_proxy_t));
 
             list_for_each_entry(rc, &px1->nuster.rules, list) {
-                struct nst_rule_key *key = NULL;
+                nst_rule_key_t  *key = NULL;
 
-                rule = nst_memory_alloc(memory, sizeof(struct nst_rule));
+                rule = nst_memory_alloc(memory, sizeof(nst_rule_t));
 
                 if(!rule) {
                     goto err;
@@ -163,7 +163,7 @@ out:
                 if(key) {
                     rule->key = key;
                 } else {
-                    key = nst_memory_alloc(memory, sizeof(struct nst_rule_key));
+                    key = nst_memory_alloc(memory, sizeof(nst_rule_key_t));
 
                     if(!key) {
                         goto err;
@@ -216,14 +216,17 @@ out:
 
 err:
     ha_alert("Out of memory when initializing rules.\n");
+
     exit(1);
 }
 
-void nuster_init() {
+void
+nuster_init() {
 
     if(!(global.mode & MODE_MWORKER)) {
         ha_alert("[nuster] Not in master-worker mode."
                 "Add master-worker to conf file  or run with -W.\n");
+
         exit(1);
     }
 
@@ -235,8 +238,9 @@ void nuster_init() {
     nst_nosql_init();
 }
 
-int nst_test_rule(struct stream *s, struct nst_rule *rule, int res) {
-    int ret;
+int
+nst_test_rule(hpx_stream_t *s, nst_rule_t *rule, int res) {
+    int  ret;
 
     /* no acl defined */
     if(!rule->cond) {
@@ -262,14 +266,14 @@ int nst_test_rule(struct stream *s, struct nst_rule *rule, int res) {
     return NST_ERR;
 }
 
-void nst_debug(struct stream *s, const char *fmt, ...) {
+void
+nst_debug(hpx_stream_t *s, const char *fmt, ...) {
 
     if((global.mode & MODE_DEBUG)) {
-        va_list args;
-        struct session *sess = strm_sess(s);
+        va_list         args;
+        hpx_session_t  *sess = strm_sess(s);
 
-        fprintf(stderr, "%08x:%s.nuster[%04x:%04x]: ",
-                s->uniq_id, s->be->id,
+        fprintf(stderr, "%08x:%s.nuster[%04x:%04x]: ", s->uniq_id, s->be->id,
                 objt_conn(sess->origin) ?
                 (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
                 objt_cs(s->si[1].end) ?
@@ -281,10 +285,11 @@ void nst_debug(struct stream *s, const char *fmt, ...) {
     }
 }
 
-void nst_debug2(const char *fmt, ...) {
+void
+nst_debug2(const char *fmt, ...) {
 
     if((global.mode & MODE_DEBUG)) {
-        va_list args;
+        va_list  args;
         va_start(args, fmt);
         vfprintf(stderr, fmt, args);
         va_end(args);

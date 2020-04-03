@@ -23,12 +23,10 @@
 #define _NUSTER_NOSQL_H
 
 #include <nuster/common.h>
-#include <nuster/core.h>
-#include <nuster/persist.h>
 
 
 enum {
-    NST_NOSQL_APPCTX_STATE_INIT = 0,
+    NST_NOSQL_APPCTX_STATE_INIT         = 0,
     NST_NOSQL_APPCTX_STATE_WAIT,
     NST_NOSQL_APPCTX_STATE_HIT_MEMORY,
     NST_NOSQL_APPCTX_STATE_CREATE,
@@ -43,31 +41,29 @@ enum {
     NST_NOSQL_APPCTX_STATE_HIT_DISK,
 };
 
-extern struct flt_ops  nst_nosql_filter_ops;
-extern const char *nst_nosql_flt_id;
+extern hpx_flt_ops_t  nst_nosql_filter_ops;
+extern const char    *nst_nosql_flt_id;
 
 
 void nst_nosql_init();
 void nst_nosql_housekeeping();
-int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px);
 
-struct nst_data *nst_nosql_data_new();
+void nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
+int nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
+int nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
+void nst_nosql_abort(nst_ctx_t *ctx);
+int nst_nosql_exists(nst_ctx_t *ctx);
+int nst_nosql_delete(nst_key_t *key);
 
-void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx);
-int nst_nosql_exists(struct nst_ctx *ctx);
-int nst_nosql_delete(struct nst_key *key);
-int nst_nosql_update(struct http_msg *msg, struct nst_ctx *ctx, unsigned int offset,
-        unsigned int msg_len);
+int nst_nosql_get_headers(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
 
-int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx);
-
-void nst_nosql_abort(struct nst_ctx *ctx);
-
-int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx);
-
-void nst_nosql_persist_async();
-void nst_nosql_persist_cleanup();
 void nst_nosql_persist_load();
+void nst_nosql_persist_cleanup();
+void nst_nosql_persist_async();
+
+nst_data_t *nst_nosql_data_new();
+
+int nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
 
 #define nst_nosql_memory_alloc(size)    nst_memory_alloc(global.nuster.nosql.memory, size)
 #define nst_nosql_memory_free(p)        nst_memory_free(global.nuster.nosql.memory, p)

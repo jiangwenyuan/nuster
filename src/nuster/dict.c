@@ -14,12 +14,13 @@
 
 #include <nuster/nuster.h>
 
-int nst_dict_init(struct nst_dict *dict, struct nst_memory *memory, uint64_t dict_size) {
+int
+nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size) {
 
-    int block_size = memory->block_size;
-    int entry_size = sizeof(struct nst_dict_entry*);
-    int size       = (block_size + dict_size - 1) / block_size * block_size;
-    int i;
+    int  block_size = memory->block_size;
+    int  entry_size = sizeof(nst_dict_entry_t *);
+    int  size       = (block_size + dict_size - 1) / block_size * block_size;
+    int  i;
 
     dict->memory = memory;
     dict->size   = size / entry_size;
@@ -49,9 +50,10 @@ int nst_dict_init(struct nst_dict *dict, struct nst_memory *memory, uint64_t dic
  * If its invalid set entry->data->invalid to true,
  * entry->data is freed by _cache_data_cleanup
  */
-void nst_dict_cleanup(struct nst_dict *dict) {
-    struct nst_dict_entry *entry = dict->entry[dict->cleanup_idx];
-    struct nst_dict_entry *prev  = entry;
+void
+nst_dict_cleanup(nst_dict_t *dict) {
+    nst_dict_entry_t  *entry = dict->entry[dict->cleanup_idx];
+    nst_dict_entry_t  *prev  = entry;
 
     if(!dict->used) {
         return;
@@ -60,7 +62,7 @@ void nst_dict_cleanup(struct nst_dict *dict) {
     while(entry) {
 
         if(nst_dict_entry_invalid(entry)) {
-            struct nst_dict_entry *tmp = entry;
+            nst_dict_entry_t *tmp = entry;
 
             if(entry->data) {
                 entry->data->invalid = 1;
@@ -94,12 +96,13 @@ void nst_dict_cleanup(struct nst_dict *dict) {
     }
 }
 
-struct nst_dict_entry *nst_dict_set(struct nst_dict *dict, struct nst_key *key,
-        struct nst_http_txn *txn, struct nst_rule *rule, int pid, int mode) {
+nst_dict_entry_t *
+nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *rule,
+        int pid, int mode) {
 
-    struct nst_dict_entry  *entry = NULL;
-    struct nst_data        *data = NULL;
-    int                     idx;
+    nst_dict_entry_t  *entry = NULL;
+    nst_data_t        *data  = NULL;
+    int                idx;
 
     entry = nst_memory_alloc(dict->memory, sizeof(*entry));
 
@@ -191,9 +194,10 @@ err:
     return NULL;
 }
 
-struct nst_dict_entry *nst_dict_get(struct nst_dict *dict, struct nst_key *key) {
-    struct nst_dict_entry  *entry = NULL;
-    int                     idx;
+nst_dict_entry_t *
+nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
+    nst_dict_entry_t  *entry = NULL;
+    int                idx;
 
     if(dict->used == 0) {
         return NULL;
@@ -207,9 +211,9 @@ struct nst_dict_entry *nst_dict_get(struct nst_dict *dict, struct nst_key *key) 
         if(entry->key.hash == key->hash && entry->key.size == key->size
                 && !memcmp(entry->key.data, key->data, key->size)) {
 
-            int expired = nst_dict_entry_expired(entry);
+            int  expired  = nst_dict_entry_expired(entry);
 
-            uint64_t max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
+            uint64_t  max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
 
             entry->atime = get_current_timestamp();
 
@@ -260,12 +264,13 @@ struct nst_dict_entry *nst_dict_get(struct nst_dict *dict, struct nst_key *key) 
     return NULL;
 }
 
-int nst_dict_set_from_disk(struct nst_dict *dict, struct buffer *buf,
-        struct ist host, struct ist path, struct nst_key *key, char *file, char *meta) {
+int
+nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
+        nst_key_t *key, char *file, char *meta) {
 
-    struct nst_dict_entry  *entry = NULL;
-    uint64_t                ttl_extend;
-    int                     idx;
+    nst_dict_entry_t  *entry = NULL;
+    uint64_t           ttl_extend;
+    int                idx;
 
     key->hash = nst_persist_meta_get_hash(meta);
 

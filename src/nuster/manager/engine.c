@@ -20,15 +20,17 @@
 
 #include <nuster/nuster.h>
 
-static int _nst_manager_set_state_ttl(struct stream *s, struct channel *req, struct proxy *px,
+static int
+_nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
         int state, int ttl) {
 
-    int found, mode = NST_MANAGER_NAME_RULE;
-    struct proxy *p;
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_proxy_t        *p;
+    hpx_htx_t          *htx = htxbuf(&s->req.buf);
+    int                 found, mode, ret;
 
-    struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr = { .blk = NULL };
-    int ret = NST_HTTP_400;
+    mode = NST_MANAGER_NAME_RULE;
+    ret  = NST_HTTP_400;
 
     if(state == -1 && ttl == -1) {
         goto end;
@@ -44,7 +46,7 @@ static int _nst_manager_set_state_ttl(struct stream *s, struct channel *req, str
         p = proxies_list;
 
         while(p) {
-            struct nst_rule *rule = NULL;
+            nst_rule_t *rule = NULL;
 
             if((p->cap & PR_CAP_BE)
                     && (p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL)) {
@@ -97,10 +99,11 @@ end:
     return 1;
 }
 
-static int _nst_manager_check_uri(struct http_msg *msg) {
-    struct htx *htx;
-    struct htx_sl *sl;
-    struct ist url, uri;
+static int
+_nst_manager_check_uri(hpx_http_msg_t *msg) {
+    hpx_htx_sl_t  *sl;
+    hpx_htx_t     *htx;
+    hpx_ist_t      url, uri;
 
     if(!global.nuster.manager.uri.len) {
         return NST_ERR;
@@ -118,10 +121,11 @@ static int _nst_manager_check_uri(struct http_msg *msg) {
     return NST_OK;
 }
 
-static inline int _nst_manager_check_purge_method(struct http_txn *txn, struct http_msg *msg) {
+static inline int
+_nst_manager_check_purge_method(hpx_http_txn_t *txn, hpx_http_msg_t *msg) {
 
-    struct htx *htx = htxbuf(&msg->chn->buf);
-    struct htx_sl *sl = http_get_stline(htx);
+    hpx_htx_t     *htx = htxbuf(&msg->chn->buf);
+    hpx_htx_sl_t  *sl  = http_get_stline(htx);
 
     if(txn->meth == HTTP_METH_OTHER
         && isteqi(htx_sl_req_meth(sl), global.nuster.manager.purge_method)) {
@@ -134,12 +138,12 @@ static inline int _nst_manager_check_purge_method(struct http_txn *txn, struct h
 /*
  * return 1 if the request is done, otherwise 0
  */
-int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
-    struct http_txn *txn = s->txn;
-    struct http_msg *msg = &txn->req;
-    struct htx *htx      = htxbuf(&s->req.buf);
-
-    struct http_hdr_ctx hdr = { .blk = NULL };
+int
+nst_manager(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_http_txn_t     *txn = s->txn;
+    hpx_http_msg_t     *msg = &txn->req;
+    hpx_htx_t          *htx = htxbuf(&s->req.buf);
 
     if(global.nuster.manager.status != NST_STATUS_ON) {
         return 0;
@@ -159,8 +163,8 @@ int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
                 /* stats */
                 return nst_stats_applet(s, req, px);
             } else if(txn->meth == HTTP_METH_POST) {
-                int state = -1;
-                int ttl   = -1;
+                int  state = -1;
+                int  ttl   = -1;
 
                 /* manager */
                 if(http_find_header(htx, ist("state"), &hdr, 0)) {
@@ -191,7 +195,8 @@ int nst_manager(struct stream *s, struct channel *req, struct proxy *px) {
     return 1;
 }
 
-void nst_manager_init() {
+void
+nst_manager_init() {
     nst_purger_init();
 
     if(nst_stats_init() != NST_OK) {

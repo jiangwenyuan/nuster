@@ -24,8 +24,9 @@
 const char *nst_cache_flt_id = "cache filter id";
 const char *nst_nosql_flt_id = "nosql filter id";
 
-static struct nst_key_element *_nst_parse_rule_key_cast(char *str) {
-    struct nst_key_element *key = NULL;
+static nst_key_element_t *
+_nst_parse_rule_key_cast(char *str) {
+    nst_key_element_t  *key = NULL;
 
     if(!strcmp(str, "method")) {
         key       = malloc(sizeof(*key));
@@ -76,21 +77,23 @@ static struct nst_key_element *_nst_parse_rule_key_cast(char *str) {
     return key;
 }
 
-static struct nst_key_element **_nst_parse_rule_key(char *str) {
-    struct nst_key_element **pk = NULL;
-    char *m, *tmp = strdup(str);
-    int i = 0;
+static nst_key_element_t **
+_nst_parse_rule_key(char *str) {
+    nst_key_element_t  **pk  = NULL;
+    char                *tmp = strdup(str);
+    int                  i   = 0;
+    char                *m;
 
     m = strtok(tmp, ".");
 
     while(m) {
-        struct nst_key_element *key = _nst_parse_rule_key_cast(m);
+        nst_key_element_t  *key = _nst_parse_rule_key_cast(m);
 
         if(!key) {
             goto err;
         }
 
-        pk = realloc(pk, (i + 1) * sizeof(struct nst_key_element *));
+        pk = realloc(pk, (i + 1) * sizeof(nst_key_element_t *));
         pk[i++] = key;
         m = strtok(NULL, ".");
     }
@@ -99,7 +102,7 @@ static struct nst_key_element **_nst_parse_rule_key(char *str) {
         goto err;
     }
 
-    pk = realloc(pk, (i + 1) * sizeof(struct nst_key_element *));
+    pk = realloc(pk, (i + 1) * sizeof(nst_key_element_t *));
     pk[i] = NULL;
 
     free(tmp);
@@ -121,19 +124,21 @@ err:
     return NULL;
 }
 
-static struct nst_rule_code *_nst_parse_rule_code(char *str) {
+static nst_rule_code_t *
+_nst_parse_rule_code(char *str) {
 
     if(!strcmp(str, "all")) {
         return NULL;
     } else {
-        struct nst_rule_code *code = NULL;
-        char *tmp = strdup(str);
-        char *m = strtok(tmp, ",");
+        nst_rule_code_t  *code = NULL;
+        char             *tmp  = strdup(str);
+        char             *m    = strtok(tmp, ",");
 
         /* warn ","? */
         while(m) {
-            int i = atoi(m);
-            struct nst_rule_code *cc = malloc(sizeof(*cc));
+            int               i  = atoi(m);
+            nst_rule_code_t  *cc = malloc(sizeof(*cc));
+
             cc->code = i;
 
             if(code) {
@@ -143,6 +148,7 @@ static struct nst_rule_code *_nst_parse_rule_code(char *str) {
             }
 
             code = cc;
+
             m = strtok(NULL, ",");
         }
 
@@ -156,11 +162,13 @@ static struct nst_rule_code *_nst_parse_rule_code(char *str) {
 /*
  * Parse size
  */
-const char *nst_parse_size(const char *text, uint64_t *ret) {
-    uint64_t value = 0;
+const char *
+nst_parse_size(const char *text, uint64_t *ret) {
+    uint64_t  value = 0;
 
     while(1) {
-        unsigned int i;
+        unsigned int  i;
+
         i = *text - '0';
 
         if(i > 9) {
@@ -229,9 +237,10 @@ end:
 /*
  * Parse time
  */
-const char *nst_parse_time(const char *text, int len, unsigned *ret) {
-    unsigned imult, idiv, omult, odiv;
-    unsigned value;
+const char *
+nst_parse_time(const char *text, int len, unsigned *ret) {
+    unsigned  imult, idiv, omult, odiv;
+    unsigned  value;
 
     if(*text - '0' > 9) {
         return text;
@@ -300,10 +309,10 @@ const char *nst_parse_time(const char *text, int len, unsigned *ret) {
     return NULL;
 }
 
-int nuster_parse_global_manager(const char *file, int linenum, char **args) {
-
-    int err_code = 0;
-    int cur_arg  = 1;
+int
+nuster_parse_global_manager(const char *file, int linenum, char **args) {
+    int  err_code = 0;
+    int  cur_arg  = 1;
 
     if(global.nuster.manager.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
@@ -391,10 +400,10 @@ out:
     return err_code;
 }
 
-int nuster_parse_global_cache(const char *file, int linenum, char **args) {
-
-    int err_code = 0;
-    int cur_arg  = 1;
+int
+nuster_parse_global_cache(const char *file, int linenum, char **args) {
+    int  err_code = 0;
+    int  cur_arg  = 1;
 
     if(global.nuster.cache.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
@@ -623,10 +632,10 @@ out:
     return err_code;
 }
 
-int nuster_parse_global_nosql(const char *file, int linenum, char **args) {
-
-    int err_code = 0;
-    int cur_arg  = 1;
+int
+nuster_parse_global_nosql(const char *file, int linenum, char **args) {
+    int  err_code = 0;
+    int  cur_arg  = 1;
 
     if(global.nuster.nosql.status != NST_STATUS_UNDEFINED) {
         ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n",
@@ -861,12 +870,13 @@ out:
     return err_code;
 }
 
-int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
-        struct proxy *defpx, const char *file, int line, char **err) {
+int
+nst_parse_proxy_cache(char **args, int section, hpx_proxy_t *px, hpx_proxy_t *defpx,
+        const char *file, int line, char **err) {
 
-    struct flt_conf *fconf;
-    struct nst_flt_conf *conf;
-    int cur_arg = 1;
+    hpx_flt_conf_t  *fconf;
+    nst_flt_conf_t  *conf;
+    int              cur_arg = 1;
 
     list_for_each_entry(fconf, &px->filter_configs, list) {
 
@@ -919,12 +929,13 @@ int nst_parse_proxy_cache(char **args, int section, struct proxy *px,
     return 0;
 }
 
-int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
-        struct proxy *defpx, const char *file, int line, char **err) {
+int
+nst_parse_proxy_nosql(char **args, int section, hpx_proxy_t *px, hpx_proxy_t *defpx,
+        const char *file, int line, char **err) {
 
-    struct flt_conf *fconf;
-    struct nst_flt_conf *conf;
-    int cur_arg = 1;
+    hpx_flt_conf_t  *fconf;
+    nst_flt_conf_t  *conf;
+    int              cur_arg = 1;
 
     list_for_each_entry(fconf, &px->filter_configs, list) {
 
@@ -977,25 +988,21 @@ int nst_parse_proxy_nosql(char **args, int section, struct proxy *px,
     return 0;
 }
 
-int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct proxy *defpx,
+int
+nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *defpx,
         const char *file, int line, char **err) {
 
-    struct nst_rule_config *rule = NULL;
+    nst_rule_config_t  *rule = NULL;
+    hpx_acl_cond_t     *cond = NULL;
+    char               *name = NULL;
+    char               *key  = NULL;
+    char               *code = NULL;
 
-    struct acl_cond *cond = NULL;
+    int         ttl, disk, etag, last_modified;
+    uint8_t     extend[4] = { -1 };
+    int         cur_arg   = 2;
 
-    char *name = NULL;
-    char *key  = NULL;
-    char *code = NULL;
-    int   ttl  = -1;
-    int   disk = -1;
-    int   etag = -1;
-
-    int last_modified = -1;
-
-    uint8_t extend[4] = { -1 };
-
-    int cur_arg = 2;
+    ttl = disk = etag = last_modified = -1;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' section.");
@@ -1123,6 +1130,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -1208,11 +1216,10 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
             } else if(!strcmp(args[cur_arg], "off")) {
                 extend[0] = extend[1] = extend[2] = extend[3] = 0;
             } else {
-                char *tmp = strdup(args[cur_arg]);
-                char *ptr = tmp;
-                char *next;
-
-                int t, i = 0;
+                char  *tmp = strdup(args[cur_arg]);
+                char  *ptr = tmp;
+                char  *next;
+                int    t, i = 0;
 
                 while(tmp != NULL) {
                     strsep(&ptr, ",");
@@ -1273,7 +1280,7 @@ int nst_parse_proxy_rule(char **args, int section, struct proxy *proxy, struct p
     if(!strcmp(args[cur_arg], "if") || !strcmp(args[cur_arg], "unless")) {
 
         if(*args[cur_arg + 1] != 0) {
-            char *errmsg = NULL;
+            char  *errmsg = NULL;
 
             if((cond = build_acl_cond(file, line, &proxy->acl, proxy, (const char **)args + cur_arg,
                             &errmsg)) == NULL) {
@@ -1345,8 +1352,9 @@ out:
     return -1;
 }
 
-int nst_parse_proxy(char **args, int section, struct proxy *px,
-        struct proxy *defpx, const char *file, int line, char **err) {
+int
+nst_parse_proxy(char **args, int section, hpx_proxy_t *px, hpx_proxy_t *defpx,
+        const char *file, int line, char **err) {
 
     if(px->cap != PR_CAP_BE) {
         memprintf(err, "[proxy] '%s' is only allowed in 'backend' section.", args[0]);

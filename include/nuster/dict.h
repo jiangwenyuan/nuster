@@ -23,8 +23,8 @@
 #define _NUSTER_DICT_H
 
 #include <nuster/common.h>
-#include <nuster/persist.h>
 #include <nuster/http.h>
+#include <nuster/key.h>
 
 /*
  * A nst_dict_entry is an entry in nst_dict hash table
@@ -36,58 +36,59 @@ enum {
     NST_DICT_ENTRY_STATE_EXPIRED,
 };
 
-struct nst_dict_entry {
-    int                     state;
+typedef struct nst_dict_entry {
+    struct nst_dict_entry      *next;
 
-    struct nst_key          key;
-    struct nst_rule        *rule;        /* rule */
-    struct nst_data        *data;
+    int                         state;
 
-    struct buffer           buf;
+    nst_key_t                   key;
+    nst_rule_t                 *rule;           /* rule */
+    nst_data_t                 *data;
 
-    struct ist              host;
-    struct ist              path;
-    struct ist              etag;
-    struct ist              last_modified;
+    hpx_buffer_t                buf;
 
-    int                     pid;         /* proxy uuid */
-    char                   *file;
-    int                     header_len;
+    hpx_ist_t                   host;
+    hpx_ist_t                   path;
+    hpx_ist_t                   etag;
+    hpx_ist_t                   last_modified;
 
-    uint64_t                expire;
-    uint64_t                ctime;
-    uint64_t                atime;
+    int                         pid;            /* proxy uuid */
+    char                       *file;
+    int                         header_len;
+
+    uint64_t                    expire;
+    uint64_t                    ctime;
+    uint64_t                    atime;
 
     /* For entries loaded from disk */
-    uint32_t                ttl;
-    uint8_t                 extend[4];
+    uint32_t                    ttl;
+    uint8_t                     extend[4];
 
     /* see rule.extend */
-    uint64_t                access[4];
+    uint64_t                    access[4];
 
     /* extended count  */
-    int                     extended;
+    int                         extended;
+} nst_dict_entry_t;
 
-    struct nst_dict_entry  *next;
-};
+typedef struct nst_dict {
+    nst_memory_t               *memory;
 
-struct nst_dict {
-    struct nst_memory      *memory;
+    nst_dict_entry_t          **entry;
+    uint64_t                    size;           /* number of entries */
+    uint64_t                    used;           /* number of used entries */
 
-    struct nst_dict_entry **entry;
-    uint64_t                 size;              /* number of entries */
-    uint64_t                 used;              /* number of used entries */
-
-    uint64_t                 cleanup_idx;
+    uint64_t                    cleanup_idx;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t          mutex;
+    pthread_mutex_t             mutex;
 #else
-    unsigned int             waiters;
+    unsigned int                waiters;
 #endif
-};
+} nst_dict_t;
 
-static inline int nst_dict_entry_expired(struct nst_dict_entry *entry) {
+static inline int
+nst_dict_entry_expired(nst_dict_entry_t *entry) {
 
     if(entry->expire == 0) {
         return 0;
@@ -97,7 +98,8 @@ static inline int nst_dict_entry_expired(struct nst_dict_entry *entry) {
 
 }
 
-static inline int nst_dict_entry_invalid(struct nst_dict_entry *entry) {
+static inline int
+nst_dict_entry_invalid(nst_dict_entry_t *entry) {
 
     /* check state */
     if(entry->state == NST_DICT_ENTRY_STATE_INVALID) {
@@ -110,16 +112,15 @@ static inline int nst_dict_entry_invalid(struct nst_dict_entry *entry) {
     return nst_dict_entry_expired(entry);
 }
 
-int nst_dict_init(struct nst_dict *dict, struct nst_memory *memory, uint64_t dict_size);
+int nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size);
 
-struct nst_dict_entry *nst_dict_get(struct nst_dict *dict, struct nst_key *key);
+nst_dict_entry_t *nst_dict_get(nst_dict_t *dict, nst_key_t *key);
+nst_dict_entry_t *nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn,
+        nst_rule_t *rule, int pid, int mode);
 
-struct nst_dict_entry *nst_dict_set(struct nst_dict *dict, struct nst_key *key,
-        struct nst_http_txn *txn, struct nst_rule *rule, int pid, int mode);
+int nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
+        nst_key_t *key, char *file, char *meta);
 
-int nst_dict_set_from_disk(struct nst_dict *dict, struct buffer *buf,
-        struct ist host, struct ist path, struct nst_key *key, char *file, char *meta);
-
-void nst_dict_cleanup(struct nst_dict *dict);
+void nst_dict_cleanup(nst_dict_t *dict);
 
 #endif /* _NUSTER_DICT_H */

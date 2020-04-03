@@ -19,7 +19,8 @@
 
 #include <nuster/nuster.h>
 
-void nst_stats_update_cache(int state) {
+void
+nst_stats_update_cache(int state) {
     nst_shctx_lock(global.nuster.stats);
 
     global.nuster.stats->cache.total++;
@@ -46,9 +47,10 @@ void nst_stats_update_cache(int state) {
  * return 1 if the req is done, otherwise 0
  */
 
-int nst_stats_applet(struct stream *s, struct channel *req, struct proxy *px) {
-    struct stream_interface *si = &s->si[1];
-    struct appctx *appctx       = NULL;
+int
+nst_stats_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
+    hpx_stream_interface_t  *si = &s->si[1];
+    hpx_appctx_t            *appctx;
 
     s->target = &nuster.applet.stats.obj_type;
 
@@ -69,13 +71,14 @@ int nst_stats_applet(struct stream *s, struct channel *req, struct proxy *px) {
 
 }
 
-static int _nst_stats_header(struct appctx *appctx, struct stream_interface *si, struct htx *htx) {
-    struct stream *s = si_strm(si);
-    struct htx_sl *sl;
-    unsigned int flags;
+static int
+_nst_stats_header(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *htx) {
+    hpx_stream_t  *s = si_strm(si);
+    hpx_htx_sl_t  *sl;
+    unsigned int  flags;
 
     flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_ENC|HTX_SL_F_XFER_LEN|HTX_SL_F_CHNK);
-    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), ist("200"), ist("OK"));
+    sl    = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"), ist("200"), ist("OK"));
 
     if(!sl) {
         goto full;
@@ -106,7 +109,8 @@ full:
     return 0;
 }
 
-static int _nst_stats_putdata(struct channel *chn, struct htx *htx, struct buffer *chk) {
+static int
+_nst_stats_putdata(hpx_channel_t *chn, hpx_htx_t *htx, hpx_buffer_t *chk) {
 
     if(chk->data >= channel_htx_recv_max(chn, htx)) {
         return 0;
@@ -122,9 +126,10 @@ static int _nst_stats_putdata(struct channel *chn, struct htx *htx, struct buffe
     return 1;
 }
 
-static int _getMaxPaddingLen() {
-    struct proxy *p;
-    int max = 32;
+static int
+_getMaxPaddingLen() {
+    hpx_proxy_t  *p;
+    int           max = 32;
 
     p = proxies_list;
 
@@ -133,13 +138,13 @@ static int _getMaxPaddingLen() {
         if((p->cap & PR_CAP_BE)
                 && (p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL)) {
 
-            struct nst_rule *rule = NULL;
-            int s1 = strlen(p->id);
+            nst_rule_t  *rule = NULL;
+            int          s1   = strlen(p->id);
 
             rule = nuster.proxy[p->uuid]->rule;
 
             while(rule) {
-                int s2 = s1 + 8 + strlen(rule->name);
+                int  s2 = s1 + 8 + strlen(rule->name);
 
                 if(s2 > max) {
                     max = s2;
@@ -156,10 +161,9 @@ static int _getMaxPaddingLen() {
 }
 
 static int
-_nst_stats_payload(struct appctx *appctx, struct stream_interface *si, struct htx *htx) {
-    struct channel *res = si_ic(si);
-
-    int len = _getMaxPaddingLen();
+_nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *htx) {
+    hpx_channel_t  *res = si_ic(si);
+    int             len = _getMaxPaddingLen();
 
     chunk_reset(&trash);
 
@@ -257,18 +261,18 @@ full:
     return 0;
 }
 
-static int _nst_stats_proxy(struct appctx *appctx, struct stream_interface *si, struct htx *htx) {
-    struct channel *res = si_ic(si);
-    struct proxy *p;
-
-    int len = _getMaxPaddingLen();
+static int
+_nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *htx) {
+    hpx_channel_t  *res = si_ic(si);
+    hpx_proxy_t    *p;
+    int             len = _getMaxPaddingLen();
 
     chunk_reset(&trash);
 
     p = proxies_list;
 
     while(p) {
-        struct nst_rule *rule = NULL;
+        nst_rule_t  *rule = NULL;
 
         if(htx_almost_full(htx)) {
             si_rx_room_blk(si);
@@ -294,7 +298,7 @@ static int _nst_stats_proxy(struct appctx *appctx, struct stream_interface *si, 
                 }
 
                 if(rule->uuid == appctx->st2) {
-                    int i = len - strlen(p->id) - 8 - strlen(rule->name);
+                    int  i = len - strlen(p->id) - 8 - strlen(rule->name);
 
                     if(rule->idx == 0) {
                         chunk_printf(&trash, "\n**PROXY %s %s**\n",
@@ -343,13 +347,13 @@ full:
     return 0;
 }
 
-static void nst_stats_handler(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
-    struct channel *req         = si_oc(si);
-    struct channel *res         = si_ic(si);
-    struct stream *s            = si_strm(si);
-
-    struct htx *req_htx, *res_htx;
+static void
+nst_stats_handler(hpx_appctx_t *appctx) {
+    hpx_stream_interface_t  *si  = appctx->owner;
+    hpx_channel_t           *req = si_oc(si);
+    hpx_channel_t           *res = si_ic(si);
+    hpx_stream_t            *s   = si_strm(si);
+    hpx_htx_t               *req_htx, *res_htx;
 
     req_htx = htx_from_buf(&req->buf);
     res_htx = htx_from_buf(&res->buf);
@@ -405,14 +409,15 @@ out:
     }
 }
 
-int nst_stats_init() {
-    global.nuster.stats = nst_memory_alloc(global.nuster.memory, sizeof(struct nst_stats));
+int
+nst_stats_init() {
+    global.nuster.stats = nst_memory_alloc(global.nuster.memory, sizeof(nst_stats_t));
 
     if(!global.nuster.stats) {
         return NST_ERR;
     }
 
-    memset(global.nuster.stats, 0, sizeof(struct nst_stats));
+    memset(global.nuster.stats, 0, sizeof(nst_stats_t));
 
     if(nst_shctx_init(global.nuster.stats) != NST_OK) {
         return NST_ERR;

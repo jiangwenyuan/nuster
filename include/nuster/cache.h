@@ -25,33 +25,30 @@
 #include <nuster/common.h>
 
 
-extern struct flt_ops  nst_cache_filter_ops;
-extern const char *nst_cache_flt_id;
+extern hpx_flt_ops_t  nst_cache_filter_ops;
+extern const char    *nst_cache_flt_id;
 
 
 void nst_cache_init();
 void nst_cache_housekeeping();
 
-void nst_cache_finish(struct nst_ctx *ctx);
-void nst_cache_abort(struct nst_ctx *ctx);
-int nst_cache_exists(struct nst_ctx *ctx);
-int nst_cache_delete(struct nst_key *key);
-struct nst_data *nst_cache_data_new();
-void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
-        struct channel *res, struct nst_ctx *ctx);
+void nst_cache_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
+void nst_cache_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
 
-void nst_cache_persist_cleanup();
+void nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx);
+int nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
+void nst_cache_finish(nst_ctx_t *ctx);
+void nst_cache_abort(nst_ctx_t *ctx);
+int nst_cache_exists(nst_ctx_t *ctx);
+int nst_cache_delete(nst_key_t *key);
+void nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req,
+        hpx_channel_t *res, nst_ctx_t *ctx);
+
 void nst_cache_persist_load();
+void nst_cache_persist_cleanup();
 void nst_cache_persist_async();
-void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx);
 
-void
-nst_cache_build_last_modified(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx);
-
-int nst_cache_update(struct http_msg *msg, struct nst_ctx *ctx,
-        unsigned int offset, unsigned int len);
-
-void nst_cache_create(struct http_msg *msg, struct nst_ctx *ctx);
+nst_data_t *nst_cache_data_new();
 
 #define nst_cache_memory_alloc(size)    nst_memory_alloc(global.nuster.cache.memory, size)
 #define nst_cache_memory_free(p)        nst_memory_free(global.nuster.cache.memory, p)

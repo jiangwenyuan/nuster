@@ -28,7 +28,8 @@
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
 
-static inline int _nst_shctx_init(pthread_mutex_t *mutex) {
+static inline int
+_nst_shctx_init(pthread_mutex_t *mutex) {
     pthread_mutexattr_t attr;
 
     if(pthread_mutexattr_init(&attr)) {
@@ -53,13 +54,14 @@ static inline int _nst_shctx_init(pthread_mutex_t *mutex) {
 #else
 
 #ifdef USE_SYSCALL_FUTEX
-static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr,
-        int value) {
+static inline void
+_shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
 
     syscall(SYS_futex, uaddr, FUTEX_WAIT, value, NULL, 0, 0);
 }
 
-static inline void _shctx_awakelocker(unsigned int *uaddr) {
+static inline void
+_shctx_awakelocker(unsigned int *uaddr) {
     syscall(SYS_futex, uaddr, FUTEX_WAKE, 1, NULL, 0, 0);
 }
 
@@ -67,17 +69,19 @@ static inline void _shctx_awakelocker(unsigned int *uaddr) {
 
 #if defined (__i486__) || defined (__i586__) || defined (__i686__)           \
     || defined (__x86_64__)
-static inline void relax() {
+static inline void
+relax() {
     __asm volatile("rep;nop\n" ::: "memory");
 }
 #else /* if no x86_64 or i586 arch: use less optimized but generic asm */
-static inline void relax() {
+static inline void
+relax() {
     __asm volatile("" ::: "memory");
 }
 #endif
 
-static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr,
-        int value) {
+static inline void
+_shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
 
     int i;
 
@@ -95,7 +99,8 @@ static inline void _shctx_wait4lock(unsigned int *count, unsigned int *uaddr,
 
 #if defined (__i486__) || defined (__i586__) || defined (__i686__)           \
     || defined (__x86_64__)
-static inline unsigned int xchg(unsigned int *ptr, unsigned int x) {
+static inline unsigned int
+xchg(unsigned int *ptr, unsigned int x) {
     __asm volatile("lock xchgl %0,%1"
             : "=r" (x), "+m" (*ptr)
             : "0" (x)
@@ -104,8 +109,8 @@ static inline unsigned int xchg(unsigned int *ptr, unsigned int x) {
     return x;
 }
 
-static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old,
-        unsigned int new) {
+static inline unsigned int
+cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
 
     unsigned int ret;
 
@@ -117,7 +122,8 @@ static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old,
     return ret;
 }
 
-static inline unsigned char atomic_dec(unsigned int *ptr) {
+static inline unsigned char
+atomic_dec(unsigned int *ptr) {
     unsigned char ret;
 
     __asm volatile("lock decl %0\n"
@@ -130,23 +136,26 @@ static inline unsigned char atomic_dec(unsigned int *ptr) {
 }
 
 #else /* if no x86_64 or i586 arch: use less optimized gcc >= 4.1 built-ins */
-static inline unsigned int xchg(unsigned int *ptr, unsigned int x) {
+static inline unsigned int
+xchg(unsigned int *ptr, unsigned int x) {
     return __sync_lock_test_and_set(ptr, x);
 }
 
-static inline unsigned int cmpxchg(unsigned int *ptr, unsigned int old,
-        unsigned int new) {
+static inline unsigned int
+cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
 
     return __sync_val_compare_and_swap(ptr, old, new);
 }
 
-static inline unsigned char atomic_dec(unsigned int *ptr) {
+static inline unsigned char
+atomic_dec(unsigned int *ptr) {
     return __sync_sub_and_fetch(ptr, 1) ? 1 : 0;
 }
 
 #endif
 
-static inline void _shctx_lock(unsigned int *waiters) {
+static inline void
+_shctx_lock(unsigned int *waiters) {
     unsigned int x;
     unsigned int count = 4;
 
@@ -167,7 +176,8 @@ static inline void _shctx_lock(unsigned int *waiters) {
 
 }
 
-static inline void _shctx_unlock(unsigned int *waiters) {
+static inline void
+_shctx_unlock(unsigned int *waiters) {
 
     if (atomic_dec(waiters)) {
         *waiters = 0;
@@ -176,7 +186,8 @@ static inline void _shctx_unlock(unsigned int *waiters) {
 
 }
 
-static inline int _nst_shctx_init(unsigned int *waiters) {
+static inline int
+_nst_shctx_init(unsigned int *waiters) {
     *waiters = 0;
 
     return NST_OK;

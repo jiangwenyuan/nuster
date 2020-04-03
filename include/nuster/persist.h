@@ -75,63 +75,73 @@
 #define NST_PERSIST_POS_KEY                     NST_PERSIST_META_SIZE
 
 enum {
-    NST_PERSIST_APPLET_ERROR   = -1,
-    NST_PERSIST_APPLET_DONE    =  0,
+    NST_PERSIST_APPLET_ERROR    = -1,
+    NST_PERSIST_APPLET_DONE     =  0,
     NST_PERSIST_APPLET_HEADER,
     NST_PERSIST_APPLET_PAYLOAD,
     NST_PERSIST_APPLET_EOM,
 };
 
-struct persist {
-    char *file;             /* cache file */
-    int   fd;
-    int   offset;
-    char  meta[NST_PERSIST_META_SIZE];
-};
+typedef struct nst_persist {
+    char        *file;             /* cache file */
+    int          fd;
+    int          offset;
+    char         meta[NST_PERSIST_META_SIZE];
+} nst_persist_t;
 
 /* /0/00: 5 */
-static inline int nst_persist_path_base_len(struct ist root) {
+static inline int
+nst_persist_path_base_len(hpx_ist_t root) {
     return root.len + 5;
 }
 
 /* /0/00/00322ec3e2428e4a: 5 + 1 + 16 */
-static inline int nst_persist_path_hash_len(struct ist root) {
+static inline int
+nst_persist_path_hash_len(hpx_ist_t root) {
     return root.len + 22;
 }
 
 /* /0/00/00322ec3e2428e4a/71fabeefebdaaedb-16ae92496e1: 22 + 1 + 16 + 1 + 11 */
-static inline int nst_persist_path_file_len(struct ist root) {
+static inline int
+nst_persist_path_file_len(hpx_ist_t root) {
     return root.len + 51;
 }
 
 int nst_persist_mkdir(char *path);
-int nst_persist_init(struct ist root, char *path, uint64_t hash);
+int nst_persist_init(hpx_ist_t root, char *path, uint64_t hash);
 
-static inline int nst_persist_create(const char *pathname) {
+static inline int
+nst_persist_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 
-static inline int nst_persist_open(const char *pathname) {
+static inline int
+nst_persist_open(const char *pathname) {
     return open(pathname, O_RDONLY);
 }
 
-static inline void nst_persist_meta_set_hash(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_hash(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_HASH) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_hash(char *p) {
+static inline uint64_t
+nst_persist_meta_get_hash(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_HASH);
 }
 
-static inline void nst_persist_meta_set_expire(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_expire(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_expire(char *p) {
+static inline uint64_t
+nst_persist_meta_get_expire(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE);
 }
 
-static inline int nst_persist_meta_check_expire(char *p) {
+static inline int
+nst_persist_meta_check_expire(char *p) {
     uint64_t expire = *(uint64_t *)(p + NST_PERSIST_META_POS_EXPIRE);
 
     if(expire == 0) {
@@ -145,71 +155,88 @@ static inline int nst_persist_meta_check_expire(char *p) {
     }
 }
 
-static inline void nst_persist_meta_set_payload_len(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_payload_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_PAYLOAD_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_payload_len(char *p) {
+static inline uint64_t
+nst_persist_meta_get_payload_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_PAYLOAD_LEN);
 }
 
-static inline void nst_persist_meta_set_header_len(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_header_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_HEADER_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_header_len(char *p) {
+static inline uint64_t
+nst_persist_meta_get_header_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_HEADER_LEN);
 }
 
-static inline void nst_persist_meta_set_key_len(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_key_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_KEY_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_key_len(char *p) {
+static inline uint64_t
+nst_persist_meta_get_key_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_KEY_LEN);
 }
 
-static inline void nst_persist_meta_set_host_len(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_host_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_HOST_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_host_len(char *p) {
+static inline uint64_t
+nst_persist_meta_get_host_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_HOST_LEN);
 }
 
-static inline void nst_persist_meta_set_path_len(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_path_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_PATH_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_path_len(char *p) {
+static inline uint64_t
+nst_persist_meta_get_path_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_PATH_LEN);
 }
 
-static inline void nst_persist_meta_set_etag_len(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_etag_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_ETAG_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_etag_len(char *p) {
+static inline uint64_t
+nst_persist_meta_get_etag_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_ETAG_LEN);
 }
 
-static inline void nst_persist_meta_set_last_modified_len(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_last_modified_len(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_LAST_MODIFIED_LEN) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_last_modified_len(char *p) {
+static inline uint64_t
+nst_persist_meta_get_last_modified_len(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_LAST_MODIFIED_LEN);
 }
 
-static inline void nst_persist_meta_set_ttl_extend(char *p, uint64_t v) {
+static inline void
+nst_persist_meta_set_ttl_extend(char *p, uint64_t v) {
     *(uint64_t *)(p + NST_PERSIST_META_POS_TTL_EXTEND) = v;
 }
 
-static inline uint64_t nst_persist_meta_get_ttl_extend(char *p) {
+static inline uint64_t
+nst_persist_meta_get_ttl_extend(char *p) {
     return *(uint64_t *)(p + NST_PERSIST_META_POS_TTL_EXTEND);
 }
 
-static inline int nst_persist_get_header_pos(char *p) {
+static inline int
+nst_persist_get_header_pos(char *p) {
     return (int)(NST_PERSIST_META_SIZE + nst_persist_meta_get_key_len(p)
             + nst_persist_meta_get_host_len(p)
             + nst_persist_meta_get_path_len(p)
@@ -239,9 +266,10 @@ nst_persist_meta_init(char *p, char mode, uint64_t hash, uint64_t expire,
     nst_persist_meta_set_ttl_extend(p, ttl_extend);
 }
 
-int nst_persist_exists(struct ist root, struct persist *disk, struct nst_key *key);
+int nst_persist_exists(hpx_ist_t root, nst_persist_t *disk, nst_key_t *key);
 
-static inline int nst_persist_write(struct persist *disk, char *buf, int len) {
+static inline int
+nst_persist_write(nst_persist_t *disk, char *buf, int len) {
     ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
 
     if(ret != len) {
@@ -253,21 +281,22 @@ static inline int nst_persist_write(struct persist *disk, char *buf, int len) {
     return NST_OK;
 }
 
-static inline int nst_persist_write_meta(struct persist *disk) {
+static inline int
+nst_persist_write_meta(nst_persist_t *disk) {
     disk->offset = 0;
 
     return nst_persist_write(disk, disk->meta, NST_PERSIST_META_SIZE);
 }
 
 static inline int
-nst_persist_write_key(struct persist *disk, struct nst_key *key) {
+nst_persist_write_key(nst_persist_t *disk, nst_key_t *key) {
     disk->offset = NST_PERSIST_POS_KEY;
 
     return nst_persist_write(disk, key->data, key->size);
 }
 
 static inline int
-nst_persist_write_host(struct persist *disk, struct ist host) {
+nst_persist_write_host(nst_persist_t *disk, hpx_ist_t host) {
 
     disk->offset = NST_PERSIST_POS_KEY + nst_persist_meta_get_key_len(disk->meta);
 
@@ -275,7 +304,7 @@ nst_persist_write_host(struct persist *disk, struct ist host) {
 }
 
 static inline int
-nst_persist_write_path(struct persist *disk, struct ist path) {
+nst_persist_write_path(nst_persist_t *disk, hpx_ist_t path) {
 
     disk->offset = NST_PERSIST_POS_KEY
         + nst_persist_meta_get_key_len(disk->meta)
@@ -285,7 +314,7 @@ nst_persist_write_path(struct persist *disk, struct ist path) {
 }
 
 static inline int
-nst_persist_write_etag(struct persist *disk, struct ist etag) {
+nst_persist_write_etag(nst_persist_t *disk, hpx_ist_t etag) {
 
     disk->offset = NST_PERSIST_POS_KEY
         + nst_persist_meta_get_key_len(disk->meta)
@@ -296,7 +325,7 @@ nst_persist_write_etag(struct persist *disk, struct ist etag) {
 }
 
 static inline int
-nst_persist_write_last_modified(struct persist *disk, struct ist lm) {
+nst_persist_write_last_modified(nst_persist_t *disk, hpx_ist_t lm) {
 
     disk->offset = NST_PERSIST_POS_KEY
         + nst_persist_meta_get_key_len(disk->meta)
@@ -307,19 +336,19 @@ nst_persist_write_last_modified(struct persist *disk, struct ist lm) {
     return nst_persist_write(disk, lm.ptr, lm.len);
 }
 
-void nst_persist_load(char *path, struct dirent *de1, char **meta, char **key);
+void nst_persist_load(char *path, nst_dirent_t *de1, char **meta, char **key);
 int nst_persist_get_meta(int fd, char *meta);
-int nst_persist_get_key(int fd, char *meta, struct nst_key *key);
-int nst_persist_get_host(int fd, char *meta, struct ist host);
-int nst_persist_get_path(int fd, char *meta, struct ist path);
-int nst_persist_get_etag(int fd, char *meta, struct ist etag);
-int nst_persist_get_last_modified(int fd, char *meta, struct ist last_modified);
+int nst_persist_get_key(int fd, char *meta, nst_key_t *key);
+int nst_persist_get_host(int fd, char *meta, hpx_ist_t host);
+int nst_persist_get_path(int fd, char *meta, hpx_ist_t path);
+int nst_persist_get_etag(int fd, char *meta, hpx_ist_t etag);
+int nst_persist_get_last_modified(int fd, char *meta, hpx_ist_t last_modified);
 
-DIR *nst_persist_opendir_by_idx(struct ist root, char *path, int idx);
-void nst_persist_cleanup(struct ist root, char *path, struct dirent *de);
-struct dirent *nst_persist_dir_next(DIR *dir);
-int nst_persist_valid(struct persist *disk, struct nst_key *key);
-int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_key *key);
+DIR *nst_persist_opendir_by_idx(hpx_ist_t root, char *path, int idx);
+void nst_persist_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de);
+nst_dirent_t *nst_persist_dir_next(DIR *dir);
+int nst_persist_valid(nst_persist_t *disk, nst_key_t *key);
+int nst_persist_purge_by_key(hpx_ist_t root, nst_persist_t *disk, nst_key_t *key);
 int nst_persist_purge_by_path(char *path);
 void nst_persist_update_expire(char *file, uint64_t expire);
 

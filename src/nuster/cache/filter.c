@@ -24,17 +24,19 @@
 
 #include <nuster/nuster.h>
 
-static int _nst_cache_filter_init(struct proxy *px, struct flt_conf *fconf) {
-    struct nst_flt_conf *conf = fconf->conf;
+static int
+_nst_cache_filter_init(hpx_proxy_t *px, hpx_flt_conf_t *fconf) {
+    nst_flt_conf_t  *conf = fconf->conf;
 
     fconf->flags |= FLT_CFG_FL_HTX;
-    conf->pid = px->uuid;
+    conf->pid     = px->uuid;
 
     return 0;
 }
 
-static void _nst_cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
-    struct nst_flt_conf *conf = fconf->conf;
+static void
+_nst_cache_filter_deinit(hpx_proxy_t *px, hpx_flt_conf_t *fconf) {
+    nst_flt_conf_t  *conf = fconf->conf;
 
     if(conf) {
         free(conf);
@@ -43,7 +45,8 @@ static void _nst_cache_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
     fconf->conf = NULL;
 }
 
-static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
+static int
+_nst_cache_filter_check(hpx_proxy_t *px, hpx_flt_conf_t *fconf) {
 
     if(px->mode != PR_MODE_HTTP) {
         ha_warning("Proxy [%s]: mode should be http to enable cache\n", px->id);
@@ -52,8 +55,9 @@ static int _nst_cache_filter_check(struct proxy *px, struct flt_conf *fconf) {
     return 0;
 }
 
-static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
-    struct nst_flt_conf *conf = FLT_CONF(filter);
+static int
+_nst_cache_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
+    nst_flt_conf_t  *conf = FLT_CONF(filter);
 
     /* disable cache if state is not NST_STATUS_ON */
     if(global.nuster.cache.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
@@ -61,13 +65,13 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     }
 
     if(!filter->ctx) {
-        int rule_cnt, key_cnt, size;
-        struct nst_ctx *ctx;
+        nst_ctx_t  *ctx;
+        int         rule_cnt, key_cnt, size;
 
         rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
         key_cnt  = nuster.proxy[conf->pid]->key_cnt;
 
-        size = sizeof(struct nst_ctx) + key_cnt * sizeof(struct nst_key);
+        size = sizeof(nst_ctx_t) + key_cnt * sizeof(nst_key_t);
 
         ctx = malloc(size);
 
@@ -97,11 +101,12 @@ static int _nst_cache_filter_attach(struct stream *s, struct filter *filter) {
     return 1;
 }
 
-static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
+static void
+_nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
     if(filter->ctx) {
-        int i;
-        struct nst_ctx *ctx = filter->ctx;
+        nst_ctx_t  *ctx = filter->ctx;
+        int         i;
 
         nst_stats_update_cache(ctx->state);
 
@@ -114,7 +119,7 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
         }
 
         for(i = 0; i < ctx->key_cnt; i++) {
-            struct nst_key key = ctx->keys[i];
+            nst_key_t key = ctx->keys[i];
 
             if(key.data) {
                 free(key.data);
@@ -128,13 +133,13 @@ static void _nst_cache_filter_detach(struct stream *s, struct filter *filter) {
 }
 
 static int
-_nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct http_msg *msg) {
-    struct channel *req         = msg->chn;
-    struct channel *res         = &s->res;
-    struct proxy *px            = s->be;
-    struct stream_interface *si = &s->si[1];
-    struct nst_ctx *ctx   = filter->ctx;
-    struct htx *htx;
+_nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg) {
+    hpx_channel_t           *req = msg->chn;
+    hpx_channel_t           *res = &s->res;
+    hpx_proxy_t             *px  = s->be;
+    hpx_stream_interface_t  *si  = &s->si[1];
+    nst_ctx_t               *ctx = filter->ctx;
+    hpx_htx_t               *htx;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
         /* request */
@@ -145,7 +150,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
         }
 
         if(ctx->state == NST_CTX_STATE_INIT) {
-            int i = 0;
+            int  i = 0;
 
             if(nst_http_parse_htx(s, msg, &ctx->txn) != NST_OK) {
                 ctx->state = NST_CTX_STATE_BYPASS;
@@ -156,8 +161,8 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
             ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
-                int idx = ctx->rule->key->idx;
-                struct nst_key *key = &(ctx->keys[idx]);
+                int        idx  = ctx->rule->key->idx;
+                nst_key_t  *key = &(ctx->keys[idx]);
 
                 nst_debug(s, "[cache] ==== Check rule: %s ====\n", ctx->rule->name);
 
@@ -264,9 +269,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
             }
         }
 
-        if(ctx->state == NST_CTX_STATE_HIT_MEMORY
-                || ctx->state == NST_CTX_STATE_HIT_DISK) {
-
+        if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
             nst_cache_hit(s, si, req, res, ctx);
         }
 
@@ -274,7 +277,7 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
         /* response */
 
         if(ctx->state == NST_CTX_STATE_INIT) {
-            int i = 0;
+            int  i = 0;
 
             ctx->rule = nuster.proxy[px->uuid]->rule;
 
@@ -297,9 +300,8 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
         }
 
         if(ctx->state == NST_CTX_STATE_PASS) {
-            struct nst_rule_code *cc = ctx->rule->code;
-
-            int valid = 0;
+            nst_rule_code_t  *cc    = ctx->rule->code;
+            int               valid = 0;
 
             /* check if code is valid */
             nst_debug(s, "[cache] Check status code: ");
@@ -342,10 +344,11 @@ _nst_cache_filter_http_headers(struct stream *s, struct filter *filter, struct h
     return 1;
 }
 
-static int _nst_cache_filter_http_payload(struct stream *s, struct filter *filter,
-        struct http_msg *msg, unsigned int offset, unsigned int len) {
+static int
+_nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg,
+        unsigned int offset, unsigned int len) {
 
-    struct nst_ctx *ctx = filter->ctx;
+    nst_ctx_t  *ctx = filter->ctx;
 
     if(len <= 0) {
         return 0;
@@ -370,9 +373,9 @@ err:
 }
 
 static int
-_nst_cache_filter_http_end(struct stream *s, struct filter *filter, struct http_msg *msg) {
+_nst_cache_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg) {
 
-    struct nst_ctx *ctx = filter->ctx;
+    nst_ctx_t  *ctx = filter->ctx;
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         nst_cache_finish(ctx);
@@ -382,7 +385,7 @@ _nst_cache_filter_http_end(struct stream *s, struct filter *filter, struct http_
     return 1;
 }
 
-struct flt_ops nst_cache_filter_ops = {
+hpx_flt_ops_t nst_cache_filter_ops = {
     /* Manage cache filter, called for each filter declaration */
     .init   = _nst_cache_filter_init,
     .deinit = _nst_cache_filter_deinit,
@@ -399,10 +402,10 @@ struct flt_ops nst_cache_filter_ops = {
 };
 
 static int
-nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp, const char *kw, void *private) {
+nst_smp_fetch_cache_hit(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw, void *private) {
 
-    struct nst_ctx *ctx;
-    struct filter        *filter;
+    nst_ctx_t *ctx;
+    hpx_filter_t        *filter;
 
     list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
         if(FLT_ID(filter) != nst_cache_flt_id) {
@@ -423,7 +426,7 @@ nst_smp_fetch_cache_hit(const struct arg *args, struct sample *smp, const char *
     return 0;
 }
 
-static struct sample_fetch_kw_list nst_sample_fetch_keywords = {
+static hpx_sample_fetch_kw_list_t nst_sample_fetch_keywords = {
     ILH, {
         { "nuster.cache.hit", nst_smp_fetch_cache_hit, 0, NULL, SMP_T_BOOL, SMP_USE_HRSHP },
     }

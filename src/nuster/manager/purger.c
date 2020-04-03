@@ -23,12 +23,13 @@
 /*
  * purge cache by key
  */
-int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px) {
-    struct http_msg *msg = &s->txn->req;
-    struct nst_key key;
-    int ret;
+int
+nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
+    hpx_http_msg_t  *msg = &s->txn->req;
+    nst_key_t        key;
+    int              ret;
 
-    struct nst_http_txn txn;
+    nst_http_txn_t txn;
 
     if(nst_http_txn_attach(&txn) != NST_OK) {
         goto err;
@@ -37,7 +38,7 @@ int nst_purger_basic(struct stream *s, struct channel *req, struct proxy *px) {
     if((px->cap & PR_CAP_BE)
             && (px->nuster.mode == NST_MODE_CACHE || px->nuster.mode == NST_MODE_NOSQL)) {
 
-        struct nst_rule *rule = nuster.proxy[px->uuid]->rule;
+        nst_rule_t  *rule = nuster.proxy[px->uuid]->rule;
 
         if(nst_http_parse_htx(s, msg, &txn) != NST_OK) {
             goto err;
@@ -89,22 +90,23 @@ end:
     return 1;
 }
 
-int nst_purger_advanced(struct stream *s, struct channel *req, struct proxy *px) {
-    struct stream_interface *si = &s->si[1];
-    struct appctx *appctx       = NULL;
-    int mode                    = NST_MANAGER_NAME_RULE;
-    int st1                     = 0;
-    char *host                  = NULL;
-    char *path                  = NULL;
-    struct my_regex *regex      = NULL;
-    char *error                 = NULL;
-    char *regex_str             = NULL;
-    int host_len                = 0;
-    int path_len                = 0;
-    struct proxy *p;
+int
+nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
+    hpx_stream_interface_t  *si  = &s->si[1];
+    hpx_htx_t               *htx = htxbuf(&s->req.buf);
+    hpx_http_hdr_ctx_t       hdr = { .blk = NULL };
+    hpx_proxy_t             *p;
+    hpx_appctx_t            *appctx;
+    hpx_my_regex_t          *regex;
+    char                    *regex_str, *error, *host, *path;
+    int                      host_len, path_len, mode, st1;
 
-    struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr = { .blk = NULL };
+    host     = NULL;
+    path     = NULL;
+    host_len = 0;
+    path_len = 0;
+    mode     = NST_MANAGER_NAME_RULE;
+    st1      = 0;
 
     if(http_find_header(htx, ist("x-host"), &hdr, 0)) {
         host     = hdr.value.ptr;
@@ -122,7 +124,7 @@ int nst_purger_advanced(struct stream *s, struct channel *req, struct proxy *px)
         p = proxies_list;
 
         while(p) {
-            struct nst_rule *rule = NULL;
+            nst_rule_t *rule = NULL;
 
             if((p->cap & PR_CAP_BE)
                     && (p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL)) {
@@ -192,7 +194,7 @@ purge:
     if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
         goto err;
     } else {
-        struct buffer buf = { .area = NULL };
+        hpx_buffer_t buf = { .area = NULL };
 
         appctx      = si_appctx(si);
         memset(&appctx->ctx.nuster.manager, 0, sizeof(appctx->ctx.nuster.manager));
@@ -260,8 +262,9 @@ badreq:
     return 1;
 }
 
-int nst_purger_check(struct appctx *appctx, struct nst_dict_entry *entry) {
-    int ret = 0;
+int
+nst_purger_check(hpx_appctx_t *appctx, nst_dict_entry_t *entry) {
+    int  ret = 0;
 
     switch(appctx->st0) {
         case NST_MANAGER_NAME_ALL:
@@ -303,14 +306,13 @@ int nst_purger_check(struct appctx *appctx, struct nst_dict_entry *entry) {
     return ret;
 }
 
-static void nst_purger_handler(struct appctx *appctx) {
-    struct nst_dict_entry *entry = NULL;
-    struct stream_interface *si   = appctx->owner;
-
-    struct stream *s = si_strm(si);
-    uint64_t start   = get_current_timestamp();
-
-    int max = 1000;
+static void
+nst_purger_handler(hpx_appctx_t *appctx) {
+    nst_dict_entry_t        *entry  = NULL;
+    hpx_stream_interface_t  *si     = appctx->owner;
+    hpx_stream_t             *s     = si_strm(si);
+    uint64_t                  start = get_current_timestamp();
+    int                       max   = 1000;
 
     while(1) {
         nst_shctx_lock(&nuster.cache->dict);
@@ -356,7 +358,8 @@ static void nst_purger_handler(struct appctx *appctx) {
     }
 }
 
-static void nst_purger_release_handler(struct appctx *appctx) {
+static void
+nst_purger_release_handler(hpx_appctx_t *appctx) {
 
     if(appctx->ctx.nuster.manager.regex) {
         regex_free(appctx->ctx.nuster.manager.regex);
@@ -366,7 +369,8 @@ static void nst_purger_release_handler(struct appctx *appctx) {
     nst_cache_memory_free(appctx->ctx.nuster.manager.buf.area);
 }
 
-void nst_purger_init() {
+void
+nst_purger_init() {
     nuster.applet.purger.fct     = nst_purger_handler;
     nuster.applet.purger.release = nst_purger_release_handler;
 }

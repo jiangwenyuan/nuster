@@ -26,17 +26,17 @@
 
 #include <nuster/nuster.h>
 
-static void _nst_cache_memory_handler(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
-    struct channel *req = si_oc(si);
-    struct channel *res = si_ic(si);
-
-    struct htx *req_htx, *res_htx;
-    struct nst_data_element *element = NULL;
-    int total = 0;
+static void
+_nst_cache_memory_handler(hpx_appctx_t *appctx) {
+    hpx_stream_interface_t  *si  = appctx->owner;
+    hpx_channel_t           *req = si_oc(si);
+    hpx_channel_t           *res = si_ic(si);
+    hpx_htx_t               *req_htx, *res_htx;
+    nst_data_element_t      *element = NULL;
+    int                      total = 0;
 
     res_htx = htxbuf(&res->buf);
-    total = res_htx->data;
+    total   = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         appctx->ctx.nuster.cache.data->clients--;
@@ -102,22 +102,21 @@ out:
 /*
  * The cache disk applet acts like the backend to send cached http data
  */
-static void _nst_cache_disk_handler(struct appctx *appctx) {
-    struct stream_interface *si = appctx->owner;
+static void
+_nst_cache_disk_handler(hpx_appctx_t *appctx) {
+    hpx_stream_interface_t  *si = appctx->owner;
+    hpx_channel_t           *req = si_oc(si);
+    hpx_channel_t           *res = si_ic(si);
+    hpx_htx_t               *req_htx, *res_htx;
+    uint64_t                 offset;
+    int                      total, ret, max, fd, header_len;
 
-    struct channel *req = si_oc(si);
-    struct channel *res = si_ic(si);
-    struct htx *req_htx, *res_htx;
-    int total = 0;
-    int ret;
-    int max;
-
-    int fd = appctx->ctx.nuster.cache.fd;
-    int header_len = appctx->ctx.nuster.cache.header_len;
-    uint64_t offset = appctx->ctx.nuster.cache.offset;
+    header_len = appctx->ctx.nuster.cache.header_len;
+    offset     = appctx->ctx.nuster.cache.offset;
+    fd         = appctx->ctx.nuster.cache.fd;
 
     res_htx = htxbuf(&res->buf);
-    total = res_htx->data;
+    total   = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         goto out;
@@ -138,7 +137,8 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
     switch(appctx->st1) {
         case NST_PERSIST_APPLET_HEADER:
             {
-                char *p = trash.area;
+                char  *p = trash.area;
+
                 ret = pread(fd, p, header_len, offset);
 
                 if(ret != header_len) {
@@ -148,16 +148,15 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
                 }
 
                 while(header_len != 0) {
-                    struct htx_blk *blk;
-                    char *ptr;
-                    uint32_t blksz, sz, info;
-                    enum htx_blk_type type;
+                    hpx_htx_blk_type_t  type;
+                    hpx_htx_blk_t       *blk;
+                    char                *ptr;
+                    uint32_t             blksz, sz, info;
 
-                    info = *(uint32_t *)p;
-                    type = (info >> 28);
+                    info  = *(uint32_t *)p;
+                    type  = (info >> 28);
                     blksz = (info & 0xff) + ((info >> 8) & 0xfffff);
-
-                    blk = htx_add_blk(res_htx, type, blksz);
+                    blk   = htx_add_blk(res_htx, type, blksz);
 
                     if(!blk) {
                         appctx->st1 = NST_PERSIST_APPLET_ERROR;
@@ -166,17 +165,19 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
                     }
 
                     blk->info = info;
+
                     ptr = htx_get_blk_ptr(res_htx, blk);
-                    sz = htx_get_blksz(blk);
-                    p += 4;
+                    sz  = htx_get_blksz(blk);
+                    p  += 4;
                     memcpy(ptr, p, sz);
-                    p += sz;
+                    p  += sz;
 
                     header_len -= 4 + sz;
                 }
 
                 appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
                 offset += ret;
+
                 appctx->ctx.nuster.cache.offset = offset;
             }
 
@@ -191,16 +192,15 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
             }
 
             if(ret > 0) {
-                struct htx_blk *blk;
-                char *ptr;
-                uint32_t blksz, sz, info;
-                enum htx_blk_type type;
+                hpx_htx_blk_type_t  type;
+                hpx_htx_blk_t      *blk;
+                char               *ptr;
+                uint32_t            blksz, sz, info;
 
-                type = HTX_BLK_DATA;
-                info = (type << 28) + ret;
+                type  = HTX_BLK_DATA;
+                info  = (type << 28) + ret;
                 blksz = info & 0xfffffff;
-
-                blk = htx_add_blk(res_htx, type, blksz);
+                blk   = htx_add_blk(res_htx, type, blksz);
 
                 if(!blk) {
                     appctx->st1 = NST_PERSIST_APPLET_ERROR;
@@ -209,8 +209,9 @@ static void _nst_cache_disk_handler(struct appctx *appctx) {
                 }
 
                 blk->info = info;
+
                 ptr = htx_get_blk_ptr(res_htx, blk);
-                sz = htx_get_blksz(blk);
+                sz  = htx_get_blksz(blk);
                 memcpy(ptr, trash.area, sz);
 
                 appctx->ctx.nuster.cache.offset += ret;
@@ -262,7 +263,9 @@ out:
 /*
  * The cache applet acts like the backend to send cached http data
  */
-static void nst_cache_handler(struct appctx *appctx) {
+static void
+nst_cache_handler(hpx_appctx_t *appctx) {
+
     if(appctx->st0 == NST_CTX_STATE_HIT_MEMORY) {
         _nst_cache_memory_handler(appctx);
     } else {
@@ -273,9 +276,10 @@ static void nst_cache_handler(struct appctx *appctx) {
 /*
  * create a new nst_data and insert it to cache->data list
  */
-struct nst_data *nst_cache_data_new() {
+nst_data_t *
+nst_cache_data_new() {
 
-    struct nst_data *data = nst_cache_memory_alloc(sizeof(*data));
+    nst_data_t  *data = nst_cache_memory_alloc(sizeof(*data));
 
     nst_shctx_lock(nuster.cache);
 
@@ -308,8 +312,9 @@ struct nst_data *nst_cache_data_new() {
 /*
  * free invalid nst_data
  */
-static void _nst_data_cleanup() {
-    struct nst_data *data = NULL;
+static void
+_nst_data_cleanup() {
+    nst_data_t *data = NULL;
 
     if(nuster.cache->data_head) {
 
@@ -337,11 +342,11 @@ static void _nst_data_cleanup() {
     }
 
     if(data) {
-        struct nst_data_element *element = data->element;
+        nst_data_element_t *element = data->element;
 
         while(element) {
-            struct nst_data_element *tmp = element;
-            element                      = element->next;
+            nst_data_element_t *tmp = element;
+            element                 = element->next;
 
             nst_cache_memory_free(tmp);
         }
@@ -350,15 +355,15 @@ static void _nst_data_cleanup() {
     }
 }
 
-void nst_cache_housekeeping() {
+void
+nst_cache_housekeeping() {
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
-
-        int dict_cleaner = global.nuster.cache.dict_cleaner;
-        int data_cleaner = global.nuster.cache.data_cleaner;
-        int disk_cleaner = global.nuster.cache.disk_cleaner;
-        int disk_loader  = global.nuster.cache.disk_loader;
-        int disk_saver   = global.nuster.cache.disk_saver;
+        int  dict_cleaner = global.nuster.cache.dict_cleaner;
+        int  data_cleaner = global.nuster.cache.data_cleaner;
+        int  disk_cleaner = global.nuster.cache.disk_cleaner;
+        int  disk_loader  = global.nuster.cache.disk_loader;
+        int  disk_saver   = global.nuster.cache.disk_saver;
 
         while(dict_cleaner--) {
             nst_shctx_lock(&nuster.cache->dict);
@@ -389,7 +394,8 @@ void nst_cache_housekeeping() {
     }
 }
 
-void nst_cache_init() {
+void
+nst_cache_init() {
     nuster.applet.cache.fct = nst_cache_handler;
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
@@ -414,7 +420,7 @@ void nst_cache_init() {
             goto shm_err;
         }
 
-        nuster.cache = nst_cache_memory_alloc(sizeof(struct nst_core));
+        nuster.cache = nst_cache_memory_alloc(sizeof(nst_core_t));
 
         if(!nuster.cache) {
             goto err;
@@ -423,7 +429,7 @@ void nst_cache_init() {
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
         if(global.nuster.cache.root.len) {
-            int len = nst_persist_path_file_len(global.nuster.cache.root) + 1;
+            int  len = nst_persist_path_file_len(global.nuster.cache.root) + 1;
 
             nuster.cache->disk.file = nst_cache_memory_alloc(len);
 
@@ -457,18 +463,19 @@ shm_err:
     exit(1);
 }
 
-static void _nst_cache_record_access(struct nst_dict_entry *entry) {
+static void
+_nst_cache_record_access(nst_dict_entry_t *entry) {
+
     if(entry->expire == 0 || entry->extend[0] == 0xFF) {
         entry->access[0]++;
     } else {
-        uint64_t stime, diff;
-        uint32_t ttl = entry->ttl;
-        float pct;
+        uint64_t  stime, diff;
+        float     pct;
+        uint32_t  ttl = entry->ttl;
 
         stime = entry->ctime + ttl * entry->extended * 1000;
-        diff = entry->atime - stime;
-
-        pct = diff / 1000.0 / ttl * 100;
+        diff  = entry->atime - stime;
+        pct   = diff / 1000.0 / ttl * 100;
 
         if(pct < 100 - entry->extend[0] - entry->extend[1] - entry->extend[2]) {
             entry->access[0]++;
@@ -486,12 +493,15 @@ static void _nst_cache_record_access(struct nst_dict_entry *entry) {
 /*
  * Check if valid cache exists
  */
-int nst_cache_exists(struct nst_ctx *ctx) {
-    struct nst_dict_entry *entry = NULL;
-    int ret = NST_CTX_STATE_INIT;
+int
+nst_cache_exists(nst_ctx_t *ctx) {
+    nst_dict_entry_t  *entry = NULL;
+    nst_key_t         *key;
+    int                ret, idx;
 
-    int idx = ctx->rule->key->idx;
-    struct nst_key *key = &(ctx->keys[idx]);
+    ret = NST_CTX_STATE_INIT;
+    idx = ctx->rule->key->idx;
+    key = &(ctx->keys[idx]);
 
     if(!key) {
         return ret;
@@ -578,14 +588,18 @@ int nst_cache_exists(struct nst_ctx *ctx) {
     return ret;
 }
 
-void nst_cache_create(struct http_msg *msg, struct nst_ctx *ctx) {
-    struct nst_dict_entry *entry = NULL;
+void
+nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
+    nst_dict_entry_t  *entry = NULL;
+    hpx_buffer_t       buf  = { .area = NULL };
+    nst_key_t         *key;
+    int                idx;
 
-    int idx = ctx->rule->key->idx;
-    struct nst_key *key = &(ctx->keys[idx]);
-    struct buffer buf = { .area = NULL };
+    idx = ctx->rule->key->idx;
+    key = &(ctx->keys[idx]);
 
     nst_shctx_lock(&nuster.cache->dict);
+
     entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
@@ -662,19 +676,19 @@ void nst_cache_create(struct http_msg *msg, struct nst_ctx *ctx) {
     nst_shctx_unlock(&nuster.cache->dict);
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        int pos;
-        struct htx *htx = htxbuf(&msg->chn->buf);
+        hpx_htx_t  *htx = htxbuf(&msg->chn->buf);
+        int         pos;
+
         ctx->txn.res.header_len = 0;
 
         for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-            struct htx_blk *blk = htx_get_blk(htx, pos);
-            uint32_t        sz  = htx_get_blksz(blk);
-            enum htx_blk_type type = htx_get_blk_type(blk);
-
-            struct nst_data_element *element = NULL;
+            hpx_htx_blk_t       *blk     = htx_get_blk(htx, pos);
+            uint32_t             sz      = htx_get_blksz(blk);
+            hpx_htx_blk_type_t   type    = htx_get_blk_type(blk);
+            nst_data_element_t  *element = NULL;
 
             if(ctx->rule->disk != NST_DISK_ONLY)  {
-                element = nst_cache_memory_alloc(sizeof(struct nst_data_element) + sz);
+                element = nst_cache_memory_alloc(sizeof(nst_data_element_t) + sz);
 
                 if(!element) {
                     goto err;
@@ -706,9 +720,9 @@ void nst_cache_create(struct http_msg *msg, struct nst_ctx *ctx) {
     if(ctx->state == NST_CTX_STATE_CREATE
             && (ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY)) {
 
-        uint64_t ttl_extend = ctx->rule->ttl;
-        int pos;
-        struct htx *htx;
+        uint64_t    ttl_extend = ctx->rule->ttl;
+        int         pos;
+        hpx_htx_t  *htx;
 
         ctx->disk.file = nst_cache_memory_alloc(
                 nst_persist_path_file_len(global.nuster.cache.root) + 1);
@@ -743,9 +757,9 @@ void nst_cache_create(struct http_msg *msg, struct nst_ctx *ctx) {
         htx = htxbuf(&msg->chn->buf);
 
         for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-            struct htx_blk *blk = htx_get_blk(htx, pos);
+            hpx_htx_blk_t *blk = htx_get_blk(htx, pos);
             uint32_t        sz  = htx_get_blksz(blk);
-            enum htx_blk_type type = htx_get_blk_type(blk);
+            hpx_htx_blk_type_t type = htx_get_blk_type(blk);
 
             nst_persist_write(&ctx->disk, (char *)&blk->info, 4);
             nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
@@ -763,17 +777,17 @@ err:
 /*
  * Add partial http data to nst_data
  */
-int nst_cache_update(struct http_msg *msg, struct nst_ctx *ctx, unsigned int offset,
-        unsigned int len) {
+int
+nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
 
-    int pos;
-    struct htx *htx = htxbuf(&msg->chn->buf);
+    int         pos;
+    hpx_htx_t  *htx = htxbuf(&msg->chn->buf);
 
     for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-        struct htx_blk *blk = htx_get_blk(htx, pos);
-        uint32_t        sz  = htx_get_blksz(blk);
-        enum htx_blk_type type = htx_get_blk_type(blk);
-        struct nst_data_element *element;
+        hpx_htx_blk_t       *blk  = htx_get_blk(htx, pos);
+        uint32_t             sz   = htx_get_blksz(blk);
+        hpx_htx_blk_type_t   type = htx_get_blk_type(blk);
+        nst_data_element_t  *element;
 
         if(type != HTX_BLK_DATA) {
             continue;
@@ -820,7 +834,8 @@ err:
 /*
  * cache done
  */
-void nst_cache_finish(struct nst_ctx *ctx) {
+void
+nst_cache_finish(nst_ctx_t *ctx) {
     ctx->state = NST_CTX_STATE_DONE;
 
     if(ctx->rule->disk == NST_DISK_ONLY) {
@@ -849,7 +864,8 @@ void nst_cache_finish(struct nst_ctx *ctx) {
     }
 }
 
-void nst_cache_abort(struct nst_ctx *ctx) {
+void
+nst_cache_abort(nst_ctx_t *ctx) {
     ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
@@ -858,11 +874,13 @@ void nst_cache_abort(struct nst_ctx *ctx) {
  *  0: not found
  *  1: ok
  */
-int nst_cache_delete(struct nst_key *key) {
-    struct nst_dict_entry *entry = NULL;
-    int ret;
+int
+nst_cache_delete(nst_key_t *key) {
+    nst_dict_entry_t  *entry = NULL;
+    int                ret;
 
     nst_shctx_lock(&nuster.cache->dict);
+
     entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
@@ -886,7 +904,7 @@ int nst_cache_delete(struct nst_key *key) {
     nst_shctx_unlock(&nuster.cache->dict);
 
     if(!nuster.cache->disk.loaded && global.nuster.cache.root.len){
-        struct persist disk;
+        nst_persist_t  disk;
 
         disk.file = trash.area;
 
@@ -900,10 +918,11 @@ int nst_cache_delete(struct nst_key *key) {
 /*
  * Create cache applet to handle the request
  */
-void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel *req,
-        struct channel *res, struct nst_ctx *ctx) {
+void
+nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, hpx_channel_t *res,
+        nst_ctx_t *ctx) {
 
-    struct appctx *appctx = NULL;
+    hpx_appctx_t  *appctx = NULL;
 
     /*
      * set backend to nuster.applet.cache
@@ -924,9 +943,8 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
             appctx->ctx.nuster.cache.data    = ctx->data;
             appctx->ctx.nuster.cache.element = ctx->data->element;
         } else {
-
-            appctx->ctx.nuster.cache.fd = ctx->disk.fd;
-            appctx->ctx.nuster.cache.offset = nst_persist_get_header_pos(ctx->disk.meta);
+            appctx->ctx.nuster.cache.fd         = ctx->disk.fd;
+            appctx->ctx.nuster.cache.offset     = nst_persist_get_header_pos(ctx->disk.meta);
             appctx->ctx.nuster.cache.header_len = nst_persist_meta_get_header_len(ctx->disk.meta);
         }
 
@@ -942,8 +960,9 @@ void nst_cache_hit(struct stream *s, struct stream_interface *si, struct channel
     }
 }
 
-void nst_cache_persist_async() {
-    struct nst_dict_entry *entry;
+void
+nst_cache_persist_async() {
+    nst_dict_entry_t  *entry;
 
     if(!global.nuster.cache.root.len || !nuster.cache->disk.loaded) {
         return;
@@ -960,11 +979,11 @@ void nst_cache_persist_async() {
         if(!nst_dict_entry_invalid(entry) && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
-            struct nst_data_element *element = entry->data->element;
-            struct persist disk;
-            uint64_t ttl_extend  = entry->ttl;
-            uint64_t header_len  = 0;
-            uint64_t payload_len = 0;
+            nst_persist_t        disk;
+            nst_data_element_t  *element     = entry->data->element;
+            uint64_t             ttl_extend  = entry->ttl;
+            uint64_t             header_len  = 0;
+            uint64_t             payload_len = 0;
 
             entry->file = nst_cache_memory_alloc(
                     nst_persist_path_file_len(global.nuster.cache.root) + 1);
@@ -996,11 +1015,11 @@ void nst_cache_persist_async() {
             nst_persist_write_last_modified(&disk, entry->last_modified);
 
             while(element) {
-                uint32_t blksz, info;
-                enum htx_blk_type type;
+                hpx_htx_blk_type_t  type;
+                uint32_t            blksz, info;
 
-                info = element->info;
-                type = (info >> 28);
+                info  = element->info;
+                type  = (info >> 28);
                 blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
                         ? (info & 0xff) + ((info >> 8) & 0xfffff)
                         : info & 0xfffffff);
@@ -1038,28 +1057,28 @@ void nst_cache_persist_async() {
 
 }
 
-void nst_cache_persist_load() {
+void
+nst_cache_persist_load() {
 
     if(global.nuster.cache.root.len && !nuster.cache->disk.loaded) {
-        struct ist root;
-        char *file;
-        char meta[NST_PERSIST_META_SIZE];
-        int fd;
-        DIR *dir2;
-        struct dirent *de2;
-        struct nst_key key = { .data = NULL };
-        struct buffer buf = { .area = NULL };
-        struct ist host;
-        struct ist path;
+        hpx_ist_t      root;
+        char          *file;
+        char           meta[NST_PERSIST_META_SIZE];
+        int            fd;
+        DIR           *dir2;
+        nst_dirent_t  *de2;
+        nst_key_t      key = { .data = NULL };
+        hpx_buffer_t   buf = { .area = NULL };
+        hpx_ist_t      host;
+        hpx_ist_t      path;
 
-        fd = -1;
+        fd   = -1;
         dir2 = NULL;
-
         root = global.nuster.cache.root;
         file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
-            struct dirent *de = nst_persist_dir_next(nuster.cache->disk.dir);
+            nst_dirent_t *de = nst_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
 
@@ -1183,13 +1202,14 @@ err:
     }
 }
 
-void nst_cache_persist_cleanup() {
+void
+nst_cache_persist_cleanup() {
 
     if(global.nuster.cache.root.len && nuster.cache->disk.loaded) {
-        char *file = nuster.cache->disk.file;
+        char  *file = nuster.cache->disk.file;
 
         if(nuster.cache->disk.dir) {
-            struct dirent *de = nst_persist_dir_next(nuster.cache->disk.dir);
+            nst_dirent_t *de = nst_persist_dir_next(nuster.cache->disk.dir);
 
             if(de) {
                 nst_persist_cleanup(global.nuster.cache.root, file, de);
@@ -1214,11 +1234,10 @@ void nst_cache_persist_cleanup() {
     }
 }
 
-void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
-
-    struct htx *htx;
-
-    struct http_hdr_ctx hdr = { .blk = NULL };
+void
+nst_cache_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_htx_t          *htx;
 
     ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
     ctx->txn.res.etag.len = 0;
@@ -1243,13 +1262,10 @@ void nst_cache_build_etag(struct stream *s, struct http_msg *msg, struct nst_ctx
 }
 
 void
-nst_cache_build_last_modified(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
-
-    struct htx *htx;
-
-    struct http_hdr_ctx hdr = { .blk = NULL };
-
-    int len  = sizeof("Mon, 01 JAN 1970 00:00:00 GMT") - 1;
+nst_cache_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_htx_t          *htx;
+    int                 len = sizeof("Mon, 01 JAN 1970 00:00:00 GMT") - 1;
 
     htx = htxbuf(&s->res.buf);
 
@@ -1263,13 +1279,12 @@ nst_cache_build_last_modified(struct stream *s, struct http_msg *msg, struct nst
         }
 
     } else {
-        char mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
-            "Nov", "Dec" };
+        struct tm  *tm;
+        time_t      now;
+        char        mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
+            "Oct", "Nov", "Dec" };
+        char        day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
-        char day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-
-        struct tm *tm;
-        time_t now;
         time(&now);
         tm = gmtime(&now);
 

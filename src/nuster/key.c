@@ -21,18 +21,18 @@
 
 #include <nuster/nuster.h>
 
-int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
-        struct nst_http_txn *txn, struct nst_key *key, enum http_meth_t method) {
+int
+nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_txn_t *txn,
+        nst_key_t *key, enum http_meth_t method) {
 
-    struct nst_key_element *ck = NULL;
-    struct nst_key_element **pck = rule->key->data;
+    nst_key_element_t  **pck = rule->key->data;
+    nst_key_element_t   *ck  = NULL;
+    hpx_buffer_t        *buf = nst_key_init();
 
-    struct buffer *buf = nst_key_init();
-
-    nst_debug(s, "Calculate key: ");
+    nst_debug(s, "[key  ] Calculate: ");
 
     while((ck = *pck++)) {
-        int ret = NST_ERR;
+        int  ret = NST_ERR;
 
         switch(ck->type) {
             case NST_KEY_ELEMENT_METHOD:
@@ -45,7 +45,7 @@ int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
                 nst_debug2("scheme.");
 
                 {
-                    struct ist scheme = txn->req.scheme == SCH_HTTPS ? ist("HTTPS") : ist("HTTP");
+                    hpx_ist_t scheme = txn->req.scheme == SCH_HTTPS ? ist("HTTPS") : ist("HTTP");
                     ret = nst_key_catist(buf, scheme);
                 }
 
@@ -104,8 +104,8 @@ int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
                 nst_debug2("param_%s.", ck->data);
 
                 if(txn->req.query.len) {
-                    char *v = NULL;
-                    int v_l = 0;
+                    char  *v   = NULL;
+                    int    v_l = 0;
 
                     if(nst_http_find_param(txn->req.query.ptr,
                                 txn->req.query.ptr + txn->req.query.len,
@@ -120,9 +120,9 @@ int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
                 break;
             case NST_KEY_ELEMENT_HEADER:
                 {
-                    struct htx *htx = htxbuf(&s->req.buf);
-                    struct http_hdr_ctx hdr = { .blk = NULL };
-                    struct ist h = {
+                    hpx_htx_t          *htx = htxbuf(&s->req.buf);
+                    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+                    hpx_ist_t           h   = {
                         .ptr = ck->data,
                         .len = strlen(ck->data),
                     };
@@ -144,8 +144,8 @@ int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
                 nst_debug2("cookie_%s.", ck->data);
 
                 if(txn->req.cookie.len) {
-                    char *v = NULL;
-                    size_t v_l = 0;
+                    char   *v   = NULL;
+                    size_t  v_l = 0;
 
                     if(http_extract_cookie_value(txn->req.cookie.ptr,
                                 txn->req.cookie.ptr + txn->req.cookie.len,
@@ -164,13 +164,13 @@ int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
 
                 if(s->txn->meth == HTTP_METH_POST || s->txn->meth == HTTP_METH_PUT) {
 
-                    int pos;
-                    struct htx *htx = htxbuf(&msg->chn->buf);
+                    int         pos;
+                    hpx_htx_t  *htx = htxbuf(&msg->chn->buf);
 
                     for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-                        struct htx_blk *blk = htx_get_blk(htx, pos);
-                        uint32_t        sz  = htx_get_blksz(blk);
-                        enum htx_blk_type type = htx_get_blk_type(blk);
+                        hpx_htx_blk_t      *blk  = htx_get_blk(htx, pos);
+                        hpx_htx_blk_type_t  type = htx_get_blk_type(blk);
+                        uint32_t            sz   = htx_get_blksz(blk);
 
                         if(type != HTX_BLK_DATA) {
                             continue;
@@ -210,13 +210,14 @@ int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
     return NST_OK;
 }
 
-void nst_key_debug(struct nst_key *key) {
+void
+nst_key_debug(nst_key_t *key) {
 
     if((global.mode & MODE_DEBUG)) {
-        int i;
+        int  i;
 
         for(i = 0; i < key->size; i++) {
-            char c = key->data[i];
+            char  c = key->data[i];
 
             if(c != 0) {
                 fprintf(stderr, "%c", c);

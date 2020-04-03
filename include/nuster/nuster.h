@@ -25,35 +25,34 @@
 #define NUSTER_VERSION    "5.0.0.21"
 #define NUSTER_COPYRIGHT  "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
-#include <common/chunk.h>
 #include <types/applet.h>
 
 #include <nuster/common.h>
 #include <nuster/shctx.h>
 #include <nuster/memory.h>
+#include <nuster/http.h>
 #include <nuster/key.h>
 #include <nuster/core.h>
-#include <nuster/http.h>
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
 #include <nuster/manager.h>
 #include <nuster/persist.h>
 
-struct nuster {
-    struct nst_core *cache;
-    struct nst_core *nosql;
+typedef struct nuster {
+    nst_core_t                 *cache;
+    nst_core_t                 *nosql;
 
     struct {
-        struct applet cache;
-        struct applet nosql;
-        struct applet purger;
-        struct applet stats;
+        hpx_applet_t            cache;
+        hpx_applet_t            nosql;
+        hpx_applet_t            purger;
+        hpx_applet_t            stats;
     } applet;
 
-    struct nst_proxy **proxy;
-};
+    nst_proxy_t               **proxy;
+} nuster_t;
 
-extern struct nuster nuster;
+extern nuster_t nuster;
 
 
 void nuster_init();
@@ -63,12 +62,14 @@ int nuster_parse_global_cache(const char *file, int linenum, char **args);
 int nuster_parse_global_nosql(const char *file, int linenum, char **args);
 int nuster_parse_global_manager(const char *file, int linenum, char **args);
 
-static inline void nuster_housekeeping() {
+static inline void
+nuster_housekeeping() {
     nst_cache_housekeeping();
     nst_nosql_housekeeping();
 }
 
-static inline int nuster_check_applet(struct stream *s, struct channel *req, struct proxy *px) {
+static inline int
+nuster_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     return nst_manager(s, req, px) || nst_nosql_check_applet(s, req, px);
 }
 

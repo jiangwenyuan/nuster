@@ -27,15 +27,17 @@
 
 #include <nuster/nuster.h>
 
-static void nst_nosql_handler(struct appctx *appctx) {
-    struct stream_interface *si       = appctx->owner;
-    struct stream *s                  = si_strm(si);
-    struct channel *req               = si_oc(si);
-    struct channel *res               = si_ic(si);
-    struct nst_data_element *element = NULL;
-    struct htx *req_htx, *res_htx;
-    int ret;
-    int total = 0;
+static void
+nst_nosql_handler(hpx_appctx_t *appctx) {
+    hpx_stream_interface_t  *si      = appctx->owner;
+    hpx_stream_t            *s       = si_strm(si);
+    hpx_channel_t           *req     = si_oc(si);
+    hpx_channel_t           *res     = si_ic(si);
+    nst_data_element_t      *element = NULL;
+    int                      total   = 0;
+    hpx_htx_t               *req_htx, *res_htx;
+    int                      ret, max, fd, header_len;
+    uint64_t                 offset;
 
     res_htx = htx_from_buf(&res->buf);
 
@@ -115,16 +117,15 @@ out:
             break;
         case NST_NOSQL_APPCTX_STATE_HIT_DISK:
             {
-                int max = b_room(&res->buf) - global.tune.maxrewrite;
-
-                int fd = appctx->ctx.nuster.nosql.fd;
-                int header_len = appctx->ctx.nuster.nosql.header_len;
-                uint64_t offset = appctx->ctx.nuster.nosql.offset;
+                max        = b_room(&res->buf) - global.tune.maxrewrite;
+                header_len = appctx->ctx.nuster.nosql.header_len;
+                offset     = appctx->ctx.nuster.nosql.offset;
+                fd         = appctx->ctx.nuster.nosql.fd;
 
                 switch(appctx->st1) {
                     case NST_PERSIST_APPLET_HEADER:
                         {
-                            char *p = trash.area;
+                            char  *p = trash.area;
 
                             ret = pread(fd, p, header_len, offset);
 
@@ -135,16 +136,15 @@ out:
                             }
 
                             while(header_len != 0) {
-                                struct htx_blk *blk;
-                                char *ptr;
-                                uint32_t blksz, sz, info;
-                                enum htx_blk_type type;
+                                hpx_htx_blk_type_t  type;
+                                hpx_htx_blk_t      *blk;
+                                char               *ptr;
+                                uint32_t            blksz, sz, info;
 
-                                info = *(uint32_t *)p;
-                                type = (info >> 28);
+                                info  = *(uint32_t *)p;
+                                type  = (info >> 28);
                                 blksz = (info & 0xff) + ((info >> 8) & 0xfffff);
-
-                                blk = htx_add_blk(res_htx, type, blksz);
+                                blk   = htx_add_blk(res_htx, type, blksz);
 
                                 if(!blk) {
                                     appctx->st1 = NST_PERSIST_APPLET_ERROR;
@@ -153,11 +153,12 @@ out:
                                 }
 
                                 blk->info = info;
+
                                 ptr = htx_get_blk_ptr(res_htx, blk);
-                                sz = htx_get_blksz(blk);
-                                p += 4;
+                                sz  = htx_get_blksz(blk);
+                                p  += 4;
                                 memcpy(ptr, p, sz);
-                                p += sz;
+                                p  += sz;
 
                                 header_len -= 4 + sz;
                             }
@@ -180,16 +181,15 @@ out:
                         }
 
                         if(ret > 0) {
-                            struct htx_blk *blk;
-                            char *ptr;
-                            uint32_t blksz, sz, info;
-                            enum htx_blk_type type;
+                            hpx_htx_blk_type_t  type;
+                            hpx_htx_blk_t      *blk;
+                            char               *ptr;
+                            uint32_t            blksz, sz, info;
 
-                            type = HTX_BLK_DATA;
-                            info = (type << 28) + ret;
+                            type  = HTX_BLK_DATA;
+                            info  = (type << 28) + ret;
                             blksz = info & 0xfffffff;
-
-                            blk = htx_add_blk(res_htx, type, blksz);
+                            blk   = htx_add_blk(res_htx, type, blksz);
 
                             if(!blk) {
                                 appctx->st1 = NST_PERSIST_APPLET_ERROR;
@@ -198,8 +198,9 @@ out:
                             }
 
                             blk->info = info;
+
                             ptr = htx_get_blk_ptr(res_htx, blk);
-                            sz = htx_get_blksz(blk);
+                            sz  = htx_get_blksz(blk);
                             memcpy(ptr, trash.area, sz);
 
                             appctx->ctx.nuster.nosql.offset += ret;
@@ -305,8 +306,9 @@ end:
     return;
 }
 
-struct nst_data *nst_nosql_data_new() {
-    struct nst_data *data = nst_nosql_memory_alloc(sizeof(*data));
+nst_data_t *
+nst_nosql_data_new() {
+    nst_data_t  *data = nst_nosql_memory_alloc(sizeof(*data));
 
     nst_shctx_lock(nuster.nosql);
 
@@ -336,8 +338,9 @@ struct nst_data *nst_nosql_data_new() {
     return data;
 }
 
-static void _nst_data_cleanup() {
-    struct nst_data *data = NULL;
+static void
+_nst_data_cleanup() {
+    nst_data_t  *data = NULL;
 
     if(nuster.nosql->data_head) {
 
@@ -364,11 +367,11 @@ static void _nst_data_cleanup() {
     }
 
     if(data) {
-        struct nst_data_element *element = data->element;
+        nst_data_element_t *element = data->element;
 
         while(element) {
-            struct nst_data_element *tmp = element;
-            element                       = element->next;
+            nst_data_element_t *tmp = element;
+            element                 = element->next;
 
             nst_nosql_memory_free(tmp);
         }
@@ -377,15 +380,16 @@ static void _nst_data_cleanup() {
     }
 }
 
-void nst_nosql_housekeeping() {
+void
+nst_nosql_housekeeping() {
 
     if(global.nuster.nosql.status == NST_STATUS_ON && master == 1) {
 
-        int dict_cleaner = global.nuster.nosql.dict_cleaner;
-        int data_cleaner = global.nuster.nosql.data_cleaner;
-        int disk_cleaner = global.nuster.nosql.disk_cleaner;
-        int disk_loader  = global.nuster.nosql.disk_loader;
-        int disk_saver   = global.nuster.nosql.disk_saver;
+        int  dict_cleaner = global.nuster.nosql.dict_cleaner;
+        int  data_cleaner = global.nuster.nosql.data_cleaner;
+        int  disk_cleaner = global.nuster.nosql.disk_cleaner;
+        int  disk_loader  = global.nuster.nosql.disk_loader;
+        int  disk_saver   = global.nuster.nosql.disk_saver;
 
         while(dict_cleaner--) {
             nst_shctx_lock(&nuster.nosql->dict);
@@ -415,7 +419,8 @@ void nst_nosql_housekeeping() {
     }
 }
 
-void nst_nosql_init() {
+void
+nst_nosql_init() {
     nuster.applet.nosql.fct = nst_nosql_handler;
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
@@ -440,7 +445,7 @@ void nst_nosql_init() {
             goto shm_err;
         }
 
-        nuster.nosql = nst_nosql_memory_alloc(sizeof(struct nst_core));
+        nuster.nosql = nst_nosql_memory_alloc(sizeof(nst_core_t));
 
         if(!nuster.nosql) {
             goto err;
@@ -449,7 +454,7 @@ void nst_nosql_init() {
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
         if(global.nuster.nosql.root.len) {
-            int len = nst_persist_path_file_len(global.nuster.nosql.root) + 1;
+            int  len = nst_persist_path_file_len(global.nuster.nosql.root) + 1;
 
             nuster.nosql->disk.file = nst_nosql_memory_alloc(len);
 
@@ -486,14 +491,15 @@ shm_err:
 /*
  * return 1 if the request is done, otherwise 0
  */
-int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *px) {
+int
+nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
     if(global.nuster.nosql.status == NST_STATUS_ON && px->nuster.mode == NST_MODE_NOSQL) {
-        struct stream_interface *si = &s->si[1];
-        struct http_txn *txn        = s->txn;
-        struct http_msg *msg        = &txn->req;
-        struct appctx *appctx       = NULL;
-        struct htx *htx;
+        hpx_stream_interface_t  *si     = &s->si[1];
+        hpx_http_txn_t          *txn    = s->txn;
+        hpx_http_msg_t          *msg    = &txn->req;
+        hpx_appctx_t            *appctx = NULL;
+        hpx_htx_t               *htx;
 
         s->target = &nuster.applet.nosql.obj_type;
 
@@ -518,7 +524,6 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *
             }
 
             req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
-
             req->analysers &= ~AN_REQ_FLT_XFER_DATA;
             req->analysers |= AN_REQ_HTTP_XFER_BODY;
 
@@ -528,10 +533,10 @@ int nst_nosql_check_applet(struct stream *s, struct channel *req, struct proxy *
     return 0;
 }
 
-int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
-
-    struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr = { .blk = NULL };
+int
+nst_nosql_get_headers(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_htx_t          *htx = htxbuf(&s->req.buf);
 
     if(http_find_header(htx, ist("Content-Type"), &hdr, 0)) {
         ctx->txn.req.content_type.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
@@ -559,25 +564,24 @@ int nst_nosql_get_headers(struct stream *s, struct http_msg *msg, struct nst_ctx
     return 1;
 }
 
-int _nst_nosql_create_header(struct stream *s, struct nst_ctx *ctx, struct ist clv) {
-    struct htx_sl *sl;
-    enum htx_blk_type type;
-    uint32_t size, info;
-    char *data = NULL;
-
-    struct nst_data_element *ele_sl, *ele_cl, *ele_te, *ele_eoh;
-
-    struct ist clk = ist("Content-Length");
-    struct ist tek = ist("Transfer-Encoding");
-    struct ist tev = ist("Chunked");
-    struct ist p1  = ist("HTTP/1.1");
-    struct ist p2  = ist("200");
-    struct ist p3  = ist("OK");
+int
+_nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
+    nst_data_element_t  *ele_sl, *ele_cl, *ele_te, *ele_eoh;
+    hpx_htx_blk_type_t   type;
+    hpx_htx_sl_t        *sl;
+    uint32_t             size, info;
+    hpx_ist_t            clk  = ist("Content-Length");
+    hpx_ist_t            tek  = ist("Transfer-Encoding");
+    hpx_ist_t            tev  = ist("Chunked");
+    hpx_ist_t            p1   = ist("HTTP/1.1");
+    hpx_ist_t            p2   = ist("200");
+    hpx_ist_t            p3   = ist("OK");
+    char                *data = NULL;
 
     type = HTX_BLK_RES_SL;
 
-    info = type << 28;
-    size = sizeof(*sl) + p1.len + p2.len + p3.len;
+    info  = type << 28;
+    size  = sizeof(*sl) + p1.len + p2.len + p3.len;
     info += size;
 
     ele_sl = nst_nosql_memory_alloc(sizeof(*ele_sl) + size);
@@ -590,7 +594,7 @@ int _nst_nosql_create_header(struct stream *s, struct nst_ctx *ctx, struct ist c
 
     ctx->txn.res.header_len += 4 + size;
 
-    sl = (struct htx_sl *)data;
+    sl = (hpx_htx_sl_t *)data;
     sl->hdrs_bytes = -1;
 
     if(ctx->txn.res.content_length) {
@@ -613,9 +617,9 @@ int _nst_nosql_create_header(struct stream *s, struct nst_ctx *ctx, struct ist c
     ctx->element = ele_sl;
 
     if(ctx->txn.res.content_length) {
-        type = HTX_BLK_HDR;
-        info = type << 28;
-        size = clk.len + clv.len;
+        type  = HTX_BLK_HDR;
+        info  = type << 28;
+        size  = clk.len + clv.len;
         info += (clv.len << 8) + clk.len;
 
         ele_cl = nst_nosql_memory_alloc(sizeof(*ele_cl) + size);
@@ -636,9 +640,9 @@ int _nst_nosql_create_header(struct stream *s, struct nst_ctx *ctx, struct ist c
         ctx->element->next = ele_cl;
         ctx->element = ele_cl;
     } else {
-        type = HTX_BLK_HDR;
-        info = type << 28;
-        size = tek.len + tev.len;
+        type  = HTX_BLK_HDR;
+        info  = type << 28;
+        size  = tek.len + tev.len;
         info += (tev.len << 8) + tek.len;
 
         ele_te = nst_nosql_memory_alloc(sizeof(*ele_te) + size);
@@ -660,9 +664,9 @@ int _nst_nosql_create_header(struct stream *s, struct nst_ctx *ctx, struct ist c
         ctx->element = ele_te;
     }
 
-    type = HTX_BLK_EOH;
-    info = type << 28;
-    size = 1;
+    type  = HTX_BLK_EOH;
+    info  = type << 28;
+    size  = 1;
     info += size;
 
     ele_eoh = nst_nosql_memory_alloc(sizeof(*ele_eoh) + size);
@@ -691,13 +695,18 @@ err:
     return NST_ERR;
 }
 
-void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
-    struct nst_dict_entry *entry = NULL;
-    struct nst_data_element *element = NULL;
-    int idx = ctx->rule->key->idx;
-    struct nst_key *key = &(ctx->keys[idx]);
+void
+nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
+    nst_dict_entry_t    *entry   = NULL;
+    nst_data_element_t  *element = NULL;
+    nst_key_t           *key;
+    int                  idx;
+
+    idx = ctx->rule->key->idx;
+    key = &(ctx->keys[idx]);
 
     nst_shctx_lock(&nuster.nosql->dict);
+
     entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
@@ -727,9 +736,9 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_ctx *ct
     } else {
 
         if(ctx->state == NST_CTX_STATE_CREATE) {
-            struct htx *htx = htxbuf(&msg->chn->buf);
-            struct htx_sl *sl;
-            struct http_hdr_ctx hdr = { .blk = NULL };
+            hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+            hpx_htx_sl_t       *sl;
+            hpx_htx_t          *htx = htxbuf(&msg->chn->buf);
 
             ctx->entry   = entry;
             ctx->data    = entry->data;
@@ -739,7 +748,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_ctx *ct
 
             if(sl->flags & HTX_SL_F_CLEN) {
                 if(http_find_header(htx, ist("Content-Length"), &hdr, 0)) {
-                    long long cl;
+                    long long  cl;
 
                     strl2llrc(hdr.value.ptr, hdr.value.len, &cl);
                     ctx->txn.res.content_length = cl;
@@ -786,7 +795,7 @@ void nst_nosql_create(struct stream *s, struct http_msg *msg, struct nst_ctx *ct
         element = ctx->data->element;
 
         while(element) {
-            int sz = ((element->info & 0xff) + ((element->info >> 8) & 0xfffff));
+            int  sz = ((element->info & 0xff) + ((element->info >> 8) & 0xfffff));
 
             nst_persist_write(&ctx->disk, (char *)&element->info, 4);
             nst_persist_write(&ctx->disk, element->data, sz);
@@ -800,17 +809,17 @@ err:
     return;
 }
 
-int nst_nosql_update(struct http_msg *msg, struct nst_ctx *ctx, unsigned int offset,
-        unsigned int msg_len) {
+int
+nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
 
-    int pos;
-    struct htx *htx = htxbuf(&msg->chn->buf);
+    hpx_htx_t  *htx = htxbuf(&msg->chn->buf);
+    int         pos;
 
     for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-        struct htx_blk *blk = htx_get_blk(htx, pos);
-        uint32_t        sz  = htx_get_blksz(blk);
-        enum htx_blk_type type = htx_get_blk_type(blk);
-        struct nst_data_element *element;
+        hpx_htx_blk_t       *blk  = htx_get_blk(htx, pos);
+        hpx_htx_blk_type_t   type = htx_get_blk_type(blk);
+        uint32_t             sz   = htx_get_blksz(blk);
+        nst_data_element_t  *element;
 
         if(type != HTX_BLK_DATA) {
             continue;
@@ -854,12 +863,15 @@ err:
     return NST_ERR;
 }
 
-int nst_nosql_exists(struct nst_ctx *ctx) {
-    struct nst_dict_entry *entry = NULL;
-    int ret = NST_CTX_STATE_INIT;
+int
+nst_nosql_exists(nst_ctx_t *ctx) {
+    nst_dict_entry_t  *entry = NULL;
+    int                ret, idx;
+    nst_key_t         *key;
 
-    int idx = ctx->rule->key->idx;
-    struct nst_key *key = &(ctx->keys[idx]);
+    ret = NST_CTX_STATE_INIT;
+    idx = ctx->rule->key->idx;
+    key = &(ctx->keys[idx]);
 
     if(!key) {
         return ret;
@@ -922,11 +934,13 @@ int nst_nosql_exists(struct nst_ctx *ctx) {
  *  0: not found
  *  1: ok
  */
-int nst_nosql_delete(struct nst_key *key) {
-    struct nst_dict_entry *entry = NULL;
-    int ret;
+int
+nst_nosql_delete(nst_key_t *key) {
+    nst_dict_entry_t  *entry = NULL;
+    int                ret;
 
     nst_shctx_lock(&nuster.nosql->dict);
+
     entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
@@ -950,7 +964,7 @@ int nst_nosql_delete(struct nst_key *key) {
     nst_shctx_unlock(&nuster.nosql->dict);
 
     if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
-        struct persist disk;
+        nst_persist_t  disk;
 
         disk.file = trash.area;
 
@@ -961,7 +975,8 @@ int nst_nosql_delete(struct nst_key *key) {
 }
 
 
-int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx) {
+int
+nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(ctx->txn.res.content_length == 0 && ctx->txn.res.payload_len == 0) {
         ctx->state = NST_CTX_STATE_INVALID;
@@ -1001,12 +1016,14 @@ int nst_nosql_finish(struct stream *s, struct http_msg *msg, struct nst_ctx *ctx
     return NST_OK;
 }
 
-void nst_nosql_abort(struct nst_ctx *ctx) {
+void
+nst_nosql_abort(nst_ctx_t *ctx) {
     ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
-void nst_nosql_persist_async() {
-    struct nst_dict_entry *entry;
+void
+nst_nosql_persist_async() {
+    nst_dict_entry_t  *entry;
 
     if(!global.nuster.nosql.root.len || !nuster.nosql->disk.loaded) {
         return;
@@ -1024,10 +1041,12 @@ void nst_nosql_persist_async() {
                 && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
-            struct nst_data_element *element = entry->data->element;
-            struct persist disk;
-            uint64_t header_len  = 0;
-            uint64_t payload_len = 0;
+            nst_data_element_t  *element = entry->data->element;
+            nst_persist_t        disk;
+            uint64_t             header_len, payload_len;
+
+            header_len  = 0;
+            payload_len = 0;
 
             entry->file = nst_nosql_memory_alloc(
                     nst_persist_path_file_len(global.nuster.nosql.root) + 1);
@@ -1049,19 +1068,20 @@ void nst_nosql_persist_async() {
             nst_persist_write_key(&disk, &entry->key);
 
             while(element) {
-                uint32_t blksz, info;
-                enum htx_blk_type type;
+                hpx_htx_blk_type_t  type;
+                uint32_t            blksz, info;
 
-                info = element->info;
-                type = (info >> 28);
+                info  = element->info;
+                type  = (info >> 28);
                 blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
                         ? (info & 0xff) + ((info >> 8) & 0xfffff)
                         : info & 0xfffffff);
 
                 if(type != HTX_BLK_DATA) {
                     nst_persist_write(&disk, (char *)&info, 4);
+
                     payload_len += 4;
-                    header_len += 4 + blksz;
+                    header_len  += 4 + blksz;
                 }
 
                 nst_persist_write(&disk, element->data, blksz);
@@ -1092,28 +1112,28 @@ void nst_nosql_persist_async() {
 
 }
 
-void nst_nosql_persist_load() {
+void
+nst_nosql_persist_load() {
 
     if(global.nuster.nosql.root.len && !nuster.nosql->disk.loaded) {
-        struct ist root;
-        char *file;
-        char meta[NST_PERSIST_META_SIZE];
-        int fd;
-        DIR *dir2;
-        struct dirent *de2;
-        struct nst_key key = { .data = NULL };
-        struct buffer buf = { .area = NULL };
-        struct ist host;
-        struct ist path;
+        hpx_ist_t      root;
+        char          *file;
+        char           meta[NST_PERSIST_META_SIZE];
+        int            fd;
+        DIR           *dir2;
+        nst_dirent_t  *de2;
+        nst_key_t      key = { .data = NULL };
+        hpx_buffer_t   buf = { .area = NULL };
+        hpx_ist_t      host;
+        hpx_ist_t      path;
 
-        fd = -1;
+        fd   = -1;
         dir2 = NULL;
-
         root = global.nuster.nosql.root;
         file = nuster.nosql->disk.file;
 
         if(nuster.nosql->disk.dir) {
-            struct dirent *de = nst_persist_dir_next(nuster.nosql->disk.dir);
+            nst_dirent_t  *de = nst_persist_dir_next(nuster.nosql->disk.dir);
 
             if(de) {
 
@@ -1237,13 +1257,14 @@ err:
     }
 }
 
-void nst_nosql_persist_cleanup() {
+void
+nst_nosql_persist_cleanup() {
 
     if(global.nuster.nosql.root.len && nuster.nosql->disk.loaded) {
-        char *file = nuster.nosql->disk.file;
+        char  *file = nuster.nosql->disk.file;
 
         if(nuster.nosql->disk.dir) {
-            struct dirent *de = nst_persist_dir_next(nuster.nosql->disk.dir);
+            nst_dirent_t *de = nst_persist_dir_next(nuster.nosql->disk.dir);
 
             if(de) {
                 nst_persist_cleanup(global.nuster.nosql.root, file, de);

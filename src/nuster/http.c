@@ -81,11 +81,12 @@ struct nst_http_code nst_http_codes[NST_HTTP_SIZE] = {
     },
 };
 
-int nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, int *val_len) {
-    char equal   = '=';
-    char and     = '&';
-    char *ptr    = query_beg;
-    int name_len = strlen(name);
+int
+nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, int *val_len) {
+    char   equal    = '=';
+    char   and      = '&';
+    char  *ptr      = query_beg;
+    int    name_len = strlen(name);
 
     while(ptr + name_len + 1 < query_end) {
 
@@ -111,14 +112,15 @@ int nst_http_find_param(char *query_beg, char *query_end, char *name, char **val
     return NST_ERR;
 }
 
-int nst_http_data_element_to_htx(struct nst_data_element *element, struct htx *htx) {
-    struct htx_blk *blk;
-    char *ptr;
-    uint32_t blksz, sz, info;
-    enum htx_blk_type type;
+int
+nst_http_data_element_to_htx(nst_data_element_t *element, hpx_htx_t *htx) {
+    hpx_htx_blk_t      *blk;
+    uint32_t            blksz, sz, info;
+    char               *ptr;
+    hpx_htx_blk_type_t  type;
 
-    info = element->info;
-    type = (info >> 28);
+    info  = element->info;
+    type  = (info >> 28);
     blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
             ? (info & 0xff) + ((info >> 8) & 0xfffff)
             : info & 0xfffffff);
@@ -130,19 +132,21 @@ int nst_http_data_element_to_htx(struct nst_data_element *element, struct htx *h
     }
 
     blk->info = info;
-    ptr = htx_get_blk_ptr(htx, blk);
-    sz = htx_get_blksz(blk);
+    ptr       = htx_get_blk_ptr(htx, blk);
+    sz        = htx_get_blksz(blk);
+
     memcpy(ptr, element->data, sz);
 
     return NST_OK;
 }
 
-void nst_http_reply(struct stream *s, int idx) {
-    struct stream_interface *si = &s->si[1];
-    struct channel *res = &s->res;
-    struct htx *htx;
-    struct htx_sl *sl;
-    unsigned int flags;
+void
+nst_http_reply(hpx_stream_t *s, int idx) {
+    hpx_stream_interface_t  *si  = &s->si[1];
+    hpx_channel_t           *res = &s->res;
+    hpx_htx_t               *htx;
+    hpx_htx_sl_t            *sl;
+    unsigned int             flags;
 
     b_reset(&res->buf);
 
@@ -172,14 +176,16 @@ void nst_http_reply(struct stream *s, int idx) {
     htx_to_buf(htx, &res->buf);
 }
 
-int nst_http_reply_100(struct stream *s) {
-    struct channel *res = &s->res;
-    struct htx *htx     = htx_from_buf(&res->buf);
-    struct htx_sl *sl;
-    size_t data;
-    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_LEN|HTX_SL_F_BODYLESS);
+int
+nst_http_reply_100(hpx_stream_t *s) {
+    hpx_channel_t  *res = &s->res;
+    hpx_htx_t      *htx = htx_from_buf(&res->buf);
+    hpx_htx_sl_t   *sl;
+    size_t          data;
+    unsigned int    flags;
 
-    sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"),
+    flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_LEN|HTX_SL_F_BODYLESS);
+    sl    = htx_add_stline(htx, HTX_BLK_RES_SL, flags, ist("HTTP/1.1"),
             nst_http_codes[NST_HTTP_100].code, nst_http_codes[NST_HTTP_100].reason);
 
     if(!sl) {
@@ -204,12 +210,15 @@ fail:
     return -1;
 }
 
-void nst_http_reply_304(struct stream *s, struct ist last_modified, struct ist etag) {
-    struct stream_interface *si = &s->si[1];
-    struct channel *res = &s->res;
-    struct htx *htx;
-    struct htx_sl *sl;
-    unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_LEN|HTX_SL_F_BODYLESS);
+void
+nst_http_reply_304(hpx_stream_t *s, hpx_ist_t last_modified, hpx_ist_t etag) {
+    hpx_stream_interface_t  *si  = &s->si[1];
+    hpx_channel_t           *res = &s->res;
+    hpx_htx_t               *htx;
+    hpx_htx_sl_t            *sl;
+    unsigned int             flags;
+
+    flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_LEN|HTX_SL_F_BODYLESS);
 
     b_reset(&res->buf);
 
@@ -239,14 +248,15 @@ void nst_http_reply_304(struct stream *s, struct ist last_modified, struct ist e
 
 }
 
-int nst_http_handle_expect(struct stream *s, struct htx *htx, struct http_msg *msg) {
+int
+nst_http_handle_expect(hpx_stream_t *s, hpx_htx_t *htx, hpx_http_msg_t *msg) {
 
     if(msg->msg_state == HTTP_MSG_BODY
             && (msg->flags & HTTP_MSGF_VER_11)
             && (msg->flags & (HTTP_MSGF_CNT_LEN|HTTP_MSGF_TE_CHNK))) {
 
-        struct ist hdr = { .ptr = "Expect", .len = 6 };
-        struct http_hdr_ctx ctx;
+        hpx_http_hdr_ctx_t  ctx;
+        hpx_ist_t           hdr = { .ptr = "Expect", .len = 6 };
 
         ctx.blk = NULL;
         /* Expect is allowed in 1.1, look for it */
@@ -269,14 +279,15 @@ int nst_http_handle_expect(struct stream *s, struct htx *htx, struct http_msg *m
  * 1: http_headers should return 1 immediately
  * 0: http_headers should proceed
  */
-int nst_http_handle_conditional_req(struct stream *s, struct htx *htx,
-        struct ist last_modified, struct ist etag, int test_last_modified, int test_etag) {
+int
+nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_modified,
+        hpx_ist_t etag, int test_last_modified, int test_etag) {
 
-    struct http_hdr_ctx hdr = { .blk = NULL };
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
 
-    int if_none_match     = -1;
-    int if_match          = -1;
-    int if_modified_since = -1;;
+    int  if_none_match      = -1;
+    int  if_match           = -1;
+    int  if_modified_since  = -1;;
 
     if(test_etag != NST_STATUS_ON && test_last_modified != NST_STATUS_ON) {
         return 0;
@@ -371,13 +382,13 @@ code412:
     return 1;
 }
 
-int nst_http_parse_htx(struct stream *s, struct http_msg *msg, struct nst_http_txn *txn) {
-    struct htx *htx = htxbuf(&s->req.buf);
-    struct http_hdr_ctx hdr = { .blk = NULL };
-
-    struct htx_sl *sl;
-    struct ist url, uri;
-    char *uri_begin, *uri_end, *ptr;
+int
+nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_htx_t          *htx = htxbuf(&s->req.buf);
+    hpx_htx_sl_t       *sl;
+    hpx_ist_t           url, uri;
+    char               *uri_begin, *uri_end, *ptr;
 
     txn->req.scheme = SCH_HTTP;
 

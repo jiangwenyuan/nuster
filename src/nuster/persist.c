@@ -16,8 +16,9 @@
 
 #include <nuster/nuster.h>
 
-int nst_persist_mkdir(char *path) {
-    char *p = path;
+int
+nst_persist_mkdir(char *path) {
+    char  *p = path;
 
     while(*p != '\0') {
         p++;
@@ -47,7 +48,8 @@ int nst_persist_mkdir(char *path) {
     return NST_OK;
 }
 
-int nst_persist_init(struct ist root, char *path, uint64_t hash) {
+int
+nst_persist_init(hpx_ist_t root, char *path, uint64_t hash) {
     sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr, hash >> 60, hash >> 56, hash);
 
     nst_debug2("[nuster][persist] Path: %s\n", path);
@@ -64,8 +66,9 @@ int nst_persist_init(struct ist root, char *path, uint64_t hash) {
     return NST_OK;
 }
 
-int nst_persist_valid(struct persist *disk, struct nst_key *key) {
-    int ret;
+int
+nst_persist_valid(nst_persist_t *disk, nst_key_t *key) {
+    int  ret;
 
     disk->fd = nst_persist_open(disk->file);
 
@@ -110,9 +113,10 @@ err:
     return NST_ERR;
 }
 
-int nst_persist_exists(struct ist root, struct persist *disk, struct nst_key *key) {
-    struct dirent *de;
-    DIR *dirp;
+int
+nst_persist_exists(hpx_ist_t root, nst_persist_t *disk, nst_key_t *key) {
+    nst_dirent_t  *de;
+    DIR           *dirp;
 
     sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
             key->hash >> 60, key->hash >> 56, key->hash);
@@ -141,19 +145,22 @@ int nst_persist_exists(struct ist root, struct persist *disk, struct nst_key *ke
     return NST_ERR;
 }
 
-DIR *nst_persist_opendir_by_idx(struct ist root, char *path, int idx) {
+DIR *
+nst_persist_opendir_by_idx(hpx_ist_t root, char *path, int idx) {
     memset(path, 0, nst_persist_path_file_len(root));
     sprintf(path, "%s/%x/%02x", root.ptr, idx / 16, idx);
 
     return opendir(path);
 }
 
-struct dirent *nst_persist_dir_next(DIR *dir) {
+nst_dirent_t *
+nst_persist_dir_next(DIR *dir) {
     return readdir(dir);
 }
 
-int nst_persist_get_meta(int fd, char *meta) {
-    int ret;
+int
+nst_persist_get_meta(int fd, char *meta) {
+    int  ret;
 
     ret = pread(fd, meta, NST_PERSIST_META_SIZE, 0);
 
@@ -172,8 +179,9 @@ int nst_persist_get_meta(int fd, char *meta) {
     return NST_OK;
 }
 
-int nst_persist_get_key(int fd, char *meta, struct nst_key *key) {
-    int ret;
+int
+nst_persist_get_key(int fd, char *meta, nst_key_t *key) {
+    int  ret;
 
     ret = pread(fd, key->data, key->size, NST_PERSIST_POS_KEY);
 
@@ -184,8 +192,9 @@ int nst_persist_get_key(int fd, char *meta, struct nst_key *key) {
     return NST_OK;
 }
 
-int nst_persist_get_host(int fd, char *meta, struct ist host) {
-    int ret;
+int
+nst_persist_get_host(int fd, char *meta, hpx_ist_t host) {
+    int  ret;
 
     ret = pread(fd, host.ptr, host.len, NST_PERSIST_POS_KEY + nst_persist_meta_get_key_len(meta));
 
@@ -196,9 +205,10 @@ int nst_persist_get_host(int fd, char *meta, struct ist host) {
     return NST_OK;
 }
 
-int nst_persist_get_path(int fd, char *meta, struct ist path) {
+int
+nst_persist_get_path(int fd, char *meta, hpx_ist_t path) {
 
-    int ret = pread(fd, path.ptr, path.len, NST_PERSIST_POS_KEY
+    int  ret = pread(fd, path.ptr, path.len, NST_PERSIST_POS_KEY
             + nst_persist_meta_get_key_len(meta)
             + nst_persist_meta_get_host_len(meta));
 
@@ -209,9 +219,10 @@ int nst_persist_get_path(int fd, char *meta, struct ist path) {
     return NST_OK;
 }
 
-int nst_persist_get_etag(int fd, char *meta, struct ist etag) {
+int
+nst_persist_get_etag(int fd, char *meta, hpx_ist_t etag) {
 
-    int ret = pread(fd, etag.ptr, etag.len, NST_PERSIST_POS_KEY
+    int  ret = pread(fd, etag.ptr, etag.len, NST_PERSIST_POS_KEY
             + nst_persist_meta_get_key_len(meta)
             + nst_persist_meta_get_host_len(meta)
             + nst_persist_meta_get_path_len(meta));
@@ -223,9 +234,10 @@ int nst_persist_get_etag(int fd, char *meta, struct ist etag) {
     return NST_OK;
 }
 
-int nst_persist_get_last_modified(int fd, char *meta, struct ist last_modified) {
+int
+nst_persist_get_last_modified(int fd, char *meta, hpx_ist_t last_modified) {
 
-    int ret = pread(fd, last_modified.ptr, last_modified.len,
+    int  ret = pread(fd, last_modified.ptr, last_modified.len,
             NST_PERSIST_POS_KEY
             + nst_persist_meta_get_key_len(meta)
             + nst_persist_meta_get_host_len(meta)
@@ -239,20 +251,19 @@ int nst_persist_get_last_modified(int fd, char *meta, struct ist last_modified) 
     return NST_OK;
 }
 
-void nst_persist_cleanup(struct ist root, char *path, struct dirent *de1) {
-    DIR *dir2;
-    struct dirent *de2;
-    int fd, ret;
-    char meta[NST_PERSIST_META_SIZE];
+void
+nst_persist_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de1) {
+    nst_dirent_t  *de2;
+    DIR           *dir2;
+    int            fd, ret;
+    char           meta[NST_PERSIST_META_SIZE];
 
     if(strcmp(de1->d_name, ".") == 0 || strcmp(de1->d_name, "..") == 0) {
-
         return;
     }
 
     memcpy(path + nst_persist_path_base_len(root), "/", 1);
-    memcpy(path + nst_persist_path_base_len(root) + 1, de1->d_name,
-            strlen(de1->d_name));
+    memcpy(path + nst_persist_path_base_len(root) + 1, de1->d_name, strlen(de1->d_name));
 
     dir2 = opendir(path);
 
@@ -313,11 +324,12 @@ void nst_persist_cleanup(struct ist root, char *path, struct dirent *de1) {
  *  0: not found
  *  1: ok
  */
-int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_key *key) {
+int
+nst_persist_purge_by_key(hpx_ist_t root, nst_persist_t *disk, nst_key_t *key) {
 
-    struct dirent *de;
-    DIR *dirp;
-    int ret;
+    nst_dirent_t  *de;
+    DIR           *dirp;
+    int            ret;
 
     sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
             key->hash >> 60, key->hash >> 56, key->hash);
@@ -325,6 +337,7 @@ int nst_persist_purge_by_key(struct ist root, struct persist *disk, struct nst_k
     dirp = opendir(disk->file);
 
     if(!dirp) {
+
         if(errno == ENOENT) {
             return 0;
         } else {
@@ -374,8 +387,9 @@ done:
  *  0: not found
  *  1: ok
  */
-int nst_persist_purge_by_path(char *path) {
-    int ret = unlink(path);
+int
+nst_persist_purge_by_path(char *path) {
+    int  ret = unlink(path);
 
     if(ret == 0) {
         return 1;
@@ -388,8 +402,9 @@ int nst_persist_purge_by_path(char *path) {
     }
 }
 
-void nst_persist_update_expire(char *file, uint64_t expire) {
-    int fd;
+void
+nst_persist_update_expire(char *file, uint64_t expire) {
+    int  fd;
 
     fd = open(file, O_WRONLY);
 

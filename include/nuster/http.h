@@ -39,40 +39,41 @@ enum {
     NST_HTTP_SIZE
 };
 
-struct nst_http_code {
-    int                   status;
-    struct ist            code;
-    struct ist            reason;
-    struct ist            length;
-};
+typedef struct nst_http_code {
+    int                 status;
+    hpx_ist_t           code;
+    hpx_ist_t           reason;
+    hpx_ist_t           length;
+} nst_http_code_t;
 
-struct nst_http_req {
-    int                   scheme;
-    struct ist            host;
-    struct ist            uri;
-    struct ist            path;
-    int                   delimiter;
-    struct ist            query;
-    struct ist            cookie;
-    struct ist            content_type;
-};
+typedef struct nst_http_req {
+    int                 scheme;
+    hpx_ist_t           host;
+    hpx_ist_t           uri;
+    hpx_ist_t           path;
+    int                 delimiter;
+    hpx_ist_t           query;
+    hpx_ist_t           cookie;
+    hpx_ist_t           content_type;
+} nst_http_req_t;
 
-struct nst_http_res {
-    int                   header_len;
-    uint64_t              payload_len;
-    uint64_t              content_length;
-    struct ist            transfer_encoding;
-    struct ist            etag;
-    struct ist            last_modified;
-};
+typedef struct nst_http_res {
+    int                 header_len;
+    uint64_t            payload_len;
+    uint64_t            content_length;
+    hpx_ist_t           transfer_encoding;
+    hpx_ist_t           etag;
+    hpx_ist_t           last_modified;
+} nst_http_res_t;
 
-struct nst_http_txn {
-    struct buffer        *buf;
-    struct nst_http_req   req;
-    struct nst_http_res   res;
-};
+typedef struct nst_http_txn {
+    hpx_buffer_t       *buf;
+    nst_http_req_t      req;
+    nst_http_res_t      res;
+} nst_http_txn_t;
 
-static inline int nst_http_txn_attach(struct nst_http_txn *txn) {
+static inline int
+nst_http_txn_attach(nst_http_txn_t *txn) {
     txn->buf = alloc_trash_chunk();
 
     if(txn->buf) {
@@ -82,20 +83,21 @@ static inline int nst_http_txn_attach(struct nst_http_txn *txn) {
     }
 }
 
-static inline void nst_http_txn_detach(struct nst_http_txn *txn) {
+static inline void
+nst_http_txn_detach(nst_http_txn_t *txn) {
     free_trash_chunk(txn->buf);
 }
 
-int nst_http_parse_htx(struct stream *s, struct http_msg *msg, struct nst_http_txn *txn);
+int nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn);
 int nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, int *val_len);
-int nst_http_data_element_to_htx(struct nst_data_element *element, struct htx *htx);
+int nst_http_data_element_to_htx(nst_data_element_t *element, hpx_htx_t *htx);
 
-void nst_http_reply(struct stream *s, int idx);
-int nst_http_reply_100(struct stream *s);
-void nst_http_reply_304(struct stream *s, struct ist last_modified, struct ist etag);
+void nst_http_reply(hpx_stream_t *s, int idx);
+int nst_http_reply_100(hpx_stream_t *s);
+void nst_http_reply_304(hpx_stream_t *s, hpx_ist_t last_modified, hpx_ist_t etag);
 
-int nst_http_handle_expect(struct stream *s, struct htx *htx, struct http_msg *msg);
-int nst_http_handle_conditional_req(struct stream *s, struct htx *htx,
-        struct ist last_modified, struct ist etag, int test_last_modified, int test_etag);
+int nst_http_handle_expect(hpx_stream_t *s, hpx_htx_t *htx, hpx_http_msg_t *msg);
+int nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx,
+        hpx_ist_t last_modified, hpx_ist_t etag, int test_last_modified, int test_etag);
 
 #endif /* _NUSTER_HTTP_H */

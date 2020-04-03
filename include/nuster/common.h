@@ -22,6 +22,34 @@
 #ifndef _NUSTER_COMMON_H
 #define _NUSTER_COMMON_H
 
+typedef struct dirent                   nst_dirent_t;
+
+typedef struct sample_fetch_kw_list     hpx_sample_fetch_kw_list_t;
+typedef struct stream_interface         hpx_stream_interface_t;
+typedef struct http_hdr_ctx             hpx_http_hdr_ctx_t;
+typedef enum   htx_blk_type             hpx_htx_blk_type_t;
+typedef struct flt_conf                 hpx_flt_conf_t;
+typedef struct http_msg                 hpx_http_msg_t;
+typedef struct acl_cond                 hpx_acl_cond_t;
+typedef struct http_txn                 hpx_http_txn_t;
+typedef struct my_regex                 hpx_my_regex_t;
+typedef struct channel                  hpx_channel_t;
+typedef struct flt_ops                  hpx_flt_ops_t;
+typedef struct htx_blk                  hpx_htx_blk_t;
+typedef struct session                  hpx_session_t;
+typedef struct buffer                   hpx_buffer_t;
+typedef struct stream                   hpx_stream_t;
+typedef struct appctx                   hpx_appctx_t;
+typedef struct applet                   hpx_applet_t;
+typedef struct htx_sl                   hpx_htx_sl_t;
+typedef struct filter                   hpx_filter_t;
+typedef struct sample                   hpx_sample_t;
+typedef struct proxy                    hpx_proxy_t;
+typedef struct list                     hpx_list_t;
+typedef struct ist                      hpx_ist_t;
+typedef struct htx                      hpx_htx_t;
+typedef struct arg                      hpx_arg_t;
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -38,13 +66,11 @@
 #endif
 #endif
 
-#include <common/mini-clist.h>
-#include <types/acl.h>
+#include <common/buf.h>
 #include <types/global.h>
-#include <import/xxhash.h>
 
-#define NST_OK          0
-#define NST_ERR         1
+#define NST_OK                          0
+#define NST_ERR                         1
 
 #define NST_DEFAULT_TTL                 0
 #define NST_DEFAULT_SIZE                1024 * 1024
@@ -59,6 +85,28 @@
 #define NST_DEFAULT_KEY                "method.scheme.host.uri"
 #define NST_DEFAULT_CODE               "200"
 
+typedef struct nst_data_element {
+    struct nst_data_element  *next;
+
+    int                       info;
+    char                      data[0];
+} nst_data_element_t;
+
+/*
+ * A nst_data contains a complete http response data,
+ * and is pointed by nst_entry->data.
+ * All nst_data are stored in a circular singly linked list
+ */
+typedef struct nst_data {
+    struct nst_data     *next;
+
+    int                  clients;
+    int                  invalid;
+
+    nst_data_element_t  *element;
+} nst_data_t;
+
+
 enum {
     NST_STATUS_UNDEFINED = -1,
     NST_STATUS_OFF       =  0,
@@ -66,8 +114,27 @@ enum {
 };
 
 enum {
-    NST_MODE_CACHE = 1,
-    NST_MODE_NOSQL,
+    NST_MODE_CACHE       = 1,
+    NST_MODE_NOSQL       = 2,
+};
+
+enum {
+    NST_RULE_DISABLED    = 0,
+    NST_RULE_ENABLED     = 1,
+};
+
+enum {
+    /* no disk persistence */
+    NST_DISK_OFF         = 0,
+
+    /* disk persistence only, do not cache in memory */
+    NST_DISK_ONLY,
+
+    /* persist the response on disk before return to client */
+    NST_DISK_SYNC,
+
+    /* cache in memory first and persist on disk later */
+    NST_DISK_ASYNC,
 };
 
 enum nst_key_element_type {
@@ -105,50 +172,32 @@ enum nst_key_element_type {
     NST_KEY_ELEMENT_BODY,
 };
 
-enum {
-    NST_RULE_DISABLED = 0,
-    NST_RULE_ENABLED  = 1,
-};
-
-enum {
-    /* no disk persistence */
-    NST_DISK_OFF    = 0,
-
-    /* disk persistence only, do not cache in memory */
-    NST_DISK_ONLY,
-
-    /* persist the response on disk before return to client */
-    NST_DISK_SYNC,
-
-    /* cache in memory first and persist on disk later */
-    NST_DISK_ASYNC,
-};
-
-struct nst_key_element {
+typedef struct nst_key_element {
     enum nst_key_element_type  type;
     char                      *data;
-};
+} nst_key_element_t;
 
-struct nst_rule_key {
-    char                      *name;
-    struct nst_key_element   **data;           /* parsed key */
-    int                        idx;
-
+typedef struct nst_rule_key {
     struct nst_rule_key       *next;
-};
 
-struct nst_rule_code {
+    char                      *name;
+    nst_key_element_t        **data;           /* parsed key */
+    int                        idx;
+} nst_rule_key_t;
+
+typedef struct nst_rule_code {
     struct nst_rule_code      *next;
-    int                        code;
-};
 
-struct nst_rule_config {
-    struct list                list;          /* list linked to from the proxy */
+    int                        code;
+} nst_rule_code_t;
+
+typedef struct nst_rule_config {
+    hpx_list_t                 list;          /* list linked to from the proxy */
 
     int                        id;            /* same for identical names */
     char                      *name;          /* cache name for logging */
-    struct nst_rule_key        key;
-    struct nst_rule_code      *code;          /* code */
+    nst_rule_key_t             key;
+    nst_rule_code_t           *code;          /* code */
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
     int                        disk;          /* NST_DISK_* */
     int                        etag;          /* etag on|off */
@@ -173,10 +222,12 @@ struct nst_rule_config {
      */
     uint8_t                    extend[4];
 
-    struct acl_cond           *cond;          /* acl condition to meet */
-};
+    hpx_acl_cond_t            *cond;          /* acl condition to meet */
+} nst_rule_config_t;
 
-struct nst_rule {
+typedef struct nst_rule {
+    struct nst_rule           *next;
+
     int                        uuid;          /* unique rule ID */
     int                        idx;           /* index in specific proxy */
     int                        id;            /* same for identical names */
@@ -184,27 +235,27 @@ struct nst_rule {
     int                        state;         /* enabled or disabled */
 
     char                      *name;          /* rule name for logging */
-    struct nst_rule_key       *key;
-    struct nst_rule_code      *code;          /* code */
+    nst_rule_key_t            *key;
+    nst_rule_code_t           *code;          /* code */
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
     int                        disk;          /* NST_DISK_* */
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
     uint8_t                    extend[4];
-    struct acl_cond           *cond;          /* acl condition to meet */
+    hpx_acl_cond_t            *cond;          /* acl condition to meet */
+} nst_rule_t;
 
-    struct nst_rule           *next;
-};
-
-struct nst_flt_conf {
-    int status;
-    int pid;
-};
+typedef struct nst_flt_conf {
+    int                       status;
+    int                       pid;
+} nst_flt_conf_t;
 
 
 /* get current timestamp in milliseconds */
-static inline uint64_t get_current_timestamp() {
+static inline uint64_t
+get_current_timestamp() {
     struct timeval tv;
+
     gettimeofday(&tv, NULL);
 
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
@@ -213,7 +264,8 @@ static inline uint64_t get_current_timestamp() {
 const char *nst_parse_size(const char *text, uint64_t *ret);
 const char *nst_parse_time(const char *text, int len, unsigned *ret);
 
-void nst_debug(struct stream *s, const char *fmt, ...);
+void nst_debug(hpx_stream_t *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
+
 
 #endif /* _NUSTER_COMMON_H */

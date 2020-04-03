@@ -22,28 +22,27 @@
 #ifndef _NUSTER_KEY_H
 #define _NUSTER_KEY_H
 
-#include <stdlib.h>
-#include <stdio.h>
-
 #include <import/xxhash.h>
 
-#include <nuster/http.h>
+#include <nuster/common.h>
 
-struct nst_key {
-    uint32_t    size;
-    char       *data;
-    uint64_t    hash;
-};
+typedef struct nst_key {
+    uint32_t            size;
+    char               *data;
+    uint64_t            hash;
+} nst_key_t;
 
-static inline struct buffer *nst_key_init() {
-    struct buffer *key = get_trash_chunk();
+static inline hpx_buffer_t *
+nst_key_init() {
+    hpx_buffer_t *key = get_trash_chunk();
 
     memset(key->area, 0, key->size);
 
     return key;
 }
 
-static inline int nst_key_cat(struct buffer *key, const char *ptr, int len) {
+static inline int
+nst_key_cat(hpx_buffer_t *key, const char *ptr, int len) {
     if(key->data + len > key->size) {
         return NST_ERR;
     }
@@ -54,7 +53,8 @@ static inline int nst_key_cat(struct buffer *key, const char *ptr, int len) {
     return NST_OK;
 }
 
-static inline int nst_key_catist(struct buffer *key, struct ist v) {
+static inline int
+nst_key_catist(hpx_buffer_t *key, hpx_ist_t v) {
     /* additional one NULL delimiter */
     if(key->data + v.len + 1 > key->size) {
         return NST_ERR;
@@ -66,7 +66,8 @@ static inline int nst_key_catist(struct buffer *key, struct ist v) {
     return NST_OK;
 }
 
-static inline int nst_key_catdel(struct buffer *key) {
+static inline int
+nst_key_catdel(hpx_buffer_t *key) {
     if(key->data + 1 > key->size) {
         return NST_ERR;
     }
@@ -76,13 +77,14 @@ static inline int nst_key_catdel(struct buffer *key) {
     return NST_OK;
 }
 
-static inline void nst_key_hash(struct nst_key *key) {
+static inline void
+nst_key_hash(nst_key_t *key) {
     key->hash = XXH64(key->data, key->size, 0);
 }
 
-void nst_key_debug(struct nst_key *key);
+void nst_key_debug(nst_key_t *key);
 
-int nst_key_build(struct stream *s, struct http_msg *msg, struct nst_rule *rule,
-        struct nst_http_txn *txn, struct nst_key *key, enum http_meth_t method);
+int nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_txn_t *txn,
+        nst_key_t *key, enum http_meth_t method);
 
 #endif /* _NUSTER_KEY_H */

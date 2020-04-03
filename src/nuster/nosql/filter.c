@@ -21,17 +21,19 @@
 
 #include <nuster/nuster.h>
 
-static int _nst_nosql_filter_init(struct proxy *px, struct flt_conf *fconf) {
-    struct nst_flt_conf *conf = fconf->conf;
+static int
+_nst_nosql_filter_init(hpx_proxy_t *px, hpx_flt_conf_t *fconf) {
+    nst_flt_conf_t  *conf = fconf->conf;
 
     fconf->flags |= FLT_CFG_FL_HTX;
-    conf->pid = px->uuid;
+    conf->pid     = px->uuid;
 
     return 0;
 }
 
-static void _nst_nosql_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
-    struct nst_flt_conf *conf = fconf->conf;
+static void
+_nst_nosql_filter_deinit(hpx_proxy_t *px, hpx_flt_conf_t *fconf) {
+    nst_flt_conf_t  *conf = fconf->conf;
 
     if(conf) {
         free(conf);
@@ -40,7 +42,8 @@ static void _nst_nosql_filter_deinit(struct proxy *px, struct flt_conf *fconf) {
     fconf->conf = NULL;
 }
 
-static int _nst_nosql_filter_check(struct proxy *px, struct flt_conf *fconf) {
+static int
+_nst_nosql_filter_check(hpx_proxy_t *px, hpx_flt_conf_t *fconf) {
 
     if(px->mode != PR_MODE_HTTP) {
         ha_warning("Proxy [%s]: mode should be http to enable nosql\n", px->id);
@@ -49,21 +52,22 @@ static int _nst_nosql_filter_check(struct proxy *px, struct flt_conf *fconf) {
     return 0;
 }
 
-static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
-    struct nst_flt_conf *conf = FLT_CONF(filter);
+static int
+_nst_nosql_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
+    nst_flt_conf_t  *conf = FLT_CONF(filter);
 
     if(global.nuster.nosql.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
         return 0;
     }
 
     if(!filter->ctx) {
-        int rule_cnt, key_cnt, size;
-        struct nst_ctx *ctx;
+        nst_ctx_t  *ctx;
+        int         rule_cnt, key_cnt, size;
 
         rule_cnt = nuster.proxy[conf->pid]->rule_cnt;
         key_cnt  = nuster.proxy[conf->pid]->key_cnt;
 
-        size = sizeof(struct nst_ctx) + key_cnt * sizeof(struct nst_key);
+        size = sizeof(nst_ctx_t) + key_cnt * sizeof(nst_key_t);
 
         ctx = malloc(size);
 
@@ -92,10 +96,11 @@ static int _nst_nosql_filter_attach(struct stream *s, struct filter *filter) {
     return 1;
 }
 
-static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
+static void
+_nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
     if(filter->ctx) {
-        struct nst_ctx *ctx = filter->ctx;
+        nst_ctx_t  *ctx = filter->ctx;
 
         if(ctx->state == NST_CTX_STATE_CREATE) {
             nst_nosql_abort(ctx);
@@ -108,14 +113,14 @@ static void _nst_nosql_filter_detach(struct stream *s, struct filter *filter) {
 }
 
 static int
-_nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct http_msg *msg) {
+_nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg) {
 
-    struct stream_interface *si = &s->si[1];
-    struct nst_ctx *ctx   = filter->ctx;
-    struct proxy *px            = s->be;
-    struct appctx *appctx       = si_appctx(si);
-    struct channel *req         = msg->chn;
-    struct channel *res         = &s->res;
+    hpx_stream_interface_t  *si     = &s->si[1];
+    nst_ctx_t               *ctx    = filter->ctx;
+    hpx_proxy_t             *px     = s->be;
+    hpx_appctx_t            *appctx = si_appctx(si);
+    hpx_channel_t           *req    = msg->chn;
+    hpx_channel_t           *res    = &s->res;
 
     if((msg->chn->flags & CF_ISRESP)) {
         return 1;
@@ -131,7 +136,7 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
     }
 
     if(ctx->state == NST_CTX_STATE_INIT) {
-        int i = 0;
+        int  i = 0;
 
         if(nst_http_parse_htx(s, msg, &ctx->txn) != NST_OK) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
@@ -142,8 +147,8 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
         ctx->rule = nuster.proxy[px->uuid]->rule;
 
         for(i = 0; i < ctx->rule_cnt; i++) {
-            int idx = ctx->rule->key->idx;
-            struct nst_key *key = &(ctx->keys[idx]);
+            int         idx = ctx->rule->key->idx;
+            nst_key_t  *key = &(ctx->keys[idx]);
 
             nst_debug(s, "[nosql] ==== Check rule: %s ====\n", ctx->rule->name);
 
@@ -290,12 +295,13 @@ _nst_nosql_filter_http_headers(struct stream *s, struct filter *filter, struct h
     return 1;
 }
 
-static int _nst_nosql_filter_http_payload(struct stream *s, struct filter *filter,
-        struct http_msg *msg, unsigned int offset, unsigned int len) {
+static int
+_nst_nosql_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg,
+        unsigned int offset, unsigned int len) {
 
-    struct stream_interface *si = &s->si[1];
-    struct appctx *appctx       = si_appctx(si);
-    struct nst_ctx *ctx   = filter->ctx;
+    hpx_stream_interface_t  *si     = &s->si[1];
+    hpx_appctx_t            *appctx = si_appctx(si);
+    nst_ctx_t               *ctx    = filter->ctx;
 
     if(len <= 0) {
         return 0;
@@ -314,10 +320,10 @@ static int _nst_nosql_filter_http_payload(struct stream *s, struct filter *filte
 }
 
 static int
-_nst_nosql_filter_http_end(struct stream *s, struct filter *filter, struct http_msg *msg) {
-    struct stream_interface *si = &s->si[1];
-    struct appctx *appctx       = si_appctx(si);
-    struct nst_ctx *ctx   = filter->ctx;
+_nst_nosql_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg) {
+    hpx_stream_interface_t  *si     = &s->si[1];
+    hpx_appctx_t            *appctx = si_appctx(si);
+    nst_ctx_t               *ctx    = filter->ctx;
 
     if(ctx->state == NST_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
 
@@ -335,7 +341,7 @@ _nst_nosql_filter_http_end(struct stream *s, struct filter *filter, struct http_
     return 1;
 }
 
-struct flt_ops nst_nosql_filter_ops = {
+hpx_flt_ops_t nst_nosql_filter_ops = {
     /* Manage nosql filter, called for each filter declaration */
     .init   = _nst_nosql_filter_init,
     .deinit = _nst_nosql_filter_deinit,
