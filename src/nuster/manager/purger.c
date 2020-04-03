@@ -21,7 +21,7 @@
 #include <nuster/nuster.h>
 
 /*
- * purge cache by key
+ * purge by key
  */
 int
 nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
@@ -201,11 +201,16 @@ purge:
 
         appctx->st0 = mode;
         appctx->st1 = st1;
-        appctx->st2 = 0;
+
+        if(p->nuster.mode == NST_MODE_CACHE) {
+            appctx->ctx.nuster.manager.dict = &nuster.cache->dict;
+        } else {
+            appctx->ctx.nuster.manager.dict = &nuster.nosql->dict;
+        }
 
         buf.size = host_len + path_len;
         buf.data = 0;
-        buf.area = nst_cache_memory_alloc(buf.size);
+        buf.area = nst_memory_alloc(appctx->ctx.nuster.manager.dict->memory, buf.size);
 
         if(!buf.area) {
             goto err;
@@ -310,15 +315,16 @@ static void
 nst_purger_handler(hpx_appctx_t *appctx) {
     nst_dict_entry_t        *entry  = NULL;
     hpx_stream_interface_t  *si     = appctx->owner;
-    hpx_stream_t             *s     = si_strm(si);
-    uint64_t                  start = get_current_timestamp();
-    int                       max   = 1000;
+    hpx_stream_t            *s      = si_strm(si);
+    uint64_t                 start  = get_current_timestamp();
+    int                      max    = 1000;
+    nst_dict_t              *dict   = appctx->ctx.nuster.manager.dict;
 
     while(1) {
-        nst_shctx_lock(&nuster.cache->dict);
+        nst_shctx_lock(dict);
 
-        while(appctx->st2 < nuster.cache->dict.size && max--) {
-            entry = nuster.cache->dict.entry[appctx->st2];
+        while(appctx->ctx.nuster.manager.idx < dict->size && max--) {
+            entry = dict->entry[appctx->ctx.nuster.manager.idx];
 
             while(entry) {
 
@@ -339,10 +345,10 @@ nst_purger_handler(hpx_appctx_t *appctx) {
                 entry = entry->next;
             }
 
-            appctx->st2++;
+            appctx->ctx.nuster.manager.idx++;
         }
 
-        nst_shctx_unlock(&nuster.cache->dict);
+        nst_shctx_unlock(dict);
 
         if(get_current_timestamp() - start > 1) {
             break;
@@ -353,7 +359,7 @@ nst_purger_handler(hpx_appctx_t *appctx) {
 
     task_wakeup(s->task, TASK_WOKEN_OTHER);
 
-    if(appctx->st2 == nuster.cache->dict.size) {
+    if(appctx->ctx.nuster.manager.idx == dict->size) {
         nst_http_reply(s, NST_HTTP_200);
     }
 }
@@ -366,7 +372,7 @@ nst_purger_release_handler(hpx_appctx_t *appctx) {
         free(appctx->ctx.nuster.manager.regex);
     }
 
-    nst_cache_memory_free(appctx->ctx.nuster.manager.buf.area);
+    nst_memory_free(appctx->ctx.nuster.manager.dict->memory, appctx->ctx.nuster.manager.buf.area);
 }
 
 void

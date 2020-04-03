@@ -79,27 +79,30 @@ struct appctx {
 	union {
 		union {
 			struct {
-				struct nst_dict_entry  *entry;
-				struct nst_data   *data;
-				struct nst_data_element *element;
+				struct nst_dict_entry    *entry;
+				struct nst_data_element  *element;
+				struct nst_data          *data;
 
-				int fd;
-				int header_len;
-				uint64_t offset;
+				int       fd;
+				int       header_len;
+				uint64_t  offset;
 			} cache;
 			struct {
-				struct nst_dict_entry *entry;
-				struct nst_data   *data;
-				struct nst_data_element *element;
-				int fd;
-				int header_len;
-				uint64_t offset;
+				struct nst_dict_entry    *entry;
+				struct nst_data_element  *element;
+				struct nst_data          *data;
+
+				int       fd;
+				int       header_len;
+				uint64_t  offset;
 			} nosql;
 			struct {
-				struct buffer    buf;
-				struct ist	 host;
-				struct ist	 path;
-				struct my_regex *regex;
+				struct nst_dict  *dict;
+				uint64_t          idx;
+				struct buffer     buf;
+				struct ist	  host;
+				struct ist	  path;
+				struct my_regex  *regex;
 			} manager;
 		} nuster;
 		struct {

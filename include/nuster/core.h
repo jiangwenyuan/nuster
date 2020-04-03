@@ -88,12 +88,6 @@ typedef struct nst_core {
     unsigned int                waiters;
 #endif
 
-    /* >=0: rehashing, index, -1: not rehashing */
-    int                         rehash_idx;
-
-    /* cache dict cleanup index */
-    int                         cleanup_idx;
-
     /* persist async index */
     int                         persist_idx;
 
