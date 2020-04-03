@@ -43,6 +43,30 @@ nst_stats_update_cache(int state) {
     nst_shctx_unlock(global.nuster.stats);
 }
 
+void
+nst_stats_update_nosql(int state) {
+    nst_shctx_lock(global.nuster.stats);
+
+    global.nuster.stats->nosql.total++;
+
+    switch(state) {
+        case NST_CTX_STATE_HIT_MEMORY:
+        case NST_CTX_STATE_HIT_DISK:
+            global.nuster.stats->nosql.get++;
+            break;
+        case NST_CTX_STATE_CREATE:
+            global.nuster.stats->nosql.post++;
+            break;
+        case NST_CTX_STATE_DELETE:
+            global.nuster.stats->nosql.delete++;
+            break;
+        default:
+            break;
+    }
+
+    nst_shctx_unlock(global.nuster.stats);
+}
+
 /*
  * return 1 if the req is done, otherwise 0
  */
@@ -247,6 +271,20 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.abort:",
                 global.nuster.stats->cache.abort);
+    }
+
+    if(global.nuster.nosql.status == NST_STATUS_ON) {
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.total:",
+                global.nuster.stats->nosql.total);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.get:",
+                global.nuster.stats->nosql.get);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.post:",
+                global.nuster.stats->nosql.post);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.delete:",
+                global.nuster.stats->nosql.delete);
     }
 
     if(!_nst_stats_putdata(res, htx, &trash)) {

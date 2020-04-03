@@ -53,6 +53,14 @@ typedef struct nst_stats {
         uint64_t                abort;
     } cache;
 
+    struct {
+        uint64_t                total;
+        uint64_t                get;
+        uint64_t                post;
+        uint64_t                delete;
+        uint64_t                abort;
+    } nosql;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t             mutex;
 #else
@@ -69,6 +77,7 @@ void nst_manager_init();
 int nst_stats_init();
 int nst_stats_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
 void nst_stats_update_cache(int state);
+void nst_stats_update_nosql(int state);
 
 /* purger */
 void nst_purger_init();
