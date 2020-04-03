@@ -715,6 +715,10 @@ statistics.cache.total:         0
 statistics.cache.hit:           0
 statistics.cache.fetch:         0
 statistics.cache.abort:         0
+statistics.nosql.total:         0
+statistics.nosql.get:           0
+statistics.nosql.post:          0
+statistics.nosql.delete:        0
 
 **PROXY cache app1**
 app1.rule.r1:                   state=on  disk=off   ttl=100

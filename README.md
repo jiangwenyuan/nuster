@@ -732,12 +732,16 @@ statistics.cache.total:         0
 statistics.cache.hit:           0
 statistics.cache.fetch:         0
 statistics.cache.abort:         0
+statistics.nosql.total:         0
+statistics.nosql.get:           0
+statistics.nosql.post:          0
+statistics.nosql.delete:        0
 
 **PROXY cache app1**
-app1.rule.r1:                  state=on  disk=off   ttl=100
-app1.rule.r2:                  state=on  disk=only  ttl=200
-app1.rule.r2:                  state=on  disk=sync  ttl=300
-app1.rule.r4:                  state=on  disk=async ttl=400
+app1.rule.r1:                   state=on  disk=off   ttl=100
+app1.rule.r2:                   state=on  disk=only  ttl=200
+app1.rule.r2:                   state=on  disk=sync  ttl=300
+app1.rule.r4:                   state=on  disk=async ttl=400
 
 **PROXY nosql app2**
 app2.rule.ra:                   state=on  disk=off   ttl=0
