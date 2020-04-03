@@ -83,7 +83,7 @@ nst_stats_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     } else {
         appctx      = si_appctx(si);
         appctx->st0 = NST_STATS_HEADER;
-        appctx->st1 = proxies_list->uuid;
+        appctx->st1 = px->uuid;
         appctx->st2 = 0;
 
         req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
