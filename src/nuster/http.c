@@ -143,6 +143,7 @@ nst_http_data_element_to_htx(nst_data_element_t *element, hpx_htx_t *htx) {
 void
 nst_http_reply(hpx_stream_t *s, int idx) {
     hpx_stream_interface_t  *si  = &s->si[1];
+    hpx_channel_t           *req = &s->req;
     hpx_channel_t           *res = &s->res;
     hpx_htx_t               *htx;
     hpx_htx_sl_t            *sl;
@@ -174,6 +175,12 @@ nst_http_reply(hpx_stream_t *s, int idx) {
     }
 
     htx_to_buf(htx, &res->buf);
+
+    if(co_data(req)) {
+        hpx_htx_t  *req_htx = htx_from_buf(&req->buf);
+        co_htx_skip(req, req_htx, co_data(req));
+        htx_to_buf(req_htx, &req->buf);
+    }
 }
 
 int

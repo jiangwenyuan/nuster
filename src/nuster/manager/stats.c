@@ -90,7 +90,7 @@ nst_stats_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
         req->analysers |= AN_REQ_HTTP_XFER_BODY;
 
-        return 0;
+        return 1;
     }
 
 }
