@@ -1,5 +1,5 @@
 /*
- * nuster manager functions.
+ * nuster purger functions.
  *
  * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *

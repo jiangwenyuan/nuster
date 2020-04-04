@@ -23,6 +23,7 @@
 #define _NUSTER_CORE_H
 
 #include <nuster/common.h>
+#include <nuster/store.h>
 #include <nuster/http.h>
 #include <nuster/key.h>
 #include <nuster/dict.h>
@@ -99,6 +100,8 @@ typedef struct nst_core {
         nst_dirent_t           *de;
         char                   *file;
     } disk;
+
+    nst_store_t                 store;
 } nst_core_t;
 
 static inline int

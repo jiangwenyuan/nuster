@@ -85,28 +85,6 @@ typedef struct arg                      hpx_arg_t;
 #define NST_DEFAULT_KEY                "method.scheme.host.uri"
 #define NST_DEFAULT_CODE               "200"
 
-typedef struct nst_data_element {
-    struct nst_data_element  *next;
-
-    int                       info;
-    char                      data[0];
-} nst_data_element_t;
-
-/*
- * A nst_data contains a complete http response data,
- * and is pointed by nst_entry->data.
- * All nst_data are stored in a circular singly linked list
- */
-typedef struct nst_data {
-    struct nst_data     *next;
-
-    int                  clients;
-    int                  invalid;
-
-    nst_data_element_t  *element;
-} nst_data_t;
-
-
 enum {
     NST_STATUS_UNDEFINED = -1,
     NST_STATUS_OFF       =  0,

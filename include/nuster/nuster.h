@@ -30,6 +30,7 @@
 #include <nuster/common.h>
 #include <nuster/shctx.h>
 #include <nuster/memory.h>
+#include <nuster/ring.h>
 #include <nuster/http.h>
 #include <nuster/key.h>
 #include <nuster/core.h>

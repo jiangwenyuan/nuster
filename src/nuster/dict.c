@@ -1,5 +1,5 @@
 /*
- * nuster cache dict functions.
+ * nuster dict functions.
  *
  * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
