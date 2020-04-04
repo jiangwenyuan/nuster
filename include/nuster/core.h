@@ -80,25 +80,6 @@ typedef struct nst_ctx {
 
 typedef struct nst_core {
     nst_dict_t                  dict;
-
-#if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t             mutex;
-#else
-    unsigned int                waiters;
-#endif
-
-    /* persist async index */
-    int                         persist_idx;
-
-    /* for disk_loader and disk_cleaner */
-    struct {
-        int                     loaded;
-        int                     idx;
-        DIR                    *dir;
-        nst_dirent_t           *de;
-        char                   *file;
-    } disk;
-
     nst_store_t                 store;
 } nst_core_t;
 

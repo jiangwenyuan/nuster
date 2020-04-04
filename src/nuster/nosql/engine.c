@@ -382,15 +382,11 @@ nst_nosql_init() {
         if(global.nuster.nosql.root.len) {
             int  len = nst_disk_path_file_len(global.nuster.nosql.root) + 1;
 
-            nuster.nosql->disk.file = nst_nosql_memory_alloc(len);
+            nuster.nosql->store.disk.file = nst_nosql_memory_alloc(len);
 
-            if(!nuster.nosql->disk.file) {
+            if(!nuster.nosql->store.disk.file) {
                 goto err;
             }
-        }
-
-        if(nst_shctx_init(nuster.nosql) != NST_OK) {
-            goto shm_err;
         }
 
         if(nst_dict_init(&nuster.nosql->dict, global.nuster.nosql.memory,
@@ -399,7 +395,9 @@ nst_nosql_init() {
             goto err;
         }
 
-        if(nst_store_init(&nuster.nosql->store, global.nuster.nosql.memory) != NST_OK) {
+        if(nst_store_init(global.nuster.nosql.root, &nuster.nosql->store,
+                    global.nuster.nosql.memory) != NST_OK) {
+
             goto err;
         }
 
@@ -707,7 +705,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             return;
         }
 
-        if(nst_disk_init(global.nuster.nosql.root, ctx->disk.file, key->hash) != NST_OK) {
+        if(nst_disk_data_init(global.nuster.nosql.root, ctx->disk.file, key->hash) != NST_OK) {
             ctx->state = NST_CTX_STATE_INVALID;
 
             return;
@@ -893,7 +891,7 @@ nst_nosql_delete(nst_key_t *key) {
 
     nst_shctx_unlock(&nuster.nosql->dict);
 
-    if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
+    if(!nuster.nosql->store.disk.loaded && global.nuster.nosql.root.len){
         nst_disk_data_t  disk;
 
         disk.file = trash.area;
@@ -955,7 +953,7 @@ void
 nst_nosql_persist_async() {
     nst_dict_entry_t  *entry;
 
-    if(!global.nuster.nosql.root.len || !nuster.nosql->disk.loaded) {
+    if(!global.nuster.nosql.root.len || !nuster.nosql->store.disk.loaded) {
         return;
     }
 
@@ -963,7 +961,7 @@ nst_nosql_persist_async() {
         return;
     }
 
-    entry = nuster.nosql->dict.entry[nuster.nosql->persist_idx];
+    entry = nuster.nosql->dict.entry[nuster.nosql->dict.async_idx];
 
     while(entry) {
 
@@ -985,7 +983,7 @@ nst_nosql_persist_async() {
                 return;
             }
 
-            if(nst_disk_init(global.nuster.nosql.root, entry->file, entry->key.hash) != NST_OK) {
+            if(nst_disk_data_init(global.nuster.nosql.root, entry->file, entry->key.hash) != NST_OK) {
                 return;
             }
 
@@ -1033,11 +1031,11 @@ nst_nosql_persist_async() {
 
     }
 
-    nuster.nosql->persist_idx++;
+    nuster.nosql->dict.async_idx++;
 
     /* if we have checked the whole dict */
-    if(nuster.nosql->persist_idx == nuster.nosql->dict.size) {
-        nuster.nosql->persist_idx = 0;
+    if(nuster.nosql->dict.async_idx == nuster.nosql->dict.size) {
+        nuster.nosql->dict.async_idx = 0;
     }
 
 }
@@ -1045,7 +1043,7 @@ nst_nosql_persist_async() {
 void
 nst_nosql_persist_load() {
 
-    if(global.nuster.nosql.root.len && !nuster.nosql->disk.loaded) {
+    if(global.nuster.nosql.root.len && !nuster.nosql->store.disk.loaded) {
         hpx_ist_t      root;
         char          *file;
         char           meta[NST_DISK_META_SIZE];
@@ -1060,10 +1058,10 @@ nst_nosql_persist_load() {
         fd   = -1;
         dir2 = NULL;
         root = global.nuster.nosql.root;
-        file = nuster.nosql->disk.file;
+        file = nuster.nosql->store.disk.file;
 
-        if(nuster.nosql->disk.dir) {
-            nst_dirent_t  *de = nst_disk_dir_next(nuster.nosql->disk.dir);
+        if(nuster.nosql->store.disk.dir) {
+            nst_dirent_t  *de = nst_disk_dir_next(nuster.nosql->store.disk.dir);
 
             if(de) {
 
@@ -1147,22 +1145,22 @@ nst_nosql_persist_load() {
 
                 closedir(dir2);
             } else {
-                nuster.nosql->disk.idx++;
-                closedir(nuster.nosql->disk.dir);
-                nuster.nosql->disk.dir = NULL;
+                nuster.nosql->store.disk.idx++;
+                closedir(nuster.nosql->store.disk.dir);
+                nuster.nosql->store.disk.dir = NULL;
             }
         } else {
-            nuster.nosql->disk.dir = nst_disk_opendir_by_idx(
-                    global.nuster.nosql.root, file, nuster.nosql->disk.idx);
+            nuster.nosql->store.disk.dir = nst_disk_opendir_by_idx(
+                    global.nuster.nosql.root, file, nuster.nosql->store.disk.idx);
 
-            if(!nuster.nosql->disk.dir) {
-                nuster.nosql->disk.idx++;
+            if(!nuster.nosql->store.disk.dir) {
+                nuster.nosql->store.disk.idx++;
             }
         }
 
-        if(nuster.nosql->disk.idx == 16 * 16) {
-            nuster.nosql->disk.loaded = 1;
-            nuster.nosql->disk.idx    = 0;
+        if(nuster.nosql->store.disk.idx == 16 * 16) {
+            nuster.nosql->store.disk.loaded = 1;
+            nuster.nosql->store.disk.idx    = 0;
         }
 
         return;
@@ -1190,30 +1188,30 @@ err:
 void
 nst_nosql_persist_cleanup() {
 
-    if(global.nuster.nosql.root.len && nuster.nosql->disk.loaded) {
-        char  *file = nuster.nosql->disk.file;
+    if(global.nuster.nosql.root.len && nuster.nosql->store.disk.loaded) {
+        char  *file = nuster.nosql->store.disk.file;
 
-        if(nuster.nosql->disk.dir) {
-            nst_dirent_t *de = nst_disk_dir_next(nuster.nosql->disk.dir);
+        if(nuster.nosql->store.disk.dir) {
+            nst_dirent_t *de = nst_disk_dir_next(nuster.nosql->store.disk.dir);
 
             if(de) {
                 nst_disk_cleanup(global.nuster.nosql.root, file, de);
             } else {
-                nuster.nosql->disk.idx++;
-                closedir(nuster.nosql->disk.dir);
-                nuster.nosql->disk.dir = NULL;
+                nuster.nosql->store.disk.idx++;
+                closedir(nuster.nosql->store.disk.dir);
+                nuster.nosql->store.disk.dir = NULL;
             }
         } else {
-            nuster.nosql->disk.dir = nst_disk_opendir_by_idx(
-                    global.nuster.nosql.root, file, nuster.nosql->disk.idx);
+            nuster.nosql->store.disk.dir = nst_disk_opendir_by_idx(
+                    global.nuster.nosql.root, file, nuster.nosql->store.disk.idx);
 
-            if(!nuster.nosql->disk.dir) {
-                nuster.nosql->disk.idx++;
+            if(!nuster.nosql->store.disk.dir) {
+                nuster.nosql->store.disk.idx++;
             }
         }
 
-        if(nuster.nosql->disk.idx == 16 * 16) {
-            nuster.nosql->disk.idx = 0;
+        if(nuster.nosql->store.disk.idx == 16 * 16) {
+            nuster.nosql->store.disk.idx = 0;
         }
 
     }

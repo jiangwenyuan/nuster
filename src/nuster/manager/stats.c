@@ -244,7 +244,7 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
                 global.nuster.cache.root.ptr);
 
         chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.loaded:",
-            nuster.cache->disk.loaded ? "yes" : "no");
+            nuster.cache->store.disk.loaded ? "yes" : "no");
     }
 
     if(global.nuster.nosql.root.len) {
@@ -252,7 +252,7 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
                 global.nuster.nosql.root.ptr);
 
         chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.loaded:",
-            nuster.nosql->disk.loaded ? "yes" : "no");
+            nuster.nosql->store.disk.loaded ? "yes" : "no");
     }
 
     if(global.nuster.cache.status == NST_STATUS_ON || global.nuster.nosql.status == NST_STATUS_ON) {

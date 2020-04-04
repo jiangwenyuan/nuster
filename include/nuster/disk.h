@@ -76,11 +76,22 @@ enum {
 };
 
 typedef struct nst_disk_data {
-    char        *file;             /* cache file */
-    int          fd;
-    int          offset;
-    char         meta[NST_DISK_META_SIZE];
+    char               *file;               /* disk file */
+    int                 fd;
+    int                 offset;
+    char                meta[NST_DISK_META_SIZE];
 } nst_disk_data_t;
+
+
+typedef struct nst_disk {
+    nst_memory_t       *memory;
+    hpx_ist_t           root;               /* persist root directory */
+    int                 loaded;
+    int                 idx;
+    DIR                *dir;
+    nst_dirent_t       *de;
+    char               *file;
+} nst_disk_t;
 
 /* /0/00: 5 */
 static inline int
@@ -101,7 +112,7 @@ nst_disk_path_file_len(hpx_ist_t root) {
 }
 
 int nst_disk_mkdir(char *path);
-int nst_disk_init(hpx_ist_t root, char *path, uint64_t hash);
+int nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash);
 
 static inline int
 nst_disk_create(const char *pathname) {
@@ -344,5 +355,7 @@ int nst_disk_valid(nst_disk_data_t *disk, nst_key_t *key);
 int nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
 int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
+
+int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
 
 #endif /* _NUSTER_DISK_H */

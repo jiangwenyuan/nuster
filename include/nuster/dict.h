@@ -86,6 +86,8 @@ typedef struct nst_dict {
 
     uint64_t                    cleanup_idx;
 
+    uint64_t                    async_idx;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t             mutex;
 #else

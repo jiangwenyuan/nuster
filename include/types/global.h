@@ -190,7 +190,7 @@ struct global {
 			int disk_loader;                 /* the number of files load once */
 			int disk_saver;                  /* the number of entries checked once for persist_async */
 
-			struct ist root;                 /* persist root directory */
+			struct ist root;                 /* disk root directory */
 
 			struct nst_memory *memory;       /* memory */
 		} cache;
@@ -206,7 +206,7 @@ struct global {
 			int disk_loader;                 /* the number of files load once */
 			int disk_saver;                  /* the number of entries checked once for persist_async */
 
-			struct ist root;                 /* persist root directory */
+			struct ist root;                 /* disk root directory */
 
 			struct nst_memory *memory;       /* memory */
 		} nosql;

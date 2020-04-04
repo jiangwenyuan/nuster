@@ -28,13 +28,23 @@
 
 typedef struct nst_store {
     nst_ring_t              ring;
+    nst_disk_t              disk;
 } nst_store_t;
 
 
 
 static inline int
-nst_store_init(nst_store_t *store, nst_memory_t *memory) {
-    return nst_ring_init(&store->ring, memory);
+nst_store_init(hpx_ist_t root, nst_store_t *store, nst_memory_t *memory) {
+
+    if(nst_ring_init(&store->ring, memory) != NST_OK) {
+        return NST_ERR;
+    }
+
+    if(nst_disk_init(root, &store->disk, memory) != NST_OK) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
 }
 
 #endif /* _NUSTER_STORE_H */

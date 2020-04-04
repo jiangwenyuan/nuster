@@ -49,7 +49,7 @@ nst_disk_mkdir(char *path) {
 }
 
 int
-nst_disk_init(hpx_ist_t root, char *path, uint64_t hash) {
+nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash) {
     sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr, hash >> 60, hash >> 56, hash);
 
     nst_debug2("[nuster][persist] Path: %s\n", path);
@@ -416,3 +416,24 @@ nst_disk_update_expire(char *file, uint64_t expire) {
     close(fd);
 }
 
+int
+nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
+
+    if(root.len) {
+        if(nst_disk_mkdir(root.ptr) == NST_ERR) {
+            fprintf(stderr, "Create `%s` failed\n", global.nuster.cache.root.ptr);
+
+            return NST_ERR;
+        }
+
+        disk->memory = memory;
+        disk->root   = root;
+        disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len(root) + 1);
+
+        if(!disk->file) {
+            return NST_ERR;
+        }
+    }
+
+    return NST_OK;
+}
