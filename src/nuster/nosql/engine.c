@@ -389,6 +389,8 @@ nst_nosql_init() {
             }
         }
 
+        nuster.nosql->memory = global.nuster.nosql.memory;
+
         if(nst_dict_init(&nuster.nosql->dict, global.nuster.nosql.memory,
                     global.nuster.nosql.dict_size) != NST_OK) {
 

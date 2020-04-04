@@ -338,6 +338,8 @@ nst_cache_init() {
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
+        nuster.cache->memory = global.nuster.cache.memory;
+
         if(nst_dict_init(&nuster.cache->dict, global.nuster.cache.memory,
                     global.nuster.cache.dict_size) != NST_OK) {
 
