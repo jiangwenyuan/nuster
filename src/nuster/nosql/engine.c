@@ -713,7 +713,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             return;
         }
 
-        ctx->store.disk.fd = nst_disk_create(ctx->store.disk.file);
+        ctx->store.disk.fd = nst_disk_data_create(ctx->store.disk.file);
 
         nst_disk_meta_init(ctx->store.disk.meta, (char)ctx->rule->disk, key->hash,
                 0, ctx->txn.res.header_len, 0, ctx->entry->key.size, 0, 0, 0, 0, 0);
@@ -989,7 +989,7 @@ nst_nosql_persist_async() {
                 return;
             }
 
-            disk.fd = nst_disk_create(entry->store.disk.file);
+            disk.fd = nst_disk_data_create(entry->store.disk.file);
 
             nst_disk_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->key.hash, entry->expire, 0, 0,

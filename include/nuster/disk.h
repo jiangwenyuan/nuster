@@ -115,7 +115,7 @@ int nst_disk_mkdir(char *path);
 int nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash);
 
 static inline int
-nst_disk_create(const char *pathname) {
+nst_disk_data_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 

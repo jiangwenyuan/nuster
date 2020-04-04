@@ -639,7 +639,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             return;
         }
 
-        ctx->store.disk.fd = nst_disk_create(ctx->store.disk.file);
+        ctx->store.disk.fd = nst_disk_data_create(ctx->store.disk.file);
 
         ttl_extend = ttl_extend << 32;
         *( uint8_t *)(&ttl_extend)      = ctx->rule->extend[0];
@@ -901,7 +901,7 @@ nst_cache_persist_async() {
                 return;
             }
 
-            disk.fd = nst_disk_create(entry->store.disk.file);
+            disk.fd = nst_disk_data_create(entry->store.disk.file);
 
             ttl_extend = ttl_extend << 32;
             *( uint8_t *)(&ttl_extend)      = entry->extend[0];
