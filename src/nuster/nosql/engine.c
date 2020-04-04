@@ -816,8 +816,8 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             ret = NST_CTX_STATE_HIT_MEMORY;
         }
 
-        if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->file) {
-            ctx->store.disk.file = entry->file;
+        if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->store.disk.file) {
+            ctx->store.disk.file = entry->store.disk.file;
             ret = NST_CTX_STATE_CHECK_PERSIST;
         }
     } else {
@@ -882,8 +882,8 @@ nst_nosql_delete(nst_key_t *key) {
             ret = 1;
         }
 
-        if(entry->file) {
-            ret = nst_disk_purge_by_path(entry->file);
+        if(entry->store.disk.file) {
+            ret = nst_disk_purge_by_path(entry->store.disk.file);
         }
     } else {
         ret = 0;
@@ -937,7 +937,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
             nst_disk_write_meta(&ctx->store.disk);
 
-            ctx->entry->file = ctx->store.disk.file;
+            ctx->entry->store.disk.file = ctx->store.disk.file;
         }
     }
 
@@ -967,7 +967,7 @@ nst_nosql_persist_async() {
 
         if(entry->state == NST_DICT_ENTRY_STATE_VALID
                 && entry->rule->disk == NST_DISK_ASYNC
-                && entry->file == NULL) {
+                && entry->store.disk.file == NULL) {
 
             nst_ring_item_t     *item = entry->store.ring.data->item;
             nst_disk_data_t      disk;
@@ -976,18 +976,18 @@ nst_nosql_persist_async() {
             header_len  = 0;
             payload_len = 0;
 
-            entry->file = nst_nosql_memory_alloc(
+            entry->store.disk.file = nst_nosql_memory_alloc(
                     nst_disk_path_file_len(global.nuster.nosql.root) + 1);
 
-            if(!entry->file) {
+            if(!entry->store.disk.file) {
                 return;
             }
 
-            if(nst_disk_data_init(global.nuster.nosql.root, entry->file, entry->key.hash) != NST_OK) {
+            if(nst_disk_data_init(global.nuster.nosql.root, entry->store.disk.file, entry->key.hash) != NST_OK) {
                 return;
             }
 
-            disk.fd = nst_disk_create(entry->file);
+            disk.fd = nst_disk_create(entry->store.disk.file);
 
             nst_disk_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->key.hash, entry->expire, 0, 0,

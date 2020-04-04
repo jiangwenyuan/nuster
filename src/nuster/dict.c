@@ -147,7 +147,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 
     entry->expire = 0;
     entry->pid    = pid;
-    entry->file   = NULL;
+    entry->store.disk.file   = NULL;
     entry->ttl    = rule->ttl;
 
     entry->extend[0] = rule->extend[0];
@@ -229,8 +229,8 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
                 entry->access[3]  = 0;
                 entry->extended  += 1;
 
-                if(entry->file) {
-                    nst_disk_update_expire(entry->file, entry->expire);
+                if(entry->store.disk.file) {
+                    nst_disk_update_expire(entry->store.disk.file, entry->expire);
                 }
 
                 expired = 0;
@@ -293,15 +293,15 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     entry->state  = NST_DICT_ENTRY_STATE_INVALID;
     entry->key    = *key;
     entry->expire = nst_disk_meta_get_expire(meta);
-    entry->file   = nst_memory_alloc(dict->memory, strlen(file));
+    entry->store.disk.file   = nst_memory_alloc(dict->memory, strlen(file));
 
-    if(!entry->file) {
+    if(!entry->store.disk.file) {
         nst_memory_free(dict->memory, entry);
 
         return NST_ERR;
     }
 
-    memcpy(entry->file, file, strlen(file));
+    memcpy(entry->store.disk.file, file, strlen(file));
 
     entry->header_len = nst_disk_meta_get_header_len(meta);
 

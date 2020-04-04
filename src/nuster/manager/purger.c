@@ -337,8 +337,8 @@ nst_purger_handler(hpx_appctx_t *appctx) {
                         entry->expire        = 0;
                     }
 
-                    if(entry->file) {
-                        nst_disk_purge_by_path(entry->file);
+                    if(entry->store.disk.file) {
+                        nst_disk_purge_by_path(entry->store.disk.file);
                     }
                 }
 

@@ -441,8 +441,8 @@ nst_cache_exists(nst_ctx_t *ctx) {
             ret = NST_CTX_STATE_HIT_MEMORY;
         }
 
-        if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->file) {
-            ctx->store.disk.file = entry->file;
+        if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->store.disk.file) {
+            ctx->store.disk.file = entry->store.disk.file;
             ret = NST_CTX_STATE_CHECK_PERSIST;
         }
     } else {
@@ -763,7 +763,7 @@ nst_cache_finish(nst_ctx_t *ctx) {
 
         nst_disk_write_meta(&ctx->store.disk);
 
-        ctx->entry->file = ctx->store.disk.file;
+        ctx->entry->store.disk.file = ctx->store.disk.file;
     }
 }
 
@@ -797,8 +797,8 @@ nst_cache_delete(nst_key_t *key) {
             ret = 1;
         }
 
-        if(entry->file) {
-            ret = nst_disk_purge_by_path(entry->file);
+        if(entry->store.disk.file) {
+            ret = nst_disk_purge_by_path(entry->store.disk.file);
         }
     } else {
         ret = 0;
@@ -880,7 +880,7 @@ nst_cache_persist_async() {
     while(entry) {
 
         if(!nst_dict_entry_invalid(entry) && entry->rule->disk == NST_DISK_ASYNC
-                && entry->file == NULL) {
+                && entry->store.disk.file == NULL) {
 
             nst_disk_data_t      disk;
             nst_ring_item_t     *item        = entry->store.ring.data->item;
@@ -888,18 +888,18 @@ nst_cache_persist_async() {
             uint64_t             header_len  = 0;
             uint64_t             payload_len = 0;
 
-            entry->file = nst_cache_memory_alloc(
+            entry->store.disk.file = nst_cache_memory_alloc(
                     nst_disk_path_file_len(global.nuster.cache.root) + 1);
 
-            if(!entry->file) {
+            if(!entry->store.disk.file) {
                 return;
             }
 
-            if(nst_disk_data_init(global.nuster.cache.root, entry->file, entry->key.hash) != NST_OK) {
+            if(nst_disk_data_init(global.nuster.cache.root, entry->store.disk.file, entry->key.hash) != NST_OK) {
                 return;
             }
 
-            disk.fd = nst_disk_create(entry->file);
+            disk.fd = nst_disk_create(entry->store.disk.file);
 
             ttl_extend = ttl_extend << 32;
             *( uint8_t *)(&ttl_extend)      = entry->extend[0];

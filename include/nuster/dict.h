@@ -52,7 +52,6 @@ typedef struct nst_dict_entry {
     hpx_ist_t                   last_modified;
 
     int                         pid;            /* proxy uuid */
-    char                       *file;
     int                         header_len;
 
     uint64_t                    expire;
@@ -74,6 +73,9 @@ typedef struct nst_dict_entry {
             nst_ring_data_t    *data;
             nst_ring_item_t    *item;
         } ring;
+        struct {
+            char               *file;
+        } disk;
     } store;
 } nst_dict_entry_t;
 
