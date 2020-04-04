@@ -67,7 +67,7 @@ nst_disk_init(hpx_ist_t root, char *path, uint64_t hash) {
 }
 
 int
-nst_disk_valid(nst_disk_t *disk, nst_key_t *key) {
+nst_disk_valid(nst_disk_data_t *disk, nst_key_t *key) {
     int  ret;
 
     disk->fd = nst_disk_open(disk->file);
@@ -114,7 +114,7 @@ err:
 }
 
 int
-nst_disk_exists(hpx_ist_t root, nst_disk_t *disk, nst_key_t *key) {
+nst_disk_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
     nst_dirent_t  *de;
     DIR           *dirp;
 
@@ -326,7 +326,7 @@ nst_disk_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de1) {
  *  1: ok
  */
 int
-nst_disk_purge_by_key(hpx_ist_t root, nst_disk_t *disk, nst_key_t *key) {
+nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
     nst_dirent_t  *de;
     DIR           *dirp;
     int            ret;

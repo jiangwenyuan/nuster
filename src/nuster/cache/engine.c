@@ -827,7 +827,7 @@ nst_cache_delete(nst_key_t *key) {
     nst_shctx_unlock(&nuster.cache->dict);
 
     if(!nuster.cache->disk.loaded && global.nuster.cache.root.len){
-        nst_disk_t  disk;
+        nst_disk_data_t  disk;
 
         disk.file = trash.area;
 
@@ -902,7 +902,7 @@ nst_cache_persist_async() {
         if(!nst_dict_entry_invalid(entry) && entry->rule->disk == NST_DISK_ASYNC
                 && entry->file == NULL) {
 
-            nst_disk_t           disk;
+            nst_disk_data_t      disk;
             nst_ring_item_t     *item        = entry->store.ring.data->item;
             uint64_t             ttl_extend  = entry->ttl;
             uint64_t             header_len  = 0;

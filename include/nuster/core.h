@@ -61,7 +61,7 @@ typedef struct nst_ctx {
 
     int                         pid;              /* proxy uuid */
 
-    nst_disk_t                  disk;
+    nst_disk_data_t             disk;
 
     struct {
         struct {

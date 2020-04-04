@@ -894,7 +894,7 @@ nst_nosql_delete(nst_key_t *key) {
     nst_shctx_unlock(&nuster.nosql->dict);
 
     if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
-        nst_disk_t  disk;
+        nst_disk_data_t  disk;
 
         disk.file = trash.area;
 
@@ -972,7 +972,7 @@ nst_nosql_persist_async() {
                 && entry->file == NULL) {
 
             nst_ring_item_t     *item = entry->store.ring.data->item;
-            nst_disk_t           disk;
+            nst_disk_data_t      disk;
             uint64_t             header_len, payload_len;
 
             header_len  = 0;
