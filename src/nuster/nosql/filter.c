@@ -256,9 +256,9 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;
         appctx->st1 = NST_DISK_APPLET_HEADER;
 
-        appctx->ctx.nuster.nosql.fd         = ctx->disk.fd;
-        appctx->ctx.nuster.nosql.offset     = nst_disk_get_header_pos(ctx->disk.meta);
-        appctx->ctx.nuster.nosql.header_len = nst_disk_meta_get_header_len(ctx->disk.meta);
+        appctx->ctx.nuster.nosql.fd         = ctx->store.disk.fd;
+        appctx->ctx.nuster.nosql.offset     = nst_disk_get_header_pos(ctx->store.disk.meta);
+        appctx->ctx.nuster.nosql.header_len = nst_disk_meta_get_header_len(ctx->store.disk.meta);
 
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
@@ -282,7 +282,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 0;
     }
 
-    if(ctx->state == NST_CTX_STATE_INVALID && ctx->disk.file == NULL) {
+    if(ctx->state == NST_CTX_STATE_INVALID && ctx->store.disk.file == NULL) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
     }
 
