@@ -48,8 +48,6 @@ void nst_cache_persist_load();
 void nst_cache_persist_cleanup();
 void nst_cache_persist_async();
 
-nst_data_t *nst_cache_data_new();
-
 #define nst_cache_memory_alloc(size)    nst_memory_alloc(global.nuster.cache.memory, size)
 #define nst_cache_memory_free(p)        nst_memory_free(global.nuster.cache.memory, p)
 

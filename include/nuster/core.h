@@ -56,14 +56,20 @@ typedef struct nst_ctx {
     int                         state;
 
     nst_dict_entry_t           *entry;
-    nst_data_t                 *data;
-    nst_data_element_t         *element;
 
     nst_http_txn_t              txn;
 
     int                         pid;              /* proxy uuid */
 
     nst_disk_t                  disk;
+
+    struct {
+        struct {
+            nst_ring_data_t    *data;
+            nst_ring_item_t    *item;
+        } ring;
+    } store;
+
 
     int                         rule_cnt;
     int                         key_cnt;
@@ -74,13 +80,6 @@ typedef struct nst_ctx {
 
 typedef struct nst_core {
     nst_dict_t                  dict;
-
-    /*
-     * point to the circular linked list, tail->next ===  head,
-     * and will be moved together constantly to check invalid data
-     */
-    nst_data_t                 *data_head;
-    nst_data_t                 *data_tail;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t             mutex;
@@ -102,19 +101,6 @@ typedef struct nst_core {
 
     nst_store_t                 store;
 } nst_core_t;
-
-static inline int
-nst_data_invalid(nst_data_t *data) {
-
-    if(data->invalid) {
-
-        if(!data->clients) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
 
 int nst_test_rule(hpx_stream_t *s, nst_rule_t *rule, int res);
 

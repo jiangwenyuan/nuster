@@ -91,7 +91,7 @@ nst_http_txn_detach(nst_http_txn_t *txn) {
 
 int nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn);
 int nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, int *val_len);
-int nst_http_data_element_to_htx(nst_data_element_t *element, hpx_htx_t *htx);
+int nst_http_ring_item_to_htx(nst_ring_item_t *item, hpx_htx_t *htx);
 
 void nst_http_reply(hpx_stream_t *s, int idx);
 int nst_http_reply_100(hpx_stream_t *s);

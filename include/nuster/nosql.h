@@ -61,8 +61,6 @@ void nst_nosql_persist_load();
 void nst_nosql_persist_cleanup();
 void nst_nosql_persist_async();
 
-nst_data_t *nst_nosql_data_new();
-
 int nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
 
 #define nst_nosql_memory_alloc(size)    nst_memory_alloc(global.nuster.nosql.memory, size)

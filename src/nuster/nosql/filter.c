@@ -240,8 +240,8 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         /* 0: header unsent, 1: sent */
         appctx->st1 = 0;
 
-        appctx->ctx.nuster.nosql.data    = ctx->data;
-        appctx->ctx.nuster.nosql.element = ctx->data->element;
+        appctx->ctx.nuster.nosql.store.ring.data = ctx->store.ring.data;
+        appctx->ctx.nuster.nosql.store.ring.item = ctx->store.ring.data->item;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;

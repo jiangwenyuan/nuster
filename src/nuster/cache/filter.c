@@ -366,7 +366,7 @@ _nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
 err:
     ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
-    ctx->entry->data  = NULL;
+    ctx->entry->store.ring.data  = NULL;
     ctx->state        = NST_CTX_STATE_BYPASS;
 
     return len;

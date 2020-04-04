@@ -80,8 +80,13 @@ struct appctx {
 		union {
 			struct {
 				struct nst_dict_entry    *entry;
-				struct nst_data_element  *element;
-				struct nst_data          *data;
+				struct {
+					struct {
+						struct nst_ring_data    *data;
+						struct nst_ring_item    *item;
+					} ring;
+				} store;
+
 
 				int       fd;
 				int       header_len;
@@ -89,8 +94,12 @@ struct appctx {
 			} cache;
 			struct {
 				struct nst_dict_entry    *entry;
-				struct nst_data_element  *element;
-				struct nst_data          *data;
+				struct {
+					struct {
+						struct nst_ring_data    *data;
+						struct nst_ring_item    *item;
+					} ring;
+				} store;
 
 				int       fd;
 				int       header_len;

@@ -113,13 +113,13 @@ nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, in
 }
 
 int
-nst_http_data_element_to_htx(nst_data_element_t *element, hpx_htx_t *htx) {
+nst_http_ring_item_to_htx(nst_ring_item_t *item, hpx_htx_t *htx) {
     hpx_htx_blk_t      *blk;
     uint32_t            blksz, sz, info;
     char               *ptr;
     hpx_htx_blk_type_t  type;
 
-    info  = element->info;
+    info  = item->info;
     type  = (info >> 28);
     blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
             ? (info & 0xff) + ((info >> 8) & 0xfffff)
@@ -135,7 +135,7 @@ nst_http_data_element_to_htx(nst_data_element_t *element, hpx_htx_t *htx) {
     ptr       = htx_get_blk_ptr(htx, blk);
     sz        = htx_get_blksz(blk);
 
-    memcpy(ptr, element->data, sz);
+    memcpy(ptr, item->data, sz);
 
     return NST_OK;
 }

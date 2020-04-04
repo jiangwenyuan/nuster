@@ -332,8 +332,8 @@ nst_purger_handler(hpx_appctx_t *appctx) {
                     if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
 
                         entry->state         = NST_DICT_ENTRY_STATE_INVALID;
-                        entry->data->invalid = 1;
-                        entry->data          = NULL;
+                        entry->store.ring.data->invalid = 1;
+                        entry->store.ring.data          = NULL;
                         entry->expire        = 0;
                     }
 

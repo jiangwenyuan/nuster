@@ -24,41 +24,17 @@
 
 #include <nuster/common.h>
 
-typedef struct nst_data_element {
-    struct nst_data_element  *next;
-
-    int                       info;
-    char                      data[0];
-} nst_data_element_t;
-
-/*
- * A nst_data contains a complete http response data,
- * and is pointed by nst_entry->data.
- * All nst_data are stored in a circular singly linked list
- */
-typedef struct nst_data {
-    struct nst_data     *next;
-
-    int                  clients;
-    int                  invalid;
-
-    nst_data_element_t  *element;
-} nst_data_t;
-
-
-
-
 /*
  * A nst_ring_data contains a complete http response data,
  * and is pointed by nst_entry->data.
  * All nst_ring_data are stored in a circular singly linked list
  */
-typedef struct nst_ring_element {
-    struct nst_ring_element     *next;
+typedef struct nst_ring_item {
+    struct nst_ring_item        *next;
 
     int                          info;
     char                         data[0];
-} nst_ring_element_t;
+} nst_ring_item_t;
 
 typedef struct nst_ring_data {
     struct nst_ring_data        *next;
@@ -66,7 +42,7 @@ typedef struct nst_ring_data {
     int                          clients;
     int                          invalid;
 
-    nst_ring_element_t          *element;
+    nst_ring_item_t             *item;
 } nst_ring_data_t;
 
 typedef struct nst_ring {
@@ -97,5 +73,12 @@ nst_ring_data_invalid(nst_ring_data_t *data) {
 }
 
 int nst_ring_init(nst_ring_t *ring, nst_memory_t *memory);
+nst_ring_data_t *nst_ring_get_data(nst_ring_t *ring);
+void nst_ring_cleanup(nst_ring_t *ring);
+static inline nst_ring_item_t *
+nst_ring_get_item(nst_ring_t *ring, uint32_t size) {
+    return nst_memory_alloc(ring->memory, sizeof(nst_ring_item_t) + size);
+}
+
 
 #endif /* _NUSTER_RING_H */

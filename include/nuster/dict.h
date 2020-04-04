@@ -43,7 +43,6 @@ typedef struct nst_dict_entry {
 
     nst_key_t                   key;
     nst_rule_t                 *rule;           /* rule */
-    nst_data_t                 *data;
 
     hpx_buffer_t                buf;
 
@@ -69,6 +68,13 @@ typedef struct nst_dict_entry {
 
     /* extended count  */
     int                         extended;
+
+    struct {
+        struct {
+            nst_ring_data_t    *data;
+            nst_ring_item_t    *item;
+        } ring;
+    } store;
 } nst_dict_entry_t;
 
 typedef struct nst_dict {

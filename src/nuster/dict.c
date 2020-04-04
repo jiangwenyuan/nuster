@@ -64,8 +64,8 @@ nst_dict_cleanup(nst_dict_t *dict) {
         if(nst_dict_entry_invalid(entry)) {
             nst_dict_entry_t *tmp = entry;
 
-            if(entry->data) {
-                entry->data->invalid = 1;
+            if(entry->store.ring.data) {
+                entry->store.ring.data->invalid = 1;
             }
 
             if(prev == entry) {
@@ -101,7 +101,6 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
         int pid, int mode) {
 
     nst_dict_entry_t  *entry = NULL;
-    nst_data_t        *data  = NULL;
     int                idx;
 
     entry = nst_memory_alloc(dict->memory, sizeof(*entry));
@@ -136,17 +135,16 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 
     if(rule->disk != NST_DISK_ONLY) {
         if(mode == NST_MODE_CACHE) {
-            data = nst_cache_data_new();
+            entry->store.ring.data = nst_ring_get_data(&nuster.cache->store.ring);
         } else {
-            data = nst_nosql_data_new();
+            entry->store.ring.data = nst_ring_get_data(&nuster.nosql->store.ring);
         }
 
-        if(!data) {
+        if(!entry->store.ring.data) {
             goto err;
         }
     }
 
-    entry->data   = data;
     entry->expire = 0;
     entry->pid    = pid;
     entry->file   = NULL;
@@ -243,8 +241,8 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
              * */
             if(entry->state == NST_DICT_ENTRY_STATE_VALID && expired) {
                 entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
-                entry->data->invalid = 1;
-                entry->data          = NULL;
+                entry->store.ring.data->invalid = 1;
+                entry->store.ring.data          = NULL;
                 entry->expire        = 0;
                 entry->access[0]     = 0;
                 entry->access[1]     = 0;
