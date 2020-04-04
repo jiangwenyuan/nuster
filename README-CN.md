@@ -700,9 +700,9 @@ manager.purge_method:           PURGE
 memory.common.total:            1048576
 memory.common.used:             1600
 memory.cache.total:             3145728
-memory.cache.total:             1048832
+memory.cache.used:              1048832
 memory.nosql.total:             105906176
-memory.nosql.total:             1048768
+memory.nosql.used:              1048768
 
 **PERSISTENCE**
 persistence.cache.dir:          /tmp/nuster/cache

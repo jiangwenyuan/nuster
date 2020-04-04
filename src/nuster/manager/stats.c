@@ -223,7 +223,7 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
                 global.nuster.cache.memory->total);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.used:",
                 global.nuster.cache.memory->used);
     }
 
@@ -231,7 +231,7 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
                 global.nuster.nosql.memory->total);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.used:",
                 global.nuster.nosql.memory->used);
     }
 
