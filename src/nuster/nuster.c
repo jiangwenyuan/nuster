@@ -181,12 +181,12 @@ out:
                     px->key = key;
                 }
 
-                rule->key = key;
-
-                rule->code = rc->code;
-                rule->ttl  = rc->ttl;
-                rule->disk = rc->disk;
-                rule->etag = rc->etag;
+                rule->key   = key;
+                rule->store = rc->store;
+                rule->code  = rc->code;
+                rule->ttl   = rc->ttl;
+                rule->disk  = rc->disk;
+                rule->etag  = rc->etag;
 
                 rule->last_modified = rc->last_modified;
 

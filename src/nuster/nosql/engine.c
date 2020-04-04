@@ -696,7 +696,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
 
     if(ctx->state == NST_CTX_STATE_CREATE
-            && (ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY)) {
+            && (ctx->rule->disk == NST_STORE_DISK_ON || ctx->rule->disk == NST_DISK_ONLY)) {
 
         ctx->store.disk.file = nst_nosql_memory_alloc(
                 nst_disk_path_file_len(global.nuster.nosql.root) + 1);
@@ -777,7 +777,7 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
 
             ctx->store.ring.item = item;
 
-            if(ctx->rule->disk == NST_DISK_SYNC) {
+            if(ctx->rule->disk == NST_STORE_DISK_ON) {
                 nst_disk_write(&ctx->store.disk, htx_get_blk_ptr(htx, blk), sz);
             }
 
@@ -823,7 +823,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             ret = NST_CTX_STATE_CHECK_PERSIST;
         }
     } else {
-        if(ctx->rule->disk != NST_DISK_OFF) {
+        if(ctx->rule->disk != NST_STORE_DISK_OFF) {
             ctx->store.disk.file = NULL;
             ret = NST_CTX_STATE_CHECK_PERSIST;
         }
@@ -927,7 +927,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             ctx->entry->expire = get_current_timestamp() / 1000 + ctx->rule->ttl;
         }
 
-        if(ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY) {
+        if(ctx->rule->disk == NST_STORE_DISK_ON || ctx->rule->disk == NST_DISK_ONLY) {
 
             nst_disk_meta_set_expire(ctx->store.disk.meta, ctx->entry->expire);
 
@@ -968,7 +968,7 @@ nst_nosql_persist_async() {
     while(entry) {
 
         if(entry->state == NST_DICT_ENTRY_STATE_VALID
-                && entry->rule->disk == NST_DISK_ASYNC
+                && entry->rule->disk == NST_STORE_DISK_ASYNC
                 && entry->store.disk.file == NULL) {
 
             nst_ring_item_t     *item = entry->store.ring.data->item;

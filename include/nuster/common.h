@@ -108,17 +108,13 @@ enum {
 };
 
 enum {
-    /* no disk persistence */
-    NST_DISK_OFF         = 0,
+    NST_STORE_MEMORY_ON         = 0x0001,
+    NST_STORE_MEMORY_OFF        = 0x0002,
+    NST_STORE_DISK_ON           = 0x0004,
+    NST_STORE_DISK_OFF          = 0x0008,
+    NST_STORE_DISK_ASYNC        = 0x0010,
 
-    /* disk persistence only, do not cache in memory */
     NST_DISK_ONLY,
-
-    /* persist the response on disk before return to client */
-    NST_DISK_SYNC,
-
-    /* cache in memory first and persist on disk later */
-    NST_DISK_ASYNC,
 };
 
 enum nst_key_element_type {
@@ -182,8 +178,9 @@ typedef struct nst_rule_config {
     char                      *name;          /* cache name for logging */
     nst_rule_key_t             key;
     nst_rule_code_t           *code;          /* code */
+    uint8_t                    store;
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
-    int                        disk;          /* NST_DISK_* */
+    int                        disk;          /* NST_STORE_DISK_* */
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
 
@@ -222,6 +219,7 @@ typedef struct nst_rule {
     nst_rule_key_t            *key;
     nst_rule_code_t           *code;          /* code */
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
+    uint8_t                    store;
     int                        disk;          /* NST_DISK_* */
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
@@ -250,6 +248,5 @@ const char *nst_parse_time(const char *text, int len, unsigned *ret);
 
 void nst_debug(hpx_stream_t *s, const char *fmt, ...);
 void nst_debug2(const char *fmt, ...);
-
 
 #endif /* _NUSTER_COMMON_H */

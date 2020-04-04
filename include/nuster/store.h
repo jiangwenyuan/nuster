@@ -47,4 +47,19 @@ nst_store_init(hpx_ist_t root, nst_store_t *store, nst_memory_t *memory) {
     return NST_OK;
 }
 
+static inline int
+nst_store_memory_on(uint8_t t) {
+    return t & NST_STORE_MEMORY_ON;
+}
+
+static inline int
+nst_store_disk_on(uint8_t t) {
+    return t & NST_STORE_DISK_ON;
+}
+
+static inline int
+nst_store_disk_async(uint8_t t) {
+    return t & NST_STORE_DISK_ASYNC;
+}
+
 #endif /* _NUSTER_STORE_H */

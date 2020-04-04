@@ -448,7 +448,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
             ret = NST_CTX_STATE_CHECK_PERSIST;
         }
     } else {
-        if(ctx->rule->disk != NST_DISK_OFF) {
+        if(ctx->rule->disk != NST_STORE_DISK_OFF) {
             ctx->store.disk.file = NULL;
 
             if(nuster.cache->store.disk.loaded) {
@@ -622,7 +622,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE
-            && (ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY)) {
+            && (ctx->rule->disk == NST_STORE_DISK_ON || ctx->rule->disk == NST_DISK_ONLY)) {
 
         uint64_t    ttl_extend = ctx->rule->ttl;
         int         pos;
@@ -720,7 +720,7 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             ctx->store.ring.item = item;
 
 
-            if(ctx->rule->disk == NST_DISK_SYNC) {
+            if(ctx->rule->disk == NST_STORE_DISK_ON) {
                 nst_disk_write(&ctx->store.disk, htx_get_blk_ptr(htx, blk), sz);
             }
 
@@ -757,7 +757,7 @@ nst_cache_finish(nst_ctx_t *ctx) {
         ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->rule->ttl;
     }
 
-    if(ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY) {
+    if(ctx->rule->disk == NST_STORE_DISK_ON || ctx->rule->disk == NST_DISK_ONLY) {
 
         nst_disk_meta_set_expire(ctx->store.disk.meta, ctx->entry->expire);
 
@@ -881,7 +881,7 @@ nst_cache_persist_async() {
 
     while(entry) {
 
-        if(!nst_dict_entry_invalid(entry) && entry->rule->disk == NST_DISK_ASYNC
+        if(!nst_dict_entry_invalid(entry) && entry->rule->disk == NST_STORE_DISK_ASYNC
                 && entry->store.disk.file == NULL) {
 
             nst_disk_data_t      disk;

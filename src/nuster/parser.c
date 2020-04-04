@@ -998,11 +998,11 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
     char               *key  = NULL;
     char               *code = NULL;
 
-    int         ttl, disk, etag, last_modified;
+    int         memory, disk, ttl, etag, last_modified;
     uint8_t     extend[4] = { -1 };
     int         cur_arg   = 2;
 
-    ttl = disk = etag = last_modified = -1;
+    memory = ttl = disk = etag = last_modified = -1;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' section.");
@@ -1097,6 +1097,37 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             continue;
         }
 
+        if(!strcmp(args[cur_arg], "memory")) {
+
+            if(memory != -1) {
+                memprintf(err, "'%s %s': memory already specified.", args[0], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                memprintf(err, "'%s %s': expects [on|off], default on.", args[0], name);
+
+                goto out;
+            }
+
+            if(!strcmp(args[cur_arg], "off")) {
+                memory = NST_STORE_DISK_OFF;
+            } else if(!strcmp(args[cur_arg], "on")) {
+                memory = NST_STORE_DISK_ON;
+            } else {
+                memprintf(err, "'%s %s': expects [on|off], default on.", args[0], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+
+            continue;
+        }
+
         if(!strcmp(args[cur_arg], "disk")) {
 
             if(disk != -1) {
@@ -1108,23 +1139,20 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [off|only|sync|async], default off.",
+                memprintf(err, "'%s %s': expects [on|off|async], default off.",
                         args[0], name);
 
                 goto out;
             }
 
             if(!strcmp(args[cur_arg], "off")) {
-                disk = NST_DISK_OFF;
-            } else if(!strcmp(args[cur_arg], "only")) {
-                disk = NST_DISK_ONLY;
-            } else if(!strcmp(args[cur_arg], "sync")) {
-                disk = NST_DISK_SYNC;
+                disk = NST_STORE_DISK_OFF;
+            } else if(!strcmp(args[cur_arg], "on")) {
+                disk = NST_STORE_DISK_ON;
             } else if(!strcmp(args[cur_arg], "async")) {
-                disk = NST_DISK_ASYNC;
+                disk = NST_STORE_DISK_ASYNC;
             } else {
-                memprintf(err, "'%s %s': expects [off|only|sync|async], " "default off.",
-                        args[0], name);
+                memprintf(err, "'%s %s': expects [on|off|async], default off.", args[0], name);
 
                 goto out;
             }
@@ -1326,10 +1354,26 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         }
     }
 
-    rule->disk = disk == -1 ? NST_DISK_OFF   : disk;
-    rule->etag = etag == -1 ? NST_STATUS_OFF : etag;
+    rule->store = 0;
 
-    rule->last_modified = last_modified == -1 ? NST_STATUS_OFF : last_modified;
+    if(memory == NST_STORE_MEMORY_OFF) {
+        rule->store |= NST_STORE_MEMORY_OFF;
+    } else {
+        rule->store |= NST_STORE_MEMORY_ON;
+    }
+
+    if(disk == NST_STORE_DISK_ON) {
+        rule->store |= NST_STORE_DISK_ON;
+    } else if(disk == NST_STORE_DISK_ASYNC) {
+        rule->store |= NST_STORE_DISK_ASYNC;
+    } else {
+        rule->store |= NST_STORE_DISK_OFF;
+    }
+
+    rule->disk          = disk          == -1 ? NST_STORE_DISK_OFF  : disk;
+
+    rule->etag          = etag          == -1 ? NST_STATUS_OFF      : etag;
+    rule->last_modified = last_modified == -1 ? NST_STATUS_OFF      : last_modified;
 
     if(extend[0] == 0xFF) {
         rule->extend[0] = rule->extend[1] = 0;

@@ -352,10 +352,10 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
 
                     chunk_appendf(&trash, "state=%-4sdisk=%-6sttl=%"PRIu32"\n",
                             rule->state == NST_RULE_ENABLED ? "on" : "off",
-                            rule->disk == NST_DISK_OFF ? "off"
+                            rule->disk == NST_STORE_DISK_OFF ? "off"
                             : rule->disk == NST_DISK_ONLY ? "only"
-                            : rule->disk == NST_DISK_SYNC ? "sync"
-                            : rule->disk == NST_DISK_ASYNC ? "async"
+                            : rule->disk == NST_STORE_DISK_ON ? "sync"
+                            : rule->disk == NST_STORE_DISK_ASYNC ? "async"
                             : "invalid",
                             rule->ttl
                             );
