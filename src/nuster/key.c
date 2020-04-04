@@ -10,6 +10,8 @@
  *
  */
 
+#include <import/sha1.h>
+
 #include <types/global.h>
 #include <types/http_htx.h>
 
@@ -208,6 +210,17 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
     memcpy(key->data, buf->area, buf->data);
 
     return NST_OK;
+}
+
+void
+nst_key_hash(nst_key_t *key) {
+    blk_SHA_CTX ctx;
+
+    key->hash = XXH64(key->data, key->size, 0);
+
+    blk_SHA1_Init(&ctx);
+    blk_SHA1_Update(&ctx, key->data, key->size);
+    blk_SHA1_Final(key->uuid, &ctx);
 }
 
 void

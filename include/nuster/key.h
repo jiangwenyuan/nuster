@@ -30,6 +30,7 @@ typedef struct nst_key {
     uint32_t            size;
     char               *data;
     uint64_t            hash;
+    unsigned char       uuid[20];
 } nst_key_t;
 
 static inline hpx_buffer_t *
@@ -77,10 +78,7 @@ nst_key_catdel(hpx_buffer_t *key) {
     return NST_OK;
 }
 
-static inline void
-nst_key_hash(nst_key_t *key) {
-    key->hash = XXH64(key->data, key->size, 0);
-}
+void nst_key_hash(nst_key_t *key);
 
 void nst_key_debug(nst_key_t *key);
 
