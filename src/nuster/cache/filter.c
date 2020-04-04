@@ -217,9 +217,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                     if(ctx->rule->etag == NST_STATUS_ON) {
                         ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
-                        ctx->txn.res.etag.len = nst_persist_meta_get_etag_len(ctx->disk.meta);
+                        ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->disk.meta);
 
-                        if(nst_persist_get_etag(ctx->disk.fd, ctx->disk.meta, ctx->txn.res.etag)
+                        if(nst_disk_get_etag(ctx->disk.fd, ctx->disk.meta, ctx->txn.res.etag)
                                 != NST_OK) {
 
                             break;
@@ -229,9 +229,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     if(ctx->rule->last_modified == NST_STATUS_ON) {
                         ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                         ctx->txn.res.last_modified.len =
-                            nst_persist_meta_get_last_modified_len(ctx->disk.meta);
+                            nst_disk_meta_get_last_modified_len(ctx->disk.meta);
 
-                        if(nst_persist_get_last_modified(ctx->disk.fd, ctx->disk.meta,
+                        if(nst_disk_get_last_modified(ctx->disk.fd, ctx->disk.meta,
                                     ctx->txn.res.last_modified) != NST_OK) {
 
                             break;

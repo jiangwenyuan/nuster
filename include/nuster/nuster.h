@@ -30,14 +30,13 @@
 #include <nuster/common.h>
 #include <nuster/shctx.h>
 #include <nuster/memory.h>
-#include <nuster/ring.h>
 #include <nuster/http.h>
 #include <nuster/key.h>
+#include <nuster/store.h>
 #include <nuster/core.h>
 #include <nuster/cache.h>
 #include <nuster/nosql.h>
 #include <nuster/manager.h>
-#include <nuster/persist.h>
 
 typedef struct nuster {
     nst_core_t                 *cache;

@@ -25,6 +25,7 @@
 #include <common/htx.h>
 
 #include <nuster/common.h>
+#include <nuster/ring.h>
 
 enum {
     NST_HTTP_100 = 0,

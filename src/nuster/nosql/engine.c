@@ -123,14 +123,14 @@ out:
                 fd         = appctx->ctx.nuster.nosql.fd;
 
                 switch(appctx->st1) {
-                    case NST_PERSIST_APPLET_HEADER:
+                    case NST_DISK_APPLET_HEADER:
                         {
                             char  *p = trash.area;
 
                             ret = pread(fd, p, header_len, offset);
 
                             if(ret != header_len) {
-                                appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                                appctx->st1 = NST_DISK_APPLET_ERROR;
 
                                 break;
                             }
@@ -147,7 +147,7 @@ out:
                                 blk   = htx_add_blk(res_htx, type, blksz);
 
                                 if(!blk) {
-                                    appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                                    appctx->st1 = NST_DISK_APPLET_ERROR;
 
                                     break;
                                 }
@@ -163,19 +163,19 @@ out:
                                 header_len -= 4 + sz;
                             }
 
-                            appctx->st1 = NST_PERSIST_APPLET_PAYLOAD;
+                            appctx->st1 = NST_DISK_APPLET_PAYLOAD;
                             offset += ret;
                             appctx->ctx.nuster.nosql.offset += ret;
                         }
 
                         break;
-                    case NST_PERSIST_APPLET_PAYLOAD:
+                    case NST_DISK_APPLET_PAYLOAD:
                         max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
 
                         ret = pread(fd, trash.area, max, offset);
 
                         if(ret == -1) {
-                            appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                            appctx->st1 = NST_DISK_APPLET_ERROR;
 
                             break;
                         }
@@ -192,7 +192,7 @@ out:
                             blk   = htx_add_blk(res_htx, type, blksz);
 
                             if(!blk) {
-                                appctx->st1 = NST_PERSIST_APPLET_ERROR;
+                                appctx->st1 = NST_DISK_APPLET_ERROR;
 
                                 break;
                             }
@@ -210,8 +210,8 @@ out:
 
                         close(fd);
 
-                        appctx->st1 = NST_PERSIST_APPLET_EOM;
-                    case NST_PERSIST_APPLET_EOM:
+                        appctx->st1 = NST_DISK_APPLET_EOM;
+                    case NST_DISK_APPLET_EOM:
 
                         if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
                             si_rx_room_blk(si);
@@ -219,8 +219,8 @@ out:
                             goto end;
                         }
 
-                        appctx->st1 = NST_PERSIST_APPLET_DONE;
-                    case NST_PERSIST_APPLET_DONE:
+                        appctx->st1 = NST_DISK_APPLET_DONE;
+                    case NST_DISK_APPLET_DONE:
 
                         if(!(res->flags & CF_SHUTR) ) {
                             res->flags |= CF_READ_NULL;
@@ -234,7 +234,7 @@ out:
                         }
 
                         break;
-                    case NST_PERSIST_APPLET_ERROR:
+                    case NST_DISK_APPLET_ERROR:
                         si_shutr(si);
                         res->flags |= CF_READ_NULL;
                         close(fd);
@@ -427,7 +427,7 @@ nst_nosql_init() {
 
         if(global.nuster.nosql.root.len) {
 
-            if(nst_persist_mkdir(global.nuster.nosql.root.ptr) == NST_ERR) {
+            if(nst_disk_mkdir(global.nuster.nosql.root.ptr) == NST_ERR) {
                 ha_alert("Create `%s` failed\n", global.nuster.nosql.root.ptr);
                 exit(1);
             }
@@ -454,7 +454,7 @@ nst_nosql_init() {
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
         if(global.nuster.nosql.root.len) {
-            int  len = nst_persist_path_file_len(global.nuster.nosql.root) + 1;
+            int  len = nst_disk_path_file_len(global.nuster.nosql.root) + 1;
 
             nuster.nosql->disk.file = nst_nosql_memory_alloc(len);
 
@@ -769,7 +769,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             && (ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY)) {
 
         ctx->disk.file = nst_nosql_memory_alloc(
-                nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+                nst_disk_path_file_len(global.nuster.nosql.root) + 1);
 
         if(!ctx->disk.file) {
             ctx->state = NST_CTX_STATE_INVALID;
@@ -777,28 +777,28 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             return;
         }
 
-        if(nst_persist_init(global.nuster.nosql.root, ctx->disk.file, key->hash) != NST_OK) {
+        if(nst_disk_init(global.nuster.nosql.root, ctx->disk.file, key->hash) != NST_OK) {
             ctx->state = NST_CTX_STATE_INVALID;
 
             return;
         }
 
-        ctx->disk.fd = nst_persist_create(ctx->disk.file);
+        ctx->disk.fd = nst_disk_create(ctx->disk.file);
 
-        nst_persist_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash,
+        nst_disk_meta_init(ctx->disk.meta, (char)ctx->rule->disk, key->hash,
                 0, ctx->txn.res.header_len, 0, ctx->entry->key.size, 0, 0, 0, 0, 0);
 
-        nst_persist_write_key(&ctx->disk, &ctx->entry->key);
+        nst_disk_write_key(&ctx->disk, &ctx->entry->key);
 
-        ctx->disk.offset = NST_PERSIST_META_SIZE + ctx->entry->key.size;
+        ctx->disk.offset = NST_DISK_META_SIZE + ctx->entry->key.size;
 
         element = ctx->data->element;
 
         while(element) {
             int  sz = ((element->info & 0xff) + ((element->info >> 8) & 0xfffff));
 
-            nst_persist_write(&ctx->disk, (char *)&element->info, 4);
-            nst_persist_write(&ctx->disk, element->data, sz);
+            nst_disk_write(&ctx->disk, (char *)&element->info, 4);
+            nst_disk_write(&ctx->disk, element->data, sz);
 
             element = element->next;
         }
@@ -826,7 +826,7 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
         }
 
         if(ctx->rule->disk == NST_DISK_ONLY)  {
-            nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
+            nst_disk_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             ctx->txn.res.payload_len += sz;
         } else {
             element = nst_nosql_memory_alloc(sizeof(*element) + sz);
@@ -848,7 +848,7 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             ctx->element = element;
 
             if(ctx->rule->disk == NST_DISK_SYNC) {
-                nst_persist_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
+                nst_disk_write(&ctx->disk, htx_get_blk_ptr(htx, blk), sz);
             }
 
             ctx->txn.res.payload_len += sz;
@@ -903,20 +903,20 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
     if(ret == NST_CTX_STATE_CHECK_PERSIST) {
         if(ctx->disk.file) {
-            if(nst_persist_valid(&ctx->disk, key) == NST_OK) {
+            if(nst_disk_valid(&ctx->disk, key) == NST_OK) {
                 ret = NST_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_CTX_STATE_INIT;
             }
         } else {
             ctx->disk.file = nst_nosql_memory_alloc(
-                    nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+                    nst_disk_path_file_len(global.nuster.nosql.root) + 1);
 
             if(!ctx->disk.file) {
                 ret = NST_CTX_STATE_INIT;
             } else {
 
-                if(nst_persist_exists(global.nuster.nosql.root, &ctx->disk, key) == NST_OK) {
+                if(nst_disk_exists(global.nuster.nosql.root, &ctx->disk, key) == NST_OK) {
                     ret = NST_CTX_STATE_HIT_DISK;
                 } else {
                     nst_nosql_memory_free(ctx->disk.file);
@@ -955,7 +955,7 @@ nst_nosql_delete(nst_key_t *key) {
         }
 
         if(entry->file) {
-            ret = nst_persist_purge_by_path(entry->file);
+            ret = nst_disk_purge_by_path(entry->file);
         }
     } else {
         ret = 0;
@@ -964,11 +964,11 @@ nst_nosql_delete(nst_key_t *key) {
     nst_shctx_unlock(&nuster.nosql->dict);
 
     if(!nuster.nosql->disk.loaded && global.nuster.nosql.root.len){
-        nst_persist_t  disk;
+        nst_disk_t  disk;
 
         disk.file = trash.area;
 
-        ret = nst_persist_purge_by_key(global.nuster.nosql.root, &disk, key);
+        ret = nst_disk_purge_by_key(global.nuster.nosql.root, &disk, key);
     }
 
     return ret;
@@ -999,15 +999,15 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
         if(ctx->rule->disk == NST_DISK_SYNC || ctx->rule->disk == NST_DISK_ONLY) {
 
-            nst_persist_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
+            nst_disk_meta_set_expire(ctx->disk.meta, ctx->entry->expire);
 
             if(ctx->txn.res.content_length) {
-                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->txn.res.content_length);
+                nst_disk_meta_set_payload_len(ctx->disk.meta, ctx->txn.res.content_length);
             } else {
-                nst_persist_meta_set_payload_len(ctx->disk.meta, ctx->txn.res.payload_len);
+                nst_disk_meta_set_payload_len(ctx->disk.meta, ctx->txn.res.payload_len);
             }
 
-            nst_persist_write_meta(&ctx->disk);
+            nst_disk_write_meta(&ctx->disk);
 
             ctx->entry->file = ctx->disk.file;
         }
@@ -1042,30 +1042,30 @@ nst_nosql_persist_async() {
                 && entry->file == NULL) {
 
             nst_data_element_t  *element = entry->data->element;
-            nst_persist_t        disk;
+            nst_disk_t           disk;
             uint64_t             header_len, payload_len;
 
             header_len  = 0;
             payload_len = 0;
 
             entry->file = nst_nosql_memory_alloc(
-                    nst_persist_path_file_len(global.nuster.nosql.root) + 1);
+                    nst_disk_path_file_len(global.nuster.nosql.root) + 1);
 
             if(!entry->file) {
                 return;
             }
 
-            if(nst_persist_init(global.nuster.nosql.root, entry->file, entry->key.hash) != NST_OK) {
+            if(nst_disk_init(global.nuster.nosql.root, entry->file, entry->key.hash) != NST_OK) {
                 return;
             }
 
-            disk.fd = nst_persist_create(entry->file);
+            disk.fd = nst_disk_create(entry->file);
 
-            nst_persist_meta_init(disk.meta, (char)entry->rule->disk,
+            nst_disk_meta_init(disk.meta, (char)entry->rule->disk,
                     entry->key.hash, entry->expire, 0, 0,
                     entry->key.size, 0, 0, 0, 0, 0);
 
-            nst_persist_write_key(&disk, &entry->key);
+            nst_disk_write_key(&disk, &entry->key);
 
             while(element) {
                 hpx_htx_blk_type_t  type;
@@ -1078,23 +1078,23 @@ nst_nosql_persist_async() {
                         : info & 0xfffffff);
 
                 if(type != HTX_BLK_DATA) {
-                    nst_persist_write(&disk, (char *)&info, 4);
+                    nst_disk_write(&disk, (char *)&info, 4);
 
                     payload_len += 4;
                     header_len  += 4 + blksz;
                 }
 
-                nst_persist_write(&disk, element->data, blksz);
+                nst_disk_write(&disk, element->data, blksz);
 
                 payload_len += blksz;
 
                 element = element->next;
             }
 
-            nst_persist_meta_set_header_len(disk.meta, header_len);
-            nst_persist_meta_set_payload_len(disk.meta, payload_len);
+            nst_disk_meta_set_header_len(disk.meta, header_len);
+            nst_disk_meta_set_payload_len(disk.meta, payload_len);
 
-            nst_persist_write_meta(&disk);
+            nst_disk_write_meta(&disk);
 
             close(disk.fd);
         }
@@ -1118,7 +1118,7 @@ nst_nosql_persist_load() {
     if(global.nuster.nosql.root.len && !nuster.nosql->disk.loaded) {
         hpx_ist_t      root;
         char          *file;
-        char           meta[NST_PERSIST_META_SIZE];
+        char           meta[NST_DISK_META_SIZE];
         int            fd;
         DIR           *dir2;
         nst_dirent_t  *de2;
@@ -1133,7 +1133,7 @@ nst_nosql_persist_load() {
         file = nuster.nosql->disk.file;
 
         if(nuster.nosql->disk.dir) {
-            nst_dirent_t  *de = nst_persist_dir_next(nuster.nosql->disk.dir);
+            nst_dirent_t  *de = nst_disk_dir_next(nuster.nosql->disk.dir);
 
             if(de) {
 
@@ -1141,8 +1141,8 @@ nst_nosql_persist_load() {
                     return;
                 }
 
-                memcpy(file + nst_persist_path_base_len(root), "/", 1);
-                memcpy(file + nst_persist_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
+                memcpy(file + nst_disk_path_base_len(root), "/", 1);
+                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
 
                 dir2 = opendir(file);
 
@@ -1156,11 +1156,11 @@ nst_nosql_persist_load() {
                         continue;
                     }
 
-                    memcpy(file + nst_persist_path_hash_len(root), "/", 1);
-                    memcpy(file + nst_persist_path_hash_len(root) + 1, de2->d_name,
+                    memcpy(file + nst_disk_path_hash_len(root), "/", 1);
+                    memcpy(file + nst_disk_path_hash_len(root) + 1, de2->d_name,
                             strlen(de2->d_name));
 
-                    fd = nst_persist_open(file);
+                    fd = nst_disk_open(file);
 
                     if(fd == -1) {
                         closedir(dir2);
@@ -1168,23 +1168,23 @@ nst_nosql_persist_load() {
                         return;
                     }
 
-                    if(nst_persist_get_meta(fd, meta) != NST_OK) {
+                    if(nst_disk_get_meta(fd, meta) != NST_OK) {
                         goto err;
                     }
 
-                    key.size = nst_persist_meta_get_key_len(meta);
+                    key.size = nst_disk_meta_get_key_len(meta);
                     key.data = nst_nosql_memory_alloc(key.size);
 
                     if(!key.data) {
                         goto err;
                     }
 
-                    if(nst_persist_get_key(fd, meta, &key) != NST_OK) {
+                    if(nst_disk_get_key(fd, meta, &key) != NST_OK) {
                         goto err;
                     }
 
-                    host.len = nst_persist_meta_get_host_len(meta);
-                    path.len = nst_persist_meta_get_path_len(meta);
+                    host.len = nst_disk_meta_get_host_len(meta);
+                    path.len = nst_disk_meta_get_path_len(meta);
 
                     buf.size = host.len + path.len;
                     buf.data = 0;
@@ -1196,13 +1196,13 @@ nst_nosql_persist_load() {
 
                     host.ptr = buf.area + buf.data;
 
-                    if(nst_persist_get_host(fd, meta, host) != NST_OK) {
+                    if(nst_disk_get_host(fd, meta, host) != NST_OK) {
                         goto err;
                     }
 
                     path.ptr = buf.area + buf.data;
 
-                    if(nst_persist_get_path(fd, meta, path) != NST_OK) {
+                    if(nst_disk_get_path(fd, meta, path) != NST_OK) {
                         goto err;
                     }
 
@@ -1222,7 +1222,7 @@ nst_nosql_persist_load() {
                 nuster.nosql->disk.dir = NULL;
             }
         } else {
-            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(
+            nuster.nosql->disk.dir = nst_disk_opendir_by_idx(
                     global.nuster.nosql.root, file, nuster.nosql->disk.idx);
 
             if(!nuster.nosql->disk.dir) {
@@ -1264,17 +1264,17 @@ nst_nosql_persist_cleanup() {
         char  *file = nuster.nosql->disk.file;
 
         if(nuster.nosql->disk.dir) {
-            nst_dirent_t *de = nst_persist_dir_next(nuster.nosql->disk.dir);
+            nst_dirent_t *de = nst_disk_dir_next(nuster.nosql->disk.dir);
 
             if(de) {
-                nst_persist_cleanup(global.nuster.nosql.root, file, de);
+                nst_disk_cleanup(global.nuster.nosql.root, file, de);
             } else {
                 nuster.nosql->disk.idx++;
                 closedir(nuster.nosql->disk.dir);
                 nuster.nosql->disk.dir = NULL;
             }
         } else {
-            nuster.nosql->disk.dir = nst_persist_opendir_by_idx(
+            nuster.nosql->disk.dir = nst_disk_opendir_by_idx(
                     global.nuster.nosql.root, file, nuster.nosql->disk.idx);
 
             if(!nuster.nosql->disk.dir) {

@@ -338,7 +338,7 @@ nst_purger_handler(hpx_appctx_t *appctx) {
                     }
 
                     if(entry->file) {
-                        nst_persist_purge_by_path(entry->file);
+                        nst_disk_purge_by_path(entry->file);
                     }
                 }
 

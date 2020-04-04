@@ -232,7 +232,7 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
                 entry->extended  += 1;
 
                 if(entry->file) {
-                    nst_persist_update_expire(entry->file, entry->expire);
+                    nst_disk_update_expire(entry->file, entry->expire);
                 }
 
                 expired = 0;
@@ -272,9 +272,9 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     uint64_t           ttl_extend;
     int                idx;
 
-    key->hash = nst_persist_meta_get_hash(meta);
+    key->hash = nst_disk_meta_get_hash(meta);
 
-    ttl_extend = nst_persist_meta_get_ttl_extend(meta);
+    ttl_extend = nst_disk_meta_get_ttl_extend(meta);
 
     entry = nst_memory_alloc(dict->memory, sizeof(*entry));
 
@@ -294,7 +294,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     /* init entry */
     entry->state  = NST_DICT_ENTRY_STATE_INVALID;
     entry->key    = *key;
-    entry->expire = nst_persist_meta_get_expire(meta);
+    entry->expire = nst_disk_meta_get_expire(meta);
     entry->file   = nst_memory_alloc(dict->memory, strlen(file));
 
     if(!entry->file) {
@@ -305,7 +305,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
 
     memcpy(entry->file, file, strlen(file));
 
-    entry->header_len = nst_persist_meta_get_header_len(meta);
+    entry->header_len = nst_disk_meta_get_header_len(meta);
 
     entry->buf = *buf;
 

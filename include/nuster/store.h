@@ -24,6 +24,7 @@
 
 #include <nuster/common.h>
 #include <nuster/ring.h>
+#include <nuster/disk.h>
 
 typedef struct nst_store {
     nst_ring_t              ring;

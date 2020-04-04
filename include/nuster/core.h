@@ -27,7 +27,6 @@
 #include <nuster/http.h>
 #include <nuster/key.h>
 #include <nuster/dict.h>
-#include <nuster/persist.h>
 
 
 enum {
@@ -64,7 +63,7 @@ typedef struct nst_ctx {
 
     int                         pid;              /* proxy uuid */
 
-    nst_persist_t               disk;
+    nst_disk_t                  disk;
 
     int                         rule_cnt;
     int                         key_cnt;

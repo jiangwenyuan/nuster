@@ -254,11 +254,11 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
     if(ctx->state == NST_CTX_STATE_HIT_DISK) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;
-        appctx->st1 = NST_PERSIST_APPLET_HEADER;
+        appctx->st1 = NST_DISK_APPLET_HEADER;
 
         appctx->ctx.nuster.nosql.fd         = ctx->disk.fd;
-        appctx->ctx.nuster.nosql.offset     = nst_persist_get_header_pos(ctx->disk.meta);
-        appctx->ctx.nuster.nosql.header_len = nst_persist_meta_get_header_len(ctx->disk.meta);
+        appctx->ctx.nuster.nosql.offset     = nst_disk_get_header_pos(ctx->disk.meta);
+        appctx->ctx.nuster.nosql.header_len = nst_disk_meta_get_header_len(ctx->disk.meta);
 
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;

@@ -68,7 +68,7 @@ nst_ring_free(nst_ring_t *ring) {
 
         if(ring->head == ring->tail) {
 
-            if(nst_data_invalid(ring->head)) {
+            if(nst_ring_data_invalid(ring->head)) {
                 data       = ring->head;
                 ring->head = NULL;
                 ring->tail = NULL;
@@ -76,7 +76,7 @@ nst_ring_free(nst_ring_t *ring) {
 
         } else {
 
-            if(nst_data_invalid(ring->head)) {
+            if(nst_ring_data_invalid(ring->head)) {
                 data             = ring->head;
                 ring->tail->next = ring->head->next;
                 ring->head       = ring->head->next;
@@ -99,7 +99,7 @@ nst_ring_free(nst_ring_t *ring) {
             nst_memory_free(ring->memory, tmp);
         }
 
-        nst_memory_free(ring, data);
+        nst_memory_free(ring->memory, data);
     }
 }
 

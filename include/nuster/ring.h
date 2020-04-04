@@ -66,7 +66,7 @@ typedef struct nst_ring_data {
     int                          clients;
     int                          invalid;
 
-    nst_data_element_t          *element;
+    nst_ring_element_t          *element;
 } nst_ring_data_t;
 
 typedef struct nst_ring {
