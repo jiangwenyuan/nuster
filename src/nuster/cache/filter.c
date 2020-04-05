@@ -200,7 +200,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 /* check if cache exists  */
                 nst_debug(s, "[cache] Check key existence: ");
 
-                ctx->state = nst_cache_exists2(ctx);
+                ctx->state = nst_cache_exists(ctx);
 
                 if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
                     /* OK, cache exists */
@@ -344,7 +344,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             nst_debug(s, "[cache] To create\n");
 
             /* start to build cache */
-            nst_cache_create2(msg, ctx);
+            nst_cache_create(msg, ctx);
         }
 
     }
@@ -364,7 +364,7 @@ _nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_cache_update2(msg, ctx, offset, len) != NST_OK) {
+        if(nst_cache_update(msg, ctx, offset, len) != NST_OK) {
             goto err;
         }
 
@@ -386,7 +386,7 @@ _nst_cache_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
     nst_ctx_t  *ctx = filter->ctx;
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        nst_cache_finish2(ctx);
+        nst_cache_finish(ctx);
         nst_debug(s, "[cache] Created\n");
     }
 

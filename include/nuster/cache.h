@@ -36,14 +36,10 @@ void nst_cache_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
 void nst_cache_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
 
 void nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx);
-void nst_cache_create2(hpx_http_msg_t *msg, nst_ctx_t *ctx);
 int nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
-int nst_cache_update2(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
 void nst_cache_finish(nst_ctx_t *ctx);
-void nst_cache_finish2(nst_ctx_t *ctx);
 void nst_cache_abort(nst_ctx_t *ctx);
 int nst_cache_exists(nst_ctx_t *ctx);
-int nst_cache_exists2(nst_ctx_t *ctx);
 int nst_cache_delete(nst_key_t *key);
 void nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req,
         hpx_channel_t *res, nst_ctx_t *ctx);
