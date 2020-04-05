@@ -833,7 +833,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
     if(ret == NST_CTX_STATE_CHECK_PERSIST) {
         if(ctx->store.disk.file) {
-            if(nst_disk_valid(&ctx->store.disk, key) == NST_OK) {
+            if(nst_disk_data_valid(&ctx->store.disk, key) == NST_OK) {
                 ret = NST_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_CTX_STATE_INIT;
@@ -846,7 +846,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
                 ret = NST_CTX_STATE_INIT;
             } else {
 
-                if(nst_disk_exists(global.nuster.nosql.root, &ctx->store.disk, key) == NST_OK) {
+                if(nst_disk_data_exists(global.nuster.nosql.root, &ctx->store.disk, key) == NST_OK) {
                     ret = NST_CTX_STATE_HIT_DISK;
                 } else {
                     nst_nosql_memory_free(ctx->store.disk.file);

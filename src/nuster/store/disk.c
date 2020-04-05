@@ -67,7 +67,7 @@ nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash) {
 }
 
 int
-nst_disk_valid(nst_disk_data_t *disk, nst_key_t *key) {
+nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key) {
     int  ret;
 
     disk->fd = nst_disk_open(disk->file);
@@ -114,7 +114,7 @@ err:
 }
 
 int
-nst_disk_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
+nst_disk_data_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
     nst_dirent_t  *de;
     DIR           *dirp;
 
@@ -133,7 +133,7 @@ nst_disk_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
             memcpy(disk->file + nst_disk_path_hash_len(root), "/", 1);
             memcpy(disk->file + nst_disk_path_hash_len(root) + 1, de->d_name, strlen(de->d_name));
 
-            if(nst_disk_valid(disk, key) == NST_OK) {
+            if(nst_disk_data_valid(disk, key) == NST_OK) {
                 closedir(dirp);
 
                 return NST_OK;

@@ -291,7 +291,7 @@ nst_disk_meta_init2(char *p, uint64_t hash, uint64_t expire, uint64_t header_len
     nst_disk_meta_set_ttl_extend(p, ttl_extend);
 }
 
-int nst_disk_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
+int nst_disk_data_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
 
 static inline int
 nst_disk_write(nst_disk_data_t *disk, char *buf, int len) {
@@ -361,6 +361,7 @@ nst_disk_write_last_modified(nst_disk_data_t *disk, hpx_ist_t lm) {
     return nst_disk_write(disk, lm.ptr, lm.len);
 }
 
+int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
 void nst_disk_load(char *path, nst_dirent_t *de1, char **meta, char **key);
 int nst_disk_get_meta(int fd, char *meta);
 int nst_disk_get_key(int fd, char *meta, nst_key_t *key);
@@ -372,12 +373,12 @@ int nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified);
 DIR *nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx);
 void nst_disk_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de);
 nst_dirent_t *nst_disk_dir_next(DIR *dir);
-int nst_disk_valid(nst_disk_data_t *disk, nst_key_t *key);
+int nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key);
 int nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
 int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
 
-int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
+
 
 int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
         nst_http_txn_t *txn, uint64_t ttl_extend);

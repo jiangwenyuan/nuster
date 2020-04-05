@@ -465,7 +465,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
         if(ctx->store.disk.file) {
 
-            if(nst_disk_valid(&ctx->store.disk, key) == NST_OK) {
+            if(nst_disk_data_valid(&ctx->store.disk, key) == NST_OK) {
                 _nst_cache_record_access(entry);
                 ret = NST_CTX_STATE_HIT_DISK;
             } else {
@@ -479,7 +479,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ret = NST_CTX_STATE_INIT;
             } else {
 
-                if(nst_disk_exists(global.nuster.cache.root, &ctx->store.disk, key) == NST_OK) {
+                if(nst_disk_data_exists(global.nuster.cache.root, &ctx->store.disk, key) == NST_OK) {
                     ret = NST_CTX_STATE_HIT_DISK;
                 } else {
                     nst_cache_memory_free(ctx->store.disk.file);
@@ -549,7 +549,7 @@ nst_cache_exists2(nst_ctx_t *ctx) {
 
         if(ctx->store.disk.file) {
 
-            if(nst_disk_valid(&ctx->store.disk, key) == NST_OK) {
+            if(nst_disk_data_valid(&ctx->store.disk, key) == NST_OK) {
                 _nst_cache_record_access(entry);
                 ret = NST_CTX_STATE_HIT_DISK;
             } else {
@@ -563,7 +563,7 @@ nst_cache_exists2(nst_ctx_t *ctx) {
                 ret = NST_CTX_STATE_INIT;
             } else {
 
-                if(nst_disk_exists(global.nuster.cache.root, &ctx->store.disk, key) == NST_OK) {
+                if(nst_disk_data_exists(global.nuster.cache.root, &ctx->store.disk, key) == NST_OK) {
                     ret = NST_CTX_STATE_HIT_DISK;
                 } else {
                     nst_cache_memory_free(ctx->store.disk.file);
