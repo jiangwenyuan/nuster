@@ -839,7 +839,7 @@ nst_cache_create2(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
             if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
                 nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
-                        ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+                        &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
             }
 
             if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
@@ -938,7 +938,7 @@ nst_cache_update2(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsi
 
         if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
             nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
-                    ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+                    &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
         }
 
         if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {

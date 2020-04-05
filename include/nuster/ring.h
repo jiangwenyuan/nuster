@@ -87,7 +87,7 @@ nst_ring_store_init(nst_ring_t *ring) {
     return nst_ring_alloc_data(ring);
 }
 
-int nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tail,
+int nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **tail,
         const char *buf, uint32_t len, uint32_t info);
 
 static inline int

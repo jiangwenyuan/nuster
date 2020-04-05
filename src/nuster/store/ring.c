@@ -104,7 +104,7 @@ nst_ring_cleanup(nst_ring_t *ring) {
 }
 
 int
-nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tail,
+nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **tail,
         const char *buf, uint32_t len, uint32_t info) {
 
     nst_ring_item_t  *item;
@@ -126,13 +126,13 @@ nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tai
     item->info = info;
     item->next = NULL;
 
-    if(tail) {
-        tail->next = item;
+    if(*tail) {
+        (*tail)->next = item;
     } else {
         data->item = item;
     }
 
-    tail = item;
+    *tail = item;
 
     return NST_OK;
 }
