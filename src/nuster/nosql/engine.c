@@ -820,18 +820,18 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
         if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->store.disk.file) {
             ctx->store.disk.file = entry->store.disk.file;
-            ret = NST_CTX_STATE_CHECK_PERSIST;
+            ret = NST_CTX_STATE_CHECK_DISK;
         }
     } else {
         if(ctx->rule->disk != NST_STORE_DISK_OFF) {
             ctx->store.disk.file = NULL;
-            ret = NST_CTX_STATE_CHECK_PERSIST;
+            ret = NST_CTX_STATE_CHECK_DISK;
         }
     }
 
     nst_shctx_unlock(&nuster.nosql->dict);
 
-    if(ret == NST_CTX_STATE_CHECK_PERSIST) {
+    if(ret == NST_CTX_STATE_CHECK_DISK) {
         if(ctx->store.disk.file) {
             if(nst_disk_data_valid(&ctx->store.disk, key) == NST_OK) {
                 ret = NST_CTX_STATE_HIT_DISK;

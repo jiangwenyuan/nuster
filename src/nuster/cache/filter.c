@@ -202,49 +202,10 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                 ctx->state = nst_cache_exists(ctx);
 
-                if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
+                if(ctx->state == NST_CTX_STATE_HIT) {
                     /* OK, cache exists */
 
-                    nst_debug2("HIT memory\n");
-
-                    htx = htxbuf(&req->buf);
-
-                    if(nst_http_handle_conditional_req(s, htx, ctx->txn.res.last_modified,
-                                ctx->txn.res.etag, ctx->rule->last_modified, ctx->rule->etag)) {
-
-                        return 1;
-                    }
-
-                    break;
-                }
-
-                if(ctx->state == NST_CTX_STATE_HIT_DISK) {
-                    /* OK, cache exists */
-
-                    nst_debug2("HIT disk\n");
-
-                    if(ctx->rule->etag == NST_STATUS_ON) {
-                        ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
-                        ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
-
-                        if(nst_disk_get_etag(ctx->store.disk.fd, ctx->store.disk.meta, ctx->txn.res.etag)
-                                != NST_OK) {
-
-                            break;
-                        }
-                    }
-
-                    if(ctx->rule->last_modified == NST_STATUS_ON) {
-                        ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
-                        ctx->txn.res.last_modified.len =
-                            nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
-
-                        if(nst_disk_get_last_modified(ctx->store.disk.fd, ctx->store.disk.meta,
-                                    ctx->txn.res.last_modified) != NST_OK) {
-
-                            break;
-                        }
-                    }
+                    nst_debug2("HIT \n");
 
                     htx = htxbuf(&req->buf);
 
@@ -277,7 +238,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             }
         }
 
-        if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
+        if(ctx->state == NST_CTX_STATE_HIT) {
             nst_cache_hit(s, si, req, res, ctx);
         }
 

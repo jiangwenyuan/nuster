@@ -172,6 +172,33 @@ nst_disk_data_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
     return NST_ERR;
 }
 
+int
+nst_disk_data_exists2(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
+    hpx_buffer_t  *buf;
+    char          *p;
+    int            i;
+
+    buf = get_trash_chunk();
+
+    p = trash.area;
+
+    data->file = buf->area;
+
+    for(i = 0; i < 20; i++) {
+        sprintf((char*)&(p[i*2]), "%02x", key->uuid[i]);
+    }
+
+    p[40] = '\0';
+
+    sprintf(data->file, "%s/%c/%c%c/%s", disk->root.ptr, p[0], p[0], p[1], p);
+
+    if(nst_disk_data_valid(data, key) == NST_OK) {
+        return NST_OK;
+    }
+
+    return NST_ERR;
+}
+
 DIR *
 nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx) {
     memset(path, 0, nst_disk_path_file_len(root));
@@ -525,7 +552,7 @@ err:
 int
 nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_http_txn_t *txn, uint64_t expire) {
     nst_disk_meta_set_expire(data->meta, expire);
-    nst_disk_meta_set_header_len(data->meta, txn->res.payload_len);
+    nst_disk_meta_set_header_len(data->meta, txn->res.header_len);
     nst_disk_meta_set_payload_len(data->meta, txn->res.payload_len);
 
     if(nst_disk_write_meta(data) != NST_OK) {

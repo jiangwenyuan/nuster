@@ -301,6 +301,7 @@ nst_disk_meta_init2(char *p, uint64_t hash, uint64_t expire, uint64_t header_len
 }
 
 int nst_disk_data_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
+int nst_disk_data_exists2(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key);
 
 static inline int
 nst_disk_write(nst_disk_data_t *disk, char *buf, int len) {
@@ -394,6 +395,7 @@ int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
 
 static inline int
 nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) {
+
     if(nst_disk_write(data, buf, len) != NST_OK) {
         if(data->fd) {
             close(data->fd);

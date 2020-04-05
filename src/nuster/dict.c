@@ -397,6 +397,10 @@ err:
     return NULL;
 }
 
+/*
+ * return NULL if invalid;
+ * return entry if init and valid
+ */
 nst_dict_entry_t *
 nst_dict_get2(nst_dict_t *dict, nst_key_t *key) {
     nst_dict_entry_t  *entry = NULL;
@@ -413,6 +417,14 @@ nst_dict_get2(nst_dict_t *dict, nst_key_t *key) {
 
         if(entry->key.hash == key->hash && entry->key.size == key->size
                 && !memcmp(entry->key.data, key->data, key->size)) {
+
+            if(entry->state == NST_DICT_ENTRY_STATE_INVALID) {
+                return NULL;
+            }
+
+            if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
+                return entry;
+            }
 
             int  expired  = nst_dict_entry_expired(entry);
 

@@ -266,7 +266,7 @@ out:
 static void
 nst_cache_handler(hpx_appctx_t *appctx) {
 
-    if(appctx->st0 == NST_CTX_STATE_HIT_MEMORY) {
+    if(appctx->ctx.nuster.cache.store.ring.data) {
         _nst_cache_memory_handler(appctx);
     } else {
         _nst_cache_disk_handler(appctx);
@@ -275,6 +275,7 @@ nst_cache_handler(hpx_appctx_t *appctx) {
 
 void
 nst_cache_housekeeping() {
+    return;
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
         int  dict_cleaner = global.nuster.cache.dict_cleaner;
@@ -413,14 +414,17 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
     nst_shctx_lock(&nuster.cache->dict);
 
-    entry = nst_dict_get(&nuster.cache->dict, key);
+    entry = nst_dict_get2(&nuster.cache->dict, key);
 
     if(entry) {
+
         if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
 
             if(entry->store.ring.data) {
                 ctx->store.ring.data = entry->store.ring.data;
                 ctx->store.ring.data->clients++;
+            } else if(entry->store.disk.file) {
+                ctx->store.disk.file = entry->store.disk.file;
             }
 
             ctx->txn.res.etag  = entry->etag;
@@ -429,52 +433,51 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
             _nst_cache_record_access(entry);
 
-            ret = NST_CTX_STATE_HIT_MEMORY;
-        }
-
-        if(entry->state == NST_DICT_ENTRY_STATE_INVALID && entry->store.disk.file) {
-            ctx->store.disk.file = entry->store.disk.file;
-            ret = NST_CTX_STATE_CHECK_PERSIST;
+            ret = NST_CTX_STATE_HIT;
         }
     } else {
-        if(ctx->rule->disk != NST_STORE_DISK_OFF) {
-            ctx->store.disk.file = NULL;
+
+        if(!nst_store_disk_off(ctx->rule->store)) {
 
             if(nuster.cache->store.disk.loaded) {
                 ret = NST_CTX_STATE_INIT;
             } else {
-                ret = NST_CTX_STATE_CHECK_PERSIST;
+                ret = NST_CTX_STATE_CHECK_DISK;
             }
         }
     }
 
     nst_shctx_unlock(&nuster.cache->dict);
 
-    if(ret == NST_CTX_STATE_CHECK_PERSIST) {
+    if(ret == NST_CTX_STATE_HIT) {
+        if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
+            ret = NST_CTX_STATE_INIT;
+        }
+    }
 
-        if(ctx->store.disk.file) {
+    if(ret == NST_CTX_STATE_CHECK_DISK) {
 
-            if(nst_disk_data_valid(&ctx->store.disk, key) == NST_OK) {
-                _nst_cache_record_access(entry);
-                ret = NST_CTX_STATE_HIT_DISK;
-            } else {
-                ret = NST_CTX_STATE_INIT;
+        if(nst_disk_data_exists2(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
+            ret = NST_CTX_STATE_HIT;
+
+            if(ctx->rule->etag == NST_STATUS_ON) {
+                ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
+
+                nst_disk_get_etag(ctx->store.disk.fd, ctx->store.disk.meta, ctx->txn.res.etag);
+            }
+
+            if(ctx->rule->last_modified == NST_STATUS_ON) {
+                ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                ctx->txn.res.last_modified.len =
+                    nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
+
+                nst_disk_get_last_modified(ctx->store.disk.fd, ctx->store.disk.meta,
+                            ctx->txn.res.last_modified);
+
             }
         } else {
-            ctx->store.disk.file = nst_cache_memory_alloc(
-                    nst_disk_path_file_len(global.nuster.cache.root) + 1);
-
-            if(!ctx->store.disk.file) {
-                ret = NST_CTX_STATE_INIT;
-            } else {
-
-                if(nst_disk_data_exists(global.nuster.cache.root, &ctx->store.disk, key) == NST_OK) {
-                    ret = NST_CTX_STATE_HIT_DISK;
-                } else {
-                    nst_cache_memory_free(ctx->store.disk.file);
-                    ret = NST_CTX_STATE_INIT;
-                }
-            }
+            ret = NST_CTX_STATE_INIT;
         }
     }
 
@@ -726,7 +729,7 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
 
         appctx->st0 = ctx->state;
 
-        if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
+        if(ctx->store.ring.data) {
             appctx->ctx.nuster.cache.store.ring.data = ctx->store.ring.data;
             appctx->ctx.nuster.cache.store.ring.item = ctx->store.ring.data->item;
         } else {

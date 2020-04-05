@@ -42,7 +42,7 @@ enum {
     NST_CTX_STATE_DELETE,            /* to delete */
     NST_CTX_STATE_DONE,              /* cache done */
     NST_CTX_STATE_INVALID,           /* invalid */
-    NST_CTX_STATE_CHECK_PERSIST,     /* check persistence */
+    NST_CTX_STATE_CHECK_DISK,     /* check persistence */
 };
 
 typedef struct nst_proxy {

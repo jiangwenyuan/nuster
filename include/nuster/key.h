@@ -35,7 +35,7 @@ typedef struct nst_key {
 
 static inline hpx_buffer_t *
 nst_key_init() {
-    hpx_buffer_t *key = get_trash_chunk();
+    hpx_buffer_t  *key = get_trash_chunk();
 
     memset(key->area, 0, key->size);
 
