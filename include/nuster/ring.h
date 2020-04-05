@@ -32,7 +32,7 @@
 typedef struct nst_ring_item {
     struct nst_ring_item        *next;
 
-    int                          info;
+    uint32_t                     info;
     char                         data[0];
 } nst_ring_item_t;
 
@@ -80,5 +80,15 @@ nst_ring_get_item(nst_ring_t *ring, uint32_t size) {
     return nst_memory_alloc(ring->memory, sizeof(nst_ring_item_t) + size);
 }
 
+int nst_ring_store_init(nst_ring_t *ring, nst_ring_data_t *data);
+int nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tail,
+        const char *buf, uint32_t len, uint32_t info);
+
+static inline int
+nst_ring_store_end(nst_ring_t *ring, nst_ring_data_t *data) {
+    data->invalid = 0;
+
+    return NST_OK;
+}
 
 #endif /* _NUSTER_RING_H */

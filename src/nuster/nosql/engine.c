@@ -641,10 +641,10 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(entry) {
 
-        if(entry->state == NST_DICT_ENTRY_STATE_CREATING) {
+        if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
             ctx->state = NST_CTX_STATE_WAIT;
         } else {
-            entry->state = NST_DICT_ENTRY_STATE_CREATING;
+            entry->state = NST_DICT_ENTRY_STATE_INIT;
 
             if(entry->store.ring.data) {
                 entry->store.ring.data->invalid = 1;

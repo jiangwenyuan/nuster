@@ -53,8 +53,18 @@ nst_store_memory_on(uint8_t t) {
 }
 
 static inline int
+nst_store_memory_off(uint8_t t) {
+    return t & NST_STORE_MEMORY_OFF;
+}
+
+static inline int
 nst_store_disk_on(uint8_t t) {
     return t & NST_STORE_DISK_ON;
+}
+
+static inline int
+nst_store_disk_off(uint8_t t) {
+    return t & NST_STORE_DISK_OFF;
 }
 
 static inline int

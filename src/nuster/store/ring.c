@@ -103,3 +103,47 @@ nst_ring_cleanup(nst_ring_t *ring) {
     }
 }
 
+int
+nst_ring_store_init(nst_ring_t *ring, nst_ring_data_t *data) {
+    data = nst_ring_get_data(ring);
+
+    if(data) {
+        return NST_OK;
+    }
+
+    return NST_ERR;
+}
+
+int
+nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tail,
+        const char *buf, uint32_t len, uint32_t info) {
+
+    nst_ring_item_t  *item;
+
+    if(data->invalid) {
+        return NST_ERR;
+    }
+
+    item = nst_ring_get_item(ring, len);
+
+    if(!item) {
+        data->invalid = 1;
+
+        return NST_ERR;
+    }
+
+    memcpy(item->data, buf, len);
+
+    item->info = info;
+    item->next = NULL;
+
+    if(tail) {
+        tail->next = item;
+    } else {
+        data->item = item;
+    }
+
+    tail = item;
+
+    return NST_OK;
+}

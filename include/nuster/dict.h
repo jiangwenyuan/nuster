@@ -30,7 +30,7 @@
  * A nst_dict_entry is an entry in nst_dict hash table
  */
 enum {
-    NST_DICT_ENTRY_STATE_CREATING = 0,
+    NST_DICT_ENTRY_STATE_INIT      = 0,
     NST_DICT_ENTRY_STATE_VALID,
     NST_DICT_ENTRY_STATE_INVALID,
     NST_DICT_ENTRY_STATE_EXPIRED,
@@ -129,6 +129,13 @@ nst_dict_entry_t *nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t 
         nst_rule_t *rule, int pid, int mode);
 
 int nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
+        nst_key_t *key, char *file, char *meta);
+
+nst_dict_entry_t *nst_dict_get2(nst_dict_t *dict, nst_key_t *key);
+nst_dict_entry_t *nst_dict_set2(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn,
+        nst_rule_t *rule, int pid);
+
+int nst_dict_set_from_disk2(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
         nst_key_t *key, char *file, char *meta);
 
 void nst_dict_cleanup(nst_dict_t *dict);

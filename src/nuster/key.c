@@ -31,7 +31,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
     nst_key_element_t   *ck  = NULL;
     hpx_buffer_t        *buf = nst_key_init();
 
-    nst_debug(s, "[key  ] Calculate: ");
+    nst_debug(s, "[build] ");
 
     while((ck = *pck++)) {
         int  ret = NST_ERR;

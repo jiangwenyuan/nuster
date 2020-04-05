@@ -167,7 +167,14 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 nst_debug(s, "[cache] ==== Check rule: %s ====\n", ctx->rule->name);
 
                 if(ctx->rule->state == NST_RULE_DISABLED) {
-                    nst_debug(s, "[cache] Disabled, continue.\n");
+                    nst_debug(s, "[rule ] Disabled, continue.\n");
+                    ctx->rule = ctx->rule->next;
+
+                    continue;
+                }
+
+                if(nst_store_memory_off(ctx->rule->store) && nst_store_disk_off(ctx->rule->store)) {
+                    nst_debug(s, "[store] memory off and disk off, continue.\n");
                     ctx->rule = ctx->rule->next;
 
                     continue;
@@ -182,17 +189,18 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     }
                 }
 
-                nst_debug(s, "[cache] Key: ");
+                nst_debug(s, "[key  ] ");
+
                 nst_key_debug(key);
 
                 nst_key_hash(key);
 
-                nst_debug(s, "[cache] Hash: %"PRIu64"\n", key->hash);
+                nst_debug(s, "[hash ] %"PRIu64"\n", key->hash);
 
                 /* check if cache exists  */
                 nst_debug(s, "[cache] Check key existence: ");
 
-                ctx->state = nst_cache_exists(ctx);
+                ctx->state = nst_cache_exists2(ctx);
 
                 if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
                     /* OK, cache exists */
@@ -336,7 +344,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             nst_debug(s, "[cache] To create\n");
 
             /* start to build cache */
-            nst_cache_create(msg, ctx);
+            nst_cache_create2(msg, ctx);
         }
 
     }
@@ -356,7 +364,7 @@ _nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
 
-        if(nst_cache_update(msg, ctx, offset, len) != NST_OK) {
+        if(nst_cache_update2(msg, ctx, offset, len) != NST_OK) {
             goto err;
         }
 
@@ -365,9 +373,9 @@ _nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     return len;
 
 err:
-    ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    ctx->entry->state            = NST_DICT_ENTRY_STATE_INVALID;
     ctx->entry->store.ring.data  = NULL;
-    ctx->state        = NST_CTX_STATE_BYPASS;
+    ctx->state                   = NST_CTX_STATE_BYPASS;
 
     return len;
 }
@@ -378,7 +386,7 @@ _nst_cache_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
     nst_ctx_t  *ctx = filter->ctx;
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        nst_cache_finish(ctx);
+        nst_cache_finish2(ctx);
         nst_debug(s, "[cache] Created\n");
     }
 

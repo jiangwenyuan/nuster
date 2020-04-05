@@ -30,7 +30,7 @@
 /*
    Offset              Length(bytes)           Content
    0                   6                       NUSTER
-   6                   1                       mode: NUSTER_DISK_*, 1, 2, 3
+   6                   1                       mode: not used
    7                   1                       version
    8 * 1               8                       hash
    8 * 2               8                       expire time
@@ -270,6 +270,27 @@ nst_disk_meta_init(char *p, char mode, uint64_t hash, uint64_t expire, uint64_t 
     nst_disk_meta_set_ttl_extend(p, ttl_extend);
 }
 
+static inline void
+nst_disk_meta_init2(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
+        uint64_t payload_len, uint64_t key_len, uint64_t host_len, uint64_t path_len,
+        uint64_t etag_len, uint64_t last_modified_len, uint64_t ttl_extend) {
+
+    memcpy(p, "NUSTER", 6);
+    p[6] = 0;
+    p[7] = (char)NST_DISK_VERSION;
+
+    nst_disk_meta_set_hash(p, hash);
+    nst_disk_meta_set_expire(p, expire);
+    nst_disk_meta_set_header_len(p, header_len);
+    nst_disk_meta_set_payload_len(p, payload_len);
+    nst_disk_meta_set_key_len(p, key_len);
+    nst_disk_meta_set_host_len(p, host_len);
+    nst_disk_meta_set_path_len(p, path_len);
+    nst_disk_meta_set_etag_len(p, etag_len);
+    nst_disk_meta_set_last_modified_len(p, last_modified_len);
+    nst_disk_meta_set_ttl_extend(p, ttl_extend);
+}
+
 int nst_disk_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
 
 static inline int
@@ -357,5 +378,28 @@ int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
 
 int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
+
+int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
+        nst_http_txn_t *txn, uint64_t ttl_extend);
+
+static inline int
+nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) {
+    if(nst_disk_write(data, buf, len) != NST_OK) {
+        if(data->fd) {
+            close(data->fd);
+        }
+
+        nst_memory_free(disk->memory, data->file);
+
+        data->file = NULL;
+
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int
+nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_http_txn_t *txn, uint64_t expire);
 
 #endif /* _NUSTER_DISK_H */
