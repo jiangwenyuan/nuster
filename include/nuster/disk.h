@@ -42,14 +42,15 @@
    8 * 8               8                       etag length
    8 * 9               8                       last-modified length
    8 * 10              8                       ttl: 4, extend: 4
-   8 * 11              40                      reserved
+   8 * 11              20                      uuid
+   8 * 11 + 20         20                      reserved
    8 * 16              key_len                 key
    + key_len           host_len                host
    + host_len          path_len                path
    + path_len          etag_len                etag
    + etag_len          last_modified_len       last_modified
    + last_modified_len header_len              header
-   header + header_len payload_len             payload
+   header_len          payload_len             payload
  */
 
 #define NST_DISK_META_POS_HASH               8 * 1
@@ -62,6 +63,7 @@
 #define NST_DISK_META_POS_ETAG_LEN           8 * 8
 #define NST_DISK_META_POS_LAST_MODIFIED_LEN  8 * 9
 #define NST_DISK_META_POS_TTL_EXTEND         8 * 10
+#define NST_DISK_META_POS_UUID               8 * 11
 
 
 #define NST_DISK_META_SIZE                   8 * 16
@@ -110,6 +112,13 @@ static inline int
 nst_disk_path_file_len(hpx_ist_t root) {
     return root.len + 51;
 }
+
+/* /5/5a/5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a: 46 */
+static inline int
+nst_disk_path_file_len2(hpx_ist_t root) {
+    return root.len + 46;
+}
+
 
 int nst_disk_mkdir(char *path);
 int nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash);

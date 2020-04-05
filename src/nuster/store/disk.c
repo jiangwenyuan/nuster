@@ -67,6 +67,32 @@ nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash) {
 }
 
 int
+nst_disk_data_init2(hpx_ist_t root, char *path, nst_key_t *key) {
+    char  *p;
+    int    i;
+
+    p = trash.area;
+
+    for(i = 0; i < 20; i++) {
+        sprintf((char*)&(p[i*2]), "%02x", key->uuid[i]);
+    }
+
+    p[40] = '\0';
+
+    sprintf(path, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
+
+    if(nst_disk_mkdir(path) != NST_OK) {
+        return NST_ERR;
+    }
+
+    sprintf(path, "%s/%c/%c%c/%s", root.ptr, p[0], p[0], p[1], p);
+
+    nst_debug2("[nuster][persist] File: %s\n", path);
+
+    return NST_OK;
+}
+
+int
 nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key) {
     int  ret;
 
@@ -442,13 +468,13 @@ int
 nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
         uint64_t ttl_extend) {
 
-    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len(disk->root) + 1);
+    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len2(disk->root) + 1);
 
     if(!data->file) {
         return NST_ERR;
     }
 
-    if(nst_disk_data_init(disk->root, data->file, key->hash) != NST_OK) {
+    if(nst_disk_data_init2(disk->root, data->file, key) != NST_OK) {
         goto err;
     }
 
