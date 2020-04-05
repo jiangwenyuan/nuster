@@ -26,7 +26,7 @@ nst_ring_init(nst_ring_t *ring, nst_memory_t *memory) {
  * create a new nst_ring_data and insert it to nst_ring list
  */
 nst_ring_data_t *
-nst_ring_get_data(nst_ring_t *ring) {
+nst_ring_alloc_data(nst_ring_t *ring) {
     nst_ring_data_t  *data = nst_memory_alloc(ring->memory, sizeof(*data));
 
     if(data) {
@@ -104,17 +104,6 @@ nst_ring_cleanup(nst_ring_t *ring) {
 }
 
 int
-nst_ring_store_init(nst_ring_t *ring, nst_ring_data_t *data) {
-    data = nst_ring_get_data(ring);
-
-    if(data) {
-        return NST_OK;
-    }
-
-    return NST_ERR;
-}
-
-int
 nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tail,
         const char *buf, uint32_t len, uint32_t info) {
 
@@ -124,7 +113,7 @@ nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tai
         return NST_ERR;
     }
 
-    item = nst_ring_get_item(ring, len);
+    item = nst_ring_alloc_item(ring, len);
 
     if(!item) {
         data->invalid = 1;

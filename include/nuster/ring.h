@@ -73,14 +73,20 @@ nst_ring_data_invalid(nst_ring_data_t *data) {
 }
 
 int nst_ring_init(nst_ring_t *ring, nst_memory_t *memory);
-nst_ring_data_t *nst_ring_get_data(nst_ring_t *ring);
-void nst_ring_cleanup(nst_ring_t *ring);
+nst_ring_data_t *nst_ring_alloc_data(nst_ring_t *ring);
+
 static inline nst_ring_item_t *
-nst_ring_get_item(nst_ring_t *ring, uint32_t size) {
+nst_ring_alloc_item(nst_ring_t *ring, uint32_t size) {
     return nst_memory_alloc(ring->memory, sizeof(nst_ring_item_t) + size);
 }
 
-int nst_ring_store_init(nst_ring_t *ring, nst_ring_data_t *data);
+void nst_ring_cleanup(nst_ring_t *ring);
+
+static inline nst_ring_data_t *
+nst_ring_store_init(nst_ring_t *ring) {
+    return nst_ring_alloc_data(ring);
+}
+
 int nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t *tail,
         const char *buf, uint32_t len, uint32_t info);
 

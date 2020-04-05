@@ -602,7 +602,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             entry->state = NST_DICT_ENTRY_STATE_INIT;
 
             if(ctx->rule->disk != NST_DISK_ONLY) {
-                entry->store.ring.data = nst_ring_get_data(&nuster.cache->store.ring);
+                entry->store.ring.data = nst_ring_alloc_data(&nuster.cache->store.ring);
 
                 buf.size = ctx->txn.buf->data;
                 buf.data = ctx->txn.buf->data;
@@ -676,7 +676,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             nst_ring_item_t     *item    = NULL;
 
             if(ctx->rule->disk != NST_DISK_ONLY)  {
-                item = nst_ring_get_item(&nuster.cache->store.ring, sz);
+                item = nst_ring_alloc_item(&nuster.cache->store.ring, sz);
 
                 if(!item) {
                     goto err;
@@ -809,7 +809,7 @@ nst_cache_create2(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
         if(nst_store_memory_on(ctx->rule->store)) {
-            nst_ring_store_init(&nuster.cache->store.ring, ctx->store.ring.data);
+            ctx->store.ring.data = nst_ring_store_init(&nuster.cache->store.ring);
         }
 
         if(nst_store_disk_on(ctx->rule->store)) {
@@ -879,7 +879,7 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
         if(ctx->rule->disk == NST_DISK_ONLY)  {
             nst_disk_write(&ctx->store.disk, htx_get_blk_ptr(htx, blk), sz);
         } else {
-            item = nst_ring_get_item(&nuster.cache->store.ring, sz);
+            item = nst_ring_alloc_item(&nuster.cache->store.ring, sz);
 
             if(!item) {
                 goto err;

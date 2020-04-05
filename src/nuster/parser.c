@@ -1114,9 +1114,9 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             }
 
             if(!strcmp(args[cur_arg], "off")) {
-                memory = NST_STORE_DISK_OFF;
+                memory = NST_STORE_MEMORY_OFF;
             } else if(!strcmp(args[cur_arg], "on")) {
-                memory = NST_STORE_DISK_ON;
+                memory = NST_STORE_MEMORY_ON;
             } else {
                 memprintf(err, "'%s %s': expects [on|off], default on.", args[0], name);
 

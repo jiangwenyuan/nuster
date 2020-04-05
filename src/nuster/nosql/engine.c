@@ -514,7 +514,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
     size  = sizeof(*sl) + p1.len + p2.len + p3.len;
     info += size;
 
-    item_sl = nst_ring_get_item(&nuster.nosql->store.ring, size);
+    item_sl = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
 
     if(!item_sl) {
         goto err;
@@ -552,7 +552,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
         size  = clk.len + clv.len;
         info += (clv.len << 8) + clk.len;
 
-        item_cl = nst_ring_get_item(&nuster.nosql->store.ring, size);
+        item_cl = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
 
         if(!item_cl) {
             goto err;
@@ -575,7 +575,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
         size  = tek.len + tev.len;
         info += (tev.len << 8) + tek.len;
 
-        item_te = nst_ring_get_item(&nuster.nosql->store.ring, size);
+        item_te = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
 
         if(!item_te) {
             goto err;
@@ -599,7 +599,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
     size  = 1;
     info += size;
 
-    item_eoh = nst_ring_get_item(&nuster.nosql->store.ring, size);
+    item_eoh = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
 
     if(!item_eoh) {
         goto err;
@@ -650,7 +650,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
                 entry->store.ring.data->invalid = 1;
             }
 
-            entry->store.ring.data = nst_ring_get_data(&nuster.nosql->store.ring);
+            entry->store.ring.data = nst_ring_alloc_data(&nuster.nosql->store.ring);
             ctx->state  = NST_CTX_STATE_CREATE;
         }
     } else {
@@ -759,7 +759,7 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             nst_disk_write(&ctx->store.disk, htx_get_blk_ptr(htx, blk), sz);
             ctx->txn.res.payload_len += sz;
         } else {
-            item = nst_ring_get_item(&nuster.nosql->store.ring, sz);
+            item = nst_ring_alloc_item(&nuster.nosql->store.ring, sz);
 
             if(!item) {
                 goto err;

@@ -135,9 +135,9 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 
     if(rule->disk != NST_DISK_ONLY) {
         if(mode == NST_MODE_CACHE) {
-            entry->store.ring.data = nst_ring_get_data(&nuster.cache->store.ring);
+            entry->store.ring.data = nst_ring_alloc_data(&nuster.cache->store.ring);
         } else {
-            entry->store.ring.data = nst_ring_get_data(&nuster.nosql->store.ring);
+            entry->store.ring.data = nst_ring_alloc_data(&nuster.nosql->store.ring);
         }
 
         if(!entry->store.ring.data) {
