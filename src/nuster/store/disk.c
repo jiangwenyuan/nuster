@@ -201,7 +201,7 @@ nst_disk_data_exists2(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 
 DIR *
 nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx) {
-    memset(path, 0, nst_disk_path_file_len(root));
+    memset(path, 0, nst_disk_path_file_len2(root));
     sprintf(path, "%s/%x/%02x", root.ptr, idx / 16, idx);
 
     return opendir(path);
@@ -234,7 +234,28 @@ nst_disk_get_meta(int fd, char *meta) {
 }
 
 int
-nst_disk_get_key(int fd, char *meta, nst_key_t *key) {
+nst_disk_read_meta(nst_disk_data_t *data) {
+    int  ret;
+
+    ret = pread(data->fd, data->meta, NST_DISK_META_SIZE, 0);
+
+    if(ret != NST_DISK_META_SIZE) {
+        return NST_ERR;
+    }
+
+    if(memcmp(data->meta, "NUSTER", 6) !=0) {
+        return NST_ERR;
+    }
+
+    if(nst_disk_meta_check_expire(data->meta) != NST_OK) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int
+nst_disk_get_key_data(int fd, char *meta, nst_key_t *key) {
     int  ret;
 
     ret = pread(fd, key->data, key->size, NST_DISK_POS_KEY);
@@ -242,6 +263,35 @@ nst_disk_get_key(int fd, char *meta, nst_key_t *key) {
     if(ret != key->size) {
         return NST_ERR;
     }
+
+    memcpy(key->uuid, meta + NST_DISK_META_POS_UUID, 20);
+
+    return NST_OK;
+}
+
+int
+nst_disk_read_key(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
+    int  ret;
+
+    key->size = nst_disk_meta_get_key_len(data->meta);
+
+    key->data = nst_memory_alloc(disk->memory, key->size);
+
+    if(!key->data) {
+        return NST_ERR;
+    }
+
+    ret = pread(data->fd, key->data, key->size, NST_DISK_POS_KEY);
+
+    if(ret != key->size) {
+        nst_memory_free(disk->memory, key->data);
+
+        return NST_ERR;
+    }
+
+    memcpy(key->uuid, data->meta + NST_DISK_META_POS_UUID, 20);
+
+    key->hash = nst_disk_meta_get_hash(data->meta);
 
     return NST_OK;
 }
@@ -260,11 +310,42 @@ nst_disk_get_host(int fd, char *meta, hpx_ist_t host) {
 }
 
 int
+nst_disk_read_host(hpx_ist_t host, nst_disk_data_t *data) {
+    int  ret, offset;
+
+    offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta);
+
+    ret = pread(data->fd, host.ptr, host.len, offset);
+
+    if(ret != host.len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int
 nst_disk_get_path(int fd, char *meta, hpx_ist_t path) {
 
     int  ret = pread(fd, path.ptr, path.len, NST_DISK_POS_KEY
             + nst_disk_meta_get_key_len(meta)
             + nst_disk_meta_get_host_len(meta));
+
+    if(ret != path.len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int
+nst_disk_read_path(hpx_ist_t path, nst_disk_data_t *data) {
+    int  ret, offset;
+
+    offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta)
+        + nst_disk_meta_get_host_len(data->meta);
+
+    ret = pread(data->fd, path.ptr, path.len, offset);
 
     if(ret != path.len) {
         return NST_ERR;
@@ -474,14 +555,14 @@ nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
 
     if(root.len) {
         if(nst_disk_mkdir(root.ptr) == NST_ERR) {
-            fprintf(stderr, "Create `%s` failed\n", global.nuster.cache.root.ptr);
+            fprintf(stderr, "Create `%s` failed\n", root.ptr);
 
             return NST_ERR;
         }
 
         disk->memory = memory;
         disk->root   = root;
-        disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len(root) + 1);
+        disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len2(root) + 1);
 
         if(!disk->file) {
             return NST_ERR;
@@ -570,3 +651,175 @@ nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_http_txn_t *txn,
 
     return NST_OK;
 }
+
+void
+nst_disk_load(nst_core_t *core) {
+
+    if(core->root.len && !core->store.disk.loaded) {
+        hpx_ist_t        root;
+        nst_disk_data_t  data;
+        nst_key_t        key = { .data = NULL };
+        hpx_buffer_t     buf = { .area = NULL };
+        hpx_ist_t        host;
+        hpx_ist_t        path;
+        char            *file;
+
+        root = core->root;
+        file = core->store.disk.file;
+
+        if(core->store.disk.dir) {
+            nst_dirent_t *de = nst_disk_dir_next(core->store.disk.dir);
+
+            while((de = readdir(core->store.disk.dir)) != NULL) {
+
+                if(strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+                    continue;
+                }
+
+                memcpy(file + nst_disk_path_base_len(root), "/", 1);
+                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
+
+                data.fd = nst_disk_open(file);
+
+                if(data.fd == -1) {
+                    continue;
+                }
+
+                if(nst_disk_read_meta(&data) != NST_OK) {
+                    goto err;
+                }
+
+                if(nst_disk_read_key(&core->store.disk, &data, &key) != NST_OK) {
+                    goto err;
+                }
+
+                host.len = nst_disk_meta_get_host_len(data.meta);
+                path.len = nst_disk_meta_get_path_len(data.meta);
+
+                buf.size = host.len + path.len;
+                buf.data = 0;
+                buf.area = nst_memory_alloc(core->memory, buf.size);
+
+                if(!buf.area) {
+                    goto err;
+                }
+
+                host.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_host(host, &data) != NST_OK) {
+                    goto err;
+                }
+
+                path.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_path(path, &data) != NST_OK) {
+                    goto err;
+                }
+
+                if(nst_dict_set_from_disk2(&core->dict, &buf, host, path, &key, file, data.meta)
+                        != NST_OK) {
+
+                    goto err;
+                }
+
+                close(data.fd);
+            }
+
+            core->store.disk.idx++;
+            closedir(core->store.disk.dir);
+            core->store.disk.dir = NULL;
+        } else {
+            core->store.disk.dir = nst_disk_opendir_by_idx(core->root, file, core->store.disk.idx);
+
+            if(!core->store.disk.dir) {
+                core->store.disk.idx++;
+            }
+        }
+
+        if(core->store.disk.idx == 16 * 16) {
+            core->store.disk.loaded = 1;
+            core->store.disk.idx    = 0;
+        }
+
+        return;
+
+err:
+
+        if(file) {
+            unlink(file);
+        }
+
+        if(data.fd) {
+            close(data.fd);
+        }
+
+        nst_memory_free(core->memory, key.data);
+        nst_memory_free(core->memory, buf.area);
+
+    }
+}
+
+void
+nst_disk_cleanup2(nst_core_t *core) {
+    nst_disk_data_t  data;
+    hpx_ist_t        root;
+    char            *file;
+
+    root = core->root;
+    file = core->store.disk.file;
+
+    if(core->root.len && core->store.disk.loaded) {
+
+        if(core->store.disk.dir) {
+            nst_dirent_t *de = nst_disk_dir_next(core->store.disk.dir);
+
+            while((de = readdir(core->store.disk.dir)) != NULL) {
+
+                if(strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+                    continue;
+                }
+
+                memcpy(file + nst_disk_path_base_len(root), "/", 1);
+                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
+
+                data.fd = nst_disk_open(file);
+
+                if(data.fd == -1) {
+                    continue;
+                }
+
+                if(nst_disk_read_meta(&data) != NST_OK) {
+                    unlink(file);
+                    close(data.fd);
+
+                    continue;
+                }
+
+                if(nst_disk_meta_check_expire(data.meta) != NST_OK) {
+                    unlink(file);
+                    close(data.fd);
+
+                    continue;
+                }
+
+                close(data.fd);
+            }
+
+            core->store.disk.idx++;
+            closedir(core->store.disk.dir);
+            core->store.disk.dir = NULL;
+        } else {
+            core->store.disk.dir = nst_disk_opendir_by_idx(core->root, file, core->store.disk.idx);
+
+            if(!core->store.disk.dir) {
+                core->store.disk.idx++;
+            }
+        }
+
+        if(core->store.disk.idx == 16 * 16) {
+            core->store.disk.idx = 0;
+        }
+
+    }
+}
+

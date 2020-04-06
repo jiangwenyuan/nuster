@@ -275,7 +275,6 @@ nst_cache_handler(hpx_appctx_t *appctx) {
 
 void
 nst_cache_housekeeping() {
-    return;
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
         int  dict_cleaner = global.nuster.cache.dict_cleaner;
@@ -284,29 +283,30 @@ nst_cache_housekeeping() {
         int  disk_loader  = global.nuster.cache.disk_loader;
         int  disk_saver   = global.nuster.cache.disk_saver;
 
-        while(dict_cleaner--) {
-            nst_shctx_lock(&nuster.cache->dict);
-            nst_dict_cleanup(&nuster.cache->dict);
-            nst_shctx_unlock(&nuster.cache->dict);
-        }
+       while(dict_cleaner--) {
+           nst_shctx_lock(&nuster.cache->dict);
+           nst_dict_cleanup(&nuster.cache->dict);
+           nst_shctx_unlock(&nuster.cache->dict);
+       }
 
-        while(data_cleaner--) {
-            nst_shctx_lock(&nuster.cache->store.ring);
-            nst_ring_cleanup(&nuster.cache->store.ring);
-            nst_shctx_unlock(&nuster.cache->store.ring);
-        }
+       while(data_cleaner--) {
+           nst_shctx_lock(&nuster.cache->store.ring);
+           nst_ring_cleanup(&nuster.cache->store.ring);
+           nst_shctx_unlock(&nuster.cache->store.ring);
+       }
 
         while(disk_cleaner--) {
-            nst_cache_persist_cleanup();
+            nst_disk_cleanup2(nuster.cache);
         }
 
         while(disk_loader--) {
-            nst_cache_persist_load();
+            nst_disk_load(nuster.cache);
         }
 
+        disk_saver = 10000;
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict);
-            nst_cache_persist_async();
+            nst_ring_store_async(nuster.cache);
             nst_shctx_unlock(&nuster.cache->dict);
         }
 
@@ -340,6 +340,7 @@ nst_cache_init() {
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
         nuster.cache->memory = global.nuster.cache.memory;
+        nuster.cache->root   = global.nuster.cache.root;
 
         if(nst_dict_init(&nuster.cache->dict, global.nuster.cache.memory,
                     global.nuster.cache.dict_size) != NST_OK) {
@@ -565,8 +566,11 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             }
 
             if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
-                nst_disk_write(&ctx->store.disk, (char *)&blk->info, 4);
-                nst_disk_write(&ctx->store.disk, htx_get_blk_ptr(htx, blk), sz);
+                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
+                        (char *)&blk->info, 4);
+
+                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
+                        htx_get_blk_ptr(htx, blk), sz);
             }
 
             if(type == HTX_BLK_EOH) {
@@ -747,280 +751,6 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
         req->analyse_exp = TICK_ETERNITY;
 
         res->flags |= CF_NEVER_WAIT;
-    }
-}
-
-void
-nst_cache_persist_async() {
-    nst_dict_entry_t  *entry;
-
-    if(!global.nuster.cache.root.len || !nuster.cache->store.disk.loaded) {
-        return;
-    }
-
-    if(!nuster.cache->dict.used) {
-        return;
-    }
-
-    entry = nuster.cache->dict.entry[nuster.cache->dict.async_idx];
-
-    while(entry) {
-
-        if(!nst_dict_entry_invalid(entry) && entry->rule->disk == NST_STORE_DISK_ASYNC
-                && entry->store.disk.file == NULL) {
-
-            nst_disk_data_t      disk;
-            nst_ring_item_t     *item        = entry->store.ring.data->item;
-            uint64_t             ttl_extend  = entry->ttl;
-            uint64_t             header_len  = 0;
-            uint64_t             payload_len = 0;
-
-            entry->store.disk.file = nst_cache_memory_alloc(
-                    nst_disk_path_file_len(global.nuster.cache.root) + 1);
-
-            if(!entry->store.disk.file) {
-                return;
-            }
-
-            if(nst_disk_data_init(global.nuster.cache.root, entry->store.disk.file, entry->key.hash) != NST_OK) {
-                return;
-            }
-
-            disk.fd = nst_disk_data_create(entry->store.disk.file);
-
-            ttl_extend = ttl_extend << 32;
-            *( uint8_t *)(&ttl_extend)      = entry->extend[0];
-            *((uint8_t *)(&ttl_extend) + 1) = entry->extend[1];
-            *((uint8_t *)(&ttl_extend) + 2) = entry->extend[2];
-            *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
-
-            nst_disk_meta_init(disk.meta, (char)entry->rule->disk, entry->key.hash,
-                    entry->expire, 0, 0, entry->key.size, entry->host.len, entry->path.len,
-                    entry->etag.len, entry->last_modified.len, ttl_extend);
-
-            nst_disk_write_key(&disk,  &entry->key);
-            nst_disk_write_host(&disk, entry->host);
-            nst_disk_write_path(&disk, entry->path);
-            nst_disk_write_etag(&disk, entry->etag);
-            nst_disk_write_last_modified(&disk, entry->last_modified);
-
-            while(item) {
-                hpx_htx_blk_type_t  type;
-                uint32_t            blksz, info;
-
-                info  = item->info;
-                type  = (info >> 28);
-                blksz = ((type == HTX_BLK_HDR || type == HTX_BLK_TLR)
-                        ? (info & 0xff) + ((info >> 8) & 0xfffff)
-                        : info & 0xfffffff);
-
-                if(type != HTX_BLK_DATA) {
-                    nst_disk_write(&disk, (char *)&info, 4);
-                    header_len += 4 + blksz;
-                }
-
-                nst_disk_write(&disk, item->data, blksz);
-
-                payload_len += blksz;
-
-                item = item->next;
-            }
-
-            nst_disk_meta_set_header_len(disk.meta, header_len);
-            nst_disk_meta_set_payload_len(disk.meta, payload_len);
-
-            nst_disk_write_meta(&disk);
-
-            close(disk.fd);
-        }
-
-        entry = entry->next;
-
-    }
-
-    nuster.cache->dict.async_idx++;
-
-    /* if we have checked the whole dict */
-    if(nuster.cache->dict.async_idx == nuster.cache->dict.size) {
-        nuster.cache->dict.async_idx = 0;
-    }
-
-}
-
-void
-nst_cache_persist_load() {
-
-    if(global.nuster.cache.root.len && !nuster.cache->store.disk.loaded) {
-        hpx_ist_t      root;
-        char          *file;
-        char           meta[NST_DISK_META_SIZE];
-        int            fd;
-        DIR           *dir2;
-        nst_dirent_t  *de2;
-        nst_key_t      key = { .data = NULL };
-        hpx_buffer_t   buf = { .area = NULL };
-        hpx_ist_t      host;
-        hpx_ist_t      path;
-
-        fd   = -1;
-        dir2 = NULL;
-        root = global.nuster.cache.root;
-        file = nuster.cache->store.disk.file;
-
-        if(nuster.cache->store.disk.dir) {
-            nst_dirent_t *de = nst_disk_dir_next(nuster.cache->store.disk.dir);
-
-            if(de) {
-
-                if(strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
-                    return;
-                }
-
-                memcpy(file + nst_disk_path_base_len(root), "/", 1);
-                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
-
-                dir2 = opendir(file);
-
-                if(!dir2) {
-                    return;
-                }
-
-                while((de2 = readdir(dir2)) != NULL) {
-
-                    if(strcmp(de2->d_name, ".") == 0 || strcmp(de2->d_name, "..") == 0) {
-                        continue;
-                    }
-
-                    memcpy(file + nst_disk_path_hash_len(root), "/", 1);
-                    memcpy(file + nst_disk_path_hash_len(root) + 1, de2->d_name,
-                            strlen(de2->d_name));
-
-                    fd = nst_disk_open(file);
-
-                    if(fd == -1) {
-                        closedir(dir2);
-
-                        return;
-                    }
-
-                    if(nst_disk_get_meta(fd, meta) != NST_OK) {
-                        goto err;
-                    }
-
-                    key.size = nst_disk_meta_get_key_len(meta);
-                    key.data = nst_cache_memory_alloc(key.size);
-
-                    if(!key.data) {
-                        goto err;
-                    }
-
-                    if(nst_disk_get_key(fd, meta, &key) != NST_OK) {
-                        goto err;
-                    }
-
-                    host.len = nst_disk_meta_get_host_len(meta);
-                    path.len = nst_disk_meta_get_path_len(meta);
-
-                    buf.size = host.len + path.len;
-                    buf.data = 0;
-                    buf.area = nst_cache_memory_alloc(buf.size);
-
-                    if(!buf.area) {
-                        goto err;
-                    }
-
-                    host.ptr = buf.area + buf.data;
-
-                    if(nst_disk_get_host(fd, meta, host) != NST_OK) {
-                        goto err;
-                    }
-
-                    path.ptr = buf.area + buf.data;
-
-                    if(nst_disk_get_path(fd, meta, path) != NST_OK) {
-                        goto err;
-                    }
-
-                    if(nst_dict_set_from_disk(&nuster.cache->dict, &buf,
-                                host, path, &key, file, meta) != NST_OK) {
-
-                        goto err;
-                    }
-
-                    close(fd);
-                }
-
-                closedir(dir2);
-            } else {
-                nuster.cache->store.disk.idx++;
-                closedir(nuster.cache->store.disk.dir);
-                nuster.cache->store.disk.dir = NULL;
-            }
-        } else {
-            nuster.cache->store.disk.dir = nst_disk_opendir_by_idx(
-                    global.nuster.cache.root, file, nuster.cache->store.disk.idx);
-
-            if(!nuster.cache->store.disk.dir) {
-                nuster.cache->store.disk.idx++;
-            }
-        }
-
-        if(nuster.cache->store.disk.idx == 16 * 16) {
-            nuster.cache->store.disk.loaded = 1;
-            nuster.cache->store.disk.idx    = 0;
-        }
-
-        return;
-
-err:
-
-        if(file) {
-            unlink(file);
-        }
-
-        if(fd) {
-            close(fd);
-        }
-
-        if(dir2) {
-            closedir(dir2);
-        }
-
-        nst_cache_memory_free(key.data);
-        nst_cache_memory_free(buf.area);
-
-    }
-}
-
-void
-nst_cache_persist_cleanup() {
-
-    if(global.nuster.cache.root.len && nuster.cache->store.disk.loaded) {
-        char  *file = nuster.cache->store.disk.file;
-
-        if(nuster.cache->store.disk.dir) {
-            nst_dirent_t *de = nst_disk_dir_next(nuster.cache->store.disk.dir);
-
-            if(de) {
-                nst_disk_cleanup(global.nuster.cache.root, file, de);
-            } else {
-                nuster.cache->store.disk.idx++;
-                closedir(nuster.cache->store.disk.dir);
-                nuster.cache->store.disk.dir = NULL;
-            }
-        } else {
-            nuster.cache->store.disk.dir = nst_disk_opendir_by_idx(
-                    global.nuster.cache.root, file, nuster.cache->store.disk.idx);
-
-            if(!nuster.cache->store.disk.dir) {
-                nuster.cache->store.disk.idx++;
-            }
-        }
-
-        if(nuster.cache->store.disk.idx == 16 * 16) {
-            nuster.cache->store.disk.idx = 0;
-        }
-
     }
 }
 

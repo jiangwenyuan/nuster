@@ -354,6 +354,7 @@ nst_dict_set2(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t 
     }
 
     memcpy(entry->key.data, key->data, key->size);
+    memcpy(entry->key.uuid, key->uuid, 20);
 
     /* set buf */
     entry->buf.size = txn->buf->data;
@@ -404,7 +405,8 @@ err:
 nst_dict_entry_t *
 nst_dict_get2(nst_dict_t *dict, nst_key_t *key) {
     nst_dict_entry_t  *entry = NULL;
-    int                idx;
+    uint64_t           max;
+    int                idx, expired;
 
     if(dict->used == 0) {
         return NULL;
@@ -426,9 +428,9 @@ nst_dict_get2(nst_dict_t *dict, nst_key_t *key) {
                 return entry;
             }
 
-            int  expired  = nst_dict_entry_expired(entry);
+            expired  = nst_dict_entry_expired(entry);
 
-            uint64_t  max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
+            max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
 
             entry->atime = get_current_timestamp();
 
@@ -508,7 +510,7 @@ nst_dict_set_from_disk2(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx
     dict->used++;
 
     /* init entry */
-    entry->state  = NST_DICT_ENTRY_STATE_INVALID;
+    entry->state  = NST_DICT_ENTRY_STATE_VALID;
     entry->key    = *key;
     entry->expire = nst_disk_meta_get_expire(meta);
     entry->store.disk.file   = nst_memory_alloc(dict->memory, strlen(file));

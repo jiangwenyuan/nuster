@@ -69,6 +69,8 @@
 #define NST_DISK_META_SIZE                   8 * 16
 #define NST_DISK_POS_KEY                     NST_DISK_META_SIZE
 
+typedef struct nst_core  nst_core_t;
+
 enum {
     NST_DISK_APPLET_ERROR    = -1,
     NST_DISK_APPLET_DONE     =  0,
@@ -372,13 +374,19 @@ nst_disk_write_last_modified(nst_disk_data_t *disk, hpx_ist_t lm) {
 }
 
 int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
-void nst_disk_load(char *path, nst_dirent_t *de1, char **meta, char **key);
+void nst_disk_load(nst_core_t *core);
 int nst_disk_get_meta(int fd, char *meta);
-int nst_disk_get_key(int fd, char *meta, nst_key_t *key);
+int nst_disk_get_key_data(int fd, char *meta, nst_key_t *key);
 int nst_disk_get_host(int fd, char *meta, hpx_ist_t host);
 int nst_disk_get_path(int fd, char *meta, hpx_ist_t path);
 int nst_disk_get_etag(int fd, char *meta, hpx_ist_t etag);
 int nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified);
+int nst_disk_read_key(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key);
+
+static inline void
+nst_disk_get_uuid(nst_key_t *key, char *meta) {
+    memcpy(key->uuid, meta + NST_DISK_META_POS_UUID, 20);
+}
 
 DIR *nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx);
 void nst_disk_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de);
@@ -388,7 +396,7 @@ int nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key)
 int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
 
-
+void nst_disk_cleanup2(nst_core_t *core);
 
 int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
         nst_http_txn_t *txn, uint64_t ttl_extend);

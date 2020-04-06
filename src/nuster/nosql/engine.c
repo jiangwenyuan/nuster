@@ -390,6 +390,7 @@ nst_nosql_init() {
         }
 
         nuster.nosql->memory = global.nuster.nosql.memory;
+        nuster.nosql->root   = global.nuster.nosql.root;
 
         if(nst_dict_init(&nuster.nosql->dict, global.nuster.nosql.memory,
                     global.nuster.nosql.dict_size) != NST_OK) {
@@ -1109,7 +1110,7 @@ nst_nosql_persist_load() {
                         goto err;
                     }
 
-                    if(nst_disk_get_key(fd, meta, &key) != NST_OK) {
+                    if(nst_disk_get_key_data(fd, meta, &key) != NST_OK) {
                         goto err;
                     }
 
