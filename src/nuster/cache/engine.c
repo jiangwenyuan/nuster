@@ -503,7 +503,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     nst_shctx_lock(&nuster.cache->dict);
 
-    entry = nst_dict_get(&nuster.cache->dict, key);
+    entry = nst_dict_get2(&nuster.cache->dict, key);
 
     if(entry) {
 
