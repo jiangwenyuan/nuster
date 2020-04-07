@@ -351,14 +351,6 @@ nst_nosql_init() {
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
 
-        if(global.nuster.nosql.root.len) {
-
-            if(nst_disk_mkdir(global.nuster.nosql.root.ptr) == NST_ERR) {
-                ha_alert("Create `%s` failed\n", global.nuster.nosql.root.ptr);
-                exit(1);
-            }
-        }
-
         global.nuster.nosql.memory = nst_memory_create("nosql.shm",
                 global.nuster.nosql.dict_size + global.nuster.nosql.data_size,
                 global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
@@ -378,16 +370,6 @@ nst_nosql_init() {
         }
 
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
-
-        if(global.nuster.nosql.root.len) {
-            int  len = nst_disk_path_file_len(global.nuster.nosql.root) + 1;
-
-            nuster.nosql->store.disk.file = nst_nosql_memory_alloc(len);
-
-            if(!nuster.nosql->store.disk.file) {
-                goto err;
-            }
-        }
 
         nuster.nosql->memory = global.nuster.nosql.memory;
         nuster.nosql->root   = global.nuster.nosql.root;
