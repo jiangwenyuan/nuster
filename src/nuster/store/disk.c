@@ -1,5 +1,5 @@
 /*
- * nuster persist related functions.
+ * nuster disk related functions.
  *
  * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
@@ -52,7 +52,7 @@ int
 nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash) {
     sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr, hash >> 60, hash >> 56, hash);
 
-    nst_debug2("[nuster][persist] Path: %s\n", path);
+    nst_debug2("[nuster][disk] Path: %s\n", path);
 
     if(nst_disk_mkdir(path) != NST_OK) {
         return NST_ERR;
@@ -61,7 +61,7 @@ nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash) {
     sprintf(path + nst_disk_path_hash_len(root), "/%"PRIx64"-%"PRIx64,
             get_current_timestamp() * random() * random() & hash, get_current_timestamp());
 
-    nst_debug2("[nuster][persist] File: %s\n", path);
+    nst_debug2("[nuster][disk] File: %s\n", path);
 
     return NST_OK;
 }
@@ -87,7 +87,7 @@ nst_disk_data_init2(hpx_ist_t root, char *path, nst_key_t *key) {
 
     sprintf(path, "%s/%c/%c%c/%s", root.ptr, p[0], p[0], p[1], p);
 
-    nst_debug2("[nuster][persist] File: %s\n", path);
+    nst_debug2("[nuster][disk] File: %s\n", path);
 
     return NST_OK;
 }
@@ -437,7 +437,7 @@ nst_disk_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de1) {
                 continue;
             }
 
-            /* persist is complete */
+            /* disk is complete */
             if(nst_disk_meta_check_expire(meta) != NST_OK) {
                 unlink(path);
                 close(fd);

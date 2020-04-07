@@ -89,7 +89,7 @@ typedef struct nst_disk_data {
 
 typedef struct nst_disk {
     nst_memory_t       *memory;
-    hpx_ist_t           root;               /* persist root directory */
+    hpx_ist_t           root;               /* disk root directory */
     int                 loaded;
     int                 idx;
     DIR                *dir;

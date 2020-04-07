@@ -115,8 +115,6 @@ nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **ta
 
     item = nst_ring_alloc_item(ring, len);
 
-    char *p = nst_memory_alloc(ring->memory, 64);
-
     if(!item) {
         data->invalid = 1;
 

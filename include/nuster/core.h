@@ -33,7 +33,7 @@ enum {
     NST_CTX_STATE_INIT = 0,          /* init */
     NST_CTX_STATE_BYPASS,            /* do not cache */
     NST_CTX_STATE_WAIT,              /* caching, wait */
-    NST_CTX_STATE_HIT,        /* hit, use memory */
+    NST_CTX_STATE_HIT,               /* hit */
     NST_CTX_STATE_HIT_MEMORY,        /* hit, use memory */
     NST_CTX_STATE_HIT_DISK,          /* hit, use disk */
     NST_CTX_STATE_PASS,              /* rule pass */
@@ -42,7 +42,7 @@ enum {
     NST_CTX_STATE_DELETE,            /* to delete */
     NST_CTX_STATE_DONE,              /* cache done */
     NST_CTX_STATE_INVALID,           /* invalid */
-    NST_CTX_STATE_CHECK_DISK,     /* check persistence */
+    NST_CTX_STATE_CHECK_DISK,        /* check disk */
 };
 
 typedef struct nst_proxy {
