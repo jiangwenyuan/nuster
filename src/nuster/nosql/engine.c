@@ -330,7 +330,7 @@ nst_nosql_housekeeping() {
         }
 
         while(disk_cleaner--) {
-            nst_disk_cleanup2(nuster.nosql);
+            nst_disk_cleanup(nuster.nosql);
         }
 
         while(disk_loader--) {
@@ -620,7 +620,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     nst_shctx_lock(&nuster.nosql->dict);
 
-    entry = nst_dict_get2(&nuster.nosql->dict, key);
+    entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
 
@@ -632,7 +632,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        entry = nst_dict_set2(&nuster.nosql->dict, key, &ctx->txn, ctx->rule, ctx->pid);
+        entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, ctx->rule, ctx->pid);
     }
 
     nst_shctx_unlock(&nuster.nosql->dict);
@@ -765,7 +765,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
     nst_shctx_lock(&nuster.nosql->dict);
 
-    entry = nst_dict_get2(&nuster.nosql->dict, key);
+    entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
 
@@ -802,7 +802,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
-        if(nst_disk_data_exists2(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
+        if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
             ret = NST_CTX_STATE_HIT;
         } else {
             ret = NST_CTX_STATE_INIT;

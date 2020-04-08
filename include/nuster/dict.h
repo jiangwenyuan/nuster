@@ -123,21 +123,14 @@ nst_dict_entry_invalid(nst_dict_entry_t *entry) {
 }
 
 int nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size);
+void nst_dict_cleanup(nst_dict_t *dict);
 
 nst_dict_entry_t *nst_dict_get(nst_dict_t *dict, nst_key_t *key);
 nst_dict_entry_t *nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn,
-        nst_rule_t *rule, int pid, int mode);
+        nst_rule_t *rule, int pid);
 
 int nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
         nst_key_t *key, char *file, char *meta);
 
-nst_dict_entry_t *nst_dict_get2(nst_dict_t *dict, nst_key_t *key);
-nst_dict_entry_t *nst_dict_set2(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn,
-        nst_rule_t *rule, int pid);
-
-int nst_dict_set_from_disk2(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
-        nst_key_t *key, char *file, char *meta);
-
-void nst_dict_cleanup(nst_dict_t *dict);
 
 #endif /* _NUSTER_DICT_H */

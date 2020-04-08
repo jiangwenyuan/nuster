@@ -236,22 +236,22 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
     }
 
     if(global.nuster.cache.root.len || global.nuster.nosql.root.len) {
-        chunk_appendf(&trash, "\n**PERSISTENCE**\n");
+        chunk_appendf(&trash, "\n**DISK**\n");
     }
 
     if(global.nuster.cache.root.len) {
-        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.dir:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "disk.cache.dir:",
                 global.nuster.cache.root.ptr);
 
-        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.cache.loaded:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "disk.cache.loaded:",
             nuster.cache->store.disk.loaded ? "yes" : "no");
     }
 
     if(global.nuster.nosql.root.len) {
-        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.dir:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "disk.nosql.dir:",
                 global.nuster.nosql.root.ptr);
 
-        chunk_appendf(&trash, "%-*s%s\n", len, "persistence.nosql.loaded:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "disk.nosql.loaded:",
             nuster.nosql->store.disk.loaded ? "yes" : "no");
     }
 

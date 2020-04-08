@@ -296,7 +296,7 @@ nst_cache_housekeeping() {
        }
 
         while(disk_cleaner--) {
-            nst_disk_cleanup2(nuster.cache);
+            nst_disk_cleanup(nuster.cache);
         }
 
         while(disk_loader--) {
@@ -414,7 +414,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
     nst_shctx_lock(&nuster.cache->dict);
 
-    entry = nst_dict_get2(&nuster.cache->dict, key);
+    entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
 
@@ -457,7 +457,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
-        if(nst_disk_data_exists2(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
+        if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
             ret = NST_CTX_STATE_HIT;
 
             if(ctx->rule->etag == NST_STATUS_ON) {
@@ -503,7 +503,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     nst_shctx_lock(&nuster.cache->dict);
 
-    entry = nst_dict_get2(&nuster.cache->dict, key);
+    entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
 
@@ -515,7 +515,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        entry = nst_dict_set2(&nuster.cache->dict, key, &ctx->txn, ctx->rule, ctx->pid);
+        entry = nst_dict_set(&nuster.cache->dict, key, &ctx->txn, ctx->rule, ctx->pid);
 
         if(entry) {
             ctx->state = NST_CTX_STATE_CREATE;

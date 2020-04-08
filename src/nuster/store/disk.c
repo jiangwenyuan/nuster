@@ -49,25 +49,7 @@ nst_disk_mkdir(char *path) {
 }
 
 int
-nst_disk_data_init(hpx_ist_t root, char *path, uint64_t hash) {
-    sprintf(path, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr, hash >> 60, hash >> 56, hash);
-
-    nst_debug2("[nuster][disk] Path: %s\n", path);
-
-    if(nst_disk_mkdir(path) != NST_OK) {
-        return NST_ERR;
-    }
-
-    sprintf(path + nst_disk_path_hash_len(root), "/%"PRIx64"-%"PRIx64,
-            get_current_timestamp() * random() * random() & hash, get_current_timestamp());
-
-    nst_debug2("[nuster][disk] File: %s\n", path);
-
-    return NST_OK;
-}
-
-int
-nst_disk_data_init2(hpx_ist_t root, char *path, nst_key_t *key) {
+nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
     char  *p;
     int    i;
 
@@ -140,40 +122,7 @@ err:
 }
 
 int
-nst_disk_data_exists(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
-    nst_dirent_t  *de;
-    DIR           *dirp;
-
-    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
-            key->hash >> 60, key->hash >> 56, key->hash);
-
-    dirp = opendir(disk->file);
-
-    if(!dirp) {
-        return NST_ERR;
-    }
-
-    while((de = readdir(dirp)) != NULL) {
-
-        if(strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-            memcpy(disk->file + nst_disk_path_hash_len(root), "/", 1);
-            memcpy(disk->file + nst_disk_path_hash_len(root) + 1, de->d_name, strlen(de->d_name));
-
-            if(nst_disk_data_valid(disk, key) == NST_OK) {
-                closedir(dirp);
-
-                return NST_OK;
-            }
-        }
-    }
-
-    closedir(dirp);
-
-    return NST_ERR;
-}
-
-int
-nst_disk_data_exists2(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
+nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
     hpx_buffer_t  *buf;
     char          *p;
     int            i;
@@ -201,7 +150,7 @@ nst_disk_data_exists2(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 
 DIR *
 nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx) {
-    memset(path, 0, nst_disk_path_file_len2(root));
+    memset(path, 0, nst_disk_path_file_len(root));
     sprintf(path, "%s/%x/%02x", root.ptr, idx / 16, idx);
 
     return opendir(path);
@@ -386,74 +335,6 @@ nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified) {
     return NST_OK;
 }
 
-void
-nst_disk_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de1) {
-    nst_dirent_t  *de2;
-    DIR           *dir2;
-    int            fd, ret;
-    char           meta[NST_DISK_META_SIZE];
-
-    if(strcmp(de1->d_name, ".") == 0 || strcmp(de1->d_name, "..") == 0) {
-        return;
-    }
-
-    memcpy(path + nst_disk_path_base_len(root), "/", 1);
-    memcpy(path + nst_disk_path_base_len(root) + 1, de1->d_name, strlen(de1->d_name));
-
-    dir2 = opendir(path);
-
-    if(!dir2) {
-        return;
-    }
-
-    while((de2 = readdir(dir2)) != NULL) {
-
-        if(strcmp(de2->d_name, ".") != 0 && strcmp(de2->d_name, "..") != 0) {
-
-            memcpy(path + nst_disk_path_hash_len(root), "/", 1);
-            memcpy(path + nst_disk_path_hash_len(root) + 1, de2->d_name, strlen(de2->d_name));
-
-            fd = nst_disk_open(path);
-
-            if(fd == -1) {
-                closedir(dir2);
-
-                return;
-            }
-
-            ret = pread(fd, meta, NST_DISK_META_SIZE, 0);
-
-            if(ret != NST_DISK_META_SIZE) {
-                unlink(path);
-                close(fd);
-
-                continue;
-            }
-
-            if(memcmp(meta, "NUSTER", 6) !=0) {
-                unlink(path);
-                close(fd);
-
-                continue;
-            }
-
-            /* disk is complete */
-            if(nst_disk_meta_check_expire(meta) != NST_OK) {
-                unlink(path);
-                close(fd);
-
-                continue;
-            }
-
-            close(fd);
-
-        }
-    }
-
-    closedir(dir2);
-
-}
-
 /*
  * -1: error
  *  0: not found
@@ -461,58 +342,38 @@ nst_disk_cleanup(hpx_ist_t root, char *path, nst_dirent_t *de1) {
  */
 int
 nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
-    nst_dirent_t  *de;
-    DIR           *dirp;
-    int            ret;
+    char  *p;
+    int    i;
 
-    sprintf(disk->file, "%s/%"PRIx64"/%02"PRIx64"/%016"PRIx64, root.ptr,
-            key->hash >> 60, key->hash >> 56, key->hash);
+    p = trash.area;
 
-    dirp = opendir(disk->file);
-
-    if(!dirp) {
-
-        if(errno == ENOENT) {
-            return 0;
-        } else {
-            return -1;
-        }
+    for(i = 0; i < 20; i++) {
+        sprintf((char*)&(p[i*2]), "%02x", key->uuid[i]);
     }
 
-    ret = 0;
+    p[40] = '\0';
 
-    while((de = readdir(dirp)) != NULL) {
+    sprintf(disk->file, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
 
-        if(strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0) {
-            memcpy(disk->file + nst_disk_path_hash_len(root), "/", 1);
-            memcpy(disk->file + nst_disk_path_hash_len(root) + 1, de->d_name, strlen(de->d_name));
+    disk->fd = nst_disk_open(disk->file);
 
-                disk->fd = nst_disk_open(disk->file);
+    if(disk->fd == -1) {
+        i = -1;
 
-                if(disk->fd == -1) {
-                    ret = -1;
+        goto done;
+    }
 
-                    goto done;
-                }
+    i = pread(disk->fd, trash.area, key->size, NST_DISK_POS_KEY);
 
-                ret = pread(disk->fd, trash.area, key->size, NST_DISK_POS_KEY);
-
-                if(ret == key->size && memcmp(key->data, trash.area, key->size) == 0) {
-                    unlink(disk->file);
-                    ret = 1;
-
-                    goto done;
-                }
-
-                close(disk->fd);
-        }
+    if(i == key->size && memcmp(key->data, trash.area, key->size) == 0) {
+        unlink(disk->file);
+        i = 1;
     }
 
 done:
-    closedir(dirp);
     close(disk->fd);
 
-    return ret;
+    return i;
 }
 
 /*
@@ -562,7 +423,7 @@ nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
 
         disk->memory = memory;
         disk->root   = root;
-        disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len2(root) + 1);
+        disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len(root) + 1);
 
         if(!disk->file) {
             return NST_ERR;
@@ -576,13 +437,13 @@ int
 nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
         uint64_t ttl_extend) {
 
-    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len2(disk->root) + 1);
+    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len(disk->root) + 1);
 
     if(!data->file) {
         return NST_ERR;
     }
 
-    if(nst_disk_data_init2(disk->root, data->file, key) != NST_OK) {
+    if(nst_disk_data_init(disk->root, data->file, key) != NST_OK) {
         goto err;
     }
 
@@ -592,7 +453,7 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
         goto err;
     }
 
-    nst_disk_meta_init2(data->meta, key->hash, 0, 0, 0, key->size, txn->req.host.len,
+    nst_disk_meta_init(data->meta, key->hash, 0, 0, 0, key->size, txn->req.host.len,
             txn->req.path.len, txn->res.etag.len, txn->res.last_modified.len, ttl_extend);
 
     if(nst_disk_write_key(data, key) != NST_OK) {
@@ -716,7 +577,7 @@ nst_disk_load(nst_core_t *core) {
                     goto err;
                 }
 
-                if(nst_dict_set_from_disk2(&core->dict, &buf, host, path, &key, file, data.meta)
+                if(nst_dict_set_from_disk(&core->dict, &buf, host, path, &key, file, data.meta)
                         != NST_OK) {
 
                     goto err;
@@ -760,7 +621,7 @@ err:
 }
 
 void
-nst_disk_cleanup2(nst_core_t *core) {
+nst_disk_cleanup(nst_core_t *core) {
     nst_disk_data_t  data;
     hpx_ist_t        root;
     char            *file;
