@@ -1370,8 +1370,6 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         rule->store |= NST_STORE_DISK_OFF;
     }
 
-    rule->disk          = disk          == -1 ? NST_STORE_DISK_OFF  : disk;
-
     rule->etag          = etag          == -1 ? NST_STATUS_OFF      : etag;
     rule->last_modified = last_modified == -1 ? NST_STATUS_OFF      : last_modified;
 

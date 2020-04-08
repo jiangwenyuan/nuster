@@ -180,7 +180,6 @@ typedef struct nst_rule_config {
     nst_rule_code_t           *code;          /* code */
     uint8_t                    store;
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
-    int                        disk;          /* NST_STORE_DISK_* */
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
 
@@ -220,7 +219,6 @@ typedef struct nst_rule {
     nst_rule_code_t           *code;          /* code */
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
     uint8_t                    store;
-    int                        disk;          /* NST_DISK_* */
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
     uint8_t                    extend[4];
