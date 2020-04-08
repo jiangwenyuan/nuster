@@ -630,6 +630,12 @@ err:
  */
 void
 nst_cache_finish(nst_ctx_t *ctx) {
+    nst_key_t  *key;
+    int         idx;
+
+    idx = ctx->rule->key->idx;
+    key = &(ctx->keys[idx]);
+
     ctx->state = NST_CTX_STATE_DONE;
 
     ctx->entry->ctime = get_current_timestamp();
@@ -648,7 +654,7 @@ nst_cache_finish(nst_ctx_t *ctx) {
 
     if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
 
-        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, &ctx->txn,
+        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
                     ctx->entry->expire) == NST_OK) {
 
             ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;

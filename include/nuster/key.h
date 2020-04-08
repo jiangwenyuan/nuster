@@ -78,6 +78,18 @@ nst_key_catdel(hpx_buffer_t *key) {
     return NST_OK;
 }
 
+/*
+ * It's the caller's reponsibility to allocate str and zero termination
+ */
+static inline void
+nst_key_uuid_stringify(nst_key_t *key, char *str){
+    int  i;
+
+    for(i = 0; i < 20; i++) {
+        sprintf((char*)&(str[i*2]), "%02x", key->uuid[i]);
+    }
+}
+
 void nst_key_hash(nst_key_t *key);
 
 void nst_key_debug(nst_key_t *key);

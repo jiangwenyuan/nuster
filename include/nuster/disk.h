@@ -103,10 +103,13 @@ nst_disk_path_base_len(hpx_ist_t root) {
     return root.len + 5;
 }
 
-/* /5/5a/5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a: 46 */
+/*
+ * temp:  /5/5a/.5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a: 47 + 1
+ * final: /5/5a/5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a:  46 + 1
+ */
 static inline int
 nst_disk_path_file_len(hpx_ist_t root) {
-    return root.len + 46;
+    return root.len + 48;
 }
 
 int nst_disk_mkdir(char *path);
@@ -383,6 +386,7 @@ nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) 
 }
 
 int
-nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_http_txn_t *txn, uint64_t expire);
+nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
+        uint64_t expire);
 
 #endif /* _NUSTER_DISK_H */

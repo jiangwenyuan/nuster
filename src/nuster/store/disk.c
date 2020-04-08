@@ -51,15 +51,10 @@ nst_disk_mkdir(char *path) {
 int
 nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
     char  *p;
-    int    i;
 
     p = trash.area;
 
-    for(i = 0; i < 20; i++) {
-        sprintf((char*)&(p[i*2]), "%02x", key->uuid[i]);
-    }
-
-    p[40] = '\0';
+    nst_key_uuid_stringify(key, p);
 
     sprintf(path, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
 
@@ -67,7 +62,9 @@ nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
         return NST_ERR;
     }
 
-    sprintf(path, "%s/%c/%c%c/%s", root.ptr, p[0], p[0], p[1], p);
+    /* create .uuid temp file */
+    p[40] = '\0';
+    sprintf(path, "%s/%c/%c%c/.%s", root.ptr, p[0], p[0], p[1], p);
 
     nst_debug2("[nuster][disk] File: %s\n", path);
 
@@ -125,7 +122,6 @@ int
 nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
     hpx_buffer_t  *buf;
     char          *p;
-    int            i;
 
     buf = get_trash_chunk();
 
@@ -133,9 +129,7 @@ nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 
     data->file = buf->area;
 
-    for(i = 0; i < 20; i++) {
-        sprintf((char*)&(p[i*2]), "%02x", key->uuid[i]);
-    }
+    nst_key_uuid_stringify(key, p);
 
     p[40] = '\0';
 
@@ -150,7 +144,6 @@ nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 
 DIR *
 nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx) {
-    memset(path, 0, nst_disk_path_file_len(root));
     sprintf(path, "%s/%x/%02x", root.ptr, idx / 16, idx);
 
     return opendir(path);
@@ -343,13 +336,11 @@ nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified) {
 int
 nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
     char  *p;
-    int    i;
+    int    ret;
 
     p = trash.area;
 
-    for(i = 0; i < 20; i++) {
-        sprintf((char*)&(p[i*2]), "%02x", key->uuid[i]);
-    }
+    nst_key_uuid_stringify(key, p);
 
     p[40] = '\0';
 
@@ -358,22 +349,22 @@ nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
     disk->fd = nst_disk_open(disk->file);
 
     if(disk->fd == -1) {
-        i = -1;
+        ret = -1;
 
         goto done;
     }
 
-    i = pread(disk->fd, trash.area, key->size, NST_DISK_POS_KEY);
+    ret = pread(disk->fd, trash.area, key->size, NST_DISK_POS_KEY);
 
-    if(i == key->size && memcmp(key->data, trash.area, key->size) == 0) {
+    if(ret == key->size && memcmp(key->data, trash.area, key->size) == 0) {
         unlink(disk->file);
-        i = 1;
+        ret = 1;
     }
 
 done:
     close(disk->fd);
 
-    return i;
+    return ret;
 }
 
 /*
@@ -423,7 +414,7 @@ nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
 
         disk->memory = memory;
         disk->root   = root;
-        disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len(root) + 1);
+        disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len(root));
 
         if(!disk->file) {
             return NST_ERR;
@@ -437,7 +428,7 @@ int
 nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
         uint64_t ttl_extend) {
 
-    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len(disk->root) + 1);
+    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len(disk->root));
 
     if(!data->file) {
         return NST_ERR;
@@ -492,25 +483,51 @@ err:
 }
 
 int
-nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_http_txn_t *txn, uint64_t expire) {
+nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
+        uint64_t expire) {
+
+    char  *p, *old_file, *new_file;
+
     nst_disk_meta_set_expire(data->meta, expire);
     nst_disk_meta_set_header_len(data->meta, txn->res.header_len);
     nst_disk_meta_set_payload_len(data->meta, txn->res.payload_len);
 
     if(nst_disk_write_meta(data) != NST_OK) {
-
-        if(data->fd) {
-            close(data->fd);
-        }
-
-        nst_memory_free(disk->memory, data->file);
-
-        data->file = NULL;
-
-        return NST_ERR;
+        goto err;
     }
 
+    p = trash.area;
+
+    nst_key_uuid_stringify(key, p);
+
+    /* create final file */
+    p[40] = '\0';
+
+    new_file = p + 41;
+    old_file = data->file;
+
+    sprintf(new_file, "%s/%c/%c%c/%s", disk->root.ptr, p[0], p[0], p[1], p);
+
+    close(data->fd);
+
+    if(rename(old_file, new_file) != 0) {
+        goto err;
+    }
+
+    memcpy(data->file, new_file, nst_disk_path_file_len(disk->root));
+
     return NST_OK;
+
+err:
+    if(data->fd) {
+        close(data->fd);
+    }
+
+    nst_memory_free(disk->memory, data->file);
+
+    data->file = NULL;
+
+    return NST_ERR;
 }
 
 void

@@ -219,7 +219,7 @@ nst_ring_store_async(nst_core_t *core) {
                 item = item->next;
             }
 
-            ret = nst_disk_store_end(&core->store.disk, &data, &txn, entry->expire);
+            ret = nst_disk_store_end(&core->store.disk, &data, &entry->key, &txn, entry->expire);
 
             if(ret != NST_OK) {
                 goto err;

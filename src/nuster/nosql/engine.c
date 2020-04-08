@@ -860,6 +860,11 @@ nst_nosql_delete(nst_key_t *key) {
 
 int
 nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
+    nst_key_t  *key;
+    int         idx;
+
+    idx = ctx->rule->key->idx;
+    key = &(ctx->keys[idx]);
 
     if(ctx->txn.res.content_length == 0 && ctx->txn.res.payload_len == 0) {
         ctx->state = NST_CTX_STATE_INVALID;
@@ -883,7 +888,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
         if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
 
-            if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, &ctx->txn,
+            if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
                         ctx->entry->expire) == NST_OK) {
 
                 ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
