@@ -50,9 +50,11 @@ nst_disk_mkdir(char *path) {
 
 int
 nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
-    char  *p;
+    hpx_buffer_t  *buf;
+    char          *p;
 
-    p = trash.area;
+    buf = get_trash_chunk();
+    p   = buf->area;
 
     nst_key_uuid_stringify(key, p);
 
@@ -73,7 +75,10 @@ nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
 
 int
 nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key) {
-    int  ret;
+    hpx_buffer_t  *buf;
+    int            ret;
+
+    buf = get_trash_chunk();
 
     disk->fd = nst_disk_open(disk->file);
 
@@ -101,13 +106,13 @@ nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key) {
         goto err;
     }
 
-    ret = pread(disk->fd, trash.area, key->size, NST_DISK_POS_KEY);
+    ret = pread(disk->fd, buf->area, key->size, NST_DISK_POS_KEY);
 
     if(ret != key->size) {
         goto err;
     }
 
-    if(memcmp(key->data, trash.area, key->size) != 0) {
+    if(memcmp(key->data, buf->area, key->size) != 0) {
         goto err;
     }
 
@@ -120,14 +125,14 @@ err:
 
 int
 nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
-    hpx_buffer_t  *buf;
+    hpx_buffer_t  *buf1, *buf2;
     char          *p;
 
-    buf = get_trash_chunk();
+    buf1 = get_trash_chunk();
+    buf2 = get_trash_chunk();
+    p    = buf1->area;
 
-    p = trash.area;
-
-    data->file = buf->area;
+    data->file = buf2->area;
 
     nst_key_uuid_stringify(key, p);
 
@@ -335,10 +340,12 @@ nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified) {
  */
 int
 nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
-    char  *p;
-    int    ret;
+    hpx_buffer_t  *buf;
+    char          *p;
+    int            ret;
 
-    p = trash.area;
+    buf = get_trash_chunk();
+    p   = buf->area;
 
     nst_key_uuid_stringify(key, p);
 
@@ -354,9 +361,9 @@ nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
         goto done;
     }
 
-    ret = pread(disk->fd, trash.area, key->size, NST_DISK_POS_KEY);
+    ret = pread(disk->fd, p, key->size, NST_DISK_POS_KEY);
 
-    if(ret == key->size && memcmp(key->data, trash.area, key->size) == 0) {
+    if(ret == key->size && memcmp(key->data, p, key->size) == 0) {
         unlink(disk->file);
         ret = 1;
     }

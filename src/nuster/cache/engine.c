@@ -107,9 +107,11 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
     hpx_stream_interface_t  *si = appctx->owner;
     hpx_channel_t           *req = si_oc(si);
     hpx_channel_t           *res = si_ic(si);
+    hpx_buffer_t            *buf;
     hpx_htx_t               *req_htx, *res_htx;
     uint64_t                 offset;
     int                      total, ret, max, fd, header_len;
+    char                    *p;
 
     header_len = appctx->ctx.nuster.cache.header_len;
     offset     = appctx->ctx.nuster.cache.offset;
@@ -136,54 +138,55 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
 
     switch(appctx->st1) {
         case NST_DISK_APPLET_HEADER:
-            {
-                char  *p = trash.area;
+            buf = get_trash_chunk();
+            p   = buf->area;
 
-                ret = pread(fd, p, header_len, offset);
+            ret = pread(fd, p, header_len, offset);
 
-                if(ret != header_len) {
+            if(ret != header_len) {
+                appctx->st1 = NST_DISK_APPLET_ERROR;
+
+                break;
+            }
+
+            while(header_len != 0) {
+                hpx_htx_blk_type_t  type;
+                hpx_htx_blk_t       *blk;
+                char                *ptr;
+                uint32_t             blksz, sz, info;
+
+                info  = *(uint32_t *)p;
+                type  = (info >> 28);
+                blksz = (info & 0xff) + ((info >> 8) & 0xfffff);
+                blk   = htx_add_blk(res_htx, type, blksz);
+
+                if(!blk) {
                     appctx->st1 = NST_DISK_APPLET_ERROR;
 
                     break;
                 }
 
-                while(header_len != 0) {
-                    hpx_htx_blk_type_t  type;
-                    hpx_htx_blk_t       *blk;
-                    char                *ptr;
-                    uint32_t             blksz, sz, info;
+                blk->info = info;
 
-                    info  = *(uint32_t *)p;
-                    type  = (info >> 28);
-                    blksz = (info & 0xff) + ((info >> 8) & 0xfffff);
-                    blk   = htx_add_blk(res_htx, type, blksz);
+                ptr = htx_get_blk_ptr(res_htx, blk);
+                sz  = htx_get_blksz(blk);
+                p  += 4;
+                memcpy(ptr, p, sz);
+                p  += sz;
 
-                    if(!blk) {
-                        appctx->st1 = NST_DISK_APPLET_ERROR;
-
-                        break;
-                    }
-
-                    blk->info = info;
-
-                    ptr = htx_get_blk_ptr(res_htx, blk);
-                    sz  = htx_get_blksz(blk);
-                    p  += 4;
-                    memcpy(ptr, p, sz);
-                    p  += sz;
-
-                    header_len -= 4 + sz;
-                }
-
-                appctx->st1 = NST_DISK_APPLET_PAYLOAD;
-                offset += ret;
-
-                appctx->ctx.nuster.cache.offset = offset;
+                header_len -= 4 + sz;
             }
 
+            appctx->st1 = NST_DISK_APPLET_PAYLOAD;
+            offset += ret;
+
+            appctx->ctx.nuster.cache.offset = offset;
+
         case NST_DISK_APPLET_PAYLOAD:
+            buf = get_trash_chunk();
+            p   = buf->area;
             max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
-            ret = pread(fd, trash.area, max, offset);
+            ret = pread(fd, p, max, offset);
 
             if(ret == -1) {
                 appctx->st1 = NST_DISK_APPLET_ERROR;
@@ -212,7 +215,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
 
                 ptr = htx_get_blk_ptr(res_htx, blk);
                 sz  = htx_get_blksz(blk);
-                memcpy(ptr, trash.area, sz);
+                memcpy(ptr, p, sz);
 
                 appctx->ctx.nuster.cache.offset += ret;
 
@@ -704,8 +707,9 @@ nst_cache_delete(nst_key_t *key) {
 
     if(!nuster.cache->store.disk.loaded && global.nuster.cache.root.len){
         nst_disk_data_t  disk;
+        hpx_buffer_t    *buf = get_trash_chunk();
 
-        disk.file = trash.area;
+        disk.file = buf->area;
 
         ret = nst_disk_purge_by_key(global.nuster.cache.root, &disk, key);
 
