@@ -202,7 +202,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                 ctx->state = nst_cache_exists(ctx);
 
-                if(ctx->state == NST_CTX_STATE_HIT) {
+                if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
                     /* OK, cache exists */
 
                     nst_debug2("HIT \n");
@@ -238,7 +238,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             }
         }
 
-        if(ctx->state == NST_CTX_STATE_HIT) {
+        if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
             nst_cache_hit(s, si, req, res, ctx);
         }
 

@@ -623,12 +623,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
-
-        if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
-            ctx->state = NST_CTX_STATE_WAIT;
-        } else if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-            ctx->state = NST_CTX_STATE_HIT;
-        }
+        ctx->state = NST_CTX_STATE_BYPASS;
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
@@ -774,11 +769,12 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             if(entry->store.ring.data) {
                 ctx->store.ring.data = entry->store.ring.data;
                 ctx->store.ring.data->clients++;
+                ret = NST_CTX_STATE_HIT_MEMORY;
             } else if(entry->store.disk.file) {
                 ctx->store.disk.file = entry->store.disk.file;
+                ret = NST_CTX_STATE_HIT_DISK;
             }
 
-            ret = NST_CTX_STATE_HIT;
         } else {
 
             if(!nst_store_disk_off(ctx->rule->store)) {
@@ -794,7 +790,11 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
     nst_shctx_unlock(&nuster.nosql->dict);
 
-    if(ret == NST_CTX_STATE_HIT) {
+    if(ret == NST_CTX_STATE_HIT_MEMORY) {
+        return ret;
+    }
+
+    if(ret == NST_CTX_STATE_HIT_DISK) {
         if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
             ret = NST_CTX_STATE_INIT;
         }
@@ -803,7 +803,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
         if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
-            ret = NST_CTX_STATE_HIT;
+            ret = NST_CTX_STATE_HIT_DISK;
         } else {
             ret = NST_CTX_STATE_INIT;
         }

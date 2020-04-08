@@ -423,8 +423,10 @@ nst_cache_exists(nst_ctx_t *ctx) {
             if(entry->store.ring.data) {
                 ctx->store.ring.data = entry->store.ring.data;
                 ctx->store.ring.data->clients++;
+                ret = NST_CTX_STATE_HIT_MEMORY;
             } else if(entry->store.disk.file) {
                 ctx->store.disk.file = entry->store.disk.file;
+                ret = NST_CTX_STATE_HIT_DISK;
             }
 
             ctx->txn.res.etag  = entry->etag;
@@ -433,7 +435,6 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
             _nst_cache_record_access(entry);
 
-            ret = NST_CTX_STATE_HIT;
         }
     } else {
 
@@ -449,7 +450,11 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
     nst_shctx_unlock(&nuster.cache->dict);
 
-    if(ret == NST_CTX_STATE_HIT) {
+    if(ret == NST_CTX_STATE_HIT_MEMORY) {
+        return ret;
+    }
+
+    if(ret == NST_CTX_STATE_HIT_DISK) {
         if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
             ret = NST_CTX_STATE_INIT;
         }
@@ -458,7 +463,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
         if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
-            ret = NST_CTX_STATE_HIT;
+            ret = NST_CTX_STATE_HIT_DISK;
 
             if(ctx->rule->etag == NST_STATUS_ON) {
                 ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
@@ -506,12 +511,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     entry = nst_dict_get(&nuster.cache->dict, key);
 
     if(entry) {
-
-        if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
-            ctx->state = NST_CTX_STATE_WAIT;
-        } else if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-            ctx->state = NST_CTX_STATE_HIT;
-        }
+        ctx->state = NST_CTX_STATE_BYPASS;
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
@@ -738,7 +738,7 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
 
         appctx->st0 = ctx->state;
 
-        if(ctx->store.ring.data) {
+        if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
             appctx->ctx.nuster.cache.store.ring.data = ctx->store.ring.data;
             appctx->ctx.nuster.cache.store.ring.item = ctx->store.ring.data->item;
         } else {
