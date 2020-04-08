@@ -310,12 +310,12 @@ nst_parse_time(const char *text, int len, unsigned *ret) {
 }
 
 int
-nuster_parse_global_manager(const char *file, int linenum, char **args) {
+nuster_parse_global_manager(const char *file, int line, char **args) {
     int  err_code = 0;
     int  cur_arg  = 1;
 
     if(global.nuster.manager.status != NST_STATUS_UNDEFINED) {
-        ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
+        ha_warning("parsing [%s:%d]: [%s] already specified. Ignore.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT;
 
@@ -323,8 +323,7 @@ nuster_parse_global_manager(const char *file, int linenum, char **args) {
     }
 
     if(*(args[cur_arg]) == 0) {
-        ha_alert("parsing [%s:%d]: '%s' expects 'on' or 'off' as argument.\n",
-                file, linenum, args[0]);
+        ha_alert("parsing [%s:%d]: [%s] expects 'on' or 'off' as argument.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -336,8 +335,7 @@ nuster_parse_global_manager(const char *file, int linenum, char **args) {
     } else if(!strcmp(args[cur_arg], "on")) {
         global.nuster.manager.status = NST_STATUS_ON;
     } else {
-        ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
-                file, linenum, args[0]);
+        ha_alert("parsing [%s:%d]: [%s] only supports 'on' and 'off'.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -354,8 +352,8 @@ nuster_parse_global_manager(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' purge-method expects a name.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] purge-method expects an argument.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -374,8 +372,8 @@ nuster_parse_global_manager(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `uri` expects a uri as an argument.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] uri expects a uri as argument.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -389,7 +387,7 @@ nuster_parse_global_manager(const char *file, int linenum, char **args) {
             continue;
         }
 
-        ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
+        ha_alert("parsing [%s:%d]: [%s] Unrecognized '%s'.\n", file, line, args[0], args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -401,12 +399,12 @@ out:
 }
 
 int
-nuster_parse_global_cache(const char *file, int linenum, char **args) {
+nuster_parse_global_cache(const char *file, int line, char **args) {
     int  err_code = 0;
     int  cur_arg  = 1;
 
     if(global.nuster.cache.status != NST_STATUS_UNDEFINED) {
-        ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n", file, linenum, args[0]);
+        ha_warning("parsing [%s:%d]: [%s] already specified. Ignore.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT;
 
@@ -414,8 +412,7 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
     }
 
     if(*(args[cur_arg]) == 0) {
-        ha_alert("parsing [%s:%d]: '%s' expects 'on' or 'off' as argument.\n",
-                file, linenum, args[0]);
+        ha_alert("parsing [%s:%d]: [%s] expects 'on' or 'off' as argument.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -427,8 +424,7 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
     } else if(!strcmp(args[cur_arg], "on")) {
         global.nuster.cache.status = NST_STATUS_ON;
     } else {
-        ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
-                file, linenum, args[0]);
+        ha_alert("parsing [%s:%d]: [%s] only supports 'on' and 'off'.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -442,8 +438,7 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-size expects a size.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] data-size expects a size.\n", file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -452,8 +447,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             if(nst_parse_size(args[cur_arg],
                         &global.nuster.cache.data_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects [m|M|g|G].\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] invalid data_size, expects [m|M|g|G].\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -468,8 +463,7 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-size expects a size.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] dict-size expects a size.\n", file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -479,8 +473,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             if(nst_parse_size(args[cur_arg],
                         &global.nuster.cache.dict_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects [m|M|g|G].\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] invalid dict-size, expects [m|M|g|G].\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -495,8 +489,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as an argument.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s]: dir expects a dir as argument.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -513,8 +507,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] dict-cleaner expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -535,8 +529,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] data-cleaner expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -558,8 +552,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] disk-cleaner expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -580,8 +574,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] disk-loader expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -602,8 +596,8 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] disk-saver expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -621,7 +615,7 @@ nuster_parse_global_cache(const char *file, int linenum, char **args) {
             continue;
         }
 
-        ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
+        ha_alert("parsing [%s:%d]: [%s] Unrecognized '%s'.\n", file, line, args[0], args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -633,13 +627,12 @@ out:
 }
 
 int
-nuster_parse_global_nosql(const char *file, int linenum, char **args) {
+nuster_parse_global_nosql(const char *file, int line, char **args) {
     int  err_code = 0;
     int  cur_arg  = 1;
 
     if(global.nuster.nosql.status != NST_STATUS_UNDEFINED) {
-        ha_alert("parsing [%s:%d]: '%s' already specified. Ignore.\n",
-                file, linenum, args[0]);
+        ha_warning("parsing [%s:%d]: [%s] already specified. Ignore.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT;
 
@@ -647,8 +640,7 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
     }
 
     if(*(args[cur_arg]) == 0) {
-        ha_alert("parsing [%s:%d]: '%s' expects 'on' or 'off' as argument.\n",
-                file, linenum, args[0]);
+        ha_alert("parsing [%s:%d]: [%s] expects 'on' or 'off' as argument.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -660,8 +652,7 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
     } else if(!strcmp(args[cur_arg], "on")) {
         global.nuster.nosql.status = NST_STATUS_ON;
     } else {
-        ha_alert("parsing [%s:%d]: '%s' only supports 'on' and 'off'.\n",
-                file, linenum, args[0]);
+        ha_alert("parsing [%s:%d]: [%s] only supports 'on' and 'off'.\n", file, line, args[0]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -676,8 +667,7 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-size expects a size.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] dict-size expects a size.\n", file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -686,8 +676,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
 
             if(nst_parse_size(args[cur_arg], &global.nuster.nosql.dict_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid dict-size, expects [m|M|g|G].\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] invalid dict-size, expects [m|M|g|G].\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -703,8 +693,7 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-size expects a size.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] data-size expects a size.\n", file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -713,8 +702,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
 
             if(nst_parse_size(args[cur_arg], &global.nuster.nosql.data_size)) {
 
-                ha_alert("parsing [%s:%d]: '%s' invalid data_size, expects [m|M|g|G].\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] invalid data_size, expects [m|M|g|G].\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -729,8 +718,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                ha_alert("parsing [%s:%d]: '%s': `dir` expects a root as an argument.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s]: `dir` expects a dir as argument.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -748,8 +737,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' dict-cleaner expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] dict-cleaner expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -771,8 +760,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' data-cleaner expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] data-cleaner expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -795,8 +784,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-cleaner expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] disk-cleaner expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -818,8 +807,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-loader expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] disk-loader expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -841,8 +830,8 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                ha_alert("parsing [%s:%d]: '%s' disk-saver expects a number.\n",
-                        file, linenum, args[0]);
+                ha_alert("parsing [%s:%d]: [%s] disk-saver expects a number.\n",
+                        file, line, args[0]);
 
                 err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -859,7 +848,7 @@ nuster_parse_global_nosql(const char *file, int linenum, char **args) {
             continue;
         }
 
-        ha_alert("parsing [%s:%d]: '%s' Unrecognized .\n", file, linenum, args[cur_arg]);
+        ha_alert("parsing [%s:%d]: [%s] Unrecognized '%s'.\n", file, line, args[0], args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
 
@@ -881,7 +870,7 @@ nst_parse_proxy_cache(char **args, int section, hpx_proxy_t *px, hpx_proxy_t *de
     list_for_each_entry(fconf, &px->filter_configs, list) {
 
         if(fconf->id == nst_cache_flt_id) {
-            memprintf(err, "%s: Proxy supports only one cache filter\n", px->id);
+            memprintf(err, "%s: supports only one cache filter", px->id);
 
             return -1;
         }
@@ -910,7 +899,7 @@ nst_parse_proxy_cache(char **args, int section, hpx_proxy_t *px, hpx_proxy_t *de
         } else if(!strcmp(args[cur_arg], "on")) {
             conf->status = NST_STATUS_ON;
         } else {
-            memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
+            memprintf(err, "[%s] expects [on|off], default on", args[1]);
 
             return -1;
         }
@@ -940,7 +929,7 @@ nst_parse_proxy_nosql(char **args, int section, hpx_proxy_t *px, hpx_proxy_t *de
     list_for_each_entry(fconf, &px->filter_configs, list) {
 
         if(fconf->id == nst_nosql_flt_id) {
-            memprintf(err, "%s: Proxy supports only one nosql filter\n", px->id);
+            memprintf(err, "%s: supports only one nosql filter\n", px->id);
 
             return -1;
         }
@@ -969,7 +958,7 @@ nst_parse_proxy_nosql(char **args, int section, hpx_proxy_t *px, hpx_proxy_t *de
         } else if(!strcmp(args[cur_arg], "on")) {
             conf->status = NST_STATUS_ON;
         } else {
-            memprintf(err, "%s: expects [on|off], default on", args[cur_arg]);
+            memprintf(err, "[%s] expects [on|off], default on", args[1]);
 
             return -1;
         }
@@ -1005,13 +994,13 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
     memory = ttl = disk = etag = last_modified = -1;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
-        memprintf(err, "`rule` is not allowed in a 'frontend' or 'defaults' section.");
+        memprintf(err, "rule is not allowed in a 'frontend' or 'defaults' section.");
 
         return -1;
     }
 
     if(*(args[cur_arg]) == 0) {
-        memprintf(err, "'%s' expects a name.", args[0]);
+        memprintf(err, "[%s] expects a name.", args[1]);
 
         return -1;
     }
@@ -1025,7 +1014,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "key")) {
 
             if(key != NULL) {
-                memprintf(err, "'%s %s': key already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: key already specified.", args[1], name);
 
                 goto out;
             }
@@ -1033,7 +1022,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                memprintf(err, "'%s %s': expects a key.", args[0], name);
+                memprintf(err, "[%s.%s]: key expects an argument.", args[1], name);
 
                 goto out;
             }
@@ -1048,7 +1037,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
 
             if(ttl != -1) {
                 /* except this case: ttl 4294967295 ttl 4294967295 */
-                memprintf(err, "'%s %s': ttl already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: ttl already specified.", args[1], name);
 
                 goto out;
             }
@@ -1056,7 +1045,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects a ttl(in seconds).", args[0], name);
+                memprintf(err, "[%s.%s]: ttl expects a ttl(in seconds).", args[1], name);
 
                 goto out;
             }
@@ -1066,7 +1055,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
              * s is returned
              */
             if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&ttl)) {
-                memprintf(err, "'%s %s': invalid ttl.", args[0], name);
+                memprintf(err, "[%s.%s]: invalid ttl.", args[1], name);
 
                 goto out;
             }
@@ -1078,7 +1067,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "code")) {
 
             if(code != NULL) {
-                memprintf(err, "'%s %s': code already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: code already specified.", args[1], name);
 
                 goto out;
             }
@@ -1086,7 +1075,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*(args[cur_arg]) == 0) {
-                memprintf(err, "'%s %s': expects a code.", args[0], name);
+                memprintf(err, "[%s.%s]: code expects an argument.", args[1], name);
 
                 goto out;
             }
@@ -1100,7 +1089,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "memory")) {
 
             if(memory != -1) {
-                memprintf(err, "'%s %s': memory already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: memory already specified.", args[1], name);
 
                 goto out;
             }
@@ -1108,7 +1097,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off], default on.", args[0], name);
+                memprintf(err, "[%s.%s]: memory expects [on|off], default on.", args[1], name);
 
                 goto out;
             }
@@ -1118,7 +1107,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "on")) {
                 memory = NST_STORE_MEMORY_ON;
             } else {
-                memprintf(err, "'%s %s': expects [on|off], default on.", args[0], name);
+                memprintf(err, "[%s.%s]: memory expects [on|off], default on.", args[1], name);
 
                 goto out;
             }
@@ -1131,7 +1120,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "disk")) {
 
             if(disk != -1) {
-                memprintf(err, "'%s %s': disk already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: disk already specified.", args[1], name);
 
                 goto out;
             }
@@ -1139,8 +1128,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off|async], default off.",
-                        args[0], name);
+                memprintf(err, "[%s.%s]: disk expects [on|off|async], default off.", args[1], name);
 
                 goto out;
             }
@@ -1152,7 +1140,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "async")) {
                 disk = NST_STORE_DISK_ASYNC;
             } else {
-                memprintf(err, "'%s %s': expects [on|off|async], default off.", args[0], name);
+                memprintf(err, "[%s.%s]: disk expects [on|off|async], default off.", args[1], name);
 
                 goto out;
             }
@@ -1165,7 +1153,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "etag")) {
 
             if(etag != -1) {
-                memprintf(err, "'%s %s': etag already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: etag already specified.", args[1], name);
 
                 goto out;
             }
@@ -1173,7 +1161,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                memprintf(err, "[%s.%s]: etag expects [on|off], default off.", args[1], name);
 
                 goto out;
             }
@@ -1183,7 +1171,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "off")) {
                 etag = NST_STATUS_OFF;
             } else {
-                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                memprintf(err, "[%s.%s]: etag expects [on|off], default off.", args[1], name);
 
                 goto out;
             }
@@ -1196,14 +1184,15 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "last-modified")) {
 
             if(last_modified != -1) {
-                memprintf(err, "'%s %s': last-modified already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: last-modified already specified.", args[1], name);
 
                 goto out;
             }
 
             cur_arg++;
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                memprintf(err, "[%s.%s]: last-modified expects [on|off], default off.",
+                        args[1], name);
 
                 goto out;
             }
@@ -1213,7 +1202,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "off")) {
                 last_modified = NST_STATUS_OFF;
             } else {
-                memprintf(err, "'%s %s': expects [on|off], default off.", args[0], name);
+                memprintf(err, "[%s.%s]: last modified expects [on|off], default off.",
+                        args[1], name);
 
                 goto out;
             }
@@ -1225,7 +1215,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "extend")) {
 
             if(extend[0] != 0xFF) {
-                memprintf(err, "'%s %s': extend already specified.", args[0], name);
+                memprintf(err, "[%s.%s]: extend already specified.", args[1], name);
 
                 goto out;
             }
@@ -1233,8 +1223,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "'%s rule %s': `extend` expects [on|off|N1,N2,N3,N4], default off.",
-                        args[0], name);
+                memprintf(err, "[%s.%s]: extend expects [on|off|N1,N2,N3,N4], default off.",
+                        args[1], name);
 
                 goto out;
             }
@@ -1254,8 +1244,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
                     t = strtol(tmp, &next, 10);
 
                     if(t < 0 || t > 100) {
-                        memprintf(err, "'%s rule %s': `extend` expects positive integer between"
-                                " 0 and 100", args[0], name);
+                        memprintf(err, "[%s.%s]: extend expects positive integer between 0 and 100",
+                                args[1], name);
 
                         goto out;
                     }
@@ -1263,8 +1253,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
                     extend[i++ % 4] = t;
 
                     if((next == tmp) || (*next != '\0')) {
-                        memprintf(err, "'%s rule %s': `extend` expects [on|off|N1,N2,N3,N4],"
-                                " default off.", args[0], name);
+                        memprintf(err, "[%s.%s]: extend expects [on|off|N1,N2,N3,N4], default off.",
+                                args[1], name);
 
                         goto out;
                     }
@@ -1273,22 +1263,21 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
                 }
 
                 if(i != 4) {
-                    memprintf(err, "'%s rule %s': `extend` expects [on|off|N1,N2,N3,N4],"
-                            " default off.", args[0], name);
+                    memprintf(err, "[%s.%s]: extend expects [on|off|N1,N2,N3,N4], default off.",
+                            args[1], name);
 
                     goto out;
                 }
 
                 if(extend[0] + extend[1] + extend[2] > 100) {
-                    memprintf(err, "'%s rule %s': `extend`: N1 + N2 + N3 must be less than or equal"
-                            " to 100", args[0], name);
+                    memprintf(err, "[%s.%s]: extend: N1 + N2 + N3 must be less than or equal"
+                            " to 100", args[1], name);
 
                     goto out;
                 }
 
                 if(extend[3] <= 0 || extend[3] > 100) {
-                    memprintf(err, "'%s rule %s': `extend`: N4 must be between 0 and 100",
-                            args[0], name);
+                    memprintf(err, "[%s.%s]: extend: N4 must be between 0 and 100", args[1], name);
 
                     goto out;
                 }
@@ -1300,7 +1289,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             continue;
         }
 
-        memprintf(err, "'%s %s': Unrecognized '%s'.", args[0], name, args[cur_arg]);
+        memprintf(err, "[%s.%s]: Unrecognized '%s'.", args[1], name, args[cur_arg]);
 
         goto out;
     }
@@ -1310,8 +1299,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(*args[cur_arg + 1] != 0) {
             char  *errmsg = NULL;
 
-            if((cond = build_acl_cond(file, line, &proxy->acl, proxy, (const char **)args + cur_arg,
-                            &errmsg)) == NULL) {
+            if((cond = build_acl_cond(file, line, &proxy->acl, proxy,
+                            (const char **)args + cur_arg, &errmsg)) == NULL) {
 
                 memprintf(err, "%s", errmsg);
                 free(errmsg);
@@ -1320,7 +1309,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             }
 
         } else {
-            memprintf(err, "'%s %s': [if|unless] expects an acl.", args[0], name);
+            memprintf(err, "[%s.%s]: [if|unless] expects an acl.", args[1], name);
 
             goto out;
         }
@@ -1335,7 +1324,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
     rule->key.data = _nst_parse_rule_key(rule->key.name);
 
     if(!rule->key.data) {
-        memprintf(err, "'%s %s': invalid key.", args[0], name);
+        memprintf(err, "[%s.%s]: invalid key.", args[1], name);
 
         goto out;
     }
@@ -1344,14 +1333,25 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
 
     rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
 
-    if(disk > 0) {
+    if(disk == NST_STORE_DISK_ON || disk == NST_STORE_DISK_ASYNC) {
         if((proxy->nuster.mode == NST_MODE_CACHE && !global.nuster.cache.root.len)
                 || (proxy->nuster.mode == NST_MODE_NOSQL && !global.nuster.nosql.root.len)) {
 
-            memprintf(err, "rule %s: disk enabled but no `dir` defined", name);
+            memprintf(err, "[%s.%s]: disk enabled but no `dir` defined", args[1], name);
 
             goto out;
         }
+    }
+
+    if(memory == NST_STORE_MEMORY_OFF && disk == NST_STORE_DISK_ASYNC) {
+        memprintf(err, "[%s.%s]: memory needs to be on to use disk async", args[1], name);
+
+        goto out;
+    }
+
+    if(memory == NST_STORE_MEMORY_OFF && disk == NST_STORE_DISK_OFF) {
+        ha_warning("parsing [%s:%d]: [%s.%s]: both memory and disk are off\n", file, line,
+                args[1], name);
     }
 
     rule->store = 0;
