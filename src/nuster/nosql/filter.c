@@ -152,7 +152,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             int         idx = ctx->rule->key->idx;
             nst_key_t  *key = &(ctx->keys[idx]);
 
-            nst_debug(s, "[nosql] ==== Check rule: %s ====\n", ctx->rule->name);
+            nst_debug(s, "[nosql] ==== Check rule: %s ====", ctx->rule->name);
 
             if(!key->data) {
                 /* build key */
@@ -163,40 +163,31 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 }
             }
 
-            nst_debug(s, "[nosql] Key: ");
-            nst_key_debug(key);
-
             nst_key_hash(key);
 
-            nst_debug(s, "[nosql] Hash: %"PRIu64"\n", key->hash);
+            nst_key_debug(s, key);
 
             if(s->txn->meth == HTTP_METH_GET) {
-                nst_debug(s, "[nosql] Check key existence: ");
+                nst_debug_beg(s, "[nosql] Check key existence: ");
 
                 ctx->state = nst_nosql_exists(ctx);
 
-                if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
-                    nst_debug2("HIT memory\n");
-
+                if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
                     /* OK, nosql exists */
+
+                    nst_debug_end("HIT");
+
                     break;
                 }
 
-                if(ctx->state == NST_CTX_STATE_HIT_DISK) {
-                    nst_debug2("HIT disk\n");
-
-                    /* OK, cache exists */
-                    break;
-                }
-
-                nst_debug2("MISS\n");
+                nst_debug_end("MISS");
             } else if(s->txn->meth == HTTP_METH_POST) {
-                nst_debug(s, "[nosql] Test rule ACL: ");
+                nst_debug_beg(s, "[nosql] Test rule ACL: ");
 
                 if(nst_test_rule(s, ctx->rule, msg->chn->flags & CF_ISRESP) == NST_OK) {
 
-                    nst_debug2("PASS\n");
-                    nst_debug(s, "[nosql] To create\n");
+                    nst_debug_end("PASS");
+                    nst_debug(s, "[nosql] To create");
 
                     if(nst_nosql_get_headers(s, msg, ctx)) {
                         ctx->state = NST_CTX_STATE_PASS;
@@ -208,17 +199,17 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     break;
                 }
 
-                nst_debug2("FAIL\n");
+                nst_debug_end("FAIL");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
                 if(nst_nosql_delete(key)) {
-                    nst_debug(s, "[nosql] EXIST, to delete\n");
+                    nst_debug(s, "[nosql] EXIST, to delete");
                     ctx->state = NST_CTX_STATE_DELETE;
 
                     break;
                 }
 
-                nst_debug(s, "[nosql] NOT EXIST\n");
+                nst_debug(s, "[nosql] NOT EXIST");
             }
 
             ctx->rule = ctx->rule->next;
@@ -332,7 +323,7 @@ _nst_nosql_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
         nst_nosql_finish(s, msg, ctx);
 
         if(ctx->state == NST_CTX_STATE_DONE) {
-            nst_debug(s, "[nosql] Created\n");
+            nst_debug(s, "[nosql] Created");
             appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
         } else {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_EMPTY;

@@ -272,26 +272,60 @@ nst_debug(hpx_stream_t *s, const char *fmt, ...) {
         va_list         args;
         hpx_session_t  *sess = strm_sess(s);
 
-        fprintf(stderr, "%08x:%s.nuster[%04x:%04x]: ", s->uniq_id, s->be->id,
+        chunk_printf(&trash, "%08x:%s.nuster[%04x:%04x]: ", s->uniq_id, s->be->id,
                 objt_conn(sess->origin) ?
                 (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
                 objt_cs(s->si[1].end) ?
                 (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
 
         va_start(args, fmt);
-        vfprintf(stderr, fmt, args);
+        chunk_appendf(&trash, fmt, args);
+        va_end(args);
+        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
+    }
+}
+
+void
+nst_debug_beg(hpx_stream_t *s, const char *fmt, ...) {
+
+    if((global.mode & MODE_DEBUG)) {
+        va_list         args;
+        hpx_session_t  *sess = strm_sess(s);
+
+        chunk_printf(&trash, "%08x:%s.nuster[%04x:%04x]: ", s->uniq_id, s->be->id,
+                objt_conn(sess->origin) ?
+                (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
+                objt_cs(s->si[1].end) ?
+                (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
+
+        va_start(args, fmt);
+        chunk_appendf(&trash, fmt, args);
         va_end(args);
     }
 }
 
 void
-nst_debug2(const char *fmt, ...) {
+nst_debug_add(const char *fmt, ...) {
 
     if((global.mode & MODE_DEBUG)) {
-        va_list  args;
+        va_list         args;
+
         va_start(args, fmt);
-        vfprintf(stderr, fmt, args);
+        chunk_appendf(&trash, fmt, args);
         va_end(args);
+    }
+}
+
+void
+nst_debug_end(const char *fmt, ...) {
+
+    if((global.mode & MODE_DEBUG)) {
+        va_list         args;
+
+        va_start(args, fmt);
+        trash.area[trash.data++] = '\n';
+        va_end(args);
+        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
     }
 }
 

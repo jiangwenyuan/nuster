@@ -164,17 +164,17 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 int        idx  = ctx->rule->key->idx;
                 nst_key_t  *key = &(ctx->keys[idx]);
 
-                nst_debug(s, "[cache] ==== Check rule: %s ====\n", ctx->rule->name);
+                nst_debug(s, "[cache] ==== Check rule: %s ====", ctx->rule->name);
 
                 if(ctx->rule->state == NST_RULE_DISABLED) {
-                    nst_debug(s, "[rule ] Disabled, continue.\n");
+                    nst_debug(s, "[rule ] Disabled, continue.");
                     ctx->rule = ctx->rule->next;
 
                     continue;
                 }
 
                 if(nst_store_memory_off(ctx->rule->store) && nst_store_disk_off(ctx->rule->store)) {
-                    nst_debug(s, "[store] memory off and disk off, continue.\n");
+                    nst_debug(s, "[store] memory off and disk off, continue.");
                     ctx->rule = ctx->rule->next;
 
                     continue;
@@ -189,23 +189,19 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     }
                 }
 
-                nst_debug(s, "[key  ] ");
-
-                nst_key_debug(key);
-
                 nst_key_hash(key);
 
-                nst_debug(s, "[hash ] %"PRIu64"\n", key->hash);
+                nst_key_debug(s, key);
 
                 /* check if cache exists  */
-                nst_debug(s, "[cache] Check key existence: ");
+                nst_debug_beg(s, "[cache] Check key existence: ");
 
                 ctx->state = nst_cache_exists(ctx);
 
                 if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
                     /* OK, cache exists */
 
-                    nst_debug2("HIT \n");
+                    nst_debug_end("HIT");
 
                     htx = htxbuf(&req->buf);
 
@@ -218,21 +214,21 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     break;
                 }
 
-                nst_debug2("MISS\n");
+                nst_debug_end("MISS");
 
                 /* no, there's no cache yet */
 
                 /* test acls to see if we should cache it */
-                nst_debug(s, "[cache] Test rule ACL (req): ");
+                nst_debug_beg(s, "[cache] Test rule ACL (req): ");
 
                 if(nst_test_rule(s, ctx->rule, msg->chn->flags & CF_ISRESP) == NST_OK) {
-                    nst_debug2("PASS\n");
+                    nst_debug_end("PASS");
                     ctx->state = NST_CTX_STATE_PASS;
 
                     break;
                 }
 
-                nst_debug2("FAIL\n");
+                nst_debug_end("FAIL");
 
                 ctx->rule = ctx->rule->next;
             }
@@ -251,18 +247,18 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
-                nst_debug(s, "[cache] ==== Check rule: %s ====\n", ctx->rule->name);
-                nst_debug(s, "[cache] Test rule ACL (res): ");
+                nst_debug(s, "[cache] ==== Check rule: %s ====", ctx->rule->name);
+                nst_debug_beg(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
                 if(nst_test_rule(s, ctx->rule, msg->chn->flags & CF_ISRESP) == NST_OK) {
-                    nst_debug2("PASS\n");
+                    nst_debug_end("PASS");
                     ctx->state = NST_CTX_STATE_PASS;
 
                     break;
                 }
 
-                nst_debug2("FAIL\n");
+                nst_debug_end("FAIL");
                 ctx->rule = ctx->rule->next;
             }
 
@@ -273,7 +269,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             int               valid = 0;
 
             /* check if code is valid */
-            nst_debug(s, "[cache] Check status code: ");
+            nst_debug_beg(s, "[cache] Check status code: ");
 
             if(!cc) {
                 valid = 1;
@@ -291,18 +287,18 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             }
 
             if(!valid) {
-                nst_debug2("FAIL\n");
+                nst_debug_end("FAIL");
 
                 return 1;
             }
 
-            nst_debug2("PASS\n");
+            nst_debug_end("PASS");
 
             nst_cache_build_etag(s, msg, ctx);
 
             nst_cache_build_last_modified(s, msg, ctx);
 
-            nst_debug(s, "[cache] To create\n");
+            nst_debug(s, "[cache] To create");
 
             /* start to build cache */
             nst_cache_create(msg, ctx);
@@ -348,7 +344,7 @@ _nst_cache_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
         nst_cache_finish(ctx);
-        nst_debug(s, "[cache] Created\n");
+        nst_debug(s, "[cache] Created");
     }
 
     return 1;

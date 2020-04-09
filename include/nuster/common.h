@@ -245,6 +245,8 @@ const char *nst_parse_size(const char *text, uint64_t *ret);
 const char *nst_parse_time(const char *text, int len, unsigned *ret);
 
 void nst_debug(hpx_stream_t *s, const char *fmt, ...);
-void nst_debug2(const char *fmt, ...);
+void nst_debug_beg(hpx_stream_t *s, const char *fmt, ...);
+void nst_debug_add(const char *fmt, ...);
+void nst_debug_end(const char *fmt, ...);
 
 #endif /* _NUSTER_COMMON_H */

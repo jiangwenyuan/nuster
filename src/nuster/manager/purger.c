@@ -45,17 +45,15 @@ nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
         }
 
         while(rule) {
-            nst_debug(s, "[manager] ==== Check rule: %s ====\n", rule->name);
+            nst_debug(s, "[manager] ==== Check rule: %s ====", rule->name);
 
             if(nst_key_build(s, msg, rule, &txn, &key, HTTP_METH_GET) != NST_OK) {
                 goto err;
             }
 
             nst_key_hash(&key);
-            nst_debug(s, "[manager] Key: ");
 
-            nst_key_debug(&key);
-            nst_debug(s, "[manager] Hash: %"PRIu64"\n", key.hash);
+            nst_key_debug(s, &key);
 
             if(px->nuster.mode == NST_MODE_CACHE) {
                 ret = nst_cache_delete(&key);

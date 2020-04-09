@@ -10,6 +10,8 @@
  *
  */
 
+#include <inttypes.h>
+
 #include <import/sha1.h>
 
 #include <types/global.h>
@@ -31,20 +33,20 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
     nst_key_element_t   *ck  = NULL;
     hpx_buffer_t        *buf = nst_key_init();
 
-    nst_debug(s, "[build] ");
+    nst_debug_beg(s, "[build] ");
 
     while((ck = *pck++)) {
         int  ret = NST_ERR;
 
         switch(ck->type) {
             case NST_KEY_ELEMENT_METHOD:
-                nst_debug2("method.");
+                nst_debug_add("method.");
 
                 ret = nst_key_catist(buf, http_known_methods[method]);
 
                 break;
             case NST_KEY_ELEMENT_SCHEME:
-                nst_debug2("scheme.");
+                nst_debug_add("scheme.");
 
                 {
                     hpx_ist_t scheme = txn->req.scheme == SCH_HTTPS ? ist("HTTPS") : ist("HTTP");
@@ -53,7 +55,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
 
                 break;
             case NST_KEY_ELEMENT_HOST:
-                nst_debug2("host.");
+                nst_debug_add("host.");
 
                 if(txn->req.host.len) {
                     ret = nst_key_catist(buf, txn->req.host);
@@ -63,7 +65,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
 
                 break;
             case NST_KEY_ELEMENT_URI:
-                nst_debug2("uri.");
+                nst_debug_add("uri.");
 
                 if(txn->req.uri.len) {
                     ret = nst_key_catist(buf, txn->req.uri);
@@ -73,7 +75,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
 
                 break;
             case NST_KEY_ELEMENT_PATH:
-                nst_debug2("path.");
+                nst_debug_add("path.");
 
                 if(txn->req.path.len) {
                     ret = nst_key_catist(buf, txn->req.path);
@@ -83,7 +85,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
 
                 break;
             case NST_KEY_ELEMENT_DELIMITER:
-                nst_debug2("delimiter.");
+                nst_debug_add("delimiter.");
 
                 if(txn->req.delimiter) {
                     ret = nst_key_catist(buf, ist("?"));
@@ -93,7 +95,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
 
                 break;
             case NST_KEY_ELEMENT_QUERY:
-                nst_debug2("query.");
+                nst_debug_add("query.");
 
                 if(txn->req.query.len) {
                     ret = nst_key_catist(buf, txn->req.query);
@@ -103,7 +105,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
 
                 break;
             case NST_KEY_ELEMENT_PARAM:
-                nst_debug2("param_%s.", ck->data);
+                nst_debug_add("param_%s.", ck->data);
 
                 if(txn->req.query.len) {
                     char  *v   = NULL;
@@ -129,7 +131,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
                         .len = strlen(ck->data),
                     };
 
-                    nst_debug2("header_%s.", ck->data);
+                    nst_debug_add("header_%s.", ck->data);
 
                     while(http_find_header(htx, h, &hdr, 0)) {
                         ret = nst_key_catist(buf, hdr.value);
@@ -143,7 +145,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
                 ret = nst_key_catdel(buf);
                 break;
             case NST_KEY_ELEMENT_COOKIE:
-                nst_debug2("cookie_%s.", ck->data);
+                nst_debug_add("cookie_%s.", ck->data);
 
                 if(txn->req.cookie.len) {
                     char   *v   = NULL;
@@ -162,7 +164,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
                 ret = nst_key_catdel(buf);
                 break;
             case NST_KEY_ELEMENT_BODY:
-                nst_debug2("body.");
+                nst_debug_add("body.");
 
                 if(s->txn->meth == HTTP_METH_POST || s->txn->meth == HTTP_METH_PUT) {
 
@@ -198,7 +200,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
         }
     }
 
-    nst_debug2("\n");
+    nst_debug_end("\n");
 
     key->size = buf->data;
     key->data = malloc(key->size);
@@ -224,20 +226,43 @@ nst_key_hash(nst_key_t *key) {
 }
 
 void
-nst_key_debug(nst_key_t *key) {
+nst_key_debug(hpx_stream_t *s, nst_key_t *key) {
 
     if((global.mode & MODE_DEBUG)) {
-        int  i;
+        hpx_session_t  *sess = strm_sess(s);
+        int             i;
+
+        chunk_printf(&trash, "%08x:%s.nuster[%04x:%04x]: [key.raw] ", s->uniq_id, s->be->id,
+                objt_conn(sess->origin) ?
+                (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
+                objt_cs(s->si[1].end) ?
+                (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
 
         for(i = 0; i < key->size; i++) {
             char  c = key->data[i];
 
             if(c != 0) {
-                fprintf(stderr, "%c", c);
+                chunk_appendf(&trash, "%c", c);
             }
         }
 
-        fprintf(stderr, "\n");
+        chunk_appendf(&trash, "\n");
+        chunk_appendf(&trash, "%08x:%s.nuster[%04x:%04x]: [key.hash] %"PRIu64"\n", s->uniq_id, s->be->id,
+                objt_conn(sess->origin) ?
+                (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
+                objt_cs(s->si[1].end) ?
+                (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1, key->hash);
+
+        chunk_appendf(&trash, "%08x:%s.nuster[%04x:%04x]: [key.uuid] ", s->uniq_id, s->be->id,
+                objt_conn(sess->origin) ?
+                (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
+                objt_cs(s->si[1].end) ?
+                (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
+
+        nst_key_uuid_stringify(key, trash.area + trash.data);
+        trash.data += 40;
+        chunk_appendf(&trash, "\n");
+        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
     }
 }
 

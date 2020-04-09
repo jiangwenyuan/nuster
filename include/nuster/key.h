@@ -92,7 +92,7 @@ nst_key_uuid_stringify(nst_key_t *key, char *str){
 
 void nst_key_hash(nst_key_t *key);
 
-void nst_key_debug(nst_key_t *key);
+void nst_key_debug(hpx_stream_t *s, nst_key_t *key);
 
 int nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_txn_t *txn,
         nst_key_t *key, enum http_meth_t method);

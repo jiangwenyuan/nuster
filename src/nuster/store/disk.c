@@ -68,8 +68,6 @@ nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
     p[40] = '\0';
     sprintf(path, "%s/%c/%c%c/.%s", root.ptr, p[0], p[0], p[1], p);
 
-    nst_debug2("[nuster][disk] File: %s\n", path);
-
     return NST_OK;
 }
 
