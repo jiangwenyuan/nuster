@@ -661,6 +661,8 @@ nst_cache_finish(nst_ctx_t *ctx) {
                     ctx->entry->expire) == NST_OK) {
 
             ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
+
+            ctx->entry->store.disk.file = ctx->store.disk.file;
         }
     }
 
