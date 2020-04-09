@@ -72,39 +72,39 @@ nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
 }
 
 int
-nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key) {
+nst_disk_data_valid(nst_disk_data_t *data, nst_key_t *key) {
     hpx_buffer_t  *buf;
     int            ret;
 
     buf = get_trash_chunk();
 
-    disk->fd = nst_disk_open(disk->file);
+    data->fd = nst_disk_open(data->file);
 
-    if(disk->fd == -1) {
+    if(data->fd == -1) {
         goto err;
     }
 
-    ret = pread(disk->fd, disk->meta, NST_DISK_META_SIZE, 0);
+    ret = pread(data->fd, data->meta, NST_DISK_META_SIZE, 0);
 
     if(ret != NST_DISK_META_SIZE) {
         goto err;
     }
 
-    if(memcmp(disk->meta, "NUSTER", 6) !=0) {
+    if(memcmp(data->meta, "NUSTER", 6) !=0) {
         goto err;
     }
 
-    if(nst_disk_meta_check_expire(disk->meta) != NST_OK) {
+    if(nst_disk_meta_check_expire(data->meta) != NST_OK) {
         goto err;
     }
 
-    if(nst_disk_meta_get_hash(disk->meta) != key->hash
-            || nst_disk_meta_get_key_len(disk->meta) != key->size) {
+    if(nst_disk_meta_get_hash(data->meta) != key->hash
+            || nst_disk_meta_get_key_len(data->meta) != key->size) {
 
         goto err;
     }
 
-    ret = pread(disk->fd, buf->area, key->size, NST_DISK_POS_KEY);
+    ret = pread(data->fd, buf->area, key->size, NST_DISK_POS_KEY);
 
     if(ret != key->size) {
         goto err;
@@ -117,7 +117,7 @@ nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key) {
     return NST_OK;
 
 err:
-    close(disk->fd);
+    close(data->fd);
     return NST_ERR;
 }
 
@@ -158,27 +158,6 @@ nst_disk_dir_next(DIR *dir) {
 }
 
 int
-nst_disk_get_meta(int fd, char *meta) {
-    int  ret;
-
-    ret = pread(fd, meta, NST_DISK_META_SIZE, 0);
-
-    if(ret != NST_DISK_META_SIZE) {
-        return NST_ERR;
-    }
-
-    if(memcmp(meta, "NUSTER", 6) !=0) {
-        return NST_ERR;
-    }
-
-    if(nst_disk_meta_check_expire(meta) != NST_OK) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int
 nst_disk_read_meta(nst_disk_data_t *data) {
     int  ret;
 
@@ -195,21 +174,6 @@ nst_disk_read_meta(nst_disk_data_t *data) {
     if(nst_disk_meta_check_expire(data->meta) != NST_OK) {
         return NST_ERR;
     }
-
-    return NST_OK;
-}
-
-int
-nst_disk_get_key_data(int fd, char *meta, nst_key_t *key) {
-    int  ret;
-
-    ret = pread(fd, key->data, key->size, NST_DISK_POS_KEY);
-
-    if(ret != key->size) {
-        return NST_ERR;
-    }
-
-    memcpy(key->uuid, meta + NST_DISK_META_POS_UUID, 20);
 
     return NST_OK;
 }
@@ -242,19 +206,6 @@ nst_disk_read_key(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 }
 
 int
-nst_disk_get_host(int fd, char *meta, hpx_ist_t host) {
-    int  ret;
-
-    ret = pread(fd, host.ptr, host.len, NST_DISK_POS_KEY + nst_disk_meta_get_key_len(meta));
-
-    if(ret != host.len) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int
 nst_disk_read_host(hpx_ist_t host, nst_disk_data_t *data) {
     int  ret, offset;
 
@@ -263,20 +214,6 @@ nst_disk_read_host(hpx_ist_t host, nst_disk_data_t *data) {
     ret = pread(data->fd, host.ptr, host.len, offset);
 
     if(ret != host.len) {
-        return NST_ERR;
-    }
-
-    return NST_OK;
-}
-
-int
-nst_disk_get_path(int fd, char *meta, hpx_ist_t path) {
-
-    int  ret = pread(fd, path.ptr, path.len, NST_DISK_POS_KEY
-            + nst_disk_meta_get_key_len(meta)
-            + nst_disk_meta_get_host_len(meta));
-
-    if(ret != path.len) {
         return NST_ERR;
     }
 
@@ -300,12 +237,12 @@ nst_disk_read_path(hpx_ist_t path, nst_disk_data_t *data) {
 }
 
 int
-nst_disk_get_etag(int fd, char *meta, hpx_ist_t etag) {
+nst_disk_read_etag(nst_disk_data_t *data, hpx_ist_t etag) {
 
-    int  ret = pread(fd, etag.ptr, etag.len, NST_DISK_POS_KEY
-            + nst_disk_meta_get_key_len(meta)
-            + nst_disk_meta_get_host_len(meta)
-            + nst_disk_meta_get_path_len(meta));
+    int  ret = pread(data->fd, etag.ptr, etag.len, NST_DISK_POS_KEY
+            + nst_disk_meta_get_key_len(data->meta)
+            + nst_disk_meta_get_host_len(data->meta)
+            + nst_disk_meta_get_path_len(data->meta));
 
     if(ret != etag.len) {
         return NST_ERR;
@@ -315,14 +252,14 @@ nst_disk_get_etag(int fd, char *meta, hpx_ist_t etag) {
 }
 
 int
-nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified) {
+nst_disk_read_last_modified(nst_disk_data_t *data, hpx_ist_t last_modified) {
 
-    int  ret = pread(fd, last_modified.ptr, last_modified.len,
+    int  ret = pread(data->fd, last_modified.ptr, last_modified.len,
             NST_DISK_POS_KEY
-            + nst_disk_meta_get_key_len(meta)
-            + nst_disk_meta_get_host_len(meta)
-            + nst_disk_meta_get_path_len(meta)
-            + nst_disk_meta_get_etag_len(meta));
+            + nst_disk_meta_get_key_len(data->meta)
+            + nst_disk_meta_get_host_len(data->meta)
+            + nst_disk_meta_get_path_len(data->meta)
+            + nst_disk_meta_get_etag_len(data->meta));
 
     if(ret != last_modified.len) {
         return NST_ERR;
@@ -337,7 +274,7 @@ nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified) {
  *  1: ok
  */
 int
-nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
+nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *data, nst_key_t *key) {
     hpx_buffer_t  *buf;
     char          *p;
     int            ret;
@@ -349,25 +286,25 @@ nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
 
     p[NST_DISK_FILE_LEN] = '\0';
 
-    sprintf(disk->file, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
+    sprintf(data->file, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
 
-    disk->fd = nst_disk_open(disk->file);
+    data->fd = nst_disk_open(data->file);
 
-    if(disk->fd == -1) {
+    if(data->fd == -1) {
         ret = -1;
 
         goto done;
     }
 
-    ret = pread(disk->fd, p, key->size, NST_DISK_POS_KEY);
+    ret = pread(data->fd, p, key->size, NST_DISK_POS_KEY);
 
     if(ret == key->size && memcmp(key->data, p, key->size) == 0) {
-        remove(disk->file);
+        remove(data->file);
         ret = 1;
     }
 
 done:
-    close(disk->fd);
+    close(data->fd);
 
     return ret;
 }

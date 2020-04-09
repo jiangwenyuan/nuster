@@ -473,7 +473,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                 ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
 
-                nst_disk_get_etag(ctx->store.disk.fd, ctx->store.disk.meta, ctx->txn.res.etag);
+                nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
             }
 
             if(ctx->rule->last_modified == NST_STATUS_ON) {
@@ -481,8 +481,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.last_modified.len =
                     nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
 
-                nst_disk_get_last_modified(ctx->store.disk.fd, ctx->store.disk.meta,
-                            ctx->txn.res.last_modified);
+                nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
 
             }
         } else {

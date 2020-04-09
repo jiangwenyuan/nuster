@@ -285,81 +285,75 @@ nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
 int nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key);
 
 static inline int
-nst_disk_write(nst_disk_data_t *disk, char *buf, int len) {
-    ssize_t ret = pwrite(disk->fd, buf, len, disk->offset);
+nst_disk_write(nst_disk_data_t *data, char *buf, int len) {
+    ssize_t ret = pwrite(data->fd, buf, len, data->offset);
 
     if(ret != len) {
         return NST_ERR;
     }
 
-    disk->offset += len;
+    data->offset += len;
 
     return NST_OK;
 }
 
 static inline int
-nst_disk_write_meta(nst_disk_data_t *disk) {
-    disk->offset = 0;
+nst_disk_write_meta(nst_disk_data_t *data) {
+    data->offset = 0;
 
-    return nst_disk_write(disk, disk->meta, NST_DISK_META_SIZE);
+    return nst_disk_write(data, data->meta, NST_DISK_META_SIZE);
 }
 
 static inline int
-nst_disk_write_key(nst_disk_data_t *disk, nst_key_t *key) {
-    disk->offset = NST_DISK_POS_KEY;
+nst_disk_write_key(nst_disk_data_t *data, nst_key_t *key) {
+    data->offset = NST_DISK_POS_KEY;
 
-    return nst_disk_write(disk, key->data, key->size);
+    return nst_disk_write(data, key->data, key->size);
 }
 
 static inline int
-nst_disk_write_host(nst_disk_data_t *disk, hpx_ist_t host) {
+nst_disk_write_host(nst_disk_data_t *data, hpx_ist_t host) {
 
-    disk->offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(disk->meta);
+    data->offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta);
 
-    return nst_disk_write(disk, host.ptr, host.len);
+    return nst_disk_write(data, host.ptr, host.len);
 }
 
 static inline int
-nst_disk_write_path(nst_disk_data_t *disk, hpx_ist_t path) {
+nst_disk_write_path(nst_disk_data_t *data, hpx_ist_t path) {
 
-    disk->offset = NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(disk->meta)
-        + nst_disk_meta_get_host_len(disk->meta);
+    data->offset = NST_DISK_POS_KEY
+        + nst_disk_meta_get_key_len(data->meta)
+        + nst_disk_meta_get_host_len(data->meta);
 
-    return nst_disk_write(disk, path.ptr, path.len);
+    return nst_disk_write(data, path.ptr, path.len);
 }
 
 static inline int
-nst_disk_write_etag(nst_disk_data_t *disk, hpx_ist_t etag) {
+nst_disk_write_etag(nst_disk_data_t *data, hpx_ist_t etag) {
 
-    disk->offset = NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(disk->meta)
-        + nst_disk_meta_get_host_len(disk->meta)
-        + nst_disk_meta_get_path_len(disk->meta);
+    data->offset = NST_DISK_POS_KEY
+        + nst_disk_meta_get_key_len(data->meta)
+        + nst_disk_meta_get_host_len(data->meta)
+        + nst_disk_meta_get_path_len(data->meta);
 
-    return nst_disk_write(disk, etag.ptr, etag.len);
+    return nst_disk_write(data, etag.ptr, etag.len);
 }
 
 static inline int
-nst_disk_write_last_modified(nst_disk_data_t *disk, hpx_ist_t lm) {
+nst_disk_write_last_modified(nst_disk_data_t *data, hpx_ist_t lm) {
 
-    disk->offset = NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(disk->meta)
-        + nst_disk_meta_get_host_len(disk->meta)
-        + nst_disk_meta_get_path_len(disk->meta)
-        + nst_disk_meta_get_etag_len(disk->meta);
+    data->offset = NST_DISK_POS_KEY
+        + nst_disk_meta_get_key_len(data->meta)
+        + nst_disk_meta_get_host_len(data->meta)
+        + nst_disk_meta_get_path_len(data->meta)
+        + nst_disk_meta_get_etag_len(data->meta);
 
-    return nst_disk_write(disk, lm.ptr, lm.len);
+    return nst_disk_write(data, lm.ptr, lm.len);
 }
 
-int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
-void nst_disk_load(nst_core_t *core);
-int nst_disk_get_meta(int fd, char *meta);
-int nst_disk_get_key_data(int fd, char *meta, nst_key_t *key);
-int nst_disk_get_host(int fd, char *meta, hpx_ist_t host);
-int nst_disk_get_path(int fd, char *meta, hpx_ist_t path);
-int nst_disk_get_etag(int fd, char *meta, hpx_ist_t etag);
-int nst_disk_get_last_modified(int fd, char *meta, hpx_ist_t last_modified);
+int nst_disk_read_etag(nst_disk_data_t *data, hpx_ist_t etag);
+int nst_disk_read_last_modified(nst_disk_data_t *data, hpx_ist_t last_modified);
 int nst_disk_read_key(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key);
 
 static inline void
@@ -367,14 +361,16 @@ nst_disk_get_uuid(nst_key_t *key, char *meta) {
     memcpy(key->uuid, meta + NST_DISK_META_POS_UUID, 20);
 }
 
+int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
+void nst_disk_load(nst_core_t *core);
+void nst_disk_cleanup(nst_core_t *core);
+
 DIR *nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx);
 nst_dirent_t *nst_disk_dir_next(DIR *dir);
 int nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key);
 int nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
 int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
-
-void nst_disk_cleanup(nst_core_t *core);
 
 int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
         nst_http_txn_t *txn, uint64_t ttl_extend);
