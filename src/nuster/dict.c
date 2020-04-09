@@ -194,6 +194,7 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
     while(entry) {
 
         if(entry->key.hash == key->hash && entry->key.size == key->size
+                && !memcmp(entry->key.uuid, key->uuid, NST_KEY_UUID_LEN)
                 && !memcmp(entry->key.data, key->data, key->size)) {
 
             if(entry->state == NST_DICT_ENTRY_STATE_INVALID) {
