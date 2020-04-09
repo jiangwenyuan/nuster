@@ -144,7 +144,7 @@ nst_ring_store_async(nst_core_t *core) {
     nst_ring_item_t    *item;
     nst_http_txn_t      txn;
     hpx_htx_blk_type_t  type;
-    uint64_t            ttl_extend, header_len, payload_len;
+    uint64_t            ttl_extend;
     uint32_t            blksz, info;
     int                 ret;
 
@@ -167,13 +167,13 @@ nst_ring_store_async(nst_core_t *core) {
                 && entry->store.disk.file == NULL) {
 
             ttl_extend  = entry->ttl;
-            header_len  = 0;
-            payload_len = 0;
 
-            txn.req.host = entry->host;
-            txn.req.path = entry->path;
-            txn.res.etag = entry->etag;
+            txn.req.host          = entry->host;
+            txn.req.path          = entry->path;
+            txn.res.etag          = entry->etag;
             txn.res.last_modified = entry->last_modified;
+            txn.res.header_len    = 0;
+            txn.res.payload_len   = 0;
 
             ttl_extend = ttl_extend << 32;
             *( uint8_t *)(&ttl_extend)      = entry->extend[0];
@@ -205,7 +205,7 @@ nst_ring_store_async(nst_core_t *core) {
                         goto err;
                     }
 
-                    header_len += 4 + blksz;
+                    txn.res.header_len += 4 + blksz;
                 }
 
                 ret = nst_disk_store_add(&core->store.disk, &data, item->data, blksz);
@@ -214,7 +214,7 @@ nst_ring_store_async(nst_core_t *core) {
                     goto err;
                 }
 
-                payload_len += blksz;
+                txn.res.payload_len += blksz;
 
                 item = item->next;
             }
