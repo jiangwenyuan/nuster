@@ -59,6 +59,8 @@ static int
 _nst_cache_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
     nst_flt_conf_t  *conf = FLT_CONF(filter);
 
+    nst_debug(s, "[cache] ===== attach =====");
+
     /* disable cache if state is not NST_STATUS_ON */
     if(global.nuster.cache.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
         return 0;
@@ -130,6 +132,8 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
         free(ctx);
     }
+
+    nst_debug(s, "[cache] ===== detach =====");
 }
 
 static int
@@ -164,17 +168,17 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 int        idx  = ctx->rule->key->idx;
                 nst_key_t  *key = &(ctx->keys[idx]);
 
-                nst_debug(s, "[cache] ==== Check rule: %s ====", ctx->rule->name);
+                nst_debug(s, "[rule ] ----- %s", ctx->rule->name);
 
                 if(ctx->rule->state == NST_RULE_DISABLED) {
-                    nst_debug(s, "[rule ] Disabled, continue.");
+                    nst_debug(s, "[rule ] disabled, continue.");
                     ctx->rule = ctx->rule->next;
 
                     continue;
                 }
 
                 if(nst_store_memory_off(ctx->rule->store) && nst_store_disk_off(ctx->rule->store)) {
-                    nst_debug(s, "[store] memory off and disk off, continue.");
+                    nst_debug(s, "[rule ] memory off and disk off, continue.");
                     ctx->rule = ctx->rule->next;
 
                     continue;

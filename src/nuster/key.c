@@ -33,7 +33,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
     nst_key_element_t   *ck  = NULL;
     hpx_buffer_t        *buf = nst_key_init();
 
-    nst_debug_beg(s, "[build] ");
+    nst_debug_beg(s, "[rule ] key:  ");
 
     while((ck = *pck++)) {
         int  ret = NST_ERR;
@@ -200,7 +200,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
         }
     }
 
-    nst_debug_end("\n");
+    nst_debug_end("");
 
     key->size = buf->data;
     key->data = malloc(key->size);
@@ -232,13 +232,14 @@ nst_key_debug(hpx_stream_t *s, nst_key_t *key) {
         hpx_session_t  *sess = strm_sess(s);
         int             i;
 
-        chunk_printf(&trash, "%08x:%s.nuster[%04x:%04x]: [key.raw] ", s->uniq_id, s->be->id,
+        chunk_printf(&trash, "%08x:%s.nuster[%04x:%04x]: [key  ] raw:  |%d| ",
+                s->uniq_id, s->be->id,
                 objt_conn(sess->origin) ?
                 (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
                 objt_cs(s->si[1].end) ?
-                (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
+                (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1, key->size);
 
-        for(i = 0; i < key->size; i++) {
+        for(i = 0; i < (key->size > 1024 ? 1024 : key->size); i++) {
             char  c = key->data[i];
 
             if(c != 0) {
@@ -246,14 +247,21 @@ nst_key_debug(hpx_stream_t *s, nst_key_t *key) {
             }
         }
 
+        if(key->size > 1024) {
+            chunk_appendf(&trash, "...<truncated>");
+        }
+
         chunk_appendf(&trash, "\n");
-        chunk_appendf(&trash, "%08x:%s.nuster[%04x:%04x]: [key.hash] %"PRIu64"\n", s->uniq_id, s->be->id,
+
+        chunk_appendf(&trash, "%08x:%s.nuster[%04x:%04x]: [key  ] hash: %"PRIu64"\n",
+                s->uniq_id, s->be->id,
                 objt_conn(sess->origin) ?
                 (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
                 objt_cs(s->si[1].end) ?
                 (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1, key->hash);
 
-        chunk_appendf(&trash, "%08x:%s.nuster[%04x:%04x]: [key.uuid] ", s->uniq_id, s->be->id,
+        chunk_appendf(&trash, "%08x:%s.nuster[%04x:%04x]: [key  ] uuid: ",
+                s->uniq_id, s->be->id,
                 objt_conn(sess->origin) ?
                 (unsigned short)objt_conn(sess->origin)->handle.fd : -1,
                 objt_cs(s->si[1].end) ?

@@ -279,7 +279,8 @@ nst_debug(hpx_stream_t *s, const char *fmt, ...) {
                 (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
 
         va_start(args, fmt);
-        chunk_appendf(&trash, fmt, args);
+        trash.data += vsprintf(trash.area + trash.data, fmt, args);
+        trash.area[trash.data++] = '\n';
         va_end(args);
         shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
     }
@@ -299,7 +300,7 @@ nst_debug_beg(hpx_stream_t *s, const char *fmt, ...) {
                 (unsigned short)objt_cs(s->si[1].end)->conn->handle.fd : -1);
 
         va_start(args, fmt);
-        chunk_appendf(&trash, fmt, args);
+        trash.data += vsprintf(trash.area + trash.data, fmt, args);
         va_end(args);
     }
 }
@@ -311,7 +312,7 @@ nst_debug_add(const char *fmt, ...) {
         va_list         args;
 
         va_start(args, fmt);
-        chunk_appendf(&trash, fmt, args);
+        trash.data += vsprintf(trash.area + trash.data, fmt, args);
         va_end(args);
     }
 }
@@ -323,8 +324,9 @@ nst_debug_end(const char *fmt, ...) {
         va_list         args;
 
         va_start(args, fmt);
-        trash.area[trash.data++] = '\n';
+        trash.data += vsprintf(trash.area + trash.data, fmt, args);
         va_end(args);
+        trash.area[trash.data++] = '\n';
         shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
     }
 }

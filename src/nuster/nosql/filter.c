@@ -56,6 +56,8 @@ static int
 _nst_nosql_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
     nst_flt_conf_t  *conf = FLT_CONF(filter);
 
+    nst_debug(s, "[nosql] ===== attach =====");
+
     if(global.nuster.nosql.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
         return 0;
     }
@@ -112,6 +114,8 @@ _nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
         free(ctx);
     }
+
+    nst_debug(s, "[nosql] ===== detach =====");
 }
 
 static int
@@ -152,7 +156,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             int         idx = ctx->rule->key->idx;
             nst_key_t  *key = &(ctx->keys[idx]);
 
-            nst_debug(s, "[nosql] ==== Check rule: %s ====", ctx->rule->name);
+            nst_debug(s, "[rule ] ----- %s", ctx->rule->name);
 
             if(!key->data) {
                 /* build key */
