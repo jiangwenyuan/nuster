@@ -287,15 +287,11 @@ nst_cache_housekeeping() {
         int  disk_saver   = global.nuster.cache.disk_saver;
 
        while(dict_cleaner--) {
-           nst_shctx_lock(&nuster.cache->dict);
            nst_dict_cleanup(&nuster.cache->dict);
-           nst_shctx_unlock(&nuster.cache->dict);
        }
 
        while(data_cleaner--) {
-           nst_shctx_lock(&nuster.cache->store.ring);
            nst_ring_cleanup(&nuster.cache->store.ring);
-           nst_shctx_unlock(&nuster.cache->store.ring);
        }
 
         while(disk_cleaner--) {
@@ -307,9 +303,7 @@ nst_cache_housekeeping() {
         }
 
         while(disk_saver--) {
-            nst_shctx_lock(&nuster.cache->dict);
             nst_ring_store_async(nuster.cache);
-            nst_shctx_unlock(&nuster.cache->dict);
         }
 
     }

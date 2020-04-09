@@ -64,6 +64,8 @@ void
 nst_ring_cleanup(nst_ring_t *ring) {
     nst_ring_data_t  *data = NULL;
 
+    nst_shctx_lock(ring);
+
     if(ring->head) {
 
         if(ring->head == ring->tail) {
@@ -101,6 +103,8 @@ nst_ring_cleanup(nst_ring_t *ring) {
 
         nst_memory_free(ring->memory, data);
     }
+
+    nst_shctx_unlock(ring);
 }
 
 int
@@ -156,6 +160,8 @@ nst_ring_store_async(nst_core_t *core) {
     if(!core->dict.used) {
         return;
     }
+
+    nst_shctx_lock(&core->dict);
 
     entry = core->dict.entry[core->dict.async_idx];
 
@@ -221,10 +227,6 @@ nst_ring_store_async(nst_core_t *core) {
 
             ret = nst_disk_store_end(&core->store.disk, &data, &entry->key, &txn, entry->expire);
 
-            if(ret != NST_OK) {
-                goto err;
-            }
-
 err:
             close(data.fd);
 
@@ -244,5 +246,6 @@ err:
         core->dict.async_idx = 0;
     }
 
+    nst_shctx_unlock(&core->dict);
 }
 

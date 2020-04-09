@@ -321,15 +321,11 @@ nst_nosql_housekeeping() {
         int  disk_saver   = global.nuster.nosql.disk_saver;
 
         while(dict_cleaner--) {
-            nst_shctx_lock(&nuster.nosql->dict);
             nst_dict_cleanup(&nuster.nosql->dict);
-            nst_shctx_unlock(&nuster.nosql->dict);
         }
 
         while(data_cleaner--) {
-            nst_shctx_lock(&nuster.nosql->store.ring);
             nst_ring_cleanup(&nuster.nosql->store.ring);
-            nst_shctx_unlock(&nuster.nosql->store.ring);
         }
 
         while(disk_cleaner--) {
@@ -341,9 +337,7 @@ nst_nosql_housekeeping() {
         }
 
         while(disk_saver--) {
-            nst_shctx_lock(&nuster.nosql->dict);
             nst_ring_store_async(nuster.nosql);
-            nst_shctx_unlock(&nuster.nosql->dict);
         }
     }
 }

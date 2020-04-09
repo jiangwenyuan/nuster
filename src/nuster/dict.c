@@ -52,12 +52,17 @@ nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size) {
  */
 void
 nst_dict_cleanup(nst_dict_t *dict) {
-    nst_dict_entry_t  *entry = dict->entry[dict->cleanup_idx];
-    nst_dict_entry_t  *prev  = entry;
+    nst_dict_entry_t  *entry;
+    nst_dict_entry_t  *prev;
 
     if(!dict->used) {
         return;
     }
+
+    nst_shctx_lock(dict);
+
+    entry = dict->entry[dict->cleanup_idx];
+    prev  = entry;
 
     while(entry) {
 
@@ -94,6 +99,8 @@ nst_dict_cleanup(nst_dict_t *dict) {
     if(dict->cleanup_idx == dict->size) {
         dict->cleanup_idx = 0;
     }
+
+    nst_shctx_unlock(dict);
 }
 
 nst_dict_entry_t *
