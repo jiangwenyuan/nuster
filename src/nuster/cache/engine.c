@@ -306,6 +306,7 @@ nst_cache_housekeeping() {
             nst_disk_load(nuster.cache);
         }
 
+        disk_saver = 10000;
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict);
             nst_ring_store_async(nuster.cache);

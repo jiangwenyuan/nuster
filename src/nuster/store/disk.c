@@ -429,112 +429,6 @@ nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
     return NST_OK;
 }
 
-int
-nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
-        uint64_t ttl_extend) {
-
-    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len(disk->root));
-
-    if(!data->file) {
-        return NST_ERR;
-    }
-
-    if(nst_disk_data_init(disk->root, data->file, key) != NST_OK) {
-        goto err;
-    }
-
-    data->fd = nst_disk_data_create(data->file);
-
-    if(data->fd == -1) {
-        goto err;
-    }
-
-    nst_disk_meta_init(data->meta, key->hash, 0, 0, 0, key->size, txn->req.host.len,
-            txn->req.path.len, txn->res.etag.len, txn->res.last_modified.len, ttl_extend);
-
-    if(nst_disk_write_key(data, key) != NST_OK) {
-        goto err;
-    }
-
-    if(nst_disk_write_host(data, txn->req.host) != NST_OK) {
-        goto err;
-    }
-
-    if(nst_disk_write_path(data, txn->req.path) != NST_OK) {
-        goto err;
-    }
-
-    if(nst_disk_write_etag(data, txn->res.etag) != NST_OK) {
-        goto err;
-    }
-
-    if(nst_disk_write_last_modified(data, txn->res.last_modified) != NST_OK) {
-        goto err;
-    }
-
-    return NST_OK;
-
-err:
-
-    if(data->fd) {
-        close(data->fd);
-    }
-
-    nst_memory_free(disk->memory, data->file);
-
-    data->file = NULL;
-
-    return NST_ERR;
-}
-
-int
-nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
-        uint64_t expire) {
-
-    char  *p, *old_file, *new_file;
-
-    nst_disk_meta_set_expire(data->meta, expire);
-    nst_disk_meta_set_header_len(data->meta, txn->res.header_len);
-    nst_disk_meta_set_payload_len(data->meta, txn->res.payload_len);
-
-    if(nst_disk_write_meta(data) != NST_OK) {
-        goto err;
-    }
-
-    p = trash.area;
-
-    nst_key_uuid_stringify(key, p);
-
-    /* create final file */
-    p[NST_DISK_FILE_LEN] = '\0';
-
-    new_file = p + 41;
-    old_file = data->file;
-
-    sprintf(new_file, "%s/%c/%c%c/%s", disk->root.ptr, p[0], p[0], p[1], p);
-
-    close(data->fd);
-
-    if(rename(old_file, new_file) != 0) {
-        goto err;
-    }
-
-    memcpy(data->file, new_file, nst_disk_path_file_len(disk->root));
-
-    return NST_OK;
-
-err:
-    if(data->fd) {
-        close(data->fd);
-    }
-
-    nst_memory_free(disk->memory, data->file);
-
-    data->file = NULL;
-
-    return NST_ERR;
-}
-
 void
 nst_disk_load(nst_core_t *core) {
 
@@ -734,5 +628,112 @@ nst_disk_cleanup(nst_core_t *core) {
         }
 
     }
+}
+
+int
+nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
+        uint64_t ttl_extend) {
+
+    data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len(disk->root));
+
+    if(!data->file) {
+        return NST_ERR;
+    }
+
+    if(nst_disk_data_init(disk->root, data->file, key) != NST_OK) {
+        goto err;
+    }
+
+    data->fd = nst_disk_data_create(data->file);
+
+    if(data->fd == -1) {
+        goto err;
+    }
+
+    nst_disk_meta_init(data->meta, key->hash, 0, 0, 0, key->size, txn->req.host.len,
+            txn->req.path.len, txn->res.etag.len, txn->res.last_modified.len, ttl_extend);
+
+    if(nst_disk_write_key(data, key) != NST_OK) {
+        goto err;
+    }
+
+    if(nst_disk_write_host(data, txn->req.host) != NST_OK) {
+        goto err;
+    }
+
+    if(nst_disk_write_path(data, txn->req.path) != NST_OK) {
+        goto err;
+    }
+
+    if(nst_disk_write_etag(data, txn->res.etag) != NST_OK) {
+        goto err;
+    }
+
+    if(nst_disk_write_last_modified(data, txn->res.last_modified) != NST_OK) {
+        goto err;
+    }
+
+    return NST_OK;
+
+err:
+
+    if(data->fd) {
+        close(data->fd);
+    }
+
+    nst_memory_free(disk->memory, data->file);
+
+    data->file = NULL;
+
+    return NST_ERR;
+}
+
+int
+nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
+        uint64_t expire) {
+
+    char  *p, *old_file, *new_file;
+
+    nst_disk_meta_set_expire(data->meta, expire);
+    nst_disk_meta_set_header_len(data->meta, txn->res.header_len);
+    nst_disk_meta_set_payload_len(data->meta, txn->res.payload_len);
+    nst_disk_meta_set_uuid(data->meta, key->uuid);
+
+    if(nst_disk_write_meta(data) != NST_OK) {
+        goto err;
+    }
+
+    p = trash.area;
+
+    nst_key_uuid_stringify(key, p);
+
+    /* create final file */
+    p[NST_DISK_FILE_LEN] = '\0';
+
+    new_file = p + 41;
+    old_file = data->file;
+
+    sprintf(new_file, "%s/%c/%c%c/%s", disk->root.ptr, p[0], p[0], p[1], p);
+
+    close(data->fd);
+
+    if(rename(old_file, new_file) != 0) {
+        goto err;
+    }
+
+    memcpy(data->file, new_file, nst_disk_path_file_len(disk->root));
+
+    return NST_OK;
+
+err:
+    if(data->fd) {
+        close(data->fd);
+    }
+
+    nst_memory_free(disk->memory, data->file);
+
+    data->file = NULL;
+
+    return NST_ERR;
 }
 

@@ -241,6 +241,16 @@ nst_disk_meta_get_ttl_extend(char *p) {
     return *(uint64_t *)(p + NST_DISK_META_POS_TTL_EXTEND);
 }
 
+static inline void
+nst_disk_meta_set_uuid(char *p, unsigned char *uuid) {
+    memcpy(p + NST_DISK_META_POS_UUID, uuid, NST_KEY_UUID_LEN);
+}
+
+static inline char *
+nst_disk_meta_get_uuid(char *p) {
+    return (char *)(p + NST_DISK_META_POS_UUID);
+}
+
 static inline int
 nst_disk_get_header_pos(char *p) {
     return (int)(NST_DISK_META_SIZE
