@@ -26,11 +26,13 @@
 
 #include <nuster/common.h>
 
+#define NST_KEY_UUID_LEN        20
+
 typedef struct nst_key {
     uint32_t            size;
     char               *data;
     uint64_t            hash;
-    unsigned char       uuid[20];
+    unsigned char       uuid[NST_KEY_UUID_LEN];
 } nst_key_t;
 
 static inline hpx_buffer_t *
@@ -85,7 +87,7 @@ static inline void
 nst_key_uuid_stringify(nst_key_t *key, char *str){
     int  i;
 
-    for(i = 0; i < 20; i++) {
+    for(i = 0; i < NST_KEY_UUID_LEN; i++) {
         sprintf((char*)&(str[i*2]), "%02x", key->uuid[i]);
     }
 }

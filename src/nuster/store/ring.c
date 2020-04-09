@@ -229,7 +229,7 @@ err:
             close(data.fd);
 
             if(ret != NST_OK) {
-                unlink(data.file);
+                remove(data.file);
             }
         }
 

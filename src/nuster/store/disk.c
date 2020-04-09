@@ -65,7 +65,7 @@ nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
     }
 
     /* create .uuid temp file */
-    p[40] = '\0';
+    p[NST_DISK_FILE_LEN] = '\0';
     sprintf(path, "%s/%c/%c%c/.%s", root.ptr, p[0], p[0], p[1], p);
 
     return NST_OK;
@@ -134,7 +134,7 @@ nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 
     nst_key_uuid_stringify(key, p);
 
-    p[40] = '\0';
+    p[NST_DISK_FILE_LEN] = '\0';
 
     sprintf(data->file, "%s/%c/%c%c/%s", disk->root.ptr, p[0], p[0], p[1], p);
 
@@ -347,7 +347,7 @@ nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
 
     nst_key_uuid_stringify(key, p);
 
-    p[40] = '\0';
+    p[NST_DISK_FILE_LEN] = '\0';
 
     sprintf(disk->file, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
 
@@ -362,7 +362,7 @@ nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key) {
     ret = pread(disk->fd, p, key->size, NST_DISK_POS_KEY);
 
     if(ret == key->size && memcmp(key->data, p, key->size) == 0) {
-        unlink(disk->file);
+        remove(disk->file);
         ret = 1;
     }
 
@@ -379,7 +379,7 @@ done:
  */
 int
 nst_disk_purge_by_path(char *path) {
-    int  ret = unlink(path);
+    int  ret = remove(path);
 
     if(ret == 0) {
         return 1;
@@ -506,7 +506,7 @@ nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_
     nst_key_uuid_stringify(key, p);
 
     /* create final file */
-    p[40] = '\0';
+    p[NST_DISK_FILE_LEN] = '\0';
 
     new_file = p + 41;
     old_file = data->file;
@@ -546,6 +546,7 @@ nst_disk_load(nst_core_t *core) {
         hpx_ist_t        host;
         hpx_ist_t        path;
         char            *file;
+        int              len;
 
         root = core->root;
         file = core->store.disk.file;
@@ -559,8 +560,22 @@ nst_disk_load(nst_core_t *core) {
                     continue;
                 }
 
+                len = strlen(de->d_name);
+
+                if(len != NST_DISK_FILE_LEN) {
+                    chunk_reset(&trash);
+                    chunk_memcat(&trash, file, nst_disk_path_base_len(root));
+                    chunk_memcat(&trash, "/", 1);
+                    chunk_memcat(&trash, de->d_name, len);
+                    trash.area[trash.data++] = '\0';
+
+                    remove(trash.area);
+
+                    continue;
+                }
+
                 memcpy(file + nst_disk_path_base_len(root), "/", 1);
-                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
+                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, NST_DISK_FILE_LEN);
 
                 data.fd = nst_disk_open(file);
 
@@ -629,7 +644,7 @@ nst_disk_load(nst_core_t *core) {
 err:
 
         if(file) {
-            unlink(file);
+            remove(file);
         }
 
         if(data.fd) {
@@ -647,6 +662,7 @@ nst_disk_cleanup(nst_core_t *core) {
     nst_disk_data_t  data;
     hpx_ist_t        root;
     char            *file;
+    int              len;
 
     root = core->root;
     file = core->store.disk.file;
@@ -658,12 +674,26 @@ nst_disk_cleanup(nst_core_t *core) {
 
             while((de = readdir(core->store.disk.dir)) != NULL) {
 
-                if(strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+                if(de->d_name[0] == '.') {
+                    continue;
+                }
+
+                len = strlen(de->d_name);
+
+                if(len != NST_DISK_FILE_LEN) {
+                    chunk_reset(&trash);
+                    chunk_memcat(&trash, file, nst_disk_path_base_len(root));
+                    chunk_memcat(&trash, "/", 1);
+                    chunk_memcat(&trash, de->d_name, len);
+                    trash.area[trash.data++] = '\0';
+
+                    remove(trash.area);
+
                     continue;
                 }
 
                 memcpy(file + nst_disk_path_base_len(root), "/", 1);
-                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, strlen(de->d_name));
+                memcpy(file + nst_disk_path_base_len(root) + 1, de->d_name, NST_DISK_FILE_LEN);
 
                 data.fd = nst_disk_open(file);
 
@@ -672,14 +702,14 @@ nst_disk_cleanup(nst_core_t *core) {
                 }
 
                 if(nst_disk_read_meta(&data) != NST_OK) {
-                    unlink(file);
+                    remove(file);
                     close(data.fd);
 
                     continue;
                 }
 
                 if(nst_disk_meta_check_expire(data.meta) != NST_OK) {
-                    unlink(file);
+                    remove(file);
                     close(data.fd);
 
                     continue;

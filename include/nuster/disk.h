@@ -69,6 +69,8 @@
 #define NST_DISK_META_SIZE                   8 * 16
 #define NST_DISK_POS_KEY                     NST_DISK_META_SIZE
 
+#define NST_DISK_FILE_LEN                    NST_KEY_UUID_LEN * 2
+
 typedef struct nst_core  nst_core_t;
 
 enum {
