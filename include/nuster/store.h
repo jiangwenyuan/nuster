@@ -68,8 +68,8 @@ nst_store_disk_off(uint8_t t) {
 }
 
 static inline int
-nst_store_disk_async(uint8_t t) {
-    return t & NST_STORE_DISK_ASYNC;
+nst_store_disk_sync(uint8_t t) {
+    return t & NST_STORE_DISK_SYNC;
 }
 
 #endif /* _NUSTER_STORE_H */

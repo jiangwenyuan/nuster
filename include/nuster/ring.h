@@ -99,6 +99,6 @@ nst_ring_store_end(nst_ring_t *ring, nst_ring_data_t *data) {
     return NST_OK;
 }
 
-void nst_ring_store_async(nst_core_t *core);
+void nst_ring_store_sync(nst_core_t *core);
 
 #endif /* _NUSTER_RING_H */

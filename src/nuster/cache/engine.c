@@ -303,7 +303,7 @@ nst_cache_housekeeping() {
         }
 
         while(disk_saver--) {
-            nst_ring_store_async(nuster.cache);
+            nst_ring_store_sync(nuster.cache);
         }
 
     }

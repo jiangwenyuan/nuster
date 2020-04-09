@@ -142,7 +142,7 @@ nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **ta
 }
 
 void
-nst_ring_store_async(nst_core_t *core) {
+nst_ring_store_sync(nst_core_t *core) {
     nst_dict_entry_t   *entry;
     nst_disk_data_t     data = { .file = NULL };
     nst_ring_item_t    *item;
@@ -163,13 +163,13 @@ nst_ring_store_async(nst_core_t *core) {
 
     nst_shctx_lock(&core->dict);
 
-    entry = core->dict.entry[core->dict.async_idx];
+    entry = core->dict.entry[core->dict.sync_idx];
 
     while(entry) {
 
         if(!nst_dict_entry_invalid(entry)
                 && entry->rule
-                && nst_store_disk_async(entry->rule->store)
+                && nst_store_disk_sync(entry->rule->store)
                 && entry->store.disk.file == NULL) {
 
             ttl_extend  = entry->ttl;
@@ -239,11 +239,11 @@ err:
 
     }
 
-    core->dict.async_idx++;
+    core->dict.sync_idx++;
 
     /* if we have checked the whole dict */
-    if(core->dict.async_idx == core->dict.size) {
-        core->dict.async_idx = 0;
+    if(core->dict.sync_idx == core->dict.size) {
+        core->dict.sync_idx = 0;
     }
 
     nst_shctx_unlock(&core->dict);

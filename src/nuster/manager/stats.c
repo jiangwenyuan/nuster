@@ -355,7 +355,7 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
                             nst_store_memory_on(rule->store) ? "on" : "off",
                             nst_store_disk_on(rule->store) ? "on"
                             : nst_store_disk_off(rule->store) ? "off"
-                            : "async",
+                            : "sync",
                             rule->ttl
                             );
 

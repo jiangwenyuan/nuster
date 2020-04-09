@@ -337,7 +337,7 @@ nst_nosql_housekeeping() {
         }
 
         while(disk_saver--) {
-            nst_ring_store_async(nuster.nosql);
+            nst_ring_store_sync(nuster.nosql);
         }
     }
 }

@@ -1128,7 +1128,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "[%s.%s]: disk expects [on|off|async], default off.", args[1], name);
+                memprintf(err, "[%s.%s]: disk expects [on|off|sync], default off.", args[1], name);
 
                 goto out;
             }
@@ -1137,10 +1137,10 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
                 disk = NST_STORE_DISK_OFF;
             } else if(!strcmp(args[cur_arg], "on")) {
                 disk = NST_STORE_DISK_ON;
-            } else if(!strcmp(args[cur_arg], "async")) {
-                disk = NST_STORE_DISK_ASYNC;
+            } else if(!strcmp(args[cur_arg], "sync")) {
+                disk = NST_STORE_DISK_SYNC;
             } else {
-                memprintf(err, "[%s.%s]: disk expects [on|off|async], default off.", args[1], name);
+                memprintf(err, "[%s.%s]: disk expects [on|off|sync], default off.", args[1], name);
 
                 goto out;
             }
@@ -1333,7 +1333,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
 
     rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
 
-    if(disk == NST_STORE_DISK_ON || disk == NST_STORE_DISK_ASYNC) {
+    if(disk == NST_STORE_DISK_ON || disk == NST_STORE_DISK_SYNC) {
         if((proxy->nuster.mode == NST_MODE_CACHE && !global.nuster.cache.root.len)
                 || (proxy->nuster.mode == NST_MODE_NOSQL && !global.nuster.nosql.root.len)) {
 
@@ -1343,8 +1343,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         }
     }
 
-    if(memory == NST_STORE_MEMORY_OFF && disk == NST_STORE_DISK_ASYNC) {
-        memprintf(err, "[%s.%s]: memory needs to be on to use disk async", args[1], name);
+    if(memory == NST_STORE_MEMORY_OFF && disk == NST_STORE_DISK_SYNC) {
+        memprintf(err, "[%s.%s]: memory needs to be on to use disk sync", args[1], name);
 
         goto out;
     }
@@ -1364,8 +1364,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
 
     if(disk == NST_STORE_DISK_ON) {
         rule->store |= NST_STORE_DISK_ON;
-    } else if(disk == NST_STORE_DISK_ASYNC) {
-        rule->store |= NST_STORE_DISK_ASYNC;
+    } else if(disk == NST_STORE_DISK_SYNC) {
+        rule->store |= NST_STORE_DISK_SYNC;
     } else {
         rule->store |= NST_STORE_DISK_OFF;
     }
