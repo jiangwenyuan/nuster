@@ -205,7 +205,11 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
                     /* OK, cache exists */
 
-                    nst_debug_end("HIT");
+                    if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
+                        nst_debug_end("HIT memory");
+                    } else {
+                        nst_debug_end("HIT disk");
+                    }
 
                     htx = htxbuf(&req->buf);
 

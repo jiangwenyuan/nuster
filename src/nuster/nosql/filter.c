@@ -176,10 +176,16 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                 ctx->state = nst_nosql_exists(ctx);
 
-                if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
+                if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
                     /* OK, nosql exists */
+                    nst_debug_end("HIT memory");
 
-                    nst_debug_end("HIT");
+                    break;
+                }
+
+                if(ctx->state == NST_CTX_STATE_HIT_DISK) {
+                    /* OK, nosql exists */
+                    nst_debug_end("HIT disk");
 
                     break;
                 }

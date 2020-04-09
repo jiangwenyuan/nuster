@@ -269,7 +269,7 @@ out:
 static void
 nst_cache_handler(hpx_appctx_t *appctx) {
 
-    if(appctx->ctx.nuster.cache.store.ring.data) {
+    if(appctx->st0 == NST_CTX_STATE_HIT_MEMORY) {
         _nst_cache_memory_handler(appctx);
     } else {
         _nst_cache_disk_handler(appctx);
