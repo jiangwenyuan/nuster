@@ -761,54 +761,70 @@ nst_nosql_exists(nst_ctx_t *ctx) {
         return ret;
     }
 
-    nst_shctx_lock(&nuster.nosql->dict);
+    if(!nst_key_memory_checked(key)) {
+        nst_key_memory_set_checked(key);
 
-    entry = nst_dict_get(&nuster.nosql->dict, key);
+        nst_shctx_lock(&nuster.nosql->dict);
 
-    if(entry) {
+        entry = nst_dict_get(&nuster.nosql->dict, key);
 
-        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+        if(entry) {
 
-            if(entry->store.ring.data) {
-                ctx->store.ring.data = entry->store.ring.data;
-                ctx->store.ring.data->clients++;
-                ret = NST_CTX_STATE_HIT_MEMORY;
-            } else if(entry->store.disk.file) {
-                ctx->store.disk.file = entry->store.disk.file;
-                ret = NST_CTX_STATE_HIT_DISK;
+            if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+
+                if(entry->store.ring.data) {
+                    ctx->store.ring.data = entry->store.ring.data;
+                    ctx->store.ring.data->clients++;
+                    ret = NST_CTX_STATE_HIT_MEMORY;
+                } else if(entry->store.disk.file) {
+                    ctx->store.disk.file = entry->store.disk.file;
+                    ret = NST_CTX_STATE_HIT_DISK;
+                }
             }
 
-        } else {
+            if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
+                ret = NST_CTX_STATE_WAIT;
+            }
+        }
 
-            if(!nst_store_disk_off(ctx->rule->store)) {
+        nst_shctx_unlock(&nuster.nosql->dict);
+    }
 
-                if(nuster.nosql->store.disk.loaded) {
-                    ret = NST_CTX_STATE_INIT;
-                } else {
-                    ret = NST_CTX_STATE_CHECK_DISK;
-                }
+    if(ret == NST_CTX_STATE_INIT) {
+
+        if(!nst_store_disk_off(ctx->rule->store)) {
+
+            if(!nuster.nosql->store.disk.loaded) {
+                ret = NST_CTX_STATE_CHECK_DISK;
             }
         }
     }
-
-    nst_shctx_unlock(&nuster.nosql->dict);
 
     if(ret == NST_CTX_STATE_HIT_MEMORY) {
         return ret;
     }
 
     if(ret == NST_CTX_STATE_HIT_DISK) {
-        if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
-            ret = NST_CTX_STATE_INIT;
+
+        if(!nst_key_disk_checked(key)) {
+            nst_key_disk_set_checked(key);
+
+            if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
+                ret = NST_CTX_STATE_INIT;
+            }
         }
     }
 
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
-        if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
-            ret = NST_CTX_STATE_HIT_DISK;
-        } else {
-            ret = NST_CTX_STATE_INIT;
+        if(!nst_key_disk_checked(key)) {
+            nst_key_disk_set_checked(key);
+
+            if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
+                ret = NST_CTX_STATE_HIT_DISK;
+            } else {
+                ret = NST_CTX_STATE_INIT;
+            }
         }
     }
 

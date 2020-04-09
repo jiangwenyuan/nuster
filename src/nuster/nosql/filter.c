@@ -165,9 +165,9 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                     return 1;
                 }
-            }
 
-            nst_key_hash(key);
+                nst_key_hash(key);
+            }
 
             nst_key_debug(s, key);
 

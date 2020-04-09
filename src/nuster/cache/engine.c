@@ -306,7 +306,6 @@ nst_cache_housekeeping() {
             nst_disk_load(nuster.cache);
         }
 
-        disk_saver = 10000;
         while(disk_saver--) {
             nst_shctx_lock(&nuster.cache->dict);
             nst_ring_store_async(nuster.cache);
@@ -416,76 +415,93 @@ nst_cache_exists(nst_ctx_t *ctx) {
         return ret;
     }
 
-    nst_shctx_lock(&nuster.cache->dict);
+    if(!nst_key_memory_checked(key)) {
+        nst_key_memory_set_checked(key);
 
-    entry = nst_dict_get(&nuster.cache->dict, key);
+        nst_shctx_lock(&nuster.cache->dict);
 
-    if(entry) {
+        entry = nst_dict_get(&nuster.cache->dict, key);
 
-        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+        if(entry) {
 
-            if(entry->store.ring.data) {
-                ctx->store.ring.data = entry->store.ring.data;
-                ctx->store.ring.data->clients++;
-                ret = NST_CTX_STATE_HIT_MEMORY;
-            } else if(entry->store.disk.file) {
-                ctx->store.disk.file = entry->store.disk.file;
-                ret = NST_CTX_STATE_HIT_DISK;
+            if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+
+                if(entry->store.ring.data) {
+                    ctx->store.ring.data = entry->store.ring.data;
+                    ctx->store.ring.data->clients++;
+                    ret = NST_CTX_STATE_HIT_MEMORY;
+                } else if(entry->store.disk.file) {
+                    ctx->store.disk.file = entry->store.disk.file;
+                    ret = NST_CTX_STATE_HIT_DISK;
+                }
+
+                ctx->txn.res.etag  = entry->etag;
+
+                ctx->txn.res.last_modified = entry->last_modified;
+
+                _nst_cache_record_access(entry);
             }
 
-            ctx->txn.res.etag  = entry->etag;
-
-            ctx->txn.res.last_modified = entry->last_modified;
-
-            _nst_cache_record_access(entry);
-
+            if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
+                ret = NST_CTX_STATE_WAIT;
+            }
         }
-    } else {
+
+        nst_shctx_unlock(&nuster.cache->dict);
+    }
+
+    if(ret == NST_CTX_STATE_INIT) {
 
         if(!nst_store_disk_off(ctx->rule->store)) {
 
-            if(nuster.cache->store.disk.loaded) {
-                ret = NST_CTX_STATE_INIT;
-            } else {
+            if(!nuster.cache->store.disk.loaded) {
                 ret = NST_CTX_STATE_CHECK_DISK;
             }
         }
     }
 
-    nst_shctx_unlock(&nuster.cache->dict);
 
     if(ret == NST_CTX_STATE_HIT_MEMORY) {
         return ret;
     }
 
     if(ret == NST_CTX_STATE_HIT_DISK) {
-        if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
-            ret = NST_CTX_STATE_INIT;
+
+        if(!nst_key_disk_checked(key)) {
+            nst_key_disk_set_checked(key);
+
+            if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
+                ret = NST_CTX_STATE_INIT;
+            }
         }
     }
 
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
-        if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
-            ret = NST_CTX_STATE_HIT_DISK;
+        if(!nst_key_disk_checked(key)) {
+            nst_key_disk_set_checked(key);
 
-            if(ctx->rule->etag == NST_STATUS_ON) {
-                ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
-                ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
+            if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
+                ret = NST_CTX_STATE_HIT_DISK;
 
-                nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+                if(ctx->rule->etag == NST_STATUS_ON) {
+                    ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                    ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
+
+                    nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+                }
+
+                if(ctx->rule->last_modified == NST_STATUS_ON) {
+                    ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                    ctx->txn.res.last_modified.len =
+                        nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
+
+                    nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
+
+                }
+            } else {
+                ret = NST_CTX_STATE_INIT;
             }
-
-            if(ctx->rule->last_modified == NST_STATUS_ON) {
-                ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
-                ctx->txn.res.last_modified.len =
-                    nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
-
-                nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
-
-            }
-        } else {
-            ret = NST_CTX_STATE_INIT;
         }
     }
 
@@ -690,16 +706,16 @@ nst_cache_delete(nst_key_t *key) {
     if(entry) {
 
         if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-            entry->state         = NST_DICT_ENTRY_STATE_EXPIRED;
+            entry->state                    = NST_DICT_ENTRY_STATE_INVALID;
             entry->store.ring.data->invalid = 1;
             entry->store.ring.data          = NULL;
-            entry->expire        = 0;
+            entry->expire                   = 0;
 
             ret = 1;
-        }
 
-        if(entry->store.disk.file) {
-            ret = nst_disk_purge_by_path(entry->store.disk.file);
+            if(entry->store.disk.file) {
+                ret = nst_disk_purge_by_path(entry->store.disk.file);
+            }
         }
     } else {
         ret = 0;

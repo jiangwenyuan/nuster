@@ -28,12 +28,38 @@
 
 #define NST_KEY_UUID_LEN        20
 
+enum {
+    NST_KEY_MEMORY_CHECKED = 0x0001,
+    NST_KEY_DISK_CHECKED   = 0x0002,
+};
+
 typedef struct nst_key {
+    uint8_t             flags;
     uint32_t            size;
     char               *data;
     uint64_t            hash;
     unsigned char       uuid[NST_KEY_UUID_LEN];
 } nst_key_t;
+
+static inline int
+nst_key_memory_checked(nst_key_t *key) {
+    return key->flags & NST_KEY_MEMORY_CHECKED;
+}
+
+static inline int
+nst_key_memory_set_checked(nst_key_t *key) {
+    return key->flags |= NST_KEY_MEMORY_CHECKED;
+}
+
+static inline int
+nst_key_disk_checked(nst_key_t *key) {
+    return key->flags & NST_KEY_DISK_CHECKED;
+}
+
+static inline int
+nst_key_disk_set_checked(nst_key_t *key) {
+    return key->flags |=  NST_KEY_DISK_CHECKED;
+}
 
 static inline hpx_buffer_t *
 nst_key_init() {

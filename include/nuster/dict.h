@@ -33,7 +33,6 @@ enum {
     NST_DICT_ENTRY_STATE_INIT      = 0,
     NST_DICT_ENTRY_STATE_VALID,
     NST_DICT_ENTRY_STATE_INVALID,
-    NST_DICT_ENTRY_STATE_EXPIRED,
 };
 
 typedef struct nst_dict_entry {
@@ -113,8 +112,6 @@ nst_dict_entry_invalid(nst_dict_entry_t *entry) {
 
     /* check state */
     if(entry->state == NST_DICT_ENTRY_STATE_INVALID) {
-        return 1;
-    } else if(entry->state == NST_DICT_ENTRY_STATE_EXPIRED) {
         return 1;
     }
 

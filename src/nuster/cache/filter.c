@@ -165,7 +165,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
-                int        idx  = ctx->rule->key->idx;
+                int         idx = ctx->rule->key->idx;
                 nst_key_t  *key = &(ctx->keys[idx]);
 
                 nst_debug(s, "[rule ] ----- %s", ctx->rule->name);
@@ -191,9 +191,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                         return 1;
                     }
-                }
 
-                nst_key_hash(key);
+                    nst_key_hash(key);
+                }
 
                 nst_key_debug(s, key);
 
