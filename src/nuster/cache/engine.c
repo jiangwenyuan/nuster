@@ -39,7 +39,7 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
     total   = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        appctx->ctx.nuster.cache.store.ring.data->clients--;
+        appctx->ctx.nuster.store.ring.data->clients--;
 
         goto out;
     }
@@ -52,11 +52,11 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
     }
 
     if(res->flags & (CF_SHUTW|CF_SHUTR|CF_SHUTW_NOW)) {
-        appctx->ctx.nuster.cache.store.ring.item = NULL;
+        appctx->ctx.nuster.store.ring.item = NULL;
     }
 
-    if(appctx->ctx.nuster.cache.store.ring.item) {
-        item = appctx->ctx.nuster.cache.store.ring.item;
+    if(appctx->ctx.nuster.store.ring.item) {
+        item = appctx->ctx.nuster.store.ring.item;
 
         while(item) {
             if(nst_http_ring_item_to_htx(item, res_htx) != NST_OK) {
@@ -77,7 +77,7 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
             goto out;
         }
 
-        appctx->ctx.nuster.cache.store.ring.data->clients--;
+        appctx->ctx.nuster.store.ring.data->clients--;
 
         if(!(res->flags & CF_SHUTR) ) {
             res->flags |= CF_READ_NULL;
@@ -93,7 +93,7 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
     }
 
 out:
-    appctx->ctx.nuster.cache.store.ring.item = item;
+    appctx->ctx.nuster.store.ring.item = item;
     total = res_htx->data - total;
     channel_add_input(res, total);
     htx_to_buf(res_htx, &res->buf);
@@ -113,9 +113,9 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
     int                      total, ret, max, fd, header_len;
     char                    *p;
 
-    header_len = appctx->ctx.nuster.cache.header_len;
-    offset     = appctx->ctx.nuster.cache.offset;
-    fd         = appctx->ctx.nuster.cache.fd;
+    header_len = appctx->ctx.nuster.store.disk.header_len;
+    offset     = appctx->ctx.nuster.store.disk.offset;
+    fd         = appctx->ctx.nuster.store.disk.fd;
 
     res_htx = htxbuf(&res->buf);
     total   = res_htx->data;
@@ -180,7 +180,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
             appctx->st1 = NST_DISK_APPLET_PAYLOAD;
             offset += ret;
 
-            appctx->ctx.nuster.cache.offset = offset;
+            appctx->ctx.nuster.store.disk.offset = offset;
 
         case NST_DISK_APPLET_PAYLOAD:
             buf = get_trash_chunk();
@@ -217,7 +217,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
                 sz  = htx_get_blksz(blk);
                 memcpy(ptr, p, sz);
 
-                appctx->ctx.nuster.cache.offset += ret;
+                appctx->ctx.nuster.store.disk.offset += ret;
 
                 break;
             }
@@ -750,17 +750,20 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
         s->target = NULL;
     } else {
         appctx = si_appctx(si);
-        memset(&appctx->ctx.nuster.cache, 0, sizeof(appctx->ctx.nuster.cache));
+        memset(&appctx->ctx.nuster.store, 0, sizeof(appctx->ctx.nuster.store));
 
         appctx->st0 = ctx->state;
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
-            appctx->ctx.nuster.cache.store.ring.data = ctx->store.ring.data;
-            appctx->ctx.nuster.cache.store.ring.item = ctx->store.ring.data->item;
+            appctx->ctx.nuster.store.ring.data = ctx->store.ring.data;
+            appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
         } else {
-            appctx->ctx.nuster.cache.fd         = ctx->store.disk.fd;
-            appctx->ctx.nuster.cache.offset     = nst_disk_get_header_pos(ctx->store.disk.meta);
-            appctx->ctx.nuster.cache.header_len = nst_disk_meta_get_header_len(ctx->store.disk.meta);
+            appctx->ctx.nuster.store.disk.fd         = ctx->store.disk.fd;
+            appctx->ctx.nuster.store.disk.offset     =
+                nst_disk_get_header_pos(ctx->store.disk.meta);
+
+            appctx->ctx.nuster.store.disk.header_len =
+                nst_disk_meta_get_header_len(ctx->store.disk.meta);
         }
 
         appctx->st1 = NST_DISK_APPLET_HEADER;

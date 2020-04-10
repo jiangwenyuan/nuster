@@ -78,33 +78,17 @@ struct appctx {
 
 	union {
 		union {
-			struct {
-				struct nst_dict_entry    *entry;
+			union {
 				struct {
-					struct {
-						struct nst_ring_data    *data;
-						struct nst_ring_item    *item;
-					} ring;
-				} store;
-
-
-				int       fd;
-				int       header_len;
-				uint64_t  offset;
-			} cache;
-			struct {
-				struct nst_dict_entry    *entry;
+					struct nst_ring_data    *data;
+					struct nst_ring_item    *item;
+				} ring;
 				struct {
-					struct {
-						struct nst_ring_data    *data;
-						struct nst_ring_item    *item;
-					} ring;
-				} store;
-
-				int       fd;
-				int       header_len;
-				uint64_t  offset;
-			} nosql;
+					int       fd;
+					int       header_len;
+					uint64_t  offset;
+				} disk;
+			} store;
 			struct {
 				struct nst_dict  *dict;
 				uint64_t          idx;

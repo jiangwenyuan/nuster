@@ -45,7 +45,7 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
     res_htx = htx_from_buf(&res->buf);
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        appctx->ctx.nuster.nosql.store.ring.data->clients--;
+        appctx->ctx.nuster.store.ring.data->clients--;
 
         return;
     }
@@ -76,8 +76,8 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
             break;
         case NST_NOSQL_APPCTX_STATE_HIT_MEMORY:
 
-            if(appctx->ctx.nuster.nosql.store.ring.item) {
-                item = appctx->ctx.nuster.nosql.store.ring.item;
+            if(appctx->ctx.nuster.store.ring.item) {
+                item = appctx->ctx.nuster.store.ring.item;
 
                 while(item) {
 
@@ -112,7 +112,7 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
             }
 
 out:
-            appctx->ctx.nuster.nosql.store.ring.item = item;
+            appctx->ctx.nuster.store.ring.item = item;
             total = res_htx->data - total;
             channel_add_input(res, total);
             htx_to_buf(res_htx, &res->buf);
@@ -121,9 +121,9 @@ out:
         case NST_NOSQL_APPCTX_STATE_HIT_DISK:
             {
                 max        = b_room(&res->buf) - global.tune.maxrewrite;
-                header_len = appctx->ctx.nuster.nosql.header_len;
-                offset     = appctx->ctx.nuster.nosql.offset;
-                fd         = appctx->ctx.nuster.nosql.fd;
+                header_len = appctx->ctx.nuster.store.disk.header_len;
+                offset     = appctx->ctx.nuster.store.disk.offset;
+                fd         = appctx->ctx.nuster.store.disk.fd;
 
                 switch(appctx->st1) {
                     case NST_DISK_APPLET_HEADER:
@@ -168,7 +168,7 @@ out:
 
                         appctx->st1 = NST_DISK_APPLET_PAYLOAD;
                         offset += ret;
-                        appctx->ctx.nuster.nosql.offset += ret;
+                        appctx->ctx.nuster.store.disk.offset += ret;
 
                         break;
                     case NST_DISK_APPLET_PAYLOAD:
@@ -206,7 +206,7 @@ out:
                             sz  = htx_get_blksz(blk);
                             memcpy(ptr, p, sz);
 
-                            appctx->ctx.nuster.nosql.offset += ret;
+                            appctx->ctx.nuster.store.disk.offset += ret;
 
                             break;
                         }

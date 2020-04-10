@@ -241,8 +241,8 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         /* 0: header unsent, 1: sent */
         appctx->st1 = 0;
 
-        appctx->ctx.nuster.nosql.store.ring.data = ctx->store.ring.data;
-        appctx->ctx.nuster.nosql.store.ring.item = ctx->store.ring.data->item;
+        appctx->ctx.nuster.store.ring.data = ctx->store.ring.data;
+        appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
@@ -257,10 +257,10 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;
         appctx->st1 = NST_DISK_APPLET_HEADER;
 
-        appctx->ctx.nuster.nosql.fd         = ctx->store.disk.fd;
-        appctx->ctx.nuster.nosql.offset     = nst_disk_get_header_pos(ctx->store.disk.meta);
-        appctx->ctx.nuster.nosql.header_len = nst_disk_meta_get_header_len(ctx->store.disk.meta);
-
+        appctx->ctx.nuster.store.disk.fd         = ctx->store.disk.fd;
+        appctx->ctx.nuster.store.disk.offset     = nst_disk_get_header_pos(ctx->store.disk.meta);
+        appctx->ctx.nuster.store.disk.header_len =
+            nst_disk_meta_get_header_len(ctx->store.disk.meta);
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
