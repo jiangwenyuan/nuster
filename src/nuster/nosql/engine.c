@@ -444,26 +444,28 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 }
 
 nst_ring_item_t *
-_nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx) {
-    nst_ring_item_t     *item_sl, *item_te, *item_eoh, *tail;
+_nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn) {
+    nst_ring_item_t     *item_sl, *item_ct, *item_te, *item_eoh, *tail;
     hpx_htx_blk_type_t   type;
     hpx_htx_sl_t        *sl;
     uint32_t             size, info;
-    hpx_ist_t            tek  = ist("Transfer-Encoding");
-    hpx_ist_t            tev  = ist("Chunked");
+    hpx_ist_t            ctk  = ist("content-type");
+    hpx_ist_t            tek  = ist("transfer-encoding");
+    hpx_ist_t            tev  = ist("chunked");
     hpx_ist_t            p1   = ist("HTTP/1.1");
     hpx_ist_t            p2   = ist("200");
     hpx_ist_t            p3   = ist("OK");
     char                *data = NULL;
 
-    item_sl = item_te = item_eoh = tail = NULL;
+    item_sl = item_ct = item_te = item_eoh = tail = NULL;
     type = HTX_BLK_RES_SL;
 
+    /* status line */
     info  = type << 28;
     size  = sizeof(*sl) + p1.len + p2.len + p3.len;
     info += size;
 
-    ctx->txn.res.header_len += 4 + size;
+    txn->res.header_len += 4 + size;
 
 
     item_sl = nst_ring_alloc_item(&nuster.nosql->store.ring, p1.len + p2.len + p3.len);
@@ -490,6 +492,31 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx) {
 
     tail = item_sl;
 
+    /* content-type */
+    type  = HTX_BLK_HDR;
+    info  = type << 28;
+    size  = ctk.len + txn->req.content_type.len;
+    info += (txn->req.content_type.len << 8) + ctk.len;
+
+    item_ct = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+
+    if(!item_ct) {
+        goto err;
+    }
+
+    data = item_ct->data;
+
+    txn->res.header_len += 4 + size;
+
+    ist2bin_lc(data, ctk);
+    memcpy(data + ctk.len, txn->req.content_type.ptr, txn->req.content_type.len);
+
+    item_ct->info = info;
+
+    tail->next = item_ct;
+    tail       = item_ct;
+
+    /* transfer-encoding */
     type  = HTX_BLK_HDR;
     info  = type << 28;
     size  = tek.len + tev.len;
@@ -503,7 +530,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx) {
 
     data = item_te->data;
 
-    ctx->txn.res.header_len += 4 + size;
+    txn->res.header_len += 4 + size;
 
     ist2bin_lc(data, tek);
     memcpy(data + tek.len, tev.ptr, tev.len);
@@ -513,6 +540,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx) {
     tail->next = item_te;
     tail       = item_te;
 
+    /* eoh */
     type  = HTX_BLK_EOH;
     info  = type << 28;
     size  = 1;
@@ -526,7 +554,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx) {
 
     data = item_eoh->data;
 
-    ctx->txn.res.header_len += 4 + size;
+    txn->res.header_len += 4 + size;
 
     item_eoh->info = info;
 
@@ -537,6 +565,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx) {
 
 err:
     nst_nosql_memory_free(item_sl);
+    nst_nosql_memory_free(item_ct);
     nst_nosql_memory_free(item_te);
     nst_nosql_memory_free(item_eoh);
 
@@ -600,7 +629,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     /* create header */
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        item = _nst_nosql_create_header(s, ctx);
+        item = _nst_nosql_create_header(s, &ctx->txn);
 
         if(item == NULL) {
             ctx->state = NST_CTX_STATE_INVALID;
