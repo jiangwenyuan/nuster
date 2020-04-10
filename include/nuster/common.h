@@ -112,7 +112,7 @@ enum {
     NST_STORE_MEMORY_OFF        = 0x0002,
     NST_STORE_DISK_ON           = 0x0004,
     NST_STORE_DISK_OFF          = 0x0008,
-    NST_STORE_DISK_ASYNC        = 0x0010,
+    NST_STORE_DISK_SYNC         = 0x0010,
 };
 
 enum nst_key_element_type {
