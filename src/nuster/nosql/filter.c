@@ -158,6 +158,20 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
             nst_debug(s, "[rule ] ----- %s", ctx->rule->name);
 
+            if(ctx->rule->state == NST_RULE_DISABLED) {
+                nst_debug(s, "[rule ] disabled, continue.");
+                ctx->rule = ctx->rule->next;
+
+                continue;
+            }
+
+            if(nst_store_memory_off(ctx->rule->store) && nst_store_disk_off(ctx->rule->store)) {
+                nst_debug(s, "[rule ] memory off and disk off, continue.");
+                ctx->rule = ctx->rule->next;
+
+                continue;
+            }
+
             if(!key->data) {
                 /* build key */
                 if(nst_key_build(s, msg, ctx->rule, &ctx->txn, key, HTTP_METH_GET) != NST_OK) {

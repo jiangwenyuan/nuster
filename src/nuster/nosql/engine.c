@@ -616,6 +616,8 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     idx = ctx->rule->key->idx;
     key = &(ctx->keys[idx]);
 
+    ctx->state = NST_CTX_STATE_CREATE;
+
     nst_shctx_lock(&nuster.nosql->dict);
 
     entry = nst_dict_get(&nuster.nosql->dict, key);
@@ -626,6 +628,13 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
         entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, ctx->rule, ctx->pid);
+
+        if(entry) {
+            ctx->state = NST_CTX_STATE_CREATE;
+            ctx->entry = entry;
+        } else {
+            ctx->state = NST_CTX_STATE_BYPASS;
+        }
     }
 
     nst_shctx_unlock(&nuster.nosql->dict);
