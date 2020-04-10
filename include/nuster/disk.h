@@ -51,7 +51,7 @@
    + etag_len          last_modified_len       last_modified
    + last_modified_len header_len              header
    header_len          payload_len             payload
- */
+   */
 
 #define NST_DISK_META_POS_HASH               8 * 1
 #define NST_DISK_META_POS_EXPIRE             8 * 2

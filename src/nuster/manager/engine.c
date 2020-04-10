@@ -128,7 +128,7 @@ _nst_manager_check_purge_method(hpx_http_txn_t *txn, hpx_http_msg_t *msg) {
     hpx_htx_sl_t  *sl  = http_get_stline(htx);
 
     if(txn->meth == HTTP_METH_OTHER
-        && isteqi(htx_sl_req_meth(sl), global.nuster.manager.purge_method)) {
+            && isteqi(htx_sl_req_meth(sl), global.nuster.manager.purge_method)) {
         return NST_OK;
     } else {
         return NST_ERR;
