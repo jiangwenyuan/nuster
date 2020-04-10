@@ -67,10 +67,15 @@ nst_dict_cleanup(nst_dict_t *dict) {
     while(entry) {
 
         if(nst_dict_entry_invalid(entry)) {
-            nst_dict_entry_t *tmp = entry;
+            nst_dict_entry_t  *tmp = entry;
 
             if(entry->store.ring.data) {
                 entry->store.ring.data->invalid = 1;
+            }
+
+            if(entry->store.disk.file) {
+                nst_memory_free(dict->memory, entry->store.disk.file);
+                entry->store.disk.file = NULL;
             }
 
             if(prev == entry) {
