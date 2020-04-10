@@ -444,12 +444,11 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 }
 
 nst_ring_item_t *
-_nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
-    nst_ring_item_t     *item_sl, *item_cl, *item_te, *item_eoh, *tail;
+_nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx) {
+    nst_ring_item_t     *item_sl, *item_te, *item_eoh, *tail;
     hpx_htx_blk_type_t   type;
     hpx_htx_sl_t        *sl;
     uint32_t             size, info;
-    hpx_ist_t            clk  = ist("Content-Length");
     hpx_ist_t            tek  = ist("Transfer-Encoding");
     hpx_ist_t            tev  = ist("Chunked");
     hpx_ist_t            p1   = ist("HTTP/1.1");
@@ -457,7 +456,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
     hpx_ist_t            p3   = ist("OK");
     char                *data = NULL;
 
-    item_sl = item_cl = item_te = item_eoh = tail = NULL;
+    item_sl = item_te = item_eoh = tail = NULL;
     type = HTX_BLK_RES_SL;
 
     info  = type << 28;
@@ -478,12 +477,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
     sl = (hpx_htx_sl_t *)data;
     sl->hdrs_bytes = -1;
 
-    if(ctx->txn.res.content_length) {
-        sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_LEN |HTX_SL_F_CLEN);
-    } else {
-        sl->flags = (HTX_SL_F_IS_RESP | HTX_SL_F_VER_11 | HTX_SL_F_XFER_ENC
-                | HTX_SL_F_XFER_LEN | HTX_SL_F_CHNK);
-    }
+    sl->flags = HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_ENC|HTX_SL_F_XFER_LEN|HTX_SL_F_CHNK;
 
     HTX_SL_P1_LEN(sl) = p1.len;
     HTX_SL_P2_LEN(sl) = p2.len;
@@ -496,53 +490,28 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
 
     tail = item_sl;
 
-    if(ctx->txn.res.content_length) {
-        type  = HTX_BLK_HDR;
-        info  = type << 28;
-        size  = clk.len + clv.len;
-        info += (clv.len << 8) + clk.len;
+    type  = HTX_BLK_HDR;
+    info  = type << 28;
+    size  = tek.len + tev.len;
+    info += (tev.len << 8) + tek.len;
 
-        item_cl = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+    item_te = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
 
-        if(!item_cl) {
-            goto err;
-        }
-
-        data = item_cl->data;
-
-        ctx->txn.res.header_len += 4 + size;
-
-        ist2bin_lc(data, clk);
-        memcpy(data + clk.len, clv.ptr, clv.len);
-
-        item_cl->info = info;
-
-        tail->next = item_cl;
-        tail       = item_cl;
-    } else {
-        type  = HTX_BLK_HDR;
-        info  = type << 28;
-        size  = tek.len + tev.len;
-        info += (tev.len << 8) + tek.len;
-
-        item_te = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
-
-        if(!item_te) {
-            goto err;
-        }
-
-        data = item_te->data;
-
-        ctx->txn.res.header_len += 4 + size;
-
-        ist2bin_lc(data, tek);
-        memcpy(data + tek.len, tev.ptr, tev.len);
-
-        item_te->info = info;
-
-        tail->next = item_te;
-        tail       = item_te;
+    if(!item_te) {
+        goto err;
     }
+
+    data = item_te->data;
+
+    ctx->txn.res.header_len += 4 + size;
+
+    ist2bin_lc(data, tek);
+    memcpy(data + tek.len, tev.ptr, tev.len);
+
+    item_te->info = info;
+
+    tail->next = item_te;
+    tail       = item_te;
 
     type  = HTX_BLK_EOH;
     info  = type << 28;
@@ -568,7 +537,6 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
 
 err:
     nst_nosql_memory_free(item_sl);
-    nst_nosql_memory_free(item_cl);
     nst_nosql_memory_free(item_te);
     nst_nosql_memory_free(item_eoh);
 
@@ -632,22 +600,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     /* create header */
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
-        hpx_htx_sl_t       *sl;
-        hpx_htx_t          *htx = htxbuf(&msg->chn->buf);
-
-        sl = http_get_stline(htx);
-
-        if(sl->flags & HTX_SL_F_CLEN) {
-            if(http_find_header(htx, ist("Content-Length"), &hdr, 0)) {
-                long long  cl;
-
-                strl2llrc(hdr.value.ptr, hdr.value.len, &cl);
-                ctx->txn.res.content_length = cl;
-            }
-        }
-
-        item = _nst_nosql_create_header(s, ctx, hdr.value);
+        item = _nst_nosql_create_header(s, ctx);
 
         if(item == NULL) {
             ctx->state = NST_CTX_STATE_INVALID;
@@ -859,7 +812,7 @@ nst_nosql_delete(nst_key_t *key) {
 }
 
 
-int
+void
 nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     nst_key_t  *key;
     int         idx;
@@ -867,37 +820,31 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     idx = ctx->rule->key->idx;
     key = &(ctx->keys[idx]);
 
-    if(ctx->txn.res.content_length == 0 && ctx->txn.res.payload_len == 0) {
-        ctx->state = NST_CTX_STATE_INVALID;
-        ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    ctx->state = NST_CTX_STATE_DONE;
+
+    ctx->entry->ctime = get_current_timestamp();
+
+    if(ctx->rule->ttl == 0) {
+        ctx->entry->expire = 0;
     } else {
-        ctx->state = NST_CTX_STATE_DONE;
+        ctx->entry->expire = get_current_timestamp() / 1000 + ctx->rule->ttl;
+    }
 
-        ctx->entry->ctime = get_current_timestamp();
+    if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
 
-        if(ctx->rule->ttl == 0) {
-            ctx->entry->expire = 0;
-        } else {
-            ctx->entry->expire = get_current_timestamp() / 1000 + ctx->rule->ttl;
-        }
+        ctx->entry->store.ring.data = ctx->store.ring.data;
+    }
 
-        if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+    if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+
+        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
+                    ctx->entry->expire) == NST_OK) {
+
             ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-
-            ctx->entry->store.ring.data = ctx->store.ring.data;
-        }
-
-        if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
-
-            if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
-                        ctx->entry->expire) == NST_OK) {
-
-                ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-            }
         }
     }
 
-    return NST_OK;
 }
 
 void

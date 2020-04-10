@@ -61,8 +61,6 @@ typedef struct nst_http_req {
 typedef struct nst_http_res {
     int                 header_len;
     uint64_t            payload_len;
-    uint64_t            content_length;
-    hpx_ist_t           transfer_encoding;
     hpx_ist_t           etag;
     hpx_ist_t           last_modified;
 } nst_http_res_t;

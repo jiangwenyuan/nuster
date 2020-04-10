@@ -50,7 +50,7 @@ void nst_nosql_housekeeping();
 
 void nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
 int nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
-int nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
+void nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
 void nst_nosql_abort(nst_ctx_t *ctx);
 int nst_nosql_exists(nst_ctx_t *ctx);
 int nst_nosql_delete(nst_key_t *key);
