@@ -243,16 +243,18 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
              * change state only, leave the free stuff to cleanup
              * */
             if(entry->state == NST_DICT_ENTRY_STATE_VALID && expired) {
-                entry->state         = NST_DICT_ENTRY_STATE_INVALID;
-                entry->expire        = 0;
-                entry->access[0]     = 0;
-                entry->access[1]     = 0;
-                entry->access[2]     = 0;
-                entry->access[3]     = 0;
-                entry->extended      = 0;
+                entry->state     = NST_DICT_ENTRY_STATE_INVALID;
+                entry->expire    = 0;
+                entry->access[0] = 0;
+                entry->access[1] = 0;
+                entry->access[2] = 0;
+                entry->access[3] = 0;
+                entry->extended  = 0;
 
-                entry->store.ring.data->invalid = 1;
-                entry->store.ring.data          = NULL;
+                if(entry->store.ring.data) {
+                    entry->store.ring.data->invalid = 1;
+                    entry->store.ring.data          = NULL;
+                }
 
                 return NULL;
             }
