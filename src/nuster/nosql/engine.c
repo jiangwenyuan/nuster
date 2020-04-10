@@ -488,6 +488,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
     hpx_ist_t            p3   = ist("OK");
     char                *data = NULL;
 
+    item_sl = item_cl = item_te = item_eoh = tail = NULL;
     type = HTX_BLK_RES_SL;
 
     info  = type << 28;

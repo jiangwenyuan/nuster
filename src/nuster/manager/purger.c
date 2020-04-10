@@ -99,12 +99,12 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     char                    *regex_str, *error, *host, *path;
     int                      host_len, path_len, mode, st1;
 
-    host     = NULL;
-    path     = NULL;
-    host_len = 0;
-    path_len = 0;
-    mode     = NST_MANAGER_NAME_RULE;
-    st1      = 0;
+    regex     = NULL;
+    regex_str = error = host = path  = NULL;
+    host_len  = 0;
+    path_len  = 0;
+    mode      = NST_MANAGER_NAME_RULE;
+    st1       = 0;
 
     if(http_find_header(htx, ist("x-host"), &hdr, 0)) {
         host     = hdr.value.ptr;
@@ -200,7 +200,7 @@ purge:
         appctx->st0 = mode;
         appctx->st1 = st1;
 
-        if(p->nuster.mode == NST_MODE_CACHE) {
+        if(px->nuster.mode == NST_MODE_CACHE) {
             appctx->ctx.nuster.manager.dict = &nuster.cache->dict;
         } else {
             appctx->ctx.nuster.manager.dict = &nuster.nosql->dict;
@@ -248,8 +248,14 @@ notfound:
     return 1;
 
 err:
-    free(error);
-    free(regex_str);
+
+    if(error) {
+        free(error);
+    }
+
+    if(regex_str) {
+        free(regex_str);
+    }
 
     if(regex) {
         regex_free(regex);

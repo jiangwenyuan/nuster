@@ -302,6 +302,7 @@ nst_cache_housekeeping() {
             nst_disk_load(nuster.cache);
         }
 
+        disk_saver=10000;
         while(disk_saver--) {
             nst_ring_store_sync(nuster.cache);
         }
@@ -691,7 +692,7 @@ nst_cache_abort(nst_ctx_t *ctx) {
 int
 nst_cache_delete(nst_key_t *key) {
     nst_dict_entry_t  *entry = NULL;
-    int                ret;
+    int                ret   = 1;
 
     nst_shctx_lock(&nuster.cache->dict);
 
