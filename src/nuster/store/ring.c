@@ -192,7 +192,7 @@ nst_ring_store_sync(nst_core_t *core) {
             ret = nst_disk_store_init(&core->store.disk, &data, &entry->key, &txn, ttl_extend);
 
             if(ret != NST_OK) {
-                goto err;
+                goto next;
             }
 
             entry->store.disk.file = data.file;
@@ -210,7 +210,7 @@ nst_ring_store_sync(nst_core_t *core) {
                     ret = nst_disk_store_add(&core->store.disk, &data, (char *)&info, 4);
 
                     if(ret != NST_OK) {
-                        goto err;
+                        goto next;
                     }
 
                     txn.res.header_len += 4 + blksz;
@@ -219,7 +219,7 @@ nst_ring_store_sync(nst_core_t *core) {
                 ret = nst_disk_store_add(&core->store.disk, &data, item->data, blksz);
 
                 if(ret != NST_OK) {
-                    goto err;
+                    goto next;
                 }
 
                 txn.res.payload_len += blksz;
@@ -227,15 +227,9 @@ nst_ring_store_sync(nst_core_t *core) {
                 item = item->next;
             }
 
-            ret = nst_disk_store_end(&core->store.disk, &data, &entry->key, &txn, entry->expire);
-
-err:
-            close(data.fd);
-
-            if(ret != NST_OK) {
-                remove(data.file);
-            }
+            nst_disk_store_end(&core->store.disk, &data, &entry->key, &txn, entry->expire);
         }
+next:
 
         entry = entry->next;
 

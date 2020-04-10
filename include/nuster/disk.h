@@ -379,13 +379,16 @@ static inline int
 nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) {
 
     if(nst_disk_write(data, buf, len) != NST_OK) {
-        if(data->fd) {
+        if(data->fd != -1) {
             close(data->fd);
+            data->fd = -1;
         }
 
-        nst_memory_free(disk->memory, data->file);
-
-        data->file = NULL;
+        if(data->file) {
+            remove(data->file);
+            nst_memory_free(disk->memory, data->file);
+            data->file = NULL;
+        }
 
         return NST_ERR;
     }

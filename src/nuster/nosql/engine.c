@@ -804,7 +804,15 @@ nst_nosql_exists(nst_ctx_t *ctx) {
         if(!nst_key_disk_checked(key)) {
             nst_key_disk_set_checked(key);
 
-            if(ctx->store.disk.file && nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
+            if(ctx->store.disk.file) {
+                if(nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
+                    ret = NST_CTX_STATE_INIT;
+
+                    if(entry && entry->state == NST_DICT_ENTRY_STATE_VALID) {
+                        entry->state = NST_DICT_ENTRY_STATE_INVALID;
+                    }
+                }
+            } else {
                 ret = NST_CTX_STATE_INIT;
             }
         }

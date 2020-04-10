@@ -118,6 +118,7 @@ nst_disk_data_valid(nst_disk_data_t *data, nst_key_t *key) {
 
 err:
     close(data->fd);
+
     return NST_ERR;
 }
 
@@ -571,6 +572,9 @@ int
 nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
         uint64_t ttl_extend) {
 
+    data->file = NULL;
+    data->fd   = -1;
+
     data->file = nst_memory_alloc(disk->memory, nst_disk_path_file_len(disk->root));
 
     if(!data->file) {
@@ -614,13 +618,16 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
 
 err:
 
-    if(data->fd) {
+    if(data->fd != -1) {
         close(data->fd);
+        data->fd = -1;
     }
 
-    nst_memory_free(disk->memory, data->file);
-
-    data->file = NULL;
+    if(data->file) {
+        remove(data->file);
+        nst_memory_free(disk->memory, data->file);
+        data->file = NULL;
+    }
 
     return NST_ERR;
 }
@@ -663,13 +670,16 @@ nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_
     return NST_OK;
 
 err:
-    if(data->fd) {
+    if(data->fd == -1) {
         close(data->fd);
+        data->fd = -1;
     }
 
-    nst_memory_free(disk->memory, data->file);
-
-    data->file = NULL;
+    if(data->file) {
+        remove(data->file);
+        nst_memory_free(disk->memory, data->file);
+        data->file = NULL;
+    }
 
     return NST_ERR;
 }
