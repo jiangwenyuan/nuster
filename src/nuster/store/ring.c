@@ -63,6 +63,8 @@ nst_ring_alloc_data(nst_ring_t *ring) {
 void
 nst_ring_cleanup(nst_ring_t *ring) {
     nst_ring_data_t  *data = NULL;
+    nst_ring_item_t  *item = NULL;
+    nst_ring_item_t  *tmp;
 
     nst_shctx_lock(ring);
 
@@ -78,7 +80,7 @@ nst_ring_cleanup(nst_ring_t *ring) {
 
         } else {
 
-            if(nst_ring_data_invalid(ring->head)) {
+            if(nst_ring_data_invalid(ring->head) == NST_OK) {
                 data             = ring->head;
                 ring->tail->next = ring->head->next;
                 ring->head       = ring->head->next;
@@ -92,11 +94,11 @@ nst_ring_cleanup(nst_ring_t *ring) {
     }
 
     if(data) {
-        nst_ring_item_t  *item = data->item;
+        item = data->item;
 
         while(item) {
-            nst_ring_item_t  *tmp = item;
-            item                  = item->next;
+            tmp  = item;
+            item = item->next;
 
             nst_memory_free(ring->memory, tmp);
         }
