@@ -112,10 +112,6 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
         nst_stats_update_cache(ctx->state);
 
-        if(ctx->store.disk.fd > 0) {
-            close(ctx->store.disk.fd);
-        }
-
         if(ctx->state == NST_CTX_STATE_CREATE) {
             nst_cache_abort(ctx);
         }
