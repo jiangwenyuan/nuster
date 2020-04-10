@@ -209,16 +209,10 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 nst_debug_beg(s, "[nosql] Test rule ACL: ");
 
                 if(nst_test_rule(s, ctx->rule, msg->chn->flags & CF_ISRESP) == NST_OK) {
-
                     nst_debug_end("PASS");
                     nst_debug(s, "[nosql] To create");
 
-                    if(nst_nosql_get_headers(s, msg, ctx)) {
-                        ctx->state = NST_CTX_STATE_PASS;
-                        ctx->pid   = px->uuid;
-                    } else {
-                        ctx->state = NST_CTX_STATE_INVALID;
-                    }
+                    ctx->state = NST_CTX_STATE_PASS;
 
                     break;
                 }

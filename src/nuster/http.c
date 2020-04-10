@@ -459,6 +459,13 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
         chunk_istcat(txn->buf, hdr.value);
     }
 
+    if(http_find_header(htx, ist("Content-Type"), &hdr, 1)) {
+        txn->req.content_type.ptr = txn->buf->area + txn->buf->data;
+        txn->req.content_type.len = hdr.value.len;
+
+        chunk_istcat(txn->buf, hdr.value);
+    }
+
     return NST_OK;
 }
 

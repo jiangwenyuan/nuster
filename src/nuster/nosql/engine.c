@@ -443,37 +443,6 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     return 0;
 }
 
-int
-nst_nosql_get_headers(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
-    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
-    hpx_htx_t          *htx = htxbuf(&s->req.buf);
-
-    if(http_find_header(htx, ist("Content-Type"), &hdr, 0)) {
-        ctx->txn.req.content_type.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
-        ctx->txn.req.content_type.len = hdr.value.len;
-
-        chunk_istcat(ctx->txn.buf, hdr.value);
-    }
-
-    ctx->txn.res.transfer_encoding.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
-
-    while(http_find_header(htx, ist("Transfer-Encoding"), &hdr, 0)) {
-
-        if(ctx->txn.res.transfer_encoding.len) {
-            chunk_istcat(ctx->txn.buf, ist(","));
-        }
-
-        chunk_istcat(ctx->txn.buf, hdr.value);
-
-        ctx->txn.res.transfer_encoding.len = ctx->txn.res.transfer_encoding.len
-            ? ctx->txn.res.transfer_encoding.len + hdr.value.len + 1
-            : ctx->txn.res.transfer_encoding.len + hdr.value.len;
-
-    }
-
-    return 1;
-}
-
 nst_ring_item_t *
 _nst_nosql_create_header(hpx_stream_t *s, nst_ctx_t *ctx, hpx_ist_t clv) {
     nst_ring_item_t     *item_sl, *item_cl, *item_te, *item_eoh, *tail;

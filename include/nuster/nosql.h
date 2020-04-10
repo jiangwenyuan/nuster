@@ -55,8 +55,6 @@ void nst_nosql_abort(nst_ctx_t *ctx);
 int nst_nosql_exists(nst_ctx_t *ctx);
 int nst_nosql_delete(nst_key_t *key);
 
-int nst_nosql_get_headers(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
-
 int nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
 
 #define nst_nosql_memory_alloc(size)    nst_memory_alloc(global.nuster.nosql.memory, size)
