@@ -1,5 +1,16 @@
 # nuster Changelog
 
+## 5.0.0.20 - 2020-04-11
+
+A complete refactored version based on HTX version of HAProxy. Lots of changes, updates, improvements, to name a few:
+
+* Add nuster manager, moved purge-method and uri to manager, support both cache and nosql
+* Update new stats, support both cache and nosql
+* Update purger, add basic and advance purger, support creating key based on rule
+* Add memory on|off, disk on|off|sync, in form of backend store, more easier to add new store
+* Create new key, avoided redundant compuating, improved performance
+* Unified lots of components
+
 ## 5.0.0.20-dev1 - 2020-02-14
 
 Upgrade to HAProxy v2.1.3
