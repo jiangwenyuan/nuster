@@ -57,7 +57,4 @@ int nst_nosql_delete(nst_key_t *key);
 
 int nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
 
-#define nst_nosql_memory_alloc(size)    nst_memory_alloc(global.nuster.nosql.memory, size)
-#define nst_nosql_memory_free(p)        nst_memory_free(global.nuster.nosql.memory, p)
-
 #endif /* _NUSTER_NOSQL_H */

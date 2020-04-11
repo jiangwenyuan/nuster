@@ -360,7 +360,7 @@ nst_nosql_init() {
             goto shm_err;
         }
 
-        nuster.nosql = nst_nosql_memory_alloc(sizeof(nst_core_t));
+        nuster.nosql = nst_memory_alloc(global.nuster.nosql.memory, sizeof(nst_core_t));
 
         if(!nuster.nosql) {
             goto err;
@@ -564,10 +564,10 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn) {
     return item_sl;
 
 err:
-    nst_nosql_memory_free(item_sl);
-    nst_nosql_memory_free(item_ct);
-    nst_nosql_memory_free(item_te);
-    nst_nosql_memory_free(item_eoh);
+    nst_memory_free(nuster.nosql->memory, item_sl);
+    nst_memory_free(nuster.nosql->memory, item_ct);
+    nst_memory_free(nuster.nosql->memory, item_te);
+    nst_memory_free(nuster.nosql->memory, item_eoh);
 
     return NULL;
 }

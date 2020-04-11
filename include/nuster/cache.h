@@ -44,7 +44,4 @@ int nst_cache_delete(nst_key_t *key);
 void nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req,
         hpx_channel_t *res, nst_ctx_t *ctx);
 
-#define nst_cache_memory_alloc(size)    nst_memory_alloc(global.nuster.cache.memory, size)
-#define nst_cache_memory_free(p)        nst_memory_free(global.nuster.cache.memory, p)
-
 #endif /* _NUSTER_CACHE_H */

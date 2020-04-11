@@ -327,7 +327,7 @@ nst_cache_init() {
             goto shm_err;
         }
 
-        nuster.cache = nst_cache_memory_alloc(sizeof(nst_core_t));
+        nuster.cache = nst_memory_alloc(global.nuster.cache.memory, sizeof(nst_core_t));
 
         if(!nuster.cache) {
             goto err;
