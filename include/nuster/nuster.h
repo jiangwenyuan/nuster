@@ -22,7 +22,7 @@
 #ifndef _NUSTER_H
 #define _NUSTER_H
 
-#define NUSTER_VERSION    "4.0.0.20"
+#define NUSTER_VERSION    "4.0.1.20"
 #define NUSTER_COPYRIGHT                                                     \
     "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 

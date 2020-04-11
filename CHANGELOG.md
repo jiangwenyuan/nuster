@@ -1,5 +1,9 @@
 # nuster Changelog
 
+## 4.0.1.20 - 2020-04-11
+
+Upgrade to HAProxy v2.0.14
+
 ## 4.0.0.20 - 2020-02-13
 
 Upgrade to HAProxy v2.0.12
