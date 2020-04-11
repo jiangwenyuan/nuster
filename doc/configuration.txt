@@ -4,7 +4,7 @@
                          ----------------------
                               version 1.9
                              willy tarreau
-                              2020/02/13
+                              2020/04/02
 
 
 This document covers the configuration language as implemented in the version
@@ -8084,7 +8084,7 @@ server-state-file-name [<file>]
     global
       server-state-file-base /etc/haproxy/states
 
-   backend bk
+    backend bk
       load-server-state-from-file
 
   See also: "server-state-file-base", "load-server-state-from-file", and
@@ -11271,6 +11271,9 @@ no-tls-tickets
   extension) and force to use stateful session resumption. Stateless
   session resumption is more expensive in CPU usage. This option is also
   available on global statement "ssl-default-bind-options".
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
 
 no-tlsv10
   This setting is only available when support for OpenSSL was built in. It
@@ -11962,6 +11965,9 @@ no-tls-tickets
   extension) and force to use stateful session resumption. Stateless
   session resumption is more expensive in CPU usage for servers. This option
   is also available on global statement "ssl-default-server-options".
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
   See also "tls-tickets".
 
 no-tlsv10
@@ -12366,8 +12372,11 @@ tls-tickets
   This option may be used as "server" setting to reset any "no-tls-tickets"
   setting which would have been inherited from "default-server" directive as
   default value.
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
   It may also be used as "default-server" setting to reset any previous
-  "default-server" "no-tlsv-tickets" setting.
+  "default-server" "no-tls-tickets" setting.
 
 verify [none|required]
   This setting is only available when support for OpenSSL was built in. If set

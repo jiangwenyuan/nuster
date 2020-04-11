@@ -6521,6 +6521,7 @@ smp_fetch_ssl_x_sha1(const struct arg *args, struct sample *smp, const char *kw,
 	X509 *crt = NULL;
 	const EVP_MD *digest;
 	int ret = 0;
+	unsigned int len = 0;
 	struct buffer *smp_trash;
 	struct connection *conn;
 
@@ -6542,9 +6543,8 @@ smp_fetch_ssl_x_sha1(const struct arg *args, struct sample *smp, const char *kw,
 
 	smp_trash = get_trash_chunk();
 	digest = EVP_sha1();
-	X509_digest(crt, digest, (unsigned char *) smp_trash->area,
-		    (unsigned int *)&smp_trash->data);
-
+	X509_digest(crt, digest, (unsigned char *) smp_trash->area, &len);
+	smp_trash->data = len;
 	smp->data.u.str = *smp_trash;
 	smp->data.type = SMP_T_BIN;
 	ret = 1;
@@ -7045,6 +7045,7 @@ static int
 smp_fetch_ssl_fc_npn(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
+	unsigned int len = 0;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_STR;
@@ -7056,12 +7057,13 @@ smp_fetch_ssl_fc_npn(const struct arg *args, struct sample *smp, const char *kw,
 
 	smp->data.u.str.area = NULL;
 	SSL_get0_next_proto_negotiated(conn->xprt_ctx,
-	                                (const unsigned char **)&smp->data.u.str.area,
-	                                (unsigned *)&smp->data.u.str.data);
+	                               (const unsigned char **)&smp->data.u.str.area,
+	                               &len);
 
 	if (!smp->data.u.str.area)
 		return 0;
 
+	smp->data.u.str.data = len;
 	return 1;
 }
 #endif
@@ -7071,6 +7073,7 @@ static int
 smp_fetch_ssl_fc_alpn(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct connection *conn;
+	unsigned int len = 0;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_STR;
@@ -7083,12 +7086,13 @@ smp_fetch_ssl_fc_alpn(const struct arg *args, struct sample *smp, const char *kw
 
 	smp->data.u.str.area = NULL;
 	SSL_get0_alpn_selected(conn->xprt_ctx,
-	                         (const unsigned char **)&smp->data.u.str.area,
-	                         (unsigned *)&smp->data.u.str.data);
+	                       (const unsigned char **)&smp->data.u.str.area,
+	                       &len);
 
 	if (!smp->data.u.str.area)
 		return 0;
 
+	smp->data.u.str.data = len;
 	return 1;
 }
 #endif
@@ -7129,6 +7133,7 @@ smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const ch
 	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
 	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 	SSL_SESSION *ssl_sess;
+	unsigned int len = 0;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_BIN;
@@ -7140,11 +7145,11 @@ smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const ch
 	if (!ssl_sess)
 		return 0;
 
-	smp->data.u.str.area = (char *)SSL_SESSION_get_id(ssl_sess,
-							  (unsigned int *)&smp->data.u.str.data);
+	smp->data.u.str.area = (char *)SSL_SESSION_get_id(ssl_sess, &len);
 	if (!smp->data.u.str.area || !smp->data.u.str.data)
 		return 0;
 
+	smp->data.u.str.data = len;
 	return 1;
 }
 #endif

@@ -1940,7 +1940,8 @@ static int sample_conv_json(const struct arg *arg_p, struct sample *smp, void *p
 		}
 		else {
 			len = 1;
-			str = (char *)&c;
+			_str[0] = c;
+			str = _str;
 		}
 
 		/* Check length */
