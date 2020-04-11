@@ -747,6 +747,8 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
                     ctx->entry->expire) == NST_OK) {
 
             ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
+
+            ctx->entry->store.disk.file = ctx->store.disk.file;
         }
     }
 
