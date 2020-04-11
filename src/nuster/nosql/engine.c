@@ -458,17 +458,16 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn) {
     char                *data = NULL;
 
     item_sl = item_ct = item_te = item_eoh = tail = NULL;
-    type = HTX_BLK_RES_SL;
 
     /* status line */
+    type  = HTX_BLK_RES_SL;
     info  = type << 28;
     size  = sizeof(*sl) + p1.len + p2.len + p3.len;
     info += size;
 
     txn->res.header_len += 4 + size;
 
-
-    item_sl = nst_ring_alloc_item(&nuster.nosql->store.ring, p1.len + p2.len + p3.len);
+    item_sl = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
 
     if(!item_sl) {
         goto err;
