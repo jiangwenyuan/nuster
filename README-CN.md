@@ -20,7 +20,7 @@
   * [开启关闭rule](#开启关闭rule)
   * [更新生存时间](#更新生存时间)
   * [清除](#清除)
-* [硬盘持久化](#硬盘持久化)
+* [Store](#store)
 * [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
 
@@ -341,7 +341,7 @@ backend be
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -473,14 +473,19 @@ cache-rule 200and404 code 200,404
 cache-rule all code all
 ```
 
-### disk MODE
+### memory on|off
 
-定义缓存持久模式
+是否保存数据到内存，默认on。
 
-* off:   默认模式，仅保存在内存
-* only:  不保存在内存，仅保存在硬盘
-* sync:  保存到内存和硬盘后返回给客户端
-* async: 保存到内存后立即换回给客户的，内存数据会由master进程在一定时间后保存至硬盘
+详见[Store](#Store)
+
+### disk on|off|sync
+
+是否保存数据到硬盘，已经如何保存，默认off
+
+需要设置`memory on` 以使用 `disk sync`
+
+详见[Store](#Store)
 
 ### etag on|off
 
@@ -699,16 +704,16 @@ manager.purge_method:           PURGE
 **MEMORY**
 memory.common.total:            1048576
 memory.common.used:             1600
-memory.cache.total:             3145728
-memory.cache.used:              1048832
-memory.nosql.total:             105906176
-memory.nosql.used:              1048768
+memory.cache.total:             2098200576
+memory.cache.used:              1048960
+memory.nosql.total:             11534336
+memory.nosql.used:              1048960
 
-**PERSISTENCE**
-persistence.cache.dir:          /tmp/nuster/cache
-persistence.cache.loaded:       yes
-persistence.nosql.dir:          /tmp/nuster/nosql
-persistence.nosql.loaded:       yes
+**DISK**
+disk.cache.dir:                 /tmp/nuster/cache
+disk.cache.loaded:              no
+disk.nosql.dir:                 /tmp/nuster/nosql
+disk.nosql.loaded:              no
 
 **STATISTICS**
 statistics.cache.total:         0
@@ -721,16 +726,18 @@ statistics.nosql.post:          0
 statistics.nosql.delete:        0
 
 **PROXY cache app1**
-app1.rule.r1:                   state=on  disk=off   ttl=100
-app1.rule.r2:                   state=on  disk=only  ttl=200
-app1.rule.r2:                   state=on  disk=sync  ttl=300
-app1.rule.r4:                   state=on  disk=async ttl=400
+app1.rule.rule1:                state=on  memory=on  disk=off   ttl=10
+app1.rule.rule2:                state=on  memory=on  disk=on    ttl=10
+app1.rule.rule3:                state=on  memory=on  disk=sync  ttl=10
+app1.rule.rule4:                state=on  memory=off disk=on    ttl=10
+app1.rule.rule5:                state=on  memory=off disk=off   ttl=10
 
 **PROXY nosql app2**
-app2.rule.ra:                   state=on  disk=off   ttl=0
-app2.rule.rb:                   state=on  disk=only  ttl=1000
-app2.rule.rc:                   state=on  disk=sync  ttl=1000
-app2.rule.rd:                   state=on  disk=async ttl=1000
+app2.rule.ruleA:                state=on  memory=on  disk=off   ttl=10
+app2.rule.ruleB:                state=on  memory=on  disk=on    ttl=10
+app2.rule.ruleC:                state=on  memory=on  disk=sync  ttl=10
+app2.rule.ruleD:                state=on  memory=off disk=on    ttl=10
+app2.rule.ruleE:                state=on  memory=off disk=off   ttl=10
 ```
 
 ## 开启关闭rule
@@ -945,30 +952,23 @@ curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/
 
 6. 只有disk load结束后才能通过host or path or regex 来删除缓存文件。是否已经load结束可以查看stats URL。
 
-# 硬盘持久化
+# Store
 
-配置文件
+Nuster(cache和nosql) 支持多种后端存储. 目前支持memory和disk。计划添加其他后段。
 
-```
-global
-    master-worker
-    nuster manager on uri /_/nuster purge-method MYPURGE
-    nuster cache on data-size 10m dir /tmp/cache
-    nuster nosql on data-size 10m dir /tmp/nosql
-backend be
-    nuster cache on
-    nuster rule off   disk off   ttl 1m if { path_beg /disk-off }
-    nuster rule only  disk only  ttl 1d if { path_beg /disk-only }
-    nuster rule sync  disk sync  ttl 1h if { path_beg /disk-sync }
-    nuster rule async disk async ttl 2h if { path_beg /disk-async }
-    nuster rule others ttl 100
-```
+## Memory
 
-1. `/disk-off` 仅保存在内存
-2. `/disk-only` 仅保存在硬盘
-3. `/disk-sync` 保存至内存和硬盘后返回给客户端
-4. `/disk-async` 保存至内存后立即换回给客户端，内存数据会在一定时间后被缓存至硬盘
-5. 其他的所有请求都仅保存在内存
+数据被存在一个大小由`data-size`定义的内存区域。重启后数据会消失。
+
+## Disk
+
+数据被存到硬盘由`dir`定义的目录下。重启后数据不会消失。
+
+有三种模式:
+
+* off:   默认，不保存到硬盘
+* on:    保存到硬盘
+* sync:  需要设置`memory on`。先保存至内存然后由master进程在一定时间后同步到硬盘。
 
 # Sample fetches
 

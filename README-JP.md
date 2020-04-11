@@ -20,7 +20,7 @@
   * [Ruleの有効無効](#Ruleの有効無効)
   * [生存期間更新](#生存期間更新)
   * [削除](#削除)
-* [永続性](#永続性)
+* [Store](#store)
 * [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
 
@@ -344,7 +344,7 @@ cache/nosqlの有効無効を決める。
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -477,14 +477,19 @@ cache-rule 200and404 code 200,404
 cache-rule all code all
 ```
 
-### disk MODE
+### memory on|off
 
-パーシステンスのモードを設定する
+メモリに保存するかどうか、ディフォルトon
 
-* off:   デフォルト、メモリのみに保存する
-* only:  メモリに保存せず、ディスクだけに保存する
-* sync:  メモリとディスクに保存してからクライアントに返す
-* async: メモリに保存してクライアントに返す、後ほどmaster processによってディスクに保存される
+詳細は[Store](#Store)
+
+### disk on|off|sync
+
+ディスクに保存するかどうか、どうやって保存するか、ディフォルトoff
+
+`disk sync` を使うには`memory on`を設定する必要がある。
+
+詳細は[Store](#Store)
 
 ### etag on|off
 
@@ -703,16 +708,16 @@ manager.purge_method:           PURGE
 **MEMORY**
 memory.common.total:            1048576
 memory.common.used:             1600
-memory.cache.total:             3145728
-memory.cache.used:              1048832
-memory.nosql.total:             105906176
-memory.nosql.used:              1048768
+memory.cache.total:             2098200576
+memory.cache.used:              1048960
+memory.nosql.total:             11534336
+memory.nosql.used:              1048960
 
-**PERSISTENCE**
-persistence.cache.dir:          /tmp/nuster/cache
-persistence.cache.loaded:       yes
-persistence.nosql.dir:          /tmp/nuster/nosql
-persistence.nosql.loaded:       yes
+**DISK**
+disk.cache.dir:                 /tmp/nuster/cache
+disk.cache.loaded:              no
+disk.nosql.dir:                 /tmp/nuster/nosql
+disk.nosql.loaded:              no
 
 **STATISTICS**
 statistics.cache.total:         0
@@ -725,16 +730,18 @@ statistics.nosql.post:          0
 statistics.nosql.delete:        0
 
 **PROXY cache app1**
-app1.rule.r1:                   state=on  disk=off   ttl=100
-app1.rule.r2:                   state=on  disk=only  ttl=200
-app1.rule.r2:                   state=on  disk=sync  ttl=300
-app1.rule.r4:                   state=on  disk=async ttl=400
+app1.rule.rule1:                state=on  memory=on  disk=off   ttl=10
+app1.rule.rule2:                state=on  memory=on  disk=on    ttl=10
+app1.rule.rule3:                state=on  memory=on  disk=sync  ttl=10
+app1.rule.rule4:                state=on  memory=off disk=on    ttl=10
+app1.rule.rule5:                state=on  memory=off disk=off   ttl=10
 
 **PROXY nosql app2**
-app2.rule.ra:                   state=on  disk=off   ttl=0
-app2.rule.rb:                   state=on  disk=only  ttl=1000
-app2.rule.rc:                   state=on  disk=sync  ttl=1000
-app2.rule.rd:                   state=on  disk=async ttl=1000
+app2.rule.ruleA:                state=on  memory=on  disk=off   ttl=10
+app2.rule.ruleB:                state=on  memory=on  disk=on    ttl=10
+app2.rule.ruleC:                state=on  memory=on  disk=sync  ttl=10
+app2.rule.ruleD:                state=on  memory=off disk=on    ttl=10
+app2.rule.ruleE:                state=on  memory=off disk=off   ttl=10
 ```
 
 ## Ruleの有効無効
@@ -946,27 +953,21 @@ curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/
 
 6. host or path or regexでキャッシュファイルを削除するのはdisk loadが完了してからじゃないといけないです。disk loadが完了しているかどうかはstats URLで確認できます。
 
-# 永続性
+# Store
 
-```
-global
-    master-worker
-    nuster cache on data-size 10m dir /tmp/cache
-    nuster nosql on data-size 10m dir /tmp/nosql
-backend be
-    nuster cache on
-    nuster rule off   disk off   ttl 1m if { path_beg /disk-off }
-    nuster rule only  disk only  ttl 1d if { path_beg /disk-only }
-    nuster rule sync  disk sync  ttl 1h if { path_beg /disk-sync }
-    nuster rule async disk async ttl 2h if { path_beg /disk-async }
-    nuster rule others ttl 100
-```
+Nuster(cacheとnosql) は複数の保存先をサポートする。今はmemory とdisk２つある。
 
-1. `/disk-off` はメモリのみに保存される
-2. `/disk-only` はディスクのみに保存される
-3. `/disk-sync` はメモリとディスクに保存してからクライアントに返す
-4. `/disk-async` はメモリに保存してクライアントに返す。後ほどmaster processによってディスクに保存される
-5. ほかはメモリに保存される
+## Memory
+
+大きさが`data-size`で定義されたメモリに保存する。再起動するとDataが消える。
+
+## Disk
+
+ディスクの`dir`の下に保存する。再起動してもDataは消えない。
+
+* off:   ディフォルト、保存しない
+* on:    保存する
+* sync:  `memory on` が必須. メモリに保存して、後ほどmasterプロセスによってディスクに保存される。
 
 # Sample fetches
 

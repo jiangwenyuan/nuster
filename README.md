@@ -18,7 +18,7 @@ A high-performance HTTP proxy cache server and RESTful NoSQL cache server based 
   * [Enable disable rules](#enable-and-disable-rule)
   * [Update ttl](#update-ttl)
   * [Purging](#purging)
-* [Disk persistence](#disk-persistence)
+* [Store](#store)
 * [Sample fetches](#sample-fetches)
 * [FAQ](#faq)
 
@@ -353,7 +353,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [disk MODE] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -488,14 +488,19 @@ nuster rule 200and404 code 200,404
 nuster rule all code all
 ```
 
-### disk MODE
+### memory on|off
 
-Specify how and where to save the cached data. There are four MODEs.
+Save data to memory or not, default on.
 
-* off:   default, disable disk persistence, data are stored in memory only
-* only:  save data to disk only, do not store in memory
-* sync:  save data to memory and disk(kernel), then return to the client
-* async: save data to memory and return to the client, cached data will be saved to disk later by the master process
+See [Store](#Store) for details.
+
+### disk on|off|sync
+
+Save data to disk or not, and how, default off.
+
+`memory on` needs to be set in order to use `disk sync` mode.
+
+See [Store](#Store) for details.
 
 ### etag on|off
 
@@ -716,16 +721,16 @@ manager.purge_method:           PURGE
 **MEMORY**
 memory.common.total:            1048576
 memory.common.used:             1600
-memory.cache.total:             3145728
-memory.cache.used:              1048832
-memory.nosql.total:             105906176
-memory.nosql.used:              1048768
+memory.cache.total:             2098200576
+memory.cache.used:              1048960
+memory.nosql.total:             11534336
+memory.nosql.used:              1048960
 
-**PERSISTENCE**
-persistence.cache.dir:          /tmp/nuster/cache
-persistence.cache.loaded:       yes
-persistence.nosql.dir:          /tmp/nuster/nosql
-persistence.nosql.loaded:       yes
+**DISK**
+disk.cache.dir:                 /tmp/nuster/cache
+disk.cache.loaded:              no
+disk.nosql.dir:                 /tmp/nuster/nosql
+disk.nosql.loaded:              no
 
 **STATISTICS**
 statistics.cache.total:         0
@@ -738,16 +743,18 @@ statistics.nosql.post:          0
 statistics.nosql.delete:        0
 
 **PROXY cache app1**
-app1.rule.r1:                   state=on  disk=off   ttl=100
-app1.rule.r2:                   state=on  disk=only  ttl=200
-app1.rule.r2:                   state=on  disk=sync  ttl=300
-app1.rule.r4:                   state=on  disk=async ttl=400
+app1.rule.rule1:                state=on  memory=on  disk=off   ttl=10
+app1.rule.rule2:                state=on  memory=on  disk=on    ttl=10
+app1.rule.rule3:                state=on  memory=on  disk=sync  ttl=10
+app1.rule.rule4:                state=on  memory=off disk=on    ttl=10
+app1.rule.rule5:                state=on  memory=off disk=off   ttl=10
 
 **PROXY nosql app2**
-app2.rule.ra:                   state=on  disk=off   ttl=0
-app2.rule.rb:                   state=on  disk=only  ttl=1000
-app2.rule.rc:                   state=on  disk=sync  ttl=1000
-app2.rule.rd:                   state=on  disk=async ttl=1000
+app2.rule.ruleA:                state=on  memory=on  disk=off   ttl=10
+app2.rule.ruleB:                state=on  memory=on  disk=on    ttl=10
+app2.rule.ruleC:                state=on  memory=on  disk=sync  ttl=10
+app2.rule.ruleD:                state=on  memory=off disk=on    ttl=10
+app2.rule.ruleE:                state=on  memory=off disk=off   ttl=10
 ```
 
 ## Enable and disable rule
@@ -964,31 +971,23 @@ curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/
 
 6. Purging cache files by host or path or regex only works after the disk loader process is finished. You can check the status through stats url.
 
-# Disk persistence
+# Store
 
-Disk persistence is introduced in v3, it supports 4 persistence modes as described above.
+Nuster(both cache and nosql) supports different backend stores. Currently memory and disk are supported. More stores will be added.
 
-A minimal config file looks like
+## Memory
 
-```
-global
-    master-worker
-    nuster cache on data-size 10m dir /tmp/cache
-    nuster nosql on data-size 10m dir /tmp/nosql
-backend be
-    nuster cache on
-    nuster rule off   disk off   ttl 1m if { path_beg /disk-off }
-    nuster rule only  disk only  ttl 1d if { path_beg /disk-only }
-    nuster rule sync  disk sync  ttl 1h if { path_beg /disk-sync }
-    nuster rule async disk async ttl 2h if { path_beg /disk-async }
-    nuster rule others ttl 100
-```
+Data is stored into a memory area which size is defined by `data-size`. Data does not persist in memory and will lost after restarts.
 
-1. `/disk-off` will be cached only in memory
-2. `/disk-only` will be cached only in disk
-3. `/disk-sync` will be cached in memory and in disk, then return to the client
-4. `/disk-async` will be cached in memory and return to the client, cached data will be saved to disk later
-5. other requests will be cached only in memory
+## Disk
+
+Data is stored to disk and under the path defined by `dir`. Data persists after restarts.
+
+There are 3 modes:
+
+* off:   default, disable disk persistence.
+* on:    save data to disk.
+* sync:  memory on has to be set in order to use this mode. Save data to memory first and data will be synced to disk later by the master process
 
 # Sample fetches
 
