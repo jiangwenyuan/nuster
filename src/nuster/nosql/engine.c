@@ -560,6 +560,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn) {
 
     tail->next = item_eoh;
     tail       = item_eoh;
+    tail->next = NULL;
 
     return item_sl;
 
