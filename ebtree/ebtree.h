@@ -370,6 +370,8 @@ struct eb_root {
  * and one for the node, which remains unused in the very first node inserted
  * into the tree. This structure is 20 bytes per node on 32-bit machines. Do
  * not change the order, benchmarks have shown that it's optimal this way.
+ * Note: be careful about this struct's alignment if it gets included into
+ * another struct and some atomic ops are expected on the keys or the node.
  */
 struct eb_node {
 	struct eb_root branches; /* branches, must be at the beginning */

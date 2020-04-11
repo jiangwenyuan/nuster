@@ -828,6 +828,9 @@ static int stats_dump_fields_html(struct chunk *out, const struct field *stats, 
 		else if (strcmp(field_str(stats, ST_F_STATUS), "DOWN ") == 0) {
 			style = "going_up";
 		}
+		else if (strcmp(field_str(stats, ST_F_STATUS), "DRAIN") == 0) {
+			style = "draining";
+		}
 		else if (strcmp(field_str(stats, ST_F_STATUS), "NOLB ") == 0) {
 			style = "going_down";
 		}

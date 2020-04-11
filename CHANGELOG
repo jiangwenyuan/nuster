@@ -1,6 +1,45 @@
 ChangeLog :
 ===========
 
+2020/04/02 : 1.8.25
+    - BUG/MINOR: namespace: avoid closing fd when socket failed in my_socketat
+    - SCRIPTS: announce-release: use mutt -H instead of -i to include the draft
+    - CONTRIB: debug: add the possibility to decode the value as certain types only
+    - CONTRIB: debug: support reporting multiple values at once
+    - CONTRIB: debug: also support reading values from stdin
+    - BUG/MEDIUM: shctx: make sure to keep all blocks aligned
+    - MINOR: compiler: move CPU capabilities definition from config.h and complete them
+    - BUG/MEDIUM: ebtree: don't set attribute packed without unaligned access support
+    - BUILD: fix recent build failure on unaligned archs
+    - MINOR: compiler: add new alignment macros
+    - BUILD: ebtree: improve architecture-specific alignment
+    - BUG/MINOR: sample: fix the json converter's endian-sensitivity
+    - BUG/MINOR: sample: Make sure to return stable IDs in the unique-id fetch
+    - BUG/MAJOR: list: fix invalid element address calculation
+    - DOC: fix incorrect indentation of http_auth_*
+    - BUG/MAJOR: proxy_protocol: Properly validate TLV lengths
+    - REGTEST: make the PROXY TLV validation depend on version 2.2
+    - BUG/MINOR: lua: Ignore the reserve to know if a channel is full or not
+    - BUG/MINOR: http-rules: Preserve FLT_END analyzers on reject action
+    - BUG/MINOR: http-rules: Fix a typo in the reject action function
+    - BUG/MINOR: rules: Preserve FLT_END analyzers on silent-drop action
+    - BUG/MINOR: rules: Increment be_counters if backend is assigned for a silent-drop
+    - DOC: fix typo about no-tls-tickets
+    - DOC: improve description of no-tls-tickets
+    - DOC: ssl: clarify security implications of TLS tickets
+    - DOC: proxy_protocol: Reserve TLV type 0x05 as PP2_TYPE_UNIQUE_ID
+    - DOC: assorted typo fixes in the documentation
+    - BUG/MINOR: peers: init bind_proc to 1 if it wasn't initialized
+    - BUG/MINOR: peers: avoid an infinite loop with peers_fe is NULL
+    - BUG/MINOR: stats: Fix color of draining servers on stats page
+    - DOC: internals: Fix spelling errors in filters.txt
+    - BUG/MEDIUM: http: unbreak redirects in legacy mode
+    - MINOR: http-rules: Add a flag on redirect rules to know the rule direction
+    - BUG/MINOR: http_ana: make sure redirect flags don't have overlapping bits
+    - MINOR: http-rules: Handle the rule direction when a redirect is evaluated
+    - BUG/MINOR: http-ana: Reset request analysers on error when waiting for response
+    - BUG/CRITICAL: hpack: never index a header into the headroom after wrapping
+
 2020/02/15 : 1.8.24
     - DOC: clarify matching strings on binary fetches
     - BUG/MEDIUM: listener/thread: fix a race when pausing a listener

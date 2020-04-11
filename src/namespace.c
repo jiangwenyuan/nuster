@@ -126,7 +126,8 @@ int my_socketat(const struct netns_entry *ns, int domain, int type, int protocol
 
 #ifdef CONFIG_HAP_NS
 	if (default_namespace >= 0 && ns && setns(default_namespace, CLONE_NEWNET) == -1) {
-		close(sock);
+		if (sock >= 0)
+			close(sock);
 		return -1;
 	}
 #endif

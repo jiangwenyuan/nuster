@@ -9191,6 +9191,18 @@ out_uri_auth_compat:
 		struct peers *curpeers = cfg_peers, **last;
 		struct peer *p, *pb;
 
+		/* In the case the peers frontend was not initialized by a
+		 stick-table used in the configuration, set its bind_proc
+		 by default to the first process. */
+		while (curpeers) {
+			if (curpeers->peers_fe) {
+				if (curpeers->peers_fe->bind_proc == 0)
+					curpeers->peers_fe->bind_proc = 1;
+			}
+			curpeers = curpeers->next;
+		}
+
+		curpeers = cfg_peers;
 		/* Remove all peers sections which don't have a valid listener,
 		 * which are not used by any table, or which are bound to more
 		 * than one process.

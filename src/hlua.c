@@ -3208,8 +3208,9 @@ __LJMP static int hlua_channel_is_full(lua_State *L)
 	rem = chn->buf->size;
 	rem -= chn->buf->o; /* Output size */
 	rem -= chn->buf->i; /* Input size */
-	rem -= global.tune.maxrewrite; /* Rewrite reserved size */
-
+	/* ignore the reserve, we are not on a producer side (ie in an
+	 * applet).
+	 */
 	lua_pushboolean(L, rem <= 0);
 	return 1;
 }
