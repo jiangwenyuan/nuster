@@ -47,8 +47,6 @@ nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size) {
 
 /*
  * Check entry validity, free the entry if its invalid,
- * If its invalid set entry->data->invalid to true,
- * entry->data is freed by _cache_data_cleanup
  */
 void
 nst_dict_cleanup(nst_dict_t *dict) {
@@ -178,9 +176,9 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 err:
 
     if(entry) {
-        nst_cache_memory_free(entry->key.data);
-        nst_cache_memory_free(entry->buf.area);
-        nst_cache_memory_free(entry);
+        nst_memory_free(dict->memory, entry->key.data);
+        nst_memory_free(dict->memory, entry->buf.area);
+        nst_memory_free(dict->memory, entry);
     }
 
     return NULL;
