@@ -181,6 +181,26 @@ nst_http_reply(hpx_stream_t *s, int idx) {
         co_htx_skip(req, req_htx, co_data(req));
         htx_to_buf(req_htx, &req->buf);
     }
+
+    si_shutr(si);
+    si_shutw(si);
+    si->err_type = SI_ET_NONE;
+    si->state    = SI_ST_CLO;
+
+    channel_auto_read(req);
+    channel_abort(req);
+    channel_auto_close(req);
+    channel_htx_erase(req, htxbuf(&req->buf));
+    channel_auto_read(res);
+    channel_auto_close(res);
+
+    if(!(s->flags & SF_ERR_MASK)) {
+        s->flags |= SF_ERR_LOCAL;
+    }
+    if(!(s->flags & SF_FINST_MASK)) {
+        s->flags |= SF_FINST_C;
+    }
+
 }
 
 int

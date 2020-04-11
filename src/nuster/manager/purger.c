@@ -25,58 +25,65 @@
  */
 int
 nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
-    hpx_http_msg_t  *msg = &s->txn->req;
-    nst_key_t        key;
-    int              ret;
-
-    nst_http_txn_t txn;
+    hpx_http_msg_t     *msg  = &s->txn->req;
+    hpx_proxy_t        *p    = proxies_list;
+    nst_http_txn_t      txn;
+    nst_key_t           key  = { .data = NULL };
+    int                 ret  = NST_HTTP_500;
 
     if(nst_http_txn_attach(&txn) != NST_OK) {
         goto err;
     }
 
-    if((px->cap & PR_CAP_BE)
-            && (px->nuster.mode == NST_MODE_CACHE || px->nuster.mode == NST_MODE_NOSQL)) {
+    if(nst_http_parse_htx(s, msg, &txn) != NST_OK) {
+        goto err;
+    }
 
-        nst_rule_t  *rule = nuster.proxy[px->uuid]->rule;
+    while(p) {
+        if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
 
-        if(nst_http_parse_htx(s, msg, &txn) != NST_OK) {
-            goto err;
+            nst_rule_t  *rule = nuster.proxy[p->uuid]->rule;
+
+            while(rule) {
+                nst_debug(s, "[rule ] ----- %s", rule->name);
+
+                if(key.data) {
+                    free(key.data);
+                }
+
+                if(nst_key_build(s, msg, rule, &txn, &key, HTTP_METH_GET) != NST_OK) {
+                    goto err;
+                }
+
+                nst_key_hash(&key);
+
+                nst_key_debug(s, &key);
+
+                if(p->nuster.mode == NST_MODE_CACHE) {
+                    ret = nst_cache_delete(&key);
+                } else {
+                    ret = nst_nosql_delete(&key);
+                }
+
+                if(ret == 0) {
+                    nst_http_reply(s, NST_HTTP_404);
+                } else if(ret == 1) {
+                    nst_http_reply(s, NST_HTTP_200);
+                } else {
+                    nst_http_reply(s, NST_HTTP_500);
+                }
+
+                goto end;
+
+                rule = rule->next;
+            }
         }
 
-        while(rule) {
-            nst_debug(s, "[manager] ==== Check rule: %s ====", rule->name);
-
-            if(nst_key_build(s, msg, rule, &txn, &key, HTTP_METH_GET) != NST_OK) {
-                goto err;
-            }
-
-            nst_key_hash(&key);
-
-            nst_key_debug(s, &key);
-
-            if(px->nuster.mode == NST_MODE_CACHE) {
-                ret = nst_cache_delete(&key);
-            } else {
-                ret = nst_nosql_delete(&key);
-            }
-
-            if(ret == 0) {
-                nst_http_reply(s, NST_HTTP_404);
-            } else if(ret == 1) {
-                nst_http_reply(s, NST_HTTP_200);
-            } else {
-                nst_http_reply(s, NST_HTTP_500);
-            }
-
-            goto end;
-
-            rule = rule->next;
-        }
+        p = p->next;
     }
 
 err:
-    nst_http_reply(s, NST_HTTP_500);
+    nst_http_reply(s, ret);
 
 end:
     nst_http_txn_detach(&txn);
