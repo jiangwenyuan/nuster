@@ -27,10 +27,10 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_proxy_t        *p;
     hpx_htx_t          *htx = htxbuf(&s->req.buf);
-    int                 found, mode, ret;
+    int                 found, method, ret;
 
-    mode = NST_MANAGER_NAME_RULE;
-    ret  = NST_HTTP_400;
+    method = NST_MANAGER_NAME_RULE;
+    ret    = NST_HTTP_400;
 
     if(state == -1 && ttl == -1) {
         goto end;
@@ -39,8 +39,8 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
     if(http_find_header(htx, ist("name"), &hdr, 0)) {
 
         if(isteq(hdr.value, ist("*"))) {
-            found = 1;
-            mode  = NST_MANAGER_NAME_ALL;
+            method = NST_MANAGER_NAME_ALL;
+            found  = 1;
         }
 
         p = proxies_list;
@@ -50,18 +50,18 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
 
             if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
 
-                if(mode != NST_MANAGER_NAME_ALL && strlen(p->id) == hdr.value.len
+                if(method != NST_MANAGER_NAME_ALL && strlen(p->id) == hdr.value.len
                         && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
 
-                    found = 1;
-                    mode  = NST_MANAGER_NAME_PROXY;
+                    method = NST_MANAGER_NAME_PROXY;
+                    found  = 1;
                 }
 
                 rule = nuster.proxy[p->uuid]->rule;
 
                 while(rule) {
 
-                    if(mode != NST_MANAGER_NAME_RULE) {
+                    if(method != NST_MANAGER_NAME_RULE) {
                         rule->state = state == -1 ? rule->state : state;
                         rule->ttl   = ttl   == -1 ? rule->ttl   : ttl;
                     } else if(strlen(rule->name) == hdr.value.len
@@ -75,7 +75,7 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
                     rule = rule->next;
                 }
 
-                if(mode == NST_MANAGER_NAME_PROXY) {
+                if(method == NST_MANAGER_NAME_PROXY) {
                     break;
                 }
 

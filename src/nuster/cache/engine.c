@@ -708,16 +708,22 @@ nst_cache_delete(nst_key_t *key) {
     if(entry) {
 
         if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-            entry->state                    = NST_DICT_ENTRY_STATE_INVALID;
-            entry->store.ring.data->invalid = 1;
-            entry->store.ring.data          = NULL;
-            entry->expire                   = 0;
+            entry->state  = NST_DICT_ENTRY_STATE_INVALID;
+            entry->expire = 0;
+
+            if(entry->store.ring.data) {
+                entry->store.ring.data->invalid = 1;
+                entry->store.ring.data          = NULL;
+            }
+
+            if(entry->store.disk.file) {
+                nst_disk_remove(entry->store.disk.file);
+                nst_memory_free(nuster.nosql->memory, entry->store.disk.file);
+                entry->store.disk.file = NULL;
+            }
 
             ret = 1;
 
-            if(entry->store.disk.file) {
-                ret = nst_disk_purge_by_path(entry->store.disk.file);
-            }
         }
     } else {
         ret = 0;

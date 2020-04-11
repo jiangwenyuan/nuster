@@ -104,42 +104,53 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     hpx_appctx_t            *appctx;
     hpx_my_regex_t          *regex;
     char                    *regex_str, *error, *host, *path;
-    int                      host_len, path_len, mode, st1;
+    int                      host_len, path_len, method, st1, mode;
 
     regex     = NULL;
     regex_str = error = host = path  = NULL;
     host_len  = 0;
     path_len  = 0;
-    mode      = NST_MANAGER_NAME_RULE;
+    method    = NST_MANAGER_NAME_RULE;
     st1       = 0;
+    mode      = 0;
 
-    if(http_find_header(htx, ist("x-host"), &hdr, 0)) {
+    if(http_find_header(htx, ist("mode"), &hdr, 0)) {
+
+        if(isteq(hdr.value, ist("cache"))) {
+            mode = NST_MODE_CACHE;
+        } else if(isteq(hdr.value, ist("nosql"))) {
+            mode = NST_MODE_NOSQL;
+        } else {
+            goto badreq;
+        }
+    }
+
+    hdr.blk = NULL;
+
+    if(http_find_header(htx, ist("nuster-host"), &hdr, 0)) {
+        host     = hdr.value.ptr;
+        host_len = hdr.value.len;
+    } else if(http_find_header(htx, ist("host"), &hdr, 0)) {
         host     = hdr.value.ptr;
         host_len = hdr.value.len;
     }
 
     hdr.blk = NULL;
+
     if(http_find_header(htx, ist("name"), &hdr, 0)) {
-
-        if(isteq(hdr.value, ist("*"))) {
-            mode = NST_MANAGER_NAME_ALL;
-
-            goto purge;
-        }
 
         p = proxies_list;
 
         while(p) {
             nst_rule_t *rule = NULL;
 
-            if((p->cap & PR_CAP_BE)
-                    && (p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL)) {
+            if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
 
-                if(mode != NST_MANAGER_NAME_ALL && strlen(p->id) == hdr.value.len
-                        && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
+                if(strlen(p->id) == hdr.value.len && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
 
-                    mode = NST_MANAGER_NAME_PROXY;
-                    st1  = p->uuid;
+                    method = NST_MANAGER_NAME_PROXY;
+                    st1    = p->uuid;
+                    mode   = p->nuster.mode;
 
                     goto purge;
                 }
@@ -151,8 +162,9 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
                     if(strlen(rule->name) == hdr.value.len
                             && !memcmp(hdr.value.ptr, rule->name, hdr.value.len)) {
 
-                        mode = NST_MANAGER_NAME_RULE;
-                        st1  = rule->id;
+                        method = NST_MANAGER_NAME_RULE;
+                        st1    = rule->id;
+                        mode   = p->nuster.mode;
 
                         goto purge;
                     }
@@ -166,9 +178,9 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
         goto notfound;
     } else if(http_find_header(htx, ist("path"), &hdr, 0)) {
-        path      = hdr.value.ptr;
-        path_len  = hdr.value.len;
-        mode      = host ? NST_MANAGER_PATH_HOST : NST_MANAGER_PATH;
+        path     = hdr.value.ptr;
+        path_len = hdr.value.len;
+        method   = host ? NST_MANAGER_PATH_HOST : NST_MANAGER_PATH;
     } else if(http_find_header(htx, ist("regex"), &hdr, 0)) {
 
         regex_str = malloc(hdr.value.len + 1);
@@ -185,11 +197,10 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
         }
 
         free(regex_str);
-        regex_free(regex);
 
-        mode = host ? NST_MANAGER_REGEX_HOST : NST_MANAGER_REGEX;
+        method = host ? NST_MANAGER_REGEX_HOST : NST_MANAGER_REGEX;
     } else if(host) {
-        mode = NST_MANAGER_HOST;
+        method = NST_MANAGER_HOST;
     } else {
         goto badreq;
     }
@@ -205,25 +216,29 @@ purge:
         appctx      = si_appctx(si);
         memset(&appctx->ctx.nuster.manager, 0, sizeof(appctx->ctx.nuster.manager));
 
-        appctx->st0 = mode;
+        appctx->st0 = method;
         appctx->st1 = st1;
 
-        if(px->nuster.mode == NST_MODE_CACHE) {
+        if(mode == NST_MODE_CACHE) {
             appctx->ctx.nuster.manager.dict = &nuster.cache->dict;
         } else {
             appctx->ctx.nuster.manager.dict = &nuster.nosql->dict;
         }
 
-        buf.size = host_len + path_len;
-        buf.data = 0;
-        buf.area = nst_memory_alloc(appctx->ctx.nuster.manager.dict->memory, buf.size);
+        if(method == NST_MANAGER_HOST || method == NST_MANAGER_PATH_HOST
+                || method == NST_MANAGER_REGEX_HOST || method == NST_MANAGER_PATH) {
 
-        if(!buf.area) {
-            goto err;
+            buf.size = host_len + path_len;
+            buf.data = 0;
+            buf.area = nst_memory_alloc(appctx->ctx.nuster.manager.dict->memory, buf.size);
+
+            if(!buf.area) {
+                goto err;
+            }
         }
 
-        if(mode == NST_MANAGER_HOST || mode == NST_MANAGER_PATH_HOST
-                || mode == NST_MANAGER_REGEX_HOST) {
+        if(method == NST_MANAGER_HOST || method == NST_MANAGER_PATH_HOST
+                || method == NST_MANAGER_REGEX_HOST) {
 
             appctx->ctx.nuster.manager.host.ptr = buf.area + buf.data;
             appctx->ctx.nuster.manager.host.len = host_len;
@@ -231,13 +246,13 @@ purge:
             chunk_memcat(&buf, host, host_len);
         }
 
-        if(mode == NST_MANAGER_PATH || mode == NST_MANAGER_PATH_HOST) {
+        if(method == NST_MANAGER_PATH || method == NST_MANAGER_PATH_HOST) {
 
             appctx->ctx.nuster.manager.path.ptr = buf.area + buf.data;
             appctx->ctx.nuster.manager.path.len = path_len;
 
             chunk_memcat(&buf, path, path_len);
-        } else if(mode == NST_MANAGER_REGEX || mode == NST_MANAGER_REGEX_HOST) {
+        } else if(method == NST_MANAGER_REGEX || method == NST_MANAGER_REGEX_HOST) {
             appctx->ctx.nuster.manager.regex = regex;
         }
 
@@ -284,10 +299,6 @@ nst_purger_check(hpx_appctx_t *appctx, nst_dict_entry_t *entry) {
     int  ret = 0;
 
     switch(appctx->st0) {
-        case NST_MANAGER_NAME_ALL:
-            ret = 1;
-
-            break;
         case NST_MANAGER_NAME_PROXY:
             ret = entry->pid == appctx->st1;
 
@@ -333,9 +344,10 @@ nst_purger_handler(hpx_appctx_t *appctx) {
     nst_dict_t              *dict   = appctx->ctx.nuster.manager.dict;
 
     while(1) {
-        nst_shctx_lock(dict);
 
         while(appctx->ctx.nuster.manager.idx < dict->size && max--) {
+            nst_shctx_lock(dict);
+
             entry = dict->entry[appctx->ctx.nuster.manager.idx];
 
             while(entry) {
@@ -343,14 +355,17 @@ nst_purger_handler(hpx_appctx_t *appctx) {
                 if(nst_purger_check(appctx, entry)) {
                     if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
 
-                        entry->state         = NST_DICT_ENTRY_STATE_INVALID;
-                        entry->store.ring.data->invalid = 1;
-                        entry->store.ring.data          = NULL;
-                        entry->expire        = 0;
-                    }
+                        entry->state  = NST_DICT_ENTRY_STATE_INVALID;
+                        entry->expire = 0;
 
-                    if(entry->store.disk.file) {
-                        nst_disk_purge_by_path(entry->store.disk.file);
+                        if(entry->store.ring.data) {
+                            entry->store.ring.data->invalid = 1;
+                            entry->store.ring.data          = NULL;
+                        }
+
+                        if(entry->store.disk.file) {
+                            nst_disk_purge_by_path(entry->store.disk.file);
+                        }
                     }
                 }
 
@@ -358,9 +373,9 @@ nst_purger_handler(hpx_appctx_t *appctx) {
             }
 
             appctx->ctx.nuster.manager.idx++;
-        }
 
-        nst_shctx_unlock(dict);
+            nst_shctx_unlock(dict);
+        }
 
         if(get_current_timestamp() - start > 1) {
             break;
@@ -381,7 +396,6 @@ nst_purger_release_handler(hpx_appctx_t *appctx) {
 
     if(appctx->ctx.nuster.manager.regex) {
         regex_free(appctx->ctx.nuster.manager.regex);
-        free(appctx->ctx.nuster.manager.regex);
     }
 
     nst_memory_free(appctx->ctx.nuster.manager.dict->memory, appctx->ctx.nuster.manager.buf.area);
