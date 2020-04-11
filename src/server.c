@@ -656,6 +656,8 @@ static int srv_parse_proxy_v2_options(char **args, int *cur_arg,
 			newsrv->pp_opts |= SRV_PP_V2_AUTHORITY;
 		} else if (!strcmp(p, "crc32c")) {
 			newsrv->pp_opts |= SRV_PP_V2_CRC32C;
+		} else if (!strcmp(p, "unique-id")) {
+			newsrv->pp_opts |= SRV_PP_V2_UNIQUE_ID;
 		} else
 			goto fail;
 	}
@@ -809,11 +811,11 @@ static int srv_parse_source(char **args, int *cur_arg,
 				char *name, *end;
 
 				name = args[*cur_arg + 1] + 7;
-				while (isspace(*name))
+				while (isspace((unsigned char)*name))
 					name++;
 
 				end = name;
-				while (*end && !isspace(*end) && *end != ',' && *end != ')')
+				while (*end && !isspace((unsigned char)*end) && *end != ',' && *end != ')')
 					end++;
 
 				newsrv->conn_src.opts &= ~CO_SRC_TPROXY_MASK;
@@ -826,14 +828,14 @@ static int srv_parse_source(char **args, int *cur_arg,
 				newsrv->conn_src.bind_hdr_occ = -1;
 
 				/* now look for an occurrence number */
-				while (isspace(*end))
+				while (isspace((unsigned char)*end))
 					end++;
 				if (*end == ',') {
 					end++;
 					name = end;
 					if (*end == '-')
 						end++;
-					while (isdigit((int)*end))
+					while (isdigit((unsigned char)*end))
 						end++;
 					newsrv->conn_src.bind_hdr_occ = strl2ic(name, end - name);
 				}
@@ -1538,7 +1540,7 @@ static struct sample_expr *srv_sni_sample_parse_expr(struct server *srv, struct 
 	idx = 0;
 	px->conf.args.ctx = ARGC_SRV;
 
-	return sample_parse_expr((char **)args, &idx, file, linenum, err, &px->conf.args);
+	return sample_parse_expr((char **)args, &idx, file, linenum, err, &px->conf.args, NULL);
 }
 
 static int server_parse_sni_expr(struct server *newsrv, struct proxy *px, char **err)
@@ -2053,8 +2055,6 @@ static int server_finalize_init(const char *file, int linenum, char **args, int 
 	srv_lb_commit_status(srv);
 
 	return 0;
-err:
-	return ERR_ALERT | ERR_FATAL;
 }
 
 /*
@@ -3322,9 +3322,11 @@ static void srv_update_state(struct server *srv, int version, char **params)
 					/* If the FDQN has been changed from stats socket,
 					 * apply fqdn state file value (which is the value set
 					 * from stats socket).
+					 * Also ensure the runtime resolver will process this resolution.
 					 */
 					if (fqdn_set_by_cli) {
 						srv_set_fqdn(srv, fqdn, 0);
+						srv->flags &= ~SRV_F_NO_RESOLUTION;
 						srv->next_admin |= SRV_ADMF_HMAINT;
 					}
 				}
@@ -3434,7 +3436,7 @@ static void srv_state_parse_line(char *buf, const int version, char **params, ch
 	}
 
 	/* ignore blank characters at the beginning of the line */
-	while (isspace(*cur))
+	while (isspace((unsigned char)*cur))
 		++cur;
 
 	/* Ignore empty or commented lines */
@@ -3458,10 +3460,10 @@ static void srv_state_parse_line(char *buf, const int version, char **params, ch
 	arg = 1;
 	srv_arg = 0;
 	while (*cur && arg < SRV_STATE_FILE_MAX_FIELDS) {
-		if (isspace(*cur)) {
+		if (isspace((unsigned char)*cur)) {
 			*cur = '\0';
 			++cur;
-			while (isspace(*cur))
+			while (isspace((unsigned char)*cur))
 				++cur;
 			switch (version) {
 				case 1:
@@ -4431,6 +4433,9 @@ int srv_set_fqdn(struct server *srv, const char *hostname, int dns_locked)
 	if (!srv->hostname || !srv->hostname_dn)
 		goto err;
 
+	if (srv->flags & SRV_F_NO_RESOLUTION)
+		goto end;
+
 	if (dns_link_resolution(srv, OBJ_TYPE_SERVER, 1) == -1)
 		goto err;
 
@@ -4771,6 +4776,10 @@ static int cli_parse_set_server(char **args, char *payload, struct appctx *appct
 		if (!*args[4]) {
 			cli_err(appctx, "set server <b>/<s> fqdn requires a FQDN.\n");
 			goto out_unlock;
+		}
+		/* ensure runtime resolver will process this new fqdn */
+		if (sv->flags & SRV_F_NO_RESOLUTION) {
+			sv->flags &= ~SRV_F_NO_RESOLUTION;
 		}
 		warning = update_server_fqdn(sv, args[4], "stats socket command", 0);
 		if (warning)
@@ -5608,7 +5617,10 @@ struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsi
 
 			HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[i]);
 			for (j = 0; j < max_conn; j++) {
-				struct connection *conn = MT_LIST_POP(&srv->idle_orphan_conns[i], struct connection *, list);
+				struct connection *conn = MT_LIST_POP(&srv->idle_conns[i], struct connection *, list);
+				if (!conn)
+					conn = MT_LIST_POP(&srv->safe_conns[i],
+					                   struct connection *, list);
 				if (!conn)
 					break;
 				did_remove = 1;

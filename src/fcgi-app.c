@@ -54,7 +54,7 @@ static struct ist fcgi_param_name(char *dst, const struct ist name)
 	memcpy(dst, ":fcgi-", 6);
 	ofs1 = 6;
 	for (ofs2 = 0; ofs2 < name.len; ofs2++) {
-		if (isalnum((int)name.ptr[ofs2]))
+		if (isalnum((unsigned char)name.ptr[ofs2]))
 			dst[ofs1++] = ist_lc[(unsigned char)name.ptr[ofs2]];
 		else
 			dst[ofs1++] = '_';
@@ -474,10 +474,11 @@ static int fcgi_flt_http_headers(struct stream *s, struct filter *filter, struct
 
   rewrite_err:
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_rewrites, 1);
-	if (sess->fe != s->be)
-		_HA_ATOMIC_ADD(&s->be->be_counters.failed_rewrites, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.failed_rewrites, 1);
 	if (sess->listener->counters)
 		_HA_ATOMIC_ADD(&sess->listener->counters->failed_rewrites, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.failed_rewrites, 1);
   hdr_rule_err:
 	node = ebpt_first(&hdr_rules);
 	while (node) {
@@ -837,9 +838,9 @@ static int cfg_parse_fcgi_app(const char *file, int linenum, char **args, int kw
 		}
 		if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
 			goto out;
-		free(curapp->docroot.ptr);
+		istfree(&curapp->docroot);
 		curapp->docroot = ist2(strdup(args[1]), strlen(args[1]));
-		if (!curapp->docroot.ptr) {
+		if (!isttest(curapp->docroot)) {
 			ha_alert("parsing [%s:%d] : out of memory.\n", file, linenum);
 			err_code |= ERR_ALERT | ERR_ABORT;
 		}
@@ -870,9 +871,9 @@ static int cfg_parse_fcgi_app(const char *file, int linenum, char **args, int kw
 		}
 		if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
 			goto out;
-		free(curapp->index.ptr);
+		istfree(&curapp->index);
 		curapp->index = ist2(strdup(args[1]), strlen(args[1]));
-		if (!curapp->index.ptr) {
+		if (!isttest(curapp->index)) {
 			ha_alert("parsing [%s:%d] : out of memory.\n", file, linenum);
 			err_code |= ERR_ALERT | ERR_ABORT;
 		}
@@ -887,10 +888,11 @@ static int cfg_parse_fcgi_app(const char *file, int linenum, char **args, int kw
 			goto out;
 		}
 		if (strcasecmp(args[1], "or") == 0) {
-			ha_warning("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
+			ha_alert("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
 				   "logical disjunction within a condition.\n",
 				   file, linenum, args[1]);
-			err_code |= ERR_WARN;
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
 		}
 		if (parse_acl((const char **)args+1, &curapp->acls, &errmsg, &curapp->conf.args, file, linenum) == NULL) {
 			ha_alert("parsing [%s:%d] : error detected while parsing ACL '%s' : %s.\n",
@@ -1068,8 +1070,8 @@ void fcgi_apps_deinit()
 		struct fcgi_rule_conf *rule, *back;
 
 		free(curapp->name);
-		free(curapp->docroot.ptr);
-		free(curapp->index.ptr);
+		istfree(&curapp->docroot);
+		istfree(&curapp->index);
 		regex_free(curapp->pathinfo_re);
 		free(curapp->conf.file);
 

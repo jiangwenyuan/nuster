@@ -22,6 +22,7 @@
 #include <common/hash.h>
 #include <common/http.h>
 #include <common/initcall.h>
+#include <common/net_helper.h>
 #include <common/standard.h>
 #include <common/uri_auth.h>
 #include <common/base64.h>
@@ -824,8 +825,11 @@ sample_cast_fct sample_casts[SMP_TYPES][SMP_TYPES] = {
  *        fetch keyword followed by format conversion keywords.
  * Returns a pointer on allocated sample expression structure.
  * The caller must have set al->ctx.
+ * If <endptr> is non-nul, it will be set to the first unparsed character
+ * (which may be the final '\0') on success. If it is nul, the expression
+ * must be properly terminated by a '\0' otherwise an error is reported.
  */
-struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, int line, char **err_msg, struct arg_list *al)
+struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, int line, char **err_msg, struct arg_list *al, char **endptr)
 {
 	const char *begw; /* beginning of word */
 	const char *endw; /* end of word */
@@ -839,7 +843,8 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 	int err_arg;
 
 	begw = str[*idx];
-	for (endw = begw; *endw && *endw != '(' && *endw != ','; endw++);
+	for (endw = begw; is_idchar(*endw); endw++)
+		;
 
 	if (endw == begw) {
 		memprintf(err_msg, "missing fetch method");
@@ -855,24 +860,9 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 		goto out_error;
 	}
 
-	endt = endw;
-	if (*endt == '(') {
-		/* look for the end of this term and skip the opening parenthesis */
-		endt = ++endw;
-		while (*endt && *endt != ')')
-			endt++;
-		if (*endt != ')') {
-			memprintf(err_msg, "missing closing ')' after arguments to fetch keyword '%s'", fkw);
-			goto out_error;
-		}
-	}
-
 	/* At this point, we have :
 	 *   - begw : beginning of the keyword
 	 *   - endw : end of the keyword, first character not part of keyword
-	 *            nor the opening parenthesis (so first character of args
-	 *            if present).
-	 *   - endt : end of the term (=endw or last parenthesis if args are present)
 	 */
 
 	if (fetch->out_type >= SMP_TYPES) {
@@ -895,10 +885,15 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 	 */
 	al->kw = expr->fetch->kw;
 	al->conv = NULL;
-	if (make_arg_list(endw, endt - endw, fetch->arg_mask, &expr->arg_p, err_msg, NULL, &err_arg, al) < 0) {
+	if (make_arg_list(endw, -1, fetch->arg_mask, &expr->arg_p, err_msg, &endt, &err_arg, al) < 0) {
 		memprintf(err_msg, "fetch method '%s' : %s", fkw, *err_msg);
 		goto out_error;
 	}
+
+	/* now endt is our first char not part of the arg list, typically the
+	 * comma after the sample fetch name or after the closing parenthesis,
+	 * or the NUL char.
+	 */
 
 	if (!expr->arg_p) {
 		expr->arg_p = empty_arg_list;
@@ -925,10 +920,11 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 		int err_arg;
 		int argcnt;
 
-		if (*endt == ')') /* skip last closing parenthesis */
-			endt++;
-
 		if (*endt && *endt != ',') {
+			if (endptr) {
+				/* end found, let's stop here */
+				break;
+			}
 			if (ckw)
 				memprintf(err_msg, "missing comma after converter '%s'", ckw);
 			else
@@ -936,6 +932,9 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 			goto out_error;
 		}
 
+		/* FIXME: how long should we support such idiocies ? Maybe we
+		 * should already warn ?
+		 */
 		while (*endt == ',') /* then trailing commas */
 			endt++;
 
@@ -949,7 +948,8 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 				break;
 		}
 
-		for (endw = begw; *endw && *endw != '(' && *endw != ','; endw++);
+		for (endw = begw; is_idchar(*endw); endw++)
+			;
 
 		free(ckw);
 		ckw = my_strndup(begw, endw - begw);
@@ -957,22 +957,12 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 		conv = find_sample_conv(begw, endw - begw);
 		if (!conv) {
 			/* we found an isolated keyword that we don't know, it's not ours */
-			if (begw == str[*idx])
+			if (begw == str[*idx]) {
+				endt = begw;
 				break;
+			}
 			memprintf(err_msg, "unknown converter '%s'", ckw);
 			goto out_error;
-		}
-
-		endt = endw;
-		if (*endt == '(') {
-			/* look for the end of this term */
-			endt = ++endw;
-			while (*endt && *endt != ')')
-				endt++;
-			if (*endt != ')') {
-				memprintf(err_msg, "syntax error: missing ')' after converter '%s'", ckw);
-				goto out_error;
-			}
 		}
 
 		if (conv->in_type >= SMP_TYPES || conv->out_type >= SMP_TYPES) {
@@ -996,7 +986,7 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 
 		al->kw = expr->fetch->kw;
 		al->conv = conv_expr->conv->kw;
-		argcnt = make_arg_list(endw, endt - endw, conv->arg_mask, &conv_expr->arg_p, err_msg, NULL, &err_arg, al);
+		argcnt = make_arg_list(endw, -1, conv->arg_mask, &conv_expr->arg_p, err_msg, &endt, &err_arg, al);
 		if (argcnt < 0) {
 			memprintf(err_msg, "invalid arg %d in converter '%s' : %s", err_arg+1, ckw, *err_msg);
 			goto out_error;
@@ -1014,6 +1004,11 @@ struct sample_expr *sample_parse_expr(char **str, int *idx, const char *file, in
 			memprintf(err_msg, "invalid args in converter '%s' : %s", ckw, *err_msg);
 			goto out_error;
 		}
+	}
+
+	if (endptr) {
+		/* end found, let's stop here */
+		*endptr = (char *)endt;
 	}
 
  out:
@@ -1472,7 +1467,7 @@ static int sample_conv_debug(const struct arg *arg_p, struct sample *smp, void *
 	/* Display the displayable chars*. */
 	b_putchr(buf, '<');
 	for (i = 0; i < tmp.data.u.str.data; i++) {
-		if (isprint(tmp.data.u.str.area[i]))
+		if (isprint((unsigned char)tmp.data.u.str.area[i]))
 			b_putchr(buf, tmp.data.u.str.area[i]);
 		else
 			b_putchr(buf, '.');
@@ -1756,10 +1751,10 @@ static int sample_conv_ipmask(const struct arg *args, struct sample *smp, void *
 		if (args[1].type != ARGT_IPV6)
 			return 0;
 
-		*(uint32_t*)&smp->data.u.ipv6.s6_addr[0]  &= *(uint32_t*)&args[1].data.ipv6.s6_addr[0];
-		*(uint32_t*)&smp->data.u.ipv6.s6_addr[4]  &= *(uint32_t*)&args[1].data.ipv6.s6_addr[4];
-		*(uint32_t*)&smp->data.u.ipv6.s6_addr[8]  &= *(uint32_t*)&args[1].data.ipv6.s6_addr[8];
-		*(uint32_t*)&smp->data.u.ipv6.s6_addr[12] &= *(uint32_t*)&args[1].data.ipv6.s6_addr[12];
+		write_u64(&smp->data.u.ipv6.s6_addr[0],
+			  read_u64(&smp->data.u.ipv6.s6_addr[0]) & read_u64(&args[1].data.ipv6.s6_addr[0]));
+		write_u64(&smp->data.u.ipv6.s6_addr[8],
+			  read_u64(&smp->data.u.ipv6.s6_addr[8]) & read_u64(&args[1].data.ipv6.s6_addr[8]));
 		smp->data.type = SMP_T_IPV6;
 	}
 
@@ -2052,7 +2047,7 @@ static int sample_conv_json(const struct arg *arg_p, struct sample *smp, void *p
 			len = 2;
 			str = "\\t";
 		}
-		else if (c > 0xff || !isprint(c)) {
+		else if (c > 0xff || !isprint((unsigned char)c)) {
 			/* isprint generate a segfault if c is too big. The man says that
 			 * c must have the value of an unsigned char or EOF.
 			 */
@@ -2361,6 +2356,7 @@ static int sample_conv_regsub(const struct arg *arg_p, struct sample *smp, void 
 	struct my_regex *reg = arg_p[0].data.reg;
 	regmatch_t pmatch[MAX_MATCH];
 	struct buffer *trash = get_trash_chunk();
+	struct buffer *output;
 	int flag, max;
 	int found;
 
@@ -2393,15 +2389,23 @@ static int sample_conv_regsub(const struct arg *arg_p, struct sample *smp, void 
 		if (!found)
 			break;
 
+		output = alloc_trash_chunk();
+		if (!output)
+			break;
+
+		output->data = exp_replace(output->area, output->size, start, arg_p[1].data.str.area, pmatch);
+
 		/* replace the matching part */
-		max = trash->size - trash->data;
+		max = output->size - output->data;
 		if (max) {
-			if (max > arg_p[1].data.str.data)
-				max = arg_p[1].data.str.data;
+			if (max > output->data)
+				max = output->data;
 			memcpy(trash->area + trash->data,
-			       arg_p[1].data.str.area, max);
+			       output->area, max);
 			trash->data += max;
 		}
+
+		free_trash_chunk(output);
 
 		/* stop here if we're done with this string */
 		if (start >= end)
@@ -3120,11 +3124,11 @@ smp_fetch_thread(const struct arg *args, struct sample *smp, const char *kw, voi
 static int
 smp_fetch_rand(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	smp->data.u.sint = ha_random();
+	smp->data.u.sint = ha_random32();
 
 	/* reduce if needed. Don't do a modulo, use all bits! */
 	if (args && args[0].type == ARGT_SINT)
-		smp->data.u.sint = (smp->data.u.sint * args[0].data.sint) / ((u64)RAND_MAX+1);
+		smp->data.u.sint = ((u64)smp->data.u.sint * (u64)args[0].data.sint) >> 32;
 
 	smp->data.type = SMP_T_SINT;
 	smp->flags |= SMP_F_VOL_TEST | SMP_F_MAY_CHANGE;
@@ -3324,30 +3328,7 @@ static int smp_check_uuid(struct arg *args, char **err)
 static int smp_fetch_uuid(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	if (args[0].data.sint == 4 || !args[0].type) {
-		uint32_t rnd[4] = { 0, 0, 0, 0 };
-		uint64_t last = 0;
-		int byte = 0;
-		uint8_t bits = 0;
-		unsigned int rand_max_bits = my_flsl(RAND_MAX);
-
-		while (byte < 4) {
-			while (bits < 32) {
-				last |= (uint64_t)ha_random() << bits;
-				bits += rand_max_bits;
-			}
-			rnd[byte++] = last;
-			last >>= 32u;
-			bits  -= 32;
-		}
-
-		chunk_printf(&trash, "%8.8x-%4.4x-%4.4x-%4.4x-%12.12llx",
-			     rnd[0],
-			     rnd[1] & 0xFFFF,
-			     ((rnd[1] >> 16u) & 0xFFF) | 0x4000,  // highest 4 bits indicate the uuid version
-			     (rnd[2] & 0x3FFF) | 0x8000,  // the highest 2 bits indicate the UUID variant (10),
-			     (long long)((rnd[2] >> 14u) | ((uint64_t) rnd[3] << 18u)) & 0xFFFFFFFFFFFFull
-			);
-
+		ha_generate_uuid(&trash);
 		smp->data.type = SMP_T_STR;
 		smp->flags = SMP_F_VOL_TEST | SMP_F_MAY_CHANGE;
 		smp->data.u.str = trash;

@@ -270,7 +270,7 @@ nst_key_debug(hpx_stream_t *s, nst_key_t *key) {
         nst_key_uuid_stringify(key, trash.area + trash.data);
         trash.data += 40;
         chunk_appendf(&trash, "\n");
-        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
+        DISGUISE(write(1, trash.area, trash.data));
     }
 }
 

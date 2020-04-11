@@ -10,10 +10,14 @@
  *
  */
 
+
+#include <fcntl.h>
 #include <signal.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include <common/buf.h>
 #include <common/config.h>
@@ -61,8 +65,10 @@ void ha_thread_dump(struct buffer *buf, int thr, int calling_tid)
 	              !!(global_tasks_mask & thr_bit),
 	              !eb_is_empty(&task_per_thread[thr].timers),
 	              !eb_is_empty(&task_per_thread[thr].rqueue),
-	              !(LIST_ISEMPTY(&task_per_thread[thr].task_list) |
-		        MT_LIST_ISEMPTY(&task_per_thread[thr].shared_tasklet_list)),
+	              !(LIST_ISEMPTY(&task_per_thread[thr].tasklets[TL_URGENT]) &&
+			LIST_ISEMPTY(&task_per_thread[thr].tasklets[TL_NORMAL]) &&
+			LIST_ISEMPTY(&task_per_thread[thr].tasklets[TL_BULK]) &&
+			MT_LIST_ISEMPTY(&task_per_thread[thr].shared_tasklet_list)),
 	              task_per_thread[thr].task_list_size,
 	              task_per_thread[thr].rqueue_size,
 	              stuck,
@@ -83,6 +89,70 @@ void ha_thread_dump(struct buffer *buf, int thr, int calling_tid)
 
 	chunk_appendf(buf, "             curr_task=");
 	ha_task_dump(buf, sched->current, "             ");
+
+#ifdef USE_BACKTRACE
+	if (stuck) {
+		/* We only emit the backtrace for stuck threads in order not to
+		 * waste precious output buffer space with non-interesting data.
+		 */
+		struct buffer bak;
+		void *callers[100];
+		int j, nptrs;
+		void *addr;
+		int dump = 0;
+
+		nptrs = my_backtrace(callers, sizeof(callers)/sizeof(*callers));
+
+		/* The call backtrace_symbols_fd(callers, nptrs, STDOUT_FILENO)
+		   would produce similar output to the following: */
+
+		if (nptrs)
+			chunk_appendf(buf, "             call trace(%d):\n", nptrs);
+
+		for (j = 0; j < nptrs || dump < 2; j++) {
+			if (j == nptrs && !dump) {
+				/* we failed to spot the starting point of the
+				 * dump, let's start over dumping everything we
+				 * have.
+				 */
+				dump = 2;
+				j = 0;
+			}
+			bak = *buf;
+			dump_addr_and_bytes(buf, "             | ", callers[j], 8);
+			addr = resolve_sym_name(buf, ": ", callers[j]);
+			if (dump == 0) {
+				/* dump not started, will start *after*
+				 * ha_thread_dump_all_to_trash and ha_panic
+				 */
+				if (addr == ha_thread_dump_all_to_trash || addr == ha_panic)
+					dump = 1;
+				*buf = bak;
+				continue;
+			}
+
+			if (dump == 1) {
+				/* starting */
+				if (addr == ha_thread_dump_all_to_trash || addr == ha_panic) {
+					*buf = bak;
+					continue;
+				}
+				dump = 2;
+			}
+
+			if (dump == 2) {
+				/* dumping */
+				if (addr == run_poll_loop || addr == main || addr == run_tasks_from_list) {
+					dump = 3;
+					*buf = bak;
+					break;
+				}
+			}
+			/* OK, line dumped */
+			chunk_appendf(buf, "\n");
+		}
+	}
+#endif
 }
 
 
@@ -116,20 +186,9 @@ void ha_task_dump(struct buffer *buf, const struct task *task, const char *pfx)
 		              task->call_date ? (unsigned long long)(now_mono_time() - task->call_date) : 0,
 		              task->call_date ? " ns ago" : "");
 
-	chunk_appendf(buf, "%s"
-	              "  fct=%p=main%s%ld (%s) ctx=%p",
-	              pfx,
-	              task->process,
-		      ((void *)task->process - (void *)main) < 0 ? "" : "+",
-		      (long)((void *)task->process - (void *)main),
-	              task->process == process_stream ? "process_stream" :
-	              task->process == task_run_applet ? "task_run_applet" :
-	              task->process == si_cs_io_cb ? "si_cs_io_cb" :
-#ifdef USE_LUA
-		      task->process == hlua_process_task ? "hlua_process_task" :
-#endif
-		      "?",
-	              task->context);
+	chunk_appendf(buf, "%s  fct=%p(", pfx, task->process);
+	resolve_sym_name(buf, NULL, task->process);
+	chunk_appendf(buf,") ctx=%p", task->context);
 
 	if (task->process == task_run_applet && (appctx = task->context))
 		chunk_appendf(buf, "(%s)\n", appctx->applet->name);
@@ -205,7 +264,7 @@ void ha_panic()
 	chunk_reset(&trash);
 	chunk_appendf(&trash, "Thread %u is about to kill the process.\n", tid + 1);
 	ha_thread_dump_all_to_trash();
-	shut_your_big_mouth_gcc(write(2, trash.area, trash.data));
+	DISGUISE(write(2, trash.area, trash.data));
 	for (;;)
 		abort();
 }
@@ -313,8 +372,9 @@ static int debug_parse_cli_panic(char **args, char *payload, struct appctx *appc
 #if defined(DEBUG_DEV)
 static int debug_parse_cli_exec(char **args, char *payload, struct appctx *appctx, void *private)
 {
-	FILE *f;
+	int pipefd[2];
 	int arg;
+	int pid;
 
 	if (!cli_has_level(appctx, ACCESS_LVL_ADMIN))
 		return 1;
@@ -327,14 +387,41 @@ static int debug_parse_cli_exec(char **args, char *payload, struct appctx *appct
 		chunk_strcat(&trash, args[arg]);
 	}
 
-	f = popen(trash.area, "re");
-	if (!f)
-		return cli_err(appctx, "Failed to execute command.\n");
+	thread_isolate();
+	if (pipe(pipefd) < 0)
+		goto fail_pipe;
 
+	if (fcntl(pipefd[0], F_SETFD, fcntl(pipefd[0], F_GETFD, FD_CLOEXEC) | FD_CLOEXEC) == -1)
+		goto fail_fcntl;
+
+	if (fcntl(pipefd[1], F_SETFD, fcntl(pipefd[1], F_GETFD, FD_CLOEXEC) | FD_CLOEXEC) == -1)
+		goto fail_fcntl;
+
+	pid = fork();
+
+	if (pid < 0)
+		goto fail_fork;
+	else if (pid == 0) {
+		/* child */
+		char *cmd[4] = { "/bin/sh", "-c", 0, 0 };
+
+		close(0);
+		dup2(pipefd[1], 1);
+		dup2(pipefd[1], 2);
+
+		cmd[2] = trash.area;
+		execvp(cmd[0], cmd);
+		printf("execvp() failed\n");
+		exit(1);
+	}
+
+	/* parent */
+	thread_release();
+	close(pipefd[1]);
 	chunk_reset(&trash);
 	while (1) {
-		size_t ret = fread(trash.area + trash.data, 1, trash.size - 20 - trash.data, f);
-		if (!ret)
+		size_t ret = read(pipefd[0], trash.area + trash.data, trash.size - 20 - trash.data);
+		if (ret <= 0)
 			break;
 		trash.data += ret;
 		if (trash.data + 20 == trash.size) {
@@ -342,10 +429,18 @@ static int debug_parse_cli_exec(char **args, char *payload, struct appctx *appct
 			break;
 		}
 	}
-
-	fclose(f);
+	close(pipefd[0]);
+	waitpid(pid, NULL, WNOHANG);
 	trash.area[trash.data] = 0;
 	return cli_msg(appctx, LOG_INFO, trash.area);
+
+ fail_fork:
+ fail_fcntl:
+	close(pipefd[0]);
+	close(pipefd[1]);
+ fail_pipe:
+	thread_release();
+	return cli_err(appctx, "Failed to execute command.\n");
 }
 #endif
 
@@ -401,6 +496,29 @@ static int debug_parse_cli_tkill(char **args, char *payload, struct appctx *appc
 	else
 		raise(sig);
 	return 1;
+}
+
+/* parse a "debug dev write" command. It always returns 1. */
+static int debug_parse_cli_write(char **args, char *payload, struct appctx *appctx, void *private)
+{
+	unsigned long len;
+
+	if (!*args[3])
+		return cli_err(appctx, "Missing output size.\n");
+
+	len = strtoul(args[3], NULL, 0);
+	if (len >= trash.size)
+		return cli_err(appctx, "Output too large, must be <tune.bufsize.\n");
+
+	_HA_ATOMIC_ADD(&debug_commands_issued, 1);
+
+	chunk_reset(&trash);
+	trash.data = len;
+	memset(trash.area, '.', trash.data);
+	trash.area[trash.data] = 0;
+	for (len = 64; len < trash.data; len += 64)
+		trash.area[len] = '\n';
+	return cli_msg(appctx, LOG_INFO, trash.area);
 }
 
 /* parse a "debug dev stream" command */
@@ -660,6 +778,14 @@ static int init_debug()
 {
 	struct sigaction sa;
 
+#ifdef USE_BACKTRACE
+	/* calling backtrace() will access libgcc at runtime. We don't want to
+	 * do it after the chroot, so let's perform a first call to have it
+	 * ready in memory for later use.
+	 */
+	void *callers[1];
+	my_backtrace(callers, sizeof(callers)/sizeof(*callers));
+#endif
 	sa.sa_handler = NULL;
 	sa.sa_sigaction = debug_handler;
 	sigemptyset(&sa.sa_mask);
@@ -687,6 +813,7 @@ static struct cli_kw_list cli_kws = {{ },{
 	{{ "debug", "dev", "panic", NULL }, "debug dev panic             : immediately trigger a panic",     debug_parse_cli_panic, NULL, NULL, NULL, ACCESS_EXPERT },
 	{{ "debug", "dev", "stream",NULL }, "debug dev stream ...        : show/manipulate stream flags",    debug_parse_cli_stream,NULL, NULL, NULL, ACCESS_EXPERT },
 	{{ "debug", "dev", "tkill", NULL }, "debug dev tkill [thr] [sig] : send signal to thread",           debug_parse_cli_tkill, NULL, NULL, NULL, ACCESS_EXPERT },
+	{{ "debug", "dev", "write", NULL }, "debug dev write [size]      : write that many bytes",           debug_parse_cli_write, NULL, NULL, NULL, ACCESS_EXPERT },
 	{{ "show", "threads", NULL, NULL }, "show threads   : show some threads debugging information",  NULL, cli_io_handler_show_threads, NULL },
 	{{},}
 }};

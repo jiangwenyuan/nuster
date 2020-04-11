@@ -15,6 +15,8 @@
 #include <arpa/inet.h>
 
 #include <common/standard.h>
+#include <common/chunk.h>
+#include <types/global.h>
 #include <proto/arg.h>
 
 const char *arg_type_names[ARGT_NBTYPES] = {
@@ -81,33 +83,53 @@ struct arg_list *arg_list_add(struct arg_list *orig, struct arg *arg, int pos)
 	return new;
 }
 
-/* This function builds an argument list from a config line. It returns the
- * number of arguments found, or <0 in case of any error. Everything needed
- * it automatically allocated. A pointer to an error message might be returned
- * in err_msg if not NULL, in which case it would be allocated and the caller
- * will have to check it and free it. The output arg list is returned in argp
- * which must be valid. The returned array is always terminated by an arg of
- * type ARGT_STOP (0), unless the mask indicates that no argument is supported.
- * Unresolved arguments are appended to arg list <al>, which also serves as a
- * template to create new entries. The mask is composed of a number of
- * mandatory arguments in its lower ARGM_BITS bits, and a concatenation of each
- * argument type in each subsequent ARGT_BITS-bit sblock. If <err_msg> is not
- * NULL, it must point to a freeable or NULL pointer.
+/* This function builds an argument list from a config line, and stops at the
+ * first non-matching character, which is pointed to in <end_ptr>. A valid arg
+ * list starts with an opening parenthesis '(', contains a number of comma-
+ * delimited words, and ends with the closing parenthesis ')'. An empty list
+ * (with or without the parenthesis) will lead to a valid empty argument if the
+ * keyword has a mandatory one. The function returns the number of arguments
+ * emitted, or <0 in case of any error. Everything needed it automatically
+ * allocated. A pointer to an error message might be returned in err_msg if not
+ * NULL, in which case it would be allocated and the caller will have to check
+ * it and free it. The output arg list is returned in argp which must be valid.
+ * The returned array is always terminated by an arg of type ARGT_STOP (0),
+ * unless the mask indicates that no argument is supported. Unresolved arguments
+ * are appended to arg list <al>, which also serves as a template to create new
+ * entries. The mask is composed of a number of mandatory arguments in its lower
+ * ARGM_BITS bits, and a concatenation of each argument type in each subsequent
+ * ARGT_BITS-bit sblock. If <err_msg> is not NULL, it must point to a freeable
+ * or NULL pointer. The caller is expected to restart the parsing from the new
+ * pointer set in <end_ptr>, which is the first character considered as not
+ * being part of the arg list. The input string ends on the first between <len>
+ * characters (when len is positive) or the first NUL character. Placing -1 in
+ * <len> will make it virtually unbounded (~2GB long strings).
  */
 int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
-                  char **err_msg, const char **err_ptr, int *err_arg,
+                  char **err_msg, const char **end_ptr, int *err_arg,
                   struct arg_list *al)
 {
 	int nbarg;
 	int pos;
 	struct arg *arg;
 	const char *beg;
-	char *word = NULL;
 	const char *ptr_err = NULL;
 	int min_arg;
+	int empty;
 	struct arg_list *new_al = al;
 
 	*argp = NULL;
+
+	empty = 0;
+	if (!len || *in != '(') {
+		/* it's already not for us, stop here */
+		empty = 1;
+		len = 0;
+	} else {
+		/* skip opening parenthesis */
+		len--;
+		in++;
+	}
 
 	min_arg = mask & ARGM_MASK;
 	mask >>= ARGM_BITS;
@@ -122,7 +144,7 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 	/* Note: an empty input string contains an empty argument if this argument
 	 * is marked mandatory. Otherwise we can ignore it.
 	 */
-	if (!len && !min_arg)
+	if (empty && !min_arg)
 		goto end_parse;
 
 	arg = *argp = calloc(nbarg + 1, sizeof(*arg));
@@ -130,29 +152,82 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 	/* Note: empty arguments after a comma always exist. */
 	while (pos < nbarg) {
 		unsigned int uint;
+		int squote = 0, dquote = 0;
+		char *out;
 
-		beg = in;
-		while (len && *in != ',') {
-			in++;
-			len--;
+		chunk_reset(&trash);
+		out = trash.area;
+
+		while (len && *in && trash.data < trash.size - 1) {
+			if (*in == '"' && !squote) {  /* double quote outside single quotes */
+				if (dquote)
+					dquote = 0;
+				else
+					dquote = 1;
+				in++; len--;
+				continue;
+			}
+			else if (*in == '\'' && !dquote) { /* single quote outside double quotes */
+				if (squote)
+					squote = 0;
+				else
+					squote = 1;
+				in++; len--;
+				continue;
+			}
+			else if (*in == '\\' && !squote && len != 1) {
+				/* '\', ', ' ', '"' support being escaped by '\' */
+				if (len == 1 || in[1] == 0)
+					goto unquote_err;
+
+				if (in[1] == '\\' || in[1] == ' ' || in[1] == '"' || in[1] == '\'') {
+					in++; len--;
+					*out++ = *in;
+				}
+				else if (in[1] == 'r') {
+					in++; len--;
+					*out++ = '\r';
+				}
+				else if (in[1] == 'n') {
+					in++; len--;
+					*out++ = '\n';
+				}
+				else if (in[1] == 't') {
+					in++; len--;
+					*out++ = '\t';
+				}
+				else {
+					/* just a lone '\' */
+					*out++ = *in;
+				}
+				in++; len--;
+			}
+			else {
+				if (!squote && !dquote && (*in == ',' || *in == ')')) {
+					/* end of argument */
+					break;
+				}
+				/* verbatim copy */
+				*out++ = *in++;
+				len--;
+			}
+			trash.data = out - trash.area;
 		}
 
-		/* we have a new argument between <beg> and <in> (not included).
-		 * For ease of handling, we copy it into a zero-terminated word.
-		 * By default, the output argument will be the same type of the
-		 * expected one.
-		 */
-		free(word);
-		word = my_strndup(beg, in - beg);
+		if (len && *in && *in != ',' && *in != ')')
+			goto buffer_err;
+
+		trash.area[trash.data] = 0;
 
 		arg->type = (mask >> (pos * ARGT_BITS)) & ARGT_MASK;
 
 		switch (arg->type) {
 		case ARGT_SINT:
-			if (in == beg)	  // empty number
+			if (!trash.data)	  // empty number
 				goto empty_err;
-			arg->data.sint = read_int64(&beg, in);
-			if (beg < in)
+			beg = trash.area;
+			arg->data.sint = read_int64(&beg, trash.area + trash.data);
+			if (beg < trash.area + trash.data)
 				goto parse_err;
 			arg->type = ARGT_SINT;
 			break;
@@ -175,56 +250,55 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 			 * during the parsing. The caller must at one point resolve
 			 * them and free the string.
 			 */
-			arg->data.str.area = word;
-			arg->data.str.data = in - beg;
-			arg->data.str.size = arg->data.str.data + 1;
-			word = NULL;
+			arg->data.str.area = my_strndup(trash.area, trash.data);
+			arg->data.str.data = trash.data;
+			arg->data.str.size = trash.data + 1;
 			break;
 
 		case ARGT_IPV4:
-			if (in == beg)    // empty address
+			if (!trash.data)    // empty address
 				goto empty_err;
 
-			if (inet_pton(AF_INET, word, &arg->data.ipv4) <= 0)
+			if (inet_pton(AF_INET, trash.area, &arg->data.ipv4) <= 0)
 				goto parse_err;
 			break;
 
 		case ARGT_MSK4:
-			if (in == beg)    // empty mask
+			if (!trash.data)    // empty mask
 				goto empty_err;
 
-			if (!str2mask(word, &arg->data.ipv4))
+			if (!str2mask(trash.area, &arg->data.ipv4))
 				goto parse_err;
 
 			arg->type = ARGT_IPV4;
 			break;
 
 		case ARGT_IPV6:
-			if (in == beg)    // empty address
+			if (!trash.data)    // empty address
 				goto empty_err;
 
-			if (inet_pton(AF_INET6, word, &arg->data.ipv6) <= 0)
+			if (inet_pton(AF_INET6, trash.area, &arg->data.ipv6) <= 0)
 				goto parse_err;
 			break;
 
 		case ARGT_MSK6:
-			if (in == beg)    // empty mask
+			if (!trash.data)    // empty mask
 				goto empty_err;
 
-			if (!str2mask6(word, &arg->data.ipv6))
+			if (!str2mask6(trash.area, &arg->data.ipv6))
 				goto parse_err;
 
 			arg->type = ARGT_IPV6;
 			break;
 
 		case ARGT_TIME:
-			if (in == beg)    // empty time
+			if (!trash.data)    // empty time
 				goto empty_err;
 
-			ptr_err = parse_time_err(word, &uint, TIME_UNIT_MS);
+			ptr_err = parse_time_err(trash.area, &uint, TIME_UNIT_MS);
 			if (ptr_err) {
 				if (ptr_err == PARSE_TIME_OVER || ptr_err == PARSE_TIME_UNDER)
-					ptr_err = word;
+					ptr_err = trash.area;
 				goto parse_err;
 			}
 			arg->data.sint = uint;
@@ -232,10 +306,10 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 			break;
 
 		case ARGT_SIZE:
-			if (in == beg)    // empty size
+			if (!trash.data)    // empty size
 				goto empty_err;
 
-			ptr_err = parse_size_err(word, &uint);
+			ptr_err = parse_size_err(trash.area, &uint);
 			if (ptr_err)
 				goto parse_err;
 
@@ -244,10 +318,10 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 			break;
 
 		case ARGT_PBUF_FNUM:
-			if (in == beg)
+			if (!trash.data)
 				goto empty_err;
 
-			if (!parse_dotted_uints(word, &arg->data.fid.ids, &arg->data.fid.sz))
+			if (!parse_dotted_uints(trash.area, &arg->data.fid.ids, &arg->data.fid.sz))
 				goto parse_err;
 
 			break;
@@ -261,7 +335,7 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 		arg++;
 
 		/* don't go back to parsing if we reached end */
-		if (!len || pos >= nbarg)
+		if (!len || !*in || *in == ')' || pos >= nbarg)
 			break;
 
 		/* skip comma */
@@ -269,8 +343,6 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 	}
 
  end_parse:
-	free(word); word = NULL;
-
 	if (pos < min_arg) {
 		/* not enough arguments */
 		memprintf(err_msg,
@@ -279,16 +351,23 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 		goto err;
 	}
 
-	if (len) {
-		/* too many arguments, starting at <in> */
+	if (empty) {
+		/* nothing to do */
+	} else if (*in == ')') {
+		/* skip the expected closing parenthesis */
+		in++;
+	} else {
 		/* the caller is responsible for freeing this message */
-		word = my_strndup(in, len);
-		if (nbarg)
-			memprintf(err_msg, "end of arguments expected at position %d, but got '%s'",
-			          pos + 1, word);
-		else
-			memprintf(err_msg, "no argument supported, but got '%s'", word);
-		free(word); word = NULL;
+		char *word = (len > 0) ? my_strndup(in, len) : (char *)in;
+		memprintf(err_msg, "expected ')' before '%s'", word);
+		if (len > 0)
+			free(word);
+		/* when we're missing a right paren, the empty part preceeding
+		 * already created an empty arg, adding one to the position, so
+		 * let's fix the reporting to avoid being confusing.
+		 */
+		if (pos > 1)
+			pos--;
 		goto err;
 	}
 
@@ -297,12 +376,11 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 	 */
 	if (err_arg)
 		*err_arg = pos;
-	if (err_ptr)
-		*err_ptr = in;
+	if (end_ptr)
+		*end_ptr = in;
 	return pos;
 
  err:
-	free(word);
 	if (new_al == al) {
 		/* only free the arg area if we have not queued unresolved args
 		 * still pointing to it.
@@ -312,22 +390,41 @@ int make_arg_list(const char *in, int len, uint64_t mask, struct arg **argp,
 	*argp = NULL;
 	if (err_arg)
 		*err_arg = pos;
-	if (err_ptr)
-		*err_ptr = in;
+	if (end_ptr)
+		*end_ptr = in;
 	return -1;
 
  empty_err:
+	if (pos >= min_arg)
+		goto end_parse;
+
 	memprintf(err_msg, "expected type '%s' at position %d, but got nothing",
 	          arg_type_names[(mask >> (pos * ARGT_BITS)) & ARGT_MASK], pos + 1);
 	goto err;
 
  parse_err:
+	/* come here with the word attempted to parse in trash */
 	memprintf(err_msg, "failed to parse '%s' as type '%s' at position %d",
-	          word, arg_type_names[(mask >> (pos * ARGT_BITS)) & ARGT_MASK], pos + 1);
+	          trash.area, arg_type_names[(mask >> (pos * ARGT_BITS)) & ARGT_MASK], pos + 1);
 	goto err;
 
  not_impl:
 	memprintf(err_msg, "parsing for type '%s' was not implemented, please report this bug",
 	          arg_type_names[(mask >> (pos * ARGT_BITS)) & ARGT_MASK]);
 	goto err;
+
+ buffer_err:
+	memprintf(err_msg, "too small buffer size to store decoded argument %d, increase bufsize ?",
+	          pos + 1);
+	goto err;
+
+ unquote_err:
+	/* come here with the parsed part in <trash.area>:<trash.data> and the
+	 * unparsable part in <in>.
+	 */
+	trash.area[trash.data] = 0;
+	memprintf(err_msg, "failed to parse '%s' after '%s' as type '%s' at position %d",
+	          in, trash.area, arg_type_names[(mask >> (pos * ARGT_BITS)) & ARGT_MASK], pos + 1);
+	goto err;
+
 }

@@ -10,6 +10,12 @@
  *
  */
 
+#ifdef __ELF__
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <link.h>
+#endif
+
 #include <ctype.h>
 #include <errno.h>
 #include <netdb.h>
@@ -31,7 +37,15 @@
 #include <common/standard.h>
 #include <common/tools.h>
 #include <types/global.h>
+#include <proto/applet.h>
 #include <proto/dns.h>
+#include <proto/hlua.h>
+#include <proto/listener.h>
+#include <proto/proto_udp.h>
+#include <proto/ssl_sock.h>
+#include <proto/stream_interface.h>
+#include <proto/task.h>
+
 #include <eb32tree.h>
 #include <eb32sctree.h>
 
@@ -586,7 +600,7 @@ const char *invalid_char(const char *name)
 		return name;
 
 	while (*name) {
-		if (!isalnum((int)(unsigned char)*name) && *name != '.' && *name != ':' &&
+		if (!isalnum((unsigned char)*name) && *name != '.' && *name != ':' &&
 		    *name != '_' && *name != '-')
 			return name;
 		name++;
@@ -606,7 +620,7 @@ static inline const char *__invalid_char(const char *name, int (*f)(int)) {
 		return name;
 
 	while (*name) {
-		if (!f((int)(unsigned char)*name) && *name != '.' &&
+		if (!f((unsigned char)*name) && *name != '.' &&
 		    *name != '_' && *name != '-')
 			return name;
 
@@ -977,7 +991,7 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 			port1 = "";
 		}
 
-		if (isdigit((int)(unsigned char)*port1)) {	/* single port or range */
+		if (isdigit((unsigned char)*port1)) {	/* single port or range */
 			port2 = strchr(port1, '-');
 			if (port2)
 				*port2++ = '\0';
@@ -2952,10 +2966,9 @@ char *date2str_log(char *dst, const struct tm *tm, const struct timeval *date, s
 		return NULL;
 	*dst++ = '.';
 
-	utoa_pad((unsigned int)(date->tv_usec/1000), dst, 4); // millisecondes
+	dst = utoa_pad((unsigned int)(date->tv_usec/1000)%1000, dst, 4); // milliseconds
 	if (!dst)
 		return NULL;
-	dst += 3;  // only the 3 first digits
 	*dst = '\0';
 
 	return dst;
@@ -3820,7 +3833,7 @@ char *env_expand(char *in)
 				var_beg++;
 
 			var_end = var_beg;
-			while (isalnum((int)(unsigned char)*var_end) || *var_end == '_') {
+			while (isalnum((unsigned char)*var_end) || *var_end == '_') {
 				var_end++;
 			}
 
@@ -4087,7 +4100,7 @@ int dump_text(struct buffer *out, const char *buf, int bsize)
 
 	while (buf[ptr] && ptr < bsize) {
 		c = buf[ptr];
-		if (isprint(c) && isascii(c) && c != '\\' && c != ' ' && c != '=') {
+		if (isprint((unsigned char)c) && isascii((unsigned char)c) && c != '\\' && c != ' ' && c != '=') {
 			if (out->data > out->size - 1)
 				break;
 			out->area[out->data++] = c;
@@ -4183,12 +4196,37 @@ void dump_hex(struct buffer *out, const char *pfx, const void *buf, int len, int
 				chunk_strcat(out, "'");
 			else if (unsafe > 1)
 				chunk_strcat(out, "*");
-			else if (isprint(d[i + j]))
+			else if (isprint((unsigned char)d[i + j]))
 				chunk_appendf(out, "%c", d[i + j]);
 			else
 				chunk_strcat(out, ".");
 		}
 		chunk_strcat(out, "\n");
+	}
+}
+
+/* dumps <pfx> followed by <n> bytes from <addr> in hex form into buffer <buf>
+ * enclosed in brackets after the address itself, formatted on 14 chars
+ * including the "0x" prefix. This is meant to be used as a prefix for code
+ * areas. For example:
+ *    "0x7f10b6557690 [48 c7 c0 0f 00 00 00 0f]"
+ * It relies on may_access() to know if the bytes are dumpable, otherwise "--"
+ * is emitted. A NULL <pfx> will be considered empty.
+ */
+void dump_addr_and_bytes(struct buffer *buf, const char *pfx, const void *addr, int n)
+{
+	int ok = 0;
+	int i;
+
+	chunk_appendf(buf, "%s%#14lx [", pfx ? pfx : "", (long)addr);
+
+	for (i = 0; i < n; i++) {
+		if (i == 0 || (((long)(addr + i) ^ (long)(addr)) & 4096))
+			ok = may_access(addr + i);
+		if (ok)
+			chunk_appendf(buf, "%02x%s", ((uint8_t*)addr)[i], (i<n-1) ? " " : "]");
+		else
+			chunk_appendf(buf, "--%s", (i<n-1) ? " " : "]");
 	}
 }
 
@@ -4214,7 +4252,7 @@ int dump_text_line(struct buffer *out, const char *buf, int bsize, int len,
 
 	while (ptr < len && ptr < bsize) {
 		c = buf[ptr];
-		if (isprint(c) && isascii(c) && c != '\\') {
+		if (isprint((unsigned char)c) && isascii((unsigned char)c) && c != '\\') {
 			if (out->data > end - 2)
 				break;
 			out->area[out->data++] = c;
@@ -4297,6 +4335,135 @@ void debug_hexdump(FILE *out, const char *pfx, const char *buf,
 	}
 }
 
+#ifdef __ELF__
+/* calls dladdr() or dladdr1() on <addr> and <dli>. If dladdr1 is available,
+ * also returns the symbol size in <size>, otherwise returns 0 there.
+ */
+static int dladdr_and_size(const void *addr, Dl_info *dli, size_t *size)
+{
+	int ret;
+#if (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 3)) // most detailed one
+	const ElfW(Sym) *sym;
+
+	ret = dladdr1(addr, dli, (void **)&sym, RTLD_DL_SYMENT);
+	if (ret)
+		*size = sym ? sym->st_size : 0;
+#else
+	ret = dladdr(addr, dli);
+	*size = 0;
+#endif
+	return ret;
+}
+#endif
+
+/* Tries to append to buffer <buf> some indications about the symbol at address
+ * <addr> using the following form:
+ *   lib:+0xoffset              (unresolvable address from lib's base)
+ *   main+0xoffset              (unresolvable address from main (+/-))
+ *   lib:main+0xoffset          (unresolvable lib address from main (+/-))
+ *   name                       (resolved exact exec address)
+ *   lib:name                   (resolved exact lib address)
+ *   name+0xoffset/0xsize       (resolved address within exec symbol)
+ *   lib:name+0xoffset/0xsize   (resolved address within lib symbol)
+ *
+ * The file name (lib or executable) is limited to what lies between the last
+ * '/' and the first following '.'. An optional prefix <pfx> is prepended before
+ * the output if not null. The file is not dumped when it's the same as the one
+ * that contains the "main" symbol, or when __ELF__ is not set.
+ *
+ * The symbol's base address is returned, or NULL when unresolved, in order to
+ * allow the caller to match it against known ones.
+ */
+void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr)
+{
+	const struct {
+		const void *func;
+		const char *name;
+	} fcts[] = {
+		{ .func = process_stream, .name = "process_stream" },
+		{ .func = task_run_applet, .name = "task_run_applet" },
+		{ .func = si_cs_io_cb, .name = "si_cs_io_cb" },
+		{ .func = conn_fd_handler, .name = "conn_fd_handler" },
+		{ .func = dgram_fd_handler, .name = "dgram_fd_handler" },
+		{ .func = listener_accept, .name = "listener_accept" },
+		{ .func = poller_pipe_io_handler, .name = "poller_pipe_io_handler" },
+		{ .func = mworker_accept_wrapper, .name = "mworker_accept_wrapper" },
+#ifdef USE_LUA
+		{ .func = hlua_process_task, .name = "hlua_process_task" },
+#endif
+#if defined(USE_OPENSSL) && (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+		{ .func = ssl_async_fd_free, .name = "ssl_async_fd_free" },
+		{ .func = ssl_async_fd_handler, .name = "ssl_async_fd_handler" },
+#endif
+	};
+
+#ifdef __ELF__
+	Dl_info dli, dli_main;
+	size_t size;
+	const char *fname, *p;
+#endif
+	int i;
+
+	if (pfx)
+		chunk_appendf(buf, "%s", pfx);
+
+	for (i = 0; i < sizeof(fcts) / sizeof(fcts[0]); i++) {
+		if (addr == fcts[i].func) {
+			chunk_appendf(buf, "%s", fcts[i].name);
+			return addr;
+		}
+	}
+
+#ifdef __ELF__
+	/* Now let's try to be smarter */
+	if (!dladdr_and_size(addr, &dli, &size))
+		goto unknown;
+
+	/* 1. prefix the library name if it's not the same object as the one
+	 * that contains the main function. The name is picked between last '/'
+	 * and first following '.'.
+	 */
+	if (!dladdr(main, &dli_main))
+		dli_main.dli_fbase = NULL;
+
+	if (dli_main.dli_fbase != dli.dli_fbase) {
+		fname = dli.dli_fname;
+		p = strrchr(fname, '/');
+		if (p++)
+			fname = p;
+		p = strchr(fname, '.');
+		if (!p)
+			p = fname + strlen(fname);
+
+		chunk_appendf(buf, "%.*s:", (int)(long)(p - fname), fname);
+	}
+
+	/* 2. symbol name */
+	if (dli.dli_sname) {
+		/* known, dump it and return symbol's address (exact or relative) */
+		chunk_appendf(buf, "%s", dli.dli_sname);
+		if (addr != dli.dli_saddr) {
+			chunk_appendf(buf, "+%#lx", (long)(addr - dli.dli_saddr));
+			if (size)
+				chunk_appendf(buf, "/%#lx", (long)size);
+		}
+		return dli.dli_saddr;
+	}
+	else if (dli_main.dli_fbase != dli.dli_fbase) {
+		/* unresolved symbol from a known library, report relative offset */
+		chunk_appendf(buf, "+%#lx", (long)(addr - dli.dli_fbase));
+		return NULL;
+	}
+#endif /* __ELF__ */
+ unknown:
+	/* unresolved symbol from the main file, report relative offset to main */
+	if ((void*)addr < (void*)main)
+		chunk_appendf(buf, "main-%#lx", (long)((void*)main - addr));
+	else
+		chunk_appendf(buf, "main+%#lx", (long)(addr - (void*)main));
+	return NULL;
+}
+
 /*
  * Allocate an array of unsigned int with <nums> as address from <str> string
  * made of integer sepereated by dot characters.
@@ -4360,6 +4527,7 @@ int varint_bytes(uint64_t v)
 	}
 	return len;
 }
+
 
 /* Random number generator state, see below */
 static uint64_t ha_random_state[2] ALIGNED(2*sizeof(uint64_t));
@@ -4471,6 +4639,31 @@ void ha_random_jump96(uint32_t dist)
 		ha_random_state[1] = s1;
 	}
 }
+
+/* Generates an RFC4122 UUID into chunk <output> which must be at least 37
+ * bytes large.
+ */
+void ha_generate_uuid(struct buffer *output)
+{
+	uint32_t rnd[4];
+	uint64_t last;
+
+	last = ha_random64();
+	rnd[0] = last;
+	rnd[1] = last >> 32;
+
+	last = ha_random64();
+	rnd[2] = last;
+	rnd[3] = last >> 32;
+
+	chunk_printf(output, "%8.8x-%4.4x-%4.4x-%4.4x-%12.12llx",
+	             rnd[0],
+	             rnd[1] & 0xFFFF,
+	             ((rnd[1] >> 16u) & 0xFFF) | 0x4000,  // highest 4 bits indicate the uuid version
+	             (rnd[2] & 0x3FFF) | 0x8000,  // the highest 2 bits indicate the UUID variant (10),
+	             (long long)((rnd[2] >> 14u) | ((uint64_t) rnd[3] << 18u)) & 0xFFFFFFFFFFFFull);
+}
+
 
 /*
  * Local variables:

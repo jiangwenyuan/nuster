@@ -576,8 +576,10 @@ int tcp_connect_server(struct connection *conn, int flags)
 	conn_ctrl_init(conn);       /* registers the FD */
 	fdtab[fd].linger_risk = 1;  /* close hard if needed */
 
-	if (conn->flags & CO_FL_WAIT_L4_CONN)
-		fd_cant_recv(fd); // we'll change this once the connection is validated
+	if (conn->flags & CO_FL_WAIT_L4_CONN) {
+		fd_want_send(fd);
+		fd_cant_send(fd);
+	}
 
 	if (conn_xprt_init(conn) < 0) {
 		conn_full_close(conn);
@@ -585,7 +587,6 @@ int tcp_connect_server(struct connection *conn, int flags)
 		return SF_ERR_RESOURCE;
 	}
 
-	conn_xprt_want_send(conn);  /* for connect status, proxy protocol or SSL */
 	return SF_ERR_NONE;  /* connection is OK */
 }
 
@@ -634,98 +635,6 @@ int tcp_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir)
 #endif
 		return ret;
 	}
-}
-
-/* This is the callback which is set when a connection establishment is pending
- * and we have nothing to send. It updates the FD polling status. It returns 0
- * if it fails in a fatal way or needs to poll to go further, otherwise it
- * returns non-zero and removes the CO_FL_WAIT_L4_CONN flag from the connection's
- * flags. In case of error, it sets CO_FL_ERROR and leaves the error code in
- * errno. The error checking is done in two passes in order to limit the number
- * of syscalls in the normal case :
- *   - if POLL_ERR was reported by the poller, we check for a pending error on
- *     the socket before proceeding. If found, it's assigned to errno so that
- *     upper layers can see it.
- *   - otherwise connect() is used to check the connection state again, since
- *     the getsockopt return cannot reliably be used to know if the connection
- *     is still pending or ready. This one may often return an error as well,
- *     since we don't always have POLL_ERR (eg: OSX or cached events).
- */
-int tcp_connect_probe(struct connection *conn)
-{
-	struct sockaddr_storage *addr;
-	int fd = conn->handle.fd;
-	socklen_t lskerr;
-	int skerr;
-
-	if (conn->flags & CO_FL_ERROR)
-		return 0;
-
-	if (!conn_ctrl_ready(conn))
-		return 0;
-
-	if (!(conn->flags & CO_FL_WAIT_L4_CONN))
-		return 1; /* strange we were called while ready */
-
-	if (!fd_send_ready(fd))
-		return 0;
-
-	/* we might be the first witness of FD_POLL_ERR. Note that FD_POLL_HUP
-	 * without FD_POLL_IN also indicates a hangup without input data meaning
-	 * there was no connection.
-	 */
-	if (fdtab[fd].ev & FD_POLL_ERR ||
-	    (fdtab[fd].ev & (FD_POLL_IN|FD_POLL_HUP)) == FD_POLL_HUP) {
-		skerr = 0;
-		lskerr = sizeof(skerr);
-		getsockopt(fd, SOL_SOCKET, SO_ERROR, &skerr, &lskerr);
-		errno = skerr;
-		if (errno == EAGAIN)
-			errno = 0;
-		if (errno)
-			goto out_error;
-	}
-
-	/* Use connect() to check the state of the socket. This has the
-	 * advantage of giving us the following info :
-	 *  - error
-	 *  - connecting (EALREADY, EINPROGRESS)
-	 *  - connected (EISCONN, 0)
-	 */
-	addr = conn->dst;
-	if ((conn->flags & CO_FL_SOCKS4) && obj_type(conn->target) == OBJ_TYPE_SERVER)
-		addr = &objt_server(conn->target)->socks4_addr;
-
-	if (connect(fd, (const struct sockaddr *)addr, get_addr_len(addr)) == -1) {
-		if (errno == EALREADY || errno == EINPROGRESS) {
-			__conn_xprt_want_send(conn);
-			fd_cant_send(fd);
-			return 0;
-		}
-
-		if (errno && errno != EISCONN)
-			goto out_error;
-
-		/* otherwise we're connected */
-	}
-
-	/* The FD is ready now, we'll mark the connection as complete and
-	 * forward the event to the transport layer which will notify the
-	 * data layer.
-	 */
-	conn->flags &= ~CO_FL_WAIT_L4_CONN;
-	fd_may_send(fd);
-	fd_cond_recv(fd);
-	return 1;
-
- out_error:
-	/* Write error on the file descriptor. Report it to the connection
-	 * and disable polling on this FD.
-	 */
-	fdtab[fd].linger_risk = 0;
-	conn->flags |= CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH;
-	__conn_xprt_stop_both(conn);
-	return 0;
 }
 
 /* XXX: Should probably be elsewhere */
@@ -1369,7 +1278,7 @@ static enum act_return tcp_exec_action_silent_drop(struct act_rule *rule, struct
 	if (sess->listener->counters)
 		_HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
 
-	return ACT_RET_STOP;
+	return ACT_RET_ABRT;
 }
 
 /* parse "set-{src,dst}[-port]" action */
@@ -1380,7 +1289,7 @@ enum act_parse_ret tcp_parse_set_src_dst(const char **args, int *orig_arg, struc
 	unsigned int where;
 
 	cur_arg = *orig_arg;
-	expr = sample_parse_expr((char **)args, &cur_arg, px->conf.args.file, px->conf.args.line, err, &px->conf.args);
+	expr = sample_parse_expr((char **)args, &cur_arg, px->conf.args.file, px->conf.args.line, err, &px->conf.args, NULL);
 	if (!expr)
 		return ACT_RET_PRS_ERR;
 

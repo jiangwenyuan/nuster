@@ -330,7 +330,7 @@ static int proxy_parse_rate_limit(char **args, int section, struct proxy *proxy,
                                   struct proxy *defpx, const char *file, int line,
                                   char **err)
 {
-	int retval, cap;
+	int retval;
 	char *res;
 	unsigned int *tv = NULL;
 	unsigned int *td = NULL;
@@ -341,7 +341,6 @@ static int proxy_parse_rate_limit(char **args, int section, struct proxy *proxy,
 	if (strcmp(args[1], "sessions") == 0) {
 		tv = &proxy->fe_sps_lim;
 		td = &defpx->fe_sps_lim;
-		cap = PR_CAP_FE;
 	}
 	else {
 		memprintf(err, "'%s' only supports 'sessions' (got '%s')", args[0], args[1]);
@@ -359,10 +358,9 @@ static int proxy_parse_rate_limit(char **args, int section, struct proxy *proxy,
 		return -1;
 	}
 
-	if (!(proxy->cap & cap)) {
-		memprintf(err, "%s %s will be ignored because %s '%s' has no %s capability",
-			 args[0], args[1], proxy_type_str(proxy), proxy->id,
-			 (cap & PR_CAP_BE) ? "backend" : "frontend");
+	if (!(proxy->cap & PR_CAP_FE)) {
+		memprintf(err, "%s %s will be ignored because %s '%s' has no frontend capability",
+			  args[0], args[1], proxy_type_str(proxy), proxy->id);
 		retval = 1;
 	}
 	else if (defpx && *tv != *td) {
@@ -857,6 +855,7 @@ void init_new_proxy(struct proxy *p)
 	LIST_INIT(&p->acl);
 	LIST_INIT(&p->http_req_rules);
 	LIST_INIT(&p->http_res_rules);
+	LIST_INIT(&p->http_after_res_rules);
 	LIST_INIT(&p->redirect_rules);
 	LIST_INIT(&p->mon_fail_cond);
 	LIST_INIT(&p->switching_rules);
@@ -875,6 +874,7 @@ void init_new_proxy(struct proxy *p)
 	LIST_INIT(&p->format_unique_id);
 	LIST_INIT(&p->conf.bind);
 	LIST_INIT(&p->conf.listeners);
+	LIST_INIT(&p->conf.errors);
 	LIST_INIT(&p->conf.args.list);
 	LIST_INIT(&p->tcpcheck_rules);
 	LIST_INIT(&p->filter_configs);
@@ -977,9 +977,9 @@ struct task *manage_proxy(struct task *t, void *context, unsigned short state)
 		int t;
 		t = tick_remain(now_ms, p->stop_time);
 		if (t == 0) {
-			ha_warning("Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
+			ha_warning("Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
 				   p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
-			send_log(p, LOG_WARNING, "Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
+			send_log(p, LOG_WARNING, "Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
 				 p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
 			stop_proxy(p);
 			/* try to free more memory */
@@ -1035,8 +1035,7 @@ struct task *manage_proxy(struct task *t, void *context, unsigned short state)
 	}
 
 	/* The proxy is not limited so we can re-enable any waiting listener */
-	if (!MT_LIST_ISEMPTY(&p->listener_queue))
-		dequeue_all_listeners(&p->listener_queue);
+	dequeue_proxy_listeners(p);
  out:
 	t->expire = next;
 	task_queue(t);
@@ -1562,7 +1561,7 @@ void proxy_capture_error(struct proxy *proxy, int is_back,
 	es->when    = date; // user-visible date
 	es->srv     = objt_server(target);
 	es->oe      = other_end;
-	if (objt_conn(sess->origin) && conn_get_src(__objt_conn(sess->origin)))
+	if (sess && objt_conn(sess->origin) && conn_get_src(__objt_conn(sess->origin)))
 		es->src  = *__objt_conn(sess->origin)->src;
 	else
 		memset(&es->src, 0, sizeof(es->src));
@@ -2048,8 +2047,8 @@ static int cli_parse_set_maxconn_frontend(char **args, char *payload, struct app
 			resume_listener(l);
 	}
 
-	if (px->maxconn > px->feconn && !MT_LIST_ISEMPTY(&px->listener_queue))
-		dequeue_all_listeners(&px->listener_queue);
+	if (px->maxconn > px->feconn)
+		dequeue_proxy_listeners(px);
 
 	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
 
@@ -2074,9 +2073,9 @@ static int cli_parse_shutdown_frontend(char **args, char *payload, struct appctx
 	if (px->state == PR_STSTOPPED)
 		return cli_msg(appctx, LOG_NOTICE, "Frontend was already shut down.\n");
 
-	ha_warning("Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
+	ha_warning("Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
 		   px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
-	send_log(px, LOG_WARNING, "Proxy %s stopped (FE: %lld conns, BE: %lld conns).\n",
+	send_log(px, LOG_WARNING, "Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
 	         px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
 
 	stop_proxy(px);
@@ -2236,7 +2235,7 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 
 		if (appctx->ctx.errors.iid >= 0 &&
 		    appctx->ctx.errors.px->uuid != appctx->ctx.errors.iid &&
-		    es->oe->uuid != appctx->ctx.errors.iid)
+		    (!es->oe || es->oe->uuid != appctx->ctx.errors.iid))
 			goto next;
 
 		if (appctx->ctx.errors.ptr < 0) {
@@ -2266,15 +2265,15 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 					     " frontend %s (#%d): invalid request\n"
 					     "  backend %s (#%d)",
 					     appctx->ctx.errors.px->id, appctx->ctx.errors.px->uuid,
-					     (es->oe->cap & PR_CAP_BE) ? es->oe->id : "<NONE>",
-					     (es->oe->cap & PR_CAP_BE) ? es->oe->uuid : -1);
+					     (es->oe && es->oe->cap & PR_CAP_BE) ? es->oe->id : "<NONE>",
+					     (es->oe && es->oe->cap & PR_CAP_BE) ? es->oe->uuid : -1);
 				break;
 			case 1:
 				chunk_appendf(&trash,
 					     " backend %s (#%d): invalid response\n"
 					     "  frontend %s (#%d)",
 					     appctx->ctx.errors.px->id, appctx->ctx.errors.px->uuid,
-					     es->oe->id, es->oe->uuid);
+					     es->oe ? es->oe->id : "<NONE>" , es->oe ? es->oe->uuid : -1);
 				break;
 			}
 

@@ -95,7 +95,7 @@ struct srv_kw *srv_find_kw(const char *kw);
 void srv_dump_kws(char **out);
 
 /* Recomputes the server's eweight based on its state, uweight, the current time,
- * and the proxy's algorihtm. To be used after updating sv->uweight. The warmup
+ * and the proxy's algorithm. To be used after updating sv->uweight. The warmup
  * state is automatically disabled if the time is elapsed.
  */
 void server_recalc_eweight(struct server *sv, int must_update);
@@ -245,7 +245,7 @@ static inline enum srv_initaddr srv_get_next_initaddr(unsigned int *list)
 /* This adds an idle connection to the server's list if the connection is
  * reusable, not held by any owner anymore, but still has available streams.
  */
-static inline int srv_add_to_idle_list(struct server *srv, struct connection *conn)
+static inline int srv_add_to_idle_list(struct server *srv, struct connection *conn, int is_safe)
 {
 	if (srv && srv->pool_purge_delay > 0 &&
 	    (srv->max_idle_conns == -1 || srv->max_idle_conns > srv->curr_idle_conns) &&
@@ -261,11 +261,19 @@ static inline int srv_add_to_idle_list(struct server *srv, struct connection *co
 			_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
 			return 0;
 		}
-		LIST_DEL_INIT(&conn->list);
-		MT_LIST_ADDQ(&srv->idle_orphan_conns[tid], (struct mt_list *)&conn->list);
-		srv->curr_idle_thr[tid]++;
-
+		MT_LIST_DEL(&conn->list);
 		conn->idle_time = now_ms;
+		if (is_safe) {
+			conn->flags = (conn->flags & ~CO_FL_LIST_MASK) | CO_FL_SAFE_LIST;
+			MT_LIST_ADDQ(&srv->safe_conns[tid], (struct mt_list *)&conn->list);
+			_HA_ATOMIC_ADD(&srv->curr_safe_nb, 1);
+		} else {
+			conn->flags = (conn->flags & ~CO_FL_LIST_MASK) | CO_FL_IDLE_LIST;
+			MT_LIST_ADDQ(&srv->idle_conns[tid], (struct mt_list *)&conn->list);
+			_HA_ATOMIC_ADD(&srv->curr_idle_nb, 1);
+		}
+		_HA_ATOMIC_ADD(&srv->curr_idle_thr[tid], 1);
+
 		__ha_barrier_full();
 		if ((volatile void *)srv->idle_node.node.leaf_p == NULL) {
 			HA_SPIN_LOCK(OTHER_LOCK, &idle_conn_srv_lock);

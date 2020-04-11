@@ -10,13 +10,13 @@
  */
 
 #include <unistd.h>
+#include <sys/epoll.h>
 #include <sys/time.h>
 #include <sys/types.h>
 
 #include <common/compat.h>
 #include <common/config.h>
 #include <common/debug.h>
-#include <common/epoll.h>
 #include <common/hathreads.h>
 #include <common/standard.h>
 #include <common/ticks.h>
@@ -34,11 +34,6 @@
 static THREAD_LOCAL struct epoll_event *epoll_events = NULL;
 static int epoll_fd[MAX_THREADS]; // per-thread epoll_fd
 
-/* This structure may be used for any purpose. Warning! do not use it in
- * recursive functions !
- */
-static THREAD_LOCAL struct epoll_event ev;
-
 #ifndef EPOLLRDHUP
 /* EPOLLRDHUP was defined late in libc, and it appeared in kernel 2.6.17 */
 #define EPOLLRDHUP 0x2000
@@ -50,10 +45,11 @@ static THREAD_LOCAL struct epoll_event ev;
  * send us events even though this process closed the fd (see man 7 epoll,
  * "Questions and answers", Q 6).
  */
-REGPRM1 static void __fd_clo(int fd)
+static void __fd_clo(int fd)
 {
 	if (unlikely(fdtab[fd].cloned)) {
 		unsigned long m = polled_mask[fd].poll_recv | polled_mask[fd].poll_send;
+		struct epoll_event ev;
 		int i;
 
 		for (i = global.nbthread - 1; i >= 0; i--)
@@ -65,8 +61,18 @@ REGPRM1 static void __fd_clo(int fd)
 static void _update_fd(int fd)
 {
 	int en, opcode;
+	struct epoll_event ev = { };
 
 	en = fdtab[fd].state;
+
+	/* if we're already polling or are going to poll for this FD and it's
+	 * neither active nor ready, force it to be active so that we don't
+	 * needlessly unsubscribe then re-subscribe it.
+	 */
+	if (!(en & FD_EV_READY_R) &&
+	    ((en & FD_EV_ACTIVE_W) ||
+	     ((polled_mask[fd].poll_send | polled_mask[fd].poll_recv) & tid_bit)))
+		en |= FD_EV_ACTIVE_R;
 
 	if ((polled_mask[fd].poll_send | polled_mask[fd].poll_recv) & tid_bit) {
 		if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_ACTIVE_RW)) {
@@ -114,7 +120,6 @@ static void _update_fd(int fd)
 	}
 
 	/* construct the epoll events based on new state */
-	ev.events = 0;
 	if (en & FD_EV_ACTIVE_R)
 		ev.events |= EPOLLIN | EPOLLRDHUP;
 
@@ -128,7 +133,7 @@ static void _update_fd(int fd)
 /*
  * Linux epoll() poller
  */
-REGPRM3 static void _do_poll(struct poller *p, int exp, int wake)
+static void _do_poll(struct poller *p, int exp, int wake)
 {
 	int status;
 	int fd;
@@ -200,8 +205,10 @@ REGPRM3 static void _do_poll(struct poller *p, int exp, int wake)
 	/* process polled events */
 
 	for (count = 0; count < status; count++) {
-		unsigned int n;
-		unsigned int e = epoll_events[count].events;
+		struct epoll_event ev;
+		unsigned int n, e;
+
+		e = epoll_events[count].events;
 		fd = epoll_events[count].data.fd;
 
 		if (!fdtab[fd].owner) {
@@ -275,7 +282,7 @@ static void deinit_epoll_per_thread()
  * Returns 0 in case of failure, non-zero in case of success. If it fails, it
  * disables the poller by setting its pref to 0.
  */
-REGPRM1 static int _do_init(struct poller *p)
+static int _do_init(struct poller *p)
 {
 	p->private = NULL;
 
@@ -297,7 +304,7 @@ REGPRM1 static int _do_init(struct poller *p)
  * Termination of the epoll() poller.
  * Memory is released and the poller is marked as unselectable.
  */
-REGPRM1 static void _do_term(struct poller *p)
+static void _do_term(struct poller *p)
 {
 	if (epoll_fd[tid] >= 0) {
 		close(epoll_fd[tid]);
@@ -312,7 +319,7 @@ REGPRM1 static void _do_term(struct poller *p)
  * Check that the poller works.
  * Returns 1 if OK, otherwise 0.
  */
-REGPRM1 static int _do_test(struct poller *p)
+static int _do_test(struct poller *p)
 {
 	int fd;
 
@@ -329,7 +336,7 @@ REGPRM1 static int _do_test(struct poller *p)
  * epoll_fd. Some side effects were encountered because of this, such
  * as epoll_wait() returning an FD which was previously deleted.
  */
-REGPRM1 static int _do_fork(struct poller *p)
+static int _do_fork(struct poller *p)
 {
 	if (epoll_fd[tid] >= 0)
 		close(epoll_fd[tid]);
@@ -360,7 +367,7 @@ static void _do_register(void)
 
 	p->name = "epoll";
 	p->pref = 300;
-	p->flags = 0;
+	p->flags = HAP_POLL_F_ERRHUP; // note: RDHUP might be dynamically added
 	p->private = NULL;
 
 	p->clo  = __fd_clo;

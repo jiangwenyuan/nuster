@@ -101,10 +101,8 @@ int tcp_inspect_request(struct stream *s, struct channel *req, int an_bit)
 {
 	struct session *sess = s->sess;
 	struct act_rule *rule;
-	struct stksess *ts;
-	struct stktable *t;
 	int partial;
-	int act_flags = 0;
+	int act_opts = 0;
 
 	DBG_TRACE_ENTER(STRM_EV_STRM_ANA|STRM_EV_TCP_ANA, s);
 
@@ -151,104 +149,46 @@ int tcp_inspect_request(struct stream *s, struct channel *req, int an_bit)
 		}
 
 		if (ret) {
-			act_flags |= ACT_FLAG_FIRST;
+			act_opts |= ACT_OPT_FIRST;
 resume_execution:
-			/* we have a matching rule. */
+
+			/* Always call the action function if defined */
+			if (rule->action_ptr) {
+				if (partial & SMP_OPT_FINAL)
+					act_opts |= ACT_OPT_FINAL;
+
+				switch (rule->action_ptr(rule, s->be, s->sess, s, act_opts)) {
+					case ACT_RET_CONT:
+						break;
+					case ACT_RET_STOP:
+					case ACT_RET_DONE:
+						goto end;
+					case ACT_RET_YIELD:
+						s->current_rule = rule;
+						goto missing_data;
+					case ACT_RET_DENY:
+						goto deny;
+					case ACT_RET_ABRT:
+						goto abort;
+					case ACT_RET_ERR:
+						goto internal;
+					case ACT_RET_INV:
+						goto invalid;
+				}
+				continue; /* eval the next rule */
+			}
+
+			/* If not action function defined, check for known actions */
 			if (rule->action == ACT_ACTION_ALLOW) {
-				break;
+				goto end;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
-				si_must_kill_conn(chn_prod(req));
-				channel_abort(req);
-				channel_abort(&s->res);
-				req->analysers = 0;
-
-				_HA_ATOMIC_ADD(&s->be->be_counters.denied_req, 1);
-				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
-				if (sess->listener && sess->listener->counters)
-					_HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
-
-				if (!(s->flags & SF_ERR_MASK))
-					s->flags |= SF_ERR_PRXCOND;
-				if (!(s->flags & SF_FINST_MASK))
-					s->flags |= SF_FINST_R;
-				DBG_TRACE_DEVEL("leaving on error", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA|STRM_EV_TCP_ERR, s);
-				return 0;
-			}
-			else if (rule->action >= ACT_ACTION_TRK_SC0 && rule->action <= ACT_ACTION_TRK_SCMAX) {
-				/* Note: only the first valid tracking parameter of each
-				 * applies.
-				 */
-				struct stktable_key *key;
-				struct sample smp;
-
-				if (stkctr_entry(&s->stkctr[trk_idx(rule->action)]))
-					continue;
-
-				t = rule->arg.trk_ctr.table.t;
-				key = stktable_fetch_key(t, s->be, sess, s, SMP_OPT_DIR_REQ | partial, rule->arg.trk_ctr.expr, &smp);
-
-				if ((smp.flags & SMP_F_MAY_CHANGE) && !(partial & SMP_OPT_FINAL))
-					goto missing_data; /* key might appear later */
-
-				if (key && (ts = stktable_get_entry(t, key))) {
-					stream_track_stkctr(&s->stkctr[trk_idx(rule->action)], t, ts);
-					stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_CONTENT);
-					if (sess->fe != s->be)
-						stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_BACKEND);
-				}
-			}
-			else if (rule->action == ACT_TCP_CAPTURE) {
-				struct sample *key;
-				struct cap_hdr *h = rule->arg.cap.hdr;
-				char **cap = s->req_cap;
-				int len;
-
-				key = sample_fetch_as_type(s->be, sess, s, SMP_OPT_DIR_REQ | partial, rule->arg.cap.expr, SMP_T_STR);
-				if (!key)
-					continue;
-
-				if (key->flags & SMP_F_MAY_CHANGE)
-					goto missing_data;
-
-				if (cap[h->index] == NULL)
-					cap[h->index] = pool_alloc(h->pool);
-
-				if (cap[h->index] == NULL) /* no more capture memory */
-					continue;
-
-				len = key->data.u.str.data;
-				if (len > h->len)
-					len = h->len;
-
-				memcpy(cap[h->index], key->data.u.str.area,
-				       len);
-				cap[h->index][len] = 0;
-			}
-			else {
-				/* Custom keywords. */
-				if (!rule->action_ptr)
-					continue;
-
-				if (partial & SMP_OPT_FINAL)
-					act_flags |= ACT_FLAG_FINAL;
-
-				switch (rule->action_ptr(rule, s->be, s->sess, s, act_flags)) {
-				case ACT_RET_ERR:
-				case ACT_RET_CONT:
-					continue;
-				case ACT_RET_STOP:
-				case ACT_RET_DONE:
-					break;
-				case ACT_RET_YIELD:
-					s->current_rule = rule;
-					goto missing_data;
-				}
-				break; /* ACT_RET_STOP/DONE */
+				goto deny;
 			}
 		}
 	}
 
+ end:
 	/* if we get there, it means we have no rule which matches, or
 	 * we have an explicit accept, so we apply the default accept.
 	 */
@@ -265,6 +205,39 @@ resume_execution:
 	DBG_TRACE_DEVEL("waiting for more data", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA, s);
 	return 0;
 
+ deny:
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
+	if (sess->listener && sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
+	goto reject;
+
+ internal:
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	if (sess->listener && sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_INTERNAL;
+	goto reject;
+
+ invalid:
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
+	if (sess->listener && sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
+
+ reject:
+	si_must_kill_conn(chn_prod(req));
+	channel_abort(req);
+	channel_abort(&s->res);
+
+ abort:
+	req->analysers &= AN_REQ_FLT_END;
+
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_PRXCOND;
+	if (!(s->flags & SF_FINST_MASK))
+		s->flags |= SF_FINST_R;
+	DBG_TRACE_DEVEL("leaving on error|deny|abort", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA|STRM_EV_TCP_ERR, s);
+	return 0;
 }
 
 /* This function performs the TCP response analysis on the current response. It
@@ -278,7 +251,7 @@ int tcp_inspect_response(struct stream *s, struct channel *rep, int an_bit)
 	struct session *sess = s->sess;
 	struct act_rule *rule;
 	int partial;
-	int act_flags = 0;
+	int act_opts = 0;
 
 	DBG_TRACE_ENTER(STRM_EV_STRM_ANA|STRM_EV_TCP_ANA, s);
 
@@ -329,63 +302,52 @@ int tcp_inspect_response(struct stream *s, struct channel *rep, int an_bit)
 		}
 
 		if (ret) {
-			act_flags |= ACT_FLAG_FIRST;
+			act_opts |= ACT_OPT_FIRST;
 resume_execution:
-			/* we have a matching rule. */
+			/* Always call the action function if defined */
+			if (rule->action_ptr) {
+				if (partial & SMP_OPT_FINAL)
+					act_opts |= ACT_OPT_FINAL;
+
+				switch (rule->action_ptr(rule, s->be, s->sess, s, act_opts)) {
+					case ACT_RET_CONT:
+						break;
+					case ACT_RET_STOP:
+					case ACT_RET_DONE:
+						goto end;
+					case ACT_RET_YIELD:
+						s->current_rule = rule;
+						goto missing_data;
+					case ACT_RET_DENY:
+						goto deny;
+					case ACT_RET_ABRT:
+						goto abort;
+					case ACT_RET_ERR:
+						goto internal;
+					case ACT_RET_INV:
+						goto invalid;
+				}
+				continue; /* eval the next rule */
+			}
+
+			/* If not action function defined, check for known actions */
 			if (rule->action == ACT_ACTION_ALLOW) {
-				break;
+				goto end;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
-				si_must_kill_conn(chn_prod(rep));
-				channel_abort(rep);
-				channel_abort(&s->req);
-				rep->analysers = 0;
-
-				_HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
-				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_resp, 1);
-				if (sess->listener && sess->listener->counters)
-					_HA_ATOMIC_ADD(&sess->listener->counters->denied_resp, 1);
-
-				if (!(s->flags & SF_ERR_MASK))
-					s->flags |= SF_ERR_PRXCOND;
-				if (!(s->flags & SF_FINST_MASK))
-					s->flags |= SF_FINST_D;
-				DBG_TRACE_DEVEL("leaving on error", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA|STRM_EV_TCP_ERR, s);
-				return 0;
+				goto deny;
 			}
 			else if (rule->action == ACT_TCP_CLOSE) {
 				chn_prod(rep)->flags |= SI_FL_NOLINGER | SI_FL_NOHALF;
 				si_must_kill_conn(chn_prod(rep));
 				si_shutr(chn_prod(rep));
 				si_shutw(chn_prod(rep));
-				break;
-			}
-			else {
-				/* Custom keywords. */
-				if (!rule->action_ptr)
-					continue;
-
-				if (partial & SMP_OPT_FINAL)
-					act_flags |= ACT_FLAG_FINAL;
-
-				switch (rule->action_ptr(rule, s->be, s->sess, s, act_flags)) {
-				case ACT_RET_ERR:
-				case ACT_RET_CONT:
-					continue;
-				case ACT_RET_STOP:
-				case ACT_RET_DONE:
-					break;
-				case ACT_RET_YIELD:
-					channel_dont_close(rep);
-					s->current_rule = rule;
-					DBG_TRACE_DEVEL("waiting for more data", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA, s);
-					return 0;
-				}
-				break; /* ACT_RET_STOP/DONE */
+				goto end;
 			}
 		}
 	}
 
+ end:
 	/* if we get there, it means we have no rule which matches, or
 	 * we have an explicit accept, so we apply the default accept.
 	 */
@@ -393,6 +355,52 @@ resume_execution:
 	rep->analyse_exp = TICK_ETERNITY;
 	DBG_TRACE_LEAVE(STRM_EV_STRM_ANA|STRM_EV_TCP_ANA, s);
 	return 1;
+
+ missing_data:
+	channel_dont_close(rep);
+	s->current_rule = rule;
+	DBG_TRACE_DEVEL("waiting for more data", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA, s);
+	return 0;
+
+  deny:
+	_HA_ATOMIC_ADD(&s->sess->fe->fe_counters.denied_resp, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
+	if (s->sess->listener->counters)
+		_HA_ATOMIC_ADD(&s->sess->listener->counters->denied_resp, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.denied_resp, 1);
+	goto reject;
+
+ internal:
+	_HA_ATOMIC_ADD(&s->sess->fe->fe_counters.internal_errors, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (s->sess->listener->counters)
+		_HA_ATOMIC_ADD(&s->sess->listener->counters->internal_errors, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.internal_errors, 1);
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_INTERNAL;
+	goto reject;
+
+ invalid:
+	_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.failed_resp, 1);
+
+ reject:
+	si_must_kill_conn(chn_prod(rep));
+	channel_abort(rep);
+	channel_abort(&s->req);
+
+  abort:
+	rep->analysers &= AN_REQ_FLT_END;
+
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_PRXCOND;
+	if (!(s->flags & SF_FINST_MASK))
+		s->flags |= SF_FINST_D;
+	DBG_TRACE_DEVEL("leaving on error", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA|STRM_EV_TCP_ERR, s);
+	return 0;
 }
 
 
@@ -404,8 +412,6 @@ resume_execution:
 int tcp_exec_l4_rules(struct session *sess)
 {
 	struct act_rule *rule;
-	struct stksess *ts;
-	struct stktable *t = NULL;
 	struct connection *conn = objt_conn(sess->origin);
 	int result = 1;
 	enum acl_test_res ret;
@@ -424,9 +430,34 @@ int tcp_exec_l4_rules(struct session *sess)
 		}
 
 		if (ret) {
-			/* we have a matching rule. */
+			/* Always call the action function if defined */
+			if (rule->action_ptr) {
+				switch (rule->action_ptr(rule, sess->fe, sess, NULL, ACT_OPT_FINAL | ACT_OPT_FIRST)) {
+					case ACT_RET_YIELD:
+						/* yield is not allowed at this point. If this return code is
+						 * used it is a bug, so I prefer to abort the process.
+						 */
+						send_log(sess->fe, LOG_WARNING,
+							 "Internal error: yield not allowed with tcp-request connection actions.");
+						/* fall through */
+					case ACT_RET_STOP:
+					case ACT_RET_DONE:
+						goto end;
+					case ACT_RET_CONT:
+						break;
+					case ACT_RET_DENY:
+					case ACT_RET_ABRT:
+					case ACT_RET_ERR:
+					case ACT_RET_INV:
+						result = 0;
+						goto end;
+				}
+				continue; /* eval the next rule */
+			}
+
+			/* If not action function defined, check for known actions */
 			if (rule->action == ACT_ACTION_ALLOW) {
-				break;
+				goto end;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
 				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_conn, 1);
@@ -434,65 +465,29 @@ int tcp_exec_l4_rules(struct session *sess)
 					_HA_ATOMIC_ADD(&sess->listener->counters->denied_conn, 1);
 
 				result = 0;
-				break;
-			}
-			else if (rule->action >= ACT_ACTION_TRK_SC0 && rule->action <= ACT_ACTION_TRK_SCMAX) {
-				/* Note: only the first valid tracking parameter of each
-				 * applies.
-				 */
-				struct stktable_key *key;
-
-				if (stkctr_entry(&sess->stkctr[trk_idx(rule->action)]))
-					continue;
-
-				t = rule->arg.trk_ctr.table.t;
-				key = stktable_fetch_key(t, sess->fe, sess, NULL, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.trk_ctr.expr, NULL);
-
-				if (key && (ts = stktable_get_entry(t, key)))
-					stream_track_stkctr(&sess->stkctr[trk_idx(rule->action)], t, ts);
+				goto end;
 			}
 			else if (rule->action == ACT_TCP_EXPECT_PX) {
-				if (!(conn->flags & (CO_FL_HANDSHAKE_NOSSL))) {
+				if (!(conn->flags & CO_FL_HANDSHAKE)) {
 					if (xprt_add_hs(conn) < 0) {
 						result = 0;
-						break;
+						goto end;
 					}
 				}
 				conn->flags |= CO_FL_ACCEPT_PROXY;
 			}
 			else if (rule->action == ACT_TCP_EXPECT_CIP) {
-				if (!(conn->flags & (CO_FL_HANDSHAKE_NOSSL))) {
+				if (!(conn->flags & CO_FL_HANDSHAKE)) {
 					if (xprt_add_hs(conn) < 0) {
 						result = 0;
-						break;
+						goto end;
 					}
 				}
 				conn->flags |= CO_FL_ACCEPT_CIP;
 			}
-			else {
-				/* Custom keywords. */
-				if (!rule->action_ptr)
-					break;
-				switch (rule->action_ptr(rule, sess->fe, sess, NULL, ACT_FLAG_FINAL | ACT_FLAG_FIRST)) {
-				case ACT_RET_YIELD:
-					/* yield is not allowed at this point. If this return code is
-					 * used it is a bug, so I prefer to abort the process.
-					 */
-					send_log(sess->fe, LOG_WARNING,
-					         "Internal error: yield not allowed with tcp-request connection actions.");
-				case ACT_RET_STOP:
-				case ACT_RET_DONE:
-					break;
-				case ACT_RET_CONT:
-					continue;
-				case ACT_RET_ERR:
-					result = 0;
-					break;
-				}
-				break; /* ACT_RET_STOP/DONE */
-			}
 		}
 	}
+ end:
 	return result;
 }
 
@@ -506,8 +501,6 @@ int tcp_exec_l4_rules(struct session *sess)
 int tcp_exec_l5_rules(struct session *sess)
 {
 	struct act_rule *rule;
-	struct stksess *ts;
-	struct stktable *t = NULL;
 	int result = 1;
 	enum acl_test_res ret;
 
@@ -522,9 +515,34 @@ int tcp_exec_l5_rules(struct session *sess)
 		}
 
 		if (ret) {
-			/* we have a matching rule. */
+			/* Always call the action function if defined */
+			if (rule->action_ptr) {
+				switch (rule->action_ptr(rule, sess->fe, sess, NULL, ACT_OPT_FINAL | ACT_OPT_FIRST)) {
+					case ACT_RET_YIELD:
+						/* yield is not allowed at this point. If this return code is
+						 * used it is a bug, so I prefer to abort the process.
+						 */
+						send_log(sess->fe, LOG_WARNING,
+							 "Internal error: yield not allowed with tcp-request session actions.");
+						/* fall through */
+					case ACT_RET_STOP:
+					case ACT_RET_DONE:
+						goto end;
+					case ACT_RET_CONT:
+						break;
+					case ACT_RET_DENY:
+					case ACT_RET_ABRT:
+					case ACT_RET_ERR:
+					case ACT_RET_INV:
+						result = 0;
+						goto end;
+				}
+				continue; /* eval the next rule */
+			}
+
+			/* If not action function defined, check for known actions */
 			if (rule->action == ACT_ACTION_ALLOW) {
-				break;
+				goto end;
 			}
 			else if (rule->action == ACT_ACTION_DENY) {
 				_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_sess, 1);
@@ -532,47 +550,11 @@ int tcp_exec_l5_rules(struct session *sess)
 					_HA_ATOMIC_ADD(&sess->listener->counters->denied_sess, 1);
 
 				result = 0;
-				break;
-			}
-			else if (rule->action >= ACT_ACTION_TRK_SC0 && rule->action <= ACT_ACTION_TRK_SCMAX) {
-				/* Note: only the first valid tracking parameter of each
-				 * applies.
-				 */
-				struct stktable_key *key;
-
-				if (stkctr_entry(&sess->stkctr[trk_idx(rule->action)]))
-					continue;
-
-				t = rule->arg.trk_ctr.table.t;
-				key = stktable_fetch_key(t, sess->fe, sess, NULL, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.trk_ctr.expr, NULL);
-
-				if (key && (ts = stktable_get_entry(t, key)))
-					stream_track_stkctr(&sess->stkctr[trk_idx(rule->action)], t, ts);
-			}
-			else {
-				/* Custom keywords. */
-				if (!rule->action_ptr)
-					break;
-				switch (rule->action_ptr(rule, sess->fe, sess, NULL, ACT_FLAG_FINAL | ACT_FLAG_FIRST)) {
-				case ACT_RET_YIELD:
-					/* yield is not allowed at this point. If this return code is
-					 * used it is a bug, so I prefer to abort the process.
-					 */
-					send_log(sess->fe, LOG_WARNING,
-					         "Internal error: yield not allowed with tcp-request session actions.");
-				case ACT_RET_STOP:
-				case ACT_RET_DONE:
-					break;
-				case ACT_RET_CONT:
-					continue;
-				case ACT_RET_ERR:
-					result = 0;
-					break;
-				}
-				break; /* ACT_RET_STOP/DONE */
+				goto end;
 			}
 		}
 	}
+  end:
 	return result;
 }
 
@@ -592,21 +574,23 @@ static int tcp_parse_response_rule(char **args, int arg, int section_type,
 	if (strcmp(args[arg], "accept") == 0) {
 		arg++;
 		rule->action = ACT_ACTION_ALLOW;
+		rule->flags |= ACT_FLAG_FINAL;
 	}
 	else if (strcmp(args[arg], "reject") == 0) {
 		arg++;
 		rule->action = ACT_ACTION_DENY;
+		rule->flags |= ACT_FLAG_FINAL;
 	}
 	else if (strcmp(args[arg], "close") == 0) {
 		arg++;
 		rule->action = ACT_TCP_CLOSE;
+		rule->flags |= ACT_FLAG_FINAL;
 	}
 	else {
 		struct action_kw *kw;
 		kw = tcp_res_cont_action(args[arg]);
 		if (kw) {
 			arg++;
-			rule->from = ACT_F_TCP_RES_CNT;
 			rule->kw = kw;
 			if (kw->parse((const char **)args, &arg, curpx, rule, err) == ACT_RET_PRS_ERR)
 				return -1;
@@ -638,6 +622,104 @@ static int tcp_parse_response_rule(char **args, int arg, int section_type,
 }
 
 
+/* This function executes a track-sc* actions. On success, it returns
+ * ACT_RET_CONT. If it must yield, it return ACT_RET_YIELD. Otherwsize
+ * ACT_RET_ERR is returned.
+ */
+static enum act_return tcp_action_track_sc(struct act_rule *rule, struct proxy *px,
+					    struct session *sess, struct stream *s, int flags)
+{
+	struct stksess *ts;
+	struct stktable *t;
+	struct stktable_key *key;
+	struct sample smp;
+	int opt;
+
+	opt = SMP_OPT_DIR_REQ;
+	if (flags & ACT_FLAG_FINAL)
+		opt |= SMP_OPT_FINAL;
+
+	t = rule->arg.trk_ctr.table.t;
+	if (rule->from == ACT_F_TCP_REQ_CNT) { /* L7 rules: use the stream */
+		if (stkctr_entry(&s->stkctr[rule->action]))
+			goto end;
+
+		key = stktable_fetch_key(t, s->be, sess, s, opt, rule->arg.trk_ctr.expr, &smp);
+
+		if ((smp.flags & SMP_F_MAY_CHANGE) && !(flags & ACT_FLAG_FINAL))
+			return ACT_RET_YIELD; /* key might appear later */
+
+		if (key && (ts = stktable_get_entry(t, key))) {
+			stream_track_stkctr(&s->stkctr[rule->action], t, ts);
+			stkctr_set_flags(&s->stkctr[rule->action], STKCTR_TRACK_CONTENT);
+			if (sess->fe != s->be)
+				stkctr_set_flags(&s->stkctr[rule->action], STKCTR_TRACK_BACKEND);
+		}
+	}
+	else {  /* L4/L5 rules: use the session */
+		if (stkctr_entry(&sess->stkctr[rule->action]))
+			goto end;
+
+		key = stktable_fetch_key(t, sess->fe, sess, NULL, opt, rule->arg.trk_ctr.expr, NULL);
+		if (key && (ts = stktable_get_entry(t, key)))
+			stream_track_stkctr(&sess->stkctr[rule->action], t, ts);
+	}
+
+  end:
+	return ACT_RET_CONT;
+}
+
+/* This function executes a capture actions. It executes a fetch expression,
+ * turns the result into a string and puts it in a capture slot. On success, it
+ * returns ACT_RET_CONT. If it must yield, it return ACT_RET_YIELD. Otherwsize
+ * ACT_RET_ERR is returned.
+ */
+static enum act_return tcp_action_capture(struct act_rule *rule, struct proxy *px,
+					  struct session *sess, struct stream *s, int flags)
+{
+	struct sample *key;
+	struct cap_hdr *h = rule->arg.cap.hdr;
+	char **cap = s->req_cap;
+	int len, opt;
+
+	opt = ((rule->from == ACT_F_TCP_REQ_CNT) ? SMP_OPT_DIR_REQ : SMP_OPT_DIR_RES);
+	if (flags & ACT_FLAG_FINAL)
+		opt |= SMP_OPT_FINAL;
+
+	key = sample_fetch_as_type(s->be, sess, s, opt, rule->arg.cap.expr, SMP_T_STR);
+	if (!key)
+		goto end;
+
+	if ((key->flags & SMP_F_MAY_CHANGE) && !(flags & ACT_FLAG_FINAL))
+		return ACT_RET_YIELD; /* key might appear later */
+
+	if (cap[h->index] == NULL) {
+		cap[h->index] = pool_alloc(h->pool);
+		if (cap[h->index] == NULL) /* no more capture memory, ignore error */
+			goto end;
+	}
+
+	len = key->data.u.str.data;
+	if (len > h->len)
+		len = h->len;
+
+	memcpy(cap[h->index], key->data.u.str.area, len);
+	cap[h->index][len] = 0;
+
+  end:
+	return ACT_RET_CONT;
+}
+
+static void release_tcp_capture(struct act_rule * rule)
+{
+	release_sample_expr(rule->arg.cap.expr);
+}
+
+
+static void release_tcp_track_sc(struct act_rule * rule)
+{
+	release_sample_expr(rule->arg.trk_ctr.expr);
+}
 
 /* Parse a tcp-request rule. Return a negative value in case of failure */
 static int tcp_parse_request_rule(char **args, int arg, int section_type,
@@ -654,10 +736,12 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 	if (!strcmp(args[arg], "accept")) {
 		arg++;
 		rule->action = ACT_ACTION_ALLOW;
+		rule->flags |= ACT_FLAG_FINAL;
 	}
 	else if (!strcmp(args[arg], "reject")) {
 		arg++;
 		rule->action = ACT_ACTION_DENY;
+		rule->flags |= ACT_FLAG_FINAL;
 	}
 	else if (strcmp(args[arg], "capture") == 0) {
 		struct sample_expr *expr;
@@ -682,7 +766,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 		arg++;
 
 		curpx->conf.args.ctx = ARGC_CAP;
-		expr = sample_parse_expr(args, &arg, file, line, err, &curpx->conf.args);
+		expr = sample_parse_expr(args, &arg, file, line, err, &curpx->conf.args, NULL);
 		if (!expr) {
 			memprintf(err,
 			          "'%s %s %s' : %s",
@@ -743,7 +827,10 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 
 		rule->arg.cap.expr = expr;
 		rule->arg.cap.hdr = hdr;
-		rule->action = ACT_TCP_CAPTURE;
+		rule->action = ACT_CUSTOM;
+		rule->action_ptr = tcp_action_capture;
+		rule->check_ptr = check_capture;
+		rule->release_ptr  = release_tcp_capture;
 	}
 	else if (strncmp(args[arg], "track-sc", 8) == 0) {
 		struct sample_expr *expr;
@@ -760,7 +847,7 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 		}
 
 		curpx->conf.args.ctx = ARGC_TRK;
-		expr = sample_parse_expr(args, &arg, file, line, err, &curpx->conf.args);
+		expr = sample_parse_expr(args, &arg, file, line, err, &curpx->conf.args, NULL);
 		if (!expr) {
 			memprintf(err,
 			          "'%s %s %s' : %s",
@@ -792,9 +879,11 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 			rule->arg.trk_ctr.table.n = strdup(args[arg]);
 			arg++;
 		}
+		rule->action = tsc_num;
 		rule->arg.trk_ctr.expr = expr;
-		rule->action = ACT_ACTION_TRK_SC0 + tsc_num;
+		rule->action_ptr = tcp_action_track_sc;
 		rule->check_ptr = check_trk_action;
+		rule->release_ptr  = release_tcp_track_sc;
 	}
 	else if (strcmp(args[arg], "expect-proxy") == 0) {
 		if (strcmp(args[arg+1], "layer4") != 0) {
@@ -838,17 +927,14 @@ static int tcp_parse_request_rule(char **args, int arg, int section_type,
 			/* L4 */
 			kw = tcp_req_conn_action(args[arg]);
 			rule->kw = kw;
-			rule->from = ACT_F_TCP_REQ_CON;
 		} else if (where & SMP_VAL_FE_SES_ACC) {
 			/* L5 */
 			kw = tcp_req_sess_action(args[arg]);
 			rule->kw = kw;
-			rule->from = ACT_F_TCP_REQ_SES;
 		} else {
 			/* L6 */
 			kw = tcp_req_cont_action(args[arg]);
 			rule->kw = kw;
-			rule->from = ACT_F_TCP_REQ_CNT;
 		}
 		if (kw) {
 			arg++;
@@ -952,7 +1038,7 @@ static int tcp_parse_tcp_rep(char **args, int section_type, struct proxy *curpx,
 			where |= SMP_VAL_FE_RES_CNT;
 		if (curpx->cap & PR_CAP_BE)
 			where |= SMP_VAL_BE_RES_CNT;
-
+		rule->from = ACT_F_TCP_RES_CNT;
 		if (tcp_parse_response_rule(args, arg, section_type, curpx, defpx, rule, err, where, file, line) < 0)
 			goto error;
 
@@ -1066,7 +1152,7 @@ static int tcp_parse_tcp_req(char **args, int section_type, struct proxy *curpx,
 			where |= SMP_VAL_FE_REQ_CNT;
 		if (curpx->cap & PR_CAP_BE)
 			where |= SMP_VAL_BE_REQ_CNT;
-
+		rule->from = ACT_F_TCP_REQ_CNT;
 		if (tcp_parse_request_rule(args, arg, section_type, curpx, defpx, rule, err, where, file, line) < 0)
 			goto error;
 
@@ -1111,7 +1197,7 @@ static int tcp_parse_tcp_req(char **args, int section_type, struct proxy *curpx,
 		}
 
 		where |= SMP_VAL_FE_CON_ACC;
-
+		rule->from = ACT_F_TCP_REQ_CON;
 		if (tcp_parse_request_rule(args, arg, section_type, curpx, defpx, rule, err, where, file, line) < 0)
 			goto error;
 
@@ -1156,7 +1242,7 @@ static int tcp_parse_tcp_req(char **args, int section_type, struct proxy *curpx,
 		}
 
 		where |= SMP_VAL_FE_SES_ACC;
-
+		rule->from = ACT_F_TCP_REQ_SES;
 		if (tcp_parse_request_rule(args, arg, section_type, curpx, defpx, rule, err, where, file, line) < 0)
 			goto error;
 

@@ -272,22 +272,49 @@ static int dns_send_query(struct dns_resolution *resolution)
 {
 	struct dns_resolvers  *resolvers = resolution->resolvers;
 	struct dns_nameserver *ns;
+	int len;
+
+	/* Update resolution */
+	resolution->nb_queries   = 0;
+	resolution->nb_responses = 0;
+	resolution->last_query   = now_ms;
+
+	len = dns_build_query(resolution->query_id, resolution->query_type,
+	                      resolvers->accepted_payload_size,
+	                      resolution->hostname_dn, resolution->hostname_dn_len,
+	                      trash.area, trash.size);
 
 	list_for_each_entry(ns, &resolvers->nameservers, list) {
 		int fd = ns->dgram->t.sock.fd;
+		int ret;
+
 		if (fd == -1) {
 			if (dns_connect_namesaver(ns) == -1)
 				continue;
 			fd = ns->dgram->t.sock.fd;
 			resolvers->nb_nameservers++;
 		}
-		fd_want_send(fd);
-	}
 
-	/* Update resolution */
-	resolution->nb_queries   = 0;
-	resolution->nb_responses = 0;
-	resolution->last_query   = now_ms;
+		if (len < 0)
+			goto snd_error;
+
+		ret = send(fd, trash.area, len, 0);
+		if (ret == len) {
+			ns->counters.sent++;
+			resolution->nb_queries++;
+			continue;
+		}
+
+		if (ret == -1 && errno == EAGAIN) {
+			/* retry once the socket is ready */
+			fd_cant_send(fd);
+			continue;
+		}
+
+	snd_error:
+		ns->counters.snd_error++;
+		resolution->nb_queries++;
+	}
 
 	/* Push the resolution at the end of the active list */
 	LIST_DEL(&resolution->list);
@@ -489,6 +516,14 @@ static void dns_check_dns_response(struct dns_resolution *res)
 	struct server          *srv;
 	struct dns_srvrq       *srvrq;
 
+	/* clean up obsolete Additional records */
+	list_for_each_entry_safe(item, itemback, &res->response.ar_list, list) {
+		if ((item->last_seen + resolvers->hold.obsolete / 1000) < now.tv_sec) {
+			LIST_DEL(&item->list);
+			pool_free(dns_answer_item_pool, item);
+		}
+	}
+
 	list_for_each_entry_safe(item, itemback, &res->response.answer_list, list) {
 
 		/* Remove obsolete items */
@@ -580,6 +615,28 @@ static void dns_check_dns_response(struct dns_resolution *res)
 					HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 					continue;
 				}
+
+				/* Check if an Additional Record is associated to this SRV record.
+				 * Perform some sanity checks too to ensure the record can be used.
+				 * If all fine, we simply pick up the IP address found and associate
+				 * it to the server.
+				 */
+				if ((item->ar_item != NULL) &&
+				    (item->ar_item->type == DNS_RTYPE_A || item->ar_item->type == DNS_RTYPE_AAAA))
+				    {
+
+					switch (item->ar_item->type) {
+						case DNS_RTYPE_A:
+							update_server_addr(srv, &(((struct sockaddr_in*)&item->ar_item->address)->sin_addr), AF_INET, "DNS additional recrd");
+						break;
+						case DNS_RTYPE_AAAA:
+							update_server_addr(srv, &(((struct sockaddr_in6*)&item->ar_item->address)->sin6_addr), AF_INET6, "DNS additional recrd");
+						break;
+					}
+
+					srv->flags |= SRV_F_NO_RESOLUTION;
+				}
+
 				msg = update_server_fqdn(srv, hostname, "SRV record", 1);
 				if (msg)
 					send_log(srv->proxy, LOG_NOTICE, "%s", msg);
@@ -963,12 +1020,197 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 		}
 		else {
 			dns_answer_record->last_seen = now.tv_sec;
+			dns_answer_record->ar_item = NULL;
 			LIST_ADDQ(&dns_p->answer_list, &dns_answer_record->list);
 		}
 	} /* for i 0 to ancount */
 
 	/* Save the number of records we really own */
 	dns_p->header.ancount = nb_saved_records;
+
+	/* now parsing additional records */
+	nb_saved_records = 0;
+	//TODO: check with Dinko for DNS poisoning
+	for (i = 0; i < dns_p->header.arcount; i++) {
+		if (reader >= bufend)
+			return DNS_RESP_INVALID;
+
+		dns_answer_record = pool_alloc(dns_answer_item_pool);
+		if (dns_answer_record == NULL)
+			return (DNS_RESP_INVALID);
+
+		offset = 0;
+		len = dns_read_name(resp, bufend, reader, tmpname, DNS_MAX_NAME_SIZE, &offset, 0);
+
+		if (len == 0) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			return DNS_RESP_INVALID;
+		}
+
+		/* Check if the current record dname is valid.  previous_dname
+		 * points either to queried dname or last CNAME target */
+		if (dns_query->type != DNS_RTYPE_SRV && memcmp(previous_dname, tmpname, len) != 0) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			if (i == 0) {
+				/* First record, means a mismatch issue between
+				 * queried dname and dname found in the first
+				 * record */
+				return DNS_RESP_INVALID;
+			}
+			else {
+				/* If not the first record, this means we have a
+				 * CNAME resolution error */
+				return DNS_RESP_CNAME_ERROR;
+			}
+
+		}
+
+		memcpy(dns_answer_record->name, tmpname, len);
+		dns_answer_record->name[len] = 0;
+
+		reader += offset;
+		if (reader >= bufend) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			return DNS_RESP_INVALID;
+		}
+
+		/* 2 bytes for record type (A, AAAA, CNAME, etc...) */
+		if (reader + 2 > bufend) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			return DNS_RESP_INVALID;
+		}
+		dns_answer_record->type = reader[0] * 256 + reader[1];
+		reader += 2;
+
+		/* 2 bytes for class (2) */
+		if (reader + 2 > bufend) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			return DNS_RESP_INVALID;
+		}
+		dns_answer_record->class = reader[0] * 256 + reader[1];
+		reader += 2;
+
+		/* 4 bytes for ttl (4) */
+		if (reader + 4 > bufend) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			return DNS_RESP_INVALID;
+		}
+		dns_answer_record->ttl =   reader[0] * 16777216 + reader[1] * 65536
+			                 + reader[2] * 256 + reader[3];
+		reader += 4;
+
+		/* Now reading data len */
+		if (reader + 2 > bufend) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			return DNS_RESP_INVALID;
+		}
+		dns_answer_record->data_len = reader[0] * 256 + reader[1];
+
+		/* Move forward 2 bytes for data len */
+		reader += 2;
+
+		if (reader + dns_answer_record->data_len > bufend) {
+			pool_free(dns_answer_item_pool, dns_answer_record);
+			return DNS_RESP_INVALID;
+		}
+
+		/* Analyzing record content */
+		switch (dns_answer_record->type) {
+			case DNS_RTYPE_A:
+				/* ipv4 is stored on 4 bytes */
+				if (dns_answer_record->data_len != 4) {
+					pool_free(dns_answer_item_pool, dns_answer_record);
+					return DNS_RESP_INVALID;
+				}
+				dns_answer_record->address.sa_family = AF_INET;
+				memcpy(&(((struct sockaddr_in *)&dns_answer_record->address)->sin_addr),
+						reader, dns_answer_record->data_len);
+				break;
+
+			case DNS_RTYPE_AAAA:
+				/* ipv6 is stored on 16 bytes */
+				if (dns_answer_record->data_len != 16) {
+					pool_free(dns_answer_item_pool, dns_answer_record);
+					return DNS_RESP_INVALID;
+				}
+				dns_answer_record->address.sa_family = AF_INET6;
+				memcpy(&(((struct sockaddr_in6 *)&dns_answer_record->address)->sin6_addr),
+						reader, dns_answer_record->data_len);
+				break;
+
+			default:
+				pool_free(dns_answer_item_pool, dns_answer_record);
+				continue;
+
+		} /* switch (record type) */
+
+		/* Increment the counter for number of records saved into our
+		 * local response */
+		nb_saved_records++;
+
+		/* Move forward dns_answer_record->data_len for analyzing next
+		 * record in the response */
+		reader += ((dns_answer_record->type == DNS_RTYPE_SRV)
+			   ? offset
+			   : dns_answer_record->data_len);
+
+		/* Lookup to see if we already had this entry */
+		found = 0;
+		list_for_each_entry(tmp_record, &dns_p->answer_list, list) {
+			if (tmp_record->type != dns_answer_record->type)
+				continue;
+
+			switch(tmp_record->type) {
+				case DNS_RTYPE_A:
+					if (!memcmp(&((struct sockaddr_in *)&dns_answer_record->address)->sin_addr,
+						    &((struct sockaddr_in *)&tmp_record->address)->sin_addr,
+						    sizeof(in_addr_t)))
+						found = 1;
+					break;
+
+				case DNS_RTYPE_AAAA:
+					if (!memcmp(&((struct sockaddr_in6 *)&dns_answer_record->address)->sin6_addr,
+						    &((struct sockaddr_in6 *)&tmp_record->address)->sin6_addr,
+						    sizeof(struct in6_addr)))
+						found = 1;
+					break;
+
+				default:
+					break;
+			}
+
+			if (found == 1)
+				break;
+		}
+
+		if (found == 1) {
+			tmp_record->last_seen = now.tv_sec;
+			pool_free(dns_answer_item_pool, dns_answer_record);
+		}
+		else {
+			dns_answer_record->last_seen = now.tv_sec;
+			dns_answer_record->ar_item = NULL;
+
+			// looking for the SRV record in the response list linked to this additional record
+			list_for_each_entry(tmp_record, &dns_p->answer_list, list) {
+				if ( !(
+					(tmp_record->type == DNS_RTYPE_SRV) &&
+					(tmp_record->ar_item == NULL) &&
+					(memcmp(tmp_record->target, dns_answer_record->name, tmp_record->data_len) == 0)
+				      )
+				   )
+					continue;
+				tmp_record->ar_item = dns_answer_record;
+			}
+			//TODO: there is a leak for now, since we don't clean up AR records
+
+			LIST_ADDQ(&dns_p->ar_list, &dns_answer_record->list);
+		}
+	} /* for i 0 to arcount */
+
+	/* Save the number of records we really own */
+	dns_p->header.arcount = nb_saved_records;
+
 	dns_check_dns_response(resolution);
 	return DNS_RESP_VALID;
 }
@@ -1321,6 +1563,7 @@ static struct dns_resolution *dns_pick_resolution(struct dns_resolvers *resolver
 
 		LIST_INIT(&res->requesters);
 		LIST_INIT(&res->response.answer_list);
+		LIST_INIT(&res->response.ar_list);
 
 		res->prefered_query_type = query_type;
 		res->query_type          = query_type;
@@ -1392,7 +1635,7 @@ int dns_link_resolution(void *requester, int requester_type, int requester_locke
 			hostname_dn     = &stream->dns_ctx.hostname_dn;
 			hostname_dn_len = stream->dns_ctx.hostname_dn_len;
 			resolvers       = stream->dns_ctx.parent->arg.dns.resolvers;
-			query_type      = ((stream->dns_ctx.parent->arg.dns.dns_opts.family_prio == AF_INET)
+			query_type      = ((stream->dns_ctx.parent->arg.dns.dns_opts->family_prio == AF_INET)
 					   ? DNS_RTYPE_A
 					   : DNS_RTYPE_AAAA);
 			break;
@@ -1585,13 +1828,8 @@ static void dns_resolve_recv(struct dgram_conn *dgram)
 			continue;
 		}
 
-		/* known query id means a resolution in prgress */
+		/* known query id means a resolution in progress */
 		res = eb32_entry(eb, struct dns_resolution, qid);
-		if (!res) {
-			ns->counters.outdated++;
-			continue;
-		}
-
 		/* number of responses received */
 		res->nb_responses++;
 
@@ -1757,8 +1995,14 @@ static void dns_resolve_send(struct dgram_conn *dgram)
 			goto snd_error;
 
 		ret = send(fd, trash.area, len, 0);
-		if (ret != len)
+		if (ret != len) {
+			if (ret == -1 && errno == EAGAIN) {
+				/* retry once the socket is ready */
+				fd_cant_send(fd);
+				continue;
+			}
 			goto snd_error;
+		}
 
 		ns->counters.sent++;
 		res->nb_queries++;
@@ -2177,7 +2421,7 @@ enum act_return dns_action_do_resolve(struct act_rule *rule, struct proxy *px,
 				short ip_sin_family = 0;
 				void *ip = NULL;
 
-				dns_get_ip_from_response(&resolution->response, &rule->arg.dns.dns_opts, NULL,
+				dns_get_ip_from_response(&resolution->response, rule->arg.dns.dns_opts, NULL,
 							 0, &ip, &ip_sin_family, NULL);
 
 				switch (ip_sin_family) {
@@ -2220,7 +2464,7 @@ enum act_return dns_action_do_resolve(struct act_rule *rule, struct proxy *px,
 
 	fqdn = smp->data.u.str.area;
 	if (action_prepare_for_resolution(s, fqdn) == -1)
-		return ACT_RET_ERR;
+		return ACT_RET_CONT; /* on error, ignore the action */
 
 	s->dns_ctx.parent = rule;
 	dns_link_resolution(s, OBJ_TYPE_STREAM, 0);
@@ -2242,6 +2486,14 @@ enum act_return dns_action_do_resolve(struct act_rule *rule, struct proxy *px,
 
 	dns_trigger_resolution(s->dns_ctx.dns_requester);
 	return ACT_RET_YIELD;
+}
+
+static void release_dns_action(struct act_rule *rule)
+{
+	release_sample_expr(rule->arg.dns.expr);
+	free(rule->arg.dns.varname);
+	free(rule->arg.dns.resolvers_id);
+	free(rule->arg.dns.dns_opts);
 }
 
 
@@ -2295,8 +2547,12 @@ enum act_parse_ret dns_parse_do_resolve(const char **args, int *orig_arg, struct
 		goto do_resolve_parse_error;
 
 
+	rule->arg.dns.dns_opts = calloc(1, sizeof(*rule->arg.dns.dns_opts));
+	if (rule->arg.dns.dns_opts == NULL)
+		goto do_resolve_parse_error;
+
 	/* Default priority is ipv6 */
-	rule->arg.dns.dns_opts.family_prio = AF_INET6;
+	rule->arg.dns.dns_opts->family_prio = AF_INET6;
 
 	/* optional arguments accepted for now:
 	 *  ipv4 or ipv6
@@ -2310,10 +2566,10 @@ enum act_parse_ret dns_parse_do_resolve(const char **args, int *orig_arg, struct
 			goto do_resolve_parse_error;
 
 		if (strncmp(beg, "ipv4", end - beg) == 0) {
-			rule->arg.dns.dns_opts.family_prio = AF_INET;
+			rule->arg.dns.dns_opts->family_prio = AF_INET;
 		}
 		else if (strncmp(beg, "ipv6", end - beg) == 0) {
-			rule->arg.dns.dns_opts.family_prio = AF_INET6;
+			rule->arg.dns.dns_opts->family_prio = AF_INET6;
 		}
 		else {
 			goto do_resolve_parse_error;
@@ -2322,7 +2578,7 @@ enum act_parse_ret dns_parse_do_resolve(const char **args, int *orig_arg, struct
 
 	cur_arg = cur_arg + 1;
 
-	expr = sample_parse_expr((char **)args, &cur_arg, px->conf.args.file, px->conf.args.line, err, &px->conf.args);
+	expr = sample_parse_expr((char **)args, &cur_arg, px->conf.args.file, px->conf.args.line, err, &px->conf.args, NULL);
 	if (!expr)
 		goto do_resolve_parse_error;
 
@@ -2346,6 +2602,7 @@ enum act_parse_ret dns_parse_do_resolve(const char **args, int *orig_arg, struct
 	*orig_arg = cur_arg;
 
 	rule->check_ptr = check_action_do_resolve;
+	rule->release_ptr = release_dns_action;
 
 	return ACT_RET_PRS_OK;
 

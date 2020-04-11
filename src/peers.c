@@ -22,6 +22,7 @@
 
 #include <common/compat.h>
 #include <common/config.h>
+#include <common/net_helper.h>
 #include <common/time.h>
 #include <common/standard.h>
 #include <common/hathreads.h>
@@ -475,7 +476,7 @@ static int peer_prepare_updatemsg(char *msg, size_t size, struct peer_prep_param
 		cursor += stlen;
 	}
 	else if (st->table->type == SMP_T_SINT) {
-		netinteger = htonl(*((uint32_t *)ts->key.key));
+		netinteger = htonl(read_u32(ts->key.key));
 		memcpy(cursor, &netinteger, sizeof(netinteger));
 		cursor += sizeof(netinteger);
 	}
@@ -2851,13 +2852,6 @@ static struct dcache_tx *new_dcache_tx(size_t max_entries)
 	return NULL;
 }
 
-static void free_dcache_tx(struct dcache_tx *dc)
-{
-	free(dc->entries);
-	dc->entries = NULL;
-	free(dc);
-}
-
 /*
  * Allocate a cache of dictionary entries with <name> as name and <max_entries>
  * as maximum of entries.
@@ -2888,18 +2882,6 @@ static struct dcache *new_dcache(size_t max_entries)
 	free(dc_rx);
 	return NULL;
 }
-
-/*
- * Deallocate a cache of dictionary entries.
- */
-static inline void free_dcache(struct dcache *dc)
-{
-	free_dcache_tx(dc->tx);
-	dc->tx = NULL;
-	free(dc->rx); dc->rx = NULL;
-	free(dc);
-}
-
 
 /*
  * Look for the dictionary entry with the value of <i> in <d> cache of dictionary

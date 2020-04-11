@@ -1,7 +1,7 @@
                              ------------------------
                              HAProxy Management Guide
                              ------------------------
-                                   version 2.1
+                                   version 2.2
 
 
 This document describes how to start, stop, manage, and troubleshoot HAProxy,
@@ -1109,6 +1109,7 @@ S (Servers).
  91. ctime_max [..BS]: the maximum observed connect time in ms
  92. rtime_max [..BS]: the maximum observed response time in ms (0 for TCP)
  93. ttime_max [..BS]: the maximum observed total session time in ms
+ 94. eint [LFBS]: cumulative number of internal errors
 
 
 9.2) Typed output format
@@ -2507,6 +2508,37 @@ show stat [{<iid>|<proxy>} <type> <sid>] [typed|json] [desc]
   $ echo "show stat json" | socat /var/run/haproxy.sock stdio | \
     python -m json.tool
 
+show ssl cert [<filename>]
+  Display the list of certificates used on frontends. If a filename is prefixed
+  by an asterisk, it is a transaction which is not committed yet.  If a
+  filename is specified, it will show details about the certificate. This
+  command can be useful to check if a certificate was well updated. You can
+  also display details on a transaction by prefixing the filename by an
+  asterisk.
+
+  Example :
+
+    $ echo "@1 show ssl cert" | socat /var/run/haproxy.master -
+    # transaction
+    *test.local.pem
+    # filename
+    test.local.pem
+
+    $ echo "@1 show ssl cert test.local.pem" | socat /var/run/haproxy.master -
+    Filename: test.local.pem
+    Serial: 03ECC19BA54B25E85ABA46EE561B9A10D26F
+    notBefore: Sep 13 21:20:24 2019 GMT
+    notAfter: Dec 12 21:20:24 2019 GMT
+    Issuer: /C=US/O=Let's Encrypt/CN=Let's Encrypt Authority X3
+    Subject: /CN=test.local
+    Subject Alternative Name: DNS:test.local, DNS:imap.test.local
+    Algorithm: RSA2048
+    SHA1 FingerPrint: 417A11CAE25F607B24F638B4A8AEE51D1E211477
+
+    $ echo "@1 show ssl cert *test.local.pem" | socat /var/run/haproxy.master -
+    Filename: *test.local.pem
+    [...]
+
 show resolvers [<resolvers section id>]
   Dump statistics for the given resolvers section, or all resolvers sections
   if no section is supplied.
@@ -2537,7 +2569,7 @@ show table
     >>> # table: front_pub, type: ip, size:204800, used:171454
     >>> # table: back_rdp, type: ip, size:204800, used:0
 
-show table <name> [ data.<type> <operator> <value> ] | [ key <key> ]
+show table <name> [ data.<type> <operator> <value> [data.<type> ...]] | [ key <key> ]
   Dump contents of stick-table <name>. In this mode, a first line of generic
   information about the table is reported as with "show table", then all
   entries are dumped. Since this can be quite heavy, it is possible to specify
@@ -2556,6 +2588,8 @@ show table <name> [ data.<type> <operator> <value> ] | [ key <key> ]
     - lt : match entries whose data is less than this value
     - gt : match entries whose data is greater than this value
 
+  In this form, you can use multiple data filter entries, up to a maximum
+  defined during build time (4 by default).
 
   When the key form is used the entry <key> is shown.  The key must be of the
   same type as the table, which currently is limited to IPv4, IPv6, integer,

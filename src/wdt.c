@@ -26,7 +26,7 @@
  * It relies on timer_create() and timer_settime() which are only available in
  * this case.
  */
-#if defined(USE_THREAD) && defined(USE_RT) && (_POSIX_TIMERS > 0) && defined(_POSIX_THREAD_CPUTIME)
+#if defined(USE_RT) && (_POSIX_TIMERS > 0) && defined(_POSIX_THREAD_CPUTIME)
 
 /* Setup (or ping) the watchdog timer for thread <thr>. Returns non-zero on
  * success, zero on failure. It interrupts once per second of CPU time. It
@@ -113,9 +113,11 @@ void wdt_handler(int sig, siginfo_t *si, void *arg)
 	 * with the other thread interrupted exactly where it was running and
 	 * the current one not involved in this.
 	 */
+#ifdef USE_THREAD
 	if (thr != tid)
 		pthread_kill(ha_thread_info[thr].pthread, sig);
 	else
+#endif
 		ha_panic();
 	return;
 
@@ -125,7 +127,7 @@ void wdt_handler(int sig, siginfo_t *si, void *arg)
 
 int init_wdt_per_thread()
 {
-	struct sigevent sev;
+	struct sigevent sev = { };
 	sigset_t set;
 
 	/* unblock the WDTSIG signal we intend to use */
@@ -139,7 +141,8 @@ int init_wdt_per_thread()
 	sev.sigev_notify          = SIGEV_SIGNAL;
 	sev.sigev_signo           = WDTSIG;
 	sev.sigev_value.sival_int = tid;
-	if (timer_create(ti->clock_id, &sev, &ti->wd_timer) == -1)
+	if (timer_create(ti->clock_id, &sev, &ti->wd_timer) == -1 &&
+	    timer_create(CLOCK_REALTIME, &sev, &ti->wd_timer) == -1)
 		goto fail1;
 
 	if (!wdt_ping(tid))

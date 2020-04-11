@@ -262,8 +262,11 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		}
 
 		/* initialize error relocations */
-		for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
-			chunk_dup(&curproxy->errmsg[rc], &defproxy.errmsg[rc]);
+		if (!proxy_dup_default_conf_errors(curproxy, &defproxy, &errmsg)) {
+			ha_alert("parsing [%s:%d] : proxy '%s' : %s\n", file, linenum, curproxy->id, errmsg);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
 
 		if (curproxy->cap & PR_CAP_FE) {
 			curproxy->maxconn = defproxy.maxconn;
@@ -426,8 +429,15 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		}
 
 		/* copy default header unique id */
-		if (defproxy.header_unique_id)
-			curproxy->header_unique_id = strdup(defproxy.header_unique_id);
+		if (isttest(defproxy.header_unique_id)) {
+			const struct ist copy = istdup(defproxy.header_unique_id);
+			if (!isttest(copy)) {
+				ha_alert("parsing [%s:%d] : failed to allocate memory for unique-id-header\n", file, linenum);
+				err_code |= ERR_ALERT | ERR_FATAL;
+				goto out;
+			}
+			curproxy->header_unique_id = copy;
+		}
 
 		/* default compression options */
 		if (defproxy.comp != NULL) {
@@ -506,8 +516,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			free(defproxy.conf.logformat_sd_string);
 		free(defproxy.conf.lfsd_file);
 
-		for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
-			chunk_destroy(&defproxy.errmsg[rc]);
+		proxy_release_conf_errors(&defproxy);
 
 		/* we cannot free uri_auth because it might already be used */
 		init_default_instance();
@@ -806,10 +815,11 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		}
 
 		if (strcasecmp(args[1], "or") == 0) {
-			ha_warning("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
+			ha_alert("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
 				   "logical disjunction within a condition.\n",
 				   file, linenum, args[1]);
-			err_code |= ERR_WARN;
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
 		}
 
 		if (parse_acl((const char **)args + 1, &curproxy->acl, &errmsg, &curproxy->conf.args, file, linenum) == NULL) {
@@ -1006,7 +1016,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 				}
 				val = args[cur_arg + 1];
 				while (*val) {
-					if (iscntrl(*val) || *val == ';') {
+					if (iscntrl((unsigned char)*val) || *val == ';') {
 						ha_alert("parsing [%s:%d]: character '%%x%02X' is not permitted in attribute value.\n",
 							 file, linenum, *val);
 						err_code |= ERR_ALERT | ERR_FATAL;
@@ -1368,10 +1378,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 		if (!LIST_ISEMPTY(&curproxy->http_req_rules) &&
 		    !LIST_PREV(&curproxy->http_req_rules, struct act_rule *, list)->cond &&
-		    (LIST_PREV(&curproxy->http_req_rules, struct act_rule *, list)->action == ACT_ACTION_ALLOW ||
-		     LIST_PREV(&curproxy->http_req_rules, struct act_rule *, list)->action == ACT_ACTION_DENY ||
-		     LIST_PREV(&curproxy->http_req_rules, struct act_rule *, list)->action == ACT_HTTP_REDIR ||
-		     LIST_PREV(&curproxy->http_req_rules, struct act_rule *, list)->action == ACT_HTTP_REQ_AUTH)) {
+		    (LIST_PREV(&curproxy->http_req_rules, struct act_rule *, list)->flags & ACT_FLAG_FINAL)) {
 			ha_warning("parsing [%s:%d]: previous '%s' action is final and has no condition attached, further entries are NOOP.\n",
 				   file, linenum, args[0]);
 			err_code |= ERR_WARN;
@@ -1402,8 +1409,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 		if (!LIST_ISEMPTY(&curproxy->http_res_rules) &&
 		    !LIST_PREV(&curproxy->http_res_rules, struct act_rule *, list)->cond &&
-		    (LIST_PREV(&curproxy->http_res_rules, struct act_rule *, list)->action == ACT_ACTION_ALLOW ||
-		     LIST_PREV(&curproxy->http_res_rules, struct act_rule *, list)->action == ACT_ACTION_DENY)) {
+		    (LIST_PREV(&curproxy->http_res_rules, struct act_rule *, list)->flags & ACT_FLAG_FINAL)) {
 			ha_warning("parsing [%s:%d]: previous '%s' action is final and has no condition attached, further entries are NOOP.\n",
 				   file, linenum, args[0]);
 			err_code |= ERR_WARN;
@@ -1421,6 +1427,36 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 	                                          file, linenum);
 
 		LIST_ADDQ(&curproxy->http_res_rules, &rule->list);
+	}
+	else if (!strcmp(args[0], "http-after-response")) {
+		struct act_rule *rule;
+
+		if (curproxy == &defproxy) {
+			ha_alert("parsing [%s:%d]: '%s' not allowed in 'defaults' section.\n", file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+
+		if (!LIST_ISEMPTY(&curproxy->http_after_res_rules) &&
+		    !LIST_PREV(&curproxy->http_after_res_rules, struct act_rule *, list)->cond &&
+		    (LIST_PREV(&curproxy->http_after_res_rules, struct act_rule *, list)->flags & ACT_FLAG_FINAL)) {
+			ha_warning("parsing [%s:%d]: previous '%s' action is final and has no condition attached, further entries are NOOP.\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
+		}
+
+		rule = parse_http_after_res_cond((const char **)args + 1, file, linenum, curproxy);
+
+		if (!rule) {
+			err_code |= ERR_ALERT | ERR_ABORT;
+			goto out;
+		}
+
+		err_code |= warnif_cond_conflicts(rule->cond,
+	                                          (curproxy->cap & PR_CAP_BE) ? SMP_VAL_BE_HRS_HDR : SMP_VAL_FE_HRS_HDR,
+	                                          file, linenum);
+
+		LIST_ADDQ(&curproxy->http_after_res_rules, &rule->list);
 	}
 	else if (!strcmp(args[0], "http-send-name-header")) { /* send server name in request header */
 		/* set the header name and length into the proxy structure */
@@ -1698,7 +1734,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		}
 
 		curproxy->conf.args.ctx = ARGC_STK;
-		expr = sample_parse_expr(args, &myidx, file, linenum, &errmsg, &curproxy->conf.args);
+		expr = sample_parse_expr(args, &myidx, file, linenum, &errmsg, &curproxy->conf.args, NULL);
 		if (!expr) {
 			ha_alert("parsing [%s:%d] : '%s': %s\n", file, linenum, args[0], errmsg);
 			err_code |= ERR_ALERT | ERR_FATAL;
@@ -3455,13 +3491,21 @@ stats_error_parsing:
 	}
 
 	else if (strcmp(args[0], "unique-id-header") == 0) {
+		char *copy;
 		if (!*(args[1])) {
 			ha_alert("parsing [%s:%d] : %s expects an argument.\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
-		free(curproxy->header_unique_id);
-		curproxy->header_unique_id = strdup(args[1]);
+		copy = strdup(args[1]);
+		if (copy == NULL) {
+			ha_alert("parsing [%s:%d] : failed to allocate memory for unique-id-header\n", file, linenum);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+
+		istfree(&curproxy->header_unique_id);
+		curproxy->header_unique_id = ist(copy);
 	}
 
 	else if (strcmp(args[0], "log-format") == 0) {
@@ -3620,11 +3664,11 @@ stats_error_parsing:
 					char *name, *end;
 
 					name = args[cur_arg+1] + 7;
-					while (isspace(*name))
+					while (isspace((unsigned char)*name))
 						name++;
 
 					end = name;
-					while (*end && !isspace(*end) && *end != ',' && *end != ')')
+					while (*end && !isspace((unsigned char)*end) && *end != ',' && *end != ')')
 						end++;
 
 					curproxy->conn_src.opts &= ~CO_SRC_TPROXY_MASK;
@@ -3636,14 +3680,14 @@ stats_error_parsing:
 					curproxy->conn_src.bind_hdr_occ = -1;
 
 					/* now look for an occurrence number */
-					while (isspace(*end))
+					while (isspace((unsigned char)*end))
 						end++;
 					if (*end == ',') {
 						end++;
 						name = end;
 						if (*end == '-')
 							end++;
-						while (isdigit((int)*end))
+						while (isdigit((unsigned char)*end))
 							end++;
 						curproxy->conn_src.bind_hdr_occ = strl2ic(name, end-name);
 					}
@@ -3845,125 +3889,6 @@ stats_error_parsing:
 			"Use 'http-response add-header' instead.\n", file, linenum, args[0]);
 		err_code |= ERR_ALERT | ERR_FATAL;
 		goto out;
-	}
-	else if (!strcmp(args[0], "errorloc") ||
-		 !strcmp(args[0], "errorloc302") ||
-		 !strcmp(args[0], "errorloc303")) { /* error location */
-		int errnum, errlen;
-		char *err;
-
-		if (warnifnotcap(curproxy, PR_CAP_FE | PR_CAP_BE, file, linenum, args[0], NULL))
-			err_code |= ERR_WARN;
-
-		if (*(args[2]) == 0) {
-			ha_alert("parsing [%s:%d] : <%s> expects <status_code> and <url> as arguments.\n", file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		errnum = atol(args[1]);
-		if (!strcmp(args[0], "errorloc303")) {
-			errlen = strlen(HTTP_303) + strlen(args[2]) + 5;
-			err = malloc(errlen);
-			errlen = snprintf(err, errlen, "%s%s\r\n\r\n", HTTP_303, args[2]);
-		} else {
-			errlen = strlen(HTTP_302) + strlen(args[2]) + 5;
-			err = malloc(errlen);
-			errlen = snprintf(err, errlen, "%s%s\r\n\r\n", HTTP_302, args[2]);
-		}
-
-		for (rc = 0; rc < HTTP_ERR_SIZE; rc++) {
-			if (http_err_codes[rc] == errnum) {
-				struct buffer chk;
-
-				if (!http_str_to_htx(&chk, ist2(err, errlen))) {
-					ha_alert("parsing [%s:%d] : unable to convert message in HTX for HTTP return code %d.\n",
-						 file, linenum, http_err_codes[rc]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					free(err);
-					goto out;
-				}
-				chunk_destroy(&curproxy->errmsg[rc]);
-				curproxy->errmsg[rc] = chk;
-				break;
-			}
-		}
-
-		if (rc >= HTTP_ERR_SIZE) {
-			ha_warning("parsing [%s:%d] : status code %d not handled by '%s', error relocation will be ignored.\n",
-				   file, linenum, errnum, args[0]);
-			free(err);
-		}
-	}
-	else if (!strcmp(args[0], "errorfile")) { /* error message from a file */
-		int errnum, errlen, fd;
-		char *err;
-		struct stat stat;
-
-		if (warnifnotcap(curproxy, PR_CAP_FE | PR_CAP_BE, file, linenum, args[0], NULL))
-			err_code |= ERR_WARN;
-
-		if (*(args[2]) == 0) {
-			ha_alert("parsing [%s:%d] : <%s> expects <status_code> and <file> as arguments.\n", file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		fd = open(args[2], O_RDONLY);
-		if ((fd < 0) || (fstat(fd, &stat) < 0)) {
-			ha_alert("parsing [%s:%d] : error opening file <%s> for custom error message <%s>.\n",
-				 file, linenum, args[2], args[1]);
-			if (fd >= 0)
-				close(fd);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (stat.st_size <= global.tune.bufsize) {
-			errlen = stat.st_size;
-		} else {
-			ha_warning("parsing [%s:%d] : custom error message file <%s> larger than %d bytes. Truncating.\n",
-				   file, linenum, args[2], global.tune.bufsize);
-			err_code |= ERR_WARN;
-			errlen = global.tune.bufsize;
-		}
-
-		err = malloc(errlen); /* malloc() must succeed during parsing */
-		errnum = read(fd, err, errlen);
-		if (errnum != errlen) {
-			ha_alert("parsing [%s:%d] : error reading file <%s> for custom error message <%s>.\n",
-				 file, linenum, args[2], args[1]);
-			close(fd);
-			free(err);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-		close(fd);
-
-		errnum = atol(args[1]);
-		for (rc = 0; rc < HTTP_ERR_SIZE; rc++) {
-			if (http_err_codes[rc] == errnum) {
-				struct buffer chk;
-
-				if (!http_str_to_htx(&chk, ist2(err, errlen))) {
-					ha_alert("parsing [%s:%d] : unable to convert message in HTX for HTTP return code %d.\n",
-						 file, linenum, http_err_codes[rc]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					free(err);
-					goto out;
-				}
-				chunk_destroy(&curproxy->errmsg[rc]);
-				curproxy->errmsg[rc] = chk;
-				break;
-			}
-		}
-
-		if (rc >= HTTP_ERR_SIZE) {
-			ha_warning("parsing [%s:%d] : status code %d not handled by '%s', error customization will be ignored.\n",
-				   file, linenum, errnum, args[0]);
-			err_code |= ERR_WARN;
-			free(err);
-		}
 	}
 	else {
 		struct cfg_kw_list *kwl;

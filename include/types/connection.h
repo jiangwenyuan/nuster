@@ -64,6 +64,11 @@ enum sub_event_type {
 	SUB_RETRY_SEND       = 0x00000002,  /* Schedule the tasklet when we can attempt to send again */
 };
 
+/* Describes a set of subscriptions. Multiple events may be registered at the
+ * same time. The callee should assume everything not pending for completion is
+ * implicitly possible. It's illegal to change the tasklet if events are still
+ * registered.
+ */
 struct wait_event {
 	struct tasklet *tasklet;
 	int events;             /* set of enum sub_event_type above */
@@ -118,17 +123,16 @@ enum cs_shw_mode {
 	CS_SHW_SILENT       = 1,           /* imminent close, don't notify peer */
 };
 
-/* For each direction, we have a CO_FL_{SOCK,DATA}_<DIR>_ENA flag, which
+/* For each direction, we have a CO_FL_XPRT_<DIR>_ENA flag, which
  * indicates if read or write is desired in that direction for the respective
  * layers. The current status corresponding to the current layer being used is
- * remembered in the CO_FL_CURR_<DIR>_ENA flag. The need to poll (ie receipt of
+ * remembered in the CO_FL_XPRT_<DIR>_ENA flag. The need to poll (ie receipt of
  * EAGAIN) is remembered at the file descriptor level so that even when the
  * activity is stopped and restarted, we still remember whether it was needed
  * to poll before attempting the I/O.
  *
- * The CO_FL_CURR_<DIR>_ENA flag is set from the FD status in
- * conn_refresh_polling_flags(). The FD state is updated according to these
- * flags in conn_cond_update_polling().
+ * The FD state is updated according to CO_FL_XPRT_<DIR>_ENA in
+ * conn_cond_update_polling().
  */
 
 /* flags for use in connection->flags */
@@ -136,21 +140,23 @@ enum {
 	CO_FL_NONE          = 0x00000000,  /* Just for initialization purposes */
 
 	/* Do not change these values without updating conn_*_poll_changes() ! */
-	/* unusued : 0x00000001 */
-	CO_FL_XPRT_RD_ENA   = 0x00000002,  /* receiving data is allowed */
-	CO_FL_CURR_RD_ENA   = 0x00000004,  /* receiving is currently allowed */
-	/* unused : 0x00000008 */
+	CO_FL_SAFE_LIST     = 0x00000001,  /* 0 = not in any list, 1 = in safe_list  */
+	CO_FL_IDLE_LIST     = 0x00000002,  /* 2 = in idle_list, 3 = invalid */
+	CO_FL_LIST_MASK     = 0x00000003,  /* Is the connection in any server-managed list ? */
+
+	/* unused : 0x00000001 */
+	/* unused : 0x00000002 */
+	/* unused : 0x00000004, 0x00000008 */
 
 	/* unused : 0x00000010 */
-	CO_FL_XPRT_WR_ENA   = 0x00000020,  /* sending data is desired */
-	CO_FL_CURR_WR_ENA   = 0x00000040,  /* sending is currently desired */
-	/* unused : 0x00000080 */
+	/* unused : 0x00000020 */
+	/* unused : 0x00000040, 0x00000080 */
 
 	/* These flags indicate whether the Control and Transport layers are initialized */
 	CO_FL_CTRL_READY    = 0x00000100, /* FD was registered, fd_delete() needed */
 	CO_FL_XPRT_READY    = 0x00000200, /* xprt_init() done, xprt_close() needed */
 
-	CO_FL_WILL_UPDATE   = 0x00000400, /* the conn handler will take care of updating the polling */
+	/* unused : 0x00000400 */
 
 	/* This flag is used by data layers to indicate they had to stop
 	 * receiving data because a buffer was full. The connection handler
@@ -174,25 +180,25 @@ enum {
 	/* flags used to report connection errors or other closing conditions */
 	CO_FL_ERROR         = 0x00100000,  /* a fatal error was reported     */
 	CO_FL_NOTIFY_DONE   = 0x001C0000,  /* any xprt shut/error flags above needs to be reported */
-	CO_FL_NOTIFY_DATA   = 0x001C0000,  /* any shut/error flags above needs to be reported */
 
 	/* flags used to report connection status updates */
-	CO_FL_CONNECTED     = 0x00200000,  /* L4+L6 now ready ; extra handshakes may or may not exist */
 	CO_FL_WAIT_L4_CONN  = 0x00400000,  /* waiting for L4 to be connected */
 	CO_FL_WAIT_L6_CONN  = 0x00800000,  /* waiting for L6 to be connected (eg: SSL) */
+	CO_FL_WAIT_L4L6     = 0x00C00000,  /* waiting for L4 and/or L6 to be connected */
 
-	/*** All the flags below are used for connection handshakes. Any new
+	/* All the flags below are used for connection handshakes. Any new
 	 * handshake should be added after this point, and CO_FL_HANDSHAKE
 	 * should be updated.
 	 */
 	CO_FL_SEND_PROXY    = 0x01000000,  /* send a valid PROXY protocol header */
-	CO_FL_SSL_WAIT_HS   = 0x02000000,  /* wait for an SSL handshake to complete */
-	CO_FL_ACCEPT_PROXY  = 0x04000000,  /* receive a valid PROXY protocol header */
-	CO_FL_ACCEPT_CIP    = 0x08000000,  /* receive a valid NetScaler Client IP header */
+	CO_FL_ACCEPT_PROXY  = 0x02000000,  /* receive a valid PROXY protocol header */
+	CO_FL_ACCEPT_CIP    = 0x04000000,  /* receive a valid NetScaler Client IP header */
 
 	/* below we have all handshake flags grouped into one */
-	CO_FL_HANDSHAKE     = CO_FL_SEND_PROXY | CO_FL_SSL_WAIT_HS | CO_FL_ACCEPT_PROXY | CO_FL_ACCEPT_CIP | CO_FL_SOCKS4_SEND | CO_FL_SOCKS4_RECV,
-	CO_FL_HANDSHAKE_NOSSL = CO_FL_SEND_PROXY | CO_FL_ACCEPT_PROXY | CO_FL_ACCEPT_CIP | CO_FL_SOCKS4_SEND | CO_FL_SOCKS4_RECV,
+	CO_FL_HANDSHAKE     = CO_FL_SEND_PROXY | CO_FL_ACCEPT_PROXY | CO_FL_ACCEPT_CIP | CO_FL_SOCKS4_SEND | CO_FL_SOCKS4_RECV,
+	CO_FL_WAIT_XPRT     = CO_FL_WAIT_L4_CONN | CO_FL_HANDSHAKE | CO_FL_WAIT_L6_CONN,
+
+	CO_FL_SSL_WAIT_HS   = 0x08000000,  /* wait for an SSL handshake to complete */
 
 	/* This connection may not be shared between clients */
 	CO_FL_PRIVATE       = 0x10000000,
@@ -282,6 +288,7 @@ enum {
 enum {
 	CO_RFL_BUF_WET     = 0x0001,    /* Buffer still has some output data present */
 	CO_RFL_BUF_FLUSH   = 0x0002,    /* Flush mux's buffers but don't read more data */
+	CO_RFL_READ_ONCE   = 0x0004,    /* don't loop even if the request/response is small */
 };
 
 /* flags that can be passed to xprt->snd_buf() and mux->snd_buf() */
@@ -325,8 +332,8 @@ struct xprt_ops {
 	void (*destroy_srv)(struct server *srv);    /* destroy a server context */
 	int  (*get_alpn)(const struct connection *conn, void *xprt_ctx, const char **str, int *len); /* get application layer name */
 	char name[8];                               /* transport layer name, zero-terminated */
-	int (*subscribe)(struct connection *conn, void *xprt_ctx, int event_type, void *param); /* Subscribe to events, such as "being able to send" */
-	int (*unsubscribe)(struct connection *conn, void *xprt_ctx, int event_type, void *param); /* Unsubscribe to events */
+	int (*subscribe)(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es); /* Subscribe <es> to events, such as "being able to send" */
+	int (*unsubscribe)(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es); /* Unsubscribe <es> from events */
 	int (*remove_xprt)(struct connection *conn, void *xprt_ctx, void *toremove_ctx, const struct xprt_ops *newops, void *newctx); /* Remove an xprt from the connection, used by temporary xprt such as the handshake one */
 	int (*add_xprt)(struct connection *conn, void *xprt_ctx, void *toadd_ctx, const struct xprt_ops *toadd_ops, void **oldxprt_ctx, const struct xprt_ops **oldxprt_ops); /* Add a new XPRT as the new xprt, and return the old one */
 };
@@ -358,14 +365,15 @@ struct mux_ops {
 	const struct conn_stream *(*get_first_cs)(const struct connection *); /* retrieves any valid conn_stream from this connection */
 	void (*detach)(struct conn_stream *); /* Detach a conn_stream from an outgoing connection, when the request is done */
 	void (*show_fd)(struct buffer *, struct connection *); /* append some data about connection into chunk for "show fd" */
-	int (*subscribe)(struct conn_stream *cs, int event_type, void *param); /* Subscribe to events, such as "being able to send" */
-	int (*unsubscribe)(struct conn_stream *cs, int event_type, void *param); /* Unsubscribe to events */
+	int (*subscribe)(struct conn_stream *cs, int event_type,  struct wait_event *es); /* Subscribe <es> to events, such as "being able to send" */
+	int (*unsubscribe)(struct conn_stream *cs, int event_type,  struct wait_event *es); /* Unsubscribe <es> from events */
 	int (*avail_streams)(struct connection *conn); /* Returns the number of streams still available for a connection */
 	int (*used_streams)(struct connection *conn);  /* Returns the number of streams in use on a connection. */
 	void (*destroy)(void *ctx); /* Let the mux know one of its users left, so it may have to disappear */
 	void (*reset)(struct connection *conn); /* Reset the mux, because we're re-trying to connect */
 	const struct cs_info *(*get_cs_info)(struct conn_stream *cs); /* Return info on the specified conn_stream or NULL if not defined */
 	int (*ctl)(struct connection *conn, enum mux_ctl_type mux_ctl, void *arg); /* Provides informations about the mux */
+	int (*takeover)(struct connection *conn); /* Attempts to migrate the connection to the current thread */
 	unsigned int flags;                           /* some flags characterizing the mux's capabilities (MX_FL_*) */
 	char name[8];                                 /* mux layer name, zero-terminated */
 };
@@ -436,10 +444,7 @@ struct cs_info {
  * socket, and can also be made to an internal applet. It can support
  * several transport schemes (raw, ssl, ...). It can support several
  * connection control schemes, generally a protocol for socket-oriented
- * connections, but other methods for applets. The xprt_done_cb() callback
- * is called once the transport layer initialization is done (success or
- * failure). It may return < 0 to report an error and require an abort of the
- * connection being instanciated. It must be removed once done.
+ * connections, but other methods for applets.
  */
 struct connection {
 	/* first cache line */
@@ -456,13 +461,11 @@ struct connection {
 	enum obj_type *target;        /* the target to connect to (server, proxy, applet, ...) */
 
 	/* second cache line */
-	struct wait_event *send_wait; /* Task to wake when we're ready to send */
-	struct wait_event *recv_wait; /* Task to wake when we're ready to recv */
-	struct list list;             /* attach point to various connection lists (idle, ...) */
+	struct wait_event *subs; /* Task to wake when awaited events are ready */
+	struct mt_list list;          /* attach point to various connection lists (idle, ...) */
 	struct list session_list;     /* List of attached connections to a session */
 	union conn_handle handle;     /* connection handle at the socket layer */
 	const struct netns_entry *proxy_netns;
-	int (*xprt_done_cb)(struct connection *conn);  /* callback to notify of end of handshake */
 
 	/* third cache line and beyond */
 	void (*destroy_cb)(struct connection *conn);  /* callback to notify of imminent death of the connection */
@@ -471,6 +474,7 @@ struct connection {
 	char *proxy_authority;	      /* Value of authority TLV received via PROXYv2 */
 	unsigned int idle_time;                 /* Time the connection was added to the idle list, or 0 if not in the idle list */
 	uint8_t proxy_authority_len;  /* Length of authority TLV received via PROXYv2 */
+	struct ist proxy_unique_id;  /* Value of the unique ID TLV received via PROXYv2 */
 };
 
 /* PROTO token registration */

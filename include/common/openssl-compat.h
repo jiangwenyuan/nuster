@@ -136,15 +136,49 @@ static inline STACK_OF(X509) *X509_chain_up_ref(STACK_OF(X509) *chain)
 
 #endif
 
+#ifdef OPENSSL_IS_BORINGSSL
+/*
+ * Functions missing in BoringSSL
+ */
+
+static inline X509_CRL *X509_OBJECT_get0_X509_CRL(const X509_OBJECT *a)
+{
+    if (a == NULL || a->type != X509_LU_CRL) {
+        return NULL;
+    }
+    return a->data.crl;
+}
+#endif
+
 #if (HA_OPENSSL_VERSION_NUMBER < 0x1010000fL) && (LIBRESSL_VERSION_NUMBER < 0x2070000fL)
 /*
  * Functions introduced in OpenSSL 1.1.0 and in LibreSSL 2.7.0
  */
 
-static inline const unsigned char *SSL_SESSION_get0_id_context(const SSL_SESSION *sess, unsigned int *sid_ctx_length)
+static inline STACK_OF(X509_OBJECT) *X509_STORE_get0_objects(X509_STORE *st)
 {
-	*sid_ctx_length = sess->sid_ctx_length;
-	return sess->sid_ctx;
+    return st->objs;
+}
+
+static inline int X509_OBJECT_get_type(const X509_OBJECT *a)
+{
+    return a->type;
+}
+
+static inline X509 *X509_OBJECT_get0_X509(const X509_OBJECT *a)
+{
+    if (a == NULL || a->type != X509_LU_X509) {
+        return NULL;
+    }
+    return a->data.x509;
+}
+
+static inline X509_CRL *X509_OBJECT_get0_X509_CRL(const X509_OBJECT *a)
+{
+    if (a == NULL || a->type != X509_LU_CRL) {
+        return NULL;
+    }
+    return a->data.crl;
 }
 
 static inline int SSL_SESSION_set1_id(SSL_SESSION *s, const unsigned char *sid, unsigned int sid_len)
@@ -165,16 +199,6 @@ static inline const OCSP_CERTID *OCSP_SINGLERESP_get0_id(const OCSP_SINGLERESP *
 	return single->certId;
 }
 #endif
-
-static inline pem_password_cb *SSL_CTX_get_default_passwd_cb(SSL_CTX *ctx)
-{
-	return ctx->default_passwd_callback;
-}
-
-static inline void *SSL_CTX_get_default_passwd_cb_userdata(SSL_CTX *ctx)
-{
-	return ctx->default_passwd_callback_userdata;
-}
 
 #ifndef OPENSSL_NO_DH
 static inline int DH_set0_pqg(DH *dh, BIGNUM *p, BIGNUM *q, BIGNUM *g)
@@ -244,8 +268,11 @@ static inline void EVP_PKEY_up_ref(EVP_PKEY *pkey)
 #define X509_getm_notAfter      X509_get_notAfter
 #endif
 
-#if (OPENSSL_VERSION_NUMBER < 0x1010000fL || defined LIBRESSL_VERSION_NUMBER)
+#if !defined(EVP_CTRL_AEAD_SET_IVLEN)
 #define EVP_CTRL_AEAD_SET_IVLEN EVP_CTRL_GCM_SET_IVLEN
+#endif
+
+#if !defined(EVP_CTRL_AEAD_SET_TAG)
 #define EVP_CTRL_AEAD_SET_TAG   EVP_CTRL_GCM_SET_TAG
 #endif
 

@@ -683,7 +683,7 @@ static void chk_report_conn_err(struct check *check, int errno_bck, int expired)
 		/* connection allocation error before the connection was established */
 		set_server_check_status(check, HCHK_STATUS_SOCKERR, err_msg);
 	}
-	else if ((conn->flags & (CO_FL_CONNECTED|CO_FL_WAIT_L4_CONN)) == CO_FL_WAIT_L4_CONN) {
+	else if (conn->flags & CO_FL_WAIT_L4_CONN) {
 		/* L4 not established (yet) */
 		if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
 			set_server_check_status(check, HCHK_STATUS_L4CON, err_msg);
@@ -698,7 +698,7 @@ static void chk_report_conn_err(struct check *check, int errno_bck, int expired)
 			dns_trigger_resolution(check->server->dns_requester);
 
 	}
-	else if ((conn->flags & (CO_FL_CONNECTED|CO_FL_WAIT_L6_CONN)) == CO_FL_WAIT_L6_CONN) {
+	else if (conn->flags & CO_FL_WAIT_L6_CONN) {
 		/* L6 not established (yet) */
 		if (conn->flags & CO_FL_ERROR || cs->flags & CS_FL_ERROR)
 			set_server_check_status(check, HCHK_STATUS_L6RSP, err_msg);
@@ -760,21 +760,8 @@ static void __event_srv_chk_w(struct conn_stream *cs)
 	if (unlikely(check->result == CHK_RES_FAILED))
 		goto out_wakeup;
 
-	if (conn->flags & CO_FL_HANDSHAKE) {
-		if (!(conn->flags & CO_FL_ERROR))
-			cs->conn->mux->subscribe(cs, SUB_RETRY_SEND, &check->wait_list);
-		goto out;
-	}
-
 	if (retrieve_errno_from_socket(conn)) {
 		chk_report_conn_err(check, errno, 0);
-		goto out_wakeup;
-	}
-
-	if (conn->flags & CO_FL_SOCK_WR_SH) {
-		/* if the output is closed, we can't do anything */
-		conn->flags |= CO_FL_ERROR;
-		chk_report_conn_err(check, 0, 0);
 		goto out_wakeup;
 	}
 
@@ -800,9 +787,6 @@ static void __event_srv_chk_w(struct conn_stream *cs)
 			goto out;
 		}
 	}
-
-	if (!b_data(&check->bo))
-		conn_xprt_stop_send(conn);
 
 	/* full request sent, we allow up to <timeout.check> if nonzero for a response */
 	if (s->proxy->timeout.check) {
@@ -849,12 +833,6 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 	if (unlikely(check->result == CHK_RES_FAILED))
 		goto out_wakeup;
 
-	if (conn->flags & CO_FL_HANDSHAKE) {
-		if (!(conn->flags & CO_FL_ERROR))
-			cs->conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
-		goto out;
-	}
-
 	/* wake() will take care of calling tcpcheck_main() */
 	if (check->type == PR_O2_TCPCHK_CHK)
 		goto out;
@@ -886,7 +864,7 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 	}
 
 	/* the rest of the code below expects the connection to be ready! */
-	if (!(conn->flags & CO_FL_CONNECTED) && !done)
+	if (conn->flags & CO_FL_WAIT_XPRT && !done)
 		goto wait_more_data;
 
 	/* Intermediate or complete response received.
@@ -1392,7 +1370,7 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 
 	default:
 		/* good connection is enough for pure TCP check */
-		if ((conn->flags & CO_FL_CONNECTED) && !check->type) {
+		if (!(conn->flags & CO_FL_WAIT_XPRT) && !check->type) {
 			if (check->use_ssl)
 				set_server_check_status(check, HCHK_STATUS_L6OK, NULL);
 			else
@@ -1477,7 +1455,7 @@ static int wake_srv_chk(struct conn_stream *cs)
 		chk_report_conn_err(check, errno, 0);
 		task_wakeup(check->task, TASK_WOKEN_IO);
 	}
-	else if (!(conn->flags & CO_FL_HANDSHAKE) && !check->type) {
+	else if (!(conn->flags & CO_FL_WAIT_XPRT) && !check->type) {
 		/* we may get here if only a connection probe was required : we
 		 * don't have any data to send nor anything expected in response,
 		 * so the completion of the connection establishment is enough.
@@ -2025,7 +2003,9 @@ static int connect_proc_chk(struct task *t)
 
 	pid = fork();
 	if (pid < 0) {
-		ha_alert("Failed to fork process for external health check: %s. Aborting.\n",
+		ha_alert("Failed to fork process for external health check%s: %s. Aborting.\n",
+			 (global.tune.options & GTUNE_INSECURE_FORK) ?
+			 "" : " (likely caused by missing 'insecure-fork-wanted')",
 			 strerror(errno));
 		set_server_check_status(check, HCHK_STATUS_SOCKERR, strerror(errno));
 		goto out;
@@ -2283,7 +2263,7 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 				 * sending since otherwise we won't be woken up.
 				 */
 				__event_srv_chk_w(cs);
-				if (!(conn->flags & CO_FL_WAIT_L4_CONN) ||
+				if (!(conn->flags & CO_FL_WAIT_XPRT) ||
 				    !(check->wait_list.events & SUB_RETRY_SEND))
 					__event_srv_chk_r(cs);
 			}
@@ -2350,7 +2330,7 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 		 */
 		if (check->result == CHK_RES_UNKNOWN) {
 			/* good connection is enough for pure TCP check */
-			if ((conn->flags & CO_FL_CONNECTED) && !check->type) {
+			if (!(conn->flags & CO_FL_WAIT_XPRT) && !check->type) {
 				if (check->use_ssl)
 					set_server_check_status(check, HCHK_STATUS_L6OK, NULL);
 				else
@@ -2783,7 +2763,7 @@ static int tcpcheck_main(struct check *check)
 		next = LIST_NEXT(&next->list, struct tcpcheck_rule *, list);
 
 	if ((check->current_step || &next->list == head) &&
-	    (!(conn->flags & CO_FL_CONNECTED) || (conn->flags & CO_FL_HANDSHAKE))) {
+	    (conn->flags & CO_FL_WAIT_XPRT)) {
 		/* we allow up to min(inter, timeout.connect) for a connection
 		 * to establish but only when timeout.check is set
 		 * as it may be to short for a full check otherwise
@@ -3032,7 +3012,7 @@ static int tcpcheck_main(struct check *check)
 				break;
 
 			/* don't do anything until the connection is established */
-			if (!(conn->flags & CO_FL_CONNECTED))
+			if (conn->flags & CO_FL_WAIT_XPRT)
 				break;
 
 		} /* end 'connect' */
@@ -3044,12 +3024,6 @@ static int tcpcheck_main(struct check *check)
 			if (*b_head(&check->bi) != '\0') {
 				*b_head(&check->bi) = '\0';
 				b_reset(&check->bi);
-			}
-
-			if (conn->flags & CO_FL_SOCK_WR_SH) {
-				conn->flags |= CO_FL_ERROR;
-				chk_report_conn_err(check, 0, 0);
-				goto out_end_tcpcheck;
 			}
 
 			if (check->current_step->string_len >= b_size(&check->bo)) {
@@ -3231,7 +3205,7 @@ static int tcpcheck_main(struct check *check)
 	} /* end loop over double chained step list */
 
 	/* don't do anything until the connection is established */
-	if (!(conn->flags & CO_FL_CONNECTED)) {
+	if (conn->flags & CO_FL_WAIT_XPRT) {
 		/* update expire time, should be done by process_chk */
 		/* we allow up to min(inter, timeout.connect) for a connection
 		 * to establish but only when timeout.check is set

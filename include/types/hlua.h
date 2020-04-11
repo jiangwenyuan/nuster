@@ -37,14 +37,11 @@ struct stream;
 #define HLUA_WAKERESWR 0x00000004
 #define HLUA_WAKEREQWR 0x00000008
 #define HLUA_EXIT      0x00000010
-#define HLUA_MUST_GC   0x00000020
-#define HLUA_STOP      0x00000040
 
 #define HLUA_F_AS_STRING    0x01
 #define HLUA_F_MAY_USE_HTTP 0x02
 
 #define HLUA_TXN_NOTERM   0x00000001
-#define HLUA_TXN_HTTP_RDY 0x00000002 /* Set if the txn is HTTP ready for the defined direction */
 
 #define HLUA_CONCAT_BLOCSZ 2048
 
@@ -58,22 +55,6 @@ enum hlua_exec {
 	HLUA_E_ERRMSG, /* LUA stack execution failed with a string error message
 	                  in the top of stack. */
 	HLUA_E_ERR,    /* LUA stack execution failed without error message. */
-};
-
-/* This struct is use for storing HAProxy parsers state
- * before executing some Lua code. The goal is we can
- * check and compare the parser state a the end of Lua
- * execution. If the state is changed by Lua towards
- * an unexpected state, we can abort the transaction.
- */
-struct hlua_consistency {
-	enum pr_mode mode;
-	union {
-		struct {
-			int dir;
-			enum h1_state state;
-		} http;
-	} data;
 };
 
 struct hlua {
@@ -92,7 +73,7 @@ struct hlua {
 	                      We must wake this task to continue the task execution */
 	struct list com; /* The list head of the signals attached to this task. */
 	struct ebpt_node node;
-	struct hlua_consistency cons; /* Store data consistency check. */
+	int gc_count;  /* number of items which need a GC */
 };
 
 /* This is a part of the list containing references to functions

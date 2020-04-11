@@ -271,7 +271,7 @@ static char *register_name(const char *name, int len, enum vars_scope *scope,
 	/* Check variable name syntax. */
 	tmp = var_names[var_names_nb - 1];
 	while (*tmp) {
-		if (!isalnum((int)(unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
+		if (!isalnum((unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
 			memprintf(err, "invalid syntax at char '%s'", tmp);
 			res = NULL;
 			goto end;
@@ -749,7 +749,7 @@ static enum act_parse_ret parse_store(const char **args, int *arg, struct proxy 
 	kw_name = args[*arg-1];
 
 	rule->arg.vars.expr = sample_parse_expr((char **)args, arg, px->conf.args.file,
-	                                        px->conf.args.line, err, &px->conf.args);
+	                                        px->conf.args.line, err, &px->conf.args, NULL);
 	if (!rule->arg.vars.expr)
 		return ACT_RET_PRS_ERR;
 
@@ -882,6 +882,14 @@ static struct action_kw_list http_res_kws = { { }, {
 }};
 
 INITCALL1(STG_REGISTER, http_res_keywords_register, &http_res_kws);
+
+static struct action_kw_list http_after_res_kws = { { }, {
+	{ "set-var",   parse_store, 1 },
+	{ "unset-var", parse_store, 1 },
+	{ /* END */ }
+}};
+
+INITCALL1(STG_REGISTER, http_after_res_keywords_register, &http_after_res_kws);
 
 static struct cfg_kw_list cfg_kws = {{ },{
 	{ CFG_GLOBAL, "tune.vars.global-max-size", vars_max_size_global },

@@ -245,7 +245,16 @@ static inline void tasklet_wakeup(struct tasklet *tl)
 	if (likely(tl->tid < 0)) {
 		/* this tasklet runs on the caller thread */
 		if (LIST_ISEMPTY(&tl->list)) {
-			LIST_ADDQ(&task_per_thread[tid].task_list, &tl->list);
+			if (tl->state & TASK_SELF_WAKING) {
+				LIST_ADDQ(&task_per_thread[tid].tasklets[TL_BULK], &tl->list);
+			}
+			else if ((struct task *)tl == sched->current) {
+				_HA_ATOMIC_OR(&tl->state, TASK_SELF_WAKING);
+				LIST_ADDQ(&task_per_thread[tid].tasklets[TL_BULK], &tl->list);
+			}
+			else {
+				LIST_ADDQ(&task_per_thread[tid].tasklets[TL_URGENT], &tl->list);
+			}
 			_HA_ATOMIC_ADD(&tasks_run_queue, 1);
 		}
 	} else {
@@ -264,10 +273,10 @@ static inline void tasklet_wakeup(struct tasklet *tl)
 /* Insert a tasklet into the tasklet list. If used with a plain task instead,
  * the caller must update the task_list_size.
  */
-static inline void tasklet_insert_into_tasklet_list(struct tasklet *tl)
+static inline void tasklet_insert_into_tasklet_list(struct list *list, struct tasklet *tl)
 {
 	_HA_ATOMIC_ADD(&tasks_run_queue, 1);
-	LIST_ADDQ(&sched->task_list, &tl->list);
+	LIST_ADDQ(list, &tl->list);
 }
 
 /* Remove the tasklet from the tasklet list. The tasklet MUST already be there.
@@ -326,7 +335,7 @@ static inline void tasklet_init(struct tasklet *t)
 }
 
 /* Allocate and initialize a new tasklet, local to the thread by default. The
- * caller may assing its tid if it wants to own the tasklet.
+ * caller may assign its tid if it wants to own the tasklet.
  */
 static inline struct tasklet *tasklet_new(void)
 {
@@ -379,7 +388,7 @@ static inline void task_destroy(struct task *t)
 		return;
 
 	task_unlink_wq(t);
-	/* We don't have to explicitely remove from the run queue.
+	/* We don't have to explicitly remove from the run queue.
 	 * If we are in the runqueue, the test below will set t->process
 	 * to NULL, and the task will be free'd when it'll be its turn
 	 * to run.
@@ -485,7 +494,7 @@ static inline void task_schedule(struct task *task, int when)
  * execution context. It contains a pointer to the associated task.
  * "link" is a list head attached to an other task that must be wake
  * the lua task if an event occurs. This is useful with external
- * events like TCP I/O or sleep functions. This funcion allocate
+ * events like TCP I/O or sleep functions. This function allocate
  * memory for the signal.
  */
 static inline struct notification *notification_new(struct list *purge, struct list *event, struct task *wakeup)
@@ -526,7 +535,7 @@ static inline void notification_purge(struct list *purge)
 }
 
 /* In some cases, the disconnected notifications must be cleared.
- * This function just release memory blocs. The purge list is not
+ * This function just release memory blocks. The purge list is not
  * locked because it is owned by only one process. Before browsing
  * this list, the caller must ensure to be the only one browser.
  * The "com" is not locked because when com->task is NULL, the
@@ -581,7 +590,10 @@ static inline int thread_has_tasks(void)
 {
 	return (!!(global_tasks_mask & tid_bit) |
 	        (sched->rqueue_size > 0) |
-	        !LIST_ISEMPTY(&sched->task_list) | !MT_LIST_ISEMPTY(&sched->shared_tasklet_list));
+	        !LIST_ISEMPTY(&sched->tasklets[TL_URGENT]) |
+	        !LIST_ISEMPTY(&sched->tasklets[TL_NORMAL]) |
+	        !LIST_ISEMPTY(&sched->tasklets[TL_BULK])   |
+		!MT_LIST_ISEMPTY(&sched->shared_tasklet_list));
 }
 
 /* adds list item <item> to work list <work> and wake up the associated task */
@@ -596,6 +608,7 @@ struct work_list *work_list_create(int nbthread,
                                    void *arg);
 
 void work_list_destroy(struct work_list *work, int nbthread);
+int run_tasks_from_list(struct list *list, int max);
 
 /*
  * This does 3 things :
@@ -608,9 +621,15 @@ void process_runnable_tasks();
 
 /*
  * Extract all expired timers from the timer queue, and wakes up all
- * associated tasks. Returns the date of next event (or eternity).
+ * associated tasks.
  */
-int wake_expired_tasks();
+void wake_expired_tasks();
+
+/* Checks the next timer for the current thread by looking into its own timer
+ * list and the global one. It may return TICK_ETERNITY if no timer is present.
+ * Note that the next timer might very well be slightly in the past.
+ */
+int next_timer_expiry();
 
 /*
  * Delete every tasks before running the master polling loop

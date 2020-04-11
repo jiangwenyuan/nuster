@@ -23,6 +23,10 @@
 #ifndef _TYPES_HTTP_HTX_H
 #define _TYPES_HTTP_HTX_H
 
+#include <ebistree.h>
+
+#include <common/buf.h>
+#include <common/http.h>
 #include <common/htx.h>
 #include <common/ist.h>
 
@@ -32,6 +36,26 @@ struct http_hdr_ctx {
 	struct ist     value;
 	uint16_t       lws_before;
 	uint16_t       lws_after;
+};
+
+/* A custom HTTP error message load from a row file and converted in HTX. The
+ * node key is the file path.
+ */
+struct http_error {
+	struct buffer msg;
+	struct ebpt_node node;
+};
+
+/* http-errors section and parameters. */
+struct http_errors {
+	char *id;                             /* unique identifier */
+	struct {
+		char *file;                   /* file where the section appears */
+		int   line;                   /* line where the section appears */
+	} conf;                               /* config information */
+
+	struct buffer *errmsg[HTTP_ERR_SIZE]; /* customized error messages for known errors */
+	struct list list;                     /* http-errors list */
 };
 
 #endif /* _TYPES_HTTP_HTX_H */

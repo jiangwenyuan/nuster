@@ -15,8 +15,7 @@
 
 struct xprt_handshake_ctx {
 	struct connection *conn;
-	struct wait_event *send_wait;
-	struct wait_event *recv_wait;
+	struct wait_event *subs;
 	struct wait_event wait_event;
 	const struct xprt_ops *xprt;
 	void *xprt_ctx;
@@ -83,25 +82,19 @@ out:
 	 * connection error
 	 * */
 	if ((conn->flags & CO_FL_ERROR) ||
-	    !(conn->flags & CO_FL_HANDSHAKE_NOSSL)) {
+	    !(conn->flags & CO_FL_HANDSHAKE)) {
 		int ret = 0;
 		int woke = 0;
 		int was_conn_ctx = 0;
+
 		/* On error, wake any waiter */
-		if (ctx->recv_wait) {
-			ctx->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(ctx->recv_wait->tasklet);
+		if (ctx->subs) {
+			tasklet_wakeup(ctx->subs->tasklet);
+			ctx->subs->events = 0;
 			woke = 1;
-			ctx->recv_wait = NULL;
+			ctx->subs = NULL;
 		}
-		if (ctx->send_wait) {
-			ctx->send_wait->events &= ~SUB_RETRY_SEND;
-			tasklet_wakeup(ctx->send_wait->tasklet);
-			woke = 1;
-			ctx->send_wait = NULL;
-		}
-		if (!(conn->flags & CO_FL_ERROR))
-			conn->flags |= CO_FL_CONNECTED;
+
 		/* Remove ourself from the xprt chain */
 		if (ctx->wait_event.events != 0)
 			ctx->xprt->unsubscribe(ctx->conn,
@@ -116,13 +109,13 @@ out:
 			conn->xprt->remove_xprt(conn, conn->xprt_ctx, ctx,
 			    ctx->xprt, ctx->xprt_ctx);
 		/* If we're the first xprt for the connection, let the
-		 * upper layers know. If xprt_done_cb() is set, call it,
-		 * and if we have a mux, and it has a wake method, call it
-		 * too.
+		 * upper layers know. If no mux was set up yet, then call
+		 * conn_create_mux, and if we have a mux, and it has a wake
+		 * method, call it too.
 		 */
 		if (was_conn_ctx) {
-			if (ctx->conn->xprt_done_cb)
-				ret = ctx->conn->xprt_done_cb(ctx->conn);
+			if (!ctx->conn->mux)
+				ret = conn_create_mux(ctx->conn);
 			if (ret >= 0 && !woke && ctx->conn->mux && ctx->conn->mux->wake)
 				ret = ctx->conn->mux->wake(ctx->conn);
 		}
@@ -162,7 +155,7 @@ static int xprt_handshake_init(struct connection *conn, void **xprt_ctx)
 	 */
 	ctx->xprt = NULL;
 	ctx->xprt_ctx = NULL;
-	ctx->send_wait = ctx->recv_wait = NULL;
+	ctx->subs = NULL;
 	*xprt_ctx = ctx;
 
 	return 0;
@@ -177,13 +170,9 @@ static void xprt_handshake_close(struct connection *conn, void *xprt_ctx)
 			ctx->xprt->unsubscribe(ctx->conn, ctx->xprt_ctx,
 			                       ctx->wait_event.events,
 					       &ctx->wait_event);
-		if (ctx->send_wait) {
-			ctx->send_wait->events &= ~SUB_RETRY_SEND;
-			tasklet_wakeup(ctx->send_wait->tasklet);
-		}
-		if (ctx->recv_wait) {
-			ctx->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(ctx->recv_wait->tasklet);
+		if (ctx->subs) {
+			ctx->subs->events = 0;
+			tasklet_wakeup(ctx->subs->tasklet);
 		}
 
 		if (ctx->xprt && ctx->xprt->close)
@@ -196,7 +185,7 @@ static void xprt_handshake_close(struct connection *conn, void *xprt_ctx)
 		 * to fallback to the original XPRT to re-initiate the
 		 * connection.
 		 */
-		conn->flags &= ~CO_FL_HANDSHAKE_NOSSL;
+		conn->flags &= ~CO_FL_HANDSHAKE;
 		if (conn->xprt == xprt_get(XPRT_HANDSHAKE))
 			conn->xprt = xprt_get(XPRT_RAW);
 		tasklet_free(ctx->wait_event.tasklet);
@@ -204,48 +193,39 @@ static void xprt_handshake_close(struct connection *conn, void *xprt_ctx)
 	}
 }
 
-static int xprt_handshake_subscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
+/* Called from the upper layer, to subscribe <es> to events <event_type>. The
+ * event subscriber <es> is not allowed to change from a previous call as long
+ * as at least one event is still subscribed. The <event_type> must only be a
+ * combination of SUB_RETRY_RECV and SUB_RETRY_SEND. It always returns 0.
+ */
+static int xprt_handshake_subscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
-	struct wait_event *sw;
 	struct xprt_handshake_ctx *ctx = xprt_ctx;
 
-	if (event_type & SUB_RETRY_RECV) {
-		sw = param;
-		BUG_ON(ctx->recv_wait !=  NULL || (sw->events & SUB_RETRY_RECV));
-		sw->events |= SUB_RETRY_RECV;
-		ctx->recv_wait = sw;
-		event_type &= ~SUB_RETRY_RECV;
-	}
-	if (event_type & SUB_RETRY_SEND) {
-		sw = param;
-		BUG_ON(ctx->send_wait !=  NULL || (sw->events & SUB_RETRY_SEND));
-		sw->events |= SUB_RETRY_SEND;
-		ctx->send_wait = sw;
-		event_type &= ~SUB_RETRY_SEND;
-        }
-	if (event_type != 0)
-                return -1;
+	BUG_ON(event_type & ~(SUB_RETRY_SEND|SUB_RETRY_RECV));
+	BUG_ON(ctx->subs && ctx->subs != es);
+
+	ctx->subs = es;
+	es->events |= event_type;
         return 0;
 
 }
 
-static int xprt_handshake_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
+/* Called from the upper layer, to unsubscribe <es> from events <event_type>.
+ * The <es> pointer is not allowed to differ from the one passed to the
+ * subscribe() call. It always returns zero.
+ */
+static int xprt_handshake_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
-	struct wait_event *sw;
 	struct xprt_handshake_ctx *ctx = xprt_ctx;
 
-	if (event_type & SUB_RETRY_RECV) {
-		sw = param;
-                BUG_ON(ctx->recv_wait != sw);
-                ctx->recv_wait = NULL;
-                sw->events &= ~SUB_RETRY_RECV;
-	}
-	if (event_type & SUB_RETRY_SEND) {
-		sw = param;
-		BUG_ON(ctx->send_wait != sw);
-		ctx->send_wait = NULL;
-		sw->events &= ~SUB_RETRY_SEND;
-	}
+	BUG_ON(event_type & ~(SUB_RETRY_SEND|SUB_RETRY_RECV));
+	BUG_ON(ctx->subs && ctx->subs != es);
+
+	es->events &= ~event_type;
+	if (!es->events)
+		ctx->subs = NULL;
+
 	return 0;
 }
 

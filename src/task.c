@@ -155,14 +155,13 @@ void __task_queue(struct task *task, struct eb_root *wq)
 
 /*
  * Extract all expired timers from the timer queue, and wakes up all
- * associated tasks. Returns the date of next event (or eternity).
+ * associated tasks.
  */
-int wake_expired_tasks()
+void wake_expired_tasks()
 {
 	struct task_per_thread * const tt = sched; // thread's tasks
 	struct task *task;
 	struct eb32_node *eb;
-	int ret = TICK_ETERNITY;
 	__decl_hathreads(int key);
 
 	while (1) {
@@ -178,11 +177,8 @@ int wake_expired_tasks()
 				break;
 		}
 
-		if (tick_is_lt(now_ms, eb->key)) {
-			/* timer not expired yet, revisit it later */
-			ret = eb->key;
+		if (tick_is_lt(now_ms, eb->key))
 			break;
-		}
 
 		/* timer looks expired, detach it from the queue */
 		task = eb32_entry(eb, struct task, wq);
@@ -225,11 +221,8 @@ int wake_expired_tasks()
 	key = eb->key;
 	HA_RWLOCK_RDUNLOCK(TASK_WQ_LOCK, &wq_lock);
 
-	if (tick_is_lt(now_ms, key)) {
-		/* timer not expired yet, revisit it later */
-		ret = tick_first(ret, key);
+	if (tick_is_lt(now_ms, key))
 		goto leave;
-	}
 
 	/* There's really something of interest here, let's visit the queue */
 
@@ -247,11 +240,8 @@ int wake_expired_tasks()
 				break;
 		}
 
-		if (tick_is_lt(now_ms, eb->key)) {
-			/* timer not expired yet, revisit it later */
-			ret = tick_first(ret, eb->key);
+		if (tick_is_lt(now_ms, eb->key))
 			break;
-		}
 
 		/* timer looks expired, detach it from the queue */
 		task = eb32_entry(eb, struct task, wq);
@@ -282,7 +272,132 @@ int wake_expired_tasks()
 	HA_RWLOCK_WRUNLOCK(TASK_WQ_LOCK, &wq_lock);
 #endif
 leave:
+	return;
+}
+
+/* Checks the next timer for the current thread by looking into its own timer
+ * list and the global one. It may return TICK_ETERNITY if no timer is present.
+ * Note that the next timer might very well be slighly in the past.
+ */
+int next_timer_expiry()
+{
+	struct task_per_thread * const tt = sched; // thread's tasks
+	struct eb32_node *eb;
+	int ret = TICK_ETERNITY;
+	__decl_hathreads(int key);
+
+	/* first check in the thread-local timers */
+	eb = eb32_lookup_ge(&tt->timers, now_ms - TIMER_LOOK_BACK);
+	if (!eb) {
+		/* we might have reached the end of the tree, typically because
+		 * <now_ms> is in the first half and we're first scanning the last
+		 * half. Let's loop back to the beginning of the tree now.
+		 */
+		eb = eb32_first(&tt->timers);
+	}
+
+	if (eb)
+		ret = eb->key;
+
+#ifdef USE_THREAD
+	if (!eb_is_empty(&timers)) {
+		HA_RWLOCK_RDLOCK(TASK_WQ_LOCK, &wq_lock);
+		eb = eb32_lookup_ge(&timers, now_ms - TIMER_LOOK_BACK);
+		if (!eb)
+			eb = eb32_first(&timers);
+		if (eb)
+			key = eb->key;
+		HA_RWLOCK_RDUNLOCK(TASK_WQ_LOCK, &wq_lock);
+		if (eb)
+			ret = tick_first(ret, key);
+	}
+#endif
 	return ret;
+}
+
+/* Walks over tasklet list <list> and run at most <max> of them. Returns
+ * the number of entries effectively processed (tasks and tasklets merged).
+ * The count of tasks in the list for the current thread is adjusted.
+ */
+int run_tasks_from_list(struct list *list, int max)
+{
+	struct task *(*process)(struct task *t, void *ctx, unsigned short state);
+	struct task *t;
+	unsigned short state;
+	void *ctx;
+	int done = 0;
+
+	while (done < max && !LIST_ISEMPTY(list)) {
+		t = (struct task *)LIST_ELEM(list->n, struct tasklet *, list);
+		state = (t->state & (TASK_SHARED_WQ|TASK_SELF_WAKING));
+
+		ti->flags &= ~TI_FL_STUCK; // this thread is still running
+		activity[tid].ctxsw++;
+		ctx = t->context;
+		process = t->process;
+		t->calls++;
+		sched->current = t;
+
+		if (TASK_IS_TASKLET(t)) {
+			state = _HA_ATOMIC_XCHG(&t->state, state);
+			__ha_barrier_atomic_store();
+			__tasklet_remove_from_tasklet_list((struct tasklet *)t);
+			process(t, ctx, state);
+			done++;
+			sched->current = NULL;
+			__ha_barrier_store();
+			continue;
+		}
+
+		state = _HA_ATOMIC_XCHG(&t->state, state | TASK_RUNNING);
+		__ha_barrier_atomic_store();
+		__tasklet_remove_from_tasklet_list((struct tasklet *)t);
+
+		/* OK then this is a regular task */
+
+		task_per_thread[tid].task_list_size--;
+		if (unlikely(t->call_date)) {
+			uint64_t now_ns = now_mono_time();
+
+			t->lat_time += now_ns - t->call_date;
+			t->call_date = now_ns;
+		}
+
+		__ha_barrier_store();
+		if (likely(process == process_stream))
+			t = process_stream(t, ctx, state);
+		else if (process != NULL)
+			t = process(t, ctx, state);
+		else {
+			__task_free(t);
+			sched->current = NULL;
+			__ha_barrier_store();
+			/* We don't want max_processed to be decremented if
+			 * we're just freeing a destroyed task, we should only
+			 * do so if we really ran a task.
+			 */
+			continue;
+		}
+		sched->current = NULL;
+		__ha_barrier_store();
+		/* If there is a pending state  we have to wake up the task
+		 * immediately, else we defer it into wait queue
+		 */
+		if (t != NULL) {
+			if (unlikely(t->call_date)) {
+				t->cpu_time += now_mono_time() - t->call_date;
+				t->call_date = 0;
+			}
+
+			state = _HA_ATOMIC_AND(&t->state, ~TASK_RUNNING);
+			if (state & TASK_WOKEN_ANY)
+				task_wakeup(t, 0);
+			else
+				task_queue(t);
+		}
+		done++;
+	}
+	return done;
 }
 
 /* The run queue is chronologically sorted in a tree. An insertion counter is
@@ -304,7 +419,7 @@ void process_runnable_tasks()
 	struct eb32sc_node *lrq = NULL; // next local run queue entry
 	struct eb32sc_node *grq = NULL; // next global run queue entry
 	struct task *t;
-	int max_processed;
+	int max_processed, done;
 	struct mt_list *tmp_list;
 
 	ti->flags &= ~TI_FL_STUCK; // this thread is still running
@@ -318,7 +433,7 @@ void process_runnable_tasks()
 	 */
 	tmp_list = MT_LIST_BEHEAD(&sched->shared_tasklet_list);
 	if (tmp_list)
-		LIST_SPLICE_END_DETACHED(&sched->task_list, (struct list *)tmp_list);
+		LIST_SPLICE_END_DETACHED(&sched->tasklets[TL_URGENT], (struct list *)tmp_list);
 
 	tasks_run_queue_cur = tasks_run_queue; /* keep a copy for reporting */
 	nb_tasks_cur = nb_tasks;
@@ -327,9 +442,15 @@ void process_runnable_tasks()
 	if (likely(niced_tasks))
 		max_processed = (max_processed + 3) / 4;
 
+	/* run up to max_processed/3 urgent tasklets */
+	done = run_tasks_from_list(&tt->tasklets[TL_URGENT], (max_processed + 2) / 3);
+	max_processed -= done;
+
+	/* pick up to max_processed/2 (~=3/4*(max_processed-done)) regular tasks from prio-ordered run queues */
+
 	/* Note: the grq lock is always held when grq is not null */
 
-	while (tt->task_list_size < max_processed) {
+	while (tt->task_list_size < (3 * max_processed + 3) / 4) {
 		if ((global_tasks_mask & tid_bit) && !grq) {
 #ifdef USE_THREAD
 			HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
@@ -380,7 +501,7 @@ void process_runnable_tasks()
 		/* Make sure the entry doesn't appear to be in a list */
 		LIST_INIT(&((struct tasklet *)t)->list);
 		/* And add it to the local task list */
-		tasklet_insert_into_tasklet_list((struct tasklet *)t);
+		tasklet_insert_into_tasklet_list(&tt->tasklets[TL_NORMAL], (struct tasklet *)t);
 		tt->task_list_size++;
 		activity[tid].tasksw++;
 	}
@@ -391,78 +512,17 @@ void process_runnable_tasks()
 		grq = NULL;
 	}
 
-	while (max_processed > 0 && !LIST_ISEMPTY(&tt->task_list)) {
-		struct task *t;
-		unsigned short state;
-		void *ctx;
-		struct task *(*process)(struct task *t, void *ctx, unsigned short state);
+	/* run between 0.4*max_processed and max_processed/2 regular tasks */
+	done = run_tasks_from_list(&tt->tasklets[TL_NORMAL], (3 * max_processed + 3) / 4);
+	max_processed -= done;
 
-		t = (struct task *)LIST_ELEM(task_per_thread[tid].task_list.n, struct tasklet *, list);
-		state = (t->state & TASK_SHARED_WQ) | TASK_RUNNING;
-		state = _HA_ATOMIC_XCHG(&t->state, state);
-		__ha_barrier_atomic_store();
-		__tasklet_remove_from_tasklet_list((struct tasklet *)t);
+	/* run between max_processed/4 and max_processed bulk tasklets */
+	done = run_tasks_from_list(&tt->tasklets[TL_BULK], max_processed);
+	max_processed -= done;
 
-		ti->flags &= ~TI_FL_STUCK; // this thread is still running
-		activity[tid].ctxsw++;
-		ctx = t->context;
-		process = t->process;
-		t->calls++;
-
-		if (TASK_IS_TASKLET(t)) {
-			process(NULL, ctx, state);
-			max_processed--;
-			continue;
-		}
-
-		/* OK then this is a regular task */
-
-		tt->task_list_size--;
-		if (unlikely(t->call_date)) {
-			uint64_t now_ns = now_mono_time();
-
-			t->lat_time += now_ns - t->call_date;
-			t->call_date = now_ns;
-		}
-
-		sched->current = t;
-		__ha_barrier_store();
-		if (likely(process == process_stream))
-			t = process_stream(t, ctx, state);
-		else if (process != NULL)
-			t = process(t, ctx, state);
-		else {
-			__task_free(t);
-			sched->current = NULL;
-			__ha_barrier_store();
-			/* We don't want max_processed to be decremented if
-			 * we're just freeing a destroyed task, we should only
-			 * do so if we really ran a task.
-			 */
-			continue;
-		}
-		sched->current = NULL;
-		__ha_barrier_store();
-		/* If there is a pending state  we have to wake up the task
-		 * immediately, else we defer it into wait queue
-		 */
-		if (t != NULL) {
-			if (unlikely(t->call_date)) {
-				t->cpu_time += now_mono_time() - t->call_date;
-				t->call_date = 0;
-			}
-
-			state = _HA_ATOMIC_AND(&t->state, ~TASK_RUNNING);
-			if (state & TASK_WOKEN_ANY)
-				task_wakeup(t, 0);
-			else
-				task_queue(t);
-		}
-
-		max_processed--;
-	}
-
-	if (!LIST_ISEMPTY(&tt->task_list))
+	if (!LIST_ISEMPTY(&sched->tasklets[TL_URGENT]) |
+	    !LIST_ISEMPTY(&sched->tasklets[TL_NORMAL]) |
+	    !LIST_ISEMPTY(&sched->tasklets[TL_BULK]))
 		activity[tid].long_rq++;
 }
 
@@ -566,7 +626,9 @@ static void init_task()
 #endif
 	memset(&task_per_thread, 0, sizeof(task_per_thread));
 	for (i = 0; i < MAX_THREADS; i++) {
-		LIST_INIT(&task_per_thread[i].task_list);
+		LIST_INIT(&task_per_thread[i].tasklets[TL_URGENT]);
+		LIST_INIT(&task_per_thread[i].tasklets[TL_NORMAL]);
+		LIST_INIT(&task_per_thread[i].tasklets[TL_BULK]);
 		MT_LIST_INIT(&task_per_thread[i].shared_tasklet_list);
 	}
 }

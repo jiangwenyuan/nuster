@@ -47,44 +47,41 @@ enum {
 #define FD_POLL_DATA    (FD_POLL_IN  | FD_POLL_OUT)
 #define FD_POLL_STICKY  (FD_POLL_ERR | FD_POLL_HUP)
 
-/* FD bits used for different polling states in each direction */
-#define FD_EV_ACTIVE    1U
-#define FD_EV_READY     2U
-#define FD_EV_SHUT      4U
-#define FD_EV_ERR       8U
+/* FD_EV_* are the values used in fdtab[].state to define the polling states in
+ * each direction. Most of them are manipulated using test-and-set operations
+ * which require the bit position in the mask, which is given in the _BIT
+ * variant.
+ */
 
 /* bits positions for a few flags */
 #define FD_EV_ACTIVE_R_BIT 0
 #define FD_EV_READY_R_BIT  1
 #define FD_EV_SHUT_R_BIT   2
-#define FD_EV_ERR_R_BIT    3
+/* unused: 3 */
 
 #define FD_EV_ACTIVE_W_BIT 4
 #define FD_EV_READY_W_BIT  5
 #define FD_EV_SHUT_W_BIT   6
-#define FD_EV_ERR_W_BIT    7
+#define FD_EV_ERR_RW_BIT   7
 
-#define FD_EV_STATUS    (FD_EV_ACTIVE | FD_EV_READY | FD_EV_SHUT | FD_EV_ERR)
-#define FD_EV_STATUS_R  (FD_EV_STATUS)
-#define FD_EV_STATUS_W  (FD_EV_STATUS << 4)
-
-#define FD_EV_ACTIVE_R  (FD_EV_ACTIVE)
-#define FD_EV_ACTIVE_W  (FD_EV_ACTIVE << 4)
+/* and flag values */
+#define FD_EV_ACTIVE_R  (1U << FD_EV_ACTIVE_R_BIT)
+#define FD_EV_ACTIVE_W  (1U << FD_EV_ACTIVE_W_BIT)
 #define FD_EV_ACTIVE_RW (FD_EV_ACTIVE_R | FD_EV_ACTIVE_W)
 
-#define FD_EV_READY_R   (FD_EV_READY)
-#define FD_EV_READY_W   (FD_EV_READY << 4)
+#define FD_EV_READY_R   (1U << FD_EV_READY_R_BIT)
+#define FD_EV_READY_W   (1U << FD_EV_READY_W_BIT)
 #define FD_EV_READY_RW  (FD_EV_READY_R | FD_EV_READY_W)
 
 /* note that when FD_EV_SHUT is set, ACTIVE and READY are cleared */
-#define FD_EV_SHUT_R    (FD_EV_SHUT)
-#define FD_EV_SHUT_W    (FD_EV_SHUT << 4)
+#define FD_EV_SHUT_R    (1U << FD_EV_SHUT_R_BIT)
+#define FD_EV_SHUT_W    (1U << FD_EV_SHUT_W_BIT)
 #define FD_EV_SHUT_RW   (FD_EV_SHUT_R | FD_EV_SHUT_W)
 
-/* note that when FD_EV_ERR is set, SHUT is also set */
-#define FD_EV_ERR_R     (FD_EV_ERR)
-#define FD_EV_ERR_W     (FD_EV_ERR << 4)
-#define FD_EV_ERR_RW    (FD_EV_ERR_R | FD_EV_ERR_W)
+/* note that when FD_EV_ERR is set, SHUT is also set. Also, ERR is for both
+ * directions at once (write error, socket dead, etc).
+ */
+#define FD_EV_ERR_RW    (1U << FD_EV_ERR_RW_BIT)
 
 
 /* This is the value used to mark a file descriptor as dead. This value is
@@ -121,13 +118,13 @@ struct fdlist {
 
 /* info about one given fd */
 struct fdtab {
-	__decl_hathreads(HA_SPINLOCK_T lock);
-	unsigned long thread_mask;           /* mask of thread IDs authorized to process the task */
+	unsigned long running_mask;          /* mask of thread IDs currntly using the fd */
+	unsigned long thread_mask;           /* mask of thread IDs authorized to process the fd */
 	unsigned long update_mask;           /* mask of thread IDs having an update for fd */
 	struct fdlist_entry update;          /* Entry in the global update list */
 	void (*iocb)(int fd);                /* I/O handler */
 	void *owner;                         /* the connection or listener associated with this fd, NULL if closed */
-	unsigned char state;                 /* FD state for read and write directions (2*3 bits) */
+	unsigned char state;                 /* FD state for read and write directions (FD_EV_*) */
 	unsigned char ev;                    /* event seen in return of poll() : FD_POLL_* */
 	unsigned char linger_risk:1;         /* 1 if we must kill lingering before closing */
 	unsigned char cloned:1;              /* 1 if a cloned socket, requires EPOLL_CTL_DEL on close */
@@ -162,16 +159,17 @@ struct fdinfo {
  *  - flags indicate what the poller supports (HAP_POLL_F_*)
  */
 
-#define HAP_POLL_F_RDHUP 0x00000001                          /* the poller notifies of HUP with reads */
+#define HAP_POLL_F_RDHUP        0x00000001                   /* the poller notifies of HUP with reads */
+#define HAP_POLL_F_ERRHUP       0x00000002                   /* the poller reports ERR and HUP */
 
 struct poller {
 	void   *private;                                     /* any private data for the poller */
-	void REGPRM1   (*clo)(const int fd);                 /* mark <fd> as closed */
-	void REGPRM3   (*poll)(struct poller *p, int exp, int wake);  /* the poller itself */
-	int  REGPRM1   (*init)(struct poller *p);            /* poller initialization */
-	void REGPRM1   (*term)(struct poller *p);            /* termination of this poller */
-	int  REGPRM1   (*test)(struct poller *p);            /* pre-init check of the poller */
-	int  REGPRM1   (*fork)(struct poller *p);            /* post-fork re-opening */
+	void   (*clo)(const int fd);                 /* mark <fd> as closed */
+	void   (*poll)(struct poller *p, int exp, int wake);  /* the poller itself */
+	int    (*init)(struct poller *p);            /* poller initialization */
+	void   (*term)(struct poller *p);            /* termination of this poller */
+	int    (*test)(struct poller *p);            /* pre-init check of the poller */
+	int    (*fork)(struct poller *p);            /* post-fork re-opening */
 	const char   *name;                                  /* poller name */
 	unsigned int flags;                                  /* HAP_POLL_F_* */
 	int    pref;                                         /* try pollers with higher preference first */

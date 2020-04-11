@@ -257,33 +257,8 @@ static const char *spoe_appctx_state_str[SPOE_APPCTX_ST_END+1] = {
 static char *
 generate_pseudo_uuid()
 {
-	char *uuid;
-	uint32_t rnd[4] = { 0, 0, 0, 0 };
-	uint64_t last = 0;
-	int byte = 0;
-	uint8_t bits = 0;
-	unsigned int rand_max_bits = my_flsl(RAND_MAX);
-
-	if ((uuid = calloc(1, 37)) == NULL)
-		return NULL;
-
-	while (byte < 4) {
-		while (bits < 32) {
-			last |= (uint64_t)ha_random() << bits;
-			bits += rand_max_bits;
-		}
-		rnd[byte++] = last;
-		last >>= 32u;
-		bits  -= 32;
-	}
-	snprintf(uuid, 37, "%8.8x-%4.4x-%4.4x-%4.4x-%12.12llx",
-			     rnd[0],
-			     rnd[1] & 0xFFFF,
-			     ((rnd[1] >> 16u) & 0xFFF) | 0x4000,  // highest 4 bits indicate the uuid version
-			     (rnd[2] & 0x3FFF) | 0x8000,  // the highest 2 bits indicate the UUID variant (10),
-			     (long long)((rnd[2] >> 14u) | ((uint64_t) rnd[3] << 18u)) & 0xFFFFFFFFFFFFull
-			);
-	return uuid;
+	ha_generate_uuid(&trash);
+	return my_strndup(trash.area, trash.data);
 }
 
 
@@ -344,7 +319,7 @@ spoe_str_to_vsn(const char *str, size_t len)
 	vsn = -1;
 
 	/* skip leading spaces */
-	while (p < end && isspace(*p))
+	while (p < end && isspace((unsigned char)*p))
 		p++;
 
 	/* parse Major number, until the '.' */
@@ -378,7 +353,7 @@ spoe_str_to_vsn(const char *str, size_t len)
 		goto out;
 
 	/* skip trailing spaces */
-	while (p < end && isspace(*p))
+	while (p < end && isspace((unsigned char)*p))
 		p++;
 	if (p != end)
 		goto out;
@@ -784,21 +759,21 @@ spoe_handle_agenthello_frame(struct appctx *appctx, char *frame, size_t size)
 				char *delim;
 
 				/* Skip leading spaces */
-				for (; isspace(*str) && sz; str++, sz--);
+				for (; isspace((unsigned char)*str) && sz; str++, sz--);
 
 				if (sz >= 10 && !strncmp(str, "pipelining", 10)) {
 					str += 10; sz -= 10;
-					if (!sz || isspace(*str) || *str == ',')
+					if (!sz || isspace((unsigned char)*str) || *str == ',')
 						flags |= SPOE_APPCTX_FL_PIPELINING;
 				}
 				else if (sz >= 5 && !strncmp(str, "async", 5)) {
 					str += 5; sz -= 5;
-					if (!sz || isspace(*str) || *str == ',')
+					if (!sz || isspace((unsigned char)*str) || *str == ',')
 						flags |= SPOE_APPCTX_FL_ASYNC;
 				}
 				else if (sz >= 13 && !strncmp(str, "fragmentation", 13)) {
 					str += 13; sz -= 13;
-					if (!sz || isspace(*str) || *str == ',')
+					if (!sz || isspace((unsigned char)*str) || *str == ',')
 						flags |= SPOE_APPCTX_FL_FRAGMENTATION;
 				}
 
@@ -1988,7 +1963,7 @@ spoe_create_appctx(struct spoe_config *conf)
 	SPOE_APPCTX(appctx)->buffer          = BUF_NULL;
 	SPOE_APPCTX(appctx)->cur_fpa         = 0;
 
-	LIST_INIT(&SPOE_APPCTX(appctx)->buffer_wait.list);
+	MT_LIST_INIT(&SPOE_APPCTX(appctx)->buffer_wait.list);
 	SPOE_APPCTX(appctx)->buffer_wait.target = appctx;
 	SPOE_APPCTX(appctx)->buffer_wait.wakeup_cb = (int (*)(void *))spoe_wakeup_appctx;
 
@@ -2834,31 +2809,21 @@ spoe_acquire_buffer(struct buffer *buf, struct buffer_wait *buffer_wait)
 	if (buf->size)
 		return 1;
 
-	if (!LIST_ISEMPTY(&buffer_wait->list)) {
-		HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-		LIST_DEL(&buffer_wait->list);
-		LIST_INIT(&buffer_wait->list);
-		HA_SPIN_UNLOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-	}
+	if (MT_LIST_ADDED(&buffer_wait->list))
+		MT_LIST_DEL(&buffer_wait->list);
 
 	if (b_alloc_margin(buf, global.tune.reserved_bufs))
 		return 1;
 
-	HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-	LIST_ADDQ(&buffer_wq, &buffer_wait->list);
-	HA_SPIN_UNLOCK(BUF_WQ_LOCK, &buffer_wq_lock);
+	MT_LIST_ADDQ(&buffer_wq, &buffer_wait->list);
 	return 0;
 }
 
 static void
 spoe_release_buffer(struct buffer *buf, struct buffer_wait *buffer_wait)
 {
-	if (!LIST_ISEMPTY(&buffer_wait->list)) {
-		HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-		LIST_DEL(&buffer_wait->list);
-		LIST_INIT(&buffer_wait->list);
-		HA_SPIN_UNLOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-	}
+	if (MT_LIST_ADDED(&buffer_wait->list))
+		MT_LIST_DEL(&buffer_wait->list);
 
 	/* Release the buffer if needed */
 	if (buf->size) {
@@ -2892,7 +2857,7 @@ spoe_create_context(struct stream *s, struct filter *filter)
 	ctx->events      = conf->agent->events;
 	ctx->groups      = &conf->agent->groups;
 	ctx->buffer      = BUF_NULL;
-	LIST_INIT(&ctx->buffer_wait.list);
+	MT_LIST_INIT(&ctx->buffer_wait.list);
 	ctx->buffer_wait.target = ctx;
 	ctx->buffer_wait.wakeup_cb = (int (*)(void *))spoe_wakeup_context;
 	LIST_INIT(&ctx->list);
@@ -3583,7 +3548,7 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			tmp = args[2];
 			while (*tmp) {
-				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
+				if (!isalnum((unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
 					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
 						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -3617,7 +3582,7 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			tmp = args[2];
 			while (*tmp) {
-				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
+				if (!isalnum((unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
 					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
 						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -3641,7 +3606,7 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			tmp = args[2];
 			while (*tmp) {
-				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
+				if (!isalnum((unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
 					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
 						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -3665,7 +3630,7 @@ cfg_parse_spoe_agent(const char *file, int linenum, char **args, int kwm)
 				goto out;
 			tmp = args[2];
 			while (*tmp) {
-				if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
+				if (!isalnum((unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
 					ha_alert("parsing [%s:%d]: '%s %s' only supports [a-zA-Z0-9_.] chars.\n",
 						 file, linenum, args[0], args[1]);
 					err_code |= ERR_ALERT | ERR_FATAL;
@@ -3964,7 +3929,7 @@ cfg_parse_spoe_message(const char *file, int linenum, char **args, int kwm)
 			}
 			arg->expr = sample_parse_expr((char*[]){delim, NULL},
 						      &idx, file, linenum, &errmsg,
-						      &curproxy->conf.args);
+						      &curproxy->conf.args, NULL);
 			if (arg->expr == NULL) {
 				ha_alert("parsing [%s:%d] : '%s': %s.\n", file, linenum, args[0], errmsg);
 				err_code |= ERR_ALERT | ERR_FATAL;
@@ -3988,10 +3953,11 @@ cfg_parse_spoe_message(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 		if (strcasecmp(args[1], "or") == 0) {
-			ha_warning("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
+			ha_alert("parsing [%s:%d] : acl name '%s' will never match. 'or' is used to express a "
 				   "logical disjunction within a condition.\n",
 				   file, linenum, args[1]);
-			err_code |= ERR_WARN;
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
 		}
 		if (parse_acl((const char **)args + 1, &curmsg->acls, &errmsg, &curproxy->conf.args, file, linenum) == NULL) {
 			ha_alert("parsing [%s:%d] : error detected while parsing ACL '%s' : %s.\n",
@@ -4180,7 +4146,7 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 		char *tmp = curagent->id;
 
 		while (*tmp) {
-			if (!isalnum(*tmp) && *tmp != '_' && *tmp != '.') {
+			if (!isalnum((unsigned char)*tmp) && *tmp != '_' && *tmp != '.') {
 				memprintf(err, "Invalid variable prefix '%s' for SPOE agent '%s' declared at %s:%d. "
 					  "Use 'option var-prefix' to set it. Only [a-zA-Z0-9_.] chars are supported.\n",
 					  curagent->id, curagent->id, curagent->conf.file, curagent->conf.line);
@@ -4495,9 +4461,8 @@ parse_spoe_flt(char **args, int *cur_arg, struct proxy *px,
 /* Send message of a SPOE group. This is the action_ptr callback of a rule
  * associated to a "send-spoe-group" action.
  *
- * It returns ACT_RET_CONT is processing is finished without error, it returns
- * ACT_RET_YIELD if the action is in progress. Otherwise it returns
- * ACT_RET_ERR. */
+ * It returns ACT_RET_CONT if processing is finished (with error or not), it returns
+ * ACT_RET_YIELD if the action is in progress. */
 static enum act_return
 spoe_send_group(struct act_rule *rule, struct proxy *px,
 		struct session *sess, struct stream *s, int flags)
@@ -4517,7 +4482,7 @@ spoe_send_group(struct act_rule *rule, struct proxy *px,
 		}
 	}
 	if (agent == NULL || group == NULL || ctx == NULL)
-		return ACT_RET_ERR;
+		return ACT_RET_CONT;
 	if (ctx->state == SPOE_CTX_ST_NONE)
 		return ACT_RET_CONT;
 
@@ -4541,7 +4506,7 @@ spoe_send_group(struct act_rule *rule, struct proxy *px,
 	if (ret == 1)
 		return ACT_RET_CONT;
 	else if (ret == 0) {
-		if (flags & ACT_FLAG_FINAL) {
+		if (flags & ACT_OPT_FINAL) {
 			SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
 				    " - failed to process group '%s': interrupted by caller\n",
 				    (int)now.tv_sec, (int)now.tv_usec,
@@ -4554,7 +4519,7 @@ spoe_send_group(struct act_rule *rule, struct proxy *px,
 		return ACT_RET_YIELD;
 	}
 	else
-		return ACT_RET_ERR;
+		return ACT_RET_CONT;
 }
 
 /* Check an "send-spoe-group" action. Here, we'll try to find the real SPOE

@@ -1,6 +1,5 @@
 # build status appears on https://travis-ci.com/haproxy/haproxy
 
-sudo: required
 dist: bionic
 
 language: c
@@ -20,7 +19,11 @@ env:
 
 addons:
   apt:
-    packages: [ liblua5.3-dev, libsystemd-dev, libpcre2-dev ]
+    update: true
+    packages: [ liblua5.3-dev, libsystemd-dev, libpcre2-dev, clang-9, socat ]
+  homebrew:
+    update: true
+    packages: [ socat ]
 
 cache:
   directories:
@@ -29,13 +32,27 @@ cache:
 
 matrix:
   include:
-  - os: linux-ppc64le
+  - os: linux
+    arch: ppc64le
     if: type == cron
     compiler: gcc
-    env: TARGET=linux-glibc OPENSSL_VERSION=1.0.2t LABEL="linux-ppc64le"
+    env: TARGET=linux-glibc OPENSSL_VERSION=1.0.2u
   - os: linux
-    if: type != cron
+    arch: amd64
+    if: type == push
     compiler: clang
+    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1d CC=clang-9
+##################
+## temporarily disabled, until arm64 runners become stable
+#  - os: linux
+#    arch: arm64
+#    if: type == push
+#    compiler: clang
+#    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1d CC=clang-9
+  - os: linux
+    arch: s390x
+    if: type == push
+    compiler: gcc
     env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1d
   - os: linux
     if: type == cron
@@ -50,41 +67,35 @@ matrix:
   - os: linux
     if: type == cron
     compiler: clang
-    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.0l FIFTYONEDEGREES_SRC="contrib/51d/src/trie"
+    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.0l FIFTYONEDEGREES_SRC="contrib/51d/src/trie" CC=clang-9
   - os: linux
-    if: type != cron
+    if: type == push
     compiler: clang
-    env: TARGET=linux-glibc LIBRESSL_VERSION=3.0.2
-  - os: linux
-    if: type == cron
-    compiler: clang
-    env: TARGET=linux-glibc LIBRESSL_VERSION=2.9.2
+    env: TARGET=linux-glibc LIBRESSL_VERSION=3.0.2 CC=clang-9
   - os: linux
     if: type == cron
     compiler: clang
-    env: TARGET=linux-glibc LIBRESSL_VERSION=2.8.3 EXTRA_OBJS="contrib/prometheus-exporter/service-prometheus.o"
+    env: TARGET=linux-glibc LIBRESSL_VERSION=2.9.2 CC=clang-9
+  - os: linux
+    if: type == cron
+    compiler: clang
+    env: TARGET=linux-glibc LIBRESSL_VERSION=2.8.3 EXTRA_OBJS="contrib/prometheus-exporter/service-prometheus.o" CC=clang-9
   - os: linux
     if: type == cron
     compiler: clang
     env: TARGET=linux-glibc BORINGSSL=yes
   - os: linux
-    if: type != cron
+    if: type == push
     compiler: clang
-    env: TARGET=linux-glibc FLAGS=
+    env: TARGET=linux-glibc FLAGS= CC=clang-9
   - os: osx
-    if: type != cron
+    if: type == push
     compiler: clang
     env: TARGET=osx FLAGS="USE_OPENSSL=1" OPENSSL_VERSION=1.1.1d
-#  - os: windows
-#    if: type == cron
-#    install:
-#      - choco install bash make libssl-devel cygwin-devel gcc-core libgcc1 binutils lua-devel libpcre-devel zlib-devel --source cygwin
-#    script:
-#      - C:\\tools\\cygwin\\bin\\bash -lc 'cd $OLDPWD && make TARGET=cygwin USE_ZLIB=1 USE_PCRE=1 USE_PCRE_JIT=1 USE_LUA=1 USE_OPENSSL=1 USE_THREAD=1 && ./haproxy -vv'
   - os: linux
     if: type == cron
     compiler: clang
-    env: TARGET=linux-glibc FLAGS="USE_SLZ=1 USE_PCRE2=1 USE_PCRE2_JIT=1 USE_LUA=1 USE_OPENSSL=1 USE_SYSTEMD=1 USE_WURFL=1 WURFL_INC=contrib/wurfl WURFL_LIB=contrib/wurfl USE_51DEGREES=1"
+    env: TARGET=linux-glibc FLAGS="USE_SLZ=1 USE_PCRE2=1 USE_PCRE2_JIT=1 USE_LUA=1 USE_OPENSSL=1 USE_SYSTEMD=1 USE_WURFL=1 WURFL_INC=contrib/wurfl WURFL_LIB=contrib/wurfl USE_51DEGREES=1" CC=clang-9
     before_script:
       - git clone http://git.1wt.eu/git/libslz.git/
       - cd libslz && make && make PREFIX=${HOME}/opt install && cd ..
@@ -93,17 +104,16 @@ install:
   - git clone https://github.com/VTest/VTest.git ../vtest
   # Special flags due to: https://github.com/vtest/VTest/issues/12
   - make -C ../vtest FLAGS="-O2 -s -Wall"
-  - scripts/build-ssl.sh > build-ssl.log 2>&1 || (cat build-ssl.log && exit 1)
+  - travis_wait bash -c 'scripts/build-ssl.sh >build-ssl.log 2>&1' || (cat build-ssl.log && exit 1)
 
 script:
+  - if [ "${CC%-*}"  = "clang" ]; then export FLAGS="$FLAGS USE_OBSOLETE_LINKER=1" DEBUG_CFLAGS="-g -fsanitize=address" LDFLAGS="-fsanitize=address"; fi
   - make -C contrib/wurfl
-  - make -j3 CC=$CC V=1 TARGET=$TARGET $FLAGS DEBUG_CFLAGS="$DEBUG_CFLAGS" LDFLAGS="$LDFLAGS" 51DEGREES_SRC="$FIFTYONEDEGREES_SRC" EXTRA_OBJS="$EXTRA_OBJS"
-  - if [ "${TRAVIS_OS_NAME}" = "linux" ]; then export LD_LIBRARY_PATH="${HOME}/opt/lib:${LD_LIBRARY_PATH:-}"; fi
-  - if [ "${TRAVIS_OS_NAME}" = "osx" ]; then export DYLD_LIBRARY_PATH="${HOME}/opt/lib:${DYLD_LIBRARY_PATH:-}"; fi
+  - make -j3 CC=$CC V=1 ERR=1 TARGET=$TARGET $FLAGS DEBUG_CFLAGS="$DEBUG_CFLAGS" LDFLAGS="$LDFLAGS -L$SSL_LIB -Wl,-rpath,$SSL_LIB" 51DEGREES_SRC="$FIFTYONEDEGREES_SRC" EXTRA_OBJS="$EXTRA_OBJS"
   - ./haproxy -vv
   - if [ "${TRAVIS_OS_NAME}" = "linux" ]; then ldd haproxy; fi
   - if [ "${TRAVIS_OS_NAME}" = "osx" ]; then otool -L haproxy; fi
-  - env VTEST_PROGRAM=../vtest/vtest make reg-tests
+  - make reg-tests VTEST_PROGRAM=../vtest/vtest REGTESTS_TYPES=default,bug,devel
 
 after_failure:
   - |

@@ -329,10 +329,6 @@ struct appctx *si_register_handler(struct stream_interface *si, struct applet *a
  */
 int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 {
-	/* we might have been called just after an asynchronous shutw */
-	if (conn->flags & CO_FL_SOCK_WR_SH)
-		goto out_error;
-
 	if (!conn_ctrl_ready(conn))
 		goto out_error;
 
@@ -358,9 +354,12 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 		if (cs && cs->data_cb == &si_conn_cb) {
 			struct stream_interface *si = cs->data;
 			struct conn_stream *remote_cs = objt_cs(si_opposite(si)->end);
+			struct stream *strm = si_strm(si);
+
 			ret = make_proxy_line(trash.area, trash.size,
 					      objt_server(conn->target),
-					      remote_cs ? remote_cs->conn : NULL);
+					      remote_cs ? remote_cs->conn : NULL,
+					      strm);
 			/* We may not have a conn_stream yet, if we don't
 			 * know which mux to use, because it will be decided
 			 * during the SSL handshake. In this case, there should
@@ -375,7 +374,8 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 
 			ret = make_proxy_line(trash.area, trash.size,
 			                      objt_server(conn->target),
-					      objt_conn(sess->origin));
+					      objt_conn(sess->origin),
+					      NULL);
 		}
 		else {
 			/* The target server expects a LOCAL line to be sent first. Retrieving
@@ -385,7 +385,8 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 				goto out_wait;
 
 			ret = make_proxy_line(trash.area, trash.size,
-					      objt_server(conn->target), conn);
+					      objt_server(conn->target), conn,
+					      NULL);
 		}
 
 		if (!ret)
@@ -400,7 +401,7 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 		ret = conn_sock_send(conn,
 				     trash.area + ret + conn->send_proxy_ofs,
 		                     -conn->send_proxy_ofs,
-		                     (conn->flags & CO_FL_XPRT_WR_ENA) ? MSG_MORE : 0);
+		                     (conn->subs && conn->subs->events & SUB_RETRY_SEND) ? MSG_MORE : 0);
 
 		if (ret < 0)
 			goto out_error;
@@ -415,8 +416,7 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 	/* The connection is ready now, simply return and let the connection
 	 * handler notify upper layers if needed.
 	 */
-	if (conn->flags & CO_FL_WAIT_L4_CONN)
-		conn->flags &= ~CO_FL_WAIT_L4_CONN;
+	conn->flags &= ~CO_FL_WAIT_L4_CONN;
 	conn->flags &= ~flag;
 	return 1;
 
@@ -452,7 +452,7 @@ static void stream_int_notify(struct stream_interface *si)
 		struct connection *conn = objt_cs(si->end) ? objt_cs(si->end)->conn : NULL;
 
 		if (((oc->flags & (CF_SHUTW|CF_SHUTW_NOW)) == CF_SHUTW_NOW) &&
-		    (si->state == SI_ST_EST) && (!conn || !(conn->flags & (CO_FL_HANDSHAKE | CO_FL_EARLY_SSL_HS))))
+		    (si->state == SI_ST_EST) && (!conn || !(conn->flags & (CO_FL_WAIT_XPRT | CO_FL_EARLY_SSL_HS))))
 			si_shutw(si);
 		oc->wex = TICK_ETERNITY;
 	}
@@ -608,14 +608,14 @@ static int si_cs_process(struct conn_stream *cs)
 	 * in the event there's an analyser waiting for the end of
 	 * the handshake.
 	 */
-	if (!(conn->flags & (CO_FL_HANDSHAKE | CO_FL_EARLY_SSL_HS)) &&
+	if (!(conn->flags & (CO_FL_WAIT_XPRT | CO_FL_EARLY_SSL_HS)) &&
 	    (cs->flags & CS_FL_WAIT_FOR_HS)) {
 		cs->flags &= ~CS_FL_WAIT_FOR_HS;
 		task_wakeup(si_task(si), TASK_WOKEN_MSG);
 	}
 
 	if (!si_state_in(si->state, SI_SB_EST|SI_SB_DIS|SI_SB_CLO) &&
-	    (conn->flags & (CO_FL_CONNECTED | CO_FL_HANDSHAKE)) == CO_FL_CONNECTED) {
+	    (conn->flags & CO_FL_WAIT_XPRT) == 0) {
 		si->exp = TICK_ETERNITY;
 		oc->flags |= CF_WRITE_NULL;
 		if (si->state == SI_ST_CON)
@@ -673,7 +673,7 @@ int si_cs_send(struct conn_stream *cs)
 		return 0;
 
 	/* we might have been called just after an asynchronous shutw */
-	if (conn->flags & CO_FL_SOCK_WR_SH || oc->flags & CF_SHUTW)
+	if (oc->flags & CF_SHUTW)
 		return 1;
 
 	if (oc->pipe && conn->xprt->snd_pipe && conn->mux->snd_pipe) {
@@ -923,7 +923,7 @@ void si_sync_send(struct stream_interface *si)
 		return;
 
 	cs = objt_cs(si->end);
-	if (!cs)
+	if (!cs || !cs->conn->mux)
 		return;
 
 	si_cs_send(cs);
@@ -1316,10 +1316,6 @@ int si_cs_recv(struct conn_stream *cs)
 
 		/* splice not possible (anymore), let's go on on standard copy */
 	}
-	else {
-		/* be sure not to block regular receive path below */
-		conn->flags &= ~CO_FL_WAIT_ROOM;
-	}
 
  abort_splice:
 	if (ic->pipe && unlikely(!ic->pipe->data)) {
@@ -1344,7 +1340,7 @@ int si_cs_recv(struct conn_stream *cs)
 	 * recv().
 	 */
 	while ((cs->flags & CS_FL_RCV_MORE) ||
-	    (!(conn->flags & (CO_FL_ERROR | CO_FL_WAIT_ROOM | CO_FL_HANDSHAKE)) &&
+	    (!(conn->flags & (CO_FL_ERROR | CO_FL_HANDSHAKE)) &&
 	       (!(cs->flags & (CS_FL_ERROR|CS_FL_EOS))) && !(ic->flags & CF_SHUTR))) {
 		/* <max> may be null. This is the mux responsibility to set
 		 * CS_FL_RCV_MORE on the CS if more space is needed.
@@ -1504,14 +1500,11 @@ int si_cs_recv(struct conn_stream *cs)
 		ret = 1;
 	}
 	else if (cs->flags & CS_FL_EOS) {
-		/* connection closed */
-		if (conn->flags & CO_FL_CONNECTED) {
-			/* we received a shutdown */
-			ic->flags |= CF_READ_NULL;
-			if (ic->flags & CF_AUTO_CLOSE)
-				channel_shutw_now(ic);
-			stream_int_read0(si);
-		}
+		/* we received a shutdown */
+		ic->flags |= CF_READ_NULL;
+		if (ic->flags & CF_AUTO_CLOSE)
+			channel_shutw_now(ic);
+		stream_int_read0(si);
 		ret = 1;
 	}
 	else if (!si_rx_blocked(si)) {

@@ -16,8 +16,6 @@
 #   USE_EPOLL            : enable epoll() on Linux 2.6. Automatic.
 #   USE_KQUEUE           : enable kqueue() on BSD. Automatic.
 #   USE_EVPORTS          : enable event ports on SunOS systems. Automatic.
-#   USE_MY_EPOLL         : redefine epoll_* syscalls. Automatic.
-#   USE_MY_SPLICE        : redefine the splice syscall if build fails without.
 #   USE_NETFILTER        : enable netfilter on Linux. Automatic.
 #   USE_PCRE             : enable use of libpcre for regex. Recommended.
 #   USE_PCRE_JIT         : enable JIT for faster regex on libpcre >= 8.32
@@ -27,7 +25,6 @@
 #   USE_PRIVATE_CACHE    : disable shared memory cache of ssl sessions.
 #   USE_THREAD           : enable threads support.
 #   USE_PTHREAD_PSHARED  : enable pthread process shared mutex on sslcache.
-#   USE_REGPARM          : enable regparm optimization. Recommended on x86.
 #   USE_STATIC_PCRE      : enable static libpcre. Recommended.
 #   USE_STATIC_PCRE2     : enable static libpcre2.
 #   USE_TPROXY           : enable transparent proxy. Automatic.
@@ -35,13 +32,11 @@
 #   USE_LINUX_SPLICE     : enable kernel 2.6 splicing. Automatic.
 #   USE_LIBCRYPT         : enable crypted passwords using -lcrypt
 #   USE_CRYPT_H          : set it if your system requires including crypt.h
-#   USE_VSYSCALL         : enable vsyscall on Linux x86, bypassing libc
 #   USE_GETADDRINFO      : use getaddrinfo() to resolve IPv6 host names.
 #   USE_OPENSSL          : enable use of OpenSSL. Recommended, but see below.
 #   USE_LUA              : enable Lua support.
 #   USE_FUTEX            : enable use of futex on kernel 2.6. Automatic.
 #   USE_ACCEPT4          : enable use of accept4() on linux. Automatic.
-#   USE_MY_ACCEPT4       : use own implementation of accept4() if glibc < 2.10.
 #   USE_PRCTL            : enable use of prctl(). Automatic.
 #   USE_ZLIB             : enable zlib library support.
 #   USE_SLZ              : enable slz library instead of zlib (pick at most one).
@@ -50,6 +45,7 @@
 #   USE_NS               : enable network namespace support. Supported on Linux >= 2.6.24.
 #   USE_DL               : enable it if your system requires -ldl. Automatic on Linux.
 #   USE_RT               : enable it if your system requires -lrt. Automatic on Linux.
+#   USE_BACKTRACE        : enable backtrace(). Automatic on Linux.
 #   USE_DEVICEATLAS      : enable DeviceAtlas api.
 #   USE_51DEGREES        : enable third party device detection library from 51Degrees
 #   USE_WURFL            : enable WURFL detection library from Scientiamobile
@@ -177,12 +173,11 @@ REG_TEST_FILES =
 REG_TEST_SCRIPT=./scripts/run-regtests.sh
 
 #### Compiler-specific flags that may be used to disable some negative over-
-# optimization or to silence some warnings. -fno-strict-aliasing is needed with
-# gcc >= 4.4.
+# optimization or to silence some warnings.
 # We rely on signed integer wraparound on overflow, however clang think it
 # can do whatever it wants since it's an undefined behavior, so use -fwrapv
 # to be sure we get the intended behavior.
-SPEC_CFLAGS := -fno-strict-aliasing -Wdeclaration-after-statement
+SPEC_CFLAGS := -Wall -Wextra -Wdeclaration-after-statement
 SPEC_CFLAGS += $(call cc-opt-alt,-fwrapv,$(call cc-opt,-fno-strict-overflow))
 SPEC_CFLAGS += $(call cc-nowarn,address-of-packed-member)
 SPEC_CFLAGS += $(call cc-nowarn,unused-label)
@@ -201,6 +196,10 @@ SPEC_CFLAGS += $(call cc-opt,-Wshift-negative-value)
 SPEC_CFLAGS += $(call cc-opt,-Wshift-overflow=2)
 SPEC_CFLAGS += $(call cc-opt,-Wduplicated-cond)
 SPEC_CFLAGS += $(call cc-opt,-Wnull-dereference)
+
+ifneq ($(ERR),)
+SPEC_CFLAGS += -Werror
+endif
 
 #### Memory usage tuning
 # If small memory footprint is required, you can reduce the buffer size. There
@@ -286,13 +285,13 @@ LDFLAGS = $(ARCH_FLAGS) -g
 #### list of all "USE_*" options. These ones must be updated if new options are
 # added, so that the relevant options are properly added to the CFLAGS and to
 # the reported build options.
-use_opts = USE_EPOLL USE_KQUEUE USE_MY_EPOLL USE_MY_SPLICE USE_NETFILTER      \
+use_opts = USE_EPOLL USE_KQUEUE USE_NETFILTER                                 \
            USE_PCRE USE_PCRE_JIT USE_PCRE2 USE_PCRE2_JIT USE_POLL             \
-           USE_PRIVATE_CACHE USE_THREAD USE_PTHREAD_PSHARED USE_REGPARM       \
+           USE_PRIVATE_CACHE USE_THREAD USE_PTHREAD_PSHARED USE_BACKTRACE     \
            USE_STATIC_PCRE USE_STATIC_PCRE2 USE_TPROXY USE_LINUX_TPROXY       \
-           USE_LINUX_SPLICE USE_LIBCRYPT USE_CRYPT_H USE_VSYSCALL             \
+           USE_LINUX_SPLICE USE_LIBCRYPT USE_CRYPT_H                          \
            USE_GETADDRINFO USE_OPENSSL USE_LUA USE_FUTEX USE_ACCEPT4          \
-           USE_MY_ACCEPT4 USE_ZLIB USE_SLZ USE_CPU_AFFINITY USE_TFO USE_NS    \
+           USE_ZLIB USE_SLZ USE_CPU_AFFINITY USE_TFO USE_NS                   \
            USE_DL USE_RT USE_DEVICEATLAS USE_51DEGREES USE_WURFL USE_SYSTEMD  \
            USE_OBSOLETE_LINKER USE_PRCTL USE_THREAD_DUMP USE_EVPORTS
 
@@ -328,7 +327,7 @@ ifeq ($(TARGET),linux-glibc)
     USE_POLL USE_TPROXY USE_LIBCRYPT USE_DL USE_RT USE_CRYPT_H USE_NETFILTER  \
     USE_CPU_AFFINITY USE_THREAD USE_EPOLL USE_FUTEX USE_LINUX_TPROXY          \
     USE_ACCEPT4 USE_LINUX_SPLICE USE_PRCTL USE_THREAD_DUMP USE_NS USE_TFO     \
-    USE_GETADDRINFO)
+    USE_GETADDRINFO USE_BACKTRACE)
 ifneq ($(shell echo __arm__/__aarch64__ | $(CC) -E -xc - | grep '^[^\#]'),__arm__/__aarch64__)
   TARGET_LDFLAGS=-latomic
 endif
@@ -504,24 +503,20 @@ ifneq ($(USE_EVPORTS),)
 OPTIONS_OBJS   += src/ev_evports.o
 endif
 
-ifneq ($(USE_VSYSCALL),)
-OPTIONS_OBJS   += src/i386-linux-vsys.o
-endif
-
-ifneq ($(USE_REGPARM),)
-OPTIONS_CFLAGS += -DCONFIG_REGPARM=3
-endif
-
 ifneq ($(USE_DL),)
 OPTIONS_LDFLAGS += -ldl
+endif
+
+ifneq ($(USE_RT),)
+OPTIONS_LDFLAGS += -lrt
 endif
 
 ifneq ($(USE_THREAD),)
 OPTIONS_LDFLAGS += -lpthread
 endif
 
-ifneq ($(USE_RT),)
-OPTIONS_LDFLAGS += -lrt
+ifneq ($(USE_BACKTRACE),)
+OPTIONS_LDFLAGS += -Wl,$(if $(EXPORT_SYMBOL),$(EXPORT_SYMBOL),--export-dynamic)
 endif
 
 ifneq ($(USE_OPENSSL),)
@@ -721,11 +716,7 @@ EBTREE_DIR := ebtree
 
 #### Global compile options
 VERBOSE_CFLAGS = $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE)
-COPTS  = -Iinclude -I$(EBTREE_DIR) -Wall -Wextra
-
-ifneq ($(ERR),)
-COPTS += -Werror
-endif
+COPTS  = -Iinclude -I$(EBTREE_DIR)
 
 COPTS += $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE) $(SILENT_DEFINE)
 COPTS += $(DEBUG) $(OPTIONS_CFLAGS) $(ADDINC)
@@ -868,9 +859,14 @@ help:
 	$(Q)echo;echo "Disabled features for TARGET '$(TARGET)' (enable with 'USE_xxx=1') :"
 	$(Q)set -- $(foreach opt,$(patsubst USE_%,%,$(use_opts)),$(if $(USE_$(opt)),,$(opt))); echo "  $$*" | (fmt || cat) 2>/dev/null
 
-# Used only to force a rebuild if some build options change
+# Used only to force a rebuild if some build options change, but we don't do
+# it for certain targets which take no build options
+ifneq (reg-tests, $(firstword $(MAKECMDGOALS)))
 build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 .build_opts: $(build_opts)
+else
+.build_opts:
+endif
 
 haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS) $(NUSTER_OBJS)
 	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)

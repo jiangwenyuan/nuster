@@ -43,15 +43,16 @@ extern struct mux_proto_list mux_proto_list;
  * provided by the connection's sock_ops.
  */
 void conn_fd_handler(int fd);
+int conn_fd_check(struct connection *conn);
 
 /* receive a PROXY protocol header over a connection */
 int conn_recv_proxy(struct connection *conn, int flag);
-int make_proxy_line(char *buf, int buf_len, struct server *srv, struct connection *remote);
+int make_proxy_line(char *buf, int buf_len, struct server *srv, struct connection *remote, struct stream *strm);
 int make_proxy_line_v1(char *buf, int buf_len, struct sockaddr_storage *src, struct sockaddr_storage *dst);
-int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connection *remote);
+int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connection *remote, struct stream *strm);
 
-int conn_subscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param);
-int conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param);
+int conn_subscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es);
+int conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es);
 
 /* receive a NetScaler Client IP insertion header over a connection */
 int conn_recv_netscaler_cip(struct connection *conn, int flag);
@@ -65,6 +66,9 @@ int conn_sock_drain(struct connection *conn);
 /* scoks4 proxy handshake */
 int conn_send_socks4_proxy_request(struct connection *conn);
 int conn_recv_socks4_proxy_response(struct connection *conn);
+
+/* If we delayed the mux creation because we were waiting for the handshake, do it now */
+int conn_create_mux(struct connection *conn);
 
 __decl_hathreads(extern HA_SPINLOCK_T toremove_lock[MAX_THREADS]);
 
@@ -159,155 +163,20 @@ static inline void conn_stop_tracking(struct connection *conn)
 	conn->flags &= ~CO_FL_XPRT_TRACKED;
 }
 
-/* Update polling on connection <c>'s file descriptor depending on its current
- * state as reported in the connection's CO_FL_CURR_* flags, reports of EAGAIN
- * in CO_FL_WAIT_*, and the upper layer expectations indicated by CO_FL_XPRT_*.
- * The connection flags are updated with the new flags at the end of the
- * operation. Polling is totally disabled if an error was reported.
- */
-void conn_update_xprt_polling(struct connection *c);
-
-/* Refresh the connection's polling flags from its file descriptor status.
- * This should be called at the beginning of a connection handler. It does
- * nothing if CO_FL_WILL_UPDATE is present, indicating that an upper caller
- * has already done it.
- */
-static inline void conn_refresh_polling_flags(struct connection *conn)
-{
-	if (conn_ctrl_ready(conn) && !(conn->flags & CO_FL_WILL_UPDATE)) {
-		unsigned int flags = conn->flags;
-
-		flags &= ~(CO_FL_CURR_RD_ENA | CO_FL_CURR_WR_ENA | CO_FL_WAIT_ROOM);
-		if (fd_recv_active(conn->handle.fd))
-			flags |= CO_FL_CURR_RD_ENA;
-		if (fd_send_active(conn->handle.fd))
-			flags |= CO_FL_CURR_WR_ENA;
-		conn->flags = flags;
-	}
-}
-
-/* inspects c->flags and returns non-zero if XPRT ENA changes from the CURR ENA
- * or if the WAIT flags are set with their respective ENA flags. Additionally,
- * non-zero is also returned if an error was reported on the connection. This
- * function is used quite often and is inlined. In order to proceed optimally
- * with very little code and CPU cycles, the bits are arranged so that a change
- * can be detected by a few left shifts, a xor, and a mask. These operations
- * detect when W&D are both enabled for either direction, when C&D differ for
- * either direction and when Error is set. The trick consists in first keeping
- * only the bits we're interested in, since they don't collide when shifted,
- * and to perform the AND at the end. In practice, the compiler is able to
- * replace the last AND with a TEST in boolean conditions. This results in
- * checks that are done in 4-6 cycles and less than 30 bytes.
- */
-static inline unsigned int conn_xprt_polling_changes(const struct connection *c)
-{
-	unsigned int f = c->flags;
-	f &= CO_FL_XPRT_WR_ENA | CO_FL_XPRT_RD_ENA | CO_FL_CURR_WR_ENA |
-	     CO_FL_CURR_RD_ENA | CO_FL_ERROR;
-
-	f = (f ^ (f << 1)) & (CO_FL_CURR_WR_ENA|CO_FL_CURR_RD_ENA);    /* test C ^ D */
-	return f & (CO_FL_CURR_WR_ENA | CO_FL_CURR_RD_ENA | CO_FL_ERROR);
-}
-
-/* Automatically updates polling on connection <c> depending on the XPRT flags.
- * It does nothing if CO_FL_WILL_UPDATE is present, indicating that an upper
- * caller is going to do it again later.
- */
-static inline void conn_cond_update_xprt_polling(struct connection *c)
-{
-	if (!(c->flags & CO_FL_WILL_UPDATE))
-		if (conn_xprt_polling_changes(c))
-			conn_update_xprt_polling(c);
-}
-
 /* Stop all polling on the fd. This might be used when an error is encountered
- * for example. It does not propage the change to the fd layer if
- * CO_FL_WILL_UPDATE is present, indicating that an upper caller is going to do
- * it later.
+ * for example.
  */
 static inline void conn_stop_polling(struct connection *c)
 {
-	c->flags &= ~(CO_FL_CURR_RD_ENA | CO_FL_CURR_WR_ENA |
-		      CO_FL_XPRT_RD_ENA | CO_FL_XPRT_WR_ENA);
-	if (!(c->flags & CO_FL_WILL_UPDATE) && conn_ctrl_ready(c))
+	if (conn_ctrl_ready(c))
 		fd_stop_both(c->handle.fd);
 }
 
-/* Automatically update polling on connection <c> depending on the XPRT and
- * SOCK flags, and on whether a handshake is in progress or not. This may be
- * called at any moment when there is a doubt about the effectiveness of the
- * polling state, for instance when entering or leaving the handshake state.
- * It does nothing if CO_FL_WILL_UPDATE is present, indicating that an upper
- * caller is going to do it again later.
- */
+/* Stops polling in case of error on the connection. */
 static inline void conn_cond_update_polling(struct connection *c)
 {
 	if (unlikely(c->flags & CO_FL_ERROR))
 		conn_stop_polling(c);
-	else if (!(c->flags & CO_FL_WILL_UPDATE)) {
-		if (conn_xprt_polling_changes(c))
-			conn_update_xprt_polling(c);
-	}
-}
-
-/***** Event manipulation primitives for use by DATA I/O callbacks *****/
-/* The __conn_* versions do not propagate to lower layers and are only meant
- * to be used by handlers called by the connection handler. The other ones
- * may be used anywhere.
- */
-static inline void __conn_xprt_want_recv(struct connection *c)
-{
-	c->flags |= CO_FL_XPRT_RD_ENA;
-}
-
-static inline void __conn_xprt_stop_recv(struct connection *c)
-{
-	c->flags &= ~CO_FL_XPRT_RD_ENA;
-}
-
-static inline void __conn_xprt_want_send(struct connection *c)
-{
-	c->flags |= CO_FL_XPRT_WR_ENA;
-}
-
-static inline void __conn_xprt_stop_send(struct connection *c)
-{
-	c->flags &= ~CO_FL_XPRT_WR_ENA;
-}
-
-static inline void __conn_xprt_stop_both(struct connection *c)
-{
-	c->flags &= ~(CO_FL_XPRT_WR_ENA | CO_FL_XPRT_RD_ENA);
-}
-
-static inline void conn_xprt_want_recv(struct connection *c)
-{
-	__conn_xprt_want_recv(c);
-	conn_cond_update_xprt_polling(c);
-}
-
-static inline void conn_xprt_stop_recv(struct connection *c)
-{
-	__conn_xprt_stop_recv(c);
-	conn_cond_update_xprt_polling(c);
-}
-
-static inline void conn_xprt_want_send(struct connection *c)
-{
-	__conn_xprt_want_send(c);
-	conn_cond_update_xprt_polling(c);
-}
-
-static inline void conn_xprt_stop_send(struct connection *c)
-{
-	__conn_xprt_stop_send(c);
-	conn_cond_update_xprt_polling(c);
-}
-
-static inline void conn_xprt_stop_both(struct connection *c)
-{
-	__conn_xprt_stop_both(c);
-	conn_cond_update_xprt_polling(c);
 }
 
 /* read shutdown, called from the rcv_buf/rcv_pipe handlers when
@@ -316,12 +185,13 @@ static inline void conn_xprt_stop_both(struct connection *c)
 static inline void conn_sock_read0(struct connection *c)
 {
 	c->flags |= CO_FL_SOCK_RD_SH;
-	__conn_xprt_stop_recv(c);
-	/* we don't risk keeping ports unusable if we found the
-	 * zero from the other side.
-	 */
-	if (conn_ctrl_ready(c))
+	if (conn_ctrl_ready(c)) {
+		fd_stop_recv(c->handle.fd);
+		/* we don't risk keeping ports unusable if we found the
+		 * zero from the other side.
+		 */
 		fdtab[c->handle.fd].linger_risk = 0;
+	}
 }
 
 /* write shutdown, indication that the upper layer is not willing to send
@@ -332,20 +202,20 @@ static inline void conn_sock_read0(struct connection *c)
 static inline void conn_sock_shutw(struct connection *c, int clean)
 {
 	c->flags |= CO_FL_SOCK_WR_SH;
-	conn_refresh_polling_flags(c);
-	__conn_xprt_stop_send(c);
-	conn_cond_update_xprt_polling(c);
-
-	/* don't perform a clean shutdown if we're going to reset or
-	 * if the shutr was already received.
-	 */
-	if (conn_ctrl_ready(c) && !(c->flags & CO_FL_SOCK_RD_SH) && clean)
-		shutdown(c->handle.fd, SHUT_WR);
+	if (conn_ctrl_ready(c)) {
+		fd_stop_send(c->handle.fd);
+		/* don't perform a clean shutdown if we're going to reset or
+		 * if the shutr was already received.
+		 */
+		if (!(c->flags & CO_FL_SOCK_RD_SH) && clean)
+			shutdown(c->handle.fd, SHUT_WR);
+	}
 }
 
 static inline void conn_xprt_shutw(struct connection *c)
 {
-	__conn_xprt_stop_send(c);
+	if (conn_ctrl_ready(c))
+		fd_stop_send(c->handle.fd);
 
 	/* clean data-layer shutdown */
 	if (c->xprt && c->xprt->shutw)
@@ -354,7 +224,8 @@ static inline void conn_xprt_shutw(struct connection *c)
 
 static inline void conn_xprt_shutw_hard(struct connection *c)
 {
-	__conn_xprt_stop_send(c);
+	if (conn_ctrl_ready(c))
+		fd_stop_send(c->handle.fd);
 
 	/* unclean data-layer shutdown */
 	if (c->xprt && c->xprt->shutw)
@@ -445,17 +316,16 @@ static inline void conn_init(struct connection *conn)
 	conn->handle.fd = DEAD_FD_MAGIC;
 	conn->err_code = CO_ER_NONE;
 	conn->target = NULL;
-	conn->xprt_done_cb = NULL;
 	conn->destroy_cb = NULL;
 	conn->proxy_netns = NULL;
-	LIST_INIT(&conn->list);
+	MT_LIST_INIT(&conn->list);
 	LIST_INIT(&conn->session_list);
-	conn->send_wait = NULL;
-	conn->recv_wait = NULL;
+	conn->subs = NULL;
 	conn->idle_time = 0;
 	conn->src = NULL;
 	conn->dst = NULL;
 	conn->proxy_authority = NULL;
+	conn->proxy_unique_id = IST_NULL;
 }
 
 /* sets <owner> as the connection's owner */
@@ -463,18 +333,6 @@ static inline void conn_set_owner(struct connection *conn, void *owner, void (*c
 {
 	conn->owner = owner;
 	conn->destroy_cb = cb;
-}
-
-/* registers <cb> as a callback to notify for transport's readiness or failure */
-static inline void conn_set_xprt_done_cb(struct connection *conn, int (*cb)(struct connection *))
-{
-	conn->xprt_done_cb = cb;
-}
-
-/* unregisters the callback to notify for transport's readiness or failure */
-static inline void conn_clear_xprt_done_cb(struct connection *conn)
-{
-	conn->xprt_done_cb = NULL;
 }
 
 /* Allocates a struct sockaddr from the pool if needed, assigns it to *sap and
@@ -543,12 +401,12 @@ static inline struct conn_stream *cs_new(struct connection *conn)
 	struct conn_stream *cs;
 
 	cs = pool_alloc(pool_head_connstream);
-	if (!likely(cs))
+	if (unlikely(!cs))
 		return NULL;
 
 	if (!conn) {
 		conn = conn_new();
-		if (!likely(conn)) {
+		if (unlikely(!conn)) {
 			cs_free(cs);
 			return NULL;
 		}
@@ -577,15 +435,10 @@ static inline const struct conn_stream *cs_get_first(const struct connection *co
 
 static inline void conn_force_unsubscribe(struct connection *conn)
 {
-	if (conn->recv_wait) {
-		conn->recv_wait->events &= ~SUB_RETRY_RECV;
-		conn->recv_wait = NULL;
-	}
-	if (conn->send_wait) {
-		conn->send_wait->events &= ~SUB_RETRY_SEND;
-		conn->send_wait = NULL;
-	}
-
+	if (!conn->subs)
+		return;
+	conn->subs->events = 0;
+	conn->subs = NULL;
 }
 
 /* Releases a connection previously allocated by conn_new() */
@@ -606,6 +459,10 @@ static inline void conn_free(struct connection *conn)
 		pool_free(pool_head_authority, conn->proxy_authority);
 		conn->proxy_authority = NULL;
 	}
+	if (isttest(conn->proxy_unique_id)) {
+		pool_free(pool_head_uniqueid, conn->proxy_unique_id.ptr);
+		conn->proxy_unique_id = IST_NULL;
+	}
 
 	/* By convention we always place a NULL where the ctx points to if the
 	 * mux is null. It may have been used to store the connection as a
@@ -620,7 +477,8 @@ static inline void conn_free(struct connection *conn)
 	if (conn->idle_time > 0) {
 		struct server *srv = __objt_server(conn->target);
 		_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
-		srv->curr_idle_thr[tid]--;
+		_HA_ATOMIC_SUB(conn->flags & CO_FL_SAFE_LIST ? &srv->curr_safe_nb : &srv->curr_idle_nb, 1);
+		_HA_ATOMIC_SUB(&srv->curr_idle_thr[tid], 1);
 	}
 
 	conn_force_unsubscribe(conn);
@@ -824,7 +682,7 @@ static inline const char *conn_err_code_str(struct connection *c)
 	case CO_ER_SSL_TIMEOUT:   return "Timeout during SSL handshake";
 	case CO_ER_SSL_TOO_MANY:  return "Too many SSL connections";
 	case CO_ER_SSL_NO_MEM:    return "Out of memory when initializing an SSL connection";
-	case CO_ER_SSL_RENEG:     return "Rejected a client-initiated SSL renegociation attempt";
+	case CO_ER_SSL_RENEG:     return "Rejected a client-initiated SSL renegotiation attempt";
 	case CO_ER_SSL_CA_FAIL:   return "SSL client CA chain cannot be verified";
 	case CO_ER_SSL_CRT_FAIL:  return "SSL client certificate not trusted";
 	case CO_ER_SSL_MISMATCH:  return "Server presented an SSL certificate different from the configured one";

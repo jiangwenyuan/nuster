@@ -40,18 +40,19 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 int http_request_forward_body(struct stream *s, struct channel *req, int an_bit);
 int http_response_forward_body(struct stream *s, struct channel *res, int an_bit);
 int http_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struct http_txn *txn);
-int http_transform_header_str(struct stream* s, struct channel *chn, struct htx *htx,
-			      struct ist name, const char *str, struct my_regex *re, int action);
+int http_eval_after_res_rules(struct stream *s);
+int http_replace_hdrs(struct stream* s, struct htx *htx, struct ist name, const char *str, struct my_regex *re, int full);
 int http_req_replace_stline(int action, const char *replace, int len,
 			    struct proxy *px, struct stream *s);
-void http_res_set_status(unsigned int status, const char *reason, struct stream *s);
+int http_res_set_status(unsigned int status, struct ist reason, struct stream *s);
 void http_check_request_for_cacheability(struct stream *s, struct channel *req);
 void http_check_response_for_cacheability(struct stream *s, struct channel *res);
 void http_perform_server_redirect(struct stream *s, struct stream_interface *si);
 void http_server_error(struct stream *s, struct stream_interface *si, int err, int finst, const struct buffer *msg);
-void http_reply_and_close(struct stream *s, short status, struct buffer *msg);
+void http_reply_and_close(struct stream *s, short status, const struct buffer *msg);
 void http_return_srv_error(struct stream *s, struct stream_interface *si);
 struct buffer *http_error_message(struct stream *s);
+int http_forward_proxy_resp(struct stream *s, int final);
 
 struct http_txn *http_alloc_txn(struct stream *s);
 void http_init_txn(struct stream *s);

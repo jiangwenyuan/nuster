@@ -22,6 +22,11 @@
 #ifndef _COMMON_STANDARD_H
 #define _COMMON_STANDARD_H
 
+#ifdef USE_BACKTRACE
+#define _GNU_SOURCE
+#include <execinfo.h>
+#endif
+
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
@@ -392,6 +397,16 @@ extern const char *invalid_domainchar(const char *name);
  */
 extern const char *invalid_prefix_char(const char *name);
 
+/* returns true if <c> is an identifier character, that is, a digit, a letter,
+ * or '-', '+', '_', ':' or '.'. This is usable for proxy names, server names,
+ * ACL names, sample fetch names, and converter names.
+ */
+static inline int is_idchar(char c)
+{
+	return isalnum((unsigned char)c) ||
+	       c == '.' || c == '_' || c == '-' || c == '+' || c == ':';
+}
+
 /*
  * converts <str> to a locally allocated struct sockaddr_storage *, and a
  * port range consisting in two integers. The low and high end are always set
@@ -432,7 +447,7 @@ int cidr2dotted(int cidr, struct in_addr *mask);
 /*
  * converts <str> to two struct in_addr* which must be pre-allocated.
  * The format is "addr[/mask]", where "addr" cannot be empty, and mask
- * is optionnal and either in the dotted or CIDR notation.
+ * is optional and either in the dotted or CIDR notation.
  * Note: "addr" can also be a hostname. Returns 1 if OK, 0 if error.
  */
 int str2net(const char *str, int resolve, struct in_addr *addr, struct in_addr *mask);
@@ -465,7 +480,7 @@ static inline struct sockaddr_storage *str2ip(const char *str, struct sockaddr_s
 /*
  * converts <str> to two struct in6_addr* which must be pre-allocated.
  * The format is "addr[/mask]", where "addr" cannot be empty, and mask
- * is an optionnal number of bits (128 being the default).
+ * is an optional number of bits (128 being the default).
  * Returns 1 if OK, 0 if error.
  */
 int str62net(const char *str, struct in6_addr *addr, unsigned char *mask);
@@ -741,7 +756,7 @@ static inline char *alltrim(char *s, char c) {
 
 /* This function converts the time_t value <now> into a broken out struct tm
  * which must be allocated by the caller. It is highly recommended to use this
- * function intead of localtime() because that one requires a time_t* which
+ * function instead of localtime() because that one requires a time_t* which
  * is not always compatible with tv_sec depending on OS/hardware combinations.
  */
 static inline void get_localtime(const time_t now, struct tm *tm)
@@ -751,7 +766,7 @@ static inline void get_localtime(const time_t now, struct tm *tm)
 
 /* This function converts the time_t value <now> into a broken out struct tm
  * which must be allocated by the caller. It is highly recommended to use this
- * function intead of gmtime() because that one requires a time_t* which
+ * function instead of gmtime() because that one requires a time_t* which
  * is not always compatible with tv_sec depending on OS/hardware combinations.
  */
 static inline void get_gmtime(const time_t now, struct tm *tm)
@@ -764,7 +779,7 @@ static inline void get_gmtime(const time_t now, struct tm *tm)
  * serves as a temporary origin. It's worth remembering that it's the first
  * year of each period that is leap and not the last one, so for instance year
  * 1 sees 366 days since year 0 was leap. For this reason we have to apply
- * modular arithmetics which is why we offset the year by 399 before
+ * modular arithmetic which is why we offset the year by 399 before
  * subtracting the excess at the end. No overflow here before ~11.7 million
  * years.
  */
@@ -887,7 +902,6 @@ static inline unsigned int my_ffsl(unsigned long a)
 		cnt += 2;
 	}
 	if (!(a & 0x1)) {
-		a >>= 1;
 		cnt += 1;
 	}
 #endif /* x86_64 */
@@ -931,7 +945,6 @@ static inline unsigned int my_flsl(unsigned long a)
 		cnt += 2;
 	}
 	if (a & 0x2) {
-		a >>= 1;
 		cnt += 1;
 	}
 #endif /* x86_64 */
@@ -974,7 +987,7 @@ static inline int ha_bit_test(unsigned long bit, const long *map)
 
 /*
  * Parse binary string written in hexadecimal (source) and store the decoded
- * result into binstr and set binstrlen to the lengh of binstr. Memory for
+ * result into binstr and set binstrlen to the length of binstr. Memory for
  * binstr is allocated by the function. In case of error, returns 0 with an
  * error message in err.
  */
@@ -1238,7 +1251,7 @@ char *gmt2str_log(char *dst, struct tm *tm, size_t size);
 char *localdate2str_log(char *dst, time_t t, struct tm *tm, size_t size);
 
 /* These 3 functions parses date string and fills the
- * corresponding broken-down time in <tm>. In succes case,
+ * corresponding broken-down time in <tm>. In success case,
  * it returns 1, otherwise, it returns 0.
  */
 int parse_http_date(const char *date, int len, struct tm *tm);
@@ -1296,7 +1309,7 @@ int append_prefixed_str(struct buffer *out, const char *in, const char *pfx, cha
 /* removes environment variable <name> from the environment as found in
  * environ. This is only provided as an alternative for systems without
  * unsetenv() (old Solaris and AIX versions). THIS IS NOT THREAD SAFE.
- * The principle is to scan environ for each occurence of variable name
+ * The principle is to scan environ for each occurrence of variable name
  * <name> and to replace the matching pointers with the last pointer of
  * the array (since variables are not ordered).
  * It always returns 0 (success).
@@ -1325,19 +1338,6 @@ void debug_hexdump(FILE *out, const char *pfx, const char *buf, unsigned int bas
 /* this is used to emit call traces when building with TRACE=1 */
 __attribute__((format(printf, 1, 2)))
 void calltrace(char *fmt, ...);
-
-/* used from everywhere just to drain results we don't want to read and which
- * recent versions of gcc increasingly and annoyingly complain about.
- */
-extern int shut_your_big_mouth_gcc_int;
-
-/* used from everywhere just to drain results we don't want to read and which
- * recent versions of gcc increasingly and annoyingly complain about.
- */
-static inline void shut_your_big_mouth_gcc(int r)
-{
-	shut_your_big_mouth_gcc_int = r;
-}
 
 /* same as strstr() but case-insensitive */
 const char *strnistr(const char *str1, int len_str1, const char *str2, int len_str2);
@@ -1492,8 +1492,35 @@ int dump_text(struct buffer *out, const char *buf, int bsize);
 int dump_binary(struct buffer *out, const char *buf, int bsize);
 int dump_text_line(struct buffer *out, const char *buf, int bsize, int len,
                    int *line, int ptr);
+void dump_addr_and_bytes(struct buffer *buf, const char *pfx, const void *addr, int n);
 void dump_hex(struct buffer *out, const char *pfx, const void *buf, int len, int unsafe);
 int may_access(const void *ptr);
+void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr);
+
+#if defined(USE_BACKTRACE)
+/* Note that this may result in opening libgcc() on first call, so it may need
+ * to have been called once before chrooting.
+ */
+static forceinline int my_backtrace(void **buffer, int max)
+{
+#ifdef HA_HAVE_WORKING_BACKTRACE
+	return backtrace(buffer, max);
+#else
+	const struct frame {
+		const struct frame *next;
+		void *ra;
+	} *frame;
+	int count;
+
+	frame = __builtin_frame_address(0);
+	for (count = 0; count < max && may_access(frame) && may_access(frame->ra);) {
+		buffer[count++] = frame->ra;
+		frame = frame->next;
+	}
+	return count;
+#endif
+}
+#endif
 
 /* same as realloc() except that ptr is also freed upon failure */
 static inline void *my_realloc2(void *ptr, size_t size)
@@ -1509,6 +1536,7 @@ static inline void *my_realloc2(void *ptr, size_t size)
 int parse_dotted_uints(const char *s, unsigned int **nums, size_t *sz);
 
 /* PRNG */
+void ha_generate_uuid(struct buffer *output);
 void ha_random_seed(const unsigned char *seed, size_t len);
 void ha_random_jump96(uint32_t dist);
 uint64_t ha_random64();

@@ -43,7 +43,6 @@
 
 
 #if defined(USE_LINUX_SPLICE)
-#include <common/splice.h>
 
 /* A pipe contains 16 segments max, and it's common to see segments of 1448 bytes
  * because of timestamps. Use this as a hint for not looping on splice().
@@ -72,7 +71,7 @@ int raw_sock_to_pipe(struct connection *conn, void *xprt_ctx, struct pipe *pipe,
 	if (!fd_recv_ready(conn->handle.fd))
 		return 0;
 
-	conn_refresh_polling_flags(conn);
+	conn->flags &= ~CO_FL_WAIT_ROOM;
 	errno = 0;
 
 	/* Under Linux, if FD_POLL_HUP is set, we have reached the end.
@@ -118,7 +117,7 @@ int raw_sock_to_pipe(struct connection *conn, void *xprt_ctx, struct pipe *pipe,
 					conn->flags |= CO_FL_WAIT_ROOM;
 					break;
 				}
-
+				/* socket buffer exhausted */
 				fd_cant_recv(conn->handle.fd);
 				break;
 			}
@@ -148,7 +147,6 @@ int raw_sock_to_pipe(struct connection *conn, void *xprt_ctx, struct pipe *pipe,
 			 * being asked to poll.
 			 */
 			conn->flags |= CO_FL_WAIT_ROOM;
-			fd_done_recv(conn->handle.fd);
 			break;
 		}
 	} /* while */
@@ -185,7 +183,13 @@ int raw_sock_from_pipe(struct connection *conn, void *xprt_ctx, struct pipe *pip
 	if (!fd_send_ready(conn->handle.fd))
 		return 0;
 
-	conn_refresh_polling_flags(conn);
+	if (conn->flags & CO_FL_SOCK_WR_SH) {
+		/* it's already closed */
+		conn->flags |= CO_FL_ERROR | CO_FL_SOCK_RD_SH;
+		errno = EPIPE;
+		return 0;
+	}
+
 	done = 0;
 	while (pipe->data) {
 		ret = splice(pipe->cons, NULL, conn->handle.fd, NULL, pipe->data,
@@ -209,7 +213,6 @@ int raw_sock_from_pipe(struct connection *conn, void *xprt_ctx, struct pipe *pip
 	}
 	if (unlikely(conn->flags & CO_FL_WAIT_L4_CONN) && done) {
 		conn->flags &= ~CO_FL_WAIT_L4_CONN;
-		fd_cond_recv(conn->handle.fd);
 	}
 
 	return done;
@@ -239,7 +242,7 @@ static size_t raw_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 	if (!fd_recv_ready(conn->handle.fd))
 		return 0;
 
-	conn_refresh_polling_flags(conn);
+	conn->flags &= ~CO_FL_WAIT_ROOM;
 	errno = 0;
 
 	if (unlikely(!(fdtab[conn->handle.fd].ev & FD_POLL_IN))) {
@@ -273,6 +276,9 @@ static size_t raw_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 			b_add(buf, ret);
 			done += ret;
 			if (ret < try) {
+				/* socket buffer exhausted */
+				fd_cant_recv(conn->handle.fd);
+
 				/* unfortunately, on level-triggered events, POLL_HUP
 				 * is generally delivered AFTER the system buffer is
 				 * empty, unless the poller supports POLL_RDHUP. If
@@ -287,16 +293,19 @@ static size_t raw_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 
 				if ((!fdtab[conn->handle.fd].linger_risk) ||
 				    (cur_poller.flags & HAP_POLL_F_RDHUP)) {
-					fd_done_recv(conn->handle.fd);
 					break;
 				}
 			}
 			count -= ret;
+
+			if (flags & CO_RFL_READ_ONCE)
+				break;
 		}
 		else if (ret == 0) {
 			goto read0;
 		}
 		else if (errno == EAGAIN || errno == ENOTCONN) {
+			/* socket buffer exhausted */
 			fd_cant_recv(conn->handle.fd);
 			break;
 		}
@@ -352,7 +361,13 @@ static size_t raw_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 	if (!fd_send_ready(conn->handle.fd))
 		return 0;
 
-	conn_refresh_polling_flags(conn);
+	if (conn->flags & CO_FL_SOCK_WR_SH) {
+		/* it's already closed */
+		conn->flags |= CO_FL_ERROR | CO_FL_SOCK_RD_SH;
+		errno = EPIPE;
+		return 0;
+	}
+
 	done = 0;
 	/* send the largest possible block. For this we perform only one call
 	 * to send() unless the buffer wraps and we exactly fill the first hunk,
@@ -373,11 +388,13 @@ static size_t raw_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 			count -= ret;
 			done += ret;
 
-			/* A send succeeded, so we can consier ourself connected */
-			conn->flags |= CO_FL_CONNECTED;
 			/* if the system buffer is full, don't insist */
-			if (ret < try)
+			if (ret < try) {
+				fd_cant_send(conn->handle.fd);
 				break;
+			}
+			if (!count)
+				fd_stop_send(conn->handle.fd);
 		}
 		else if (ret == 0 || errno == EAGAIN || errno == ENOTCONN || errno == EINPROGRESS) {
 			/* nothing written, we need to poll for write first */
@@ -391,7 +408,6 @@ static size_t raw_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 	}
 	if (unlikely(conn->flags & CO_FL_WAIT_L4_CONN) && done) {
 		conn->flags &= ~CO_FL_WAIT_L4_CONN;
-		fd_cond_recv(conn->handle.fd);
 	}
 
 	if (done > 0) {
@@ -405,14 +421,23 @@ static size_t raw_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 	return done;
 }
 
-static int raw_sock_subscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
+/* Called from the upper layer, to subscribe <es> to events <event_type>. The
+ * event subscriber <es> is not allowed to change from a previous call as long
+ * as at least one event is still subscribed. The <event_type> must only be a
+ * combination of SUB_RETRY_RECV and SUB_RETRY_SEND. It always returns 0.
+ */
+static int raw_sock_subscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
-	return conn_subscribe(conn, xprt_ctx, event_type, param);
+	return conn_subscribe(conn, xprt_ctx, event_type, es);
 }
 
-static int raw_sock_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
+/* Called from the upper layer, to unsubscribe <es> from events <event_type>.
+ * The <es> pointer is not allowed to differ from the one passed to the
+ * subscribe() call. It always returns zero.
+ */
+static int raw_sock_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
-	return conn_unsubscribe(conn, xprt_ctx, event_type, param);
+	return conn_unsubscribe(conn, xprt_ctx, event_type, es);
 }
 
 /* We can't have an underlying XPRT, so just return -1 to signify failure */

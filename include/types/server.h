@@ -142,6 +142,7 @@ enum srv_initaddr {
 #define SRV_F_COOKIESET    0x0100        /* this server has a cookie configured, so don't generate dynamic cookies */
 #define SRV_F_FASTOPEN     0x0200        /* Use TCP Fast Open to connect to server */
 #define SRV_F_SOCKS4_PROXY 0x0400        /* this server uses SOCKS4 proxy */
+#define SRV_F_NO_RESOLUTION 0x0800       /* disable runtime DNS resolution on this server */
 
 /* configured server options for send-proxy (server->pp_opts) */
 #define SRV_PP_V1               0x0001   /* proxy protocol version 1 */
@@ -153,6 +154,7 @@ enum srv_initaddr {
 #define SRV_PP_V2_SSL_CIPHER    0x0040   /* proxy protocol version 2 with cipher used */
 #define SRV_PP_V2_AUTHORITY     0x0080   /* proxy protocol version 2 with authority */
 #define SRV_PP_V2_CRC32C        0x0100   /* proxy protocol version 2 with crc32c */
+#define SRV_PP_V2_UNIQUE_ID     0x0200   /* proxy protocol version 2 with unique ID */
 
 /* function which act on servers need to return various errors */
 #define SRV_STATUS_OK       0   /* everything is OK. */
@@ -220,13 +222,14 @@ struct server {
 
 	struct eb_root pendconns;		/* pending connections */
 	struct list actconns;			/* active connections */
-	struct list *priv_conns;		/* private idle connections attached to stream interfaces */
-	struct list *idle_conns;		/* sharable idle connections attached or not to a stream interface */
-	struct list *safe_conns;		/* safe idle connections attached to stream interfaces, shared */
-	struct mt_list *idle_orphan_conns;         /* Orphan connections idling */
+	struct mt_list *idle_conns;		/* sharable idle connections*/
+	struct mt_list *safe_conns;		/* safe idle connections */
+	struct list *available_conns;           /* Connection in used, but with still new streams available */
 	unsigned int pool_purge_delay;          /* Delay before starting to purge the idle conns pool */
 	unsigned int max_idle_conns;            /* Max number of connection allowed in the orphan connections list */
-	unsigned int curr_idle_conns;           /* Current number of orphan idling connections */
+	unsigned int curr_idle_conns;           /* Current number of orphan idling connections, both the idle and the safe lists */
+	unsigned int curr_idle_nb;              /* Current number of connections in the idle list */
+	unsigned int curr_safe_nb;              /* Current number of connections in the safe list */
 	unsigned int *curr_idle_thr;            /* Current number of orphan idling connections per thread */
 	int max_reuse;                          /* Max number of requests on a same connection */
 	struct eb32_node idle_node;             /* When to next do cleanup in the idle connections */

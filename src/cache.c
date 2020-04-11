@@ -36,6 +36,7 @@
 #include <common/hash.h>
 #include <common/htx.h>
 #include <common/initcall.h>
+#include <common/net_helper.h>
 
 #define CACHE_FLT_F_IMPLICIT_DECL  0x00000001 /* The cache filtre was implicitly declared (ie without
 					       * the filter keyword) */
@@ -95,7 +96,7 @@ struct cache_entry *entry_exist(struct cache *cache, char *hash)
 	struct eb32_node *node;
 	struct cache_entry *entry;
 
-	node = eb32_lookup(&cache->entries, (*(unsigned int *)hash));
+	node = eb32_lookup(&cache->entries, read_u32(hash));
 	if (!node)
 		return NULL;
 
@@ -199,55 +200,41 @@ cache_store_check(struct proxy *px, struct flt_conf *fconf)
 }
 
 static int
-cache_store_chn_start_analyze(struct stream *s, struct filter *filter, struct channel *chn)
+cache_store_strm_init(struct stream *s, struct filter *filter)
 {
-	if (!(chn->flags & CF_ISRESP))
-		return 1;
+	struct cache_st *st;
 
-	if (filter->ctx == NULL) {
-		struct cache_st *st;
+	st = pool_alloc_dirty(pool_head_cache_st);
+	if (st == NULL)
+		return -1;
 
-		st = pool_alloc_dirty(pool_head_cache_st);
-		if (st == NULL)
-			return -1;
+	st->first_block = NULL;
+	filter->ctx     = st;
 
-		st->first_block = NULL;
-		filter->ctx     = st;
-
-		/* Register post-analyzer on AN_RES_WAIT_HTTP */
-		filter->post_analyzers |= AN_RES_WAIT_HTTP;
-	}
-
+	/* Register post-analyzer on AN_RES_WAIT_HTTP */
+	filter->post_analyzers |= AN_RES_WAIT_HTTP;
 	return 1;
 }
 
-static int
-cache_store_chn_end_analyze(struct stream *s, struct filter *filter, struct channel *chn)
+static void
+cache_store_strm_deinit(struct stream *s, struct filter *filter)
 {
 	struct cache_st *st = filter->ctx;
 	struct cache_flt_conf *cconf = FLT_CONF(filter);
 	struct cache *cache = cconf->c.cache;
 	struct shared_context *shctx = shctx_ptr(cache);
 
-	if (!(chn->flags & CF_ISRESP))
-		return 1;
-
 	/* Everything should be released in the http_end filter, but we need to do it
 	 * there too, in case of errors */
-
 	if (st && st->first_block) {
-
 		shctx_lock(shctx);
 		shctx_row_dec_hot(shctx, st->first_block);
 		shctx_unlock(shctx);
-
 	}
 	if (st) {
 		pool_free(pool_head_cache_st, st);
 		filter->ctx = NULL;
 	}
-
-	return 1;
 }
 
 static int
@@ -549,7 +536,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	struct shared_context *shctx = shctx_ptr(cconf->c.cache);
 	struct cache_st *cache_ctx = NULL;
 	struct cache_entry *object, *old;
-	unsigned int key = *(unsigned int *)txn->cache_hash;
+	unsigned int key = read_u32(txn->cache_hash);
 	struct htx *htx;
 	struct http_hdr_ctx ctx;
 	size_t hdrs_len = 0;
@@ -1400,9 +1387,11 @@ struct flt_ops cache_ops = {
 	.check  = cache_store_check,
 	.deinit = cache_store_deinit,
 
+	/* Handle stream init/deinit */
+	.attach = cache_store_strm_init,
+	.detach = cache_store_strm_deinit,
+
 	/* Handle channels activity */
-	.channel_start_analyze = cache_store_chn_start_analyze,
-	.channel_end_analyze = cache_store_chn_end_analyze,
 	.channel_post_analyze = cache_store_post_analyze,
 
 	/* Filter HTTP requests and responses */
@@ -1530,7 +1519,7 @@ static int cli_io_handler_show_cache(struct appctx *appctx)
 			}
 
 			entry = container_of(node, struct cache_entry, eb);
-			chunk_printf(&trash, "%p hash:%u size:%u (%u blocks), refcount:%u, expire:%d\n", entry, (*(unsigned int *)entry->hash), block_ptr(entry)->len, block_ptr(entry)->block_count, block_ptr(entry)->refcount, entry->expire - (int)now.tv_sec);
+			chunk_printf(&trash, "%p hash:%u size:%u (%u blocks), refcount:%u, expire:%d\n", entry, read_u32(entry->hash), block_ptr(entry)->len, block_ptr(entry)->block_count, block_ptr(entry)->refcount, entry->expire - (int)now.tv_sec);
 
 			next_key = node->key + 1;
 			appctx->ctx.cli.i0 = next_key;

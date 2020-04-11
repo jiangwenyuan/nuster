@@ -179,7 +179,11 @@ done:
 void fd_rm_from_fd_list(volatile struct fdlist *list, int fd, int off)
 {
 #if defined(HA_HAVE_CAS_DW) || defined(HA_CAS_IS_8B)
-	volatile struct fdlist_entry cur_list, next_list;
+	volatile union {
+		struct fdlist_entry ent;
+		uint64_t u64;
+		uint32_t u32[2];
+	} cur_list, next_list;
 #endif
 	int old;
 	int new = -2;
@@ -188,24 +192,24 @@ void fd_rm_from_fd_list(volatile struct fdlist *list, int fd, int off)
 	int last;
 lock_self:
 #if (defined(HA_CAS_IS_8B) || defined(HA_HAVE_CAS_DW))
-	next_list.next = next_list.prev = -2;
-	cur_list = *(volatile struct fdlist_entry *)(((char *)&fdtab[fd]) + off);
+	next_list.ent.next = next_list.ent.prev = -2;
+	cur_list.ent = *(volatile struct fdlist_entry *)(((char *)&fdtab[fd]) + off);
 	/* First, attempt to lock our own entries */
 	do {
 		/* The FD is not in the FD cache, give up */
-		if (unlikely(cur_list.next <= -3))
+		if (unlikely(cur_list.ent.next <= -3))
 			return;
-		if (unlikely(cur_list.prev == -2 || cur_list.next == -2))
+		if (unlikely(cur_list.ent.prev == -2 || cur_list.ent.next == -2))
 			goto lock_self;
 	} while (
 #ifdef HA_CAS_IS_8B
-	    unlikely(!_HA_ATOMIC_CAS(((void **)(void *)&_GET_NEXT(fd, off)), ((void **)(void *)&cur_list), (*(void **)(void *)&next_list))))
+		 unlikely(!_HA_ATOMIC_CAS(((uint64_t *)&_GET_NEXT(fd, off)), (uint64_t *)&cur_list.u64, next_list.u64))
 #else
-	    unlikely(!_HA_ATOMIC_DWCAS(((void *)&_GET_NEXT(fd, off)), ((void *)&cur_list), ((void *)&next_list))))
+		 unlikely(!_HA_ATOMIC_DWCAS(((long *)&_GET_NEXT(fd, off)), (uint32_t *)&cur_list.u32, &next_list.u32))
 #endif
-	    ;
-	next = cur_list.next;
-	prev = cur_list.prev;
+	    );
+	next = cur_list.ent.next;
+	prev = cur_list.ent.prev;
 
 #else
 lock_self_next:
@@ -296,10 +300,18 @@ done:
  */
 static void fd_dodelete(int fd, int do_close)
 {
-	unsigned long locked = atleast2(fdtab[fd].thread_mask);
+	int locked = fdtab[fd].running_mask != tid_bit;
 
+	/* We're just trying to protect against a concurrent fd_insert()
+	 * here, not against fd_takeother(), because either we're called
+	 * directly from the iocb(), and we're already locked, or we're
+	 * called from the mux tasklet, but then the mux is responsible for
+	 * making sure the tasklet does nothing, and the connection is never
+	 * destroyed.
+	 */
 	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+		fd_set_running_excl(fd);
+
 	if (fdtab[fd].linger_risk) {
 		/* this is generally set when connecting to servers */
 		setsockopt(fd, SOL_SOCKET, SO_LINGER,
@@ -320,7 +332,67 @@ static void fd_dodelete(int fd, int do_close)
 		_HA_ATOMIC_SUB(&ha_used_fds, 1);
 	}
 	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		fd_clr_running(fd);
+}
+
+#ifndef HA_HAVE_CAS_DW
+__decl_hathreads(__decl_rwlock(fd_mig_lock));
+#endif
+
+/*
+ * Take over a FD belonging to another thread.
+ * unexpected_conn is the expected owner of the fd.
+ * Returns 0 on success, and -1 on failure.
+ */
+int fd_takeover(int fd, void *expected_owner)
+{
+#ifndef HA_HAVE_CAS_DW
+	int ret;
+
+	HA_RWLOCK_WRLOCK(OTHER_LOCK, &fd_mig_lock);
+	_HA_ATOMIC_OR(&fdtab[fd].running_mask, tid_bit);
+	if (fdtab[fd].running_mask != tid_bit || fdtab[fd].owner != expected_owner) {
+		ret = -1;
+		_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
+		goto end;
+	}
+	fdtab[fd].thread_mask = tid_bit;
+	_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
+	ret = 0;
+end:
+	HA_RWLOCK_WRUNLOCK(OTHER_LOCK, &fd_mig_lock);
+	/* Make sure the FD doesn't have the active bit. It is possible that
+	 * the fd is polled by the thread that used to own it, the new thread
+	 * is supposed to call subscribe() later, to activate polling.
+	 */
+	fd_stop_recv(fd);
+	return ret;
+#else
+	unsigned long old_masks[2];
+	unsigned long new_masks[2];
+
+	old_masks[0] = tid_bit;
+	old_masks[1] = fdtab[fd].thread_mask;
+	new_masks[0] = new_masks[1] = tid_bit;
+	/* protect ourself against a delete then an insert for the same fd,
+	 * if it happens, then the owner will no longer be the expected
+	 * connection.
+	 */
+	_HA_ATOMIC_OR(&fdtab[fd].running_mask, tid_bit);
+	if (fdtab[fd].owner != expected_owner) {
+		_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
+		return -1;
+	}
+	do {
+		if (old_masks[0] != tid_bit || !old_masks[1]) {
+			_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
+			return -1;
+		}
+	} while (!(_HA_ATOMIC_DWCAS(&fdtab[fd].running_mask, &old_masks,
+		   &new_masks)));
+	_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
+	return 0;
+#endif /* HW_HAVE_CAS_DW */
 }
 
 /* Deletes an FD from the fdsets.
@@ -360,6 +432,7 @@ void updt_fd_polling(const int fd)
 	}
 }
 
+__decl_spinlock(log_lock);
 /* Tries to send <npfx> parts from <prefix> followed by <nmsg> parts from <msg>
  * optionally followed by a newline if <nl> is non-null, to file descriptor
  * <fd>. The message is sent atomically using writev(). It may be truncated to
@@ -417,9 +490,9 @@ ssize_t fd_write_frag_line(int fd, size_t maxlen, const struct ist pfx[], size_t
 			fcntl(fd, F_SETFL, O_NONBLOCK);
 	}
 
-	HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+	HA_SPIN_LOCK(OTHER_LOCK, &log_lock);
 	sent = writev(fd, iovec, vec);
-	HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+	HA_SPIN_UNLOCK(OTHER_LOCK, &log_lock);
 
 	/* sent > 0 if the message was delivered */
 	return sent;
@@ -597,7 +670,6 @@ int init_pollers()
 	update_list.first = update_list.last = -1;
 
 	for (p = 0; p < global.maxsock; p++) {
-		HA_SPIN_INIT(&fdtab[p].lock);
 		/* Mark the fd as out of the fd cache */
 		fdtab[p].update.next = -3;
 	}
@@ -633,9 +705,6 @@ void deinit_pollers() {
 
 	struct poller *bp;
 	int p;
-
-	for (p = 0; p < global.maxsock; p++)
-		HA_SPIN_DESTROY(&fdtab[p].lock);
 
 	for (p = 0; p < nbpollers; p++) {
 		bp = &pollers[p];

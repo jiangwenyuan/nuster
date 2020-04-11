@@ -18,7 +18,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include <common/accept4.h>
 #include <common/cfgparse.h>
 #include <common/config.h>
 #include <common/errors.h>
@@ -54,6 +53,12 @@ struct xfer_sock_list *xfer_sock_list = NULL;
  * moving them to the remote queues and waking up the associated tasklet.
  */
 static struct work_list *local_listener_queue;
+
+/* list of the temporarily limited listeners because of lack of resource */
+static struct mt_list global_listener_queue = MT_LIST_HEAD_INIT(global_listener_queue);
+static struct task *global_listener_queue_task;
+static struct task *manage_global_listener_queue(struct task *t, void *context, unsigned short state);
+
 
 #if defined(USE_THREAD)
 
@@ -463,12 +468,25 @@ int disable_all_listeners(struct protocol *proto)
 	return ERR_NONE;
 }
 
-/* Dequeues all of the listeners waiting for a resource in wait queue <queue>. */
-void dequeue_all_listeners(struct mt_list *list)
+/* Dequeues all listeners waiting for a resource the global wait queue */
+void dequeue_all_listeners()
 {
 	struct listener *listener;
 
-	while ((listener = MT_LIST_POP(list, struct listener *, wait_queue))) {
+	while ((listener = MT_LIST_POP(&global_listener_queue, struct listener *, wait_queue))) {
+		/* This cannot fail because the listeners are by definition in
+		 * the LI_LIMITED state.
+		 */
+		resume_listener(listener);
+	}
+}
+
+/* Dequeues all listeners waiting for a resource in proxy <px>'s queue */
+void dequeue_proxy_listeners(struct proxy *px)
+{
+	struct listener *listener;
+
+	while ((listener = MT_LIST_POP(&px->listener_queue, struct listener *, wait_queue))) {
 		/* This cannot fail because the listeners are by definition in
 		 * the LI_LIMITED state.
 		 */
@@ -663,7 +681,7 @@ void listener_accept(int fd)
 		if (unlikely(!max)) {
 			/* frontend accept rate limit was reached */
 			expire = tick_add(now_ms, next_event_delay(&global.sess_per_sec, global.sps_lim, 0));
-			goto wait_expire;
+			goto limit_global;
 		}
 
 		if (max_accept > max)
@@ -676,7 +694,7 @@ void listener_accept(int fd)
 		if (unlikely(!max)) {
 			/* frontend accept rate limit was reached */
 			expire = tick_add(now_ms, next_event_delay(&global.conn_per_sec, global.cps_lim, 0));
-			goto wait_expire;
+			goto limit_global;
 		}
 
 		if (max_accept > max)
@@ -689,7 +707,7 @@ void listener_accept(int fd)
 		if (unlikely(!max)) {
 			/* frontend accept rate limit was reached */
 			expire = tick_add(now_ms, next_event_delay(&global.ssl_per_sec, global.ssl_lim, 0));
-			goto wait_expire;
+			goto limit_global;
 		}
 
 		if (max_accept > max)
@@ -701,9 +719,8 @@ void listener_accept(int fd)
 
 		if (unlikely(!max)) {
 			/* frontend accept rate limit was reached */
-			limit_listener(l, &p->listener_queue);
-			task_schedule(p->task, tick_add(now_ms, next_event_delay(&p->fe_sess_per_sec, p->fe_sps_lim, 0)));
-			goto end;
+			expire = tick_add(now_ms, next_event_delay(&p->fe_sess_per_sec, p->fe_sps_lim, 0));
+			goto limit_proxy;
 		}
 
 		if (max_accept > max)
@@ -746,8 +763,8 @@ void listener_accept(int fd)
 					 * thread is going to do it.
 					 */
 					next_feconn = 0;
-					limit_listener(l, &p->listener_queue);
-					goto end;
+					expire = TICK_ETERNITY;
+					goto limit_proxy;
 				}
 				next_feconn = count + 1;
 			} while (!_HA_ATOMIC_CAS(&p->feconn, &count, next_feconn));
@@ -761,9 +778,8 @@ void listener_accept(int fd)
 					 * thread is going to do it.
 					 */
 					next_actconn = 0;
-					limit_listener(l, &global_listener_queue);
-					task_schedule(global_listener_queue_task, tick_add(now_ms, 1000)); /* try again in 1 second */
-					goto end;
+					expire = tick_add(now_ms, 1000); /* try again in 1 second */
+					goto limit_global;
 				}
 				next_actconn = count + 1;
 			} while (!_HA_ATOMIC_CAS(&actconn, (int *)(&count), next_actconn));
@@ -865,9 +881,8 @@ void listener_accept(int fd)
 				 "Proxy %s reached the configured maximum connection limit. Please check the global 'maxconn' value.\n",
 				 p->id);
 			close(cfd);
-			limit_listener(l, &global_listener_queue);
-			task_schedule(global_listener_queue_task, tick_add(now_ms, 1000)); /* try again in 1 second */
-			goto end;
+			expire = tick_add(now_ms, 1000); /* try again in 1 second */
+			goto limit_global;
 		}
 
 		/* past this point, l->accept() will automatically decrement
@@ -1023,17 +1038,6 @@ void listener_accept(int fd)
 
 	} /* end of for (max_accept--) */
 
-	/* we've exhausted max_accept, so there is no need to poll again */
-	goto end;
-
- transient_error:
-	/* pause the listener for up to 100 ms */
-	expire = tick_add(now_ms, 100);
-
- wait_expire:
-	/* switch the listener to LI_LIMITED and wait until up to <expire> in the global queue */
-	limit_listener(l, &global_listener_queue);
-	task_schedule(global_listener_queue_task, tick_first(expire, global_listener_queue_task->expire));
  end:
 	if (next_conn)
 		_HA_ATOMIC_SUB(&l->nbconn, 1);
@@ -1053,12 +1057,11 @@ void listener_accept(int fd)
 		resume_listener(l);
 
 		/* Dequeues all of the listeners waiting for a resource */
-		if (!MT_LIST_ISEMPTY(&global_listener_queue))
-			dequeue_all_listeners(&global_listener_queue);
+		dequeue_all_listeners();
 
 		if (p && !MT_LIST_ISEMPTY(&p->listener_queue) &&
 		    (!p->fe_sps_lim || freq_ctr_remain(&p->fe_sess_per_sec, p->fe_sps_lim, 0) > 0))
-			dequeue_all_listeners(&p->listener_queue);
+			dequeue_proxy_listeners(p);
 	}
 
 	/* Now it's getting tricky. The listener was supposed to be in LI_READY
@@ -1079,6 +1082,28 @@ void listener_accept(int fd)
 		fd_stop_recv(l->fd);
 	}
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
+	return;
+
+ transient_error:
+	/* pause the listener for up to 100 ms */
+	expire = tick_add(now_ms, 100);
+
+ limit_global:
+	/* (re-)queue the listener to the global queue and set it to expire no
+	 * later than <expire> ahead. The listener turns to LI_LIMITED.
+	 */
+	limit_listener(l, &global_listener_queue);
+	task_schedule(global_listener_queue_task, expire);
+	goto end;
+
+ limit_proxy:
+	/* (re-)queue the listener to the proxy's queue and set it to expire no
+	 * later than <expire> ahead. The listener turns to LI_LIMITED.
+	 */
+	limit_listener(l, &p->listener_queue);
+	if (p->task && tick_isset(expire))
+		task_schedule(p->task, expire);
+	goto end;
 }
 
 /* Notify the listener that a connection initiated from it was released. This
@@ -1100,12 +1125,11 @@ void listener_release(struct listener *l)
 		resume_listener(l);
 
 	/* Dequeues all of the listeners waiting for a resource */
-	if (!MT_LIST_ISEMPTY(&global_listener_queue))
-		dequeue_all_listeners(&global_listener_queue);
+	dequeue_all_listeners();
 
 	if (!MT_LIST_ISEMPTY(&fe->listener_queue) &&
 	    (!fe->fe_sps_lim || freq_ctr_remain(&fe->fe_sess_per_sec, fe->fe_sps_lim, 0) > 0))
-		dequeue_all_listeners(&fe->listener_queue);
+		dequeue_proxy_listeners(fe);
 }
 
 /* resume listeners waiting in the local listener queue. They are still in LI_LIMITED state */
@@ -1129,16 +1153,56 @@ static int listener_queue_init()
 		ha_alert("Out of memory while initializing listener queues.\n");
 		return ERR_FATAL|ERR_ABORT;
 	}
+
+	global_listener_queue_task = task_new(MAX_THREADS_MASK);
+	if (!global_listener_queue_task) {
+		ha_alert("Out of memory when initializing global listener queue\n");
+		return ERR_FATAL|ERR_ABORT;
+	}
+	/* very simple initialization, users will queue the task if needed */
+	global_listener_queue_task->context = NULL; /* not even a context! */
+	global_listener_queue_task->process = manage_global_listener_queue;
+
 	return 0;
 }
 
 static void listener_queue_deinit()
 {
 	work_list_destroy(local_listener_queue, global.nbthread);
+	task_destroy(global_listener_queue_task);
+	global_listener_queue_task = NULL;
 }
 
 REGISTER_CONFIG_POSTPARSER("multi-threaded listener queue", listener_queue_init);
 REGISTER_POST_DEINIT(listener_queue_deinit);
+
+
+/* This is the global management task for listeners. It enables listeners waiting
+ * for global resources when there are enough free resource, or at least once in
+ * a while. It is designed to be called as a task.
+ */
+static struct task *manage_global_listener_queue(struct task *t, void *context, unsigned short state)
+{
+	/* If there are still too many concurrent connections, let's wait for
+	 * some of them to go away. We don't need to re-arm the timer because
+	 * each of them will scan the queue anyway.
+	 */
+	if (unlikely(actconn >= global.maxconn))
+		goto out;
+
+	/* We should periodically try to enable listeners waiting for a global
+	 * resource here, because it is possible, though very unlikely, that
+	 * they have been blocked by a temporary lack of global resource such
+	 * as a file descriptor or memory and that the temporary condition has
+	 * disappeared.
+	 */
+	dequeue_all_listeners();
+
+ out:
+	t->expire = TICK_ETERNITY;
+	task_queue(t);
+	return t;
+}
 
 /*
  * Registers the bind keyword list <kwl> as a list of valid keywords for next
@@ -1224,18 +1288,6 @@ smp_fetch_so_id(const struct arg *args, struct sample *smp, const char *kw, void
 {
 	smp->data.type = SMP_T_SINT;
 	smp->data.u.sint = smp->sess->listener->luid;
-	return 1;
-}
-static int
-smp_fetch_so_name(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	smp->data.u.str.area = smp->sess->listener->name;
-	if (!smp->data.u.str.area)
-		return 0;
-
-	smp->data.type = SMP_T_STR;
-	smp->flags = SMP_F_CONST;
-	smp->data.u.str.data = strlen(smp->data.u.str.area);
 	return 1;
 }
 
@@ -1474,7 +1526,6 @@ static int cfg_parse_tune_listener_mq(char **args, int section_type, struct prox
 static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ "dst_conn", smp_fetch_dconn, 0, NULL, SMP_T_SINT, SMP_USE_FTEND, },
 	{ "so_id",    smp_fetch_so_id, 0, NULL, SMP_T_SINT, SMP_USE_FTEND, },
-	{ "so_name",  smp_fetch_so_name, 0, NULL, SMP_T_STR, SMP_USE_FTEND, },
 	{ /* END */ },
 }};
 

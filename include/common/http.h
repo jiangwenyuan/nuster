@@ -27,7 +27,7 @@
 #include <common/ist.h>
 
 /*
- * some macros mainly used when parsing header fileds.
+ * some macros mainly used when parsing header fields.
  * from RFC7230:
  *   CTL                 = <any US-ASCII control character (octets 0 - 31) and DEL (127)>
  *   SEP                 = one of the 17 defined separators or SP or HT
@@ -83,8 +83,10 @@ enum {
 	HTTP_ERR_200 = 0,
 	HTTP_ERR_400,
 	HTTP_ERR_403,
+	HTTP_ERR_404,
 	HTTP_ERR_405,
 	HTTP_ERR_408,
+	HTTP_ERR_410,
 	HTTP_ERR_421,
 	HTTP_ERR_425,
 	HTTP_ERR_429,

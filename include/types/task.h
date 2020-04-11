@@ -36,6 +36,7 @@
 #define TASK_QUEUED       0x0004  /* The task has been (re-)added to the run queue */
 #define TASK_SHARED_WQ    0x0008  /* The task's expiration may be updated by other
                                    * threads, must be set before first queue/wakeup */
+#define TASK_SELF_WAKING  0x0010  /* task/tasklet found waking itself */
 
 #define TASK_WOKEN_INIT   0x0100  /* woken up for initialisation purposes */
 #define TASK_WOKEN_TIMER  0x0200  /* woken up because of expired timer */
@@ -50,6 +51,13 @@
                            TASK_WOKEN_IO|TASK_WOKEN_SIGNAL|TASK_WOKEN_MSG| \
                            TASK_WOKEN_RES)
 
+enum {
+	TL_URGENT = 0,   /* urgent tasklets (I/O callbacks) */
+	TL_NORMAL = 1,   /* normal tasks */
+	TL_BULK = 2,     /* bulk task/tasklets, streaming I/Os */
+	TL_CLASSES       /* must be last */
+};
+
 struct notification {
 	struct list purge_me; /* Part of the list of signals to be purged in the
 	                         case of the LUA execution stack crash. */
@@ -63,9 +71,9 @@ struct notification {
 struct task_per_thread {
 	struct eb_root timers;  /* tree constituting the per-thread wait queue */
 	struct eb_root rqueue;  /* tree constituting the per-thread run queue */
-	struct list task_list;  /* List of tasks to be run, mixing tasks and tasklets */
 	struct mt_list shared_tasklet_list; /* Tasklet to be run, woken up by other threads */
-	int task_list_size;     /* Number of tasks in the task_list */
+	struct list tasklets[TL_CLASSES]; /* tasklets (and/or tasks) to run, by class */
+	int task_list_size;     /* Number of tasks among the tasklets */
 	int rqueue_size;        /* Number of elements in the per-thread run queue */
 	struct task *current;   /* current task (not tasklet) */
 	__attribute__((aligned(64))) char end[0];

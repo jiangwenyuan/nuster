@@ -41,6 +41,31 @@ struct mux_proto_list mux_proto_list = {
         .list = LIST_HEAD_INIT(mux_proto_list.list)
 };
 
+int conn_create_mux(struct connection *conn)
+{
+	if (conn_is_back(conn)) {
+		struct server *srv;
+		struct conn_stream *cs = conn->ctx;
+
+		if (conn->flags & CO_FL_ERROR)
+			goto fail;
+
+		if (conn_install_mux_be(conn, conn->ctx, conn->owner) < 0)
+			goto fail;
+		srv = objt_server(conn->target);
+		if (srv && ((srv->proxy->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR) &&
+		    conn->mux->avail_streams(conn) > 0)
+			LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&conn->list));
+		return 0;
+fail:
+		/* let the upper layer know the connection failed */
+		cs->data_cb->wake(cs);
+		return -1;
+	} else
+		return conn_complete_session(conn);
+
+}
+
 /* I/O callback for fd-based connections. It calls the read/write handlers
  * provided by the connection's sock_ops, which must be valid.
  */
@@ -48,93 +73,86 @@ void conn_fd_handler(int fd)
 {
 	struct connection *conn = fdtab[fd].owner;
 	unsigned int flags;
-	int io_available = 0;
+	int need_wake = 0;
 
 	if (unlikely(!conn)) {
 		activity[tid].conn_dead++;
 		return;
 	}
 
-	conn_refresh_polling_flags(conn);
-	conn->flags |= CO_FL_WILL_UPDATE;
-
 	flags = conn->flags & ~CO_FL_ERROR; /* ensure to call the wake handler upon error */
 
-	/* The connection owner might want to be notified about an end of
-	 * handshake indicating the connection is ready, before we proceed with
-	 * any data exchange. The callback may fail and cause the connection to
-	 * be destroyed, thus we must not use it anymore and should immediately
-	 * leave instead. The caller must immediately unregister itself once
-	 * called.
-	 */
-	if (!(conn->flags & CO_FL_HANDSHAKE) &&
-	    conn->xprt_done_cb && conn->xprt_done_cb(conn) < 0)
-		return;
+	if (unlikely(conn->flags & CO_FL_WAIT_L4_CONN) &&
+	    ((fd_send_ready(fd) && fd_send_active(fd)) ||
+	     (fd_recv_ready(fd) && fd_recv_active(fd)))) {
+		/* Still waiting for a connection to establish and nothing was
+		 * attempted yet to probe the connection. this will clear the
+		 * CO_FL_WAIT_L4_CONN flag on success.
+		 */
+		if (!conn_fd_check(conn))
+			goto leave;
+		need_wake = 1;
+	}
 
-	if (conn->xprt && fd_send_ready(fd)) {
+	if (fd_send_ready(fd) && fd_send_active(fd)) {
 		/* force reporting of activity by clearing the previous flags :
 		 * we'll have at least ERROR or CONNECTED at the end of an I/O,
 		 * both of which will be detected below.
 		 */
 		flags = 0;
-		if (conn->send_wait != NULL) {
-			conn->send_wait->events &= ~SUB_RETRY_SEND;
-			tasklet_wakeup(conn->send_wait->tasklet);
-			conn->send_wait = NULL;
-		} else
-			io_available = 1;
-		__conn_xprt_stop_send(conn);
-	}
-
-	if (unlikely(conn->flags & CO_FL_WAIT_L4_CONN)) {
-		/* still waiting for a connection to establish and nothing was
-		 * attempted yet to probe the connection. Then let's retry the
-		 * connect().
-		 */
-		if (!tcp_connect_probe(conn))
-			goto leave;
+		if (conn->subs && conn->subs->events & SUB_RETRY_SEND) {
+			need_wake = 0; // wake will be called after this I/O
+			tasklet_wakeup(conn->subs->tasklet);
+			conn->subs->events &= ~SUB_RETRY_SEND;
+			if (!conn->subs->events)
+				conn->subs = NULL;
+		}
+		fd_stop_send(fd);
 	}
 
 	/* The data transfer starts here and stops on error and handshakes. Note
 	 * that we must absolutely test conn->xprt at each step in case it suddenly
 	 * changes due to a quick unexpected close().
 	 */
-	if (conn->xprt && fd_recv_ready(fd)) {
+	if (fd_recv_ready(fd) && fd_recv_active(fd)) {
 		/* force reporting of activity by clearing the previous flags :
 		 * we'll have at least ERROR or CONNECTED at the end of an I/O,
 		 * both of which will be detected below.
 		 */
 		flags = 0;
-		if (conn->recv_wait) {
-			conn->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(conn->recv_wait->tasklet);
-			conn->recv_wait = NULL;
-		} else
-			io_available = 1;
-		__conn_xprt_stop_recv(conn);
+		if (conn->subs && conn->subs->events & SUB_RETRY_RECV) {
+			need_wake = 0; // wake will be called after this I/O
+			tasklet_wakeup(conn->subs->tasklet);
+			conn->subs->events &= ~SUB_RETRY_RECV;
+			if (!conn->subs->events)
+				conn->subs = NULL;
+		}
+		else if (tasks_run_queue_cur >= 16*global.tune.runqueue_depth) {
+			/* In order to save syscalls especially with epoll, we
+			 * prefer *not* to disable receiving and instead let
+			 * the handler do its job. But if the run queue becomes
+			 * high, the excess of events may cause extra wakeups
+			 * and in this case we'd rather flow-control ourselves.
+			 */
+			fd_stop_recv(fd);
+		}
 	}
 
  leave:
-	/* Verify if the connection just established. */
-	if (unlikely(!(conn->flags & (CO_FL_WAIT_L4_CONN | CO_FL_WAIT_L6_CONN | CO_FL_CONNECTED))))
-		conn->flags |= CO_FL_CONNECTED;
-
-	/* The connection owner might want to be notified about failures to
-	 * complete the handshake. The callback may fail and cause the
-	 * connection to be destroyed, thus we must not use it anymore and
-	 * should immediately leave instead. The caller must immediately
-	 * unregister itself once called.
+	/* If we don't yet have a mux, that means we were waiting for
+	 * informations to create one, typically from the ALPN. If we're
+	 * done with the handshake, attempt to create one.
 	 */
-	if (((conn->flags ^ flags) & CO_FL_NOTIFY_DONE) &&
-	    conn->xprt_done_cb && conn->xprt_done_cb(conn) < 0)
-		return;
+	if (unlikely(!conn->mux) && !(conn->flags & CO_FL_WAIT_XPRT))
+		if (conn_create_mux(conn) < 0)
+			return;
 
 	/* The wake callback is normally used to notify the data layer about
 	 * data layer activity (successful send/recv), connection establishment,
 	 * shutdown and fatal errors. We need to consider the following
 	 * situations to wake up the data layer :
-	 *  - change among the CO_FL_NOTIFY_DATA flags :
-	 *      {DATA,SOCK}_{RD,WR}_SH, ERROR,
+	 *  - change among the CO_FL_NOTIFY_DONE flags :
+	 *      SOCK_{RD,WR}_SH, ERROR,
 	 *  - absence of any of {L4,L6}_CONN and CONNECTED, indicating the
 	 *    end of handshake and transition to CONNECTED
 	 *  - raise of CONNECTED with HANDSHAKE down
@@ -144,51 +162,105 @@ void conn_fd_handler(int fd)
 	 * Note that the wake callback is allowed to release the connection and
 	 * the fd (and return < 0 in this case).
 	 */
-	if ((io_available || (((conn->flags ^ flags) & CO_FL_NOTIFY_DATA) ||
-	     ((flags & (CO_FL_CONNECTED|CO_FL_HANDSHAKE)) != CO_FL_CONNECTED &&
-	      (conn->flags & (CO_FL_CONNECTED|CO_FL_HANDSHAKE)) == CO_FL_CONNECTED))) &&
+	if ((need_wake || ((conn->flags ^ flags) & CO_FL_NOTIFY_DONE) ||
+	     ((flags & CO_FL_WAIT_XPRT) && !(conn->flags & CO_FL_WAIT_XPRT))) &&
 	    conn->mux && conn->mux->wake && conn->mux->wake(conn) < 0)
 		return;
 
 	/* commit polling changes */
-	conn->flags &= ~CO_FL_WILL_UPDATE;
 	conn_cond_update_polling(conn);
 	return;
 }
 
-/* Update polling on connection <c>'s file descriptor depending on its current
- * state as reported in the connection's CO_FL_CURR_* flags, reports of EAGAIN
- * in CO_FL_WAIT_*, and the data layer expectations indicated by CO_FL_XPRT_*.
- * The connection flags are updated with the new flags at the end of the
- * operation. Polling is totally disabled if an error was reported.
+/* This is the callback which is set when a connection establishment is pending
+ * and we have nothing to send. It may update the FD polling status to indicate
+ * !READY. It returns 0 if it fails in a fatal way or needs to poll to go
+ * further, otherwise it returns non-zero and removes the CO_FL_WAIT_L4_CONN
+ * flag from the connection's flags. In case of error, it sets CO_FL_ERROR and
+ * leaves the error code in errno.
  */
-void conn_update_xprt_polling(struct connection *c)
+int conn_fd_check(struct connection *conn)
 {
-	unsigned int f = c->flags;
+	struct sockaddr_storage *addr;
+	int fd = conn->handle.fd;
 
-	if (!conn_ctrl_ready(c))
-		return;
+	if (conn->flags & CO_FL_ERROR)
+		return 0;
 
-	/* update read status if needed */
-	if (unlikely((f & (CO_FL_CURR_RD_ENA|CO_FL_XPRT_RD_ENA)) == CO_FL_XPRT_RD_ENA)) {
-		fd_want_recv(c->handle.fd);
-		f |= CO_FL_CURR_RD_ENA;
-	}
-	else if (unlikely((f & (CO_FL_CURR_RD_ENA|CO_FL_XPRT_RD_ENA)) == CO_FL_CURR_RD_ENA)) {
-		fd_stop_recv(c->handle.fd);
-		f &= ~CO_FL_CURR_RD_ENA;
+	if (!conn_ctrl_ready(conn))
+		return 0;
+
+	if (!(conn->flags & CO_FL_WAIT_L4_CONN))
+		return 1; /* strange we were called while ready */
+
+	if (!fd_send_ready(fd))
+		return 0;
+
+	/* Here we have 2 cases :
+	 *  - modern pollers, able to report ERR/HUP. If these ones return any
+	 *    of these flags then it's likely a failure, otherwise it possibly
+	 *    is a success (i.e. there may have been data received just before
+	 *    the error was reported).
+	 *  - select, which doesn't report these and with which it's always
+	 *    necessary either to try connect() again or to check for SO_ERROR.
+	 * In order to simplify everything, we double-check using connect() as
+	 * soon as we meet either of these delicate situations. Note that
+	 * SO_ERROR would clear the error after reporting it!
+	 */
+	if (cur_poller.flags & HAP_POLL_F_ERRHUP) {
+		/* modern poller, able to report ERR/HUP */
+		if ((fdtab[fd].ev & (FD_POLL_IN|FD_POLL_ERR|FD_POLL_HUP)) == FD_POLL_IN)
+			goto done;
+		if ((fdtab[fd].ev & (FD_POLL_OUT|FD_POLL_ERR|FD_POLL_HUP)) == FD_POLL_OUT)
+			goto done;
+		if (!(fdtab[fd].ev & (FD_POLL_ERR|FD_POLL_HUP)))
+			goto wait;
+		/* error present, fall through common error check path */
 	}
 
-	/* update write status if needed */
-	if (unlikely((f & (CO_FL_CURR_WR_ENA|CO_FL_XPRT_WR_ENA)) == CO_FL_XPRT_WR_ENA)) {
-		fd_want_send(c->handle.fd);
-		f |= CO_FL_CURR_WR_ENA;
+	/* Use connect() to check the state of the socket. This has the double
+	 * advantage of *not* clearing the error (so that health checks can
+	 * still use getsockopt(SO_ERROR)) and giving us the following info :
+	 *  - error
+	 *  - connecting (EALREADY, EINPROGRESS)
+	 *  - connected (EISCONN, 0)
+	 */
+	addr = conn->dst;
+	if ((conn->flags & CO_FL_SOCKS4) && obj_type(conn->target) == OBJ_TYPE_SERVER)
+		addr = &objt_server(conn->target)->socks4_addr;
+
+	if (connect(fd, (const struct sockaddr *)addr, get_addr_len(addr)) == -1) {
+		if (errno == EALREADY || errno == EINPROGRESS)
+			goto wait;
+
+		if (errno && errno != EISCONN)
+			goto out_error;
 	}
-	else if (unlikely((f & (CO_FL_CURR_WR_ENA|CO_FL_XPRT_WR_ENA)) == CO_FL_CURR_WR_ENA)) {
-		fd_stop_send(c->handle.fd);
-		f &= ~CO_FL_CURR_WR_ENA;
-	}
-	c->flags = f;
+
+ done:
+	/* The FD is ready now, we'll mark the connection as complete and
+	 * forward the event to the transport layer which will notify the
+	 * data layer.
+	 */
+	conn->flags &= ~CO_FL_WAIT_L4_CONN;
+	fd_may_send(fd);
+	fd_cond_recv(fd);
+	errno = 0; // make health checks happy
+	return 1;
+
+ out_error:
+	/* Write error on the file descriptor. Report it to the connection
+	 * and disable polling on this FD.
+	 */
+	fdtab[fd].linger_risk = 0;
+	conn->flags |= CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH;
+	conn_stop_polling(conn);
+	return 0;
+
+ wait:
+	fd_cant_send(fd);
+	fd_want_send(fd);
+	return 0;
 }
 
 /* Send a message over an established connection. It makes use of send() and
@@ -247,51 +319,70 @@ int conn_sock_send(struct connection *conn, const void *buf, int len, int flags)
 	return ret;
 }
 
-int conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
+/* Called from the upper layer, to subscribe <es> to events <event_type>. The
+ * event subscriber <es> is not allowed to change from a previous call as long
+ * as at least one event is still subscribed. The <event_type> must only be a
+ * combination of SUB_RETRY_RECV and SUB_RETRY_SEND. It always returns 0.
+ */
+int conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
-	struct wait_event *sw;
+	BUG_ON(event_type & ~(SUB_RETRY_SEND|SUB_RETRY_RECV));
+	BUG_ON(conn->subs && conn->subs != es);
 
-	if (event_type & SUB_RETRY_RECV) {
-		sw = param;
-		BUG_ON(conn->recv_wait != sw);
-		conn->recv_wait = NULL;
-		sw->events &= ~SUB_RETRY_RECV;
-		__conn_xprt_stop_recv(conn);
+	es->events &= ~event_type;
+	if (!es->events)
+		conn->subs = NULL;
+
+	if (conn_ctrl_ready(conn)) {
+		if (event_type & SUB_RETRY_RECV)
+			fd_stop_recv(conn->handle.fd);
+
+		if (event_type & SUB_RETRY_SEND)
+			fd_stop_send(conn->handle.fd);
 	}
-	if (event_type & SUB_RETRY_SEND) {
-		sw = param;
-		BUG_ON(conn->send_wait != sw);
-		conn->send_wait = NULL;
-		sw->events &= ~SUB_RETRY_SEND;
-		__conn_xprt_stop_send(conn);
-	}
-	conn_update_xprt_polling(conn);
 	return 0;
 }
 
-int conn_subscribe(struct connection *conn, void *xprt_ctx, int event_type, void *param)
+/* Called from the upper layer, to subscribe <es> to events <event_type>.
+ * The <es> struct is not allowed to differ from the one passed during a
+ * previous call to subscribe(). If the FD is ready, the wait_event is
+ * immediately woken up and the subcription is cancelled. It always
+ * returns zero.
+ */
+int conn_subscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
-	struct wait_event *sw;
+	BUG_ON(event_type & ~(SUB_RETRY_SEND|SUB_RETRY_RECV));
+	BUG_ON(conn->subs && conn->subs != es);
 
-	if (event_type & SUB_RETRY_RECV) {
-		sw = param;
-		BUG_ON(conn->recv_wait != NULL || (sw->events & SUB_RETRY_RECV));
-		sw->events |= SUB_RETRY_RECV;
-		conn->recv_wait = sw;
-		event_type &= ~SUB_RETRY_RECV;
-		__conn_xprt_want_recv(conn);
+	if (conn->subs && (conn->subs->events & event_type) == event_type)
+		return 0;
+
+	conn->subs = es;
+	es->events |= event_type;
+
+	if (conn_ctrl_ready(conn)) {
+		if (event_type & SUB_RETRY_RECV) {
+			if (fd_recv_ready(conn->handle.fd)) {
+				tasklet_wakeup(es->tasklet);
+				es->events &= ~SUB_RETRY_RECV;
+				if (!es->events)
+					conn->subs = NULL;
+			}
+			else
+				fd_want_recv(conn->handle.fd);
+		}
+
+		if (event_type & SUB_RETRY_SEND) {
+			if (fd_send_ready(conn->handle.fd)) {
+				tasklet_wakeup(es->tasklet);
+				es->events &= ~SUB_RETRY_SEND;
+				if (!es->events)
+					conn->subs = NULL;
+			}
+			else
+				fd_want_send(conn->handle.fd);
+		}
 	}
-	if (event_type & SUB_RETRY_SEND) {
-		sw = param;
-		BUG_ON(conn->send_wait != NULL || (sw->events & SUB_RETRY_SEND));
-		sw->events |= SUB_RETRY_SEND;
-		conn->send_wait = sw;
-		event_type &= ~SUB_RETRY_SEND;
-		__conn_xprt_want_send(conn);
-	}
-	if (event_type != 0)
-		return (-1);
-	conn_update_xprt_polling(conn);
 	return 0;
 }
 
@@ -366,7 +457,7 @@ int conn_sock_drain(struct connection *conn)
 /*
  * Get data length from tlv
  */
-static int get_tlv_length(const struct tlv *src)
+static inline size_t get_tlv_length(const struct tlv *src)
 {
 	return (src->length_hi << 8) | src->length_lo;
 }
@@ -400,12 +491,8 @@ int conn_recv_proxy(struct connection *conn, int flag)
 	struct proxy_hdr_v2 *hdr_v2;
 	const char v2sig[] = PP2_SIGNATURE;
 	size_t total_v2_len;
-	int tlv_offset = 0;
+	size_t tlv_offset = 0;
 	int ret;
-
-	/* we might have been called just after an asynchronous shutr */
-	if (conn->flags & CO_FL_SOCK_RD_SH)
-		goto fail;
 
 	if (!conn_ctrl_ready(conn))
 		goto fail;
@@ -416,7 +503,7 @@ int conn_recv_proxy(struct connection *conn, int flag)
 	if (!fd_recv_ready(conn->handle.fd))
 		goto not_ready;
 
-	do {
+	while (1) {
 		ret = recv(conn->handle.fd, trash.area, trash.size, MSG_PEEK);
 		if (ret < 0) {
 			if (errno == EINTR)
@@ -428,13 +515,16 @@ int conn_recv_proxy(struct connection *conn, int flag)
 			goto recv_abort;
 		}
 		trash.data = ret;
-	} while (0);
+		break;
+	}
 
 	if (!trash.data) {
 		/* client shutdown */
 		conn->err_code = CO_ER_PRX_EMPTY;
 		goto fail;
 	}
+
+	conn->flags &= ~CO_FL_WAIT_L4_CONN;
 
 	if (trash.data < 6)
 		goto missing;
@@ -616,7 +706,7 @@ int conn_recv_proxy(struct connection *conn, int flag)
 		/* TLV parsing */
 		while (tlv_offset < total_v2_len) {
 			struct tlv *tlv_packet;
-			int tlv_len;
+			size_t tlv_len;
 
 			/* Verify that we have at least TLV_HEADER_SIZE bytes left */
 			if (tlv_offset + TLV_HEADER_SIZE > total_v2_len)
@@ -665,6 +755,22 @@ int conn_recv_proxy(struct connection *conn, int flag)
 				conn->proxy_authority_len = tlv_len;
 				break;
 			}
+			case PP2_TYPE_UNIQUE_ID: {
+				const struct ist tlv = ist2((const char *)tlv_packet->value, tlv_len);
+
+				if (tlv.len > UNIQUEID_LEN)
+					goto bad_header;
+				conn->proxy_unique_id = ist2(pool_alloc(pool_head_uniqueid), 0);
+				if (!isttest(conn->proxy_unique_id))
+					goto fail;
+				if (istcpy(&conn->proxy_unique_id, tlv, UNIQUEID_LEN) < 0) {
+					/* This is technically unreachable, because we verified above
+					 * that the TLV value fits.
+					 */
+					goto fail;
+				}
+				break;
+			}
 			default:
 				break;
 			}
@@ -695,13 +801,15 @@ int conn_recv_proxy(struct connection *conn, int flag)
 	 * exact line at once. If we don't get the exact same result, we
 	 * fail.
 	 */
-	do {
-		int len2 = recv(conn->handle.fd, trash.area, trash.data, 0);
+	while (1) {
+		ssize_t len2 = recv(conn->handle.fd, trash.area, trash.data, 0);
+
 		if (len2 < 0 && errno == EINTR)
 			continue;
 		if (len2 != trash.data)
 			goto recv_abort;
-	} while (0);
+		break;
+	}
 
 	conn->flags &= ~flag;
 	conn->flags |= CO_FL_RCVD_PROXY;
@@ -756,10 +864,6 @@ int conn_recv_netscaler_cip(struct connection *conn, int flag)
 	uint8_t ip_ver;
 	int ret;
 
-	/* we might have been called just after an asynchronous shutr */
-	if (conn->flags & CO_FL_SOCK_RD_SH)
-		goto fail;
-
 	if (!conn_ctrl_ready(conn))
 		goto fail;
 
@@ -769,7 +873,7 @@ int conn_recv_netscaler_cip(struct connection *conn, int flag)
 	if (!fd_recv_ready(conn->handle.fd))
 		goto not_ready;
 
-	do {
+	while (1) {
 		ret = recv(conn->handle.fd, trash.area, trash.size, MSG_PEEK);
 		if (ret < 0) {
 			if (errno == EINTR)
@@ -781,7 +885,10 @@ int conn_recv_netscaler_cip(struct connection *conn, int flag)
 			goto recv_abort;
 		}
 		trash.data = ret;
-	} while (0);
+		break;
+	}
+
+	conn->flags &= ~CO_FL_WAIT_L4_CONN;
 
 	if (!trash.data) {
 		/* client shutdown */
@@ -799,17 +906,17 @@ int conn_recv_netscaler_cip(struct connection *conn, int flag)
 
 	/* Decode a possible NetScaler Client IP request, fail early if
 	 * it does not match */
-	if (ntohl(*(uint32_t *)line) != __objt_listener(conn->target)->bind_conf->ns_cip_magic)
+	if (ntohl(read_u32(line)) != __objt_listener(conn->target)->bind_conf->ns_cip_magic)
 		goto bad_magic;
 
 	/* Legacy CIP protocol */
 	if ((trash.area[8] & 0xD0) == 0x40) {
-		hdr_len = ntohl(*(uint32_t *)(line+4));
+		hdr_len = ntohl(read_u32((line+4)));
 		line += 8;
 	}
 	/* Standard CIP protocol */
 	else if (trash.area[8] == 0x00) {
-		hdr_len = ntohs(*(uint32_t *)(line+10));
+		hdr_len = ntohs(read_u32((line+10)));
 		line += 12;
 	}
 	/* Unknown CIP protocol */
@@ -899,13 +1006,14 @@ int conn_recv_netscaler_cip(struct connection *conn, int flag)
 	 * we re-read the exact line at once. If we don't get the exact same
 	 * result, we fail.
 	 */
-	do {
+	while (1) {
 		int len2 = recv(conn->handle.fd, trash.area, trash.data, 0);
 		if (len2 < 0 && errno == EINTR)
 			continue;
 		if (len2 != trash.data)
 			goto recv_abort;
-	} while (0);
+		break;
+	}
 
 	conn->flags &= ~flag;
 	return 1;
@@ -940,10 +1048,6 @@ int conn_send_socks4_proxy_request(struct connection *conn)
 {
 	struct socks4_request req_line;
 
-	/* we might have been called just after an asynchronous shutw */
-	if (conn->flags & CO_FL_SOCK_WR_SH)
-		goto out_error;
-
 	if (!conn_ctrl_ready(conn))
 		goto out_error;
 
@@ -973,7 +1077,7 @@ int conn_send_socks4_proxy_request(struct connection *conn)
 				conn,
 				((char *)(&req_line)) + (sizeof(req_line)+conn->send_proxy_ofs),
 				-conn->send_proxy_ofs,
-				(conn->flags & CO_FL_XPRT_WR_ENA) ? MSG_MORE : 0);
+				(conn->subs && conn->subs->events & SUB_RETRY_SEND) ? MSG_MORE : 0);
 
 		DPRINTF(stderr, "SOCKS PROXY HS FD[%04X]: Before send remain is [%d], sent [%d]\n",
 				conn->handle.fd, -conn->send_proxy_ofs, ret);
@@ -994,8 +1098,7 @@ int conn_send_socks4_proxy_request(struct connection *conn)
 	/* The connection is ready now, simply return and let the connection
 	 * handler notify upper layers if needed.
 	 */
-	if (conn->flags & CO_FL_WAIT_L4_CONN)
-		conn->flags &= ~CO_FL_WAIT_L4_CONN;
+	conn->flags &= ~CO_FL_WAIT_L4_CONN;
 
 	if (conn->flags & CO_FL_SEND_PROXY) {
 		/*
@@ -1024,17 +1127,13 @@ int conn_recv_socks4_proxy_response(struct connection *conn)
 	char line[SOCKS4_HS_RSP_LEN];
 	int ret;
 
-	/* we might have been called just after an asynchronous shutr */
-	if (conn->flags & CO_FL_SOCK_RD_SH)
-		goto fail;
-
 	if (!conn_ctrl_ready(conn))
 		goto fail;
 
 	if (!fd_recv_ready(conn->handle.fd))
 		goto not_ready;
 
-	do {
+	while (1) {
 		/* SOCKS4 Proxy will response with 8 bytes, 0x00 | 0x5A | 0x00 0x00 | 0x00 0x00 0x00 0x00
 		 * Try to peek into it, before all 8 bytes ready.
 		 */
@@ -1071,7 +1170,10 @@ int conn_recv_socks4_proxy_response(struct connection *conn)
 			}
 			goto recv_abort;
 		}
-	} while (0);
+		break;
+	}
+
+	conn->flags &= ~CO_FL_WAIT_L4_CONN;
 
 	if (ret < SOCKS4_HS_RSP_LEN) {
 		/* Missing data. Since we're using MSG_PEEK, we can only poll again if
@@ -1107,7 +1209,7 @@ int conn_recv_socks4_proxy_response(struct connection *conn)
 	}
 
 	/* remove the 8 bytes response from the stream */
-	do {
+	while (1) {
 		ret = recv(conn->handle.fd, line, SOCKS4_HS_RSP_LEN, 0);
 		if (ret < 0 && errno == EINTR) {
 			continue;
@@ -1118,7 +1220,8 @@ int conn_recv_socks4_proxy_response(struct connection *conn)
 			}
 			goto fail;
 		}
-	} while (0);
+		break;
+	}
 
 	conn->flags &= ~CO_FL_SOCKS4_RECV;
 	return 1;
@@ -1139,12 +1242,12 @@ int conn_recv_socks4_proxy_response(struct connection *conn)
 }
 
 /* Note: <remote> is explicitly allowed to be NULL */
-int make_proxy_line(char *buf, int buf_len, struct server *srv, struct connection *remote)
+int make_proxy_line(char *buf, int buf_len, struct server *srv, struct connection *remote, struct stream *strm)
 {
 	int ret = 0;
 
 	if (srv && (srv->pp_opts & SRV_PP_V2)) {
-		ret = make_proxy_line_v2(buf, buf_len, srv, remote);
+		ret = make_proxy_line_v2(buf, buf_len, srv, remote, strm);
 	}
 	else {
 		if (remote && conn_get_src(remote) && conn_get_dst(remote))
@@ -1251,7 +1354,7 @@ static int make_tlv(char *dest, int dest_len, char type, uint16_t length, const 
 }
 
 /* Note: <remote> is explicitly allowed to be NULL */
-int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connection *remote)
+int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connection *remote, struct stream *strm)
 {
 	const char pp2_signature[] = PP2_SIGNATURE;
 	void *tlv_crc32c_p = NULL;
@@ -1335,6 +1438,7 @@ int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connec
 
 	if (srv->pp_opts & SRV_PP_V2_CRC32C) {
 		uint32_t zero_crc32c = 0;
+
 		if ((buf_len - ret) < sizeof(struct tlv))
 			return 0;
 		tlv_crc32c_p = (void *)((struct tlv *)&buf[ret])->value;
@@ -1366,10 +1470,25 @@ int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connec
 		}
 	}
 
+	if (srv->pp_opts & SRV_PP_V2_UNIQUE_ID) {
+		struct session* sess = strm_sess(strm);
+		struct ist unique_id = stream_generate_unique_id(strm, &sess->fe->format_unique_id);
+
+		value = unique_id.ptr;
+		value_len = unique_id.len;
+
+		if (value_len >= 0) {
+			if ((buf_len - ret) < sizeof(struct tlv))
+				return 0;
+			ret += make_tlv(&buf[ret], (buf_len - ret), PP2_TYPE_UNIQUE_ID, value_len, value);
+		}
+	}
+
 #ifdef USE_OPENSSL
 	if (srv->pp_opts & SRV_PP_V2_SSL) {
 		struct tlv_ssl *tlv;
 		int ssl_tlv_len = 0;
+
 		if ((buf_len - ret) < sizeof(struct tlv_ssl))
 			return 0;
 		tlv = (struct tlv_ssl *)&buf[ret];
@@ -1463,7 +1582,7 @@ int smp_fetch_fc_rcvd_proxy(const struct arg *args, struct sample *smp, const ch
 	if (!conn)
 		return 0;
 
-	if (!(conn->flags & CO_FL_CONNECTED)) {
+	if (conn->flags & CO_FL_WAIT_XPRT) {
 		smp->flags |= SMP_F_MAY_CHANGE;
 		return 0;
 	}
@@ -1484,7 +1603,7 @@ int smp_fetch_fc_pp_authority(const struct arg *args, struct sample *smp, const 
 	if (!conn)
 		return 0;
 
-	if (!(conn->flags & CO_FL_CONNECTED)) {
+	if (conn->flags & CO_FL_WAIT_XPRT) {
 		smp->flags |= SMP_F_MAY_CHANGE;
 		return 0;
 	}
@@ -1500,6 +1619,31 @@ int smp_fetch_fc_pp_authority(const struct arg *args, struct sample *smp, const 
 	return 1;
 }
 
+/* fetch the unique ID TLV from a PROXY protocol header */
+int smp_fetch_fc_pp_unique_id(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	struct connection *conn;
+
+	conn = objt_conn(smp->sess->origin);
+	if (!conn)
+		return 0;
+
+	if (conn->flags & CO_FL_WAIT_XPRT) {
+		smp->flags |= SMP_F_MAY_CHANGE;
+		return 0;
+	}
+
+	if (!isttest(conn->proxy_unique_id))
+		return 0;
+
+	smp->flags = 0;
+	smp->data.type = SMP_T_STR;
+	smp->data.u.str.area = conn->proxy_unique_id.ptr;
+	smp->data.u.str.data = conn->proxy_unique_id.len;
+
+	return 1;
+}
+
 /* Note: must not be declared <const> as its list will be overwritten.
  * Note: fetches that may return multiple types must be declared as the lowest
  * common denominator, the type that can be casted into all other ones. For
@@ -1510,6 +1654,7 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	{ "bc_http_major", smp_fetch_fc_http_major, 0, NULL, SMP_T_SINT, SMP_USE_L4SRV },
 	{ "fc_rcvd_proxy", smp_fetch_fc_rcvd_proxy, 0, NULL, SMP_T_BOOL, SMP_USE_L4CLI },
 	{ "fc_pp_authority", smp_fetch_fc_pp_authority, 0, NULL, SMP_T_STR, SMP_USE_L4CLI },
+	{ "fc_pp_unique_id", smp_fetch_fc_pp_unique_id, 0, NULL, SMP_T_STR, SMP_USE_L4CLI },
 	{ /* END */ },
 }};
 

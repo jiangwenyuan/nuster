@@ -40,6 +40,7 @@
 
 #include <types/acl.h>
 #include <types/backend.h>
+#include <types/checks.h>
 #include <types/counters.h>
 #include <types/filters.h>
 #include <types/freq_ctr.h>
@@ -315,6 +316,7 @@ struct proxy {
 	struct list acl;                        /* ACL declared on this proxy */
 	struct list http_req_rules;		/* HTTP request rules: allow/deny/... */
 	struct list http_res_rules;		/* HTTP response rules: allow/deny/... */
+	struct list http_after_res_rules;	/* HTTP final response rules: set-header/del-header/... */
 	struct list redirect_rules;             /* content redirecting rules (chained) */
 	struct list switching_rules;            /* content switching rules (chained) */
 	struct list persist_rules;		/* 'force-persist' and 'ignore-persist' rules (chained) */
@@ -404,7 +406,7 @@ struct proxy {
 	struct list logformat; 			/* log_format linked list */
 	struct list logformat_sd;		/* log_format linked list for the RFC5424 structured-data part */
 	struct buffer log_tag;                   /* override default syslog tag */
-	char *header_unique_id; 		/* unique-id header */
+	struct ist header_unique_id; 		/* unique-id header */
 	struct list format_unique_id;		/* unique-id format */
 	int to_log;				/* things to be logged (LW_*) */
 	int stop_time;                          /* date to stop listening, when stopping != 0 (int ticks) */
@@ -428,7 +430,7 @@ struct proxy {
 	char *check_path;			/* PATH environment to use for external agent checks */
 	char *expect_str;			/* http-check expected content : string or text version of the regex */
 	struct my_regex *expect_regex;		/* http-check expected content */
-	struct buffer errmsg[HTTP_ERR_SIZE];	/* default or customized error messages for known errors */
+	struct buffer *errmsg[HTTP_ERR_SIZE];	/* default or customized error messages for known errors */
 	int uuid;				/* universally unique proxy ID, used for SNMP */
 	unsigned int backlog;			/* force the frontend's listen backlog */
 	unsigned long bind_proc;		/* bitmask of processes using this proxy */
@@ -450,6 +452,7 @@ struct proxy {
 		struct eb_root used_server_name; /* list of server names in use */
 		struct list bind;		/* list of bind settings */
 		struct list listeners;		/* list of listeners belonging to this frontend */
+		struct list errors;             /* list of all custom error files */
 		struct arg_list args;           /* sample arg list that need to be resolved */
 		struct ebpt_node by_name;       /* proxies are stored sorted by name here */
 		char *logformat_string;		/* log format string */

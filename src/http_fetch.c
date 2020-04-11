@@ -409,19 +409,18 @@ static int smp_fetch_stcode(const struct arg *args, struct sample *smp, const ch
 
 static int smp_fetch_uniqueid(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	struct ist unique_id;
+
 	if (LIST_ISEMPTY(&smp->sess->fe->format_unique_id))
 		return 0;
 
-	if (!smp->strm->unique_id) {
-		if ((smp->strm->unique_id = pool_alloc(pool_head_uniqueid)) == NULL)
-			return 0;
-		smp->strm->unique_id[0] = '\0';
-		build_logline(smp->strm, smp->strm->unique_id,
-		              UNIQUEID_LEN, &smp->sess->fe->format_unique_id);
-	}
-	smp->data.u.str.data = strlen(smp->strm->unique_id);
+	unique_id = stream_generate_unique_id(smp->strm, &smp->sess->fe->format_unique_id);
+	if (!isttest(unique_id))
+		return 0;
+
+	smp->data.u.str.area = smp->strm->unique_id.ptr;
+	smp->data.u.str.data = smp->strm->unique_id.len;
 	smp->data.type = SMP_T_STR;
-	smp->data.u.str.area = smp->strm->unique_id;
 	smp->flags = SMP_F_CONST;
 	return 1;
 }
@@ -982,23 +981,19 @@ static int smp_fetch_path(const struct arg *args, struct sample *smp, const char
 	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
 	struct htx_sl *sl;
 	struct ist path;
-	size_t len;
 
 	if (!htx)
 		return 0;
 
 	sl = http_get_stline(htx);
-	path = http_get_path(htx_sl_req_uri(sl));
-	if (!path.ptr)
+	path = iststop(http_get_path(htx_sl_req_uri(sl)), '?');
+	if (!isttest(path))
 		return 0;
-
-	for (len = 0; len < path.len && *(path.ptr + len) != '?'; len++)
-		;
 
 	/* OK, we got the '/' ! */
 	smp->data.type = SMP_T_STR;
 	smp->data.u.str.area = path.ptr;
-	smp->data.u.str.data = len;
+	smp->data.u.str.data = path.len;
 	smp->flags = SMP_F_VOL_1ST | SMP_F_CONST;
 	return 1;
 }
@@ -1033,7 +1028,7 @@ static int smp_fetch_base(const struct arg *args, struct sample *smp, const char
 	/* now retrieve the path */
 	sl = http_get_stline(htx);
 	path = http_get_path(htx_sl_req_uri(sl));
-	if (path.ptr) {
+	if (isttest(path)) {
 		size_t len;
 
 		for (len = 0; len < path.len && *(path.ptr + len) != '?'; len++)
@@ -1079,7 +1074,7 @@ static int smp_fetch_base32(const struct arg *args, struct sample *smp, const ch
 	/* now retrieve the path */
 	sl = http_get_stline(htx);
 	path = http_get_path(htx_sl_req_uri(sl));
-	if (path.ptr) {
+	if (isttest(path)) {
 		size_t len;
 
 		for (len = 0; len < path.len && *(path.ptr + len) != '?'; len++)
@@ -1427,7 +1422,7 @@ static int smp_fetch_capture_req_uri(const struct arg *args, struct sample *smp,
 	path.len = ptr - path.ptr;
 
 	path = http_get_path(path);
-	if (!path.ptr)
+	if (!isttest(path))
 		return 0;
 
 	smp->data.u.str.area = path.ptr;

@@ -19,6 +19,7 @@
 #include <common/initcall.h>
 #include <common/memory.h>
 #include <common/mini-clist.h>
+#include <common/net_helper.h>
 #include <common/standard.h>
 #include <common/time.h>
 
@@ -2118,7 +2119,7 @@ static enum act_parse_ret parse_set_gpt0(const char **args, int *arg, struct pro
 	rule->arg.gpt.value = strtol(args[*arg], &error, 10);
 	if (*error != '\0') {
 		rule->arg.gpt.expr = sample_parse_expr((char **)args, arg, px->conf.args.file,
-		                                       px->conf.args.line, err, &px->conf.args);
+		                                       px->conf.args.line, err, &px->conf.args, NULL);
 		if (!rule->arg.gpt.expr)
 			return ACT_RET_PRS_ERR;
 
@@ -3366,7 +3367,7 @@ static int table_dump_entry_to_buffer(struct buffer *msg,
 		chunk_appendf(msg, " key=%s", addr);
 	}
 	else if (t->type == SMP_T_SINT) {
-		chunk_appendf(msg, " key=%u", *(unsigned int *)entry->key.key);
+		chunk_appendf(msg, " key=%u", read_u32(entry->key.key));
 	}
 	else if (t->type == SMP_T_STR) {
 		chunk_appendf(msg, " key=");
@@ -3600,23 +3601,34 @@ static int table_process_entry_per_key(struct appctx *appctx, char **args)
  */
 static int table_prepare_data_request(struct appctx *appctx, char **args)
 {
+	int i;
+	char *err = NULL;
+
 	if (appctx->ctx.table.action != STK_CLI_ACT_SHOW && appctx->ctx.table.action != STK_CLI_ACT_CLR)
 		return cli_err(appctx, "content-based lookup is only supported with the \"show\" and \"clear\" actions\n");
 
-	/* condition on stored data value */
-	appctx->ctx.table.data_type = stktable_get_data_type(args[3] + 5);
-	if (appctx->ctx.table.data_type < 0)
-		return cli_err(appctx, "Unknown data type\n");
+	for (i = 0; i < STKTABLE_FILTER_LEN; i++) {
+		if (i > 0 && !*args[3+3*i])  // number of filter entries can be less than STKTABLE_FILTER_LEN
+			break;
+		/* condition on stored data value */
+		appctx->ctx.table.data_type[i] = stktable_get_data_type(args[3+3*i] + 5);
+		if (appctx->ctx.table.data_type[i] < 0)
+			return cli_dynerr(appctx, memprintf(&err, "Filter entry #%i: Unknown data type\n", i + 1));
 
-	if (!((struct stktable *)appctx->ctx.table.target)->data_ofs[appctx->ctx.table.data_type])
-		return cli_err(appctx, "Data type not stored in this table\n");
+		if (!((struct stktable *)appctx->ctx.table.target)->data_ofs[appctx->ctx.table.data_type[i]])
+			return cli_dynerr(appctx, memprintf(&err, "Filter entry #%i: Data type not stored in this table\n", i + 1));
 
-	appctx->ctx.table.data_op = get_std_op(args[4]);
-	if (appctx->ctx.table.data_op < 0)
-		return cli_err(appctx, "Require and operator among \"eq\", \"ne\", \"le\", \"ge\", \"lt\", \"gt\"\n");
+		appctx->ctx.table.data_op[i] = get_std_op(args[4+3*i]);
+		if (appctx->ctx.table.data_op[i] < 0)
+			return cli_dynerr(appctx, memprintf(&err, "Filter entry #%i: Require and operator among \"eq\", \"ne\", \"le\", \"ge\", \"lt\", \"gt\"\n", i + 1));
 
-	if (!*args[5] || strl2llrc(args[5], strlen(args[5]), &appctx->ctx.table.value) != 0)
-		return cli_err(appctx, "Require a valid integer value to compare against\n");
+		if (!*args[5+3*i] || strl2llrc(args[5+3*i], strlen(args[5+3*i]), &appctx->ctx.table.value[i]) != 0)
+			return cli_dynerr(appctx, memprintf(&err, "Filter entry #%i: Require a valid integer value to compare against\n", i + 1));
+	}
+
+	if (*args[3+3*i]) {
+		return cli_dynerr(appctx, memprintf(&err, "Detected extra data in filter, %ith word of input, after '%s'\n", 3+3*i + 1, args[2+3*i]));
+	}
 
 	/* OK we're done, all the fields are set */
 	return 0;
@@ -3625,7 +3637,10 @@ static int table_prepare_data_request(struct appctx *appctx, char **args)
 /* returns 0 if wants to be called, 1 if has ended processing */
 static int cli_parse_table_req(char **args, char *payload, struct appctx *appctx, void *private)
 {
-	appctx->ctx.table.data_type = -1;
+	int i;
+
+	for (i = 0; i < STKTABLE_FILTER_LEN; i++)
+		appctx->ctx.table.data_type[i] = -1;
 	appctx->ctx.table.target = NULL;
 	appctx->ctx.table.entry = NULL;
 	appctx->ctx.table.action = (long)private; // keyword argument, one of STK_CLI_ACT_*
@@ -3672,7 +3687,6 @@ static int cli_io_handler_table(struct appctx *appctx)
 	struct stream_interface *si = appctx->owner;
 	struct stream *s = si_strm(si);
 	struct ebmb_node *eb;
-	int dt;
 	int skip_entry;
 	int show = appctx->ctx.table.action == STK_CLI_ACT_SHOW;
 
@@ -3744,48 +3758,53 @@ static int cli_io_handler_table(struct appctx *appctx)
 
 			HA_RWLOCK_RDLOCK(STK_SESS_LOCK, &appctx->ctx.table.entry->lock);
 
-			if (appctx->ctx.table.data_type >= 0) {
+			if (appctx->ctx.table.data_type[0] >= 0) {
 				/* we're filtering on some data contents */
 				void *ptr;
-				long long data;
+				int dt, i;
+				signed char op;
+				long long data, value;
 
 
-				dt = appctx->ctx.table.data_type;
-				ptr = stktable_data_ptr(appctx->ctx.table.t,
-							appctx->ctx.table.entry,
-							dt);
+				for (i = 0; i < STKTABLE_FILTER_LEN; i++) {
+					if (appctx->ctx.table.data_type[i] == -1)
+						break;
+					dt = appctx->ctx.table.data_type[i];
+					ptr = stktable_data_ptr(appctx->ctx.table.t,
+								appctx->ctx.table.entry,
+								dt);
 
-				data = 0;
-				switch (stktable_data_types[dt].std_type) {
-				case STD_T_SINT:
-					data = stktable_data_cast(ptr, std_t_sint);
-					break;
-				case STD_T_UINT:
-					data = stktable_data_cast(ptr, std_t_uint);
-					break;
-				case STD_T_ULL:
-					data = stktable_data_cast(ptr, std_t_ull);
-					break;
-				case STD_T_FRQP:
-					data = read_freq_ctr_period(&stktable_data_cast(ptr, std_t_frqp),
-								    appctx->ctx.table.t->data_arg[dt].u);
-					break;
+					data = 0;
+					switch (stktable_data_types[dt].std_type) {
+					case STD_T_SINT:
+						data = stktable_data_cast(ptr, std_t_sint);
+						break;
+					case STD_T_UINT:
+						data = stktable_data_cast(ptr, std_t_uint);
+						break;
+					case STD_T_ULL:
+						data = stktable_data_cast(ptr, std_t_ull);
+						break;
+					case STD_T_FRQP:
+						data = read_freq_ctr_period(&stktable_data_cast(ptr, std_t_frqp),
+									    appctx->ctx.table.t->data_arg[dt].u);
+						break;
+					}
+
+					op = appctx->ctx.table.data_op[i];
+					value = appctx->ctx.table.value[i];
+
+					/* skip the entry if the data does not match the test and the value */
+					if ((data < value &&
+					     (op == STD_OP_EQ || op == STD_OP_GT || op == STD_OP_GE)) ||
+					    (data == value &&
+					     (op == STD_OP_NE || op == STD_OP_GT || op == STD_OP_LT)) ||
+					    (data > value &&
+					     (op == STD_OP_EQ || op == STD_OP_LT || op == STD_OP_LE))) {
+						skip_entry = 1;
+						break;
+					}
 				}
-
-				/* skip the entry if the data does not match the test and the value */
-				if ((data < appctx->ctx.table.value &&
-				     (appctx->ctx.table.data_op == STD_OP_EQ ||
-				      appctx->ctx.table.data_op == STD_OP_GT ||
-				      appctx->ctx.table.data_op == STD_OP_GE)) ||
-				    (data == appctx->ctx.table.value &&
-				     (appctx->ctx.table.data_op == STD_OP_NE ||
-				      appctx->ctx.table.data_op == STD_OP_GT ||
-				      appctx->ctx.table.data_op == STD_OP_LT)) ||
-				    (data > appctx->ctx.table.value &&
-				     (appctx->ctx.table.data_op == STD_OP_EQ ||
-				      appctx->ctx.table.data_op == STD_OP_LT ||
-				      appctx->ctx.table.data_op == STD_OP_LE)))
-					skip_entry = 1;
 			}
 
 			if (show && !skip_entry &&

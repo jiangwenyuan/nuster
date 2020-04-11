@@ -282,7 +282,7 @@ nst_debug(hpx_stream_t *s, const char *fmt, ...) {
         trash.data += vsprintf(trash.area + trash.data, fmt, args);
         trash.area[trash.data++] = '\n';
         va_end(args);
-        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
+        DISGUISE(write(1, trash.area, trash.data));
     }
 }
 
@@ -327,7 +327,7 @@ nst_debug_end(const char *fmt, ...) {
         trash.data += vsprintf(trash.area + trash.data, fmt, args);
         va_end(args);
         trash.area[trash.data++] = '\n';
-        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
+        DISGUISE(write(1, trash.area, trash.data));
     }
 }
 

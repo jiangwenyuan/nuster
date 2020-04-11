@@ -18,6 +18,7 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <common/net_helper.h>
 #include <common/time.h>
 #include <common/uri_auth.h>
 
@@ -39,7 +40,6 @@ static int class_listener_ref;
 static int class_regex_ref;
 static int class_stktable_ref;
 
-#define MAX_STK_FILTER_LEN 4
 #define STATS_LEN (MAX((int)ST_F_TOTAL_FIELDS, (int)INF_TOTAL_FIELDS))
 
 static THREAD_LOCAL struct field stats[STATS_LEN];
@@ -682,7 +682,7 @@ int hlua_stktable_dump(lua_State *L)
 	int op;
 	int dt;
 	long long val;
-	struct stk_filter filter[MAX_STK_FILTER_LEN];
+	struct stk_filter filter[STKTABLE_FILTER_LEN];
 	int filter_count = 0;
 	int i;
 	int skip_entry;
@@ -700,8 +700,8 @@ int hlua_stktable_dump(lua_State *L)
 		while (lua_next(L, 2) != 0) {
 			int entry_idx = 0;
 
-			if (filter_count >= MAX_STK_FILTER_LEN)
-				return hlua_error(L, "Filter table too large (len > %d)", MAX_STK_FILTER_LEN);
+			if (filter_count >= STKTABLE_FILTER_LEN)
+				return hlua_error(L, "Filter table too large (len > %d)", STKTABLE_FILTER_LEN);
 
 			if (lua_type(L, -1) != LUA_TTABLE  || lua_rawlen(L, -1) != 3)
 				return hlua_error(L, "Filter table entry must be a triplet: {\"data_col\", \"op\", val} (entry #%d)", filter_count + 1);
@@ -1521,10 +1521,10 @@ int hlua_match_addr(lua_State *L)
 		int i;
 
 		for (i = 0; i < 16; i += 4) {
-			if ((*(uint32_t *)&addr1->addr.v6.ip.s6_addr[i] &
-			     *(uint32_t *)&addr2->addr.v6.mask.s6_addr[i]) !=
-			    (*(uint32_t *)&addr2->addr.v6.ip.s6_addr[i] &
-			     *(uint32_t *)&addr1->addr.v6.mask.s6_addr[i]))
+			if ((read_u32(&addr1->addr.v6.ip.s6_addr[i]) &
+			     read_u32(&addr2->addr.v6.mask.s6_addr[i])) !=
+			    (read_u32(&addr2->addr.v6.ip.s6_addr[i]) &
+			     read_u32(&addr1->addr.v6.mask.s6_addr[i])))
 				break;
 		}
 		if (i == 16) {

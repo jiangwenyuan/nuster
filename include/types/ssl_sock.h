@@ -23,9 +23,12 @@
 #define _TYPES_SSL_SOCK_H
 #ifdef USE_OPENSSL
 
+#include <ebpttree.h>
 #include <ebmbtree.h>
+#include <eb64tree.h>
 
 #include <common/hathreads.h>
+#include <common/mini-clist.h>
 #include <common/openssl-compat.h>
 
 struct pkey_info {
@@ -36,11 +39,12 @@ struct pkey_info {
 struct sni_ctx {
 	SSL_CTX *ctx;             /* context associated to the certificate */
 	int order;                /* load order for the certificate */
-	uint8_t neg:1;              /* reject if match */
-	uint8_t wild:1;            /* wildcard sni */
+	unsigned int neg:1;       /* reject if match */
+	unsigned int wild:1;      /* wildcard sni */
 	struct pkey_info kinfo;   /* pkey info */
 	struct ssl_bind_conf *conf; /* ssl "bind" conf for the certificate */
 	struct list by_ckch_inst; /* chained in ckch_inst's list of sni_ctx */
+	struct ckch_inst *ckch_inst; /* instance used to create this sni_ctx */
 	struct ebmb_node name;    /* node holding the servername value */
 };
 
@@ -109,8 +113,7 @@ struct cert_key_and_chain {
  */
 struct ckch_store {
 	struct cert_key_and_chain *ckch;
-	int multi:1; /* is it a multi-cert bundle ? */
-	int filters:1; /* one of the instances is using filters, TODO:remove this flag once filters are supported */
+	unsigned int multi:1;  /* is it a multi-cert bundle ? */
 	struct list ckch_inst; /* list of ckch_inst which uses this ckch_node */
 	struct ebmb_node node;
 	char path[0];
@@ -126,9 +129,31 @@ struct ckch_store {
 struct ckch_inst {
 	struct bind_conf *bind_conf; /* pointer to the bind_conf that uses this ckch_inst */
 	struct ssl_bind_conf *ssl_conf; /* pointer to the ssl_conf which is used by every sni_ctx of this inst */
-	int is_default;      /* This instance is used as the default ctx for this bind_conf */
+	struct ckch_store *ckch_store; /* pointer to the store used to generate this inst */
+	unsigned int filters:1; /* using sni filters ? */
+	unsigned int is_default:1;      /* This instance is used as the default ctx for this bind_conf */
+	/* space for more flag there */
 	struct list sni_ctx; /* list of sni_ctx using this ckch_inst */
 	struct list by_ckchs; /* chained in ckch_store's list of ckch_inst */
+	struct list by_crtlist_entry; /* chained in crtlist_entry list of inst */
+};
+
+/* This structure is basically a crt-list or a directory */
+struct crtlist {
+	struct eb_root entries;
+	struct list ord_entries; /* list to keep the line order of the crt-list file */
+	struct ebmb_node node; /* key is the filename or directory */
+};
+
+/* a file in a directory or a line in a crt-list */
+struct crtlist_entry {
+	struct ssl_bind_conf *ssl_conf; /* SSL conf in crt-list */
+	unsigned int linenum;
+	unsigned int fcount; /* filters count */
+	char **filters;
+	struct list ckch_inst; /* list of instances of this entry */
+	struct list by_crtlist; /* ordered entries */
+	struct ebpt_node node; /* key is a ptr to a ckch_store */
 };
 
 #if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
@@ -150,6 +175,16 @@ struct sni_keytype {
 };
 
 #endif
+
+/* issuer chain store with hash of Subject Key Identifier
+   certificate/issuer matching is verify with X509_check_issued
+*/
+struct issuer_chain {
+	struct eb64_node node;
+	STACK_OF(X509) *chain;
+	char *path;
+};
+
 
 #endif /* USE_OPENSSL */
 #endif /* _TYPES_SSL_SOCK_H */

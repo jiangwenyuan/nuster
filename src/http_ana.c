@@ -14,6 +14,7 @@
 #include <common/config.h>
 #include <common/debug.h>
 #include <common/htx.h>
+#include <common/net_helper.h>
 #include <common/uri_auth.h>
 
 #include <types/capture.h>
@@ -26,7 +27,6 @@
 #include <proto/filters.h>
 #include <proto/http_htx.h>
 #include <proto/log.h>
-#include <proto/pattern.h>
 #include <proto/http_ana.h>
 #include <proto/proxy.h>
 #include <proto/server.h>
@@ -54,7 +54,7 @@ static size_t http_fmt_req_line(const struct htx_sl *sl, char *str, size_t len);
 static void http_debug_stline(const char *dir, struct stream *s, const struct htx_sl *sl);
 static void http_debug_hdr(const char *dir, struct stream *s, const struct ist n, const struct ist v);
 
-static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct list *rules, struct stream *s, int *deny_status);
+static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct list *rules, struct stream *s);
 static enum rule_result http_res_get_intercept_rule(struct proxy *px, struct list *rules, struct stream *s);
 
 static void http_manage_client_side_cookies(struct stream *s, struct channel *req);
@@ -437,9 +437,9 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 	txn->status = 500;
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_INTERNAL;
-	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
 	if (sess->listener->counters)
-		_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
 	goto return_prx_cond;
 
  return_bad_req:
@@ -480,7 +480,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	struct htx *htx;
 	struct redirect_rule *rule;
 	enum rule_result verdict;
-	int deny_status = HTTP_ERR_403;
 	struct connection *conn = objt_conn(sess->origin);
 
 	if (unlikely(msg->msg_state < HTTP_MSG_BODY)) {
@@ -499,7 +498,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 
 	/* evaluate http-request rules */
 	if (!LIST_ISEMPTY(&px->http_req_rules)) {
-		verdict = http_req_get_intercept_rule(px, &px->http_req_rules, s, &deny_status);
+		verdict = http_req_get_intercept_rule(px, &px->http_req_rules, s);
 
 		switch (verdict) {
 		case HTTP_RULE_RES_YIELD: /* some data miss, call the function later. */
@@ -522,6 +521,9 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 
 		case HTTP_RULE_RES_BADREQ: /* failed with a bad request */
 			goto return_bad_req;
+
+		case HTTP_RULE_RES_ERROR: /* failed with a bad request */
+			goto return_int_err;
 		}
 	}
 
@@ -532,7 +534,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		ctx.blk = NULL;
 		if (!http_find_header(htx, ist("Early-Data"), &ctx, 0)) {
 			if (unlikely(!http_add_header(htx, ist("Early-Data"), ist("1"))))
-				goto return_bad_req;
+				goto return_int_err;
 		}
 	}
 
@@ -545,18 +547,15 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	if (!s->target && http_stats_check_uri(s, txn, px)) {
 		s->target = &http_stats_applet.obj_type;
 		if (unlikely(!si_register_handler(&s->si[1], objt_applet(s->target)))) {
-			txn->status = 500;
 			s->logs.tv_request = now;
-			http_reply_and_close(s, txn->status, http_error_message(s));
-
 			if (!(s->flags & SF_ERR_MASK))
 				s->flags |= SF_ERR_RESOURCE;
-			goto return_prx_cond;
+			goto return_int_err;
 		}
 
 		/* parse the whole stats request and extract the relevant information */
 		http_handle_stats(s, req);
-		verdict = http_req_get_intercept_rule(px, &px->uri_auth->http_req_rules, s, &deny_status);
+		verdict = http_req_get_intercept_rule(px, &px->uri_auth->http_req_rules, s);
 		/* not all actions implemented: deny, allow, auth */
 
 		if (verdict == HTTP_RULE_RES_DENY) /* stats http-request deny */
@@ -564,6 +563,12 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 
 		if (verdict == HTTP_RULE_RES_ABRT) /* stats auth / stats http-request auth */
 			goto return_prx_cond;
+
+		if (verdict == HTTP_RULE_RES_BADREQ) /* failed with a bad request */
+			goto return_bad_req;
+
+		if (verdict == HTTP_RULE_RES_ERROR) /* failed with a bad request */
+			goto return_int_err;
 	}
 
 	/* Proceed with the applets now. */
@@ -572,7 +577,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 			_HA_ATOMIC_ADD(&sess->fe->fe_counters.intercepted_req, 1);
 
 		if (http_handle_expect_hdr(s, htx, msg) == -1)
-			goto return_bad_req;
+			goto return_int_err;
 
 		if (!(s->flags & SF_ERR_MASK))      // this is not really an error but it is
 			s->flags |= SF_ERR_LOCAL;   // to mark that it comes from the proxy
@@ -602,7 +607,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 				continue;
 		}
 		if (!http_apply_redirect_rule(rule, s, txn))
-			goto return_bad_req;
+			goto return_int_err;
 		goto done;
 	}
 
@@ -647,8 +652,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	 */
 	channel_dont_connect(req);
 
-	txn->status = http_err_codes[deny_status];
-
 	req->analysers &= AN_REQ_FLT_END; /* remove switching rules etc... */
 	req->analysers |= AN_REQ_HTTP_TARPIT;
 	req->analyse_exp = tick_add_ifset(now_ms,  s->be->timeout.tarpit);
@@ -656,7 +659,7 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 		req->analyse_exp = tick_add(now_ms, 0);
 	stream_inc_http_err_ctr(s);
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
-	if (sess->fe != s->be)
+	if (s->flags & SF_BE_ASSIGNED)
 		_HA_ATOMIC_ADD(&s->be->be_counters.denied_req, 1);
 	if (sess->listener->counters)
 		_HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
@@ -669,25 +672,36 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	if (s->be->cookie_name || sess->fe->capture_name)
 		http_manage_client_side_cookies(s, req);
 
-	txn->flags |= TX_CLDENY;
-	txn->status = http_err_codes[deny_status];
 	s->logs.tv_request = now;
-	http_reply_and_close(s, txn->status, http_error_message(s));
 	stream_inc_http_err_ctr(s);
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
-	if (sess->fe != s->be)
+	if (s->flags & SF_BE_ASSIGNED)
 		_HA_ATOMIC_ADD(&s->be->be_counters.denied_req, 1);
 	if (sess->listener->counters)
 		_HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
-	goto return_prx_cond;
+	goto return_prx_err;
+
+ return_int_err:
+	txn->status = 500;
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_INTERNAL;
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	if (s->flags & SF_BE_ASSIGNED)
+		_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
+	goto return_prx_err;
 
  return_bad_req:
 	txn->status = 400;
-	http_reply_and_close(s, txn->status, http_error_message(s));
-
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
 	if (sess->listener->counters)
 		_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
+	/* fall through */
+
+ return_prx_err:
+	http_reply_and_close(s, txn->status, http_error_message(s));
+	/* fall through */
 
  return_prx_cond:
 	if (!(s->flags & SF_ERR_MASK))
@@ -746,18 +760,9 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 		struct ist uri, path;
 
 		if (!sockaddr_alloc(&s->target_addr)) {
-			txn->status = 500;
-			req->analysers &= AN_REQ_FLT_END;
-			http_reply_and_close(s, txn->status, http_error_message(s));
-
 			if (!(s->flags & SF_ERR_MASK))
 				s->flags |= SF_ERR_RESOURCE;
-			if (!(s->flags & SF_FINST_MASK))
-				s->flags |= SF_FINST_R;
-
-			DBG_TRACE_DEVEL("leaving on error",
-					STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA|STRM_EV_HTTP_ERR, s, txn);
-			return 0;
+			goto return_int_err;
 		}
 		sl = http_get_stline(htx);
 		uri = htx_sl_req_uri(sl);
@@ -789,21 +794,24 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 	if (s->be->cookie_name || sess->fe->capture_name)
 		http_manage_client_side_cookies(s, req);
 
-	/* add unique-id if "header-unique-id" is specified */
+	/* 8: Generate unique ID if a "unique-id-format" is defined.
+	 *
+	 * A unique ID is generated even when it is not sent to ensure that the ID can make use of
+	 * fetches only available in the HTTP request processing stage.
+	 */
+	if (!LIST_ISEMPTY(&sess->fe->format_unique_id)) {
+		struct ist unique_id = stream_generate_unique_id(s, &sess->fe->format_unique_id);
 
-	if (!LIST_ISEMPTY(&sess->fe->format_unique_id) && !s->unique_id) {
-		if ((s->unique_id = pool_alloc(pool_head_uniqueid)) == NULL)
-			goto return_bad_req;
-		s->unique_id[0] = '\0';
-		build_logline(s, s->unique_id, UNIQUEID_LEN, &sess->fe->format_unique_id);
-	}
+		if (!isttest(unique_id)) {
+			if (!(s->flags & SF_ERR_MASK))
+				s->flags |= SF_ERR_RESOURCE;
+			goto return_int_err;
+		}
 
-	if (sess->fe->header_unique_id && s->unique_id) {
-		struct ist n = ist2(sess->fe->header_unique_id, strlen(sess->fe->header_unique_id));
-		struct ist v = ist2(s->unique_id, strlen(s->unique_id));
-
-		if (unlikely(!http_add_header(htx, n, v)))
-			goto return_bad_req;
+		/* send unique ID if a "unique-id-header" is defined */
+		if (isttest(sess->fe->header_unique_id) &&
+		    unlikely(!http_add_header(htx, sess->fe->header_unique_id, s->unique_id)))
+				goto return_int_err;
 	}
 
 	/*
@@ -840,7 +848,7 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 				 */
 				chunk_printf(&trash, "%d.%d.%d.%d", pn[0], pn[1], pn[2], pn[3]);
 				if (unlikely(!http_add_header(htx, hdr, ist2(trash.area, trash.data))))
-					goto return_bad_req;
+					goto return_int_err;
 			}
 		}
 		else if (cli_conn && conn_get_src(cli_conn) && cli_conn->src->ss_family == AF_INET6) {
@@ -860,7 +868,7 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 			 */
 			chunk_printf(&trash, "%s", pn);
 			if (unlikely(!http_add_header(htx, hdr, ist2(trash.area, trash.data))))
-				goto return_bad_req;
+				goto return_int_err;
 		}
 	}
 
@@ -897,7 +905,7 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 
 				chunk_printf(&trash, "%d.%d.%d.%d", pn[0], pn[1], pn[2], pn[3]);
 				if (unlikely(!http_add_header(htx, hdr, ist2(trash.area, trash.data))))
-					goto return_bad_req;
+					goto return_int_err;
 			}
 		}
 	}
@@ -937,19 +945,34 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 	DBG_TRACE_LEAVE(STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn);
 	return 1;
 
+ return_int_err:
+	txn->status = 500;
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_INTERNAL;
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	if (s->flags & SF_BE_ASSIGNED)
+		_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
+	goto return_prx_cond;
+
  return_bad_req: /* let's centralize all bad requests */
 	txn->status = 400;
-	req->analysers &= AN_REQ_FLT_END;
-	http_reply_and_close(s, txn->status, http_error_message(s));
-
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
 	if (sess->listener->counters)
 		_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
+	/* fall through */
+
+ return_prx_cond:
+	http_reply_and_close(s, txn->status, http_error_message(s));
 
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_PRXCOND;
 	if (!(s->flags & SF_FINST_MASK))
 		s->flags |= SF_FINST_R;
+
+	req->analysers &= AN_REQ_FLT_END;
+	req->analyse_exp = TICK_ETERNITY;
 	DBG_TRACE_DEVEL("leaving on error",
 			STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA|STRM_EV_HTTP_ERR, s, txn);
 	return 0;
@@ -1036,7 +1059,7 @@ int http_wait_for_request_body(struct stream *s, struct channel *req, int an_bit
 
 	if (msg->msg_state < HTTP_MSG_DATA) {
 		if (http_handle_expect_hdr(s, htx, msg) == -1)
-			goto return_bad_req;
+			goto return_int_err;
 	}
 
 	msg->msg_state = HTTP_MSG_DATA;
@@ -1051,12 +1074,12 @@ int http_wait_for_request_body(struct stream *s, struct channel *req, int an_bit
  missing_data:
 	if ((req->flags & CF_READ_TIMEOUT) || tick_is_expired(req->analyse_exp, now_ms)) {
 		txn->status = 408;
-
 		if (!(s->flags & SF_ERR_MASK))
 			s->flags |= SF_ERR_CLITO;
-		if (!(s->flags & SF_FINST_MASK))
-			s->flags |= SF_FINST_D;
-		goto return_err_msg;
+		_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
+		if (sess->listener->counters)
+			_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
+		goto return_prx_cond;
 	}
 
 	/* we get here if we need to wait for more data */
@@ -1085,29 +1108,32 @@ int http_wait_for_request_body(struct stream *s, struct channel *req, int an_bit
 
  return_int_err:
 	txn->status = 500;
-
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_INTERNAL;
-	if (!(s->flags & SF_FINST_MASK))
-		s->flags |= SF_FINST_R;
-	goto return_err_msg;
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	if (s->flags & SF_BE_ASSIGNED)
+		_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
+	goto return_prx_cond;
 
  return_bad_req: /* let's centralize all bad requests */
 	txn->status = 400;
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
+	/* fall through */
+
+ return_prx_cond:
+	http_reply_and_close(s, txn->status, http_error_message(s));
 
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_PRXCOND;
 	if (!(s->flags & SF_FINST_MASK))
-		s->flags |= SF_FINST_R;
-	/* fall through */
-
- return_err_msg:
-	http_reply_and_close(s, txn->status, http_error_message(s));
+		s->flags |= (msg->msg_state < HTTP_MSG_DATA ? SF_FINST_R : SF_FINST_D);
 
 	req->analysers &= AN_REQ_FLT_END;
-	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
-	if (sess->listener->counters)
-		_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
+	req->analyse_exp = TICK_ETERNITY;
 	DBG_TRACE_DEVEL("leaving on error",
 			STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA|STRM_EV_HTTP_ERR, s, txn);
 	return 0;
@@ -1324,38 +1350,47 @@ int http_request_forward_body(struct stream *s, struct channel *req, int an_bit)
   return_cli_abort:
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.cli_aborts, 1);
 	_HA_ATOMIC_ADD(&s->be->be_counters.cli_aborts, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->cli_aborts, 1);
 	if (objt_server(s->target))
-		_HA_ATOMIC_ADD(&objt_server(s->target)->counters.cli_aborts, 1);
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.cli_aborts, 1);
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_CLICL;
 	status = 400;
-	goto return_error;
+	goto return_prx_cond;
 
   return_srv_abort:
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.srv_aborts, 1);
 	_HA_ATOMIC_ADD(&s->be->be_counters.srv_aborts, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->srv_aborts, 1);
 	if (objt_server(s->target))
-		_HA_ATOMIC_ADD(&objt_server(s->target)->counters.srv_aborts, 1);
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.srv_aborts, 1);
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_SRVCL;
 	status = 502;
-	goto return_error;
+	goto return_prx_cond;
 
   return_int_err:
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_INTERNAL;
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.internal_errors, 1);
 	status = 500;
-	goto return_error;
+	goto return_prx_cond;
 
   return_bad_req:
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
 	if (sess->listener->counters)
 		_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
-	if (!(s->flags & SF_ERR_MASK))
-		s->flags |= SF_ERR_CLICL;
 	status = 400;
+	/* fall through */
 
-  return_error:
+  return_prx_cond:
 	if (txn->status > 0) {
 		/* Note: we don't send any error if some data were already sent */
 		http_reply_and_close(s, txn->status, NULL);
@@ -1365,6 +1400,8 @@ int http_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 	}
 	req->analysers   &= AN_REQ_FLT_END;
 	s->res.analysers &= AN_RES_FLT_END; /* we're in data phase, we want to abort both directions */
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_PRXCOND;
 	if (!(s->flags & SF_FINST_MASK))
 		s->flags |= ((txn->rsp.msg_state < HTTP_MSG_ERROR) ? SF_FINST_H : SF_FINST_D);
 	DBG_TRACE_DEVEL("leaving on error ",
@@ -1493,8 +1530,6 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			}
 
 			rep->analysers &= AN_RES_FLT_END;
-			s->req.analysers &= AN_REQ_FLT_END;
-			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 502;
 
 			/* Check to see if the server refused the early data.
@@ -1540,8 +1575,6 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			}
 
 			rep->analysers &= AN_RES_FLT_END;
-			s->req.analysers &= AN_REQ_FLT_END;
-			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 504;
 			s->si[1].flags |= SI_FL_NOLINGER;
 			http_reply_and_close(s, txn->status, http_error_message(s));
@@ -1559,12 +1592,12 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 		else if ((rep->flags & CF_SHUTR) && ((s->req.flags & (CF_SHUTR|CF_SHUTW)) == (CF_SHUTR|CF_SHUTW))) {
 			_HA_ATOMIC_ADD(&sess->fe->fe_counters.cli_aborts, 1);
 			_HA_ATOMIC_ADD(&s->be->be_counters.cli_aborts, 1);
+			if (sess->listener->counters)
+				_HA_ATOMIC_ADD(&sess->listener->counters->cli_aborts, 1);
 			if (objt_server(s->target))
 				_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.cli_aborts, 1);
 
 			rep->analysers &= AN_RES_FLT_END;
-			s->req.analysers &= AN_REQ_FLT_END;
-			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 400;
 			http_reply_and_close(s, txn->status, http_error_message(s));
 
@@ -1600,8 +1633,6 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			}
 
 			rep->analysers &= AN_RES_FLT_END;
-			s->req.analysers &= AN_REQ_FLT_END;
-			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 502;
 			s->si[1].flags |= SI_FL_NOLINGER;
 			http_reply_and_close(s, txn->status, http_error_message(s));
@@ -1621,9 +1652,9 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 				goto abort_keep_alive;
 
 			_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
+			if (objt_server(s->target))
+				_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.failed_resp, 1);
 			rep->analysers &= AN_RES_FLT_END;
-			s->req.analysers &= AN_REQ_FLT_END;
-			rep->analyse_exp = TICK_ETERNITY;
 
 			if (!(s->flags & SF_ERR_MASK))
 				s->flags |= SF_ERR_CLICL;
@@ -1819,11 +1850,16 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	return 1;
 
  return_int_err:
-	_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.internal_errors, 1);
 	txn->status = 500;
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_INTERNAL;
-	goto return_error;
+	goto return_prx_cond;
 
   return_bad_res:
 	_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
@@ -1841,7 +1877,7 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	txn->status = 502;
 	/* fall through */
 
- return_error:
+ return_prx_cond:
 	http_reply_and_close(s, txn->status, http_error_message(s));
 
 	if (!(s->flags & SF_ERR_MASK))
@@ -1931,34 +1967,30 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 		if (ret == HTTP_RULE_RES_CONT) {
 			ret = http_res_get_intercept_rule(cur_proxy, &cur_proxy->http_res_rules, s);
 
-			if (ret == HTTP_RULE_RES_BADREQ)
-				goto return_srv_prx_502;
+			switch (ret) {
+			case HTTP_RULE_RES_YIELD: /* some data miss, call the function later. */
+				goto return_prx_yield;
 
-			if (ret == HTTP_RULE_RES_DONE) {
-				rep->analysers &= ~an_bit;
-				rep->analyse_exp = TICK_ETERNITY;
-				return 1;
+			case HTTP_RULE_RES_CONT:
+			case HTTP_RULE_RES_STOP: /* nothing to do */
+				break;
+
+			case HTTP_RULE_RES_DENY: /* deny or tarpit */
+				goto deny;
+
+			case HTTP_RULE_RES_ABRT: /* abort request, response already sent */
+				goto return_prx_cond;
+
+			case HTTP_RULE_RES_DONE: /* OK, but terminate request processing (eg: redirect) */
+				goto done;
+
+			case HTTP_RULE_RES_BADREQ: /* failed with a bad request */
+				goto return_bad_res;
+
+			case HTTP_RULE_RES_ERROR: /* failed with a bad request */
+				goto return_int_err;
 			}
-		}
 
-		/* we need to be called again. */
-		if (ret == HTTP_RULE_RES_YIELD) {
-			channel_dont_close(rep);
-			DBG_TRACE_DEVEL("waiting for more data",
-					STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn);
-			return 0;
-		}
-
-		/* has the response been denied ? */
-		if (txn->flags & TX_SVDENY) {
-			if (objt_server(s->target))
-				_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.failed_secu, 1);
-
-			_HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
-			_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_resp, 1);
-			if (sess->listener->counters)
-				_HA_ATOMIC_ADD(&sess->listener->counters->denied_resp, 1);
-			goto return_srv_prx_502;
 		}
 
 		/* check whether we're already working on the frontend */
@@ -1966,15 +1998,6 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 			break;
 		cur_proxy = sess->fe;
 	}
-
-	/* After this point, this anayzer can't return yield, so we can
-	 * remove the bit corresponding to this analyzer from the list.
-	 *
-	 * Note that the intermediate returns and goto found previously
-	 * reset the analyzers.
-	 */
-	rep->analysers &= ~an_bit;
-	rep->analyse_exp = TICK_ETERNITY;
 
 	/* OK that's all we can do for 1xx responses */
 	if (unlikely(txn->status < 200 && txn->status != 101))
@@ -2053,7 +2076,7 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 			chunk_appendf(&trash, "; %s", s->be->cookie_attrs);
 
 		if (unlikely(!http_add_header(htx, ist("Set-Cookie"), ist2(trash.area, trash.data))))
-			goto return_bad_resp;
+			goto return_int_err;
 
 		txn->flags &= ~TX_SCK_MASK;
 		if (__objt_server(s->target)->cookie && (s->flags & SF_DIRECT))
@@ -2072,7 +2095,7 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
 
 			if (unlikely(!http_add_header(htx, ist("Cache-control"), ist("private"))))
-				goto return_bad_resp;
+				goto return_int_err;
 		}
 	}
 
@@ -2088,23 +2111,23 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 		 * a set-cookie header. We'll block it as requested by
 		 * the 'checkcache' option, and send an alert.
 		 */
-		if (objt_server(s->target))
-			_HA_ATOMIC_ADD(&objt_server(s->target)->counters.failed_secu, 1);
-
-		_HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
-		_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_resp, 1);
-		if (sess->listener->counters)
-			_HA_ATOMIC_ADD(&sess->listener->counters->denied_resp, 1);
-
 		ha_alert("Blocking cacheable cookie in response from instance %s, server %s.\n",
 			 s->be->id, objt_server(s->target) ? objt_server(s->target)->id : "<dispatch>");
 		send_log(s->be, LOG_ALERT,
 			 "Blocking cacheable cookie in response from instance %s, server %s.\n",
 			 s->be->id, objt_server(s->target) ? objt_server(s->target)->id : "<dispatch>");
-		goto return_srv_prx_502;
+		goto deny;
 	}
 
   end:
+	/*
+	 * Evaluate after-response rules before forwarding the response. rules
+	 * from the backend are evaluated first, then one from the frontend if
+	 * it differs.
+	 */
+	if (!http_eval_after_res_rules(s))
+		goto return_int_err;
+
 	/* Always enter in the body analyzer */
 	rep->analysers &= ~AN_RES_FLT_XFER_DATA;
 	rep->analysers |= AN_RES_HTTP_XFER_BODY;
@@ -2119,22 +2142,51 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 		s->do_log(s);
 		s->logs.bytes_out = 0;
 	}
+
+ done:
 	DBG_TRACE_LEAVE(STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn);
+	rep->analysers &= ~an_bit;
+	rep->analyse_exp = TICK_ETERNITY;
 	return 1;
 
-  return_bad_resp:
+ deny:
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_resp, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.denied_resp, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->denied_resp, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.denied_resp, 1);
+	goto return_prx_err;
+
+ return_int_err:
+	txn->status = 500;
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_INTERNAL;
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.internal_errors, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.internal_errors, 1);
+	goto return_prx_err;
+
+ return_bad_res:
+	txn->status = 502;
+	_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
 	if (objt_server(s->target)) {
 		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.failed_resp, 1);
 		health_adjust(__objt_server(s->target), HANA_STATUS_HTTP_RSP);
 	}
-	_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
+	/* fall through */
 
-  return_srv_prx_502:
-	rep->analysers &= AN_RES_FLT_END;
-	txn->status = 502;
+ return_prx_err:
+	http_reply_and_close(s, txn->status, http_error_message(s));
+	/* fall through */
+
+ return_prx_cond:
 	s->logs.t_data = -1; /* was not a valid response */
 	s->si[1].flags |= SI_FL_NOLINGER;
-	http_reply_and_close(s, txn->status, http_error_message(s));
+
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_PRXCOND;
 	if (!(s->flags & SF_FINST_MASK))
@@ -2145,6 +2197,12 @@ int http_process_res_common(struct stream *s, struct channel *rep, int an_bit, s
 	rep->analyse_exp = TICK_ETERNITY;
 	DBG_TRACE_DEVEL("leaving on error",
 			STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA|STRM_EV_HTTP_ERR, s, txn);
+	return 0;
+
+ return_prx_yield:
+	channel_dont_close(rep);
+	DBG_TRACE_DEVEL("waiting for more data",
+			STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn);
 	return 0;
 }
 
@@ -2358,8 +2416,10 @@ int http_response_forward_body(struct stream *s, struct channel *res, int an_bit
   return_srv_abort:
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.srv_aborts, 1);
 	_HA_ATOMIC_ADD(&s->be->be_counters.srv_aborts, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->srv_aborts, 1);
 	if (objt_server(s->target))
-		_HA_ATOMIC_ADD(&objt_server(s->target)->counters.srv_aborts, 1);
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.srv_aborts, 1);
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_SRVCL;
 	goto return_error;
@@ -2367,14 +2427,21 @@ int http_response_forward_body(struct stream *s, struct channel *res, int an_bit
   return_cli_abort:
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.cli_aborts, 1);
 	_HA_ATOMIC_ADD(&s->be->be_counters.cli_aborts, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->cli_aborts, 1);
 	if (objt_server(s->target))
-		_HA_ATOMIC_ADD(&objt_server(s->target)->counters.cli_aborts, 1);
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.cli_aborts, 1);
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_CLICL;
 	goto return_error;
 
   return_int_err:
-	_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
+	_HA_ATOMIC_ADD(&sess->fe->fe_counters.internal_errors, 1);
+	_HA_ATOMIC_ADD(&s->be->be_counters.internal_errors, 1);
+	if (sess->listener->counters)
+		_HA_ATOMIC_ADD(&sess->listener->counters->internal_errors, 1);
+	if (objt_server(s->target))
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.internal_errors, 1);
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_INTERNAL;
 	goto return_error;
@@ -2382,11 +2449,12 @@ int http_response_forward_body(struct stream *s, struct channel *res, int an_bit
   return_bad_res:
 	_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
 	if (objt_server(s->target)) {
-		_HA_ATOMIC_ADD(&objt_server(s->target)->counters.failed_resp, 1);
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.failed_resp, 1);
 		health_adjust(__objt_server(s->target), HANA_STATUS_HTTP_RSP);
 	}
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_SRVCL;
+	/* fall through */
 
    return_error:
 	/* don't send any error message as we're in the body */
@@ -2413,12 +2481,14 @@ int http_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struc
 	struct buffer *chunk;
 	struct ist status, reason, location;
 	unsigned int flags;
-	size_t data;
 	int close = 0; /* Try to keep the connection alive byt default */
 
 	chunk = alloc_trash_chunk();
-	if (!chunk)
+	if (!chunk) {
+		if (!(s->flags & SF_ERR_MASK))
+			s->flags |= SF_ERR_RESOURCE;
 		goto fail;
+	}
 
 	/*
 	 * Create the location
@@ -2437,7 +2507,7 @@ int http_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struc
 			sl = http_get_stline(htx);
 			path = http_get_path(htx_sl_req_uri(sl));
 			/* build message using path */
-			if (path.ptr) {
+			if (isttest(path)) {
 				if (rule->flags & REDIRECT_FLAG_DROP_QS) {
 					int qs = 0;
 					while (qs < path.len) {
@@ -2485,7 +2555,7 @@ int http_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struc
 			sl = http_get_stline(htx);
 			path = http_get_path(htx_sl_req_uri(sl));
 			/* build message using path */
-			if (path.ptr) {
+			if (isttest(path)) {
 				if (rule->flags & REDIRECT_FLAG_DROP_QS) {
 					int qs = 0;
 					while (qs < path.len) {
@@ -2608,21 +2678,9 @@ int http_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struc
 		goto fail;
 
 	htx_to_buf(htx, &res->buf);
+	if (!http_forward_proxy_resp(s, 1))
+		goto fail;
 
-	htx->flags |= HTX_FL_PROXY_RESP;
-	data = htx->data - co_data(res);
-	c_adv(res, data);
-	res->total += data;
-
-	channel_auto_read(req);
-	channel_abort(req);
-	channel_auto_close(req);
-	channel_htx_erase(req, htxbuf(&req->buf));
-
-	res->wex = tick_add_ifset(now_ms, res->wto);
-	channel_auto_read(res);
-	channel_auto_close(res);
-	channel_shutr_now(res);
 	if (rule->flags & REDIRECT_FLAG_FROM_REQ) {
 		/* let's log the request time */
 		s->logs.tv_request = now;
@@ -2648,15 +2706,19 @@ int http_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struc
 	return 0;
 }
 
-int http_transform_header_str(struct stream* s, struct channel *chn, struct htx *htx,
-			      struct ist name, const char *str, struct my_regex *re, int action)
+/* Replace all headers matching the name <name>. The header value is replaced if
+ * it matches the regex <re>. <str> is used for the replacement. If <full> is
+ * set to 1, the full-line is matched and replaced. Otherwise, comma-separated
+ * values are evaluated one by one. It returns 0 on success and -1 on error.
+ */
+int http_replace_hdrs(struct stream* s, struct htx *htx, struct ist name,
+		     const char *str, struct my_regex *re, int full)
 {
 	struct http_hdr_ctx ctx;
 	struct buffer *output = get_trash_chunk();
 
-	/* find full header is action is ACT_HTTP_REPLACE_HDR */
 	ctx.blk = NULL;
-	while (http_find_header(htx, name, &ctx, (action == ACT_HTTP_REPLACE_HDR))) {
+	while (http_find_header(htx, name, &ctx, full)) {
 		if (!regex_exec_match2(re, ctx.value.ptr, ctx.value.len, MAX_MATCH, pmatch, 0))
 			continue;
 
@@ -2667,91 +2729,6 @@ int http_transform_header_str(struct stream* s, struct channel *chn, struct htx 
 			return -1;
 	}
 	return 0;
-}
-
-static int http_transform_header(struct stream* s, struct channel *chn, struct htx *htx,
-				 const struct ist name, struct list *fmt, struct my_regex *re, int action)
-{
-	struct buffer *replace;
-	int ret = -1;
-
-	replace = alloc_trash_chunk();
-	if (!replace)
-		goto leave;
-
-	replace->data = build_logline(s, replace->area, replace->size, fmt);
-	if (replace->data >= replace->size - 1)
-		goto leave;
-
-	ret = http_transform_header_str(s, chn, htx, name, replace->area, re, action);
-
-  leave:
-	free_trash_chunk(replace);
-	return ret;
-}
-
-
-/* Terminate a 103-Erly-hints response and send it to the client. It returns 0
- * on success and -1 on error. The response channel is updated accordingly.
- */
-static int http_reply_103_early_hints(struct channel *res)
-{
-	struct htx *htx = htx_from_buf(&res->buf);
-	size_t data;
-
-	if (!htx_add_endof(htx, HTX_BLK_EOH)) {
-		/* If an error occurred during an Early-hint rule,
-		 * remove the incomplete HTTP 103 response from the
-		 * buffer */
-		channel_htx_truncate(res, htx);
-		return -1;
-	}
-
-	data = htx->data - co_data(res);
-	c_adv(res, data);
-	res->total += data;
-	return 0;
-}
-
-/*
- * Build an HTTP Early Hint HTTP 103 response header with <name> as name and with a value
- * built according to <fmt> log line format.
- * If <early_hints> is 0, it is starts a new response by adding the start
- * line. If an error occurred -1 is returned. On success 0 is returned. The
- * channel is not updated here. It must be done calling the function
- * http_reply_103_early_hints().
- */
-static int http_add_early_hint_header(struct stream *s, int early_hints, const struct ist name, struct list *fmt)
-{
-	struct channel *res = &s->res;
-	struct htx *htx = htx_from_buf(&res->buf);
-	struct buffer *value = alloc_trash_chunk();
-
-	if (!early_hints) {
-		struct htx_sl *sl;
-		unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|
-				      HTX_SL_F_XFER_LEN|HTX_SL_F_BODYLESS);
-
-		sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags,
-				    ist("HTTP/1.1"), ist("103"), ist("Early Hints"));
-		if (!sl)
-			goto fail;
-		sl->info.res.status = 103;
-	}
-
-	value->data = build_logline(s, b_tail(value), b_room(value), fmt);
-	if (!htx_add_header(htx, name, ist2(b_head(value), b_data(value))))
-		goto fail;
-
-	free_trash_chunk(value);
-	return 1;
-
-  fail:
-	/* If an error occurred during an Early-hint rule, remove the incomplete
-	 * HTTP 103 response from the buffer */
-	channel_htx_truncate(res, htx);
-	free_trash_chunk(value);
-	return -1;
 }
 
 /* This function executes one of the set-{method,path,query,uri} actions. It
@@ -2801,9 +2778,10 @@ int http_req_replace_stline(int action, const char *replace, int len,
 }
 
 /* This function replace the HTTP status code and the associated message. The
- * variable <status> contains the new status code. This function never fails.
+ * variable <status> contains the new status code. This function never fails. It
+ * returns 0 in case of success, -1 in case of internal error.
  */
-void http_res_set_status(unsigned int status, const char *reason, struct stream *s)
+int http_res_set_status(unsigned int status, struct ist reason, struct stream *s)
 {
 	struct htx *htx = htxbuf(&s->res.buf);
 	char *res;
@@ -2813,11 +2791,16 @@ void http_res_set_status(unsigned int status, const char *reason, struct stream 
 	trash.data = res - trash.area;
 
 	/* Do we have a custom reason format string? */
-	if (reason == NULL)
-		reason = http_get_reason(status);
+	if (!isttest(reason)) {
+		const char *str = http_get_reason(status);
+		reason = ist2(str, strlen(str));
+	}
 
-	if (http_replace_res_status(htx, ist2(trash.area, trash.data)))
-		http_replace_res_reason(htx, ist2(reason, strlen(reason)));
+	if (!http_replace_res_status(htx, ist2(trash.area, trash.data)))
+		return -1;
+	if (!http_replace_res_reason(htx, reason))
+		return -1;
+	return 0;
 }
 
 /* Executes the http-request rules <rules> for stream <s>, proxy <px> and
@@ -2830,7 +2813,7 @@ void http_res_set_status(unsigned int status, const char *reason, struct stream 
  * status.
  */
 static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct list *rules,
-						    struct stream *s, int *deny_status)
+						    struct stream *s)
 {
 	struct session *sess = strm_sess(s);
 	struct http_txn *txn = s->txn;
@@ -2839,8 +2822,7 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 	struct http_hdr_ctx ctx;
 	const char *auth_realm;
 	enum rule_result rule_ret = HTTP_RULE_RES_CONT;
-	int act_flags = 0;
-	int early_hints = 0;
+	int act_opts = 0;
 
 	htx = htxbuf(&s->req.buf);
 
@@ -2857,6 +2839,9 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 	}
 	s->current_rule_list = rules;
 
+	/* start the ruleset evaluation in strict mode */
+	txn->req.flags &= ~HTTP_MSGF_SOFT_RW;
+
 	list_for_each_entry(rule, rules, list) {
 		/* check optional condition */
 		if (rule->cond) {
@@ -2872,37 +2857,72 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 				continue;
 		}
 
-		act_flags |= ACT_FLAG_FIRST;
+		act_opts |= ACT_OPT_FIRST;
   resume_execution:
-		if (early_hints && rule->action != ACT_HTTP_EARLY_HINT) {
-			early_hints = 0;
-			if (http_reply_103_early_hints(&s->res) == -1) {
-				rule_ret = HTTP_RULE_RES_BADREQ;
-				goto end;
+		/* Always call the action function if defined */
+		if (rule->action_ptr) {
+			if ((s->req.flags & CF_READ_ERROR) ||
+			    ((s->req.flags & (CF_SHUTR|CF_READ_NULL)) &&
+			     (px->options & PR_O_ABRT_CLOSE)))
+				act_opts |= ACT_OPT_FINAL;
+
+			switch (rule->action_ptr(rule, px, sess, s, act_opts)) {
+				case ACT_RET_CONT:
+					break;
+				case ACT_RET_STOP:
+					rule_ret = HTTP_RULE_RES_STOP;
+					goto end;
+				case ACT_RET_YIELD:
+					s->current_rule = rule;
+					rule_ret = HTTP_RULE_RES_YIELD;
+					goto end;
+				case ACT_RET_ERR:
+					rule_ret = HTTP_RULE_RES_ERROR;
+					goto end;
+				case ACT_RET_DONE:
+					rule_ret = HTTP_RULE_RES_DONE;
+					goto end;
+				case ACT_RET_DENY:
+					txn->flags |= TX_CLDENY;
+					if (txn->status == -1)
+						txn->status = 403;
+					rule_ret = HTTP_RULE_RES_DENY;
+					goto end;
+				case ACT_RET_ABRT:
+					rule_ret = HTTP_RULE_RES_ABRT;
+					goto end;
+				case ACT_RET_INV:
+					rule_ret = HTTP_RULE_RES_BADREQ;
+					goto end;
 			}
+			continue; /* eval the next rule */
 		}
 
+		/* If not action function defined, check for known actions */
 		switch (rule->action) {
 			case ACT_ACTION_ALLOW:
 				rule_ret = HTTP_RULE_RES_STOP;
 				goto end;
 
 			case ACT_ACTION_DENY:
-				if (deny_status)
-					*deny_status = rule->deny_status;
+				txn->flags |= TX_CLDENY;
+				txn->status = rule->arg.http_deny.status;
+				if (rule->arg.http_deny.errmsg)
+					txn->errmsg = rule->arg.http_deny.errmsg;
 				rule_ret = HTTP_RULE_RES_DENY;
 				goto end;
 
 			case ACT_HTTP_REQ_TARPIT:
 				txn->flags |= TX_CLTARPIT;
-				if (deny_status)
-					*deny_status = rule->deny_status;
+				txn->status = rule->arg.http_deny.status;
+				if (rule->arg.http_deny.errmsg)
+					txn->errmsg = rule->arg.http_deny.errmsg;
 				rule_ret = HTTP_RULE_RES_DENY;
 				goto end;
 
 			case ACT_HTTP_REQ_AUTH:
 				/* Auth might be performed on regular http-req rules as well as on stats */
-				auth_realm = rule->arg.auth.realm;
+				auth_realm = rule->arg.http.str.ptr;
 				if (!auth_realm) {
 					if (px->uri_auth && rules == &px->uri_auth->http_req_rules)
 						auth_realm = STATS_DEFAULT_REALM;
@@ -2915,293 +2935,49 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 				 */
 				rule_ret = HTTP_RULE_RES_ABRT;
 				if (http_reply_40x_unauthorized(s, auth_realm) == -1)
-					rule_ret = HTTP_RULE_RES_BADREQ;
+					rule_ret = HTTP_RULE_RES_ERROR;
 				stream_inc_http_err_ctr(s);
 				goto end;
 
 			case ACT_HTTP_REDIR:
-				rule_ret = HTTP_RULE_RES_DONE;
+				rule_ret = HTTP_RULE_RES_ABRT;
 				if (!http_apply_redirect_rule(rule->arg.redir, s, txn))
-					rule_ret = HTTP_RULE_RES_BADREQ;
+					rule_ret = HTTP_RULE_RES_ERROR;
 				goto end;
 
 			case ACT_HTTP_SET_NICE:
-				s->task->nice = rule->arg.nice;
+				s->task->nice = rule->arg.http.i;
 				break;
 
 			case ACT_HTTP_SET_TOS:
-				conn_set_tos(objt_conn(sess->origin), rule->arg.tos);
+				conn_set_tos(objt_conn(sess->origin), rule->arg.http.i);
 				break;
 
 			case ACT_HTTP_SET_MARK:
-				conn_set_mark(objt_conn(sess->origin), rule->arg.mark);
+				conn_set_mark(objt_conn(sess->origin), rule->arg.http.i);
 				break;
 
 			case ACT_HTTP_SET_LOGL:
-				s->logs.level = rule->arg.loglevel;
-				break;
-
-			case ACT_HTTP_REPLACE_HDR:
-			case ACT_HTTP_REPLACE_VAL:
-				if (http_transform_header(s, &s->req, htx,
-							  ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len),
-							  &rule->arg.hdr_add.fmt,
-							  rule->arg.hdr_add.re, rule->action)) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
+				s->logs.level = rule->arg.http.i;
 				break;
 
 			case ACT_HTTP_DEL_HDR:
 				/* remove all occurrences of the header */
 				ctx.blk = NULL;
-				while (http_find_header(htx, ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len), &ctx, 1))
+				while (http_find_header(htx, rule->arg.http.str, &ctx, 1))
 					http_remove_header(htx, &ctx);
 				break;
 
-			case ACT_HTTP_SET_HDR:
-			case ACT_HTTP_ADD_HDR: {
-				/* The scope of the trash buffer must be limited to this function. The
-				 * build_logline() function can execute a lot of other function which
-				 * can use the trash buffer. So for limiting the scope of this global
-				 * buffer, we build first the header value using build_logline, and
-				 * after we store the header name.
-				 */
-				struct buffer *replace;
-				struct ist n, v;
-
-				replace = alloc_trash_chunk();
-				if (!replace) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				replace->data = build_logline(s, replace->area, replace->size, &rule->arg.hdr_add.fmt);
-				n = ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len);
-				v = ist2(replace->area, replace->data);
-
-				if (rule->action == ACT_HTTP_SET_HDR) {
-					/* remove all occurrences of the header */
-					ctx.blk = NULL;
-					while (http_find_header(htx, ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len), &ctx, 1))
-						http_remove_header(htx, &ctx);
-				}
-
-				if (!http_add_header(htx, n, v)) {
-					static unsigned char rate_limit = 0;
-
-					if ((rate_limit++ & 255) == 0) {
-						send_log(px, LOG_WARNING, "Proxy %s failed to add or set the request header '%.*s' for request #%u. You might need to increase tune.maxrewrite.", px->id, (int)n.len, n.ptr, s->uniq_id);
-					}
-
-					_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_rewrites, 1);
-					if (sess->fe != s->be)
-						_HA_ATOMIC_ADD(&s->be->be_counters.failed_rewrites, 1);
-					if (sess->listener->counters)
-						_HA_ATOMIC_ADD(&sess->listener->counters->failed_rewrites, 1);
-				}
-				free_trash_chunk(replace);
-				break;
-			}
-
-			case ACT_HTTP_DEL_ACL:
-			case ACT_HTTP_DEL_MAP: {
-				struct pat_ref *ref;
-				struct buffer *key;
-
-				/* collect reference */
-				ref = pat_ref_lookup(rule->arg.map.ref);
-				if (!ref)
-					continue;
-
-				/* allocate key */
-				key = alloc_trash_chunk();
-				if (!key) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* collect key */
-				key->data = build_logline(s, key->area, key->size, &rule->arg.map.key);
-				key->area[key->data] = '\0';
-
-				/* perform update */
-				/* returned code: 1=ok, 0=ko */
-				HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
-				pat_ref_delete(ref, key->area);
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
-
-				free_trash_chunk(key);
-				break;
-			}
-
-			case ACT_HTTP_ADD_ACL: {
-				struct pat_ref *ref;
-				struct buffer *key;
-
-				/* collect reference */
-				ref = pat_ref_lookup(rule->arg.map.ref);
-				if (!ref)
-					continue;
-
-				/* allocate key */
-				key = alloc_trash_chunk();
-				if (!key) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* collect key */
-				key->data = build_logline(s, key->area, key->size, &rule->arg.map.key);
-				key->area[key->data] = '\0';
-
-				/* perform update */
-				/* add entry only if it does not already exist */
-				HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
-				if (pat_ref_find_elt(ref, key->area) == NULL)
-					pat_ref_add(ref, key->area, NULL, NULL);
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
-
-				free_trash_chunk(key);
-				break;
-			}
-
-			case ACT_HTTP_SET_MAP: {
-				struct pat_ref *ref;
-				struct buffer *key, *value;
-
-				/* collect reference */
-				ref = pat_ref_lookup(rule->arg.map.ref);
-				if (!ref)
-					continue;
-
-				/* allocate key */
-				key = alloc_trash_chunk();
-				if (!key) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* allocate value */
-				value = alloc_trash_chunk();
-				if (!value) {
-					free_trash_chunk(key);
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* collect key */
-				key->data = build_logline(s, key->area, key->size, &rule->arg.map.key);
-				key->area[key->data] = '\0';
-
-				/* collect value */
-				value->data = build_logline(s, value->area, value->size, &rule->arg.map.value);
-				value->area[value->data] = '\0';
-
-				/* perform update */
-				HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
-				if (pat_ref_find_elt(ref, key->area) != NULL)
-					/* update entry if it exists */
-					pat_ref_set(ref, key->area, value->area, NULL);
-				else
-					/* insert a new entry */
-					pat_ref_add(ref, key->area, value->area, NULL);
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
-				free_trash_chunk(key);
-				free_trash_chunk(value);
-				break;
-			}
-
-			case ACT_HTTP_EARLY_HINT:
-				if (!(txn->req.flags & HTTP_MSGF_VER_11))
-					break;
-				early_hints = http_add_early_hint_header(s, early_hints,
-									 ist2(rule->arg.early_hint.name, rule->arg.early_hint.name_len),
-									 &rule->arg.early_hint.fmt);
-				if (early_hints == -1) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-				break;
-
-			case ACT_CUSTOM:
-				if ((s->req.flags & CF_READ_ERROR) ||
-				    ((s->req.flags & (CF_SHUTR|CF_READ_NULL)) &&
-				     (px->options & PR_O_ABRT_CLOSE)))
-					act_flags |= ACT_FLAG_FINAL;
-
-				switch (rule->action_ptr(rule, px, s->sess, s, act_flags)) {
-					case ACT_RET_ERR:
-					case ACT_RET_CONT:
-						break;
-					case ACT_RET_STOP:
-						rule_ret = HTTP_RULE_RES_STOP;
-						goto end;
-					case ACT_RET_DONE:
-						rule_ret = HTTP_RULE_RES_DONE;
-						goto end;
-					case ACT_RET_YIELD:
-						s->current_rule = rule;
-						rule_ret = HTTP_RULE_RES_YIELD;
-						goto end;
-				}
-				break;
-
-			case ACT_ACTION_TRK_SC0 ... ACT_ACTION_TRK_SCMAX:
-				/* Note: only the first valid tracking parameter of each
-				 * applies.
-				 */
-
-				if (stkctr_entry(&s->stkctr[trk_idx(rule->action)]) == NULL) {
-					struct stktable *t;
-					struct stksess *ts;
-					struct stktable_key *key;
-					void *ptr1, *ptr2;
-
-					t = rule->arg.trk_ctr.table.t;
-					key = stktable_fetch_key(t, s->be, sess, s, SMP_OPT_DIR_REQ | SMP_OPT_FINAL,
-								 rule->arg.trk_ctr.expr, NULL);
-
-					if (key && (ts = stktable_get_entry(t, key))) {
-						stream_track_stkctr(&s->stkctr[trk_idx(rule->action)], t, ts);
-
-						/* let's count a new HTTP request as it's the first time we do it */
-						ptr1 = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_REQ_CNT);
-						ptr2 = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_REQ_RATE);
-						if (ptr1 || ptr2) {
-							HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-
-							if (ptr1)
-								stktable_data_cast(ptr1, http_req_cnt)++;
-
-							if (ptr2)
-								update_freq_ctr_period(&stktable_data_cast(ptr2, http_req_rate),
-										       t->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u, 1);
-
-							HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-							/* If data was modified, we need to touch to re-schedule sync */
-							stktable_touch_local(t, ts, 0);
-						}
-
-						stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_CONTENT);
-						if (sess->fe != s->be)
-							stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_BACKEND);
-					}
-				}
-				break;
-
-				/* other flags exists, but normally, they never be matched. */
+			/* other flags exists, but normally, they never be matched. */
 			default:
 				break;
 		}
 	}
 
   end:
-	if (early_hints) {
-		if (http_reply_103_early_hints(&s->res) == -1)
-			rule_ret = HTTP_RULE_RES_BADREQ;
-	}
+	/* if the ruleset evaluation is finished reset the strict mode */
+	if (rule_ret != HTTP_RULE_RES_YIELD)
+		txn->req.flags &= ~HTTP_MSGF_SOFT_RW;
 
 	/* we reached the end of the rules, nothing to report */
 	return rule_ret;
@@ -3226,7 +3002,7 @@ static enum rule_result http_res_get_intercept_rule(struct proxy *px, struct lis
 	struct act_rule *rule;
 	struct http_hdr_ctx ctx;
 	enum rule_result rule_ret = HTTP_RULE_RES_CONT;
-	int act_flags = 0;
+	int act_opts = 0;
 
 	htx = htxbuf(&s->res.buf);
 
@@ -3243,6 +3019,9 @@ static enum rule_result http_res_get_intercept_rule(struct proxy *px, struct lis
 	}
 	s->current_rule_list = rules;
 
+	/* start the ruleset evaluation in strict mode */
+	txn->rsp.flags &= ~HTTP_MSGF_SOFT_RW;
+
 	list_for_each_entry(rule, rules, list) {
 		/* check optional condition */
 		if (rule->cond) {
@@ -3258,297 +3037,129 @@ static enum rule_result http_res_get_intercept_rule(struct proxy *px, struct lis
 				continue;
 		}
 
-		act_flags |= ACT_FLAG_FIRST;
+		act_opts |= ACT_OPT_FIRST;
 resume_execution:
+
+		/* Always call the action function if defined */
+		if (rule->action_ptr) {
+			if ((s->req.flags & CF_READ_ERROR) ||
+			    ((s->req.flags & (CF_SHUTR|CF_READ_NULL)) &&
+			     (px->options & PR_O_ABRT_CLOSE)))
+				act_opts |= ACT_OPT_FINAL;
+
+			switch (rule->action_ptr(rule, px, sess, s, act_opts)) {
+				case ACT_RET_CONT:
+					break;
+				case ACT_RET_STOP:
+					rule_ret = HTTP_RULE_RES_STOP;
+					goto end;
+				case ACT_RET_YIELD:
+					s->current_rule = rule;
+					rule_ret = HTTP_RULE_RES_YIELD;
+					goto end;
+				case ACT_RET_ERR:
+					rule_ret = HTTP_RULE_RES_ERROR;
+					goto end;
+				case ACT_RET_DONE:
+					rule_ret = HTTP_RULE_RES_DONE;
+					goto end;
+				case ACT_RET_DENY:
+					txn->flags |= TX_CLDENY;
+					if (txn->status == -1)
+						txn->status = 502;
+					rule_ret = HTTP_RULE_RES_DENY;
+					goto end;
+				case ACT_RET_ABRT:
+					rule_ret = HTTP_RULE_RES_ABRT;
+					goto end;
+				case ACT_RET_INV:
+					rule_ret = HTTP_RULE_RES_BADREQ;
+					goto end;
+			}
+			continue; /* eval the next rule */
+		}
+
+		/* If not action function defined, check for known actions */
 		switch (rule->action) {
 			case ACT_ACTION_ALLOW:
 				rule_ret = HTTP_RULE_RES_STOP; /* "allow" rules are OK */
 				goto end;
 
 			case ACT_ACTION_DENY:
-				txn->flags |= TX_SVDENY;
-				rule_ret = HTTP_RULE_RES_STOP;
+				txn->flags |= TX_CLDENY;
+				txn->status = rule->arg.http_deny.status;
+				if (rule->arg.http_deny.errmsg)
+					txn->errmsg = rule->arg.http_deny.errmsg;
+				rule_ret = HTTP_RULE_RES_DENY;
 				goto end;
 
 			case ACT_HTTP_SET_NICE:
-				s->task->nice = rule->arg.nice;
+				s->task->nice = rule->arg.http.i;
 				break;
 
 			case ACT_HTTP_SET_TOS:
-				conn_set_tos(objt_conn(sess->origin), rule->arg.tos);
+				conn_set_tos(objt_conn(sess->origin), rule->arg.http.i);
 				break;
 
 			case ACT_HTTP_SET_MARK:
-				conn_set_mark(objt_conn(sess->origin), rule->arg.mark);
+				conn_set_mark(objt_conn(sess->origin), rule->arg.http.i);
 				break;
 
 			case ACT_HTTP_SET_LOGL:
-				s->logs.level = rule->arg.loglevel;
-				break;
-
-			case ACT_HTTP_REPLACE_HDR:
-			case ACT_HTTP_REPLACE_VAL:
-				if (http_transform_header(s, &s->res, htx,
-							  ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len),
-							  &rule->arg.hdr_add.fmt,
-							  rule->arg.hdr_add.re, rule->action)) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
+				s->logs.level = rule->arg.http.i;
 				break;
 
 			case ACT_HTTP_DEL_HDR:
 				/* remove all occurrences of the header */
 				ctx.blk = NULL;
-				while (http_find_header(htx, ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len), &ctx, 1))
+				while (http_find_header(htx, rule->arg.http.str, &ctx, 1))
 					http_remove_header(htx, &ctx);
 				break;
 
-			case ACT_HTTP_SET_HDR:
-			case ACT_HTTP_ADD_HDR: {
-				struct buffer *replace;
-				struct ist n, v;
-
-				replace = alloc_trash_chunk();
-				if (!replace) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				replace->data = build_logline(s, replace->area, replace->size, &rule->arg.hdr_add.fmt);
-				n = ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len);
-				v = ist2(replace->area, replace->data);
-
-				if (rule->action == ACT_HTTP_SET_HDR) {
-					/* remove all occurrences of the header */
-					ctx.blk = NULL;
-					while (http_find_header(htx, ist2(rule->arg.hdr_add.name, rule->arg.hdr_add.name_len), &ctx, 1))
-						http_remove_header(htx, &ctx);
-				}
-
-				if (!http_add_header(htx, n, v)) {
-					static unsigned char rate_limit = 0;
-
-					if ((rate_limit++ & 255) == 0) {
-						send_log(px, LOG_WARNING, "Proxy %s failed to add or set the response header '%.*s' for request #%u. You might need to increase tune.maxrewrite.", px->id, (int)n.len, n.ptr, s->uniq_id);
-					}
-
-					_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_rewrites, 1);
-					if (sess->fe != s->be)
-						_HA_ATOMIC_ADD(&s->be->be_counters.failed_rewrites, 1);
-					if (sess->listener->counters)
-						_HA_ATOMIC_ADD(&sess->listener->counters->failed_rewrites, 1);
-					if (objt_server(s->target))
-						_HA_ATOMIC_ADD(&objt_server(s->target)->counters.failed_rewrites, 1);
-				}
-				free_trash_chunk(replace);
-				break;
-			}
-
-			case ACT_HTTP_DEL_ACL:
-			case ACT_HTTP_DEL_MAP: {
-				struct pat_ref *ref;
-				struct buffer *key;
-
-				/* collect reference */
-				ref = pat_ref_lookup(rule->arg.map.ref);
-				if (!ref)
-					continue;
-
-			/* allocate key */
-				key = alloc_trash_chunk();
-				if (!key) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* collect key */
-				key->data = build_logline(s, key->area, key->size, &rule->arg.map.key);
-				key->area[key->data] = '\0';
-
-				/* perform update */
-				/* returned code: 1=ok, 0=ko */
-				HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
-				pat_ref_delete(ref, key->area);
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
-
-				free_trash_chunk(key);
-				break;
-			}
-
-			case ACT_HTTP_ADD_ACL: {
-				struct pat_ref *ref;
-				struct buffer *key;
-
-				/* collect reference */
-				ref = pat_ref_lookup(rule->arg.map.ref);
-				if (!ref)
-					continue;
-
-				/* allocate key */
-				key = alloc_trash_chunk();
-				if (!key) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* collect key */
-				key->data = build_logline(s, key->area, key->size, &rule->arg.map.key);
-				key->area[key->data] = '\0';
-
-				/* perform update */
-				/* check if the entry already exists */
-				HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
-				if (pat_ref_find_elt(ref, key->area) == NULL)
-					pat_ref_add(ref, key->area, NULL, NULL);
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
-				free_trash_chunk(key);
-				break;
-			}
-
-			case ACT_HTTP_SET_MAP: {
-				struct pat_ref *ref;
-				struct buffer *key, *value;
-
-				/* collect reference */
-				ref = pat_ref_lookup(rule->arg.map.ref);
-				if (!ref)
-					continue;
-
-				/* allocate key */
-				key = alloc_trash_chunk();
-				if (!key) {
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* allocate value */
-				value = alloc_trash_chunk();
-				if (!value) {
-					free_trash_chunk(key);
-					rule_ret = HTTP_RULE_RES_BADREQ;
-					goto end;
-				}
-
-				/* collect key */
-				key->data = build_logline(s, key->area, key->size, &rule->arg.map.key);
-				key->area[key->data] = '\0';
-
-				/* collect value */
-				value->data = build_logline(s, value->area, value->size, &rule->arg.map.value);
-				value->area[value->data] = '\0';
-
-				/* perform update */
-				HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
-				if (pat_ref_find_elt(ref, key->area) != NULL)
-					/* update entry if it exists */
-					pat_ref_set(ref, key->area, value->area, NULL);
-				else
-					/* insert a new entry */
-					pat_ref_add(ref, key->area, value->area, NULL);
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
-				free_trash_chunk(key);
-				free_trash_chunk(value);
-				break;
-			}
-
 			case ACT_HTTP_REDIR:
-				rule_ret = HTTP_RULE_RES_DONE;
+				rule_ret = HTTP_RULE_RES_ABRT;
 				if (!http_apply_redirect_rule(rule->arg.redir, s, txn))
-					rule_ret = HTTP_RULE_RES_BADREQ;
+					rule_ret = HTTP_RULE_RES_ERROR;
 				goto end;
 
-			case ACT_ACTION_TRK_SC0 ... ACT_ACTION_TRK_SCMAX:
-				/* Note: only the first valid tracking parameter of each
-				 * applies.
-				 */
-				if (stkctr_entry(&s->stkctr[trk_idx(rule->action)]) == NULL) {
-					struct stktable *t;
-					struct stksess *ts;
-					struct stktable_key *key;
-					void *ptr;
-
-					t = rule->arg.trk_ctr.table.t;
-					key = stktable_fetch_key(t, s->be, sess, s, SMP_OPT_DIR_RES | SMP_OPT_FINAL,
-								 rule->arg.trk_ctr.expr, NULL);
-
-					if (key && (ts = stktable_get_entry(t, key))) {
-						stream_track_stkctr(&s->stkctr[trk_idx(rule->action)], t, ts);
-
-						HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-
-						/* let's count a new HTTP request as it's the first time we do it */
-						ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_REQ_CNT);
-						if (ptr)
-							stktable_data_cast(ptr, http_req_cnt)++;
-
-						ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_REQ_RATE);
-						if (ptr)
-							update_freq_ctr_period(&stktable_data_cast(ptr, http_req_rate),
-									       t->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u, 1);
-
-						/* When the client triggers a 4xx from the server, it's most often due
-						 * to a missing object or permission. These events should be tracked
-						 * because if they happen often, it may indicate a brute force or a
-						 * vulnerability scan. Normally this is done when receiving the response
-						 * but here we're tracking after this ought to have been done so we have
-						 * to do it on purpose.
-						 */
-						if ((unsigned)(txn->status - 400) < 100) {
-							ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_ERR_CNT);
-							if (ptr)
-								stktable_data_cast(ptr, http_err_cnt)++;
-
-							ptr = stktable_data_ptr(t, ts, STKTABLE_DT_HTTP_ERR_RATE);
-							if (ptr)
-								update_freq_ctr_period(&stktable_data_cast(ptr, http_err_rate),
-										       t->data_arg[STKTABLE_DT_HTTP_ERR_RATE].u, 1);
-						}
-
-						HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-						/* If data was modified, we need to touch to re-schedule sync */
-						stktable_touch_local(t, ts, 0);
-
-						stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_CONTENT);
-						if (sess->fe != s->be)
-							stkctr_set_flags(&s->stkctr[trk_idx(rule->action)], STKCTR_TRACK_BACKEND);
-					}
-				}
-				break;
-
-			case ACT_CUSTOM:
-				if ((s->req.flags & CF_READ_ERROR) ||
-				    ((s->req.flags & (CF_SHUTR|CF_READ_NULL)) &&
-				     (px->options & PR_O_ABRT_CLOSE)))
-					act_flags |= ACT_FLAG_FINAL;
-
-				switch (rule->action_ptr(rule, px, s->sess, s, act_flags)) {
-					case ACT_RET_ERR:
-					case ACT_RET_CONT:
-						break;
-					case ACT_RET_STOP:
-						rule_ret = HTTP_RULE_RES_STOP;
-						goto end;
-					case ACT_RET_DONE:
-						rule_ret = HTTP_RULE_RES_DONE;
-						goto end;
-					case ACT_RET_YIELD:
-						s->current_rule = rule;
-						rule_ret = HTTP_RULE_RES_YIELD;
-						goto end;
-				}
-				break;
-
-				/* other flags exists, but normally, they never be matched. */
+			/* other flags exists, but normally, they never be matched. */
 			default:
 				break;
 		}
 	}
 
   end:
+	/* if the ruleset evaluation is finished reset the strict mode */
+	if (rule_ret != HTTP_RULE_RES_YIELD)
+		txn->rsp.flags &= ~HTTP_MSGF_SOFT_RW;
+
 	/* we reached the end of the rules, nothing to report */
 	return rule_ret;
+}
+
+/* Executes backend and frontend http-after-response rules for the stream <s>,
+ * in that order. it return 1 on success and 0 on error. It is the caller
+ * responsibility to catch error or ignore it. If it catches it, this function
+ * may be called a second time, for the internal error.
+ */
+int http_eval_after_res_rules(struct stream *s)
+{
+	struct session *sess = s->sess;
+	enum rule_result ret = HTTP_RULE_RES_CONT;
+
+	/* prune the request variables if not already done and swap to the response variables. */
+	if (s->vars_reqres.scope != SCOPE_RES) {
+		if (!LIST_ISEMPTY(&s->vars_reqres.head))
+			vars_prune(&s->vars_reqres, s->sess, s);
+		vars_init(&s->vars_reqres, SCOPE_RES);
+	}
+
+	ret = http_res_get_intercept_rule(s->be, &s->be->http_after_res_rules, s);
+	if ((ret == HTTP_RULE_RES_CONT || ret == HTTP_RULE_RES_STOP) && sess->fe != s->be)
+		ret = http_res_get_intercept_rule(sess->fe, &sess->fe->http_after_res_rules, s);
+
+	/* All other codes than CONTINUE, STOP or DONE are forbidden */
+	return (ret == HTTP_RULE_RES_CONT || ret == HTTP_RULE_RES_STOP || ret == HTTP_RULE_RES_DONE);
 }
 
 /*
@@ -4627,7 +4238,6 @@ void http_perform_server_redirect(struct stream *s, struct stream_interface *si)
 	struct htx_sl *sl;
 	struct ist path, location;
 	unsigned int flags;
-	size_t data;
 
 	/*
 	 * Create the location
@@ -4646,7 +4256,7 @@ void http_perform_server_redirect(struct stream *s, struct stream_interface *si)
 	htx = htxbuf(&req->buf);
 	sl = http_get_stline(htx);
 	path = http_get_path(htx_sl_req_uri(sl));
-	if (!path.ptr)
+	if (!isttest(path))
 		return;
 
 	if (!chunk_memcat(&trash, path.ptr, path.len))
@@ -4675,26 +4285,14 @@ void http_perform_server_redirect(struct stream *s, struct stream_interface *si)
 		goto fail;
 
 	htx_to_buf(htx, &res->buf);
-	htx->flags |= HTX_FL_PROXY_RESP;
-	/*
-	 * Send the message
-	 */
-	data = htx->data - co_data(res);
-	c_adv(res, data);
-	res->total += data;
+	if (!http_forward_proxy_resp(s, 1))
+		goto fail;
 
 	/* return without error. */
 	si_shutr(si);
 	si_shutw(si);
 	si->err_type = SI_ET_NONE;
 	si->state    = SI_ST_CLO;
-
-	channel_auto_read(req);
-	channel_abort(req);
-	channel_auto_close(req);
-	channel_htx_erase(req, htxbuf(&req->buf));
-	channel_auto_read(res);
-	channel_auto_close(res);
 
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_LOCAL;
@@ -4926,9 +4524,12 @@ static void http_end_response(struct stream *s)
 		}
 		else if (chn->flags & CF_SHUTW) {
 			txn->rsp.msg_state = HTTP_MSG_ERROR;
+			_HA_ATOMIC_ADD(&strm_sess(s)->fe->fe_counters.cli_aborts, 1);
 			_HA_ATOMIC_ADD(&s->be->be_counters.cli_aborts, 1);
+			if (strm_sess(s)->listener->counters)
+				_HA_ATOMIC_ADD(&strm_sess(s)->listener->counters->cli_aborts, 1);
 			if (objt_server(s->target))
-				_HA_ATOMIC_ADD(&objt_server(s->target)->counters.cli_aborts, 1);
+				_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.cli_aborts, 1);
 			goto end;
 		}
 		DBG_TRACE_LEAVE(STRM_EV_HTTP_ANA, s, txn);
@@ -4960,47 +4561,64 @@ static void http_end_response(struct stream *s)
 	DBG_TRACE_LEAVE(STRM_EV_HTTP_ANA, s, txn);
 }
 
+/* Forward a response generated by HAProxy (error/redirect/return). This
+ * function forwards all pending incoming data. If <final> is set to 0, nothing
+ * more is performed. It is used for 1xx informational messages. Otherwise, the
+ * transaction is terminated and the request is emptied. On success 1 is
+ * returned. If an error occurred, 0 is returned.
+ */
+int http_forward_proxy_resp(struct stream *s, int final)
+{
+	struct channel *req = &s->req;
+	struct channel *res = &s->res;
+	struct htx *htx = htxbuf(&res->buf);
+	size_t data;
+
+	if (final) {
+		htx->flags |= HTX_FL_PROXY_RESP;
+		if (!http_eval_after_res_rules(s))
+			return 0;
+
+		channel_auto_read(req);
+		channel_abort(req);
+		channel_auto_close(req);
+		channel_htx_erase(req, htxbuf(&req->buf));
+
+		res->wex = tick_add_ifset(now_ms, res->wto);
+		channel_auto_read(res);
+		channel_auto_close(res);
+		channel_shutr_now(res);
+	}
+
+	data = htx->data - co_data(res);
+	c_adv(res, data);
+	htx->first = -1;
+	res->total += data;
+	return 1;
+}
+
 void http_server_error(struct stream *s, struct stream_interface *si, int err,
 		       int finst, const struct buffer *msg)
 {
-	channel_auto_read(si_oc(si));
-	channel_abort(si_oc(si));
-	channel_auto_close(si_oc(si));
-	channel_htx_erase(si_oc(si), htxbuf(&(si_oc(si))->buf));
-	channel_htx_truncate(si_ic(si), htxbuf(&(si_ic(si))->buf));
-	channel_auto_close(si_ic(si));
-	channel_auto_read(si_ic(si));
-
-	/* <msg> is an HTX structure. So we copy it in the response's
-	 * channel */
-	if (msg && !b_is_null(msg)) {
-		struct channel *chn = si_ic(si);
-		struct htx *htx;
-		size_t data;
-
-		FLT_STRM_CB(s, flt_http_reply(s, s->txn->status, msg));
-		htx = htx_from_buf(&chn->buf);
-		if (channel_htx_copy_msg(chn, htx, msg)) {
-			htx->flags |= HTX_FL_PROXY_RESP;
-			data = htx->data - co_data(chn);
-			c_adv(chn, data);
-			chn->total += data;
-		}
-	}
+	http_reply_and_close(s, s->txn->status, msg);
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= err;
 	if (!(s->flags & SF_FINST_MASK))
 		s->flags |= finst;
 }
 
-void http_reply_and_close(struct stream *s, short status, struct buffer *msg)
+void http_reply_and_close(struct stream *s, short status, const struct buffer *msg)
 {
 	channel_auto_read(&s->req);
 	channel_abort(&s->req);
 	channel_auto_close(&s->req);
 	channel_htx_erase(&s->req, htxbuf(&s->req.buf));
 	channel_htx_truncate(&s->res, htxbuf(&s->res.buf));
+	channel_auto_read(&s->res);
+	channel_auto_close(&s->res);
+	channel_shutr_now(&s->res);
 
+	s->res.wex = tick_add_ifset(now_ms, s->res.wto);
 	s->txn->flags &= ~TX_WAIT_NEXT_RQ;
 
 	/* <msg> is an HTX structure. So we copy it in the response's
@@ -5008,32 +4626,28 @@ void http_reply_and_close(struct stream *s, short status, struct buffer *msg)
 	if (msg && !b_is_null(msg)) {
 		struct channel *chn = &s->res;
 		struct htx *htx;
-		size_t data;
 
 		FLT_STRM_CB(s, flt_http_reply(s, s->txn->status, msg));
 		htx = htx_from_buf(&chn->buf);
 		if (channel_htx_copy_msg(chn, htx, msg)) {
-			htx->flags |= HTX_FL_PROXY_RESP;
-			data = htx->data - co_data(chn);
-			c_adv(chn, data);
-			chn->total += data;
+			if (!http_forward_proxy_resp(s, 1) && s->txn->status != 500) {
+				s->txn->status = 500;
+				http_reply_and_close(s, s->txn->status, http_error_message(s));
+			}
 		}
 	}
-
-	s->res.wex = tick_add_ifset(now_ms, s->res.wto);
-	channel_auto_read(&s->res);
-	channel_auto_close(&s->res);
-	channel_shutr_now(&s->res);
 }
 
 struct buffer *http_error_message(struct stream *s)
 {
 	const int msgnum = http_get_status_idx(s->txn->status);
 
-	if (s->be->errmsg[msgnum].area)
-		return &s->be->errmsg[msgnum];
-	else if (strm_fe(s)->errmsg[msgnum].area)
-		return &strm_fe(s)->errmsg[msgnum];
+	if (s->txn->errmsg)
+		return s->txn->errmsg;
+	else if (s->be->errmsg[msgnum])
+		return s->be->errmsg[msgnum];
+	else if (strm_fe(s)->errmsg[msgnum])
+		return strm_fe(s)->errmsg[msgnum];
 	else
 		return &http_err_chunks[msgnum];
 }
@@ -5124,7 +4738,6 @@ static int http_reply_100_continue(struct stream *s)
 	struct htx_sl *sl;
 	unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|
 			      HTX_SL_F_XFER_LEN|HTX_SL_F_BODYLESS);
-	size_t data;
 
 	sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags,
 			    ist("HTTP/1.1"), ist("100"), ist("Continue"));
@@ -5135,9 +4748,8 @@ static int http_reply_100_continue(struct stream *s)
 	if (!htx_add_endof(htx, HTX_BLK_EOH))
 		goto fail;
 
-	data = htx->data - co_data(res);
-	c_adv(res, data);
-	res->total += data;
+	if (!http_forward_proxy_resp(s, 0))
+		goto fail;
 	return 0;
 
   fail:
@@ -5160,7 +4772,6 @@ static int http_reply_40x_unauthorized(struct stream *s, const char *auth_realm)
 	struct ist code, body;
 	int status;
 	unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
-	size_t data;
 
 	if (!(s->txn->flags & TX_USE_PX_CONN)) {
 		status = 401;
@@ -5210,20 +4821,8 @@ static int http_reply_40x_unauthorized(struct stream *s, const char *auth_realm)
 	if (!htx_add_endof(htx, HTX_BLK_EOM))
 		goto fail;
 
-	htx->flags |= HTX_FL_PROXY_RESP;
-	data = htx->data - co_data(res);
-	c_adv(res, data);
-	res->total += data;
-
-	channel_auto_read(&s->req);
-	channel_abort(&s->req);
-	channel_auto_close(&s->req);
-	channel_htx_erase(&s->req, htxbuf(&s->req.buf));
-
-	res->wex = tick_add_ifset(now_ms, res->wto);
-	channel_auto_read(res);
-	channel_auto_close(res);
-	channel_shutr_now(res);
+	if (!http_forward_proxy_resp(s, 1))
+		goto fail;
 	return 0;
 
   fail:
@@ -5381,7 +4980,7 @@ static void http_debug_stline(const char *dir, struct stream *s, const struct ht
         chunk_memcat(&trash, HTX_SL_P3_PTR(sl), max);
         trash.area[trash.data++] = '\n';
 
-        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
+        DISGUISE(write(1, trash.area, trash.data));
 }
 
 /*
@@ -5408,7 +5007,7 @@ static void http_debug_hdr(const char *dir, struct stream *s, const struct ist n
         chunk_memcat(&trash, v.ptr, max);
         trash.area[trash.data++] = '\n';
 
-        shut_your_big_mouth_gcc(write(1, trash.area, trash.data));
+        DISGUISE(write(1, trash.area, trash.data));
 }
 
 /* Allocate a new HTTP transaction for stream <s> unless there is one already.
@@ -5457,7 +5056,8 @@ void http_init_txn(struct stream *s)
 		      ? (TX_NOT_FIRST|TX_WAIT_NEXT_RQ)
 		      : 0);
 	txn->status = -1;
-	*(unsigned int *)txn->cache_hash = 0;
+	txn->errmsg = NULL;
+	write_u32(txn->cache_hash, 0);
 
 	txn->cookie_first_date = 0;
 	txn->cookie_last_date = 0;
@@ -5487,9 +5087,9 @@ void http_end_txn(struct stream *s)
 	pool_free(pool_head_requri, txn->uri);
 	pool_free(pool_head_capture, txn->cli_cookie);
 	pool_free(pool_head_capture, txn->srv_cookie);
-	pool_free(pool_head_uniqueid, s->unique_id);
+	pool_free(pool_head_uniqueid, s->unique_id.ptr);
 
-	s->unique_id = NULL;
+	s->unique_id = IST_NULL;
 	txn->uri = NULL;
 	txn->srv_cookie = NULL;
 	txn->cli_cookie = NULL;
@@ -5502,7 +5102,6 @@ void http_end_txn(struct stream *s)
 
 
 DECLARE_POOL(pool_head_http_txn, "http_txn", sizeof(struct http_txn));
-DECLARE_POOL(pool_head_uniqueid, "uniqueid", UNIQUEID_LEN);
 
 __attribute__((constructor))
 static void __http_protocol_init(void)

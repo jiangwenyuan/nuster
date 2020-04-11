@@ -40,7 +40,7 @@
  *   - FAIL : no mattern may ever match
  *
  * We assign values 0, 1 and 3 to FAIL, MISS and PASS respectively, so that we
- * can make use of standard arithmetics for the truth tables below :
+ * can make use of standard arithmetic for the truth tables below :
  *
  *      x  | !x          x&y | F(0) | M(1) | P(3)     x|y | F(0) | M(1) | P(3)
  *   ------+-----       -----+------+------+-----    -----+------+------+-----
@@ -64,7 +64,7 @@ enum pat_match_res {
 /* possible flags for patterns matching or parsing */
 enum {
 	PAT_MF_IGNORE_CASE = 1 << 0,       /* ignore case */
-	PAT_MF_NO_DNS      = 1 << 1,       /* dont perform any DNS requests */
+	PAT_MF_NO_DNS      = 1 << 1,       /* don't perform any DNS requests */
 };
 
 /* possible flags for patterns storage */
@@ -121,13 +121,6 @@ struct pat_ref_elt {
 	int line;
 };
 
-/* How to store a time range and the valid days in 29 bits */
-struct pat_time {
-	int dow:7;              /* 1 bit per day of week: 0-6 */
-	int h1:5, m1:6;         /* 0..24:0..60. Use 0:0 for all day. */
-	int h2:5, m2:6;         /* 0..24:0..60. Use 24:0 for all day. */
-};
-
 /* This contain each tree indexed entry. This struct permit to associate
  * "sample" with a tree entry. It is used with maps.
  */
@@ -150,8 +143,8 @@ struct pattern {
 		int i;                          /* integer value */
 		struct {
 			signed long long min, max;
-			int min_set :1;
-			int max_set :1;
+			unsigned int min_set:1;
+			unsigned int max_set:1;
 		} range; /* integer range */
 		struct {
 			struct in_addr addr;
@@ -161,7 +154,6 @@ struct pattern {
 			struct in6_addr addr;
 			unsigned char mask;     /* number of bits */
 		} ipv6;                         /* IPv6 address/mask */
-		struct pat_time time;           /* valid hours and days */
 		struct eb_root *tree;           /* tree storing all values if any */
 	} val;                                  /* direct value */
 	union {
@@ -194,7 +186,7 @@ struct pattern_expr {
 	struct pattern_head *pat_head; /* Point to the pattern_head that contain manipulation functions.
 	                                * Note that this link point on compatible head but not on the real
 	                                * head. You can use only the function, and you must not use the
-	                                * "head". Dont write "(struct pattern_expr *)any->pat_head->expr".
+	                                * "head". Don't write "(struct pattern_expr *)any->pat_head->expr".
 	                                */
 	struct list patterns;         /* list of acl_patterns */
 	struct eb_root pattern_tree;  /* may be used for lookup in large datasets */

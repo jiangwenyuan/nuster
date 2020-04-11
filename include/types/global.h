@@ -27,8 +27,8 @@
 #include <common/config.h>
 #include <common/initcall.h>
 #include <common/hathreads.h>
-#include <common/standard.h>
 
+#include <types/freq_ctr.h>
 #include <types/listener.h>
 #include <types/proxy.h>
 #include <types/task.h>
@@ -74,6 +74,8 @@
 #define GTUNE_SET_DUMPABLE       (1<<13)
 #define GTUNE_USE_EVPORTS        (1<<14)
 #define GTUNE_STRICT_LIMITS      (1<<15)
+#define GTUNE_INSECURE_FORK      (1<<16)
+#define GTUNE_INSECURE_SETUID    (1<<17)
 
 /* SSL server verify mode */
 enum {
@@ -273,8 +275,6 @@ extern int stopping;	/* non zero means stopping in progress */
 extern int killed;	/* >0 means a hard-stop is triggered, >1 means hard-stop immediately */
 extern char hostname[MAX_HOSTNAME_LEN];
 extern char localpeer[MAX_HOSTNAME_LEN];
-extern struct mt_list global_listener_queue; /* list of the temporarily limited listeners */
-extern struct task *global_listener_queue_task;
 extern unsigned int warned;     /* bitfield of a few warnings to emit just once */
 extern volatile unsigned long sleeping_thread_mask;
 extern struct list proc_list; /* list of process in mworker mode */
@@ -321,6 +321,7 @@ int delete_oldpid(int pid);
 
 int main(int argc, char **argv);
 void deinit(void);
+void run_poll_loop(void);
 void hap_register_build_opts(const char *str, int must_free);
 void hap_register_post_check(int (*fct)());
 void hap_register_post_proxy_check(int (*fct)(struct proxy *));

@@ -59,10 +59,10 @@ static struct task *mux_pt_io_cb(struct task *t, void *tctx, unsigned short stat
 		 * subscribed to receive events, and otherwise call the wake
 		 * method, to make sure the event is noticed.
 		 */
-		if (ctx->conn->recv_wait) {
-			ctx->conn->recv_wait->events &= ~SUB_RETRY_RECV;
-			tasklet_wakeup(ctx->conn->recv_wait->tasklet);
-			ctx->conn->recv_wait = NULL;
+		if (ctx->conn->subs) {
+			ctx->conn->subs->events = 0;
+			tasklet_wakeup(ctx->conn->subs->tasklet);
+			ctx->conn->subs = NULL;
 		} else if (ctx->cs->data_cb->wake)
 			ctx->cs->data_cb->wake(ctx->cs);
 		return NULL;
@@ -150,7 +150,7 @@ static int mux_pt_wake(struct connection *conn)
 	/* If we had early data, and we're done with the handshake
 	 * then whe know the data are safe, and we can remove the flag.
 	 */
-	if ((conn->flags & (CO_FL_EARLY_DATA | CO_FL_EARLY_SSL_HS | CO_FL_HANDSHAKE)) ==
+	if ((conn->flags & (CO_FL_EARLY_DATA | CO_FL_EARLY_SSL_HS | CO_FL_WAIT_XPRT)) ==
 	    CO_FL_EARLY_DATA)
 		conn->flags &= ~CO_FL_EARLY_DATA;
 	return ret;
@@ -241,11 +241,6 @@ static void mux_pt_shutr(struct conn_stream *cs, enum cs_shr_mode mode)
 		    (mode == CS_SHR_DRAIN));
 	if (cs->flags & CS_FL_SHW)
 		conn_full_close(cs->conn);
-	/* Maybe we've been put in the list of available idle connections,
-	 * get ouf of here
-	 */
-	LIST_DEL(&cs->conn->list);
-	LIST_INIT(&cs->conn->list);
 }
 
 static void mux_pt_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
@@ -259,11 +254,6 @@ static void mux_pt_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
 		conn_sock_shutw(cs->conn, (mode == CS_SHW_NORMAL));
 	else
 		conn_full_close(cs->conn);
-	/* Maybe we've been put in the list of available idle connections,
-	 * get ouf of here
-	 */
-	LIST_DEL(&cs->conn->list);
-	LIST_INIT(&cs->conn->list);
 }
 
 /*
@@ -295,8 +285,6 @@ static size_t mux_pt_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t 
 {
 	size_t ret;
 
-	if (cs->conn->flags & CO_FL_HANDSHAKE)
-		return 0;
 	ret = cs->conn->xprt->snd_buf(cs->conn, cs->conn->xprt_ctx, buf, count, flags);
 
 	if (ret > 0)
@@ -304,15 +292,23 @@ static size_t mux_pt_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t 
 	return ret;
 }
 
-/* Called from the upper layer, to subscribe to events */
-static int mux_pt_subscribe(struct conn_stream *cs, int event_type, void *param)
+/* Called from the upper layer, to subscribe <es> to events <event_type>. The
+ * event subscriber <es> is not allowed to change from a previous call as long
+ * as at least one event is still subscribed. The <event_type> must only be a
+ * combination of SUB_RETRY_RECV and SUB_RETRY_SEND. It always returns 0.
+ */
+static int mux_pt_subscribe(struct conn_stream *cs, int event_type, struct wait_event *es)
 {
-	return (cs->conn->xprt->subscribe(cs->conn, cs->conn->xprt_ctx, event_type, param));
+	return cs->conn->xprt->subscribe(cs->conn, cs->conn->xprt_ctx, event_type, es);
 }
 
-static int mux_pt_unsubscribe(struct conn_stream *cs, int event_type, void *param)
+/* Called from the upper layer, to unsubscribe <es> from events <event_type>.
+ * The <es> pointer is not allowed to differ from the one passed to the
+ * subscribe() call. It always returns zero.
+ */
+static int mux_pt_unsubscribe(struct conn_stream *cs, int event_type, struct wait_event *es)
 {
-	return (cs->conn->xprt->unsubscribe(cs->conn, cs->conn->xprt_ctx, event_type, param));
+	return cs->conn->xprt->unsubscribe(cs->conn, cs->conn->xprt_ctx, event_type, es);
 }
 
 #if defined(USE_LINUX_SPLICE)
@@ -340,7 +336,7 @@ static int mux_pt_ctl(struct connection *conn, enum mux_ctl_type mux_ctl, void *
 	int ret = 0;
 	switch (mux_ctl) {
 	case MUX_STATUS:
-		if (conn->flags & CO_FL_CONNECTED)
+		if (!(conn->flags & CO_FL_WAIT_XPRT))
 			ret |= MUX_STATUS_READY;
 		return ret;
 	default:

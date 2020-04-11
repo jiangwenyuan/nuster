@@ -87,7 +87,7 @@
 #define HTTP_MSGF_XFER_LEN    0x00000004  /* message xfer size can be determined */
 #define HTTP_MSGF_VER_11      0x00000008  /* the message is HTTP/1.1 or above */
 
-/* unused: 0x00000010 */
+#define HTTP_MSGF_SOFT_RW     0x00000010  /* soft header rewrites, no error triggered */
 
 #define HTTP_MSGF_COMPRESSING 0x00000020  /* data compression is in progress */
 
@@ -126,6 +126,7 @@ enum rule_result {
 	HTTP_RULE_RES_ABRT,      /* abort request, msg already sent (eg: auth) */
 	HTTP_RULE_RES_DONE,      /* processing done, stop processing (eg: redirect) */
 	HTTP_RULE_RES_BADREQ,    /* bad request */
+	HTTP_RULE_RES_ERROR,     /* Internal error */
 };
 
 /* Legacy version of the HTTP/1 message state, used by the channels, should
@@ -175,6 +176,7 @@ struct http_txn {
 	enum http_meth_t meth;          /* HTTP method */
 	/* 1 unused byte here */
 	short status;                   /* HTTP status from the server, negative if from proxy */
+	struct buffer *errmsg;          /* custom HTTP error message to use as reply */
 
 	char cache_hash[20];               /* Store the cache hash  */
 	char *uri;                      /* first line if log needed, NULL otherwise */

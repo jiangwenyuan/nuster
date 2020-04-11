@@ -65,11 +65,7 @@ static uint32_t get_var_int(const uint8_t **raw_in, uint32_t *len_in, int b)
 	if (ret != (uint32_t)((1 << b) - 1))
 		goto end;
 
-	while (1) {
-		if (!len)
-			goto too_short;
-		if (!(*raw & 128))
-			break;
+	while (len && (*raw & 128)) {
 		ret += ((uint32_t)(*raw++) & 127) << shift;
 		shift += 7;
 		len--;
@@ -195,7 +191,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 			}
 
 			value = hpack_alloc_string(tmp, idx, hpack_idx_to_value(dht, idx));
-			if (!value.ptr) {
+			if (!isttest(value)) {
 				hpack_debug_printf("##ERR@%d##\n", __LINE__);
 				ret = -HPACK_ERR_TOO_LARGE;
 				goto leave;
@@ -206,7 +202,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 
 			if (!name.len) {
 				name = hpack_alloc_string(tmp, idx, hpack_idx_to_name(dht, idx));
-				if (!name.ptr) {
+				if (!isttest(name)) {
 					hpack_debug_printf("##ERR@%d##\n", __LINE__);
 					ret = -HPACK_ERR_TOO_LARGE;
 					goto leave;
@@ -410,13 +406,13 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 				value = ist2(vtrash, vlen);
 			}
 
-			name = ist2(NULL, 0);
+			name = IST_NULL;
 			if (!must_index)
 				name.len = hpack_idx_to_phdr(idx);
 
 			if (!name.len) {
 				name = hpack_alloc_string(tmp, idx, hpack_idx_to_name(dht, idx));
-				if (!name.ptr) {
+				if (!isttest(name)) {
 					hpack_debug_printf("##ERR@%d##\n", __LINE__);
 					ret = -HPACK_ERR_TOO_LARGE;
 					goto leave;
@@ -448,7 +444,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 		}
 
 		hpack_debug_printf("\e[1;34m%s\e[0m: ",
-				   name.ptr ? istpad(trash.area, name).ptr : h2_phdr_to_str(name.len));
+				   isttest(name) ? istpad(trash.area, name).ptr : h2_phdr_to_str(name.len));
 
 		hpack_debug_printf("\e[1;35m%s\e[0m [mustidx=%d, used=%d] [n=(%p,%d) v=(%p,%d)]\n",
 				   istpad(trash.area, value).ptr, must_index,
@@ -462,7 +458,7 @@ int hpack_decode_frame(struct hpack_dht *dht, const uint8_t *raw, uint32_t len,
 	}
 
 	/* put an end marker */
-	list[ret].n = list[ret].v = ist2(NULL, 0);
+	list[ret].n = list[ret].v = IST_NULL;
 	ret++;
 
  leave:

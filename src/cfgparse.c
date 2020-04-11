@@ -374,7 +374,7 @@ int parse_process_number(const char *arg, unsigned long *proc, int max, int *aut
 		for (p = arg; *p; p++) {
 			if (*p == '-' && !dash)
 				dash = p;
-			else if (!isdigit((int)*p)) {
+			else if (!isdigit((unsigned char)*p)) {
 				memprintf(err, "'%s' is not a valid number/range.", arg);
 				return -1;
 			}
@@ -420,7 +420,7 @@ unsigned long parse_cpu_set(const char **args, unsigned long *cpu_set, char **er
 		char        *dash;
 		unsigned int low, high;
 
-		if (!isdigit((int)*args[cur_arg])) {
+		if (!isdigit((unsigned char)*args[cur_arg])) {
 			memprintf(err, "'%s' is not a CPU range.\n", args[cur_arg]);
 			return -1;
 		}
@@ -2035,13 +2035,13 @@ next_line:
 					braces = 1;
 				}
 
-				if (!isalpha((int)(unsigned char)*var_beg) && *var_beg != '_') {
+				if (!isalpha((unsigned char)*var_beg) && *var_beg != '_') {
 					ha_alert("parsing [%s:%d] : Variable expansion: Unrecognized character '%c' in variable name.\n", file, linenum, *var_beg);
 					err_code |= ERR_ALERT | ERR_FATAL;
 					goto next_line; /* skip current line */
 				}
 
-				while (isalnum((int)(unsigned char)*var_end) || *var_end == '_')
+				while (isalnum((unsigned char)*var_end) || *var_end == '_')
 					var_end++;
 
 				save_char = *var_end;
@@ -2160,10 +2160,11 @@ next_line:
 
 		if (kwm != KWM_STD && strcmp(args[0], "option") != 0 &&
 		    strcmp(args[0], "log") != 0 && strcmp(args[0], "busy-polling") != 0 &&
-		    strcmp(args[0], "set-dumpable") != 0 && strcmp(args[0], "strict-limits") != 0) {
+		    strcmp(args[0], "set-dumpable") != 0 && strcmp(args[0], "strict-limits") != 0 &&
+		    strcmp(args[0], "insecure-fork-wanted") != 0) {
 			ha_alert("parsing [%s:%d]: negation/default currently "
 				 "supported only for options, log, busy-polling, "
-				 "set-dumpable and strict-limits.\n", file, linenum);
+				 "set-dumpable, strict-limits, and insecure-fork-wanted.\n", file, linenum);
 			err_code |= ERR_ALERT | ERR_FATAL;
 		}
 
@@ -2549,6 +2550,11 @@ int check_config_validity()
 					 curproxy->id, "option external-check");
 				cfgerr++;
 			}
+			if (!(global.tune.options & GTUNE_INSECURE_FORK)) {
+				ha_warning("Proxy '%s' : 'insecure-fork-wanted' not enabled in the global section, '%s' will likely fail.\n",
+					 curproxy->id, "option external-check");
+				err_code |= ERR_WARN;
+			}
 		}
 
 		if (curproxy->email_alert.set) {
@@ -2827,6 +2833,16 @@ int check_config_validity()
 
 		/* check validity for 'http-response' layer 7 rules */
 		list_for_each_entry(arule, &curproxy->http_res_rules, list) {
+			err = NULL;
+			if (arule->check_ptr && !arule->check_ptr(arule, curproxy, &err)) {
+				ha_alert("Proxy '%s': %s.\n", curproxy->id, err);
+				free(err);
+				cfgerr++;
+			}
+		}
+
+		/* check validity for 'http-after-response' layer 7 rules */
+		list_for_each_entry(arule, &curproxy->http_after_res_rules, list) {
 			err = NULL;
 			if (arule->check_ptr && !arule->check_ptr(arule, curproxy, &err)) {
 				ha_alert("Proxy '%s': %s.\n", curproxy->id, err);
@@ -3475,29 +3491,6 @@ out_uri_auth_compat:
 			newsrv = newsrv->next;
 		}
 
-		/* check if we have a frontend with "tcp-request content" looking at L7
-		 * with no inspect-delay
-		 */
-		if ((curproxy->cap & PR_CAP_FE) && !curproxy->tcp_req.inspect_delay) {
-			list_for_each_entry(arule, &curproxy->tcp_req.inspect_rules, list) {
-				if (arule->action == ACT_TCP_CAPTURE &&
-				    !(arule->arg.cap.expr->fetch->val & SMP_VAL_FE_SES_ACC))
-					break;
-				if  ((arule->action >= ACT_ACTION_TRK_SC0 && arule->action <= ACT_ACTION_TRK_SCMAX) &&
-				     !(arule->arg.trk_ctr.expr->fetch->val & SMP_VAL_FE_SES_ACC))
-					break;
-			}
-
-			if (&arule->list != &curproxy->tcp_req.inspect_rules) {
-				ha_warning("config : %s '%s' : some 'tcp-request content' rules explicitly depending on request"
-					   " contents were found in a frontend without any 'tcp-request inspect-delay' setting."
-					   " This means that these rules will randomly find their contents. This can be fixed by"
-					   " setting the tcp-request inspect-delay.\n",
-					   proxy_type_str(curproxy), curproxy->id);
-				err_code |= ERR_WARN;
-			}
-		}
-
 		/* Check filter configuration, if any */
 		cfgerr += flt_check(curproxy);
 
@@ -3620,33 +3613,27 @@ out_uri_auth_compat:
 		for (newsrv = curproxy->srv; newsrv; newsrv = newsrv->next) {
 			int i;
 
-			newsrv->priv_conns = calloc(global.nbthread, sizeof(*newsrv->priv_conns));
-			newsrv->idle_conns = calloc(global.nbthread, sizeof(*newsrv->idle_conns));
-			newsrv->safe_conns = calloc(global.nbthread, sizeof(*newsrv->safe_conns));
+			newsrv->available_conns = calloc((unsigned)global.nbthread, sizeof(*newsrv->available_conns));
 
-			if (!newsrv->priv_conns || !newsrv->idle_conns || !newsrv->safe_conns) {
-				free(newsrv->safe_conns); newsrv->safe_conns = NULL;
-				free(newsrv->idle_conns); newsrv->idle_conns = NULL;
-				free(newsrv->priv_conns); newsrv->priv_conns = NULL;
+			if (!newsrv->available_conns) {
 				ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
-					 newsrv->conf.file, newsrv->conf.line, newsrv->id);
+				    newsrv->conf.file, newsrv->conf.line, newsrv->id);
 				cfgerr++;
 				continue;
 			}
 
-			for (i = 0; i < global.nbthread; i++) {
-				LIST_INIT(&newsrv->priv_conns[i]);
-				LIST_INIT(&newsrv->idle_conns[i]);
-				LIST_INIT(&newsrv->safe_conns[i]);
-			}
+			for (i = 0; i < global.nbthread; i++)
+				LIST_INIT(&newsrv->available_conns[i]);
 
 			if (newsrv->max_idle_conns != 0) {
 				if (idle_conn_task == NULL) {
 					idle_conn_task = task_new(MAX_THREADS_MASK);
 					if (!idle_conn_task)
 						goto err;
+
 					idle_conn_task->process = srv_cleanup_idle_connections;
 					idle_conn_task->context = NULL;
+
 					for (i = 0; i < global.nbthread; i++) {
 						idle_conn_cleanup[i] = task_new(1UL << i);
 						if (!idle_conn_cleanup[i])
@@ -3656,12 +3643,30 @@ out_uri_auth_compat:
 						MT_LIST_INIT(&toremove_connections[i]);
 					}
 				}
-				newsrv->idle_orphan_conns = calloc((unsigned short)global.nbthread, sizeof(*newsrv->idle_orphan_conns));
-				if (!newsrv->idle_orphan_conns)
-					goto err;
+
+				newsrv->idle_conns = calloc((unsigned)global.nbthread, sizeof(*newsrv->idle_conns));
+				if (!newsrv->idle_conns) {
+					ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
+					    newsrv->conf.file, newsrv->conf.line, newsrv->id);
+					cfgerr++;
+					continue;
+				}
+
 				for (i = 0; i < global.nbthread; i++)
-					MT_LIST_INIT(&newsrv->idle_orphan_conns[i]);
-				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(*newsrv->curr_idle_thr));
+					MT_LIST_INIT(&newsrv->idle_conns[i]);
+
+				newsrv->safe_conns = calloc((unsigned)global.nbthread, sizeof(*newsrv->safe_conns));
+				if (!newsrv->safe_conns) {
+					ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
+					    newsrv->conf.file, newsrv->conf.line, newsrv->id);
+					cfgerr++;
+					continue;
+				}
+
+				for (i = 0; i < global.nbthread; i++)
+					MT_LIST_INIT(&newsrv->safe_conns[i]);
+
+				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(int));
 				if (!newsrv->curr_idle_thr)
 					goto err;
 				continue;
@@ -3902,25 +3907,12 @@ out_uri_auth_compat:
 		struct peers *curpeers = cfg_peers, **last;
 		struct peer *p, *pb;
 
-		/* In the case the peers frontend was not initialized by a
-		 stick-table used in the configuration, set its bind_proc
-		 by default to the first process. */
-		while (curpeers) {
-			if (curpeers->peers_fe) {
-				if (curpeers->peers_fe->bind_proc == 0)
-					curpeers->peers_fe->bind_proc = 1;
-			}
-			curpeers = curpeers->next;
-		}
-
-		curpeers = cfg_peers;
 		/* Remove all peers sections which don't have a valid listener,
 		 * which are not used by any table, or which are bound to more
 		 * than one process.
 		 */
 		last = &cfg_peers;
 		while (*last) {
-			struct stktable *t;
 			curpeers = *last;
 
 			if (curpeers->state == PR_STSTOPPED) {
@@ -3932,9 +3924,6 @@ out_uri_auth_compat:
 			else if (!curpeers->peers_fe || !curpeers->peers_fe->id) {
 				ha_warning("Removing incomplete section 'peers %s' (no peer named '%s').\n",
 					   curpeers->id, localpeer);
-				if (curpeers->peers_fe)
-					stop_proxy(curpeers->peers_fe);
-				curpeers->peers_fe = NULL;
 			}
 			else if (atleast2(curpeers->peers_fe->bind_proc)) {
 				/* either it's totally stopped or too much used */
@@ -3997,11 +3986,6 @@ out_uri_auth_compat:
 			 */
 			free(curpeers->id);
 			curpeers = curpeers->next;
-			/* Reset any refereance to this peers section in the list of stick-tables */
-			for (t = stktables_list; t; t = t->next) {
-				if (t->peers.p && t->peers.p == *last)
-					t->peers.p = NULL;
-			}
 			free(*last);
 			*last = curpeers;
 		}

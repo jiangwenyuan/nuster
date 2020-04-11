@@ -32,6 +32,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef IST_FREESTANDING
+#include <stdlib.h>
+#endif
+
 #include <common/config.h>
 
 /* ASCII to lower case conversion table */
@@ -133,6 +137,9 @@ struct ist {
 /* makes a constant ist from a constant string, for use in array declarations */
 #define IST(str) { .ptr = str "", .len = (sizeof str "") - 1 }
 
+/* IST_NULL is equivalent to an `ist` with `.ptr = NULL` and `.len = 0` */
+#define IST_NULL ((const struct ist){ .ptr = 0, .len = 0 })
+
 /* makes an ist from a regular zero terminated string. Null has length 0.
  * Constants are detected and replaced with constant initializers. Other values
  * are measured by hand without strlen() as it's much cheaper and inlinable on
@@ -181,6 +188,12 @@ struct ist {
 static inline struct ist ist2(const void *ptr, size_t len)
 {
 	return (struct ist){ .ptr = (char *)ptr, .len = len };
+}
+
+/* returns the result of `ist.ptr != NULL` */
+static inline int isttest(const struct ist ist)
+{
+	return ist.ptr != NULL;
 }
 
 /* This function MODIFIES the string to add a zero AFTER the end, and returns
@@ -705,11 +718,11 @@ static inline struct ist istist(const struct ist ist, const struct ist pat)
 		}
 		return ist2(ret.ptr - 1, ret.len + 1);
 	}
-	return ist2(NULL, 0);
+	return IST_NULL;
 }
 
 /*
- * looks for the first occurence of <chr> in string <ist> and returns a shorter
+ * looks for the first occurrence of <chr> in string <ist> and returns a shorter
  * ist if char is found.
  */
 static inline struct ist iststop(const struct ist ist, char chr)
@@ -720,4 +733,50 @@ static inline struct ist iststop(const struct ist ist, char chr)
 		;
 	return ist2(ist.ptr, len - 1);
 }
+
+#ifndef IST_FREESTANDING
+/* This function allocates <size> bytes and returns an `ist` pointing to
+ * the allocated area with size `0`.
+ *
+ * If this function fails to allocate memory the return value is equivalent
+ * to IST_NULL.
+ */
+static inline struct ist istalloc(const size_t size)
+{
+	return ist2(malloc(size), 0);
+}
+
+/* This function performs the equivalent of free() on the given <ist>.
+ *
+ * After this function returns the value of the given <ist> will be
+ * modified to be equivalent to IST_NULL.
+ */
+static inline void istfree(struct ist *ist)
+{
+	free(ist->ptr);
+	*ist = IST_NULL;
+}
+
+/* This function performs the equivalent of strdup() on the given <src>.
+ *
+ * If this function fails to allocate memory the return value is equivalent
+ * to IST_NULL.
+ */
+static inline struct ist istdup(const struct ist src)
+{
+	const size_t src_size = src.len;
+
+	/* Allocate at least 1 byte to allow duplicating an empty string with
+	 * malloc implementations that return NULL for a 0-size allocation.
+	 */
+	struct ist dst = istalloc(MAX(src_size, 1));
+
+	if (isttest(dst)) {
+		istcpy(&dst, src, src_size);
+	}
+
+	return dst;
+}
+#endif
+
 #endif

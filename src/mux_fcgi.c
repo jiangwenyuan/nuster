@@ -107,7 +107,6 @@ struct fcgi_conn {
 	struct eb_root streams_by_id;        /* all active streams by their ID */
 
 	struct list send_list;               /* list of blocked streams requesting to send */
-	struct list sending_list;            /* list of fcgi_strm scheduled to send data */
 
 	struct buffer_wait buf_wait;         /* Wait list for buffer allocation */
 	struct wait_event wait_event;        /* To be used if we're waiting for I/Os */
@@ -139,14 +138,14 @@ enum fcgi_strm_st {
 
 #define FCGI_SF_BEGIN_SENT     0x00000100  /* a BEGIN_REQUEST record was sent for this stream */
 #define FCGI_SF_OUTGOING_DATA  0x00000200  /* set whenever we've seen outgoing data */
+#define FCGI_SF_NOTIFIED       0x00000400  /* a paused stream was notified to try to send again */
 
 #define FCGI_SF_WANT_SHUTR     0x00001000  /* a stream couldn't shutr() (mux full/busy) */
 #define FCGI_SF_WANT_SHUTW     0x00002000  /* a stream couldn't shutw() (mux full/busy) */
 #define FCGI_SF_KILL_CONN      0x00004000  /* kill the whole connection with this stream */
 
 /* Other flags */
-#define FCGI_SF_HAVE_I_TLR     0x00010000 /* Set during input process to know the trailers were processed */
-#define FCGI_SF_APPEND_EOM     0x00020000 /* Send EOM to the HTX buffer */
+#define FCGI_SF_H1_PARSING_DONE  0x00010000
 
 /* FCGI stream descriptor */
 struct fcgi_strm {
@@ -165,11 +164,9 @@ struct fcgi_strm {
 	struct buffer rxbuf;          /* receive buffer, always valid (buf_empty or real buffer) */
 
 	struct eb32_node by_id;       /* place in fcgi_conn's streams_by_id */
-	struct wait_event wait_event; /* Wait list, when we're attempting to send an ABORT but we can't send */
-	struct wait_event *recv_wait; /* Address of the wait_event the conn_stream associated is waiting on */
-	struct wait_event *send_wait; /* Address of the wait_event the conn_stream associated is waiting on */
+	struct wait_event *subs;      /* Address of the wait_event the conn_stream associated is waiting on */
 	struct list send_list;        /* To be used when adding in fcgi_conn->send_list */
-	struct list sending_list;     /* To be used when adding in fcgi_conn->sending_list */
+	struct tasklet *shut_tl;      /* deferred shutdown tasklet, to retry to close after we failed to by lack of space */
 };
 
 /* Flags representing all default FCGI parameters */
@@ -604,14 +601,11 @@ static inline struct buffer *fcgi_get_buf(struct fcgi_conn *fconn, struct buffer
 {
 	struct buffer *buf = NULL;
 
-	if (likely(!LIST_ADDED(&fconn->buf_wait.list)) &&
+	if (likely(!MT_LIST_ADDED(&fconn->buf_wait.list)) &&
 	    unlikely((buf = b_alloc_margin(bptr, 0)) == NULL)) {
 		fconn->buf_wait.target = fconn;
 		fconn->buf_wait.wakeup_cb = fcgi_buf_available;
-		HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-		LIST_ADDQ(&buffer_wq, &fconn->buf_wait.list);
-		HA_SPIN_UNLOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-		__conn_xprt_stop_recv(fconn->conn);
+		MT_LIST_ADDQ(&buffer_wq, &fconn->buf_wait.list);
 	}
 	return buf;
 }
@@ -763,8 +757,7 @@ static int fcgi_init(struct connection *conn, struct proxy *px, struct session *
 	br_init(fconn->mbuf, sizeof(fconn->mbuf) / sizeof(fconn->mbuf[0]));
 	fconn->streams_by_id = EB_ROOT;
 	LIST_INIT(&fconn->send_list);
-	LIST_INIT(&fconn->sending_list);
-	LIST_INIT(&fconn->buf_wait.list);
+	MT_LIST_INIT(&fconn->buf_wait.list);
 
 	conn->ctx = fconn;
 
@@ -843,11 +836,8 @@ static void fcgi_release(struct fcgi_conn *fconn)
 
 		TRACE_DEVEL("freeing fconn", FCGI_EV_FCONN_END, conn);
 
-		if (LIST_ADDED(&fconn->buf_wait.list)) {
-			HA_SPIN_LOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-			LIST_DEL(&fconn->buf_wait.list);
-			HA_SPIN_UNLOCK(BUF_WQ_LOCK, &buffer_wq_lock);
-		}
+		if (MT_LIST_ADDED(&fconn->buf_wait.list))
+			MT_LIST_DEL(&fconn->buf_wait.list);
 
 		fcgi_release_buf(fconn, &fconn->dbuf);
 		fcgi_release_mbuf(fconn);
@@ -914,28 +904,29 @@ static inline void fcgi_strm_error(struct fcgi_strm *fstrm)
 /* Attempts to notify the data layer of recv availability */
 static void fcgi_strm_notify_recv(struct fcgi_strm *fstrm)
 {
-	struct wait_event *sw;
-
-	if (fstrm->recv_wait) {
+	if (fstrm->subs && (fstrm->subs->events & SUB_RETRY_RECV)) {
 		TRACE_POINT(FCGI_EV_STRM_WAKE, fstrm->fconn->conn, fstrm);
-		sw = fstrm->recv_wait;
-		sw->events &= ~SUB_RETRY_RECV;
-		tasklet_wakeup(sw->tasklet);
-		fstrm->recv_wait = NULL;
+		tasklet_wakeup(fstrm->subs->tasklet);
+		fstrm->subs->events &= ~SUB_RETRY_RECV;
+		if (!fstrm->subs->events)
+			fstrm->subs = NULL;
 	}
 }
 
 /* Attempts to notify the data layer of send availability */
 static void fcgi_strm_notify_send(struct fcgi_strm *fstrm)
 {
-	struct wait_event *sw;
-
-	if (fstrm->send_wait && !LIST_ADDED(&fstrm->sending_list)) {
+	if (fstrm->subs && (fstrm->subs->events & SUB_RETRY_SEND)) {
 		TRACE_POINT(FCGI_EV_STRM_WAKE, fstrm->fconn->conn, fstrm);
-		sw = fstrm->send_wait;
-		sw->events &= ~SUB_RETRY_SEND;
-		LIST_ADDQ(&fstrm->fconn->sending_list, &fstrm->sending_list);
-		tasklet_wakeup(sw->tasklet);
+		fstrm->flags |= FCGI_SF_NOTIFIED;
+		tasklet_wakeup(fstrm->subs->tasklet);
+		fstrm->subs->events &= ~SUB_RETRY_SEND;
+		if (!fstrm->subs->events)
+			fstrm->subs = NULL;
+	}
+	else if (fstrm->flags & (FCGI_SF_WANT_SHUTR | FCGI_SF_WANT_SHUTW)) {
+		TRACE_POINT(FCGI_EV_STRM_WAKE, fstrm->fconn->conn, fstrm);
+		tasklet_wakeup(fstrm->shut_tl);
 	}
 }
 
@@ -951,7 +942,8 @@ static void fcgi_strm_notify_send(struct fcgi_strm *fstrm)
 static void fcgi_strm_alert(struct fcgi_strm *fstrm)
 {
 	TRACE_POINT(FCGI_EV_STRM_WAKE, fstrm->fconn->conn, fstrm);
-	if (fstrm->recv_wait || fstrm->send_wait) {
+	if (fstrm->subs ||
+	    (fstrm->flags & (FCGI_SF_WANT_SHUTR|FCGI_SF_WANT_SHUTW))) {
 		fcgi_strm_notify_recv(fstrm);
 		fcgi_strm_notify_send(fstrm);
 	}
@@ -1015,20 +1007,14 @@ static void fcgi_strm_destroy(struct fcgi_strm *fstrm)
 		b_free(&fstrm->rxbuf);
 		offer_buffers(NULL, tasks_run_queue);
 	}
-	if (fstrm->send_wait != NULL)
-		fstrm->send_wait->events &= ~SUB_RETRY_SEND;
-	if (fstrm->recv_wait != NULL)
-		fstrm->recv_wait->events &= ~SUB_RETRY_RECV;
+	if (fstrm->subs)
+		fstrm->subs->events = 0;
 	/* There's no need to explicitly call unsubscribe here, the only
 	 * reference left would be in the fconn send_list/fctl_list, and if
 	 * we're in it, we're getting out anyway
 	 */
 	LIST_DEL_INIT(&fstrm->send_list);
-	if (LIST_ADDED(&fstrm->sending_list)) {
-		tasklet_remove_from_tasklet_list(fstrm->send_wait->tasklet);
-		LIST_DEL_INIT(&fstrm->sending_list);
-	}
-	tasklet_free(fstrm->wait_event.tasklet);
+	tasklet_free(fstrm->shut_tl);
 	pool_free(pool_head_fcgi_strm, fstrm);
 
 	TRACE_LEAVE(FCGI_EV_FSTRM_END, conn);
@@ -1050,18 +1036,15 @@ static struct fcgi_strm *fcgi_strm_new(struct fcgi_conn *fconn, int id)
 	if (!fstrm)
 		goto out;
 
-	fstrm->wait_event.tasklet = tasklet_new();
-	if (!fstrm->wait_event.tasklet) {
+	fstrm->shut_tl = tasklet_new();
+	if (!fstrm->shut_tl) {
 		pool_free(pool_head_fcgi_strm, fstrm);
 		goto out;
 	}
-	fstrm->send_wait = NULL;
-	fstrm->recv_wait = NULL;
-	fstrm->wait_event.tasklet->process = fcgi_deferred_shut;
-	fstrm->wait_event.tasklet->context = fstrm;
-	fstrm->wait_event.events = 0;
+	fstrm->subs = NULL;
+	fstrm->shut_tl->process = fcgi_deferred_shut;
+	fstrm->shut_tl->context = fstrm;
 	LIST_INIT(&fstrm->send_list);
-	LIST_INIT(&fstrm->sending_list);
 	fstrm->fconn = fconn;
 	fstrm->cs = NULL;
 	fstrm->flags = FCGI_SF_NONE;
@@ -2662,21 +2645,31 @@ static int fcgi_process_mux(struct fcgi_conn *fconn)
 		if (fconn->state == FCGI_CS_CLOSED || fconn->flags & FCGI_CF_MUX_BLOCK_ANY)
 			break;
 
-		if (LIST_ADDED(&fstrm->sending_list))
+		if (fstrm->flags & FCGI_SF_NOTIFIED)
 			continue;
 
-		/* For some reason, the upper layer failed to subsribe again,
-		 * so remove it from the send_list
+		/* If the sender changed his mind and unsubscribed, let's just
+		 * remove the stream from the send_list.
 		 */
-		if (!fstrm->send_wait) {
+		if (!(fstrm->flags & (FCGI_SF_WANT_SHUTR|FCGI_SF_WANT_SHUTW)) &&
+		    (!fstrm->subs || !(fstrm->subs->events & SUB_RETRY_SEND))) {
 			LIST_DEL_INIT(&fstrm->send_list);
 			continue;
 		}
-		TRACE_POINT(FCGI_EV_STRM_WAKE, fconn->conn, fstrm);
-		fstrm->flags &= ~FCGI_SF_BLK_ANY;
-		fstrm->send_wait->events &= ~SUB_RETRY_SEND;
-		LIST_ADDQ(&fconn->sending_list, &fstrm->sending_list);
-		tasklet_wakeup(fstrm->send_wait->tasklet);
+
+		if (fstrm->subs && fstrm->subs->events & SUB_RETRY_SEND) {
+			TRACE_POINT(FCGI_EV_STRM_WAKE, fconn->conn, fstrm);
+			fstrm->flags &= ~FCGI_SF_BLK_ANY;
+			fstrm->flags |= FCGI_SF_NOTIFIED;
+			tasklet_wakeup(fstrm->subs->tasklet);
+			fstrm->subs->events &= ~SUB_RETRY_SEND;
+			if (!fstrm->subs->events)
+				fstrm->subs = NULL;
+		} else {
+			/* it's the shut request that was queued */
+			TRACE_POINT(FCGI_EV_STRM_WAKE, fconn->conn, fstrm);
+			tasklet_wakeup(fstrm->shut_tl);
+		}
 	}
 
  fail:
@@ -2748,7 +2741,7 @@ static int fcgi_recv(struct fcgi_conn *fconn)
 		conn->xprt->subscribe(conn, conn->xprt_ctx, SUB_RETRY_RECV, &fconn->wait_event);
 	}
 	else
-		TRACE_DATA("send data", FCGI_EV_FCONN_RECV, conn,,, (size_t[]){ret});
+		TRACE_DATA("recv data", FCGI_EV_FCONN_RECV, conn,,, (size_t[]){ret});
 
 	if (!b_data(buf)) {
 		fcgi_release_buf(fconn, &fconn->dbuf);
@@ -2783,7 +2776,7 @@ static int fcgi_send(struct fcgi_conn *fconn)
 	}
 
 
-	if (conn->flags & (CO_FL_HANDSHAKE|CO_FL_WAIT_L4_CONN|CO_FL_WAIT_L6_CONN)) {
+	if (conn->flags & CO_FL_WAIT_XPRT) {
 		/* a handshake was requested */
 		goto schedule;
 	}
@@ -2870,21 +2863,31 @@ static int fcgi_send(struct fcgi_conn *fconn)
 			if (fconn->state == FCGI_CS_CLOSED || fconn->flags & FCGI_CF_MUX_BLOCK_ANY)
 				break;
 
-			if (LIST_ADDED(&fstrm->sending_list))
+			if (fstrm->flags & FCGI_SF_NOTIFIED)
 				continue;
 
-			/* For some reason, the upper layer failed to subsribe again,
-			 * so remove it from the send_list
+			/* If the sender changed his mind and unsubscribed, let's just
+			 * remove the stream from the send_list.
 			 */
-			if (!fstrm->send_wait) {
+			if (!(fstrm->flags & (FCGI_SF_WANT_SHUTR|FCGI_SF_WANT_SHUTW)) &&
+			    (!fstrm->subs || !(fstrm->subs->events & SUB_RETRY_SEND))) {
 				LIST_DEL_INIT(&fstrm->send_list);
 				continue;
 			}
-			fstrm->flags &= ~FCGI_SF_BLK_ANY;
-			fstrm->send_wait->events &= ~SUB_RETRY_SEND;
-			TRACE_DEVEL("waking up pending stream", FCGI_EV_FCONN_SEND|FCGI_EV_STRM_WAKE, conn, fstrm);
-			tasklet_wakeup(fstrm->send_wait->tasklet);
-			LIST_ADDQ(&fconn->sending_list, &fstrm->sending_list);
+
+			if (fstrm->subs && fstrm->subs->events & SUB_RETRY_SEND) {
+				TRACE_DEVEL("waking up pending stream", FCGI_EV_FCONN_SEND|FCGI_EV_STRM_WAKE, conn, fstrm);
+				fstrm->flags &= ~FCGI_SF_BLK_ANY;
+				fstrm->flags |= FCGI_SF_NOTIFIED;
+				tasklet_wakeup(fstrm->subs->tasklet);
+				fstrm->subs->events &= ~SUB_RETRY_SEND;
+				if (!fstrm->subs->events)
+					fstrm->subs = NULL;
+			} else {
+				/* it's the shut request that was queued */
+				TRACE_POINT(FCGI_EV_STRM_WAKE, fconn->conn, fstrm);
+				tasklet_wakeup(fstrm->shut_tl);
+			}
 		}
 	}
 	/* We're done, no more to send */
@@ -2905,17 +2908,55 @@ schedule:
 /* this is the tasklet referenced in fconn->wait_event.tasklet */
 static struct task *fcgi_io_cb(struct task *t, void *ctx, unsigned short status)
 {
-	struct fcgi_conn *fconn = ctx;
+	struct connection *conn;
+	struct fcgi_conn *fconn;
+	struct tasklet *tl = (struct tasklet *)t;
+	int conn_in_list;
 	int ret = 0;
 
-	TRACE_POINT(FCGI_EV_FCONN_WAKE, fconn->conn);
+
+	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+	if (tl->context == NULL) {
+		/* The connection has been taken over by another thread,
+		 * we're no longer responsible for it, so just free the
+		 * tasklet, and do nothing.
+		 */
+		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+		tasklet_free(tl);
+		return NULL;
+
+	}
+	fconn = ctx;
+	conn = fconn->conn;
+
+	TRACE_POINT(FCGI_EV_FCONN_WAKE, conn);
+
+	conn_in_list = conn->flags & CO_FL_LIST_MASK;
+	if (conn_in_list)
+		MT_LIST_DEL(&conn->list);
+
+	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
 
 	if (!(fconn->wait_event.events & SUB_RETRY_SEND))
 		ret = fcgi_send(fconn);
 	if (!(fconn->wait_event.events & SUB_RETRY_RECV))
 		ret |= fcgi_recv(fconn);
 	if (ret || b_data(&fconn->dbuf))
-		fcgi_process(fconn);
+		ret = fcgi_process(fconn);
+
+	/* If we were in an idle list, we want to add it back into it,
+	 * unless fcgi_process() returned -1, which mean it has destroyed
+	 * the connection (testing !ret is enough, if fcgi_process() wasn't
+	 * called then ret will be 0 anyway.
+	 */
+	if (!ret && conn_in_list) {
+		struct server *srv = objt_server(conn->target);
+
+		if (conn_in_list == CO_FL_SAFE_LIST)
+			MT_LIST_ADDQ(&srv->safe_conns[tid], &conn->list);
+		else
+			MT_LIST_ADDQ(&srv->idle_conns[tid], &conn->list);
+	}
 	return NULL;
 }
 
@@ -2957,7 +2998,7 @@ static int fcgi_process(struct fcgi_conn *fconn)
 	 * any stream that was waiting for it.
 	 */
 	if (!(fconn->flags & FCGI_CF_WAIT_FOR_HS) &&
-	    (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_HANDSHAKE | CO_FL_EARLY_DATA)) == CO_FL_EARLY_DATA) {
+	    (conn->flags & (CO_FL_EARLY_SSL_HS | CO_FL_WAIT_XPRT | CO_FL_EARLY_DATA)) == CO_FL_EARLY_DATA) {
 		struct eb32_node *node;
 		struct fcgi_strm *fstrm;
 
@@ -3019,7 +3060,7 @@ static int fcgi_ctl(struct connection *conn, enum mux_ctl_type mux_ctl, void *ou
 	int ret = 0;
 	switch (mux_ctl) {
 	case MUX_STATUS:
-		if (conn->flags & CO_FL_CONNECTED)
+		if (!(conn->flags & CO_FL_WAIT_XPRT))
 			ret |= MUX_STATUS_READY;
 		return ret;
 	default:
@@ -3044,6 +3085,22 @@ static struct task *fcgi_timeout_task(struct task *t, void *context, unsigned sh
 		TRACE_DEVEL("leaving (not expired)", FCGI_EV_FCONN_WAKE, fconn->conn);
 		return t;
 	}
+
+	/* We're about to destroy the connection, so make sure nobody attempts
+	 * to steal it from us.
+	 */
+	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+
+	if (fconn && fconn->conn->flags & CO_FL_LIST_MASK)
+		MT_LIST_DEL(&fconn->conn->list);
+
+	/* Somebody already stole the connection from us, so we should not
+	 * free it, we just have to free the task.
+	 */
+	if (!t->context)
+		fconn = NULL;
+
+	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
 
 	task_destroy(t);
 
@@ -3133,9 +3190,18 @@ static void fcgi_strm_capture_bad_message(struct fcgi_conn *fconn, struct fcgi_s
 {
 	struct session *sess = fstrm->sess;
 	struct proxy *proxy = fconn->proxy;
-	struct proxy *other_end = sess->fe;
+	struct proxy *other_end;
 	union error_snapshot_ctx ctx;
 
+	if (fstrm->cs && fstrm->cs->data) {
+		if (sess == NULL)
+			sess = si_strm(fstrm->cs->data)->sess;
+		if (!(h1m->flags & H1_MF_RESP))
+			other_end = si_strm(fstrm->cs->data)->be;
+		else
+			other_end = sess->fe;
+	} else
+		other_end = NULL;
 	/* http-specific part now */
 	ctx.h1.state   = h1m->state;
 	ctx.h1.c_flags = fconn->flags;
@@ -3180,7 +3246,7 @@ static size_t fcgi_strm_parse_data(struct fcgi_strm *fstrm, struct h1m *h1m, str
 
 	TRACE_ENTER(FCGI_EV_RSP_DATA|FCGI_EV_RSP_BODY, fstrm->fconn->conn, fstrm,, (size_t[]){max});
 	ret = h1_parse_msg_data(h1m, htx, buf, *ofs, max, htxbuf);
-	if (ret <= 0) {
+	if (!ret) {
 		TRACE_DEVEL("leaving on missing data or error", FCGI_EV_RSP_DATA|FCGI_EV_RSP_BODY, fstrm->fconn->conn, fstrm);
 		if ((*htx)->flags & HTX_FL_PARSING_ERROR) {
 			TRACE_USER("rejected H1 response", FCGI_EV_RSP_DATA|FCGI_EV_RSP_BODY|FCGI_EV_FSTRM_ERR, fstrm->fconn->conn, fstrm);
@@ -3191,14 +3257,6 @@ static size_t fcgi_strm_parse_data(struct fcgi_strm *fstrm, struct h1m *h1m, str
 	}
 	*ofs += ret;
   end:
-	if (h1m->state == H1_MSG_DONE) {
-		fstrm->flags &= ~FCGI_SF_APPEND_EOM;
-		TRACE_STATE("end of message", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fstrm->fconn->conn);
-	}
-	else if (h1m->state == H1_MSG_DATA && (h1m->flags & H1_MF_XFER_LEN) && h1m->curr_len == 0) {
-		fstrm->flags |= FCGI_SF_APPEND_EOM;
-		TRACE_STATE("add append_eom", FCGI_EV_RSP_DATA, fstrm->fconn->conn);
-	}
 	TRACE_LEAVE(FCGI_EV_RSP_DATA|FCGI_EV_RSP_BODY, fstrm->fconn->conn, fstrm,, (size_t[]){ret});
 	return ret;
 }
@@ -3210,7 +3268,7 @@ static size_t fcgi_strm_parse_trailers(struct fcgi_strm *fstrm, struct h1m *h1m,
 
 	TRACE_ENTER(FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS, fstrm->fconn->conn, fstrm,, (size_t[]){max});
 	ret = h1_parse_msg_tlrs(h1m, htx, buf, *ofs, max);
-	if (ret <= 0) {
+	if (!ret) {
 		TRACE_DEVEL("leaving on missing data or error", FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS, fstrm->fconn->conn, fstrm);
 		if (htx->flags & HTX_FL_PARSING_ERROR) {
 			TRACE_USER("rejected H1 response", FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS|FCGI_EV_FSTRM_ERR, fstrm->fconn->conn, fstrm);
@@ -3220,27 +3278,31 @@ static size_t fcgi_strm_parse_trailers(struct fcgi_strm *fstrm, struct h1m *h1m,
 		goto end;
 	}
 	*ofs += ret;
-	fstrm->flags |= FCGI_SF_HAVE_I_TLR;
   end:
 	TRACE_LEAVE(FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS, fstrm->fconn->conn, fstrm,, (size_t[]){ret});
 	return ret;
 }
 
 static size_t fcgi_strm_add_eom(struct fcgi_strm *fstrm, struct h1m *h1m, struct htx *htx,
-				size_t max)
+				struct buffer *buf, size_t *ofs, size_t max)
 {
-	TRACE_ENTER(FCGI_EV_RSP_DATA, fstrm->fconn->conn, fstrm,, (size_t[]){max});
-	if (max < sizeof(struct htx_blk) + 1 || !htx_add_endof(htx, HTX_BLK_EOM)) {
-		fstrm->flags |= FCGI_SF_APPEND_EOM;
-		TRACE_STATE("leaving on append_eom", FCGI_EV_RSP_DATA, fstrm->fconn->conn);
-		return 0;
-	}
+	int ret;
 
-	h1m->state = H1_MSG_DONE;
-	fstrm->flags &= ~FCGI_SF_APPEND_EOM;
-	TRACE_STATE("end of response", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fstrm->fconn->conn, fstrm);
-	TRACE_LEAVE(FCGI_EV_RSP_DATA, fstrm->fconn->conn, fstrm);
-	return (sizeof(struct htx_blk) + 1);
+	TRACE_ENTER(FCGI_EV_RSP_DATA||FCGI_EV_RSP_EOM, fstrm->fconn->conn, fstrm,, (size_t[]){max});
+	ret = h1_parse_msg_eom(h1m, htx, max);
+	if (!ret) {
+		TRACE_DEVEL("leaving on missing data or error", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fstrm->fconn->conn, fstrm);
+		if (htx->flags & HTX_FL_PARSING_ERROR) {
+			TRACE_USER("rejected H1 response", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM|FCGI_EV_FSTRM_ERR, fstrm->fconn->conn, fstrm);
+			fcgi_strm_error(fstrm);
+			fcgi_strm_capture_bad_message(fstrm->fconn, fstrm, h1m, buf);
+		}
+		goto end;
+	}
+	fstrm->flags |= FCGI_SF_H1_PARSING_DONE;
+  end:
+	TRACE_LEAVE(FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fstrm->fconn->conn, fstrm,, (size_t[]){ret});
+	return ret;
 }
 
 static size_t fcgi_strm_parse_response(struct fcgi_strm *fstrm, struct buffer *buf, size_t count)
@@ -3282,30 +3344,27 @@ static size_t fcgi_strm_parse_response(struct fcgi_strm *fstrm, struct buffer *b
 		else if (h1m->state < H1_MSG_TRAILERS) {
 			TRACE_PROTO("parsing response payload", FCGI_EV_RSP_DATA|FCGI_EV_RSP_BODY, fconn->conn, fstrm);
 			ret = fcgi_strm_parse_data(fstrm, h1m, &htx, &fstrm->rxbuf, &total, count, buf);
-			if (!ret)
+			if (!ret && h1m->state != H1_MSG_DONE)
 				break;
 
 			TRACE_PROTO("rcvd response payload data", FCGI_EV_RSP_DATA|FCGI_EV_RSP_BODY, fconn->conn, fstrm, htx);
-
-			if (h1m->state == H1_MSG_DONE)
-				TRACE_USER("H1 response fully rcvd", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fconn->conn, fstrm, htx);
 		}
 		else if (h1m->state == H1_MSG_TRAILERS) {
-			if (!(fstrm->flags & FCGI_SF_HAVE_I_TLR)) {
-				TRACE_PROTO("parsing response trailers", FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS, fconn->conn, fstrm);
-				ret = fcgi_strm_parse_trailers(fstrm, h1m, htx, &fstrm->rxbuf, &total, count);
-				if (!ret)
-					break;
-
-				TRACE_PROTO("rcvd H1 response trailers", FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS, fconn->conn, fstrm, htx);
-			}
-			else if (!fcgi_strm_add_eom(fstrm, h1m, htx, count))
+			TRACE_PROTO("parsing response trailers", FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS, fconn->conn, fstrm);
+			ret = fcgi_strm_parse_trailers(fstrm, h1m, htx, &fstrm->rxbuf, &total, count);
+			if (!ret && h1m->state != H1_MSG_DONE)
 				break;
 
-			if (h1m->state == H1_MSG_DONE)
-				TRACE_USER("H1 response fully rcvd", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fconn->conn, fstrm, htx);
+			TRACE_PROTO("rcvd H1 response trailers", FCGI_EV_RSP_DATA|FCGI_EV_RSP_TLRS, fconn->conn, fstrm, htx);
 		}
 		else if (h1m->state == H1_MSG_DONE) {
+			if (!(fstrm->flags & FCGI_SF_H1_PARSING_DONE)) {
+				if (!fcgi_strm_add_eom(fstrm, h1m, htx, &fstrm->rxbuf, &total, count))
+					break;
+
+				TRACE_USER("H1 response fully rcvd", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fconn->conn, fstrm, htx);
+			}
+
 			if (b_data(&fstrm->rxbuf) > total) {
 				htx->flags |= HTX_FL_PARSING_ERROR;
 				TRACE_PROTO("too much data, parsing error", FCGI_EV_RSP_DATA, fconn->conn, fstrm);
@@ -3316,21 +3375,16 @@ static size_t fcgi_strm_parse_response(struct fcgi_strm *fstrm, struct buffer *b
 		else if (h1m->state == H1_MSG_TUNNEL) {
 			TRACE_PROTO("parsing response tunneled data", FCGI_EV_RSP_DATA, fconn->conn, fstrm);
 			ret = fcgi_strm_parse_data(fstrm, h1m, &htx, &fstrm->rxbuf, &total, count, buf);
+
 			if (fstrm->state != FCGI_SS_ERROR &&
 			    (fstrm->flags & FCGI_SF_ES_RCVD) && b_data(&fstrm->rxbuf) == total) {
 				TRACE_DEVEL("end of tunneled data", FCGI_EV_RSP_DATA, fconn->conn, fstrm);
-				if ((h1m->flags & (H1_MF_VER_11|H1_MF_XFER_LEN)) == H1_MF_VER_11) {
-					if (!fcgi_strm_add_eom(fstrm, h1m, htx, count))
-						break;
-					TRACE_USER("H1 response fully rcvd", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fconn->conn, fstrm, htx);
-				}
-				else {
-					h1m->state = H1_MSG_DONE;
-					TRACE_USER("H1 response fully rcvd", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fconn->conn, fstrm, htx);
-					break;
-				}
+				if ((h1m->flags & (H1_MF_VER_11|H1_MF_XFER_LEN)) != H1_MF_VER_11)
+					fstrm->flags |= FCGI_SF_H1_PARSING_DONE;
+				h1m->state = H1_MSG_DONE;
+				TRACE_USER("H1 response fully rcvd", FCGI_EV_RSP_DATA|FCGI_EV_RSP_EOM, fconn->conn, fstrm, htx);
 			}
-			if (!ret)
+			if (!ret && h1m->state != H1_MSG_DONE)
 				break;
 
 			TRACE_PROTO("rcvd H1 response tunneled data", FCGI_EV_RSP_DATA, fconn->conn, fstrm, htx);
@@ -3437,25 +3491,8 @@ static void fcgi_detach(struct conn_stream *cs)
 		return;
 	}
 
-	/* The stream is about to die, so no need to attempt to run its task */
-	if (LIST_ADDED(&fstrm->sending_list)  &&
-	    fstrm->send_wait != &fstrm->wait_event) {
-		tasklet_remove_from_tasklet_list(fstrm->send_wait->tasklet);
-		LIST_DEL_INIT(&fstrm->sending_list);
-		/*
-		 * At this point, the stream_interface is supposed to have called
-		 * fcgi_unsubscribe(), so the only way there's still a
-		 * subscription that came from the stream_interface (as we
-		 * can subscribe ourself, in fcgi_do_shutw() and fcgi_do_shutr(),
-		 * without the stream_interface involved) is that we subscribed
-		 * for sending, we woke the tasklet up and removed the
-		 * SUB_RETRY_SEND flag, so the stream_interface would not
-		 * know it has to unsubscribe for send, but the tasklet hasn't
-		 * run yet. Make sure to handle that by explicitely setting
-		 * send_wait to NULL, as nothing else will do it for us.
-		 */
-		fstrm->send_wait = NULL;
-	}
+	/* there's no txbuf so we're certain no to be able to send anything */
+	fstrm->flags &= ~FCGI_SF_NOTIFIED;
 
 	sess = fstrm->sess;
 	fconn = fstrm->fconn;
@@ -3477,7 +3514,8 @@ static void fcgi_detach(struct conn_stream *cs)
 	 */
 	if (!(cs->conn->flags & CO_FL_ERROR) &&
 	    (fconn->state != FCGI_CS_CLOSED) &&
-	    (fstrm->flags & (FCGI_SF_BLK_MBUSY|FCGI_SF_BLK_MROOM)) && (fstrm->send_wait || fstrm->recv_wait)) {
+	    (fstrm->flags & (FCGI_SF_BLK_MBUSY|FCGI_SF_BLK_MROOM)) &&
+	    (fstrm->subs || (fstrm->flags & (FCGI_SF_WANT_SHUTR|FCGI_SF_WANT_SHUTW)))) {
 		TRACE_DEVEL("leaving on stream blocked", FCGI_EV_STRM_END|FCGI_EV_FSTRM_BLK, fconn->conn, fstrm);
 		return;
 	}
@@ -3492,49 +3530,46 @@ static void fcgi_detach(struct conn_stream *cs)
 
 	if (!(fconn->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) &&
 	    !(fconn->flags & FCGI_CF_KEEP_CONN)) {
-		if (!fconn->conn->owner) {
+		/* Never ever allow to reuse a connection from a non-reuse backend */
+		if ((fconn->proxy->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
+			fconn->conn->flags |= CO_FL_PRIVATE;
+		if (!fconn->conn->owner && (fconn->conn->flags & CO_FL_PRIVATE)) {
 			fconn->conn->owner = sess;
 			if (!session_add_conn(sess, fconn->conn, fconn->conn->target)) {
 				fconn->conn->owner = NULL;
 				if (eb_is_empty(&fconn->streams_by_id)) {
-					if (!srv_add_to_idle_list(objt_server(fconn->conn->target), fconn->conn)) {
-						/* The server doesn't want it, let's kill the connection right away */
-						fconn->conn->mux->destroy(fconn);
-						TRACE_DEVEL("outgoing connection killed", FCGI_EV_STRM_END|FCGI_EV_FCONN_ERR);
-					}
-					TRACE_DEVEL("reusable idle connection", FCGI_EV_STRM_END, fconn->conn);
-					return;
+					/* let's kill the connection right away */
+					fconn->conn->mux->destroy(fconn);
+					TRACE_DEVEL("outgoing connection killed", FCGI_EV_STRM_END|FCGI_EV_FCONN_ERR);
 				}
 			}
 		}
 		if (eb_is_empty(&fconn->streams_by_id)) {
-			int ret = session_check_idle_conn(fconn->conn->owner, fconn->conn);
-			if (ret == -1) {
+			if (sess && fconn->conn->owner == sess &&
+			    session_check_idle_conn(fconn->conn->owner, fconn->conn) != 0) {
 				/* The connection is destroyed, let's leave */
 				TRACE_DEVEL("outgoing connection killed", FCGI_EV_STRM_END|FCGI_EV_FCONN_ERR);
 				return;
 			}
-			else if (ret == 1) {
-				/* The connection was added to the server idle list, just stop */
+			if (!(fconn->conn->flags & CO_FL_PRIVATE)) {
+				if (!srv_add_to_idle_list(objt_server(fconn->conn->target), fconn->conn, 1)) {
+					/* The server doesn't want it, let's kill the connection right away */
+					fconn->conn->mux->destroy(fconn);
+					TRACE_DEVEL("outgoing connection killed", FCGI_EV_STRM_END|FCGI_EV_FCONN_ERR);
+					return;
+				}
+				/* At this point, the connection has been added to the
+				 * server idle list, so another thread may already have
+				 * hijacked it, so we can't do anything with it.
+				 */
 				TRACE_DEVEL("reusable idle connection", FCGI_EV_STRM_END, fconn->conn);
 				return;
 			}
-			TRACE_DEVEL("connection in idle session list", FCGI_EV_STRM_END, fconn->conn);
-		}
-		/* Never ever allow to reuse a connection from a non-reuse backend */
-		if ((fconn->proxy->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
-			fconn->conn->flags |= CO_FL_PRIVATE;
-		if (!LIST_ADDED(&fconn->conn->list) && fconn->nb_streams < fconn->streams_limit) {
-			struct server *srv = objt_server(fconn->conn->target);
-
-			if (srv) {
-				if (fconn->conn->flags & CO_FL_PRIVATE)
-					LIST_ADD(&srv->priv_conns[tid], &fconn->conn->list);
-				else
-					LIST_ADD(&srv->idle_conns[tid], &fconn->conn->list);
+		} else if (MT_LIST_ISEMPTY(&fconn->conn->list) &&
+			   fcgi_avail_streams(fconn->conn) > 0 && objt_server(fconn->conn->target)) {
+				LIST_ADD(&__objt_server(fconn->conn->target)->available_conns[tid], mt_list_to_list(&fconn->conn->list));
 			}
-			TRACE_DEVEL("connection in idle server list", FCGI_EV_STRM_END, fconn->conn);
-		}
+
 	}
 
 	/* We don't want to close right now unless we're removing the last
@@ -3559,7 +3594,6 @@ static void fcgi_detach(struct conn_stream *cs)
 static void fcgi_do_shutr(struct fcgi_strm *fstrm)
 {
 	struct fcgi_conn *fconn = fstrm->fconn;
-	struct wait_event *sw = &fstrm->wait_event;
 
 	TRACE_ENTER(FCGI_EV_STRM_SHUT, fconn->conn, fstrm);
 
@@ -3592,14 +3626,16 @@ static void fcgi_do_shutr(struct fcgi_strm *fstrm)
 	return;
 
   add_to_list:
+	/* Let the handler know we want to shutr, and add ourselves to the
+	 * send list if not yet done. fcgi_deferred_shut() will be
+	 * automatically called via the shut_tl tasklet when there's room
+	 * again.
+	 */
 	if (!LIST_ADDED(&fstrm->send_list)) {
-		sw->events |= SUB_RETRY_SEND;
 		if (fstrm->flags & (FCGI_SF_BLK_MBUSY|FCGI_SF_BLK_MROOM)) {
-			fstrm->send_wait = sw;
 			LIST_ADDQ(&fconn->send_list, &fstrm->send_list);
 		}
 	}
-	/* Let the handler know we want shutr */
 	fstrm->flags |= FCGI_SF_WANT_SHUTR;
 	TRACE_LEAVE(FCGI_EV_STRM_SHUT, fconn->conn, fstrm);
 	return;
@@ -3609,7 +3645,6 @@ static void fcgi_do_shutr(struct fcgi_strm *fstrm)
 static void fcgi_do_shutw(struct fcgi_strm *fstrm)
 {
 	struct fcgi_conn *fconn = fstrm->fconn;
-	struct wait_event *sw = &fstrm->wait_event;
 
 	TRACE_ENTER(FCGI_EV_STRM_SHUT, fconn->conn, fstrm);
 
@@ -3647,20 +3682,22 @@ static void fcgi_do_shutw(struct fcgi_strm *fstrm)
 	return;
 
   add_to_list:
+	/* Let the handler know we want to shutr, and add ourselves to the
+	 * send list if not yet done. fcgi_deferred_shut() will be
+	 * automatically called via the shut_tl tasklet when there's room
+	 * again.
+	 */
 	if (!LIST_ADDED(&fstrm->send_list)) {
-		sw->events |= SUB_RETRY_SEND;
 		if (fstrm->flags & (FCGI_SF_BLK_MBUSY|FCGI_SF_BLK_MROOM)) {
-			fstrm->send_wait = sw;
 			LIST_ADDQ(&fconn->send_list, &fstrm->send_list);
 		}
 	}
-	/* let the handler know we want to shutw */
 	fstrm->flags |= FCGI_SF_WANT_SHUTW;
 	TRACE_LEAVE(FCGI_EV_STRM_SHUT, fconn->conn, fstrm);
 	return;
 }
 
-/* This is the tasklet referenced in fstrm->wait_event.tasklet, it is used for
+/* This is the tasklet referenced in fstrm->shut_tl, it is used for
  * deferred shutdowns when the fcgi_detach() was done but the mux buffer was full
  * and prevented the last record from being emitted.
  */
@@ -3671,7 +3708,11 @@ static struct task *fcgi_deferred_shut(struct task *t, void *ctx, unsigned short
 
 	TRACE_ENTER(FCGI_EV_STRM_SHUT, fconn->conn, fstrm);
 
-	LIST_DEL_INIT(&fstrm->sending_list);
+	if (fstrm->flags & FCGI_SF_NOTIFIED) {
+		/* some data processing remains to be done first */
+		goto end;
+	}
+
 	if (fstrm->flags & FCGI_SF_WANT_SHUTW)
 		fcgi_do_shutw(fstrm);
 
@@ -3688,7 +3729,7 @@ static struct task *fcgi_deferred_shut(struct task *t, void *ctx, unsigned short
 				fcgi_release(fconn);
 		}
 	}
-
+ end:
 	TRACE_LEAVE(FCGI_EV_STRM_SHUT);
 	return NULL;
 }
@@ -3720,73 +3761,57 @@ static void fcgi_shutw(struct conn_stream *cs, enum cs_shw_mode mode)
 	fcgi_do_shutw(fstrm);
 }
 
-/* Called from the upper layer, to subscribe to events, such as being able to send.
- * The <param> argument here is supposed to be a pointer to a wait_event struct
- * which will be passed to fstrm->recv_wait or fstrm->send_wait depending on the
- * event_type. The event_type must only be a combination of SUB_RETRY_RECV and
- * SUB_RETRY_SEND, other values will lead to -1 being returned. It always
- * returns 0 except for the error above.
+/* Called from the upper layer, to subscribe <es> to events <event_type>. The
+ * event subscriber <es> is not allowed to change from a previous call as long
+ * as at least one event is still subscribed. The <event_type> must only be a
+ * combination of SUB_RETRY_RECV and SUB_RETRY_SEND. It always returns 0.
  */
-static int fcgi_subscribe(struct conn_stream *cs, int event_type, void *param)
+static int fcgi_subscribe(struct conn_stream *cs, int event_type, struct wait_event *es)
 {
-	struct wait_event *sw;
 	struct fcgi_strm *fstrm = cs->ctx;
 	struct fcgi_conn *fconn = fstrm->fconn;
 
-	if (event_type & SUB_RETRY_RECV) {
+	BUG_ON(event_type & ~(SUB_RETRY_SEND|SUB_RETRY_RECV));
+	BUG_ON(fstrm->subs && fstrm->subs != es);
+
+	es->events |= event_type;
+	fstrm->subs = es;
+
+	if (event_type & SUB_RETRY_RECV)
 		TRACE_DEVEL("unsubscribe(recv)", FCGI_EV_STRM_RECV, fconn->conn, fstrm);
-		sw = param;
-		BUG_ON(fstrm->recv_wait != NULL || (sw->events & SUB_RETRY_RECV));
-		sw->events |= SUB_RETRY_RECV;
-		fstrm->recv_wait = sw;
-		event_type &= ~SUB_RETRY_RECV;
-	}
+
 	if (event_type & SUB_RETRY_SEND) {
 		TRACE_DEVEL("unsubscribe(send)", FCGI_EV_STRM_SEND, fconn->conn, fstrm);
-		sw = param;
-		BUG_ON(fstrm->send_wait != NULL || (sw->events & SUB_RETRY_SEND));
-		sw->events |= SUB_RETRY_SEND;
-		fstrm->send_wait = sw;
 		if (!LIST_ADDED(&fstrm->send_list))
 			LIST_ADDQ(&fconn->send_list, &fstrm->send_list);
-		event_type &= ~SUB_RETRY_SEND;
 	}
-	if (event_type != 0)
-		return -1;
 	return 0;
 }
 
-/* Called from the upper layer, to unsubscribe some events (undo fcgi_subscribe).
- * The <param> argument here is supposed to be a pointer to the same wait_event
- * struct that was passed to fcgi_subscribe() otherwise nothing will be changed.
- * It always returns zero.
+/* Called from the upper layer, to unsubscribe <es> from events <event_type>
+ * (undo fcgi_subscribe). The <es> pointer is not allowed to differ from the one
+ * passed to the subscribe() call. It always returns zero.
  */
-static int fcgi_unsubscribe(struct conn_stream *cs, int event_type, void *param)
+static int fcgi_unsubscribe(struct conn_stream *cs, int event_type, struct wait_event *es)
 {
-	struct wait_event *sw;
 	struct fcgi_strm *fstrm = cs->ctx;
 	struct fcgi_conn *fconn = fstrm->fconn;
 
-	if (event_type & SUB_RETRY_RECV) {
+	BUG_ON(event_type & ~(SUB_RETRY_SEND|SUB_RETRY_RECV));
+	BUG_ON(fstrm->subs && fstrm->subs != es);
+
+	es->events &= ~event_type;
+	if (!es->events)
+		fstrm->subs = NULL;
+
+	if (event_type & SUB_RETRY_RECV)
 		TRACE_DEVEL("subscribe(recv)", FCGI_EV_STRM_RECV, fconn->conn, fstrm);
-		sw = param;
-		BUG_ON(fstrm->recv_wait != sw);
-		sw->events &= ~SUB_RETRY_RECV;
-		fstrm->recv_wait = NULL;
-	}
+
 	if (event_type & SUB_RETRY_SEND) {
 		TRACE_DEVEL("subscribe(send)", FCGI_EV_STRM_SEND, fconn->conn, fstrm);
-		sw = param;
-		BUG_ON(fstrm->send_wait != sw);
-		LIST_DEL(&fstrm->send_list);
-		LIST_INIT(&fstrm->send_list);
-		sw->events &= ~SUB_RETRY_SEND;
-		/* We were about to send, make sure it does not happen */
-		if (LIST_ADDED(&fstrm->sending_list) && fstrm->send_wait != &fstrm->wait_event) {
-			tasklet_remove_from_tasklet_list(fstrm->send_wait->tasklet);
-			LIST_DEL_INIT(&fstrm->sending_list);
-		}
-		fstrm->send_wait = NULL;
+		fstrm->flags &= ~FCGI_SF_NOTIFIED;
+		if (!(fstrm->flags & (FCGI_SF_WANT_SHUTR|FCGI_SF_WANT_SHUTW)))
+			LIST_DEL_INIT(&fstrm->send_list);
 	}
 	return 0;
 }
@@ -3805,11 +3830,11 @@ static size_t fcgi_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t co
 	else
 		TRACE_STATE("fstrm rxbuf not allocated", FCGI_EV_STRM_RECV|FCGI_EV_FSTRM_BLK, fconn->conn, fstrm);
 
-	if (b_data(&fstrm->rxbuf) || (fstrm->flags & FCGI_SF_APPEND_EOM))
+	if (b_data(&fstrm->rxbuf) || (fstrm->h1m.state == H1_MSG_DONE && !(fstrm->flags & FCGI_SF_H1_PARSING_DONE)))
 		cs->flags |= (CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
 	else {
 		cs->flags &= ~(CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
-		if (fstrm->state == FCGI_SS_ERROR || fstrm->h1m.state == H1_MSG_DONE) {
+		if (fstrm->state == FCGI_SS_ERROR || (fstrm->flags & FCGI_SF_H1_PARSING_DONE)) {
 			cs->flags |= CS_FL_EOI;
 			if (!(fstrm->h1m.flags & (H1_MF_VER_11|H1_MF_XFER_LEN)))
 				cs->flags |= CS_FL_EOS;
@@ -3829,21 +3854,6 @@ static size_t fcgi_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t co
 
 	TRACE_LEAVE(FCGI_EV_STRM_RECV, fconn->conn, fstrm);
 	return ret;
-}
-
-
-/* stops all senders of this connection for example when the mux buffer is full.
- * They are moved from the sending_list to send_list.
- */
-static void fcgi_stop_senders(struct fcgi_conn *fconn)
-{
-	struct fcgi_strm *fstrm, *fstrm_back;
-
-	list_for_each_entry_safe(fstrm, fstrm_back, &fconn->sending_list, sending_list) {
-		LIST_DEL_INIT(&fstrm->sending_list);
-		tasklet_remove_from_tasklet_list(fstrm->send_wait->tasklet);
-		fstrm->send_wait->events |= SUB_RETRY_SEND;
-	}
 }
 
 
@@ -3868,16 +3878,11 @@ static size_t fcgi_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t co
 	 * and there's somebody else that is waiting to send, do nothing,
 	 * we will subscribe later and be put at the end of the list
 	 */
-	if (!LIST_ADDED(&fstrm->sending_list) && !LIST_ISEMPTY(&fconn->send_list)) {
+	if (!(fstrm->flags & FCGI_SF_NOTIFIED) && !LIST_ISEMPTY(&fconn->send_list)) {
 		TRACE_STATE("other streams already waiting, going to the queue and leaving", FCGI_EV_STRM_SEND|FCGI_EV_FSTRM_BLK, fconn->conn, fstrm);
 		return 0;
 	}
-	LIST_DEL_INIT(&fstrm->sending_list);
-
-	/* We couldn't set it to NULL before, because we needed it in case
-	 * we had to cancel the tasklet
-	 */
-	fstrm->send_wait = NULL;
+	fstrm->flags &= ~FCGI_SF_NOTIFIED;
 
 	if (fconn->state < FCGI_CS_RECORD_H) {
 		TRACE_STATE("connection not ready, leaving", FCGI_EV_STRM_SEND|FCGI_EV_FSTRM_BLK, fconn->conn, fstrm);
@@ -3994,12 +3999,6 @@ static size_t fcgi_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t co
 	if (htx)
 		htx_to_buf(htx, buf);
 
-	/* The mux is full, cancel the pending tasks */
-	if ((fconn->flags & FCGI_CF_MUX_BLOCK_ANY) || (fstrm->flags & FCGI_SF_BLK_MBUSY)) {
-		TRACE_DEVEL("mux full, stopping senders", FCGI_EV_STRM_SEND|FCGI_EV_FCONN_BLK|FCGI_EV_FSTRM_BLK, fconn->conn, fstrm);
-		fcgi_stop_senders(fconn);
-	}
-
 	if (total > 0) {
 		if (!(fconn->wait_event.events & SUB_RETRY_SEND)) {
 			TRACE_DEVEL("data queued, waking up fconn sender", FCGI_EV_STRM_SEND|FCGI_EV_FCONN_SEND|FCGI_EV_FCONN_WAKE, fconn->conn, fstrm);
@@ -4007,7 +4006,8 @@ static size_t fcgi_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t co
 		}
 
 		/* Ok we managed to send something, leave the send_list */
-		LIST_DEL_INIT(&fstrm->send_list);
+		if (!(fstrm->flags & (FCGI_SF_WANT_SHUTR|FCGI_SF_WANT_SHUTW)))
+			LIST_DEL_INIT(&fstrm->send_list);
 	}
 
 	TRACE_LEAVE(FCGI_EV_STRM_SEND, fconn->conn, fstrm, htx, (size_t[]){total});
@@ -4069,6 +4069,50 @@ static void fcgi_show_fd(struct buffer *msg, struct connection *conn)
 	}
 }
 
+/* Migrate the the connection to the current thread.
+ * Return 0 if successful, non-zero otherwise.
+ * Expected to be called with the old thread lock held.
+ */
+static int fcgi_takeover(struct connection *conn)
+{
+	struct fcgi_conn *fcgi = conn->ctx;
+
+	if (fd_takeover(conn->handle.fd, conn) != 0)
+		return -1;
+	if (fcgi->wait_event.events)
+		fcgi->conn->xprt->unsubscribe(fcgi->conn, fcgi->conn->xprt_ctx,
+		    fcgi->wait_event.events, &fcgi->wait_event);
+	/* To let the tasklet know it should free itself, and do nothing else,
+	 * set its context to NULL;
+	 */
+	fcgi->wait_event.tasklet->context = NULL;
+	tasklet_wakeup(fcgi->wait_event.tasklet);
+	if (fcgi->task) {
+		fcgi->task->context = NULL;
+		/* Wake the task, to let it free itself */
+		task_wakeup(fcgi->task, TASK_WOKEN_OTHER);
+
+		fcgi->task = task_new(tid_bit);
+		if (!fcgi->task) {
+			fcgi_release(fcgi);
+			return -1;
+		}
+		fcgi->task->process = fcgi_timeout_task;
+		fcgi->task->context = fcgi;
+	}
+	fcgi->wait_event.tasklet = tasklet_new();
+	if (!fcgi->wait_event.tasklet) {
+		fcgi_release(fcgi);
+		return -1;
+	}
+	fcgi->wait_event.tasklet->process = fcgi_io_cb;
+	fcgi->wait_event.tasklet->context = fcgi;
+	fcgi->conn->xprt->subscribe(fcgi->conn, fcgi->conn->xprt_ctx,
+		                    SUB_RETRY_RECV, &fcgi->wait_event);
+
+	return 0;
+}
+
 /****************************************/
 /* MUX initialization and instanciation */
 /****************************************/
@@ -4091,6 +4135,7 @@ static const struct mux_ops mux_fcgi_ops = {
 	.shutw         = fcgi_shutw,
 	.ctl           = fcgi_ctl,
 	.show_fd       = fcgi_show_fd,
+	.takeover      = fcgi_takeover,
 	.flags         = MX_FL_HTX,
 	.name          = "FCGI",
 };

@@ -170,7 +170,7 @@ struct global global = {
 	.tune = {
 		.options = GTUNE_LISTENER_MQ,
 		.bufsize = (BUFSIZE + 2*sizeof(void *) - 1) & -(2*sizeof(void *)),
-		.maxrewrite = -1,
+		.maxrewrite = MAXREWRITE,
 		.chksize = (BUFSIZE + 2*sizeof(void *) - 1) & -(2*sizeof(void *)),
 		.reserved_bufs = RESERVED_BUFS,
 		.pattern_cache = DEFAULT_PAT_LRU_SIZE,
@@ -268,11 +268,6 @@ const struct linger nolinger = { .l_onoff = 1, .l_linger = 0 };
 char hostname[MAX_HOSTNAME_LEN];
 char localpeer[MAX_HOSTNAME_LEN];
 
-/* used from everywhere just to drain results we don't want to read and which
- * recent versions of gcc increasingly and annoyingly complain about.
- */
-int shut_your_big_mouth_gcc_int = 0;
-
 static char **next_argv = NULL;
 
 struct list proc_list = LIST_HEAD_INIT(proc_list);
@@ -285,11 +280,6 @@ unsigned int rlim_fd_max_at_boot = 0;
 unsigned char boot_seed[20];        /* per-boot random seed (160 bits initially) */
 
 struct mworker_proc *proc_self = NULL;
-
-/* list of the temporarily limited listeners because of lack of resource */
-struct mt_list global_listener_queue = MT_LIST_HEAD_INIT(global_listener_queue);
-struct task *global_listener_queue_task;
-static struct task *manage_global_listener_queue(struct task *t, void *context, unsigned short state);
 
 static void *run_thread_poll_loop(void *data);
 
@@ -1607,6 +1597,70 @@ static int compute_ideal_maxconn()
 	return MAX(maxconn, DEFAULT_MAXCONN);
 }
 
+/* computes the estimated maxsock value for the given maxconn based on the
+ * possibly set global.maxpipes and existing partial global.maxsock. It may
+ * temporarily change global.maxconn for the time needed to propagate the
+ * computations, and will reset it.
+ */
+static int compute_ideal_maxsock(int maxconn)
+{
+	int maxpipes = global.maxpipes;
+	int maxsock  = global.maxsock;
+
+
+	if (!maxpipes) {
+		int old_maxconn = global.maxconn;
+
+		global.maxconn = maxconn;
+		maxpipes = compute_ideal_maxpipes();
+		global.maxconn = old_maxconn;
+	}
+
+	maxsock += maxconn * 2;         /* each connection needs two sockets */
+	maxsock += maxpipes * 2;        /* each pipe needs two FDs */
+	maxsock += global.nbthread;     /* one epoll_fd/kqueue_fd per thread */
+	maxsock += 2 * global.nbthread; /* one wake-up pipe (2 fd) per thread */
+
+	/* compute fd used by async engines */
+	if (global.ssl_used_async_engines) {
+		int sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
+
+		maxsock += maxconn * sides * global.ssl_used_async_engines;
+	}
+	return maxsock;
+}
+
+/* Tests if it is possible to set the current process' RLIMIT_NOFILE to
+ * <maxsock>, then sets it back to the previous value. Returns non-zero if the
+ * value is accepted, non-zero otherwise. This is used to determine if an
+ * automatic limit may be applied or not. When it is not, the caller knows that
+ * the highest we can do is the rlim_max at boot. In case of error, we return
+ * that the setting is possible, so that we defer the error processing to the
+ * final stage in charge of enforcing this.
+ */
+static int check_if_maxsock_permitted(int maxsock)
+{
+	struct rlimit orig_limit, test_limit;
+	int ret;
+
+	if (getrlimit(RLIMIT_NOFILE, &orig_limit) != 0)
+		return 1;
+
+	/* don't go further if we can't even set to what we have */
+	if (setrlimit(RLIMIT_NOFILE, &orig_limit) != 0)
+		return 1;
+
+	test_limit.rlim_max = MAX(maxsock, orig_limit.rlim_max);
+	test_limit.rlim_cur = test_limit.rlim_max;
+	ret = setrlimit(RLIMIT_NOFILE, &test_limit);
+
+	if (setrlimit(RLIMIT_NOFILE, &orig_limit) != 0)
+		return 1;
+
+	return ret == 0;
+}
+
+
 /*
  * This function initializes all the necessary variables. It only returns
  * if everything is OK. If something fails, it exits.
@@ -1827,7 +1881,7 @@ static void init(int argc, char **argv)
 							 *argv, strerror(errno));
 						exit(1);
 					} else if (endptr && strlen(endptr)) {
-						while (isspace(*endptr)) endptr++;
+						while (isspace((unsigned char)*endptr)) endptr++;
 						if (*endptr != 0) {
 							ha_alert("-%2s option: some bytes unconsumed in PID list {%s}\n",
 								 flag, endptr);
@@ -2109,15 +2163,6 @@ static void init(int argc, char **argv)
 		exit(2);
 	}
 
-	global_listener_queue_task = task_new(MAX_THREADS_MASK);
-	if (!global_listener_queue_task) {
-		ha_alert("Out of memory when initializing global task\n");
-		exit(1);
-	}
-	/* very simple initialization, users will queue the task if needed */
-	global_listener_queue_task->context = NULL; /* not even a context! */
-	global_listener_queue_task->process = manage_global_listener_queue;
-
 	/* now we know the buffer size, we can initialize the channels and buffers */
 	init_buffer();
 
@@ -2192,23 +2237,37 @@ static void init(int argc, char **argv)
 		 */
 		int sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
 		int64_t mem = global.rlimit_memmax * 1048576ULL;
+		int retried = 0;
 
 		mem -= global.tune.sslcachesize * 200; // about 200 bytes per SSL cache entry
 		mem -= global.maxzlibmem;
 		mem = mem * MEM_USABLE_RATIO;
 
-		global.maxconn = mem /
-			((STREAM_MAX_COST + 2 * global.tune.bufsize) +    // stream + 2 buffers per stream
-			 sides * global.ssl_session_max_cost + // SSL buffers, one per side
-			 global.ssl_handshake_max_cost);       // 1 handshake per connection max
+		/* Principle: we test once to set maxconn according to the free
+		 * memory. If it results in values the system rejects, we try a
+		 * second time by respecting rlim_fd_max. If it fails again, we
+		 * go back to the initial value and will let the final code
+		 * dealing with rlimit report the error. That's up to 3 attempts.
+		 */
+		do {
+			global.maxconn = mem /
+				((STREAM_MAX_COST + 2 * global.tune.bufsize) +    // stream + 2 buffers per stream
+				 sides * global.ssl_session_max_cost +            // SSL buffers, one per side
+				 global.ssl_handshake_max_cost);                  // 1 handshake per connection max
 
-		global.maxconn = MIN(global.maxconn, ideal_maxconn);
-		global.maxconn = round_2dig(global.maxconn);
+			if (retried == 1)
+				global.maxconn = MIN(global.maxconn, ideal_maxconn);
+			global.maxconn = round_2dig(global.maxconn);
 #ifdef SYSTEM_MAXCONN
-		if (global.maxconn > SYSTEM_MAXCONN)
-			global.maxconn = SYSTEM_MAXCONN;
+			if (global.maxconn > SYSTEM_MAXCONN)
+				global.maxconn = SYSTEM_MAXCONN;
 #endif /* SYSTEM_MAXCONN */
-		global.maxsslconn = sides * global.maxconn;
+			global.maxsslconn = sides * global.maxconn;
+
+			if (check_if_maxsock_permitted(compute_ideal_maxsock(global.maxconn)))
+				break;
+		} while (retried++ < 2);
+
 		if (global.mode & (MODE_VERBOSE|MODE_DEBUG))
 			fprintf(stderr, "Note: setting global.maxconn to %d and global.maxsslconn to %d.\n",
 			        global.maxconn, global.maxsslconn);
@@ -2255,6 +2314,7 @@ static void init(int argc, char **argv)
 		int sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
 		int64_t mem = global.rlimit_memmax * 1048576ULL;
 		int64_t clearmem;
+		int retried = 0;
 
 		if (global.ssl_used_frontend || global.ssl_used_backend)
 			mem -= global.tune.sslcachesize * 200; // about 200 bytes per SSL cache entry
@@ -2266,23 +2326,35 @@ static void init(int argc, char **argv)
 		if (sides)
 			clearmem -= (global.ssl_session_max_cost + global.ssl_handshake_max_cost) * (int64_t)global.maxsslconn;
 
-		global.maxconn = clearmem / (STREAM_MAX_COST + 2 * global.tune.bufsize);
-		global.maxconn = MIN(global.maxconn, ideal_maxconn);
-		global.maxconn = round_2dig(global.maxconn);
+		/* Principle: we test once to set maxconn according to the free
+		 * memory. If it results in values the system rejects, we try a
+		 * second time by respecting rlim_fd_max. If it fails again, we
+		 * go back to the initial value and will let the final code
+		 * dealing with rlimit report the error. That's up to 3 attempts.
+		 */
+		do {
+			global.maxconn = clearmem / (STREAM_MAX_COST + 2 * global.tune.bufsize);
+			if (retried == 1)
+				global.maxconn = MIN(global.maxconn, ideal_maxconn);
+			global.maxconn = round_2dig(global.maxconn);
 #ifdef SYSTEM_MAXCONN
-		if (global.maxconn > SYSTEM_MAXCONN)
-			global.maxconn = SYSTEM_MAXCONN;
+			if (global.maxconn > SYSTEM_MAXCONN)
+				global.maxconn = SYSTEM_MAXCONN;
 #endif /* SYSTEM_MAXCONN */
 
-		if (clearmem <= 0 || !global.maxconn) {
-			ha_alert("Cannot compute the automatic maxconn because global.maxsslconn is already too "
-				 "high for the global.memmax value (%d MB). The absolute maximum possible value "
-				 "is %d, but %d was found.\n",
-				 global.rlimit_memmax,
+			if (clearmem <= 0 || !global.maxconn) {
+				ha_alert("Cannot compute the automatic maxconn because global.maxsslconn is already too "
+					 "high for the global.memmax value (%d MB). The absolute maximum possible value "
+					 "is %d, but %d was found.\n",
+					 global.rlimit_memmax,
 				 (int)(mem / (global.ssl_session_max_cost + global.ssl_handshake_max_cost)),
-				 global.maxsslconn);
-			exit(1);
-		}
+					 global.maxsslconn);
+				exit(1);
+			}
+
+			if (check_if_maxsock_permitted(compute_ideal_maxsock(global.maxconn)))
+				break;
+		} while (retried++ < 2);
 
 		if (global.mode & (MODE_VERBOSE|MODE_DEBUG)) {
 			if (sides && global.maxsslconn > sides * global.maxconn) {
@@ -2294,20 +2366,8 @@ static void init(int argc, char **argv)
 		}
 	}
 
-	if (!global.maxpipes)
-		global.maxpipes = compute_ideal_maxpipes();
-
-	global.hardmaxconn = global.maxconn;  /* keep this max value */
-	global.maxsock += global.maxconn * 2; /* each connection needs two sockets */
-	global.maxsock += global.maxpipes * 2; /* each pipe needs two FDs */
-	global.maxsock += global.nbthread;     /* one epoll_fd/kqueue_fd per thread */
-	global.maxsock += 2 * global.nbthread; /* one wake-up pipe (2 fd) per thread */
-
-	/* compute fd used by async engines */
-	if (global.ssl_used_async_engines) {
-		int sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
-		global.maxsock += global.maxconn * sides * global.ssl_used_async_engines;
-	}
+	global.maxsock = compute_ideal_maxsock(global.maxconn);
+	global.hardmaxconn = global.maxconn;
 
 	/* update connection pool thresholds */
 	global.tune.pool_low_count  = ((long long)global.maxsock * global.tune.pool_low_ratio  + 99) / 100;
@@ -2323,9 +2383,6 @@ static void init(int argc, char **argv)
 
 	if (global.tune.recv_enough == 0)
 		global.tune.recv_enough = MIN_RECV_AT_ONCE_ENOUGH;
-
-	if (global.tune.maxrewrite < 0)
-		global.tune.maxrewrite = MAXREWRITE;
 
 	if (global.tune.maxrewrite >= global.tune.bufsize / 2)
 		global.tune.maxrewrite = global.tune.bufsize / 2;
@@ -2455,6 +2512,8 @@ static void deinit_act_rules(struct list *rules)
 	list_for_each_entry_safe(rule, ruleb, rules, list) {
 		LIST_DEL(&rule->list);
 		deinit_acl_cond(rule->cond);
+		if (rule->release_ptr)
+			rule->release_ptr(rule);
 		free(rule);
 	}
 }
@@ -2491,7 +2550,6 @@ void deinit(void)
 	struct post_deinit_fct *pdf;
 	struct proxy_deinit_fct *pxdf;
 	struct server_deinit_fct *srvdf;
-	int i;
 
 	deinit_signals();
 	while (p) {
@@ -2519,9 +2577,6 @@ void deinit(void)
 		if (p->conf.logformat_sd_string != default_rfc5424_sd_log_format)
 			free(p->conf.logformat_sd_string);
 		free(p->conf.lfsd_file);
-
-		for (i = 0; i < HTTP_ERR_SIZE; i++)
-			chunk_destroy(&p->errmsg[i]);
 
 		list_for_each_entry_safe(cond, condb, &p->mon_fail_cond, list) {
 			LIST_DEL(&cond->list);
@@ -2607,6 +2662,7 @@ void deinit(void)
 		deinit_act_rules(&p->tcp_req.l5_rules);
 		deinit_act_rules(&p->http_req_rules);
 		deinit_act_rules(&p->http_res_rules);
+		deinit_act_rules(&p->http_after_res_rules);
 
 		deinit_stick_rules(&p->storersp_rules);
 		deinit_stick_rules(&p->sticking_rules);
@@ -2653,9 +2709,8 @@ void deinit(void)
 			free(s->hostname_dn);
 			free((char*)s->conf.file);
 			free(s->idle_conns);
-			free(s->priv_conns);
 			free(s->safe_conns);
-			free(s->idle_orphan_conns);
+			free(s->available_conns);
 			free(s->curr_idle_thr);
 
 			if (s->use_ssl || s->check.use_ssl) {
@@ -2755,7 +2810,6 @@ void deinit(void)
 	free(global.node);    global.node = NULL;
 	free(global.desc);    global.desc = NULL;
 	free(oldpids);        oldpids = NULL;
-	task_destroy(global_listener_queue_task); global_listener_queue_task = NULL;
 	task_destroy(idle_conn_task);
 	idle_conn_task = NULL;
 
@@ -2783,12 +2837,14 @@ void deinit(void)
 
 
 /* Runs the polling loop */
-static void run_poll_loop()
+void run_poll_loop()
 {
 	int next, wake;
 
 	tv_update_date(0,1);
 	while (1) {
+		wake_expired_tasks();
+
 		/* Process a few tasks */
 		process_runnable_tasks();
 
@@ -2796,9 +2852,6 @@ static void run_poll_loop()
 		 first thread */
 		if (tid == 0)
 			signal_process_queue();
-
-		/* Check if we can expire some tasks */
-		next = wake_expired_tasks();
 
 		/* also stop  if we failed to cleanly stop all tasks */
 		if (killed > 1)
@@ -2813,7 +2866,7 @@ static void run_poll_loop()
 		else {
 			_HA_ATOMIC_OR(&sleeping_thread_mask, tid_bit);
 			__ha_barrier_atomic_store();
-			if ((global_tasks_mask & tid_bit) || thread_has_tasks()) {
+			if (thread_has_tasks()) {
 				activity[tid].wake_tasks++;
 				_HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 			} else
@@ -2829,6 +2882,9 @@ static void run_poll_loop()
 			    (stopping_thread_mask & all_threads_mask) == all_threads_mask)
 				break;
 		}
+
+		/* If we have to sleep, measure how long */
+		next = wake ? TICK_ETERNITY : next_timer_expiry();
 
 		/* The poller will ensure it returns around <next> */
 		cur_poller.poll(&cur_poller, next, wake);
@@ -2915,6 +2971,42 @@ static void *run_thread_poll_loop(void *data)
 	pthread_mutex_unlock(&init_mutex);
 #endif
 
+#if defined(PR_SET_NO_NEW_PRIVS) && defined(USE_PRCTL)
+	/* Let's refrain from using setuid executables. This way the impact of
+	 * an eventual vulnerability in a library remains limited. It may
+	 * impact external checks but who cares about them anyway ? In the
+	 * worst case it's possible to disable the option. Obviously we do this
+	 * in workers only. We can't hard-fail on this one as it really is
+	 * implementation dependent though we're interested in feedback, hence
+	 * the warning.
+	 */
+	if (!(global.tune.options & GTUNE_INSECURE_SETUID) && !master) {
+		static int warn_fail;
+		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1 && !_HA_ATOMIC_XADD(&warn_fail, 1)) {
+			ha_warning("Failed to disable setuid, please report to developers with detailed "
+				   "information about your operating system. You can silence this warning "
+				   "by adding 'insecure-setuid-wanted' in the 'global' section.\n");
+		}
+	}
+#endif
+
+#if defined(RLIMIT_NPROC)
+	/* all threads have started, it's now time to prevent any new thread
+	 * or process from starting. Obviously we do this in workers only. We
+	 * can't hard-fail on this one as it really is implementation dependent
+	 * though we're interested in feedback, hence the warning.
+	 */
+	if (!(global.tune.options & GTUNE_INSECURE_FORK) && !master) {
+		struct rlimit limit = { .rlim_cur = 0, .rlim_max = 0 };
+		static int warn_fail;
+
+		if (setrlimit(RLIMIT_NPROC, &limit) == -1 && !_HA_ATOMIC_XADD(&warn_fail, 1)) {
+			ha_warning("Failed to disable forks, please report to developers with detailed "
+				   "information about your operating system. You can silence this warning "
+				   "by adding 'insecure-fork-wanted' in the 'global' section.\n");
+		}
+	}
+#endif
 	run_poll_loop();
 
 	list_for_each_entry(ptdf, &per_thread_deinit_list, list)
@@ -2929,38 +3021,6 @@ static void *run_thread_poll_loop(void *data)
 		pthread_exit(NULL);
 #endif
 	return NULL;
-}
-
-/* This is the global management task for listeners. It enables listeners waiting
- * for global resources when there are enough free resource, or at least once in
- * a while. It is designed to be called as a task.
- */
-static struct task *manage_global_listener_queue(struct task *t, void *context, unsigned short state)
-{
-	int next = TICK_ETERNITY;
-	/* queue is empty, nothing to do */
-	if (MT_LIST_ISEMPTY(&global_listener_queue))
-		goto out;
-
-	/* If there are still too many concurrent connections, let's wait for
-	 * some of them to go away. We don't need to re-arm the timer because
-	 * each of them will scan the queue anyway.
-	 */
-	if (unlikely(actconn >= global.maxconn))
-		goto out;
-
-	/* We should periodically try to enable listeners waiting for a global
-	 * resource here, because it is possible, though very unlikely, that
-	 * they have been blocked by a temporary lack of global resource such
-	 * as a file descriptor or memory and that the temporary condition has
-	 * disappeared.
-	 */
-	dequeue_all_listeners(&global_listener_queue);
-
- out:
-	t->expire = next;
-	task_queue(t);
-	return t;
 }
 
 /* set uid/gid depending on global settings */
@@ -3309,7 +3369,7 @@ int main(int argc, char **argv)
 			char pidstr[100];
 			snprintf(pidstr, sizeof(pidstr), "%d\n", (int)getpid());
 			if (pidfd >= 0)
-				shut_your_big_mouth_gcc(write(pidfd, pidstr, strlen(pidstr)));
+				DISGUISE(write(pidfd, pidstr, strlen(pidstr)));
 		}
 
 		/* the father launches the required number of processes */
@@ -3330,7 +3390,7 @@ int main(int argc, char **argv)
 				if (pidfd >= 0 && !(global.mode & MODE_MWORKER)) {
 					char pidstr[100];
 					snprintf(pidstr, sizeof(pidstr), "%d\n", ret);
-					shut_your_big_mouth_gcc(write(pidfd, pidstr, strlen(pidstr)));
+					DISGUISE(write(pidfd, pidstr, strlen(pidstr)));
 				}
 				if (global.mode & MODE_MWORKER) {
 					struct mworker_proc *child;

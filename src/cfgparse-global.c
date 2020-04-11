@@ -59,6 +59,9 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))
 			goto out;
 		global.mode |= MODE_DEBUG;
+		ha_warning("parsing [%s:%d] : '%s' must never be used and will be removed in 2.3. If you need debug mode, please use '-d' on the command line.\n", file, linenum, args[0]);
+		err_code |= ERR_WARN;
+		goto out;
 	}
 	else if (!strcmp(args[0], "noepoll")) {
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))
@@ -95,6 +98,22 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			global.tune.options &= ~GTUNE_SET_DUMPABLE;
 		else
 			global.tune.options |=  GTUNE_SET_DUMPABLE;
+	}
+	else if (!strcmp(args[0], "insecure-fork-wanted")) { /* "no insecure-fork-wanted" or "insecure-fork-wanted" */
+		if (alertif_too_many_args(0, file, linenum, args, &err_code))
+			goto out;
+		if (kwm == KWM_NO)
+			global.tune.options &= ~GTUNE_INSECURE_FORK;
+		else
+			global.tune.options |=  GTUNE_INSECURE_FORK;
+	}
+	else if (!strcmp(args[0], "insecure-setuid-wanted")) { /* "no insecure-setuid-wanted" or "insecure-setuid-wanted" */
+		if (alertif_too_many_args(0, file, linenum, args, &err_code))
+			goto out;
+		if (kwm == KWM_NO)
+			global.tune.options &= ~GTUNE_INSECURE_SETUID;
+		else
+			global.tune.options |=  GTUNE_INSECURE_SETUID;
 	}
 	else if (!strcmp(args[0], "nosplice")) {
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))

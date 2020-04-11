@@ -60,6 +60,16 @@ void fd_delete(int fd);
  */
 void fd_remove(int fd);
 
+/*
+ * Take over a FD belonging to another thread.
+ * Returns 0 on success, and -1 on failure.
+ */
+int fd_takeover(int fd, void *expected_owner);
+
+#ifndef HA_HAVE_CAS_DW
+__decl_hathreads(extern HA_RWLOCK_T fd_mig_lock);
+#endif
+
 ssize_t fd_write_frag_line(int fd, size_t maxlen, const struct ist pfx[], size_t npfx, const struct ist msg[], size_t nmsg, int nl);
 
 /* close all FDs starting from <start> */
@@ -106,7 +116,7 @@ void fd_add_to_fd_list(volatile struct fdlist *list, int fd, int off);
 void fd_rm_from_fd_list(volatile struct fdlist *list, int fd, int off);
 void updt_fd_polling(const int fd);
 
-/* Called from the poller to acknoledge we read an entry from the global
+/* Called from the poller to acknowledge we read an entry from the global
  * update list, to remove our bit from the update_mask, and remove it from
  * the list if we were the last one.
  */
@@ -136,14 +146,6 @@ static inline void done_update_polling(int fd)
 }
 
 /*
- * returns the FD's recv state (FD_EV_*)
- */
-static inline int fd_recv_state(const int fd)
-{
-	return ((unsigned)fdtab[fd].state >> (4 * DIR_RD)) & FD_EV_STATUS;
-}
-
-/*
  * returns true if the FD is active for recv
  */
 static inline int fd_recv_active(const int fd)
@@ -157,14 +159,6 @@ static inline int fd_recv_active(const int fd)
 static inline int fd_recv_ready(const int fd)
 {
 	return (unsigned)fdtab[fd].state & FD_EV_READY_R;
-}
-
-/*
- * returns the FD's send state (FD_EV_*)
- */
-static inline int fd_send_state(const int fd)
-{
-	return ((unsigned)fdtab[fd].state >> (4 * DIR_WR)) & FD_EV_STATUS;
 }
 
 /*
@@ -197,7 +191,6 @@ static inline void fd_stop_recv(int fd)
 	if (!(fdtab[fd].state & FD_EV_ACTIVE_R) ||
 	    !HA_ATOMIC_BTR(&fdtab[fd].state, FD_EV_ACTIVE_R_BIT))
 		return;
-	updt_fd_polling(fd);
 }
 
 /* Disable processing send events on fd <fd> */
@@ -206,7 +199,6 @@ static inline void fd_stop_send(int fd)
 	if (!(fdtab[fd].state & FD_EV_ACTIVE_W) ||
 	    !HA_ATOMIC_BTR(&fdtab[fd].state, FD_EV_ACTIVE_W_BIT))
 		return;
-	updt_fd_polling(fd);
 }
 
 /* Disable processing of events on fd <fd> for both directions. */
@@ -220,7 +212,6 @@ static inline void fd_stop_both(int fd)
 			return;
 		new = old & ~FD_EV_ACTIVE_RW;
 	} while (unlikely(!_HA_ATOMIC_CAS(&fdtab[fd].state, &old, new)));
-	updt_fd_polling(fd);
 }
 
 /* Report that FD <fd> cannot receive anymore without polling (EAGAIN detected). */
@@ -318,6 +309,49 @@ static inline void fd_want_send(int fd)
 	updt_fd_polling(fd);
 }
 
+/* Set the fd as currently running on the current thread.
+ * Retuns 0 if all goes well, or -1 if we no longer own the fd, and should
+ * do nothing with it.
+ */
+static inline int fd_set_running(int fd)
+{
+#ifndef HA_HAVE_CAS_DW
+	HA_RWLOCK_RDLOCK(OTHER_LOCK, &fd_mig_lock);
+	if (!(fdtab[fd].thread_mask & tid_bit)) {
+		HA_RWLOCK_RDUNLOCK(OTHER_LOCK, &fd_mig_lock);
+		return -1;
+	}
+	_HA_ATOMIC_OR(&fdtab[fd].running_mask, tid_bit);
+	HA_RWLOCK_RDUNLOCK(OTHER_LOCK, &fd_mig_lock);
+	return 0;
+#else
+	unsigned long old_masks[2];
+	unsigned long new_masks[2];
+	old_masks[0] = fdtab[fd].running_mask;
+	old_masks[1] = fdtab[fd].thread_mask;
+	do {
+		if (!(old_masks[1] & tid_bit))
+			return -1;
+		new_masks[0] = fdtab[fd].running_mask | tid_bit;
+		new_masks[1] = old_masks[1];
+
+	} while (!(HA_ATOMIC_DWCAS(&fdtab[fd].running_mask, &old_masks, &new_masks)));
+	return 0;
+#endif
+}
+
+static inline void fd_set_running_excl(int fd)
+{
+	unsigned long old_mask = 0;
+	while (!_HA_ATOMIC_CAS(&fdtab[fd].running_mask, &old_mask, tid_bit));
+}
+
+
+static inline void fd_clr_running(int fd)
+{
+	_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
+}
+
 /* Update events seen for FD <fd> and its state if needed. This should be
  * called by the poller, passing FD_EV_*_{R,W,RW} in <evts>. FD_EV_ERR_*
  * doesn't need to also pass FD_EV_SHUT_*, it's implied. ERR and SHUT are
@@ -327,18 +361,32 @@ static inline void fd_update_events(int fd, unsigned char evts)
 {
 	unsigned long locked = atleast2(fdtab[fd].thread_mask);
 	unsigned char old, new;
-	int new_flags;
+	int new_flags, must_stop;
 
 	new_flags =
 	      ((evts & FD_EV_READY_R) ? FD_POLL_IN  : 0) |
 	      ((evts & FD_EV_READY_W) ? FD_POLL_OUT : 0) |
 	      ((evts & FD_EV_SHUT_R)  ? FD_POLL_HUP : 0) |
-	      ((evts & FD_EV_ERR_R)   ? FD_POLL_ERR : 0) |
-	      ((evts & FD_EV_ERR_W)   ? FD_POLL_ERR : 0);
+	      ((evts & FD_EV_ERR_RW)  ? FD_POLL_ERR : 0);
 
 	/* SHUTW reported while FD was active for writes is an error */
 	if ((fdtab[fd].ev & FD_EV_ACTIVE_W) && (evts & FD_EV_SHUT_W))
 		new_flags |= FD_POLL_ERR;
+
+	/* compute the inactive events reported late that must be stopped */
+	must_stop = 0;
+	if (unlikely(!fd_active(fd))) {
+		/* both sides stopped */
+		must_stop = FD_POLL_IN | FD_POLL_OUT;
+	}
+	else if (unlikely(!fd_recv_active(fd) && (evts & (FD_EV_READY_R | FD_EV_SHUT_R | FD_EV_ERR_RW)))) {
+		/* only send remains */
+		must_stop = FD_POLL_IN;
+	}
+	else if (unlikely(!fd_send_active(fd) && (evts & (FD_EV_READY_W | FD_EV_SHUT_W | FD_EV_ERR_RW)))) {
+		/* only recv remains */
+		must_stop = FD_POLL_OUT;
+	}
 
 	old = fdtab[fd].ev;
 	new = (old & FD_POLL_STICKY) | new_flags;
@@ -358,8 +406,22 @@ static inline void fd_update_events(int fd, unsigned char evts)
 	if (fdtab[fd].ev & (FD_POLL_OUT | FD_POLL_ERR))
 		fd_may_send(fd);
 
-	if (fdtab[fd].iocb)
+	if (fdtab[fd].iocb && fd_active(fd)) {
+		if (fd_set_running(fd) == -1)
+			return;
 		fdtab[fd].iocb(fd);
+		fd_clr_running(fd);
+	}
+
+	/* we had to stop this FD and it still must be stopped after the I/O
+	 * cb's changes, so let's program an update for this.
+	 */
+	if (must_stop && !(fdtab[fd].update_mask & tid_bit)) {
+		if (((must_stop & FD_POLL_IN)  && !fd_recv_active(fd)) ||
+		    ((must_stop & FD_POLL_OUT) && !fd_send_active(fd)))
+			if (!HA_ATOMIC_BTS(&fdtab[fd].update_mask, tid))
+				fd_updt[fd_nbupdt++] = fd;
+	}
 
 	ti->flags &= ~TI_FL_STUCK; // this thread is still running
 }
@@ -367,10 +429,10 @@ static inline void fd_update_events(int fd, unsigned char evts)
 /* Prepares <fd> for being polled */
 static inline void fd_insert(int fd, void *owner, void (*iocb)(int fd), unsigned long thread_mask)
 {
-	unsigned long locked = atleast2(thread_mask);
+	int locked = fdtab[fd].running_mask != tid_bit;
 
 	if (locked)
-		HA_SPIN_LOCK(FD_LOCK, &fdtab[fd].lock);
+		fd_set_running_excl(fd);
 	fdtab[fd].owner = owner;
 	fdtab[fd].iocb = iocb;
 	fdtab[fd].ev = 0;
@@ -381,7 +443,7 @@ static inline void fd_insert(int fd, void *owner, void (*iocb)(int fd), unsigned
 	 * still knows this FD from a possible previous round.
 	 */
 	if (locked)
-		HA_SPIN_UNLOCK(FD_LOCK, &fdtab[fd].lock);
+		fd_clr_running(fd);
 	/* the two directions are ready until proven otherwise */
 	fd_may_both(fd);
 	_HA_ATOMIC_ADD(&ha_used_fds, 1);
@@ -431,7 +493,7 @@ static inline void wake_thread(int tid)
 {
 	char c = 'c';
 
-	shut_your_big_mouth_gcc(write(poller_wr_pipe[tid], &c, 1));
+	DISGUISE(write(poller_wr_pipe[tid], &c, 1));
 }
 
 
