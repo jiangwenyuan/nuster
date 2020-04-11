@@ -37,9 +37,10 @@ enum {
     NST_CTX_STATE_HIT_DISK,          /* hit, use disk */
     NST_CTX_STATE_PASS,              /* rule pass */
     NST_CTX_STATE_FULL,              /* full */
-    NST_CTX_STATE_CREATE,            /* to cache */
-    NST_CTX_STATE_DELETE,            /* to delete */
-    NST_CTX_STATE_DONE,              /* cache done */
+    NST_CTX_STATE_CREATE,            /* create */
+    NST_CTX_STATE_UPDATE,            /* update */
+    NST_CTX_STATE_DELETE,            /* delete */
+    NST_CTX_STATE_DONE,              /* done */
     NST_CTX_STATE_INVALID,           /* invalid */
     NST_CTX_STATE_CHECK_DISK,        /* check disk */
 };

@@ -213,7 +213,9 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
                 return NULL;
             }
 
-            if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
+            if(entry->state == NST_DICT_ENTRY_STATE_INIT
+                    || entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+
                 return entry;
             }
 

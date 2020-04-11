@@ -318,7 +318,8 @@ _nst_nosql_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 0;
     }
 
-    if(ctx->state == NST_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
+    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
+            && !(msg->chn->flags & CF_ISRESP)) {
 
         if(nst_nosql_update(msg, ctx, offset, len) != NST_OK) {
             ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
@@ -336,7 +337,8 @@ _nst_nosql_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
     hpx_appctx_t            *appctx = si_appctx(si);
     nst_ctx_t               *ctx    = filter->ctx;
 
-    if(ctx->state == NST_CTX_STATE_CREATE && !(msg->chn->flags & CF_ISRESP)) {
+    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
+            && !(msg->chn->flags & CF_ISRESP)) {
 
         nst_nosql_finish(s, msg, ctx);
 

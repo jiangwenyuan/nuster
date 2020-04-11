@@ -589,7 +589,14 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     entry = nst_dict_get(&nuster.nosql->dict, key);
 
     if(entry) {
-        ctx->state = NST_CTX_STATE_BYPASS;
+
+        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+            entry->state = NST_DICT_ENTRY_STATE_UPDATE;
+            ctx->state   = NST_CTX_STATE_UPDATE;
+            ctx->entry   = entry;
+        } else {
+            ctx->state = NST_CTX_STATE_WAIT;
+        }
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
@@ -607,7 +614,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     /* init store data */
 
-    if(ctx->state == NST_CTX_STATE_CREATE) {
+    if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
         if(nst_store_memory_on(ctx->rule->store)) {
             ctx->store.ring.data = nst_ring_store_init(&nuster.nosql->store.ring);
         }
@@ -628,7 +635,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     /* create header */
 
-    if(ctx->state == NST_CTX_STATE_CREATE) {
+    if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
         item = _nst_nosql_create_header(s, &ctx->txn);
 
         if(item == NULL) {
@@ -702,6 +709,46 @@ err:
     return NST_ERR;
 }
 
+void
+nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
+    nst_key_t  *key;
+    int         idx;
+
+    idx = ctx->rule->key->idx;
+    key = &(ctx->keys[idx]);
+
+    ctx->state = NST_CTX_STATE_DONE;
+
+    ctx->entry->ctime = get_current_timestamp();
+
+    if(ctx->rule->ttl == 0) {
+        ctx->entry->expire = 0;
+    } else {
+        ctx->entry->expire = get_current_timestamp() / 1000 + ctx->rule->ttl;
+    }
+
+    if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+
+        if(ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+            ctx->entry->store.ring.data->invalid = 1;
+        }
+
+        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
+
+        ctx->entry->store.ring.data = ctx->store.ring.data;
+    }
+
+    if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+
+        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
+                    ctx->entry->expire) == NST_OK) {
+
+            ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
+        }
+    }
+
+}
+
 int
 nst_nosql_exists(nst_ctx_t *ctx) {
     nst_dict_entry_t  *entry = NULL;
@@ -725,7 +772,8 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
         if(entry) {
 
-            if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+            if(entry->state == NST_DICT_ENTRY_STATE_VALID
+                    || entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
 
                 if(entry->store.ring.data) {
                     ctx->store.ring.data = entry->store.ring.data;
@@ -794,6 +842,11 @@ nst_nosql_exists(nst_ctx_t *ctx) {
     return ret;
 }
 
+void
+nst_nosql_abort(nst_ctx_t *ctx) {
+    ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+}
+
 /*
  * -1: error
  *  0: not found
@@ -838,46 +891,5 @@ nst_nosql_delete(nst_key_t *key) {
     }
 
     return ret;
-}
-
-
-void
-nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
-    nst_key_t  *key;
-    int         idx;
-
-    idx = ctx->rule->key->idx;
-    key = &(ctx->keys[idx]);
-
-    ctx->state = NST_CTX_STATE_DONE;
-
-    ctx->entry->ctime = get_current_timestamp();
-
-    if(ctx->rule->ttl == 0) {
-        ctx->entry->expire = 0;
-    } else {
-        ctx->entry->expire = get_current_timestamp() / 1000 + ctx->rule->ttl;
-    }
-
-    if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
-        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-
-        ctx->entry->store.ring.data = ctx->store.ring.data;
-    }
-
-    if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
-
-        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
-                    ctx->entry->expire) == NST_OK) {
-
-            ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-        }
-    }
-
-}
-
-void
-nst_nosql_abort(nst_ctx_t *ctx) {
-    ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
