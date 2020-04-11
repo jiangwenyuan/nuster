@@ -346,6 +346,7 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
 
     if(test_last_modified == NST_STATUS_ON) {
 
+        hdr.blk = NULL;
         if(http_find_header(htx, ist("If-Unmodified-Since"), &hdr, 1)) {
 
             if(!isteq(last_modified, hdr.value)) {
@@ -356,6 +357,7 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
 
     if(test_etag == NST_STATUS_ON) {
 
+        hdr.blk = NULL;
         while(http_find_header(htx, ist("If-None-Match"), &hdr, 0)) {
 
             if_none_match = 200;
@@ -376,6 +378,7 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
 
     if(test_last_modified == NST_STATUS_ON) {
 
+        hdr.blk = NULL;
         if(http_find_header(htx, ist("If-Modified-Since"), &hdr, 1)) {
 
             if(isteq(last_modified, hdr.value)) {
@@ -472,6 +475,7 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
         }
     }
 
+    hdr.blk = NULL;
     if(http_find_header(htx, ist("Cookie"), &hdr, 1)) {
         txn->req.cookie.ptr = txn->buf->area + txn->buf->data;
         txn->req.cookie.len = hdr.value.len;
@@ -479,6 +483,7 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
         chunk_istcat(txn->buf, hdr.value);
     }
 
+    hdr.blk = NULL;
     if(http_find_header(htx, ist("Content-Type"), &hdr, 1)) {
         txn->req.content_type.ptr = txn->buf->area + txn->buf->data;
         txn->req.content_type.len = hdr.value.len;

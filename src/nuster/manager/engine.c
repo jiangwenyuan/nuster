@@ -48,8 +48,7 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
         while(p) {
             nst_rule_t *rule = NULL;
 
-            if((p->cap & PR_CAP_BE)
-                    && (p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL)) {
+            if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
 
                 if(mode != NST_MANAGER_NAME_ALL && strlen(p->id) == hdr.value.len
                         && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
@@ -172,6 +171,7 @@ nst_manager(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
                     }
                 }
 
+                hdr.blk = NULL;
                 if(http_find_header(htx, ist("ttl"), &hdr, 0)) {
                     nst_parse_time(hdr.value.ptr, hdr.value.len, (unsigned *)&ttl);
                 }

@@ -118,6 +118,7 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
         host_len = hdr.value.len;
     }
 
+    hdr.blk = NULL;
     if(http_find_header(htx, ist("name"), &hdr, 0)) {
 
         if(isteq(hdr.value, ist("*"))) {
