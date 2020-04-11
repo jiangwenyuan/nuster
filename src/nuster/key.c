@@ -168,11 +168,11 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
 
                 if(s->txn->meth == HTTP_METH_POST || s->txn->meth == HTTP_METH_PUT) {
 
-                    int         pos;
+                    int         idx;
                     hpx_htx_t  *htx = htxbuf(&msg->chn->buf);
 
-                    for(pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-                        hpx_htx_blk_t      *blk  = htx_get_blk(htx, pos);
+                    for(idx = htx_get_first(htx); idx != -1; idx = htx_get_next(htx, idx)) {
+                        hpx_htx_blk_t      *blk  = htx_get_blk(htx, idx);
                         hpx_htx_blk_type_t  type = htx_get_blk_type(blk);
                         uint32_t            sz   = htx_get_blksz(blk);
 

@@ -679,14 +679,18 @@ err:
 
 int
 nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
+    hpx_htx_blk_type_t  type;
+    hpx_htx_blk_t      *blk;
+    hpx_htx_t          *htx;
+    uint32_t            sz;
+    int                 idx;
 
-    hpx_htx_t  *htx = htxbuf(&msg->chn->buf);
-    int         pos;
+    htx = htxbuf(&msg->chn->buf);
 
-    for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-        hpx_htx_blk_t       *blk  = htx_get_blk(htx, pos);
-        hpx_htx_blk_type_t   type = htx_get_blk_type(blk);
-        uint32_t             sz   = htx_get_blksz(blk);
+    for (idx = htx_get_first(htx); idx != -1; idx = htx_get_next(htx, idx)) {
+        blk  = htx_get_blk(htx, idx);
+        sz   = htx_get_blksz(blk);
+        type = htx_get_blk_type(blk);
 
         if(type != HTX_BLK_DATA) {
             continue;
