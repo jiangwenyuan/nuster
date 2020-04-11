@@ -3661,7 +3661,7 @@ out_uri_auth_compat:
 					goto err;
 				for (i = 0; i < global.nbthread; i++)
 					MT_LIST_INIT(&newsrv->idle_orphan_conns[i]);
-				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(int));
+				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(*newsrv->curr_idle_thr));
 				if (!newsrv->curr_idle_thr)
 					goto err;
 				continue;
@@ -3902,12 +3902,25 @@ out_uri_auth_compat:
 		struct peers *curpeers = cfg_peers, **last;
 		struct peer *p, *pb;
 
+		/* In the case the peers frontend was not initialized by a
+		 stick-table used in the configuration, set its bind_proc
+		 by default to the first process. */
+		while (curpeers) {
+			if (curpeers->peers_fe) {
+				if (curpeers->peers_fe->bind_proc == 0)
+					curpeers->peers_fe->bind_proc = 1;
+			}
+			curpeers = curpeers->next;
+		}
+
+		curpeers = cfg_peers;
 		/* Remove all peers sections which don't have a valid listener,
 		 * which are not used by any table, or which are bound to more
 		 * than one process.
 		 */
 		last = &cfg_peers;
 		while (*last) {
+			struct stktable *t;
 			curpeers = *last;
 
 			if (curpeers->state == PR_STSTOPPED) {
@@ -3919,6 +3932,9 @@ out_uri_auth_compat:
 			else if (!curpeers->peers_fe || !curpeers->peers_fe->id) {
 				ha_warning("Removing incomplete section 'peers %s' (no peer named '%s').\n",
 					   curpeers->id, localpeer);
+				if (curpeers->peers_fe)
+					stop_proxy(curpeers->peers_fe);
+				curpeers->peers_fe = NULL;
 			}
 			else if (atleast2(curpeers->peers_fe->bind_proc)) {
 				/* either it's totally stopped or too much used */
@@ -3981,6 +3997,11 @@ out_uri_auth_compat:
 			 */
 			free(curpeers->id);
 			curpeers = curpeers->next;
+			/* Reset any refereance to this peers section in the list of stick-tables */
+			for (t = stktables_list; t; t = t->next) {
+				if (t->peers.p && t->peers.p == *last)
+					t->peers.p = NULL;
+			}
 			free(*last);
 			*last = curpeers;
 		}

@@ -1356,22 +1356,34 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 		if (!fconn->app->pathinfo_re)
 			goto check_index;
 
+		/* If some special characters are found in the decoded path (\n
+		 * or \0), the PATH_INFO regex cannot match. This is theorically
+		 * valid, but probably unexpected, to have such characters. So,
+		 * to avoid any suprises, an error is triggered in this
+		 * case.
+		 */
+		if (istchr(path, '\n') || istchr(path, '\0'))
+			goto error;
+
 		/* The regex does not match, just to the last part and see if
 		 * the index must be used.
 		 */
 		if (!regex_exec_match2(fconn->app->pathinfo_re, path.ptr, len, MAX_MATCH, pmatch, 0))
 			goto check_index;
 
-		/* We must have at least 2 captures, otherwise we do nothing and
-		 * jump to the last part. Only first 2 ones will be considered
+		/* We must have at least 1 capture for the script name,
+		 * otherwise we do nothing and jump to the last part.
 		 */
-		if (pmatch[1].rm_so == -1 || pmatch[1].rm_eo == -1 ||
-		    pmatch[2].rm_so == -1 || pmatch[2].rm_eo == -1)
+		if (pmatch[1].rm_so == -1 || pmatch[1].rm_eo == -1)
 			goto check_index;
 
-		/* Finally we can set the script_name and the path_info */
+		/* Finally we can set the script_name and the path_info. The
+		 * path_info is set if not already defined, and if it was
+		 * captured
+		 */
 		params->scriptname = ist2(path.ptr + pmatch[1].rm_so, pmatch[1].rm_eo - pmatch[1].rm_so);
-		params->pathinfo   = ist2(path.ptr + pmatch[2].rm_so, pmatch[2].rm_eo - pmatch[2].rm_so);
+		if (!(params->mask & FCGI_SP_PATH_INFO) &&  (pmatch[2].rm_so == -1 || pmatch[2].rm_eo == -1))
+			params->pathinfo = ist2(path.ptr + pmatch[2].rm_so, pmatch[2].rm_eo - pmatch[2].rm_so);
 
 	  check_index:
 		len = params->scriptname.len;
@@ -3487,7 +3499,7 @@ static void fcgi_detach(struct conn_stream *cs)
 				if (eb_is_empty(&fconn->streams_by_id)) {
 					if (!srv_add_to_idle_list(objt_server(fconn->conn->target), fconn->conn)) {
 						/* The server doesn't want it, let's kill the connection right away */
-						fconn->conn->mux->destroy(fconn->conn);
+						fconn->conn->mux->destroy(fconn);
 						TRACE_DEVEL("outgoing connection killed", FCGI_EV_STRM_END|FCGI_EV_FCONN_ERR);
 					}
 					TRACE_DEVEL("reusable idle connection", FCGI_EV_STRM_END, fconn->conn);

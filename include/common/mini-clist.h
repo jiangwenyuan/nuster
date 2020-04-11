@@ -137,7 +137,7 @@ struct cond_wordlist {
  * since it's used only once.
  * Example: LIST_ELEM(cur_node->args.next, struct node *, args)
  */
-#define LIST_ELEM(lh, pt, el) ((pt)(((void *)(lh)) - ((void *)&((pt)NULL)->el)))
+#define LIST_ELEM(lh, pt, el) ((pt)(((const char *)(lh)) - ((size_t)&((pt)NULL)->el)))
 
 /* checks if the list head <lh> is empty or not */
 #define LIST_ISEMPTY(lh) ((lh)->n == (lh))
@@ -463,7 +463,7 @@ struct cond_wordlist {
  * since it's used only once.
  * Example: MT_LIST_ELEM(cur_node->args.next, struct node *, args)
  */
-#define MT_LIST_ELEM(lh, pt, el) ((pt)(((void *)(lh)) - ((void *)&((pt)NULL)->el)))
+#define MT_LIST_ELEM(lh, pt, el) ((pt)(((const char *)(lh)) - ((size_t)&((pt)NULL)->el)))
 
 /* checks if the list head <lh> is empty or not */
 #define MT_LIST_ISEMPTY(lh) ((lh)->next == (lh))
@@ -614,6 +614,7 @@ struct cond_wordlist {
 #define _MT_LIST_RELINK_DELETED(elt2)                                      \
     do {                                                                   \
 	    struct mt_list *n = elt2.next, *p = elt2.prev;                 \
+	    ALREADY_CHECKED(p);                                            \
 	    n->prev = p;                                                   \
 	    p->next = n;                                                   \
     } while (0);
@@ -626,7 +627,7 @@ struct cond_wordlist {
 		struct mt_list *el = (_el);                                \
 		(el)->prev = (el);                                         \
 		(el)->next = (el);                                         \
-		(el) = NULL;                                               \
+		(_el) = NULL;                                              \
 	} while (0)
 
 /* Simpler FOREACH_ITEM_SAFE macro inspired from Linux sources.

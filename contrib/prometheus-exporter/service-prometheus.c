@@ -367,7 +367,7 @@ const int promex_srv_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_WRETR]          = ST_F_WREDIS,
 	[ST_F_WREDIS]         = ST_F_WREW,
 	[ST_F_STATUS]         = ST_F_SCUR,
-	[ST_F_WEIGHT]         = ST_F_CHKFAIL,
+	[ST_F_WEIGHT]         = ST_F_CHECK_STATUS,
 	[ST_F_ACT]            = 0,
 	[ST_F_BCK]            = 0,
 	[ST_F_CHKFAIL]        = ST_F_CHKDOWN,
@@ -385,9 +385,9 @@ const int promex_srv_metrics[ST_F_TOTAL_FIELDS] = {
 	[ST_F_RATE]           = 0,
 	[ST_F_RATE_LIM]       = 0,
 	[ST_F_RATE_MAX]       = ST_F_LASTSESS,
-	[ST_F_CHECK_STATUS]   = 0,
-	[ST_F_CHECK_CODE]     = 0,
-	[ST_F_CHECK_DURATION] = 0,
+	[ST_F_CHECK_STATUS]   = ST_F_CHECK_CODE,
+	[ST_F_CHECK_CODE]     = ST_F_CHECK_DURATION,
+	[ST_F_CHECK_DURATION] = ST_F_CHKFAIL,
 	[ST_F_HRSP_1XX]       = ST_F_HRSP_2XX,
 	[ST_F_HRSP_2XX]       = ST_F_HRSP_3XX,
 	[ST_F_HRSP_3XX]       = ST_F_HRSP_4XX,
@@ -549,7 +549,7 @@ const struct ist promex_st_metric_names[ST_F_TOTAL_FIELDS] = {
 	[ST_F_RATE_MAX]       = IST("max_session_rate"),
 	[ST_F_CHECK_STATUS]   = IST("check_status"),
 	[ST_F_CHECK_CODE]     = IST("check_code"),
-	[ST_F_CHECK_DURATION] = IST("check_duration_milliseconds"),
+	[ST_F_CHECK_DURATION] = IST("check_duration_seconds"),
 	[ST_F_HRSP_1XX]       = IST("http_responses_total"),
 	[ST_F_HRSP_2XX]       = IST("http_responses_total"),
 	[ST_F_HRSP_3XX]       = IST("http_responses_total"),
@@ -709,9 +709,9 @@ const struct ist promex_st_metric_desc[ST_F_TOTAL_FIELDS] = {
 	[ST_F_RATE]           = IST("Current number of sessions per second over last elapsed second."),
 	[ST_F_RATE_LIM]       = IST("Configured limit on new sessions per second."),
 	[ST_F_RATE_MAX]       = IST("Maximum observed number of sessions per second."),
-	[ST_F_CHECK_STATUS]   = IST("Status of last health check (If a check is running, the status will be reported, prefixed with '* ')."),
+	[ST_F_CHECK_STATUS]   = IST("Status of last health check (HCHK_STATUS_* values)."),
 	[ST_F_CHECK_CODE]     = IST("layer5-7 code, if available of the last health check."),
-	[ST_F_CHECK_DURATION] = IST("Time in ms took to finish last health check."),
+	[ST_F_CHECK_DURATION] = IST("Total duration of the latest server health check, in seconds."),
 	[ST_F_HRSP_1XX]       = IST("Total number of HTTP responses."),
 	[ST_F_HRSP_2XX]       = IST("Total number of HTTP responses."),
 	[ST_F_HRSP_3XX]       = IST("Total number of HTTP responses."),
@@ -1027,8 +1027,8 @@ const struct ist promex_st_metric_types[ST_F_TOTAL_FIELDS] = {
 	[ST_F_RATE]           = IST("untyped"),
 	[ST_F_RATE_LIM]       = IST("gauge"),
 	[ST_F_RATE_MAX]       = IST("gauge"),
-	[ST_F_CHECK_STATUS]   = IST("untyped"),
-	[ST_F_CHECK_CODE]     = IST("untyped"),
+	[ST_F_CHECK_STATUS]   = IST("gauge"),
+	[ST_F_CHECK_CODE]     = IST("gauge"),
 	[ST_F_CHECK_DURATION] = IST("gauge"),
 	[ST_F_HRSP_1XX]       = IST("counter"),
 	[ST_F_HRSP_2XX]       = IST("counter"),
@@ -2011,6 +2011,22 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 					case ST_F_WEIGHT:
 						weight = (sv->cur_eweight * px->lbprm.wmult + px->lbprm.wdiv - 1) / px->lbprm.wdiv;
 						metric = mkf_u32(FN_AVG, weight);
+						break;
+					case ST_F_CHECK_STATUS:
+						if ((sv->check.state & (CHK_ST_ENABLED|CHK_ST_PAUSED)) != CHK_ST_ENABLED)
+							goto next_sv;
+						metric = mkf_u32(FN_OUTPUT, sv->check.status);
+						break;
+					case ST_F_CHECK_CODE:
+						if ((sv->check.state & (CHK_ST_ENABLED|CHK_ST_PAUSED)) != CHK_ST_ENABLED)
+							goto next_sv;
+						metric = mkf_u32(FN_OUTPUT, (sv->check.status < HCHK_STATUS_L57DATA) ? 0 : sv->check.code);
+						break;
+					case ST_F_CHECK_DURATION:
+						if (sv->check.status < HCHK_STATUS_CHECKED)
+						    goto next_sv;
+						secs = (double)sv->check.duration / 1000.0;
+						metric = mkf_flt(FN_DURATION, secs);
 						break;
 					case ST_F_CHKFAIL:
 						metric = mkf_u64(FN_COUNTER, sv->counters.failed_checks);

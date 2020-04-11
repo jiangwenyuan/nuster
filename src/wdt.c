@@ -18,6 +18,7 @@
 #include <common/initcall.h>
 #include <common/standard.h>
 #include <types/global.h>
+#include <types/signal.h>
 #include <proto/log.h>
 
 
@@ -26,11 +27,6 @@
  * this case.
  */
 #if defined(USE_THREAD) && defined(USE_RT) && (_POSIX_TIMERS > 0) && defined(_POSIX_THREAD_CPUTIME)
-
-/* We'll deliver SIGALRM when we've run out of CPU as it's not intercepted by
- * gdb by default.
- */
-#define WDTSIG SIGALRM
 
 /* Setup (or ping) the watchdog timer for thread <thr>. Returns non-zero on
  * success, zero on failure. It interrupts once per second of CPU time. It
@@ -101,12 +97,12 @@ void wdt_handler(int sig, siginfo_t *si, void *arg)
 
 		/* No doubt now, there's no hop to recover, die loudly! */
 		break;
-
+#ifdef USE_THREAD
 	case SI_TKILL:
 		/* we got a pthread_kill, stop on it */
 		thr = tid;
 		break;
-
+#endif
 	default:
 		/* unhandled other conditions */
 		return;
@@ -156,7 +152,7 @@ int init_wdt_per_thread()
  fail1:
 	ti->wd_timer = TIMER_INVALID;
 	ha_warning("Failed to setup watchdog timer for thread %u, disabling lockup detection.\n", tid);
-	return 0;
+	return 1;
 }
 
 void deinit_wdt_per_thread()

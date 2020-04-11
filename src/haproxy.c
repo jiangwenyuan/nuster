@@ -77,6 +77,8 @@
 #include <systemd/sd-daemon.h>
 #endif
 
+#include <import/sha1.h>
+
 #include <common/base64.h>
 #include <common/cfgparse.h>
 #include <common/chunk.h>
@@ -88,6 +90,7 @@
 #include <common/memory.h>
 #include <common/mini-clist.h>
 #include <common/namespace.h>
+#include <common/net_helper.h>
 #include <common/openssl-compat.h>
 #include <common/regex.h>
 #include <common/standard.h>
@@ -144,7 +147,9 @@ int  relative_pid = 1;		/* process id starting at 1 */
 unsigned long pid_bit = 1;      /* bit corresponding to the process id */
 unsigned long all_proc_mask = 1; /* mask of all processes */
 
-volatile unsigned long sleeping_thread_mask; /* Threads that are about to sleep in poll() */
+volatile unsigned long sleeping_thread_mask = 0; /* Threads that are about to sleep in poll() */
+volatile unsigned long stopping_thread_mask = 0; /* Threads acknowledged stopping */
+
 /* global options */
 struct global global = {
 	.hard_stop_after = TICK_ETERNITY,
@@ -275,6 +280,9 @@ struct list proc_list = LIST_HEAD_INIT(proc_list);
 int master = 0; /* 1 if in master, 0 if in child */
 unsigned int rlim_fd_cur_at_boot = 0;
 unsigned int rlim_fd_max_at_boot = 0;
+
+/* per-boot randomness */
+unsigned char boot_seed[20];        /* per-boot random seed (160 bits initially) */
 
 struct mworker_proc *proc_self = NULL;
 
@@ -1406,6 +1414,95 @@ static char **copy_argv(int argc, char **argv)
 	return newargv;
 }
 
+
+/* Performs basic random seed initialization. The main issue with this is that
+ * srandom_r() only takes 32 bits and purposely provides a reproducible sequence,
+ * which means that there will only be 4 billion possible random sequences once
+ * srandom() is called, regardless of the internal state. Not calling it is
+ * even worse as we'll always produce the same randoms sequences. What we do
+ * here is to create an initial sequence from various entropy sources, hash it
+ * using SHA1 and keep the resulting 160 bits available globally.
+ *
+ * We initialize the current process with the first 32 bits before starting the
+ * polling loop, where all this will be changed to have process specific and
+ * thread specific sequences.
+ *
+ * Before starting threads, it's still possible to call random() as srandom()
+ * is initialized from this, but after threads and/or processes are started,
+ * only ha_random() is expected to be used to guarantee distinct sequences.
+ */
+static void ha_random_boot(char *const *argv)
+{
+	unsigned char message[256];
+	unsigned char *m = message;
+	struct timeval tv;
+	blk_SHA_CTX ctx;
+	unsigned long l;
+	int fd;
+	int i;
+
+	/* start with current time as pseudo-random seed */
+	gettimeofday(&tv, NULL);
+	write_u32(m, tv.tv_sec);  m += 4;
+	write_u32(m, tv.tv_usec); m += 4;
+
+	/* PID and PPID add some OS-based randomness */
+	write_u16(m, getpid());   m += 2;
+	write_u16(m, getppid());  m += 2;
+
+	/* take up to 160 bits bytes from /dev/urandom if available (non-blocking) */
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd >= 0) {
+		i = read(fd, m, 20);
+		if (i > 0)
+			m += i;
+		close(fd);
+	}
+
+	/* take up to 160 bits bytes from openssl (non-blocking) */
+#ifdef USE_OPENSSL
+	if (RAND_bytes(m, 20) == 1)
+		m += 20;
+#endif
+
+	/* take 160 bits from existing random in case it was already initialized */
+	for (i = 0; i < 5; i++) {
+		write_u32(m, random());
+		m += 4;
+	}
+
+	/* stack address (benefit form operating system's ASLR) */
+	l = (unsigned long)&m;
+	memcpy(m, &l, sizeof(l)); m += sizeof(l);
+
+	/* argv address (benefit form operating system's ASLR) */
+	l = (unsigned long)&argv;
+	memcpy(m, &l, sizeof(l)); m += sizeof(l);
+
+	/* use tv_usec again after all the operations above */
+	gettimeofday(&tv, NULL);
+	write_u32(m, tv.tv_usec); m += 4;
+
+	/*
+	 * At this point, ~84-92 bytes have been used
+	 */
+
+	/* finish with the hostname */
+	strncpy((char *)m, hostname, message + sizeof(message) - m);
+	m += strlen(hostname);
+
+	/* total message length */
+	l = m - message;
+
+	memset(&ctx, 0, sizeof(ctx));
+	blk_SHA1_Init(&ctx);
+	blk_SHA1_Update(&ctx, message, l);
+	blk_SHA1_Final(boot_seed, &ctx);
+
+	srandom(read_u32(boot_seed));
+	ha_random_seed(boot_seed, sizeof(boot_seed));
+}
+
 /* considers splicing proxies' maxconn, computes the ideal global.maxpipes
  * setting, and returns it. It may return -1 meaning "unlimited" if some
  * unlimited proxies have been found and the global.maxconn value is not yet
@@ -1467,7 +1564,7 @@ static int compute_ideal_maxconn()
 	int ssl_sides = !!global.ssl_used_frontend + !!global.ssl_used_backend;
 	int engine_fds = global.ssl_used_async_engines * ssl_sides;
 	int pipes = compute_ideal_maxpipes();
-	int remain = rlim_fd_cur_at_boot;
+	int remain = MAX(rlim_fd_cur_at_boot, rlim_fd_max_at_boot);
 	int maxconn;
 
 	/* we have to take into account these elements :
@@ -1566,7 +1663,7 @@ static void init(int argc, char **argv)
 	tv_update_date(-1,-1);
 	start_date = now;
 
-	srandom(now_ms - getpid());
+	ha_random_boot(argv);
 
 	if (init_acl() != 0)
 		exit(1);
@@ -1948,7 +2045,11 @@ static void init(int argc, char **argv)
 		exit(1);
 	}
 
-	pattern_finalize_config();
+	err_code |= pattern_finalize_config();
+	if (err_code & (ERR_ABORT|ERR_FATAL)) {
+		ha_alert("Failed to finalize pattern config.\n");
+		exit(1);
+	}
 
 	/* recompute the amount of per-process memory depending on nbproc and
 	 * the shared SSL cache size (allowed to exist in all processes).
@@ -2699,10 +2800,6 @@ static void run_poll_loop()
 		/* Check if we can expire some tasks */
 		next = wake_expired_tasks();
 
-		/* stop when there's nothing left to do */
-		if ((jobs - unstoppable_jobs) == 0)
-			break;
-
 		/* also stop  if we failed to cleanly stop all tasks */
 		if (killed > 1)
 			break;
@@ -2721,6 +2818,16 @@ static void run_poll_loop()
 				_HA_ATOMIC_AND(&sleeping_thread_mask, ~tid_bit);
 			} else
 				wake = 0;
+		}
+
+		if (!wake) {
+			if (stopping)
+				_HA_ATOMIC_OR(&stopping_thread_mask, tid_bit);
+
+			/* stop when there's nothing left to do */
+			if ((jobs - unstoppable_jobs) == 0 &&
+			    (stopping_thread_mask & all_threads_mask) == all_threads_mask)
+				break;
 		}
 
 		/* The poller will ensure it returns around <next> */
@@ -3216,8 +3323,10 @@ int main(int argc, char **argv)
 					protocol_unbind_all();
 					exit(1); /* there has been an error */
 				}
-				else if (ret == 0) /* child breaks here */
+				else if (ret == 0) { /* child breaks here */
+					ha_random_jump96(relative_pid);
 					break;
+				}
 				if (pidfd >= 0 && !(global.mode & MODE_MWORKER)) {
 					char pidstr[100];
 					snprintf(pidstr, sizeof(pidstr), "%d\n", ret);

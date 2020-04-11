@@ -61,6 +61,26 @@
  * power of 2, and 0 otherwise */
 #define POWEROF2(x) (((x) & ((x)-1)) == 0)
 
+/* rotate left a 64-bit integer by <bits:[0-5]> bits */
+static inline uint64_t rotl64(uint64_t v, uint8_t bits)
+{
+#if !defined(__ARM_ARCH_8A) && !defined(__x86_64__)
+	bits &= 63;
+#endif
+	v = (v << bits) | (v >> (-bits & 63));
+	return v;
+}
+
+/* rotate right a 64-bit integer by <bits:[0-5]> bits */
+static inline uint64_t rotr64(uint64_t v, uint8_t bits)
+{
+#if !defined(__ARM_ARCH_8A) && !defined(__x86_64__)
+	bits &= 63;
+#endif
+	v = (v >> bits) | (v << (-bits & 63));
+	return v;
+}
+
 /* DEFNULL() returns either the argument as-is, or NULL if absent. This is for
  * use in macros arguments.
  */
@@ -1487,6 +1507,21 @@ static inline void *my_realloc2(void *ptr, size_t size)
 }
 
 int parse_dotted_uints(const char *s, unsigned int **nums, size_t *sz);
+
+/* PRNG */
+void ha_random_seed(const unsigned char *seed, size_t len);
+void ha_random_jump96(uint32_t dist);
+uint64_t ha_random64();
+
+static inline uint32_t ha_random32()
+{
+	return ha_random64() >> 32;
+}
+
+static inline int32_t ha_random()
+{
+	return ha_random32() >> 1;
+}
 
 /* HAP_STRING() makes a string from a literal while HAP_XSTRING() first
  * evaluates the argument and is suited to pass macros.

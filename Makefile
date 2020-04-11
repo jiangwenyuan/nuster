@@ -41,7 +41,7 @@
 #   USE_LUA              : enable Lua support.
 #   USE_FUTEX            : enable use of futex on kernel 2.6. Automatic.
 #   USE_ACCEPT4          : enable use of accept4() on linux. Automatic.
-#   USE_MY_ACCEPT4       : use own implemention of accept4() if glibc < 2.10.
+#   USE_MY_ACCEPT4       : use own implementation of accept4() if glibc < 2.10.
 #   USE_PRCTL            : enable use of prctl(). Automatic.
 #   USE_ZLIB             : enable zlib library support.
 #   USE_SLZ              : enable slz library instead of zlib (pick at most one).
@@ -141,7 +141,7 @@ MANDIR = $(PREFIX)/share/man
 DOCDIR = $(PREFIX)/doc/haproxy
 
 #### TARGET system
-# Use TARGET=<target_name> to optimize for a specifc target OS among the
+# Use TARGET=<target_name> to optimize for a specific target OS among the
 # following list (use the default "generic" if uncertain) :
 #    linux-glibc, linux-glibc-legacy, solaris, freebsd, openbsd, netbsd,
 #    cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic, custom
@@ -247,7 +247,7 @@ SILENT_DEFINE =
 # It's automatically appended depending on the targets.
 EXTRA =
 
-#### CPU dependant optimizations
+#### CPU dependent optimizations
 # Some CFLAGS are set by default depending on the target CPU. Those flags only
 # feed CPU_CFLAGS, which in turn feed CFLAGS, so it is not mandatory to use
 # them. You should not have to change these options. Better use CPU_CFLAGS or
@@ -261,7 +261,7 @@ CPU_CFLAGS.power8     = -O2 -mcpu=power8 -mtune=power8
 CPU_CFLAGS.power9     = -O2 -mcpu=power9 -mtune=power9
 CPU_CFLAGS            = $(CPU_CFLAGS.$(CPU))
 
-#### ARCH dependant flags, may be overridden by CPU flags
+#### ARCH dependent flags, may be overridden by CPU flags
 ARCH_FLAGS.32     = -m32
 ARCH_FLAGS.64     = -m64
 ARCH_FLAGS.i386   = -m32 -march=i386
@@ -329,6 +329,9 @@ ifeq ($(TARGET),linux-glibc)
     USE_CPU_AFFINITY USE_THREAD USE_EPOLL USE_FUTEX USE_LINUX_TPROXY          \
     USE_ACCEPT4 USE_LINUX_SPLICE USE_PRCTL USE_THREAD_DUMP USE_NS USE_TFO     \
     USE_GETADDRINFO)
+ifneq ($(shell echo __arm__/__aarch64__ | $(CC) -E -xc - | grep '^[^\#]'),__arm__/__aarch64__)
+  TARGET_LDFLAGS=-latomic
+endif
 endif
 
 # For linux >= 2.6.28, glibc without new features

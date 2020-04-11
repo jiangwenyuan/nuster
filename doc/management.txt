@@ -1475,7 +1475,7 @@ commit ssl cert <filename>
   the previous ones. Replace in memory the previous SSL certificates
   everywhere the <filename> was used in the configuration.
   Upon failure it doesn't remove or insert anything. Once the temporary
-  transaction is commited, it is destroyed.
+  transaction is committed, it is destroyed.
 
   See also "ssl set cert" and "abort ssl cert".
 
@@ -1526,7 +1526,7 @@ disable agent <backend>/<server>
   level "admin".
 
 disable dynamic-cookie backend <backend>
-  Disable the generation of dynamic cookies fot the backend <backend>
+  Disable the generation of dynamic cookies for the backend <backend>
 
 disable frontend <frontend>
   Mark the frontend as temporarily stopped. This corresponds to the mode which

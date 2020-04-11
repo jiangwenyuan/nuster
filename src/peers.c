@@ -1026,13 +1026,13 @@ static inline int peer_send_resync_confirmsg(struct appctx *appctx)
  * any other negative returned value must  be considered as an error with an appctx st0
  * returned value equal to PEER_SESS_ST_END.
  */
-static inline int peer_send_resync_finishedmsg(struct appctx *appctx, struct peer *peer)
+static inline int peer_send_resync_finishedmsg(struct appctx *appctx, struct peers *peers)
 {
 	struct peer_prep_params p = {
 		.control.head = { PEER_MSG_CLASS_CONTROL, },
 	};
 
-	p.control.head[1] = (peer->flags & PEERS_RESYNC_STATEMASK) == PEERS_RESYNC_FINISHED ?
+	p.control.head[1] = (peers->flags & PEERS_RESYNC_STATEMASK) == PEERS_RESYNC_FINISHED ?
 		PEER_MSG_CTRL_RESYNCFINISHED : PEER_MSG_CTRL_RESYNCPARTIAL;
 
 	return peer_send_msg(appctx, peer_prepare_control_msg, &p);
@@ -1949,7 +1949,7 @@ static inline int peer_send_msgs(struct appctx *appctx, struct peer *peer)
 	}
 
 	if ((peer->flags & PEER_F_TEACH_PROCESS) && !(peer->flags & PEER_F_TEACH_FINISHED)) {
-		repl = peer_send_resync_finishedmsg(appctx, peer);
+		repl = peer_send_resync_finishedmsg(appctx, peers);
 		if (repl <= 0)
 			return repl;
 
@@ -2231,7 +2231,7 @@ switchstate:
 					 * retrying otherwise the other end will do the same and we can loop
 					 * for a while.
 					 */
-					curpeer->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
+					curpeer->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + ha_random() % 2000));
 					peer_session_forceshutdown(curpeer);
 				}
 				if (maj_ver != (unsigned int)-1 && min_ver != (unsigned int)-1) {
@@ -2684,7 +2684,7 @@ static struct task *process_peer_sync(struct task * task, void *context, unsigne
 									ps->reconnect = tick_add(now_ms, MS_TO_TICKS(PEER_RECONNECT_TIMEOUT));
 								}
 								else  {
-									ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
+									ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + ha_random() % 2000));
 									peer_session_forceshutdown(ps);
 									ps->no_hbt++;
 								}
@@ -2740,7 +2740,7 @@ static struct task *process_peer_sync(struct task * task, void *context, unsigne
 				 * retrying otherwise the other end will do the same and we can loop
 				 * for a while.
 				 */
-				ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + random() % 2000));
+				ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + ha_random() % 2000));
 				if (ps->appctx) {
 					peer_session_forceshutdown(ps);
 				}

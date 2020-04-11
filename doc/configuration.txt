@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.1
                              willy tarreau
-                              2020/02/12
+                              2020/04/02
 
 
 This document covers the configuration language as implemented in the version
@@ -860,7 +860,7 @@ h1-case-adjust <from> <to>
   <from>, to change it to <to> before sending it to HTTP/1 clients or
   servers. <from> must be in lower case, and <from> and <to> must not differ
   except for their case. It may be repeated if several header names need to be
-  ajusted. Duplicate entries are not allowed. If a lot of header names have to
+  adjusted. Duplicate entries are not allowed. If a lot of header names have to
   be adjusted, it might be more convenient to use "h1-case-adjust-file".
   Please note that no transformation will be applied unless "option
   h1-case-adjust-bogus-client" or "option h1-case-adjust-bogus-server" is
@@ -4429,7 +4429,7 @@ http-request reject [ { if | unless } <condition> ]
 http-request replace-header <name> <match-regex> <replace-fmt>
                             [ { if | unless } <condition> ]
 
-  This matches the value of all occurences of header field <name> against
+  This matches the value of all occurrences of header field <name> against
   <match-regex>. Matching is performed case-sensitively. Matching values are
   completely replaced by <replace-fmt>. Format characters are allowed in
   <replace-fmt> and work like <fmt> arguments in "http-request add-header".
@@ -5867,6 +5867,11 @@ monitor-uri <uri>
   nothing more. However, it is possible to add any number of conditions using
   "monitor fail" and ACLs so that the result can be adjusted to whatever check
   can be imagined (most often the number of available servers in a backend).
+
+  Note: if <uri> starts by a slash ('/'), the matching is performed against the
+        request's path instead of the request's uri. It is a workaround to let
+        the HTTP/2 requests match the monitor-uri. Indeed, in HTTP/2, clients
+        are encouraged to send absolute URIs only.
 
   Example :
     # Use /haproxy_test to report haproxy's status
@@ -8004,7 +8009,7 @@ server-state-file-name [<file>]
     global
       server-state-file-base /etc/haproxy/states
 
-   backend bk
+    backend bk
       load-server-state-from-file
 
   See also: "server-state-file-base", "load-server-state-from-file", and
@@ -11149,6 +11154,9 @@ no-tls-tickets
   extension) and force to use stateful session resumption. Stateless
   session resumption is more expensive in CPU usage. This option is also
   available on global statement "ssl-default-bind-options".
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
 
 no-tlsv10
   This setting is only available when support for OpenSSL was built in. It
@@ -11848,6 +11856,9 @@ no-tls-tickets
   extension) and force to use stateful session resumption. Stateless
   session resumption is more expensive in CPU usage for servers. This option
   is also available on global statement "ssl-default-server-options".
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
   See also "tls-tickets".
 
 no-tlsv10
@@ -12277,8 +12288,11 @@ tls-tickets
   This option may be used as "server" setting to reset any "no-tls-tickets"
   setting which would have been inherited from "default-server" directive as
   default value.
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
   It may also be used as "default-server" setting to reset any previous
-  "default-server" "no-tlsv-tickets" setting.
+  "default-server" "no-tls-tickets" setting.
 
 verify [none|required]
   This setting is only available when support for OpenSSL was built in. If set
@@ -14884,6 +14898,11 @@ so_id : integer
   in frontends involving many "bind" lines, or to stick all users coming via a
   same socket to the same server.
 
+so_name : string
+  Returns a string containing the current listening socket's name, as defined
+  with name on a "bind" line. It can serve the same purposes as so_id but with
+  strings instead of integers.
+
 src : ip
   This is the source IPv4 address of the client of the session. It is of type
   IP and works on both IPv4 and IPv6 tables. On IPv6 tables, IPv4 addresses are
@@ -16052,19 +16071,19 @@ http_auth_group(<userlist>) : string
     groups.
 
 http_auth_pass : string
-   Returns the user's password found in the authentication data received from
-   the client, as supplied in the Authorization header. Not checks are
-   performed by this sample fetch. Only Basic authentication is supported.
+  Returns the user's password found in the authentication data received from
+  the client, as supplied in the Authorization header. Not checks are
+  performed by this sample fetch. Only Basic authentication is supported.
 
 http_auth_type : string
-   Returns the authentication method found in the authentication data received from
-   the client, as supplied in the Authorization header. Not checks are
-   performed by this sample fetch. Only Basic authentication is supported.
+  Returns the authentication method found in the authentication data received from
+  the client, as supplied in the Authorization header. Not checks are
+  performed by this sample fetch. Only Basic authentication is supported.
 
 http_auth_user : string
-   Returns the user name found in the authentication data received from the
-   client, as supplied in the Authorization header. Not checks are performed by
-   this sample fetch. Only Basic authentication is supported.
+  Returns the user name found in the authentication data received from the
+  client, as supplied in the Authorization header. Not checks are performed by
+  this sample fetch. Only Basic authentication is supported.
 
 http_first_req : boolean
   Returns true when the request being processed is the first one of the
@@ -18108,14 +18127,25 @@ pass-header <name> [ { if | unless } <condition> ]
   the FastCGI application because they are already converted into parameters.
 
 path-info <regex>
-  Define a regular expression to extract the script-name and the path-info
-  from the URI. Thus, <regex> should have two captures: the first one to
-  capture the script name and the second one to capture the path-info. It is an
+  Define a regular expression to extract the script-name and the path-info from
+  the URL-decoded path. Thus, <regex> may have two captures: the first one to
+  capture the script name and the second one to capture the path-info. The
+  first one is mandatory, the second one is optional. This way, it is possible
+  to extract the script-name from the path ignoring the path-info. It is an
   optional setting. If it is not defined, no matching is performed on the
-  URI. and the FastCGI parameters PATH_INFO and PATH_TRANSLATED are not filled.
+  path. and the FastCGI parameters PATH_INFO and PATH_TRANSLATED are not
+  filled.
+
+  For security reason, when this regular expression is defined, the newline and
+  the null characters are forbidden from the path, once URL-decoded. The reason
+  to such limitation is because otherwise the matching always fails (due to a
+  limitation one the way regular expression are executed in HAProxy). So if one
+  of these two characters is found in the URL-decoded path, an error is
+  returned to the client. The principle of least astonishment is applied here.
 
   Example :
-     path-info ^(/.+\.php)(/.*)?$
+     path-info ^(/.+\.php)(/.*)?$ # both script-name and path-info may be set
+     path-info ^(/.+\.php)        # the path-info is ignored
 
 option get-values
 no option get-values
@@ -18237,7 +18267,7 @@ use-fcgi-app <name>
 
 A Responder FastCGI application has the same purpose as a CGI/1.1 program. In
 the CGI/1.1 specification (RFC3875), several variables must be passed to the
-scipt. So HAProxy set them and some others commonly used by FastCGI
+script. So HAProxy set them and some others commonly used by FastCGI
 applications. All these variables may be overwritten, with caution though.
 
   +-------------------+-----------------------------------------------------+

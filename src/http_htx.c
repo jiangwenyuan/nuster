@@ -40,6 +40,24 @@ struct htx_sl *http_get_stline(struct htx *htx)
 	return htx_get_blk_ptr(htx, blk);
 }
 
+/* Returns the headers size in the HTX message */
+size_t http_get_hdrs_size(struct htx *htx)
+{
+	struct htx_blk *blk;
+	size_t sz = 0;
+
+	blk = htx_get_first_blk(htx);
+	if (!blk || htx_get_blk_type(blk) > HTX_BLK_EOH)
+		return sz;
+
+	for (; blk; blk = htx_get_next_blk(htx, blk)) {
+		sz += htx_get_blksz(blk);
+		if (htx_get_blk_type(blk) == HTX_BLK_EOH)
+			break;
+	}
+	return sz;
+}
+
 /* Finds the first or next occurrence of header <name> in the HTX message <htx>
  * using the context <ctx>. This structure holds everything necessary to use the
  * header and find next occurrence. If its <blk> member is NULL, the header is
@@ -165,7 +183,7 @@ int http_add_header(struct htx *htx, const struct ist n, const struct ist v)
 
   end:
 	sl = http_get_stline(htx);
-	if (sl && (sl->flags & HTX_SL_F_HAS_AUTHORITY) && isteq(n, ist("host"))) {
+	if (sl && (sl->flags & HTX_SL_F_HAS_AUTHORITY) && isteqi(n, ist("host"))) {
 		if (!http_update_authority(htx, sl, v))
 			goto fail;
 	}
@@ -441,7 +459,7 @@ int http_replace_header(struct htx *htx, struct http_hdr_ctx *ctx,
 		goto fail;
 
 	sl = http_get_stline(htx);
-	if (sl && (sl->flags & HTX_SL_F_HAS_AUTHORITY) && isteq(name, ist("host"))) {
+	if (sl && (sl->flags & HTX_SL_F_HAS_AUTHORITY) && isteqi(name, ist("host"))) {
 		if (!http_update_authority(htx, sl, value))
 			goto fail;
 		ctx->blk = NULL;
@@ -534,8 +552,12 @@ static int http_update_authority(struct htx *htx, struct htx_sl *sl, const struc
 
 	uri = htx_sl_req_uri(sl);
 	authority = http_get_authority(uri, 1);
-	if (!authority.len || isteq(host, authority))
+	if (!authority.len)
 		return 0;
+
+	/* Don't update the uri if there is no change */
+	if (isteq(host, authority))
+		return 1;
 
 	/* Start by copying old method and version */
 	chunk_memcat(temp, HTX_SL_REQ_MPTR(sl), HTX_SL_REQ_MLEN(sl)); /* meth */
