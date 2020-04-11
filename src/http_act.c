@@ -157,7 +157,7 @@ static enum act_return http_action_replace_uri(struct act_rule *rule, struct pro
 		uri = ist2(ci_head(&s->req) + s->txn->req.sl.rq.u, s->txn->req.sl.rq.u_l);
 
 	if (rule->arg.act.p[0] == (void *)1)
-		uri = http_get_path(uri); // replace path
+		uri = iststop(http_get_path(uri), '?');
 
 	if (!regex_exec_match2(rule->arg.act.p[1], uri.ptr, uri.len, MAX_MATCH, pmatch, 0))
 		goto leave;
@@ -285,8 +285,8 @@ static enum act_return http_action_reject(struct act_rule *rule, struct proxy *p
 	si_must_kill_conn(chn_prod(&s->req));
 	channel_abort(&s->req);
 	channel_abort(&s->res);
-	s->req.analysers = 0;
-	s->res.analysers = 0;
+	s->req.analysers &= AN_REQ_FLT_END;
+	s->res.analysers &= AN_RES_FLT_END;
 
 	_HA_ATOMIC_ADD(&s->be->be_counters.denied_req, 1);
 	_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);

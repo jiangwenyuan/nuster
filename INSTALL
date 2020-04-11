@@ -130,7 +130,7 @@ options involved.
 HAProxy in its basic form does not depend on anything beyond a working libc.
 However a number of options are enabled by default, or are highly recommended,
 and these options will typically involve some external components or libraries,
-depending on the targetted platform.
+depending on the targeted platform.
 
 Optional dependencies may be split into several categories :
 
@@ -288,7 +288,7 @@ can be downloaded http://libslz.org/ and is even easier to build.
 
 4.7) Lua
 --------
-Lua is an embedded programming langage supported by HAProxy to provide more
+Lua is an embedded programming language supported by HAProxy to provide more
 advanced scripting capabilities. Only versions 5.3 and above are supported.
 In order to enable Lua support, please specify "USE_LUA=1" on the command line.
 Some systems provide this library under various names to avoid conflicts with

@@ -23,6 +23,7 @@
 #include <common/standard.h>
 
 #include <types/global.h>
+#include <types/signal.h>
 
 #include <proto/cli.h>
 #include <proto/fd.h>
@@ -113,9 +114,11 @@ void ha_task_dump(struct buffer *buf, const struct task *task, const char *pfx)
 		              task->call_date ? " ns ago" : "");
 
 	chunk_appendf(buf, "%s"
-	              "  fct=%p (%s) ctx=%p",
+	              "  fct=%p=main%s%ld (%s) ctx=%p",
 	              pfx,
 	              task->process,
+		      ((void *)task->process - (void *)main) < 0 ? "" : "+",
+		      (long)((void *)task->process - (void *)main),
 	              task->process == process_stream ? "process_stream" :
 	              task->process == task_run_applet ? "task_run_applet" :
 	              task->process == si_cs_io_cb ? "si_cs_io_cb" :
@@ -439,12 +442,6 @@ void ha_thread_dump_all_to_trash()
 
 #else /* below USE_THREAD_DUMP is set */
 
-/* The signal to trigger a debug dump on a thread is SIGURG. It has the benefit
- * of not stopping gdb by default, so that issuing "show threads" in a process
- * being debugged has no adverse effect.
- */
-#define DEBUGSIG SIGURG
-
 /* ID of the thread requesting the dump */
 static unsigned int thread_dump_tid;
 
@@ -473,6 +470,12 @@ void ha_thread_dump_all_to_trash()
 /* handles DEBUGSIG to dump the state of the thread it's working on */
 void debug_handler(int sig, siginfo_t *si, void *arg)
 {
+	/* first, let's check it's really for us and that we didn't just get
+	 * a spurious DEBUGSIG.
+	 */
+	if (!(threads_to_dump & tid_bit))
+		return;
+
 	/* There are 4 phases in the dump process:
 	 *   1- wait for our turn, i.e. when all lower bits are gone.
 	 *   2- perform the action if our bit is set

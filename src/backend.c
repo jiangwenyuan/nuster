@@ -574,8 +574,7 @@ static struct server *get_server_rnd(struct stream *s, const struct server *avoi
 	curr = NULL;
 	do {
 		prev = curr;
-		/* ensure all 32 bits are covered as long as RAND_MAX >= 65535 */
-		hash = ((uint64_t)random() * ((uint64_t)RAND_MAX + 1)) ^ random();
+		hash = ha_random32();
 		curr = chash_get_server_hash(px, hash, avoid);
 		if (!curr)
 			break;
@@ -1478,13 +1477,18 @@ int connect_server(struct stream *s)
 		}
 	}
 
-	if (!srv_conn)
+	if (!srv_conn) {
+		if (srv_conn)
+			conn_free(srv_conn);
 		return SF_ERR_RESOURCE;
+	}
 
 	if (!(s->flags & SF_ADDR_SET)) {
 		err = assign_server_address(s, srv_conn);
-		if (err != SRV_STATUS_OK)
+		if (err != SRV_STATUS_OK) {
+			conn_free(srv_conn);
 			return SF_ERR_INTERNAL;
+		}
 	}
 
 	if (!conn_xprt_ready(srv_conn) && !srv_conn->mux) {
@@ -1494,11 +1498,15 @@ int connect_server(struct stream *s)
 		else if (obj_type(s->target) == OBJ_TYPE_PROXY) {
 			/* proxies exclusively run on raw_sock right now */
 			conn_prepare(srv_conn, protocol_by_family(srv_conn->addr.to.ss_family), xprt_get(XPRT_RAW));
-			if (!(srv_conn->ctrl))
+			if (!(srv_conn->ctrl)) {
+				conn_free(srv_conn);
 				return SF_ERR_INTERNAL;
+			}
 		}
-		else
+		else {
+			conn_free(srv_conn);
 			return SF_ERR_INTERNAL;  /* how did we get there ? */
+		}
 
 #if defined(USE_OPENSSL) && defined(TLSEXT_TYPE_application_layer_protocol_negotiation)
 		if (!srv ||

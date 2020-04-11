@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.0
                              willy tarreau
-                              2020/02/13
+                              2020/04/02
 
 
 This document covers the configuration language as implemented in the version
@@ -849,7 +849,7 @@ h1-case-adjust <from> <to>
   <from>, to change it to <to> before sending it to HTTP/1 clients or
   servers. <from> must be in lower case, and <from> and <to> must not differ
   except for their case. It may be repeated if several header names need to be
-  ajusted. Duplicate entries are not allowed. If a lot of header names have to
+  adjusted. Duplicate entries are not allowed. If a lot of header names have to
   be adjusted, it might be more convenient to use "h1-case-adjust-file".
   Please note that no transformation will be applied unless "option
   h1-case-adjust-bogus-client" or "option h1-case-adjust-bogus-server" is
@@ -4509,7 +4509,7 @@ http-request reject [ { if | unless } <condition> ]
 http-request replace-header <name> <match-regex> <replace-fmt>
                             [ { if | unless } <condition> ]
 
-  This matches the value of all occurences of header field <name> against
+  This matches the value of all occurrences of header field <name> against
   <match-regex>. Matching is performed case-sensitively. Matching values are
   completely replaced by <replace-fmt>. Format characters are allowed in
   <replace-fmt> and work like <fmt> arguments in "http-request add-header".
@@ -8584,7 +8584,7 @@ server-state-file-name [<file>]
     global
       server-state-file-base /etc/haproxy/states
 
-   backend bk
+    backend bk
       load-server-state-from-file
 
   See also: "server-state-file-base", "load-server-state-from-file", and
@@ -11779,6 +11779,9 @@ no-tls-tickets
   extension) and force to use stateful session resumption. Stateless
   session resumption is more expensive in CPU usage. This option is also
   available on global statement "ssl-default-bind-options".
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
 
 no-tlsv10
   This setting is only available when support for OpenSSL was built in. It
@@ -12478,6 +12481,9 @@ no-tls-tickets
   extension) and force to use stateful session resumption. Stateless
   session resumption is more expensive in CPU usage for servers. This option
   is also available on global statement "ssl-default-server-options".
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
   See also "tls-tickets".
 
 no-tlsv10
@@ -12902,8 +12908,11 @@ tls-tickets
   This option may be used as "server" setting to reset any "no-tls-tickets"
   setting which would have been inherited from "default-server" directive as
   default value.
+  The TLS ticket mechanism is only used up to TLS 1.2.
+  Forward Secrecy is compromised with TLS tickets, unless ticket keys
+  are periodically rotated (via reload or by using "tls-ticket-keys").
   It may also be used as "default-server" setting to reset any previous
-  "default-server" "no-tlsv-tickets" setting.
+  "default-server" "no-tls-tickets" setting.
 
 verify [none|required]
   This setting is only available when support for OpenSSL was built in. If set
@@ -15463,6 +15472,11 @@ so_id : integer
   Returns an integer containing the current listening socket's id. It is useful
   in frontends involving many "bind" lines, or to stick all users coming via a
   same socket to the same server.
+
+so_name : string
+  Returns a string containing the current listening socket's name, as defined
+  with name on a "bind" line. It can serve the same purposes as so_id but with
+  strings instead of integers.
 
 src : ip
   This is the source IPv4 address of the client of the session. It is of type

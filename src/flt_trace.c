@@ -487,7 +487,7 @@ trace_http_payload(struct stream *s, struct filter *filter, struct http_msg *msg
 			}
 		}
 		if (data)  {
-			ret = random() % (ret+1);
+			ret = ha_random() % (ret+1);
 			if (!ret || ret >= data)
 				ret = len;
 		}
@@ -516,7 +516,7 @@ trace_http_data(struct stream *s, struct filter *filter,
 	int ret   = avail;
 
 	if (ret && conf->rand_parsing)
-		ret = random() % (ret+1);
+		ret = ha_random() % (ret+1);
 
 	STRM_TRACE(conf, s, "%-25s: channel=%-10s - mode=%-5s (%s) - "
 		   "chunk_len=%llu - next=%u - fwd=%u - avail=%d - consume=%d",
@@ -582,7 +582,7 @@ trace_http_forward_data(struct stream *s, struct filter *filter,
 	int                  ret  = len;
 
 	if (ret && conf->rand_forwarding)
-		ret = random() % (ret+1);
+		ret = ha_random() % (ret+1);
 
 	STRM_TRACE(conf, s, "%-25s: channel=%-10s - mode=%-5s (%s) - "
 		   "len=%u - nxt=%u - fwd=%u - forward=%d",
@@ -613,7 +613,7 @@ trace_tcp_data(struct stream *s, struct filter *filter, struct channel *chn)
 	int                  ret  = avail;
 
 	if (ret && conf->rand_parsing)
-		ret = random() % (ret+1);
+		ret = ha_random() % (ret+1);
 
 	STRM_TRACE(conf, s, "%-25s: channel=%-10s - mode=%-5s (%s) - next=%u - avail=%u - consume=%d",
 		   __FUNCTION__,
@@ -633,7 +633,7 @@ trace_tcp_forward_data(struct stream *s, struct filter *filter, struct channel *
 	int                  ret  = len;
 
 	if (ret && conf->rand_forwarding)
-		ret = random() % (ret+1);
+		ret = ha_random() % (ret+1);
 
 	STRM_TRACE(conf, s, "%-25s: channel=%-10s - mode=%-5s (%s) - len=%u - fwd=%u - forward=%d",
 		   __FUNCTION__,

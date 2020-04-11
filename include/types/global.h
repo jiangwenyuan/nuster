@@ -303,6 +303,7 @@ extern int master; /* 1 if in master, 0 otherwise */
 extern unsigned int rlim_fd_cur_at_boot;
 extern unsigned int rlim_fd_max_at_boot;
 extern int atexit_flag;
+extern unsigned char boot_seed[20];  // per-boot random seed (160 bits initially)
 
 /* bit values to go with "warned" above */
 #define WARN_BLOCK_DEPRECATED       0x00000001
@@ -349,6 +350,7 @@ static inline unsigned long thread_mask(unsigned long mask)
 int tell_old_pids(int sig);
 int delete_oldpid(int pid);
 
+int main(int argc, char **argv);
 void deinit(void);
 void hap_register_build_opts(const char *str, int must_free);
 void hap_register_post_check(int (*fct)());

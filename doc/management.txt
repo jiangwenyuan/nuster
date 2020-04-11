@@ -1507,7 +1507,7 @@ disable agent <backend>/<server>
   level "admin".
 
 disable dynamic-cookie backend <backend>
-  Disable the generation of dynamic cookies fot the backend <backend>
+  Disable the generation of dynamic cookies for the backend <backend>
 
 disable frontend <frontend>
   Mark the frontend as temporarily stopped. This corresponds to the mode which

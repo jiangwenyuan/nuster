@@ -331,7 +331,7 @@ int htx_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 	 * the monitor-uri is defined by the frontend.
 	 */
 	if (unlikely((sess->fe->monitor_uri_len != 0) &&
-		     isteqi(htx_sl_req_uri(sl), ist2(sess->fe->monitor_uri, sess->fe->monitor_uri_len)))) {
+		     isteq(htx_sl_req_uri(sl), ist2(sess->fe->monitor_uri, sess->fe->monitor_uri_len)))) {
 		/*
 		 * We have found the monitor URI
 		 */
@@ -1017,8 +1017,7 @@ int htx_process_tarpit(struct stream *s, struct channel *req, int an_bit)
 	 */
 	s->logs.t_queue = tv_ms_elapsed(&s->logs.tv_accept, &now);
 
-	if (!(req->flags & CF_READ_ERROR))
-		htx_reply_and_close(s, txn->status, htx_error_message(s));
+	htx_reply_and_close(s, txn->status, (!(req->flags & CF_READ_ERROR) ? htx_error_message(s) : NULL));
 
 	req->analysers &= AN_REQ_FLT_END;
 	req->analyse_exp = TICK_ETERNITY;
@@ -1525,6 +1524,8 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			}
 
 			rep->analysers &= AN_RES_FLT_END;
+			s->req.analysers &= AN_REQ_FLT_END;
+			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 502;
 
 			/* Check to see if the server refused the early data.
@@ -1562,6 +1563,8 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			}
 
 			rep->analysers &= AN_RES_FLT_END;
+			s->req.analysers &= AN_REQ_FLT_END;
+			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 504;
 			s->si[1].flags |= SI_FL_NOLINGER;
 			htx_reply_and_close(s, txn->status, htx_error_message(s));
@@ -1581,6 +1584,8 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 				_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.cli_aborts, 1);
 
 			rep->analysers &= AN_RES_FLT_END;
+			s->req.analysers &= AN_REQ_FLT_END;
+			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 400;
 			htx_reply_and_close(s, txn->status, htx_error_message(s));
 
@@ -1611,6 +1616,8 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			}
 
 			rep->analysers &= AN_RES_FLT_END;
+			s->req.analysers &= AN_REQ_FLT_END;
+			rep->analyse_exp = TICK_ETERNITY;
 			txn->status = 502;
 			s->si[1].flags |= SI_FL_NOLINGER;
 			htx_reply_and_close(s, txn->status, htx_error_message(s));
@@ -1629,6 +1636,8 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 
 			_HA_ATOMIC_ADD(&s->be->be_counters.failed_resp, 1);
 			rep->analysers &= AN_RES_FLT_END;
+			s->req.analysers &= AN_REQ_FLT_END;
+			rep->analyse_exp = TICK_ETERNITY;
 
 			if (!(s->flags & SF_ERR_MASK))
 				s->flags |= SF_ERR_CLICL;
@@ -1832,6 +1841,8 @@ int htx_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	s->si[1].flags |= SI_FL_NOLINGER;
 	htx_reply_and_close(s, txn->status, htx_error_message(s));
 	rep->analysers &= AN_RES_FLT_END;
+	s->req.analysers &= AN_REQ_FLT_END;
+	rep->analyse_exp = TICK_ETERNITY;
 
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_PRXCOND;
@@ -2151,6 +2162,9 @@ int htx_process_res_common(struct stream *s, struct channel *rep, int an_bit, st
 		s->flags |= SF_ERR_PRXCOND;
 	if (!(s->flags & SF_FINST_MASK))
 		s->flags |= SF_FINST_H;
+
+	s->req.analysers &= AN_REQ_FLT_END;
+	rep->analyse_exp = TICK_ETERNITY;
 	return 0;
 }
 
@@ -2608,9 +2622,6 @@ int htx_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struct
 
 	htx_to_buf(htx, &res->buf);
 
-	/* let's log the request time */
-	s->logs.tv_request = now;
-
 	data = htx->data - co_data(res);
 	c_adv(res, data);
 	res->total += data;
@@ -2624,13 +2635,19 @@ int htx_apply_redirect_rule(struct redirect_rule *rule, struct stream *s, struct
 	channel_auto_read(res);
 	channel_auto_close(res);
 	channel_shutr_now(res);
+	if (rule->flags & REDIRECT_FLAG_FROM_REQ) {
+		/* let's log the request time */
+		s->logs.tv_request = now;
+		req->analysers &= AN_REQ_FLT_END;
 
-	req->analysers &= AN_REQ_FLT_END;
+		if (s->sess->fe == s->be) /* report it if the request was intercepted by the frontend */
+			_HA_ATOMIC_ADD(&s->sess->fe->fe_counters.intercepted_req, 1);
+	}
 
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_LOCAL;
 	if (!(s->flags & SF_FINST_MASK))
-		s->flags |= SF_FINST_R;
+		s->flags |= ((rule->flags & REDIRECT_FLAG_FROM_REQ) ? SF_FINST_R : SF_FINST_H);
 
 	free_trash_chunk(chunk);
 	return 1;
