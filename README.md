@@ -328,11 +328,11 @@ During one iteration `disk-loader` files are loaded(by default, 100).
 
 ### disk-saver
 
-Master process will save `disk async` cache data periodically.
+Master process will save `disk sync` cache data periodically.
 
 During one iteration `disk-saver` data are checked and saved to disk if necessary (by default, 100).
 
-See [nuster rule disk mode](#disk-mode) for details.
+See [Store](#disk) for details.
 
 ## proxy: nuster cache|nosql
 
@@ -846,13 +846,10 @@ Cache can be purged by making HTTP `DELETE` requests to the manager uri along wi
 | ------ | -----            | -----------
 | name   | nuster rule NAME | caches created by rule ${NAME} will be purged
 |        | proxy NAME       | caches of proxy ${NAME}
-|        | *                | all caches
 
 ***Examples***
 
 ```
-# purge all caches
-curl -X DELETE -H "name: *" http://127.0.0.1/nuster
 # purge all caches of proxy applb
 curl -X DELETE -H "name: app1b" http://127.0.0.1/nuster
 # purge all caches of rule r1
@@ -865,14 +862,16 @@ You can also purge cache by host, all caches with that host will be deleted:
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| x-host | HOST  | the ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| host        | HOST         | the ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
 ```
-curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+curl -X DELETE -H "nuster-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 ```
 
 ### Advanced purging: purge by path
@@ -917,10 +916,12 @@ This method provides a way to purge just by path:
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| path   | PATH  | caches with ${PATH} will be purged
-| x-host | HOST  | and host is ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| path        | PATH         | caches with ${PATH} will be purged
+| host        | HOST         | and host is ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
@@ -928,7 +929,7 @@ This method provides a way to purge just by path:
 #delete all caches which path is /imgs/test.jpg
 curl -X DELETE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster
 #delete all caches which path is /imgs/test.jpg and with host of 127.0.0.1:8080
-curl -X DELETE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+curl -X DELETE -H "path: /imgs/test.jpg" -H "nuster-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 ```
 
 ### Advanced purging: purge by regex
@@ -937,10 +938,12 @@ You can also purge cache by regex, the caches which path match the regex will be
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| regex  | REGEX | caches which path match with ${REGEX} will be purged
-| x-host | HOST  | and host is ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| regex       | REGEX        | caches which path match with ${REGEX} will be purged
+| host 	      | HOST         | and host is ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
@@ -987,7 +990,7 @@ There are 3 modes:
 
 * off:   default, disable disk persistence.
 * on:    save data to disk.
-* sync:  memory on has to be set in order to use this mode. Save data to memory first and data will be synced to disk later by the master process
+* sync:  `memory on` has to be set in order to use this mode. Save data to memory first and data will be synced to disk later by the master process. One iteration `disk-saver` data are checked and saved to disk.
 
 # Sample fetches
 

@@ -320,7 +320,7 @@ backend be
 
 每次检查 `disk-saver` 个data，并将需要保存至硬盘的data保存到硬盘（默认100）
 
-详细请参考[nuster rule disk mode](#disk-mode).
+详细请参考[Store](#disk).
 
 ## proxy: nuster cache|nosql
 
@@ -842,18 +842,20 @@ curl -X DELETE -H "name: r1" http://127.0.0.1/nuster
 
 ### 高级Purge: 通过host删除
 
-通过带上`x-host`header来删除所有属于这个host的缓存。
+通过带上`nuster-host`header来删除所有属于这个host的缓存。
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| x-host | HOST  | the ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| host        | HOST         | the ${HOST}
+| nuster-host | HOST         | nuster-host存在则使用nuster-host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
 ```
-curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+curl -X DELETE -H "nuster-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 ```
 
 ### 高级Purge: 通过path删除
@@ -898,10 +900,12 @@ curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=180&h=180
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| path   | PATH  | caches with ${PATH} will be purged
-| x-host | HOST  | and host is ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| path        | PATH         | caches with ${PATH} will be purged
+| host        | HOST         | and host is ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
@@ -909,7 +913,7 @@ curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=180&h=180
 # 删除所有path是/imgs/test.jpg的缓存
 curl -X DELETE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster
 # 删除所有path是/imgs/test.jpg 并且host是127.0.0.1:8080的缓存
-curl -X DELETE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+curl -X DELETE -H "path: /imgs/test.jpg" -H "nuster-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 ```
 
 ### 高级Purge: 通过正则删除
@@ -918,10 +922,12 @@ curl -X DELETE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| regex  | REGEX | caches which path match with ${REGEX} will be purged
-| x-host | HOST  | and host is ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| regex       | REGEX        | caches which path match with ${REGEX} will be purged
+| host 	      | HOST         | and host is ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
@@ -968,7 +974,7 @@ Nuster(cache和nosql) 支持多种后端存储. 目前支持memory和disk。计�
 
 * off:   默认，不保存到硬盘
 * on:    保存到硬盘
-* sync:  需要设置`memory on`。先保存至内存然后由master进程在一定时间后同步到硬盘。
+* sync:  需要设置`memory on`。先保存至内存然后由master进程在一定时间后同步到硬盘，每次同步`dict-saver`个缓存。
 
 # Sample fetches
 

@@ -323,7 +323,7 @@ hash tableのサイズを決める.
 
 一回で`disk-saver`個のdataをチェックして、ディスクに保存する必要あるデータを保存する(デフォルト、100).
 
-詳細は[nuster rule disk mode](#disk-mode)
+詳細は[Store](#disk)
 
 ## proxy: nuster cache|nosql
 
@@ -848,15 +848,17 @@ curl -X DELETE -H "name: r1" http://127.0.0.1/nuster
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| x-host | HOST  | the ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| host        | HOST         | the ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
 ```
 # 127.0.0.1:8080のすべてのキャッシュをPurge
-curl -X DELETE -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+curl -X DELETE -H "nuster-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 ```
 
 ### Advanced purge: pathでPurge
@@ -899,10 +901,12 @@ curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=180&h=180
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| path   | PATH  | pathが${PATH}のキャッシュをpurge
-| x-host | HOST  | そして host が ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| path        | PATH         | caches with ${PATH} will be purged
+| host        | HOST         | and host is ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
@@ -911,17 +915,19 @@ curl -XPURGE http://127.0.0.1/imgs/test.jpg?w=180&h=180
 curl -X DELETE -H "path: /imgs/test.jpg" http://127.0.0.1/nuster
 
 # pathが/imgs/test.jpgで hostが127.0.0.1:8080のキャッシュをPurge
-curl -X DELETE -H "path: /imgs/test.jpg" -H "x-host: 127.0.0.1:8080" http://127.0.0.1/nuster
+curl -X DELETE -H "path: /imgs/test.jpg" -H "nuster-host: 127.0.0.1:8080" http://127.0.0.1/nuster
 ```
 
 ### Advanced purge: regexでPurge
 
 ***headers***
 
-| header | value | description
-| ------ | ----- | -----------
-| regex  | REGEX | pathが${REGEX} matchならPurge
-| x-host | HOST  | そして host が ${HOST}
+| header      | value        | description
+| ------      | -----        | -----------
+| regex       | REGEX        | caches which path match with ${REGEX} will be purged
+| host 	      | HOST         | and host is ${HOST}
+| nuster-host | HOST         | nuster-host has higher precedence over host
+| mode        | cache, nosql | purge cache or nosql data
 
 ***Examples***
 
@@ -967,7 +973,7 @@ Nuster(cacheとnosql) は複数の保存先をサポートする。今はmemory 
 
 * off:   ディフォルト、保存しない
 * on:    保存する
-* sync:  `memory on` が必須. メモリに保存して、後ほどmasterプロセスによってディスクに保存される。
+* sync:  `memory on` が必須. メモリに保存して、後ほどmasterプロセスによってディスクに保存される、毎回`disk-saver`個のキャッシュが保存される。
 
 # Sample fetches
 
