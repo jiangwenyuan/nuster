@@ -370,9 +370,9 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
             }
         }
 
+next:
         appctx->st1 = p->next ? p->next->uuid : 0;
 
-next:
         p = p->next;
     }
 
