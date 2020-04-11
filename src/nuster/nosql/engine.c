@@ -831,7 +831,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
         if(!nst_key_disk_checked(key)) {
             nst_key_disk_set_checked(key);
 
-            if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
+            if(nst_disk_data_exists(&nuster.nosql->store.disk, &ctx->store.disk, key) == NST_OK) {
                 ret = NST_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_CTX_STATE_INIT;
