@@ -574,8 +574,9 @@ err:
 
 void
 nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
-    nst_dict_entry_t    *entry   = NULL;
-    nst_ring_item_t     *item  = NULL;
+    nst_dict_entry_t    *entry  = NULL;
+    nst_ring_item_t     *item   = NULL;
+    nst_ring_item_t     *header = NULL;
     nst_key_t           *key;
     int                  idx;
 
@@ -636,16 +637,18 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     /* create header */
 
     if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
-        item = _nst_nosql_create_header(s, &ctx->txn);
+        header = _nst_nosql_create_header(s, &ctx->txn);
 
-        if(item == NULL) {
+        if(header == NULL) {
             ctx->state = NST_CTX_STATE_INVALID;
 
             return;
         }
 
         if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
-            ctx->store.ring.data->item = item;
+            ctx->store.ring.data->item = header;
+
+            item = header;
 
             while(item) {
                 ctx->store.ring.item = item;
@@ -655,7 +658,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
         }
 
         if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
-            item = ctx->store.ring.data->item;
+            item = header;
 
             while(item) {
                 int  sz = ((item->info & 0xff) + ((item->info >> 8) & 0xfffff));
@@ -740,7 +743,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
 
-        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
+        if(nst_disk_store_end(&nuster.nosql->store.disk, &ctx->store.disk, key, &ctx->txn,
                     ctx->entry->expire) == NST_OK) {
 
             ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
