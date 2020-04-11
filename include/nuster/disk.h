@@ -114,6 +114,11 @@ nst_disk_path_file_len(hpx_ist_t root) {
     return root.len + 48;
 }
 
+static inline int
+nst_disk_remove(const char *file) {
+    return remove(file);
+}
+
 int nst_disk_mkdir(char *path);
 
 static inline int
