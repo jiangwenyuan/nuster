@@ -176,9 +176,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 err:
 
     if(entry) {
-        nst_memory_free(dict->memory, entry->key.data);
-        nst_memory_free(dict->memory, entry->buf.area);
-        nst_memory_free(dict->memory, entry);
+        entry->state = NST_DICT_ENTRY_STATE_INVALID;
     }
 
     return NULL;
