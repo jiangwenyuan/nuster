@@ -579,6 +579,10 @@ nst_cache_finish(nst_ctx_t *ctx) {
         }
     }
 
+    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT) {
+        ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    }
+
 }
 
 /*
