@@ -492,6 +492,7 @@ err:
 void
 nst_disk_cleanup(nst_core_t *core) {
     nst_disk_data_t  data;
+    nst_dirent_t    *de;
     hpx_ist_t        root;
     char            *file;
     int              len;
@@ -502,7 +503,6 @@ nst_disk_cleanup(nst_core_t *core) {
     if(core->root.len && core->store.disk.loaded) {
 
         if(core->store.disk.dir) {
-            nst_dirent_t *de = nst_disk_dir_next(core->store.disk.dir);
 
             while((de = readdir(core->store.disk.dir)) != NULL) {
 
