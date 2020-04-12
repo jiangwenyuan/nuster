@@ -433,6 +433,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     /* init store data */
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
+
         if(nst_store_memory_on(ctx->rule->store)) {
             ctx->store.ring.data = nst_ring_store_init(&nuster.cache->store.ring);
         }
@@ -463,8 +464,14 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             ctx->txn.res.header_len += 4 + sz;
 
             if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
-                nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
+                int  ret;
+
+                ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
                         &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+
+                if(ret == NST_ERR) {
+                    ctx->store.ring.data = NULL;
+                }
             }
 
             if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
@@ -510,8 +517,14 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
         ctx->txn.res.payload_len += sz;
 
         if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
-            nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
+            int  ret;
+
+            ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
                     &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+
+            if(ret == NST_ERR) {
+                ctx->store.ring.data = NULL;
+            }
         }
 
         if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
@@ -598,7 +611,6 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
                 if(entry->store.ring.data) {
                     ctx->store.ring.data = entry->store.ring.data;
-                    ctx->store.ring.data->clients++;
                     ret = NST_CTX_STATE_HIT_MEMORY;
                 } else if(entry->store.disk.file) {
                     ctx->store.disk.file = entry->store.disk.file;
@@ -760,7 +772,6 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
 
     if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
         /* return to regular process on error */
-        ctx->store.ring.data->clients--;
         s->target = NULL;
     } else {
         appctx = si_appctx(si);
@@ -769,6 +780,7 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
         appctx->st0 = ctx->state;
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
+            ctx->store.ring.data->clients++;
             appctx->ctx.nuster.store.ring.data = ctx->store.ring.data;
             appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
         } else {
