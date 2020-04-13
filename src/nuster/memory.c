@@ -343,7 +343,8 @@ nst_memory_free_locked(nst_memory_t *memory, void *p) {
     chunk_size = 1<<(memory->chunk_shift + chunk_idx);
     bits       = memory->block_size / chunk_size;
 
-    bits_idx = ((uint8_t *)p - (memory->data.begin + block_idx * memory->block_size)) / chunk_size;
+    bits_idx = ((uint8_t *)p - (memory->data.begin + 1ULL * block_idx * memory->block_size))
+        / chunk_size;
 
     memory->used -= chunk_size;
 
