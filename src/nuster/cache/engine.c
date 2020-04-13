@@ -734,7 +734,7 @@ nst_cache_delete(nst_key_t *key) {
 
             if(entry->store.disk.file) {
                 nst_disk_remove(entry->store.disk.file);
-                nst_memory_free(nuster.nosql->memory, entry->store.disk.file);
+                nst_memory_free(nuster.cache->memory, entry->store.disk.file);
                 entry->store.disk.file = NULL;
             }
 
