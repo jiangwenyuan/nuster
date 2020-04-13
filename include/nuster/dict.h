@@ -124,6 +124,16 @@ nst_dict_entry_invalid(nst_dict_entry_t *entry) {
     return 0;
 }
 
+static inline int
+nst_dict_entry_valid(nst_dict_entry_t *entry) {
+
+    if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+        return !nst_dict_entry_expired(entry);
+    }
+
+    return 0;
+}
+
 int nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size);
 void nst_dict_cleanup(nst_dict_t *dict);
 

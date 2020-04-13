@@ -169,7 +169,7 @@ nst_ring_store_sync(nst_core_t *core) {
 
     while(entry) {
 
-        if(!nst_dict_entry_invalid(entry)
+        if(nst_dict_entry_valid(entry)
                 && entry->rule
                 && nst_store_disk_sync(entry->rule->store)
                 && entry->store.disk.file == NULL) {
