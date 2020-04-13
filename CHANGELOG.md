@@ -1,5 +1,19 @@
 # nuster Changelog
 
+## 5.0.1.20 - 2020-04-13
+
+### Fixed
+
+* uint32 overflow When data-size is bigger than 4GB
+* Add nst_dict_entry_valid, use it in sync
+* Set entry.ring.data to NULL on invalid
+* Fix incorrect nosql for cache
+* Update dict_invalid check
+* Only set entry.state to invalid, leave the free stuff to cleanup
+* Set entry.state to invalid if its state is init on finish
+* Set ctx.ring.data to NULl on ring_data_add failure
+* Fix disk_cleanup readdir error
+
 ## 5.0.0.20 - 2020-04-11
 
 A complete refactored version based on HTX version of HAProxy. Lots of changes, updates, improvements, to name a few:

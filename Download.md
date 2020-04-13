@@ -4,16 +4,16 @@
 Branch | nuster version | Released   | Status            | Download
 ------ | -------------- | --------   | ------            | --------
 master |                |            | HAProxy v2.2-dev5 |
-H2.1   | 5.0.0.21       | 2020-04-11 | Stable version    | [nuster-5.0.0.21.tar.gz][4]
+H2.1   | 5.0.1.21       | 2020-04-13 | Stable version    | [nuster-5.0.1.21.tar.gz][4]
 H2.0   | 4.0.1.20       | 2020-04-11 | Unmaintained      | ~nuster-4.0.1.20.tar.gz~
-H1.9   | 3.2.4.19       | 2020-04-11 | Stable version    | [nuster-3.2.4.19.tar.gz][3]
-H1.8   | 2.0.15.18      | 2020-04-11 | Stable version    | [nuster-2.0.15.18.tar.gz][2]
-H1.7   | 1.0.3.17       | 2019-11-02 | Stable version    | [nuster-1.0.3.17.tar.gz][1]
+H1.9   | 3.2.5.19       | 2020-04-13 | Stable version    | [nuster-3.2.5.19.tar.gz][3]
+H1.8   | 2.0.16.18      | 2020-04-13 | Stable version    | [nuster-2.0.16.18.tar.gz][2]
+H1.7   | 1.0.3.17       | 2019-11-02 | Unmaintained      | [nuster-1.0.3.17.tar.gz][1]
 
 [1]:https://github.com/jiangwenyuan/nuster/releases/download/v1.0.3.17/nuster-1.0.3.17.tar.gz
-[2]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.15.18/nuster-2.0.15.18.tar.gz
-[3]:https://github.com/jiangwenyuan/nuster/releases/download/v3.2.4.19/nuster-3.2.4.19.tar.gz
-[4]:https://github.com/jiangwenyuan/nuster/releases/download/v5.0.0.21/nuster-5.0.0.21.tar.gz
+[2]:https://github.com/jiangwenyuan/nuster/releases/download/v2.0.16.18/nuster-2.0.16.18.tar.gz
+[3]:https://github.com/jiangwenyuan/nuster/releases/download/v3.2.5.19/nuster-3.2.5.19.tar.gz
+[4]:https://github.com/jiangwenyuan/nuster/releases/download/v5.0.1.21/nuster-5.0.1.21.tar.gz
 
 ## Versioning
 
@@ -30,6 +30,9 @@ https://github.com/jiangwenyuan/nuster/releases
 
 | nuster version                                                              | Base HAProxy version
 | --------------                                                              | ---------------
+| [5.0.1.21](https://github.com/jiangwenyuan/nuster/releases/tag/v5.0.1.21)   | 2.1.4
+| [3.2.5.19](https://github.com/jiangwenyuan/nuster/releases/tag/v3.2.5.19)   | 1.9.15
+| [2.0.16.18](https://github.com/jiangwenyuan/nuster/releases/tag/v2.0.16.18) | 1.8.25
 | [5.0.0.21](https://github.com/jiangwenyuan/nuster/releases/tag/v5.0.0.21)   | 2.1.4
 |  4.0.1.20                                                                   | 2.0.14
 | [3.2.4.19](https://github.com/jiangwenyuan/nuster/releases/tag/v3.2.4.19)   | 1.9.15
