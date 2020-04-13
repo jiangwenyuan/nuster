@@ -69,6 +69,7 @@ nst_dict_cleanup(nst_dict_t *dict) {
 
             if(entry->store.ring.data) {
                 entry->store.ring.data->invalid = 1;
+                entry->store.ring.data = NULL;
             }
 
             if(entry->store.disk.file) {
