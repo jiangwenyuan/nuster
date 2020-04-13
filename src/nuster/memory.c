@@ -274,7 +274,7 @@ void nuster_memory_free_locked(struct nuster_memory *memory, void *p) {
     chunk      = memory->chunk[chunk_idx];
     chunk_size = 1<<(memory->chunk_shift + chunk_idx);
     bits       = memory->block_size / chunk_size;
-    bits_idx   = ((uint8_t *)p - (memory->data.begin + block_idx * memory->block_size)) / chunk_size;
+    bits_idx   = ((uint8_t *)p - (memory->data.begin + 1ULL * block_idx * memory->block_size)) / chunk_size;
     empty      = 0;
     full       = _nuster_memory_block_is_full(block);
     _nuster_memory_block_clear_full(block);
