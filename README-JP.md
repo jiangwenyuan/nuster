@@ -297,6 +297,14 @@ hash tableのサイズを決める.
 
 でもkeyの数がdict-size(buckets数)を超えると、性能が落ちる可能性がある。`dict-size`は大体の最大key数かける８であれば十分。
 
+stats APIに
+```
+dict.nosql.length:              131072
+dict.nosql.used:                0
+```
+
+もし`dict.nosql.used` が`dict.nosql.length`より大きい場合、`dict-size`を上げたほうが良い。
+
 > 将来のバージョンはdict-sizeを削除するかもしれない, 初版のような自動リサイズを戻す。
 
 ### dir
@@ -705,11 +713,19 @@ nuster.manager:                 on
 manager.uri:                    /nuster
 manager.purge_method:           PURGE
 
+**DICT**
+dict.cache.size:                1048576
+dict.cache.length:              131072
+dict.cache.used:                150
+dict.nosql.size:                1048576
+dict.nosql.length:              131072
+dict.nosql.used:                0
+
 **MEMORY**
 memory.common.total:            1048576
-memory.common.used:             1600
+memory.common.used:             1856
 memory.cache.total:             2098200576
-memory.cache.used:              1048960
+memory.cache.used:              1149760
 memory.nosql.total:             11534336
 memory.nosql.used:              1048960
 
@@ -719,15 +735,16 @@ disk.cache.loaded:              no
 disk.nosql.dir:                 /tmp/nuster/nosql
 disk.nosql.loaded:              no
 
-**STATISTICS**
-statistics.cache.total:         0
-statistics.cache.hit:           0
-statistics.cache.fetch:         0
-statistics.cache.abort:         0
-statistics.nosql.total:         0
-statistics.nosql.get:           0
-statistics.nosql.post:          0
-statistics.nosql.delete:        0
+**STATS**
+stats.cache.total:              0
+stats.cache.hit:                0
+stats.cache.fetch:              0
+stats.cache.abort:              0
+stats.cache.bytes:              0
+stats.nosql.total:              0
+stats.nosql.get:                0
+stats.nosql.post:               0
+stats.nosql.delete:             0
 
 **PROXY cache app1**
 app1.rule.rule1:                state=on  memory=on  disk=off   ttl=10

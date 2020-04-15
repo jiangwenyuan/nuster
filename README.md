@@ -294,7 +294,16 @@ Note that it only decides the memory used by hash table buckets, not keys. In fa
 
 **dict-size(number of buckets)** is different from **number of keys**. New keys can still be added to the hash table even if the number of keys exceeds dict-size(number of buckets) as long as there is enough memory.
 
-Nevertheless, it may lead to a potential performance drop if `number of keys` is greater than `dict-size(number of buckets)`. An approximate number of keys multiplied by 8 (normally) as `dict-size` should be fine.
+Nevertheless, it may lead to a potential performance drop if `number of keys` is greater than `dict-size(number of buckets)`. An approximate number of keys multiplied by 8 (normally) as `dict-size` should be fine. Basically, the bigger the better.
+
+Enable stats API and check following stats:
+
+```
+dict.nosql.length:              131072
+dict.nosql.used:                0
+```
+
+If `dict.nosql.used` is greater than `dict.nosql.length`, then increase `dict-size` would be a good idea.
 
 > dict-size will be removed in a future release, automatically resizing the hash table in the first version will be added back.
 
@@ -718,11 +727,19 @@ nuster.manager:                 on
 manager.uri:                    /nuster
 manager.purge_method:           PURGE
 
+**DICT**
+dict.cache.size:                1048576
+dict.cache.length:              131072
+dict.cache.used:                150
+dict.nosql.size:                1048576
+dict.nosql.length:              131072
+dict.nosql.used:                0
+
 **MEMORY**
 memory.common.total:            1048576
-memory.common.used:             1600
+memory.common.used:             1856
 memory.cache.total:             2098200576
-memory.cache.used:              1048960
+memory.cache.used:              1149760
 memory.nosql.total:             11534336
 memory.nosql.used:              1048960
 
@@ -732,15 +749,16 @@ disk.cache.loaded:              no
 disk.nosql.dir:                 /tmp/nuster/nosql
 disk.nosql.loaded:              no
 
-**STATISTICS**
-statistics.cache.total:         0
-statistics.cache.hit:           0
-statistics.cache.fetch:         0
-statistics.cache.abort:         0
-statistics.nosql.total:         0
-statistics.nosql.get:           0
-statistics.nosql.post:          0
-statistics.nosql.delete:        0
+**STATS**
+stats.cache.total:              0
+stats.cache.hit:                0
+stats.cache.fetch:              0
+stats.cache.abort:              0
+stats.cache.bytes:              0
+stats.nosql.total:              0
+stats.nosql.get:                0
+stats.nosql.post:               0
+stats.nosql.delete:             0
 
 **PROXY cache app1**
 app1.rule.rule1:                state=on  memory=on  disk=off   ttl=10

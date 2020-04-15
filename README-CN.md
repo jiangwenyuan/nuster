@@ -292,7 +292,16 @@ backend be
 
 **dict-size(bucket数)** 不等于 **key数**. 就算key的数量超过了dict-size，只要整个共享内存有空间，新的key仍然可以被添加。
 
-不过如果key数超过dict-size(bucket数)性能也许会下降. dict-size可以设为大概的最大key数乘以8。
+不过如果key数超过dict-size(bucket数)性能也许会下降. dict-size可以设为大概的最大key数乘以8。当然越大越好。
+
+查看stats API:
+
+```
+dict.nosql.length:              131072
+dict.nosql.used:                0
+```
+
+如果`dict.nosql.used` 比`dict.nosql.length`大，调高`dict-size`比较好。
 
 > 将来版本会删除dict-size, 像第一版本那样自动伸缩
 
@@ -701,11 +710,19 @@ nuster.manager:                 on
 manager.uri:                    /nuster
 manager.purge_method:           PURGE
 
+**DICT**
+dict.cache.size:                1048576
+dict.cache.length:              131072
+dict.cache.used:                150
+dict.nosql.size:                1048576
+dict.nosql.length:              131072
+dict.nosql.used:                0
+
 **MEMORY**
 memory.common.total:            1048576
-memory.common.used:             1600
+memory.common.used:             1856
 memory.cache.total:             2098200576
-memory.cache.used:              1048960
+memory.cache.used:              1149760
 memory.nosql.total:             11534336
 memory.nosql.used:              1048960
 
@@ -715,15 +732,16 @@ disk.cache.loaded:              no
 disk.nosql.dir:                 /tmp/nuster/nosql
 disk.nosql.loaded:              no
 
-**STATISTICS**
-statistics.cache.total:         0
-statistics.cache.hit:           0
-statistics.cache.fetch:         0
-statistics.cache.abort:         0
-statistics.nosql.total:         0
-statistics.nosql.get:           0
-statistics.nosql.post:          0
-statistics.nosql.delete:        0
+**STATS**
+stats.cache.total:              0
+stats.cache.hit:                0
+stats.cache.fetch:              0
+stats.cache.abort:              0
+stats.cache.bytes:              0
+stats.nosql.total:              0
+stats.nosql.get:                0
+stats.nosql.post:               0
+stats.nosql.delete:             0
 
 **PROXY cache app1**
 app1.rule.rule1:                state=on  memory=on  disk=off   ttl=10
