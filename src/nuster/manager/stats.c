@@ -212,6 +212,32 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
                 global.nuster.manager.purge_method.ptr);
     }
 
+    if(global.nuster.cache.status == NST_STATUS_ON || global.nuster.nosql.status == NST_STATUS_ON) {
+        chunk_appendf(&trash, "\n**DICT**\n");
+
+        if(global.nuster.cache.status == NST_STATUS_ON) {
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.cache.size:",
+                    global.nuster.cache.dict_size);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.cache.length:",
+                    nuster.cache->dict.size);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.cache.used:",
+                    nuster.cache->dict.used);
+        }
+
+        if(global.nuster.nosql.status == NST_STATUS_ON) {
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.nosql.size:",
+                    global.nuster.nosql.dict_size);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.nosql.length:",
+                    nuster.nosql->dict.size);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.nosql.used:",
+                    nuster.nosql->dict.used);
+        }
+    }
+
     chunk_appendf(&trash, "\n**MEMORY**\n");
 
     chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.total:",
