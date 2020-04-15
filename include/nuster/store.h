@@ -26,11 +26,11 @@
 #include <nuster/ring.h>
 #include <nuster/disk.h>
 
+
 typedef struct nst_store {
     nst_ring_t              ring;
     nst_disk_t              disk;
 } nst_store_t;
-
 
 
 static inline int

@@ -27,6 +27,7 @@
 #include <nuster/common.h>
 #include <nuster/ring.h>
 
+
 enum {
     NST_HTTP_100 = 0,
     NST_HTTP_200,
@@ -81,6 +82,7 @@ nst_http_txn_attach(nst_http_txn_t *txn) {
         return NST_ERR;
     }
 }
+
 
 static inline void
 nst_http_txn_detach(nst_http_txn_t *txn) {

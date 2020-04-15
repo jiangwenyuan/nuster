@@ -70,7 +70,6 @@ typedef struct nst_ctx {
         nst_disk_data_t         disk;
     } store;
 
-
     int                         rule_cnt;
     int                         key_cnt;
     hpx_buffer_t               *key;
@@ -85,6 +84,7 @@ typedef struct nst_core {
     nst_dict_t                  dict;
     nst_store_t                 store;
 } nst_core_t;
+
 
 int nst_test_rule(hpx_stream_t *s, nst_rule_t *rule, int res);
 

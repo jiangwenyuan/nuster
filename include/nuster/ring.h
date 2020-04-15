@@ -24,6 +24,7 @@
 
 #include <nuster/common.h>
 
+
 typedef struct nst_core  nst_core_t;
 
 /*
