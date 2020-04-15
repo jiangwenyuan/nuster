@@ -24,6 +24,7 @@
 
 #include <nuster/common.h>
 
+
 #define NST_MEMORY_BLOCK_MIN_SIZE      4096ULL
 #define NST_MEMORY_BLOCK_MIN_SHIFT     12
 #define NST_MEMORY_CHUNK_MIN_SIZE      8ULL
@@ -90,6 +91,7 @@ typedef struct nst_memory {
         uint8_t                *end;
     } data;
 } nst_memory_t;
+
 
 #define bit_set(bit, i) (bit |= 1 << i)
 #define bit_clear(bit, i) (bit &= ~(1 << i))

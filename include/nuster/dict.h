@@ -26,9 +26,7 @@
 #include <nuster/http.h>
 #include <nuster/key.h>
 
-/*
- * A nst_dict_entry is an entry in nst_dict hash table
- */
+
 enum {
     NST_DICT_ENTRY_STATE_INIT      = 0,
     NST_DICT_ENTRY_STATE_UPDATE,
@@ -36,6 +34,9 @@ enum {
     NST_DICT_ENTRY_STATE_INVALID,
 };
 
+/*
+ * A nst_dict_entry is an entry in nst_dict hash table
+ */
 typedef struct nst_dict_entry {
     struct nst_dict_entry      *next;
 
@@ -96,6 +97,7 @@ typedef struct nst_dict {
     unsigned int                waiters;
 #endif
 } nst_dict_t;
+
 
 static inline int
 nst_dict_entry_expired(nst_dict_entry_t *entry) {

@@ -38,6 +38,7 @@
 #include <nuster/nosql.h>
 #include <nuster/manager.h>
 
+
 typedef struct nuster {
     nst_core_t                 *cache;
     nst_core_t                 *nosql;

@@ -24,8 +24,9 @@
 
 #include <nuster/common.h>
 
-#define NST_MANAGER_DEFAULT_PURGE_METHOD "PURGE"
-#define NST_MANAGER_DEFAULT_URI          "/nuster"
+
+#define NST_MANAGER_DEFAULT_PURGE_METHOD        "PURGE"
+#define NST_MANAGER_DEFAULT_URI                 "/nuster"
 
 enum {
     NST_MANAGER_NAME_ALL        = 0,

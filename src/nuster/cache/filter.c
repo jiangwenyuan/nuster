@@ -112,6 +112,10 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
         nst_stats_update_cache(ctx->state);
 
+        if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
+            ctx->store.ring.data->clients--;
+        }
+
         if(ctx->state == NST_CTX_STATE_CREATE) {
             nst_cache_abort(ctx);
         }

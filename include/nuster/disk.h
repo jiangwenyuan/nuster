@@ -25,6 +25,7 @@
 #include <nuster/common.h>
 #include <nuster/key.h>
 
+
 #define NST_DISK_VERSION  4
 
 /*
@@ -65,7 +66,6 @@
 #define NST_DISK_META_POS_TTL_EXTEND         8 * 10
 #define NST_DISK_META_POS_UUID               8 * 11
 
-
 #define NST_DISK_META_SIZE                   8 * 16
 #define NST_DISK_POS_KEY                     NST_DISK_META_SIZE
 
@@ -98,6 +98,7 @@ typedef struct nst_disk {
     nst_dirent_t       *de;
     char               *file;
 } nst_disk_t;
+
 
 /* /0/00: 5 */
 static inline int

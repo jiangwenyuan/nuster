@@ -39,8 +39,6 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
     total   = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        appctx->ctx.nuster.store.ring.data->clients--;
-
         goto out;
     }
 
@@ -76,8 +74,6 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
 
             goto out;
         }
-
-        appctx->ctx.nuster.store.ring.data->clients--;
 
         if(!(res->flags & CF_SHUTR) ) {
             res->flags |= CF_READ_NULL;

@@ -26,6 +26,7 @@
 
 #include <nuster/common.h>
 
+
 #define NST_KEY_UUID_LEN        20
 
 enum {
@@ -40,6 +41,7 @@ typedef struct nst_key {
     uint64_t            hash;
     unsigned char       uuid[NST_KEY_UUID_LEN];
 } nst_key_t;
+
 
 static inline int
 nst_key_memory_checked(nst_key_t *key) {
