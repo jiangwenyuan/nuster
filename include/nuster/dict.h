@@ -54,6 +54,7 @@ typedef struct nst_dict_entry {
 
     int                         pid;            /* proxy uuid */
     int                         header_len;
+    uint64_t                    payload_len;
 
     uint64_t                    expire;
     uint64_t                    ctime;

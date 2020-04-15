@@ -566,6 +566,9 @@ nst_cache_finish(nst_ctx_t *ctx) {
         ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->rule->ttl;
     }
 
+    ctx->entry->header_len  = ctx->txn.res.header_len;
+    ctx->entry->payload_len = ctx->txn.res.payload_len;
+
     if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
         ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
 
@@ -625,8 +628,9 @@ nst_cache_exists(nst_ctx_t *ctx) {
                     ret = NST_CTX_STATE_HIT_DISK;
                 }
 
-                ctx->txn.res.etag  = entry->etag;
-
+                ctx->txn.res.header_len    = entry->header_len;
+                ctx->txn.res.payload_len   = entry->payload_len;
+                ctx->txn.res.etag          = entry->etag;
                 ctx->txn.res.last_modified = entry->last_modified;
 
                 _nst_cache_record_access(entry);
@@ -681,6 +685,9 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
             if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
                 ret = NST_CTX_STATE_HIT_DISK;
+
+                ctx->txn.res.header_len  = nst_disk_meta_get_header_len(ctx->store.disk.meta);
+                ctx->txn.res.payload_len = nst_disk_meta_get_payload_len(ctx->store.disk.meta);
 
                 if(ctx->rule->etag == NST_STATUS_ON) {
                     ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
