@@ -114,7 +114,11 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
 out:
             appctx->ctx.nuster.store.ring.item = item;
             total = res_htx->data - total;
-            channel_add_input(res, total);
+
+            if(total) {
+                channel_add_input(res, total);
+            }
+
             htx_to_buf(res_htx, &res->buf);
 
             break;
@@ -248,7 +252,11 @@ out:
 
 end:
             total = res_htx->data - total;
-            channel_add_input(res, total);
+
+            if(total) {
+                channel_add_input(res, total);
+            }
+
             htx_to_buf(res_htx, &res->buf);
             task_wakeup(s->task, TASK_WOKEN_OTHER);
 

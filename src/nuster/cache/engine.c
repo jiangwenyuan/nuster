@@ -95,7 +95,11 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
 out:
     appctx->ctx.nuster.store.ring.item = item;
     total = res_htx->data - total;
-    channel_add_input(res, total);
+
+    if(total) {
+        channel_add_input(res, total);
+    }
+
     htx_to_buf(res_htx, &res->buf);
 }
 
@@ -259,7 +263,11 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
 
 out:
     total = res_htx->data - total;
-    channel_add_input(res, total);
+
+    if(total) {
+        channel_add_input(res, total);
+    }
+
     htx_to_buf(res_htx, &res->buf);
 }
 
