@@ -108,7 +108,7 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
         nst_ctx_t  *ctx = filter->ctx;
         int         i;
 
-        nst_stats_update_cache(ctx->state);
+        nst_stats_update_cache(ctx->state, ctx->txn.res.payload_len + ctx->txn.res.header_len);
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
             ctx->store.ring.data->clients--;

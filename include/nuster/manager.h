@@ -52,6 +52,7 @@ typedef struct nst_stats {
         uint64_t                fetch;
         uint64_t                hit;
         uint64_t                abort;
+        uint64_t                bytes;
     } cache;
 
     struct {
@@ -77,7 +78,7 @@ void nst_manager_init();
 /* stats */
 int nst_stats_init();
 int nst_stats_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
-void nst_stats_update_cache(int state);
+void nst_stats_update_cache(int state, uint64_t bytes);
 void nst_stats_update_nosql(int state);
 
 /* purger */
