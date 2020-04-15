@@ -148,6 +148,12 @@ nst_manager(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
         return 0;
     }
 
+    if(global.nuster.cache.status == NST_STATUS_OFF
+            && global.nuster.nosql.status == NST_STATUS_OFF) {
+
+        return 0;
+    }
+
     if(_nst_manager_check_purge_method(txn, msg) == NST_OK) {
         /* single uri */
         return nst_purger_basic(s, req, px);

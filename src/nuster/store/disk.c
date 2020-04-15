@@ -287,14 +287,19 @@ nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *data, nst_key_t *key) {
 
     p[NST_DISK_FILE_LEN] = '\0';
 
-    sprintf(data->file, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
+    sprintf(data->file, "%s/%c/%c%c/%s", root.ptr, p[0], p[0], p[1], p);
 
     data->fd = nst_disk_open(data->file);
 
     if(data->fd == -1) {
-        ret = -1;
 
-        goto done;
+        if(errno == ENOENT) {
+            ret = 0;
+        } else {
+            ret = -1;
+        }
+
+        return ret;
     }
 
     ret = pread(data->fd, p, key->size, NST_DISK_POS_KEY);
@@ -304,7 +309,6 @@ nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *data, nst_key_t *key) {
         ret = 1;
     }
 
-done:
     close(data->fd);
 
     return ret;

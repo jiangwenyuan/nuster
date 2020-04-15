@@ -59,9 +59,15 @@ nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
                 nst_key_debug(s, &key);
 
-                if(p->nuster.mode == NST_MODE_CACHE) {
+                if(global.nuster.cache.status == NST_STATUS_ON
+                        && p->nuster.mode == NST_MODE_CACHE) {
+
                     ret = nst_cache_delete(&key);
-                } else {
+                }
+
+                if(global.nuster.nosql.status == NST_STATUS_ON
+                        && p->nuster.mode == NST_MODE_CACHE) {
+
                     ret = nst_nosql_delete(&key);
                 }
 
@@ -206,6 +212,19 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     }
 
 purge:
+
+    if(mode == 0 && (method != NST_MANAGER_NAME_PROXY || method != NST_MANAGER_NAME_RULE)) {
+        goto badreq;
+    }
+
+    if(mode == NST_MODE_CACHE && global.nuster.cache.status == NST_STATUS_OFF) {
+        goto err;
+    }
+
+    if(mode == NST_MODE_NOSQL && global.nuster.nosql.status == NST_STATUS_OFF) {
+        goto err;
+    }
+
     s->target = &nuster.applet.purger.obj_type;
 
     if(unlikely(!si_register_handler(si, objt_applet(s->target)))) {
