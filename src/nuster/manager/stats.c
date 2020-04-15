@@ -20,7 +20,7 @@
 #include <nuster/nuster.h>
 
 void
-nst_stats_update_cache(int state) {
+nst_stats_update_cache(int state, uint64_t bytes) {
     nst_shctx_lock(global.nuster.stats);
 
     global.nuster.stats->cache.total++;
@@ -29,6 +29,7 @@ nst_stats_update_cache(int state) {
         case NST_CTX_STATE_HIT_MEMORY:
         case NST_CTX_STATE_HIT_DISK:
             global.nuster.stats->cache.hit++;
+            global.nuster.stats->cache.bytes += bytes;
             break;
         case NST_CTX_STATE_CREATE:
             global.nuster.stats->cache.abort++;
@@ -256,34 +257,37 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
     }
 
     if(global.nuster.cache.status == NST_STATUS_ON || global.nuster.nosql.status == NST_STATUS_ON) {
-        chunk_appendf(&trash, "\n**STATISTICS**\n");
+        chunk_appendf(&trash, "\n**STATS**\n");
     }
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.total:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.total:",
                 global.nuster.stats->cache.total);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.hit:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.hit:",
                 global.nuster.stats->cache.hit);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.fetch:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.fetch:",
                 global.nuster.stats->cache.fetch);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.cache.abort:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.abort:",
                 global.nuster.stats->cache.abort);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.bytes:",
+                global.nuster.stats->cache.bytes);
     }
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.total:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.total:",
                 global.nuster.stats->nosql.total);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.get:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.get:",
                 global.nuster.stats->nosql.get);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.post:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.post:",
                 global.nuster.stats->nosql.post);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "statistics.nosql.delete:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.delete:",
                 global.nuster.stats->nosql.delete);
     }
 
