@@ -75,13 +75,11 @@ _nst_cache_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
 
         size = sizeof(nst_ctx_t) + key_cnt * sizeof(nst_key_t);
 
-        ctx = malloc(size);
+        ctx = calloc(1, size);
 
         if(ctx == NULL) {
             return 0;
         }
-
-        memset(ctx, 0, size);
 
         ctx->state    = NST_CTX_STATE_INIT;
         ctx->pid      = conf->pid;
