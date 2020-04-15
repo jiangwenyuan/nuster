@@ -704,7 +704,7 @@ Nuster stats can be accessed by making HTTP GET request to the endpoint defined 
 
 ### Usage
 
-`curl http://127.0.0.1/internal/nuster`
+`curl http://127.0.0.1/nuster`
 
 ### Output
 
