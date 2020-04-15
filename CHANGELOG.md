@@ -1,5 +1,19 @@
 # nuster Changelog
 
+## 5.0.2.20 - 2020-04-15
+
+### Fixed
+
+* Add dict to stats
+* Fix manager segfault when mode is not present
+* Fix segfault when get stats if both cache and nosql are off
+* Add bytes to stats.cache
+* Add payload_len to entry, set header_len and payload
+* Fix stats url
+* Use calloc instead of malloc
+* Fix incorrect clients decrement
+* Fix bogus stream spinning issue.
+
 ## 5.0.1.20 - 2020-04-13
 
 ### Fixed
