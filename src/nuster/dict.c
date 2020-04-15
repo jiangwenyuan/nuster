@@ -170,7 +170,6 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
     entry->extend[1]         = rule->extend[1];
     entry->extend[2]         = rule->extend[2];
     entry->extend[3]         = rule->extend[3];
-    entry->header_len        = txn->res.header_len;
 
     return entry;
 
@@ -313,7 +312,8 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
 
     memcpy(entry->store.disk.file, file, strlen(file));
 
-    entry->header_len = nst_disk_meta_get_header_len(meta);
+    entry->header_len  = nst_disk_meta_get_header_len(meta);
+    entry->payload_len = nst_disk_meta_get_payload_len(meta);
 
     entry->buf = *buf;
 
