@@ -565,6 +565,10 @@ In order the make this work, `path` needs to be allocated for further use in rep
     acl resHdrCT res.hdr(Content-Type) image/jpeg
     nuster rule r3 if pathImg resHdrCT
 
+Or use `nuster.path`(v5):
+
+    nuster rule r3 if { nuster.path -m beg /img } { res.hdr(Content-Type) image/jpeg }
+
 4. Another example, cache if the request path does not begin with `/api/`
 
 It won't work neither:
@@ -580,7 +584,7 @@ This will work:
     acl NoCache var(txn.path) -m beg /api/
     nuster rule r1 if !NoCache
 
-I will add several new sample fetch methods to simplify this kind of tasks in future versions.
+See [Sample fetches](#sample-fetch) for sample fetches introduced by nuster.
 
 See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
 
@@ -1014,11 +1018,27 @@ There are 3 modes:
 
 Nuster introduced following sample fetches
 
-## nuster.cache.hit: boolean
+## [cache] nuster.cache.hit: boolean
 
 Returns a boolean indicating whether it's a HIT or not and can be used like
 
     http-response set-header x-cache hit if { nuster.cache.hit }
+
+## [cache|nosql] nuster.host: string
+
+Same as HAProxy `req.hdr(Host)` except that `nuster.host` can be used in both request and response stage.
+
+## [cache|nosql] nuster.uri: string
+
+Same as HAProxy `capture.req.uri`.
+
+## [cache|nosql] nuster.path: string
+
+Same as HAProxy `path` except that `nuster.path` can be used in both request and response stage.
+
+## [cache|nosql] nuster.query: string
+
+Same as HAProxy `query` except that `nuster.query` can be used in both request and response stage.
 
 # FAQ
 

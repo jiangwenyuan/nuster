@@ -550,6 +550,10 @@ ACL分别在请求阶段和响应阶段执行。
     acl resHdrCT res.hdr(Content-Type) image/jpeg
     nuster rule r3 if pathImg resHdrCT
 
+或者`nuster.path`(v5):
+
+    nuster rule r3 if { nuster.path -m beg /img } { res.hdr(Content-Type) image/jpeg }
+
 4. 另一个例子，缓存所有不以 `/api/` 开头的请求
 
 下面不正确：
@@ -565,7 +569,7 @@ ACL分别在请求阶段和响应阶段执行。
     acl NoCache var(txn.path) -m beg /api/
     nuster rule r1 if !NoCache
 
-会添加一些新的样本获取方法来简化这些操作。
+新sample fetch详见[Sample fetches](#sample-fetch)
 
 详见[HAProxy configuration](doc/configuration.txt)的**7. Using ACLs and fetching samples**
 
@@ -998,11 +1002,27 @@ Nuster(cache和nosql) 支持多种后端存储. 目前支持memory和disk。计�
 
 Nuster 加入了一些新的sample fetches
 
-## nuster.cache.hit: boolean
+## [cache] nuster.cache.hit: boolean
 
 表示是否是HIT缓存，可以像如下使用
 
     http-response set-header x-cache hit if { nuster.cache.hit }
+
+## [cache|nosql] nuster.host: string
+
+类似HAProxy的 `req.hdr(Host)`，但是请求和响应中都可使用
+
+## [cache|nosql] nuster.uri: string
+
+等同于HAProxy的`capture.req.uri`.
+
+## [cache|nosql] nuster.path: string
+
+类似HAProxy的 `path`，但是请求和响应中都可使用
+
+## [cache|nosql] nuster.query: string
+
+类似HAProxy的 `query`，但是请求和响应中都可使用
 
 # FAQ
 
