@@ -553,6 +553,10 @@ ACLはリクエストとリスポンスの二段階で評価する
     acl resHdrCT res.hdr(Content-Type) image/jpeg
     nuster rule r3 if pathImg resHdrCT
 
+もしくは`nuster.path`(v5):
+
+    nuster rule r3 if { nuster.path -m beg /img } { res.hdr(Content-Type) image/jpeg }
+
 4. `/api/`で始まるリクエスト以外はキャッシュする
 
 下記は動かない：
@@ -568,9 +572,9 @@ ACLはリクエストとリスポンスの二段階で評価する
     acl NoCache var(txn.path) -m beg /api/
     nuster rule r1 if !NoCache
 
-新しいsample取得方法を追加する予定ある。
+新しいsample取得方法は[Sample fetches](#sample-fetch)
 
-See **7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)
+**7. Using ACLs and fetching samples** section in [HAProxy configuration](doc/configuration.txt)も参考
 
 # Cache
 
@@ -996,11 +1000,27 @@ Nuster(cacheとnosql) は複数の保存先をサポートする。今はmemory 
 
 下記のsample fetchesが使えます
 
-## nuster.cache.hit: boolean
+## [cache] nuster.cache.hit: boolean
 
 キャッシュHITかどうかを表します。
 
     http-response set-header x-cache hit if { nuster.cache.hit }
+
+## [cache|nosql] nuster.host: string
+
+HAProxyの`req.hdr(Host)`と同じで、ただ request とresponse 両方使える.
+
+## [cache|nosql] nuster.uri: string
+
+HAProxyの`capture.req.uri`と同じ.
+
+## [cache|nosql] nuster.path: string
+
+HAProxyの`path`と同じで、ただ request とresponse 両方使える.
+
+## [cache|nosql] nuster.query: string
+
+HAProxyの`query`と同じで、ただ request とresponse 両方使える.
 
 # FAQ
 
