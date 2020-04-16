@@ -252,7 +252,7 @@ EXTRA =
 # feed CPU_CFLAGS, which in turn feed CFLAGS, so it is not mandatory to use
 # them. You should not have to change these options. Better use CPU_CFLAGS or
 # even CFLAGS instead.
-CPU_CFLAGS.generic    = -O2
+CPU_CFLAGS.generic    = -O0
 CPU_CFLAGS.native     = -O2 -march=native
 CPU_CFLAGS.i586       = -O2 -march=i586
 CPU_CFLAGS.i686       = -O2 -march=i686
@@ -832,7 +832,8 @@ NUSTER_OBJS = src/nuster/cache/engine.o src/nuster/cache/filter.o             \
               src/nuster/manager/purger.o                                     \
               src/nuster/store/ring.o src/nuster/store/disk.o                 \
               src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
-              src/nuster/key.o src/nuster/dict.o src/nuster/nuster.o
+              src/nuster/key.o src/nuster/dict.o src/nuster/sample.o	      \
+              src/nuster/nuster.o
 
 ifneq ($(TRACE),)
 OBJS += src/calltrace.o
