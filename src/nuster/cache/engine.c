@@ -465,6 +465,10 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             sz   = htx_get_blksz(blk);
             type = htx_get_blk_type(blk);
 
+            if(type == HTX_BLK_UNUSED) {
+                continue;
+            }
+
             ctx->txn.res.header_len += 4 + sz;
 
             if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
