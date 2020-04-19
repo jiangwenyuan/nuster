@@ -91,7 +91,7 @@
  * Check RFC 2246 (TLSv1.0) sections A.3 and A.4 for details.
  */
 const char sslv3_client_hello_pkt[] = {
-	"\x16"                /* ContentType         : 0x16 = Hanshake           */
+	"\x16"                /* ContentType         : 0x16 = Handshake          */
 	"\x03\x00"            /* ProtocolVersion     : 0x0300 = SSLv3            */
 	"\x00\x79"            /* ContentLength       : 0x79 bytes after this one */
 	"\x01"                /* HanshakeType        : 0x01 = CLIENT HELLO       */
@@ -712,7 +712,7 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_ABORT;
 			goto out;
 		}
-		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, 0);
+		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, 0, 1);
 	}
 	else if (strcmp(args[0], "log") == 0) {
 		if (init_peers_frontend(file, linenum, NULL, curpeers) != 0) {
@@ -821,9 +821,19 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 		 * The server address is parsed only if we are parsing a "peer" line,
 		 * or if we are parsing a "server" line and the current peer is not the local one.
 		 */
-		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, peer || !local_peer);
-		if (!curpeers->peers_fe->srv)
+		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, peer || !local_peer, 1);
+		if (!curpeers->peers_fe->srv) {
+			/* Remove the newly allocated peer. */
+			if (newpeer != curpeers->local) {
+				struct peer *p;
+
+				p = curpeers->remote;
+				curpeers->remote = curpeers->remote->next;
+				free(p->id);
+				free(p);
+			}
 			goto out;
+		}
 
 		/* If the peer address has just been parsed, let's copy it to <newpeer>
 		 * and initializes ->proto.
@@ -2701,7 +2711,40 @@ int check_config_validity()
 
 		/* find the target server for 'use_server' rules */
 		list_for_each_entry(srule, &curproxy->server_rules, list) {
-			struct server *target = findserver(curproxy, srule->srv.name);
+			struct server *target;
+			struct logformat_node *node;
+			char *server_name;
+
+			/* We try to parse the string as a log format expression. If the result of the parsing
+			 * is only one entry containing a single string, then it's a standard string corresponding
+			 * to a static rule, thus the parsing is cancelled and we fall back to setting srv.ptr.
+			 */
+			server_name = srule->srv.name;
+			LIST_INIT(&srule->expr);
+			curproxy->conf.args.ctx = ARGC_USRV;
+			err = NULL;
+			if (!parse_logformat_string(server_name, curproxy, &srule->expr, 0, SMP_VAL_FE_HRQ_HDR, &err)) {
+				ha_alert("Parsing [%s:%d]; use-server rule failed to parse log-format '%s' : %s.\n",
+						srule->file, srule->line, server_name, err);
+				free(err);
+				cfgerr++;
+				continue;
+			}
+			node = LIST_NEXT(&srule->expr, struct logformat_node *, list);
+
+			if (!LIST_ISEMPTY(&srule->expr)) {
+				if (node->type != LOG_FMT_TEXT || node->list.n != &srule->expr) {
+					srule->dynamic = 1;
+					free(server_name);
+					continue;
+				}
+				free(node->arg);
+				free(node);
+			}
+
+			srule->dynamic = 0;
+			srule->srv.name = server_name;
+			target = findserver(curproxy, srule->srv.name);
 
 			if (!target) {
 				ha_alert("config : %s '%s' : unable to find server '%s' referenced in a 'use-server' rule.\n",
@@ -3797,7 +3840,7 @@ out_uri_auth_compat:
 			 * maximize the work at once, but in multi-process we want to keep
 			 * some fairness between processes, so we target half of the max
 			 * number of events to be balanced over all the processes the proxy
-			 * is bound to. Rememeber that maxaccept = -1 must be kept as it is
+			 * is bound to. Remember that maxaccept = -1 must be kept as it is
 			 * used to disable the limit.
 			 */
 			if (listener->maxaccept > 0 && nbproc > 1) {
@@ -3907,12 +3950,25 @@ out_uri_auth_compat:
 		struct peers *curpeers = cfg_peers, **last;
 		struct peer *p, *pb;
 
+		/* In the case the peers frontend was not initialized by a
+		 stick-table used in the configuration, set its bind_proc
+		 by default to the first process. */
+		while (curpeers) {
+			if (curpeers->peers_fe) {
+				if (curpeers->peers_fe->bind_proc == 0)
+					curpeers->peers_fe->bind_proc = 1;
+			}
+			curpeers = curpeers->next;
+		}
+
+		curpeers = cfg_peers;
 		/* Remove all peers sections which don't have a valid listener,
 		 * which are not used by any table, or which are bound to more
 		 * than one process.
 		 */
 		last = &cfg_peers;
 		while (*last) {
+			struct stktable *t;
 			curpeers = *last;
 
 			if (curpeers->state == PR_STSTOPPED) {
@@ -3924,6 +3980,9 @@ out_uri_auth_compat:
 			else if (!curpeers->peers_fe || !curpeers->peers_fe->id) {
 				ha_warning("Removing incomplete section 'peers %s' (no peer named '%s').\n",
 					   curpeers->id, localpeer);
+				if (curpeers->peers_fe)
+					stop_proxy(curpeers->peers_fe);
+				curpeers->peers_fe = NULL;
 			}
 			else if (atleast2(curpeers->peers_fe->bind_proc)) {
 				/* either it's totally stopped or too much used */
@@ -3986,6 +4045,11 @@ out_uri_auth_compat:
 			 */
 			free(curpeers->id);
 			curpeers = curpeers->next;
+			/* Reset any refereance to this peers section in the list of stick-tables */
+			for (t = stktables_list; t; t = t->next) {
+				if (t->peers.p && t->peers.p == *last)
+					t->peers.p = NULL;
+			}
 			free(*last);
 			*last = curpeers;
 		}

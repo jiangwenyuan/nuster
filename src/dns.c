@@ -77,6 +77,19 @@ struct dns_resolvers *find_resolvers_by_id(const char *id)
 	return NULL;
 }
 
+/* Compare hostnames in a case-insensitive way .
+ * Returns 0 if they are the same, non-zero otherwise
+ */
+static __inline int dns_hostname_cmp(const char *name1, const char *name2, int len)
+{
+	int i;
+
+	for (i = 0; i < len; i++)
+		if (tolower(name1[i]) != tolower(name2[i]))
+			return -1;
+	return 0;
+}
+
 /* Returns a pointer on the SRV request matching the name <name> for the proxy
  * <px>. NULL is returned if no match is found.
  */
@@ -540,7 +553,7 @@ static void dns_check_dns_response(struct dns_resolution *res)
 					HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 					if (srv->srvrq == srvrq && srv->svc_port == item->port &&
 					    item->data_len == srv->hostname_dn_len &&
-					    !memcmp(srv->hostname_dn, item->target, item->data_len)) {
+					    !dns_hostname_cmp(srv->hostname_dn, item->target, item->data_len)) {
 						snr_update_srv_status(srv, 1);
 						free(srv->hostname);
 						free(srv->hostname_dn);
@@ -572,7 +585,7 @@ static void dns_check_dns_response(struct dns_resolution *res)
 				HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 				if (srv->srvrq == srvrq && srv->svc_port == item->port &&
 				    item->data_len == srv->hostname_dn_len &&
-				    !memcmp(srv->hostname_dn, item->target, item->data_len) &&
+				    !dns_hostname_cmp(srv->hostname_dn, item->target, item->data_len) &&
 				    !srv->dns_opts.ignore_weight) {
 					int ha_weight;
 
@@ -820,7 +833,7 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 
 		/* Check if the current record dname is valid.  previous_dname
 		 * points either to queried dname or last CNAME target */
-		if (dns_query->type != DNS_RTYPE_SRV && memcmp(previous_dname, tmpname, len) != 0) {
+		if (dns_query->type != DNS_RTYPE_SRV && dns_hostname_cmp(previous_dname, tmpname, len) != 0) {
 			pool_free(dns_answer_item_pool, dns_answer_record);
 			if (i == 0) {
 				/* First record, means a mismatch issue between
@@ -999,7 +1012,7 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 
 			case DNS_RTYPE_SRV:
                                 if (dns_answer_record->data_len == tmp_record->data_len &&
-				    !memcmp(dns_answer_record->target, tmp_record->target, dns_answer_record->data_len) &&
+				    !dns_hostname_cmp(dns_answer_record->target, tmp_record->target, dns_answer_record->data_len) &&
 				    dns_answer_record->port == tmp_record->port) {
 					tmp_record->weight = dns_answer_record->weight;
                                         found = 1;
@@ -1028,9 +1041,10 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 	/* Save the number of records we really own */
 	dns_p->header.ancount = nb_saved_records;
 
-	/* now parsing additional records */
+	/* now parsing additional records for SRV queries only */
+	if (dns_query->type != DNS_RTYPE_SRV)
+		goto skip_parsing_additional_records;
 	nb_saved_records = 0;
-	//TODO: check with Dinko for DNS poisoning
 	for (i = 0; i < dns_p->header.arcount; i++) {
 		if (reader >= bufend)
 			return DNS_RESP_INVALID;
@@ -1044,25 +1058,7 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 
 		if (len == 0) {
 			pool_free(dns_answer_item_pool, dns_answer_record);
-			return DNS_RESP_INVALID;
-		}
-
-		/* Check if the current record dname is valid.  previous_dname
-		 * points either to queried dname or last CNAME target */
-		if (dns_query->type != DNS_RTYPE_SRV && memcmp(previous_dname, tmpname, len) != 0) {
-			pool_free(dns_answer_item_pool, dns_answer_record);
-			if (i == 0) {
-				/* First record, means a mismatch issue between
-				 * queried dname and dname found in the first
-				 * record */
-				return DNS_RESP_INVALID;
-			}
-			else {
-				/* If not the first record, this means we have a
-				 * CNAME resolution error */
-				return DNS_RESP_CNAME_ERROR;
-			}
-
+			continue;
 		}
 
 		memcpy(dns_answer_record->name, tmpname, len);
@@ -1196,17 +1192,18 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 				if ( !(
 					(tmp_record->type == DNS_RTYPE_SRV) &&
 					(tmp_record->ar_item == NULL) &&
-					(memcmp(tmp_record->target, dns_answer_record->name, tmp_record->data_len) == 0)
+					(dns_hostname_cmp(tmp_record->target, dns_answer_record->name, tmp_record->data_len) == 0)
 				      )
 				   )
 					continue;
 				tmp_record->ar_item = dns_answer_record;
 			}
-			//TODO: there is a leak for now, since we don't clean up AR records
 
 			LIST_ADDQ(&dns_p->ar_list, &dns_answer_record->list);
 		}
 	} /* for i 0 to arcount */
+
+ skip_parsing_additional_records:
 
 	/* Save the number of records we really own */
 	dns_p->header.arcount = nb_saved_records;
@@ -1536,7 +1533,7 @@ static struct dns_resolution *dns_pick_resolution(struct dns_resolvers *resolver
 			continue;
 		if ((query_type == res->prefered_query_type) &&
 		    hostname_dn_len == res->hostname_dn_len  &&
-		    !memcmp(*hostname_dn, res->hostname_dn, hostname_dn_len))
+		    !dns_hostname_cmp(*hostname_dn, res->hostname_dn, hostname_dn_len))
 			return res;
 	}
 
@@ -1546,7 +1543,7 @@ static struct dns_resolution *dns_pick_resolution(struct dns_resolvers *resolver
 			continue;
 		if ((query_type == res->prefered_query_type) &&
 		    hostname_dn_len == res->hostname_dn_len  &&
-		    !memcmp(*hostname_dn, res->hostname_dn, hostname_dn_len))
+		    !dns_hostname_cmp(*hostname_dn, res->hostname_dn, hostname_dn_len))
 			return res;
 	}
 
@@ -1913,7 +1910,7 @@ static void dns_resolve_recv(struct dgram_conn *dgram)
 		 * sent. We can check only the first query of the list. We send
 		 * one query at a time so we get one query in the response */
 		query = LIST_NEXT(&res->response.query_list, struct dns_query_item *, list);
-		if (query && memcmp(query->name, res->hostname_dn, res->hostname_dn_len) != 0) {
+		if (query && dns_hostname_cmp(query->name, res->hostname_dn, res->hostname_dn_len) != 0) {
 			dns_resp = DNS_RESP_WRONG_NAME;
 			ns->counters.other++;
 			goto report_res_error;

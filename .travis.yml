@@ -16,6 +16,7 @@ env:
     - SSL_INC=${HOME}/opt/include
     - TMPDIR=/tmp
     - FIFTYONEDEGREES_SRC="contrib/51d/src/pattern"
+    - DEBUG_OPTIONS="DEBUG_STRICT=1"
 
 addons:
   apt:
@@ -41,23 +42,23 @@ matrix:
     arch: amd64
     if: type == push
     compiler: clang
-    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1d CC=clang-9
+    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1f CC=clang-9
 ##################
 ## temporarily disabled, until arm64 runners become stable
 #  - os: linux
 #    arch: arm64
 #    if: type == push
 #    compiler: clang
-#    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1d CC=clang-9
+#    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1f CC=clang-9
   - os: linux
     arch: s390x
     if: type == push
     compiler: gcc
-    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1d
+    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1f
   - os: linux
     if: type == cron
     compiler: clang
-    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1d COVERITY_SCAN_PROJECT_NAME="Haproxy" COVERITY_SCAN_BRANCH_PATTERN="*" COVERITY_SCAN_NOTIFICATION_EMAIL="chipitsine@gmail.com" COVERITY_SCAN_BUILD_COMMAND="make CC=clang TARGET=$TARGET $FLAGS 51DEGREES_SRC=$FIFTYONEDEGREES_SRC"
+    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1f COVERITY_SCAN_PROJECT_NAME="Haproxy" COVERITY_SCAN_BRANCH_PATTERN="*" COVERITY_SCAN_NOTIFICATION_EMAIL="chipitsine@gmail.com" COVERITY_SCAN_BUILD_COMMAND="make CC=clang TARGET=$TARGET $FLAGS 51DEGREES_SRC=$FIFTYONEDEGREES_SRC"
     script:
       - |
         if [ ! -z ${COVERITY_SCAN_TOKEN+x} ]; then
@@ -73,6 +74,7 @@ matrix:
     compiler: clang
     env: TARGET=linux-glibc LIBRESSL_VERSION=3.0.2 CC=clang-9
   - os: linux
+    env: DEBUG_OPTIONS=""
     if: type == cron
     compiler: clang
     env: TARGET=linux-glibc LIBRESSL_VERSION=2.9.2 CC=clang-9
@@ -91,7 +93,7 @@ matrix:
   - os: osx
     if: type == push
     compiler: clang
-    env: TARGET=osx FLAGS="USE_OPENSSL=1" OPENSSL_VERSION=1.1.1d
+    env: TARGET=osx FLAGS="USE_OPENSSL=1" OPENSSL_VERSION=1.1.1f
   - os: linux
     if: type == cron
     compiler: clang
@@ -109,7 +111,7 @@ install:
 script:
   - if [ "${CC%-*}"  = "clang" ]; then export FLAGS="$FLAGS USE_OBSOLETE_LINKER=1" DEBUG_CFLAGS="-g -fsanitize=address" LDFLAGS="-fsanitize=address"; fi
   - make -C contrib/wurfl
-  - make -j3 CC=$CC V=1 ERR=1 TARGET=$TARGET $FLAGS DEBUG_CFLAGS="$DEBUG_CFLAGS" LDFLAGS="$LDFLAGS -L$SSL_LIB -Wl,-rpath,$SSL_LIB" 51DEGREES_SRC="$FIFTYONEDEGREES_SRC" EXTRA_OBJS="$EXTRA_OBJS"
+  - make -j3 CC=$CC V=1 ERR=1 TARGET=$TARGET $FLAGS DEBUG_CFLAGS="$DEBUG_CFLAGS" LDFLAGS="$LDFLAGS" ADDLIB="-Wl,-rpath,$SSL_LIB" 51DEGREES_SRC="$FIFTYONEDEGREES_SRC" EXTRA_OBJS="$EXTRA_OBJS" $DEBUG_OPTIONS
   - ./haproxy -vv
   - if [ "${TRAVIS_OS_NAME}" = "linux" ]; then ldd haproxy; fi
   - if [ "${TRAVIS_OS_NAME}" = "osx" ]; then otool -L haproxy; fi

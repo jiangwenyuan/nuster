@@ -48,6 +48,7 @@
 #define	MODE_FOREGROUND	0x40
 #define	MODE_MWORKER	0x80    /* Master Worker */
 #define	MODE_MWORKER_WAIT	0x100    /* Master Worker wait mode */
+#define	MODE_ZERO_WARNING       0x200    /* warnings cause a failure */
 
 /* list of last checks to perform, depending on config options */
 #define LSTCHK_CAP_BIND	0x00000001	/* check that we can bind to any port */
@@ -286,13 +287,9 @@ extern int atexit_flag;
 extern unsigned char boot_seed[20];  // per-boot random seed (160 bits initially)
 
 /* bit values to go with "warned" above */
-/* unassigned : 0x00000001 (previously: WARN_BLOCK_DEPRECATED) */
-/* unassigned : 0x00000002 */
-/* unassigned : 0x00000004 (previously: WARN_REDISPATCH_DEPRECATED) */
-/* unassigned : 0x00000008 (previously: WARN_CLITO_DEPRECATED) */
-/* unassigned : 0x00000010 (previously: WARN_SRVTO_DEPRECATED) */
-/* unassigned : 0x00000020 (previously: WARN_CONTO_DEPRECATED) */
-#define WARN_FORCECLOSE_DEPRECATED  0x00000040
+#define WARN_ANY                    0x00000001 /* any warning was emitted */
+#define WARN_FORCECLOSE_DEPRECATED  0x00000002
+#define WARN_EXEC_PATH              0x00000004 /* executable path already reported */
 
 
 /* to be used with warned and WARN_* */

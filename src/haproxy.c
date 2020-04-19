@@ -703,6 +703,7 @@ static void usage(char *name)
 #endif
 		"        -dr ignores server address resolution failures\n"
 		"        -dV disables SSL verify on servers side\n"
+		"        -dW fails if any warning is emitted\n"
 		"        -sf/-st [pid ]* finishes/terminates old pids.\n"
 		"        -x <unix_socket> get listening sockets from a unix socket\n"
 		"        -S <bind>[,<bind options>...] new master CLI\n"
@@ -1807,6 +1808,8 @@ static void init(int argc, char **argv)
 				arg_mode |= MODE_VERBOSE;
 			else if (*flag == 'd' && flag[1] == 'b')
 				arg_mode |= MODE_FOREGROUND;
+			else if (*flag == 'd' && flag[1] == 'W')
+				arg_mode |= MODE_ZERO_WARNING;
 			else if (*flag == 'd' && flag[1] == 'M')
 				mem_poison_byte = flag[2] ? strtol(flag + 2, NULL, 0) : 'P';
 			else if (*flag == 'd' && flag[1] == 'r')
@@ -1940,7 +1943,7 @@ static void init(int argc, char **argv)
 	}
 
 	global.mode |= (arg_mode & (MODE_DAEMON | MODE_MWORKER | MODE_FOREGROUND | MODE_VERBOSE
-				    | MODE_QUIET | MODE_CHECK | MODE_DEBUG));
+				    | MODE_QUIET | MODE_CHECK | MODE_DEBUG | MODE_ZERO_WARNING));
 
 	if (getenv("HAPROXY_MWORKER_WAIT_ONLY")) {
 		unsetenv("HAPROXY_MWORKER_WAIT_ONLY");
@@ -2142,9 +2145,17 @@ static void init(int argc, char **argv)
 		exit(1);
 	}
 
+	if (warned & WARN_ANY && global.mode & MODE_ZERO_WARNING) {
+		ha_alert("Some warnings were found and 'zero-warning' is set. Aborting.\n");
+		exit(1);
+	}
+
 	if (global.mode & MODE_CHECK) {
 		struct peers *pr;
 		struct proxy *px;
+
+		if (warned & WARN_ANY)
+			qfprintf(stdout, "Warnings were found.\n");
 
 		for (pr = cfg_peers; pr; pr = pr->next)
 			if (pr->peers_fe)
@@ -3730,6 +3741,11 @@ int main(int argc, char **argv)
 	exit(0);
 }
 
+#if defined(__clang_version__)
+REGISTER_BUILD_OPTS("Built with clang compiler version " __clang_version__);
+#elif defined(__VERSION__)
+REGISTER_BUILD_OPTS("Built with gcc compiler version " __VERSION__);
+#endif
 
 /*
  * Local variables:

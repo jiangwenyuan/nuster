@@ -912,6 +912,9 @@ static int stats_dump_fields_html(struct buffer *out,
 		else if (strcmp(field_str(stats, ST_F_STATUS), "DOWN ") == 0) {
 			style = "going_up";
 		}
+		else if (strcmp(field_str(stats, ST_F_STATUS), "DRAIN") == 0) {
+			style = "draining";
+		}
 		else if (strcmp(field_str(stats, ST_F_STATUS), "NOLB ") == 0) {
 			style = "going_down";
 		}
@@ -3273,7 +3276,7 @@ static void http_stats_io_handler(struct appctx *appctx)
 	if (unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO))
 		goto out;
 
-	/* Check if the input buffer is avalaible. */
+	/* Check if the input buffer is available. */
 	if (!b_size(&res->buf)) {
 		si_rx_room_blk(si);
 		goto out;
@@ -3394,7 +3397,7 @@ static int stats_dump_typed_info_fields(struct buffer *out,
 }
 
 /* Fill <info> with HAProxy global info. <info> is preallocated
- * array of length <len>. The length of the aray must be
+ * array of length <len>. The length of the array must be
  * INF_TOTAL_FIELDS. If this length is less then this value, the
  * function returns 0, otherwise, it returns 1.
  */

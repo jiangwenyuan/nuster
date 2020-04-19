@@ -91,7 +91,15 @@ struct sh_ssl_sess_hdr {
 	unsigned char key_data[SSL_MAX_SSL_SESSION_ID_LENGTH];
 };
 
-/* This is used to preload the certifcate, private key
+/* states of the CLI IO handler for 'set ssl cert' */
+enum {
+	SETCERT_ST_INIT = 0,
+	SETCERT_ST_GEN,
+	SETCERT_ST_INSERT,
+	SETCERT_ST_FIN,
+};
+
+/* This is used to preload the certificate, private key
  * and Cert Chain of a file passed in via the crt
  * argument
  *
@@ -115,6 +123,7 @@ struct ckch_store {
 	struct cert_key_and_chain *ckch;
 	unsigned int multi:1;  /* is it a multi-cert bundle ? */
 	struct list ckch_inst; /* list of ckch_inst which uses this ckch_node */
+	struct list crtlist_entry; /* list of entries which use this store */
 	struct ebmb_node node;
 	char path[0];
 };
@@ -123,14 +132,12 @@ struct ckch_store {
  * This structure describe a ckch instance. An instance is generated for each
  * bind_conf.  The instance contains a linked list of the sni ctx which uses
  * the ckch in this bind_conf.
- *
- * XXX: the instance may evolve to handle ssl_bind_conf instead of bind_conf.
  */
 struct ckch_inst {
 	struct bind_conf *bind_conf; /* pointer to the bind_conf that uses this ckch_inst */
 	struct ssl_bind_conf *ssl_conf; /* pointer to the ssl_conf which is used by every sni_ctx of this inst */
 	struct ckch_store *ckch_store; /* pointer to the store used to generate this inst */
-	unsigned int filters:1; /* using sni filters ? */
+	struct crtlist_entry *crtlist_entry; /* pointer to the crtlist_entry used, or NULL */
 	unsigned int is_default:1;      /* This instance is used as the default ctx for this bind_conf */
 	/* space for more flag there */
 	struct list sni_ctx; /* list of sni_ctx using this ckch_inst */
@@ -138,8 +145,16 @@ struct ckch_inst {
 	struct list by_crtlist_entry; /* chained in crtlist_entry list of inst */
 };
 
+/* list of bind conf used by struct crtlist */
+struct bind_conf_list {
+	struct bind_conf *bind_conf;
+	struct bind_conf_list *next;
+};
+
 /* This structure is basically a crt-list or a directory */
 struct crtlist {
+	struct bind_conf_list *bind_conf; /* list of bind_conf which use this crtlist */
+	unsigned int linecount; /* number of lines */
 	struct eb_root entries;
 	struct list ord_entries; /* list to keep the line order of the crt-list file */
 	struct ebmb_node node; /* key is the filename or directory */
@@ -151,8 +166,10 @@ struct crtlist_entry {
 	unsigned int linenum;
 	unsigned int fcount; /* filters count */
 	char **filters;
-	struct list ckch_inst; /* list of instances of this entry */
+	struct crtlist *crtlist; /* ptr to the parent crtlist */
+	struct list ckch_inst; /* list of instances of this entry, there is 1 ckch_inst per instance of the crt-list */
 	struct list by_crtlist; /* ordered entries */
+	struct list by_ckch_store; /* linked in ckch_store list of crtlist_entries */
 	struct ebpt_node node; /* key is a ptr to a ckch_store */
 };
 

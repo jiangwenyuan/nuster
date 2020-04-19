@@ -540,7 +540,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 	if (!strcmp(args[0], "server")         ||
 	    !strcmp(args[0], "default-server") ||
 	    !strcmp(args[0], "server-template")) {
-		err_code |= parse_server(file, linenum, args, curproxy, &defproxy, 1);
+		err_code |= parse_server(file, linenum, args, curproxy, &defproxy, 1, 0);
 		if (err_code & ERR_FATAL)
 			goto out;
 	}
@@ -1592,6 +1592,8 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		rule = calloc(1, sizeof(*rule));
 		rule->cond = cond;
 		rule->srv.name = strdup(args[1]);
+		rule->line = linenum;
+		rule->file = strdup(file);
 		LIST_INIT(&rule->list);
 		LIST_ADDQ(&curproxy->server_rules, &rule->list);
 		curproxy->be_req_ana |= AN_REQ_SRV_RULES;
