@@ -86,6 +86,7 @@ struct appctx {
 				struct {
 					int       fd;
 					int       header_len;
+					uint64_t  payload_len;
 					uint64_t  offset;
 				} disk;
 			} store;
