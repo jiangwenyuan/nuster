@@ -54,6 +54,8 @@ typedef struct nst_ring {
     nst_ring_data_t             *head;
     nst_ring_data_t             *tail;
 
+    uint64_t                     count;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t             mutex;
 #else

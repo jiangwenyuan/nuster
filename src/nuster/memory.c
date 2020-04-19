@@ -88,7 +88,7 @@ nst_memory_create(char *name, uint64_t size, uint32_t block_size, uint32_t chunk
     memory->block_size = block_size;
     memory->chunk_size = chunk_size;
 
-    memory->total      = size;
+    memory->size       = size;
     memory->used       = 0;
 
     p += sizeof(nst_memory_t);
