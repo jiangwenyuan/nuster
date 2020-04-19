@@ -224,6 +224,12 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
 
             chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.cache.used:",
                     nuster.cache->dict.used);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.cache.cleanup_idx:",
+                    nuster.cache->dict.cleanup_idx);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.cache.sync_idx:",
+                    nuster.cache->dict.sync_idx);
         }
 
         if(global.nuster.nosql.status == NST_STATUS_ON) {
@@ -235,52 +241,66 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
 
             chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.nosql.used:",
                     nuster.nosql->dict.used);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.nosql.cleanup_idx:",
+                    nuster.nosql->dict.cleanup_idx);
+
+            chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "dict.nosql.sync_idx:",
+                    nuster.nosql->dict.sync_idx);
         }
     }
 
-    chunk_appendf(&trash, "\n**MEMORY**\n");
+    chunk_appendf(&trash, "\n**STORE MEMORY**\n");
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.total:",
-            global.nuster.memory->total);
+    /*
+       chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.total:",
+       global.nuster.memory->total);
 
-    chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.used:",
-            global.nuster.memory->used);
+       chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.common.used:",
+       global.nuster.memory->used);
+       */
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.total:",
-                global.nuster.cache.memory->total);
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.cache.size:",
+                global.nuster.cache.memory->size);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.cache.used:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.cache.used:",
                 global.nuster.cache.memory->used);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.cache.count:",
+                nuster.cache->store.ring.count);
     }
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.total:",
-                global.nuster.nosql.memory->total);
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.nosql.size:",
+                global.nuster.nosql.memory->size);
 
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "memory.nosql.used:",
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.nosql.used:",
                 global.nuster.nosql.memory->used);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.nosql.count:",
+                nuster.nosql->store.ring.count);
     }
 
     if(global.nuster.cache.status == NST_STATUS_ON || global.nuster.nosql.status == NST_STATUS_ON) {
         if(global.nuster.cache.root.len || global.nuster.nosql.root.len) {
-            chunk_appendf(&trash, "\n**DISK**\n");
+            chunk_appendf(&trash, "\n**STORE DISK**\n");
         }
     }
 
     if(global.nuster.cache.status == NST_STATUS_ON && global.nuster.cache.root.len) {
-        chunk_appendf(&trash, "%-*s%s\n", len, "disk.cache.dir:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "store.disk.cache.dir:",
                 global.nuster.cache.root.ptr);
 
-        chunk_appendf(&trash, "%-*s%s\n", len, "disk.cache.loaded:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "store.disk.cache.loaded:",
                 nuster.cache->store.disk.loaded ? "yes" : "no");
     }
 
     if(global.nuster.nosql.status == NST_STATUS_ON && global.nuster.nosql.root.len) {
-        chunk_appendf(&trash, "%-*s%s\n", len, "disk.nosql.dir:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "store.disk.nosql.dir:",
                 global.nuster.nosql.root.ptr);
 
-        chunk_appendf(&trash, "%-*s%s\n", len, "disk.nosql.loaded:",
+        chunk_appendf(&trash, "%-*s%s\n", len, "store.disk.nosql.loaded:",
                 nuster.nosql->store.disk.loaded ? "yes" : "no");
     }
 

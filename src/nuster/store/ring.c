@@ -18,6 +18,7 @@ nst_ring_init(nst_ring_t *ring, nst_memory_t *memory) {
     ring->memory = memory;
     ring->head   = NULL;
     ring->tail   = NULL;
+    ring->count  = 0;
 
     return nst_shctx_init(ring);
 }
@@ -50,6 +51,8 @@ nst_ring_alloc_data(nst_ring_t *ring) {
                 ring->tail       = data;
             }
         }
+
+        ring->count++;
 
         nst_shctx_unlock(ring);
     }
@@ -104,6 +107,8 @@ nst_ring_cleanup(nst_ring_t *ring) {
         }
 
         nst_memory_free(ring->memory, data);
+
+        ring->count--;
     }
 
     nst_shctx_unlock(ring);

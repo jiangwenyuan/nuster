@@ -717,24 +717,28 @@ manager.purge_method:           PURGE
 **DICT**
 dict.cache.size:                1048576
 dict.cache.length:              131072
-dict.cache.used:                150
+dict.cache.used:                0
+dict.cache.cleanup_idx:         0
+dict.cache.sync_idx:            0
 dict.nosql.size:                1048576
 dict.nosql.length:              131072
 dict.nosql.used:                0
+dict.nosql.cleanup_idx:         0
+dict.nosql.sync_idx:            0
 
-**MEMORY**
-memory.common.total:            1048576
-memory.common.used:             1856
-memory.cache.total:             2098200576
-memory.cache.used:              1149760
-memory.nosql.total:             11534336
-memory.nosql.used:              1048960
+**STORE MEMORY**
+store.memory.cache.size:        2098200576
+store.memory.cache.used:        1048960
+store.memory.cache.count:       0
+store.memory.nosql.size:        11534336
+store.memory.nosql.used:        1048960
+store.memory.nosql.count:       0
 
-**DISK**
-disk.cache.dir:                 /tmp/nuster/cache
-disk.cache.loaded:              no
-disk.nosql.dir:                 /tmp/nuster/nosql
-disk.nosql.loaded:              no
+**STORE DISK**
+store.disk.cache.dir:           /tmp/nuster/cache
+store.disk.cache.loaded:        yes
+store.disk.nosql.dir:           /tmp/nuster/nosql
+store.disk.nosql.loaded:        yes
 
 **STATS**
 stats.cache.total:              0
