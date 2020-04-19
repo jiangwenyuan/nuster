@@ -109,13 +109,18 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
     hpx_channel_t           *res = si_ic(si);
     hpx_buffer_t            *buf;
     hpx_htx_t               *req_htx, *res_htx;
-    uint64_t                 offset;
+    hpx_htx_blk_type_t       type;
+    hpx_htx_blk_t           *blk;
+    char                    *p, *ptr;
+    uint64_t                 offset, payload_len;
+    uint32_t                 blksz, sz, info;
     int                      total, ret, max, fd, header_len;
-    char                    *p;
 
-    header_len = appctx->ctx.nuster.store.disk.header_len;
-    offset     = appctx->ctx.nuster.store.disk.offset;
-    fd         = appctx->ctx.nuster.store.disk.fd;
+
+    header_len  = appctx->ctx.nuster.store.disk.header_len;
+    payload_len = appctx->ctx.nuster.store.disk.payload_len;
+    offset      = appctx->ctx.nuster.store.disk.offset;
+    fd          = appctx->ctx.nuster.store.disk.fd;
 
     res_htx = htxbuf(&res->buf);
     total   = res_htx->data;
@@ -132,7 +137,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
     }
 
     /* check that the output is not closed */
-    if(res->flags & (CF_SHUTW|CF_SHUTW_NOW)) {
+    if(res->flags & (CF_SHUTW|CF_SHUTR|CF_SHUTW_NOW)) {
         appctx->st1 = NST_DISK_APPLET_DONE;
     }
 
@@ -150,11 +155,6 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
             }
 
             while(header_len != 0) {
-                hpx_htx_blk_type_t  type;
-                hpx_htx_blk_t       *blk;
-                char                *ptr;
-                uint32_t             blksz, sz, info;
-
                 info  = *(uint32_t *)p;
                 type  = (info >> 28);
                 blksz = (info & 0xff) + ((info >> 8) & 0xfffff);
@@ -186,48 +186,96 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
             buf = get_trash_chunk();
             p   = buf->area;
             max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
+
+            if(max < payload_len) {
+                ret = pread(fd, p, max, offset);
+            } else {
+                ret = pread(fd, p, payload_len, offset);
+            }
+
+            if(ret <= 0) {
+                appctx->st1 = NST_DISK_APPLET_ERROR;
+
+                break;
+            }
+
+            appctx->ctx.nuster.store.disk.payload_len -= ret;
+
+            type  = HTX_BLK_DATA;
+            info  = (type << 28) + ret;
+            blksz = info & 0xfffffff;
+            blk   = htx_add_blk(res_htx, type, blksz);
+
+            if(!blk) {
+                appctx->st1 = NST_DISK_APPLET_ERROR;
+
+                break;
+            }
+
+            blk->info = info;
+
+            ptr = htx_get_blk_ptr(res_htx, blk);
+            sz  = htx_get_blksz(blk);
+            memcpy(ptr, p, sz);
+
+            offset += ret;
+            appctx->ctx.nuster.store.disk.offset = offset;
+
+            if(appctx->ctx.nuster.store.disk.payload_len == 0) {
+                appctx->st1 = NST_DISK_APPLET_EOP;
+            }
+
+        case NST_DISK_APPLET_EOP:
+            buf = get_trash_chunk();
+            p   = buf->area;
+            max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
+
             ret = pread(fd, p, max, offset);
 
-            if(ret == -1) {
+            if(ret < 0) {
                 appctx->st1 = NST_DISK_APPLET_ERROR;
 
                 break;
             }
 
             if(ret > 0) {
-                hpx_htx_blk_type_t  type;
-                hpx_htx_blk_t      *blk;
-                char               *ptr;
-                uint32_t            blksz, sz, info;
+                max = ret;
 
-                type  = HTX_BLK_DATA;
-                info  = (type << 28) + ret;
-                blksz = info & 0xfffffff;
-                blk   = htx_add_blk(res_htx, type, blksz);
+                while(max != 0) {
+                    info  = *(uint32_t *)p;
+                    type  = (info >> 28);
+                    blksz = (info & 0xff) + ((info >> 8) & 0xfffff);
+                    blk   = htx_add_blk(res_htx, type, blksz);
 
-                if(!blk) {
-                    appctx->st1 = NST_DISK_APPLET_ERROR;
+                    if(!blk) {
+                        appctx->st1 = NST_DISK_APPLET_ERROR;
 
-                    break;
+                        break;
+                    }
+
+                    blk->info = info;
+
+                    ptr = htx_get_blk_ptr(res_htx, blk);
+                    sz  = htx_get_blksz(blk);
+                    p  += 4;
+                    memcpy(ptr, p, sz);
+                    p  += sz;
+
+                    max -= 4 + sz;
                 }
 
-                blk->info = info;
+                offset += ret;
 
-                ptr = htx_get_blk_ptr(res_htx, blk);
-                sz  = htx_get_blksz(blk);
-                memcpy(ptr, p, sz);
-
-                appctx->ctx.nuster.store.disk.offset += ret;
+                appctx->ctx.nuster.store.disk.offset = offset;
 
                 break;
             }
 
+            appctx->st1 = NST_DISK_APPLET_END;
+
             close(fd);
 
-            appctx->st1 = NST_DISK_APPLET_EOM;
-
-        case NST_DISK_APPLET_EOM:
-
+        case NST_DISK_APPLET_END:
             if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
                 si_rx_room_blk(si);
 
@@ -518,26 +566,47 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
         sz   = htx_get_blksz(blk);
         type = htx_get_blk_type(blk);
 
-        if(type != HTX_BLK_DATA) {
-            continue;
-        }
+        if(type == HTX_BLK_DATA) {
 
-        ctx->txn.res.payload_len += sz;
+            ctx->txn.res.payload_len += sz;
 
-        if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
-            int  ret;
+            if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+                int  ret;
 
-            ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
-                    &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+                ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
+                        &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
 
-            if(ret == NST_ERR) {
-                ctx->store.ring.data = NULL;
+                if(ret == NST_ERR) {
+                    ctx->store.ring.data = NULL;
+                }
+            }
+
+            if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
+                        htx_get_blk_ptr(htx, blk), sz);
             }
         }
 
-        if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
-            nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
-                    htx_get_blk_ptr(htx, blk), sz);
+        if(type == HTX_BLK_TLR || type == HTX_BLK_EOT) {
+
+            if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+                int  ret;
+
+                ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
+                        &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+
+                if(ret == NST_ERR) {
+                    ctx->store.ring.data = NULL;
+                }
+            }
+
+            if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
+                        (char *)&blk->info, 4);
+
+                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
+                        htx_get_blk_ptr(htx, blk), sz);
+            }
         }
 
     }
@@ -803,12 +872,14 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
             appctx->ctx.nuster.store.ring.data = ctx->store.ring.data;
             appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
         } else {
-            appctx->ctx.nuster.store.disk.fd         = ctx->store.disk.fd;
-            appctx->ctx.nuster.store.disk.offset     =
-                nst_disk_get_header_pos(ctx->store.disk.meta);
+            appctx->ctx.nuster.store.disk.fd     = ctx->store.disk.fd;
+            appctx->ctx.nuster.store.disk.offset = nst_disk_get_header_pos(ctx->store.disk.meta);
 
             appctx->ctx.nuster.store.disk.header_len =
                 nst_disk_meta_get_header_len(ctx->store.disk.meta);
+
+            appctx->ctx.nuster.store.disk.payload_len =
+                nst_disk_meta_get_payload_len(ctx->store.disk.meta);
         }
 
         appctx->st1 = NST_DISK_APPLET_HEADER;

@@ -51,7 +51,8 @@
    + path_len          etag_len                etag
    + etag_len          last_modified_len       last_modified
    + last_modified_len header_len              header
-   header_len          payload_len             payload
+   + header_len        payload_len             payload
+   + payload_len       TLR/EOT                 [optional]
    */
 
 #define NST_DISK_META_POS_HASH               8 * 1
@@ -78,7 +79,8 @@ enum {
     NST_DISK_APPLET_DONE     =  0,
     NST_DISK_APPLET_HEADER,
     NST_DISK_APPLET_PAYLOAD,
-    NST_DISK_APPLET_EOM,
+    NST_DISK_APPLET_EOP,
+    NST_DISK_APPLET_END,
 };
 
 typedef struct nst_disk_data {

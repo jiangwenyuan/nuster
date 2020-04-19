@@ -217,8 +217,8 @@ out:
 
                         close(fd);
 
-                        appctx->st1 = NST_DISK_APPLET_EOM;
-                    case NST_DISK_APPLET_EOM:
+                        appctx->st1 = NST_DISK_APPLET_EOP;
+                    case NST_DISK_APPLET_EOP:
 
                         if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
                             si_rx_room_blk(si);
