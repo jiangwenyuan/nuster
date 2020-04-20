@@ -508,6 +508,9 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
 
+        ctx->txn.res.header_len  = 0;
+        ctx->txn.res.payload_len = 0;
+
         for(idx = htx_get_first(htx); idx != -1; idx = htx_get_next(htx, idx)) {
             blk  = htx_get_blk(htx, idx);
             sz   = htx_get_blksz(blk);
