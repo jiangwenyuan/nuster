@@ -45,7 +45,7 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
     res_htx = htx_from_buf(&res->buf);
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        appctx->ctx.nuster.store.ring.data->clients--;
+        nst_ring_data_detach(&nuster.nosql->store.ring, appctx->ctx.nuster.store.ring.data);
 
         return;
     }
@@ -806,7 +806,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
                 if(entry->store.ring.data) {
                     ctx->store.ring.data = entry->store.ring.data;
-                    ctx->store.ring.data->clients++;
+                    nst_ring_data_attach(&nuster.nosql->store.ring, ctx->store.ring.data);
                     ret = NST_CTX_STATE_HIT_MEMORY;
                 } else if(entry->store.disk.file) {
                     ctx->store.disk.file = entry->store.disk.file;
