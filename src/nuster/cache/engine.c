@@ -871,7 +871,7 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
         appctx->st0 = ctx->state;
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
-            ctx->store.ring.data->clients++;
+            nst_ring_data_attach(&nuster.cache->store.ring, ctx->store.ring.data);
             appctx->ctx.nuster.store.ring.data = ctx->store.ring.data;
             appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
         } else {

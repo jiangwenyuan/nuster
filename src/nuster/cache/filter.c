@@ -108,7 +108,7 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
         nst_stats_update_cache(ctx->state, ctx->txn.res.payload_len + ctx->txn.res.header_len);
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
-            ctx->store.ring.data->clients--;
+            nst_ring_data_detach(&nuster.cache->store.ring, ctx->store.ring.data);
         }
 
         if(ctx->state == NST_CTX_STATE_CREATE) {
