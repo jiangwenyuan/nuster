@@ -1,5 +1,18 @@
 # nuster Changelog
 
+## 5.0.3.20 - 2020-04-21
+
+### Changed
+
+* Lock the ring before add or del clients of ring_data
+* Set header_len and payload_len to 0 before add headers
+* Add ring.count and several other stats
+* Handle trailers
+* Ignore HTX_BLK_UNUSED
+* Backport v2.2-dev6
+* Update README, add new sample fetches
+* Add several new sample fetch
+
 ## 5.0.2.20 - 2020-04-15
 
 ### Fixed
