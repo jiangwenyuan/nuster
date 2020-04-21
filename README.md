@@ -176,32 +176,32 @@ You can find HAProxy documentation in `/doc`, and [Online HAProxy Documentation]
 
 ```
 frontend mysql-lb
-   bind *:3306
-   mode tcp
-   default_backend mysql-cluster
+    bind *:3306
+    mode tcp
+    default_backend mysql-cluster
 backend mysql-cluster
-   balance roundrobin
-   mode tcp
-   server s1 10.0.0.101:3306
-   server s2 10.0.0.102:3306
-   server s3 10.0.0.103:3306
+    balance roundrobin
+    mode tcp
+    server s1 10.0.0.101:3306
+    server s2 10.0.0.102:3306
+    server s3 10.0.0.103:3306
 ```
 
 ## As HTTP/HTTPS loader balancer
 
 ```
 frontend web-lb
-   bind *:80
-   #bind *:443 ssl crt XXX.pem
-   mode http
-   default_backend apps
+    bind *:80
+    #bind *:443 ssl crt XXX.pem
+    mode http
+    default_backend apps
 backend apps
-   balance roundrobin
-   mode http
-   server s1 10.0.0.101:8080
-   server s2 10.0.0.102:8080
-   server s3 10.0.0.103:8080
-   #server s4 10.0.0.101:8443 ssl verify none
+    balance roundrobin
+    mode http
+    server s1 10.0.0.101:8080
+    server s2 10.0.0.102:8080
+    server s3 10.0.0.103:8080
+    #server s4 10.0.0.101:8443 ssl verify none
 ```
 
 ## As HTTP cache server
@@ -211,8 +211,10 @@ global
     nuster cache on data-size 200m
 frontend fe
     bind *:8080
+    mode http
     default_backend be
 backend be
+    mode http
     nuster cache on
     nuster rule all
     server s1 127.0.0.1:8081
@@ -225,9 +227,11 @@ global
     nuster nosql on data-size 200m
 frontend fe
     bind *:8080
+    mode http
     default_backend be
 backend be
     nuster nosql on
+    mode http
     nuster rule r1 ttl 3600
 ```
 
@@ -599,8 +603,10 @@ global
     nuster cache on data-size 200m
 frontend fe
     bind *:8080
+    mode http
     default_backend be
 backend be
+    mode http
     nuster cache on
     nuster rule r1 if { path /a1 }
     nuster rule r2 key method.scheme.host.path.delimiter.query.cookie_userId if { path /a2 }
