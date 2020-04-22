@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 5.0.4.20 - 2020-04-22
+
+### Fixed
+
+* Payload does not send completely
+
 ## 5.0.3.20 - 2020-04-21
 
 ### Changed
