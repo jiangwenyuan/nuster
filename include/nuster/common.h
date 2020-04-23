@@ -36,6 +36,7 @@ typedef struct my_regex                 hpx_my_regex_t;
 typedef struct channel                  hpx_channel_t;
 typedef struct flt_ops                  hpx_flt_ops_t;
 typedef struct htx_blk                  hpx_htx_blk_t;
+typedef struct htx_ret                  hpx_htx_ret_t;
 typedef struct session                  hpx_session_t;
 typedef struct buffer                   hpx_buffer_t;
 typedef struct stream                   hpx_stream_t;
