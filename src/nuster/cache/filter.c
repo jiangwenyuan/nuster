@@ -323,19 +323,8 @@ _nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-
-        if(nst_cache_update(msg, ctx, offset, len) != NST_OK) {
-            goto err;
-        }
-
+        len = nst_cache_update(msg, ctx, offset, len);
     }
-
-    return len;
-
-err:
-    ctx->entry->state            = NST_DICT_ENTRY_STATE_INVALID;
-    ctx->entry->store.ring.data  = NULL;
-    ctx->state                   = NST_CTX_STATE_BYPASS;
 
     return len;
 }
