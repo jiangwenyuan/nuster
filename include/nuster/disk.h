@@ -72,7 +72,6 @@
 
 #define NST_DISK_FILE_LEN                    NST_KEY_UUID_LEN * 2
 
-typedef struct nst_core  nst_core_t;
 
 enum {
     NST_DISK_APPLET_ERROR    = -1,

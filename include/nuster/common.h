@@ -51,6 +51,7 @@ typedef struct ist                      hpx_ist_t;
 typedef struct htx                      hpx_htx_t;
 typedef struct arg                      hpx_arg_t;
 
+typedef struct nst_core  nst_core_t;
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
