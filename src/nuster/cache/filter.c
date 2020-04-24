@@ -56,12 +56,12 @@ static int
 _nst_cache_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
     nst_flt_conf_t  *conf = FLT_CONF(filter);
 
-    nst_debug(s, "[cache] ===== attach =====");
-
     /* disable cache if state is not NST_STATUS_ON */
     if(global.nuster.cache.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
         return 0;
     }
+
+    nst_debug(s, "[cache] ===== attach =====");
 
     if(!filter->ctx) {
         nst_ctx_t  *ctx;
