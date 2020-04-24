@@ -25,7 +25,6 @@
 #include <nuster/common.h>
 
 
-typedef struct nst_core  nst_core_t;
 
 /*
  * A nst_ring_data contains a complete http response data,

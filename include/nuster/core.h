@@ -77,13 +77,13 @@ typedef struct nst_ctx {
     nst_key_t                   keys[0];
 } nst_ctx_t;
 
-typedef struct nst_core {
+struct nst_core {
     nst_memory_t               *memory;
     hpx_ist_t                   root;
 
     nst_dict_t                  dict;
     nst_store_t                 store;
-} nst_core_t;
+};
 
 
 int nst_test_rule(hpx_stream_t *s, nst_rule_t *rule, int res);
