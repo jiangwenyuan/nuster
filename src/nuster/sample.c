@@ -170,6 +170,7 @@ static hpx_sample_fetch_kw_list_t nst_sample_fetch_keywords = {
         { "nuster.uri",       nst_sample_fetch_uri,       0, NULL, SMP_T_STR,  SMP_USE_HRSHP },
         { "nuster.path",      nst_sample_fetch_path,      0, NULL, SMP_T_STR,  SMP_USE_HRSHP },
         { "nuster.query",     nst_sample_fetch_query,     0, NULL, SMP_T_STR,  SMP_USE_HRSHP },
+        { /* END */ },
     }
 };
 
