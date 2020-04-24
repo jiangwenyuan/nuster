@@ -56,11 +56,11 @@ static int
 _nst_nosql_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
     nst_flt_conf_t  *conf = FLT_CONF(filter);
 
-    nst_debug(s, "[nosql] ===== attach =====");
-
     if(global.nuster.nosql.status != NST_STATUS_ON || conf->status != NST_STATUS_ON) {
         return 0;
     }
+
+    nst_debug(s, "[nosql] ===== attach =====");
 
     if(!filter->ctx) {
         nst_ctx_t  *ctx;
