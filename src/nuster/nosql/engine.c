@@ -828,7 +828,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
 
-        if(ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+        if(ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE && ctx->entry->store.ring.data) {
             ctx->entry->store.ring.data->invalid = 1;
         }
 
