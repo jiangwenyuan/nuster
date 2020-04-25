@@ -36,9 +36,12 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
     nst_ring_item_t         *item    = NULL;
     hpx_buffer_t            *buf;
     hpx_htx_t               *req_htx, *res_htx;
-    uint64_t                 offset;
+    hpx_htx_blk_type_t       type;
+    hpx_htx_blk_t           *blk;
+    char                    *p, *ptr;
+    uint64_t                 offset, payload_len;
+    uint32_t                 blksz, sz, info;
     int                      ret, max, fd, header_len, total;
-    char                    *p;
 
     total  = 0;
 
@@ -124,10 +127,11 @@ out:
             break;
         case NST_NOSQL_APPCTX_STATE_HIT_DISK:
             {
-                max        = b_room(&res->buf) - global.tune.maxrewrite;
-                header_len = appctx->ctx.nuster.store.disk.header_len;
-                offset     = appctx->ctx.nuster.store.disk.offset;
-                fd         = appctx->ctx.nuster.store.disk.fd;
+                max         = b_room(&res->buf) - global.tune.maxrewrite;
+                header_len  = appctx->ctx.nuster.store.disk.header_len;
+                payload_len = appctx->ctx.nuster.store.disk.payload_len;
+                offset      = appctx->ctx.nuster.store.disk.offset;
+                fd          = appctx->ctx.nuster.store.disk.fd;
 
                 switch(appctx->st1) {
                     case NST_DISK_APPLET_HEADER:
@@ -179,46 +183,54 @@ out:
                         buf = get_trash_chunk();
                         p   = buf->area;
                         max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
-                        ret = pread(fd, p , max, offset);
 
-                        if(ret == -1) {
+                        if(max < payload_len) {
+                            ret = pread(fd, p, max, offset);
+                        } else {
+                            ret = pread(fd, p, payload_len, offset);
+                        }
+
+                        if(ret <= 0) {
                             appctx->st1 = NST_DISK_APPLET_ERROR;
 
                             break;
                         }
 
-                        if(ret > 0) {
-                            hpx_htx_blk_type_t  type;
-                            hpx_htx_blk_t      *blk;
-                            char               *ptr;
-                            uint32_t            blksz, sz, info;
+                        appctx->ctx.nuster.store.disk.payload_len -= ret;
 
-                            type  = HTX_BLK_DATA;
-                            info  = (type << 28) + ret;
-                            blksz = info & 0xfffffff;
-                            blk   = htx_add_blk(res_htx, type, blksz);
+                        type  = HTX_BLK_DATA;
+                        info  = (type << 28) + ret;
+                        blksz = info & 0xfffffff;
+                        blk   = htx_add_blk(res_htx, type, blksz);
 
-                            if(!blk) {
-                                appctx->st1 = NST_DISK_APPLET_ERROR;
-
-                                break;
-                            }
-
-                            blk->info = info;
-
-                            ptr = htx_get_blk_ptr(res_htx, blk);
-                            sz  = htx_get_blksz(blk);
-                            memcpy(ptr, p, sz);
-
-                            appctx->ctx.nuster.store.disk.offset += ret;
+                        if(!blk) {
+                            appctx->st1 = NST_DISK_APPLET_ERROR;
 
                             break;
                         }
 
-                        close(fd);
+                        blk->info = info;
 
-                        appctx->st1 = NST_DISK_APPLET_EOP;
+                        ptr = htx_get_blk_ptr(res_htx, blk);
+                        sz  = htx_get_blksz(blk);
+                        memcpy(ptr, p, sz);
+
+                        offset += ret;
+                        appctx->ctx.nuster.store.disk.offset = offset;
+
+                        if(appctx->ctx.nuster.store.disk.payload_len == 0) {
+                            appctx->st1 = NST_DISK_APPLET_EOP;
+                        } else {
+                            break;
+                        }
+
                     case NST_DISK_APPLET_EOP:
+
+                        if(!htx_add_endof(res_htx, HTX_BLK_EOT)) {
+                            si_rx_room_blk(si);
+
+                            goto end;
+                        }
 
                         if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
                             si_rx_room_blk(si);
