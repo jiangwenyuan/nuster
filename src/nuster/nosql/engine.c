@@ -916,6 +916,8 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             } else {
                 ret = NST_CTX_STATE_INIT;
             }
+        } else {
+            ret = NST_CTX_STATE_INIT;
         }
     }
 
