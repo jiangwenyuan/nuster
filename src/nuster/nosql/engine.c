@@ -700,40 +700,91 @@ err:
 int
 nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
     hpx_htx_blk_type_t  type;
+    hpx_htx_ret_t       htxret;
     hpx_htx_blk_t      *blk;
     hpx_htx_t          *htx;
-    uint32_t            sz;
-    int                 idx;
+    unsigned int        forward = 0;
 
-    htx = htxbuf(&msg->chn->buf);
+    htx    = htxbuf(&msg->chn->buf);
+    htxret = htx_find_offset(htx, offset);
+    blk    = htxret.blk;
+    offset = htxret.ret;
 
-    for (idx = htx_get_first(htx); idx != -1; idx = htx_get_next(htx, idx)) {
-        blk  = htx_get_blk(htx, idx);
-        sz   = htx_get_blksz(blk);
+    for(; blk && len; blk = htx_get_next_blk(htx, blk)) {
+        hpx_ist_t  data;
+        uint32_t   info;
+
         type = htx_get_blk_type(blk);
 
-        if(type != HTX_BLK_DATA) {
-            continue;
+        if(type == HTX_BLK_DATA) {
+            data = htx_get_blk_value(htx, blk);
+            data.ptr += offset;
+            data.len -= offset;
+
+            if(data.len > len) {
+                data.len = len;
+            }
+
+            info = (type << 28) + data.len;
+
+            ctx->txn.res.payload_len += data.len;
+
+            forward += data.len;
+            len     -= data.len;
+
+            if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+                int  ret;
+
+                ret = nst_ring_store_add(&nuster.nosql->store.ring, ctx->store.ring.data,
+                        &ctx->store.ring.item, data.ptr, data.len, info);
+
+                if(ret == NST_ERR) {
+                    ctx->store.ring.data = NULL;
+                }
+            }
+
+            if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk, data.ptr, data.len);
+            }
         }
 
-        ctx->txn.res.payload_len += sz;
+        if(type == HTX_BLK_TLR || type == HTX_BLK_EOT) {
+            uint32_t  sz = htx_get_blksz(blk);
 
-        if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
-            nst_ring_store_add(&nuster.nosql->store.ring, ctx->store.ring.data,
-                    &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+            forward += sz;
+            len     -= sz;
+
+            if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+                int  ret;
+
+                ret = nst_ring_store_add(&nuster.nosql->store.ring, ctx->store.ring.data,
+                        &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+
+                if(ret == NST_ERR) {
+                    ctx->store.ring.data = NULL;
+                }
+            }
+
+            if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk,
+                        (char *)&blk->info, 4);
+
+                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk,
+                        htx_get_blk_ptr(htx, blk), sz);
+            }
         }
 
-        if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
-            nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk,
-                    htx_get_blk_ptr(htx, blk), sz);
+        if(type == HTX_BLK_EOM) {
+            uint32_t  sz = htx_get_blksz(blk);
+
+            forward += sz;
+            len     -= sz;
         }
+
+        offset = 0;
     }
 
-    return NST_OK;
-
-err:
-
-    return NST_ERR;
+    return forward;
 }
 
 void

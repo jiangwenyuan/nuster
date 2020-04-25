@@ -591,7 +591,6 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             forward += data.len;
             len     -= data.len;
 
-
             if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
                 int  ret;
 
