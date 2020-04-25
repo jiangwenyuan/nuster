@@ -789,8 +789,15 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
 
 void
 nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
-    nst_key_t  *key;
-    int         idx;
+    hpx_htx_blk_type_t  type;
+    uint32_t            size, info;
+    nst_key_t          *key;
+    int                 idx;
+
+    type  = HTX_BLK_EOT;
+    info  = type << 28;
+    size  = 1;
+    info += size;
 
     idx = ctx->rule->key->idx;
     key = &(ctx->keys[idx]);
@@ -807,6 +814,20 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
 
+        if(!(msg->flags & HTTP_MSGF_TE_CHNK)) {
+            int  ret;
+
+            ret = nst_ring_store_add(&nuster.nosql->store.ring, ctx->store.ring.data,
+                    &ctx->store.ring.item, "", size, info);
+
+            if(ret == NST_ERR) {
+                ctx->store.ring.data = NULL;
+            }
+        }
+    }
+
+    if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+
         if(ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
             ctx->entry->store.ring.data->invalid = 1;
         }
@@ -814,6 +835,14 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
         ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
 
         ctx->entry->store.ring.data = ctx->store.ring.data;
+    }
+
+    if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+
+        if(!(msg->flags & HTTP_MSGF_TE_CHNK)) {
+            nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk, (char *)&info, 4);
+            nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk, "", size);
+        }
     }
 
     if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
