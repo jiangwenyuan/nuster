@@ -843,13 +843,18 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
 
-        if(ctx->entry->store.ring.data) {
+        nst_shctx_lock(&nuster.nosql->dict);
+
+        if(ctx->entry && ctx->entry->state != NST_DICT_ENTRY_STATE_INVALID
+                && ctx->entry->store.ring.data) {
+
             ctx->entry->store.ring.data->invalid = 1;
         }
 
         ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-
         ctx->entry->store.ring.data = ctx->store.ring.data;
+
+        nst_shctx_unlock(&nuster.nosql->dict);
     }
 
     if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
