@@ -48,27 +48,8 @@ nst_disk_mkdir(char *path) {
     return NST_OK;
 }
 
-int
+static inline void
 nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
-    hpx_buffer_t  *buf;
-    char          *p;
-
-    buf = get_trash_chunk();
-    p   = buf->area;
-
-    nst_key_uuid_stringify(key, p);
-
-    sprintf(path, "%s/%c/%c%c", root.ptr, p[0], p[0], p[1]);
-
-    if(nst_disk_mkdir(path) != NST_OK) {
-        return NST_ERR;
-    }
-
-    /* create .uuid temp file */
-    p[NST_DISK_FILE_LEN] = '\0';
-    sprintf(path, "%s/%c/%c%c/.%s", root.ptr, p[0], p[0], p[1], p);
-
-    return NST_OK;
 }
 
 int
@@ -353,12 +334,6 @@ int
 nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
 
     if(root.len) {
-        if(nst_disk_mkdir(root.ptr) == NST_ERR) {
-            fprintf(stderr, "Create `%s` failed\n", root.ptr);
-
-            return NST_ERR;
-        }
-
         disk->memory = memory;
         disk->root   = root;
         disk->file   = nst_memory_alloc(memory, nst_disk_path_file_len(root));
@@ -366,6 +341,15 @@ nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
         if(!disk->file) {
             return NST_ERR;
         }
+
+        sprintf(disk->file, "%s/.tmp", root.ptr);
+
+        if(nst_disk_mkdir(disk->file) == NST_ERR) {
+            fprintf(stderr, "Create `%s` failed\n", disk->file);
+
+            return NST_ERR;
+        }
+
     }
 
     return NST_OK;
@@ -585,9 +569,8 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
         return NST_ERR;
     }
 
-    if(nst_disk_data_init(disk->root, data->file, key) != NST_OK) {
-        goto err;
-    }
+    sprintf(data->file, "%s/.tmp/%016"PRIx64"%016u%04x", disk->root.ptr, get_current_timestamp(),
+            global.req_count, getpid());
 
     data->fd = nst_disk_data_create(data->file);
 
@@ -660,6 +643,12 @@ nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_
 
     new_file = p + 41;
     old_file = data->file;
+
+    sprintf(new_file, "%s/%c/%c%c", disk->root.ptr, p[0], p[0], p[1]);
+
+    if(nst_disk_mkdir(new_file) != NST_OK) {
+        goto err;
+    }
 
     sprintf(new_file, "%s/%c/%c%c/%s", disk->root.ptr, p[0], p[0], p[1], p);
 

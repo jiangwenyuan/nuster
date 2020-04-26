@@ -108,12 +108,12 @@ nst_disk_path_base_len(hpx_ist_t root) {
 }
 
 /*
- * temp:  /5/5a/.5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a: 47 + 1
- * final: /5/5a/5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a:  46 + 1
+ * temp:  /.tmp/16bytes-timestamp + 16bytes-global.req_count + 8bytes-pid
+ * final: /5/5a/5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a   6 + 40 + 1
  */
 static inline int
 nst_disk_path_file_len(hpx_ist_t root) {
-    return root.len + 48;
+    return root.len + 47;
 }
 
 static inline int
