@@ -361,6 +361,7 @@ nst_disk_load(nst_core_t *core) {
     if(core->root.len && !core->store.disk.loaded) {
         hpx_ist_t        root;
         nst_disk_data_t  data;
+        nst_dirent_t     *de;
         nst_key_t        key = { .data = NULL };
         hpx_buffer_t     buf = { .area = NULL };
         hpx_ist_t        host;
@@ -372,7 +373,6 @@ nst_disk_load(nst_core_t *core) {
         file = core->store.disk.file;
 
         if(core->store.disk.dir) {
-            nst_dirent_t *de = nst_disk_dir_next(core->store.disk.dir);
 
             while((de = readdir(core->store.disk.dir)) != NULL) {
 
