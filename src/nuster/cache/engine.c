@@ -187,6 +187,10 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
             p   = buf->area;
             max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
 
+            if(max <= 0) {
+                goto out;
+            }
+
             if(max < payload_len) {
                 ret = pread(fd, p, max, offset);
             } else {
