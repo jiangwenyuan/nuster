@@ -907,7 +907,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             }
 
             if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
-                ret = NST_CTX_STATE_WAIT;
+                ret = NST_CTX_STATE_INIT;
             }
         }
 
