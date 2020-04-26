@@ -43,21 +43,18 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
     uint32_t                 blksz, sz, info;
     int                      ret, max, fd, header_len, total;
 
-    total  = 0;
-
-    res_htx = htx_from_buf(&res->buf);
+    res_htx = htxbuf(&res->buf);
+    total   = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
-        nst_ring_data_detach(&nuster.nosql->store.ring, appctx->ctx.nuster.store.ring.data);
-
-        return;
+        goto out;
     }
 
     /* Check if the input buffer is avalaible. */
     if(!b_size(&res->buf)) {
         si_rx_room_blk(si);
 
-        return;
+        goto out;
     }
 
     /* check that the output is not closed */
@@ -112,6 +109,8 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
                     co_htx_skip(req, req_htx, co_data(req));
                     htx_to_buf(req_htx, &req->buf);
                 }
+
+                nst_ring_data_detach(&nuster.nosql->store.ring, appctx->ctx.nuster.store.ring.data);
             }
 
 out:
@@ -124,6 +123,7 @@ out:
 
             htx_to_buf(res_htx, &res->buf);
 
+            task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
         case NST_NOSQL_APPCTX_STATE_HIT_DISK:
             {
@@ -183,6 +183,10 @@ out:
                         buf = get_trash_chunk();
                         p   = buf->area;
                         max = htx_get_max_blksz(res_htx, channel_htx_recv_max(res, res_htx));
+
+                        if(max <= 0) {
+                            goto end;
+                        }
 
                         if(max < payload_len) {
                             ret = pread(fd, p, max, offset);
