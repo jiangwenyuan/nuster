@@ -613,11 +613,10 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
         if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
             entry->state = NST_DICT_ENTRY_STATE_UPDATE;
-            ctx->state   = NST_CTX_STATE_UPDATE;
-            ctx->entry   = entry;
-        } else {
-            ctx->state = NST_CTX_STATE_WAIT;
         }
+
+        ctx->state   = NST_CTX_STATE_UPDATE;
+        ctx->entry   = entry;
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
@@ -840,7 +839,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
 
-        if(ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE && ctx->entry->store.ring.data) {
+        if(ctx->entry->store.ring.data) {
             ctx->entry->store.ring.data->invalid = 1;
         }
 
@@ -986,7 +985,9 @@ nst_nosql_delete(nst_key_t *key) {
 
     if(entry) {
 
-        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+        if(entry->state == NST_DICT_ENTRY_STATE_VALID
+                || entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+
             entry->state  = NST_DICT_ENTRY_STATE_INVALID;
             entry->expire = 0;
 
