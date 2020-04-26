@@ -55,11 +55,14 @@ nst_stats_update_nosql(int state) {
         case NST_CTX_STATE_HIT_DISK:
             global.nuster.stats->nosql.get++;
             break;
-        case NST_CTX_STATE_CREATE:
+        case NST_CTX_STATE_DONE:
             global.nuster.stats->nosql.post++;
             break;
         case NST_CTX_STATE_DELETE:
             global.nuster.stats->nosql.delete++;
+            break;
+        case NST_CTX_STATE_CREATE:
+            global.nuster.stats->nosql.abort++;
             break;
         default:
             break;
@@ -337,6 +340,9 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.delete:",
                 global.nuster.stats->nosql.delete);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.abort:",
+                global.nuster.stats->nosql.abort);
     }
 
     if(!_nst_stats_putdata(res, htx, &trash)) {

@@ -750,6 +750,7 @@ stats.nosql.total:              0
 stats.nosql.get:                0
 stats.nosql.post:               0
 stats.nosql.delete:             0
+stats.nosql.abort:              0
 
 **PROXY cache app1**
 app1.rule.rule1:                state=on  memory=on  disk=off   ttl=10
