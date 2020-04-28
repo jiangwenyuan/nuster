@@ -52,10 +52,13 @@ void
 nst_dict_cleanup(nst_dict_t *dict) {
     nst_dict_entry_t  *entry;
     nst_dict_entry_t  *prev;
+    uint64_t           start;
 
     if(!dict->used) {
         return;
     }
+
+    start  = get_current_timestamp();
 
     nst_shctx_lock(dict);
 
@@ -95,9 +98,15 @@ nst_dict_cleanup(nst_dict_t *dict) {
             prev  = entry;
             entry = entry->next;
         }
+
+        if(get_current_timestamp() - start >= 100) {
+            break;
+        }
     }
 
-    dict->cleanup_idx++;
+    if(entry == NULL) {
+        dict->cleanup_idx++;
+    }
 
     /* if we have checked the whole dict */
     if(dict->cleanup_idx == dict->size) {

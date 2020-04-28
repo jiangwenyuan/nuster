@@ -313,23 +313,23 @@ dict.nosql.used:                0
 
 ### dict-cleaner
 
-一回で`dict-cleaner`個のentries をチェックして, 無効なentriesは削除する(デフォルト、100).
+一回で最多`dict-cleaner`個のentries をチェックして, 無効なentriesは削除する(デフォルト、100).
 
 ### data-cleaner
 
-一回で`data-cleaner`個のdataをチェックして, 無効なdataは削除する(デフォルト、100).
+一回で最多`data-cleaner`個のdataをチェックして, 無効なdataは削除する(デフォルト、100).
 
 ### disk-cleaner
 
-一回で`disk-cleaner`個のfileをチェックして, 無効なfileは削除する(デフォルト、100).
+一回で最多`disk-cleaner`個のfileをチェックして, 無効なfileは削除する(デフォルト、100).
 
 ### disk-loader
 
-起動後、`disk-loader`個のfileをチェックして、情報をロードする(デフォルト、100).
+起動後、一回で最多`disk-loader`個のfileをチェックして、情報をロードする(デフォルト、100).
 
 ### disk-saver
 
-一回で`disk-saver`個のdataをチェックして、ディスクに保存する必要あるデータを保存する(デフォルト、100).
+一回で最多`disk-saver`個のdataをチェックして、ディスクに保存する必要あるデータを保存する(デフォルト、100).
 
 詳細は[Store](#disk)
 

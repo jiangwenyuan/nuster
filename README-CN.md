@@ -311,23 +311,23 @@ dict.nosql.used:                0
 
 ### dict-cleaner
 
-每次检查 `dict-cleaner` 个entry，无效的entry将被删除（默认100）
+每次检查最多 `dict-cleaner` 个entry，无效的entry将被删除（默认100）
 
 ### data-cleaner
 
-每次检查 `data-cleaner` 个entry，无效的data将被删除（默认100）
+每次检查最多 `data-cleaner` 个entry，无效的data将被删除（默认100）
 
 ### disk-cleaner
 
-每次检查 `disk-cleaner` 个硬盘缓存文件，无效的文件将被删除（默认100）
+每次检查最多 `disk-cleaner` 个硬盘缓存文件，无效的文件将被删除（默认100）
 
 ### disk-loader
 
-启动后每次加载 `disk-loader` 个硬盘缓存文件的信息到内存（默认100）
+启动后每次加载最多 `disk-loader` 个硬盘缓存文件的信息到内存（默认100）
 
 ### disk-saver
 
-每次检查 `disk-saver` 个data，并将需要保存至硬盘的data保存到硬盘（默认100）
+每次检查最多 `disk-saver` 个data，并将需要保存至硬盘的data保存到硬盘（默认100）
 
 详细请参考[Store](#disk).
 

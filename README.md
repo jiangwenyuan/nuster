@@ -321,29 +321,29 @@ Prior to v2.x, manager tasks like removing invalid cache data, resetting dict en
 
 In v3.x these tasks are moved to the master process and also done in iterations, and these parameters can be set to control the number of times of certain task during one iteration.
 
-During one iteration `dict-cleaner` entries are checked, invalid entries will be deleted (by default, 100).
+During one iteration no more than `dict-cleaner` entries are checked, invalid entries will be deleted (by default, 10000).
 
 ### data-cleaner
 
-During one iteration `data-cleaner` data are checked, invalid data will be deleted (by default, 100).
+During one iteration no more than `data-cleaner` data are checked, invalid data will be deleted (by default, 10000).
 
 ### disk-cleaner
 
 If disk persistence is enabled, data are stored in files. These files are checked by master process and will be deleted if invalid, for example, expired.
 
-During one iteration `disk-cleaner` files are checked, invalid files will be deleted (by default, 100).
+During one iteration no more than `disk-cleaner` files are checked, invalid files will be deleted (by default, 100).
 
 ### disk-loader
 
 After the start of nuster, master process will load information about data previously stored on disk into memory.
 
-During one iteration `disk-loader` files are loaded(by default, 100).
+During one iteration no more than `disk-loader` files are loaded(by default, 100).
 
 ### disk-saver
 
 Master process will save `disk sync` cache data periodically.
 
-During one iteration `disk-saver` data are checked and saved to disk if necessary (by default, 100).
+During one iteration no more than `disk-saver` data are checked and saved to disk if necessary (by default, 100).
 
 See [Store](#disk) for details.
 

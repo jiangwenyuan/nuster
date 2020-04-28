@@ -155,7 +155,7 @@ nst_ring_store_sync(nst_core_t *core) {
     nst_ring_item_t    *item;
     nst_http_txn_t      txn;
     hpx_htx_blk_type_t  type;
-    uint64_t            ttl_extend;
+    uint64_t            ttl_extend, start;
     uint32_t            blksz, info;
     int                 ret;
 
@@ -167,6 +167,8 @@ nst_ring_store_sync(nst_core_t *core) {
     if(!core->dict.used) {
         return;
     }
+
+    start = get_current_timestamp();
 
     nst_shctx_lock(&core->dict);
 
@@ -238,9 +240,14 @@ next:
 
         entry = entry->next;
 
+        if(get_current_timestamp() - start >= 100) {
+            break;
+        }
     }
 
-    core->dict.sync_idx++;
+    if(entry == NULL) {
+        core->dict.sync_idx++;
+    }
 
     /* if we have checked the whole dict */
     if(core->dict.sync_idx == core->dict.size) {

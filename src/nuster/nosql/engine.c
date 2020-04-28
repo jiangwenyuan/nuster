@@ -335,6 +335,7 @@ end:
 
 void
 nst_nosql_housekeeping() {
+    uint64_t  start;
 
     if(global.nuster.nosql.status == NST_STATUS_ON && master == 1) {
 
@@ -344,24 +345,46 @@ nst_nosql_housekeeping() {
         int  disk_loader  = global.nuster.nosql.disk_loader;
         int  disk_saver   = global.nuster.nosql.disk_saver;
 
+        start = get_current_timestamp();
+
         while(dict_cleaner--) {
             nst_dict_cleanup(&nuster.nosql->dict);
+
+            if(get_current_timestamp() - start >= 100) {
+                break;
+            }
         }
 
         while(data_cleaner--) {
             nst_ring_cleanup(&nuster.nosql->store.ring);
+
+            if(get_current_timestamp() - start >= 200) {
+                break;
+            }
         }
 
         while(disk_cleaner--) {
             nst_disk_cleanup(nuster.nosql);
+
+            if(get_current_timestamp() - start >= 300) {
+                break;
+            }
         }
 
         while(disk_loader--) {
             nst_disk_load(nuster.nosql);
+
+            if(get_current_timestamp() - start >= 400) {
+                break;
+            }
         }
 
         while(disk_saver--) {
             nst_ring_store_sync(nuster.nosql);
+
+            if(get_current_timestamp() - start >= 500) {
+                break;
+            }
         }
     }
 }

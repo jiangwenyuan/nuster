@@ -85,8 +85,8 @@ typedef struct nst_core  nst_core_t;
 #define NST_DEFAULT_CHUNK_SIZE          32
 #define NST_DEFAULT_DICT_SIZE           NST_DEFAULT_SIZE
 #define NST_DEFAULT_DATA_SIZE           NST_DEFAULT_SIZE
-#define NST_DEFAULT_DICT_CLEANER        100
-#define NST_DEFAULT_DATA_CLEANER        100
+#define NST_DEFAULT_DICT_CLEANER        1000
+#define NST_DEFAULT_DATA_CLEANER        1000
 #define NST_DEFAULT_DISK_CLEANER        100
 #define NST_DEFAULT_DISK_LOADER         100
 #define NST_DEFAULT_DISK_SAVER          100

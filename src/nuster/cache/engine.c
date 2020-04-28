@@ -336,6 +336,7 @@ nst_cache_handler(hpx_appctx_t *appctx) {
 
 void
 nst_cache_housekeeping() {
+    uint64_t  start;
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
         int  dict_cleaner = global.nuster.cache.dict_cleaner;
@@ -344,24 +345,46 @@ nst_cache_housekeeping() {
         int  disk_loader  = global.nuster.cache.disk_loader;
         int  disk_saver   = global.nuster.cache.disk_saver;
 
+        start = get_current_timestamp();
+
         while(dict_cleaner--) {
             nst_dict_cleanup(&nuster.cache->dict);
+
+            if(get_current_timestamp() - start >= 100) {
+                break;
+            }
         }
 
         while(data_cleaner--) {
             nst_ring_cleanup(&nuster.cache->store.ring);
+
+            if(get_current_timestamp() - start >= 200) {
+                break;
+            }
         }
 
         while(disk_cleaner--) {
             nst_disk_cleanup(nuster.cache);
+
+            if(get_current_timestamp() - start >= 300) {
+                break;
+            }
         }
 
         while(disk_loader--) {
             nst_disk_load(nuster.cache);
+
+            if(get_current_timestamp() - start >= 400) {
+                break;
+            }
         }
 
         while(disk_saver--) {
             nst_ring_store_sync(nuster.cache);
+
+            if(get_current_timestamp() - start >= 500) {
+                break;
+            }
         }
 
     }
