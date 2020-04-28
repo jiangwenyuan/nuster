@@ -290,6 +290,26 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
 
     key->hash = nst_disk_meta_get_hash(meta);
 
+    idx = key->hash % dict->size;
+
+    entry = dict->entry[idx];
+
+    while(entry) {
+
+        if(entry->key.hash == key->hash && entry->key.size == key->size
+                && !memcmp(entry->key.uuid, key->uuid, NST_KEY_UUID_LEN)
+                && !memcmp(entry->key.data, key->data, key->size)) {
+
+            break;
+        }
+
+        entry = entry->next;
+    }
+
+    if(entry) {
+        return NST_OK;
+    }
+
     ttl_extend = nst_disk_meta_get_ttl_extend(meta);
 
     entry = nst_memory_alloc(dict->memory, sizeof(*entry));
@@ -299,8 +319,6 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     }
 
     memset(entry, 0, sizeof(*entry));
-
-    idx = key->hash % dict->size;
 
     /* prepend entry to dict->entry[idx] */
     entry->next      = dict->entry[idx];
