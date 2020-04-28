@@ -388,7 +388,7 @@ nst_disk_load(nst_core_t *core) {
         hpx_ist_t        path;
         uint64_t         start;
         char            *file;
-        int              len;
+        int              len, ret;
 
         root = core->root;
         file = core->store.disk.file;
@@ -457,9 +457,13 @@ nst_disk_load(nst_core_t *core) {
                     goto err;
                 }
 
-                if(nst_dict_set_from_disk(&core->dict, &buf, host, path, &key, file, data.meta)
-                        != NST_OK) {
+                nst_shctx_lock(&core->dict);
 
+                ret = nst_dict_set_from_disk(&core->dict, &buf, host, path, &key, file, data.meta);
+
+                nst_shctx_unlock(&core->dict);
+
+                if(ret != NST_OK) {
                     goto err;
                 }
 
