@@ -358,9 +358,9 @@ nst_purger_handler(hpx_appctx_t *appctx) {
     nst_dict_entry_t        *entry  = NULL;
     hpx_stream_interface_t  *si     = appctx->owner;
     hpx_stream_t            *s      = si_strm(si);
+    nst_dict_t              *dict   = appctx->ctx.nuster.manager.dict;
     uint64_t                 start  = get_current_timestamp();
     int                      max    = 1000;
-    nst_dict_t              *dict   = appctx->ctx.nuster.manager.dict;
 
     while(1) {
 
@@ -389,14 +389,20 @@ nst_purger_handler(hpx_appctx_t *appctx) {
                 }
 
                 entry = entry->next;
+
+                if(get_current_timestamp() - start > 10) {
+                    break;
+                }
             }
 
-            appctx->ctx.nuster.manager.idx++;
+            if(entry == NULL) {
+                appctx->ctx.nuster.manager.idx++;
+            }
 
             nst_shctx_unlock(dict);
         }
 
-        if(get_current_timestamp() - start > 1) {
+        if(get_current_timestamp() - start > 20) {
             break;
         }
 

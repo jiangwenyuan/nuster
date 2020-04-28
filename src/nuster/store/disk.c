@@ -386,11 +386,14 @@ nst_disk_load(nst_core_t *core) {
         hpx_buffer_t     buf = { .area = NULL };
         hpx_ist_t        host;
         hpx_ist_t        path;
+        uint64_t         start;
         char            *file;
         int              len;
 
         root = core->root;
         file = core->store.disk.file;
+
+        start  = get_current_timestamp();
 
         if(core->store.disk.dir) {
 
@@ -461,11 +464,17 @@ nst_disk_load(nst_core_t *core) {
                 }
 
                 close(data.fd);
+
+                if(get_current_timestamp() - start >= 100) {
+                    break;
+                }
             }
 
-            core->store.disk.idx++;
-            closedir(core->store.disk.dir);
-            core->store.disk.dir = NULL;
+            if(de == NULL) {
+                core->store.disk.idx++;
+                closedir(core->store.disk.dir);
+                core->store.disk.dir = NULL;
+            }
         } else {
             core->store.disk.dir = nst_disk_opendir_by_idx(core->root, file, core->store.disk.idx);
 
@@ -502,11 +511,14 @@ nst_disk_cleanup(nst_core_t *core) {
     nst_disk_data_t  data;
     nst_dirent_t    *de;
     hpx_ist_t        root;
+    uint64_t         start;
     char            *file;
     int              len;
 
     root = core->root;
     file = core->store.disk.file;
+
+    start  = get_current_timestamp();
 
     if(core->root.len && core->store.disk.loaded) {
 
@@ -556,6 +568,10 @@ nst_disk_cleanup(nst_core_t *core) {
                 }
 
                 close(data.fd);
+
+                if(get_current_timestamp() - start >= 100) {
+                    break;
+                }
             }
 
             core->store.disk.idx++;
