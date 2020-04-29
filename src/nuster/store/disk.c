@@ -469,7 +469,7 @@ nst_disk_load(nst_core_t *core) {
 
                 close(data.fd);
 
-                if(get_current_timestamp() - start >= 100) {
+                if(get_current_timestamp() - start >= 10) {
                     break;
                 }
             }
@@ -573,7 +573,7 @@ nst_disk_cleanup(nst_core_t *core) {
 
                 close(data.fd);
 
-                if(get_current_timestamp() - start >= 100) {
+                if(get_current_timestamp() - start >= 10) {
                     break;
                 }
             }

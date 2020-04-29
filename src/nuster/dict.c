@@ -99,7 +99,7 @@ nst_dict_cleanup(nst_dict_t *dict) {
             entry = entry->next;
         }
 
-        if(get_current_timestamp() - start >= 100) {
+        if(get_current_timestamp() - start >= 10) {
             break;
         }
     }

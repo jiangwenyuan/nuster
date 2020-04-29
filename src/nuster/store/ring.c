@@ -240,7 +240,7 @@ next:
 
         entry = entry->next;
 
-        if(get_current_timestamp() - start >= 100) {
+        if(get_current_timestamp() - start >= 10) {
             break;
         }
     }
