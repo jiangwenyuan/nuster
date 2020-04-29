@@ -1025,18 +1025,10 @@ nst_nosql_delete(nst_key_t *key) {
 
     if(entry) {
 
-        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-            entry->state = NST_DICT_ENTRY_STATE_INVALID;
+        if(entry->state == NST_DICT_ENTRY_STATE_VALID
+                || entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
 
-            ret = 1;
-        } else if(entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
-            entry->state = NST_DICT_ENTRY_STATE_INIT;
-
-            ret = 1;
-        }
-
-        if(ret == 1) {
-
+            entry->state  = NST_DICT_ENTRY_STATE_INIT;
             entry->expire = 0;
 
             if(entry->store.ring.data) {
@@ -1050,6 +1042,7 @@ nst_nosql_delete(nst_key_t *key) {
                 entry->store.disk.file = NULL;
             }
 
+            ret = 1;
         }
 
     } else {
