@@ -350,39 +350,47 @@ nst_nosql_housekeeping() {
         while(dict_cleaner--) {
             nst_dict_cleanup(&nuster.nosql->dict);
 
-            if(get_current_timestamp() - start >= 100) {
+            if(get_current_timestamp() - start >= 10) {
                 break;
             }
         }
+
+        start = get_current_timestamp();
 
         while(data_cleaner--) {
             nst_ring_cleanup(&nuster.nosql->store.ring);
 
-            if(get_current_timestamp() - start >= 200) {
+            if(get_current_timestamp() - start >= 10) {
                 break;
             }
         }
+
+        start = get_current_timestamp();
 
         while(disk_cleaner--) {
             nst_disk_cleanup(nuster.nosql);
 
-            if(get_current_timestamp() - start >= 300) {
+            if(get_current_timestamp() - start >= 10) {
                 break;
             }
         }
+
+        start = get_current_timestamp();
 
         while(disk_loader--) {
             nst_disk_load(nuster.nosql);
 
-            if(get_current_timestamp() - start >= 400) {
+            if(get_current_timestamp() - start >= 10) {
                 break;
             }
         }
 
+        start = get_current_timestamp();
+
         while(disk_saver--) {
             nst_ring_store_sync(nuster.nosql);
 
-            if(get_current_timestamp() - start >= 500) {
+            if(get_current_timestamp() - start >= 10) {
                 break;
             }
         }
