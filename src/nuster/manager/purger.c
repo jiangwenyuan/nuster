@@ -66,7 +66,7 @@ nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
                 }
 
                 if(global.nuster.nosql.status == NST_STATUS_ON
-                        && p->nuster.mode == NST_MODE_CACHE) {
+                        && p->nuster.mode == NST_MODE_NOSQL) {
 
                     ret = nst_nosql_delete(&key);
                 }
