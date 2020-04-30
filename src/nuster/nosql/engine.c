@@ -907,6 +907,11 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
         }
     }
 
+
+    if(ctx->entry->state != NST_DICT_ENTRY_STATE_VALID) {
+        ctx->entry->state = NST_DICT_ENTRY_STATE_INIT;
+    }
+
 }
 
 int
