@@ -218,7 +218,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 nst_debug_end("FAIL");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
-                if(nst_nosql_delete(key)) {
+                if(nst_nosql_delete(key) == 1) {
                     nst_debug(s, "[nosql] EXIST, to delete");
                     ctx->state = NST_CTX_STATE_DELETE;
 
