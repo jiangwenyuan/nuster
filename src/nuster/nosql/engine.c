@@ -696,6 +696,9 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
         if(header == NULL) {
             ctx->state = NST_CTX_STATE_INVALID;
 
+            nst_ring_store_abort(&nuster.nosql->store.ring, ctx->store.ring.data);
+            nst_disk_store_abort(&nuster.nosql->store.disk, &ctx->store.disk);
+
             return;
         }
 

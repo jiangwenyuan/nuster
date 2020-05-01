@@ -407,4 +407,18 @@ int
 nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
         uint64_t expire);
 
+static inline void
+nst_disk_store_abort(nst_disk_t *disk, nst_disk_data_t *data) {
+    if(data->fd != -1) {
+        close(data->fd);
+        data->fd = -1;
+    }
+
+    if(data->file) {
+        remove(data->file);
+        nst_memory_free(disk->memory, data->file);
+        data->file = NULL;
+    }
+}
+
 #endif /* _NUSTER_DISK_H */
