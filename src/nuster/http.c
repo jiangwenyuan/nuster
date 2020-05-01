@@ -143,7 +143,6 @@ nst_http_ring_item_to_htx(nst_ring_item_t *item, hpx_htx_t *htx) {
 void
 nst_http_reply(hpx_stream_t *s, int idx) {
     hpx_stream_interface_t  *si  = &s->si[1];
-    hpx_channel_t           *req = &s->req;
     hpx_channel_t           *res = &s->res;
     hpx_htx_t               *htx;
     hpx_htx_sl_t            *sl;
@@ -160,6 +159,7 @@ nst_http_reply(hpx_stream_t *s, int idx) {
     sl->info.res.status = nst_http_codes[idx].status;
 
     htx_add_header(htx, ist("Content-Length"), nst_http_codes[idx].length);
+    htx_add_header(htx, ist("Content-Type"), ist("text/plain"));
 
     htx_add_endof(htx, HTX_BLK_EOH);
 
@@ -176,31 +176,10 @@ nst_http_reply(hpx_stream_t *s, int idx) {
 
     htx_to_buf(htx, &res->buf);
 
-    if(co_data(req)) {
-        hpx_htx_t  *req_htx = htx_from_buf(&req->buf);
-        co_htx_skip(req, req_htx, co_data(req));
-        htx_to_buf(req_htx, &req->buf);
-    }
-
     si_shutr(si);
     si_shutw(si);
     si->err_type = SI_ET_NONE;
     si->state    = SI_ST_CLO;
-
-    channel_auto_read(req);
-    channel_abort(req);
-    channel_auto_close(req);
-    channel_htx_erase(req, htxbuf(&req->buf));
-    channel_auto_read(res);
-    channel_auto_close(res);
-
-    if(!(s->flags & SF_ERR_MASK)) {
-        s->flags |= SF_ERR_LOCAL;
-    }
-    if(!(s->flags & SF_FINST_MASK)) {
-        s->flags |= SF_FINST_C;
-    }
-
 }
 
 int
