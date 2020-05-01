@@ -604,6 +604,14 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     nst_key_t           *key;
     int                  idx;
 
+    header = _nst_nosql_create_header(s, &ctx->txn);
+
+    if(header == NULL) {
+        ctx->state = NST_CTX_STATE_FULL;
+
+        return;
+    }
+
     idx = ctx->rule->key->idx;
     key = &(ctx->keys[idx]);
 
@@ -660,16 +668,6 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     /* create header */
 
     if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
-        header = _nst_nosql_create_header(s, &ctx->txn);
-
-        if(header == NULL) {
-            ctx->state = NST_CTX_STATE_FULL;
-
-            nst_ring_store_abort(&nuster.nosql->store.ring, ctx->store.ring.data);
-            nst_disk_store_abort(&nuster.nosql->store.disk, &ctx->store.disk);
-
-            return;
-        }
 
         if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
             ctx->store.ring.data->item = header;
