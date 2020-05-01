@@ -130,15 +130,6 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 1;
     }
 
-    if(s->txn->meth != HTTP_METH_GET &&
-            s->txn->meth != HTTP_METH_POST &&
-            s->txn->meth != HTTP_METH_DELETE) {
-
-        appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_ALLOWED;
-
-        return 1;
-    }
-
     if(ctx->state == NST_CTX_STATE_INIT) {
         int  i = 0;
 
@@ -173,9 +164,9 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             if(!key->data) {
                 /* build key */
                 if(nst_key_build(s, msg, ctx->rule, &ctx->txn, key, HTTP_METH_GET) != NST_OK) {
-                    ctx->state = NST_NOSQL_APPCTX_STATE_ERROR;
+                    ctx->state = NST_CTX_STATE_FULL;
 
-                    return 1;
+                    break;
                 }
 
                 nst_key_hash(key);
@@ -291,10 +282,6 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 0;
     }
 
-    if(ctx->state == NST_CTX_STATE_INVALID && ctx->store.disk.file == NULL) {
-        appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
-    }
-
     if(ctx->state == NST_CTX_STATE_DELETE) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
     }
@@ -340,7 +327,7 @@ _nst_nosql_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
             nst_debug(s, "[nosql] Created");
             appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
         } else {
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_EMPTY;
+            appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
         }
 
     }

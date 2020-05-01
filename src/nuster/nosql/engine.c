@@ -277,51 +277,20 @@ end:
             task_wakeup(s->task, TASK_WOKEN_OTHER);
 
             break;
-        case NST_NOSQL_APPCTX_STATE_ERROR:
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_http_reply(s, NST_HTTP_500);
-
-            break;
-        case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_http_reply(s, NST_HTTP_405);
-
-            break;
-        case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_http_reply(s, NST_HTTP_404);
-
-            break;
-        case NST_NOSQL_APPCTX_STATE_EMPTY:
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_http_reply(s, NST_HTTP_400);
-
-            break;
-        case NST_NOSQL_APPCTX_STATE_FULL:
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
-            nst_http_reply(s, NST_HTTP_507);
-
-            break;
         case NST_NOSQL_APPCTX_STATE_END:
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_DONE;
             nst_http_reply(s, NST_HTTP_200);
 
             break;
-        case NST_NOSQL_APPCTX_STATE_WAIT:
+        case NST_NOSQL_APPCTX_STATE_NOT_FOUND:
+            nst_http_reply(s, NST_HTTP_404);
+
             break;
-        case NST_NOSQL_APPCTX_STATE_DONE:
+        case NST_NOSQL_APPCTX_STATE_ERROR:
+            nst_http_reply(s, NST_HTTP_500);
 
-            if(!(res->flags & CF_SHUTR) ) {
-                res->flags |= CF_READ_NULL;
-                si_shutr(si);
-            }
-
-            /* eat the whole request */
-            if(co_data(req)) {
-                req_htx = htx_from_buf(&req->buf);
-                co_htx_skip(req, req_htx, co_data(req));
-                htx_to_buf(req_htx, &req->buf);
-            }
+            break;
+        case NST_NOSQL_APPCTX_STATE_FULL:
+            nst_http_reply(s, NST_HTTP_507);
 
             break;
         default:
@@ -461,10 +430,16 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
     if(global.nuster.nosql.status == NST_STATUS_ON && px->nuster.mode == NST_MODE_NOSQL) {
         hpx_stream_interface_t  *si     = &s->si[1];
-        hpx_http_txn_t          *txn    = s->txn;
-        hpx_http_msg_t          *msg    = &txn->req;
         hpx_appctx_t            *appctx = NULL;
-        hpx_htx_t               *htx;
+
+        if(s->txn->meth != HTTP_METH_GET &&
+                s->txn->meth != HTTP_METH_POST &&
+                s->txn->meth != HTTP_METH_DELETE) {
+
+            nst_http_reply(s, NST_HTTP_405);
+
+            return 1;
+        }
 
         s->target = &nuster.applet.nosql.obj_type;
 
@@ -481,12 +456,6 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_INIT;
             appctx->st1 = 0;
             appctx->st2 = 0;
-
-            htx = htxbuf(&req->buf);
-
-            if(nst_http_handle_expect(s, htx, msg) == -1) {
-                return 1;
-            }
 
             req->analysers &= (AN_REQ_HTTP_BODY | AN_REQ_FLT_HTTP_HDRS | AN_REQ_FLT_END);
             req->analysers &= ~AN_REQ_FLT_XFER_DATA;
@@ -661,7 +630,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             ctx->state = NST_CTX_STATE_CREATE;
             ctx->entry = entry;
         } else {
-            ctx->state = NST_CTX_STATE_BYPASS;
+            ctx->state = NST_CTX_STATE_FULL;
         }
     }
 
@@ -694,7 +663,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
         header = _nst_nosql_create_header(s, &ctx->txn);
 
         if(header == NULL) {
-            ctx->state = NST_CTX_STATE_INVALID;
+            ctx->state = NST_CTX_STATE_FULL;
 
             nst_ring_store_abort(&nuster.nosql->store.ring, ctx->store.ring.data);
             nst_disk_store_abort(&nuster.nosql->store.disk, &ctx->store.disk);
@@ -912,6 +881,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
 
     if(ctx->entry->state != NST_DICT_ENTRY_STATE_VALID) {
+        ctx->state = NST_CTX_STATE_INVALID;
         ctx->entry->state = NST_DICT_ENTRY_STATE_INIT;
     }
 
