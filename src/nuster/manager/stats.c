@@ -45,24 +45,20 @@ nst_stats_update_cache(int state, uint64_t bytes) {
 }
 
 void
-nst_stats_update_nosql(int state) {
+nst_stats_update_nosql(enum http_meth_t meth) {
     nst_shctx_lock(global.nuster.stats);
 
     global.nuster.stats->nosql.total++;
 
-    switch(state) {
-        case NST_CTX_STATE_HIT_MEMORY:
-        case NST_CTX_STATE_HIT_DISK:
+    switch(meth) {
+        case HTTP_METH_GET:
             global.nuster.stats->nosql.get++;
             break;
-        case NST_CTX_STATE_DONE:
+        case HTTP_METH_POST:
             global.nuster.stats->nosql.post++;
             break;
-        case NST_CTX_STATE_DELETE:
+        case HTTP_METH_DELETE:
             global.nuster.stats->nosql.delete++;
-            break;
-        case NST_CTX_STATE_CREATE:
-            global.nuster.stats->nosql.abort++;
             break;
         default:
             break;

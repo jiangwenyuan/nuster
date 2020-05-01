@@ -102,7 +102,7 @@ _nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
     if(filter->ctx) {
         nst_ctx_t  *ctx = filter->ctx;
 
-        nst_stats_update_nosql(ctx->state);
+        nst_stats_update_nosql(s->txn->meth);
 
         if(ctx->state == NST_CTX_STATE_CREATE) {
             nst_nosql_abort(ctx);
