@@ -116,7 +116,7 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
         }
 
         for(i = 0; i < ctx->key_cnt; i++) {
-            nst_key_t key = ctx->keys[i];
+            nst_key_t  key = ctx->keys[i];
 
             if(key.data) {
                 free(key.data);
