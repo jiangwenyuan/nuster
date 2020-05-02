@@ -101,11 +101,20 @@ _nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
     if(filter->ctx) {
         nst_ctx_t  *ctx = filter->ctx;
+        int         i;
 
         nst_stats_update_nosql(s->txn->meth);
 
         if(ctx->state == NST_CTX_STATE_CREATE) {
             nst_nosql_abort(ctx);
+        }
+
+        for(i = 0; i < ctx->key_cnt; i++) {
+            nst_key_t  key = ctx->keys[i];
+
+            if(key.data) {
+                free(key.data);
+            }
         }
 
         nst_http_txn_detach(&ctx->txn);
