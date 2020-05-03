@@ -401,7 +401,7 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
                         chunk_appendf(&trash, " ");
                     }
 
-                    chunk_appendf(&trash, "state=%-4smemory=%-4sdisk=%-6sttl=%"PRIu32"\n",
+                    chunk_appendf(&trash, "state=%-4smemory=%-4sdisk=%-5sttl=%"PRIu32"\n",
                             rule->state == NST_RULE_ENABLED ? "on" : "off",
                             nst_store_memory_on(rule->store) ? "on" : "off",
                             nst_store_disk_on(rule->store) ? "on"
