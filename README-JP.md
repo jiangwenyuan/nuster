@@ -313,11 +313,11 @@ dict.nosql.used:                0
 
 ### dict-cleaner
 
-一回で最多`dict-cleaner`個のentries をチェックして, 無効なentriesは削除する(デフォルト、100).
+一回で最多`dict-cleaner`個のentries をチェックして, 無効なentriesは削除する(デフォルト、1000).
 
 ### data-cleaner
 
-一回で最多`data-cleaner`個のdataをチェックして, 無効なdataは削除する(デフォルト、100).
+一回で最多`data-cleaner`個のdataをチェックして, 無効なdataは削除する(デフォルト、1000).
 
 ### disk-cleaner
 

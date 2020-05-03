@@ -321,11 +321,11 @@ Prior to v2.x, manager tasks like removing invalid cache data, resetting dict en
 
 In v3.x these tasks are moved to the master process and also done in iterations, and these parameters can be set to control the number of times of certain task during one iteration.
 
-During one iteration no more than `dict-cleaner` entries are checked, invalid entries will be deleted (by default, 10000).
+During one iteration no more than `dict-cleaner` entries are checked, invalid entries will be deleted (by default, 1000).
 
 ### data-cleaner
 
-During one iteration no more than `data-cleaner` data are checked, invalid data will be deleted (by default, 10000).
+During one iteration no more than `data-cleaner` data are checked, invalid data will be deleted (by default, 1000).
 
 ### disk-cleaner
 

@@ -1,5 +1,44 @@
 # nuster Changelog
 
+## 5.0.5.20 - 2020-05-03
+
+### Fixed
+
+* Stats applet check should return 0 as the request...
+* Fix unclosed fd in nosql disk hit mode
+* Apply shctx fixes
+* Use warning instead of alert for same rule warning
+* Fix ctx.key memory leak in nosql
+* Create nosql header in advance
+* Fix incorrect handling of nosql full
+* Fix incorrect nosql stats, use method
+* Add store abort, clean resources when the store is failed
+* Set nosql entry state to init if failed to create it
+* Fix error check of nst_nosql_delete
+* Fix incorrect nosql mode
+* Set entry state to init when deleting nosql entry
+* Modify break time of housekeep
+* Set state to init when delete a nosql entry if...
+* Lock the dict before set entry from disk...
+* Limit max run time in housekeep related functions
+* Fix segfault if deleting a nosql entry which is being created
+* Fix incorrect handling of getting max
+* Fix incorrect nosql stats, add nosql.abort
+* Do not wait on nosql post
+* Remove files in tmp dir on startup
+* Fix needless readdir before loop
+* Use a temp dir for creating temp file...
+* Return not found when a key is creating
+* nosql: handle trailers
+* Check entry.store.ring.data before set invalid
+* nosql: Add EOT if the request is not chunked
+* Set ctx.state to init in exist check
+* Apply incorrect handling of offset in nosql
+* Fix asan error
+* Do not print attach log if not on nuster enabled proxy
+* Suppress build warnings
+* Fix incorrect handling of offset in payload update
+
 ## 5.0.4.20 - 2020-04-22
 
 ### Fixed
