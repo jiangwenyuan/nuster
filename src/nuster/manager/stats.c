@@ -90,7 +90,7 @@ nst_stats_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
         req->analysers |= AN_REQ_HTTP_XFER_BODY;
 
-        return 1;
+        return 0;
     }
 
 }
@@ -110,7 +110,7 @@ _nst_stats_header(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *h
 
     sl->info.res.status = 200;
 
-    if(!htx_add_header(htx, ist("Cache-Control"), ist("no-cache"))) {
+    if(!htx_add_header(htx, ist("Transfer-Encoding"), ist("chunked"))) {
         goto full;
     }
 
