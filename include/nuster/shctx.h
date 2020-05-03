@@ -30,7 +30,7 @@
 
 static inline int
 _nst_shctx_init(pthread_mutex_t *mutex) {
-    pthread_mutexattr_t attr;
+    pthread_mutexattr_t  attr;
 
     if(pthread_mutexattr_init(&attr)) {
         return NST_ERR;
@@ -83,14 +83,18 @@ relax() {
 static inline void
 _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
 
-    int i;
+    int  i;
 
-    for (i = 0; i < *count; i++) {
+    for(i = 0; i < *count; i++) {
         relax();
         relax();
+
+        if(*uaddr != value) {
+            return;
+        }
     }
 
-    *count = *count << 1;
+   *count = (unsigned char)((*count << 1) + 1);
 }
 
 #define _shctx_awakelocker(a)
@@ -112,7 +116,7 @@ xchg(unsigned int *ptr, unsigned int x) {
 static inline unsigned int
 cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
 
-    unsigned int ret;
+    unsigned int  ret;
 
     __asm volatile("lock cmpxchgl %2,%1"
             : "=a" (ret), "+m" (*ptr)
@@ -124,7 +128,7 @@ cmpxchg(unsigned int *ptr, unsigned int old, unsigned int new) {
 
 static inline unsigned char
 atomic_dec(unsigned int *ptr) {
-    unsigned char ret;
+    unsigned char  ret;
 
     __asm volatile("lock decl %0\n"
             "setne %1\n"
@@ -156,8 +160,8 @@ atomic_dec(unsigned int *ptr) {
 
 static inline void
 _shctx_lock(unsigned int *waiters) {
-    unsigned int x;
-    unsigned int count = 4;
+    unsigned int  x;
+    unsigned int  count = 3;
 
     x = cmpxchg(waiters, 0, 1);
 
