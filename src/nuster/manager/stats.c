@@ -336,9 +336,6 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.delete:",
                 global.nuster.stats->nosql.delete);
-
-        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.nosql.abort:",
-                global.nuster.stats->nosql.abort);
     }
 
     if(!_nst_stats_putdata(res, htx, &trash)) {
