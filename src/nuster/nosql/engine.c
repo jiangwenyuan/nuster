@@ -245,6 +245,8 @@ out:
                         appctx->st1 = NST_DISK_APPLET_DONE;
                     case NST_DISK_APPLET_DONE:
 
+                        close(fd);
+
                         if(!(res->flags & CF_SHUTR) ) {
                             res->flags |= CF_READ_NULL;
                             si_shutr(si);
