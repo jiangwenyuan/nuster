@@ -311,11 +311,11 @@ dict.nosql.used:                0
 
 ### dict-cleaner
 
-每次检查最多 `dict-cleaner` 个entry，无效的entry将被删除（默认100）
+每次检查最多 `dict-cleaner` 个entry，无效的entry将被删除（默认1000）
 
 ### data-cleaner
 
-每次检查最多 `data-cleaner` 个entry，无效的data将被删除（默认100）
+每次检查最多 `data-cleaner` 个entry，无效的data将被删除（默认1000）
 
 ### disk-cleaner
 
