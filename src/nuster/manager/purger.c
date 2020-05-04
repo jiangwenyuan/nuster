@@ -380,6 +380,8 @@ nst_purger_handler(hpx_appctx_t *appctx) {
                         if(entry->store.ring.data) {
                             entry->store.ring.data->invalid = 1;
                             entry->store.ring.data          = NULL;
+
+                            nst_ring_incr_invalid(&dict->store->ring);
                         }
 
                         if(entry->store.disk.file) {

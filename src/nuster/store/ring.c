@@ -110,6 +110,7 @@ nst_ring_cleanup(nst_ring_t *ring) {
         nst_memory_free(ring->memory, data);
 
         ring->count--;
+        ring->invalid--;
     }
 
     nst_shctx_unlock(ring);
@@ -129,6 +130,8 @@ nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **ta
 
     if(!item) {
         data->invalid = 1;
+
+        nst_ring_incr_invalid(ring);
 
         return NST_ERR;
     }
