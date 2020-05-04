@@ -987,11 +987,11 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
     char               *key  = NULL;
     char               *code = NULL;
 
-    int         memory, disk, ttl, etag, last_modified;
+    int         memory, disk, ttl, etag, last_modified, wait;
     uint8_t     extend[4] = { -1 };
     int         cur_arg   = 2;
 
-    memory = ttl = disk = etag = last_modified = -1;
+    memory = ttl = disk = etag = last_modified = wait = -1;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "rule is not allowed in a 'frontend' or 'defaults' section.");
@@ -1289,6 +1289,36 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             continue;
         }
 
+        if(!strcmp(args[cur_arg], "wait")) {
+
+            if(wait != -1) {
+                memprintf(err, "[%s.%s]: wait already specified.", args[1], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                memprintf(err, "[%s.%s]: wait expects an argument.", args[1], name);
+
+                goto out;
+            }
+
+            /*
+             * "d", "h", "m", "s"
+             * s is returned
+             */
+            if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait)) {
+                memprintf(err, "[%s.%s]: invalid wait.", args[1], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+            continue;
+        }
+
         memprintf(err, "[%s.%s]: Unrecognized '%s'.", args[1], name, args[cur_arg]);
 
         goto out;
@@ -1382,6 +1412,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         rule->extend[2] = extend[2];
         rule->extend[3] = extend[3];
     }
+
+    rule->wait = wait;
 
     rule->cond = cond;
 

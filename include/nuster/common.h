@@ -182,6 +182,7 @@ typedef struct nst_rule_config {
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
+    int                        wait;          /* -1: not wait, 0: wait forever, > 0, wait seconds */
 
     /*
      * auto ttl extend
@@ -222,6 +223,7 @@ typedef struct nst_rule {
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
     uint8_t                    extend[4];
+    int                        wait;
     hpx_acl_cond_t            *cond;          /* acl condition to meet */
 } nst_rule_t;
 
