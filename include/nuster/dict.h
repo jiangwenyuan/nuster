@@ -92,6 +92,8 @@ typedef struct nst_dict {
 
     uint64_t                    sync_idx;
 
+    nst_store_t                *store;
+
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
     pthread_mutex_t             mutex;
 #else
@@ -137,7 +139,7 @@ nst_dict_entry_valid(nst_dict_entry_t *entry) {
     return 0;
 }
 
-int nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size);
+int nst_dict_init(nst_dict_t *dict, nst_store_t *store, nst_memory_t *memory, uint64_t dict_size);
 void nst_dict_cleanup(nst_dict_t *dict);
 
 nst_dict_entry_t *nst_dict_get(nst_dict_t *dict, nst_key_t *key);
