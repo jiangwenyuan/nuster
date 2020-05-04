@@ -327,6 +327,8 @@ During one iteration no more than `dict-cleaner` entries are checked, invalid en
 
 During one iteration no more than `data-cleaner` data are checked, invalid data will be deleted (by default, 1000).
 
+When the invalid data ratio is greater than 20%, an internal mechanism will speed up the clean process, so it is recommended not to change this from the default value.
+
 ### disk-cleaner
 
 If disk persistence is enabled, data are stored in files. These files are checked by master process and will be deleted if invalid, for example, expired.
