@@ -852,6 +852,8 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
                 && ctx->entry->store.ring.data) {
 
             ctx->entry->store.ring.data->invalid = 1;
+
+            nst_ring_incr_invalid(&nuster.nosql->store.ring);
         }
 
         ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
@@ -1012,6 +1014,8 @@ nst_nosql_delete(nst_key_t *key) {
             if(entry->store.ring.data) {
                 entry->store.ring.data->invalid = 1;
                 entry->store.ring.data          = NULL;
+
+                nst_ring_incr_invalid(&nuster.nosql->store.ring);
             }
 
             if(entry->store.disk.file) {

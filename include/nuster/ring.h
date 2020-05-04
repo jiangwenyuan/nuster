@@ -99,6 +99,13 @@ nst_ring_data_detach(nst_ring_t *ring, nst_ring_data_t *data) {
     nst_shctx_unlock(ring);
 }
 
+static inline void
+nst_ring_incr_invalid(nst_ring_t *ring) {
+    nst_shctx_lock(ring);
+    ring->invalid++;
+    nst_shctx_unlock(ring);
+}
+
 void nst_ring_cleanup(nst_ring_t *ring);
 
 static inline nst_ring_data_t *

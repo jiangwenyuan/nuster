@@ -74,6 +74,8 @@ nst_dict_cleanup(nst_dict_t *dict) {
             if(entry->store.ring.data) {
                 entry->store.ring.data->invalid = 1;
                 entry->store.ring.data = NULL;
+
+                nst_ring_incr_invalid(&dict->store->ring);
             }
 
             if(entry->store.disk.file) {
@@ -267,6 +269,8 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
                 if(entry->store.ring.data) {
                     entry->store.ring.data->invalid = 1;
                     entry->store.ring.data          = NULL;
+
+                    nst_ring_incr_invalid(&dict->store->ring);
                 }
 
                 return NULL;

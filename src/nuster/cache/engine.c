@@ -880,6 +880,8 @@ nst_cache_delete(nst_key_t *key) {
             if(entry->store.ring.data) {
                 entry->store.ring.data->invalid = 1;
                 entry->store.ring.data          = NULL;
+
+                nst_ring_incr_invalid(&nuster.cache->store.ring);
             }
 
             if(entry->store.disk.file) {
