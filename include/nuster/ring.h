@@ -54,11 +54,12 @@ typedef struct nst_ring {
     nst_ring_data_t             *tail;
 
     uint64_t                     count;
+    uint64_t                     invalid;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t             mutex;
+    pthread_mutex_t              mutex;
 #else
-    unsigned int                waiters;
+    unsigned int                 waiters;
 #endif
 } nst_ring_t;
 

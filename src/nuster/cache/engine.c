@@ -427,14 +427,14 @@ nst_cache_init() {
         nuster.cache->memory = global.nuster.cache.memory;
         nuster.cache->root   = global.nuster.cache.root;
 
-        if(nst_dict_init(&nuster.cache->dict, global.nuster.cache.memory,
-                    global.nuster.cache.dict_size) != NST_OK) {
+        if(nst_store_init(global.nuster.cache.root, &nuster.cache->store,
+                    global.nuster.cache.memory) != NST_OK) {
 
             goto err;
         }
 
-        if(nst_store_init(global.nuster.cache.root, &nuster.cache->store,
-                    global.nuster.cache.memory) != NST_OK) {
+        if(nst_dict_init(&nuster.cache->dict, &nuster.cache->store, global.nuster.cache.memory,
+                    global.nuster.cache.dict_size) != NST_OK) {
 
             goto err;
         }

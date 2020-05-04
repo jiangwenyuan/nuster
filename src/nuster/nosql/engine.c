@@ -397,14 +397,14 @@ nst_nosql_init() {
         nuster.nosql->memory = global.nuster.nosql.memory;
         nuster.nosql->root   = global.nuster.nosql.root;
 
-        if(nst_dict_init(&nuster.nosql->dict, global.nuster.nosql.memory,
-                    global.nuster.nosql.dict_size) != NST_OK) {
+        if(nst_store_init(global.nuster.nosql.root, &nuster.nosql->store,
+                    global.nuster.nosql.memory) != NST_OK) {
 
             goto err;
         }
 
-        if(nst_store_init(global.nuster.nosql.root, &nuster.nosql->store,
-                    global.nuster.nosql.memory) != NST_OK) {
+        if(nst_dict_init(&nuster.nosql->dict, &nuster.nosql->store, global.nuster.nosql.memory,
+                    global.nuster.nosql.dict_size) != NST_OK) {
 
             goto err;
         }

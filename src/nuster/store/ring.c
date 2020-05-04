@@ -15,10 +15,11 @@
 int
 nst_ring_init(nst_ring_t *ring, nst_memory_t *memory) {
 
-    ring->memory = memory;
-    ring->head   = NULL;
-    ring->tail   = NULL;
-    ring->count  = 0;
+    ring->memory  = memory;
+    ring->head    = NULL;
+    ring->tail    = NULL;
+    ring->count   = 0;
+    ring->invalid = 0;
 
     return nst_shctx_init(ring);
 }

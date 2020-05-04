@@ -15,7 +15,7 @@
 #include <nuster/nuster.h>
 
 int
-nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size) {
+nst_dict_init(nst_dict_t *dict, nst_store_t *store, nst_memory_t *memory, uint64_t dict_size) {
 
     int  block_size = memory->block_size;
     int  entry_size = sizeof(nst_dict_entry_t *);
@@ -26,6 +26,7 @@ nst_dict_init(nst_dict_t *dict, nst_memory_t *memory, uint64_t dict_size) {
     dict->size   = size / entry_size;
     dict->used   = 0;
     dict->entry  = nst_memory_alloc(memory, block_size);
+    dict->store  = store;
 
     if(!dict->entry) {
         return NST_ERR;
