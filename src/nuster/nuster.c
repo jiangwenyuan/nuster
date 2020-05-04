@@ -194,6 +194,8 @@ out:
                 rule->extend[2] = rc->extend[2];
                 rule->extend[3] = rc->extend[3];
 
+                rule->wait = rc->wait;
+
                 rule->cond = rc->cond;
 
                 rule->next = NULL;
