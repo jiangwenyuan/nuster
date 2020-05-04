@@ -315,33 +315,51 @@ nst_nosql_housekeeping() {
         int  disk_cleaner = global.nuster.nosql.disk_cleaner;
         int  disk_loader  = global.nuster.nosql.disk_loader;
         int  disk_saver   = global.nuster.nosql.disk_saver;
+        int  ms           = 10;
+        int  ratio        = 1;
 
         start = get_current_timestamp();
 
         while(dict_cleaner--) {
             nst_dict_cleanup(&nuster.nosql->dict);
 
-            if(get_current_timestamp() - start >= 10) {
+            if(get_current_timestamp() - start >= ms) {
                 break;
             }
         }
 
         start = get_current_timestamp();
+
+        if(data_cleaner > nuster.nosql->store.ring.count) {
+            data_cleaner = nuster.nosql->store.ring.count;
+        }
+
+        if(nuster.nosql->store.ring.count) {
+            ratio = nuster.nosql->store.ring.invalid * 10 / nuster.nosql->store.ring.count;
+        }
+
+        if(ratio >= 2) {
+            data_cleaner = nuster.nosql->store.ring.count;
+
+            ms = ms * ratio ;
+            ms = ms >= 100 ? 100 : ms;
+        }
 
         while(data_cleaner--) {
             nst_ring_cleanup(&nuster.nosql->store.ring);
 
-            if(get_current_timestamp() - start >= 10) {
+            if(get_current_timestamp() - start >= ms) {
                 break;
             }
         }
 
         start = get_current_timestamp();
+        ms    = 10;
 
         while(disk_cleaner--) {
             nst_disk_cleanup(nuster.nosql);
 
-            if(get_current_timestamp() - start >= 10) {
+            if(get_current_timestamp() - start >= ms) {
                 break;
             }
         }
@@ -351,7 +369,7 @@ nst_nosql_housekeeping() {
         while(disk_loader--) {
             nst_disk_load(nuster.nosql);
 
-            if(get_current_timestamp() - start >= 10) {
+            if(get_current_timestamp() - start >= ms) {
                 break;
             }
         }
@@ -361,7 +379,7 @@ nst_nosql_housekeeping() {
         while(disk_saver--) {
             nst_ring_store_sync(nuster.nosql);
 
-            if(get_current_timestamp() - start >= 10) {
+            if(get_current_timestamp() - start >= ms) {
                 break;
             }
         }

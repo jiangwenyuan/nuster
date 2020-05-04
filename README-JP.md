@@ -319,6 +319,8 @@ dict.nosql.used:                0
 
 一回で最多`data-cleaner`個のdataをチェックして, 無効なdataは削除する(デフォルト、1000).
 
+無効なdataが20%を超えったら、削除プロセスが加速するので、この値を弄るのがおすすめしない。
+
 ### disk-cleaner
 
 一回で最多`disk-cleaner`個のfileをチェックして, 無効なfileは削除する(デフォルト、100).
