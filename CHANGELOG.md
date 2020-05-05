@@ -1,5 +1,21 @@
 # nuster Changelog
 
+## 5.0.6.20 - 2020-05-05
+
+### Fixed
+
+Fix incorrect header_len and payload_len in sync mode
+Reduce disk padding in stats proxy rule
+Remove stats.nosql.abort
+
+### Added
+
+Support wait for identical requests to cache
+Add wait to rule
+Add a mechanism to speed up the data clean process
+Record invalid ring.data count
+Add store into dict and add ring.invalid
+
 ## 5.0.5.20 - 2020-05-03
 
 ### Fixed
