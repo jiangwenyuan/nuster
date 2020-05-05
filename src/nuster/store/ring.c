@@ -217,6 +217,14 @@ nst_ring_store_sync(nst_core_t *core) {
                         ? (info & 0xff) + ((info >> 8) & 0xfffff)
                         : info & 0xfffffff);
 
+                if(type == HTX_BLK_RES_SL || type == HTX_BLK_HDR || type == HTX_BLK_EOH) {
+                    txn.res.header_len += 4 + blksz;
+                }
+
+                if(type == HTX_BLK_DATA) {
+                    txn.res.payload_len += blksz;
+                }
+
                 if(type != HTX_BLK_DATA) {
                     ret = nst_disk_store_add(&core->store.disk, &data, (char *)&info, 4);
 
@@ -224,7 +232,6 @@ nst_ring_store_sync(nst_core_t *core) {
                         goto next;
                     }
 
-                    txn.res.header_len += 4 + blksz;
                 }
 
                 ret = nst_disk_store_add(&core->store.disk, &data, item->data, blksz);
@@ -232,8 +239,6 @@ nst_ring_store_sync(nst_core_t *core) {
                 if(ret != NST_OK) {
                     goto next;
                 }
-
-                txn.res.payload_len += blksz;
 
                 item = item->next;
             }
