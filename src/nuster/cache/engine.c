@@ -791,6 +791,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
             }
 
             if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
+                ctx->rule = entry->rule;
                 ret = NST_CTX_STATE_WAIT;
             }
         }

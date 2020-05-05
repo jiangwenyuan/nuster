@@ -62,6 +62,8 @@ typedef struct nst_ctx {
 
     int                         pid;              /* proxy uuid */
 
+    uint64_t                    ctime;
+
     struct {
         struct {
             nst_ring_data_t    *data;
