@@ -80,6 +80,7 @@ _nst_cache_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
 
         ctx->state    = NST_CTX_STATE_INIT;
         ctx->pid      = conf->pid;
+        ctx->ctime    = get_current_timestamp();
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
 
@@ -217,6 +218,15 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     break;
                 }
 
+                if(ctx->state == NST_CTX_STATE_WAIT) {
+                    if(ctx->rule->wait >= 0) {
+                        nst_key_reset_flag(key);
+                        nst_debug_end("WAIT");
+
+                        break;
+                    }
+                }
+
                 nst_debug_end("MISS");
 
                 /* no, there's no cache yet */
@@ -239,6 +249,19 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
             nst_cache_hit(s, si, req, res, ctx);
+        }
+
+        if(ctx->state == NST_CTX_STATE_WAIT) {
+            if(ctx->rule->wait == 0 || (ctx->rule->wait > 0
+                        && get_current_timestamp() - ctx->ctime < ctx->rule->wait * 1000)) {
+
+                usleep(1);
+                ctx->state = NST_CTX_STATE_INIT;
+
+                task_wakeup(s->task, TASK_WOKEN_MSG);
+
+                return 0;
+            }
         }
 
     } else {

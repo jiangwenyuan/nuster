@@ -48,9 +48,9 @@ nst_key_memory_checked(nst_key_t *key) {
     return key->flags & NST_KEY_MEMORY_CHECKED;
 }
 
-static inline int
+static inline void
 nst_key_memory_set_checked(nst_key_t *key) {
-    return key->flags |= NST_KEY_MEMORY_CHECKED;
+    key->flags |= NST_KEY_MEMORY_CHECKED;
 }
 
 static inline int
@@ -58,9 +58,14 @@ nst_key_disk_checked(nst_key_t *key) {
     return key->flags & NST_KEY_DISK_CHECKED;
 }
 
-static inline int
+static inline void
 nst_key_disk_set_checked(nst_key_t *key) {
-    return key->flags |=  NST_KEY_DISK_CHECKED;
+    key->flags |=  NST_KEY_DISK_CHECKED;
+}
+
+static inline void
+nst_key_reset_flag(nst_key_t *key) {
+    key->flags = 0;
 }
 
 static inline hpx_buffer_t *

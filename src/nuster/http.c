@@ -399,6 +399,10 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
     hpx_ist_t           url, uri;
     char               *uri_begin, *uri_end, *ptr;
 
+    if(txn->buf->data) {
+        return NST_OK;
+    }
+
     txn->req.scheme = SCH_HTTP;
 
 #ifdef USE_OPENSSL
