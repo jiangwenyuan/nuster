@@ -702,7 +702,7 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
 /*
  * cache done
  */
-void
+int
 nst_cache_finish(nst_ctx_t *ctx) {
     nst_key_t  *key;
     int         idx;
@@ -742,8 +742,11 @@ nst_cache_finish(nst_ctx_t *ctx) {
 
     if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT) {
         ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+
+        return NST_ERR;
     }
 
+    return NST_OK;
 }
 
 /*
