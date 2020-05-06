@@ -3,7 +3,7 @@
 
 Branch | nuster version | Released   | Status            | Download
 ------ | -------------- | --------   | ------            | --------
-master |                |            | HAProxy v2.2-dev6 |
+master |                |            | HAProxy v2.2-dev7 |
 H2.1   | 5.0.6.21       | 2020-05-05 | Stable version    | [nuster-5.0.6.21.tar.gz][4]
 H2.0   | 4.0.1.20       | 2020-04-11 | Unmaintained      | ~nuster-4.0.1.20.tar.gz~
 H1.9   | 3.2.5.19       | 2020-04-13 | Stable version    | [nuster-3.2.5.19.tar.gz][3]

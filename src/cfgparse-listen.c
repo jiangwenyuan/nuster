@@ -166,7 +166,6 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 {
 	static struct proxy *curproxy = NULL;
 	const char *err;
-	char *error;
 	int rc;
 	unsigned val;
 	int err_code = 0;
@@ -285,24 +284,15 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			curproxy->redispatch_after = defproxy.redispatch_after;
 			curproxy->max_ka_queue = defproxy.max_ka_queue;
 
-			if (defproxy.check_req) {
-				curproxy->check_req = calloc(1, defproxy.check_len);
-				memcpy(curproxy->check_req, defproxy.check_req, defproxy.check_len);
-			}
-			curproxy->check_len = defproxy.check_len;
-
-			if (defproxy.expect_str) {
-				curproxy->expect_str = strdup(defproxy.expect_str);
-				if (defproxy.expect_regex) {
-					/* note: this regex is known to be valid */
-					error = NULL;
-					if (!(curproxy->expect_regex = regex_comp(defproxy.expect_str, 1, 1, &error))) {
-						ha_alert("parsing [%s:%d] : regular expression '%s' : %s\n", file, linenum,
-						         defproxy.expect_str, error);
-						free(error);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
+			curproxy->tcpcheck_rules.flags = (defproxy.tcpcheck_rules.flags & ~TCPCHK_RULES_UNUSED_RS);
+			curproxy->tcpcheck_rules.list  = defproxy.tcpcheck_rules.list;
+			if (!LIST_ISEMPTY(&defproxy.tcpcheck_rules.preset_vars)) {
+				if (!dup_tcpcheck_vars(&curproxy->tcpcheck_rules.preset_vars,
+						       &defproxy.tcpcheck_rules.preset_vars)) {
+					ha_alert("parsing [%s:%d] : failed to duplicate tcpcheck preset-vars\n",
+						 file, linenum);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
 				}
 			}
 
@@ -478,7 +468,6 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
-		free(defproxy.check_req);
 		free(defproxy.check_command);
 		free(defproxy.check_path);
 		free(defproxy.cookie_name);
@@ -497,9 +486,6 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		defproxy.orgto_hdr_len = 0;
 		free(defproxy.server_id_hdr_name);
 		defproxy.server_id_hdr_len = 0;
-		free(defproxy.expect_str);
-		regex_free(defproxy.expect_regex);
-		defproxy.expect_regex = NULL;
 
 		if (defproxy.conf.logformat_string != default_http_log_format &&
 		    defproxy.conf.logformat_string != default_tcp_log_format &&
@@ -517,6 +503,8 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		free(defproxy.conf.lfsd_file);
 
 		proxy_release_conf_errors(&defproxy);
+
+		deinit_proxy_tcpcheck(&defproxy);
 
 		/* we cannot free uri_auth because it might already be used */
 		init_default_instance();
@@ -1124,45 +1112,6 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		/* Indicate that the email_alert is at least partially configured */
 		curproxy->email_alert.set = 1;
 	}/* end else if (!strcmp(args[0], "email-alert"))  */
-	else if (!strcmp(args[0], "external-check")) {
-		if (*(args[1]) == 0) {
-			ha_alert("parsing [%s:%d] : missing argument after '%s'.\n",
-				 file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-                }
-
-		if (!strcmp(args[1], "command")) {
-			if (alertif_too_many_args(2, file, linenum, args, &err_code))
-				goto out;
-			if (*(args[2]) == 0) {
-				ha_alert("parsing [%s:%d] : missing argument after '%s'.\n",
-					 file, linenum, args[1]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-			free(curproxy->check_command);
-			curproxy->check_command = strdup(args[2]);
-		}
-		else if (!strcmp(args[1], "path")) {
-			if (alertif_too_many_args(2, file, linenum, args, &err_code))
-				goto out;
-			if (*(args[2]) == 0) {
-				ha_alert("parsing [%s:%d] : missing argument after '%s'.\n",
-					 file, linenum, args[1]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-			free(curproxy->check_path);
-			curproxy->check_path = strdup(args[2]);
-		}
-		else {
-			ha_alert("parsing [%s:%d] : external-check: unknown argument '%s'.\n",
-				 file, linenum, args[1]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-	}/* end else if (!strcmp(args[0], "external-check"))  */
 	else if (!strcmp(args[0], "persist")) {  /* persist */
 		if (*(args[1]) == 0) {
 			ha_alert("parsing [%s:%d] : missing persist method.\n",
@@ -2304,331 +2253,53 @@ stats_error_parsing:
 				curproxy->options |= PR_O_TCP_SRV_KA;
 		}
 		else if (!strcmp(args[1], "httpchk")) {
-			if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[1], NULL))
-				err_code |= ERR_WARN;
-
-			/* use HTTP request to check servers' health */
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_HTTP_CHK;
-			if (!*args[2]) { /* no argument */
-				curproxy->check_req = strdup(DEF_CHECK_REQ); /* default request */
-				curproxy->check_len = strlen(DEF_CHECK_REQ);
-			} else if (!*args[3]) { /* one argument : URI */
-				int reqlen = strlen(args[2]) + strlen("OPTIONS  HTTP/1.0\r\n") + 1;
-				curproxy->check_req = malloc(reqlen);
-				curproxy->check_len = snprintf(curproxy->check_req, reqlen,
-							       "OPTIONS %s HTTP/1.0\r\n", args[2]); /* URI to use */
-			} else { /* more arguments : METHOD URI [HTTP_VER] */
-				int reqlen = strlen(args[2]) + strlen(args[3]) + 3 + strlen("\r\n");
-				if (*args[4])
-					reqlen += strlen(args[4]);
-				else
-					reqlen += strlen("HTTP/1.0");
-
-				curproxy->check_req = malloc(reqlen);
-				curproxy->check_len = snprintf(curproxy->check_req, reqlen,
-							       "%s %s %s\r\n", args[2], args[3], *args[4]?args[4]:"HTTP/1.0");
-			}
-			if (alertif_too_many_args_idx(3, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_httpchk_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
 		else if (!strcmp(args[1], "ssl-hello-chk")) {
-			/* use SSLv3 CLIENT HELLO to check servers' health */
-			if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[1], NULL))
-				err_code |= ERR_WARN;
-
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_SSL3_CHK;
-
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_ssl_hello_chk_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
 		else if (!strcmp(args[1], "smtpchk")) {
-			/* use SMTP request to check servers' health */
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_SMTP_CHK;
-
-			if (!*args[2] || !*args[3]) { /* no argument or incomplete EHLO host */
-				curproxy->check_req = strdup(DEF_SMTP_CHECK_REQ); /* default request */
-				curproxy->check_len = strlen(DEF_SMTP_CHECK_REQ);
-			} else { /* ESMTP EHLO, or SMTP HELO, and a hostname */
-				if (!strcmp(args[2], "EHLO") || !strcmp(args[2], "HELO")) {
-					int reqlen = strlen(args[2]) + strlen(args[3]) + strlen(" \r\n") + 1;
-					curproxy->check_req = malloc(reqlen);
-					curproxy->check_len = snprintf(curproxy->check_req, reqlen,
-								       "%s %s\r\n", args[2], args[3]); /* HELO hostname */
-				} else {
-					/* this just hits the default for now, but you could potentially expand it to allow for other stuff
-					   though, it's unlikely you'd want to send anything other than an EHLO or HELO */
-					curproxy->check_req = strdup(DEF_SMTP_CHECK_REQ); /* default request */
-					curproxy->check_len = strlen(DEF_SMTP_CHECK_REQ);
-				}
-			}
-			if (alertif_too_many_args_idx(2, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_smtpchk_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
 		else if (!strcmp(args[1], "pgsql-check")) {
-			/* use PostgreSQL request to check servers' health */
-			if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[1], NULL))
-				err_code |= ERR_WARN;
-
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_PGSQL_CHK;
-
-			if (*(args[2])) {
-				int cur_arg = 2;
-
-				while (*(args[cur_arg])) {
-					if (strcmp(args[cur_arg], "user") == 0) {
-						char * packet;
-						uint32_t packet_len;
-						uint32_t pv;
-
-						/* suboption header - needs additional argument for it */
-						if (*(args[cur_arg+1]) == 0) {
-							ha_alert("parsing [%s:%d] : '%s %s %s' expects <username> as argument.\n",
-								 file, linenum, args[0], args[1], args[cur_arg]);
-							err_code |= ERR_ALERT | ERR_FATAL;
-							goto out;
-						}
-
-						/* uint32_t + uint32_t + strlen("user")+1 + strlen(username)+1 + 1 */
-						packet_len = 4 + 4 + 5 + strlen(args[cur_arg + 1])+1 +1;
-						pv = htonl(0x30000); /* protocol version 3.0 */
-
-						packet = calloc(1, packet_len);
-
-						memcpy(packet + 4, &pv, 4);
-
-						/* copy "user" */
-						memcpy(packet + 8, "user", 4);
-
-						/* copy username */
-						memcpy(packet + 13, args[cur_arg+1], strlen(args[cur_arg+1]));
-
-						free(curproxy->check_req);
-						curproxy->check_req = packet;
-						curproxy->check_len = packet_len;
-
-						packet_len = htonl(packet_len);
-						memcpy(packet, &packet_len, 4);
-						cur_arg += 2;
-					} else {
-						/* unknown suboption - catchall */
-						ha_alert("parsing [%s:%d] : '%s %s' only supports optional values: 'user'.\n",
-							 file, linenum, args[0], args[1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-				} /* end while loop */
-			}
-			if (alertif_too_many_args_idx(2, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_pgsql_check_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
-
 		else if (!strcmp(args[1], "redis-check")) {
-			/* use REDIS PING request to check servers' health */
-			if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[1], NULL))
-				err_code |= ERR_WARN;
-
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_REDIS_CHK;
-
-			curproxy->check_req = malloc(sizeof(DEF_REDIS_CHECK_REQ) - 1);
-			memcpy(curproxy->check_req, DEF_REDIS_CHECK_REQ, sizeof(DEF_REDIS_CHECK_REQ) - 1);
-			curproxy->check_len = sizeof(DEF_REDIS_CHECK_REQ) - 1;
-
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_redis_check_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
-
 		else if (!strcmp(args[1], "mysql-check")) {
-			/* use MYSQL request to check servers' health */
-			if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[1], NULL))
-				err_code |= ERR_WARN;
-
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_MYSQL_CHK;
-
-			/* This is an example of a MySQL >=4.0 client Authentication packet kindly provided by Cyril Bonte.
-			 * const char mysql40_client_auth_pkt[] = {
-			 * 	"\x0e\x00\x00"	// packet length
-			 * 	"\x01"		// packet number
-			 * 	"\x00\x00"	// client capabilities
-			 * 	"\x00\x00\x01"	// max packet
-			 * 	"haproxy\x00"	// username (null terminated string)
-			 * 	"\x00"		// filler (always 0x00)
-			 * 	"\x01\x00\x00"	// packet length
-			 * 	"\x00"		// packet number
-			 * 	"\x01"		// COM_QUIT command
-			 * };
-			 */
-
-			/* This is an example of a MySQL >=4.1  client Authentication packet provided by Nenad Merdanovic.
-			 * const char mysql41_client_auth_pkt[] = {
-			 * 	"\x0e\x00\x00\"		// packet length
-			 * 	"\x01"			// packet number
-			 * 	"\x00\x00\x00\x00"	// client capabilities
-			 * 	"\x00\x00\x00\x01"	// max packet
-			 *	"\x21"			// character set (UTF-8)
-			 *	char[23]		// All zeroes
-			 * 	"haproxy\x00"		// username (null terminated string)
-			 * 	"\x00"			// filler (always 0x00)
-			 * 	"\x01\x00\x00"		// packet length
-			 * 	"\x00"			// packet number
-			 * 	"\x01"			// COM_QUIT command
-			 * };
-			 */
-
-
-			if (*(args[2])) {
-				int cur_arg = 2;
-
-				while (*(args[cur_arg])) {
-					if (strcmp(args[cur_arg], "user") == 0) {
-						char *mysqluser;
-						int packetlen, reqlen, userlen;
-
-						/* suboption header - needs additional argument for it */
-						if (*(args[cur_arg+1]) == 0) {
-							ha_alert("parsing [%s:%d] : '%s %s %s' expects <username> as argument.\n",
-								 file, linenum, args[0], args[1], args[cur_arg]);
-							err_code |= ERR_ALERT | ERR_FATAL;
-							goto out;
-						}
-						mysqluser = args[cur_arg + 1];
-						userlen   = strlen(mysqluser);
-
-						if (*(args[cur_arg+2])) {
-							if (!strcmp(args[cur_arg+2], "post-41")) {
-		                                                packetlen = userlen + 7 + 27;
-								reqlen    = packetlen + 9;
-
-								free(curproxy->check_req);
-								curproxy->check_req = calloc(1, reqlen);
-								curproxy->check_len = reqlen;
-
-								snprintf(curproxy->check_req, 4, "%c%c%c",
-									((unsigned char) packetlen & 0xff),
-									((unsigned char) (packetlen >> 8) & 0xff),
-									((unsigned char) (packetlen >> 16) & 0xff));
-
-								curproxy->check_req[3] = 1;
-								curproxy->check_req[5] = 0x82; // 130
-								curproxy->check_req[11] = 1;
-								curproxy->check_req[12] = 33;
-								memcpy(&curproxy->check_req[36], mysqluser, userlen);
-								curproxy->check_req[36 + userlen + 1 + 1]     = 1;
-								curproxy->check_req[36 + userlen + 1 + 1 + 4] = 1;
-								cur_arg += 3;
-							} else {
-								ha_alert("parsing [%s:%d] : keyword '%s' only supports option 'post-41'.\n", file, linenum, args[cur_arg+2]);
-								err_code |= ERR_ALERT | ERR_FATAL;
-								goto out;
-							}
-						} else {
-							packetlen = userlen + 7;
-							reqlen    = packetlen + 9;
-
-							free(curproxy->check_req);
-							curproxy->check_req = calloc(1, reqlen);
-							curproxy->check_len = reqlen;
-
-							snprintf(curproxy->check_req, 4, "%c%c%c",
-								((unsigned char) packetlen & 0xff),
-								((unsigned char) (packetlen >> 8) & 0xff),
-								((unsigned char) (packetlen >> 16) & 0xff));
-
-							curproxy->check_req[3] = 1;
-							curproxy->check_req[5] = 0x80;
-							curproxy->check_req[8] = 1;
-							memcpy(&curproxy->check_req[9], mysqluser, userlen);
-							curproxy->check_req[9 + userlen + 1 + 1]     = 1;
-							curproxy->check_req[9 + userlen + 1 + 1 + 4] = 1;
-							cur_arg += 2;
-						}
-					} else {
-						/* unknown suboption - catchall */
-						ha_alert("parsing [%s:%d] : '%s %s' only supports optional values: 'user'.\n",
-							 file, linenum, args[0], args[1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-				} /* end while loop */
-			}
+			err_code |= proxy_parse_mysql_check_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
+				goto out;
 		}
 		else if (!strcmp(args[1], "ldap-check")) {
-			/* use LDAP request to check servers' health */
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_LDAP_CHK;
-
-			curproxy->check_req = malloc(sizeof(DEF_LDAP_CHECK_REQ) - 1);
-			memcpy(curproxy->check_req, DEF_LDAP_CHECK_REQ, sizeof(DEF_LDAP_CHECK_REQ) - 1);
-			curproxy->check_len = sizeof(DEF_LDAP_CHECK_REQ) - 1;
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_ldap_check_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
 		else if (!strcmp(args[1], "spop-check")) {
-			if (curproxy == &defproxy) {
-				ha_alert("parsing [%s:%d] : '%s %s' not allowed in 'defaults' section.\n",
-					 file, linenum, args[0], args[1]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-			if (curproxy->cap & PR_CAP_FE) {
-				ha_alert("parsing [%s:%d] : '%s %s' not allowed in 'frontend' and 'listen' sections.\n",
-					 file, linenum, args[0], args[1]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-
-			/* use SPOE request to check servers' health */
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_SPOP_CHK;
-
-			if (spoe_prepare_healthcheck_request(&curproxy->check_req, &curproxy->check_len)) {
-				ha_alert("parsing [%s:%d] : failed to prepare SPOP healthcheck request.\n", file, linenum);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_spop_check_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
 		else if (!strcmp(args[1], "tcp-check")) {
-			/* use raw TCPCHK send/expect to check servers' health */
-			if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[1], NULL))
-				err_code |= ERR_WARN;
-
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_TCPCHK_CHK;
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_tcp_check_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
 		else if (!strcmp(args[1], "external-check")) {
-			/* excute an external command to check servers' health */
-			free(curproxy->check_req);
-			curproxy->check_req = NULL;
-			curproxy->options2 &= ~PR_O2_CHK_ANY;
-			curproxy->options2 |= PR_O2_EXT_CHK;
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
+			err_code |= proxy_parse_external_check_opt(args, 0, curproxy, &defproxy, file, linenum);
+			if (err_code & ERR_FATAL)
 				goto out;
 		}
 		else if (!strcmp(args[1], "forwardfor")) {
@@ -2791,435 +2462,6 @@ stats_error_parsing:
 		}
 		else {
 			ha_alert("parsing [%s:%d] : '%s' only supports 'never', 'safe', 'aggressive', 'always'.\n", file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-	}
-	else if (!strcmp(args[0], "http-check")) {
-		if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
-			err_code |= ERR_WARN;
-
-		if (strcmp(args[1], "disable-on-404") == 0) {
-			/* enable a graceful server shutdown on an HTTP 404 response */
-			curproxy->options |= PR_O_DISABLE404;
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
-				goto out;
-		}
-		else if (strcmp(args[1], "send-state") == 0) {
-			/* enable emission of the apparent state of a server in HTTP checks */
-			curproxy->options2 |= PR_O2_CHK_SNDST;
-			if (alertif_too_many_args_idx(0, 1, file, linenum, args, &err_code))
-				goto out;
-		}
-		else if (strcmp(args[1], "expect") == 0) {
-			const char *ptr_arg;
-			int cur_arg;
-
-			if (curproxy->options2 & PR_O2_EXP_TYPE) {
-				ha_alert("parsing [%s:%d] : '%s %s' already specified.\n", file, linenum, args[0], args[1]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-
-			cur_arg = 2;
-			/* consider exclamation marks, sole or at the beginning of a word */
-			while (*(ptr_arg = args[cur_arg])) {
-				while (*ptr_arg == '!') {
-					curproxy->options2 ^= PR_O2_EXP_INV;
-					ptr_arg++;
-				}
-				if (*ptr_arg)
-					break;
-				cur_arg++;
-			}
-			/* now ptr_arg points to the beginning of a word past any possible
-			 * exclamation mark, and cur_arg is the argument which holds this word.
-			 */
-			if (strcmp(ptr_arg, "status") == 0) {
-				if (!*(args[cur_arg + 1])) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <string> as an argument.\n",
-						 file, linenum, args[0], args[1], ptr_arg);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				curproxy->options2 |= PR_O2_EXP_STS;
-				free(curproxy->expect_str);
-				curproxy->expect_str = strdup(args[cur_arg + 1]);
-			}
-			else if (strcmp(ptr_arg, "string") == 0) {
-				if (!*(args[cur_arg + 1])) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <string> as an argument.\n",
-						 file, linenum, args[0], args[1], ptr_arg);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				curproxy->options2 |= PR_O2_EXP_STR;
-				free(curproxy->expect_str);
-				curproxy->expect_str = strdup(args[cur_arg + 1]);
-			}
-			else if (strcmp(ptr_arg, "rstatus") == 0) {
-				if (!*(args[cur_arg + 1])) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <regex> as an argument.\n",
-						 file, linenum, args[0], args[1], ptr_arg);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				curproxy->options2 |= PR_O2_EXP_RSTS;
-				free(curproxy->expect_str);
-				regex_free(curproxy->expect_regex);
-				curproxy->expect_str = strdup(args[cur_arg + 1]);
-				error = NULL;
-				if (!(curproxy->expect_regex = regex_comp(args[cur_arg + 1], 1, 1, &error))) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' : regular expression '%s': %s.\n",
-						 file, linenum, args[0], args[1], ptr_arg, args[cur_arg + 1], error);
-					free(error);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-			}
-			else if (strcmp(ptr_arg, "rstring") == 0) {
-				if (!*(args[cur_arg + 1])) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <regex> as an argument.\n",
-						 file, linenum, args[0], args[1], ptr_arg);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				curproxy->options2 |= PR_O2_EXP_RSTR;
-				free(curproxy->expect_str);
-				regex_free(curproxy->expect_regex);
-				curproxy->expect_str = strdup(args[cur_arg + 1]);
-				error = NULL;
-				if (!(curproxy->expect_regex = regex_comp(args[cur_arg + 1], 1, 1, &error))) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' : regular expression '%s': %s.\n",
-						 file, linenum, args[0], args[1], ptr_arg, args[cur_arg + 1], error);
-					free(error);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-			}
-			else {
-				ha_alert("parsing [%s:%d] : '%s %s' only supports [!] 'status', 'string', 'rstatus', 'rstring', found '%s'.\n",
-					 file, linenum, args[0], args[1], ptr_arg);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-		}
-		else {
-			ha_alert("parsing [%s:%d] : '%s' only supports 'disable-on-404', 'send-state', 'expect'.\n", file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-	}
-	else if (!strcmp(args[0], "tcp-check")) {
-		if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
-			err_code |= ERR_WARN;
-
-		if (strcmp(args[1], "comment") == 0) {
-			int cur_arg;
-			struct tcpcheck_rule *tcpcheck;
-
-			cur_arg = 1;
-			tcpcheck = calloc(1, sizeof(*tcpcheck));
-			tcpcheck->action = TCPCHK_ACT_COMMENT;
-
-			if (!*args[cur_arg + 1]) {
-				ha_alert("parsing [%s:%d] : '%s' expects a comment string.\n",
-					 file, linenum, args[cur_arg]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-
-			tcpcheck->comment = strdup(args[cur_arg + 1]);
-
-			LIST_ADDQ(&curproxy->tcpcheck_rules, &tcpcheck->list);
-			if (alertif_too_many_args_idx(1, 1, file, linenum, args, &err_code))
-				goto out;
-		}
-		else if (strcmp(args[1], "connect") == 0) {
-			const char *ptr_arg;
-			int cur_arg;
-			struct tcpcheck_rule *tcpcheck;
-
-			/* check if first rule is also a 'connect' action */
-			tcpcheck = LIST_NEXT(&curproxy->tcpcheck_rules, struct tcpcheck_rule *, list);
-			while (&tcpcheck->list != &curproxy->tcpcheck_rules &&
-			       tcpcheck->action == TCPCHK_ACT_COMMENT) {
-				tcpcheck = LIST_NEXT(&tcpcheck->list, struct tcpcheck_rule *, list);
-			}
-
-			if (&tcpcheck->list != &curproxy->tcpcheck_rules
-			    && tcpcheck->action != TCPCHK_ACT_CONNECT) {
-				ha_alert("parsing [%s:%d] : first step MUST also be a 'connect' when there is a 'connect' step in the tcp-check ruleset.\n",
-					 file, linenum);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-
-			cur_arg = 2;
-			tcpcheck = calloc(1, sizeof(*tcpcheck));
-			tcpcheck->action = TCPCHK_ACT_CONNECT;
-
-			/* parsing each parameters to fill up the rule */
-			while (*(ptr_arg = args[cur_arg])) {
-				/* tcp port */
-				if (strcmp(args[cur_arg], "port") == 0) {
-					if ( (atol(args[cur_arg + 1]) > 65535) ||
-							(atol(args[cur_arg + 1]) < 1) ){
-						ha_alert("parsing [%s:%d] : '%s %s %s' expects a valid TCP port (from range 1 to 65535), got %s.\n",
-							 file, linenum, args[0], args[1], "port", args[cur_arg + 1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-					tcpcheck->port = atol(args[cur_arg + 1]);
-					cur_arg += 2;
-				}
-				/* send proxy protocol */
-				else if (strcmp(args[cur_arg], "send-proxy") == 0) {
-					tcpcheck->conn_opts |= TCPCHK_OPT_SEND_PROXY;
-					cur_arg++;
-				}
-#ifdef USE_OPENSSL
-				else if (strcmp(args[cur_arg], "ssl") == 0) {
-					curproxy->options |= PR_O_TCPCHK_SSL;
-					tcpcheck->conn_opts |= TCPCHK_OPT_SSL;
-					cur_arg++;
-				}
-#endif /* USE_OPENSSL */
-				/* comment for this tcpcheck line */
-				else if (strcmp(args[cur_arg], "comment") == 0) {
-					if (!*args[cur_arg + 1]) {
-						ha_alert("parsing [%s:%d] : '%s' expects a comment string.\n",
-							 file, linenum, args[cur_arg]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-					tcpcheck->comment = strdup(args[cur_arg + 1]);
-					cur_arg += 2;
-				}
-				else {
-#ifdef USE_OPENSSL
-					ha_alert("parsing [%s:%d] : '%s %s' expects 'comment', 'port', 'send-proxy' or 'ssl' but got '%s' as argument.\n",
-#else /* USE_OPENSSL */
-					ha_alert("parsing [%s:%d] : '%s %s' expects 'comment', 'port', 'send-proxy' or but got '%s' as argument.\n",
-#endif /* USE_OPENSSL */
-						 file, linenum, args[0], args[1], args[cur_arg]);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-
-			}
-
-			LIST_ADDQ(&curproxy->tcpcheck_rules, &tcpcheck->list);
-		}
-		else if (strcmp(args[1], "send") == 0) {
-			if (! *(args[2]) ) {
-				/* SEND string expected */
-				ha_alert("parsing [%s:%d] : '%s %s %s' expects <STRING> as argument.\n",
-					 file, linenum, args[0], args[1], args[2]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			} else {
-				struct tcpcheck_rule *tcpcheck;
-
-				tcpcheck = calloc(1, sizeof(*tcpcheck));
-
-				tcpcheck->action = TCPCHK_ACT_SEND;
-				tcpcheck->string_len = strlen(args[2]);
-				tcpcheck->string = strdup(args[2]);
-				tcpcheck->expect_regex = NULL;
-
-				/* comment for this tcpcheck line */
-				if (strcmp(args[3], "comment") == 0) {
-					if (!*args[4]) {
-						ha_alert("parsing [%s:%d] : '%s' expects a comment string.\n",
-							 file, linenum, args[3]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-					tcpcheck->comment = strdup(args[4]);
-				}
-
-				LIST_ADDQ(&curproxy->tcpcheck_rules, &tcpcheck->list);
-			}
-		}
-		else if (strcmp(args[1], "send-binary") == 0) {
-			if (! *(args[2]) ) {
-				/* SEND binary string expected */
-				ha_alert("parsing [%s:%d] : '%s %s %s' expects <BINARY STRING> as argument.\n",
-					 file, linenum, args[0], args[1], args[2]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			} else {
-				struct tcpcheck_rule *tcpcheck;
-				char *err = NULL;
-
-				tcpcheck = calloc(1, sizeof(*tcpcheck));
-
-				tcpcheck->action = TCPCHK_ACT_SEND;
-				if (parse_binary(args[2], &tcpcheck->string, &tcpcheck->string_len, &err) == 0) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <BINARY STRING> as argument, but %s\n",
-						 file, linenum, args[0], args[1], args[2], err);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				tcpcheck->expect_regex = NULL;
-
-				/* comment for this tcpcheck line */
-				if (strcmp(args[3], "comment") == 0) {
-					if (!*args[4]) {
-						ha_alert("parsing [%s:%d] : '%s' expects a comment string.\n",
-							 file, linenum, args[3]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-					tcpcheck->comment = strdup(args[4]);
-				}
-
-				LIST_ADDQ(&curproxy->tcpcheck_rules, &tcpcheck->list);
-			}
-		}
-		else if (strcmp(args[1], "expect") == 0) {
-			const char *ptr_arg;
-			int cur_arg;
-			int inverse = 0;
-
-			if (curproxy->options2 & PR_O2_EXP_TYPE) {
-				ha_alert("parsing [%s:%d] : '%s %s' already specified.\n", file, linenum, args[0], args[1]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-
-			cur_arg = 2;
-			/* consider exclamation marks, sole or at the beginning of a word */
-			while (*(ptr_arg = args[cur_arg])) {
-				while (*ptr_arg == '!') {
-					inverse = !inverse;
-					ptr_arg++;
-				}
-				if (*ptr_arg)
-					break;
-				cur_arg++;
-			}
-			/* now ptr_arg points to the beginning of a word past any possible
-			 * exclamation mark, and cur_arg is the argument which holds this word.
-			 */
-			if (strcmp(ptr_arg, "binary") == 0) {
-				struct tcpcheck_rule *tcpcheck;
-				char *err = NULL;
-
-				if (!*(args[cur_arg + 1])) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <binary string> as an argument.\n",
-						 file, linenum, args[0], args[1], ptr_arg);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-
-				tcpcheck = calloc(1, sizeof(*tcpcheck));
-
-				tcpcheck->action = TCPCHK_ACT_EXPECT;
-				if (parse_binary(args[cur_arg + 1], &tcpcheck->string, &tcpcheck->string_len, &err) == 0) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <BINARY STRING> as argument, but %s\n",
-						 file, linenum, args[0], args[1], args[2], err);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				tcpcheck->expect_regex = NULL;
-				tcpcheck->inverse = inverse;
-
-				/* tcpcheck comment */
-				cur_arg += 2;
-				if (strcmp(args[cur_arg], "comment") == 0) {
-					if (!*args[cur_arg + 1]) {
-						ha_alert("parsing [%s:%d] : '%s' expects a comment string.\n",
-							 file, linenum, args[cur_arg + 1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-					tcpcheck->comment = strdup(args[cur_arg + 1]);
-				}
-
-				LIST_ADDQ(&curproxy->tcpcheck_rules, &tcpcheck->list);
-			}
-			else if (strcmp(ptr_arg, "string") == 0) {
-				struct tcpcheck_rule *tcpcheck;
-
-				if (!*(args[cur_arg + 1])) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <string> as an argument.\n",
-						 file, linenum, args[0], args[1], ptr_arg);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-
-				tcpcheck = calloc(1, sizeof(*tcpcheck));
-
-				tcpcheck->action = TCPCHK_ACT_EXPECT;
-				tcpcheck->string_len = strlen(args[cur_arg + 1]);
-				tcpcheck->string = strdup(args[cur_arg + 1]);
-				tcpcheck->expect_regex = NULL;
-				tcpcheck->inverse = inverse;
-
-				/* tcpcheck comment */
-				cur_arg += 2;
-				if (strcmp(args[cur_arg], "comment") == 0) {
-					if (!*args[cur_arg + 1]) {
-						ha_alert("parsing [%s:%d] : '%s' expects a comment string.\n",
-							 file, linenum, args[cur_arg + 1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-					tcpcheck->comment = strdup(args[cur_arg + 1]);
-				}
-
-				LIST_ADDQ(&curproxy->tcpcheck_rules, &tcpcheck->list);
-			}
-			else if (strcmp(ptr_arg, "rstring") == 0) {
-				struct tcpcheck_rule *tcpcheck;
-
-				if (!*(args[cur_arg + 1])) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' expects <regex> as an argument.\n",
-						 file, linenum, args[0], args[1], ptr_arg);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-
-				tcpcheck = calloc(1, sizeof(*tcpcheck));
-
-				tcpcheck->action = TCPCHK_ACT_EXPECT;
-				tcpcheck->string_len = 0;
-				tcpcheck->string = NULL;
-				error = NULL;
-				if (!(tcpcheck->expect_regex = regex_comp(args[cur_arg + 1], 1, 1, &error))) {
-					ha_alert("parsing [%s:%d] : '%s %s %s' : regular expression '%s': %s.\n",
-						 file, linenum, args[0], args[1], ptr_arg, args[cur_arg + 1], error);
-					free(error);
-					err_code |= ERR_ALERT | ERR_FATAL;
-					goto out;
-				}
-				tcpcheck->inverse = inverse;
-
-				/* tcpcheck comment */
-				cur_arg += 2;
-				if (strcmp(args[cur_arg], "comment") == 0) {
-					if (!*args[cur_arg + 1]) {
-						ha_alert("parsing [%s:%d] : '%s' expects a comment string.\n",
-							 file, linenum, args[cur_arg + 1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-					tcpcheck->comment = strdup(args[cur_arg + 1]);
-				}
-
-				LIST_ADDQ(&curproxy->tcpcheck_rules, &tcpcheck->list);
-			}
-			else {
-				ha_alert("parsing [%s:%d] : '%s %s' only supports [!] 'binary', 'string', 'rstring', found '%s'.\n",
-					 file, linenum, args[0], args[1], ptr_arg);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-		}
-		else {
-			ha_alert("parsing [%s:%d] : '%s' only supports 'comment', 'connect', 'send' or 'expect'.\n", file, linenum, args[0]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}

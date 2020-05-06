@@ -211,6 +211,12 @@ static inline char *ist0(struct ist ist)
 	return ist.ptr;
 }
 
+/* returns the pointer of the string */
+static inline char *istptr(const struct ist ist)
+{
+	return ist.ptr;
+}
+
 /* returns the length of the string */
 static inline size_t istlen(const struct ist ist)
 {
@@ -732,6 +738,25 @@ static inline struct ist iststop(const struct ist ist, char chr)
 	while (len++ < ist.len && ist.ptr[len - 1] != chr)
 		;
 	return ist2(ist.ptr, len - 1);
+}
+
+/*
+ * advance <.ptr> by <nb> characters.
+ * If <ist> is too short, (ist.end,0) is returned.
+ */
+static inline struct ist istadv(const struct ist ist, const size_t nb)
+{
+	if (ist.len < nb)
+		return ist2(ist.ptr + ist.len, 0);
+	return ist2(ist.ptr + nb, ist.len - nb);
+}
+
+/*
+ * compare 2 ists and return non-zero if they are the same
+ */
+static inline int istissame(const struct ist ist1, const struct ist ist2)
+{
+	return ((ist1.ptr == ist2.ptr) && (ist1.len == ist2.len));
 }
 
 #ifndef IST_FREESTANDING

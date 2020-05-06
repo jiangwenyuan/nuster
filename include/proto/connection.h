@@ -39,6 +39,9 @@ extern struct pool_head *pool_head_authority;
 extern struct xprt_ops *registered_xprt[XPRT_ENTRIES];
 extern struct mux_proto_list mux_proto_list;
 
+#define IS_HTX_CONN(conn) ((conn)->mux && ((conn)->mux->flags & MX_FL_HTX))
+#define IS_HTX_CS(cs)     (IS_HTX_CONN((cs)->conn))
+
 /* I/O callback for fd-based connections. It calls the read/write handlers
  * provided by the connection's sock_ops.
  */
@@ -981,6 +984,49 @@ static inline int conn_install_mux_be(struct connection *conn, void *ctx, struct
 		int mode;
 
 		if (prx->mode == PR_MODE_HTTP)
+			mode = PROTO_MODE_HTTP;
+		else
+			mode = PROTO_MODE_TCP;
+
+		conn_get_alpn(conn, &alpn_str, &alpn_len);
+		mux_proto = ist2(alpn_str, alpn_len);
+
+		mux_ops = conn_get_best_mux(conn, mux_proto, PROTO_SIDE_BE, mode);
+		if (!mux_ops)
+			return -1;
+	}
+	return conn_install_mux(conn, mux_ops, ctx, prx, sess);
+}
+
+/* installs the best mux for outgoing connection <conn> for a check using the
+ * upper context <ctx>. If the mux protocol is forced by the check, we use it to
+ * find the best mux. Returns < 0 on error.
+ */
+static inline int conn_install_mux_chk(struct connection *conn, void *ctx, struct session *sess)
+{
+	struct check *check = objt_check(sess->origin);
+	struct server *srv = objt_server(conn->target);
+	struct proxy *prx = objt_proxy(conn->target);
+	const struct mux_ops *mux_ops;
+
+	if (!check) // Check must be defined
+		return -1;
+
+	if (srv)
+		prx = srv->proxy;
+
+	if (!prx) // target must be either proxy or server
+		return -1;
+
+	if (check->mux_proto)
+		mux_ops = check->mux_proto->mux;
+	else {
+		struct ist mux_proto;
+		const char *alpn_str = NULL;
+		int alpn_len = 0;
+		int mode;
+
+		if ((check->tcpcheck_rules->flags & TCPCHK_RULES_PROTO_CHK) == TCPCHK_RULES_HTTP_CHK)
 			mode = PROTO_MODE_HTTP;
 		else
 			mode = PROTO_MODE_TCP;

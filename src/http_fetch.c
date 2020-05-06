@@ -88,6 +88,8 @@ REGISTER_PER_THREAD_FREE(free_raw_htx_chunk_per_thread);
  * searching again for something we are unable to find anyway. However, if
  * the result if valid, the cache is not reused because we would risk to
  * have the credentials overwritten by another stream in parallel.
+ * The caller is responsible for passing a sample with a valid stream/txn,
+ * and a valid htx.
  */
 
 static int get_http_auth(struct sample *smp, struct htx *htx)
@@ -166,10 +168,10 @@ static int get_http_auth(struct sample *smp, struct htx *htx)
  *   NULL with SMP_F_MAY_CHANGE in the sample flags if some data is missing to
  *     decide whether or not an HTTP message is present ;
  *   NULL if the requested data cannot be fetched or if it is certain that
- *     we'll never have any HTTP message there ;
+ *     we'll never have any HTTP message there; this includes null strm or chn.
  *   The HTX message if ready
  */
-struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
+struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, struct check *check, int vol)
 {
 	struct stream *s = smp->strm;
 	struct http_txn *txn = NULL;
@@ -180,9 +182,31 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 	/* Note: it is possible that <s> is NULL when called before stream
 	 * initialization (eg: tcp-request connection), so this function is the
 	 * one responsible for guarding against this case for all HTTP users.
+	 *
+	 * In the health check context, the stream and the channel must be NULL
+	 * and <check> must be set. In this case, only the input buffer,
+	 * corresponding to the response, is considered. It is the caller
+	 * responsibility to provide <check>.
 	 */
-	if (!s || !chn)
+	BUG_ON(check && (s || chn));
+	if (!s || !chn) {
+		if (check) {
+			htx = htxbuf(&check->bi);
+
+			/* Analyse not yet started */
+			if (htx_is_empty(htx) || htx->first == -1)
+				return NULL;
+
+			sl = http_get_stline(htx);
+			if (vol && !sl) {
+				/* The start-line was already forwarded, it is too late to fetch anything */
+				return NULL;
+			}
+			goto end;
+		}
+
 		return NULL;
+	}
 
 	if (!s->txn) {
 		if (unlikely(!http_alloc_txn(s)))
@@ -289,6 +313,7 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 	}
 
 	/* everything's OK */
+  end:
 	smp->data.u.sint = 1;
 	return htx;
 }
@@ -304,7 +329,7 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, int vol)
 static int smp_fetch_meth(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 0);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 0);
 	struct http_txn *txn;
 	int meth;
 
@@ -334,7 +359,7 @@ static int smp_fetch_meth(const struct arg *args, struct sample *smp, const char
 static int smp_fetch_rqver(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 	char *ptr;
 	int len;
@@ -361,7 +386,8 @@ static int smp_fetch_rqver(const struct arg *args, struct sample *smp, const cha
 static int smp_fetch_stver(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_RES_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct htx_sl *sl;
 	char *ptr;
 	int len;
@@ -389,7 +415,8 @@ static int smp_fetch_stver(const struct arg *args, struct sample *smp, const cha
 static int smp_fetch_stcode(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_RES_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct htx_sl *sl;
 	char *ptr;
 	int len;
@@ -414,6 +441,9 @@ static int smp_fetch_uniqueid(const struct arg *args, struct sample *smp, const 
 	if (LIST_ISEMPTY(&smp->sess->fe->format_unique_id))
 		return 0;
 
+	if (!smp->strm)
+		return 0;
+
 	unique_id = stream_generate_unique_id(smp->strm, &smp->sess->fe->format_unique_id);
 	if (!isttest(unique_id))
 		return 0;
@@ -432,7 +462,8 @@ static int smp_fetch_uniqueid(const struct arg *args, struct sample *smp, const 
 static int smp_fetch_hdrs(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct buffer *temp;
 	int32_t pos;
 
@@ -477,7 +508,8 @@ static int smp_fetch_hdrs(const struct arg *args, struct sample *smp, const char
 static int smp_fetch_hdrs_bin(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct buffer *temp;
 	char *p, *end;
 	int32_t pos;
@@ -544,7 +576,8 @@ static int smp_fetch_hdrs_bin(const struct arg *args, struct sample *smp, const 
 static int smp_fetch_body(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct buffer *temp;
 	int32_t pos;
 
@@ -577,7 +610,8 @@ static int smp_fetch_body(const struct arg *args, struct sample *smp, const char
 static int smp_fetch_body_len(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	int32_t pos;
 	unsigned long long len = 0;
 
@@ -608,7 +642,8 @@ static int smp_fetch_body_len(const struct arg *args, struct sample *smp, const 
 static int smp_fetch_body_size(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	int32_t pos;
 	unsigned long long len = 0;
 
@@ -638,7 +673,7 @@ static int smp_fetch_body_size(const struct arg *args, struct sample *smp, const
 static int smp_fetch_url(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 
 	if (!htx)
@@ -654,7 +689,7 @@ static int smp_fetch_url(const struct arg *args, struct sample *smp, const char 
 static int smp_fetch_url_ip(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 	struct sockaddr_storage addr;
 
@@ -675,7 +710,7 @@ static int smp_fetch_url_ip(const struct arg *args, struct sample *smp, const ch
 static int smp_fetch_url_port(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 	struct sockaddr_storage addr;
 
@@ -704,7 +739,8 @@ static int smp_fetch_fhdr(const struct arg *args, struct sample *smp, const char
 {
 	/* possible keywords: req.fhdr, res.fhdr */
 	struct channel *chn = ((kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct http_hdr_ctx *ctx = smp->ctx.a[0];
 	struct ist name;
 	int occ = 0;
@@ -757,7 +793,8 @@ static int smp_fetch_fhdr_cnt(const struct arg *args, struct sample *smp, const 
 {
 	/* possible keywords: req.fhdr_cnt, res.fhdr_cnt */
 	struct channel *chn = ((kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct http_hdr_ctx ctx;
 	struct ist name;
 	int cnt;
@@ -787,7 +824,8 @@ static int smp_fetch_hdr_names(const struct arg *args, struct sample *smp, const
 {
 	/* possible keywords: req.hdr_names, res.hdr_names */
 	struct channel *chn = ((kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct buffer *temp;
 	char del = ',';
 
@@ -832,7 +870,8 @@ static int smp_fetch_hdr(const struct arg *args, struct sample *smp, const char 
 {
 	/* possible keywords: req.hdr / hdr, res.hdr / shdr */
 	struct channel *chn = ((kw[0] == 'h' || kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct http_hdr_ctx *ctx = smp->ctx.a[0];
 	struct ist name;
 	int occ = 0;
@@ -895,7 +934,8 @@ static int smp_fetch_hdr_cnt(const struct arg *args, struct sample *smp, const c
 {
 	/* possible keywords: req.hdr_cnt / hdr_cnt, res.hdr_cnt / shdr_cnt */
 	struct channel *chn = ((kw[0] == 'h' || kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct http_hdr_ctx ctx;
 	struct ist name;
 	int cnt;
@@ -978,7 +1018,7 @@ static int smp_fetch_hdr_ip(const struct arg *args, struct sample *smp, const ch
 static int smp_fetch_path(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 	struct ist path;
 
@@ -1008,7 +1048,7 @@ static int smp_fetch_path(const struct arg *args, struct sample *smp, const char
 static int smp_fetch_base(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 	struct buffer *temp;
 	struct http_hdr_ctx ctx;
@@ -1055,7 +1095,7 @@ static int smp_fetch_base(const struct arg *args, struct sample *smp, const char
 static int smp_fetch_base32(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 	struct http_hdr_ctx ctx;
 	struct ist path;
@@ -1145,7 +1185,7 @@ static int smp_fetch_base32_src(const struct arg *args, struct sample *smp, cons
 static int smp_fetch_query(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct htx_sl *sl;
 	char *ptr, *end;
 
@@ -1172,7 +1212,7 @@ static int smp_fetch_query(const struct arg *args, struct sample *smp, const cha
 static int smp_fetch_proto_http(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 0);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 0);
 
 	if (!htx)
 		return 0;
@@ -1184,6 +1224,9 @@ static int smp_fetch_proto_http(const struct arg *args, struct sample *smp, cons
 /* return a valid test if the current request is the first one on the connection */
 static int smp_fetch_http_first_req(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	if (!smp->strm)
+		return 0;
+
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = !(smp->strm->txn->flags & TX_NOT_FIRST);
 	return 1;
@@ -1195,7 +1238,7 @@ static int smp_fetch_http_first_req(const struct arg *args, struct sample *smp, 
 static int smp_fetch_http_auth_type(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct http_txn *txn;
 
 	if (!htx)
@@ -1230,7 +1273,7 @@ static int smp_fetch_http_auth_type(const struct arg *args, struct sample *smp, 
 static int smp_fetch_http_auth_user(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct http_txn *txn;
 
 	if (!htx)
@@ -1253,7 +1296,7 @@ static int smp_fetch_http_auth_user(const struct arg *args, struct sample *smp, 
 static int smp_fetch_http_auth_pass(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct http_txn *txn;
 
 	if (!htx)
@@ -1274,7 +1317,7 @@ static int smp_fetch_http_auth_pass(const struct arg *args, struct sample *smp, 
 static int smp_fetch_http_auth(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 
 	if (!args || args->type != ARGT_USR)
 		return 0;
@@ -1294,7 +1337,7 @@ static int smp_fetch_http_auth(const struct arg *args, struct sample *smp, const
 static int smp_fetch_http_auth_grp(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 
 	if (!args || args->type != ARGT_USR)
 		return 0;
@@ -1328,12 +1371,16 @@ static int smp_fetch_http_auth_grp(const struct arg *args, struct sample *smp, c
  */
 static int smp_fetch_capture_req_hdr(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct proxy *fe = strm_fe(smp->strm);
+	struct proxy *fe;
 	int idx;
 
 	if (!args || args->type != ARGT_SINT)
 		return 0;
 
+	if (!smp->strm)
+		return 0;
+
+	fe = strm_fe(smp->strm);
 	idx = args->data.sint;
 
 	if (idx > (fe->nb_req_cap - 1) || smp->strm->req_cap == NULL || smp->strm->req_cap[idx] == NULL)
@@ -1352,12 +1399,16 @@ static int smp_fetch_capture_req_hdr(const struct arg *args, struct sample *smp,
  */
 static int smp_fetch_capture_res_hdr(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct proxy *fe = strm_fe(smp->strm);
+	struct proxy *fe;
 	int idx;
 
 	if (!args || args->type != ARGT_SINT)
 		return 0;
 
+	if (!smp->strm)
+		return 0;
+
+	fe = strm_fe(smp->strm);
 	idx = args->data.sint;
 
 	if (idx > (fe->nb_rsp_cap - 1) || smp->strm->res_cap == NULL || smp->strm->res_cap[idx] == NULL)
@@ -1375,9 +1426,13 @@ static int smp_fetch_capture_res_hdr(const struct arg *args, struct sample *smp,
 static int smp_fetch_capture_req_method(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct buffer *temp;
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 	char *ptr;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || !txn->uri)
 		return 0;
 
@@ -1400,10 +1455,14 @@ static int smp_fetch_capture_req_method(const struct arg *args, struct sample *s
 /* Extracts the path in the HTTP request, the txn->uri should be filled before the call  */
 static int smp_fetch_capture_req_uri(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 	struct ist path;
 	const char *ptr;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || !txn->uri)
 		return 0;
 
@@ -1438,8 +1497,12 @@ static int smp_fetch_capture_req_uri(const struct arg *args, struct sample *smp,
  */
 static int smp_fetch_capture_req_ver(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || txn->req.msg_state >= HTTP_MSG_BODY)
 		return 0;
 
@@ -1460,8 +1523,12 @@ static int smp_fetch_capture_req_ver(const struct arg *args, struct sample *smp,
  */
 static int smp_fetch_capture_res_ver(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || txn->rsp.msg_state >= HTTP_MSG_BODY)
 		return 0;
 
@@ -1491,7 +1558,8 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
 {
 	/* possible keywords: req.cookie / cookie / cook, res.cookie / scook / set-cookie */
 	struct channel *chn = ((kw[0] == 'c' || kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct http_hdr_ctx *ctx = smp->ctx.a[2];
 	struct ist hdr;
 	int occ = 0;
@@ -1510,7 +1578,7 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
 	if (!htx)
 		return 0;
 
-	hdr = (!(chn->flags & CF_ISRESP) ? ist("Cookie") : ist("Set-Cookie"));
+	hdr = (!(check || (chn && chn->flags & CF_ISRESP)) ? ist("Cookie") : ist("Set-Cookie"));
 
 	if (!occ && !(smp->opt & SMP_OPT_ITERATE))
 		/* no explicit occurrence and single fetch => last cookie by default */
@@ -1588,7 +1656,8 @@ static int smp_fetch_cookie_cnt(const struct arg *args, struct sample *smp, cons
 {
 	/* possible keywords: req.cook_cnt / cook_cnt, res.cook_cnt / scook_cnt */
 	struct channel *chn = ((kw[0] == 'c' || kw[2] == 'q') ? SMP_REQ_CHN(smp) : SMP_RES_CHN(smp));
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
+	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct http_hdr_ctx ctx;
 	struct ist hdr;
 	char *val_beg, *val_end;
@@ -1600,7 +1669,7 @@ static int smp_fetch_cookie_cnt(const struct arg *args, struct sample *smp, cons
 	if (!htx)
 		return 0;
 
-	hdr = (!(chn->flags & CF_ISRESP) ? ist("Cookie") : ist("Set-Cookie"));
+	hdr = (!(check || (chn && chn->flags & CF_ISRESP)) ? ist("Cookie") : ist("Set-Cookie"));
 
 	val_end = val_beg = NULL;
 	ctx.blk = NULL;
@@ -1734,7 +1803,7 @@ static int smp_fetch_url_param(const struct arg *args, struct sample *smp, const
 		delim = *args[1].data.str.area;
 
 	if (!smp->ctx.a[0]) { // first call, find the query string
-		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+		struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 		struct htx_sl *sl;
 
 		if (!htx)
@@ -1767,6 +1836,7 @@ static int smp_fetch_url_param(const struct arg *args, struct sample *smp, const
 static int smp_fetch_body_param(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
+	struct check *check = ((kw[0] == 'c' && smp->sess) ? objt_check(smp->sess->origin) : NULL);
 	const char *name;
 	int name_len;
 
@@ -1781,7 +1851,7 @@ static int smp_fetch_body_param(const struct arg *args, struct sample *smp, cons
 	}
 
 	if (!smp->ctx.a[0]) { // first call, find the query string
-		struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+		struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 		struct buffer *temp;
 		int32_t pos;
 
@@ -1844,7 +1914,7 @@ static int smp_fetch_url_param_val(const struct arg *args, struct sample *smp, c
 static int smp_fetch_url32(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, 1);
+	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 1);
 	struct http_hdr_ctx ctx;
 	struct htx_sl *sl;
 	struct ist path;
@@ -2059,6 +2129,26 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	{ "url_param",          smp_fetch_url_param,          ARG2(0,STR,STR),  NULL,    SMP_T_STR,  SMP_USE_HRQHV },
 	{ "urlp"     ,          smp_fetch_url_param,          ARG2(0,STR,STR),  NULL,    SMP_T_STR,  SMP_USE_HRQHV },
 	{ "urlp_val",           smp_fetch_url_param_val,      ARG2(0,STR,STR),  NULL,    SMP_T_SINT, SMP_USE_HRQHV },
+
+
+	{ "check.ver",          smp_fetch_stver,              0,                NULL,    SMP_T_STR,  SMP_USE_INTRN },
+	{ "check.status",       smp_fetch_stcode,             0,                NULL,    SMP_T_SINT, SMP_USE_INTRN },
+	{ "check.hdrs",         smp_fetch_hdrs,               0,                NULL,    SMP_T_BIN,  SMP_USE_INTRN },
+	{ "check.hdrs_bin",     smp_fetch_hdrs_bin,           0,                NULL,    SMP_T_BIN,  SMP_USE_INTRN },
+	{ "check.body",         smp_fetch_body,               0,                NULL,    SMP_T_BIN,  SMP_USE_INTRN },
+	{ "check.body_len",     smp_fetch_body_len,           0,                NULL,    SMP_T_SINT, SMP_USE_INTRN },
+	{ "check.body_size",    smp_fetch_body_size,          0,                NULL,    SMP_T_SINT, SMP_USE_INTRN },
+	{ "check.body_param",   smp_fetch_body_param,         ARG1(0,STR),      NULL,    SMP_T_BIN,  SMP_USE_INTRN },
+	{ "check.fhdr",         smp_fetch_fhdr,               ARG2(0,STR,SINT), val_hdr, SMP_T_STR,  SMP_USE_INTRN },
+	{ "check.fhdr_cnt",     smp_fetch_fhdr_cnt,           ARG1(0,STR),      NULL,    SMP_T_SINT, SMP_USE_INTRN },
+	{ "check.hdr",          smp_fetch_hdr,                ARG2(0,STR,SINT), val_hdr, SMP_T_STR,  SMP_USE_INTRN },
+	{ "check.hdr_cnt",      smp_fetch_hdr_cnt,            ARG1(0,STR),      NULL,    SMP_T_SINT, SMP_USE_INTRN },
+	{ "check.hdr_ip",       smp_fetch_hdr_ip,             ARG2(0,STR,SINT), val_hdr, SMP_T_IPV4, SMP_USE_INTRN },
+	{ "check.hdr_names",    smp_fetch_hdr_names,          ARG1(0,STR),      NULL,    SMP_T_STR,  SMP_USE_INTRN },
+	{ "check.hdr_val",      smp_fetch_hdr_val,            ARG2(0,STR,SINT), val_hdr, SMP_T_SINT, SMP_USE_INTRN },
+	{ "check.cook",         smp_fetch_cookie,             ARG1(0,STR),      NULL,    SMP_T_STR,  SMP_USE_INTRN },
+	{ "check.cook_cnt",     smp_fetch_cookie_cnt,         ARG1(0,STR),      NULL,    SMP_T_SINT, SMP_USE_INTRN },
+	{ "check.cook_val",     smp_fetch_cookie_val,         ARG1(0,STR),      NULL,    SMP_T_SINT, SMP_USE_INTRN },
 	{ /* END */ },
 }};
 

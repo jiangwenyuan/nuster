@@ -1749,8 +1749,12 @@ const char *csv_enc_append(const char *str, int quote, struct buffer *output)
  * be shorter. If some forbidden characters are found, the conversion is
  * aborted, the string is truncated before the issue and a negative value is
  * returned, otherwise the operation returns the length of the decoded string.
+ * If the 'in_form' argument is non-nul the string is assumed to be part of
+ * an "application/x-www-form-urlencoded" encoded string, and the '+' will be
+ * turned to a space. If it's zero, this will only be done after a question
+ * mark ('?').
  */
-int url_decode(char *string)
+int url_decode(char *string, int in_form)
 {
 	char *in, *out;
 	int ret = -1;
@@ -1760,7 +1764,7 @@ int url_decode(char *string)
 	while (*in) {
 		switch (*in) {
 		case '+' :
-			*out++ = ' ';
+			*out++ = in_form ? ' ' : *in;
 			break;
 		case '%' :
 			if (!ishex(in[1]) || !ishex(in[2]))
@@ -1768,6 +1772,9 @@ int url_decode(char *string)
 			*out++ = (hex2i(in[1]) << 4) + hex2i(in[2]);
 			in += 2;
 			break;
+		case '?':
+			in_form = 1;
+			/* fall through */
 		default:
 			*out++ = *in;
 			break;
@@ -2283,6 +2290,32 @@ const void *my_memmem(const void *haystack, size_t haystacklen, const void *need
 		++c;
 	}
 	return NULL;
+}
+
+/* get length of the initial segment consiting entirely of bytes in <accept> */
+size_t my_memspn(const void *str, size_t len, const void *accept, size_t acceptlen)
+{
+	size_t ret = 0;
+
+	while (ret < len && memchr(accept, *((int *)str), acceptlen)) {
+		str++;
+		ret++;
+	}
+	return ret;
+}
+
+/* get length of the initial segment consiting entirely of bytes not in <rejcet> */
+size_t my_memcspn(const void *str, size_t len, const void *reject, size_t rejectlen)
+{
+	size_t ret = 0;
+
+	while (ret < len) {
+		if(memchr(reject, *((int *)str), rejectlen))
+			return ret;
+		str++;
+		ret++;
+	}
+	return ret;
 }
 
 /* This function returns the first unused key greater than or equal to <key> in

@@ -13,15 +13,21 @@
 #ifndef _TYPES_CHECKS_H
 #define _TYPES_CHECKS_H
 
-#include <sys/time.h>
+#include <ebpttree.h>
 
+#include <common/standard.h>
 #include <common/config.h>
+#include <common/ist.h>
 #include <common/mini-clist.h>
 #include <common/regex.h>
 #include <common/buf.h>
 
 #include <types/connection.h>
 #include <types/obj_type.h>
+#include <types/proxy.h>
+#include <types/sample.h>
+#include <types/server.h>
+#include <types/session.h>
 #include <types/task.h>
 
 /* enum used by check->result. Must remain in this order, as some code uses
@@ -44,7 +50,7 @@ enum chk_result {
 #define CHK_ST_PORT_MISS        0x0020  /* check can't be send because no port is configured to run it */
 
 /* check status */
-enum {
+enum healthcheck_status {
 	HCHK_STATUS_UNKNOWN	 = 0,	/* Unknown */
 	HCHK_STATUS_INI,		/* Initializing */
 	HCHK_STATUS_START,		/* Check started - SPECIAL STATUS */
@@ -80,33 +86,6 @@ enum {
 
 	HCHK_STATUS_SIZE
 };
-
-/* environment variables memory requirement for different types of data */
-#define EXTCHK_SIZE_EVAL_INIT 0		/* size determined during the init phase,
-					 * such environment variables are not updatable. */
-#define EXTCHK_SIZE_ULONG     20	/* max string length for an unsigned long value */
-
-/* external checks environment variables */
-enum {
-	EXTCHK_PATH = 0,
-
-	/* Proxy specific environment variables */
-	EXTCHK_HAPROXY_PROXY_NAME,	/* the backend name */
-	EXTCHK_HAPROXY_PROXY_ID,	/* the backend id */
-	EXTCHK_HAPROXY_PROXY_ADDR,	/* the first bind address if available (or empty) */
-	EXTCHK_HAPROXY_PROXY_PORT,	/* the first bind port if available (or empty) */
-
-	/* Server specific environment variables */
-	EXTCHK_HAPROXY_SERVER_NAME,	/* the server name */
-	EXTCHK_HAPROXY_SERVER_ID,	/* the server id */
-	EXTCHK_HAPROXY_SERVER_ADDR,	/* the server address */
-	EXTCHK_HAPROXY_SERVER_PORT,	/* the server port if available (or empty) */
-	EXTCHK_HAPROXY_SERVER_MAXCONN,	/* the server max connections */
-	EXTCHK_HAPROXY_SERVER_CURCONN,	/* the current number of connections on the server */
-
-	EXTCHK_SIZE
-};
-
 
 /* health status for response tracking */
 enum {
@@ -156,6 +135,9 @@ enum {
 };
 
 struct check {
+	enum obj_type obj_type;                 /* object type == OBJ_TYPE_CHECK */
+	struct session *sess;			/* Health check session. */
+	struct vars vars;			/* Health check dynamic variables. */
 	struct xprt_ops *xprt;			/* transport layer operations for health checks */
 	struct conn_stream *cs;			/* conn_stream state for health checks */
 	struct buffer bi, bo;			/* input and output buffers to send/recv check */
@@ -165,11 +147,10 @@ struct check {
 	short status, code;			/* check result, check code */
 	unsigned short port;			/* the port to use for the health checks */
 	char desc[HCHK_DESC_LEN];		/* health check description */
-	int use_ssl;				/* use SSL for health checks */
+	signed char use_ssl;			/* use SSL for health checks (1: on, 0: server mode, -1: off) */
 	int send_proxy;				/* send a PROXY protocol header with checks */
-	struct list *tcpcheck_rules;		/* tcp-check send / expect rules */
+	struct tcpcheck_rules *tcpcheck_rules;	/* tcp-check send / expect rules */
 	struct tcpcheck_rule *current_step;     /* current step when using tcpcheck */
-	struct tcpcheck_rule *last_started_step;/* pointer to latest tcpcheck rule started */
 	int inter, fastinter, downinter;        /* checks: time in milliseconds */
 	enum chk_result result;                 /* health-check result : CHK_RES_* */
 	int state;				/* state of the check : CHK_ST_*   */
@@ -177,8 +158,6 @@ struct check {
 						 * rise to rise+fall-1 = good */
 	int rise, fall;				/* time in iterations */
 	int type;				/* Check type, one of PR_O2_*_CHK */
-	int send_string_len;			/* length of agent command string */
-	char *send_string;			/* optionally send a string when connecting to the agent */
 	struct server *server;			/* back-pointer to server */
 	struct proxy *proxy;                    /* proxy to be used */
 	char **argv;				/* the arguments to use if running a process-based check */
@@ -189,51 +168,211 @@ struct check {
 	char *sni;				/* Server name */
 	char *alpn_str;                         /* ALPN to use for checks */
 	int alpn_len;                           /* ALPN string length */
-
+	const struct mux_proto_list *mux_proto; /* the mux to use for all outgoing connections (specified by the "proto" keyword) */
 	int via_socks4;                         /* check the connection via socks4 proxy */
 };
 
-struct check_status {
-	short result;			/* one of SRV_CHK_* */
-	char *info;			/* human readable short info */
-	char *desc;			/* long description */
+#define TCPCHK_OPT_NONE            0x0000  /* no options specified, default */
+#define TCPCHK_OPT_SEND_PROXY      0x0001  /* send proxy-protocol string */
+#define TCPCHK_OPT_SSL             0x0002  /* SSL connection */
+#define TCPCHK_OPT_LINGER          0x0004  /* Do not RST connection, let it linger */
+#define TCPCHK_OPT_DEFAULT_CONNECT 0x0008  /* Do a connect using server params */
+#define TCPCHK_OPT_IMPLICIT        0x0010  /* Implicit connect */
+#define TCPCHK_OPT_SOCKS4          0x0020  /* check the connection via socks4 proxy */
+
+struct tcpcheck_connect {
+	char *sni;                     /* server name to use for SSL connections */
+	char *alpn;                    /* ALPN to use for the SSL connection */
+	int alpn_len;                  /* ALPN string length */
+	const struct mux_proto_list *mux_proto; /* the mux to use for all outgoing connections (specified by the "proto" keyword) */
+	uint16_t options;              /* options when setting up a new connection */
+	uint16_t port;                 /* port to connect to */
+	struct sample_expr *port_expr; /* sample expr to determine the port, may be NULL */
+	struct sockaddr_storage addr;  /* the address to the connect */
 };
 
-struct extcheck_env {
-	char *name;	/* environment variable name */
-	int vmaxlen;	/* value maximum length, used to determine the required memory allocation */
+enum tcpcheck_send_type {
+	TCPCHK_SEND_UNDEF = 0,  /* Send is not parsed. */
+	TCPCHK_SEND_STRING,     /* Send an ASCII string. */
+	TCPCHK_SEND_BINARY,     /* Send a binary sequence. */
+	TCPCHK_SEND_STRING_LF,  /* Send an ASCII log-format string. */
+	TCPCHK_SEND_BINARY_LF,  /* Send a binary log-format sequence. */
+	TCPCHK_SEND_HTTP,       /* Send an HTTP request */
 };
 
-struct analyze_status {
-	char *desc;				/* description */
-	unsigned char lr[HANA_OBS_SIZE];	/* result for l4/l7: 0 = ignore, 1 - error, 2 - OK */
+struct tcpcheck_http_hdr {
+	struct ist  name;  /* the header name */
+	struct list value; /* the log-format string value */
+	struct list list;  /* header chained list */
+};
+
+struct tcpcheck_codes {
+	unsigned int (*codes)[2]; /* an array of roange of codes: [0]=min [1]=max */
+	size_t num;               /* number of entry in the array */
+};
+
+#define TCPCHK_SND_HTTP_FL_URI_FMT    0x0001 /* Use a log-format string for the uri */
+#define TCPCHK_SND_HTTP_FL_BODY_FMT   0x0002 /* Use a log-format string for the body */
+#define TCPCHK_SND_HTTP_FROM_OPT      0x0004 /* Send rule coming from "option httpck" directive */
+
+struct tcpcheck_send {
+	enum tcpcheck_send_type type;
+	union {
+		struct ist  data; /* an ASCII string or a binary sequence */
+		struct list fmt;  /* an ASCII or hexa log-format string */
+		struct {
+			unsigned int flags;             /* TCPCHK_SND_HTTP_FL_* */
+			struct http_meth meth;          /* the HTTP request method */
+			union {
+				struct ist  uri;        /* the HTTP request uri is a string  */
+				struct list uri_fmt;    /* or a log-format string */
+			};
+			struct ist vsn;                 /* the HTTP request version string */
+			struct list hdrs;               /* the HTTP request header list */
+			union {
+				struct ist   body;      /* the HTTP request payload is a string */
+				struct list  body_fmt;  /* or a log-format string */
+			};
+		} http;           /* Info about the HTTP request to send */
+	};
+};
+
+enum tcpcheck_eval_ret {
+	TCPCHK_EVAL_WAIT = 0,
+	TCPCHK_EVAL_STOP,
+	TCPCHK_EVAL_CONTINUE,
+};
+
+enum tcpcheck_expect_type {
+	TCPCHK_EXPECT_UNDEF = 0,         /* Match is not used. */
+	TCPCHK_EXPECT_STRING,            /* Matches a string. */
+	TCPCHK_EXPECT_REGEX,             /* Matches a regular pattern. */
+	TCPCHK_EXPECT_REGEX_BINARY,      /* Matches a regular pattern on a hex-encoded text. */
+	TCPCHK_EXPECT_BINARY,            /* Matches a binary sequence on a hex-encoded text. */
+	TCPCHK_EXPECT_CUSTOM,            /* Execute a custom function. */
+	TCPCHK_EXPECT_HTTP_STATUS,       /* Matches a list of codes on the HTTP status */
+	TCPCHK_EXPECT_HTTP_REGEX_STATUS, /* Matches a regular pattern on the HTTP status */
+	TCPCHK_EXPECT_HTTP_HEADER,       /* Matches on HTTP headers */
+	TCPCHK_EXPECT_HTTP_BODY,         /* Matches a string oa the HTTP payload */
+	TCPCHK_EXPECT_HTTP_REGEX_BODY,   /* Matches a regular pattern on a HTTP payload */
+};
+
+/* tcp-check expect flags */
+#define TCPCHK_EXPT_FL_INV             0x0001 /* Matching is inversed */
+#define TCPCHK_EXPT_FL_HTTP_HNAME_STR  0x0002 /* Exact match on the HTTP header name */
+#define TCPCHK_EXPT_FL_HTTP_HNAME_BEG  0x0004 /* Prefix match on the HTTP header name */
+#define TCPCHK_EXPT_FL_HTTP_HNAME_END  0x0008 /* Suffix match on the HTTP header name */
+#define TCPCHK_EXPT_FL_HTTP_HNAME_SUB  0x0010 /* Substring match on the HTTP header name */
+#define TCPCHK_EXPT_FL_HTTP_HNAME_REG  0x0020 /* Regex match on the HTTP header name */
+#define TCPCHK_EXPT_FL_HTTP_HNAME_FMT  0x0040 /* The HTTP header name is a log-format string */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_NONE  0x0080 /* No match on the HTTP header value */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_STR   0x0100 /* Exact match on the HTTP header value */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_BEG   0x0200 /* Prefix match on the HTTP header value */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_END   0x0400 /* Suffix match on the HTTP header value */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_SUB   0x0800 /* Substring match on the HTTP header value */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_REG   0x1000 /* Regex match on the HTTP header value*/
+#define TCPCHK_EXPT_FL_HTTP_HVAL_FMT   0x2000 /* The HTTP header value is a log-format string */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_FULL  0x4000 /* Match the full header value ( no stop on commas ) */
+
+#define TCPCHK_EXPT_FL_HTTP_HNAME_TYPE 0x003E /* Mask to get matching method on header name */
+#define TCPCHK_EXPT_FL_HTTP_HVAL_TYPE  0x1F00 /* Mask to get matching method on header value */
+struct tcpcheck_expect {
+	enum tcpcheck_expect_type type;   /* Type of pattern used for matching. */
+	unsigned int flags;               /* TCPCHK_EXPT_FL_* */
+	union {
+		struct ist data;             /* Matching a literal string / binary anywhere in the response. */
+		struct my_regex *regex;      /* Matching a regex pattern. */
+		struct tcpcheck_codes codes; /* Matching a list of codes */
+		struct {
+			union {
+				struct ist name;
+				struct list name_fmt;
+				struct my_regex *name_re;
+			};
+			union {
+				struct ist value;
+				struct list value_fmt;
+				struct my_regex *value_re;
+			};
+		} hdr;                       /* Matching a header pattern */
+
+
+		/* custom function to eval epxect rule */
+		enum tcpcheck_eval_ret (*custom)(struct check *, struct tcpcheck_rule *, int);
+	};
+	struct tcpcheck_rule *head;     /* first expect of a chain. */
+	int min_recv;                   /* Minimum amount of data before an expect can be applied. (default: -1, ignored) */
+	enum healthcheck_status ok_status;   /* The healthcheck status to use on success (default: L7OKD) */
+	enum healthcheck_status err_status;  /* The healthcheck status to use on error (default: L7RSP) */
+	enum healthcheck_status tout_status; /* The healthcheck status to use on timeout (default: L7TOUT) */
+	struct list onerror_fmt;        /* log-format string to use as comment on error */
+	struct list onsuccess_fmt;      /* log-format string to use as comment on success (if last rule) */
+	struct sample_expr *status_expr; /* sample expr to determine the check status code */
+};
+
+struct tcpcheck_action_kw {
+	struct act_rule *rule;
 };
 
 /* possible actions for tcpcheck_rule->action */
-enum {
-	TCPCHK_ACT_SEND        = 0,             /* send action, regular string format */
-	TCPCHK_ACT_EXPECT,                      /* expect action, either regular or binary string */
-	TCPCHK_ACT_CONNECT,                     /* connect action, to probe a new port */
-	TCPCHK_ACT_COMMENT,                     /* no action, simply a comment used for logs */
+enum tcpcheck_rule_type {
+	TCPCHK_ACT_SEND = 0, /* send action, regular string format */
+	TCPCHK_ACT_EXPECT, /* expect action, either regular or binary string */
+	TCPCHK_ACT_CONNECT, /* connect action, to probe a new port */
+	TCPCHK_ACT_COMMENT, /* no action, simply a comment used for logs */
+	TCPCHK_ACT_ACTION_KW, /* custom registered action_kw rule. */
 };
-
-/* flags used by tcpcheck_rule->conn_opts */
-#define TCPCHK_OPT_NONE         0x0000  /* no options specified, default */
-#define TCPCHK_OPT_SEND_PROXY   0x0001  /* send proxy-protocol string */
-#define TCPCHK_OPT_SSL          0x0002  /* SSL connection */
 
 struct tcpcheck_rule {
 	struct list list;                       /* list linked to from the proxy */
-	int action;                             /* action: send or expect */
+	enum tcpcheck_rule_type action;         /* type of the rule. */
+	int index;                              /* Index within the list. Starts at 0. */
 	char *comment;				/* comment to be used in the logs and on the stats socket */
-	/* match type uses NON-NULL pointer from either string or expect_regex below */
-	/* sent string is string */
-	char *string;                           /* sent or expected string */
-	int string_len;                         /* string length */
-	struct my_regex *expect_regex;          /* expected */
-	int inverse;                            /* 0 = regular match, 1 = inverse match */
-	unsigned short port;                    /* port to connect to */
-	unsigned short conn_opts;               /* options when setting up a new connection */
+	union {
+		struct tcpcheck_connect connect; /* Connect rule. */
+		struct tcpcheck_send send;      /* Send rule. */
+		struct tcpcheck_expect expect;  /* Expected pattern. */
+		struct tcpcheck_action_kw action_kw;  /* Custom action. */
+	};
 };
+
+#define TCPCHK_RULES_NONE           0x00000000
+#define TCPCHK_RULES_UNUSED_TCP_RS  0x00000001 /* An unused tcp-check ruleset exists */
+#define TCPCHK_RULES_UNUSED_HTTP_RS 0x00000002 /* An unused http-check ruleset exists */
+#define TCPCHK_RULES_UNUSED_RS      0x00000003 /* Mask for unused ruleset */
+
+#define TCPCHK_RULES_PGSQL_CHK   0x00000010
+#define TCPCHK_RULES_REDIS_CHK   0x00000020
+#define TCPCHK_RULES_SMTP_CHK    0x00000030
+#define TCPCHK_RULES_HTTP_CHK    0x00000040
+#define TCPCHK_RULES_MYSQL_CHK   0x00000050
+#define TCPCHK_RULES_LDAP_CHK    0x00000060
+#define TCPCHK_RULES_SSL3_CHK    0x00000070
+#define TCPCHK_RULES_AGENT_CHK   0x00000080
+#define TCPCHK_RULES_SPOP_CHK    0x00000090
+/* Unused 0x000000A0..0x00000FF0 (reserverd for futur proto) */
+#define TCPCHK_RULES_TCP_CHK     0x00000FF0
+#define TCPCHK_RULES_PROTO_CHK   0x00000FF0 /* Mask to cover protocol check */
+
+/* A list of tcp-check vars, to be registered before executing a ruleset */
+struct tcpcheck_var {
+	struct ist name;         /* the variable name with the scope */
+	struct sample_data data; /* the data associated to the variable */
+	struct list list;        /* element to chain tcp-check vars */
+};
+
+/* a list of tcp-check rules */
+struct tcpcheck_rules {
+	unsigned int flags;       /* flags applied to the rules */
+	struct list *list;        /* the list of tcpcheck_rules */
+	struct list  preset_vars; /* The list of variable to preset before executing the ruleset */
+};
+
+/* A list of tcp-check rules with a name */
+struct tcpcheck_ruleset {
+	struct list rules;     /* the list of tcpcheck_rule */
+	struct ebpt_node node; /* node in the shared tree */
+};
+
 
 #endif /* _TYPES_CHECKS_H */

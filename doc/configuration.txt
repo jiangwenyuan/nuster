@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.2
                              willy tarreau
-                              2020/04/17
+                              2020/05/05
 
 
 This document covers the configuration language as implemented in the version
@@ -87,7 +87,8 @@ Summary
 7.3.4.        Fetching samples at Layer 5
 7.3.5.        Fetching samples from buffer contents (Layer 6)
 7.3.6.        Fetching HTTP samples (Layer 7)
-7.3.7.        Fetching samples for developers
+7.3.7.        Fetching health-check samples
+7.3.8.        Fetching samples for developers
 7.4.      Pre-defined ACLs
 
 8.    Logging
@@ -622,12 +623,14 @@ The following keywords are supported in the "global" section :
    - stats
    - ssl-default-bind-ciphers
    - ssl-default-bind-ciphersuites
+   - ssl-default-bind-curves
    - ssl-default-bind-options
    - ssl-default-server-ciphers
    - ssl-default-server-ciphersuites
    - ssl-default-server-options
    - ssl-dh-param-file
    - ssl-server-verify
+   - ssl-skip-self-issued-ca
    - unix-bind
    - unsetenv
    - 51degrees-data-file
@@ -1270,6 +1273,13 @@ ssl-default-bind-ciphersuites <ciphersuites>
   "ssl-default-bind-ciphers" keyword. Please check the "bind" keyword for more
   information.
 
+ssl-default-bind-curves <curves>
+  This setting is only available when support for OpenSSL was built in. It sets
+  the default string describing the list of elliptic curves algorithms ("curve
+  suite") that are negotiated during the SSL/TLS handshake with ECDHE. The format
+  of the string is a colon-delimited list of curve name.
+  Please check the "bind" keyword for more information.
+
 ssl-default-bind-options [<option>]...
   This setting is only available when support for OpenSSL was built in. It sets
   default ssl-options to force on all "bind" lines. Please check the "bind"
@@ -1369,6 +1379,16 @@ ssl-server-verify [none|required]
   The default behavior for SSL verify on servers side. If specified to 'none',
   servers certificates are not verified. The default is 'required' except if
   forced using cmdline option '-dV'.
+
+ssl-skip-self-issued-ca
+  Self issued CA, aka x509 root CA, is the enchor for chain validation: as a
+  server is useless to send it, client must have it. Standard configuration
+  need to not include such CA in PEM file. This option allows you to keep such
+  CA in PEM file without sending it to the client. Use case is to provide
+  issuer for ocsp without the need for '.issuer' file and be able to share it
+  with 'issuers-chain-path'. This concerns all certificates without intermediate
+  certificates. It's useless for BoringSSL, .issuer is ignored because ocsp
+  bits does not need it.
 
 stats socket [<address:port>|<path>] [param*]
   Binds a UNIX socket to <path> or a TCPv4/v6 address to <address:port>.
@@ -2633,9 +2653,13 @@ fullconn                                  X          -         X         X
 grace                                     X          X         X         X
 hash-type                                 X          -         X         X
 http-after-response                       -          X         X         X
+http-check comment                        X          -         X         X
+http-check connect                        X          -         X         X
 http-check disable-on-404                 X          -         X         X
-http-check expect                         -          -         X         X
+http-check expect                         X          -         X         X
 http-check send-state                     X          -         X         X
+http-check set-var                        X          -         X         X
+http-check unset-var                      X          -         X         X
 http-request                              -          X         X         X
 http-response                             -          X         X         X
 http-reuse                                X          -         X         X
@@ -2736,10 +2760,13 @@ stick on                                  -          -         X         X
 stick store-request                       -          -         X         X
 stick store-response                      -          -         X         X
 stick-table                               -          X         X         X
-tcp-check connect                         -          -         X         X
-tcp-check expect                          -          -         X         X
-tcp-check send                            -          -         X         X
-tcp-check send-binary                     -          -         X         X
+tcp-check comment                         X          -         X         X
+tcp-check connect                         X          -         X         X
+tcp-check expect                          X          -         X         X
+tcp-check send                            X          -         X         X
+tcp-check send-binary                     X          -         X         X
+tcp-check set-var                         X          -         X         X
+tcp-check unset-var                       X          -         X         X
 tcp-request connection                    -          X         X         -
 tcp-request content                       -          X         X         X
 tcp-request inspect-delay                 -          X         X         X
@@ -4365,6 +4392,97 @@ http-after-response unset-var(<var-name>) [ { if | unless } <condition> ]
     http-after-response unset-var(sess.last_redir)
 
 
+http-check comment <string>
+  Defines a comment for the following the http-check rule, reported in logs if
+  it fails.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+
+  Arguments :
+    <string>  is the comment message to add in logs if the following http-check
+              rule fails.
+
+  It only works for connect, send and expect rules. It is useful to make
+  user-friendly error reporting.
+
+  See also : "option httpchk", "http-check conncet", "http-check send" and
+             "http-check expect".
+
+
+http-check connect [default] [port <expr>] [addr <ip>] [send-proxy]
+                   [via-socks4] [ssl] [sni <sni>] [alpn <alpn>] [linger]
+		   [proto <name>] [comment <msg>]
+  Opens a new connection to perform an HTTP health check
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+
+  Arguments :
+    comment <msg>  defines a message to report if the rule evaluation fails.
+
+    default      Use default options of the server line to do the health
+                 checks. The server options are used only if not redifined.
+
+    port <expr>  if not set, check port or server port is used.
+                 It tells HAProxy where to open the connection to.
+                 <port> must be a valid TCP port source integer, from 1 to
+                 65535 or an sample-fetch expression.
+
+    addr <ip>    defines the IP address to do the health check.
+
+    send-proxy   send a PROXY protocol string
+
+    via-socks4   enables outgoing health checks using upstream socks4 proxy.
+
+    ssl          opens a ciphered connection
+
+    sni <sni>    specifies the SNI to use to do health checks over SSL.
+
+    alpn <alpn>  defines which protocols to advertise with ALPN. The protocol
+                 list consists in a comma-delimited list of protocol names,
+                 for instance: "h2,http/1.1". If it is not set, the server ALPN
+                 is used.
+
+    proto <name> forces the multiplexer's protocol to use for this connection.
+                 It must be an HTTP mux protocol and it must be usable on the
+                 backend side. The list of available protocols is reported in
+                 haproxy -vv.
+
+    linger       cleanly close the connection instead of using a single RST.
+
+  Just like tcp-check health checks, it is possible to configure the connection
+  to use to perform HTTP health check. This directive should also be used to
+  describe a scenario involving several request/response exchanges, possibly on
+  different ports or with different servers.
+
+  When there are no TCP port configured on the server line neither server port
+  directive, then the first step of the http-check sequence must be to specify
+  the port with a "http-check connect".
+
+  In an http-check ruleset a 'connect' is required, it is also mandatory to start
+  the ruleset with a 'connect' rule. Purpose is to ensure admin know what they
+  do.
+
+  When a connect must start the ruleset, if may still be preceded by set-var,
+  unset-var or comment rules.
+
+  Examples :
+         # check HTTP and HTTPs services on a server.
+         # first open port 80 thanks to server line port directive, then
+         # tcp-check opens port 443, ciphered and run a request on it:
+         option httpchk
+
+         http-check connect
+         http-check send meth GET uri / ver HTTP/1.1 hdr host haproxy.1wt.eu
+         http-check expect status 200-399
+         http-check connect port 443 ssl sni haproxy.1wt.eu
+         http-check send meth GET uri / ver HTTP/1.1 hdr host haproxy.1wt.eu
+         http-check expect status 200-399
+
+         server www 10.0.0.1 check port 80
+
+  See also : "option httpchk", "http-check send", "http-check expect"
+
+
 http-check disable-on-404
   Enable a maintenance mode upon HTTP/404 response to health-checks
   May be used in sections :   defaults | frontend | listen | backend
@@ -4383,14 +4501,63 @@ http-check disable-on-404
   is used with "http-check expect", then it has precedence over it so that 404
   responses will still be considered as soft-stop.
 
-  See also : "option httpchk", "http-check expect"
+  See also : "option httpchk" and "http-check expect".
 
 
-http-check expect [!] <match> <pattern>
+http-check expect [min-recv <int>] [comment <msg>]
+                  [ok-status <st>] [error-status <st>] [tout-status <st>]
+                  [on-success <fmt>] [on-error <fmt>] [status-code <expr>]
+                  [!] <match> <pattern>
   Make HTTP health checks consider response contents or specific status codes
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
+
   Arguments :
+    comment <msg>  defines a message to report if the rule evaluation fails.
+
+    min-recv  is optional and can define the minimum amount of data required to
+              evaluate the current expect rule. If the number of received bytes
+              is under this limit, the check will wait for more data. This
+              option can be used to resolve some ambiguous matching rules or to
+              avoid executing costly regex matches on content known to be still
+              incomplete. If an exact string is used, the minimum between the
+              string length and this parameter is used. This parameter is
+              ignored if it is set to -1. If the expect rule does not match,
+              the check will wait for more data. If set to 0, the evaluation
+              result is always conclusive.
+
+    ok-status <st>     is optional and can be used to set the check status if
+                       the expect rule is successfully evaluated and if it is
+                       the last rule in the tcp-check ruleset. "L7OK", "L7OKC",
+                       "L6OK" and "L4OK" are supported and may be used to set,
+                       respectively, HCHK_STATUS_L7OK, HCHK_STATUS_L7OKCD,
+                       HCHK_STATUS_L6OK or HCHK_STATUS_L4OK success status.
+                        By default "L7OK" is used.
+
+    error-status <st>  is optional and can be used to set the check status if
+                       an error occurred during the expect rule evaluation.
+                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported and
+                       may be used to set, respectively, HCHK_STATUS_L7RSP,
+                       HCHK_STATUS_L7STS, HCHK_STATUS_L6RSP or HCHK_STATUS_L4CON
+                       error status. By default "L7RSP" is used.
+
+    tout-status <st>   is optional and can be used to set the check status if
+                       a timeout occurred during the expect rule evaluation.
+                       "L7TOUT", "L6TOUT", and "L4TOUT" are supported and may
+                       be used to set, respectively, HCHK_STATUS_L7TOUT,
+                       HCHK_STATUS_L6TOUT or HCHK_STATUS_L4TOUT timeout status.
+                       By default "L7TOUT" is used.
+
+    on-success <fmt>   is optional and can be used to customize the
+                       informational message reported in logs if the expect
+                       rule is successfully evaluated and if it is the last rule
+                       in the tcp-check ruleset. <fmt> is a log-format string.
+
+    on-error <fmt>     is optional and can be used to customize the
+                       informational message reported in logs if an error
+                       occurred during the expect rule evaluation. <fmt> is a
+                       log-format string.
+
     <match>   is a keyword indicating how to look for a specific pattern in the
               response. The keyword may be one of "status", "rstatus",
               "string", or "rstring". The keyword may be preceded by an
@@ -4398,9 +4565,10 @@ http-check expect [!] <match> <pattern>
               between the exclamation mark and the keyword. See below for more
               details on the supported keywords.
 
-    <pattern> is the pattern to look for. It may be a string or a regular
-              expression. If the pattern contains spaces, they must be escaped
-              with the usual backslash ('\').
+    <pattern> is the pattern to look for. It may be a string, a regular
+              expression or a more complex pattern with several arguments. If
+              the string pattern contains spaces, they must be escaped with the
+              usual backslash ('\').
 
   By default, "option httpchk" considers that response statuses 2xx and 3xx
   are valid, and that others are invalid. When "http-check expect" is used,
@@ -4408,11 +4576,13 @@ http-check expect [!] <match> <pattern>
   statement is supported in a backend. If a server fails to respond or times
   out, the check obviously fails. The available matches are :
 
-    status <string> : test the exact string match for the HTTP status code.
-                      A health check response will be considered valid if the
-                      response's status code is exactly this string. If the
-                      "status" keyword is prefixed with "!", then the response
-                      will be considered invalid if the status code matches.
+    status <codes> :  test the status codes found parsing <codes> string. it
+                      must be a comma-separated list of status codes or range
+                      codes. A health check response will be considered as
+                      valid if the response's status code matches any status
+                      code or is inside any range of the list. If the "status"
+                      keyword is prefixed with "!", then the response will be
+                      considered invalid if the status code matches.
 
     rstatus <regex> : test a regular expression for the HTTP status code.
                       A health check response will be considered valid if the
@@ -4420,6 +4590,25 @@ http-check expect [!] <match> <pattern>
                       "rstatus" keyword is prefixed with "!", then the response
                       will be considered invalid if the status code matches.
                       This is mostly used to check for multiple codes.
+
+    header name [ -m <meth> ] <name> [log-format]
+           [ value [ -m <meth> ] <value> [log-format] [full] ] :
+                      test the specified header pattern on the HTTP response
+                      headers. The name pattern is mandatory but the value
+                      pattern is optional. If not specified, only the header
+                      presence is verified. <meth> is the matching method,
+                      applied on the header name or the header value. Supported
+                      matching methods are "str" (exact match), "beg" (prefix
+                      match), "end" (suffix match), "sub" (substring match) or
+                      "reg" (regex match). If not specified, exact matching
+                      method is used. If the "log-format" option is used, the
+                      pattern (<name> or <value>) is evaluated as a log-format
+                      string. This option cannot be used with the regex
+                      matching method. Finally, by default, the header value is
+                      considered as comma-separated list. Each part may be
+                      tested. The "full" option may be used to test the full
+                      header line. Note that matchings are case insensitive on
+                      the header names.
 
     string <string> : test the exact string match in the HTTP response body.
                       A health check response will be considered valid if the
@@ -4449,16 +4638,21 @@ http-check expect [!] <match> <pattern>
   waste some CPU cycles, especially when regular expressions are used, and that
   it is always better to focus the checks on smaller resources.
 
-  Also "http-check expect" doesn't support HTTP keep-alive. Keep in mind that it
-  will automatically append a "Connection: close" header, meaning that this
-  header should not be present in the request provided by "option httpchk".
+  In an http-check ruleset, the last expect rule may be implicit. If no expect
+  rule is specified after the last "http-check send", an implicit expect rule
+  is defined to match on 2xx or 3xx status codes. It means this rule is also
+  defined if there is no "http-check" rule at all, when only "option httpchk"
+  is set.
 
   Last, if "http-check expect" is combined with "http-check disable-on-404",
   then this last one has precedence when the server responds with 404.
 
   Examples :
          # only accept status 200 as valid
-         http-check expect status 200
+         http-check expect status 200,201,300-310
+
+         # be sure a sessid coookie is set
+         http-check expect header name "set-cookie" value -m beg "sessid="
 
          # consider SQL errors as errors
          http-check expect ! string SQL\ Error
@@ -4469,7 +4663,70 @@ http-check expect [!] <match> <pattern>
          # check that we have a correct hexadecimal tag before /html
          http-check expect rstring <!--tag:[0-9a-f]*--></html>
 
-  See also : "option httpchk", "http-check disable-on-404"
+  See also : "option httpchk", "http-check connect", "http-check disable-on-404"
+             and "http-check send".
+
+
+http-check send [meth <method>] [uri <uri>] [ver <version>] [comment <msg>]
+                [hdr <name> <fmt>]* [body <string>]
+  Add a possible list of headers and/or a body to the request sent during HTTP
+  health checks.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+  Arguments :
+    comment <msg>  defines a message to report if the rule evaluation fails.
+
+    meth <method>  is the optional HTTP method used with the requests. When not
+                   set, the "OPTIONS" method is used, as it generally requires
+                   low server processing and is easy to filter out from the
+                   logs. Any method may be used, though it is not recommended
+                   to invent non-standard ones.
+
+    uri <uri>      is optional and set the URI referenced in the HTTP requests.
+                   it defaults to " / " which is accessible by default on almost
+                   any server, but may be changed to any other URI. Query
+                   strings are permitted.
+
+    ver <version>  is the optional HTTP version string. It defaults to
+                   "HTTP/1.0" but some servers might behave incorrectly in HTTP
+                   1.0, so turningit to HTTP/1.1 may sometimes help. Note that
+                   the Host field is mandatory in HTTP/1.1, use "hdr" argument
+                   to add it.
+
+    hdr <name> <fmt>  adds the HTTP header field whose name is specified in
+                      <name> and whose value is defined by <fmt>, which follows
+                      to the log-format rules.
+
+    body <string>  add the body defined by <string> to the request sent during
+                   HTTP health checks. If defined, the "Content-Length" header
+                   is thus automatically added to the request.
+
+  In addition to the request line defined by the "option httpchk" directive,
+  this one is the valid way to add some headers and optionally a body to the
+  request sent during HTTP health checks. If a body is defined, the associate
+  "Content-Length" header is automatically added. Thus, this header or
+  "Transfer-encoding" header should not be present in the request provided by
+  "http-check send". If so, it will be ignored. The old trick consisting to add
+  headers after the version string on the "option httpchk" line is now
+  deprecated. Note also the "Connection: close" header is still added if a
+  "http-check expect" direcive is defined independently of this directive, just
+  like the state header if the directive "http-check send-state" is defined.
+
+  Also "http-check send" doesn't support HTTP keep-alive. Keep in mind that it
+  will automatically append a "Connection: close" header, meaning that this
+  header should not be present in the request provided by "http-check send". If
+  so, it will be ignored.
+
+  Note that the Host header and the request authority, when both defined, are
+  automatically synchronized. It means when the HTTP request is sent, when a
+  Host is inserted in the request, the request authority is accordingly
+  updated. Thus, don't be surprised if the Host header value overwrites the
+  configured request authority.
+
+  Note also for now, no Host header is automatically added in HTTP/1.1 or above
+  requests. You should add it explicitly.
+
+  See also : "option httpchk", "http-check send-state" and "http-check expect".
 
 
 http-check send-state
@@ -4520,7 +4777,48 @@ http-check send-state
     >>>  X-Haproxy-Server-State: UP 2/3; name=bck/srv2; node=lb1; weight=1/2; \
            scur=13/22; qcur=0
 
-  See also : "option httpchk", "http-check disable-on-404"
+  See also : "option httpchk", "http-check disable-on-404" and
+             "http-check send".
+
+
+http-check set-var(<var-name>) <expr>
+  This operation sets the content of a variable. The variable is declared inline.
+  May be used in sections:   defaults | frontend | listen | backend
+                               yes    |    no    |   yes  |   yes
+
+  Arguments :
+    <var-name>  The name of the variable starts with an indication about its
+                scope. The scopes allowed for http-check are:
+                  "proc" : the variable is shared with the whole process.
+                  "sess" : the variable is shared with the tcp-check session.
+                  "check": the variable is declared for the lifetime of the tcp-check.
+                This prefix is followed by a name. The separator is a '.'.
+                The name may only contain characters 'a-z', 'A-Z', '0-9', '.',
+                and '-'.
+
+    <expr>      Is a sample-fetch expression potentially followed by converters.
+
+  Examples :
+        http-check set-var(check.port) int(1234)
+
+
+http-check unset-var(<var-name>)
+  Free a reference to a variable within its scope.
+  May be used in sections:   defaults | frontend | listen | backend
+                               yes    |    no    |   yes  |   yes
+
+  Arguments :
+    <var-name>  The name of the variable starts with an indication about its
+                scope. The scopes allowed for http-check are:
+                  "proc" : the variable is shared with the whole process.
+                  "sess" : the variable is shared with the tcp-check session.
+                  "check": the variable is declared for the lifetime of the tcp-check.
+                This prefix is followed by a name. The separator is a '.'.
+                The name may only contain characters 'a-z', 'A-Z', '0-9', '.',
+                and '-'.
+
+  Examples :
+        http-check unset-var(check.port)
 
 
 http-request <action> [options...] [ { if | unless } <condition> ]
@@ -5114,15 +5412,22 @@ http-request set-src <expr> [ { if | unless } <condition> ]
   This is used to set the source IP address to the value of specified
   expression. Useful when a proxy in front of HAProxy rewrites source IP, but
   provides the correct IP in a HTTP header; or you want to mask source IP for
-  privacy.
+  privacy. All subsequent calls to "src" fetch will return this value
+  (see example).
 
   Arguments :
     <expr>  Is a standard HAProxy expression formed by a sample-fetch followed
             by some converters.
 
+  See also "option forwardfor".
+
   Example:
     http-request set-src hdr(x-forwarded-for)
     http-request set-src src,ipmask(24)
+
+    # After the masking this will track connections
+    # based on the IP address with the last byte zeroed out.
+    http-request track-sc0 src
 
   When possible, set-src preserves the original source port as long as the
   address family allows it, otherwise the source port is set to 0.
@@ -7100,7 +7405,7 @@ option httpchk
 option httpchk <uri>
 option httpchk <method> <uri>
 option httpchk <method> <uri> <version>
-  Enable HTTP protocol to check on the servers health
+  Enables HTTP protocol to check on the servers health
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
   Arguments :
@@ -7117,8 +7422,7 @@ option httpchk <method> <uri> <version>
     <version> is the optional HTTP version string. It defaults to "HTTP/1.0"
               but some servers might behave incorrectly in HTTP 1.0, so turning
               it to HTTP/1.1 may sometimes help. Note that the Host field is
-              mandatory in HTTP/1.1, and as a trick, it is possible to pass it
-              after "\r\n" following the version string.
+              mandatory in HTTP/1.1, use "http-check send" directive to add it.
 
   By default, server health checks only consist in trying to establish a TCP
   connection. When "option httpchk" is specified, a complete HTTP request is
@@ -7126,19 +7430,34 @@ option httpchk <method> <uri> <version>
   considered valid, while all other ones indicate a server failure, including
   the lack of any response.
 
-  The port and interval are specified in the server configuration.
+  Combined with "http-check" directives, it is possible to customize the
+  request sent during the HTTP health checks or the matching rules on the
+  response. It is also possible to configure a send/expect sequence, just like
+  with the directive "tcp-check" for TCP health checks.
 
-  This option does not necessarily require an HTTP backend, it also works with
-  plain TCP backends. This is particularly useful to check simple scripts bound
-  to some dedicated ports using the inetd daemon.
+  The server configuration is used by default to open connections to perform
+  HTTP health checks. By it is also possible to overwrite server parameters
+  using "http-check connect" rules.
+
+  "httpchk" option does not necessarily require an HTTP backend, it also works
+  with plain TCP backends. This is particularly useful to check simple scripts
+  bound to some dedicated ports using the inetd daemon. However, it will always
+  internally relies on an HTX mutliplexer. Thus, it means the request
+  formatting and the response parsing will be strict.
+
+  Note : For a while, there was no way to add headers or body in the request
+         used for HTTP health checks. So a workaround was to hide it at the end
+         of the version string with a "\r\n" after the version. It is now
+	 deprecated. The directive "http-check send" must be used instead.
 
   Examples :
-      # Relay HTTPS traffic to Apache instance and check service availability
-      # using HTTP request "OPTIONS * HTTP/1.1" on port 80.
-      backend https_relay
-          mode tcp
-          option httpchk OPTIONS * HTTP/1.1\r\nHost:\ www
-          server apache1 192.168.1.1:443 check port 80
+        # Relay HTTPS traffic to Apache instance and check service availability
+        # using HTTP request "OPTIONS * HTTP/1.1" on port 80.
+        backend https_relay
+            mode tcp
+            option httpchk OPTIONS * HTTP/1.1
+            http-check send hdr Host www
+            server apache1 192.168.1.1:443 check port 80
 
   See also : "option ssl-hello-chk", "option smtpchk", "option mysql-check",
              "option pgsql-check", "http-check" and the "check", "port" and
@@ -7357,21 +7676,27 @@ no option log-separate-errors
 
 option logasap
 no option logasap
-  Enable or disable early logging of HTTP requests
+  Enable or disable early logging.
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    yes   |   yes  |   no
   Arguments : none
 
-  By default, HTTP requests are logged upon termination so that the total
-  transfer time and the number of bytes appear in the logs. When large objects
-  are being transferred, it may take a while before the request appears in the
-  logs. Using "option logasap", the request gets logged as soon as the server
-  sends the complete headers. The only missing information in the logs will be
-  the total number of bytes which will indicate everything except the amount
-  of data transferred, and the total time which will not take the transfer
-  time into account. In such a situation, it's a good practice to capture the
-  "Content-Length" response header so that the logs at least indicate how many
-  bytes are expected to be transferred.
+  By default, logs are emitted when all the log format variables and sample
+  fetches used in the definition of the log-format string return a value, or
+  when the session is terminated. This allows the built in log-format strings
+  to account for the transfer time, or the number of bytes in log messages.
+
+  When handling long lived connections such as large file transfers or RDP,
+  it may take a while for the request or connection to appear in the logs.
+  Using "option logasap", the log message is created as soon as the server
+  connection is established in mode tcp, or as soon as the server sends the
+  complete headers in mode http. Missing information in the logs will be the
+  total number of bytes which will only indicate the amount of data transfered
+  before the message was created and the total time which will not take the
+  remainder of the connection life or transfer time into account. For the case
+  of HTTP, it is good practice to capture the Content-Length response header
+  so that the logs at least indicate how many bytes are expected to be
+  transfered.
 
   Examples :
       listen http_proxy 0.0.0.0:80
@@ -7914,13 +8239,16 @@ option tcp-check
       In this mode, many questions may be sent and many answers may be
       analyzed.
 
-    A fifth mode can be used to insert comments in different steps of the
-    script.
+  A fifth mode can be used to insert comments in different steps of the script.
 
-    For each tcp-check rule you create, you can add a "comment" directive,
-    followed by a string. This string will be reported in the log and stderr
-    in debug mode. It is useful to make user-friendly error reporting.
-    The "comment" is of course optional.
+  For each tcp-check rule you create, you can add a "comment" directive,
+  followed by a string. This string will be reported in the log and stderr in
+  debug mode. It is useful to make user-friendly error reporting.  The
+  "comment" is of course optional.
+
+  During the execution of a health check, a variable scope is made available to
+  store data samples, using the "tcp-check set-var" operation. Freeing those
+  variable is possible using "tcp-check unset-var".
 
 
   Examples :
@@ -7957,7 +8285,7 @@ option tcp-check
          tcp-check expect rstring HTTP/1\..\ (2..|3..) comment check\ HTTP\ response
 
 
-  See also : "tcp-check expect", "tcp-check send"
+  See also : "tcp-check connect", "tcp-check expect" and "tcp-check send".
 
 
 option tcp-smart-accept
@@ -9724,10 +10052,62 @@ stick store-response <pattern> [table <table>] [{if | unless} <condition>]
              extraction.
 
 
-tcp-check connect [params*]
+tcp-check comment <string>
+  Defines a comment for the following the tcp-check rule, reported in logs if
+  it fails.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+
+  Arguments :
+    <string>  is the comment message to add in logs if the following tcp-check
+              rule fails.
+
+  It only works for connect, send and expect rules. It is useful to make
+  user-friendly error reporting.
+
+  See also : "option tcp-check", "tcp-check connect", "tcp-check send" and
+             "tcp-check expect".
+
+
+tcp-check connect [default] [port <expr>] [addr <ip>] [send-proxy] [via-socks4]
+                  [ssl] [sni <sni>] [alpn <alpn>] [linger]
+                  [proto <name>] [comment <msg>]
   Opens a new connection
   May be used in sections:   defaults | frontend | listen | backend
-                               no     |    no    |   yes  |   yes
+                               yes    |    no    |   yes  |   yes
+
+  Arguments :
+    comment <msg>  defines a message to report if the rule evaluation fails.
+
+    default      Use default options of the server line to do the health
+                 checks. The server options are used only if not redifined.
+
+    port <expr>  if not set, check port or server port is used.
+                 It tells HAProxy where to open the connection to.
+                 <port> must be a valid TCP port source integer, from 1 to
+                 65535 or an sample-fetch expression.
+
+    addr <ip>    defines the IP address to do the health check.
+
+    send-proxy   send a PROXY protocol string
+
+    via-socks4   enables outgoing health checks using upstream socks4 proxy.
+
+    ssl          opens a ciphered connection
+
+    sni <sni>    specifies the SNI to use to do health checks over SSL.
+
+    alpn <alpn>  defines which protocols to advertise with ALPN. The protocol
+                 list consists in a comma-delimited list of protocol names,
+                 for instance: "http/1.1,http/1.0" (without quotes).
+                 If it is not set, the server ALPN is used.
+
+    proto <name> forces the multiplexer's protocol to use for this connection.
+                 It must be a TCP mux protocol and it must be usable on the
+                 backend side. The list of available protocols is reported in
+                 haproxy -vv.
+
+    linger       cleanly close the connection instead of using a single RST.
 
   When an application lies on more than a single TCP port or when HAProxy
   load-balance many services in a single backend, it makes sense to probe all
@@ -9741,19 +10121,10 @@ tcp-check connect [params*]
   the ruleset with a 'connect' rule. Purpose is to ensure admin know what they
   do.
 
-  Parameters :
-    They are optional and can be used to describe how HAProxy should open and
-    use the TCP connection.
+  When a connect must start the ruleset, if may still be preceded by set-var,
+  unset-var or comment rules.
 
-    port      if not set, check port or server port is used.
-              It tells HAProxy where to open the connection to.
-              <port> must be a valid TCP port source integer, from 1 to 65535.
-
-    send-proxy   send a PROXY protocol string
-
-    ssl          opens a ciphered connection
-
-    Examples:
+  Examples :
          # check HTTP and HTTPs services on a server.
          # first open port 80 thanks to server line port directive, then
          # tcp-check opens port 443, ciphered and run a request on it:
@@ -9772,7 +10143,7 @@ tcp-check connect [params*]
 
          # check both POP and IMAP from a single server:
          option tcp-check
-         tcp-check connect port 110
+         tcp-check connect port 110 linger
          tcp-check expect string +OK\ POP3\ ready
          tcp-check connect port 143
          tcp-check expect string *\ OK\ IMAP4\ ready
@@ -9781,18 +10152,71 @@ tcp-check connect [params*]
   See also : "option tcp-check", "tcp-check send", "tcp-check expect"
 
 
-tcp-check expect [!] <match> <pattern>
+tcp-check expect [min-recv <int>] [comment <msg>]
+                 [ok-status <st>] [error-status <st>] [tout-status <st>]
+                 [on-success <fmt>] [on-error <fmt>] [status-code <expr>]
+                 [!] <match> <pattern>
   Specify data to be collected and analyzed during a generic health check
   May be used in sections:   defaults | frontend | listen | backend
-                               no     |    no    |   yes  |   yes
+                               yes    |    no    |   yes  |   yes
 
   Arguments :
+    comment <msg>  defines a message to report if the rule evaluation fails.
+
+    min-recv  is optional and can define the minimum amount of data required to
+              evaluate the current expect rule. If the number of received bytes
+              is under this limit, the check will wait for more data. This
+              option can be used to resolve some ambiguous matching rules or to
+              avoid executing costly regex matches on content known to be still
+              incomplete. If an exact string (string or binary) is used, the
+              minimum between the string length and this parameter is used.
+              This parameter is ignored if it is set to -1. If the expect rule
+              does not match, the check will wait for more data. If set to 0,
+              the evaluation result is always conclusive.
+
     <match>   is a keyword indicating how to look for a specific pattern in the
-              response. The keyword may be one of "string", "rstring" or
-              binary.
+              response. The keyword may be one of "string", "rstring", "binary" or
+              "rbinary".
               The keyword may be preceded by an exclamation mark ("!") to negate
               the match. Spaces are allowed between the exclamation mark and the
               keyword. See below for more details on the supported keywords.
+
+    ok-status <st>     is optional and can be used to set the check status if
+                       the expect rule is successfully evaluated and if it is
+                       the last rule in the tcp-check ruleset. "L7OK", "L7OKC",
+                       "L6OK" and "L4OK" are supported and may be used to set,
+                       respectively, HCHK_STATUS_L7OK, HCHK_STATUS_L7OKCD,
+                       HCHK_STATUS_L6OK or HCHK_STATUS_L4OK success status.
+                        By default "L7OK" is used.
+
+    error-status <st>  is optional and can be used to set the check status if
+                       an error occurred during the expect rule evaluation.
+                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported and
+                       may be used to set, respectively, HCHK_STATUS_L7RSP,
+                       HCHK_STATUS_L7STS, HCHK_STATUS_L6RSP or HCHK_STATUS_L4CON
+                       error status. By default "L7RSP" is used.
+
+    tout-status <st>   is optional and can be used to set the check status if
+                       a timeout occurred during the expect rule evaluation.
+                       "L7TOUT", "L6TOUT", and "L4TOUT" are supported and may
+                       be used to set, respectively, HCHK_STATUS_L7TOUT,
+                       HCHK_STATUS_L6TOUT or HCHK_STATUS_L4TOUT timeout status.
+                       By default "L7TOUT" is used.
+
+    on-success <fmt>   is optional and can be used to customize the
+                       informational message reported in logs if the expect
+                       rule is successfully evaluated and if it is the last rule
+                       in the tcp-check ruleset. <fmt> is a log-format string.
+
+    on-error <fmt>     is optional and can be used to customize the
+                       informational message reported in logs if an error
+                       occurred during the expect rule evaluation. <fmt> is a
+                       log-format string.
+
+    status-code <expr> is optional and can be used to set the check status code
+                       reported in logs, on success or on error. <expr> is a
+                       standard HAProxy expression formed by a sample-fetch
+                       followed by some converters.
 
     <pattern> is the pattern to look for. It may be a string or a regular
               expression. If the pattern contains spaces, they must be escaped
@@ -9801,7 +10225,6 @@ tcp-check expect [!] <match> <pattern>
               a series of hexadecimal digits in an even number. Each sequence of
               two digits will represent a byte. The hexadecimal digits may be
               used upper or lower case.
-
 
   The available matches are intentionally similar to their http-check cousins :
 
@@ -9826,6 +10249,15 @@ tcp-check expect [!] <match> <pattern>
                          be considered valid if the response's buffer contains
                          this exact hexadecimal string.
                          Purpose is to match data on binary protocols.
+
+    rbinary <regex> : test a regular expression on the response buffer, like
+                      "rstring". However, the response buffer is transformed
+                      into its hexadecimal form, including NUL-bytes. This
+                      allows using all regex engines to match any binary
+                      content.  The hexadecimal transformation takes twice the
+                      size of the original response. As such, the expected
+                      pattern should work on at-most half the response buffer
+                      size.
 
   It is important to note that the responses will be limited to a certain size
   defined by the global "tune.chksize" option, which defaults to 16384 bytes.
@@ -9862,13 +10294,18 @@ tcp-check expect [!] <match> <pattern>
              "tcp-check send-binary", "http-check expect", tune.chksize
 
 
-tcp-check send <data>
+tcp-check send <data> [comment <msg>] [log-format]
   Specify a string to be sent as a question during a generic health check
   May be used in sections:   defaults | frontend | listen | backend
-                               no     |    no    |   yes  |   yes
+                               yes    |    no    |   yes  |   yes
 
-    <data> : the data to be sent as a question during a generic health check
-             session. For now, <data> must be a string.
+  Arguments :
+    comment <msg>  defines a message to report if the rule evaluation fails.
+
+    log-format     specifies <data> must be evaluated a log-format string.
+
+    <data>  the data to be sent as a question during a generic health check
+            session. For now, <data> must be a string.
 
   Examples :
          # look for the redis master server
@@ -9880,19 +10317,22 @@ tcp-check send <data>
              "tcp-check send-binary", tune.chksize
 
 
-tcp-check send-binary <hexstring>
+tcp-check send-binary <hexstring> [comment <msg>] [log-format]
   Specify a hex digits string to be sent as a binary question during a raw
   tcp health check
   May be used in sections:   defaults | frontend | listen | backend
-                               no     |    no    |   yes  |   yes
+                               yes    |    no    |   yes  |   yes
 
-    <data> : the data to be sent as a question during a generic health check
-             session. For now, <data> must be a string.
-    <hexstring> : test the exact string in its hexadecimal form matches in the
-                   response buffer. A health check response will be considered
-                   valid if the response's buffer contains this exact
-                   hexadecimal string.
-                   Purpose is to send binary data to ask on binary protocols.
+  Arguments :
+    comment <msg>  defines a message to report if the rule evaluation fails.
+
+    log-format     specifies <hexstring> must be evaluated a log-format string.
+
+    <hexstring>  test the exact string in its hexadecimal form matches in the
+                 response buffer. A health check response will be considered
+                 valid if the response's buffer contains this exact hexadecimal
+                 string. Purpose is to send binary data to ask on binary
+                 protocols.
 
   Examples :
          # redis check in binary
@@ -9903,6 +10343,46 @@ tcp-check send-binary <hexstring>
 
   See also : "option tcp-check", "tcp-check connect", "tcp-check expect",
              "tcp-check send", tune.chksize
+
+
+tcp-check set-var(<var-name>) <expr>
+  This operation sets the content of a variable. The variable is declared inline.
+  May be used in sections:   defaults | frontend | listen | backend
+                               yes    |    no    |   yes  |   yes
+
+  Arguments :
+    <var-name>  The name of the variable starts with an indication about its
+                scope. The scopes allowed for tcp-check are:
+                  "proc" : the variable is shared with the whole process.
+                  "sess" : the variable is shared with the tcp-check session.
+                  "check": the variable is declared for the lifetime of the tcp-check.
+                This prefix is followed by a name. The separator is a '.'.
+                The name may only contain characters 'a-z', 'A-Z', '0-9', '.',
+                and '-'.
+
+    <expr>      Is a sample-fetch expression potentially followed by converters.
+
+  Examples :
+    tcp-check set-var(check.port) int(1234)
+
+
+tcp-check unset-var(<var-name>)
+  Free a reference to a variable within its scope.
+  May be used in sections:   defaults | frontend | listen | backend
+                               yes    |    no    |   yes  |   yes
+
+  Arguments :
+    <var-name>  The name of the variable starts with an indication about its
+                scope. The scopes allowed for tcp-check are:
+                  "proc" : the variable is shared with the whole process.
+                  "sess" : the variable is shared with the tcp-check session.
+                  "check": the variable is declared for the lifetime of the tcp-check.
+                This prefix is followed by a name. The separator is a '.'.
+                The name may only contain characters 'a-z', 'A-Z', '0-9', '.',
+                and '-'.
+
+  Examples :
+    tcp-check unset-var(check.port)
 
 
 tcp-request connection <action> [{if | unless} <condition>]
@@ -12079,18 +12559,55 @@ ca-file <cafile>
   server's certificate.
 
 check
-  This option enables health checks on the server. By default, a server is
-  always considered available. If "check" is set, the server is available when
-  accepting periodic TCP connections, to ensure that it is really able to serve
-  requests. The default address and port to send the tests to are those of the
-  server, and the default source is the same as the one defined in the
-  backend. It is possible to change the address using the "addr" parameter, the
-  port using the "port" parameter, the source address using the "source"
-  address, and the interval and timers using the "inter", "rise" and "fall"
-  parameters. The request method is define in the backend using the "httpchk",
-  "smtpchk", "mysql-check", "pgsql-check" and "ssl-hello-chk" options. Please
-  refer to those options and parameters for more information. See also
-  "no-check" option.
+  This option enables health checks on a server:
+    - when not set, no health checking is performed, and the server is always
+      considered available.
+    - when set and no other check method is configured, the server is considered
+      available when a connection can be established at the highest configured
+      transport layer. This means TCP by default, or SSL/TLS when "ssl" or
+      "check-ssl" are set, both possibly combined with connection prefixes such
+      as a PROXY protocol header when "send-proxy" or "check-send-proxy" are
+      set.
+    - when set and an application-level health check is defined, the
+      application-level exchanges are performed on top of the configured
+      transport layer and the server is considered available if all of the
+      exchanges succeed.
+
+  By default, health checks are performed on the same address and port as
+  configured on the server, using the same encapsulation parameters (SSL/TLS,
+  proxy-protocol header, etc... ). It is possible to change the destination
+  address using "addr" and the port using "port". When done, it is assumed the
+  server isn't checked on the service port, and configured encapsulation
+  parameters are not reused. One must explicitely set "check-send-proxy" to send
+  connection headers, "check-ssl" to use SSL/TLS.
+
+  When "sni" or "alpn" are set on the server line, their value is not used for
+  health checks and one must use "check-sni" or "check-alpn".
+
+  The default source address for health check traffic is the same as the one
+  defined in the backend. It can be changed with the "source" keyword.
+
+  The interval between checks can be set using the "inter" keyword, and the
+  "rise" and "fall" keywords can be used to define how many successful or
+  failed health checks are required to flag a server available or not
+  available.
+
+  Optional application-level health checks can be configured with "option
+  httpchk", "option mysql-check" "option smtpchk", "option pgsql-check",
+  "option ldap-check", or "option redis-check".
+
+  Example:
+      # simple tcp check
+      backend foo
+        server s1 192.168.0.1:80 check
+      # this does a tcp connect + tls handshake
+      backend foo
+        server s1 192.168.0.1:443 ssl check
+      # simple tcp check is enough for check success
+      backend foo
+        option tcp-check
+        tcp-check connect
+        server s1 192.168.0.1:443 ssl check
 
 check-send-proxy
   This option forces emission of a PROXY protocol line with outgoing health
@@ -12105,6 +12622,15 @@ check-alpn <protocols>
   Defines which protocols to advertise with ALPN. The protocol list consists in
   a comma-delimited list of protocol names, for instance: "http/1.1,http/1.0"
   (without quotes). If it is not set, the server ALPN is used.
+
+check-proto <name>
+  Forces the multiplexer's protocol to use for the server's health-check
+  connections. It must be compatible with the health-check type (TCP or
+  HTTP). It must also be usable on the backend side. The list of available
+  protocols is reported in haproxy -vv.
+  Idea behind this optipon is to bypass the selection of the best multiplexer's
+  protocol for health-check connections established to this server.
+  If not defined, the server one will be used, if set.
 
 check-sni <sni>
   This option allows you to specify the SNI to be used when doing health checks
@@ -12561,7 +13087,6 @@ port <port>
   set. See also the "addr" parameter.
 
 proto <name>
-
   Forces the multiplexer's protocol to use for the outgoing connections to this
   server. It must be compatible with the mode of the backend (TCP or HTTP). It
   must also be usable on the backend side. The list of available protocols is
@@ -13882,6 +14407,11 @@ crc32c([<avalanche>])
   not be used for security purposes as a 32-bit hash is trivial to break. See
   also "djb2", "sdbm", "wt6", "crc32" and the "hash-type" directive.
 
+cut_crlf
+  Cuts the string representation of the input sample on the first carriage
+  return ('\r') or newline ('\n') character found. Only the string length is
+  updated.
+
 da-csv-conv(<prop>[,<prop>*])
   Asks the DeviceAtlas converter to identify the User Agent string passed on
   input, and to emit a string made of the concatenation of the properties
@@ -13964,6 +14494,12 @@ hex
 hex2i
   Converts a hex string containing two hex digits per input byte to an
   integer. If the input value cannot be converted, then zero is returned.
+
+htonl
+  Converts the input integer value to its 32-bit binary representation in the
+  network byte order. Because sample fetches own signed 64-bit integer, when
+  this converter is used, the input integer value is first casted to an
+  unsigned 32-bit integer.
 
 http_date([<offset],[<unit>])
   Converts an integer supposed to contain a date since epoch to a string
@@ -14083,6 +14619,10 @@ ltime(<format>[,<offset>])
       # Emit two colons, one with the local time and another with ip:port
       # e.g.  20140710162350 127.0.0.1:57325
       log-format %[date,ltime(%Y%m%d%H%M%S)]\ %ci:%cp
+
+ltrim(<chars>)
+  Skips any characters from <chars> from the beginning of the string
+  representation of the input sample.
 
 map(<map_file>[,<default_value>])
 map_<match_type>(<map_file>[,<default_value>])
@@ -14272,6 +14812,10 @@ capture-res(<id>)
   See also: "declare capture", "http-request capture",
             "http-response capture", "capture.req.hdr" and
             "capture.res.hdr" (sample fetches).
+
+rtrim(<chars>)
+  Skips any characters from <chars> from the end of the string representation
+  of the input sample.
 
 sdbm([<avalanche>])
   Hashes a binary input sample into an unsigned 32-bit quantity using the SDBM
@@ -14514,9 +15058,13 @@ upper
   sample fetch function or after a transformation keyword returning a string
   type. The result is of type string.
 
-url_dec
-  Takes an url-encoded string provided as input and returns the decoded
-  version as output. The input and the output are of type string.
+url_dec([<in_form>])
+  Takes an url-encoded string provided as input and returns the decoded version
+  as output. The input and the output are of type string. If the <in_form>
+  argument is set to a non-zero integer value, the input string is assumed to
+  be part of a form or query string and the '+' character will be turned into a
+  space (' '). Otherwise this will only happen after a question mark indicating
+  a query string ('?').
 
 ungrpc(<field_number>,[<field_type>])
   This extracts the protocol buffers message field in raw mode of an input binary
@@ -15123,11 +15671,13 @@ bc_http_major : integer
 
 be_id : integer
   Returns an integer containing the current backend's id. It can be used in
-  frontends with responses to check which backend processed the request.
+  frontends with responses to check which backend processed the request. It can
+  also be used in a tcp-check or an http-check ruleset.
 
 be_name : string
   Returns a string containing the current backend's name. It can be used in
-  frontends with responses to check which backend processed the request.
+  frontends with responses to check which backend processed the request. It can
+  also be used in a tcp-check or an http-check ruleset.
 
 dst : ip
   This is the destination IPv4 address of the connection on the client side,
@@ -15718,12 +16268,12 @@ src_updt_conn_cnt([<table>]) : integer
 srv_id : integer
   Returns an integer containing the server's id when processing the response.
   While it's almost only used with ACLs, it may be used for logging or
-  debugging.
+  debugging. It can also be used in a tcp-check or an http-check ruleset.
 
 srv_name : string
   Returns a string containing the server's name when processing the response.
   While it's almost only used with ACLs, it may be used for logging or
-  debugging.
+  debugging. It can also be used in a tcp-check or an http-check ruleset.
 
 7.3.4. Fetching samples at Layer 5
 ----------------------------------
@@ -15754,11 +16304,13 @@ future information. Those generally include the results of SSL negotiations.
 ssl_bc : boolean
   Returns true when the back connection was made via an SSL/TLS transport
   layer and is locally deciphered. This means the outgoing connection was made
-  other a server with the "ssl" option.
+  other a server with the "ssl" option. It can be used in a tcp-check or an
+  http-check ruleset.
 
 ssl_bc_alg_keysize : integer
   Returns the symmetric cipher key size supported in bits when the outgoing
-  connection was made over an SSL/TLS transport layer.
+  connection was made over an SSL/TLS transport layer. It can be used in a
+  tcp-check or an http-check ruleset.
 
 ssl_bc_alpn : string
   This extracts the Application Layer Protocol Negotiation field from an
@@ -15769,21 +16321,25 @@ ssl_bc_alpn : string
   not advertised unless the "alpn" keyword on the "server" line specifies a
   protocol list. Also, nothing forces the server to pick a protocol from this
   list, any other one may be requested. The TLS ALPN extension is meant to
-  replace the TLS NPN extension. See also "ssl_bc_npn".
+  replace the TLS NPN extension. See also "ssl_bc_npn". It can be used in a
+  tcp-check or an http-check ruleset.
 
 ssl_bc_cipher : string
   Returns the name of the used cipher when the outgoing connection was made
-  over an SSL/TLS transport layer.
+  over an SSL/TLS transport layer. It can be used in a tcp-check or an
+  http-check ruleset.
 
 ssl_bc_client_random : binary
   Returns the client random of the back connection when the incoming connection
   was made over an SSL/TLS transport layer. It is useful to to decrypt traffic
   sent using ephemeral ciphers. This requires OpenSSL >= 1.1.0, or BoringSSL.
+  It can be used in a tcp-check or an http-check ruleset.
 
 ssl_bc_is_resumed : boolean
   Returns true when the back connection was made over an SSL/TLS transport
   layer and the newly created SSL session was resumed using a cached
-  session or a TLS ticket.
+  session or a TLS ticket. It can be used in a tcp-check or an http-check
+  ruleset.
 
 ssl_bc_npn : string
   This extracts the Next Protocol Negotiation field from an outgoing connection
@@ -15793,36 +16349,42 @@ ssl_bc_npn : string
   the TLS NPN extension is not advertised unless the "npn" keyword on the
   "server" line specifies a protocol list. Also, nothing forces the server to
   pick a protocol from this list, any other one may be used. Please note that
-  the TLS NPN extension was replaced with ALPN.
+  the TLS NPN extension was replaced with ALPN. It can be used in a tcp-check
+  or an http-check ruleset.
 
 ssl_bc_protocol : string
   Returns the name of the used protocol when the outgoing connection was made
-  over an SSL/TLS transport layer.
+  over an SSL/TLS transport layer. It can be used in a tcp-check or an
+  http-check ruleset.
 
 ssl_bc_unique_id : binary
   When the outgoing connection was made over an SSL/TLS transport layer,
   returns the TLS unique ID as defined in RFC5929 section 3. The unique id
-  can be encoded to base64 using the converter: "ssl_bc_unique_id,base64".
+  can be encoded to base64 using the converter: "ssl_bc_unique_id,base64". It
+  can be used in a tcp-check or an http-check ruleset.
 
 ssl_bc_server_random : binary
   Returns the server random of the back connection when the incoming connection
   was made over an SSL/TLS transport layer. It is useful to to decrypt traffic
   sent using ephemeral ciphers. This requires OpenSSL >= 1.1.0, or BoringSSL.
+  It can be used in a tcp-check or an http-check ruleset.
 
 ssl_bc_session_id : binary
   Returns the SSL ID of the back connection when the outgoing connection was
   made over an SSL/TLS transport layer. It is useful to log if we want to know
-  if session was reused or not.
+  if session was reused or not. It can be used in a tcp-check or an http-check
+  ruleset.
 
 ssl_bc_session_key : binary
   Returns the SSL session master key of the back connection when the outgoing
   connection was made over an SSL/TLS transport layer. It is useful to decrypt
   traffic sent using ephemeral ciphers. This requires OpenSSL >= 1.1.0, or
-  BoringSSL.
+  BoringSSL. It can be used in a tcp-check or an http-check ruleset.
 
 ssl_bc_use_keysize : integer
   Returns the symmetric cipher key size used in bits when the outgoing
-  connection was made over an SSL/TLS transport layer.
+  connection was made over an SSL/TLS transport layer. It can be used in a
+  tcp-check or an http-check ruleset.
 
 ssl_c_ca_err : integer
   When the incoming connection was made over an SSL/TLS transport layer,
@@ -16972,7 +17534,160 @@ url32+src : binary
   the source address family. This can be used to track per-IP, per-URL counters.
 
 
-7.3.7. Fetching samples for developers
+7.3.7. Fetching health-check samples
+-------------------------------------
+
+This set of sample fetch methods may be called from an health-check execution
+context. It was introduced in the version 2.2. The following sample fetches are
+placed in the dedicated scope "check". Other sample fetches may also be called
+when an health-check is performed if it makes sense and if the sample fetch was
+adapted to be called in this context.
+
+check.len : integer
+  Returns an integer value corresponding to the number of bytes present in the
+  check input buffer, containing the data received from the server. This can be
+  called from a tcp-check expect rule, or eventually from a set-var rule after
+  an expect rule and before a send rule (check input buffer is filled on
+  tcp-check expect rules and reset on tcp-check send rules).
+
+check.payload(<offset>,<length>) : binary
+  This extracts a binary block of <length> bytes and starting at byte <offset>
+  in the check input buffer, containing data received from the server. As a
+  special case, if the <length> argument is zero, then the whole buffer from
+  <offset> to the end is extracted. This can be called from a tcp-check expect
+  rule, or eventually from a set-var rule after an expect rule and before a
+  send rule (check input buffer is filled on tcp-check expect rules and reset
+  on tcp-check send rules).
+
+check.payload_lv(<offset1>,<length>[,<offset2>]) : binary
+  This extracts a binary block whose size is specified at <offset1> for
+  <length> bytes, and which starts at <offset2> if specified or just after the
+  length in the check input buffer, containing data received from the
+  server. The <offset2> parameter also supports relative offsets if prepended
+  with a '+' or '-' sign. This can be called from a tcp-check expect rule, or
+  eventually from a set-var rule after an expect rule and before a send rule
+  (check input buffer is filled on tcp-check expect rules and reset on
+  tcp-check send rules).
+
+check.body : binary
+  Returns the available body of the HTTP response in the context of a
+  http-check health check as a block of data.
+
+check.body_param([<name>) : string
+  Assumes the body of the HTTP response in the context of a http-check health
+  check is url-encoded. This extracts the first occurrence of the parameter
+  <name> in the body, which ends before '&'. The parameter name is
+  case-sensitive. If no name is given, any parameter will match, and the first
+  one will be returned. The result is a string corresponding to the value of
+  the parameter <name> as presented in the request body (no URL decoding is
+  performed).
+
+check.body_len : integer
+  Returns the length in bytes of the available body of the HTTP response in the
+  context of a http-check health check. It may be lower than the advertised
+  length if the body is larger than the buffer.
+
+check.body_size : integer
+  Returns the advertised length of the HTTP response's body in bytes in the
+  context of a http-check health check. It will represent the advertised
+  Content-Length header, or the size of the available body in case of chunked
+  encoding.
+
+check.cook([<name>]) : string
+  Extracts the last occurrence of the cookie name <name> on a "Set-Cookie"
+  header line from the HTTP response in the context of a http-check health
+  check, and returns its value as string. If no name is specified, the first
+  cookie value is returned.
+
+check.cook_cnt([<name>]) : integer
+  Returns an integer value representing the number of occurrences of the cookie
+  <name> in the HTTP response in the context of a http-check health check, or
+  all cookies if <name> is not specified.
+
+check.cook_val([<name>]) : integer
+  Extracts the last occurrence of the cookie name <name> on a "Set-Cookie"
+  header line from the HTTP response in the context of a http-check health
+  check, and converts its value to an integer which is returned. If no name is
+  specified, the first cookie value is returned.
+
+check.fhdr(<name>[,<occ>]) : string
+  Extracts the last occurrence of header <name> in an HTTP response in the
+  context of a http-check health check. Optionally, a specific occurrence might
+  be specified as a position number.  Positive values indicate a position from
+  the first occurrence, with 1 being the first one. Negative values indicate
+  positions relative to the last one, with -1 being the last one. It differs
+  from check.hdr() in that any commas present in the value are returned and are
+  not used as delimiters.
+
+check.fhdr_cnt([<name>]) : integer
+  Returns an integer value representing the number of occurrences of response
+  header field name <name>, or the total number of header fields if <name> is
+  not specified, in the context of a http-check health check. Contrary to its
+  check.hdr_cnt() cousin, this function returns the number of full line headers
+  and does not stop on commas.
+
+check.hdr([<name>[,<occ>]]) : string
+
+  Extracts the last occurrence of header <name> in an HTTP response in the
+  context of a http-check health check. Optionally, a specific occurrence might
+  be specified as a position number.  Positive values indicate a position from
+  the first occurrence, with 1 being the first one. Negative values indicate
+  positions relative to the last one, with -1 being the last one. A typical use
+  is with the X-Forwarded-For header once converted to IP, associated with an
+  IP stick-table. The function considers any comma as a delimiter for distinct
+  values. If full-line headers are desired instead, use check.fhdr(). Please
+  carefully check RFC7231 to know how certain headers are supposed to be
+  parsed. Also, some of them are case insensitive (e.g. Connection).
+
+check.hdr_cnt([<name>]) : integer
+  Returns an integer value representing the number of occurrences of response
+  header field name <name>, or the total number of header field values if
+  <name> is not specified, in the context of a http-check health check. It is
+  important to remember that one header line may count as several headers if it
+  has several values. The function considers any comma as a delimiter for
+  distinct values. If full-line headers are desired instead, check.fhdr_cnt()
+  should be used instead. See "check.hdr" for more information on header
+  matching.
+
+check.hdr_ip([<name>[,<occ>]]) : ip
+  Extracts the last occurrence of header <name> in an HTTP response in the
+  context of a http-check health check, converts it to an IPv4 or IPv6 address
+  and returns this address. If <name> is omitted, every value of every header
+  is checked. Optionally, a specific occurrence might be specified as a
+  position number. Positive values indicate a position from the first
+  occurrence, with 1 being the first one. Negative values indicate positions
+  relative to the last one, with -1 being the last one. A typical use is with
+  the X-Forwarded-For and X-Client-IP headers.
+
+check.hdr_val([<name>[,<occ>]]) : integer
+  Extracts the last occurrence of header <name> in an HTTP response in the
+  context of a http-check health check, and converts it to an integer value. If
+  <name> is omitted, every value of every header is checked.  Optionally, a
+  specific occurrence might be specified as a position number.  Positive values
+  indicate a position from the first occurrence, with 1 being the first
+  one. Negative values indicate positions relative to the last one, with -1
+  being the last one. A typical use is with the X-Forwarded-For header.
+
+check.hdrs : string
+  Returns the headers in the HTTP response in the context of a http-check
+  health check as string including the last empty line separating headers from
+  the response body. The last empty line can be used to detect a truncated
+  header block.
+
+check.hdrs_bin : binary
+  Returns the headers in the HTTP response in the context of a http-check
+  health check in preparsed binary form.
+
+check.status : integer
+  Returns an integer containing the HTTP status code of the HTTP response in
+  the context of a http-check health check, for example, 302.
+
+check.ver : string (deprecated)
+  Returns the version string from the HTTP response in the context of a
+  http-check health check, for example "1.1".
+
+
+7.3.8. Fetching samples for developers
 ---------------------------------------
 
 This set of sample fetch methods is reserved to developers and must never be
@@ -17753,6 +18468,7 @@ Please refer to the table below for currently defined variables :
   | H | %Tr  | Tr (response time)                            | numeric     |
   |   | %Ts  | timestamp                                     | numeric     |
   |   | %Tt  | Tt                                            | numeric     |
+  |   | %Tu  | Tu                                            | numeric     |
   |   | %Tw  | Tw                                            | numeric     |
   |   | %U   | bytes_uploaded       (from client to server)  | numeric     |
   |   | %ac  | actconn                                       | numeric     |
@@ -17920,6 +18636,7 @@ Timings events in HTTP mode:
       : Th   Ti   TR   Tw   Tc   Tr   Td : Ti   ...
       :<---- Tq ---->:                   :
       :<-------------- Tt -------------->:
+      :<--        -----Tu--------------->:
                 :<--------- Ta --------->:
 
 Timings events in TCP mode:
@@ -18015,6 +18732,15 @@ Timings events in TCP mode:
     Timers with "-1" values have to be excluded from this equation. In TCP
     mode, "Ti", "Tq" and "Tr" have to be excluded too. Note that "Tt" can never
     be negative and that for HTTP, Tt is simply equal to (Th+Ti+Ta).
+
+  - Tu: total estimated time as seen from client, between the moment the proxy
+    accepted it and the moment both ends were closed, without idle time.
+    This is useful to roughly measure end-to-end time as a user would see it,
+    without idle time pollution from keep-alive time between requests. This
+    timer in only an estimation of time seen by user as it assumes network
+    latency is the same in both directions. The exception is when the "logasap"
+    option is specified. In this case, it only equals (Th+TR+Tw+Tc+Tr), and is
+    prefixed with a '+' sign.
 
 These timers provide precious indications on trouble causes. Since the TCP
 protocol defines retransmit delays of 3, 6, 12... seconds, we know for sure

@@ -167,6 +167,7 @@ static struct {
 	char *crt_base;             /* base directory path for certificates */
 	char *ca_base;              /* base directory path for CAs and CRLs */
 	char *issuers_chain_path;   /* from "issuers-chain-path" */
+	int  skip_self_issued_ca;
 
 	int  async;                 /* whether we use ssl async mode */
 
@@ -175,6 +176,9 @@ static struct {
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
 	char *listen_default_ciphersuites;
 	char *connect_default_ciphersuites;
+#endif
+#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+	char *listen_default_curves;
 #endif
 	int listen_default_ssloptions;
 	int connect_default_ssloptions;
@@ -3823,7 +3827,7 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 		for (i = 0; i < sk_X509_num(find_chain); i++) {
 			ca = sk_X509_value(find_chain, i);
 			/* skip self issued (Root CA) */
-			if (!X509_NAME_cmp(X509_get_subject_name(ca), X509_get_issuer_name(ca)))
+			if (global_ssl.skip_self_issued_ca && !X509_NAME_cmp(X509_get_subject_name(ca), X509_get_issuer_name(ca)))
 				continue;
 			/*
 			   SSL_CTX_add1_chain_cert could be used with openssl >= 1.0.2
@@ -5921,10 +5925,8 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 			return cfgerr;
 		}
 	}
-	if (srv->use_ssl)
+	if (srv->use_ssl == 1)
 		srv->xprt = &ssl_sock;
-	if (srv->check.use_ssl)
-		srv->check.xprt = &ssl_sock;
 
 	ctx = SSL_CTX_new(SSLv23_client_method());
 	if (!ctx) {
@@ -8466,8 +8468,13 @@ smp_fetch_ssl_x_key_alg(const struct arg *args, struct sample *smp, const char *
 static int
 smp_fetch_ssl_fc(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = (conn && conn->xprt == &ssl_sock);
@@ -8499,10 +8506,16 @@ smp_fetch_ssl_fc_has_sni(const struct arg *args, struct sample *smp, const char 
 static int
 smp_fetch_ssl_fc_is_resumed(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
-	struct ssl_sock_ctx *ctx = conn ? conn->xprt_ctx : NULL;
+	struct connection *conn;
+	struct ssl_sock_ctx *ctx;
 
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+
+	ctx = conn ? conn->xprt_ctx : NULL;
 
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = (conn && conn->xprt == &ssl_sock) &&
@@ -8518,9 +8531,14 @@ smp_fetch_ssl_fc_is_resumed(const struct arg *args, struct sample *smp, const ch
 static int
 smp_fetch_ssl_fc_cipher(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	struct ssl_sock_ctx *ctx;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
@@ -8546,10 +8564,15 @@ smp_fetch_ssl_fc_cipher(const struct arg *args, struct sample *smp, const char *
 static int
 smp_fetch_ssl_fc_alg_keysize(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	struct ssl_sock_ctx *ctx;
 	int sint;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
@@ -8572,9 +8595,14 @@ smp_fetch_ssl_fc_alg_keysize(const struct arg *args, struct sample *smp, const c
 static int
 smp_fetch_ssl_fc_use_keysize(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	struct ssl_sock_ctx *ctx;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
@@ -8601,8 +8629,12 @@ smp_fetch_ssl_fc_npn(const struct arg *args, struct sample *smp, const char *kw,
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_STR;
 
-	conn = (kw[4] != 'b' ) ? objt_conn(smp->sess->origin) :
-	    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
 	ctx = conn->xprt_ctx;
@@ -8631,8 +8663,11 @@ smp_fetch_ssl_fc_alpn(const struct arg *args, struct sample *smp, const char *kw
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_STR;
 
-	conn = (kw[4] != 'b' ) ? objt_conn(smp->sess->origin) :
-	    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
@@ -8658,9 +8693,14 @@ smp_fetch_ssl_fc_alpn(const struct arg *args, struct sample *smp, const char *kw
 static int
 smp_fetch_ssl_fc_protocol(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	struct ssl_sock_ctx *ctx;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
@@ -8686,14 +8726,19 @@ smp_fetch_ssl_fc_protocol(const struct arg *args, struct sample *smp, const char
 static int
 smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	SSL_SESSION *ssl_sess;
 	struct ssl_sock_ctx *ctx;
 	unsigned int len = 0;
 
 	smp->flags = SMP_F_CONST;
 	smp->data.type = SMP_T_BIN;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
@@ -8704,7 +8749,7 @@ smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const ch
 		return 0;
 
 	smp->data.u.str.area = (char *)SSL_SESSION_get_id(ssl_sess, &len);
-	if (!smp->data.u.str.area || !smp->data.u.str.data)
+	if (!smp->data.u.str.area || !len)
 		return 0;
 
 	smp->data.u.str.data = len;
@@ -8717,10 +8762,15 @@ smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const ch
 static int
 smp_fetch_ssl_fc_random(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                           smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	struct buffer *data;
 	struct ssl_sock_ctx *ctx;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
@@ -8748,11 +8798,16 @@ smp_fetch_ssl_fc_random(const struct arg *args, struct sample *smp, const char *
 static int
 smp_fetch_ssl_fc_session_key(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	SSL_SESSION *ssl_sess;
 	struct buffer *data;
 	struct ssl_sock_ctx *ctx;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
 		return 0;
@@ -8901,11 +8956,16 @@ smp_fetch_ssl_fc_cl_str(const struct arg *args, struct sample *smp, const char *
 static int
 smp_fetch_ssl_fc_unique_id(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct connection *conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
-	                                    smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
+	struct connection *conn;
 	int finished_len;
 	struct buffer *finished_trash;
 	struct ssl_sock_ctx *ctx;
+
+	if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		conn = (kw[4] != 'b') ? cs_conn(__objt_check(smp->sess->origin)->cs) : NULL;
+	else
+		conn = (kw[4] != 'b') ? objt_conn(smp->sess->origin) :
+			smp->strm ? cs_conn(objt_cs(smp->strm->si[1].end)) : NULL;
 
 	smp->flags = 0;
 	if (!conn || !conn->xprt_ctx || conn->xprt != &ssl_sock)
@@ -9453,39 +9513,45 @@ static int bind_parse_npn(char **args, int cur_arg, struct proxy *px, struct bin
 	return ssl_bind_parse_npn(args, cur_arg, px, &conf->ssl_conf, err);
 }
 
-/* parse the "alpn" bind keyword */
-static int ssl_bind_parse_alpn(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
+
+/* Parses a alpn string and converts it to the right format for the SSL api */
+int ssl_sock_parse_alpn(char *arg, char **alpn_str, int *alpn_len, char **err)
 {
-#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
-	char *p1, *p2;
+	char *p1, *p2, *alpn = NULL;
+	int len, ret = 0;
 
-	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing the comma-delimited ALPN protocol suite", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
+	*alpn_str = NULL;
+	*alpn_len = 0;
+
+	if (!*arg) {
+		memprintf(err, "missing the comma-delimited ALPN protocol suite");
+		goto error;
 	}
-
-	free(conf->alpn_str);
 
 	/* the ALPN string is built as a suite of (<len> <name>)*,
 	 * so we reuse each comma to store the next <len> and need
 	 * one more for the end of the string.
 	 */
-	conf->alpn_len = strlen(args[cur_arg + 1]) + 1;
-	conf->alpn_str = calloc(1, conf->alpn_len + 1);
-	memcpy(conf->alpn_str + 1, args[cur_arg + 1], conf->alpn_len);
+	len  = strlen(arg) + 1;
+	alpn = calloc(1, len+1);
+	if (!alpn) {
+		memprintf(err, "'%s' : out of memory", arg);
+		goto error;
+	}
+	memcpy(alpn+1, arg, len);
 
 	/* replace commas with the name length */
-	p1 = conf->alpn_str;
+	p1 = alpn;
 	p2 = p1 + 1;
 	while (1) {
-		p2 = memchr(p1 + 1, ',', conf->alpn_str + conf->alpn_len - (p1 + 1));
+		p2 = memchr(p1 + 1, ',', alpn + len - (p1 + 1));
 		if (!p2)
 			p2 = p1 + 1 + strlen(p1 + 1);
 
 		if (p2 - (p1 + 1) > 255) {
 			*p2 = '\0';
-			memprintf(err, "'%s' : ALPN protocol name too long : '%s'", args[cur_arg], p1 + 1);
-			return ERR_ALERT | ERR_FATAL;
+			memprintf(err, "ALPN protocol name too long : '%s'", p1 + 1);
+			goto error;
 		}
 
 		*p1 = p2 - (p1 + 1);
@@ -9496,7 +9562,31 @@ static int ssl_bind_parse_alpn(char **args, int cur_arg, struct proxy *px, struc
 
 		*(p2++) = '\0';
 	}
-	return 0;
+
+	*alpn_str = alpn;
+	*alpn_len = len;
+
+  out:
+	return ret;
+
+  error:
+	free(alpn);
+	ret = ERR_ALERT | ERR_FATAL;
+	goto out;
+}
+
+/* parse the "alpn" bind keyword */
+static int ssl_bind_parse_alpn(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
+{
+#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
+	int ret;
+
+	free(conf->alpn_str);
+
+	ret = ssl_sock_parse_alpn(args[cur_arg + 1], &conf->alpn_str, &conf->alpn_len, err);
+	if (ret)
+		memprintf(err, "'%s' : %s", args[cur_arg], *err);
+	return ret;
 #else
 	memprintf(err, "'%s' : library does not support TLS ALPN extension", args[cur_arg]);
 	return ERR_ALERT | ERR_FATAL;
@@ -9516,6 +9606,10 @@ static int bind_parse_ssl(char **args, int cur_arg, struct proxy *px, struct bin
 
 	if (global_ssl.listen_default_ciphers && !conf->ssl_conf.ciphers)
 		conf->ssl_conf.ciphers = strdup(global_ssl.listen_default_ciphers);
+#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+	if (global_ssl.listen_default_curves && !conf->ssl_conf.curves)
+		conf->ssl_conf.curves = strdup(global_ssl.listen_default_curves);
+#endif
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
 	if (global_ssl.listen_default_ciphersuites && !conf->ssl_conf.ciphersuites)
 		conf->ssl_conf.ciphersuites = strdup(global_ssl.listen_default_ciphersuites);
@@ -9763,9 +9857,9 @@ static int srv_parse_npn(char **args, int *cur_arg, struct proxy *px, struct ser
 static int srv_parse_alpn(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
 #ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
-	char *p1, *p2;
 	char **alpn_str;
 	int *alpn_len;
+	int ret;
 
 	if (*args[*cur_arg] == 'c') {
 		alpn_str = &newsrv->check.alpn_str;
@@ -9775,44 +9869,12 @@ static int srv_parse_alpn(char **args, int *cur_arg, struct proxy *px, struct se
 		alpn_len = &newsrv->ssl_ctx.alpn_len;
 
 	}
-	if (!*args[*cur_arg + 1]) {
-		memprintf(err, "'%s' : missing the comma-delimited ALPN protocol suite", args[*cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
 
 	free(*alpn_str);
-
-	/* the ALPN string is built as a suite of (<len> <name>)*,
-	 * so we reuse each comma to store the next <len> and need
-	 * one more for the end of the string.
-	 */
-	*alpn_len = strlen(args[*cur_arg + 1]) + 1;
-	*alpn_str = calloc(1, *alpn_len + 1);
-	memcpy(*alpn_str + 1, args[*cur_arg + 1], *alpn_len);
-
-	/* replace commas with the name length */
-	p1 = *alpn_str;
-	p2 = p1 + 1;
-	while (1) {
-		p2 = memchr(p1 + 1, ',', *alpn_str + *alpn_len - (p1 + 1));
-		if (!p2)
-			p2 = p1 + 1 + strlen(p1 + 1);
-
-		if (p2 - (p1 + 1) > 255) {
-			*p2 = '\0';
-			memprintf(err, "'%s' : ALPN protocol name too long : '%s'", args[*cur_arg], p1 + 1);
-			return ERR_ALERT | ERR_FATAL;
-		}
-
-		*p1 = p2 - (p1 + 1);
-		p1 = p2;
-
-		if (!*p2)
-			break;
-
-		*(p2++) = '\0';
-	}
-	return 0;
+	ret = ssl_sock_parse_alpn(args[*cur_arg + 1], alpn_str, alpn_len, err);
+	if (ret)
+		memprintf(err, "'%s' : %s", args[*cur_arg], *err);
+	return ret;
 #else
 	memprintf(err, "'%s' : library does not support TLS ALPN extension", args[*cur_arg]);
 	return ERR_ALERT | ERR_FATAL;
@@ -9948,7 +10010,7 @@ static int srv_parse_crt(char **args, int *cur_arg, struct proxy *px, struct ser
 /* parse the "no-check-ssl" server keyword */
 static int srv_parse_no_check_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
-	newsrv->check.use_ssl = 0;
+	newsrv->check.use_ssl = -1;
 	free(newsrv->ssl_ctx.ciphers);
 	newsrv->ssl_ctx.ciphers = NULL;
 	newsrv->ssl_ctx.options &= ~global_ssl.connect_default_ssloptions;
@@ -9975,7 +10037,7 @@ static int srv_parse_no_send_proxy_cn(char **args, int *cur_arg, struct proxy *p
 /* parse the "no-ssl" server keyword */
 static int srv_parse_no_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
-	newsrv->use_ssl = 0;
+	newsrv->use_ssl = -1;
 	free(newsrv->ssl_ctx.ciphers);
 	newsrv->ssl_ctx.ciphers = NULL;
 	return 0;
@@ -10050,6 +10112,16 @@ static int srv_parse_ssl(char **args, int *cur_arg, struct proxy *px, struct ser
 	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
 		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
 #endif
+	newsrv->ssl_ctx.options |= global_ssl.connect_default_ssloptions;
+	newsrv->ssl_ctx.methods.flags |= global_ssl.connect_default_sslmethods.flags;
+
+	if (!newsrv->ssl_ctx.methods.min)
+		newsrv->ssl_ctx.methods.min = global_ssl.connect_default_sslmethods.min;
+
+	if (!newsrv->ssl_ctx.methods.max)
+		newsrv->ssl_ctx.methods.max = global_ssl.connect_default_sslmethods.max;
+
+
 	return 0;
 }
 
@@ -10188,6 +10260,15 @@ static int ssl_parse_global_ca_crt_base(char **args, int section_type, struct pr
 		return -1;
 	}
 	*target = strdup(args[1]);
+	return 0;
+}
+
+/* parse the "ssl-skip-self-issued-ca" keyword in global section.  */
+static int ssl_parse_skip_self_issued_ca(char **args, int section_type, struct proxy *curpx,
+					 struct proxy *defpx, const char *file, int line,
+					 char **err)
+{
+	global_ssl.skip_self_issued_ca = 1;
 	return 0;
 }
 
@@ -10493,6 +10574,31 @@ static int ssl_parse_global_ciphersuites(char **args, int section_type, struct p
 }
 #endif
 
+#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+/*
+ * parse the "ssl-default-bind-curves" keyword in a global section.
+ * Returns <0 on alert, >0 on warning, 0 on success.
+ */
+static int ssl_parse_global_curves(char **args, int section_type, struct proxy *curpx,
+                                   struct proxy *defpx, const char *file, int line,
+				   char **err)
+{
+	char **target;
+	target = &global_ssl.listen_default_curves;
+
+	if (too_many_args(1, args, err, NULL))
+		return -1;
+
+	if (*(args[1]) == 0) {
+		memprintf(err, "global statement '%s' expects a curves suite as an arguments.", args[0]);
+		return -1;
+	}
+
+	free(*target);
+	*target = strdup(args[1]);
+	return 0;
+}
+#endif
 /* parse various global tune.ssl settings consisting in positive integers.
  * Returns <0 on alert, >0 on warning, 0 on success.
  */
@@ -11413,6 +11519,24 @@ static int cli_parse_add_crtlist(char **args, char *payload, struct appctx *appc
 		goto error;
 	}
 
+	if (eb_gettag(crtlist->entries.b[EB_RGHT])) {
+		char *slash;
+
+		slash = strrchr(cert_path, '/');
+		if (!slash) {
+			memprintf(&err, "'%s' is a directory, certificate path '%s' must contain the directory path", (char *)crtlist->node.key, cert_path);
+			goto error;
+		}
+		/* temporary replace / by 0 to do an strcmp */
+		*slash = '\0';
+		if (strcmp(cert_path, (char*)crtlist->node.key) != 0) {
+			*slash = '/';
+			memprintf(&err, "'%s' is a directory, certificate path '%s' must contain the directory path", (char *)crtlist->node.key, cert_path);
+			goto error;
+		}
+		*slash = '/';
+	}
+
 	if (*cert_path != '/' && global_ssl.crt_base) {
 		if ((strlen(global_ssl.crt_base) + 1 + strlen(cert_path)) > MAXPATHLEN) {
 			memprintf(&err, "'%s' : path too long", cert_path);
@@ -11442,6 +11566,12 @@ static int cli_parse_add_crtlist(char **args, char *payload, struct appctx *appc
 	inserted = ebpt_insert(&crtlist->entries, &entry->node);
 	if (inserted != &entry->node) {
 		memprintf(&err, "file already exists in this directory!");
+		goto error;
+	}
+
+	/* this is supposed to be a directory (EB_ROOT_UNIQUE), so no ssl_conf are allowed */
+	if ((entry->ssl_conf || entry->filters) && eb_gettag(crtlist->entries.b[EB_RGHT])) {
+		memprintf(&err, "this is a directory, SSL configuration and filters are not allowed");
 		goto error;
 	}
 
@@ -12046,7 +12176,7 @@ static int cli_io_handler_commit_cert(struct appctx *appctx)
 
 				/* delete the old sni_ctx, the old ckch_insts and the ckch_store */
 				list_for_each_entry_safe(ckchi, ckchis, &old_ckchs->ckch_inst, by_ckchs) {
-					struct bind_conf *bind_conf = ckchi->bind_conf;
+					struct bind_conf __maybe_unused *bind_conf = ckchi->bind_conf;
 
 					HA_RWLOCK_WRLOCK(SNI_LOCK, &bind_conf->sni_lock);
 					ckch_inst_free(ckchi);
@@ -12973,6 +13103,7 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 #ifndef OPENSSL_NO_ENGINE
 	{ CFG_GLOBAL, "ssl-engine",  ssl_parse_global_ssl_engine },
 #endif
+	{ CFG_GLOBAL, "ssl-skip-self-issued-ca", ssl_parse_skip_self_issued_ca },
 	{ CFG_GLOBAL, "tune.ssl.cachesize", ssl_parse_global_int },
 #ifndef OPENSSL_NO_DH
 	{ CFG_GLOBAL, "tune.ssl.default-dh-param", ssl_parse_global_default_dh },
@@ -12984,6 +13115,9 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 	{ CFG_GLOBAL, "tune.ssl.capture-cipherlist-size", ssl_parse_global_capture_cipherlist },
 	{ CFG_GLOBAL, "ssl-default-bind-ciphers", ssl_parse_global_ciphers },
 	{ CFG_GLOBAL, "ssl-default-server-ciphers", ssl_parse_global_ciphers },
+#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+	{ CFG_GLOBAL, "ssl-default-bind-curves", ssl_parse_global_curves },
+#endif
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
 	{ CFG_GLOBAL, "ssl-default-bind-ciphersuites", ssl_parse_global_ciphersuites },
 	{ CFG_GLOBAL, "ssl-default-server-ciphersuites", ssl_parse_global_ciphersuites },

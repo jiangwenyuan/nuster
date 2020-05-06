@@ -14,6 +14,7 @@
 #include <proto/stream.h>
 #include <proto/tcp_rules.h>
 #include <proto/vars.h>
+#include <proto/checks.h>
 
 /* This contains a pool of struct vars */
 DECLARE_STATIC_POOL(var_pool, "vars", sizeof(struct var));
@@ -33,6 +34,7 @@ static unsigned int var_proc_limit = 0;
 static unsigned int var_sess_limit = 0;
 static unsigned int var_txn_limit = 0;
 static unsigned int var_reqres_limit = 0;
+static unsigned int var_check_limit = 0;
 
 __decl_rwlock(var_names_rwlock);
 
@@ -46,6 +48,11 @@ static inline struct vars *get_vars(struct session *sess, struct stream *strm, e
 		return &global.vars;
 	case SCOPE_SESS:
 		return &sess->vars;
+	case SCOPE_CHECK: {
+			struct check *check = objt_check(sess->origin);
+
+			return check ? &check->vars : NULL;
+		}
 	case SCOPE_TXN:
 		return strm ? &strm->vars_txn : NULL;
 	case SCOPE_REQ:
@@ -69,7 +76,15 @@ static void var_accounting_diff(struct vars *vars, struct session *sess, struct 
 	case SCOPE_TXN:
 		if (strm)
 			_HA_ATOMIC_ADD(&strm->vars_txn.size, size);
+		goto scope_sess;
+	case SCOPE_CHECK: {
+			struct check *check = objt_check(sess->origin);
+
+			if (check)
+				_HA_ATOMIC_ADD(&check->vars.size, size);
+		}
 		/* fall through */
+scope_sess:
 	case SCOPE_SESS:
 		_HA_ATOMIC_ADD(&sess->vars.size, size);
 		/* fall through */
@@ -97,7 +112,15 @@ static int var_accounting_add(struct vars *vars, struct session *sess, struct st
 	case SCOPE_TXN:
 		if (var_txn_limit && strm && strm->vars_txn.size + size > var_txn_limit)
 			return 0;
+		goto scope_sess;
+	case SCOPE_CHECK: {
+			struct check *check = objt_check(sess->origin);
+
+			if (var_check_limit && check && check->vars.size + size > var_check_limit)
+				return 0;
+		}
 		/* fall through */
+scope_sess:
 	case SCOPE_SESS:
 		if (var_sess_limit && sess->vars.size + size > var_sess_limit)
 			return 0;
@@ -226,9 +249,14 @@ static char *register_name(const char *name, int len, enum vars_scope *scope,
 		len -= 4;
 		*scope = SCOPE_RES;
 	}
+	else if (len > 6 && strncmp(name, "check.", 6) == 0) {
+		name += 6;
+		len -= 6;
+		*scope = SCOPE_CHECK;
+	}
 	else {
 		memprintf(err, "invalid variable name '%s'. A variable name must be start by its scope. "
-		               "The scope can be 'proc', 'sess', 'txn', 'req' or 'res'", name);
+		               "The scope can be 'proc', 'sess', 'txn', 'req', 'res' or 'check'", name);
 		return res;
 	}
 
@@ -642,6 +670,7 @@ static enum act_return action_store(struct act_rule *rule, struct proxy *px,
 	case ACT_F_TCP_RES_CNT: dir = SMP_OPT_DIR_RES; break;
 	case ACT_F_HTTP_REQ:    dir = SMP_OPT_DIR_REQ; break;
 	case ACT_F_HTTP_RES:    dir = SMP_OPT_DIR_RES; break;
+	case ACT_F_TCP_CHK:     dir = SMP_OPT_DIR_REQ; break;
 	default:
 		send_log(px, LOG_ERR, "Vars: internal error while execute action store.");
 		if (!(global.mode & MODE_QUIET) || (global.mode & MODE_VERBOSE))
@@ -759,6 +788,7 @@ static enum act_parse_ret parse_store(const char **args, int *arg, struct proxy 
 	case ACT_F_TCP_RES_CNT: flags = SMP_VAL_BE_RES_CNT; break;
 	case ACT_F_HTTP_REQ:    flags = SMP_VAL_FE_HRQ_HDR; break;
 	case ACT_F_HTTP_RES:    flags = SMP_VAL_BE_HRS_HDR; break;
+	case ACT_F_TCP_CHK:     flags = SMP_VAL_BE_CHK_RUL; break;
 	default:
 		memprintf(err,
 			  "internal error, unexpected rule->from=%d, please report this bug!",
@@ -827,6 +857,13 @@ static int vars_max_size_reqres(char **args, int section_type, struct proxy *cur
 	return vars_max_size(args, section_type, curpx, defpx, file, line, err, &var_reqres_limit);
 }
 
+static int vars_max_size_check(char **args, int section_type, struct proxy *curpx,
+                                struct proxy *defpx, const char *file, int line,
+                                char **err)
+{
+	return vars_max_size(args, section_type, curpx, defpx, file, line, err, &var_check_limit);
+}
+
 static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 
 	{ "var", smp_fetch_var, ARG1(1,STR), smp_check_var, SMP_T_STR, SMP_USE_L4CLI },
@@ -867,6 +904,14 @@ static struct action_kw_list tcp_res_kws = { { }, {
 
 INITCALL1(STG_REGISTER, tcp_res_cont_keywords_register, &tcp_res_kws);
 
+static struct action_kw_list tcp_check_kws = {ILH, {
+	{ "set-var",   parse_store, 1 },
+	{ "unset-var", parse_store, 1 },
+	{ /* END */ }
+}};
+
+INITCALL1(STG_REGISTER, tcp_check_keywords_register, &tcp_check_kws);
+
 static struct action_kw_list http_req_kws = { { }, {
 	{ "set-var",   parse_store, 1 },
 	{ "unset-var", parse_store, 1 },
@@ -897,6 +942,7 @@ static struct cfg_kw_list cfg_kws = {{ },{
 	{ CFG_GLOBAL, "tune.vars.sess-max-size",   vars_max_size_sess   },
 	{ CFG_GLOBAL, "tune.vars.txn-max-size",    vars_max_size_txn    },
 	{ CFG_GLOBAL, "tune.vars.reqres-max-size", vars_max_size_reqres },
+	{ CFG_GLOBAL, "tune.vars.check-max-size",  vars_max_size_check  },
 	{ /* END */ }
 }};
 

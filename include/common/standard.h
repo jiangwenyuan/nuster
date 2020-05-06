@@ -609,8 +609,12 @@ static inline const char *csv_enc(const char *str, int quote,
  * be shorter. If some forbidden characters are found, the conversion is
  * aborted, the string is truncated before the issue and non-zero is returned,
  * otherwise the operation returns non-zero indicating success.
+ * If the 'in_form' argument is non-nul the string is assumed to be part of
+ * an "application/x-www-form-urlencoded" encoded string, and the '+' will be
+ * turned to a space. If it's zero, this will only be done after a question
+ * mark ('?').
  */
-int url_decode(char *string);
+int url_decode(char *string, int in_form);
 
 /* This one is 6 times faster than strtoul() on athlon, but does
  * no check at all.
@@ -838,10 +842,10 @@ static inline unsigned int mul32hi(unsigned int a, unsigned int b)
  */
 static inline unsigned int div64_32(unsigned long long o1, unsigned int o2)
 {
-	unsigned int result;
+	unsigned long long result;
 #ifdef __i386__
 	asm("divl %2"
-	    : "=a" (result)
+	    : "=A" (result)
 	    : "A"(o1), "rm"(o2));
 #else
 	result = o1 / o2;
@@ -1001,6 +1005,16 @@ char *my_strndup(const char *src, int n);
  * returns the pointer if found, returns NULL otherwise
  */
 const void *my_memmem(const void *, size_t, const void *, size_t);
+
+/* get length of the initial segment consiting entirely of bytes within a given
+ * mask
+ */
+size_t my_memspn(const void *, size_t, const void *, size_t);
+
+/* get length of the initial segment consiting entirely of bytes not within a
+ * given mask
+ */
+size_t my_memcspn(const void *, size_t, const void *, size_t);
 
 /* This function returns the first unused key greater than or equal to <key> in
  * ID tree <root>. Zero is returned if no place is found.
