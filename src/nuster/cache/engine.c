@@ -228,6 +228,8 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
             if(appctx->ctx.nuster.store.disk.payload_len == 0) {
                 appctx->st1 = NST_DISK_APPLET_EOP;
             } else {
+                si_rx_room_blk(si);
+
                 break;
             }
 
