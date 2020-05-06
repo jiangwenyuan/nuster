@@ -872,6 +872,18 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
 void
 nst_cache_abort(nst_ctx_t *ctx) {
+
+    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT) {
+
+        if(ctx->store.ring.data) {
+            nst_ring_store_abort(&nuster.cache->store.ring, ctx->store.ring.data);
+        }
+
+        if(ctx->store.disk.file) {
+            nst_disk_store_abort(&nuster.cache->store.disk, &ctx->store.disk);
+        }
+    }
+
     ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 

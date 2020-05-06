@@ -125,9 +125,12 @@ nst_ring_store_end(nst_ring_t *ring, nst_ring_data_t *data) {
 
 static inline void
 nst_ring_store_abort(nst_ring_t *ring, nst_ring_data_t *data) {
+
     if(data) {
         data->invalid = 1;
     }
+
+    nst_ring_incr_invalid(ring);
 }
 
 void nst_ring_store_sync(nst_core_t *core);
