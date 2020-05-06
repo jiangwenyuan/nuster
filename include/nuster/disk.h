@@ -85,7 +85,7 @@ enum {
 typedef struct nst_disk_data {
     char               *file;               /* disk file */
     int                 fd;
-    int                 offset;
+    uint64_t            offset;
     char                meta[NST_DISK_META_SIZE];
 } nst_disk_data_t;
 
