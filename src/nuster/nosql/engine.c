@@ -1002,6 +1002,19 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
 void
 nst_nosql_abort(nst_ctx_t *ctx) {
+
+    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT
+            || ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+
+        if(ctx->store.ring.data) {
+            nst_ring_store_abort(&nuster.nosql->store.ring, ctx->store.ring.data);
+        }
+
+        if(ctx->store.disk.file) {
+            nst_disk_store_abort(&nuster.nosql->store.disk, &ctx->store.disk);
+        }
+    }
+
     ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
