@@ -358,8 +358,12 @@ _nst_cache_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
     nst_ctx_t  *ctx = filter->ctx;
 
     if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
-        nst_cache_finish(ctx);
-        nst_debug(s, "[cache] Created");
+
+        if(nst_cache_finish(ctx) == NST_OK) {
+            nst_debug(s, "[cache] Create OK");
+        } else {
+            nst_debug(s, "[cache] Created Failed");
+        }
     }
 
     return 1;

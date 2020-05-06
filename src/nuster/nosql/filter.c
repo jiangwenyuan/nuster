@@ -333,9 +333,10 @@ _nst_nosql_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
         nst_nosql_finish(s, msg, ctx);
 
         if(ctx->state == NST_CTX_STATE_DONE) {
-            nst_debug(s, "[nosql] Created");
+            nst_debug(s, "[nosql] Create OK");
             appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
         } else {
+            nst_debug(s, "[nosql] Create Failed");
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
         }
 
