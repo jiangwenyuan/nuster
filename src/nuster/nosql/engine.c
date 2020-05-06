@@ -222,6 +222,8 @@ out:
                         if(appctx->ctx.nuster.store.disk.payload_len == 0) {
                             appctx->st1 = NST_DISK_APPLET_EOP;
                         } else {
+                            si_rx_room_blk(si);
+
                             break;
                         }
 
@@ -274,7 +276,6 @@ end:
 
             htx_to_buf(res_htx, &res->buf);
 
-            task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
         case NST_NOSQL_APPCTX_STATE_END:
             nst_http_reply(s, NST_HTTP_200);
