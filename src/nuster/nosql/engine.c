@@ -71,8 +71,6 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
                 htx_to_buf(req_htx, &req->buf);
             }
 
-            task_wakeup(s->task, TASK_WOKEN_OTHER);
-
             break;
         case NST_NOSQL_APPCTX_STATE_HIT_MEMORY:
 
@@ -123,7 +121,6 @@ out:
 
             htx_to_buf(res_htx, &res->buf);
 
-            task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
         case NST_NOSQL_APPCTX_STATE_HIT_DISK:
             {
@@ -276,8 +273,8 @@ end:
             }
 
             htx_to_buf(res_htx, &res->buf);
-            task_wakeup(s->task, TASK_WOKEN_OTHER);
 
+            task_wakeup(s->task, TASK_WOKEN_OTHER);
             break;
         case NST_NOSQL_APPCTX_STATE_END:
             nst_http_reply(s, NST_HTTP_200);
