@@ -359,16 +359,16 @@ nst_cache_housekeeping() {
 
         start = get_current_timestamp();
 
-        if(data_cleaner > nuster.nosql->store.ring.count) {
-            data_cleaner = nuster.nosql->store.ring.count;
+        if(data_cleaner > nuster.cache->store.ring.count) {
+            data_cleaner = nuster.cache->store.ring.count;
         }
 
-        if(nuster.nosql->store.ring.count) {
-            ratio = nuster.nosql->store.ring.invalid * 10 / nuster.nosql->store.ring.count;
+        if(nuster.cache->store.ring.count) {
+            ratio = nuster.cache->store.ring.invalid * 10 / nuster.cache->store.ring.count;
         }
 
         if(ratio >= 2) {
-            data_cleaner = nuster.nosql->store.ring.count;
+            data_cleaner = nuster.cache->store.ring.count;
 
             ms = ms * ratio ;
             ms = ms >= 100 ? 100 : ms;
