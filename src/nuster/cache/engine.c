@@ -787,8 +787,6 @@ nst_cache_exists(nst_ctx_t *ctx) {
                     ret = NST_CTX_STATE_HIT_DISK;
                 }
 
-                ctx->rule = entry->rule;
-
                 ctx->txn.res.header_len    = entry->header_len;
                 ctx->txn.res.payload_len   = entry->payload_len;
                 ctx->txn.res.etag          = entry->etag;
@@ -799,7 +797,6 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
             if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
                 ctx->rule = entry->rule;
-
                 ret = NST_CTX_STATE_WAIT;
             }
         }
