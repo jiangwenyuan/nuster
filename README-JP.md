@@ -354,7 +354,7 @@ cache/nosqlの有効無効を決める。
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -476,11 +476,11 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 
 > `on` は 33,33,33,33
 
-### wait WAIT
+### wait on|off|TIME
 
-同時に来た同じなリクエストがキャッシュ完成するのを待つかどうか。 `wait 0`はキャッシュ完成するまでまつ、 `wait TIME`はTIME秒待ってからバックエンドにフォーワードする。
+同時に来た同じなリクエストがキャッシュ完成するのを待つかどうか。 `wait on`はキャッシュ完成するまでまつ、 `wait TIME`はTIME秒待ってからバックエンドにフォーワードする。
 
-ディフォルトは待たずに全部バックエンドにフォーワードする。
+ディフォルトは待たずに全部バックエンドにフォーワードする(`wait off`)。
 
 最初のリクエストが初期化をするまで他の同じなリクエストが来た場合は待たずにフォーワードする。
 

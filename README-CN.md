@@ -94,7 +94,7 @@ nuster也可以用作RESTful NoSQL缓存服务器, 用HTTP `POST/GET/DELETE` 来
 ## 编译
 
 ```
-make TARGET=linux2628 USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
+make TARGET=linux-glibc USE_LUA=1 LUA_INC=/usr/include/lua5.3 USE_OPENSSL=1 USE_PCRE=1 USE_ZLIB=1
 make install PREFIX=/usr/local/nuster
 ```
 
@@ -352,7 +352,7 @@ dict.nosql.used:                0
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -474,11 +474,11 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 
 > `on` 其实是33,33,33,33
 
-### wait WAIT
+### wait on|off|TIME
 
-如果同时有相同的请求时是否等待缓存完成。wait 0表示等待直到其他请求完成缓存，wait TIME表示等待TIME秒后缓存还没完成的话则转发到后端服务器。
+如果同时有相同的请求时是否等待缓存完成。`wait on`表示等待直到其他请求完成缓存，`wait TIME`表示等待TIME秒后缓存还没完成的话则转发到后端服务器。
 
-默认不会等待，相同的请求都被转发到后端，第一个请求会生成缓存。
+默认不会等待，相同的请求都被转发到后端，第一个请求会生成缓存(`wait off`)。
 
 注意只有当第一个请求完成某些初始化工作后其他的请求才会等待。
 
