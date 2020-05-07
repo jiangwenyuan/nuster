@@ -477,3 +477,71 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
     return NST_OK;
 }
 
+void
+nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag) {
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_htx_t          *htx;
+
+    txn->res.etag.ptr = txn->buf->area + txn->buf->data;
+    txn->res.etag.len = 0;
+
+    htx = htxbuf(&s->res.buf);
+
+    if(http_find_header(htx, ist("ETag"), &hdr, 1)) {
+        txn->res.etag.len = hdr.value.len;
+
+        chunk_istcat(txn->buf, hdr.value);
+    } else {
+        uint64_t t = get_current_timestamp();
+
+        sprintf(txn->res.etag.ptr, "\"%08x\"", XXH32(&t, 8, 0));
+        txn->res.etag.len = 10;
+        b_add(txn->buf, txn->res.etag.len);
+
+        if(etag == NST_STATUS_ON) {
+            http_add_header(htx, ist("Etag"), txn->res.etag);
+        }
+    }
+}
+
+void
+nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn,
+        int last_modified) {
+
+    hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
+    hpx_htx_t          *htx;
+    int                 len = sizeof("Mon, 01 JAN 1970 00:00:00 GMT") - 1;
+
+    htx = htxbuf(&s->res.buf);
+
+    txn->res.last_modified.ptr = txn->buf->area + txn->buf->data;
+    txn->res.last_modified.len = len;
+
+    if(http_find_header(htx, ist("Last-Modified"), &hdr, 1)) {
+
+        if(hdr.value.len == len) {
+            chunk_istcat(txn->buf, hdr.value);
+        }
+
+    } else {
+        struct tm  *tm;
+        time_t      now;
+        char        mon[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
+            "Oct", "Nov", "Dec" };
+        char        day[7][4]  = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+
+        time(&now);
+        tm = gmtime(&now);
+
+        sprintf(txn->res.last_modified.ptr, "%s, %02d %s %04d %02d:%02d:%02d GMT",
+                day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
+                1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+        b_add(txn->buf, txn->res.last_modified.len);
+
+        if(last_modified == NST_STATUS_ON) {
+            http_add_header(htx, ist("Last-Modified"), txn->res.last_modified);
+        }
+    }
+}
+

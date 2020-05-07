@@ -101,4 +101,9 @@ int nst_http_handle_expect(hpx_stream_t *s, hpx_htx_t *htx, hpx_http_msg_t *msg)
 int nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx,
         hpx_ist_t last_modified, hpx_ist_t etag, int test_last_modified, int test_etag);
 
+void nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag);
+void nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn,
+        int last_modified);
+
+
 #endif /* _NUSTER_HTTP_H */
