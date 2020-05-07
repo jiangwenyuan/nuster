@@ -1036,7 +1036,6 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         if(!strcmp(args[cur_arg], "ttl")) {
 
             if(ttl != -1) {
-                /* except this case: ttl 4294967295 ttl 4294967295 */
                 memprintf(err, "[%s.%s]: ttl already specified.", args[1], name);
 
                 goto out;
@@ -1056,6 +1055,12 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
              */
             if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&ttl)) {
                 memprintf(err, "[%s.%s]: invalid ttl.", args[1], name);
+
+                goto out;
+            }
+
+            if(ttl < 0) {
+                memprintf(err, "[%s.%s]: invalid ttl(max: %d).", args[1], name, INT_MAX);
 
                 goto out;
             }
@@ -1317,6 +1322,12 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
                  */
                 if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait)) {
                     memprintf(err, "[%s.%s]: invalid wait.", args[1], name);
+
+                    goto out;
+                }
+
+                if(wait < 0) {
+                    memprintf(err, "[%s.%s]: invalid wait(max: %d).", args[1], name, INT_MAX);
 
                     goto out;
                 }
