@@ -1300,19 +1300,26 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "[%s.%s]: wait expects an argument.", args[1], name);
+                memprintf(err, "[%s.%s]: wait expects [on|off|TIME], default off.",
+                        args[1], name);
 
                 goto out;
             }
 
-            /*
-             * "d", "h", "m", "s"
-             * s is returned
-             */
-            if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait)) {
-                memprintf(err, "[%s.%s]: invalid wait.", args[1], name);
+            if(!strcmp(args[cur_arg], "on")) {
+                wait = 0;
+            } else if(!strcmp(args[cur_arg], "off")) {
+                wait = -1;
+            } else {
+                /*
+                 * "d", "h", "m", "s"
+                 * s is returned
+                 */
+                if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait)) {
+                    memprintf(err, "[%s.%s]: invalid wait.", args[1], name);
 
-                goto out;
+                    goto out;
+                }
             }
 
             cur_arg++;

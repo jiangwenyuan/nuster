@@ -368,7 +368,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait WAIT] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -491,11 +491,11 @@ ttl will be extended if:
 
 > `on` equals to 33,33,33,33
 
-### wait WAIT
+### wait on|off|TIME
 
-When enabled, only one request at a time will be passed to backend server to create cache. Other identical requests will either wait until the cache is created(`wait 0`) or for the time expires(`wait TIME`) and be forwarded to the backend server.
+When enabled, only one request at a time will be passed to backend server to create cache. Other identical requests will either wait until the cache is created(`wait on`) or for the time expires(`wait TIME`) and be forwarded to the backend server.
 
-By default, identical requests are forwarded to backend server and the first one will create the cache.
+By default, identical requests are forwarded to backend server and the first one will create the cache(`wait off`).
 
 Note that other identical requests will not wait until the first request finished the initialization process(e.g. create a cache entry).
 
