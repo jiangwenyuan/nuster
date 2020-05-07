@@ -320,9 +320,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
             nst_debug_end("PASS");
 
-            nst_cache_build_etag(s, msg, ctx);
+            nst_http_build_etag(s, msg, &ctx->txn, ctx->rule->etag);
 
-            nst_cache_build_last_modified(s, msg, ctx);
+            nst_http_build_last_modified(s, msg, &ctx->txn, ctx->rule->last_modified);
 
             nst_debug(s, "[cache] To create");
 
