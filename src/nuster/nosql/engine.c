@@ -87,29 +87,27 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
 
                     item = item->next;
                 }
-
-            } else {
-
-                if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
-                    si_rx_room_blk(si);
-
-                    goto out;
-                }
-
-                if(!(res->flags & CF_SHUTR) ) {
-                    res->flags |= CF_READ_NULL;
-                    si_shutr(si);
-                }
-
-                /* eat the whole request */
-                if(co_data(req)) {
-                    req_htx = htx_from_buf(&req->buf);
-                    co_htx_skip(req, req_htx, co_data(req));
-                    htx_to_buf(req_htx, &req->buf);
-                }
-
-                nst_ring_data_detach(&nuster.nosql->store.ring, appctx->ctx.nuster.store.ring.data);
             }
+
+            if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
+                si_rx_room_blk(si);
+
+                goto out;
+            }
+
+            if(!(res->flags & CF_SHUTR) ) {
+                res->flags |= CF_READ_NULL;
+                si_shutr(si);
+            }
+
+            /* eat the whole request */
+            if(co_data(req)) {
+                req_htx = htx_from_buf(&req->buf);
+                co_htx_skip(req, req_htx, co_data(req));
+                htx_to_buf(req_htx, &req->buf);
+            }
+
+            nst_ring_data_detach(&nuster.nosql->store.ring, appctx->ctx.nuster.store.ring.data);
 
 out:
             appctx->ctx.nuster.store.ring.item = item;
