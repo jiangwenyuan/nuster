@@ -149,7 +149,7 @@ nst_dict_entry_t *nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t 
         nst_rule_t *rule, int pid);
 
 int nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
-        nst_key_t *key, char *file, char *meta);
+        hpx_ist_t etag, hpx_ist_t last_modified, nst_key_t *key, char *file, char *meta);
 
 
 #endif /* _NUSTER_DICT_H */

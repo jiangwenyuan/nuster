@@ -210,7 +210,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     htx = htxbuf(&req->buf);
 
                     if(nst_http_handle_conditional_req(s, htx, ctx->txn.res.last_modified,
-                                ctx->txn.res.etag, ctx->rule->last_modified, ctx->rule->etag)) {
+                                ctx->txn.res.etag, ctx->last_modified_flag, ctx->etag_flag)) {
 
                         return 1;
                     }

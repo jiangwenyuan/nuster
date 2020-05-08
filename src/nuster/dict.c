@@ -289,7 +289,7 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
 
 int
 nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
-        nst_key_t *key, char *file, char *meta) {
+        hpx_ist_t etag, hpx_ist_t last_modified, nst_key_t *key, char *file, char *meta) {
 
     nst_dict_entry_t  *entry = NULL;
     uint64_t           ttl_extend;
@@ -347,21 +347,19 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
 
     memcpy(entry->store.disk.file, file, strlen(file));
 
-    entry->header_len  = nst_disk_meta_get_header_len(meta);
-    entry->payload_len = nst_disk_meta_get_payload_len(meta);
-
-    entry->buf = *buf;
-
-    entry->host = host;
-    entry->path = path;
-
-    entry->extend[0] = *( uint8_t *)(&ttl_extend);
-    entry->extend[1] = *((uint8_t *)(&ttl_extend) + 1);
-    entry->extend[2] = *((uint8_t *)(&ttl_extend) + 2);
-    entry->extend[3] = *((uint8_t *)(&ttl_extend) + 3);
-    entry->ttl       = ttl_extend >> 32;
-    entry->etag_flag = nst_disk_meta_get_etag_flag(meta);
-
+    entry->header_len         = nst_disk_meta_get_header_len(meta);
+    entry->payload_len        = nst_disk_meta_get_payload_len(meta);
+    entry->buf                = *buf;
+    entry->host               = host;
+    entry->path               = path;
+    entry->etag               = etag;
+    entry->last_modified      = last_modified;
+    entry->extend[0]          = *( uint8_t *)(&ttl_extend);
+    entry->extend[1]          = *((uint8_t *)(&ttl_extend) + 1);
+    entry->extend[2]          = *((uint8_t *)(&ttl_extend) + 2);
+    entry->extend[3]          = *((uint8_t *)(&ttl_extend) + 3);
+    entry->ttl                = ttl_extend >> 32;
+    entry->etag_flag          = nst_disk_meta_get_etag_flag(meta);
     entry->last_modified_flag = nst_disk_meta_get_last_modified_flag(meta);
 
     return NST_OK;
