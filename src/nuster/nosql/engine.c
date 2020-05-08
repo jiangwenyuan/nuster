@@ -486,18 +486,22 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 }
 
 nst_ring_item_t *
-_nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn) {
-    nst_ring_item_t     *item_sl, *item_ct, *item_te, *item_eoh, *tail;
+_nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_flag,
+        int last_modified_flag) {
+
+    nst_ring_item_t     *item_sl, *item_ct, *item_te, *item_eoh, *item_et, *item_lm, *tail;
     hpx_htx_blk_type_t   type;
     hpx_htx_sl_t        *sl;
-    uint32_t             size, info;
     hpx_ist_t            ctk  = ist("content-type");
     hpx_ist_t            tek  = ist("transfer-encoding");
+    hpx_ist_t            etk  = ist("etag");
+    hpx_ist_t            lmk  = ist("last-modified");
     hpx_ist_t            tev  = ist("chunked");
     hpx_ist_t            p1   = ist("HTTP/1.1");
     hpx_ist_t            p2   = ist("200");
     hpx_ist_t            p3   = ist("OK");
     char                *data = NULL;
+    uint32_t             size, info;
 
     item_sl = item_ct = item_te = item_eoh = tail = NULL;
 
@@ -581,6 +585,58 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn) {
     tail->next = item_te;
     tail       = item_te;
 
+    /* etag */
+    if(etag_flag) {
+        type  = HTX_BLK_HDR;
+        info  = type << 28;
+        size  = etk.len + txn->res.etag.len;
+        info += (txn->res.etag.len << 8) + etk.len;
+
+        item_et = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+
+        if(!item_et) {
+            goto err;
+        }
+
+        data = item_et->data;
+
+        txn->res.header_len += 4 + size;
+
+        ist2bin_lc(data, etk);
+        memcpy(data + etk.len, txn->res.etag.ptr, txn->res.etag.len);
+
+        item_et->info = info;
+
+        tail->next = item_et;
+        tail       = item_et;
+    }
+
+    /* last-modified */
+    if(last_modified_flag) {
+        type  = HTX_BLK_HDR;
+        info  = type << 28;
+        size  = lmk.len + txn->res.last_modified.len;
+        info += (txn->res.last_modified.len << 8) + lmk.len;
+
+        item_lm = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+
+        if(!item_lm) {
+            goto err;
+        }
+
+        data = item_lm->data;
+
+        txn->res.header_len += 4 + size;
+
+        ist2bin_lc(data, lmk);
+        memcpy(data + lmk.len, txn->res.last_modified.ptr, txn->res.last_modified.len);
+
+        item_lm->info = info;
+
+        tail->next = item_lm;
+        tail       = item_lm;
+    }
+
     /* eoh */
     type  = HTX_BLK_EOH;
     info  = type << 28;
@@ -622,7 +678,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     nst_key_t           *key;
     int                  idx;
 
-    header = _nst_nosql_create_header(s, &ctx->txn);
+    header = _nst_nosql_create_header(s, &ctx->txn, ctx->rule->etag, ctx->rule->last_modified);
 
     if(header == NULL) {
         ctx->state = NST_CTX_STATE_FULL;
@@ -647,6 +703,9 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
         ctx->state   = NST_CTX_STATE_UPDATE;
         ctx->entry   = entry;
+
+        memcpy(entry->etag.ptr, ctx->txn.res.etag.ptr, entry->etag.len);
+        memcpy(entry->last_modified.ptr, ctx->txn.res.last_modified.ptr, entry->last_modified.len);
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
@@ -940,6 +999,13 @@ nst_nosql_exists(nst_ctx_t *ctx) {
                     ctx->store.disk.file = entry->store.disk.file;
                     ret = NST_CTX_STATE_HIT_DISK;
                 }
+
+                ctx->txn.res.header_len    = entry->header_len;
+                ctx->txn.res.payload_len   = entry->payload_len;
+                ctx->txn.res.etag          = entry->etag;
+                ctx->txn.res.last_modified = entry->last_modified;
+                ctx->etag_flag             = entry->etag_flag;
+                ctx->last_modified_flag    = entry->last_modified_flag;
             }
 
             if(entry->state == NST_DICT_ENTRY_STATE_INIT) {

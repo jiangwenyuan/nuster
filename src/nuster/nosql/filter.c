@@ -103,7 +103,7 @@ _nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
         nst_ctx_t  *ctx = filter->ctx;
         int         i;
 
-        nst_stats_update_nosql(s->txn->meth);
+        //nst_stats_update_nosql(s->txn->meth);
 
         if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
             nst_nosql_abort(ctx);
@@ -134,6 +134,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     hpx_appctx_t            *appctx = si_appctx(si);
     hpx_channel_t           *req    = msg->chn;
     hpx_channel_t           *res    = &s->res;
+    hpx_htx_t               *htx;
 
     if((msg->chn->flags & CF_ISRESP)) {
         return 1;
@@ -242,6 +243,16 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 1;
     }
 
+    if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
+        htx = htxbuf(&req->buf);
+
+        if(nst_http_handle_conditional_req(s, htx, ctx->txn.res.last_modified,
+                    ctx->txn.res.etag, ctx->last_modified_flag, ctx->etag_flag)) {
+
+            return 1;
+        }
+    }
+
     if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_MEMORY;
         /* 0: header unsent, 1: sent */
@@ -281,6 +292,11 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
     if(ctx->state == NST_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
+
+        nst_http_build_etag(s, msg, &ctx->txn, NST_STATUS_OFF);
+
+        nst_http_build_last_modified(s, msg, &ctx->txn, NST_STATUS_OFF);
+
         nst_nosql_create(s, msg, ctx);
     }
 
