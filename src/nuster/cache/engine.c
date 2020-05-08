@@ -792,6 +792,8 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.payload_len   = entry->payload_len;
                 ctx->txn.res.etag          = entry->etag;
                 ctx->txn.res.last_modified = entry->last_modified;
+                ctx->etag_flag             = entry->etag_flag;
+                ctx->last_modified_flag    = entry->last_modified_flag;
 
                 _nst_cache_record_access(entry);
             }
@@ -850,20 +852,28 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.header_len  = nst_disk_meta_get_header_len(ctx->store.disk.meta);
                 ctx->txn.res.payload_len = nst_disk_meta_get_payload_len(ctx->store.disk.meta);
 
-                if(ctx->rule->etag == NST_STATUS_ON) {
+                ctx->etag_flag = nst_disk_meta_get_etag_flag(ctx->store.disk.meta);
+
+                if(ctx->etag_flag == NST_STATUS_ON) {
                     ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                     ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
 
                     nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+
+                    ctx->txn.buf->data += ctx->txn.res.etag.len;
                 }
 
-                if(ctx->rule->last_modified == NST_STATUS_ON) {
+                ctx->last_modified_flag =
+                    nst_disk_meta_get_last_modified_flag(ctx->store.disk.meta);
+
+                if(ctx->last_modified_flag == NST_STATUS_ON) {
                     ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                     ctx->txn.res.last_modified.len =
                         nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
 
                     nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
 
+                    ctx->txn.buf->data += ctx->txn.res.last_modified.len;
                 }
             } else {
                 ret = NST_CTX_STATE_INIT;

@@ -188,7 +188,7 @@ nst_disk_read_key(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 }
 
 int
-nst_disk_read_host(hpx_ist_t host, nst_disk_data_t *data) {
+nst_disk_read_host(nst_disk_data_t *data, hpx_ist_t host) {
     int  ret, offset;
 
     offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta);
@@ -203,7 +203,7 @@ nst_disk_read_host(hpx_ist_t host, nst_disk_data_t *data) {
 }
 
 int
-nst_disk_read_path(hpx_ist_t path, nst_disk_data_t *data) {
+nst_disk_read_path(nst_disk_data_t *data, hpx_ist_t path) {
     int  ret, offset;
 
     offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta)
@@ -386,6 +386,8 @@ nst_disk_load(nst_core_t *core) {
         hpx_buffer_t     buf = { .area = NULL };
         hpx_ist_t        host;
         hpx_ist_t        path;
+        hpx_ist_t        etag;
+        hpx_ist_t        last_modified;
         uint64_t         start;
         char            *file;
         int              len, ret;
@@ -434,10 +436,12 @@ nst_disk_load(nst_core_t *core) {
                     goto err;
                 }
 
-                host.len = nst_disk_meta_get_host_len(data.meta);
-                path.len = nst_disk_meta_get_path_len(data.meta);
+                host.len          = nst_disk_meta_get_host_len(data.meta);
+                path.len          = nst_disk_meta_get_path_len(data.meta);
+                etag.len          = nst_disk_meta_get_etag_len(data.meta);
+                last_modified.len = nst_disk_meta_get_last_modified_len(data.meta);
 
-                buf.size = host.len + path.len;
+                buf.size = host.len + path.len + etag.len + last_modified.len;
                 buf.data = 0;
                 buf.area = nst_memory_alloc(core->memory, buf.size);
 
@@ -447,19 +451,37 @@ nst_disk_load(nst_core_t *core) {
 
                 host.ptr = buf.area + buf.data;
 
-                if(nst_disk_read_host(host, &data) != NST_OK) {
+                if(nst_disk_read_host(&data, host) != NST_OK) {
                     goto err;
                 }
 
+                buf.data += host.len;
                 path.ptr = buf.area + buf.data;
 
-                if(nst_disk_read_path(path, &data) != NST_OK) {
+                if(nst_disk_read_path(&data, path) != NST_OK) {
                     goto err;
                 }
+
+                buf.data += path.len;
+                etag.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_etag(&data, etag) != NST_OK) {
+                    goto err;
+                }
+
+                buf.data += etag.len;
+                last_modified.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_last_modified(&data, last_modified) != NST_OK) {
+                    goto err;
+                }
+
+                buf.data += last_modified.len;
 
                 nst_shctx_lock(&core->dict);
 
-                ret = nst_dict_set_from_disk(&core->dict, &buf, host, path, &key, file, data.meta);
+                ret = nst_dict_set_from_disk(&core->dict, &buf, host, path, etag, last_modified,
+                        &key, file, data.meta);
 
                 nst_shctx_unlock(&core->dict);
 
