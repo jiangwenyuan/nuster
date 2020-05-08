@@ -491,13 +491,15 @@ ttl will be extended if:
 
 > `on` equals to 33,33,33,33
 
-### wait on|off|TIME
+### wait on|off|TIME [cache only]
 
 When enabled, only one request at a time will be passed to backend server to create cache. Other identical requests will either wait until the cache is created(`wait on`) or for the time expires(`wait TIME`) and be forwarded to the backend server.
 
 By default, identical requests are forwarded to backend server and the first one will create the cache(`wait off`).
 
 Note that other identical requests will not wait until the first request finished the initialization process(e.g. create a cache entry).
+
+> In nosql mode, there is no wait mode. Multiple identical POST requests are served in the order it was received, and the body of the last request will be saved as the content.
 
 ### code CODE1,CODE2...
 

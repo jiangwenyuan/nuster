@@ -473,33 +473,6 @@ shm_err:
     exit(1);
 }
 
-static void
-_nst_cache_record_access(nst_dict_entry_t *entry) {
-
-    if(entry->expire == 0 || entry->extend[0] == 0xFF) {
-        entry->access[0]++;
-    } else {
-        uint64_t  stime, diff;
-        float     pct;
-        uint32_t  ttl = entry->ttl;
-
-        stime = entry->ctime + ttl * entry->extended * 1000;
-        diff  = entry->atime - stime;
-        pct   = diff / 1000.0 / ttl * 100;
-
-        if(pct < 100 - entry->extend[0] - entry->extend[1] - entry->extend[2]) {
-            entry->access[0]++;
-        } else if(pct < 100 - entry->extend[1] - entry->extend[2]) {
-            entry->access[1]++;
-        } else if(pct < 100 - entry->extend[2]) {
-            entry->access[2]++;
-        } else {
-            entry->access[3]++;
-        }
-    }
-
-}
-
 void
 nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     hpx_htx_blk_type_t  type;
@@ -795,7 +768,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ctx->etag_flag             = entry->etag_flag;
                 ctx->last_modified_flag    = entry->last_modified_flag;
 
-                _nst_cache_record_access(entry);
+                nst_dict_record_access(entry);
             }
 
             if(entry->state == NST_DICT_ENTRY_STATE_INIT) {

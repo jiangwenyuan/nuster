@@ -364,3 +364,30 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
 
     return NST_OK;
 }
+
+void
+nst_dict_record_access(nst_dict_entry_t *entry) {
+
+    if(entry->expire == 0 || entry->extend[0] == 0xFF) {
+        entry->access[0]++;
+    } else {
+        uint64_t  stime, diff;
+        float     pct;
+        uint32_t  ttl = entry->ttl;
+
+        stime = entry->ctime + ttl * entry->extended * 1000;
+        diff  = entry->atime - stime;
+        pct   = diff / 1000.0 / ttl * 100;
+
+        if(pct < 100 - entry->extend[0] - entry->extend[1] - entry->extend[2]) {
+            entry->access[0]++;
+        } else if(pct < 100 - entry->extend[1] - entry->extend[2]) {
+            entry->access[1]++;
+        } else if(pct < 100 - entry->extend[2]) {
+            entry->access[2]++;
+        } else {
+            entry->access[3]++;
+        }
+    }
+
+}

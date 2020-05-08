@@ -1004,6 +1004,8 @@ nst_nosql_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.last_modified = entry->last_modified;
                 ctx->etag_flag             = entry->etag_flag;
                 ctx->last_modified_flag    = entry->last_modified_flag;
+
+                nst_dict_record_access(entry);
             }
 
             if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
