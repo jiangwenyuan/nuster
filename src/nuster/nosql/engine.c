@@ -1053,6 +1053,30 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             nst_key_disk_set_checked(key);
 
             if(nst_disk_data_exists(&nuster.nosql->store.disk, &ctx->store.disk, key) == NST_OK) {
+                ctx->etag_flag = nst_disk_meta_get_etag_flag(ctx->store.disk.meta);
+
+                if(ctx->etag_flag == NST_STATUS_ON) {
+                    ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                    ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
+
+                    nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+
+                    ctx->txn.buf->data += ctx->txn.res.etag.len;
+                }
+
+                ctx->last_modified_flag =
+                    nst_disk_meta_get_last_modified_flag(ctx->store.disk.meta);
+
+                if(ctx->last_modified_flag == NST_STATUS_ON) {
+                    ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
+                    ctx->txn.res.last_modified.len =
+                        nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
+
+                    nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
+
+                    ctx->txn.buf->data += ctx->txn.res.last_modified.len;
+                }
+
                 ret = NST_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_CTX_STATE_INIT;
