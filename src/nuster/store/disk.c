@@ -75,6 +75,10 @@ nst_disk_data_valid(nst_disk_data_t *data, nst_key_t *key) {
         goto err;
     }
 
+    if(data->meta[7] != NST_DISK_VERSION) {
+        goto err;
+    }
+
     if(nst_disk_meta_check_expire(data->meta) != NST_OK) {
         goto err;
     }
@@ -150,6 +154,10 @@ nst_disk_read_meta(nst_disk_data_t *data) {
     }
 
     if(memcmp(data->meta, "NUSTER", 6) !=0) {
+        return NST_ERR;
+    }
+
+    if(data->meta[7] != NST_DISK_VERSION) {
         return NST_ERR;
     }
 

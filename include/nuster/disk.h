@@ -26,7 +26,7 @@
 #include <nuster/key.h>
 
 
-#define NST_DISK_VERSION  4
+#define NST_DISK_VERSION  5
 
 /*
    Offset              Length(bytes)           Content
