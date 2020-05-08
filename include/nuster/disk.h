@@ -40,8 +40,8 @@
    8 * 5               8                       key length
    8 * 6               8                       host length
    8 * 7               8                       path length
-   8 * 8               8                       etag length
-   8 * 9               8                       last-modified length
+   8 * 8               8                       etag, on|off: 4, length: 4
+   8 * 9               8                       last-modified: on|off: 4, length: 4
    8 * 10              8                       ttl: 4, extend: 4
    8 * 11              20                      uuid
    8 * 11 + 20         20                      reserved
@@ -219,24 +219,45 @@ nst_disk_meta_get_path_len(char *p) {
 }
 
 static inline void
-nst_disk_meta_set_etag_len(char *p, uint64_t v) {
-    *(uint64_t *)(p + NST_DISK_META_POS_ETAG_LEN) = v;
+nst_disk_meta_set_etag_len(char *p, uint32_t v) {
+    *(uint32_t *)(p + NST_DISK_META_POS_ETAG_LEN) = v;
 }
 
-static inline uint64_t
+static inline uint32_t
 nst_disk_meta_get_etag_len(char *p) {
-    return *(uint64_t *)(p + NST_DISK_META_POS_ETAG_LEN);
+    return *(uint32_t *)(p + NST_DISK_META_POS_ETAG_LEN);
 }
 
 static inline void
-nst_disk_meta_set_last_modified_len(char *p, uint64_t v) {
-    *(uint64_t *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN) = v;
+nst_disk_meta_set_etag_flag(char *p, int v) {
+    *(int *)(p + NST_DISK_META_POS_ETAG_LEN + 4) = v;
 }
 
-static inline uint64_t
-nst_disk_meta_get_last_modified_len(char *p) {
-    return *(uint64_t *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN);
+static inline int
+nst_disk_meta_get_etag_flag(char *p) {
+    return *(int *)(p + NST_DISK_META_POS_ETAG_LEN + 4);
 }
+
+static inline void
+nst_disk_meta_set_last_modified_len(char *p, uint32_t v) {
+    *(uint32_t *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN) = v;
+}
+
+static inline uint32_t
+nst_disk_meta_get_last_modified_len(char *p) {
+    return *(uint32_t *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN);
+}
+
+static inline void
+nst_disk_meta_set_last_modified_flag(char *p, int v) {
+    *(int *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN + 4) = v;
+}
+
+static inline int
+nst_disk_meta_get_last_modified_flag(char *p) {
+    return *(int *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN + 4);
+}
+
 
 static inline void
 nst_disk_meta_set_ttl_extend(char *p, uint64_t v) {
@@ -271,7 +292,8 @@ nst_disk_get_header_pos(char *p) {
 static inline void
 nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
         uint64_t payload_len, uint64_t key_len, uint64_t host_len, uint64_t path_len,
-        uint64_t etag_len, uint64_t last_modified_len, uint64_t ttl_extend) {
+        int etag_flag, uint32_t etag_len, int last_modified_flag, uint32_t last_modified_len,
+        uint64_t ttl_extend) {
 
     memcpy(p, "NUSTER", 6);
     p[6] = 0;
@@ -285,7 +307,9 @@ nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
     nst_disk_meta_set_host_len(p, host_len);
     nst_disk_meta_set_path_len(p, path_len);
     nst_disk_meta_set_etag_len(p, etag_len);
+    nst_disk_meta_set_etag_flag(p, etag_flag);
     nst_disk_meta_set_last_modified_len(p, last_modified_len);
+    nst_disk_meta_set_last_modified_flag(p, last_modified_flag);
     nst_disk_meta_set_ttl_extend(p, ttl_extend);
 }
 
@@ -380,7 +404,7 @@ int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
 
 int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
-        nst_http_txn_t *txn, uint64_t ttl_extend);
+        nst_http_txn_t *txn, int etag, int last_modified, uint64_t ttl_extend);
 
 static inline int
 nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) {

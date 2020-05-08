@@ -598,7 +598,7 @@ nst_disk_cleanup(nst_core_t *core) {
 
 int
 nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
-        uint64_t ttl_extend) {
+        int etag, int last_modified, uint64_t ttl_extend) {
 
     data->file = NULL;
     data->fd   = -1;
@@ -619,7 +619,8 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
     }
 
     nst_disk_meta_init(data->meta, key->hash, 0, 0, 0, key->size, txn->req.host.len,
-            txn->req.path.len, txn->res.etag.len, txn->res.last_modified.len, ttl_extend);
+            txn->req.path.len, etag, txn->res.etag.len, last_modified, txn->res.last_modified.len,
+            ttl_extend);
 
     if(nst_disk_write_key(data, key) != NST_OK) {
         goto err;
