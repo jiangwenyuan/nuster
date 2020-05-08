@@ -103,8 +103,6 @@ _nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
         nst_ctx_t  *ctx = filter->ctx;
         int         i;
 
-        //nst_stats_update_nosql(s->txn->meth);
-
         if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
             nst_nosql_abort(ctx);
         }
@@ -139,6 +137,8 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     if((msg->chn->flags & CF_ISRESP)) {
         return 1;
     }
+
+    nst_stats_update_nosql(s->txn->meth);
 
     if(ctx->state == NST_CTX_STATE_INIT) {
         int  i = 0;
