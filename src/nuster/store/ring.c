@@ -200,7 +200,8 @@ nst_ring_store_sync(nst_core_t *core) {
             *((uint8_t *)(&ttl_extend) + 2) = entry->extend[2];
             *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
 
-            ret = nst_disk_store_init(&core->store.disk, &data, &entry->key, &txn, ttl_extend);
+            ret = nst_disk_store_init(&core->store.disk, &data, &entry->key, &txn,
+                    entry->rule->etag, entry->rule->last_modified, ttl_extend);
 
             if(ret != NST_OK) {
                 goto next;

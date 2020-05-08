@@ -679,7 +679,8 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             *((uint8_t *)(&t) + 2) = ctx->rule->extend[2];
             *((uint8_t *)(&t) + 3) = ctx->rule->extend[3];
 
-            nst_disk_store_init(&nuster.nosql->store.disk, &ctx->store.disk, key, &ctx->txn, t);
+            nst_disk_store_init(&nuster.nosql->store.disk, &ctx->store.disk, key, &ctx->txn,
+                    ctx->rule->etag, ctx->rule->last_modified, t);
         }
     }
 

@@ -63,6 +63,8 @@ typedef struct nst_dict_entry {
     /* For entries loaded from disk */
     uint32_t                    ttl;
     uint8_t                     extend[4];
+    int                         etag_flag;
+    int                         last_modified_flag;
 
     /* see rule.extend */
     uint64_t                    access[4];

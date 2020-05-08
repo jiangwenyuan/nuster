@@ -166,22 +166,24 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 
     memcpy(entry->buf.area, txn->buf->area, txn->buf->data);
 
-    entry->host.ptr          = entry->buf.area + (txn->req.host.ptr - txn->buf->area);
-    entry->host.len          = txn->req.host.len;
-    entry->path.ptr          = entry->buf.area + (txn->req.path.ptr - txn->buf->area);
-    entry->path.len          = txn->req.path.len;
-    entry->etag.ptr          = entry->buf.area + (txn->res.etag.ptr - txn->buf->area);
-    entry->etag.len          = txn->res.etag.len;
-    entry->last_modified.ptr = entry->buf.area + (txn->res.last_modified.ptr - txn->buf->area);
-    entry->last_modified.len = txn->res.last_modified.len;
-    entry->rule              = rule;
-    entry->expire            = 0;
-    entry->pid               = pid;
-    entry->ttl               = rule->ttl;
-    entry->extend[0]         = rule->extend[0];
-    entry->extend[1]         = rule->extend[1];
-    entry->extend[2]         = rule->extend[2];
-    entry->extend[3]         = rule->extend[3];
+    entry->host.ptr           = entry->buf.area + (txn->req.host.ptr - txn->buf->area);
+    entry->host.len           = txn->req.host.len;
+    entry->path.ptr           = entry->buf.area + (txn->req.path.ptr - txn->buf->area);
+    entry->path.len           = txn->req.path.len;
+    entry->etag.ptr           = entry->buf.area + (txn->res.etag.ptr - txn->buf->area);
+    entry->etag.len           = txn->res.etag.len;
+    entry->last_modified.ptr  = entry->buf.area + (txn->res.last_modified.ptr - txn->buf->area);
+    entry->last_modified.len  = txn->res.last_modified.len;
+    entry->rule               = rule;
+    entry->expire             = 0;
+    entry->pid                = pid;
+    entry->ttl                = rule->ttl;
+    entry->extend[0]          = rule->extend[0];
+    entry->extend[1]          = rule->extend[1];
+    entry->extend[2]          = rule->extend[2];
+    entry->extend[3]          = rule->extend[3];
+    entry->etag_flag          = rule->etag;
+    entry->last_modified_flag = rule->last_modified;
 
     return entry;
 
@@ -334,7 +336,8 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     entry->state  = NST_DICT_ENTRY_STATE_VALID;
     entry->key    = *key;
     entry->expire = nst_disk_meta_get_expire(meta);
-    entry->store.disk.file   = nst_memory_alloc(dict->memory, strlen(file));
+
+    entry->store.disk.file  = nst_memory_alloc(dict->memory, strlen(file));
 
     if(!entry->store.disk.file) {
         nst_memory_free(dict->memory, entry);
@@ -356,8 +359,10 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     entry->extend[1] = *((uint8_t *)(&ttl_extend) + 1);
     entry->extend[2] = *((uint8_t *)(&ttl_extend) + 2);
     entry->extend[3] = *((uint8_t *)(&ttl_extend) + 3);
+    entry->ttl       = ttl_extend >> 32;
+    entry->etag_flag = nst_disk_meta_get_etag_flag(meta);
 
-    entry->ttl = ttl_extend >> 32;
+    entry->last_modified_flag = nst_disk_meta_get_last_modified_flag(meta);
 
     return NST_OK;
 }
