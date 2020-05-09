@@ -1,5 +1,31 @@
 # nuster Changelog
 
+## 5.0.7.20 - 2020-09-05
+
+### Fixed
+
+Fix premature end of nosql engine
+Support etag/last-modified in nosql mode
+[nosql] Handle backend server abort
+Improve disk cache performance by indicating
+Change disk.offset to 64 bits to support files greater than 4gb
+Remove unnecessary task wake
+Update debug info, correct create failed message
+Handle backend server abort
+Incorrect nosql vars in cache engine
+
+### Added
+
+Enable extend in nosql mode
+Support etag last-modified in nosql mode
+Check disk version
+Move update_nosql_stat to filter header
+Add etag and last_modified flag into ctx
+Save etag and last_modified flag into disk
+Move etag/last-modified handler to http
+Check max ttl and wait
+Update wait format, use on/off
+
 ## 5.0.6.20 - 2020-05-05
 
 ### Fixed
