@@ -182,10 +182,10 @@ nst_ring_store_sync(nst_core_t *core) {
 
         if(nst_dict_entry_valid(entry)
                 && entry->rule
-                && nst_store_disk_sync(entry->rule->store)
+                && nst_store_disk_sync(entry->rule->prop.store)
                 && entry->store.disk.file == NULL) {
 
-            ttl_extend  = entry->ttl;
+            ttl_extend  = entry->prop.ttl;
 
             txn.req.host          = entry->host;
             txn.req.path          = entry->path;
@@ -195,13 +195,13 @@ nst_ring_store_sync(nst_core_t *core) {
             txn.res.payload_len   = 0;
 
             ttl_extend = ttl_extend << 32;
-            *( uint8_t *)(&ttl_extend)      = entry->extend[0];
-            *((uint8_t *)(&ttl_extend) + 1) = entry->extend[1];
-            *((uint8_t *)(&ttl_extend) + 2) = entry->extend[2];
-            *((uint8_t *)(&ttl_extend) + 3) = entry->extend[3];
+            *( uint8_t *)(&ttl_extend)      = entry->prop.extend[0];
+            *((uint8_t *)(&ttl_extend) + 1) = entry->prop.extend[1];
+            *((uint8_t *)(&ttl_extend) + 2) = entry->prop.extend[2];
+            *((uint8_t *)(&ttl_extend) + 3) = entry->prop.extend[3];
 
             ret = nst_disk_store_init(&core->store.disk, &data, &entry->key, &txn,
-                    entry->rule->etag, entry->rule->last_modified, ttl_extend);
+                    entry->rule->prop.etag, entry->rule->prop.last_modified, ttl_extend);
 
             if(ret != NST_OK) {
                 goto next;

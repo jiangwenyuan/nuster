@@ -207,6 +207,17 @@ typedef struct nst_rule_config {
     hpx_acl_cond_t            *cond;          /* acl condition to meet */
 } nst_rule_config_t;
 
+typedef struct nst_rule_prop {
+    hpx_ist_t                  name;          /* rule name */
+    uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
+    uint8_t                    store;
+    int                        etag;          /* etag on|off */
+    int                        last_modified; /* last_modified on|off */
+    uint8_t                    extend[4];
+    int                        wait;
+    int                        status_code;
+} nst_rule_prop_t;
+
 typedef struct nst_rule {
     struct nst_rule           *next;
 
@@ -216,15 +227,11 @@ typedef struct nst_rule {
 
     int                        state;         /* enabled or disabled */
 
-    char                      *name;          /* rule name for logging */
     nst_rule_key_t            *key;
     nst_rule_code_t           *code;          /* code */
-    uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
-    uint8_t                    store;
-    int                        etag;          /* etag on|off */
-    int                        last_modified; /* last_modified on|off */
-    uint8_t                    extend[4];
-    int                        wait;
+
+    nst_rule_prop_t            prop;
+
     hpx_acl_cond_t            *cond;          /* acl condition to meet */
 } nst_rule_t;
 

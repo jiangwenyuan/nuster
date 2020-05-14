@@ -155,7 +155,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             int         idx = ctx->rule->key->idx;
             nst_key_t  *key = &(ctx->keys[idx]);
 
-            nst_debug(s, "[rule ] ----- %s", ctx->rule->name);
+            nst_debug(s, "[rule ] ----- %s", ctx->rule->prop.name.ptr);
 
             if(ctx->rule->state == NST_RULE_DISABLED) {
                 nst_debug(s, "[rule ] disabled, continue.");
@@ -164,7 +164,9 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 continue;
             }
 
-            if(nst_store_memory_off(ctx->rule->store) && nst_store_disk_off(ctx->rule->store)) {
+            if(nst_store_memory_off(ctx->rule->prop.store)
+                    && nst_store_disk_off(ctx->rule->prop.store)) {
+
                 nst_debug(s, "[rule ] memory off and disk off, continue.");
                 ctx->rule = ctx->rule->next;
 

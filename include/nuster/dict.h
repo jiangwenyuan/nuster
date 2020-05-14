@@ -60,11 +60,7 @@ typedef struct nst_dict_entry {
     uint64_t                    ctime;
     uint64_t                    atime;
 
-    /* For entries loaded from disk */
-    uint32_t                    ttl;
-    uint8_t                     extend[4];
-    int                         etag_flag;
-    int                         last_modified_flag;
+    nst_rule_prop_t             prop;
 
     /* see rule.extend */
     uint64_t                    access[4];

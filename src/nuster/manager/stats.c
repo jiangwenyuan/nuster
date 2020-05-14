@@ -168,7 +168,7 @@ _getMaxPaddingLen() {
             rule = nuster.proxy[p->uuid]->rule;
 
             while(rule) {
-                int  s2 = s1 + 8 + strlen(rule->name);
+                int  s2 = s1 + 8 + rule->prop.name.len;
 
                 if(s2 > max) {
                     max = s2;
@@ -387,7 +387,7 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
                 }
 
                 if(rule->uuid == appctx->st2) {
-                    int  i = len - strlen(p->id) - 8 - strlen(rule->name);
+                    int  i = len - strlen(p->id) - 8 - rule->prop.name.len;
 
                     if(rule->idx == 0) {
                         chunk_printf(&trash, "\n**PROXY %s %s**\n",
@@ -395,7 +395,7 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
                                 p->id);
                     }
 
-                    chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->name);
+                    chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->prop.name.ptr);
 
                     while(i--) {
                         chunk_appendf(&trash, " ");
@@ -403,11 +403,11 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
 
                     chunk_appendf(&trash, "state=%-4smemory=%-4sdisk=%-5sttl=%"PRIu32"\n",
                             rule->state == NST_RULE_ENABLED ? "on" : "off",
-                            nst_store_memory_on(rule->store) ? "on" : "off",
-                            nst_store_disk_on(rule->store) ? "on"
-                            : nst_store_disk_off(rule->store) ? "off"
+                            nst_store_memory_on(rule->prop.store) ? "on" : "off",
+                            nst_store_disk_on(rule->prop.store) ? "on"
+                            : nst_store_disk_off(rule->prop.store) ? "off"
                             : "sync",
-                            rule->ttl
+                            rule->prop.ttl
                             );
 
                     if(!_nst_stats_putdata(res, htx, &trash)) {
