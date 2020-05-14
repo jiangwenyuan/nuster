@@ -45,7 +45,7 @@ nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
             nst_rule_t  *rule = nuster.proxy[p->uuid]->rule;
 
             while(rule) {
-                nst_debug(s, "[rule ] ----- %s", rule->name);
+                nst_debug(s, "[rule ] ----- %s", rule->prop.name.ptr);
 
                 if(key.data) {
                     free(key.data);
@@ -165,9 +165,7 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
                 while(rule) {
 
-                    if(strlen(rule->name) == hdr.value.len
-                            && !memcmp(hdr.value.ptr, rule->name, hdr.value.len)) {
-
+                    if(isteq(rule->prop.name, hdr.value)) {
                         method = NST_MANAGER_NAME_RULE;
                         st1    = rule->id;
                         mode   = p->nuster.mode;

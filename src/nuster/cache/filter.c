@@ -164,7 +164,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 int         idx = ctx->rule->key->idx;
                 nst_key_t  *key = &(ctx->keys[idx]);
 
-                nst_debug(s, "[rule ] ----- %s", ctx->rule->name);
+                nst_debug(s, "[rule ] ----- %s", ctx->rule->prop.name.ptr);
 
                 if(ctx->rule->state == NST_RULE_DISABLED) {
                     nst_debug(s, "[rule ] disabled, continue.");
@@ -173,7 +173,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     continue;
                 }
 
-                if(nst_store_memory_off(ctx->rule->store) && nst_store_disk_off(ctx->rule->store)) {
+                if(nst_store_memory_off(ctx->rule->prop.store)
+                        && nst_store_disk_off(ctx->rule->prop.store)) {
+
                     nst_debug(s, "[rule ] memory off and disk off, continue.");
                     ctx->rule = ctx->rule->next;
 
@@ -219,7 +221,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 }
 
                 if(ctx->state == NST_CTX_STATE_WAIT) {
-                    if(ctx->rule->wait >= 0) {
+                    if(ctx->rule->prop.wait >= 0) {
                         nst_key_reset_flag(key);
                         nst_debug_end("WAIT");
 
@@ -252,8 +254,8 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         }
 
         if(ctx->state == NST_CTX_STATE_WAIT) {
-            if(ctx->rule->wait == 0 || (ctx->rule->wait > 0
-                        && get_current_timestamp() - ctx->ctime < ctx->rule->wait * 1000)) {
+            if(ctx->rule->prop.wait == 0 || (ctx->rule->prop.wait > 0
+                        && get_current_timestamp() - ctx->ctime < ctx->rule->prop.wait * 1000)) {
 
                 usleep(1);
                 ctx->state = NST_CTX_STATE_INIT;
@@ -273,7 +275,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
-                nst_debug(s, "[cache] ==== Check rule: %s ====", ctx->rule->name);
+                nst_debug(s, "[cache] ==== Check rule: %s ====", ctx->rule->prop.name.ptr);
                 nst_debug_beg(s, "[cache] Test rule ACL (res): ");
 
                 /* test acls to see if we should cache it */
@@ -320,9 +322,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
             nst_debug_end("PASS");
 
-            nst_http_build_etag(s, msg, &ctx->txn, ctx->rule->etag);
+            nst_http_build_etag(s, msg, &ctx->txn, ctx->rule->prop.etag);
 
-            nst_http_build_last_modified(s, msg, &ctx->txn, ctx->rule->last_modified);
+            nst_http_build_last_modified(s, msg, &ctx->txn, ctx->rule->prop.last_modified);
 
             nst_debug(s, "[cache] To create");
 

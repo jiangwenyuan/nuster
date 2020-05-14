@@ -177,13 +177,13 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
     entry->rule               = rule;
     entry->expire             = 0;
     entry->pid                = pid;
-    entry->ttl                = rule->ttl;
-    entry->extend[0]          = rule->extend[0];
-    entry->extend[1]          = rule->extend[1];
-    entry->extend[2]          = rule->extend[2];
-    entry->extend[3]          = rule->extend[3];
-    entry->etag_flag          = rule->etag;
-    entry->last_modified_flag = rule->last_modified;
+    entry->prop.ttl           = rule->prop.ttl;
+    entry->prop.extend[0]     = rule->prop.extend[0];
+    entry->prop.extend[1]     = rule->prop.extend[1];
+    entry->prop.extend[2]     = rule->prop.extend[2];
+    entry->prop.extend[3]     = rule->prop.extend[3];
+    entry->prop.etag          = rule->prop.etag;
+    entry->prop.last_modified = rule->prop.last_modified;
 
     return entry;
 
@@ -231,15 +231,15 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
 
             expired  = nst_dict_entry_expired(entry);
 
-            max = 1000 * entry->expire + 1000 * entry->ttl * entry->extend[3] / 100;
+            max = 1000 * entry->expire + 1000 * entry->prop.ttl * entry->prop.extend[3] / 100;
 
             entry->atime = get_current_timestamp();
 
-            if(expired && entry->extend[0] != 0xFF && entry->atime <= max
+            if(expired && entry->prop.extend[0] != 0xFF && entry->atime <= max
                     && entry->access[3] > entry->access[2]
                     && entry->access[2] > entry->access[1]) {
 
-                entry->expire    += entry->ttl;
+                entry->expire    += entry->prop.ttl;
 
                 entry->access[0] += entry->access[1];
                 entry->access[0] += entry->access[2];
@@ -354,13 +354,13 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     entry->path               = path;
     entry->etag               = etag;
     entry->last_modified      = last_modified;
-    entry->extend[0]          = *( uint8_t *)(&ttl_extend);
-    entry->extend[1]          = *((uint8_t *)(&ttl_extend) + 1);
-    entry->extend[2]          = *((uint8_t *)(&ttl_extend) + 2);
-    entry->extend[3]          = *((uint8_t *)(&ttl_extend) + 3);
-    entry->ttl                = ttl_extend >> 32;
-    entry->etag_flag          = nst_disk_meta_get_etag_flag(meta);
-    entry->last_modified_flag = nst_disk_meta_get_last_modified_flag(meta);
+    entry->prop.extend[0]     = *( uint8_t *)(&ttl_extend);
+    entry->prop.extend[1]     = *((uint8_t *)(&ttl_extend) + 1);
+    entry->prop.extend[2]     = *((uint8_t *)(&ttl_extend) + 2);
+    entry->prop.extend[3]     = *((uint8_t *)(&ttl_extend) + 3);
+    entry->prop.ttl           = ttl_extend >> 32;
+    entry->prop.etag          = nst_disk_meta_get_etag_flag(meta);
+    entry->prop.last_modified = nst_disk_meta_get_last_modified_flag(meta);
 
     return NST_OK;
 }
@@ -368,22 +368,22 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
 void
 nst_dict_record_access(nst_dict_entry_t *entry) {
 
-    if(entry->expire == 0 || entry->extend[0] == 0xFF) {
+    if(entry->expire == 0 || entry->prop.extend[0] == 0xFF) {
         entry->access[0]++;
     } else {
         uint64_t  stime, diff;
         float     pct;
-        uint32_t  ttl = entry->ttl;
+        uint32_t  ttl = entry->prop.ttl;
 
         stime = entry->ctime + ttl * entry->extended * 1000;
         diff  = entry->atime - stime;
         pct   = diff / 1000.0 / ttl * 100;
 
-        if(pct < 100 - entry->extend[0] - entry->extend[1] - entry->extend[2]) {
+        if(pct < 100 - entry->prop.extend[0] - entry->prop.extend[1] - entry->prop.extend[2]) {
             entry->access[0]++;
-        } else if(pct < 100 - entry->extend[1] - entry->extend[2]) {
+        } else if(pct < 100 - entry->prop.extend[1] - entry->prop.extend[2]) {
             entry->access[1]++;
-        } else if(pct < 100 - entry->extend[2]) {
+        } else if(pct < 100 - entry->prop.extend[2]) {
             entry->access[2]++;
         } else {
             entry->access[3]++;

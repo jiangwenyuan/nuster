@@ -144,11 +144,12 @@ out:
                     goto err;
                 }
 
-                rule->uuid  = uuid++;
-                rule->idx   = px->rule_cnt++;
-                rule->id    = rc->id;
-                rule->state = NST_RULE_ENABLED;
-                rule->name  = rc->name;
+                rule->uuid          = uuid++;
+                rule->idx           = px->rule_cnt++;
+                rule->id            = rc->id;
+                rule->state         = NST_RULE_ENABLED;
+                rule->prop.name.ptr = rc->name;
+                rule->prop.name.len = strlen(rc->name);
 
                 key = px->key;
 
@@ -182,19 +183,19 @@ out:
                 }
 
                 rule->key   = key;
-                rule->store = rc->store;
+                rule->prop.store = rc->store;
                 rule->code  = rc->code;
-                rule->ttl   = rc->ttl;
-                rule->etag  = rc->etag;
+                rule->prop.ttl   = rc->ttl;
+                rule->prop.etag  = rc->etag;
 
-                rule->last_modified = rc->last_modified;
+                rule->prop.last_modified = rc->last_modified;
 
-                rule->extend[0] = rc->extend[0];
-                rule->extend[1] = rc->extend[1];
-                rule->extend[2] = rc->extend[2];
-                rule->extend[3] = rc->extend[3];
+                rule->prop.extend[0] = rc->extend[0];
+                rule->prop.extend[1] = rc->extend[1];
+                rule->prop.extend[2] = rc->extend[2];
+                rule->prop.extend[3] = rc->extend[3];
 
-                rule->wait = rc->wait;
+                rule->prop.wait = rc->wait;
 
                 rule->cond = rc->cond;
 

@@ -62,14 +62,12 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
                 while(rule) {
 
                     if(method != NST_MANAGER_NAME_RULE) {
-                        rule->state = state == -1 ? rule->state : state;
-                        rule->ttl   = ttl   == -1 ? rule->ttl   : ttl;
-                    } else if(strlen(rule->name) == hdr.value.len
-                            && !memcmp(hdr.value.ptr, rule->name, hdr.value.len)) {
-
-                        rule->state = state == -1 ? rule->state : state;
-                        rule->ttl   = ttl   == -1 ? rule->ttl   : ttl;
-                        found       = 1;
+                        rule->state    = state == -1 ? rule->state    : state;
+                        rule->prop.ttl = ttl   == -1 ? rule->prop.ttl : ttl;
+                    } else if(isteq(rule->prop.name, hdr.value)) {
+                        rule->state    = state == -1 ? rule->state    : state;
+                        rule->prop.ttl = ttl   == -1 ? rule->prop.ttl : ttl;
+                        found          = 1;
                     }
 
                     rule = rule->next;

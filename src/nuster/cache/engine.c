@@ -515,22 +515,22 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
 
-        if(nst_store_memory_on(ctx->rule->store)) {
+        if(nst_store_memory_on(ctx->rule->prop.store)) {
             ctx->store.ring.data = nst_ring_store_init(&nuster.cache->store.ring);
         }
 
-        if(nst_store_disk_on(ctx->rule->store)) {
-            uint64_t  t = ctx->rule->ttl;
+        if(nst_store_disk_on(ctx->rule->prop.store)) {
+            uint64_t  t = ctx->rule->prop.ttl;
 
             t = t << 32;
 
-            *( uint8_t *)(&t)      = ctx->rule->extend[0];
-            *((uint8_t *)(&t) + 1) = ctx->rule->extend[1];
-            *((uint8_t *)(&t) + 2) = ctx->rule->extend[2];
-            *((uint8_t *)(&t) + 3) = ctx->rule->extend[3];
+            *( uint8_t *)(&t)      = ctx->rule->prop.extend[0];
+            *((uint8_t *)(&t) + 1) = ctx->rule->prop.extend[1];
+            *((uint8_t *)(&t) + 2) = ctx->rule->prop.extend[2];
+            *((uint8_t *)(&t) + 3) = ctx->rule->prop.extend[3];
 
             nst_disk_store_init(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
-                    ctx->rule->etag, ctx->rule->last_modified, t);
+                    ctx->rule->prop.etag, ctx->rule->prop.last_modified, t);
         }
     }
 
@@ -552,7 +552,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
             ctx->txn.res.header_len += 4 + sz;
 
-            if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
                 int  ret;
 
                 ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
@@ -563,7 +563,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
                 nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
                         (char *)&blk->info, 4);
 
@@ -619,7 +619,7 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             forward += data.len;
             len     -= data.len;
 
-            if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
                 int  ret;
 
                 ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
@@ -630,7 +630,7 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
                 nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk, data.ptr, data.len);
             }
         }
@@ -641,7 +641,7 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             forward += sz;
             len     -= sz;
 
-            if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
                 int  ret;
 
                 ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
@@ -652,7 +652,7 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
                 nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
                         (char *)&blk->info, 4);
 
@@ -690,22 +690,22 @@ nst_cache_finish(nst_ctx_t *ctx) {
 
     ctx->entry->ctime = get_current_timestamp();
 
-    if(ctx->rule->ttl == 0) {
+    if(ctx->rule->prop.ttl == 0) {
         ctx->entry->expire = 0;
     } else {
-        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->rule->ttl;
+        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->rule->prop.ttl;
     }
 
     ctx->entry->header_len  = ctx->txn.res.header_len;
     ctx->entry->payload_len = ctx->txn.res.payload_len;
 
-    if(nst_store_memory_on(ctx->rule->store) && ctx->store.ring.data) {
+    if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
         ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
 
         ctx->entry->store.ring.data = ctx->store.ring.data;
     }
 
-    if(nst_store_disk_on(ctx->rule->store) && ctx->store.disk.file) {
+    if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
 
         if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
                     ctx->entry->expire) == NST_OK) {
@@ -765,8 +765,8 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.payload_len   = entry->payload_len;
                 ctx->txn.res.etag          = entry->etag;
                 ctx->txn.res.last_modified = entry->last_modified;
-                ctx->etag_flag             = entry->etag_flag;
-                ctx->last_modified_flag    = entry->last_modified_flag;
+                ctx->etag_flag             = entry->prop.etag;
+                ctx->last_modified_flag    = entry->prop.last_modified;
 
                 nst_dict_record_access(entry);
             }
@@ -782,7 +782,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
     if(ret == NST_CTX_STATE_INIT) {
 
-        if(!nst_store_disk_off(ctx->rule->store)) {
+        if(!nst_store_disk_off(ctx->rule->prop.store)) {
 
             if(!nuster.cache->store.disk.loaded) {
                 ret = NST_CTX_STATE_CHECK_DISK;
