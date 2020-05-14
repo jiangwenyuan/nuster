@@ -177,6 +177,7 @@ typedef struct nst_rule_config {
 
     int                        id;            /* same for identical names */
     char                      *name;          /* cache name for logging */
+    char                      *proxy;         /* proxy name */
     nst_rule_key_t             key;
     nst_rule_code_t           *code;          /* code */
     uint8_t                    store;
@@ -228,6 +229,7 @@ typedef struct nst_rule {
     int                        state;         /* enabled or disabled */
 
     nst_rule_key_t            *key;
+    hpx_ist_t                  proxy;
     nst_rule_code_t           *code;          /* code */
 
     nst_rule_prop_t            prop;

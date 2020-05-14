@@ -156,27 +156,33 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
     memcpy(entry->key.uuid, key->uuid, 20);
 
     /* set buf */
-    entry->buf.size = txn->buf->data;
-    entry->buf.data = txn->buf->data;
+    entry->buf.size = txn->req.host.len + txn->req.path.len + txn->res.etag.len
+        + txn->res.last_modified.len + rule->proxy.len + rule->prop.name.len;
+    entry->buf.data = 0;
     entry->buf.area = nst_memory_alloc(dict->memory, entry->buf.size);
 
     if(!entry->buf.area) {
         goto err;
     }
 
-    memcpy(entry->buf.area, txn->buf->area, txn->buf->data);
+    entry->host = ist2(entry->buf.area + entry->buf.data, txn->req.host.len);
+    chunk_istcat(&entry->buf, txn->req.host);
 
-    entry->host.ptr           = entry->buf.area + (txn->req.host.ptr - txn->buf->area);
-    entry->host.len           = txn->req.host.len;
-    entry->path.ptr           = entry->buf.area + (txn->req.path.ptr - txn->buf->area);
-    entry->path.len           = txn->req.path.len;
-    entry->etag.ptr           = entry->buf.area + (txn->res.etag.ptr - txn->buf->area);
-    entry->etag.len           = txn->res.etag.len;
-    entry->last_modified.ptr  = entry->buf.area + (txn->res.last_modified.ptr - txn->buf->area);
-    entry->last_modified.len  = txn->res.last_modified.len;
-    entry->rule               = rule;
-    entry->expire             = 0;
-    entry->pid                = pid;
+    entry->path = ist2(entry->buf.area + entry->buf.data, txn->req.path.len);
+    chunk_istcat(&entry->buf, txn->req.path);
+
+    entry->etag = ist2(entry->buf.area + entry->buf.data, txn->res.etag.len);
+    chunk_istcat(&entry->buf, txn->res.etag);
+
+    entry->last_modified = ist2(entry->buf.area + entry->buf.data, txn->res.last_modified.len);
+    chunk_istcat(&entry->buf, txn->res.last_modified);
+
+    entry->proxy = ist2(entry->buf.area + entry->buf.data, rule->proxy.len);
+    chunk_istcat(&entry->buf, rule->proxy);
+
+    entry->prop.name = ist2(entry->buf.area + entry->buf.data, rule->prop.name.len);
+    chunk_istcat(&entry->buf, rule->prop.name);
+
     entry->prop.ttl           = rule->prop.ttl;
     entry->prop.extend[0]     = rule->prop.extend[0];
     entry->prop.extend[1]     = rule->prop.extend[1];
@@ -184,6 +190,10 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
     entry->prop.extend[3]     = rule->prop.extend[3];
     entry->prop.etag          = rule->prop.etag;
     entry->prop.last_modified = rule->prop.last_modified;
+
+    entry->rule               = rule;
+    entry->expire             = 0;
+    entry->pid                = pid;
 
     return entry;
 
