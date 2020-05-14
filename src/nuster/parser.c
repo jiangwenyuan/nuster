@@ -1365,7 +1365,6 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
 
     rule = malloc(sizeof(*rule));
 
-    rule->id    = -1;
     rule->name  = strdup(name);
     rule->proxy = proxy->id;
 

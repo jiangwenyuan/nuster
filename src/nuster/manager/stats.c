@@ -168,7 +168,7 @@ _getMaxPaddingLen() {
             rule = nuster.proxy[p->uuid]->rule;
 
             while(rule) {
-                int  s2 = s1 + 8 + rule->prop.name.len;
+                int  s2 = s1 + 8 + rule->prop.rid.len;
 
                 if(s2 > max) {
                     max = s2;
@@ -387,7 +387,7 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
                 }
 
                 if(rule->uuid == appctx->st2) {
-                    int  i = len - strlen(p->id) - 8 - rule->prop.name.len;
+                    int  i = len - strlen(p->id) - 8 - rule->prop.rid.len;
 
                     if(rule->idx == 0) {
                         chunk_printf(&trash, "\n**PROXY %s %s**\n",
@@ -395,7 +395,7 @@ _nst_stats_proxy(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *ht
                                 p->id);
                     }
 
-                    chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->prop.name.ptr);
+                    chunk_appendf(&trash, "%s.rule.%s: ", p->id, rule->prop.rid.ptr);
 
                     while(i--) {
                         chunk_appendf(&trash, " ");

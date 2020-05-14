@@ -45,7 +45,7 @@ nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
             nst_rule_t  *rule = nuster.proxy[p->uuid]->rule;
 
             while(rule) {
-                nst_debug(s, "[rule ] ----- %s", rule->prop.name.ptr);
+                nst_debug(s, "[rule ] ----- %s", rule->prop.rid.ptr);
 
                 if(key.data) {
                     free(key.data);
@@ -113,12 +113,11 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     hpx_ist_t                host  = { .len = 0 };
     hpx_ist_t                path  = { .len = 0 };
     char                    *regex_str, *error;
-    int                      method, st1, mode;
+    int                      method, mode;
 
     regex     = NULL;
     regex_str = error = NULL;
     method    = NST_MANAGER_NAME_RULE;
-    st1       = 0;
     mode      = 0;
 
     if(http_find_header(htx, ist("mode"), &hdr, 0)) {
@@ -200,7 +199,6 @@ purge:
         memset(&appctx->ctx.nuster.manager, 0, sizeof(appctx->ctx.nuster.manager));
 
         appctx->st0 = method;
-        appctx->st1 = st1;
 
         if(mode == NST_MODE_CACHE) {
             appctx->ctx.nuster.manager.dict = &nuster.cache->dict;
@@ -313,7 +311,7 @@ nst_purger_check(hpx_appctx_t *appctx, nst_dict_entry_t *entry) {
 
             break;
         case NST_MANAGER_NAME_RULE:
-            ret = isteq(entry->prop.name, appctx->ctx.nuster.manager.rule);
+            ret = isteq(entry->prop.rid, appctx->ctx.nuster.manager.rule);
 
             break;
         case NST_MANAGER_PATH:

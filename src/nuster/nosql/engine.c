@@ -708,7 +708,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, ctx->rule, ctx->pid);
+        entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, ctx->rule);
 
         if(entry) {
             ctx->state = NST_CTX_STATE_CREATE;
