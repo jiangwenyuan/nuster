@@ -51,6 +51,7 @@ typedef struct nst_dict_entry {
     hpx_ist_t                   path;
     hpx_ist_t                   etag;
     hpx_ist_t                   last_modified;
+    hpx_ist_t                   proxy;
 
     int                         pid;            /* proxy uuid */
     int                         header_len;

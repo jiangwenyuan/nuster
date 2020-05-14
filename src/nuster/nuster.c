@@ -148,6 +148,8 @@ out:
                 rule->idx           = px->rule_cnt++;
                 rule->id            = rc->id;
                 rule->state         = NST_RULE_ENABLED;
+                rule->proxy.ptr     = rc->proxy;
+                rule->proxy.ptr     = strlen(rc->proxy);
                 rule->prop.name.ptr = rc->name;
                 rule->prop.name.len = strlen(rc->name);
 

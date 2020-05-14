@@ -96,6 +96,8 @@ struct appctx {
 				struct buffer     buf;
 				struct ist	  host;
 				struct ist	  path;
+				struct ist	  proxy;
+				struct ist	  rule;
 				struct my_regex  *regex;
 			} manager;
 		} nuster;
