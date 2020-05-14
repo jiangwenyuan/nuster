@@ -175,7 +175,6 @@ typedef struct nst_rule_code {
 typedef struct nst_rule_config {
     hpx_list_t                 list;          /* list linked to from the proxy */
 
-    int                        id;            /* same for identical names */
     char                      *name;          /* cache name for logging */
     char                      *proxy;         /* proxy name */
     nst_rule_key_t             key;
@@ -209,7 +208,8 @@ typedef struct nst_rule_config {
 } nst_rule_config_t;
 
 typedef struct nst_rule_prop {
-    hpx_ist_t                  name;          /* rule name */
+    hpx_ist_t                  pid;          /* proxy name */
+    hpx_ist_t                  rid;          /* rule name */
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
     uint8_t                    store;
     int                        etag;          /* etag on|off */
@@ -224,12 +224,10 @@ typedef struct nst_rule {
 
     int                        uuid;          /* unique rule ID */
     int                        idx;           /* index in specific proxy */
-    int                        id;            /* same for identical names */
 
     int                        state;         /* enabled or disabled */
 
     nst_rule_key_t            *key;
-    hpx_ist_t                  proxy;
     nst_rule_code_t           *code;          /* code */
 
     nst_rule_prop_t            prop;

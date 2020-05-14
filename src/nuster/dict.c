@@ -120,7 +120,7 @@ nst_dict_cleanup(nst_dict_t *dict) {
 }
 
 nst_dict_entry_t *
-nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *rule, int pid) {
+nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *rule) {
 
     nst_dict_entry_t  *entry = NULL;
     int                idx;
@@ -157,7 +157,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 
     /* set buf */
     entry->buf.size = txn->req.host.len + txn->req.path.len + txn->res.etag.len
-        + txn->res.last_modified.len + rule->proxy.len + rule->prop.name.len;
+        + txn->res.last_modified.len + rule->prop.pid.len + rule->prop.rid.len;
     entry->buf.data = 0;
     entry->buf.area = nst_memory_alloc(dict->memory, entry->buf.size);
 
@@ -177,11 +177,11 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
     entry->last_modified = ist2(entry->buf.area + entry->buf.data, txn->res.last_modified.len);
     chunk_istcat(&entry->buf, txn->res.last_modified);
 
-    entry->proxy = ist2(entry->buf.area + entry->buf.data, rule->proxy.len);
-    chunk_istcat(&entry->buf, rule->proxy);
+    entry->prop.pid = ist2(entry->buf.area + entry->buf.data, rule->prop.pid.len);
+    chunk_istcat(&entry->buf, rule->prop.pid);
 
-    entry->prop.name = ist2(entry->buf.area + entry->buf.data, rule->prop.name.len);
-    chunk_istcat(&entry->buf, rule->prop.name);
+    entry->prop.rid = ist2(entry->buf.area + entry->buf.data, rule->prop.rid.len);
+    chunk_istcat(&entry->buf, rule->prop.rid);
 
     entry->prop.ttl           = rule->prop.ttl;
     entry->prop.extend[0]     = rule->prop.extend[0];
@@ -193,7 +193,6 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 
     entry->rule               = rule;
     entry->expire             = 0;
-    entry->pid                = pid;
 
     return entry;
 

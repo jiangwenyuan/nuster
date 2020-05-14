@@ -78,7 +78,6 @@ _nst_nosql_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
         }
 
         ctx->state    = NST_CTX_STATE_INIT;
-        ctx->pid      = conf->pid;
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
 
@@ -155,7 +154,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             int         idx = ctx->rule->key->idx;
             nst_key_t  *key = &(ctx->keys[idx]);
 
-            nst_debug(s, "[rule ] ----- %s", ctx->rule->prop.name.ptr);
+            nst_debug(s, "[rule ] ----- %s", ctx->rule->prop.rid.ptr);
 
             if(ctx->rule->state == NST_RULE_DISABLED) {
                 nst_debug(s, "[rule ] disabled, continue.");

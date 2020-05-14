@@ -49,7 +49,7 @@ static void
 _nst_proxy_init() {
     hpx_proxy_t   *px1;
     nst_memory_t  *memory;
-    int            i, uuid, proxy_cnt;
+    int            uuid, proxy_cnt;
 
     /* new rule init */
     global.nuster.memory = nst_memory_create("nuster.shm", NST_DEFAULT_SIZE,
@@ -65,7 +65,7 @@ _nst_proxy_init() {
 
     memory = global.nuster.memory;
 
-    i = proxy_cnt = 0;
+    proxy_cnt = 0;
 
     px1 = proxies_list;
 
@@ -83,22 +83,17 @@ _nst_proxy_init() {
                 list_for_each_entry(r2, &px2->nuster.rules, list) {
 
                     if(r2 == r1) {
-                        goto out;
+                        break;
                     }
 
                     if(!strcmp(r2->name, r1->name)) {
                         ha_warning("nuster rule with same name=[%s] found.\n", r1->name);
-                        r1->id = r2->id;
-                        goto out;
+
+                        break;
                     }
                 }
 
                 px2 = px2->next;
-            }
-
-out:
-            if(r1->id == -1) {
-                r1->id = i++;
             }
         }
 
@@ -114,7 +109,7 @@ out:
 
     memset(nuster.proxy, 0, proxy_cnt * sizeof(nst_proxy_t *));
 
-    i = uuid = 0;
+    uuid = 0;
 
     px1 = proxies_list;
 
@@ -144,18 +139,15 @@ out:
                     goto err;
                 }
 
-                rule->uuid          = uuid++;
-                rule->idx           = px->rule_cnt++;
-                rule->id            = rc->id;
-                rule->state         = NST_RULE_ENABLED;
-                rule->proxy.ptr     = rc->proxy;
-                rule->proxy.len     = strlen(rc->proxy);
-                rule->prop.name.ptr = rc->name;
-                rule->prop.name.len = strlen(rc->name);
+                rule->next  = NULL;
+                rule->uuid  = uuid++;
+                rule->idx   = px->rule_cnt++;
+                rule->state = NST_RULE_ENABLED;
 
                 key = px->key;
 
                 while(key) {
+
                     if(strcmp(key->name, rc->key.name) == 0) {
                         break;
                     }
@@ -184,24 +176,22 @@ out:
                     px->key = key;
                 }
 
-                rule->key   = key;
-                rule->prop.store = rc->store;
-                rule->code  = rc->code;
-                rule->prop.ttl   = rc->ttl;
-                rule->prop.etag  = rc->etag;
+                rule->key  = key;
+                rule->code = rc->code;
 
+                rule->prop.pid           = ist2(rc->proxy, strlen(rc->proxy));
+                rule->prop.rid           = ist2(rc->name, strlen(rc->name));
+                rule->prop.ttl           = rc->ttl;
+                rule->prop.store         = rc->store;
+                rule->prop.etag          = rc->etag;
                 rule->prop.last_modified = rc->last_modified;
-
-                rule->prop.extend[0] = rc->extend[0];
-                rule->prop.extend[1] = rc->extend[1];
-                rule->prop.extend[2] = rc->extend[2];
-                rule->prop.extend[3] = rc->extend[3];
-
-                rule->prop.wait = rc->wait;
+                rule->prop.extend[0]     = rc->extend[0];
+                rule->prop.extend[1]     = rc->extend[1];
+                rule->prop.extend[2]     = rc->extend[2];
+                rule->prop.extend[3]     = rc->extend[3];
+                rule->prop.wait          = rc->wait;
 
                 rule->cond = rc->cond;
-
-                rule->next = NULL;
 
                 if(px->rule) {
                     tail->next = rule;

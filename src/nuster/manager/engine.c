@@ -64,7 +64,7 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
                     if(method != NST_MANAGER_NAME_RULE) {
                         rule->state    = state == -1 ? rule->state    : state;
                         rule->prop.ttl = ttl   == -1 ? rule->prop.ttl : ttl;
-                    } else if(isteq(rule->prop.name, hdr.value)) {
+                    } else if(isteq(rule->prop.rid, hdr.value)) {
                         rule->state    = state == -1 ? rule->state    : state;
                         rule->prop.ttl = ttl   == -1 ? rule->prop.ttl : ttl;
                         found          = 1;

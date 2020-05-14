@@ -60,8 +60,6 @@ typedef struct nst_ctx {
 
     nst_http_txn_t              txn;
 
-    int                         pid;              /* proxy uuid */
-
     uint64_t                    ctime;
 
     struct {
