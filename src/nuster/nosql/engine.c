@@ -708,7 +708,7 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, ctx->rule);
+        entry = nst_dict_set(&nuster.nosql->dict, key, &ctx->txn, &ctx->rule->prop);
 
         if(entry) {
             ctx->state = NST_CTX_STATE_CREATE;
@@ -728,17 +728,8 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
         }
 
         if(nst_store_disk_on(ctx->rule->prop.store)) {
-            uint64_t  t = ctx->rule->prop.ttl;
-
-            t = t << 32;
-
-            *( uint8_t *)(&t)      = ctx->rule->prop.extend[0];
-            *((uint8_t *)(&t) + 1) = ctx->rule->prop.extend[1];
-            *((uint8_t *)(&t) + 2) = ctx->rule->prop.extend[2];
-            *((uint8_t *)(&t) + 3) = ctx->rule->prop.extend[3];
-
             nst_disk_store_init(&nuster.nosql->store.disk, &ctx->store.disk, key, &ctx->txn,
-                    ctx->rule->prop.etag, ctx->rule->prop.last_modified, t);
+                    &ctx->rule->prop);
         }
     }
 
