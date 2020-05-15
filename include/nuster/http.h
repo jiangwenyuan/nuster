@@ -95,15 +95,15 @@ int nst_http_ring_item_to_htx(nst_ring_item_t *item, hpx_htx_t *htx);
 
 void nst_http_reply(hpx_stream_t *s, int idx);
 int nst_http_reply_100(hpx_stream_t *s);
-void nst_http_reply_304(hpx_stream_t *s, hpx_ist_t last_modified, hpx_ist_t etag);
+void nst_http_reply_304(hpx_stream_t *s, nst_http_txn_t *txn);
 
 int nst_http_handle_expect(hpx_stream_t *s, hpx_htx_t *htx, hpx_http_msg_t *msg);
-int nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx,
-        hpx_ist_t last_modified, hpx_ist_t etag, int last_modified_flag, int etag_flag);
+int nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, nst_http_txn_t *txn,
+        nst_rule_prop_t *prop);
 
-void nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag_flag);
+void nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag_prop);
 void nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn,
-        int last_modified_flag);
+        int last_modified_prop);
 
 
 #endif /* _NUSTER_HTTP_H */

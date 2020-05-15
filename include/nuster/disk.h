@@ -229,12 +229,12 @@ nst_disk_meta_get_etag_len(char *p) {
 }
 
 static inline void
-nst_disk_meta_set_etag_flag(char *p, int v) {
+nst_disk_meta_set_etag_prop(char *p, int v) {
     *(int *)(p + NST_DISK_META_POS_ETAG_LEN + 4) = v;
 }
 
 static inline int
-nst_disk_meta_get_etag_flag(char *p) {
+nst_disk_meta_get_etag_prop(char *p) {
     return *(int *)(p + NST_DISK_META_POS_ETAG_LEN + 4);
 }
 
@@ -249,12 +249,12 @@ nst_disk_meta_get_last_modified_len(char *p) {
 }
 
 static inline void
-nst_disk_meta_set_last_modified_flag(char *p, int v) {
+nst_disk_meta_set_last_modified_prop(char *p, int v) {
     *(int *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN + 4) = v;
 }
 
 static inline int
-nst_disk_meta_get_last_modified_flag(char *p) {
+nst_disk_meta_get_last_modified_prop(char *p) {
     return *(int *)(p + NST_DISK_META_POS_LAST_MODIFIED_LEN + 4);
 }
 
@@ -292,7 +292,7 @@ nst_disk_get_header_pos(char *p) {
 static inline void
 nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
         uint64_t payload_len, uint64_t key_len, uint64_t host_len, uint64_t path_len,
-        int etag_flag, uint32_t etag_len, int last_modified_flag, uint32_t last_modified_len,
+        int etag_prop, uint32_t etag_len, int last_modified_prop, uint32_t last_modified_len,
         uint64_t ttl_extend) {
 
     memcpy(p, "NUSTER", 6);
@@ -307,9 +307,9 @@ nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
     nst_disk_meta_set_host_len(p, host_len);
     nst_disk_meta_set_path_len(p, path_len);
     nst_disk_meta_set_etag_len(p, etag_len);
-    nst_disk_meta_set_etag_flag(p, etag_flag);
+    nst_disk_meta_set_etag_prop(p, etag_prop);
     nst_disk_meta_set_last_modified_len(p, last_modified_len);
-    nst_disk_meta_set_last_modified_flag(p, last_modified_flag);
+    nst_disk_meta_set_last_modified_prop(p, last_modified_prop);
     nst_disk_meta_set_ttl_extend(p, ttl_extend);
 }
 

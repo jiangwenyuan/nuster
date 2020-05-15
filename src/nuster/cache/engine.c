@@ -765,8 +765,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.payload_len   = entry->payload_len;
                 ctx->txn.res.etag          = entry->etag;
                 ctx->txn.res.last_modified = entry->last_modified;
-                ctx->etag_flag             = entry->prop.etag;
-                ctx->last_modified_flag    = entry->prop.last_modified;
+                ctx->prop                  = &entry->prop;
 
                 nst_dict_record_access(entry);
             }
@@ -820,14 +819,12 @@ nst_cache_exists(nst_ctx_t *ctx) {
             nst_key_disk_set_checked(key);
 
             if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
-                ret = NST_CTX_STATE_HIT_DISK;
+                ctx->prop = (nst_rule_prop_t *)(ctx->txn.buf->area + ctx->txn.buf->data);
+                ctx->txn.buf->data += sizeof(nst_rule_prop_t);
 
-                ctx->txn.res.header_len  = nst_disk_meta_get_header_len(ctx->store.disk.meta);
-                ctx->txn.res.payload_len = nst_disk_meta_get_payload_len(ctx->store.disk.meta);
+                ctx->prop->etag = nst_disk_meta_get_etag_prop(ctx->store.disk.meta);
 
-                ctx->etag_flag = nst_disk_meta_get_etag_flag(ctx->store.disk.meta);
-
-                if(ctx->etag_flag == NST_STATUS_ON) {
+                if(ctx->prop->etag == NST_STATUS_ON) {
                     ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                     ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
 
@@ -836,10 +833,10 @@ nst_cache_exists(nst_ctx_t *ctx) {
                     ctx->txn.buf->data += ctx->txn.res.etag.len;
                 }
 
-                ctx->last_modified_flag =
-                    nst_disk_meta_get_last_modified_flag(ctx->store.disk.meta);
+                ctx->prop->last_modified =
+                    nst_disk_meta_get_last_modified_prop(ctx->store.disk.meta);
 
-                if(ctx->last_modified_flag == NST_STATUS_ON) {
+                if(ctx->prop->last_modified == NST_STATUS_ON) {
                     ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                     ctx->txn.res.last_modified.len =
                         nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
@@ -848,6 +845,8 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
                     ctx->txn.buf->data += ctx->txn.res.last_modified.len;
                 }
+
+                ret = NST_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_CTX_STATE_INIT;
             }

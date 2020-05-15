@@ -367,8 +367,8 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     entry->prop.extend[2]     = *((uint8_t *)(&ttl_extend) + 2);
     entry->prop.extend[3]     = *((uint8_t *)(&ttl_extend) + 3);
     entry->prop.ttl           = ttl_extend >> 32;
-    entry->prop.etag          = nst_disk_meta_get_etag_flag(meta);
-    entry->prop.last_modified = nst_disk_meta_get_last_modified_flag(meta);
+    entry->prop.etag          = nst_disk_meta_get_etag_prop(meta);
+    entry->prop.last_modified = nst_disk_meta_get_last_modified_prop(meta);
 
     return NST_OK;
 }

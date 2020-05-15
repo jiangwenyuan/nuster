@@ -247,9 +247,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
         htx = htxbuf(&req->buf);
 
-        if(nst_http_handle_conditional_req(s, htx, ctx->txn.res.last_modified,
-                    ctx->txn.res.etag, ctx->last_modified_flag, ctx->etag_flag)) {
-
+        if(nst_http_handle_conditional_req(s, htx, &ctx->txn, ctx->prop)) {
             return 1;
         }
     }

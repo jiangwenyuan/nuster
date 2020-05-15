@@ -217,7 +217,7 @@ fail:
 }
 
 void
-nst_http_reply_304(hpx_stream_t *s, hpx_ist_t last_modified, hpx_ist_t etag) {
+nst_http_reply_304(hpx_stream_t *s, nst_http_txn_t *txn) {
     hpx_stream_interface_t  *si  = &s->si[1];
     hpx_channel_t           *res = &s->res;
     hpx_htx_t               *htx;
@@ -235,9 +235,9 @@ nst_http_reply_304(hpx_stream_t *s, hpx_ist_t last_modified, hpx_ist_t etag) {
 
     sl->info.res.status = nst_http_codes[NST_HTTP_304].status;
 
-    htx_add_header(htx, ist("Last-Modified"), last_modified);
+    htx_add_header(htx, ist("Last-Modified"), txn->res.last_modified);
 
-    htx_add_header(htx, ist("ETag"), etag);
+    htx_add_header(htx, ist("ETag"), txn->res.etag);
 
     htx_add_endof(htx, HTX_BLK_EOH);
 
@@ -286,8 +286,8 @@ nst_http_handle_expect(hpx_stream_t *s, hpx_htx_t *htx, hpx_http_msg_t *msg) {
  * 0: http_headers should proceed
  */
 int
-nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_modified,
-        hpx_ist_t etag, int last_modified_flag, int etag_flag) {
+nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, nst_http_txn_t *txn,
+        nst_rule_prop_t *prop) {
 
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
 
@@ -295,11 +295,11 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
     int  if_match           = -1;
     int  if_modified_since  = -1;;
 
-    if(etag_flag != NST_STATUS_ON && last_modified_flag != NST_STATUS_ON) {
+    if(prop->etag != NST_STATUS_ON && prop->last_modified != NST_STATUS_ON) {
         return 0;
     }
 
-    if(etag_flag == NST_STATUS_ON) {
+    if(prop->etag == NST_STATUS_ON) {
 
         while(http_find_header(htx, ist("If-Match"), &hdr, 0)) {
 
@@ -311,7 +311,7 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
                 break;
             }
 
-            if(isteq(etag, hdr.value)) {
+            if(isteq(txn->res.etag, hdr.value)) {
                 if_match = 200;
 
                 break;
@@ -323,18 +323,18 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
         }
     }
 
-    if(last_modified_flag == NST_STATUS_ON) {
+    if(prop->last_modified == NST_STATUS_ON) {
 
         hdr.blk = NULL;
         if(http_find_header(htx, ist("If-Unmodified-Since"), &hdr, 1)) {
 
-            if(!isteq(last_modified, hdr.value)) {
+            if(!isteq(txn->res.last_modified, hdr.value)) {
                 goto code412;
             }
         }
     }
 
-    if(etag_flag == NST_STATUS_ON) {
+    if(prop->etag == NST_STATUS_ON) {
 
         hdr.blk = NULL;
         while(http_find_header(htx, ist("If-None-Match"), &hdr, 0)) {
@@ -347,7 +347,7 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
                 break;
             }
 
-            if(isteq(etag, hdr.value)) {
+            if(isteq(txn->res.etag, hdr.value)) {
                 if_none_match = 304;
 
                 break;
@@ -355,12 +355,12 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
         }
     }
 
-    if(last_modified_flag == NST_STATUS_ON) {
+    if(prop->last_modified == NST_STATUS_ON) {
 
         hdr.blk = NULL;
         if(http_find_header(htx, ist("If-Modified-Since"), &hdr, 1)) {
 
-            if(isteq(last_modified, hdr.value)) {
+            if(isteq(txn->res.last_modified, hdr.value)) {
                 if_modified_since = 304;
             } else {
                 if_modified_since = 200;
@@ -380,7 +380,7 @@ nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, hpx_ist_t last_
 
 code304:
 
-    nst_http_reply_304(s, last_modified, etag);
+    nst_http_reply_304(s, txn);
 
     return 1;
 
@@ -478,7 +478,7 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
 }
 
 void
-nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag_flag) {
+nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag_prop) {
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx;
 
@@ -498,7 +498,7 @@ nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, i
         txn->res.etag.len = 10;
         b_add(txn->buf, txn->res.etag.len);
 
-        if(etag_flag == NST_STATUS_ON) {
+        if(etag_prop == NST_STATUS_ON) {
             http_add_header(htx, ist("Etag"), txn->res.etag);
         }
     }
@@ -506,7 +506,7 @@ nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, i
 
 void
 nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn,
-        int last_modified_flag) {
+        int last_modified_prop) {
 
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx;
@@ -539,7 +539,7 @@ nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_
 
         b_add(txn->buf, txn->res.last_modified.len);
 
-        if(last_modified_flag == NST_STATUS_ON) {
+        if(last_modified_prop == NST_STATUS_ON) {
             http_add_header(htx, ist("Last-Modified"), txn->res.last_modified);
         }
     }
