@@ -27,15 +27,16 @@ int
 nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     hpx_http_msg_t     *msg  = &s->txn->req;
     hpx_proxy_t        *p    = proxies_list;
+    hpx_buffer_t       *buf  = alloc_trash_chunk();
     nst_http_txn_t      txn;
     nst_key_t           key  = { .data = NULL };
     int                 ret  = NST_HTTP_500;
 
-    if(nst_http_txn_attach(&txn) != NST_OK) {
+    if(!buf) {
         goto err;
     }
 
-    if(nst_http_parse_htx(s, msg, &txn) != NST_OK) {
+    if(nst_http_parse_htx(s, msg, buf, &txn) != NST_OK) {
         goto err;
     }
 
@@ -92,7 +93,7 @@ err:
     nst_http_reply(s, ret);
 
 end:
-    nst_http_txn_detach(&txn);
+    free_trash_chunk(buf);
 
     if(key.data) {
         free(key.data);

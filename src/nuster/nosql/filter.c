@@ -80,8 +80,9 @@ _nst_nosql_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
         ctx->state    = NST_CTX_STATE_INIT;
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
+        ctx->buf      = alloc_trash_chunk();
 
-        if(nst_http_txn_attach(&ctx->txn) != NST_OK) {
+        if(!ctx->buf) {
             free(ctx);
 
             return 0;
@@ -114,7 +115,7 @@ _nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
             }
         }
 
-        nst_http_txn_detach(&ctx->txn);
+        free_trash_chunk(ctx->buf);
 
         free(ctx);
     }
@@ -142,7 +143,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     if(ctx->state == NST_CTX_STATE_INIT) {
         int  i = 0;
 
-        if(nst_http_parse_htx(s, msg, &ctx->txn) != NST_OK) {
+        if(nst_http_parse_htx(s, msg, ctx->buf, &ctx->txn) != NST_OK) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
 
             return 1;
@@ -292,9 +293,9 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     if(ctx->state == NST_CTX_STATE_PASS) {
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
 
-        nst_http_build_etag(s, msg, &ctx->txn, NST_STATUS_OFF);
+        nst_http_build_etag(s, msg, ctx->buf, &ctx->txn, NST_STATUS_OFF);
 
-        nst_http_build_last_modified(s, msg, &ctx->txn, NST_STATUS_OFF);
+        nst_http_build_last_modified(s, msg, ctx->buf, &ctx->txn, NST_STATUS_OFF);
 
         nst_nosql_create(s, msg, ctx);
     }

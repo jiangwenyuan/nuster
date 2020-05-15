@@ -56,6 +56,8 @@ typedef struct nst_proxy {
 typedef struct nst_ctx {
     int                         state;
 
+    hpx_buffer_t               *buf;
+
     nst_dict_entry_t           *entry;
 
     nst_http_txn_t              txn;
