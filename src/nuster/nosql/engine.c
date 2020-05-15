@@ -484,8 +484,8 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 }
 
 nst_ring_item_t *
-_nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_flag,
-        int last_modified_flag) {
+_nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
+        int last_modified_prop) {
 
     nst_ring_item_t     *item_sl, *item_ct, *item_te, *item_eoh, *item_et, *item_lm, *tail;
     hpx_htx_blk_type_t   type;
@@ -584,7 +584,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_flag,
     tail       = item_te;
 
     /* etag */
-    if(etag_flag) {
+    if(etag_prop) {
         type  = HTX_BLK_HDR;
         info  = type << 28;
         size  = etk.len + txn->res.etag.len;
@@ -610,7 +610,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_flag,
     }
 
     /* last-modified */
-    if(last_modified_flag) {
+    if(last_modified_prop) {
         type  = HTX_BLK_HDR;
         info  = type << 28;
         size  = lmk.len + txn->res.last_modified.len;
@@ -1003,8 +1003,7 @@ nst_nosql_exists(nst_ctx_t *ctx) {
                 ctx->txn.res.payload_len   = entry->payload_len;
                 ctx->txn.res.etag          = entry->etag;
                 ctx->txn.res.last_modified = entry->last_modified;
-                ctx->etag_flag             = entry->prop.etag;
-                ctx->last_modified_flag    = entry->prop.last_modified;
+                ctx->prop                  = &entry->prop;
 
                 nst_dict_record_access(entry);
             }
@@ -1056,9 +1055,12 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             nst_key_disk_set_checked(key);
 
             if(nst_disk_data_exists(&nuster.nosql->store.disk, &ctx->store.disk, key) == NST_OK) {
-                ctx->etag_flag = nst_disk_meta_get_etag_flag(ctx->store.disk.meta);
+                ctx->prop = (nst_rule_prop_t *)(ctx->txn.buf->area + ctx->txn.buf->data);
+                ctx->txn.buf->data += sizeof(nst_rule_prop_t);
 
-                if(ctx->etag_flag == NST_STATUS_ON) {
+                ctx->prop->etag = nst_disk_meta_get_etag_prop(ctx->store.disk.meta);
+
+                if(ctx->prop->etag == NST_STATUS_ON) {
                     ctx->txn.res.etag.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                     ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
 
@@ -1067,10 +1069,10 @@ nst_nosql_exists(nst_ctx_t *ctx) {
                     ctx->txn.buf->data += ctx->txn.res.etag.len;
                 }
 
-                ctx->last_modified_flag =
-                    nst_disk_meta_get_last_modified_flag(ctx->store.disk.meta);
+                ctx->prop->last_modified =
+                    nst_disk_meta_get_last_modified_prop(ctx->store.disk.meta);
 
-                if(ctx->last_modified_flag == NST_STATUS_ON) {
+                if(ctx->prop->last_modified == NST_STATUS_ON) {
                     ctx->txn.res.last_modified.ptr = ctx->txn.buf->area + ctx->txn.buf->data;
                     ctx->txn.res.last_modified.len =
                         nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);

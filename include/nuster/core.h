@@ -71,8 +71,6 @@ typedef struct nst_ctx {
     } store;
 
     nst_rule_prop_t            *prop;
-    int                         etag_flag;
-    int                         last_modified_flag;
 
     int                         rule_cnt;
     int                         key_cnt;
