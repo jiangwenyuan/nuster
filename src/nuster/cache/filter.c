@@ -220,7 +220,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 }
 
                 if(ctx->state == NST_CTX_STATE_WAIT) {
-                    if(ctx->rule->prop.wait >= 0) {
+                    if(ctx->prop->wait >= 0) {
                         nst_key_reset_flag(key);
                         nst_debug_end("WAIT");
 
@@ -253,8 +253,8 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         }
 
         if(ctx->state == NST_CTX_STATE_WAIT) {
-            if(ctx->rule->prop.wait == 0 || (ctx->rule->prop.wait > 0
-                        && get_current_timestamp() - ctx->ctime < ctx->rule->prop.wait * 1000)) {
+            if(ctx->prop->wait == 0 || (ctx->prop->wait > 0
+                        && get_current_timestamp() - ctx->ctime < ctx->prop->wait * 1000)) {
 
                 usleep(1);
                 ctx->state = NST_CTX_STATE_INIT;

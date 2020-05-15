@@ -70,6 +70,7 @@ typedef struct nst_ctx {
         nst_disk_data_t         disk;
     } store;
 
+    nst_rule_prop_t            *prop;
     int                         etag_flag;
     int                         last_modified_flag;
 

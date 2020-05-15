@@ -43,7 +43,6 @@ typedef struct nst_dict_entry {
     int                         state;
 
     nst_key_t                   key;
-    nst_rule_t                 *rule;           /* rule */
 
     hpx_buffer_t                buf;
 
