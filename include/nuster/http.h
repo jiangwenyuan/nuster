@@ -67,29 +67,13 @@ typedef struct nst_http_res {
 } nst_http_res_t;
 
 typedef struct nst_http_txn {
-    hpx_buffer_t       *buf;
     nst_http_req_t      req;
     nst_http_res_t      res;
 } nst_http_txn_t;
 
-static inline int
-nst_http_txn_attach(nst_http_txn_t *txn) {
-    txn->buf = alloc_trash_chunk();
+int nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf,
+        nst_http_txn_t *txn);
 
-    if(txn->buf) {
-        return NST_OK;
-    } else {
-        return NST_ERR;
-    }
-}
-
-
-static inline void
-nst_http_txn_detach(nst_http_txn_t *txn) {
-    free_trash_chunk(txn->buf);
-}
-
-int nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn);
 int nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, int *val_len);
 int nst_http_ring_item_to_htx(nst_ring_item_t *item, hpx_htx_t *htx);
 
@@ -101,9 +85,11 @@ int nst_http_handle_expect(hpx_stream_t *s, hpx_htx_t *htx, hpx_http_msg_t *msg)
 int nst_http_handle_conditional_req(hpx_stream_t *s, hpx_htx_t *htx, nst_http_txn_t *txn,
         nst_rule_prop_t *prop);
 
-void nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag_prop);
-void nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn,
-        int last_modified_prop);
+void nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf,
+        nst_http_txn_t *txn, int etag_prop);
+
+void nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf,
+        nst_http_txn_t *txn, int last_modified_prop);
 
 
 #endif /* _NUSTER_HTTP_H */

@@ -82,8 +82,9 @@ _nst_cache_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
         ctx->ctime    = get_current_timestamp();
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
+        ctx->buf      = alloc_trash_chunk();
 
-        if(nst_http_txn_attach(&ctx->txn) != NST_OK) {
+        if(!ctx->buf) {
             free(ctx);
 
             return 0;
@@ -123,7 +124,7 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
             }
         }
 
-        nst_http_txn_detach(&ctx->txn);
+        free_trash_chunk(ctx->buf);
 
         free(ctx);
     }
@@ -151,7 +152,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         if(ctx->state == NST_CTX_STATE_INIT) {
             int  i = 0;
 
-            if(nst_http_parse_htx(s, msg, &ctx->txn) != NST_OK) {
+            if(nst_http_parse_htx(s, msg, ctx->buf, &ctx->txn) != NST_OK) {
                 ctx->state = NST_CTX_STATE_BYPASS;
 
                 return 1;
@@ -319,9 +320,10 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
             nst_debug_end("PASS");
 
-            nst_http_build_etag(s, msg, &ctx->txn, ctx->rule->prop.etag);
+            nst_http_build_etag(s, msg, ctx->buf, &ctx->txn, ctx->rule->prop.etag);
 
-            nst_http_build_last_modified(s, msg, &ctx->txn, ctx->rule->prop.last_modified);
+            nst_http_build_last_modified(s, msg, ctx->buf, &ctx->txn,
+                    ctx->rule->prop.last_modified);
 
             nst_debug(s, "[cache] To create");
 

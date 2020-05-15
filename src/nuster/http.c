@@ -392,14 +392,14 @@ code412:
 }
 
 int
-nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
+nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf, nst_http_txn_t *txn) {
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx = htxbuf(&s->req.buf);
     hpx_htx_sl_t       *sl;
     hpx_ist_t           url, uri;
     char               *uri_begin, *uri_end, *ptr;
 
-    if(txn->buf->data) {
+    if(buf->data) {
         return NST_OK;
     }
 
@@ -412,10 +412,10 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
 #endif
 
     if(http_find_header(htx, ist("Host"), &hdr, 0)) {
-        txn->req.host.ptr = txn->buf->area + txn->buf->data;
+        txn->req.host.ptr = buf->area + buf->data;
         txn->req.host.len = hdr.value.len;
 
-        chunk_istcat(txn->buf, hdr.value);
+        chunk_istcat(buf, hdr.value);
     }
 
     sl  = http_get_stline(htx);
@@ -426,10 +426,10 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
         return NST_ERR;
     }
 
-    txn->req.uri.ptr = txn->buf->area + txn->buf->data;
+    txn->req.uri.ptr = buf->area + buf->data;
     txn->req.uri.len = uri.len;
 
-    chunk_istcat(txn->buf, uri);
+    chunk_istcat(buf, uri);
 
     uri_begin = txn->req.uri.ptr;
     uri_end   = txn->req.uri.ptr + uri.len;
@@ -460,29 +460,31 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn) {
 
     hdr.blk = NULL;
     if(http_find_header(htx, ist("Cookie"), &hdr, 1)) {
-        txn->req.cookie.ptr = txn->buf->area + txn->buf->data;
+        txn->req.cookie.ptr = buf->area + buf->data;
         txn->req.cookie.len = hdr.value.len;
 
-        chunk_istcat(txn->buf, hdr.value);
+        chunk_istcat(buf, hdr.value);
     }
 
     hdr.blk = NULL;
     if(http_find_header(htx, ist("Content-Type"), &hdr, 1)) {
-        txn->req.content_type.ptr = txn->buf->area + txn->buf->data;
+        txn->req.content_type.ptr = buf->area + buf->data;
         txn->req.content_type.len = hdr.value.len;
 
-        chunk_istcat(txn->buf, hdr.value);
+        chunk_istcat(buf, hdr.value);
     }
 
     return NST_OK;
 }
 
 void
-nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, int etag_prop) {
+nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf, nst_http_txn_t *txn,
+        int etag_prop) {
+
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx;
 
-    txn->res.etag.ptr = txn->buf->area + txn->buf->data;
+    txn->res.etag.ptr = buf->area + buf->data;
     txn->res.etag.len = 0;
 
     htx = htxbuf(&s->res.buf);
@@ -490,13 +492,13 @@ nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, i
     if(http_find_header(htx, ist("ETag"), &hdr, 1)) {
         txn->res.etag.len = hdr.value.len;
 
-        chunk_istcat(txn->buf, hdr.value);
+        chunk_istcat(buf, hdr.value);
     } else {
         uint64_t t = get_current_timestamp();
 
         sprintf(txn->res.etag.ptr, "\"%08x\"", XXH32(&t, 8, 0));
         txn->res.etag.len = 10;
-        b_add(txn->buf, txn->res.etag.len);
+        b_add(buf, txn->res.etag.len);
 
         if(etag_prop == NST_STATUS_ON) {
             http_add_header(htx, ist("Etag"), txn->res.etag);
@@ -505,8 +507,8 @@ nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn, i
 }
 
 void
-nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_t *txn,
-        int last_modified_prop) {
+nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf,
+        nst_http_txn_t *txn, int last_modified_prop) {
 
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx;
@@ -514,13 +516,13 @@ nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_
 
     htx = htxbuf(&s->res.buf);
 
-    txn->res.last_modified.ptr = txn->buf->area + txn->buf->data;
+    txn->res.last_modified.ptr = buf->area + buf->data;
     txn->res.last_modified.len = len;
 
     if(http_find_header(htx, ist("Last-Modified"), &hdr, 1)) {
 
         if(hdr.value.len == len) {
-            chunk_istcat(txn->buf, hdr.value);
+            chunk_istcat(buf, hdr.value);
         }
 
     } else {
@@ -537,7 +539,7 @@ nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, nst_http_txn_
                 day[tm->tm_wday], tm->tm_mday, mon[tm->tm_mon],
                 1900 + tm->tm_year, tm->tm_hour, tm->tm_min, tm->tm_sec);
 
-        b_add(txn->buf, txn->res.last_modified.len);
+        b_add(buf, txn->res.last_modified.len);
 
         if(last_modified_prop == NST_STATUS_ON) {
             http_add_header(htx, ist("Last-Modified"), txn->res.last_modified);
