@@ -626,9 +626,40 @@ nst_disk_cleanup(nst_core_t *core) {
     }
 }
 
+static void
+nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
+        uint64_t payload_len, uint64_t key_len, nst_http_txn_t *txn, nst_rule_prop_t *prop) {
+
+    uint64_t  ttl_extend = prop->ttl;
+
+    ttl_extend = ttl_extend << 32;
+
+    *( uint8_t *)(&ttl_extend)      = prop->extend[0];
+    *((uint8_t *)(&ttl_extend) + 1) = prop->extend[1];
+    *((uint8_t *)(&ttl_extend) + 2) = prop->extend[2];
+    *((uint8_t *)(&ttl_extend) + 3) = prop->extend[3];
+
+    memcpy(p, "NUSTER", 6);
+    p[6] = 0;
+    p[7] = (char)NST_DISK_VERSION;
+
+    nst_disk_meta_set_hash(p, hash);
+    nst_disk_meta_set_expire(p, expire);
+    nst_disk_meta_set_header_len(p, header_len);
+    nst_disk_meta_set_payload_len(p, payload_len);
+    nst_disk_meta_set_key_len(p, key_len);
+    nst_disk_meta_set_host_len(p, txn->req.host.len);
+    nst_disk_meta_set_path_len(p, txn->req.path.len);
+    nst_disk_meta_set_etag_len(p, txn->res.etag.len);
+    nst_disk_meta_set_etag_prop(p, prop->etag);
+    nst_disk_meta_set_last_modified_len(p, txn->res.last_modified.len);
+    nst_disk_meta_set_last_modified_prop(p, prop->last_modified);
+    nst_disk_meta_set_ttl_extend(p, ttl_extend);
+}
+
 int
 nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
-        int etag, int last_modified, uint64_t ttl_extend) {
+        nst_rule_prop_t *prop) {
 
     data->file = NULL;
     data->fd   = -1;
@@ -648,9 +679,7 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
         goto err;
     }
 
-    nst_disk_meta_init(data->meta, key->hash, 0, 0, 0, key->size, txn->req.host.len,
-            txn->req.path.len, etag, txn->res.etag.len, last_modified, txn->res.last_modified.len,
-            ttl_extend);
+    nst_disk_meta_init(data->meta, key->hash, 0, 0, 0, key->size, txn, prop);
 
     if(nst_disk_write_key(data, key) != NST_OK) {
         goto err;

@@ -120,7 +120,7 @@ nst_dict_cleanup(nst_dict_t *dict) {
 }
 
 nst_dict_entry_t *
-nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *rule) {
+nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_prop_t *prop) {
 
     nst_dict_entry_t  *entry = NULL;
     int                idx;
@@ -157,7 +157,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
 
     /* set buf */
     entry->buf.size = txn->req.host.len + txn->req.path.len + txn->res.etag.len
-        + txn->res.last_modified.len + rule->prop.pid.len + rule->prop.rid.len;
+        + txn->res.last_modified.len + prop->pid.len + prop->rid.len;
     entry->buf.data = 0;
     entry->buf.area = nst_memory_alloc(dict->memory, entry->buf.size);
 
@@ -177,20 +177,19 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
     entry->last_modified = ist2(entry->buf.area + entry->buf.data, txn->res.last_modified.len);
     chunk_istcat(&entry->buf, txn->res.last_modified);
 
-    entry->prop.pid = ist2(entry->buf.area + entry->buf.data, rule->prop.pid.len);
-    chunk_istcat(&entry->buf, rule->prop.pid);
+    entry->prop.pid = ist2(entry->buf.area + entry->buf.data, prop->pid.len);
+    chunk_istcat(&entry->buf, prop->pid);
 
-    entry->prop.rid = ist2(entry->buf.area + entry->buf.data, rule->prop.rid.len);
-    chunk_istcat(&entry->buf, rule->prop.rid);
+    entry->prop.rid = ist2(entry->buf.area + entry->buf.data, prop->rid.len);
+    chunk_istcat(&entry->buf, prop->rid);
 
-    entry->prop.ttl           = rule->prop.ttl;
-    entry->prop.extend[0]     = rule->prop.extend[0];
-    entry->prop.extend[1]     = rule->prop.extend[1];
-    entry->prop.extend[2]     = rule->prop.extend[2];
-    entry->prop.extend[3]     = rule->prop.extend[3];
-    entry->prop.etag          = rule->prop.etag;
-    entry->prop.last_modified = rule->prop.last_modified;
-
+    entry->prop.ttl           = prop->ttl;
+    entry->prop.extend[0]     = prop->extend[0];
+    entry->prop.extend[1]     = prop->extend[1];
+    entry->prop.extend[2]     = prop->extend[2];
+    entry->prop.extend[3]     = prop->extend[3];
+    entry->prop.etag          = prop->etag;
+    entry->prop.last_modified = prop->last_modified;
     entry->expire             = 0;
 
     return entry;

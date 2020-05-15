@@ -159,7 +159,7 @@ nst_ring_store_sync(nst_core_t *core) {
     nst_ring_item_t    *item;
     nst_http_txn_t      txn;
     hpx_htx_blk_type_t  type;
-    uint64_t            ttl_extend, start;
+    uint64_t            start;
     uint32_t            blksz, info;
     int                 ret;
 
@@ -184,8 +184,6 @@ nst_ring_store_sync(nst_core_t *core) {
                 && nst_store_disk_sync(entry->prop.store)
                 && entry->store.disk.file == NULL) {
 
-            ttl_extend  = entry->prop.ttl;
-
             txn.req.host          = entry->host;
             txn.req.path          = entry->path;
             txn.res.etag          = entry->etag;
@@ -193,14 +191,7 @@ nst_ring_store_sync(nst_core_t *core) {
             txn.res.header_len    = 0;
             txn.res.payload_len   = 0;
 
-            ttl_extend = ttl_extend << 32;
-            *( uint8_t *)(&ttl_extend)      = entry->prop.extend[0];
-            *((uint8_t *)(&ttl_extend) + 1) = entry->prop.extend[1];
-            *((uint8_t *)(&ttl_extend) + 2) = entry->prop.extend[2];
-            *((uint8_t *)(&ttl_extend) + 3) = entry->prop.extend[3];
-
-            ret = nst_disk_store_init(&core->store.disk, &data, &entry->key, &txn,
-                    entry->prop.etag, entry->prop.last_modified, ttl_extend);
+            ret = nst_disk_store_init(&core->store.disk, &data, &entry->key, &txn, &entry->prop);
 
             if(ret != NST_OK) {
                 goto next;

@@ -208,13 +208,6 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                         nst_debug_end("HIT disk");
                     }
 
-                    htx = htxbuf(&req->buf);
-
-                    if(nst_http_handle_conditional_req(s, htx, &ctx->txn, ctx->prop)) {
-
-                        return 1;
-                    }
-
                     break;
                 }
 
@@ -248,6 +241,12 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         }
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK) {
+            htx = htxbuf(&req->buf);
+
+            if(nst_http_handle_conditional_req(s, htx, &ctx->txn, ctx->prop)) {
+                return 1;
+            }
+
             nst_cache_hit(s, si, req, res, ctx);
         }
 

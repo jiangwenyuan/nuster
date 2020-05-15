@@ -307,7 +307,7 @@ nst_purger_check(hpx_appctx_t *appctx, nst_dict_entry_t *entry) {
 
     switch(appctx->st0) {
         case NST_MANAGER_NAME_PROXY:
-            ret = isteq(entry->proxy, appctx->ctx.nuster.manager.proxy);
+            ret = isteq(entry->prop.pid, appctx->ctx.nuster.manager.proxy);
 
             break;
         case NST_MANAGER_NAME_RULE:

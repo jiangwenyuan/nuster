@@ -289,30 +289,6 @@ nst_disk_get_header_pos(char *p) {
             + nst_disk_meta_get_last_modified_len(p));
 }
 
-static inline void
-nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
-        uint64_t payload_len, uint64_t key_len, uint64_t host_len, uint64_t path_len,
-        int etag_prop, uint32_t etag_len, int last_modified_prop, uint32_t last_modified_len,
-        uint64_t ttl_extend) {
-
-    memcpy(p, "NUSTER", 6);
-    p[6] = 0;
-    p[7] = (char)NST_DISK_VERSION;
-
-    nst_disk_meta_set_hash(p, hash);
-    nst_disk_meta_set_expire(p, expire);
-    nst_disk_meta_set_header_len(p, header_len);
-    nst_disk_meta_set_payload_len(p, payload_len);
-    nst_disk_meta_set_key_len(p, key_len);
-    nst_disk_meta_set_host_len(p, host_len);
-    nst_disk_meta_set_path_len(p, path_len);
-    nst_disk_meta_set_etag_len(p, etag_len);
-    nst_disk_meta_set_etag_prop(p, etag_prop);
-    nst_disk_meta_set_last_modified_len(p, last_modified_len);
-    nst_disk_meta_set_last_modified_prop(p, last_modified_prop);
-    nst_disk_meta_set_ttl_extend(p, ttl_extend);
-}
-
 int nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key);
 
 static inline int
@@ -404,7 +380,7 @@ int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
 
 int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
-        nst_http_txn_t *txn, int etag, int last_modified, uint64_t ttl_extend);
+        nst_http_txn_t *txn, nst_rule_prop_t *prop);
 
 static inline int
 nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) {
