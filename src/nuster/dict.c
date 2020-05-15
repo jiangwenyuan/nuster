@@ -191,7 +191,6 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_t *
     entry->prop.etag          = rule->prop.etag;
     entry->prop.last_modified = rule->prop.last_modified;
 
-    entry->rule               = rule;
     entry->expire             = 0;
 
     return entry;
