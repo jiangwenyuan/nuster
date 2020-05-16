@@ -87,9 +87,9 @@ _nst_proxy_init() {
                     }
 
                     if(!strcmp(r2->name, r1->name)) {
-                        ha_warning("nuster rule with same name=[%s] found.\n", r1->name);
+                        ha_alert("nuster rule with same name=[%s] found.\n", r1->name);
 
-                        break;
+                        exit(1);
                     }
                 }
 
