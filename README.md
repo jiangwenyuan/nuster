@@ -403,9 +403,7 @@ rule `path01` will never match because the first rule will cache everything.
 
 ### name
 
-Define a name for this rule.
-
-It will be used in cache manager API, it does not have to be unique, but it might be a good idea to make it unique. Rules with the same name are treated as one.
+Define a name for this rule. Must be globally unique since v5.
 
 ### key KEY
 
@@ -1025,9 +1023,7 @@ curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/
 
    For example, all jpg files under /imgs should be `^/imgs/.*\.jpg$` instead of `/imgs/*.jpg`
 
-5. Purging cache files by rule name or proxy name only works in current session. If nuster restarts, then cache files cannot be purged by rule name or proxy name as information like rule name and proxy name is not persisted in the cache fiels.
-
-6. Purging cache files by host or path or regex only works after the disk loader process is finished. You can check the status through stats url.
+5. Purging cache files by proxy name or rule name or host or path or regex only works after the disk loader process is finished. You can check the status through stats url.
 
 # Store
 

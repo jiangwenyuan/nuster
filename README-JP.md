@@ -389,9 +389,7 @@ rule allはすべてをマッチングするので、rule `path01`は実行し�
 
 ### name
 
-このruleのnameを定義する。
-
-cache manager APIに使われる。唯一にする必要ないが、唯一にしたほうがおすすめ、同じnameのruleは同じとされる。
+このruleのnameを定義する。v5以降はグローバルユニーク。
 
 ### key KEY
 
@@ -992,9 +990,7 @@ curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/
 
    /imgs配下のjpgファイルは  `/imgs/*.jpg`　ではなく、`^/imgs/.*\.jpg$` である。
 
-5. rule nameやproxy nameでキャッシュファイルを削除するのは同じプロセスでなることが必要です。例えば、再起動したら、保存されたキャッシュファイルはrule nameやproxy nameで削除できないです。rule nameやproxy nameの情報は保存してないので。
-
-6. host or path or regexでキャッシュファイルを削除するのはdisk loadが完了してからじゃないといけないです。disk loadが完了しているかどうかはstats URLで確認できます。
+5. proxy name or rule name or host or path or regexでキャッシュファイルを削除するのはdisk loadが完了してからじゃないといけないです。disk loadが完了しているかどうかはstats URLで確認できます。
 
 # Store
 
