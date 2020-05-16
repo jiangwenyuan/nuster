@@ -360,6 +360,8 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     entry->path               = txn->req.path;
     entry->etag               = txn->res.etag;
     entry->last_modified      = txn->res.last_modified;
+    entry->prop.pid           = prop->pid;
+    entry->prop.rid           = prop->rid;
     entry->prop.ttl           = prop->ttl;
     entry->prop.extend[0]     = prop->extend[0];
     entry->prop.extend[1]     = prop->extend[1];

@@ -94,10 +94,9 @@ struct appctx {
 				struct nst_dict  *dict;
 				uint64_t          idx;
 				struct buffer     buf;
+				struct ist	  name;
 				struct ist	  host;
 				struct ist	  path;
-				struct ist	  proxy;
-				struct ist	  rule;
 				struct my_regex  *regex;
 			} manager;
 		} nuster;

@@ -109,10 +109,10 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     hpx_http_hdr_ctx_t       hdr = { .blk = NULL };
     hpx_appctx_t            *appctx;
     hpx_my_regex_t          *regex;
-    hpx_ist_t                proxy = { .len = 0 };
-    hpx_ist_t                rule  = { .len = 0 };
-    hpx_ist_t                host  = { .len = 0 };
-    hpx_ist_t                path  = { .len = 0 };
+    hpx_proxy_t             *p;
+    hpx_ist_t                name = { .len = 0 };
+    hpx_ist_t                host = { .len = 0 };
+    hpx_ist_t                path = { .len = 0 };
     char                    *regex_str, *error;
     int                      method, mode;
 
@@ -141,12 +141,43 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
     hdr.blk = NULL;
 
-    if(http_find_header(htx, ist("proxy"), &hdr, 0)) {
-        proxy  = hdr.value;
-        method = NST_MANAGER_PROXY;
-    } else if(http_find_header(htx, ist("rule"), &hdr, 0)) {
-        rule   = hdr.value;
-        method = NST_MANAGER_RULE;
+    if(http_find_header(htx, ist("name"), &hdr, 0)) {
+        p = proxies_list;
+
+        while(p) {
+            nst_rule_t  *rule = NULL;
+
+            if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
+
+                if(strlen(p->id) == hdr.value.len && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
+
+                    method = NST_MANAGER_PROXY;
+                    mode   = p->nuster.mode;
+                    name   = hdr.value;
+
+                    goto purge;
+                }
+
+                rule = nuster.proxy[p->uuid]->rule;
+
+                while(rule) {
+
+                    if(isteq(rule->prop.rid, hdr.value)) {
+                        method = NST_MANAGER_RULE;
+                        mode   = p->nuster.mode;
+                        name   = hdr.value;
+
+                        goto purge;
+                    }
+
+                    rule = rule->next;
+                }
+            }
+
+            p = p->next;
+        }
+
+        goto notfound;
     } else if(http_find_header(htx, ist("path"), &hdr, 0)) {
         path   = hdr.value;
         method = host.len ? NST_MANAGER_PATH_HOST : NST_MANAGER_PATH;
@@ -208,10 +239,8 @@ purge:
 
         switch(method) {
             case NST_MANAGER_PROXY:
-                buf.size = proxy.len;
-                break;
             case NST_MANAGER_RULE:
-                buf.size = rule.len;
+                buf.size = name.len;
                 break;
             case NST_MANAGER_PATH:
                 buf.size = path.len;
@@ -235,31 +264,28 @@ purge:
 
         switch(method) {
             case NST_MANAGER_PROXY:
-                appctx->ctx.nuster.manager.proxy = ist2(buf.area + buf.data, buf.data);
-                chunk_istcat(&buf, proxy);
-                break;
             case NST_MANAGER_RULE:
-                appctx->ctx.nuster.manager.rule = ist2(buf.area + buf.data, buf.data);
-                chunk_istcat(&buf, host);
+                appctx->ctx.nuster.manager.name = ist2(buf.area + buf.data, name.len);
+                chunk_istcat(&buf, name);
                 break;
             case NST_MANAGER_PATH:
-                appctx->ctx.nuster.manager.path = ist2(buf.area + buf.data, buf.data);
+                appctx->ctx.nuster.manager.path = ist2(buf.area + buf.data, path.len);
                 chunk_istcat(&buf, path);
                 break;
             case NST_MANAGER_HOST:
-                appctx->ctx.nuster.manager.host = ist2(buf.area + buf.data, buf.data);
+                appctx->ctx.nuster.manager.host = ist2(buf.area + buf.data, host.len);
                 chunk_istcat(&buf, host);
                 break;
             case NST_MANAGER_REGEX_HOST:
                 appctx->ctx.nuster.manager.regex = regex;
-                appctx->ctx.nuster.manager.host  = ist2(buf.area + buf.data, buf.data);
+                appctx->ctx.nuster.manager.host  = ist2(buf.area + buf.data, host.len);
                 chunk_istcat(&buf, host);
                 break;
             case NST_MANAGER_PATH_HOST:
-                appctx->ctx.nuster.manager.path = ist2(buf.area + buf.data, buf.data);
-                chunk_istcat(&buf, path);
-                appctx->ctx.nuster.manager.host = ist2(buf.area + buf.data, buf.data);
+                appctx->ctx.nuster.manager.host = ist2(buf.area + buf.data, host.len);
                 chunk_istcat(&buf, host);
+                appctx->ctx.nuster.manager.path = ist2(buf.area + buf.data, path.len);
+                chunk_istcat(&buf, path);
                 break;
         }
 
@@ -307,11 +333,11 @@ nst_purger_check(hpx_appctx_t *appctx, nst_dict_entry_t *entry) {
 
     switch(appctx->st0) {
         case NST_MANAGER_PROXY:
-            ret = isteq(entry->prop.pid, appctx->ctx.nuster.manager.proxy);
+            ret = isteq(entry->prop.pid, appctx->ctx.nuster.manager.name);
 
             break;
         case NST_MANAGER_RULE:
-            ret = isteq(entry->prop.rid, appctx->ctx.nuster.manager.rule);
+            ret = isteq(entry->prop.rid, appctx->ctx.nuster.manager.name);
 
             break;
         case NST_MANAGER_PATH:
