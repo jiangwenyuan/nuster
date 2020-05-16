@@ -29,9 +29,9 @@
 #define NST_MANAGER_DEFAULT_URI                 "/nuster"
 
 enum {
-    NST_MANAGER_NAME_ALL        = 0,
-    NST_MANAGER_NAME_PROXY,
-    NST_MANAGER_NAME_RULE,
+    NST_MANAGER_ALL           = 0,
+    NST_MANAGER_PROXY,
+    NST_MANAGER_RULE,
     NST_MANAGER_PATH,
     NST_MANAGER_REGEX,
     NST_MANAGER_HOST,
