@@ -950,7 +950,7 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
             appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
         } else {
             appctx->ctx.nuster.store.disk.fd     = ctx->store.disk.fd;
-            appctx->ctx.nuster.store.disk.offset = nst_disk_get_header_pos(ctx->store.disk.meta);
+            appctx->ctx.nuster.store.disk.offset = nst_disk_pos_header(&ctx->store.disk);
 
             appctx->ctx.nuster.store.disk.header_len =
                 nst_disk_meta_get_header_len(ctx->store.disk.meta);

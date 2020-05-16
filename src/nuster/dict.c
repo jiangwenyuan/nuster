@@ -158,6 +158,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
     /* set buf */
     entry->buf.size = txn->req.host.len + txn->req.path.len + txn->res.etag.len
         + txn->res.last_modified.len + prop->pid.len + prop->rid.len;
+
     entry->buf.data = 0;
     entry->buf.area = nst_memory_alloc(dict->memory, entry->buf.size);
 
@@ -295,14 +296,11 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
 }
 
 int
-nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
-        hpx_ist_t etag, hpx_ist_t last_modified, nst_key_t *key, char *file, char *meta) {
+nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_http_txn_t *txn,
+        nst_rule_prop_t *prop, char *file, uint64_t expire) {
 
     nst_dict_entry_t  *entry = NULL;
-    uint64_t           ttl_extend;
     int                idx;
-
-    key->hash = nst_disk_meta_get_hash(meta);
 
     idx = key->hash % dict->size;
 
@@ -321,10 +319,11 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     }
 
     if(entry) {
+        nst_memory_free(dict->memory, key->data);
+        nst_memory_free(dict->memory, buf->area);
+
         return NST_OK;
     }
-
-    ttl_extend = nst_disk_meta_get_ttl_extend(meta);
 
     entry = nst_memory_alloc(dict->memory, sizeof(*entry));
 
@@ -342,7 +341,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
     /* init entry */
     entry->state  = NST_DICT_ENTRY_STATE_VALID;
     entry->key    = *key;
-    entry->expire = nst_disk_meta_get_expire(meta);
+    entry->expire = expire;
 
     entry->store.disk.file  = nst_memory_alloc(dict->memory, strlen(file));
 
@@ -354,20 +353,20 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_
 
     memcpy(entry->store.disk.file, file, strlen(file));
 
-    entry->header_len         = nst_disk_meta_get_header_len(meta);
-    entry->payload_len        = nst_disk_meta_get_payload_len(meta);
+    entry->header_len         = txn->res.header_len;
+    entry->payload_len        = txn->res.payload_len;
     entry->buf                = *buf;
-    entry->host               = host;
-    entry->path               = path;
-    entry->etag               = etag;
-    entry->last_modified      = last_modified;
-    entry->prop.extend[0]     = *( uint8_t *)(&ttl_extend);
-    entry->prop.extend[1]     = *((uint8_t *)(&ttl_extend) + 1);
-    entry->prop.extend[2]     = *((uint8_t *)(&ttl_extend) + 2);
-    entry->prop.extend[3]     = *((uint8_t *)(&ttl_extend) + 3);
-    entry->prop.ttl           = ttl_extend >> 32;
-    entry->prop.etag          = nst_disk_meta_get_etag_prop(meta);
-    entry->prop.last_modified = nst_disk_meta_get_last_modified_prop(meta);
+    entry->host               = txn->req.host;
+    entry->path               = txn->req.path;
+    entry->etag               = txn->res.etag;
+    entry->last_modified      = txn->res.last_modified;
+    entry->prop.ttl           = prop->ttl;
+    entry->prop.extend[0]     = prop->extend[0];
+    entry->prop.extend[1]     = prop->extend[1];
+    entry->prop.extend[2]     = prop->extend[2];
+    entry->prop.extend[3]     = prop->extend[3];
+    entry->prop.etag          = prop->etag;
+    entry->prop.last_modified = prop->last_modified;
 
     return NST_OK;
 }

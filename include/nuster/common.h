@@ -208,8 +208,8 @@ typedef struct nst_rule_config {
 } nst_rule_config_t;
 
 typedef struct nst_rule_prop {
-    hpx_ist_t                  pid;          /* proxy name */
-    hpx_ist_t                  rid;          /* rule name */
+    hpx_ist_t                  pid;           /* proxy name */
+    hpx_ist_t                  rid;           /* rule name */
     uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
     uint8_t                    store;
     int                        etag;          /* etag on|off */

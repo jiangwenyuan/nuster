@@ -275,7 +275,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         appctx->st1 = NST_DISK_APPLET_HEADER;
 
         appctx->ctx.nuster.store.disk.fd         = ctx->store.disk.fd;
-        appctx->ctx.nuster.store.disk.offset     = nst_disk_get_header_pos(ctx->store.disk.meta);
+        appctx->ctx.nuster.store.disk.offset     = nst_disk_pos_header(&ctx->store.disk);
         appctx->ctx.nuster.store.disk.header_len =
             nst_disk_meta_get_header_len(ctx->store.disk.meta);
         appctx->ctx.nuster.store.disk.payload_len =

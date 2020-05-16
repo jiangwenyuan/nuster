@@ -142,10 +142,9 @@ nst_dict_entry_t *nst_dict_get(nst_dict_t *dict, nst_key_t *key);
 nst_dict_entry_t *nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn,
         nst_rule_prop_t *prop);
 
-int nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, hpx_ist_t host, hpx_ist_t path,
-        hpx_ist_t etag, hpx_ist_t last_modified, nst_key_t *key, char *file, char *meta);
+int nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_http_txn_t *txn,
+        nst_rule_prop_t *prop, char *file, uint64_t expire);
 
-void
-nst_dict_record_access(nst_dict_entry_t *entry);
+void nst_dict_record_access(nst_dict_entry_t *entry);
 
 #endif /* _NUSTER_DICT_H */
