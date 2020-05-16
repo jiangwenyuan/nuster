@@ -387,9 +387,7 @@ rule `path01`永远不会被匹配。
 
 ### name
 
-定义rule的name。
-
-在cache manager API中使用, 不必唯一但是建议不同的rule用不同的name，否则相同name的rule视作一样。
+定义rule的name。 v5开始必须全局唯一。
 
 ### key KEY
 
@@ -992,9 +990,7 @@ curl -X DELETE -H "regex: ^/imgs/.*\.jpg$" -H "127.0.0.1:8080" http://127.0.0.1/
 
    比如 /imgs下的.jpg文件是`^/imgs/.*\.jpg$` 而不是 `/imgs/*.jpg`
 
-5. 通过rule name或proxy name删除缓存时，需要注意这两种方法只在当前进程有效。如果重启了进程则无法通过这两种方法删除缓存文件，因为rule name信息和proxy name信息并没有保存在缓存文件中。
-
-6. 只有disk load结束后才能通过host or path or regex 来删除缓存文件。是否已经load结束可以查看stats URL。
+5. 只有disk load结束后才能通过proxy name or rule name or host or path or regex 来删除缓存文件。是否已经load结束可以查看stats URL。
 
 # Store
 
