@@ -118,7 +118,6 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
     regex     = NULL;
     regex_str = error = NULL;
-    method    = NST_MANAGER_NAME_RULE;
     mode      = 0;
 
     if(http_find_header(htx, ist("mode"), &hdr, 0)) {
@@ -144,10 +143,10 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
     if(http_find_header(htx, ist("proxy"), &hdr, 0)) {
         proxy  = hdr.value;
-        method = NST_MANAGER_NAME_PROXY;
+        method = NST_MANAGER_PROXY;
     } else if(http_find_header(htx, ist("rule"), &hdr, 0)) {
         rule   = hdr.value;
-        method = NST_MANAGER_NAME_RULE;
+        method = NST_MANAGER_RULE;
     } else if(http_find_header(htx, ist("path"), &hdr, 0)) {
         path   = hdr.value;
         method = host.len ? NST_MANAGER_PATH_HOST : NST_MANAGER_PATH;
@@ -177,7 +176,7 @@ nst_purger_advanced(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
 purge:
 
-    if(mode == 0 && (method != NST_MANAGER_NAME_PROXY || method != NST_MANAGER_NAME_RULE)) {
+    if(mode == 0 && (method != NST_MANAGER_PROXY && method != NST_MANAGER_RULE)) {
         goto badreq;
     }
 
@@ -208,10 +207,10 @@ purge:
         }
 
         switch(method) {
-            case NST_MANAGER_NAME_PROXY:
+            case NST_MANAGER_PROXY:
                 buf.size = proxy.len;
                 break;
-            case NST_MANAGER_NAME_RULE:
+            case NST_MANAGER_RULE:
                 buf.size = rule.len;
                 break;
             case NST_MANAGER_PATH:
@@ -235,11 +234,11 @@ purge:
         }
 
         switch(method) {
-            case NST_MANAGER_NAME_PROXY:
+            case NST_MANAGER_PROXY:
                 appctx->ctx.nuster.manager.proxy = ist2(buf.area + buf.data, buf.data);
                 chunk_istcat(&buf, proxy);
                 break;
-            case NST_MANAGER_NAME_RULE:
+            case NST_MANAGER_RULE:
                 appctx->ctx.nuster.manager.rule = ist2(buf.area + buf.data, buf.data);
                 chunk_istcat(&buf, host);
                 break;
@@ -307,11 +306,11 @@ nst_purger_check(hpx_appctx_t *appctx, nst_dict_entry_t *entry) {
     int  ret = 0;
 
     switch(appctx->st0) {
-        case NST_MANAGER_NAME_PROXY:
+        case NST_MANAGER_PROXY:
             ret = isteq(entry->prop.pid, appctx->ctx.nuster.manager.proxy);
 
             break;
-        case NST_MANAGER_NAME_RULE:
+        case NST_MANAGER_RULE:
             ret = isteq(entry->prop.rid, appctx->ctx.nuster.manager.rule);
 
             break;

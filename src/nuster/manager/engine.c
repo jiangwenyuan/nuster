@@ -29,7 +29,7 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
     hpx_htx_t          *htx = htxbuf(&s->req.buf);
     int                 found, method, ret;
 
-    method = NST_MANAGER_NAME_RULE;
+    method = NST_MANAGER_RULE;
     ret    = NST_HTTP_400;
 
     if(state == -1 && ttl == -1) {
@@ -39,7 +39,7 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
     if(http_find_header(htx, ist("name"), &hdr, 0)) {
 
         if(isteq(hdr.value, ist("*"))) {
-            method = NST_MANAGER_NAME_ALL;
+            method = NST_MANAGER_ALL;
             found  = 1;
         }
 
@@ -50,10 +50,10 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
 
             if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
 
-                if(method != NST_MANAGER_NAME_ALL && strlen(p->id) == hdr.value.len
+                if(method != NST_MANAGER_ALL && strlen(p->id) == hdr.value.len
                         && !memcmp(hdr.value.ptr, p->id, hdr.value.len)) {
 
-                    method = NST_MANAGER_NAME_PROXY;
+                    method = NST_MANAGER_PROXY;
                     found  = 1;
                 }
 
@@ -61,7 +61,7 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
 
                 while(rule) {
 
-                    if(method != NST_MANAGER_NAME_RULE) {
+                    if(method != NST_MANAGER_RULE) {
                         rule->state    = state == -1 ? rule->state    : state;
                         rule->prop.ttl = ttl   == -1 ? rule->prop.ttl : ttl;
                     } else if(isteq(rule->prop.rid, hdr.value)) {
@@ -73,7 +73,7 @@ _nst_manager_set_state_ttl(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px,
                     rule = rule->next;
                 }
 
-                if(method == NST_MANAGER_NAME_PROXY) {
+                if(method == NST_MANAGER_PROXY) {
                     break;
                 }
 
