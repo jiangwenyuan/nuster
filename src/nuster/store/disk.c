@@ -48,10 +48,6 @@ nst_disk_mkdir(char *path) {
     return NST_OK;
 }
 
-static inline void
-nst_disk_data_init(hpx_ist_t root, char *path, nst_key_t *key) {
-}
-
 int
 nst_disk_data_valid(nst_disk_data_t *data, nst_key_t *key) {
     hpx_buffer_t  *buf;
@@ -196,10 +192,40 @@ nst_disk_read_key(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key) {
 }
 
 int
+nst_disk_read_proxy(nst_disk_data_t *data, hpx_ist_t proxy) {
+    int  ret, offset;
+
+    offset = nst_disk_pos_proxy(data);
+
+    ret = pread(data->fd, proxy.ptr, proxy.len, offset);
+
+    if(ret != proxy.len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int
+nst_disk_read_rule(nst_disk_data_t *data, hpx_ist_t rule) {
+    int  ret, offset;
+
+    offset = nst_disk_pos_rule(data);
+
+    ret = pread(data->fd, rule.ptr, rule.len, offset);
+
+    if(ret != rule.len) {
+        return NST_ERR;
+    }
+
+    return NST_OK;
+}
+
+int
 nst_disk_read_host(nst_disk_data_t *data, hpx_ist_t host) {
     int  ret, offset;
 
-    offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta);
+    offset = nst_disk_pos_host(data);
 
     ret = pread(data->fd, host.ptr, host.len, offset);
 
@@ -214,8 +240,7 @@ int
 nst_disk_read_path(nst_disk_data_t *data, hpx_ist_t path) {
     int  ret, offset;
 
-    offset = NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta)
-        + nst_disk_meta_get_host_len(data->meta);
+    offset = nst_disk_pos_path(data);
 
     ret = pread(data->fd, path.ptr, path.len, offset);
 
@@ -228,11 +253,11 @@ nst_disk_read_path(nst_disk_data_t *data, hpx_ist_t path) {
 
 int
 nst_disk_read_etag(nst_disk_data_t *data, hpx_ist_t etag) {
+    int  ret, offset;
 
-    int  ret = pread(data->fd, etag.ptr, etag.len, NST_DISK_POS_KEY
-            + nst_disk_meta_get_key_len(data->meta)
-            + nst_disk_meta_get_host_len(data->meta)
-            + nst_disk_meta_get_path_len(data->meta));
+    offset = nst_disk_pos_etag(data);
+
+    ret = pread(data->fd, etag.ptr, etag.len, offset);
 
     if(ret != etag.len) {
         return NST_ERR;
@@ -243,13 +268,11 @@ nst_disk_read_etag(nst_disk_data_t *data, hpx_ist_t etag) {
 
 int
 nst_disk_read_last_modified(nst_disk_data_t *data, hpx_ist_t last_modified) {
+    int  ret, offset;
 
-    int  ret = pread(data->fd, last_modified.ptr, last_modified.len,
-            NST_DISK_POS_KEY
-            + nst_disk_meta_get_key_len(data->meta)
-            + nst_disk_meta_get_host_len(data->meta)
-            + nst_disk_meta_get_path_len(data->meta)
-            + nst_disk_meta_get_etag_len(data->meta));
+    offset = nst_disk_pos_last_modified(data);
+
+    ret = pread(data->fd, last_modified.ptr, last_modified.len, offset);
 
     if(ret != last_modified.len) {
         return NST_ERR;
@@ -392,11 +415,9 @@ nst_disk_load(nst_core_t *core) {
         nst_dirent_t     *de;
         nst_key_t        key = { .data = NULL };
         hpx_buffer_t     buf = { .area = NULL };
-        hpx_ist_t        host;
-        hpx_ist_t        path;
-        hpx_ist_t        etag;
-        hpx_ist_t        last_modified;
-        uint64_t         start;
+        nst_http_txn_t   txn;
+        nst_rule_prop_t  prop;
+        uint64_t         start, ttl_extend, expire;
         char            *file;
         int              len, ret;
 
@@ -444,12 +465,16 @@ nst_disk_load(nst_core_t *core) {
                     goto err;
                 }
 
-                host.len          = nst_disk_meta_get_host_len(data.meta);
-                path.len          = nst_disk_meta_get_path_len(data.meta);
-                etag.len          = nst_disk_meta_get_etag_len(data.meta);
-                last_modified.len = nst_disk_meta_get_last_modified_len(data.meta);
+                prop.pid.len              = nst_disk_meta_get_proxy_len(data.meta);
+                prop.rid.len              = nst_disk_meta_get_rule_len(data.meta);
+                txn.req.host.len          = nst_disk_meta_get_host_len(data.meta);
+                txn.req.path.len          = nst_disk_meta_get_path_len(data.meta);
+                txn.res.etag.len          = nst_disk_meta_get_etag_len(data.meta);
+                txn.res.last_modified.len = nst_disk_meta_get_last_modified_len(data.meta);
 
-                buf.size = host.len + path.len + etag.len + last_modified.len;
+                buf.size = prop.pid.len + prop.rid.len + txn.req.host.len + txn.req.path.len
+                    + txn.res.etag.len + txn.res.last_modified.len;
+
                 buf.data = 0;
                 buf.area = nst_memory_alloc(core->memory, buf.size);
 
@@ -457,39 +482,71 @@ nst_disk_load(nst_core_t *core) {
                     goto err;
                 }
 
-                host.ptr = buf.area + buf.data;
+                prop.pid.ptr = buf.area + buf.data;
 
-                if(nst_disk_read_host(&data, host) != NST_OK) {
+                if(nst_disk_read_proxy(&data, prop.pid) != NST_OK) {
                     goto err;
                 }
 
-                buf.data += host.len;
-                path.ptr = buf.area + buf.data;
+                buf.data += prop.pid.len;
 
-                if(nst_disk_read_path(&data, path) != NST_OK) {
+                prop.rid.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_rule(&data, prop.rid) != NST_OK) {
                     goto err;
                 }
 
-                buf.data += path.len;
-                etag.ptr = buf.area + buf.data;
+                ttl_extend         = nst_disk_meta_get_ttl_extend(data.meta);
+                prop.ttl           = ttl_extend >> 32;
+                prop.extend[0]     = *( uint8_t *)(&ttl_extend);
+                prop.extend[1]     = *((uint8_t *)(&ttl_extend) + 1);
+                prop.extend[2]     = *((uint8_t *)(&ttl_extend) + 2);
+                prop.extend[3]     = *((uint8_t *)(&ttl_extend) + 3);
+                prop.etag          = nst_disk_meta_get_etag_prop(data.meta);
+                prop.last_modified = nst_disk_meta_get_last_modified_prop(data.meta);
 
-                if(nst_disk_read_etag(&data, etag) != NST_OK) {
+                buf.data += prop.rid.len;
+
+                txn.req.host.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_host(&data, txn.req.host) != NST_OK) {
                     goto err;
                 }
 
-                buf.data += etag.len;
-                last_modified.ptr = buf.area + buf.data;
+                buf.data += txn.req.host.len;
 
-                if(nst_disk_read_last_modified(&data, last_modified) != NST_OK) {
+                txn.req.path.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_path(&data, txn.req.path) != NST_OK) {
                     goto err;
                 }
 
-                buf.data += last_modified.len;
+                buf.data += txn.req.path.len;
+
+                txn.res.etag.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_etag(&data, txn.res.etag) != NST_OK) {
+                    goto err;
+                }
+
+                buf.data += txn.res.etag.len;
+
+                txn.res.last_modified.ptr = buf.area + buf.data;
+
+                if(nst_disk_read_last_modified(&data, txn.res.last_modified) != NST_OK) {
+                    goto err;
+                }
+
+                buf.data += txn.res.last_modified.len;
+
+                txn.res.header_len  = nst_disk_meta_get_header_len(data.meta);
+                txn.res.payload_len = nst_disk_meta_get_payload_len(data.meta);
+
+                expire = nst_disk_meta_get_expire(data.meta);
 
                 nst_shctx_lock(&core->dict);
 
-                ret = nst_dict_set_from_disk(&core->dict, &buf, host, path, etag, last_modified,
-                        &key, file, data.meta);
+                ret = nst_dict_set_from_disk(&core->dict, &buf, &key, &txn, &prop, file, expire);
 
                 nst_shctx_unlock(&core->dict);
 
@@ -644,16 +701,18 @@ nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
     p[7] = (char)NST_DISK_VERSION;
 
     nst_disk_meta_set_hash(p, hash);
+    nst_disk_meta_set_key_len(p, key_len);
     nst_disk_meta_set_expire(p, expire);
     nst_disk_meta_set_header_len(p, header_len);
     nst_disk_meta_set_payload_len(p, payload_len);
-    nst_disk_meta_set_key_len(p, key_len);
+    nst_disk_meta_set_proxy_len(p, prop->pid.len);
+    nst_disk_meta_set_rule_len(p, prop->rid.len);
     nst_disk_meta_set_host_len(p, txn->req.host.len);
     nst_disk_meta_set_path_len(p, txn->req.path.len);
-    nst_disk_meta_set_etag_len(p, txn->res.etag.len);
     nst_disk_meta_set_etag_prop(p, prop->etag);
-    nst_disk_meta_set_last_modified_len(p, txn->res.last_modified.len);
+    nst_disk_meta_set_etag_len(p, txn->res.etag.len);
     nst_disk_meta_set_last_modified_prop(p, prop->last_modified);
+    nst_disk_meta_set_last_modified_len(p, txn->res.last_modified.len);
     nst_disk_meta_set_ttl_extend(p, ttl_extend);
 }
 
@@ -682,6 +741,14 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
     nst_disk_meta_init(data->meta, key->hash, 0, 0, 0, key->size, txn, prop);
 
     if(nst_disk_write_key(data, key) != NST_OK) {
+        goto err;
+    }
+
+    if(nst_disk_write_proxy(data, prop->pid) != NST_OK) {
+        goto err;
+    }
+
+    if(nst_disk_write_rule(data, prop->rid) != NST_OK) {
         goto err;
     }
 
@@ -725,10 +792,10 @@ nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_
 
     char  *p, *old_file, *new_file;
 
+    nst_disk_meta_set_uuid(data->meta, key->uuid);
     nst_disk_meta_set_expire(data->meta, expire);
     nst_disk_meta_set_header_len(data->meta, txn->res.header_len);
     nst_disk_meta_set_payload_len(data->meta, txn->res.payload_len);
-    nst_disk_meta_set_uuid(data->meta, key->uuid);
 
     if(nst_disk_write_meta(data) != NST_OK) {
         goto err;
