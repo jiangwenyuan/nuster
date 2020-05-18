@@ -26,7 +26,7 @@
 #include <nuster/key.h>
 
 
-#define NST_DISK_VERSION  5
+#define NST_DISK_VERSION  6
 
 /*
    Offset              Length(bytes)           Content
@@ -44,7 +44,8 @@
    8 * 10              8                       etag, on|off: 4, length: 4
    8 * 11              8                       last-modified: on|off: 4, length: 4
    8 * 12              8                       ttl: 4, extend: 4
-   8 * 13              24                      reserved
+   8 * 13              4                       stale: 4,
+   8 * 13 + 4          20                      reserved
    NST_DISK_META_SIZE  key_len                 key
    + key_len           proxy_len               proxy
    + proxy_len         rule_len                rule
@@ -72,6 +73,7 @@
 #define NST_DISK_META_POS_LAST_MODIFIED_PROP    8 * 11
 #define NST_DISK_META_POS_LAST_MODIFIED_LEN     8 * 11 + 4
 #define NST_DISK_META_POS_TTL_EXTEND            8 * 12
+#define NST_DISK_META_POS_STALE                 8 * 13
 
 #define NST_DISK_META_SIZE                      8 * 16
 #define NST_DISK_POS_KEY                        NST_DISK_META_SIZE
@@ -176,21 +178,6 @@ nst_disk_meta_set_expire(char *p, uint64_t v) {
 static inline uint64_t
 nst_disk_meta_get_expire(char *p) {
     return *(uint64_t *)(p + NST_DISK_META_POS_EXPIRE);
-}
-
-static inline int
-nst_disk_meta_check_expire(char *p) {
-    uint64_t expire = *(uint64_t *)(p + NST_DISK_META_POS_EXPIRE);
-
-    if(expire == 0) {
-        return NST_OK;
-    }
-
-    if(expire * 1000 > get_current_timestamp()) {
-        return NST_OK;
-    } else {
-        return NST_ERR;
-    }
 }
 
 static inline void
@@ -301,6 +288,49 @@ nst_disk_meta_set_ttl_extend(char *p, uint64_t v) {
 static inline uint64_t
 nst_disk_meta_get_ttl_extend(char *p) {
     return *(uint64_t *)(p + NST_DISK_META_POS_TTL_EXTEND);
+}
+
+static inline void
+nst_disk_meta_set_stale(char *p, int32_t v) {
+    *(int32_t *)(p + NST_DISK_META_POS_STALE) = v;
+}
+
+static inline int32_t
+nst_disk_meta_get_stale(char *p) {
+    return *(int32_t *)(p + NST_DISK_META_POS_STALE);
+}
+
+static inline int
+nst_disk_meta_check_expire(char *p) {
+    uint64_t  expire = nst_disk_meta_get_expire(p);
+    uint64_t  now    = get_current_timestamp();
+
+    if(expire == 0) {
+        return NST_OK;
+    }
+
+    if(expire * 1000 > now) {
+        return NST_OK;
+    }
+
+    return NST_ERR;
+}
+
+static inline int
+nst_disk_meta_check_stale(char *p) {
+    uint64_t  expire = nst_disk_meta_get_expire(p);
+    uint64_t  now    = get_current_timestamp();
+    int32_t   stale  = nst_disk_meta_get_stale(p);
+
+    if(stale == 0) {
+        return NST_OK;
+    }
+
+    if(expire + stale > now / 1000) {
+        return NST_OK;
+    }
+
+    return NST_ERR;
 }
 
 static inline int

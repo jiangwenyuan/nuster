@@ -352,7 +352,7 @@ dict.nosql.used:                0
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -481,6 +481,16 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 注意只有当第一个请求完成某些初始化工作后其他的请求才会等待。
 
 > nosql模式下不会等待，相同的请求将被依次处理，最后一个请求的内容将被保存。
+
+### use-stale on|off|TIME [cache only]
+
+决定是否在更新缓存时是否使用过期的缓存，以及在后端宕机时是否使用过期缓存。
+
+当use-stale on时，在更新缓存时使用过期缓存。
+
+当use-stale off时，如果`wait off` 那么相同的请求将被传递到后端服务器否则等待。
+
+`use-stale TIME`则允许在因后端服务器宕机而导致更新缓存失败后继续使用缓存TIME秒。
 
 ### code CODE1,CODE2...
 

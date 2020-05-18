@@ -191,6 +191,8 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
     entry->prop.extend[3]     = prop->extend[3];
     entry->prop.etag          = prop->etag;
     entry->prop.last_modified = prop->last_modified;
+    entry->prop.wait          = prop->wait;
+    entry->prop.stale         = prop->stale;
     entry->expire             = 0;
 
     return entry;
@@ -237,6 +239,17 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
                 return entry;
             }
 
+            if(entry->state == NST_DICT_ENTRY_STATE_STALE) {
+                if(nst_dict_entry_stale_valid(entry)) {
+                    return entry;
+                } else {
+                    return NULL;
+                }
+            }
+
+            /*
+             * check extend
+             */
             expired  = nst_dict_entry_expired(entry);
 
             max = 1000 * entry->expire + 1000 * entry->prop.ttl * entry->prop.extend[3] / 100;
@@ -264,10 +277,19 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
                 expired = 0;
             }
 
+            /*
+             * check stale
+             */
+            if(expired && entry->prop.stale >= 0) {
+                entry->state = NST_DICT_ENTRY_STATE_REFRESH;
+
+                expired = 0;
+            }
+
             /* check expire
              * change state only, leave the free stuff to cleanup
              * */
-            if(entry->state == NST_DICT_ENTRY_STATE_VALID && expired) {
+            if(expired) {
                 entry->state     = NST_DICT_ENTRY_STATE_INVALID;
                 entry->expire    = 0;
                 entry->access[0] = 0;
@@ -339,11 +361,16 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     dict->used++;
 
     /* init entry */
-    entry->state  = NST_DICT_ENTRY_STATE_VALID;
+    if(expire * 1000 > get_current_timestamp()) {
+        entry->state = NST_DICT_ENTRY_STATE_VALID;
+    } else {
+        entry->state = NST_DICT_ENTRY_STATE_STALE;
+    }
+
     entry->key    = *key;
     entry->expire = expire;
 
-    entry->store.disk.file  = nst_memory_alloc(dict->memory, strlen(file));
+    entry->store.disk.file = nst_memory_alloc(dict->memory, strlen(file));
 
     if(!entry->store.disk.file) {
         nst_memory_free(dict->memory, entry);
@@ -369,6 +396,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     entry->prop.extend[3]     = prop->extend[3];
     entry->prop.etag          = prop->etag;
     entry->prop.last_modified = prop->last_modified;
+    entry->prop.stale         = prop->stale;
 
     return NST_OK;
 }

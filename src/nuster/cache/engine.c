@@ -478,56 +478,52 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     hpx_htx_blk_type_t  type;
     hpx_htx_blk_t      *blk;
     hpx_htx_t          *htx;
-    nst_key_t          *key;
     nst_dict_entry_t   *entry;
     uint32_t            sz;
     int                 idx;
 
-    idx = ctx->rule->key->idx;
-    key = &(ctx->keys[idx]);
-
     htx = htxbuf(&msg->chn->buf);
 
-    ctx->state = NST_CTX_STATE_CREATE;
-
-    nst_shctx_lock(&nuster.cache->dict);
-
-    entry = nst_dict_get(&nuster.cache->dict, key);
-
-    if(entry) {
-        ctx->state = NST_CTX_STATE_BYPASS;
-    }
-
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        entry = nst_dict_set(&nuster.cache->dict, key, &ctx->txn, &ctx->rule->prop);
+        nst_shctx_lock(&nuster.cache->dict);
+
+        entry = nst_dict_get(&nuster.cache->dict, ctx->key);
 
         if(entry) {
-            ctx->state = NST_CTX_STATE_CREATE;
-            ctx->entry = entry;
-        } else {
             ctx->state = NST_CTX_STATE_BYPASS;
         }
-    }
 
-    nst_shctx_unlock(&nuster.cache->dict);
+        if(ctx->state == NST_CTX_STATE_CREATE) {
+            entry = nst_dict_set(&nuster.cache->dict, ctx->key, &ctx->txn, &ctx->rule->prop);
+
+            if(entry) {
+                ctx->state = NST_CTX_STATE_CREATE;
+                ctx->entry = entry;
+            } else {
+                ctx->state = NST_CTX_STATE_BYPASS;
+            }
+        }
+
+        nst_shctx_unlock(&nuster.cache->dict);
+    }
 
     /* init store data */
 
-    if(ctx->state == NST_CTX_STATE_CREATE) {
+    if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
 
         if(nst_store_memory_on(ctx->rule->prop.store)) {
             ctx->store.ring.data = nst_ring_store_init(&nuster.cache->store.ring);
         }
 
         if(nst_store_disk_on(ctx->rule->prop.store)) {
-            nst_disk_store_init(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
+            nst_disk_store_init(&nuster.cache->store.disk, &ctx->store.disk, ctx->key, &ctx->txn,
                     &ctx->rule->prop);
         }
     }
 
     /* add header */
 
-    if(ctx->state == NST_CTX_STATE_CREATE) {
+    if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
 
         ctx->txn.res.header_len  = 0;
         ctx->txn.res.payload_len = 0;
@@ -671,12 +667,6 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
  */
 int
 nst_cache_finish(nst_ctx_t *ctx) {
-    nst_key_t  *key;
-    int         idx;
-
-    idx = ctx->rule->key->idx;
-    key = &(ctx->keys[idx]);
-
     ctx->state = NST_CTX_STATE_DONE;
 
     ctx->entry->ctime = get_current_timestamp();
@@ -691,14 +681,25 @@ nst_cache_finish(nst_ctx_t *ctx) {
     ctx->entry->payload_len = ctx->txn.res.payload_len;
 
     if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
-        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
+        nst_shctx_lock(&nuster.cache->dict);
 
+        if(ctx->entry && ctx->entry->state != NST_DICT_ENTRY_STATE_INVALID
+                && ctx->entry->store.ring.data) {
+
+            ctx->entry->store.ring.data->invalid = 1;
+
+            nst_ring_incr_invalid(&nuster.cache->store.ring);
+        }
+
+        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
         ctx->entry->store.ring.data = ctx->store.ring.data;
+
+        nst_shctx_unlock(&nuster.cache->dict);
     }
 
     if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
 
-        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, key, &ctx->txn,
+        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, ctx->key, &ctx->txn,
                     ctx->entry->expire) == NST_OK) {
 
             ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
@@ -707,7 +708,7 @@ nst_cache_finish(nst_ctx_t *ctx) {
         }
     }
 
-    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT) {
+    if(ctx->entry->state != NST_DICT_ENTRY_STATE_VALID) {
         ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
 
         return NST_ERR;
@@ -722,34 +723,35 @@ nst_cache_finish(nst_ctx_t *ctx) {
 int
 nst_cache_exists(nst_ctx_t *ctx) {
     nst_dict_entry_t  *entry = NULL;
-    nst_key_t         *key;
-    int                ret, idx;
+    int                ret;
 
     ret = NST_CTX_STATE_INIT;
-    idx = ctx->rule->key->idx;
-    key = &(ctx->keys[idx]);
 
-    if(!key) {
+    if(!ctx->key) {
         return ret;
     }
 
-    if(!nst_key_memory_checked(key)) {
-        nst_key_memory_set_checked(key);
+    if(!nst_key_memory_checked(ctx->key)) {
+        nst_key_memory_set_checked(ctx->key);
 
         nst_shctx_lock(&nuster.cache->dict);
 
-        entry = nst_dict_get(&nuster.cache->dict, key);
+        entry = nst_dict_get(&nuster.cache->dict, ctx->key);
 
         if(entry) {
 
-            if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+            if(entry->state == NST_DICT_ENTRY_STATE_VALID
+                    || entry->state == NST_DICT_ENTRY_STATE_UPDATE
+                    || entry->state == NST_DICT_ENTRY_STATE_STALE) {
 
                 if(entry->store.ring.data) {
-                    ctx->store.ring.data = entry->store.ring.data;
                     ret = NST_CTX_STATE_HIT_MEMORY;
+
+                    ctx->store.ring.data = entry->store.ring.data;
                 } else if(entry->store.disk.file) {
-                    ctx->store.disk.file = entry->store.disk.file;
                     ret = NST_CTX_STATE_HIT_DISK;
+
+                    ctx->store.disk.file = entry->store.disk.file;
                 }
 
                 ctx->txn.res.header_len    = entry->header_len;
@@ -762,15 +764,26 @@ nst_cache_exists(nst_ctx_t *ctx) {
             }
 
             if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
-                ctx->prop = &entry->prop;
                 ret = NST_CTX_STATE_WAIT;
+
+                ctx->prop = &entry->prop;
             }
+
+            if(entry->state == NST_DICT_ENTRY_STATE_REFRESH) {
+                ret = NST_CTX_STATE_UPDATE;
+
+                entry->state = NST_DICT_ENTRY_STATE_UPDATE;
+                ctx->entry   = entry;
+                ctx->prop    = &entry->prop;
+            }
+
         }
 
         nst_shctx_unlock(&nuster.cache->dict);
     }
 
     if(ret == NST_CTX_STATE_INIT) {
+
 
         if(!nst_store_disk_off(ctx->rule->prop.store)) {
 
@@ -787,15 +800,34 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
     if(ret == NST_CTX_STATE_HIT_DISK) {
 
-        if(!nst_key_disk_checked(key)) {
-            nst_key_disk_set_checked(key);
+        if(!nst_key_disk_checked(ctx->key)) {
+            nst_key_disk_set_checked(ctx->key);
 
             if(ctx->store.disk.file) {
-                if(nst_disk_data_valid(&ctx->store.disk, key) != NST_OK) {
+
+                if(nst_disk_data_valid(&ctx->store.disk, ctx->key) != NST_OK) {
+
                     ret = NST_CTX_STATE_INIT;
 
-                    if(entry && entry->state == NST_DICT_ENTRY_STATE_VALID) {
+                    if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
                         entry->state = NST_DICT_ENTRY_STATE_INVALID;
+                    }
+                } else {
+
+                    if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+                        if(nst_disk_meta_check_expire(ctx->store.disk.meta) != NST_OK) {
+                            ret = NST_CTX_STATE_INIT;
+
+                            entry->state = NST_DICT_ENTRY_STATE_INVALID;
+                        }
+                    }
+
+                    if(entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+                        ret = NST_CTX_STATE_HIT_DISK;
+                    }
+
+                    if(entry->state == NST_DICT_ENTRY_STATE_STALE) {
+                        ret = NST_CTX_STATE_HIT_DISK;
                     }
                 }
             } else {
@@ -806,38 +838,47 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
-        if(!nst_key_disk_checked(key)) {
-            nst_key_disk_set_checked(key);
+        if(!nst_key_disk_checked(ctx->key)) {
+            nst_key_disk_set_checked(ctx->key);
 
-            if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, key) == NST_OK) {
-                ctx->prop = (nst_rule_prop_t *)(ctx->buf->area + ctx->buf->data);
-                ctx->buf->data += sizeof(nst_rule_prop_t);
+            if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, ctx->key)
+                    == NST_OK) {
+                int  stale_prop = nst_disk_meta_get_stale(ctx->store.disk.meta);
+                int  stale      = nst_disk_meta_check_stale(ctx->store.disk.meta) != NST_OK;
+                int  expired    = nst_disk_meta_check_expire(ctx->store.disk.meta) != NST_OK;
 
-                ctx->prop->etag = nst_disk_meta_get_etag_prop(ctx->store.disk.meta);
+                if(stale_prop == 0 || (stale_prop > 0 && stale) || (stale_prop < 0 && expired)) {
+                    ret = NST_CTX_STATE_INIT;
+                } else {
+                    ctx->prop = (nst_rule_prop_t *)(ctx->buf->area + ctx->buf->data);
+                    ctx->buf->data += sizeof(nst_rule_prop_t);
 
-                if(ctx->prop->etag == NST_STATUS_ON) {
-                    ctx->txn.res.etag.ptr = ctx->buf->area + ctx->buf->data;
-                    ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
+                    ctx->prop->etag = nst_disk_meta_get_etag_prop(ctx->store.disk.meta);
 
-                    nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+                    if(ctx->prop->etag == NST_STATUS_ON) {
+                        ctx->txn.res.etag.ptr = ctx->buf->area + ctx->buf->data;
+                        ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
 
-                    ctx->buf->data += ctx->txn.res.etag.len;
+                        nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+
+                        ctx->buf->data += ctx->txn.res.etag.len;
+                    }
+
+                    ctx->prop->last_modified =
+                        nst_disk_meta_get_last_modified_prop(ctx->store.disk.meta);
+
+                    if(ctx->prop->last_modified == NST_STATUS_ON) {
+                        ctx->txn.res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
+                        ctx->txn.res.last_modified.len =
+                            nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
+
+                        nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
+
+                        ctx->buf->data += ctx->txn.res.last_modified.len;
+                    }
+
+                    ret = NST_CTX_STATE_HIT_DISK;
                 }
-
-                ctx->prop->last_modified =
-                    nst_disk_meta_get_last_modified_prop(ctx->store.disk.meta);
-
-                if(ctx->prop->last_modified == NST_STATUS_ON) {
-                    ctx->txn.res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
-                    ctx->txn.res.last_modified.len =
-                        nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
-
-                    nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
-
-                    ctx->buf->data += ctx->txn.res.last_modified.len;
-                }
-
-                ret = NST_CTX_STATE_HIT_DISK;
             } else {
                 ret = NST_CTX_STATE_INIT;
             }
@@ -852,7 +893,8 @@ nst_cache_exists(nst_ctx_t *ctx) {
 void
 nst_cache_abort(nst_ctx_t *ctx) {
 
-    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT) {
+    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT
+            || ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
 
         if(ctx->store.ring.data) {
             nst_ring_store_abort(&nuster.cache->store.ring, ctx->store.ring.data);
@@ -863,7 +905,13 @@ nst_cache_abort(nst_ctx_t *ctx) {
         }
     }
 
-    ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT) {
+        ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    }
+
+    if(ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+        ctx->entry->state = NST_DICT_ENTRY_STATE_STALE;
+    }
 }
 
 /*

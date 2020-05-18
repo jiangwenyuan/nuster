@@ -75,10 +75,6 @@ nst_disk_data_valid(nst_disk_data_t *data, nst_key_t *key) {
         goto err;
     }
 
-    if(nst_disk_meta_check_expire(data->meta) != NST_OK) {
-        goto err;
-    }
-
     if(nst_disk_meta_get_hash(data->meta) != key->hash
             || nst_disk_meta_get_key_len(data->meta) != key->size) {
 
@@ -154,10 +150,6 @@ nst_disk_read_meta(nst_disk_data_t *data) {
     }
 
     if(data->meta[7] != NST_DISK_VERSION) {
-        return NST_ERR;
-    }
-
-    if(nst_disk_meta_check_expire(data->meta) != NST_OK) {
         return NST_ERR;
     }
 
@@ -419,7 +411,7 @@ nst_disk_load(nst_core_t *core) {
         nst_rule_prop_t  prop;
         uint64_t         start, ttl_extend, expire;
         char            *file;
-        int              len, ret;
+        int              len, ret, stale_prop, stale, expired;
 
         root = core->root;
         file = core->store.disk.file;
@@ -458,6 +450,14 @@ nst_disk_load(nst_core_t *core) {
                 }
 
                 if(nst_disk_read_meta(&data) != NST_OK) {
+                    goto err;
+                }
+
+                stale_prop = nst_disk_meta_get_stale(data.meta);
+                stale      = nst_disk_meta_check_stale(data.meta) != NST_OK;
+                expired    = nst_disk_meta_check_expire(data.meta) != NST_OK;
+
+                if(stale_prop == 0 || (stale_prop > 0 && stale) || (stale_prop < 0 && expired)) {
                     goto err;
                 }
 
@@ -504,6 +504,7 @@ nst_disk_load(nst_core_t *core) {
                 prop.extend[3]     = *((uint8_t *)(&ttl_extend) + 3);
                 prop.etag          = nst_disk_meta_get_etag_prop(data.meta);
                 prop.last_modified = nst_disk_meta_get_last_modified_prop(data.meta);
+                prop.stale         = nst_disk_meta_get_stale(data.meta);
 
                 buf.data += prop.rid.len;
 
@@ -651,7 +652,9 @@ nst_disk_cleanup(nst_core_t *core) {
                     continue;
                 }
 
-                if(nst_disk_meta_check_expire(data.meta) != NST_OK) {
+                if(nst_disk_meta_get_stale(data.meta) < 0
+                        && nst_disk_meta_check_expire(data.meta) != NST_OK) {
+
                     remove(file);
                     close(data.fd);
 
@@ -714,6 +717,7 @@ nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
     nst_disk_meta_set_last_modified_prop(p, prop->last_modified);
     nst_disk_meta_set_last_modified_len(p, txn->res.last_modified.len);
     nst_disk_meta_set_ttl_extend(p, ttl_extend);
+    nst_disk_meta_set_stale(p, prop->stale);
 }
 
 int
