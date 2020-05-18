@@ -186,6 +186,13 @@ typedef struct nst_rule_config {
     int                        wait;          /* -1: not wait, 0: wait forever, > 0, wait seconds */
 
     /*
+     *  -1: do not use stale
+     *   0: use stale while updating
+     * > 0: keep for N seconds if update failed and use stale
+     */
+    int                        stale;
+
+    /*
      * auto ttl extend
      *        ctime                   expire
      *        |<-        ttl        ->|
@@ -216,6 +223,7 @@ typedef struct nst_rule_prop {
     int                        last_modified; /* last_modified on|off */
     uint8_t                    extend[4];
     int                        wait;
+    int                        stale;
     int                        status_code;
 } nst_rule_prop_t;
 

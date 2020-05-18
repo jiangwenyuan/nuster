@@ -112,15 +112,15 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
             nst_ring_data_detach(&nuster.cache->store.ring, ctx->store.ring.data);
         }
 
-        if(ctx->state == NST_CTX_STATE_CREATE) {
+        if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
             nst_cache_abort(ctx);
         }
 
         for(i = 0; i < ctx->key_cnt; i++) {
-            nst_key_t  key = ctx->keys[i];
+            ctx->key = &ctx->keys[i];
 
-            if(key.data) {
-                free(key.data);
+            if(ctx->key->data) {
+                free(ctx->key->data);
             }
         }
 
@@ -161,8 +161,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
-                int         idx = ctx->rule->key->idx;
-                nst_key_t  *key = &(ctx->keys[idx]);
+                int  idx = ctx->rule->key->idx;
+
+                ctx->key = &(ctx->keys[idx]);
 
                 nst_debug(s, "[rule ] ----- %s", ctx->rule->prop.rid.ptr);
 
@@ -182,18 +183,20 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     continue;
                 }
 
-                if(!key->data) {
+                if(!ctx->key->data) {
                     /* build key */
-                    if(nst_key_build(s, msg, ctx->rule, &ctx->txn, key, s->txn->meth) != NST_OK) {
+                    if(nst_key_build(s, msg, ctx->rule, &ctx->txn, ctx->key, s->txn->meth)
+                            != NST_OK) {
+
                         ctx->state = NST_CTX_STATE_BYPASS;
 
                         return 1;
                     }
 
-                    nst_key_hash(key);
+                    nst_key_hash(ctx->key);
                 }
 
-                nst_key_debug(s, key);
+                nst_key_debug(s, ctx->key);
 
                 /* check if cache exists  */
                 nst_debug_beg(s, "[cache] Check key existence: ");
@@ -214,11 +217,15 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                 if(ctx->state == NST_CTX_STATE_WAIT) {
                     if(ctx->prop->wait >= 0) {
-                        nst_key_reset_flag(key);
+                        nst_key_reset_flag(ctx->key);
                         nst_debug_end("WAIT");
 
                         break;
                     }
+                }
+
+                if(ctx->state == NST_CTX_STATE_UPDATE) {
+                    break;
                 }
 
                 nst_debug_end("MISS");
@@ -273,6 +280,10 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             ctx->rule = nuster.proxy[px->uuid]->rule;
 
             for(i = 0; i < ctx->rule_cnt; i++) {
+                int  idx = ctx->rule->key->idx;
+
+                ctx->key = &(ctx->keys[idx]);
+
                 nst_debug(s, "[cache] ==== Check rule: %s ====", ctx->rule->prop.rid.ptr);
                 nst_debug_beg(s, "[cache] Test rule ACL (res): ");
 
@@ -320,14 +331,21 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
             nst_debug_end("PASS");
 
-            nst_http_build_etag(s, msg, ctx->buf, &ctx->txn, ctx->rule->prop.etag);
+            ctx->state = NST_CTX_STATE_CREATE;
+            ctx->prop  = &ctx->rule->prop;
+        }
 
-            nst_http_build_last_modified(s, msg, ctx->buf, &ctx->txn,
-                    ctx->rule->prop.last_modified);
+        if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
+            nst_http_build_etag(s, msg, ctx->buf, &ctx->txn, ctx->prop->etag);
 
-            nst_debug(s, "[cache] To create");
+            nst_http_build_last_modified(s, msg, ctx->buf, &ctx->txn, ctx->prop->last_modified);
 
-            /* start to build cache */
+            if(ctx->state == NST_CTX_STATE_CREATE) {
+                nst_debug(s, "[cache] To create");
+            } else {
+                nst_debug(s, "[cache] To update");
+            }
+
             nst_cache_create(msg, ctx);
         }
 
@@ -346,7 +364,9 @@ _nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 0;
     }
 
-    if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
+    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
+            && (msg->chn->flags & CF_ISRESP)) {
+
         len = nst_cache_update(msg, ctx, offset, len);
     }
 
@@ -358,7 +378,8 @@ _nst_cache_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
 
     nst_ctx_t  *ctx = filter->ctx;
 
-    if(ctx->state == NST_CTX_STATE_CREATE && (msg->chn->flags & CF_ISRESP)) {
+    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
+            && (msg->chn->flags & CF_ISRESP)) {
 
         if(nst_cache_finish(ctx) == NST_OK) {
             nst_debug(s, "[cache] Create OK");

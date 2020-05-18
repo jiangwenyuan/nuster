@@ -29,8 +29,10 @@
 
 enum {
     NST_DICT_ENTRY_STATE_INIT      = 0,
-    NST_DICT_ENTRY_STATE_UPDATE,
     NST_DICT_ENTRY_STATE_VALID,
+    NST_DICT_ENTRY_STATE_REFRESH,
+    NST_DICT_ENTRY_STATE_UPDATE,
+    NST_DICT_ENTRY_STATE_STALE,
     NST_DICT_ENTRY_STATE_INVALID,
 };
 
@@ -110,6 +112,11 @@ nst_dict_entry_expired(nst_dict_entry_t *entry) {
 }
 
 static inline int
+nst_dict_entry_stale_valid(nst_dict_entry_t *entry) {
+    return entry->expire + entry->prop.stale > get_current_timestamp() / 1000;
+}
+
+static inline int
 nst_dict_entry_invalid(nst_dict_entry_t *entry) {
 
     /* check state */
@@ -120,6 +127,11 @@ nst_dict_entry_invalid(nst_dict_entry_t *entry) {
     /* check expire */
     if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
         return nst_dict_entry_expired(entry);
+    }
+
+    /* check stale */
+    if(entry->state == NST_DICT_ENTRY_STATE_STALE) {
+        return !nst_dict_entry_stale_valid(entry);
     }
 
     return 0;

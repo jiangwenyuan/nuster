@@ -368,7 +368,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -498,6 +498,16 @@ By default, identical requests are forwarded to backend server and the first one
 Note that other identical requests will not wait until the first request finished the initialization process(e.g. create a cache entry).
 
 > In nosql mode, there is no wait mode. Multiple identical POST requests are served in the order it was received, and the body of the last request will be saved as the content.
+
+### use-stale on|off|TIME [cache only]
+
+Determines whether or not to serve stale cache to clients if it is being updated or the backend server is down.
+
+When use-stale is on, the stale cache will be used to serve clients.
+
+When use-stale is off, which is the default mode, same requests will be passed to the backend when the cache is being updated if `wait off` is set, otherwise wait if `wait on|TIME` is set.
+
+`use-stale TIME` permits using the stale cache to serve clients for TIME seconds if the cache cannot be updated due to backend error.
 
 ### code CODE1,CODE2...
 

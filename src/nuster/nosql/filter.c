@@ -108,10 +108,10 @@ _nst_nosql_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
         }
 
         for(i = 0; i < ctx->key_cnt; i++) {
-            nst_key_t  key = ctx->keys[i];
+            ctx->key = &ctx->keys[i];
 
-            if(key.data) {
-                free(key.data);
+            if(ctx->key->data) {
+                free(ctx->key->data);
             }
         }
 
@@ -152,8 +152,9 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         ctx->rule = nuster.proxy[px->uuid]->rule;
 
         for(i = 0; i < ctx->rule_cnt; i++) {
-            int         idx = ctx->rule->key->idx;
-            nst_key_t  *key = &(ctx->keys[idx]);
+            int  idx = ctx->rule->key->idx;
+
+            ctx->key = &(ctx->keys[idx]);
 
             nst_debug(s, "[rule ] ----- %s", ctx->rule->prop.rid.ptr);
 
@@ -173,18 +174,18 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 continue;
             }
 
-            if(!key->data) {
+            if(!ctx->key->data) {
                 /* build key */
-                if(nst_key_build(s, msg, ctx->rule, &ctx->txn, key, HTTP_METH_GET) != NST_OK) {
+                if(nst_key_build(s, msg, ctx->rule, &ctx->txn, ctx->key, HTTP_METH_GET) != NST_OK) {
                     ctx->state = NST_CTX_STATE_FULL;
 
                     break;
                 }
 
-                nst_key_hash(key);
+                nst_key_hash(ctx->key);
             }
 
-            nst_key_debug(s, key);
+            nst_key_debug(s, ctx->key);
 
             if(s->txn->meth == HTTP_METH_GET) {
                 nst_debug_beg(s, "[nosql] Check key existence: ");
@@ -221,7 +222,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 nst_debug_end("FAIL");
             } else if(s->txn->meth == HTTP_METH_DELETE) {
 
-                if(nst_nosql_delete(key) == 1) {
+                if(nst_nosql_delete(ctx->key) == 1) {
                     nst_debug(s, "[nosql] EXIST, to delete");
                     ctx->state = NST_CTX_STATE_DELETE;
 
@@ -322,7 +323,7 @@ static int
 _nst_nosql_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg,
         unsigned int offset, unsigned int len) {
 
-    nst_ctx_t               *ctx    = filter->ctx;
+    nst_ctx_t  *ctx = filter->ctx;
 
     if(len <= 0) {
         return 0;

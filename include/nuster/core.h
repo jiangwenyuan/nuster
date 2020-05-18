@@ -76,8 +76,8 @@ typedef struct nst_ctx {
 
     int                         rule_cnt;
     int                         key_cnt;
-    hpx_buffer_t               *key;
     nst_rule_t                 *rule;
+    nst_key_t                  *key;
     nst_key_t                   keys[0];
 } nst_ctx_t;
 

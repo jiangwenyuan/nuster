@@ -354,7 +354,7 @@ cache/nosqlの有効無効を決める。
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -483,6 +483,16 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 最初のリクエストが初期化をするまで他の同じなリクエストが来た場合は待たずにフォーワードする。
 
 > Nosqlモードではwaitしない。順番に処理して最後のリクエストの内容を保存する。
+
+### use-stale on|off|TIME [cache only]
+
+キャッシュが更新されているときや、バックエンドのサーバーダウンで更新失敗した時に、失効済みのキャッシュを使うかどうかを決める。
+
+`use-stale on`: キャッシュが更新されている時、失効済みのキャッシュを使う。
+
+`use-stale off`(ディフォルト): `wait off`の場合、同じなリクエストがバックエンドにフォーワードする, `wait on|TIME` の場合は待つ。
+
+`use-stale TIME`: バックエンドのサーバーダウンで更新失敗した時に、失効済みのキャッシュをTIME秒間を使う。
 
 ### code CODE1,CODE2...
 
