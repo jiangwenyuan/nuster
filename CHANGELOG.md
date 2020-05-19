@@ -1,6 +1,26 @@
 # nuster Changelog
 
-## 5.0.7.20 - 2020-09-05
+## 5.0.8.20 - 2020-05-09
+
+### Added
+
+* Add use-stale
+
+### Changed
+
+* Enforce unique rule name
+* Use name again and check proxy and rule name in advance
+* Fix incorrect purge mode check
+* Save proxy and rule name into disk
+* Move txn.buf to ctx
+* Use prop in disk_store_init, simplify meta_init
+* Use prop in various functions
+* Remove unused entry.rule
+* Remove unused proxy uuid in ctx and entry, remove rule.id
+* Use proxy name and rule name for purging
+* Add proxy to entry and ctx
+
+## 5.0.7.20 - 2020-05-09
 
 ### Fixed
 
