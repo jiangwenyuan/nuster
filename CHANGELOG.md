@@ -1,6 +1,12 @@
 # nuster Changelog
 
-## 5.0.8.20 - 2020-05-09
+## 5.0.9.21 - 2020-05-20
+
+### Fixed
+
+* Fix incorrectly deletetion of disk cache when use-stale is on
+
+## 5.0.8.21 - 2020-05-19
 
 ### Added
 
@@ -20,7 +26,7 @@
 * Use proxy name and rule name for purging
 * Add proxy to entry and ctx
 
-## 5.0.7.20 - 2020-05-09
+## 5.0.7.21 - 2020-05-09
 
 ### Fixed
 
@@ -46,7 +52,7 @@ Move etag/last-modified handler to http
 Check max ttl and wait
 Update wait format, use on/off
 
-## 5.0.6.20 - 2020-05-05
+## 5.0.6.21 - 2020-05-05
 
 ### Fixed
 
@@ -62,7 +68,7 @@ Add a mechanism to speed up the data clean process
 Record invalid ring.data count
 Add store into dict and add ring.invalid
 
-## 5.0.5.20 - 2020-05-03
+## 5.0.5.21 - 2020-05-03
 
 ### Fixed
 
@@ -101,13 +107,13 @@ Add store into dict and add ring.invalid
 * Suppress build warnings
 * Fix incorrect handling of offset in payload update
 
-## 5.0.4.20 - 2020-04-22
+## 5.0.4.21 - 2020-04-22
 
 ### Fixed
 
 * Payload does not send completely
 
-## 5.0.3.20 - 2020-04-21
+## 5.0.3.21 - 2020-04-21
 
 ### Changed
 
@@ -120,7 +126,7 @@ Add store into dict and add ring.invalid
 * Update README, add new sample fetches
 * Add several new sample fetch
 
-## 5.0.2.20 - 2020-04-15
+## 5.0.2.21 - 2020-04-15
 
 ### Fixed
 
@@ -134,7 +140,7 @@ Add store into dict and add ring.invalid
 * Fix incorrect clients decrement
 * Fix bogus stream spinning issue.
 
-## 5.0.1.20 - 2020-04-13
+## 5.0.1.21 - 2020-04-13
 
 ### Fixed
 
@@ -148,7 +154,7 @@ Add store into dict and add ring.invalid
 * Set ctx.ring.data to NULl on ring_data_add failure
 * Fix disk_cleanup readdir error
 
-## 5.0.0.20 - 2020-04-11
+## 5.0.0.21 - 2020-04-11
 
 A complete refactored version based on HTX version of HAProxy. Lots of changes, updates, improvements, to name a few:
 
@@ -159,7 +165,7 @@ A complete refactored version based on HTX version of HAProxy. Lots of changes, 
 * Create new key, avoided redundant compuating, improved performance
 * Unified lots of components
 
-## 5.0.0.20-dev1 - 2020-02-14
+## 5.0.0.21-dev1 - 2020-02-14
 
 Upgrade to HAProxy v2.1.3
 
