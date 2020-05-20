@@ -457,7 +457,7 @@ nst_disk_load(nst_core_t *core) {
                 stale      = nst_disk_meta_check_stale(data.meta) != NST_OK;
                 expired    = nst_disk_meta_check_expire(data.meta) != NST_OK;
 
-                if(stale_prop == 0 || (stale_prop > 0 && stale) || (stale_prop < 0 && expired)) {
+                if(expired && (stale_prop == 0 || (stale_prop > 0 && stale))) {
                     goto err;
                 }
 
