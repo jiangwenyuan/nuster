@@ -840,7 +840,7 @@ nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_
     return NST_OK;
 
 err:
-    if(data->fd == -1) {
+    if(data->fd != -1) {
         close(data->fd);
         data->fd = -1;
     }
