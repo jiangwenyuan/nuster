@@ -428,17 +428,20 @@ nst_cache_init() {
                 global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
         if(!global.nuster.cache.memory) {
-            goto shm_err;
+            ha_alert("Failed to create nuster cache memory zone.\n");
+            exit(1);
         }
 
         if(nst_shctx_init(global.nuster.cache.memory) != NST_OK) {
-            goto shm_err;
+            ha_alert("Failed to init nuster cache memory.\n");
+            exit(1);
         }
 
         nuster.cache = nst_memory_alloc(global.nuster.cache.memory, sizeof(nst_core_t));
 
         if(!nuster.cache) {
-            goto err;
+            ha_alert("Failed to init nuster cache core.\n");
+            exit(1);
         }
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
@@ -449,28 +452,20 @@ nst_cache_init() {
         if(nst_store_init(global.nuster.cache.root, &nuster.cache->store,
                     global.nuster.cache.memory) != NST_OK) {
 
-            goto err;
+            ha_alert("Failed to init nuster cache store.\n");
+            exit(1);
         }
 
         if(nst_dict_init(&nuster.cache->dict, &nuster.cache->store, global.nuster.cache.memory,
                     global.nuster.cache.dict_size) != NST_OK) {
 
-            goto err;
+            ha_alert("Failed to init nuster cache dict.\n");
+            exit(1);
         }
 
         ha_notice("[nuster][cache] on, dict_size=%"PRIu64", data_size=%"PRIu64"\n",
                 global.nuster.cache.dict_size, global.nuster.cache.data_size);
     }
-
-    return;
-
-err:
-    ha_alert("Out of memory when initializing cache.\n");
-    exit(1);
-
-shm_err:
-    ha_alert("Error when initializing cache.\n");
-    exit(1);
 }
 
 void

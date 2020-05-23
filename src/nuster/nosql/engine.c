@@ -393,17 +393,20 @@ nst_nosql_init() {
                 global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
         if(!global.nuster.nosql.memory) {
-            goto shm_err;
+            ha_alert("Failed to create nuster nosql memory zone.\n");
+            exit(1);
         }
 
         if(nst_shctx_init(global.nuster.nosql.memory) != NST_OK) {
-            goto shm_err;
+            ha_alert("Failed to init nuster nosql memory.\n");
+            exit(1);
         }
 
         nuster.nosql = nst_memory_alloc(global.nuster.nosql.memory, sizeof(nst_core_t));
 
         if(!nuster.nosql) {
-            goto err;
+            ha_alert("Failed to init nuster nosql core.\n");
+            exit(1);
         }
 
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
@@ -414,28 +417,20 @@ nst_nosql_init() {
         if(nst_store_init(global.nuster.nosql.root, &nuster.nosql->store,
                     global.nuster.nosql.memory) != NST_OK) {
 
-            goto err;
+            ha_alert("Failed to init nuster nosql store.\n");
+            exit(1);
         }
 
         if(nst_dict_init(&nuster.nosql->dict, &nuster.nosql->store, global.nuster.nosql.memory,
                     global.nuster.nosql.dict_size) != NST_OK) {
 
-            goto err;
+            ha_alert("Failed to init nuster nosql dict.\n");
+            exit(1);
         }
 
         ha_notice("[nuster][nosql] on, dict_size=%"PRIu64", data_size=%"PRIu64"\n",
                 global.nuster.nosql.dict_size, global.nuster.nosql.data_size);
     }
-
-    return;
-
-err:
-    ha_alert("Out of memory when initializing nuster nosql.\n");
-    exit(1);
-
-shm_err:
-    ha_alert("Error when initializing nosql.\n");
-    exit(1);
 }
 
 /*

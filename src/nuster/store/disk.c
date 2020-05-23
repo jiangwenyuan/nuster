@@ -378,6 +378,12 @@ nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
         /* remove files of tmp dir */
         tmp = opendir(disk->file);
 
+        if(!tmp) {
+            fprintf(stderr, "Open `%s` failed\n", disk->file);
+
+            return NST_ERR;
+        }
+
         while((de = readdir(tmp)) != NULL) {
             if(de->d_name[0] == '.') {
                 continue;
