@@ -58,7 +58,7 @@ smp_fetch_len(const struct arg *args, struct sample *smp, const char *kw, void *
 		else
 			smp->data.u.sint = ci_data(chn);
 	}
-	else if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK) {
+	else if (obj_type(smp->sess->origin) == OBJ_TYPE_CHECK) {
 		struct check *check = __objt_check(smp->sess->origin);
 		smp->data.u.sint = ((check->cs && IS_HTX_CS(check->cs)) ? (htxbuf(&check->bi))->data: b_data(&check->bi));
 	}
@@ -979,7 +979,7 @@ smp_fetch_payload_lv(const struct arg *arg_p, struct sample *smp, const char *kw
 		data = ci_data(chn);
 		max  = global.tune.bufsize;
 	}
-	else if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK) {
+	else if (obj_type(smp->sess->origin) == OBJ_TYPE_CHECK) {
 		struct buffer *buf = &(__objt_check(smp->sess->origin)->bi);
 		head = b_head(buf);
 		data = b_data(buf);
@@ -1042,7 +1042,7 @@ smp_fetch_payload(const struct arg *arg_p, struct sample *smp, const char *kw, v
 		data = ci_data(chn);
 		max  = global.tune.bufsize;
 	}
-	else if (smp->sess && obj_type(smp->sess->origin) == OBJ_TYPE_CHECK) {
+	else if (obj_type(smp->sess->origin) == OBJ_TYPE_CHECK) {
 		struct buffer *buf = &(__objt_check(smp->sess->origin)->bi);
 		head = b_head(buf);
 		data = b_data(buf);
@@ -1359,10 +1359,6 @@ static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ "res.payload_lv",      smp_fetch_payload_lv,     ARG3(2,SINT,SINT,STR),  val_payload_lv, SMP_T_BIN,  SMP_USE_L6RES },
 	{ "res.ssl_hello_type",  smp_fetch_ssl_hello_type, 0,                      NULL,           SMP_T_SINT, SMP_USE_L6RES },
 	{ "wait_end",            smp_fetch_wait_end,       0,                      NULL,           SMP_T_BOOL, SMP_USE_INTRN },
-
-	{ "check.len",           smp_fetch_len,            0,                      NULL,           SMP_T_SINT, SMP_USE_INTRN },
-	{ "check.payload",       smp_fetch_payload,        ARG2(2,SINT,SINT),      NULL,           SMP_T_BIN,  SMP_USE_INTRN },
-	{ "check.payload_lv",    smp_fetch_payload_lv,     ARG3(2,SINT,SINT,STR),  val_payload_lv, SMP_T_BIN,  SMP_USE_INTRN },
 	{ /* END */ },
 }};
 

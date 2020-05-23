@@ -30,6 +30,7 @@
 #include <types/http_htx.h>
 
 extern struct buffer http_err_chunks[HTTP_ERR_SIZE];
+extern struct http_reply http_err_replies[HTTP_ERR_SIZE];
 extern struct list http_errors_list;
 
 struct htx_sl *http_get_stline(struct htx *htx);
@@ -59,6 +60,11 @@ unsigned int http_get_htx_hdr(const struct htx *htx, const struct ist hdr,
 unsigned int http_get_htx_fhdr(const struct htx *htx, const struct ist hdr,
 			       int occ, struct http_hdr_ctx *ctx, char **vptr, size_t *vlen);
 int http_str_to_htx(struct buffer *buf, struct ist raw);
+
+void release_http_reply(struct http_reply *http_reply);
+int http_check_http_reply(struct http_reply *reply, struct proxy*px, char **errmsg);
+struct http_reply *http_parse_http_reply(const char **args, int *orig_arg, struct proxy *px,
+					 int default_status, char **errmsg);
 
 struct buffer *http_load_errorfile(const char *file, char **errmsg);
 struct buffer *http_load_errormsg(const char *key, const struct ist msg, char **errmsg);

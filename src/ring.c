@@ -191,12 +191,50 @@ ssize_t ring_write(struct ring *ring, size_t maxlen, const struct ist pfx[], siz
 	sent = lenlen + totlen + 1;
 
 	/* notify potential readers */
-	list_for_each_entry(appctx, &ring->waiters, ctx.cli.l0)
+	list_for_each_entry(appctx, &ring->waiters, wait_entry)
 		appctx_wakeup(appctx);
 
  done_buf:
 	HA_RWLOCK_WRUNLOCK(LOGSRV_LOCK, &ring->lock);
 	return sent;
+}
+
+/* Tries to attach appctx <appctx> as a new reader on ring <ring>. This is
+ * meant to be used by low level appctx code such as CLI or ring forwarding.
+ * For higher level functions, please see the relevant parts in appctx or CLI.
+ * It returns non-zero on success or zero on failure if too many users are
+ * already attached. On success, the caller MUST call ring_detach_appctx()
+ * to detach itself, even if it was never woken up.
+ */
+int ring_attach_appctx(struct ring *ring, struct appctx *appctx)
+{
+	int users = ring->readers_count;
+
+	do {
+		if (users >= 255)
+			return 0;
+	} while (!_HA_ATOMIC_CAS(&ring->readers_count, &users, users + 1));
+	return 1;
+}
+
+/* detach an appctx from a ring. The appctx is expected to be waiting at
+ * offset <ofs>. Nothing is done if <ring> is NULL.
+ */
+void ring_detach_appctx(struct ring *ring, struct appctx *appctx, size_t ofs)
+{
+	if (!ring)
+		return;
+
+	HA_RWLOCK_WRLOCK(LOGSRV_LOCK, &ring->lock);
+	if (ofs != ~0) {
+		/* reader was still attached */
+		ofs -= ring->ofs;
+		BUG_ON(ofs >= b_size(&ring->buf));
+		LIST_DEL_INIT(&appctx->wait_entry);
+		HA_ATOMIC_SUB(b_peek(&ring->buf, ofs), 1);
+	}
+	HA_ATOMIC_SUB(&ring->readers_count, 1);
+	HA_RWLOCK_WRUNLOCK(LOGSRV_LOCK, &ring->lock);
 }
 
 /* Tries to attach CLI handler <appctx> as a new reader on ring <ring>. This is
@@ -207,15 +245,10 @@ ssize_t ring_write(struct ring *ring, size_t maxlen, const struct ist pfx[], siz
  */
 int ring_attach_cli(struct ring *ring, struct appctx *appctx)
 {
-	int users = ring->readers_count;
-
-	do {
-		if (users >= 255)
-			return cli_err(appctx,
-				       "Sorry, too many watchers (255) on this ring buffer. "
-				       "What could it have so interesting to attract so many watchers ?");
-
-	} while (!_HA_ATOMIC_CAS(&ring->readers_count, &users, users + 1));
+	if (!ring_attach_appctx(ring, appctx))
+		return cli_err(appctx,
+		               "Sorry, too many watchers (255) on this ring buffer. "
+		               "What could it have so interesting to attract so many watchers ?");
 
 	if (!appctx->io_handler)
 		appctx->io_handler = cli_io_handler_show_ring;
@@ -248,9 +281,11 @@ int cli_io_handler_show_ring(struct appctx *appctx)
 	if (unlikely(si_ic(si)->flags & (CF_WRITE_ERROR|CF_SHUTW)))
 		return 1;
 
-	HA_RWLOCK_RDLOCK(LOGSRV_LOCK, &ring->lock);
+	HA_RWLOCK_WRLOCK(LOGSRV_LOCK, &ring->lock);
+	LIST_DEL_INIT(&appctx->wait_entry);
+	HA_RWLOCK_WRUNLOCK(LOGSRV_LOCK, &ring->lock);
 
-	LIST_DEL_INIT(&appctx->ctx.cli.l0);
+	HA_RWLOCK_RDLOCK(LOGSRV_LOCK, &ring->lock);
 
 	/* explanation for the initialization below: it would be better to do
 	 * this in the parsing function but this would occasionally result in
@@ -321,7 +356,9 @@ int cli_io_handler_show_ring(struct appctx *appctx)
 		 */
 		if (!si_oc(si)->output && !(si_oc(si)->flags & CF_SHUTW)) {
 			/* let's be woken up once new data arrive */
-			LIST_ADDQ(&ring->waiters, &appctx->ctx.cli.l0);
+			HA_RWLOCK_WRLOCK(LOGSRV_LOCK, &ring->lock);
+			LIST_ADDQ(&ring->waiters, &appctx->wait_entry);
+			HA_RWLOCK_WRUNLOCK(LOGSRV_LOCK, &ring->lock);
 			si_rx_endp_done(si);
 			ret = 0;
 		}
@@ -337,19 +374,7 @@ void cli_io_release_show_ring(struct appctx *appctx)
 	struct ring *ring = appctx->ctx.cli.p0;
 	size_t ofs = appctx->ctx.cli.o0;
 
-	if (!ring)
-		return;
-
-	HA_RWLOCK_RDLOCK(LOGSRV_LOCK, &ring->lock);
-	if (ofs != ~0) {
-		/* reader was still attached */
-		ofs -= ring->ofs;
-		BUG_ON(ofs >= b_size(&ring->buf));
-		LIST_DEL_INIT(&appctx->ctx.cli.l0);
-		HA_ATOMIC_SUB(b_peek(&ring->buf, ofs), 1);
-	}
-	HA_ATOMIC_SUB(&ring->readers_count, 1);
-	HA_RWLOCK_RDUNLOCK(LOGSRV_LOCK, &ring->lock);
+	ring_detach_appctx(ring, appctx, ofs);
 }
 
 

@@ -247,6 +247,9 @@ void srv_dump_kws(char **out)
 	struct srv_kw_list *kwl;
 	int index;
 
+	if (!out)
+		return;
+
 	*out = NULL;
 	list_for_each_entry(kwl, &srv_keywords.list, list) {
 		for (index = 0; kwl->kw[index].kw != NULL; index++) {
@@ -1277,7 +1280,7 @@ static struct srv_kw_list srv_kws = { "ALL", { }, {
 INITCALL1(STG_REGISTER, srv_register_keywords, &srv_kws);
 
 /* Recomputes the server's eweight based on its state, uweight, the current time,
- * and the proxy's algorihtm. To be used after updating sv->uweight. The warmup
+ * and the proxy's algorithm. To be used after updating sv->uweight. The warmup
  * state is automatically disabled if the time is elapsed. If <must_update> is
  * not zero, the update will be propagated immediately.
  *
@@ -2248,7 +2251,7 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 						len2mask6(mask, &opt->pref_net[opt->pref_net_nb].mask.in6);
 						opt->pref_net[opt->pref_net_nb].family = AF_INET6;
 					} else {
-						/* All network conversions fail, retrun error. */
+						/* All network conversions fail, return error. */
 						ha_alert("parsing [%s:%d]: '%s': invalid network '%s'.\n",
 						      file, linenum, args[cur_arg], p);
 						err_code |= ERR_ALERT | ERR_FATAL;

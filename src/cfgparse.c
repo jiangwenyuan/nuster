@@ -1965,8 +1965,9 @@ next_line:
 						skip = 3;
 					}
 					else {
-						ha_alert("parsing [%s:%d] : invalid or incomplete '\\x' sequence in '%s'.\n", file, linenum, args[0]);
+						ha_alert("parsing [%s:%d] : invalid or incomplete '\\x' sequence '%.*s' in '%s'.\n", file, linenum, 4, line, args[0]);
 						err_code |= ERR_ALERT | ERR_FATAL;
+						goto next_line;
 					}
 				} else if (line[1] == '"') {
 					*line = '"';
@@ -2654,7 +2655,10 @@ int check_config_validity()
 					free(pxname);
 					continue;
 				}
-				/* simple string: free the expression and fall back to static rule */
+				/* Only one element in the list, a simple string: free the expression and
+				 * fall back to static rule
+				 */
+				LIST_DEL(&node->list);
 				free(node->arg);
 				free(node);
 			}
@@ -2715,6 +2719,10 @@ int check_config_validity()
 					free(server_name);
 					continue;
 				}
+				/* Only one element in the list, a simple string: free the expression and
+				 * fall back to static rule
+				 */
+				LIST_DEL(&node->list);
 				free(node->arg);
 				free(node);
 			}

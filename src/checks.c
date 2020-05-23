@@ -594,16 +594,22 @@ static void chk_report_conn_err(struct check *check, int errno_bck, int expired)
 				case TCPCHK_EXPECT_BINARY:
 					chunk_appendf(chk, " (expect binary '%.*s')", (unsigned int)istlen(expect->data), istptr(expect->data));
 					break;
-				case TCPCHK_EXPECT_REGEX:
+				case TCPCHK_EXPECT_STRING_REGEX:
 					chunk_appendf(chk, " (expect regex)");
 					break;
-				case TCPCHK_EXPECT_REGEX_BINARY:
+				case TCPCHK_EXPECT_BINARY_REGEX:
 					chunk_appendf(chk, " (expect binary regex)");
+					break;
+				case TCPCHK_EXPECT_STRING_LF:
+					chunk_appendf(chk, " (expect log-format string)");
+					break;
+				case TCPCHK_EXPECT_BINARY_LF:
+					chunk_appendf(chk, " (expect log-format binary)");
 					break;
 				case TCPCHK_EXPECT_HTTP_STATUS:
 					chunk_appendf(chk, " (expect HTTP status codes)");
 					break;
-				case TCPCHK_EXPECT_HTTP_REGEX_STATUS:
+				case TCPCHK_EXPECT_HTTP_STATUS_REGEX:
 					chunk_appendf(chk, " (expect HTTP status regex)");
 					break;
 				case TCPCHK_EXPECT_HTTP_HEADER:
@@ -612,8 +618,11 @@ static void chk_report_conn_err(struct check *check, int errno_bck, int expired)
 				case TCPCHK_EXPECT_HTTP_BODY:
 					chunk_appendf(chk, " (expect HTTP body content '%.*s')", (unsigned int)istlen(expect->data), istptr(expect->data));
 					break;
-				case TCPCHK_EXPECT_HTTP_REGEX_BODY:
+				case TCPCHK_EXPECT_HTTP_BODY_REGEX:
 					chunk_appendf(chk, " (expect HTTP body regex)");
+					break;
+				case TCPCHK_EXPECT_HTTP_BODY_LF:
+					chunk_appendf(chk, " (expect log-format HTTP body)");
 					break;
 				case TCPCHK_EXPECT_CUSTOM:
 					chunk_appendf(chk, " (expect custom function)");
@@ -793,11 +802,16 @@ static void free_tcpcheck(struct tcpcheck_rule *rule, int in_pool)
 		case TCPCHK_EXPECT_HTTP_BODY:
 			istfree(&rule->expect.data);
 			break;
-		case TCPCHK_EXPECT_REGEX:
-		case TCPCHK_EXPECT_REGEX_BINARY:
-		case TCPCHK_EXPECT_HTTP_REGEX_STATUS:
-		case TCPCHK_EXPECT_HTTP_REGEX_BODY:
+		case TCPCHK_EXPECT_STRING_REGEX:
+		case TCPCHK_EXPECT_BINARY_REGEX:
+		case TCPCHK_EXPECT_HTTP_STATUS_REGEX:
+		case TCPCHK_EXPECT_HTTP_BODY_REGEX:
 			regex_free(rule->expect.regex);
+			break;
+		case TCPCHK_EXPECT_STRING_LF:
+		case TCPCHK_EXPECT_BINARY_LF:
+		case TCPCHK_EXPECT_HTTP_BODY_LF:
+			free_tcpcheck_fmt(&rule->expect.fmt);
 			break;
 		case TCPCHK_EXPECT_HTTP_HEADER:
 			if (rule->expect.flags & TCPCHK_EXPT_FL_HTTP_HNAME_REG)
@@ -1047,7 +1061,7 @@ static void tcpcheck_expect_onerror_message(struct buffer *msg, struct check *ch
 	 *     1. if info field is already provided, copy it
 	 *     2. if the expect rule provides an onerror log-format string,
 	 *        use it to produce the message
-	 *     3. the expect rule is part of a protcol check (http, redis, mysql...), do nothing
+	 *     3. the expect rule is part of a protocol check (http, redis, mysql...), do nothing
 	 *     4. Otherwise produce the generic tcp-check info message
 	 */
 	if (istlen(info)) {
@@ -1076,13 +1090,20 @@ static void tcpcheck_expect_onerror_message(struct buffer *msg, struct check *ch
 	case TCPCHK_EXPECT_BINARY:
 		chunk_appendf(msg, " (binary) at step %d", tcpcheck_get_step_id(check, rule));
 		break;
-	case TCPCHK_EXPECT_REGEX:
-	case TCPCHK_EXPECT_HTTP_REGEX_STATUS:
-	case TCPCHK_EXPECT_HTTP_REGEX_BODY:
+	case TCPCHK_EXPECT_STRING_REGEX:
+	case TCPCHK_EXPECT_HTTP_STATUS_REGEX:
+	case TCPCHK_EXPECT_HTTP_BODY_REGEX:
 		chunk_appendf(msg, " (regex) at step %d", tcpcheck_get_step_id(check, rule));
 		break;
-	case TCPCHK_EXPECT_REGEX_BINARY:
+	case TCPCHK_EXPECT_BINARY_REGEX:
 		chunk_appendf(msg, " (binary regex) at step %d", tcpcheck_get_step_id(check, rule));
+		break;
+	case TCPCHK_EXPECT_STRING_LF:
+	case TCPCHK_EXPECT_HTTP_BODY_LF:
+		chunk_appendf(msg, " (log-format string) at step %d", tcpcheck_get_step_id(check, rule));
+		break;
+	case TCPCHK_EXPECT_BINARY_LF:
+		chunk_appendf(msg, " (log-format binary) at step %d", tcpcheck_get_step_id(check, rule));
 		break;
 	case TCPCHK_EXPECT_CUSTOM:
 		chunk_appendf(msg, " (custom function) at step %d", tcpcheck_get_step_id(check, rule));
@@ -1128,7 +1149,7 @@ static void tcpcheck_expect_onsuccess_message(struct buffer *msg, struct check *
 	 *     1. if info field is already provided, copy it
 	 *     2. if the expect rule provides an onsucces log-format string,
 	 *        use it to produce the message
-	 *     3. the expect rule is part of a protcol check (http, redis, mysql...), do nothing
+	 *     3. the expect rule is part of a protocol check (http, redis, mysql...), do nothing
 	 *     4. Otherwise produce the generic tcp-check info message
 	 */
 	if (istlen(info))
@@ -1658,6 +1679,7 @@ static enum tcpcheck_eval_ret tcpcheck_eval_connect(struct check *check, struct 
 	struct connection *conn = NULL;
 	struct protocol *proto;
 	struct xprt_ops *xprt;
+	struct tcpcheck_rule *next;
 	int status, port;
 
 	/* For a connect action we'll create a new connection. We may also have
@@ -1751,14 +1773,12 @@ static enum tcpcheck_eval_ret tcpcheck_eval_connect(struct check *check, struct 
 	cs_attach(cs, check, &check_conn_cb);
 
 	status = SF_ERR_INTERNAL;
+	next = get_next_tcpcheck_rule(check->tcpcheck_rules, rule);
 	if (proto && proto->connect) {
-		struct tcpcheck_rule *next;
 		int flags = 0;
 
 		if (check->tcpcheck_rules->flags & TCPCHK_RULES_PROTO_CHK)
 			flags |= CONNECT_HAS_DATA;
-
-		next = get_next_tcpcheck_rule(check->tcpcheck_rules, rule);
 		if (!next || next->action != TCPCHK_ACT_EXPECT)
 			flags |= CONNECT_DELACK_ALWAYS;
 		status = proto->connect(conn, flags);
@@ -1871,6 +1891,12 @@ static enum tcpcheck_eval_ret tcpcheck_eval_connect(struct check *check, struct 
 
 	/* don't do anything until the connection is established */
 	if (conn->flags & CO_FL_WAIT_XPRT) {
+		if (conn->mux) {
+			if (next && next->action == TCPCHK_ACT_SEND)
+				conn->mux->subscribe(cs, SUB_RETRY_SEND, &check->wait_list);
+			else
+				conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
+		}
 		ret = TCPCHK_EVAL_WAIT;
 		goto out;
 	}
@@ -1943,7 +1969,12 @@ static enum tcpcheck_eval_ret tcpcheck_eval_send(struct check *check, struct tcp
 		meth = ((send->http.meth.meth == HTTP_METH_OTHER)
 			? ist2(send->http.meth.str.area, send->http.meth.str.data)
 			: http_known_methods[send->http.meth.meth]);
-		uri = (isttest(send->http.uri) ? send->http.uri : ist("/")); // TODO: handle uri_fmt
+		if (send->http.flags & TCPCHK_SND_HTTP_FL_URI_FMT) {
+			tmp->data = sess_build_logline(check->sess, NULL, b_orig(tmp), b_size(tmp), &send->http.uri_fmt);
+			uri = (b_data(tmp) ? ist2(b_orig(tmp), b_data(tmp)) : ist("/"));
+		}
+		else
+			uri = (isttest(send->http.uri) ? send->http.uri : ist("/"));
 		vsn = (isttest(send->http.vsn) ? send->http.vsn : ist("HTTP/1.0"));
 
 		if ((istlen(vsn) == 6 && *(vsn.ptr+5) == '2') ||
@@ -1959,13 +1990,6 @@ static enum tcpcheck_eval_ret tcpcheck_eval_send(struct check *check, struct tcp
 			goto error_htx;
 		sl->info.req.meth = send->http.meth.meth;
 		if (!http_update_host(htx, sl, uri))
-			goto error_htx;
-
-		body = send->http.body; // TODO: handle body_fmt
-		clen = ist((!istlen(body) ? "0" : ultoa(istlen(body))));
-
-		if (!htx_add_header(htx, ist("Connection"), ist("close")) ||
-		    !htx_add_header(htx, ist("Content-length"), clen))
 			goto error_htx;
 
 		if (!LIST_ISEMPTY(&send->http.hdrs)) {
@@ -1994,8 +2018,23 @@ static enum tcpcheck_eval_ret tcpcheck_eval_send(struct check *check, struct tcp
 				goto error_htx;
 		}
 
+
+		if (send->http.flags & TCPCHK_SND_HTTP_FL_BODY_FMT) {
+			chunk_reset(tmp);
+			tmp->data = sess_build_logline(check->sess, NULL, b_orig(tmp), b_size(tmp), &send->http.body_fmt);
+			body = ist2(b_orig(tmp), b_data(tmp));
+		}
+		else
+			body = send->http.body;
+		clen = ist((!istlen(body) ? "0" : ultoa(istlen(body))));
+
+		if (!htx_add_header(htx, ist("Connection"), ist("close")) ||
+		    !htx_add_header(htx, ist("Content-length"), clen))
+			goto error_htx;
+
+
 		if (!htx_add_endof(htx, HTX_BLK_EOH) ||
-		    (istlen(body) && !htx_add_data_atonce(htx, send->http.body)) ||
+		    (istlen(body) && !htx_add_data_atonce(htx, body)) ||
 		    !htx_add_endof(htx, HTX_BLK_EOM))
 			goto error_htx;
 
@@ -2046,8 +2085,8 @@ static enum tcpcheck_eval_ret tcpcheck_eval_send(struct check *check, struct tcp
 
 }
 
-/* Try to reveice data before evaluting a tcp-check expect rule. Returns
- * TCPCHK_EVAL_WAIT if it is already subcribed on receive events or if nothing
+/* Try to receive data before evaluating a tcp-check expect rule. Returns
+ * TCPCHK_EVAL_WAIT if it is already subscribed on receive events or if nothing
  * was received, TCPCHK_EVAL_CONTINUE to evaluate the expect rule or
  * TCPCHK_EVAL_STOP if an error occurred.
  */
@@ -2136,7 +2175,7 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 	struct htx_blk *blk;
 	enum tcpcheck_eval_ret ret = TCPCHK_EVAL_CONTINUE;
 	struct tcpcheck_expect *expect = &rule->expect;
-	struct buffer *msg = NULL, *nbuf = NULL, *vbuf = NULL;
+	struct buffer *msg = NULL, *tmp = NULL, *nbuf = NULL, *vbuf = NULL;
 	enum healthcheck_status status = HCHK_STATUS_L7RSP;
 	struct ist desc = IST_NULL;
 	int i, match, inverse;
@@ -2170,6 +2209,7 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 	inverse = !!(expect->flags & TCPCHK_EXPT_FL_INV);
 	/* Make GCC happy ; initialize match to a failure state. */
 	match = inverse;
+	status = expect->err_status;
 
 	switch (expect->type) {
 	case TCPCHK_EXPECT_HTTP_STATUS:
@@ -2183,15 +2223,15 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 		}
 
 		/* Set status and description in case of error */
-		status = ((rule->expect.err_status != HCHK_STATUS_UNKNOWN) ? rule->expect.err_status : HCHK_STATUS_L7STS);
+		status = ((status != HCHK_STATUS_UNKNOWN) ? status : HCHK_STATUS_L7STS);
 		if (LIST_ISEMPTY(&expect->onerror_fmt))
 			desc = htx_sl_res_reason(sl);
 		break;
-	case TCPCHK_EXPECT_HTTP_REGEX_STATUS:
+	case TCPCHK_EXPECT_HTTP_STATUS_REGEX:
 		match = regex_exec2(expect->regex, HTX_SL_RES_CPTR(sl), HTX_SL_RES_CLEN(sl));
 
 		/* Set status and description in case of error */
-		status = ((rule->expect.err_status != HCHK_STATUS_UNKNOWN) ? rule->expect.err_status : HCHK_STATUS_L7STS);
+		status = ((status != HCHK_STATUS_UNKNOWN) ? status : HCHK_STATUS_L7STS);
 		if (LIST_ISEMPTY(&expect->onerror_fmt))
 			desc = htx_sl_res_reason(sl);
 		break;
@@ -2203,9 +2243,17 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 
 		if (expect->flags & TCPCHK_EXPT_FL_HTTP_HNAME_FMT) {
 			nbuf = alloc_trash_chunk();
-			if (!nbuf)
+			if (!nbuf) {
+				status = HCHK_STATUS_L7RSP;
+				desc = ist("Failed to allocate buffer to eval log-format string");
 				goto error;
+			}
 			nbuf->data = sess_build_logline(check->sess, NULL, b_orig(nbuf), b_size(nbuf), &expect->hdr.name_fmt);
+			if (!b_data(nbuf)) {
+				status = HCHK_STATUS_L7RSP;
+				desc = ist("log-format string evaluated to an empty string");
+				goto error;
+			}
 			npat = ist2(b_orig(nbuf), b_data(nbuf));
 		}
 		else if (!(expect->flags & TCPCHK_EXPT_FL_HTTP_HNAME_REG))
@@ -2213,9 +2261,17 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 
 		if (expect->flags & TCPCHK_EXPT_FL_HTTP_HVAL_FMT) {
 			vbuf = alloc_trash_chunk();
-			if (!vbuf)
+			if (!vbuf) {
+				status = HCHK_STATUS_L7RSP;
+				desc = ist("Failed to allocate buffer to eval log-format string");
 				goto error;
+			}
 			vbuf->data = sess_build_logline(check->sess, NULL, b_orig(vbuf), b_size(vbuf), &expect->hdr.value_fmt);
+			if (!b_data(vbuf)) {
+				status = HCHK_STATUS_L7RSP;
+				desc = ist("log-format string evaluated to an empty string");
+				goto error;
+			}
 			vpat = ist2(b_orig(vbuf), b_data(vbuf));
 		}
 		else if (!(expect->flags & TCPCHK_EXPT_FL_HTTP_HVAL_REG))
@@ -2245,7 +2301,15 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 				if (!http_match_header(htx, expect->hdr.name_re, &ctx, full))
 					goto end_of_match;
 				break;
+			default:
+				/* should never happen */
+				goto end_of_match;
 			}
+
+			/* A header has matched the name pattern, let's test its
+			 * value now (always defined from there). If there is no
+			 * value pattern, it is a good match.
+			 */
 
 			if (expect->flags & TCPCHK_EXPT_FL_HTTP_HVAL_NONE) {
 				match = 1;
@@ -2294,14 +2358,16 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 		}
 
 	  end_of_match:
-		status = ((rule->expect.err_status != HCHK_STATUS_UNKNOWN) ? rule->expect.err_status : HCHK_STATUS_L7STS);
+		status = ((status != HCHK_STATUS_UNKNOWN) ? status : HCHK_STATUS_L7STS);
 		if (LIST_ISEMPTY(&expect->onerror_fmt))
 			desc = htx_sl_res_reason(sl);
 		break;
 	}
 
 	case TCPCHK_EXPECT_HTTP_BODY:
-	case TCPCHK_EXPECT_HTTP_REGEX_BODY:
+	case TCPCHK_EXPECT_HTTP_BODY_REGEX:
+	case TCPCHK_EXPECT_HTTP_BODY_LF:
+		match = 0;
 		chunk_reset(&trash);
 		for (blk = htx_get_head_blk(htx); blk; blk = htx_get_next_blk(htx, blk)) {
 			enum htx_blk_type type = htx_get_blk_type(blk);
@@ -2317,14 +2383,30 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 		if (!b_data(&trash)) {
 			if (!last_read)
 				goto wait_more_data;
-			status = ((rule->expect.err_status != HCHK_STATUS_UNKNOWN) ? rule->expect.err_status : HCHK_STATUS_L7RSP);
+			status = ((status != HCHK_STATUS_UNKNOWN) ? status : HCHK_STATUS_L7RSP);
 			if (LIST_ISEMPTY(&expect->onerror_fmt))
 				desc = ist("HTTP content check could not find a response body");
 			goto error;
 		}
 
+		if (expect->type == TCPCHK_EXPECT_HTTP_BODY_LF) {
+			tmp = alloc_trash_chunk();
+			if (!tmp) {
+				status = HCHK_STATUS_L7RSP;
+				desc = ist("Failed to allocate buffer to eval log-format string");
+				goto error;
+			}
+			tmp->data = sess_build_logline(check->sess, NULL, b_orig(tmp), b_size(tmp), &expect->fmt);
+			if (!b_data(tmp)) {
+				status = HCHK_STATUS_L7RSP;
+				desc = ist("log-format string evaluated to an empty string");
+				goto error;
+			}
+		}
+
 		if (!last_read &&
 		    ((expect->type == TCPCHK_EXPECT_HTTP_BODY && b_data(&trash) < istlen(expect->data)) ||
+		     ((expect->type == TCPCHK_EXPECT_HTTP_BODY_LF && b_data(&trash) < b_data(tmp))) ||
 		     (expect->min_recv > 0 && b_data(&trash) < expect->min_recv))) {
 			ret = TCPCHK_EVAL_WAIT;
 			goto out;
@@ -2332,20 +2414,23 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 
 		if (expect->type ==TCPCHK_EXPECT_HTTP_BODY)
 			match = my_memmem(b_orig(&trash), b_data(&trash), istptr(expect->data), istlen(expect->data)) != NULL;
+		else if (expect->type ==TCPCHK_EXPECT_HTTP_BODY_LF)
+			match = my_memmem(b_orig(&trash), b_data(&trash), b_orig(tmp), b_data(tmp)) != NULL;
 		else
 			match = regex_exec2(expect->regex, b_orig(&trash), b_data(&trash));
 
 		/* Set status and description in case of error */
-		status = ((rule->expect.err_status != HCHK_STATUS_UNKNOWN) ? rule->expect.err_status : HCHK_STATUS_L7RSP);
+		status = ((status != HCHK_STATUS_UNKNOWN) ? status : HCHK_STATUS_L7RSP);
 		if (LIST_ISEMPTY(&expect->onerror_fmt))
 			desc = (inverse
 				? ist("HTTP check matched unwanted content")
 				: ist("HTTP content check did not match"));
 		break;
 
+
 	default:
 		/* should never happen */
-		status = ((rule->expect.err_status != HCHK_STATUS_UNKNOWN) ? rule->expect.err_status : HCHK_STATUS_L7RSP);
+		status = ((status != HCHK_STATUS_UNKNOWN) ? status : HCHK_STATUS_L7RSP);
 		goto error;
 	}
 
@@ -2361,6 +2446,7 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect_http(struct check *check, str
 		goto error;
 
   out:
+	free_trash_chunk(tmp);
 	free_trash_chunk(nbuf);
 	free_trash_chunk(vbuf);
 	free_trash_chunk(msg);
@@ -2387,7 +2473,8 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect(struct check *check, struct t
 {
 	enum tcpcheck_eval_ret ret = TCPCHK_EVAL_CONTINUE;
 	struct tcpcheck_expect *expect = &rule->expect;
-	struct buffer *msg = NULL;
+	struct buffer *msg = NULL, *tmp = NULL;
+	struct ist desc = IST_NULL;
 	enum healthcheck_status status;
 	int match, inverse;
 
@@ -2411,21 +2498,57 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect(struct check *check, struct t
 	inverse = !!(expect->flags & TCPCHK_EXPT_FL_INV);
 	/* Make GCC happy ; initialize match to a failure state. */
 	match = inverse;
+	status = ((expect->err_status != HCHK_STATUS_UNKNOWN) ? expect->err_status : HCHK_STATUS_L7RSP);
 
 	switch (expect->type) {
 	case TCPCHK_EXPECT_STRING:
 	case TCPCHK_EXPECT_BINARY:
 		match = my_memmem(b_head(&check->bi), b_data(&check->bi), istptr(expect->data), istlen(expect->data)) != NULL;
 		break;
-	case TCPCHK_EXPECT_REGEX:
+	case TCPCHK_EXPECT_STRING_REGEX:
 		match = regex_exec2(expect->regex, b_head(&check->bi), MIN(b_data(&check->bi), b_size(&check->bi)-1));
 		break;
 
-	case TCPCHK_EXPECT_REGEX_BINARY:
+	case TCPCHK_EXPECT_BINARY_REGEX:
 		chunk_reset(&trash);
 		dump_binary(&trash, b_head(&check->bi), b_data(&check->bi));
 		match = regex_exec2(expect->regex, b_head(&trash), MIN(b_data(&trash), b_size(&trash)-1));
 		break;
+
+	case TCPCHK_EXPECT_STRING_LF:
+	case TCPCHK_EXPECT_BINARY_LF:
+		match = 0;
+		tmp = alloc_trash_chunk();
+		if (!tmp) {
+			status = HCHK_STATUS_L7RSP;
+			desc = ist("Failed to allocate buffer to eval format string");
+			goto error;
+		}
+		tmp->data = sess_build_logline(check->sess, NULL, b_orig(tmp), b_size(tmp), &expect->fmt);
+		if (!b_data(tmp)) {
+			status = HCHK_STATUS_L7RSP;
+			desc = ist("log-format string evaluated to an empty string");
+			goto error;
+		}
+		if (expect->type == TCPCHK_EXPECT_BINARY_LF) {
+			int len = tmp->data;
+			if (parse_binary(b_orig(tmp),  &tmp->area, &len, NULL) == 0) {
+				status = HCHK_STATUS_L7RSP;
+				desc = ist("Failed to parse hexastring resulting of eval of a log-format string");
+				goto error;
+			}
+			tmp->data = len;
+		}
+		if (b_data(&check->bi) < tmp->data) {
+			if (!last_read) {
+				ret = TCPCHK_EVAL_WAIT;
+				goto out;
+			}
+			break;
+		}
+		match = my_memmem(b_head(&check->bi), b_data(&check->bi), b_orig(tmp), b_data(tmp)) != NULL;
+		break;
+
 	case TCPCHK_EXPECT_CUSTOM:
 		if (expect->custom)
 			ret = expect->custom(check, rule, last_read);
@@ -2449,24 +2572,22 @@ static enum tcpcheck_eval_ret tcpcheck_eval_expect(struct check *check, struct t
 	if (match ^ inverse)
 		goto out;
 
-
+  error:
 	/* From this point on, we matched something we did not want, this is an error state. */
 	ret = TCPCHK_EVAL_STOP;
 	msg = alloc_trash_chunk();
 	if (msg)
-		tcpcheck_expect_onerror_message(msg, check, rule, match, IST_NULL);
-
-	status = ((rule->expect.err_status != HCHK_STATUS_UNKNOWN) ? rule->expect.err_status : HCHK_STATUS_L7RSP);
+		tcpcheck_expect_onerror_message(msg, check, rule, match, desc);
 	set_server_check_status(check, status, (msg ? b_head(msg) : NULL));
 	free_trash_chunk(msg);
-	ret = TCPCHK_EVAL_STOP;
 
   out:
+	free_trash_chunk(tmp);
 	return ret;
 }
 
 /* Evaluates a TCPCHK_ACT_ACTION_KW rule. Returns TCPCHK_EVAL_CONTINUE to
- * evaluate the next rule or TCPCHK_EVAL_STOP if an error occurred. It nevers
+ * evaluate the next rule or TCPCHK_EVAL_STOP if an error occurred. It never
  * waits.
  */
 static enum tcpcheck_eval_ret tcpcheck_eval_action_kw(struct check *check, struct tcpcheck_rule *rule)
@@ -2514,20 +2635,31 @@ static int tcpcheck_main(struct check *check)
 	/* 2- check if we are waiting for the connection establishment. It only
 	 *    happens during TCPCHK_ACT_CONNECT. */
 	if (check->current_step && check->current_step->action == TCPCHK_ACT_CONNECT) {
-		rule = LIST_NEXT(&check->current_step->list, typeof(rule), list);
 		if (conn && (conn->flags & CO_FL_WAIT_XPRT)) {
-			if (rule->action == TCPCHK_ACT_SEND)
-				conn->mux->subscribe(cs, SUB_RETRY_SEND, &check->wait_list);
-			else if (rule->action == TCPCHK_ACT_EXPECT)
-				conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
+			struct tcpcheck_rule *next;
+
+			next = get_next_tcpcheck_rule(check->tcpcheck_rules, check->current_step);
+			if (next && next->action == TCPCHK_ACT_SEND) {
+				if (!(check->wait_list.events & SUB_RETRY_SEND))
+					conn->mux->subscribe(cs, SUB_RETRY_SEND, &check->wait_list);
+			}
+			else {
+				if (!(check->wait_list.events & SUB_RETRY_RECV))
+					conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
+			}
 			goto out;
 		}
+		rule = LIST_NEXT(&check->current_step->list, typeof(rule), list);
 	}
 
 	/* 3- check for pending outgoing data. It only happens during
 	 *    TCPCHK_ACT_SEND. */
 	else if (check->current_step && check->current_step->action == TCPCHK_ACT_SEND) {
 		if (conn && b_data(&check->bo)) {
+			/* We're already waiting to be able to send, give up */
+			if (check->wait_list.events & SUB_RETRY_SEND)
+				goto out;
+
 			ret = conn->mux->snd_buf(cs, &check->bo,
 						 (IS_HTX_CONN(conn) ? (htxbuf(&check->bo))->data: b_data(&check->bo)), 0);
 			if (ret <= 0) {
@@ -2617,7 +2749,8 @@ static int tcpcheck_main(struct check *check)
 
 			if (eval_ret == TCPCHK_EVAL_WAIT) {
 				check->current_step = rule->expect.head;
-				conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
+				if (!(check->wait_list.events & SUB_RETRY_RECV))
+					conn->mux->subscribe(cs, SUB_RETRY_RECV, &check->wait_list);
 			}
 			break;
 		case TCPCHK_ACT_ACTION_KW:
@@ -3612,7 +3745,7 @@ static struct tcpcheck_rule *parse_tcpcheck_connect(char **args, int cur_arg, st
 			continue;
 
 		memprintf(errmsg, "first step MUST also be a 'connect', "
-			  "optionnaly preceded by a 'set-var', an 'unset-var' or a 'comment', "
+			  "optionally preceded by a 'set-var', an 'unset-var' or a 'comment', "
 			  "when there is a 'connect' step in the tcp-check ruleset");
 		goto error;
 	}
@@ -3800,7 +3933,15 @@ static struct tcpcheck_rule *parse_tcpcheck_send(char **args, int cur_arg, struc
 	char *comment = NULL, *data = NULL;
 	enum tcpcheck_send_type type = TCPCHK_SEND_UNDEF;
 
-	type = ((strcmp(args[cur_arg], "send-binary") == 0) ? TCPCHK_SEND_BINARY : TCPCHK_SEND_STRING);
+	if (strcmp(args[cur_arg], "send-binary-lf") == 0)
+		type = TCPCHK_SEND_BINARY_LF;
+	else if (strcmp(args[cur_arg], "send-binary") == 0)
+		type = TCPCHK_SEND_BINARY;
+	else if (strcmp(args[cur_arg], "send-lf") == 0)
+		type = TCPCHK_SEND_STRING_LF;
+	else if (strcmp(args[cur_arg], "send") == 0)
+		type = TCPCHK_SEND_STRING;
+
 	if (!*(args[cur_arg+1])) {
 		memprintf(errmsg, "'%s' expects a %s as argument",
 			  (type == TCPCHK_SEND_BINARY ? "binary string": "string"), args[cur_arg]);
@@ -3824,14 +3965,8 @@ static struct tcpcheck_rule *parse_tcpcheck_send(char **args, int cur_arg, struc
 				goto error;
 			}
 		}
-		else if (strcmp(args[cur_arg], "log-format") == 0) {
-			if (type == TCPCHK_SEND_BINARY)
-				type = TCPCHK_SEND_BINARY_LF;
-			else if (type == TCPCHK_SEND_STRING)
-				type = TCPCHK_SEND_STRING_LF;
-		}
 		else {
-			memprintf(errmsg, "expects 'comment', 'log-format' but got '%s' as argument.",
+			memprintf(errmsg, "expects 'comment' but got '%s' as argument.",
 				  args[cur_arg]);
 			goto error;
 		}
@@ -3908,14 +4043,16 @@ static struct tcpcheck_rule *parse_tcpcheck_send_http(char **args, int cur_arg, 
 			cur_arg++;
 			meth = args[cur_arg];
 		}
-		else if (strcmp(args[cur_arg], "uri") == 0) {
+		else if (strcmp(args[cur_arg], "uri") == 0 || strcmp(args[cur_arg], "uri-lf") == 0) {
 			if (!*(args[cur_arg+1])) {
 				memprintf(errmsg, "'%s' expects a string as argument.", args[cur_arg]);
 				goto error;
 			}
+			flags &= ~TCPCHK_SND_HTTP_FL_URI_FMT;
+			if (strcmp(args[cur_arg], "uri-lf") == 0)
+				flags |= TCPCHK_SND_HTTP_FL_URI_FMT;
 			cur_arg++;
 			uri = args[cur_arg];
-			// TODO: log-format uri
 		}
 		else if (strcmp(args[cur_arg], "ver") == 0) {
 			if (!*(args[cur_arg+1])) {
@@ -3950,14 +4087,16 @@ static struct tcpcheck_rule *parse_tcpcheck_send_http(char **args, int cur_arg, 
 		  skip_hdr:
 			cur_arg += 2;
 		}
-		else if (strcmp(args[cur_arg], "body") == 0) {
+		else if (strcmp(args[cur_arg], "body") == 0 || strcmp(args[cur_arg], "body-lf") == 0) {
 			if (!*(args[cur_arg+1])) {
 				memprintf(errmsg, "'%s' expects a string as argument.", args[cur_arg]);
 				goto error;
 			}
+			flags &= ~TCPCHK_SND_HTTP_FL_BODY_FMT;
+			if (strcmp(args[cur_arg], "body-lf") == 0)
+				flags |= TCPCHK_SND_HTTP_FL_BODY_FMT;
 			cur_arg++;
 			body = args[cur_arg];
-			// TODO: log-format body
 		}
 		else if (strcmp(args[cur_arg], "comment") == 0) {
 			if (!*(args[cur_arg+1])) {
@@ -3973,8 +4112,8 @@ static struct tcpcheck_rule *parse_tcpcheck_send_http(char **args, int cur_arg, 
 			}
 		}
 		else {
-			memprintf(errmsg, "expects 'comment', 'meth', 'uri', 'ver', 'hdr' and 'body' but got '%s' as argument.",
-				  args[cur_arg]);
+			memprintf(errmsg, "expects 'comment', 'meth', 'uri', 'uri-lf', 'ver', 'hdr', 'body' or 'body-lf'"
+				  " but got '%s' as argument.", args[cur_arg]);
 			goto error;
 		}
 		cur_arg++;
@@ -4003,10 +4142,20 @@ static struct tcpcheck_rule *parse_tcpcheck_send_http(char **args, int cur_arg, 
 		}
 	}
 	if (uri) {
-		chk->send.http.uri = ist2(strdup(uri), strlen(uri));
-		if (!isttest(chk->send.http.uri)) {
-			memprintf(errmsg, "out of memory");
-			goto error;
+		if (chk->send.http.flags & TCPCHK_SND_HTTP_FL_URI_FMT) {
+			LIST_INIT(&chk->send.http.uri_fmt);
+			px->conf.args.ctx = ARGC_SRV;
+			if (!parse_logformat_string(uri, px, &chk->send.http.uri_fmt, 0, SMP_VAL_BE_CHK_RUL, errmsg)) {
+				memprintf(errmsg, "'%s' invalid log-format string (%s).\n", uri, *errmsg);
+				goto error;
+			}
+		}
+		else {
+			chk->send.http.uri = ist2(strdup(uri), strlen(uri));
+			if (!isttest(chk->send.http.uri)) {
+				memprintf(errmsg, "out of memory");
+				goto error;
+			}
 		}
 	}
 	if (vsn) {
@@ -4037,10 +4186,20 @@ static struct tcpcheck_rule *parse_tcpcheck_send_http(char **args, int cur_arg, 
 	}
 
 	if (body) {
-		chk->send.http.body = ist2(strdup(body), strlen(body));
-		if (!isttest(chk->send.http.body)) {
-			memprintf(errmsg, "out of memory");
-			goto error;
+		if (chk->send.http.flags & TCPCHK_SND_HTTP_FL_BODY_FMT) {
+			LIST_INIT(&chk->send.http.body_fmt);
+			px->conf.args.ctx = ARGC_SRV;
+			if (!parse_logformat_string(body, px, &chk->send.http.body_fmt, 0, SMP_VAL_BE_CHK_RUL, errmsg)) {
+				memprintf(errmsg, "'%s' invalid log-format string (%s).\n", body, *errmsg);
+				goto error;
+			}
+		}
+		else {
+			chk->send.http.body = ist2(strdup(body), strlen(body));
+			if (!isttest(chk->send.http.body)) {
+				memprintf(errmsg, "out of memory");
+				goto error;
+			}
 		}
 	}
 
@@ -4148,9 +4307,9 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 				goto error;
 			}
 			if (proto != TCPCHK_RULES_HTTP_CHK)
-				type = ((*(args[cur_arg]) == 's') ? TCPCHK_EXPECT_STRING : TCPCHK_EXPECT_REGEX);
+				type = ((*(args[cur_arg]) == 's') ? TCPCHK_EXPECT_STRING : TCPCHK_EXPECT_STRING_REGEX);
 			else
-				type = ((*(args[cur_arg]) == 's') ? TCPCHK_EXPECT_HTTP_BODY : TCPCHK_EXPECT_HTTP_REGEX_BODY);
+				type = ((*(args[cur_arg]) == 's') ? TCPCHK_EXPECT_HTTP_BODY : TCPCHK_EXPECT_HTTP_BODY_REGEX);
 
 			if (!*(args[cur_arg+1])) {
 				memprintf(errmsg, "'%s' expects a <pattern> as argument", args[cur_arg]);
@@ -4166,7 +4325,27 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 				memprintf(errmsg, "only on pattern expected");
 				goto error;
 			}
-			type = ((*(args[cur_arg]) == 'b') ?  TCPCHK_EXPECT_BINARY : TCPCHK_EXPECT_REGEX_BINARY);
+			type = ((*(args[cur_arg]) == 'b') ?  TCPCHK_EXPECT_BINARY : TCPCHK_EXPECT_BINARY_REGEX);
+
+			if (!*(args[cur_arg+1])) {
+				memprintf(errmsg, "'%s' expects a <pattern> as argument", args[cur_arg]);
+				goto error;
+			}
+			cur_arg++;
+			pattern = args[cur_arg];
+		}
+		else if (strcmp(args[cur_arg], "string-lf") == 0 || strcmp(args[cur_arg], "binary-lf") == 0) {
+			if (type != TCPCHK_EXPECT_UNDEF) {
+				memprintf(errmsg, "only on pattern expected");
+				goto error;
+			}
+			if (proto != TCPCHK_RULES_HTTP_CHK)
+				type = ((*(args[cur_arg]) == 's') ? TCPCHK_EXPECT_STRING_LF : TCPCHK_EXPECT_BINARY_LF);
+			else {
+				if (*(args[cur_arg]) != 's')
+					goto bad_http_kw;
+				type = TCPCHK_EXPECT_HTTP_BODY_LF;
+			}
 
 			if (!*(args[cur_arg+1])) {
 				memprintf(errmsg, "'%s' expects a <pattern> as argument", args[cur_arg]);
@@ -4182,7 +4361,7 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 				memprintf(errmsg, "only on pattern expected");
 				goto error;
 			}
-			type = ((*(args[cur_arg]) == 's') ? TCPCHK_EXPECT_HTTP_STATUS : TCPCHK_EXPECT_HTTP_REGEX_STATUS);
+			type = ((*(args[cur_arg]) == 's') ? TCPCHK_EXPECT_HTTP_STATUS : TCPCHK_EXPECT_HTTP_STATUS_REGEX);
 
 			if (!*(args[cur_arg+1])) {
 				memprintf(errmsg, "'%s' expects a <pattern> as argument", args[cur_arg]);
@@ -4202,7 +4381,7 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 			}
 			type = TCPCHK_EXPECT_CUSTOM;
 		}
-		else if (strcmp(args[cur_arg], "header") == 0) {
+		else if (strcmp(args[cur_arg], "hdr") == 0 || strcmp(args[cur_arg], "fhdr") == 0) {
 			int orig_arg = cur_arg;
 
 			if (proto != TCPCHK_RULES_HTTP_CHK)
@@ -4213,12 +4392,20 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 			}
 			type = TCPCHK_EXPECT_HTTP_HEADER;
 
+			if (strcmp(args[cur_arg], "fhdr") == 0)
+				flags |= TCPCHK_EXPT_FL_HTTP_HVAL_FULL;
+
 			/* Parse the name pattern, mandatory */
-			if (!*(args[cur_arg+1]) || !*(args[cur_arg+2]) || strcmp(args[cur_arg+1], "name") != 0) {
-				memprintf(errmsg, "'%s' expects at the keyword name as first argument followed by a pattern",
+			if (!*(args[cur_arg+1]) || !*(args[cur_arg+2]) ||
+			    (strcmp(args[cur_arg+1], "name") != 0 && strcmp(args[cur_arg+1], "name-lf") != 0)) {
+				memprintf(errmsg, "'%s' expects at the name keyword as first argument followed by a pattern",
 					  args[orig_arg]);
 				goto error;
 			}
+
+			if (strcmp(args[cur_arg+1], "name-lf") == 0)
+				flags |= TCPCHK_EXPT_FL_HTTP_HNAME_FMT;
+
 			cur_arg += 2;
 			if (strcmp(args[cur_arg], "-m") == 0) {
 				if  (!*(args[cur_arg+1])) {
@@ -4234,8 +4421,14 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 					flags |= TCPCHK_EXPT_FL_HTTP_HNAME_END;
 				else if (strcmp(args[cur_arg+1], "sub") == 0)
 					flags |= TCPCHK_EXPT_FL_HTTP_HNAME_SUB;
-				else if (strcmp(args[cur_arg+1], "reg") == 0)
+				else if (strcmp(args[cur_arg+1], "reg") == 0) {
+					if (flags & TCPCHK_EXPT_FL_HTTP_HNAME_FMT) {
+						memprintf(errmsg, "'%s': log-format string is not supported with a regex matching method",
+							  args[orig_arg]);
+						goto error;
+					}
 					flags |= TCPCHK_EXPT_FL_HTTP_HNAME_REG;
+				}
 				else {
 					memprintf(errmsg, "'%s' : '%s' only supports 'str', 'beg', 'end', 'sub' or 'reg' (got '%s')",
 						  args[orig_arg], args[cur_arg], args[cur_arg+1]);
@@ -4247,29 +4440,17 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 				flags |= TCPCHK_EXPT_FL_HTTP_HNAME_STR;
 			npat = args[cur_arg];
 
-			if (!(*args[cur_arg+1])) {
+			if (!*(args[cur_arg+1]) ||
+			    (strcmp(args[cur_arg+1], "value") != 0 && strcmp(args[cur_arg+1], "value-lf") != 0)) {
 				flags |= TCPCHK_EXPT_FL_HTTP_HVAL_NONE;
 				goto next;
 			}
+			if (strcmp(args[cur_arg+1], "value-lf") == 0)
+				flags |= TCPCHK_EXPT_FL_HTTP_HVAL_FMT;
 
-			if (strcmp(args[cur_arg+1], "log-format") == 0) {
-				if (flags & TCPCHK_EXPT_FL_HTTP_HNAME_REG) {
-					memprintf(errmsg, "'%s': '%s' cannot be used with a regex matching pattern",
-						  args[orig_arg], args[cur_arg+1]);
-					goto error;
-				}
-				flags |= TCPCHK_EXPT_FL_HTTP_HNAME_FMT;
-				cur_arg++;
-			}
-
-			if (!(*args[cur_arg+1]) || strcmp(args[cur_arg+1], "value") != 0) {
-				flags |= TCPCHK_EXPT_FL_HTTP_HVAL_NONE;
-				goto next;
-			}
-
-			/* Parse the value pattern, optionnal */
-			cur_arg += 2;
-			if (strcmp(args[cur_arg], "-m") == 0) {
+			/* Parse the value pattern, optional */
+			if (strcmp(args[cur_arg+2], "-m") == 0) {
+				cur_arg += 2;
 				if  (!*(args[cur_arg+1])) {
 					memprintf(errmsg, "'%s' : '%s' expects at a matching pattern ('str', 'beg', 'end', 'sub' or 'reg')",
 						  args[orig_arg], args[cur_arg]);
@@ -4283,34 +4464,29 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 					flags |= TCPCHK_EXPT_FL_HTTP_HVAL_END;
 				else if (strcmp(args[cur_arg+1], "sub") == 0)
 					flags |= TCPCHK_EXPT_FL_HTTP_HVAL_SUB;
-				else if (strcmp(args[cur_arg+1], "reg") == 0)
+				else if (strcmp(args[cur_arg+1], "reg") == 0) {
+					if (flags & TCPCHK_EXPT_FL_HTTP_HVAL_FMT) {
+						memprintf(errmsg, "'%s': log-format string is not supported with a regex matching method",
+							  args[orig_arg]);
+						goto error;
+					}
 					flags |= TCPCHK_EXPT_FL_HTTP_HVAL_REG;
+				}
 				else {
 					memprintf(errmsg, "'%s' : '%s' only supports 'str', 'beg', 'end', 'sub' or 'reg' (got '%s')",
 						  args[orig_arg], args[cur_arg], args[cur_arg+1]);
 					goto error;
 				}
-				cur_arg += 2;
 			}
 			else
 				flags |= TCPCHK_EXPT_FL_HTTP_HVAL_STR;
-			vpat = args[cur_arg];
 
-			while (*args[cur_arg+1]) {
-				if (strcmp(args[cur_arg+1], "log-format") == 0) {
-					if (flags & TCPCHK_EXPT_FL_HTTP_HVAL_REG) {
-						memprintf(errmsg, "'%s': '%s' cannot be used with a regex matching pattern",
-							  args[orig_arg], args[cur_arg+1]);
-						goto error;
-					}
-					flags |= TCPCHK_EXPT_FL_HTTP_HVAL_FMT;
-				}
-				else if (strcmp(args[cur_arg+1], "full") == 0)
-					flags |= TCPCHK_EXPT_FL_HTTP_HVAL_FULL;
-				else
-					break;
-				cur_arg++;
+			if (!*(args[cur_arg+2])) {
+				memprintf(errmsg, "'%s' expect a pattern with the value keyword", args[orig_arg]);
+				goto error;
 			}
+			vpat = args[cur_arg+2];
+			cur_arg += 2;
 		}
 		else if (strcmp(args[cur_arg], "comment") == 0) {
 			if (in_pattern) {
@@ -4456,13 +4632,13 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 		else {
 			if (proto == TCPCHK_RULES_HTTP_CHK) {
 			  bad_http_kw:
-				memprintf(errmsg, "'only supports min-recv, [!]string', '[!]rstring', '[!]status', '[!]rstatus'"
-					  "[!]header or comment but got '%s' as argument.", args[cur_arg]);
+				memprintf(errmsg, "'only supports min-recv, [!]string', '[!]rstring', '[!]string-lf', '[!]status', "
+					  "'[!]rstatus', [!]hdr, [!]fhdr or comment but got '%s' as argument.", args[cur_arg]);
 			}
 			else {
 			  bad_tcp_kw:
-				memprintf(errmsg, "'only supports min-recv, '[!]binary', '[!]string', '[!]rstring', '[!]rbinary'"
-					  " or comment but got '%s' as argument.", args[cur_arg]);
+				memprintf(errmsg, "'only supports min-recv, '[!]binary', '[!]string', '[!]rstring', '[!]string-lf'"
+					  "'[!]rbinary', '[!]binary-lf' or comment but got '%s' as argument.", args[cur_arg]);
 			}
 			goto error;
 		}
@@ -4558,14 +4734,26 @@ static struct tcpcheck_rule *parse_tcpcheck_expect(char **args, int cur_arg, str
 		chk->expect.data.len = len;
 		break;
 	}
-	case TCPCHK_EXPECT_REGEX:
-	case TCPCHK_EXPECT_REGEX_BINARY:
-	case TCPCHK_EXPECT_HTTP_REGEX_STATUS:
-	case TCPCHK_EXPECT_HTTP_REGEX_BODY:
+	case TCPCHK_EXPECT_STRING_REGEX:
+	case TCPCHK_EXPECT_BINARY_REGEX:
+	case TCPCHK_EXPECT_HTTP_STATUS_REGEX:
+	case TCPCHK_EXPECT_HTTP_BODY_REGEX:
 		chk->expect.regex = regex_comp(pattern, 1, 0, errmsg);
 		if (!chk->expect.regex)
 			goto error;
 		break;
+
+	case TCPCHK_EXPECT_STRING_LF:
+	case TCPCHK_EXPECT_BINARY_LF:
+	case TCPCHK_EXPECT_HTTP_BODY_LF:
+		LIST_INIT(&chk->expect.fmt);
+		px->conf.args.ctx = ARGC_SRV;
+		if (!parse_logformat_string(pattern, px, &chk->expect.fmt, 0, SMP_VAL_BE_CHK_RUL, errmsg)) {
+			memprintf(errmsg, "'%s' invalid log-format string (%s).\n", pattern, *errmsg);
+			goto error;
+		}
+		break;
+
 	case TCPCHK_EXPECT_HTTP_HEADER:
 		if (!npat) {
 			memprintf(errmsg, "unexpected error, undefined header name pattern");
@@ -4748,7 +4936,7 @@ static int tcpcheck_add_http_rule(struct tcpcheck_rule *chk, struct tcpcheck_rul
 	 */
 
 	if (chk->action == TCPCHK_ACT_SEND && (chk->send.http.flags & TCPCHK_SND_HTTP_FROM_OPT)) {
-		/* Tries to add an implcit http-check send rule from an "option httpchk" line.
+		/* Tries to add an implicit http-check send rule from an "option httpchk" line.
 		 * First, the first rule is retrieved, skipping the first CONNECT, if any, and
 		 * following tests are performed :
 		 *
@@ -4758,7 +4946,7 @@ static int tcpcheck_add_http_rule(struct tcpcheck_rule *chk, struct tcpcheck_rul
 		 *  2- If it is another implicit send rule, it is replaced with the new one.
 		 *
 		 *  3- Otherwise, it means it is an explicit send rule. In this case we merge
-		 *     both, overwritting the old send rule (the explicit one) with info of the
+		 *     both, overwriting the old send rule (the explicit one) with info of the
 		 *     new send rule (the implicit one).
 		 */
 		r = get_first_tcpcheck_rule(rules);
@@ -5106,6 +5294,8 @@ static int init_srv_check(struct server *srv)
 			srv->check.xprt = xprt_get(XPRT_SSL);
 		srv->check.send_proxy |= (srv->pp_opts);
 	}
+	else if (srv->check.use_ssl == 1)
+		srv->check.xprt = xprt_get(XPRT_SSL);
 
 	/* Inherit the mux protocol from the server if not already defined for
 	 * the check
@@ -5201,7 +5391,7 @@ static int init_srv_agent_check(struct server *srv)
 	if (!srv->do_agent)
 		goto out;
 
-	/* If there is no connect rule preceeding all send / expect rules, an
+	/* If there is no connect rule preceding all send / expect rules, an
 	 * implicit one is inserted before all others.
 	 */
 	chk = get_first_tcpcheck_rule(srv->agent.tcpcheck_rules);
@@ -5302,7 +5492,7 @@ static int check_proxy_tcpcheck(struct proxy *px)
 
 	/* For all ruleset: */
 
-	/* If there is no connect rule preceeding all send / expect rules, an
+	/* If there is no connect rule preceding all send / expect rules, an
 	 * implicit one is inserted before all others.
 	 */
 	chk = get_first_tcpcheck_rule(&px->tcpcheck_rules);
@@ -5833,7 +6023,8 @@ static int proxy_parse_tcpcheck(char **args, int section, struct proxy *curpx,
 	cur_arg = 1;
 	if (strcmp(args[cur_arg], "connect") == 0)
 		chk = parse_tcpcheck_connect(args, cur_arg, curpx, &rs->rules, file, line, errmsg);
-	else if (strcmp(args[cur_arg], "send") == 0 || strcmp(args[cur_arg], "send-binary") == 0)
+	else if (strcmp(args[cur_arg], "send") == 0 || strcmp(args[cur_arg], "send-binary") == 0 ||
+		 strcmp(args[cur_arg], "send-lf") == 0 || strcmp(args[cur_arg], "send-binary-lf") == 0)
 		chk = parse_tcpcheck_send(args, cur_arg, curpx, &rs->rules, file, line, errmsg);
 	else if (strcmp(args[cur_arg], "expect") == 0)
 		chk = parse_tcpcheck_expect(args, cur_arg, curpx, &rs->rules, 0, file, line, errmsg);
@@ -6141,7 +6332,7 @@ int proxy_parse_redis_check_opt(char **args, int cur_arg, struct proxy *curpx, s
 
 	chk = parse_tcpcheck_expect((char *[]){"tcp-check", "expect", "string", redis_res,
 				               "error-status", "L7STS",
-				               "on-error", "%[check.payload(0,0),cut_crlf]",
+				               "on-error", "%[res.payload(0,0),cut_crlf]",
 				               "on-success", "Redis server is ok",
 				               ""},
 				    1, curpx, &rs->rules, TCPCHK_RULES_REDIS_CHK, file, line, &errmsg);
@@ -6179,7 +6370,7 @@ int proxy_parse_ssl_hello_chk_opt(char **args, int cur_arg, struct proxy *curpx,
 	 * Check RFC 2246 (TLSv1.0) sections A.3 and A.4 for details.
 	 */
 	static char sslv3_client_hello[] = {
-		"16"                        /* ContentType         : 0x16 = Hanshake           */
+		"16"                        /* ContentType         : 0x16 = Handshake          */
 		"0300"                      /* ProtocolVersion     : 0x0300 = SSLv3            */
 		"0079"                      /* ContentLength       : 0x79 bytes after this one */
 		"01"                        /* HanshakeType        : 0x01 = CLIENT HELLO       */
@@ -6232,7 +6423,7 @@ int proxy_parse_ssl_hello_chk_opt(char **args, int cur_arg, struct proxy *curpx,
 		goto error;
 	}
 
-	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-binary", sslv3_client_hello, "log-format", ""},
+	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-binary-lf", sslv3_client_hello, ""},
 				  1, curpx, &rs->rules, file, line, &errmsg);
 	if (!chk) {
 		ha_alert("parsing [%s:%d] : %s\n", file, line, errmsg);
@@ -6343,7 +6534,7 @@ int proxy_parse_smtpchk_opt(char **args, int cur_arg, struct proxy *curpx, struc
 	chk = parse_tcpcheck_expect((char *[]){"tcp-check", "expect", "rstring", "^[0-9]{3}[ \r]",
 				               "min-recv", "4",
 				               "error-status", "L7RSP",
-				               "on-error", "%[check.payload(0,0),cut_crlf]",
+				               "on-error", "%[res.payload(0,0),cut_crlf]",
 				               ""},
 		                    1, curpx, &rs->rules, TCPCHK_RULES_SMTP_CHK, file, line, &errmsg);
 	if (!chk) {
@@ -6356,8 +6547,8 @@ int proxy_parse_smtpchk_opt(char **args, int cur_arg, struct proxy *curpx, struc
 	chk = parse_tcpcheck_expect((char *[]){"tcp-check", "expect", "rstring", "^2[0-9]{2}[ \r]",
 				               "min-recv", "4",
 				               "error-status", "L7STS",
-				               "on-error", "%[check.payload(4,0),ltrim(' '),cut_crlf]",
-				               "status-code", "check.payload(0,3)",
+				               "on-error", "%[res.payload(4,0),ltrim(' '),cut_crlf]",
+				               "status-code", "res.payload(0,3)",
 				               ""},
 		                    1, curpx, &rs->rules, TCPCHK_RULES_SMTP_CHK, file, line, &errmsg);
 	if (!chk) {
@@ -6367,7 +6558,7 @@ int proxy_parse_smtpchk_opt(char **args, int cur_arg, struct proxy *curpx, struc
 	chk->index = 2;
 	LIST_ADDQ(&rs->rules, &chk->list);
 
-	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send", smtp_req, "log-format", ""},
+	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-lf", smtp_req, ""},
 				  1, curpx, &rs->rules, file, line, &errmsg);
 	if (!chk) {
 		ha_alert("parsing [%s:%d] : %s\n", file, line, errmsg);
@@ -6379,9 +6570,9 @@ int proxy_parse_smtpchk_opt(char **args, int cur_arg, struct proxy *curpx, struc
 	chk = parse_tcpcheck_expect((char *[]){"tcp-check", "expect", "rstring", "^2[0-9]{2}[- \r]",
 				               "min-recv", "4",
 				               "error-status", "L7STS",
-				               "on-error", "%[check.payload(4,0),ltrim(' '),cut_crlf]",
-				               "on-success", "%[check.payload(4,0),ltrim(' '),cut_crlf]",
-				               "status-code", "check.payload(0,3)",
+				               "on-error", "%[res.payload(4,0),ltrim(' '),cut_crlf]",
+				               "on-success", "%[res.payload(4,0),ltrim(' '),cut_crlf]",
+				               "status-code", "res.payload(0,3)",
 				               ""},
 		                    1, curpx, &rs->rules, TCPCHK_RULES_SMTP_CHK, file, line, &errmsg);
 	if (!chk) {
@@ -6502,7 +6693,7 @@ int proxy_parse_pgsql_check_opt(char **args, int cur_arg, struct proxy *curpx, s
 	chk->index = 0;
 	LIST_ADDQ(&rs->rules, &chk->list);
 
-	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-binary", pgsql_req, "log-format", ""},
+	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-binary-lf", pgsql_req, ""},
 				  1, curpx, &rs->rules, file, line, &errmsg);
 	if (!chk) {
 		ha_alert("parsing [%s:%d] : %s\n", file, line, errmsg);
@@ -6514,7 +6705,7 @@ int proxy_parse_pgsql_check_opt(char **args, int cur_arg, struct proxy *curpx, s
 	chk = parse_tcpcheck_expect((char *[]){"tcp-check", "expect", "!rstring", "^E",
 				               "min-recv", "5",
 				               "error-status", "L7RSP",
-				               "on-error", "%[check.payload(6,0)]",
+				               "on-error", "%[res.payload(6,0)]",
 				               ""},
 		                    1, curpx, &rs->rules, TCPCHK_RULES_PGSQL_CHK, file, line, &errmsg);
 	if (!chk) {
@@ -6663,20 +6854,20 @@ int proxy_parse_mysql_check_opt(char **args, int cur_arg, struct proxy *curpx, s
 			goto error;
 		}
 
-		if (*args[cur_arg+2]) {
-			if (strcmp(args[cur_arg+2], "post-41") != 0) {
-				ha_alert("parsing [%s:%d] : keyword '%s' only supports option 'post-41' (got '%s').\n",
-					 file, line, args[cur_arg], args[cur_arg+2]);
-				goto error;
-			}
+		if (!*args[cur_arg+2] || strcmp(args[cur_arg+2], "post-41") == 0) {
 			packetlen = userlen + 7 + 27;
 			mysql_req = mysql41_req;
 			mysql_rsname  = mysql41_rsname;
 		}
-		else {
+		else if (strcmp(args[cur_arg+2], "pre-41") == 0) {
 			packetlen = userlen + 7;
 			mysql_req = mysql40_req;
 			mysql_rsname  = mysql40_rsname;
+		}
+		else  {
+			ha_alert("parsing [%s:%d] : keyword '%s' only supports 'post-41' and 'pre-41' (got '%s').\n",
+				 file, line, args[cur_arg], args[cur_arg+2]);
+			goto error;
 		}
 
 		hdr[0] = (unsigned char)(packetlen & 0xff);
@@ -6731,7 +6922,7 @@ int proxy_parse_mysql_check_opt(char **args, int cur_arg, struct proxy *curpx, s
 	LIST_ADDQ(&rs->rules, &chk->list);
 
 	if (mysql_req) {
-		chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-binary", mysql_req, "log-format", ""},
+		chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-binary-lf", mysql_req, ""},
 					  1, curpx, &rs->rules, file, line, &errmsg);
 		if (!chk) {
 			ha_alert("parsing [%s:%d] : %s\n", file, line, errmsg);
@@ -7254,7 +7445,7 @@ static int srv_parse_agent_check(char **args, int *cur_arg, struct proxy *curpx,
 		goto error;
 	}
 
-	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send", "%[var(check.agent_string)]", "log-format", ""},
+	chk = parse_tcpcheck_send((char *[]){"tcp-check", "send-lf", "%[var(check.agent_string)]", ""},
 				  1, curpx, &rs->rules, srv->conf.file, srv->conf.line, errmsg);
 	if (!chk) {
 		memprintf(errmsg, "'%s': %s", args[*cur_arg], *errmsg);

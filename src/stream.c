@@ -970,7 +970,7 @@ static void sess_set_term_flags(struct stream *s)
 /* This function parses the use-service action ruleset. It executes
  * the associated ACL and set an applet as a stream or txn final node.
  * it returns ACT_RET_ERR if an error occurs, the proxy left in
- * consistent state. It returns ACT_RET_STOP in succes case because
+ * consistent state. It returns ACT_RET_STOP in success case because
  * use-service must be a terminal action. Returns ACT_RET_YIELD
  * if the initialisation function require more data.
  */
@@ -995,7 +995,7 @@ enum act_return process_use_service(struct act_rule *rule, struct proxy *px,
 	else
 		appctx = si_appctx(&s->si[1]);
 
-	/* Stops the applet sheduling, in case of the init function miss
+	/* Stops the applet scheduling, in case of the init function miss
 	 * some data.
 	 */
 	si_stop_get(&s->si[1]);
@@ -2068,6 +2068,7 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 				si_b->state = SI_ST_REQ; /* new connection requested */
 				si_b->conn_retries = s->be->conn_retries;
 				if ((s->be->retry_type &~ PR_RE_CONN_FAILED) &&
+				    (s->be->mode == PR_MODE_HTTP) &&
 				    !(si_b->flags & SI_FL_D_L7_RETRY))
 					si_b->flags |= SI_FL_L7_RETRY;
 			}
@@ -2440,6 +2441,7 @@ void stream_update_time_stats(struct stream *s)
 	int t_data;
 	int t_close;
 	struct server *srv;
+	unsigned int samples_window;
 
 	t_request = 0;
 	t_queue   = s->logs.t_queue;
@@ -2462,19 +2464,23 @@ void stream_update_time_stats(struct stream *s)
 
 	srv = objt_server(s->target);
 	if (srv) {
-		swrate_add(&srv->counters.q_time, TIME_STATS_SAMPLES, t_queue);
-		swrate_add(&srv->counters.c_time, TIME_STATS_SAMPLES, t_connect);
-		swrate_add(&srv->counters.d_time, TIME_STATS_SAMPLES, t_data);
-		swrate_add(&srv->counters.t_time, TIME_STATS_SAMPLES, t_close);
+		samples_window = (((s->be->mode == PR_MODE_HTTP) ?
+			srv->counters.p.http.cum_req : srv->counters.cum_lbconn) > TIME_STATS_SAMPLES) ? TIME_STATS_SAMPLES : 0;
+		swrate_add_dynamic(&srv->counters.q_time, samples_window, t_queue);
+		swrate_add_dynamic(&srv->counters.c_time, samples_window, t_connect);
+		swrate_add_dynamic(&srv->counters.d_time, samples_window, t_data);
+		swrate_add_dynamic(&srv->counters.t_time, samples_window, t_close);
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.qtime_max, t_queue);
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.ctime_max, t_connect);
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.dtime_max, t_data);
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.ttime_max, t_close);
 	}
-	swrate_add(&s->be->be_counters.q_time, TIME_STATS_SAMPLES, t_queue);
-	swrate_add(&s->be->be_counters.c_time, TIME_STATS_SAMPLES, t_connect);
-	swrate_add(&s->be->be_counters.d_time, TIME_STATS_SAMPLES, t_data);
-	swrate_add(&s->be->be_counters.t_time, TIME_STATS_SAMPLES, t_close);
+	samples_window = (((s->be->mode == PR_MODE_HTTP) ?
+		s->be->be_counters.p.http.cum_req : s->be->be_counters.cum_lbconn) > TIME_STATS_SAMPLES) ? TIME_STATS_SAMPLES : 0;
+	swrate_add_dynamic(&s->be->be_counters.q_time, samples_window, t_queue);
+	swrate_add_dynamic(&s->be->be_counters.c_time, samples_window, t_connect);
+	swrate_add_dynamic(&s->be->be_counters.d_time, samples_window, t_data);
+	swrate_add_dynamic(&s->be->be_counters.t_time, samples_window, t_close);
 	HA_ATOMIC_UPDATE_MAX(&s->be->be_counters.qtime_max, t_queue);
 	HA_ATOMIC_UPDATE_MAX(&s->be->be_counters.ctime_max, t_connect);
 	HA_ATOMIC_UPDATE_MAX(&s->be->be_counters.dtime_max, t_data);

@@ -75,6 +75,7 @@ struct appctx {
 	unsigned long thread_mask;      /* mask of thread IDs authorized to process the applet */
 	struct task *t;                  /* task associated to the applet */
 	struct freq_ctr call_rate;       /* appctx call rate */
+	struct list wait_entry;          /* entry in a list of waiters for an event (e.g. ring events) */
 
 	union {
 		union {
@@ -94,9 +95,9 @@ struct appctx {
 				struct nst_dict  *dict;
 				uint64_t          idx;
 				struct buffer     buf;
-				struct ist	  name;
-				struct ist	  host;
-				struct ist	  path;
+				struct ist        name;
+				struct ist        host;
+				struct ist        path;
 				struct my_regex  *regex;
 			} manager;
 		} nuster;
@@ -130,7 +131,6 @@ struct appctx {
 			const char *msg;        /* pointer to a persistent message to be returned in CLI_ST_PRINT state */
 			int severity;           /* severity of the message to be returned according to (syslog) rfc5424 */
 			char *err;              /* pointer to a 'must free' message to be returned in CLI_ST_PRINT_FREE state */
-			struct list l0;         /* General purpose list element, pointers, offsets and integers for... */
 			void *p0, *p1, *p2;     /* ...registered commands, initialized to 0 by the CLI before first... */
 			size_t o0, o1;          /* ...invocation of the keyword parser, except for the list element which... */
 			int i0, i1;             /* ...is initialized with LIST_INIT(). */

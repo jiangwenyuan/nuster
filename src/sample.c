@@ -185,7 +185,7 @@ const unsigned int fetch_cap[SMP_SRC_ENTRIES] = {
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL_BE_RES_CNT |
 	                   SMP_VAL_BE_HRS_HDR | SMP_VAL_BE_HRS_BDY | SMP_VAL_BE_STO_RUL |
 	                   SMP_VAL_FE_RES_CNT | SMP_VAL_FE_HRS_HDR | SMP_VAL_FE_HRS_BDY |
-	                   SMP_VAL___________ | SMP_VAL___________),
+	                   SMP_VAL___________ | SMP_VAL_BE_CHK_RUL),
 
 	[SMP_SRC_HRSHV] = (SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
@@ -193,7 +193,7 @@ const unsigned int fetch_cap[SMP_SRC_ENTRIES] = {
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL_BE_RES_CNT |
 	                   SMP_VAL_BE_HRS_HDR | SMP_VAL_BE_HRS_BDY | SMP_VAL_BE_STO_RUL |
 	                   SMP_VAL_FE_RES_CNT | SMP_VAL_FE_HRS_HDR | SMP_VAL_FE_HRS_BDY |
-	                   SMP_VAL___________ | SMP_VAL___________),
+	                   SMP_VAL___________ | SMP_VAL_BE_CHK_RUL),
 
 	[SMP_SRC_HRSHP] = (SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
@@ -201,7 +201,7 @@ const unsigned int fetch_cap[SMP_SRC_ENTRIES] = {
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL_BE_RES_CNT |
 	                   SMP_VAL_BE_HRS_HDR | SMP_VAL_BE_HRS_BDY | SMP_VAL_BE_STO_RUL |
 	                   SMP_VAL_FE_RES_CNT | SMP_VAL_FE_HRS_HDR | SMP_VAL_FE_HRS_BDY |
-	                   SMP_VAL_FE_LOG_END | SMP_VAL___________),
+	                   SMP_VAL_FE_LOG_END | SMP_VAL_BE_CHK_RUL),
 
 	[SMP_SRC_HRSBO] = (SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
@@ -209,7 +209,7 @@ const unsigned int fetch_cap[SMP_SRC_ENTRIES] = {
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
 	                   SMP_VAL___________ | SMP_VAL_BE_HRS_BDY | SMP_VAL_BE_STO_RUL |
 	                   SMP_VAL_FE_RES_CNT | SMP_VAL_FE_HRS_HDR | SMP_VAL_FE_HRS_BDY |
-	                   SMP_VAL___________ | SMP_VAL___________),
+	                   SMP_VAL___________ | SMP_VAL_BE_CHK_RUL),
 
 	[SMP_SRC_RQFIN] = (SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
 	                   SMP_VAL___________ | SMP_VAL___________ | SMP_VAL___________ |
@@ -1132,6 +1132,7 @@ int smp_resolve_args(struct proxy *p)
 		case ARGC_ACL:   ctx = "ACL keyword"; break;
 		case ARGC_SRV:   where = "in server directive in"; break;
 		case ARGC_SPOE:  where = "in spoe-message directive in"; break;
+		case ARGC_HERR:  where = "in http-error directive in"; break;
 		}
 
 		/* set a few default settings */
@@ -1478,7 +1479,7 @@ static int sample_conv_debug(const struct arg *arg_p, struct sample *smp, void *
 
  done:
 	line = ist2(buf->area, buf->data);
-	sink_write(sink, &line, 1);
+	sink_write(sink, &line, 1, 0, 0, NULL, NULL, NULL);
  end:
 	free_trash_chunk(buf);
 	return 1;
@@ -1653,7 +1654,229 @@ static int sample_conv_sha2(const struct arg *arg_p, struct sample *smp, void *p
 	smp->flags &= ~SMP_F_CONST;
 	return 1;
 }
-#endif
+
+static inline int sample_conv_var2smp_str(const struct arg *arg, struct sample *smp)
+{
+	switch (arg->type) {
+	case ARGT_STR:
+		smp->data.type = SMP_T_STR;
+		smp->data.u.str = arg->data.str;
+		return 1;
+	case ARGT_VAR:
+		if (!vars_get_by_desc(&arg->data.var, smp))
+				return 0;
+		if (!sample_casts[smp->data.type][SMP_T_STR])
+				return 0;
+		if (!sample_casts[smp->data.type][SMP_T_STR](smp))
+				return 0;
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000100fL)
+static int check_aes_gcm(struct arg *args, struct sample_conv *conv,
+						  const char *file, int line, char **err)
+{
+	switch(args[0].data.sint) {
+	case 128:
+	case 192:
+	case 256:
+		break;
+	default:
+		memprintf(err, "key size must be 128, 192 or 256 (bits).");
+		return 0;
+	}
+	/* Try to decode a variable. */
+	vars_check_arg(&args[1], NULL);
+	vars_check_arg(&args[2], NULL);
+	vars_check_arg(&args[3], NULL);
+	return 1;
+}
+
+/* Arguments: AES size in bits, nonce, key, tag. The last three arguments are base64 encoded */
+static int sample_conv_aes_gcm_dec(const struct arg *arg_p, struct sample *smp, void *private)
+{
+	struct sample nonce, key, aead_tag;
+	struct buffer *smp_trash, *smp_trash_alloc;
+	EVP_CIPHER_CTX *ctx;
+	int dec_size, ret;
+
+	smp_set_owner(&nonce, smp->px, smp->sess, smp->strm, smp->opt);
+	if (!sample_conv_var2smp_str(&arg_p[1], &nonce))
+		return 0;
+
+	smp_set_owner(&key, smp->px, smp->sess, smp->strm, smp->opt);
+	if (!sample_conv_var2smp_str(&arg_p[2], &key))
+		return 0;
+
+	smp_set_owner(&aead_tag, smp->px, smp->sess, smp->strm, smp->opt);
+	if (!sample_conv_var2smp_str(&arg_p[3], &aead_tag))
+		return 0;
+
+	smp_trash = get_trash_chunk();
+	smp_trash_alloc = alloc_trash_chunk();
+	if (!smp_trash_alloc)
+		return 0;
+
+	ctx = EVP_CIPHER_CTX_new();
+
+	if (!ctx)
+		goto err;
+
+	dec_size = base64dec(nonce.data.u.str.area, nonce.data.u.str.data, smp_trash->area, smp_trash->size);
+	if (dec_size < 0)
+		goto err;
+	smp_trash->data = dec_size;
+
+	/* Set cipher type and mode */
+	switch(arg_p[0].data.sint) {
+	case 128:
+		EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL);
+		break;
+	case 192:
+		EVP_DecryptInit_ex(ctx, EVP_aes_192_gcm(), NULL, NULL, NULL);
+		break;
+	case 256:
+		EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
+		break;
+	}
+
+	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, smp_trash->data, NULL);
+
+	/* Initialise IV */
+	if(!EVP_DecryptInit_ex(ctx, NULL, NULL, NULL, (unsigned char *) smp_trash->area))
+		goto err;
+
+	dec_size = base64dec(key.data.u.str.area, key.data.u.str.data, smp_trash->area, smp_trash->size);
+	if (dec_size < 0)
+		goto err;
+	smp_trash->data = dec_size;
+
+	/* Initialise key */
+	if (!EVP_DecryptInit_ex(ctx, NULL, NULL, (unsigned char *) smp_trash->area, NULL))
+		goto err;
+
+	if (!EVP_DecryptUpdate(ctx, (unsigned char *) smp_trash->area, (int *) &smp_trash->data,
+						  (unsigned char *) smp->data.u.str.area, (int) smp->data.u.str.data))
+		goto err;
+
+	dec_size = base64dec(aead_tag.data.u.str.area, aead_tag.data.u.str.data, smp_trash_alloc->area, smp_trash_alloc->size);
+	if (dec_size < 0)
+		goto err;
+	smp_trash_alloc->data = dec_size;
+	dec_size = smp_trash->data;
+
+	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, smp_trash_alloc->data, (void *) smp_trash_alloc->area);
+	ret = EVP_DecryptFinal_ex(ctx, (unsigned char *) smp_trash->area + smp_trash->data, (int *) &smp_trash->data);
+
+	if (ret <= 0)
+		goto err;
+
+	smp->data.u.str.data = dec_size + smp_trash->data;
+	smp->data.u.str.area = smp_trash->area;
+	smp->data.type = SMP_T_BIN;
+	smp->flags &= ~SMP_F_CONST;
+	free_trash_chunk(smp_trash_alloc);
+	return 1;
+
+err:
+	free_trash_chunk(smp_trash_alloc);
+	return 0;
+}
+#endif /* HA_OPENSSL_VERSION_NUMBER */
+
+static int check_crypto_digest(struct arg *args, struct sample_conv *conv,
+						  const char *file, int line, char **err)
+{
+	const EVP_MD *evp = EVP_get_digestbyname(args[0].data.str.area);
+
+	if (evp)
+		return 1;
+
+	memprintf(err, "algorithm must be a valid OpenSSL message digest name.");
+	return 0;
+}
+
+static int sample_conv_crypto_digest(const struct arg *args, struct sample *smp, void *private)
+{
+	struct buffer *trash = get_trash_chunk();
+	unsigned char *md = (unsigned char*) trash->area;
+	unsigned int md_len = trash->size;
+	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+	const EVP_MD *evp = EVP_get_digestbyname(args[0].data.str.area);
+
+	if (!ctx)
+		return 0;
+
+	if (!EVP_DigestInit_ex(ctx, evp, NULL) ||
+	    !EVP_DigestUpdate(ctx, smp->data.u.str.area, smp->data.u.str.data) ||
+	    !EVP_DigestFinal_ex(ctx, md, &md_len)) {
+		EVP_MD_CTX_free(ctx);
+		return 0;
+	}
+
+	EVP_MD_CTX_free(ctx);
+
+	trash->data = md_len;
+	smp->data.u.str = *trash;
+	smp->data.type = SMP_T_BIN;
+	smp->flags &= ~SMP_F_CONST;
+	return 1;
+}
+
+static int check_crypto_hmac(struct arg *args, struct sample_conv *conv,
+						  const char *file, int line, char **err)
+{
+	if (!check_crypto_digest(args, conv, file, line, err))
+		return 0;
+
+	vars_check_arg(&args[1], NULL);
+	return 1;
+}
+
+static int sample_conv_crypto_hmac(const struct arg *args, struct sample *smp, void *private)
+{
+	struct sample key;
+	struct buffer *trash, *key_trash;
+	unsigned char *md;
+	unsigned int md_len;
+	const EVP_MD *evp = EVP_get_digestbyname(args[0].data.str.area);
+	int dec_size;
+
+	smp_set_owner(&key, smp->px, smp->sess, smp->strm, smp->opt);
+	if (!sample_conv_var2smp_str(&args[1], &key))
+		return 0;
+
+	trash = get_trash_chunk();
+	key_trash = alloc_trash_chunk();
+	if (!key_trash)
+		return 0;
+
+	dec_size = base64dec(key.data.u.str.area, key.data.u.str.data, key_trash->area, key_trash->size);
+	if (dec_size < 0)
+		goto err;
+
+	md = (unsigned char*) trash->area;
+	md_len = trash->size;
+	if (!HMAC(evp, key_trash->area, dec_size, (const unsigned char*) smp->data.u.str.area, smp->data.u.str.data, md, &md_len))
+		goto err;
+
+	free_trash_chunk(key_trash);
+
+	trash->data = md_len;
+	smp->data.u.str = *trash;
+	smp->data.type = SMP_T_BIN;
+	smp->flags &= ~SMP_F_CONST;
+	return 1;
+
+err:
+	free_trash_chunk(key_trash);
+	return 0;
+}
+
+#endif /* USE_OPENSSL */
 
 static int sample_conv_bin2hex(const struct arg *arg_p, struct sample *smp, void *private)
 {
@@ -3496,6 +3719,11 @@ static struct sample_conv_kw_list sample_conv_kws = {ILH, {
 	{ "sha1",   sample_conv_sha1,      0,            NULL, SMP_T_BIN,  SMP_T_BIN  },
 #ifdef USE_OPENSSL
 	{ "sha2",   sample_conv_sha2,      ARG1(0, SINT), smp_check_sha2, SMP_T_BIN,  SMP_T_BIN  },
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000100fL)
+	{ "aes_gcm_dec", sample_conv_aes_gcm_dec,   ARG4(4,SINT,STR,STR,STR), check_aes_gcm,       SMP_T_BIN, SMP_T_BIN },
+#endif
+	{ "digest",      sample_conv_crypto_digest, ARG1(1,STR),              check_crypto_digest, SMP_T_BIN, SMP_T_BIN },
+	{ "hmac",        sample_conv_crypto_hmac,   ARG2(2,STR,STR),          check_crypto_hmac,   SMP_T_BIN, SMP_T_BIN },
 #endif
 	{ "concat", sample_conv_concat,    ARG3(1,STR,STR,STR), smp_check_concat, SMP_T_STR,  SMP_T_STR },
 	{ "strcmp", sample_conv_strcmp,    ARG1(1,STR), smp_check_strcmp, SMP_T_STR,  SMP_T_SINT },

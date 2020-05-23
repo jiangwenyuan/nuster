@@ -32,6 +32,7 @@
 #include <common/config.h>
 #include <common/http-hdr.h>
 #include <common/ist.h>
+#include <common/memory.h>
 
 /* Dynamic Headers Table, usable for tables up to 4GB long and values of 64kB-1.
  * The model can be improved by using offsets relative to the table entry's end
@@ -133,6 +134,18 @@ enum {
 /* static header table as in RFC7541 Appendix A. [0] unused. */
 #define HPACK_SHT_SIZE 62
 extern const struct http_hdr hpack_sht[HPACK_SHT_SIZE];
+extern struct pool_head *pool_head_hpack_tbl;
+
+/* when built outside of haproxy, HPACK_STANDALONE must be defined, and
+ * pool_head_hpack_tbl->size must be set to the DHT size.
+ */
+#ifndef HPACK_STANDALONE
+#define hpack_alloc(pool)      pool_alloc(pool)
+#define hpack_free(pool, ptr)  pool_free(pool, ptr)
+#else
+#define hpack_alloc(pool)      malloc(pool->size)
+#define hpack_free(pool, ptr)  free(ptr)
+#endif
 
 extern int __hpack_dht_make_room(struct hpack_dht *dht, unsigned int needed);
 extern int hpack_dht_insert(struct hpack_dht *dht, struct ist name, struct ist value);
@@ -233,23 +246,24 @@ static inline void hpack_dht_init(struct hpack_dht *dht, uint32_t size)
 	dht->used = 0;
 }
 
-/* allocate a dynamic headers table of <size> bytes and return it initialized */
-static inline struct hpack_dht *hpack_dht_alloc(uint32_t size)
+/* allocate a dynamic headers table from the pool and return it initialized */
+static inline struct hpack_dht *hpack_dht_alloc()
 {
 	struct hpack_dht *dht;
 
-	dht = malloc(size);
-	if (!dht)
-		return dht;
+	if (unlikely(!pool_head_hpack_tbl))
+		return NULL;
 
-	hpack_dht_init(dht, size);
+	dht = hpack_alloc(pool_head_hpack_tbl);
+	if (dht)
+		hpack_dht_init(dht, pool_head_hpack_tbl->size);
 	return dht;
 }
 
 /* free a dynamic headers table */
 static inline void hpack_dht_free(struct hpack_dht *dht)
 {
-	free(dht);
+	hpack_free(pool_head_hpack_tbl, dht);
 }
 
 #endif /* _COMMON_HPACK_TBL_H */

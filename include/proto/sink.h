@@ -29,16 +29,22 @@ extern struct list sink_list;
 
 struct sink *sink_find(const char *name);
 struct sink *sink_new_fd(const char *name, const char *desc, enum sink_fmt fmt, int fd);
-ssize_t __sink_write(struct sink *sink, const struct ist msg[], size_t nmsg);
-int sink_announce_dropped(struct sink *sink);
+ssize_t __sink_write(struct sink *sink, const struct ist msg[], size_t nmsg,
+                     int level, int facility, struct ist * tag,
+                     struct ist *pid, struct ist *sd);
+int sink_announce_dropped(struct sink *sink, int facility, struct ist *pid);
 
 
 /* tries to send <nmsg> message parts (up to 8, ignored above) from message
  * array <msg> to sink <sink>. Formatting according to the sink's preference is
  * done here. Lost messages are accounted for in the sink's counter. If there
  * were lost messages, an attempt is first made to indicate it.
+ * The function returns the number of Bytes effectively sent or announced.
+ * or <= 0 in other cases.
  */
-static inline void sink_write(struct sink *sink, const struct ist msg[], size_t nmsg)
+static inline ssize_t sink_write(struct sink *sink, const struct ist msg[], size_t nmsg,
+                              int level, int facility, struct ist * tag,
+                              struct ist *pid, struct ist *sd)
 {
 	ssize_t sent;
 
@@ -50,7 +56,7 @@ static inline void sink_write(struct sink *sink, const struct ist msg[], size_t 
 		 * position.
 		 */
 		HA_RWLOCK_WRLOCK(LOGSRV_LOCK, &sink->ctx.lock);
-		sent = sink_announce_dropped(sink);
+		sent = sink_announce_dropped(sink, facility, pid);
 		HA_RWLOCK_WRUNLOCK(LOGSRV_LOCK, &sink->ctx.lock);
 
 		if (!sent) {
@@ -62,12 +68,14 @@ static inline void sink_write(struct sink *sink, const struct ist msg[], size_t 
 	}
 
 	HA_RWLOCK_RDLOCK(LOGSRV_LOCK, &sink->ctx.lock);
-	sent = __sink_write(sink, msg, nmsg);
+	sent = __sink_write(sink, msg, nmsg, level, facility, tag, pid, sd);
 	HA_RWLOCK_RDUNLOCK(LOGSRV_LOCK, &sink->ctx.lock);
 
  fail:
 	if (unlikely(sent <= 0))
 		HA_ATOMIC_ADD(&sink->ctx.dropped, 1);
+
+	return sent;
 }
 
 #endif /* _PROTO_SINK_H */

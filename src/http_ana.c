@@ -1011,6 +1011,7 @@ int http_process_tarpit(struct stream *s, struct channel *req, int an_bit)
 
 	http_reply_and_close(s, txn->status, (!(req->flags & CF_READ_ERROR) ? http_error_message(s) : NULL));
 
+  end:
 	req->analysers &= AN_REQ_FLT_END;
 	req->analyse_exp = TICK_ETERNITY;
 
@@ -1431,6 +1432,7 @@ static __inline int do_l7_retry(struct stream *s, struct stream_interface *si)
 	res->flags &= ~(CF_READ_ERROR | CF_READ_TIMEOUT | CF_SHUTR | CF_EOI | CF_READ_NULL | CF_SHUTR_NOW);
 	res->analysers = 0;
 	si->flags &= ~(SI_FL_ERR | SI_FL_EXP | SI_FL_RXBLK_SHUT);
+	s->flags &= ~SF_ADDR_SET;
 	stream_choose_redispatch(s);
 	si->exp = TICK_ETERNITY;
 	res->rex = TICK_ETERNITY;
@@ -1727,8 +1729,10 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 	if (n == 4)
 		stream_inc_http_err_ctr(s);
 
-	if (objt_server(s->target))
+	if (objt_server(s->target)) {
 		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.p.http.rsp[n], 1);
+		_HA_ATOMIC_ADD(&__objt_server(s->target)->counters.p.http.cum_req, 1);
+	}
 
 	/* Adjust server's health based on status code. Note: status codes 501
 	 * and 505 are triggered on demand by client request, so we must not
@@ -1830,10 +1834,17 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 
 		ctx.blk = NULL;
 		while (http_find_header(htx, hdr, &ctx, 0)) {
-			if ((ctx.value.len >= 9 && word_match(ctx.value.ptr, ctx.value.len, "Negotiate", 9)) ||
-			    (ctx.value.len >= 4 && !memcmp(ctx.value.ptr, "NTLM", 4))) {
+			/* If www-authenticate contains "Negotiate", "Nego2", or "NTLM",
+			 * possibly followed by blanks and a base64 string, the connection
+			 * is private. Since it's a mess to deal with, we only check for
+			 * values starting with "NTLM" or "Nego". Note that often multiple
+			 * headers are sent by the server there.
+			 */
+			if ((ctx.value.len >= 4 && strncasecmp(ctx.value.ptr, "Nego", 4) == 0) ||
+			    (ctx.value.len >= 4 && strncasecmp(ctx.value.ptr, "NTLM", 4) == 0)) {
 				sess->flags |= SESS_FL_PREFER_LAST;
 				srv_conn->flags |= CO_FL_PRIVATE;
+				break;
 			}
 		}
 	}
@@ -2883,7 +2894,6 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 					rule_ret = HTTP_RULE_RES_DONE;
 					goto end;
 				case ACT_RET_DENY:
-					txn->flags |= TX_CLDENY;
 					if (txn->status == -1)
 						txn->status = 403;
 					rule_ret = HTTP_RULE_RES_DENY;
@@ -2905,18 +2915,15 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 				goto end;
 
 			case ACT_ACTION_DENY:
-				txn->flags |= TX_CLDENY;
-				txn->status = rule->arg.http_deny.status;
-				if (rule->arg.http_deny.errmsg)
-					txn->errmsg = rule->arg.http_deny.errmsg;
+				txn->status = rule->arg.http_reply->status;
+				txn->http_reply = rule->arg.http_reply;
 				rule_ret = HTTP_RULE_RES_DENY;
 				goto end;
 
 			case ACT_HTTP_REQ_TARPIT:
 				txn->flags |= TX_CLTARPIT;
-				txn->status = rule->arg.http_deny.status;
-				if (rule->arg.http_deny.errmsg)
-					txn->errmsg = rule->arg.http_deny.errmsg;
+				txn->status = rule->arg.http_reply->status;
+				txn->http_reply = rule->arg.http_reply;
 				rule_ret = HTTP_RULE_RES_DENY;
 				goto end;
 
@@ -2989,9 +2996,8 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
  * is returned, the process can continue the evaluation of next rule list. If
  * *STOP or *DONE is returned, the process must stop the evaluation. If *BADREQ
  * is returned, it means the operation could not be processed and a server error
- * must be returned. It may set the TX_SVDENY on txn->flags if it encounters a
- * deny rule. If *YIELD is returned, the caller must call again the function
- * with the same context.
+ * must be returned. If *YIELD is returned, the caller must call again the
+ * function with the same context.
  */
 static enum rule_result http_res_get_intercept_rule(struct proxy *px, struct list *rules,
 						    struct stream *s)
@@ -3064,7 +3070,6 @@ resume_execution:
 					rule_ret = HTTP_RULE_RES_DONE;
 					goto end;
 				case ACT_RET_DENY:
-					txn->flags |= TX_CLDENY;
 					if (txn->status == -1)
 						txn->status = 502;
 					rule_ret = HTTP_RULE_RES_DENY;
@@ -3086,10 +3091,8 @@ resume_execution:
 				goto end;
 
 			case ACT_ACTION_DENY:
-				txn->flags |= TX_CLDENY;
-				txn->status = rule->arg.http_deny.status;
-				if (rule->arg.http_deny.errmsg)
-					txn->errmsg = rule->arg.http_deny.errmsg;
+				txn->status = rule->arg.http_reply->status;
+				txn->http_reply = rule->arg.http_reply;
 				rule_ret = HTTP_RULE_RES_DENY;
 				goto end;
 
@@ -3147,6 +3150,10 @@ int http_eval_after_res_rules(struct stream *s)
 	struct session *sess = s->sess;
 	enum rule_result ret = HTTP_RULE_RES_CONT;
 
+	/* Eval after-response ruleset only if the reply is not const */
+	if (s->txn->flags & TX_CONST_REPLY)
+		goto end;
+
 	/* prune the request variables if not already done and swap to the response variables. */
 	if (s->vars_reqres.scope != SCOPE_RES) {
 		if (!LIST_ISEMPTY(&s->vars_reqres.head))
@@ -3158,6 +3165,7 @@ int http_eval_after_res_rules(struct stream *s)
 	if ((ret == HTTP_RULE_RES_CONT || ret == HTTP_RULE_RES_STOP) && sess->fe != s->be)
 		ret = http_res_get_intercept_rule(sess->fe, &sess->fe->http_after_res_rules, s);
 
+  end:
 	/* All other codes than CONTINUE, STOP or DONE are forbidden */
 	return (ret == HTTP_RULE_RES_CONT || ret == HTTP_RULE_RES_STOP || ret == HTTP_RULE_RES_DONE);
 }
@@ -4564,9 +4572,8 @@ static void http_end_response(struct stream *s)
 /* Forward a response generated by HAProxy (error/redirect/return). This
  * function forwards all pending incoming data. If <final> is set to 0, nothing
  * more is performed. It is used for 1xx informational messages. Otherwise, the
- * transaction is terminated and the request is emptied. if <final> is greater
- * than 1, it means after-response ruleset must not be evaluated. On success 1
- * is returned. If an error occurred, 0 is returned.
+ * transaction is terminated and the request is emptied. On success 1 is
+ * returned. If an error occurred, 0 is returned.
  */
 int http_forward_proxy_resp(struct stream *s, int final)
 {
@@ -4577,7 +4584,8 @@ int http_forward_proxy_resp(struct stream *s, int final)
 
 	if (final) {
 		htx->flags |= HTX_FL_PROXY_RESP;
-		if (final == 1 && !http_eval_after_res_rules(s))
+
+		if (!http_eval_after_res_rules(s))
 			return 0;
 
 		channel_auto_read(req);
@@ -4599,7 +4607,7 @@ int http_forward_proxy_resp(struct stream *s, int final)
 }
 
 void http_server_error(struct stream *s, struct stream_interface *si, int err,
-		       int finst, const struct buffer *msg)
+		       int finst, struct http_reply *msg)
 {
 	http_reply_and_close(s, s->txn->status, msg);
 	if (!(s->flags & SF_ERR_MASK))
@@ -4608,59 +4616,189 @@ void http_server_error(struct stream *s, struct stream_interface *si, int err,
 		s->flags |= finst;
 }
 
-void http_reply_and_close(struct stream *s, short status, const struct buffer *msg)
+void http_reply_and_close(struct stream *s, short status, struct http_reply *msg)
 {
-	int final = 1;
+	if (!msg) {
+		channel_htx_truncate(&s->res, htxbuf(&s->res.buf));
+		goto end;
+	}
 
-  retry:
+	if (http_reply_message(s, msg) == -1) {
+		/* On error, return a 500 error message, but don't rewrite it if
+		 * it is already an internal error.
+		 */
+		if (s->txn->status == 500)
+			s->txn->flags |= TX_CONST_REPLY;
+		s->txn->status = 500;
+		s->txn->http_reply = NULL;
+		return http_reply_and_close(s, s->txn->status, http_error_message(s));
+	}
+
+end:
+	s->res.wex = tick_add_ifset(now_ms, s->res.wto);
+	s->txn->flags &= ~TX_WAIT_NEXT_RQ;
+
 	channel_auto_read(&s->req);
 	channel_abort(&s->req);
 	channel_auto_close(&s->req);
 	channel_htx_erase(&s->req, htxbuf(&s->req.buf));
-	channel_htx_truncate(&s->res, htxbuf(&s->res.buf));
 	channel_auto_read(&s->res);
 	channel_auto_close(&s->res);
 	channel_shutr_now(&s->res);
-
-	s->res.wex = tick_add_ifset(now_ms, s->res.wto);
-	s->txn->flags &= ~TX_WAIT_NEXT_RQ;
-
-	/* <msg> is an HTX structure. So we copy it in the response's
-	 * channel */
-	if (msg && !b_is_null(msg)) {
-		struct channel *chn = &s->res;
-		struct htx *htx;
-
-		FLT_STRM_CB(s, flt_http_reply(s, s->txn->status, msg));
-		htx = htx_from_buf(&chn->buf);
-		if (channel_htx_copy_msg(chn, htx, msg)) {
-			if (!http_forward_proxy_resp(s, final)) {
-				/* On error, return a 500 error message, but
-				 * don't rewrite it if it is already an internal
-				 * error.
-				 */
-				if (s->txn->status == 500)
-					final++;
-				s->txn->status = 500;
-				msg = http_error_message(s);
-				goto retry;
-			}
-		}
-	}
 }
 
-struct buffer *http_error_message(struct stream *s)
+struct http_reply *http_error_message(struct stream *s)
 {
 	const int msgnum = http_get_status_idx(s->txn->status);
 
-	if (s->txn->errmsg)
-		return s->txn->errmsg;
-	else if (s->be->errmsg[msgnum])
-		return s->be->errmsg[msgnum];
-	else if (strm_fe(s)->errmsg[msgnum])
-		return strm_fe(s)->errmsg[msgnum];
+	if (s->txn->http_reply)
+		return s->txn->http_reply;
+	else if (s->be->replies[msgnum])
+		return s->be->replies[msgnum];
+	else if (strm_fe(s)->replies[msgnum])
+		return strm_fe(s)->replies[msgnum];
 	else
-		return &http_err_chunks[msgnum];
+		return &http_err_replies[msgnum];
+}
+
+/* Produces an HTX message from an http reply. Depending on the http reply type, a,
+ * errorfile, an raw file or a log-format string is used. On success, it returns
+ * 0. If an error occurs -1 is returned.
+ */
+static int http_reply_to_htx(struct stream *s, struct htx *htx, struct http_reply *reply)
+{
+	struct buffer *errmsg;
+	struct htx_sl *sl;
+	struct buffer *body = NULL;
+	const char *status, *reason, *clen, *ctype;
+	unsigned int slflags;
+	int ret = 0;
+
+	/*
+	 * - HTTP_REPLY_ERRFILES unexpected here. handled as no payload if so
+	 *
+	 * - HTTP_REPLY_INDIRECT: switch on another reply if defined or handled
+	 *   as no payload if NULL. the TXN status code is set with the status
+	 *   of the original reply.
+	 */
+
+	if (reply->type == HTTP_REPLY_INDIRECT) {
+		if (reply->body.reply)
+			reply = reply->body.reply;
+	}
+	if (reply->type == HTTP_REPLY_ERRMSG && !reply->body.errmsg)  {
+		/* get default error message */
+		if (reply == s->txn->http_reply)
+			s->txn->http_reply = NULL;
+		reply = http_error_message(s);
+		if (reply->type == HTTP_REPLY_INDIRECT) {
+			if (reply->body.reply)
+				reply = reply->body.reply;
+		}
+	}
+
+	if (reply->type == HTTP_REPLY_ERRMSG) {
+		/* implicit or explicit error message*/
+		errmsg = reply->body.errmsg;
+		if (errmsg && !b_is_null(errmsg)) {
+			if (!htx_copy_msg(htx, errmsg))
+				goto fail;
+		}
+	}
+	else {
+		/* no payload, file or log-format string */
+		if (reply->type == HTTP_REPLY_RAW) {
+			/* file */
+			body = &reply->body.obj;
+		}
+		else if (reply->type == HTTP_REPLY_LOGFMT) {
+			/* log-format string */
+			body = alloc_trash_chunk();
+			if (!body)
+				goto fail_alloc;
+			body->data = build_logline(s, body->area, body->size, &reply->body.fmt);
+		}
+		/* else no payload */
+
+		status = ultoa(reply->status);
+		reason = http_get_reason(reply->status);
+		slflags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11|HTX_SL_F_XFER_LEN|HTX_SL_F_CLEN);
+		if (!body || !b_data(body))
+			slflags |= HTX_SL_F_BODYLESS;
+		sl = htx_add_stline(htx, HTX_BLK_RES_SL, slflags, ist("HTTP/1.1"), ist(status), ist(reason));
+		if (!sl)
+			goto fail;
+		sl->info.res.status = reply->status;
+
+		clen = (body ? ultoa(b_data(body)) : "0");
+		ctype = reply->ctype;
+
+		if (!LIST_ISEMPTY(&reply->hdrs)) {
+			struct http_reply_hdr *hdr;
+			struct buffer *value = alloc_trash_chunk();
+
+			if (!value)
+				goto fail;
+
+			list_for_each_entry(hdr, &reply->hdrs, list) {
+				chunk_reset(value);
+				value->data = build_logline(s, value->area, value->size, &hdr->value);
+				if (b_data(value) && !htx_add_header(htx, hdr->name, ist2(b_head(value), b_data(value)))) {
+					free_trash_chunk(value);
+					goto fail;
+				}
+				chunk_reset(value);
+			}
+			free_trash_chunk(value);
+		}
+
+		if (!htx_add_header(htx, ist("content-length"), ist(clen)) ||
+		    (body && b_data(body) && ctype && !htx_add_header(htx, ist("content-type"), ist(ctype))) ||
+		    !htx_add_endof(htx, HTX_BLK_EOH) ||
+		    (body && b_data(body) && !htx_add_data_atonce(htx, ist2(b_head(body), b_data(body)))) ||
+		    !htx_add_endof(htx, HTX_BLK_EOM))
+			goto fail;
+	}
+
+  leave:
+	if (reply->type == HTTP_REPLY_LOGFMT)
+		free_trash_chunk(body);
+	return ret;
+
+  fail_alloc:
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_RESOURCE;
+	/* fall through */
+  fail:
+	ret = -1;
+	goto leave;
+}
+
+/* Send an http reply to the client. On success, it returns 0. If an error
+ * occurs -1 is returned.
+ */
+int http_reply_message(struct stream *s, struct http_reply *reply)
+{
+	struct channel *res = &s->res;
+	struct htx *htx = htx_from_buf(&res->buf);
+
+	if (s->txn->status == -1)
+		s->txn->status = reply->status;
+	channel_htx_truncate(res, htx);
+
+	if (http_reply_to_htx(s, htx, reply) == -1)
+		goto fail;
+
+	htx_to_buf(htx, &s->res.buf);
+	if (!http_forward_proxy_resp(s, 1))
+		goto fail;
+	return 0;
+
+  fail:
+	channel_htx_truncate(res, htx);
+	if (!(s->flags & SF_ERR_MASK))
+		s->flags |= SF_ERR_PRXCOND;
+	return -1;
 }
 
 /* Return the error message corresponding to si->err_type. It is assumed
@@ -5067,7 +5205,7 @@ void http_init_txn(struct stream *s)
 		      ? (TX_NOT_FIRST|TX_WAIT_NEXT_RQ)
 		      : 0);
 	txn->status = -1;
-	txn->errmsg = NULL;
+	txn->http_reply = NULL;
 	write_u32(txn->cache_hash, 0);
 
 	txn->cookie_first_date = 0;

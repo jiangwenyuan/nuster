@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.2
                              willy tarreau
-                              2020/05/05
+                              2020/05/22
 
 
 This document covers the configuration language as implemented in the version
@@ -87,8 +87,7 @@ Summary
 7.3.4.        Fetching samples at Layer 5
 7.3.5.        Fetching samples from buffer contents (Layer 6)
 7.3.6.        Fetching HTTP samples (Layer 7)
-7.3.7.        Fetching health-check samples
-7.3.8.        Fetching samples for developers
+7.3.7.        Fetching samples for developers
 7.4.      Pre-defined ACLs
 
 8.    Logging
@@ -613,6 +612,7 @@ The following keywords are supported in the "global" section :
    - nbthread
    - node
    - pidfile
+   - pp2-never-send-local
    - presetenv
    - resetenv
    - uid
@@ -1177,6 +1177,19 @@ pidfile <pidfile>
   Writes PIDs of all daemons into file <pidfile>. This option is equivalent to
   the "-p" command line argument. The file must be accessible to the user
   starting the process. See also "daemon".
+
+pp2-never-send-local
+  A bug in the PROXY protocol v2 implementation was present in HAProxy up to
+  version 2.1, causing it to emit a PROXY command instead of a LOCAL command
+  for health checks. This is particularly minor but confuses some servers'
+  logs. Sadly, the bug was discovered very late and revealed that some servers
+  which possibly only tested their PROXY protocol implementation against
+  HAProxy fail to properly handle the LOCAL command, and permanently remain in
+  the "down" state when HAProxy checks them. When this happens, it is possible
+  to enable this global option to revert to the older (bogus) behavior for the
+  time it takes to contact the affected components' vendors and get them fixed.
+  This option is disabled by default and acts on all servers having the
+  "send-proxy-v2" statement.
 
 presetenv <name> <value>
   Sets environment variable <name> to value <value>. If the variable exists, it
@@ -2126,7 +2139,7 @@ tune.ssl.default-dh-param <number>
   the ephemeral/temporary Diffie-Hellman key in case of DHE key exchange. The
   final size will try to match the size of the server's RSA (or DSA) key (e.g,
   a 2048 bits temporary DH key for a 2048 bits RSA key), but will not exceed
-  this maximum value. Default value if 1024. Only 1024 or higher values are
+  this maximum value. Default value if 2048. Only 1024 or higher values are
   allowed. Higher values will increase the CPU load, and values greater than
   1024 bits are not supported by Java 7 and earlier clients. This value is not
   used if static Diffie-Hellman parameters are supplied either directly
@@ -2660,6 +2673,7 @@ http-check expect                         X          -         X         X
 http-check send-state                     X          -         X         X
 http-check set-var                        X          -         X         X
 http-check unset-var                      X          -         X         X
+http-error                                X          X         X         X
 http-request                              -          X         X         X
 http-response                             -          X         X         X
 http-reuse                                X          -         X         X
@@ -2764,7 +2778,9 @@ tcp-check comment                         X          -         X         X
 tcp-check connect                         X          -         X         X
 tcp-check expect                          X          -         X         X
 tcp-check send                            X          -         X         X
+tcp-check send-lf                         X          -         X         X
 tcp-check send-binary                     X          -         X         X
+tcp-check send-binary-lf                  X          -         X         X
 tcp-check set-var                         X          -         X         X
 tcp-check unset-var                       X          -         X         X
 tcp-request connection                    -          X         X         -
@@ -3791,17 +3807,15 @@ errorfile <code> <file>
 
   Code 200 is emitted in response to requests matching a "monitor-uri" rule.
 
-  The files are returned verbatim on the TCP socket. This allows any trick such
-  as redirections to another URL or site, as well as tricks to clean cookies,
-  force enable or disable caching, etc... The package provides default error
-  files returning the same contents as default errors.
-
-  The files should not exceed the configured buffer size (BUFSIZE), which
-  generally is 8 or 16 kB, otherwise they will be truncated. It is also wise
-  not to put any reference to local contents (e.g. images) in order to avoid
-  loops between the client and HAProxy when all servers are down, causing an
-  error to be returned instead of an image. For better HTTP compliance, it is
-  recommended that all header lines end with CR-LF and not LF alone.
+  The files are parsed when HAProxy starts and must be valid according to the
+  HTTP specification. They should not exceed the configured buffer size
+  (BUFSIZE), which generally is 16 kB, otherwise an internal error will be
+  returned. It is also wise not to put any reference to local contents
+  (e.g. images) in order to avoid loops between the client and HAProxy when all
+  servers are down, causing an error to be returned instead of an
+  image. Finally, The response cannot exceed (tune.bufsize - tune.maxrewrite)
+  so that "http-after-response" rules still have room to operate (see
+  "tune.maxrewrite").
 
   The files are read at the same time as the configuration and kept in memory.
   For this reason, the errors continue to be returned even when the process is
@@ -3809,7 +3823,7 @@ errorfile <code> <file>
   simple method for developing those files consists in associating them to the
   403 status code and interrogating a blocked URL.
 
-  See also : "errorloc", "errorloc302", "errorloc303"
+  See also : "http-error", "errorloc", "errorloc302", "errorloc303"
 
   Example :
         errorfile 400 /etc/haproxy/errorfiles/400badreq.http
@@ -3838,8 +3852,8 @@ errorfiles <name> [<code> ...]
   ones. Fonctionnly, it is exactly the same than declaring all error files by
   hand using "errorfile" directives.
 
-  See also : "errorfile", "errorloc", "errorloc302" , "errorloc303" and section
-             3.8 about http-errors.
+  See also : "http-error", "errorfile", "errorloc", "errorloc302" ,
+             "errorloc303" and section 3.8 about http-errors.
 
   Example :
         errorfiles generic
@@ -3876,7 +3890,7 @@ errorloc302 <code> <url>
   status code, indicating to the client that the URL must be fetched with a GET
   request.
 
-  See also : "errorfile", "errorloc303"
+  See also : "http-error", "errorfile", "errorloc303"
 
 
 errorloc303 <code> <url>
@@ -3906,7 +3920,7 @@ errorloc303 <code> <url>
   possible that some very old browsers designed before HTTP/1.1 do not support
   it, but no such problem has been reported till now.
 
-  See also : "errorfile", "errorloc", "errorloc302"
+  See also : "http-error", "errorfile", "errorloc", "errorloc302"
 
 
 email-alert from <emailaddr>
@@ -4529,23 +4543,29 @@ http-check expect [min-recv <int>] [comment <msg>]
     ok-status <st>     is optional and can be used to set the check status if
                        the expect rule is successfully evaluated and if it is
                        the last rule in the tcp-check ruleset. "L7OK", "L7OKC",
-                       "L6OK" and "L4OK" are supported and may be used to set,
-                       respectively, HCHK_STATUS_L7OK, HCHK_STATUS_L7OKCD,
-                       HCHK_STATUS_L6OK or HCHK_STATUS_L4OK success status.
-                        By default "L7OK" is used.
+                       "L6OK" and "L4OK" are supported :
+                         - L7OK  : check passed on layer 7
+                         - L7OKC : check conditionally passed on layer 7, for
+                                   example 404 with disable-on-404
+                         - L6OK  : check passed on layer 6
+                         - L4OK  : check passed on layer 4
+                       By default "L7OK" is used.
 
     error-status <st>  is optional and can be used to set the check status if
                        an error occurred during the expect rule evaluation.
-                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported and
-                       may be used to set, respectively, HCHK_STATUS_L7RSP,
-                       HCHK_STATUS_L7STS, HCHK_STATUS_L6RSP or HCHK_STATUS_L4CON
-                       error status. By default "L7RSP" is used.
+                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported :
+                         - L7RSP : layer 7 invalid response - protocol error
+                         - L7STS : layer 7 response error, for example HTTP 5xx
+                         - L6RSP : layer 6 invalid response - protocol error
+                         - L4CON : layer 1-4 connection problem
+                       By default "L7RSP" is used.
 
     tout-status <st>   is optional and can be used to set the check status if
                        a timeout occurred during the expect rule evaluation.
-                       "L7TOUT", "L6TOUT", and "L4TOUT" are supported and may
-                       be used to set, respectively, HCHK_STATUS_L7TOUT,
-                       HCHK_STATUS_L6TOUT or HCHK_STATUS_L4TOUT timeout status.
+                       "L7TOUT", "L6TOUT", and "L4TOUT" are supported :
+                         - L7TOUT : layer 7 (HTTP/SMTP) timeout
+                         - L6TOUT : layer 6 (SSL) timeout
+                         - L4TOUT : layer 1-4 timeout
                        By default "L7TOUT" is used.
 
     on-success <fmt>   is optional and can be used to customize the
@@ -4559,8 +4579,8 @@ http-check expect [min-recv <int>] [comment <msg>]
                        log-format string.
 
     <match>   is a keyword indicating how to look for a specific pattern in the
-              response. The keyword may be one of "status", "rstatus",
-              "string", or "rstring". The keyword may be preceded by an
+              response. The keyword may be one of "status", "rstatus", "hdr",
+              "fhdr", "string", or "rstring". The keyword may be preceded by an
               exclamation mark ("!") to negate the match. Spaces are allowed
               between the exclamation mark and the keyword. See below for more
               details on the supported keywords.
@@ -4591,8 +4611,8 @@ http-check expect [min-recv <int>] [comment <msg>]
                       will be considered invalid if the status code matches.
                       This is mostly used to check for multiple codes.
 
-    header name [ -m <meth> ] <name> [log-format]
-           [ value [ -m <meth> ] <value> [log-format] [full] ] :
+    hdr  { name | name-lf } [ -m <meth> ] <name>
+         [ { value | value-lf } [ -m <meth> ] <value> :
                       test the specified header pattern on the HTTP response
                       headers. The name pattern is mandatory but the value
                       pattern is optional. If not specified, only the header
@@ -4601,14 +4621,20 @@ http-check expect [min-recv <int>] [comment <msg>]
                       matching methods are "str" (exact match), "beg" (prefix
                       match), "end" (suffix match), "sub" (substring match) or
                       "reg" (regex match). If not specified, exact matching
-                      method is used. If the "log-format" option is used, the
-                      pattern (<name> or <value>) is evaluated as a log-format
-                      string. This option cannot be used with the regex
-                      matching method. Finally, by default, the header value is
-                      considered as comma-separated list. Each part may be
-                      tested. The "full" option may be used to test the full
-                      header line. Note that matchings are case insensitive on
-                      the header names.
+                      method is used. If the "name-lf" parameter is used,
+                      <name> is evaluated as a log-format string. If "value-lf"
+                      parameter is used, <value> is evaluated as a log-format
+                      string. These parameters cannot be used with the regex
+                      matching method. Finally, the header value is considered
+                      as comma-separated list. Note that matchings are case
+                      insensitive on the header names.
+
+    fhdr { name | name-lf } [ -m <meth> ] <name>
+         [ { value | value-lf } [ -m <meth> ] <value> :
+                      test the specified full header pattern on the HTTP
+                      response headers. It does exactly the same than "hdr"
+                      keyword, except the full header value is tested, commas
+                      are not considered as delimiters.
 
     string <string> : test the exact string match in the HTTP response body.
                       A health check response will be considered valid if the
@@ -4628,6 +4654,13 @@ http-check expect [min-recv <int>] [comment <msg>]
                       This can be used to look for a mandatory word at the end
                       of a dynamic page, or to detect a failure when a specific
                       error appears on the check page (e.g. a stack trace).
+
+    string-lf <fmt> : test a log-format string match in the HTTP response body.
+                      A health check response will be considered valid if the
+                      response's body contains the  string resulting of the
+                      evaluation of <fmt>, which follows the log-format rules.
+                      If prefixed with "!", then the response will be
+                      considered invalid if the body contains the string.
 
   It is important to note that the responses will be limited to a certain size
   defined by the global "tune.chksize" option, which defaults to 16384 bytes.
@@ -4667,8 +4700,9 @@ http-check expect [min-recv <int>] [comment <msg>]
              and "http-check send".
 
 
-http-check send [meth <method>] [uri <uri>] [ver <version>] [comment <msg>]
-                [hdr <name> <fmt>]* [body <string>]
+http-check send [meth <method>] [{ uri <uri> | uri-lf <fmt> }>] [ver <version>]
+                [hdr <name> <fmt>]* [{ body <string> | body-lf <fmt> }]
+                [comment <msg>]
   Add a possible list of headers and/or a body to the request sent during HTTP
   health checks.
   May be used in sections :   defaults | frontend | listen | backend
@@ -4682,10 +4716,15 @@ http-check send [meth <method>] [uri <uri>] [ver <version>] [comment <msg>]
                    logs. Any method may be used, though it is not recommended
                    to invent non-standard ones.
 
-    uri <uri>      is optional and set the URI referenced in the HTTP requests.
-                   it defaults to " / " which is accessible by default on almost
-                   any server, but may be changed to any other URI. Query
-                   strings are permitted.
+    uri <uri>      is optional and set the URI referenced in the HTTP requests
+                   to the string <uri>. It defaults to "/" which is accessible
+                   by default on almost any server, but may be changed to any
+                   other URI. Query strings are permitted.
+
+    uri-lf <fmt>   is optional and set the URI referenced in the HTTP requests
+                   using the log-format string <fmt>. It defaults to "/" which
+                   is accessible by default on almost any server, but may be
+                   changed to any other URI. Query strings are permitted.
 
     ver <version>  is the optional HTTP version string. It defaults to
                    "HTTP/1.0" but some servers might behave incorrectly in HTTP
@@ -4700,6 +4739,11 @@ http-check send [meth <method>] [uri <uri>] [ver <version>] [comment <msg>]
     body <string>  add the body defined by <string> to the request sent during
                    HTTP health checks. If defined, the "Content-Length" header
                    is thus automatically added to the request.
+
+    body-lf <fmt>  add the body defined by the log-format string <fmt> to the
+                   request sent during HTTP health checks. If defined, the
+                   "Content-Length" header is thus automatically added to the
+                   request.
 
   In addition to the request line defined by the "option httpchk" directive,
   this one is the valid way to add some headers and optionally a body to the
@@ -4819,6 +4863,83 @@ http-check unset-var(<var-name>)
 
   Examples :
         http-check unset-var(check.port)
+
+
+http-error status <code> [content-type <type>]
+           [ { default-errorfiles | errorfile <file> | errorfiles <name> |
+               file <file> | lf-file <file> | string <str> | lf-string <fmt> } ]
+           [ hdr <name> <fmt> ]*
+  Defines a custom error message to use instead of errors generated by HAProxy.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    yes   |   yes  |   yes
+  Arguments :
+    staus <code>         is the HTTP status code. It must be specified.
+                         Currently, HAProxy is capable of generating codes
+                         200, 400, 403, 404, 405, 408, 410, 425, 429, 500,
+                         502, 503, and 504.
+
+    content-type <type>  is the response content type, for instance
+                         "text/plain". This parameter is ignored and should be
+                         omitted when an errorfile is configured or when the
+                         payload is empty. Otherwise, it must be defined.
+
+    default-errorfiles   Reset the previously defined error message for current
+                         proxy for the status <code>. If used on a backend, the
+                         frontend error message is used, if defined. If used on
+                         a frontend, the default error message is used.
+
+    errorfile <file>     designates a file containing the full HTTP response.
+                         It is recommended to follow the common practice of
+                         appending ".http" to the filename so that people do
+                         not confuse the response with HTML error pages, and to
+                         use absolute paths, since files are read before any
+                         chroot is performed.
+
+    errorfiles <name>    designates the http-errors section to use to import
+                         the error message with the status code <code>. If no
+                         such message is found, the proxy's error messages are
+                         considered.
+
+    file <file>          specifies the file to use as response payload. If the
+                         file is not empty, its content-type must be set as
+                         argument to "content-type", otherwise, any
+                         "content-type" argument is ignored. <file> is
+                         considered as a raw string.
+
+    string <str>         specifies the raw string to use as response payload.
+                         The content-type must always be set as argument to
+                         "content-type".
+
+    lf-file <file>       specifies the file to use as response payload. If the
+                         file is not empty, its content-type must be set as
+                         argument to "content-type", otherwise, any
+                         "content-type" argument is ignored. <file> is
+                         evaluated as a log-format string.
+
+    lf-string <str>      specifies the log-format string to use as response
+                         payload. The content-type must always be set as
+                         argument to "content-type".
+
+    hdr <name> <fmt>     adds to the response the HTTP header field whose name
+                         is specified in <name> and whose value is defined by
+                         <fmt>, which follows to the log-format rules.
+                         This parameter is ignored if an errorfile is used.
+
+  This directive may be used instead of "errorfile", to define a custom error
+  message. As "errorfile" directive, it is used for errors detected and
+  returned by HAProxy. If an errorfile is defined, it is parsed when HAProxy
+  starts and must be valid according to the HTTP standards. The generated
+  response must not exceed the configured buffer size (BUFFSIZE), otherwise an
+  internal error will be returned.  Finally, if you consider to use some
+  http-after-response rules to rewrite these errors, the reserved buffer space
+  should be available (see "tune.maxrewrite").
+
+  The files are read at the same time as the configuration and kept in memory.
+  For this reason, the errors continue to be returned even when the process is
+  chrooted, and no file change is considered while the process is running.
+
+  See also : "errorfile", "errorfiles", "errorloc", "errorloc302",
+             "errorloc303" and section 3.8 about http-errors.
 
 
 http-request <action> [options...] [ { if | unless } <condition> ]
@@ -4960,18 +5081,22 @@ http-request del-map(<file-name>) <key fmt> [ { if | unless } <condition> ]
   It takes one argument: "file name" It is the equivalent of the "del map"
   command from the stats socket, but can be triggered by an HTTP request.
 
-http-request deny [deny_status <status>] [ { errorfile | errorfiles } <err> ]
-                           [ { if | unless } <condition> ]
+http-request deny [deny_status <status>] [ { if | unless } <condition> ]
+http-request deny [ { status | deny_status } <code>] [content-type <type>]
+          [ { default-errorfiles | errorfile <file> | errorfiles <name> |
+              file <file> | lf-file <file> | string <str> | lf-string <fmt> } ]
+          [ hdr <name> <fmt> ]*
+          [ { if | unless } <condition> ]
 
-  This stops the evaluation of the rules and immediately rejects the request
-  and emits an HTTP 403 error, or optionally the status code specified as an
-  argument to "deny_status". The list of permitted status codes is limited to
-  those that can be overridden by the "errorfile" directive. A specific error
-  message may be specified. It may be an error file, using the "errorfile"
-  keyword followed by the file containing the full HTTP response. It may also
-  be an error from an http-errors section, using the "errorfiles" keyword
-  followed by the section name.
+  This stops the evaluation of the rules and immediately rejects the request.
+  By default an HTTP 403 error is returned. But the response may be customized
+  using same syntax than "http-request return" rules. Thus, see "http-request
+  return" for details. For compatiblity purpose, when no argument is defined,
+  or only "deny_status", the argument "default-errorfiles" is implied. It means
+  "http-request deny [deny_status <status>]" is an alias of
+  "http-request deny [status <status>] default-errorfiles".
   No further "http-request" rules are evaluated.
+  See also "http-request return".
 
 http-request disable-l7-retry [ { if | unless } <condition> ]
   This disables any attempt to retry the request if it fails for any other
@@ -5545,26 +5670,32 @@ http-request strict-mode { on | off }
   the frontend, the default mode is restored when HAProxy starts the backend
   rules evaluation.
 
-http-request tarpit [deny_status <status>] [ { errorfile | errorfiles } <err> ]
-                           [ { if | unless } <condition> ]
+http-request tarpit [deny_status <status>] [ { if | unless } <condition> ]
+http-request tarpit [ { status | deny_status } <code>] [content-type <type>]
+          [ { default-errorfiles | errorfile <file> | errorfiles <name> |
+              file <file> | lf-file <file> | string <str> | lf-string <fmt> } ]
+          [ hdr <name> <fmt> ]*
+          [ { if | unless } <condition> ]
 
   This stops the evaluation of the rules and immediately blocks the request
   without responding for a delay specified by "timeout tarpit" or
   "timeout connect" if the former is not set. After that delay, if the client
-  is still connected, an HTTP error 500 (or optionally the status code
-  specified as an argument to "deny_status") is returned so that the client
-  does not suspect it has been tarpitted. Logs will report the flags "PT".
-  The goal of the tarpit rule is to slow down robots during an attack when
-  they're limited on the number of concurrent requests. It can be very
-  efficient against very dumb robots, and will significantly reduce the load
-  on firewalls compared to a "deny" rule. But when facing "correctly"
-  developed robots, it can make things worse by forcing haproxy and the front
-  firewall to support insane number of concurrent connections. A specific error
-  message may be specified. It may be an error file, using the "errorfile"
-  keyword followed by the file containing the full HTTP response. It may also
-  be an error from an http-errors section, using the "errorfiles" keyword
-  followed by the section name.
-  See also the "silent-drop" action.
+  is still connected, a response is returned so that the client does not
+  suspect it has been tarpitted. Logs will report the flags "PT". The goal of
+  the tarpit rule is to slow down robots during an attack when they're limited
+  on the number of concurrent requests. It can be very efficient against very
+  dumb robots, and will significantly reduce the load on firewalls compared to
+  a "deny" rule. But when facing "correctly" developed robots, it can make
+  things worse by forcing haproxy and the front firewall to support insane
+  number of concurrent connections. By default an HTTP error 500 is returned.
+  But the response may be customized using same syntax than
+  "http-request return" rules. Thus, see "http-request return" for details.
+  For compatiblity purpose, when no argument is defined, or only "deny_status",
+  the argument "default-errorfiles" is implied. It means
+  "http-request tarpit [deny_status <status>]" is an alias of
+  "http-request tarpit [status <status>] default-errorfiles".
+  No further "http-request" rules are evaluated.
+  See also "http-request return" and "http-request silent-drop".
 
 http-request track-sc0 <key> [table <table>] [ { if | unless } <condition> ]
 http-request track-sc1 <key> [table <table>] [ { if | unless } <condition> ]
@@ -5748,18 +5879,22 @@ http-response del-map(<file-name>) <key fmt> [ { if | unless } <condition> ]
   It takes one argument: "file name" It is the equivalent of the "del map"
   command from the stats socket, but can be triggered by an HTTP response.
 
-http-response deny [deny_status <status>] [ { errorfile | errorfiles } <err> ]
-                           [ { if | unless } <condition> ]
+http-response deny [deny_status <status>] [ { if | unless } <condition> ]
+http-response deny [ { status | deny_status } <code>] [content-type <type>]
+          [ { default-errorfiles | errorfile <file> | errorfiles <name> |
+              file <file> | lf-file <file> | string <str> | lf-string <fmt> } ]
+          [ hdr <name> <fmt> ]*
+          [ { if | unless } <condition> ]
 
-  This stops the evaluation of the rules and immediately rejects the response
-  and emits an HTTP 502 error, or optionally the status code specified as an
-  argument to "deny_status". The list of permitted status codes is limited to
-  those that can be overridden by the "errorfile" directive. A specific error
-  message may be specified. It may be an error file, using the "errorfile"
-  keyword followed by the file containing the full HTTP response. It may also
-  be an error from an http-errors section, using the "errorfiles" keyword
-  followed by the section name.
+  This stops the evaluation of the rules and immediately rejects the response.
+  By default an HTTP 502 error is returned. But the response may be customized
+  using same syntax than "http-response return" rules. Thus, see
+  "http-response return" for details. For compatiblity purpose, when no
+  argument is defined, or only "deny_status", the argument "default-errorfiles"
+  is implied. It means "http-response deny [deny_status <status>]" is an alias
+  of "http-response deny [status <status>] default-errorfiles".
   No further "http-response" rules are evaluated.
+  See also "http-response return".
 
 http-response redirect <rule> [ { if | unless } <condition> ]
 
@@ -7691,12 +7826,12 @@ no option logasap
   Using "option logasap", the log message is created as soon as the server
   connection is established in mode tcp, or as soon as the server sends the
   complete headers in mode http. Missing information in the logs will be the
-  total number of bytes which will only indicate the amount of data transfered
+  total number of bytes which will only indicate the amount of data transferred
   before the message was created and the total time which will not take the
   remainder of the connection life or transfer time into account. For the case
   of HTTP, it is good practice to capture the Content-Length response header
   so that the logs at least indicate how many bytes are expected to be
-  transfered.
+  transferred.
 
   Examples :
       listen http_proxy 0.0.0.0:80
@@ -7714,14 +7849,15 @@ no option logasap
              logging.
 
 
-option mysql-check [ user <username> [ post-41 ] ]
+option mysql-check [ user <username> [ { post-41 | pre-41 } ] ]
   Use MySQL health checks for server testing
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
   Arguments :
     <username> This is the username which will be used when connecting to MySQL
                server.
-    post-41    Send post v4.1 client compatible checks
+    post-41    Send post v4.1 client compatible checks (the default)
+    pre-41     Send pre v4.1 client compatible checks
 
   If you specify a username, the check consists of sending two MySQL packet,
   one Client Authentication packet, and one QUIT packet, to correctly close
@@ -8718,7 +8854,9 @@ retries <value>
 
 
 retry-on [list of keywords]
-  Specify when to attempt to automatically retry a failed request
+  Specify when to attempt to automatically retry a failed request.
+  This setting is only valid when "mode" is set to http and is silently ignored
+  otherwise.
   May be used in sections:    defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
   Arguments :
@@ -10184,23 +10322,29 @@ tcp-check expect [min-recv <int>] [comment <msg>]
     ok-status <st>     is optional and can be used to set the check status if
                        the expect rule is successfully evaluated and if it is
                        the last rule in the tcp-check ruleset. "L7OK", "L7OKC",
-                       "L6OK" and "L4OK" are supported and may be used to set,
-                       respectively, HCHK_STATUS_L7OK, HCHK_STATUS_L7OKCD,
-                       HCHK_STATUS_L6OK or HCHK_STATUS_L4OK success status.
+                       "L6OK" and "L4OK" are supported :
+                         - L7OK  : check passed on layer 7
+                         - L7OKC : check conditionally passed on layer 7, for
+                                   example 404 with disable-on-404
+                         - L6OK  : check passed on layer 6
+                         - L4OK  : check passed on layer 4
                         By default "L7OK" is used.
 
     error-status <st>  is optional and can be used to set the check status if
                        an error occurred during the expect rule evaluation.
-                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported and
-                       may be used to set, respectively, HCHK_STATUS_L7RSP,
-                       HCHK_STATUS_L7STS, HCHK_STATUS_L6RSP or HCHK_STATUS_L4CON
-                       error status. By default "L7RSP" is used.
+                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported :
+                         - L7RSP : layer 7 invalid response - protocol error
+                         - L7STS : layer 7 response error, for example HTTP 5xx
+                         - L6RSP : layer 6 invalid response - protocol error
+                         - L4CON : layer 1-4 connection problem
+                       By default "L7RSP" is used.
 
     tout-status <st>   is optional and can be used to set the check status if
                        a timeout occurred during the expect rule evaluation.
-                       "L7TOUT", "L6TOUT", and "L4TOUT" are supported and may
-                       be used to set, respectively, HCHK_STATUS_L7TOUT,
-                       HCHK_STATUS_L6TOUT or HCHK_STATUS_L4TOUT timeout status.
+                       "L7TOUT", "L6TOUT", and "L4TOUT" are supported :
+                         - L7TOUT : layer 7 (HTTP/SMTP) timeout
+                         - L6TOUT : layer 6 (SSL) timeout
+                         - L4TOUT : layer 1-4 timeout
                        By default "L7TOUT" is used.
 
     on-success <fmt>   is optional and can be used to customize the
@@ -10244,6 +10388,13 @@ tcp-check expect [min-recv <int>] [comment <msg>]
                       will be considered invalid if the body matches the
                       expression.
 
+    string-lf <fmt> : test a log-format string match in the response's buffer.
+                      A health check response will be considered valid if the
+                      response's buffer contains the  string resulting of the
+                      evaluation of <fmt>, which follows the log-format rules.
+                      If prefixed with "!", then the response will be
+                      considered invalid if the buffer contains the string.
+
     binary <hexstring> : test the exact string in its hexadecimal form matches
                          in the response buffer. A health check response will
                          be considered valid if the response's buffer contains
@@ -10258,6 +10409,17 @@ tcp-check expect [min-recv <int>] [comment <msg>]
                       size of the original response. As such, the expected
                       pattern should work on at-most half the response buffer
                       size.
+
+    binary-lf <hexfmt> : test a log-format string in its hexadecimal form
+                         match in the response's buffer. A health check response
+                         will be considered valid if the response's buffer
+                         contains the hexadecimal string resulting of the
+                         evaluation of <fmt>, which follows the log-format
+                         rules. If prefixed with "!", then the response will be
+                         considered invalid if the buffer contains the
+                         hexadecimal string. The hexadecimal string is converted
+                         in a binary string before matching the response's
+                         buffer.
 
   It is important to note that the responses will be limited to a certain size
   defined by the global "tune.chksize" option, which defaults to 16384 bytes.
@@ -10294,18 +10456,21 @@ tcp-check expect [min-recv <int>] [comment <msg>]
              "tcp-check send-binary", "http-check expect", tune.chksize
 
 
-tcp-check send <data> [comment <msg>] [log-format]
-  Specify a string to be sent as a question during a generic health check
+tcp-check send <data> [comment <msg>]
+tcp-check send-lf <fmt> [comment <msg>]
+  Specify a string or a log-format string to be sent as a question during a
+  generic health check
   May be used in sections:   defaults | frontend | listen | backend
                                yes    |    no    |   yes  |   yes
 
   Arguments :
     comment <msg>  defines a message to report if the rule evaluation fails.
 
-    log-format     specifies <data> must be evaluated a log-format string.
+    <data>         is the string that will be sent during a generic health
+                   check session.
 
-    <data>  the data to be sent as a question during a generic health check
-            session. For now, <data> must be a string.
+    <fmt>          is the log-format string that will be sent, once evaluated,
+                   during a generic health check session.
 
   Examples :
          # look for the redis master server
@@ -10317,22 +10482,22 @@ tcp-check send <data> [comment <msg>] [log-format]
              "tcp-check send-binary", tune.chksize
 
 
-tcp-check send-binary <hexstring> [comment <msg>] [log-format]
-  Specify a hex digits string to be sent as a binary question during a raw
-  tcp health check
+tcp-check send-binary <hexstring> [comment <msg>]
+tcp-check send-binary-lf <hexfmt> [comment <msg>]
+  Specify an hex digits string or an hex digits log-format string to be sent as
+  a binary question during a raw tcp health check
   May be used in sections:   defaults | frontend | listen | backend
                                yes    |    no    |   yes  |   yes
 
   Arguments :
     comment <msg>  defines a message to report if the rule evaluation fails.
 
-    log-format     specifies <hexstring> must be evaluated a log-format string.
+    <hexstring>    is the hexadecimal string that will be send, once converted
+                   to binary, during a generic health check session.
 
-    <hexstring>  test the exact string in its hexadecimal form matches in the
-                 response buffer. A health check response will be considered
-                 valid if the response's buffer contains this exact hexadecimal
-                 string. Purpose is to send binary data to ask on binary
-                 protocols.
+    <hexfmt>       is the hexadecimal log-format string that will be send, once
+                   evaluated and converted to binary, during a generic health
+                   check session.
 
   Examples :
          # redis check in binary
@@ -12578,7 +12743,7 @@ check
   proxy-protocol header, etc... ). It is possible to change the destination
   address using "addr" and the port using "port". When done, it is assumed the
   server isn't checked on the service port, and configured encapsulation
-  parameters are not reused. One must explicitely set "check-send-proxy" to send
+  parameters are not reused. One must explicitly set "check-send-proxy" to send
   connection headers, "check-ssl" to use SSL/TLS.
 
   When "sni" or "alpn" are set on the server line, their value is not used for
@@ -14441,6 +14606,13 @@ debug([<prefix][,<destination>])
   Example:
     tcp-request connection track-sc0 src,debug(track-sc)
 
+digest(<algorithm>)
+  Converts a binary input sample to a message digest. The result is a binary
+  sample. The <algorithm> must be an OpenSSL message digest name (e.g. sha256).
+
+  Please note that this converter is only available when haproxy has been
+  compiled with USE_OPENSSL.
+
 div(<value>)
   Divides the input value of type signed integer by <value>, and returns the
   result as an signed integer. If <value> is null, the largest unsigned
@@ -14500,6 +14672,15 @@ htonl
   network byte order. Because sample fetches own signed 64-bit integer, when
   this converter is used, the input integer value is first casted to an
   unsigned 32-bit integer.
+
+hmac(<algorithm>, <key>)
+  Converts a binary input sample to a message authentication code with the given
+  key. The result is a binary sample. The <algorithm> must be one of the
+  registered OpenSSL message digest names (e.g. sha256). The <key> parameter must
+  be base64 encoded and can either be a string or a variable.
+
+  Please note that this converter is only available when haproxy has been
+  compiled with USE_OPENSSL.
 
 http_date([<offset],[<unit>])
   Converts an integer supposed to contain a date since epoch to a string
@@ -16934,20 +17115,21 @@ res.len : integer
   at the beginning of the session, while a test for more data will wait for
   that data to come in and return false only when haproxy is certain that no
   more data will come in. This test was designed to be used with TCP response
-  content inspection.
+  content inspection. But it may also be used in tcp-check based expect rules.
 
 res.payload(<offset>,<length>) : binary
   This extracts a binary block of <length> bytes and starting at byte <offset>
   in the response buffer. As a special case, if the <length> argument is zero,
-  the the whole buffer from <offset> to the end is extracted. This can be used
+  the whole buffer from <offset> to the end is extracted. This can be used
   with ACLs in order to check for the presence of some content in a buffer at
-  any location.
+  any location. It may also be used in tcp-check based expect rules.
 
 res.payload_lv(<offset1>,<length>[,<offset2>]) : binary
   This extracts a binary block whose size is specified at <offset1> for <length>
   bytes, and which starts at <offset2> if specified or just after the length in
   the response buffer. The <offset2> parameter also supports relative offsets
-  if prepended with a '+' or '-' sign.
+  if prepended with a '+' or '-' sign. It may also be used in tcp-check based
+  expect rules.
 
   Example : please consult the example from the "stick store-response" keyword.
 
@@ -17065,10 +17247,9 @@ capture.res.ver : string
   persistent flag.
 
 req.body : binary
-  This returns the HTTP request's available body as a block of data. It
-  requires that the request body has been buffered made available using
-  "option http-buffer-request". In case of chunked-encoded body, currently only
-  the first chunk is analyzed.
+  This returns the HTTP request's available body as a block of data. It is
+  recommended to use "option http-buffer-request" to be sure to wait, as much
+  as possible, for the request's body.
 
 req.body_param([<name>) : string
   This fetch assumes that the body of the POST request is url-encoded. The user
@@ -17085,15 +17266,13 @@ req.body_param([<name>) : string
 req.body_len : integer
   This returns the length of the HTTP request's available body in bytes. It may
   be lower than the advertised length if the body is larger than the buffer. It
-  requires that the request body has been buffered made available using
-  "option http-buffer-request".
+  is recommended to use "option http-buffer-request" to be sure to wait, as
+  much as possible, for the request's body.
 
 req.body_size : integer
   This returns the advertised length of the HTTP request's body in bytes. It
-  will represent the advertised Content-Length header, or the size of the first
-  chunk in case of chunked encoding. In order to parse the chunks, it requires
-  that the request body has been buffered made available using
-  "option http-buffer-request".
+  will represent the advertised Content-Length header, or the size of the
+  available data in case of chunked encoding.
 
 req.cook([<name>]) : string
 cook([<name>]) : string (deprecated)
@@ -17320,6 +17499,26 @@ req_ver : string (deprecated)
   ACL derivatives :
     req_ver : exact string match
 
+res.body : binary
+  This returns the HTTP response's available body as a block of data. Unlike
+  the request side, there is no directive to wait for the response's body. This
+  sample fetch is really useful (and usable) in the health-check context. It
+  may be used in tcp-check based expect rules.
+
+res.body_len : integer
+  This returns the length of the HTTP response available body in bytes. Unlike
+  the request side, there is no directive to wait for the response's body. This
+  sample fetch is really useful (and usable) in the health-check context. It
+  may be used in tcp-check based expect rules.
+
+res.body_size : integer
+  This returns the advertised length of the HTTP response body in bytes. It
+  will represent the advertised Content-Length header, or the size of the
+  available data in case of chunked encoding. Unlike the request side, there is
+  no directive to wait for the response body. This sample fetch is really
+  useful (and usable) in the health-check context. It may be used in tcp-check
+  based expect rules.
+
 res.comp : boolean
   Returns the boolean "true" value if the response has been compressed by
   HAProxy, otherwise returns boolean "false". This may be used to add
@@ -17334,7 +17533,8 @@ res.cook([<name>]) : string
 scook([<name>]) : string (deprecated)
   This extracts the last occurrence of the cookie name <name> on a "Set-Cookie"
   header line from the response, and returns its value as string. If no name is
-  specified, the first cookie value is returned.
+  specified, the first cookie value is returned. It may be used in tcp-check
+  based expect rules.
 
   ACL derivatives :
     scook([<name>] : exact string match
@@ -17343,13 +17543,15 @@ res.cook_cnt([<name>]) : integer
 scook_cnt([<name>]) : integer (deprecated)
   Returns an integer value representing the number of occurrences of the cookie
   <name> in the response, or all cookies if <name> is not specified. This is
-  mostly useful when combined with ACLs to detect suspicious responses.
+  mostly useful when combined with ACLs to detect suspicious responses. It may
+  be used in tcp-check based expect rules.
 
 res.cook_val([<name>]) : integer
 scook_val([<name>]) : integer (deprecated)
   This extracts the last occurrence of the cookie name <name> on a "Set-Cookie"
   header line from the response, and converts its value to an integer which is
-  returned. If no name is specified, the first cookie value is returned.
+  returned. If no name is specified, the first cookie value is returned. It may
+  be used in tcp-check based expect rules.
 
 res.fhdr([<name>[,<occ>]]) : string
   This extracts the last occurrence of header <name> in an HTTP response, or of
@@ -17360,14 +17562,15 @@ res.fhdr([<name>[,<occ>]]) : string
   differs from res.hdr() in that any commas present in the value are returned
   and are not used as delimiters. If this is not desired, the res.hdr() fetch
   should be used instead. This is sometimes useful with headers such as Date or
-  Expires.
+  Expires. It may be used in tcp-check based expect rules.
 
 res.fhdr_cnt([<name>]) : integer
   Returns an integer value representing the number of occurrences of response
   header field name <name>, or the total number of header fields if <name> is
   not specified. Contrary to its res.hdr_cnt() cousin, this function returns
   the number of full line headers and does not stop on commas. If this is not
-  desired, the res.hdr_cnt() fetch should be used instead.
+  desired, the res.hdr_cnt() fetch should be used instead. It may be used in
+  tcp-check based expect rules.
 
 res.hdr([<name>[,<occ>]]) : string
 shdr([<name>[,<occ>]]) : string (deprecated)
@@ -17378,7 +17581,8 @@ shdr([<name>[,<occ>]]) : string (deprecated)
   indicate positions relative to the last one, with -1 being the last one. This
   can be useful to learn some data into a stick-table. The function considers
   any comma as a delimiter for distinct values. If this is not desired, the
-  res.fhdr() fetch should be used instead.
+  res.fhdr() fetch should be used instead. It may be used in tcp-check based
+  expect rules.
 
   ACL derivatives :
     shdr([<name>[,<occ>]])     : exact string match
@@ -17396,7 +17600,7 @@ shdr_cnt([<name>]) : integer (deprecated)
   header field name <name>, or the total number of header fields if <name> is
   not specified. The function considers any comma as a delimiter for distinct
   values. If this is not desired, the res.fhdr_cnt() fetch should be used
-  instead.
+  instead. It may be used in tcp-check based expect rules.
 
 res.hdr_ip([<name>[,<occ>]]) : ip
 shdr_ip([<name>[,<occ>]]) : ip (deprecated)
@@ -17405,13 +17609,15 @@ shdr_ip([<name>[,<occ>]]) : ip (deprecated)
   specific occurrence might be specified as a position number. Positive values
   indicate a position from the first occurrence, with 1 being the first one.
   Negative values indicate positions relative to the last one, with -1 being
-  the last one. This can be useful to learn some data into a stick table.
+  the last one. This can be useful to learn some data into a stick table. It
+  may be used in tcp-check based expect rules.
 
 res.hdr_names([<delim>]) : string
   This builds a string made from the concatenation of all header names as they
   appear in the response when the rule is evaluated. The default delimiter is
   the comma (',') but it may be overridden as an optional argument <delim>. In
-  this case, only the first character of <delim> is considered.
+  this case, only the first character of <delim> is considered. It may be used
+  in tcp-check based expect rules.
 
 res.hdr_val([<name>[,<occ>]]) : integer
 shdr_val([<name>[,<occ>]]) : integer (deprecated)
@@ -17420,12 +17626,35 @@ shdr_val([<name>[,<occ>]]) : integer (deprecated)
   specified as a position number. Positive values indicate a position from the
   first occurrence, with 1 being the first one. Negative values indicate
   positions relative to the last one, with -1 being the last one. This can be
-  useful to learn some data into a stick table.
+  useful to learn some data into a stick table. It may be used in tcp-check
+  based expect rules.
+
+res.hdrs : string
+  Returns the current response headers as string including the last empty line
+  separating headers from the request body. The last empty line can be used to
+  detect a truncated header block. This sample fetch is useful for some SPOE
+  headers analyzers and for advanced logging. It may also be used in tcp-check
+  based expect rules.
+
+res.hdrs_bin : binary
+  Returns the current response headers contained in preparsed binary form. This
+  is useful for offloading some processing with SPOE. It may be used in
+  tcp-check based expect rules. Each string is described by a length followed
+  by the number of bytes indicated in the length. The length is represented
+  using the variable integer encoding detailed in the SPOE documentation. The
+  end of the list is marked by a couple of empty header names and values
+  (length of 0 for both).
+
+  *(<str:header-name><str:header-value>)<empty string><empty string>
+
+  int:  refer to the SPOE documentation for the encoding
+  str:  <int:length><bytes>
 
 res.ver : string
 resp_ver : string (deprecated)
   Returns the version string from the HTTP response, for example "1.1". This
-  can be useful for logs, but is mostly there for ACL.
+  can be useful for logs, but is mostly there for ACL. It may be used in
+  tcp-check based expect rules.
 
   ACL derivatives :
     resp_ver : exact string match
@@ -17442,7 +17671,8 @@ set-cookie([<name>]) : string (deprecated)
 status : integer
   Returns an integer containing the HTTP status code in the HTTP response, for
   example, 302. It is mostly used within ACLs and integer ranges, for example,
-  to remove any Location header if the response is not a 3xx.
+  to remove any Location header if the response is not a 3xx. It may be used in
+  tcp-check based expect rules.
 
 unique-id : string
   Returns the unique-id attached to the request. The directive
@@ -17534,160 +17764,7 @@ url32+src : binary
   the source address family. This can be used to track per-IP, per-URL counters.
 
 
-7.3.7. Fetching health-check samples
--------------------------------------
-
-This set of sample fetch methods may be called from an health-check execution
-context. It was introduced in the version 2.2. The following sample fetches are
-placed in the dedicated scope "check". Other sample fetches may also be called
-when an health-check is performed if it makes sense and if the sample fetch was
-adapted to be called in this context.
-
-check.len : integer
-  Returns an integer value corresponding to the number of bytes present in the
-  check input buffer, containing the data received from the server. This can be
-  called from a tcp-check expect rule, or eventually from a set-var rule after
-  an expect rule and before a send rule (check input buffer is filled on
-  tcp-check expect rules and reset on tcp-check send rules).
-
-check.payload(<offset>,<length>) : binary
-  This extracts a binary block of <length> bytes and starting at byte <offset>
-  in the check input buffer, containing data received from the server. As a
-  special case, if the <length> argument is zero, then the whole buffer from
-  <offset> to the end is extracted. This can be called from a tcp-check expect
-  rule, or eventually from a set-var rule after an expect rule and before a
-  send rule (check input buffer is filled on tcp-check expect rules and reset
-  on tcp-check send rules).
-
-check.payload_lv(<offset1>,<length>[,<offset2>]) : binary
-  This extracts a binary block whose size is specified at <offset1> for
-  <length> bytes, and which starts at <offset2> if specified or just after the
-  length in the check input buffer, containing data received from the
-  server. The <offset2> parameter also supports relative offsets if prepended
-  with a '+' or '-' sign. This can be called from a tcp-check expect rule, or
-  eventually from a set-var rule after an expect rule and before a send rule
-  (check input buffer is filled on tcp-check expect rules and reset on
-  tcp-check send rules).
-
-check.body : binary
-  Returns the available body of the HTTP response in the context of a
-  http-check health check as a block of data.
-
-check.body_param([<name>) : string
-  Assumes the body of the HTTP response in the context of a http-check health
-  check is url-encoded. This extracts the first occurrence of the parameter
-  <name> in the body, which ends before '&'. The parameter name is
-  case-sensitive. If no name is given, any parameter will match, and the first
-  one will be returned. The result is a string corresponding to the value of
-  the parameter <name> as presented in the request body (no URL decoding is
-  performed).
-
-check.body_len : integer
-  Returns the length in bytes of the available body of the HTTP response in the
-  context of a http-check health check. It may be lower than the advertised
-  length if the body is larger than the buffer.
-
-check.body_size : integer
-  Returns the advertised length of the HTTP response's body in bytes in the
-  context of a http-check health check. It will represent the advertised
-  Content-Length header, or the size of the available body in case of chunked
-  encoding.
-
-check.cook([<name>]) : string
-  Extracts the last occurrence of the cookie name <name> on a "Set-Cookie"
-  header line from the HTTP response in the context of a http-check health
-  check, and returns its value as string. If no name is specified, the first
-  cookie value is returned.
-
-check.cook_cnt([<name>]) : integer
-  Returns an integer value representing the number of occurrences of the cookie
-  <name> in the HTTP response in the context of a http-check health check, or
-  all cookies if <name> is not specified.
-
-check.cook_val([<name>]) : integer
-  Extracts the last occurrence of the cookie name <name> on a "Set-Cookie"
-  header line from the HTTP response in the context of a http-check health
-  check, and converts its value to an integer which is returned. If no name is
-  specified, the first cookie value is returned.
-
-check.fhdr(<name>[,<occ>]) : string
-  Extracts the last occurrence of header <name> in an HTTP response in the
-  context of a http-check health check. Optionally, a specific occurrence might
-  be specified as a position number.  Positive values indicate a position from
-  the first occurrence, with 1 being the first one. Negative values indicate
-  positions relative to the last one, with -1 being the last one. It differs
-  from check.hdr() in that any commas present in the value are returned and are
-  not used as delimiters.
-
-check.fhdr_cnt([<name>]) : integer
-  Returns an integer value representing the number of occurrences of response
-  header field name <name>, or the total number of header fields if <name> is
-  not specified, in the context of a http-check health check. Contrary to its
-  check.hdr_cnt() cousin, this function returns the number of full line headers
-  and does not stop on commas.
-
-check.hdr([<name>[,<occ>]]) : string
-
-  Extracts the last occurrence of header <name> in an HTTP response in the
-  context of a http-check health check. Optionally, a specific occurrence might
-  be specified as a position number.  Positive values indicate a position from
-  the first occurrence, with 1 being the first one. Negative values indicate
-  positions relative to the last one, with -1 being the last one. A typical use
-  is with the X-Forwarded-For header once converted to IP, associated with an
-  IP stick-table. The function considers any comma as a delimiter for distinct
-  values. If full-line headers are desired instead, use check.fhdr(). Please
-  carefully check RFC7231 to know how certain headers are supposed to be
-  parsed. Also, some of them are case insensitive (e.g. Connection).
-
-check.hdr_cnt([<name>]) : integer
-  Returns an integer value representing the number of occurrences of response
-  header field name <name>, or the total number of header field values if
-  <name> is not specified, in the context of a http-check health check. It is
-  important to remember that one header line may count as several headers if it
-  has several values. The function considers any comma as a delimiter for
-  distinct values. If full-line headers are desired instead, check.fhdr_cnt()
-  should be used instead. See "check.hdr" for more information on header
-  matching.
-
-check.hdr_ip([<name>[,<occ>]]) : ip
-  Extracts the last occurrence of header <name> in an HTTP response in the
-  context of a http-check health check, converts it to an IPv4 or IPv6 address
-  and returns this address. If <name> is omitted, every value of every header
-  is checked. Optionally, a specific occurrence might be specified as a
-  position number. Positive values indicate a position from the first
-  occurrence, with 1 being the first one. Negative values indicate positions
-  relative to the last one, with -1 being the last one. A typical use is with
-  the X-Forwarded-For and X-Client-IP headers.
-
-check.hdr_val([<name>[,<occ>]]) : integer
-  Extracts the last occurrence of header <name> in an HTTP response in the
-  context of a http-check health check, and converts it to an integer value. If
-  <name> is omitted, every value of every header is checked.  Optionally, a
-  specific occurrence might be specified as a position number.  Positive values
-  indicate a position from the first occurrence, with 1 being the first
-  one. Negative values indicate positions relative to the last one, with -1
-  being the last one. A typical use is with the X-Forwarded-For header.
-
-check.hdrs : string
-  Returns the headers in the HTTP response in the context of a http-check
-  health check as string including the last empty line separating headers from
-  the response body. The last empty line can be used to detect a truncated
-  header block.
-
-check.hdrs_bin : binary
-  Returns the headers in the HTTP response in the context of a http-check
-  health check in preparsed binary form.
-
-check.status : integer
-  Returns an integer containing the HTTP status code of the HTTP response in
-  the context of a http-check health check, for example, 302.
-
-check.ver : string (deprecated)
-  Returns the version string from the HTTP response in the context of a
-  http-check health check, for example "1.1".
-
-
-7.3.8. Fetching samples for developers
+7.3.7. Fetching samples for developers
 ---------------------------------------
 
 This set of sample fetch methods is reserved to developers and must never be
@@ -19446,10 +19523,6 @@ the Stream Processing Offload Protocol (SPOP).
 
 For all information about the SPOE configuration and the SPOP specification, see
 "doc/SPOE.txt".
-
-Important note:
-    The SPOE filter is highly experimental for now and was not heavily
-    tested. It is really not production ready. So use it carefully.
 
 9.4. Cache
 ----------

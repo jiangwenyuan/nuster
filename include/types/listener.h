@@ -27,7 +27,6 @@
 
 #ifdef USE_OPENSSL
 #include <common/openssl-compat.h>
-#include <types/ssl_sock.h>
 #endif
 
 #include <common/config.h>
@@ -112,6 +111,12 @@ enum li_state {
 #define BC_SSL_O_PREF_CLIE_CIPH 0x0200  /* prefer client ciphers */
 #endif
 
+struct tls_version_filter {
+	uint16_t flags;     /* ssl options */
+	uint8_t  min;      /* min TLS version */
+	uint8_t  max;      /* max TLS version */
+};
+
 /* ssl "bind" settings */
 struct ssl_bind_conf {
 #ifdef USE_OPENSSL
@@ -135,7 +140,8 @@ struct ssl_bind_conf {
 #endif
 	char *curves;	           /* curves suite to use for ECDHE */
 	char *ecdhe;               /* named curve to use for ECDHE */
-	struct tls_version_filter ssl_methods; /* ssl methods */
+	struct tls_version_filter ssl_methods_cfg; /* original ssl methods found in configuration */
+	struct tls_version_filter ssl_methods; /* actual ssl methods used at runtime */
 #endif
 };
 

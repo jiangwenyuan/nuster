@@ -29,8 +29,11 @@
 #include <proto/sample.h>
 
 struct buffer http_err_chunks[HTTP_ERR_SIZE];
+struct http_reply http_err_replies[HTTP_ERR_SIZE];
+
 struct eb_root http_error_messages = EB_ROOT;
 struct list http_errors_list = LIST_HEAD_INIT(http_errors_list);
+struct list http_replies_list = LIST_HEAD_INIT(http_replies_list);
 
 /* The declaration of an errorfiles/errorfile directives. Used during config
  * parsing only. */
@@ -39,7 +42,7 @@ struct conf_errors {
 	union {
 		struct {
 			int status;                 /* the status code associated to this error */
-			struct buffer *msg;         /* the HTX error message */
+			struct http_reply *reply;   /* the http reply for the errorfile */
 		} errorfile;                        /* describe an "errorfile" directive */
 		struct {
 			char *name;                 /* the http-errors section name */
@@ -954,6 +957,44 @@ error:
 	return 0;
 }
 
+void release_http_reply(struct http_reply *http_reply)
+{
+	struct logformat_node *lf, *lfb;
+	struct http_reply_hdr *hdr, *hdrb;
+
+	if (!http_reply)
+		return;
+
+	free(http_reply->ctype);
+	http_reply->ctype = NULL;
+	list_for_each_entry_safe(hdr, hdrb, &http_reply->hdrs, list) {
+		LIST_DEL(&hdr->list);
+		list_for_each_entry_safe(lf, lfb, &hdr->value, list) {
+			LIST_DEL(&lf->list);
+			release_sample_expr(lf->expr);
+			free(lf->arg);
+			free(lf);
+		}
+		istfree(&hdr->name);
+		free(hdr);
+	}
+
+	if (http_reply->type == HTTP_REPLY_ERRFILES) {
+		free(http_reply->body.http_errors);
+		http_reply->body.http_errors = NULL;
+	}
+	else if (http_reply->type == HTTP_REPLY_RAW)
+		chunk_destroy(&http_reply->body.obj);
+	else if (http_reply->type == HTTP_REPLY_LOGFMT) {
+		list_for_each_entry_safe(lf, lfb, &http_reply->body.fmt, list) {
+			LIST_DEL(&lf->list);
+			release_sample_expr(lf->expr);
+			free(lf->arg);
+			free(lf);
+		}
+	}
+}
+
 static int http_htx_init(void)
 {
 	struct buffer chk;
@@ -975,6 +1016,11 @@ static int http_htx_init(void)
 			err_code |= ERR_ALERT | ERR_FATAL;
 		}
 		http_err_chunks[rc] = chk;
+		http_err_replies[rc].type = HTTP_REPLY_ERRMSG;
+		http_err_replies[rc].status = http_err_codes[rc];
+		http_err_replies[rc].ctype = NULL;
+		LIST_INIT(&http_err_replies[rc].hdrs);
+		http_err_replies[rc].body.errmsg = &http_err_chunks[rc];
 	}
 end:
 	return err_code;
@@ -983,25 +1029,34 @@ end:
 static void http_htx_deinit(void)
 {
 	struct http_errors *http_errs, *http_errsb;
+	struct http_reply *http_rep, *http_repb;
 	struct ebpt_node *node, *next;
-	struct http_error *http_err;
+	struct http_error_msg *http_errmsg;
+	int rc;
 
 	node = ebpt_first(&http_error_messages);
 	while (node) {
 		next = ebpt_next(node);
 		ebpt_delete(node);
-		http_err = container_of(node, typeof(*http_err), node);
-		chunk_destroy(&http_err->msg);
+		http_errmsg = container_of(node, typeof(*http_errmsg), node);
+		chunk_destroy(&http_errmsg->msg);
 		free(node->key);
-		free(http_err);
+		free(http_errmsg);
 		node = next;
 	}
 
 	list_for_each_entry_safe(http_errs, http_errsb, &http_errors_list, list) {
 		free(http_errs->conf.file);
 		free(http_errs->id);
+		for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
+			release_http_reply(http_errs->replies[rc]);
 		LIST_DEL(&http_errs->list);
 		free(http_errs);
+	}
+
+	list_for_each_entry_safe(http_rep, http_repb, &http_replies_list, list) {
+		LIST_DEL(&http_rep->list);
+		release_http_reply(http_rep);
 	}
 }
 
@@ -1017,7 +1072,7 @@ struct buffer *http_load_errorfile(const char *file, char **errmsg)
 	struct buffer *buf = NULL;
 	struct buffer chk;
 	struct ebpt_node *node;
-	struct http_error *http_err;
+	struct http_error_msg *http_errmsg;
 	struct stat stat;
 	char *err = NULL;
 	int errnum, errlen;
@@ -1026,8 +1081,8 @@ struct buffer *http_load_errorfile(const char *file, char **errmsg)
 	/* already loaded */
 	node = ebis_lookup_len(&http_error_messages, file, strlen(file));
 	if (node) {
-		http_err = container_of(node,  typeof(*http_err), node);
-		buf = &http_err->msg;
+		http_errmsg = container_of(node,  typeof(*http_errmsg), node);
+		buf = &http_errmsg->msg;
 		goto out;
 	}
 
@@ -1059,30 +1114,30 @@ struct buffer *http_load_errorfile(const char *file, char **errmsg)
 	}
 
 	/* Create the node corresponding to the error file */
-	http_err = calloc(1, sizeof(*http_err));
-	if (!http_err) {
+	http_errmsg = calloc(1, sizeof(*http_errmsg));
+	if (!http_errmsg) {
 		memprintf(errmsg, "out of memory.");
 		goto out;
 	}
-	http_err->node.key = strdup(file);
-	if (!http_err->node.key) {
+	http_errmsg->node.key = strdup(file);
+	if (!http_errmsg->node.key) {
 		memprintf(errmsg, "out of memory.");
-		free(http_err);
+		free(http_errmsg);
 		goto out;
 	}
 
 	/* Convert the error file into an HTX message */
 	if (!http_str_to_htx(&chk, ist2(err, errlen))) {
 		memprintf(errmsg, "unable to convert custom error message file '%s' in HTX.", file);
-		free(http_err->node.key);
-		free(http_err);
+		free(http_errmsg->node.key);
+		free(http_errmsg);
 		goto out;
 	}
 
 	/* Insert the node in the tree and return the HTX message */
-	http_err->msg = chk;
-	ebis_insert(&http_error_messages, &http_err->node);
-	buf = &http_err->msg;
+	http_errmsg->msg = chk;
+	ebis_insert(&http_error_messages, &http_errmsg->node);
+	buf = &http_errmsg->msg;
 
   out:
 	if (fd >= 0)
@@ -1100,40 +1155,40 @@ struct buffer *http_load_errormsg(const char *key, const struct ist msg, char **
 	struct buffer *buf = NULL;
 	struct buffer chk;
 	struct ebpt_node *node;
-	struct http_error *http_err;
+	struct http_error_msg *http_errmsg;
 
 	/* already loaded */
 	node = ebis_lookup_len(&http_error_messages, key, strlen(key));
 	if (node) {
-		http_err = container_of(node,  typeof(*http_err), node);
-		buf = &http_err->msg;
+		http_errmsg = container_of(node,  typeof(*http_errmsg), node);
+		buf = &http_errmsg->msg;
 		goto out;
 	}
 	/* Create the node corresponding to the error file */
-	http_err = calloc(1, sizeof(*http_err));
-	if (!http_err) {
+	http_errmsg = calloc(1, sizeof(*http_errmsg));
+	if (!http_errmsg) {
 		memprintf(errmsg, "out of memory.");
 		goto out;
 	}
-	http_err->node.key = strdup(key);
-	if (!http_err->node.key) {
+	http_errmsg->node.key = strdup(key);
+	if (!http_errmsg->node.key) {
 		memprintf(errmsg, "out of memory.");
-		free(http_err);
+		free(http_errmsg);
 		goto out;
 	}
 
 	/* Convert the error file into an HTX message */
 	if (!http_str_to_htx(&chk, msg)) {
 		memprintf(errmsg, "unable to convert message in HTX.");
-		free(http_err->node.key);
-		free(http_err);
+		free(http_errmsg->node.key);
+		free(http_errmsg);
 		goto out;
 	}
 
 	/* Insert the node in the tree and return the HTX message */
-	http_err->msg = chk;
-	ebis_insert(&http_error_messages, &http_err->node);
-	buf = &http_err->msg;
+	http_errmsg->msg = chk;
+	ebis_insert(&http_error_messages, &http_errmsg->node);
+	buf = &http_errmsg->msg;
   out:
 	return buf;
 }
@@ -1203,12 +1258,406 @@ out:
 	return buf;
 }
 
+/* Check an "http reply" and, for replies referencing an http-errors section,
+ * try to find the right section and the right error message in this section. If
+ * found, the reply is updated. If the http-errors section exists but the error
+ * message is not found, no error message is set to fallback on the default
+ * ones.  Otherwise (unknown section) an error is returned.
+ *
+ * The function returns 1 in success case, otherwise, it returns 0 and errmsg is
+ * filled.
+ */
+int http_check_http_reply(struct http_reply *reply, struct proxy *px, char **errmsg)
+{
+	struct http_errors *http_errs;
+	int ret = 1;
+
+	if (reply->type != HTTP_REPLY_ERRFILES)
+		goto end;
+
+	list_for_each_entry(http_errs, &http_errors_list, list) {
+		if (strcmp(http_errs->id, reply->body.http_errors) == 0) {
+			reply->type = HTTP_REPLY_INDIRECT;
+			free(reply->body.http_errors);
+			reply->body.reply = http_errs->replies[http_get_status_idx(reply->status)];
+			if (!reply->body.reply)
+				ha_warning("Proxy '%s': status '%d' referenced by an http reply "
+					   "not declared in http-errors section '%s'.\n",
+					   px->id, reply->status, http_errs->id);
+			break;
+		}
+	}
+
+	if (&http_errs->list == &http_errors_list) {
+		memprintf(errmsg, "unknown http-errors section '%s' referenced by an http reply ",
+			  reply->body.http_errors);
+		ret = 0;
+	}
+
+  end:
+	return ret;
+}
+
+/* Parse an "http reply". It returns the reply on success or NULL on error. This
+ * function creates one of the following http replies :
+ *
+ *   - HTTP_REPLY_EMPTY    : dummy response, no payload
+ *   - HTTP_REPLY_ERRMSG   : implicit error message depending on the status code or explicit one
+ *   - HTTP_REPLY_ERRFILES : points on an http-errors section (resolved during post-parsing)
+ *   - HTTP_REPLY_RAW      : explicit file object ('file' argument)
+ *   - HTTP_REPLY_LOGFMT   : explicit log-format string ('content' argument)
+ *
+ * The content-type must be defined for non-empty payload. It is ignored for
+ * error messages (implicit or explicit). When an http-errors section is
+ * referenced (HTTP_REPLY_ERRFILES), the real error message should be resolved
+ * during the configuration validity check or dynamically. It is the caller
+ * responsibility to choose. If no status code is configured, <default_status>
+ * is set.
+ */
+struct http_reply *http_parse_http_reply(const char **args, int *orig_arg, struct proxy *px,
+					 int default_status, char **errmsg)
+{
+	struct logformat_node *lf, *lfb;
+	struct http_reply *reply = NULL;
+	struct http_reply_hdr *hdr, *hdrb;
+	struct stat stat;
+	const char *act_arg = NULL;
+	char *obj = NULL;
+	int cur_arg, cap, objlen = 0, fd = -1;
+
+
+	reply = calloc(1, sizeof(*reply));
+	if (!reply) {
+		memprintf(errmsg, "out of memory");
+		goto error;
+	}
+	LIST_INIT(&reply->hdrs);
+	reply->type = HTTP_REPLY_EMPTY;
+	reply->status = default_status;
+
+	if (px->conf.args.ctx == ARGC_HERR)
+		cap = (SMP_VAL_REQUEST | SMP_VAL_RESPONSE);
+	else
+		cap = ((px->conf.args.ctx == ARGC_HRQ)
+		       ? ((px->cap & PR_CAP_FE) ? SMP_VAL_FE_HRQ_HDR : SMP_VAL_BE_HRQ_HDR)
+		       : ((px->cap & PR_CAP_BE) ? SMP_VAL_BE_HRS_HDR : SMP_VAL_FE_HRS_HDR));
+
+	cur_arg = *orig_arg;
+	while (*args[cur_arg]) {
+		if (strcmp(args[cur_arg], "status") == 0) {
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <status_code> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			reply->status = atol(args[cur_arg]);
+			if (reply->status < 200 || reply->status > 599) {
+				memprintf(errmsg, "Unexpected status code '%d'", reply->status);
+				goto error;
+			}
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "content-type") == 0) {
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <ctype> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			free(reply->ctype);
+			reply->ctype = strdup(args[cur_arg]);
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "errorfiles") == 0) {
+			if (reply->type != HTTP_REPLY_EMPTY) {
+				memprintf(errmsg, "unexpected '%s' argument, '%s' already defined", args[cur_arg], act_arg);
+				goto error;
+			}
+			act_arg = args[cur_arg];
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <name> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			reply->body.http_errors = strdup(args[cur_arg]);
+			if (!reply->body.http_errors) {
+				memprintf(errmsg, "out of memory");
+				goto error;
+			}
+			reply->type = HTTP_REPLY_ERRFILES;
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "default-errorfiles") == 0) {
+			if (reply->type != HTTP_REPLY_EMPTY) {
+				memprintf(errmsg, "unexpected '%s' argument, '%s' already defined", args[cur_arg], act_arg);
+				goto error;
+			}
+			act_arg = args[cur_arg];
+			reply->type = HTTP_REPLY_ERRMSG;
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "errorfile") == 0) {
+			if (reply->type != HTTP_REPLY_EMPTY) {
+				memprintf(errmsg, "unexpected '%s' argument, '%s' already defined", args[cur_arg], act_arg);
+				goto error;
+			}
+			act_arg = args[cur_arg];
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <fmt> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			reply->body.errmsg = http_load_errorfile(args[cur_arg], errmsg);
+			if (!reply->body.errmsg) {
+				goto error;
+			}
+			reply->type = HTTP_REPLY_ERRMSG;
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "file") == 0) {
+			if (reply->type != HTTP_REPLY_EMPTY) {
+				memprintf(errmsg, "unexpected '%s' argument, '%s' already defined", args[cur_arg], act_arg);
+				goto error;
+			}
+			act_arg = args[cur_arg];
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <file> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			fd = open(args[cur_arg], O_RDONLY);
+			if ((fd < 0) || (fstat(fd, &stat) < 0)) {
+				memprintf(errmsg, "error opening file '%s'", args[cur_arg]);
+				goto error;
+			}
+			if (stat.st_size > global.tune.bufsize) {
+				memprintf(errmsg, "file '%s' exceeds the buffer size (%lld > %d)",
+					  args[cur_arg], (long long)stat.st_size, global.tune.bufsize);
+				goto error;
+			}
+			objlen = stat.st_size;
+			obj = malloc(objlen);
+			if (!obj || read(fd, obj, objlen) != objlen) {
+				memprintf(errmsg, "error reading file '%s'", args[cur_arg]);
+				goto error;
+			}
+			close(fd);
+			fd = -1;
+			reply->type = HTTP_REPLY_RAW;
+			chunk_initlen(&reply->body.obj, obj, global.tune.bufsize, objlen);
+			obj = NULL;
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "string") == 0) {
+			if (reply->type != HTTP_REPLY_EMPTY) {
+				memprintf(errmsg, "unexpected '%s' argument, '%s' already defined", args[cur_arg], act_arg);
+				goto error;
+			}
+			act_arg = args[cur_arg];
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <str> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			obj = strdup(args[cur_arg]);
+			objlen = strlen(args[cur_arg]);
+			if (!obj) {
+				memprintf(errmsg, "out of memory");
+				goto error;
+			}
+			reply->type = HTTP_REPLY_RAW;
+			chunk_initlen(&reply->body.obj, obj, global.tune.bufsize, objlen);
+			obj = NULL;
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "lf-file") == 0) {
+			if (reply->type != HTTP_REPLY_EMPTY) {
+				memprintf(errmsg, "unexpected '%s' argument, '%s' already defined", args[cur_arg], act_arg);
+				goto error;
+			}
+			act_arg = args[cur_arg];
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <file> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			fd = open(args[cur_arg], O_RDONLY);
+			if ((fd < 0) || (fstat(fd, &stat) < 0)) {
+				memprintf(errmsg, "error opening file '%s'", args[cur_arg]);
+				goto error;
+			}
+			if (stat.st_size > global.tune.bufsize) {
+				memprintf(errmsg, "file '%s' exceeds the buffer size (%lld > %d)",
+					  args[cur_arg], (long long)stat.st_size, global.tune.bufsize);
+				goto error;
+			}
+			objlen = stat.st_size;
+			obj = malloc(objlen + 1);
+			if (!obj || read(fd, obj, objlen) != objlen) {
+				memprintf(errmsg, "error reading file '%s'", args[cur_arg]);
+				goto error;
+			}
+			close(fd);
+			fd = -1;
+			obj[objlen] = '\0';
+			reply->type = HTTP_REPLY_LOGFMT;
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "lf-string") == 0) {
+			if (reply->type != HTTP_REPLY_EMPTY) {
+				memprintf(errmsg, "unexpected '%s' argument, '%s' already defined", args[cur_arg], act_arg);
+				goto error;
+			}
+			act_arg = args[cur_arg];
+			cur_arg++;
+			if (!*args[cur_arg]) {
+				memprintf(errmsg, "'%s' expects <fmt> as argument", args[cur_arg-1]);
+				goto error;
+			}
+			obj = strdup(args[cur_arg]);
+			objlen = strlen(args[cur_arg]);
+			reply->type = HTTP_REPLY_LOGFMT;
+			cur_arg++;
+		}
+		else if (strcmp(args[cur_arg], "hdr") == 0) {
+			cur_arg++;
+			if (!*args[cur_arg] || !*args[cur_arg+1]) {
+				memprintf(errmsg, "'%s' expects <name> and <value> as arguments", args[cur_arg-1]);
+				goto error;
+			}
+			if (strcasecmp(args[cur_arg], "content-length") == 0 ||
+			    strcasecmp(args[cur_arg], "transfer-encoding") == 0 ||
+			    strcasecmp(args[cur_arg], "content-type") == 0) {
+				ha_warning("parsing [%s:%d] : header '%s' always ignored by the http reply.\n",
+					   px->conf.args.file, px->conf.args.line, args[cur_arg]);
+				cur_arg += 2;
+				continue;
+			}
+			hdr = calloc(1, sizeof(*hdr));
+			if (!hdr) {
+				memprintf(errmsg, "'%s' : out of memory", args[cur_arg-1]);
+				goto error;
+			}
+			LIST_INIT(&hdr->value);
+			hdr->name = ist(strdup(args[cur_arg]));
+			if (!isttest(hdr->name)) {
+				memprintf(errmsg, "out of memory");
+				goto error;
+			}
+			LIST_ADDQ(&reply->hdrs, &hdr->list);
+			if (!parse_logformat_string(args[cur_arg+1], px, &hdr->value, LOG_OPT_HTTP, cap, errmsg))
+				goto error;
+
+			free(px->conf.lfs_file);
+			px->conf.lfs_file = strdup(px->conf.args.file);
+			px->conf.lfs_line = px->conf.args.line;
+			cur_arg += 2;
+		}
+		else
+			break;
+	}
+
+	if (reply->type == HTTP_REPLY_EMPTY) { /* no payload */
+		if (reply->ctype) {
+			ha_warning("parsing [%s:%d] : content-type '%s' ignored by the http reply because"
+				   " neither errorfile nor payload defined.\n",
+				   px->conf.args.file, px->conf.args.line, reply->ctype);
+			free(reply->ctype);
+			reply->ctype = NULL;
+		}
+	}
+	else if (reply->type == HTTP_REPLY_ERRFILES || reply->type == HTTP_REPLY_ERRMSG) { /* errorfiles or errorfile */
+
+		if (reply->type != HTTP_REPLY_ERRMSG || !reply->body.errmsg) {
+			/* default errorfile or errorfiles: check the status */
+			int rc;
+
+			for (rc = 0; rc < HTTP_ERR_SIZE; rc++) {
+				if (http_err_codes[rc] == reply->status)
+					break;
+			}
+
+			if (rc >= HTTP_ERR_SIZE) {
+				memprintf(errmsg, "status code '%d' not handled by default with '%s' argument.",
+					  reply->status, act_arg);
+				goto error;
+			}
+		}
+
+		if (reply->ctype) {
+			ha_warning("parsing [%s:%d] : content-type '%s' ignored by the http reply when used "
+				   "with an erorrfile.\n",
+				   px->conf.args.file, px->conf.args.line, reply->ctype);
+			free(reply->ctype);
+			reply->ctype = NULL;
+		}
+		if (!LIST_ISEMPTY(&reply->hdrs)) {
+			ha_warning("parsing [%s:%d] : hdr parameters ignored by the http reply when used "
+				   "with an erorrfile.\n",
+				   px->conf.args.file, px->conf.args.line);
+			list_for_each_entry_safe(hdr, hdrb, &reply->hdrs, list) {
+				LIST_DEL(&hdr->list);
+				list_for_each_entry_safe(lf, lfb, &hdr->value, list) {
+					LIST_DEL(&lf->list);
+					release_sample_expr(lf->expr);
+					free(lf->arg);
+					free(lf);
+				}
+				istfree(&hdr->name);
+				free(hdr);
+			}
+		}
+	}
+	else if (reply->type == HTTP_REPLY_RAW) { /* explicit parameter using 'file' parameter*/
+		if (!reply->ctype && objlen) {
+			memprintf(errmsg, "a content type must be defined when non-empty payload is configured");
+			goto error;
+		}
+		if (reply->ctype && !b_data(&reply->body.obj)) {
+			ha_warning("parsing [%s:%d] : content-type '%s' ignored by the http reply when used "
+				   "with an emtpy payload.\n",
+				   px->conf.args.file, px->conf.args.line, reply->ctype);
+			free(reply->ctype);
+			reply->ctype = NULL;
+		}
+		if (b_room(&reply->body.obj) < global.tune.maxrewrite) {
+			ha_warning("parsing [%s:%d] : http reply payload runs over the buffer space reserved to headers rewriting."
+				   " It may lead to internal errors if strict rewriting mode is enabled.\n",
+				   px->conf.args.file, px->conf.args.line);
+		}
+	}
+	else if (reply->type == HTTP_REPLY_LOGFMT) { /* log-format payload using 'lf-file' of 'lf-string' parameter */
+		LIST_INIT(&reply->body.fmt);
+		if (!reply->ctype) {
+			memprintf(errmsg, "a content type must be defined with a log-format payload");
+			goto error;
+		}
+		if (!parse_logformat_string(obj, px, &reply->body.fmt, LOG_OPT_HTTP, cap, errmsg))
+			goto error;
+
+		free(px->conf.lfs_file);
+		px->conf.lfs_file = strdup(px->conf.args.file);
+		px->conf.lfs_line = px->conf.args.line;
+	}
+
+	free(obj);
+	*orig_arg = cur_arg;
+	return reply;
+
+  error:
+	free(obj);
+	if (fd >= 0)
+		close(fd);
+	release_http_reply(reply);
+	return NULL;
+}
+
 /* Parses the "errorloc[302|303]" proxy keyword */
 static int proxy_parse_errorloc(char **args, int section, struct proxy *curpx,
 				  struct proxy *defpx, const char *file, int line,
 				  char **errmsg)
 {
 	struct conf_errors *conf_err;
+	struct http_reply *reply;
 	struct buffer *msg;
 	int errloc, status;
 	int ret = 0;
@@ -1233,15 +1682,30 @@ static int proxy_parse_errorloc(char **args, int section, struct proxy *curpx,
 		goto out;
 	}
 
+	reply = calloc(1, sizeof(*reply));
+	if (!reply) {
+		memprintf(errmsg, "%s : out of memory.", args[0]);
+		ret = -1;
+		goto out;
+	}
+	reply->type = HTTP_REPLY_ERRMSG;
+	reply->status = status;
+	reply->ctype = NULL;
+	LIST_INIT(&reply->hdrs);
+	reply->body.errmsg = msg;
+	LIST_ADDQ(&http_replies_list, &reply->list);
+
 	conf_err = calloc(1, sizeof(*conf_err));
 	if (!conf_err) {
 		memprintf(errmsg, "%s : out of memory.", args[0]);
+		free(reply);
 		ret = -1;
 		goto out;
 	}
 	conf_err->type = 1;
 	conf_err->info.errorfile.status = status;
-	conf_err->info.errorfile.msg = msg;
+	conf_err->info.errorfile.reply = reply;
+
 	conf_err->file = strdup(file);
 	conf_err->line = line;
 	LIST_ADDQ(&curpx->conf.errors, &conf_err->list);
@@ -1257,6 +1721,7 @@ static int proxy_parse_errorfile(char **args, int section, struct proxy *curpx,
 				 char **errmsg)
 {
 	struct conf_errors *conf_err;
+	struct http_reply *reply;
 	struct buffer *msg;
 	int status;
 	int ret = 0;
@@ -1280,15 +1745,29 @@ static int proxy_parse_errorfile(char **args, int section, struct proxy *curpx,
 		goto out;
 	}
 
+	reply = calloc(1, sizeof(*reply));
+	if (!reply) {
+		memprintf(errmsg, "%s : out of memory.", args[0]);
+		ret = -1;
+		goto out;
+	}
+	reply->type = HTTP_REPLY_ERRMSG;
+	reply->status = status;
+	reply->ctype = NULL;
+	LIST_INIT(&reply->hdrs);
+	reply->body.errmsg = msg;
+	LIST_ADDQ(&http_replies_list, &reply->list);
+
 	conf_err = calloc(1, sizeof(*conf_err));
 	if (!conf_err) {
 		memprintf(errmsg, "%s : out of memory.", args[0]);
+		free(reply);
 		ret = -1;
 		goto out;
 	}
 	conf_err->type = 1;
 	conf_err->info.errorfile.status = status;
-	conf_err->info.errorfile.msg = msg;
+	conf_err->info.errorfile.reply = reply;
 	conf_err->file = strdup(file);
 	conf_err->line = line;
 	LIST_ADDQ(&curpx->conf.errors, &conf_err->list);
@@ -1361,6 +1840,80 @@ static int proxy_parse_errorfiles(char **args, int section, struct proxy *curpx,
 	goto out;
 }
 
+/* Parses the "http-error" proxy keyword */
+static int proxy_parse_http_error(char **args, int section, struct proxy *curpx,
+				  struct proxy *defpx, const char *file, int line,
+				  char **errmsg)
+{
+	struct conf_errors *conf_err;
+	struct http_reply *reply = NULL;
+	int rc, cur_arg, ret = 0;
+
+	if (warnifnotcap(curpx, PR_CAP_FE | PR_CAP_BE, file, line, args[0], NULL)) {
+		ret = 1;
+		goto out;
+	}
+
+	cur_arg = 1;
+	curpx->conf.args.ctx = ARGC_HERR;
+	reply = http_parse_http_reply((const char **)args, &cur_arg, curpx, 0, errmsg);
+	if (!reply) {
+		memprintf(errmsg, "%s : %s", args[0], *errmsg);
+		goto error;
+	}
+	else if (!reply->status) {
+		memprintf(errmsg, "%s : expects at least a <status> as arguments.\n", args[0]);
+		goto error;
+	}
+
+	for (rc = 0; rc < HTTP_ERR_SIZE; rc++) {
+		if (http_err_codes[rc] == reply->status)
+			break;
+	}
+
+	if (rc >= HTTP_ERR_SIZE) {
+		memprintf(errmsg, "%s: status code '%d' not handled.", args[0], reply->status);
+		goto error;
+	}
+	if (*args[cur_arg]) {
+		memprintf(errmsg, "%s : unknown keyword '%s'.", args[0], args[cur_arg]);
+		goto error;
+	}
+
+	conf_err = calloc(1, sizeof(*conf_err));
+	if (!conf_err) {
+		memprintf(errmsg, "%s : out of memory.", args[0]);
+		goto error;
+	}
+	if (reply->type == HTTP_REPLY_ERRFILES) {
+		int rc = http_get_status_idx(reply->status);
+
+		conf_err->type = 2;
+		conf_err->info.errorfiles.name = reply->body.http_errors;
+		conf_err->info.errorfiles.status[rc] = 2;
+		reply->body.http_errors = NULL;
+		release_http_reply(reply);
+	}
+	else {
+		conf_err->type = 1;
+		conf_err->info.errorfile.status = reply->status;
+		conf_err->info.errorfile.reply = reply;
+		LIST_ADDQ(&http_replies_list, &reply->list);
+	}
+	conf_err->file = strdup(file);
+	conf_err->line = line;
+	LIST_ADDQ(&curpx->conf.errors, &conf_err->list);
+
+  out:
+	return ret;
+
+  error:
+	release_http_reply(reply);
+	ret = -1;
+	goto out;
+
+}
+
 /* Check "errorfiles" proxy keyword */
 static int proxy_check_errors(struct proxy *px)
 {
@@ -1372,7 +1925,11 @@ static int proxy_check_errors(struct proxy *px)
 		if (conf_err->type == 1) {
 			/* errorfile */
 			rc = http_get_status_idx(conf_err->info.errorfile.status);
-			px->errmsg[rc] = conf_err->info.errorfile.msg;
+			px->replies[rc] = conf_err->info.errorfile.reply;
+
+			/* For proxy, to rely on default replies, just don't reference a reply */
+			if (px->replies[rc]->type == HTTP_REPLY_ERRMSG && !px->replies[rc]->body.errmsg)
+				px->replies[rc] = NULL;
 		}
 		else {
 			/* errorfiles */
@@ -1393,8 +1950,8 @@ static int proxy_check_errors(struct proxy *px)
 			free(conf_err->info.errorfiles.name);
 			for (rc = 0; rc < HTTP_ERR_SIZE; rc++) {
 				if (conf_err->info.errorfiles.status[rc] > 0) {
-					if (http_errs->errmsg[rc])
-						px->errmsg[rc] = http_errs->errmsg[rc];
+					if (http_errs->replies[rc])
+						px->replies[rc] = http_errs->replies[rc];
 					else if (conf_err->info.errorfiles.status[rc] == 2)
 						ha_warning("config: proxy '%s' : status '%d' not declared in"
 							   " http-errors section '%s' (at %s:%d).\n",
@@ -1416,16 +1973,16 @@ static int proxy_check_errors(struct proxy *px)
 static int post_check_errors()
 {
 	struct ebpt_node *node;
-	struct http_error *http_err;
+	struct http_error_msg *http_errmsg;
 	struct htx *htx;
 	int err_code = 0;
 
 	node = ebpt_first(&http_error_messages);
 	while (node) {
-		http_err = container_of(node, typeof(*http_err), node);
-		if (b_is_null(&http_err->msg))
+		http_errmsg = container_of(node, typeof(*http_errmsg), node);
+		if (b_is_null(&http_errmsg->msg))
 			goto next;
-		htx = htxbuf(&http_err->msg);
+		htx = htxbuf(&http_errmsg->msg);
 		if (htx_free_data_space(htx) < global.tune.maxrewrite) {
 			ha_warning("config: errorfile '%s' runs over the buffer space"
 				   " reserved to headers rewritting. It may lead to internal errors if "
@@ -1454,7 +2011,7 @@ int proxy_dup_default_conf_errors(struct proxy *curpx, struct proxy *defpx, char
 		new_conf_err->type = conf_err->type;
 		if (conf_err->type == 1) {
 			new_conf_err->info.errorfile.status = conf_err->info.errorfile.status;
-			new_conf_err->info.errorfile.msg    = conf_err->info.errorfile.msg;
+			new_conf_err->info.errorfile.reply  = conf_err->info.errorfile.reply;
 		}
 		else {
 			new_conf_err->info.errorfiles.name = strdup(conf_err->info.errorfiles.name);
@@ -1542,6 +2099,7 @@ static int cfg_parse_http_errors(const char *file, int linenum, char **args, int
 		curr_errs->conf.line = linenum;
 	}
 	else if (!strcmp(args[0], "errorfile")) { /* error message from a file */
+		struct http_reply *reply;
 		struct buffer *msg;
 		int status, rc;
 
@@ -1559,8 +2117,21 @@ static int cfg_parse_http_errors(const char *file, int linenum, char **args, int
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
+
+		reply = calloc(1, sizeof(*reply));
+		if (!reply) {
+			ha_alert("parsing [%s:%d] : %s : out of memory.\n", file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		reply->type = HTTP_REPLY_ERRMSG;
+		reply->status = status;
+		reply->ctype = NULL;
+		LIST_INIT(&reply->hdrs);
+		reply->body.errmsg = msg;
+
 		rc = http_get_status_idx(status);
-		curr_errs->errmsg[rc] = msg;
+		curr_errs->replies[rc] = reply;
 	}
 	else if (*args[0] != 0) {
 		ha_alert("parsing [%s:%d] : unknown keyword '%s' in '%s' section\n", file, linenum, args[0], cursection);
@@ -1579,6 +2150,7 @@ static struct cfg_kw_list cfg_kws = {ILH, {
         { CFG_LISTEN, "errorloc303",  proxy_parse_errorloc },
         { CFG_LISTEN, "errorfile",    proxy_parse_errorfile },
         { CFG_LISTEN, "errorfiles",   proxy_parse_errorfiles },
+        { CFG_LISTEN, "http-error",   proxy_parse_http_error },
         { 0, NULL, NULL },
 }};
 

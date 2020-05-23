@@ -26,14 +26,13 @@
 #include <common/http.h>
 
 #include <types/channel.h>
+#include <types/http_htx.h>
 
 /* These are the flags that are found in txn->flags */
 
 /* action flags */
-#define TX_CLDENY	0x00000001	/* a client header matches a deny regex */
-#define TX_CLALLOW	0x00000002	/* a client header matches an allow regex */
-#define TX_SVDENY	0x00000004	/* a server header matches a deny regex */
-#define TX_SVALLOW	0x00000008	/* a server header matches an allow regex */
+/* Unusued: 0x00000001..0x00000004 */
+#define TX_CONST_REPLY  0x00000008      /* The http reply must not be rewritten (don't eval after-response ruleset) */
 #define TX_CLTARPIT	0x00000010	/* the transaction is tarpitted (anti-dos) */
 
 /* transaction flags dedicated to cookies : bits values 0x20 to 0x80 (0-7 shift 5) */
@@ -176,7 +175,7 @@ struct http_txn {
 	enum http_meth_t meth;          /* HTTP method */
 	/* 1 unused byte here */
 	short status;                   /* HTTP status from the server, negative if from proxy */
-	struct buffer *errmsg;          /* custom HTTP error message to use as reply */
+	struct http_reply *http_reply;  /* The HTTP reply to use as reply */
 
 	char cache_hash[20];               /* Store the cache hash  */
 	char *uri;                      /* first line if log needed, NULL otherwise */

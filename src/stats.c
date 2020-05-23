@@ -1016,19 +1016,10 @@ static int stats_dump_fields_html(struct buffer *out,
 
 		/* http response (via hover): 1xx, 2xx, 3xx, 4xx, 5xx, other */
 		if (strcmp(field_str(stats, ST_F_MODE), "http") == 0) {
-			unsigned long long tot;
-
-			tot  = stats[ST_F_HRSP_OTHER].u.u64;
-			tot += stats[ST_F_HRSP_1XX].u.u64;
-			tot += stats[ST_F_HRSP_2XX].u.u64;
-			tot += stats[ST_F_HRSP_3XX].u.u64;
-			tot += stats[ST_F_HRSP_4XX].u.u64;
-			tot += stats[ST_F_HRSP_5XX].u.u64;
-
 			chunk_appendf(out,
 			              "<tr><th>New connections:</th><td>%s</td></tr>"
 			              "<tr><th>Reused connections:</th><td>%s</td><td>(%d%%)</td></tr>"
-			              "<tr><th>Cum. HTTP responses:</th><td>%s</td></tr>"
+			              "<tr><th>Cum. HTTP requests:</th><td>%s</td></tr>"
 			              "<tr><th>- HTTP 1xx responses:</th><td>%s</td><td>(%d%%)</td></tr>"
 			              "<tr><th>- HTTP 2xx responses:</th><td>%s</td><td>(%d%%)</td></tr>"
 			              "<tr><th>- HTTP 3xx responses:</th><td>%s</td><td>(%d%%)</td></tr>"
@@ -1042,13 +1033,19 @@ static int stats_dump_fields_html(struct buffer *out,
 			              U2H(stats[ST_F_REUSE].u.u64),
 			              (stats[ST_F_CONNECT].u.u64 + stats[ST_F_REUSE].u.u64) ?
 			              (int)(100 * stats[ST_F_REUSE].u.u64 / (stats[ST_F_CONNECT].u.u64 + stats[ST_F_REUSE].u.u64)) : 0,
-			              U2H(tot),
-			              U2H(stats[ST_F_HRSP_1XX].u.u64), tot ? (int)(100 * stats[ST_F_HRSP_1XX].u.u64 / tot) : 0,
-			              U2H(stats[ST_F_HRSP_2XX].u.u64), tot ? (int)(100 * stats[ST_F_HRSP_2XX].u.u64 / tot) : 0,
-			              U2H(stats[ST_F_HRSP_3XX].u.u64), tot ? (int)(100 * stats[ST_F_HRSP_3XX].u.u64 / tot) : 0,
-			              U2H(stats[ST_F_HRSP_4XX].u.u64), tot ? (int)(100 * stats[ST_F_HRSP_4XX].u.u64 / tot) : 0,
-			              U2H(stats[ST_F_HRSP_5XX].u.u64), tot ? (int)(100 * stats[ST_F_HRSP_5XX].u.u64 / tot) : 0,
-			              U2H(stats[ST_F_HRSP_OTHER].u.u64), tot ? (int)(100 * stats[ST_F_HRSP_OTHER].u.u64 / tot) : 0,
+			              U2H(stats[ST_F_REQ_TOT].u.u64),
+			              U2H(stats[ST_F_HRSP_1XX].u.u64), stats[ST_F_REQ_TOT].u.u64 ?
+			              (int)(100 * stats[ST_F_HRSP_1XX].u.u64 / stats[ST_F_REQ_TOT].u.u64) : 0,
+			              U2H(stats[ST_F_HRSP_2XX].u.u64), stats[ST_F_REQ_TOT].u.u64 ?
+			              (int)(100 * stats[ST_F_HRSP_2XX].u.u64 / stats[ST_F_REQ_TOT].u.u64) : 0,
+			              U2H(stats[ST_F_HRSP_3XX].u.u64), stats[ST_F_REQ_TOT].u.u64 ?
+			              (int)(100 * stats[ST_F_HRSP_3XX].u.u64 / stats[ST_F_REQ_TOT].u.u64) : 0,
+			              U2H(stats[ST_F_HRSP_4XX].u.u64), stats[ST_F_REQ_TOT].u.u64 ?
+			              (int)(100 * stats[ST_F_HRSP_4XX].u.u64 / stats[ST_F_REQ_TOT].u.u64) : 0,
+			              U2H(stats[ST_F_HRSP_5XX].u.u64), stats[ST_F_REQ_TOT].u.u64 ?
+			              (int)(100 * stats[ST_F_HRSP_5XX].u.u64 / stats[ST_F_REQ_TOT].u.u64) : 0,
+			              U2H(stats[ST_F_HRSP_OTHER].u.u64), stats[ST_F_REQ_TOT].u.u64 ?
+			              (int)(100 * stats[ST_F_HRSP_OTHER].u.u64 / stats[ST_F_REQ_TOT].u.u64) : 0,
 			              U2H(stats[ST_F_WREW].u.u64),
 			              U2H(stats[ST_F_EINT].u.u64));
 		}
@@ -1613,6 +1610,8 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 	struct buffer *out = get_trash_chunk();
 	enum srv_stats_state state;
 	char *fld_status;
+	long long srv_samples_counter;
+	unsigned int srv_samples_window = TIME_STATS_SAMPLES;
 
 	if (len < ST_F_TOTAL_FIELDS)
 		return 0;
@@ -1796,6 +1795,7 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 
 	/* http response: 1xx, 2xx, 3xx, 4xx, 5xx, other */
 	if (px->mode == PR_MODE_HTTP) {
+		stats[ST_F_REQ_TOT]    = mkf_u64(FN_COUNTER, sv->counters.p.http.cum_req);
 		stats[ST_F_HRSP_1XX]   = mkf_u64(FN_COUNTER, sv->counters.p.http.rsp[1]);
 		stats[ST_F_HRSP_2XX]   = mkf_u64(FN_COUNTER, sv->counters.p.http.rsp[2]);
 		stats[ST_F_HRSP_3XX]   = mkf_u64(FN_COUNTER, sv->counters.p.http.rsp[3]);
@@ -1811,10 +1811,14 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 	stats[ST_F_SRV_ABRT] = mkf_u64(FN_COUNTER, sv->counters.srv_aborts);
 	stats[ST_F_LASTSESS] = mkf_s32(FN_AGE, srv_lastsession(sv));
 
-	stats[ST_F_QTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.q_time, TIME_STATS_SAMPLES));
-	stats[ST_F_CTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.c_time, TIME_STATS_SAMPLES));
-	stats[ST_F_RTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.d_time, TIME_STATS_SAMPLES));
-	stats[ST_F_TTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.t_time, TIME_STATS_SAMPLES));
+	srv_samples_counter = (px->mode == PR_MODE_HTTP) ? sv->counters.p.http.cum_req : sv->counters.cum_lbconn;
+	if (srv_samples_counter < TIME_STATS_SAMPLES && srv_samples_counter > 0)
+		srv_samples_window = srv_samples_counter;
+
+	stats[ST_F_QTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.q_time, srv_samples_window));
+	stats[ST_F_CTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.c_time, srv_samples_window));
+	stats[ST_F_RTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.d_time, srv_samples_window));
+	stats[ST_F_TTIME] = mkf_u32(FN_AVG, swrate_avg(sv->counters.t_time, srv_samples_window));
 
 	stats[ST_F_QT_MAX] = mkf_u32(FN_MAX, sv->counters.qtime_max);
 	stats[ST_F_CT_MAX] = mkf_u32(FN_MAX, sv->counters.ctime_max);
@@ -1872,6 +1876,9 @@ static int stats_dump_sv_stats(struct stream_interface *si, struct proxy *px, st
  */
 int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int len)
 {
+	long long be_samples_counter;
+	unsigned int be_samples_window = TIME_STATS_SAMPLES;
+
 	if (len < ST_F_TOTAL_FIELDS)
 		return 0;
 
@@ -1944,10 +1951,14 @@ int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int le
 	stats[ST_F_COMP_RSP]     = mkf_u64(FN_COUNTER, px->be_counters.p.http.comp_rsp);
 	stats[ST_F_LASTSESS]     = mkf_s32(FN_AGE, be_lastsession(px));
 
-	stats[ST_F_QTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.q_time, TIME_STATS_SAMPLES));
-	stats[ST_F_CTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.c_time, TIME_STATS_SAMPLES));
-	stats[ST_F_RTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.d_time, TIME_STATS_SAMPLES));
-	stats[ST_F_TTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.t_time, TIME_STATS_SAMPLES));
+	be_samples_counter = (px->mode == PR_MODE_HTTP) ? px->be_counters.p.http.cum_req : px->be_counters.cum_lbconn;
+	if (be_samples_counter < TIME_STATS_SAMPLES && be_samples_counter > 0)
+		be_samples_window = be_samples_counter;
+
+	stats[ST_F_QTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.q_time, be_samples_window));
+	stats[ST_F_CTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.c_time, be_samples_window));
+	stats[ST_F_RTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.d_time, be_samples_window));
+	stats[ST_F_TTIME]        = mkf_u32(FN_AVG, swrate_avg(px->be_counters.t_time, be_samples_window));
 
 	stats[ST_F_QT_MAX]       = mkf_u32(FN_MAX, px->be_counters.qtime_max);
 	stats[ST_F_CT_MAX]       = mkf_u32(FN_MAX, px->be_counters.ctime_max);

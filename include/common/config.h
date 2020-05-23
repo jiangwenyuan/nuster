@@ -26,35 +26,4 @@
 #include <common/compat.h>
 #include <common/defaults.h>
 
-/* CONFIG_HAP_MEM_OPTIM
- * This enables use of memory pools instead of malloc()/free(). There
- * is no reason to disable it, except perhaps for rare debugging.
- */
-#ifndef   CONFIG_HAP_NO_MEM_OPTIM
-#  define CONFIG_HAP_MEM_OPTIM
-#endif /* CONFIG_HAP_NO_MEM_OPTIM */
-
-#ifdef USE_THREAD
-#define THREAD_LOCAL __thread
-#else
-#define THREAD_LOCAL
-#endif
-
-/* On architectures supporting threads and double-word CAS, we can implement
- * lock-less memory pools. This isn't supported for debugging modes however.
- */
-#if defined(USE_THREAD) && defined(HA_HAVE_CAS_DW) && !defined(DEBUG_NO_LOCKLESS_POOLS) && !defined(DEBUG_UAF) && !defined(DEBUG_FAIL_ALLOC)
-#define CONFIG_HAP_LOCKLESS_POOLS
-#ifndef CONFIG_HAP_POOL_CACHE_SIZE
-#define CONFIG_HAP_POOL_CACHE_SIZE 524288
-#endif
-#endif
-
-/* CONFIG_HAP_INLINE_FD_SET
- * This makes use of inline FD_* macros instead of calling equivalent
- * functions. Benchmarks on a Pentium-M show that using functions is
- * generally twice as fast. So it's better to keep this option unset.
- */
-//#undef  CONFIG_HAP_INLINE_FD_SET
-
 #endif /* _COMMON_CONFIG_H */

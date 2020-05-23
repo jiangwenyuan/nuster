@@ -43,13 +43,16 @@ matrix:
     if: type == push
     compiler: clang
     env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1f CC=clang-9
-##################
-## temporarily disabled, until arm64 runners become stable
-#  - os: linux
-#    arch: arm64
-#    if: type == push
-#    compiler: clang
-#    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1f CC=clang-9
+  - os: linux
+    # The ARM64 build uses openssl and libssl-dev from Ubuntu repository. They come preinstalled by TravisCI!
+    arch: arm64
+    if: type == push
+    compiler: clang
+    env: TARGET=linux-glibc OPENSSL_VERSION=1.1.1f CC=clang-9 SSL_LIB=/usr/lib SSL_INC=/usr/include
+    install:
+      - git clone https://github.com/VTest/VTest.git ../vtest
+      # Special flags due to: https://github.com/vtest/VTest/issues/12
+      - make -C ../vtest FLAGS="-O2 -s -Wall"
   - os: linux
     arch: s390x
     if: type == push
@@ -72,16 +75,16 @@ matrix:
   - os: linux
     if: type == push
     compiler: clang
-    env: TARGET=linux-glibc LIBRESSL_VERSION=3.0.2 CC=clang-9
+    env: TARGET=linux-glibc LIBRESSL_VERSION=3.1.1 CC=clang-9
   - os: linux
     env: DEBUG_OPTIONS=""
     if: type == cron
     compiler: clang
-    env: TARGET=linux-glibc LIBRESSL_VERSION=2.9.2 CC=clang-9
+    env: TARGET=linux-glibc LIBRESSL_VERSION=3.0.2 CC=clang-9
   - os: linux
     if: type == cron
     compiler: clang
-    env: TARGET=linux-glibc LIBRESSL_VERSION=2.8.3 EXTRA_OBJS="contrib/prometheus-exporter/service-prometheus.o" CC=clang-9
+    env: TARGET=linux-glibc LIBRESSL_VERSION=2.9.2 EXTRA_OBJS="contrib/prometheus-exporter/service-prometheus.o" CC=clang-9
   - os: linux
     if: type == cron
     compiler: clang
@@ -99,8 +102,13 @@ matrix:
     compiler: clang
     env: TARGET=linux-glibc FLAGS="USE_SLZ=1 USE_PCRE2=1 USE_PCRE2_JIT=1 USE_LUA=1 USE_OPENSSL=1 USE_SYSTEMD=1 USE_WURFL=1 WURFL_INC=contrib/wurfl WURFL_LIB=contrib/wurfl USE_51DEGREES=1" CC=clang-9
     before_script:
-      - git clone http://git.1wt.eu/git/libslz.git/
+      - git clone https://github.com/wtarreau/libslz
       - cd libslz && make && make PREFIX=${HOME}/opt install && cd ..
+  allow_failures:
+  - os: linux
+    arch: arm64
+    if: type == push
+    compiler: clang
 
 install:
   - git clone https://github.com/VTest/VTest.git ../vtest
