@@ -34,13 +34,13 @@ typedef struct nst_store {
 
 
 static inline int
-nst_store_init(hpx_ist_t root, nst_store_t *store, nst_memory_t *memory) {
+nst_store_init(hpx_ist_t root, nst_store_t *store, nst_memory_t *memory, int clean_temp) {
 
     if(nst_ring_init(&store->ring, memory) != NST_OK) {
         return NST_ERR;
     }
 
-    if(nst_disk_init(root, &store->disk, memory) != NST_OK) {
+    if(nst_disk_init(root, &store->disk, memory, clean_temp) != NST_OK) {
         return NST_ERR;
     }
 

@@ -415,7 +415,7 @@ nst_nosql_init() {
         nuster.nosql->root   = global.nuster.nosql.root;
 
         if(nst_store_init(global.nuster.nosql.root, &nuster.nosql->store,
-                    global.nuster.nosql.memory) != NST_OK) {
+                    global.nuster.nosql.memory, global.nuster.nosql.clean_temp) != NST_OK) {
 
             ha_alert("Failed to init nuster nosql store.\n");
             exit(1);

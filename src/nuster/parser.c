@@ -615,6 +615,36 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
             continue;
         }
 
+        if(!strcmp(args[cur_arg], "clean-temp")) {
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: [%s] expects 'on' or 'off' as argument.\n", file, line,
+                        args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+
+                goto out;
+            }
+
+            if(!strcmp(args[cur_arg], "off")) {
+                global.nuster.cache.clean_temp = NST_STATUS_OFF;
+            } else if(!strcmp(args[cur_arg], "on")) {
+                global.nuster.cache.clean_temp = NST_STATUS_ON;
+            } else {
+                ha_alert("parsing [%s:%d]: [%s] only supports 'on' and 'off'.\n", file, line,
+                        args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+
+                goto out;
+            }
+
+            cur_arg++;
+
+            continue;
+        }
+
         ha_alert("parsing [%s:%d]: [%s] Unrecognized '%s'.\n", file, line, args[0], args[cur_arg]);
 
         err_code |= ERR_ALERT | ERR_FATAL;
@@ -845,6 +875,36 @@ nuster_parse_global_nosql(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "clean-temp")) {
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                ha_alert("parsing [%s:%d]: [%s] expects 'on' or 'off' as argument.\n", file, line,
+                        args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+
+                goto out;
+            }
+
+            if(!strcmp(args[cur_arg], "off")) {
+                global.nuster.nosql.clean_temp = NST_STATUS_OFF;
+            } else if(!strcmp(args[cur_arg], "on")) {
+                global.nuster.nosql.clean_temp = NST_STATUS_ON;
+            } else {
+                ha_alert("parsing [%s:%d]: [%s] only supports 'on' and 'off'.\n", file, line,
+                        args[0]);
+
+                err_code |= ERR_ALERT | ERR_FATAL;
+
+                goto out;
+            }
+
+            cur_arg++;
+
             continue;
         }
 
