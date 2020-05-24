@@ -411,7 +411,7 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf, nst_
     }
 #endif
 
-    if(http_find_header(htx, ist("Host"), &hdr, 0)) {
+    if(http_find_header(htx, ist("Host"), &hdr, 1)) {
         txn->req.host.ptr = buf->area + buf->data;
         txn->req.host.len = hdr.value.len;
 
