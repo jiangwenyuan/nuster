@@ -472,7 +472,7 @@ int nst_disk_read_path(nst_disk_data_t *data, hpx_ist_t path);
 int nst_disk_read_etag(nst_disk_data_t *data, hpx_ist_t etag);
 int nst_disk_read_last_modified(nst_disk_data_t *data, hpx_ist_t last_modified);
 
-int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory);
+int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory, int clean_temp);
 void nst_disk_load(nst_core_t *core);
 void nst_disk_cleanup(nst_core_t *core);
 

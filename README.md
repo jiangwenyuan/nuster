@@ -265,9 +265,9 @@ Define a customized HTTP method to purge, it is `PURGE` by default.
 
 **syntax:**
 
-*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
+*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
 
-*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n]*
+*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
 
 **default:** *none*
 
@@ -348,6 +348,14 @@ Master process will save `disk sync` cache data periodically.
 During one iteration no more than `disk-saver` data are checked and saved to disk if necessary (by default, 100).
 
 See [Store](#disk) for details.
+
+### clean-temp on|off
+
+Under the directory defined by `dir`, a temporary directory `.tmp` will be created to store temporary files.
+
+Use this option to determine whether or not to remove those temporary files on startup.
+
+By default, it is `off`.
 
 ## proxy: nuster cache|nosql
 

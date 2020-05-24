@@ -450,7 +450,7 @@ nst_cache_init() {
         nuster.cache->root   = global.nuster.cache.root;
 
         if(nst_store_init(global.nuster.cache.root, &nuster.cache->store,
-                    global.nuster.cache.memory) != NST_OK) {
+                    global.nuster.cache.memory, global.nuster.cache.clean_temp) != NST_OK) {
 
             ha_alert("Failed to init nuster cache store.\n");
             exit(1);

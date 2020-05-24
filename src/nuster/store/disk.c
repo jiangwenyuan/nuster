@@ -354,9 +354,7 @@ nst_disk_update_expire(char *file, uint64_t expire) {
 }
 
 int
-nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
-    nst_dirent_t  *de;
-    DIR           *tmp;
+nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory, int clean_temp) {
 
     if(root.len) {
         disk->memory = memory;
@@ -375,30 +373,35 @@ nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory) {
             return NST_ERR;
         }
 
-        /* remove files of tmp dir */
-        tmp = opendir(disk->file);
+        if(clean_temp == NST_STATUS_ON) {
+            /* remove files of tmp dir */
+            nst_dirent_t  *de;
+            DIR           *tmp;
 
-        if(!tmp) {
-            fprintf(stderr, "Open `%s` failed\n", disk->file);
+            tmp = opendir(disk->file);
 
-            return NST_ERR;
-        }
+            if(!tmp) {
+                fprintf(stderr, "Open `%s` failed\n", disk->file);
 
-        while((de = readdir(tmp)) != NULL) {
-            if(de->d_name[0] == '.') {
-                continue;
+                return NST_ERR;
             }
 
-            chunk_reset(&trash);
-            chunk_memcat(&trash, disk->file, nst_disk_path_base_len(root));
-            chunk_memcat(&trash, "/", 1);
-            chunk_memcat(&trash, de->d_name, strlen(de->d_name));
-            trash.area[trash.data++] = '\0';
+            while((de = readdir(tmp)) != NULL) {
+                if(de->d_name[0] == '.') {
+                    continue;
+                }
 
-            remove(trash.area);
+                chunk_reset(&trash);
+                chunk_memcat(&trash, disk->file, nst_disk_path_base_len(root));
+                chunk_memcat(&trash, "/", 1);
+                chunk_memcat(&trash, de->d_name, strlen(de->d_name));
+                trash.area[trash.data++] = '\0';
+
+                remove(trash.area);
+            }
+
+            closedir(tmp);
         }
-
-        closedir(tmp);
     }
 
     return NST_OK;
