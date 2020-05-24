@@ -115,7 +115,7 @@ nst_disk_path_base_len(hpx_ist_t root) {
 }
 
 /*
- * temp:  /.tmp/16bytes-timestamp + 16bytes-global.req_count + 8bytes-pid
+ * temp:  /.tmp/20-bytes-random + 20-bytes-timestamp
  * final: /5/5a/5ab66d8c3b4bdca6a5e9538943c40f6ba45beb7a   6 + 40 + 1
  */
 static inline int
