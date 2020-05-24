@@ -259,6 +259,15 @@ get_current_timestamp() {
     return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+static inline uint64_t
+get_current_timestamp_ns() {
+    struct timespec ts;
+
+    clock_gettime(CLOCK_REALTIME, &ts);
+
+    return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
+}
+
 const char *nst_parse_size(const char *text, uint64_t *ret);
 const char *nst_parse_time(const char *text, int len, unsigned *ret);
 

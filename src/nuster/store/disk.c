@@ -739,8 +739,8 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
         return NST_ERR;
     }
 
-    sprintf(data->file, "%s/.tmp/%016"PRIx64"%016u%04x", disk->root.ptr, get_current_timestamp(),
-            global.req_count, getpid());
+    sprintf(data->file, "%s/.tmp/%020"PRIx64"%020"PRIu64, disk->root.ptr, ha_random64(),
+            get_current_timestamp_ns());
 
     data->fd = nst_disk_data_create(data->file);
 
