@@ -338,6 +338,7 @@ nst_cache_handler(hpx_appctx_t *appctx) {
 
 void
 nst_cache_housekeeping() {
+    uint64_t  begin = get_current_timestamp();
     uint64_t  start;
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
@@ -385,8 +386,19 @@ nst_cache_housekeeping() {
         }
 
         start = get_current_timestamp();
+        ms    = 10;
 
-        while(disk_cleaner--) {
+        while(nuster.cache->store.disk.loaded && disk_saver--) {
+            nst_ring_store_sync(nuster.cache);
+
+            if(get_current_timestamp() - start >= ms) {
+                break;
+            }
+        }
+
+        start = get_current_timestamp();
+
+        while(nuster.cache->store.disk.loaded && disk_cleaner--) {
             nst_disk_cleanup(nuster.cache);
 
             if(get_current_timestamp() - start >= ms) {
@@ -394,22 +406,10 @@ nst_cache_housekeeping() {
             }
         }
 
-        start = get_current_timestamp();
-
-        while(disk_loader--) {
+        while(!nuster.cache->store.disk.loaded && disk_loader--) {
             nst_disk_load(nuster.cache);
 
-            if(get_current_timestamp() - start >= ms) {
-                break;
-            }
-        }
-
-        start = get_current_timestamp();
-
-        while(disk_saver--) {
-            nst_ring_store_sync(nuster.cache);
-
-            if(get_current_timestamp() - start >= ms) {
+            if(get_current_timestamp() - begin >= 500) {
                 break;
             }
         }

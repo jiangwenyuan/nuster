@@ -302,10 +302,10 @@ end:
 
 void
 nst_nosql_housekeeping() {
+    uint64_t  begin = get_current_timestamp();
     uint64_t  start;
 
     if(global.nuster.nosql.status == NST_STATUS_ON && master == 1) {
-
         int  dict_cleaner = global.nuster.nosql.dict_cleaner;
         int  data_cleaner = global.nuster.nosql.data_cleaner;
         int  disk_cleaner = global.nuster.nosql.disk_cleaner;
@@ -352,7 +352,17 @@ nst_nosql_housekeeping() {
         start = get_current_timestamp();
         ms    = 10;
 
-        while(disk_cleaner--) {
+        while(nuster.nosql->store.disk.loaded && disk_saver--) {
+            nst_ring_store_sync(nuster.nosql);
+
+            if(get_current_timestamp() - start >= ms) {
+                break;
+            }
+        }
+
+        start = get_current_timestamp();
+
+        while(nuster.nosql->store.disk.loaded && disk_cleaner--) {
             nst_disk_cleanup(nuster.nosql);
 
             if(get_current_timestamp() - start >= ms) {
@@ -360,25 +370,14 @@ nst_nosql_housekeeping() {
             }
         }
 
-        start = get_current_timestamp();
-
-        while(disk_loader--) {
+        while(!nuster.nosql->store.disk.loaded && disk_loader--) {
             nst_disk_load(nuster.nosql);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(get_current_timestamp() - begin >= 500) {
                 break;
             }
         }
 
-        start = get_current_timestamp();
-
-        while(disk_saver--) {
-            nst_ring_store_sync(nuster.nosql);
-
-            if(get_current_timestamp() - start >= ms) {
-                break;
-            }
-        }
     }
 }
 

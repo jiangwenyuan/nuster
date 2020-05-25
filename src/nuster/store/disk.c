@@ -566,7 +566,7 @@ nst_disk_load(nst_core_t *core) {
 
                 close(data.fd);
 
-                if(get_current_timestamp() - start >= 10) {
+                if(get_current_timestamp() - start >= 300) {
                     break;
                 }
             }
