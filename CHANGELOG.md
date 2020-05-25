@@ -1,5 +1,16 @@
 # nuster Changelog
 
+## 5.0.10.21 - 2020-05-25
+
+### Fixed
+
+* Improve disk load speed
+* Add clean-temp, remove temp file or not on startup
+* Use full search for Host header
+* Use a more random code to generate temp file
+* Fix fd leak, should use not equal instead of equal
+* Quit if open tmp dir failed and refine alert message
+
 ## 5.0.9.21 - 2020-05-20
 
 ### Fixed
