@@ -925,7 +925,10 @@ nst_cache_delete(nst_key_t *key) {
 
     if(entry) {
 
-        if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
+        if(entry->state == NST_DICT_ENTRY_STATE_VALID
+                || entry->state == NST_DICT_ENTRY_STATE_UPDATE
+                || entry->state == NST_DICT_ENTRY_STATE_STALE) {
+
             entry->state  = NST_DICT_ENTRY_STATE_INVALID;
             entry->expire = 0;
 
