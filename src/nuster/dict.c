@@ -361,7 +361,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     dict->used++;
 
     /* init entry */
-    if(expire * 1000 > get_current_timestamp()) {
+    if(expire == 0 || expire * 1000 > get_current_timestamp()) {
         entry->state = NST_DICT_ENTRY_STATE_VALID;
     } else {
         entry->state = NST_DICT_ENTRY_STATE_STALE;
