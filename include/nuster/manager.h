@@ -52,6 +52,7 @@ typedef struct nst_stats {
         uint64_t                fetch;
         uint64_t                hit;
         uint64_t                abort;
+        uint64_t                bypass;
         uint64_t                bytes;
     } cache;
 

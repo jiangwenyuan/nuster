@@ -804,6 +804,8 @@ stats.cache.total:              0
 stats.cache.hit:                0
 # The total number of MISS requests
 stats.cache.fetch:              0
+# The total number of bypass requests
+stats.cache.bypass:             0
 # The total number of aborted requests
 stats.cache.abort:              0
 # The total response size in bytes served by cache
