@@ -46,6 +46,7 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <sys/resource.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <syslog.h>
@@ -596,6 +597,8 @@ void hap_register_per_thread_free(int (*fct)())
 
 static void display_version()
 {
+	struct utsname utsname;
+
 	printf("nuster version %s\n", NUSTER_VERSION);
 	printf("Copyright (C) %s\n\n", NUSTER_COPYRIGHT);
 	printf("HA-Proxy version %s %s - https://haproxy.org/\n"
@@ -619,6 +622,10 @@ static void display_version()
 			printf("Known bugs: https://github.com/haproxy/haproxy/issues?q=is:issue+is:open\n");
 		else
 			printf("Known bugs: " PRODUCT_URL_BUGS "\n", base_version);
+	}
+
+	if (uname(&utsname) == 0) {
+		printf("Running on: %s %s %s %s\n", utsname.sysname, utsname.release, utsname.version, utsname.machine);
 	}
 }
 
@@ -2500,6 +2507,8 @@ void deinit(void)
 		free(p->conf.file);
 		free(p->id);
 		free(p->check_req);
+		free(p->check_hdrs);
+		free(p->check_body);
 		free(p->cookie_name);
 		free(p->cookie_domain);
 		free(p->cookie_attrs);
@@ -2635,23 +2644,11 @@ void deinit(void)
 		while (s) {
 			s_next = s->next;
 
-			task_destroy(s->check.task);
-			task_destroy(s->agent.task);
-
-			if (s->check.wait_list.tasklet)
-				tasklet_free(s->check.wait_list.tasklet);
-			if (s->agent.wait_list.tasklet)
-				tasklet_free(s->agent.wait_list.tasklet);
 
 			task_destroy(s->warmup);
 
 			free(s->id);
 			free(s->cookie);
-			free(s->check.bi.area);
-			free(s->check.bo.area);
-			free(s->agent.bi.area);
-			free(s->agent.bo.area);
-			free(s->agent.send_string);
 			free(s->hostname_dn);
 			free((char*)s->conf.file);
 			free(s->idle_conns);
@@ -2660,7 +2657,7 @@ void deinit(void)
 			free(s->idle_orphan_conns);
 			free(s->curr_idle_thr);
 
-			if (s->use_ssl || s->check.use_ssl) {
+			if (s->use_ssl == 1 || s->check.use_ssl == 1 || (s->proxy->options & PR_O_TCPCHK_SSL)) {
 				if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->destroy_srv)
 					xprt_get(XPRT_SSL)->destroy_srv(s);
 			}
@@ -2785,7 +2782,7 @@ void deinit(void)
 
 
 /* Runs the polling loop */
-static void run_poll_loop()
+void run_poll_loop()
 {
 	int next, wake;
 
@@ -2823,13 +2820,25 @@ static void run_poll_loop()
 		}
 
 		if (!wake) {
-			if (stopping)
+			int i;
+
+			if (stopping) {
 				_HA_ATOMIC_OR(&stopping_thread_mask, tid_bit);
+				/* notify all threads that stopping was just set */
+				for (i = 0; i < global.nbthread; i++)
+					if (((all_threads_mask & ~stopping_thread_mask) >> i) & 1)
+						wake_thread(i);
+			}
 
 			/* stop when there's nothing left to do */
 			if ((jobs - unstoppable_jobs) == 0 &&
-			    (stopping_thread_mask & all_threads_mask) == all_threads_mask)
+			    (stopping_thread_mask & all_threads_mask) == all_threads_mask) {
+				/* wake all threads waiting on jobs==0 */
+				for (i = 0; i < global.nbthread; i++)
+					if (((all_threads_mask & ~tid_bit) >> i) & 1)
+						wake_thread(i);
 				break;
+			}
 		}
 
 		/* The poller will ensure it returns around <next> */

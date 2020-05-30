@@ -10,6 +10,7 @@
  *
  */
 
+
 #include <signal.h>
 #include <time.h>
 #include <stdio.h>
@@ -54,9 +55,10 @@ void ha_thread_dump(struct buffer *buf, int thr, int calling_tid)
 	int stuck = !!(ha_thread_info[thr].flags & TI_FL_STUCK);
 
 	chunk_appendf(buf,
-	              "%c%cThread %-2u: act=%d glob=%d wq=%d rq=%d tl=%d tlsz=%d rqsz=%d\n"
+	              "%c%cThread %-2u: id=0x%llx act=%d glob=%d wq=%d rq=%d tl=%d tlsz=%d rqsz=%d\n"
 	              "             stuck=%d prof=%d",
 	              (thr == calling_tid) ? '*' : ' ', stuck ? '>' : ' ', thr + 1,
+		      ha_get_pthread_id(thr),
 		      thread_has_tasks(),
 	              !!(global_tasks_mask & thr_bit),
 	              !eb_is_empty(&task_per_thread[thr].timers),
@@ -83,6 +85,70 @@ void ha_thread_dump(struct buffer *buf, int thr, int calling_tid)
 
 	chunk_appendf(buf, "             curr_task=");
 	ha_task_dump(buf, sched->current, "             ");
+
+#ifdef USE_BACKTRACE
+	if (stuck) {
+		/* We only emit the backtrace for stuck threads in order not to
+		 * waste precious output buffer space with non-interesting data.
+		 */
+		struct buffer bak;
+		void *callers[100];
+		int j, nptrs;
+		void *addr;
+		int dump = 0;
+
+		nptrs = my_backtrace(callers, sizeof(callers)/sizeof(*callers));
+
+		/* The call backtrace_symbols_fd(callers, nptrs, STDOUT_FILENO)
+		   would produce similar output to the following: */
+
+		if (nptrs)
+			chunk_appendf(buf, "             call trace(%d):\n", nptrs);
+
+		for (j = 0; j < nptrs || dump < 2; j++) {
+			if (j == nptrs && !dump) {
+				/* we failed to spot the starting point of the
+				 * dump, let's start over dumping everything we
+				 * have.
+				 */
+				dump = 2;
+				j = 0;
+			}
+			bak = *buf;
+			dump_addr_and_bytes(buf, "             | ", callers[j], 8);
+			addr = resolve_sym_name(buf, ": ", callers[j]);
+			if (dump == 0) {
+				/* dump not started, will start *after*
+				 * ha_thread_dump_all_to_trash and ha_panic
+				 */
+				if (addr == ha_thread_dump_all_to_trash || addr == ha_panic)
+					dump = 1;
+				*buf = bak;
+				continue;
+			}
+
+			if (dump == 1) {
+				/* starting */
+				if (addr == ha_thread_dump_all_to_trash || addr == ha_panic) {
+					*buf = bak;
+					continue;
+				}
+				dump = 2;
+			}
+
+			if (dump == 2) {
+				/* dumping */
+				if (addr == run_poll_loop || addr == main || addr == process_runnable_tasks) {
+					dump = 3;
+					*buf = bak;
+					break;
+				}
+			}
+			/* OK, line dumped */
+			chunk_appendf(buf, "\n");
+		}
+	}
+#endif
 }
 
 
@@ -116,20 +182,9 @@ void ha_task_dump(struct buffer *buf, const struct task *task, const char *pfx)
 		              task->call_date ? (unsigned long long)(now_mono_time() - task->call_date) : 0,
 		              task->call_date ? " ns ago" : "");
 
-	chunk_appendf(buf, "%s"
-	              "  fct=%p=main%s%ld (%s) ctx=%p",
-	              pfx,
-	              task->process,
-		      ((void *)task->process - (void *)main) < 0 ? "" : "+",
-		      (long)((void *)task->process - (void *)main),
-	              task->process == process_stream ? "process_stream" :
-	              task->process == task_run_applet ? "task_run_applet" :
-	              task->process == si_cs_io_cb ? "si_cs_io_cb" :
-#ifdef USE_LUA
-		      task->process == hlua_process_task ? "hlua_process_task" :
-#endif
-		      "?",
-	              task->context);
+	chunk_appendf(buf, "%s  fct=%p(", pfx, task->process);
+	resolve_sym_name(buf, NULL, task->process);
+	chunk_appendf(buf,") ctx=%p", task->context);
 
 	if (task->process == task_run_applet && (appctx = task->context))
 		chunk_appendf(buf, "(%s)\n", appctx->applet->name);
@@ -660,6 +715,14 @@ static int init_debug()
 {
 	struct sigaction sa;
 
+#ifdef USE_BACKTRACE
+	/* calling backtrace() will access libgcc at runtime. We don't want to
+	 * do it after the chroot, so let's perform a first call to have it
+	 * ready in memory for later use.
+	 */
+	void *callers[1];
+	my_backtrace(callers, sizeof(callers)/sizeof(*callers));
+#endif
 	sa.sa_handler = NULL;
 	sa.sa_sigaction = debug_handler;
 	sigemptyset(&sa.sa_mask);

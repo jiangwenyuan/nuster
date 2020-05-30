@@ -712,7 +712,7 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_ABORT;
 			goto out;
 		}
-		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, 0);
+		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, 0, 1);
 	}
 	else if (strcmp(args[0], "log") == 0) {
 		if (init_peers_frontend(file, linenum, NULL, curpeers) != 0) {
@@ -821,9 +821,19 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 		 * The server address is parsed only if we are parsing a "peer" line,
 		 * or if we are parsing a "server" line and the current peer is not the local one.
 		 */
-		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, peer || !local_peer);
-		if (!curpeers->peers_fe->srv)
+		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, peer || !local_peer, 1);
+		if (!curpeers->peers_fe->srv) {
+			/* Remove the newly allocated peer. */
+			if (newpeer != curpeers->local) {
+				struct peer *p;
+
+				p = curpeers->remote;
+				curpeers->remote = curpeers->remote->next;
+				free(p->id);
+				free(p);
+			}
 			goto out;
+		}
 
 		/* If the peer address has just been parsed, let's copy it to <newpeer>
 		 * and initializes ->proto.
@@ -1150,9 +1160,8 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 				continue;
 
 			memset(sk, 0, sizeof(*sk));
-			sk = str2ip2(address, sk, 1);
-			if (!sk) {
-				ha_warning("parsing [/etc/resolv.conf:%d] : address '%s' could not be recognized, namerserver will be excluded.\n",
+			if (!str2ip2(address, sk, 1)) {
+				ha_warning("parsing [/etc/resolv.conf:%d] : address '%s' could not be recognized, nameserver will be excluded.\n",
 					   resolv_linenum, address);
 				err_code |= ERR_WARN;
 				continue;
@@ -1987,6 +1996,7 @@ next_line:
 					else {
 						ha_alert("parsing [%s:%d] : invalid or incomplete '\\x' sequence in '%s'.\n", file, linenum, args[0]);
 						err_code |= ERR_ALERT | ERR_FATAL;
+						goto next_line;
 					}
 				} else if (line[1] == '"') {
 					*line = '"';
@@ -2661,7 +2671,10 @@ int check_config_validity()
 					free(pxname);
 					continue;
 				}
-				/* simple string: free the expression and fall back to static rule */
+				/* Only one element in the list, a simple string: free the expression and
+				 * fall back to static rule
+				 */
+				LIST_DEL(&node->list);
 				free(node->arg);
 				free(node);
 			}
@@ -3193,7 +3206,7 @@ out_uri_auth_compat:
 			}
 
 			/* this will also properly set the transport layer for prod and checks */
-			if (newsrv->use_ssl || newsrv->check.use_ssl) {
+			if (newsrv->use_ssl == 1 || newsrv->check.use_ssl == 1 || (newsrv->proxy->options & PR_O_TCPCHK_SSL)) {
 				if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->prepare_srv)
 					cfgerr += xprt_get(XPRT_SSL)->prepare_srv(newsrv);
 			}
@@ -3205,9 +3218,6 @@ out_uri_auth_compat:
 				    newsrv->conf.file, newsrv->conf.line,
 				    proxy_type_str(curproxy), curproxy->id,
 				    newsrv->id);
-
-			/* set the check type on the server */
-			newsrv->check.type = curproxy->options2 & PR_O2_CHK_ANY;
 
 			if (newsrv->trackit) {
 				struct proxy *px;
@@ -3245,9 +3255,7 @@ out_uri_auth_compat:
 					goto next_srv;
 				}
 
-				if (!(srv->check.state & CHK_ST_CONFIGURED) &&
-				    !(srv->agent.state & CHK_ST_CONFIGURED) &&
-				    !srv->track && !srv->trackit) {
+				if (!srv->do_check && !srv->do_agent && !srv->track && !srv->trackit) {
 					ha_alert("config : %s '%s', server '%s': unable to use %s/%s for "
 						 "tracking as it does not have any check nor agent enabled.\n",
 						 proxy_type_str(curproxy), curproxy->id,
@@ -3957,7 +3965,7 @@ out_uri_auth_compat:
 				p = curpeers->remote;
 				while (p) {
 					if (p->srv) {
-						if (p->srv->use_ssl && xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->prepare_srv)
+						if (p->srv->use_ssl == 1 && xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->prepare_srv)
 							cfgerr += xprt_get(XPRT_SSL)->prepare_srv(p->srv);
 					}
 					p = p->next;

@@ -1540,6 +1540,12 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 
 	dataptr = message;
 
+	/* historically some messages used to already contain the trailing LF
+	 * or Zero. Let's remove all trailing LF or Zero
+	 */
+	while (size && ((dataptr[size-1] == '\n' || (dataptr[size-1] == 0))))
+		size--;
+
 	if (logsrv->type == LOG_TARGET_FD) {
 		/* the socket's address is a file descriptor */
 		plogfd = (int *)&((struct sockaddr_in *)&logsrv->addr)->sin_addr.s_addr;
@@ -1594,7 +1600,7 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 		hdr_ptr = hdr;
 		hdr_max = 3;
 		maxlen = logsrv->maxlen - hdr_max;
-		max = MIN(size, maxlen) - 1;
+		max = MIN(size, maxlen - 1);
 		goto send;
 
 	case LOG_FORMAT_RAW:
@@ -1602,7 +1608,7 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 		hdr_ptr = hdr = "";
 		hdr_max = 0;
 		maxlen = logsrv->maxlen;
-		max = MIN(size, maxlen) - 1;
+		max = MIN(size, maxlen - 1);
 		goto send;
 
 	default:
@@ -1686,7 +1692,7 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 		goto send;
 	}
 
-	max = MIN(size, maxlen - sd_max) - 1;
+	max = MIN(size, maxlen - sd_max - 1);
 send:
 	if (logsrv->addr.ss_family == AF_UNSPEC) {
 		/* the target is a file descriptor or a ring buffer */

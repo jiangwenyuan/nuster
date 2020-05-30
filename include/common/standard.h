@@ -22,6 +22,11 @@
 #ifndef _COMMON_STANDARD_H
 #define _COMMON_STANDARD_H
 
+#ifdef USE_BACKTRACE
+#define _GNU_SOURCE
+#include <execinfo.h>
+#endif
+
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
@@ -594,8 +599,12 @@ static inline const char *csv_enc(const char *str, int quote,
  * be shorter. If some forbidden characters are found, the conversion is
  * aborted, the string is truncated before the issue and non-zero is returned,
  * otherwise the operation returns non-zero indicating success.
+ * If the 'in_form' argument is non-nul the string is assumed to be part of
+ * an "application/x-www-form-urlencoded" encoded string, and the '+' will be
+ * turned to a space. If it's zero, this will only be done after a question
+ * mark ('?').
  */
-int url_decode(char *string);
+int url_decode(char *string, int in_form);
 
 /* This one is 6 times faster than strtoul() on athlon, but does
  * no check at all.
@@ -823,10 +832,10 @@ static inline unsigned int mul32hi(unsigned int a, unsigned int b)
  */
 static inline unsigned int div64_32(unsigned long long o1, unsigned int o2)
 {
-	unsigned int result;
+	unsigned long long result;
 #ifdef __i386__
 	asm("divl %2"
-	    : "=a" (result)
+	    : "=A" (result)
 	    : "A"(o1), "rm"(o2));
 #else
 	result = o1 / o2;
@@ -1492,8 +1501,35 @@ int dump_text(struct buffer *out, const char *buf, int bsize);
 int dump_binary(struct buffer *out, const char *buf, int bsize);
 int dump_text_line(struct buffer *out, const char *buf, int bsize, int len,
                    int *line, int ptr);
+void dump_addr_and_bytes(struct buffer *buf, const char *pfx, const void *addr, int n);
 void dump_hex(struct buffer *out, const char *pfx, const void *buf, int len, int unsafe);
 int may_access(const void *ptr);
+void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr);
+
+#if defined(USE_BACKTRACE)
+/* Note that this may result in opening libgcc() on first call, so it may need
+ * to have been called once before chrooting.
+ */
+static forceinline int my_backtrace(void **buffer, int max)
+{
+#ifdef HA_HAVE_WORKING_BACKTRACE
+	return backtrace(buffer, max);
+#else
+	const struct frame {
+		const struct frame *next;
+		void *ra;
+	} *frame;
+	int count;
+
+	frame = __builtin_frame_address(0);
+	for (count = 0; count < max && may_access(frame) && may_access(frame->ra);) {
+		buffer[count++] = frame->ra;
+		frame = frame->next;
+	}
+	return count;
+#endif
+}
+#endif
 
 /* same as realloc() except that ptr is also freed upon failure */
 static inline void *my_realloc2(void *ptr, size_t size)

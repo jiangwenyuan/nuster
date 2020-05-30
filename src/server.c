@@ -55,6 +55,7 @@ static int srv_apply_lastaddr(struct server *srv, int *err_code);
 static int srv_set_fqdn(struct server *srv, const char *fqdn, int dns_locked);
 static void srv_state_parse_line(char *buf, const int version, char **params, char **srv_params);
 static int srv_state_get_version(FILE *f);
+static void srv_cleanup_connections(struct server *srv);
 
 /* List head of all known server keywords */
 static struct srv_kw_list srv_keywords = {
@@ -1641,6 +1642,15 @@ static void srv_ssl_settings_cpy(struct server *srv, struct server *src)
 		srv->ssl_ctx.verify_host = strdup(src->ssl_ctx.verify_host);
 	if (src->ssl_ctx.ciphers != NULL)
 		srv->ssl_ctx.ciphers = strdup(src->ssl_ctx.ciphers);
+	if (src->ssl_ctx.options)
+		srv->ssl_ctx.options = src->ssl_ctx.options;
+	if (src->ssl_ctx.methods.flags)
+		srv->ssl_ctx.methods.flags = src->ssl_ctx.methods.flags;
+	if (src->ssl_ctx.methods.min)
+		srv->ssl_ctx.methods.min = src->ssl_ctx.methods.min;
+	if (src->ssl_ctx.methods.max)
+		srv->ssl_ctx.methods.max = src->ssl_ctx.methods.max;
+
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL)
 	if (src->ssl_ctx.ciphersuites != NULL)
 		srv->ssl_ctx.ciphersuites = strdup(src->ssl_ctx.ciphersuites);
@@ -1857,154 +1867,6 @@ struct server *new_server(struct proxy *proxy)
 	return srv;
 }
 
-/*
- * Validate <srv> server health-check settings.
- * Returns 0 if everything is OK, -1 if not.
- */
-static int server_healthcheck_validate(const char *file, int linenum, struct server *srv)
-{
-	struct tcpcheck_rule *r = NULL;
-	struct list *l;
-
-	/*
-	 * We need at least a service port, a check port or the first tcp-check rule must
-	 * be a 'connect' one when checking an IPv4/IPv6 server.
-	 */
-	if ((srv_check_healthcheck_port(&srv->check) != 0) ||
-	    (!is_inet_addr(&srv->check.addr) && (is_addr(&srv->check.addr) || !is_inet_addr(&srv->addr))))
-		return 0;
-
-	r = (struct tcpcheck_rule *)srv->proxy->tcpcheck_rules.n;
-	if (!r) {
-		ha_alert("parsing [%s:%d] : server %s has neither service port nor check port. "
-			 "Check has been disabled.\n",
-			 file, linenum, srv->id);
-		return -1;
-	}
-
-	/* search the first action (connect / send / expect) in the list */
-	l = &srv->proxy->tcpcheck_rules;
-	list_for_each_entry(r, l, list) {
-		if (r->action != TCPCHK_ACT_COMMENT)
-			break;
-	}
-
-	if ((r->action != TCPCHK_ACT_CONNECT) || !r->port) {
-		ha_alert("parsing [%s:%d] : server %s has neither service port nor check port "
-			 "nor tcp_check rule 'connect' with port information. Check has been disabled.\n",
-			 file, linenum, srv->id);
-		return -1;
-	}
-
-	/* scan the tcp-check ruleset to ensure a port has been configured */
-	l = &srv->proxy->tcpcheck_rules;
-	list_for_each_entry(r, l, list) {
-		if ((r->action == TCPCHK_ACT_CONNECT) && (!r->port)) {
-			ha_alert("parsing [%s:%d] : server %s has neither service port nor check port, "
-				 "and a tcp_check rule 'connect' with no port information. Check has been disabled.\n",
-				 file, linenum, srv->id);
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-/*
- * Initialize <srv> health-check structure.
- * Returns the error string in case of memory allocation failure, NULL if not.
- */
-static const char *do_health_check_init(struct server *srv, int check_type, int state)
-{
-	const char *ret;
-
-	if (!srv->do_check)
-		return NULL;
-
-	ret = init_check(&srv->check, check_type);
-	if (ret)
-		return ret;
-
-	srv->check.state |= state;
-	global.maxsock++;
-
-	return NULL;
-}
-
-static int server_health_check_init(const char *file, int linenum,
-                                    struct server *srv, struct proxy *curproxy)
-{
-	const char *ret;
-
-	if (!srv->do_check)
-		return 0;
-
-	if (srv->trackit) {
-		ha_alert("parsing [%s:%d]: unable to enable checks and tracking at the same time!\n",
-			 file, linenum);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	if (server_healthcheck_validate(file, linenum, srv) < 0)
-		return ERR_ALERT | ERR_ABORT;
-
-	/* note: check type will be set during the config review phase */
-	ret = do_health_check_init(srv, 0, CHK_ST_CONFIGURED | CHK_ST_ENABLED);
-	if (ret) {
-		ha_alert("parsing [%s:%d] : %s.\n", file, linenum, ret);
-		return ERR_ALERT | ERR_ABORT;
-	}
-
-	return 0;
-}
-
-/*
- * Initialize <srv> agent check structure.
- * Returns the error string in case of memory allocation failure, NULL if not.
- */
-static const char *do_server_agent_check_init(struct server *srv, int state)
-{
-	const char *ret;
-
-	if (!srv->do_agent)
-		return NULL;
-
-	ret = init_check(&srv->agent, PR_O2_LB_AGENT_CHK);
-	if (ret)
-		return ret;
-
-	if (!srv->agent.inter)
-		srv->agent.inter = srv->check.inter;
-
-	srv->agent.state |= state;
-	global.maxsock++;
-
-	return NULL;
-}
-
-static int server_agent_check_init(const char *file, int linenum,
-                                   struct server *srv, struct proxy *curproxy)
-{
-	const char *ret;
-
-	if (!srv->do_agent)
-		return 0;
-
-	if (!srv->agent.port) {
-		ha_alert("parsing [%s:%d] : server %s does not have agent port. Agent check has been disabled.\n",
-			  file, linenum, srv->id);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	ret = do_server_agent_check_init(srv, CHK_ST_CONFIGURED | CHK_ST_ENABLED | CHK_ST_AGENT);
-	if (ret) {
-		ha_alert("parsing [%s:%d] : %s.\n", file, linenum, ret);
-		return ERR_ALERT | ERR_ABORT;
-	}
-
-	return 0;
-}
-
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 static int server_sni_expr_init(const char *file, int linenum, char **args, int cur_arg,
                                 struct server *srv, struct proxy *proxy)
@@ -2034,11 +1896,20 @@ static int server_sni_expr_init(const char *file, int linenum, char **args, int 
 static int server_finalize_init(const char *file, int linenum, char **args, int cur_arg,
                                 struct server *srv, struct proxy *px)
 {
+#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 	int ret;
+#endif
 
-	if ((ret = server_health_check_init(file, linenum, srv, px)) != 0 ||
-	    (ret = server_agent_check_init(file, linenum, srv, px)) != 0) {
-		return ret;
+	if (srv->do_check && srv->trackit) {
+		ha_alert("parsing [%s:%d]: unable to enable checks and tracking at the same time!\n",
+			 file, linenum);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	if (srv->do_agent && !srv->agent.port) {
+		ha_alert("parsing [%s:%d] : server %s does not have agent port. Agent check has been disabled.\n",
+			  file, linenum, srv->id);
+		return ERR_ALERT | ERR_FATAL;
 	}
 
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
@@ -2108,9 +1979,6 @@ static int server_template_init(struct server *srv, struct proxy *px)
 	struct server *newsrv;
 
 	for (i = srv->tmpl_info.nb_low + 1; i <= srv->tmpl_info.nb_high; i++) {
-		int check_init_state;
-		int agent_init_state;
-
 		newsrv = new_server(px);
 		if (!newsrv)
 			goto err;
@@ -2126,14 +1994,6 @@ static int server_template_init(struct server *srv, struct proxy *px)
 #endif
 		/* Set this new server ID. */
 		srv_set_id_from_prefix(newsrv, srv->tmpl_info.prefix, i);
-
-		/* Initial checks states. */
-		check_init_state = CHK_ST_CONFIGURED | CHK_ST_ENABLED;
-		agent_init_state = CHK_ST_CONFIGURED | CHK_ST_ENABLED | CHK_ST_AGENT;
-
-		if (do_health_check_init(newsrv, px->options2 & PR_O2_CHK_ANY, check_init_state) ||
-		    do_server_agent_check_init(newsrv, agent_init_state))
-			goto err;
 
 		/* Linked backwards first. This will be restablished after parsing. */
 		newsrv->next = px->srv;
@@ -2156,7 +2016,7 @@ static int server_template_init(struct server *srv, struct proxy *px)
 	return i - srv->tmpl_info.nb_low;
 }
 
-int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy, struct proxy *defproxy, int parse_addr)
+int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy, struct proxy *defproxy, int parse_addr, int in_peers_section)
 {
 	struct server *newsrv = NULL;
 	const char *err = NULL;
@@ -2186,11 +2046,16 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 		/* There is no mandatory first arguments for default server. */
 		if (srv && parse_addr) {
 			if (!*args[2]) {
-				/* 'server' line number of argument check. */
-				ha_alert("parsing [%s:%d] : '%s' expects <name> and <addr>[:<port>] as arguments.\n",
-					  file, linenum, args[0]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
+				if (in_peers_section) {
+					return 0;
+				}
+				else {
+					/* 'server' line number of argument check. */
+					ha_alert("parsing [%s:%d] : '%s' expects <name> and <addr>[:<port>] as arguments.\n",
+						  file, linenum, args[0]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
 			}
 
 			err = invalid_char(args[1]);
@@ -4080,8 +3945,11 @@ const char *update_server_addr_port(struct server *s, const char *addr, const ch
 	}
 
 out:
-	if (changed)
+	if (changed) {
+		/* force connection cleanup on the given server */
+		srv_cleanup_connections(s);
 		srv_set_dyncookie(s);
+	}
 	if (updater)
 		chunk_appendf(msg, " by '%s'", updater);
 	chunk_appendf(msg, "\n");
@@ -5242,6 +5110,8 @@ static void srv_update_status(struct server *s)
 			if (s->onmarkeddown & HANA_ONMARKEDDOWN_SHUTDOWNSESSIONS)
 				srv_shutdown_streams(s, SF_ERR_DOWN);
 
+			/* force connection cleanup on the given server */
+			srv_cleanup_connections(s);
 			/* we might have streams queued on this server and waiting for
 			 * a connection. Those which are redispatchable will be queued
 			 * to another server or to the proxy itself.
@@ -5568,6 +5438,37 @@ struct task *srv_cleanup_toremove_connections(struct task *task, void *context, 
 	}
 
 	return task;
+}
+
+/* cleanup connections for a given server
+ * might be useful when going on forced maintenance or live changing ip/port
+ */
+static void srv_cleanup_connections(struct server *srv)
+{
+	struct connection *conn;
+	int did_remove;
+	int i;
+	int j;
+
+	HA_SPIN_LOCK(OTHER_LOCK, &idle_conn_srv_lock);
+	for (i = 0; i < global.nbthread; i++) {
+		did_remove = 0;
+		HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[i]);
+		for (j = 0; j < srv->curr_idle_conns; j++) {
+			conn = LIST_ELEM(srv->idle_conns[tid].n, struct connection *, list);
+			if (!conn)
+				conn = LIST_ELEM(srv->safe_conns[tid].n,
+						 struct connection *, list);
+			if (!conn)
+				break;
+			did_remove = 1;
+			MT_LIST_ADDQ(&toremove_connections[i], (struct mt_list *)&conn->list);
+		}
+		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[i]);
+		if (did_remove)
+			task_wakeup(idle_conn_cleanup[i], TASK_WOKEN_OTHER);
+	}
+	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conn_srv_lock);
 }
 
 struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsigned short state)

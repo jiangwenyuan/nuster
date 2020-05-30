@@ -10,6 +10,12 @@
  *
  */
 
+#ifdef __ELF__
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <link.h>
+#endif
+
 #include <ctype.h>
 #include <errno.h>
 #include <netdb.h>
@@ -31,7 +37,15 @@
 #include <common/standard.h>
 #include <common/tools.h>
 #include <types/global.h>
+#include <proto/applet.h>
 #include <proto/dns.h>
+#include <proto/hlua.h>
+#include <proto/listener.h>
+#include <proto/proto_udp.h>
+#include <proto/ssl_sock.h>
+#include <proto/stream_interface.h>
+#include <proto/task.h>
+
 #include <eb32tree.h>
 #include <eb32sctree.h>
 
@@ -1731,8 +1745,12 @@ const char *csv_enc_append(const char *str, int quote, struct buffer *output)
  * be shorter. If some forbidden characters are found, the conversion is
  * aborted, the string is truncated before the issue and a negative value is
  * returned, otherwise the operation returns the length of the decoded string.
+ * If the 'in_form' argument is non-nul the string is assumed to be part of
+ * an "application/x-www-form-urlencoded" encoded string, and the '+' will be
+ * turned to a space. If it's zero, this will only be done after a question
+ * mark ('?').
  */
-int url_decode(char *string)
+int url_decode(char *string, int in_form)
 {
 	char *in, *out;
 	int ret = -1;
@@ -1742,7 +1760,7 @@ int url_decode(char *string)
 	while (*in) {
 		switch (*in) {
 		case '+' :
-			*out++ = ' ';
+			*out++ = in_form ? ' ' : *in;
 			break;
 		case '%' :
 			if (!ishex(in[1]) || !ishex(in[2]))
@@ -1750,6 +1768,9 @@ int url_decode(char *string)
 			*out++ = (hex2i(in[1]) << 4) + hex2i(in[2]);
 			in += 2;
 			break;
+		case '?':
+			in_form = 1;
+			/* fall through */
 		default:
 			*out++ = *in;
 			break;
@@ -4192,6 +4213,31 @@ void dump_hex(struct buffer *out, const char *pfx, const void *buf, int len, int
 	}
 }
 
+/* dumps <pfx> followed by <n> bytes from <addr> in hex form into buffer <buf>
+ * enclosed in brackets after the address itself, formatted on 14 chars
+ * including the "0x" prefix. This is meant to be used as a prefix for code
+ * areas. For example:
+ *    "0x7f10b6557690 [48 c7 c0 0f 00 00 00 0f]"
+ * It relies on may_access() to know if the bytes are dumpable, otherwise "--"
+ * is emitted. A NULL <pfx> will be considered empty.
+ */
+void dump_addr_and_bytes(struct buffer *buf, const char *pfx, const void *addr, int n)
+{
+	int ok = 0;
+	int i;
+
+	chunk_appendf(buf, "%s%#14lx [", pfx ? pfx : "", (long)addr);
+
+	for (i = 0; i < n; i++) {
+		if (i == 0 || (((long)(addr + i) ^ (long)(addr)) & 4096))
+			ok = may_access(addr + i);
+		if (ok)
+			chunk_appendf(buf, "%02x%s", ((uint8_t*)addr)[i], (i<n-1) ? " " : "]");
+		else
+			chunk_appendf(buf, "--%s", (i<n-1) ? " " : "]");
+	}
+}
+
 /* print a line of text buffer (limited to 70 bytes) to <out>. The format is :
  * <2 spaces> <offset=5 digits> <space or plus> <space> <70 chars max> <\n>
  * which is 60 chars per line. Non-printable chars \t, \n, \r and \e are
@@ -4295,6 +4341,135 @@ void debug_hexdump(FILE *out, const char *pfx, const char *buf,
 		}
 		fputc('\n', out);
 	}
+}
+
+#ifdef __ELF__
+/* calls dladdr() or dladdr1() on <addr> and <dli>. If dladdr1 is available,
+ * also returns the symbol size in <size>, otherwise returns 0 there.
+ */
+static int dladdr_and_size(const void *addr, Dl_info *dli, size_t *size)
+{
+	int ret;
+#ifdef __USE_GNU // most detailed one
+	const ElfW(Sym) *sym;
+
+	ret = dladdr1(addr, dli, (void **)&sym, RTLD_DL_SYMENT);
+	if (ret)
+		*size = sym ? sym->st_size : 0;
+#else
+	ret = dladdr(addr, dli);
+	*size = 0;
+#endif
+	return ret;
+}
+#endif
+
+/* Tries to append to buffer <buf> some indications about the symbol at address
+ * <addr> using the following form:
+ *   lib:+0xoffset              (unresolvable address from lib's base)
+ *   main+0xoffset              (unresolvable address from main (+/-))
+ *   lib:main+0xoffset          (unresolvable lib address from main (+/-))
+ *   name                       (resolved exact exec address)
+ *   lib:name                   (resolved exact lib address)
+ *   name+0xoffset/0xsize       (resolved address within exec symbol)
+ *   lib:name+0xoffset/0xsize   (resolved address within lib symbol)
+ *
+ * The file name (lib or executable) is limited to what lies between the last
+ * '/' and the first following '.'. An optional prefix <pfx> is prepended before
+ * the output if not null. The file is not dumped when it's the same as the one
+ * that contains the "main" symbol, or when __ELF__ is not set.
+ *
+ * The symbol's base address is returned, or NULL when unresolved, in order to
+ * allow the caller to match it against known ones.
+ */
+void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr)
+{
+	const struct {
+		const void *func;
+		const char *name;
+	} fcts[] = {
+		{ .func = process_stream, .name = "process_stream" },
+		{ .func = task_run_applet, .name = "task_run_applet" },
+		{ .func = si_cs_io_cb, .name = "si_cs_io_cb" },
+		{ .func = conn_fd_handler, .name = "conn_fd_handler" },
+		{ .func = dgram_fd_handler, .name = "dgram_fd_handler" },
+		{ .func = listener_accept, .name = "listener_accept" },
+		{ .func = poller_pipe_io_handler, .name = "poller_pipe_io_handler" },
+		{ .func = mworker_accept_wrapper, .name = "mworker_accept_wrapper" },
+#ifdef USE_LUA
+		{ .func = hlua_process_task, .name = "hlua_process_task" },
+#endif
+#if defined(USE_OPENSSL) && (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+		{ .func = ssl_async_fd_free, .name = "ssl_async_fd_free" },
+		{ .func = ssl_async_fd_handler, .name = "ssl_async_fd_handler" },
+#endif
+	};
+
+#ifdef __ELF__
+	Dl_info dli, dli_main;
+	size_t size;
+	const char *fname, *p;
+#endif
+	int i;
+
+	if (pfx)
+		chunk_appendf(buf, "%s", pfx);
+
+	for (i = 0; i < sizeof(fcts) / sizeof(fcts[0]); i++) {
+		if (addr == fcts[i].func) {
+			chunk_appendf(buf, "%s", fcts[i].name);
+			return addr;
+		}
+	}
+
+#ifdef __ELF__
+	/* Now let's try to be smarter */
+	if (!dladdr_and_size(addr, &dli, &size))
+		goto unknown;
+
+	/* 1. prefix the library name if it's not the same object as the one
+	 * that contains the main function. The name is picked between last '/'
+	 * and first following '.'.
+	 */
+	if (!dladdr(main, &dli_main))
+		dli_main.dli_fbase = NULL;
+
+	if (dli_main.dli_fbase != dli.dli_fbase) {
+		fname = dli.dli_fname;
+		p = strrchr(fname, '/');
+		if (p++)
+			fname = p;
+		p = strchr(fname, '.');
+		if (!p)
+			p = fname + strlen(fname);
+
+		chunk_appendf(buf, "%.*s:", (int)(long)(p - fname), fname);
+	}
+
+	/* 2. symbol name */
+	if (dli.dli_sname) {
+		/* known, dump it and return symbol's address (exact or relative) */
+		chunk_appendf(buf, "%s", dli.dli_sname);
+		if (addr != dli.dli_saddr) {
+			chunk_appendf(buf, "+%#lx", (long)(addr - dli.dli_saddr));
+			if (size)
+				chunk_appendf(buf, "/%#lx", (long)size);
+		}
+		return dli.dli_saddr;
+	}
+	else if (dli_main.dli_fbase != dli.dli_fbase) {
+		/* unresolved symbol from a known library, report relative offset */
+		chunk_appendf(buf, "+%#lx", (long)(addr - dli.dli_fbase));
+		return NULL;
+	}
+#endif /* __ELF__ */
+ unknown:
+	/* unresolved symbol from the main file, report relative offset to main */
+	if ((void*)addr < (void*)main)
+		chunk_appendf(buf, "main-%#lx", (long)((void*)main - addr));
+	else
+		chunk_appendf(buf, "main+%#lx", (long)(addr - (void*)main));
+	return NULL;
 }
 
 /*

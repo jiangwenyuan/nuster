@@ -588,6 +588,12 @@ static void hlua_stktable_entry(lua_State *L, struct stktable *t, struct stksess
 			lua_pushinteger(L, read_freq_ctr_period(&stktable_data_cast(ptr, std_t_frqp),
 			                t->data_arg[dt].u));
 			break;
+		case STD_T_DICT: {
+			struct dict_entry *de;
+			de = stktable_data_cast(ptr, std_t_dict);
+			lua_pushstring(L, de ? (char *)de->value.key : "-");
+			break;
+		}
 		}
 
 		lua_settable(L, -3);
@@ -611,7 +617,7 @@ int hlua_stktable_lookup(lua_State *L)
 	t = hlua_check_stktable(L, 1);
 	smp.data.type = SMP_T_STR;
 	smp.flags = SMP_F_CONST;
-	smp.data.u.str.area = (char *)luaL_checkstring(L, 2);
+	smp.data.u.str.area = (char *)lua_tolstring(L, 2, &smp.data.u.str.data);
 
 	skey = smp_to_stkey(&smp, t);
 	if (!skey) {

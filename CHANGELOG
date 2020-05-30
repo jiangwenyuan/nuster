@@ -1,6 +1,98 @@
 ChangeLog :
 ===========
 
+2020/05/29 : 2.1.5
+    - BUG/MINOR: protocol_buffer: Wrong maximum shifting.
+    - MINOR: ssl: improve the errors when a crt can't be open
+    - BUG/MINOR: ssl/cli: memory leak in 'set ssl cert'
+    - BUG/MINOR: ssl: memleak of the struct cert_key_and_chain
+    - BUG/MINOR: connection: always send address-less LOCAL PROXY connections
+    - BUG/MINOR: peers: Incomplete peers sections should be validated.
+    - DOC: hashing: update link to hashing functions
+    - MINOR: version: Show uname output in display_version()
+    - DOC: Improve documentation on http-request set-src
+    - BUG/MINOR: ssl: default settings for ssl server options are not used
+    - BUG/MEDIUM: http-ana: Handle NTLM messages correctly.
+    - BUG/MINOR: tools: fix the i386 version of the div64_32 function
+    - BUG/MINOR: http: make url_decode() optionally convert '+' to SP
+    - DOC: option logasap does not depend on mode
+    - MEDIUM: memory: make pool_gc() run under thread isolation
+    - MINOR: contrib: make the peers wireshark dissector a plugin
+    - BUG/MINOR: check: Update server address and port to execute an external check
+    - MINOR: checks: Add a way to send custom headers and payload during http chekcs
+    - BUG/MINOR: checks: Respect the no-check-ssl option
+    - BUG/MEDIUM: server/checks: Init server check during config validity check
+    - BUG/MINOR: checks: chained expect will not properly wait for enough data
+    - BUG/MINOR: obj_type: Handle stream object in obj_base_ptr() function
+    - BUG/MINOR: mux-fcgi: Be sure to have a connection as session's origin to use it
+    - BUG/MEDIUM: capture: capture-req/capture-res converters crash without a stream
+    - BUG/MEDIUM: capture: capture.{req,res}.* crash without a stream
+    - BUG/MEDIUM: http: the "http_first_req" sample fetch could crash without a steeam
+    - BUG/MEDIUM: http: the "unique-id" sample fetch could crash without a steeam
+    - BUG/MEDIUM: sample: make the CPU and latency sample fetches check for a stream
+    - BUG/MEDIUM: listener: mark the thread as not stuck inside the loop
+    - MINOR: threads: export the POSIX thread ID in panic dumps
+    - BUG/MINOR: debug: properly use long long instead of long for the thread ID
+    - BUG/MEDIUM: shctx: really check the lock's value while waiting
+    - BUG/MEDIUM: shctx: bound the number of loops that can happen around the lock
+    - MINOR: stream: report the list of active filters on stream crashes
+    - MINOR: haproxy: export run_poll_loop
+    - MINOR: tools: add new function dump_addr_and_bytes()
+    - MINOR: tools: add resolve_sym_name() to resolve function pointers
+    - MINOR: debug: use resolve_sym_name() to dump task handlers
+    - MINOR: cli: make "show fd" rely on resolve_sym_name()
+    - MEDIUM: debug: add support for dumping backtraces of stuck threads
+    - MINOR: debug: call backtrace() once upon startup
+    - BUILD: Makefile: include librt before libpthread
+    - MINOR: wdt: do not depend on USE_THREAD
+    - MINOR: debug: report the number of entries in the backtrace
+    - MINOR: debug: improve backtrace() on aarch64 and possibly other systems
+    - MINOR: debug: use our own backtrace function on clang+x86_64
+    - MINOR: debug: dump the whole trace if we can't spot the starting point
+    - BUILD: tools: unbreak resolve_sym_name() on non-GNU platforms
+    - BUILD: tools: rely on __ELF__ not USE_DL to enable use of dladdr()
+    - BUILD: Makefile: add linux-musl to TARGET
+    - REGTEST: ssl: test the client certificate authentication
+    - REGTEST: http-rules: Require PCRE or PCRE2 option to run map_redirect script
+    - Revert "BUG/MINOR: connection: always send address-less LOCAL PROXY connections"
+    - Revert "BUG/MINOR: connection: make sure to correctly tag local PROXY connections"
+    - BUG/MINOR: checks/server: use_ssl member must be signed
+    - BUG/MINOR: checks: Compute the right HTTP request length for HTTP health checks
+    - BUG/MINOR: checks: Remove a warning about http health checks
+    - BUG/MEDIUM: mux_fcgi: Free the FCGI connection at the end of fcgi_release()
+    - BUG/MEDIUM: mux-fcgi: Fix wrong test on FCGI_CF_KEEP_CONN in fcgi_detach()
+    - BUG/MEDIUM: connections: force connections cleanup on server changes
+    - BUG/MEDIUM: h1: Don't compare host and authority if only h1 headers are parsed
+    - BUG/MEDIUM: ssl: fix the id length check within smp_fetch_ssl_fc_session_id()
+    - CLEANUP: connections: align function declaration
+    - BUG/MINOR: sample: Set the correct type when a binary is converted to a string
+    - BUG/MINOR: threads: fix multiple use of argument inside HA_ATOMIC_CAS()
+    - BUG/MINOR: threads: fix multiple use of argument inside HA_ATOMIC_UPDATE_{MIN,MAX}()
+    - BUG/MEDIUM: lua: Fix dumping of stick table entries for STD_T_DICT
+    - BUG/MINOR: config: Make use_backend and use-server post-parsing less obscur
+    - BUG/MINOR: http-ana: fix NTLM response parsing again
+    - BUG/MEDIUM: http_ana: make the detection of NTLM variants safer
+    - BUG/MINOR: cfgparse: Abort parsing the current line if an invalid \x sequence is encountered
+    - BUG/MINOR: pools: use %u not %d to report pool stats in "show pools"
+    - BUG/MINOR: pollers: remove uneeded free in global init
+    - BUG/MINOR: soft-stop: always wake up waiting threads on stopping
+    - BUILD: select: only declare existing local labels to appease clang
+    - BUG/MEDIUM: streams: Remove SF_ADDR_SET if we're retrying due to L7 retry.
+    - BUG/MEDIUM: stream: Only allow L7 retries when using HTTP.
+    - BUG/MINOR: cache: Don't needlessly test "cache" keyword in parse_cache_flt()
+    - BUG/MAJOR: mux-fcgi: Stop sending loop if FCGI stream is blocked for any reason
+    - BUG/MEDIUM: ring: write-lock the ring while attaching/detaching
+    - BUG/MINOR: checks: Respect check-ssl param when a port or an addr is specified
+    - BUG/MINOR: server: Fix server_finalize_init() to avoid unused variable
+    - DOC: retry-on can only be used with mode http
+    - DOC/MINOR: halog: Add long help info for ic flag
+    - DOC: SPOE is no longer experimental
+    - BUG/MINOR: logs: prevent double line returns in some events.
+    - REGTESTS: checks: Fix tls_health_checks when IPv6 addresses are used
+    - BUG/MEDIUM: logs: fix trailing zeros on log message.
+    - BUG/MINOR: lua: Add missing string length for lua sticktable lookup
+    - BUG/MINOR: nameservers: fix error handling in parsing of resolv.conf
+
 2020/04/02 : 2.1.4
     - SCRIPTS: make announce-release executable again
     - BUG/MINOR: namespace: avoid closing fd when socket failed in my_socketat

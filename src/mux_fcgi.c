@@ -862,6 +862,8 @@ static void fcgi_release(struct fcgi_conn *fconn)
 		if (conn && fconn->wait_event.events != 0)
 			conn->xprt->unsubscribe(conn, conn->xprt_ctx, fconn->wait_event.events,
 						&fconn->wait_event);
+
+		pool_free(pool_head_fcgi_conn, fconn);
 	}
 
 	if (conn) {
@@ -1242,7 +1244,7 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 	if (!(params->mask & FCGI_SP_SRV_PORT)) {
 		char *end;
 		int port = 0;
-		if (conn_get_dst(cli_conn))
+		if (cli_conn && conn_get_dst(cli_conn))
 			port = get_host_port(cli_conn->dst);
 		end = ultoa_o(port, b_tail(params->p), b_room(params->p));
 		if (!end)
@@ -1256,7 +1258,7 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 		if (!istlen(params->srv_name)) {
 			char *ptr = NULL;
 
-			if (conn_get_dst(cli_conn))
+			if (cli_conn && conn_get_dst(cli_conn))
 				if (addr_to_str(cli_conn->dst, b_tail(params->p), b_room(params->p)) != -1)
 					ptr = b_tail(params->p);
 			if (ptr) {
@@ -1268,7 +1270,7 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 	if (!(params->mask & FCGI_SP_REM_ADDR)) {
 		char *ptr = NULL;
 
-		if (conn_get_src(cli_conn))
+		if (cli_conn && conn_get_src(cli_conn))
 			if (addr_to_str(cli_conn->src, b_tail(params->p), b_room(params->p)) != -1)
 				ptr = b_tail(params->p);
 		if (ptr) {
@@ -1279,7 +1281,7 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 	if (!(params->mask & FCGI_SP_REM_PORT)) {
 		char *end;
 		int port = 0;
-		if (conn_get_src(cli_conn))
+		if (cli_conn && conn_get_src(cli_conn))
 			port = get_host_port(cli_conn->src);
 		end = ultoa_o(port, b_tail(params->p), b_room(params->p));
 		if (!end)
@@ -1309,7 +1311,8 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 	}
 #ifdef USE_OPENSSL
 	if (!(params->mask & FCGI_SP_HTTPS)) {
-		params->https = ssl_sock_is_ssl(cli_conn);
+		if (cli_conn)
+			params->https = ssl_sock_is_ssl(cli_conn);
 	}
 #endif
 	if ((params->mask & FCGI_SP_URI_MASK) != FCGI_SP_URI_MASK) {
@@ -1323,7 +1326,7 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 		chunk_memcat(params->p, path.ptr, path.len);
 		path.ptr = b_tail(params->p) - path.len;
 		path.ptr[path.len] = '\0';
-		len = url_decode(path.ptr);
+		len = url_decode(path.ptr, 0);
 		if (len < 0)
 			goto error;
 		path.len = len;
@@ -3491,7 +3494,7 @@ static void fcgi_detach(struct conn_stream *cs)
 	fcgi_strm_destroy(fstrm);
 
 	if (!(fconn->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) &&
-	    !(fconn->flags & FCGI_CF_KEEP_CONN)) {
+	    (fconn->flags & FCGI_CF_KEEP_CONN)) {
 		if (!fconn->conn->owner) {
 			fconn->conn->owner = sess;
 			if (!session_add_conn(sess, fconn->conn, fconn->conn->target)) {
@@ -3922,7 +3925,7 @@ static size_t fcgi_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t co
 	if (!(fstrm->flags & FCGI_SF_OUTGOING_DATA) && count)
 		fstrm->flags |= FCGI_SF_OUTGOING_DATA;
 
-	while (fstrm->state < FCGI_SS_HLOC && !(fconn->flags & FCGI_SF_BLK_ANY) &&
+	while (fstrm->state < FCGI_SS_HLOC && !(fstrm->flags & FCGI_SF_BLK_ANY) &&
 	       count && !htx_is_empty(htx)) {
 		blk = htx_get_head_blk(htx);
 		ALREADY_CHECKED(blk);

@@ -115,8 +115,8 @@ const struct extcheck_env extcheck_envs[EXTCHK_SIZE] = {
 	[EXTCHK_HAPROXY_PROXY_PORT]     = { "HAPROXY_PROXY_PORT",     EXTCHK_SIZE_EVAL_INIT },
 	[EXTCHK_HAPROXY_SERVER_NAME]    = { "HAPROXY_SERVER_NAME",    EXTCHK_SIZE_EVAL_INIT },
 	[EXTCHK_HAPROXY_SERVER_ID]      = { "HAPROXY_SERVER_ID",      EXTCHK_SIZE_EVAL_INIT },
-	[EXTCHK_HAPROXY_SERVER_ADDR]    = { "HAPROXY_SERVER_ADDR",    EXTCHK_SIZE_EVAL_INIT },
-	[EXTCHK_HAPROXY_SERVER_PORT]    = { "HAPROXY_SERVER_PORT",    EXTCHK_SIZE_EVAL_INIT },
+	[EXTCHK_HAPROXY_SERVER_ADDR]    = { "HAPROXY_SERVER_ADDR",    EXTCHK_SIZE_ADDR },
+	[EXTCHK_HAPROXY_SERVER_PORT]    = { "HAPROXY_SERVER_PORT",    EXTCHK_SIZE_UINT },
 	[EXTCHK_HAPROXY_SERVER_MAXCONN] = { "HAPROXY_SERVER_MAXCONN", EXTCHK_SIZE_EVAL_INIT },
 	[EXTCHK_HAPROXY_SERVER_CURCONN] = { "HAPROXY_SERVER_CURCONN", EXTCHK_SIZE_ULONG },
 };
@@ -1393,7 +1393,7 @@ static void __event_srv_chk_r(struct conn_stream *cs)
 	default:
 		/* good connection is enough for pure TCP check */
 		if ((conn->flags & CO_FL_CONNECTED) && !check->type) {
-			if (check->use_ssl)
+			if (check->use_ssl == 1)
 				set_server_check_status(check, HCHK_STATUS_L6OK, NULL);
 			else
 				set_server_check_status(check, HCHK_STATUS_L4OK, NULL);
@@ -1621,13 +1621,30 @@ static int connect_conn_chk(struct task *t)
 			memcpy(b_head(&check->bo) + 11, &gmt_time, 4);
 		}
 		else if ((check->type) == PR_O2_HTTP_CHK) {
-			if (s->proxy->options2 & PR_O2_CHK_SNDST)
-				b_putblk(&check->bo, trash.area,
-					 httpchk_build_status_header(s, trash.area, trash.size));
 			/* prevent HTTP keep-alive when "http-check expect" is used */
 			if (s->proxy->options2 & PR_O2_EXP_TYPE)
 				b_putist(&check->bo, ist("Connection: close\r\n"));
+
+			/* If there is a body, add its content-length */
+			if (s->proxy->check_body_len)
+				chunk_appendf(&check->bo, "Content-Length: %s\r\n", ultoa(s->proxy->check_body_len));
+
+			/* Add configured headers */
+			if (s->proxy->check_hdrs)
+				b_putblk(&check->bo, s->proxy->check_hdrs, s->proxy->check_hdrs_len);
+
+			/* Add send-state header */
+			if (s->proxy->options2 & PR_O2_CHK_SNDST)
+				b_putblk(&check->bo, trash.area,
+					 httpchk_build_status_header(s, trash.area, trash.size));
+
+			/* end-of-header */
 			b_putist(&check->bo, ist("\r\n"));
+
+			/* Add the body */
+			if (s->proxy->check_body)
+				b_putblk(&check->bo, s->proxy->check_body, s->proxy->check_body_len);
+
 			*b_tail(&check->bo) = '\0'; /* to make gdb output easier to read */
 		}
 	}
@@ -1947,14 +1964,21 @@ static int prepare_external_check(struct check *check)
 		goto err;
 	}
 
-	addr_to_str(&s->addr, buf, sizeof(buf));
-	check->argv[3] = strdup(buf);
+	if (!check->argv[1] || !check->argv[2]) {
+		ha_alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
+		goto err;
+	}
 
+	check->argv[3] = calloc(EXTCHK_SIZE_ADDR, sizeof(*check->argv[3]));
+	check->argv[4] = calloc(EXTCHK_SIZE_UINT, sizeof(*check->argv[4]));
+	if (!check->argv[3] || !check->argv[4]) {
+		ha_alert("Starting [%s:%s] check: out of memory.\n", px->id, s->id);
+		goto err;
+	}
+
+	addr_to_str(&s->addr, check->argv[3], EXTCHK_SIZE_ADDR);
 	if (s->addr.ss_family == AF_INET || s->addr.ss_family == AF_INET6)
-		snprintf(buf, sizeof(buf), "%u", s->svc_port);
-	else
-		*buf = 0;
-	check->argv[4] = strdup(buf);
+		snprintf(check->argv[4], EXTCHK_SIZE_UINT, "%u", s->svc_port);
 
 	for (i = 0; i < 5; i++) {
 		if (!check->argv[i]) {
@@ -2052,7 +2076,18 @@ static int connect_proc_chk(struct task *t)
 		}
 
 		environ = check->envp;
+
+		/* Update some environment variables and command args: curconn, server addr and server port */
 		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_CURCONN, ultoa_r(s->cur_sess, buf, sizeof(buf)));
+
+		addr_to_str(&s->addr, check->argv[3], EXTCHK_SIZE_ADDR);
+		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_ADDR, check->argv[3]);
+
+		*check->argv[4] = 0;
+		if (s->addr.ss_family == AF_INET || s->addr.ss_family == AF_INET6)
+			snprintf(check->argv[4], EXTCHK_SIZE_UINT, "%u", s->svc_port);
+		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_PORT, check->argv[4]);
+
 		haproxy_unblock_signals();
 		execvp(px->check_command, check->argv);
 		ha_alert("Failed to exec process for external health check: %s. Aborting.\n",
@@ -2351,7 +2386,7 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 		if (check->result == CHK_RES_UNKNOWN) {
 			/* good connection is enough for pure TCP check */
 			if ((conn->flags & CO_FL_CONNECTED) && !check->type) {
-				if (check->use_ssl)
+				if (check->use_ssl == 1)
 					set_server_check_status(check, HCHK_STATUS_L6OK, NULL);
 				else
 					set_server_check_status(check, HCHK_STATUS_L4OK, NULL);
@@ -3139,10 +3174,10 @@ static int tcpcheck_main(struct check *check)
 				goto out_end_tcpcheck;
 			}
 
+		tcpcheck_expect:
 			if (!done && (check->current_step->string != NULL) && (b_data(&check->bi) < check->current_step->string_len) )
 				continue; /* try to read more */
 
-		tcpcheck_expect:
 			if (check->current_step->string != NULL)
 				ret = my_memmem(contentptr, b_data(&check->bi), check->current_step->string, check->current_step->string_len) != NULL;
 			else if (check->current_step->expect_regex != NULL)
@@ -3301,6 +3336,10 @@ const char *init_check(struct check *check, int type)
 
 void free_check(struct check *check)
 {
+	task_destroy(check->task);
+	if (check->wait_list.tasklet)
+		tasklet_free(check->wait_list.tasklet);
+
 	free(check->bi.area);
 	free(check->bo.area);
 	if (check->cs) {
@@ -3432,7 +3471,6 @@ int init_email_alert(struct mailers *mls, struct proxy *p, char **err)
 		struct email_alertq *q     = &queues[i];
 		struct check        *check = &q->check;
 
-		task_destroy(check->task);
 		free_check(check);
 	}
 	free(queues);
@@ -3655,16 +3693,6 @@ int srv_check_healthcheck_port(struct check *chk)
 
 	srv = chk->server;
 
-	/* If neither a port nor an addr was specified and no check transport
-	 * layer is forced, then the transport layer used by the checks is the
-	 * same as for the production traffic. Otherwise we use raw_sock by
-	 * default, unless one is specified.
-	 */
-	if (!chk->port && !is_addr(&chk->addr)) {
-		chk->use_ssl |= (srv->use_ssl || (srv->proxy->options & PR_O_TCPCHK_SSL));
-		chk->send_proxy |= (srv->pp_opts);
-	}
-
 	/* by default, we use the health check port ocnfigured */
 	if (chk->port > 0)
 		return chk->port;
@@ -3690,6 +3718,132 @@ int srv_check_healthcheck_port(struct check *chk)
 }
 
 REGISTER_POST_CHECK(start_checks);
+
+static int init_srv_check(struct server *srv)
+{
+	const char *err;
+	struct tcpcheck_rule *r;
+	int ret = 0;
+
+	if (!srv->do_check)
+		goto out;
+
+
+	/* If neither a port nor an addr was specified and no check transport
+	 * layer is forced, then the transport layer used by the checks is the
+	 * same as for the production traffic. Otherwise we use raw_sock by
+	 * default, unless one is specified.
+	 */
+	if (!srv->check.port && !is_addr(&srv->check.addr)) {
+		if (!srv->check.use_ssl && srv->use_ssl != -1) {
+			srv->check.use_ssl = srv->use_ssl;
+			srv->check.xprt    = srv->xprt;
+		}
+		else if (srv->check.use_ssl == 1)
+			srv->check.xprt = xprt_get(XPRT_SSL);
+
+		srv->check.send_proxy |= (srv->pp_opts);
+	}
+	else if (srv->check.use_ssl == 1)
+		srv->check.xprt = xprt_get(XPRT_SSL);
+
+	/* validate <srv> server health-check settings */
+
+	/* We need at least a service port, a check port or the first tcp-check
+	 * rule must be a 'connect' one when checking an IPv4/IPv6 server.
+	 */
+	if ((srv_check_healthcheck_port(&srv->check) != 0) ||
+	    (!is_inet_addr(&srv->check.addr) && (is_addr(&srv->check.addr) || !is_inet_addr(&srv->addr))))
+		goto init;
+
+	if (!LIST_ISEMPTY(&srv->proxy->tcpcheck_rules)) {
+		ha_alert("config: %s '%s': server '%s' has neither service port nor check port.\n",
+			 proxy_type_str(srv->proxy), srv->proxy->id, srv->id);
+		ret |= ERR_ALERT | ERR_ABORT;
+		goto out;
+	}
+
+	/* search the first action (connect / send / expect) in the list */
+	r = get_first_tcpcheck_rule(&srv->proxy->tcpcheck_rules);
+	if (!r || (r->action != TCPCHK_ACT_CONNECT) || !r->port) {
+		ha_alert("config: %s '%s': server '%s' has neither service port nor check port "
+			 "nor tcp_check rule 'connect' with port information.\n",
+			 proxy_type_str(srv->proxy), srv->proxy->id, srv->id);
+		ret |= ERR_ALERT | ERR_ABORT;
+		goto out;
+	}
+
+	/* scan the tcp-check ruleset to ensure a port has been configured */
+	list_for_each_entry(r, &srv->proxy->tcpcheck_rules, list) {
+		if ((r->action == TCPCHK_ACT_CONNECT) && (!r->port)) {
+			ha_alert("config: %s '%s': server '%s' has neither service port nor check port, "
+				 "and a tcp_check rule 'connect' with no port information.\n",
+				 proxy_type_str(srv->proxy), srv->proxy->id, srv->id);
+			ret |= ERR_ALERT | ERR_ABORT;
+			goto out;
+		}
+	}
+
+  init:
+	err = init_check(&srv->check, srv->proxy->options2 & PR_O2_CHK_ANY);
+	if (err) {
+		ha_alert("config: %s '%s': unable to init check for server '%s' (%s).\n",
+			 proxy_type_str(srv->proxy), srv->proxy->id, srv->id, err);
+		ret |= ERR_ALERT | ERR_ABORT;
+		goto out;
+	}
+	srv->check.state |= CHK_ST_CONFIGURED | CHK_ST_ENABLED;
+	global.maxsock++;
+
+  out:
+	return ret;
+}
+
+static int init_srv_agent_check(struct server *srv)
+{
+	const char *err;
+	int ret = 0;
+
+	if (!srv->do_agent)
+		goto out;
+
+	err = init_check(&srv->agent, PR_O2_LB_AGENT_CHK);
+	if (err) {
+		ha_alert("config: %s '%s': unable to init agent-check for server '%s' (%s).\n",
+			 proxy_type_str(srv->proxy), srv->proxy->id, srv->id, err);
+		ret |= ERR_ALERT | ERR_ABORT;
+		goto out;
+	}
+
+	if (!srv->agent.inter)
+		srv->agent.inter = srv->check.inter;
+
+	srv->agent.state |= CHK_ST_CONFIGURED | CHK_ST_ENABLED | CHK_ST_AGENT;
+	global.maxsock++;
+
+  out:
+	return ret;
+}
+
+static void deinit_srv_check(struct server *srv)
+{
+	if (srv->do_check)
+		free_check(&srv->check);
+}
+
+
+static void deinit_srv_agent_check(struct server *srv)
+{
+	if (srv->do_agent)
+		free_check(&srv->agent);
+	free(srv->agent.send_string);
+}
+
+REGISTER_POST_SERVER_CHECK(init_srv_check);
+REGISTER_POST_SERVER_CHECK(init_srv_agent_check);
+
+REGISTER_SERVER_DEINIT(deinit_srv_check);
+REGISTER_SERVER_DEINIT(deinit_srv_agent_check);
 
 /*
  * Local variables:

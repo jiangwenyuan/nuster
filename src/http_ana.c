@@ -1394,6 +1394,7 @@ static __inline int do_l7_retry(struct stream *s, struct stream_interface *si)
 	res->flags &= ~(CF_READ_ERROR | CF_READ_TIMEOUT | CF_SHUTR | CF_EOI | CF_READ_NULL | CF_SHUTR_NOW);
 	res->analysers = 0;
 	si->flags &= ~(SI_FL_ERR | SI_FL_EXP | SI_FL_RXBLK_SHUT);
+	s->flags &= ~SF_ADDR_SET;
 	stream_choose_redispatch(s);
 	si->exp = TICK_ETERNITY;
 	res->rex = TICK_ETERNITY;
@@ -1799,10 +1800,17 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 
 		ctx.blk = NULL;
 		while (http_find_header(htx, hdr, &ctx, 0)) {
-			if ((ctx.value.len >= 9 && word_match(ctx.value.ptr, ctx.value.len, "Negotiate", 9)) ||
-			    (ctx.value.len >= 4 && word_match(ctx.value.ptr, ctx.value.len, "NTLM", 4))) {
+			/* If www-authenticate contains "Negotiate", "Nego2", or "NTLM",
+			 * possibly followed by blanks and a base64 string, the connection
+			 * is private. Since it's a mess to deal with, we only check for
+			 * values starting with "NTLM" or "Nego". Note that often multiple
+			 * headers are sent by the server there.
+			 */
+			if ((ctx.value.len >= 4 && strncasecmp(ctx.value.ptr, "Nego", 4) == 0) ||
+			    (ctx.value.len >= 4 && strncasecmp(ctx.value.ptr, "NTLM", 4) == 0)) {
 				sess->flags |= SESS_FL_PREFER_LAST;
 				srv_conn->flags |= CO_FL_PRIVATE;
+				break;
 			}
 		}
 	}

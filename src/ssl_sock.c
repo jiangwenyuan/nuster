@@ -3132,11 +3132,16 @@ static int ssl_sock_load_pem_into_ckch(const char *path, char *buf, struct cert_
 	} else {
 		/* reading from a file */
 		in = BIO_new(BIO_s_file());
-		if (in == NULL)
+		if (in == NULL) {
+			memprintf(err, "%sCan't allocate memory\n", err && *err ? *err : "");
 			goto end;
+		}
 
-		if (BIO_read_filename(in, path) <= 0)
+		if (BIO_read_filename(in, path) <= 0) {
+			memprintf(err, "%scannot open the file '%s'.\n",
+			          err && *err ? *err : "", path);
 			goto end;
+		}
 	}
 
 	/* Read Private Key */
@@ -3503,12 +3508,16 @@ void ckchs_free(struct ckch_store *ckchs)
 	if (ckchs->multi) {
 		int n;
 
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++)
+		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
 			ssl_sock_free_cert_key_and_chain_contents(&ckchs->ckch[n]);
+		}
+		free(ckchs->ckch);
+		ckchs->ckch = NULL;
 	} else
 #endif
 	{
 		ssl_sock_free_cert_key_and_chain_contents(ckchs->ckch);
+		free(ckchs->ckch);
 		ckchs->ckch = NULL;
 	}
 
@@ -5264,10 +5273,8 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 			return cfgerr;
 		}
 	}
-	if (srv->use_ssl)
+	if (srv->use_ssl == 1)
 		srv->xprt = &ssl_sock;
-	if (srv->check.use_ssl)
-		srv->check.xprt = &ssl_sock;
 
 	ctx = SSL_CTX_new(SSLv23_client_method());
 	if (!ctx) {
@@ -7998,7 +8005,7 @@ smp_fetch_ssl_fc_session_id(const struct arg *args, struct sample *smp, const ch
 		return 0;
 
 	smp->data.u.str.area = (char *)SSL_SESSION_get_id(ssl_sess, &len);
-	if (!smp->data.u.str.area || !smp->data.u.str.data)
+	if (!smp->data.u.str.area || !len)
 		return 0;
 
 	smp->data.u.str.data = len;
@@ -9246,7 +9253,7 @@ static int srv_parse_crt(char **args, int *cur_arg, struct proxy *px, struct ser
 /* parse the "no-check-ssl" server keyword */
 static int srv_parse_no_check_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
-	newsrv->check.use_ssl = 0;
+	newsrv->check.use_ssl = -1;
 	free(newsrv->ssl_ctx.ciphers);
 	newsrv->ssl_ctx.ciphers = NULL;
 	newsrv->ssl_ctx.options &= ~global_ssl.connect_default_ssloptions;
@@ -9273,7 +9280,7 @@ static int srv_parse_no_send_proxy_cn(char **args, int *cur_arg, struct proxy *p
 /* parse the "no-ssl" server keyword */
 static int srv_parse_no_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
-	newsrv->use_ssl = 0;
+	newsrv->use_ssl = -1;
 	free(newsrv->ssl_ctx.ciphers);
 	newsrv->ssl_ctx.ciphers = NULL;
 	return 0;
@@ -9348,6 +9355,16 @@ static int srv_parse_ssl(char **args, int *cur_arg, struct proxy *px, struct ser
 	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
 		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
 #endif
+	newsrv->ssl_ctx.options |= global_ssl.connect_default_ssloptions;
+	newsrv->ssl_ctx.methods.flags |= global_ssl.connect_default_sslmethods.flags;
+
+	if (!newsrv->ssl_ctx.methods.min)
+		newsrv->ssl_ctx.methods.min = global_ssl.connect_default_sslmethods.min;
+
+	if (!newsrv->ssl_ctx.methods.max)
+		newsrv->ssl_ctx.methods.max = global_ssl.connect_default_sslmethods.max;
+
+
 	return 0;
 }
 
@@ -10188,6 +10205,8 @@ static int cli_io_handler_commit_cert(struct appctx *appctx)
 
 					HA_RWLOCK_WRLOCK(SNI_LOCK, &ckchi->bind_conf->sni_lock);
 					list_for_each_entry_safe(sc0, sc0s, &ckchi->sni_ctx, by_ckch_inst) {
+						if (sc0->order == 0) /* we only free if it's the first inserted */
+							SSL_CTX_free(sc0->ctx);
 						ebmb_delete(&sc0->name);
 						LIST_DEL(&sc0->by_ckch_inst);
 						free(sc0);

@@ -412,6 +412,9 @@ static int smp_fetch_uniqueid(const struct arg *args, struct sample *smp, const 
 	if (LIST_ISEMPTY(&smp->sess->fe->format_unique_id))
 		return 0;
 
+	if (!smp->strm)
+		return 0;
+
 	if (!smp->strm->unique_id) {
 		if ((smp->strm->unique_id = pool_alloc(pool_head_uniqueid)) == NULL)
 			return 0;
@@ -1189,6 +1192,9 @@ static int smp_fetch_proto_http(const struct arg *args, struct sample *smp, cons
 /* return a valid test if the current request is the first one on the connection */
 static int smp_fetch_http_first_req(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	if (!smp->strm)
+		return 0;
+
 	smp->data.type = SMP_T_BOOL;
 	smp->data.u.sint = !(smp->strm->txn->flags & TX_NOT_FIRST);
 	return 1;
@@ -1333,12 +1339,16 @@ static int smp_fetch_http_auth_grp(const struct arg *args, struct sample *smp, c
  */
 static int smp_fetch_capture_req_hdr(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct proxy *fe = strm_fe(smp->strm);
+	struct proxy *fe;
 	int idx;
 
 	if (!args || args->type != ARGT_SINT)
 		return 0;
 
+	if (!smp->strm)
+		return 0;
+
+	fe = strm_fe(smp->strm);
 	idx = args->data.sint;
 
 	if (idx > (fe->nb_req_cap - 1) || smp->strm->req_cap == NULL || smp->strm->req_cap[idx] == NULL)
@@ -1357,12 +1367,16 @@ static int smp_fetch_capture_req_hdr(const struct arg *args, struct sample *smp,
  */
 static int smp_fetch_capture_res_hdr(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct proxy *fe = strm_fe(smp->strm);
+	struct proxy *fe;
 	int idx;
 
 	if (!args || args->type != ARGT_SINT)
 		return 0;
 
+	if (!smp->strm)
+		return 0;
+
+	fe = strm_fe(smp->strm);
 	idx = args->data.sint;
 
 	if (idx > (fe->nb_rsp_cap - 1) || smp->strm->res_cap == NULL || smp->strm->res_cap[idx] == NULL)
@@ -1380,9 +1394,13 @@ static int smp_fetch_capture_res_hdr(const struct arg *args, struct sample *smp,
 static int smp_fetch_capture_req_method(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct buffer *temp;
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 	char *ptr;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || !txn->uri)
 		return 0;
 
@@ -1405,10 +1423,14 @@ static int smp_fetch_capture_req_method(const struct arg *args, struct sample *s
 /* Extracts the path in the HTTP request, the txn->uri should be filled before the call  */
 static int smp_fetch_capture_req_uri(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 	struct ist path;
 	const char *ptr;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || !txn->uri)
 		return 0;
 
@@ -1443,8 +1465,12 @@ static int smp_fetch_capture_req_uri(const struct arg *args, struct sample *smp,
  */
 static int smp_fetch_capture_req_ver(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || txn->req.msg_state >= HTTP_MSG_BODY)
 		return 0;
 
@@ -1465,8 +1491,12 @@ static int smp_fetch_capture_req_ver(const struct arg *args, struct sample *smp,
  */
 static int smp_fetch_capture_res_ver(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
-	struct http_txn *txn = smp->strm->txn;
+	struct http_txn *txn;
 
+	if (!smp->strm)
+		return 0;
+
+	txn = smp->strm->txn;
 	if (!txn || txn->rsp.msg_state >= HTTP_MSG_BODY)
 		return 0;
 

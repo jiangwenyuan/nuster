@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.1
                              willy tarreau
-                              2020/04/02
+                              2020/05/29
 
 
 This document covers the configuration language as implemented in the version
@@ -4143,6 +4143,33 @@ http-check expect [!] <match> <pattern>
   See also : "option httpchk", "http-check disable-on-404"
 
 
+http-check send [hdr <name> <value>]* [body <string>]
+  Add a possible list of headers and/or a body to the request sent during HTTP
+  health checks.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+  Arguments :
+    hdr <name> <value>   adds the HTTP header field whose name is specified in
+                         <name> and whose value is defined by <value> to the
+                         request sent during HTTP health checks.
+
+    body <string>        add the body defined by <string> to the request sent
+                         sent during HTTP health checks. If defined, the
+                         "Content-Length" header is thus automatically added
+                         to the request.
+
+  In addition to the request line defined by the "option httpchk" directive,
+  this one is the valid way to add some headers and optionally a body to the
+  request sent during HTTP health checks. If a body is defined, the associate
+  "Content-Length" header is automatically added. The old trick consisting to
+  add headers after the version string on the "option httpchk" line is now
+  deprecated. Note also the "Connection: close" header is still added if a
+  "http-check expect" direcive is defined independently of this directive, just
+  like the state header if the directive "http-check send-state" is defined.
+
+  See also : "option httpchk", "http-check send-state" and "http-check expect"
+
+
 http-check send-state
   Enable emission of a state header with HTTP health checks
   May be used in sections :   defaults | frontend | listen | backend
@@ -4707,15 +4734,22 @@ http-request set-src <expr> [ { if | unless } <condition> ]
   This is used to set the source IP address to the value of specified
   expression. Useful when a proxy in front of HAProxy rewrites source IP, but
   provides the correct IP in a HTTP header; or you want to mask source IP for
-  privacy.
+  privacy. All subsequent calls to "src" fetch will return this value
+  (see example).
 
   Arguments :
     <expr>  Is a standard HAProxy expression formed by a sample-fetch followed
             by some converters.
 
+  See also "option forwardfor".
+
   Example:
     http-request set-src hdr(x-forwarded-for)
     http-request set-src src,ipmask(24)
+
+    # After the masking this will track connections
+    # based on the IP address with the last byte zeroed out.
+    http-request track-sc0 src
 
   When possible, set-src preserves the original source port as long as the
   address family allows it, otherwise the source port is set to 0.
@@ -6597,8 +6631,7 @@ option httpchk <method> <uri> <version>
     <version> is the optional HTTP version string. It defaults to "HTTP/1.0"
               but some servers might behave incorrectly in HTTP 1.0, so turning
               it to HTTP/1.1 may sometimes help. Note that the Host field is
-              mandatory in HTTP/1.1, and as a trick, it is possible to pass it
-              after "\r\n" following the version string.
+              mandatory in HTTP/1.1, use "http-check send" directive to add it.
 
   By default, server health checks only consist in trying to establish a TCP
   connection. When "option httpchk" is specified, a complete HTTP request is
@@ -6612,12 +6645,18 @@ option httpchk <method> <uri> <version>
   plain TCP backends. This is particularly useful to check simple scripts bound
   to some dedicated ports using the inetd daemon.
 
+  Note : For a while, there was no way to add headers or body in the request
+         used for HTTP health checks. So a workaround was to hide it at the end
+         of the version string with a "\r\n" after the version. It is now
+	 deprecated. The directive "http-check send" must be used instead.
+
   Examples :
       # Relay HTTPS traffic to Apache instance and check service availability
       # using HTTP request "OPTIONS * HTTP/1.1" on port 80.
       backend https_relay
           mode tcp
-          option httpchk OPTIONS * HTTP/1.1\r\nHost:\ www
+          option httpchk OPTIONS * HTTP/1.1
+          http-check send hdr Host www
           server apache1 192.168.1.1:443 check port 80
 
   See also : "option ssl-hello-chk", "option smtpchk", "option mysql-check",
@@ -6837,21 +6876,27 @@ no option log-separate-errors
 
 option logasap
 no option logasap
-  Enable or disable early logging of HTTP requests
+  Enable or disable early logging.
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    yes   |   yes  |   no
   Arguments : none
 
-  By default, HTTP requests are logged upon termination so that the total
-  transfer time and the number of bytes appear in the logs. When large objects
-  are being transferred, it may take a while before the request appears in the
-  logs. Using "option logasap", the request gets logged as soon as the server
-  sends the complete headers. The only missing information in the logs will be
-  the total number of bytes which will indicate everything except the amount
-  of data transferred, and the total time which will not take the transfer
-  time into account. In such a situation, it's a good practice to capture the
-  "Content-Length" response header so that the logs at least indicate how many
-  bytes are expected to be transferred.
+  By default, logs are emitted when all the log format variables and sample
+  fetches used in the definition of the log-format string return a value, or
+  when the session is terminated. This allows the built in log-format strings
+  to account for the transfer time, or the number of bytes in log messages.
+
+  When handling long lived connections such as large file transfers or RDP,
+  it may take a while for the request or connection to appear in the logs.
+  Using "option logasap", the log message is created as soon as the server
+  connection is established in mode tcp, or as soon as the server sends the
+  complete headers in mode http. Missing information in the logs will be the
+  total number of bytes which will only indicate the amount of data transfered
+  before the message was created and the total time which will not take the
+  remainder of the connection life or transfer time into account. For the case
+  of HTTP, it is good practice to capture the Content-Length response header
+  so that the logs at least indicate how many bytes are expected to be
+  transfered.
 
   Examples :
       listen http_proxy 0.0.0.0:80
@@ -7850,7 +7895,9 @@ retries <value>
 
 
 retry-on [list of keywords]
-  Specify when to attempt to automatically retry a failed request
+  Specify when to attempt to automatically retry a failed request.
+  This setting is only valid when "mode" is set to http and is silently ignored
+  otherwise.
   May be used in sections:    defaults | frontend | listen | backend
                                  yes   |    no    |   yes  |   yes
   Arguments :
@@ -13930,9 +13977,13 @@ upper
   sample fetch function or after a transformation keyword returning a string
   type. The result is of type string.
 
-url_dec
-  Takes an url-encoded string provided as input and returns the decoded
-  version as output. The input and the output are of type string.
+url_dec([<in_form>])
+  Takes an url-encoded string provided as input and returns the decoded version
+  as output. The input and the output are of type string. If the <in_form>
+  argument is set to a non-zero integer value, the input string is assumed to
+  be part of a form or query string and the '+' character will be turned into a
+  space (' '). Otherwise this will only happen after a question mark indicating
+  a query string ('?').
 
 ungrpc(<field_number>,[<field_type>])
   This extracts the protocol buffers message field in raw mode of an input binary
@@ -18007,10 +18058,6 @@ the Stream Processing Offload Protocol (SPOP).
 
 For all information about the SPOE configuration and the SPOP specification, see
 "doc/SPOE.txt".
-
-Important note:
-    The SPOE filter is highly experimental for now and was not heavily
-    tested. It is really not production ready. So use it carefully.
 
 9.4. Cache
 ----------

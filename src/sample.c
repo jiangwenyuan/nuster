@@ -621,6 +621,7 @@ static int c_bin2str(struct sample *smp)
 			break;
 		}
 	}
+	smp->data.type = SMP_T_STR;
 	return 1;
 }
 
@@ -3144,6 +3145,9 @@ smp_fetch_stopping(const struct arg *args, struct sample *smp, const char *kw, v
 static int
 smp_fetch_cpu_calls(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	if (!smp->strm)
+		return 0;
+
 	smp->data.type = SMP_T_SINT;
 	smp->data.u.sint = smp->strm->task->calls;
 	return 1;
@@ -3153,6 +3157,9 @@ smp_fetch_cpu_calls(const struct arg *args, struct sample *smp, const char *kw, 
 static int
 smp_fetch_cpu_ns_avg(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	if (!smp->strm)
+		return 0;
+
 	smp->data.type = SMP_T_SINT;
 	smp->data.u.sint = smp->strm->task->calls ? smp->strm->task->cpu_time / smp->strm->task->calls : 0;
 	return 1;
@@ -3162,6 +3169,9 @@ smp_fetch_cpu_ns_avg(const struct arg *args, struct sample *smp, const char *kw,
 static int
 smp_fetch_cpu_ns_tot(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	if (!smp->strm)
+		return 0;
+
 	smp->data.type = SMP_T_SINT;
 	smp->data.u.sint = smp->strm->task->cpu_time;
 	return 1;
@@ -3171,6 +3181,9 @@ smp_fetch_cpu_ns_tot(const struct arg *args, struct sample *smp, const char *kw,
 static int
 smp_fetch_lat_ns_avg(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	if (!smp->strm)
+		return 0;
+
 	smp->data.type = SMP_T_SINT;
 	smp->data.u.sint = smp->strm->task->calls ? smp->strm->task->lat_time / smp->strm->task->calls : 0;
 	return 1;
@@ -3180,6 +3193,9 @@ smp_fetch_lat_ns_avg(const struct arg *args, struct sample *smp, const char *kw,
 static int
 smp_fetch_lat_ns_tot(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
+	if (!smp->strm)
+		return 0;
+
 	smp->data.type = SMP_T_SINT;
 	smp->data.u.sint = smp->strm->task->lat_time;
 	return 1;

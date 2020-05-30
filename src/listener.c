@@ -1021,6 +1021,7 @@ void listener_accept(int fd)
 		}
 #endif
 
+		ti->flags &= ~TI_FL_STUCK; // this thread is still running
 	} /* end of for (max_accept--) */
 
 	/* we've exhausted max_accept, so there is no need to poll again */

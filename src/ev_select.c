@@ -249,13 +249,12 @@ static void deinit_select_per_thread()
  */
 REGPRM1 static int _do_init(struct poller *p)
 {
-	__label__ fail_swevt, fail_srevt, fail_revt;
 	int fd_set_bytes;
 
 	p->private = NULL;
 
 	if (global.maxsock > FD_SETSIZE)
-		goto fail_revt;
+		goto fail_srevt;
 
 	fd_set_bytes = sizeof(fd_set) * (global.maxsock + FD_SETSIZE - 1) / FD_SETSIZE;
 
@@ -272,9 +271,6 @@ REGPRM1 static int _do_init(struct poller *p)
  fail_swevt:
 	free(fd_evts[DIR_RD]);
  fail_srevt:
-	free(tmp_evts[DIR_WR]);
-	free(tmp_evts[DIR_RD]);
- fail_revt:
 	p->pref = 0;
 	return 0;
 }
