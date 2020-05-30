@@ -37,6 +37,9 @@ nst_stats_update_cache(int state, uint64_t bytes) {
         case NST_CTX_STATE_DONE:
             global.nuster.stats->cache.fetch++;
             break;
+        case NST_CTX_STATE_BYPASS:
+            global.nuster.stats->cache.bypass++;
+            break;
         default:
             break;
     }
@@ -316,6 +319,9 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.fetch:",
                 global.nuster.stats->cache.fetch);
+
+        chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.bypass:",
+                global.nuster.stats->cache.bypass);
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "stats.cache.abort:",
                 global.nuster.stats->cache.abort);

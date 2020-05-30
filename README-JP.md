@@ -773,6 +773,7 @@ store.disk.nosql.loaded:        yes
 stats.cache.total:              0
 stats.cache.hit:                0
 stats.cache.fetch:              0
+stats.cache.bypass:             0
 stats.cache.abort:              0
 stats.cache.bytes:              0
 stats.nosql.total:              0
