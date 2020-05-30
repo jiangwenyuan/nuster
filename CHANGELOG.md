@@ -1,5 +1,14 @@
 # nuster Changelog
 
+## 5.0.11.21 - 2020-05-30
+
+backported HAProxy v2.1.5
+
+### Fixed
+
+* Delete entry state of update or stale
+* Entry state is set to stale when expire is 0.
+
 ## 5.0.10.21 - 2020-05-25
 
 ### Fixed
@@ -41,43 +50,43 @@
 
 ### Fixed
 
-Fix premature end of nosql engine
-Support etag/last-modified in nosql mode
-[nosql] Handle backend server abort
-Improve disk cache performance by indicating
-Change disk.offset to 64 bits to support files greater than 4gb
-Remove unnecessary task wake
-Update debug info, correct create failed message
-Handle backend server abort
-Incorrect nosql vars in cache engine
+* Fix premature end of nosql engine
+* Support etag/last-modified in nosql mode
+* [nosql] Handle backend server abort
+* Improve disk cache performance by indicating
+* Change disk.offset to 64 bits to support files greater than 4gb
+* Remove unnecessary task wake
+* Update debug info, correct create failed message
+* Handle backend server abort
+* Incorrect nosql vars in cache engine
 
 ### Added
 
-Enable extend in nosql mode
-Support etag last-modified in nosql mode
-Check disk version
-Move update_nosql_stat to filter header
-Add etag and last_modified flag into ctx
-Save etag and last_modified flag into disk
-Move etag/last-modified handler to http
-Check max ttl and wait
-Update wait format, use on/off
+* Enable extend in nosql mode
+* Support etag last-modified in nosql mode
+* Check disk version
+* Move update_nosql_stat to filter header
+* Add etag and last_modified flag into ctx
+* Save etag and last_modified flag into disk
+* Move etag/last-modified handler to http
+* Check max ttl and wait
+* Update wait format, use on/off
 
 ## 5.0.6.21 - 2020-05-05
 
 ### Fixed
 
-Fix incorrect header_len and payload_len in sync mode
-Reduce disk padding in stats proxy rule
-Remove stats.nosql.abort
+* Fix incorrect header_len and payload_len in sync mode
+* Reduce disk padding in stats proxy rule
+* Remove stats.nosql.abort
 
 ### Added
 
-Support wait for identical requests to cache
-Add wait to rule
-Add a mechanism to speed up the data clean process
-Record invalid ring.data count
-Add store into dict and add ring.invalid
+* Support wait for identical requests to cache
+* Add wait to rule
+* Add a mechanism to speed up the data clean process
+* Record invalid ring.data count
+* Add store into dict and add ring.invalid
 
 ## 5.0.5.21 - 2020-05-03
 
