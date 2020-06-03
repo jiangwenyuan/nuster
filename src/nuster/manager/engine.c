@@ -177,7 +177,13 @@ nst_manager(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
                 hdr.blk = NULL;
                 if(http_find_header(htx, ist("ttl"), &hdr, 0)) {
-                    nst_parse_time(hdr.value.ptr, hdr.value.len, (unsigned *)&ttl);
+                    int  ret = nst_parse_time(hdr.value.ptr, hdr.value.len, (unsigned *)&ttl);
+
+                    if(ret == NST_TIME_ERR) {
+                        ttl = -1;
+                    } else if(ret == NST_TIME_OVER) {
+                        ttl = INT_MAX;
+                    }
                 }
 
                 return _nst_manager_set_state_ttl(s, req, px, state, ttl);

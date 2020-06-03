@@ -111,6 +111,12 @@ enum {
 };
 
 enum {
+    NST_TIME_OK          = 0,
+    NST_TIME_OVER        = 1,
+    NST_TIME_ERR         = 2,
+};
+
+enum {
     NST_STORE_MEMORY_ON         = 0x0001,
     NST_STORE_MEMORY_OFF        = 0x0002,
     NST_STORE_DISK_ON           = 0x0004,
@@ -180,7 +186,7 @@ typedef struct nst_rule_config {
     nst_rule_key_t             key;
     nst_rule_code_t           *code;          /* code */
     uint8_t                    store;
-    uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
+    int                        ttl;           /* ttl: seconds, 0: not expire, -1: auto */
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
     int                        wait;          /* -1: not wait, 0: wait forever, > 0, wait seconds */
@@ -217,10 +223,10 @@ typedef struct nst_rule_config {
 typedef struct nst_rule_prop {
     hpx_ist_t                  pid;           /* proxy name */
     hpx_ist_t                  rid;           /* rule name */
-    uint32_t                   ttl;           /* ttl: seconds, 0: not expire */
     uint8_t                    store;
-    int                        etag;          /* etag on|off */
-    int                        last_modified; /* last_modified on|off */
+    int                        ttl;
+    int                        etag;
+    int                        last_modified;
     uint8_t                    extend[4];
     int                        wait;
     int                        stale;
@@ -269,7 +275,7 @@ get_current_timestamp_ns() {
 }
 
 const char *nst_parse_size(const char *text, uint64_t *ret);
-const char *nst_parse_time(const char *text, int len, unsigned *ret);
+int nst_parse_time(const char *text, int len, uint32_t *ret);
 
 void nst_debug(hpx_stream_t *s, const char *fmt, ...);
 void nst_debug_beg(hpx_stream_t *s, const char *fmt, ...);
