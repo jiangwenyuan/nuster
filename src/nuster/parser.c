@@ -236,25 +236,32 @@ end:
 
 /*
  * Parse time
+ * The value is returned in ret if everything is fine, and a NST_TIME_OK is returned
+ * 0 <= ret < 2^31(2147483648)
+ * If the value is equal to or greater than 2^31, NST_TIME_OVER is returned.
+ * If the value is equal to or greater than 2^64, NST_TIME_UNDER is returned.
+ * NST_TIME_ERR is returned in case of error
  */
-const char *
-nst_parse_time(const char *text, int len, unsigned *ret) {
-    unsigned  imult, idiv, omult, odiv;
-    unsigned  value;
+int
+nst_parse_time(const char *text, int len, uint32_t *ret) {
+    uint64_t  imult, idiv, omult, odiv;
+    uint64_t  value, result;
+    int       text_len = len;
 
     if(*text - '0' > 9) {
-        return text;
+        return NST_TIME_ERR;
     }
 
     omult = odiv = imult = idiv = 1;
     value = 0;
 
     while(len--) {
-        unsigned int j;
+        unsigned int  j;
 
         j = *text - '0';
 
         if(j > 9) {
+
             switch(*text) {
                 case 's':
                     break;
@@ -268,9 +275,10 @@ nst_parse_time(const char *text, int len, unsigned *ret) {
                     imult = 86400;
                     break;
                 default:
-                    return text;
+                    return NST_TIME_ERR;
                     break;
             }
+
             break;
         }
 
@@ -280,7 +288,11 @@ nst_parse_time(const char *text, int len, unsigned *ret) {
     }
 
     if(len > 0) {
-        return text;
+        return NST_TIME_ERR;
+    }
+
+    if(text_len > strlen("2147483648d")) {
+        return NST_TIME_OVER;
     }
 
     if(omult % idiv == 0) {
@@ -303,10 +315,15 @@ nst_parse_time(const char *text, int len, unsigned *ret) {
         imult  = 1;
     }
 
-    value = (value * (imult * omult) + (idiv * odiv - 1)) / (idiv * odiv);
-    *ret = value;
+    result = (value * (imult * omult) + (idiv * odiv - 1)) / (idiv * odiv);
 
-    return NULL;
+    if(result >= 0x80000000) {
+        return NST_TIME_OVER;
+    }
+
+    *ret = result;
+
+    return NST_TIME_OK;
 }
 
 int
@@ -1051,7 +1068,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
     uint8_t     extend[4] = { -1 };
     int         cur_arg   = 2;
 
-    memory = ttl = disk = etag = last_modified = wait = stale = -1;
+    memory = disk = etag = last_modified = wait = stale = -1;
+    ttl = -2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
         memprintf(err, "rule is not allowed in a 'frontend' or 'defaults' section.");
@@ -1095,7 +1113,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
 
         if(!strcmp(args[cur_arg], "ttl")) {
 
-            if(ttl != -1) {
+            if(ttl != -2) {
                 memprintf(err, "[%s.%s]: ttl already specified.", args[1], name);
 
                 goto out;
@@ -1104,7 +1122,8 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
-                memprintf(err, "[%s.%s]: ttl expects a ttl(in seconds).", args[1], name);
+                memprintf(err, "[%s.%s]: ttl expects auto argument or a ttl(in seconds).",
+                        args[1], name);
 
                 goto out;
             }
@@ -1113,16 +1132,21 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
              * "d", "h", "m", "s"
              * s is returned
              */
-            if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&ttl)) {
-                memprintf(err, "[%s.%s]: invalid ttl.", args[1], name);
+            if(!strcmp(args[cur_arg], "auto")) {
+                ttl = -1;
+            } else {
+                int  ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (uint32_t *)&ttl);
 
-                goto out;
-            }
+                if(ret == NST_TIME_ERR) {
+                    memprintf(err, "[%s.%s]: invalid ttl.", args[1], name);
 
-            if(ttl < 0) {
-                memprintf(err, "[%s.%s]: invalid ttl(max: %d).", args[1], name, INT_MAX);
+                    goto out;
+                } else if(ret == NST_TIME_OVER) {
+                    ttl = INT_MAX;
 
-                goto out;
+                    ha_warning("[%s.%s]: Set ttl to max %d.\n", args[1], name, INT_MAX);
+                }
+
             }
 
             cur_arg++;
@@ -1376,20 +1400,16 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "off")) {
                 wait = -1;
             } else {
-                /*
-                 * "d", "h", "m", "s"
-                 * s is returned
-                 */
-                if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait)) {
+                int  ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait);
+
+                if(ret == NST_TIME_ERR) {
                     memprintf(err, "[%s.%s]: invalid wait.", args[1], name);
 
                     goto out;
-                }
+                } else if(ret == NST_TIME_OVER) {
+                    wait = INT_MAX;
 
-                if(wait < 0) {
-                    memprintf(err, "[%s.%s]: invalid wait(max: %d).", args[1], name, INT_MAX);
-
-                    goto out;
+                    ha_warning("[%s.%s]: Set wait to max %d.\n", args[1], name, INT_MAX);
                 }
             }
 
@@ -1419,20 +1439,16 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "off")) {
                 stale = -1;
             } else {
-                /*
-                 * "d", "h", "m", "s"
-                 * s is returned
-                 */
-                if(nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&stale)) {
+                int  ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&stale);
+
+                if(ret == NST_TIME_ERR) {
                     memprintf(err, "[%s.%s]: invalid use-stale.", args[1], name);
 
                     goto out;
-                }
+                } else if(ret == NST_TIME_OVER) {
+                    stale = INT_MAX;
 
-                if(stale < 0) {
-                    memprintf(err, "[%s.%s]: invalid use-stale(max: %d).", args[1], name, INT_MAX);
-
-                    goto out;
+                    ha_warning("[%s.%s]: Set use-stale to max %d.\n", args[1], name, INT_MAX);
                 }
             }
 
@@ -1482,7 +1498,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
 
     rule->code = _nst_parse_rule_code(code == NULL ? NST_DEFAULT_CODE : code);
 
-    rule->ttl = ttl == -1 ? NST_DEFAULT_TTL : ttl;
+    rule->ttl = ttl == -2 ? NST_DEFAULT_TTL : ttl;
 
     if(disk == NST_STORE_DISK_ON || disk == NST_STORE_DISK_SYNC) {
         if((proxy->nuster.mode == NST_MODE_CACHE && !global.nuster.cache.root.len)
