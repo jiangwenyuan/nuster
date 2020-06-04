@@ -392,7 +392,7 @@ code412:
 }
 
 int
-nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf, nst_http_txn_t *txn) {
+nst_http_parse_htx(hpx_stream_t *s, hpx_buffer_t *buf, nst_http_txn_t *txn) {
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx = htxbuf(&s->req.buf);
     hpx_htx_sl_t       *sl;
@@ -478,8 +478,7 @@ nst_http_parse_htx(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf, nst_
 }
 
 void
-nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf, nst_http_txn_t *txn,
-        int etag_prop) {
+nst_http_build_etag(hpx_stream_t *s, hpx_buffer_t *buf, nst_http_txn_t *txn, int etag_prop) {
 
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx;
@@ -507,8 +506,8 @@ nst_http_build_etag(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf, nst
 }
 
 void
-nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t *buf,
-        nst_http_txn_t *txn, int last_modified_prop) {
+nst_http_build_last_modified(hpx_stream_t *s, hpx_buffer_t *buf, nst_http_txn_t *txn,
+        int last_modified_prop) {
 
     hpx_http_hdr_ctx_t  hdr = { .blk = NULL };
     hpx_htx_t          *htx;
@@ -545,5 +544,70 @@ nst_http_build_last_modified(hpx_stream_t *s, hpx_http_msg_t *msg, hpx_buffer_t 
             http_add_header(htx, ist("Last-Modified"), txn->res.last_modified);
         }
     }
+}
+
+hpx_ist_t
+nst_http_parse_key_value(hpx_ist_t hdr, hpx_ist_t key) {
+    int  i;
+
+    if(hdr.len < key.len) {
+        return IST_NULL;
+    }
+
+    for(i = 0; i < key.len; i++) {
+
+        if(*(hdr.ptr + i) != *(key.ptr + i)) {
+            return IST_NULL;
+        }
+    }
+
+    if(*(hdr.ptr + key.len) != '=') {
+        return IST_NULL;
+    }
+
+    return ist2(hdr.ptr + key.len + 1, hdr.len - key.len - 1);
+}
+
+int
+nst_http_parse_ttl(hpx_htx_t *htx, hpx_buffer_t *buf, nst_http_txn_t *txn) {
+    hpx_http_hdr_ctx_t  hdr     = { .blk = NULL };
+    hpx_ist_t           smaxage = IST("s-maxage");
+    hpx_ist_t           maxage  = IST("max-age");
+
+    int  ret;
+
+    while(http_find_header(htx, ist("cache-control"), &hdr, 0)) {
+        hpx_ist_t  value;
+
+        value = nst_http_parse_key_value(hdr.value, smaxage);
+
+        if(isttest(value)) {
+            ret = nst_parse_time(value.ptr, value.len, (uint32_t *)&(txn->res.ttl));
+
+            if(ret == NST_TIME_OK && txn->res.ttl > 0) {
+                return NST_OK;
+            } else if(ret == NST_TIME_OVER) {
+                txn->res.ttl = INT_MAX;
+
+                return NST_OK;
+            }
+        }
+
+        value = nst_http_parse_key_value(hdr.value, maxage);
+
+        if(isttest(value)) {
+            ret = nst_parse_time(value.ptr, value.len, (uint32_t *)&(txn->res.ttl));
+
+            if(ret == NST_TIME_OK && txn->res.ttl > 0) {
+                return NST_OK;
+            } else if(ret == NST_TIME_OVER) {
+                txn->res.ttl = INT_MAX;
+
+                return NST_OK;
+            }
+        }
+    }
+
+    return NST_ERR;
 }
 

@@ -36,7 +36,7 @@ nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
         goto err;
     }
 
-    if(nst_http_parse_htx(s, msg, buf, &txn) != NST_OK) {
+    if(nst_http_parse_htx(s, buf, &txn) != NST_OK) {
         goto err;
     }
 

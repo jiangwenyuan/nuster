@@ -291,6 +291,10 @@ end:
             nst_http_reply(s, NST_HTTP_507);
 
             break;
+        case NST_NOSQL_APPCTX_STATE_NOT_ALLOWED:
+            nst_http_reply(s, NST_HTTP_400);
+
+            break;
         default:
             co_skip(si_oc(si), co_data(si_oc(si)));
 
@@ -874,10 +878,10 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     ctx->entry->ctime = get_current_timestamp();
 
-    if(ctx->rule->prop.ttl == 0) {
+    if(ctx->entry->prop.ttl == 0) {
         ctx->entry->expire = 0;
     } else {
-        ctx->entry->expire = get_current_timestamp() / 1000 + ctx->rule->prop.ttl;
+        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->entry->prop.ttl;
     }
 
     if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {

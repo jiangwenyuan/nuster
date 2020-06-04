@@ -143,7 +143,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     if(ctx->state == NST_CTX_STATE_INIT) {
         int  i = 0;
 
-        if(nst_http_parse_htx(s, msg, ctx->buf, &ctx->txn) != NST_OK) {
+        if(nst_http_parse_htx(s, ctx->buf, &ctx->txn) != NST_OK) {
             appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
 
             return 1;
@@ -215,6 +215,7 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                     nst_debug(s, "[nosql] To create");
 
                     ctx->state = NST_CTX_STATE_PASS;
+                    ctx->prop  = &ctx->rule->prop;
 
                     break;
                 }
@@ -292,11 +293,28 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
     }
 
     if(ctx->state == NST_CTX_STATE_PASS) {
+        nst_debug_beg(s, "[nosql] Check ttl: ");
+
+        if(ctx->prop->ttl == -1) {
+
+            if(nst_http_parse_ttl(htxbuf(&s->req.buf), ctx->buf, &ctx->txn) != NST_OK) {
+                nst_debug_end("FAIL");
+
+                appctx->st0 = NST_NOSQL_APPCTX_STATE_NOT_ALLOWED;
+
+                return 1;
+            }
+        } else {
+            ctx->txn.res.ttl = ctx->prop->ttl;
+        }
+
+        nst_debug_end("PASS");
+
         appctx->st0 = NST_NOSQL_APPCTX_STATE_CREATE;
 
-        nst_http_build_etag(s, msg, ctx->buf, &ctx->txn, NST_STATUS_OFF);
+        nst_http_build_etag(s, ctx->buf, &ctx->txn, NST_STATUS_OFF);
 
-        nst_http_build_last_modified(s, msg, ctx->buf, &ctx->txn, NST_STATUS_OFF);
+        nst_http_build_last_modified(s, ctx->buf, &ctx->txn, NST_STATUS_OFF);
 
         nst_nosql_create(s, msg, ctx);
     }

@@ -360,7 +360,7 @@ cache/nosqlの有効無効を決める。
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -447,10 +447,16 @@ Cookie: logged_in=yes; user=nuster;
 
 リクエストのkeyが同じなら、キャッシュを返す。
 
-### ttl TTL
+### ttl auto|TTL
 
 生存期限を定義する。単位は `d`, `h`, `m`と`s`で、 ディフォルトは`0`秒。
 `0`の場合は失効しない。
+
+`auto`を使う場合、 ttl は自動的に`cache-control` headerの`s-maxage` か `max-age`の値に設定する。
+
+> `cache-control`の他のディレクティブは処理してない。 
+
+ttlのMaxは2147483647
 
 `extend`でttlを自動的に延長できる。
 
@@ -490,6 +496,8 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 
 > Nosqlモードではwaitしない。順番に処理して最後のリクエストの内容を保存する。
 
+最大値：2147483647.
+
 ### use-stale on|off|TIME [cache only]
 
 キャッシュが更新されているときや、バックエンドのサーバーダウンで更新失敗した時に、失効済みのキャッシュを使うかどうかを決める。
@@ -499,6 +507,8 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 `use-stale off`(ディフォルト): `wait off`の場合、同じなリクエストがバックエンドにフォーワードする, `wait on|TIME` の場合は待つ。
 
 `use-stale TIME`: バックエンドのサーバーダウンで更新失敗した時に、失効済みのキャッシュをTIME秒間を使う。
+
+最大値：2147483647.
 
 ### code CODE1,CODE2...
 
@@ -666,6 +676,15 @@ Check status code.
   * エラー発生
 * 507 Insufficient Storage
   * dict-size超え
+
+## Headers
+
+Supported headers in request
+
+| Name          | value                   | description
+| ------        | -----                   | -----------
+| content-type  | any   		  | Will be returned as is in GET request
+| cache-control | `s-maxage` or `max-age` | used to set ttl when rule.ttl is `auto`
 
 ## userごとのdata
 
