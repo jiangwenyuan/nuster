@@ -291,7 +291,7 @@ nst_parse_time(const char *text, int len, uint32_t *ret) {
         return NST_TIME_ERR;
     }
 
-    if(text_len > strlen("2147483648d")) {
+    if(text_len >= sizeof("2147483648d")) {
         return NST_TIME_OVER;
     }
 

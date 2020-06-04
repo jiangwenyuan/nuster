@@ -358,7 +358,7 @@ dict.nosql.used:                0
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -445,10 +445,16 @@ Cookie: logged_in=yes; user=nuster;
 
 相同key的请求则会直接返回cache给客户端。
 
-### ttl TTL
+### ttl auto|TTL
 
 设置缓存生存时间，过期后缓存会被删除。 可以使用 `d`, `h`, `m` and `s`。默认`0`秒.
 如果不希望失效则设为0
+
+当使用`auto`时, ttl自动使用`cache-control` header的`s-maxage` 或者`max-age`的值。
+
+> `cache-control`的其他指令没有处理。
+
+ttl最大值2147483647.
 
 可以通过设置 `extend` 关键词来自动延长缓存的ttl。
 
@@ -488,6 +494,8 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 
 > nosql模式下不会等待，相同的请求将被依次处理，最后一个请求的内容将被保存。
 
+最大值2147483647.
+
 ### use-stale on|off|TIME [cache only]
 
 决定是否在更新缓存时是否使用过期的缓存，以及在后端宕机时是否使用过期缓存。
@@ -497,6 +505,8 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 当use-stale off时，如果`wait off` 那么相同的请求将被传递到后端服务器否则等待。
 
 `use-stale TIME`则允许在因后端服务器宕机而导致更新缓存失败后继续使用缓存TIME秒。
+
+最大值2147483647.
 
 ### code CODE1,CODE2...
 
@@ -662,6 +672,15 @@ Check status code.
   * 发生未知错误
 * 507 Insufficient Storage
   * 超过data-size
+
+## Headers
+
+Supported headers in request
+
+| Name          | value                   | description
+| ------        | -----                   | -----------
+| content-type  | any   		  | Will be returned as is in GET request
+| cache-control | `s-maxage` or `max-age` | used to set ttl when rule.ttl is `auto`
 
 ## 分用户的data
 

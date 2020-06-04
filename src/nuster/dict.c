@@ -184,7 +184,8 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
     entry->prop.rid = ist2(entry->buf.area + entry->buf.data, prop->rid.len);
     chunk_istcat(&entry->buf, prop->rid);
 
-    entry->prop.ttl           = prop->ttl;
+    entry->prop.ttl           = txn->res.ttl;
+
     entry->prop.extend[0]     = prop->extend[0];
     entry->prop.extend[1]     = prop->extend[1];
     entry->prop.extend[2]     = prop->extend[2];

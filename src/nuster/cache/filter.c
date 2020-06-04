@@ -152,7 +152,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         if(ctx->state == NST_CTX_STATE_INIT) {
             int  i = 0;
 
-            if(nst_http_parse_htx(s, msg, ctx->buf, &ctx->txn) != NST_OK) {
+            if(nst_http_parse_htx(s, ctx->buf, &ctx->txn) != NST_OK) {
                 ctx->state = NST_CTX_STATE_BYPASS;
 
                 return 1;
@@ -336,9 +336,27 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         }
 
         if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
-            nst_http_build_etag(s, msg, ctx->buf, &ctx->txn, ctx->prop->etag);
 
-            nst_http_build_last_modified(s, msg, ctx->buf, &ctx->txn, ctx->prop->last_modified);
+            nst_debug_beg(s, "[cache] Check ttl: ");
+
+            if(ctx->prop->ttl == -1) {
+
+                if(nst_http_parse_ttl(htxbuf(&s->res.buf), ctx->buf, &ctx->txn) != NST_OK) {
+                    nst_debug_end("FAIL");
+
+                    ctx->state = NST_CTX_STATE_BYPASS;
+
+                    return 1;
+                }
+            } else {
+                ctx->txn.res.ttl = ctx->prop->ttl;
+            }
+
+            nst_debug_end("PASS");
+
+            nst_http_build_etag(s, ctx->buf, &ctx->txn, ctx->prop->etag);
+
+            nst_http_build_last_modified(s, ctx->buf, &ctx->txn, ctx->prop->last_modified);
 
             if(ctx->state == NST_CTX_STATE_CREATE) {
                 nst_debug(s, "[cache] To create");

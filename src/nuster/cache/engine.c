@@ -666,10 +666,10 @@ nst_cache_finish(nst_ctx_t *ctx) {
 
     ctx->entry->ctime = get_current_timestamp();
 
-    if(ctx->rule->prop.ttl == 0) {
+    if(ctx->entry->prop.ttl == 0) {
         ctx->entry->expire = 0;
     } else {
-        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->rule->prop.ttl;
+        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->entry->prop.ttl;
     }
 
     ctx->entry->header_len  = ctx->txn.res.header_len;

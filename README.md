@@ -376,7 +376,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -463,11 +463,17 @@ So default key produces `GET\0http\0www.example.com\0/q?name=X&type=Y\0`, and `k
 
 If a request has the same key as a cached HTTP response data, then cached data will be sent to the client.
 
-### ttl TTL
+### ttl auto|TTL
 
 Set a TTL on key, after the TTL has expired, the key will be deleted.
 
 It accepts units like `d`, `h`, `m` and `s`. Default ttl is `0` which does not expire the key.
+
+When `auto` is used, the ttl is set to the value of `s-maxage` or `max-age` directive in the `cache-control` header.
+
+> Other directives of `cache-control` are not handled.
+
+The max value of ttl is 2147483647.
 
 ttl can be automatically extended by using `extend` keyword.
 
@@ -507,6 +513,8 @@ Note that other identical requests will not wait until the first request finishe
 
 > In nosql mode, there is no wait mode. Multiple identical POST requests are served in the order it was received, and the body of the last request will be saved as the content.
 
+The max value of wait is 2147483647.
+
 ### use-stale on|off|TIME [cache only]
 
 Determines whether or not to serve stale cache to clients if it is being updated or the backend server is down.
@@ -516,6 +524,8 @@ When use-stale is on, the stale cache will be used to serve clients.
 When use-stale is off, which is the default mode, same requests will be passed to the backend when the cache is being updated if `wait off` is set, otherwise wait if `wait on|TIME` is set.
 
 `use-stale TIME` permits using the stale cache to serve clients for TIME seconds if the cache cannot be updated due to backend error.
+
+The max value of use-stale is 2147483647.
 
 ### code CODE1,CODE2...
 
@@ -686,6 +696,15 @@ Check status code.
   * any error occurs
 * 507 Insufficient Storage
   * exceeds max data-size
+
+## Headers
+
+Supported headers in request
+
+| Name          | value                   | description
+| ------        | -----                   | -----------
+| content-type  | any   		  | Will be returned as is in GET request
+| cache-control | `s-maxage` or `max-age` | used to set ttl when rule.ttl is `auto`
 
 ## Per-user data
 
