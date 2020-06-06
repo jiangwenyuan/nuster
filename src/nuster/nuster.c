@@ -191,6 +191,7 @@ _nst_proxy_init() {
                 rule->prop.extend[3]     = rc->extend[3];
                 rule->prop.wait          = rc->wait;
                 rule->prop.stale         = rc->stale;
+                rule->prop.inactive      = rc->inactive;
 
                 rule->cond = rc->cond;
 
