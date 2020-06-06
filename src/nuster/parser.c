@@ -1064,11 +1064,12 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
     char               *key  = NULL;
     char               *code = NULL;
 
-    int         memory, disk, ttl, etag, last_modified, wait, stale;
-    uint8_t     extend[4] = { -1 };
-    int         cur_arg   = 2;
+    int      memory, disk, ttl, etag, last_modified, wait, stale, inactive;
+    uint8_t  extend[4] = { -1 };
+    int      cur_arg   = 2;
+    int      ret;
 
-    memory = disk = etag = last_modified = wait = stale = -1;
+    memory = disk = etag = last_modified = wait = stale = inactive = -1;
     ttl = -2;
 
     if(proxy == defpx || !(proxy->cap & PR_CAP_BE)) {
@@ -1135,7 +1136,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             if(!strcmp(args[cur_arg], "auto")) {
                 ttl = -1;
             } else {
-                int  ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (uint32_t *)&ttl);
+                ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (uint32_t *)&ttl);
 
                 if(ret == NST_TIME_ERR) {
                     memprintf(err, "[%s.%s]: invalid ttl.", args[1], name);
@@ -1400,7 +1401,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "off")) {
                 wait = -1;
             } else {
-                int  ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait);
+                ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&wait);
 
                 if(ret == NST_TIME_ERR) {
                     memprintf(err, "[%s.%s]: invalid wait.", args[1], name);
@@ -1439,7 +1440,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             } else if(!strcmp(args[cur_arg], "off")) {
                 stale = -1;
             } else {
-                int  ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&stale);
+                ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&stale);
 
                 if(ret == NST_TIME_ERR) {
                     memprintf(err, "[%s.%s]: invalid use-stale.", args[1], name);
@@ -1449,6 +1450,43 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
                     stale = INT_MAX;
 
                     ha_warning("[%s.%s]: Set use-stale to max %d.\n", args[1], name, INT_MAX);
+                }
+            }
+
+            cur_arg++;
+            continue;
+        }
+
+        if(!strcmp(args[cur_arg], "inactive")) {
+
+            if(stale != -1) {
+                memprintf(err, "[%s.%s]: inactive already specified.", args[1], name);
+
+                goto out;
+            }
+
+            cur_arg++;
+
+            if(*args[cur_arg] == 0) {
+                memprintf(err, "[%s.%s]: inactive expects [off|TIME], default off.",
+                        args[1], name);
+
+                goto out;
+            }
+
+            if(!strcmp(args[cur_arg], "off")) {
+                inactive = 0;
+            } else {
+                ret = nst_parse_time(args[cur_arg], strlen(args[cur_arg]), (unsigned *)&inactive);
+
+                if(ret == NST_TIME_ERR) {
+                    memprintf(err, "[%s.%s]: invalid inactive.", args[1], name);
+
+                    goto out;
+                } else if(ret == NST_TIME_OVER) {
+                    stale = INT_MAX;
+
+                    ha_warning("[%s.%s]: Set inactive to max %d.\n", args[1], name, INT_MAX);
                 }
             }
 
@@ -1550,8 +1588,9 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
         rule->extend[3] = extend[3];
     }
 
-    rule->wait  = wait;
-    rule->stale = stale;
+    rule->wait     = wait;
+    rule->stale    = stale;
+    rule->inactive = inactive == -1 ? 0 : inactive;
 
     rule->cond = cond;
 

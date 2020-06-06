@@ -190,6 +190,7 @@ typedef struct nst_rule_config {
     int                        etag;          /* etag on|off */
     int                        last_modified; /* last_modified on|off */
     int                        wait;          /* -1: not wait, 0: wait forever, > 0, wait seconds */
+    int                        inactive;      /* 0: disabled, > 0: inactive seconds */
 
     /*
      *  -1: do not use stale
@@ -229,6 +230,7 @@ typedef struct nst_rule_prop {
     int                        last_modified;
     uint8_t                    extend[4];
     int                        wait;
+    int                        inactive;
     int                        stale;
     int                        status_code;
 } nst_rule_prop_t;
