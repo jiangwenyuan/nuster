@@ -44,8 +44,8 @@
    8 * 10              8                       etag, on|off: 4, length: 4
    8 * 11              8                       last-modified: on|off: 4, length: 4
    8 * 12              8                       ttl: 4, extend: 4
-   8 * 13              4                       stale: 4,
-   8 * 13 + 4          20                      reserved
+   8 * 13              8                       stale: 4, inactive: 4
+   8 * 14              20                      reserved
    NST_DISK_META_SIZE  key_len                 key
    + key_len           proxy_len               proxy
    + proxy_len         rule_len                rule
@@ -74,6 +74,7 @@
 #define NST_DISK_META_POS_LAST_MODIFIED_LEN     8 * 11 + 4
 #define NST_DISK_META_POS_TTL_EXTEND            8 * 12
 #define NST_DISK_META_POS_STALE                 8 * 13
+#define NST_DISK_META_POS_INACTIVE              8 * 13 + 4
 
 #define NST_DISK_META_SIZE                      8 * 16
 #define NST_DISK_POS_KEY                        NST_DISK_META_SIZE
@@ -298,6 +299,16 @@ nst_disk_meta_set_stale(char *p, int32_t v) {
 static inline int32_t
 nst_disk_meta_get_stale(char *p) {
     return *(int32_t *)(p + NST_DISK_META_POS_STALE);
+}
+
+static inline void
+nst_disk_meta_set_inactive(char *p, int32_t v) {
+    *(int32_t *)(p + NST_DISK_META_POS_INACTIVE) = v;
+}
+
+static inline int32_t
+nst_disk_meta_get_inactive(char *p) {
+    return *(int32_t *)(p + NST_DISK_META_POS_INACTIVE);
 }
 
 static inline int

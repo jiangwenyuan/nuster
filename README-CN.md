@@ -358,7 +358,7 @@ dict.nosql.used:                0
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [inactive off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -507,6 +507,14 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 `use-stale TIME`则允许在因后端服务器宕机而导致更新缓存失败后继续使用缓存TIME秒。
 
 最大值2147483647.
+
+### inactive off|TIME
+
+当TIME秒内没有被访问过，则删除该缓存。默认为off。
+
+注意在TIME秒没被访问后缓存并不是百分百会删除。如果清理进程先于新的请求访问该缓存，那么缓存会被删除。如果新的请求先于清理进程访问该缓存，那么该缓存的最后访问时间就会被更新该缓存也不会被删除。并没有使用硬盘缓存文件的访问时间，当重启nuster后，缓存的最后访问时间会被设置为缓存被加载的时间。
+
+最大值：2147483647.
 
 ### code CODE1,CODE2...
 

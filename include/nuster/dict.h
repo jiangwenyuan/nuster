@@ -117,6 +117,16 @@ nst_dict_entry_stale_valid(nst_dict_entry_t *entry) {
 }
 
 static inline int
+nst_dict_entry_inactive(nst_dict_entry_t *entry) {
+
+    if(entry->prop.inactive == 0) {
+        return 0;
+    } else {
+        return get_current_timestamp() - entry->atime > entry->prop.inactive * 1000;
+    }
+}
+
+static inline int
 nst_dict_entry_invalid(nst_dict_entry_t *entry) {
 
     /* check state */
@@ -126,7 +136,12 @@ nst_dict_entry_invalid(nst_dict_entry_t *entry) {
 
     /* check expire */
     if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-        return nst_dict_entry_expired(entry);
+
+        if(nst_dict_entry_expired(entry)) {
+            return 1;
+        } else {
+            return nst_dict_entry_inactive(entry);
+        }
     }
 
     /* check stale */

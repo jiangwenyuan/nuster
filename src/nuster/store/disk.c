@@ -514,6 +514,7 @@ nst_disk_load(nst_core_t *core) {
                 prop.etag          = nst_disk_meta_get_etag_prop(data.meta);
                 prop.last_modified = nst_disk_meta_get_last_modified_prop(data.meta);
                 prop.stale         = nst_disk_meta_get_stale(data.meta);
+                prop.inactive      = nst_disk_meta_get_inactive(data.meta);
 
                 buf.data += prop.rid.len;
 
@@ -727,6 +728,7 @@ nst_disk_meta_init(char *p, uint64_t hash, uint64_t expire, uint64_t header_len,
     nst_disk_meta_set_last_modified_len(p, txn->res.last_modified.len);
     nst_disk_meta_set_ttl_extend(p, ttl_extend);
     nst_disk_meta_set_stale(p, prop->stale);
+    nst_disk_meta_set_inactive(p, prop->inactive);
 }
 
 int

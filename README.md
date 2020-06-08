@@ -376,7 +376,7 @@ If there are filters on this proxy, put this directive after all other filters.
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [inactive off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -526,6 +526,14 @@ When use-stale is off, which is the default mode, same requests will be passed t
 `use-stale TIME` permits using the stale cache to serve clients for TIME seconds if the cache cannot be updated due to backend error.
 
 The max value of use-stale is 2147483647.
+
+### inactive off|TIME
+
+Determines whether or not to delete the cache that are not accessed during TIME seconds regardless of the validity. By default, inactive is set to off(0).
+
+Note that it is not guaranteed that the cache get removed after TIME inactive. If the clean process accesses the cache first, then the data get removed. If a new request comes first, then the last access time of the cache gets updated and the cache will not be deleted. In the case of disk file, the atime of the file is not used, so when nuster restarts, the last access time is set to the loaded time.
+
+The max value of inactive is 2147483647.
 
 ### code CODE1,CODE2...
 

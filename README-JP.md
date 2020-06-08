@@ -360,7 +360,7 @@ cache/nosqlの有効無効を決める。
 
 **syntax:**
 
-*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
+*nuster rule name [key KEY] [ttl auto|TTL] [extend EXTEND] [wait on|off|TIME] [use-stale on|off|TIME] [inactive off|TIME] [code CODE] [memory on|off] [disk on|off|sync] [etag on|off] [last-modified on|off] [if|unless condition]*
 
 **default:** *none*
 
@@ -454,7 +454,7 @@ Cookie: logged_in=yes; user=nuster;
 
 `auto`を使う場合、 ttl は自動的に`cache-control` headerの`s-maxage` か `max-age`の値に設定する。
 
-> `cache-control`の他のディレクティブは処理してない。 
+> `cache-control`の他のディレクティブは処理してない。
 
 ttlのMaxは2147483647
 
@@ -507,6 +507,14 @@ percentage: |<- (100 - n1 - n2 - n3)% ->|<- n1% ->|<- n2% ->|<- n3% ->|<- n4% ->
 `use-stale off`(ディフォルト): `wait off`の場合、同じなリクエストがバックエンドにフォーワードする, `wait on|TIME` の場合は待つ。
 
 `use-stale TIME`: バックエンドのサーバーダウンで更新失敗した時に、失効済みのキャッシュをTIME秒間を使う。
+
+最大値：2147483647.
+
+### inactive off|TIME
+
+指定した期間を過ぎてアクセスがない場合キャッシュが削除される。ディフォルトはoff(0)。
+
+TIMEを過ぎると必ず削除されるというわけではない、cleanプロセスが先にcacheをアクセスする場合、削除されるけど、新しいリクエストが先に来る場合、キャッシュの最終アクセス時間が更新されキャッシュは削除されない。ディスクファイルの場合はファイルのアクセス時間使ってないため、nusterが再起動すると、最終アクセス時間はロード時間に設定する。
 
 最大値：2147483647.
 
