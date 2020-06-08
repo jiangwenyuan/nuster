@@ -194,7 +194,9 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
     entry->prop.last_modified = prop->last_modified;
     entry->prop.wait          = prop->wait;
     entry->prop.stale         = prop->stale;
+    entry->prop.inactive      = prop->inactive;
     entry->expire             = 0;
+    entry->atime              = get_current_timestamp();
 
     return entry;
 
@@ -370,6 +372,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
 
     entry->key    = *key;
     entry->expire = expire;
+    entry->atime  = get_current_timestamp();
 
     entry->store.disk.file = nst_memory_alloc(dict->memory, strlen(file));
 
@@ -398,6 +401,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     entry->prop.etag          = prop->etag;
     entry->prop.last_modified = prop->last_modified;
     entry->prop.stale         = prop->stale;
+    entry->prop.inactive      = prop->inactive;
 
     return NST_OK;
 }
