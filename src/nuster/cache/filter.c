@@ -79,7 +79,7 @@ _nst_cache_filter_attach(hpx_stream_t *s, hpx_filter_t *filter) {
         }
 
         ctx->state    = NST_CTX_STATE_INIT;
-        ctx->ctime    = get_current_timestamp();
+        ctx->ctime    = nst_time_now_ms();
         ctx->rule_cnt = rule_cnt;
         ctx->key_cnt  = key_cnt;
         ctx->buf      = alloc_trash_chunk();
@@ -260,7 +260,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
         if(ctx->state == NST_CTX_STATE_WAIT) {
             if(ctx->prop->wait == 0 || (ctx->prop->wait > 0
-                        && get_current_timestamp() - ctx->ctime < ctx->prop->wait * 1000)) {
+                        && nst_time_now_ms() - ctx->ctime < ctx->prop->wait * 1000)) {
 
                 usleep(1);
                 ctx->state = NST_CTX_STATE_INIT;

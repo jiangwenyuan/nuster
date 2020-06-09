@@ -106,14 +106,14 @@ nst_dict_entry_expired(nst_dict_entry_t *entry) {
     if(entry->expire == 0) {
         return 0;
     } else {
-        return entry->expire <= get_current_timestamp() / 1000;
+        return entry->expire <= nst_time_now_ms() / 1000;
     }
 
 }
 
 static inline int
 nst_dict_entry_stale_valid(nst_dict_entry_t *entry) {
-    return entry->expire + entry->prop.stale > get_current_timestamp() / 1000;
+    return entry->expire + entry->prop.stale > nst_time_now_ms() / 1000;
 }
 
 static inline int
@@ -122,7 +122,7 @@ nst_dict_entry_inactive(nst_dict_entry_t *entry) {
     if(entry->prop.inactive == 0) {
         return 0;
     } else {
-        return get_current_timestamp() - entry->atime > entry->prop.inactive * 1000;
+        return nst_time_now_ms() - entry->atime > entry->prop.inactive * 1000;
     }
 }
 

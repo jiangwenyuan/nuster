@@ -259,16 +259,17 @@ typedef struct nst_flt_conf {
 
 /* get current timestamp in milliseconds */
 static inline uint64_t
-get_current_timestamp() {
-    struct timeval tv;
+nst_time_now_ms() {
+    struct timespec ts;
 
-    gettimeofday(&tv, NULL);
+    clock_gettime(CLOCK_REALTIME, &ts);
 
-    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+    return (uint64_t) ts.tv_sec * 1000 + (uint64_t) ts.tv_nsec / 1000000;
 }
 
+/* get current timestamp in nanoseconds */
 static inline uint64_t
-get_current_timestamp_ns() {
+nst_time_now_ns() {
     struct timespec ts;
 
     clock_gettime(CLOCK_REALTIME, &ts);

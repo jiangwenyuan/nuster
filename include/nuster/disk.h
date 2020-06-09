@@ -314,7 +314,7 @@ nst_disk_meta_get_inactive(char *p) {
 static inline int
 nst_disk_meta_check_expire(char *p) {
     uint64_t  expire = nst_disk_meta_get_expire(p);
-    uint64_t  now    = get_current_timestamp();
+    uint64_t  now    = nst_time_now_ms();
 
     if(expire == 0) {
         return NST_OK;
@@ -330,7 +330,7 @@ nst_disk_meta_check_expire(char *p) {
 static inline int
 nst_disk_meta_check_stale(char *p) {
     uint64_t  expire = nst_disk_meta_get_expire(p);
-    uint64_t  now    = get_current_timestamp();
+    uint64_t  now    = nst_time_now_ms();
     int32_t   stale  = nst_disk_meta_get_stale(p);
 
     if(stale == 0) {

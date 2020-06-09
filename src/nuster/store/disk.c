@@ -425,7 +425,7 @@ nst_disk_load(nst_core_t *core) {
         root = core->root;
         file = core->store.disk.file;
 
-        start  = get_current_timestamp();
+        start  = nst_time_now_ms();
 
         if(core->store.disk.dir) {
 
@@ -567,7 +567,7 @@ nst_disk_load(nst_core_t *core) {
 
                 close(data.fd);
 
-                if(get_current_timestamp() - start >= 300) {
+                if(nst_time_now_ms() - start >= 300) {
                     break;
                 }
             }
@@ -620,7 +620,7 @@ nst_disk_cleanup(nst_core_t *core) {
     root = core->root;
     file = core->store.disk.file;
 
-    start  = get_current_timestamp();
+    start  = nst_time_now_ms();
 
     if(core->root.len && core->store.disk.loaded) {
 
@@ -673,7 +673,7 @@ nst_disk_cleanup(nst_core_t *core) {
 
                 close(data.fd);
 
-                if(get_current_timestamp() - start >= 10) {
+                if(nst_time_now_ms() - start >= 10) {
                     break;
                 }
             }
@@ -745,7 +745,7 @@ nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst
     }
 
     sprintf(data->file, "%s/.tmp/%020"PRIx64"%020"PRIu64, disk->root.ptr, ha_random64(),
-            get_current_timestamp_ns());
+            nst_time_now_ns());
 
     data->fd = nst_disk_data_create(data->file);
 
