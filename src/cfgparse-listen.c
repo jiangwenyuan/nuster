@@ -262,8 +262,23 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		}
 
 		/* initialize error relocations */
-		for (rc = 0; rc < HTTP_ERR_SIZE; rc++)
-			chunk_dup(&curproxy->errmsg[rc], &defproxy.errmsg[rc]);
+		for (rc = 0; rc < HTTP_ERR_SIZE; rc++) {
+			struct buffer *dst = &curproxy->errmsg[rc];
+			const struct buffer *src = &defproxy.errmsg[rc];
+
+			if (b_orig(src)) {
+				dst->head = 0;
+				dst->data = 0;
+				dst->size = 0;
+				dst->area = malloc(src->size);
+				if (dst->area) {
+					dst->head = src->head;
+					dst->data = src->data;
+					dst->size = src->size;
+					memcpy(dst->area, src->area, dst->data);
+				}
+			}
+		}
 
 		if (curproxy->cap & PR_CAP_FE) {
 			curproxy->maxconn = defproxy.maxconn;

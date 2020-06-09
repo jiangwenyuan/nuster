@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.1
                              willy tarreau
-                              2020/05/29
+                              2020/06/09
 
 
 This document covers the configuration language as implemented in the version

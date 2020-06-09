@@ -276,7 +276,7 @@ char localpeer[MAX_HOSTNAME_LEN];
  */
 int shut_your_big_mouth_gcc_int = 0;
 
-static char **next_argv = NULL;
+static char **old_argv = NULL; /* previous argv but cleaned up */
 
 struct list proc_list = LIST_HEAD_INIT(proc_list);
 
@@ -811,7 +811,10 @@ static void get_cur_unixsocket()
  */
 void mworker_reload()
 {
+	char **next_argv = NULL;
+	int old_argc = 0; /* previous number of argument */
 	int next_argc = 0;
+	int i = 0;
 	char *msg = NULL;
 	struct rlimit limit;
 	struct per_thread_deinit_fct *ptdf;
@@ -855,13 +858,18 @@ void mworker_reload()
 	}
 
 	/* compute length  */
-	while (next_argv[next_argc])
-		next_argc++;
+	while (old_argv[old_argc])
+		old_argc++;
 
 	/* 1 for haproxy -sf, 2 for -x /socket */
-	next_argv = realloc(next_argv, (next_argc + 1 + 2 + mworker_child_nb() + nb_oldpids + 1) * sizeof(char *));
+	next_argv = calloc(old_argc + 1 + 2 + mworker_child_nb() + nb_oldpids + 1, sizeof(char *));
 	if (next_argv == NULL)
 		goto alloc_error;
+
+	/* copy the program name */
+	next_argv[next_argc++] = old_argv[0];
+
+	/* insert the new options just after argv[0] in case we have a -- */
 
 	/* add -sf <PID>*  to argv */
 	if (mworker_child_nb() > 0) {
@@ -872,32 +880,33 @@ void mworker_reload()
 		list_for_each_entry(child, &proc_list, list) {
 			if (!(child->options & (PROC_O_TYPE_WORKER|PROC_O_TYPE_PROG)) || child->pid <= -1 )
 				continue;
-			next_argv[next_argc] = memprintf(&msg, "%d", child->pid);
-			if (next_argv[next_argc] == NULL)
+			if ((next_argv[next_argc++] = memprintf(&msg, "%d", child->pid)) == NULL)
 				goto alloc_error;
 			msg = NULL;
-			next_argc++;
 		}
 	}
-
-	next_argv[next_argc] = NULL;
-
 	/* add the -x option with the stat socket */
 	if (cur_unixsocket) {
-
 		next_argv[next_argc++] = "-x";
 		next_argv[next_argc++] = (char *)cur_unixsocket;
-		next_argv[next_argc++] = NULL;
 	}
+
+	/* copy the previous options */
+	for (i = 1; i < old_argc; i++)
+		next_argv[next_argc++] = old_argv[i];
 
 	ha_warning("Reexecuting Master process\n");
 	signal(SIGPROF, SIG_IGN);
 	execvp(next_argv[0], next_argv);
 
 	ha_warning("Failed to reexecute the master process [%d]: %s\n", pid, strerror(errno));
+	free(next_argv);
+	next_argv = NULL;
 	return;
 
 alloc_error:
+	free(next_argv);
+	next_argv = NULL;
 	ha_warning("Failed to reexecute the master process [%d]: Cannot allocate memory\n", pid);
 	return;
 }
@@ -1390,37 +1399,105 @@ out:
 
 /*
  * copy and cleanup the current argv
- * Remove the -sf /-st parameters
+ * Remove the -sf /-st / -x parameters
  * Return an allocated copy of argv
  */
 
 static char **copy_argv(int argc, char **argv)
 {
-	char **newargv;
-	int i = 0, j = 0;
+	char **newargv, **retargv;
 
 	newargv = calloc(argc + 2, sizeof(char *));
 	if (newargv == NULL) {
 		ha_warning("Cannot allocate memory\n");
 		return NULL;
 	}
+	retargv = newargv;
 
-	while (i < argc) {
-		/* -sf or -st or -x */
-		if (i > 0 && argv[i][0] == '-' &&
-		    ((argv[i][1] == 's' && (argv[i][2] == 'f' || argv[i][2] == 't')) || argv[i][1] == 'x' )) {
-			/* list of pids to finish ('f') or terminate ('t') or unix socket (-x) */
-			i++;
-			while (i < argc && argv[i][0] != '-') {
-				i++;
+	/* first copy argv[0] */
+	*newargv++ = *argv++;
+	argc--;
+
+	while (argc > 0) {
+		if (**argv != '-') {
+			/* non options are copied but will fail in the argument parser */
+			*newargv++ = *argv++;
+			argc--;
+
+		} else  {
+			char *flag;
+
+			flag = *argv + 1;
+
+			if (flag[0] == '-' && flag[1] == 0) {
+				/* "--\0" copy every arguments till the end of argv */
+				*newargv++ = *argv++;
+				argc--;
+
+				while (argc > 0) {
+					*newargv++ = *argv++;
+					argc--;
+				}
+			} else {
+				switch (*flag) {
+					case 's':
+						/* -sf / -st and their parameters are ignored */
+						if (flag[1] == 'f' || flag[1] == 't') {
+							argc--;
+							argv++;
+							/* The list can't contain a negative value since the only
+							way to know the end of this list is by looking for the
+							next option or the end of the options */
+							while (argc > 0 && argv[0][0] != '-') {
+								argc--;
+								argv++;
+							}
+						}
+						break;
+
+					case 'x':
+						/* this option and its parameter are ignored */
+						argc--;
+						argv++;
+						if (argc > 0) {
+							argc--;
+							argv++;
+						}
+						break;
+
+					case 'C':
+					case 'n':
+					case 'm':
+					case 'N':
+					case 'L':
+					case 'f':
+					case 'p':
+					case 'S':
+						/* these options have only 1 parameter which must be copied and can start with a '-' */
+						*newargv++ = *argv++;
+						argc--;
+						if (argc == 0)
+							goto error;
+						*newargv++ = *argv++;
+						argc--;
+						break;
+					default:
+						/* for other options just copy them without parameters, this is also done
+						 * for options like "--foo", but this  will fail in the argument parser.
+						 * */
+						*newargv++ = *argv++;
+						argc--;
+						break;
+				}
 			}
-			continue;
 		}
-
-		newargv[j++] = argv[i++];
 	}
 
-	return newargv;
+	return retargv;
+
+error:
+	free(retargv);
+	return NULL;
 }
 
 
@@ -1635,7 +1712,11 @@ static void init(int argc, char **argv)
 	int ideal_maxconn;
 
 	global.mode = MODE_STARTING;
-	next_argv = copy_argv(argc, argv);
+	old_argv = copy_argv(argc, argv);
+	if (!old_argv) {
+		ha_alert("failed to copy argv.\n");
+		exit(1);
+	}
 
 	if (!init_trash_buffers(1)) {
 		ha_alert("failed to initialize trash buffers.\n");
@@ -1786,7 +1867,7 @@ static void init(int argc, char **argv)
 			else if (*flag == 'q')
 				arg_mode |= MODE_QUIET;
 			else if (*flag == 'x') {
-				if (argc <= 1 || argv[1][0] == '-') {
+				if (argc <= 1) {
 					ha_alert("Unix socket path expected with the -x flag\n\n");
 					usage(progname);
 				}
@@ -1800,7 +1881,7 @@ static void init(int argc, char **argv)
 			else if (*flag == 'S') {
 				struct wordlist *c;
 
-				if (argc <= 1 || argv[1][0] == '-') {
+				if (argc <= 1) {
 					ha_alert("Socket and optional bind parameters expected with the -S flag\n");
 					usage(progname);
 				}

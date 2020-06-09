@@ -1,6 +1,24 @@
 ChangeLog :
 ===========
 
+2020/06/09 : 2.1.7
+    - BUG/MAJOR: http-htx: Don't forget to copy error messages from defaults sections
+
+2020/06/08 : 2.1.6
+    - Revert "BUG/MEDIUM: connections: force connections cleanup on server changes"
+    - SCRIPTS: publish-release: pass -n to gzip to remove timestamp
+    - BUG/MINOR: peers: fix internal/network key type mapping.
+    - BUG/MEDIUM: lua: Reset analyse expiration timeout before executing a lua action
+    - BUG/MEDIUM: http-htx: Duplicate error messages as raw data instead of string
+    - BUG/MEDIUM: hlua: Lock pattern references to perform set/add/del operations
+    - BUG/MEDIUM: contrib/prometheus-exporter: Properly set flags to dump metrics
+    - BUG/MEDIUM: mworker: fix the copy of options in copy_argv()
+    - BUG/MINOR: init: -x can have a parameter starting with a dash
+    - BUG/MINOR: init: -S can have a parameter starting with a dash
+    - BUG/MEDIUM: mworker: fix the reload with an -- option
+    - BUG/MINOR: ssl: fix a trash buffer leak in some error cases
+    - BUG/MINOR: mworker: fix a memleak when execvp() failed
+
 2020/05/29 : 2.1.5
     - BUG/MINOR: protocol_buffer: Wrong maximum shifting.
     - MINOR: ssl: improve the errors when a crt can't be open
