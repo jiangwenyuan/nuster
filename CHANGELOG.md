@@ -1,5 +1,19 @@
 # nuster Changelog
 
+## 5.0.12.21 - 2020-06-09
+
+### Changed
+
+* Add missing macro and function
+* Use clock_gettime instead of gettimeofday, rename now
+* Move nst_debug from nuster to misc
+* Support inactive #78
+* Add inactive parser
+* Support automatically set ttl from header, #77
+* Check max time in time parser
+* Add bypass count to stats
+* Backport v2.1.7
+
 ## 5.0.11.21 - 2020-05-30
 
 backported HAProxy v2.1.5
