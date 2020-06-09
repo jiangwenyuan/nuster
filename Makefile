@@ -836,7 +836,7 @@ NUSTER_OBJS = src/nuster/cache/engine.o src/nuster/cache/filter.o             \
               src/nuster/store/ring.o src/nuster/store/disk.o                 \
               src/nuster/memory.o src/nuster/parser.o src/nuster/http.o       \
               src/nuster/key.o src/nuster/dict.o src/nuster/sample.o	      \
-              src/nuster/nuster.o
+              src/nuster/misc.o src/nuster/nuster.o
 
 ifneq ($(TRACE),)
 OBJS += src/calltrace.o
