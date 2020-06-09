@@ -24,6 +24,12 @@
 
 #include <nuster/nuster.h>
 
+#define IST_NULL ((const struct ist){ .ptr = 0, .len = 0 })
+
+static inline int isttest(hpx_ist_t ist) {
+        return ist.ptr != NULL;
+}
+
 struct nst_http_code nst_http_codes[NST_HTTP_SIZE] = {
     [NST_HTTP_100] = {
         .status = 100,
