@@ -172,7 +172,7 @@ nst_ring_store_sync(nst_core_t *core) {
         return;
     }
 
-    start = get_current_timestamp();
+    start = nst_time_now_ms();
 
     nst_shctx_lock(&core->dict);
 
@@ -240,7 +240,7 @@ next:
 
         entry = entry->next;
 
-        if(get_current_timestamp() - start >= 10) {
+        if(nst_time_now_ms() - start >= 10) {
             break;
         }
     }

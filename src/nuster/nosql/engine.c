@@ -306,7 +306,7 @@ end:
 
 void
 nst_nosql_housekeeping() {
-    uint64_t  begin = get_current_timestamp();
+    uint64_t  begin = nst_time_now_ms();
     uint64_t  start;
 
     if(global.nuster.nosql.status == NST_STATUS_ON && master == 1) {
@@ -318,17 +318,17 @@ nst_nosql_housekeeping() {
         int  ms           = 10;
         int  ratio        = 1;
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
 
         while(dict_cleaner--) {
             nst_dict_cleanup(&nuster.nosql->dict);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
 
         if(data_cleaner > nuster.nosql->store.ring.count) {
             data_cleaner = nuster.nosql->store.ring.count;
@@ -348,28 +348,28 @@ nst_nosql_housekeeping() {
         while(data_cleaner--) {
             nst_ring_cleanup(&nuster.nosql->store.ring);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
         ms    = 10;
 
         while(nuster.nosql->store.disk.loaded && disk_saver--) {
             nst_ring_store_sync(nuster.nosql);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
 
         while(nuster.nosql->store.disk.loaded && disk_cleaner--) {
             nst_disk_cleanup(nuster.nosql);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
@@ -377,7 +377,7 @@ nst_nosql_housekeeping() {
         while(!nuster.nosql->store.disk.loaded && disk_loader--) {
             nst_disk_load(nuster.nosql);
 
-            if(get_current_timestamp() - begin >= 500) {
+            if(nst_time_now_ms() - begin >= 500) {
                 break;
             }
         }
@@ -876,7 +876,7 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     ctx->state = NST_CTX_STATE_DONE;
 
-    ctx->entry->ctime = get_current_timestamp();
+    ctx->entry->ctime = nst_time_now_ms();
 
     if(ctx->entry->prop.ttl == 0) {
         ctx->entry->expire = 0;

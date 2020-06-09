@@ -59,7 +59,7 @@ nst_dict_cleanup(nst_dict_t *dict) {
         return;
     }
 
-    start  = get_current_timestamp();
+    start  = nst_time_now_ms();
 
     nst_shctx_lock(dict);
 
@@ -102,7 +102,7 @@ nst_dict_cleanup(nst_dict_t *dict) {
             entry = entry->next;
         }
 
-        if(get_current_timestamp() - start >= 10) {
+        if(nst_time_now_ms() - start >= 10) {
             break;
         }
     }
@@ -196,7 +196,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
     entry->prop.stale         = prop->stale;
     entry->prop.inactive      = prop->inactive;
     entry->expire             = 0;
-    entry->atime              = get_current_timestamp();
+    entry->atime              = nst_time_now_ms();
 
     return entry;
 
@@ -257,7 +257,7 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
 
             max = 1000 * entry->expire + 1000 * entry->prop.ttl * entry->prop.extend[3] / 100;
 
-            entry->atime = get_current_timestamp();
+            entry->atime = nst_time_now_ms();
 
             if(expired && entry->prop.extend[0] != 0xFF && entry->atime <= max
                     && entry->access[3] > entry->access[2]
@@ -364,7 +364,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     dict->used++;
 
     /* init entry */
-    if(expire == 0 || expire * 1000 > get_current_timestamp()) {
+    if(expire == 0 || expire * 1000 > nst_time_now_ms()) {
         entry->state = NST_DICT_ENTRY_STATE_VALID;
     } else {
         entry->state = NST_DICT_ENTRY_STATE_STALE;
@@ -372,7 +372,7 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
 
     entry->key    = *key;
     entry->expire = expire;
-    entry->atime  = get_current_timestamp();
+    entry->atime  = nst_time_now_ms();
 
     entry->store.disk.file = nst_memory_alloc(dict->memory, strlen(file));
 

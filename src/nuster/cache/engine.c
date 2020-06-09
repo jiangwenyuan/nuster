@@ -338,7 +338,7 @@ nst_cache_handler(hpx_appctx_t *appctx) {
 
 void
 nst_cache_housekeeping() {
-    uint64_t  begin = get_current_timestamp();
+    uint64_t  begin = nst_time_now_ms();
     uint64_t  start;
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
@@ -350,17 +350,17 @@ nst_cache_housekeeping() {
         int  ms           = 10;
         int  ratio        = 1;
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
 
         while(dict_cleaner--) {
             nst_dict_cleanup(&nuster.cache->dict);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
 
         if(data_cleaner > nuster.cache->store.ring.count) {
             data_cleaner = nuster.cache->store.ring.count;
@@ -380,28 +380,28 @@ nst_cache_housekeeping() {
         while(data_cleaner--) {
             nst_ring_cleanup(&nuster.cache->store.ring);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
         ms    = 10;
 
         while(nuster.cache->store.disk.loaded && disk_saver--) {
             nst_ring_store_sync(nuster.cache);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
 
-        start = get_current_timestamp();
+        start = nst_time_now_ms();
 
         while(nuster.cache->store.disk.loaded && disk_cleaner--) {
             nst_disk_cleanup(nuster.cache);
 
-            if(get_current_timestamp() - start >= ms) {
+            if(nst_time_now_ms() - start >= ms) {
                 break;
             }
         }
@@ -409,7 +409,7 @@ nst_cache_housekeeping() {
         while(!nuster.cache->store.disk.loaded && disk_loader--) {
             nst_disk_load(nuster.cache);
 
-            if(get_current_timestamp() - begin >= 500) {
+            if(nst_time_now_ms() - begin >= 500) {
                 break;
             }
         }
@@ -664,7 +664,7 @@ int
 nst_cache_finish(nst_ctx_t *ctx) {
     ctx->state = NST_CTX_STATE_DONE;
 
-    ctx->entry->ctime = get_current_timestamp();
+    ctx->entry->ctime = nst_time_now_ms();
 
     if(ctx->entry->prop.ttl == 0) {
         ctx->entry->expire = 0;

@@ -493,7 +493,7 @@ nst_http_build_etag(hpx_stream_t *s, hpx_buffer_t *buf, nst_http_txn_t *txn, int
 
         chunk_istcat(buf, hdr.value);
     } else {
-        uint64_t t = get_current_timestamp();
+        uint64_t t = nst_time_now_ms();
 
         sprintf(txn->res.etag.ptr, "\"%08x\"", XXH32(&t, 8, 0));
         txn->res.etag.len = 10;
