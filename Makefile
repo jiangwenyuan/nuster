@@ -251,7 +251,7 @@ EXTRA =
 # feed CPU_CFLAGS, which in turn feed CFLAGS, so it is not mandatory to use
 # them. You should not have to change these options. Better use CPU_CFLAGS or
 # even CFLAGS instead.
-CPU_CFLAGS.generic    = -O0
+CPU_CFLAGS.generic    = -O2
 CPU_CFLAGS.native     = -O2 -march=native
 CPU_CFLAGS.i586       = -O2 -march=i586
 CPU_CFLAGS.i686       = -O2 -march=i686
@@ -723,12 +723,9 @@ endif
 endif
 endif
 
-# This one can be changed to look for ebtree files in an external directory
-EBTREE_DIR := ebtree
-
 #### Global compile options
 VERBOSE_CFLAGS = $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE)
-COPTS  = -Iinclude -I$(EBTREE_DIR)
+COPTS  = -Iinclude
 
 COPTS += $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE) $(SILENT_DEFINE)
 COPTS += $(DEBUG) $(OPTIONS_CFLAGS) $(ADDINC)
@@ -800,43 +797,44 @@ all: haproxy $(EXTRA)
 endif
 endif
 
-OBJS = src/mux_h2.o src/stream.o src/mux_fcgi.o src/cfgparse-listen.o         \
-       src/http_ana.o src/stats.o src/mux_h1.o src/flt_spoe.o src/server.o    \
-       src/cfgparse.o src/checks.o src/backend.o src/log.o src/peers.o        \
-       src/cli.o src/haproxy.o src/stick_table.o src/standard.o src/sample.o  \
-       src/proxy.o src/stream_interface.o src/pattern.o src/dns.o             \
-       src/proto_tcp.o src/listener.o src/cfgparse-global.o src/h1.o          \
-       src/http_rules.o src/http_fetch.o src/cache.o src/session.o            \
-       src/fcgi-app.o src/connection.o src/tcp_rules.o src/filters.o          \
-       src/task.o src/mworker.o src/map.o src/h1_htx.o src/trace.o            \
-       src/flt_trace.o src/acl.o src/http_htx.o src/flt_http_comp.o           \
-       src/payload.o src/vars.o src/debug.o src/mux_pt.o src/http_act.o       \
-       src/h2.o src/queue.o src/fd.o src/proto_uxst.o src/lb_chash.o          \
-       src/ring.o src/frontend.o src/raw_sock.o src/xprt_handshake.o          \
-       src/htx.o src/memory.o src/applet.o src/channel.o src/signal.o         \
-       src/lb_fwrr.o src/ev_select.o src/sink.o src/http_conv.o               \
-       src/proto_sockpair.o src/mworker-prog.o src/activity.o src/lb_fwlc.o   \
-       src/http.o src/lb_fas.o src/uri_auth.o src/hathreads.o src/regex.o     \
-       src/auth.o src/buffer.o src/compression.o src/proto_udp.o src/lb_map.o \
-       src/chunk.o src/wdt.o src/hpack-dec.o src/action.o src/xxhash.o        \
-       src/pipe.o src/shctx.o src/hpack-tbl.o src/http_acl.o src/sha1.o       \
-       src/time.o src/hpack-enc.o src/fcgi.o src/arg.o src/base64.o           \
-       src/protocol.o src/freq_ctr.o src/lru.o src/hpack-huff.o src/dict.o    \
-       src/hash.o src/mailers.o src/version.o
-
-EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
-              $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
-              $(EBTREE_DIR)/ebmbtree.o $(EBTREE_DIR)/ebsttree.o \
-              $(EBTREE_DIR)/ebimtree.o $(EBTREE_DIR)/ebistree.o
+OBJS = src/mux_fcgi.o src/mux_h1.o src/mux_h2.o src/backend.o                 \
+       src/cfgparse.o src/cli.o src/cfgparse-listen.o src/stats.o             \
+       src/http_ana.o src/stream.o src/check.o src/sample.o                   \
+       src/tools.o src/server.o src/listener.o src/tcpcheck.o                 \
+       src/pattern.o src/log.o src/stick_table.o src/flt_spoe.o               \
+       src/stream_interface.o src/filters.o src/http_fetch.o                  \
+       src/map.o src/session.o src/sink.o src/flt_http_comp.o                 \
+       src/debug.o src/tcp_rules.o src/haproxy.o src/peers.o                  \
+       src/flt_trace.o src/queue.o src/proxy.o src/http_htx.o                 \
+       src/dns.o src/raw_sock.o src/pool.o src/http_act.o                     \
+       src/http_rules.o src/compression.o src/cfgparse-global.o               \
+       src/payload.o src/signal.o src/activity.o src/mworker.o                \
+       src/cache.o src/proto_uxst.o src/lb_chash.o src/connection.o           \
+       src/proto_tcp.o src/http_conv.o src/arg.o src/lb_fas.o                 \
+       src/xprt_handshake.o src/fcgi-app.o src/applet.o src/acl.o             \
+       src/task.o src/ring.o src/vars.o src/trace.o src/mux_pt.o              \
+       src/xxhash.o src/mworker-prog.o src/h1_htx.o src/frontend.o            \
+       src/extcheck.o src/channel.o src/action.o src/mailers.o                \
+       src/proto_sockpair.o src/ebmbtree.o src/thread.o                       \
+       src/lb_fwrr.o src/time.o src/regex.o src/lb_fwlc.o                     \
+       src/htx.o src/h2.o src/hpack-tbl.o src/lru.o src/wdt.o                 \
+       src/lb_map.o src/eb32sctree.o src/ebistree.o src/h1.o                  \
+       src/sha1.o src/http.o src/fd.o src/ev_select.o src/chunk.o             \
+       src/hash.o src/hpack-dec.o src/freq_ctr.o src/http_acl.o               \
+       src/buffer.o src/uri_auth.o src/protocol.o src/auth.o                  \
+       src/ebsttree.o src/pipe.o src/hpack-enc.o src/fcgi.o                   \
+       src/eb64tree.o src/dict.o src/shctx.o src/ebimtree.o                   \
+       src/eb32tree.o src/ebtree.o src/dgram.o                                \
+       src/hpack-huff.o src/base64.o src/version.o
 
 NUSTER_OBJS = src/nuster/cache/engine.o src/nuster/cache/filter.o             \
-              src/nuster/nosql/engine.o src/nuster/nosql/filter.o             \
-              src/nuster/manager/stats.o src/nuster/manager/engine.o          \
-              src/nuster/manager/purger.o                                     \
-              src/nuster/store/memory.o src/nuster/store/disk.o               \
-              src/nuster/shmem.o src/nuster/parser.o src/nuster/http.o        \
-              src/nuster/key.o src/nuster/dict.o src/nuster/sample.o	      \
-              src/nuster/misc.o src/nuster/nuster.o
+       src/nuster/nosql/engine.o src/nuster/nosql/filter.o                    \
+       src/nuster/manager/stats.o src/nuster/manager/engine.o                 \
+       src/nuster/manager/purger.o                                            \
+       src/nuster/store/memory.o src/nuster/store/disk.o                      \
+       src/nuster/shmem.o src/nuster/parser.o src/nuster/http.o               \
+       src/nuster/key.o src/nuster/dict.o src/nuster/sample.o                 \
+       src/nuster/misc.o src/nuster/nuster.o
 
 ifneq ($(TRACE),)
 OBJS += src/calltrace.o
@@ -846,11 +844,8 @@ ifneq ($(EXTRA_OBJS),)
 OBJS += $(EXTRA_OBJS)
 endif
 
-# Not used right now
-LIB_EBTREE = $(EBTREE_DIR)/libebtree.a
-
 # Used only for forced dependency checking. May be cleared during development.
-INCLUDES = $(wildcard include/*/*.h ebtree/*.h)
+INCLUDES = $(wildcard include/*/*.h)
 DEP = $(INCLUDES) .build_opts
 
 help:
@@ -881,11 +876,8 @@ else
 .build_opts:
 endif
 
-haproxy: $(OPTIONS_OBJS) $(OBJS) $(EBTREE_OBJS) $(NUSTER_OBJS)
+haproxy: $(OPTIONS_OBJS) $(OBJS) $(NUSTER_OBJS)
 	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
-
-$(LIB_EBTREE): $(EBTREE_OBJS)
-	$(cmd_AR) rv $@ $^
 
 objsize: haproxy
 	$(Q)objdump -t $^|grep ' g '|grep -F '.text'|awk '{print $$5 FS $$6}'|sort
@@ -946,8 +938,8 @@ uninstall:
 	$(Q)rm -f "$(DESTDIR)$(SBINDIR)"/nuster
 
 clean:
-	$(Q)rm -f *.[oas] src/*.[oas] ebtree/*.[oas] haproxy test .build_opts .build_opts.new
-	$(Q)for dir in . src include/* doc ebtree; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
+	$(Q)rm -f *.[oas] src/*.[oas] haproxy test .build_opts .build_opts.new
+	$(Q)for dir in . src include/* doc; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
 	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
 	$(Q)rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]

@@ -25,7 +25,7 @@
 #define NUSTER_VERSION    "5.0.10.21"
 #define NUSTER_COPYRIGHT  "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
-#include <types/applet.h>
+#include <haproxy/applet-t.h>
 
 #include <nuster/common.h>
 #include <nuster/shctx.h>

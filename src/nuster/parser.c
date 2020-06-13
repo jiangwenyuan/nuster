@@ -10,14 +10,11 @@
  *
  */
 
-#include <common/standard.h>
-#include <common/cfgparse.h>
-#include <common/errors.h>
-
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/log.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/acl.h>
+#include <haproxy/tools.h>
 
 #include <nuster/nuster.h>
 

@@ -54,16 +54,17 @@ typedef struct arg                      hpx_arg_t;
 
 typedef struct nst_core                 nst_core_t;
 
+#include <stdio.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
-#include <stdio.h>
-#include <errno.h>
+#include <dirent.h>
+#include <inttypes.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <dirent.h>
 
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
@@ -76,8 +77,6 @@ typedef struct nst_core                 nst_core_t;
 #endif
 #endif
 
-#include <common/buf.h>
-#include <types/global.h>
 
 #define NST_OK                          0
 #define NST_ERR                         1

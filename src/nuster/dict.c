@@ -10,8 +10,6 @@
  *
  */
 
-#include <types/global.h>
-
 #include <nuster/nuster.h>
 
 int

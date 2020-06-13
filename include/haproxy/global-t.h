@@ -177,6 +177,52 @@ struct global {
 		unsigned long thread[MAX_THREADS];  /* list of CPU masks for the 32/64 first threads of the 1st process */
 	} cpu_map;
 #endif
+	struct {
+		struct {
+			int status;                      /* cache on or off */
+
+			uint64_t dict_size;              /* max memory used by dict, in bytes */
+			uint64_t data_size;              /* max memory used by data, in bytes */
+
+			int dict_cleaner;                /* the number of entries checked once */
+			int data_cleaner;                /* the number of data checked once */
+			int disk_cleaner;                /* the number of files checked once */
+			int disk_loader;                 /* the number of files load once */
+			int disk_saver;                  /* the number of entries checked once for persist_async */
+			int clean_temp;                  /* clean temp file or not */
+
+			struct ist root;                 /* disk root directory */
+
+			struct nst_shmem    *shmem;      /* memory */
+		} cache;
+		struct {
+			int status;                      /* enable nosql on or off */
+
+			uint64_t dict_size;              /* max memory used by dict, in bytes */
+			uint64_t data_size;              /* max memory used by data, in bytes */
+
+			int dict_cleaner;                /* the number of entries checked once */
+			int data_cleaner;                /* the number of data checked once */
+			int disk_cleaner;                /* the number of files checked once */
+			int disk_loader;                 /* the number of files load once */
+			int disk_saver;                  /* the number of entries checked once for persist_async */
+			int clean_temp;                  /* clean temp file or not */
+
+			struct ist root;                 /* disk root directory */
+
+			struct nst_shmem    *shmem;      /* memory */
+		} nosql;
+
+		struct {
+			int          status;             /* enable nosql on or off */
+			struct ist   purge_method;
+			struct ist   uri;                /* the uri used for stats and manager */
+		} manager;
+
+		struct nst_stats  *stats;
+
+		struct nst_shmem  *shmem;                /* memory */
+	} nuster;
 };
 
 #endif /* _HAPROXY_GLOBAL_T_H */

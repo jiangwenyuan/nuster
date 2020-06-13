@@ -10,12 +10,8 @@
  *
  */
 
-#include <inttypes.h>
-
-#include <types/global.h>
-
-#include <proto/stream_interface.h>
-#include <proto/proxy.h>
+#include <haproxy/proxy.h>
+#include <haproxy/stream_interface.h>
 
 #include <nuster/nuster.h>
 

@@ -10,6 +10,8 @@
  *
  */
 
+#include <haproxy/htx-t.h>
+
 #include <nuster/nuster.h>
 
 int

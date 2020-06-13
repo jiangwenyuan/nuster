@@ -17,40 +17,33 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
-#include <common/defaults.h>
-#include <common/cfgparse.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/time.h>
+#include <import/eb32tree.h>
+#include <import/ebistree.h>
 
-#include <eb32tree.h>
-#include <ebistree.h>
-
-#include <types/capture.h>
-#include <types/cli.h>
-#include <types/global.h>
-#include <types/obj_type.h>
-#include <types/peers.h>
-#include <types/stats.h>
-
-#include <proto/applet.h>
-#include <proto/cli.h>
-#include <proto/backend.h>
-#include <proto/fd.h>
-#include <proto/filters.h>
-#include <proto/listener.h>
-#include <proto/log.h>
-#include <proto/proto_tcp.h>
-#include <proto/http_ana.h>
-#include <proto/proxy.h>
-#include <proto/server.h>
-#include <proto/signal.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
+#include <haproxy/api.h>
+#include <haproxy/applet-t.h>
+#include <haproxy/capture-t.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/cli.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/filters.h>
+#include <haproxy/global.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/obj_type-t.h>
+#include <haproxy/peers.h>
+#include <haproxy/pool.h>
+#include <haproxy/proto_tcp.h>
+#include <haproxy/proxy.h>
+#include <haproxy/server-t.h>
+#include <haproxy/signal.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/time.h>
 
 
 int listeners;	/* # of proxy listeners, set by cfgparse */
@@ -113,6 +106,7 @@ const struct cfg_opt cfg_opts2[] =
 
 	{"h1-case-adjust-bogus-client",   PR_O2_H1_ADJ_BUGCLI, PR_CAP_FE, 0, PR_MODE_HTTP },
 	{"h1-case-adjust-bogus-server",   PR_O2_H1_ADJ_BUGSRV, PR_CAP_BE, 0, PR_MODE_HTTP },
+	{"disable-h2-upgrade",            PR_O2_NO_H2_UPGRADE, PR_CAP_FE, 0, PR_MODE_HTTP },
 	{ NULL, 0, 0, 0 }
 };
 

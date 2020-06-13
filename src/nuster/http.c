@@ -10,17 +10,11 @@
  *
  */
 
-#include <common/http.h>
+#include <import/xxhash.h>
 
-#include <types/stream.h>
-#include <types/http_ana.h>
-#include <types/channel.h>
-#include <types/stream_interface.h>
-#include <types/proxy.h>
-
-#include <proto/stream_interface.h>
-#include <proto/http_ana.h>
-#include <proto/http_htx.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/http.h>
 
 #include <nuster/nuster.h>
 

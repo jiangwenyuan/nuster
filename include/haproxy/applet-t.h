@@ -32,6 +32,8 @@
 #include <haproxy/stream-t.h>
 #include <haproxy/xref-t.h>
 
+#include <nuster/common.h>
+
 /* flags for appctx->state */
 #define APPLET_WANT_DIE     0x01  /* applet was running and requested to die */
 
@@ -73,6 +75,29 @@ struct appctx {
 	struct list wait_entry;          /* entry in a list of waiters for an event (e.g. ring events) */
 
 	union {
+		union {
+			union {
+				struct {
+					struct nst_memory_object  *obj;
+					struct nst_memory_item    *item;
+				} memory;
+				struct {
+					int       fd;
+					int       header_len;
+					uint64_t  payload_len;
+					uint64_t  offset;
+				} disk;
+			} store;
+			struct {
+				struct nst_dict  *dict;
+				uint64_t          idx;
+				struct buffer     buf;
+				struct ist        name;
+				struct ist        host;
+				struct ist        path;
+				struct my_regex  *regex;
+			} manager;
+		} nuster;
 		struct {
 			void *ptr;              /* current peer or NULL, do not use for something else */
 		} peers;                        /* used by the peers applet */

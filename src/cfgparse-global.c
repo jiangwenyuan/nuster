@@ -11,8 +11,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <common/cfgparse.h>
-#include <proto/compression.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/compression.h>
+#include <haproxy/global.h>
+#include <haproxy/log.h>
+#include <haproxy/tools.h>
 
 #include <nuster/nuster.h>
 

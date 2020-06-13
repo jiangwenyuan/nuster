@@ -10,12 +10,8 @@
  *
  */
 
-#include <common/standard.h>
-
-#include <types/sample.h>
-
-#include <proto/filters.h>
-#include <proto/sample.h>
+#include <haproxy/filters.h>
+#include <haproxy/sample.h>
 
 #include <nuster/nuster.h>
 

@@ -10,14 +10,8 @@
  *
  */
 
-#include <common/cfgparse.h>
-#include <common/standard.h>
-
-#include <proto/filters.h>
-#include <proto/log.h>
-#include <proto/stream.h>
-#include <proto/http_ana.h>
-#include <proto/stream_interface.h>
+#include <haproxy/filters.h>
+#include <haproxy/stream_interface.h>
 
 #include <nuster/nuster.h>
 

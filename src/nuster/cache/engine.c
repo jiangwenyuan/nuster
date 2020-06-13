@@ -10,19 +10,7 @@
  *
  */
 
-#include <proto/log.h>
-#include <proto/http_ana.h>
-#include <proto/raw_sock.h>
-#include <proto/stream_interface.h>
-#include <proto/acl.h>
-#include <proto/proxy.h>
-#include <proto/http_htx.h>
-#include <common/htx.h>
-
-#ifdef USE_OPENSSL
-#include <proto/ssl_sock.h>
-#include <types/ssl_sock.h>
-#endif
+#include <haproxy/stream_interface.h>
 
 #include <nuster/nuster.h>
 

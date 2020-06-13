@@ -12,7 +12,7 @@
 
 #include <sys/mman.h>
 
-#include <common/standard.h>
+#include <haproxy/tools.h>
 
 #include <nuster/shctx.h>
 #include <nuster/shmem.h>

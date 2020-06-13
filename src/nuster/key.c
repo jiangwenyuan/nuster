@@ -12,16 +12,14 @@
 
 #include <inttypes.h>
 
+#include <import/xxhash.h>
 #include <import/sha1.h>
 
-#include <types/global.h>
-#include <types/http_htx.h>
-
-#include <proto/stream_interface.h>
-#include <proto/proxy.h>
-#include <proto/log.h>
-#include <proto/acl.h>
-#include <proto/http_htx.h>
+#include <haproxy/global.h>
+#include <haproxy/htx.h>
+#include <haproxy/stream.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/http.h>
 
 #include <nuster/nuster.h>
 

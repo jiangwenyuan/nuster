@@ -22,7 +22,7 @@
 #ifndef _NUSTER_KEY_H
 #define _NUSTER_KEY_H
 
-#include <import/xxhash.h>
+#include <haproxy/chunk.h>
 
 #include <nuster/common.h>
 

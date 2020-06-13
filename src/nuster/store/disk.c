@@ -10,9 +10,8 @@
  *
  */
 
-#include <dirent.h>
-
-#include <types/global.h>
+#include <haproxy/tools.h>
+#include <haproxy/global.h>
 
 #include <nuster/nuster.h>
 

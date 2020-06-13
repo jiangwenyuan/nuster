@@ -10,30 +10,32 @@
  *
  */
 
-#include <common/base64.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/htx.h>
-#include <common/net_helper.h>
-#include <common/uri_auth.h>
-
-#include <types/capture.h>
-
-#include <proto/acl.h>
-#include <proto/action.h>
-#include <proto/channel.h>
-#include <proto/checks.h>
-#include <proto/connection.h>
-#include <proto/filters.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/http_ana.h>
-#include <proto/proxy.h>
-#include <proto/server.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/stats.h>
-#include <proto/vars.h>
+#include <haproxy/acl.h>
+#include <haproxy/action-t.h>
+#include <haproxy/api.h>
+#include <haproxy/backend.h>
+#include <haproxy/base64.h>
+#include <haproxy/capture-t.h>
+#include <haproxy/channel.h>
+#include <haproxy/check.h>
+#include <haproxy/connection.h>
+#include <haproxy/errors.h>
+#include <haproxy/filters.h>
+#include <haproxy/http.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/log.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/proxy.h>
+#include <haproxy/regex.h>
+#include <haproxy/server-t.h>
+#include <haproxy/stats.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/trace.h>
+#include <haproxy/uri_auth-t.h>
+#include <haproxy/vars.h>
 
 #include <nuster/nuster.h>
 
@@ -65,7 +67,6 @@ static int http_handle_stats(struct stream *s, struct channel *req);
 
 static int http_handle_expect_hdr(struct stream *s, struct htx *htx, struct http_msg *msg);
 static int http_reply_100_continue(struct stream *s);
-static int http_reply_40x_unauthorized(struct stream *s, const char *auth_realm);
 
 /* This stream analyser waits for a complete HTTP request. It returns 1 if the
  * processing can continue on next analysers, or zero if it either needs more
@@ -2831,7 +2832,6 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 	struct htx *htx;
 	struct act_rule *rule;
 	struct http_hdr_ctx ctx;
-	const char *auth_realm;
 	enum rule_result rule_ret = HTTP_RULE_RES_CONT;
 	int act_opts = 0;
 
@@ -2925,25 +2925,6 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 				txn->status = rule->arg.http_reply->status;
 				txn->http_reply = rule->arg.http_reply;
 				rule_ret = HTTP_RULE_RES_DENY;
-				goto end;
-
-			case ACT_HTTP_REQ_AUTH:
-				/* Auth might be performed on regular http-req rules as well as on stats */
-				auth_realm = rule->arg.http.str.ptr;
-				if (!auth_realm) {
-					if (px->uri_auth && rules == &px->uri_auth->http_req_rules)
-						auth_realm = STATS_DEFAULT_REALM;
-					else
-						auth_realm = px->id;
-				}
-				/* send 401/407 depending on whether we use a proxy or not. We still
-				 * count one error, because normal browsing won't significantly
-				 * increase the counter but brute force attempts will.
-				 */
-				rule_ret = HTTP_RULE_RES_ABRT;
-				if (http_reply_40x_unauthorized(s, auth_realm) == -1)
-					rule_ret = HTTP_RULE_RES_ERROR;
-				stream_inc_http_err_ctr(s);
 				goto end;
 
 			case ACT_HTTP_REDIR:
@@ -4665,7 +4646,7 @@ struct http_reply *http_error_message(struct stream *s)
  * errorfile, an raw file or a log-format string is used. On success, it returns
  * 0. If an error occurs -1 is returned.
  */
-static int http_reply_to_htx(struct stream *s, struct htx *htx, struct http_reply *reply)
+int http_reply_to_htx(struct stream *s, struct htx *htx, struct http_reply *reply)
 {
 	struct buffer *errmsg;
 	struct htx_sl *sl;
@@ -4908,78 +4889,6 @@ static int http_reply_100_continue(struct stream *s)
 	return -1;
 }
 
-
-/* Send a 401-Unauthorized or 407-Unauthorized response to the client, depending
- * ont whether we use a proxy or not. It returns 0 on success and -1 on
- * error. The response channel is updated accordingly.
- */
-static int http_reply_40x_unauthorized(struct stream *s, const char *auth_realm)
-{
-	struct channel *res = &s->res;
-	struct htx *htx = htx_from_buf(&res->buf);
-	struct htx_sl *sl;
-	struct ist code, body;
-	int status;
-	unsigned int flags = (HTX_SL_F_IS_RESP|HTX_SL_F_VER_11);
-
-	if (!(s->txn->flags & TX_USE_PX_CONN)) {
-		status = 401;
-		code = ist("401");
-		body = ist("<html><body><h1>401 Unauthorized</h1>\n"
-			   "You need a valid user and password to access this content.\n"
-			   "</body></html>\n");
-	}
-	else {
-		status = 407;
-		code = ist("407");
-		body = ist("<html><body><h1>407 Unauthorized</h1>\n"
-			   "You need a valid user and password to access this content.\n"
-			   "</body></html>\n");
-	}
-
-	sl = htx_add_stline(htx, HTX_BLK_RES_SL, flags,
-			    ist("HTTP/1.1"), code, ist("Unauthorized"));
-	if (!sl)
-		goto fail;
-	sl->info.res.status = status;
-	s->txn->status = status;
-
-	if (chunk_printf(&trash, "Basic realm=\"%s\"", auth_realm) == -1)
-		goto fail;
-
-        if (!htx_add_header(htx, ist("Content-length"), ist("112")) ||
-	    !htx_add_header(htx, ist("Cache-Control"), ist("no-cache")) ||
-	    !htx_add_header(htx, ist("Connection"), ist("close")) ||
-	    !htx_add_header(htx, ist("Content-Type"), ist("text/html")))
-		goto fail;
-	if (status == 401 && !htx_add_header(htx, ist("WWW-Authenticate"), ist2(trash.area, trash.data)))
-		goto fail;
-	if (status == 407 && !htx_add_header(htx, ist("Proxy-Authenticate"), ist2(trash.area, trash.data)))
-		goto fail;
-	if (!htx_add_endof(htx, HTX_BLK_EOH))
-		goto fail;
-
-	while (body.len) {
-		size_t sent = htx_add_data(htx, body);
-		if (!sent)
-			goto fail;
-		body.ptr += sent;
-		body.len -= sent;
-	}
-
-	if (!htx_add_endof(htx, HTX_BLK_EOM))
-		goto fail;
-
-	if (!http_forward_proxy_resp(s, 1))
-		goto fail;
-	return 0;
-
-  fail:
-	/* If an error occurred, remove the incomplete HTTP response from the
-	 * buffer */
-	channel_htx_truncate(res, htx);
-	return -1;
-}
 
 /*
  * Capture headers from message <htx> according to header list <cap_hdr>, and

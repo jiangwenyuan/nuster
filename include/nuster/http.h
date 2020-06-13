@@ -22,8 +22,6 @@
 #ifndef _NUSTER_HTTP_H
 #define _NUSTER_HTTP_H
 
-#include <common/htx.h>
-
 #include <nuster/common.h>
 #include <nuster/memory.h>
 

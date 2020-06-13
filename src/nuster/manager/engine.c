@@ -10,13 +10,10 @@
  *
  */
 
-#include <types/global.h>
-
-#include <proto/http_ana.h>
-#include <proto/stream_interface.h>
-#include <proto/proxy.h>
-#include <proto/http_htx.h>
-#include <common/htx.h>
+#include <haproxy/http.h>
+#include <haproxy/proxy.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/stream_interface.h>
 
 #include <nuster/nuster.h>
 
