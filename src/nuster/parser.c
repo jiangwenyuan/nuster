@@ -21,8 +21,8 @@
 
 #include <nuster/nuster.h>
 
-const char *nst_cache_flt_id = "cache filter id";
-const char *nst_nosql_flt_id = "nosql filter id";
+const char *nst_cache_flt_id = "nuster cache id";
+const char *nst_nosql_flt_id = "nuster nosql id";
 
 static nst_key_element_t *
 _nst_parse_rule_key_cast(char *str) {
@@ -365,6 +365,7 @@ nuster_parse_global_manager(const char *file, int line, char **args) {
     cur_arg++;
 
     while(*(args[cur_arg]) !=0) {
+
         if(!strcmp(args[cur_arg], "purge-method")) {
             cur_arg++;
 
@@ -401,6 +402,7 @@ nuster_parse_global_manager(const char *file, int line, char **args) {
             global.nuster.manager.uri.len = strlen(args[cur_arg]);
 
             cur_arg++;
+
             continue;
         }
 
@@ -451,6 +453,7 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
     cur_arg++;
 
     while(*(args[cur_arg]) !=0) {
+
         if(!strcmp(args[cur_arg], "data-size")) {
             cur_arg++;
 
@@ -473,6 +476,7 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -499,6 +503,7 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -516,7 +521,9 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
 
             global.nuster.cache.root.ptr = strdup(args[cur_arg]);
             global.nuster.cache.root.len = strlen(args[cur_arg]);
+
             cur_arg++;
+
             continue;
         }
 
@@ -539,6 +546,7 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -584,6 +592,7 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -606,6 +615,7 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -758,6 +768,7 @@ nuster_parse_global_nosql(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -775,6 +786,7 @@ nuster_parse_global_nosql(const char *file, int line, char **args) {
 
             global.nuster.nosql.root.ptr = strdup(args[cur_arg]);
             global.nuster.nosql.root.len = strlen(args[cur_arg]);
+
             cur_arg++;
 
             continue;
@@ -818,8 +830,7 @@ nuster_parse_global_nosql(const char *file, int line, char **args) {
             global.nuster.nosql.data_cleaner = atoi(args[cur_arg]);
 
             if(global.nuster.nosql.data_cleaner <= 0) {
-                global.nuster.nosql.data_cleaner =
-                    NST_DEFAULT_DATA_CLEANER;
+                global.nuster.nosql.data_cleaner = NST_DEFAULT_DATA_CLEANER;
             }
 
             cur_arg++;
@@ -892,6 +903,7 @@ nuster_parse_global_nosql(const char *file, int line, char **args) {
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -1415,6 +1427,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -1454,6 +1467,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             }
 
             cur_arg++;
+
             continue;
         }
 
@@ -1491,6 +1505,7 @@ nst_parse_proxy_rule(char **args, int section, hpx_proxy_t *proxy, hpx_proxy_t *
             }
 
             cur_arg++;
+
             continue;
         }
 

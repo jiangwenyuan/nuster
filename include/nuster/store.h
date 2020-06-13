@@ -23,29 +23,31 @@
 #define _NUSTER_STORE_H
 
 #include <nuster/common.h>
-#include <nuster/ring.h>
+#include <nuster/memory.h>
 #include <nuster/disk.h>
 
 
 typedef struct nst_store {
-    nst_ring_t              ring;
-    nst_disk_t              disk;
+    nst_memory_t                memory;
+    nst_disk_t                  disk;
 } nst_store_t;
 
 
 static inline int
-nst_store_init(hpx_ist_t root, nst_store_t *store, nst_memory_t *memory, int clean_temp) {
+nst_store_init(nst_store_t *store, hpx_ist_t root, nst_shmem_t *shmem, int clean_temp) {
 
-    if(nst_ring_init(&store->ring, memory) != NST_OK) {
+    if(nst_memory_init(&store->memory, shmem) != NST_OK) {
         return NST_ERR;
     }
 
-    if(nst_disk_init(root, &store->disk, memory, clean_temp) != NST_OK) {
+    if(nst_disk_init(&store->disk, root, shmem, clean_temp) != NST_OK) {
         return NST_ERR;
     }
 
     return NST_OK;
 }
+
+void nst_store_memory_sync_disk(nst_core_t *core);
 
 static inline int
 nst_store_memory_on(uint8_t t) {

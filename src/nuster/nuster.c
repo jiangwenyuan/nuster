@@ -47,23 +47,23 @@ nuster_t  nuster = {
 
 static void
 _nst_proxy_init() {
-    hpx_proxy_t   *px1;
-    nst_memory_t  *memory;
-    int            uuid, proxy_cnt;
+    hpx_proxy_t  *px1;
+    nst_shmem_t  *shmem;
+    int           uuid, proxy_cnt;
 
     /* new rule init */
-    global.nuster.memory = nst_memory_create("nuster.shm", NST_DEFAULT_SIZE,
+    global.nuster.shmem = nst_shmem_create("nuster.shm", NST_DEFAULT_SIZE,
             global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
-    if(!global.nuster.memory) {
+    if(!global.nuster.shmem) {
         goto err;
     }
 
-    if(nst_shctx_init(global.nuster.memory) != NST_OK) {
+    if(nst_shctx_init(global.nuster.shmem) != NST_OK) {
         goto err;
     }
 
-    memory = global.nuster.memory;
+    shmem = global.nuster.shmem;
 
     proxy_cnt = 0;
 
@@ -101,7 +101,7 @@ _nst_proxy_init() {
         px1 = px1->next;
     }
 
-    nuster.proxy = nst_memory_alloc(memory, proxy_cnt * sizeof(nst_proxy_t *));
+    nuster.proxy = nst_shmem_alloc(shmem, proxy_cnt * sizeof(nst_proxy_t *));
 
     if(!nuster.proxy) {
         goto err;
@@ -114,13 +114,14 @@ _nst_proxy_init() {
     px1 = proxies_list;
 
     while(px1) {
+
         if(px1->nuster.mode == NST_MODE_CACHE || px1->nuster.mode == NST_MODE_NOSQL) {
             nst_rule_config_t  *rc   = NULL;
             nst_rule_t         *rule = NULL;
             nst_rule_t         *tail = NULL;
             nst_proxy_t        *px   = NULL;
 
-            nuster.proxy[px1->uuid] = nst_memory_alloc(memory, sizeof(nst_proxy_t));
+            nuster.proxy[px1->uuid] = nst_shmem_alloc(shmem, sizeof(nst_proxy_t));
 
             px = nuster.proxy[px1->uuid];
 
@@ -133,7 +134,7 @@ _nst_proxy_init() {
             list_for_each_entry(rc, &px1->nuster.rules, list) {
                 nst_rule_key_t  *key = NULL;
 
-                rule = nst_memory_alloc(memory, sizeof(nst_rule_t));
+                rule = nst_shmem_alloc(shmem, sizeof(nst_rule_t));
 
                 if(!rule) {
                     goto err;
@@ -158,7 +159,7 @@ _nst_proxy_init() {
                 if(key) {
                     rule->key = key;
                 } else {
-                    key = nst_memory_alloc(memory, sizeof(nst_rule_key_t));
+                    key = nst_shmem_alloc(shmem, sizeof(nst_rule_key_t));
 
                     if(!key) {
                         goto err;

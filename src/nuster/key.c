@@ -27,7 +27,7 @@
 
 int
 nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_txn_t *txn,
-        nst_key_t *key, enum http_meth_t method) {
+        nst_key_t *key, hpx_http_meth_t method) {
 
     nst_key_element_t  **pck = rule->key->data;
     nst_key_element_t   *ck  = NULL;

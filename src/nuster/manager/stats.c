@@ -48,7 +48,7 @@ nst_stats_update_cache(int state, uint64_t bytes) {
 }
 
 void
-nst_stats_update_nosql(enum http_meth_t meth) {
+nst_stats_update_nosql(hpx_http_meth_t meth) {
     nst_shctx_lock(global.nuster.stats);
 
     global.nuster.stats->nosql.total++;
@@ -264,27 +264,28 @@ _nst_stats_payload(hpx_appctx_t *appctx, hpx_stream_interface_t *si, hpx_htx_t *
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.cache.size:",
-                global.nuster.cache.memory->size);
+                global.nuster.cache.shmem->size);
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.cache.used:",
-                global.nuster.cache.memory->used);
+                global.nuster.cache.shmem->used);
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.cache.count:",
-                nuster.cache->store.ring.count);
+                nuster.cache->store.memory.count);
     }
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.nosql.size:",
-                global.nuster.nosql.memory->size);
+                global.nuster.nosql.shmem->size);
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.nosql.used:",
-                global.nuster.nosql.memory->used);
+                global.nuster.nosql.shmem->used);
 
         chunk_appendf(&trash, "%-*s%"PRIu64"\n", len, "store.memory.nosql.count:",
-                nuster.nosql->store.ring.count);
+                nuster.nosql->store.memory.count);
     }
 
     if(global.nuster.cache.status == NST_STATUS_ON || global.nuster.nosql.status == NST_STATUS_ON) {
+
         if(global.nuster.cache.root.len || global.nuster.nosql.root.len) {
             chunk_appendf(&trash, "\n**STORE DISK**\n");
         }
@@ -505,7 +506,7 @@ out:
 
 int
 nst_stats_init() {
-    global.nuster.stats = nst_memory_alloc(global.nuster.memory, sizeof(nst_stats_t));
+    global.nuster.stats = nst_shmem_alloc(global.nuster.shmem, sizeof(nst_stats_t));
 
     if(!global.nuster.stats) {
         return NST_ERR;

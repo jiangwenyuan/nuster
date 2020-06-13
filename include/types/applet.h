@@ -80,9 +80,9 @@ struct appctx {
 		union {
 			union {
 				struct {
-					struct nst_ring_data    *data;
-					struct nst_ring_item    *item;
-				} ring;
+					struct nst_memory_object  *obj;
+					struct nst_memory_item    *item;
+				} memory;
 				struct {
 					int       fd;
 					int       header_len;

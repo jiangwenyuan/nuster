@@ -67,8 +67,7 @@ _shctx_awakelocker(unsigned int *uaddr) {
 
 #else /* internal spin lock */
 
-#if defined (__i486__) || defined (__i586__) || defined (__i686__)           \
-    || defined (__x86_64__)
+#if defined (__i486__) || defined (__i586__) || defined (__i686__) || defined (__x86_64__)
 static inline void
 relax() {
     __asm volatile("rep;nop\n" ::: "memory");
@@ -101,8 +100,7 @@ _shctx_wait4lock(unsigned int *count, unsigned int *uaddr, int value) {
 
 #endif
 
-#if defined (__i486__) || defined (__i586__) || defined (__i686__)           \
-    || defined (__x86_64__)
+#if defined (__i486__) || defined (__i586__) || defined (__i686__) || defined (__x86_64__)
 static inline unsigned int
 xchg(unsigned int *ptr, unsigned int x) {
     __asm volatile("lock xchgl %0,%1"

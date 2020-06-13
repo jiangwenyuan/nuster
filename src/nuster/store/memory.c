@@ -1,5 +1,5 @@
 /*
- * nuster ring functions.
+ * nuster store memory functions.
  *
  * Copyright (C) Jiang Wenyuan, < koubunen AT gmail DOT com >
  *
@@ -13,125 +13,125 @@
 #include <nuster/nuster.h>
 
 int
-nst_ring_init(nst_ring_t *ring, nst_memory_t *memory) {
+nst_memory_init(nst_memory_t *mem, nst_shmem_t *shmem) {
 
-    ring->memory  = memory;
-    ring->head    = NULL;
-    ring->tail    = NULL;
-    ring->count   = 0;
-    ring->invalid = 0;
+    mem->shmem   = shmem;
+    mem->head    = NULL;
+    mem->tail    = NULL;
+    mem->count   = 0;
+    mem->invalid = 0;
 
-    return nst_shctx_init(ring);
+    return nst_shctx_init(mem);
 }
 
 /*
- * create a new nst_ring_data and insert it to nst_ring list
- */
-nst_ring_data_t *
-nst_ring_alloc_data(nst_ring_t *ring) {
-    nst_ring_data_t  *data = nst_memory_alloc(ring->memory, sizeof(*data));
-
-    if(data) {
-        memset(data, 0, sizeof(*data));
-
-        nst_shctx_lock(ring);
-
-        if(ring->head == NULL) {
-            ring->head = data;
-            ring->tail = data;
-            data->next = data;
-        } else {
-
-            if(ring->head == ring->tail) {
-                ring->head->next = data;
-                data->next       = ring->head;
-                ring->tail       = data;
-            } else {
-                data->next       = ring->head;
-                ring->tail->next = data;
-                ring->tail       = data;
-            }
-        }
-
-        ring->count++;
-
-        nst_shctx_unlock(ring);
-    }
-
-    return data;
-}
-
-/*
- * free invalid nst_ring_data
+ * free invalid nst_memory_object
  */
 void
-nst_ring_cleanup(nst_ring_t *ring) {
-    nst_ring_data_t  *data = NULL;
-    nst_ring_item_t  *item = NULL;
-    nst_ring_item_t  *tmp;
+nst_memory_cleanup(nst_memory_t *mem) {
+    nst_memory_obj_t   *obj  = NULL;
+    nst_memory_item_t  *item = NULL;
+    nst_memory_item_t  *tmp;
 
-    nst_shctx_lock(ring);
+    nst_shctx_lock(mem);
 
-    if(ring->head) {
+    if(mem->head) {
 
-        if(ring->head == ring->tail) {
+        if(mem->head == mem->tail) {
 
-            if(nst_ring_data_invalid(ring->head) == NST_OK) {
-                data       = ring->head;
-                ring->head = NULL;
-                ring->tail = NULL;
+            if(nst_memory_obj_invalid(mem->head) == NST_OK) {
+                obj       = mem->head;
+                mem->head = NULL;
+                mem->tail = NULL;
             }
 
         } else {
 
-            if(nst_ring_data_invalid(ring->head) == NST_OK) {
-                data             = ring->head;
-                ring->tail->next = ring->head->next;
-                ring->head       = ring->head->next;
+            if(nst_memory_obj_invalid(mem->head) == NST_OK) {
+                obj             = mem->head;
+                mem->tail->next = mem->head->next;
+                mem->head       = mem->head->next;
             } else {
-                ring->tail = ring->head;
-                ring->head = ring->head->next;
+                mem->tail = mem->head;
+                mem->head = mem->head->next;
             }
 
         }
 
     }
 
-    if(data) {
-        item = data->item;
+    if(obj) {
+        item = obj->item;
 
         while(item) {
             tmp  = item;
             item = item->next;
 
-            nst_memory_free(ring->memory, tmp);
+            nst_shmem_free(mem->shmem, tmp);
         }
 
-        nst_memory_free(ring->memory, data);
+        nst_shmem_free(mem->shmem, obj);
 
-        ring->count--;
-        ring->invalid--;
+        mem->count--;
+        mem->invalid--;
     }
 
-    nst_shctx_unlock(ring);
+    nst_shctx_unlock(mem);
+}
+
+/*
+ * create a new nst_memory_object and insert it to nst_memory list
+ */
+nst_memory_obj_t *
+nst_memory_obj_create(nst_memory_t *mem) {
+    nst_memory_obj_t  *obj = nst_shmem_alloc(mem->shmem, sizeof(*obj));
+
+    if(obj) {
+        memset(obj, 0, sizeof(*obj));
+
+        nst_shctx_lock(mem);
+
+        if(mem->head == NULL) {
+            mem->head = obj;
+            mem->tail = obj;
+            obj->next    = obj;
+        } else {
+
+            if(mem->head == mem->tail) {
+                mem->head->next = obj;
+                obj->next       = mem->head;
+                mem->tail       = obj;
+            } else {
+                obj->next       = mem->head;
+                mem->tail->next = obj;
+                mem->tail       = obj;
+            }
+        }
+
+        mem->count++;
+
+        nst_shctx_unlock(mem);
+    }
+
+    return obj;
 }
 
 int
-nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **tail,
+nst_memory_obj_append(nst_memory_t *mem, nst_memory_obj_t *obj, nst_memory_item_t **tail,
         const char *buf, uint32_t len, uint32_t info) {
 
-    nst_ring_item_t  *item;
+    nst_memory_item_t  *item;
 
-    if(data->invalid) {
+    if(obj->invalid) {
         return NST_ERR;
     }
 
-    item = nst_ring_alloc_item(ring, len);
+    item = nst_memory_alloc_item(mem, len);
 
     if(!item) {
-        data->invalid = 1;
+        obj->invalid = 1;
 
-        nst_ring_incr_invalid(ring);
+        nst_memory_incr_invalid(mem);
 
         return NST_ERR;
     }
@@ -144,7 +144,7 @@ nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **ta
     if(*tail) {
         (*tail)->next = item;
     } else {
-        data->item = item;
+        obj->item = item;
     }
 
     *tail = item;
@@ -153,10 +153,10 @@ nst_ring_store_add(nst_ring_t *ring, nst_ring_data_t *data, nst_ring_item_t **ta
 }
 
 void
-nst_ring_store_sync(nst_core_t *core) {
+nst_store_memory_sync_disk(nst_core_t *core) {
     nst_dict_entry_t   *entry;
-    nst_disk_data_t     data = { .file = NULL };
-    nst_ring_item_t    *item;
+    nst_disk_obj_t      data = { .file = NULL };
+    nst_memory_item_t  *item;
     nst_http_txn_t      txn;
     hpx_htx_blk_type_t  type;
     uint64_t            start;
@@ -191,7 +191,7 @@ nst_ring_store_sync(nst_core_t *core) {
             txn.res.header_len    = 0;
             txn.res.payload_len   = 0;
 
-            ret = nst_disk_store_init(&core->store.disk, &data, &entry->key, &txn, &entry->prop);
+            ret = nst_disk_obj_create(&core->store.disk, &data, &entry->key, &txn, &entry->prop);
 
             if(ret != NST_OK) {
                 goto next;
@@ -199,7 +199,7 @@ nst_ring_store_sync(nst_core_t *core) {
 
             entry->store.disk.file = data.file;
 
-            item = entry->store.ring.data->item;
+            item = entry->store.memory.obj->item;
 
             while(item) {
                 info  = item->info;
@@ -217,7 +217,7 @@ nst_ring_store_sync(nst_core_t *core) {
                 }
 
                 if(type != HTX_BLK_DATA) {
-                    ret = nst_disk_store_add(&core->store.disk, &data, (char *)&info, 4);
+                    ret = nst_disk_obj_append(&core->store.disk, &data, (char *)&info, 4);
 
                     if(ret != NST_OK) {
                         goto next;
@@ -225,7 +225,7 @@ nst_ring_store_sync(nst_core_t *core) {
 
                 }
 
-                ret = nst_disk_store_add(&core->store.disk, &data, item->data, blksz);
+                ret = nst_disk_obj_append(&core->store.disk, &data, item->data, blksz);
 
                 if(ret != NST_OK) {
                     goto next;
@@ -234,7 +234,7 @@ nst_ring_store_sync(nst_core_t *core) {
                 item = item->next;
             }
 
-            nst_disk_store_end(&core->store.disk, &data, &entry->key, &txn, entry->expire);
+            nst_disk_obj_finish(&core->store.disk, &data, &entry->key, &txn, entry->expire);
         }
 next:
 

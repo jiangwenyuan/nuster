@@ -25,118 +25,106 @@
 #include <nuster/common.h>
 
 
-#define NST_MEMORY_BLOCK_MIN_SIZE      4096ULL
-#define NST_MEMORY_BLOCK_MIN_SHIFT     12
-#define NST_MEMORY_CHUNK_MIN_SIZE      8ULL
-#define NST_MEMORY_CHUNK_MIN_SHIFT     3
-#define NST_MEMORY_BLOCK_MAX_SIZE      1024 * 1024 * 2
-#define NST_MEMORY_BLOCK_MAX_SHIFT     21
-#define NST_MEMORY_INFO_BITMAP_BITS    32
-
-
-/* start                                 alignment                   stop
- * |                                     |   |                       |
- * |_______|_0_|_...._|_M_|_0_|_..._|_N__|_*_|__0__|__...__|__N__|_*_|
- *         |              |                  |             |     |
- *         chunk        block              begin         end   <bitmap>
- *
- *
- */
-
 /*
- * info:
- * | bitmap: 32 | reserved: 16 | 5 | full: 1 | bitmap: 1 | inited: 1 | type: 8 |
- * bitmap: points to bitmap area, doesn't change once set
- * chunk size[n]: 1<<(NST_MEMORY_CHUNK_MIN_SHIFT + n)
+ * A nst_memory_object contains a complete http response data
+ * All nst_memory_object are stored in a circular singly linked list
  */
-typedef struct nst_memory_ctrl {
-    uint64_t                    info;
-    uint8_t                    *bitmap;
+typedef struct nst_memory_item {
+    struct nst_memory_item      *next;
 
-    struct nst_memory_ctrl     *prev;
-    struct nst_memory_ctrl     *next;
-} nst_memory_ctrl_t;
+    uint32_t                     info;
+    char                         data[0];
+} nst_memory_item_t;
+
+typedef struct nst_memory_object {
+    struct nst_memory_object    *next;
+
+    int                          clients;
+    int                          invalid;
+
+    nst_memory_item_t           *item;
+} nst_memory_obj_t;
 
 typedef struct nst_memory {
-    uint8_t                    *start;
-    uint8_t                    *stop;
-    uint8_t                    *bitmap;
-    char                        name[16];
+    nst_shmem_t                 *shmem;
+
+    nst_memory_obj_t            *head;
+    nst_memory_obj_t            *tail;
+
+    uint64_t                     count;
+    uint64_t                     invalid;
 
 #if defined NUSTER_USE_PTHREAD || defined USE_PTHREAD_PSHARED
-    pthread_mutex_t             mutex;
+    pthread_mutex_t              mutex;
 #else
-    unsigned int                waiters;
+    unsigned int                 waiters;
 #endif
-
-    uint64_t                    size;
-    uint64_t                    used;
-
-    uint32_t                    block_size;  /* max memory can be allocated */
-    uint32_t                    chunk_size;  /* min memory can be allocated */
-    int                         chunk_shift;
-    int                         block_shift;
-
-    int                         chunks;
-    int                         blocks;
-
-    nst_memory_ctrl_t         **chunk;
-    nst_memory_ctrl_t          *block;
-    nst_memory_ctrl_t          *empty;
-    nst_memory_ctrl_t          *full;
-
-    struct {
-        uint8_t                *begin;
-        uint8_t                *free;
-        uint8_t                *end;
-    } data;
 } nst_memory_t;
 
 
-#define bit_set(bit, i) (bit |= 1 << i)
-#define bit_clear(bit, i) (bit &= ~(1 << i))
-#define bit_used(bit, i) (((bit) >> (i)) & 1)
-#define bit_unused(bit, i) ((((bit) >> (i)) & 1) == 0)
-
+int nst_memory_init(nst_memory_t *mem, nst_shmem_t *shmem);
+void nst_memory_cleanup(nst_memory_t *mem);
 static inline void
-_nst_memory_block_set_type(nst_memory_ctrl_t *block, uint8_t type) {
-    *(uint8_t *)(&block->info) = type;
+nst_memory_incr_invalid(nst_memory_t *mem) {
+    nst_shctx_lock(mem);
+    mem->invalid++;
+    nst_shctx_unlock(mem);
+}
+
+
+static inline nst_memory_item_t *
+nst_memory_alloc_item(nst_memory_t *mem, uint32_t size) {
+    return nst_shmem_alloc(mem->shmem, sizeof(nst_memory_item_t) + size);
+}
+
+nst_memory_obj_t *nst_memory_obj_create(nst_memory_t *mem);
+
+int nst_memory_obj_append(nst_memory_t *mem, nst_memory_obj_t *obj, nst_memory_item_t **tail,
+        const char *buf, uint32_t len, uint32_t info);
+
+static inline int
+nst_memory_obj_finish(nst_memory_t *mem, nst_memory_obj_t *obj) {
+    obj->invalid = 0;
+
+    return NST_OK;
 }
 
 static inline void
-_nst_memory_block_set_inited(nst_memory_ctrl_t *block) {
-    bit_set(block->info, 9);
+nst_memory_obj_abort(nst_memory_t *mem, nst_memory_obj_t *obj) {
+
+    if(obj) {
+        obj->invalid = 1;
+    }
+
+    nst_memory_incr_invalid(mem);
 }
 
 static inline int
-_nst_memory_block_is_inited(nst_memory_ctrl_t *block) {
-    return bit_used(block->info, 9);
+nst_memory_obj_invalid(nst_memory_obj_t *obj) {
+
+    if(obj->invalid) {
+
+        if(!obj->clients) {
+            return NST_OK;
+        }
+    }
+
+    return NST_ERR;
 }
 
 static inline void
-_nst_memory_block_set_bitmap(nst_memory_ctrl_t *block) {
-    bit_set(block->info, 10);
+nst_memory_obj_attach(nst_memory_t *mem, nst_memory_obj_t *obj) {
+    nst_shctx_lock(mem);
+    obj->clients++;
+    nst_shctx_unlock(mem);
 }
 
 static inline void
-_nst_memory_block_set_full(nst_memory_ctrl_t *block) {
-    bit_set(block->info, 11);
+nst_memory_obj_detach(nst_memory_t *mem, nst_memory_obj_t *obj) {
+    nst_shctx_lock(mem);
+    obj->clients--;
+    nst_shctx_unlock(mem);
 }
 
-static inline int
-_nst_memory_block_is_full(nst_memory_ctrl_t *block) {
-    return bit_used(block->info, 11);
-}
-
-static inline void
-_nst_memory_block_clear_full(nst_memory_ctrl_t *block) {
-    bit_clear(block->info, 11);
-}
-
-nst_memory_t *
-nst_memory_create(char *name, uint64_t size, uint32_t block_size, uint32_t chunk_size);
-
-void *nst_memory_alloc(nst_memory_t *memory, int size);
-void nst_memory_free(nst_memory_t *memory, void *p);
 
 #endif /* _NUSTER_MEMORY_H */

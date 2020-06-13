@@ -70,9 +70,9 @@ typedef struct nst_dict_entry {
 
     struct {
         struct {
-            nst_ring_data_t    *data;
-            nst_ring_item_t    *item;
-        } ring;
+            nst_memory_obj_t   *obj;
+            nst_memory_item_t  *item;
+        } memory;
         struct {
             char               *file;
         } disk;
@@ -80,7 +80,7 @@ typedef struct nst_dict_entry {
 } nst_dict_entry_t;
 
 typedef struct nst_dict {
-    nst_memory_t               *memory;
+    nst_shmem_t                *shmem;
 
     nst_dict_entry_t          **entry;
     uint64_t                    size;           /* number of entries */
@@ -162,7 +162,7 @@ nst_dict_entry_valid(nst_dict_entry_t *entry) {
     return 0;
 }
 
-int nst_dict_init(nst_dict_t *dict, nst_store_t *store, nst_memory_t *memory, uint64_t dict_size);
+int nst_dict_init(nst_dict_t *dict, nst_store_t *store, nst_shmem_t *shmem, uint64_t dict_size);
 void nst_dict_cleanup(nst_dict_t *dict);
 
 nst_dict_entry_t *nst_dict_get(nst_dict_t *dict, nst_key_t *key);

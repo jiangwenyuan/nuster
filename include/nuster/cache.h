@@ -33,9 +33,7 @@ void nst_cache_init();
 void nst_cache_housekeeping();
 
 void nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx);
-unsigned int nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset,
-        unsigned int len);
-
+int nst_cache_append(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
 int nst_cache_finish(nst_ctx_t *ctx);
 void nst_cache_abort(nst_ctx_t *ctx);
 int nst_cache_exists(nst_ctx_t *ctx);

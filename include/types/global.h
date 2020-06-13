@@ -188,12 +188,12 @@ struct global {
 			int data_cleaner;                /* the number of data checked once */
 			int disk_cleaner;                /* the number of files checked once */
 			int disk_loader;                 /* the number of files load once */
-			int disk_saver;                  /* the number of entries checked once for persist_async */
+			int disk_saver;                  /* the number of entries checked once for disk sync */
 			int clean_temp;                  /* clean temp file or not */
 
 			struct ist root;                 /* disk root directory */
 
-			struct nst_memory *memory;       /* memory */
+			struct nst_shmem *shmem;         /* memory */
 		} cache;
 		struct {
 			int status;                      /* enable nosql on or off */
@@ -205,23 +205,23 @@ struct global {
 			int data_cleaner;                /* the number of data checked once */
 			int disk_cleaner;                /* the number of files checked once */
 			int disk_loader;                 /* the number of files load once */
-			int disk_saver;                  /* the number of entries checked once for persist_async */
+			int disk_saver;                  /* the number of entries checked once for disk sync */
 			int clean_temp;                  /* clean temp file or not */
 
 			struct ist root;                 /* disk root directory */
 
-			struct nst_memory *memory;       /* memory */
+			struct nst_shmem *shmem;         /* memory */
 		} nosql;
 
 		struct {
-			int          status;                      /* enable nosql on or off */
+			int          status;             /* enable nosql on or off */
 			struct ist   purge_method;
-			struct ist   uri;                        /* the uri used for stats and manager */
+			struct ist   uri;                /* the uri used for stats and manager */
 		} manager;
 
 		struct nst_stats  *stats;
 
-		struct nst_memory *memory;                     /* for common usage */
+		struct nst_shmem *shmem;                 /* for common usage */
 	} nuster;
 };
 

@@ -47,14 +47,13 @@ extern const char    *nst_nosql_flt_id;
 
 void nst_nosql_init();
 void nst_nosql_housekeeping();
+int nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
 
 void nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
-int nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
+int nst_nosql_append(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len);
 void nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx);
 void nst_nosql_abort(nst_ctx_t *ctx);
 int nst_nosql_exists(nst_ctx_t *ctx);
 int nst_nosql_delete(nst_key_t *key);
-
-int nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px);
 
 #endif /* _NUSTER_NOSQL_H */
