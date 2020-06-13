@@ -120,12 +120,11 @@ _nst_manager_check_uri(hpx_http_msg_t *msg) {
 
 static inline int
 _nst_manager_check_purge_method(hpx_http_txn_t *txn, hpx_http_msg_t *msg) {
+    hpx_http_meth_t  meth = txn->meth;
+    hpx_htx_t       *htx  = htxbuf(&msg->chn->buf);
+    hpx_htx_sl_t    *sl   = http_get_stline(htx);
 
-    hpx_htx_t     *htx = htxbuf(&msg->chn->buf);
-    hpx_htx_sl_t  *sl  = http_get_stline(htx);
-
-    if(txn->meth == HTTP_METH_OTHER
-            && isteqi(htx_sl_req_meth(sl), global.nuster.manager.purge_method)) {
+    if(meth == HTTP_METH_OTHER && isteqi(htx_sl_req_meth(sl), global.nuster.manager.purge_method)) {
         return NST_OK;
     } else {
         return NST_ERR;
@@ -176,6 +175,7 @@ nst_manager(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
                 }
 
                 hdr.blk = NULL;
+
                 if(http_find_header(htx, ist("ttl"), &hdr, 0)) {
                     int  ret = nst_parse_time(hdr.value.ptr, hdr.value.len, (unsigned *)&ttl);
 

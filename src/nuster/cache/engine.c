@@ -28,11 +28,11 @@
 
 static void
 _nst_cache_memory_handler(hpx_appctx_t *appctx) {
-    hpx_stream_interface_t  *si  = appctx->owner;
-    hpx_channel_t           *req = si_oc(si);
-    hpx_channel_t           *res = si_ic(si);
     hpx_htx_t               *req_htx, *res_htx;
-    nst_ring_item_t         *item = NULL;
+    hpx_stream_interface_t  *si    = appctx->owner;
+    hpx_channel_t           *req   = si_oc(si);
+    hpx_channel_t           *res   = si_ic(si);
+    nst_memory_item_t       *item  = NULL;
     int                      total = 0;
 
     res_htx = htxbuf(&res->buf);
@@ -50,14 +50,15 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
     }
 
     if(res->flags & (CF_SHUTW|CF_SHUTR|CF_SHUTW_NOW)) {
-        appctx->ctx.nuster.store.ring.item = NULL;
+        appctx->ctx.nuster.store.memory.item = NULL;
     }
 
-    if(appctx->ctx.nuster.store.ring.item) {
-        item = appctx->ctx.nuster.store.ring.item;
+    if(appctx->ctx.nuster.store.memory.item) {
+        item = appctx->ctx.nuster.store.memory.item;
 
         while(item) {
-            if(nst_http_ring_item_to_htx(item, res_htx) != NST_OK) {
+
+            if(nst_http_memory_item_to_htx(item, res_htx) != NST_OK) {
                 si_rx_room_blk(si);
 
                 goto out;
@@ -89,7 +90,7 @@ _nst_cache_memory_handler(hpx_appctx_t *appctx) {
     }
 
 out:
-    appctx->ctx.nuster.store.ring.item = item;
+    appctx->ctx.nuster.store.memory.item = item;
     total = res_htx->data - total;
 
     if(total) {
@@ -104,7 +105,7 @@ out:
  */
 static void
 _nst_cache_disk_handler(hpx_appctx_t *appctx) {
-    hpx_stream_interface_t  *si = appctx->owner;
+    hpx_stream_interface_t  *si  = appctx->owner;
     hpx_channel_t           *req = si_oc(si);
     hpx_channel_t           *res = si_ic(si);
     hpx_buffer_t            *buf;
@@ -116,14 +117,12 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
     uint32_t                 blksz, sz, info;
     int                      total, ret, max, fd, header_len;
 
-
     header_len  = appctx->ctx.nuster.store.disk.header_len;
     payload_len = appctx->ctx.nuster.store.disk.payload_len;
     offset      = appctx->ctx.nuster.store.disk.offset;
     fd          = appctx->ctx.nuster.store.disk.fd;
-
-    res_htx = htxbuf(&res->buf);
-    total   = res_htx->data;
+    res_htx     = htxbuf(&res->buf);
+    total       = res_htx->data;
 
     if(unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO)) {
         goto out;
@@ -284,6 +283,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
             close(fd);
 
         case NST_DISK_APPLET_END:
+
             if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
                 si_rx_room_blk(si);
 
@@ -338,8 +338,10 @@ nst_cache_handler(hpx_appctx_t *appctx) {
 
 void
 nst_cache_housekeeping() {
-    uint64_t  begin = nst_time_now_ms();
-    uint64_t  start;
+    nst_dict_t   *dict  = &nuster.cache->dict;
+    nst_store_t  *store = &nuster.cache->store;
+    uint64_t      begin = nst_time_now_ms();
+    uint64_t      start;
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
         int  dict_cleaner = global.nuster.cache.dict_cleaner;
@@ -353,7 +355,7 @@ nst_cache_housekeeping() {
         start = nst_time_now_ms();
 
         while(dict_cleaner--) {
-            nst_dict_cleanup(&nuster.cache->dict);
+            nst_dict_cleanup(dict);
 
             if(nst_time_now_ms() - start >= ms) {
                 break;
@@ -362,23 +364,23 @@ nst_cache_housekeeping() {
 
         start = nst_time_now_ms();
 
-        if(data_cleaner > nuster.cache->store.ring.count) {
-            data_cleaner = nuster.cache->store.ring.count;
+        if(data_cleaner > store->memory.count) {
+            data_cleaner = store->memory.count;
         }
 
-        if(nuster.cache->store.ring.count) {
-            ratio = nuster.cache->store.ring.invalid * 10 / nuster.cache->store.ring.count;
+        if(store->memory.count) {
+            ratio = store->memory.invalid * 10 / store->memory.count;
         }
 
         if(ratio >= 2) {
-            data_cleaner = nuster.cache->store.ring.count;
+            data_cleaner = store->memory.count;
 
             ms = ms * ratio ;
             ms = ms >= 100 ? 100 : ms;
         }
 
         while(data_cleaner--) {
-            nst_ring_cleanup(&nuster.cache->store.ring);
+            nst_memory_cleanup(&store->memory);
 
             if(nst_time_now_ms() - start >= ms) {
                 break;
@@ -388,8 +390,8 @@ nst_cache_housekeeping() {
         start = nst_time_now_ms();
         ms    = 10;
 
-        while(nuster.cache->store.disk.loaded && disk_saver--) {
-            nst_ring_store_sync(nuster.cache);
+        while(store->disk.loaded && disk_saver--) {
+            nst_store_memory_sync_disk(nuster.cache);
 
             if(nst_time_now_ms() - start >= ms) {
                 break;
@@ -398,7 +400,7 @@ nst_cache_housekeeping() {
 
         start = nst_time_now_ms();
 
-        while(nuster.cache->store.disk.loaded && disk_cleaner--) {
+        while(store->disk.loaded && disk_cleaner--) {
             nst_disk_cleanup(nuster.cache);
 
             if(nst_time_now_ms() - start >= ms) {
@@ -406,7 +408,7 @@ nst_cache_housekeeping() {
             }
         }
 
-        while(!nuster.cache->store.disk.loaded && disk_loader--) {
+        while(!store->disk.loaded && disk_loader--) {
             nst_disk_load(nuster.cache);
 
             if(nst_time_now_ms() - begin >= 500) {
@@ -419,25 +421,36 @@ nst_cache_housekeeping() {
 
 void
 nst_cache_init() {
+    hpx_ist_t     root;
+    nst_shmem_t  *shmem;
+    uint64_t      dict_size, data_size, size;
+    int           clean_temp;
+
+    root       = global.nuster.cache.root;
+    dict_size  = global.nuster.cache.dict_size;
+    data_size  = global.nuster.cache.data_size;
+    size       = dict_size + data_size;
+    clean_temp = global.nuster.cache.clean_temp;
+
     nuster.applet.cache.fct = nst_cache_handler;
 
     if(global.nuster.cache.status == NST_STATUS_ON) {
 
-        global.nuster.cache.memory = nst_memory_create("cache.shm",
-                global.nuster.cache.dict_size + global.nuster.cache.data_size,
-                global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
+        shmem = nst_shmem_create("cache.shm", size, global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
-        if(!global.nuster.cache.memory) {
+        if(!shmem) {
             ha_alert("Failed to create nuster cache memory zone.\n");
             exit(1);
         }
 
-        if(nst_shctx_init(global.nuster.cache.memory) != NST_OK) {
+        global.nuster.cache.shmem = shmem;
+
+        if(nst_shctx_init(shmem) != NST_OK) {
             ha_alert("Failed to init nuster cache memory.\n");
             exit(1);
         }
 
-        nuster.cache = nst_memory_alloc(global.nuster.cache.memory, sizeof(nst_core_t));
+        nuster.cache = nst_shmem_alloc(shmem, sizeof(nst_core_t));
 
         if(!nuster.cache) {
             ha_alert("Failed to init nuster cache core.\n");
@@ -446,25 +459,19 @@ nst_cache_init() {
 
         memset(nuster.cache, 0, sizeof(*nuster.cache));
 
-        nuster.cache->memory = global.nuster.cache.memory;
-        nuster.cache->root   = global.nuster.cache.root;
+        nuster.cache->shmem = shmem;
+        nuster.cache->root  = root;
 
-        if(nst_store_init(global.nuster.cache.root, &nuster.cache->store,
-                    global.nuster.cache.memory, global.nuster.cache.clean_temp) != NST_OK) {
-
+        if(nst_store_init(&nuster.cache->store, root, shmem, clean_temp) != NST_OK) {
             ha_alert("Failed to init nuster cache store.\n");
             exit(1);
         }
 
-        if(nst_dict_init(&nuster.cache->dict, &nuster.cache->store, global.nuster.cache.memory,
-                    global.nuster.cache.dict_size) != NST_OK) {
-
+        if(nst_dict_init(&nuster.cache->dict, &nuster.cache->store, shmem, dict_size) != NST_OK) {
             ha_alert("Failed to init nuster cache dict.\n");
             exit(1);
         }
 
-        ha_notice("[nuster][cache] on, dict_size=%"PRIu64", data_size=%"PRIu64"\n",
-                global.nuster.cache.dict_size, global.nuster.cache.data_size);
     }
 }
 
@@ -474,22 +481,28 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     hpx_htx_blk_t      *blk;
     hpx_htx_t          *htx;
     nst_dict_entry_t   *entry;
+    nst_memory_t       *mem;
+    nst_dict_t         *dict;
+    nst_disk_t         *disk;
     uint32_t            sz;
     int                 idx;
 
-    htx = htxbuf(&msg->chn->buf);
+    dict = &nuster.cache->dict;
+    mem  = &nuster.cache->store.memory;
+    disk = &nuster.cache->store.disk;
+    htx  = htxbuf(&msg->chn->buf);
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        nst_shctx_lock(&nuster.cache->dict);
+        nst_shctx_lock(dict);
 
-        entry = nst_dict_get(&nuster.cache->dict, ctx->key);
+        entry = nst_dict_get(dict, ctx->key);
 
         if(entry) {
             ctx->state = NST_CTX_STATE_BYPASS;
         }
 
         if(ctx->state == NST_CTX_STATE_CREATE) {
-            entry = nst_dict_set(&nuster.cache->dict, ctx->key, &ctx->txn, &ctx->rule->prop);
+            entry = nst_dict_set(dict, ctx->key, &ctx->txn, &ctx->rule->prop);
 
             if(entry) {
                 ctx->state = NST_CTX_STATE_CREATE;
@@ -499,7 +512,7 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             }
         }
 
-        nst_shctx_unlock(&nuster.cache->dict);
+        nst_shctx_unlock(dict);
     }
 
     /* init store data */
@@ -507,12 +520,11 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
 
         if(nst_store_memory_on(ctx->rule->prop.store)) {
-            ctx->store.ring.data = nst_ring_store_init(&nuster.cache->store.ring);
+            ctx->store.memory.obj = nst_memory_obj_create(mem);
         }
 
         if(nst_store_disk_on(ctx->rule->prop.store)) {
-            nst_disk_store_init(&nuster.cache->store.disk, &ctx->store.disk, ctx->key, &ctx->txn,
-                    &ctx->rule->prop);
+            nst_disk_obj_create(disk, &ctx->store.disk.obj, ctx->key, &ctx->txn, &ctx->rule->prop);
         }
     }
 
@@ -534,23 +546,22 @@ nst_cache_create(hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
             ctx->txn.res.header_len += 4 + sz;
 
-            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
-                int  ret;
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
+                nst_memory_obj_t    *obj  = ctx->store.memory.obj;
+                nst_memory_item_t  **item = &ctx->store.memory.item;
+                char                *ptr  = htx_get_blk_ptr(htx, blk);
+                int                  ret;
 
-                ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
-                        &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+                ret = nst_memory_obj_append(mem, obj, item, ptr, sz, blk->info);
 
                 if(ret == NST_ERR) {
-                    ctx->store.ring.data = NULL;
+                    ctx->store.memory.obj = NULL;
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
-                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
-                        (char *)&blk->info, 4);
-
-                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
-                        htx_get_blk_ptr(htx, blk), sz);
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, (char *)&blk->info, 4);
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, htx_get_blk_ptr(htx, blk), sz);
             }
 
             if(type == HTX_BLK_EOH) {
@@ -564,16 +575,20 @@ err:
 }
 
 /*
- * Add partial http data to nst_ring_data
+ * Add partial http data to nst_memory_object
  */
-unsigned int
-nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
+int
+nst_cache_append(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
     hpx_htx_blk_type_t  type;
     hpx_htx_ret_t       htxret;
     hpx_htx_blk_t      *blk;
     hpx_htx_t          *htx;
+    nst_memory_t       *mem;
+    nst_disk_t         *disk;
     unsigned int        forward = 0;
 
+    mem    = &nuster.cache->store.memory;
+    disk   = &nuster.cache->store.disk;
     htx    = htxbuf(&msg->chn->buf);
     htxret = htx_find_offset(htx, offset);
     blk    = htxret.blk;
@@ -601,19 +616,20 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             forward += data.len;
             len     -= data.len;
 
-            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
-                int  ret;
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
+                nst_memory_obj_t    *obj  = ctx->store.memory.obj;
+                nst_memory_item_t  **item = &ctx->store.memory.item;
+                int                  ret;
 
-                ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
-                        &ctx->store.ring.item, data.ptr, data.len, info);
+                ret = nst_memory_obj_append(mem, obj, item, data.ptr, data.len, info);
 
                 if(ret == NST_ERR) {
-                    ctx->store.ring.data = NULL;
+                    ctx->store.memory.obj = NULL;
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
-                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk, data.ptr, data.len);
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, data.ptr, data.len);
             }
         }
 
@@ -623,23 +639,22 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             forward += sz;
             len     -= sz;
 
-            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
-                int  ret;
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
+                nst_memory_obj_t    *obj  = ctx->store.memory.obj;
+                nst_memory_item_t  **item = &ctx->store.memory.item;
+                char                *ptr  = htx_get_blk_ptr(htx, blk);
+                int                  ret;
 
-                ret = nst_ring_store_add(&nuster.cache->store.ring, ctx->store.ring.data,
-                        &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+                ret = nst_memory_obj_append(mem, obj, item, ptr, sz, blk->info);
 
                 if(ret == NST_ERR) {
-                    ctx->store.ring.data = NULL;
+                    ctx->store.memory.obj = NULL;
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
-                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
-                        (char *)&blk->info, 4);
-
-                nst_disk_store_add(&nuster.cache->store.disk, &ctx->store.disk,
-                        htx_get_blk_ptr(htx, blk), sz);
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, (char *)&blk->info, 4);
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, htx_get_blk_ptr(htx, blk), sz);
             }
         }
 
@@ -662,49 +677,49 @@ nst_cache_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
  */
 int
 nst_cache_finish(nst_ctx_t *ctx) {
+    nst_dict_t        *dict  = &nuster.cache->dict;
+    nst_disk_t        *disk  = &nuster.cache->store.disk;
+    nst_dict_entry_t  *entry = ctx->entry;
+
     ctx->state = NST_CTX_STATE_DONE;
 
-    ctx->entry->ctime = nst_time_now_ms();
+    entry->ctime = nst_time_now_ms();
 
-    if(ctx->entry->prop.ttl == 0) {
-        ctx->entry->expire = 0;
+    if(entry->prop.ttl == 0) {
+        entry->expire = 0;
     } else {
-        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->entry->prop.ttl;
+        entry->expire = entry->ctime / 1000 + entry->prop.ttl;
     }
 
-    ctx->entry->header_len  = ctx->txn.res.header_len;
-    ctx->entry->payload_len = ctx->txn.res.payload_len;
+    entry->header_len  = ctx->txn.res.header_len;
+    entry->payload_len = ctx->txn.res.payload_len;
 
-    if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
-        nst_shctx_lock(&nuster.cache->dict);
+    if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
+        nst_shctx_lock(dict);
 
-        if(ctx->entry && ctx->entry->state != NST_DICT_ENTRY_STATE_INVALID
-                && ctx->entry->store.ring.data) {
+        if(entry && entry->state != NST_DICT_ENTRY_STATE_INVALID && entry->store.memory.obj) {
+            entry->store.memory.obj->invalid = 1;
 
-            ctx->entry->store.ring.data->invalid = 1;
-
-            nst_ring_incr_invalid(&nuster.cache->store.ring);
+            nst_memory_incr_invalid(&nuster.cache->store.memory);
         }
 
-        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-        ctx->entry->store.ring.data = ctx->store.ring.data;
+        entry->state = NST_DICT_ENTRY_STATE_VALID;
+        entry->store.memory.obj = ctx->store.memory.obj;
 
-        nst_shctx_unlock(&nuster.cache->dict);
+        nst_shctx_unlock(dict);
     }
 
-    if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
+    if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
+        nst_disk_obj_t  *obj  = &ctx->store.disk.obj;
 
-        if(nst_disk_store_end(&nuster.cache->store.disk, &ctx->store.disk, ctx->key, &ctx->txn,
-                    ctx->entry->expire) == NST_OK) {
-
-            ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-
-            ctx->entry->store.disk.file = ctx->store.disk.file;
+        if(nst_disk_obj_finish(disk, obj, ctx->key, &ctx->txn, entry->expire) == NST_OK) {
+            entry->state = NST_DICT_ENTRY_STATE_VALID;
+            entry->store.disk.file = ctx->store.disk.obj.file;
         }
     }
 
-    if(ctx->entry->state != NST_DICT_ENTRY_STATE_VALID) {
-        ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    if(entry->state != NST_DICT_ENTRY_STATE_VALID) {
+        entry->state = NST_DICT_ENTRY_STATE_INVALID;
 
         return NST_ERR;
     }
@@ -718,6 +733,8 @@ nst_cache_finish(nst_ctx_t *ctx) {
 int
 nst_cache_exists(nst_ctx_t *ctx) {
     nst_dict_entry_t  *entry = NULL;
+    nst_dict_t        *dict  = &nuster.cache->dict;
+    nst_disk_t        *disk  = &nuster.cache->store.disk;
     int                ret;
 
     ret = NST_CTX_STATE_INIT;
@@ -729,9 +746,9 @@ nst_cache_exists(nst_ctx_t *ctx) {
     if(!nst_key_memory_checked(ctx->key)) {
         nst_key_memory_set_checked(ctx->key);
 
-        nst_shctx_lock(&nuster.cache->dict);
+        nst_shctx_lock(dict);
 
-        entry = nst_dict_get(&nuster.cache->dict, ctx->key);
+        entry = nst_dict_get(dict, ctx->key);
 
         if(entry) {
 
@@ -739,14 +756,14 @@ nst_cache_exists(nst_ctx_t *ctx) {
                     || entry->state == NST_DICT_ENTRY_STATE_UPDATE
                     || entry->state == NST_DICT_ENTRY_STATE_STALE) {
 
-                if(entry->store.ring.data) {
+                if(entry->store.memory.obj) {
                     ret = NST_CTX_STATE_HIT_MEMORY;
 
-                    ctx->store.ring.data = entry->store.ring.data;
+                    ctx->store.memory.obj = entry->store.memory.obj;
                 } else if(entry->store.disk.file) {
                     ret = NST_CTX_STATE_HIT_DISK;
 
-                    ctx->store.disk.file = entry->store.disk.file;
+                    ctx->store.disk.obj.file = entry->store.disk.file;
                 }
 
                 ctx->txn.res.header_len    = entry->header_len;
@@ -774,15 +791,14 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
         }
 
-        nst_shctx_unlock(&nuster.cache->dict);
+        nst_shctx_unlock(dict);
     }
 
     if(ret == NST_CTX_STATE_INIT) {
 
-
         if(!nst_store_disk_off(ctx->rule->prop.store)) {
 
-            if(!nuster.cache->store.disk.loaded) {
+            if(!disk->loaded) {
                 ret = NST_CTX_STATE_CHECK_DISK;
             }
         }
@@ -798,9 +814,9 @@ nst_cache_exists(nst_ctx_t *ctx) {
         if(!nst_key_disk_checked(ctx->key)) {
             nst_key_disk_set_checked(ctx->key);
 
-            if(ctx->store.disk.file) {
+            if(ctx->store.disk.obj.file) {
 
-                if(nst_disk_data_valid(&ctx->store.disk, ctx->key) != NST_OK) {
+                if(nst_disk_obj_valid(&ctx->store.disk.obj, ctx->key) != NST_OK) {
 
                     ret = NST_CTX_STATE_INIT;
 
@@ -810,7 +826,8 @@ nst_cache_exists(nst_ctx_t *ctx) {
                 } else {
 
                     if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
-                        if(nst_disk_meta_check_expire(ctx->store.disk.meta) != NST_OK) {
+
+                        if(nst_disk_meta_check_expire(ctx->store.disk.obj.meta) != NST_OK) {
                             ret = NST_CTX_STATE_INIT;
 
                             entry->state = NST_DICT_ENTRY_STATE_INVALID;
@@ -834,13 +851,15 @@ nst_cache_exists(nst_ctx_t *ctx) {
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
         if(!nst_key_disk_checked(ctx->key)) {
+            nst_disk_obj_t  *obj = &ctx->store.disk.obj;
+
             nst_key_disk_set_checked(ctx->key);
 
-            if(nst_disk_data_exists(&nuster.cache->store.disk, &ctx->store.disk, ctx->key)
-                    == NST_OK) {
-                int  stale_prop = nst_disk_meta_get_stale(ctx->store.disk.meta);
-                int  stale      = nst_disk_meta_check_stale(ctx->store.disk.meta) != NST_OK;
-                int  expired    = nst_disk_meta_check_expire(ctx->store.disk.meta) != NST_OK;
+            if(nst_disk_obj_exists(disk, obj, ctx->key) == NST_OK) {
+                char *meta      = ctx->store.disk.obj.meta;
+                int  stale_prop = nst_disk_meta_get_stale(meta);
+                int  stale      = nst_disk_meta_check_stale(meta) != NST_OK;
+                int  expired    = nst_disk_meta_check_expire(meta) != NST_OK;
 
                 if(stale_prop == 0 || (stale_prop > 0 && stale) || (stale_prop < 0 && expired)) {
                     ret = NST_CTX_STATE_INIT;
@@ -848,26 +867,24 @@ nst_cache_exists(nst_ctx_t *ctx) {
                     ctx->prop = (nst_rule_prop_t *)(ctx->buf->area + ctx->buf->data);
                     ctx->buf->data += sizeof(nst_rule_prop_t);
 
-                    ctx->prop->etag = nst_disk_meta_get_etag_prop(ctx->store.disk.meta);
+                    ctx->prop->etag = nst_disk_meta_get_etag_prop(meta);
 
                     if(ctx->prop->etag == NST_STATUS_ON) {
                         ctx->txn.res.etag.ptr = ctx->buf->area + ctx->buf->data;
-                        ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
+                        ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(meta);
 
-                        nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+                        nst_disk_read_etag(obj, ctx->txn.res.etag);
 
                         ctx->buf->data += ctx->txn.res.etag.len;
                     }
 
-                    ctx->prop->last_modified =
-                        nst_disk_meta_get_last_modified_prop(ctx->store.disk.meta);
+                    ctx->prop->last_modified = nst_disk_meta_get_last_modified_prop(meta);
 
                     if(ctx->prop->last_modified == NST_STATUS_ON) {
                         ctx->txn.res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
-                        ctx->txn.res.last_modified.len =
-                            nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
+                        ctx->txn.res.last_modified.len = nst_disk_meta_get_last_modified_len(meta);
 
-                        nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
+                        nst_disk_read_last_modified(obj, ctx->txn.res.last_modified);
 
                         ctx->buf->data += ctx->txn.res.last_modified.len;
                     }
@@ -887,25 +904,25 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
 void
 nst_cache_abort(nst_ctx_t *ctx) {
+    nst_dict_entry_t   *entry = ctx->entry;
 
-    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT
-            || ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+    if(entry->state == NST_DICT_ENTRY_STATE_INIT || entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
 
-        if(ctx->store.ring.data) {
-            nst_ring_store_abort(&nuster.cache->store.ring, ctx->store.ring.data);
+        if(ctx->store.memory.obj) {
+            nst_memory_obj_abort(&nuster.cache->store.memory, ctx->store.memory.obj);
         }
 
-        if(ctx->store.disk.file) {
-            nst_disk_store_abort(&nuster.cache->store.disk, &ctx->store.disk);
+        if(ctx->store.disk.obj.file) {
+            nst_disk_obj_abort(&nuster.cache->store.disk, &ctx->store.disk.obj);
         }
     }
 
-    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT) {
-        ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    if(entry->state == NST_DICT_ENTRY_STATE_INIT) {
+        entry->state = NST_DICT_ENTRY_STATE_INVALID;
     }
 
-    if(ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
-        ctx->entry->state = NST_DICT_ENTRY_STATE_STALE;
+    if(entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+        entry->state = NST_DICT_ENTRY_STATE_STALE;
     }
 }
 
@@ -916,12 +933,13 @@ nst_cache_abort(nst_ctx_t *ctx) {
  */
 int
 nst_cache_delete(nst_key_t *key) {
+    nst_dict_t        *dict  = &nuster.cache->dict;
     nst_dict_entry_t  *entry = NULL;
     int                ret   = 1;
 
-    nst_shctx_lock(&nuster.cache->dict);
+    nst_shctx_lock(dict);
 
-    entry = nst_dict_get(&nuster.cache->dict, key);
+    entry = nst_dict_get(dict, key);
 
     if(entry) {
 
@@ -932,16 +950,16 @@ nst_cache_delete(nst_key_t *key) {
             entry->state  = NST_DICT_ENTRY_STATE_INVALID;
             entry->expire = 0;
 
-            if(entry->store.ring.data) {
-                entry->store.ring.data->invalid = 1;
-                entry->store.ring.data          = NULL;
+            if(entry->store.memory.obj) {
+                entry->store.memory.obj->invalid = 1;
+                entry->store.memory.obj          = NULL;
 
-                nst_ring_incr_invalid(&nuster.cache->store.ring);
+                nst_memory_incr_invalid(&nuster.cache->store.memory);
             }
 
             if(entry->store.disk.file) {
-                nst_disk_remove(entry->store.disk.file);
-                nst_memory_free(nuster.cache->memory, entry->store.disk.file);
+                nst_disk_file_remove(entry->store.disk.file);
+                nst_shmem_free(nuster.cache->shmem, entry->store.disk.file);
                 entry->store.disk.file = NULL;
             }
 
@@ -952,15 +970,15 @@ nst_cache_delete(nst_key_t *key) {
         ret = 0;
     }
 
-    nst_shctx_unlock(&nuster.cache->dict);
+    nst_shctx_unlock(dict);
 
     if(!nuster.cache->store.disk.loaded && global.nuster.cache.root.len){
-        nst_disk_data_t  disk;
+        nst_disk_obj_t  disk;
         hpx_buffer_t    *buf = get_trash_chunk();
 
         disk.file = buf->area;
 
-        ret = nst_disk_purge_by_key(global.nuster.cache.root, &disk, key);
+        ret = nst_disk_purge_by_key(&disk, key, global.nuster.cache.root);
 
     }
 
@@ -991,26 +1009,24 @@ nst_cache_hit(hpx_stream_t *s, hpx_stream_interface_t *si, hpx_channel_t *req, h
         appctx->st0 = ctx->state;
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
-            nst_ring_data_attach(&nuster.cache->store.ring, ctx->store.ring.data);
-            appctx->ctx.nuster.store.ring.data = ctx->store.ring.data;
-            appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
+            nst_memory_obj_attach(&nuster.cache->store.memory, ctx->store.memory.obj);
+            appctx->ctx.nuster.store.memory.obj  = ctx->store.memory.obj;
+            appctx->ctx.nuster.store.memory.item = ctx->store.memory.obj->item;
         } else {
-            appctx->ctx.nuster.store.disk.fd     = ctx->store.disk.fd;
-            appctx->ctx.nuster.store.disk.offset = nst_disk_pos_header(&ctx->store.disk);
+            char  *meta = ctx->store.disk.obj.meta;
 
-            appctx->ctx.nuster.store.disk.header_len =
-                nst_disk_meta_get_header_len(ctx->store.disk.meta);
-
-            appctx->ctx.nuster.store.disk.payload_len =
-                nst_disk_meta_get_payload_len(ctx->store.disk.meta);
+            appctx->ctx.nuster.store.disk.fd          = ctx->store.disk.obj.fd;
+            appctx->ctx.nuster.store.disk.offset      = nst_disk_pos_header(&ctx->store.disk.obj);
+            appctx->ctx.nuster.store.disk.header_len  = nst_disk_meta_get_header_len(meta);
+            appctx->ctx.nuster.store.disk.payload_len = nst_disk_meta_get_payload_len(meta);
         }
 
         appctx->st1 = NST_DISK_APPLET_HEADER;
 
-        req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
-        req->analysers &= ~AN_REQ_FLT_XFER_DATA;
+        req->analysers  &= ~AN_REQ_FLT_HTTP_HDRS;
+        req->analysers  &= ~AN_REQ_FLT_XFER_DATA;
+        req->analysers  |= AN_REQ_FLT_END;
 
-        req->analysers |= AN_REQ_FLT_END;
         req->analyse_exp = TICK_ETERNITY;
 
         res->flags |= CF_NEVER_WAIT;

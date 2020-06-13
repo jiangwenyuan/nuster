@@ -94,7 +94,7 @@ void
 nst_debug_add(const char *fmt, ...) {
 
     if((global.mode & MODE_DEBUG)) {
-        va_list         args;
+        va_list  args;
 
         va_start(args, fmt);
         trash.data += vsprintf(trash.area + trash.data, fmt, args);
@@ -106,7 +106,7 @@ void
 nst_debug_end(const char *fmt, ...) {
 
     if((global.mode & MODE_DEBUG)) {
-        va_list         args;
+        va_list  args;
 
         va_start(args, fmt);
         trash.data += vsprintf(trash.area + trash.data, fmt, args);

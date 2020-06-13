@@ -15,18 +15,18 @@
 #include <nuster/nuster.h>
 
 int
-nst_dict_init(nst_dict_t *dict, nst_store_t *store, nst_memory_t *memory, uint64_t dict_size) {
+nst_dict_init(nst_dict_t *dict, nst_store_t *store, nst_shmem_t *shmem, uint64_t dict_size) {
 
-    int  block_size = memory->block_size;
+    int  block_size = shmem->block_size;
     int  entry_size = sizeof(nst_dict_entry_t *);
     int  size       = (block_size + dict_size - 1) / block_size * block_size;
     int  i;
 
-    dict->memory = memory;
-    dict->size   = size / entry_size;
-    dict->used   = 0;
-    dict->entry  = nst_memory_alloc(memory, block_size);
-    dict->store  = store;
+    dict->shmem = shmem;
+    dict->size  = size / entry_size;
+    dict->used  = 0;
+    dict->entry = nst_shmem_alloc(shmem, block_size);
+    dict->store = store;
 
     if(!dict->entry) {
         return NST_ERR;
@@ -34,7 +34,7 @@ nst_dict_init(nst_dict_t *dict, nst_store_t *store, nst_memory_t *memory, uint64
 
     for(i = 1; i < size / block_size; i++) {
 
-        if(!nst_memory_alloc(memory, block_size)) {
+        if(!nst_shmem_alloc(shmem, block_size)) {
             return NST_ERR;
         }
     }
@@ -59,7 +59,7 @@ nst_dict_cleanup(nst_dict_t *dict) {
         return;
     }
 
-    start  = nst_time_now_ms();
+    start = nst_time_now_ms();
 
     nst_shctx_lock(dict);
 
@@ -71,15 +71,15 @@ nst_dict_cleanup(nst_dict_t *dict) {
         if(nst_dict_entry_invalid(entry)) {
             nst_dict_entry_t  *tmp = entry;
 
-            if(entry->store.ring.data) {
-                entry->store.ring.data->invalid = 1;
-                entry->store.ring.data = NULL;
+            if(entry->store.memory.obj) {
+                entry->store.memory.obj->invalid = 1;
+                entry->store.memory.obj          = NULL;
 
-                nst_ring_incr_invalid(&dict->store->ring);
+                nst_memory_incr_invalid(&dict->store->memory);
             }
 
             if(entry->store.disk.file) {
-                nst_memory_free(dict->memory, entry->store.disk.file);
+                nst_shmem_free(dict->shmem, entry->store.disk.file);
                 entry->store.disk.file = NULL;
             }
 
@@ -92,9 +92,9 @@ nst_dict_cleanup(nst_dict_t *dict) {
 
             entry = entry->next;
 
-            nst_memory_free(dict->memory, tmp->buf.area);
-            nst_memory_free(dict->memory, tmp->key.data);
-            nst_memory_free(dict->memory, tmp);
+            nst_shmem_free(dict->shmem, tmp->buf.area);
+            nst_shmem_free(dict->shmem, tmp->key.data);
+            nst_shmem_free(dict->shmem, tmp);
 
             dict->used--;
         } else {
@@ -121,11 +121,10 @@ nst_dict_cleanup(nst_dict_t *dict) {
 
 nst_dict_entry_t *
 nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_prop_t *prop) {
-
     nst_dict_entry_t  *entry = NULL;
     int                idx;
 
-    entry = nst_memory_alloc(dict->memory, sizeof(*entry));
+    entry = nst_shmem_alloc(dict->shmem, sizeof(*entry));
 
     if(!entry) {
         goto err;
@@ -146,7 +145,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
     /* set key */
     entry->key.size = key->size;
     entry->key.hash = key->hash;
-    entry->key.data = nst_memory_alloc(dict->memory, key->size);
+    entry->key.data = nst_shmem_alloc(dict->shmem, key->size);
 
     if(!entry->key.data) {
         goto err;
@@ -160,7 +159,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
         + txn->res.last_modified.len + prop->pid.len + prop->rid.len;
 
     entry->buf.data = 0;
-    entry->buf.area = nst_memory_alloc(dict->memory, entry->buf.size);
+    entry->buf.area = nst_shmem_alloc(dict->shmem, entry->buf.size);
 
     if(!entry->buf.area) {
         goto err;
@@ -243,6 +242,7 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
             }
 
             if(entry->state == NST_DICT_ENTRY_STATE_STALE) {
+
                 if(nst_dict_entry_stale_valid(entry)) {
                     return entry;
                 } else {
@@ -253,7 +253,7 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
             /*
              * check extend
              */
-            expired  = nst_dict_entry_expired(entry);
+            expired = nst_dict_entry_expired(entry);
 
             max = 1000 * entry->expire + 1000 * entry->prop.ttl * entry->prop.extend[3] / 100;
 
@@ -301,11 +301,11 @@ nst_dict_get(nst_dict_t *dict, nst_key_t *key) {
                 entry->access[3] = 0;
                 entry->extended  = 0;
 
-                if(entry->store.ring.data) {
-                    entry->store.ring.data->invalid = 1;
-                    entry->store.ring.data          = NULL;
+                if(entry->store.memory.obj) {
+                    entry->store.memory.obj->invalid = 1;
+                    entry->store.memory.obj          = NULL;
 
-                    nst_ring_incr_invalid(&dict->store->ring);
+                    nst_memory_incr_invalid(&dict->store->memory);
                 }
 
                 return NULL;
@@ -344,13 +344,13 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     }
 
     if(entry) {
-        nst_memory_free(dict->memory, key->data);
-        nst_memory_free(dict->memory, buf->area);
+        nst_shmem_free(dict->shmem, key->data);
+        nst_shmem_free(dict->shmem, buf->area);
 
         return NST_OK;
     }
 
-    entry = nst_memory_alloc(dict->memory, sizeof(*entry));
+    entry = nst_shmem_alloc(dict->shmem, sizeof(*entry));
 
     if(!entry) {
         return NST_ERR;
@@ -374,10 +374,10 @@ nst_dict_set_from_disk(nst_dict_t *dict, hpx_buffer_t *buf, nst_key_t *key, nst_
     entry->expire = expire;
     entry->atime  = nst_time_now_ms();
 
-    entry->store.disk.file = nst_memory_alloc(dict->memory, strlen(file));
+    entry->store.disk.file = nst_shmem_alloc(dict->shmem, strlen(file));
 
     if(!entry->store.disk.file) {
-        nst_memory_free(dict->memory, entry);
+        nst_shmem_free(dict->shmem, entry);
 
         return NST_ERR;
     }

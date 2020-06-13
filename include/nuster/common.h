@@ -27,6 +27,7 @@ typedef struct dirent                   nst_dirent_t;
 typedef struct sample_fetch_kw_list     hpx_sample_fetch_kw_list_t;
 typedef struct stream_interface         hpx_stream_interface_t;
 typedef struct http_hdr_ctx             hpx_http_hdr_ctx_t;
+typedef enum   http_meth_t              hpx_http_meth_t;
 typedef enum   htx_blk_type             hpx_htx_blk_type_t;
 typedef struct flt_conf                 hpx_flt_conf_t;
 typedef struct http_msg                 hpx_http_msg_t;
@@ -95,25 +96,25 @@ typedef struct nst_core                 nst_core_t;
 #define NST_DEFAULT_CODE               "200"
 
 enum {
-    NST_STATUS_UNDEFINED = -1,
-    NST_STATUS_OFF       =  0,
-    NST_STATUS_ON        =  1,
+    NST_STATUS_UNDEFINED        = -1,
+    NST_STATUS_OFF              =  0,
+    NST_STATUS_ON               =  1,
 };
 
 enum {
-    NST_MODE_CACHE       = 1,
-    NST_MODE_NOSQL       = 2,
+    NST_MODE_CACHE              = 1,
+    NST_MODE_NOSQL              = 2,
 };
 
 enum {
-    NST_RULE_DISABLED    = 0,
-    NST_RULE_ENABLED     = 1,
+    NST_RULE_DISABLED           = 0,
+    NST_RULE_ENABLED            = 1,
 };
 
 enum {
-    NST_TIME_OK          = 0,
-    NST_TIME_OVER        = 1,
-    NST_TIME_ERR         = 2,
+    NST_TIME_OK                 = 0,
+    NST_TIME_OVER               = 1,
+    NST_TIME_ERR                = 2,
 };
 
 enum {
@@ -126,7 +127,7 @@ enum {
 
 enum nst_key_element_type {
     /* method: GET, POST... */
-    NST_KEY_ELEMENT_METHOD = 1,
+    NST_KEY_ELEMENT_METHOD      = 1,
 
     /* scheme: http, https */
     NST_KEY_ELEMENT_SCHEME,
@@ -260,7 +261,7 @@ typedef struct nst_flt_conf {
 /* get current timestamp in milliseconds */
 static inline uint64_t
 nst_time_now_ms() {
-    struct timespec ts;
+    struct timespec  ts;
 
     clock_gettime(CLOCK_REALTIME, &ts);
 
@@ -270,7 +271,7 @@ nst_time_now_ms() {
 /* get current timestamp in nanoseconds */
 static inline uint64_t
 nst_time_now_ns() {
-    struct timespec ts;
+    struct timespec  ts;
 
     clock_gettime(CLOCK_REALTIME, &ts);
 

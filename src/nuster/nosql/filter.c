@@ -260,33 +260,33 @@ _nst_nosql_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         /* 0: header unsent, 1: sent */
         appctx->st1 = 0;
 
-        appctx->ctx.nuster.store.ring.data = ctx->store.ring.data;
-        appctx->ctx.nuster.store.ring.item = ctx->store.ring.data->item;
+        appctx->ctx.nuster.store.memory.obj  = ctx->store.memory.obj;
+        appctx->ctx.nuster.store.memory.item = ctx->store.memory.obj->item;
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
-
         req->analysers |= AN_REQ_FLT_END;
+
         req->analyse_exp = TICK_ETERNITY;
 
         res->flags |= CF_NEVER_WAIT;
     }
 
     if(ctx->state == NST_CTX_STATE_HIT_DISK) {
+        char  *meta = ctx->store.disk.obj.meta;
+
         appctx->st0 = NST_NOSQL_APPCTX_STATE_HIT_DISK;
         appctx->st1 = NST_DISK_APPLET_HEADER;
 
-        appctx->ctx.nuster.store.disk.fd         = ctx->store.disk.fd;
-        appctx->ctx.nuster.store.disk.offset     = nst_disk_pos_header(&ctx->store.disk);
-        appctx->ctx.nuster.store.disk.header_len =
-            nst_disk_meta_get_header_len(ctx->store.disk.meta);
-        appctx->ctx.nuster.store.disk.payload_len =
-            nst_disk_meta_get_payload_len(ctx->store.disk.meta);
+        appctx->ctx.nuster.store.disk.fd          = ctx->store.disk.obj.fd;
+        appctx->ctx.nuster.store.disk.offset      = nst_disk_pos_header(&ctx->store.disk.obj);
+        appctx->ctx.nuster.store.disk.header_len  = nst_disk_meta_get_header_len(meta);
+        appctx->ctx.nuster.store.disk.payload_len = nst_disk_meta_get_payload_len(meta);
 
         req->analysers &= ~AN_REQ_FLT_HTTP_HDRS;
         req->analysers &= ~AN_REQ_FLT_XFER_DATA;
-
         req->analysers |= AN_REQ_FLT_END;
+
         req->analyse_exp = TICK_ETERNITY;
 
         res->flags |= CF_NEVER_WAIT;
@@ -347,10 +347,11 @@ _nst_nosql_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 0;
     }
 
-    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
-            && !(msg->chn->flags & CF_ISRESP)) {
+    if(msg->chn->flags & CF_ISRESP) {
 
-        len = nst_nosql_update(msg, ctx, offset, len);
+        if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
+            len = nst_nosql_append(msg, ctx, offset, len);
+        }
     }
 
     return len;
@@ -362,19 +363,21 @@ _nst_nosql_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
     hpx_appctx_t            *appctx = si_appctx(si);
     nst_ctx_t               *ctx    = filter->ctx;
 
-    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
-            && !(msg->chn->flags & CF_ISRESP)) {
+    if(msg->chn->flags & CF_ISRESP) {
 
-        nst_nosql_finish(s, msg, ctx);
+        if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
 
-        if(ctx->state == NST_CTX_STATE_DONE) {
-            nst_debug(s, "[nosql] Create OK");
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
-        } else {
-            nst_debug(s, "[nosql] Create Failed");
-            appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
+            nst_nosql_finish(s, msg, ctx);
+
+            if(ctx->state == NST_CTX_STATE_DONE) {
+                nst_debug(s, "[nosql] Create OK");
+                appctx->st0 = NST_NOSQL_APPCTX_STATE_END;
+            } else {
+                nst_debug(s, "[nosql] Create Failed");
+                appctx->st0 = NST_NOSQL_APPCTX_STATE_ERROR;
+            }
+
         }
-
     }
 
     return 1;

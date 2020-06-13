@@ -79,6 +79,7 @@ nst_key_init() {
 
 static inline int
 nst_key_cat(hpx_buffer_t *key, const char *ptr, int len) {
+
     if(key->data + len > key->size) {
         return NST_ERR;
     }
@@ -104,6 +105,7 @@ nst_key_catist(hpx_buffer_t *key, hpx_ist_t v) {
 
 static inline int
 nst_key_catdel(hpx_buffer_t *key) {
+
     if(key->data + 1 > key->size) {
         return NST_ERR;
     }
@@ -130,6 +132,6 @@ void nst_key_hash(nst_key_t *key);
 void nst_key_debug(hpx_stream_t *s, nst_key_t *key);
 
 int nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_txn_t *txn,
-        nst_key_t *key, enum http_meth_t method);
+        nst_key_t *key, hpx_http_meth_t method);
 
 #endif /* _NUSTER_KEY_H */

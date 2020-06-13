@@ -113,7 +113,7 @@ nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, in
 }
 
 int
-nst_http_ring_item_to_htx(nst_ring_item_t *item, hpx_htx_t *htx) {
+nst_http_memory_item_to_htx(nst_memory_item_t *item, hpx_htx_t *htx) {
     hpx_htx_blk_t      *blk;
     uint32_t            blksz, sz, info;
     char               *ptr;

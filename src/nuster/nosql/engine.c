@@ -29,11 +29,11 @@
 
 static void
 nst_nosql_handler(hpx_appctx_t *appctx) {
-    hpx_stream_interface_t  *si      = appctx->owner;
-    hpx_stream_t            *s       = si_strm(si);
-    hpx_channel_t           *req     = si_oc(si);
-    hpx_channel_t           *res     = si_ic(si);
-    nst_ring_item_t         *item    = NULL;
+    hpx_stream_interface_t  *si   = appctx->owner;
+    hpx_stream_t            *s    = si_strm(si);
+    hpx_channel_t           *req  = si_oc(si);
+    hpx_channel_t           *res  = si_ic(si);
+    nst_memory_item_t       *item = NULL;
     hpx_buffer_t            *buf;
     hpx_htx_t               *req_htx, *res_htx;
     hpx_htx_blk_type_t       type;
@@ -74,12 +74,12 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
             break;
         case NST_NOSQL_APPCTX_STATE_HIT_MEMORY:
 
-            if(appctx->ctx.nuster.store.ring.item) {
-                item = appctx->ctx.nuster.store.ring.item;
+            if(appctx->ctx.nuster.store.memory.item) {
+                item = appctx->ctx.nuster.store.memory.item;
 
                 while(item) {
 
-                    if(nst_http_ring_item_to_htx(item, res_htx) != NST_OK) {
+                    if(nst_http_memory_item_to_htx(item, res_htx) != NST_OK) {
                         si_rx_room_blk(si);
 
                         goto out;
@@ -107,10 +107,10 @@ nst_nosql_handler(hpx_appctx_t *appctx) {
                 htx_to_buf(req_htx, &req->buf);
             }
 
-            nst_ring_data_detach(&nuster.nosql->store.ring, appctx->ctx.nuster.store.ring.data);
+            nst_memory_obj_detach(&nuster.nosql->store.memory, appctx->ctx.nuster.store.memory.obj);
 
 out:
-            appctx->ctx.nuster.store.ring.item = item;
+            appctx->ctx.nuster.store.memory.item = item;
             total = res_htx->data - total;
 
             if(total) {
@@ -306,8 +306,10 @@ end:
 
 void
 nst_nosql_housekeeping() {
-    uint64_t  begin = nst_time_now_ms();
-    uint64_t  start;
+    nst_dict_t   *dict  = &nuster.nosql->dict;
+    nst_store_t  *store = &nuster.nosql->store;
+    uint64_t      begin = nst_time_now_ms();
+    uint64_t      start;
 
     if(global.nuster.nosql.status == NST_STATUS_ON && master == 1) {
         int  dict_cleaner = global.nuster.nosql.dict_cleaner;
@@ -321,7 +323,7 @@ nst_nosql_housekeeping() {
         start = nst_time_now_ms();
 
         while(dict_cleaner--) {
-            nst_dict_cleanup(&nuster.nosql->dict);
+            nst_dict_cleanup(dict);
 
             if(nst_time_now_ms() - start >= ms) {
                 break;
@@ -330,23 +332,23 @@ nst_nosql_housekeeping() {
 
         start = nst_time_now_ms();
 
-        if(data_cleaner > nuster.nosql->store.ring.count) {
-            data_cleaner = nuster.nosql->store.ring.count;
+        if(data_cleaner > store->memory.count) {
+            data_cleaner = store->memory.count;
         }
 
-        if(nuster.nosql->store.ring.count) {
-            ratio = nuster.nosql->store.ring.invalid * 10 / nuster.nosql->store.ring.count;
+        if(store->memory.count) {
+            ratio = store->memory.invalid * 10 / store->memory.count;
         }
 
         if(ratio >= 2) {
-            data_cleaner = nuster.nosql->store.ring.count;
+            data_cleaner = store->memory.count;
 
             ms = ms * ratio ;
             ms = ms >= 100 ? 100 : ms;
         }
 
         while(data_cleaner--) {
-            nst_ring_cleanup(&nuster.nosql->store.ring);
+            nst_memory_cleanup(&store->memory);
 
             if(nst_time_now_ms() - start >= ms) {
                 break;
@@ -356,8 +358,8 @@ nst_nosql_housekeeping() {
         start = nst_time_now_ms();
         ms    = 10;
 
-        while(nuster.nosql->store.disk.loaded && disk_saver--) {
-            nst_ring_store_sync(nuster.nosql);
+        while(store->disk.loaded && disk_saver--) {
+            nst_store_memory_sync_disk(nuster.nosql);
 
             if(nst_time_now_ms() - start >= ms) {
                 break;
@@ -366,7 +368,7 @@ nst_nosql_housekeeping() {
 
         start = nst_time_now_ms();
 
-        while(nuster.nosql->store.disk.loaded && disk_cleaner--) {
+        while(store->disk.loaded && disk_cleaner--) {
             nst_disk_cleanup(nuster.nosql);
 
             if(nst_time_now_ms() - start >= ms) {
@@ -374,7 +376,7 @@ nst_nosql_housekeeping() {
             }
         }
 
-        while(!nuster.nosql->store.disk.loaded && disk_loader--) {
+        while(!store->disk.loaded && disk_loader--) {
             nst_disk_load(nuster.nosql);
 
             if(nst_time_now_ms() - begin >= 500) {
@@ -387,25 +389,36 @@ nst_nosql_housekeeping() {
 
 void
 nst_nosql_init() {
+    hpx_ist_t     root;
+    nst_shmem_t  *shmem;
+    uint64_t      dict_size, data_size, size;
+    int           clean_temp;
+
+    root       = global.nuster.nosql.root;
+    dict_size  = global.nuster.nosql.dict_size;
+    data_size  = global.nuster.nosql.data_size;
+    size       = dict_size + data_size;
+    clean_temp = global.nuster.nosql.clean_temp;
+
     nuster.applet.nosql.fct = nst_nosql_handler;
 
     if(global.nuster.nosql.status == NST_STATUS_ON) {
 
-        global.nuster.nosql.memory = nst_memory_create("nosql.shm",
-                global.nuster.nosql.dict_size + global.nuster.nosql.data_size,
-                global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
+        shmem = nst_shmem_create("nosql.shm", size, global.tune.bufsize, NST_DEFAULT_CHUNK_SIZE);
 
-        if(!global.nuster.nosql.memory) {
+        if(!shmem) {
             ha_alert("Failed to create nuster nosql memory zone.\n");
             exit(1);
         }
 
-        if(nst_shctx_init(global.nuster.nosql.memory) != NST_OK) {
+        global.nuster.nosql.shmem = shmem;
+
+        if(nst_shctx_init(shmem) != NST_OK) {
             ha_alert("Failed to init nuster nosql memory.\n");
             exit(1);
         }
 
-        nuster.nosql = nst_memory_alloc(global.nuster.nosql.memory, sizeof(nst_core_t));
+        nuster.nosql = nst_shmem_alloc(shmem, sizeof(nst_core_t));
 
         if(!nuster.nosql) {
             ha_alert("Failed to init nuster nosql core.\n");
@@ -414,25 +427,19 @@ nst_nosql_init() {
 
         memset(nuster.nosql, 0, sizeof(*nuster.nosql));
 
-        nuster.nosql->memory = global.nuster.nosql.memory;
-        nuster.nosql->root   = global.nuster.nosql.root;
+        nuster.nosql->shmem = shmem;
+        nuster.nosql->root  = root;
 
-        if(nst_store_init(global.nuster.nosql.root, &nuster.nosql->store,
-                    global.nuster.nosql.memory, global.nuster.nosql.clean_temp) != NST_OK) {
-
+        if(nst_store_init(&nuster.nosql->store, root, shmem, clean_temp) != NST_OK) {
             ha_alert("Failed to init nuster nosql store.\n");
             exit(1);
         }
 
-        if(nst_dict_init(&nuster.nosql->dict, &nuster.nosql->store, global.nuster.nosql.memory,
-                    global.nuster.nosql.dict_size) != NST_OK) {
-
+        if(nst_dict_init(&nuster.nosql->dict, &nuster.nosql->store, shmem, dict_size) != NST_OK) {
             ha_alert("Failed to init nuster nosql dict.\n");
             exit(1);
         }
 
-        ha_notice("[nuster][nosql] on, dict_size=%"PRIu64", data_size=%"PRIu64"\n",
-                global.nuster.nosql.dict_size, global.nuster.nosql.data_size);
     }
 }
 
@@ -444,12 +451,10 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
 
     if(global.nuster.nosql.status == NST_STATUS_ON && px->nuster.mode == NST_MODE_NOSQL) {
         hpx_stream_interface_t  *si     = &s->si[1];
+        hpx_http_meth_t          meth   = s->txn->meth;
         hpx_appctx_t            *appctx = NULL;
 
-        if(s->txn->meth != HTTP_METH_GET &&
-                s->txn->meth != HTTP_METH_POST &&
-                s->txn->meth != HTTP_METH_DELETE) {
-
+        if(meth != HTTP_METH_GET && meth != HTTP_METH_POST && meth != HTTP_METH_DELETE) {
             nst_http_reply(s, NST_HTTP_405);
 
             return 1;
@@ -481,11 +486,10 @@ nst_nosql_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     return 0;
 }
 
-nst_ring_item_t *
-_nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
-        int last_modified_prop) {
-
-    nst_ring_item_t     *item_sl, *item_ct, *item_te, *item_eoh, *item_et, *item_lm, *tail;
+nst_memory_item_t *
+_nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, nst_rule_prop_t *prop) {
+    nst_memory_t        *mem  = &nuster.nosql->store.memory;
+    nst_memory_item_t   *item_sl, *item_ct, *item_te, *item_eoh, *item_et, *item_lm, *tail;
     hpx_htx_blk_type_t   type;
     hpx_htx_sl_t        *sl;
     hpx_ist_t            ctk  = ist("content-type");
@@ -509,7 +513,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
 
     txn->res.header_len += 4 + size;
 
-    item_sl = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+    item_sl = nst_memory_alloc_item(mem, size);
 
     if(!item_sl) {
         goto err;
@@ -539,7 +543,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
     size  = ctk.len + txn->req.content_type.len;
     info += (txn->req.content_type.len << 8) + ctk.len;
 
-    item_ct = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+    item_ct = nst_memory_alloc_item(mem, size);
 
     if(!item_ct) {
         goto err;
@@ -563,7 +567,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
     size  = tek.len + tev.len;
     info += (tev.len << 8) + tek.len;
 
-    item_te = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+    item_te = nst_memory_alloc_item(mem, size);
 
     if(!item_te) {
         goto err;
@@ -582,13 +586,13 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
     tail       = item_te;
 
     /* etag */
-    if(etag_prop) {
+    if(prop->etag) {
         type  = HTX_BLK_HDR;
         info  = type << 28;
         size  = etk.len + txn->res.etag.len;
         info += (txn->res.etag.len << 8) + etk.len;
 
-        item_et = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+        item_et = nst_memory_alloc_item(mem, size);
 
         if(!item_et) {
             goto err;
@@ -608,13 +612,13 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
     }
 
     /* last-modified */
-    if(last_modified_prop) {
+    if(prop->last_modified) {
         type  = HTX_BLK_HDR;
         info  = type << 28;
         size  = lmk.len + txn->res.last_modified.len;
         info += (txn->res.last_modified.len << 8) + lmk.len;
 
-        item_lm = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+        item_lm = nst_memory_alloc_item(mem, size);
 
         if(!item_lm) {
             goto err;
@@ -639,7 +643,7 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
     size  = 1;
     info += size;
 
-    item_eoh = nst_ring_alloc_item(&nuster.nosql->store.ring, size);
+    item_eoh = nst_memory_alloc_item(mem, size);
 
     if(!item_eoh) {
         goto err;
@@ -658,22 +662,24 @@ _nst_nosql_create_header(hpx_stream_t *s, nst_http_txn_t *txn, int etag_prop,
     return item_sl;
 
 err:
-    nst_memory_free(nuster.nosql->memory, item_sl);
-    nst_memory_free(nuster.nosql->memory, item_ct);
-    nst_memory_free(nuster.nosql->memory, item_te);
-    nst_memory_free(nuster.nosql->memory, item_eoh);
+    nst_shmem_free(nuster.nosql->shmem, item_sl);
+    nst_shmem_free(nuster.nosql->shmem, item_ct);
+    nst_shmem_free(nuster.nosql->shmem, item_te);
+    nst_shmem_free(nuster.nosql->shmem, item_eoh);
 
     return NULL;
 }
 
 void
 nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
-    nst_dict_entry_t    *entry  = NULL;
-    nst_ring_item_t     *item   = NULL;
-    nst_ring_item_t     *header = NULL;
+    nst_dict_entry_t   *entry  = NULL;
+    nst_memory_item_t  *item   = NULL;
+    nst_memory_item_t  *header = NULL;
+    nst_dict_t         *dict   = &nuster.nosql->dict;
+    nst_memory_t       *mem    = &nuster.nosql->store.memory;
+    nst_disk_t         *disk   = &nuster.nosql->store.disk;
 
-    header = _nst_nosql_create_header(s, &ctx->txn, ctx->rule->prop.etag,
-            ctx->rule->prop.last_modified);
+    header = _nst_nosql_create_header(s, &ctx->txn, &ctx->rule->prop);
 
     if(header == NULL) {
         ctx->state = NST_CTX_STATE_FULL;
@@ -683,9 +689,9 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     ctx->state = NST_CTX_STATE_CREATE;
 
-    nst_shctx_lock(&nuster.nosql->dict);
+    nst_shctx_lock(dict);
 
-    entry = nst_dict_get(&nuster.nosql->dict, ctx->key);
+    entry = nst_dict_get(dict, ctx->key);
 
     if(entry) {
 
@@ -693,15 +699,15 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             entry->state = NST_DICT_ENTRY_STATE_UPDATE;
         }
 
-        ctx->state   = NST_CTX_STATE_UPDATE;
-        ctx->entry   = entry;
+        ctx->state = NST_CTX_STATE_UPDATE;
+        ctx->entry = entry;
 
         memcpy(entry->etag.ptr, ctx->txn.res.etag.ptr, entry->etag.len);
         memcpy(entry->last_modified.ptr, ctx->txn.res.last_modified.ptr, entry->last_modified.len);
     }
 
     if(ctx->state == NST_CTX_STATE_CREATE) {
-        entry = nst_dict_set(&nuster.nosql->dict, ctx->key, &ctx->txn, &ctx->rule->prop);
+        entry = nst_dict_set(dict, ctx->key, &ctx->txn, &ctx->rule->prop);
 
         if(entry) {
             ctx->state = NST_CTX_STATE_CREATE;
@@ -711,18 +717,17 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
         }
     }
 
-    nst_shctx_unlock(&nuster.nosql->dict);
+    nst_shctx_unlock(dict);
 
     /* init store data */
 
     if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
         if(nst_store_memory_on(ctx->rule->prop.store)) {
-            ctx->store.ring.data = nst_ring_store_init(&nuster.nosql->store.ring);
+            ctx->store.memory.obj = nst_memory_obj_create(mem);
         }
 
         if(nst_store_disk_on(ctx->rule->prop.store)) {
-            nst_disk_store_init(&nuster.nosql->store.disk, &ctx->store.disk, ctx->key, &ctx->txn,
-                    &ctx->rule->prop);
+            nst_disk_obj_create(disk, &ctx->store.disk.obj, ctx->key, &ctx->txn, &ctx->rule->prop);
         }
     }
 
@@ -730,28 +735,26 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 
     if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
 
-        if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
-            ctx->store.ring.data->item = header;
+        if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
+            ctx->store.memory.obj->item = header;
 
             item = header;
 
             while(item) {
-                ctx->store.ring.item = item;
+                ctx->store.memory.item = item;
 
                 item = item->next;
             }
         }
 
-        if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
+        if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
             item = header;
 
             while(item) {
                 int  sz = ((item->info & 0xff) + ((item->info >> 8) & 0xfffff));
 
-                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk,
-                        (char *)&item->info, 4);
-
-                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk, item->data, sz);
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, (char *)&item->info, 4);
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, item->data, sz);
 
                 item = item->next;
             }
@@ -761,11 +764,11 @@ nst_nosql_create(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
             item = header;
 
             while(item) {
-                nst_ring_item_t  *t = item;
+                nst_memory_item_t  *t = item;
 
                 item = item->next;
 
-                nst_memory_free(nuster.nosql->memory, t);
+                nst_shmem_free(nuster.nosql->shmem, t);
             }
         }
     }
@@ -775,17 +778,21 @@ err:
 }
 
 int
-nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
+nst_nosql_append(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsigned int len) {
     hpx_htx_blk_type_t  type;
     hpx_htx_ret_t       htxret;
     hpx_htx_blk_t      *blk;
     hpx_htx_t          *htx;
+    nst_memory_t       *mem;
+    nst_disk_t         *disk;
     unsigned int        forward = 0;
 
     htx    = htxbuf(&msg->chn->buf);
     htxret = htx_find_offset(htx, offset);
     blk    = htxret.blk;
     offset = htxret.ret;
+    disk   = &nuster.nosql->store.disk;
+    mem    = &nuster.nosql->store.memory;
 
     for(; blk && len; blk = htx_get_next_blk(htx, blk)) {
         hpx_ist_t  data;
@@ -809,19 +816,19 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             forward += data.len;
             len     -= data.len;
 
-            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
                 int  ret;
 
-                ret = nst_ring_store_add(&nuster.nosql->store.ring, ctx->store.ring.data,
-                        &ctx->store.ring.item, data.ptr, data.len, info);
+                ret = nst_memory_obj_append(mem, ctx->store.memory.obj,
+                        &ctx->store.memory.item, data.ptr, data.len, info);
 
                 if(ret == NST_ERR) {
-                    ctx->store.ring.data = NULL;
+                    ctx->store.memory.obj = NULL;
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
-                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk, data.ptr, data.len);
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, data.ptr, data.len);
             }
         }
 
@@ -831,23 +838,22 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
             forward += sz;
             len     -= sz;
 
-            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
+            if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
+                nst_memory_obj_t    *obj  = ctx->store.memory.obj;
+                nst_memory_item_t  **item = &ctx->store.memory.item;
+                char                *ptr  = htx_get_blk_ptr(htx, blk);
                 int  ret;
 
-                ret = nst_ring_store_add(&nuster.nosql->store.ring, ctx->store.ring.data,
-                        &ctx->store.ring.item, htx_get_blk_ptr(htx, blk), sz, blk->info);
+                ret = nst_memory_obj_append(mem, obj, item, ptr, sz, blk->info);
 
                 if(ret == NST_ERR) {
-                    ctx->store.ring.data = NULL;
+                    ctx->store.memory.obj = NULL;
                 }
             }
 
-            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
-                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk,
-                        (char *)&blk->info, 4);
-
-                nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk,
-                        htx_get_blk_ptr(htx, blk), sz);
+            if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, (char *)&blk->info, 4);
+                nst_disk_obj_append(disk, &ctx->store.disk.obj, htx_get_blk_ptr(htx, blk), sz);
             }
         }
 
@@ -867,78 +873,84 @@ nst_nosql_update(hpx_http_msg_t *msg, nst_ctx_t *ctx, unsigned int offset, unsig
 void
 nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
     hpx_htx_blk_type_t  type;
+    nst_dict_t         *dict;
+    nst_memory_t       *mem;
+    nst_disk_t         *disk;
+    nst_dict_entry_t   *entry;
     uint32_t            size, info;
 
     type  = HTX_BLK_EOT;
     info  = type << 28;
     size  = 1;
     info += size;
+    dict  = &nuster.nosql->dict;
+    mem   = &nuster.nosql->store.memory;
+    disk  = &nuster.nosql->store.disk;
+    entry = ctx->entry;
 
     ctx->state = NST_CTX_STATE_DONE;
 
-    ctx->entry->ctime = nst_time_now_ms();
+    entry->ctime = nst_time_now_ms();
 
-    if(ctx->entry->prop.ttl == 0) {
-        ctx->entry->expire = 0;
+    if(entry->prop.ttl == 0) {
+        entry->expire = 0;
     } else {
-        ctx->entry->expire = ctx->entry->ctime / 1000 + ctx->entry->prop.ttl;
+        entry->expire = entry->ctime / 1000 + entry->prop.ttl;
     }
 
-    if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
+    if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
 
         if(!(msg->flags & HTTP_MSGF_TE_CHNK)) {
-            int  ret;
+            nst_memory_obj_t    *obj  = ctx->store.memory.obj;
+            nst_memory_item_t  **item = &ctx->store.memory.item;
+            int                  ret;
 
-            ret = nst_ring_store_add(&nuster.nosql->store.ring, ctx->store.ring.data,
-                    &ctx->store.ring.item, "", size, info);
+            ret = nst_memory_obj_append(mem, obj, item, "", size, info);
 
             if(ret == NST_ERR) {
-                ctx->store.ring.data = NULL;
+                ctx->store.memory.obj = NULL;
             }
         }
     }
 
-    if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.ring.data) {
+    if(nst_store_memory_on(ctx->rule->prop.store) && ctx->store.memory.obj) {
 
-        nst_shctx_lock(&nuster.nosql->dict);
+        nst_shctx_lock(dict);
 
-        if(ctx->entry && ctx->entry->state != NST_DICT_ENTRY_STATE_INVALID
-                && ctx->entry->store.ring.data) {
+        if(entry && entry->state != NST_DICT_ENTRY_STATE_INVALID && entry->store.memory.obj) {
+            entry->store.memory.obj->invalid = 1;
 
-            ctx->entry->store.ring.data->invalid = 1;
-
-            nst_ring_incr_invalid(&nuster.nosql->store.ring);
+            nst_memory_incr_invalid(mem);
         }
 
-        ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-        ctx->entry->store.ring.data = ctx->store.ring.data;
+        entry->state = NST_DICT_ENTRY_STATE_VALID;
+        entry->store.memory.obj = ctx->store.memory.obj;
 
-        nst_shctx_unlock(&nuster.nosql->dict);
+        nst_shctx_unlock(dict);
     }
 
-    if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
+    if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
 
         if(!(msg->flags & HTTP_MSGF_TE_CHNK)) {
-            nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk, (char *)&info, 4);
-            nst_disk_store_add(&nuster.nosql->store.disk, &ctx->store.disk, "", size);
+            nst_disk_obj_append(disk, &ctx->store.disk.obj, (char *)&info, 4);
+            nst_disk_obj_append(disk, &ctx->store.disk.obj, "", size);
         }
     }
 
-    if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.file) {
+    if(nst_store_disk_on(ctx->rule->prop.store) && ctx->store.disk.obj.file) {
+        nst_disk_obj_t  *obj = &ctx->store.disk.obj;
 
-        if(nst_disk_store_end(&nuster.nosql->store.disk, &ctx->store.disk, ctx->key, &ctx->txn,
-                    ctx->entry->expire) == NST_OK) {
+        if(nst_disk_obj_finish(disk, obj, ctx->key, &ctx->txn, entry->expire) == NST_OK) {
+            entry->state = NST_DICT_ENTRY_STATE_VALID;
 
-            ctx->entry->state = NST_DICT_ENTRY_STATE_VALID;
-
-            ctx->entry->store.disk.file = ctx->store.disk.file;
+            entry->store.disk.file = ctx->store.disk.obj.file;
         }
     }
 
 
-    if(ctx->entry->state != NST_DICT_ENTRY_STATE_VALID) {
+    if(entry->state != NST_DICT_ENTRY_STATE_VALID) {
         ctx->state = NST_CTX_STATE_INVALID;
-        ctx->entry->state = NST_DICT_ENTRY_STATE_INIT;
+        entry->state = NST_DICT_ENTRY_STATE_INIT;
     }
 
 }
@@ -946,6 +958,9 @@ nst_nosql_finish(hpx_stream_t *s, hpx_http_msg_t *msg, nst_ctx_t *ctx) {
 int
 nst_nosql_exists(nst_ctx_t *ctx) {
     nst_dict_entry_t  *entry = NULL;
+    nst_dict_t        *dict  = &nuster.nosql->dict;
+    nst_memory_t      *mem   = &nuster.nosql->store.memory;
+    nst_disk_t        *disk  = &nuster.nosql->store.disk;
     int                ret;
 
     ret = NST_CTX_STATE_INIT;
@@ -957,21 +972,21 @@ nst_nosql_exists(nst_ctx_t *ctx) {
     if(!nst_key_memory_checked(ctx->key)) {
         nst_key_memory_set_checked(ctx->key);
 
-        nst_shctx_lock(&nuster.nosql->dict);
+        nst_shctx_lock(dict);
 
-        entry = nst_dict_get(&nuster.nosql->dict, ctx->key);
+        entry = nst_dict_get(dict, ctx->key);
 
         if(entry) {
 
             if(entry->state == NST_DICT_ENTRY_STATE_VALID
                     || entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
 
-                if(entry->store.ring.data) {
-                    ctx->store.ring.data = entry->store.ring.data;
-                    nst_ring_data_attach(&nuster.nosql->store.ring, ctx->store.ring.data);
+                if(entry->store.memory.obj) {
+                    ctx->store.memory.obj = entry->store.memory.obj;
+                    nst_memory_obj_attach(mem, ctx->store.memory.obj);
                     ret = NST_CTX_STATE_HIT_MEMORY;
                 } else if(entry->store.disk.file) {
-                    ctx->store.disk.file = entry->store.disk.file;
+                    ctx->store.disk.obj.file = entry->store.disk.file;
                     ret = NST_CTX_STATE_HIT_DISK;
                 }
 
@@ -989,14 +1004,14 @@ nst_nosql_exists(nst_ctx_t *ctx) {
             }
         }
 
-        nst_shctx_unlock(&nuster.nosql->dict);
+        nst_shctx_unlock(dict);
     }
 
     if(ret == NST_CTX_STATE_INIT) {
 
         if(!nst_store_disk_off(ctx->rule->prop.store)) {
 
-            if(!nuster.nosql->store.disk.loaded) {
+            if(!disk->loaded) {
                 ret = NST_CTX_STATE_CHECK_DISK;
             }
         }
@@ -1011,10 +1026,11 @@ nst_nosql_exists(nst_ctx_t *ctx) {
         if(!nst_key_disk_checked(ctx->key)) {
             nst_key_disk_set_checked(ctx->key);
 
-            if(ctx->store.disk.file) {
-                if(nst_disk_data_valid(&ctx->store.disk, ctx->key) != NST_OK
-                        && nst_disk_meta_check_expire(ctx->store.disk.meta) != NST_OK) {
+            if(ctx->store.disk.obj.file) {
+                int  valid  = nst_disk_obj_valid(&ctx->store.disk.obj, ctx->key);
+                int  expire = nst_disk_meta_check_expire(ctx->store.disk.obj.meta);
 
+                if(valid != NST_OK && expire != NST_OK) {
                     ret = NST_CTX_STATE_INIT;
 
                     if(entry && entry->state == NST_DICT_ENTRY_STATE_VALID) {
@@ -1030,34 +1046,34 @@ nst_nosql_exists(nst_ctx_t *ctx) {
     if(ret == NST_CTX_STATE_CHECK_DISK) {
 
         if(!nst_key_disk_checked(ctx->key)) {
+            char  *meta   = ctx->store.disk.obj.meta;
+            int    exists = nst_disk_obj_exists(disk, &ctx->store.disk.obj, ctx->key);
+
             nst_key_disk_set_checked(ctx->key);
 
-            if(nst_disk_data_exists(&nuster.nosql->store.disk, &ctx->store.disk, ctx->key) == NST_OK
-                    && nst_disk_meta_check_expire(ctx->store.disk.meta) == NST_OK) {
+            if(exists == NST_OK && nst_disk_meta_check_expire(meta) == NST_OK) {
 
                 ctx->prop = (nst_rule_prop_t *)(ctx->buf->area + ctx->buf->data);
                 ctx->buf->data += sizeof(nst_rule_prop_t);
 
-                ctx->prop->etag = nst_disk_meta_get_etag_prop(ctx->store.disk.meta);
+                ctx->prop->etag = nst_disk_meta_get_etag_prop(meta);
 
                 if(ctx->prop->etag == NST_STATUS_ON) {
                     ctx->txn.res.etag.ptr = ctx->buf->area + ctx->buf->data;
-                    ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(ctx->store.disk.meta);
+                    ctx->txn.res.etag.len = nst_disk_meta_get_etag_len(meta);
 
-                    nst_disk_read_etag(&ctx->store.disk, ctx->txn.res.etag);
+                    nst_disk_read_etag(&ctx->store.disk.obj, ctx->txn.res.etag);
 
                     ctx->buf->data += ctx->txn.res.etag.len;
                 }
 
-                ctx->prop->last_modified =
-                    nst_disk_meta_get_last_modified_prop(ctx->store.disk.meta);
+                ctx->prop->last_modified = nst_disk_meta_get_last_modified_prop(meta);
 
                 if(ctx->prop->last_modified == NST_STATUS_ON) {
                     ctx->txn.res.last_modified.ptr = ctx->buf->area + ctx->buf->data;
-                    ctx->txn.res.last_modified.len =
-                        nst_disk_meta_get_last_modified_len(ctx->store.disk.meta);
+                    ctx->txn.res.last_modified.len = nst_disk_meta_get_last_modified_len(meta);
 
-                    nst_disk_read_last_modified(&ctx->store.disk, ctx->txn.res.last_modified);
+                    nst_disk_read_last_modified(&ctx->store.disk.obj, ctx->txn.res.last_modified);
 
                     ctx->buf->data += ctx->txn.res.last_modified.len;
                 }
@@ -1076,20 +1092,20 @@ nst_nosql_exists(nst_ctx_t *ctx) {
 
 void
 nst_nosql_abort(nst_ctx_t *ctx) {
+    nst_dict_entry_t  *entry = ctx->entry;
 
-    if(ctx->entry->state == NST_DICT_ENTRY_STATE_INIT
-            || ctx->entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
+    if(entry->state == NST_DICT_ENTRY_STATE_INIT || entry->state == NST_DICT_ENTRY_STATE_UPDATE) {
 
-        if(ctx->store.ring.data) {
-            nst_ring_store_abort(&nuster.nosql->store.ring, ctx->store.ring.data);
+        if(ctx->store.memory.obj) {
+            nst_memory_obj_abort(&nuster.nosql->store.memory, ctx->store.memory.obj);
         }
 
-        if(ctx->store.disk.file) {
-            nst_disk_store_abort(&nuster.nosql->store.disk, &ctx->store.disk);
+        if(ctx->store.disk.obj.file) {
+            nst_disk_obj_abort(&nuster.nosql->store.disk, &ctx->store.disk.obj);
         }
     }
 
-    ctx->entry->state = NST_DICT_ENTRY_STATE_INVALID;
+    entry->state = NST_DICT_ENTRY_STATE_INVALID;
 }
 
 /*
@@ -1099,12 +1115,13 @@ nst_nosql_abort(nst_ctx_t *ctx) {
  */
 int
 nst_nosql_delete(nst_key_t *key) {
+    nst_dict_t        *dict  = &nuster.nosql->dict;
     nst_dict_entry_t  *entry = NULL;
     int                ret   = 0;
 
-    nst_shctx_lock(&nuster.nosql->dict);
+    nst_shctx_lock(dict);
 
-    entry = nst_dict_get(&nuster.nosql->dict, key);
+    entry = nst_dict_get(dict, key);
 
     if(entry) {
 
@@ -1114,16 +1131,16 @@ nst_nosql_delete(nst_key_t *key) {
             entry->state  = NST_DICT_ENTRY_STATE_INIT;
             entry->expire = 0;
 
-            if(entry->store.ring.data) {
-                entry->store.ring.data->invalid = 1;
-                entry->store.ring.data          = NULL;
+            if(entry->store.memory.obj) {
+                entry->store.memory.obj->invalid = 1;
+                entry->store.memory.obj          = NULL;
 
-                nst_ring_incr_invalid(&nuster.nosql->store.ring);
+                nst_memory_incr_invalid(&nuster.nosql->store.memory);
             }
 
             if(entry->store.disk.file) {
-                nst_disk_remove(entry->store.disk.file);
-                nst_memory_free(nuster.nosql->memory, entry->store.disk.file);
+                nst_disk_file_remove(entry->store.disk.file);
+                nst_shmem_free(nuster.nosql->shmem, entry->store.disk.file);
                 entry->store.disk.file = NULL;
             }
 
@@ -1134,15 +1151,15 @@ nst_nosql_delete(nst_key_t *key) {
         ret = 0;
     }
 
-    nst_shctx_unlock(&nuster.nosql->dict);
+    nst_shctx_unlock(dict);
 
     if(!nuster.nosql->store.disk.loaded && global.nuster.nosql.root.len){
-        nst_disk_data_t  disk;
+        nst_disk_obj_t  disk;
         hpx_buffer_t    *buf = get_trash_chunk();
 
         disk.file = buf->area;
 
-        ret = nst_disk_purge_by_key(global.nuster.nosql.root, &disk, key);
+        ret = nst_disk_purge_by_key(&disk, key, global.nuster.nosql.root);
     }
 
     return ret;

@@ -25,6 +25,8 @@ nst_sample_fetch_cache_hit(const hpx_arg_t *args, hpx_sample_t *smp, const char 
     nst_ctx_t     *ctx;
 
     list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
+        int  hit;
+
         if(FLT_ID(filter) != nst_cache_flt_id) {
             continue;
         }
@@ -33,9 +35,10 @@ nst_sample_fetch_cache_hit(const hpx_arg_t *args, hpx_sample_t *smp, const char 
             break;
         }
 
-        smp->data.type = SMP_T_BOOL;
-        smp->data.u.sint = ctx->state == NST_CTX_STATE_HIT_MEMORY
-            || ctx->state == NST_CTX_STATE_HIT_DISK;;
+        hit = ctx->state == NST_CTX_STATE_HIT_MEMORY || ctx->state == NST_CTX_STATE_HIT_DISK;;
+
+        smp->data.type   = SMP_T_BOOL;
+        smp->data.u.sint = hit;
 
         return 1;
     }
@@ -49,6 +52,7 @@ nst_sample_fetch_host(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw, 
     nst_ctx_t     *ctx;
 
     list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
+
         if(FLT_ID(filter) != nst_cache_flt_id && FLT_ID(filter) != nst_nosql_flt_id) {
             continue;
         }
@@ -58,7 +62,7 @@ nst_sample_fetch_host(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw, 
         }
 
         smp->data.type = SMP_T_STR;
-        smp->flags = SMP_F_CONST;
+        smp->flags     = SMP_F_CONST;
 
         if(!ctx->txn.req.host.len) {
             return 0;
@@ -79,6 +83,7 @@ nst_sample_fetch_uri(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw, v
     nst_ctx_t     *ctx;
 
     list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
+
         if(FLT_ID(filter) != nst_cache_flt_id && FLT_ID(filter) != nst_nosql_flt_id) {
             continue;
         }
@@ -88,7 +93,7 @@ nst_sample_fetch_uri(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw, v
         }
 
         smp->data.type = SMP_T_STR;
-        smp->flags = SMP_F_CONST;
+        smp->flags     = SMP_F_CONST;
 
         if(!ctx->txn.req.uri.len) {
             return 0;
@@ -109,6 +114,7 @@ nst_sample_fetch_path(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw, 
     nst_ctx_t     *ctx;
 
     list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
+
         if(FLT_ID(filter) != nst_cache_flt_id && FLT_ID(filter) != nst_nosql_flt_id) {
             continue;
         }
@@ -118,7 +124,7 @@ nst_sample_fetch_path(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw, 
         }
 
         smp->data.type = SMP_T_STR;
-        smp->flags = SMP_F_CONST;
+        smp->flags     = SMP_F_CONST;
 
         if(!ctx->txn.req.path.len) {
             return 0;
@@ -139,6 +145,7 @@ nst_sample_fetch_query(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw,
     nst_ctx_t       *ctx;
 
     list_for_each_entry(filter, &strm_flt(smp->strm)->filters, list) {
+
         if(FLT_ID(filter) != nst_cache_flt_id) {
             continue;
         }
@@ -148,7 +155,7 @@ nst_sample_fetch_query(const hpx_arg_t *args, hpx_sample_t *smp, const char *kw,
         }
 
         smp->data.type = SMP_T_STR;
-        smp->flags = SMP_F_CONST;
+        smp->flags     = SMP_F_CONST;
 
         if(!ctx->txn.req.query.len) {
             return 0;

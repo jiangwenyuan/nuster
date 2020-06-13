@@ -41,6 +41,7 @@ nst_purger_basic(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     }
 
     while(p) {
+
         if(p->nuster.mode == NST_MODE_CACHE || p->nuster.mode == NST_MODE_NOSQL) {
 
             nst_rule_t  *rule = nuster.proxy[p->uuid]->rule;
@@ -255,7 +256,7 @@ purge:
         }
 
         if(buf.size) {
-            buf.area = nst_memory_alloc(appctx->ctx.nuster.manager.dict->memory, buf.size);
+            buf.area = nst_shmem_alloc(appctx->ctx.nuster.manager.dict->shmem, buf.size);
 
             if(!buf.area) {
                 goto err;
@@ -386,16 +387,17 @@ nst_purger_handler(hpx_appctx_t *appctx) {
             while(entry) {
 
                 if(nst_purger_check(appctx, entry)) {
+
                     if(entry->state == NST_DICT_ENTRY_STATE_VALID) {
 
                         entry->state  = NST_DICT_ENTRY_STATE_INVALID;
                         entry->expire = 0;
 
-                        if(entry->store.ring.data) {
-                            entry->store.ring.data->invalid = 1;
-                            entry->store.ring.data          = NULL;
+                        if(entry->store.memory.obj) {
+                            entry->store.memory.obj->invalid = 1;
+                            entry->store.memory.obj          = NULL;
 
-                            nst_ring_incr_invalid(&dict->store->ring);
+                            nst_memory_incr_invalid(&dict->store->memory);
                         }
 
                         if(entry->store.disk.file) {
@@ -439,7 +441,7 @@ nst_purger_release_handler(hpx_appctx_t *appctx) {
         regex_free(appctx->ctx.nuster.manager.regex);
     }
 
-    nst_memory_free(appctx->ctx.nuster.manager.dict->memory, appctx->ctx.nuster.manager.buf.area);
+    nst_shmem_free(appctx->ctx.nuster.manager.dict->shmem, appctx->ctx.nuster.manager.buf.area);
 }
 
 void

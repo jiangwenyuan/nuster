@@ -66,10 +66,12 @@ typedef struct nst_ctx {
 
     struct {
         struct {
-            nst_ring_data_t    *data;
-            nst_ring_item_t    *item;
-        } ring;
-        nst_disk_data_t         disk;
+            nst_memory_obj_t   *obj;
+            nst_memory_item_t  *item;
+        } memory;
+        struct {
+            nst_disk_obj_t      obj;
+        } disk;
     } store;
 
     nst_rule_prop_t            *prop;
@@ -82,7 +84,7 @@ typedef struct nst_ctx {
 } nst_ctx_t;
 
 struct nst_core {
-    nst_memory_t               *memory;
+    nst_shmem_t                *shmem;
     hpx_ist_t                   root;
 
     nst_dict_t                  dict;

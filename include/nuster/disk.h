@@ -90,16 +90,16 @@ enum {
     NST_DISK_APPLET_END,
 };
 
-typedef struct nst_disk_data {
+typedef struct nst_disk_object {
     char               *file;               /* disk file */
     int                 fd;
     uint64_t            offset;
     char                meta[NST_DISK_META_SIZE];
-} nst_disk_data_t;
+} nst_disk_obj_t;
 
 
 typedef struct nst_disk {
-    nst_memory_t       *memory;
+    nst_shmem_t        *shmem;
     hpx_ist_t           root;               /* disk root directory */
     int                 loaded;
     int                 idx;
@@ -125,19 +125,17 @@ nst_disk_path_file_len(hpx_ist_t root) {
 }
 
 static inline int
-nst_disk_remove(const char *file) {
+nst_disk_file_remove(const char *file) {
     return remove(file);
 }
 
-int nst_disk_mkdir(char *path);
-
 static inline int
-nst_disk_data_create(const char *pathname) {
+nst_disk_file_create(const char *pathname) {
     return open(pathname, O_CREAT | O_WRONLY, 0600);
 }
 
 static inline int
-nst_disk_open(const char *pathname) {
+nst_disk_file_open(const char *pathname) {
     return open(pathname, O_RDONLY);
 }
 
@@ -345,172 +343,167 @@ nst_disk_meta_check_stale(char *p) {
 }
 
 static inline int
-nst_disk_pos_proxy(nst_disk_data_t *data) {
-    return NST_DISK_POS_KEY + nst_disk_meta_get_key_len(data->meta);
+nst_disk_pos_proxy(nst_disk_obj_t *obj) {
+    return NST_DISK_POS_KEY + nst_disk_meta_get_key_len(obj->meta);
 }
 
 static inline int
-nst_disk_pos_rule(nst_disk_data_t *data) {
+nst_disk_pos_rule(nst_disk_obj_t *obj) {
     return NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(data->meta)
-        + nst_disk_meta_get_proxy_len(data->meta);
+        + nst_disk_meta_get_key_len(obj->meta)
+        + nst_disk_meta_get_proxy_len(obj->meta);
 }
 
 static inline int
-nst_disk_pos_host(nst_disk_data_t *data) {
+nst_disk_pos_host(nst_disk_obj_t *obj) {
     return NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(data->meta)
-        + nst_disk_meta_get_proxy_len(data->meta)
-        + nst_disk_meta_get_rule_len(data->meta);
+        + nst_disk_meta_get_key_len(obj->meta)
+        + nst_disk_meta_get_proxy_len(obj->meta)
+        + nst_disk_meta_get_rule_len(obj->meta);
 }
 
 static inline int
-nst_disk_pos_path(nst_disk_data_t *data) {
+nst_disk_pos_path(nst_disk_obj_t *obj) {
     return NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(data->meta)
-        + nst_disk_meta_get_proxy_len(data->meta)
-        + nst_disk_meta_get_rule_len(data->meta)
-        + nst_disk_meta_get_host_len(data->meta);
+        + nst_disk_meta_get_key_len(obj->meta)
+        + nst_disk_meta_get_proxy_len(obj->meta)
+        + nst_disk_meta_get_rule_len(obj->meta)
+        + nst_disk_meta_get_host_len(obj->meta);
 }
 
 static inline int
-nst_disk_pos_etag(nst_disk_data_t *data) {
+nst_disk_pos_etag(nst_disk_obj_t *obj) {
     return NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(data->meta)
-        + nst_disk_meta_get_proxy_len(data->meta)
-        + nst_disk_meta_get_rule_len(data->meta)
-        + nst_disk_meta_get_host_len(data->meta)
-        + nst_disk_meta_get_path_len(data->meta);
+        + nst_disk_meta_get_key_len(obj->meta)
+        + nst_disk_meta_get_proxy_len(obj->meta)
+        + nst_disk_meta_get_rule_len(obj->meta)
+        + nst_disk_meta_get_host_len(obj->meta)
+        + nst_disk_meta_get_path_len(obj->meta);
 }
 
 static inline int
-nst_disk_pos_last_modified(nst_disk_data_t *data) {
+nst_disk_pos_last_modified(nst_disk_obj_t *obj) {
     return NST_DISK_POS_KEY
-        + nst_disk_meta_get_key_len(data->meta)
-        + nst_disk_meta_get_proxy_len(data->meta)
-        + nst_disk_meta_get_rule_len(data->meta)
-        + nst_disk_meta_get_host_len(data->meta)
-        + nst_disk_meta_get_path_len(data->meta)
-        + nst_disk_meta_get_etag_len(data->meta);
+        + nst_disk_meta_get_key_len(obj->meta)
+        + nst_disk_meta_get_proxy_len(obj->meta)
+        + nst_disk_meta_get_rule_len(obj->meta)
+        + nst_disk_meta_get_host_len(obj->meta)
+        + nst_disk_meta_get_path_len(obj->meta)
+        + nst_disk_meta_get_etag_len(obj->meta);
 }
 
 static inline int
-nst_disk_pos_header(nst_disk_data_t *data) {
+nst_disk_pos_header(nst_disk_obj_t *obj) {
     return NST_DISK_META_SIZE
-        + nst_disk_meta_get_key_len(data->meta)
-        + nst_disk_meta_get_proxy_len(data->meta)
-        + nst_disk_meta_get_rule_len(data->meta)
-        + nst_disk_meta_get_host_len(data->meta)
-        + nst_disk_meta_get_path_len(data->meta)
-        + nst_disk_meta_get_etag_len(data->meta)
-        + nst_disk_meta_get_last_modified_len(data->meta);
+        + nst_disk_meta_get_key_len(obj->meta)
+        + nst_disk_meta_get_proxy_len(obj->meta)
+        + nst_disk_meta_get_rule_len(obj->meta)
+        + nst_disk_meta_get_host_len(obj->meta)
+        + nst_disk_meta_get_path_len(obj->meta)
+        + nst_disk_meta_get_etag_len(obj->meta)
+        + nst_disk_meta_get_last_modified_len(obj->meta);
 }
 
 static inline int
-nst_disk_write(nst_disk_data_t *data, char *buf, int len) {
-    ssize_t ret = pwrite(data->fd, buf, len, data->offset);
+nst_disk_write(nst_disk_obj_t *obj, char *buf, int len) {
+    ssize_t ret = pwrite(obj->fd, buf, len, obj->offset);
 
     if(ret != len) {
         return NST_ERR;
     }
 
-    data->offset += len;
+    obj->offset += len;
 
     return NST_OK;
 }
 
 static inline int
-nst_disk_write_meta(nst_disk_data_t *data) {
-    data->offset = 0;
+nst_disk_write_meta(nst_disk_obj_t *obj) {
+    obj->offset = 0;
 
-    return nst_disk_write(data, data->meta, NST_DISK_META_SIZE);
+    return nst_disk_write(obj, obj->meta, NST_DISK_META_SIZE);
 }
 
 static inline int
-nst_disk_write_key(nst_disk_data_t *data, nst_key_t *key) {
-    data->offset = NST_DISK_POS_KEY;
+nst_disk_write_key(nst_disk_obj_t *obj, nst_key_t *key) {
+    obj->offset = NST_DISK_POS_KEY;
 
-    return nst_disk_write(data, key->data, key->size);
+    return nst_disk_write(obj, key->data, key->size);
 }
 
 static inline int
-nst_disk_write_proxy(nst_disk_data_t *data, hpx_ist_t proxy) {
-    data->offset = nst_disk_pos_proxy(data);
+nst_disk_write_proxy(nst_disk_obj_t *obj, hpx_ist_t proxy) {
+    obj->offset = nst_disk_pos_proxy(obj);
 
-    return nst_disk_write(data, proxy.ptr, proxy.len);
+    return nst_disk_write(obj, proxy.ptr, proxy.len);
 }
 
 static inline int
-nst_disk_write_rule(nst_disk_data_t *data, hpx_ist_t rule) {
-    data->offset = nst_disk_pos_rule(data);
+nst_disk_write_rule(nst_disk_obj_t *obj, hpx_ist_t rule) {
+    obj->offset = nst_disk_pos_rule(obj);
 
-    return nst_disk_write(data, rule.ptr, rule.len);
+    return nst_disk_write(obj, rule.ptr, rule.len);
 }
 
 static inline int
-nst_disk_write_host(nst_disk_data_t *data, hpx_ist_t host) {
-    data->offset = nst_disk_pos_host(data);
+nst_disk_write_host(nst_disk_obj_t *obj, hpx_ist_t host) {
+    obj->offset = nst_disk_pos_host(obj);
 
-    return nst_disk_write(data, host.ptr, host.len);
+    return nst_disk_write(obj, host.ptr, host.len);
 }
 
 static inline int
-nst_disk_write_path(nst_disk_data_t *data, hpx_ist_t path) {
-    data->offset = nst_disk_pos_path(data);
+nst_disk_write_path(nst_disk_obj_t *obj, hpx_ist_t path) {
+    obj->offset = nst_disk_pos_path(obj);
 
-    return nst_disk_write(data, path.ptr, path.len);
+    return nst_disk_write(obj, path.ptr, path.len);
 }
 
 static inline int
-nst_disk_write_etag(nst_disk_data_t *data, hpx_ist_t etag) {
-    data->offset = nst_disk_pos_etag(data);
+nst_disk_write_etag(nst_disk_obj_t *obj, hpx_ist_t etag) {
+    obj->offset = nst_disk_pos_etag(obj);
 
-    return nst_disk_write(data, etag.ptr, etag.len);
+    return nst_disk_write(obj, etag.ptr, etag.len);
 }
 
 static inline int
-nst_disk_write_last_modified(nst_disk_data_t *data, hpx_ist_t lm) {
-    data->offset = nst_disk_pos_last_modified(data);
+nst_disk_write_last_modified(nst_disk_obj_t *obj, hpx_ist_t lm) {
+    obj->offset = nst_disk_pos_last_modified(obj);
 
-    return nst_disk_write(data, lm.ptr, lm.len);
+    return nst_disk_write(obj, lm.ptr, lm.len);
 }
 
-int nst_disk_read_key(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key);
-int nst_disk_read_proxy(nst_disk_data_t *data, hpx_ist_t proxy);
-int nst_disk_read_rule(nst_disk_data_t *data, hpx_ist_t rule);
-int nst_disk_read_host(nst_disk_data_t *data, hpx_ist_t host);
-int nst_disk_read_path(nst_disk_data_t *data, hpx_ist_t path);
-int nst_disk_read_etag(nst_disk_data_t *data, hpx_ist_t etag);
-int nst_disk_read_last_modified(nst_disk_data_t *data, hpx_ist_t last_modified);
+int nst_disk_read_key(nst_disk_t *disk, nst_disk_obj_t *obj, nst_key_t *key);
+int nst_disk_read_proxy(nst_disk_obj_t *obj, hpx_ist_t proxy);
+int nst_disk_read_rule(nst_disk_obj_t *obj, hpx_ist_t rule);
+int nst_disk_read_host(nst_disk_obj_t *obj, hpx_ist_t host);
+int nst_disk_read_path(nst_disk_obj_t *obj, hpx_ist_t path);
+int nst_disk_read_etag(nst_disk_obj_t *obj, hpx_ist_t etag);
+int nst_disk_read_last_modified(nst_disk_obj_t *obj, hpx_ist_t last_modified);
 
-int nst_disk_init(hpx_ist_t root, nst_disk_t *disk, nst_memory_t *memory, int clean_temp);
+int nst_disk_init(nst_disk_t *disk, hpx_ist_t root, nst_shmem_t *shmem, int clean_temp);
 void nst_disk_load(nst_core_t *core);
 void nst_disk_cleanup(nst_core_t *core);
-
-DIR *nst_disk_opendir_by_idx(hpx_ist_t root, char *path, int idx);
-nst_dirent_t *nst_disk_dir_next(DIR *dir);
-int nst_disk_data_valid(nst_disk_data_t *disk, nst_key_t *key);
-int nst_disk_data_exists(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key);
-int nst_disk_purge_by_key(hpx_ist_t root, nst_disk_data_t *disk, nst_key_t *key);
+int nst_disk_purge_by_key(nst_disk_obj_t *disk, nst_key_t *key, hpx_ist_t root);
 int nst_disk_purge_by_path(char *path);
 void nst_disk_update_expire(char *file, uint64_t expire);
 
-int nst_disk_store_init(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key,
+int nst_disk_obj_create(nst_disk_t *disk, nst_disk_obj_t *obj, nst_key_t *key,
         nst_http_txn_t *txn, nst_rule_prop_t *prop);
 
 static inline int
-nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) {
+nst_disk_obj_append(nst_disk_t *disk, nst_disk_obj_t *obj, char *buf, int len) {
 
-    if(nst_disk_write(data, buf, len) != NST_OK) {
-        if(data->fd != -1) {
-            close(data->fd);
-            data->fd = -1;
+    if(nst_disk_write(obj, buf, len) != NST_OK) {
+        if(obj->fd != -1) {
+            close(obj->fd);
+            obj->fd = -1;
         }
 
-        if(data->file) {
-            remove(data->file);
-            nst_memory_free(disk->memory, data->file);
-            data->file = NULL;
+        if(obj->file) {
+            remove(obj->file);
+            nst_shmem_free(disk->shmem, obj->file);
+            obj->file = NULL;
         }
 
         return NST_ERR;
@@ -520,21 +513,24 @@ nst_disk_store_add(nst_disk_t *disk, nst_disk_data_t *data, char *buf, int len) 
 }
 
 int
-nst_disk_store_end(nst_disk_t *disk, nst_disk_data_t *data, nst_key_t *key, nst_http_txn_t *txn,
+nst_disk_obj_finish(nst_disk_t *disk, nst_disk_obj_t *obj, nst_key_t *key, nst_http_txn_t *txn,
         uint64_t expire);
 
 static inline void
-nst_disk_store_abort(nst_disk_t *disk, nst_disk_data_t *data) {
-    if(data->fd != -1) {
-        close(data->fd);
-        data->fd = -1;
+nst_disk_obj_abort(nst_disk_t *disk, nst_disk_obj_t *obj) {
+    if(obj->fd != -1) {
+        close(obj->fd);
+        obj->fd = -1;
     }
 
-    if(data->file) {
-        remove(data->file);
-        nst_memory_free(disk->memory, data->file);
-        data->file = NULL;
+    if(obj->file) {
+        remove(obj->file);
+        nst_shmem_free(disk->shmem, obj->file);
+        obj->file = NULL;
     }
 }
+
+int nst_disk_obj_valid(nst_disk_obj_t *disk, nst_key_t *key);
+int nst_disk_obj_exists(nst_disk_t *disk, nst_disk_obj_t *obj, nst_key_t *key);
 
 #endif /* _NUSTER_DISK_H */

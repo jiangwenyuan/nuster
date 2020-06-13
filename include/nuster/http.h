@@ -25,7 +25,7 @@
 #include <common/htx.h>
 
 #include <nuster/common.h>
-#include <nuster/ring.h>
+#include <nuster/memory.h>
 
 
 enum {
@@ -75,7 +75,7 @@ typedef struct nst_http_txn {
 int nst_http_parse_htx(hpx_stream_t *s, hpx_buffer_t *buf, nst_http_txn_t *txn);
 
 int nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, int *val_len);
-int nst_http_ring_item_to_htx(nst_ring_item_t *item, hpx_htx_t *htx);
+int nst_http_memory_item_to_htx(nst_memory_item_t *item, hpx_htx_t *htx);
 
 void nst_http_reply(hpx_stream_t *s, int idx);
 int nst_http_reply_100(hpx_stream_t *s);

@@ -109,7 +109,7 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
         nst_stats_update_cache(ctx->state, ctx->txn.res.payload_len + ctx->txn.res.header_len);
 
         if(ctx->state == NST_CTX_STATE_HIT_MEMORY) {
-            nst_ring_data_detach(&nuster.cache->store.ring, ctx->store.ring.data);
+            nst_memory_obj_detach(&nuster.cache->store.memory, ctx->store.memory.obj);
         }
 
         if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
@@ -134,18 +134,19 @@ _nst_cache_filter_detach(hpx_stream_t *s, hpx_filter_t *filter) {
 
 static int
 _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t *msg) {
-    hpx_channel_t           *req = msg->chn;
-    hpx_channel_t           *res = &s->res;
-    hpx_proxy_t             *px  = s->be;
-    hpx_stream_interface_t  *si  = &s->si[1];
-    nst_ctx_t               *ctx = filter->ctx;
+    hpx_channel_t           *req  = msg->chn;
+    hpx_channel_t           *res  = &s->res;
+    hpx_proxy_t             *px   = s->be;
+    hpx_stream_interface_t  *si   = &s->si[1];
+    hpx_http_meth_t          meth = s->txn->meth;
+    nst_ctx_t               *ctx  = filter->ctx;
     hpx_htx_t               *htx;
 
     if(!(msg->chn->flags & CF_ISRESP)) {
         /* request */
 
         /* check http method */
-        if(s->txn->meth == HTTP_METH_OTHER) {
+        if(meth == HTTP_METH_OTHER) {
             ctx->state = NST_CTX_STATE_BYPASS;
         }
 
@@ -185,9 +186,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
 
                 if(!ctx->key->data) {
                     /* build key */
-                    if(nst_key_build(s, msg, ctx->rule, &ctx->txn, ctx->key, s->txn->meth)
-                            != NST_OK) {
-
+                    if(nst_key_build(s, msg, ctx->rule, &ctx->txn, ctx->key, meth) != NST_OK) {
                         ctx->state = NST_CTX_STATE_BYPASS;
 
                         return 1;
@@ -216,6 +215,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
                 }
 
                 if(ctx->state == NST_CTX_STATE_WAIT) {
+
                     if(ctx->prop->wait >= 0) {
                         nst_key_reset_flag(ctx->key);
                         nst_debug_end("WAIT");
@@ -259,9 +259,9 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         }
 
         if(ctx->state == NST_CTX_STATE_WAIT) {
-            if(ctx->prop->wait == 0 || (ctx->prop->wait > 0
-                        && nst_time_now_ms() - ctx->ctime < ctx->prop->wait * 1000)) {
+            int  t = nst_time_now_ms() - ctx->ctime;
 
+            if(ctx->prop->wait == 0 || (ctx->prop->wait > 0 && t < ctx->prop->wait * 1000)) {
                 usleep(1);
                 ctx->state = NST_CTX_STATE_INIT;
 
@@ -382,10 +382,11 @@ _nst_cache_filter_http_payload(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
         return 0;
     }
 
-    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
-            && (msg->chn->flags & CF_ISRESP)) {
+    if(msg->chn->flags & CF_ISRESP) {
 
-        len = nst_cache_update(msg, ctx, offset, len);
+        if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
+            len = nst_cache_append(msg, ctx, offset, len);
+        }
     }
 
     return len;
@@ -396,13 +397,15 @@ _nst_cache_filter_http_end(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_msg_t
 
     nst_ctx_t  *ctx = filter->ctx;
 
-    if((ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE)
-            && (msg->chn->flags & CF_ISRESP)) {
+    if(msg->chn->flags & CF_ISRESP) {
 
-        if(nst_cache_finish(ctx) == NST_OK) {
-            nst_debug(s, "[cache] Create OK");
-        } else {
-            nst_debug(s, "[cache] Created Failed");
+        if(ctx->state == NST_CTX_STATE_CREATE || ctx->state == NST_CTX_STATE_UPDATE) {
+
+            if(nst_cache_finish(ctx) == NST_OK) {
+                nst_debug(s, "[cache] Create OK");
+            } else {
+                nst_debug(s, "[cache] Created Failed");
+            }
         }
     }
 
