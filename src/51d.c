@@ -1,20 +1,20 @@
 #include <stdio.h>
 
-#include <common/cfgparse.h>
-#include <common/chunk.h>
-#include <common/buffer.h>
-#include <common/errors.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-#include <types/global.h>
-#include <proto/arg.h>
-#include <proto/http_fetch.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/http_ana.h>
-#include <proto/sample.h>
-#include <import/xxhash.h>
 #include <import/lru.h>
+#include <import/xxhash.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/buf-t.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/chunk.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_fetch.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/sample.h>
+#include <haproxy/thread.h>
+#include <haproxy/tools.h>
 #include <51Degrees.h>
 
 struct _51d_property_names {

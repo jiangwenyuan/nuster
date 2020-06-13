@@ -16,17 +16,12 @@
  *
  */
 
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/standard.h>
-#include <eb32tree.h>
-
-#include <types/global.h>
-#include <types/server.h>
-
-#include <proto/backend.h>
-#include <proto/queue.h>
+#include <import/eb32tree.h>
+#include <haproxy/api.h>
+#include <haproxy/backend.h>
+#include <haproxy/queue.h>
+#include <haproxy/server-t.h>
+#include <haproxy/tools.h>
 
 /* Return next tree node after <node> which must still be in the tree, or be
  * NULL. Lookup wraps around the end to the beginning. If the next node is the

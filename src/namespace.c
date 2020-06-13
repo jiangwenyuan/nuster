@@ -10,13 +10,13 @@
 
 #include <string.h>
 
-#include <common/namespace.h>
-#include <common/compiler.h>
-#include <common/hash.h>
-#include <common/errors.h>
-#include <proto/log.h>
-#include <proto/signal.h>
-#include <types/global.h>
+#include <haproxy/api.h>
+#include <haproxy/chunk.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/hash.h>
+#include <haproxy/namespace.h>
+#include <haproxy/signal.h>
 
 /* Opens the namespace <ns_name> and returns the FD or -1 in case of error
  * (check errno).

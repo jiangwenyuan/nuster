@@ -12,14 +12,12 @@
 #include <signal.h>
 #include <time.h>
 
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-#include <common/standard.h>
-#include <types/global.h>
-#include <types/signal.h>
-#include <proto/log.h>
+#include <haproxy/api.h>
+#include <haproxy/debug.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/thread.h>
+#include <haproxy/tools.h>
 
 
 /*

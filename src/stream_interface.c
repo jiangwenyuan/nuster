@@ -19,26 +19,22 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include <common/buffer.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/standard.h>
-#include <common/ticks.h>
-#include <common/time.h>
+#include <haproxy/api.h>
+#include <haproxy/applet.h>
+#include <haproxy/channel.h>
+#include <haproxy/connection.h>
+#include <haproxy/dynbuf.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/pipe-t.h>
+#include <haproxy/pipe.h>
+#include <haproxy/proxy.h>
+#include <haproxy/stream-t.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
-#include <proto/applet.h>
-#include <proto/channel.h>
-#include <proto/connection.h>
-#include <proto/http_htx.h>
-#include <proto/mux_pt.h>
-#include <proto/pipe.h>
-#include <proto/proxy.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
-
-#include <types/pipe.h>
 
 /* functions used by default on a detached stream-interface */
 static void stream_int_shutr(struct stream_interface *si);
@@ -340,7 +336,11 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 		const struct conn_stream *cs;
 		int ret;
 
-		cs = cs_get_first(conn);
+		/* If there is no mux attached to the connection, it means the
+		 * connection context is a conn-stream.
+		 */
+		cs = (conn->mux ? cs_get_first(conn) : conn->ctx);
+
 		/* The target server expects a PROXY line to be sent first.
 		 * If the send_proxy_ofs is negative, it corresponds to the
 		 * offset to start sending from then end of the proxy string
@@ -360,22 +360,6 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 					      objt_server(conn->target),
 					      remote_cs ? remote_cs->conn : NULL,
 					      strm);
-			/* We may not have a conn_stream yet, if we don't
-			 * know which mux to use, because it will be decided
-			 * during the SSL handshake. In this case, there should
-			 * be a session associated to the connection in
-			 * conn->owner, and we know it is the session that
-			 * initiated that connection, so we can just use
-			 * its origin, which should contain the client
-			 * connection.
-			 */
-		} else if (!cs && conn->owner) {
-			struct session *sess = conn->owner;
-
-			ret = make_proxy_line(trash.area, trash.size,
-			                      objt_server(conn->target),
-					      objt_conn(sess->origin),
-					      NULL);
 		}
 		else {
 			/* The target server expects a LOCAL line to be sent first. Retrieving

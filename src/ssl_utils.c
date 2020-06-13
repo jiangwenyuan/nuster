@@ -12,12 +12,10 @@
  */
 
 
-#include <common/buffer.h>
-#include <common/openssl-compat.h>
-
-#include <proto/ssl_sock.h>
-
-#include <types/ssl_sock.h>
+#include <haproxy/api.h>
+#include <haproxy/buf-t.h>
+#include <haproxy/openssl-compat.h>
+#include <haproxy/ssl_sock.h>
 
 /* fill a buffer with the algorithm and size of a public key */
 int cert_get_pkey_algo(X509 *crt, struct buffer *out)

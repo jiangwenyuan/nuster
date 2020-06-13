@@ -10,24 +10,20 @@
  *
  */
 
-#include <common/buffer.h>
-#include <common/cfgparse.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-
-#include <types/compression.h>
-#include <types/filters.h>
-#include <types/proxy.h>
-#include <types/sample.h>
-
-#include <proto/compression.h>
-#include <proto/filters.h>
-#include <proto/http_htx.h>
-#include <proto/http_ana.h>
-#include <proto/sample.h>
-#include <proto/stream.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/compression.h>
+#include <haproxy/dynbuf.h>
+#include <haproxy/filters.h>
+#include <haproxy/http.h>
+#include <haproxy/http_ana-t.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/list.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/sample.h>
+#include <haproxy/stream.h>
+#include <haproxy/tools.h>
 
 const char *http_comp_flt_id = "compression filter";
 

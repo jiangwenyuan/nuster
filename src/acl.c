@@ -14,25 +14,20 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <common/config.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/uri_auth.h>
+#include <import/ebsttree.h>
 
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/arg.h>
-#include <proto/auth.h>
-#include <proto/channel.h>
-#include <proto/log.h>
-#include <proto/pattern.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/stick_table.h>
-
-#include <ebsttree.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/auth.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/pattern.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/sample.h>
+#include <haproxy/stick_table.h>
+#include <haproxy/tools.h>
 
 /* List head of all known ACL keywords */
 static struct acl_kw_list acl_keywords = {

@@ -29,8 +29,8 @@
 #include <inttypes.h>
 #include <string.h>
 
-#include <common/config.h>
-#include <common/hpack-huff.h>
+#include <haproxy/api.h>
+#include <haproxy/hpack-huff.h>
 
 struct huff {
 	uint32_t c; /* code point */

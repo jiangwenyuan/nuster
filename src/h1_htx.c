@@ -10,14 +10,14 @@
  *
  */
 
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/cfgparse.h>
-#include <common/h1.h>
-#include <common/http.h>
-#include <common/htx.h>
-
-#include <proto/h1_htx.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/global.h>
+#include <haproxy/h1.h>
+#include <haproxy/h1_htx.h>
+#include <haproxy/http.h>
+#include <haproxy/htx.h>
+#include <haproxy/tools.h>
 
 /* Estimate the size of the HTX headers after the parsing, including the EOH. */
 static size_t h1_eval_htx_hdrs_size(const struct http_hdr *hdrs)

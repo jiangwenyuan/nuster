@@ -7,7 +7,7 @@
  * The DHT size may optionally be changed in argv[1].
  *
  * Build like this :
- *    gcc -I../../include -I../../ebtree -O0 -g -fno-strict-aliasing -fwrapv \
+ *    gcc -I../../include -O0 -g -fno-strict-aliasing -fwrapv \
  *        -o decode decode.c
  */
 
@@ -18,9 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <common/chunk.h>
-#include <common/hpack-dec.h>
-#include <common/mini-clist.h>
+#include <haproxy/chunk.h>
+#include <haproxy/hpack-dec.h>
 
 #define MAX_RQ_SIZE 65536
 #define MAX_HDR_NUM 1000

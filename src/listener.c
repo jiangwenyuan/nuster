@@ -18,28 +18,26 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include <common/cfgparse.h>
-#include <common/config.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/time.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/connection.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/proto_sockpair.h>
+#include <haproxy/protocol-t.h>
+#include <haproxy/protocol.h>
+#include <haproxy/sample.h>
+#include <haproxy/stream.h>
+#include <haproxy/task.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
-#include <types/global.h>
-#include <types/protocol.h>
-
-#include <proto/acl.h>
-#include <proto/connection.h>
-#include <proto/fd.h>
-#include <proto/freq_ctr.h>
-#include <proto/log.h>
-#include <proto/listener.h>
-#include <proto/protocol.h>
-#include <proto/proto_sockpair.h>
-#include <proto/sample.h>
-#include <proto/stream.h>
-#include <proto/task.h>
 
 /* List head of all known bind keywords */
 static struct bind_kw_list bind_keywords = {
@@ -736,7 +734,7 @@ void listener_accept(int fd)
 		struct sockaddr_storage addr;
 		socklen_t laddr = sizeof(addr);
 		unsigned int count;
-		__decl_hathreads(unsigned long mask);
+		__decl_thread(unsigned long mask);
 
 		/* pre-increase the number of connections without going too far.
 		 * We process the listener, then the proxy, then the process.

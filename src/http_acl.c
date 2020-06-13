@@ -16,22 +16,16 @@
 #include <string.h>
 #include <time.h>
 
-#include <common/chunk.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/http.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/standard.h>
-#include <common/version.h>
-
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/arg.h>
-#include <proto/auth.h>
-#include <proto/pattern.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/auth.h>
+#include <haproxy/chunk.h>
+#include <haproxy/http.h>
+#include <haproxy/pattern.h>
+#include <haproxy/pool.h>
+#include <haproxy/tools.h>
+#include <haproxy/version.h>
 
 
 /* We use the pre-parsed method if it is known, and store its number as an

@@ -26,24 +26,19 @@
 #include <sys/types.h>
 #include <sys/un.h>
 
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/time.h>
-#include <common/version.h>
+#include <haproxy/api.h>
+#include <haproxy/connection.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/protocol.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+#include <haproxy/version.h>
 
-#include <types/global.h>
-
-#include <proto/connection.h>
-#include <proto/fd.h>
-#include <proto/listener.h>
-#include <proto/log.h>
-#include <proto/protocol.h>
-#include <proto/task.h>
 
 static int uxst_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int uxst_bind_listeners(struct protocol *proto, char *errmsg, int errlen);

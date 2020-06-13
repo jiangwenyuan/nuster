@@ -12,23 +12,20 @@
 
 #include <errno.h>
 
-#include <common/cfgparse.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/initcall.h>
-#include <common/namespace.h>
-#include <common/hash.h>
-#include <common/net_helper.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/connection.h>
+#include <haproxy/fd.h>
+#include <haproxy/frontend.h>
+#include <haproxy/hash.h>
+#include <haproxy/log-t.h>
+#include <haproxy/namespace.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/proto_tcp.h>
+#include <haproxy/sample.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/stream_interface.h>
 
-#include <proto/connection.h>
-#include <proto/fd.h>
-#include <proto/frontend.h>
-#include <proto/proto_tcp.h>
-#include <proto/stream_interface.h>
-#include <proto/sample.h>
-#include <proto/ssl_sock.h>
-
-#include <common/debug.h>
 
 DECLARE_POOL(pool_head_connection, "connection",  sizeof(struct connection));
 DECLARE_POOL(pool_head_connstream, "conn_stream", sizeof(struct conn_stream));
@@ -1473,7 +1470,7 @@ int make_proxy_line_v2(char *buf, int buf_len, struct server *srv, struct connec
 		}
 	}
 
-	if (srv->pp_opts & SRV_PP_V2_UNIQUE_ID) {
+	if (strm && (srv->pp_opts & SRV_PP_V2_UNIQUE_ID)) {
 		struct session* sess = strm_sess(strm);
 		struct ist unique_id = stream_generate_unique_id(strm, &sess->fe->format_unique_id);
 

@@ -10,17 +10,16 @@
  *
  */
 
-#include <common/config.h>
-#include <common/memory.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-
-#include <proto/action.h>
-#include <proto/log.h>
-#include <proto/obj_type.h>
-#include <proto/proxy.h>
-#include <proto/stick_table.h>
-#include <proto/task.h>
+#include <haproxy/action.h>
+#include <haproxy/api.h>
+#include <haproxy/errors.h>
+#include <haproxy/list.h>
+#include <haproxy/obj_type.h>
+#include <haproxy/pool.h>
+#include <haproxy/proxy.h>
+#include <haproxy/stick_table.h>
+#include <haproxy/task.h>
+#include <haproxy/tools.h>
 
 
 /* Find and check the target table used by an action track-sc*. This

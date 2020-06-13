@@ -13,12 +13,12 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include <common/config.h>
-#include <common/hathreads.h>
-#include <common/memory.h>
+#include <haproxy/api.h>
+#include <haproxy/global.h>
+#include <haproxy/pipe-t.h>
+#include <haproxy/pool.h>
+#include <haproxy/thread.h>
 
-#include <types/global.h>
-#include <types/pipe.h>
 
 DECLARE_STATIC_POOL(pool_head_pipe, "pipe", sizeof(struct pipe));
 

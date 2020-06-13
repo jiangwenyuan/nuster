@@ -1,20 +1,20 @@
 #include <ctype.h>
 
-#include <common/cfgparse.h>
-#include <common/http.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/check.h>
+#include <haproxy/global.h>
+#include <haproxy/http.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/list.h>
+#include <haproxy/log.h>
+#include <haproxy/sample.h>
+#include <haproxy/stream-t.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/tcpcheck.h>
+#include <haproxy/vars.h>
 
-#include <types/vars.h>
-
-#include <proto/arg.h>
-#include <proto/http_rules.h>
-#include <proto/http_ana.h>
-#include <proto/sample.h>
-#include <proto/stream.h>
-#include <proto/tcp_rules.h>
-#include <proto/vars.h>
-#include <proto/checks.h>
 
 /* This contains a pool of struct vars */
 DECLARE_STATIC_POOL(var_pool, "vars", sizeof(struct var));
@@ -538,66 +538,52 @@ int vars_check_arg(struct arg *arg, char **err)
 }
 
 /* This function store a sample in a variable if it was already defined.
- * In error case, it fails silently.
+ * Returns zero on failure and non-zero otherwise. The variable not being
+ * defined is treated as a failure.
  */
-void vars_set_by_name_ifexist(const char *name, size_t len, struct sample *smp)
+int vars_set_by_name_ifexist(const char *name, size_t len, struct sample *smp)
 {
 	enum vars_scope scope;
 
 	/* Resolve name and scope. */
 	name = register_name(name, len, &scope, 0, NULL);
 	if (!name)
-		return;
+		return 0;
 
-	sample_store_stream(name, scope, smp);
+	return sample_store_stream(name, scope, smp);
 }
 
 
 /* This function store a sample in a variable.
- * In error case, it fails silently.
+ * Returns zero on failure and non-zero otherwise.
  */
-void vars_set_by_name(const char *name, size_t len, struct sample *smp)
+int vars_set_by_name(const char *name, size_t len, struct sample *smp)
 {
 	enum vars_scope scope;
 
 	/* Resolve name and scope. */
 	name = register_name(name, len, &scope, 1, NULL);
 	if (!name)
-		return;
+		return 0;
 
-	sample_store_stream(name, scope, smp);
+	return sample_store_stream(name, scope, smp);
 }
 
 /* This function unset a variable if it was already defined.
- * In error case, it fails silently.
+ * Returns zero on failure and non-zero otherwise.
  */
-void vars_unset_by_name_ifexist(const char *name, size_t len, struct sample *smp)
+int vars_unset_by_name_ifexist(const char *name, size_t len, struct sample *smp)
 {
 	enum vars_scope scope;
 
 	/* Resolve name and scope. */
 	name = register_name(name, len, &scope, 0, NULL);
 	if (!name)
-		return;
+		return 0;
 
-	sample_clear_stream(name, scope, smp);
+	return sample_clear_stream(name, scope, smp);
 }
 
-
-/* This function unset a variable.
- * In error case, it fails silently.
- */
-void vars_unset_by_name(const char *name, size_t len, struct sample *smp)
-{
-	enum vars_scope scope;
-
-	/* Resolve name and scope. */
-	name = register_name(name, len, &scope, 1, NULL);
-	if (!name)
-		return;
-
-	sample_clear_stream(name, scope, smp);
-}
 
 /* this function fills a sample with the
  * variable content. Returns 1 if the sample

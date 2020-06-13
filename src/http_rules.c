@@ -16,25 +16,21 @@
 #include <string.h>
 #include <time.h>
 
-#include <common/cfgparse.h>
-#include <common/chunk.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/http.h>
-#include <common/memory.h>
-#include <common/standard.h>
-#include <common/version.h>
-
-#include <types/capture.h>
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/action.h>
-#include <proto/arg.h>
-#include <proto/http_rules.h>
-#include <proto/http_ana.h>
-#include <proto/sample.h>
+#include <haproxy/acl.h>
+#include <haproxy/action.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/capture-t.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/chunk.h>
+#include <haproxy/global.h>
+#include <haproxy/http.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/log.h>
+#include <haproxy/pool.h>
+#include <haproxy/sample.h>
+#include <haproxy/tools.h>
+#include <haproxy/version.h>
 
 
 /* List head of all known action keywords for "http-request" */

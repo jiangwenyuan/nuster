@@ -11,43 +11,39 @@
  *
  */
 
+#include <netinet/tcp.h>
 #include <ctype.h>
 #include <errno.h>
 
+#include <import/ebsttree.h>
 #include <import/xxhash.h>
 
-#include <common/cfgparse.h>
-#include <common/config.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/namespace.h>
-#include <common/time.h>
+#include <haproxy/api.h>
+#include <haproxy/applet-t.h>
+#include <haproxy/backend.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/check.h>
+#include <haproxy/cli.h>
+#include <haproxy/connection.h>
+#include <haproxy/dict-t.h>
+#include <haproxy/dns.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/log.h>
+#include <haproxy/mailers.h>
+#include <haproxy/namespace.h>
+#include <haproxy/port_range.h>
+#include <haproxy/protocol.h>
+#include <haproxy/queue.h>
+#include <haproxy/sample.h>
+#include <haproxy/server.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/tcpcheck.h>
+#include <haproxy/time.h>
 
-#include <types/applet.h>
-#include <types/cli.h>
-#include <types/dict.h>
-#include <types/global.h>
-#include <types/cli.h>
-#include <types/dns.h>
-#include <types/stats.h>
-
-#include <proto/applet.h>
-#include <proto/cli.h>
-#include <proto/checks.h>
-#include <proto/connection.h>
-#include <proto/port_range.h>
-#include <proto/protocol.h>
-#include <proto/queue.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/stats.h>
-#include <proto/task.h>
-#include <proto/dns.h>
-#include <netinet/tcp.h>
-
-#include <ebsttree.h>
 
 static void srv_update_status(struct server *s);
 static void srv_update_state(struct server *srv, int version, char **params);
@@ -62,12 +58,12 @@ static struct srv_kw_list srv_keywords = {
 	.list = LIST_HEAD_INIT(srv_keywords.list)
 };
 
-__decl_hathreads(HA_SPINLOCK_T idle_conn_srv_lock);
+__decl_thread(HA_SPINLOCK_T idle_conn_srv_lock);
 struct eb_root idle_conn_srv = EB_ROOT;
 struct task *idle_conn_task = NULL;
 struct task *idle_conn_cleanup[MAX_THREADS] = { NULL };
 struct mt_list toremove_connections[MAX_THREADS];
-__decl_hathreads(HA_SPINLOCK_T toremove_lock[MAX_THREADS]);
+__decl_thread(HA_SPINLOCK_T toremove_lock[MAX_THREADS]);
 
 /* The server names dictionary */
 struct dict server_name_dict = {
@@ -2273,6 +2269,20 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 					goto out;
 				}
 				newsrv->uweight = newsrv->iweight = w;
+				cur_arg += 2;
+			}
+			else if (!strcmp(args[cur_arg], "log-proto")) {
+				if (!strcmp(args[cur_arg + 1], "legacy"))
+					newsrv->log_proto = SRV_LOG_PROTO_LEGACY;
+				else if (!strcmp(args[cur_arg + 1], "octet-count"))
+					newsrv->log_proto = SRV_LOG_PROTO_OCTET_COUNTING;
+				else {
+					ha_alert("parsing [%s:%d]: '%s' expects one of 'legacy' or "
+						"'octet-count' but got '%s'\n",
+						file, linenum, args[cur_arg], args[cur_arg + 1]);
+					err_code |= ERR_ALERT | ERR_FATAL;
+					goto out;
+				}
 				cur_arg += 2;
 			}
 			else if (!strcmp(args[cur_arg], "minconn")) {

@@ -12,19 +12,19 @@
 
 #include <string.h>
 
-#include <common/config.h>
-#include <common/memory.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/time.h>
-#include <eb32sctree.h>
-#include <eb32tree.h>
+#include <import/eb32sctree.h>
+#include <import/eb32tree.h>
 
-#include <proto/fd.h>
-#include <proto/freq_ctr.h>
-#include <proto/proxy.h>
-#include <proto/stream.h>
-#include <proto/task.h>
+#include <haproxy/api.h>
+#include <haproxy/fd.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/list.h>
+#include <haproxy/pool.h>
+#include <haproxy/stream.h>
+#include <haproxy/task.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+
 
 DECLARE_POOL(pool_head_task,    "task",    sizeof(struct task));
 DECLARE_POOL(pool_head_tasklet, "tasklet", sizeof(struct tasklet));
@@ -162,7 +162,7 @@ void wake_expired_tasks()
 	struct task_per_thread * const tt = sched; // thread's tasks
 	struct task *task;
 	struct eb32_node *eb;
-	__decl_hathreads(int key);
+	__decl_thread(int key);
 
 	while (1) {
   lookup_next_local:
@@ -284,7 +284,7 @@ int next_timer_expiry()
 	struct task_per_thread * const tt = sched; // thread's tasks
 	struct eb32_node *eb;
 	int ret = TICK_ETERNITY;
-	__decl_hathreads(int key);
+	__decl_thread(int key);
 
 	/* first check in the thread-local timers */
 	eb = eb32_lookup_ge(&tt->timers, now_ms - TIMER_LOOK_BACK);

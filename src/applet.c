@@ -13,13 +13,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <common/config.h>
-#include <common/mini-clist.h>
-#include <proto/applet.h>
-#include <proto/channel.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
+#include <haproxy/api.h>
+#include <haproxy/applet.h>
+#include <haproxy/channel.h>
+#include <haproxy/list.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
 
 unsigned int nb_applets = 0;
 

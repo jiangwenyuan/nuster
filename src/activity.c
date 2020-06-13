@@ -10,16 +10,14 @@
  *
  */
 
-#include <common/cfgparse.h>
-#include <common/config.h>
-#include <common/standard.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-#include <types/activity.h>
-#include <proto/channel.h>
-#include <proto/cli.h>
-#include <proto/freq_ctr.h>
-#include <proto/stream_interface.h>
+#include <haproxy/activity-t.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/channel.h>
+#include <haproxy/cli.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/tools.h>
 
 
 /* bit field of profiling options. Beware, may be modified at runtime! */

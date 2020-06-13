@@ -14,11 +14,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <common/config.h>
-#include <common/buffer.h>
-#include <common/memory.h>
-
-#include <types/global.h>
+#include <haproxy/api.h>
+#include <haproxy/dynbuf.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/pool.h>
 
 struct pool_head *pool_head_buffer;
 

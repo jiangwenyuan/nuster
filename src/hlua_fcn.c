@@ -18,19 +18,18 @@
 #include <lua.h>
 #include <lualib.h>
 
-#include <common/net_helper.h>
-#include <common/time.h>
-#include <common/uri_auth.h>
-
-#include <types/cli.h>
-#include <types/hlua.h>
-#include <types/proxy.h>
-#include <types/stats.h>
-
-#include <proto/proxy.h>
-#include <proto/server.h>
-#include <proto/stats.h>
-#include <proto/stick_table.h>
+#include <haproxy/cli-t.h>
+#include <haproxy/errors.h>
+#include <haproxy/hlua-t.h>
+#include <haproxy/http.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/pattern-t.h>
+#include <haproxy/proxy.h>
+#include <haproxy/regex.h>
+#include <haproxy/server.h>
+#include <haproxy/stats.h>
+#include <haproxy/stick_table.h>
+#include <haproxy/time.h>
 
 /* Contains the class reference of the concat object. */
 static int class_concat_ref;
@@ -617,7 +616,7 @@ int hlua_stktable_lookup(lua_State *L)
 	t = hlua_check_stktable(L, 1);
 	smp.data.type = SMP_T_STR;
 	smp.flags = SMP_F_CONST;
-	smp.data.u.str.area = (char *)luaL_checkstring(L, 2);
+	smp.data.u.str.area = (char *)lua_tolstring(L, 2, &smp.data.u.str.data);
 
 	skey = smp_to_stkey(&smp, t);
 	if (!skey) {

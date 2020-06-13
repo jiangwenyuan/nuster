@@ -10,16 +10,12 @@
  *
  */
 
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <eb32tree.h>
+#include <import/eb32tree.h>
+#include <haproxy/api.h>
+#include <haproxy/backend.h>
+#include <haproxy/queue.h>
+#include <haproxy/server-t.h>
 
-#include <types/global.h>
-#include <types/server.h>
-
-#include <proto/backend.h>
-#include <proto/queue.h>
 
 static inline void fwrr_remove_from_tree(struct server *s);
 static inline void fwrr_queue_by_weight(struct eb_root *root, struct server *s);

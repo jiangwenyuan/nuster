@@ -12,24 +12,18 @@
 
 #include <ctype.h>
 
-#include <common/hathreads.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/standard.h>
-#include <common/time.h>
-#include <common/tools.h>
-
-#include <types/channel.h>
-#include <types/filters.h>
-#include <types/global.h>
-#include <types/proxy.h>
-#include <types/stream.h>
-
-#include <proto/filters.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/http_ana.h>
-#include <proto/stream.h>
+#include <haproxy/api.h>
+#include <haproxy/channel-t.h>
+#include <haproxy/errors.h>
+#include <haproxy/filters.h>
+#include <haproxy/global.h>
+#include <haproxy/http_ana-t.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
 const char *trace_flt_id = "trace filter";
 

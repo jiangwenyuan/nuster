@@ -26,25 +26,19 @@
 #include <sys/types.h>
 #include <sys/un.h>
 
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/time.h>
-#include <common/version.h>
+#include <haproxy/api.h>
+#include <haproxy/connection.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/listener.h>
+#include <haproxy/protocol.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+#include <haproxy/version.h>
 
-#include <types/global.h>
-
-#include <proto/connection.h>
-#include <proto/fd.h>
-#include <proto/freq_ctr.h>
-#include <proto/listener.h>
-#include <proto/log.h>
-#include <proto/protocol.h>
-#include <proto/task.h>
 
 static void sockpair_add_listener(struct listener *listener, int port);
 static int sockpair_bind_listener(struct listener *listener, char *errmsg, int errlen);

@@ -13,11 +13,9 @@
 #include <signal.h>
 #include <string.h>
 
-#include <common/hathreads.h>
-
-#include <proto/signal.h>
-#include <proto/log.h>
-#include <proto/task.h>
+#include <haproxy/errors.h>
+#include <haproxy/signal.h>
+#include <haproxy/task.h>
 
 /* Principle : we keep an in-order list of the first occurrence of all received
  * signals. All occurrences of a same signal are grouped though. The signal

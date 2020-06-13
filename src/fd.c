@@ -87,14 +87,11 @@
 #include <errno.h>
 #endif
 
-#include <common/compat.h>
-#include <common/config.h>
+#include <haproxy/api.h>
+#include <haproxy/fd.h>
+#include <haproxy/global.h>
+#include <haproxy/port_range.h>
 
-#include <types/global.h>
-
-#include <proto/fd.h>
-#include <proto/log.h>
-#include <proto/port_range.h>
 
 struct fdtab *fdtab = NULL;     /* array of all the file descriptors */
 struct polled_mask *polled_mask = NULL; /* Array for the polled_mask of each fd */
@@ -336,7 +333,7 @@ static void fd_dodelete(int fd, int do_close)
 }
 
 #ifndef HA_HAVE_CAS_DW
-__decl_hathreads(__decl_rwlock(fd_mig_lock));
+__decl_thread(__decl_rwlock(fd_mig_lock));
 #endif
 
 /*

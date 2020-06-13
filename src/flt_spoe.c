@@ -12,39 +12,31 @@
 #include <ctype.h>
 #include <errno.h>
 
-#include <common/cfgparse.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/time.h>
+#include <haproxy/acl.h>
+#include <haproxy/action-t.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/filters.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/log.h>
+#include <haproxy/pool.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/session.h>
+#include <haproxy/signal.h>
+#include <haproxy/spoe.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/thread.h>
+#include <haproxy/time.h>
+#include <haproxy/vars.h>
 
-#include <types/arg.h>
-#include <types/global.h>
-#include <types/spoe.h>
-
-#include <proto/acl.h>
-#include <proto/action.h>
-#include <proto/arg.h>
-#include <proto/backend.h>
-#include <proto/filters.h>
-#include <proto/freq_ctr.h>
-#include <proto/frontend.h>
-#include <proto/http_rules.h>
-#include <proto/log.h>
-#include <proto/http_ana.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/session.h>
-#include <proto/signal.h>
-#include <proto/spoe.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
-#include <proto/tcp_rules.h>
-#include <proto/vars.h>
 
 #if defined(DEBUG_SPOE) || defined(DEBUG_FULL)
 #define SPOE_PRINTF(x...) fprintf(x)

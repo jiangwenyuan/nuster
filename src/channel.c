@@ -15,10 +15,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <common/config.h>
-#include <common/buffer.h>
-
-#include <proto/channel.h>
+#include <haproxy/api.h>
+#include <haproxy/buf.h>
+#include <haproxy/channel.h>
 
 
 /* Schedule up to <bytes> more bytes to be forwarded via the channel without

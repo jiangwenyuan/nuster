@@ -10,33 +10,26 @@
  * 2 of the License, or (at your option) any later version.
  */
 
-#include <eb32tree.h>
+#include <import/eb32tree.h>
 #include <import/sha1.h>
 
-#include <types/action.h>
-#include <types/cli.h>
-#include <types/filters.h>
-#include <types/proxy.h>
-#include <types/shctx.h>
-
-#include <proto/channel.h>
-#include <proto/cli.h>
-#include <proto/proxy.h>
-#include <proto/http_htx.h>
-#include <proto/filters.h>
-#include <proto/http_rules.h>
-#include <proto/http_ana.h>
-#include <proto/log.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/shctx.h>
-
-
-#include <common/cfgparse.h>
-#include <common/hash.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/net_helper.h>
+#include <haproxy/action-t.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/channel.h>
+#include <haproxy/cli.h>
+#include <haproxy/errors.h>
+#include <haproxy/filters.h>
+#include <haproxy/hash.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/htx.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/proxy.h>
+#include <haproxy/shctx.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
 
 #define CACHE_FLT_F_IMPLICIT_DECL  0x00000001 /* The cache filtre was implicitly declared (ie without
 					       * the filter keyword) */

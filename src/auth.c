@@ -25,17 +25,13 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <types/global.h>
-#include <common/config.h>
-#include <common/errors.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-
-#include <proto/acl.h>
-#include <proto/log.h>
-
-#include <types/auth.h>
-#include <types/pattern.h>
+#include <haproxy/api.h>
+#include <haproxy/auth-t.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/pattern-t.h>
+#include <haproxy/sample-t.h>
+#include <haproxy/thread.h>
 
 struct userlist *userlist = NULL;    /* list of all existing userlists */
 
@@ -45,7 +41,7 @@ struct userlist *userlist = NULL;    /* list of all existing userlists */
 static THREAD_LOCAL struct crypt_data crypt_data = { .initialized = 0 };
 #else
 /* lock for crypt() */
-__decl_hathreads(static HA_SPINLOCK_T auth_lock);
+__decl_thread(static HA_SPINLOCK_T auth_lock);
 #endif
 #endif
 

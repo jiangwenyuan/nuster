@@ -15,16 +15,14 @@
  * 3 of the License, or (at your option) any later version.
  *
  */
-#include <limits.h>
 #include <stdio.h>
 #include <stdarg.h>
 
-#include <common/defaults.h>
-#include <common/standard.h>
-#include <common/chunk.h>
-#include <common/time.h>
-
-#include <proto/spoe.h>
+#include <haproxy/api.h>
+#include <haproxy/chunk.h>
+#include <haproxy/spoe.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
 #include <http_core.h>
 #include <http_main.h>

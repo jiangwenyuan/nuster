@@ -9,32 +9,28 @@
  * 2 of the License, or (at your option) any later version.
  *
  */
-#include <common/cfgparse.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/ticks.h>
-#include <common/time.h>
+#include <haproxy/acl.h>
+#include <haproxy/action.h>
+#include <haproxy/api.h>
+#include <haproxy/arg-t.h>
+#include <haproxy/capture-t.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/channel.h>
+#include <haproxy/connection.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/log.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/stick_table.h>
+#include <haproxy/stream-t.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+#include <haproxy/trace.h>
 
-#include <types/arg.h>
-#include <types/capture.h>
-#include <types/connection.h>
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/action.h>
-#include <proto/channel.h>
-#include <proto/connection.h>
-#include <proto/log.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/stick_table.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/tcp_rules.h>
 
 #define TRACE_SOURCE &trace_strm
 

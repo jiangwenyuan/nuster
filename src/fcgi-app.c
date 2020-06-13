@@ -10,25 +10,24 @@
  *
  */
 
-#include <common/config.h>
-#include <common/chunk.h>
-#include <common/cfgparse.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/standard.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/chunk.h>
+#include <haproxy/errors.h>
+#include <haproxy/fcgi-app.h>
+#include <haproxy/filters.h>
+#include <haproxy/global.h>
+#include <haproxy/http_fetch.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/log.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/regex.h>
+#include <haproxy/sample.h>
+#include <haproxy/server-t.h>
+#include <haproxy/session.h>
+#include <haproxy/tools.h>
 
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/fcgi-app.h>
-#include <proto/filters.h>
-#include <proto/http_fetch.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/session.h>
 
 /* Global list of all FCGI applications */
 static struct fcgi_app *fcgi_apps = NULL;

@@ -19,37 +19,31 @@
 
 #include <sys/types.h>
 
-#include <common/cfgparse.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/time.h>
-#include <common/ticks.h>
-#include <common/net_helper.h>
+#include <haproxy/action.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/channel.h>
+#include <haproxy/check.h>
+#include <haproxy/cli.h>
+#include <haproxy/dgram.h>
+#include <haproxy/dns.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/global.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/log.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/server.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
+#include <haproxy/vars.h>
 
-#include <types/action.h>
-#include <types/applet.h>
-#include <types/cli.h>
-#include <types/global.h>
-#include <types/dns.h>
-#include <types/stats.h>
-
-#include <proto/action.h>
-#include <proto/channel.h>
-#include <proto/cli.h>
-#include <proto/checks.h>
-#include <proto/dns.h>
-#include <proto/fd.h>
-#include <proto/http_ana.h>
-#include <proto/http_rules.h>
-#include <proto/log.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/task.h>
-#include <proto/proto_udp.h>
-#include <proto/proxy.h>
-#include <proto/stream_interface.h>
-#include <proto/tcp_rules.h>
-#include <proto/vars.h>
 
 struct list dns_resolvers  = LIST_HEAD_INIT(dns_resolvers);
 struct list dns_srvrq_list = LIST_HEAD_INIT(dns_srvrq_list);

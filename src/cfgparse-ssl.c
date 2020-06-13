@@ -31,15 +31,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include <common/base64.h>
-#include <common/cfgparse.h>
-#include <common/initcall.h>
-#include <common/openssl-compat.h>
-
-#include <types/ssl_sock.h>
-
-#include <proto/listener.h>
-#include <proto/ssl_sock.h>
+#include <haproxy/api.h>
+#include <haproxy/base64.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/listener.h>
+#include <haproxy/openssl-compat.h>
+#include <haproxy/ssl_sock.h>
 
 
 /****************** Global Section Parsing ********************************************/

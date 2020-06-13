@@ -10,11 +10,10 @@
  *
  */
 
-#include <common/config.h>
-#include <common/standard.h>
-#include <common/time.h>
-#include <common/tools.h>
-#include <proto/freq_ctr.h>
+#include <haproxy/api.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
 /* Read a frequency counter taking history into account for missing time in
  * current period. Current second is sub-divided in 1000 chunks of one ms,
@@ -35,19 +34,19 @@ unsigned int read_freq_ctr(struct freq_ctr *ctr)
 
 	while (1) {
 		_curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_curr_sec = ctr->curr_sec;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr_sec & 0x80000000)
 			continue;
 		curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		curr_sec = ctr->curr_sec;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr == curr && _past == past && _curr_sec == curr_sec)
 			break;
 	}
@@ -78,19 +77,19 @@ unsigned int freq_ctr_remain(struct freq_ctr *ctr, unsigned int freq, unsigned i
 
 	while (1) {
 		_curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_curr_sec = ctr->curr_sec;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr_sec & 0x80000000)
 			continue;
 		curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		curr_sec = ctr->curr_sec;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr == curr && _past == past && _curr_sec == curr_sec)
 			break;
 	}
@@ -125,19 +124,19 @@ unsigned int next_event_delay(struct freq_ctr *ctr, unsigned int freq, unsigned 
 
 	while (1) {
 		_curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_curr_sec = ctr->curr_sec;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr_sec & 0x80000000)
 			continue;
 		curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		curr_sec = ctr->curr_sec;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr == curr && _past == past && _curr_sec == curr_sec)
 			break;
 	}
@@ -184,19 +183,19 @@ unsigned int read_freq_ctr_period(struct freq_ctr_period *ctr, unsigned int peri
 
 	while (1) {
 		_curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_curr_tick = ctr->curr_tick;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr_tick & 0x1)
 			continue;
 		curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		curr_tick = ctr->curr_tick;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr == curr && _past == past && _curr_tick == curr_tick)
 			break;
 	};
@@ -231,19 +230,19 @@ unsigned int freq_ctr_remain_period(struct freq_ctr_period *ctr, unsigned int pe
 
 	while (1) {
 		_curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		_curr_tick = ctr->curr_tick;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr_tick & 0x1)
 			continue;
 		curr = ctr->curr_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		past = ctr->prev_ctr;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		curr_tick = ctr->curr_tick;
-		HA_BARRIER();
+		__ha_compiler_barrier();
 		if (_curr == curr && _past == past && _curr_tick == curr_tick)
 			break;
 	};

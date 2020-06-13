@@ -30,15 +30,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <common/standard.h>
-#include <common/hpack-dec.h>
-#include <common/hpack-huff.h>
-#include <common/hpack-tbl.h>
-#include <common/chunk.h>
-#include <common/h2.h>
-#include <common/ist.h>
-
-#include <types/global.h>
+#include <import/ist.h>
+#include <haproxy/chunk.h>
+#include <haproxy/h2.h>
+#include <haproxy/hpack-dec.h>
+#include <haproxy/hpack-huff.h>
+#include <haproxy/hpack-tbl.h>
+#include <haproxy/tools.h>
 
 
 #if defined(DEBUG_HPACK)

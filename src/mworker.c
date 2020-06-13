@@ -17,30 +17,26 @@
 #include <string.h>
 #include <sys/wait.h>
 
-#include <common/cfgparse.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/version.h>
-
-#include <types/cli.h>
-#include <types/global.h>
-#include <types/peers.h>
-#include <types/signal.h>
-
-#include <proto/cli.h>
-#include <proto/fd.h>
-#include <proto/listener.h>
-#include <proto/log.h>
-#include <proto/mworker.h>
-#include <proto/proxy.h>
-#include <proto/signal.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-
-
 #if defined(USE_SYSTEMD)
 #include <systemd/sd-daemon.h>
 #endif
+
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/cli.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/listener.h>
+#include <haproxy/mworker.h>
+#include <haproxy/peers.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/signal.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/version.h>
+
 
 static int exitcode = -1;
 static int max_reloads = -1; /* number max of reloads a worker can have until they are killed */

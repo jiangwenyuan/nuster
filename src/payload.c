@@ -13,17 +13,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <common/initcall.h>
-#include <common/net_helper.h>
-#include <common/htx.h>
-#include <proto/acl.h>
-#include <proto/arg.h>
-#include <proto/channel.h>
-#include <proto/connection.h>
-#include <proto/pattern.h>
-#include <proto/payload.h>
-#include <proto/sample.h>
-#include <proto/http_ana.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/channel.h>
+#include <haproxy/connection.h>
+#include <haproxy/htx.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/pattern.h>
+#include <haproxy/payload.h>
+#include <haproxy/sample.h>
 
 
 /************************************************************************/

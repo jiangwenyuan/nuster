@@ -10,24 +10,24 @@
  *
  */
 
-#include <common/cfgparse.h>
-#include <common/config.h>
-#include <common/h1.h>
-#include <common/h2.h>
-#include <common/hpack-dec.h>
-#include <common/hpack-enc.h>
-#include <common/hpack-tbl.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/net_helper.h>
-#include <proto/connection.h>
-#include <proto/http_htx.h>
-#include <proto/trace.h>
-#include <proto/session.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <types/session.h>
-#include <eb32tree.h>
+#include <import/eb32tree.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/connection.h>
+#include <haproxy/h1.h>
+#include <haproxy/h2.h>
+#include <haproxy/hpack-dec.h>
+#include <haproxy/hpack-enc.h>
+#include <haproxy/hpack-tbl.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/istbuf.h>
+#include <haproxy/log.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/session-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/trace.h>
 
 
 /* dummy streams returned for closed, error, refused, idle and states */

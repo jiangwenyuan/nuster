@@ -14,8 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <common/base64.h>
-#include <common/config.h>
+#include <haproxy/api.h>
+#include <haproxy/base64.h>
 
 #define B64BASE	'#'		/* arbitrary chosen base value */
 #define B64CMIN	'+'

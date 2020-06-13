@@ -14,36 +14,34 @@
 #include <string.h>
 #include <errno.h>
 
-#include <common/config.h>
-#include <common/cfgparse.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/mini-clist.h>
-#include <common/net_helper.h>
-#include <common/standard.h>
-#include <common/time.h>
+#include <import/ebmbtree.h>
+#include <import/ebsttree.h>
+#include <import/ebistree.h>
 
-#include <ebmbtree.h>
-#include <ebsttree.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/cli.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/list.h>
+#include <haproxy/log.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/peers.h>
+#include <haproxy/pool.h>
+#include <haproxy/proto_tcp.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stick_table.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
-#include <types/cli.h>
-#include <types/global.h>
-#include <types/stats.h>
-
-#include <proto/arg.h>
-#include <proto/cli.h>
-#include <proto/http_rules.h>
-#include <proto/log.h>
-#include <proto/http_ana.h>
-#include <proto/proto_tcp.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/stick_table.h>
-#include <proto/task.h>
-#include <proto/peers.h>
-#include <proto/tcp_rules.h>
 
 /* structure used to return a table key built from a sample */
 static THREAD_LOCAL struct stktable_key static_table_key;

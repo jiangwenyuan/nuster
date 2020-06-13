@@ -17,16 +17,12 @@
 #include <sys/time.h>
 #include <sys/types.h>
 
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/hathreads.h>
-#include <common/ticks.h>
-#include <common/time.h>
-
-#include <types/global.h>
-
-#include <proto/activity.h>
-#include <proto/fd.h>
+#include <haproxy/activity.h>
+#include <haproxy/api.h>
+#include <haproxy/fd.h>
+#include <haproxy/global.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
 
 
 #ifndef POLLRDHUP

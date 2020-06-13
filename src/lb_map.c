@@ -10,17 +10,12 @@
  *
  */
 
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <eb32tree.h>
-
-#include <types/global.h>
-#include <types/server.h>
-
-#include <proto/backend.h>
-#include <proto/lb_map.h>
-#include <proto/queue.h>
+#include <import/eb32tree.h>
+#include <haproxy/api.h>
+#include <haproxy/backend.h>
+#include <haproxy/lb_map.h>
+#include <haproxy/queue.h>
+#include <haproxy/server-t.h>
 
 /* this function updates the map according to server <srv>'s new state.
  *

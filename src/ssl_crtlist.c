@@ -8,31 +8,27 @@
  * 2 of the License, or (at your option) any later version.
  *
  */
-
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include <common/errors.h>
-#include <common/standard.h>
-
 #include <dirent.h>
-#include <ebpttree.h>
-#include <ebsttree.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <syslog.h>
 
-#include <types/cli.h>
-#include <types/ssl_crtlist.h>
-#include <types/ssl_ckch.h>
-#include <types/ssl_sock.h>
+#include <import/ebpttree.h>
+#include <import/ebsttree.h>
 
-#include <proto/channel.h>
-#include <proto/cli.h>
-#include <proto/stream_interface.h>
-#include <proto/ssl_crtlist.h>
-#include <proto/ssl_ckch.h>
-#include <proto/ssl_sock.h>
+#include <haproxy/channel.h>
+#include <haproxy/cli.h>
+#include <haproxy/errors.h>
+#include <haproxy/ssl_ckch.h>
+#include <haproxy/ssl_crtlist.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/tools.h>
+
 
 /* release ssl bind conf */
 void ssl_sock_free_ssl_conf(struct ssl_bind_conf *conf)
@@ -701,7 +697,6 @@ static void dump_crtlist_sslconf(struct buffer *buf, const struct ssl_bind_conf 
 	}
 
 	/* the crt-lists only support ssl-min-ver and ssl-max-ver */
-	/* XXX: this part need to be revamp so we don't dump the default settings */
 	if (conf->ssl_methods_cfg.min) {
 		if (space) chunk_appendf(buf, " ");
 		chunk_appendf(buf, "ssl-min-ver %s", methodVersions[conf->ssl_methods_cfg.min].name);

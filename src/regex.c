@@ -14,12 +14,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <types/global.h>
-#include <common/config.h>
-#include <common/defaults.h>
-#include <common/regex.h>
-#include <common/standard.h>
-#include <proto/log.h>
+#include <haproxy/api.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/regex.h>
+#include <haproxy/tools.h>
 
 /* regex trash buffer used by various regex tests */
 THREAD_LOCAL regmatch_t pmatch[MAX_MATCH];  /* rm_so, rm_eo for regular expressions */
@@ -123,33 +122,6 @@ const char *check_replace_string(const char *str)
 	return err;
 }
 
-
-/* returns the pointer to an error in the replacement string, or NULL if OK */
-const char *chain_regex(struct hdr_exp **head, struct my_regex *preg,
-			int action, const char *replace, void *cond)
-{
-	struct hdr_exp *exp;
-
-	if (replace != NULL) {
-		const char *err;
-		err = check_replace_string(replace);
-		if (err)
-			return err;
-	}
-
-	while (*head != NULL)
-		head = &(*head)->next;
-
-	exp = calloc(1, sizeof(*exp));
-
-	exp->preg = preg;
-	exp->replace = replace;
-	exp->action = action;
-	exp->cond = cond;
-	*head = exp;
-
-	return NULL;
-}
 
 /* This function apply regex. It take const null terminated char as input.
  * If the function doesn't match, it returns false, else it returns true.

@@ -16,26 +16,25 @@
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <syslog.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#include <common/buf.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-#include <common/ist.h>
-#include <common/net_helper.h>
-#include <common/standard.h>
+#include <haproxy/api.h>
+#include <haproxy/buf.h>
+#include <haproxy/cli.h>
+#include <haproxy/debug.h>
+#include <haproxy/fd.h>
+#include <haproxy/global.h>
+#include <haproxy/hlua.h>
+#include <haproxy/log.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/thread.h>
+#include <haproxy/tools.h>
+#include <import/ist.h>
 
-#include <types/global.h>
-#include <types/signal.h>
-
-#include <proto/cli.h>
-#include <proto/fd.h>
-#include <proto/hlua.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
 
 /* mask of threads still having to dump, used to respect ordering. Only used
  * when USE_THREAD_DUMP is set.

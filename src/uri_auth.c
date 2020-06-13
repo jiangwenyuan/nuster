@@ -13,12 +13,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <common/base64.h>
-#include <common/config.h>
-#include <common/uri_auth.h>
+#include <haproxy/api.h>
+#include <haproxy/base64.h>
+#include <haproxy/errors.h>
+#include <haproxy/list.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/uri_auth.h>
 
-#include <types/stats.h>
-#include <proto/log.h>
 
 /*
  * Initializes a basic uri_auth structure header and returns a pointer to it.

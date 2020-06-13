@@ -19,47 +19,42 @@
 #include <ctype.h>
 #include <sys/types.h>
 
-#include <common/buffer.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/hash.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/ticks.h>
-#include <common/time.h>
-#include <common/namespace.h>
-
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/arg.h>
-#include <proto/backend.h>
-#include <proto/channel.h>
-#include <proto/checks.h>
-#include <proto/frontend.h>
-#include <proto/http_htx.h>
-#include <proto/lb_chash.h>
-#include <proto/lb_fas.h>
-#include <proto/lb_fwlc.h>
-#include <proto/lb_fwrr.h>
-#include <proto/lb_map.h>
-#include <proto/log.h>
-#include <proto/mux_pt.h>
-#include <proto/obj_type.h>
-#include <proto/payload.h>
-#include <proto/protocol.h>
-#include <proto/http_ana.h>
-#include <proto/proto_tcp.h>
-#include <proto/proxy.h>
-#include <proto/queue.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/session.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/ssl_sock.h>
-#include <proto/task.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/backend.h>
+#include <haproxy/channel.h>
+#include <haproxy/check.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/hash.h>
+#include <haproxy/http.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/lb_chash.h>
+#include <haproxy/lb_fas.h>
+#include <haproxy/lb_fwlc.h>
+#include <haproxy/lb_fwrr.h>
+#include <haproxy/lb_map.h>
+#include <haproxy/log.h>
+#include <haproxy/namespace.h>
+#include <haproxy/obj_type.h>
+#include <haproxy/payload.h>
+#include <haproxy/proto_tcp.h>
+#include <haproxy/protocol.h>
+#include <haproxy/proxy.h>
+#include <haproxy/queue.h>
+#include <haproxy/sample.h>
+#include <haproxy/server.h>
+#include <haproxy/session.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
+#include <haproxy/trace.h>
 
 #define TRACE_SOURCE &trace_strm
 
@@ -1407,6 +1402,10 @@ int connect_server(struct stream *s)
 		    srv->mux_proto || s->be->mode != PR_MODE_HTTP))
 #endif
 			init_mux = 1;
+#if defined(USE_OPENSSL) && defined(TLSEXT_TYPE_application_layer_protocol_negotiation)
+		else
+			srv_conn->owner = s->sess;
+#endif
 		/* process the case where the server requires the PROXY protocol to be sent */
 		srv_conn->send_proxy_ofs = 0;
 

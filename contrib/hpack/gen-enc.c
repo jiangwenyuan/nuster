@@ -5,7 +5,7 @@
  * table is built to access the first entry of each length.
  *
  * Build like this :
- *    gcc -I../../include -I../../ebtree -o gen-enc gen-enc.c
+ *    gcc -I../../include -o gen-enc gen-enc.c
  */
 #define HPACK_STANDALONE
 
@@ -14,8 +14,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <common/ist.h>
-#include <common/hpack-tbl.h>
+#include <import/ist.h>
+#include <haproxy/hpack-tbl-t.h>
 #include "../../src/hpack-tbl.c"
 
 struct idxhdr {

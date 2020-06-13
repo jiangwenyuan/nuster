@@ -20,12 +20,13 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <common/cfgparse.h>
-#include <common/errors.h>
-#include <common/initcall.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/mworker.h>
+#include <haproxy/task.h>
 
-#include <proto/log.h>
-#include <proto/mworker.h>
 
 static int use_program = 0; /* do we use the program section ? */
 

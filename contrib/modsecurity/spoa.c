@@ -36,10 +36,9 @@
 #include <event2/event_struct.h>
 #include <event2/thread.h>
 
-#include <common/mini-clist.h>
-#include <common/chunk.h>
-
-#include <proto/spoe.h>
+#include <haproxy/chunk.h>
+#include <haproxy/list.h>
+#include <haproxy/spoe.h>
 
 #include "spoa.h"
 #include "modsec_wrapper.h"

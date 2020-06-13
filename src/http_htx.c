@@ -14,19 +14,19 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <types/global.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/global.h>
+#include <haproxy/h1.h>
+#include <haproxy/http.h>
+#include <haproxy/http_fetch.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/log.h>
+#include <haproxy/regex.h>
+#include <haproxy/sample.h>
 
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/cfgparse.h>
-#include <common/h1.h>
-#include <common/http.h>
-#include <common/htx.h>
-
-#include <proto/arg.h>
-#include <proto/http_htx.h>
-#include <proto/http_fetch.h>
-#include <proto/sample.h>
 
 struct buffer http_err_chunks[HTTP_ERR_SIZE];
 struct http_reply http_err_replies[HTTP_ERR_SIZE];
@@ -993,6 +993,7 @@ void release_http_reply(struct http_reply *http_reply)
 			free(lf);
 		}
 	}
+	free(http_reply);
 }
 
 static int http_htx_init(void)
@@ -1222,6 +1223,17 @@ struct buffer *http_parse_errorfile(int status, const char *file, char **errmsg)
  */
 struct buffer *http_parse_errorloc(int errloc, int status, const char *url, char **errmsg)
 {
+	static const char *HTTP_302 =
+		"HTTP/1.1 302 Found\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-length: 0\r\n"
+		"Location: "; /* not terminated since it will be concatenated with the URL */
+	static const char *HTTP_303 =
+		"HTTP/1.1 303 See Other\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-length: 0\r\n"
+		"Location: "; /* not terminated since it will be concatenated with the URL */
+
 	struct buffer *buf = NULL;
 	const char *msg;
 	char *key = NULL, *err = NULL;
@@ -1537,13 +1549,13 @@ struct http_reply *http_parse_http_reply(const char **args, int *orig_arg, struc
 				memprintf(errmsg, "'%s' : out of memory", args[cur_arg-1]);
 				goto error;
 			}
+			LIST_ADDQ(&reply->hdrs, &hdr->list);
 			LIST_INIT(&hdr->value);
 			hdr->name = ist(strdup(args[cur_arg]));
 			if (!isttest(hdr->name)) {
 				memprintf(errmsg, "out of memory");
 				goto error;
 			}
-			LIST_ADDQ(&reply->hdrs, &hdr->list);
 			if (!parse_logformat_string(args[cur_arg+1], px, &hdr->value, LOG_OPT_HTTP, cap, errmsg))
 				goto error;
 

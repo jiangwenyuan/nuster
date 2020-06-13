@@ -19,14 +19,13 @@
  */
 
 #include <stdlib.h>
-#include <common/buf.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/hathreads.h>
-#include <types/applet.h>
-#include <proto/cli.h>
-#include <proto/ring.h>
-#include <proto/stream_interface.h>
+#include <haproxy/api.h>
+#include <haproxy/applet.h>
+#include <haproxy/buf.h>
+#include <haproxy/cli.h>
+#include <haproxy/ring.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/thread.h>
 
 /* Creates and returns a ring buffer of size <size> bytes. Returns NULL on
  * allocation failure.
@@ -206,7 +205,7 @@ ssize_t ring_write(struct ring *ring, size_t maxlen, const struct ist pfx[], siz
  * already attached. On success, the caller MUST call ring_detach_appctx()
  * to detach itself, even if it was never woken up.
  */
-int ring_attach_appctx(struct ring *ring, struct appctx *appctx)
+int ring_attach(struct ring *ring)
 {
 	int users = ring->readers_count;
 
@@ -245,7 +244,7 @@ void ring_detach_appctx(struct ring *ring, struct appctx *appctx, size_t ofs)
  */
 int ring_attach_cli(struct ring *ring, struct appctx *appctx)
 {
-	if (!ring_attach_appctx(ring, appctx))
+	if (!ring_attach(ring))
 		return cli_err(appctx,
 		               "Sorry, too many watchers (255) on this ring buffer. "
 		               "What could it have so interesting to attract so many watchers ?");

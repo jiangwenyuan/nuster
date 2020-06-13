@@ -18,15 +18,16 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#include <common/buffer.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/ist.h>
-#include <common/mini-clist.h>
-#include <proto/cli.h>
-#include <proto/log.h>
-#include <proto/sink.h>
-#include <proto/trace.h>
+#include <import/ist.h>
+#include <haproxy/api.h>
+#include <haproxy/buf.h>
+#include <haproxy/cli.h>
+#include <haproxy/errors.h>
+#include <haproxy/istbuf.h>
+#include <haproxy/list.h>
+#include <haproxy/log.h>
+#include <haproxy/sink.h>
+#include <haproxy/trace.h>
 
 struct list trace_sources = LIST_HEAD_INIT(trace_sources);
 THREAD_LOCAL struct buffer trace_buf = { };

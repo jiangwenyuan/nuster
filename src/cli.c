@@ -26,48 +26,41 @@
 
 #include <net/if.h>
 
-#include <common/cfgparse.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/ticks.h>
-#include <common/time.h>
-#include <common/uri_auth.h>
-#include <common/version.h>
-#include <common/base64.h>
-
-#include <types/applet.h>
-#include <types/global.h>
-#include <types/dns.h>
-#include <types/stats.h>
-
-#include <proto/activity.h>
-#include <proto/backend.h>
-#include <proto/channel.h>
-#include <proto/checks.h>
-#include <proto/cli.h>
-#include <proto/compression.h>
-#include <proto/stats.h>
-#include <proto/fd.h>
-#include <proto/freq_ctr.h>
-#include <proto/frontend.h>
-#include <proto/log.h>
-#include <proto/pattern.h>
-#include <proto/pipe.h>
-#include <proto/protocol.h>
-#include <proto/listener.h>
-#include <proto/map.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/session.h>
-#include <proto/stream.h>
-#include <proto/server.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
+#include <haproxy/activity.h>
+#include <haproxy/api.h>
+#include <haproxy/applet-t.h>
+#include <haproxy/base64.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/channel.h>
+#include <haproxy/check.h>
+#include <haproxy/cli.h>
+#include <haproxy/compression.h>
+#include <haproxy/dns-t.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/list.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/mworker-t.h>
+#include <haproxy/pattern-t.h>
+#include <haproxy/peers.h>
+#include <haproxy/pipe.h>
+#include <haproxy/protocol.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample-t.h>
+#include <haproxy/server.h>
+#include <haproxy/session.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+#include <haproxy/version.h>
 
 #define PAYLOAD_PATTERN "<<"
 

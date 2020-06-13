@@ -13,32 +13,30 @@
  *
  */
 
-#include <common/cfgparse.h>
-#include <common/config.h>
-#include <common/buffer.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/mini-clist.h>
-
-#include <types/global.h>
-
-#include <proto/action.h>
-#include <proto/applet.h>
-#include <proto/backend.h>
-#include <proto/compression.h>
-#include <proto/frontend.h>
-#include <proto/listener.h>
-#include <proto/http_htx.h>
-#include <proto/pipe.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/ssl_sock.h>
-#include <proto/stats.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
+#include <haproxy/action-t.h>
+#include <haproxy/api.h>
+#include <haproxy/applet.h>
+#include <haproxy/backend.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/compression.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/http.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/list.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/pipe.h>
+#include <haproxy/pool.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/server.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/stats.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
 
 /* Prometheus exporter applet states (appctx->st0) */
 enum {
@@ -2149,13 +2147,12 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 static int promex_dump_metrics(struct appctx *appctx, struct stream_interface *si, struct htx *htx)
 {
 	int ret;
-	int flags = appctx->ctx.stats.flags;
 
 	switch (appctx->st1) {
 		case PROMEX_DUMPER_INIT:
 			appctx->ctx.stats.px = NULL;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_INFO_METRIC);
+			appctx->ctx.stats.flags |= (PROMEX_FL_METRIC_HDR|PROMEX_FL_INFO_METRIC);
 			appctx->st2 = promex_global_metrics[INF_NAME];
 			appctx->st1 = PROMEX_DUMPER_GLOBAL;
 			/* fall through */
@@ -2172,7 +2169,8 @@ static int promex_dump_metrics(struct appctx *appctx, struct stream_interface *s
 
 			appctx->ctx.stats.px = proxies_list;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
+			appctx->ctx.stats.flags &= ~PROMEX_FL_INFO_METRIC;
+			appctx->ctx.stats.flags |= (PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
 			appctx->st2 = promex_front_metrics[ST_F_PXNAME];
 			appctx->st1 = PROMEX_DUMPER_FRONT;
 			/* fall through */
@@ -2189,7 +2187,7 @@ static int promex_dump_metrics(struct appctx *appctx, struct stream_interface *s
 
 			appctx->ctx.stats.px = proxies_list;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
+			appctx->ctx.stats.flags |= PROMEX_FL_METRIC_HDR;
 			appctx->st2 = promex_back_metrics[ST_F_PXNAME];
 			appctx->st1 = PROMEX_DUMPER_BACK;
 			/* fall through */
@@ -2206,7 +2204,7 @@ static int promex_dump_metrics(struct appctx *appctx, struct stream_interface *s
 
 			appctx->ctx.stats.px = proxies_list;
 			appctx->ctx.stats.sv = (appctx->ctx.stats.px ? appctx->ctx.stats.px->srv : NULL);
-			appctx->ctx.stats.flags = (flags|PROMEX_FL_METRIC_HDR|PROMEX_FL_STATS_METRIC);
+			appctx->ctx.stats.flags |= PROMEX_FL_METRIC_HDR;
 			appctx->st2 = promex_srv_metrics[ST_F_PXNAME];
 			appctx->st1 = PROMEX_DUMPER_SRV;
 			/* fall through */
@@ -2223,7 +2221,7 @@ static int promex_dump_metrics(struct appctx *appctx, struct stream_interface *s
 
 			appctx->ctx.stats.px = NULL;
 			appctx->ctx.stats.sv = NULL;
-			appctx->ctx.stats.flags = flags;
+			appctx->ctx.stats.flags &= ~(PROMEX_FL_METRIC_HDR|PROMEX_FL_INFO_METRIC|PROMEX_FL_STATS_METRIC);
 			appctx->st2 = 0;
 			appctx->st1 = PROMEX_DUMPER_DONE;
 			/* fall through */

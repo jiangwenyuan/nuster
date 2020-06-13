@@ -13,10 +13,9 @@
 
 #include <sys/mman.h>
 #include <arpa/inet.h>
-#include <ebmbtree.h>
-#include <types/global.h>
-#include <common/mini-clist.h>
-#include "proto/shctx.h"
+#include <import/ebmbtree.h>
+#include <haproxy/list.h>
+#include <haproxy/shctx.h>
 
 #if !defined (USE_PRIVATE_CACHE)
 

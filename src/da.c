@@ -1,16 +1,17 @@
 #include <stdio.h>
 
-#include <common/cfgparse.h>
-#include <common/errors.h>
-#include <common/http.h>
-#include <common/initcall.h>
-#include <types/global.h>
-#include <proto/arg.h>
-#include <proto/http_fetch.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/http_ana.h>
-#include <proto/sample.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/errors.h>
+#include <haproxy/global.h>
+#include <haproxy/http.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_fetch.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/sample.h>
+#include <haproxy/tools.h>
 #include <dac.h>
 
 static struct {

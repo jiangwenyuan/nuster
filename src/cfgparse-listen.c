@@ -11,23 +11,26 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <common/cfgparse.h>
-#include <common/uri_auth.h>
-
-#include <types/capture.h>
-#include <types/compression.h>
-#include <types/stats.h>
-
-#include <proto/acl.h>
-#include <proto/checks.h>
-#include <proto/connection.h>
-#include <proto/http_htx.h>
-#include <proto/http_rules.h>
-#include <proto/listener.h>
-#include <proto/protocol.h>
-#include <proto/proxy.h>
-#include <proto/server.h>
-#include <proto/stick_table.h>
+#include <haproxy/acl.h>
+#include <haproxy/capture-t.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/check.h>
+#include <haproxy/compression-t.h>
+#include <haproxy/connection.h>
+#include <haproxy/extcheck.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/peers.h>
+#include <haproxy/protocol.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/server.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stick_table.h>
+#include <haproxy/tcpcheck.h>
+#include <haproxy/uri_auth.h>
 
 /* Report a warning if a rule is placed after a 'tcp-request session' rule.
  * Return 1 if the warning has been emitted, otherwise 0.

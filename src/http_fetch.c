@@ -16,33 +16,27 @@
 #include <string.h>
 #include <time.h>
 
-#include <common/base64.h>
-#include <common/chunk.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/h1.h>
-#include <common/http.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/standard.h>
-#include <common/version.h>
-
-#include <types/global.h>
-
-#include <proto/arg.h>
-#include <proto/auth.h>
-#include <proto/channel.h>
-#include <proto/connection.h>
-#include <proto/http_fetch.h>
-#include <proto/h1_htx.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/obj_type.h>
-#include <proto/http_ana.h>
-#include <proto/sample.h>
-#include <proto/stream.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/auth.h>
+#include <haproxy/base64.h>
+#include <haproxy/channel.h>
+#include <haproxy/chunk.h>
+#include <haproxy/connection.h>
+#include <haproxy/global.h>
+#include <haproxy/h1.h>
+#include <haproxy/h1_htx.h>
+#include <haproxy/http.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_fetch.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/obj_type.h>
+#include <haproxy/pool.h>
+#include <haproxy/sample.h>
+#include <haproxy/stream.h>
+#include <haproxy/tools.h>
+#include <haproxy/version.h>
 
 
 /* this struct is used between calls to smp_fetch_hdr() or smp_fetch_cookie() */

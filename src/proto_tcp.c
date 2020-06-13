@@ -30,36 +30,29 @@
 #include <netinet/tcp.h>
 #include <netinet/in.h>
 
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/mini-clist.h>
-#include <common/standard.h>
-#include <common/namespace.h>
+#include <haproxy/action-t.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/channel.h>
+#include <haproxy/connection.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/global.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/list.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/namespace.h>
+#include <haproxy/port_range.h>
+#include <haproxy/proto_tcp.h>
+#include <haproxy/protocol.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/sample.h>
+#include <haproxy/server.h>
+#include <haproxy/stream-t.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/tools.h>
 
-#include <types/action.h>
-#include <types/connection.h>
-#include <types/global.h>
-#include <types/stream.h>
-
-#include <proto/arg.h>
-#include <proto/channel.h>
-#include <proto/connection.h>
-#include <proto/fd.h>
-#include <proto/http_rules.h>
-#include <proto/listener.h>
-#include <proto/log.h>
-#include <proto/port_range.h>
-#include <proto/protocol.h>
-#include <proto/http_ana.h>
-#include <proto/proto_tcp.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/task.h>
-#include <proto/tcp_rules.h>
 
 static int tcp_bind_listeners(struct protocol *proto, char *errmsg, int errlen);
 static int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen);

@@ -24,28 +24,24 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 
-#include <common/config.h>
-#include <common/compat.h>
-#include <common/initcall.h>
-#include <common/standard.h>
-#include <common/time.h>
-#include <common/version.h>
+#include <haproxy/api.h>
+#include <haproxy/applet-t.h>
+#include <haproxy/cli.h>
+#include <haproxy/fd.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/http.h>
+#include <haproxy/log.h>
+#include <haproxy/ring.h>
+#include <haproxy/sample.h>
+#include <haproxy/sink.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+#include <haproxy/version.h>
 
-#include <types/cli.h>
-#include <types/global.h>
-#include <types/log.h>
-
-#include <proto/applet.h>
-#include <proto/cli.h>
-#include <proto/fd.h>
-#include <proto/frontend.h>
-#include <proto/log.h>
-#include <proto/ring.h>
-#include <proto/sample.h>
-#include <proto/sink.h>
-#include <proto/ssl_sock.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
 
 struct log_fmt {
 	char *name;
@@ -1041,16 +1037,10 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 	/* now, back to the address */
 	logsrv->type = LOG_TARGET_DGRAM;
 	if (strncmp(args[1], "ring@", 5) == 0) {
-		struct sink *sink = sink_find(args[1] + 5);
-
-		if (!sink || sink->type != SINK_TYPE_BUFFER) {
-			memprintf(err, "cannot find ring buffer '%s'", args[1] + 5);
-			goto error;
-		}
-
 		logsrv->addr.ss_family = AF_UNSPEC;
 		logsrv->type = LOG_TARGET_BUFFER;
-		logsrv->sink = sink;
+		logsrv->sink = NULL;
+		logsrv->ring_name = strdup(args[1] + 5);
 		goto done;
 	}
 
@@ -1585,8 +1575,10 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, char *pid_
 
 	dataptr = message;
 
-	/* historically some messages used to already contain the trailing LF */
-	if (size && (dataptr[size-1] == '\n'))
+	/* historically some messages used to already contain the trailing LF
+	 * or Zero. Let's remove all trailing LF or Zero
+	 */
+	while (size && ((dataptr[size-1] == '\n' || (dataptr[size-1] == 0))))
 		size--;
 
 	if (logsrv->type == LOG_TARGET_FD) {

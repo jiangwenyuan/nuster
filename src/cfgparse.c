@@ -33,56 +33,51 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <common/cfgparse.h>
-#include <common/chunk.h>
-#include <common/config.h>
-#include <common/errors.h>
-#include <common/memory.h>
-#include <common/standard.h>
-#include <common/time.h>
-#include <common/uri_auth.h>
-#include <common/namespace.h>
-#include <common/hathreads.h>
-
-#include <types/capture.h>
-#include <types/filters.h>
-#include <types/global.h>
-#include <types/obj_type.h>
-#include <types/peers.h>
-#include <types/mailers.h>
-#include <types/dns.h>
-#include <types/stats.h>
-
-#include <proto/acl.h>
-#include <proto/action.h>
-#include <proto/auth.h>
-#include <proto/backend.h>
-#include <proto/channel.h>
-#include <proto/checks.h>
-#include <proto/dns.h>
-#include <proto/stats.h>
-#include <proto/filters.h>
-#include <proto/frontend.h>
-#include <proto/http_rules.h>
-#include <proto/lb_chash.h>
-#include <proto/lb_fas.h>
-#include <proto/lb_fwlc.h>
-#include <proto/lb_fwrr.h>
-#include <proto/lb_map.h>
-#include <proto/listener.h>
-#include <proto/log.h>
-#include <proto/protocol.h>
-#include <proto/http_ana.h>
-#include <proto/proxy.h>
-#include <proto/peers.h>
-#include <proto/sample.h>
-#include <proto/session.h>
-#include <proto/server.h>
-#include <proto/stream.h>
-#include <proto/stick_table.h>
-#include <proto/task.h>
-#include <proto/tcp_rules.h>
-#include <proto/connection.h>
+#include <haproxy/acl.h>
+#include <haproxy/action-t.h>
+#include <haproxy/api.h>
+#include <haproxy/auth.h>
+#include <haproxy/backend.h>
+#include <haproxy/capture.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/channel.h>
+#include <haproxy/check.h>
+#include <haproxy/chunk.h>
+#include <haproxy/connection.h>
+#include <haproxy/dns.h>
+#include <haproxy/errors.h>
+#include <haproxy/filters.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/lb_chash.h>
+#include <haproxy/lb_fas.h>
+#include <haproxy/lb_fwlc.h>
+#include <haproxy/lb_fwrr.h>
+#include <haproxy/lb_map.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/mailers.h>
+#include <haproxy/namespace.h>
+#include <haproxy/obj_type-t.h>
+#include <haproxy/peers-t.h>
+#include <haproxy/peers.h>
+#include <haproxy/pool.h>
+#include <haproxy/protocol.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/server.h>
+#include <haproxy/session.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stick_table.h>
+#include <haproxy/stream.h>
+#include <haproxy/task.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/thread.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+#include <haproxy/uri_auth-t.h>
 
 
 /* Used to chain configuration sections definitions. This list
@@ -1130,9 +1125,8 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 				continue;
 
 			memset(sk, 0, sizeof(*sk));
-			sk = str2ip2(address, sk, 1);
-			if (!sk) {
-				ha_warning("parsing [/etc/resolv.conf:%d] : address '%s' could not be recognized, namerserver will be excluded.\n",
+			if (!str2ip2(address, sk, 1)) {
+				ha_warning("parsing [/etc/resolv.conf:%d] : address '%s' could not be recognized, nameserver will be excluded.\n",
 					   resolv_linenum, address);
 				err_code |= ERR_WARN;
 				continue;
@@ -2512,7 +2506,7 @@ int check_config_validity()
 		}
 
 		if ((curproxy->options2 & PR_O2_CHK_ANY) == PR_O2_TCPCHK_CHK &&
-		    (curproxy->tcpcheck_rules.flags & TCPCHK_RULES_PROTO_CHK) == TCPCHK_RULES_HTTP_CHK) {
+		    (curproxy->tcpcheck_rules.flags & TCPCHK_RULES_PROTO_CHK) != TCPCHK_RULES_HTTP_CHK) {
 			if (curproxy->options & PR_O_DISABLE404) {
 				ha_warning("config : '%s' will be ignored for %s '%s' (requires 'option httpchk').\n",
 					   "disable-on-404", proxy_type_str(curproxy), curproxy->id);

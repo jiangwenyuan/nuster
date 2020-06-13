@@ -10,23 +10,18 @@
  *
  */
 
-#include <common/config.h>
-#include <common/buffer.h>
-#include <common/debug.h>
-#include <common/http.h>
-#include <common/memory.h>
+#include <haproxy/api.h>
+#include <haproxy/connection.h>
+#include <haproxy/global.h>
+#include <haproxy/http.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
+#include <haproxy/pool.h>
+#include <haproxy/proxy.h>
+#include <haproxy/session.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/vars.h>
 
-#include <types/global.h>
-#include <types/session.h>
-
-#include <proto/connection.h>
-#include <proto/listener.h>
-#include <proto/log.h>
-#include <proto/proxy.h>
-#include <proto/session.h>
-#include <proto/stream.h>
-#include <proto/tcp_rules.h>
-#include <proto/vars.h>
 
 DECLARE_POOL(pool_head_session, "session", sizeof(struct session));
 DECLARE_POOL(pool_head_sess_srv_list, "session server list",

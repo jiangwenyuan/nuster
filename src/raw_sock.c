@@ -19,27 +19,20 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
 #include <netinet/tcp.h>
 
-#include <common/buffer.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/standard.h>
-#include <common/ticks.h>
-#include <common/time.h>
-
-#include <proto/connection.h>
-#include <proto/fd.h>
-#include <proto/freq_ctr.h>
-#include <proto/log.h>
-#include <proto/pipe.h>
-#include <proto/raw_sock.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
-
-#include <types/global.h>
+#include <haproxy/api.h>
+#include <haproxy/buf.h>
+#include <haproxy/connection.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/global.h>
+#include <haproxy/pipe.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
 
 #if defined(USE_LINUX_SPLICE)

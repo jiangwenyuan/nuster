@@ -10,28 +10,22 @@
  *
  */
 
-#include <common/buffer.h>
-#include <common/debug.h>
-#include <common/cfgparse.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/errors.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/namespace.h>
-#include <common/standard.h>
-#include <common/hathreads.h>
+#include <haproxy/api.h>
+#include <haproxy/buf-t.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/compression.h>
+#include <haproxy/errors.h>
+#include <haproxy/filters.h>
+#include <haproxy/flt_http_comp.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/namespace.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/tools.h>
+#include <haproxy/trace.h>
 
-#include <types/filters.h>
-#include <types/http_ana.h>
-
-#include <proto/compression.h>
-#include <proto/filters.h>
-#include <proto/flt_http_comp.h>
-#include <proto/http_htx.h>
-#include <proto/http_ana.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
 
 #define TRACE_SOURCE &trace_strm
 

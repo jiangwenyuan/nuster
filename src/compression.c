@@ -26,19 +26,16 @@
 #undef free_func
 #endif /* USE_ZLIB */
 
-#include <common/cfgparse.h>
-#include <common/compat.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-
-#include <types/global.h>
-#include <types/compression.h>
-
-#include <proto/acl.h>
-#include <proto/compression.h>
-#include <proto/freq_ctr.h>
-#include <proto/stream.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/compression-t.h>
+#include <haproxy/compression.h>
+#include <haproxy/dynbuf.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/global.h>
+#include <haproxy/pool.h>
+#include <haproxy/stream.h>
+#include <haproxy/thread.h>
 
 
 #if defined(USE_ZLIB)

@@ -15,11 +15,10 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <common/config.h>
-#include <common/chunk.h>
-#include <common/standard.h>
-
-#include <types/global.h>
+#include <haproxy/api.h>
+#include <haproxy/chunk.h>
+#include <haproxy/global.h>
+#include <haproxy/tools.h>
 
 /* trash chunks used for various conversions */
 static THREAD_LOCAL struct buffer *trash_chunk;

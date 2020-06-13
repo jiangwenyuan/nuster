@@ -9,27 +9,24 @@
  * 2 of the License, or (at your option) any later version.
  *
  */
-#include <common/cfgparse.h>
-#include <common/config.h>
-#include <common/h1.h>
-#include <common/h2.h>
-#include <common/htx.h>
-#include <common/initcall.h>
+#include <import/ebistree.h>
 
-#include <ebistree.h>
-
-#include <types/pipe.h>
-#include <types/proxy.h>
-#include <types/session.h>
-
-#include <proto/connection.h>
-#include <proto/h1_htx.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/session.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/trace.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/connection.h>
+#include <haproxy/h1.h>
+#include <haproxy/h1_htx.h>
+#include <haproxy/h2.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/istbuf.h>
+#include <haproxy/log.h>
+#include <haproxy/pipe-t.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/session-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/trace.h>
 
 /*
  *  H1 Connection flags (32 bits)
@@ -1184,7 +1181,9 @@ static size_t h1_process_headers(struct h1s *h1s, struct h1m *h1m, struct htx *h
 
 	TRACE_ENTER(H1_EV_RX_DATA|H1_EV_RX_HDRS, h1s->h1c->conn, h1s,, (size_t[]){max});
 
-	if (!(h1s->flags & H1S_F_NOT_FIRST) && !(h1m->flags & H1_MF_RESP)) {
+	if (!(h1s->h1c->px->options2 & PR_O2_NO_H2_UPGRADE) && /* H2 upgrade supported by the proxy */
+	    !(h1s->flags & H1S_F_NOT_FIRST) &&                 /* It is the first transaction */
+	    !(h1m->flags & H1_MF_RESP)) {                      /* It is a request */
 		/* Try to match H2 preface before parsing the request headers. */
 		ret = b_isteq(buf, 0, b_data(buf), ist(H2_CONN_PREFACE));
 		if (ret > 0) {

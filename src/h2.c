@@ -26,11 +26,14 @@
  */
 
 #include <inttypes.h>
-#include <common/config.h>
-#include <common/h2.h>
-#include <common/http-hdr.h>
-#include <common/ist.h>
-#include <types/global.h>
+#include <haproxy/api.h>
+#include <haproxy/global.h>
+#include <haproxy/h2.h>
+#include <haproxy/http-hdr-t.h>
+#include <haproxy/http.h>
+#include <haproxy/htx.h>
+#include <import/ist.h>
+
 
 struct h2_frame_definition h2_frame_definition[H2_FT_ENTRIES] =	{
 	 [H2_FT_DATA         ] = { .dir = 3, .min_id = 1, .max_id = H2_MAX_STREAM_ID, .min_len = 0, .max_len = H2_MAX_FRAME_LEN, },

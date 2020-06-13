@@ -10,29 +10,29 @@
  *
  */
 
-#include <common/cfgparse.h>
-#include <common/config.h>
-#include <common/fcgi.h>
-#include <common/h1.h>
-#include <common/htx.h>
-#include <common/initcall.h>
-#include <common/ist.h>
-#include <common/mini-clist.h>
-#include <common/net_helper.h>
+#include <import/ist.h>
 
-#include <types/proxy.h>
-#include <types/session.h>
+#include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/connection.h>
+#include <haproxy/errors.h>
+#include <haproxy/fcgi-app.h>
+#include <haproxy/fcgi.h>
+#include <haproxy/h1.h>
+#include <haproxy/h1_htx.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/htx.h>
+#include <haproxy/list.h>
+#include <haproxy/log.h>
+#include <haproxy/net_helper.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/regex.h>
+#include <haproxy/session-t.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/trace.h>
 
-#include <proto/connection.h>
-#include <proto/fcgi-app.h>
-#include <proto/h1_htx.h>
-#include <proto/http_htx.h>
-#include <proto/log.h>
-#include <proto/session.h>
-#include <proto/ssl_sock.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/trace.h>
 
 /* FCGI Connection flags (32 bits) */
 #define FCGI_CF_NONE           0x00000000

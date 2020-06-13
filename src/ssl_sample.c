@@ -20,20 +20,16 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <common/buffer.h>
-#include <common/initcall.h>
-#include <common/openssl-compat.h>
-#include <common/standard.h>
-
-#include <types/sample.h>
-#include <types/ssl_sock.h>
-
-#include <proto/acl.h>
-#include <proto/arg.h>
-#include <proto/obj_type.h>
-#include <proto/ssl_sock.h>
-#include <proto/ssl_utils.h>
-#include <proto/sample.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/buf-t.h>
+#include <haproxy/obj_type.h>
+#include <haproxy/openssl-compat.h>
+#include <haproxy/sample.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/ssl_utils.h>
+#include <haproxy/tools.h>
 
 
 /***** Below are some sample fetching functions for ACL/patterns *****/

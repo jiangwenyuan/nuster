@@ -44,7 +44,7 @@
  *   - a pendconn_add() is only performed by the stream which will own the
  *     pendconn ; the pendconn is allocated at this moment and returned ; it is
  *     added to either the server or the proxy's queue while holding this
- *     queue's lock.
+s *     queue's lock.
  *
  *   - the pendconn is then met by a thread walking over the proxy or server's
  *     queue with the respective lock held. This lock is exclusive and the
@@ -69,22 +69,20 @@
  *   - a pendconn doesn't switch between queues, it stays where it is.
  */
 
-#include <common/config.h>
-#include <common/initcall.h>
-#include <common/memory.h>
-#include <common/time.h>
-#include <common/hathreads.h>
-#include <eb32tree.h>
-
-#include <proto/http_rules.h>
-#include <proto/http_ana.h>
-#include <proto/queue.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
-#include <proto/tcp_rules.h>
+#include <import/eb32tree.h>
+#include <haproxy/api.h>
+#include <haproxy/backend.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/pool.h>
+#include <haproxy/queue.h>
+#include <haproxy/sample.h>
+#include <haproxy/server-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/thread.h>
+#include <haproxy/time.h>
 
 
 #define NOW_OFFSET_BOUNDARY()          ((now_ms - (TIMER_LOOK_BACK >> 12)) & 0xfffff)

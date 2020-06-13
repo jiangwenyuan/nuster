@@ -11,7 +11,6 @@
  */
 
 #include <ctype.h>
-#include <limits.h>
 #include <setjmp.h>
 
 #include <lauxlib.h>
@@ -22,45 +21,42 @@
 #error "Requires Lua 5.3 or later."
 #endif
 
-#include <ebpttree.h>
+#include <import/ebpttree.h>
 
-#include <common/cfgparse.h>
-#include <common/compiler.h>
-#include <common/hathreads.h>
-#include <common/initcall.h>
-#include <common/xref.h>
-#include <common/h1.h>
+#include <haproxy/api.h>
+#include <haproxy/applet.h>
+#include <haproxy/arg.h>
+#include <haproxy/cfgparse.h>
+#include <haproxy/channel.h>
+#include <haproxy/cli.h>
+#include <haproxy/connection.h>
+#include <haproxy/h1.h>
+#include <haproxy/hlua.h>
+#include <haproxy/hlua_fcn.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/http_fetch.h>
+#include <haproxy/http_htx.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/log.h>
+#include <haproxy/map.h>
+#include <haproxy/obj_type.h>
+#include <haproxy/pattern.h>
+#include <haproxy/payload.h>
+#include <haproxy/proxy-t.h>
+#include <haproxy/regex.h>
+#include <haproxy/sample.h>
+#include <haproxy/server-t.h>
+#include <haproxy/session.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/tcp_rules.h>
+#include <haproxy/thread.h>
+#include <haproxy/tools.h>
+#include <haproxy/vars.h>
+#include <haproxy/xref.h>
 
-#include <types/cli.h>
-#include <types/hlua.h>
-#include <types/proxy.h>
-#include <types/stats.h>
-
-#include <proto/arg.h>
-#include <proto/applet.h>
-#include <proto/channel.h>
-#include <proto/cli.h>
-#include <proto/connection.h>
-#include <proto/stats.h>
-#include <proto/hlua.h>
-#include <proto/hlua_fcn.h>
-#include <proto/http_fetch.h>
-#include <proto/http_htx.h>
-#include <proto/http_rules.h>
-#include <proto/map.h>
-#include <proto/obj_type.h>
-#include <proto/queue.h>
-#include <proto/pattern.h>
-#include <proto/payload.h>
-#include <proto/http_ana.h>
-#include <proto/sample.h>
-#include <proto/server.h>
-#include <proto/session.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
-#include <proto/tcp_rules.h>
-#include <proto/vars.h>
 
 /* Lua uses longjmp to perform yield or throwing errors. This
  * macro is used only for identifying the function that can
@@ -1258,7 +1254,9 @@ __LJMP static int hlua_del_acl(lua_State *L)
 	if (!ref)
 		WILL_LJMP(luaL_error(L, "'del_acl': unknown acl file '%s'", name));
 
+	HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
 	pat_ref_delete(ref, key);
+	HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
 	return 0;
 }
 
@@ -1280,7 +1278,9 @@ static int hlua_del_map(lua_State *L)
 	if (!ref)
 		WILL_LJMP(luaL_error(L, "'del_map': unknown acl file '%s'", name));
 
+	HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
 	pat_ref_delete(ref, key);
+	HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
 	return 0;
 }
 
@@ -1302,8 +1302,10 @@ static int hlua_add_acl(lua_State *L)
 	if (!ref)
 		WILL_LJMP(luaL_error(L, "'add_acl': unknown acl file '%s'", name));
 
+	HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
 	if (pat_ref_find_elt(ref, key) == NULL)
 		pat_ref_add(ref, key, NULL, NULL);
+	HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
 	return 0;
 }
 
@@ -1328,10 +1330,12 @@ static int hlua_set_map(lua_State *L)
 	if (!ref)
 		WILL_LJMP(luaL_error(L, "'set_map': unknown map file '%s'", name));
 
+	HA_SPIN_LOCK(PATREF_LOCK, &ref->lock);
 	if (pat_ref_find_elt(ref, key) != NULL)
 		pat_ref_set(ref, key, value, NULL);
 	else
 		pat_ref_add(ref, key, value, NULL);
+	HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
 	return 0;
 }
 
@@ -3475,7 +3479,8 @@ __LJMP static int hlua_applet_tcp_set_var(lua_State *L)
 	size_t len;
 	struct sample smp;
 
-	MAY_LJMP(check_args(L, 3, "set_var"));
+	if (lua_gettop(L) < 3 || lua_gettop(L) > 4)
+		WILL_LJMP(luaL_error(L, "'set_var' needs between 3 and 4 arguments"));
 
 	/* It is useles to retrieve the stream, but this function
 	 * runs only in a stream context.
@@ -3489,8 +3494,13 @@ __LJMP static int hlua_applet_tcp_set_var(lua_State *L)
 
 	/* Store the sample in a variable. */
 	smp_set_owner(&smp, s->be, s->sess, s, 0);
-	vars_set_by_name(name, len, &smp);
-	return 0;
+
+	if (lua_gettop(L) == 4 && lua_toboolean(L, 4))
+		lua_pushboolean(L, vars_set_by_name_ifexist(name, len, &smp) != 0);
+	else
+		lua_pushboolean(L, vars_set_by_name(name, len, &smp) != 0);
+
+	return 1;
 }
 
 __LJMP static int hlua_applet_tcp_unset_var(lua_State *L)
@@ -3512,8 +3522,8 @@ __LJMP static int hlua_applet_tcp_unset_var(lua_State *L)
 
 	/* Unset the variable. */
 	smp_set_owner(&smp, s->be, s->sess, s, 0);
-	vars_unset_by_name(name, len, &smp);
-	return 0;
+	lua_pushboolean(L, vars_unset_by_name_ifexist(name, len, &smp) != 0);
+	return 1;
 }
 
 __LJMP static int hlua_applet_tcp_get_var(lua_State *L)
@@ -3953,7 +3963,8 @@ __LJMP static int hlua_applet_http_set_var(lua_State *L)
 	size_t len;
 	struct sample smp;
 
-	MAY_LJMP(check_args(L, 3, "set_var"));
+	if (lua_gettop(L) < 3 || lua_gettop(L) > 4)
+		WILL_LJMP(luaL_error(L, "'set_var' needs between 3 and 4 arguments"));
 
 	/* It is useles to retrieve the stream, but this function
 	 * runs only in a stream context.
@@ -3967,8 +3978,13 @@ __LJMP static int hlua_applet_http_set_var(lua_State *L)
 
 	/* Store the sample in a variable. */
 	smp_set_owner(&smp, s->be, s->sess, s, 0);
-	vars_set_by_name(name, len, &smp);
-	return 0;
+
+	if (lua_gettop(L) == 4 && lua_toboolean(L, 4))
+		lua_pushboolean(L, vars_set_by_name_ifexist(name, len, &smp) != 0);
+	else
+		lua_pushboolean(L, vars_set_by_name(name, len, &smp) != 0);
+
+	return 1;
 }
 
 __LJMP static int hlua_applet_http_unset_var(lua_State *L)
@@ -3990,8 +4006,8 @@ __LJMP static int hlua_applet_http_unset_var(lua_State *L)
 
 	/* Unset the variable. */
 	smp_set_owner(&smp, s->be, s->sess, s, 0);
-	vars_unset_by_name(name, len, &smp);
-	return 0;
+	lua_pushboolean(L, vars_unset_by_name_ifexist(name, len, &smp) != 0);
+	return 1;
 }
 
 __LJMP static int hlua_applet_http_get_var(lua_State *L)
@@ -5040,7 +5056,8 @@ __LJMP static int hlua_set_var(lua_State *L)
 	size_t len;
 	struct sample smp;
 
-	MAY_LJMP(check_args(L, 3, "set_var"));
+	if (lua_gettop(L) < 3 || lua_gettop(L) > 4)
+		WILL_LJMP(luaL_error(L, "'set_var' needs between 3 and 4 arguments"));
 
 	/* It is useles to retrieve the stream, but this function
 	 * runs only in a stream context.
@@ -5053,8 +5070,13 @@ __LJMP static int hlua_set_var(lua_State *L)
 
 	/* Store the sample in a variable. */
 	smp_set_owner(&smp, htxn->p, htxn->s->sess, htxn->s, htxn->dir & SMP_OPT_DIR);
-	vars_set_by_name(name, len, &smp);
-	return 0;
+
+	if (lua_gettop(L) == 4 && lua_toboolean(L, 4))
+		lua_pushboolean(L, vars_set_by_name_ifexist(name, len, &smp) != 0);
+	else
+		lua_pushboolean(L, vars_set_by_name(name, len, &smp) != 0);
+
+	return 1;
 }
 
 __LJMP static int hlua_unset_var(lua_State *L)
@@ -5074,8 +5096,8 @@ __LJMP static int hlua_unset_var(lua_State *L)
 
 	/* Unset the variable. */
 	smp_set_owner(&smp, htxn->p, htxn->s->sess, htxn->s, htxn->dir & SMP_OPT_DIR);
-	vars_unset_by_name(name, len, &smp);
-	return 0;
+	lua_pushboolean(L, vars_unset_by_name_ifexist(name, len, &smp) != 0);
+	return 1;
 }
 
 __LJMP static int hlua_get_var(lua_State *L)
@@ -6599,6 +6621,15 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 		/* We must initialize the execution timeouts. */
 		s->hlua->max_time = hlua_timeout_session;
 	}
+
+	/* Always reset the analyse expiration timeout for the corresponding
+	 * channel in case the lua script yield, to be sure to not keep an
+	 * expired timeout.
+	 */
+	if (dir == SMP_OPT_DIR_REQ)
+		s->req.analyse_exp = TICK_ETERNITY;
+	else
+		s->res.analyse_exp = TICK_ETERNITY;
 
 	/* Execute the function. */
 	switch (hlua_ctx_resume(s->hlua, !(flags & ACT_OPT_FINAL))) {

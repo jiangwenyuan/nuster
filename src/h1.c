@@ -11,11 +11,9 @@
  */
 
 #include <ctype.h>
-#include <common/config.h>
-#include <common/h1.h>
-#include <common/http-hdr.h>
-
-#include <proto/channel.h>
+#include <haproxy/api.h>
+#include <haproxy/h1.h>
+#include <haproxy/http-hdr.h>
 
 /* Parse the Content-Length header field of an HTTP/1 request. The function
  * checks all possible occurrences of a comma-delimited value, and verifies

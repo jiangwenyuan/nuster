@@ -40,56 +40,45 @@
 #include <netdb.h>
 #include <netinet/tcp.h>
 
+#include <import/ebpttree.h>
+#include <import/ebsttree.h>
 #include <import/lru.h>
 #include <import/xxhash.h>
 
-#include <common/buffer.h>
-#include <common/chunk.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/errors.h>
-#include <common/initcall.h>
-#include <common/openssl-compat.h>
-#include <common/standard.h>
-#include <common/ticks.h>
-#include <common/time.h>
-#include <common/base64.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/base64.h>
+#include <haproxy/channel.h>
+#include <haproxy/chunk.h>
+#include <haproxy/cli.h>
+#include <haproxy/connection.h>
+#include <haproxy/dynbuf.h>
+#include <haproxy/errors.h>
+#include <haproxy/fd.h>
+#include <haproxy/freq_ctr.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/http_rules.h>
+#include <haproxy/log.h>
+#include <haproxy/openssl-compat.h>
+#include <haproxy/pattern-t.h>
+#include <haproxy/proto_tcp.h>
+#include <haproxy/proxy.h>
+#include <haproxy/server.h>
+#include <haproxy/shctx.h>
+#include <haproxy/ssl_ckch.h>
+#include <haproxy/ssl_crtlist.h>
+#include <haproxy/ssl_sock.h>
+#include <haproxy/ssl_utils.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/stream-t.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/ticks.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
+#include <haproxy/vars.h>
 
-#include <ebpttree.h>
-#include <ebsttree.h>
-
-#include <types/applet.h>
-#include <types/cli.h>
-#include <types/global.h>
-#include <types/ssl_sock.h>
-#include <types/stats.h>
-
-#include <proto/acl.h>
-#include <proto/arg.h>
-#include <proto/channel.h>
-#include <proto/connection.h>
-#include <proto/cli.h>
-#include <proto/fd.h>
-#include <proto/freq_ctr.h>
-#include <proto/frontend.h>
-#include <proto/http_rules.h>
-#include <proto/listener.h>
-#include <proto/pattern.h>
-#include <proto/proto_tcp.h>
-#include <proto/http_ana.h>
-#include <proto/server.h>
-#include <proto/stream_interface.h>
-#include <proto/log.h>
-#include <proto/proxy.h>
-#include <proto/shctx.h>
-#include <proto/ssl_ckch.h>
-#include <proto/ssl_crtlist.h>
-#include <proto/ssl_sock.h>
-#include <proto/ssl_utils.h>
-#include <proto/stream.h>
-#include <proto/task.h>
-#include <proto/vars.h>
 
 /* ***** READ THIS before adding code here! *****
  *
@@ -275,7 +264,7 @@ static int ssl_locking_init(void)
 
 #endif
 
-__decl_hathreads(HA_SPINLOCK_T ckch_lock);
+__decl_thread(HA_SPINLOCK_T ckch_lock);
 
 
 /*
@@ -2917,29 +2906,31 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 			find_chain = issuer->chain;
 	}
 
-	/* Load all certs from chain, except Root, in the ssl_ctx */
-	if (find_chain) {
-		int i;
+	/* Load all certs in the ckch into the ctx_chain for the ssl_ctx */
+	if (find_chain)
+#ifdef SSL_CTX_set1_chain
+		if (!SSL_CTX_set1_chain(ctx, find_chain)) {
+			memprintf(err, "%sunable to load chain certificate into SSL Context '%s'. Make sure you are linking against Openssl >= 1.0.2.\n",
+				  err && *err ? *err : "", path);
+			errcode |= ERR_ALERT | ERR_FATAL;
+			goto end;
+		}
+#else
+	{ /* legacy compat (< openssl 1.0.2) */
 		X509 *ca;
-		for (i = 0; i < sk_X509_num(find_chain); i++) {
-			ca = sk_X509_value(find_chain, i);
-			/* skip self issued (Root CA) */
-			if (global_ssl.skip_self_issued_ca && !X509_NAME_cmp(X509_get_subject_name(ca), X509_get_issuer_name(ca)))
-				continue;
-			/*
-			   SSL_CTX_add1_chain_cert could be used with openssl >= 1.0.2
-			   Used SSL_CTX_add_extra_chain_cert for compat (aka SSL_CTX_add0_chain_cert)
-			*/
-			X509_up_ref(ca);
+		STACK_OF(X509) *chain;
+		chain = X509_chain_up_ref(find_chain);
+		while ((ca = sk_X509_shift(chain)))
 			if (!SSL_CTX_add_extra_chain_cert(ctx, ca)) {
-				X509_free(ca);
 				memprintf(err, "%sunable to load chain certificate into SSL Context '%s'.\n",
 					  err && *err ? *err : "", path);
+				X509_free(ca);
+				sk_X509_pop_free(chain, X509_free);
 				errcode |= ERR_ALERT | ERR_FATAL;
 				goto end;
 			}
-		}
 	}
+#endif
 
 #ifndef OPENSSL_NO_DH
 	/* store a NULL pointer to indicate we have not yet loaded
@@ -3650,6 +3641,7 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 	int i, min, max, hole;
 	int flags = MC_SSL_O_ALL;
 	int cfgerr = 0;
+	const int default_min_ver = CONF_TLSV12;
 
 	ctx = SSL_CTX_new(SSLv23_server_method());
 	bind_conf->initial_ctx = ctx;
@@ -3663,9 +3655,18 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 
 	min = conf_ssl_methods->min;
 	max = conf_ssl_methods->max;
-	/* start with TLSv10 to remove SSLv3 per default */
-	if (!min && (!max || max >= CONF_TLSV10))
-		min = CONF_TLSV10;
+
+	/* default minimum is TLSV12,  */
+	if (!min) {
+		if (!max || (max >= default_min_ver)) {
+			min = default_min_ver;
+		} else {
+			ha_warning("Proxy '%s': Ambiguous configuration for bind '%s' at [%s:%d]: the ssl-min-ver value is not configured and the ssl-max-ver value is lower than the default ssl-min-ver value (%s). "
+			           "Setting the ssl-min-ver to %s. Use 'ssl-min-ver' to fix this.\n",
+			           bind_conf->frontend->id, bind_conf->arg, bind_conf->file, bind_conf->line, methodVersions[default_min_ver].name, methodVersions[max].name);
+			min = max;
+		}
+	}
 	/* Real min and max should be determinate with configuration and openssl's capabilities */
 	if (min)
 		flags |= (methodVersions[min].flag - 1);

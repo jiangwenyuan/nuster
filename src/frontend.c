@@ -22,29 +22,24 @@
 
 #include <netinet/tcp.h>
 
-#include <common/chunk.h>
-#include <common/compat.h>
-#include <common/config.h>
-#include <common/debug.h>
-#include <common/initcall.h>
-#include <common/standard.h>
-#include <common/time.h>
+#include <haproxy/acl.h>
+#include <haproxy/api.h>
+#include <haproxy/arg.h>
+#include <haproxy/chunk.h>
+#include <haproxy/fd.h>
+#include <haproxy/frontend.h>
+#include <haproxy/global.h>
+#include <haproxy/http_ana.h>
+#include <haproxy/log.h>
+#include <haproxy/proto_tcp.h>
+#include <haproxy/proxy.h>
+#include <haproxy/sample.h>
+#include <haproxy/stream.h>
+#include <haproxy/stream_interface.h>
+#include <haproxy/task.h>
+#include <haproxy/time.h>
+#include <haproxy/tools.h>
 
-#include <types/global.h>
-
-#include <proto/acl.h>
-#include <proto/arg.h>
-#include <proto/channel.h>
-#include <proto/fd.h>
-#include <proto/frontend.h>
-#include <proto/log.h>
-#include <proto/proto_tcp.h>
-#include <proto/http_ana.h>
-#include <proto/proxy.h>
-#include <proto/sample.h>
-#include <proto/stream.h>
-#include <proto/stream_interface.h>
-#include <proto/task.h>
 
 /* Finish a stream accept() for a proxy (TCP or HTTP). It returns a negative
  * value in case of a critical failure which must cause the listener to be
