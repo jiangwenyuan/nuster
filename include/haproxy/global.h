@@ -45,7 +45,7 @@ extern const struct linger nolinger;
 extern int stopping;	/* non zero means stopping in progress */
 extern int killed;	/* >0 means a hard-stop is triggered, >1 means hard-stop immediately */
 extern char hostname[MAX_HOSTNAME_LEN];
-extern char localpeer[MAX_HOSTNAME_LEN];
+extern char *localpeer;
 extern unsigned int warned;     /* bitfield of a few warnings to emit just once */
 extern volatile unsigned long sleeping_thread_mask;
 extern struct list proc_list; /* list of process in mworker mode */
@@ -61,6 +61,7 @@ struct proxy;
 struct server;
 int main(int argc, char **argv);
 void deinit(void);
+__attribute__((noreturn)) void deinit_and_exit(int);
 void run_poll_loop(void);
 int tell_old_pids(int sig);
 int delete_oldpid(int pid);

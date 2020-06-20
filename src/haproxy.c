@@ -259,7 +259,7 @@ const int one = 1;
 const struct linger nolinger = { .l_onoff = 1, .l_linger = 0 };
 
 char hostname[MAX_HOSTNAME_LEN];
-char localpeer[MAX_HOSTNAME_LEN];
+char *localpeer = NULL;
 
 static char **old_argv = NULL; /* previous argv but cleaned up */
 
@@ -1774,8 +1774,11 @@ static void init(int argc, char **argv)
 	 */
 	memset(hostname, 0, sizeof(hostname));
 	gethostname(hostname, sizeof(hostname) - 1);
-	memset(localpeer, 0, sizeof(localpeer));
-	memcpy(localpeer, hostname, (sizeof(hostname) > sizeof(localpeer) ? sizeof(localpeer) : sizeof(hostname)) - 1);
+
+	if ((localpeer = strdup(hostname)) == NULL) {
+		ha_alert("Cannot allocate memory for local peer.\n");
+		exit(EXIT_FAILURE);
+	}
 	setenv("HAPROXY_LOCALPEER", localpeer, 1);
 
 	/* we were in mworker mode, we should restart in mworker mode */
@@ -2001,8 +2004,13 @@ static void init(int argc, char **argv)
 				case 'm' : global.rlimit_memmax_all = atol(*argv); break;
 				case 'N' : cfg_maxpconn = atol(*argv); break;
 				case 'L' :
-					strncpy(localpeer, *argv, sizeof(localpeer) - 1);
+					free(localpeer);
+					if ((localpeer = strdup(*argv)) == NULL) {
+						ha_alert("Cannot allocate memory for local peer.\n");
+						exit(EXIT_FAILURE);
+					}
 					setenv("HAPROXY_LOCALPEER", localpeer, 1);
+					global.localpeer_cmdline = 1;
 					break;
 				case 'f' :
 					if (!list_append_word(&cfg_cfgfiles, *argv, &err_msg)) {
@@ -2248,7 +2256,7 @@ static void init(int argc, char **argv)
 		if (pr || px) {
 			/* At least one peer or one listener has been found */
 			qfprintf(stdout, "Configuration file is valid\n");
-			exit(0);
+			deinit_and_exit(0);
 		}
 		qfprintf(stdout, "Configuration file has no error but will not start (no listener) => exit(2).\n");
 		exit(2);
@@ -2459,6 +2467,8 @@ static void init(int argc, char **argv)
 
 	global.maxsock = compute_ideal_maxsock(global.maxconn);
 	global.hardmaxconn = global.maxconn;
+	if (!global.maxpipes)
+		global.maxpipes = compute_ideal_maxpipes();
 
 	/* update connection pool thresholds */
 	global.tune.pool_low_count  = ((long long)global.maxsock * global.tune.pool_low_ratio  + 99) / 100;
@@ -2888,6 +2898,7 @@ void deinit(void)
 	free(global.node);    global.node = NULL;
 	free(global.desc);    global.desc = NULL;
 	free(oldpids);        oldpids = NULL;
+	free(localpeer);      localpeer = NULL;
 	task_destroy(idle_conn_task);
 	idle_conn_task = NULL;
 
@@ -2913,6 +2924,11 @@ void deinit(void)
 	deinit_pollers();
 } /* end deinit() */
 
+__attribute__((noreturn)) void deinit_and_exit(int status)
+{
+	deinit();
+	exit(status);
+}
 
 /* Runs the polling loop */
 void run_poll_loop()
@@ -2923,13 +2939,15 @@ void run_poll_loop()
 	while (1) {
 		wake_expired_tasks();
 
-		/* Process a few tasks */
-		process_runnable_tasks();
-
 		/* check if we caught some signals and process them in the
 		 first thread */
-		if (tid == 0)
+		if (signal_queue_len && tid == 0) {
+			activity[tid].wake_signal++;
 			signal_process_queue();
+		}
+
+		/* Process a few tasks */
+		process_runnable_tasks();
 
 		/* also stop  if we failed to cleanly stop all tasks */
 		if (killed > 1)
@@ -2939,8 +2957,6 @@ void run_poll_loop()
 		wake = 1;
 		if (thread_has_tasks())
 			activity[tid].wake_tasks++;
-		else if (signal_queue_len && tid == 0)
-			activity[tid].wake_signal++;
 		else {
 			_HA_ATOMIC_OR(&sleeping_thread_mask, tid_bit);
 			__ha_barrier_atomic_store();
@@ -3815,17 +3831,8 @@ int main(int argc, char **argv)
 	run_thread_poll_loop(0);
 #endif
 
-	/* Do some cleanup */
-	deinit();
-
-	exit(0);
+	deinit_and_exit(0);
 }
-
-#if defined(__clang_version__)
-REGISTER_BUILD_OPTS("Built with clang compiler version " __clang_version__);
-#elif defined(__VERSION__)
-REGISTER_BUILD_OPTS("Built with gcc compiler version " __VERSION__);
-#endif
 
 /*
  * Local variables:

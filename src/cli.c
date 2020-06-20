@@ -526,7 +526,18 @@ static int cli_parse_request(struct appctx *appctx)
 			break;
 
 		args[i] = p;
-		p += strcspn(p, " \t");
+		while (1) {
+			p += strcspn(p, " \t\\");
+			/* escaped chars using backlashes (\) */
+			if (*p == '\\') {
+				if (!*++p)
+					break;
+				if (!*++p)
+					break;
+			} else {
+				break;
+			}
+		}
 		*p++ = 0;
 
 		/* unescape backslashes (\) */
@@ -1126,22 +1137,22 @@ static int cli_io_handler_show_activity(struct appctx *appctx)
 
 	chunk_appendf(&trash, "thread_id: %u (%u..%u)\n", tid + 1, 1, global.nbthread);
 	chunk_appendf(&trash, "date_now: %lu.%06lu\n", (long)now.tv_sec, (long)now.tv_usec);
+	chunk_appendf(&trash, "ctxsw:");        SHOW_TOT(thr, activity[thr].ctxsw);
+	chunk_appendf(&trash, "tasksw:");       SHOW_TOT(thr, activity[thr].tasksw);
+	chunk_appendf(&trash, "empty_rq:");     SHOW_TOT(thr, activity[thr].empty_rq);
+	chunk_appendf(&trash, "long_rq:");      SHOW_TOT(thr, activity[thr].long_rq);
 	chunk_appendf(&trash, "loops:");        SHOW_TOT(thr, activity[thr].loops);
 	chunk_appendf(&trash, "wake_tasks:");   SHOW_TOT(thr, activity[thr].wake_tasks);
 	chunk_appendf(&trash, "wake_signal:");  SHOW_TOT(thr, activity[thr].wake_signal);
+	chunk_appendf(&trash, "poll_io:");      SHOW_TOT(thr, activity[thr].poll_io);
 	chunk_appendf(&trash, "poll_exp:");     SHOW_TOT(thr, activity[thr].poll_exp);
-	chunk_appendf(&trash, "poll_drop:");    SHOW_TOT(thr, activity[thr].poll_drop);
-	chunk_appendf(&trash, "poll_dead:");    SHOW_TOT(thr, activity[thr].poll_dead);
-	chunk_appendf(&trash, "poll_skip:");    SHOW_TOT(thr, activity[thr].poll_skip);
-	chunk_appendf(&trash, "fd_lock:");      SHOW_TOT(thr, activity[thr].fd_lock);
+	chunk_appendf(&trash, "poll_drop_fd:"); SHOW_TOT(thr, activity[thr].poll_drop_fd);
+	chunk_appendf(&trash, "poll_dead_fd:"); SHOW_TOT(thr, activity[thr].poll_dead_fd);
+	chunk_appendf(&trash, "poll_skip_fd:"); SHOW_TOT(thr, activity[thr].poll_skip_fd);
 	chunk_appendf(&trash, "conn_dead:");    SHOW_TOT(thr, activity[thr].conn_dead);
-	chunk_appendf(&trash, "stream:");       SHOW_TOT(thr, activity[thr].stream);
+	chunk_appendf(&trash, "stream_calls:"); SHOW_TOT(thr, activity[thr].stream_calls);
 	chunk_appendf(&trash, "pool_fail:");    SHOW_TOT(thr, activity[thr].pool_fail);
 	chunk_appendf(&trash, "buf_wait:");     SHOW_TOT(thr, activity[thr].buf_wait);
-	chunk_appendf(&trash, "empty_rq:");     SHOW_TOT(thr, activity[thr].empty_rq);
-	chunk_appendf(&trash, "long_rq:");      SHOW_TOT(thr, activity[thr].long_rq);
-	chunk_appendf(&trash, "ctxsw:");        SHOW_TOT(thr, activity[thr].ctxsw);
-	chunk_appendf(&trash, "tasksw:");       SHOW_TOT(thr, activity[thr].tasksw);
 	chunk_appendf(&trash, "cpust_ms_tot:"); SHOW_TOT(thr, activity[thr].cpust_total / 2);
 	chunk_appendf(&trash, "cpust_ms_1s:");  SHOW_TOT(thr, read_freq_ctr(&activity[thr].cpust_1s) / 2);
 	chunk_appendf(&trash, "cpust_ms_15s:"); SHOW_TOT(thr, read_freq_ctr_period(&activity[thr].cpust_15s, 15000) / 2);
@@ -1191,6 +1202,7 @@ static int cli_io_handler_show_cli_sock(struct appctx *appctx)
 				return 0;
 			}
 			appctx->st2 = STAT_ST_LIST;
+			/* fall through */
 
 		case STAT_ST_LIST:
 			if (global.stats_fe) {
@@ -1267,6 +1279,7 @@ static int cli_io_handler_show_cli_sock(struct appctx *appctx)
 					appctx->ctx.cli.p0 = &bind_conf->by_fe; /* store the latest list node dumped */
 				}
 			}
+			/* fall through */
 		default:
 			appctx->st2 = STAT_ST_FIN;
 			return 1;
@@ -2021,7 +2034,7 @@ int pcli_parse_request(struct stream *s, struct channel *req, char **errmsg, int
 		while (p+reql < end) {
 			/* handle escaping */
 			if (p[reql] == '\\') {
-				reql++;
+				reql+=2;
 				continue;
 			}
 			if (p[reql] == ';' || p[reql] == '\n') {
@@ -2061,29 +2074,25 @@ int pcli_parse_request(struct stream *s, struct channel *req, char **errmsg, int
 
 	/* splits the command in words */
 	while (i < MAX_STATS_ARGS && p < end) {
-		int j, k;
-
 		/* skip leading spaces/tabs */
 		p += strspn(p, " \t");
 		if (!*p)
 			break;
 
 		args[i] = p;
-		p += strcspn(p, " \t");
-		*p++ = 0;
-
-		/* unescape backslashes (\) */
-		for (j = 0, k = 0; args[i][k]; k++) {
-			if (args[i][k] == '\\') {
-				if (args[i][k + 1] == '\\')
-					k++;
-				else
-					continue;
+		while (1) {
+			p += strcspn(p, " \t\\");
+			/* escaped chars using backlashes (\) */
+			if (*p == '\\') {
+				if (!*++p)
+					break;
+				if (!*++p)
+					break;
+			} else {
+				break;
 			}
-			args[i][j] = args[i][k];
-			j++;
 		}
-		args[i][j] = 0;
+		*p++ = 0;
 		i++;
 	}
 

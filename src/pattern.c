@@ -2098,18 +2098,27 @@ void pat_ref_reload(struct pat_ref *ref, struct pat_ref *replace)
 }
 
 /* This function prune all entries of <ref>. This function
- * prune the associated pattern_expr.
+ * prunes the associated pattern_expr. It may return before the end of
+ * the list is reached, returning 0, to yield. The caller must call it
+ * again. Otherwise it returns 1 once done.
  */
-void pat_ref_prune(struct pat_ref *ref)
+int pat_ref_prune(struct pat_ref *ref)
 {
 	struct pat_ref_elt *elt, *safe;
 	struct pattern_expr *expr;
 	struct bref *bref, *back;
+	int loops = 0;
 
 	list_for_each_entry(expr, &ref->pat, list) {
 		HA_RWLOCK_WRLOCK(PATEXP_LOCK, &expr->lock);
 		expr->pat_head->prune(expr);
 		HA_RWLOCK_WRUNLOCK(PATEXP_LOCK, &expr->lock);
+		loops++;
+		/* yield often, some lists may be huge, especially those
+		 * having to be freed through free_pattern_tree()
+		 */
+		if (loops > 10)
+			return 0;
 	}
 
 	/* we trash pat_ref_elt in a second time to ensure that data is
@@ -2130,9 +2139,11 @@ void pat_ref_prune(struct pat_ref *ref)
 		free(elt->pattern);
 		free(elt->sample);
 		free(elt);
+		loops++;
+		if (loops > 100000)
+			return 0;
 	}
-
-
+	return 1;
 }
 
 /* This function lookup for existing reference <ref> in pattern_head <head>. */
@@ -2557,17 +2568,22 @@ struct pattern *pattern_exec_match(struct pattern_head *head, struct sample *smp
 						if (static_sample_data.u.str.data >= static_sample_data.u.str.size)
 							static_sample_data.u.str.data = static_sample_data.u.str.size - 1;
 						memcpy(static_sample_data.u.str.area,
-						       pat->data->u.str.area,
-						       static_sample_data.u.str.data);
+						       pat->data->u.str.area, static_sample_data.u.str.data);
 						static_sample_data.u.str.area[static_sample_data.u.str.data] = 0;
+						pat->data = &static_sample_data;
+						break;
+
 					case SMP_T_IPV4:
 					case SMP_T_IPV6:
 					case SMP_T_SINT:
 						memcpy(&static_sample_data, pat->data, sizeof(struct sample_data));
+						pat->data = &static_sample_data;
+						break;
 					default:
+						/* unimplemented pattern type */
 						pat->data = NULL;
+						break;
 				}
-				pat->data = &static_sample_data;
 			}
 			HA_RWLOCK_RDUNLOCK(PATEXP_LOCK, &list->expr->lock);
 			return pat;

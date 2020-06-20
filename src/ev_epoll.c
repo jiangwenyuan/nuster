@@ -59,6 +59,20 @@ static void _update_fd(int fd)
 
 	en = fdtab[fd].state;
 
+	/* Try to force EPOLLET on FDs that support it */
+	if (fdtab[fd].et_possible) {
+		/* already done ? */
+		if (polled_mask[fd].poll_recv & polled_mask[fd].poll_send & tid_bit)
+			return;
+
+		/* enable ET polling in both directions */
+		_HA_ATOMIC_OR(&polled_mask[fd].poll_recv, tid_bit);
+		_HA_ATOMIC_OR(&polled_mask[fd].poll_send, tid_bit);
+		opcode = EPOLL_CTL_ADD;
+		ev.events = EPOLLIN | EPOLLRDHUP | EPOLLOUT | EPOLLET;
+		goto done;
+	}
+
 	/* if we're already polling or are going to poll for this FD and it's
 	 * neither active nor ready, force it to be active so that we don't
 	 * needlessly unsubscribe then re-subscribe it.
@@ -120,6 +134,7 @@ static void _update_fd(int fd)
 	if (en & FD_EV_ACTIVE_W)
 		ev.events |= EPOLLOUT;
 
+ done:
 	ev.data.fd = fd;
 	epoll_ctl(epoll_fd[tid], opcode, fd, &ev);
 }
@@ -142,7 +157,7 @@ static void _do_poll(struct poller *p, int exp, int wake)
 
 		_HA_ATOMIC_AND(&fdtab[fd].update_mask, ~tid_bit);
 		if (!fdtab[fd].owner) {
-			activity[tid].poll_drop++;
+			activity[tid].poll_drop_fd++;
 			continue;
 		}
 
@@ -180,8 +195,10 @@ static void _do_poll(struct poller *p, int exp, int wake)
 		status = epoll_wait(epoll_fd[tid], epoll_events, global.tune.maxpollevents, timeout);
 		tv_update_date(timeout, status);
 
-		if (status)
+		if (status) {
+			activity[tid].poll_io++;
 			break;
+		}
 		if (timeout || !wait_time)
 			break;
 		if (signal_queue_len || wake)
@@ -206,13 +223,13 @@ static void _do_poll(struct poller *p, int exp, int wake)
 		fd = epoll_events[count].data.fd;
 
 		if (!fdtab[fd].owner) {
-			activity[tid].poll_dead++;
+			activity[tid].poll_dead_fd++;
 			continue;
 		}
 
 		if (!(fdtab[fd].thread_mask & tid_bit)) {
 			/* FD has been migrated */
-			activity[tid].poll_skip++;
+			activity[tid].poll_skip_fd++;
 			epoll_ctl(epoll_fd[tid], EPOLL_CTL_DEL, fd, &ev);
 			_HA_ATOMIC_AND(&polled_mask[fd].poll_recv, ~tid_bit);
 			_HA_ATOMIC_AND(&polled_mask[fd].poll_send, ~tid_bit);

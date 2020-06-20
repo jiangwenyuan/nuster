@@ -66,6 +66,7 @@
 #define GTUNE_STRICT_LIMITS      (1<<15)
 #define GTUNE_INSECURE_FORK      (1<<16)
 #define GTUNE_INSECURE_SETUID    (1<<17)
+#define GTUNE_FD_ET              (1<<18)
 
 /* SSL server verify mode */
 enum {
@@ -127,6 +128,7 @@ struct global {
 	char *chroot;
 	char *pidfile;
 	char *node, *desc;		/* node name & description */
+	int localpeer_cmdline;		/* whether or not the commandline "-L" was set */
 	struct buffer log_tag;           /* name for syslog */
 	struct list logsrvs;
 	char *log_send_hostname;   /* set hostname in syslog header */

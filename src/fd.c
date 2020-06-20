@@ -88,9 +88,11 @@
 #endif
 
 #include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
 #include <haproxy/fd.h>
 #include <haproxy/global.h>
 #include <haproxy/port_range.h>
+#include <haproxy/tools.h>
 
 
 struct fdtab *fdtab = NULL;     /* array of all the file descriptors */
@@ -300,7 +302,7 @@ static void fd_dodelete(int fd, int do_close)
 	int locked = fdtab[fd].running_mask != tid_bit;
 
 	/* We're just trying to protect against a concurrent fd_insert()
-	 * here, not against fd_takeother(), because either we're called
+	 * here, not against fd_takeover(), because either we're called
 	 * directly from the iocb(), and we're already locked, or we're
 	 * called from the mux tasklet, but then the mux is responsible for
 	 * making sure the tasklet does nothing, and the connection is never
@@ -343,53 +345,49 @@ __decl_thread(__decl_rwlock(fd_mig_lock));
  */
 int fd_takeover(int fd, void *expected_owner)
 {
-#ifndef HA_HAVE_CAS_DW
-	int ret;
+	int ret = -1;
 
-	HA_RWLOCK_WRLOCK(OTHER_LOCK, &fd_mig_lock);
-	_HA_ATOMIC_OR(&fdtab[fd].running_mask, tid_bit);
-	if (fdtab[fd].running_mask != tid_bit || fdtab[fd].owner != expected_owner) {
-		ret = -1;
-		_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
-		goto end;
+#ifndef HA_HAVE_CAS_DW
+	if (_HA_ATOMIC_OR(&fdtab[fd].running_mask, tid_bit) == tid_bit) {
+		HA_RWLOCK_WRLOCK(OTHER_LOCK, &fd_mig_lock);
+		if (fdtab[fd].owner == expected_owner) {
+			fdtab[fd].thread_mask = tid_bit;
+			ret = 0;
+		}
+		HA_RWLOCK_WRUNLOCK(OTHER_LOCK, &fd_mig_lock);
 	}
-	fdtab[fd].thread_mask = tid_bit;
-	_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
-	ret = 0;
-end:
-	HA_RWLOCK_WRUNLOCK(OTHER_LOCK, &fd_mig_lock);
-	/* Make sure the FD doesn't have the active bit. It is possible that
-	 * the fd is polled by the thread that used to own it, the new thread
-	 * is supposed to call subscribe() later, to activate polling.
-	 */
-	fd_stop_recv(fd);
-	return ret;
 #else
 	unsigned long old_masks[2];
 	unsigned long new_masks[2];
 
-	old_masks[0] = tid_bit;
-	old_masks[1] = fdtab[fd].thread_mask;
 	new_masks[0] = new_masks[1] = tid_bit;
+
+	old_masks[0] = _HA_ATOMIC_OR(&fdtab[fd].running_mask, tid_bit);
+	old_masks[1] = fdtab[fd].thread_mask;
+
 	/* protect ourself against a delete then an insert for the same fd,
 	 * if it happens, then the owner will no longer be the expected
 	 * connection.
 	 */
-	_HA_ATOMIC_OR(&fdtab[fd].running_mask, tid_bit);
-	if (fdtab[fd].owner != expected_owner) {
-		_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
-		return -1;
-	}
-	do {
-		if (old_masks[0] != tid_bit || !old_masks[1]) {
-			_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
-			return -1;
+	if (fdtab[fd].owner == expected_owner) {
+		while (old_masks[0] == tid_bit && old_masks[1]) {
+			if (_HA_ATOMIC_DWCAS(&fdtab[fd].running_mask, &old_masks, &new_masks)) {
+				ret = 0;
+				break;
+			}
 		}
-	} while (!(_HA_ATOMIC_DWCAS(&fdtab[fd].running_mask, &old_masks,
-		   &new_masks)));
-	_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
-	return 0;
+	}
 #endif /* HW_HAVE_CAS_DW */
+
+	_HA_ATOMIC_AND(&fdtab[fd].running_mask, ~tid_bit);
+
+	/* Make sure the FD doesn't have the active bit. It is possible that
+	 * the fd is polled by the thread that used to own it, the new thread
+	 * is supposed to call subscribe() later, to activate polling.
+	 */
+	if (likely(ret == 0))
+		fd_stop_recv(fd);
+	return ret;
 }
 
 /* Deletes an FD from the fdsets.
@@ -446,6 +444,7 @@ ssize_t fd_write_frag_line(int fd, size_t maxlen, const struct ist pfx[], size_t
 	size_t totlen = 0;
 	size_t sent = 0;
 	int vec = 0;
+	int attempts = 0;
 
 	if (!maxlen)
 		maxlen = ~0;
@@ -481,16 +480,31 @@ ssize_t fd_write_frag_line(int fd, size_t maxlen, const struct ist pfx[], size_t
 		vec++;
 	}
 
+	/* make sure we never interleave writes and we never block. This means
+	 * we prefer to fail on collision than to block. But we don't want to
+	 * lose too many logs so we just perform a few lock attempts then give
+	 * up.
+	 */
+
+	while (HA_SPIN_TRYLOCK(OTHER_LOCK, &log_lock) != 0) {
+		if (++attempts >= 200) {
+			/* so that the caller knows the message couldn't be delivered */
+			sent = -1;
+			errno = EAGAIN;
+			goto leave;
+		}
+		ha_thread_relax();
+	}
+
 	if (unlikely(!fdtab[fd].initialized)) {
 		fdtab[fd].initialized = 1;
 		if (!isatty(fd))
 			fcntl(fd, F_SETFL, O_NONBLOCK);
 	}
-
-	HA_SPIN_LOCK(OTHER_LOCK, &log_lock);
 	sent = writev(fd, iovec, vec);
 	HA_SPIN_UNLOCK(OTHER_LOCK, &log_lock);
 
+ leave:
 	/* sent > 0 if the message was delivered */
 	return sent;
 }
@@ -794,6 +808,33 @@ int fork_poller()
 	}
 	return 1;
 }
+
+/* config parser for global "tune.fd.edge-triggered", accepts "on" or "off" */
+static int cfg_parse_tune_fd_edge_triggered(char **args, int section_type, struct proxy *curpx,
+                                      struct proxy *defpx, const char *file, int line,
+                                      char **err)
+{
+	if (too_many_args(1, args, err, NULL))
+		return -1;
+
+	if (strcmp(args[1], "on") == 0)
+		global.tune.options |= GTUNE_FD_ET;
+	else if (strcmp(args[1], "off") == 0)
+		global.tune.options &= ~GTUNE_FD_ET;
+	else {
+		memprintf(err, "'%s' expects either 'on' or 'off' but got '%s'.", args[0], args[1]);
+		return -1;
+	}
+	return 0;
+}
+
+/* config keyword parsers */
+static struct cfg_kw_list cfg_kws = {ILH, {
+	{ CFG_GLOBAL, "tune.fd.edge-triggered", cfg_parse_tune_fd_edge_triggered },
+	{ 0, NULL, NULL }
+}};
+
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
 
 REGISTER_PER_THREAD_ALLOC(alloc_pollers_per_thread);
 REGISTER_PER_THREAD_INIT(init_pollers_per_thread);
