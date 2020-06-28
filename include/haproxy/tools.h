@@ -568,12 +568,12 @@ char *my_strndup(const char *src, int n);
  */
 const void *my_memmem(const void *, size_t, const void *, size_t);
 
-/* get length of the initial segment consiting entirely of bytes within a given
+/* get length of the initial segment consisting entirely of bytes within a given
  * mask
  */
 size_t my_memspn(const void *, size_t, const void *, size_t);
 
-/* get length of the initial segment consiting entirely of bytes not within a
+/* get length of the initial segment consisting entirely of bytes not within a
  * given mask
  */
 size_t my_memcspn(const void *, size_t, const void *, size_t);
@@ -862,6 +862,7 @@ int my_unsetenv(const char *name);
  */
 char *env_expand(char *in);
 uint32_t parse_line(char *in, char *out, size_t *outlen, char **args, int *nbargs, uint32_t opts, char **errptr);
+size_t sanitize_for_printing(char *line, size_t pos, size_t width);
 
 /* debugging macro to emit messages using write() on fd #-1 so that strace sees
  * them.

@@ -1538,7 +1538,7 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 			/* Check to see if the server refused the early data.
 			 * If so, just send a 425
 			 */
-			if (conn->err_code == CO_ER_SSL_EARLY_FAILED) {
+			if (conn && conn->err_code == CO_ER_SSL_EARLY_FAILED) {
 				if ((s->be->retry_type & PR_RE_EARLY_ERROR) &&
 				    (si_b->flags & SI_FL_L7_RETRY) &&
 				    do_l7_retry(s, si_b) == 0) {
@@ -4554,7 +4554,8 @@ static void http_end_response(struct stream *s)
  * function forwards all pending incoming data. If <final> is set to 0, nothing
  * more is performed. It is used for 1xx informational messages. Otherwise, the
  * transaction is terminated and the request is emptied. On success 1 is
- * returned. If an error occurred, 0 is returned.
+ * returned. If an error occurred, 0 is returned. If it fails, this function
+ * only exits. It is the caller responsibility to do the cleanup.
  */
 int http_forward_proxy_resp(struct stream *s, int final)
 {
@@ -4578,6 +4579,13 @@ int http_forward_proxy_resp(struct stream *s, int final)
 		channel_auto_read(res);
 		channel_auto_close(res);
 		channel_shutr_now(res);
+		res->flags |= CF_EOI; /* The response is terminated, add EOI */
+	}
+	else {
+		/* Send ASAP informational messages. Rely on CF_EOI for final
+		 * response.
+		 */
+		res->flags |= CF_SEND_DONTWAIT;
 	}
 
 	data = htx->data - co_data(res);
@@ -4606,10 +4614,14 @@ void http_reply_and_close(struct stream *s, short status, struct http_reply *msg
 
 	if (http_reply_message(s, msg) == -1) {
 		/* On error, return a 500 error message, but don't rewrite it if
-		 * it is already an internal error.
+		 * it is already an internal error. If it was already a "const"
+		 * 500 error, just fail.
 		 */
-		if (s->txn->status == 500)
+		if (s->txn->status == 500) {
+			if (s->txn->flags & TX_CONST_REPLY)
+				goto end;
 			s->txn->flags |= TX_CONST_REPLY;
+		}
 		s->txn->status = 500;
 		s->txn->http_reply = NULL;
 		return http_reply_and_close(s, s->txn->status, http_error_message(s));
@@ -4642,9 +4654,10 @@ struct http_reply *http_error_message(struct stream *s)
 		return &http_err_replies[msgnum];
 }
 
-/* Produces an HTX message from an http reply. Depending on the http reply type, a,
- * errorfile, an raw file or a log-format string is used. On success, it returns
- * 0. If an error occurs -1 is returned.
+/* Produces an HTX message from an http reply. Depending on the http reply type,
+ * a, errorfile, an raw file or a log-format string is used. On success, it
+ * returns 0. If an error occurs -1 is returned. If it fails, this function only
+ * exits. It is the caller responsibility to do the cleanup.
  */
 int http_reply_to_htx(struct stream *s, struct htx *htx, struct http_reply *reply)
 {
@@ -4756,7 +4769,11 @@ int http_reply_to_htx(struct stream *s, struct htx *htx, struct http_reply *repl
 }
 
 /* Send an http reply to the client. On success, it returns 0. If an error
- * occurs -1 is returned.
+ * occurs -1 is returned and the response channel is truncated, removing this
+ * way the faulty reply. This function may fail when the reply is formatted
+ * (http_reply_to_htx) or when the reply is forwarded
+ * (http_forward_proxy_resp). On the last case, it is because a
+ * http-after-response rule fails.
  */
 int http_reply_message(struct stream *s, struct http_reply *reply)
 {

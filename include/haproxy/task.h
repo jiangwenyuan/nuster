@@ -116,7 +116,7 @@ struct work_list *work_list_create(int nbthread,
                                    struct task *(*fct)(struct task *, void *, unsigned short),
                                    void *arg);
 void work_list_destroy(struct work_list *work, int nbthread);
-int run_tasks_from_list(struct list *list, int max);
+unsigned int run_tasks_from_lists(unsigned int budgets[]);
 
 /*
  * This does 3 things :
@@ -166,9 +166,7 @@ static inline int thread_has_tasks(void)
 {
 	return (!!(global_tasks_mask & tid_bit) |
 	        (sched->rqueue_size > 0) |
-	        !LIST_ISEMPTY(&sched->tasklets[TL_URGENT]) |
-	        !LIST_ISEMPTY(&sched->tasklets[TL_NORMAL]) |
-	        !LIST_ISEMPTY(&sched->tasklets[TL_BULK])   |
+	        !!sched->tl_class_mask |
 		!MT_LIST_ISEMPTY(&sched->shared_tasklet_list));
 }
 
@@ -329,15 +327,23 @@ static inline void tasklet_wakeup(struct tasklet *tl)
 		/* this tasklet runs on the caller thread */
 		if (LIST_ISEMPTY(&tl->list)) {
 			if (tl->state & TASK_SELF_WAKING) {
-				LIST_ADDQ(&task_per_thread[tid].tasklets[TL_BULK], &tl->list);
+				LIST_ADDQ(&sched->tasklets[TL_BULK], &tl->list);
+				sched->tl_class_mask |= 1 << TL_BULK;
 			}
 			else if ((struct task *)tl == sched->current) {
 				_HA_ATOMIC_OR(&tl->state, TASK_SELF_WAKING);
-				LIST_ADDQ(&task_per_thread[tid].tasklets[TL_BULK], &tl->list);
+				LIST_ADDQ(&sched->tasklets[TL_BULK], &tl->list);
+				sched->tl_class_mask |= 1 << TL_BULK;
+			}
+			else if (sched->current_queue < 0) {
+				LIST_ADDQ(&sched->tasklets[TL_URGENT], &tl->list);
+				sched->tl_class_mask |= 1 << TL_URGENT;
 			}
 			else {
-				LIST_ADDQ(&task_per_thread[tid].tasklets[TL_URGENT], &tl->list);
+				LIST_ADDQ(&sched->tasklets[sched->current_queue], &tl->list);
+				sched->tl_class_mask |= 1 << sched->current_queue;
 			}
+
 			_HA_ATOMIC_ADD(&tasks_run_queue, 1);
 		}
 	} else {

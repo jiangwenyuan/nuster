@@ -26,6 +26,7 @@
 #include <haproxy/sample.h>
 #include <haproxy/server-t.h>
 #include <haproxy/session.h>
+#include <haproxy/sink.h>
 #include <haproxy/tools.h>
 
 
@@ -61,7 +62,7 @@ static struct ist fcgi_param_name(char *dst, const struct ist name)
 	return ist2(dst, ofs1);
 }
 
-/* Returns a pointer to the FCGi applicatrion mathing the name <name>. NULL is
+/* Returns a pointer to the FCGi application matching the name <name>. NULL is
  * returned if no match found.
  */
 struct fcgi_app *fcgi_app_find_by_name(const char *name)
@@ -646,6 +647,7 @@ static int cfg_fcgi_apps_postparser()
 	struct fcgi_app *curapp;
 	struct proxy *px;
 	struct server *srv;
+	struct logsrv *logsrv;
 	int err_code = 0;
 
 	for (px = proxies_list; px; px = px->next) {
@@ -693,6 +695,19 @@ static int cfg_fcgi_apps_postparser()
 				err_code |= ERR_WARN;
 			}
 			curapp->maxreqs = 1;
+		}
+
+		list_for_each_entry(logsrv, &curapp->logsrvs, list) {
+			if (logsrv->type == LOG_TARGET_BUFFER) {
+				struct sink *sink = sink_find(logsrv->ring_name);
+
+				if (!sink || sink->type != SINK_TYPE_BUFFER) {
+					ha_alert("config : fcgi-app '%s' : log server uses unkown ring named '%s'.\n",
+						 curapp->name, logsrv->ring_name);
+					err_code |= ERR_ALERT | ERR_FATAL;
+				}
+				logsrv->sink = sink;
+			}
 		}
 	}
 

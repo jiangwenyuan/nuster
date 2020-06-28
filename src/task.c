@@ -16,6 +16,7 @@
 #include <import/eb32tree.h>
 
 #include <haproxy/api.h>
+#include <haproxy/cfgparse.h>
 #include <haproxy/fd.h>
 #include <haproxy/freq_ctr.h>
 #include <haproxy/list.h>
@@ -318,20 +319,66 @@ int next_timer_expiry()
 	return ret;
 }
 
-/* Walks over tasklet list <list> and run at most <max> of them. Returns
- * the number of entries effectively processed (tasks and tasklets merged).
- * The count of tasks in the list for the current thread is adjusted.
+/* Walks over tasklet lists sched->tasklets[0..TL_CLASSES-1] and run at most
+ * budget[TL_*] of them. Returns the number of entries effectively processed
+ * (tasks and tasklets merged). The count of tasks in the list for the current
+ * thread is adjusted.
  */
-int run_tasks_from_list(struct list *list, int max)
+unsigned int run_tasks_from_lists(unsigned int budgets[])
 {
 	struct task *(*process)(struct task *t, void *ctx, unsigned short state);
+	struct list *tl_queues = sched->tasklets;
 	struct task *t;
+	uint8_t budget_mask = (1 << TL_CLASSES) - 1;
+	unsigned int done = 0;
+	unsigned int queue;
 	unsigned short state;
 	void *ctx;
-	int done = 0;
 
-	while (done < max && !LIST_ISEMPTY(list)) {
-		t = (struct task *)LIST_ELEM(list->n, struct tasklet *, list);
+	for (queue = 0; queue < TL_CLASSES;) {
+		sched->current_queue = queue;
+
+		/* global.tune.sched.low-latency is set */
+		if (global.tune.options & GTUNE_SCHED_LOW_LATENCY) {
+			if (unlikely(sched->tl_class_mask & budget_mask & ((1 << queue) - 1))) {
+				/* a lower queue index has tasks again and still has a
+				 * budget to run them. Let's switch to it now.
+				 */
+				queue = (sched->tl_class_mask & 1) ? 0 :
+					(sched->tl_class_mask & 2) ? 1 : 2;
+				continue;
+			}
+
+			if (unlikely(queue > TL_URGENT &&
+				     budget_mask & (1 << TL_URGENT) &&
+				     !MT_LIST_ISEMPTY(&sched->shared_tasklet_list))) {
+				/* an urgent tasklet arrived from another thread */
+				break;
+			}
+
+			if (unlikely(queue > TL_NORMAL &&
+				     budget_mask & (1 << TL_NORMAL) &&
+				     ((sched->rqueue_size > 0) ||
+				      (global_tasks_mask & tid_bit)))) {
+				/* a task was woken up by a bulk tasklet or another thread */
+				break;
+			}
+		}
+
+		if (LIST_ISEMPTY(&tl_queues[queue])) {
+			sched->tl_class_mask &= ~(1 << queue);
+			queue++;
+			continue;
+		}
+
+		if (!budgets[queue]) {
+			budget_mask &= ~(1 << queue);
+			queue++;
+			continue;
+		}
+
+		budgets[queue]--;
+		t = (struct task *)LIST_ELEM(tl_queues[queue].n, struct tasklet *, list);
 		state = (t->state & (TASK_SHARED_WQ|TASK_SELF_WAKING));
 
 		ti->flags &= ~TI_FL_STUCK; // this thread is still running
@@ -400,6 +447,8 @@ int run_tasks_from_list(struct list *list, int max)
 		}
 		done++;
 	}
+	sched->current_queue = -1;
+
 	return done;
 }
 
@@ -419,13 +468,26 @@ int run_tasks_from_list(struct list *list, int max)
 void process_runnable_tasks()
 {
 	struct task_per_thread * const tt = sched;
-	struct eb32sc_node *lrq = NULL; // next local run queue entry
-	struct eb32sc_node *grq = NULL; // next global run queue entry
+	struct eb32sc_node *lrq; // next local run queue entry
+	struct eb32sc_node *grq; // next global run queue entry
 	struct task *t;
-	int max_processed, done;
+	const unsigned int default_weights[TL_CLASSES] = {
+		[TL_URGENT] = 64, // ~50% of CPU bandwidth for I/O
+		[TL_NORMAL] = 48, // ~37% of CPU bandwidth for tasks
+		[TL_BULK]   = 16, // ~13% of CPU bandwidth for self-wakers
+	};
+	unsigned int max[TL_CLASSES]; // max to be run per class
+	unsigned int max_total;       // sum of max above
 	struct mt_list *tmp_list;
+	unsigned int queue;
+	int max_processed;
 
 	ti->flags &= ~TI_FL_STUCK; // this thread is still running
+
+	if (!thread_has_tasks()) {
+		activity[tid].empty_rq++;
+		return;
+	}
 
 	tasks_run_queue_cur = tasks_run_queue; /* keep a copy for reporting */
 	nb_tasks_cur = nb_tasks;
@@ -434,28 +496,37 @@ void process_runnable_tasks()
 	if (likely(niced_tasks))
 		max_processed = (max_processed + 3) / 4;
 
-	if (!thread_has_tasks()) {
-		activity[tid].empty_rq++;
-		return;
-	}
-
  not_done_yet:
-	/* Merge the list of tasklets waken up by other threads to the
-	 * main list.
+	max[TL_URGENT] = max[TL_NORMAL] = max[TL_BULK] = 0;
+
+	/* urgent tasklets list gets a default weight of ~50% */
+	if ((tt->tl_class_mask & (1 << TL_URGENT)) ||
+	    !MT_LIST_ISEMPTY(&tt->shared_tasklet_list))
+		max[TL_URGENT] = default_weights[TL_URGENT];
+
+	/* normal tasklets list gets a default weight of ~37% */
+	if ((tt->tl_class_mask & (1 << TL_NORMAL)) ||
+	    (sched->rqueue_size > 0) || (global_tasks_mask & tid_bit))
+		max[TL_NORMAL] = default_weights[TL_NORMAL];
+
+	/* bulk tasklets list gets a default weight of ~13% */
+	if ((tt->tl_class_mask & (1 << TL_BULK)))
+		max[TL_BULK] = default_weights[TL_BULK];
+
+	/* Now compute a fair share of the weights. Total may slightly exceed
+	 * 100% due to rounding, this is not a problem. Note that by design
+	 * the sum cannot be NULL as we cannot get there without tasklets to
+	 * process.
 	 */
-	tmp_list = MT_LIST_BEHEAD(&sched->shared_tasklet_list);
-	if (tmp_list)
-		LIST_SPLICE_END_DETACHED(&sched->tasklets[TL_URGENT], (struct list *)tmp_list);
+	max_total = max[TL_URGENT] + max[TL_NORMAL] + max[TL_BULK];
+	for (queue = 0; queue < TL_CLASSES; queue++)
+		max[queue]  = ((unsigned)max_processed * max[queue] + max_total - 1) / max_total;
 
-	/* run up to max_processed/3 urgent tasklets */
-	done = run_tasks_from_list(&tt->tasklets[TL_URGENT], (max_processed + 2) / 3);
-	max_processed -= done;
+	lrq = grq = NULL;
 
-	/* pick up to max_processed/2 (~=3/4*(max_processed-done)) regular tasks from prio-ordered run queues */
-
+	/* pick up to max[TL_NORMAL] regular tasks from prio-ordered run queues */
 	/* Note: the grq lock is always held when grq is not null */
-
-	while (tt->task_list_size < (3 * max_processed + 3) / 4) {
+	while (tt->task_list_size < max[TL_NORMAL]) {
 		if ((global_tasks_mask & tid_bit) && !grq) {
 #ifdef USE_THREAD
 			HA_SPIN_LOCK(TASK_RQ_LOCK, &rq_lock);
@@ -507,6 +578,7 @@ void process_runnable_tasks()
 		LIST_INIT(&((struct tasklet *)t)->list);
 		/* And add it to the local task list */
 		tasklet_insert_into_tasklet_list(&tt->tasklets[TL_NORMAL], (struct tasklet *)t);
+		tt->tl_class_mask |= 1 << TL_NORMAL;
 		tt->task_list_size++;
 		activity[tid].tasksw++;
 	}
@@ -517,21 +589,24 @@ void process_runnable_tasks()
 		grq = NULL;
 	}
 
-	/* run between 0.4*max_processed and max_processed/2 regular tasks */
-	done = run_tasks_from_list(&tt->tasklets[TL_NORMAL], (3 * max_processed + 3) / 4);
-	max_processed -= done;
+	/* Merge the list of tasklets waken up by other threads to the
+	 * main list.
+	 */
+	tmp_list = MT_LIST_BEHEAD(&tt->shared_tasklet_list);
+	if (tmp_list) {
+		LIST_SPLICE_END_DETACHED(&tt->tasklets[TL_URGENT], (struct list *)tmp_list);
+		if (!LIST_ISEMPTY(&tt->tasklets[TL_URGENT]))
+			tt->tl_class_mask |= 1 << TL_URGENT;
+	}
 
-	/* run between max_processed/4 and max_processed bulk tasklets */
-	done = run_tasks_from_list(&tt->tasklets[TL_BULK], max_processed);
-	max_processed -= done;
+	/* execute tasklets in each queue */
+	max_processed -= run_tasks_from_lists(max);
 
 	/* some tasks may have woken other ones up */
-	if (max_processed && thread_has_tasks())
+	if (max_processed > 0 && thread_has_tasks())
 		goto not_done_yet;
 
-	if (!LIST_ISEMPTY(&sched->tasklets[TL_URGENT]) |
-	    !LIST_ISEMPTY(&sched->tasklets[TL_NORMAL]) |
-	    !LIST_ISEMPTY(&sched->tasklets[TL_BULK]))
+	if (tt->tl_class_mask)
 		activity[tid].long_rq++;
 }
 
@@ -642,6 +717,32 @@ static void init_task()
 	}
 }
 
+/* config parser for global "tune.sched.low-latency", accepts "on" or "off" */
+static int cfg_parse_tune_sched_low_latency(char **args, int section_type, struct proxy *curpx,
+                                      struct proxy *defpx, const char *file, int line,
+                                      char **err)
+{
+	if (too_many_args(1, args, err, NULL))
+		return -1;
+
+	if (strcmp(args[1], "on") == 0)
+		global.tune.options |= GTUNE_SCHED_LOW_LATENCY;
+	else if (strcmp(args[1], "off") == 0)
+		global.tune.options &= ~GTUNE_SCHED_LOW_LATENCY;
+	else {
+		memprintf(err, "'%s' expects either 'on' or 'off' but got '%s'.", args[0], args[1]);
+		return -1;
+	}
+	return 0;
+}
+
+/* config keyword parsers */
+static struct cfg_kw_list cfg_kws = {ILH, {
+	{ CFG_GLOBAL, "tune.sched.low-latency", cfg_parse_tune_sched_low_latency },
+	{ 0, NULL, NULL }
+}};
+
+INITCALL1(STG_REGISTER, cfg_register_keywords, &cfg_kws);
 INITCALL0(STG_PREPARE, init_task);
 
 /*

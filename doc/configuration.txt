@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.2
                              willy tarreau
-                              2020/06/19
+                              2020/06/26
 
 
 This document covers the configuration language as implemented in the version
@@ -697,6 +697,7 @@ The following keywords are supported in the "global" section :
    - tune.rcvbuf.server
    - tune.recv_enough
    - tune.runqueue-depth
+   - tune.sched.low-latency
    - tune.sndbuf.client
    - tune.sndbuf.server
    - tune.ssl.cachesize
@@ -2095,7 +2096,20 @@ tune.recv_enough <number>
 tune.runqueue-depth <number>
   Sets the maximum amount of task that can be processed at once when running
   tasks. The default value is 200. Increasing it may incur latency when
-  dealing with I/Os, making it too small can incur extra overhead.
+  dealing with I/Os, making it too small can incur extra overhead. When
+  experimenting with much larger values, it may be useful to also enable
+  tune.sched.low-latency to limit the maximum latency to the lowest possible.
+
+tune.sched.low-latency { on | off }
+  Enables ('on') or disables ('off') the low-latency task scheduler. By default
+  haproxy processes tasks from several classes one class at a time as this is
+  the most efficient. But when running with large values of tune.runqueue-depth
+  this can have a measurable effect on request or connection latency. When this
+  low-latency setting is enabled, tasks of lower priority classes will always
+  be executed before other ones if they exist. This will permit to lower the
+  maximum latency experienced by new requests or connections in the middle of
+  massive traffic, at the expense of a higher impact on this large traffic.
+  For regular usage it is better to leave this off. The default value is off.
 
 tune.sndbuf.client <number>
 tune.sndbuf.server <number>
@@ -3913,7 +3927,7 @@ errorfile <code> <file>
   Arguments :
     <code>    is the HTTP status code. Currently, HAProxy is capable of
               generating codes 200, 400, 401, 403, 404, 405, 407, 408, 410,
-              425, 429, 500, 502, 503, and 504.
+              413, 425, 429, 500, 502, 503, and 504.
 
     <file>    designates a file containing the full HTTP response. It is
               recommended to follow the common practice of appending ".http" to
@@ -3962,7 +3976,7 @@ errorfiles <name> [<code> ...]
 
     <code>  is a HTTP status code. Several status code may be listed.
             Currently, HAProxy is capable of generating codes 200, 400, 401,
-            403, 404, 405, 407, 408, 410, 425, 429, 500, 502, 503, and 504.
+            403, 404, 405, 407, 408, 410, 413, 425, 429, 500, 502, 503, and 504.
 
   Errors defined in the http-errors section with the name <name> are imported
   in the current proxy. If no status code is specified, all error files of the
@@ -3988,7 +4002,7 @@ errorloc302 <code> <url>
   Arguments :
     <code>    is the HTTP status code. Currently, HAProxy is capable of
               generating codes 200, 400, 401, 403, 404, 405, 407, 408, 410,
-              425, 429, 500, 502, 503, and 504.
+              413, 425, 429, 500, 502, 503, and 504.
 
     <url>     it is the exact contents of the "Location" header. It may contain
               either a relative URI to an error page hosted on the same site,
@@ -4020,7 +4034,7 @@ errorloc303 <code> <url>
   Arguments :
     <code>    is the HTTP status code. Currently, HAProxy is capable of
               generating codes 200, 400, 401, 403, 404, 405, 407, 408, 410,
-              425, 429, 500, 502, 503, and 504.
+              413, 425, 429, 500, 502, 503, and 504.
 
     <url>     it is the exact contents of the "Location" header. It may contain
               either a relative URI to an error page hosted on the same site,
@@ -4993,10 +5007,10 @@ http-error status <code> [content-type <type>]
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    yes   |   yes  |   yes
   Arguments :
-    staus <code>         is the HTTP status code. It must be specified.
+    status <code>        is the HTTP status code. It must be specified.
                          Currently, HAProxy is capable of generating codes
-                         200, 400, 401, 403, 404, 405, 407, 408, 410, 425, 429,
-                         500, 502, 503, and 504.
+                         200, 400, 401, 403, 404, 405, 407, 408, 410, 413, 425,
+                         429, 500, 502, 503, and 504.
 
     content-type <type>  is the response content type, for instance
                          "text/plain". This parameter is ignored and should be
@@ -5219,7 +5233,7 @@ http-request deny [ { status | deny_status } <code>] [content-type <type>]
   This stops the evaluation of the rules and immediately rejects the request.
   By default an HTTP 403 error is returned. But the response may be customized
   using same syntax than "http-request return" rules. Thus, see "http-request
-  return" for details. For compatiblity purpose, when no argument is defined,
+  return" for details. For compatibility purpose, when no argument is defined,
   or only "deny_status", the argument "default-errorfiles" is implied. It means
   "http-request deny [deny_status <status>]" is an alias of
   "http-request deny [status <status>] default-errorfiles".
@@ -5439,22 +5453,22 @@ http-request return [status <code>] [content-type <type>]
 
   * If "default-errorfiles" argument is set, the proxy's errorfiles are
     considered.  If the "status" argument is defined, it must be one of the
-    status code handled by hparoxy (200, 400, 403, 404, 405, 408, 410, 425,
-    429, 500, 502, 503, and 504). The "content-type" argument, if any, is
-    ignored.
+    status code handled by hparoxy (200, 400, 403, 404, 405, 408, 410, 413,
+    425, 429, 500, 502, 503, and 504). The "content-type" argument, if any,
+    is ignored.
 
   * If a specific errorfile is defined, with an "errorfile" argument, the
     corresponding file, containing a full HTTP response, is returned. Only the
     "status" argument is considered. It must be one of the status code handled
-    by hparoxy (200, 400, 403, 404, 405, 408, 410, 425, 429, 500, 502, 503, and
-    504). The "content-type" argument, if any, is ignored.
+    by hparoxy (200, 400, 403, 404, 405, 408, 410, 413, 425, 429, 500, 502, 503,
+    and 504). The "content-type" argument, if any, is ignored.
 
   * If an http-errors section is defined, with an "errorfiles" argument, the
     corresponding file in the specified http-errors section, containing a full
     HTTP response, is returned. Only the "status" argument is considered. It
     must be one of the status code handled by hparoxy (200, 400, 403, 404, 405,
-    408, 410, 425, 429, 500, 502, 503, and 504). The "content-type" argument,
-    if any, is ignored.
+    408, 410, 413, 425, 429, 500, 502, 503, and 504). The "content-type"
+    argument, if any, is ignored.
 
   * If a "file" or a "lf-file" argument is specified, the file's content is
     used as the response payload. If the file is not empty, its content-type
@@ -5476,7 +5490,7 @@ http-request return [status <code>] [content-type <type>]
 
   Note that the generated response must be smaller than a buffer. And to avoid
   any warning, when an errorfile or a raw file is loaded, the buffer space
-  reserved to the headers rewritting should also be free.
+  reserved to the headers rewriting should also be free.
 
   No further "http-request" rules are evaluated.
 
@@ -5818,7 +5832,7 @@ http-request tarpit [ { status | deny_status } <code>] [content-type <type>]
   number of concurrent connections. By default an HTTP error 500 is returned.
   But the response may be customized using same syntax than
   "http-request return" rules. Thus, see "http-request return" for details.
-  For compatiblity purpose, when no argument is defined, or only "deny_status",
+  For compatibility purpose, when no argument is defined, or only "deny_status",
   the argument "default-errorfiles" is implied. It means
   "http-request tarpit [deny_status <status>]" is an alias of
   "http-request tarpit [status <status>] default-errorfiles".
@@ -6017,7 +6031,7 @@ http-response deny [ { status | deny_status } <code>] [content-type <type>]
   This stops the evaluation of the rules and immediately rejects the response.
   By default an HTTP 502 error is returned. But the response may be customized
   using same syntax than "http-response return" rules. Thus, see
-  "http-response return" for details. For compatiblity purpose, when no
+  "http-response return" for details. For compatibility purpose, when no
   argument is defined, or only "deny_status", the argument "default-errorfiles"
   is implied. It means "http-response deny [deny_status <status>]" is an alias
   of "http-response deny [status <status>] default-errorfiles".
@@ -6086,22 +6100,22 @@ http-response return [status <code>] [content-type <type>]
 
   * If "default-errorfiles" argument is set, the proxy's errorfiles are
     considered.  If the "status" argument is defined, it must be one of the
-    status code handled by hparoxy (200, 400, 403, 404, 405, 408, 410, 425,
-    429, 500, 502, 503, and 504). The "content-type" argument, if any, is
-    ignored.
+    status code handled by hparoxy (200, 400, 403, 404, 405, 408, 410, 413,
+    425, 429, 500, 502, 503, and 504). The "content-type" argument, if any,
+    is ignored.
 
   * If a specific errorfile is defined, with an "errorfile" argument, the
     corresponding file, containing a full HTTP response, is returned. Only the
     "status" argument is considered. It must be one of the status code handled
-    by hparoxy (200, 400, 403, 404, 405, 408, 410, 425, 429, 500, 502, 503, and
-    504). The "content-type" argument, if any, is ignored.
+    by hparoxy (200, 400, 403, 404, 405, 408, 410, 413, 425, 429, 500, 502, 503,
+    and 504). The "content-type" argument, if any, is ignored.
 
   * If an http-errors section is defined, with an "errorfiles" argument, the
     corresponding file in the specified http-errors section, containing a full
     HTTP response, is returned. Only the "status" argument is considered. It
     must be one of the status code handled by hparoxy (200, 400, 403, 404, 405,
-    408, 410, 425, 429, 500, 502, 503, and 504). The "content-type" argument,
-    if any, is ignored.
+    408, 410, 413, 425, 429, 500, 502, 503, and 504). The "content-type"
+    argument, if any, is ignored.
 
   * If a "file" or a "lf-file" argument is specified, the file's content is
     used as the response payload. If the file is not empty, its content-type
@@ -6123,7 +6137,7 @@ http-response return [status <code>] [content-type <type>]
 
   Note that the generated response must be smaller than a buffer. And to avoid
   any warning, when an errorfile or a raw file is loaded, the buffer space
-  reserved to the headers rewritting should also be free.
+  reserved to the headers rewriting should also be free.
 
   No further "http-response" rules are evaluated.
 
@@ -12012,7 +12026,7 @@ use-server <server> unless <condition>
   configuration and an error is reported if the specified server does not exist.
   If it is a log-format, no check is performed when parsing the configuration,
   and if we can't resolve a valid server name at runtime but the use-server rule
-  was conditionned by an ACL returning true, no other use-server rule is applied
+  was conditioned by an ACL returning true, no other use-server rule is applied
   and we fall back to load balancing.
 
   See also: "use_backend", section 5 about server and section 7 about ACLs.
@@ -15838,11 +15852,12 @@ lat_ns_avg : integer
   the value low, it is possible to reduce the scheduler's run queue depth using
   "tune.runqueue-depth", to reduce the number of concurrent events processed at
   once using "tune.maxpollevents", to decrease the stream's nice value using
-  the "nice" option on the "bind" lines or in the frontend, or to look for
-  other heavy requests in logs (those exhibiting large values of "cpu_ns_avg"),
-  whose processing needs to be adjusted or fixed. Compression of large buffers
-  could be a culprit, like heavy regex or long lists of regex.
-  Note: this value is exactly lat_ns_tot divided by cpu_calls.
+  the "nice" option on the "bind" lines or in the frontend, to enable low
+  latency scheduling using "tune.sched.low-latency", or to look for other heavy
+  requests in logs (those exhibiting large values of "cpu_ns_avg"), whose
+  processing needs to be adjusted or fixed. Compression of large buffers could
+  be a culprit, like heavy regex or long lists of regex. Note: this value is
+  exactly lat_ns_tot divided by cpu_calls.
 
 lat_ns_tot : integer
   Returns the total number of nanoseconds spent between the moment the task
@@ -15854,10 +15869,11 @@ lat_ns_tot : integer
   the value low, it is possible to reduce the scheduler's run queue depth using
   "tune.runqueue-depth", to reduce the number of concurrent events processed at
   once using "tune.maxpollevents", to decrease the stream's nice value using
-  the "nice" option on the "bind" lines or in the frontend, or to look for
-  other heavy requests in logs (those exhibiting large values of "cpu_ns_avg"),
-  whose processing needs to be adjusted or fixed. Compression of large buffers
-  could be a culprit, like heavy regex or long lists of regex. Note: while it
+  the "nice" option on the "bind" lines or in the frontend, to enable low
+  latency scheduling using "tune.sched.low-latency", or to look for other heavy
+  requests in logs (those exhibiting large values of "cpu_ns_avg"), whose
+  processing needs to be adjusted or fixed. Compression of large buffers could
+  be a culprit, like heavy regex or long lists of regex. Note: while it
   may intuitively seem that the total latency adds to a transfer time, it is
   almost never true because while a task waits for the CPU, network buffers
   continue to fill up and the next call will process more at once. The value
@@ -17061,6 +17077,74 @@ ssl_fc_use_keysize : integer
   Returns the symmetric cipher key size used in bits when the incoming
   connection was made over an SSL/TLS transport layer.
 
+ssl_s_der : binary
+  Returns the DER formatted certificate presented by the server when the
+  outgoing connection was made over an SSL/TLS transport layer. When used for
+  an ACL, the value(s) to match against can be passed in hexadecimal form.
+
+ssl_s_key_alg : string
+  Returns the name of the algorithm used to generate the key of the certificate
+  presented by the server when the outgoing connection was made over an
+  SSL/TLS transport layer.
+
+ssl_s_notafter : string
+  Returns the end date presented by the server as a formatted string
+  YYMMDDhhmmss[Z] when the outgoing connection was made over an SSL/TLS
+  transport layer.
+
+ssl_s_notbefore : string
+  Returns the start date presented by the server as a formatted string
+  YYMMDDhhmmss[Z] when the outgoing connection was made over an SSL/TLS
+  transport layer.
+
+ssl_s_i_dn([<entry>[,<occ>[,<format>]]]) : string
+  When the outgoing connection was made over an SSL/TLS transport layer,
+  returns the full distinguished name of the issuer of the certificate
+  presented by the server when no <entry> is specified, or the value of the
+  first given entry found from the beginning of the DN. If a positive/negative
+  occurrence number is specified as the optional second argument, it returns
+  the value of the nth given entry value from the beginning/end of the DN.
+  For instance, "ssl_s_i_dn(OU,2)" the second organization unit, and
+  "ssl_s_i_dn(CN)" retrieves the common name.
+  The <format> parameter allows you to receive the DN suitable for
+  consumption by different protocols. Currently supported is rfc2253 for
+  LDAP v3.
+  If you'd like to modify the format only you can specify an empty string
+  and zero for the first two parameters. Example: ssl_s_i_dn(,0,rfc2253)
+
+ssl_s_s_dn([<entry>[,<occ>[,<format>]]]) : string
+  When the outgoing connection was made over an SSL/TLS transport layer,
+  returns the full distinguished name of the subject of the certificate
+  presented by the server when no <entry> is specified, or the value of the
+  first given entry found from the beginning of the DN. If a positive/negative
+  occurrence number is specified as the optional second argument, it returns
+  the value of the nth given entry value from the beginning/end of the DN.
+  For instance, "ssl_s_s_dn(OU,2)" the second organization unit, and
+  "ssl_s_s_dn(CN)" retrieves the common name.
+  The <format> parameter allows you to receive the DN suitable for
+  consumption by different protocols. Currently supported is rfc2253 for
+  LDAP v3.
+  If you'd like to modify the format only you can specify an empty string
+  and zero for the first two parameters. Example: ssl_s_s_dn(,0,rfc2253)
+
+ssl_s_serial : binary
+  Returns the serial of the certificate presented by the server when the
+  outgoing connection was made over an SSL/TLS transport layer. When used for
+  an ACL, the value(s) to match against can be passed in hexadecimal form.
+
+ssl_s_sha1 : binary
+  Returns the SHA-1 fingerprint of the certificate presented by the server
+  when the outgoing connection was made over an SSL/TLS transport layer. This
+  can be used to know which certificate was chosen using SNI.
+
+ssl_s_sig_alg : string
+  Returns the name of the algorithm used to sign the certificate presented by
+  the server when the outgoing connection was made over an SSL/TLS transport
+  layer.
+
+ssl_s_version : integer
+  Returns the version of the certificate presented by the server when the
+  outgoing connection was made over an SSL/TLS transport layer.
 
 7.3.5. Fetching samples from buffer contents (Layer 6)
 ------------------------------------------------------
@@ -19853,7 +19937,7 @@ no option get-values
                         "1" otherwise.
 
   Some FastCGI applications does not support this feature. Some others close
-  the connexion immediately after sending their response. So, by default, this
+  the connection immediately after sending their response. So, by default, this
   option is disabled.
 
   Note that the maximum number of concurrent requests accepted by a FastCGI

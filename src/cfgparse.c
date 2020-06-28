@@ -1854,6 +1854,7 @@ int readcfgfile(const char *file)
 	size_t outlen = 0;
 	size_t outlinesize = 0;
 	int fatal = 0;
+	int missing_lf = -1;
 
 	if ((thisline = malloc(sizeof(*thisline) * linesize)) == NULL) {
 		ha_alert("parsing [%s] : out of memory.\n", file);
@@ -1871,6 +1872,14 @@ next_line:
 		char *end;
 		char *args[MAX_LINE_ARGS + 1];
 		char *line = thisline;
+
+		if (missing_lf != -1) {
+			ha_warning("parsing [%s:%d]: Stray NUL character at position %d. "
+			           "This will become a hard error in HAProxy 2.3.\n",
+			           file, linenum, (missing_lf + 1));
+			err_code |= ERR_WARN;
+			missing_lf = -1;
+		}
 
 		linenum++;
 
@@ -1894,19 +1903,27 @@ next_line:
 					 file, linenum);
 				err_code |= ERR_ALERT | ERR_FATAL;
 				fatal++;
+				linenum--;
 				continue;
 			}
 
 			readbytes = linesize - 1;
 			linesize = newlinesize;
 			thisline = newline;
+			linenum--;
 			continue;
 		}
 
 		readbytes = 0;
 
-		/* kill trailing LF */
-		*(end - 1) = 0;
+		if (end > line && *(end-1) == '\n') {
+			/* kill trailing LF */
+			*(end - 1) = 0;
+		}
+		else {
+			/* mark this line as truncated */
+			missing_lf = end - line;
+		}
 
 		/* skip leading spaces */
 		while (isspace((unsigned char)*line))
@@ -1921,47 +1938,47 @@ next_line:
 			uint32_t err;
 			char *errptr;
 
-			arg = MAX_LINE_ARGS;
+			arg = MAX_LINE_ARGS + 1;
 			outlen = outlinesize;
 			err = parse_line(line, outline, &outlen, args, &arg,
 					 PARSE_OPT_ENV | PARSE_OPT_DQUOTE | PARSE_OPT_SQUOTE |
 					 PARSE_OPT_BKSLASH | PARSE_OPT_SHARP, &errptr);
 
 			if (err & PARSE_ERR_QUOTE) {
-				ha_alert("parsing [%s:%d]: unmatched quote below:\n"
-					 "  %s\n  %*s\n", file, linenum, line, (int)(errptr-line+1), "^");
+				size_t newpos = sanitize_for_printing(line, errptr - line, 80);
+
+				ha_alert("parsing [%s:%d]: unmatched quote at position %d:\n"
+					 "  %s\n  %*s\n", file, linenum, (int)(errptr-thisline+1), line, (int)(newpos+1), "^");
 				err_code |= ERR_ALERT | ERR_FATAL;
 				fatal++;
 				goto next_line;
 			}
 
 			if (err & PARSE_ERR_BRACE) {
-				ha_alert("parsing [%s:%d]: unmatched brace in environment variable name below:\n"
-					 "  %s\n  %*s\n", file, linenum, line, (int)(errptr-line+1), "^");
+				size_t newpos = sanitize_for_printing(line, errptr - line, 80);
+
+				ha_alert("parsing [%s:%d]: unmatched brace in environment variable name at position %d:\n"
+					 "  %s\n  %*s\n", file, linenum, (int)(errptr-thisline+1), line, (int)(newpos+1), "^");
 				err_code |= ERR_ALERT | ERR_FATAL;
 				fatal++;
 				goto next_line;
 			}
 
 			if (err & PARSE_ERR_VARNAME) {
-				ha_alert("parsing [%s:%d]: forbidden first char in environment variable name below:\n"
-					 "  %s\n  %*s\n", file, linenum, line, (int)(errptr-line+1), "^");
+				size_t newpos = sanitize_for_printing(line, errptr - line, 80);
+
+				ha_alert("parsing [%s:%d]: forbidden first char in environment variable name at position %d:\n"
+					 "  %s\n  %*s\n", file, linenum, (int)(errptr-thisline+1), line, (int)(newpos+1), "^");
 				err_code |= ERR_ALERT | ERR_FATAL;
 				fatal++;
 				goto next_line;
 			}
 
 			if (err & PARSE_ERR_HEX) {
-				ha_alert("parsing [%s:%d]: truncated or invalid hexadecimal sequence below:\n"
-					 "  %s\n  %*s\n", file, linenum, line, (int)(errptr-line+1), "^");
-				err_code |= ERR_ALERT | ERR_FATAL;
-				fatal++;
-				goto next_line;
-			}
+				size_t newpos = sanitize_for_printing(line, errptr - line, 80);
 
-			if (err & PARSE_ERR_TOOMANY) {
-				ha_alert("parsing [%s:%d]: too many words, truncating at word %d, position %ld: <%s>.\n",
-					 file, linenum, arg, (long)(args[arg-1] - thisline + 1), args[arg-1]);
+				ha_alert("parsing [%s:%d]: truncated or invalid hexadecimal sequence at position %d:\n"
+					 "  %s\n  %*s\n", file, linenum, (int)(errptr-thisline+1), line, (int)(newpos+1), "^");
 				err_code |= ERR_ALERT | ERR_FATAL;
 				fatal++;
 				goto next_line;
@@ -1980,6 +1997,16 @@ next_line:
 				/* try again */
 				continue;
 			}
+
+			if (err & PARSE_ERR_TOOMANY) {
+				/* only check this *after* being sure the output is allocated */
+				ha_alert("parsing [%s:%d]: too many words, truncating after word %d, position %ld: <%s>.\n",
+					 file, linenum, MAX_LINE_ARGS, (long)(args[MAX_LINE_ARGS-1] - outline + 1), args[MAX_LINE_ARGS-1]);
+				err_code |= ERR_ALERT | ERR_FATAL;
+				fatal++;
+				goto next_line;
+			}
+
 			/* everything's OK */
 			break;
 		}
@@ -2054,6 +2081,13 @@ next_line:
 			if (err_code & ERR_ABORT)
 				goto err;
 		}
+	}
+
+	if (missing_lf != -1) {
+		ha_warning("parsing [%s:%d]: Missing LF on last line, file might have been truncated at position %d. "
+		           "This will become a hard error in HAProxy 2.3.\n",
+		           file, linenum, (missing_lf + 1));
+		err_code |= ERR_WARN;
 	}
 
 	if (cs && cs->post_section_parser)

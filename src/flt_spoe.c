@@ -2010,7 +2010,7 @@ spoe_queue_context(struct spoe_context *ctx)
 
 	/* Check if we need to create a new SPOE applet or not. */
 	if (!eb_is_empty(&agent->rt[tid].idle_applets) &&
-	    agent->rt[tid].processing < read_freq_ctr(&agent->rt[tid].processing_per_sec))
+	    (agent->rt[tid].processing == 1 || agent->rt[tid].processing < read_freq_ctr(&agent->rt[tid].processing_per_sec)))
 		goto end;
 
 	SPOE_PRINTF(stderr, "%d.%06d [SPOE/%-15s] %s: stream=%p"
@@ -3187,7 +3187,7 @@ spoe_start_analyze(struct stream *s, struct filter *filter, struct channel *chn)
 		ctx->flags |= SPOE_CTX_FL_CLI_CONNECTED;
 	}
 	else {
-		if (filter->pre_analyzers & SPOE_EV_ON_TCP_RSP)
+		if (filter->pre_analyzers & AN_RES_INSPECT)
 			chn->analysers |= AN_RES_INSPECT;
 
 		if (ctx->flags & SPOE_CTX_FL_SRV_CONNECTED)

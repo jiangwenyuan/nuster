@@ -4738,7 +4738,9 @@ void ha_generate_uuid(struct buffer *output)
  * extraneous ones are not emitted but <outlen> is updated so that the caller
  * knows how much to realloc. Similarly, <args> are not updated beyond <nbargs>
  * but the returned <nbargs> indicates how many were found. All trailing args
- * up to <nbargs> point to the trailing zero.
+ * up to <nbargs> point to the trailing zero, and as long as <nbargs> is > 0,
+ * it is guaranteed that at least one arg will point to the zero. It is safe
+ * to call it with a NULL <args> if <nbargs> is 0.
  *
  * <out> may overlap with <in> provided that it never goes further, in which
  * case the parser will accept to perform in-place parsing and unquoting/
@@ -4761,7 +4763,7 @@ uint32_t parse_line(char *in, char *out, size_t *outlen, char **args, int *nbarg
 	char *brace = NULL;
 	unsigned char hex1, hex2;
 	size_t outmax = *outlen;
-	int argsmax = *nbargs;
+	int argsmax = *nbargs - 1;
 	size_t outpos = 0;
 	int squote = 0;
 	int dquote = 0;
@@ -4771,7 +4773,10 @@ uint32_t parse_line(char *in, char *out, size_t *outlen, char **args, int *nbarg
 	*nbargs = 0;
 	*outlen = 0;
 
-	args[arg] = out;
+	/* argsmax may be -1 here, protecting args[] from any write */
+	if (arg < argsmax)
+		args[arg] = out;
+
 	while (1) {
 		if (*in >= '-' && *in != '\\') {
 			/* speedup: directly send all regular chars starting
@@ -4972,13 +4977,63 @@ uint32_t parse_line(char *in, char *out, size_t *outlen, char **args, int *nbarg
 	*nbargs = arg;
 	*outlen = outpos;
 
-	/* empty all trailing args by making them point to the trailing zero */
-	while (arg < argsmax)
+	/* empty all trailing args by making them point to the trailing zero,
+	 * at least the last one in any case.
+	 */
+	if (arg > argsmax)
+		arg = argsmax;
+
+	while (arg >= 0 && arg <= argsmax)
 		args[arg++] = out + outpos - 1;
 
 	return err;
 }
 #undef EMIT_CHAR
+
+/* This is used to sanitize an input line that's about to be used for error reporting.
+ * It will adjust <line> to print approximately <width> chars around <pos>, trying to
+ * preserve the beginning, with leading or trailing "..." when the line is truncated.
+ * If non-printable chars are present in the output. It returns the new offset <pos>
+ * in the modified line. Non-printable characters are replaced with '?'. <width> must
+ * be at least 6 to support two "..." otherwise the result is undefined. The line
+ * itself must have at least 7 chars allocated for the same reason.
+ */
+size_t sanitize_for_printing(char *line, size_t pos, size_t width)
+{
+	size_t shift = 0;
+	char *out = line;
+	char *in = line;
+	char *end = line + width;
+
+	if (pos >= width) {
+		/* if we have to shift, we'll be out of context, so let's
+		 * try to put <pos> at the center of width.
+		 */
+		shift = pos - width / 2;
+		in += shift + 3;
+		end = out + width - 3;
+		out[0] = out[1] = out[2] = '.';
+		out += 3;
+	}
+
+	while (out < end && *in) {
+		if (isspace((unsigned char)*in))
+			*out++ = ' ';
+		else if (isprint((unsigned char)*in))
+			*out++ = *in;
+		else
+			*out++ = '?';
+		in++;
+	}
+
+	if (end < line + width) {
+		out[0] = out[1] = out[2] = '.';
+		out += 3;
+	}
+
+	*out++ = 0;
+	return pos - shift;
+}
 
 /*
  * Local variables:
