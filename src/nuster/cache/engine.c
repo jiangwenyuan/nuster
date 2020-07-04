@@ -328,17 +328,23 @@ void
 nst_cache_housekeeping() {
     nst_dict_t   *dict  = &nuster.cache->dict;
     nst_store_t  *store = &nuster.cache->store;
-    uint64_t      begin = nst_time_now_ms();
     uint64_t      start;
+
+#ifndef USE_THREAD
+    uint64_t      begin = nst_time_now_ms();
+#endif
 
     if(global.nuster.cache.status == NST_STATUS_ON && master == 1) {
         int  dict_cleaner = global.nuster.cache.dict_cleaner;
         int  data_cleaner = global.nuster.cache.data_cleaner;
         int  disk_cleaner = global.nuster.cache.disk_cleaner;
-        int  disk_loader  = global.nuster.cache.disk_loader;
         int  disk_saver   = global.nuster.cache.disk_saver;
         int  ms           = 10;
         int  ratio        = 1;
+
+#ifndef USE_THREAD
+        int  disk_loader  = global.nuster.cache.disk_loader;
+#endif
 
         start = nst_time_now_ms();
 
@@ -396,6 +402,7 @@ nst_cache_housekeeping() {
             }
         }
 
+#ifndef USE_THREAD
         while(!store->disk.loaded && disk_loader--) {
             nst_disk_load(nuster.cache);
 
@@ -403,6 +410,7 @@ nst_cache_housekeeping() {
                 break;
             }
         }
+#endif
 
     }
 }
@@ -413,6 +421,10 @@ nst_cache_init() {
     nst_shmem_t  *shmem;
     uint64_t      dict_size, data_size, size;
     int           clean_temp;
+
+#ifdef USE_THREAD
+    pthread_t     tid;
+#endif
 
     root       = global.nuster.cache.root;
     dict_size  = global.nuster.cache.dict_size;
@@ -459,6 +471,10 @@ nst_cache_init() {
             ha_alert("Failed to init nuster cache dict.\n");
             exit(1);
         }
+
+#ifdef USE_THREAD
+        pthread_create(&tid, NULL, nst_disk_load_thread, nuster.cache);
+#endif
 
     }
 }

@@ -533,4 +533,8 @@ nst_disk_obj_abort(nst_disk_t *disk, nst_disk_obj_t *obj) {
 int nst_disk_obj_valid(nst_disk_obj_t *disk, nst_key_t *key);
 int nst_disk_obj_exists(nst_disk_t *disk, nst_disk_obj_t *obj, nst_key_t *key);
 
+#ifdef USE_THREAD
+void *nst_disk_load_thread(void *core);
+#endif
+
 #endif /* _NUSTER_DISK_H */

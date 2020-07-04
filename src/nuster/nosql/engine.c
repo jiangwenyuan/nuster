@@ -295,17 +295,23 @@ void
 nst_nosql_housekeeping() {
     nst_dict_t   *dict  = &nuster.nosql->dict;
     nst_store_t  *store = &nuster.nosql->store;
-    uint64_t      begin = nst_time_now_ms();
     uint64_t      start;
+
+#ifndef USE_THREAD
+    uint64_t      begin = nst_time_now_ms();
+#endif
 
     if(global.nuster.nosql.status == NST_STATUS_ON && master == 1) {
         int  dict_cleaner = global.nuster.nosql.dict_cleaner;
         int  data_cleaner = global.nuster.nosql.data_cleaner;
         int  disk_cleaner = global.nuster.nosql.disk_cleaner;
-        int  disk_loader  = global.nuster.nosql.disk_loader;
         int  disk_saver   = global.nuster.nosql.disk_saver;
         int  ms           = 10;
         int  ratio        = 1;
+
+#ifndef USE_THREAD
+        int  disk_loader  = global.nuster.nosql.disk_loader;
+#endif
 
         start = nst_time_now_ms();
 
@@ -381,6 +387,10 @@ nst_nosql_init() {
     uint64_t      dict_size, data_size, size;
     int           clean_temp;
 
+#ifdef USE_THREAD
+    pthread_t     tid;
+#endif
+
     root       = global.nuster.nosql.root;
     dict_size  = global.nuster.nosql.dict_size;
     data_size  = global.nuster.nosql.data_size;
@@ -426,6 +436,10 @@ nst_nosql_init() {
             ha_alert("Failed to init nuster nosql dict.\n");
             exit(1);
         }
+
+#ifdef USE_THREAD
+        pthread_create(&tid, NULL, nst_disk_load_thread, nuster.nosql);
+#endif
 
     }
 }
