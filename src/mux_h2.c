@@ -3524,15 +3524,15 @@ static struct task *h2_io_cb(struct task *t, void *ctx, unsigned short status)
 	int ret = 0;
 
 
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	if (t->context == NULL) {
 		/* The connection has been taken over by another thread,
 		 * we're no longer responsible for it, so just free the
 		 * tasklet, and do nothing.
 		 */
-		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 		tasklet_free(tl);
-		return NULL;
+		goto leave;
 	}
 	h2c = ctx;
 	conn = h2c->conn;
@@ -3547,7 +3547,7 @@ static struct task *h2_io_cb(struct task *t, void *ctx, unsigned short status)
 	if (conn_in_list)
 		MT_LIST_DEL(&conn->list);
 
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 
 	if (!(h2c->wait_event.events & SUB_RETRY_SEND))
 		ret = h2_send(h2c);
@@ -3570,6 +3570,7 @@ static struct task *h2_io_cb(struct task *t, void *ctx, unsigned short status)
 			MT_LIST_ADDQ(&srv->idle_conns[tid], &conn->list);
 	}
 
+leave:
 	TRACE_LEAVE(H2_EV_H2C_WAKE);
 	return NULL;
 }
@@ -3642,15 +3643,15 @@ static int h2_process(struct h2c *h2c)
 		}
 
 		/* connections in error must be removed from the idle lists */
-		HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+		HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 		MT_LIST_DEL((struct mt_list *)&conn->list);
-		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	}
 	else if (h2c->st0 == H2_CS_ERROR) {
 		/* connections in error must be removed from the idle lists */
-		HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+		HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 		MT_LIST_DEL((struct mt_list *)&conn->list);
-		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	}
 
 	if (!b_data(&h2c->dbuf))
@@ -3704,35 +3705,45 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 
 	TRACE_ENTER(H2_EV_H2C_WAKE, h2c ? h2c->conn : NULL);
 
-	if (!expired && h2c) {
-		TRACE_DEVEL("leaving (not expired)", H2_EV_H2C_WAKE, h2c->conn);
-		return t;
-	}
+	if (h2c) {
+		 /* Make sure nobody stole the connection from us */
+		HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 
-	if (h2c && !h2c_may_expire(h2c)) {
-		/* we do still have streams but all of them are idle, waiting
-		 * for the data layer, so we must not enforce the timeout here.
+		/* Somebody already stole the connection from us, so we should not
+		 * free it, we just have to free the task.
 		 */
-		t->expire = TICK_ETERNITY;
-		return t;
+		if (!t->context) {
+			h2c = NULL;
+			HA_SPIN_UNLOCK(&OTHER_LOCK, &idle_conns[tid].takeover_lock);
+			goto do_leave;
+		}
+
+
+		if (!expired) {
+			HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
+			TRACE_DEVEL("leaving (not expired)", H2_EV_H2C_WAKE, h2c->conn);
+			return t;
+		}
+
+		if (!h2c_may_expire(h2c)) {
+			/* we do still have streams but all of them are idle, waiting
+			 * for the data layer, so we must not enforce the timeout here.
+			 */
+			HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
+			t->expire = TICK_ETERNITY;
+			return t;
+		}
+
+		/* We're about to destroy the connection, so make sure nobody attempts
+		 * to steal it from us.
+		 */
+		if (h2c->conn->flags & CO_FL_LIST_MASK)
+			MT_LIST_DEL(&h2c->conn->list);
+
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	}
 
-	/* We're about to destroy the connection, so make sure nobody attempts
-	 * to steal it from us.
-	 */
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
-
-	if (h2c && h2c->conn->flags & CO_FL_LIST_MASK)
-		MT_LIST_DEL(&h2c->conn->list);
-
-	/* Somebody already stole the connection from us, so we should not
-	 * free it, we just have to free the task.
-	 */
-	if (!t->context)
-		h2c = NULL;
-
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
-
+do_leave:
 	task_destroy(t);
 
 	if (!h2c) {
@@ -3777,9 +3788,9 @@ static struct task *h2_timeout_task(struct task *t, void *context, unsigned shor
 	}
 
 	/* in any case this connection must not be considered idle anymore */
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	MT_LIST_DEL((struct mt_list *)&h2c->conn->list);
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 
 	/* either we can release everything now or it will be done later once
 	 * the last stream closes.
@@ -6044,12 +6055,25 @@ static void h2_show_fd(struct buffer *msg, struct connection *conn)
  * Return 0 if successful, non-zero otherwise.
  * Expected to be called with the old thread lock held.
  */
-static int h2_takeover(struct connection *conn)
+static int h2_takeover(struct connection *conn, int orig_tid)
 {
 	struct h2c *h2c = conn->ctx;
+	struct task *task;
 
 	if (fd_takeover(conn->handle.fd, conn) != 0)
 		return -1;
+
+	if (conn->xprt->takeover && conn->xprt->takeover(conn, conn->xprt_ctx, orig_tid) != 0) {
+		/* We failed to takeover the xprt, even if the connection may
+		 * still be valid, flag it as error'd, as we have already
+		 * taken over the fd, and wake the tasklet, so that it will
+		 * destroy it.
+		 */
+		conn->flags |= CO_FL_ERROR;
+		tasklet_wakeup_on(h2c->wait_event.tasklet, orig_tid);
+		return -1;
+	}
+
 	if (h2c->wait_event.events)
 		h2c->conn->xprt->unsubscribe(h2c->conn, h2c->conn->xprt_ctx,
 		    h2c->wait_event.events, &h2c->wait_event);
@@ -6057,11 +6081,14 @@ static int h2_takeover(struct connection *conn)
 	 * set its context to NULL.
 	 */
 	h2c->wait_event.tasklet->context = NULL;
-	tasklet_wakeup(h2c->wait_event.tasklet);
-	if (h2c->task) {
-		h2c->task->context = NULL;
-		/* Wake the task, to let it free itself */
-		task_wakeup(h2c->task, TASK_WOKEN_OTHER);
+	tasklet_wakeup_on(h2c->wait_event.tasklet, orig_tid);
+
+	task = h2c->task;
+	if (task) {
+		task->context = NULL;
+		h2c->task = NULL;
+		__ha_barrier_store();
+		task_kill(task);
 
 		h2c->task = task_new(tid_bit);
 		if (!h2c->task) {

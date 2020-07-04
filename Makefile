@@ -378,7 +378,7 @@ endif
 # OpenBSD 5.7 and above
 ifeq ($(TARGET),openbsd)
   set_target_defaults = $(call default_opts, \
-    USE_POLL USE_TPROXY USE_THREAD USE_KQUEUE USE_ACCEPT4)
+    USE_POLL USE_TPROXY USE_KQUEUE USE_ACCEPT4)
 endif
 
 # NetBSD
@@ -819,7 +819,7 @@ OBJS = src/mux_fcgi.o src/mux_h1.o src/mux_h2.o src/backend.o                 \
        src/lb_map.o src/eb32sctree.o src/ebistree.o src/h1.o                  \
        src/sha1.o src/http.o src/fd.o src/ev_select.o src/chunk.o             \
        src/hash.o src/hpack-dec.o src/freq_ctr.o src/http_acl.o               \
-       src/buffer.o src/uri_auth.o src/protocol.o src/auth.o                  \
+       src/dynbuf.o src/uri_auth.o src/protocol.o src/auth.o                  \
        src/ebsttree.o src/pipe.o src/hpack-enc.o src/fcgi.o                   \
        src/eb64tree.o src/dict.o src/shctx.o src/ebimtree.o                   \
        src/eb32tree.o src/ebtree.o src/dgram.o                                \

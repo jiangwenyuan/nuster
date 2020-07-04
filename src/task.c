@@ -57,6 +57,59 @@ static unsigned int rqueue_ticks;  /* insertion count */
 
 struct task_per_thread task_per_thread[MAX_THREADS];
 
+
+/* Flags the task <t> for immediate destruction and puts it into its first
+ * thread's shared tasklet list if not yet queued/running. This will bypass
+ * the priority scheduling and make the task show up as fast as possible in
+ * the other thread's queue. Note that this operation isn't idempotent and is
+ * not supposed to be run on the same task from multiple threads at once. It's
+ * the caller's responsibility to make sure it is the only one able to kill the
+ * task.
+ */
+void task_kill(struct task *t)
+{
+	unsigned short state = t->state;
+	unsigned int thr;
+
+	BUG_ON(state & TASK_KILLED);
+
+	while (1) {
+		while (state & (TASK_RUNNING | TASK_QUEUED)) {
+			/* task already in the queue and about to be executed,
+			 * or even currently running. Just add the flag and be
+			 * done with it, the process loop will detect it and kill
+			 * it. The CAS will fail if we arrive too late.
+			 */
+			if (_HA_ATOMIC_CAS(&t->state, &state, state | TASK_KILLED))
+				return;
+		}
+
+		/* We'll have to wake it up, but we must also secure it so that
+		 * it doesn't vanish under us. TASK_QUEUED guarantees nobody will
+		 * add past us.
+		 */
+		if (_HA_ATOMIC_CAS(&t->state, &state, state | TASK_QUEUED | TASK_KILLED)) {
+			/* Bypass the tree and go directly into the shared tasklet list.
+			 * Note: that's a task so it must be accounted for as such. Pick
+			 * the task's first thread for the job.
+			 */
+			thr = my_ffsl(t->thread_mask) - 1;
+
+			/* Beware: tasks that have never run don't have their ->list empty yet! */
+			LIST_INIT(&((struct tasklet *)t)->list);
+			MT_LIST_ADDQ(&task_per_thread[thr].shared_tasklet_list,
+			             (struct mt_list *)&((struct tasklet *)t)->list);
+			_HA_ATOMIC_ADD(&tasks_run_queue, 1);
+			_HA_ATOMIC_ADD(&task_per_thread[thr].task_list_size, 1);
+			if (sleeping_thread_mask & (1UL << thr)) {
+				_HA_ATOMIC_AND(&sleeping_thread_mask, ~(1UL << thr));
+				wake_thread(thr);
+			}
+			return;
+		}
+	}
+}
+
 /* Puts the task <t> in run queue at a position depending on t->nice. <t> is
  * returned. The nice value assigns boosts in 32th of the run queue size. A
  * nice value of -1024 sets the task to -tasks_run_queue*32, while a nice value
@@ -379,7 +432,7 @@ unsigned int run_tasks_from_lists(unsigned int budgets[])
 
 		budgets[queue]--;
 		t = (struct task *)LIST_ELEM(tl_queues[queue].n, struct tasklet *, list);
-		state = (t->state & (TASK_SHARED_WQ|TASK_SELF_WAKING));
+		state = t->state & (TASK_SHARED_WQ|TASK_SELF_WAKING|TASK_KILLED);
 
 		ti->flags &= ~TI_FL_STUCK; // this thread is still running
 		activity[tid].ctxsw++;
@@ -405,7 +458,7 @@ unsigned int run_tasks_from_lists(unsigned int budgets[])
 
 		/* OK then this is a regular task */
 
-		task_per_thread[tid].task_list_size--;
+		_HA_ATOMIC_SUB(&task_per_thread[tid].task_list_size, 1);
 		if (unlikely(t->call_date)) {
 			uint64_t now_ns = now_mono_time();
 
@@ -414,11 +467,18 @@ unsigned int run_tasks_from_lists(unsigned int budgets[])
 		}
 
 		__ha_barrier_store();
-		if (likely(process == process_stream))
+
+		/* Note for below: if TASK_KILLED arrived before we've read the state, we
+		 * directly free the task. Otherwise it will be seen after processing and
+		 * it's freed on the exit path.
+		 */
+		if (likely(!(state & TASK_KILLED) && process == process_stream))
 			t = process_stream(t, ctx, state);
-		else if (process != NULL)
+		else if (!(state & TASK_KILLED) && process != NULL)
 			t = process(t, ctx, state);
 		else {
+			if (task_in_wq(t))
+				__task_unlink_wq(t);
 			__task_free(t);
 			sched->current = NULL;
 			__ha_barrier_store();
@@ -440,7 +500,12 @@ unsigned int run_tasks_from_lists(unsigned int budgets[])
 			}
 
 			state = _HA_ATOMIC_AND(&t->state, ~TASK_RUNNING);
-			if (state & TASK_WOKEN_ANY)
+			if (unlikely(state & TASK_KILLED)) {
+				if (task_in_wq(t))
+					__task_unlink_wq(t);
+				__task_free(t);
+			}
+			else if (state & TASK_WOKEN_ANY)
 				task_wakeup(t, 0);
 			else
 				task_queue(t);
@@ -514,11 +579,17 @@ void process_runnable_tasks()
 		max[TL_BULK] = default_weights[TL_BULK];
 
 	/* Now compute a fair share of the weights. Total may slightly exceed
-	 * 100% due to rounding, this is not a problem. Note that by design
-	 * the sum cannot be NULL as we cannot get there without tasklets to
-	 * process.
+	 * 100% due to rounding, this is not a problem. Note that while in
+	 * theory the sum cannot be NULL as we cannot get there without tasklets
+	 * to process, in practice it seldom happens when multiple writers
+	 * conflict and rollback on MT_LIST_ADDQ(shared_tasklet_list), causing
+	 * a first MT_LIST_ISEMPTY() to succeed for thread_has_task() and the
+	 * one above to finally fail. This is extremely rare and not a problem.
 	 */
 	max_total = max[TL_URGENT] + max[TL_NORMAL] + max[TL_BULK];
+	if (!max_total)
+		return;
+
 	for (queue = 0; queue < TL_CLASSES; queue++)
 		max[queue]  = ((unsigned)max_processed * max[queue] + max_total - 1) / max_total;
 
@@ -579,7 +650,7 @@ void process_runnable_tasks()
 		/* And add it to the local task list */
 		tasklet_insert_into_tasklet_list(&tt->tasklets[TL_NORMAL], (struct tasklet *)t);
 		tt->tl_class_mask |= 1 << TL_NORMAL;
-		tt->task_list_size++;
+		_HA_ATOMIC_ADD(&tt->task_list_size, 1);
 		activity[tid].tasksw++;
 	}
 

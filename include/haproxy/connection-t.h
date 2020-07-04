@@ -354,6 +354,7 @@ struct xprt_ops {
 	int  (*prepare_srv)(struct server *srv);    /* prepare a server context */
 	void (*destroy_srv)(struct server *srv);    /* destroy a server context */
 	int  (*get_alpn)(const struct connection *conn, void *xprt_ctx, const char **str, int *len); /* get application layer name */
+	int (*takeover)(struct connection *conn, void *xprt_ctx, int orig_tid); /* Let the xprt know the fd have been taken over */
 	char name[8];                               /* transport layer name, zero-terminated */
 	int (*subscribe)(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es); /* Subscribe <es> to events, such as "being able to send" */
 	int (*unsubscribe)(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es); /* Unsubscribe <es> from events */
@@ -390,7 +391,7 @@ struct mux_ops {
 	void (*reset)(struct connection *conn); /* Reset the mux, because we're re-trying to connect */
 	const struct cs_info *(*get_cs_info)(struct conn_stream *cs); /* Return info on the specified conn_stream or NULL if not defined */
 	int (*ctl)(struct connection *conn, enum mux_ctl_type mux_ctl, void *arg); /* Provides information about the mux */
-	int (*takeover)(struct connection *conn); /* Attempts to migrate the connection to the current thread */
+	int (*takeover)(struct connection *conn, int orig_tid); /* Attempts to migrate the connection to the current thread */
 	unsigned int flags;                           /* some flags characterizing the mux's capabilities (MX_FL_*) */
 	char name[8];                                 /* mux layer name, zero-terminated */
 };
@@ -599,6 +600,16 @@ struct tlv_ssl {
 	uint8_t sub_tlv[0];
 }__attribute__((packed));
 
+
+/* This structure is used to manage idle connections, their locking, and the
+ * list of such idle connections to be removed. It is per-thread and must be
+ * accessible from foreign threads.
+ */
+struct idle_conns {
+	struct mt_list toremove_conns;
+	__decl_thread(HA_SPINLOCK_T takeover_lock);
+	struct task *cleanup_task;
+} THREAD_ALIGNED(64);
 
 #endif /* _HAPROXY_CONNECTION_T_H */
 

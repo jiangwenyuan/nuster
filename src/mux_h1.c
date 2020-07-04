@@ -2219,13 +2219,13 @@ static struct task *h1_io_cb(struct task *t, void *ctx, unsigned short status)
 	int ret = 0;
 
 
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	if (tl->context == NULL) {
 		/* The connection has been taken over by another thread,
 		 * we're no longer responsible for it, so just free the
 		 * tasklet, and do nothing.
 		 */
-		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 		tasklet_free(tl);
 		return NULL;
 	}
@@ -2241,7 +2241,7 @@ static struct task *h1_io_cb(struct task *t, void *ctx, unsigned short status)
 	if (conn_in_list)
 		MT_LIST_DEL(&conn->list);
 
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 
 	if (!(h1c->wait_event.events & SUB_RETRY_SEND))
 		ret = h1_send(h1c);
@@ -2300,26 +2300,27 @@ static struct task *h1_timeout_task(struct task *t, void *context, unsigned shor
 
 	TRACE_POINT(H1_EV_H1C_WAKE, h1c ? h1c->conn : NULL);
 
-	if (!expired && h1c) {
-		TRACE_DEVEL("leaving (not expired)", H1_EV_H1C_WAKE, h1c->conn);
-		return t;
+	if (h1c) {
+		if (!expired) {
+			TRACE_DEVEL("leaving (not expired)", H1_EV_H1C_WAKE, h1c->conn);
+			return t;
+		}
+
+		/* We're about to destroy the connection, so make sure nobody attempts
+		 * to steal it from us.
+		 */
+		HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
+
+		/* Somebody already stole the connection from us, so we should not
+		 * free it, we just have to free the task.
+		 */
+		if (!t->context)
+			h1c = NULL;
+		else if (h1c->conn->flags & CO_FL_LIST_MASK)
+			MT_LIST_DEL(&h1c->conn->list);
+
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	}
-
-	/* We're about to destroy the connection, so make sure nobody attempts
-	 * to steal it from us.
-	 */
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
-
-	if (h1c && h1c->conn->flags & CO_FL_LIST_MASK)
-		MT_LIST_DEL(&h1c->conn->list);
-
-	/* Somebody already stole the connection from us, so we should not
-	 * free it, we just have to free the task.
-	 */
-	if (!t->context)
-		h1c = NULL;
-
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
 
 	task_destroy(t);
 
@@ -2921,12 +2922,25 @@ static int add_hdr_case_adjust(const char *from, const char *to, char **err)
  * Return 0 if successful, non-zero otherwise.
  * Expected to be called with the old thread lock held.
  */
-static int h1_takeover(struct connection *conn)
+static int h1_takeover(struct connection *conn, int orig_tid)
 {
 	struct h1c *h1c = conn->ctx;
+	struct task *task;
 
 	if (fd_takeover(conn->handle.fd, conn) != 0)
 		return -1;
+
+	if (conn->xprt->takeover && conn->xprt->takeover(conn, conn->xprt_ctx, orig_tid) != 0) {
+		/* We failed to takeover the xprt, even if the connection may
+		 * still be valid, flag it as error'd, as we have already
+		 * taken over the fd, and wake the tasklet, so that it will
+		 * destroy it.
+		 */
+		conn->flags |= CO_FL_ERROR;
+		tasklet_wakeup_on(h1c->wait_event.tasklet, orig_tid);
+		return -1;
+	}
+
 	if (h1c->wait_event.events)
 		h1c->conn->xprt->unsubscribe(h1c->conn, h1c->conn->xprt_ctx,
 		    h1c->wait_event.events, &h1c->wait_event);
@@ -2934,11 +2948,14 @@ static int h1_takeover(struct connection *conn)
 	 * set its context to NULL.
 	 */
 	h1c->wait_event.tasklet->context = NULL;
-	tasklet_wakeup(h1c->wait_event.tasklet);
-	if (h1c->task) {
-		h1c->task->context = NULL;
-		/* Wake the task, to let it free itself */
-		task_wakeup(h1c->task, TASK_WOKEN_OTHER);
+	tasklet_wakeup_on(h1c->wait_event.tasklet, orig_tid);
+
+	task = h1c->task;
+	if (task) {
+		task->context = NULL;
+		h1c->task = NULL;
+		__ha_barrier_store();
+		task_kill(task);
 
 		h1c->task = task_new(tid_bit);
 		if (!h1c->task) {

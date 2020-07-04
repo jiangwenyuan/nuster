@@ -22,9 +22,9 @@
 #ifndef _HAPROXY_POOL_T_H
 #define _HAPROXY_POOL_T_H
 
-#include <haproxy/api.h>
-#include <haproxy/list.h>
-#include <haproxy/thread.h>
+#include <haproxy/api-t.h>
+#include <haproxy/list-t.h>
+#include <haproxy/thread-t.h>
 
 /* On architectures supporting threads and double-word CAS, we can implement
  * lock-less memory pools. This isn't supported for debugging modes however.
@@ -65,7 +65,9 @@
 #define POOL_LINK(pool, item) ((void **)(item))
 #endif
 
-#define MAX_BASE_POOLS 32
+#ifndef MAX_BASE_POOLS
+#define MAX_BASE_POOLS 64
+#endif
 
 #define POOL_AVG_SAMPLES 1024
 

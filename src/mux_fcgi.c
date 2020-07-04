@@ -2918,13 +2918,13 @@ static struct task *fcgi_io_cb(struct task *t, void *ctx, unsigned short status)
 	int ret = 0;
 
 
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	if (tl->context == NULL) {
 		/* The connection has been taken over by another thread,
 		 * we're no longer responsible for it, so just free the
 		 * tasklet, and do nothing.
 		 */
-		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 		tasklet_free(tl);
 		return NULL;
 
@@ -2938,7 +2938,7 @@ static struct task *fcgi_io_cb(struct task *t, void *ctx, unsigned short status)
 	if (conn_in_list)
 		MT_LIST_DEL(&conn->list);
 
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 
 	if (!(fconn->wait_event.events & SUB_RETRY_SEND))
 		ret = fcgi_send(fconn);
@@ -3084,27 +3084,34 @@ static struct task *fcgi_timeout_task(struct task *t, void *context, unsigned sh
 
 	TRACE_ENTER(FCGI_EV_FCONN_WAKE, (fconn ? fconn->conn : NULL));
 
-	if (!expired && fconn) {
-		TRACE_DEVEL("leaving (not expired)", FCGI_EV_FCONN_WAKE, fconn->conn);
-		return t;
+	if (fconn) {
+		HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
+
+		/* Somebody already stole the connection from us, so we should not
+		 * free it, we just have to free the task.
+		 */
+		if (!t->context) {
+			HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
+			fconn = NULL;
+			goto do_leave;
+		}
+
+		if (!expired) {
+			HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
+			TRACE_DEVEL("leaving (not expired)", FCGI_EV_FCONN_WAKE, fconn->conn);
+			return t;
+		}
+
+		/* We're about to destroy the connection, so make sure nobody attempts
+		 * to steal it from us.
+		 */
+		if (fconn->conn->flags & CO_FL_LIST_MASK)
+			MT_LIST_DEL(&fconn->conn->list);
+
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	}
 
-	/* We're about to destroy the connection, so make sure nobody attempts
-	 * to steal it from us.
-	 */
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
-
-	if (fconn && fconn->conn->flags & CO_FL_LIST_MASK)
-		MT_LIST_DEL(&fconn->conn->list);
-
-	/* Somebody already stole the connection from us, so we should not
-	 * free it, we just have to free the task.
-	 */
-	if (!t->context)
-		fconn = NULL;
-
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
-
+do_leave:
 	task_destroy(t);
 
 	if (!fconn) {
@@ -4077,12 +4084,25 @@ static void fcgi_show_fd(struct buffer *msg, struct connection *conn)
  * Return 0 if successful, non-zero otherwise.
  * Expected to be called with the old thread lock held.
  */
-static int fcgi_takeover(struct connection *conn)
+static int fcgi_takeover(struct connection *conn, int orig_tid)
 {
 	struct fcgi_conn *fcgi = conn->ctx;
+	struct task *task;
 
 	if (fd_takeover(conn->handle.fd, conn) != 0)
 		return -1;
+
+	if (conn->xprt->takeover && conn->xprt->takeover(conn, conn->xprt_ctx, orig_tid) != 0) {
+		/* We failed to takeover the xprt, even if the connection may
+		 * still be valid, flag it as error'd, as we have already
+		 * taken over the fd, and wake the tasklet, so that it will
+		 * destroy it.
+		 */
+		conn->flags |= CO_FL_ERROR;
+		tasklet_wakeup_on(fcgi->wait_event.tasklet, orig_tid);
+		return -1;
+	}
+
 	if (fcgi->wait_event.events)
 		fcgi->conn->xprt->unsubscribe(fcgi->conn, fcgi->conn->xprt_ctx,
 		    fcgi->wait_event.events, &fcgi->wait_event);
@@ -4090,11 +4110,14 @@ static int fcgi_takeover(struct connection *conn)
 	 * set its context to NULL;
 	 */
 	fcgi->wait_event.tasklet->context = NULL;
-	tasklet_wakeup(fcgi->wait_event.tasklet);
-	if (fcgi->task) {
-		fcgi->task->context = NULL;
-		/* Wake the task, to let it free itself */
-		task_wakeup(fcgi->task, TASK_WOKEN_OTHER);
+	tasklet_wakeup_on(fcgi->wait_event.tasklet, orig_tid);
+
+	task = fcgi->task;
+	if (task) {
+		task->context = NULL;
+		fcgi->task = NULL;
+		__ha_barrier_store();
+		task_kill(task);
 
 		fcgi->task = task_new(tid_bit);
 		if (!fcgi->task) {

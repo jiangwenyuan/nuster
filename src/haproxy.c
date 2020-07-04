@@ -1834,6 +1834,9 @@ static void init(int argc, char **argv)
 #if defined(SO_REUSEPORT)
 	global.tune.options |= GTUNE_USE_REUSEPORT;
 #endif
+#ifdef USE_THREAD
+	global.tune.options |= GTUNE_IDLE_POOL_SHARED;
+#endif
 
 	pid = getpid();
 	progname = *argv;
@@ -2974,7 +2977,7 @@ void run_poll_loop()
 				if (_HA_ATOMIC_OR(&stopping_thread_mask, tid_bit) == tid_bit) {
 					/* notify all threads that stopping was just set */
 					for (i = 0; i < global.nbthread; i++)
-						if ((all_threads_mask >> i) & 1)
+						if (((all_threads_mask & ~stopping_thread_mask) >> i) & 1)
 							wake_thread(i);
 				}
 			}
@@ -3251,7 +3254,7 @@ int main(int argc, char **argv)
 					exit(1);
 			}
 			else
-				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs.",
+				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs."
 					   "This will fail in >= v2.3\n",
 					   argv[0], global.rlimit_memmax);
 		}

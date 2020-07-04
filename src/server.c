@@ -62,9 +62,6 @@ static struct srv_kw_list srv_keywords = {
 __decl_thread(HA_SPINLOCK_T idle_conn_srv_lock);
 struct eb_root idle_conn_srv = EB_ROOT;
 struct task *idle_conn_task = NULL;
-struct task *idle_conn_cleanup[MAX_THREADS] = { NULL };
-struct mt_list toremove_connections[MAX_THREADS];
-__decl_thread(HA_SPINLOCK_T toremove_lock[MAX_THREADS]);
 
 /* The server names dictionary */
 struct dict server_name_dict = {
@@ -356,6 +353,20 @@ static int srv_parse_pool_purge_delay(char **args, int *cur_arg, struct proxy *c
 	}
 	newsrv->pool_purge_delay = time;
 
+	return 0;
+}
+
+static int srv_parse_pool_low_conn(char **args, int *cur_arg, struct proxy *curproxy, struct server *newsrv, char **err)
+{
+	char *arg;
+
+	arg = args[*cur_arg + 1];
+	if (!*arg) {
+		memprintf(err, "'%s' expects <value> as argument.\n", args[*cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	newsrv->low_idle_conns = atoi(arg);
 	return 0;
 }
 
@@ -1259,6 +1270,7 @@ static struct srv_kw_list srv_kws = { "ALL", { }, {
 	{ "no-tfo",              srv_parse_no_tfo,              0,  1 }, /* Disable use of TCP Fast Open */
 	{ "non-stick",           srv_parse_non_stick,           0,  1 }, /* Disable stick-table persistence */
 	{ "observe",             srv_parse_observe,             1,  1 }, /* Enables health adjusting based on observing communication with the server */
+	{ "pool-low-conn",       srv_parse_pool_low_conn,       1,  1 }, /* Set the min number of orphan idle connecbefore being allowed to pick from other threads */
 	{ "pool-max-conn",       srv_parse_pool_max_conn,       1,  1 }, /* Set the max number of orphan idle connections, 0 means unlimited */
 	{ "pool-purge-delay",    srv_parse_pool_purge_delay,    1,  1 }, /* Set the time before we destroy orphan idle connections, defaults to 1s */
 	{ "proto",               srv_parse_proto,               1,  1 }, /* Set the proto to use for all outgoing connections */
@@ -1733,6 +1745,7 @@ static void srv_settings_cpy(struct server *srv, struct server *src, int srv_tmp
 #endif
 	srv->mux_proto = src->mux_proto;
 	srv->pool_purge_delay = src->pool_purge_delay;
+	srv->low_idle_conns = src->low_idle_conns;
 	srv->max_idle_conns = src->max_idle_conns;
 	srv->max_reuse = src->max_reuse;
 
@@ -5172,7 +5185,7 @@ struct task *srv_cleanup_toremove_connections(struct task *task, void *context, 
 {
 	struct connection *conn;
 
-	while ((conn = MT_LIST_POP(&toremove_connections[tid],
+	while ((conn = MT_LIST_POP(&idle_conns[tid].toremove_conns,
 	                               struct connection *, list)) != NULL) {
 		conn->mux->destroy(conn->ctx);
 	}
@@ -5180,33 +5193,46 @@ struct task *srv_cleanup_toremove_connections(struct task *task, void *context, 
 	return task;
 }
 
+/* Move toremove_nb connections from idle_list to toremove_list, -1 means
+ * moving them all.
+ * Returns the number of connections moved.
+ */
+static int srv_migrate_conns_to_remove(struct mt_list *idle_list, struct mt_list *toremove_list, int toremove_nb)
+{
+	struct mt_list *elt1, elt2;
+	struct connection *conn;
+	int i = 0;
+
+	mt_list_for_each_entry_safe(conn, idle_list, list, elt1, elt2) {
+		if (toremove_nb != -1 && i >= toremove_nb)
+			break;
+		MT_LIST_DEL_SAFE_NOINIT(elt1);
+		MT_LIST_ADDQ_NOCHECK(toremove_list, &conn->list);
+		i++;
+	}
+	return i;
+}
 /* cleanup connections for a given server
  * might be useful when going on forced maintenance or live changing ip/port
  */
 static void srv_cleanup_connections(struct server *srv)
 {
-	struct connection *conn;
 	int did_remove;
 	int i;
-	int j;
 
+	/* check all threads starting with ours */
 	HA_SPIN_LOCK(OTHER_LOCK, &idle_conn_srv_lock);
-	for (i = 0; i < global.nbthread; i++) {
+	for (i = tid;;) {
 		did_remove = 0;
-		HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[i]);
-		for (j = 0; j < srv->curr_idle_conns; j++) {
-			conn = MT_LIST_POP(&srv->idle_conns[i], struct connection *, list);
-			if (!conn)
-				conn = MT_LIST_POP(&srv->safe_conns[i],
-				                   struct connection *, list);
-			if (!conn)
-				break;
+		if (srv_migrate_conns_to_remove(&srv->idle_conns[i], &idle_conns[i].toremove_conns, -1) > 0)
 			did_remove = 1;
-			MT_LIST_ADDQ(&toremove_connections[i], (struct mt_list *)&conn->list);
-		}
-		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[i]);
+		if (srv_migrate_conns_to_remove(&srv->safe_conns[i], &idle_conns[i].toremove_conns, -1) > 0)
+			did_remove = 1;
 		if (did_remove)
-			task_wakeup(idle_conn_cleanup[i], TASK_WOKEN_OTHER);
+			task_wakeup(idle_conns[i].cleanup_task, TASK_WOKEN_OTHER);
+
+		if ((i = ((i + 1 == global.nbthread) ? 0 : i + 1)) == tid)
+			break;
 	}
 	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conn_srv_lock);
 }
@@ -5253,34 +5279,41 @@ struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsi
 		curr_idle = srv->curr_idle_conns;
 		if (curr_idle == 0)
 			goto remove;
-		exceed_conns = srv->curr_used_conns + curr_idle -
-		               srv->max_used_conns;
+		exceed_conns = srv->curr_used_conns + curr_idle - MAX(srv->max_used_conns, srv->est_need_conns);
 		exceed_conns = to_kill = exceed_conns / 2 + (exceed_conns & 1);
+
+		srv->est_need_conns = (srv->est_need_conns + srv->max_used_conns + 1) / 2;
+		if (srv->est_need_conns < srv->max_used_conns)
+			srv->est_need_conns = srv->max_used_conns;
+
 		srv->max_used_conns = srv->curr_used_conns;
 
-		for (i = 0; i < global.nbthread && to_kill > 0; i++) {
+		if (exceed_conns <= 0)
+			goto remove;
+
+		/* check all threads starting with ours */
+		for (i = tid;;) {
 			int max_conn;
 			int j;
 			int did_remove = 0;
 
 			max_conn = (exceed_conns * srv->curr_idle_thr[i]) /
 			           curr_idle + 1;
-			HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[i]);
-			for (j = 0; j < max_conn; j++) {
-				struct connection *conn = MT_LIST_POP(&srv->idle_conns[i], struct connection *, list);
-				if (!conn)
-					conn = MT_LIST_POP(&srv->safe_conns[i],
-					                   struct connection *, list);
-				if (!conn)
-					break;
+
+			j = srv_migrate_conns_to_remove(&srv->idle_conns[i], &idle_conns[i].toremove_conns, max_conn);
+			if (j > 0)
 				did_remove = 1;
-				MT_LIST_ADDQ(&toremove_connections[i], (struct mt_list *)&conn->list);
-			}
-			HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[i]);
+			if (max_conn - j > 0 &&
+			    srv_migrate_conns_to_remove(&srv->safe_conns[i], &idle_conns[i].toremove_conns, max_conn - j) > 0)
+				did_remove = 1;
+
 			if (did_remove && max_conn < srv->curr_idle_thr[i])
 				srv_is_empty = 0;
 			if (did_remove)
-				task_wakeup(idle_conn_cleanup[i], TASK_WOKEN_OTHER);
+				task_wakeup(idle_conns[i].cleanup_task, TASK_WOKEN_OTHER);
+
+			if ((i = ((i + 1 == global.nbthread) ? 0 : i + 1)) == tid)
+				break;
 		}
 remove:
 		eb32_delete(&srv->idle_node);
@@ -5301,6 +5334,25 @@ remove:
 		task->expire = TICK_ETERNITY;
 
 	return task;
+}
+
+/* config parser for global "tune.idle-pool.shared", accepts "on" or "off" */
+static int cfg_parse_idle_pool_shared(char **args, int section_type, struct proxy *curpx,
+                                      struct proxy *defpx, const char *file, int line,
+                                      char **err)
+{
+	if (too_many_args(1, args, err, NULL))
+		return -1;
+
+	if (strcmp(args[1], "on") == 0)
+		global.tune.options |= GTUNE_IDLE_POOL_SHARED;
+	else if (strcmp(args[1], "off") == 0)
+		global.tune.options &= ~GTUNE_IDLE_POOL_SHARED;
+	else {
+		memprintf(err, "'%s' expects either 'on' or 'off' but got '%s'.", args[0], args[1]);
+		return -1;
+	}
+	return 0;
 }
 
 /* config parser for global "tune.pool-{low,high}-fd-ratio" */
@@ -5330,6 +5382,7 @@ static int cfg_parse_pool_fd_ratio(char **args, int section_type, struct proxy *
 
 /* config keyword parsers */
 static struct cfg_kw_list cfg_kws = {ILH, {
+	{ CFG_GLOBAL, "tune.idle-pool.shared",       cfg_parse_idle_pool_shared },
 	{ CFG_GLOBAL, "tune.pool-high-fd-ratio",     cfg_parse_pool_fd_ratio },
 	{ CFG_GLOBAL, "tune.pool-low-fd-ratio",      cfg_parse_pool_fd_ratio },
 	{ 0, NULL, NULL }

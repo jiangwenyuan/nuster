@@ -1070,51 +1070,100 @@ static void assign_tproxy_address(struct stream *s)
 }
 
 /* Attempt to get a backend connection from the specified mt_list array
- * (safe or idle connections).
+ * (safe or idle connections). The <is_safe> argument means what type of
+ * connection the caller wants.
  */
 static struct connection *conn_backend_get(struct server *srv, int is_safe)
 {
 	struct mt_list *mt_list = is_safe ? srv->safe_conns : srv->idle_conns;
 	struct connection *conn;
-	int i;
+	int i; // thread number
 	int found = 0;
+	int stop;
 
 	/* We need to lock even if this is our own list, because another
 	 * thread may be trying to migrate that connection, and we don't want
 	 * to end up with two threads using the same connection.
 	 */
-	HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+	i = tid;
+	HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 	conn = MT_LIST_POP(&mt_list[tid], struct connection *, list);
-	HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+
+	/* If we failed to pick a connection from the idle list, let's try again with
+	 * the safe list.
+	 */
+	if (!conn && !is_safe && srv->curr_safe_nb > 0) {
+		conn = MT_LIST_POP(&srv->safe_conns[tid], struct connection *, list);
+		if (conn) {
+			is_safe = 1;
+			mt_list = srv->safe_conns;
+		}
+	}
+	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 
 	/* If we found a connection in our own list, and we don't have to
 	 * steal one from another thread, then we're done.
 	 */
-	if (conn) {
-		i = tid;
-		goto fix_conn;
-	}
+	if (conn)
+		goto done;
 
-	/* Lookup all other threads for an idle connection, starting from tid + 1 */
-	for (i = tid; !found && (i = ((i + 1 == global.nbthread) ? 0 : i + 1)) != tid;) {
+	/* pool sharing globally disabled ? */
+	if (!(global.tune.options & GTUNE_IDLE_POOL_SHARED))
+		goto done;
+
+	/* Are we allowed to pick from another thread ? We'll still try
+	 * it if we're running low on FDs as we don't want to create
+	 * extra conns in this case, otherwise we can give up if we have
+	 * too few idle conns.
+	 */
+	if (srv->curr_idle_conns < srv->low_idle_conns &&
+	    ha_used_fds < global.tune.pool_low_count)
+		goto done;
+
+	/* Lookup all other threads for an idle connection, starting from last
+	 * unvisited thread.
+	 */
+	stop = srv->next_takeover;
+	if (stop >= global.nbthread)
+		stop = 0;
+
+	for (i = stop; !found && (i = ((i + 1 == global.nbthread) ? 0 : i + 1)) != stop;) {
 		struct mt_list *elt1, elt2;
 
-		HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[i]);
+		if (!srv->curr_idle_thr[i] || i == tid)
+			continue;
+
+		HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[i].takeover_lock);
 		mt_list_for_each_entry_safe(conn, &mt_list[i], list, elt1, elt2) {
-			if (conn->mux->takeover && conn->mux->takeover(conn) == 0) {
+			if (conn->mux->takeover && conn->mux->takeover(conn, i) == 0) {
 				MT_LIST_DEL_SAFE(elt1);
+				_HA_ATOMIC_ADD(&activity[tid].fd_takeover, 1);
 				found = 1;
 				break;
 			}
 		}
-		HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[i]);
+
+		if (!found && !is_safe && srv->curr_safe_nb > 0) {
+			mt_list_for_each_entry_safe(conn, &srv->safe_conns[i], list, elt1, elt2) {
+				if (conn->mux->takeover && conn->mux->takeover(conn, i) == 0) {
+					MT_LIST_DEL_SAFE(elt1);
+					_HA_ATOMIC_ADD(&activity[tid].fd_takeover, 1);
+					found = 1;
+					is_safe = 1;
+					mt_list = srv->safe_conns;
+					break;
+				}
+			}
+		}
+		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[i].takeover_lock);
 	}
 
 	if (!found)
 		conn = NULL;
-	else {
-fix_conn:
+ done:
+	if (conn) {
 		conn->idle_time = 0;
+		_HA_ATOMIC_STORE(&srv->next_takeover, (i + 1 == global.nbthread) ? 0 : i + 1);
 		_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
 		_HA_ATOMIC_SUB(&srv->curr_idle_thr[i], 1);
 		_HA_ATOMIC_SUB(is_safe ? &srv->curr_safe_nb : &srv->curr_idle_nb, 1);
@@ -1150,6 +1199,7 @@ int connect_server(struct stream *s)
 	int reuse_orphan = 0;
 	int init_mux = 0;
 	int err;
+	int was_unused = 0;
 
 
 	/* This will catch some corner cases such as lying connections resulting from
@@ -1203,22 +1253,28 @@ int connect_server(struct stream *s)
 			    reuse = 1;
 		}
 		else if (!srv_conn && srv->curr_idle_conns > 0) {
-			if (srv->idle_conns &&
+			if (srv->idle_conns && srv->safe_conns &&
 			    ((s->be->options & PR_O_REUSE_MASK) != PR_O_REUSE_NEVR &&
 			     s->txn && (s->txn->flags & TX_NOT_FIRST)) &&
-			    srv->curr_idle_nb > 0) {
+			    srv->curr_idle_nb + srv->curr_safe_nb > 0) {
+				/* we're on the second column of the tables above, let's
+				 * try idle then safe.
+				 */
 				srv_conn = conn_backend_get(srv, 0);
+				was_unused = 1;
 			}
 			else if (srv->safe_conns &&
 			         ((s->txn && (s->txn->flags & TX_NOT_FIRST)) ||
 				  (s->be->options & PR_O_REUSE_MASK) >= PR_O_REUSE_AGGR) &&
 				 srv->curr_safe_nb > 0) {
 				srv_conn = conn_backend_get(srv, 1);
+				was_unused = 1;
 			}
 			else if (srv->idle_conns &&
 			         ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_ALWS) &&
 				 srv->curr_idle_nb > 0) {
 				srv_conn = conn_backend_get(srv, 0);
+				was_unused = 1;
 			}
 			/* If we've picked a connection from the pool, we now have to
 			 * detach it. We may have to get rid of the previous idle
@@ -1269,17 +1325,14 @@ int connect_server(struct stream *s)
 		else {
 			int i;
 
-			for (i = 0; i < global.nbthread; i++) {
-				if (i == tid)
-					continue;
-
+			for (i = tid; (i = ((i + 1 == global.nbthread) ? 0 : i + 1)) != tid;) {
 				// just silence stupid gcc which reports an absurd
 				// out-of-bounds warning for <i> which is always
 				// exactly zero without threads, but it seems to
 				// see it possibly larger.
 				ALREADY_CHECKED(i);
 
-				HA_SPIN_LOCK(OTHER_LOCK, &toremove_lock[tid]);
+				HA_SPIN_LOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 				tokill_conn = MT_LIST_POP(&srv->idle_conns[i],
 				    struct connection *, list);
 				if (!tokill_conn)
@@ -1288,13 +1341,13 @@ int connect_server(struct stream *s)
 				if (tokill_conn) {
 					/* We got one, put it into the concerned thread's to kill list, and wake it's kill task */
 
-					MT_LIST_ADDQ(&toremove_connections[i],
+					MT_LIST_ADDQ(&idle_conns[i].toremove_conns,
 					    (struct mt_list *)&tokill_conn->list);
-					task_wakeup(idle_conn_cleanup[i], TASK_WOKEN_OTHER);
-					HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+					task_wakeup(idle_conns[i].cleanup_task, TASK_WOKEN_OTHER);
+					HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 					break;
 				}
-				HA_SPIN_UNLOCK(OTHER_LOCK, &toremove_lock[tid]);
+				HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 			}
 		}
 
@@ -1340,18 +1393,22 @@ int connect_server(struct stream *s)
 	/* no reuse or failed to reuse the connection above, pick a new one */
 	if (!srv_conn) {
 		srv_conn = conn_new();
+		was_unused = 1;
 		if (srv_conn)
 			srv_conn->target = s->target;
 		srv_cs = NULL;
 	}
 
-	if (srv_conn && srv) {
+	if (srv_conn && srv && was_unused) {
 		_HA_ATOMIC_ADD(&srv->curr_used_conns, 1);
 		/* It's ok not to do that atomically, we don't need an
 		 * exact max.
 		 */
 		if (srv->max_used_conns < srv->curr_used_conns)
 			srv->max_used_conns = srv->curr_used_conns;
+
+		if (srv->est_need_conns < srv->curr_used_conns)
+			srv->est_need_conns = srv->curr_used_conns;
 	}
 	if (!srv_conn || !sockaddr_alloc(&srv_conn->dst)) {
 		if (srv_conn)

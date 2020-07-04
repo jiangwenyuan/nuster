@@ -109,6 +109,7 @@ extern struct task_per_thread task_per_thread[MAX_THREADS];
 __decl_thread(extern HA_SPINLOCK_T rq_lock);  /* spin lock related to run queue */
 __decl_thread(extern HA_RWLOCK_T wq_lock);    /* RW lock related to the wait queue */
 
+void task_kill(struct task *t);
 void __task_wakeup(struct task *t, struct eb_root *);
 void __task_queue(struct task *task, struct eb_root *wq);
 
@@ -321,9 +322,12 @@ static inline struct task *task_unlink_rq(struct task *t)
 	return t;
 }
 
-static inline void tasklet_wakeup(struct tasklet *tl)
+/* schedules tasklet <tl> to run onto thread <thr> or the current thread if
+ * <thr> is negative.
+ */
+static inline void tasklet_wakeup_on(struct tasklet *tl, int thr)
 {
-	if (likely(tl->tid < 0)) {
+	if (likely(thr < 0)) {
 		/* this tasklet runs on the caller thread */
 		if (LIST_ISEMPTY(&tl->list)) {
 			if (tl->state & TASK_SELF_WAKING) {
@@ -348,15 +352,22 @@ static inline void tasklet_wakeup(struct tasklet *tl)
 		}
 	} else {
 		/* this tasklet runs on a specific thread */
-		if (MT_LIST_ADDQ(&task_per_thread[tl->tid].shared_tasklet_list, (struct mt_list *)&tl->list) == 1) {
+		if (MT_LIST_ADDQ(&task_per_thread[thr].shared_tasklet_list, (struct mt_list *)&tl->list) == 1) {
 			_HA_ATOMIC_ADD(&tasks_run_queue, 1);
-			if (sleeping_thread_mask & (1UL << tl->tid)) {
-				_HA_ATOMIC_AND(&sleeping_thread_mask, ~(1UL << tl->tid));
-				wake_thread(tl->tid);
+			if (sleeping_thread_mask & (1UL << thr)) {
+				_HA_ATOMIC_AND(&sleeping_thread_mask, ~(1UL << thr));
+				wake_thread(thr);
 			}
 		}
 	}
+}
 
+/* schedules tasklet <tl> to run onto the thread designated by tl->tid, which
+ * is either its owner thread if >= 0 or the current thread if < 0.
+ */
+static inline void tasklet_wakeup(struct tasklet *tl)
+{
+	tasklet_wakeup_on(tl, tl->tid);
 }
 
 /* Insert a tasklet into the tasklet list. If used with a plain task instead,

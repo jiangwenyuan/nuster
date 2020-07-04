@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.2
                              willy tarreau
-                              2020/06/26
+                              2020/07/04
 
 
 This document covers the configuration language as implemented in the version
@@ -682,6 +682,7 @@ The following keywords are supported in the "global" section :
    - tune.http.cookielen
    - tune.http.logurilen
    - tune.http.maxhdr
+   - tune.idle-pool.shared
    - tune.idletimer
    - tune.lua.forced-yield
    - tune.lua.maxmem
@@ -693,6 +694,8 @@ The following keywords are supported in the "global" section :
    - tune.maxrewrite
    - tune.pattern.cache-size
    - tune.pipesize
+   - tune.pool-high-fd-ratio
+   - tune.pool-low-fd-ratio
    - tune.rcvbuf.client
    - tune.rcvbuf.server
    - tune.recv_enough
@@ -1947,6 +1950,15 @@ tune.http.maxhdr <number>
   1..32767. Keep in mind that each new header consumes 32bits of memory for
   each session, so don't push this limit too high.
 
+tune.idle-pool.shared { on | off }
+  Enables ('on') or disables ('off') sharing of idle connection pools between
+  threads for a same server. The default is to share them between threads in
+  order to minimize the number of persistent connections to a server, and to
+  optimize the connection reuse rate. But to help with debugging or when
+  suspecting a bug in HAProxy around connection reuse, it can be convenient to
+  forcefully disable this idle pool sharing between multiple threads, and force
+  this option to "off". The default is on.
+
 tune.idletimer <timeout>
   Sets the duration after which haproxy will consider that an empty buffer is
   probably associated with an idle stream. This is used to optimally adjust
@@ -2061,12 +2073,6 @@ tune.pipesize <number>
   performed. This has an impact on the kernel's memory footprint, so this must
   not be changed if impacts are not understood.
 
-tune.pool-low-fd-ratio <number>
-  This setting sets the max number of file descriptors (in percentage) used by
-  haproxy globally against the maximum number of file descriptors haproxy can
-  use before we stop putting connection into the idle pool for reuse. The
-  default is 20.
-
 tune.pool-high-fd-ratio <number>
   This setting sets the max number of file descriptors (in percentage) used by
   haproxy globally against the maximum number of file descriptors haproxy can
@@ -2075,6 +2081,12 @@ tune.pool-high-fd-ratio <number>
   descriptor will mean that roughly half of the maximum front connections can
   keep an idle connection behind, anything beyond this probably doesn't make
   much sense in the general case when targeting connection reuse).
+
+tune.pool-low-fd-ratio <number>
+  This setting sets the max number of file descriptors (in percentage) used by
+  haproxy globally against the maximum number of file descriptors haproxy can
+  use before we stop putting connection into the idle pool for reuse. The
+  default is 20.
 
 tune.rcvbuf.client <number>
 tune.rcvbuf.server <number>
@@ -12301,10 +12313,11 @@ crt-list <file>
 
         <crtfile> [\[<sslbindconf> ...\]] [[!]<snifilter> ...]
 
-  sslbindconf support "npn", "alpn", "verify", "ca-file", "ca-verify-file",
-  "no-ca-names", "crl-file", "ecdhe", "curves", "ciphers" configuration. With
-  BoringSSL and Openssl >= 1.1.1 "ssl-min-ver" and "ssl-max-ver" are also
-  supported. It override the configuration set in bind line for the certificate.
+  sslbindconf supports "allow-0rtt", "alpn", "ca-file", "ca-verify-file",
+  "ciphers", "ciphersuites", "crl-file", "curves", "ecdhe", "no-ca-names",
+  "npn", "verify" configuration. With BoringSSL and Openssl >= 1.1.1
+  "ssl-min-ver" and "ssl-max-ver" are also supported. It overrides the
+  configuration set in bind line for the certificate.
 
   Wildcards are supported in the SNI filter. Negative filter are also supported,
   only useful in combination with a wildcard filter to exclude a particular SNI.
@@ -13402,6 +13415,19 @@ on-marked-up <action>
     with an 'U' termination code (for "Up").
 
   Actions are disabled by default
+
+pool-low-conn <max>
+  Set a low threshold on the number of idling connections for a server, below
+  which a thread will not try to steal a connection from another thread. This
+  can be useful to improve CPU usage patterns in scenarios involving many very
+  fast servers, in order to ensure all threads will keep a few idle connections
+  all the time instead of letting them accumulate over one thread and migrating
+  them from thread to thread. Typical values of twice the number of threads
+  seem to show very good performance already with sub-millisecond response
+  times. The default is zero, indicating that any idle connection can be used
+  at any time. It is the recommended setting for normal use. This only applies
+  to connections that can be shared according to the same principles as those
+  applying to "http-reuse".
 
 pool-max-conn <max>
   Set the maximum number of idling connections for a server. -1 means unlimited
@@ -18741,9 +18767,10 @@ as a sample expression rule (see section 7.3). This it useful to add some
 less common information such as the client's SSL certificate's DN, or to log
 the key that would be used to store an entry into a stick table.
 
-Note: spaces must be escaped. A space character is considered as a separator.
-In order to emit a verbatim '%', it must be preceded by another '%' resulting
-in '%%'. HAProxy will automatically merge consecutive separators.
+Note: spaces must be escaped. In configuration directives "log-format",
+"log-format-sd" and "unique-id-format", spaces are considered as
+delimiters and are merged. In order to emit a verbatim '%', it must be
+preceded by another '%' resulting in '%%'.
 
 Note: when using the RFC5424 syslog message format, the characters '"',
 '\' and ']' inside PARAM-VALUE should be escaped with '\' as prefix (see
