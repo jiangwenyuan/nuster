@@ -227,6 +227,8 @@ out:
                         }
 
                         appctx->st1 = NST_DISK_APPLET_DONE;
+
+                        /* fall through */
                     case NST_DISK_APPLET_DONE:
 
                         close(fd);
