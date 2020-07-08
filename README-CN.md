@@ -327,6 +327,8 @@ dict.nosql.used:                0
 
 启动后每次加载最多 `disk-loader` 个硬盘缓存文件的信息到内存（默认100）
 
+`USE_THREAD` 启用时, 会有一个单独的线程进行加载，这时忽略该参数。
+
 ### disk-saver
 
 每次检查最多 `disk-saver` 个data，并将需要保存至硬盘的data保存到硬盘（默认100）

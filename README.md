@@ -341,6 +341,8 @@ After the start of nuster, master process will load information about data previ
 
 During one iteration no more than `disk-loader` files are loaded(by default, 100).
 
+If `USE_THREAD` is used, a separate thread will be created to load disk files and this parameter is ignored.
+
 ### disk-saver
 
 Master process will save `disk sync` cache data periodically.
