@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.2
                              willy tarreau
-                              2020/07/04
+                              2020/07/07
 
 
 This document covers the configuration language as implemented in the version
@@ -201,11 +201,6 @@ HAProxy supports 4 connection modes :
   - server close  : the server-facing connection is closed after the response.
   - close         : the connection is actively closed after end of response.
 
-For HTTP/2, the connection mode resembles more the "server close" mode : given
-the independence of all streams, there is currently no place to hook the idle
-server connection after a response, so it is closed after the response. HTTP/2
-is only supported for incoming connections, not on connections going to
-servers.
 
 
 1.2. HTTP request
@@ -274,10 +269,6 @@ specific to the language, framework or application in use.
 
 HTTP/2 doesn't convey a version information with the request, so the version is
 assumed to be the same as the one of the underlying protocol (i.e. "HTTP/2").
-However, haproxy natively processes HTTP/1.x requests and headers, so requests
-received over an HTTP/2 connection are transcoded to HTTP/1.1 before being
-processed. This explains why they still appear as "HTTP/1.1" in haproxy's logs
-as well as in server logs.
 
 
 1.2.2. The request headers
@@ -295,7 +286,10 @@ define a total of 3 values for the "Accept:" header.
 Contrary to a common misconception, header names are not case-sensitive, and
 their values are not either if they refer to other header names (such as the
 "Connection:" header). In HTTP/2, header names are always sent in lower case,
-as can be seen when running in debug mode.
+as can be seen when running in debug mode. Internally, all header names are
+normalized to lower case so that HTTP/1.x and HTTP/2 use the exact same
+representation, and they are sent as-is on the other side. This explains why an
+HTTP/1.x request typed with camel case is delivered in lower case.
 
 The end of the headers is indicated by the first empty line. People often say
 that it's a double line feed, which is not exact, even if a double line feed
@@ -704,6 +698,7 @@ The following keywords are supported in the "global" section :
    - tune.sndbuf.client
    - tune.sndbuf.server
    - tune.ssl.cachesize
+   - tune.ssl.keylog
    - tune.ssl.lifetime
    - tune.ssl.force-private-cache
    - tune.ssl.maxrecord
@@ -1410,7 +1405,7 @@ ssl-server-verify [none|required]
   forced using cmdline option '-dV'.
 
 ssl-skip-self-issued-ca
-  Self issued CA, aka x509 root CA, is the enchor for chain validation: as a
+  Self issued CA, aka x509 root CA, is the anchor for chain validation: as a
   server is useless to send it, client must have it. Standard configuration
   need to not include such CA in PEM file. This option allows you to keep such
   CA in PEM file without sending it to the client. Use case is to provide
@@ -2157,6 +2152,44 @@ tune.ssl.force-private-cache
   this case, adding a first layer of hash-based load balancing before the SSL
   layer might limit the impact of the lack of session sharing.
 
+tune.ssl.keylog { on | off }
+  This option activates the logging of the TLS keys. It should be used with
+  care as it will consume more memory per SSL session and could decrease
+  performances. This is disabled by default.
+
+  These sample fetches should be used to generate the SSLKEYLOGFILE that is
+  required to decipher traffic with wireshark.
+
+  https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS/Key_Log_Format
+
+  The SSLKEYLOG is a series of lines which are formatted this way:
+
+    <Label> <space> <ClientRandom> <space> <Secret>
+
+  The ClientRandom is provided by the %[ssl_fc_client_random,hex] sample
+  fetch, the secret and the Label could be find in the array below. You need
+  to generate a SSLKEYLOGFILE with all the labels in this array.
+
+  The following sample fetches are hexadecimal strings and does not need to be
+  converted.
+
+  SSLKEYLOGFILE Label             |  Sample fetches for the Secrets
+  --------------------------------|-----------------------------------------
+  CLIENT_EARLY_TRAFFIC_SECRET     |  %[ssl_fc_client_early_traffic_secret]
+  CLIENT_HANDSHAKE_TRAFFIC_SECRET |  %[ssl_fc_client_handshake_traffic_secret]
+  SERVER_HANDSHAKE_TRAFFIC_SECRET |  %[ssl_fc_server_handshake_traffic_secret]
+  CLIENT_TRAFFIC_SECRET_0         |  %[ssl_fc_client_traffic_secret_0]
+  SERVER_TRAFFIC_SECRET_0         |  %[ssl_fc_server_traffic_secret_0]
+  EXPORTER_SECRET                 |  %[ssl_fc_exporter_secret]
+  EARLY_EXPORTER_SECRET           |  %[ssl_fc_early_exporter_secret]
+
+  This is only available with OpenSSL 1.1.1, and useful with TLS1.3 session.
+
+  If you want to generate the content of a SSLKEYLOGFILE with TLS < 1.3, you
+  only need this line:
+
+  "CLIENT_RANDOM %[ssl_fc_client_random,hex] %[ssl_fc_session_key,hex]"
+
 tune.ssl.lifetime <timeout>
   Sets how long a cached SSL session may remain valid. This time is expressed
   in seconds and defaults to 300 (5 min). It is important to understand that it
@@ -2465,7 +2498,7 @@ table <tablename> type {ip | integer | string [len <length>] | binary [len <leng
       backend t1
           stick-table type string size 10m store gpc0 peers mypeers
 
-  Here "t1" table declared in "mypeeers" section has "mypeers/t1" as global name.
+  Here "t1" table declared in "mypeers" section has "mypeers/t1" as global name.
   "t1" table declared as a backend as "t1" as global name. But at peer protocol
   level the former table is named "/t1", the latter is again named "t1".
 
@@ -2599,7 +2632,7 @@ ring <ringname>
   Creates a new ring-buffer with name <ringname>.
 
 description <text>
-  The descritpition is an optional description string of the ring. It will
+  The description is an optional description string of the ring. It will
   appear on CLI. By default, <name> is reused to fill this field.
 
 format <format>
@@ -3995,7 +4028,7 @@ errorfiles <name> [<code> ...]
   http-errors section are imported. Otherwise, only error files associated to
   the listed status code are imported. Those error files override the already
   defined custom errors for the proxy. And they may be overridden by following
-  ones. Fonctionnly, it is exactly the same than declaring all error files by
+  ones. Functionally, it is exactly the same as declaring all error files by
   hand using "errorfile" directives.
 
   See also : "http-error", "errorfile", "errorloc", "errorloc302" ,
@@ -4540,7 +4573,7 @@ http-after-response strict-mode { on | off }
 
   By default, the strict rewriting mode is enabled. Its value is also reset
   when a ruleset evaluation ends. So, for instance, if you change the mode on
-  the bacnkend, the default mode is restored when HAProxy starts the frontend
+  the backend, the default mode is restored when HAProxy starts the frontend
   rules evaluation.
 
 http-after-response unset-var(<var-name>) [ { if | unless } <condition> ]
@@ -4565,7 +4598,7 @@ http-check comment <string>
   It only works for connect, send and expect rules. It is useful to make
   user-friendly error reporting.
 
-  See also : "option httpchk", "http-check conncet", "http-check send" and
+  See also : "option httpchk", "http-check connect", "http-check send" and
              "http-check expect".
 
 
@@ -4580,7 +4613,7 @@ http-check connect [default] [port <expr>] [addr <ip>] [send-proxy]
     comment <msg>  defines a message to report if the rule evaluation fails.
 
     default      Use default options of the server line to do the health
-                 checks. The server options are used only if not redifined.
+                 checks. The server options are used only if not redefined.
 
     port <expr>  if not set, check port or server port is used.
                  It tells HAProxy where to open the connection to.
@@ -4874,7 +4907,7 @@ http-check send [meth <method>] [{ uri <uri> | uri-lf <fmt> }>] [ver <version>]
 
     ver <version>  is the optional HTTP version string. It defaults to
                    "HTTP/1.0" but some servers might behave incorrectly in HTTP
-                   1.0, so turningit to HTTP/1.1 may sometimes help. Note that
+                   1.0, so turning it to HTTP/1.1 may sometimes help. Note that
                    the Host field is mandatory in HTTP/1.1, use "hdr" argument
                    to add it.
 
@@ -4899,7 +4932,7 @@ http-check send [meth <method>] [{ uri <uri> | uri-lf <fmt> }>] [ver <version>]
   "http-check send". If so, it will be ignored. The old trick consisting to add
   headers after the version string on the "option httpchk" line is now
   deprecated. Note also the "Connection: close" header is still added if a
-  "http-check expect" direcive is defined independently of this directive, just
+  "http-check expect" directive is defined independently of this directive, just
   like the state header if the directive "http-check send-state" is defined.
 
   Also "http-check send" doesn't support HTTP keep-alive. Keep in mind that it
@@ -5453,7 +5486,7 @@ http-request return [status <code>] [content-type <type>]
   This stops the evaluation of the rules and immediately returns a response. The
   default status code used for the response is 200. It can be optionally
   specified as an arguments to "status". The response content-type may also be
-  specified as an argument to "content-type". Finally the response itselft may
+  specified as an argument to "content-type". Finally the response itself may
   be defined. If can be a full HTTP response specifying the errorfile to use,
   or the response payload specifying the file or the string to use. These rules
   are followed to create the response :
@@ -5465,20 +5498,20 @@ http-request return [status <code>] [content-type <type>]
 
   * If "default-errorfiles" argument is set, the proxy's errorfiles are
     considered.  If the "status" argument is defined, it must be one of the
-    status code handled by hparoxy (200, 400, 403, 404, 405, 408, 410, 413,
+    status code handled by haproxy (200, 400, 403, 404, 405, 408, 410, 413,
     425, 429, 500, 502, 503, and 504). The "content-type" argument, if any,
     is ignored.
 
   * If a specific errorfile is defined, with an "errorfile" argument, the
     corresponding file, containing a full HTTP response, is returned. Only the
     "status" argument is considered. It must be one of the status code handled
-    by hparoxy (200, 400, 403, 404, 405, 408, 410, 413, 425, 429, 500, 502, 503,
+    by haproxy (200, 400, 403, 404, 405, 408, 410, 413, 425, 429, 500, 502, 503,
     and 504). The "content-type" argument, if any, is ignored.
 
   * If an http-errors section is defined, with an "errorfiles" argument, the
     corresponding file in the specified http-errors section, containing a full
     HTTP response, is returned. Only the "status" argument is considered. It
-    must be one of the status code handled by hparoxy (200, 400, 403, 404, 405,
+    must be one of the status code handled by haproxy (200, 400, 403, 404, 405,
     408, 410, 413, 425, 429, 500, 502, 503, and 504). The "content-type"
     argument, if any, is ignored.
 
@@ -5507,7 +5540,7 @@ http-request return [status <code>] [content-type <type>]
   No further "http-request" rules are evaluated.
 
   Example:
-    http-request return errorfile /etc/haproy/errorfiles/200.http \
+    http-request return errorfile /etc/haproxy/errorfiles/200.http \
         if { path /ping }
 
     http-request return content-type image/x-icon file /var/www/favicon.ico  \
@@ -6100,7 +6133,7 @@ http-response return [status <code>] [content-type <type>]
   This stops the evaluation of the rules and immediately returns a response. The
   default status code used for the response is 200. It can be optionally
   specified as an arguments to "status". The response content-type may also be
-  specified as an argument to "content-type". Finally the response itselft may
+  specified as an argument to "content-type". Finally the response itself may
   be defined. If can be a full HTTP response specifying the errorfile to use,
   or the response payload specifying the file or the string to use. These rules
   are followed to create the response :
@@ -6112,20 +6145,20 @@ http-response return [status <code>] [content-type <type>]
 
   * If "default-errorfiles" argument is set, the proxy's errorfiles are
     considered.  If the "status" argument is defined, it must be one of the
-    status code handled by hparoxy (200, 400, 403, 404, 405, 408, 410, 413,
+    status code handled by haproxy (200, 400, 403, 404, 405, 408, 410, 413,
     425, 429, 500, 502, 503, and 504). The "content-type" argument, if any,
     is ignored.
 
   * If a specific errorfile is defined, with an "errorfile" argument, the
     corresponding file, containing a full HTTP response, is returned. Only the
     "status" argument is considered. It must be one of the status code handled
-    by hparoxy (200, 400, 403, 404, 405, 408, 410, 413, 425, 429, 500, 502, 503,
+    by haproxy (200, 400, 403, 404, 405, 408, 410, 413, 425, 429, 500, 502, 503,
     and 504). The "content-type" argument, if any, is ignored.
 
   * If an http-errors section is defined, with an "errorfiles" argument, the
     corresponding file in the specified http-errors section, containing a full
     HTTP response, is returned. Only the "status" argument is considered. It
-    must be one of the status code handled by hparoxy (200, 400, 403, 404, 405,
+    must be one of the status code handled by haproxy (200, 400, 403, 404, 405,
     408, 410, 413, 425, 429, 500, 502, 503, and 504). The "content-type"
     argument, if any, is ignored.
 
@@ -6154,7 +6187,7 @@ http-response return [status <code>] [content-type <type>]
   No further "http-response" rules are evaluated.
 
   Example:
-    http-response return errorfile /etc/haproy/errorfiles/200.http \
+    http-response return errorfile /etc/haproxy/errorfiles/200.http \
         if { status eq 404 }
 
     http-response return content-type text/plain  \
@@ -6320,7 +6353,7 @@ http-response strict-mode { on | off }
 
   By default, the strict rewriting mode is enabled. Its value is also reset
   when a ruleset evaluation ends. So, for instance, if you change the mode on
-  the bacnkend, the default mode is restored when HAProxy starts the frontend
+  the backend, the default mode is restored when HAProxy starts the frontend
   rules evaluation.
 
 http-response track-sc0 <key> [table <table>] [ { if | unless } <condition> ]
@@ -7750,7 +7783,7 @@ option httpchk <method> <uri> <version>
   "httpchk" option does not necessarily require an HTTP backend, it also works
   with plain TCP backends. This is particularly useful to check simple scripts
   bound to some dedicated ports using the inetd daemon. However, it will always
-  internally relies on an HTX mutliplexer. Thus, it means the request
+  internally relies on an HTX multiplexer. Thus, it means the request
   formatting and the response parsing will be strict.
 
   Note : For a while, there was no way to add headers or body in the request
@@ -10391,7 +10424,7 @@ tcp-check connect [default] [port <expr>] [addr <ip>] [send-proxy] [via-socks4]
     comment <msg>  defines a message to report if the rule evaluation fails.
 
     default      Use default options of the server line to do the health
-                 checks. The server options are used only if not redifined.
+                 checks. The server options are used only if not redefined.
 
     port <expr>  if not set, check port or server port is used.
                  It tells HAProxy where to open the connection to.
@@ -12623,7 +12656,7 @@ proto <name>
   must be compatible with the mode of the frontend (TCP or HTTP). It must also
   be usable on the frontend side. The list of available protocols is reported
   in haproxy -vv.
-  Idea behind this optipon is to bypass the selection of the best multiplexer's
+  Idea behind this option is to bypass the selection of the best multiplexer's
   protocol for all connections instantiated from this listening socket. For
   instance, it is possible to force the http/2 on clear TCP by specifying "proto
   h2" on the bind line.
@@ -12973,7 +13006,7 @@ check-proto <name>
   connections. It must be compatible with the health-check type (TCP or
   HTTP). It must also be usable on the backend side. The list of available
   protocols is reported in haproxy -vv.
-  Idea behind this optipon is to bypass the selection of the best multiplexer's
+  Idea behind this option is to bypass the selection of the best multiplexer's
   protocol for health-check connections established to this server.
   If not defined, the server one will be used, if set.
 
@@ -13455,7 +13488,7 @@ proto <name>
   server. It must be compatible with the mode of the backend (TCP or HTTP). It
   must also be usable on the backend side. The list of available protocols is
   reported in haproxy -vv.
-  Idea behind this optipon is to bypass the selection of the best multiplexer's
+  Idea behind this option is to bypass the selection of the best multiplexer's
   protocol for all connections established to this server.
 
 redir <prefix>
@@ -14733,7 +14766,7 @@ concat([<start>],[<var>],[<end>])
   allow to concatenate variables with delimiters to an existing set of
   variables. This can be used to build new variables made of a succession of
   other variables, such as colon-delimited values. If commas or closing
-  parethesis are needed as delimiters, they must be protected by quotes or
+  parenthesis are needed as delimiters, they must be protected by quotes or
   backslashes, themselves protected so that they are not stripped by the first
   level parser. See examples below.
 
@@ -17020,6 +17053,51 @@ ssl_fc_client_random : binary
   was made over an SSL/TLS transport layer. It is useful to to decrypt traffic
   sent using ephemeral ciphers. This requires OpenSSL >= 1.1.0, or BoringSSL.
 
+ssl_fc_client_early_traffic_secret : string
+  Return the CLIENT_EARLY_TRAFFIC_SECRET as an hexadecimal string for the
+  front connection when the incoming connection was made over a TLS 1.3
+  transport layer.
+  Require OpenSSL >= 1.1.1. This is one of the keys dumped by the OpenSSL
+  keylog callback to generate the SSLKEYLOGFILE. The SSL Key logging must be
+  activated with "tune.ssl.keylog on" in the global section. See also
+  "tune.ssl.keylog"
+
+ssl_fc_client_handshake_traffic_secret : string
+  Return the CLIENT_HANDSHAKE_TRAFFIC_SECRET as an hexadecimal string for the
+  front connection when the incoming connection was made over a TLS 1.3
+  transport layer.
+  Require OpenSSL >= 1.1.1. This is one of the keys dumped by the OpenSSL
+  keylog callback to generate the SSLKEYLOGFILE. The SSL Key logging must be
+  activated with "tune.ssl.keylog on" in the global section. See also
+  "tune.ssl.keylog"
+
+ssl_fc_client_traffic_secret_0 : string
+  Return the CLIENT_TRAFFIC_SECRET_0 as an hexadecimal string for the
+  front connection when the incoming connection was made over a TLS 1.3
+  transport layer.
+  Require OpenSSL >= 1.1.1. This is one of the keys dumped by the OpenSSL
+  keylog callback to generate the SSLKEYLOGFILE. The SSL Key logging must be
+  activated with "tune.ssl.keylog on" in the global section. See also
+  "tune.ssl.keylog"
+
+ssl_fc_exporter_secret : string
+  Return the EXPORTER_SECRET as an hexadecimal string for the
+  front connection when the incoming connection was made over a TLS 1.3
+  transport layer.
+  Require OpenSSL >= 1.1.1. This is one of the keys dumped by the OpenSSL
+  keylog callback to generate the SSLKEYLOGFILE. The SSL Key logging must be
+  activated with "tune.ssl.keylog on" in the global section. See also
+  "tune.ssl.keylog"
+
+ssl_fc_early_exporter_secret : string
+  Return the EARLY_EXPORTER_SECRET as an hexadecimal string for the
+  front connection when the incoming connection was made over an TLS 1.3
+  transport layer.
+  Require OpenSSL >= 1.1.1. This is one of the keys dumped by the OpenSSL
+  keylog callback to generate the SSLKEYLOGFILE. The SSL Key logging must be
+  activated with "tune.ssl.keylog on" in the global section. See also
+  "tune.ssl.keylog"
+
 ssl_fc_has_crt : boolean
   Returns true if a client certificate is present in an incoming connection over
   SSL/TLS transport layer. Useful if 'verify' statement is set to 'optional'.
@@ -17063,6 +17141,24 @@ ssl_fc_unique_id : binary
   When the incoming connection was made over an SSL/TLS transport layer,
   returns the TLS unique ID as defined in RFC5929 section 3. The unique id
   can be encoded to base64 using the converter: "ssl_bc_unique_id,base64".
+
+ssl_fc_server_handshake_traffic_secret : string
+  Return the SERVER_HANDSHAKE_TRAFFIC_SECRET as an hexadecimal string for the
+  front connection when the incoming connection was made over a TLS 1.3
+  transport layer.
+  Require OpenSSL >= 1.1.1. This is one of the keys dumped by the OpenSSL
+  keylog callback to generate the SSLKEYLOGFILE. The SSL Key logging must be
+  activated with "tune.ssl.keylog on" in the global section. See also
+  "tune.ssl.keylog"
+
+ssl_fc_server_traffic_secret_0 : string
+  Return the SERVER_TRAFFIC_SECRET_0 as an hexadecimal string for the
+  front connection when the incoming connection was made over an TLS 1.3
+  transport layer.
+  Require OpenSSL >= 1.1.1. This is one of the keys dumped by the OpenSSL
+  keylog callback to generate the SSLKEYLOGFILE. The SSL Key logging must be
+  activated with "tune.ssl.keylog on" in the global section. See also
+  "tune.ssl.keylog"
 
 ssl_fc_server_random : binary
   Returns the server random of the front connection when the incoming connection
@@ -19841,7 +19937,7 @@ See also : section 9.2 about the compression filter, section 9.5 about the
 9.5. Fcgi-app
 -------------
 
-filter fcg-app <name>
+filter fcgi-app <name>
 
   Arguments :
 
@@ -19954,7 +20050,7 @@ option get-values
 no option get-values
   Enable or disable the retrieve of variables about connection management.
 
-  HAproxy is able to send the record FCGI_GET_VALUES on connection
+  HAProxy is able to send the record FCGI_GET_VALUES on connection
   establishment to retrieve the value for following variables:
 
     * FCGI_MAX_REQS     The maximum number of concurrent requests this
