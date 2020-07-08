@@ -1,5 +1,14 @@
 # nuster Changelog
 
+## 5.2.0.22 - 2020-07-08
+
+Backported HAProxy v2.2.0
+
+### Added
+
+* Use thread to do disk load when thread is enabled
+* Use a new versioning system
+
 ## 5.0.12.21 - 2020-06-09
 
 ### Changed
