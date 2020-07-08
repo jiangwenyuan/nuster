@@ -169,6 +169,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
 
             appctx->ctx.nuster.store.disk.offset = offset;
 
+            /* fall through */
         case NST_DISK_APPLET_PAYLOAD:
             buf = get_trash_chunk();
             p   = buf->area;
@@ -220,6 +221,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
                 break;
             }
 
+            /* fall through */
         case NST_DISK_APPLET_EOP:
             buf = get_trash_chunk();
             p   = buf->area;
@@ -270,6 +272,7 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
 
             close(fd);
 
+            /* fall through */
         case NST_DISK_APPLET_END:
 
             if(!htx_add_endof(res_htx, HTX_BLK_EOM)) {
@@ -279,6 +282,8 @@ _nst_cache_disk_handler(hpx_appctx_t *appctx) {
             }
 
             appctx->st1 = NST_DISK_APPLET_DONE;
+
+            /* fall through */
         case NST_DISK_APPLET_DONE:
 
             if(!(res->flags & CF_SHUTR) ) {
