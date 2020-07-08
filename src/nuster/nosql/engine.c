@@ -212,6 +212,7 @@ out:
                             break;
                         }
 
+                        /* fall through */
                     case NST_DISK_APPLET_EOP:
 
                         if(!htx_add_endof(res_htx, HTX_BLK_EOT)) {
