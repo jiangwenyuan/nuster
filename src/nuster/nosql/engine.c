@@ -369,6 +369,7 @@ nst_nosql_housekeeping() {
             }
         }
 
+#ifndef USE_THREAD
         while(!store->disk.loaded && disk_loader--) {
             nst_disk_load(nuster.nosql);
 
@@ -376,6 +377,7 @@ nst_nosql_housekeeping() {
                 break;
             }
         }
+#endif
 
     }
 }
