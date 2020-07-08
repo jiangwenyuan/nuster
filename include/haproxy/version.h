@@ -33,13 +33,13 @@
 #ifdef  CONFIG_PRODUCT_BRANCH
 #define PRODUCT_BRANCH    CONFIG_PRODUCT_BRANCH
 #else
-#define PRODUCT_BRANCH   "2.2"
+#define PRODUCT_BRANCH   "2.3"
 #endif
 
 #ifdef  CONFIG_PRODUCT_STATUS
 #define PRODUCT_STATUS    CONFIG_PRODUCT_STATUS
 #else
-#define PRODUCT_STATUS   "Status: long-term supported branch - will stop receiving fixes around Q2 2025."
+#define PRODUCT_STATUS   "Status: development branch - not safe for use in production."
 #endif
 
 #ifdef CONFIG_PRODUCT_URL_BUGS
