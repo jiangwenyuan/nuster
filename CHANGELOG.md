@@ -1,5 +1,11 @@
 # nuster Changelog
 
+## 5.2.1.22 - 2020-07-09
+
+### Fixed
+
+* issue #90, proxy count may be less than max uuid
+
 ## 5.2.0.22 - 2020-07-08
 
 Backported HAProxy v2.2.0
