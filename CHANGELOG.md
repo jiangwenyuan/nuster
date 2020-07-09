@@ -1,5 +1,15 @@
 # nuster Changelog
 
+## 5.1.0.21 - 2020-07-09
+
+renumbered
+
+## 5.0.13.21 - 2020-07-09
+
+### Fixed
+
+* issue #90, proxy count may be less than max uuid
+
 ## 5.0.12.21 - 2020-06-09
 
 ### Changed
