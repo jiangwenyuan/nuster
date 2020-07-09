@@ -97,7 +97,7 @@ _nst_proxy_init() {
             }
         }
 
-        proxy_cnt++;
+        proxy_cnt = MAX(proxy_cnt, px1->uuid + 1);
         px1 = px1->next;
     }
 
