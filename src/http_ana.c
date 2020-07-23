@@ -1252,6 +1252,8 @@ int http_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 	msg->msg_state = HTTP_MSG_ENDING;
 
   ending:
+	req->flags &= ~CF_EXPECT_MORE; /* no more data are expected */
+
 	/* other states, ENDING...TUNNEL */
 	if (msg->msg_state >= HTTP_MSG_DONE)
 		goto done;
@@ -1342,7 +1344,7 @@ int http_request_forward_body(struct stream *s, struct channel *req, int an_bit)
 	 * flag with the last block of forwarded data, which would cause an
 	 * additional delay to be observed by the receiver.
 	 */
-	if (msg->flags & HTTP_MSGF_TE_CHNK)
+	if (HAS_REQ_DATA_FILTERS(s))
 		req->flags |= CF_EXPECT_MORE;
 
 	DBG_TRACE_DEVEL("waiting for more data to forward",
@@ -2338,6 +2340,8 @@ int http_response_forward_body(struct stream *s, struct channel *res, int an_bit
 	msg->msg_state = HTTP_MSG_ENDING;
 
   ending:
+	res->flags &= ~CF_EXPECT_MORE; /* no more data are expected */
+
 	/* other states, ENDING...TUNNEL */
 	if (msg->msg_state >= HTTP_MSG_DONE)
 		goto done;
@@ -2417,7 +2421,7 @@ int http_response_forward_body(struct stream *s, struct channel *res, int an_bit
 	 * flag with the last block of forwarded data, which would cause an
 	 * additional delay to be observed by the receiver.
 	 */
-	if ((msg->flags & HTTP_MSGF_TE_CHNK) || (msg->flags & HTTP_MSGF_COMPRESSING))
+	if (HAS_RSP_DATA_FILTERS(s))
 		res->flags |= CF_EXPECT_MORE;
 
 	/* the stream handler will take care of timeouts and errors */
@@ -4580,6 +4584,7 @@ int http_forward_proxy_resp(struct stream *s, int final)
 		channel_auto_close(res);
 		channel_shutr_now(res);
 		res->flags |= CF_EOI; /* The response is terminated, add EOI */
+		htxbuf(&res->buf)->flags |= HTX_FL_EOI; /* no more data are expected */
 	}
 	else {
 		/* Send ASAP informational messages. Rely on CF_EOI for final

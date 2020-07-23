@@ -1,6 +1,37 @@
 ChangeLog :
 ===========
 
+2020/07/23 : 2.2.1
+    - BUG/MINOR: sample: Free str.area in smp_check_const_bool
+    - BUG/MINOR: sample: Free str.area in smp_check_const_meth
+    - BUG/MEDIUM: lists: add missing store barrier on MT_LIST_BEHEAD()
+    - BUG/MEDIUM: lists: add missing store barrier in MT_LIST_ADD/MT_LIST_ADDQ
+    - CONTRIB: da: fix memory leak in dummy function da_atlas_open()
+    - BUG/MEDIUM: mux-h2: Don't add private connections in available connection list
+    - BUG/MEDIUM: mux-fcgi: Don't add private connections in available connection list
+    - BUG/MEDIUM: mux-h1: Continue to process request when switching in tunnel mode
+    - BUG/MINOR: mux-fcgi: Handle empty STDERR record
+    - BUG/MINOR: mux-fcgi: Set conn state to RECORD_P when skipping the record padding
+    - BUG/MINOR: mux-fcgi: Set flags on the right stream field for empty FCGI_STDOUT
+    - BUG/MEDIUM: log: issue mixing sampled to not sampled log servers.
+    - BUG/MEDIUM: fcgi-app: fix memory leak in fcgi_flt_http_headers
+    - BUG/MEDIUM: server: resolve state file handle leak on reload
+    - BUG/MEDIUM: server: fix possibly uninitialized state file on close
+    - BUG/MEDIUM: channel: Be aware of SHUTW_NOW flag when output data are peeked
+    - BUILD: config: address build warning on raspbian+rpi4
+    - BUG/MAJOR: tasks: make sure to always lock the shared wait queue if needed
+    - BUILD: config: fix again bugs gcc warnings on calloc
+    - DOC: ssl: req_ssl_sni needs implicit TLS
+    - BUG/MEDIUM: arg: empty args list must be dropped
+    - BUG/MEDIUM: resolve: fix init resolving for ring and peers section.
+    - BUG/MAJOR: tasks: don't requeue global tasks into the local queue
+    - BUG/MAJOR: dns: Make the do-resolve action thread-safe
+    - BUG/MEDIUM: dns: Release answer items when a DNS resolution is freed
+    - MEDIUM: htx: Add a flag on a HTX message when no more data are expected
+    - BUG/MINOR: htx: add two missing HTX_FL_EOI and remove an unexpected one
+    - BUG/MEDIUM: stream-int: Don't set MSG_MORE flag if no more data are expected
+    - BUG/MEDIUM: http-ana: Only set CF_EXPECT_MORE flag on data filtering
+
 2020/07/07 : 2.2.0
     - BUILD: mux-h2: fix typo breaking build when using DEBUG_LOCK
     - CLEANUP: makefile: update the outdated list of DEBUG_xxx options

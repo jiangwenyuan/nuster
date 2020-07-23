@@ -1937,7 +1937,8 @@ static int server_template_init(struct server *srv, struct proxy *px)
 	return i - srv->tmpl_info.nb_low;
 }
 
-int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy, struct proxy *defproxy, int parse_addr, int in_peers_section)
+int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy,
+                 struct proxy *defproxy, int parse_addr, int in_peers_section, int initial_resolve)
 {
 	struct server *newsrv = NULL;
 	const char *err = NULL;
@@ -2053,7 +2054,7 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 			if (!parse_addr)
 				goto skip_addr;
 
-			sk = str2sa_range(args[cur_arg], &port, &port1, &port2, &errmsg, NULL, &fqdn, 0);
+			sk = str2sa_range(args[cur_arg], &port, &port1, &port2, &errmsg, NULL, &fqdn, initial_resolve);
 			if (!sk) {
 				ha_alert("parsing [%s:%d] : '%s %s' : %s\n", file, linenum, args[0], args[1], errmsg);
 				err_code |= ERR_ALERT | ERR_FATAL;
@@ -3162,7 +3163,7 @@ void apply_server_state(void)
 	struct state_line *st;
 	struct ebmb_node *node, *next_node;
 
-
+	f = NULL;
 	global_file_version = 0;
 	globalfilepathlen = 0;
 	/* create the globalfilepath variable */
@@ -3267,6 +3268,11 @@ void apply_server_state(void)
 		}
 	}
  out_load_server_state_in_tree:
+
+	if (f) {
+		fclose(f);
+		f = NULL;
+	}
 
 	/* parse all proxies and load states form tree (global file) or from local file */
 	for (curproxy = proxies_list; curproxy != NULL; curproxy = curproxy->next) {
@@ -3447,9 +3453,11 @@ void apply_server_state(void)
 				/* now we can proceed with server's state update */
 				srv_update_state(srv, version, srv_params);
 			}
+
+			fileclose:
+				fclose(f);
+
 		}
-fileclose:
-		fclose(f);
 	}
 
 	/* now free memory allocated for the tree */

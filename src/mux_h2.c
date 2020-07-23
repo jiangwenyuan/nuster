@@ -3945,25 +3945,32 @@ static void h2_detach(struct conn_stream *cs)
 			/* Never ever allow to reuse a connection from a non-reuse backend */
 			if ((h2c->proxy->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
 				h2c->conn->flags |= CO_FL_PRIVATE;
-			if (!h2c->conn->owner && (h2c->conn->flags & CO_FL_PRIVATE)) {
-				h2c->conn->owner = sess;
-				if (!session_add_conn(sess, h2c->conn, h2c->conn->target)) {
-					h2c->conn->owner = NULL;
-					if (eb_is_empty(&h2c->streams_by_id)) {
-						h2c->conn->mux->destroy(h2c);
-						TRACE_DEVEL("leaving on error after killing outgoing connection", H2_EV_STRM_END|H2_EV_H2C_ERR);
+			if (h2c->conn->flags & CO_FL_PRIVATE) {
+				if (!h2c->conn->owner) {
+					h2c->conn->owner = sess;
+					if (!session_add_conn(sess, h2c->conn, h2c->conn->target)) {
+						h2c->conn->owner = NULL;
+						if (eb_is_empty(&h2c->streams_by_id)) {
+							h2c->conn->mux->destroy(h2c);
+							TRACE_DEVEL("leaving on error after killing outgoing connection", H2_EV_STRM_END|H2_EV_H2C_ERR);
+							return;
+						}
+					}
+				}
+				if (eb_is_empty(&h2c->streams_by_id) && h2c->conn->owner == sess) {
+					if (session_check_idle_conn(h2c->conn->owner, h2c->conn) != 0) {
+						/* At this point either the connection is destroyed, or it's been added to the server idle list, just stop */
+						TRACE_DEVEL("leaving without reusable idle connection", H2_EV_STRM_END);
 						return;
 					}
 				}
+
+				/* Be sure to remove the connection from the available_conns list */
+				if (!MT_LIST_ISEMPTY(&h2c->conn->list))
+					MT_LIST_DEL(&h2c->conn->list);
 			}
-			if (eb_is_empty(&h2c->streams_by_id)) {
-				if (sess && h2c->conn->owner == sess &&
-				    session_check_idle_conn(h2c->conn->owner, h2c->conn) != 0) {
-					/* At this point either the connection is destroyed, or it's been added to the server idle list, just stop */
-					TRACE_DEVEL("leaving without reusable idle connection", H2_EV_STRM_END);
-					return;
-				}
-				if (!(h2c->conn->flags & CO_FL_PRIVATE)) {
+			else {
+				if (eb_is_empty(&h2c->streams_by_id)) {
 					if (!srv_add_to_idle_list(objt_server(h2c->conn->target), h2c->conn, 1)) {
 						/* The server doesn't want it, let's kill the connection right away */
 						h2c->conn->mux->destroy(h2c);
@@ -3978,9 +3985,10 @@ static void h2_detach(struct conn_stream *cs)
 					return;
 
 				}
-			} else if (MT_LIST_ISEMPTY(&h2c->conn->list) &&
-			           h2_avail_streams(h2c->conn) > 0 && objt_server(h2c->conn->target)) {
-				LIST_ADD(&__objt_server(h2c->conn->target)->available_conns[tid], mt_list_to_list(&h2c->conn->list));
+				else if (MT_LIST_ISEMPTY(&h2c->conn->list) &&
+					 h2_avail_streams(h2c->conn) > 0 && objt_server(h2c->conn->target)) {
+					LIST_ADD(&__objt_server(h2c->conn->target)->available_conns[tid], mt_list_to_list(&h2c->conn->list));
+				}
 			}
 		}
 	}
@@ -4453,6 +4461,7 @@ next_frame:
 
 	if ((h2c->dff & H2_F_HEADERS_END_STREAM)) {
 		/* Mark the end of message using EOM */
+		htx->flags |= HTX_FL_EOI; /* no more data are expected. Only EOM remains to add now */
 		if (!htx_add_endof(htx, HTX_BLK_EOM)) {
 			TRACE_STATE("failed to append HTX EOM block into rxbuf", H2_EV_RX_FRAME|H2_EV_RX_HDR|H2_EV_H2S_ERR, h2c->conn);
 			goto fail;
@@ -4588,6 +4597,7 @@ try_again:
 	 */
 
 	if (h2c->dff & H2_F_DATA_END_STREAM) {
+		htx->flags |= HTX_FL_EOI; /* no more data are expected. Only EOM remains to add now */
 		if (!htx_add_endof(htx, HTX_BLK_EOM)) {
 			TRACE_STATE("h2s rxbuf is full, failed to add EOM", H2_EV_RX_FRAME|H2_EV_RX_DATA|H2_EV_H2S_BLK, h2c->conn, h2s);
 			h2c->flags |= H2_CF_DEM_SFULL;
@@ -5779,6 +5789,8 @@ static size_t h2_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		if (htx_is_empty(buf_htx))
 			cs->flags |= CS_FL_EOI;
 	}
+	else if (htx_is_empty(h2s_htx))
+		buf_htx->flags |= (h2s_htx->flags & HTX_FL_EOI);
 
 	buf_htx->extra = (h2s_htx->extra ? (h2s_htx->data + h2s_htx->extra) : 0);
 	htx_to_buf(buf_htx, buf);

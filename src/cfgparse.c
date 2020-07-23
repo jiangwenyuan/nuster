@@ -677,7 +677,7 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 			err_code |= ERR_ALERT | ERR_ABORT;
 			goto out;
 		}
-		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, 0, 1);
+		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, 0, 1, 1);
 	}
 	else if (strcmp(args[0], "log") == 0) {
 		if (init_peers_frontend(file, linenum, NULL, curpeers) != 0) {
@@ -786,7 +786,7 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 		 * The server address is parsed only if we are parsing a "peer" line,
 		 * or if we are parsing a "server" line and the current peer is not the local one.
 		 */
-		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, peer || !local_peer, 1);
+		err_code |= parse_server(file, linenum, args, curpeers->peers_fe, NULL, peer || !local_peer, 1, 1);
 		if (!curpeers->peers_fe->srv) {
 			/* Remove the newly allocated peer. */
 			if (newpeer != curpeers->local) {
@@ -3549,7 +3549,7 @@ out_uri_auth_compat:
 		for (newsrv = curproxy->srv; newsrv; newsrv = newsrv->next) {
 			int i;
 
-			newsrv->available_conns = calloc((unsigned)global.nbthread, sizeof(*newsrv->available_conns));
+			newsrv->available_conns = calloc(global.nbthread, sizeof(*newsrv->available_conns));
 
 			if (!newsrv->available_conns) {
 				ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
@@ -3581,7 +3581,7 @@ out_uri_auth_compat:
 					}
 				}
 
-				newsrv->idle_conns = calloc((unsigned)global.nbthread, sizeof(*newsrv->idle_conns));
+				newsrv->idle_conns = calloc((unsigned short)global.nbthread, sizeof(*newsrv->idle_conns));
 				if (!newsrv->idle_conns) {
 					ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
 					    newsrv->conf.file, newsrv->conf.line, newsrv->id);
@@ -3592,7 +3592,7 @@ out_uri_auth_compat:
 				for (i = 0; i < global.nbthread; i++)
 					MT_LIST_INIT(&newsrv->idle_conns[i]);
 
-				newsrv->safe_conns = calloc((unsigned)global.nbthread, sizeof(*newsrv->safe_conns));
+				newsrv->safe_conns = calloc(global.nbthread, sizeof(*newsrv->safe_conns));
 				if (!newsrv->safe_conns) {
 					ha_alert("parsing [%s:%d] : failed to allocate idle connections for server '%s'.\n",
 					    newsrv->conf.file, newsrv->conf.line, newsrv->id);

@@ -244,6 +244,7 @@
 		if ((el)->next != (el) || (el)->prev != (el)) {            \
 			(n)->prev = p;                                     \
 			(lh)->next = n;                                    \
+			__ha_barrier_store();                              \
 			break;                                             \
 		}                                                          \
 		(el)->next = n;                                            \
@@ -283,6 +284,7 @@
 		if ((el)->next != (el) || (el)->prev != (el)) {            \
 			p->next = n;                                       \
 			(lh)->prev = p;                                    \
+			__ha_barrier_store();                              \
 			break;                                             \
 		}                                                          \
 		(el)->next = n;                                            \
@@ -349,6 +351,7 @@
 		        continue;                                   \
 		if (_p == (lh)) {                                   \
 			(lh)->prev = _p;                            \
+			__ha_barrier_store();                       \
 			_n = NULL;                                  \
 			break;                                      \
 		}                                                   \
@@ -361,12 +364,15 @@
 		if (_n == (lh)) {                                   \
 			(lh)->next = _n;                            \
 			(lh)->prev = _p;                            \
+			__ha_barrier_store();                       \
 			_n = NULL;                                  \
 			break;                                      \
 		}                                                   \
 		(lh)->next = (lh);                                  \
 		(lh)->prev = (lh);                                  \
+		__ha_barrier_store();                               \
 		_n->prev = _p;                                      \
+		__ha_barrier_store();                               \
 		_p->next = NULL;                                    \
 		__ha_barrier_store();                               \
 		break;                                              \
