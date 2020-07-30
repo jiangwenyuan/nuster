@@ -261,7 +261,7 @@ void *nst_disk_load_thread(void *data) {
     tim.tv_nsec = 300;
     while(1) {
         nanosleep(&tim , &tim2);
-        printf("load cicle iteration")
+        printf("load cicle iteration");
         nst_disk_load(core);
     }
 
