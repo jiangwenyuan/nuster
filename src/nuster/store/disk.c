@@ -256,10 +256,7 @@ nst_disk_init(nst_disk_t *disk, hpx_ist_t root, nst_shmem_t *shmem, int clean_te
 #ifdef USE_THREAD
 void *nst_disk_load_thread(void *data) {
     nst_core_t  *core = (nst_core_t *)data;
-    struct timespec tim;
-    tim.tv_sec = 0;
-    tim.tv_nsec = 300000000L;
-    while(1) {
+    while(!core->store.disk.loaded) {
         nanosleep(&tim , NULL);
         nst_disk_load(core);
     }
