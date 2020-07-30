@@ -807,7 +807,7 @@ nst_cache_exists(nst_ctx_t *ctx) {
 
         if(!nst_store_disk_off(ctx->rule->prop.store)) {
 
-            if(!disk->loaded) {
+            if(!disk->loaded || global.nuster.cache.disk_always_read) {
                 ret = NST_CTX_STATE_CHECK_DISK;
             }
         }
