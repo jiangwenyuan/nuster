@@ -12,7 +12,8 @@
 
 #include <haproxy/tools.h>
 #include <haproxy/global.h>
-
+#include <time.h>
+#include <stdio.h>
 #include <nuster/nuster.h>
 
 int
@@ -255,8 +256,12 @@ nst_disk_init(nst_disk_t *disk, hpx_ist_t root, nst_shmem_t *shmem, int clean_te
 #ifdef USE_THREAD
 void *nst_disk_load_thread(void *data) {
     nst_core_t  *core = (nst_core_t *)data;
-
-    while(!core->store.disk.loaded) {
+    struct timespec tim, tim2;
+    tim.tv_sec = 0;
+    tim.tv_nsec = 300;
+    while(1) {
+        nanosleep(&tim , &tim2);
+        printf("load cicle iteration")
         nst_disk_load(core);
     }
 
