@@ -195,6 +195,7 @@ struct global {
 			int disk_saver;                  /* the number of entries checked once for persist_async */
 			int clean_temp;                  /* clean temp file or not */
 			int disk_always_read;
+			
 			struct ist root;                 /* disk root directory */
 
 			struct nst_shmem    *shmem;      /* memory */
@@ -211,6 +212,7 @@ struct global {
 			int disk_loader;                 /* the number of files load once */
 			int disk_saver;                  /* the number of entries checked once for persist_async */
 			int clean_temp;                  /* clean temp file or not */
+			int disk_always_read;
 
 			struct ist root;                 /* disk root directory */
 
