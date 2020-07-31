@@ -669,7 +669,7 @@ nuster_parse_global_cache(const char *file, int line, char **args) {
             continue;
         }
 
-            if(!strcmp(args[cur_arg], "disk_always_read")) {
+        if(!strcmp(args[cur_arg], "disk_always_read")) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
@@ -965,7 +965,7 @@ nuster_parse_global_nosql(const char *file, int line, char **args) {
             continue;
         }
 
-                    if(!strcmp(args[cur_arg], "disk_always_read")) {
+            if(!strcmp(args[cur_arg], "disk_always_read")) {
             cur_arg++;
 
             if(*args[cur_arg] == 0) {
