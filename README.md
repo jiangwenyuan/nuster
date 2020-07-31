@@ -265,9 +265,9 @@ Define a customized HTTP method to purge, it is `PURGE` by default.
 
 **syntax:**
 
-*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
+*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off] [disk-always-read on|off]*
 
-*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
+*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off] [disk-always-read on|off]*
 
 **default:** *none*
 
@@ -356,6 +356,13 @@ See [Store](#disk) for details.
 Under the directory defined by `dir`, a temporary directory `.tmp` will be created to store temporary files.
 
 Use this option to determine whether or not to remove those temporary files on startup.
+
+By default, it is `off`.
+
+### disk-always-read on|off
+
+The initial load of cached data on disk only happens on startup and has such if running in a scenario where the disk is shared across multiple instances, it can lead to missed cache calls.
+Using this option, the disk is always checked for the cached data, and only them passed along.
 
 By default, it is `off`.
 
