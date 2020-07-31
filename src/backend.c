@@ -1459,8 +1459,8 @@ int connect_server(struct stream *s)
 		srv_conn->ctx = srv_cs;
 #if defined(USE_OPENSSL) && defined(TLSEXT_TYPE_application_layer_protocol_negotiation)
 		if (!srv ||
-		    ((!(srv->ssl_ctx.alpn_str) && !(srv->ssl_ctx.npn_str)) ||
-		    srv->mux_proto || s->be->mode != PR_MODE_HTTP))
+		    (srv->use_ssl != 1 || (!(srv->ssl_ctx.alpn_str) && !(srv->ssl_ctx.npn_str)) ||
+		     srv->mux_proto || s->be->mode != PR_MODE_HTTP))
 #endif
 			init_mux = 1;
 #if defined(USE_OPENSSL) && defined(TLSEXT_TYPE_application_layer_protocol_negotiation)
@@ -1519,6 +1519,16 @@ int connect_server(struct stream *s)
 	if (err != SF_ERR_NONE)
 		return err;
 
+	/* The CO_FL_SEND_PROXY flag may have been set by the connect method,
+	 * if so, add our handshake pseudo-XPRT now.
+	 */
+	if ((srv_conn->flags & CO_FL_HANDSHAKE)) {
+		if (xprt_add_hs(srv_conn) < 0) {
+			conn_full_close(srv_conn);
+			return SF_ERR_INTERNAL;
+		}
+	}
+
 	/* We have to defer the mux initialization until after si_connect()
 	 * has been called, as we need the xprt to have been properly
 	 * initialized, or any attempt to recv during the mux init may
@@ -1537,16 +1547,6 @@ int connect_server(struct stream *s)
 		    !(srv_conn->flags & CO_FL_PRIVATE) && srv_conn->mux->avail_streams(srv_conn) > 0)
 			LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&srv_conn->list));
 	}
-	/* The CO_FL_SEND_PROXY flag may have been set by the connect method,
-	 * if so, add our handshake pseudo-XPRT now.
-	 */
-	if ((srv_conn->flags & CO_FL_HANDSHAKE)) {
-		if (xprt_add_hs(srv_conn) < 0) {
-			conn_full_close(srv_conn);
-			return SF_ERR_INTERNAL;
-		}
-	}
-
 
 #if USE_OPENSSL && (defined(OPENSSL_IS_BORINGSSL) || (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L))
 
@@ -1626,6 +1626,14 @@ int connect_server(struct stream *s)
 	 */
 	if ((srv_cs->flags & CS_FL_EOI) && !(si_ic(&s->si[1])->flags & CF_EOI))
 		si_ic(&s->si[1])->flags |= (CF_EOI|CF_READ_PARTIAL);
+
+	/* catch all sync connect while the mux is not already installed */
+	if (!srv_conn->mux && !(srv_conn->flags & CO_FL_WAIT_XPRT)) {
+		if (conn_create_mux(srv_conn) < 0) {
+			conn_full_close(srv_conn);
+			return SF_ERR_INTERNAL;
+		}
+	}
 
 	return SF_ERR_NONE;  /* connection is OK */
 }

@@ -354,7 +354,9 @@ resume_execution:
 
  missing_data:
 	channel_dont_close(rep);
-	s->current_rule = rule;
+	/* just set the analyser timeout once at the beginning of the response */
+	if (!tick_isset(rep->analyse_exp) && s->be->tcp_rep.inspect_delay)
+		rep->analyse_exp = tick_add(now_ms, s->be->tcp_rep.inspect_delay);
 	DBG_TRACE_DEVEL("waiting for more data", STRM_EV_STRM_ANA|STRM_EV_TCP_ANA, s);
 	return 0;
 
@@ -389,7 +391,7 @@ resume_execution:
 	channel_abort(&s->req);
 
   abort:
-	rep->analysers &= AN_REQ_FLT_END;
+	rep->analysers &= AN_RES_FLT_END;
 
 	if (!(s->flags & SF_ERR_MASK))
 		s->flags |= SF_ERR_PRXCOND;

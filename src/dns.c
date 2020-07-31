@@ -1038,6 +1038,35 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 	/* now parsing additional records for SRV queries only */
 	if (dns_query->type != DNS_RTYPE_SRV)
 		goto skip_parsing_additional_records;
+
+	/* if we find Authority records, just skip them */
+	for (i = 0; i < dns_p->header.nscount; i++) {
+		offset = 0;
+		len = dns_read_name(resp, bufend, reader, tmpname, DNS_MAX_NAME_SIZE,
+		                    &offset, 0);
+		if (len == 0)
+			continue;
+
+		if (reader + offset + 10 >= bufend)
+			return DNS_RESP_INVALID;
+
+		reader += offset;
+		/* skip 2 bytes for class */
+		reader += 2;
+		/* skip 2 bytes for type */
+		reader += 2;
+		/* skip 4 bytes for ttl */
+		reader += 4;
+		/* read data len */
+		len = reader[0] * 256 + reader[1];
+		reader += 2;
+
+		if (reader + len >= bufend)
+			return DNS_RESP_INVALID;
+
+		reader += len;
+	}
+
 	nb_saved_records = 0;
 	for (i = 0; i < dns_p->header.arcount; i++) {
 		if (reader >= bufend)
@@ -2421,10 +2450,8 @@ enum act_return dns_action_do_resolve(struct act_rule *rule, struct proxy *px,
 			locked = 1;
 		}
 
-		if (resolution->step == RSLV_STEP_RUNNING) {
-			ret = ACT_RET_YIELD;
-			goto end;
-		}
+		if (resolution->step == RSLV_STEP_RUNNING)
+			goto yield;
 		if (resolution->step == RSLV_STEP_NONE) {
 			/* We update the variable only if we have a valid response. */
 			if (resolution->status == RSLV_STATUS_VALID) {
@@ -2458,14 +2485,7 @@ enum act_return dns_action_do_resolve(struct act_rule *rule, struct proxy *px,
 			}
 		}
 
-		free(s->dns_ctx.hostname_dn); s->dns_ctx.hostname_dn = NULL;
-		s->dns_ctx.hostname_dn_len = 0;
-		dns_unlink_resolution(s->dns_ctx.dns_requester);
-
-		pool_free(dns_requester_pool, s->dns_ctx.dns_requester);
-		s->dns_ctx.dns_requester = NULL;
-
-		goto end;
+		goto release_requester;
 	}
 
 	/* need to configure and start a new DNS resolution */
@@ -2486,26 +2506,38 @@ enum act_return dns_action_do_resolve(struct act_rule *rule, struct proxy *px,
 
 	/* Check if there is a fresh enough response in the cache of our associated resolution */
 	req = s->dns_ctx.dns_requester;
-	if (!req || !req->resolution) {
-		dns_trigger_resolution(s->dns_ctx.dns_requester);
-		ret = ACT_RET_YIELD;
-		goto end;
-	}
+	if (!req || !req->resolution)
+		goto release_requester; /* on error, ignore the action */
 	res = req->resolution;
 
 	exp = tick_add(res->last_resolution, resolvers->hold.valid);
 	if (resolvers->t && res->status == RSLV_STATUS_VALID && tick_isset(res->last_resolution)
-		       && !tick_is_expired(exp, now_ms)) {
+	    && !tick_is_expired(exp, now_ms)) {
 		goto use_cache;
 	}
 
 	dns_trigger_resolution(s->dns_ctx.dns_requester);
+
+  yield:
+	if (flags & ACT_OPT_FINAL)
+		goto release_requester;
 	ret = ACT_RET_YIELD;
 
   end:
 	if (locked)
 		HA_SPIN_UNLOCK(DNS_LOCK, &resolvers->lock);
 	return ret;
+
+  release_requester:
+	free(s->dns_ctx.hostname_dn);
+	s->dns_ctx.hostname_dn = NULL;
+	s->dns_ctx.hostname_dn_len = 0;
+	if (s->dns_ctx.dns_requester) {
+		dns_unlink_resolution(s->dns_ctx.dns_requester);
+		pool_free(dns_requester_pool, s->dns_ctx.dns_requester);
+		s->dns_ctx.dns_requester = NULL;
+	}
+	goto end;
 }
 
 static void release_dns_action(struct act_rule *rule)

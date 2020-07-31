@@ -1069,6 +1069,9 @@ void hlua_hook(lua_State *L, lua_Debug *ar)
  */
 static enum hlua_exec hlua_ctx_resume(struct hlua *lua, int yield_allowed)
 {
+#if defined(LUA_VERSION_NUM) && LUA_VERSION_NUM >= 504
+	int nres;
+#endif
 	int ret;
 	const char *msg;
 	const char *trace;
@@ -1100,7 +1103,11 @@ resume_execution:
 	lua->wake_time = TICK_ETERNITY;
 
 	/* Call the function. */
+#if defined(LUA_VERSION_NUM) && LUA_VERSION_NUM >= 504
+	ret = lua_resume(lua->T, gL.T, lua->nargs, &nres);
+#else
 	ret = lua_resume(lua->T, gL.T, lua->nargs);
+#endif
 	switch (ret) {
 
 	case LUA_OK:
@@ -6642,11 +6649,16 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 			act_ret = lua_tointeger(s->hlua->T, -1);
 
 		/* Set timeout in the required channel. */
-		if (act_ret == ACT_RET_YIELD && s->hlua->wake_time != TICK_ETERNITY) {
-			if (dir == SMP_OPT_DIR_REQ)
-				s->req.analyse_exp = s->hlua->wake_time;
-			else
-				s->res.analyse_exp = s->hlua->wake_time;
+		if (act_ret == ACT_RET_YIELD) {
+			if (flags & ACT_OPT_FINAL)
+				goto err_yield;
+
+			if (s->hlua->wake_time != TICK_ETERNITY) {
+				if (dir == SMP_OPT_DIR_REQ)
+					s->req.analyse_exp = s->hlua->wake_time;
+				else
+					s->res.analyse_exp = s->hlua->wake_time;
+			}
 		}
 		goto end;
 
@@ -6687,6 +6699,8 @@ static enum act_return hlua_action(struct act_rule *rule, struct proxy *px,
 		goto end;
 
 	case HLUA_E_YIELD:
+	  err_yield:
+		act_ret = ACT_RET_CONT;
 		SEND_ERR(px, "Lua function '%s': aborting Lua processing on expired timeout.\n",
 		         rule->arg.hlua_rule->fcn.name);
 		goto end;
@@ -7845,10 +7859,12 @@ static int hlua_load(char **args, int section_type, struct proxy *curpx,
 		memprintf(err, "Lua message handler error: %s\n", lua_tostring(gL.T, -1));
 		lua_pop(gL.T, 1);
 		return -1;
+#if defined(LUA_VERSION_NUM) && LUA_VERSION_NUM <= 503
 	case LUA_ERRGCMM:
 		memprintf(err, "Lua garbage collector error: %s\n", lua_tostring(gL.T, -1));
 		lua_pop(gL.T, 1);
 		return -1;
+#endif
 	default:
 		memprintf(err, "Lua unknown error: %s\n", lua_tostring(gL.T, -1));
 		lua_pop(gL.T, 1);

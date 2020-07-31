@@ -1,6 +1,24 @@
 ChangeLog :
 ===========
 
+2020/07/31 : 2.2.2
+    - BUG/MINOR: mux-fcgi: Don't url-decode the QUERY_STRING parameter anymore
+    - BUILD: tools: fix build with static only toolchains
+    - BUG/MINOR: debug: Don't dump the lua stack if it is not initialized
+    - BUG/MAJOR: dns: fix null pointer dereference in snr_update_srv_status
+    - BUG/MAJOR: dns: don't treat Authority records as an error
+    - MEDIUM: lua: Add support for the Lua 5.4
+    - BUG/MEDIUM: dns: Don't yield in do-resolve action on a final evaluation
+    - BUG/MINOR: lua: Abort execution of actions that yield on a final evaluation
+    - BUG/MINOR: tcp-rules: Preserve the right filter analyser on content eval abort
+    - BUG/MINOR: tcp-rules: Set the inspect-delay when a tcp-response action yields
+    - BUG/MEDIUM: connection: Be sure to always install a mux for sync connect
+    - MINOR: connection: Preinstall the mux for non-ssl connect
+    - MINOR: stream-int: Be sure to have a mux to do sends and receives
+    - SCRIPTS: announce-release: add the link to the wiki in the announce messages
+    - BUG/MEDIUM: backend: always attach the transport before installing the mux
+    - BUG/MEDIUM: tcp-checks: always attach the transport before installing the mux
+
 2020/07/23 : 2.2.1
     - BUG/MINOR: sample: Free str.area in smp_check_const_bool
     - BUG/MINOR: sample: Free str.area in smp_check_const_meth
