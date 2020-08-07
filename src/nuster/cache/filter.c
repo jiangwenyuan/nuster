@@ -255,7 +255,7 @@ _nst_cache_filter_http_headers(hpx_stream_t *s, hpx_filter_t *filter, hpx_http_m
             int  t = nst_time_now_ms() - ctx->ctime;
 
             if(ctx->prop->wait == 0 || (ctx->prop->wait > 0 && t < ctx->prop->wait * 1000)) {
-                usleep(1);
+                usleep(1000);
                 ctx->state = NST_CTX_STATE_INIT;
 
                 task_wakeup(s->task, TASK_WOKEN_MSG);
