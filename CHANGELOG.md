@@ -1,5 +1,13 @@
 # nuster Changelog
 
+## 5.2.2.22 - 2020-08-08
+
+Update to HAProxy v2.2.2
+
+### Fixed
+
+* Incorrect unit of usleep
+
 ## 5.2.1.22 - 2020-07-09
 
 ### Fixed
