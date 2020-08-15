@@ -43,7 +43,7 @@ extern struct dict server_name_dict;
 int srv_downtime(const struct server *s);
 int srv_lastsession(const struct server *s);
 int srv_getinter(const struct check *check);
-int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy, struct proxy *defproxy, int parse_addr, int in_peers_section);
+int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy, struct proxy *defproxy, int parse_addr, int in_peers_section, int initial_resolve);
 int update_server_addr(struct server *s, void *ip, int ip_sin_family, const char *updater);
 const char *update_server_addr_port(struct server *s, const char *addr, const char *port, char *updater);
 struct server *server_find_by_id(struct proxy *bk, int id);
@@ -239,6 +239,50 @@ static inline enum srv_initaddr srv_get_next_initaddr(unsigned int *list)
 	return ret;
 }
 
+static inline void srv_use_idle_conn(struct server *srv, struct connection *conn)
+{
+	if (conn->flags & CO_FL_LIST_MASK) {
+		_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
+		_HA_ATOMIC_SUB(conn->flags & CO_FL_SAFE_LIST ? &srv->curr_safe_nb : &srv->curr_idle_nb, 1);
+		_HA_ATOMIC_SUB(&srv->curr_idle_thr[tid], 1);
+		conn->flags &= ~CO_FL_LIST_MASK;
+		__ha_barrier_atomic_store();
+		LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&conn->list));
+	}
+
+	_HA_ATOMIC_ADD(&srv->curr_used_conns, 1);
+
+	/* It's ok not to do that atomically, we don't need an
+	 * exact max.
+	 */
+	if (srv->max_used_conns < srv->curr_used_conns)
+		srv->max_used_conns = srv->curr_used_conns;
+
+	if (srv->est_need_conns < srv->curr_used_conns)
+		srv->est_need_conns = srv->curr_used_conns;
+}
+
+static inline void srv_del_conn_from_list(struct server *srv, struct connection *conn)
+{
+	if (conn->flags & CO_FL_LIST_MASK) {
+		/* The connection is currently in the server's idle list, so tell it
+		 * there's one less connection available in that list.
+		 */
+		_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
+		_HA_ATOMIC_SUB(conn->flags & CO_FL_SAFE_LIST ? &srv->curr_safe_nb : &srv->curr_idle_nb, 1);
+		_HA_ATOMIC_SUB(&srv->curr_idle_thr[tid], 1);
+	}
+	else {
+		/* The connection is not private and not in any server's idle
+		 * list, so decrement the current number of used connections
+		 */
+		_HA_ATOMIC_SUB(&srv->curr_used_conns, 1);
+	}
+
+	/* Remove the connection from any list (safe, idle or available) */
+	MT_LIST_DEL((struct mt_list *)&conn->list);
+}
+
 /* This adds an idle connection to the server's list if the connection is
  * reusable, not held by any owner anymore, but still has available streams.
  */
@@ -270,7 +314,6 @@ static inline int srv_add_to_idle_list(struct server *srv, struct connection *co
 		}
 		_HA_ATOMIC_SUB(&srv->curr_used_conns, 1);
 		MT_LIST_DEL(&conn->list);
-		conn->idle_time = now_ms;
 		if (is_safe) {
 			conn->flags = (conn->flags & ~CO_FL_LIST_MASK) | CO_FL_SAFE_LIST;
 			MT_LIST_ADDQ(&srv->safe_conns[tid], (struct mt_list *)&conn->list);

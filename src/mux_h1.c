@@ -363,8 +363,13 @@ static inline int h1_recv_allowed(const struct h1c *h1c)
 		return 0;
 	}
 
-	if (h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH)) {
-		TRACE_DEVEL("recv not allowed because of (error|read0) on connection", H1_EV_H1C_RECV|H1_EV_H1C_BLK, h1c->conn);
+	if (h1c->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_WAIT_L4_CONN|CO_FL_WAIT_L6_CONN)) {
+		TRACE_DEVEL("recv not allowed because of (error|read0|waitl4|waitl6) on connection", H1_EV_H1C_RECV|H1_EV_H1C_BLK, h1c->conn);
+		return 0;
+	}
+
+	if (conn_is_back(h1c->conn) && h1c->h1s && h1c->h1s->req.state == H1_MSG_RQBEFORE) {
+		TRACE_DEVEL("recv not allowed because back and request not sent yet", H1_EV_H1C_RECV|H1_EV_H1C_BLK, h1c->conn);
 		return 0;
 	}
 
@@ -451,7 +456,23 @@ static int h1_avail_streams(struct connection *conn)
 	return 1 - h1_used_streams(conn);
 }
 
-
+/* Refresh the h1c task timeout if necessary */
+static void h1_refresh_timeout(struct h1c *h1c)
+{
+	if (h1c->task) {
+		h1c->task->expire = TICK_ETERNITY;
+		if ((!h1c->h1s && !conn_is_back(h1c->conn)) || b_data(&h1c->obuf)) {
+			/* front connections waiting for a stream, as well as any connection with
+			 * pending data, need a timeout.
+			 */
+			h1c->task->expire = tick_add(now_ms, ((h1c->flags & (H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN))
+							      ? h1c->shut_timeout
+							      : h1c->timeout));
+			task_queue(h1c->task);
+			TRACE_DEVEL("refreshing connection's timeout", H1_EV_H1C_SEND, h1c->conn);
+		}
+	}
+}
 /*****************************************************************/
 /* functions below are dedicated to the mux setup and management */
 /*****************************************************************/
@@ -473,7 +494,7 @@ static struct conn_stream *h1s_new_cs(struct h1s *h1s)
 	struct conn_stream *cs;
 
 	TRACE_ENTER(H1_EV_STRM_NEW, h1s->h1c->conn, h1s);
-	cs = cs_new(h1s->h1c->conn);
+	cs = cs_new(h1s->h1c->conn, h1s->h1c->conn->target);
 	if (!cs) {
 		TRACE_DEVEL("leaving on CS allocation failure", H1_EV_STRM_NEW|H1_EV_STRM_END|H1_EV_STRM_ERR, h1s->h1c->conn, h1s);
 		goto err;
@@ -1456,8 +1477,10 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, size_t count
 			else if (h1s->req.state < H1_MSG_DONE || h1s->res.state < H1_MSG_DONE) {
 				h1c->flags |= H1C_F_IN_BUSY;
 				TRACE_STATE("switch h1c in busy mode", H1_EV_RX_DATA|H1_EV_H1C_BLK, h1c->conn, h1s);
+				break;
 			}
-			break;
+			else
+				break;
 		}
 		else if (h1m->state == H1_MSG_TUNNEL) {
 			TRACE_PROTO("parsing tunneled data", H1_EV_RX_DATA, h1c->conn, h1s);
@@ -2199,15 +2222,7 @@ static int h1_process(struct h1c * h1c)
 		h1s->cs->data_cb->wake(h1s->cs);
 	}
   end:
-	if (h1c->task) {
-		h1c->task->expire = TICK_ETERNITY;
-		if (b_data(&h1c->obuf)) {
-			h1c->task->expire = tick_add(now_ms, ((h1c->flags & (H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN))
-							      ? h1c->shut_timeout
-							      : h1c->timeout));
-			task_queue(h1c->task);
-		}
-	}
+	h1_refresh_timeout(h1c);
 	TRACE_LEAVE(H1_EV_H1C_WAKE, conn);
 	return 0;
 
@@ -2372,7 +2387,7 @@ static struct conn_stream *h1_attach(struct connection *conn, struct session *se
 		goto end;
 	}
 
-	cs = cs_new(h1c->conn);
+	cs = cs_new(h1c->conn, h1c->conn->target);
 	if (!cs) {
 		TRACE_DEVEL("leaving on CS allocation failure", H1_EV_STRM_NEW|H1_EV_STRM_END|H1_EV_STRM_ERR, conn);
 		goto end;
@@ -2453,24 +2468,21 @@ static void h1_detach(struct conn_stream *cs)
 			goto release;
 		}
 
-		/* Never ever allow to reuse a connection from a non-reuse backend */
-		if ((h1c->px->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
-			h1c->conn->flags |= CO_FL_PRIVATE;
-
-		if (!(h1c->conn->owner) && (h1c->conn->flags & CO_FL_PRIVATE)) {
-			h1c->conn->owner = sess;
+		if (h1c->conn->flags & CO_FL_PRIVATE) {
+			/* Add the connection in the session server list, if not already done */
 			if (!session_add_conn(sess, h1c->conn, h1c->conn->target)) {
 				h1c->conn->owner = NULL;
 				h1c->conn->mux->destroy(h1c);
 				goto end;
 			}
+			/* Always idle at this step */
 			if (session_check_idle_conn(sess, h1c->conn)) {
 				/* The connection got destroyed, let's leave */
 				TRACE_DEVEL("outgoing connection killed", H1_EV_STRM_END|H1_EV_H1C_END);
 				goto end;
 			}
 		}
-		if (!(h1c->conn->flags & CO_FL_PRIVATE)) {
+		else {
 			if (h1c->conn->owner == sess)
 				h1c->conn->owner = NULL;
 			h1c->conn->xprt->subscribe(h1c->conn, h1c->conn->xprt_ctx, SUB_RETRY_RECV, &h1c->wait_event);
@@ -2503,19 +2515,7 @@ static void h1_detach(struct conn_stream *cs)
 			h1_process(h1c);
 		else
 			h1c->conn->xprt->subscribe(h1c->conn, h1c->conn->xprt_ctx, SUB_RETRY_RECV, &h1c->wait_event);
-		if (h1c->task) {
-			h1c->task->expire = TICK_ETERNITY;
-			if ((!h1c->h1s && !conn_is_back(h1c->conn)) || b_data(&h1c->obuf)) {
-				/* front connections waiting for a stream, as well as any connection with
-				 * pending data, need a timeout.
-				 */
-				h1c->task->expire = tick_add(now_ms, ((h1c->flags & (H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN))
-								      ? h1c->shut_timeout
-								      : h1c->timeout));
-				task_queue(h1c->task);
-				TRACE_DEVEL("refreshing connection's timeout", H1_EV_STRM_END, h1c->conn);
-			}
-		}
+		h1_refresh_timeout(h1c);
 	}
   end:
 	TRACE_LEAVE(H1_EV_STRM_END);
@@ -2753,7 +2753,7 @@ static size_t h1_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		if ((h1c->wait_event.events & SUB_RETRY_SEND) || !h1_send(h1c))
 			break;
 	}
-
+	h1_refresh_timeout(h1c);
 	TRACE_LEAVE(H1_EV_STRM_SEND, h1c->conn, h1s,, (size_t[]){total});
 	return total;
 }

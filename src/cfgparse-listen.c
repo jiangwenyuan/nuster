@@ -277,6 +277,10 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 			curproxy->to_log = defproxy.to_log & ~LW_COOKIE & ~LW_REQHDR & ~ LW_RSPHDR;
 			curproxy->max_out_conns = defproxy.max_out_conns;
+
+			curproxy->clitcpka_cnt   = defproxy.clitcpka_cnt;
+			curproxy->clitcpka_idle  = defproxy.clitcpka_idle;
+			curproxy->clitcpka_intvl = defproxy.clitcpka_intvl;
 		}
 
 		if (curproxy->cap & PR_CAP_BE) {
@@ -337,6 +341,10 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			curproxy->conn_src.tproxy_addr = defproxy.conn_src.tproxy_addr;
 #endif
 			curproxy->load_server_state_from_file = defproxy.load_server_state_from_file;
+
+			curproxy->srvtcpka_cnt   = defproxy.srvtcpka_cnt;
+			curproxy->srvtcpka_idle  = defproxy.srvtcpka_idle;
+			curproxy->srvtcpka_intvl = defproxy.srvtcpka_intvl;
 		}
 
 		if (curproxy->cap & PR_CAP_FE) {
@@ -531,7 +539,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 	if (!strcmp(args[0], "server")         ||
 	    !strcmp(args[0], "default-server") ||
 	    !strcmp(args[0], "server-template")) {
-		err_code |= parse_server(file, linenum, args, curproxy, &defproxy, 1, 0);
+		err_code |= parse_server(file, linenum, args, curproxy, &defproxy, 1, 0, 0);
 		if (err_code & ERR_FATAL)
 			goto out;
 	}

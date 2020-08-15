@@ -379,8 +379,24 @@ int tcp_connect_server(struct connection *conn, int flags)
 		return SF_ERR_INTERNAL;
 	}
 
-	if (be->options & PR_O_TCP_SRV_KA)
+	if (be->options & PR_O_TCP_SRV_KA) {
 		setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+
+#ifdef TCP_KEEPCNT
+		if (be->srvtcpka_cnt)
+			setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &be->srvtcpka_cnt, sizeof(be->srvtcpka_cnt));
+#endif
+
+#ifdef TCP_KEEPIDLE
+		if (be->srvtcpka_idle)
+			setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &be->srvtcpka_idle, sizeof(be->srvtcpka_idle));
+#endif
+
+#ifdef TCP_KEEPINTVL
+		if (be->srvtcpka_intvl)
+			setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &be->srvtcpka_intvl, sizeof(be->srvtcpka_intvl));
+#endif
+	}
 
 	/* allow specific binding :
 	 * - server-specific at first
@@ -399,14 +415,14 @@ int tcp_connect_server(struct connection *conn, int flags)
 		if (conn->src && is_inet_addr(conn->src)) {
 			switch (src->opts & CO_SRC_TPROXY_MASK) {
 			case CO_SRC_TPROXY_CLI:
-				conn->flags |= CO_FL_PRIVATE;
+				conn_set_private(conn);
 				/* fall through */
 			case CO_SRC_TPROXY_ADDR:
 				flags = 3;
 				break;
 			case CO_SRC_TPROXY_CIP:
 			case CO_SRC_TPROXY_DYN:
-				conn->flags |= CO_FL_PRIVATE;
+				conn_set_private(conn);
 				flags = 1;
 				break;
 			}
@@ -572,6 +588,7 @@ int tcp_connect_server(struct connection *conn, int flags)
 	if (conn->flags & CO_FL_WAIT_L4_CONN) {
 		fd_want_send(fd);
 		fd_cant_send(fd);
+		fd_cant_recv(fd);
 	}
 
 	if (conn_xprt_init(conn) < 0) {
@@ -1485,12 +1502,12 @@ static int val_fc_time_value(struct arg *args, char **err)
 {
 	if (args[0].type == ARGT_STR) {
 		if (strcmp(args[0].data.str.area, "us") == 0) {
-			free(args[0].data.str.area);
+			chunk_destroy(&args[0].data.str);
 			args[0].type = ARGT_SINT;
 			args[0].data.sint = TIME_UNIT_US;
 		}
 		else if (strcmp(args[0].data.str.area, "ms") == 0) {
-			free(args[0].data.str.area);
+			chunk_destroy(&args[0].data.str);
 			args[0].type = ARGT_SINT;
 			args[0].data.sint = TIME_UNIT_MS;
 		}
@@ -1519,7 +1536,7 @@ static int var_fc_counter(struct arg *args, char **err)
 	if (args[0].type != ARGT_STOP) {
 		ha_warning("no argument supported for 'fc_*' sample expressions returning counters.\n");
 		if (args[0].type == ARGT_STR)
-			free(args[0].data.str.area);
+			chunk_destroy(&args[0].data.str);
 		args[0].type = ARGT_STOP;
 	}
 

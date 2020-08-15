@@ -371,6 +371,7 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	 */
 	s->current_rule_list = NULL;
 	s->current_rule = NULL;
+	s->rules_exp = TICK_ETERNITY;
 
 	/* Copy SC counters for the stream. We don't touch refcounts because
 	 * any reference we have is inherited from the session. Since the stream
@@ -627,9 +628,13 @@ static void stream_free(struct stream *s)
 	}
 
 	if (s->dns_ctx.dns_requester) {
+		__decl_thread(struct dns_resolvers *resolvers = s->dns_ctx.parent->arg.dns.resolvers);
+
+		HA_SPIN_LOCK(DNS_LOCK, &resolvers->lock);
 		free(s->dns_ctx.hostname_dn); s->dns_ctx.hostname_dn = NULL;
 		s->dns_ctx.hostname_dn_len = 0;
 		dns_unlink_resolution(s->dns_ctx.dns_requester);
+		HA_SPIN_UNLOCK(DNS_LOCK, &resolvers->lock);
 
 		pool_free(dns_requester_pool, s->dns_ctx.dns_requester);
 		s->dns_ctx.dns_requester = NULL;

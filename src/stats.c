@@ -144,8 +144,10 @@ const struct name_desc info_fields[INF_TOTAL_FIELDS] = {
 	[INF_BUSY_POLLING]                   = { .name = "BusyPolling",                 .desc = "1 if busy-polling is currently in use on the worker process, otherwise zero (config.busy-polling)" },
 	[INF_FAILED_RESOLUTIONS]             = { .name = "FailedResolutions",           .desc = "Total number of failed DNS resolutions in current worker process since started" },
 	[INF_TOTAL_BYTES_OUT]                = { .name = "TotalBytesOut",               .desc = "Total number of bytes emitted by current worker process since started" },
+	[INF_TOTAL_SPLICED_BYTES_OUT]        = { .name = "TotalSplicdedBytesOut",       .desc = "Total number of bytes emitted by current worker process through a kernel pipe since started" },
 	[INF_BYTES_OUT_RATE]                 = { .name = "BytesOutRate",                .desc = "Number of bytes emitted by current worker process over the last second" },
 	[INF_DEBUG_COMMANDS_ISSUED]          = { .name = "DebugCommandsIssued",         .desc = "Number of debug commands issued on this process (anything > 0 is unsafe)" },
+	[INF_CUM_LOG_MSGS]                   = { .name = "CumRecvLogs",                 .desc = "Total number of log messages received by log-forwarding listeners on this worker process since started" },
 };
 
 const struct name_desc stat_fields[ST_F_TOTAL_FIELDS] = {
@@ -933,7 +935,7 @@ static int stats_dump_fields_html(struct buffer *out,
 			style = "going_down";
 		}
 
-		if (memcmp(field_str(stats, ST_F_STATUS), "MAINT", 5) == 0)
+		if (strncmp(field_str(stats, ST_F_STATUS), "MAINT", 5) == 0)
 			chunk_appendf(out, "<tr class=\"maintain\">");
 		else
 			chunk_appendf(out,
@@ -1105,15 +1107,15 @@ static int stats_dump_fields_html(struct buffer *out,
 		 */
 
 
-		if (memcmp(field_str(stats, ST_F_STATUS), "MAINT", 5) == 0) {
+		if (strncmp(field_str(stats, ST_F_STATUS), "MAINT", 5) == 0) {
 			chunk_appendf(out, "%s MAINT", human_time(stats[ST_F_LASTCHG].u.u32, 1));
 		}
-		else if (memcmp(field_str(stats, ST_F_STATUS), "no check", 5) == 0) {
+		else if (strcmp(field_str(stats, ST_F_STATUS), "no check") == 0) {
 			chunk_strcat(out, "<i>no check</i>");
 		}
 		else {
 			chunk_appendf(out, "%s %s", human_time(stats[ST_F_LASTCHG].u.u32, 1), field_str(stats, ST_F_STATUS));
-			if (memcmp(field_str(stats, ST_F_STATUS), "DOWN", 4) == 0) {
+			if (strncmp(field_str(stats, ST_F_STATUS), "DOWN", 4) == 0) {
 				if (stats[ST_F_CHECK_HEALTH].u.u32)
 					chunk_strcat(out, " &uarr;");
 			}
@@ -1121,7 +1123,7 @@ static int stats_dump_fields_html(struct buffer *out,
 				chunk_strcat(out, " &darr;");
 		}
 
-		if (memcmp(field_str(stats, ST_F_STATUS), "DOWN", 4) == 0 &&
+		if (strncmp(field_str(stats, ST_F_STATUS), "DOWN", 4) == 0 &&
 		    stats[ST_F_AGENT_STATUS].type && !stats[ST_F_AGENT_HEALTH].u.u32) {
 			chunk_appendf(out,
 			              "</td><td class=ac><u> %s",
@@ -3337,6 +3339,7 @@ static void http_stats_io_handler(struct appctx *appctx)
 
 	if (appctx->st0 == STAT_HTTP_DONE) {
 		/* Don't add TLR because mux-h1 will take care of it */
+		res_htx->flags |= HTX_FL_EOI; /* no more data are expected. Only EOM remains to add now */
 		if (!htx_add_endof(res_htx, HTX_BLK_EOM)) {
 			si_rx_room_blk(si);
 			goto out;
@@ -3519,8 +3522,10 @@ int stats_fill_info(struct field *info, int len)
 	info[INF_BUSY_POLLING]                   = mkf_u32(0, !!(global.tune.options & GTUNE_BUSY_POLLING));
 	info[INF_FAILED_RESOLUTIONS]             = mkf_u32(0, dns_failed_resolutions);
 	info[INF_TOTAL_BYTES_OUT]                = mkf_u64(0, global.out_bytes);
+	info[INF_TOTAL_SPLICED_BYTES_OUT]        = mkf_u64(0, global.spliced_out_bytes);
 	info[INF_BYTES_OUT_RATE]                 = mkf_u64(FN_RATE, (unsigned long long)read_freq_ctr(&global.out_32bps) * 32);
 	info[INF_DEBUG_COMMANDS_ISSUED]          = mkf_u32(0, debug_commands_issued);
+	info[INF_CUM_LOG_MSGS]                   = mkf_u32(FN_COUNTER, cum_log_messages);
 
 	return 1;
 }

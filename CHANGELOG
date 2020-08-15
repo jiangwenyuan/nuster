@@ -1,6 +1,154 @@
 ChangeLog :
 ===========
 
+2020/08/14 : 2.3-dev3
+    - SCRIPTS: git-show-backports: make -m most only show the left branch
+    - SCRIPTS: git-show-backports: emit the shell command to backport a commit
+    - BUILD: Makefile: require SSL_LIB, SSL_INC to be explicitly set
+    - CI: travis-ci: specify SLZ_LIB, SLZ_INC for travis builds
+    - BUG/MEDIUM: mux-h1: Refresh H1 connection timeout after a synchronous send
+    - CLEANUP: dns: typo in reported error message
+    - BUG/MAJOR: dns: disabled servers through SRV records never recover
+    - BUG/MINOR: spoa-server: fix size_t format printing
+    - DOC: spoa-server: fix false friends `actually`
+    - BUG/MINOR: ssl: fix memory leak at OCSP loading
+    - BUG/MEDIUM: ssl: memory leak of ocsp data at SSL_CTX_free()
+    - BUG/MEDIUM: map/lua: Return an error if a map is loaded during runtime
+    - MINOR: arg: Add an argument type to keep a reference on opaque data
+    - BUG/MINOR: converters: Store the sink in an arg pointer for debug() converter
+    - BUG/MINOR: lua: Duplicate map name to load it when a new Map object is created
+    - BUG/MINOR: arg: Fix leaks during arguments validation for fetches/converters
+    - BUG/MINOR: lua: Check argument type to convert it to IPv4/IPv6 arg validation
+    - BUG/MINOR: lua: Check argument type to convert it to IP mask in arg validation
+    - MINOR: hlua: Don't needlessly copy lua strings in trash during args validation
+    - BUG/MINOR: lua: Duplicate lua strings in sample fetches/converters arg array
+    - MEDIUM: lua: Don't filter exported fetches and converters
+    - MINOR: lua: Add support for userlist as fetches and converters arguments
+    - MINOR: lua: Add support for regex as fetches and converters arguments
+    - MINOR: arg: Use chunk_destroy() to release string arguments
+    - BUG/MINOR: snapshots: leak of snapshots on deinit()
+    - CLEANUP: ssl: ssl_sock_crt2der semicolon and spaces
+    - MINOR: ssl: add ssl_{c,s}_chain_der fetch methods
+    - CLEANUP: fix all duplicated semicolons
+    - BUG/MEDIUM: ssl: fix the ssl-skip-self-issued-ca option
+    - BUG/MINOR: ssl: ssl-skip-self-issued-ca requires >= 1.0.2
+    - BUG/MINOR: stats: use strncmp() instead of memcmp() on health states
+    - BUILD: makefile: don't disable -Wstringop-overflow anymore
+    - BUG/MINOR: ssl: double free w/ smp_fetch_ssl_x_chain_der()
+    - BUG/MEDIUM: htx: smp_prefetch_htx() must always validate the direction
+    - BUG/MEDIUM: ssl: never generates the chain from the verify store
+    - OPTIM: regex: PCRE2 use JIT match when JIT optimisation occured.
+    - BUG/MEDIUM: ssl: does not look for all SNIs before chosing a certificate
+    - CLEANUP: ssl: remove poorly readable nested ternary
+
+2020/07/31 : 2.3-dev2
+    - DOC: ssl: req_ssl_sni needs implicit TLS
+    - BUG/MEDIUM: arg: empty args list must be dropped
+    - BUG/MEDIUM: resolve: fix init resolving for ring and peers section.
+    - BUG/MAJOR: tasks: don't requeue global tasks into the local queue
+    - MINOR: tasks/debug: make the thread affinity BUG_ON check a bit stricter
+    - MINOR: tasks/debug: add a few BUG_ON() to detect use of wrong timer queue
+    - MINOR: tasks/debug: add a BUG_ON() check to detect requeued task on free
+    - BUG/MAJOR: dns: Make the do-resolve action thread-safe
+    - BUG/MEDIUM: dns: Release answer items when a DNS resolution is freed
+    - MEDIUM: htx: Add a flag on a HTX message when no more data are expected
+    - BUG/MEDIUM: stream-int: Don't set MSG_MORE flag if no more data are expected
+    - BUG/MEDIUM: http-ana: Only set CF_EXPECT_MORE flag on data filtering
+    - CLEANUP: dns: remove 45 "return" statements from dns_validate_dns_response()
+    - BUG/MINOR: htx: add two missing HTX_FL_EOI and remove an unexpected one
+    - BUG/MINOR: mux-fcgi: Don't url-decode the QUERY_STRING parameter anymore
+    - BUILD: tools: fix build with static only toolchains
+    - DOC: Use gender neutral language
+    - BUG/MINOR: debug: Don't dump the lua stack if it is not initialized
+    - BUG/MAJOR: dns: fix null pointer dereference in snr_update_srv_status
+    - BUG/MAJOR: dns: don't treat Authority records as an error
+    - CI : travis-ci : prepare for using stock OpenSSL
+    - CI: travis-ci : switch to stock openssl when openssl-1.1.1 is used
+    - MEDIUM: lua: Add support for the Lua 5.4
+    - BUG/MEDIUM: dns: Don't yield in do-resolve action on a final evaluation
+    - BUG/MINOR: lua: Abort execution of actions that yield on a final evaluation
+    - MINOR: tcp-rules: Return an internal error if an action yields on a final eval
+    - BUG/MINOR: tcp-rules: Preserve the right filter analyser on content eval abort
+    - BUG/MINOR: tcp-rules: Set the inspect-delay when a tcp-response action yields
+    - MEDIUM: tcp-rules: Use a dedicated expiration date for tcp ruleset
+    - MEDIUM: lua: Set the analyse expiration date with smaller wake_time only
+    - BUG/MEDIUM: connection: Be sure to always install a mux for sync connect
+    - MINOR: connection: Preinstall the mux for non-ssl connect
+    - MINOR: stream-int: Be sure to have a mux to do sends and receives
+    - BUG/MINOR: lua: Fix a possible null pointer deref on lua ctx
+    - SCRIPTS: announce-release: add the link to the wiki in the announce messages
+    - CI: travis-ci: use better name for Coverity scan job
+    - CI: travis-ci: use proper linking flags for SLZ build
+    - BUG/MEDIUM: backend: always attach the transport before installing the mux
+    - BUG/MEDIUM: tcp-checks: always attach the transport before installing the mux
+    - MINOR: connection: avoid a useless recvfrom() on outgoing connections
+    - MINOR: mux-h1: do not even try to receive if the connection is not fully set up
+    - MINOR: mux-h1: do not try to receive on backend before sending a request
+    - CLEANUP: assorted typo fixes in the code and comments
+    - BUG/MEDIUM: ssl: check OCSP calloc in ssl_sock_load_ocsp()
+
+2020/07/17 : 2.3-dev1
+    - MINOR: config: make strict limits enabled by default
+    - BUG/MINOR: acl: Fix freeing of expr->smp in prune_acl_expr
+    - BUG/MINOR: sample: Fix freeing of conv_exprs in release_sample_expr
+    - BUG/MINOR: haproxy: Free proxy->format_unique_id during deinit
+    - BUG/MINOR: haproxy: Add missing free of server->(hostname|resolvers_id)
+    - BUG/MINOR: haproxy: Free proxy->unique_id_header during deinit
+    - BUG/MINOR: haproxy: Free srule->file during deinit
+    - BUG/MINOR: haproxy: Free srule->expr during deinit
+    - BUG/MINOR: sample: Free str.area in smp_check_const_bool
+    - BUG/MINOR: sample: Free str.area in smp_check_const_meth
+    - CLEANUP: haproxy: Free proxy_deinit_list in deinit()
+    - CLEANUP: haproxy: Free post_deinit_list in deinit()
+    - CLEANUP: haproxy: Free server_deinit_list in deinit()
+    - CLEANUP: haproxy: Free post_server_check_list in deinit()
+    - CLEANUP: Add static void vars_deinit()
+    - CLEANUP: Add static void hlua_deinit()
+    - CLEANUP: contrib/prometheus-exporter: typo fixes for ssl reuse metric
+    - BUG/MEDIUM: lists: add missing store barrier on MT_LIST_BEHEAD()
+    - BUG/MEDIUM: lists: add missing store barrier in MT_LIST_ADD/MT_LIST_ADDQ
+    - MINOR: tcp: Support TCP keepalive parameters customization
+    - BUILD: tcp: condition TCP keepalive settings to platforms providing them
+    - MINOR: lists: rename some MT_LIST operations to clarify them
+    - MINOR: buffer: use MT_LIST_ADDQ() for buffer_wait lists additions
+    - MINOR: connection: use MT_LIST_ADDQ() to add connections to idle lists
+    - MINOR: tasks: use MT_LIST_ADDQ() when killing tasks.
+    - CONTRIB: da: fix memory leak in dummy function da_atlas_open()
+    - CI: travis-ci: speed up osx build by running brew scripted, switch to latest osx image
+    - BUG/MEDIUM: mux-h2: Don't add private connections in available connection list
+    - BUG/MEDIUM: mux-fcgi: Don't add private connections in available connection list
+    - MINOR: connection: Set the SNI on server connections before installing the mux
+    - MINOR: connection: Set new connection as private on reuse never
+    - MINOR: connection: Add a wrapper to mark a connection as private
+    - MEDIUM: connection: Add private connections synchronously in session server list
+    - MINOR: connection: Use a dedicated function to look for a session's connection
+    - MINOR: connection: Set the conncetion target during its initialisation
+    - MINOR: session: Take care to decrement idle_conns counter in session_unown_conn
+    - MINOR: server: Factorize code to deal with reuse of server idle connections
+    - MINOR: server: Factorize code to deal with connections removed from an idle list
+    - CLEANUP: connection: remove unused field idle_time from the connection struct
+    - BUG/MEDIUM: mux-h1: Continue to process request when switching in tunnel mode
+    - MINOR: raw_sock: Report the number of bytes emitted using the splicing
+    - MINOR: contrib/prometheus-exporter: Add missing global and per-server metrics
+    - MINOR: backend: Add sample fetches to get the server's weight
+    - BUG/MINOR: mux-fcgi: Handle empty STDERR record
+    - BUG/MINOR: mux-fcgi: Set conn state to RECORD_P when skipping the record padding
+    - BUG/MINOR: mux-fcgi: Set flags on the right stream field for empty FCGI_STDOUT
+    - BUG/MINOR: backend: fix potential null deref on srv_conn
+    - BUG/MEDIUM: log: issue mixing sampled to not sampled log servers.
+    - MEDIUM: udp: adds minimal proto udp support for message listeners.
+    - MEDIUM: log/sink: re-work and merge of build message API.
+    - MINOR: log: adds syslog udp message handler and parsing.
+    - MEDIUM: log: adds log forwarding section.
+    - MINOR: log: adds counters on received syslog messages.
+    - BUG/MEDIUM: fcgi-app: fix memory leak in fcgi_flt_http_headers
+    - BUG/MEDIUM: server: resolve state file handle leak on reload
+    - BUG/MEDIUM: server: fix possibly uninitialized state file on close
+    - BUG/MEDIUM: channel: Be aware of SHUTW_NOW flag when output data are peeked
+    - BUILD: config: address build warning on raspbian+rpi4
+    - BUG/MAJOR: tasks: make sure to always lock the shared wait queue if needed
+    - BUILD: config: fix again bugs gcc warnings on calloc
+
 2020/07/07 : 2.3-dev0
     - [RELEASE] Released version 2.3-dev0
     - MINOR: version: back to development, update status message

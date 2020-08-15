@@ -10,7 +10,7 @@
  *
  */
 
-#ifdef __ELF__
+#if (defined(__ELF__) && !defined(__linux__)) || defined(USE_DL)
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <link.h>
@@ -871,6 +871,7 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 	char *port1, *port2;
 	int portl, porth, porta;
 	int abstract = 0;
+	int is_udp = 0;
 
 	portl = porth = porta = 0;
 	if (fqdn)
@@ -906,6 +907,21 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 	else if (strncmp(str2, "ipv6@", 5) == 0) {
 		str2 += 5;
 		ss.ss_family = AF_INET6;
+	}
+	else if (strncmp(str2, "udp4@", 5) == 0) {
+		str2 += 5;
+		ss.ss_family = AF_INET;
+		is_udp = 1;
+	}
+	else if (strncmp(str2, "udp6@", 5) == 0) {
+		str2 += 5;
+		ss.ss_family = AF_INET6;
+		is_udp = 1;
+	}
+	else if (strncmp(str2, "udp@", 4) == 0) {
+		str2 += 4;
+		ss.ss_family = AF_UNSPEC;
+		is_udp = 1;
 	}
 	else if (*str2 == '/') {
 		ss.ss_family = AF_UNIX;
@@ -1037,6 +1053,13 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 			}
 		}
 		set_host_port(&ss, porta);
+		if (is_udp) {
+			if (ss.ss_family == AF_INET6)
+				ss.ss_family = AF_CUST_UDP6;
+			else
+				ss.ss_family = AF_CUST_UDP4;
+		}
+
 	}
 
 	ret = &ss;
@@ -4387,7 +4410,7 @@ const char *get_exec_path()
 	return ret;
 }
 
-#ifdef __ELF__
+#if (defined(__ELF__) && !defined(__linux__)) || defined(USE_DL)
 /* calls dladdr() or dladdr1() on <addr> and <dli>. If dladdr1 is available,
  * also returns the symbol size in <size>, otherwise returns 0 there.
  */
@@ -4421,7 +4444,7 @@ static int dladdr_and_size(const void *addr, Dl_info *dli, size_t *size)
  * The file name (lib or executable) is limited to what lies between the last
  * '/' and the first following '.'. An optional prefix <pfx> is prepended before
  * the output if not null. The file is not dumped when it's the same as the one
- * that contains the "main" symbol, or when __ELF__ is not set.
+ * that contains the "main" symbol, or when __ELF__ && USE_DL are not set.
  *
  * The symbol's base address is returned, or NULL when unresolved, in order to
  * allow the caller to match it against known ones.
@@ -4449,7 +4472,7 @@ const void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr)
 #endif
 	};
 
-#ifdef __ELF__
+#if (defined(__ELF__) && !defined(__linux__)) || defined(USE_DL)
 	Dl_info dli, dli_main;
 	size_t size;
 	const char *fname, *p;
@@ -4466,7 +4489,7 @@ const void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr)
 		}
 	}
 
-#ifdef __ELF__
+#if (defined(__ELF__) && !defined(__linux__)) || defined(USE_DL)
 	/* Now let's try to be smarter */
 	if (!dladdr_and_size(addr, &dli, &size))
 		goto unknown;
@@ -4506,7 +4529,7 @@ const void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr)
 		chunk_appendf(buf, "+%#lx", (long)(addr - dli.dli_fbase));
 		return NULL;
 	}
-#endif /* __ELF__ */
+#endif /* __ELF__ && !__linux__ || USE_DL */
  unknown:
 	/* unresolved symbol from the main file, report relative offset to main */
 	if ((void*)addr < (void*)main)

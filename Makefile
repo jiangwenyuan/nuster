@@ -185,7 +185,6 @@ SPEC_CFLAGS += $(call cc-nowarn,sign-compare)
 SPEC_CFLAGS += $(call cc-nowarn,unused-parameter)
 SPEC_CFLAGS += $(call cc-nowarn,clobbered)
 SPEC_CFLAGS += $(call cc-nowarn,missing-field-initializers)
-SPEC_CFLAGS += $(call cc-nowarn,stringop-overflow)
 SPEC_CFLAGS += $(call cc-nowarn,cast-function-type)
 SPEC_CFLAGS += $(call cc-nowarn,string-plus-int)
 SPEC_CFLAGS += $(call cc-opt,-Wtype-limits)
@@ -533,6 +532,8 @@ OPTIONS_LDFLAGS += -Wl,$(if $(EXPORT_SYMBOL),$(EXPORT_SYMBOL),--export-dynamic)
 endif
 
 ifneq ($(USE_OPENSSL),)
+SSL_INC =
+SSL_LIB =
 # OpenSSL is packaged in various forms and with various dependencies.
 # In general -lssl is enough, but on some platforms, -lcrypto may be needed,
 # reason why it's added by default. Some even need -lz, then you'll need to
@@ -825,7 +826,7 @@ OBJS = src/mux_fcgi.o src/mux_h1.o src/mux_h2.o src/backend.o                 \
        src/dynbuf.o src/uri_auth.o src/protocol.o src/auth.o                  \
        src/ebsttree.o src/pipe.o src/hpack-enc.o src/fcgi.o                   \
        src/eb64tree.o src/dict.o src/shctx.o src/ebimtree.o                   \
-       src/eb32tree.o src/ebtree.o src/dgram.o                                \
+       src/eb32tree.o src/ebtree.o src/dgram.o src/proto_udp.o                \
        src/hpack-huff.o src/base64.o src/version.o
 
 NUSTER_OBJS = src/nuster/cache/engine.o src/nuster/cache/filter.o             \

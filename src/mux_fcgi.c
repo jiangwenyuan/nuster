@@ -825,7 +825,7 @@ static inline struct fcgi_strm *fcgi_conn_st_by_id(struct fcgi_conn *fconn, int 
  */
 static void fcgi_release(struct fcgi_conn *fconn)
 {
-	struct connection *conn = NULL;;
+	struct connection *conn = NULL;
 
 	TRACE_POINT(FCGI_EV_FCONN_END);
 
@@ -1303,27 +1303,21 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 		struct ist path = http_get_path(params->uri);
 		int len;
 
-		/* Decode the path. it must first be copied to keep the URI
-		 * untouched.
-		 */
-		chunk_memcat(params->p, path.ptr, path.len);
-		path.ptr = b_tail(params->p) - path.len;
-		path.ptr[path.len] = '\0';
-		len = url_decode(path.ptr, 0);
-		if (len < 0)
-			goto error;
-		path.len = len;
-
 		/* No scrit_name set but no valid path ==> error */
 		if (!(params->mask & FCGI_SP_SCRIPT_NAME) && !istlen(path))
 			goto error;
 
-		/* Find limit between the path and the query-string */
-		for (len = 0; len < path.len && *(path.ptr + len) != '?'; len++);
-
 		/* If there is a query-string, Set it if not already set */
-		if (!(params->mask & FCGI_SP_REQ_QS) && len < path.len)
-			params->qs = ist2(path.ptr+len+1, path.len-len-1);
+		if (!(params->mask & FCGI_SP_REQ_QS)) {
+			struct ist qs = istfind(path, '?');
+
+			/* Update the path length */
+			path.len -= qs.len;
+
+			/* Set the query-string skipping the '?', if any */
+			if (istlen(qs))
+				params->qs = istnext(qs);
+		}
 
 		/* If the script_name is set, don't try to deduce the path_info
 		 * too. The opposite is not true.
@@ -1333,8 +1327,18 @@ static int fcgi_set_default_param(struct fcgi_conn *fconn, struct fcgi_strm *fst
 			goto end;
 		}
 
+		/* Decode the path. it must first be copied to keep the URI
+		 * untouched.
+		 */
+		chunk_memcat(params->p, path.ptr, path.len);
+		path.ptr = b_tail(params->p) - path.len;
+		len = url_decode(ist0(path), 0);
+		if (len < 0)
+			goto error;
+		path.len = len;
+
 		/* script_name not set, preset it with the path for now */
-		params->scriptname = ist2(path.ptr, len);
+		params->scriptname = path;
 
 		/* If there is no regex to match the pathinfo, just to the last
 		 * part and see if the index must be used.
@@ -2295,6 +2299,7 @@ static int fcgi_strm_handle_stdout(struct fcgi_conn *fconn, struct fcgi_strm *fs
 		goto fail;
 
   end_transfer:
+	fconn->state = FCGI_CS_RECORD_P;
 	fconn->drl += fconn->drp;
 	fconn->drp = 0;
 	ret = MIN(b_data(&fconn->dbuf), fconn->drl);
@@ -2335,7 +2340,7 @@ static int fcgi_strm_handle_empty_stdout(struct fcgi_conn *fconn, struct fcgi_st
 		return 0;
 	}
 	fconn->state = FCGI_CS_RECORD_H;
-	fstrm->state |= FCGI_SF_ES_RCVD;
+	fstrm->flags |= FCGI_SF_ES_RCVD;
 	TRACE_PROTO("FCGI STDOUT record rcvd", FCGI_EV_RX_RECORD|FCGI_EV_RX_STDOUT, fconn->conn, fstrm,, (size_t[]){0});
 	TRACE_STATE("stdout data fully send, switching to RECORD_H", FCGI_EV_RX_RECORD|FCGI_EV_RX_FHDR|FCGI_EV_RX_EOI, fconn->conn, fstrm);
 	TRACE_LEAVE(FCGI_EV_RX_RECORD|FCGI_EV_RX_STDOUT, fconn->conn, fstrm);
@@ -2355,7 +2360,7 @@ static int fcgi_strm_handle_stderr(struct fcgi_conn *fconn, struct fcgi_strm *fs
 	dbuf = &fconn->dbuf;
 
 	/* Only padding remains */
-	if (fconn->state == FCGI_CS_RECORD_P)
+	if (fconn->state == FCGI_CS_RECORD_P || !fconn->drl)
 		goto end_transfer;
 
 	if (b_data(dbuf) < (fconn->drl + fconn->drp) &&
@@ -2379,6 +2384,7 @@ static int fcgi_strm_handle_stderr(struct fcgi_conn *fconn, struct fcgi_strm *fs
 		goto fail;
 
   end_transfer:
+	fconn->state = FCGI_CS_RECORD_P;
 	fconn->drl += fconn->drp;
 	fconn->drp = 0;
 	ret = MIN(b_data(&fconn->dbuf), fconn->drl);
@@ -3436,7 +3442,7 @@ static struct conn_stream *fcgi_attach(struct connection *conn, struct session *
 	struct fcgi_conn *fconn = conn->ctx;
 
 	TRACE_ENTER(FCGI_EV_FSTRM_NEW, conn);
-	cs = cs_new(conn);
+	cs = cs_new(conn, conn->target);
 	if (!cs) {
 		TRACE_DEVEL("leaving on CS allocation failure", FCGI_EV_FSTRM_NEW|FCGI_EV_FSTRM_ERR, conn);
 		return NULL;
@@ -3540,11 +3546,8 @@ static void fcgi_detach(struct conn_stream *cs)
 
 	if (!(fconn->conn->flags & (CO_FL_ERROR|CO_FL_SOCK_RD_SH|CO_FL_SOCK_WR_SH)) &&
 	    (fconn->flags & FCGI_CF_KEEP_CONN)) {
-		/* Never ever allow to reuse a connection from a non-reuse backend */
-		if ((fconn->proxy->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
-			fconn->conn->flags |= CO_FL_PRIVATE;
-		if (!fconn->conn->owner && (fconn->conn->flags & CO_FL_PRIVATE)) {
-			fconn->conn->owner = sess;
+		if (fconn->conn->flags & CO_FL_PRIVATE) {
+			/* Add the connection in the session serverlist, if not already done */
 			if (!session_add_conn(sess, fconn->conn, fconn->conn->target)) {
 				fconn->conn->owner = NULL;
 				if (eb_is_empty(&fconn->streams_by_id)) {
@@ -3554,15 +3557,16 @@ static void fcgi_detach(struct conn_stream *cs)
 					return;
 				}
 			}
-		}
-		if (eb_is_empty(&fconn->streams_by_id)) {
-			if (sess && fconn->conn->owner == sess &&
-			    session_check_idle_conn(fconn->conn->owner, fconn->conn) != 0) {
-				/* The connection is destroyed, let's leave */
-				TRACE_DEVEL("outgoing connection killed", FCGI_EV_STRM_END|FCGI_EV_FCONN_ERR);
-				return;
+			if (eb_is_empty(&fconn->streams_by_id)) {
+				if (session_check_idle_conn(fconn->conn->owner, fconn->conn) != 0) {
+					/* The connection is destroyed, let's leave */
+					TRACE_DEVEL("outgoing connection killed", FCGI_EV_STRM_END|FCGI_EV_FCONN_ERR);
+					return;
+				}
 			}
-			if (!(fconn->conn->flags & CO_FL_PRIVATE)) {
+		}
+		else {
+			if (eb_is_empty(&fconn->streams_by_id)) {
 				if (!srv_add_to_idle_list(objt_server(fconn->conn->target), fconn->conn, 1)) {
 					/* The server doesn't want it, let's kill the connection right away */
 					fconn->conn->mux->destroy(fconn);
@@ -3576,11 +3580,11 @@ static void fcgi_detach(struct conn_stream *cs)
 				TRACE_DEVEL("reusable idle connection", FCGI_EV_STRM_END, fconn->conn);
 				return;
 			}
-		} else if (MT_LIST_ISEMPTY(&fconn->conn->list) &&
-			   fcgi_avail_streams(fconn->conn) > 0 && objt_server(fconn->conn->target)) {
+			else if (MT_LIST_ISEMPTY(&fconn->conn->list) &&
+				 fcgi_avail_streams(fconn->conn) > 0 && objt_server(fconn->conn->target)) {
 				LIST_ADD(&__objt_server(fconn->conn->target)->available_conns[tid], mt_list_to_list(&fconn->conn->list));
 			}
-
+		}
 	}
 
 	/* We don't want to close right now unless we're removing the last

@@ -144,7 +144,7 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 
 	ret = -1; /* assume unrecoverable error by default */
 
-	if (unlikely((cli_conn = conn_new()) == NULL))
+	if (unlikely((cli_conn = conn_new(&l->obj_type)) == NULL))
 		goto out_close;
 
 	if (!sockaddr_alloc(&cli_conn->src))
@@ -153,7 +153,6 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	cli_conn->handle.fd = cfd;
 	*cli_conn->src = *addr;
 	cli_conn->flags |= CO_FL_ADDR_FROM_SET;
-	cli_conn->target = &l->obj_type;
 	cli_conn->proxy_netns = l->netns;
 
 	conn_prepare(cli_conn, l->proto, l->bind_conf->xprt);
@@ -224,8 +223,24 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	if (l->addr.ss_family == AF_INET || l->addr.ss_family == AF_INET6) {
 		setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, (char *) &one, sizeof(one));
 
-		if (p->options & PR_O_TCP_CLI_KA)
+		if (p->options & PR_O_TCP_CLI_KA) {
 			setsockopt(cfd, SOL_SOCKET, SO_KEEPALIVE, (char *) &one, sizeof(one));
+
+#ifdef TCP_KEEPCNT
+			if (p->clitcpka_cnt)
+				setsockopt(cfd, IPPROTO_TCP, TCP_KEEPCNT, &p->clitcpka_cnt, sizeof(p->clitcpka_cnt));
+#endif
+
+#ifdef TCP_KEEPIDLE
+			if (p->clitcpka_idle)
+				setsockopt(cfd, IPPROTO_TCP, TCP_KEEPIDLE, &p->clitcpka_idle, sizeof(p->clitcpka_idle));
+#endif
+
+#ifdef TCP_KEEPINTVL
+			if (p->clitcpka_intvl)
+				setsockopt(cfd, IPPROTO_TCP, TCP_KEEPINTVL, &p->clitcpka_intvl, sizeof(p->clitcpka_intvl));
+#endif
+		}
 
 		if (p->options & PR_O_TCP_NOLING)
 			fdtab[cfd].linger_risk = 1;

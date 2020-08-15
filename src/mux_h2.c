@@ -926,7 +926,7 @@ static inline struct h2s *h2c_st_by_id(struct h2c *h2c, int id)
  */
 static void h2_release(struct h2c *h2c)
 {
-	struct connection *conn = NULL;;
+	struct connection *conn = NULL;
 
 	TRACE_ENTER(H2_EV_H2C_END);
 
@@ -1352,7 +1352,7 @@ static struct h2s *h2c_frt_stream_new(struct h2c *h2c, int id)
 	if (!h2s)
 		goto out;
 
-	cs = cs_new(h2c->conn);
+	cs = cs_new(h2c->conn, h2c->conn->target);
 	if (!cs)
 		goto out_close;
 
@@ -3818,7 +3818,7 @@ static struct conn_stream *h2_attach(struct connection *conn, struct session *se
 	struct h2c *h2c = conn->ctx;
 
 	TRACE_ENTER(H2_EV_H2S_NEW, conn);
-	cs = cs_new(conn);
+	cs = cs_new(conn, conn->target);
 	if (!cs) {
 		TRACE_DEVEL("leaving on CS allocation failure", H2_EV_H2S_NEW|H2_EV_H2S_ERR, conn);
 		return NULL;
@@ -3942,11 +3942,8 @@ static void h2_detach(struct conn_stream *cs)
 	if (h2c->flags & H2_CF_IS_BACK) {
 		if (!(h2c->conn->flags &
 		    (CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH))) {
-			/* Never ever allow to reuse a connection from a non-reuse backend */
-			if ((h2c->proxy->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
-				h2c->conn->flags |= CO_FL_PRIVATE;
-			if (!h2c->conn->owner && (h2c->conn->flags & CO_FL_PRIVATE)) {
-				h2c->conn->owner = sess;
+			if (h2c->conn->flags & CO_FL_PRIVATE) {
+				/* Add the connection in the session server list, if not already done */
 				if (!session_add_conn(sess, h2c->conn, h2c->conn->target)) {
 					h2c->conn->owner = NULL;
 					if (eb_is_empty(&h2c->streams_by_id)) {
@@ -3955,15 +3952,16 @@ static void h2_detach(struct conn_stream *cs)
 						return;
 					}
 				}
-			}
-			if (eb_is_empty(&h2c->streams_by_id)) {
-				if (sess && h2c->conn->owner == sess &&
-				    session_check_idle_conn(h2c->conn->owner, h2c->conn) != 0) {
-					/* At this point either the connection is destroyed, or it's been added to the server idle list, just stop */
-					TRACE_DEVEL("leaving without reusable idle connection", H2_EV_STRM_END);
-					return;
+				if (eb_is_empty(&h2c->streams_by_id)) {
+					if (session_check_idle_conn(h2c->conn->owner, h2c->conn) != 0) {
+						/* At this point either the connection is destroyed, or it's been added to the server idle list, just stop */
+						TRACE_DEVEL("leaving without reusable idle connection", H2_EV_STRM_END);
+						return;
+					}
 				}
-				if (!(h2c->conn->flags & CO_FL_PRIVATE)) {
+			}
+			else {
+				if (eb_is_empty(&h2c->streams_by_id)) {
 					if (!srv_add_to_idle_list(objt_server(h2c->conn->target), h2c->conn, 1)) {
 						/* The server doesn't want it, let's kill the connection right away */
 						h2c->conn->mux->destroy(h2c);
@@ -3978,9 +3976,10 @@ static void h2_detach(struct conn_stream *cs)
 					return;
 
 				}
-			} else if (MT_LIST_ISEMPTY(&h2c->conn->list) &&
-			           h2_avail_streams(h2c->conn) > 0 && objt_server(h2c->conn->target)) {
-				LIST_ADD(&__objt_server(h2c->conn->target)->available_conns[tid], mt_list_to_list(&h2c->conn->list));
+				else if (MT_LIST_ISEMPTY(&h2c->conn->list) &&
+					 h2_avail_streams(h2c->conn) > 0 && objt_server(h2c->conn->target)) {
+					LIST_ADD(&__objt_server(h2c->conn->target)->available_conns[tid], mt_list_to_list(&h2c->conn->list));
+				}
 			}
 		}
 	}
@@ -4453,6 +4452,7 @@ next_frame:
 
 	if ((h2c->dff & H2_F_HEADERS_END_STREAM)) {
 		/* Mark the end of message using EOM */
+		htx->flags |= HTX_FL_EOI; /* no more data are expected. Only EOM remains to add now */
 		if (!htx_add_endof(htx, HTX_BLK_EOM)) {
 			TRACE_STATE("failed to append HTX EOM block into rxbuf", H2_EV_RX_FRAME|H2_EV_RX_HDR|H2_EV_H2S_ERR, h2c->conn);
 			goto fail;
@@ -4588,6 +4588,7 @@ try_again:
 	 */
 
 	if (h2c->dff & H2_F_DATA_END_STREAM) {
+		htx->flags |= HTX_FL_EOI; /* no more data are expected. Only EOM remains to add now */
 		if (!htx_add_endof(htx, HTX_BLK_EOM)) {
 			TRACE_STATE("h2s rxbuf is full, failed to add EOM", H2_EV_RX_FRAME|H2_EV_RX_DATA|H2_EV_H2S_BLK, h2c->conn, h2s);
 			h2c->flags |= H2_CF_DEM_SFULL;
@@ -5779,6 +5780,8 @@ static size_t h2_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		if (htx_is_empty(buf_htx))
 			cs->flags |= CS_FL_EOI;
 	}
+	else if (htx_is_empty(h2s_htx))
+		buf_htx->flags |= (h2s_htx->flags & HTX_FL_EOI);
 
 	buf_htx->extra = (h2s_htx->extra ? (h2s_htx->data + h2s_htx->extra) : 0);
 	htx_to_buf(buf_htx, buf);

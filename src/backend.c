@@ -1166,13 +1166,8 @@ static struct connection *conn_backend_get(struct server *srv, int is_safe)
 		conn = NULL;
  done:
 	if (conn) {
-		conn->idle_time = 0;
 		_HA_ATOMIC_STORE(&srv->next_takeover, (i + 1 == global.nbthread) ? 0 : i + 1);
-		_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
-		_HA_ATOMIC_SUB(&srv->curr_idle_thr[i], 1);
-		_HA_ATOMIC_SUB(is_safe ? &srv->curr_safe_nb : &srv->curr_idle_nb, 1);
-		__ha_barrier_atomic_store();
-		LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&conn->list));
+		srv_use_idle_conn(srv, conn);
 	}
 	return conn;
 }
@@ -1197,13 +1192,10 @@ int connect_server(struct stream *s)
 	struct connection *cli_conn = objt_conn(strm_orig(s));
 	struct connection *srv_conn = NULL;
 	struct conn_stream *srv_cs = NULL;
-	struct sess_srv_list *srv_list;
 	struct server *srv;
 	int reuse = 0;
-	int reuse_orphan = 0;
 	int init_mux = 0;
 	int err;
-	int was_unused = 0;
 
 
 	/* This will catch some corner cases such as lying connections resulting from
@@ -1212,21 +1204,9 @@ int connect_server(struct stream *s)
 	si_release_endpoint(&s->si[1]);
 
 	/* first, search for a matching connection in the session's idle conns */
-	list_for_each_entry(srv_list, &s->sess->srv_list, srv_list) {
-		if (srv_list->target == s->target) {
-			list_for_each_entry(srv_conn, &srv_list->conn_list, session_list) {
-				if (conn_xprt_ready(srv_conn) &&
-				    srv_conn->mux && (srv_conn->mux->avail_streams(srv_conn) > 0)) {
-					reuse = 1;
-					break;
-				}
-			}
-			break;
-		}
-	}
-
-	if (!reuse)
-		srv_conn = NULL;
+	srv_conn = session_get_conn(s->sess, s->target);
+	if (srv_conn)
+		reuse = 1;
 
 	srv = objt_server(s->target);
 
@@ -1265,20 +1245,17 @@ int connect_server(struct stream *s)
 				 * try idle then safe.
 				 */
 				srv_conn = conn_backend_get(srv, 0);
-				was_unused = 1;
 			}
 			else if (srv->safe_conns &&
 			         ((s->txn && (s->txn->flags & TX_NOT_FIRST)) ||
 				  (s->be->options & PR_O_REUSE_MASK) >= PR_O_REUSE_AGGR) &&
 				 srv->curr_safe_nb > 0) {
 				srv_conn = conn_backend_get(srv, 1);
-				was_unused = 1;
 			}
 			else if (srv->idle_conns &&
 			         ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_ALWS) &&
 				 srv->curr_idle_nb > 0) {
 				srv_conn = conn_backend_get(srv, 0);
-				was_unused = 1;
 			}
 			/* If we've picked a connection from the pool, we now have to
 			 * detach it. We may have to get rid of the previous idle
@@ -1286,11 +1263,8 @@ int connect_server(struct stream *s)
 			 * other owner's. That way it may remain alive for others to
 			 * pick.
 			 */
-			if (srv_conn) {
-				reuse_orphan = 1;
+			if (srv_conn)
 				reuse = 1;
-				srv_conn->flags &= ~CO_FL_LIST_MASK;
-			}
 		}
 	}
 
@@ -1356,19 +1330,6 @@ int connect_server(struct stream *s)
 		}
 
 	}
-	/* If we're really reusing the connection, remove it from the orphan
-	 * list and add it back to the idle list.
-	 */
-	if (reuse) {
-		if (!reuse_orphan) {
-			if (srv_conn->flags & CO_FL_SESS_IDLE) {
-				struct session *sess = srv_conn->owner;
-
-				srv_conn->flags &= ~CO_FL_SESS_IDLE;
-				sess->idle_conns--;
-			}
-		}
-	}
 
 	if (reuse) {
 		if (srv_conn->mux) {
@@ -1396,24 +1357,16 @@ int connect_server(struct stream *s)
 
 	/* no reuse or failed to reuse the connection above, pick a new one */
 	if (!srv_conn) {
-		srv_conn = conn_new();
-		was_unused = 1;
-		if (srv_conn)
-			srv_conn->target = s->target;
+		srv_conn = conn_new(s->target);
 		srv_cs = NULL;
+
+		if (srv_conn) {
+			srv_conn->owner = s->sess;
+			if ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_NEVR)
+				conn_set_private(srv_conn);
+		}
 	}
 
-	if (srv_conn && srv && was_unused) {
-		_HA_ATOMIC_ADD(&srv->curr_used_conns, 1);
-		/* It's ok not to do that atomically, we don't need an
-		 * exact max.
-		 */
-		if (srv->max_used_conns < srv->curr_used_conns)
-			srv->max_used_conns = srv->curr_used_conns;
-
-		if (srv->est_need_conns < srv->curr_used_conns)
-			srv->est_need_conns = srv->curr_used_conns;
-	}
 	if (!srv_conn || !sockaddr_alloc(&srv_conn->dst)) {
 		if (srv_conn)
 			conn_free(srv_conn);
@@ -1459,19 +1412,16 @@ int connect_server(struct stream *s)
 		srv_conn->ctx = srv_cs;
 #if defined(USE_OPENSSL) && defined(TLSEXT_TYPE_application_layer_protocol_negotiation)
 		if (!srv ||
-		    ((!(srv->ssl_ctx.alpn_str) && !(srv->ssl_ctx.npn_str)) ||
-		    srv->mux_proto || s->be->mode != PR_MODE_HTTP))
+		    (srv->use_ssl != 1 || (!(srv->ssl_ctx.alpn_str) && !(srv->ssl_ctx.npn_str)) ||
+		     srv->mux_proto || s->be->mode != PR_MODE_HTTP))
 #endif
 			init_mux = 1;
-#if defined(USE_OPENSSL) && defined(TLSEXT_TYPE_application_layer_protocol_negotiation)
-		else
-			srv_conn->owner = s->sess;
-#endif
+
 		/* process the case where the server requires the PROXY protocol to be sent */
 		srv_conn->send_proxy_ofs = 0;
 
 		if (srv && srv->pp_opts) {
-			srv_conn->flags |= CO_FL_PRIVATE;
+			conn_set_private(srv_conn);
 			srv_conn->flags |= CO_FL_SEND_PROXY;
 			srv_conn->send_proxy_ofs = 1; /* must compute size */
 			if (cli_conn)
@@ -1519,6 +1469,29 @@ int connect_server(struct stream *s)
 	if (err != SF_ERR_NONE)
 		return err;
 
+#ifdef USE_OPENSSL
+	if (srv && srv->ssl_ctx.sni) {
+		struct sample *smp;
+
+		smp = sample_fetch_as_type(s->be, s->sess, s, SMP_OPT_DIR_REQ | SMP_OPT_FINAL,
+					   srv->ssl_ctx.sni, SMP_T_STR);
+		if (smp_make_safe(smp)) {
+			ssl_sock_set_servername(srv_conn, smp->data.u.str.area);
+			conn_set_private(srv_conn);
+		}
+	}
+#endif /* USE_OPENSSL */
+
+	/* The CO_FL_SEND_PROXY flag may have been set by the connect method,
+	 * if so, add our handshake pseudo-XPRT now.
+	 */
+	if ((srv_conn->flags & CO_FL_HANDSHAKE)) {
+		if (xprt_add_hs(srv_conn) < 0) {
+			conn_full_close(srv_conn);
+			return SF_ERR_INTERNAL;
+		}
+	}
+
 	/* We have to defer the mux initialization until after si_connect()
 	 * has been called, as we need the xprt to have been properly
 	 * initialized, or any attempt to recv during the mux init may
@@ -1531,22 +1504,18 @@ int connect_server(struct stream *s)
 		}
 		/* If we're doing http-reuse always, and the connection is not
 		 * private with available streams (an http2 connection), add it
-		 * to the available list, so that others can use it right away.
+		 * to the available list, so that others can use it right
+		 * away. If the connection is private, add it in the session
+		 * server list.
 		 */
 		if (srv && ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_ALWS) &&
 		    !(srv_conn->flags & CO_FL_PRIVATE) && srv_conn->mux->avail_streams(srv_conn) > 0)
 			LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&srv_conn->list));
-	}
-	/* The CO_FL_SEND_PROXY flag may have been set by the connect method,
-	 * if so, add our handshake pseudo-XPRT now.
-	 */
-	if ((srv_conn->flags & CO_FL_HANDSHAKE)) {
-		if (xprt_add_hs(srv_conn) < 0) {
-			conn_full_close(srv_conn);
-			return SF_ERR_INTERNAL;
+		else if (srv_conn->flags & CO_FL_PRIVATE) {
+			/* If it fail now, the same will be done in mux->detach() callback */
+			session_add_conn(srv_conn->owner, srv_conn, srv_conn->target);
 		}
 	}
-
 
 #if USE_OPENSSL && (defined(OPENSSL_IS_BORINGSSL) || (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L))
 
@@ -1576,21 +1545,6 @@ int connect_server(struct stream *s)
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.cur_sess_max, count);
 		if (s->be->lbprm.server_take_conn)
 			s->be->lbprm.server_take_conn(srv);
-
-#ifdef USE_OPENSSL
-		if (srv->ssl_ctx.sni) {
-			struct sample *smp;
-
-			smp = sample_fetch_as_type(s->be, s->sess, s, SMP_OPT_DIR_REQ | SMP_OPT_FINAL,
-						   srv->ssl_ctx.sni, SMP_T_STR);
-			if (smp_make_safe(smp)) {
-				ssl_sock_set_servername(srv_conn,
-							smp->data.u.str.area);
-				srv_conn->flags |= CO_FL_PRIVATE;
-			}
-		}
-#endif /* USE_OPENSSL */
-
 	}
 
 	/* Now handle synchronously connected sockets. We know the stream-int
@@ -1626,6 +1580,14 @@ int connect_server(struct stream *s)
 	 */
 	if ((srv_cs->flags & CS_FL_EOI) && !(si_ic(&s->si[1])->flags & CF_EOI))
 		si_ic(&s->si[1])->flags |= (CF_EOI|CF_READ_PARTIAL);
+
+	/* catch all sync connect while the mux is not already installed */
+	if (!srv_conn->mux && !(srv_conn->flags & CO_FL_WAIT_XPRT)) {
+		if (conn_create_mux(srv_conn) < 0) {
+			conn_full_close(srv_conn);
+			return SF_ERR_INTERNAL;
+		}
+	}
 
 	return SF_ERR_NONE;  /* connection is OK */
 }
@@ -2858,6 +2820,48 @@ smp_fetch_srv_sess_rate(const struct arg *args, struct sample *smp, const char *
 	return 1;
 }
 
+/* set temp integer to the server weight.
+ * Accepts exactly 1 argument. Argument is a server, other types will lead to
+ * undefined behaviour.
+ */
+static int
+smp_fetch_srv_weight(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	struct server *srv = args->data.srv;
+	struct proxy *px = srv->proxy;
+
+	smp->flags = SMP_F_VOL_TEST;
+	smp->data.type = SMP_T_SINT;
+	smp->data.u.sint = (srv->cur_eweight * px->lbprm.wmult + px->lbprm.wdiv - 1) / px->lbprm.wdiv;
+	return 1;
+}
+
+/* set temp integer to the server initial weight.
+ * Accepts exactly 1 argument. Argument is a server, other types will lead to
+ * undefined behaviour.
+ */
+static int
+smp_fetch_srv_iweight(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	smp->flags = SMP_F_VOL_TEST;
+	smp->data.type = SMP_T_SINT;
+	smp->data.u.sint = args->data.srv->iweight;
+	return 1;
+}
+
+/* set temp integer to the server user-specified weight.
+ * Accepts exactly 1 argument. Argument is a server, other types will lead to
+ * undefined behaviour.
+ */
+static int
+smp_fetch_srv_uweight(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+	smp->flags = SMP_F_VOL_TEST;
+	smp->data.type = SMP_T_SINT;
+	smp->data.u.sint = args->data.srv->uweight;
+	return 1;
+}
+
 static int sample_conv_nbsrv(const struct arg *args, struct sample *smp, void *private)
 {
 
@@ -2929,6 +2933,9 @@ static struct sample_fetch_kw_list smp_kws = {ILH, {
 	{ "srv_name",      smp_fetch_srv_name,       0,           NULL, SMP_T_STR,  SMP_USE_SERVR, },
 	{ "srv_queue",     smp_fetch_srv_queue,      ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
 	{ "srv_sess_rate", smp_fetch_srv_sess_rate,  ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_weight",    smp_fetch_srv_weight,     ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_iweight",   smp_fetch_srv_iweight,    ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_uweight",   smp_fetch_srv_uweight,    ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
 	{ /* END */ },
 }};
 

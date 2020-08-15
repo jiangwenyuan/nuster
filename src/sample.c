@@ -1177,8 +1177,7 @@ int smp_resolve_args(struct proxy *p)
 				break;
 			}
 
-			free(arg->data.str.area);
-			arg->data.str.area = NULL;
+			chunk_destroy(&arg->data.str);
 			arg->unresolved = 0;
 			arg->data.srv = srv;
 			break;
@@ -1205,8 +1204,7 @@ int smp_resolve_args(struct proxy *p)
 				break;
 			}
 
-			free(arg->data.str.area);
-			arg->data.str.area = NULL;
+			chunk_destroy(&arg->data.str);
 			arg->unresolved = 0;
 			arg->data.prx = px;
 			break;
@@ -1233,8 +1231,7 @@ int smp_resolve_args(struct proxy *p)
 				break;
 			}
 
-			free(arg->data.str.area);
-			arg->data.str.area = NULL;
+			chunk_destroy(&arg->data.str);
 			arg->unresolved = 0;
 			arg->data.prx = px;
 			break;
@@ -1274,8 +1271,7 @@ int smp_resolve_args(struct proxy *p)
 				t->proxies_list = p;
 			}
 
-			free(arg->data.str.area);
-			arg->data.str.area = NULL;
+			chunk_destroy(&arg->data.str);
 			arg->unresolved = 0;
 			arg->data.t = t;
 			break;
@@ -1304,8 +1300,7 @@ int smp_resolve_args(struct proxy *p)
 				break;
 			}
 
-			free(arg->data.str.area);
-			arg->data.str.area = NULL;
+			chunk_destroy(&arg->data.str);
 			arg->unresolved = 0;
 			arg->data.usr = ul;
 			break;
@@ -1332,8 +1327,7 @@ int smp_resolve_args(struct proxy *p)
 				continue;
 			}
 
-			free(arg->data.str.area);
-			arg->data.str.area = NULL;
+			chunk_destroy(&arg->data.str);
 			arg->unresolved = 0;
 			arg->data.reg = reg;
 			break;
@@ -1402,8 +1396,7 @@ static void release_sample_arg(struct arg *p)
 
 	while (p->type != ARGT_STOP) {
 		if (p->type == ARGT_STR || p->unresolved) {
-			free(p->data.str.area);
-			p->data.str.area = NULL;
+			chunk_destroy(&p->data.str);
 			p->unresolved = 0;
 		}
 		else if (p->type == ARGT_REG) {
@@ -1424,8 +1417,12 @@ void release_sample_expr(struct sample_expr *expr)
 	if (!expr)
 		return;
 
-	list_for_each_entry_safe(conv_expr, conv_exprb, &expr->conv_exprs, list)
+	list_for_each_entry_safe(conv_expr, conv_exprb, &expr->conv_exprs, list) {
+		LIST_DEL(&conv_expr->list);
 		release_sample_arg(conv_expr->arg_p);
+		free(conv_expr);
+	}
+
 	release_sample_arg(expr->arg_p);
 	free(expr);
 }
@@ -1448,7 +1445,7 @@ static int sample_conv_debug(const struct arg *arg_p, struct sample *smp, void *
 	if (!buf)
 		goto end;
 
-	sink = (struct sink *)arg_p[1].data.str.area;
+	sink = (struct sink *)arg_p[1].data.ptr;
 	BUG_ON(!sink);
 
 	pfx = arg_p[0].data.str.area;
@@ -1479,7 +1476,7 @@ static int sample_conv_debug(const struct arg *arg_p, struct sample *smp, void *
 
  done:
 	line = ist2(buf->area, buf->data);
-	sink_write(sink, &line, 1, 0, 0, NULL, NULL, NULL);
+	sink_write(sink, &line, 1, 0, 0, NULL);
  end:
 	free_trash_chunk(buf);
 	return 1;
@@ -1510,8 +1507,9 @@ static int smp_check_debug(struct arg *args, struct sample_conv *conv,
 		return 0;
 	}
 
-	args[1].data.str.area = (char *)sink;
-	args[1].data.str.data = 0; // that's not a string anymore
+	chunk_destroy(&args[1].data.str);
+	args[1].type = ARGT_PTR;
+	args[1].data.ptr = sink;
 	return 1;
 }
 
@@ -2139,6 +2137,8 @@ enum input_type {
 static int sample_conv_json_check(struct arg *arg, struct sample_conv *conv,
                                   const char *file, int line, char **err)
 {
+	enum input_type type;
+
 	if (!arg) {
 		memprintf(err, "Unexpected empty arg list");
 		return 0;
@@ -2149,45 +2149,28 @@ static int sample_conv_json_check(struct arg *arg, struct sample_conv *conv,
 		return 0;
 	}
 
-	if (strcmp(arg->data.str.area, "") == 0) {
-		arg->type = ARGT_SINT;
-		arg->data.sint = IT_ASCII;
-		return 1;
+	if (strcmp(arg->data.str.area, "") == 0)
+		type = IT_ASCII;
+	else if (strcmp(arg->data.str.area, "ascii") == 0)
+		type = IT_ASCII;
+	else if (strcmp(arg->data.str.area, "utf8") == 0)
+		type = IT_UTF8;
+	else if (strcmp(arg->data.str.area, "utf8s") == 0)
+		type = IT_UTF8S;
+	else if (strcmp(arg->data.str.area, "utf8p") == 0)
+		type = IT_UTF8P;
+	else if (strcmp(arg->data.str.area, "utf8ps") == 0)
+		type = IT_UTF8PS;
+	else {
+		memprintf(err, "Unexpected input code type. "
+			  "Allowed value are 'ascii', 'utf8', 'utf8s', 'utf8p' and 'utf8ps'");
+		return 0;
 	}
 
-	else if (strcmp(arg->data.str.area, "ascii") == 0) {
-		arg->type = ARGT_SINT;
-		arg->data.sint = IT_ASCII;
-		return 1;
-	}
-
-	else if (strcmp(arg->data.str.area, "utf8") == 0) {
-		arg->type = ARGT_SINT;
-		arg->data.sint = IT_UTF8;
-		return 1;
-	}
-
-	else if (strcmp(arg->data.str.area, "utf8s") == 0) {
-		arg->type = ARGT_SINT;
-		arg->data.sint = IT_UTF8S;
-		return 1;
-	}
-
-	else if (strcmp(arg->data.str.area, "utf8p") == 0) {
-		arg->type = ARGT_SINT;
-		arg->data.sint = IT_UTF8P;
-		return 1;
-	}
-
-	else if (strcmp(arg->data.str.area, "utf8ps") == 0) {
-		arg->type = ARGT_SINT;
-		arg->data.sint = IT_UTF8PS;
-		return 1;
-	}
-
-	memprintf(err, "Unexpected input code type. "
-	               "Allowed value are 'ascii', 'utf8', 'utf8s', 'utf8p' and 'utf8ps'");
-	return 0;
+	chunk_destroy(&arg->data.str);
+	arg->type = ARGT_SINT;
+	arg->data.sint = type;
+	return 1;
 }
 
 static int sample_conv_json(const struct arg *arg_p, struct sample *smp, void *private)
@@ -2662,6 +2645,7 @@ static int check_operator(struct arg *args, struct sample_conv *conv,
 {
 	const char *str;
 	const char *end;
+	long long int i;
 
 	/* Try to decode a variable. */
 	if (vars_check_arg(&args[0], NULL))
@@ -2670,12 +2654,15 @@ static int check_operator(struct arg *args, struct sample_conv *conv,
 	/* Try to convert an integer */
 	str = args[0].data.str.area;
 	end = str + strlen(str);
-	args[0].data.sint = read_int64(&str, end);
+	i = read_int64(&str, end);
 	if (*str != '\0') {
 		memprintf(err, "expects an integer or a variable name");
 		return 0;
 	}
+
+	chunk_destroy(&args[0].data.str);
 	args[0].type = ARGT_SINT;
+	args[0].data.sint = i;
 	return 1;
 }
 
@@ -3199,6 +3186,7 @@ static int sample_conv_protobuf_check(struct arg *args, struct sample_conv *conv
 			return 0;
 		}
 
+		chunk_destroy(&args[1].data.str);
 		args[1].type = ARGT_SINT;
 		args[1].data.sint = pbuf_type;
 	}
@@ -3364,23 +3352,26 @@ smp_fetch_env(const struct arg *args, struct sample *smp, const char *kw, void *
 int smp_check_date_unit(struct arg *args, char **err)
 {
         if (args[1].type == ARGT_STR) {
+		long long int unit;
+
                 if (strcmp(args[1].data.str.area, "s") == 0) {
-                        args[1].data.sint = TIME_UNIT_S;
+                        unit = TIME_UNIT_S;
                 }
                 else if (strcmp(args[1].data.str.area, "ms") == 0) {
-                        args[1].data.sint = TIME_UNIT_MS;
+                        unit = TIME_UNIT_MS;
                 }
                 else if (strcmp(args[1].data.str.area, "us") == 0) {
-                        args[1].data.sint = TIME_UNIT_US;
+                        unit = TIME_UNIT_US;
                 }
                 else {
                         memprintf(err, "expects 's', 'ms' or 'us', got '%s'",
                                   args[1].data.str.area);
                         return 0;
                 }
-                free(args[1].data.str.area);
-                args[1].data.str.area = NULL;
+
+		chunk_destroy(&args[1].data.str);
                 args[1].type = ARGT_SINT;
+		args[1].data.sint = unit;
         }
         else if (args[1].type != ARGT_STOP) {
                 memprintf(err, "Unexpected arg type");
@@ -3567,12 +3558,14 @@ static int smp_check_const_bool(struct arg *args, char **err)
 {
 	if (strcasecmp(args[0].data.str.area, "true") == 0 ||
 	    strcasecmp(args[0].data.str.area, "1") == 0) {
+		chunk_destroy(&args[0].data.str);
 		args[0].type = ARGT_SINT;
 		args[0].data.sint = 1;
 		return 1;
 	}
 	if (strcasecmp(args[0].data.str.area, "false") == 0 ||
 	    strcasecmp(args[0].data.str.area, "0") == 0) {
+		chunk_destroy(&args[0].data.str);
 		args[0].type = ARGT_SINT;
 		args[0].data.sint = 0;
 		return 1;
@@ -3616,6 +3609,7 @@ static int smp_check_const_bin(struct arg *args, char **err)
 
 	if (!parse_binary(args[0].data.str.area, &binstr, &binstrlen, err))
 		return 0;
+	chunk_destroy(&args[0].data.str);
 	args[0].type = ARGT_STR;
 	args[0].data.str.area = binstr;
 	args[0].data.str.data = binstrlen;
@@ -3638,10 +3632,11 @@ static int smp_check_const_meth(struct arg *args, char **err)
 
 	meth = find_http_meth(args[0].data.str.area, args[0].data.str.data);
 	if (meth != HTTP_METH_OTHER) {
+		chunk_destroy(&args[0].data.str);
 		args[0].type = ARGT_SINT;
 		args[0].data.sint = meth;
 	} else {
-		/* Check method avalaibility. A methos is a token defined as :
+		/* Check method avalaibility. A method is a token defined as :
 		 * tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
 		 *         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
 		 * token = 1*tchar

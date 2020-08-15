@@ -39,6 +39,7 @@
 #include <haproxy/server-t.h>
 #include <haproxy/tcpcheck-t.h>
 #include <haproxy/thread-t.h>
+#include <haproxy/uri_auth-t.h>
 
 /* values for proxy->state */
 enum pr_state {
@@ -56,6 +57,8 @@ enum pr_mode {
 	PR_MODE_HTTP,
 	PR_MODE_HEALTH,
 	PR_MODE_CLI,
+	PR_MODE_SYSLOG,
+	PR_MODES
 } __attribute__((packed));
 
 enum PR_SRV_STATE_FILE {
@@ -306,6 +309,12 @@ struct proxy {
 	int  capture_len;			/* length of the string to be captured */
 	struct uri_auth *uri_auth;		/* if non-NULL, the (list of) per-URI authentications */
 	int max_ka_queue;			/* 1+maximum requests in queue accepted for reusing a K-A conn (0=none) */
+	int clitcpka_cnt;                       /* The maximum number of keepalive probes TCP should send before dropping the connection. (client side) */
+	int clitcpka_idle;                      /* The time (in seconds) the connection needs to remain idle before TCP starts sending keepalive probes. (client side) */
+	int clitcpka_intvl;                     /* The time (in seconds) between individual keepalive probes. (client side) */
+	int srvtcpka_cnt;                       /* The maximum number of keepalive probes TCP should send before dropping the connection. (server side) */
+	int srvtcpka_idle;                      /* The time (in seconds) the connection needs to remain idle before TCP starts sending keepalive probes. (server side) */
+	int srvtcpka_intvl;                     /* The time (in seconds) between individual keepalive probes. (server side) */
 	int monitor_uri_len;			/* length of the string above. 0 if unused */
 	char *monitor_uri;			/* a special URI to which we respond with HTTP/200 OK */
 	struct list mon_fail_cond;              /* list of conditions to fail monitoring requests (chained) */

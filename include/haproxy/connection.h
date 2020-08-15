@@ -312,7 +312,7 @@ static inline void cs_init(struct conn_stream *cs, struct connection *conn)
  * is about to be reused. It also leaves the addresses untouched, which makes
  * it usable across connection retries to reset a connection to a known state.
  */
-static inline void conn_init(struct connection *conn)
+static inline void conn_init(struct connection *conn, void *target)
 {
 	conn->obj_type = OBJ_TYPE_CONN;
 	conn->flags = CO_FL_NONE;
@@ -322,13 +322,12 @@ static inline void conn_init(struct connection *conn)
 	conn->send_proxy_ofs = 0;
 	conn->handle.fd = DEAD_FD_MAGIC;
 	conn->err_code = CO_ER_NONE;
-	conn->target = NULL;
+	conn->target = target;
 	conn->destroy_cb = NULL;
 	conn->proxy_netns = NULL;
 	MT_LIST_INIT(&conn->list);
 	LIST_INIT(&conn->session_list);
 	conn->subs = NULL;
-	conn->idle_time = 0;
 	conn->src = NULL;
 	conn->dst = NULL;
 	conn->proxy_authority = NULL;
@@ -340,6 +339,18 @@ static inline void conn_set_owner(struct connection *conn, void *owner, void (*c
 {
 	conn->owner = owner;
 	conn->destroy_cb = cb;
+}
+
+
+/* Mark the connection <conn> as private and remove it from the available connection list */
+static inline void conn_set_private(struct connection *conn)
+{
+	if (!(conn->flags & CO_FL_PRIVATE)) {
+		conn->flags |= CO_FL_PRIVATE;
+
+		if (obj_type(conn->target) == OBJ_TYPE_SERVER)
+			srv_del_conn_from_list(__objt_server(conn->target), conn);
+	}
 }
 
 /* Allocates a struct sockaddr from the pool if needed, assigns it to *sap and
@@ -377,13 +388,16 @@ static inline void sockaddr_free(struct sockaddr_storage **sap)
  * connection is returned on success, NULL on failure. The connection must
  * be released using pool_free() or conn_free().
  */
-static inline struct connection *conn_new()
+static inline struct connection *conn_new(void *target)
 {
 	struct connection *conn;
 
 	conn = pool_alloc(pool_head_connection);
-	if (likely(conn != NULL))
-		conn_init(conn);
+	if (likely(conn != NULL)) {
+		conn_init(conn, target);
+		if (obj_type(target) == OBJ_TYPE_SERVER)
+			srv_use_idle_conn(__objt_server(target), conn);
+	}
 	return conn;
 }
 
@@ -403,7 +417,7 @@ static inline void cs_free(struct conn_stream *cs)
  * to the mux's stream list on success, then returned. On failure, nothing is
  * allocated and NULL is returned.
  */
-static inline struct conn_stream *cs_new(struct connection *conn)
+static inline struct conn_stream *cs_new(struct connection *conn, void *target)
 {
 	struct conn_stream *cs;
 
@@ -412,12 +426,11 @@ static inline struct conn_stream *cs_new(struct connection *conn)
 		return NULL;
 
 	if (!conn) {
-		conn = conn_new();
+		conn = conn_new(target);
 		if (unlikely(!conn)) {
 			cs_free(cs);
 			return NULL;
 		}
-		conn_init(conn);
 	}
 
 	cs_init(cs, conn);
@@ -451,12 +464,16 @@ static inline void conn_force_unsubscribe(struct connection *conn)
 /* Releases a connection previously allocated by conn_new() */
 static inline void conn_free(struct connection *conn)
 {
-	/* Remove ourself from the session's connections list, if any. */
-	if (!LIST_ISEMPTY(&conn->session_list)) {
-		struct session *sess = conn->owner;
-		if (conn->flags & CO_FL_SESS_IDLE)
-			sess->idle_conns--;
-		session_unown_conn(sess, conn);
+	if (conn->flags & CO_FL_PRIVATE) {
+		/* The connection is private, so remove it from the session's
+		 * connections list, if any.
+		 */
+		if (!LIST_ISEMPTY(&conn->session_list))
+			session_unown_conn(conn->owner, conn);
+	}
+	else {
+		if (obj_type(conn->target) == OBJ_TYPE_SERVER)
+			srv_del_conn_from_list(__objt_server(conn->target), conn);
 	}
 
 	sockaddr_free(&conn->src);
@@ -478,23 +495,7 @@ static inline void conn_free(struct connection *conn)
 	if (conn->ctx != NULL && conn->mux == NULL)
 		*(void **)conn->ctx = NULL;
 
-	/* The connection is currently in the server's idle list, so tell it
-	 * there's one less connection available in that list.
-	 */
-	if (conn->idle_time > 0) {
-		struct server *srv = __objt_server(conn->target);
-		_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
-		_HA_ATOMIC_SUB(conn->flags & CO_FL_SAFE_LIST ? &srv->curr_safe_nb : &srv->curr_idle_nb, 1);
-		_HA_ATOMIC_SUB(&srv->curr_idle_thr[tid], 1);
-	} else {
-		struct server *srv = objt_server(conn->target);
-
-		if (srv)
-			_HA_ATOMIC_SUB(&srv->curr_used_conns, 1);
-	}
-
 	conn_force_unsubscribe(conn);
-	MT_LIST_DEL((struct mt_list *)&conn->list);
 	pool_free(pool_head_connection, conn);
 }
 

@@ -96,7 +96,6 @@ void task_kill(struct task *t)
 			thr = my_ffsl(t->thread_mask) - 1;
 
 			/* Beware: tasks that have never run don't have their ->list empty yet! */
-			LIST_INIT(&((struct tasklet *)t)->list);
 			MT_LIST_ADDQ(&task_per_thread[thr].shared_tasklet_list,
 			             (struct mt_list *)&((struct tasklet *)t)->list);
 			_HA_ATOMIC_ADD(&tasks_run_queue, 1);
@@ -193,6 +192,12 @@ void __task_wakeup(struct task *t, struct eb_root *root)
  */
 void __task_queue(struct task *task, struct eb_root *wq)
 {
+#ifdef USE_THREAD
+	BUG_ON((wq == &timers && !(task->state & TASK_SHARED_WQ)) ||
+	       (wq == &sched->timers && (task->state & TASK_SHARED_WQ)) ||
+	       (wq != &timers && wq != &sched->timers));
+#endif
+
 	if (likely(task_in_wq(task)))
 		__task_unlink_wq(task);
 
@@ -316,7 +321,7 @@ void wake_expired_tasks()
 			 */
 			__task_unlink_wq(task);
 			if (tick_isset(task->expire))
-				__task_queue(task, &tt->timers);
+				__task_queue(task, &timers);
 			goto lookup_next;
 		}
 		else {
@@ -477,8 +482,7 @@ unsigned int run_tasks_from_lists(unsigned int budgets[])
 		else if (!(state & TASK_KILLED) && process != NULL)
 			t = process(t, ctx, state);
 		else {
-			if (task_in_wq(t))
-				__task_unlink_wq(t);
+			task_unlink_wq(t);
 			__task_free(t);
 			sched->current = NULL;
 			__ha_barrier_store();
@@ -501,8 +505,7 @@ unsigned int run_tasks_from_lists(unsigned int budgets[])
 
 			state = _HA_ATOMIC_AND(&t->state, ~TASK_RUNNING);
 			if (unlikely(state & TASK_KILLED)) {
-				if (task_in_wq(t))
-					__task_unlink_wq(t);
+				task_unlink_wq(t);
 				__task_free(t);
 			}
 			else if (state & TASK_WOKEN_ANY)
@@ -582,7 +585,7 @@ void process_runnable_tasks()
 	 * 100% due to rounding, this is not a problem. Note that while in
 	 * theory the sum cannot be NULL as we cannot get there without tasklets
 	 * to process, in practice it seldom happens when multiple writers
-	 * conflict and rollback on MT_LIST_ADDQ(shared_tasklet_list), causing
+	 * conflict and rollback on MT_LIST_TRY_ADDQ(shared_tasklet_list), causing
 	 * a first MT_LIST_ISEMPTY() to succeed for thread_has_task() and the
 	 * one above to finally fail. This is extremely rare and not a problem.
 	 */

@@ -1937,7 +1937,8 @@ static int server_template_init(struct server *srv, struct proxy *px)
 	return i - srv->tmpl_info.nb_low;
 }
 
-int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy, struct proxy *defproxy, int parse_addr, int in_peers_section)
+int parse_server(const char *file, int linenum, char **args, struct proxy *curproxy,
+                 struct proxy *defproxy, int parse_addr, int in_peers_section, int initial_resolve)
 {
 	struct server *newsrv = NULL;
 	const char *err = NULL;
@@ -2053,7 +2054,7 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 			if (!parse_addr)
 				goto skip_addr;
 
-			sk = str2sa_range(args[cur_arg], &port, &port1, &port2, &errmsg, NULL, &fqdn, 0);
+			sk = str2sa_range(args[cur_arg], &port, &port1, &port2, &errmsg, NULL, &fqdn, initial_resolve);
 			if (!sk) {
 				ha_alert("parsing [%s:%d] : '%s %s' : %s\n", file, linenum, args[0], args[1], errmsg);
 				err_code |= ERR_ALERT | ERR_FATAL;
@@ -3162,7 +3163,7 @@ void apply_server_state(void)
 	struct state_line *st;
 	struct ebmb_node *node, *next_node;
 
-
+	f = NULL;
 	global_file_version = 0;
 	globalfilepathlen = 0;
 	/* create the globalfilepath variable */
@@ -3267,6 +3268,11 @@ void apply_server_state(void)
 		}
 	}
  out_load_server_state_in_tree:
+
+	if (f) {
+		fclose(f);
+		f = NULL;
+	}
 
 	/* parse all proxies and load states form tree (global file) or from local file */
 	for (curproxy = proxies_list; curproxy != NULL; curproxy = curproxy->next) {
@@ -3447,9 +3453,11 @@ void apply_server_state(void)
 				/* now we can proceed with server's state update */
 				srv_update_state(srv, version, srv_params);
 			}
+
+			fileclose:
+				fclose(f);
+
 		}
-fileclose:
-		fclose(f);
 	}
 
 	/* now free memory allocated for the tree */
@@ -3722,6 +3730,21 @@ int snr_update_srv_status(struct server *s, int has_no_ip)
 	struct dns_resolvers  *resolvers  = s->resolvers;
 	struct dns_resolution *resolution = s->dns_requester->resolution;
 	int exp;
+
+	/* If resolution is NULL we're dealing with SRV records Additional records */
+	if (resolution == NULL) {
+		/* since this server has an IP, it can go back in production */
+		if (has_no_ip == 0) {
+			srv_clr_admin_flag(s, SRV_ADMF_RMAINT);
+			return 1;
+		}
+
+		if (s->next_admin & SRV_ADMF_RMAINT)
+			return 1;
+
+		srv_set_admin_flag(s, SRV_ADMF_RMAINT, "entry removed from SRV record");
+		return 0;
+	}
 
 	switch (resolution->status) {
 		case RSLV_STATUS_NONE:
@@ -5207,7 +5230,7 @@ static int srv_migrate_conns_to_remove(struct mt_list *idle_list, struct mt_list
 		if (toremove_nb != -1 && i >= toremove_nb)
 			break;
 		MT_LIST_DEL_SAFE_NOINIT(elt1);
-		MT_LIST_ADDQ_NOCHECK(toremove_list, &conn->list);
+		MT_LIST_ADDQ(toremove_list, &conn->list);
 		i++;
 	}
 	return i;

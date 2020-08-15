@@ -77,6 +77,9 @@ static inline void session_store_counters(struct session *sess)
 static inline void session_unown_conn(struct session *sess, struct connection *conn)
 {
 	struct sess_srv_list *srv_list = NULL;
+
+	if (conn->flags & CO_FL_SESS_IDLE)
+		sess->idle_conns--;
 	LIST_DEL(&conn->session_list);
 	LIST_INIT(&conn->session_list);
 	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
@@ -90,10 +93,19 @@ static inline void session_unown_conn(struct session *sess, struct connection *c
 	}
 }
 
+/* Add the connection <conn> to the server list of the session <sess>. This
+ * function is called only if the connection is private. Nothing is performed if
+ * the connection is already in the session sever list or if the session does
+ * not own the connection.
+ */
 static inline int session_add_conn(struct session *sess, struct connection *conn, void *target)
 {
 	struct sess_srv_list *srv_list = NULL;
 	int found = 0;
+
+	/* Already attach to the session or not the connection owner */
+	if (!LIST_ISEMPTY(&conn->session_list) || conn->owner != sess)
+		return 1;
 
 	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
 		if (srv_list->target == target) {
@@ -114,11 +126,16 @@ static inline int session_add_conn(struct session *sess, struct connection *conn
 	return 1;
 }
 
-/* Returns 0 if the session can keep the idle conn, -1 if it was destroyed, or 1 if it was added to the server list */
+/* Returns 0 if the session can keep the idle conn, -1 if it was destroyed. The
+ * connection must be private.
+ */
 static inline int session_check_idle_conn(struct session *sess, struct connection *conn)
 {
-	if (!(conn->flags & CO_FL_PRIVATE) ||
-	    sess->idle_conns >= sess->fe->max_out_conns) {
+	/* Another session owns this connection */
+	if (conn->owner != sess)
+		return 0;
+
+	if (sess->idle_conns >= sess->fe->max_out_conns) {
 		session_unown_conn(sess, conn);
 		conn->owner = NULL;
 		conn->flags &= ~CO_FL_SESS_IDLE;
@@ -129,6 +146,35 @@ static inline int session_check_idle_conn(struct session *sess, struct connectio
 		sess->idle_conns++;
 	}
 	return 0;
+}
+
+/* Look for an available connection matching the target <target> in the server
+ * list of the session <sess>. It returns a connection if found. Otherwise it
+ * returns NULL.
+ */
+static inline struct connection *session_get_conn(struct session *sess, void *target)
+{
+	struct connection *srv_conn = NULL;
+	struct sess_srv_list *srv_list;
+
+	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
+		if (srv_list->target == target) {
+			list_for_each_entry(srv_conn, &srv_list->conn_list, session_list) {
+				if (srv_conn->mux && (srv_conn->mux->avail_streams(srv_conn) > 0)) {
+					if (srv_conn->flags & CO_FL_SESS_IDLE) {
+						srv_conn->flags &= ~CO_FL_SESS_IDLE;
+						sess->idle_conns--;
+					}
+					goto end;
+				}
+			}
+			srv_conn = NULL; /* No available connection found */
+			goto end;
+		}
+	}
+
+  end:
+	return srv_conn;
 }
 
 #endif /* _HAPROXY_SESSION_H */

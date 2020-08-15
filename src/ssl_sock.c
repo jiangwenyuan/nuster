@@ -852,6 +852,7 @@ struct certificate_ocsp {
 	struct ebmb_node key;
 	unsigned char key_data[OCSP_MAX_CERTID_ASN1_LENGTH];
 	struct buffer response;
+	int refcount;
 	long expire;
 };
 
@@ -1203,6 +1204,8 @@ static int tlskeys_finalize_config(void)
 #endif /* SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB */
 
 #ifndef OPENSSL_NO_OCSP
+int ocsp_ex_index = -1;
+
 int ssl_sock_get_ocsp_arg_kt_index(int evp_keytype)
 {
 	switch (evp_keytype) {
@@ -1225,11 +1228,18 @@ int ssl_sock_ocsp_stapling_cbk(SSL *ssl, void *arg)
 	struct certificate_ocsp *ocsp;
 	struct ocsp_cbk_arg *ocsp_arg;
 	char *ssl_buf;
+	SSL_CTX *ctx;
 	EVP_PKEY *ssl_pkey;
 	int key_type;
 	int index;
 
-	ocsp_arg = arg;
+	ctx = SSL_get_SSL_CTX(ssl);
+	if (!ctx)
+		return SSL_TLSEXT_ERR_NOACK;
+
+	ocsp_arg = SSL_CTX_get_ex_data(ctx, ocsp_ex_index);
+	if (!ocsp_arg)
+		return SSL_TLSEXT_ERR_NOACK;
 
 	ssl_pkey = SSL_get_privatekey(ssl);
 	if (!ssl_pkey)
@@ -1271,6 +1281,26 @@ int ssl_sock_ocsp_stapling_cbk(SSL *ssl, void *arg)
 #endif
 
 #if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
+
+
+/*
+ * Decrease the refcount of the struct ocsp_response and frees it if it's not
+ * used anymore. Also removes it from the tree if free'd.
+ */
+static void ssl_sock_free_ocsp(struct certificate_ocsp *ocsp)
+{
+	if (!ocsp)
+		return;
+
+	ocsp->refcount--;
+	if (ocsp->refcount <= 0) {
+		ebmb_delete(&ocsp->key);
+		chunk_destroy(&ocsp->response);
+		free(ocsp);
+	}
+}
+
+
 /*
  * This function enables the handling of OCSP status extension on 'ctx' if a
  * ocsp_response buffer was found in the cert_key_and_chain.  To enable OCSP
@@ -1342,18 +1372,24 @@ static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckc
 	SSL_CTX_get_tlsext_status_cb(ctx, &callback);
 
 	if (!callback) {
-		struct ocsp_cbk_arg *cb_arg = calloc(1, sizeof(*cb_arg));
+		struct ocsp_cbk_arg *cb_arg;
 		EVP_PKEY *pkey;
+
+		cb_arg = calloc(1, sizeof(*cb_arg));
+		if (!cb_arg)
+			goto out;
 
 		cb_arg->is_single = 1;
 		cb_arg->s_ocsp = iocsp;
+		iocsp->refcount++;
 
 		pkey = X509_get_pubkey(x);
 		cb_arg->single_kt = EVP_PKEY_base_id(pkey);
 		EVP_PKEY_free(pkey);
 
 		SSL_CTX_set_tlsext_status_cb(ctx, ssl_sock_ocsp_stapling_cbk);
-		SSL_CTX_set_tlsext_status_arg(ctx, cb_arg);
+		SSL_CTX_set_ex_data(ctx, ocsp_ex_index, cb_arg); /* we use the ex_data instead of the cb_arg function here, so we can use the cleanup callback to free */
+
 	} else {
 		/*
 		 * If the ctx has a status CB, then we have previously set an OCSP staple for this ctx
@@ -1365,11 +1401,7 @@ static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckc
 		int key_type;
 		EVP_PKEY *pkey;
 
-#ifdef SSL_CTX_get_tlsext_status_arg
-		SSL_CTX_ctrl(ctx, SSL_CTRL_GET_TLSEXT_STATUS_REQ_CB_ARG, 0, &cb_arg);
-#else
-		cb_arg = ctx->tlsext_status_arg;
-#endif
+		cb_arg = SSL_CTX_get_ex_data(ctx, ocsp_ex_index);
 
 		/*
 		 * The following few lines will convert cb_arg from a single ocsp to multi ocsp
@@ -1387,15 +1419,16 @@ static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckc
 		EVP_PKEY_free(pkey);
 
 		index = ssl_sock_get_ocsp_arg_kt_index(key_type);
-		if (index >= 0 && !cb_arg->m_ocsp[index])
+		if (index >= 0 && !cb_arg->m_ocsp[index]) {
 			cb_arg->m_ocsp[index] = iocsp;
-
+			iocsp->refcount++;
+		}
 	}
 
 	ret = 0;
 
 	warn = NULL;
-	if (ssl_sock_load_ocsp_response(ckch->ocsp_response, ocsp, cid, &warn)) {
+	if (ssl_sock_load_ocsp_response(ckch->ocsp_response, iocsp, cid, &warn)) {
 		memprintf(&warn, "Loading: %s. Content will be ignored", warn ? warn : "failure");
 		ha_warning("%s.\n", warn);
 	}
@@ -2319,6 +2352,8 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 
 	HA_RWLOCK_RDLOCK(SNI_LOCK, &s->sni_lock);
 
+	/* Look for an ECDSA, RSA and DSA certificate, first in the single
+	 * name and if not found in the wildcard  */
 	for (i = 0; i < 2; i++) {
 		if (i == 0) 	/* lookup in full qualified names */
 			node = ebst_lookup(&s->sni_ctx, trash.area);
@@ -2345,26 +2380,33 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 				}
 			}
 		}
-		/* select by key_signature priority order */
-		node = (has_ecdsa_sig && node_ecdsa) ? node_ecdsa
-			: ((has_rsa_sig && node_rsa) ? node_rsa
-			   : (node_anonymous ? node_anonymous
-			      : (node_ecdsa ? node_ecdsa      /* no ecdsa signature case (< TLSv1.2) */
-				 : node_rsa                   /* no rsa signature case (far far away) */
-				 )));
-		if (node) {
-			/* switch ctx */
-			struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
-			ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
-			if (conf) {
-				methodVersions[conf->ssl_methods.min].ssl_set_version(ssl, SET_MIN);
-				methodVersions[conf->ssl_methods.max].ssl_set_version(ssl, SET_MAX);
-				if (conf->early_data)
-					allow_early = 1;
-			}
-			HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
-			goto allow_early;
+	}
+	/* Once the certificates are found, select them depending on what is
+	 * supported in the client and by key_signature priority order: EDSA >
+	 * RSA > DSA */
+	if (has_ecdsa_sig && node_ecdsa)
+		node = node_ecdsa;
+	else if (has_rsa_sig && node_rsa)
+		node = node_rsa;
+	else if (node_anonymous)
+		node = node_anonymous;
+	else if (node_ecdsa)
+		node = node_ecdsa;      /* no ecdsa signature case (< TLSv1.2) */
+	else
+		node = node_rsa;        /* no rsa signature case (far far away) */
+
+	if (node) {
+		/* switch ctx */
+		struct ssl_bind_conf *conf = container_of(node, struct sni_ctx, name)->conf;
+		ssl_sock_switchctx_set(ssl, container_of(node, struct sni_ctx, name)->ctx);
+		if (conf) {
+			methodVersions[conf->ssl_methods.min].ssl_set_version(ssl, SET_MIN);
+			methodVersions[conf->ssl_methods.max].ssl_set_version(ssl, SET_MAX);
+			if (conf->early_data)
+				allow_early = 1;
 		}
+		HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
+		goto allow_early;
 	}
 
 	HA_RWLOCK_RDUNLOCK(SNI_LOCK, &s->sni_lock);
@@ -2952,15 +2994,20 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 			find_chain = issuer->chain;
 	}
 
+	if (!find_chain) {
+		/* always put a null chain stack in the SSL_CTX so it does not
+		 * try to build the chain from the verify store */
+		find_chain = sk_X509_new_null();
+	}
+
 	/* Load all certs in the ckch into the ctx_chain for the ssl_ctx */
-	if (find_chain)
 #ifdef SSL_CTX_set1_chain
-		if (!SSL_CTX_set1_chain(ctx, find_chain)) {
-			memprintf(err, "%sunable to load chain certificate into SSL Context '%s'. Make sure you are linking against Openssl >= 1.0.2.\n",
-				  err && *err ? *err : "", path);
-			errcode |= ERR_ALERT | ERR_FATAL;
-			goto end;
-		}
+	if (!SSL_CTX_set1_chain(ctx, find_chain)) {
+		memprintf(err, "%sunable to load chain certificate into SSL Context '%s'. Make sure you are linking against Openssl >= 1.0.2.\n",
+			  err && *err ? *err : "", path);
+		errcode |= ERR_ALERT | ERR_FATAL;
+		goto end;
+	}
 #else
 	{ /* legacy compat (< openssl 1.0.2) */
 		X509 *ca;
@@ -2975,6 +3022,18 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 				errcode |= ERR_ALERT | ERR_FATAL;
 				goto end;
 			}
+	}
+#endif
+
+#ifdef SSL_CTX_build_cert_chain
+	/* remove the Root CA from the SSL_CTX if the option is activated */
+	if (global_ssl.skip_self_issued_ca) {
+		if (!SSL_CTX_build_cert_chain(ctx, SSL_BUILD_CHAIN_FLAG_NO_ROOT|SSL_BUILD_CHAIN_FLAG_UNTRUSTED|SSL_BUILD_CHAIN_FLAG_IGNORE_ERROR)) {
+			memprintf(err, "%sunable to load chain certificate into SSL Context '%s'.\n",
+				  err && *err ? *err : "", path);
+			errcode |= ERR_ALERT | ERR_FATAL;
+			goto end;
+		}
 	}
 #endif
 
@@ -6717,6 +6776,31 @@ static void ssl_sock_sctl_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 }
 
 #endif
+
+#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) && !defined OPENSSL_IS_BORINGSSL)
+static void ssl_sock_ocsp_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx, long argl, void *argp)
+{
+	struct ocsp_cbk_arg *ocsp_arg;
+
+	if (ptr) {
+		ocsp_arg = ptr;
+
+		if (ocsp_arg->is_single) {
+			ssl_sock_free_ocsp(ocsp_arg->s_ocsp);
+			ocsp_arg->s_ocsp = NULL;
+		} else {
+			int i;
+
+			for (i = 0; i < SSL_SOCK_NUM_KEYTYPES; i++) {
+				ssl_sock_free_ocsp(ocsp_arg->m_ocsp[i]);
+				ocsp_arg->m_ocsp[i] = NULL;
+			}
+		}
+		free(ocsp_arg);
+	}
+}
+#endif
+
 static void ssl_sock_capture_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx, long argl, void *argp)
 {
 	pool_free(pool_head_ssl_capture, ptr);
@@ -6782,6 +6866,11 @@ static void __ssl_sock_init(void)
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
 	sctl_ex_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_sctl_free_func);
 #endif
+
+#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) && !defined OPENSSL_IS_BORINGSSL)
+	ocsp_ex_index = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_ocsp_free_func);
+#endif
+
 	ssl_app_data_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 	ssl_capture_ptr_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_capture_free_func);
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)

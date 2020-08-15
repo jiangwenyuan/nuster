@@ -109,16 +109,14 @@ static struct acl_expr *prune_acl_expr(struct acl_expr *expr)
 		if (arg->type == ARGT_STOP)
 			break;
 		if (arg->type == ARGT_STR || arg->unresolved) {
-			free(arg->data.str.area);
-			arg->data.str.area = NULL;
-			arg->data.str.data = 0;
+			chunk_destroy(&arg->data.str);
 			unresolved |= arg->unresolved;
 			arg->unresolved = 0;
 		}
 	}
 
-	if (expr->smp->arg_p != empty_arg_list && !unresolved)
-		free(expr->smp->arg_p);
+	release_sample_expr(expr->smp);
+
 	return expr;
 }
 

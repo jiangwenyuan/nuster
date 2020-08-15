@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.3
                              willy tarreau
-                              2020/07/07
+                              2020/08/14
 
 
 This document covers the configuration language as implemented in the version
@@ -1051,11 +1051,25 @@ log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
     rfc5424   The RFC5424 syslog message format.
               (https://tools.ietf.org/html/rfc5424)
 
+    priority  A message containing only a level plus syslog facility between
+              angle brackets such as '<63>', followed by the text. The PID,
+              date, time, process name and system name are omitted. This is
+              designed to be used with a local log server.
+
     short     A message containing only a level between angle brackets such as
               '<3>', followed by the text. The PID, date, time, process name
               and system name are omitted. This is designed to be used with a
               local log server. This format is compatible with what the systemd
               logger consumes.
+
+    timed     A message containing only a level between angle brackets such as
+             '<3>', followed by ISO date and by the text. The PID, process
+              name and system name are omitted. This is designed to be
+              used with a local log server.
+
+    iso       A message containing only the ISO date, followed by the text.
+              The PID, process name and system name are omitted. This is
+              designed to be used with a local log server.
 
     raw       A message containing only the text. The level, PID, date, time,
               process name and system name are omitted. This is designed to be
@@ -1412,7 +1426,7 @@ ssl-skip-self-issued-ca
   issuer for ocsp without the need for '.issuer' file and be able to share it
   with 'issuers-chain-path'. This concerns all certificates without intermediate
   certificates. It's useless for BoringSSL, .issuer is ignored because ocsp
-  bits does not need it.
+  bits does not need it. Requires at least OpenSSL 1.0.2.
 
 stats socket [<address:port>|<path>] [param*]
   Binds a UNIX socket to <path> or a TCPv4/v6 address to <address:port>.
@@ -1581,12 +1595,11 @@ wurfl-cache-size <size>
   with USE_WURFL=1.
 
 strict-limits
-  Makes process fail at startup when a setrlimit fails. Haproxy is tries to set
-  the best setrlimit according to what has been calculated. If it fails, it
-  will emit a warning. Use this option if you want an explicit failure of
-  haproxy when those limits fail. This option is disabled by default. If it has
-  been enabled, it may still be forcibly disabled by prefixing it with the "no"
-  keyword.
+  Makes process fail at startup when a setrlimit fails. Haproxy tries to set the
+  best setrlimit according to what has been calculated. If it fails, it will
+  emit a warning. This option is here to guarantee an explicit failure of
+  haproxy when those limits fail. It is enabled by default. It may still be
+  forcibly disabled by prefixing it with the "no" keyword.
 
 3.2. Performance tuning
 -----------------------
@@ -2664,6 +2677,11 @@ format <format>
               local log server. This format is compatible with what the systemd
               logger consumes.
 
+     priority A message containing only a level plus syslog facility between angle
+              brackets such as '<63>', followed by the text. The PID, date, time,
+              process name and system name are omitted. This is designed to be used
+              with a local log server.
+
       timed   A message containing only a level between angle brackets such as
               '<3>', followed by ISO date and by the text. The PID, process
               name and system name are omitted. This is designed to be
@@ -2720,6 +2738,57 @@ timeout server <timeout>
         timeout server 10s
         server mysyslogsrv 127.0.0.1:6514 log-proto octet-count
 
+3.10. Log forwarding
+-------------------
+
+It is possible to declare one or multiple log forwarding section,
+haproxy will forward all received log messages to a log servers list.
+
+log-forward <name>
+  Creates a new log forwarder proxy identified as <name>.
+
+bind <addr> [param*]
+  Used to configure a log udp listener to receive messages to forward.
+  Only udp listeners are allowed, address must be prefixed using
+  'udp@', 'udp4@' or 'udp6@'. This supports for all "bind" parameters
+  found in 5.1 paragraph but most of them are irrelevant for udp/syslog case.
+
+log global
+log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
+    <facility> [<level> [<minlevel>]]
+  Used to configure target log servers. See more details on proxies
+  documentation.
+  If no format specified, haproxy tries to keep the incoming log format.
+  Configured facility is ignored, except if incoming message does not
+  present a facility but one is mandatory on the outgoing format.
+  If there is no timestamp available in the input format, but the field
+  exists in output format, haproxy will use the local date.
+
+  Example:
+    global
+       log stderr format iso local7
+
+    ring myring
+        description "My local buffer"
+        format rfc5424
+        maxlen 1200
+        size 32764
+        timeout connect 5s
+        timeout server 10s
+        # syslog tcp server
+        server mysyslogsrv 127.0.0.1:514 log-proto octet-count
+
+    log-forward sylog-loadb
+        bind udp4@127.0.0.1:1514
+        # all messages on stderr
+        log global
+        # all messages on local tcp syslog server
+        log ring@myring local0
+        # load balance messages on 4 udp syslog servers
+        log 127.0.0.1:10001 sample 1:4 local0
+        log 127.0.0.1:10002 sample 2:4 local0
+        log 127.0.0.1:10003 sample 3:4 local0
+        log 127.0.0.1:10004 sample 4:4 local0
 
 4. Proxies
 ----------
@@ -2817,6 +2886,9 @@ bind-process                              X          X         X         X
 capture cookie                            -          X         X         -
 capture request header                    -          X         X         -
 capture response header                   -          X         X         -
+clitcpka-cnt                              X          X         X         -
+clitcpka-idle                             X          X         X         -
+clitcpka-intvl                            X          X         X         -
 compression                               X          X         X         X
 cookie                                    X          -         X         X
 declare capture                           -          X         X         -
@@ -2935,6 +3007,9 @@ server                                    -          -         X         X
 server-state-file-name                    X          -         X         X
 server-template                           -          -         X         X
 source                                    X          -         X         X
+srvtcpka-cnt                              X          -         X         X
+srvtcpka-idle                             X          -         X         X
+srvtcpka-intvl                            X          -         X         X
 stats admin                               -          X         X         X
 stats auth                                X          X         X         X
 stats enable                              X          X         X         X
@@ -3298,6 +3373,15 @@ bind /<path> [, ...] [param*]
                   no slash ('/'). Currently supported prefixes are :
                     - 'ipv4@'  -> address is always IPv4
                     - 'ipv6@'  -> address is always IPv6
+                    - 'udp@'   -> address is resolved as IPv4 or IPv6 and
+                      protocol UDP is used. Currently those listeners are
+                      supported only in log-forward sections.
+                    - 'udp4@'  -> address is always IPv4 and protocol UDP
+                      is used. Currently those listeners are supported
+                      only in log-forward sections.
+                    - 'udp6@'  -> address is always IPv6 and protocol UDP
+                      is used. Currently those listeners are supported
+                      only in log-forward sections.
                     - 'unix@'  -> address is a path to a local unix socket
                     - 'abns@'  -> address is in abstract namespace (Linux only).
                       Note: since abstract sockets are not "rebindable", they
@@ -3571,6 +3655,60 @@ capture response header <name> len <length>
 
   See also : "capture cookie", "capture request header" as well as section 8
              about logging.
+
+
+clitcpka-cnt <count>
+  Sets the maximum number of keepalive probes TCP should send before dropping
+  the connection on the client side.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    yes   |   yes  |   no
+  Arguments :
+    <count>   is the maximum number of keepalive probes.
+
+  This keyword corresponds to the socket option TCP_KEEPCNT. If this keyword
+  is not specified, system-wide TCP parameter (tcp_keepalive_probes) is used.
+  The availability of this setting depends on the operating system. It is
+  known to work on Linux.
+
+  See also : "option clitcpka", "clitcpka-idle", "clitcpka-intvl".
+
+
+clitcpka-idle <timeout>
+  Sets the time the connection needs to remain idle before TCP starts sending
+  keepalive probes, if enabled the sending of TCP keepalive packets on the
+  client side.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    yes   |   yes  |   no
+  Arguments :
+    <timeout> is the time the connection needs to remain idle before TCP starts
+              sending keepalive probes. It is specified in seconds by default,
+              but can be in any other unit if the number is suffixed by the
+              unit, as explained at the top of this document.
+
+  This keyword corresponds to the socket option TCP_KEEPIDLE. If this keyword
+  is not specified, system-wide TCP parameter (tcp_keepalive_time) is used.
+  The availability of this setting depends on the operating system. It is
+  known to work on Linux.
+
+  See also : "option clitcpka", "clitcpka-cnt", "clitcpka-intvl".
+
+
+clitcpka-intvl <timeout>
+  Sets the time between individual keepalive probes on the client side.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    yes   |   yes  |   no
+  Arguments :
+    <timeout> is the time between individual keepalive probes. It is specified
+              in seconds by default, but can be in any other unit if the number
+              is suffixed by the unit, as explained at the top of this
+              document.
+
+  This keyword corresponds to the socket option TCP_KEEPINTVL. If this keyword
+  is not specified, system-wide TCP parameter (tcp_keepalive_intvl) is used.
+  The availability of this setting depends on the operating system. It is
+  known to work on Linux.
+
+  See also : "option clitcpka", "clitcpka-cnt", "clitcpka-idle".
 
 
 compression algo <algorithm> ...
@@ -6710,11 +6848,25 @@ no log
       rfc5424   The RFC5424 syslog message format.
                 (https://tools.ietf.org/html/rfc5424)
 
+      priority  A message containing only a level plus syslog facility between
+                angle brackets such as '<63>', followed by the text. The PID,
+                date, time, process name and system name are omitted. This is
+                designed to be used with a local log server.
+
       short     A message containing only a level between angle brackets such as
                 '<3>', followed by the text. The PID, date, time, process name
                 and system name are omitted. This is designed to be used with a
                 local log server. This format is compatible with what the
                 systemd logger consumes.
+
+      timed     A message containing only a level between angle brackets such as
+                '<3>', followed by ISO date and by the text. The PID, process
+                name and system name are omitted. This is designed to be
+                used with a local log server.
+
+      iso       A message containing only the ISO date, followed by the text.
+                The PID, process name and system name are omitted. This is
+                designed to be used with a local log server.
 
       raw       A message containing only the text. The level, PID, date, time,
                 process name and system name are omitted. This is designed to
@@ -9408,6 +9560,60 @@ source <addr>[:<port>] [interface <name>]
              the Linux kernel on www.balabit.com, the "bind" keyword.
 
 
+srvtcpka-cnt <count>
+  Sets the maximum number of keepalive probes TCP should send before dropping
+  the connection on the server side.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+  Arguments :
+    <count>   is the maximum number of keepalive probes.
+
+  This keyword corresponds to the socket option TCP_KEEPCNT. If this keyword
+  is not specified, system-wide TCP parameter (tcp_keepalive_probes) is used.
+  The availability of this setting depends on the operating system. It is
+  known to work on Linux.
+
+  See also : "option srvtcpka", "srvtcpka-idle", "srvtcpka-intvl".
+
+
+srvtcpka-idle <timeout>
+  Sets the time the connection needs to remain idle before TCP starts sending
+  keepalive probes, if enabled the sending of TCP keepalive packets on the
+  server side.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+  Arguments :
+    <timeout> is the time the connection needs to remain idle before TCP starts
+              sending keepalive probes. It is specified in seconds by default,
+              but can be in any other unit if the number is suffixed by the
+              unit, as explained at the top of this document.
+
+  This keyword corresponds to the socket option TCP_KEEPIDLE. If this keyword
+  is not specified, system-wide TCP parameter (tcp_keepalive_time) is used.
+  The availability of this setting depends on the operating system. It is
+  known to work on Linux.
+
+  See also : "option srvtcpka", "srvtcpka-cnt", "srvtcpka-intvl".
+
+
+srvtcpka-intvl <timeout>
+  Sets the time between individual keepalive probes on the server side.
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    no    |   yes  |   yes
+  Arguments :
+    <timeout> is the time between individual keepalive probes. It is specified
+              in seconds by default, but can be in any other unit if the number
+              is suffixed by the unit, as explained at the top of this
+              document.
+
+  This keyword corresponds to the socket option TCP_KEEPINTVL. If this keyword
+  is not specified, system-wide TCP parameter (tcp_keepalive_intvl) is used.
+  The availability of this setting depends on the operating system. It is
+  known to work on Linux.
+
+  See also : "option srvtcpka", "srvtcpka-cnt", "srvtcpka-idle".
+
+
 stats admin { if | unless } <cond>
   Enable statistics admin level if/unless a condition is matched
   May be used in sections :   defaults | frontend | listen | backend
@@ -9662,7 +9868,7 @@ stats refresh <delay>
   This statement is useful on monitoring displays with a permanent page
   reporting the load balancer's activity. When set, the HTML report page will
   include a link "refresh"/"stop refresh" so that the user can select whether
-  he wants automatic refresh of the page or not.
+  they want automatic refresh of the page or not.
 
   Though this statement alone is enough to enable statistics reporting, it is
   recommended to set all other settings in order to avoid relying on default
@@ -12053,15 +12259,16 @@ use-server <server> unless <condition>
 
   The "use-server" statement works both in HTTP and TCP mode. This makes it
   suitable for use with content-based inspection. For instance, a server could
-  be selected in a farm according to the TLS SNI field. And if these servers
-  have their weight set to zero, they will not be used for other traffic.
+  be selected in a farm according to the TLS SNI field when using protocols with
+  implicit TLS (also see "req_ssl_sni"). And if these servers have their weight
+  set to zero, they will not be used for other traffic.
 
   Example :
      # intercept incoming TLS requests based on the SNI field
      use-server www if { req_ssl_sni -i www.example.com }
      server     www 192.168.0.1:443 weight 0
      use-server mail if { req_ssl_sni -i mail.example.com }
-     server     mail 192.168.0.1:587 weight 0
+     server     mail 192.168.0.1:465 weight 0
      use-server imap if { req_ssl_sni -i imap.example.com }
      server     imap 192.168.0.1:993 weight 0
      # all the rest is forwarded to this server
@@ -16047,6 +16254,21 @@ srv_sess_rate([<backend>/]<server>) : integer
         acl srv2_full srv_sess_rate(be1/srv2) gt 50
         use_backend be2 if srv1_full or srv2_full
 
+srv_iweight([<backend>/]<server>): integer
+  Returns an integer corresponding to the server's initial weight. If <backend>
+  is omitted, then the server is looked up in the current backend. See also
+  "srv_weight" and "srv_uweight".
+
+srv_uweight([<backend>/]<server>): integer
+  Returns an integer corresponding to the user visible server's weight. If
+  <backend> is omitted, then the server is looked up in the current
+  backend. See also "srv_weight" and "srv_iweight".
+
+srv_weight([<backend>/]<server>): integer
+  Returns an integer corresponding to the current (or effective) server's
+  weight. If <backend> is omitted, then the server is looked up in the current
+  backend. See also "srv_iweight" and "srv_uweight".
+
 stopping : boolean
   Returns TRUE if the process calling the function is currently stopping. This
   can be useful for logging, or for relaxing certain checks or helping close
@@ -16840,6 +17062,13 @@ ssl_c_der : binary
   incoming connection was made over an SSL/TLS transport layer. When used for
   an ACL, the value(s) to match against can be passed in hexadecimal form.
 
+ssl_c_der_chain : binary
+  Returns the DER formatted chain certificate presented by the client when the
+  incoming connection was made over an SSL/TLS transport layer. When used for
+  an ACL, the value(s) to match against can be passed in hexadecimal form. One
+  can parse the result with any lib accepting ASN.1 DER data. It currentlly
+  does not support resumed sessions.
+
 ssl_c_err : integer
   When the incoming connection was made over an SSL/TLS transport layer,
   returns the ID of the first error detected during verification at depth 0, or
@@ -17204,6 +17433,13 @@ ssl_s_der : binary
   outgoing connection was made over an SSL/TLS transport layer. When used for
   an ACL, the value(s) to match against can be passed in hexadecimal form.
 
+ssl_s_chain_der : binary
+  Returns the DER formatted chain certificate presented by the server when the
+  outgoing connection was made over an SSL/TLS transport layer. When used for
+  an ACL, the value(s) to match against can be passed in hexadecimal form. One
+  can parse the result with any lib accepting ASN.1 DER data. It currentlly
+  does not support resumed sessions.
+
 ssl_s_key_alg : string
   Returns the name of the algorithm used to generate the key of the certificate
   presented by the server when the outgoing connection was made over an
@@ -17449,13 +17685,15 @@ req_ssl_sni : string (deprecated)
   contains data that parse as a complete SSL (v3 or superior) client hello
   message. Note that this only applies to raw contents found in the request
   buffer and not to contents deciphered via an SSL data layer, so this will not
-  work with "bind" lines having the "ssl" option. SNI normally contains the
-  name of the host the client tries to connect to (for recent browsers). SNI is
-  useful for allowing or denying access to certain hosts when SSL/TLS is used
-  by the client. This test was designed to be used with TCP request content
-  inspection. If content switching is needed, it is recommended to first wait
-  for a complete client hello (type 1), like in the example below. See also
-  "ssl_fc_sni".
+  work with "bind" lines having the "ssl" option. This will only work for actual
+  implicit TLS based protocols like HTTPS (443), IMAPS (993), SMTPS (465),
+  however it will not work for explicit TLS based protocols, like SMTP (25/587)
+  or IMAP (143). SNI normally contains the name of the host the client tries to
+  connect to (for recent browsers). SNI is useful for allowing or denying access
+  to certain hosts when SSL/TLS is used by the client. This test was designed to
+  be used with TCP request content inspection. If content switching is needed,
+  it is recommended to first wait for a complete client hello (type 1), like in
+  the example below. See also "ssl_fc_sni".
 
   ACL derivatives :
     req_ssl_sni : exact string match

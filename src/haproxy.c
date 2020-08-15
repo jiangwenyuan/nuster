@@ -1837,6 +1837,7 @@ static void init(int argc, char **argv)
 #ifdef USE_THREAD
 	global.tune.options |= GTUNE_IDLE_POOL_SHARED;
 #endif
+	global.tune.options |= GTUNE_STRICT_LIMITS;
 
 	pid = getpid();
 	progname = *argv;
@@ -2651,9 +2652,10 @@ void deinit(void)
 	struct logformat_node *lf, *lfb;
 	struct bind_conf *bind_conf, *bind_back;
 	struct build_opts_str *bol, *bolb;
-	struct post_deinit_fct *pdf;
-	struct proxy_deinit_fct *pxdf;
-	struct server_deinit_fct *srvdf;
+	struct post_deinit_fct *pdf, *pdfb;
+	struct proxy_deinit_fct *pxdf, *pxdfb;
+	struct server_deinit_fct *srvdf, *srvdfb;
+	struct post_server_check_fct *pscf, *pscfb;
 
 	deinit_signals();
 	while (p) {
@@ -2666,6 +2668,8 @@ void deinit(void)
 		free(p->capture_name);
 		free(p->monitor_uri);
 		free(p->rdp_cookie_name);
+		free(p->invalid_rep);
+		free(p->invalid_req);
 		if (p->conf.logformat_string != default_http_log_format &&
 		    p->conf.logformat_string != default_tcp_log_format &&
 		    p->conf.logformat_string != clf_http_log_format)
@@ -2673,6 +2677,7 @@ void deinit(void)
 
 		free(p->conf.lfs_file);
 		free(p->conf.uniqueid_format_string);
+		istfree(&p->header_unique_id);
 		free(p->conf.uif_file);
 		if ((p->lbprm.algo & BE_LB_LKUP) == BE_LB_LKUP_MAP)
 			free(p->lbprm.map.srv);
@@ -2712,6 +2717,13 @@ void deinit(void)
 		list_for_each_entry_safe(srule, sruleb, &p->server_rules, list) {
 			LIST_DEL(&srule->list);
 			prune_acl_cond(srule->cond);
+			list_for_each_entry_safe(lf, lfb, &srule->expr, list) {
+				LIST_DEL(&lf->list);
+				release_sample_expr(lf->expr);
+				free(lf->arg);
+				free(lf);
+			}
+			free(srule->file);
 			free(srule->cond);
 			free(srule);
 		}
@@ -2759,6 +2771,13 @@ void deinit(void)
 			free(lf);
 		}
 
+		list_for_each_entry_safe(lf, lfb, &p->format_unique_id, list) {
+			LIST_DEL(&lf->list);
+			release_sample_expr(lf->expr);
+			free(lf->arg);
+			free(lf);
+		}
+
 		deinit_act_rules(&p->tcp_req.inspect_rules);
 		deinit_act_rules(&p->tcp_rep.inspect_rules);
 		deinit_act_rules(&p->tcp_req.l4_rules);
@@ -2797,12 +2816,14 @@ void deinit(void)
 
 			free(s->id);
 			free(s->cookie);
+			free(s->hostname);
 			free(s->hostname_dn);
 			free((char*)s->conf.file);
 			free(s->idle_conns);
 			free(s->safe_conns);
 			free(s->available_conns);
 			free(s->curr_idle_thr);
+			free(s->resolvers_id);
 
 			if (s->use_ssl == 1 || s->check.use_ssl == 1 || (s->proxy->options & PR_O_TCPCHK_SSL)) {
 				if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->destroy_srv)
@@ -2920,6 +2941,26 @@ void deinit(void)
 			free((void *)bol->str);
 		LIST_DEL(&bol->list);
 		free(bol);
+	}
+
+	list_for_each_entry_safe(pxdf, pxdfb, &proxy_deinit_list, list) {
+		LIST_DEL(&pxdf->list);
+		free(pxdf);
+	}
+
+	list_for_each_entry_safe(pdf, pdfb, &post_deinit_list, list) {
+		LIST_DEL(&pdf->list);
+		free(pdf);
+	}
+
+	list_for_each_entry_safe(srvdf, srvdfb, &server_deinit_list, list) {
+		LIST_DEL(&srvdf->list);
+		free(srvdf);
+	}
+
+	list_for_each_entry_safe(pscf, pscfb, &post_server_check_list, list) {
+		LIST_DEL(&pscf->list);
+		free(pscf);
 	}
 
 	vars_prune(&global.vars, NULL, NULL);
@@ -3221,8 +3262,7 @@ int main(int argc, char **argv)
 				if (setrlimit(RLIMIT_NOFILE, &limit) != -1)
 					getrlimit(RLIMIT_NOFILE, &limit);
 
-				ha_warning("[%s.main()] Cannot raise FD limit to %d, limit is %d. "
-				           "This will fail in >= v2.3\n",
+				ha_warning("[%s.main()] Cannot raise FD limit to %d, limit is %d.\n",
 					   argv[0], global.rlimit_nofile, (int)limit.rlim_cur);
 				global.rlimit_nofile = limit.rlim_cur;
 			}
@@ -3241,8 +3281,7 @@ int main(int argc, char **argv)
 					exit(1);
 			}
 			else
-				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs."
-					   "This will fail in >= v2.3\n",
+				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
 					   argv[0], global.rlimit_memmax);
 		}
 #else
@@ -3254,8 +3293,7 @@ int main(int argc, char **argv)
 					exit(1);
 			}
 			else
-				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs."
-					   "This will fail in >= v2.3\n",
+				ha_warning("[%s.main()] Cannot fix MEM limit to %d megs.\n",
 					   argv[0], global.rlimit_memmax);
 		}
 #endif
@@ -3384,8 +3422,8 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	/* If the user is not root, we'll still let him try the configuration
-	 * but we inform him that unexpected behaviour may occur.
+	/* If the user is not root, we'll still let them try the configuration
+	 * but we inform them that unexpected behaviour may occur.
 	 */
 	if ((global.last_checks & LSTCHK_NETADM) && getuid())
 		ha_warning("[%s.main()] Some options which require full privileges"
@@ -3441,8 +3479,7 @@ int main(int argc, char **argv)
 		}
 		else
 			ha_alert("[%s.main()] FD limit (%d) too low for maxconn=%d/maxsock=%d. "
-				 "Please raise 'ulimit-n' to %d or more to avoid any trouble."
-				 "This will fail in >= v2.3\n",
+				 "Please raise 'ulimit-n' to %d or more to avoid any trouble.\n",
 			         argv[0], (int)limit.rlim_cur, global.maxconn, global.maxsock,
 				 global.maxsock);
 	}
@@ -3724,7 +3761,7 @@ int main(int argc, char **argv)
 			}
 			else
 				ha_warning("[%s.main()] Failed to set the raise the maximum "
-					   "file size. This will fail in >= v2.3\n", argv[0]);
+					   "file size.\n", argv[0]);
 		}
 #endif
 
@@ -3738,7 +3775,7 @@ int main(int argc, char **argv)
 			}
 			else
 				ha_warning("[%s.main()] Failed to set the raise the core "
-					   "dump size. This will fail in >= v2.3\n", argv[0]);
+					   "dump size.\n", argv[0]);
 		}
 #endif
 
