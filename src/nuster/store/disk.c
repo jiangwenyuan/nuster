@@ -256,6 +256,10 @@ nst_disk_init(nst_disk_t *disk, hpx_ist_t root, nst_shmem_t *shmem, int clean_te
 void *nst_disk_load_thread(void *data) {
     nst_core_t  *core = (nst_core_t *)data;
 
+    if(core->root.len == 0) {
+        return NULL;
+    }
+
     while(!core->store.disk.loaded) {
         nst_disk_load(core);
     }
