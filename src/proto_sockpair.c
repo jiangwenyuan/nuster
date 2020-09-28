@@ -35,6 +35,7 @@
 #include <haproxy/list.h>
 #include <haproxy/listener.h>
 #include <haproxy/protocol.h>
+#include <haproxy/proto_sockpair.h>
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
 #include <haproxy/version.h>
@@ -42,27 +43,33 @@
 
 static void sockpair_add_listener(struct listener *listener, int port);
 static int sockpair_bind_listener(struct listener *listener, char *errmsg, int errlen);
-static int sockpair_bind_listeners(struct protocol *proto, char *errmsg, int errlen);
 static int sockpair_connect_server(struct connection *conn, int flags);
+
+struct proto_fam proto_fam_sockpair = {
+	.name = "sockpair",
+	.sock_domain = AF_CUST_SOCKPAIR,
+	.sock_family = AF_UNIX,
+	.sock_addrlen = sizeof(struct sockaddr_un),
+	.l3_addrlen = sizeof(((struct sockaddr_un*)0)->sun_path),
+	.addrcmp = NULL,
+	.bind = sockpair_bind_receiver,
+	.get_src = NULL,
+	.get_dst = NULL,
+};
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_sockpair = {
 	.name = "sockpair",
+	.fam = &proto_fam_sockpair,
+	.ctrl_type = SOCK_STREAM,
 	.sock_domain = AF_CUST_SOCKPAIR,
 	.sock_type = SOCK_STREAM,
 	.sock_prot = 0,
-	.sock_family = AF_UNIX,
-	.sock_addrlen = sizeof(struct sockaddr_un),
-	.l3_addrlen = sizeof(((struct sockaddr_un*)0)->sun_path),/* path len */
 	.accept = &listener_accept,
 	.connect = &sockpair_connect_server,
-	.bind = sockpair_bind_listener,
-	.bind_all = sockpair_bind_listeners,
-	.unbind_all = NULL,
+	.listen = sockpair_bind_listener,
 	.enable_all = enable_all_listeners,
 	.disable_all = disable_all_listeners,
-	.get_src = NULL,
-	.get_dst = NULL,
 	.pause = NULL,
 	.add = sockpair_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_sockpair.listeners),
@@ -83,32 +90,64 @@ static void sockpair_add_listener(struct listener *listener, int port)
 	if (listener->state != LI_INIT)
 		return;
 	listener->state = LI_ASSIGNED;
-	listener->proto = &proto_sockpair;
-	LIST_ADDQ(&proto_sockpair.listeners, &listener->proto_list);
+	listener->rx.proto = &proto_sockpair;
+	LIST_ADDQ(&proto_sockpair.listeners, &listener->rx.proto_list);
 	proto_sockpair.nb_listeners++;
 }
 
-/* This function creates all UNIX sockets bound to the protocol entry <proto>.
- * It is intended to be used as the protocol's bind_all() function.
- * The sockets will be registered but not added to any fd_set, in order not to
- * loose them across the fork(). A call to uxst_enable_listeners() is needed
- * to complete initialization.
- *
- * Must be called with proto_lock held.
- *
- * The return value is composed from ERR_NONE, ERR_RETRYABLE and ERR_FATAL.
+/* Binds receiver <rx>, and assigns <handler> and rx->owner as the callback and
+ * context, respectively, with <tm> as the thread mask. Returns and error code
+ * made of ERR_* bits on failure or ERR_NONE on success. On failure, an error
+ * message may be passed into <errmsg>. Note that the binding address is only
+ * an FD to receive the incoming FDs on. Thus by definition there is no real
+ * "bind" operation, this only completes the receiver. Such FDs are not
+ * inherited upon reload.
  */
-static int sockpair_bind_listeners(struct protocol *proto, char *errmsg, int errlen)
+int sockpair_bind_receiver(struct receiver *rx, void (*handler)(int fd), char **errmsg)
 {
-	struct listener *listener;
-	int err = ERR_NONE;
+	int err;
 
-	list_for_each_entry(listener, &proto->listeners, proto_list) {
-		err |= sockpair_bind_listener(listener, errmsg, errlen);
-		if (err & ERR_ABORT)
-			break;
+	/* ensure we never return garbage */
+	if (errmsg)
+		*errmsg = 0;
+
+	err = ERR_NONE;
+
+	if (rx->flags & RX_F_BOUND)
+		return ERR_NONE;
+
+	if (rx->fd == -1) {
+		err |= ERR_FATAL | ERR_ALERT;
+		memprintf(errmsg, "sockpair may be only used with inherited FDs");
+		goto bind_return;
 	}
+
+	if (rx->fd >= global.maxsock) {
+		err |= ERR_FATAL | ERR_ABORT | ERR_ALERT;
+		memprintf(errmsg, "not enough free sockets (raise '-n' parameter)");
+		goto bind_close_return;
+	}
+
+	if (fcntl(rx->fd, F_SETFL, O_NONBLOCK) == -1) {
+		err |= ERR_FATAL | ERR_ALERT;
+		memprintf(errmsg, "cannot make socket non-blocking");
+		goto bind_close_return;
+	}
+
+	rx->flags |= RX_F_BOUND;
+
+	fd_insert(rx->fd, rx->owner, handler, thread_mask(rx->settings->bind_thread) & all_threads_mask);
 	return err;
+
+ bind_return:
+	if (errmsg && *errmsg)
+		memprintf(errmsg, "%s [fd %d]", *errmsg, rx->fd);
+
+	return err;
+
+ bind_close_return:
+	close(rx->fd);
+	goto bind_return;
 }
 
 /* This function changes the state from ASSIGNED to LISTEN. The socket is NOT
@@ -119,9 +158,8 @@ static int sockpair_bind_listeners(struct protocol *proto, char *errmsg, int err
  */
 static int sockpair_bind_listener(struct listener *listener, char *errmsg, int errlen)
 {
-	int fd = listener->fd;
 	int err;
-	const char *msg = NULL;
+	char *msg = NULL;
 
 	err = ERR_NONE;
 
@@ -132,33 +170,17 @@ static int sockpair_bind_listener(struct listener *listener, char *errmsg, int e
 	if (listener->state != LI_ASSIGNED)
 		return ERR_NONE; /* already bound */
 
-	if (listener->fd == -1) {
-		err |= ERR_FATAL | ERR_ALERT;
-		msg = "sockpair can be only used with inherited FDs";
-		goto err_return;
-	}
-
-	if (fd >= global.maxsock) {
-		err |= ERR_FATAL | ERR_ALERT;
-		msg = "socket(): not enough free sockets, raise -n argument";
-		goto err_return;
-	}
-	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
-		err |= ERR_FATAL | ERR_ALERT;
-		msg = "cannot make sockpair non-blocking";
+	if (!(listener->rx.flags & RX_F_BOUND)) {
+		msg = "receiving socket not bound";
 		goto err_return;
 	}
 
 	listener->state = LI_LISTEN;
-
-	fd_insert(fd, listener, listener->proto->accept,
-	          thread_mask(listener->bind_conf->bind_thread) & all_threads_mask);
-
 	return err;
 
  err_return:
 	if (msg && errlen)
-		snprintf(errmsg, errlen, "%s [fd %d]", msg, fd);
+		snprintf(errmsg, errlen, "%s [fd %d]", msg, listener->rx.fd);
 	return err;
 }
 

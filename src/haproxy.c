@@ -39,7 +39,6 @@
 #include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <net/if.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -110,12 +109,15 @@
 #include <haproxy/peers.h>
 #include <haproxy/pool.h>
 #include <haproxy/protocol.h>
+#include <haproxy/proto_tcp.h>
 #include <haproxy/proxy.h>
 #include <haproxy/regex.h>
 #include <haproxy/sample.h>
 #include <haproxy/server.h>
 #include <haproxy/session.h>
 #include <haproxy/signal.h>
+#include <haproxy/sock.h>
+#include <haproxy/sock_inet.h>
 #include <haproxy/ssl_sock.h>
 #include <haproxy/stream.h>
 #include <haproxy/task.h>
@@ -763,11 +765,11 @@ static void get_cur_unixsocket()
 
 			list_for_each_entry(l, &bind_conf->listeners, by_bind) {
 
-				if (l->addr.ss_family == AF_UNIX &&
+				if (l->rx.addr.ss_family == AF_UNIX &&
 				    (bind_conf->level & ACCESS_FD_LISTENERS)) {
 					const struct sockaddr_un *un;
 
-					un = (struct sockaddr_un *)&l->addr;
+					un = (struct sockaddr_un *)&l->rx.addr;
 					/* priority to old_unixsocket */
 					if (!cur_unixsocket) {
 						cur_unixsocket = strdup(un->sun_path);
@@ -843,7 +845,8 @@ void mworker_reload()
 		old_argc++;
 
 	/* 1 for haproxy -sf, 2 for -x /socket */
-	next_argv = calloc(old_argc + 1 + 2 + mworker_child_nb() + nb_oldpids + 1, sizeof(char *));
+	next_argv = calloc(old_argc + 1 + 2 + mworker_child_nb() + nb_oldpids + 1,
+			   sizeof(*next_argv));
 	if (next_argv == NULL)
 		goto alloc_error;
 
@@ -1167,217 +1170,6 @@ next_dir_entry:
 	free(err);
 }
 
-static int get_old_sockets(const char *unixsocket)
-{
-	char *cmsgbuf = NULL, *tmpbuf = NULL;
-	int *tmpfd = NULL;
-	struct sockaddr_un addr;
-	struct cmsghdr *cmsg;
-	struct msghdr msghdr;
-	struct iovec iov;
-	struct xfer_sock_list *xfer_sock = NULL;
-	struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
-	int sock = -1;
-	int ret = -1;
-	int ret2 = -1;
-	int fd_nb;
-	int got_fd = 0;
-	int i = 0;
-	size_t maxoff = 0, curoff = 0;
-
-	memset(&msghdr, 0, sizeof(msghdr));
-	cmsgbuf = malloc(CMSG_SPACE(sizeof(int)) * MAX_SEND_FD);
-	if (!cmsgbuf) {
-		ha_warning("Failed to allocate memory to send sockets\n");
-		goto out;
-	}
-	sock = socket(PF_UNIX, SOCK_STREAM, 0);
-	if (sock < 0) {
-		ha_warning("Failed to connect to the old process socket '%s'\n",
-			   unixsocket);
-		goto out;
-	}
-	strncpy(addr.sun_path, unixsocket, sizeof(addr.sun_path) - 1);
-	addr.sun_path[sizeof(addr.sun_path) - 1] = 0;
-	addr.sun_family = PF_UNIX;
-	ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
-	if (ret < 0) {
-		ha_warning("Failed to connect to the old process socket '%s'\n",
-			   unixsocket);
-		goto out;
-	}
-	setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (void *)&tv, sizeof(tv));
-	iov.iov_base = &fd_nb;
-	iov.iov_len = sizeof(fd_nb);
-	msghdr.msg_iov = &iov;
-	msghdr.msg_iovlen = 1;
-	send(sock, "_getsocks\n", strlen("_getsocks\n"), 0);
-	/* First, get the number of file descriptors to be received */
-	if (recvmsg(sock, &msghdr, MSG_WAITALL) != sizeof(fd_nb)) {
-		ha_warning("Failed to get the number of sockets to be transferred !\n");
-		goto out;
-	}
-	if (fd_nb == 0) {
-		ret = 0;
-		goto out;
-	}
-	tmpbuf = malloc(fd_nb * (1 + MAXPATHLEN + 1 + IFNAMSIZ + sizeof(int)));
-	if (tmpbuf == NULL) {
-		ha_warning("Failed to allocate memory while receiving sockets\n");
-		goto out;
-	}
-	tmpfd = malloc(fd_nb * sizeof(int));
-	if (tmpfd == NULL) {
-		ha_warning("Failed to allocate memory while receiving sockets\n");
-		goto out;
-	}
-	msghdr.msg_control = cmsgbuf;
-	msghdr.msg_controllen = CMSG_SPACE(sizeof(int)) * MAX_SEND_FD;
-	iov.iov_len = MAX_SEND_FD * (1 + MAXPATHLEN + 1 + IFNAMSIZ + sizeof(int));
-	do {
-		int ret3;
-
-		iov.iov_base = tmpbuf + curoff;
-		ret = recvmsg(sock, &msghdr, 0);
-		if (ret == -1 && errno == EINTR)
-			continue;
-		if (ret <= 0)
-			break;
-		/* Send an ack to let the sender know we got the sockets
-		 * and it can send some more
-		 */
-		do {
-			ret3 = send(sock, &got_fd, sizeof(got_fd), 0);
-		} while (ret3 == -1 && errno == EINTR);
-		for (cmsg = CMSG_FIRSTHDR(&msghdr); cmsg != NULL;
-		    cmsg = CMSG_NXTHDR(&msghdr, cmsg)) {
-			if (cmsg->cmsg_level == SOL_SOCKET &&
-			    cmsg->cmsg_type == SCM_RIGHTS) {
-				size_t totlen = cmsg->cmsg_len -
-				    CMSG_LEN(0);
-				if (totlen / sizeof(int) + got_fd > fd_nb) {
-					ha_warning("Got to many sockets !\n");
-					goto out;
-				}
-				/*
-				 * Be paranoid and use memcpy() to avoid any
-				 * potential alignment issue.
-				 */
-				memcpy(&tmpfd[got_fd], CMSG_DATA(cmsg), totlen);
-				got_fd += totlen / sizeof(int);
-			}
-		}
-		curoff += ret;
-	} while (got_fd < fd_nb);
-
-	if (got_fd != fd_nb) {
-		ha_warning("We didn't get the expected number of sockets (expecting %d got %d)\n",
-			   fd_nb, got_fd);
-		goto out;
-	}
-	maxoff = curoff;
-	curoff = 0;
-	for (i = 0; i < got_fd; i++) {
-		int fd = tmpfd[i];
-		socklen_t socklen;
-		int len;
-
-		xfer_sock = calloc(1, sizeof(*xfer_sock));
-		if (!xfer_sock) {
-			ha_warning("Failed to allocate memory in get_old_sockets() !\n");
-			break;
-		}
-		xfer_sock->fd = -1;
-
-		socklen = sizeof(xfer_sock->addr);
-		if (getsockname(fd, (struct sockaddr *)&xfer_sock->addr, &socklen) != 0) {
-			ha_warning("Failed to get socket address\n");
-			free(xfer_sock);
-			xfer_sock = NULL;
-			continue;
-		}
-		if (curoff >= maxoff) {
-			ha_warning("Inconsistency while transferring sockets\n");
-			goto out;
-		}
-		len = tmpbuf[curoff++];
-		if (len > 0) {
-			/* We have a namespace */
-			if (curoff + len > maxoff) {
-				ha_warning("Inconsistency while transferring sockets\n");
-				goto out;
-			}
-			xfer_sock->namespace = malloc(len + 1);
-			if (!xfer_sock->namespace) {
-				ha_warning("Failed to allocate memory while transferring sockets\n");
-				goto out;
-			}
-			memcpy(xfer_sock->namespace, &tmpbuf[curoff], len);
-			xfer_sock->namespace[len] = 0;
-			curoff += len;
-		}
-		if (curoff >= maxoff) {
-			ha_warning("Inconsistency while transferring sockets\n");
-			goto out;
-		}
-		len = tmpbuf[curoff++];
-		if (len > 0) {
-			/* We have an interface */
-			if (curoff + len > maxoff) {
-				ha_warning("Inconsistency while transferring sockets\n");
-				goto out;
-			}
-			xfer_sock->iface = malloc(len + 1);
-			if (!xfer_sock->iface) {
-				ha_warning("Failed to allocate memory while transferring sockets\n");
-				goto out;
-			}
-			memcpy(xfer_sock->iface, &tmpbuf[curoff], len);
-			xfer_sock->iface[len] = 0;
-			curoff += len;
-		}
-		if (curoff + sizeof(int) > maxoff) {
-			ha_warning("Inconsistency while transferring sockets\n");
-			goto out;
-		}
-		memcpy(&xfer_sock->options, &tmpbuf[curoff],
-		    sizeof(xfer_sock->options));
-		curoff += sizeof(xfer_sock->options);
-
-		xfer_sock->fd = fd;
-		if (xfer_sock_list)
-			xfer_sock_list->prev = xfer_sock;
-		xfer_sock->next = xfer_sock_list;
-		xfer_sock->prev = NULL;
-		xfer_sock_list = xfer_sock;
-		xfer_sock = NULL;
-	}
-
-	ret2 = 0;
-out:
-	/* If we failed midway make sure to close the remaining
-	 * file descriptors
-	 */
-	if (tmpfd != NULL && i < got_fd) {
-		for (; i < got_fd; i++) {
-			close(tmpfd[i]);
-		}
-	}
-	free(tmpbuf);
-	free(tmpfd);
-	free(cmsgbuf);
-	if (sock != -1)
-		close(sock);
-	if (xfer_sock) {
-		free(xfer_sock->namespace);
-		free(xfer_sock->iface);
-		if (xfer_sock->fd != -1)
-			close(xfer_sock->fd);
-		free(xfer_sock);
-	}
-	return (ret2);
-}
-
 /*
  * copy and cleanup the current argv
  * Remove the -sf /-st / -x parameters
@@ -1388,7 +1180,7 @@ static char **copy_argv(int argc, char **argv)
 {
 	char **newargv, **retargv;
 
-	newargv = calloc(argc + 2, sizeof(char *));
+	newargv = calloc(argc + 2, sizeof(*newargv));
 	if (newargv == NULL) {
 		ha_warning("Cannot allocate memory\n");
 		return NULL;
@@ -1433,6 +1225,10 @@ static char **copy_argv(int argc, char **argv)
 								argc--;
 								argv++;
 							}
+						} else {
+							argc--;
+							argv++;
+
 						}
 						break;
 
@@ -2655,7 +2451,13 @@ void deinit(void)
 	struct post_deinit_fct *pdf, *pdfb;
 	struct proxy_deinit_fct *pxdf, *pxdfb;
 	struct server_deinit_fct *srvdf, *srvdfb;
+	struct per_thread_init_fct *tif, *tifb;
+	struct per_thread_deinit_fct *tdf, *tdfb;
+	struct per_thread_alloc_fct *taf, *tafb;
+	struct per_thread_free_fct *tff, *tffb;
 	struct post_server_check_fct *pscf, *pscfb;
+	struct post_check_fct *pcf, *pcfb;
+	struct post_proxy_check_fct *ppcf, *ppcfb;
 
 	deinit_signals();
 	while (p) {
@@ -2845,7 +2647,8 @@ void deinit(void)
 			 * Close it and give the listener its real state.
 			 */
 			if (p->state == PR_STSTOPPED && l->state >= LI_ZOMBIE) {
-				close(l->fd);
+				fd_delete(l->rx.fd);
+				l->rx.fd = -1;
 				l->state = LI_INIT;
 			}
 			unbind_listener(l);
@@ -2890,6 +2693,8 @@ void deinit(void)
 	}/* end while(p) */
 
 	while (ua) {
+		struct stat_scope *scope, *scopep;
+
 		uap = ua;
 		ua = ua->next;
 
@@ -2900,6 +2705,15 @@ void deinit(void)
 
 		userlist_free(uap->userlist);
 		deinit_act_rules(&uap->http_req_rules);
+
+		scope = uap->scope;
+		while (scope) {
+			scopep = scope;
+			scope = scope->next;
+
+			free(scopep->px_id);
+			free(scopep);
+		}
 
 		free(uap);
 	}
@@ -2922,6 +2736,7 @@ void deinit(void)
 	free(global.node);    global.node = NULL;
 	free(global.desc);    global.desc = NULL;
 	free(oldpids);        oldpids = NULL;
+	free(old_argv);       old_argv = NULL;
 	free(localpeer);      localpeer = NULL;
 	task_destroy(idle_conn_task);
 	idle_conn_task = NULL;
@@ -2958,9 +2773,39 @@ void deinit(void)
 		free(srvdf);
 	}
 
+	list_for_each_entry_safe(pcf, pcfb, &post_check_list, list) {
+		LIST_DEL(&pcf->list);
+		free(pcf);
+	}
+
 	list_for_each_entry_safe(pscf, pscfb, &post_server_check_list, list) {
 		LIST_DEL(&pscf->list);
 		free(pscf);
+	}
+
+	list_for_each_entry_safe(ppcf, ppcfb, &post_proxy_check_list, list) {
+		LIST_DEL(&ppcf->list);
+		free(ppcf);
+	}
+
+	list_for_each_entry_safe(tif, tifb, &per_thread_init_list, list) {
+		LIST_DEL(&tif->list);
+		free(tif);
+	}
+
+	list_for_each_entry_safe(tdf, tdfb, &per_thread_deinit_list, list) {
+		LIST_DEL(&tdf->list);
+		free(tdf);
+	}
+
+	list_for_each_entry_safe(taf, tafb, &per_thread_alloc_list, list) {
+		LIST_DEL(&taf->list);
+		free(taf);
+	}
+
+	list_for_each_entry_safe(tff, tffb, &per_thread_free_list, list) {
+		LIST_DEL(&tff->list);
+		free(tff);
 	}
 
 	vars_prune(&global.vars, NULL, NULL);
@@ -3200,7 +3045,6 @@ int main(int argc, char **argv)
 {
 	int err, retry;
 	struct rlimit limit;
-	char errmsg[100];
 	int pidfd = -1;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -3301,7 +3145,7 @@ int main(int argc, char **argv)
 
 	if (old_unixsocket) {
 		if (strcmp("/dev/null", old_unixsocket) != 0) {
-			if (get_old_sockets(old_unixsocket) != 0) {
+			if (sock_get_old_sockets(old_unixsocket) != 0) {
 				ha_alert("Failed to get the sockets from the old process!\n");
 				if (!(global.mode & MODE_MWORKER))
 					exit(1);
@@ -3318,7 +3162,7 @@ int main(int argc, char **argv)
 	err = ERR_NONE;
 	while (retry >= 0) {
 		struct timeval w;
-		err = start_proxies(retry == 0 || nb_oldpids == 0);
+		err = protocol_bind_all(retry == 0 || nb_oldpids == 0);
 		/* exit the loop on no error or fatal error */
 		if ((err & (ERR_RETRYABLE|ERR_FATAL)) != ERR_RETRYABLE)
 			break;
@@ -3341,14 +3185,17 @@ int main(int argc, char **argv)
 		retry--;
 	}
 
-	/* Note: start_proxies() sends an alert when it fails. */
+	/* Note: protocol_bind_all() sends an alert when it fails. */
 	if ((err & ~ERR_WARN) != ERR_NONE) {
+		ha_alert("[%s.main()] Some protocols failed to start their listeners! Exiting.\n", argv[0]);
 		if (retry != MAX_START_RETRIES && nb_oldpids) {
 			protocol_unbind_all(); /* cleanup everything we can */
 			tell_old_pids(SIGTTIN);
 		}
 		exit(1);
 	}
+
+	start_proxies();
 
 	if (!(global.mode & MODE_MWORKER_WAIT) && listeners == 0) {
 		ha_alert("[%s.main()] No enabled listener found (check for 'bind' directives) ! Exiting.\n", argv[0]);
@@ -3357,20 +3204,7 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	err = protocol_bind_all(errmsg, sizeof(errmsg));
-	if ((err & ~ERR_WARN) != ERR_NONE) {
-		if ((err & ERR_ALERT) || (err & ERR_WARN))
-			ha_alert("[%s.main()] %s.\n", argv[0], errmsg);
-
-		ha_alert("[%s.main()] Some protocols failed to start their listeners! Exiting.\n", argv[0]);
-		protocol_unbind_all(); /* cleanup everything we can */
-		if (nb_oldpids)
-			tell_old_pids(SIGTTIN);
-		exit(1);
-	} else if (err & ERR_WARN) {
-		ha_alert("[%s.main()] %s.\n", argv[0], errmsg);
-	}
-	/* Ok, all listener should now be bound, close any leftover sockets
+	/* Ok, all listeners should now be bound, close any leftover sockets
 	 * the previous process gave us, we don't need them anymore
 	 */
 	while (xfer_sock_list != NULL) {
@@ -3681,7 +3515,7 @@ int main(int argc, char **argv)
 
 			list_for_each_entry(bind_conf, &global.stats_fe->conf.bind, by_fe) {
 				if (bind_conf->level & ACCESS_FD_LISTENERS) {
-					if (!bind_conf->bind_proc || bind_conf->bind_proc & (1UL << proc)) {
+					if (!bind_conf->settings.bind_proc || bind_conf->settings.bind_proc & (1UL << proc)) {
 						global.tune.options |= GTUNE_SOCKET_TRANSFER;
 						break;
 					}

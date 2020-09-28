@@ -58,8 +58,8 @@
 # given TARGET is enumerated at the end of "make help".
 #
 # Variables useful for packagers :
-#   CC is set to "gcc" by default and is used for compilation only.
-#   LD is set to "gcc" by default and is used for linking only.
+#   CC is set to "cc" by default and is used for compilation only.
+#   LD is set to "cc" by default and is used for linking only.
 #   ARCH may be useful to force build of 32-bit binary on 64-bit systems
 #   CFLAGS is automatically set for the specified CPU and may be overridden.
 #   LDFLAGS is automatically set to -g and may be overridden.
@@ -106,6 +106,7 @@
 #   SUBVERS        : add a sub-version (eg: platform, model, ...).
 #   VERDATE        : force haproxy's release date.
 #   VTEST_PROGRAM  : location of the vtest program to run reg-tests.
+#   DEBUG_USE_ABORT: use abort() for program termination, see include/haproxy/bug.h for details
 
 # verbosity: pass V=1 for verbose shell invocation
 V = 0
@@ -157,8 +158,7 @@ CPU = generic
 ARCH =
 
 #### Toolchain options.
-# GCC is normally used both for compiling and linking.
-CC = gcc
+CC = cc
 LD = $(CC)
 
 #### Debug flags (typically "-g").
@@ -817,8 +817,8 @@ OBJS = src/mux_fcgi.o src/mux_h1.o src/mux_h2.o src/backend.o                 \
        src/task.o src/ring.o src/vars.o src/trace.o src/mux_pt.o              \
        src/xxhash.o src/mworker-prog.o src/h1_htx.o src/frontend.o            \
        src/extcheck.o src/channel.o src/action.o src/mailers.o                \
-       src/proto_sockpair.o src/ebmbtree.o src/thread.o                       \
-       src/lb_fwrr.o src/time.o src/regex.o src/lb_fwlc.o                     \
+       src/tcp_act.o src/proto_sockpair.o src/ebmbtree.o src/thread.o         \
+       src/tcp_sample.o src/lb_fwrr.o src/time.o src/regex.o src/lb_fwlc.o    \
        src/htx.o src/h2.o src/hpack-tbl.o src/lru.o src/wdt.o                 \
        src/lb_map.o src/eb32sctree.o src/ebistree.o src/h1.o                  \
        src/sha1.o src/http.o src/fd.o src/ev_select.o src/chunk.o             \
@@ -827,7 +827,8 @@ OBJS = src/mux_fcgi.o src/mux_h1.o src/mux_h2.o src/backend.o                 \
        src/ebsttree.o src/pipe.o src/hpack-enc.o src/fcgi.o                   \
        src/eb64tree.o src/dict.o src/shctx.o src/ebimtree.o                   \
        src/eb32tree.o src/ebtree.o src/dgram.o src/proto_udp.o                \
-       src/hpack-huff.o src/base64.o src/version.o
+       src/hpack-huff.o src/cfgparse-tcp.o src/base64.o src/version.o         \
+       src/cfgparse-unix.o src/sock.o src/sock_inet.o src/sock_unix.o
 
 NUSTER_OBJS = src/nuster/cache/engine.o src/nuster/cache/filter.o             \
        src/nuster/nosql/engine.o src/nuster/nosql/filter.o                    \

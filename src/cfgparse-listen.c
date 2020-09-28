@@ -442,7 +442,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 		/* default compression options */
 		if (defproxy.comp != NULL) {
-			curproxy->comp = calloc(1, sizeof(struct comp));
+			curproxy->comp = calloc(1, sizeof(*curproxy->comp));
 			curproxy->comp->algos = defproxy.comp->algos;
 			curproxy->comp->types = defproxy.comp->types;
 		}
@@ -479,6 +479,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 
+		free(defproxy.conf.file);
 		free(defproxy.check_command);
 		free(defproxy.check_path);
 		free(defproxy.cookie_name);
@@ -565,9 +566,9 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		bind_conf = bind_conf_alloc(curproxy, file, linenum, args[1], xprt_get(XPRT_RAW));
 
 		/* use default settings for unix sockets */
-		bind_conf->ux.uid  = global.unix_bind.ux.uid;
-		bind_conf->ux.gid  = global.unix_bind.ux.gid;
-		bind_conf->ux.mode = global.unix_bind.ux.mode;
+		bind_conf->settings.ux.uid  = global.unix_bind.ux.uid;
+		bind_conf->settings.ux.gid  = global.unix_bind.ux.gid;
+		bind_conf->settings.ux.mode = global.unix_bind.ux.mode;
 
 		/* NOTE: the following line might create several listeners if there
 		 * are comma-separated IPs or port ranges. So all further processing
@@ -2590,7 +2591,6 @@ stats_error_parsing:
 	else if (!strcmp(args[0], "dispatch")) {  /* dispatch address */
 		struct sockaddr_storage *sk;
 		int port1, port2;
-		struct protocol *proto;
 
 		if (curproxy == &defproxy) {
 			ha_alert("parsing [%s:%d] : '%s' not allowed in 'defaults' section.\n", file, linenum, args[0]);
@@ -2600,31 +2600,11 @@ stats_error_parsing:
 		else if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
 			err_code |= ERR_WARN;
 
-		sk = str2sa_range(args[1], NULL, &port1, &port2, &errmsg, NULL, NULL, 1);
+		sk = str2sa_range(args[1], NULL, &port1, &port2, NULL, NULL,
+		                  &errmsg, NULL, NULL,
+		                  PA_O_RESOLVE | PA_O_PORT_OK | PA_O_PORT_MAND | PA_O_STREAM | PA_O_XPRT | PA_O_CONNECT);
 		if (!sk) {
 			ha_alert("parsing [%s:%d] : '%s' : %s\n", file, linenum, args[0], errmsg);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		proto = protocol_by_family(sk->ss_family);
-		if (!proto || !proto->connect) {
-			ha_alert("parsing [%s:%d] : '%s %s' : connect() not supported for this address family.\n",
-				 file, linenum, args[0], args[1]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (port1 != port2) {
-			ha_alert("parsing [%s:%d] : '%s' : port ranges and offsets are not allowed in '%s'.\n",
-				 file, linenum, args[0], args[1]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (!port1) {
-			ha_alert("parsing [%s:%d] : '%s' : missing port number in '%s', <addr:port> expected.\n",
-				 file, linenum, args[0], args[1]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -2854,7 +2834,6 @@ stats_error_parsing:
 		int cur_arg;
 		int port1, port2;
 		struct sockaddr_storage *sk;
-		struct protocol *proto;
 
 		if (warnifnotcap(curproxy, PR_CAP_BE, file, linenum, args[0], NULL))
 			err_code |= ERR_WARN;
@@ -2872,25 +2851,11 @@ stats_error_parsing:
 		curproxy->conn_src.iface_name = NULL;
 		curproxy->conn_src.iface_len = 0;
 
-		sk = str2sa_range(args[1], NULL, &port1, &port2, &errmsg, NULL, NULL, 1);
+		sk = str2sa_range(args[1], NULL, &port1, &port2, NULL, NULL,
+		                  &errmsg, NULL, NULL, PA_O_RESOLVE | PA_O_PORT_OK | PA_O_STREAM | PA_O_CONNECT);
 		if (!sk) {
 			ha_alert("parsing [%s:%d] : '%s %s' : %s\n",
 				 file, linenum, args[0], args[1], errmsg);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		proto = protocol_by_family(sk->ss_family);
-		if (!proto || !proto->connect) {
-			ha_alert("parsing [%s:%d] : '%s %s' : connect() not supported for this address family.\n",
-				 file, linenum, args[0], args[1]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (port1 != port2) {
-			ha_alert("parsing [%s:%d] : '%s' : port ranges and offsets are not allowed in '%s'\n",
-				 file, linenum, args[0], args[1]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -2957,7 +2922,8 @@ stats_error_parsing:
 				} else {
 					struct sockaddr_storage *sk;
 
-					sk = str2sa_range(args[cur_arg + 1], NULL, &port1, &port2, &errmsg, NULL, NULL, 1);
+					sk = str2sa_range(args[cur_arg + 1], NULL, &port1, &port2, NULL, NULL,
+					                  &errmsg, NULL, NULL, PA_O_RESOLVE | PA_O_PORT_OK | PA_O_STREAM | PA_O_CONNECT);
 					if (!sk) {
 						ha_alert("parsing [%s:%d] : '%s %s' : %s\n",
 							 file, linenum, args[cur_arg], args[cur_arg+1], errmsg);
@@ -2965,20 +2931,6 @@ stats_error_parsing:
 						goto out;
 					}
 
-					proto = protocol_by_family(sk->ss_family);
-					if (!proto || !proto->connect) {
-						ha_alert("parsing [%s:%d] : '%s %s' : connect() not supported for this address family.\n",
-							 file, linenum, args[cur_arg], args[cur_arg+1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
-
-					if (port1 != port2) {
-						ha_alert("parsing [%s:%d] : '%s' : port ranges and offsets are not allowed in '%s'\n",
-							 file, linenum, args[cur_arg], args[cur_arg + 1]);
-						err_code |= ERR_ALERT | ERR_FATAL;
-						goto out;
-					}
 					curproxy->conn_src.tproxy_addr = *sk;
 					curproxy->conn_src.opts |= CO_SRC_TPROXY_ADDR;
 				}

@@ -1763,6 +1763,7 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
 		msg->flags = 0;
 		txn->status = 0;
 		s->logs.t_data = -1; /* was not a response yet */
+		rep->flags |= CF_SEND_DONTWAIT; /* Send ASAP informational messages */
 		goto next_one;
 	}
 
@@ -2759,7 +2760,7 @@ int http_replace_hdrs(struct stream* s, struct htx *htx, struct ist name,
  * error, though this can be revisited when this code is finally exploited.
  *
  * 'action' can be '0' to replace method, '1' to replace path, '2' to replace
- * query string and 3 to replace uri.
+ * query string, 3 to replace uri or 4 to replace the path+query.
  *
  * In query string case, the mark question '?' must be set at the start of the
  * string by the caller, event if the replacement query string is empty.
@@ -2776,7 +2777,7 @@ int http_req_replace_stline(int action, const char *replace, int len,
 			break;
 
 		case 1: // path
-			if (!http_replace_req_path(htx, ist2(replace, len)))
+			if (!http_replace_req_path(htx, ist2(replace, len), 0))
 				return -1;
 			break;
 
@@ -2787,6 +2788,11 @@ int http_req_replace_stline(int action, const char *replace, int len,
 
 		case 3: // uri
 			if (!http_replace_req_uri(htx, ist2(replace, len)))
+				return -1;
+			break;
+
+		case 4: // path + query
+			if (!http_replace_req_path(htx, ist2(replace, len), 1))
 				return -1;
 			break;
 
@@ -2815,9 +2821,7 @@ int http_res_set_status(unsigned int status, struct ist reason, struct stream *s
 		reason = ist2(str, strlen(str));
 	}
 
-	if (!http_replace_res_status(htx, ist2(trash.area, trash.data)))
-		return -1;
-	if (!http_replace_res_reason(htx, reason))
+	if (!http_replace_res_status(htx, ist2(trash.area, trash.data), reason))
 		return -1;
 	return 0;
 }

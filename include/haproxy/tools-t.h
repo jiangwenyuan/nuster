@@ -50,6 +50,23 @@
 #define DEFNULL(...) _FIRST_ARG(NULL, ##__VA_ARGS__, NULL)
 #define _FIRST_ARG(a, b, ...) b
 
+/* options flags for parse_line() */
+#define PARSE_OPT_SHARP         0x00000001      // '#' ends the line
+#define PARSE_OPT_BKSLASH       0x00000002      // '\' escapes chars
+#define PARSE_OPT_SQUOTE        0x00000004      // "'" encloses a string
+#define PARSE_OPT_DQUOTE        0x00000008      // '"' encloses a string
+#define PARSE_OPT_ENV           0x00000010      // '$' is followed by environment variables
+#define PARSE_OPT_INPLACE       0x00000020      // parse and tokenize in-place (src == dst)
+
+/* return error flags from parse_line() */
+#define PARSE_ERR_TOOLARGE      0x00000001      // result is too large for initial outlen
+#define PARSE_ERR_TOOMANY       0x00000002      // more words than initial nbargs
+#define PARSE_ERR_QUOTE         0x00000004      // unmatched quote (offending one at errptr)
+#define PARSE_ERR_BRACE         0x00000008      // unmatched brace (offending one at errptr)
+#define PARSE_ERR_HEX           0x00000010      // unparsable hex sequence (at errptr)
+#define PARSE_ERR_VARNAME       0x00000020      // invalid variable name (at errptr)
+#define PARSE_ERR_OVERLAP       0x00000040      // output overlaps with input, need to allocate
+
 /* special return values for the time parser (parse_time_err()) */
 #define PARSE_TIME_UNDER ((char *)1)
 #define PARSE_TIME_OVER  ((char *)2)
@@ -67,6 +84,19 @@
 #define MINUTE (60 * SEC)
 #define HOUR (60 * MINUTE)
 #define DAY (24 * HOUR)
+
+/* Address parsing options for use with str2sa_range() */
+#define PA_O_RESOLVE            0x00000001   /* do resolve the FQDN to an IP address */
+#define PA_O_PORT_OK            0x00000002   /* ports are supported */
+#define PA_O_PORT_MAND          0x00000004   /* ports are mandatory */
+#define PA_O_PORT_RANGE         0x00000008   /* port ranges are supported */
+#define PA_O_PORT_OFS           0x00000010   /* port offsets are supported */
+#define PA_O_SOCKET_FD          0x00000020   /* inherited socket FDs are supported */
+#define PA_O_RAW_FD             0x00000040   /* inherited raw FDs are supported (pipes, ttys, ...) */
+#define PA_O_DGRAM              0x00000080   /* the address will be used for a datagram socket (in or out) */
+#define PA_O_STREAM             0x00000100   /* the address will be used for streams (in or out) */
+#define PA_O_XPRT               0x00000200   /* transport protocols may be specified */
+#define PA_O_CONNECT            0x00000400   /* the protocol must have a ->connect method */
 
 /* UTF-8 decoder status */
 #define UTF8_CODE_OK       0x00

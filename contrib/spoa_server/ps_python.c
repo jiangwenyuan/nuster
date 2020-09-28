@@ -244,6 +244,8 @@ static PyObject *ps_python_set_var_ipv4(PyObject *self, PyObject *args)
 		PyErr_SetString(spoa_error, "No space left available");
 		return NULL;
 	}
+	/* Once we set the IP value in the worker, we don't need it anymore... */
+	Py_XDECREF(value);
 	return Py_None;
 }
 
@@ -279,6 +281,8 @@ static PyObject *ps_python_set_var_ipv6(PyObject *self, PyObject *args)
 		PyErr_SetString(spoa_error, "No space left available");
 		return NULL;
 	}
+	/* Once we set the IP value in the worker, we don't need it anymore... */
+	Py_XDECREF(value);
 	return Py_None;
 }
 
@@ -411,7 +415,7 @@ static int ps_python_start_worker(struct worker *w)
 	}
 
 	ipv6_address = PyObject_GetAttrString(module_ipaddress, "IPv6Address");
-	if (ipv4_address == NULL) {
+	if (ipv6_address == NULL) {
 		PyErr_Print();
 		return 0;
 	}
@@ -554,7 +558,6 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 		ent = PyDict_New();
 		if (ent == NULL) {
 			Py_DECREF(kw_args);
-			Py_DECREF(ent);
 			PyErr_Print();
 			return 0;
 		}
@@ -564,6 +567,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 		key = PY_STRING_FROM_STRING("name");
 		if (key == NULL) {
 			Py_DECREF(kw_args);
+			Py_DECREF(ent);
 			PyErr_Print();
 			return 0;
 		}
@@ -629,6 +633,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 			if (func == NULL) {
 				Py_DECREF(kw_args);
 				Py_DECREF(ent);
+				Py_DECREF(key);
 				PyErr_Print();
 				return 0;
 			}
@@ -636,6 +641,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 			if (ip_dict == NULL) {
 				Py_DECREF(kw_args);
 				Py_DECREF(ent);
+				Py_DECREF(key);
 				Py_DECREF(func);
 				PyErr_Print();
 				return 0;
@@ -644,6 +650,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 			if (ip_name == NULL) {
 				Py_DECREF(kw_args);
 				Py_DECREF(ent);
+				Py_DECREF(key);
 				Py_DECREF(func);
 				Py_DECREF(ip_dict);
 				PyErr_Print();
@@ -653,6 +660,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 			if (ip_value == NULL) {
 				Py_DECREF(kw_args);
 				Py_DECREF(ent);
+				Py_DECREF(key);
 				Py_DECREF(func);
 				Py_DECREF(ip_dict);
 				Py_DECREF(ip_name);
@@ -663,6 +671,10 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 			Py_DECREF(ip_name);
 			Py_DECREF(ip_value);
 			if (ret == -1) {
+				Py_DECREF(kw_args);
+				Py_DECREF(ent);
+				Py_DECREF(key);
+				Py_DECREF(func);
 				Py_DECREF(ip_dict);
 				PyErr_Print();
 				return 0;
@@ -738,9 +750,13 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 	}
 
 	result = PyObject_Call(python_ref, empty_array, fkw);
+	Py_DECREF(fkw);
 	if (result == NULL) {
 		PyErr_Print();
 		return 0;
+	}
+	if (result != Py_None) {
+		Py_DECREF(result);
 	}
 
 	return 1;

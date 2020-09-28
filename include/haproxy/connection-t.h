@@ -596,7 +596,7 @@ struct tlv_ssl {
 	struct tlv tlv;
 	uint8_t client;
 	uint32_t verify;
-	uint8_t sub_tlv[0];
+	uint8_t sub_tlv[VAR_ARRAY];
 }__attribute__((packed));
 
 

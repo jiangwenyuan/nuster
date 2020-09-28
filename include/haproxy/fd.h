@@ -60,11 +60,6 @@ extern volatile int ha_used_fds; // Number of FDs we're currently using
  */
 void fd_delete(int fd);
 
-/* Deletes an FD from the fdsets.
- * The file descriptor is kept open.
- */
-void fd_remove(int fd);
-
 /*
  * Take over a FD belonging to another thread.
  * Returns 0 on success, and -1 on failure.
@@ -446,6 +441,7 @@ static inline void fd_insert(int fd, void *owner, void (*iocb)(int fd), unsigned
 	fdtab[fd].linger_risk = 0;
 	fdtab[fd].cloned = 0;
 	fdtab[fd].et_possible = 0;
+	fdtab[fd].exported = 0;
 #ifdef DEBUG_FD
 	fdtab[fd].event_count = 0;
 #endif

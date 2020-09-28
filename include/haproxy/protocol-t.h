@@ -30,16 +30,16 @@
 
 /* some pointer types referenced below */
 struct listener;
+struct receiver;
 struct connection;
 
 /*
  * Custom network family for str2sa parsing.  Should be ok to do this since
  * sa_family_t is standardized as an unsigned integer
  */
-#define AF_CUST_SOCKPAIR     (AF_MAX + 1)
-#define AF_CUST_UDP4         (AF_MAX + 2)
-#define AF_CUST_UDP6         (AF_MAX + 3)
-#define AF_CUST_MAX          (AF_MAX + 4)
+#define AF_CUST_EXISTING_FD  (AF_MAX + 1)
+#define AF_CUST_SOCKPAIR     (AF_MAX + 2)
+#define AF_CUST_MAX          (AF_MAX + 3)
 
 /*
  * Test in case AF_CUST_MAX overflows the sa_family_t (unsigned int)
@@ -57,29 +57,38 @@ struct connection;
 #define CONNECT_DELACK_ALWAYS                   0x00000004 /* Use a delayed ACK */
 #define CONNECT_CAN_USE_TFO                     0x00000008 /* We can use TFO for this connection */
 
-/* This structure contains all information needed to easily handle a protocol.
- * Its primary goal is to ease listeners maintenance. Specifically, the
- * bind_all() primitive must be used before any fork(), and the enable_all()
- * primitive must be called after the fork() to enable all fds. Last, the
- * unbind_all() primitive closes all listeners.
+/* protocol families define standard functions acting on a given address family
+ * for a socket implementation, such as AF_INET/PF_INET for example.
  */
-struct protocol {
-	char name[PROTO_NAME_LEN];			/* protocol name, zero-terminated */
+struct proto_fam {
+	char name[PROTO_NAME_LEN];                      /* family name, zero-terminated */
 	int sock_domain;				/* socket domain, as passed to socket()   */
-	int sock_type;					/* socket type, as passed to socket()     */
-	int sock_prot;					/* socket protocol, as passed to socket() */
 	sa_family_t sock_family;			/* socket family, for sockaddr */
 	socklen_t sock_addrlen;				/* socket address length, used by bind() */
 	int l3_addrlen;					/* layer3 address length, used by hashes */
+	int (*addrcmp)(const struct sockaddr_storage *, const struct sockaddr_storage *); /* compare addresses (like memcmp) */
+	int (*bind)(struct receiver *rx, void (*handler)(int fd), char **errmsg); /* bind a receiver */
+	int (*get_src)(int fd, struct sockaddr *, socklen_t, int dir); /* syscall used to retrieve src addr */
+	int (*get_dst)(int fd, struct sockaddr *, socklen_t, int dir); /* syscall used to retrieve dst addr */
+};
+
+/* This structure contains all information needed to easily handle a protocol.
+ * Its primary goal is to ease listeners maintenance. Specifically, the
+ * bind() primitive must be used before any fork(), and the enable_all()
+ * primitive must be called after the fork() to enable all fds.
+ */
+struct protocol {
+	char name[PROTO_NAME_LEN];			/* protocol name, zero-terminated */
+	struct proto_fam *fam;                          /* protocol family */
+	int ctrl_type;                                  /* control layer type (SOCK_STREAM/SOCK_DGRAM) */
+	int sock_domain;				/* socket domain, as passed to socket()   */
+	int sock_type;					/* socket type, as passed to socket()     */
+	int sock_prot;					/* socket protocol, as passed to socket() */
 	void (*accept)(int fd);				/* generic accept function */
-	int (*bind)(struct listener *l, char *errmsg, int errlen); /* bind a listener */
-	int (*bind_all)(struct protocol *proto, char *errmsg, int errlen); /* bind all unbound listeners */
-	int (*unbind_all)(struct protocol *proto);	/* unbind all bound listeners */
+	int (*listen)(struct listener *l, char *errmsg, int errlen); /* start a listener */
 	int (*enable_all)(struct protocol *proto);	/* enable all bound listeners */
 	int (*disable_all)(struct protocol *proto);	/* disable all bound listeners */
 	int (*connect)(struct connection *, int flags); /* connect function if any, see below for flags values */
-	int (*get_src)(int fd, struct sockaddr *, socklen_t, int dir); /* syscall used to retrieve src addr */
-	int (*get_dst)(int fd, struct sockaddr *, socklen_t, int dir); /* syscall used to retrieve dst addr */
 	int (*drain)(int fd);                           /* indicates whether we can safely close the fd */
 	int (*pause)(struct listener *l);               /* temporarily pause this listener for a soft restart */
 	void (*add)(struct listener *l, int port);      /* add a listener for this protocol and port */

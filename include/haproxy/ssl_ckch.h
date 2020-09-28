@@ -45,19 +45,16 @@ static inline int ssl_sock_is_ckch_valid(struct cert_key_and_chain *ckch)
 #endif
 
 /* ckch_store functions */
-struct ckch_store *ckchs_load_cert_file(char *path, int multi, char **err);
+struct ckch_store *ckchs_load_cert_file(char *path, char **err);
 struct ckch_store *ckchs_lookup(char *path);
 struct ckch_store *ckchs_dup(const struct ckch_store *src);
-struct ckch_store *ckch_store_new(const char *filename, int nmemb);
+struct ckch_store *ckch_store_new(const char *filename);
 void ckch_store_free(struct ckch_store *store);
 
 
 /* ckch_inst functions */
 void ckch_inst_free(struct ckch_inst *inst);
 struct ckch_inst *ckch_inst_new();
-int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *ckchs,
-                                   struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
-                                   char **sni_filter, int fcount, struct ckch_inst **ckchi, char **err);
 int ckch_inst_new_load_store(const char *path, struct ckch_store *ckchs, struct bind_conf *bind_conf,
                              struct ssl_bind_conf *ssl_conf, char **sni_filter, int fcount, struct ckch_inst **ckchi, char **err);
 

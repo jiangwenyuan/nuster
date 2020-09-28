@@ -523,15 +523,14 @@ static void dns_check_dns_response(struct dns_resolution *res)
 	struct server          *srv;
 	struct dns_srvrq       *srvrq;
 
-	/* clean up obsolete Additional records */
-	list_for_each_entry_safe(item, itemback, &res->response.ar_list, list) {
-		if ((item->last_seen + resolvers->hold.obsolete / 1000) < now.tv_sec) {
-			LIST_DEL(&item->list);
-			pool_free(dns_answer_item_pool, item);
-		}
-	}
-
 	list_for_each_entry_safe(item, itemback, &res->response.answer_list, list) {
+		struct dns_answer_item *ar_item = item->ar_item;
+
+		/* clean up obsolete Additional record */
+		if (ar_item && (ar_item->last_seen + resolvers->hold.obsolete / 1000) < now.tv_sec) {
+			pool_free(dns_answer_item_pool, ar_item);
+			item->ar_item = NULL;
+		}
 
 		/* Remove obsolete items */
 		if ((item->last_seen + resolvers->hold.obsolete / 1000) < now.tv_sec) {
@@ -562,6 +561,10 @@ static void dns_check_dns_response(struct dns_resolution *res)
 
 		  rm_obselete_item:
 			LIST_DEL(&item->list);
+			if (item->ar_item) {
+				pool_free(dns_answer_item_pool, item->ar_item);
+				item->ar_item = NULL;
+			}
 			pool_free(dns_answer_item_pool, item);
 			continue;
 		}
@@ -579,50 +582,24 @@ static void dns_check_dns_response(struct dns_resolution *res)
 				HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 				if (srv->srvrq == srvrq && srv->svc_port == item->port &&
 				    item->data_len == srv->hostname_dn_len &&
-				    !dns_hostname_cmp(srv->hostname_dn, item->target, item->data_len) &&
-				    !srv->dns_opts.ignore_weight) {
-					int ha_weight;
-
-					/* DNS weight range if from 0 to 65535
-					 * HAProxy weight is from 0 to 256
-					 * The rule below ensures that weight 0 is well respected
-					 * while allowing a "mapping" from DNS weight into HAProxy's one.
-					 */
-					ha_weight = (item->weight + 255) / 256;
-					if (srv->uweight != ha_weight) {
-						char weight[9];
-
-						snprintf(weight, sizeof(weight), "%d", ha_weight);
-						server_parse_weight_change_request(srv, weight);
-					}
-					HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
+				    !dns_hostname_cmp(srv->hostname_dn, item->target, item->data_len)) {
 					break;
 				}
 				HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
 			}
-			if (srv)
-				continue;
 
 			/* If not, try to find a server with undefined hostname */
-			for (srv = srvrq->proxy->srv; srv != NULL; srv = srv->next) {
-				HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
-				if (srv->srvrq == srvrq && !srv->hostname_dn)
-					break;
-				HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
-			}
-			/* And update this server, if found */
-			if (srv) {
-				const char *msg = NULL;
-				char weight[9];
-				int ha_weight;
-				char hostname[DNS_MAX_NAME_SIZE];
-
-				if (dns_dn_label_to_str(item->target, item->data_len+1,
-							hostname, DNS_MAX_NAME_SIZE) == -1) {
+			if (!srv) {
+				for (srv = srvrq->proxy->srv; srv != NULL; srv = srv->next) {
+					HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
+					if (srv->srvrq == srvrq && !srv->hostname_dn)
+						break;
 					HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
-					continue;
 				}
+			}
 
+			/* And update this server, if found (srv is locked here) */
+			if (srv) {
 				/* Check if an Additional Record is associated to this SRV record.
 				 * Perform some sanity checks too to ensure the record can be used.
 				 * If all fine, we simply pick up the IP address found and associate
@@ -644,9 +621,19 @@ static void dns_check_dns_response(struct dns_resolution *res)
 					srv->flags |= SRV_F_NO_RESOLUTION;
 				}
 
-				msg = update_server_fqdn(srv, hostname, "SRV record", 1);
-				if (msg)
-					send_log(srv->proxy, LOG_NOTICE, "%s", msg);
+				if (!srv->hostname_dn) {
+					const char *msg = NULL;
+					char hostname[DNS_MAX_NAME_SIZE];
+
+					if (dns_dn_label_to_str(item->target, item->data_len+1,
+								hostname, DNS_MAX_NAME_SIZE) == -1) {
+						HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
+						continue;
+					}
+					msg = update_server_fqdn(srv, hostname, "SRV record", 1);
+					if (msg)
+						send_log(srv->proxy, LOG_NOTICE, "%s", msg);
+				}
 
 				/* now we have an IP address associated to this server, we can update its status */
 				snr_update_srv_status(srv, 0);
@@ -658,6 +645,9 @@ static void dns_check_dns_response(struct dns_resolution *res)
 					srv->check.port = item->port;
 
 				if (!srv->dns_opts.ignore_weight) {
+					char weight[9];
+					int ha_weight;
+
 					/* DNS weight range if from 0 to 65535
 					 * HAProxy weight is from 0 to 256
 					 * The rule below ensures that weight 0 is well respected
@@ -1213,17 +1203,17 @@ static int dns_validate_dns_response(unsigned char *resp, unsigned char *bufend,
 
 			// looking for the SRV record in the response list linked to this additional record
 			list_for_each_entry(tmp_record, &dns_p->answer_list, list) {
-				if ( !(
-					(tmp_record->type == DNS_RTYPE_SRV) &&
-					(tmp_record->ar_item == NULL) &&
-					(dns_hostname_cmp(tmp_record->target, dns_answer_record->name, tmp_record->data_len) == 0)
-				      )
-				   )
-					continue;
-				tmp_record->ar_item = dns_answer_record;
+				if (tmp_record->type == DNS_RTYPE_SRV &&
+				    !dns_hostname_cmp(tmp_record->target, dns_answer_record->name, tmp_record->data_len)) {
+					/* Always use the received additional record to refresh info */
+					if (tmp_record->ar_item)
+						pool_free(dns_answer_item_pool, tmp_record->ar_item);
+					tmp_record->ar_item = dns_answer_record;
+					break;
+				}
 			}
-
-			LIST_ADDQ(&dns_p->ar_list, &dns_answer_record->list);
+			if (tmp_record->ar_item != dns_answer_record)
+				pool_free(dns_answer_item_pool, dns_answer_record);
 			dns_answer_record = NULL;
 		}
 	} /* for i 0 to arcount */
@@ -1592,7 +1582,6 @@ static struct dns_resolution *dns_pick_resolution(struct dns_resolvers *resolver
 
 		LIST_INIT(&res->requesters);
 		LIST_INIT(&res->response.answer_list);
-		LIST_INIT(&res->response.ar_list);
 
 		res->prefered_query_type = query_type;
 		res->query_type          = query_type;
@@ -1623,13 +1612,12 @@ static void dns_free_resolution(struct dns_resolution *resolution)
 		req->resolution = NULL;
 	}
 
-	list_for_each_entry_safe(item, itemback, &resolution->response.ar_list, list) {
-		LIST_DEL(&item->list);
-		pool_free(dns_answer_item_pool, item);
-	}
-
 	list_for_each_entry_safe(item, itemback, &resolution->response.answer_list, list) {
 		LIST_DEL(&item->list);
+		if (item->ar_item) {
+			pool_free(dns_answer_item_pool, item->ar_item);
+			item->ar_item = NULL;
+		}
 		pool_free(dns_answer_item_pool, item);
 	}
 

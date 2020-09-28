@@ -195,8 +195,8 @@ static struct server *get_server_sh(struct proxy *px, const char *addr, int len,
  * it will either look for active servers, or for backup servers.
  * If any server is found, it will be returned. If no valid server is found,
  * NULL is returned. The lbprm.arg_opt{1,2,3} values correspond respectively to
- * the "whole" optional argument (boolean), the "len" argument (numeric) and
- * the "depth" argument (numeric).
+ * the "whole" optional argument (boolean, bit0), the "len" argument (numeric)
+ * and the "depth" argument (numeric).
  *
  * This code was contributed by Guillaume Dallaire, who also selected this hash
  * algorithm out of a tens because it gave him the best results.
@@ -227,7 +227,7 @@ static struct server *get_server_uh(struct proxy *px, char *uri, int uri_len, co
 			if (slashes == px->lbprm.arg_opt3) /* depth+1 */
 				break;
 		}
-		else if (c == '?' && !px->lbprm.arg_opt1) // "whole"
+		else if (c == '?' && !(px->lbprm.arg_opt1 & 1)) // "whole"
 			break;
 		end++;
 	}
@@ -701,6 +701,11 @@ int assign_server(struct stream *s)
 					struct ist uri;
 
 					uri = htx_sl_req_uri(http_get_stline(htxbuf(&s->req.buf)));
+					if (s->be->lbprm.arg_opt1 & 2) {
+						uri = http_get_path(uri);
+						if (!uri.ptr)
+							uri = ist("");
+					}
 					srv = get_server_uh(s->be, uri.ptr, uri.len, prev_srv);
 				}
 				break;
@@ -2374,7 +2379,7 @@ int backend_parse_balance(const char **args, char **err, struct proxy *curproxy)
 
 		curproxy->lbprm.algo &= ~BE_LB_ALGO;
 		curproxy->lbprm.algo |= BE_LB_ALGO_UH;
-		curproxy->lbprm.arg_opt1 = 0; // "whole"
+		curproxy->lbprm.arg_opt1 = 0; // "whole", "path-only"
 		curproxy->lbprm.arg_opt2 = 0; // "len"
 		curproxy->lbprm.arg_opt3 = 0; // "depth"
 
@@ -2399,11 +2404,15 @@ int backend_parse_balance(const char **args, char **err, struct proxy *curproxy)
 				arg += 2;
 			}
 			else if (!strcmp(args[arg], "whole")) {
-				curproxy->lbprm.arg_opt1 = 1;
+				curproxy->lbprm.arg_opt1 |= 1;
+				arg += 1;
+			}
+			else if (!strcmp(args[arg], "path-only")) {
+				curproxy->lbprm.arg_opt1 |= 2;
 				arg += 1;
 			}
 			else {
-				memprintf(err, "%s only accepts parameters 'len', 'depth', and 'whole' (got '%s').", args[0], args[arg]);
+				memprintf(err, "%s only accepts parameters 'len', 'depth', 'path-only', and 'whole' (got '%s').", args[0], args[arg]);
 				return -1;
 			}
 		}

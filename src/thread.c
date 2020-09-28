@@ -189,6 +189,27 @@ static int thread_cpus_enabled()
 	return ret;
 }
 
+/* Depending on the platform and how libpthread was built, pthread_exit() may
+ * involve some code in libgcc_s that would be loaded on exit for the first
+ * time, causing aborts if the process is chrooted. It's harmless bit very
+ * dirty. There isn't much we can do to make sure libgcc_s is loaded only if
+ * needed, so what we do here is that during early boot we create a dummy
+ * thread that immediately exits. This will lead to libgcc_s being loaded
+ * during boot on the platforms where it's required.
+ */
+static void *dummy_thread_function(void *data)
+{
+	pthread_exit(NULL);
+	return NULL;
+}
+
+static inline void preload_libgcc_s(void)
+{
+	pthread_t dummy_thread;
+	pthread_create(&dummy_thread, NULL, dummy_thread_function, NULL);
+	pthread_join(dummy_thread, NULL);
+}
+
 __attribute__((constructor))
 static void __thread_init(void)
 {
@@ -200,6 +221,8 @@ static void __thread_init(void)
 			 LONGBITS, MAX_THREADS);
 		exit(1);
 	}
+
+	preload_libgcc_s();
 
 	thread_cpus_enabled_at_boot = thread_cpus_enabled();
 

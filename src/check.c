@@ -968,8 +968,8 @@ const char *init_check(struct check *check, int type)
 	b_reset(&check->bi); check->bi.size = global.tune.chksize;
 	b_reset(&check->bo); check->bo.size = global.tune.chksize;
 
-	check->bi.area = calloc(check->bi.size, sizeof(char));
-	check->bo.area = calloc(check->bo.size, sizeof(char));
+	check->bi.area = calloc(check->bi.size, sizeof(*check->bi.area));
+	check->bo.area = calloc(check->bo.size, sizeof(*check->bo.area));
 
 	if (!check->bi.area || !check->bo.area)
 		return "out of memory while allocating check buffer";
@@ -2629,7 +2629,6 @@ static int srv_parse_addr(char **args, int *cur_arg, struct proxy *curpx, struct
 			  char **errmsg)
 {
 	struct sockaddr_storage *sk;
-	struct protocol *proto;
 	int port1, port2, err_code = 0;
 
 
@@ -2638,22 +2637,10 @@ static int srv_parse_addr(char **args, int *cur_arg, struct proxy *curpx, struct
 		goto error;
 	}
 
-	sk = str2sa_range(args[*cur_arg+1], NULL, &port1, &port2, errmsg, NULL, NULL, 1);
+	sk = str2sa_range(args[*cur_arg+1], NULL, &port1, &port2, NULL, NULL, errmsg, NULL, NULL,
+	                  PA_O_RESOLVE | PA_O_PORT_OK | PA_O_STREAM | PA_O_CONNECT);
 	if (!sk) {
 		memprintf(errmsg, "'%s' : %s", args[*cur_arg], *errmsg);
-		goto error;
-	}
-
-	proto = protocol_by_family(sk->ss_family);
-	if (!proto || !proto->connect) {
-		memprintf(errmsg, "'%s %s' : connect() not supported for this address family.",
-		          args[*cur_arg], args[*cur_arg+1]);
-		goto error;
-	}
-
-	if (port1 != port2) {
-		memprintf(errmsg, "'%s' : port ranges and offsets are not allowed in '%s'.",
-		          args[*cur_arg], args[*cur_arg+1]);
 		goto error;
 	}
 

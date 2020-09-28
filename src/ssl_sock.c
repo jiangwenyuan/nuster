@@ -489,7 +489,6 @@ __decl_rwlock(ssl_ctx_lru_rwlock);
 
 #endif // SSL_CTRL_SET_TLSEXT_HOSTNAME
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
 /* The order here matters for picking a default context,
  * keep the most common keytype at the bottom of the list
  */
@@ -498,7 +497,6 @@ const char *SSL_SOCK_KEYTYPE_NAMES[] = {
 	"ecdsa",
 	"rsa"
 };
-#endif
 
 static struct shared_context *ssl_shctx = NULL; /* ssl shared session cache */
 static struct eb_root *sh_ssl_sess_tree; /* ssl shared session tree */
@@ -674,7 +672,7 @@ void ssl_async_fd_handler(int fd)
 	/* crypto engine is available, let's notify the associated
 	 * connection that it can pursue its processing.
 	 */
-	ssl_sock_io_cb(NULL, ctx, 0);
+	tasklet_wakeup(ctx->wait_event.tasklet);
 }
 
 /*
@@ -700,7 +698,7 @@ void ssl_async_fd_free(int fd)
 
 	SSL_get_all_async_fds(ssl, all_fd, &num_all_fds);
 	for (i=0 ; i < num_all_fds ; i++)
-		fd_remove(all_fd[i]);
+		fd_stop_both(all_fd[i]);
 
 	/* Now we can safely call SSL_free, no more pending job in engines */
 	SSL_free(ssl);
@@ -731,7 +729,7 @@ static inline void ssl_async_process_fds(struct ssl_sock_ctx *ctx)
 
 	/* We remove unused fds from the fdtab */
 	for (i=0 ; i < num_del_fds ; i++)
-		fd_remove(del_fd[i]);
+		fd_stop_both(del_fd[i]);
 
 	/* We add new fds to the fdtab */
 	for (i=0 ; i < num_add_fds ; i++) {
@@ -1824,13 +1822,50 @@ static int ssl_sock_advertise_alpn_protos(SSL *s, const unsigned char **out,
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
 #ifndef SSL_NO_GENERATE_CERTIFICATES
 
+/* Configure a DNS SAN extenion on a certificate. */
+int ssl_sock_add_san_ext(X509V3_CTX* ctx, X509* cert, const char *servername) {
+	int failure = 0;
+	X509_EXTENSION *san_ext = NULL;
+	CONF *conf = NULL;
+	struct buffer *san_name = get_trash_chunk();
+
+	conf = NCONF_new(NULL);
+	if (!conf) {
+		failure = 1;
+		goto cleanup;
+	}
+
+	/* Build an extension based on the DNS entry above */
+	chunk_appendf(san_name, "DNS:%s", servername);
+	san_ext = X509V3_EXT_nconf_nid(conf, ctx, NID_subject_alt_name, san_name->area);
+	if (!san_ext) {
+		failure = 1;
+		goto cleanup;
+	}
+
+	/* Add the extension */
+	if (!X509_add_ext(cert, san_ext, -1 /* Add to end */)) {
+		failure = 1;
+		goto cleanup;
+	}
+
+	/* Success */
+	failure = 0;
+
+cleanup:
+	if (NULL != san_ext) X509_EXTENSION_free(san_ext);
+	if (NULL != conf) NCONF_free(conf);
+
+	return failure;
+}
+
 /* Create a X509 certificate with the specified servername and serial. This
  * function returns a SSL_CTX object or NULL if an error occurs. */
 static SSL_CTX *
 ssl_sock_do_create_cert(const char *servername, struct bind_conf *bind_conf, SSL *ssl)
 {
-	X509         *cacert  = bind_conf->ca_sign_cert;
-	EVP_PKEY     *capkey  = bind_conf->ca_sign_pkey;
+	X509         *cacert  = bind_conf->ca_sign_ckch->cert;
+	EVP_PKEY     *capkey  = bind_conf->ca_sign_ckch->key;
 	SSL_CTX      *ssl_ctx = NULL;
 	X509         *newcrt  = NULL;
 	EVP_PKEY     *pkey    = NULL;
@@ -1907,6 +1942,11 @@ ssl_sock_do_create_cert(const char *servername, struct bind_conf *bind_conf, SSL
 		X509_EXTENSION_free(ext);
 	}
 
+	/* Add SAN extension */
+	if (ssl_sock_add_san_ext(&ctx, newcrt, servername)) {
+		goto mkcert_error;
+	}
+
 	/* Sign the certificate with the CA private key */
 
 	key_type = EVP_PKEY_base_id(capkey);
@@ -1942,6 +1982,22 @@ ssl_sock_do_create_cert(const char *servername, struct bind_conf *bind_conf, SSL
 		goto mkcert_error;
 	if (!SSL_CTX_check_private_key(ssl_ctx))
 		goto mkcert_error;
+
+	/* Build chaining the CA cert and the rest of the chain, keep these order */
+#if defined(SSL_CTX_add1_chain_cert)
+	if (!SSL_CTX_add1_chain_cert(ssl_ctx, bind_conf->ca_sign_ckch->cert)) {
+		goto mkcert_error;
+	}
+
+	if (bind_conf->ca_sign_ckch->chain) {
+		for (i = 0; i < sk_X509_num(bind_conf->ca_sign_ckch->chain); i++) {
+			X509 *chain_cert = sk_X509_value(bind_conf->ca_sign_ckch->chain, i);
+			if (!SSL_CTX_add1_chain_cert(ssl_ctx, chain_cert)) {
+				goto mkcert_error;
+			}
+		}
+	}
+#endif
 
 	if (newcrt) X509_free(newcrt);
 
@@ -1991,7 +2047,7 @@ ssl_sock_assign_generated_cert(unsigned int key, struct bind_conf *bind_conf, SS
 
 	if (ssl_ctx_lru_tree) {
 		HA_RWLOCK_WRLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
-		lru = lru64_lookup(key, ssl_ctx_lru_tree, bind_conf->ca_sign_cert, 0);
+		lru = lru64_lookup(key, ssl_ctx_lru_tree, bind_conf->ca_sign_ckch->cert, 0);
 		if (lru && lru->domain) {
 			if (ssl)
 				SSL_set_SSL_CTX(ssl, (SSL_CTX *)lru->data);
@@ -2022,14 +2078,14 @@ ssl_sock_set_generated_cert(SSL_CTX *ssl_ctx, unsigned int key, struct bind_conf
 
 	if (ssl_ctx_lru_tree) {
 		HA_RWLOCK_WRLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
-		lru = lru64_get(key, ssl_ctx_lru_tree, bind_conf->ca_sign_cert, 0);
+		lru = lru64_get(key, ssl_ctx_lru_tree, bind_conf->ca_sign_ckch->cert, 0);
 		if (!lru) {
 			HA_RWLOCK_WRUNLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
 			return -1;
 		}
 		if (lru->domain && lru->data)
 			lru->free((SSL_CTX *)lru->data);
-		lru64_commit(lru, ssl_ctx, bind_conf->ca_sign_cert, 0, (void (*)(void *))SSL_CTX_free);
+		lru64_commit(lru, ssl_ctx, bind_conf->ca_sign_ckch->cert, 0, (void (*)(void *))SSL_CTX_free);
 		HA_RWLOCK_WRUNLOCK(SSL_GEN_CERTS_LOCK, &ssl_ctx_lru_rwlock);
 		return 0;
 	}
@@ -2049,7 +2105,7 @@ ssl_sock_generated_cert_key(const void *data, size_t len)
 static int
 ssl_sock_generate_certificate(const char *servername, struct bind_conf *bind_conf, SSL *ssl)
 {
-	X509         *cacert  = bind_conf->ca_sign_cert;
+	X509         *cacert  = bind_conf->ca_sign_ckch->cert;
 	SSL_CTX      *ssl_ctx = NULL;
 	struct lru64 *lru     = NULL;
 	unsigned int  key;
@@ -2357,13 +2413,31 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 	for (i = 0; i < 2; i++) {
 		if (i == 0) 	/* lookup in full qualified names */
 			node = ebst_lookup(&s->sni_ctx, trash.area);
-		else if (i == 1 && wildp) /* lookup in wildcards names */
+		else if (i == 1 && wildp)  /* lookup in wildcards names */
 			node = ebst_lookup(&s->sni_w_ctx, wildp);
 		else
 			break;
+
 		for (n = node; n; n = ebmb_next_dup(n)) {
+
 			/* lookup a not neg filter */
 			if (!container_of(n, struct sni_ctx, name)->neg) {
+				struct sni_ctx *sni, *sni_tmp;
+				int skip = 0;
+
+				if (i == 1 && wildp) { /* wildcard */
+					/* If this is a wildcard, look for an exclusion on the same crt-list line */
+					sni = container_of(n, struct sni_ctx, name);
+					list_for_each_entry(sni_tmp, &sni->ckch_inst->sni_ctx, by_ckch_inst) {
+						if (sni_tmp->neg && (!strcmp((const char *)sni_tmp->name.key, trash.area))) {
+							skip = 1;
+							break;
+						}
+					}
+					if (skip)
+						continue;
+				}
+
 				switch(container_of(n, struct sni_ctx, name)->kinfo.sig) {
 				case TLSEXT_signature_ecdsa:
 					if (!node_ecdsa)
@@ -3079,309 +3153,6 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 	return errcode;
 }
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-
-static int ssl_sock_populate_sni_keytypes_hplr(const char *str, struct eb_root *sni_keytypes, int key_index)
-{
-	struct sni_keytype *s_kt = NULL;
-	struct ebmb_node *node;
-	int i;
-
-	for (i = 0; i < trash.size; i++) {
-		if (!str[i])
-			break;
-		trash.area[i] = tolower((unsigned char)str[i]);
-	}
-	trash.area[i] = 0;
-	node = ebst_lookup(sni_keytypes, trash.area);
-	if (!node) {
-		/* CN not found in tree */
-		s_kt = malloc(sizeof(struct sni_keytype) + i + 1);
-		/* Using memcpy here instead of strncpy.
-		 * strncpy will cause sig_abrt errors under certain versions of gcc with -O2
-		 * See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=60792
-		 */
-		if (!s_kt)
-			return -1;
-
-		memcpy(s_kt->name.key, trash.area, i+1);
-		s_kt->keytypes = 0;
-		ebst_insert(sni_keytypes, &s_kt->name);
-	} else {
-		/* CN found in tree */
-		s_kt = container_of(node, struct sni_keytype, name);
-	}
-
-	/* Mark that this CN has the keytype of key_index via keytypes mask */
-	s_kt->keytypes |= 1<<key_index;
-
-	return 0;
-
-}
-
-#endif
-
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-
-/*
- * Take a ckch_store which contains a multi-certificate bundle.
- * Group these certificates into a set of SSL_CTX*
- * based on shared and unique CN and SAN entries. Add these SSL_CTX* to the SNI tree.
- *
- * This will allow the user to explicitly group multiple cert/keys for a single purpose
- *
- * Returns a bitfield containing the flags:
- *     ERR_FATAL in any fatal error case
- *     ERR_ALERT if the reason of the error is available in err
- *     ERR_WARN if a warning is available into err
- *
- */
-int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *ckchs,
-                                   struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
-                                   char **sni_filter, int fcount, struct ckch_inst **ckchi, char **err)
-{
-	int i = 0, n = 0;
-	struct cert_key_and_chain *certs_and_keys;
-	struct eb_root sni_keytypes_map = EB_ROOT;
-	struct ebmb_node *node;
-	struct ebmb_node *next;
-	/* Array of SSL_CTX pointers corresponding to each possible combo
-	 * of keytypes
-	 */
-	struct key_combo_ctx key_combos[SSL_SOCK_POSSIBLE_KT_COMBOS] = { {0} };
-	int errcode = 0;
-	X509_NAME *xname = NULL;
-	char *str = NULL;
-#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-	STACK_OF(GENERAL_NAME) *names = NULL;
-#endif
-	struct ckch_inst *ckch_inst;
-
-	*ckchi = NULL;
-
-	if (!ckchs || !ckchs->ckch || !ckchs->multi) {
-		memprintf(err, "%sunable to load SSL certificate file '%s' file does not exist.\n",
-		          err && *err ? *err : "", path);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	ckch_inst = ckch_inst_new();
-	if (!ckch_inst) {
-		memprintf(err, "%sunable to allocate SSL context for cert '%s'.\n",
-		          err && *err ? *err : "", path);
-		errcode |= ERR_ALERT | ERR_FATAL;
-		goto end;
-	}
-
-	certs_and_keys = ckchs->ckch;
-
-	/* Process each ckch and update keytypes for each CN/SAN
-	 * for example, if CN/SAN www.a.com is associated with
-	 * certs with keytype 0 and 2, then at the end of the loop,
-	 * www.a.com will have:
-	 *     keyindex = 0 | 1 | 4 = 5
-	 */
-	for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-		int ret;
-
-		if (!ssl_sock_is_ckch_valid(&certs_and_keys[n]))
-			continue;
-
-		if (fcount) {
-			for (i = 0; i < fcount; i++) {
-				ret = ssl_sock_populate_sni_keytypes_hplr(sni_filter[i], &sni_keytypes_map, n);
-				if (ret < 0) {
-					memprintf(err, "%sunable to allocate SSL context.\n",
-					          err && *err ? *err : "");
-					errcode |= ERR_ALERT | ERR_FATAL;
-					goto end;
-				}
-			}
-		} else {
-			/* A lot of the following code is OpenSSL boilerplate for processing CN's and SAN's,
-			 * so the line that contains logic is marked via comments
-			 */
-			xname = X509_get_subject_name(certs_and_keys[n].cert);
-			i = -1;
-			while ((i = X509_NAME_get_index_by_NID(xname, NID_commonName, i)) != -1) {
-				X509_NAME_ENTRY *entry = X509_NAME_get_entry(xname, i);
-				ASN1_STRING *value;
-				value = X509_NAME_ENTRY_get_data(entry);
-				if (ASN1_STRING_to_UTF8((unsigned char **)&str, value) >= 0) {
-					/* Important line is here */
-					ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
-
-					OPENSSL_free(str);
-					str = NULL;
-					if (ret < 0) {
-						memprintf(err, "%sunable to allocate SSL context.\n",
-						          err && *err ? *err : "");
-						errcode |= ERR_ALERT | ERR_FATAL;
-						goto end;
-					}
-				}
-			}
-
-			/* Do the above logic for each SAN */
-#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-			names = X509_get_ext_d2i(certs_and_keys[n].cert, NID_subject_alt_name, NULL, NULL);
-			if (names) {
-				for (i = 0; i < sk_GENERAL_NAME_num(names); i++) {
-					GENERAL_NAME *name = sk_GENERAL_NAME_value(names, i);
-
-					if (name->type == GEN_DNS) {
-						if (ASN1_STRING_to_UTF8((unsigned char **)&str, name->d.dNSName) >= 0) {
-							/* Important line is here */
-							ret = ssl_sock_populate_sni_keytypes_hplr(str, &sni_keytypes_map, n);
-
-							OPENSSL_free(str);
-							str = NULL;
-							if (ret < 0) {
-								memprintf(err, "%sunable to allocate SSL context.\n",
-								          err && *err ? *err : "");
-								errcode |= ERR_ALERT | ERR_FATAL;
-								goto end;
-							}
-						}
-					}
-				}
-			}
-		}
-#endif /* SSL_CTRL_SET_TLSEXT_HOSTNAME */
-	}
-
-	/* If no files found, return error */
-	if (eb_is_empty(&sni_keytypes_map)) {
-		memprintf(err, "%sunable to load SSL certificate file '%s' file does not exist.\n",
-		          err && *err ? *err : "", path);
-		errcode |= ERR_ALERT | ERR_FATAL;
-		goto end;
-	}
-
-	/* We now have a map of CN/SAN to keytypes that are loaded in
-	 * Iterate through the map to create the SSL_CTX's (if needed)
-	 * and add each CTX to the SNI tree
-	 *
-	 * Some math here:
-	 *   There are 2^n - 1 possible combinations, each unique
-	 *   combination is denoted by the key in the map. Each key
-	 *   has a value between 1 and 2^n - 1. Conveniently, the array
-	 *   of SSL_CTX* is sized 2^n. So, we can simply use the i'th
-	 *   entry in the array to correspond to the unique combo (key)
-	 *   associated with i. This unique key combo (i) will be associated
-	 *   with combos[i-1]
-	 */
-
-	node = ebmb_first(&sni_keytypes_map);
-	while (node) {
-		SSL_CTX *cur_ctx;
-		char cur_file[MAXPATHLEN+1];
-		const struct pkey_info kinfo = { .sig = TLSEXT_signature_anonymous, .bits = 0 };
-
-		str = (char *)container_of(node, struct sni_keytype, name)->name.key;
-		i = container_of(node, struct sni_keytype, name)->keytypes;
-		cur_ctx = key_combos[i-1].ctx;
-
-		if (cur_ctx == NULL) {
-			/* need to create SSL_CTX */
-			cur_ctx = SSL_CTX_new(SSLv23_server_method());
-			if (cur_ctx == NULL) {
-				memprintf(err, "%sunable to allocate SSL context.\n",
-				          err && *err ? *err : "");
-				errcode |= ERR_ALERT | ERR_FATAL;
-				goto end;
-			}
-
-			/* Load all required certs/keys/chains/OCSPs info into SSL_CTX */
-			for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-				if (i & (1<<n)) {
-					/* Key combo contains ckch[n] */
-					snprintf(cur_file, MAXPATHLEN+1, "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
-					errcode |= ssl_sock_put_ckch_into_ctx(cur_file, &certs_and_keys[n], cur_ctx, err);
-					if (errcode & ERR_CODE)
-						goto end;
-				}
-			}
-
-			/* Update key_combos */
-			key_combos[i-1].ctx = cur_ctx;
-		}
-
-		/* Update SNI Tree */
-
-		key_combos[i-1].order = ckch_inst_add_cert_sni(cur_ctx, ckch_inst, bind_conf, ssl_conf,
-		                                              kinfo, str, key_combos[i-1].order);
-		if (key_combos[i-1].order < 0) {
-			memprintf(err, "%sunable to create a sni context.\n", err && *err ? *err : "");
-			errcode |= ERR_ALERT | ERR_FATAL;
-			goto end;
-		}
-		node = ebmb_next(node);
-	}
-
-
-	/* Mark a default context if none exists, using the ctx that has the most shared keys */
-	if (!bind_conf->default_ctx) {
-		for (i = SSL_SOCK_POSSIBLE_KT_COMBOS - 1; i >= 0; i--) {
-			if (key_combos[i].ctx) {
-				bind_conf->default_ctx = key_combos[i].ctx;
-				bind_conf->default_ssl_conf = ssl_conf;
-				ckch_inst->is_default = 1;
-				SSL_CTX_up_ref(bind_conf->default_ctx);
-				break;
-			}
-		}
-	}
-
-	ckch_inst->bind_conf = bind_conf;
-	ckch_inst->ssl_conf = ssl_conf;
-	ckch_inst->ckch_store = ckchs;
-
-end:
-
-	if (names)
-		sk_GENERAL_NAME_pop_free(names, GENERAL_NAME_free);
-
-	node = ebmb_first(&sni_keytypes_map);
-	while (node) {
-		next = ebmb_next(node);
-		ebmb_delete(node);
-		free(ebmb_entry(node, struct sni_keytype, name));
-		node = next;
-	}
-
-	/* we need to free the ctx since we incremented the refcount where it's used */
-	for (i = 0; i < SSL_SOCK_POSSIBLE_KT_COMBOS; i++) {
-		if (key_combos[i].ctx)
-			SSL_CTX_free(key_combos[i].ctx);
-	}
-
-	if (errcode & ERR_CODE && ckch_inst) {
-		if (ckch_inst->is_default) {
-			SSL_CTX_free(bind_conf->default_ctx);
-			bind_conf->default_ctx = NULL;
-		}
-
-		ckch_inst_free(ckch_inst);
-		ckch_inst = NULL;
-	}
-
-	*ckchi = ckch_inst;
-	return errcode;
-}
-#else
-/* This is a dummy, that just logs an error and returns error */
-int ckch_inst_new_load_multi_store(const char *path, struct ckch_store *ckchs,
-                                   struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_conf,
-                                   char **sni_filter, int fcount, struct ckch_inst **ckchi, char **err)
-{
-	memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
-	          err && *err ? *err : "", path, strerror(errno));
-	return ERR_ALERT | ERR_FATAL;
-}
-
-#endif /* #if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL: Support for loading multiple certs into a single SSL_CTX */
-
 /*
  * This function allocate a ckch_inst and create its snis
  *
@@ -3551,10 +3322,7 @@ static int ssl_sock_load_ckchs(const char *path, struct ckch_store *ckchs,
 	int errcode = 0;
 
 	/* we found the ckchs in the tree, we can use it directly */
-	if (ckchs->multi)
-		errcode |= ckch_inst_new_load_multi_store(path, ckchs, bind_conf, ssl_conf, sni_filter, fcount, ckch_inst, err);
-	else
-		errcode |= ckch_inst_new_load_store(path, ckchs, bind_conf, ssl_conf, sni_filter, fcount, ckch_inst, err);
+	errcode |= ckch_inst_new_load_store(path, ckchs, bind_conf, ssl_conf, sni_filter, fcount, ckch_inst, err);
 
 	if (errcode & ERR_CODE)
 		return errcode;
@@ -3697,7 +3465,7 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 	}
 	if (stat(path, &buf) == 0) {
 		if (S_ISDIR(buf.st_mode) == 0) {
-			ckchs =  ckchs_load_cert_file(path, 0,  err);
+			ckchs =  ckchs_load_cert_file(path, err);
 			if (!ckchs)
 				return ERR_ALERT | ERR_FATAL;
 
@@ -3708,11 +3476,29 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 	} else {
 		/* stat failed, could be a bundle */
 		if (global_ssl.extra_files & SSL_GF_BUNDLE) {
-			/* try to load a bundle if it is permitted */
-			ckchs =  ckchs_load_cert_file(path, 1,  err);
-			if (!ckchs)
-				return ERR_ALERT | ERR_FATAL;
-			cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+			char fp[MAXPATHLEN+1] = {0};
+			int n = 0;
+
+			/* Load all possible certs and keys in separate ckch_store */
+			for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
+				struct stat buf;
+				int ret;
+
+				ret = snprintf(fp, sizeof(fp), "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
+				if (ret > sizeof(fp))
+					continue;
+
+				if ((ckchs = ckchs_lookup(fp))) {
+					cfgerr |= ssl_sock_load_ckchs(fp, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+				} else {
+					if (stat(fp, &buf) == 0) {
+						ckchs =  ckchs_load_cert_file(fp, err);
+						if (!ckchs)
+							return ERR_ALERT | ERR_FATAL;
+						cfgerr |= ssl_sock_load_ckchs(fp, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+					}
+				}
+			}
 		} else {
 			memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
 			          err && *err ? *err : "", fp, strerror(errno));
@@ -4443,7 +4229,7 @@ static int ssl_sock_srv_hostcheck(const char *pattern, const char *hostname)
 	size_t prefixlen, suffixlen;
 
 	/* Trivial case */
-	if (strcmp(pattern, hostname) == 0)
+	if (strcasecmp(pattern, hostname) == 0)
 		return 1;
 
 	/* The rest of this logic is based on RFC 6125, section 6.4.3
@@ -4474,7 +4260,7 @@ static int ssl_sock_srv_hostcheck(const char *pattern, const char *hostname)
 	/* Make sure all labels match except the leftmost */
 	hostname_left_label_end = strchr(hostname, '.');
 	if (!hostname_left_label_end
-	    || strcmp(pattern_left_label_end, hostname_left_label_end) != 0)
+	    || strcasecmp(pattern_left_label_end, hostname_left_label_end) != 0)
 		return 0;
 
 	/* Make sure the leftmost label of the hostname is long enough
@@ -4486,8 +4272,8 @@ static int ssl_sock_srv_hostcheck(const char *pattern, const char *hostname)
 	 * wildcard */
 	prefixlen = pattern_wildcard - pattern;
 	suffixlen = pattern_left_label_end - (pattern_wildcard + 1);
-	if ((prefixlen && (memcmp(pattern, hostname, prefixlen) != 0))
-	    || (suffixlen && (memcmp(pattern_wildcard + 1, hostname_left_label_end - suffixlen, suffixlen) != 0)))
+	if ((prefixlen && (strncasecmp(pattern, hostname, prefixlen) != 0))
+	    || (suffixlen && (strncasecmp(pattern_wildcard + 1, hostname_left_label_end - suffixlen, suffixlen) != 0)))
 		return 0;
 
 	return 1;
@@ -4964,11 +4750,6 @@ void ssl_sock_free_all_ctx(struct bind_conf *bind_conf)
 		back = ebmb_next(node);
 		ebmb_delete(node);
 		SSL_CTX_free(sni->ctx);
-		if (!sni->order) { /* only free the SSL conf its first occurrence */
-			ssl_sock_free_ssl_conf(sni->conf);
-			free(sni->conf);
-			sni->conf = NULL;
-		}
 		LIST_DEL(&sni->by_ckch_inst);
 		free(sni);
 		node = back;
@@ -5013,13 +4794,12 @@ int
 ssl_sock_load_ca(struct bind_conf *bind_conf)
 {
 	struct proxy *px = bind_conf->frontend;
-	FILE     *fp;
-	X509     *cacert = NULL;
-	EVP_PKEY *capkey = NULL;
-	int       err    = 0;
+	struct cert_key_and_chain *ckch = NULL;
+	int ret = 0;
+	char *err = NULL;
 
 	if (!bind_conf->generate_certs)
-		return err;
+		return ret;
 
 #if (defined SSL_CTRL_SET_TLSEXT_HOSTNAME && !defined SSL_NO_GENERATE_CERTIFICATES)
 	if (global_ssl.ctx_cache) {
@@ -5033,52 +4813,56 @@ ssl_sock_load_ca(struct bind_conf *bind_conf)
 		ha_alert("Proxy '%s': cannot enable certificate generation, "
 			 "no CA certificate File configured at [%s:%d].\n",
 			 px->id, bind_conf->file, bind_conf->line);
-		goto load_error;
+		goto failed;
 	}
 
-	/* read in the CA certificate */
-	if (!(fp = fopen(bind_conf->ca_sign_file, "r"))) {
-		ha_alert("Proxy '%s': Failed to read CA certificate file '%s' at [%s:%d].\n",
-			 px->id, bind_conf->ca_sign_file, bind_conf->file, bind_conf->line);
-		goto load_error;
-	}
-	if (!(cacert = PEM_read_X509(fp, NULL, NULL, NULL))) {
-		ha_alert("Proxy '%s': Failed to read CA certificate file '%s' at [%s:%d].\n",
-			 px->id, bind_conf->ca_sign_file, bind_conf->file, bind_conf->line);
-		goto read_error;
-	}
-	rewind(fp);
-	if (!(capkey = PEM_read_PrivateKey(fp, NULL, NULL, bind_conf->ca_sign_pass))) {
-		ha_alert("Proxy '%s': Failed to read CA private key file '%s' at [%s:%d].\n",
-			 px->id, bind_conf->ca_sign_file, bind_conf->file, bind_conf->line);
-		goto read_error;
+	/* Allocate cert structure */
+	ckch = calloc(1, sizeof(*ckch));
+	if (!ckch) {
+		ha_alert("Proxy '%s': Failed to read CA certificate file '%s' at [%s:%d]. Chain allocation failure\n",
+			px->id, bind_conf->ca_sign_file, bind_conf->file, bind_conf->line);
+		goto failed;
 	}
 
-	fclose (fp);
-	bind_conf->ca_sign_cert = cacert;
-	bind_conf->ca_sign_pkey = capkey;
-	return err;
+	/* Try to parse file */
+	if (ssl_sock_load_files_into_ckch(bind_conf->ca_sign_file, ckch, &err)) {
+		ha_alert("Proxy '%s': Failed to read CA certificate file '%s' at [%s:%d]. Chain loading failed: %s\n",
+			px->id, bind_conf->ca_sign_file, bind_conf->file, bind_conf->line, err);
+		if (err) free(err);
+		goto failed;
+	}
 
- read_error:
-	fclose (fp);
-	if (capkey) EVP_PKEY_free(capkey);
-	if (cacert) X509_free(cacert);
- load_error:
+	/* Fail if missing cert or pkey */
+	if ((!ckch->cert) || (!ckch->key)) {
+		ha_alert("Proxy '%s': Failed to read CA certificate file '%s' at [%s:%d]. Chain missing certificate or private key\n",
+			px->id, bind_conf->ca_sign_file, bind_conf->file, bind_conf->line);
+		goto failed;
+	}
+
+	/* Final assignment to bind */
+	bind_conf->ca_sign_ckch = ckch;
+	return ret;
+
+ failed:
+	if (ckch) {
+		ssl_sock_free_cert_key_and_chain_contents(ckch);
+		free(ckch);
+	}
+
 	bind_conf->generate_certs = 0;
-	err++;
-	return err;
+	ret++;
+	return ret;
 }
 
 /* Release CA cert and private key used to generate certificated */
 void
 ssl_sock_free_ca(struct bind_conf *bind_conf)
 {
-	if (bind_conf->ca_sign_pkey)
-		EVP_PKEY_free(bind_conf->ca_sign_pkey);
-	if (bind_conf->ca_sign_cert)
-		X509_free(bind_conf->ca_sign_cert);
-	bind_conf->ca_sign_pkey = NULL;
-	bind_conf->ca_sign_cert = NULL;
+	if (bind_conf->ca_sign_ckch) {
+		ssl_sock_free_cert_key_and_chain_contents(bind_conf->ca_sign_ckch);
+		free(bind_conf->ca_sign_ckch);
+		bind_conf->ca_sign_ckch = NULL;
+	}
 }
 
 /*
@@ -6063,12 +5847,12 @@ static void ssl_sock_close(struct connection *conn, void *xprt_ctx) {
 			}
 			/* Else we can remove the fds from the fdtab
 			 * and call SSL_free.
-			 * note: we do a fd_remove and not a delete
+			 * note: we do a fd_stop_both and not a delete
 			 * because the fd is  owned by the engine.
 			 * the engine is responsible to close
 			 */
 			for (i=0 ; i < num_all_fds ; i++)
-				fd_remove(all_fd[i]);
+				fd_stop_both(all_fd[i]);
 		}
 #endif
 		SSL_free(ctx->ssl);

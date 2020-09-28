@@ -721,17 +721,7 @@ void ckch_store_free(struct ckch_store *store)
 	if (!store)
 		return;
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200L
-	if (store->multi) {
-		int n;
-
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++)
-			ssl_sock_free_cert_key_and_chain_contents(&store->ckch[n]);
-	} else
-#endif
-	{
-		ssl_sock_free_cert_key_and_chain_contents(store->ckch);
-	}
+	ssl_sock_free_cert_key_and_chain_contents(store->ckch);
 
 	free(store->ckch);
 	store->ckch = NULL;
@@ -750,7 +740,7 @@ void ckch_store_free(struct ckch_store *store)
  *
  * Return a ckch_store or NULL upon failure.
  */
-struct ckch_store *ckch_store_new(const char *filename, int nmemb)
+struct ckch_store *ckch_store_new(const char *filename)
 {
 	struct ckch_store *store;
 	int pathlen;
@@ -760,17 +750,12 @@ struct ckch_store *ckch_store_new(const char *filename, int nmemb)
 	if (!store)
 		return NULL;
 
-	if (nmemb > 1)
-		store->multi = 1;
-	else
-		store->multi = 0;
-
 	memcpy(store->path, filename, pathlen + 1);
 
 	LIST_INIT(&store->ckch_inst);
 	LIST_INIT(&store->crtlist_entry);
 
-	store->ckch = calloc(nmemb, sizeof(*store->ckch));
+	store->ckch = calloc(1, sizeof(*store->ckch));
 	if (!store->ckch)
 		goto error;
 
@@ -786,24 +771,10 @@ struct ckch_store *ckchs_dup(const struct ckch_store *src)
 {
 	struct ckch_store *dst;
 
-	dst = ckch_store_new(src->path, src->multi ? SSL_SOCK_NUM_KEYTYPES : 1);
+	dst = ckch_store_new(src->path);
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-	if (src->multi) {
-		int n;
-
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-			if (&src->ckch[n]) {
-				if (!ssl_sock_copy_cert_key_and_chain(&src->ckch[n], &dst->ckch[n]))
-					goto error;
-			}
-		}
-	} else
-#endif
-	{
-		if (!ssl_sock_copy_cert_key_and_chain(src->ckch, dst->ckch))
-			goto error;
-	}
+	if (!ssl_sock_copy_cert_key_and_chain(src->ckch, dst->ckch))
+		goto error;
 
 	return dst;
 
@@ -830,50 +801,22 @@ struct ckch_store *ckchs_lookup(char *path)
 /*
  * This function allocate a ckch_store and populate it with certificates from files.
  */
-struct ckch_store *ckchs_load_cert_file(char *path, int multi, char **err)
+struct ckch_store *ckchs_load_cert_file(char *path, char **err)
 {
 	struct ckch_store *ckchs;
 
-	ckchs = ckch_store_new(path, multi ? SSL_SOCK_NUM_KEYTYPES : 1);
+	ckchs = ckch_store_new(path);
 	if (!ckchs) {
 		memprintf(err, "%sunable to allocate memory.\n", err && *err ? *err : "");
 		goto end;
 	}
-	if (!multi) {
 
-		if (ssl_sock_load_files_into_ckch(path, ckchs->ckch, err) == 1)
-			goto end;
+	if (ssl_sock_load_files_into_ckch(path, ckchs->ckch, err) == 1)
+		goto end;
 
-		/* insert into the ckchs tree */
-		memcpy(ckchs->path, path, strlen(path) + 1);
-		ebst_insert(&ckchs_tree, &ckchs->node);
-	} else {
-		int found = 0;
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-		char fp[MAXPATHLEN+1] = {0};
-		int n = 0;
-
-		/* Load all possible certs and keys */
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-			struct stat buf;
-			snprintf(fp, sizeof(fp), "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
-			if (stat(fp, &buf) == 0) {
-				if (ssl_sock_load_files_into_ckch(fp, &ckchs->ckch[n], err) == 1)
-					goto end;
-				found = 1;
-				ckchs->multi = 1;
-			}
-		}
-#endif
-
-		if (!found) {
-			memprintf(err, "%sDidn't find any certificate for bundle '%s'.\n", err && *err ? *err : "", path);
-			goto end;
-		}
-		/* insert into the ckchs tree */
-		memcpy(ckchs->path, path, strlen(path) + 1);
-		ebst_insert(&ckchs_tree, &ckchs->node);
-	}
+	/* insert into the ckchs tree */
+	memcpy(ckchs->path, path, strlen(path) + 1);
+	ebst_insert(&ckchs_tree, &ckchs->node);
 	return ckchs;
 
 end:
@@ -978,20 +921,7 @@ static int cli_io_handler_show_cert(struct appctx *appctx)
 		if (ckchs_transaction.old_ckchs) {
 			ckchs = ckchs_transaction.old_ckchs;
 			chunk_appendf(trash, "# transaction\n");
-			if (!ckchs->multi) {
-				chunk_appendf(trash, "*%s\n", ckchs->path);
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-			} else {
-				int n;
-
-				chunk_appendf(trash, "*%s:", ckchs->path);
-				for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-					if (ckchs->ckch[n].cert)
-						chunk_appendf(trash, " %s.%s\n", ckchs->path, SSL_SOCK_KEYTYPE_NAMES[n]);
-				}
-				chunk_appendf(trash, "\n");
-#endif
-			}
+			chunk_appendf(trash, "*%s\n", ckchs->path);
 		}
 	}
 
@@ -1003,20 +933,7 @@ static int cli_io_handler_show_cert(struct appctx *appctx)
 	}
 	while (node) {
 		ckchs = ebmb_entry(node, struct ckch_store, node);
-		if (!ckchs->multi) {
-			chunk_appendf(trash, "%s\n", ckchs->path);
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-		} else {
-			int n;
-
-			chunk_appendf(trash, "%s:", ckchs->path);
-			for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-				if (ckchs->ckch[n].cert)
-					chunk_appendf(trash, " %s.%s", ckchs->path, SSL_SOCK_KEYTYPE_NAMES[n]);
-			}
-			chunk_appendf(trash, "\n");
-#endif
-		}
+		chunk_appendf(trash, "%s\n", ckchs->path);
 
 		node = ebmb_next(node);
 		if (ci_putchk(si_ic(si), trash) == -1) {
@@ -1085,121 +1002,119 @@ static int cli_io_handler_show_cert_detail(struct appctx *appctx)
 	if (!tmp || !out)
 		goto end_no_putchk;
 
-	if (!ckchs->multi) {
-		chunk_appendf(out, "Filename: ");
-		if (ckchs == ckchs_transaction.new_ckchs)
-			chunk_appendf(out, "*");
-		chunk_appendf(out, "%s\n", ckchs->path);
+	chunk_appendf(out, "Filename: ");
+	if (ckchs == ckchs_transaction.new_ckchs)
+		chunk_appendf(out, "*");
+	chunk_appendf(out, "%s\n", ckchs->path);
 
-		chunk_appendf(out, "Status: ");
-		if (ckchs->ckch->cert == NULL)
-			chunk_appendf(out, "Empty\n");
-		else if (LIST_ISEMPTY(&ckchs->ckch_inst))
-			chunk_appendf(out, "Unused\n");
-		else
-			chunk_appendf(out, "Used\n");
+	chunk_appendf(out, "Status: ");
+	if (ckchs->ckch->cert == NULL)
+		chunk_appendf(out, "Empty\n");
+	else if (LIST_ISEMPTY(&ckchs->ckch_inst))
+		chunk_appendf(out, "Unused\n");
+	else
+		chunk_appendf(out, "Used\n");
 
-		if (ckchs->ckch->cert == NULL)
-			goto end;
+	if (ckchs->ckch->cert == NULL)
+		goto end;
 
-		chain = ckchs->ckch->chain;
-		if (chain == NULL) {
-			struct issuer_chain *issuer;
-			issuer = ssl_get0_issuer_chain(ckchs->ckch->cert);
-			if (issuer) {
-				chain = issuer->chain;
-				chunk_appendf(out, "Chain Filename: ");
-				chunk_appendf(out, "%s\n", issuer->path);
-			}
+	chain = ckchs->ckch->chain;
+	if (chain == NULL) {
+		struct issuer_chain *issuer;
+		issuer = ssl_get0_issuer_chain(ckchs->ckch->cert);
+		if (issuer) {
+			chain = issuer->chain;
+			chunk_appendf(out, "Chain Filename: ");
+			chunk_appendf(out, "%s\n", issuer->path);
 		}
-		chunk_appendf(out, "Serial: ");
-		if (ssl_sock_get_serial(ckchs->ckch->cert, tmp) == -1)
-			goto end;
-		dump_binary(out, tmp->area, tmp->data);
-		chunk_appendf(out, "\n");
+	}
+	chunk_appendf(out, "Serial: ");
+	if (ssl_sock_get_serial(ckchs->ckch->cert, tmp) == -1)
+		goto end;
+	dump_binary(out, tmp->area, tmp->data);
+	chunk_appendf(out, "\n");
 
-		chunk_appendf(out, "notBefore: ");
-		chunk_reset(tmp);
-		if ((bio = BIO_new(BIO_s_mem())) ==  NULL)
-			goto end;
-		if (ASN1_TIME_print(bio, X509_getm_notBefore(ckchs->ckch->cert)) == 0)
-			goto end;
-		write = BIO_read(bio, tmp->area, tmp->size-1);
-		tmp->area[write] = '\0';
-		BIO_free(bio);
-		bio = NULL;
-		chunk_appendf(out, "%s\n", tmp->area);
+	chunk_appendf(out, "notBefore: ");
+	chunk_reset(tmp);
+	if ((bio = BIO_new(BIO_s_mem())) ==  NULL)
+		goto end;
+	if (ASN1_TIME_print(bio, X509_getm_notBefore(ckchs->ckch->cert)) == 0)
+		goto end;
+	write = BIO_read(bio, tmp->area, tmp->size-1);
+	tmp->area[write] = '\0';
+	BIO_free(bio);
+	bio = NULL;
+	chunk_appendf(out, "%s\n", tmp->area);
 
-		chunk_appendf(out, "notAfter: ");
-		chunk_reset(tmp);
-		if ((bio = BIO_new(BIO_s_mem())) == NULL)
-			goto end;
-		if (ASN1_TIME_print(bio, X509_getm_notAfter(ckchs->ckch->cert)) == 0)
-			goto end;
-		if ((write = BIO_read(bio, tmp->area, tmp->size-1)) <= 0)
-			goto end;
-		tmp->area[write] = '\0';
-		BIO_free(bio);
-		bio = NULL;
-		chunk_appendf(out, "%s\n", tmp->area);
+	chunk_appendf(out, "notAfter: ");
+	chunk_reset(tmp);
+	if ((bio = BIO_new(BIO_s_mem())) == NULL)
+		goto end;
+	if (ASN1_TIME_print(bio, X509_getm_notAfter(ckchs->ckch->cert)) == 0)
+		goto end;
+	if ((write = BIO_read(bio, tmp->area, tmp->size-1)) <= 0)
+		goto end;
+	tmp->area[write] = '\0';
+	BIO_free(bio);
+	bio = NULL;
+	chunk_appendf(out, "%s\n", tmp->area);
 
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-		chunk_appendf(out, "Subject Alternative Name: ");
-		if (ssl_sock_get_san_oneline(ckchs->ckch->cert, out) == -1)
-		    goto end;
-		*(out->area + out->data) = '\0';
-		chunk_appendf(out, "\n");
+	chunk_appendf(out, "Subject Alternative Name: ");
+	if (ssl_sock_get_san_oneline(ckchs->ckch->cert, out) == -1)
+		goto end;
+	*(out->area + out->data) = '\0';
+	chunk_appendf(out, "\n");
 #endif
-		chunk_reset(tmp);
-		chunk_appendf(out, "Algorithm: ");
-		if (cert_get_pkey_algo(ckchs->ckch->cert, tmp) == 0)
-			goto end;
-		chunk_appendf(out, "%s\n", tmp->area);
+	chunk_reset(tmp);
+	chunk_appendf(out, "Algorithm: ");
+	if (cert_get_pkey_algo(ckchs->ckch->cert, tmp) == 0)
+		goto end;
+	chunk_appendf(out, "%s\n", tmp->area);
 
-		chunk_reset(tmp);
-		chunk_appendf(out, "SHA1 FingerPrint: ");
-		if (X509_digest(ckchs->ckch->cert, EVP_sha1(), (unsigned char *) tmp->area, &len) == 0)
-			goto end;
-		tmp->data = len;
-		dump_binary(out, tmp->area, tmp->data);
-		chunk_appendf(out, "\n");
+	chunk_reset(tmp);
+	chunk_appendf(out, "SHA1 FingerPrint: ");
+	if (X509_digest(ckchs->ckch->cert, EVP_sha1(), (unsigned char *) tmp->area, &len) == 0)
+		goto end;
+	tmp->data = len;
+	dump_binary(out, tmp->area, tmp->data);
+	chunk_appendf(out, "\n");
 
-		chunk_appendf(out, "Subject: ");
-		if ((name = X509_get_subject_name(ckchs->ckch->cert)) == NULL)
+	chunk_appendf(out, "Subject: ");
+	if ((name = X509_get_subject_name(ckchs->ckch->cert)) == NULL)
+		goto end;
+	if ((ssl_sock_get_dn_oneline(name, tmp)) == -1)
+		goto end;
+	*(tmp->area + tmp->data) = '\0';
+	chunk_appendf(out, "%s\n", tmp->area);
+
+	chunk_appendf(out, "Issuer: ");
+	if ((name = X509_get_issuer_name(ckchs->ckch->cert)) == NULL)
+		goto end;
+	if ((ssl_sock_get_dn_oneline(name, tmp)) == -1)
+		goto end;
+	*(tmp->area + tmp->data) = '\0';
+	chunk_appendf(out, "%s\n", tmp->area);
+
+	/* Displays subject of each certificate in the chain */
+	for (i = 0; i < sk_X509_num(chain); i++) {
+		X509 *ca = sk_X509_value(chain, i);
+
+		chunk_appendf(out, "Chain Subject: ");
+		if ((name = X509_get_subject_name(ca)) == NULL)
 			goto end;
 		if ((ssl_sock_get_dn_oneline(name, tmp)) == -1)
 			goto end;
 		*(tmp->area + tmp->data) = '\0';
 		chunk_appendf(out, "%s\n", tmp->area);
 
-		chunk_appendf(out, "Issuer: ");
-		if ((name = X509_get_issuer_name(ckchs->ckch->cert)) == NULL)
+		chunk_appendf(out, "Chain Issuer: ");
+		if ((name = X509_get_issuer_name(ca)) == NULL)
 			goto end;
 		if ((ssl_sock_get_dn_oneline(name, tmp)) == -1)
 			goto end;
 		*(tmp->area + tmp->data) = '\0';
 		chunk_appendf(out, "%s\n", tmp->area);
-
-		/* Displays subject of each certificate in the chain */
-		for (i = 0; i < sk_X509_num(chain); i++) {
-			X509 *ca = sk_X509_value(chain, i);
-
-			chunk_appendf(out, "Chain Subject: ");
-			if ((name = X509_get_subject_name(ca)) == NULL)
-				goto end;
-			if ((ssl_sock_get_dn_oneline(name, tmp)) == -1)
-				goto end;
-			*(tmp->area + tmp->data) = '\0';
-			chunk_appendf(out, "%s\n", tmp->area);
-
-			chunk_appendf(out, "Chain Issuer: ");
-			if ((name = X509_get_issuer_name(ca)) == NULL)
-				goto end;
-			if ((ssl_sock_get_dn_oneline(name, tmp)) == -1)
-				goto end;
-			*(tmp->area + tmp->data) = '\0';
-			chunk_appendf(out, "%s\n", tmp->area);
-		}
 	}
 
 end:
@@ -1249,9 +1164,6 @@ static int cli_parse_show_cert(char **args, char *payload, struct appctx *appctx
 				goto error;
 
 		}
-
-		if (ckchs->multi)
-			goto error;
 
 		appctx->ctx.cli.p0 = ckchs;
 		/* use the IO handler that shows details */
@@ -1352,10 +1264,7 @@ static int cli_io_handler_commit_cert(struct appctx *appctx)
 						fcount = ckchi->crtlist_entry->fcount;
 					}
 
-					if (new_ckchs->multi)
-						errcode |= ckch_inst_new_load_multi_store(new_ckchs->path, new_ckchs, ckchi->bind_conf, ckchi->ssl_conf, sni_filter, fcount, &new_inst, &err);
-					else
-						errcode |= ckch_inst_new_load_store(new_ckchs->path, new_ckchs, ckchi->bind_conf, ckchi->ssl_conf, sni_filter, fcount, &new_inst, &err);
+					errcode |= ckch_inst_new_load_store(new_ckchs->path, new_ckchs, ckchi->bind_conf, ckchi->ssl_conf, sni_filter, fcount, &new_inst, &err);
 
 					if (errcode & ERR_CODE)
 						goto error;
@@ -1490,35 +1399,15 @@ static int cli_parse_commit_cert(char **args, char *payload, struct appctx *appc
 		goto error;
 	}
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-	if (ckchs_transaction.new_ckchs->multi) {
-		int n;
+	/* if a certificate is here, a private key must be here too */
+	if (ckchs_transaction.new_ckchs->ckch->cert && !ckchs_transaction.new_ckchs->ckch->key) {
+		memprintf(&err, "The transaction must contain at least a certificate and a private key!\n");
+		goto error;
+	}
 
-		for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
-			/* if a certificate is here, a private key must be here too */
-			if (ckchs_transaction.new_ckchs->ckch[n].cert && !ckchs_transaction.new_ckchs->ckch[n].key) {
-				memprintf(&err, "The transaction must contain at least a certificate and a private key!\n");
-				goto error;
-			}
-
-			if (ckchs_transaction.new_ckchs->ckch[n].cert && !X509_check_private_key(ckchs_transaction.new_ckchs->ckch[n].cert, ckchs_transaction.new_ckchs->ckch[n].key)) {
-				memprintf(&err, "inconsistencies between private key and certificate loaded '%s'.\n", ckchs_transaction.path);
-				goto error;
-			}
-		}
-	} else
-#endif
-	{
-		/* if a certificate is here, a private key must be here too */
-		if (ckchs_transaction.new_ckchs->ckch->cert && !ckchs_transaction.new_ckchs->ckch->key) {
-			memprintf(&err, "The transaction must contain at least a certificate and a private key!\n");
-			goto error;
-		}
-
-		if (!X509_check_private_key(ckchs_transaction.new_ckchs->ckch->cert, ckchs_transaction.new_ckchs->ckch->key)) {
-			memprintf(&err, "inconsistencies between private key and certificate loaded '%s'.\n", ckchs_transaction.path);
-			goto error;
-		}
+	if (!X509_check_private_key(ckchs_transaction.new_ckchs->ckch->cert, ckchs_transaction.new_ckchs->ckch->key)) {
+		memprintf(&err, "inconsistencies between private key and certificate loaded '%s'.\n", ckchs_transaction.path);
+		goto error;
 	}
 
 	/* init the appctx structure */
@@ -1550,7 +1439,6 @@ static int cli_parse_set_cert(char **args, char *payload, struct appctx *appctx,
 	struct ckch_store *old_ckchs = NULL;
 	char *err = NULL;
 	int i;
-	int bundle = -1; /* TRUE if >= 0 (ckch index) */
 	int errcode = 0;
 	char *end;
 	int type = CERT_TYPE_PEM;
@@ -1592,30 +1480,6 @@ static int cli_parse_set_cert(char **args, char *payload, struct appctx *appctx,
 
 	/* if there is an ongoing transaction */
 	if (ckchs_transaction.path) {
-		/* if the ongoing transaction is a bundle, we need to find which part of the bundle need to be updated */
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-		if (ckchs_transaction.new_ckchs->multi) {
-			char *end;
-			int j;
-
-			/* check if it was used in a bundle by removing the
-			 *   .dsa/.rsa/.ecdsa at the end of the filename */
-			end = strrchr(buf->area, '.');
-			for (j = 0; end && j < SSL_SOCK_NUM_KEYTYPES; j++) {
-				if (!strcmp(end + 1, SSL_SOCK_KEYTYPE_NAMES[j])) {
-					bundle = j; /* keep the type of certificate so we insert it at the right place */
-					*end = '\0'; /* it's a bundle let's end the string*/
-					break;
-				}
-			}
-			if (bundle < 0) {
-				memprintf(&err, "The ongoing transaction is the '%s' bundle. You need to specify which part of the bundle you want to update ('%s.{rsa,ecdsa,dsa}')\n", ckchs_transaction.path, buf->area);
-				errcode |= ERR_ALERT | ERR_FATAL;
-				goto end;
-			}
-		}
-#endif
-
 		/* if there is an ongoing transaction, check if this is the same file */
 		if (strcmp(ckchs_transaction.path, buf->area) != 0) {
 			memprintf(&err, "The ongoing transaction is about '%s' but you are trying to set '%s'\n", ckchs_transaction.path, buf->area);
@@ -1626,62 +1490,9 @@ static int cli_parse_set_cert(char **args, char *payload, struct appctx *appctx,
 		appctx->ctx.ssl.old_ckchs = ckchs_transaction.new_ckchs;
 
 	} else {
-		struct ckch_store *find_ckchs[2] = { NULL, NULL };
 
-		/* lookup for the certificate in the tree:
-		 * check if this is used as a bundle AND as a unique certificate */
-		for (i = 0; i < 2; i++) {
-
-			if ((find_ckchs[i] = ckchs_lookup(buf->area)) != NULL) {
-				/* only the bundle name is in the tree and you should
-				 * never update a bundle name, only a filename */
-				if (bundle < 0 && find_ckchs[i]->multi) {
-					/* we tried to look for a non-bundle and we found a bundle */
-					memprintf(&err, "%s%s is a multi-cert bundle. Try updating %s.{dsa,rsa,ecdsa}\n",
-						  err ? err : "", args[3], args[3]);
-					errcode |= ERR_ALERT | ERR_FATAL;
-					goto end;
-				}
-				/* If we want a bundle but this is not a bundle
-				 * example: When you try to update <file>.rsa, but
-				 * <file> is a regular file */
-				if (bundle >= 0 && find_ckchs[i]->multi == 0) {
-					find_ckchs[i] = NULL;
-					break;
-				}
-			}
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-			{
-				char *end;
-				int j;
-
-				/* check if it was used in a bundle by removing the
-				 *   .dsa/.rsa/.ecdsa at the end of the filename */
-				end = strrchr(buf->area, '.');
-				for (j = 0; end && j < SSL_SOCK_NUM_KEYTYPES; j++) {
-					if (!strcmp(end + 1, SSL_SOCK_KEYTYPE_NAMES[j])) {
-						bundle = j; /* keep the type of certificate so we insert it at the right place */
-						*end = '\0'; /* it's a bundle let's end the string*/
-						break;
-					}
-				}
-				if (bundle < 0) /* we didn't find a bundle extension */
-					break;
-			}
-#else
-			/* bundles are not supported here, so we don't need to lookup again */
-			break;
-#endif
-		}
-
-		if (find_ckchs[0] && find_ckchs[1]) {
-			memprintf(&err, "%sUpdating a certificate which is used in the HAProxy configuration as a bundle and as a unique certificate is not supported. ('%s' and '%s')\n",
-			          err ? err : "", find_ckchs[0]->path, find_ckchs[1]->path);
-			errcode |= ERR_ALERT | ERR_FATAL;
-			goto end;
-		}
-
-		appctx->ctx.ssl.old_ckchs = find_ckchs[0] ? find_ckchs[0] : find_ckchs[1];
+		/* lookup for the certificate in the tree */
+		appctx->ctx.ssl.old_ckchs = ckchs_lookup(buf->area);
 	}
 
 	if (!appctx->ctx.ssl.old_ckchs) {
@@ -1712,10 +1523,7 @@ static int cli_parse_set_cert(char **args, char *payload, struct appctx *appctx,
 		goto end;
 	}
 
-	if (!new_ckchs->multi)
-		ckch = new_ckchs->ckch;
-	else
-		ckch = &new_ckchs->ckch[bundle];
+	ckch = new_ckchs->ckch;
 
 	/* appply the change on the duplicate */
 	if (cert_exts[type].load(buf->area, payload, ckch, &err) != 0) {
@@ -1841,7 +1649,7 @@ static int cli_parse_new_cert(char **args, char *payload, struct appctx *appctx,
 		goto error;
 	}
 	/* we won't support multi-certificate bundle here */
-	store = ckch_store_new(path, 1);
+	store = ckch_store_new(path);
 	if (!store) {
 		memprintf(&err, "unable to allocate memory.\n");
 		goto error;

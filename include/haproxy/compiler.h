@@ -27,19 +27,28 @@
  * Gcc before 3.0 needs [0] to declare a variable-size array
  */
 #ifndef VAR_ARRAY
-#if  __GNUC__  < 3
+#if defined(__GNUC__) && (__GNUC__ < 3)
 #define VAR_ARRAY	0
 #else
 #define VAR_ARRAY
 #endif
 #endif
 
+#if !defined(__GNUC__)
+/* Some versions of glibc irresponsibly redefine __attribute__() to empty for
+ * non-gcc compilers, and as such, silently break all constructors with other
+ * other compilers. Let's make sure such incompatibilities are detected if any,
+ * or that the attribute is properly enforced.
+ */
+#undef __attribute__
+#define __attribute__(x) __attribute__(x)
+#endif
 
 /* By default, gcc does not inline large chunks of code, but we want it to
  * respect our choices.
  */
 #if !defined(forceinline)
-#if __GNUC__ < 3
+#if !defined(__GNUC__) || (__GNUC__ < 3)
 #define forceinline inline
 #else
 #define forceinline inline __attribute__((always_inline))
@@ -89,7 +98,7 @@
  * generally better for the cache and to reduce the number of jumps.
  */
 #if !defined(likely)
-#if __GNUC__ < 3
+#if !defined(__GNUC__) || (__GNUC__ < 3)
 #define __builtin_expect(x,y) (x)
 #define likely(x) (x)
 #define unlikely(x) (x)

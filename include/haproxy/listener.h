@@ -83,24 +83,15 @@ void unbind_listener(struct listener *listener);
  */
 void unbind_listener_no_close(struct listener *listener);
 
-/* This function closes all listening sockets bound to the protocol <proto>,
- * and the listeners end in LI_ASSIGNED state if they were higher. It does not
- * detach them from the protocol. It always returns ERR_NONE.
- */
-int unbind_all_listeners(struct protocol *proto);
-
-
 /* creates one or multiple listeners for bind_conf <bc> on sockaddr <ss> on port
  * range <portl> to <porth>, and possibly attached to fd <fd> (or -1 for auto
- * allocation). The address family is taken from ss->ss_family. The number of
- * jobs and listeners is automatically increased by the number of listeners
- * created. If the <inherited> argument is set to 1, it specifies that the FD
- * was obtained from a parent process.
- * It returns non-zero on success, zero on error with the error message
- * set in <err>.
+ * allocation). The address family is taken from ss->ss_family, and the protocol
+ * passed in <proto> must be usable on this family. The number of jobs and
+ * listeners is automatically increased by the number of listeners created. It
+ * returns non-zero on success, zero on error with the error message set in <err>.
  */
 int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
-                     int portl, int porth, int fd, int inherited, char **err);
+                     int portl, int porth, int fd, struct protocol *proto, char **err);
 
 /* Delete a listener from its protocol's list of listeners. The listener's
  * state is automatically updated from LI_ASSIGNED to LI_INIT. The protocol's
@@ -157,9 +148,9 @@ static inline struct bind_conf *bind_conf_alloc(struct proxy *fe, const char *fi
 	if (arg)
 		bind_conf->arg = strdup(arg);
 
-	bind_conf->ux.uid = -1;
-	bind_conf->ux.gid = -1;
-	bind_conf->ux.mode = 0;
+	bind_conf->settings.ux.uid = -1;
+	bind_conf->settings.ux.gid = -1;
+	bind_conf->settings.ux.mode = 0;
 	bind_conf->xprt = xprt;
 	bind_conf->frontend = fe;
 	bind_conf->severity_output = CLI_SEVERITY_NONE;
@@ -183,8 +174,6 @@ static inline const char *listener_state_str(const struct listener *l)
 		return "INVALID";
 	return states[st];
 }
-
-extern struct xfer_sock_list *xfer_sock_list;
 
 extern struct accept_queue_ring accept_queue_rings[MAX_THREADS] __attribute__((aligned(64)));
 

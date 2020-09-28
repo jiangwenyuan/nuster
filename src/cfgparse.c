@@ -111,13 +111,13 @@ struct cfg_kw_list cfg_keywords = {
  */
 int str2listener(char *str, struct proxy *curproxy, struct bind_conf *bind_conf, const char *file, int line, char **err)
 {
+	struct protocol *proto;
 	char *next, *dupstr;
 	int port, end;
 
 	next = dupstr = strdup(str);
 
 	while (next && *next) {
-		int inherited = 0;
 		struct sockaddr_storage *ss2;
 		int fd = -1;
 
@@ -127,71 +127,65 @@ int str2listener(char *str, struct proxy *curproxy, struct bind_conf *bind_conf,
 			*next++ = 0;
 		}
 
-		ss2 = str2sa_range(str, NULL, &port, &end, err,
+		ss2 = str2sa_range(str, NULL, &port, &end, &fd, &proto, err,
 		                   curproxy == global.stats_fe ? NULL : global.unix_bind.prefix,
-		                   NULL, 1);
+		                   NULL, PA_O_RESOLVE | PA_O_PORT_OK | PA_O_PORT_MAND | PA_O_PORT_RANGE |
+		                          PA_O_SOCKET_FD | PA_O_STREAM | PA_O_XPRT);
 		if (!ss2)
 			goto fail;
 
-		if (ss2->ss_family == AF_INET || ss2->ss_family == AF_INET6
-		                              || ss2->ss_family == AF_CUST_UDP4
-					      || ss2->ss_family == AF_CUST_UDP6) {
-			if (!port && !end) {
-				memprintf(err, "missing port number: '%s'\n", str);
-				goto fail;
-			}
-
-			if (!port || !end) {
-				memprintf(err, "port offsets are not allowed in 'bind': '%s'\n", str);
-				goto fail;
-			}
-
-			if (port < 1 || port > 65535) {
-				memprintf(err, "invalid port '%d' specified for address '%s'.\n", port, str);
-				goto fail;
-			}
-
-			if (end < 1 || end > 65535) {
-				memprintf(err, "invalid port '%d' specified for address '%s'.\n", end, str);
-				goto fail;
-			}
+		/* OK the address looks correct */
+		if (!create_listeners(bind_conf, ss2, port, end, fd, proto, err)) {
+			memprintf(err, "%s for address '%s'.\n", *err, str);
+			goto fail;
 		}
-		else if (ss2->ss_family == AF_UNSPEC) {
-			socklen_t addr_len;
-			inherited = 1;
+	} /* end while(next) */
+	free(dupstr);
+	return 1;
+ fail:
+	free(dupstr);
+	return 0;
+}
 
-			/* We want to attach to an already bound fd whose number
-			 * is in the addr part of ss2 when cast to sockaddr_in.
-			 * Note that by definition there is a single listener.
-			 * We still have to determine the address family to
-			 * register the correct protocol.
-			 */
-			fd = ((struct sockaddr_in *)ss2)->sin_addr.s_addr;
-			addr_len = sizeof(*ss2);
-			if (getsockname(fd, (struct sockaddr *)ss2, &addr_len) == -1) {
-				memprintf(err, "cannot use file descriptor '%d' : %s.\n", fd, strerror(errno));
-				goto fail;
-			}
+/*
+ * converts <str> to a list of datagram-oriented listeners which are dynamically
+ * allocated.
+ * The format is "{addr|'*'}:port[-end][,{addr|'*'}:port[-end]]*", where :
+ *  - <addr> can be empty or "*" to indicate INADDR_ANY ;
+ *  - <port> is a numerical port from 1 to 65535 ;
+ *  - <end> indicates to use the range from <port> to <end> instead (inclusive).
+ * This can be repeated as many times as necessary, separated by a coma.
+ * Function returns 1 for success or 0 if error. In case of errors, if <err> is
+ * not NULL, it must be a valid pointer to either NULL or a freeable area that
+ * will be replaced with an error message.
+ */
+int str2receiver(char *str, struct proxy *curproxy, struct bind_conf *bind_conf, const char *file, int line, char **err)
+{
+	struct protocol *proto;
+	char *next, *dupstr;
+	int port, end;
 
-			port = end = get_host_port(ss2);
+	next = dupstr = strdup(str);
 
-		} else if (ss2->ss_family == AF_CUST_SOCKPAIR) {
-			socklen_t addr_len;
-			inherited = 1;
+	while (next && *next) {
+		struct sockaddr_storage *ss2;
+		int fd = -1;
 
-			fd = ((struct sockaddr_in *)ss2)->sin_addr.s_addr;
-			addr_len = sizeof(*ss2);
-			if (getsockname(fd, (struct sockaddr *)ss2, &addr_len) == -1) {
-				memprintf(err, "cannot use file descriptor '%d' : %s.\n", fd, strerror(errno));
-				goto fail;
-			}
-
-			ss2->ss_family = AF_CUST_SOCKPAIR; /* reassign AF_CUST_SOCKPAIR because of getsockname */
-			port = end = 0;
+		str = next;
+		/* 1) look for the end of the first address */
+		if ((next = strchr(str, ',')) != NULL) {
+			*next++ = 0;
 		}
+
+		ss2 = str2sa_range(str, NULL, &port, &end, &fd, &proto, err,
+		                   curproxy == global.stats_fe ? NULL : global.unix_bind.prefix,
+		                   NULL, PA_O_RESOLVE | PA_O_PORT_OK | PA_O_PORT_MAND | PA_O_PORT_RANGE |
+		                          PA_O_SOCKET_FD | PA_O_DGRAM | PA_O_XPRT);
+		if (!ss2)
+			goto fail;
 
 		/* OK the address looks correct */
-		if (!create_listeners(bind_conf, ss2, port, end, fd, inherited, err)) {
+		if (!create_listeners(bind_conf, ss2, port, end, fd, proto, err)) {
 			memprintf(err, "%s for address '%s'.\n", *err, str);
 			goto fail;
 		}
@@ -635,8 +629,8 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 					goto out;
 				}
 			}
-			newpeer->addr = l->addr;
-			newpeer->proto = protocol_by_family(newpeer->addr.ss_family);
+			newpeer->addr = l->rx.addr;
+			newpeer->proto = l->rx.proto;
 			cur_arg++;
 		}
 
@@ -890,13 +884,18 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 		if (!t || !id) {
 			ha_alert("parsing [%s:%d]: '%s %s' : memory allocation failed\n",
 			         file, linenum, args[0], args[1]);
+			free(t);
+			free(id);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
 
 		err_code |= parse_stick_table(file, linenum, args, t, id, id + prefix_len, curpeers);
-		if (err_code & ERR_FATAL)
+		if (err_code & ERR_FATAL) {
+			free(t);
+			free(id);
 			goto out;
+		}
 
 		stktable_store_name(t);
 		t->next = stktables_list;
@@ -995,7 +994,6 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 	else if (strcmp(args[0], "nameserver") == 0) { /* nameserver definition */
 		struct sockaddr_storage *sk;
 		int port1, port2;
-		struct protocol *proto;
 
 		if (!*args[2]) {
 			ha_alert("parsing [%s:%d] : '%s' expects <name> and <addr>[:<port>] as arguments.\n",
@@ -1034,31 +1032,10 @@ int cfg_parse_resolvers(const char *file, int linenum, char **args, int kwm)
 		newnameserver->conf.line = linenum;
 		newnameserver->id = strdup(args[1]);
 
-		sk = str2sa_range(args[2], NULL, &port1, &port2, &errmsg, NULL, NULL, 1);
+		sk = str2sa_range(args[2], NULL, &port1, &port2, NULL, NULL,
+		                  &errmsg, NULL, NULL, PA_O_RESOLVE | PA_O_PORT_OK | PA_O_PORT_MAND | PA_O_DGRAM);
 		if (!sk) {
 			ha_alert("parsing [%s:%d] : '%s %s' : %s\n", file, linenum, args[0], args[1], errmsg);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		proto = protocol_by_family(sk->ss_family);
-		if (!proto || !proto->connect) {
-			ha_alert("parsing [%s:%d] : '%s %s' : connect() not supported for this address family.\n",
-				file, linenum, args[0], args[1]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (port1 != port2) {
-			ha_alert("parsing [%s:%d] : '%s %s' : port ranges and offsets are not allowed in '%s'\n",
-				 file, linenum, args[0], args[1], args[2]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (!port1 && !port2) {
-			ha_alert("parsing [%s:%d] : '%s %s' : no UDP port specified\n",
-				 file, linenum, args[0], args[1]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -1418,31 +1395,18 @@ int cfg_parse_mailers(const char *file, int linenum, char **args, int kwm)
 
 		newmailer->id = strdup(args[1]);
 
-		sk = str2sa_range(args[2], NULL, &port1, &port2, &errmsg, NULL, NULL, 1);
+		sk = str2sa_range(args[2], NULL, &port1, &port2, NULL, &proto,
+		                  &errmsg, NULL, NULL,
+		                  PA_O_RESOLVE | PA_O_PORT_OK | PA_O_PORT_MAND | PA_O_STREAM | PA_O_XPRT | PA_O_CONNECT);
 		if (!sk) {
 			ha_alert("parsing [%s:%d] : '%s %s' : %s\n", file, linenum, args[0], args[1], errmsg);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
 
-		proto = protocol_by_family(sk->ss_family);
-		if (!proto || !proto->connect || proto->sock_prot != IPPROTO_TCP) {
+		if (proto->sock_prot != IPPROTO_TCP) {
 			ha_alert("parsing [%s:%d] : '%s %s' : TCP not supported for this address family.\n",
 				 file, linenum, args[0], args[1]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (port1 != port2) {
-			ha_alert("parsing [%s:%d] : '%s %s' : port ranges and offsets are not allowed in '%s'\n",
-				 file, linenum, args[0], args[1], args[2]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-
-		if (!port1) {
-			ha_alert("parsing [%s:%d] : '%s %s' : missing or invalid port in '%s'\n",
-				 file, linenum, args[0], args[1], args[2]);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -1876,11 +1840,11 @@ next_line:
 		char *line = thisline;
 
 		if (missing_lf != -1) {
-			ha_warning("parsing [%s:%d]: Stray NUL character at position %d. "
-			           "This will become a hard error in HAProxy 2.3.\n",
-			           file, linenum, (missing_lf + 1));
-			err_code |= ERR_WARN;
+			ha_alert("parsing [%s:%d]: Stray NUL character at position %d.\n",
+			         file, linenum, (missing_lf + 1));
+			err_code |= ERR_ALERT | ERR_FATAL;
 			missing_lf = -1;
+			break;
 		}
 
 		linenum++;
@@ -2086,10 +2050,9 @@ next_line:
 	}
 
 	if (missing_lf != -1) {
-		ha_warning("parsing [%s:%d]: Missing LF on last line, file might have been truncated at position %d. "
-		           "This will become a hard error in HAProxy 2.3.\n",
-		           file, linenum, (missing_lf + 1));
-		err_code |= ERR_WARN;
+		ha_alert("parsing [%s:%d]: Missing LF on last line, file might have been truncated at position %d.\n",
+		         file, linenum, (missing_lf + 1));
+		err_code |= ERR_ALERT | ERR_FATAL;
 	}
 
 	if (cs && cs->post_section_parser)
@@ -2318,7 +2281,7 @@ int check_config_validity()
 #endif
 
 			/* detect and address thread affinity inconsistencies */
-			mask = thread_mask(bind_conf->bind_thread);
+			mask = thread_mask(bind_conf->settings.bind_thread);
 			if (!(mask & all_threads_mask)) {
 				unsigned long new_mask = 0;
 
@@ -2327,27 +2290,27 @@ int check_config_validity()
 					mask >>= global.nbthread;
 				}
 
-				bind_conf->bind_thread = new_mask;
+				bind_conf->settings.bind_thread = new_mask;
 				ha_warning("Proxy '%s': the thread range specified on the 'process' directive of 'bind %s' at [%s:%d] only refers to thread numbers out of the range defined by the global 'nbthread' directive. The thread numbers were remapped to existing threads instead (mask 0x%lx).\n",
 					   curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line, new_mask);
 			}
 
 			/* detect process and nbproc affinity inconsistencies */
-			mask = proc_mask(bind_conf->bind_proc) & proc_mask(curproxy->bind_proc);
+			mask = proc_mask(bind_conf->settings.bind_proc) & proc_mask(curproxy->bind_proc);
 			if (!(mask & all_proc_mask)) {
 				mask = proc_mask(curproxy->bind_proc) & all_proc_mask;
-				nbproc = my_popcountl(bind_conf->bind_proc);
-				bind_conf->bind_proc = proc_mask(bind_conf->bind_proc) & mask;
+				nbproc = my_popcountl(bind_conf->settings.bind_proc);
+				bind_conf->settings.bind_proc = proc_mask(bind_conf->settings.bind_proc) & mask;
 
-				if (!bind_conf->bind_proc && nbproc == 1) {
+				if (!bind_conf->settings.bind_proc && nbproc == 1) {
 					ha_warning("Proxy '%s': the process number specified on the 'process' directive of 'bind %s' at [%s:%d] refers to a process not covered by the proxy. This has been fixed by forcing it to run on the proxy's first process only.\n",
 						   curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line);
-					bind_conf->bind_proc = mask & ~(mask - 1);
+					bind_conf->settings.bind_proc = mask & ~(mask - 1);
 				}
-				else if (!bind_conf->bind_proc && nbproc > 1) {
+				else if (!bind_conf->settings.bind_proc && nbproc > 1) {
 					ha_warning("Proxy '%s': the process range specified on the 'process' directive of 'bind %s' at [%s:%d] only refers to processes not covered by the proxy. The directive was ignored so that all of the proxy's processes are used.\n",
 						   curproxy->id, bind_conf->arg, bind_conf->file, bind_conf->line);
-					bind_conf->bind_proc = 0;
+					bind_conf->settings.bind_proc = 0;
 				}
 			}
 		}
@@ -3612,7 +3575,7 @@ out_uri_auth_compat:
 				for (i = 0; i < global.nbthread; i++)
 					MT_LIST_INIT(&newsrv->safe_conns[i]);
 
-				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(int));
+				newsrv->curr_idle_thr = calloc(global.nbthread, sizeof(*newsrv->curr_idle_thr));
 				if (!newsrv->curr_idle_thr)
 					goto err;
 				continue;
@@ -3636,7 +3599,7 @@ out_uri_auth_compat:
 			unsigned long mask;
 
 			mask  = proc_mask(global.stats_fe->bind_proc) && all_proc_mask;
-			mask &= proc_mask(bind_conf->bind_proc);
+			mask &= proc_mask(bind_conf->settings.bind_proc);
 
 			/* stop here if more than one process is used */
 			if (atleast2(mask))
@@ -3655,7 +3618,7 @@ out_uri_auth_compat:
 		list_for_each_entry(bind_conf, &curproxy->conf.bind, by_fe) {
 			unsigned long mask;
 
-			mask = proc_mask(bind_conf->bind_proc);
+			mask = proc_mask(bind_conf->settings.bind_proc);
 			curproxy->bind_proc |= mask;
 		}
 		curproxy->bind_proc = proc_mask(curproxy->bind_proc);
@@ -3665,7 +3628,7 @@ out_uri_auth_compat:
 		list_for_each_entry(bind_conf, &global.stats_fe->conf.bind, by_fe) {
 			unsigned long mask;
 
-			mask = bind_conf->bind_proc ? bind_conf->bind_proc : 0;
+			mask = bind_conf->settings.bind_proc ? bind_conf->settings.bind_proc : 0;
 			global.stats_fe->bind_proc |= mask;
 		}
 		global.stats_fe->bind_proc = proc_mask(global.stats_fe->bind_proc);
@@ -3711,7 +3674,7 @@ out_uri_auth_compat:
 			int nbproc;
 
 			nbproc = my_popcountl(curproxy->bind_proc &
-			                      (listener->bind_conf->bind_proc ? listener->bind_conf->bind_proc : curproxy->bind_proc) &
+			                      (listener->bind_conf->settings.bind_proc ? listener->bind_conf->settings.bind_proc : curproxy->bind_proc) &
 			                      all_proc_mask);
 
 			if (!nbproc) /* no intersection between listener and frontend */
@@ -3782,7 +3745,7 @@ out_uri_auth_compat:
 				int count, maxproc = 0;
 
 				list_for_each_entry(bind_conf, &curproxy->conf.bind, by_fe) {
-					count = my_popcountl(bind_conf->bind_proc);
+					count = my_popcountl(bind_conf->settings.bind_proc);
 					if (count > maxproc)
 						maxproc = count;
 				}

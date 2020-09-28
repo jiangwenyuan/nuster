@@ -29,7 +29,8 @@
 
 #include <haproxy/api-t.h>
 #include <haproxy/obj_type-t.h>
-#include <haproxy/thread.h>
+#include <haproxy/receiver-t.h>
+#include <haproxy/thread-t.h>
 
 #ifdef USE_OPENSSL
 #include <haproxy/openssl-compat.h>
@@ -84,7 +85,7 @@ enum li_state {
 /* listener socket options */
 #define LI_O_NONE               0x0000
 #define LI_O_NOLINGER           0x0001  /* disable linger on this socket */
-#define LI_O_FOREIGN            0x0002  /* permit listening on foreign addresses ("transparent") */
+/* unused                       0x0002  */
 #define LI_O_NOQUICKACK         0x0004  /* disable quick ack of immediate data (linux) */
 #define LI_O_DEF_ACCEPT         0x0008  /* wait up to 1 second for data before accepting */
 #define LI_O_TCP_L4_RULES       0x0010  /* run TCP L4 rules checks on the incoming connection */
@@ -93,10 +94,10 @@ enum li_state {
 #define LI_O_ACC_PROXY          0x0080  /* find the proxied address in the first request line */
 #define LI_O_UNLIMITED          0x0100  /* listener not subject to global limits (peers & stats socket) */
 #define LI_O_TCP_FO             0x0200  /* enable TCP Fast Open (linux >= 3.7) */
-#define LI_O_V6ONLY             0x0400  /* bind to IPv6 only on Linux >= 2.4.21 */
-#define LI_O_V4V6               0x0800  /* bind to IPv4/IPv6 on Linux >= 2.4.21 */
+/* unused                       0x0400  */
+/* unused                       0x0800  */
 #define LI_O_ACC_CIP            0x1000  /* find the proxied address in the NetScaler Client IP header */
-#define LI_O_INHERITED          0x2000  /* inherited FD from the parent process (fd@) */
+/* unused                       0x2000 */
 #define LI_O_MWORKER            0x4000  /* keep the FD open in the master but close it in the children */
 #define LI_O_NOSTOP             0x8000  /* keep the listener active even after a soft stop */
 
@@ -163,8 +164,7 @@ struct bind_conf {
 	char *ca_sign_file;        /* CAFile used to generate and sign server certificates */
 	char *ca_sign_pass;        /* CAKey passphrase */
 
-	X509     *ca_sign_cert;    /* CA certificate referenced by ca_file */
-	EVP_PKEY *ca_sign_pkey;    /* CA private key referenced by ca_key */
+	struct cert_key_and_chain * ca_sign_ckch;	/* CA and possible certificate chain for ca generation */
 #endif
 	struct proxy *frontend;    /* the frontend all these listeners belong to, or NULL */
 	const struct mux_proto_list *mux_proto; /* the mux to use for all incoming connections (specified by the "proto" keyword) */
@@ -174,18 +174,12 @@ struct bind_conf {
 	int level;                 /* stats access level (ACCESS_LVL_*) */
 	int severity_output;       /* default severity output format in cli feedback messages */
 	struct list listeners;     /* list of listeners using this bind config */
-	unsigned long bind_proc;   /* bitmask of processes allowed to use these listeners */
-	unsigned long bind_thread; /* bitmask of threads allowed to use these listeners */
 	uint32_t ns_cip_magic;     /* Excepted NetScaler Client IP magic number */
 	struct list by_fe;         /* next binding for the same frontend, or NULL */
 	char *arg;                 /* argument passed to "bind" for better error reporting */
 	char *file;                /* file where the section appears */
 	int line;                  /* line where the section appears */
-	struct {                   /* UNIX socket permissions */
-		uid_t uid;         /* -1 to leave unchanged */
-		gid_t gid;         /* -1 to leave unchanged */
-		mode_t mode;       /* 0 to leave unchanged */
-	} ux;
+	struct rx_settings settings; /* all the settings needed for the listening socket */
 };
 
 /* The listener will be directly referenced by the fdtab[] which holds its
@@ -196,11 +190,9 @@ struct listener {
 	enum obj_type obj_type;         /* object type = OBJ_TYPE_LISTENER */
 	enum li_state state;            /* state: NEW, INIT, ASSIGNED, LISTEN, READY, FULL */
 	short int nice;                 /* nice value to assign to the instantiated tasks */
-	int fd;				/* the listen socket */
 	int luid;			/* listener universally unique ID, used for SNMP */
 	int options;			/* socket options : LI_O_* */
 	struct fe_counters *counters;	/* statistics counters */
-	struct protocol *proto;		/* protocol this listener belongs to */
 	int nbconn;			/* current number of connections on this listener */
 	int maxconn;			/* maximum connections allowed on this listener */
 	unsigned int backlog;		/* if set, listen backlog */
@@ -213,12 +205,9 @@ struct listener {
 	unsigned int analysers;		/* bitmap of required protocol analysers */
 	int maxseg;			/* for TCP, advertised MSS */
 	int tcp_ut;                     /* for TCP, user timeout */
-	char *interface;		/* interface name or NULL */
 	char *name;			/* listener's name */
 
 	__decl_thread(HA_SPINLOCK_T lock);
-
-	const struct netns_entry *netns; /* network namespace of the listener*/
 
 	/* cache line boundary */
 	unsigned int thr_conn[MAX_THREADS]; /* number of connections per thread */
@@ -228,10 +217,7 @@ struct listener {
 	struct list by_fe;              /* chaining in frontend's list of listeners */
 	struct list by_bind;            /* chaining in bind_conf's list of listeners */
 	struct bind_conf *bind_conf;	/* "bind" line settings, include SSL settings among other things */
-	struct list proto_list;         /* list in the protocol header */
-
-	/* warning: this struct is huge, keep it at the bottom */
-	struct sockaddr_storage addr;	/* the address we listen to */
+	struct receiver rx;             /* network receiver parts */
 	struct {
 		struct eb32_node id;	/* place in the tree of used IDs */
 	} conf;				/* config information */
@@ -264,17 +250,6 @@ struct bind_kw_list {
 	const char *scope;
 	struct list list;
 	struct bind_kw kw[VAR_ARRAY];
-};
-
-
-struct xfer_sock_list {
-	int fd;
-	char *iface;
-	char *namespace;
-	int options; /* socket options LI_O_* */
-	struct xfer_sock_list *prev;
-	struct xfer_sock_list *next;
-	struct sockaddr_storage addr;
 };
 
 /* This is used to create the accept queue, optimized to be 64 bytes long. */

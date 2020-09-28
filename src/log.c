@@ -803,6 +803,7 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 	struct logsrv *logsrv = NULL;
 	int port1, port2;
 	int cur_arg;
+	int fd;
 
 	/*
 	 * "no log": delete previous herited or defined syslog
@@ -1018,19 +1019,16 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 		goto done;
 	}
 
-	if (strncmp(args[1], "fd@", 3) == 0)
-		logsrv->type = LOG_TARGET_FD;
-
-	sk = str2sa_range(args[1], NULL, &port1, &port2, err, NULL, NULL, 1);
+	sk = str2sa_range(args[1], NULL, &port1, &port2, &fd, NULL,
+	                  err, NULL, NULL, PA_O_RESOLVE | PA_O_PORT_OK | PA_O_RAW_FD | PA_O_DGRAM);
 	if (!sk)
 		goto error;
+
+	if (fd != -1)
+		logsrv->type = LOG_TARGET_FD;
 	logsrv->addr = *sk;
 
 	if (sk->ss_family == AF_INET || sk->ss_family == AF_INET6) {
-		if (port1 != port2) {
-			memprintf(err, "port ranges and offsets are not allowed in '%s'", args[1]);
-			goto error;
-		}
 		logsrv->addr = *sk;
 		if (!port1)
 			set_host_port(&logsrv->addr, SYSLOG_PORT);
@@ -1748,13 +1746,13 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, int level,
 	while (size && (message[size-1] == '\n' || (message[size-1] == 0)))
 		size--;
 
-	if (logsrv->type == LOG_TARGET_FD) {
-		/* the socket's address is a file descriptor */
-		plogfd = (int *)&((struct sockaddr_in *)&logsrv->addr)->sin_addr.s_addr;
-	}
-	else if (logsrv->type == LOG_TARGET_BUFFER) {
+	if (logsrv->type == LOG_TARGET_BUFFER) {
 		plogfd = NULL;
 		goto send;
+	}
+	else if (logsrv->addr.ss_family == AF_CUST_EXISTING_FD) {
+		/* the socket's address is a file descriptor */
+		plogfd = (int *)&((struct sockaddr_in *)&logsrv->addr)->sin_addr.s_addr;
 	}
 	else if (logsrv->addr.ss_family == AF_UNIX)
 		plogfd = &logfdunix;
@@ -1784,18 +1782,23 @@ static inline void __do_send_log(struct logsrv *logsrv, int nblogger, int level,
 
 	msg_header = build_log_header(logsrv->format, level, facility, metadata, &nbelem);
  send:
-	if (logsrv->addr.ss_family == AF_UNSPEC) {
+	if (logsrv->type == LOG_TARGET_BUFFER) {
 		struct ist msg;
 
 		msg = ist2(message, size);
 		if (msg.len > logsrv->maxlen)
 			msg.len = logsrv->maxlen;
 
-		if (logsrv->type == LOG_TARGET_BUFFER) {
-			sent = sink_write(logsrv->sink, &msg, 1, level, logsrv->facility, metadata);
-		}
-		else /* LOG_TARGET_FD */
-			sent = fd_write_frag_line(*plogfd, logsrv->maxlen, msg_header, nbelem, &msg, 1, 1);
+		sent = sink_write(logsrv->sink, &msg, 1, level, logsrv->facility, metadata);
+	}
+	else if (logsrv->addr.ss_family == AF_CUST_EXISTING_FD) {
+		struct ist msg;
+
+		msg = ist2(message, size);
+		if (msg.len > logsrv->maxlen)
+			msg.len = logsrv->maxlen;
+
+		sent = fd_write_frag_line(*plogfd, logsrv->maxlen, msg_header, nbelem, &msg, 1, 1);
 	}
 	else {
 		int i = 0;
@@ -3610,7 +3613,7 @@ int cfg_parse_log_forward(const char *file, int linenum, char **args, int kwm)
 		px->id = strdup(args[1]);
 
 	}
-	else if (strcmp(args[0], "bind") == 0) {
+	else if (strcmp(args[0], "dgram-bind") == 0) {
 		int cur_arg;
 		static int kws_dumped;
 		struct bind_conf *bind_conf;
@@ -3622,7 +3625,7 @@ int cfg_parse_log_forward(const char *file, int linenum, char **args, int kwm)
 		bind_conf = bind_conf_alloc(cfg_log_forward, file, linenum,
 		                            NULL, xprt_get(XPRT_RAW));
 
-		if (!str2listener(args[1], cfg_log_forward, bind_conf, file, linenum, &errmsg)) {
+		if (!str2receiver(args[1], cfg_log_forward, bind_conf, file, linenum, &errmsg)) {
 			if (errmsg && *errmsg) {
 				indent_msg(&errmsg, 2);
 				ha_alert("parsing [%s:%d] : '%s %s' : %s\n", file, linenum, args[0], args[1], errmsg);
@@ -3630,18 +3633,12 @@ int cfg_parse_log_forward(const char *file, int linenum, char **args, int kwm)
 			else {
 				ha_alert("parsing [%s:%d] : '%s %s' : error encountered while parsing listening address %s.\n",
 				         file, linenum, args[0], args[1], args[2]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
 			}
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
 		}
 		list_for_each_entry(l, &bind_conf->listeners, by_bind) {
-			/* Currently, only UDP handlers are allowed */
-			if (l->proto->sock_domain != AF_CUST_UDP4 && l->proto->sock_domain != AF_CUST_UDP6) {
-				ha_alert("parsing [%s:%d] : '%s %s' : error,  listening address must be prefixed using 'udp@', 'udp4@' or 'udp6@' %s.\n",
-				         file, linenum, args[0], args[1], args[2]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
+			/* the fact that the sockets are of type dgram is guaranteed by str2receiver() */
 			l->maxaccept = global.tune.maxaccept ? global.tune.maxaccept : 64;
 			global.maxsock++;
 		}
@@ -3687,6 +3684,11 @@ int cfg_parse_log_forward(const char *file, int linenum, char **args, int kwm)
 			         err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
+	}
+	else {
+		ha_alert("parsing [%s:%d] : unknown keyword '%s' in log-forward section.\n", file, linenum, args[0]);
+		err_code |= ERR_ALERT | ERR_ABORT;
+		goto out;
 	}
 out:
 	return err_code;

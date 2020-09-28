@@ -2534,14 +2534,10 @@ __LJMP static int hlua_socket_connect(struct lua_State *L)
 	}
 
 	/* Parse ip address. */
-	addr = str2sa_range(ip, NULL, &low, &high, NULL, NULL, NULL, 0);
+	addr = str2sa_range(ip, NULL, &low, &high, NULL, NULL, NULL, NULL, NULL, PA_O_PORT_OK | PA_O_STREAM);
 	if (!addr) {
 		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "connect: cannot parse destination address '%s'", ip));
-	}
-	if (low != high) {
-		xref_unlock(&socket->xref, peer);
-		WILL_LJMP(luaL_error(L, "connect: port ranges not supported : address '%s'", ip));
 	}
 
 	/* Set port. */
@@ -2852,8 +2848,10 @@ __LJMP static int hlua_channel_dup_yield(lua_State *L, int status, lua_KContext 
 
 	chn = MAY_LJMP(hlua_checkchannel(L, 1));
 
-	if (chn_strm(chn)->be->mode == PR_MODE_HTTP)
+	if (chn_strm(chn)->be->mode == PR_MODE_HTTP) {
+		lua_pushfstring(L, "Cannot manipulate HAProxy channels in HTTP mode.");
 		WILL_LJMP(lua_error(L));
+	}
 
 	if (_hlua_channel_dup(chn, L) == 0)
 		MAY_LJMP(hlua_yieldk(L, 0, 0, hlua_channel_dup_yield, TICK_ETERNITY, 0));
@@ -2880,8 +2878,10 @@ __LJMP static int hlua_channel_get_yield(lua_State *L, int status, lua_KContext 
 
 	chn = MAY_LJMP(hlua_checkchannel(L, 1));
 
-	if (chn_strm(chn)->be->mode == PR_MODE_HTTP)
+	if (chn_strm(chn)->be->mode == PR_MODE_HTTP) {
+		lua_pushfstring(L, "Cannot manipulate HAProxy channels in HTTP mode.");
 		WILL_LJMP(lua_error(L));
+	}
 
 	ret = _hlua_channel_dup(chn, L);
 	if (unlikely(ret == 0))
@@ -2920,8 +2920,10 @@ __LJMP static int hlua_channel_getline_yield(lua_State *L, int status, lua_KCont
 
 	chn = MAY_LJMP(hlua_checkchannel(L, 1));
 
-	if (chn_strm(chn)->be->mode == PR_MODE_HTTP)
+	if (chn_strm(chn)->be->mode == PR_MODE_HTTP) {
+		lua_pushfstring(L, "Cannot manipulate HAProxy channels in HTTP mode.");
 		WILL_LJMP(lua_error(L));
+	}
 
 	ret = ci_getline_nc(chn, &blk1, &len1, &blk2, &len2);
 	if (ret == 0)
@@ -2968,8 +2970,10 @@ __LJMP static int hlua_channel_append_yield(lua_State *L, int status, lua_KConte
 	int ret;
 	int max;
 
-	if (chn_strm(chn)->be->mode == PR_MODE_HTTP)
+	if (chn_strm(chn)->be->mode == PR_MODE_HTTP) {
+		lua_pushfstring(L, "Cannot manipulate HAProxy channels in HTTP mode.");
 		WILL_LJMP(lua_error(L));
+	}
 
 	/* Check if the buffer is available because HAProxy doesn't allocate
 	 * the request buffer if its not required.
@@ -3040,8 +3044,10 @@ __LJMP static int hlua_channel_set(lua_State *L)
 	chn = MAY_LJMP(hlua_checkchannel(L, 1));
 	lua_pushinteger(L, 0);
 
-	if (chn_strm(chn)->be->mode == PR_MODE_HTTP)
+	if (chn_strm(chn)->be->mode == PR_MODE_HTTP) {
+		lua_pushfstring(L, "Cannot manipulate HAProxy channels in HTTP mode.");
 		WILL_LJMP(lua_error(L));
+	}
 
 	b_set_data(&chn->buf, co_data(chn));
 
@@ -3062,8 +3068,10 @@ __LJMP static int hlua_channel_send_yield(lua_State *L, int status, lua_KContext
 	int max;
 	struct hlua *hlua = hlua_gethlua(L);
 
-	if (chn_strm(chn)->be->mode == PR_MODE_HTTP)
+	if (chn_strm(chn)->be->mode == PR_MODE_HTTP) {
+		lua_pushfstring(L, "Cannot manipulate HAProxy channels in HTTP mode.");
 		WILL_LJMP(lua_error(L));
+	}
 
 	if (unlikely(channel_output_closed(chn))) {
 		lua_pushinteger(L, -1);
@@ -3166,8 +3174,10 @@ __LJMP static int hlua_channel_forward_yield(lua_State *L, int status, lua_KCont
 
 	chn = MAY_LJMP(hlua_checkchannel(L, 1));
 
-	if (chn_strm(chn)->be->mode == PR_MODE_HTTP)
+	if (chn_strm(chn)->be->mode == PR_MODE_HTTP) {
+		lua_pushfstring(L, "Cannot manipulate HAProxy channels in HTTP mode.");
 		WILL_LJMP(lua_error(L));
+	}
 
 	len = MAY_LJMP(luaL_checkinteger(L, 2));
 	l = MAY_LJMP(luaL_checkinteger(L, -1));
@@ -7348,7 +7358,8 @@ static enum act_parse_ret action_register_lua(const char **args, int *cur_arg, s
 	}
 
 	/* Memory for arguments. */
-	rule->arg.hlua_rule->args = calloc(fcn->nargs + 1, sizeof(char *));
+	rule->arg.hlua_rule->args = calloc(fcn->nargs + 1,
+					   sizeof(*rule->arg.hlua_rule->args));
 	if (!rule->arg.hlua_rule->args) {
 		memprintf(err, "out of memory error");
 		return ACT_RET_PRS_ERR;

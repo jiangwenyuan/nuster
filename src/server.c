@@ -648,7 +648,6 @@ static int srv_parse_source(char **args, int *cur_arg,
 	char *errmsg;
 	int port_low, port_high;
 	struct sockaddr_storage *sk;
-	struct protocol *proto;
 
 	errmsg = NULL;
 
@@ -659,16 +658,11 @@ static int srv_parse_source(char **args, int *cur_arg,
 	}
 
 	/* 'sk' is statically allocated (no need to be freed). */
-	sk = str2sa_range(args[*cur_arg + 1], NULL, &port_low, &port_high, &errmsg, NULL, NULL, 1);
+	sk = str2sa_range(args[*cur_arg + 1], NULL, &port_low, &port_high, NULL, NULL,
+	                  &errmsg, NULL, NULL,
+		          PA_O_RESOLVE | PA_O_PORT_OK | PA_O_PORT_RANGE | PA_O_STREAM | PA_O_CONNECT);
 	if (!sk) {
 		memprintf(err, "'%s %s' : %s\n", args[*cur_arg], args[*cur_arg + 1], errmsg);
-		goto err;
-	}
-
-	proto = protocol_by_family(sk->ss_family);
-	if (!proto || !proto->connect) {
-		ha_alert("'%s %s' : connect() not supported for this address family.\n",
-			 args[*cur_arg], args[*cur_arg + 1]);
 		goto err;
 	}
 
@@ -678,18 +672,6 @@ static int srv_parse_source(char **args, int *cur_arg,
 	if (port_low != port_high) {
 		int i;
 
-		if (!port_low || !port_high) {
-			ha_alert("'%s' does not support port offsets (found '%s').\n",
-				 args[*cur_arg], args[*cur_arg + 1]);
-			goto err;
-		}
-
-		if (port_low  <= 0 || port_low  > 65535 ||
-			port_high <= 0 || port_high > 65535 ||
-			port_low > port_high) {
-			ha_alert("'%s': invalid source port range %d-%d.\n", args[*cur_arg], port_low, port_high);
-			goto err;
-		}
 		newsrv->conn_src.sport_range = port_range_alloc_range(port_high - port_low + 1);
 		for (i = 0; i < newsrv->conn_src.sport_range->size; i++)
 			newsrv->conn_src.sport_range->ports[i] = port_low + i;
@@ -756,24 +738,14 @@ static int srv_parse_source(char **args, int *cur_arg,
 				int port1, port2;
 
 				/* 'sk' is statically allocated (no need to be freed). */
-				sk = str2sa_range(args[*cur_arg + 1], NULL, &port1, &port2, &errmsg, NULL, NULL, 1);
+				sk = str2sa_range(args[*cur_arg + 1], NULL, &port1, &port2, NULL, NULL,
+				                  &errmsg, NULL, NULL,
+				                  PA_O_RESOLVE | PA_O_PORT_OK | PA_O_STREAM | PA_O_CONNECT);
 				if (!sk) {
 					ha_alert("'%s %s' : %s\n", args[*cur_arg], args[*cur_arg + 1], errmsg);
 					goto err;
 				}
 
-				proto = protocol_by_family(sk->ss_family);
-				if (!proto || !proto->connect) {
-					ha_alert("'%s %s' : connect() not supported for this address family.\n",
-						 args[*cur_arg], args[*cur_arg + 1]);
-					goto err;
-				}
-
-				if (port1 != port2) {
-					ha_alert("'%s' : port ranges and offsets are not allowed in '%s'\n",
-						 args[*cur_arg], args[*cur_arg + 1]);
-					goto err;
-				}
 				newsrv->conn_src.tproxy_addr = *sk;
 				newsrv->conn_src.opts |= CO_SRC_TPROXY_ADDR;
 			}
@@ -847,7 +819,6 @@ static int srv_parse_socks4(char **args, int *cur_arg,
 	char *errmsg;
 	int port_low, port_high;
 	struct sockaddr_storage *sk;
-	struct protocol *proto;
 
 	errmsg = NULL;
 
@@ -857,30 +828,16 @@ static int srv_parse_socks4(char **args, int *cur_arg,
 	}
 
 	/* 'sk' is statically allocated (no need to be freed). */
-	sk = str2sa_range(args[*cur_arg + 1], NULL, &port_low, &port_high, &errmsg, NULL, NULL, 1);
+	sk = str2sa_range(args[*cur_arg + 1], NULL, &port_low, &port_high, NULL, NULL,
+	                  &errmsg, NULL, NULL,
+	                  PA_O_RESOLVE | PA_O_PORT_OK | PA_O_PORT_MAND | PA_O_STREAM | PA_O_CONNECT);
 	if (!sk) {
 		memprintf(err, "'%s %s' : %s\n", args[*cur_arg], args[*cur_arg + 1], errmsg);
 		goto err;
 	}
 
-	proto = protocol_by_family(sk->ss_family);
-	if (!proto || !proto->connect) {
-		ha_alert("'%s %s' : connect() not supported for this address family.\n", args[*cur_arg], args[*cur_arg + 1]);
-		goto err;
-	}
-
 	newsrv->flags |= SRV_F_SOCKS4_PROXY;
 	newsrv->socks4_addr = *sk;
-
-	if (port_low != port_high) {
-		ha_alert("'%s' does not support port offsets (found '%s').\n", args[*cur_arg], args[*cur_arg + 1]);
-		goto err;
-	}
-
-	if (!port_low) {
-		ha_alert("'%s': invalid port range %d-%d.\n", args[*cur_arg], port_low, port_high);
-		goto err;
-	}
 
 	return 0;
 
@@ -2016,7 +1973,6 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 		if (!defsrv) {
 			struct sockaddr_storage *sk;
 			int port1, port2, port;
-			struct protocol *proto;
 
 			newsrv = new_server(curproxy);
 			if (!newsrv) {
@@ -2054,17 +2010,11 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 			if (!parse_addr)
 				goto skip_addr;
 
-			sk = str2sa_range(args[cur_arg], &port, &port1, &port2, &errmsg, NULL, &fqdn, initial_resolve);
+			sk = str2sa_range(args[cur_arg], &port, &port1, &port2, NULL, NULL,
+			                  &errmsg, NULL, &fqdn,
+			                  (initial_resolve ? PA_O_RESOLVE : 0) | PA_O_PORT_OK | PA_O_PORT_OFS | PA_O_STREAM | PA_O_XPRT | PA_O_CONNECT);
 			if (!sk) {
 				ha_alert("parsing [%s:%d] : '%s %s' : %s\n", file, linenum, args[0], args[1], errmsg);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
-			}
-
-			proto = protocol_by_family(sk->ss_family);
-			if (!fqdn && (!proto || !proto->connect)) {
-				ha_alert("parsing [%s:%d] : '%s %s' : connect() not supported for this address family.\n",
-				      file, linenum, args[0], args[1]);
 				err_code |= ERR_ALERT | ERR_FATAL;
 				goto out;
 			}
@@ -2072,13 +2022,6 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 			if (!port1 || !port2) {
 				/* no port specified, +offset, -offset */
 				newsrv->flags |= SRV_F_MAPPORTS;
-			}
-			else if (port1 != port2) {
-				/* port range */
-				ha_alert("parsing [%s:%d] : '%s %s' : port ranges are not allowed in '%s'\n",
-				      file, linenum, args[0], args[1], args[2]);
-				err_code |= ERR_ALERT | ERR_FATAL;
-				goto out;
 			}
 
 			/* save hostname and create associated name resolution */
@@ -3485,6 +3428,20 @@ void apply_server_state(void)
  */
 int update_server_addr(struct server *s, void *ip, int ip_sin_family, const char *updater)
 {
+	/* save the new IP family & address if necessary */
+	switch (ip_sin_family) {
+	case AF_INET:
+		if (s->addr.ss_family == ip_sin_family &&
+		    !memcmp(ip, &((struct sockaddr_in *)&s->addr)->sin_addr.s_addr, 4))
+			return 0;
+		break;
+	case AF_INET6:
+		if (s->addr.ss_family == ip_sin_family &&
+		    !memcmp(ip, &((struct sockaddr_in6 *)&s->addr)->sin6_addr.s6_addr, 16))
+			return 0;
+		break;
+	};
+
 	/* generates a log line and a warning on stderr */
 	if (1) {
 		/* book enough space for both IPv4 and IPv6 */
@@ -3501,6 +3458,9 @@ int update_server_addr(struct server *s, void *ip, int ip_sin_family, const char
 			break;
 		case AF_INET6:
 			inet_ntop(s->addr.ss_family, &((struct sockaddr_in6 *)&s->addr)->sin6_addr, oldip, INET6_ADDRSTRLEN);
+			break;
+		default:
+			strcpy(oldip, "(none)");
 			break;
 		};
 

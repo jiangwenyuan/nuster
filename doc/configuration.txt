@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.3
                              willy tarreau
-                              2020/08/14
+                              2020/09/25
 
 
 This document covers the configuration language as implemented in the version
@@ -1199,9 +1199,10 @@ nbthread <number>
   value is reported in the output of "haproxy -vv". See also "nbproc".
 
 pidfile <pidfile>
-  Writes PIDs of all daemons into file <pidfile>. This option is equivalent to
-  the "-p" command line argument. The file must be accessible to the user
-  starting the process. See also "daemon".
+  Writes PIDs of all daemons into file <pidfile> when daemon mode or writes PID
+  of master process into file <pidfile> when master-worker mode. This option is
+  equivalent to the "-p" command line argument. The file must be accessible to
+  the user starting the process. See also "daemon" and "master-worker".
 
 pp2-never-send-local
   A bug in the PROXY protocol v2 implementation was present in HAProxy up to
@@ -1372,7 +1373,8 @@ ssl-dh-param-file <file>
 
 ssl-load-extra-files <none|all|bundle|sctl|ocsp|issuer|key>*
   This setting alters the way HAProxy will look for unspecified files during
-  the loading of the SSL certificates.
+  the loading of the SSL certificates associated to "bind" lines. It does not
+  apply to certificates used for client authentication on "server" lines.
 
   By default, HAProxy discovers automatically a lot of files not specified in
   the configuration, and you may want to disable this behavior if you want to
@@ -1387,12 +1389,13 @@ ssl-load-extra-files <none|all|bundle|sctl|ocsp|issuer|key>*
 
   "bundle": When a file specified in the configuration does not exist, HAProxy
   will try to load a certificate bundle. This is done by looking for
-  <basename>.rsa, .ecdsa and .dsa. In the case of directories, HAProxy will
-  try to gather the files with the same basename in a multi-certificate bundle.
-  The bundles were introduced with OpenSSL 1.0.2 and were the only way back
-  then to load an ECDSA certificate and a RSA one, with the same SNI. Since
-  OpenSSL 1.1.1 it is not recommended anymore, you can specify both the ECDSA
-  and the RSA file on the bind line.
+  <basename>.rsa, .ecdsa and .dsa.
+  The multi-certificates bundles were introduced with OpenSSL 1.0.2 and were
+  the only way back then to serve an ECDSA certificate and a RSA one with the
+  same SNI. Since HAProxy 2.3 it does not use the OpenSSL bundle but it
+  loads every certificates separately to emulate this behavior. At least
+  OpenSSL 1.1.1 is required. It is recommended to specify all the certificates
+  in the configuration instead of using the bundle feature.
 
   "sctl": Try to load "<basename>.sctl" for each crt keyword.
 
@@ -2747,11 +2750,12 @@ haproxy will forward all received log messages to a log servers list.
 log-forward <name>
   Creates a new log forwarder proxy identified as <name>.
 
-bind <addr> [param*]
-  Used to configure a log udp listener to receive messages to forward.
-  Only udp listeners are allowed, address must be prefixed using
-  'udp@', 'udp4@' or 'udp6@'. This supports for all "bind" parameters
-  found in 5.1 paragraph but most of them are irrelevant for udp/syslog case.
+dgram-bind <addr> [param*]
+  Used to configure a UDP log listener to receive messages to forward. Only UDP
+  listeners are allowed. Addresses must be in IPv4 or IPv6 form,followed by a
+  port. This supports for some of the "bind" parameters found in 5.1 paragraph
+  among which "interface", "namespace" or "transparent", the other ones being
+  silently ignored as irrelevant for UDP/syslog case.
 
 log global
 log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
@@ -3206,6 +3210,11 @@ balance url_param <param> [check_post]
                   to be used to compute the hash. One level is counted for each
                   slash in the request. If both parameters are specified, the
                   evaluation stops when either is reached.
+
+                  A "path-only" parameter indicates that the hashing key starts
+                  at the first '/' of the path. This can be used to ignore the
+                  authority part of absolute URIs, and to make sure that HTTP/1
+                  and HTTP/2 URIs will provide the same hash.
 
       url_param   The URL parameter specified in argument will be looked up in
                   the query string of each HTTP GET request.
@@ -5548,8 +5557,9 @@ http-request replace-path <match-regex> <replace-fmt>
 
   This works like "replace-header" except that it works on the request's path
   component instead of a header. The path component starts at the first '/'
-  after an optional scheme+authority. It does contain the query string if any
-  is present. The replacement does not modify the scheme nor authority.
+  after an optional scheme+authority and ends before the question mark. Thus,
+  the replacement does not modify the scheme, the authority and the
+  query-string.
 
   It is worth noting that regular expressions may be more expensive to evaluate
   than certain ACLs, so rare replacements may benefit from a condition to avoid
@@ -5559,13 +5569,21 @@ http-request replace-path <match-regex> <replace-fmt>
     # prefix /foo : turn /bar?q=1 into /foo/bar?q=1 :
     http-request replace-path (.*) /foo\1
 
-    # suffix /foo : turn /bar?q=1 into /bar/foo?q=1 :
-    http-request replace-path ([^?]*)(\?(.*))? \1/foo\2
-
     # strip /foo : turn /foo/bar?q=1 into /bar?q=1
     http-request replace-path /foo/(.*) /\1
     # or more efficient if only some requests match :
     http-request replace-path /foo/(.*) /\1 if { url_beg /foo/ }
+
+http-request replace-pathq <match-regex> <replace-fmt>
+                           [ { if | unless } <condition> ]
+
+  This does the same as "http-request replace-path" except that the path
+  contains the query-string if any is present. Thus, the path and the
+  query-string are replaced.
+
+  Example:
+    # suffix /foo : turn /bar?q=1 into /bar/foo?q=1 :
+    http-request replace-pathq ([^?]*)(\?(.*))? \1/foo\2
 
 http-request replace-uri <match-regex> <replace-fmt>
                            [ { if | unless } <condition> ]
@@ -5819,6 +5837,12 @@ http-request set-path <fmt> [ { if | unless } <condition> ]
     Example :
       # prepend the host name before the path
       http-request set-path /%[hdr(host)]%[path]
+
+http-request set-pathq <fmt> [ { if | unless } <condition> ]
+
+  This does the same as "http-request set-path" except that the query-string is
+  also rewritten. It may be used to remove the query-string, including the
+  question mark (it is not possible using "http-request set-query").
 
 http-request set-priority-class <expr> [ { if | unless } <condition> ]
 
@@ -12494,15 +12518,20 @@ crt <cert>
   that support EC certificates to be able to use EC ciphers, while
   simultaneously supporting older, RSA only clients.
 
-  In order to provide this functionality, multiple PEM files, each with a
-  different key type, are required. To associate these PEM files into a
-  "cert bundle" that is recognized by haproxy, they must be named in the
-  following way: All PEM files that are to be bundled must have the same base
-  name, with a suffix indicating the key type. Currently, three suffixes are
-  supported: rsa, dsa and ecdsa. For example, if www.example.com has two PEM
-  files, an RSA file and an ECDSA file, they must be named: "example.pem.rsa"
-  and "example.pem.ecdsa". The first part of the filename is arbitrary; only the
-  suffix matters. To load this bundle into haproxy, specify the base name only:
+  In order to provide this feature, multiple PEM files, each with a different
+  key type, are required. Since HAProxy 2.3, at least OpenSSL 1.1.1 is
+  required to use this feature. It can be configured by adding each file in
+  the configuration, which is the recommended way, or by using a "cert
+  bundle".
+
+  To associate these PEM files into a "cert bundle" that is recognized by
+  haproxy, they must be named in the following way: All PEM files that are to
+  be bundled must have the same base name, with a suffix indicating the key
+  type. Currently, three suffixes are supported: rsa, dsa and ecdsa. For
+  example, if www.example.com has two PEM files, an RSA file and an ECDSA
+  file, they must be named: "example.pem.rsa" and "example.pem.ecdsa". The
+  first part of the filename is arbitrary; only the suffix matters. To load
+  this bundle into haproxy, specify the base name only:
 
   Example :  bind :8443 ssl crt example.pem
 
@@ -15132,6 +15161,13 @@ http_date([<offset],[<unit>])
   "s" for seconds (default behavior), "ms" for milliseconds, or "us" for
   microseconds since epoch. Offset is assumed to have the same unit as
   input timestamp.
+
+iif(<true>,<false>)
+  Returns the <true> string if the input value is true. Returns the <false>
+  string otherwise.
+
+  Example:
+    http-request set-header x-forwarded-proto %[ssl_fc,iif(https,http)]
 
 in_table(<table>)
   Uses the string representation of the input sample to perform a look up in
@@ -18099,6 +18135,14 @@ path : string
     path_len : length match
     path_reg : regex match
     path_sub : substring match
+
+pathq : string
+  This extracts the request's URL path with the query-string, which starts at
+  the first slash. This sample fetch is pretty handy to always retrieve a
+  relative URI, excluding the scheme and the authority part, if any. Indeed,
+  while it is the common representation for an HTTP/1.1 request target, in
+  HTTP/2, an absolute URI is often used. This sample fetch will return the same
+  result in both cases.
 
 query : string
   This extracts the request's query string, which starts after the first

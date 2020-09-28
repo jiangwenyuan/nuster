@@ -16,10 +16,6 @@
 #include <link.h>
 #endif
 
-#if (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 16))
-#include <sys/auxv.h>
-#endif
-
 #include <ctype.h>
 #include <errno.h>
 #include <netdb.h>
@@ -36,6 +32,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#if (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 16))
+#include <sys/auxv.h>
+#endif
+
 #include <import/eb32sctree.h>
 #include <import/eb32tree.h>
 
@@ -47,6 +47,7 @@
 #include <haproxy/hlua.h>
 #include <haproxy/listener.h>
 #include <haproxy/namespace.h>
+#include <haproxy/protocol.h>
 #include <haproxy/ssl_sock.h>
 #include <haproxy/stream_interface.h>
 #include <haproxy/task.h>
@@ -855,23 +856,33 @@ struct sockaddr_storage *str2ip2(const char *str, struct sockaddr_storage *sa, i
  *     that the caller will have to free(),
  *   - NULL if there was an explicit address that doesn't require resolution.
  *
- * Hostnames are only resolved if <resolve> is non-null. Note that if <resolve>
- * is null, <fqdn> is still honnored so it is possible for the caller to know
- * whether a resolution failed by setting <resolve> to null and checking if
- * <fqdn> was filled, indicating the need for a resolution.
+ * Hostnames are only resolved if <opts> has PA_O_RESOLVE. Otherwise <fqdn> is
+ * still honored so it is possible for the caller to know whether a resolution
+ * failed by clearing this flag and checking if <fqdn> was filled, indicating
+ * the need for a resolution.
  *
  * When a file descriptor is passed, its value is put into the s_addr part of
- * the address when cast to sockaddr_in and the address family is AF_UNSPEC.
+ * the address when cast to sockaddr_in and the address family is
+ * AF_CUST_EXISTING_FD.
+ *
+ * The matching protocol will be set into <proto> if non-null.
+ *
+ * Any known file descriptor is also assigned to <fd> if non-null, otherwise it
+ * is forced to -1.
  */
-struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int *high, char **err, const char *pfx, char **fqdn, int resolve)
+struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int *high, int *fd,
+                                      struct protocol **proto, char **err,
+                                      const char *pfx, char **fqdn, unsigned int opts)
 {
 	static THREAD_LOCAL struct sockaddr_storage ss;
 	struct sockaddr_storage *ret = NULL;
+	struct protocol *new_proto = NULL;
 	char *back, *str2;
 	char *port1, *port2;
 	int portl, porth, porta;
 	int abstract = 0;
-	int is_udp = 0;
+	int new_fd = -1;
+	int sock_type, ctrl_type;
 
 	portl = porth = porta = 0;
 	if (fqdn)
@@ -889,6 +900,21 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 	}
 
 	memset(&ss, 0, sizeof(ss));
+
+	/* prepare the default socket types */
+	if ((opts & (PA_O_STREAM|PA_O_DGRAM)) == PA_O_DGRAM)
+		sock_type = ctrl_type = SOCK_DGRAM;
+	else
+		sock_type = ctrl_type = SOCK_STREAM;
+
+	if (strncmp(str2, "stream+", 7) == 0) {
+		str2 += 7;
+		sock_type = ctrl_type = SOCK_STREAM;
+	}
+	else if (strncmp(str2, "dgram+", 6) == 0) {
+		str2 += 6;
+		sock_type = ctrl_type = SOCK_DGRAM;
+	}
 
 	if (strncmp(str2, "unix@", 5) == 0) {
 		str2 += 5;
@@ -911,17 +937,25 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 	else if (strncmp(str2, "udp4@", 5) == 0) {
 		str2 += 5;
 		ss.ss_family = AF_INET;
-		is_udp = 1;
+		sock_type = ctrl_type = SOCK_DGRAM;
 	}
 	else if (strncmp(str2, "udp6@", 5) == 0) {
 		str2 += 5;
 		ss.ss_family = AF_INET6;
-		is_udp = 1;
+		sock_type = ctrl_type = SOCK_DGRAM;
 	}
 	else if (strncmp(str2, "udp@", 4) == 0) {
 		str2 += 4;
 		ss.ss_family = AF_UNSPEC;
-		is_udp = 1;
+		sock_type = ctrl_type = SOCK_DGRAM;
+	}
+	else if (strncmp(str2, "fd@", 3) == 0) {
+		str2 += 3;
+		ss.ss_family = AF_CUST_EXISTING_FD;
+	}
+	else if (strncmp(str2, "sockpair@", 9) == 0) {
+		str2 += 9;
+		ss.ss_family = AF_CUST_SOCKPAIR;
 	}
 	else if (*str2 == '/') {
 		ss.ss_family = AF_UNIX;
@@ -929,36 +963,61 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 	else
 		ss.ss_family = AF_UNSPEC;
 
-	if (ss.ss_family == AF_UNSPEC && strncmp(str2, "sockpair@", 9) == 0) {
+	if (ss.ss_family == AF_CUST_SOCKPAIR) {
+		struct sockaddr_storage ss2;
+		socklen_t addr_len;
 		char *endptr;
 
-		str2 += 9;
-
-		((struct sockaddr_in *)&ss)->sin_addr.s_addr = strtol(str2, &endptr, 10);
-		((struct sockaddr_in *)&ss)->sin_port = 0;
-
-		if (!*str2 || *endptr) {
+		new_fd = strtol(str2, &endptr, 10);
+		if (!*str2 || new_fd < 0 || *endptr) {
 			memprintf(err, "file descriptor '%s' is not a valid integer in '%s'\n", str2, str);
 			goto out;
 		}
 
-		ss.ss_family = AF_CUST_SOCKPAIR;
+		/* just verify that it's a socket */
+		addr_len = sizeof(ss2);
+		if (getsockname(new_fd, (struct sockaddr *)&ss2, &addr_len) == -1) {
+			memprintf(err, "cannot use file descriptor '%d' : %s.\n", new_fd, strerror(errno));
+			goto out;
+		}
 
+		((struct sockaddr_in *)&ss)->sin_addr.s_addr = new_fd;
+		((struct sockaddr_in *)&ss)->sin_port = 0;
 	}
-	else if (ss.ss_family == AF_UNSPEC && strncmp(str2, "fd@", 3) == 0) {
+	else if (ss.ss_family == AF_CUST_EXISTING_FD) {
 		char *endptr;
 
-		str2 += 3;
-		((struct sockaddr_in *)&ss)->sin_addr.s_addr = strtol(str2, &endptr, 10);
-		((struct sockaddr_in *)&ss)->sin_port = 0;
-
-		if (!*str2 || *endptr) {
+		new_fd = strtol(str2, &endptr, 10);
+		if (!*str2 || new_fd < 0 || *endptr) {
 			memprintf(err, "file descriptor '%s' is not a valid integer in '%s'\n", str2, str);
 			goto out;
 		}
 
-		/* we return AF_UNSPEC if we use a file descriptor number */
-		ss.ss_family = AF_UNSPEC;
+		if (opts & PA_O_SOCKET_FD) {
+			socklen_t addr_len;
+			int type;
+
+			addr_len = sizeof(ss);
+			if (getsockname(new_fd, (struct sockaddr *)&ss, &addr_len) == -1) {
+				memprintf(err, "cannot use file descriptor '%d' : %s.\n", new_fd, strerror(errno));
+				goto out;
+			}
+
+			addr_len = sizeof(type);
+			if (getsockopt(new_fd, SOL_SOCKET, SO_TYPE, &type, &addr_len) != 0 ||
+			    (type == SOCK_STREAM) != (sock_type == SOCK_STREAM)) {
+				memprintf(err, "socket on file descriptor '%d' is of the wrong type.\n", new_fd);
+				goto out;
+			}
+
+			porta = portl = porth = get_host_port(&ss);
+		} else if (opts & PA_O_RAW_FD) {
+			((struct sockaddr_in *)&ss)->sin_addr.s_addr = new_fd;
+			((struct sockaddr_in *)&ss)->sin_port = 0;
+		} else {
+			memprintf(err, "a file descriptor is not acceptable here in '%s'\n", str);
+			goto out;
+		}
 	}
 	else if (ss.ss_family == AF_UNIX) {
 		struct sockaddr_un *un = (struct sockaddr_un *)&ss;
@@ -999,6 +1058,10 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 			/* Found a colon before a closing-bracket, must be a port separator.
 			 * This guarantee backward compatibility.
 			 */
+			if (!(opts & PA_O_PORT_OK)) {
+				memprintf(err, "port specification not permitted here in '%s'", str);
+				goto out;
+			}
 			*chr++ = '\0';
 			port1 = chr;
 		}
@@ -1007,24 +1070,57 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 			 * or directly ending with a closing-bracket.
 			 * However, no port.
 			 */
+			if (opts & PA_O_PORT_MAND) {
+				memprintf(err, "missing port specification in '%s'", str);
+				goto out;
+			}
 			port1 = "";
 		}
 
 		if (isdigit((unsigned char)*port1)) {	/* single port or range */
 			port2 = strchr(port1, '-');
-			if (port2)
+			if (port2) {
+				if (!(opts & PA_O_PORT_RANGE)) {
+					memprintf(err, "port range not permitted here in '%s'", str);
+					goto out;
+				}
 				*port2++ = '\0';
+			}
 			else
 				port2 = port1;
 			portl = atoi(port1);
 			porth = atoi(port2);
+
+			if (portl < !!(opts & PA_O_PORT_MAND) || portl > 65535) {
+				memprintf(err, "invalid port '%s'", port1);
+				goto out;
+			}
+
+			if (porth < !!(opts & PA_O_PORT_MAND) || porth > 65535) {
+				memprintf(err, "invalid port '%s'", port2);
+				goto out;
+			}
+
+			if (portl > porth) {
+				memprintf(err, "invalid port range '%d-%d'", portl, porth);
+				goto out;
+			}
+
 			porta = portl;
 		}
 		else if (*port1 == '-') { /* negative offset */
+			if (!(opts & PA_O_PORT_OFS)) {
+				memprintf(err, "port offset not permitted here in '%s'", str);
+				goto out;
+			}
 			portl = atoi(port1 + 1);
 			porta = -portl;
 		}
 		else if (*port1 == '+') { /* positive offset */
+			if (!(opts & PA_O_PORT_OFS)) {
+				memprintf(err, "port offset not permitted here in '%s'", str);
+				goto out;
+			}
 			porth = atoi(port1 + 1);
 			porta = porth;
 		}
@@ -1032,15 +1128,19 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 			memprintf(err, "invalid character '%c' in port number '%s' in '%s'\n", *port1, port1, str);
 			goto out;
 		}
+		else if (opts & PA_O_PORT_MAND) {
+			memprintf(err, "missing port specification in '%s'", str);
+			goto out;
+		}
 
 		/* first try to parse the IP without resolving. If it fails, it
 		 * tells us we need to keep a copy of the FQDN to resolve later
 		 * and to enable DNS. In this case we can proceed if <fqdn> is
-		 * set or if resolve is set, otherwise it's an error.
+		 * set or if PA_O_RESOLVE is set, otherwise it's an error.
 		 */
 		if (str2ip2(str2, &ss, 0) == NULL) {
-			if ((!resolve && !fqdn) ||
-				 (resolve && str2ip2(str2, &ss, 1) == NULL)) {
+			if ((!(opts & PA_O_RESOLVE) && !fqdn) ||
+			    ((opts & PA_O_RESOLVE) && str2ip2(str2, &ss, 1) == NULL)) {
 				memprintf(err, "invalid address: '%s' in '%s'\n", str2, str);
 				goto out;
 			}
@@ -1053,13 +1153,36 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 			}
 		}
 		set_host_port(&ss, porta);
-		if (is_udp) {
-			if (ss.ss_family == AF_INET6)
-				ss.ss_family = AF_CUST_UDP6;
-			else
-				ss.ss_family = AF_CUST_UDP4;
+	}
+
+	if (ctrl_type == SOCK_STREAM && !(opts & PA_O_STREAM)) {
+		memprintf(err, "stream-type socket not acceptable in '%s'\n", str);
+		goto out;
+	}
+	else if (ctrl_type == SOCK_DGRAM && !(opts & PA_O_DGRAM)) {
+		memprintf(err, "dgram-type socket not acceptable in '%s'\n", str);
+		goto out;
+	}
+
+	if (proto || (opts & PA_O_CONNECT)) {
+		/* Note: if the caller asks for a proto, we must find one,
+		 * except if we return with an fqdn that will resolve later,
+		 * in which case the address is not known yet (this is only
+		 * for servers actually).
+		 */
+		new_proto = protocol_lookup(ss.ss_family,
+					    sock_type == SOCK_DGRAM,
+					    ctrl_type == SOCK_DGRAM);
+
+		if (!new_proto && (!fqdn || !*fqdn)) {
+			memprintf(err, "unsupported protocol family %d for address '%s'", ss.ss_family, str);
+			goto out;
 		}
 
+		if ((opts & PA_O_CONNECT) && new_proto && !new_proto->connect) {
+			memprintf(err, "connect() not supported for this protocol family %d used by address '%s'", ss.ss_family, str);
+			goto out;
+		}
 	}
 
 	ret = &ss;
@@ -1070,6 +1193,10 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 		*low = portl;
 	if (high)
 		*high = porth;
+	if (fd)
+		*fd = new_fd;
+	if (proto)
+		*proto = new_proto;
 	free(back);
 	return ret;
 }
@@ -2236,7 +2363,7 @@ int parse_binary(const char *source, char **binstr, int *binstrlen, char **err)
 	len = len >> 1;
 
 	if (!*binstr) {
-		*binstr = calloc(len, sizeof(char));
+		*binstr = calloc(len, sizeof(**binstr));
 		if (!*binstr) {
 			memprintf(err, "out of memory while loading string pattern");
 			return 0;

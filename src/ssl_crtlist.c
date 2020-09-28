@@ -61,6 +61,79 @@ void ssl_sock_free_ssl_conf(struct ssl_bind_conf *conf)
 	}
 }
 
+/*
+ * Allocate and copy a ssl_bind_conf structure
+ */
+struct ssl_bind_conf *crtlist_dup_ssl_conf(struct ssl_bind_conf *src)
+{
+	struct ssl_bind_conf *dst;
+
+	if (!src)
+		return NULL;
+
+	dst = calloc(1, sizeof(*dst));
+	if (!dst)
+		return NULL;
+
+#if defined(OPENSSL_NPN_NEGOTIATED) && !defined(OPENSSL_NO_NEXTPROTONEG)
+	if (src->npn_str) {
+		dst->npn_str = strdup(src->npn_str);
+		if (!dst->npn_str)
+			goto error;
+	}
+#endif
+#ifdef TLSEXT_TYPE_application_layer_protocol_negotiation
+	if (src->alpn_str) {
+		dst->alpn_str = strdup(src->alpn_str);
+		if (!dst->alpn_str)
+			goto error;
+	}
+#endif
+	if (src->ca_file) {
+		dst->ca_file = strdup(src->ca_file);
+		if (!dst->ca_file)
+			goto error;
+	}
+	if (src->ca_verify_file) {
+		dst->ca_verify_file = strdup(src->ca_verify_file);
+		if (!dst->ca_verify_file)
+			goto error;
+	}
+	if (src->crl_file) {
+		dst->crl_file = strdup(src->crl_file);
+		if (!dst->crl_file)
+			goto error;
+	}
+	if (src->ciphers) {
+		dst->ciphers = strdup(src->ciphers);
+		if (!dst->ciphers)
+			goto error;
+	}
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	if (src->ciphersuites) {
+		dst->ciphersuites = strdup(src->ciphersuites);
+		if (!dst->ciphersuites)
+			goto error;
+	}
+#endif
+	if (src->curves) {
+		dst->curves = strdup(src->curves);
+		if (!dst->curves)
+			goto error;
+	}
+	if (src->ecdhe) {
+		dst->ecdhe = strdup(src->ecdhe);
+		if (!dst->ecdhe)
+			goto error;
+	}
+	return dst;
+
+error:
+	ssl_sock_free_ssl_conf(dst);
+	free(dst);
+
+	return NULL;
+}
 
 /* free sni filters */
 void crtlist_free_filters(char **args)
@@ -122,6 +195,45 @@ void crtlist_entry_free(struct crtlist_entry *entry)
 		ckch_inst_free(inst);
 	}
 	free(entry);
+}
+/*
+ * Duplicate a crt_list entry and its content (ssl_conf, filters/fcount)
+ * Return a pointer to the new entry
+ */
+struct crtlist_entry *crtlist_entry_dup(struct crtlist_entry *src)
+{
+	struct crtlist_entry *entry;
+
+	if (src == NULL)
+		return NULL;
+
+	entry = crtlist_entry_new();
+	if (entry == NULL)
+		return NULL;
+
+	if (src->filters) {
+		entry->filters = crtlist_dup_filters(src->filters, src->fcount);
+		if (!entry->filters)
+			goto error;
+	}
+	entry->fcount = src->fcount;
+	if (src->ssl_conf) {
+		entry->ssl_conf = crtlist_dup_ssl_conf(src->ssl_conf);
+		if (!entry->ssl_conf)
+			goto error;
+	}
+	entry->crtlist = src->crtlist;
+
+	return entry;
+
+error:
+
+	crtlist_free_filters(entry->filters);
+	ssl_sock_free_ssl_conf(entry->ssl_conf);
+	free(entry->ssl_conf);
+	free(entry);
+
+	return NULL;
 }
 
 /*
@@ -380,8 +492,8 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 			cfgerr |= ERR_ALERT | ERR_FATAL;
 			goto error;
 		}
-
-		*(end - 1) = '\0'; /* line parser mustn't receive any \n */
+		if (*(end - 1) == '\n')
+			*(end - 1) = '\0'; /* line parser mustn't receive any \n */
 		cfgerr |= crtlist_parse_line(thisline, &crt_path, entry, file, linenum, err);
 		if (cfgerr)
 			goto error;
@@ -407,22 +519,71 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 		/* Look for a ckch_store or create one */
 		ckchs = ckchs_lookup(crt_path);
 		if (ckchs == NULL) {
-			if (stat(crt_path, &buf) == 0)
-				ckchs = ckchs_load_cert_file(crt_path, 0,  err);
-			else
-				ckchs = ckchs_load_cert_file(crt_path, 1,  err);
-		}
-		if (ckchs == NULL)
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+			if (stat(crt_path, &buf) == 0) {
 
+				ckchs = ckchs_load_cert_file(crt_path, err);
+				if (ckchs == NULL) {
+					cfgerr |= ERR_ALERT | ERR_FATAL;
+					goto error;
+				}
+
+				entry->node.key = ckchs;
+				entry->crtlist = newlist;
+				ebpt_insert(&newlist->entries, &entry->node);
+				LIST_ADDQ(&newlist->ord_entries, &entry->by_crtlist);
+				LIST_ADDQ(&ckchs->crtlist_entry, &entry->by_ckch_store);
+
+			} else {
+				/* If we didn't find the file, this could be a
+				bundle, since 2.3 we don't support OpenSSL
+				multi-certificate bundle, so we emulate it by
+				loading each file separately. To do so we need
+				to duplicate the entry in the crt-list because
+				it becomes independent */
+				char fp[MAXPATHLEN+1] = {0};
+				int n = 0;
+				struct crtlist_entry *entry_dup = entry; /* use the previous created entry */
+				for (n = 0; n < SSL_SOCK_NUM_KEYTYPES; n++) {
+					struct stat buf;
+					int ret;
+
+					ret = snprintf(fp, sizeof(fp), "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
+					if (ret > sizeof(fp))
+						continue;
+
+					ckchs = ckchs_lookup(fp);
+					if (!ckchs && stat(fp, &buf) == 0) {
+
+						ckchs = ckchs_load_cert_file(fp, err);
+						if (ckchs == NULL) {
+							cfgerr |= ERR_ALERT | ERR_FATAL;
+							goto error;
+						}
+
+						linenum++; /* we duplicate the line for this entry in the bundle */
+						if (!entry_dup) { /* if the entry was used, duplicate one */
+							linenum++;
+							entry_dup = crtlist_entry_dup(entry);
+							if (!entry_dup) {
+								cfgerr |= ERR_ALERT | ERR_FATAL;
+								goto error;
+							}
+							entry_dup->linenum = linenum;
+						}
+
+						entry_dup->node.key = ckchs;
+						entry_dup->crtlist = newlist;
+						ebpt_insert(&newlist->entries, &entry_dup->node);
+						LIST_ADDQ(&newlist->ord_entries, &entry_dup->by_crtlist);
+						LIST_ADDQ(&ckchs->crtlist_entry, &entry_dup->by_ckch_store);
+
+						entry_dup = NULL; /* the entry was used, we need a new one next round */
+					}
+				}
+			}
+		}
 		if (cfgerr & ERR_CODE)
 			goto error;
-
-		entry->node.key = ckchs;
-		entry->crtlist = newlist;
-		ebpt_insert(&newlist->entries, &entry->node);
-		LIST_ADDQ(&newlist->ord_entries, &entry->by_crtlist);
-		LIST_ADDQ(&ckchs->crtlist_entry, &entry->by_ckch_store);
 
 		entry = NULL;
 	}
@@ -458,10 +619,6 @@ int crtlist_load_cert_dir(char *path, struct bind_conf *bind_conf, struct crtlis
 	char fp[MAXPATHLEN+1];
 	int cfgerr = 0;
 	struct ckch_store *ckchs;
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-	int is_bundle;
-	int j;
-#endif
 
 	dir = crtlist_new(path, 1);
 	if (dir == NULL) {
@@ -501,59 +658,9 @@ int crtlist_load_cert_dir(char *path, struct bind_conf *bind_conf, struct crtlis
 				goto ignore_entry;
 			}
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL
-			is_bundle = 0;
-			/* Check if current entry in directory is part of a multi-cert bundle */
-
-			if ((global_ssl.extra_files & SSL_GF_BUNDLE) && end) {
-				for (j = 0; j < SSL_SOCK_NUM_KEYTYPES; j++) {
-					if (!strcmp(end + 1, SSL_SOCK_KEYTYPE_NAMES[j])) {
-						is_bundle = 1;
-						break;
-					}
-				}
-
-				if (is_bundle) {
-					int dp_len;
-
-					dp_len = end - de->d_name;
-
-					/* increment i and free de until we get to a non-bundle cert
-					 * Note here that we look at de_list[i + 1] before freeing de
-					 * this is important since ignore_entry will free de. This also
-					 * guarantees that de->d_name continues to hold the same prefix.
-					 */
-					while (i + 1 < n && !strncmp(de_list[i + 1]->d_name, de->d_name, dp_len)) {
-						free(de);
-						i++;
-						de = de_list[i];
-					}
-
-					snprintf(fp, sizeof(fp), "%s/%.*s", path, dp_len, de->d_name);
-					ckchs = ckchs_lookup(fp);
-					if (ckchs == NULL)
-						ckchs = ckchs_load_cert_file(fp, 1,  err);
-					if (ckchs == NULL) {
-						free(de);
-						free(entry);
-						cfgerr |= ERR_ALERT | ERR_FATAL;
-						goto end;
-					}
-					entry->node.key = ckchs;
-					entry->crtlist = dir;
-					LIST_ADDQ(&ckchs->crtlist_entry, &entry->by_ckch_store);
-					LIST_ADDQ(&dir->ord_entries, &entry->by_crtlist);
-					ebpt_insert(&dir->entries, &entry->node);
-
-					/* Successfully processed the bundle */
-					goto ignore_entry;
-				}
-			}
-
-#endif
 			ckchs = ckchs_lookup(fp);
 			if (ckchs == NULL)
-				ckchs = ckchs_load_cert_file(fp, 0,  err);
+				ckchs = ckchs_load_cert_file(fp, err);
 			if (ckchs == NULL) {
 				free(de);
 				free(entry);
@@ -1109,10 +1216,6 @@ static int cli_parse_add_crtlist(char **args, char *payload, struct appctx *appc
 		memprintf(&err, "certificate '%s' does not exist!", cert_path);
 		goto error;
 	}
-	if (store->multi) {
-		memprintf(&err, "certificate '%s' is a bundle. You can disable the bundle merging with the directive 'ssl-load-extra-files' in the global section.", cert_path);
-		goto error;
-	}
 	if (store->ckch == NULL || store->ckch->cert == NULL) {
 		memprintf(&err, "certificate '%s' is empty!", cert_path);
 		goto error;
@@ -1205,10 +1308,6 @@ static int cli_parse_del_crtlist(char **args, char *payload, struct appctx *appc
 	store = ckchs_lookup(cert_path);
 	if (store == NULL) {
 		memprintf(&err, "certificate '%s' does not exist!", cert_path);
-		goto error;
-	}
-	if (store->multi) {
-		memprintf(&err, "certificate '%s' is a bundle. You can disable the bundle merging with the directive 'ssl-load-extra-files' in the global section.", cert_path);
 		goto error;
 	}
 	if (store->ckch == NULL || store->ckch->cert == NULL) {

@@ -44,8 +44,6 @@ static struct bind_kw_list bind_keywords = {
 	.list = LIST_HEAD_INIT(bind_keywords.list)
 };
 
-struct xfer_sock_list *xfer_sock_list = NULL;
-
 /* there is one listener queue per thread so that a thread unblocking the
  * global queue can wake up listeners bound only to foreign threads by
  * moving them to the remote queues and waking up the associated tasklet.
@@ -237,7 +235,7 @@ static void enable_listener(struct listener *listener)
 	HA_SPIN_LOCK(LISTENER_LOCK, &listener->lock);
 	if (listener->state == LI_LISTEN) {
 		if ((global.mode & (MODE_DAEMON | MODE_MWORKER)) &&
-		    !(proc_mask(listener->bind_conf->bind_proc) & pid_bit)) {
+		    !(proc_mask(listener->rx.settings->bind_proc) & pid_bit)) {
 			/* we don't want to enable this listener and don't
 			 * want any fd event to reach it.
 			 */
@@ -249,7 +247,7 @@ static void enable_listener(struct listener *listener)
 			}
 		}
 		else if (!listener->maxconn || listener->nbconn < listener->maxconn) {
-			fd_want_recv(listener->fd);
+			fd_want_recv(listener->rx.fd);
 			listener->state = LI_READY;
 		}
 		else {
@@ -275,7 +273,7 @@ static void disable_listener(struct listener *listener)
 	if (listener->state < LI_READY)
 		goto end;
 	if (listener->state == LI_READY)
-		fd_stop_recv(listener->fd);
+		fd_stop_recv(listener->rx.fd);
 	MT_LIST_DEL(&listener->wait_queue);
 	listener->state = LI_LISTEN;
   end:
@@ -298,11 +296,15 @@ int pause_listener(struct listener *l)
 	if (l->state <= LI_ZOMBIE)
 		goto end;
 
-	if (l->proto->pause) {
+	if ((global.mode & (MODE_DAEMON | MODE_MWORKER)) &&
+	    !(proc_mask(l->rx.settings->bind_proc) & pid_bit))
+		goto end;
+
+	if (l->rx.proto->pause) {
 		/* Returns < 0 in case of failure, 0 if the listener
 		 * was totally stopped, or > 0 if correctly paused.
 		 */
-		int ret = l->proto->pause(l);
+		int ret = l->rx.proto->pause(l);
 
 		if (ret < 0) {
 			ret = 0;
@@ -314,7 +316,7 @@ int pause_listener(struct listener *l)
 
 	MT_LIST_DEL(&l->wait_queue);
 
-	fd_stop_recv(l->fd);
+	fd_stop_recv(l->rx.fd);
 	l->state = LI_PAUSED;
   end:
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
@@ -344,14 +346,14 @@ int resume_listener(struct listener *l)
 		goto end;
 
 	if ((global.mode & (MODE_DAEMON | MODE_MWORKER)) &&
-	    !(proc_mask(l->bind_conf->bind_proc) & pid_bit))
+	    !(proc_mask(l->rx.settings->bind_proc) & pid_bit))
 		goto end;
 
 	if (l->state == LI_ASSIGNED) {
 		char msg[100];
 		int err;
 
-		err = l->proto->bind(l, msg, sizeof(msg));
+		err = l->rx.proto->listen(l, msg, sizeof(msg));
 		if (err & ERR_ALERT)
 			ha_alert("Resuming listener: %s\n", msg);
 		else if (err & ERR_WARN)
@@ -368,9 +370,9 @@ int resume_listener(struct listener *l)
 		goto end;
 	}
 
-	if (l->proto->sock_prot == IPPROTO_TCP &&
+	if (l->rx.proto->sock_prot == IPPROTO_TCP &&
 	    l->state == LI_PAUSED &&
-	    listen(l->fd, listener_backlog(l)) != 0) {
+	    listen(l->rx.fd, listener_backlog(l)) != 0) {
 		ret = 0;
 		goto end;
 	}
@@ -385,16 +387,16 @@ int resume_listener(struct listener *l)
 		goto end;
 	}
 
-	if (!(thread_mask(l->bind_conf->bind_thread) & tid_bit)) {
+	if (!(thread_mask(l->rx.settings->bind_thread) & tid_bit)) {
 		/* we're not allowed to touch this listener's FD, let's requeue
 		 * the listener into one of its owning thread's queue instead.
 		 */
-		int first_thread = my_flsl(thread_mask(l->bind_conf->bind_thread) & all_threads_mask) - 1;
+		int first_thread = my_flsl(thread_mask(l->rx.settings->bind_thread) & all_threads_mask) - 1;
 		work_list_add(&local_listener_queue[first_thread], &l->wait_queue);
 		goto end;
 	}
 
-	fd_want_recv(l->fd);
+	fd_want_recv(l->rx.fd);
 	l->state = LI_READY;
   end:
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
@@ -410,7 +412,7 @@ static void listener_full(struct listener *l)
 	if (l->state >= LI_READY) {
 		MT_LIST_DEL(&l->wait_queue);
 		if (l->state != LI_FULL) {
-			fd_stop_recv(l->fd);
+			fd_stop_recv(l->rx.fd);
 			l->state = LI_FULL;
 		}
 	}
@@ -425,7 +427,7 @@ static void limit_listener(struct listener *l, struct mt_list *list)
 	HA_SPIN_LOCK(LISTENER_LOCK, &l->lock);
 	if (l->state == LI_READY) {
 		MT_LIST_TRY_ADDQ(list, &l->wait_queue);
-		fd_stop_recv(l->fd);
+		fd_stop_recv(l->rx.fd);
 		l->state = LI_LIMITED;
 	}
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
@@ -444,7 +446,7 @@ int enable_all_listeners(struct protocol *proto)
 {
 	struct listener *listener;
 
-	list_for_each_entry(listener, &proto->listeners, proto_list)
+	list_for_each_entry(listener, &proto->listeners, rx.proto_list)
 		enable_listener(listener);
 	return ERR_NONE;
 }
@@ -461,7 +463,7 @@ int disable_all_listeners(struct protocol *proto)
 {
 	struct listener *listener;
 
-	list_for_each_entry(listener, &proto->listeners, proto_list)
+	list_for_each_entry(listener, &proto->listeners, rx.proto_list)
 		disable_listener(listener);
 	return ERR_NONE;
 }
@@ -498,18 +500,18 @@ void dequeue_proxy_listeners(struct proxy *px)
 void do_unbind_listener(struct listener *listener, int do_close)
 {
 	if (listener->state == LI_READY && fd_updt)
-		fd_stop_recv(listener->fd);
+		fd_stop_recv(listener->rx.fd);
 
 	MT_LIST_DEL(&listener->wait_queue);
 
 	if (listener->state >= LI_PAUSED) {
-		if (do_close) {
-			fd_delete(listener->fd);
-			listener->fd = -1;
-		}
-		else
-			fd_remove(listener->fd);
 		listener->state = LI_ASSIGNED;
+		fd_stop_both(listener->rx.fd);
+		if (do_close) {
+			fd_delete(listener->rx.fd);
+			listener->rx.flags &= ~RX_F_BOUND;
+			listener->rx.fd = -1;
+		}
 	}
 }
 
@@ -535,42 +537,18 @@ void unbind_listener_no_close(struct listener *listener)
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &listener->lock);
 }
 
-/* This function closes all listening sockets bound to the protocol <proto>,
- * and the listeners end in LI_ASSIGNED state if they were higher. It does not
- * detach them from the protocol. It always returns ERR_NONE.
- *
- * Must be called with proto_lock held.
- *
- */
-int unbind_all_listeners(struct protocol *proto)
-{
-	struct listener *listener;
-
-	list_for_each_entry(listener, &proto->listeners, proto_list)
-		unbind_listener(listener);
-	return ERR_NONE;
-}
-
 /* creates one or multiple listeners for bind_conf <bc> on sockaddr <ss> on port
  * range <portl> to <porth>, and possibly attached to fd <fd> (or -1 for auto
- * allocation). The address family is taken from ss->ss_family. The number of
- * jobs and listeners is automatically increased by the number of listeners
- * created. If the <inherited> argument is set to 1, it specifies that the FD
- * was obtained from a parent process.
- * It returns non-zero on success, zero on error with the error message
- * set in <err>.
+ * allocation). The address family is taken from ss->ss_family, and the protocol
+ * passed in <proto> must be usable on this family. The number of jobs and
+ * listeners is automatically increased by the number of listeners created. It
+ * returns non-zero on success, zero on error with the error message set in <err>.
  */
 int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
-                     int portl, int porth, int fd, int inherited, char **err)
+                     int portl, int porth, int fd, struct protocol *proto, char **err)
 {
-	struct protocol *proto = protocol_by_family(ss->ss_family);
 	struct listener *l;
 	int port;
-
-	if (!proto) {
-		memprintf(err, "unsupported protocol family %d", ss->ss_family);
-		return 0;
-	}
 
 	for (port = portl; port <= porth; port++) {
 		l = calloc(1, sizeof(*l));
@@ -582,16 +560,17 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		LIST_ADDQ(&bc->frontend->conf.listeners, &l->by_fe);
 		LIST_ADDQ(&bc->listeners, &l->by_bind);
 		l->bind_conf = bc;
-
-		l->fd = fd;
-		memcpy(&l->addr, ss, sizeof(*ss));
+		l->rx.settings = &bc->settings;
+		l->rx.owner = l;
+		l->rx.fd = fd;
+		memcpy(&l->rx.addr, ss, sizeof(*ss));
 		MT_LIST_INIT(&l->wait_queue);
 		l->state = LI_INIT;
 
 		proto->add(l, port);
 
-		if (inherited)
-			l->options |= LI_O_INHERITED;
+		if (fd != -1)
+			l->rx.flags |= RX_F_INHERITED;
 
 		HA_SPIN_INIT(&l->lock);
 		_HA_ATOMIC_ADD(&jobs, 1);
@@ -615,8 +594,8 @@ void delete_listener(struct listener *listener)
 	HA_SPIN_LOCK(LISTENER_LOCK, &listener->lock);
 	if (listener->state == LI_ASSIGNED) {
 		listener->state = LI_INIT;
-		LIST_DEL(&listener->proto_list);
-		listener->proto->nb_listeners--;
+		LIST_DEL(&listener->rx.proto_list);
+		listener->rx.proto->nb_listeners--;
 		_HA_ATOMIC_SUB(&jobs, 1);
 		_HA_ATOMIC_SUB(&listeners, 1);
 	}
@@ -784,7 +763,7 @@ void listener_accept(int fd)
 		}
 
 		/* with sockpair@ we don't want to do an accept */
-		if (unlikely(l->addr.ss_family == AF_CUST_SOCKPAIR)) {
+		if (unlikely(l->rx.addr.ss_family == AF_CUST_SOCKPAIR)) {
 			if ((cfd = recv_fd_uxst(fd)) != -1)
 				fcntl(cfd, F_SETFL, O_NONBLOCK);
 			/* just like with UNIX sockets, only the family is filled */
@@ -893,7 +872,7 @@ void listener_accept(int fd)
 		next_actconn = 0;
 
 #if defined(USE_THREAD)
-		mask = thread_mask(l->bind_conf->bind_thread) & all_threads_mask;
+		mask = thread_mask(l->rx.settings->bind_thread) & all_threads_mask;
 		if (atleast2(mask) && (global.tune.options & GTUNE_LISTENER_MQ) && !stopping) {
 			struct accept_queue_ring *ring;
 			unsigned int t, t0, t1, t2;
@@ -1078,7 +1057,7 @@ void listener_accept(int fd)
 		else
 			fd_done_recv(fd);
 	} else if (l->state > LI_ASSIGNED) {
-		fd_stop_recv(l->fd);
+		fd_stop_recv(l->rx.fd);
 	}
 	HA_SPIN_UNLOCK(LISTENER_LOCK, &l->lock);
 	return;
@@ -1491,8 +1470,8 @@ static int bind_parse_process(char **args, int cur_arg, struct proxy *px, struct
 		*slash = '/';
 	}
 
-	conf->bind_proc |= proc;
-	conf->bind_thread |= thread;
+	conf->settings.bind_proc |= proc;
+	conf->settings.bind_thread |= thread;
 	return 0;
 }
 

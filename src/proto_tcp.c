@@ -10,11 +10,6 @@
  *
  */
 
-/* this is to have tcp_info defined on systems using musl
- * library, such as Alpine Linux
- */
-#define _GNU_SOURCE
-
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -30,15 +25,12 @@
 #include <netinet/tcp.h>
 #include <netinet/in.h>
 
-#include <haproxy/action-t.h>
 #include <haproxy/api.h>
 #include <haproxy/arg.h>
-#include <haproxy/channel.h>
 #include <haproxy/connection.h>
 #include <haproxy/errors.h>
 #include <haproxy/fd.h>
 #include <haproxy/global.h>
-#include <haproxy/http_rules.h>
 #include <haproxy/list.h>
 #include <haproxy/listener.h>
 #include <haproxy/log.h>
@@ -47,14 +39,11 @@
 #include <haproxy/proto_tcp.h>
 #include <haproxy/protocol.h>
 #include <haproxy/proxy-t.h>
-#include <haproxy/sample.h>
-#include <haproxy/server.h>
-#include <haproxy/stream-t.h>
-#include <haproxy/tcp_rules.h>
+#include <haproxy/sock.h>
+#include <haproxy/sock_inet.h>
 #include <haproxy/tools.h>
 
 
-static int tcp_bind_listeners(struct protocol *proto, char *errmsg, int errlen);
 static int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static void tcpv4_add_listener(struct listener *listener, int port);
 static void tcpv6_add_listener(struct listener *listener, int port);
@@ -62,20 +51,15 @@ static void tcpv6_add_listener(struct listener *listener, int port);
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_tcpv4 = {
 	.name = "tcpv4",
+	.fam = &proto_fam_inet4,
+	.ctrl_type = SOCK_STREAM,
 	.sock_domain = AF_INET,
 	.sock_type = SOCK_STREAM,
 	.sock_prot = IPPROTO_TCP,
-	.sock_family = AF_INET,
-	.sock_addrlen = sizeof(struct sockaddr_in),
-	.l3_addrlen = 32/8,
 	.accept = &listener_accept,
 	.connect = tcp_connect_server,
-	.bind = tcp_bind_listener,
-	.bind_all = tcp_bind_listeners,
-	.unbind_all = unbind_all_listeners,
+	.listen = tcp_bind_listener,
 	.enable_all = enable_all_listeners,
-	.get_src = tcp_get_src,
-	.get_dst = tcp_get_dst,
 	.pause = tcp_pause_listener,
 	.add = tcpv4_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_tcpv4.listeners),
@@ -87,20 +71,15 @@ INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv4);
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_tcpv6 = {
 	.name = "tcpv6",
+	.fam = &proto_fam_inet6,
+	.ctrl_type = SOCK_STREAM,
 	.sock_domain = AF_INET6,
 	.sock_type = SOCK_STREAM,
 	.sock_prot = IPPROTO_TCP,
-	.sock_family = AF_INET6,
-	.sock_addrlen = sizeof(struct sockaddr_in6),
-	.l3_addrlen = 128/8,
 	.accept = &listener_accept,
 	.connect = tcp_connect_server,
-	.bind = tcp_bind_listener,
-	.bind_all = tcp_bind_listeners,
-	.unbind_all = unbind_all_listeners,
+	.listen = tcp_bind_listener,
 	.enable_all = enable_all_listeners,
-	.get_src = tcp_get_src,
-	.get_dst = tcp_get_dst,
 	.pause = tcp_pause_listener,
 	.add = tcpv6_add_listener,
 	.listeners = LIST_HEAD_INIT(proto_tcpv6.listeners),
@@ -108,12 +87,6 @@ static struct protocol proto_tcpv6 = {
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv6);
-
-/* Default TCP parameters, got by opening a temporary TCP socket. */
-#ifdef TCP_MAXSEG
-static THREAD_LOCAL int default_tcp_maxseg = -1;
-static THREAD_LOCAL int default_tcp6_maxseg = -1;
-#endif
 
 /* Binds ipv4/ipv6 address <local> to socket <fd>, unless <flags> is set, in which
  * case we try to bind <remote>. <flags> is a 2-bit field consisting of :
@@ -143,20 +116,7 @@ int tcp_bind_socket(int fd, int flags, struct sockaddr_storage *local, struct so
 			 * multiple combinations of certain methods, so we try the
 			 * supported ones until one succeeds.
 			 */
-			if (0
-#if defined(IP_TRANSPARENT)
-			    || (setsockopt(fd, SOL_IP, IP_TRANSPARENT, &one, sizeof(one)) == 0)
-#endif
-#if defined(IP_FREEBIND)
-			    || (setsockopt(fd, SOL_IP, IP_FREEBIND, &one, sizeof(one)) == 0)
-#endif
-#if defined(IP_BINDANY)
-			    || (setsockopt(fd, IPPROTO_IP, IP_BINDANY, &one, sizeof(one)) == 0)
-#endif
-#if defined(SO_BINDANY)
-			    || (setsockopt(fd, SOL_SOCKET, SO_BINDANY, &one, sizeof(one)) == 0)
-#endif
-			    )
+			if (sock_inet4_make_foreign(fd))
 				foreign_ok = 1;
 			else
 				ip_transp_working = 0;
@@ -164,20 +124,7 @@ int tcp_bind_socket(int fd, int flags, struct sockaddr_storage *local, struct so
 		break;
 	case AF_INET6:
 		if (flags && ip6_transp_working) {
-			if (0
-#if defined(IPV6_TRANSPARENT) && defined(SOL_IPV6)
-			    || (setsockopt(fd, SOL_IPV6, IPV6_TRANSPARENT, &one, sizeof(one)) == 0)
-#endif
-#if defined(IP_FREEBIND)
-			    || (setsockopt(fd, SOL_IP, IP_FREEBIND, &one, sizeof(one)) == 0)
-#endif
-#if defined(IPV6_BINDANY)
-			    || (setsockopt(fd, IPPROTO_IPV6, IPV6_BINDANY, &one, sizeof(one)) == 0)
-#endif
-#if defined(SO_BINDANY)
-			    || (setsockopt(fd, SOL_SOCKET, SO_BINDANY, &one, sizeof(one)) == 0)
-#endif
-			    )
+			if (sock_inet6_make_foreign(fd))
 				foreign_ok = 1;
 			else
 				ip6_transp_working = 0;
@@ -231,22 +178,6 @@ int tcp_bind_socket(int fd, int flags, struct sockaddr_storage *local, struct so
 		return 2;
 
 	return 0;
-}
-
-/* conn->dst MUST be valid */
-static int create_server_socket(struct connection *conn)
-{
-	const struct netns_entry *ns = NULL;
-
-#ifdef USE_NS
-	if (objt_server(conn->target)) {
-		if (__objt_server(conn->target)->flags & SRV_F_USE_NS_FROM_PP)
-			ns = conn->proxy_netns;
-		else
-			ns = __objt_server(conn->target)->netns;
-	}
-#endif
-	return my_socketat(ns, conn->dst->ss_family, SOCK_STREAM, IPPROTO_TCP);
 }
 
 /*
@@ -317,7 +248,7 @@ int tcp_connect_server(struct connection *conn, int flags)
 		return SF_ERR_INTERNAL;
 	}
 
-	fd = conn->handle.fd = create_server_socket(conn);
+	fd = conn->handle.fd = sock_create_server_socket(conn);
 
 	if (fd == -1) {
 		qfprintf(stderr, "Cannot get a server socket.\n");
@@ -600,131 +531,6 @@ int tcp_connect_server(struct connection *conn, int flags)
 	return SF_ERR_NONE;  /* connection is OK */
 }
 
-
-/*
- * Retrieves the source address for the socket <fd>, with <dir> indicating
- * if we're a listener (=0) or an initiator (!=0). It returns 0 in case of
- * success, -1 in case of error. The socket's source address is stored in
- * <sa> for <salen> bytes.
- */
-int tcp_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir)
-{
-	if (dir)
-		return getsockname(fd, sa, &salen);
-	else
-		return getpeername(fd, sa, &salen);
-}
-
-
-/*
- * Retrieves the original destination address for the socket <fd>, with <dir>
- * indicating if we're a listener (=0) or an initiator (!=0). In the case of a
- * listener, if the original destination address was translated, the original
- * address is retrieved. It returns 0 in case of success, -1 in case of error.
- * The socket's source address is stored in <sa> for <salen> bytes.
- */
-int tcp_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir)
-{
-	if (dir)
-		return getpeername(fd, sa, &salen);
-	else {
-		int ret = getsockname(fd, sa, &salen);
-
-		if (ret < 0)
-			return ret;
-
-#if defined(USE_TPROXY) && defined(SO_ORIGINAL_DST)
-		/* For TPROXY and Netfilter's NAT, we can retrieve the original
-		 * IPv4 address before DNAT/REDIRECT. We must not do that with
-		 * other families because v6-mapped IPv4 addresses are still
-		 * reported as v4.
-		 */
-		if (((struct sockaddr_storage *)sa)->ss_family == AF_INET
-		    && getsockopt(fd, SOL_IP, SO_ORIGINAL_DST, sa, &salen) == 0)
-			return 0;
-#endif
-		return ret;
-	}
-}
-
-/* XXX: Should probably be elsewhere */
-static int compare_sockaddr(struct sockaddr_storage *a, struct sockaddr_storage *b)
-{
-	if (a->ss_family != b->ss_family) {
-		return (-1);
-	}
-	switch (a->ss_family) {
-	case AF_INET:
-		{
-			struct sockaddr_in *a4 = (void *)a, *b4 = (void *)b;
-			if (a4->sin_port != b4->sin_port)
-				return (-1);
-			return (memcmp(&a4->sin_addr, &b4->sin_addr,
-			    sizeof(a4->sin_addr)));
-		}
-	case AF_INET6:
-		{
-			struct sockaddr_in6 *a6 = (void *)a, *b6 = (void *)b;
-			if (a6->sin6_port != b6->sin6_port)
-				return (-1);
-			return (memcmp(&a6->sin6_addr, &b6->sin6_addr,
-			    sizeof(a6->sin6_addr)));
-		}
-	default:
-		return (-1);
-	}
-
-}
-
-#define LI_MANDATORY_FLAGS	(LI_O_FOREIGN | LI_O_V6ONLY | LI_O_V4V6)
-/* When binding the listeners, check if a socket has been sent to us by the
- * previous process that we could reuse, instead of creating a new one.
- */
-static int tcp_find_compatible_fd(struct listener *l)
-{
-	struct xfer_sock_list *xfer_sock = xfer_sock_list;
-	int ret = -1;
-
-	while (xfer_sock) {
-		if (!compare_sockaddr(&xfer_sock->addr, &l->addr)) {
-			if ((l->interface == NULL && xfer_sock->iface == NULL) ||
-			    (l->interface != NULL && xfer_sock->iface != NULL &&
-			     !strcmp(l->interface, xfer_sock->iface))) {
-				if ((l->options & LI_MANDATORY_FLAGS) ==
-				    (xfer_sock->options & LI_MANDATORY_FLAGS)) {
-					if ((xfer_sock->namespace == NULL &&
-					    l->netns == NULL)
-#ifdef USE_NS
-					    || (xfer_sock->namespace != NULL &&
-					    l->netns != NULL &&
-					    !strcmp(xfer_sock->namespace,
-					    l->netns->node.key))
-#endif
-					   ) {
-						break;
-					}
-
-				}
-			}
-		}
-		xfer_sock = xfer_sock->next;
-	}
-	if (xfer_sock != NULL) {
-		ret = xfer_sock->fd;
-		if (xfer_sock == xfer_sock_list)
-			xfer_sock_list = xfer_sock->next;
-		if (xfer_sock->prev)
-			xfer_sock->prev->next = xfer_sock->next;
-		if (xfer_sock->next)
-			xfer_sock->next->prev = xfer_sock->prev;
-		free(xfer_sock->iface);
-		free(xfer_sock->namespace);
-		free(xfer_sock);
-	}
-	return ret;
-}
-#undef L1_MANDATORY_FLAGS
-
 /* This function tries to bind a TCPv4/v6 listener. It may return a warning or
  * an error message in <errmsg> if the message is at most <errlen> bytes long
  * (including '\0'). Note that <errmsg> may be NULL if <errlen> is also zero.
@@ -740,41 +546,12 @@ static int tcp_find_compatible_fd(struct listener *l)
  */
 int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 {
-	__label__ tcp_return, tcp_close_return;
 	int fd, err;
-	int ext, ready;
+	int ready;
 	socklen_t ready_len;
-	const char *msg = NULL;
-#ifdef TCP_MAXSEG
+	char *msg = NULL;
 
-	/* Create a temporary TCP socket to get default parameters we can't
-	 * guess.
-	 * */
-	ready_len = sizeof(default_tcp_maxseg);
-	if (default_tcp_maxseg == -1) {
-		default_tcp_maxseg = -2;
-		fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-		if (fd < 0)
-			ha_warning("Failed to create a temporary socket!\n");
-		else {
-			if (getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &default_tcp_maxseg,
-			    &ready_len) == -1)
-				ha_warning("Failed to get the default value of TCP_MAXSEG\n");
-			close(fd);
-		}
-	}
-	if (default_tcp6_maxseg == -1) {
-		default_tcp6_maxseg = -2;
-		fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-		if (fd >= 0) {
-			if (getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &default_tcp6_maxseg,
-			    &ready_len) == -1)
-				ha_warning("Failed ot get the default value of TCP_MAXSEG for IPv6\n");
-			close(fd);
-		}
-	}
-#endif
-
+	err = ERR_NONE;
 
 	/* ensure we never return garbage */
 	if (errlen)
@@ -783,46 +560,12 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 	if (listener->state != LI_ASSIGNED)
 		return ERR_NONE; /* already bound */
 
-	err = ERR_NONE;
-
-	if (listener->fd == -1)
-		listener->fd = tcp_find_compatible_fd(listener);
-
-	/* if the listener already has an fd assigned, then we were offered the
-	 * fd by an external process (most likely the parent), and we don't want
-	 * to create a new socket. However we still want to set a few flags on
-	 * the socket.
-	 */
-	fd = listener->fd;
-	ext = (fd >= 0);
-
-	if (!ext) {
-		fd = my_socketat(listener->netns, listener->addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
-
-		if (fd == -1) {
-			err |= ERR_RETRYABLE | ERR_ALERT;
-			msg = "cannot create listening socket";
-			goto tcp_return;
-		}
+	if (!(listener->rx.flags & RX_F_BOUND)) {
+		msg = "receiving socket not bound";
+		goto tcp_return;
 	}
 
-	if (fd >= global.maxsock) {
-		err |= ERR_FATAL | ERR_ABORT | ERR_ALERT;
-		msg = "not enough free sockets (raise '-n' parameter)";
-		goto tcp_close_return;
-	}
-
-	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
-		err |= ERR_FATAL | ERR_ALERT;
-		msg = "cannot make socket non-blocking";
-		goto tcp_close_return;
-	}
-
-	if (!ext && setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == -1) {
-		/* not fatal but should be reported */
-		msg = "cannot do so_reuseaddr";
-		err |= ERR_ALERT;
-	}
+	fd = listener->rx.fd;
 
 	if (listener->options & LI_O_NOLINGER)
 		setsockopt(fd, SOL_SOCKET, SO_LINGER, &nolinger, sizeof(struct linger));
@@ -838,67 +581,6 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 		}
 	}
 
-#ifdef SO_REUSEPORT
-	/* OpenBSD and Linux 3.9 support this. As it's present in old libc versions of
-	 * Linux, it might return an error that we will silently ignore.
-	 */
-	if (!ext && (global.tune.options & GTUNE_USE_REUSEPORT))
-		setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
-#endif
-
-	if (!ext && (listener->options & LI_O_FOREIGN)) {
-		switch (listener->addr.ss_family) {
-		case AF_INET:
-			if (1
-#if defined(IP_TRANSPARENT)
-			    && (setsockopt(fd, SOL_IP, IP_TRANSPARENT, &one, sizeof(one)) == -1)
-#endif
-#if defined(IP_FREEBIND)
-			    && (setsockopt(fd, SOL_IP, IP_FREEBIND, &one, sizeof(one)) == -1)
-#endif
-#if defined(IP_BINDANY)
-			    && (setsockopt(fd, IPPROTO_IP, IP_BINDANY, &one, sizeof(one)) == -1)
-#endif
-#if defined(SO_BINDANY)
-			    && (setsockopt(fd, SOL_SOCKET, SO_BINDANY, &one, sizeof(one)) == -1)
-#endif
-			    ) {
-				msg = "cannot make listening socket transparent";
-				err |= ERR_ALERT;
-			}
-		break;
-		case AF_INET6:
-			if (1
-#if defined(IPV6_TRANSPARENT) && defined(SOL_IPV6)
-			    && (setsockopt(fd, SOL_IPV6, IPV6_TRANSPARENT, &one, sizeof(one)) == -1)
-#endif
-#if defined(IP_FREEBIND)
-			    && (setsockopt(fd, SOL_IP, IP_FREEBIND, &one, sizeof(one)) == -1)
-#endif
-#if defined(IPV6_BINDANY)
-			    && (setsockopt(fd, IPPROTO_IPV6, IPV6_BINDANY, &one, sizeof(one)) == -1)
-#endif
-#if defined(SO_BINDANY)
-			    && (setsockopt(fd, SOL_SOCKET, SO_BINDANY, &one, sizeof(one)) == -1)
-#endif
-			    ) {
-				msg = "cannot make listening socket transparent";
-				err |= ERR_ALERT;
-			}
-		break;
-		}
-	}
-
-#ifdef SO_BINDTODEVICE
-	/* Note: this might fail if not CAP_NET_RAW */
-	if (!ext && listener->interface) {
-		if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE,
-			       listener->interface, strlen(listener->interface) + 1) == -1) {
-			msg = "cannot bind listener to device";
-			err |= ERR_WARN;
-		}
-	}
-#endif
 #if defined(TCP_MAXSEG)
 	if (listener->maxseg > 0) {
 		if (setsockopt(fd, IPPROTO_TCP, TCP_MAXSEG,
@@ -906,15 +588,16 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 			msg = "cannot set MSS";
 			err |= ERR_WARN;
 		}
-	} else if (ext) {
+	} else {
+		/* we may want to try to restore the default MSS if the socket was inherited */
 		int tmpmaxseg = -1;
 		int defaultmss;
 		socklen_t len = sizeof(tmpmaxseg);
 
-		if (listener->addr.ss_family == AF_INET)
-			defaultmss = default_tcp_maxseg;
+		if (listener->rx.addr.ss_family == AF_INET)
+			defaultmss = sock_inet_tcp_maxseg_default;
 		else
-			defaultmss = default_tcp6_maxseg;
+			defaultmss = sock_inet6_tcp_maxseg_default;
 
 		getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &tmpmaxseg, &len);
 		if (defaultmss > 0 &&
@@ -973,25 +656,12 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 		}
 	}
 #endif
-#if defined(IPV6_V6ONLY)
-	if (listener->options & LI_O_V6ONLY)
-                setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof(one));
-	else if (listener->options & LI_O_V4V6)
-                setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero));
-#endif
-
-	if (!ext && bind(fd, (struct sockaddr *)&listener->addr, listener->proto->sock_addrlen) == -1) {
-		err |= ERR_RETRYABLE | ERR_ALERT;
-		msg = "cannot bind socket";
-		goto tcp_close_return;
-	}
-
 	ready = 0;
 	ready_len = sizeof(ready);
 	if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &ready, &ready_len) == -1)
 		ready = 0;
 
-	if (!(ext && ready) && /* only listen if not already done by external process */
+	if (!ready && /* only listen if not already done by external process */
 	    listen(fd, listener_backlog(listener)) == -1) {
 		err |= ERR_RETRYABLE | ERR_ALERT;
 		msg = "cannot listen to socket";
@@ -1006,46 +676,18 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 #endif
 
 	/* the socket is ready */
-	listener->fd = fd;
 	listener->state = LI_LISTEN;
-
-	fd_insert(fd, listener, listener->proto->accept,
-	          thread_mask(listener->bind_conf->bind_thread) & all_threads_mask);
-
- tcp_return:
-	if (msg && errlen) {
-		char pn[INET6_ADDRSTRLEN];
-
-		addr_to_str(&listener->addr, pn, sizeof(pn));
-		snprintf(errmsg, errlen, "%s [%s:%d]", msg, pn, get_host_port(&listener->addr));
-	}
 	return err;
 
  tcp_close_return:
 	close(fd);
-	goto tcp_return;
-}
+ tcp_return:
+	if (msg && errlen) {
+		char pn[INET6_ADDRSTRLEN];
 
-/* This function creates all TCP sockets bound to the protocol entry <proto>.
- * It is intended to be used as the protocol's bind_all() function.
- * The sockets will be registered but not added to any fd_set, in order not to
- * loose them across the fork(). A call to enable_all_listeners() is needed
- * to complete initialization. The return value is composed from ERR_*.
- *
- * Must be called with proto_lock held.
- *
- */
-static int tcp_bind_listeners(struct protocol *proto, char *errmsg, int errlen)
-{
-	struct listener *listener;
-	int err = ERR_NONE;
-
-	list_for_each_entry(listener, &proto->listeners, proto_list) {
-		err |= tcp_bind_listener(listener, errmsg, errlen);
-		if (err & ERR_ABORT)
-			break;
+		addr_to_str(&listener->rx.addr, pn, sizeof(pn));
+		snprintf(errmsg, errlen, "%s [%s:%d]", msg, pn, get_host_port(&listener->rx.addr));
 	}
-
 	return err;
 }
 
@@ -1061,9 +703,9 @@ static void tcpv4_add_listener(struct listener *listener, int port)
 	if (listener->state != LI_INIT)
 		return;
 	listener->state = LI_ASSIGNED;
-	listener->proto = &proto_tcpv4;
-	((struct sockaddr_in *)(&listener->addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_tcpv4.listeners, &listener->proto_list);
+	listener->rx.proto = &proto_tcpv4;
+	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
+	LIST_ADDQ(&proto_tcpv4.listeners, &listener->rx.proto_list);
 	proto_tcpv4.nb_listeners++;
 }
 
@@ -1079,9 +721,9 @@ static void tcpv6_add_listener(struct listener *listener, int port)
 	if (listener->state != LI_INIT)
 		return;
 	listener->state = LI_ASSIGNED;
-	listener->proto = &proto_tcpv6;
-	((struct sockaddr_in *)(&listener->addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_tcpv6.listeners, &listener->proto_list);
+	listener->rx.proto = &proto_tcpv6;
+	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
+	LIST_ADDQ(&proto_tcpv6.listeners, &listener->rx.proto_list);
 	proto_tcpv6.nb_listeners++;
 }
 
@@ -1090,987 +732,16 @@ static void tcpv6_add_listener(struct listener *listener, int port)
  */
 int tcp_pause_listener(struct listener *l)
 {
-	if (shutdown(l->fd, SHUT_WR) != 0)
+	if (shutdown(l->rx.fd, SHUT_WR) != 0)
 		return -1; /* Solaris dies here */
 
-	if (listen(l->fd, listener_backlog(l)) != 0)
+	if (listen(l->rx.fd, listener_backlog(l)) != 0)
 		return -1; /* OpenBSD dies here */
 
-	if (shutdown(l->fd, SHUT_RD) != 0)
+	if (shutdown(l->rx.fd, SHUT_RD) != 0)
 		return -1; /* should always be OK */
 	return 1;
 }
-
-/*
- * Execute the "set-src" action. May be called from {tcp,http}request.
- * It only changes the address and tries to preserve the original port. If the
- * previous family was neither AF_INET nor AF_INET6, the port is set to zero.
- */
-enum act_return tcp_action_req_set_src(struct act_rule *rule, struct proxy *px,
-                                              struct session *sess, struct stream *s, int flags)
-{
-	struct connection *cli_conn;
-
-	if ((cli_conn = objt_conn(sess->origin)) && conn_get_src(cli_conn)) {
-		struct sample *smp;
-
-		smp = sample_fetch_as_type(px, sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.expr, SMP_T_ADDR);
-		if (smp) {
-			int port = get_net_port(cli_conn->src);
-
-			if (smp->data.type == SMP_T_IPV4) {
-				((struct sockaddr_in *)cli_conn->src)->sin_family = AF_INET;
-				((struct sockaddr_in *)cli_conn->src)->sin_addr.s_addr = smp->data.u.ipv4.s_addr;
-				((struct sockaddr_in *)cli_conn->src)->sin_port = port;
-			} else if (smp->data.type == SMP_T_IPV6) {
-				((struct sockaddr_in6 *)cli_conn->src)->sin6_family = AF_INET6;
-				memcpy(&((struct sockaddr_in6 *)cli_conn->src)->sin6_addr, &smp->data.u.ipv6, sizeof(struct in6_addr));
-				((struct sockaddr_in6 *)cli_conn->src)->sin6_port = port;
-			}
-		}
-		cli_conn->flags |= CO_FL_ADDR_FROM_SET;
-	}
-	return ACT_RET_CONT;
-}
-
-/*
- * Execute the "set-dst" action. May be called from {tcp,http}request.
- * It only changes the address and tries to preserve the original port. If the
- * previous family was neither AF_INET nor AF_INET6, the port is set to zero.
- */
-enum act_return tcp_action_req_set_dst(struct act_rule *rule, struct proxy *px,
-                                              struct session *sess, struct stream *s, int flags)
-{
-	struct connection *cli_conn;
-
-	if ((cli_conn = objt_conn(sess->origin)) && conn_get_dst(cli_conn)) {
-		struct sample *smp;
-
-		smp = sample_fetch_as_type(px, sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.expr, SMP_T_ADDR);
-		if (smp) {
-			int port = get_net_port(cli_conn->dst);
-
-			if (smp->data.type == SMP_T_IPV4) {
-				((struct sockaddr_in *)cli_conn->dst)->sin_family = AF_INET;
-				((struct sockaddr_in *)cli_conn->dst)->sin_addr.s_addr = smp->data.u.ipv4.s_addr;
-			} else if (smp->data.type == SMP_T_IPV6) {
-				((struct sockaddr_in6 *)cli_conn->dst)->sin6_family = AF_INET6;
-				memcpy(&((struct sockaddr_in6 *)cli_conn->dst)->sin6_addr, &smp->data.u.ipv6, sizeof(struct in6_addr));
-				((struct sockaddr_in6 *)cli_conn->dst)->sin6_port = port;
-			}
-			cli_conn->flags |= CO_FL_ADDR_TO_SET;
-		}
-	}
-	return ACT_RET_CONT;
-}
-
-/*
- * Execute the "set-src-port" action. May be called from {tcp,http}request.
- * We must test the sin_family before setting the port. If the address family
- * is neither AF_INET nor AF_INET6, the address is forced to AF_INET "0.0.0.0"
- * and the port is assigned.
- */
-enum act_return tcp_action_req_set_src_port(struct act_rule *rule, struct proxy *px,
-                                              struct session *sess, struct stream *s, int flags)
-{
-	struct connection *cli_conn;
-
-	if ((cli_conn = objt_conn(sess->origin)) && conn_get_src(cli_conn)) {
-		struct sample *smp;
-
-		smp = sample_fetch_as_type(px, sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.expr, SMP_T_SINT);
-		if (smp) {
-			if (cli_conn->src->ss_family == AF_INET6) {
-				((struct sockaddr_in6 *)cli_conn->src)->sin6_port = htons(smp->data.u.sint);
-			} else {
-				if (cli_conn->src->ss_family != AF_INET) {
-					cli_conn->src->ss_family = AF_INET;
-					((struct sockaddr_in *)cli_conn->src)->sin_addr.s_addr = 0;
-				}
-				((struct sockaddr_in *)cli_conn->src)->sin_port = htons(smp->data.u.sint);
-			}
-		}
-	}
-	return ACT_RET_CONT;
-}
-
-/*
- * Execute the "set-dst-port" action. May be called from {tcp,http}request.
- * We must test the sin_family before setting the port. If the address family
- * is neither AF_INET nor AF_INET6, the address is forced to AF_INET "0.0.0.0"
- * and the port is assigned.
- */
-enum act_return tcp_action_req_set_dst_port(struct act_rule *rule, struct proxy *px,
-                                              struct session *sess, struct stream *s, int flags)
-{
-	struct connection *cli_conn;
-
-	if ((cli_conn = objt_conn(sess->origin)) && conn_get_dst(cli_conn)) {
-		struct sample *smp;
-
-		smp = sample_fetch_as_type(px, sess, s, SMP_OPT_DIR_REQ|SMP_OPT_FINAL, rule->arg.expr, SMP_T_SINT);
-		if (smp) {
-			if (cli_conn->dst->ss_family == AF_INET6) {
-				((struct sockaddr_in6 *)cli_conn->dst)->sin6_port = htons(smp->data.u.sint);
-			} else {
-				if (cli_conn->dst->ss_family != AF_INET) {
-					cli_conn->dst->ss_family = AF_INET;
-					((struct sockaddr_in *)cli_conn->dst)->sin_addr.s_addr = 0;
-				}
-				((struct sockaddr_in *)cli_conn->dst)->sin_port = htons(smp->data.u.sint);
-			}
-		}
-	}
-	return ACT_RET_CONT;
-}
-
-/* Executes the "silent-drop" action. May be called from {tcp,http}{request,response} */
-static enum act_return tcp_exec_action_silent_drop(struct act_rule *rule, struct proxy *px, struct session *sess, struct stream *strm, int flags)
-{
-	struct connection *conn = objt_conn(sess->origin);
-
-	if (!conn)
-		goto out;
-
-	if (!conn_ctrl_ready(conn))
-		goto out;
-
-#ifdef TCP_QUICKACK
-	/* drain is needed only to send the quick ACK */
-	conn_sock_drain(conn);
-
-	/* re-enable quickack if it was disabled to ack all data and avoid
-	 * retransmits from the client that might trigger a real reset.
-	 */
-	setsockopt(conn->handle.fd, SOL_TCP, TCP_QUICKACK, &one, sizeof(one));
-#endif
-	/* lingering must absolutely be disabled so that we don't send a
-	 * shutdown(), this is critical to the TCP_REPAIR trick. When no stream
-	 * is present, returning with ERR will cause lingering to be disabled.
-	 */
-	if (strm)
-		strm->si[0].flags |= SI_FL_NOLINGER;
-
-	/* We're on the client-facing side, we must force to disable lingering to
-	 * ensure we will use an RST exclusively and kill any pending data.
-	 */
-	fdtab[conn->handle.fd].linger_risk = 1;
-
-#ifdef TCP_REPAIR
-	if (setsockopt(conn->handle.fd, SOL_TCP, TCP_REPAIR, &one, sizeof(one)) == 0) {
-		/* socket will be quiet now */
-		goto out;
-	}
-#endif
-	/* either TCP_REPAIR is not defined or it failed (eg: permissions).
-	 * Let's fall back on the TTL trick, though it only works for routed
-	 * network and has no effect on local net.
-	 */
-#ifdef IP_TTL
-	setsockopt(conn->handle.fd, SOL_IP, IP_TTL, &one, sizeof(one));
-#endif
- out:
-	/* kill the stream if any */
-	if (strm) {
-		channel_abort(&strm->req);
-		channel_abort(&strm->res);
-		strm->req.analysers &= AN_REQ_FLT_END;
-		strm->res.analysers &= AN_RES_FLT_END;
-		if (strm->flags & SF_BE_ASSIGNED)
-			_HA_ATOMIC_ADD(&strm->be->be_counters.denied_req, 1);
-		if (!(strm->flags & SF_ERR_MASK))
-			strm->flags |= SF_ERR_PRXCOND;
-		if (!(strm->flags & SF_FINST_MASK))
-			strm->flags |= SF_FINST_R;
-	}
-
-	_HA_ATOMIC_ADD(&sess->fe->fe_counters.denied_req, 1);
-	if (sess->listener->counters)
-		_HA_ATOMIC_ADD(&sess->listener->counters->denied_req, 1);
-
-	return ACT_RET_ABRT;
-}
-
-/* parse "set-{src,dst}[-port]" action */
-enum act_parse_ret tcp_parse_set_src_dst(const char **args, int *orig_arg, struct proxy *px, struct act_rule *rule, char **err)
-{
-	int cur_arg;
-	struct sample_expr *expr;
-	unsigned int where;
-
-	cur_arg = *orig_arg;
-	expr = sample_parse_expr((char **)args, &cur_arg, px->conf.args.file, px->conf.args.line, err, &px->conf.args, NULL);
-	if (!expr)
-		return ACT_RET_PRS_ERR;
-
-	where = 0;
-	if (px->cap & PR_CAP_FE)
-		where |= SMP_VAL_FE_HRQ_HDR;
-	if (px->cap & PR_CAP_BE)
-		where |= SMP_VAL_BE_HRQ_HDR;
-
-	if (!(expr->fetch->val & where)) {
-		memprintf(err,
-			  "fetch method '%s' extracts information from '%s', none of which is available here",
-			  args[cur_arg-1], sample_src_names(expr->fetch->use));
-		free(expr);
-		return ACT_RET_PRS_ERR;
-	}
-	rule->arg.expr = expr;
-	rule->action = ACT_CUSTOM;
-
-	if (!strcmp(args[*orig_arg-1], "set-src")) {
-		rule->action_ptr = tcp_action_req_set_src;
-	} else if (!strcmp(args[*orig_arg-1], "set-src-port")) {
-		rule->action_ptr = tcp_action_req_set_src_port;
-	} else if (!strcmp(args[*orig_arg-1], "set-dst")) {
-		rule->action_ptr = tcp_action_req_set_dst;
-	} else if (!strcmp(args[*orig_arg-1], "set-dst-port")) {
-		rule->action_ptr = tcp_action_req_set_dst_port;
-	} else {
-		return ACT_RET_PRS_ERR;
-	}
-
-	(*orig_arg)++;
-
-	return ACT_RET_PRS_OK;
-}
-
-
-/* Parse a "silent-drop" action. It takes no argument. It returns ACT_RET_PRS_OK on
- * success, ACT_RET_PRS_ERR on error.
- */
-static enum act_parse_ret tcp_parse_silent_drop(const char **args, int *orig_arg, struct proxy *px,
-                                                struct act_rule *rule, char **err)
-{
-	rule->action     = ACT_CUSTOM;
-	rule->action_ptr = tcp_exec_action_silent_drop;
-	return ACT_RET_PRS_OK;
-}
-
-
-/************************************************************************/
-/*       All supported sample fetch functions must be declared here     */
-/************************************************************************/
-
-/* fetch the connection's source IPv4/IPv6 address */
-int smp_fetch_src(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	struct connection *cli_conn = objt_conn(smp->sess->origin);
-
-	if (!cli_conn)
-		return 0;
-
-	if (!conn_get_src(cli_conn))
-		return 0;
-
-	switch (cli_conn->src->ss_family) {
-	case AF_INET:
-		smp->data.u.ipv4 = ((struct sockaddr_in *)cli_conn->src)->sin_addr;
-		smp->data.type = SMP_T_IPV4;
-		break;
-	case AF_INET6:
-		smp->data.u.ipv6 = ((struct sockaddr_in6 *)cli_conn->src)->sin6_addr;
-		smp->data.type = SMP_T_IPV6;
-		break;
-	default:
-		return 0;
-	}
-
-	smp->flags = 0;
-	return 1;
-}
-
-/* set temp integer to the connection's source port */
-static int
-smp_fetch_sport(const struct arg *args, struct sample *smp, const char *k, void *private)
-{
-	struct connection *cli_conn = objt_conn(smp->sess->origin);
-
-	if (!cli_conn)
-		return 0;
-
-	if (!conn_get_src(cli_conn))
-		return 0;
-
-	smp->data.type = SMP_T_SINT;
-	if (!(smp->data.u.sint = get_host_port(cli_conn->src)))
-		return 0;
-
-	smp->flags = 0;
-	return 1;
-}
-
-/* fetch the connection's destination IPv4/IPv6 address */
-static int
-smp_fetch_dst(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	struct connection *cli_conn = objt_conn(smp->sess->origin);
-
-	if (!cli_conn)
-		return 0;
-
-	if (!conn_get_dst(cli_conn))
-		return 0;
-
-	switch (cli_conn->dst->ss_family) {
-	case AF_INET:
-		smp->data.u.ipv4 = ((struct sockaddr_in *)cli_conn->dst)->sin_addr;
-		smp->data.type = SMP_T_IPV4;
-		break;
-	case AF_INET6:
-		smp->data.u.ipv6 = ((struct sockaddr_in6 *)cli_conn->dst)->sin6_addr;
-		smp->data.type = SMP_T_IPV6;
-		break;
-	default:
-		return 0;
-	}
-
-	smp->flags = 0;
-	return 1;
-}
-
-/* check if the destination address of the front connection is local to the
- * system or if it was intercepted.
- */
-int smp_fetch_dst_is_local(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	struct connection *conn = objt_conn(smp->sess->origin);
-	struct listener *li = smp->sess->listener;
-
-	if (!conn)
-		return 0;
-
-	if (!conn_get_dst(conn))
-		return 0;
-
-	smp->data.type = SMP_T_BOOL;
-	smp->flags = 0;
-	smp->data.u.sint = addr_is_local(li->netns, conn->dst);
-	return smp->data.u.sint >= 0;
-}
-
-/* check if the source address of the front connection is local to the system
- * or not.
- */
-int smp_fetch_src_is_local(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	struct connection *conn = objt_conn(smp->sess->origin);
-	struct listener *li = smp->sess->listener;
-
-	if (!conn)
-		return 0;
-
-	if (!conn_get_src(conn))
-		return 0;
-
-	smp->data.type = SMP_T_BOOL;
-	smp->flags = 0;
-	smp->data.u.sint = addr_is_local(li->netns, conn->src);
-	return smp->data.u.sint >= 0;
-}
-
-/* set temp integer to the frontend connexion's destination port */
-static int
-smp_fetch_dport(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	struct connection *cli_conn = objt_conn(smp->sess->origin);
-
-	if (!cli_conn)
-		return 0;
-
-	if (!conn_get_dst(cli_conn))
-		return 0;
-
-	smp->data.type = SMP_T_SINT;
-	if (!(smp->data.u.sint = get_host_port(cli_conn->dst)))
-		return 0;
-
-	smp->flags = 0;
-	return 1;
-}
-
-#ifdef TCP_INFO
-
-
-/* Validates the arguments passed to "fc_*" fetch keywords returning a time
- * value. These keywords support an optional string representing the unit of the
- * result: "us" for microseconds and "ms" for milliseconds". Returns 0 on error
- * and non-zero if OK.
- */
-static int val_fc_time_value(struct arg *args, char **err)
-{
-	if (args[0].type == ARGT_STR) {
-		if (strcmp(args[0].data.str.area, "us") == 0) {
-			chunk_destroy(&args[0].data.str);
-			args[0].type = ARGT_SINT;
-			args[0].data.sint = TIME_UNIT_US;
-		}
-		else if (strcmp(args[0].data.str.area, "ms") == 0) {
-			chunk_destroy(&args[0].data.str);
-			args[0].type = ARGT_SINT;
-			args[0].data.sint = TIME_UNIT_MS;
-		}
-		else {
-			memprintf(err, "expects 'us' or 'ms', got '%s'",
-				  args[0].data.str.area);
-			return 0;
-		}
-	}
-	else {
-		memprintf(err, "Unexpected arg type");
-		return 0;
-	}
-
-	return 1;
-}
-
-/* Validates the arguments passed to "fc_*" fetch keywords returning a
- * counter. These keywords should be used without any keyword, but because of a
- * bug in previous versions, an optional string argument may be passed. In such
- * case, the argument is ignored and a warning is emitted. Returns 0 on error
- * and non-zero if OK.
- */
-static int var_fc_counter(struct arg *args, char **err)
-{
-	if (args[0].type != ARGT_STOP) {
-		ha_warning("no argument supported for 'fc_*' sample expressions returning counters.\n");
-		if (args[0].type == ARGT_STR)
-			chunk_destroy(&args[0].data.str);
-		args[0].type = ARGT_STOP;
-	}
-
-	return 1;
-}
-
-/* Returns some tcp_info data if it's available. "dir" must be set to 0 if
- * the client connection is required, otherwise it is set to 1. "val" represents
- * the required value.
- * If the function fails it returns 0, otherwise it returns 1 and "result" is filled.
- */
-static inline int get_tcp_info(const struct arg *args, struct sample *smp,
-                               int dir, int val)
-{
-	struct connection *conn;
-	struct tcp_info info;
-	socklen_t optlen;
-
-	/* strm can be null. */
-	if (!smp->strm)
-		return 0;
-
-	/* get the object associated with the stream interface.The
-	 * object can be other thing than a connection. For example,
-	 * it be a appctx. */
-	conn = cs_conn(objt_cs(smp->strm->si[dir].end));
-	if (!conn)
-		return 0;
-
-	/* The fd may not be available for the tcp_info struct, and the
-	  syscal can fail. */
-	optlen = sizeof(info);
-	if (getsockopt(conn->handle.fd, SOL_TCP, TCP_INFO, &info, &optlen) == -1)
-		return 0;
-
-	/* extract the value. */
-	smp->data.type = SMP_T_SINT;
-	switch (val) {
-	case 0:  smp->data.u.sint = info.tcpi_rtt;            break;
-	case 1:  smp->data.u.sint = info.tcpi_rttvar;         break;
-#if defined(__linux__)
-	/* these ones are common to all Linux versions */
-	case 2:  smp->data.u.sint = info.tcpi_unacked;        break;
-	case 3:  smp->data.u.sint = info.tcpi_sacked;         break;
-	case 4:  smp->data.u.sint = info.tcpi_lost;           break;
-	case 5:  smp->data.u.sint = info.tcpi_retrans;        break;
-	case 6:  smp->data.u.sint = info.tcpi_fackets;        break;
-	case 7:  smp->data.u.sint = info.tcpi_reordering;     break;
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
-	/* the ones are found on FreeBSD and NetBSD featuring TCP_INFO */
-	case 2:  smp->data.u.sint = info.__tcpi_unacked;      break;
-	case 3:  smp->data.u.sint = info.__tcpi_sacked;       break;
-	case 4:  smp->data.u.sint = info.__tcpi_lost;         break;
-	case 5:  smp->data.u.sint = info.__tcpi_retrans;      break;
-	case 6:  smp->data.u.sint = info.__tcpi_fackets;      break;
-	case 7:  smp->data.u.sint = info.__tcpi_reordering;   break;
-#endif
-	default: return 0;
-	}
-
-	return 1;
-}
-
-/* get the mean rtt of a client connection */
-static int
-smp_fetch_fc_rtt(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 0))
-		return 0;
-
-	/* By default or if explicitly specified, convert rtt to ms */
-	if (!args || args[0].type == ARGT_STOP || args[0].data.sint == TIME_UNIT_MS)
-		smp->data.u.sint = (smp->data.u.sint + 500) / 1000;
-
-	return 1;
-}
-
-/* get the variance of the mean rtt of a client connection */
-static int
-smp_fetch_fc_rttvar(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 1))
-		return 0;
-
-	/* By default or if explicitly specified, convert rttvar to ms */
-	if (!args || args[0].type == ARGT_STOP || args[0].data.sint == TIME_UNIT_MS)
-		smp->data.u.sint = (smp->data.u.sint + 500) / 1000;
-
-	return 1;
-}
-
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__)
-
-/* get the unacked counter on a client connection */
-static int
-smp_fetch_fc_unacked(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 2))
-		return 0;
-	return 1;
-}
-
-/* get the sacked counter on a client connection */
-static int
-smp_fetch_fc_sacked(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 3))
-		return 0;
-	return 1;
-}
-
-/* get the lost counter on a client connection */
-static int
-smp_fetch_fc_lost(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 4))
-		return 0;
-	return 1;
-}
-
-/* get the retrans counter on a client connection */
-static int
-smp_fetch_fc_retrans(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 5))
-		return 0;
-	return 1;
-}
-
-/* get the fackets counter on a client connection */
-static int
-smp_fetch_fc_fackets(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 6))
-		return 0;
-	return 1;
-}
-
-/* get the reordering counter on a client connection */
-static int
-smp_fetch_fc_reordering(const struct arg *args, struct sample *smp, const char *kw, void *private)
-{
-	if (!get_tcp_info(args, smp, 0, 7))
-		return 0;
-	return 1;
-}
-#endif // linux || freebsd || netbsd
-#endif // TCP_INFO
-
-#ifdef IPV6_V6ONLY
-/* parse the "v4v6" bind keyword */
-static int bind_parse_v4v6(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET6)
-			l->options |= LI_O_V4V6;
-	}
-
-	return 0;
-}
-
-/* parse the "v6only" bind keyword */
-static int bind_parse_v6only(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET6)
-			l->options |= LI_O_V6ONLY;
-	}
-
-	return 0;
-}
-#endif
-
-#ifdef CONFIG_HAP_TRANSPARENT
-/* parse the "transparent" bind keyword */
-static int bind_parse_transparent(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET || l->addr.ss_family == AF_INET6)
-			l->options |= LI_O_FOREIGN;
-	}
-
-	return 0;
-}
-#endif
-
-#ifdef TCP_DEFER_ACCEPT
-/* parse the "defer-accept" bind keyword */
-static int bind_parse_defer_accept(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET || l->addr.ss_family == AF_INET6)
-			l->options |= LI_O_DEF_ACCEPT;
-	}
-
-	return 0;
-}
-#endif
-
-#ifdef TCP_FASTOPEN
-/* parse the "tfo" bind keyword */
-static int bind_parse_tfo(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET || l->addr.ss_family == AF_INET6)
-			l->options |= LI_O_TCP_FO;
-	}
-
-	return 0;
-}
-#endif
-
-#ifdef TCP_MAXSEG
-/* parse the "mss" bind keyword */
-static int bind_parse_mss(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-	int mss;
-
-	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing MSS value", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	mss = atoi(args[cur_arg + 1]);
-	if (!mss || abs(mss) > 65535) {
-		memprintf(err, "'%s' : expects an MSS with and absolute value between 1 and 65535", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET || l->addr.ss_family == AF_INET6)
-			l->maxseg = mss;
-	}
-
-	return 0;
-}
-#endif
-
-#ifdef TCP_USER_TIMEOUT
-/* parse the "tcp-ut" bind keyword */
-static int bind_parse_tcp_ut(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	const char *ptr = NULL;
-	struct listener *l;
-	unsigned int timeout;
-
-	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing TCP User Timeout value", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	ptr = parse_time_err(args[cur_arg + 1], &timeout, TIME_UNIT_MS);
-	if (ptr == PARSE_TIME_OVER) {
-		memprintf(err, "timer overflow in argument '%s' to '%s' (maximum value is 2147483647 ms or ~24.8 days)",
-			  args[cur_arg+1], args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-	else if (ptr == PARSE_TIME_UNDER) {
-		memprintf(err, "timer underflow in argument '%s' to '%s' (minimum non-null value is 1 ms)",
-			  args[cur_arg+1], args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-	else if (ptr) {
-		memprintf(err, "'%s' : expects a positive delay in milliseconds", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET || l->addr.ss_family == AF_INET6)
-			l->tcp_ut = timeout;
-	}
-
-	return 0;
-}
-#endif
-
-#ifdef SO_BINDTODEVICE
-/* parse the "interface" bind keyword */
-static int bind_parse_interface(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-
-	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing interface name", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		if (l->addr.ss_family == AF_INET || l->addr.ss_family == AF_INET6)
-			l->interface = strdup(args[cur_arg + 1]);
-	}
-
-	return 0;
-}
-#endif
-
-#ifdef USE_NS
-/* parse the "namespace" bind keyword */
-static int bind_parse_namespace(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
-{
-	struct listener *l;
-	char *namespace = NULL;
-
-	if (!*args[cur_arg + 1]) {
-		memprintf(err, "'%s' : missing namespace id", args[cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-	namespace = args[cur_arg + 1];
-
-	list_for_each_entry(l, &conf->listeners, by_bind) {
-		l->netns = netns_store_lookup(namespace, strlen(namespace));
-
-		if (l->netns == NULL)
-			l->netns = netns_store_insert(namespace);
-
-		if (l->netns == NULL) {
-			ha_alert("Cannot open namespace '%s'.\n", args[cur_arg + 1]);
-			return ERR_ALERT | ERR_FATAL;
-		}
-	}
-	return 0;
-}
-#endif
-
-#ifdef TCP_USER_TIMEOUT
-/* parse the "tcp-ut" server keyword */
-static int srv_parse_tcp_ut(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
-{
-	const char *ptr = NULL;
-	unsigned int timeout;
-
-	if (!*args[*cur_arg + 1]) {
-		memprintf(err, "'%s' : missing TCP User Timeout value", args[*cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	ptr = parse_time_err(args[*cur_arg + 1], &timeout, TIME_UNIT_MS);
-	if (ptr == PARSE_TIME_OVER) {
-		memprintf(err, "timer overflow in argument '%s' to '%s' (maximum value is 2147483647 ms or ~24.8 days)",
-			  args[*cur_arg+1], args[*cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-	else if (ptr == PARSE_TIME_UNDER) {
-		memprintf(err, "timer underflow in argument '%s' to '%s' (minimum non-null value is 1 ms)",
-			  args[*cur_arg+1], args[*cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-	else if (ptr) {
-		memprintf(err, "'%s' : expects a positive delay in milliseconds", args[*cur_arg]);
-		return ERR_ALERT | ERR_FATAL;
-	}
-
-	if (newsrv->addr.ss_family == AF_INET || newsrv->addr.ss_family == AF_INET6)
-		newsrv->tcp_ut = timeout;
-
-	return 0;
-}
-#endif
-
-
-/* Note: must not be declared <const> as its list will be overwritten.
- * Note: fetches that may return multiple types must be declared as the lowest
- * common denominator, the type that can be casted into all other ones. For
- * instance v4/v6 must be declared v4.
- */
-static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
-	{ "dst",      smp_fetch_dst,   0, NULL, SMP_T_IPV4, SMP_USE_L4CLI },
-	{ "dst_is_local", smp_fetch_dst_is_local, 0, NULL, SMP_T_BOOL, SMP_USE_L4CLI },
-	{ "dst_port", smp_fetch_dport, 0, NULL, SMP_T_SINT, SMP_USE_L4CLI },
-	{ "src",      smp_fetch_src,   0, NULL, SMP_T_IPV4, SMP_USE_L4CLI },
-	{ "src_is_local", smp_fetch_src_is_local, 0, NULL, SMP_T_BOOL, SMP_USE_L4CLI },
-	{ "src_port", smp_fetch_sport, 0, NULL, SMP_T_SINT, SMP_USE_L4CLI },
-#ifdef TCP_INFO
-	{ "fc_rtt",           smp_fetch_fc_rtt,           ARG1(0,STR), val_fc_time_value, SMP_T_SINT, SMP_USE_L4CLI },
-	{ "fc_rttvar",        smp_fetch_fc_rttvar,        ARG1(0,STR), val_fc_time_value, SMP_T_SINT, SMP_USE_L4CLI },
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__)
-	{ "fc_unacked",       smp_fetch_fc_unacked,       ARG1(0,STR), var_fc_counter, SMP_T_SINT, SMP_USE_L4CLI },
-	{ "fc_sacked",        smp_fetch_fc_sacked,        ARG1(0,STR), var_fc_counter, SMP_T_SINT, SMP_USE_L4CLI },
-	{ "fc_retrans",       smp_fetch_fc_retrans,       ARG1(0,STR), var_fc_counter, SMP_T_SINT, SMP_USE_L4CLI },
-	{ "fc_fackets",       smp_fetch_fc_fackets,       ARG1(0,STR), var_fc_counter, SMP_T_SINT, SMP_USE_L4CLI },
-	{ "fc_lost",          smp_fetch_fc_lost,          ARG1(0,STR), var_fc_counter, SMP_T_SINT, SMP_USE_L4CLI },
-	{ "fc_reordering",    smp_fetch_fc_reordering,    ARG1(0,STR), var_fc_counter, SMP_T_SINT, SMP_USE_L4CLI },
-#endif // linux || freebsd || netbsd
-#endif // TCP_INFO
-	{ /* END */ },
-}};
-
-INITCALL1(STG_REGISTER, sample_register_fetches, &sample_fetch_keywords);
-
-/************************************************************************/
-/*           All supported bind keywords must be declared here.         */
-/************************************************************************/
-
-/* Note: must not be declared <const> as its list will be overwritten.
- * Please take care of keeping this list alphabetically sorted, doing so helps
- * all code contributors.
- * Optional keywords are also declared with a NULL ->parse() function so that
- * the config parser can report an appropriate error when a known keyword was
- * not enabled.
- */
-static struct bind_kw_list bind_kws = { "TCP", { }, {
-#ifdef TCP_DEFER_ACCEPT
-	{ "defer-accept",  bind_parse_defer_accept, 0 }, /* wait for some data for 1 second max before doing accept */
-#endif
-#ifdef SO_BINDTODEVICE
-	{ "interface",     bind_parse_interface,    1 }, /* specifically bind to this interface */
-#endif
-#ifdef TCP_MAXSEG
-	{ "mss",           bind_parse_mss,          1 }, /* set MSS of listening socket */
-#endif
-#ifdef TCP_USER_TIMEOUT
-	{ "tcp-ut",        bind_parse_tcp_ut,       1 }, /* set User Timeout on listening socket */
-#endif
-#ifdef TCP_FASTOPEN
-	{ "tfo",           bind_parse_tfo,          0 }, /* enable TCP_FASTOPEN of listening socket */
-#endif
-#ifdef CONFIG_HAP_TRANSPARENT
-	{ "transparent",   bind_parse_transparent,  0 }, /* transparently bind to the specified addresses */
-#endif
-#ifdef IPV6_V6ONLY
-	{ "v4v6",          bind_parse_v4v6,         0 }, /* force socket to bind to IPv4+IPv6 */
-	{ "v6only",        bind_parse_v6only,       0 }, /* force socket to bind to IPv6 only */
-#endif
-#ifdef USE_NS
-	{ "namespace",     bind_parse_namespace,    1 },
-#endif
-	/* the versions with the NULL parse function*/
-	{ "defer-accept",  NULL,  0 },
-	{ "interface",     NULL,  1 },
-	{ "mss",           NULL,  1 },
-	{ "transparent",   NULL,  0 },
-	{ "v4v6",          NULL,  0 },
-	{ "v6only",        NULL,  0 },
-	{ NULL, NULL, 0 },
-}};
-
-INITCALL1(STG_REGISTER, bind_register_keywords, &bind_kws);
-
-static struct srv_kw_list srv_kws = { "TCP", { }, {
-#ifdef TCP_USER_TIMEOUT
-	{ "tcp-ut",        srv_parse_tcp_ut,        1,  1 }, /* set TCP user timeout on server */
-#endif
-	{ NULL, NULL, 0 },
-}};
-
-INITCALL1(STG_REGISTER, srv_register_keywords, &srv_kws);
-
-static struct action_kw_list tcp_req_conn_actions = {ILH, {
-	{ "set-src",      tcp_parse_set_src_dst },
-	{ "set-src-port", tcp_parse_set_src_dst },
-	{ "set-dst"     , tcp_parse_set_src_dst },
-	{ "set-dst-port", tcp_parse_set_src_dst },
-	{ "silent-drop",  tcp_parse_silent_drop },
-	{ /* END */ }
-}};
-
-INITCALL1(STG_REGISTER, tcp_req_conn_keywords_register, &tcp_req_conn_actions);
-
-static struct action_kw_list tcp_req_sess_actions = {ILH, {
-	{ "set-src",      tcp_parse_set_src_dst },
-	{ "set-src-port", tcp_parse_set_src_dst },
-	{ "set-dst"     , tcp_parse_set_src_dst },
-	{ "set-dst-port", tcp_parse_set_src_dst },
-	{ "silent-drop",  tcp_parse_silent_drop },
-	{ /* END */ }
-}};
-
-INITCALL1(STG_REGISTER, tcp_req_sess_keywords_register, &tcp_req_sess_actions);
-
-static struct action_kw_list tcp_req_cont_actions = {ILH, {
-	{ "set-dst"     , tcp_parse_set_src_dst },
-	{ "set-dst-port", tcp_parse_set_src_dst },
-	{ "silent-drop",  tcp_parse_silent_drop },
-	{ /* END */ }
-}};
-
-INITCALL1(STG_REGISTER, tcp_req_cont_keywords_register, &tcp_req_cont_actions);
-
-static struct action_kw_list tcp_res_cont_actions = {ILH, {
-	{ "silent-drop", tcp_parse_silent_drop },
-	{ /* END */ }
-}};
-
-INITCALL1(STG_REGISTER, tcp_res_cont_keywords_register, &tcp_res_cont_actions);
-
-static struct action_kw_list http_req_actions = {ILH, {
-	{ "silent-drop",  tcp_parse_silent_drop },
-	{ "set-src",      tcp_parse_set_src_dst },
-	{ "set-src-port", tcp_parse_set_src_dst },
-	{ "set-dst",      tcp_parse_set_src_dst },
-	{ "set-dst-port", tcp_parse_set_src_dst },
-	{ /* END */ }
-}};
-
-INITCALL1(STG_REGISTER, http_req_keywords_register, &http_req_actions);
-
-static struct action_kw_list http_res_actions = {ILH, {
-	{ "silent-drop", tcp_parse_silent_drop },
-	{ /* END */ }
-}};
-
-INITCALL1(STG_REGISTER, http_res_keywords_register, &http_res_actions);
-
-REGISTER_BUILD_OPTS("Built with transparent proxy support using:"
-#if defined(IP_TRANSPARENT)
-		    " IP_TRANSPARENT"
-#endif
-#if defined(IPV6_TRANSPARENT)
-		    " IPV6_TRANSPARENT"
-#endif
-#if defined(IP_FREEBIND)
-		    " IP_FREEBIND"
-#endif
-#if defined(IP_BINDANY)
-		    " IP_BINDANY"
-#endif
-#if defined(IPV6_BINDANY)
-		    " IPV6_BINDANY"
-#endif
-#if defined(SO_BINDANY)
-		    " SO_BINDANY"
-#endif
-		    "");
 
 
 /*
