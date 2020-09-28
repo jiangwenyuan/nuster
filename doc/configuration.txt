@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.2
                              willy tarreau
-                              2020/07/31
+                              2020/09/08
 
 
 This document covers the configuration language as implemented in the version
@@ -1358,7 +1358,8 @@ ssl-dh-param-file <file>
 
 ssl-load-extra-files <none|all|bundle|sctl|ocsp|issuer|key>*
   This setting alters the way HAProxy will look for unspecified files during
-  the loading of the SSL certificates.
+  the loading of the SSL certificates associated to "bind" lines. It does not
+  apply to certificates used for client authentication on "server" lines.
 
   By default, HAProxy discovers automatically a lot of files not specified in
   the configuration, and you may want to disable this behavior if you want to
@@ -1412,7 +1413,7 @@ ssl-skip-self-issued-ca
   issuer for ocsp without the need for '.issuer' file and be able to share it
   with 'issuers-chain-path'. This concerns all certificates without intermediate
   certificates. It's useless for BoringSSL, .issuer is ignored because ocsp
-  bits does not need it.
+  bits does not need it. Requires at least OpenSSL 1.0.2.
 
 stats socket [<address:port>|<path>] [param*]
   Binds a UNIX socket to <path> or a TCPv4/v6 address to <address:port>.
@@ -5410,8 +5411,9 @@ http-request replace-path <match-regex> <replace-fmt>
 
   This works like "replace-header" except that it works on the request's path
   component instead of a header. The path component starts at the first '/'
-  after an optional scheme+authority. It does contain the query string if any
-  is present. The replacement does not modify the scheme nor authority.
+  after an optional scheme+authority and ends before the question mark. Thus,
+  the replacement does not modify the scheme, the authority and the
+  query-string.
 
   It is worth noting that regular expressions may be more expensive to evaluate
   than certain ACLs, so rare replacements may benefit from a condition to avoid
@@ -5421,13 +5423,21 @@ http-request replace-path <match-regex> <replace-fmt>
     # prefix /foo : turn /bar?q=1 into /foo/bar?q=1 :
     http-request replace-path (.*) /foo\1
 
-    # suffix /foo : turn /bar?q=1 into /bar/foo?q=1 :
-    http-request replace-path ([^?]*)(\?(.*))? \1/foo\2
-
     # strip /foo : turn /foo/bar?q=1 into /bar?q=1
     http-request replace-path /foo/(.*) /\1
     # or more efficient if only some requests match :
     http-request replace-path /foo/(.*) /\1 if { url_beg /foo/ }
+
+http-request replace-pathq <match-regex> <replace-fmt>
+                           [ { if | unless } <condition> ]
+
+  This does the same as "http-request replace-path" except that the path
+  contains the query-string if any is present. Thus, the path and the
+  query-string are replaced.
+
+  Example:
+    # suffix /foo : turn /bar?q=1 into /bar/foo?q=1 :
+    http-request replace-pathq ([^?]*)(\?(.*))? \1/foo\2
 
 http-request replace-uri <match-regex> <replace-fmt>
                            [ { if | unless } <condition> ]
@@ -5681,6 +5691,12 @@ http-request set-path <fmt> [ { if | unless } <condition> ]
     Example :
       # prepend the host name before the path
       http-request set-path /%[hdr(host)]%[path]
+
+http-request set-pathq <fmt> [ { if | unless } <condition> ]
+
+  This does the same as "http-request set-path" except that the query-string is
+  also rewritten. It may be used to remove the query-string, including the
+  question mark (it is not possible using "http-request set-query").
 
 http-request set-priority-class <expr> [ { if | unless } <condition> ]
 
@@ -17864,6 +17880,14 @@ path : string
     path_len : length match
     path_reg : regex match
     path_sub : substring match
+
+pathq : string
+  This extracts the request's URL path with the query-string, which starts at
+  the first slash. This sample fetch is pretty handy to always retrieve a
+  relative URI, excluding the scheme and the authority part, if any. Indeed,
+  while it is the common representation for an HTTP/1.1 request target, in
+  HTTP/2, an absolute URI is often used. This sample fetch will return the same
+  result in both cases.
 
 query : string
   This extracts the request's query string, which starts after the first

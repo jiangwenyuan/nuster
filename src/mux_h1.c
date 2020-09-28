@@ -451,7 +451,31 @@ static int h1_avail_streams(struct connection *conn)
 	return 1 - h1_used_streams(conn);
 }
 
-
+/* Refresh the h1c task timeout if necessary */
+static void h1_refresh_timeout(struct h1c *h1c)
+{
+	if (h1c->task) {
+		h1c->task->expire = TICK_ETERNITY;
+		if (h1c->flags & H1C_F_CS_SHUTDOWN) {
+			/* half-closed connections switch to clientfin/serverfin
+			 * timeouts so that we don't hang too long on clients
+			 * that have gone away (especially in tunnel mode).
+			 */
+			h1c->task->expire = tick_add(now_ms, h1c->shut_timeout);
+			task_queue(h1c->task);
+			TRACE_DEVEL("refreshing connection's timeout (half-closed)", H1_EV_H1C_SEND, h1c->conn);
+		} else if ((!h1c->h1s && !conn_is_back(h1c->conn)) || b_data(&h1c->obuf)) {
+			/* front connections waiting for a stream, as well as any connection with
+			 * pending data, need a timeout.
+			 */
+			h1c->task->expire = tick_add(now_ms, ((h1c->flags & H1C_F_CS_SHUTW_NOW)
+							      ? h1c->shut_timeout
+							      : h1c->timeout));
+			task_queue(h1c->task);
+			TRACE_DEVEL("refreshing connection's timeout", H1_EV_H1C_SEND, h1c->conn);
+		}
+	}
+}
 /*****************************************************************/
 /* functions below are dedicated to the mux setup and management */
 /*****************************************************************/
@@ -2201,15 +2225,7 @@ static int h1_process(struct h1c * h1c)
 		h1s->cs->data_cb->wake(h1s->cs);
 	}
   end:
-	if (h1c->task) {
-		h1c->task->expire = TICK_ETERNITY;
-		if (b_data(&h1c->obuf)) {
-			h1c->task->expire = tick_add(now_ms, ((h1c->flags & (H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN))
-							      ? h1c->shut_timeout
-							      : h1c->timeout));
-			task_queue(h1c->task);
-		}
-	}
+	h1_refresh_timeout(h1c);
 	TRACE_LEAVE(H1_EV_H1C_WAKE, conn);
 	return 0;
 
@@ -2505,19 +2521,7 @@ static void h1_detach(struct conn_stream *cs)
 			h1_process(h1c);
 		else
 			h1c->conn->xprt->subscribe(h1c->conn, h1c->conn->xprt_ctx, SUB_RETRY_RECV, &h1c->wait_event);
-		if (h1c->task) {
-			h1c->task->expire = TICK_ETERNITY;
-			if ((!h1c->h1s && !conn_is_back(h1c->conn)) || b_data(&h1c->obuf)) {
-				/* front connections waiting for a stream, as well as any connection with
-				 * pending data, need a timeout.
-				 */
-				h1c->task->expire = tick_add(now_ms, ((h1c->flags & (H1C_F_CS_SHUTW_NOW|H1C_F_CS_SHUTDOWN))
-								      ? h1c->shut_timeout
-								      : h1c->timeout));
-				task_queue(h1c->task);
-				TRACE_DEVEL("refreshing connection's timeout", H1_EV_STRM_END, h1c->conn);
-			}
-		}
+		h1_refresh_timeout(h1c);
 	}
   end:
 	TRACE_LEAVE(H1_EV_STRM_END);
@@ -2755,7 +2759,7 @@ static size_t h1_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		if ((h1c->wait_event.events & SUB_RETRY_SEND) || !h1_send(h1c))
 			break;
 	}
-
+	h1_refresh_timeout(h1c);
 	TRACE_LEAVE(H1_EV_STRM_SEND, h1c->conn, h1s,, (size_t[]){total});
 	return total;
 }

@@ -163,6 +163,8 @@ static int get_http_auth(struct sample *smp, struct htx *htx)
  *     decide whether or not an HTTP message is present ;
  *   NULL if the requested data cannot be fetched or if it is certain that
  *     we'll never have any HTTP message there; this includes null strm or chn.
+ *   NULL if the sample's direction does not match the channel's (i.e. the
+ *     function was asked to work on the wrong channel)
  *   The HTX message if ready
  */
 struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, struct check *check, int vol)
@@ -172,6 +174,11 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, struct che
 	struct htx *htx = NULL;
 	struct http_msg *msg;
 	struct htx_sl *sl;
+
+	if (chn &&
+	    (((smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_REQ && (chn->flags & CF_ISRESP)) ||
+	     ((smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_RES && !(chn->flags & CF_ISRESP))))
+		return 0;
 
 	/* Note: it is possible that <s> is NULL when called before stream
 	 * initialization (eg: tcp-request connection), so this function is the
@@ -323,24 +330,29 @@ struct htx *smp_prefetch_htx(struct sample *smp, struct channel *chn, struct che
 static int smp_fetch_meth(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
 	struct channel *chn = SMP_REQ_CHN(smp);
-	struct htx *htx = smp_prefetch_htx(smp, chn, NULL, 0);
 	struct http_txn *txn;
 	int meth;
 
-	if (!htx)
+	txn = smp->strm->txn;
+	if (!txn)
 		return 0;
 
-	txn = smp->strm->txn;
 	meth = txn->meth;
 	smp->data.type = SMP_T_METH;
 	smp->data.u.meth.meth = meth;
 	if (meth == HTTP_METH_OTHER) {
+		struct htx *htx;
 		struct htx_sl *sl;
 
 		if ((smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_RES) {
 			/* ensure the indexes are not affected */
 			return 0;
 		}
+
+		htx = smp_prefetch_htx(smp, chn, NULL, 0);
+		if (!htx)
+			return 0;
+
 		sl = http_get_stline(htx);
 		smp->flags |= SMP_F_CONST;
 		smp->data.u.meth.str.area = HTX_SL_REQ_MPTR(sl);
@@ -1013,8 +1025,9 @@ static int smp_fetch_hdr_ip(const struct arg *args, struct sample *smp, const ch
 	return ret;
 }
 
-/* 8. Check on URI PATH. A pointer to the PATH is stored. The path starts at
- * the first '/' after the possible hostname, and ends before the possible '?'.
+/* 8. Check on URI PATH. A pointer to the PATH is stored. The path starts at the
+ * first '/' after the possible hostname. It ends before the possible '?' except
+ * for 'pathq' keyword.
  */
 static int smp_fetch_path(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
@@ -1027,7 +1040,13 @@ static int smp_fetch_path(const struct arg *args, struct sample *smp, const char
 		return 0;
 
 	sl = http_get_stline(htx);
-	path = iststop(http_get_path(htx_sl_req_uri(sl)), '?');
+	path = http_get_path(htx_sl_req_uri(sl));
+
+	if (kw[0] == 'p' && kw[4] == 'q') // pathq
+		path = http_get_path(htx_sl_req_uri(sl));
+	else
+		path = iststop(http_get_path(htx_sl_req_uri(sl)), '?');
+
 	if (!isttest(path))
 		return 0;
 
@@ -2059,6 +2078,7 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	{ "http_first_req",     smp_fetch_http_first_req,     0,                NULL,    SMP_T_BOOL, SMP_USE_HRQHP },
 	{ "method",             smp_fetch_meth,               0,                NULL,    SMP_T_METH, SMP_USE_HRQHP },
 	{ "path",               smp_fetch_path,               0,                NULL,    SMP_T_STR,  SMP_USE_HRQHV },
+	{ "pathq",              smp_fetch_path,               0,                NULL,    SMP_T_STR,  SMP_USE_HRQHV },
 	{ "query",              smp_fetch_query,              0,                NULL,    SMP_T_STR,  SMP_USE_HRQHV },
 
 	/* HTTP protocol on the request path */

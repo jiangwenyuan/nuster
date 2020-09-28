@@ -1,6 +1,68 @@
 ChangeLog :
 ===========
 
+2020/09/08 : 2.2.3
+    - SCRIPTS: git-show-backports: make -m most only show the left branch
+    - SCRIPTS: git-show-backports: emit the shell command to backport a commit
+    - BUG/MEDIUM: mux-h1: Refresh H1 connection timeout after a synchronous send
+    - CLEANUP: dns: typo in reported error message
+    - BUG/MAJOR: dns: disabled servers through SRV records never recover
+    - BUG/MINOR: spoa-server: fix size_t format printing
+    - DOC: spoa-server: fix false friends `actually`
+    - BUG/MINOR: ssl: fix memory leak at OCSP loading
+    - BUG/MEDIUM: ssl: memory leak of ocsp data at SSL_CTX_free()
+    - BUG/MEDIUM: map/lua: Return an error if a map is loaded during runtime
+    - MINOR: arg: Add an argument type to keep a reference on opaque data
+    - BUG/MINOR: converters: Store the sink in an arg pointer for debug() converter
+    - BUG/MINOR: lua: Duplicate map name to load it when a new Map object is created
+    - BUG/MINOR: arg: Fix leaks during arguments validation for fetches/converters
+    - BUG/MINOR: lua: Check argument type to convert it to IPv4/IPv6 arg validation
+    - BUG/MINOR: lua: Check argument type to convert it to IP mask in arg validation
+    - MINOR: hlua: Don't needlessly copy lua strings in trash during args validation
+    - BUG/MINOR: lua: Duplicate lua strings in sample fetches/converters arg array
+    - MEDIUM: lua: Don't filter exported fetches and converters
+    - BUG/MINOR: snapshots: leak of snapshots on deinit()
+    - BUG/MEDIUM: ssl: fix the ssl-skip-self-issued-ca option
+    - BUG/MINOR: ssl: ssl-skip-self-issued-ca requires >= 1.0.2
+    - BUG/MINOR: stats: use strncmp() instead of memcmp() on health states
+    - BUG/MEDIUM: htx: smp_prefetch_htx() must always validate the direction
+    - BUG/MEDIUM: ssl: never generates the chain from the verify store
+    - BUG/MEDIUM: ssl: fix ssl_bind_conf double free w/ wildcards
+    - BUG/MINOR: reload: do not fail when no socket is sent
+    - BUG/MEDIUM: http-ana: Don't wait to send 1xx responses received from servers
+    - MINOR: http-htx: Add an option to eval query-string when the path is replaced
+    - BUG/MINOR: http-rules: Replace path and query-string in "replace-path" action
+    - BUG/MEDIUM: ssl: crt-list negative filters don't work
+    - DOC: cache: Use '<name>' instead of '<id>' in error message
+    - MINOR: cache: Reject duplicate cache names
+    - BUILD: tools: include auxv a bit later
+    - BUILD: task: work around a bogus warning in gcc 4.7/4.8 at -O1
+    - BUG/MAJOR: contrib/spoa-server: Fix unhandled python call leading to memory leak
+    - BUG/MINOR: contrib/spoa-server: Ensure ip address references are freed
+    - BUG/MINOR: contrib/spoa-server: Do not free reference to NULL
+    - BUG/MINOR: contrib/spoa-server: Updating references to free in case of failure
+    - BUG/MEDIUM: contrib/spoa-server: Fix ipv4_address used instead of ipv6_address
+    - BUG/MINOR: startup: haproxy -s cause 100% cpu
+    - Revert "BUG/MINOR: http-rules: Replace path and query-string in "replace-path" action"
+    - BUG/MEDIUM: doc: Fix replace-path action description
+    - MINOR: http-rules: Add set-pathq and replace-pathq actions
+    - MINOR: http-fetch: Add pathq sample fetch
+    - REGTEST: Add a test for request path manipulations, with and without the QS
+    - BUG/MEDIUM: ssl: check OCSP calloc in ssl_sock_load_ocsp()
+    - MINOR: arg: Use chunk_destroy() to release string arguments
+    - BUG/MEDIUM: ssl: does not look for all SNIs before chosing a certificate
+    - BUG/MINOR: threads: work around a libgcc_s issue with chrooting
+    - BUILD: thread: limit the libgcc_s workaround to glibc only
+    - MINOR: Commit .gitattributes
+    - CLEANUP: Update .gitignore
+    - CLEANUP: dns: remove 45 "return" statements from dns_validate_dns_response()
+    - BUG/MEDIUM: dns: Don't store additional records in a linked-list
+    - BUG/MEDIUM: dns: Be sure to renew IP address for already known servers
+    - MINOR: server: Improve log message sent when server address is updated
+    - DOC: ssl-load-extra-files only applies to certificates on bind lines
+    - BUG/MINOR: auth: report valid crypto(3) support depending on build options
+    - BUG/MEDIUM: mux-h1: always apply the timeout on half-closed connections
+
 2020/07/31 : 2.2.2
     - BUG/MINOR: mux-fcgi: Don't url-decode the QUERY_STRING parameter anymore
     - BUILD: tools: fix build with static only toolchains
