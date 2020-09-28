@@ -3,8 +3,8 @@
 
 Branch | nuster version | Released   | Status              | Download
 ------ | -------------- | --------   | ------              | --------
-master |                |            | HAProxy v2.3-dev0   |
-5.2    | 5.2.2.22       | 2020-08-08 | Stable version      | [nuster-5.2.2.22.tar.gz][6]
+master |                |            | HAProxy v2.3-dev5   |
+5.2    | 5.2.3.22       | 2020-09-28 | Stable version      | [nuster-5.2.3.22.tar.gz][6]
 5.1    | 5.1.0.21       | 2020-07-09 | Mainline version    | [nuster-5.1.0.21.tar.gz][5]
 H2.1   | 5.0.13.21      | 2020-07-09 | Unmaintained        | [nuster-5.0.13.21.tar.gz][4], renumbered to 5.1.0.21
 H2.0   | 4.0.1.20       | 2020-04-11 | Unmaintained        | ~nuster-4.0.1.20.tar.gz~
@@ -12,7 +12,7 @@ H1.9   | 3.2.5.19       | 2020-04-13 | Critical fixes only | [nuster-3.2.5.19.ta
 H1.8   | 2.0.16.18      | 2020-04-13 | Critical fixes only | [nuster-2.0.16.18.tar.gz][2]
 H1.7   | 1.0.3.17       | 2019-11-02 | Unmaintained        | [nuster-1.0.3.17.tar.gz][1]
 
-[6]:https://github.com/jiangwenyuan/nuster/releases/download/v5.2.2.22/nuster-5.2.2.22.tar.gz
+[6]:https://github.com/jiangwenyuan/nuster/releases/download/v5.2.3.22/nuster-5.2.3.22.tar.gz
 [5]:https://github.com/jiangwenyuan/nuster/releases/download/v5.1.0.21/nuster-5.1.0.21.tar.gz
 [4]:https://github.com/jiangwenyuan/nuster/releases/download/v5.0.13.21/nuster-5.0.13.21.tar.gz
 [3]:https://github.com/jiangwenyuan/nuster/releases/download/v3.2.5.19/nuster-3.2.5.19.tar.gz
@@ -37,6 +37,7 @@ https://github.com/jiangwenyuan/nuster/releases
 
 | nuster version                                                              | Base HAProxy version
 | --------------                                                              | ---------------
+| [5.2.3.22](https://github.com/jiangwenyuan/nuster/releases/tag/v5.2.3.22)   | 2.2.3
 | [5.2.2.22](https://github.com/jiangwenyuan/nuster/releases/tag/v5.2.2.22)   | 2.2.2
 | [5.2.1.22](https://github.com/jiangwenyuan/nuster/releases/tag/v5.2.1.22)   | 2.2.0
 | [5.1.0.21](https://github.com/jiangwenyuan/nuster/releases/tag/v5.1.0.21)   | 2.1.7

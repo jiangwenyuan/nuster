@@ -1,5 +1,15 @@
 # nuster Changelog
 
+## 5.2.3.22 - 2020-09-28
+
+Update to HAProxy v2.2.3
+
+### Fixed
+
+* Broken nosql function
+* Disk cache failed handle empty response
+* 100% CPU usage in disk load thread
+
 ## 5.2.2.22 - 2020-08-08
 
 Update to HAProxy v2.2.2
