@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.2
                              willy tarreau
-                              2020/09/08
+                              2020/11/05
 
 
 This document covers the configuration language as implemented in the version
@@ -3133,6 +3133,11 @@ balance url_param <param> [check_post]
                   slash in the request. If both parameters are specified, the
                   evaluation stops when either is reached.
 
+                  A "path-only" parameter indicates that the hashing key starts
+                  at the first '/' of the path. This can be used to ignore the
+                  authority part of absolute URIs, and to make sure that HTTP/1
+                  and HTTP/2 URIs will provide the same hash.
+
       url_param   The URL parameter specified in argument will be looked up in
                   the query string of each HTTP GET request.
 
@@ -5497,7 +5502,7 @@ http-request return [status <code>] [content-type <type>]
   default status code used for the response is 200. It can be optionally
   specified as an arguments to "status". The response content-type may also be
   specified as an argument to "content-type". Finally the response itself may
-  be defined. If can be a full HTTP response specifying the errorfile to use,
+  be defined. It can be a full HTTP response specifying the errorfile to use,
   or the response payload specifying the file or the string to use. These rules
   are followed to create the response :
 
@@ -5538,14 +5543,14 @@ http-request return [status <code>] [content-type <type>]
     evaluated as a log-format string. With a "string" argument, it is
     considered as a raw string.
 
-  When the response is not based an errorfile, it is possible to appends HTTP
+  When the response is not based on an errorfile, it is possible to append HTTP
   header fields to the response using "hdr" arguments. Otherwise, all "hdr"
   arguments are ignored. For each one, the header name is specified in <name>
   and its value is defined by <fmt> which follows the log-format rules.
 
   Note that the generated response must be smaller than a buffer. And to avoid
   any warning, when an errorfile or a raw file is loaded, the buffer space
-  reserved to the headers rewriting should also be free.
+  reserved for the headers rewriting should also be free.
 
   No further "http-request" rules are evaluated.
 
@@ -5908,7 +5913,7 @@ http-request track-sc2 <key> [table <table>] [ { if | unless } <condition> ]
   not stop evaluation and do not change default action. The number of counters
   that may be simultaneously tracked by the same connection is set in
   MAX_SESS_STKCTR at build time (reported in haproxy -vv) which defaults to 3,
-  so the track-sc number is between 0 and (MAX_SESS_STCKTR-1). The first
+  so the track-sc number is between 0 and (MAX_SESS_STKCTR-1). The first
   "track-sc0" rule executed enables tracking of the counters of the specified
   table as the first set. The first "track-sc1" rule executed enables tracking
   of the counters of the specified table as the second set. The first
@@ -10852,7 +10857,7 @@ tcp-request connection <action> [{if | unless} <condition>]
         number of counters that may be simultaneously tracked by the same
         connection is set in MAX_SESS_STKCTR at build time (reported in
         haproxy -vv) which defaults to 3, so the track-sc number is between 0
-        and (MAX_SESS_STCKTR-1). The first "track-sc0" rule executed enables
+        and (MAX_SESS_STKCTR-1). The first "track-sc0" rule executed enables
         tracking of the counters of the specified table as the first set. The
         first "track-sc1" rule executed enables tracking of the counters of the
         specified table as the second set. The first "track-sc2" rule executed
@@ -11088,13 +11093,16 @@ tcp-request content <action> [{if | unless} <condition>]
   "track-sc*" actions as well as for changing the default action to a reject.
 
   It is perfectly possible to match layer 7 contents with "tcp-request content"
-  rules, since HTTP-specific ACL matches are able to preliminarily parse the
-  contents of a buffer before extracting the required data. If the buffered
-  contents do not parse as a valid HTTP message, then the ACL does not match.
-  The parser which is involved there is exactly the same as for all other HTTP
-  processing, so there is no risk of parsing something differently. In an HTTP
-  backend connected to from an HTTP frontend, it is guaranteed that HTTP
-  contents will always be immediately present when the rule is evaluated first.
+  rules from a TCP proxy, since HTTP-specific ACL matches are able to
+  preliminarily parse the contents of a buffer before extracting the required
+  data. If the buffered contents do not parse as a valid HTTP message, then the
+  ACL does not match.  The parser which is involved there is exactly the same
+  as for all other HTTP processing, so there is no risk of parsing something
+  differently. In an HTTP frontend or an HTTP backend, it is guaranteed that
+  HTTP contents will always be immediately present when the rule is evaluated
+  first because the HTTP parsing is performed in the early stages of the
+  connection processing, at the session level. But for such proxies, using
+  "http-request" rules is much more natural and recommended.
 
   Tracking layer7 information is also possible provided that the information
   are present when the rule is processed. The rule processing engine is able to
@@ -12854,7 +12862,7 @@ agent-check
     MAINT mode, thus it will not accept any new connections at all, and health
     checks will be stopped.
 
-  - The words "down", "failed", or "stopped", optionally followed by a
+  - The words "down", "fail", or "stopped", optionally followed by a
     description string after a sharp ('#'). All of these mark the server's
     operating state as DOWN, but since the word itself is reported on the stats
     page, the difference allows an administrator to know if the situation was
@@ -15224,7 +15232,7 @@ regsub(<regex>,<subst>[,<flags>])
 
      # capture groups and backreferences
      # both lines do the same.
-     http-request redirect location %[url,'regsub("(foo|bar)([0-9]+)?","\2\1",i)]'
+     http-request redirect location %[url,'regsub("(foo|bar)([0-9]+)?","\2\1",i)']
      http-request redirect location %[url,regsub(\"(foo|bar)([0-9]+)?\",\"\2\1\",i)]
 
 capture-req(<id>)

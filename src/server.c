@@ -74,7 +74,7 @@ struct eb_root state_file = EB_ROOT_UNIQUE;
 
 int srv_downtime(const struct server *s)
 {
-	if ((s->cur_state != SRV_ST_STOPPED) && s->last_change < now.tv_sec)		// ignore negative time
+	if ((s->cur_state != SRV_ST_STOPPED) || s->last_change >= now.tv_sec)		// ignore negative time
 		return s->down_time;
 
 	return now.tv_sec - s->last_change + s->down_time;
@@ -877,8 +877,8 @@ static int srv_parse_socks4(char **args, int *cur_arg,
 		goto err;
 	}
 
-	if (!port_low) {
-		ha_alert("'%s': invalid port range %d-%d.\n", args[*cur_arg], port_low, port_high);
+	if (port_low <= 0 || port_low > 65535) {
+		ha_alert("'%s': invalid port %d.\n", args[*cur_arg], port_low);
 		goto err;
 	}
 
@@ -1903,6 +1903,9 @@ static int server_template_init(struct server *srv, struct proxy *px)
 		newsrv = new_server(px);
 		if (!newsrv)
 			goto err;
+
+		newsrv->conf.file = strdup(srv->conf.file);
+		newsrv->conf.line = srv->conf.line;
 
 		srv_settings_cpy(newsrv, srv, 1);
 		srv_prepare_for_resolution(newsrv, srv->hostname);
@@ -4126,14 +4129,24 @@ static int srv_apply_lastaddr(struct server *srv, int *err_code)
 /* returns 0 if no error, otherwise a combination of ERR_* flags */
 static int srv_iterate_initaddr(struct server *srv)
 {
+	char *name = srv->hostname;
 	int return_code = 0;
 	int err_code;
 	unsigned int methods;
 
+	/* If no addr and no hostname set, get the name from the DNS SRV request */
+	if (!name && srv->srvrq)
+		name = srv->srvrq->name;
+
 	methods = srv->init_addr_methods;
-	if (!methods) { // default to "last,libc"
+	if (!methods) {
+		/* otherwise default to "last,libc" */
 		srv_append_initaddr(&methods, SRV_IADDR_LAST);
 		srv_append_initaddr(&methods, SRV_IADDR_LIBC);
+		if (srv->resolvers_id) {
+			/* dns resolution is configured, add "none" to not fail on startup */
+			srv_append_initaddr(&methods, SRV_IADDR_NONE);
+		}
 	}
 
 	/* "-dr" : always append "none" so that server addresses resolution
@@ -4166,7 +4179,7 @@ static int srv_iterate_initaddr(struct server *srv)
 			srv_set_admin_flag(srv, SRV_ADMF_RMAINT, NULL);
 			if (return_code) {
 				ha_warning("parsing [%s:%d] : 'server %s' : could not resolve address '%s', disabling server.\n",
-					   srv->conf.file, srv->conf.line, srv->id, srv->hostname);
+					   srv->conf.file, srv->conf.line, srv->id, name);
 			}
 			return return_code;
 
@@ -4174,7 +4187,7 @@ static int srv_iterate_initaddr(struct server *srv)
 			ipcpy(&srv->init_addr, &srv->addr);
 			if (return_code) {
 				ha_warning("parsing [%s:%d] : 'server %s' : could not resolve address '%s', falling back to configured address.\n",
-					   srv->conf.file, srv->conf.line, srv->id, srv->hostname);
+					   srv->conf.file, srv->conf.line, srv->id, name);
 			}
 			goto out;
 
@@ -4185,11 +4198,11 @@ static int srv_iterate_initaddr(struct server *srv)
 
 	if (!return_code) {
 		ha_alert("parsing [%s:%d] : 'server %s' : no method found to resolve address '%s'\n",
-		      srv->conf.file, srv->conf.line, srv->id, srv->hostname);
+		      srv->conf.file, srv->conf.line, srv->id, name);
 	}
 	else {
 		ha_alert("parsing [%s:%d] : 'server %s' : could not resolve address '%s'.\n",
-		      srv->conf.file, srv->conf.line, srv->id, srv->hostname);
+		      srv->conf.file, srv->conf.line, srv->id, name);
 	}
 
 	return_code |= ERR_ALERT | ERR_FATAL;
@@ -4221,7 +4234,7 @@ int srv_init_addr(void)
 			goto srv_init_addr_next;
 
 		for (srv = curproxy->srv; srv; srv = srv->next)
-			if (srv->hostname)
+			if (srv->hostname || srv->srvrq)
 				return_code |= srv_iterate_initaddr(srv);
 
  srv_init_addr_next:
@@ -4687,7 +4700,9 @@ INITCALL1(STG_REGISTER, cli_register_kw, &cli_kws);
  * This function applies server's status changes, it is
  * is designed to be called asynchronously.
  *
- * Must be called with the server lock held.
+ * Must be called with the server lock held. This may also be called at init
+ * time as the result of parsing the state file, in which case no lock will be
+ * held, and the server's warmup task can be null.
  */
 static void srv_update_status(struct server *s)
 {
@@ -4783,11 +4798,11 @@ static void srv_update_status(struct server *s)
 				s->proxy->last_change = now.tv_sec;
 			}
 
-			if (s->next_state == SRV_ST_STOPPED && s->last_change < now.tv_sec)	// ignore negative times
+			if (s->cur_state == SRV_ST_STOPPED && s->last_change < now.tv_sec)	// ignore negative times
 				s->down_time += now.tv_sec - s->last_change;
 
 			s->last_change = now.tv_sec;
-			if (s->next_state == SRV_ST_STARTING)
+			if (s->next_state == SRV_ST_STARTING && s->warmup)
 				task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20))));
 
 			server_recalc_eweight(s, 0);
@@ -4965,8 +4980,10 @@ static void srv_update_status(struct server *s)
 			}
 			else {
 				s->next_state = SRV_ST_STARTING;
-				if (s->slowstart > 0)
-					task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20))));
+				if (s->slowstart > 0) {
+					if (s->warmup)
+						task_schedule(s->warmup, tick_add(now_ms, MS_TO_TICKS(MAX(1000, s->slowstart / 20))));
+				}
 				else
 					s->next_state = SRV_ST_RUNNING;
 			}
@@ -5283,11 +5300,10 @@ struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsi
 	struct eb32_node *eb;
 	int i;
 	unsigned int next_wakeup;
-	int need_wakeup = 0;
 
+	next_wakeup = TICK_ETERNITY;
 	HA_SPIN_LOCK(OTHER_LOCK, &idle_conn_srv_lock);
 	while (1) {
-		int srv_is_empty = 1;
 		int exceed_conns;
 		int to_kill;
 		int curr_idle;
@@ -5306,7 +5322,6 @@ struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsi
 		if (tick_is_lt(now_ms, eb->key)) {
 			/* timer not expired yet, revisit it later */
 			next_wakeup = eb->key;
-			need_wakeup = 1;
 			break;
 		}
 		srv = eb32_entry(eb, struct server, idle_node);
@@ -5322,7 +5337,7 @@ struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsi
 		exceed_conns = srv->curr_used_conns + curr_idle - MAX(srv->max_used_conns, srv->est_need_conns);
 		exceed_conns = to_kill = exceed_conns / 2 + (exceed_conns & 1);
 
-		srv->est_need_conns = (srv->est_need_conns + srv->max_used_conns + 1) / 2;
+		srv->est_need_conns = (srv->est_need_conns + srv->max_used_conns) / 2;
 		if (srv->est_need_conns < srv->max_used_conns)
 			srv->est_need_conns = srv->max_used_conns;
 
@@ -5347,8 +5362,6 @@ struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsi
 			    srv_migrate_conns_to_remove(&srv->safe_conns[i], &idle_conns[i].toremove_conns, max_conn - j) > 0)
 				did_remove = 1;
 
-			if (did_remove && max_conn < srv->curr_idle_thr[i])
-				srv_is_empty = 0;
 			if (did_remove)
 				task_wakeup(idle_conns[i].cleanup_task, TASK_WOKEN_OTHER);
 
@@ -5357,22 +5370,19 @@ struct task *srv_cleanup_idle_connections(struct task *task, void *context, unsi
 		}
 remove:
 		eb32_delete(&srv->idle_node);
-		if (!srv_is_empty) {
+
+		if (srv->curr_idle_conns) {
 			/* There are still more idle connections, add the
 			 * server back in the tree.
 			 */
-			srv->idle_node.key = tick_add(srv->pool_purge_delay,
-			    now_ms);
+			srv->idle_node.key = tick_add(srv->pool_purge_delay, now_ms);
 			eb32_insert(&idle_conn_srv, &srv->idle_node);
+			next_wakeup = tick_first(next_wakeup, srv->idle_node.key);
 		}
 	}
 	HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conn_srv_lock);
 
-	if (need_wakeup)
-		task->expire = next_wakeup;
-	else
-		task->expire = TICK_ETERNITY;
-
+	task->expire = next_wakeup;
 	return task;
 }
 

@@ -1,6 +1,96 @@
 ChangeLog :
 ===========
 
+2020/11/05 : 2.2.5
+    - BUILD: ssl_crtlist: work around another bogus gcc-9.3 warning
+    - BUILD: makefile: Fix building with closefrom() support enabled
+    - MINOR: ssl: Add error if a crt-list might be truncated
+    - BUG/MINOR: Fix several leaks of 'log_tag' in init().
+    - DOC: tcp-rules: Refresh details about L7 matching for tcp-request content rules
+    - BUG/MINOR: tcpcheck: Set socks4 and send-proxy flags before the connect call
+    - BUG/MEDIUM: queue: make pendconn_cond_unlink() really thread-safe
+    - MINOR: ssl: Add warning if a crt-list might be truncated
+    - MINOR: counters: fix a typo in comment
+    - BUG/MINOR: stats: fix validity of the json schema
+    - MINOR: hlua: Display debug messages on stderr only in debug mode
+    - BUG/MINOR: peers: Inconsistency when dumping peer status codes.
+    - BUG/MINOR: mux-h1: Be sure to only set CO_RFL_READ_ONCE for the first read
+    - BUG/MINOR: mux-h1: Always set the session on frontend h1 stream
+    - DOC: fix a confusing typo on a regsub example
+    - DOC: Add missing stats fields in the management doc
+    - BUG/MEDIUM: mux-fcgi: Don't handle pending read0 too early on streams
+    - BUG/MEDIUM: mux-h2: Don't handle pending read0 too early on streams
+    - DOC: Fix typos in configuration.txt
+    - BUG/MINOR: http: Fix content-length of the default 500 error
+    - BUG/MINOR: http-htx: Expect no body for 204/304 internal HTTP responses
+    - CLEANUP: tree-wide: use VAR_ARRAY instead of [0] in various definitions
+    - BUILD: connection: fix build on clang after the VAR_ARRAY cleanup
+    - BUG/MINOR: init: only keep rlim_fd_cur if max is unlimited
+    - BUG/MINOR: mux-h2: do not stop outgoing connections on stopping
+    - MINOR: fd: report an error message when failing initial allocations
+    - BUG/MINOR: connection: fix loop iter on connection takeover
+    - BUG/MEDIUM: task: bound the number of tasks picked from the wait queue at once
+    - BUG/MEDIUM: spoe: Unset variable instead of set it if no data provided
+    - BUG/MEDIUM: mux-h1: Get the session from the H1S when capturing bad messages
+    - BUG/MEDIUM: lb: Always lock the server when calling server_{take,drop}_conn
+    - DOC: fix typo in MAX_SESS_STKCTR
+    - BUG/MINOR: peers: Possible unexpected peer seesion reset after collisions.
+    - BUG/MINOR: disable dynamic OCSP load with BoringSSL
+    - BUILD: ssl: make BoringSSL use its own version numbers
+    - MINOR: ssl: 'ssl-load-extra-del-ext' removes the certificate extension
+    - BUG/MINOR: queue: properly report redistributed connections
+    - BUG/MEDIUM: server: support changing the slowstart value from state-file
+    - BUG/MINOR: http-ana: Don't send payload for internal responses to HEAD requests
+    - BUG/MAJOR: mux-h2: Don't try to send data if we know it is no longer possible
+    - Revert "MINOR: ssl: 'ssl-load-extra-del-ext' removes the certificate extension"
+    - BUG/MEDIUM: ssl: OCSP must work with BoringSSL
+    - BUG/MINOR: extcheck: add missing checks on extchk_setenv()
+    - BUG/MINOR: log: fix memory leak on logsrv parse error
+    - BUG/MINOR: log: fix risk of null deref on error path
+    - BUG/MINOR: server: fix srv downtime calcul on starting
+    - BUG/MINOR: server: fix down_time report for stats
+    - BUG/MINOR: lua: initialize sample before using it
+    - MINOR: ist: Add a case insensitive istmatch function
+    - BUG/MINOR: cache: Manage multiple values in cache-control header value
+    - BUG/MINOR: cache: Inverted variables in http_calc_maxage function
+    - BUG/MEDIUM: filters: Don't try to init filters for disabled proxies
+    - BUG/MINOR: proxy/server: Skip per-proxy/server post-check for disabled proxies
+    - BUG/MINOR: checks: Report a socket error before any connection attempt
+    - BUG/MINOR: server: Set server without addr but with dns in RMAINT on startup
+    - MINOR: server: Copy configuration file and line for server templates
+    - BUG/MEDIUM: mux-pt: Release the tasklet during an HTTP upgrade
+    - BUG/MINOR: filters: Skip disabled proxies during startup only
+    - BUG/MEDIUM: stick-table: limit the time spent purging old entries
+    - CLEANUP: mux-h2: Remove the h1 parser state from the h2 stream
+    - BUG/MEDIUM: server: make it possible to kill last idle connections
+
+2020/09/30 : 2.2.4
+    - BUILD: threads: better workaround for late loading of libgcc_s
+    - BUG/MEDIUM: pattern: Renew the pattern expression revision when it is pruned
+    - BUG/MINOR: Fix type passed of sizeof() for calloc()
+    - BUG/MINOR: ssl: verifyhost is case sensitive
+    - BUG/MINOR: server: report correct error message for invalid port on "socks4"
+    - BUG/MEDIUM: ssl: Don't call ssl_sock_io_cb() directly.
+    - BUG/MINOR: ssl/crt-list: crt-list could end without a \n
+    - BUG/MINOR: h2/trace: do not display "stream error" after a frame ACK
+    - BUG/MINOR: http-fetch: Don't set the sample type during the htx prefetch
+    - BUG/MINOR: config: Fix memory leak on config parse listen
+    - BUG/MEDIUM: h2: report frame bits only for handled types
+    - BUG/MINOR: Fix memory leaks cfg_parse_peers
+    - MINOR: h2/trace: also display the remaining frame length in traces
+    - MINOR: backend: make the "whole" option of balance uri take only one bit
+    - MINOR: backend: add a new "path-only" option to "balance uri"
+    - REGTESTS: add a few load balancing tests
+    - BUG/MEDIUM: listeners: do not pause foreign listeners
+    - BUILD: trace: include tools.h
+    - REGTESTS: use "command" instead of "which" for better POSIX compatibility
+    - DOC: agent-check: fix typo in "fail" word expected reply
+    - BUG/MINOR: ssl/crt-list: exit on warning out of crtlist_parse_line()
+    - REGTEST: fix host part in balance-uri-path-only.vtc
+    - REGTEST: make agent-check.vtc require 1.8
+    - REGTEST: make abns_socket.vtc require 1.8
+    - REGTEST: make map_regm_with_backref require 1.7
+
 2020/09/08 : 2.2.3
     - SCRIPTS: git-show-backports: make -m most only show the left branch
     - SCRIPTS: git-show-backports: emit the shell command to backport a commit

@@ -1852,7 +1852,12 @@ static void init(int argc, char **argv)
 		progname = tmp + 1;
 
 	/* the process name is used for the logs only */
-	chunk_initstr(&global.log_tag, strdup(progname));
+	chunk_initlen(&global.log_tag, strdup(progname), strlen(progname), strlen(progname));
+	if (b_orig(&global.log_tag) == NULL) {
+		chunk_destroy(&global.log_tag);
+		ha_alert("Cannot allocate memory for log_tag.\n");
+		exit(EXIT_FAILURE);
+	}
 
 	argc--; argv++;
 	while (argc > 0) {
@@ -2188,6 +2193,9 @@ static void init(int argc, char **argv)
 		struct server *srv;
 		struct post_proxy_check_fct *ppcf;
 		struct post_server_check_fct *pscf;
+
+		if (px->state == PR_STSTOPPED)
+			continue;
 
 		list_for_each_entry(pscf, &post_server_check_list, list) {
 			for (srv = px->srv; srv; srv = srv->next)
@@ -3186,6 +3194,9 @@ int main(int argc, char **argv)
 
 	/* take a copy of initial limits before we possibly change them */
 	getrlimit(RLIMIT_NOFILE, &limit);
+
+	if (limit.rlim_max == RLIM_INFINITY)
+		limit.rlim_max = limit.rlim_cur;
 	rlim_fd_cur_at_boot = limit.rlim_cur;
 	rlim_fd_max_at_boot = limit.rlim_max;
 

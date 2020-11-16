@@ -14,7 +14,6 @@
 #include <haproxy/api.h>
 #include <haproxy/cfgparse.h>
 #include <haproxy/connection.h>
-#include <haproxy/h1.h>
 #include <haproxy/h2.h>
 #include <haproxy/hpack-dec.h>
 #include <haproxy/hpack-enc.h>
@@ -190,13 +189,12 @@ enum h2_ss {
 
 
 /* H2 stream descriptor, describing the stream as it appears in the H2C, and as
- * it is being processed in the internal HTTP representation (H1 for now).
+ * it is being processed in the internal HTTP representation (HTX).
  */
 struct h2s {
 	struct conn_stream *cs;
 	struct session *sess;
 	struct h2c *h2c;
-	struct h1m h1m;         /* request or response parser state for H1 */
 	struct eb32_node by_id; /* place in h2c's streams_by_id */
 	int32_t id; /* stream ID */
 	uint32_t flags;      /* H2_SF_* */
@@ -508,7 +506,7 @@ static void h2_trace(enum trace_level level, uint64_t mask, const struct trace_s
 
 		if (h2c->dsi >= 0 &&
 		    (mask & (H2_EV_RX_FRAME|H2_EV_RX_FHDR)) == (H2_EV_RX_FRAME|H2_EV_RX_FHDR)) {
-			chunk_appendf(&trace_buf, " dft=%s/%02x", h2_ft_str(h2c->dft), h2c->dff);
+			chunk_appendf(&trace_buf, " dft=%s/%02x dfl=%d", h2_ft_str(h2c->dft), h2c->dff, h2c->dfl);
 		}
 
 		if (h2s) {
@@ -549,6 +547,18 @@ static void h2_trace(enum trace_level level, uint64_t mask, const struct trace_s
 				      HTX_SL_P2_LEN(sl), HTX_SL_P2_PTR(sl),
 				      HTX_SL_P3_LEN(sl), HTX_SL_P3_PTR(sl));
 	}
+}
+
+
+/* Detect a pending read0 for a H2 connection. It happens if a read0 is pending
+ * on the connection AND if there is no more data in the demux buffer. The
+ * function returns 1 to report a read0 or 0 otherwise.
+ */
+static int h2c_read0_pending(struct h2c *h2c)
+{
+	if (conn_xprt_read0_pending(h2c->conn) && !b_data(&h2c->dbuf))
+		return 1;
+	return 0;
 }
 
 /* returns true if the connection is allowed to expire, false otherwise. A
@@ -1307,16 +1317,6 @@ static struct h2s *h2s_new(struct h2c *h2c, int id)
 	h2s->body_len  = 0;
 	h2s->rxbuf     = BUF_NULL;
 
-	if (h2c->flags & H2_CF_IS_BACK) {
-		h1m_init_req(&h2s->h1m);
-		h2s->h1m.err_pos = -1; // don't care about errors on the request path
-		h2s->h1m.flags |= H1_MF_TOLOWER;
-	} else {
-		h1m_init_res(&h2s->h1m);
-		h2s->h1m.err_pos = -1; // don't care about errors on the response path
-		h2s->h1m.flags |= H1_MF_TOLOWER;
-	}
-
 	h2s->by_id.key = h2s->id = id;
 	if (id > 0)
 		h2c->max_id      = id;
@@ -1901,7 +1901,7 @@ static void h2s_wake_one_stream(struct h2s *h2s)
 		return;
 	}
 
-	if (conn_xprt_read0_pending(h2s->h2c->conn)) {
+	if (h2c_read0_pending(h2s->h2c)) {
 		if (h2s->st == H2_SS_OPEN)
 			h2s->st = H2_SS_HREM;
 		else if (h2s->st == H2_SS_HLOC)
@@ -3050,7 +3050,7 @@ static void h2_process_demux(struct h2c *h2c)
 
 		if (tmp_h2s != h2s && h2s && h2s->cs &&
 		    (b_data(&h2s->rxbuf) ||
-		     conn_xprt_read0_pending(h2c->conn) ||
+		     h2c_read0_pending(h2c) ||
 		     h2s->st == H2_SS_CLOSED ||
 		     (h2s->flags & H2_SF_ES_RCVD) ||
 		     (h2s->cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING|CS_FL_EOS)))) {
@@ -3190,7 +3190,8 @@ static void h2_process_demux(struct h2c *h2c)
 		}
 
 		if (h2c->st0 != H2_CS_FRAME_H) {
-			TRACE_DEVEL("stream error, skip frame payload", H2_EV_RX_FRAME, h2c->conn, h2s);
+			if (h2c->dfl)
+				TRACE_DEVEL("skipping remaining frame payload", H2_EV_RX_FRAME, h2c->conn, h2s);
 			ret = MIN(b_data(&h2c->dbuf), h2c->dfl);
 			b_del(&h2c->dbuf, ret);
 			h2c->dfl -= ret;
@@ -3212,7 +3213,7 @@ static void h2_process_demux(struct h2c *h2c)
 	/* we can go here on missing data, blocked response or error */
 	if (h2s && h2s->cs &&
 	    (b_data(&h2s->rxbuf) ||
-	     conn_xprt_read0_pending(h2c->conn) ||
+	     h2c_read0_pending(h2c) ||
 	     h2s->st == H2_SS_CLOSED ||
 	     (h2s->flags & H2_SF_ES_RCVD) ||
 	     (h2s->cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING|CS_FL_EOS)))) {
@@ -3456,7 +3457,8 @@ static int h2_send(struct h2c *h2c)
 		if (h2c->flags & H2_CF_MUX_MALLOC)
 			done = 1; // we won't go further without extra buffers
 
-		if (conn->flags & CO_FL_ERROR)
+		if ((conn->flags & (CO_FL_SOCK_WR_SH|CO_FL_ERROR)) ||
+		    (h2c->st0 == H2_CS_ERROR2) || (h2c->flags & H2_CF_GOAWAY_FAILED))
 			break;
 
 		if (h2c->flags & (H2_CF_MUX_MFULL | H2_CF_DEM_MBUSY | H2_CF_DEM_MROOM))
@@ -3596,7 +3598,7 @@ static int h2_process(struct h2c *h2c)
 	}
 	h2_send(h2c);
 
-	if (unlikely(h2c->proxy->state == PR_STSTOPPED)) {
+	if (unlikely(h2c->proxy->state == PR_STSTOPPED) && !(h2c->flags & H2_CF_IS_BACK)) {
 		/* frontend is stopping, reload likely in progress, let's try
 		 * to announce a graceful shutdown if not yet done. We don't
 		 * care if it fails, it will be tried again later.
@@ -3629,7 +3631,7 @@ static int h2_process(struct h2c *h2c)
 		}
 	}
 
-	if (conn->flags & CO_FL_ERROR || conn_xprt_read0_pending(conn) ||
+	if (conn->flags & CO_FL_ERROR || h2c_read0_pending(h2c) ||
 	    h2c->st0 == H2_CS_ERROR2 || h2c->flags & H2_CF_GOAWAY_FAILED ||
 	    (eb_is_empty(&h2c->streams_by_id) && h2c->last_sid >= 0 &&
 	     h2c->max_id >= h2c->last_sid)) {
@@ -5804,7 +5806,7 @@ static size_t h2_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		cs->flags &= ~(CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
 		if (h2s->flags & H2_SF_ES_RCVD)
 			cs->flags |= CS_FL_EOI;
-		if (conn_xprt_read0_pending(h2c->conn) || h2s->st == H2_SS_CLOSED)
+		if (h2c_read0_pending(h2c) || h2s->st == H2_SS_CLOSED)
 			cs->flags |= CS_FL_EOS;
 		if (cs->flags & CS_FL_ERR_PENDING)
 			cs->flags |= CS_FL_ERROR;

@@ -291,6 +291,10 @@ flt_init_all()
 	int err_code = 0;
 
 	for (px = proxies_list; px; px = px->next) {
+		if (px->state == PR_STSTOPPED) {
+			flt_deinit(px);
+			continue;
+		}
 		err_code |= flt_init(px);
 		if (err_code & (ERR_ABORT|ERR_FATAL)) {
 			ha_alert("Failed to initialize filters for proxy '%s'.\n",
@@ -310,6 +314,9 @@ flt_init_all_per_thread()
 	int err_code = 0;
 
 	for (px = proxies_list; px; px = px->next) {
+		if (px->state == PR_STSTOPPED)
+			continue;
+
 		err_code = flt_init_per_thread(px);
 		if (err_code & (ERR_ABORT|ERR_FATAL)) {
 			ha_alert("Failed to initialize filters for proxy '%s' for thread %u.\n",

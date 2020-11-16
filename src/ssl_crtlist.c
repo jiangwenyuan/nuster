@@ -340,6 +340,7 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 	struct stat buf;
 	int linenum = 0;
 	int cfgerr = 0;
+	int missing_lf = -1;
 
 	if ((f = fopen(file, "r")) == NULL) {
 		memprintf(err, "cannot open file '%s' : %s", file, strerror(errno));
@@ -359,6 +360,14 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 		char *crt_path;
 		struct ckch_store *ckchs;
 
+		if (missing_lf != -1) {
+			memprintf(err, "parsing [%s:%d]: Stray NUL character at position %d.\n",
+			          file, linenum, (missing_lf + 1));
+			cfgerr |= ERR_WARN;
+			missing_lf = -1;
+			break;
+		}
+
 		linenum++;
 		end = line + strlen(line);
 		if (end-line == sizeof(thisline)-1 && *(end-1) != '\n') {
@@ -374,6 +383,15 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 		if (*line == '#' || *line == '\n' || *line == '\r')
 			continue;
 
+		if (end > line && *(end-1) == '\n') {
+			/* kill trailing LF */
+			*(end - 1) = 0;
+		}
+		else {
+			/* mark this line as truncated */
+			missing_lf = end - line;
+		}
+
 		entry = crtlist_entry_new();
 		if (entry == NULL) {
 			memprintf(err, "Not enough memory!");
@@ -381,9 +399,8 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 			goto error;
 		}
 
-		*(end - 1) = '\0'; /* line parser mustn't receive any \n */
 		cfgerr |= crtlist_parse_line(thisline, &crt_path, entry, file, linenum, err);
-		if (cfgerr)
+		if (cfgerr & ERR_CODE)
 			goto error;
 
 		/* empty line */
@@ -412,8 +429,10 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 			else
 				ckchs = ckchs_load_cert_file(crt_path, 1,  err);
 		}
-		if (ckchs == NULL)
+		if (ckchs == NULL) {
 			cfgerr |= ERR_ALERT | ERR_FATAL;
+			goto error;
+		}
 
 		if (cfgerr & ERR_CODE)
 			goto error;
@@ -426,6 +445,13 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 
 		entry = NULL;
 	}
+
+	if (missing_lf != -1) {
+		memprintf(err, "parsing [%s:%d]: Missing LF on last line, file might have been truncated at position %d.\n",
+		          file, linenum, (missing_lf + 1));
+		cfgerr |= ERR_WARN;
+	}
+
 	if (cfgerr & ERR_CODE)
 		goto error;
 

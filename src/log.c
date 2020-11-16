@@ -827,6 +827,7 @@ int smp_log_range_cmp(const void *a, const void *b)
  */
 int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 {
+	struct smp_log_range *smp_rgs = NULL;
 	struct sockaddr_storage *sk;
 	struct logsrv *logsrv = NULL;
 	int port1, port2;
@@ -932,7 +933,6 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 	if (strcmp(args[cur_arg], "sample") == 0) {
 		unsigned low, high;
 		char *p, *beg, *end, *smp_sz_str;
-		struct smp_log_range *smp_rgs = NULL;
 		size_t smp_rgs_sz = 0, smp_sz = 0, new_smp_sz;
 
 		p = args[cur_arg+1];
@@ -1068,6 +1068,9 @@ int parse_logsrv(char **args, struct list *logsrvs, int do_del, char **err)
 	return 1;
 
   error:
+	free(smp_rgs);
+	if (logsrv)
+		free(logsrv->ring_name);
 	free(logsrv);
 	return 0;
 }

@@ -672,14 +672,20 @@ int init_pollers()
 	int p;
 	struct poller *bp;
 
-	if ((fdtab = calloc(global.maxsock, sizeof(struct fdtab))) == NULL)
+	if ((fdtab = calloc(global.maxsock, sizeof(struct fdtab))) == NULL) {
+		ha_alert("Not enough memory to allocate %d entries for fdtab!\n", global.maxsock);
 		goto fail_tab;
+	}
 
-	if ((polled_mask = calloc(global.maxsock, sizeof(*polled_mask))) == NULL)
+	if ((polled_mask = calloc(global.maxsock, sizeof(*polled_mask))) == NULL) {
+		ha_alert("Not enough memory to allocate %d entries for polled_mask!\n", global.maxsock);
 		goto fail_polledmask;
+	}
 
-	if ((fdinfo = calloc(global.maxsock, sizeof(struct fdinfo))) == NULL)
+	if ((fdinfo = calloc(global.maxsock, sizeof(struct fdinfo))) == NULL) {
+		ha_alert("Not enough memory to allocate %d entries for fdinfo!\n", global.maxsock);
 		goto fail_info;
+	}
 
 	update_list.first = update_list.last = -1;
 

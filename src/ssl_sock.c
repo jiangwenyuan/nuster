@@ -674,7 +674,7 @@ void ssl_async_fd_handler(int fd)
 	/* crypto engine is available, let's notify the associated
 	 * connection that it can pursue its processing.
 	 */
-	ssl_sock_io_cb(NULL, ctx, 0);
+	tasklet_wakeup(ctx->wait_event.tasklet);
 }
 
 /*
@@ -1280,7 +1280,7 @@ int ssl_sock_ocsp_stapling_cbk(SSL *ssl, void *arg)
 
 #endif
 
-#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
+#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) && !defined OPENSSL_IS_BORINGSSL)
 
 
 /*
@@ -1315,7 +1315,6 @@ static void ssl_sock_free_ocsp(struct certificate_ocsp *ocsp)
  * Returns 1 if no ".ocsp" file found, 0 if OCSP status extension is
  * successfully enabled, or -1 in other error case.
  */
-#ifndef OPENSSL_IS_BORINGSSL
 static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckch, STACK_OF(X509) *chain)
 {
 	X509 *x, *issuer;
@@ -1445,13 +1444,13 @@ out:
 
 	return ret;
 }
-#else /* OPENSSL_IS_BORINGSSL */
+#endif
+
+#ifdef OPENSSL_IS_BORINGSSL
 static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckch, STACK_OF(X509) *chain)
 {
 	return SSL_CTX_set_ocsp_response(ctx, (const uint8_t *)ckch->ocsp_response->area, ckch->ocsp_response->data);
 }
-#endif
-
 #endif
 
 
@@ -4456,7 +4455,7 @@ static int ssl_sock_srv_hostcheck(const char *pattern, const char *hostname)
 	size_t prefixlen, suffixlen;
 
 	/* Trivial case */
-	if (strcmp(pattern, hostname) == 0)
+	if (strcasecmp(pattern, hostname) == 0)
 		return 1;
 
 	/* The rest of this logic is based on RFC 6125, section 6.4.3
@@ -4487,7 +4486,7 @@ static int ssl_sock_srv_hostcheck(const char *pattern, const char *hostname)
 	/* Make sure all labels match except the leftmost */
 	hostname_left_label_end = strchr(hostname, '.');
 	if (!hostname_left_label_end
-	    || strcmp(pattern_left_label_end, hostname_left_label_end) != 0)
+	    || strcasecmp(pattern_left_label_end, hostname_left_label_end) != 0)
 		return 0;
 
 	/* Make sure the leftmost label of the hostname is long enough
@@ -4499,8 +4498,8 @@ static int ssl_sock_srv_hostcheck(const char *pattern, const char *hostname)
 	 * wildcard */
 	prefixlen = pattern_wildcard - pattern;
 	suffixlen = pattern_left_label_end - (pattern_wildcard + 1);
-	if ((prefixlen && (memcmp(pattern, hostname, prefixlen) != 0))
-	    || (suffixlen && (memcmp(pattern_wildcard + 1, hostname_left_label_end - suffixlen, suffixlen) != 0)))
+	if ((prefixlen && (strncasecmp(pattern, hostname, prefixlen) != 0))
+	    || (suffixlen && (strncasecmp(pattern_wildcard + 1, hostname_left_label_end - suffixlen, suffixlen) != 0)))
 		return 0;
 
 	return 1;
