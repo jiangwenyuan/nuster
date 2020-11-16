@@ -91,7 +91,7 @@ nst_http_find_param(char *query_beg, char *query_end, char *name, char **val, in
                 *val = ptr;
 
                 while(ptr < query_end && *ptr != and) {
-                    (*val)++;
+                    (*val_len)++;
                     ptr++;
                 }
 
