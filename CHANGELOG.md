@@ -1,5 +1,13 @@
 # nuster Changelog
 
+## 5.2.4.22 - 2020-11-16
+
+Update to HAProxy v2.2.5
+
+### Fixed
+
+* Broken param_ parser introduced by bccd6d5f233
+
 ## 5.2.3.22 - 2020-09-28
 
 Update to HAProxy v2.2.3
