@@ -192,6 +192,7 @@ nst_dict_set(nst_dict_t *dict, nst_key_t *key, nst_http_txn_t *txn, nst_rule_pro
     entry->prop.wait          = prop->wait;
     entry->prop.stale         = prop->stale;
     entry->prop.inactive      = prop->inactive;
+    entry->prop.store         = prop->store;
     entry->expire             = 0;
     entry->atime              = nst_time_now_ms();
 
