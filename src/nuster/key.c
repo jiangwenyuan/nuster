@@ -55,7 +55,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
             case NST_KEY_ELEMENT_HOST:
                 nst_debug_add("host.");
 
-                if(txn->req.host.len) {
+                if(txn->req.host.ptr && txn->req.host.len) {
                     ret = nst_key_catist(buf, txn->req.host);
                 } else {
                     ret = nst_key_catdel(buf);
@@ -65,7 +65,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
             case NST_KEY_ELEMENT_URI:
                 nst_debug_add("uri.");
 
-                if(txn->req.uri.len) {
+                if(txn->req.uri.ptr && txn->req.uri.len) {
                     ret = nst_key_catist(buf, txn->req.uri);
                 } else {
                     ret = nst_key_catdel(buf);
@@ -75,7 +75,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
             case NST_KEY_ELEMENT_PATH:
                 nst_debug_add("path.");
 
-                if(txn->req.path.len) {
+                if(txn->req.path.ptr && txn->req.path.len) {
                     ret = nst_key_catist(buf, txn->req.path);
                 } else {
                     ret = nst_key_catdel(buf);
@@ -95,7 +95,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
             case NST_KEY_ELEMENT_QUERY:
                 nst_debug_add("query.");
 
-                if(txn->req.query.len) {
+                if(txn->req.query.ptr && txn->req.query.len) {
                     ret = nst_key_catist(buf, txn->req.query);
                 } else {
                     ret = nst_key_catdel(buf);
@@ -105,7 +105,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
             case NST_KEY_ELEMENT_PARAM:
                 nst_debug_add("param_%s.", ck->data);
 
-                if(txn->req.query.len) {
+                if(txn->req.query.ptr && txn->req.query.len) {
                     char  *v   = NULL;
                     int    v_l = 0;
 
@@ -145,7 +145,7 @@ nst_key_build(hpx_stream_t *s, hpx_http_msg_t *msg, nst_rule_t *rule, nst_http_t
             case NST_KEY_ELEMENT_COOKIE:
                 nst_debug_add("cookie_%s.", ck->data);
 
-                if(txn->req.cookie.len) {
+                if(txn->req.cookie.ptr && txn->req.cookie.len) {
                     char   *v   = NULL;
                     size_t  v_l = 0;
 
