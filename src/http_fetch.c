@@ -587,6 +587,7 @@ static int smp_fetch_body(const struct arg *args, struct sample *smp, const char
 	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct buffer *temp;
 	int32_t pos;
+	int finished = 0;
 
 	if (!htx)
 		return 0;
@@ -596,8 +597,10 @@ static int smp_fetch_body(const struct arg *args, struct sample *smp, const char
 		struct htx_blk *blk = htx_get_blk(htx, pos);
 		enum htx_blk_type type = htx_get_blk_type(blk);
 
-		if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT)
+		if (type == HTX_BLK_EOM || type == HTX_BLK_TLR || type == HTX_BLK_EOT) {
+			finished = 1;
 			break;
+		}
 		if (type == HTX_BLK_DATA) {
 			if (!h1_format_htx_data(htx_get_blk_value(htx, blk), temp, 0))
 				return 0;
@@ -608,7 +611,8 @@ static int smp_fetch_body(const struct arg *args, struct sample *smp, const char
 	smp->data.u.str = *temp;
 	smp->flags = SMP_F_VOL_TEST;
 
-	if (!channel_full(chn, global.tune.maxrewrite) && !(chn->flags & (CF_EOI|CF_SHUTR|CF_READ_ERROR)))
+	if (!finished && (check || (chn && !channel_full(chn, global.tune.maxrewrite) &&
+				    !(chn->flags & (CF_EOI|CF_SHUTR|CF_READ_ERROR)))))
 		smp->flags |= SMP_F_MAY_CHANGE;
 
 	return 1;
@@ -1566,11 +1570,11 @@ static int smp_fetch_capture_res_ver(const struct arg *args, struct sample *smp,
  * smp->ctx.a[0] for the in-header position, smp->ctx.a[1] for the
  * end-of-header-value, and smp->ctx.a[2] for the hdr_ctx. Depending on
  * the direction, multiple cookies may be parsed on the same line or not.
- * The cookie name is in args and the name length in args->data.str.len.
- * Accepts exactly 1 argument of type string. If the input options indicate
- * that no iterating is desired, then only last value is fetched if any.
- * The returned sample is of type CSTR. Can be used to parse cookies in other
- * files.
+ * If provided, the searched cookie name is in args, in args->data.str. If
+ * the input options indicate that no iterating is desired, then only last
+ * value is fetched if any. If no cookie name is provided, the first cookie
+ * value found is fetched. The returned sample is of type CSTR.  Can be used
+ * to parse cookies in other files.
  */
 static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
@@ -1580,11 +1584,14 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
 	struct htx *htx = smp_prefetch_htx(smp, chn, check, 1);
 	struct http_hdr_ctx *ctx = smp->ctx.a[2];
 	struct ist hdr;
-	int occ = 0;
+	char *cook = NULL;
+	size_t cook_l = 0;
 	int found = 0;
 
-	if (!args || args->type != ARGT_STR)
-		return 0;
+	if (args && args->type == ARGT_STR) {
+		cook = args->data.str.area;
+		cook_l = args->data.str.data;
+	}
 
 	if (!ctx) {
 		/* first call */
@@ -1598,13 +1605,9 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
 
 	hdr = (!(check || (chn && chn->flags & CF_ISRESP)) ? ist("Cookie") : ist("Set-Cookie"));
 
-	if (!occ && !(smp->opt & SMP_OPT_ITERATE))
-		/* no explicit occurrence and single fetch => last cookie by default */
-		occ = -1;
-
-	/* OK so basically here, either we want only one value and it's the
-	 * last one, or we want to iterate over all of them and we fetch the
-	 * next one.
+	/* OK so basically here, either we want only one value or we want to
+	 * iterate over all of them and we fetch the next one. In this last case
+	 * SMP_OPT_ITERATE option is set.
 	 */
 
 	if (!(smp->flags & SMP_F_NOT_LAST)) {
@@ -1622,7 +1625,7 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
 			if (!http_find_header(htx, hdr, ctx, 0))
 				goto out;
 
-			if (ctx->value.len < args->data.str.data + 1)
+			if (ctx->value.len < cook_l + 1)
 				continue;
 
 			smp->ctx.a[0] = ctx->value.ptr;
@@ -1632,16 +1635,20 @@ static int smp_fetch_cookie(const struct arg *args, struct sample *smp, const ch
 		smp->data.type = SMP_T_STR;
 		smp->flags |= SMP_F_CONST;
 		smp->ctx.a[0] = http_extract_cookie_value(smp->ctx.a[0], smp->ctx.a[1],
-							  args->data.str.area, args->data.str.data,
+							  cook, cook_l,
 							  (smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_REQ,
 							  &smp->data.u.str.area,
 							  &smp->data.u.str.data);
 		if (smp->ctx.a[0]) {
 			found = 1;
-			if (occ >= 0) {
-				/* one value was returned into smp->data.u.str.{str,len} */
+			if (smp->opt & SMP_OPT_ITERATE) {
+				/* iterate on cookie value */
 				smp->flags |= SMP_F_NOT_LAST;
 				return 1;
+			}
+			if (args->data.str.data == 0) {
+				/* No cookie name, first occurrence returned */
+				break;
 			}
 		}
 		/* if we're looking for last occurrence, let's loop */
@@ -1679,10 +1686,14 @@ static int smp_fetch_cookie_cnt(const struct arg *args, struct sample *smp, cons
 	struct http_hdr_ctx ctx;
 	struct ist hdr;
 	char *val_beg, *val_end;
+	char *cook = NULL;
+	size_t cook_l = 0;
 	int cnt;
 
-	if (!args || args->type != ARGT_STR)
-		return 0;
+	if (args && args->type == ARGT_STR){
+		cook = args->data.str.area;
+		cook_l = args->data.str.data;
+	}
 
 	if (!htx)
 		return 0;
@@ -1698,7 +1709,7 @@ static int smp_fetch_cookie_cnt(const struct arg *args, struct sample *smp, cons
 			if (!http_find_header(htx, hdr, &ctx, 0))
 				break;
 
-			if (ctx.value.len < args->data.str.data + 1)
+			if (ctx.value.len < cook_l + 1)
 				continue;
 
 			val_beg = ctx.value.ptr;
@@ -1708,7 +1719,7 @@ static int smp_fetch_cookie_cnt(const struct arg *args, struct sample *smp, cons
 		smp->data.type = SMP_T_STR;
 		smp->flags |= SMP_F_CONST;
 		while ((val_beg = http_extract_cookie_value(val_beg, val_end,
-							    args->data.str.area, args->data.str.data,
+							    cook, cook_l,
 							    (smp->opt & SMP_OPT_DIR) == SMP_OPT_DIR_REQ,
 							    &smp->data.u.str.area,
 							    &smp->data.u.str.data))) {

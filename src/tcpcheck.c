@@ -993,6 +993,10 @@ enum tcpcheck_eval_ret tcpcheck_eval_connect(struct check *check, struct tcpchec
 	 *   3: release and replace the old one on success
 	 */
 
+	/* Always release input and output buffer when a new connect is evaluated */
+	check_release_buf(check, &check->bi);
+	check_release_buf(check, &check->bo);
+
 	/* 2- prepare new connection */
 	cs = cs_new(NULL);
 	if (!cs) {
@@ -1227,9 +1231,23 @@ enum tcpcheck_eval_ret tcpcheck_eval_send(struct check *check, struct tcpcheck_r
 	struct buffer *tmp = NULL;
 	struct htx *htx = NULL;
 
-	/* reset the read & write buffer */
-	b_reset(&check->bi);
-	b_reset(&check->bo);
+	if (check->state & CHK_ST_OUT_ALLOC) {
+		ret = TCPCHK_EVAL_WAIT;
+		goto out;
+	}
+
+	if (!check_get_buf(check, &check->bo)) {
+		check->state |= CHK_ST_OUT_ALLOC;
+		ret = TCPCHK_EVAL_WAIT;
+		goto out;
+	}
+
+	/* Data already pending in the output buffer, send them now */
+	if (b_data(&check->bo))
+		goto do_send;
+
+	/* Always release input buffer when a new send is evaluated */
+	check_release_buf(check, &check->bi);
 
 	switch (send->type) {
 	case TCPCHK_SEND_STRING:
@@ -1357,7 +1375,7 @@ enum tcpcheck_eval_ret tcpcheck_eval_send(struct check *check, struct tcpcheck_r
 		goto out;
 	};
 
-
+  do_send:
 	if (conn->mux->snd_buf(cs, &check->bo,
 			       (IS_HTX_CONN(conn) ? (htxbuf(&check->bo))->data: b_data(&check->bo)), 0) <= 0) {
 		if ((conn->flags & CO_FL_ERROR) || (cs->flags & CS_FL_ERROR)) {
@@ -1373,6 +1391,8 @@ enum tcpcheck_eval_ret tcpcheck_eval_send(struct check *check, struct tcpcheck_r
 
   out:
 	free_trash_chunk(tmp);
+	if (!b_data(&check->bo) || ret == TCPCHK_EVAL_STOP)
+		check_release_buf(check, &check->bo);
 	return ret;
 
   error_htx:
@@ -1414,6 +1434,14 @@ enum tcpcheck_eval_ret tcpcheck_eval_recv(struct check *check, struct tcpcheck_r
 
 	if (cs->flags & CS_FL_EOS)
 		goto end_recv;
+
+	if (check->state & CHK_ST_IN_ALLOC)
+		goto wait_more_data;
+
+	if (!check_get_buf(check, &check->bi)) {
+		check->state |= CHK_ST_IN_ALLOC;
+		goto wait_more_data;
+	}
 
 	/* errors on the connection and the conn-stream were already checked */
 
@@ -1462,6 +1490,8 @@ enum tcpcheck_eval_ret tcpcheck_eval_recv(struct check *check, struct tcpcheck_r
 	}
 
   out:
+	if (!b_data(&check->bi) || ret == TCPCHK_EVAL_STOP)
+		check_release_buf(check, &check->bi);
 	return ret;
 
   stop:
@@ -1932,7 +1962,7 @@ int tcpcheck_main(struct check *check)
 	struct conn_stream *cs = check->cs;
 	struct connection *conn = cs_conn(cs);
 	int must_read = 1, last_read = 0;
-	int ret, retcode = 0;
+	int retcode = 0;
 	enum tcpcheck_eval_ret eval_ret;
 
 	/* here, we know that the check is complete or that it failed */
@@ -1973,34 +2003,12 @@ int tcpcheck_main(struct check *check)
 		rule = LIST_NEXT(&check->current_step->list, typeof(rule), list);
 	}
 
-	/* 3- check for pending outgoing data. It only happens during
-	 *    TCPCHK_ACT_SEND. */
-	else if (check->current_step && check->current_step->action == TCPCHK_ACT_SEND) {
-		if (b_data(&check->bo)) {
-			/* We're already waiting to be able to send, give up */
-			if (check->wait_list.events & SUB_RETRY_SEND)
-				goto out;
-
-			ret = conn->mux->snd_buf(cs, &check->bo,
-						 (IS_HTX_CONN(conn) ? (htxbuf(&check->bo))->data: b_data(&check->bo)), 0);
-			if (ret <= 0) {
-				if ((conn->flags & CO_FL_ERROR) || (cs->flags & CS_FL_ERROR))
-					goto out_end_tcpcheck;
-			}
-			if ((IS_HTX_CONN(conn) && !htx_is_empty(htxbuf(&check->bo))) || b_data(&check->bo)) {
-				conn->mux->subscribe(cs, SUB_RETRY_SEND, &check->wait_list);
-				goto out;
-			}
-		}
-		rule = LIST_NEXT(&check->current_step->list, typeof(rule), list);
-	}
-
-	/* 4- check if a rule must be resume. It happens if check->current_step
+	/* 3- check if a rule must be resume. It happens if check->current_step
 	 *    is defined. */
 	else if (check->current_step)
 		rule = check->current_step;
 
-	/* 5- It is the first evaluation. We must create a session and preset
+	/* 4- It is the first evaluation. We must create a session and preset
 	 *    tcp-check variables */
         else {
 		struct tcpcheck_var *var;
@@ -2137,6 +2145,10 @@ int tcpcheck_main(struct check *check)
   out_end_tcpcheck:
 	if ((conn && conn->flags & CO_FL_ERROR) || (cs && cs->flags & CS_FL_ERROR))
 		chk_report_conn_err(check, errno, 0);
+
+	/* the tcpcheck is finished, release in/out buffer now */
+	check_release_buf(check, &check->bi);
+	check_release_buf(check, &check->bo);
 
   out:
 	return retcode;
@@ -2300,6 +2312,16 @@ struct tcpcheck_rule *parse_tcpcheck_connect(char **args, int cur_arg, struct pr
 				memprintf(errmsg, "'%s' : unknown MUX protocol '%s'.", args[cur_arg], args[cur_arg+1]);
 				goto error;
 			}
+
+			if (strcmp(args[0], "tcp-check") == 0 && mux_proto->mode != PROTO_MODE_TCP) {
+				memprintf(errmsg, "'%s' : invalid MUX protocol '%s' for tcp-check", args[cur_arg], args[cur_arg+1]);
+				goto error;
+			}
+			else if (strcmp(args[0], "http-check") == 0 && mux_proto->mode != PROTO_MODE_HTTP) {
+				memprintf(errmsg, "'%s' : invalid MUX protocol '%s' for http-check", args[cur_arg], args[cur_arg+1]);
+				goto error;
+			}
+
 			cur_arg++;
 		}
 		else if (strcmp(args[cur_arg], "comment") == 0) {

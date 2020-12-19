@@ -2931,7 +2931,7 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const struct cert_key_and_chain
 		/* Clear openssl global errors stack */
 		ERR_clear_error();
 
-		if (global_ssl.default_dh_param <= 1024) {
+		if (global_ssl.default_dh_param && global_ssl.default_dh_param <= 1024) {
 			/* we are limited to DH parameter of 1024 bits anyway */
 			if (local_dh_1024 == NULL)
 				local_dh_1024 = ssl_get_dh_1024();
@@ -6402,7 +6402,7 @@ int ssl_load_global_issuer_from_BIO(BIO *in, char *fp, char **err)
 	struct issuer_chain *issuer = NULL;
 
 	akid = X509_get_ext_d2i(cert, NID_authority_key_identifier, NULL, NULL);
-	if (akid) {
+	if (akid && akid->keyid) {
 		struct eb64_node *node;
 		u64 hk;
 		hk = XXH64(ASN1_STRING_get0_data(akid->keyid), ASN1_STRING_length(akid->keyid), 0);
