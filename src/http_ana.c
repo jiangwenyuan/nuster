@@ -99,7 +99,7 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 	if (htx->flags & (HTX_FL_PARSING_ERROR|HTX_FL_PROCESSING_ERROR)) {
 		stream_inc_http_req_ctr(s);
 		stream_inc_http_err_ctr(s);
-		proxy_inc_fe_req_ctr(sess->fe);
+		proxy_inc_fe_req_ctr(sess->listener, sess->fe);
 		if (htx->flags & HTX_FL_PARSING_ERROR)
 			goto return_bad_req;
 		else
@@ -150,7 +150,7 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 
 			stream_inc_http_err_ctr(s);
 			stream_inc_http_req_ctr(s);
-			proxy_inc_fe_req_ctr(sess->fe);
+			proxy_inc_fe_req_ctr(sess->listener, sess->fe);
 			_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
 			if (sess->listener->counters)
 				_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
@@ -177,7 +177,7 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 
 			stream_inc_http_err_ctr(s);
 			stream_inc_http_req_ctr(s);
-			proxy_inc_fe_req_ctr(sess->fe);
+			proxy_inc_fe_req_ctr(sess->listener, sess->fe);
 			_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
 			if (sess->listener->counters)
 				_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
@@ -204,7 +204,7 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 
 			stream_inc_http_err_ctr(s);
 			stream_inc_http_req_ctr(s);
-			proxy_inc_fe_req_ctr(sess->fe);
+			proxy_inc_fe_req_ctr(sess->listener, sess->fe);
 			_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
 			if (sess->listener->counters)
 				_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
@@ -272,7 +272,7 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 
 	msg->msg_state = HTTP_MSG_BODY;
 	stream_inc_http_req_ctr(s);
-	proxy_inc_fe_req_ctr(sess->fe); /* one more valid request for this FE */
+	proxy_inc_fe_req_ctr(sess->listener, sess->fe); /* one more valid request for this FE */
 
 	/* kill the pending keep-alive timeout */
 	txn->flags &= ~TX_WAIT_NEXT_RQ;
@@ -760,7 +760,7 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 		struct htx_sl *sl;
 		struct ist uri, path;
 
-		if (!sockaddr_alloc(&s->target_addr)) {
+		if (!sockaddr_alloc(&s->target_addr, NULL, 0)) {
 			if (!(s->flags & SF_ERR_MASK))
 				s->flags |= SF_ERR_RESOURCE;
 			goto return_int_err;
@@ -3539,8 +3539,6 @@ static void http_manage_client_side_cookies(struct stream *s, struct channel *re
 				}
 			}
 
-			/* continue with next cookie on this header line */
-			att_beg = next;
 		} /* for each cookie */
 
 
@@ -3855,68 +3853,46 @@ void http_check_request_for_cacheability(struct stream *s, struct channel *req)
 {
 	struct http_txn *txn = s->txn;
 	struct htx *htx;
-        int32_t pos;
-	int pragma_found, cc_found, i;
+	struct http_hdr_ctx ctx = { .blk = NULL };
+	int pragma_found, cc_found;
 
 	if ((txn->flags & (TX_CACHEABLE|TX_CACHE_IGNORE)) == TX_CACHE_IGNORE)
 		return; /* nothing more to do here */
 
 	htx = htxbuf(&req->buf);
 	pragma_found = cc_found = 0;
-	for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-                struct htx_blk *blk = htx_get_blk(htx, pos);
-                enum htx_blk_type type = htx_get_blk_type(blk);
-		struct ist n, v;
 
-                if (type == HTX_BLK_EOH)
-                        break;
-                if (type != HTX_BLK_HDR)
-                        continue;
-
-		n = htx_get_blk_name(htx, blk);
-		v = htx_get_blk_value(htx, blk);
-
-		if (isteq(n, ist("pragma"))) {
-			if (v.len >= 8 && strncasecmp(v.ptr, "no-cache", 8) == 0) {
-				pragma_found = 1;
-				continue;
-			}
+	/* Check "pragma" header for HTTP/1.0 compatibility. */
+	if (http_find_header(htx, ist("pragma"), &ctx, 1)) {
+		if (isteqi(ctx.value, ist("no-cache"))) {
+			pragma_found = 1;
 		}
+	}
 
-		/* Don't use the cache and don't try to store if we found the
-		 * Authorization header */
-		if (isteq(n, ist("authorization"))) {
-			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
-			txn->flags |= TX_CACHE_IGNORE;
-			continue;
-		}
+	ctx.blk = NULL;
+	/* Don't use the cache and don't try to store if we found the
+	 * Authorization header */
+	if (http_find_header(htx, ist("authorization"), &ctx, 1)) {
+		txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
+		txn->flags |= TX_CACHE_IGNORE;
+	}
 
-		if (!isteq(n, ist("cache-control")))
-			continue;
 
-		/* OK, right now we know we have a cache-control header */
+	/* Look for "cache-control" header and iterate over all the values
+	 * until we find one that specifies that caching is possible or not. */
+	ctx.blk = NULL;
+	while (http_find_header(htx, ist("cache-control"), &ctx, 0)) {
 		cc_found = 1;
-		if (!v.len)	/* no info */
-			continue;
-
-		i = 0;
-		while (i < v.len && *(v.ptr+i) != '=' && *(v.ptr+i) != ',' &&
-		       !isspace((unsigned char)*(v.ptr+i)))
-			i++;
-
-		/* we have a complete value between v.ptr and (v.ptr+i). We don't check the
-		 * values after max-age, max-stale nor min-fresh, we simply don't
-		 * use the cache when they're specified.
-		 */
-		if (((i == 7) && strncasecmp(v.ptr, "max-age",   7) == 0) ||
-		    ((i == 8) && strncasecmp(v.ptr, "no-cache",  8) == 0) ||
-		    ((i == 9) && strncasecmp(v.ptr, "max-stale", 9) == 0) ||
-		    ((i == 9) && strncasecmp(v.ptr, "min-fresh", 9) == 0)) {
+		/* We don't check the values after max-age, max-stale nor min-fresh,
+		 * we simply don't use the cache when they're specified. */
+		if (istmatchi(ctx.value, ist("max-age")) ||
+		    istmatchi(ctx.value, ist("no-cache")) ||
+		    istmatchi(ctx.value, ist("max-stale")) ||
+		    istmatchi(ctx.value, ist("min-fresh"))) {
 			txn->flags |= TX_CACHE_IGNORE;
 			continue;
 		}
-
-		if ((i == 8) && strncasecmp(v.ptr, "no-store", 8) == 0) {
+		if (istmatchi(ctx.value, ist("no-store"))) {
 			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
 			continue;
 		}
@@ -3940,9 +3916,8 @@ void http_check_request_for_cacheability(struct stream *s, struct channel *req)
 void http_check_response_for_cacheability(struct stream *s, struct channel *res)
 {
 	struct http_txn *txn = s->txn;
+	struct http_hdr_ctx ctx = { .blk = NULL };
 	struct htx *htx;
-        int32_t pos;
-	int i;
 
 	if (txn->status < 200) {
 		/* do not try to cache interim responses! */
@@ -3951,64 +3926,33 @@ void http_check_response_for_cacheability(struct stream *s, struct channel *res)
 	}
 
 	htx = htxbuf(&res->buf);
-	for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
-                struct htx_blk *blk  = htx_get_blk(htx, pos);
-                enum htx_blk_type type = htx_get_blk_type(blk);
-		struct ist n, v;
-
-                if (type == HTX_BLK_EOH)
-                        break;
-                if (type != HTX_BLK_HDR)
-                        continue;
-
-		n = htx_get_blk_name(htx, blk);
-		v = htx_get_blk_value(htx, blk);
-
-		if (isteq(n, ist("pragma"))) {
-			if ((v.len >= 8) && strncasecmp(v.ptr, "no-cache", 8) == 0) {
-				txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
-				return;
-			}
-		}
-
-		if (!isteq(n, ist("cache-control")))
-			continue;
-
-		/* OK, right now we know we have a cache-control header */
-		if (!v.len)	/* no info */
-			continue;
-
-		i = 0;
-		while (i < v.len && *(v.ptr+i) != '=' && *(v.ptr+i) != ',' &&
-		       !isspace((unsigned char)*(v.ptr+i)))
-			i++;
-
-		/* we have a complete value between v.ptr and (v.ptr+i) */
-		if (i < v.len && *(v.ptr + i) == '=') {
-			if (((v.len - i) > 1 && (i == 7) && strncasecmp(v.ptr, "max-age=0", 9) == 0) ||
-			    ((v.len - i) > 1 && (i == 8) && strncasecmp(v.ptr, "s-maxage=0", 10) == 0)) {
-				txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
-				continue;
-			}
-
-			/* we have something of the form no-cache="set-cookie" */
-			if ((v.len >= 21) &&
-			    strncasecmp(v.ptr, "no-cache=\"set-cookie", 20) == 0
-			    && (*(v.ptr + 20) == '"' || *(v.ptr + 20 ) == ','))
-				txn->flags &= ~TX_CACHE_COOK;
-			continue;
-		}
-
-		/* OK, so we know that either p2 points to the end of string or to a comma */
-		if (((i ==  7) && strncasecmp(v.ptr, "private", 7) == 0) ||
-		    ((i ==  8) && strncasecmp(v.ptr, "no-cache", 8) == 0) ||
-		    ((i ==  8) && strncasecmp(v.ptr, "no-store", 8) == 0)) {
+	/* Check "pragma" header for HTTP/1.0 compatibility. */
+	if (http_find_header(htx, ist("pragma"), &ctx, 1)) {
+		if (isteqi(ctx.value, ist("no-cache"))) {
 			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
 			return;
 		}
+	}
 
-		if ((i ==  6) && strncasecmp(v.ptr, "public", 6) == 0) {
+	/* Look for "cache-control" header and iterate over all the values
+	 * until we find one that specifies that caching is possible or not. */
+	ctx.blk = NULL;
+	while (http_find_header(htx, ist("cache-control"), &ctx, 0)) {
+		if (isteqi(ctx.value, ist("public"))) {
 			txn->flags |= TX_CACHEABLE | TX_CACHE_COOK;
+			continue;
+		}
+		if (isteqi(ctx.value, ist("private")) ||
+		    isteqi(ctx.value, ist("no-cache")) ||
+		    isteqi(ctx.value, ist("no-store")) ||
+		    isteqi(ctx.value, ist("max-age=0")) ||
+		    isteqi(ctx.value, ist("s-maxage=0"))) {
+			txn->flags &= ~TX_CACHEABLE & ~TX_CACHE_COOK;
+			continue;
+		}
+		/* We might have a no-cache="set-cookie" form. */
+		if (istmatchi(ctx.value, ist("no-cache=\"set-cookie"))) {
+			txn->flags &= ~TX_CACHE_COOK;
 			continue;
 		}
 	}
@@ -4090,6 +4034,10 @@ static int http_handle_stats(struct stream *s, struct channel *req)
 	for (h = lookup; h <= end - 3; h++) {
 		if (memcmp(h, ";up", 3) == 0) {
 			appctx->ctx.stats.flags |= STAT_HIDE_DOWN;
+			break;
+		}
+		if (memcmp(h, ";no-maint", 3) == 0) {
+			appctx->ctx.stats.flags |= STAT_HIDE_MAINT;
 			break;
 		}
 	}
@@ -4580,6 +4528,9 @@ int http_forward_proxy_resp(struct stream *s, int final)
 
 		if (!http_eval_after_res_rules(s))
 			return 0;
+
+		if (s->txn->meth == HTTP_METH_HEAD)
+			htx_skip_msg_payload(htx);
 
 		channel_auto_read(req);
 		channel_abort(req);

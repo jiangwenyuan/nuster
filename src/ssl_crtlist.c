@@ -327,8 +327,8 @@ int crtlist_parse_line(char *line, char **crt_path, struct crtlist_entry *entry,
 		/* Check if we reached the limit and the last char is not \n.
 		 * Watch out for the last line without the terminating '\n'!
 		 */
-		memprintf(err, "line %d too long in file '%s', limit is %d characters",
-		          linenum, file, CRT_LINESIZE-1);
+		memprintf(err, "parsing [%s:%d]: line too long, limit is %d characters",
+		          file, linenum, CRT_LINESIZE-1);
 		cfgerr |= ERR_ALERT | ERR_FATAL;
 		goto error;
 	}
@@ -340,12 +340,12 @@ int crtlist_parse_line(char *line, char **crt_path, struct crtlist_entry *entry,
 			*line = 0;
 		} else if (*line == '[') {
 			if (ssl_b) {
-				memprintf(err, "too many '[' on line %d in file '%s'.", linenum, file);
+				memprintf(err, "parsing [%s:%d]: too many '['", file, linenum);
 				cfgerr |= ERR_ALERT | ERR_FATAL;
 				goto error;
 			}
 			if (!arg) {
-				memprintf(err, "file must start with a cert on line %d in file '%s'", linenum, file);
+				memprintf(err, "parsing [%s:%d]: file must start with a cert", file, linenum);
 				cfgerr |= ERR_ALERT | ERR_FATAL;
 				goto error;
 			}
@@ -354,12 +354,12 @@ int crtlist_parse_line(char *line, char **crt_path, struct crtlist_entry *entry,
 			*line = 0;
 		} else if (*line == ']') {
 			if (ssl_e) {
-				memprintf(err, "too many ']' on line %d in file '%s'.", linenum, file);
+				memprintf(err, "parsing [%s:%d]: too many ']'", file, linenum);
 				cfgerr |= ERR_ALERT | ERR_FATAL;
 				goto error;
 			}
 			if (!ssl_b) {
-				memprintf(err, "missing '[' in line %d in file '%s'.", linenum, file);
+				memprintf(err, "parsing [%s:%d]: missing '['", file, linenum);
 				cfgerr |= ERR_ALERT | ERR_FATAL;
 				goto error;
 			}
@@ -368,7 +368,7 @@ int crtlist_parse_line(char *line, char **crt_path, struct crtlist_entry *entry,
 			*line = 0;
 		} else if (newarg) {
 			if (arg == MAX_CRT_ARGS) {
-				memprintf(err, "too many args on line %d in file '%s'.", linenum, file);
+				memprintf(err, "parsing [%s:%d]: too many args ", file, linenum);
 				cfgerr |= ERR_ALERT | ERR_FATAL;
 				goto error;
 			}
@@ -403,8 +403,8 @@ int crtlist_parse_line(char *line, char **crt_path, struct crtlist_entry *entry,
 				newarg = 1;
 				cfgerr |= ssl_bind_kws[i].parse(args, cur_arg, NULL, ssl_conf, err);
 				if (cur_arg + 1 + ssl_bind_kws[i].skip > ssl_e) {
-					memprintf(err, "ssl args out of '[]' for %s on line %d in file '%s'",
-					          args[cur_arg], linenum, file);
+					memprintf(err, "parsing [%s:%d]: ssl args out of '[]' for %s",
+					          file, linenum, args[cur_arg]);
 					cfgerr |= ERR_ALERT | ERR_FATAL;
 					goto error;
 				}
@@ -413,8 +413,8 @@ int crtlist_parse_line(char *line, char **crt_path, struct crtlist_entry *entry,
 			}
 		}
 		if (!cfgerr && !newarg) {
-			memprintf(err, "unknown ssl keyword %s on line %d in file '%s'.",
-				  args[cur_arg], linenum, file);
+			memprintf(err, "parsing [%s:%d]: unknown ssl keyword %s",
+				  file, linenum, args[cur_arg]);
 			cfgerr |= ERR_ALERT | ERR_FATAL;
 			goto error;
 		}
@@ -452,6 +452,7 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 	struct stat buf;
 	int linenum = 0;
 	int cfgerr = 0;
+	int missing_lf = -1;
 
 	if ((f = fopen(file, "r")) == NULL) {
 		memprintf(err, "cannot open file '%s' : %s", file, strerror(errno));
@@ -471,14 +472,22 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 		char *crt_path;
 		struct ckch_store *ckchs;
 
+		if (missing_lf != -1) {
+			memprintf(err, "parsing [%s:%d]: Stray NUL character at position %d.\n",
+			          file, linenum, (missing_lf + 1));
+			cfgerr |= ERR_ALERT | ERR_FATAL;
+			missing_lf = -1;
+			break;
+		}
+
 		linenum++;
 		end = line + strlen(line);
 		if (end-line == sizeof(thisline)-1 && *(end-1) != '\n') {
 			/* Check if we reached the limit and the last char is not \n.
 			 * Watch out for the last line without the terminating '\n'!
 			 */
-			memprintf(err, "line %d too long in file '%s', limit is %d characters",
-				  linenum, file, (int)sizeof(thisline)-1);
+			memprintf(err, "parsing [%s:%d]: line too long, limit is %d characters",
+				  file, linenum, (int)sizeof(thisline)-1);
 			cfgerr |= ERR_ALERT | ERR_FATAL;
 			break;
 		}
@@ -486,16 +495,24 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 		if (*line == '#' || *line == '\n' || *line == '\r')
 			continue;
 
+		if (end > line && *(end-1) == '\n') {
+			/* kill trailing LF */
+			*(end - 1) = 0;
+		}
+		else {
+			/* mark this line as truncated */
+			missing_lf = end - line;
+		}
+
 		entry = crtlist_entry_new();
 		if (entry == NULL) {
 			memprintf(err, "Not enough memory!");
 			cfgerr |= ERR_ALERT | ERR_FATAL;
 			goto error;
 		}
-		if (*(end - 1) == '\n')
-			*(end - 1) = '\0'; /* line parser mustn't receive any \n */
+
 		cfgerr |= crtlist_parse_line(thisline, &crt_path, entry, file, linenum, err);
-		if (cfgerr)
+		if (cfgerr & ERR_CODE)
 			goto error;
 
 		/* empty line */
@@ -507,8 +524,8 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 
 		if (*crt_path != '/' && global_ssl.crt_base) {
 			if ((strlen(global_ssl.crt_base) + 1 + strlen(crt_path)) > MAXPATHLEN) {
-				memprintf(err, "'%s' : path too long on line %d in file '%s'",
-					  crt_path, linenum, file);
+				memprintf(err, "parsing [%s:%d]: '%s' : path too long",
+					  file, linenum, crt_path);
 				cfgerr |= ERR_ALERT | ERR_FATAL;
 				goto error;
 			}
@@ -535,11 +552,11 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 
 			} else {
 				/* If we didn't find the file, this could be a
-				bundle, since 2.3 we don't support OpenSSL
-				multi-certificate bundle, so we emulate it by
-				loading each file separately. To do so we need
-				to duplicate the entry in the crt-list because
-				it becomes independent */
+				bundle, since 2.3 we don't support multiple
+				certificate in the same OpenSSL store, so we
+				emulate it by loading each file separately. To
+				do so we need to duplicate the entry in the
+				crt-list because it becomes independent */
 				char fp[MAXPATHLEN+1] = {0};
 				int n = 0;
 				struct crtlist_entry *entry_dup = entry; /* use the previous created entry */
@@ -582,11 +599,15 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 				}
 			}
 		}
-		if (cfgerr & ERR_CODE)
-			goto error;
-
 		entry = NULL;
 	}
+
+	if (missing_lf != -1) {
+		memprintf(err, "parsing [%s:%d]: Missing LF on last line, file might have been truncated at position %d.\n",
+		          file, linenum, (missing_lf + 1));
+		cfgerr |= ERR_ALERT | ERR_FATAL;
+	}
+
 	if (cfgerr & ERR_CODE)
 		goto error;
 

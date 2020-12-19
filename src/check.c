@@ -655,8 +655,8 @@ void chk_report_conn_err(struct check *check, int errno_bck, int expired)
 		set_server_check_status(check, HCHK_STATUS_SOCKERR, err_msg);
 	}
 
-	if (!conn) {
-		/* connection allocation error before the connection was established */
+	if (!conn || !conn->ctrl) {
+		/* error before any connection attempt (connection allocation error or no control layer) */
 		set_server_check_status(check, HCHK_STATUS_SOCKERR, err_msg);
 	}
 	else if (conn->flags & CO_FL_WAIT_L4_CONN) {
@@ -859,7 +859,7 @@ static struct task *process_chk_conn(struct task *t, void *context, unsigned sho
 		 * is disabled.
 		 */
 		if (((check->state & (CHK_ST_ENABLED | CHK_ST_PAUSED)) != CHK_ST_ENABLED) ||
-		    proxy->state == PR_STSTOPPED)
+		    proxy->disabled)
 			goto reschedule;
 
 		/* we'll initiate a new check */

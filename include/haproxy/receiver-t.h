@@ -29,9 +29,10 @@
 #include <haproxy/namespace-t.h>
 #include <haproxy/thread.h>
 
-/* Bit values for receiver->options */
+/* Bit values for receiver->flags */
 #define RX_F_BOUND              0x00000001  /* receiver already bound */
 #define RX_F_INHERITED          0x00000002  /* inherited FD from the parent process (fd@) */
+#define RX_F_MWORKER            0x00000004  /* keep the FD open in the master but close it in the children */
 
 /* Bit values for rx_settings->options */
 #define RX_O_FOREIGN            0x00000001  /* receives on foreign addresses */
@@ -58,6 +59,7 @@ struct receiver {
 	unsigned int flags;              /* receiver options (RX_F_*) */
 	struct protocol *proto;          /* protocol this receiver belongs to */
 	void *owner;                     /* receiver's owner (usually a listener) */
+	void (*iocb)(int fd);            /* generic I/O handler (typically accept callback) */
 	struct rx_settings *settings;    /* points to the settings used by this receiver */
 	struct list proto_list;          /* list in the protocol header */
 	/* warning: this struct is huge, keep it at the bottom */

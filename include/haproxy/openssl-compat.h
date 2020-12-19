@@ -31,6 +31,12 @@
  * extra features with ORs and not with AND NOT.
  */
 #define HA_OPENSSL_VERSION_NUMBER 0x1000107fL
+#elif defined(OPENSSL_IS_BORINGSSL)
+/*
+ * in 49e9f67d8b7cbeb3953b5548ad1009d15947a523 BoringSSL has changed its version to 1.1.1
+ * Let's switch it back to 1.1.0
+ */
+#define HA_OPENSSL_VERSION_NUMBER 0x1010007f
 #else /* this is for a real OpenSSL or a truly compatible derivative */
 #define HA_OPENSSL_VERSION_NUMBER OPENSSL_VERSION_NUMBER
 #endif
@@ -375,6 +381,16 @@ static inline void SSL_CTX_up_ref(SSL_CTX *ctx)
 #if (HA_OPENSSL_VERSION_NUMBER < 0x1010000fL)
 #define EVP_MD_CTX_new EVP_MD_CTX_create
 #define EVP_MD_CTX_free EVP_MD_CTX_destroy
+#endif
+
+/* OpenSSL 1.0.2 and onwards define SSL_CTX_set1_curves_list which is both a
+ * function and a macro. OpenSSL 1.0.2 to 1.1.0 define SSL_CTRL_SET_CURVES_LIST
+ * as a macro, which disappeared from 1.1.1. BoringSSL only has that one and
+ * not the former macro but it does have the function. Let's keep the test on
+ * the macro matching the function name.
+ */
+#if !defined(SSL_CTX_set1_curves_list) && defined(SSL_CTRL_SET_CURVES_LIST)
+#define SSL_CTX_set1_curves_list SSL_CTX_set1_curves_list
 #endif
 
 #endif /* USE_OPENSSL */

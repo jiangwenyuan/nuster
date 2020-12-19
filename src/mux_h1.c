@@ -401,7 +401,6 @@ static int h1_buf_available(void *target)
 	if ((h1c->flags & H1C_F_OUT_ALLOC) && b_alloc_margin(&h1c->obuf, 0)) {
 		TRACE_STATE("unblocking h1s, obuf allocated", H1_EV_TX_DATA|H1_EV_H1S_BLK|H1_EV_STRM_WAKE, h1c->conn, h1c->h1s);
 		h1c->flags &= ~H1C_F_OUT_ALLOC;
-		tasklet_wakeup(h1c->wait_event.tasklet);
 		if (h1c->h1s)
 			h1_wake_stream_for_send(h1c->h1s);
 		return 1;
@@ -571,7 +570,7 @@ static struct h1s *h1s_create(struct h1c *h1c, struct conn_stream *cs, struct se
 
 		/* For frontend connections we should always have a session */
 		if (!sess)
-			sess = h1c->conn->owner;
+			h1s->sess = sess = h1c->conn->owner;
 
 		/* Timers for subsequent sessions on the same HTTP 1.x connection
 		 * measure from `now`, not from the connection accept time */
@@ -889,7 +888,7 @@ static void h1_set_cli_conn_mode(struct h1s *h1s, struct h1m *h1m)
 	}
 
 	/* If KAL, check if the frontend is stopping. If yes, switch in CLO mode */
-	if (h1s->flags & H1S_F_WANT_KAL && fe->state == PR_STSTOPPED) {
+	if (h1s->flags & H1S_F_WANT_KAL && fe->disabled) {
 		h1s->flags = (h1s->flags & ~H1S_F_WANT_MSK) | H1S_F_WANT_CLO;
 		TRACE_STATE("stopping, set close mode", H1_EV_RX_DATA|H1_EV_RX_HDRS|H1_EV_TX_DATA|H1_EV_TX_HDRS, h1s->h1c->conn, h1s);
 	}
@@ -953,7 +952,7 @@ static void h1_set_srv_conn_mode(struct h1s *h1s, struct h1m *h1m)
 	}
 
 	/* If KAL, check if the backend is stopping. If yes, switch in CLO mode */
-	if (h1s->flags & H1S_F_WANT_KAL && be->state == PR_STSTOPPED) {
+	if (h1s->flags & H1S_F_WANT_KAL && be->disabled) {
 		h1s->flags = (h1s->flags & ~H1S_F_WANT_MSK) | H1S_F_WANT_CLO;
 		TRACE_STATE("stopping, set close mode", H1_EV_RX_DATA|H1_EV_RX_HDRS|H1_EV_TX_DATA|H1_EV_TX_HDRS, h1s->h1c->conn, h1s);
 	}
@@ -1080,7 +1079,7 @@ static void h1_show_error_snapshot(struct buffer *out, const struct error_snapsh
 static void h1_capture_bad_message(struct h1c *h1c, struct h1s *h1s,
 				   struct h1m *h1m, struct buffer *buf)
 {
-	struct session *sess = h1c->conn->owner;
+	struct session *sess = h1s->sess;
 	struct proxy *proxy = h1c->px;
 	struct proxy *other_end;
 	union error_snapshot_ctx ctx;
@@ -2061,7 +2060,8 @@ static int h1_recv(struct h1c *h1c)
 		b_slow_realign(&h1c->ibuf, trash.area, 0);
 
 	/* avoid useless reads after first responses */
-	if (h1s && (h1s->req.state == H1_MSG_RQBEFORE || h1s->res.state == H1_MSG_RPBEFORE))
+	if (h1s && ((!conn_is_back(conn) && h1s->req.state == H1_MSG_RQBEFORE) ||
+		    (conn_is_back(conn) && h1s->res.state == H1_MSG_RPBEFORE)))
 		flags |= CO_RFL_READ_ONCE;
 
 	max = buf_room_for_htx_data(&h1c->ibuf);

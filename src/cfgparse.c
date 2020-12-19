@@ -414,7 +414,7 @@ void init_default_instance()
 {
 	init_new_proxy(&defproxy);
 	defproxy.mode = PR_MODE_TCP;
-	defproxy.state = PR_STNEW;
+	defproxy.disabled = 0;
 	defproxy.maxconn = cfg_maxpconn;
 	defproxy.conn_retries = CONN_RETRIES;
 	defproxy.redispatch_after = 0;
@@ -730,7 +730,7 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 		curpeers->conf.line = linenum;
 		curpeers->last_change = now.tv_sec;
 		curpeers->id = strdup(args[1]);
-		curpeers->state = PR_STNEW;
+		curpeers->disabled = 0;
 	}
 	else if (strcmp(args[0], "peer") == 0 ||
 	         strcmp(args[0], "server") == 0) { /* peer or server definition */
@@ -902,10 +902,10 @@ int cfg_parse_peers(const char *file, int linenum, char **args, int kwm)
 		stktables_list = t;
 	}
 	else if (!strcmp(args[0], "disabled")) {  /* disables this peers section */
-		curpeers->state = PR_STSTOPPED;
+		curpeers->disabled = 1;
 	}
 	else if (!strcmp(args[0], "enabled")) {  /* enables this peers section (used to revert a disabled default) */
-		curpeers->state = PR_STNEW;
+		curpeers->disabled = 0;
 	}
 	else if (*args[0] != 0) {
 		ha_alert("parsing [%s:%d] : unknown keyword '%s' in '%s' section\n", file, linenum, args[0], cursection);
@@ -1908,7 +1908,8 @@ next_line:
 			outlen = outlinesize;
 			err = parse_line(line, outline, &outlen, args, &arg,
 					 PARSE_OPT_ENV | PARSE_OPT_DQUOTE | PARSE_OPT_SQUOTE |
-					 PARSE_OPT_BKSLASH | PARSE_OPT_SHARP, &errptr);
+					 PARSE_OPT_BKSLASH | PARSE_OPT_SHARP | PARSE_OPT_WORD_EXPAND,
+					 &errptr);
 
 			if (err & PARSE_ERR_QUOTE) {
 				size_t newpos = sanitize_for_printing(line, errptr - line, 80);
@@ -1944,6 +1945,16 @@ next_line:
 				size_t newpos = sanitize_for_printing(line, errptr - line, 80);
 
 				ha_alert("parsing [%s:%d]: truncated or invalid hexadecimal sequence at position %d:\n"
+					 "  %s\n  %*s\n", file, linenum, (int)(errptr-thisline+1), line, (int)(newpos+1), "^");
+				err_code |= ERR_ALERT | ERR_FATAL;
+				fatal++;
+				goto next_line;
+			}
+
+			if (err & PARSE_ERR_WRONG_EXPAND) {
+				size_t newpos = sanitize_for_printing(line, errptr - line, 80);
+
+				ha_alert("parsing [%s:%d]: truncated or invalid word expansion sequence at position %d:\n"
 					 "  %s\n  %*s\n", file, linenum, (int)(errptr-thisline+1), line, (int)(newpos+1), "^");
 				err_code |= ERR_ALERT | ERR_FATAL;
 				fatal++;
@@ -2106,7 +2117,7 @@ void propagate_processes(struct proxy *from, struct proxy *to)
 	if (!(from->cap & PR_CAP_FE))
 		return;
 
-	if (from->state == PR_STSTOPPED)
+	if (from->disabled)
 		return;
 
 	/* default_backend */
@@ -2223,11 +2234,14 @@ int check_config_validity()
 		next_pxid++;
 
 
-		if (curproxy->state == PR_STSTOPPED) {
-			/* ensure we don't keep listeners uselessly bound */
-			stop_proxy(curproxy);
+		if (curproxy->disabled) {
+			/* ensure we don't keep listeners uselessly bound. We
+			 * can't disable their listeners yet (fdtab not
+			 * allocated yet) but let's skip them.
+			 */
 			if (curproxy->table) {
 				free((void *)curproxy->table->peers.name);
+				curproxy->table->peers.name = NULL;
 				curproxy->table->peers.p = NULL;
 			}
 			continue;
@@ -2316,19 +2330,6 @@ int check_config_validity()
 		}
 
 		switch (curproxy->mode) {
-		case PR_MODE_HEALTH:
-			cfgerr += proxy_cfg_ensure_no_http(curproxy);
-			if (!(curproxy->cap & PR_CAP_FE)) {
-				ha_alert("config : %s '%s' cannot be in health mode as it has no frontend capability.\n",
-					 proxy_type_str(curproxy), curproxy->id);
-				cfgerr++;
-			}
-
-			if (curproxy->srv != NULL)
-				ha_warning("config : servers will be ignored for %s '%s'.\n",
-					   proxy_type_str(curproxy), curproxy->id);
-			break;
-
 		case PR_MODE_TCP:
 			cfgerr += proxy_cfg_ensure_no_http(curproxy);
 			break;
@@ -2341,9 +2342,10 @@ int check_config_validity()
 			cfgerr += proxy_cfg_ensure_no_http(curproxy);
 			break;
 		case PR_MODE_SYSLOG:
+		case PR_MODE_PEERS:
 		case PR_MODES:
 			/* should not happen, bug gcc warn missing switch statement */
-			ha_alert("config : %s '%s' cannot use syslog mode for this proxy.\n",
+			ha_alert("config : %s '%s' cannot use peers or syslog mode for this proxy. NOTE: PLEASE REPORT THIS TO DEVELOPERS AS YOU'RE NOT SUPPOSED TO BE ABLE TO CREATE A CONFIGURATION TRIGGERING THIS!\n",
 				 proxy_type_str(curproxy), curproxy->id);
 			cfgerr++;
 			break;
@@ -2355,7 +2357,7 @@ int check_config_validity()
 			err_code |= ERR_WARN;
 		}
 
-		if ((curproxy->cap & PR_CAP_BE) && (curproxy->mode != PR_MODE_HEALTH)) {
+		if (curproxy->cap & PR_CAP_BE) {
 			if (curproxy->lbprm.algo & BE_LB_KIND) {
 				if (curproxy->options & PR_O_TRANSP) {
 					ha_alert("config : %s '%s' cannot use both transparent and balance mode.\n",
@@ -2784,7 +2786,7 @@ int check_config_validity()
 				curproxy->table->peers.p = NULL;
 				cfgerr++;
 			}
-			else if (curpeers->state == PR_STSTOPPED) {
+			else if (curpeers->disabled) {
 				/* silently disable this peers section */
 				curproxy->table->peers.p = NULL;
 			}
@@ -3268,7 +3270,7 @@ out_uri_auth_compat:
 			}
 			break;
 		}
-		HA_SPIN_INIT(&curproxy->lbprm.lock);
+		HA_RWLOCK_INIT(&curproxy->lbprm.lock);
 
 		if (curproxy->options & PR_O_LOGASAP)
 			curproxy->to_log &= ~LW_BYTES;
@@ -3724,9 +3726,6 @@ out_uri_auth_compat:
 			if (!LIST_ISEMPTY(&curproxy->tcp_req.l5_rules))
 				listener->options |= LI_O_TCP_L5_RULES;
 
-			if (curproxy->mon_mask.s_addr)
-				listener->options |= LI_O_CHK_MONNET;
-
 			/* smart accept mode is automatic in HTTP mode */
 			if ((curproxy->options2 & PR_O2_SMARTACC) ||
 			    ((curproxy->mode == PR_MODE_HTTP || listener->bind_conf->is_ssl) &&
@@ -3837,7 +3836,7 @@ out_uri_auth_compat:
 			struct stktable *t;
 			curpeers = *last;
 
-			if (curpeers->state == PR_STSTOPPED) {
+			if (curpeers->disabled) {
 				/* the "disabled" keyword was present */
 				if (curpeers->peers_fe)
 					stop_proxy(curpeers->peers_fe);
@@ -3935,7 +3934,7 @@ out_uri_auth_compat:
 	 * other proxies.
 	 */
 	for (curproxy = proxies_list; curproxy; curproxy = curproxy->next) {
-		if (curproxy->state == PR_STSTOPPED || !curproxy->table)
+		if (curproxy->disabled || !curproxy->table)
 			continue;
 
 		if (!stktable_init(curproxy->table)) {

@@ -1582,8 +1582,8 @@ void pattern_init_head(struct pattern_head *head)
  *
  */
 
-/* This function lookup for reference. If the reference is found, they return
- * pointer to the struct pat_ref, else return NULL.
+/* This function looks up a reference by name. If the reference is found, a
+ * pointer to the struct pat_ref is returned, otherwise NULL is returned.
  */
 struct pat_ref *pat_ref_lookup(const char *reference)
 {
@@ -1595,8 +1595,8 @@ struct pat_ref *pat_ref_lookup(const char *reference)
 	return NULL;
 }
 
-/* This function lookup for unique id. If the reference is found, they return
- * pointer to the struct pat_ref, else return NULL.
+/* This function looks up a reference's unique id. If the reference is found, a
+ * pointer to the struct pat_ref is returned, otherwise NULL is returned.
  */
 struct pat_ref *pat_ref_lookupid(int unique_id)
 {
@@ -1608,10 +1608,9 @@ struct pat_ref *pat_ref_lookupid(int unique_id)
 	return NULL;
 }
 
-/* This function remove all pattern matching the pointer <refelt> from
- * the the reference and from each expr member of the reference. This
- * function returns 1 if the deletion is done and return 0 is the entry
- * is not found.
+/* This function removes all the patterns matching the pointer <refelt> from
+ * the reference and from each expr member of this reference. This function
+ * returns 1 if the entry was found and deleted, otherwise zero.
  */
 int pat_ref_delete_by_id(struct pat_ref *ref, struct pat_ref_elt *refelt)
 {
@@ -1709,7 +1708,10 @@ struct pat_ref_elt *pat_ref_find_elt(struct pat_ref *ref, const char *key)
 }
 
 
-  /* This function modify the sample of the first pattern that match the <key>. */
+/* This function modifies the sample of pat_ref_elt <elt> in all expressions
+ * found under <ref> to become <value>. It is assumed that the caller has
+ * already verified that <elt> belongs to <ref>.
+ */
 static inline int pat_ref_set_elt(struct pat_ref *ref, struct pat_ref_elt *elt,
                                   const char *value, char **err)
 {
@@ -1735,8 +1737,8 @@ static inline int pat_ref_set_elt(struct pat_ref *ref, struct pat_ref_elt *elt,
 		memprintf(err, "out of memory error");
 		return 0;
 	}
-	/* Load sample in each reference. All the conversion are tested
-	 * below, normally these calls dosn't fail.
+	/* Load sample in each reference. All the conversions are tested
+	 * below, normally these calls don't fail.
 	 */
 	list_for_each_entry(expr, &ref->pat, list) {
 		if (!expr->pat_head->parse_smp)
@@ -1757,7 +1759,10 @@ static inline int pat_ref_set_elt(struct pat_ref *ref, struct pat_ref_elt *elt,
 	return 1;
 }
 
-/* This function modify the sample of the first pattern that match the <key>. */
+/* This function modifies the sample of pat_ref_elt <refelt> in all expressions
+ * found under <ref> to become <value>, after checking that <refelt> really
+ * belongs to <ref>.
+ */
 int pat_ref_set_by_id(struct pat_ref *ref, struct pat_ref_elt *refelt, const char *value, char **err)
 {
 	struct pat_ref_elt *elt;
@@ -1775,7 +1780,9 @@ int pat_ref_set_by_id(struct pat_ref *ref, struct pat_ref_elt *refelt, const cha
 	return 0;
 }
 
-/* This function modify the sample of the first pattern that match the <key>. */
+/* This function modifies to <value> the sample of all patterns matching <key>
+ * under <ref>.
+ */
 int pat_ref_set(struct pat_ref *ref, const char *key, const char *value, char **err)
 {
 	struct pat_ref_elt *elt;
@@ -1818,14 +1825,14 @@ int pat_ref_set(struct pat_ref *ref, const char *key, const char *value, char **
 /* This function creates a new reference. <ref> is the reference name.
  * <flags> are PAT_REF_*. /!\ The reference is not checked, and must
  * be unique. The user must check the reference with "pat_ref_lookup()"
- * before calling this function. If the function fail, it return NULL,
- * else return new struct pat_ref.
+ * before calling this function. If the function fails, it returns NULL,
+ * otherwise it returns the new struct pat_ref.
  */
 struct pat_ref *pat_ref_new(const char *reference, const char *display, unsigned int flags)
 {
 	struct pat_ref *ref;
 
-	ref = malloc(sizeof(*ref));
+	ref = calloc(1, sizeof(*ref));
 	if (!ref)
 		return NULL;
 
@@ -1836,8 +1843,6 @@ struct pat_ref *pat_ref_new(const char *reference, const char *display, unsigned
 			return NULL;
 		}
 	}
-	else
-		ref->display = NULL;
 
 	ref->reference = strdup(reference);
 	if (!ref->reference) {
@@ -1857,18 +1862,18 @@ struct pat_ref *pat_ref_new(const char *reference, const char *display, unsigned
 	return ref;
 }
 
-/* This function create new reference. <unique_id> is the unique id. If
+/* This function creates a new reference. <unique_id> is the unique id. If
  * the value of <unique_id> is -1, the unique id is calculated later.
  * <flags> are PAT_REF_*. /!\ The reference is not checked, and must
  * be unique. The user must check the reference with "pat_ref_lookup()"
  * or pat_ref_lookupid before calling this function. If the function
- * fail, it return NULL, else return new struct pat_ref.
+ * fails, it returns NULL, otherwise it returns the new struct pat_ref.
  */
 struct pat_ref *pat_ref_newid(int unique_id, const char *display, unsigned int flags)
 {
 	struct pat_ref *ref;
 
-	ref = malloc(sizeof(*ref));
+	ref = calloc(1, sizeof(*ref));
 	if (!ref)
 		return NULL;
 
@@ -1879,8 +1884,6 @@ struct pat_ref *pat_ref_newid(int unique_id, const char *display, unsigned int f
 			return NULL;
 		}
 	}
-	else
-		ref->display = NULL;
 
 	ref->reference = NULL;
 	ref->flags = flags;
@@ -1893,48 +1896,45 @@ struct pat_ref *pat_ref_newid(int unique_id, const char *display, unsigned int f
 	return ref;
 }
 
-/* This function adds entry to <ref>. It can failed with memory error.
- * If the function fails, it returns 0.
+/* This function adds entry to <ref>. It can fail on memory error. It returns
+ * the newly added element on success, or NULL on failure. The PATREF_LOCK on
+ * <ref> must be held.
  */
-int pat_ref_append(struct pat_ref *ref, char *pattern, char *sample, int line)
+struct pat_ref_elt *pat_ref_append(struct pat_ref *ref, const char *pattern, const char *sample, int line)
 {
 	struct pat_ref_elt *elt;
 
-	elt = malloc(sizeof(*elt));
+	elt = calloc(1, sizeof(*elt));
 	if (!elt)
-		return 0;
+		goto fail;
 
 	elt->line = line;
 
 	elt->pattern = strdup(pattern);
-	if (!elt->pattern) {
-		free(elt);
-		return 0;
-	}
+	if (!elt->pattern)
+		goto fail;
 
 	if (sample) {
 		elt->sample = strdup(sample);
-		if (!elt->sample) {
-			free(elt->pattern);
-			free(elt);
-			return 0;
-		}
+		if (!elt->sample)
+			goto fail;
 	}
-	else
-		elt->sample = NULL;
 
 	LIST_INIT(&elt->back_refs);
 	LIST_ADDQ(&ref->head, &elt->list);
-
-	return 1;
+	return elt;
+ fail:
+	if (elt)
+		free(elt->pattern);
+	free(elt);
+	return NULL;
 }
 
-/* This function create sample found in <elt>, parse the pattern also
- * found in <elt> and insert it in <expr>. The function copy <patflags>
- * in <expr>. If the function fails, it returns0 and <err> is filled.
+/* This function creates sample found in <elt>, parses the pattern also
+ * found in <elt> and inserts it in <expr>. The function copies <patflags>
+ * into <expr>. If the function fails, it returns 0 and <err> is filled.
  * In success case, the function returns 1.
  */
-static inline
 int pat_ref_push(struct pat_ref_elt *elt, struct pattern_expr *expr,
                  int patflags, char **err)
 {
@@ -1982,9 +1982,9 @@ int pat_ref_push(struct pat_ref_elt *elt, struct pattern_expr *expr,
 	return 1;
 }
 
-/* This function adds entry to <ref>. It can failed with memory error. The new
+/* This function adds entry to <ref>. It can fail on memory error. The new
  * entry is added at all the pattern_expr registered in this reference. The
- * function stop on the first error encountered. It returns 0 and err is
+ * function stops on the first error encountered. It returns 0 and <err> is
  * filled. If an error is encountered, the complete add operation is cancelled.
  * If the insertion is a success the function returns 1.
  */
@@ -1995,35 +1995,11 @@ int pat_ref_add(struct pat_ref *ref,
 	struct pat_ref_elt *elt;
 	struct pattern_expr *expr;
 
-	elt = malloc(sizeof(*elt));
+	elt = pat_ref_append(ref, pattern, sample, -1);
 	if (!elt) {
 		memprintf(err, "out of memory error");
 		return 0;
 	}
-
-	elt->line = -1;
-
-	elt->pattern = strdup(pattern);
-	if (!elt->pattern) {
-		free(elt);
-		memprintf(err, "out of memory error");
-		return 0;
-	}
-
-	if (sample) {
-		elt->sample = strdup(sample);
-		if (!elt->sample) {
-			free(elt->pattern);
-			free(elt);
-			memprintf(err, "out of memory error");
-			return 0;
-		}
-	}
-	else
-		elt->sample = NULL;
-
-	LIST_INIT(&elt->back_refs);
-	LIST_ADDQ(&ref->head, &elt->list);
 
 	list_for_each_entry(expr, &ref->pat, list) {
 		if (!pat_ref_push(elt, expr, 0, err)) {
@@ -2032,7 +2008,6 @@ int pat_ref_add(struct pat_ref *ref,
 			return 0;
 		}
 	}
-
 	return 1;
 }
 
@@ -2128,7 +2103,7 @@ void pat_ref_reload(struct pat_ref *ref, struct pat_ref *replace)
 	HA_SPIN_UNLOCK(PATREF_LOCK, &ref->lock);
 }
 
-/* This function prune all entries of <ref>. This function
+/* This function prunes all entries of <ref>. This function
  * prunes the associated pattern_expr. It may return before the end of
  * the list is reached, returning 0, to yield. The caller must call it
  * again. Otherwise it returns 1 once done.
@@ -2177,7 +2152,9 @@ int pat_ref_prune(struct pat_ref *ref)
 	return 1;
 }
 
-/* This function lookup for existing reference <ref> in pattern_head <head>. */
+/* This function looks up any existing reference <ref> in pattern_head <head>, and
+ * returns the associated pattern_expr pointer if found, otherwise NULL.
+ */
 struct pattern_expr *pattern_lookup_expr(struct pattern_head *head, struct pat_ref *ref)
 {
 	struct pattern_expr_list *expr;
@@ -2206,7 +2183,7 @@ struct pattern_expr *pattern_new_expr(struct pattern_head *head, struct pat_ref 
 		*reuse = 0;
 
 	/* Memory and initialization of the chain element. */
-	list = malloc(sizeof(*list));
+	list = calloc(1, sizeof(*list));
 	if (!list) {
 		memprintf(err, "out of memory");
 		return NULL;
@@ -2232,7 +2209,7 @@ struct pattern_expr *pattern_new_expr(struct pattern_head *head, struct pat_ref 
 	/* If no similar expr was found, we create new expr. */
 	if (!expr) {
 		/* Get a lot of memory for the expr struct. */
-		expr = malloc(sizeof(*expr));
+		expr = calloc(1, sizeof(*expr));
 		if (!expr) {
 			free(list);
 			memprintf(err, "out of memory");
@@ -2624,7 +2601,7 @@ struct pattern *pattern_exec_match(struct pattern_head *head, struct sample *smp
 	return NULL;
 }
 
-/* This function prune the pattern expression. */
+/* This function prunes the pattern expressions starting at pattern_head <head>. */
 void pattern_prune(struct pattern_head *head)
 {
 	struct pattern_expr_list *list, *safe;
@@ -2642,10 +2619,9 @@ void pattern_prune(struct pattern_head *head)
 	}
 }
 
-/* This function lookup for a pattern matching the <key> and return a
- * pointer to a pointer of the sample stoarge. If the <key> dont match,
- * the function returns NULL. If the key cannot be parsed, the function
- * fill <err>.
+/* This function searches occurrences of pattern reference element <ref> in
+ * expression <expr> and returns a pointer to a pointer of the sample storage.
+ * If <ref> is not found, NULL is returned.
  */
 struct sample_data **pattern_find_smp(struct pattern_expr *expr, struct pat_ref_elt *ref)
 {
@@ -2676,9 +2652,9 @@ struct sample_data **pattern_find_smp(struct pattern_expr *expr, struct pat_ref_
 	return NULL;
 }
 
-/* This function search all the pattern matching the <key> and delete it.
- * If the parsing of the input key fails, the function returns 0 and the
- * <err> is filled, else return 1;
+/* This function delets from expression <expr> all occurrences of patterns
+ * corresponding to pattern reference element <ref>. The function always
+ * returns 1.
  */
 int pattern_delete(struct pattern_expr *expr, struct pat_ref_elt *ref)
 {
@@ -2688,7 +2664,9 @@ int pattern_delete(struct pattern_expr *expr, struct pat_ref_elt *ref)
 	return 1;
 }
 
-/* This function compares two pat_ref** on unique_id */
+/* This function compares two pat_ref** on their unique_id, and returns -1/0/1
+ * depending on their order (suitable for sorting).
+ */
 static int cmp_pat_ref(const void *_a, const void *_b)
 {
 	struct pat_ref * const *a = _a;
@@ -2701,8 +2679,8 @@ static int cmp_pat_ref(const void *_a, const void *_b)
 	return 0;
 }
 
-/* This function finalize the configuration parsing. It sets all the
- * automatic ids
+/* This function finalizes the configuration parsing. It sets all the
+ * automatic ids.
  */
 int pattern_finalize_config(void)
 {

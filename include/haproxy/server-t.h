@@ -38,6 +38,7 @@
 #include <haproxy/obj_type-t.h>
 #include <haproxy/openssl-compat.h>
 #include <haproxy/ssl_sock-t.h>
+#include <haproxy/stats-t.h>
 #include <haproxy/task-t.h>
 #include <haproxy/thread-t.h>
 
@@ -234,9 +235,10 @@ struct server {
 	unsigned int curr_used_conns;           /* Current number of used connections */
 	unsigned int max_used_conns;            /* Max number of used connections (the counter is reset at each connection purges */
 	unsigned int est_need_conns;            /* Estimate on the number of needed connections (max of curr and previous max_used) */
-	unsigned int *curr_idle_thr;            /* Current number of orphan idling connections per thread */
 	unsigned int next_takeover;             /* thread ID to try to steal connections from next time */
+	unsigned int *curr_idle_thr;            /* Current number of orphan idling connections per thread */
 	int max_reuse;                          /* Max number of requests on a same connection */
+	__decl_thread(HA_SPINLOCK_T lock);      /* may enclose the proxy's lock, must not be taken under */
 	struct eb32_node idle_node;             /* When to next do cleanup in the idle connections */
 	struct task *warmup;                    /* the task dedicated to the warmup when slowstart is set */
 
@@ -328,7 +330,6 @@ struct server {
 	} ssl_ctx;
 #endif
 	struct dns_srvrq *srvrq;		/* Pointer representing the DNS SRV requeest, if any */
-	__decl_thread(HA_SPINLOCK_T lock);   /* may enclose the proxy's lock, must not be taken under */
 	struct {
 		const char *file;		/* file where the section appears */
 		struct eb32_node id;		/* place in the tree of used IDs */
@@ -352,6 +353,8 @@ struct server {
 	char adm_st_chg_cause[48];		/* administrative status change's cause */
 
 	struct sockaddr_storage socks4_addr;	/* the address of the SOCKS4 Proxy, including the port */
+
+	EXTRA_COUNTERS(extra_counters);
 };
 
 

@@ -35,7 +35,7 @@ extern struct pool_head *pool_head_sess_srv_list;
 
 struct session *session_new(struct proxy *fe, struct listener *li, enum obj_type *origin);
 void session_free(struct session *sess);
-int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr);
+int session_accept_fd(struct connection *cli_conn);
 int conn_complete_session(struct connection *conn);
 
 /* Remove the refcount from the session to the tracked counters, and clear the
@@ -80,8 +80,7 @@ static inline void session_unown_conn(struct session *sess, struct connection *c
 
 	if (conn->flags & CO_FL_SESS_IDLE)
 		sess->idle_conns--;
-	LIST_DEL(&conn->session_list);
-	LIST_INIT(&conn->session_list);
+	LIST_DEL_INIT(&conn->session_list);
 	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
 		if (srv_list->target == conn->target) {
 			if (LIST_ISEMPTY(&srv_list->conn_list)) {

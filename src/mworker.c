@@ -334,7 +334,8 @@ restart_wait:
 /* This wrapper is called from the workers. It is registered instead of the
  * normal listener_accept() so the worker can exit() when it detects that the
  * master closed the IPC FD. If it's not a close, we just call the regular
- * listener_accept() function */
+ * listener_accept() function.
+ */
 void mworker_accept_wrapper(int fd)
 {
 	char c;
@@ -351,7 +352,10 @@ void mworker_accept_wrapper(int fd)
 			}
 			break;
 		} else if (ret > 0) {
-			listener_accept(fd);
+			struct listener *l = fdtab[fd].owner;
+
+			if (l)
+				listener_accept(l);
 			return;
 		} else if (ret == 0) {
 			/* At this step the master is down before
@@ -422,14 +426,8 @@ void mworker_cleanlisteners()
 
 		list_for_each_entry_safe(l, l_next, &curproxy->conf.listeners, by_fe) {
 			/* remove the listener, but not those we need in the master... */
-			if (!(l->options & LI_O_MWORKER)) {
-				/* unbind the listener but does not close if
-				   the FD is inherited with fd@ from the parent
-				   process */
-				if (l->rx.flags & RX_F_INHERITED)
-					unbind_listener_no_close(l);
-				else
-					unbind_listener(l);
+			if (!(l->rx.flags & RX_F_MWORKER)) {
+				unbind_listener(l);
 				delete_listener(l);
 			} else {
 				listen_in_master = 1;
@@ -437,7 +435,7 @@ void mworker_cleanlisteners()
 		}
 		/* if the proxy shouldn't be in the master, we stop it */
 		if (!listen_in_master)
-			curproxy->state = PR_STSTOPPED;
+			curproxy->disabled = 1;
 	}
 }
 

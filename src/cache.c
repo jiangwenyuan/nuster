@@ -21,18 +21,21 @@
 #include <haproxy/errors.h>
 #include <haproxy/filters.h>
 #include <haproxy/hash.h>
+#include <haproxy/http.h>
 #include <haproxy/http_ana.h>
 #include <haproxy/http_htx.h>
 #include <haproxy/http_rules.h>
 #include <haproxy/htx.h>
 #include <haproxy/net_helper.h>
 #include <haproxy/proxy.h>
+#include <haproxy/sample.h>
 #include <haproxy/shctx.h>
 #include <haproxy/stream.h>
 #include <haproxy/stream_interface.h>
 
 #define CACHE_FLT_F_IMPLICIT_DECL  0x00000001 /* The cache filtre was implicitly declared (ie without
 					       * the filter keyword) */
+#define CACHE_FLT_INIT             0x00000002 /* Whether the cache name was freed. */
 
 const char *cache_store_flt_id = "cache store filter";
 
@@ -72,6 +75,17 @@ struct cache_entry {
 
 	struct eb32_node eb;     /* ebtree node used to hold the cache object */
 	char hash[20];
+
+	unsigned int etag_length; /* Length of the ETag value (if one was found in the response). */
+	unsigned int etag_offset; /* Offset of the ETag value in the data buffer. */
+
+	time_t last_modified; /* Origin server "Last-Modified" header value converted in
+			       * seconds since epoch. If no "Last-Modified"
+			       * header is found, use "Date" header value,
+			       * otherwise use reception time. This field will
+			       * be used in case of an "If-Modified-Since"-based
+			       * conditional request. */
+
 	unsigned char data[0];
 };
 
@@ -133,6 +147,8 @@ cache_store_deinit(struct proxy *px, struct flt_conf *fconf)
 {
 	struct cache_flt_conf *cconf = fconf->conf;
 
+	if (!(cconf->flags & CACHE_FLT_INIT))
+		free(cconf->c.name);
 	free(cconf);
 }
 
@@ -466,6 +482,9 @@ int http_calc_maxage(struct stream *s, struct cache *cache)
 	struct http_hdr_ctx ctx = { .blk = NULL };
 	int smaxage = -1;
 	int maxage = -1;
+	int expires = -1;
+	struct tm tm = {};
+	time_t expires_val = 0;
 
 	while (http_find_header(htx, ist("cache-control"), &ctx, 0)) {
 		char *value;
@@ -476,7 +495,7 @@ int http_calc_maxage(struct stream *s, struct cache *cache)
 
 			chunk_strncat(chk, value, ctx.value.len - 8 + 1);
 			chunk_strncat(chk, "", 1);
-			maxage = atoi(chk->area);
+			smaxage = atoi(chk->area);
 		}
 
 		value = directive_value(ctx.value.ptr, ctx.value.len, "max-age", 7);
@@ -485,11 +504,32 @@ int http_calc_maxage(struct stream *s, struct cache *cache)
 
 			chunk_strncat(chk, value, ctx.value.len - 7 + 1);
 			chunk_strncat(chk, "", 1);
-			smaxage = atoi(chk->area);
+			maxage = atoi(chk->area);
 		}
 	}
 
-	/* TODO: Expires - Data */
+	/* Look for Expires header if no s-maxage or max-age Cache-Control data
+	 * was found. */
+	if (maxage == -1 && smaxage == -1) {
+		ctx.blk = NULL;
+		if (http_find_header(htx, ist("expires"), &ctx, 1)) {
+			if (parse_http_date(istptr(ctx.value), istlen(ctx.value), &tm)) {
+				expires_val = my_timegm(&tm);
+				/* A request having an expiring date earlier
+				 * than the current date should be considered as
+				 * stale. */
+				expires = (expires_val >= now.tv_sec) ?
+					(expires_val - now.tv_sec) : 0;
+			}
+			else {
+				/* Following RFC 7234#5.3, an invalid date
+				 * format must be treated as a date in the past
+				 * so the cache entry must be seen as already
+				 * expired. */
+				expires = 0;
+			}
+		}
+	}
 
 
 	if (smaxage > 0)
@@ -497,6 +537,9 @@ int http_calc_maxage(struct stream *s, struct cache *cache)
 
 	if (maxage > 0)
 		return MIN(maxage, cache->maxage);
+
+	if (expires >= 0)
+		return MIN(expires, cache->maxage);
 
 	return cache->maxage;
 
@@ -510,6 +553,40 @@ static void cache_free_blocks(struct shared_block *first, struct shared_block *b
 	if (first == block && object->eb.key)
 		eb32_delete(&object->eb);
 	object->eb.key = 0;
+}
+
+
+/* As per RFC 7234#4.3.2, in case of "If-Modified-Since" conditional request, the
+ * date value should be compared to a date determined by in a previous response (for
+ * the same entity). This date could either be the "Last-Modified" value, or the "Date"
+ * value of the response's reception time (by decreasing order of priority). */
+static time_t get_last_modified_time(struct htx *htx)
+{
+	time_t last_modified = 0;
+	struct http_hdr_ctx ctx = { .blk = NULL };
+	struct tm tm = {};
+
+	if (http_find_header(htx, ist("last-modified"), &ctx, 1)) {
+		if (parse_http_date(istptr(ctx.value), istlen(ctx.value), &tm)) {
+			last_modified = my_timegm(&tm);
+		}
+	}
+
+	if (!last_modified) {
+		ctx.blk = NULL;
+		if (http_find_header(htx, ist("date"), &ctx, 1)) {
+			if (parse_http_date(istptr(ctx.value), istlen(ctx.value), &tm)) {
+				last_modified = my_timegm(&tm);
+			}
+		}
+	}
+
+	/* Fallback on the current time if no "Last-Modified" or "Date" header
+	 * was found. */
+	if (!last_modified)
+		last_modified = now.tv_sec;
+
+	return last_modified;
 }
 
 /*
@@ -534,6 +611,10 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	struct http_hdr_ctx ctx;
 	size_t hdrs_len = 0;
 	int32_t pos;
+	unsigned int etag_length = 0;
+	unsigned int etag_offset = 0;
+	struct ist header_name = IST_NULL;
+	time_t last_modified = 0;
 
 	/* Don't cache if the response came from a cache */
 	if ((obj_type(s->target) == OBJ_TYPE_APPLET) &&
@@ -597,6 +678,10 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 		http_remove_header(htx, &ctx);
 	}
 
+	/* Build a last-modified time that will be stored in the cache_entry and
+	 * compared to a future If-Modified-Since client header. */
+	last_modified = get_last_modified_time(htx);
+
 	chunk_reset(&trash);
 	for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
 		struct htx_blk *blk = htx_get_blk(htx, pos);
@@ -606,6 +691,18 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 		hdrs_len += sizeof(*blk) + sz;
 		chunk_memcat(&trash, (char *)&blk->info, sizeof(blk->info));
 		chunk_memcat(&trash, htx_get_blk_ptr(htx, blk), sz);
+
+		/* Look for optional ETag header.
+		 * We need to store the offset of the ETag value in order for
+		 * future conditional requests to be able to perform ETag
+		 * comparisons. */
+		if (type == HTX_BLK_HDR) {
+			header_name = htx_get_blk_name(htx, blk);
+			if (isteq(header_name, ist("etag"))) {
+				etag_length = sz - istlen(header_name);
+				etag_offset = sizeof(struct cache_entry) + b_data(&trash) - sz + istlen(header_name);
+			}
+		}
 		if (type == HTX_BLK_EOH)
 			break;
 	}
@@ -629,6 +726,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	object->eb.node.leaf_p = NULL;
 	object->eb.key = 0;
 	object->age = age;
+	object->last_modified = last_modified;
 
 	/* reserve space for the cache_entry structure */
 	first->len = sizeof(struct cache_entry);
@@ -638,6 +736,10 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	 * modifying some HTTP headers, or on the contrary after modifying
 	 * those headers.
 	 */
+
+	/* Write the ETag information in the cache_entry if needed. */
+	object->etag_length = etag_length;
+	object->etag_offset = etag_offset;
 
 	/* does not need to be locked because it's in the "hot" list,
 	 * copy the headers */
@@ -906,8 +1008,18 @@ static void http_cache_io_handler(struct appctx *appctx)
 		    !htx_cache_add_age_hdr(appctx, res_htx))
 			goto error;
 
-		/* Skip response body for HEAD requests */
-		if (si_strm(si)->txn->meth == HTTP_METH_HEAD)
+		/* In case of a conditional request, we might want to send a
+		 * "304 Not Modified" response instead of the stored data. */
+		if (appctx->ctx.cache.send_notmodified) {
+			if (!http_replace_res_status(res_htx, ist("304"), ist("Not Modified"))) {
+				/* If replacing the status code fails we need to send the full response. */
+				appctx->ctx.cache.send_notmodified = 0;
+			}
+		}
+
+		/* Skip response body for HEAD requests or in case of "304 Not
+		 * Modified" response. */
+		if (si_strm(si)->txn->meth == HTTP_METH_HEAD || appctx->ctx.cache.send_notmodified)
 			appctx->st0 = HTX_CACHE_EOM;
 		else
 			appctx->st0 = HTX_CACHE_DATA;
@@ -1094,6 +1206,90 @@ int sha1_hosturi(struct stream *s)
 	return 1;
 }
 
+/* Looks for "If-None-Match" headers in the request and compares their value
+ * with the one that might have been stored in the cache_entry. If any of them
+ * matches, a "304 Not Modified" response should be sent instead of the cached
+ * data.
+ * Although unlikely in a GET/HEAD request, the "If-None-Match: *" syntax is
+ * valid and should receive a "304 Not Modified" response (RFC 7234#4.3.2).
+ *
+ * If no "If-None-Match" header was found, look for an "If-Modified-Since"
+ * header and compare its value (date) to the one stored in the cache_entry.
+ * If the request's date is later than the cached one, we also send a
+ * "304 Not Modified" response (see RFCs 7232#3.3 and 7234#4.3.2).
+ *
+ * Returns 1 if "304 Not Modified" should be sent, 0 otherwise.
+ */
+static int should_send_notmodified_response(struct cache *cache, struct htx *htx,
+                                            struct cache_entry *entry)
+{
+	int retval = 0;
+
+	struct http_hdr_ctx ctx = { .blk = NULL };
+	struct ist cache_entry_etag = IST_NULL;
+	struct buffer *etag_buffer = NULL;
+	int if_none_match_found = 0;
+
+	struct tm tm = {};
+	time_t if_modified_since = 0;
+
+	/* If we find a "If-None-Match" header in the request, rebuild the
+	 * cache_entry's ETag in order to perform comparisons.
+	 * There could be multiple "if-none-match" header lines. */
+	while (http_find_header(htx, ist("if-none-match"), &ctx, 0)) {
+		if_none_match_found = 1;
+
+		/* A '*' matches everything. */
+		if (isteq(ctx.value, ist("*")) != 0) {
+			retval = 1;
+			break;
+		}
+
+		/* No need to rebuild an etag if none was stored in the cache. */
+		if (entry->etag_length == 0)
+			break;
+
+		/* Rebuild the stored ETag. */
+		if (etag_buffer == NULL) {
+			etag_buffer = get_trash_chunk();
+
+			if (shctx_row_data_get(shctx_ptr(cache), block_ptr(entry),
+					       (unsigned char*)b_orig(etag_buffer),
+					       entry->etag_offset, entry->etag_length) == 0) {
+				cache_entry_etag = ist2(b_orig(etag_buffer), entry->etag_length);
+			} else {
+				/* We could not rebuild the ETag in one go, we
+				 * won't send a "304 Not Modified" response. */
+				break;
+			}
+		}
+
+		if (http_compare_etags(cache_entry_etag, ctx.value) == 1) {
+			retval = 1;
+			break;
+		}
+	}
+
+	/* If the request did not contain an "If-None-Match" header, we look for
+	 * an "If-Modified-Since" header (see RFC 7232#3.3). */
+	if (retval == 0 && if_none_match_found == 0) {
+		ctx.blk = NULL;
+		if (http_find_header(htx, ist("if-modified-since"), &ctx, 1)) {
+			if (parse_http_date(istptr(ctx.value), istlen(ctx.value), &tm)) {
+				if_modified_since = my_timegm(&tm);
+
+				/* We send a "304 Not Modified" response if the
+				 * entry's last modified date is earlier than
+				 * the one found in the "If-Modified-Since"
+				 * header. */
+				retval = (entry->last_modified <= if_modified_since);
+			}
+		}
+	}
+
+	return retval;
+}
+
 enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *px,
                                          struct session *sess, struct stream *s, int flags)
 {
@@ -1138,6 +1334,8 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
 			appctx->ctx.cache.entry = res;
 			appctx->ctx.cache.next = NULL;
 			appctx->ctx.cache.sent = 0;
+			appctx->ctx.cache.send_notmodified =
+                                should_send_notmodified_response(cache, htxbuf(&s->req.buf), res);
 
 			if (px == strm_fe(s))
 				_HA_ATOMIC_ADD(&px->fe_counters.p.http.cache_hits, 1);
@@ -1376,6 +1574,7 @@ int post_check_cache()
 				cconf = fconf->conf;
 				if (!strcmp(cache->id, cconf->c.name)) {
 					free(cconf->c.name);
+					cconf->flags |= CACHE_FLT_INIT;
 					cconf->c.cache = cache;
 					break;
 				}
@@ -1542,6 +1741,53 @@ static int cli_io_handler_show_cache(struct appctx *appctx)
 
 }
 
+
+/*
+ * boolean, returns true if response was built out of a cache entry.
+ */
+static int
+smp_fetch_res_cache_hit(const struct arg *args, struct sample *smp,
+                        const char *kw, void *private)
+{
+	smp->data.type = SMP_T_BOOL;
+	smp->data.u.sint = (smp->strm ? (smp->strm->target == &http_cache_applet.obj_type) : 0);
+
+	return 1;
+}
+
+/*
+ * string, returns cache name (if response came from a cache).
+ */
+static int
+smp_fetch_res_cache_name(const struct arg *args, struct sample *smp,
+                         const char *kw, void *private)
+{
+	struct appctx *appctx = NULL;
+
+	struct cache_flt_conf *cconf = NULL;
+	struct cache *cache = NULL;
+
+	if (!smp->strm || smp->strm->target != &http_cache_applet.obj_type)
+		return 0;
+
+	/* Get appctx from the stream_interface. */
+	appctx = si_appctx(&smp->strm->si[1]);
+	if (appctx && appctx->rule) {
+		cconf = appctx->rule->arg.act.p[0];
+		if (cconf) {
+			cache = cconf->c.cache;
+
+			smp->data.type = SMP_T_STR;
+			smp->flags = SMP_F_CONST;
+			smp->data.u.str.area = cache->id;
+			smp->data.u.str.data = strlen(cache->id);
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
 /* Declare the filter parser for "cache" keyword */
 static struct flt_kw_list filter_kws = { "CACHE", { }, {
 		{ "cache", parse_cache_flt, NULL },
@@ -1586,3 +1832,14 @@ struct applet http_cache_applet = {
 /* config parsers for this section */
 REGISTER_CONFIG_SECTION("cache", cfg_parse_cache, cfg_post_parse_section_cache);
 REGISTER_POST_CHECK(post_check_cache);
+
+
+/* Note: must not be declared <const> as its list will be overwritten */
+static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
+		{ "res.cache_hit",  smp_fetch_res_cache_hit,  0, NULL, SMP_T_BOOL, SMP_USE_HRSHP, SMP_VAL_RESPONSE },
+		{ "res.cache_name", smp_fetch_res_cache_name, 0, NULL, SMP_T_STR,  SMP_USE_HRSHP, SMP_VAL_RESPONSE },
+		{ /* END */ },
+	}
+};
+
+INITCALL1(STG_REGISTER, sample_register_fetches, &sample_fetch_keywords);

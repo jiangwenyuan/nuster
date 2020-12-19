@@ -39,6 +39,11 @@ extern const char *stat_status_codes[];
 extern struct applet http_stats_applet;
 
 
+struct htx;
+int stats_putchk(struct channel *chn, struct htx *htx, struct buffer *chk);
+
+int stats_dump_one_line(const struct field *stats, size_t stats_count, struct appctx *appctx);
+
 int stats_fill_info(struct field *info, int len);
 int stats_fill_fe_stats(struct proxy *px, struct field *stats, int len);
 int stats_fill_li_stats(struct proxy *px, struct listener *l, int flags,
@@ -114,6 +119,13 @@ static inline struct field mkf_flt(uint32_t type, double value)
 	struct field f = { .type = FF_FLT | type, .u.flt = value };
 	return f;
 }
+
+#define MK_STATS_PROXY_DOMAIN(px_cap) \
+	((px_cap) << STATS_PX_CAP | STATS_DOMAIN_PROXY)
+
+int stats_allocate_proxy_counters(struct proxy *px);
+
+void stats_register_module(struct stats_module *m);
 
 #endif /* _HAPROXY_STATS_H */
 

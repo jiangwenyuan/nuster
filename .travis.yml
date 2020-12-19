@@ -1,6 +1,6 @@
 # build status appears on https://travis-ci.com/haproxy/haproxy
 
-dist: bionic
+dist: focal
 
 language: c
 
@@ -19,7 +19,7 @@ env:
 addons:
   apt:
     update: true
-    packages: [ liblua5.3-dev, libsystemd-dev, libpcre2-dev, clang-9, socat, ninja-build ]
+    packages: [ liblua5.3-dev, libsystemd-dev, libpcre2-dev, clang-9, socat, ninja-build, libpcre3-dev ]
 
 cache:
   directories:
@@ -55,7 +55,7 @@ matrix:
   - os: linux
     if: type == cron
     compiler: clang
-    env: TARGET=linux-glibc COVERITY_SCAN_PROJECT_NAME="Haproxy" COVERITY_SCAN_BRANCH_PATTERN="*" COVERITY_SCAN_NOTIFICATION_EMAIL="chipitsine@gmail.com" COVERITY_SCAN_BUILD_COMMAND="make CC=clang DEFINE=-DDEBUG_USE_ABORT TARGET=$TARGET $FLAGS 51DEGREES_SRC=$FIFTYONEDEGREES_SRC"
+    env: TARGET=linux-glibc COVERITY_SCAN_PROJECT_NAME="Haproxy" COVERITY_SCAN_BRANCH_PATTERN="*" COVERITY_SCAN_NOTIFICATION_EMAIL="chipitsine@gmail.com" COVERITY_SCAN_BUILD_COMMAND="make CC=clang DEFINE=-DDEBUG_USE_ABORT TARGET=$TARGET $FLAGS 51DEGREES_SRC=$FIFTYONEDEGREES_SRC DEBUG_STRICT=1"
     script:
       - |
         if [ ! -z ${COVERITY_SCAN_TOKEN+x} ]; then

@@ -137,15 +137,18 @@ struct appctx {
 			unsigned int sent;          /* The number of bytes already sent for this cache entry. */
 			unsigned int offset;        /* start offset of remaining data relative to beginning of the next block */
 			unsigned int rem_data;      /* Remaining bytes for the last data block (HTX only, 0 means process next block) */
+			unsigned int send_notmodified:1;   /* In case of conditional request, we might want to send a "304 Not Modified"
+                                                            * response instead of the stored data. */
+			unsigned int unused:31;
 			struct shared_block *next;  /* The next block of data to be sent for this cache entry. */
 		} cache;
 		/* all entries below are used by various CLI commands, please
 		 * keep the grouped together and avoid adding new ones.
 		 */
 		struct {
-			struct proxy *px;
-			struct server *sv;
-			void *l;
+			void *obj1;             /* context pointer used in stats dump */
+			void *obj2;             /* context pointer used in stats dump */
+			uint32_t domain;        /* set the stats to used, for now only proxy stats are supported */
 			int scope_str;		/* limit scope to a frontend/backend substring */
 			int scope_len;		/* length of the string above in the buffer */
 			int px_st;		/* STAT_PX_ST* */

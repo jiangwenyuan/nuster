@@ -427,20 +427,21 @@ static int connect_proc_chk(struct task *t)
 		environ = check->envp;
 
 		/* Update some environment variables and command args: curconn, server addr and server port */
-		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_CURCONN, ultoa_r(s->cur_sess, buf, sizeof(buf)));
+		EXTCHK_SETENV(check, EXTCHK_HAPROXY_SERVER_CURCONN, ultoa_r(s->cur_sess, buf, sizeof(buf)), fail);
 
 		addr_to_str(&s->addr, check->argv[3], EXTCHK_SIZE_ADDR);
-		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_ADDR, check->argv[3]);
+		EXTCHK_SETENV(check, EXTCHK_HAPROXY_SERVER_ADDR, check->argv[3], fail);
 
 		*check->argv[4] = 0;
 		if (s->addr.ss_family == AF_INET || s->addr.ss_family == AF_INET6)
 			snprintf(check->argv[4], EXTCHK_SIZE_UINT, "%u", s->svc_port);
-		extchk_setenv(check, EXTCHK_HAPROXY_SERVER_PORT, check->argv[4]);
+		EXTCHK_SETENV(check, EXTCHK_HAPROXY_SERVER_PORT, check->argv[4], fail);
 
 		haproxy_unblock_signals();
 		execvp(px->check_command, check->argv);
 		ha_alert("Failed to exec process for external health check: %s. Aborting.\n",
 			 strerror(errno));
+	fail:
 		exit(-1);
 	}
 
@@ -495,7 +496,7 @@ struct task *process_chk_proc(struct task *t, void *context, unsigned short stat
 		 * is disabled.
 		 */
 		if (((check->state & (CHK_ST_ENABLED | CHK_ST_PAUSED)) != CHK_ST_ENABLED) ||
-		    s->proxy->state == PR_STSTOPPED)
+		    s->proxy->disabled)
 			goto reschedule;
 
 		/* we'll initiate a new check */

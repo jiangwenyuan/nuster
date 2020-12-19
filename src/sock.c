@@ -10,6 +10,7 @@
  *
  */
 
+#define _GNU_SOURCE
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -26,7 +27,8 @@
 
 #include <haproxy/api.h>
 #include <haproxy/connection.h>
-#include <haproxy/listener-t.h>
+#include <haproxy/listener.h>
+#include <haproxy/log.h>
 #include <haproxy/namespace.h>
 #include <haproxy/sock.h>
 #include <haproxy/sock_inet.h>
@@ -34,6 +36,135 @@
 
 /* the list of remaining sockets transferred from an older process */
 struct xfer_sock_list *xfer_sock_list = NULL;
+
+
+/* Accept an incoming connection from listener <l>, and return it, as well as
+ * a CO_AC_* status code into <status> if not null. Null is returned on error.
+ * <l> must be a valid listener with a valid frontend.
+ */
+struct connection *sock_accept_conn(struct listener *l, int *status)
+{
+#ifdef USE_ACCEPT4
+	static int accept4_broken;
+#endif
+	struct proxy *p = l->bind_conf->frontend;
+	struct connection *conn = NULL;
+	struct sockaddr_storage *addr = NULL;
+	socklen_t laddr;
+	int ret;
+	int cfd;
+
+	if (!sockaddr_alloc(&addr, NULL, 0))
+		goto fail_addr;
+
+	/* accept() will mark all accepted FDs O_NONBLOCK and the ones accepted
+	 * in the master process as FD_CLOEXEC. It's not done for workers
+	 * because 1) workers are not supposed to execute anything so there's
+	 * no reason for uselessly slowing down everything, and 2) that would
+	 * prevent us from implementing fd passing in the future.
+	 */
+#ifdef USE_ACCEPT4
+	laddr = sizeof(*conn->src);
+
+	/* only call accept4() if it's known to be safe, otherwise fallback to
+	 * the legacy accept() + fcntl().
+	 */
+	if (unlikely(accept4_broken) ||
+	    (((cfd = accept4(l->rx.fd, (struct sockaddr*)addr, &laddr,
+	                     SOCK_NONBLOCK | (master ? SOCK_CLOEXEC : 0))) == -1) &&
+	     (errno == ENOSYS || errno == EINVAL || errno == EBADF) &&
+	     (accept4_broken = 1)))
+#endif
+	{
+		laddr = sizeof(*conn->src);
+		if ((cfd = accept(l->rx.fd, (struct sockaddr*)addr, &laddr)) != -1) {
+			fcntl(cfd, F_SETFL, O_NONBLOCK);
+			if (master)
+				fcntl(cfd, F_SETFD, FD_CLOEXEC);
+		}
+	}
+
+	if (likely(cfd != -1)) {
+		/* Perfect, the connection was accepted */
+		conn = conn_new(&l->obj_type);
+		if (!conn)
+			goto fail_conn;
+
+		conn->src = addr;
+		conn->handle.fd = cfd;
+		conn->flags |= CO_FL_ADDR_FROM_SET;
+		ret = CO_AC_DONE;
+		goto done;
+	}
+
+	/* error conditions below */
+	sockaddr_free(&addr);
+
+	switch (errno) {
+	case EAGAIN:
+		ret = CO_AC_DONE; /* nothing more to accept */
+		if (fdtab[l->rx.fd].ev & (FD_POLL_HUP|FD_POLL_ERR)) {
+			/* the listening socket might have been disabled in a shared
+			 * process and we're a collateral victim. We'll just pause for
+			 * a while in case it comes back. In the mean time, we need to
+			 * clear this sticky flag.
+			 */
+			_HA_ATOMIC_AND(&fdtab[l->rx.fd].ev, ~(FD_POLL_HUP|FD_POLL_ERR));
+			ret = CO_AC_PAUSE;
+		}
+		fd_cant_recv(l->rx.fd);
+		break;
+
+	case EINVAL:
+		/* might be trying to accept on a shut fd (eg: soft stop) */
+		ret = CO_AC_PAUSE;
+		break;
+
+	case EINTR:
+	case ECONNABORTED:
+		ret = CO_AC_RETRY;
+		break;
+
+	case ENFILE:
+		if (p)
+			send_log(p, LOG_EMERG,
+			         "Proxy %s reached system FD limit (maxsock=%d). Please check system tunables.\n",
+			         p->id, global.maxsock);
+		ret = CO_AC_PAUSE;
+		break;
+
+	case EMFILE:
+		if (p)
+			send_log(p, LOG_EMERG,
+			         "Proxy %s reached process FD limit (maxsock=%d). Please check 'ulimit-n' and restart.\n",
+			         p->id, global.maxsock);
+		ret = CO_AC_PAUSE;
+		break;
+
+	case ENOBUFS:
+	case ENOMEM:
+		if (p)
+			send_log(p, LOG_EMERG,
+			         "Proxy %s reached system memory limit (maxsock=%d). Please check system tunables.\n",
+			         p->id, global.maxsock);
+		ret = CO_AC_PAUSE;
+		break;
+
+	default:
+		/* unexpected result, let's give up and let other tasks run */
+		ret = CO_AC_YIELD;
+	}
+ done:
+	if (status)
+		*status = ret;
+	return conn;
+
+ fail_conn:
+	sockaddr_free(&addr);
+ fail_addr:
+	ret = CO_AC_PAUSE;
+	goto done;
+}
 
 /* Create a socket to connect to the server in conn->dst (which MUST be valid),
  * using the configured namespace if needed, or the one passed by the proxy
@@ -53,6 +184,51 @@ int sock_create_server_socket(struct connection *conn)
 	}
 #endif
 	return my_socketat(ns, conn->dst->ss_family, SOCK_STREAM, 0);
+}
+
+/* Enables receiving on receiver <rx> once already bound. */
+void sock_enable(struct receiver *rx)
+{
+        if (rx->flags & RX_F_BOUND)
+		fd_want_recv_safe(rx->fd);
+}
+
+/* Disables receiving on receiver <rx> once already bound. */
+void sock_disable(struct receiver *rx)
+{
+        if (rx->flags & RX_F_BOUND)
+		fd_stop_recv(rx->fd);
+}
+
+/* stops, unbinds and possibly closes the FD associated with receiver rx */
+void sock_unbind(struct receiver *rx)
+{
+	/* There are a number of situations where we prefer to keep the FD and
+	 * not to close it (unless we're stopping, of course):
+	 *   - worker process unbinding from a worker's FD with socket transfer enabled => keep
+	 *   - master process unbinding from a master's inherited FD => keep
+	 *   - master process unbinding from a master's FD => close
+	 *   - master process unbinding from a worker's inherited FD => keep
+	 *   - master process unbinding from a worker's FD => close
+	 *   - worker process unbinding from a master's FD => close
+	 *   - worker process unbinding from a worker's FD => close
+	 */
+	if (rx->flags & RX_F_BOUND)
+		rx->proto->rx_disable(rx);
+
+	if (!stopping && !master &&
+	    !(rx->flags & RX_F_MWORKER) &&
+	    (global.tune.options & GTUNE_SOCKET_TRANSFER))
+		return;
+
+	if (!stopping && master &&
+	    rx->flags & RX_F_INHERITED)
+		return;
+
+	rx->flags &= ~RX_F_BOUND;
+	if (rx->fd != -1)
+		fd_delete(rx->fd);
+	rx->fd = -1;
 }
 
 /*
@@ -415,6 +591,38 @@ int sock_find_compatible_fd(const struct receiver *rx)
 		free(xfer_sock);
 	}
 	return ret;
+}
+
+/* Tests if the receiver supports accepting connections. Returns positive on
+ * success, 0 if not possible, negative if the socket is non-recoverable. The
+ * rationale behind this is that inherited FDs may be broken and that shared
+ * FDs might have been paused by another process.
+ */
+int sock_accepting_conn(const struct receiver *rx)
+{
+	int opt_val = 0;
+	socklen_t opt_len = sizeof(opt_val);
+
+	if (getsockopt(rx->fd, SOL_SOCKET, SO_ACCEPTCONN, &opt_val, &opt_len) == -1)
+		return -1;
+
+	return opt_val;
+}
+
+/* This is the FD handler IO callback for stream sockets configured for
+ * accepting incoming connections. It's a pass-through to listener_accept()
+ * which will iterate over the listener protocol's accept_conn() function.
+ * The FD's owner must be a listener.
+ */
+void sock_accept_iocb(int fd)
+{
+	struct listener *l = fdtab[fd].owner;
+
+	if (!l)
+		return;
+
+	BUG_ON(!!master != !!(l->rx.flags & RX_F_MWORKER));
+	listener_accept(l);
 }
 
 /*

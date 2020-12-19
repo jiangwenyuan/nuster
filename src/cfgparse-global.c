@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <haproxy/buf.h>
 #include <haproxy/cfgparse.h>
 #include <haproxy/compression.h>
 #include <haproxy/global.h>
@@ -58,14 +59,6 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			}
 		}
 		global.mode |= MODE_MWORKER;
-	}
-	else if (!strcmp(args[0], "debug")) {
-		if (alertif_too_many_args(0, file, linenum, args, &err_code))
-			goto out;
-		global.mode |= MODE_DEBUG;
-		ha_warning("parsing [%s:%d] : '%s' must never be used and will be removed in 2.3. If you need debug mode, please use '-d' on the command line.\n", file, linenum, args[0]);
-		err_code |= ERR_WARN;
-		goto out;
 	}
 	else if (!strcmp(args[0], "noepoll")) {
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))
@@ -950,7 +943,13 @@ int cfg_parse_global(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 		chunk_destroy(&global.log_tag);
-		chunk_initstr(&global.log_tag, strdup(args[1]));
+		chunk_initlen(&global.log_tag, strdup(args[1]), strlen(args[1]), strlen(args[1]));
+		if (b_orig(&global.log_tag) == NULL) {
+			chunk_destroy(&global.log_tag);
+			ha_alert("parsing [%s:%d]: cannot allocate memory for '%s'.\n", file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
 	}
 	else if (!strcmp(args[0], "spread-checks")) {  /* random time between checks (0-50) */
 		if (alertif_too_many_args(1, file, linenum, args, &err_code))

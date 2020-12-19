@@ -37,6 +37,7 @@
 #   USE_LUA              : enable Lua support.
 #   USE_FUTEX            : enable use of futex on kernel 2.6. Automatic.
 #   USE_ACCEPT4          : enable use of accept4() on linux. Automatic.
+#   USE_CLOSEFROM        : enable use of closefrom() on *bsd, solaris. Automatic.
 #   USE_PRCTL            : enable use of prctl(). Automatic.
 #   USE_ZLIB             : enable zlib library support.
 #   USE_SLZ              : enable slz library instead of zlib (pick at most one).
@@ -104,6 +105,7 @@
 #   IGNOREGIT      : ignore GIT commit versions if set.
 #   VERSION        : force haproxy version reporting.
 #   SUBVERS        : add a sub-version (eg: platform, model, ...).
+#   EXTRAVERSION   : local version string to append (e.g. build number etc)
 #   VERDATE        : force haproxy's release date.
 #   VTEST_PROGRAM  : location of the vtest program to run reg-tests.
 #   DEBUG_USE_ABORT: use abort() for program termination, see include/haproxy/bug.h for details
@@ -140,8 +142,9 @@ DOCDIR = $(PREFIX)/doc/haproxy
 #### TARGET system
 # Use TARGET=<target_name> to optimize for a specific target OS among the
 # following list (use the default "generic" if uncertain) :
-#    linux-glibc, linux-glibc-legacy, linux-musl, solaris, freebsd, openbsd,
-#    netbsd, cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic, custom
+#    linux-glibc, linux-glibc-legacy, linux-musl, solaris, freebsd, dragonfly,
+#    openbsd, netbsd, cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic,
+#    custom
 TARGET =
 
 #### TARGET CPU
@@ -291,7 +294,7 @@ use_opts = USE_EPOLL USE_KQUEUE USE_NETFILTER                                 \
            USE_STATIC_PCRE USE_STATIC_PCRE2 USE_TPROXY USE_LINUX_TPROXY       \
            USE_LINUX_SPLICE USE_LIBCRYPT USE_CRYPT_H                          \
            USE_GETADDRINFO USE_OPENSSL USE_LUA USE_FUTEX USE_ACCEPT4          \
-           USE_ZLIB USE_SLZ USE_CPU_AFFINITY USE_TFO USE_NS                   \
+           USE_CLOSEFROM USE_ZLIB USE_SLZ USE_CPU_AFFINITY USE_TFO USE_NS     \
            USE_DL USE_RT USE_DEVICEATLAS USE_51DEGREES USE_WURFL USE_SYSTEMD  \
            USE_OBSOLETE_LINKER USE_PRCTL USE_THREAD_DUMP USE_EVPORTS
 
@@ -353,40 +356,49 @@ ifneq ($(shell echo __arm__/__aarch64__ | $(CC) -E -xc - | grep '^[^\#]'),__arm_
 endif
 endif
 
-# Solaris 8 and above
+# Solaris 10 and above
 ifeq ($(TARGET),solaris)
-  # We also enable getaddrinfo() which works since solaris 8.
   set_target_defaults = $(call default_opts, \
     USE_POLL USE_TPROXY USE_LIBCRYPT USE_CRYPT_H USE_GETADDRINFO USE_THREAD \
-    USE_RT USE_OBSOLETE_LINKER USE_EVPORTS)
+    USE_RT USE_OBSOLETE_LINKER USE_EVPORTS USE_CLOSEFROM)
   TARGET_CFLAGS  = -DFD_SETSIZE=65536 -D_REENTRANT -D_XOPEN_SOURCE=500 -D__EXTENSIONS__
   TARGET_LDFLAGS = -lnsl -lsocket
 endif
 
-# FreeBSD 5 and above
+# FreeBSD 10 and above
 ifeq ($(TARGET),freebsd)
   set_target_defaults = $(call default_opts, \
     USE_POLL USE_TPROXY USE_LIBCRYPT USE_THREAD USE_CPU_AFFINITY USE_KQUEUE   \
-    USE_CLOSEFROM)
+    USE_ACCEPT4 USE_CLOSEFROM USE_GETADDRINFO)
+endif
+
+# DragonFlyBSD 4.3 and above
+ifeq ($(TARGET),dragonfly)
+  set_target_defaults = $(call default_opts, \
+    USE_POLL USE_TPROXY USE_LIBCRYPT USE_THREAD USE_CPU_AFFINITY USE_KQUEUE   \
+    USE_ACCEPT4 USE_CLOSEFROM USE_GETADDRINFO)
 endif
 
 # Mac OS/X
 ifeq ($(TARGET),osx)
   set_target_defaults = $(call default_opts, \
-    USE_POLL USE_TPROXY USE_LIBCRYPT USE_THREAD USE_CPU_AFFINITY USE_KQUEUE)
+    USE_POLL USE_TPROXY USE_LIBCRYPT USE_THREAD USE_CPU_AFFINITY USE_KQUEUE   \
+    USE_GETADDRINFO)
   EXPORT_SYMBOL  = -export_dynamic
 endif
 
-# OpenBSD 5.7 and above
+# OpenBSD 6.3 and above
 ifeq ($(TARGET),openbsd)
   set_target_defaults = $(call default_opts, \
-    USE_POLL USE_TPROXY USE_KQUEUE USE_ACCEPT4)
+    USE_POLL USE_TPROXY USE_THREAD USE_KQUEUE USE_ACCEPT4 USE_CLOSEFROM   \
+    USE_GETADDRINFO)
 endif
 
-# NetBSD
+# NetBSD 8 and above
 ifeq ($(TARGET),netbsd)
   set_target_defaults = $(call default_opts, \
-    USE_POLL USE_TPROXY USE_KQUEUE)
+    USE_POLL USE_TPROXY USE_THREAD USE_KQUEUE USE_ACCEPT4 USE_CLOSEFROM   \
+    USE_GETADDRINFO)
 endif
 
 # AIX 5.1 only
@@ -448,6 +460,9 @@ endif
 ifeq ($(VERDATE),)
 VERDATE := $(shell (grep -v '^\$$Format' VERDATE 2>/dev/null || touch VERDATE) | head -n 1 | cut -f1 -d' ' | tr '-' '/')
 endif
+
+# this one is always empty by default and appended verbatim
+EXTRAVERSION =
 
 #### Build options
 # Do not change these ones, enable USE_* variables instead.
@@ -732,8 +747,8 @@ COPTS  = -Iinclude
 COPTS += $(CFLAGS) $(TARGET_CFLAGS) $(SMALL_OPTS) $(DEFINE) $(SILENT_DEFINE)
 COPTS += $(DEBUG) $(OPTIONS_CFLAGS) $(ADDINC)
 
-ifneq ($(VERSION)$(SUBVERS),)
-COPTS += -DCONFIG_HAPROXY_VERSION=\"$(VERSION)$(SUBVERS)\"
+ifneq ($(VERSION)$(SUBVERS)$(EXTRAVERSION),)
+COPTS += -DCONFIG_HAPROXY_VERSION=\"$(VERSION)$(SUBVERS)$(EXTRAVERSION)\"
 endif
 
 ifneq ($(VERDATE),)
@@ -776,8 +791,9 @@ all:
 	@echo
 	@echo "Please choose the target among the following supported list :"
 	@echo
-	@echo "   linux-glibc, linux-glibc-legacy, linux-musl, solaris, freebsd, openbsd, "
-	@echo "   netbsd, cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic, custom"
+	@echo "   linux-glibc, linux-glibc-legacy, linux-musl, solaris, freebsd, dragonfly, "
+	@echo "   openbsd, netbsd, cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic, "
+	@echo "   custom"
 	@echo
 	@echo "Use \"generic\" if you don't want any optimization, \"custom\" if you"
 	@echo "want to precisely tweak every option, or choose the target which"
@@ -799,52 +815,55 @@ all: haproxy $(EXTRA)
 endif
 endif
 
-OBJS = src/mux_fcgi.o src/mux_h1.o src/mux_h2.o src/backend.o                 \
-       src/cfgparse.o src/cli.o src/cfgparse-listen.o src/stats.o             \
-       src/http_ana.o src/stream.o src/check.o src/sample.o                   \
-       src/tools.o src/server.o src/listener.o src/tcpcheck.o                 \
-       src/pattern.o src/log.o src/stick_table.o src/flt_spoe.o               \
-       src/stream_interface.o src/filters.o src/http_fetch.o                  \
-       src/map.o src/session.o src/sink.o src/flt_http_comp.o                 \
-       src/debug.o src/tcp_rules.o src/haproxy.o src/peers.o                  \
-       src/flt_trace.o src/queue.o src/proxy.o src/http_htx.o                 \
-       src/dns.o src/raw_sock.o src/pool.o src/http_act.o                     \
-       src/http_rules.o src/compression.o src/cfgparse-global.o               \
-       src/payload.o src/signal.o src/activity.o src/mworker.o                \
-       src/cache.o src/proto_uxst.o src/lb_chash.o src/connection.o           \
-       src/proto_tcp.o src/http_conv.o src/arg.o src/lb_fas.o                 \
-       src/xprt_handshake.o src/fcgi-app.o src/applet.o src/acl.o             \
-       src/task.o src/ring.o src/vars.o src/trace.o src/mux_pt.o              \
-       src/xxhash.o src/mworker-prog.o src/h1_htx.o src/frontend.o            \
-       src/extcheck.o src/channel.o src/action.o src/mailers.o                \
-       src/tcp_act.o src/proto_sockpair.o src/ebmbtree.o src/thread.o         \
-       src/tcp_sample.o src/lb_fwrr.o src/time.o src/regex.o src/lb_fwlc.o    \
-       src/htx.o src/h2.o src/hpack-tbl.o src/lru.o src/wdt.o                 \
-       src/lb_map.o src/eb32sctree.o src/ebistree.o src/h1.o                  \
-       src/sha1.o src/http.o src/fd.o src/ev_select.o src/chunk.o             \
-       src/hash.o src/hpack-dec.o src/freq_ctr.o src/http_acl.o               \
-       src/dynbuf.o src/uri_auth.o src/protocol.o src/auth.o                  \
-       src/ebsttree.o src/pipe.o src/hpack-enc.o src/fcgi.o                   \
-       src/eb64tree.o src/dict.o src/shctx.o src/ebimtree.o                   \
-       src/eb32tree.o src/ebtree.o src/dgram.o src/proto_udp.o                \
-       src/hpack-huff.o src/cfgparse-tcp.o src/base64.o src/version.o         \
-       src/cfgparse-unix.o src/sock.o src/sock_inet.o src/sock_unix.o
-
-NUSTER_OBJS = src/nuster/cache/engine.o src/nuster/cache/filter.o             \
-       src/nuster/nosql/engine.o src/nuster/nosql/filter.o                    \
-       src/nuster/manager/stats.o src/nuster/manager/engine.o                 \
-       src/nuster/manager/purger.o                                            \
-       src/nuster/store/memory.o src/nuster/store/disk.o                      \
-       src/nuster/shmem.o src/nuster/parser.o src/nuster/http.o               \
-       src/nuster/key.o src/nuster/dict.o src/nuster/sample.o                 \
-       src/nuster/misc.o src/nuster/nuster.o
-
-ifneq ($(TRACE),)
-OBJS += src/calltrace.o
-endif
+OBJS =
 
 ifneq ($(EXTRA_OBJS),)
 OBJS += $(EXTRA_OBJS)
+endif
+
+OBJS += src/mux_h2.o src/mux_fcgi.o src/http_ana.o src/stream.o                \
+        src/mux_h1.o src/stats.o src/flt_spoe.o src/backend.o                  \
+        src/tcpcheck.o src/server.o src/tools.o src/cli.o                      \
+        src/cfgparse.o src/log.o src/cfgparse-listen.o src/check.o             \
+        src/stick_table.o src/peers.o src/dns.o src/stream_interface.o         \
+        src/sample.o src/http_htx.o src/haproxy.o src/http_act.o               \
+        src/proxy.o src/pattern.o src/listener.o src/cache.o                   \
+        src/http_fetch.o src/session.o src/connection.o src/sink.o             \
+        src/task.o src/filters.o src/fcgi-app.o src/tcp_rules.o                \
+        src/payload.o src/mux_pt.o src/flt_http_comp.o                         \
+        src/cfgparse-global.o src/vars.o src/map.o src/debug.o                 \
+        src/queue.o src/h1_htx.o src/compression.o src/mworker.o               \
+        src/flt_trace.o src/acl.o src/trace.o src/proto_sockpair.o             \
+        src/proto_tcp.o src/lb_chash.o src/htx.o src/xprt_handshake.o          \
+        src/h1.o src/sock.o src/ring.o src/extcheck.o src/tcp_sample.o         \
+        src/frontend.o src/h2.o src/channel.o src/applet.o                     \
+        src/tcp_act.o src/http_rules.o src/fd.o src/raw_sock.o                 \
+        src/pool.o src/mailers.o src/http_conv.o src/lb_fwrr.o                 \
+        src/proto_uxst.o src/http.o src/lb_fwlc.o src/lb_fas.o                 \
+        src/activity.o src/sock_unix.o src/protocol.o                          \
+        src/mworker-prog.o src/signal.o src/proto_udp.o src/lb_map.o           \
+        src/sock_inet.o src/ev_select.o src/cfgparse-tcp.o                     \
+        src/action.o src/thread.o src/sha1.o src/ebmbtree.o                    \
+        src/cfgparse-unix.o src/dict.o src/xxhash.o src/time.o                 \
+        src/hpack-dec.o src/arg.o src/hpack-tbl.o src/eb64tree.o               \
+        src/chunk.o src/shctx.o src/regex.o src/fcgi.o src/eb32tree.o          \
+        src/eb32sctree.o src/dynbuf.o src/pipe.o src/lru.o                     \
+        src/ebimtree.o src/uri_auth.o src/freq_ctr.o src/ebsttree.o            \
+        src/ebistree.o src/auth.o src/wdt.o src/http_acl.o                     \
+        src/hpack-enc.o src/hpack-huff.o src/ebtree.o src/base64.o             \
+        src/hash.o src/dgram.o src/version.o
+
+OBJS += src/nuster/cache/engine.o src/nuster/cache/filter.o                    \
+        src/nuster/nosql/engine.o src/nuster/nosql/filter.o                    \
+        src/nuster/manager/stats.o src/nuster/manager/engine.o                 \
+        src/nuster/manager/purger.o                                            \
+        src/nuster/store/memory.o src/nuster/store/disk.o                      \
+        src/nuster/shmem.o src/nuster/parser.o src/nuster/http.o               \
+        src/nuster/key.o src/nuster/dict.o src/nuster/sample.o                 \
+        src/nuster/misc.o src/nuster/nuster.o
+
+ifneq ($(TRACE),)
+OBJS += src/calltrace.o
 endif
 
 # Used only for forced dependency checking. May be cleared during development.
@@ -862,8 +881,9 @@ help:
 	     fi; \
 	   else \
 	     echo "TARGET not set, you may pass 'TARGET=xxx' to set one among :";\
-	     echo "  linux-glibc, linux-glibc-legacy, solaris, freebsd, netbsd, osx,"; \
-	     echo "  openbsd, aix51, aix52, aix72-gcc, cygwin, haiku, generic, custom"; \
+	     echo "  linux-glibc, linux-glibc-legacy, solaris, freebsd, dragonfly, netbsd,"; \
+	     echo "  osx, openbsd, aix51, aix52, aix72-gcc, cygwin, haiku, generic,"; \
+	     echo "  custom"; \
 	   fi
 	$(Q)echo;echo "Enabled features for TARGET '$(TARGET)' (disable with 'USE_xxx=') :"
 	$(Q)set -- $(foreach opt,$(patsubst USE_%,%,$(use_opts)),$(if $(USE_$(opt)),$(opt),)); echo "  $$*" | (fmt || cat) 2>/dev/null
@@ -879,7 +899,7 @@ else
 .build_opts:
 endif
 
-haproxy: $(OPTIONS_OBJS) $(OBJS) $(NUSTER_OBJS)
+haproxy: $(OPTIONS_OBJS) $(OBJS)
 	$(cmd_LD) $(LDFLAGS) -o $@ $^ $(LDOPTS)
 
 objsize: haproxy
@@ -887,6 +907,18 @@ objsize: haproxy
 
 %.o:	%.c $(DEP)
 	$(cmd_CC) $(COPTS) -c -o $@ $<
+
+contrib/halog/halog:
+	$(Q)$(MAKE) -C contrib/halog halog CC='$(cmd_CC)' OPTIMIZE='$(COPTS)'
+
+contrib/debug/flags:
+	$(Q)$(MAKE) -C contrib/debug flags CC='$(cmd_CC)' OPTIMIZE='$(COPTS)'
+
+contrib/debug/poll:
+	$(Q)$(MAKE) -C contrib/debug poll CC='$(cmd_CC)' OPTIMIZE='$(COPTS)'
+
+contrib/tcploop/tcploop:
+	$(Q)$(MAKE) -C contrib/tcploop tcploop CC='$(cmd_CC)' OPTIMIZE='$(COPTS)'
 
 # rebuild it every time
 .PHONY: src/version.c
@@ -943,8 +975,9 @@ uninstall:
 clean:
 	$(Q)rm -f *.[oas] src/*.[oas] haproxy test .build_opts .build_opts.new
 	$(Q)for dir in . src include/* doc; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
-	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS).tar.gz
-	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS) nohup.out gmon.out
+	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION).tar.gz
+	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION) nohup.out gmon.out
+	$(Q)rm -f contrib/halog/halog contrib/debug/flags contrib/debug/poll contrib/tcploop/tcploop
 	$(Q)rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
 
 tags:
@@ -955,17 +988,17 @@ cscope:
 	$(Q)find src include -name "*.[ch]" -print | cscope -q -b -i -
 
 tar:	clean
-	$(Q)ln -s . haproxy-$(VERSION)$(SUBVERS)
-	$(Q)tar --exclude=haproxy-$(VERSION)$(SUBVERS)/.git \
-	    --exclude=haproxy-$(VERSION)$(SUBVERS)/haproxy-$(VERSION)$(SUBVERS) \
-	    --exclude=haproxy-$(VERSION)$(SUBVERS)/haproxy-$(VERSION)$(SUBVERS).tar.gz \
-	    -cf - haproxy-$(VERSION)$(SUBVERS)/* | gzip -c9 >haproxy-$(VERSION)$(SUBVERS).tar.gz
-	$(Q)echo haproxy-$(VERSION)$(SUBVERS).tar.gz
-	$(Q)rm -f haproxy-$(VERSION)$(SUBVERS)
+	$(Q)ln -s . haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION)
+	$(Q)tar --exclude=haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION)/.git \
+	    --exclude=haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION)/haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION) \
+	    --exclude=haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION)/haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION).tar.gz \
+	    -cf - haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION)/* | gzip -c9 >haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION).tar.gz
+	$(Q)echo haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION).tar.gz
+	$(Q)rm -f haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION)
 
 git-tar:
-	$(Q)git archive --format=tar --prefix="haproxy-$(VERSION)$(SUBVERS)/" HEAD | gzip -9 > haproxy-$(VERSION)$(SUBVERS).tar.gz
-	$(Q)echo haproxy-$(VERSION)$(SUBVERS).tar.gz
+	$(Q)git archive --format=tar --prefix="haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION)/" HEAD | gzip -9 > haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION).tar.gz
+	$(Q)echo haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION).tar.gz
 
 version:
 	@echo "VERSION: $(VERSION)"

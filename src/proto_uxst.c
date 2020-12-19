@@ -43,7 +43,9 @@
 static int uxst_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int uxst_connect_server(struct connection *conn, int flags);
 static void uxst_add_listener(struct listener *listener, int port);
-static int uxst_pause_listener(struct listener *l);
+static void uxst_enable_listener(struct listener *listener);
+static void uxst_disable_listener(struct listener *listener);
+static int uxst_suspend_receiver(struct receiver *rx);
 
 /* Note: must not be declared <const> as its list will be overwritten */
 static struct protocol proto_unix = {
@@ -53,15 +55,22 @@ static struct protocol proto_unix = {
 	.sock_domain = PF_UNIX,
 	.sock_type = SOCK_STREAM,
 	.sock_prot = 0,
-	.accept = &listener_accept,
-	.connect = &uxst_connect_server,
-	.listen = uxst_bind_listener,
-	.enable_all = enable_all_listeners,
-	.disable_all = disable_all_listeners,
-	.pause = uxst_pause_listener,
 	.add = uxst_add_listener,
-	.listeners = LIST_HEAD_INIT(proto_unix.listeners),
-	.nb_listeners = 0,
+	.listen = uxst_bind_listener,
+	.enable = uxst_enable_listener,
+	.disable = uxst_disable_listener,
+	.unbind = default_unbind_listener,
+	.suspend = default_suspend_listener,
+	.accept_conn = sock_accept_conn,
+	.rx_enable = sock_enable,
+	.rx_disable = sock_disable,
+	.rx_unbind = sock_unbind,
+	.rx_suspend = uxst_suspend_receiver,
+	.rx_listening = sock_accepting_conn,
+	.default_iocb = &sock_accept_iocb,
+	.connect = &uxst_connect_server,
+	.receivers = LIST_HEAD_INIT(proto_unix.receivers),
+	.nb_receivers = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_unix);
@@ -86,7 +95,6 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 {
 	int fd, err;
 	int ready;
-	socklen_t ready_len;
 	char *msg = NULL;
 
 	err = ERR_NONE;
@@ -104,11 +112,7 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 	}
 
 	fd = listener->rx.fd;
-
-	ready = 0;
-	ready_len = sizeof(ready);
-	if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &ready, &ready_len) == -1)
-		ready = 0;
+	ready = sock_accepting_conn(&listener->rx) > 0;
 
 	if (!ready && /* only listen if not already done by external process */
 	    listen(fd, listener_backlog(listener)) < 0) {
@@ -118,7 +122,7 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 	}
 
 	/* the socket is now listening */
-	listener->state = LI_LISTEN;
+	listener_set_state(listener, LI_LISTEN);
 	return err;
 
  uxst_close_return:
@@ -142,25 +146,44 @@ static void uxst_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
-	listener->state = LI_ASSIGNED;
+	listener_set_state(listener, LI_ASSIGNED);
 	listener->rx.proto = &proto_unix;
-	LIST_ADDQ(&proto_unix.listeners, &listener->rx.proto_list);
-	proto_unix.nb_listeners++;
+	LIST_ADDQ(&proto_unix.receivers, &listener->rx.proto_list);
+	proto_unix.nb_receivers++;
 }
 
-/* Pause a listener. Returns < 0 in case of failure, 0 if the listener
- * was totally stopped, or > 0 if correctly paused. Nothing is done for
- * plain unix sockets since currently it's the new process which handles
- * the renaming. Abstract sockets are completely unbound.
+/* Enable receipt of incoming connections for listener <l>. The receiver must
+ * still be valid.
  */
-static int uxst_pause_listener(struct listener *l)
+static void uxst_enable_listener(struct listener *l)
 {
-	if (((struct sockaddr_un *)&l->rx.addr)->sun_path[0])
+	fd_want_recv_safe(l->rx.fd);
+}
+
+/* Disable receipt of incoming connections for listener <l>. The receiver must
+ * still be valid.
+ */
+static void uxst_disable_listener(struct listener *l)
+{
+	fd_stop_recv(l->rx.fd);
+}
+
+/* Suspend a receiver. Returns < 0 in case of failure, 0 if the receiver
+ * was totally stopped, or > 0 if correctly suspended. Nothing is done for
+ * plain unix sockets since currently it's the new process which handles
+ * the renaming. Abstract sockets are completely unbound and closed so
+ * there's no need to stop the poller.
+ */
+static int uxst_suspend_receiver(struct receiver *rx)
+{
+	struct listener *l = LIST_ELEM(rx, struct listener *, rx);
+
+	if (((struct sockaddr_un *)&rx->addr)->sun_path[0])
 		return 1;
 
 	/* Listener's lock already held. Call lockless version of
 	 * unbind_listener. */
-	do_unbind_listener(l, 1);
+	do_unbind_listener(l);
 	return 0;
 }
 

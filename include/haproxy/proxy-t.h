@@ -37,27 +37,18 @@
 #include <haproxy/freq_ctr-t.h>
 #include <haproxy/obj_type-t.h>
 #include <haproxy/server-t.h>
+#include <haproxy/stats-t.h>
 #include <haproxy/tcpcheck-t.h>
 #include <haproxy/thread-t.h>
 #include <haproxy/uri_auth-t.h>
-
-/* values for proxy->state */
-enum pr_state {
-	PR_STNEW = 0,           /* proxy has not been initialized yet */
-	PR_STREADY,             /* proxy has been initialized and is ready */
-	PR_STFULL,              /* frontend is full (maxconn reached) */
-	PR_STPAUSED,            /* frontend is paused (during hot restart) */
-	PR_STSTOPPED,           /* proxy is stopped (end of a restart) */
-	PR_STERROR,             /* proxy experienced an unrecoverable error */
-} __attribute__((packed));
 
 /* values for proxy->mode */
 enum pr_mode {
 	PR_MODE_TCP = 0,
 	PR_MODE_HTTP,
-	PR_MODE_HEALTH,
 	PR_MODE_CLI,
 	PR_MODE_SYSLOG,
+	PR_MODE_PEERS,
 	PR_MODES
 } __attribute__((packed));
 
@@ -254,15 +245,13 @@ struct error_snapshot {
 
 struct proxy {
 	enum obj_type obj_type;                 /* object type == OBJ_TYPE_PROXY */
-	enum pr_state state;                    /* proxy state, one of PR_* */
-	enum pr_mode mode;                      /* mode = PR_MODE_TCP, PR_MODE_HTTP or PR_MODE_HEALTH */
+	char disabled;                          /* non-zero if disabled or shutdown */
+	enum pr_mode mode;                      /* mode = PR_MODE_TCP, PR_MODE_HTTP, ... */
 	char cap;                               /* supported capabilities (PR_CAP_*) */
 	unsigned int maxconn;                   /* max # of active streams on the frontend */
 
 	int options;				/* PR_O_REDISP, PR_O_TRANSP, ... */
 	int options2;				/* PR_O2_* */
-	int max_out_conns;                      /* Max number of idling connections we keep for a session */
-	struct in_addr mon_net, mon_mask;	/* don't forward connections from this net (network order) FIXME: should support IPv6 */
 	unsigned int ck_opts;			/* PR_CK_* (cookie options) */
 	unsigned int fe_req_ana, be_req_ana;	/* bitmap of common request protocol analysers for the frontend and backend */
 	unsigned int fe_rsp_ana, be_rsp_ana;	/* bitmap of common response protocol analysers for the frontend and backend */
@@ -303,11 +292,12 @@ struct proxy {
 	unsigned int cookie_maxidle;		/* max idle time for this cookie */
 	unsigned int cookie_maxlife;		/* max life time for this cookie */
 	char *rdp_cookie_name;			/* name of the RDP cookie to look for */
-	int  rdp_cookie_len;			/* strlen(rdp_cookie_name), computed only once */
 	char *capture_name;			/* beginning of the name of the cookie to capture */
+	int  rdp_cookie_len;			/* strlen(rdp_cookie_name), computed only once */
 	int  capture_namelen;			/* length of the cookie name to match */
-	int  capture_len;			/* length of the string to be captured */
 	struct uri_auth *uri_auth;		/* if non-NULL, the (list of) per-URI authentications */
+	int  capture_len;			/* length of the string to be captured */
+	int max_out_conns;                      /* Max number of idling connections we keep for a session */
 	int max_ka_queue;			/* 1+maximum requests in queue accepted for reusing a K-A conn (0=none) */
 	int clitcpka_cnt;                       /* The maximum number of keepalive probes TCP should send before dropping the connection. (client side) */
 	int clitcpka_idle;                      /* The time (in seconds) the connection needs to remain idle before TCP starts sending keepalive probes. (client side) */
@@ -331,6 +321,8 @@ struct proxy {
 		int clientfin;                  /* timeout to apply to client half-closed connections */
 		int serverfin;                  /* timeout to apply to server half-closed connections */
 	} timeout;
+	__decl_thread(HA_RWLOCK_T lock);        /* may be taken under the server's lock */
+
 	char *id, *desc;			/* proxy id (name) and description */
 	struct eb_root pendconns;		/* pending connections with no server assigned yet */
 	int nbpend;				/* number of pending connections with no server assigned yet */
@@ -358,7 +350,6 @@ struct proxy {
 	int redispatch_after;			/* number of retries before redispatch */
 	unsigned down_trans;			/* up-down transitions */
 	unsigned down_time;			/* total time the proxy was down */
-	unsigned int log_count;			/* number of logs produced by the frontend */
 	time_t last_change;			/* last time, when the state was changed */
 	int (*accept)(struct stream *s);       /* application layer's accept() */
 	struct conn_src conn_src;               /* connection source settings */
@@ -387,13 +378,18 @@ struct proxy {
 
 	struct task *task;			/* the associated task, mandatory to manage rate limiting, stopping and resource shortage, NULL if disabled */
 	struct tcpcheck_rules tcpcheck_rules;   /* tcp-check send / expect rules */
-	int grace;				/* grace time after stop request */
 	char *check_command;			/* Command to use for external agent checks */
 	char *check_path;			/* PATH environment to use for external agent checks */
 	struct http_reply *replies[HTTP_ERR_SIZE]; /* HTTP replies for known errors */
+	unsigned int log_count;			/* number of logs produced by the frontend */
+	int grace;				/* grace time after stop request */
 	int uuid;				/* universally unique proxy ID, used for SNMP */
 	unsigned int backlog;			/* force the frontend's listen backlog */
 	unsigned long bind_proc;		/* bitmask of processes using this proxy */
+	unsigned int li_all;                    /* total number of listeners attached to this proxy */
+	unsigned int li_paused;                 /* total number of listeners paused (LI_PAUSED) */
+	unsigned int li_bound;                  /* total number of listeners ready (LI_LISTEN)  */
+	unsigned int li_ready;                  /* total number of listeners ready (>=LI_READY) */
 
 	/* warning: these structs are huge, keep them at the bottom */
 	struct sockaddr_storage dispatch_addr;	/* the default address to connect to */
@@ -450,11 +446,14 @@ struct proxy {
 						 * name is used
 						 */
 	struct list filter_configs;		/* list of the filters that are declared on this proxy */
+
 	struct {
 		int mode;
 		struct list rules;              /* nuster rules */
 	} nuster;
-	__decl_thread(HA_SPINLOCK_T lock);   /* may be taken under the server's lock */
+
+	EXTRA_COUNTERS(extra_counters_fe);
+	EXTRA_COUNTERS(extra_counters_be);
 };
 
 struct switching_rule {

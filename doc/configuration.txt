@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.3
                              willy tarreau
-                              2020/09/25
+                              2020/11/05
 
 
 This document covers the configuration language as implemented in the version
@@ -475,7 +475,10 @@ interpreted only within double quotes. Variables are expanded during the
 configuration parsing. Variable names must be preceded by a dollar ("$") and
 optionally enclosed with braces ("{}") similarly to what is done in Bourne
 shell. Variable names can contain alphanumerical characters or the character
-underscore ("_") but should not start with a digit.
+underscore ("_") but should not start with a digit. If the variable contains a
+list of several values separated by spaces, it can be expanded as individual
+arguments by enclosing the variable with braces and appending the suffix '[*]'
+before the closing brace.
 
   Example:
 
@@ -714,7 +717,6 @@ The following keywords are supported in the "global" section :
    - tune.zlib.windowsize
 
  * Debugging
-   - debug
    - quiet
    - zero-warning
 
@@ -1174,14 +1176,15 @@ mworker-max-reloads <number>
   SIGTERM. This option helps to keep under control the number of workers.
   See also "show proc" in the Management Guide.
 
-nbproc <number>
+nbproc <number>  (deprecated)
   Creates <number> processes when going daemon. This requires the "daemon"
   mode. By default, only one process is created, which is the recommended mode
   of operation. For systems limited to small sets of file descriptors per
   process, it may be needed to fork multiple daemons. When set to a value
   larger than 1, threads are automatically disabled. USING MULTIPLE PROCESSES
-  IS HARDER TO DEBUG AND IS REALLY DISCOURAGED. See also "daemon" and
-  "nbthread".
+  IS HARDER TO DEBUG AND IS REALLY DISCOURAGED. This directive is deprecated
+  and scheduled for removal in 2.5. Please use "nbthread" instead. See also
+  "daemon" and "nbthread".
 
 nbthread <number>
   This setting is only available when support for threads was built in. It
@@ -1371,6 +1374,20 @@ ssl-dh-param-file <file>
   "openssl dhparam <size>", where size should be at least 2048, as 1024-bit DH
   parameters should not be considered secure anymore.
 
+ssl-load-extra-del-ext
+  This setting allows to configure the way HAProxy does the lookup for the
+  extra SSL files. By default HAProxy adds a new extension to the filename.
+  (ex: with "foobar.crt" load "foobar.crt.key"). With this option enabled,
+  HAProxy removes the extension before adding the new one (ex: with
+  "foobar.crt" load "foobar.key").
+
+  Your crt file must have a ".crt" extension for this option to work.
+
+  This option is not compatible with bundle extensions (.ecdsa, .rsa. .dsa)
+  and won't try to remove them.
+
+  This option is disabled by default. See also "ssl-load-extra-files".
+
 ssl-load-extra-files <none|all|bundle|sctl|ocsp|issuer|key>*
   This setting alters the way HAProxy will look for unspecified files during
   the loading of the SSL certificates associated to "bind" lines. It does not
@@ -1388,14 +1405,40 @@ ssl-load-extra-files <none|all|bundle|sctl|ocsp|issuer|key>*
   bundles, sctl, ocsp, issuer, key.
 
   "bundle": When a file specified in the configuration does not exist, HAProxy
-  will try to load a certificate bundle. This is done by looking for
-  <basename>.rsa, .ecdsa and .dsa.
-  The multi-certificates bundles were introduced with OpenSSL 1.0.2 and were
-  the only way back then to serve an ECDSA certificate and a RSA one with the
-  same SNI. Since HAProxy 2.3 it does not use the OpenSSL bundle but it
-  loads every certificates separately to emulate this behavior. At least
-  OpenSSL 1.1.1 is required. It is recommended to specify all the certificates
-  in the configuration instead of using the bundle feature.
+  will try to load a "cert bundle".
+
+  Starting from HAProxy 2.3, the bundles are not loaded in the same OpenSSL
+  certificate store, instead it will loads each certificate in a separate
+  store which is equivalent to declaring multiple "crt". OpenSSL 1.1.1 is
+  required to achieve this. Which means that bundles are now used only for
+  backward compatibility and are not mandatory anymore to do an hybrid RSA/ECC
+  bind configuration..
+
+  To associate these PEM files into a "cert bundle" that is recognized by
+  haproxy, they must be named in the following way: All PEM files that are to
+  be bundled must have the same base name, with a suffix indicating the key
+  type. Currently, three suffixes are supported: rsa, dsa and ecdsa. For
+  example, if www.example.com has two PEM files, an RSA file and an ECDSA
+  file, they must be named: "example.pem.rsa" and "example.pem.ecdsa". The
+  first part of the filename is arbitrary; only the suffix matters. To load
+  this bundle into haproxy, specify the base name only:
+
+  Example :  bind :8443 ssl crt example.pem
+
+  Note that the suffix is not given to haproxy; this tells haproxy to look for
+  a cert bundle.
+
+  HAProxy will load all PEM files in the bundle as if they were configured
+  separately in several "crt".
+
+  The bundle loading does not have an impact anymore on the directory loading
+  since files are loading separately.
+
+  On the CLI, bundles are seen as separate files, and the bundle extension is
+  required to commit them.
+
+  OCSP files (.ocsp), issuer files (.issuer), Certificate Transparency (.sctl)
+  as well as private keys (.key) are supported with multi-cert bundling.
 
   "sctl": Try to load "<basename>.sctl" for each crt keyword.
 
@@ -2288,12 +2331,6 @@ tune.zlib.windowsize <number>
 3.3. Debugging
 --------------
 
-debug (deprecated)
-  Enables debug mode which dumps to stdout all exchanges, and disables forking
-  into background. It is the equivalent of the command-line argument "-d". It
-  should never be used in a production configuration since it may prevent full
-  system startup.
-
 quiet
   Do not display any message during startup. It is equivalent to the command-
   line argument "-q".
@@ -2750,11 +2787,23 @@ haproxy will forward all received log messages to a log servers list.
 log-forward <name>
   Creates a new log forwarder proxy identified as <name>.
 
+backlog <conns>
+  Give hints to the system about the approximate listen backlog desired size
+  on connections accept.
+
+bind <addr> [param*]
+  Used to configure a stream log listener to receive messages to forward.
+  This supports the "bind" parameters found in 5.1 paragraph including
+  those about ssl but some statements such as "alpn" may be irrelevant for
+  syslog protocol over TCP.
+  Those listeners support both "Octet Counting" and "Non-Transparent-Framing"
+  modes as defined in rfc-6587.
+
 dgram-bind <addr> [param*]
-  Used to configure a UDP log listener to receive messages to forward. Only UDP
-  listeners are allowed. Addresses must be in IPv4 or IPv6 form,followed by a
-  port. This supports for some of the "bind" parameters found in 5.1 paragraph
-  among which "interface", "namespace" or "transparent", the other ones being
+  Used to configure a datagram log listener to receive messages to forward.
+  Addresses must be in IPv4 or IPv6 form,followed by a port. This supports
+  for some of the "bind" parameters found in 5.1 paragraph among which
+  "interface", "namespace" or "transparent", the other ones being
   silently ignored as irrelevant for UDP/syslog case.
 
 log global
@@ -2783,7 +2832,8 @@ log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
         server mysyslogsrv 127.0.0.1:514 log-proto octet-count
 
     log-forward sylog-loadb
-        bind udp4@127.0.0.1:1514
+        dgram-bind 127.0.0.1:1514
+        bind 127.0.0.1:1514
         # all messages on stderr
         log global
         # all messages on local tcp syslog server
@@ -2793,6 +2843,13 @@ log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
         log 127.0.0.1:10002 sample 2:4 local0
         log 127.0.0.1:10003 sample 3:4 local0
         log 127.0.0.1:10004 sample 4:4 local0
+
+maxconn <conns>
+  Fix the maximum number of concurrent connections on a log forwarder.
+  10 is the default.
+
+timeout client <timeout>
+  Set the maximum inactivity time on the client side.
 
 4. Proxies
 ----------
@@ -2943,7 +3000,6 @@ max-keep-alive-queue                      X          -         X         X
 maxconn                                   X          X         X         -
 mode                                      X          X         X         X
 monitor fail                              -          X         X         -
-monitor-net                               X          X         X         -
 monitor-uri                               X          X         X         -
 option abortonclose                  (*)  X          -         X         X
 option accept-invalid-http-request   (*)  X          X         X         -
@@ -3151,7 +3207,9 @@ balance url_param <param> [check_post]
                   expected, such as LDAP, SQL, TSE, etc... but is not very well
                   suited for protocols using short sessions such as HTTP. This
                   algorithm is dynamic, which means that server weights may be
-                  adjusted on the fly for slow starts for instance.
+                  adjusted on the fly for slow starts for instance. It will
+                  also consider the number of queued connections in addition to
+                  the established ones in order to minimize queuing.
 
       first       The first server with available connection slots receives the
                   connection. The servers are chosen from the lowest numeric
@@ -4449,7 +4507,7 @@ fullconn <conns>
   See also : "maxconn", "server"
 
 
-grace <time>
+grace <time> (deprecated)
   Maintain a proxy operational for some time after a soft stop
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    yes   |   yes  |   yes
@@ -5643,7 +5701,7 @@ http-request return [status <code>] [content-type <type>]
   default status code used for the response is 200. It can be optionally
   specified as an arguments to "status". The response content-type may also be
   specified as an argument to "content-type". Finally the response itself may
-  be defined. If can be a full HTTP response specifying the errorfile to use,
+  be defined. It can be a full HTTP response specifying the errorfile to use,
   or the response payload specifying the file or the string to use. These rules
   are followed to create the response :
 
@@ -5684,14 +5742,14 @@ http-request return [status <code>] [content-type <type>]
     evaluated as a log-format string. With a "string" argument, it is
     considered as a raw string.
 
-  When the response is not based an errorfile, it is possible to appends HTTP
+  When the response is not based on an errorfile, it is possible to append HTTP
   header fields to the response using "hdr" arguments. Otherwise, all "hdr"
   arguments are ignored. For each one, the header name is specified in <name>
   and its value is defined by <fmt> which follows the log-format rules.
 
   Note that the generated response must be smaller than a buffer. And to avoid
   any warning, when an errorfile or a raw file is loaded, the buffer space
-  reserved to the headers rewriting should also be free.
+  reserved for the headers rewriting should also be free.
 
   No further "http-request" rules are evaluated.
 
@@ -6054,7 +6112,7 @@ http-request track-sc2 <key> [table <table>] [ { if | unless } <condition> ]
   not stop evaluation and do not change default action. The number of counters
   that may be simultaneously tracked by the same connection is set in
   MAX_SESS_STKCTR at build time (reported in haproxy -vv) which defaults to 3,
-  so the track-sc number is between 0 and (MAX_SESS_STCKTR-1). The first
+  so the track-sc number is between 0 and (MAX_SESS_STKCTR-1). The first
   "track-sc0" rule executed enables tracking of the counters of the specified
   table as the first set. The first "track-sc1" rule executed enables tracking
   of the counters of the specified table as the second set. The first
@@ -6569,7 +6627,12 @@ http-reuse { never | safe | aggressive | always }
                  closes the connection when the request is being sent, the
                  browser can decide to silently retry it. Since it is exactly
                  equivalent to regular keep-alive, there should be no side
-                 effects.
+                 effects. There is also a special handling for the connections
+                 using protocols subject to Head-of-line blocking (backend with
+                 h2 or fcgi). In this case, when at least one stream is
+                 processed, the used connection is reserved to handle streams
+                 of the same session. When no more streams are processed, the
+                 connection is released and can be reused.
 
     - "aggressive" : this mode may be useful in webservices environments where
                  all servers are not necessarily known and where it would be
@@ -6600,8 +6663,9 @@ http-reuse { never | safe | aggressive | always }
     - connections made with "usesrc" followed by a client-dependent value
       ("client", "clientip", "hdr_ip") are marked private and never shared;
 
-    - connections sent to a server with a TLS SNI extension are marked private
-      and are never shared;
+    - connections sent to a server with a variable value as TLS SNI extension
+      are marked private and are never shared. This is not the case if the SNI
+      is guaranteed to be a constant, as for example using a literal string;
 
     - connections with certain bogus authentication schemes (relying on the
       connection) like NTLM are detected, marked private and are never shared;
@@ -7052,7 +7116,7 @@ maxconn <conns>
   See also : "server", global section's "maxconn", "fullconn"
 
 
-mode { tcp|http|health }
+mode { tcp|http }
   Set the running mode or protocol of the instance
   May be used in sections :   defaults | frontend | listen | backend
                                  yes   |    yes   |   yes  |   yes
@@ -7068,15 +7132,6 @@ mode { tcp|http|health }
               processing and switching will be possible. This is the mode which
               brings HAProxy most of its value.
 
-    health    The instance will work in "health" mode. It will just reply "OK"
-              to incoming connections and close the connection. Alternatively,
-              If the "httpchk" option is set, "HTTP/1.0 200 OK" will be sent
-              instead. Nothing will be logged in either case. This mode is used
-              to reply to external components health checks. This mode is
-              deprecated and should not be used anymore as it is possible to do
-              the same and even better by combining TCP or HTTP modes with the
-              "monitor" keyword.
-
   When doing content switching, it is mandatory that the frontend and the
   backend are in the same mode (generally HTTP), otherwise the configuration
   will be refused.
@@ -7084,8 +7139,6 @@ mode { tcp|http|health }
   Example :
      defaults http_instances
          mode http
-
-  See also : "monitor", "monitor-net"
 
 
 monitor fail { if | unless } <condition>
@@ -7122,48 +7175,7 @@ monitor fail { if | unless } <condition>
         monitor-uri   /site_alive
         monitor fail  if site_dead
 
-  See also : "monitor-net", "monitor-uri", "errorfile", "errorloc"
-
-
-monitor-net <source>
-  Declare a source network which is limited to monitor requests
-  May be used in sections :   defaults | frontend | listen | backend
-                                 yes   |    yes   |   yes  |   no
-  Arguments :
-    <source>  is the source IPv4 address or network which will only be able to
-              get monitor responses to any request. It can be either an IPv4
-              address, a host name, or an address followed by a slash ('/')
-              followed by a mask.
-
-  In TCP mode, any connection coming from a source matching <source> will cause
-  the connection to be immediately closed without any log. This allows another
-  equipment to probe the port and verify that it is still listening, without
-  forwarding the connection to a remote server.
-
-  In HTTP mode, a connection coming from a source matching <source> will be
-  accepted, the following response will be sent without waiting for a request,
-  then the connection will be closed : "HTTP/1.0 200 OK". This is normally
-  enough for any front-end HTTP probe to detect that the service is UP and
-  running without forwarding the request to a backend server. Note that this
-  response is sent in raw format, without any transformation. This is important
-  as it means that it will not be SSL-encrypted on SSL listeners.
-
-  Monitor requests are processed very early, just after tcp-request connection
-  ACLs which are the only ones able to block them. These connections are short
-  lived and never wait for any data from the client. They cannot be logged, and
-  it is the intended purpose. They are only used to report HAProxy's health to
-  an upper component, nothing more. Please note that "monitor fail" rules do
-  not apply to connections intercepted by "monitor-net".
-
-  Last, please note that only one "monitor-net" statement can be specified in
-  a frontend. If more than one is found, only the last one will be considered.
-
-  Example :
-    # addresses .252 and .253 are just probing us.
-    frontend www
-        monitor-net 192.168.0.252/31
-
-  See also : "monitor fail", "monitor-uri"
+  See also : "monitor-uri", "errorfile", "errorloc"
 
 
 monitor-uri <uri>
@@ -7202,7 +7214,7 @@ monitor-uri <uri>
         mode http
         monitor-uri /haproxy_test
 
-  See also : "monitor fail", "monitor-net"
+  See also : "monitor fail"
 
 
 option abortonclose
@@ -7519,7 +7531,7 @@ no option dontlognull
   If this option has been enabled in a "defaults" section, it can be disabled
   in a specific instance by prepending the "no" keyword before it.
 
-  See also : "log", "http-ignore-probes", "monitor-net", "monitor-uri", and
+  See also : "log", "http-ignore-probes", "monitor-uri", and
              section 8 about logging.
 
 
@@ -8292,22 +8304,37 @@ no option nolinger
 
   When this happens, it is possible to activate "option nolinger" which forces
   the system to immediately remove any socket's pending data on close. Thus,
-  the session is instantly purged from the system's tables. This usually has
-  side effects such as increased number of TCP resets due to old retransmits
-  getting immediately rejected. Some firewalls may sometimes complain about
-  this too.
+  a TCP RST is emitted, any pending data are truncated, and the session is
+  instantly purged from the system's tables. The generally visible effect for
+  a client is that responses are truncated if the close happens with a last
+  block of data (e.g. on a redirect or error response). On the server side,
+  it may help release the source ports immediately when forwarding a client
+  aborts in tunnels. In both cases, TCP resets are emitted and given that
+  the session is instantly destroyed, there will be no retransmit. On a lossy
+  network this can increase problems, especially when there is a firewall on
+  the lossy side, because the firewall might see and process the reset (hence
+  purge its session) and block any further traffic for this session,, including
+  retransmits from the other side. So if the other side doesn't receive it,
+  it will never receive any RST again, and the firewall might log many blocked
+  packets.
 
-  For this reason, it is not recommended to use this option when not absolutely
-  needed. You know that you need it when you have thousands of FIN_WAIT1
-  sessions on your system (TIME_WAIT ones do not count).
+  For all these reasons, it is strongly recommended NOT to use this option,
+  unless absolutely needed as a last resort. In most situations, using the
+  "client-fin" or "server-fin" timeouts achieves similar results with a more
+  reliable behavior. On Linux it's also possible to use the "tcp-ut" bind or
+  server setting.
 
   This option may be used both on frontends and backends, depending on the side
   where it is required. Use it on the frontend for clients, and on the backend
-  for servers.
+  for servers. While this option is technically supported in "defaults"
+  sections, it must really not be used there as it risks to accidently
+  propagate to sections that must no use it and to cause problems there.
 
   If this option has been enabled in a "defaults" section, it can be disabled
   in a specific instance by prepending the "no" keyword before it.
 
+  See also: "timeout client-fin", "timeout server-fin", "tcp-ut" bind or server
+            keywords.
 
 option originalto [ except <network> ] [ header <name> ]
   Enable insertion of the X-Original-To header to requests sent to servers
@@ -10007,6 +10034,22 @@ stats show-legends
   See also: "stats enable", "stats uri".
 
 
+stats show-modules
+  Enable display of extra statistics module on the statistics page
+  May be used in sections :   defaults | frontend | listen | backend
+                                 yes   |    yes   |   yes  |   yes
+  Arguments : none
+
+  New columns are added at the end of the line containing the extra statistics
+  values as a tooltip.
+
+  Though this statement alone is enough to enable statistics reporting, it is
+  recommended to set all other settings in order to avoid relying on default
+  unobvious parameters. Default behavior is not to show this information.
+
+  See also: "stats enable", "stats uri".
+
+
 stats show-node [ <name> ]
   Enable reporting of a host name on the statistics page.
   May be used in sections :   defaults | frontend | listen | backend
@@ -11066,7 +11109,7 @@ tcp-request connection <action> [{if | unless} <condition>]
         number of counters that may be simultaneously tracked by the same
         connection is set in MAX_SESS_STKCTR at build time (reported in
         haproxy -vv) which defaults to 3, so the track-sc number is between 0
-        and (MAX_SESS_STCKTR-1). The first "track-sc0" rule executed enables
+        and (MAX_SESS_STKCTR-1). The first "track-sc0" rule executed enables
         tracking of the counters of the specified table as the first set. The
         first "track-sc1" rule executed enables tracking of the counters of the
         specified table as the second set. The first "track-sc2" rule executed
@@ -11301,14 +11344,24 @@ tcp-request content <action> [{if | unless} <condition>]
   the action, it is simply performed unconditionally. That can be useful for
   "track-sc*" actions as well as for changing the default action to a reject.
 
+  Note also that it is recommended to use a "tcp-request session" rule to track
+  information that does *not* depend on Layer 7 contents, especially for HTTP
+  frontends. Some HTTP processing are performed at the session level and may
+  lead to an early rejection of the requests. Thus, the tracking at the content
+  level may be disturbed in such case. A warning is emitted during startup to
+  prevent, as far as possible, such unreliable usage.
+
   It is perfectly possible to match layer 7 contents with "tcp-request content"
-  rules, since HTTP-specific ACL matches are able to preliminarily parse the
-  contents of a buffer before extracting the required data. If the buffered
-  contents do not parse as a valid HTTP message, then the ACL does not match.
-  The parser which is involved there is exactly the same as for all other HTTP
-  processing, so there is no risk of parsing something differently. In an HTTP
-  backend connected to from an HTTP frontend, it is guaranteed that HTTP
-  contents will always be immediately present when the rule is evaluated first.
+  rules from a TCP proxy, since HTTP-specific ACL matches are able to
+  preliminarily parse the contents of a buffer before extracting the required
+  data. If the buffered contents do not parse as a valid HTTP message, then the
+  ACL does not match.  The parser which is involved there is exactly the same
+  as for all other HTTP processing, so there is no risk of parsing something
+  differently. In an HTTP frontend or an HTTP backend, it is guaranteed that
+  HTTP contents will always be immediately present when the rule is evaluated
+  first because the HTTP parsing is performed in the early stages of the
+  connection processing, at the session level. But for such proxies, using
+  "http-request" rules is much more natural and recommended.
 
   Tracking layer7 information is also possible provided that the information
   are present when the rule is processed. The rule processing engine is able to
@@ -12518,56 +12571,9 @@ crt <cert>
   that support EC certificates to be able to use EC ciphers, while
   simultaneously supporting older, RSA only clients.
 
-  In order to provide this feature, multiple PEM files, each with a different
-  key type, are required. Since HAProxy 2.3, at least OpenSSL 1.1.1 is
-  required to use this feature. It can be configured by adding each file in
-  the configuration, which is the recommended way, or by using a "cert
-  bundle".
-
-  To associate these PEM files into a "cert bundle" that is recognized by
-  haproxy, they must be named in the following way: All PEM files that are to
-  be bundled must have the same base name, with a suffix indicating the key
-  type. Currently, three suffixes are supported: rsa, dsa and ecdsa. For
-  example, if www.example.com has two PEM files, an RSA file and an ECDSA
-  file, they must be named: "example.pem.rsa" and "example.pem.ecdsa". The
-  first part of the filename is arbitrary; only the suffix matters. To load
-  this bundle into haproxy, specify the base name only:
-
-  Example :  bind :8443 ssl crt example.pem
-
-  Note that the suffix is not given to haproxy; this tells haproxy to look for
-  a cert bundle.
-
-  HAProxy will load all PEM files in the bundle at the same time to try to
-  support multiple key types. PEM files are combined based on Common Name
-  (CN) and Subject Alternative Name (SAN) to support SNI lookups. This means
-  that even if you give haproxy a cert bundle, if there are no shared CN/SAN
-  entries in the certificates in that bundle, haproxy will not be able to
-  provide multi-cert support.
-
-  Assuming bundle in the example above contained the following:
-
-              Filename     |       CN        |        SAN
-        -------------------+-----------------+-------------------
-         example.pem.rsa   | www.example.com | rsa.example.com
-        -------------------+-----------------+-------------------
-         example.pem.ecdsa | www.example.com | ecdsa.example.com
-        -------------------+-----------------+-------------------
-
-  Users connecting with an SNI of "www.example.com" will be able
-  to use both RSA and ECDSA cipher suites. Users connecting with an SNI of
-  "rsa.example.com" will only be able to use RSA cipher suites, and users
-  connecting with "ecdsa.example.com" will only be able to use ECDSA cipher
-  suites. With BoringSSL and Openssl >= 1.1.1 multi-cert is natively supported,
-  no need to bundle certificates. ECDSA certificate will be preferred if client
-  support it.
-
-  If a directory name is given as the <cert> argument, haproxy will
-  automatically search and load bundled files in that directory.
-
-  OSCP files (.ocsp) and issuer files (.issuer) are supported with multi-cert
-  bundling. Each certificate can have its own .ocsp and .issuer file. At this
-  time, sctl is not supported in multi-certificate bundling.
+  To achieve this, OpenSSL 1.1.1 is required, you can configure this behavior
+  by providing one crt entry per certificate type, or by configuring a "cert
+  bundle" like it was required before HAProxy 1.8. See "ssl-load-extra-files".
 
 crt-ignore-err <errors>
   This setting is only available when support for OpenSSL was built in. Sets a
@@ -12597,11 +12603,9 @@ crt-list <file>
   certificate is still needed to meet OpenSSL expectations. If it is not used,
   the 'strict-sni' option may be used.
 
-  Multi-cert bundling (see "crt") is supported with crt-list, as long as only
-  the base name is given in the crt-list. SNI filter will do the same work on
-  all bundled certificates. With BoringSSL and Openssl >= 1.1.1 multi-cert is
-  natively supported, avoid multi-cert bundling. RSA and ECDSA certificates can
-  be declared in a row, and set different ssl and filter parameter.
+  Multi-cert bundling (see "ssl-load-extra-files") is supported with crt-list,
+  as long as only the base name is given in the crt-list. SNI filter will do
+  the same work on all bundled certificates.
 
   Empty lines as well as lines beginning with a hash ('#') will be ignored.
 
@@ -13073,7 +13077,7 @@ agent-check
     MAINT mode, thus it will not accept any new connections at all, and health
     checks will be stopped.
 
-  - The words "down", "failed", or "stopped", optionally followed by a
+  - The words "down", "fail", or "stopped", optionally followed by a
     description string after a sharp ('#'). All of these mark the server's
     operating state as DOWN, but since the word itself is reported on the stats
     page, the difference allows an administrator to know if the situation was
@@ -13450,9 +13454,13 @@ maxqueue <maxqueue>
   will wait in the queue for this server. If this limit is reached, next
   requests will be redispatched to other servers instead of indefinitely
   waiting to be served. This will break persistence but may allow people to
-  quickly re-log in when the server they try to connect to is dying. The
-  default value is "0" which means the queue is unlimited. See also the
-  "maxconn" and "minconn" parameters.
+  quickly re-log in when the server they try to connect to is dying. Some load
+  balancing algorithms such as leastconn take this into account and accept to
+  add requests into a server's queue up to this value if it is explicitly set
+  to a value greater than zero, which often allows to better smooth the load
+  when dealing with single-digit maxconn values. The default value is "0" which
+  means the queue is unlimited. See also the "maxconn" and "minconn" parameters
+  and "balance leastconn".
 
 max-reuse <count>
   The "max-reuse" argument indicates the HTTP connection processors that they
@@ -15450,7 +15458,7 @@ regsub(<regex>,<subst>[,<flags>])
 
      # capture groups and backreferences
      # both lines do the same.
-     http-request redirect location %[url,'regsub("(foo|bar)([0-9]+)?","\2\1",i)]'
+     http-request redirect location %[url,'regsub("(foo|bar)([0-9]+)?","\2\1",i)']
      http-request redirect location %[url,regsub(\"(foo|bar)([0-9]+)?\",\"\2\1\",i)]
 
 capture-req(<id>)
@@ -18187,6 +18195,15 @@ res.body_size : integer
   useful (and usable) in the health-check context. It may be used in tcp-check
   based expect rules.
 
+res.cache_hit : boolean
+  Returns the boolean "true" value if the response has been built out of an
+  HTTP cache entry, otherwise returns boolean "false".
+
+res.cache_name : string
+  Returns a string containing the name of the HTTP cache that was used to
+  build the HTTP response if res.cache_hit is true, otherwise returns an
+  empty string.
+
 res.comp : boolean
   Returns the boolean "true" value if the response has been compressed by
   HAProxy, otherwise returns boolean "false". This may be used to add
@@ -19308,11 +19325,8 @@ ask how to disable logging for those checks. There are three possibilities :
     setting "option dontlognull" in the frontend. It also disables logging of
     port scans, which may or may not be desired.
 
-  - if the connection come from a known source network, use "monitor-net" to
-    declare this network as monitoring only. Any host in this network will then
-    only be able to perform health checks, and their requests will not be
-    logged. This is generally appropriate to designate a list of equipment
-    such as other load-balancers.
+  - it is possible to use the "http-request set-log-level silent" action using
+    a variety of conditions (source networks, paths, user-agents, etc).
 
   - if the tests are performed on a known URI, use "monitor-uri" to declare
     this URI as dedicated to monitoring. Any host sending this request will

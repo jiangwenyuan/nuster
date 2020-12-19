@@ -65,26 +65,15 @@ int protocol_bind_all(int verbose)
 	struct receiver *receiver;
 	char msg[100];
 	char *errmsg;
-	void *handler;
 	int err, lerr;
 
 	err = 0;
 	HA_SPIN_LOCK(PROTO_LOCK, &proto_lock);
 	list_for_each_entry(proto, &protocols, list) {
-		list_for_each_entry(receiver, &proto->listeners, proto_list) {
+		list_for_each_entry(receiver, &proto->receivers, proto_list) {
 			listener = LIST_ELEM(receiver, struct listener *, rx);
 
-			/* FIXME: horrible hack, we don't have a way to register
-			 * a handler when creating the receiver yet, so we still
-			 * have to take care of special cases here.
-			 */
-			handler = listener->rx.proto->accept;
-			if (!handler && listener->bind_conf->frontend->mode == PR_MODE_SYSLOG) {
-				extern void syslog_fd_handler(int);
-				handler = syslog_fd_handler;
-			}
-
-			lerr = proto->fam->bind(receiver, handler, &errmsg);
+			lerr = proto->fam->bind(receiver, &errmsg);
 			err |= lerr;
 
 			/* errors are reported if <verbose> is set or if they are fatal */
@@ -144,51 +133,93 @@ int protocol_unbind_all(void)
 	err = 0;
 	HA_SPIN_LOCK(PROTO_LOCK, &proto_lock);
 	list_for_each_entry(proto, &protocols, list) {
-		list_for_each_entry(listener, &proto->listeners, rx.proto_list)
+		list_for_each_entry(listener, &proto->receivers, rx.proto_list)
 			unbind_listener(listener);
 	}
 	HA_SPIN_UNLOCK(PROTO_LOCK, &proto_lock);
 	return err;
 }
 
-/* enables all listeners of all registered protocols. This is intended to be
- * used after a fork() to enable reading on all file descriptors. Returns a
- * composition of ERR_NONE, ERR_RETRYABLE, ERR_FATAL.
+/* stops all listeners of all registered protocols, except when the belong to a
+ * proxy configured with a grace time. This will normally catch every single
+ * listener, all protocols included, and the grace ones will have to be handled
+ * by the proxy stopping loop. This is to be used during soft_stop() only. It
+ * does not return any error.
  */
-int protocol_enable_all(void)
+void protocol_stop_now(void)
 {
 	struct protocol *proto;
+	struct listener *listener, *lback;
+
+	HA_SPIN_LOCK(PROTO_LOCK, &proto_lock);
+	list_for_each_entry(proto, &protocols, list) {
+		list_for_each_entry_safe(listener, lback, &proto->receivers, rx.proto_list)
+			if (!listener->bind_conf->frontend->grace)
+				stop_listener(listener, 0, 1, 0);
+	}
+	HA_SPIN_UNLOCK(PROTO_LOCK, &proto_lock);
+}
+
+/* pauses all listeners of all registered protocols. This is typically
+ * used on SIG_TTOU to release all listening sockets for the time needed to
+ * try to bind a new process. The listeners enter LI_PAUSED. It returns
+ * ERR_NONE, with ERR_FATAL on failure.
+ */
+int protocol_pause_all(void)
+{
+	struct protocol *proto;
+	struct listener *listener;
 	int err;
 
 	err = 0;
 	HA_SPIN_LOCK(PROTO_LOCK, &proto_lock);
 	list_for_each_entry(proto, &protocols, list) {
-		if (proto->enable_all) {
-			err |= proto->enable_all(proto);
-		}
+		list_for_each_entry(listener, &proto->receivers, rx.proto_list)
+			if (!pause_listener(listener))
+				err |= ERR_FATAL;
 	}
 	HA_SPIN_UNLOCK(PROTO_LOCK, &proto_lock);
 	return err;
 }
 
-/* disables all listeners of all registered protocols. This may be used before
- * a fork() to avoid duplicating poll lists. Returns a composition of ERR_NONE,
- * ERR_RETRYABLE, ERR_FATAL.
+/* resumes all listeners of all registered protocols. This is typically used on
+ * SIG_TTIN to re-enable listening sockets after a new process failed to bind.
+ * The listeners switch to LI_READY/LI_FULL. It returns ERR_NONE, with ERR_FATAL
+ * on failure.
  */
-int protocol_disable_all(void)
+int protocol_resume_all(void)
 {
 	struct protocol *proto;
+	struct listener *listener;
 	int err;
 
 	err = 0;
 	HA_SPIN_LOCK(PROTO_LOCK, &proto_lock);
 	list_for_each_entry(proto, &protocols, list) {
-		if (proto->disable_all) {
-			err |= proto->disable_all(proto);
-		}
+		list_for_each_entry(listener, &proto->receivers, rx.proto_list)
+			if (!resume_listener(listener))
+				err |= ERR_FATAL;
 	}
 	HA_SPIN_UNLOCK(PROTO_LOCK, &proto_lock);
 	return err;
+}
+
+/* enables all listeners of all registered protocols. This is intended to be
+ * used after a fork() to enable reading on all file descriptors. Returns
+ * composition of ERR_NONE.
+ */
+int protocol_enable_all(void)
+{
+	struct protocol *proto;
+	struct listener *listener;
+
+	HA_SPIN_LOCK(PROTO_LOCK, &proto_lock);
+	list_for_each_entry(proto, &protocols, list) {
+		list_for_each_entry(listener, &proto->receivers, rx.proto_list)
+			enable_listener(listener);
+	}
+	HA_SPIN_UNLOCK(PROTO_LOCK, &proto_lock);
+	return ERR_NONE;
 }
 
 /*

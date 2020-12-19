@@ -129,30 +129,22 @@ static void session_count_new(struct session *sess)
 /* This function is called from the protocol layer accept() in order to
  * instantiate a new session on behalf of a given listener and frontend. It
  * returns a positive value upon success, 0 if the connection can be ignored,
- * or a negative value upon critical failure. The accepted file descriptor is
+ * or a negative value upon critical failure. The accepted connection is
  * closed if we return <= 0. If no handshake is needed, it immediately tries
- * to instantiate a new stream. The created connection's owner points to the
- * new session until the upper layers are created.
+ * to instantiate a new stream. The connection must already have been filled
+ * with the incoming connection handle (a fd), a target (the listener) and a
+ * source address.
  */
-int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr)
+int session_accept_fd(struct connection *cli_conn)
 {
-	struct connection *cli_conn;
+	struct listener *l = __objt_listener(cli_conn->target);
 	struct proxy *p = l->bind_conf->frontend;
+	int cfd = cli_conn->handle.fd;
 	struct session *sess;
 	int ret;
 
-
 	ret = -1; /* assume unrecoverable error by default */
 
-	if (unlikely((cli_conn = conn_new(&l->obj_type)) == NULL))
-		goto out_close;
-
-	if (!sockaddr_alloc(&cli_conn->src))
-		goto out_free_conn;
-
-	cli_conn->handle.fd = cfd;
-	*cli_conn->src = *addr;
-	cli_conn->flags |= CO_FL_ADDR_FROM_SET;
 	cli_conn->proxy_netns = l->rx.settings->netns;
 
 	conn_prepare(cli_conn, l->rx.proto, l->bind_conf->xprt);
@@ -187,35 +179,6 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 		/* let's do a no-linger now to close with a single RST. */
 		setsockopt(cfd, SOL_SOCKET, SO_LINGER, (struct linger *) &nolinger, sizeof(struct linger));
 		ret = 0; /* successful termination */
-		goto out_free_sess;
-	}
-
-	/* monitor-net and health mode are processed immediately after TCP
-	 * connection rules. This way it's possible to block them, but they
-	 * never use the lower data layers, they send directly over the socket,
-	 * as they were designed for. We first flush the socket receive buffer
-	 * in order to avoid emission of an RST by the system. We ignore any
-	 * error.
-	 */
-	if (unlikely((p->mode == PR_MODE_HEALTH) ||
-		     ((l->options & LI_O_CHK_MONNET) &&
-		      addr->ss_family == AF_INET &&
-		      (((struct sockaddr_in *)addr)->sin_addr.s_addr & p->mon_mask.s_addr) == p->mon_net.s_addr))) {
-		/* we have 4 possibilities here :
-		 *  - HTTP mode, from monitoring address => send "HTTP/1.0 200 OK"
-		 *  - HEALTH mode with HTTP check => send "HTTP/1.0 200 OK"
-		 *  - HEALTH mode without HTTP check => just send "OK"
-		 *  - TCP mode from monitoring address => just close
-		 */
-		if (l->rx.proto->drain)
-			l->rx.proto->drain(cfd);
-		if (p->mode == PR_MODE_HTTP ||
-		    (p->mode == PR_MODE_HEALTH && (p->options2 & PR_O2_CHK_ANY) == PR_O2_TCPCHK_CHK &&
-		     (p->tcpcheck_rules.flags & TCPCHK_RULES_PROTO_CHK) == TCPCHK_RULES_HTTP_CHK))
-			send(cfd, "HTTP/1.0 200 OK\r\n\r\n", 19, MSG_DONTWAIT|MSG_NOSIGNAL|MSG_MORE);
-		else if (p->mode == PR_MODE_HEALTH)
-			send(cfd, "OK\n", 3, MSG_DONTWAIT|MSG_NOSIGNAL|MSG_MORE);
-		ret = 0;
 		goto out_free_sess;
 	}
 
@@ -308,12 +271,8 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 	  * done below, for all errors. */
 	sess->listener = NULL;
 	session_free(sess);
+
  out_free_conn:
-	conn_stop_tracking(cli_conn);
-	conn_xprt_close(cli_conn);
-	conn_free(cli_conn);
- out_close:
-	listener_release(l);
 	if (ret < 0 && l->bind_conf->xprt == xprt_get(XPRT_RAW) &&
 	    p->mode == PR_MODE_HTTP && l->bind_conf->mux_proto == NULL) {
 		/* critical error, no more memory, try to emit a 500 response */
@@ -321,10 +280,10 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 		     MSG_DONTWAIT|MSG_NOSIGNAL);
 	}
 
-	if (fdtab[cfd].owner)
-		fd_delete(cfd);
-	else
-		close(cfd);
+	conn_stop_tracking(cli_conn);
+	conn_full_close(cli_conn);
+	conn_free(cli_conn);
+	listener_release(l);
 	return ret;
 }
 

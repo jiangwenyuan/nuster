@@ -119,6 +119,7 @@
 #include <haproxy/sock.h>
 #include <haproxy/sock_inet.h>
 #include <haproxy/ssl_sock.h>
+#include <haproxy/stats-t.h>
 #include <haproxy/stream.h>
 #include <haproxy/task.h>
 #include <haproxy/thread.h>
@@ -979,7 +980,12 @@ static void sig_soft_stop(struct sig_handler *sh)
  */
 static void sig_pause(struct sig_handler *sh)
 {
-	pause_proxies();
+	if (protocol_pause_all() & ERR_FATAL) {
+		const char *msg = "Some proxies refused to pause, performing soft stop now.\n";
+		ha_warning("%s", msg);
+		send_log(NULL, LOG_WARNING, "%s", msg);
+		soft_stop();
+	}
 	pool_gc(NULL);
 }
 
@@ -988,7 +994,11 @@ static void sig_pause(struct sig_handler *sh)
  */
 static void sig_listen(struct sig_handler *sh)
 {
-	resume_proxies();
+	if (protocol_resume_all() & ERR_FATAL) {
+		const char *msg = "Some proxies refused to resume, probably due to a conflict on a listening port. You may want to try again after the conflicting application is stopped, otherwise a restart might be needed to resume safe operations.\n";
+		ha_warning("%s", msg);
+		send_log(NULL, LOG_WARNING, "%s", msg);
+	}
 }
 
 /*
@@ -1641,7 +1651,12 @@ static void init(int argc, char **argv)
 		progname = tmp + 1;
 
 	/* the process name is used for the logs only */
-	chunk_initstr(&global.log_tag, strdup(progname));
+	chunk_initlen(&global.log_tag, strdup(progname), strlen(progname), strlen(progname));
+	if (b_orig(&global.log_tag) == NULL) {
+		chunk_destroy(&global.log_tag);
+		ha_alert("Cannot allocate memory for log_tag.\n");
+		exit(EXIT_FAILURE);
+	}
 
 	argc--; argv++;
 	while (argc > 0) {
@@ -1972,11 +1987,25 @@ static void init(int argc, char **argv)
 		}
 	}
 
+	if (global.nbproc > 1 && !global.nbthread) {
+		ha_warning("nbproc is deprecated!\n"
+			   "  | For suffering many limitations, the 'nbproc' directive is now deprecated\n"
+			   "  | and scheduled for removal in 2.5. Just comment it out: haproxy will use\n"
+			   "  | threads and will run on all allocated processors. You may also switch to\n"
+			   "  | 'nbthread %d' to keep the same number of processors. If you absolutely\n"
+			   "  | want to run in multi-process mode, you can silence this warning by adding\n"
+			   "  | 'nbthread 1', but then please report your use case to developers.\n",
+		           global.nbproc);
+	}
+
 	err_code |= check_config_validity();
 	for (px = proxies_list; px; px = px->next) {
 		struct server *srv;
 		struct post_proxy_check_fct *ppcf;
 		struct post_server_check_fct *pscf;
+
+		if (px->disabled)
+			continue;
 
 		list_for_each_entry(pscf, &post_server_check_list, list) {
 			for (srv = px->srv; srv; srv = srv->next)
@@ -2050,7 +2079,7 @@ static void init(int argc, char **argv)
 				break;
 
 		for (px = proxies_list; px; px = px->next)
-			if (px->state == PR_STNEW && !LIST_ISEMPTY(&px->conf.listeners))
+			if (!px->disabled && px->li_all)
 				break;
 
 		if (pr || px) {
@@ -2378,6 +2407,12 @@ static void init(int argc, char **argv)
 	if (!global.node)
 		global.node = strdup(hostname);
 
+	/* stop disabled proxies */
+	for (px = proxies_list; px; px = px->next) {
+		if (px->disabled)
+			stop_proxy(px);
+	}
+
 	if (!hlua_post_init())
 		exit(1);
 
@@ -2458,6 +2493,37 @@ void deinit(void)
 	struct post_server_check_fct *pscf, *pscfb;
 	struct post_check_fct *pcf, *pcfb;
 	struct post_proxy_check_fct *ppcf, *ppcfb;
+	int cur_fd;
+
+	/* At this point the listeners state is weird:
+	 *  - most listeners are still bound and referenced in their protocol
+	 *  - some might be zombies that are not in their proto anymore, but
+	 *    still appear in their proxy's listeners with a valid FD.
+	 *  - some might be stopped and still appear in their proxy as FD #-1
+	 *  - among all of them, some might be inherited hence shared and we're
+	 *    not allowed to pause them or whatever, we must just close them.
+	 *  - finally some are not listeners (pipes, logs, stdout, etc) and
+	 *    must be left intact.
+	 *
+	 * The safe way to proceed is to unbind (and close) whatever is not yet
+	 * unbound so that no more receiver/listener remains alive. Then close
+	 * remaining listener FDs, which correspond to zombie listeners (those
+	 * belonging to disabled proxies that were in another process).
+	 * objt_listener() would be cleaner here but not converted yet.
+	 */
+	protocol_unbind_all();
+
+	for (cur_fd = 0; cur_fd < global.maxsock; cur_fd++) {
+		if (!fdtab || !fdtab[cur_fd].owner)
+			continue;
+
+		if (fdtab[cur_fd].iocb == &sock_accept_iocb) {
+			struct listener *l = fdtab[cur_fd].owner;
+
+			BUG_ON(l->state != LI_INIT);
+			unbind_listener(l);
+		}
+	}
 
 	deinit_signals();
 	while (p) {
@@ -2493,6 +2559,9 @@ void deinit(void)
 			prune_acl_cond(cond);
 			free(cond);
 		}
+
+		EXTRA_COUNTERS_FREE(p->extra_counters_fe);
+		EXTRA_COUNTERS_FREE(p->extra_counters_be);
 
 		/* build a list of unique uri_auths */
 		if (!ua)
@@ -2636,27 +2705,18 @@ void deinit(void)
 			list_for_each_entry(srvdf, &server_deinit_list, list)
 				srvdf->fct(s);
 
+			EXTRA_COUNTERS_FREE(s->extra_counters);
 			free(s);
 			s = s_next;
 		}/* end while(s) */
 
 		list_for_each_entry_safe(l, l_next, &p->conf.listeners, by_fe) {
-			/*
-			 * Zombie proxy, the listener just pretend to be up
-			 * because they still hold an opened fd.
-			 * Close it and give the listener its real state.
-			 */
-			if (p->state == PR_STSTOPPED && l->state >= LI_ZOMBIE) {
-				fd_delete(l->rx.fd);
-				l->rx.fd = -1;
-				l->state = LI_INIT;
-			}
-			unbind_listener(l);
-			delete_listener(l);
 			LIST_DEL(&l->by_fe);
 			LIST_DEL(&l->by_bind);
 			free(l->name);
 			free(l->counters);
+
+			EXTRA_COUNTERS_FREE(l->extra_counters);
 			free(l);
 		}
 
@@ -2687,8 +2747,8 @@ void deinit(void)
 
 		p0 = p;
 		p = p->next;
-		HA_SPIN_DESTROY(&p0->lbprm.lock);
-		HA_SPIN_DESTROY(&p0->lock);
+		HA_RWLOCK_DESTROY(&p0->lbprm.lock);
+		HA_RWLOCK_DESTROY(&p0->lock);
 		free(p0);
 	}/* end while(p) */
 
@@ -2723,8 +2783,6 @@ void deinit(void)
 	cfg_unregister_sections();
 
 	deinit_log_buffers();
-
-	protocol_unbind_all();
 
 	list_for_each_entry(pdf, &post_deinit_list, list)
 		pdf->fct();
@@ -3061,6 +3119,9 @@ int main(int argc, char **argv)
 
 	/* take a copy of initial limits before we possibly change them */
 	getrlimit(RLIMIT_NOFILE, &limit);
+
+	if (limit.rlim_max == RLIM_INFINITY)
+		limit.rlim_max = limit.rlim_cur;
 	rlim_fd_cur_at_boot = limit.rlim_cur;
 	rlim_fd_max_at_boot = limit.rlim_max;
 
@@ -3194,8 +3255,6 @@ int main(int argc, char **argv)
 		}
 		exit(1);
 	}
-
-	start_proxies();
 
 	if (!(global.mode & MODE_MWORKER_WAIT) && listeners == 0) {
 		ha_alert("[%s.main()] No enabled listener found (check for 'bind' directives) ! Exiting.\n", argv[0]);
@@ -3526,13 +3585,19 @@ int main(int argc, char **argv)
 		/* we might have to unbind some proxies from some processes */
 		px = proxies_list;
 		while (px != NULL) {
-			if (px->bind_proc && px->state != PR_STSTOPPED) {
-				if (!(px->bind_proc & (1UL << proc))) {
-					if (global.tune.options & GTUNE_SOCKET_TRANSFER)
-						zombify_proxy(px);
-					else
-						stop_proxy(px);
-				}
+			if (px->bind_proc && !px->disabled) {
+				if (!(px->bind_proc & (1UL << proc)))
+					stop_proxy(px);
+			}
+			px = px->next;
+		}
+
+		/* we might have to unbind some log forward proxies from some processes */
+		px = cfg_log_forward;
+		while (px != NULL) {
+			if (px->bind_proc && !px->disabled) {
+				if (!(px->bind_proc & (1UL << proc)))
+					stop_proxy(px);
 			}
 			px = px->next;
 		}

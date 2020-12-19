@@ -548,6 +548,13 @@ static struct server *get_server_rnd(struct stream *s, const struct server *avoi
 			curr = prev;
 	} while (--draws > 0);
 
+	/* if the selected server is full, pretend we have none so that we reach
+	 * the backend's queue instead.
+	 */
+	if (curr &&
+	    (curr->nbpend || (curr->maxconn && curr->served >= srv_dynamic_maxconn(curr))))
+		curr = NULL;
+
 	return curr;
 }
 
@@ -633,11 +640,22 @@ int assign_server(struct stream *s)
 			}
 		}
 	}
-	if (s->be->lbprm.algo & BE_LB_KIND) {
 
+	if (s->be->lbprm.algo & BE_LB_KIND) {
 		/* we must check if we have at least one server available */
 		if (!s->be->lbprm.tot_weight) {
 			err = SRV_STATUS_NOSRV;
+			goto out;
+		}
+
+		/* if there's some queue on the backend, with certain algos we
+		 * know it's because all servers are full.
+		 */
+		if (s->be->nbpend &&
+		    (((s->be->lbprm.algo & (BE_LB_KIND|BE_LB_NEED|BE_LB_PARM)) == BE_LB_ALGO_FAS)||   // first
+		     ((s->be->lbprm.algo & (BE_LB_KIND|BE_LB_NEED|BE_LB_PARM)) == BE_LB_ALGO_RR) ||   // roundrobin
+		     ((s->be->lbprm.algo & (BE_LB_KIND|BE_LB_NEED|BE_LB_PARM)) == BE_LB_ALGO_SRR))) { // static-rr
+			err = SRV_STATUS_FULL;
 			goto out;
 		}
 
@@ -827,7 +845,7 @@ int assign_server_address(struct stream *s)
 
 	DPRINTF(stderr,"assign_server_address : s=%p\n",s);
 
-	if (!sockaddr_alloc(&s->target_addr))
+	if (!sockaddr_alloc(&s->target_addr, NULL, 0))
 		return SRV_STATUS_INTERNAL;
 
 	if ((s->flags & SF_DIRECT) || (s->be->lbprm.algo & BE_LB_KIND)) {
@@ -1038,7 +1056,7 @@ static void assign_tproxy_address(struct stream *s)
 	else
 		return;
 
-	if (!sockaddr_alloc(&srv_conn->src))
+	if (!sockaddr_alloc(&srv_conn->src, NULL, 0))
 		return;
 
 	switch (src->opts & CO_SRC_TPROXY_MASK) {
@@ -1082,7 +1100,7 @@ static void assign_tproxy_address(struct stream *s)
  * (safe or idle connections). The <is_safe> argument means what type of
  * connection the caller wants.
  */
-static struct connection *conn_backend_get(struct server *srv, int is_safe)
+static struct connection *conn_backend_get(struct stream *s, struct server *srv, int is_safe)
 {
 	struct mt_list *mt_list = is_safe ? srv->safe_conns : srv->idle_conns;
 	struct connection *conn;
@@ -1136,7 +1154,8 @@ static struct connection *conn_backend_get(struct server *srv, int is_safe)
 	if (stop >= global.nbthread)
 		stop = 0;
 
-	for (i = stop; !found && (i = ((i + 1 == global.nbthread) ? 0 : i + 1)) != stop;) {
+	i = stop;
+	do {
 		struct mt_list *elt1, elt2;
 
 		if (!srv->curr_idle_thr[i] || i == tid)
@@ -1148,6 +1167,7 @@ static struct connection *conn_backend_get(struct server *srv, int is_safe)
 				MT_LIST_DEL_SAFE(elt1);
 				_HA_ATOMIC_ADD(&activity[tid].fd_takeover, 1);
 				found = 1;
+
 				break;
 			}
 		}
@@ -1160,19 +1180,38 @@ static struct connection *conn_backend_get(struct server *srv, int is_safe)
 					found = 1;
 					is_safe = 1;
 					mt_list = srv->safe_conns;
+
 					break;
 				}
 			}
 		}
 		HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[i].takeover_lock);
-	}
+	} while (!found && (i = (i + 1 == global.nbthread) ? 0 : i + 1) != stop);
 
 	if (!found)
 		conn = NULL;
  done:
 	if (conn) {
 		_HA_ATOMIC_STORE(&srv->next_takeover, (i + 1 == global.nbthread) ? 0 : i + 1);
-		srv_use_idle_conn(srv, conn);
+
+		srv_use_conn(srv, conn);
+
+		_HA_ATOMIC_SUB(&srv->curr_idle_conns, 1);
+		_HA_ATOMIC_SUB(conn->flags & CO_FL_SAFE_LIST ? &srv->curr_safe_nb : &srv->curr_idle_nb, 1);
+		_HA_ATOMIC_SUB(&srv->curr_idle_thr[i], 1);
+		conn->flags &= ~CO_FL_LIST_MASK;
+		__ha_barrier_atomic_store();
+
+		if ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_SAFE &&
+		    conn->mux->flags & MX_FL_HOL_RISK) {
+			/* attach the connection to the session private list
+			 */
+			conn->owner = s->sess;
+			session_add_conn(conn->owner, conn, conn->target);
+		}
+		else {
+			LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&conn->list));
+		}
 	}
 	return conn;
 }
@@ -1249,18 +1288,18 @@ int connect_server(struct stream *s)
 				/* we're on the second column of the tables above, let's
 				 * try idle then safe.
 				 */
-				srv_conn = conn_backend_get(srv, 0);
+				srv_conn = conn_backend_get(s, srv, 0);
 			}
 			else if (srv->safe_conns &&
 			         ((s->txn && (s->txn->flags & TX_NOT_FIRST)) ||
 				  (s->be->options & PR_O_REUSE_MASK) >= PR_O_REUSE_AGGR) &&
 				 srv->curr_safe_nb > 0) {
-				srv_conn = conn_backend_get(srv, 1);
+				srv_conn = conn_backend_get(s, srv, 1);
 			}
 			else if (srv->idle_conns &&
 			         ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_ALWS) &&
 				 srv->curr_idle_nb > 0) {
-				srv_conn = conn_backend_get(srv, 0);
+				srv_conn = conn_backend_get(s, srv, 0);
 			}
 			/* If we've picked a connection from the pool, we now have to
 			 * detach it. We may have to get rid of the previous idle
@@ -1372,7 +1411,7 @@ int connect_server(struct stream *s)
 		}
 	}
 
-	if (!srv_conn || !sockaddr_alloc(&srv_conn->dst)) {
+	if (!srv_conn || !sockaddr_alloc(&srv_conn->dst, 0, 0)) {
 		if (srv_conn)
 			conn_free(srv_conn);
 		return SF_ERR_RESOURCE;
@@ -1482,7 +1521,10 @@ int connect_server(struct stream *s)
 					   srv->ssl_ctx.sni, SMP_T_STR);
 		if (smp_make_safe(smp)) {
 			ssl_sock_set_servername(srv_conn, smp->data.u.str.area);
-			conn_set_private(srv_conn);
+			if (!(srv->ssl_ctx.sni->fetch->use & SMP_USE_INTRN) ||
+			    smp->flags & SMP_F_VOLATILE) {
+				conn_set_private(srv_conn);
+			}
 		}
 	}
 #endif /* USE_OPENSSL */
@@ -1510,13 +1552,16 @@ int connect_server(struct stream *s)
 		/* If we're doing http-reuse always, and the connection is not
 		 * private with available streams (an http2 connection), add it
 		 * to the available list, so that others can use it right
-		 * away. If the connection is private, add it in the session
-		 * server list.
+		 * away. If the connection is private or we're doing http-reuse
+		 * safe and the mux protocol supports multiplexing, add it in
+		 * the session server list.
 		 */
 		if (srv && ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_ALWS) &&
 		    !(srv_conn->flags & CO_FL_PRIVATE) && srv_conn->mux->avail_streams(srv_conn) > 0)
 			LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&srv_conn->list));
-		else if (srv_conn->flags & CO_FL_PRIVATE) {
+		else if (srv_conn->flags & CO_FL_PRIVATE ||
+		         ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_SAFE &&
+		          srv_conn->mux->flags & MX_FL_HOL_RISK)) {
 			/* If it fail now, the same will be done in mux->detach() callback */
 			session_add_conn(srv_conn->owner, srv_conn, srv_conn->target);
 		}
@@ -1548,8 +1593,11 @@ int connect_server(struct stream *s)
 		s->flags |= SF_CURR_SESS;
 		count = _HA_ATOMIC_ADD(&srv->cur_sess, 1);
 		HA_ATOMIC_UPDATE_MAX(&srv->counters.cur_sess_max, count);
-		if (s->be->lbprm.server_take_conn)
+		if (s->be->lbprm.server_take_conn) {
+			HA_SPIN_LOCK(SERVER_LOCK, &srv->lock);
 			s->be->lbprm.server_take_conn(srv);
+			HA_SPIN_UNLOCK(SERVER_LOCK, &srv->lock);
+		}
 	}
 
 	/* Now handle synchronously connected sockets. We know the stream-int

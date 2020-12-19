@@ -357,9 +357,11 @@ static inline void conn_set_private(struct connection *conn)
  * returns it. If <sap> is NULL, the address is always allocated and returned.
  * if <sap> is non-null, an address will only be allocated if it points to a
  * non-null pointer. In this case the allocated address will be assigned there.
- * In both situations the new pointer is returned.
+ * If <orig> is non-null and <len> positive, the address in <sa> will be copied
+ * into the allocated address. In both situations the new pointer is returned.
  */
-static inline struct sockaddr_storage *sockaddr_alloc(struct sockaddr_storage **sap)
+static inline struct sockaddr_storage *
+sockaddr_alloc(struct sockaddr_storage **sap, const struct sockaddr_storage *orig, socklen_t len)
 {
 	struct sockaddr_storage *sa;
 
@@ -367,6 +369,8 @@ static inline struct sockaddr_storage *sockaddr_alloc(struct sockaddr_storage **
 		return *sap;
 
 	sa = pool_alloc(pool_head_sockaddr);
+	if (sa && orig && len > 0)
+		memcpy(sa, orig, len);
 	if (sap)
 		*sap = sa;
 	return sa;
@@ -396,7 +400,7 @@ static inline struct connection *conn_new(void *target)
 	if (likely(conn != NULL)) {
 		conn_init(conn, target);
 		if (obj_type(target) == OBJ_TYPE_SERVER)
-			srv_use_idle_conn(__objt_server(target), conn);
+			srv_use_conn(__objt_server(target), conn);
 	}
 	return conn;
 }
@@ -464,14 +468,12 @@ static inline void conn_force_unsubscribe(struct connection *conn)
 /* Releases a connection previously allocated by conn_new() */
 static inline void conn_free(struct connection *conn)
 {
-	if (conn->flags & CO_FL_PRIVATE) {
-		/* The connection is private, so remove it from the session's
-		 * connections list, if any.
-		 */
-		if (!LIST_ISEMPTY(&conn->session_list))
-			session_unown_conn(conn->owner, conn);
+	/* If the connection is owned by the session, remove it from its list
+	 */
+	if (LIST_ADDED(&conn->session_list)) {
+		session_unown_conn(conn->owner, conn);
 	}
-	else {
+	else if (!(conn->flags & CO_FL_PRIVATE)) {
 		if (obj_type(conn->target) == OBJ_TYPE_SERVER)
 			srv_del_conn_from_list(__objt_server(conn->target), conn);
 	}
@@ -537,7 +539,7 @@ static inline int conn_get_src(struct connection *conn)
 	if (!conn_ctrl_ready(conn) || !conn->ctrl->fam->get_src)
 		return 0;
 
-	if (!sockaddr_alloc(&conn->src))
+	if (!sockaddr_alloc(&conn->src, NULL, 0))
 		return 0;
 
 	if (conn->ctrl->fam->get_src(conn->handle.fd, (struct sockaddr *)conn->src,
@@ -560,7 +562,7 @@ static inline int conn_get_dst(struct connection *conn)
 	if (!conn_ctrl_ready(conn) || !conn->ctrl->fam->get_dst)
 		return 0;
 
-	if (!sockaddr_alloc(&conn->dst))
+	if (!sockaddr_alloc(&conn->dst, NULL, 0))
 		return 0;
 
 	if (conn->ctrl->fam->get_dst(conn->handle.fd, (struct sockaddr *)conn->dst,

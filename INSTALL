@@ -1,15 +1,15 @@
 Installation instructions for HAProxy
 =====================================
 
-This is a development version, so it is expected to break from time to time,
-to add and remove features without prior notification and it should not be used
-in production. If you are not used to build from sources or if you are not used
-to follow updates then it is recommended that instead you use the packages
-provided by your software vendor or Linux distribution. Most of them are taking
-this task seriously and are doing a good job at backporting important fixes. If
-for any reason you'd prefer to use a different version than the one packaged
-for your system, you want to be certain to have all the fixes or to get some
-commercial support, other choices are available at http://www.haproxy.com/.
+HAProxy 2.3 is a stable version, which means that it will get fixes for bugs as
+they are discovered till around Q1 2022 and should not receive new features.
+This version is mostly suited at experienced users who are willing to quickly
+follow updates. New users are encouraged to use long term supported versions
+such as the ones provided by their software vendor or Linux distribution, as
+such versions require far less common updates. If for any reason you'd prefer
+a different version than the one packaged for your system, you want to be
+certain to have all the fixes or to get some commercial support, other choices
+are available at https://www.haproxy.com/.
 
 
 Areas covered in this document
@@ -96,6 +96,11 @@ HAProxy requires a working GCC or Clang toolchain and GNU make :
     your operating system is very likely to work with no trouble. Clang >= 3.0
     is also known to work as an alternative solution. Recent versions may emit
     a bit more warnings that are worth reporting as they may reveal real bugs.
+    TCC (https://repo.or.cz/tinycc.git) is also usable for developers but will
+    not support threading and was found at least once to produce bad code in
+    some rare corner cases (since fixed). But it builds extremely quickly
+    (typically half a second for the whole project) and is very convenient to
+    run quick tests during API changes or code refactoring.
 
   - GNU ld (binutils package), with no particular version. Other linkers might
     work but were not tested.
@@ -374,11 +379,12 @@ and assign it to the TARGET variable :
   - linux-glibc         for Linux kernel 2.6.28 and above
   - linux-glibc-legacy  for Linux kernel 2.6.28 and above without new features
   - linux-musl          for Linux kernel 2.6.28 and above with musl libc
-  - solaris             for Solaris 8 or 10 (others untested)
-  - freebsd             for FreeBSD 5 to 12 (others untested)
-  - netbsd              for NetBSD
+  - solaris             for Solaris 10 and above
+  - freebsd             for FreeBSD 10 and above
+  - dragonfly           for DragonFlyBSD 4.3 and above
+  - netbsd              for NetBSD 8 and above
   - osx                 for Mac OS/X
-  - openbsd             for OpenBSD 5.7 and above
+  - openbsd             for OpenBSD 6.3 and above
   - aix51               for AIX 5.1
   - aix52               for AIX 5.2
   - aix72-gcc           for AIX 7.2 (using gcc)

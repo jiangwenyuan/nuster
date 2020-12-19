@@ -105,6 +105,7 @@ __attribute__((noreturn)) void usage(int code, const char *arg0)
 	    "                 Note: fd=socket,bind(fd),listen(fd)\n"
 	    "  C            : Connects to ip:port\n"
 	    "                 Note: fd=socket,connect(fd)\n"
+	    "  D            : Disconnect (connect to AF_UNSPEC)\n"
 	    "  A[<count>]   : Accepts <count> incoming sockets and closes count-1\n"
 	    "                 Note: fd=accept(fd)\n"
 	    "  J            : Jump back to oldest post-fork/post-accept action\n"
@@ -443,6 +444,14 @@ int tcp_connect(const struct sockaddr_storage *sa, const char *arg)
 	return -1;
 }
 
+/* Try to disconnect by connecting to AF_UNSPEC. Return >=0 on success, -1 in case of error */
+int tcp_disconnect(int sock)
+{
+	const struct sockaddr sa = { .sa_family = AF_UNSPEC };
+
+	return connect(sock, &sa, sizeof(sa));
+}
+
 /* receives N bytes from the socket and returns 0 (or -1 in case of a recv
  * error, or -2 in case of an argument error). When no arg is passed, receives
  * anything and stops. Otherwise reads the requested amount of data. 0 means
@@ -683,9 +692,7 @@ int tcp_wait_out(int sock, const char *arg)
 /* delays processing for <time> milliseconds, 100 by default */
 int tcp_pause(int sock, const char *arg)
 {
-	struct pollfd pollfd;
 	int delay = 100;
-	int ret;
 
 	if (arg[1]) {
 		delay = atoi(arg + 1);
@@ -785,6 +792,13 @@ int main(int argc, char **argv)
 			if (sock < 0)
 				die(1, "Fatal: tcp_connect() failed.\n");
 			dolog("connect\n");
+			break;
+
+		case 'D':
+			/* silently ignore non-existing connections */
+			if (sock >= 0 && tcp_disconnect(sock) < 0)
+				die(1, "Fatal: tcp_connect() failed.\n");
+			dolog("disconnect\n");
 			break;
 
 		case 'A':

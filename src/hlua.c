@@ -945,6 +945,9 @@ static inline void hlua_sendlog(struct proxy *px, int level, const char *msg)
 
 	send_log(px, level, "%s\n", trash.area);
 	if (!(global.mode & MODE_QUIET) || (global.mode & (MODE_VERBOSE | MODE_STARTING))) {
+		if (level == LOG_DEBUG && !(global.mode & MODE_DEBUG))
+			return;
+
 		get_localtime(date.tv_sec, &tm);
 		fprintf(stderr, "[%s] %03d/%02d%02d%02d (%d) : %s\n",
 		        log_levels[level], tm.tm_yday, tm.tm_hour, tm.tm_min, tm.tm_sec,
@@ -2561,11 +2564,10 @@ __LJMP static int hlua_socket_connect(struct lua_State *L)
 	si = appctx->owner;
 	s = si_strm(si);
 
-	if (!sockaddr_alloc(&s->target_addr)) {
+	if (!sockaddr_alloc(&s->target_addr, addr, sizeof(*addr))) {
 		xref_unlock(&socket->xref, peer);
 		WILL_LJMP(luaL_error(L, "connect: internal error"));
 	}
-	*s->target_addr = *addr;
 	s->flags |= SF_ADDR_SET;
 
 	hlua = hlua_gethlua(L);
@@ -3503,6 +3505,7 @@ __LJMP static int hlua_run_sample_conv(lua_State *L)
 	}
 
 	/* Initialise the sample. */
+	memset(&smp, 0, sizeof(smp));
 	if (!hlua_lua2smp(L, 2, &smp)) {
 		hlua_pusherror(L, "error in the input argument");
 		goto error;
@@ -3647,6 +3650,7 @@ __LJMP static int hlua_applet_tcp_set_var(lua_State *L)
 	s = appctx->htxn.s;
 
 	/* Converts the third argument in a sample. */
+	memset(&smp, 0, sizeof(smp));
 	hlua_lua2smp(L, 3, &smp);
 
 	/* Store the sample in a variable. */
@@ -4131,6 +4135,7 @@ __LJMP static int hlua_applet_http_set_var(lua_State *L)
 	s = appctx->htxn.s;
 
 	/* Converts the third argument in a sample. */
+	memset(&smp, 0, sizeof(smp));
 	hlua_lua2smp(L, 3, &smp);
 
 	/* Store the sample in a variable. */
@@ -5223,6 +5228,7 @@ __LJMP static int hlua_set_var(lua_State *L)
 	name = MAY_LJMP(luaL_checklstring(L, 2, &len));
 
 	/* Converts the third argument in a sample. */
+	memset(&smp, 0, sizeof(smp));
 	hlua_lua2smp(L, 3, &smp);
 
 	/* Store the sample in a variable. */

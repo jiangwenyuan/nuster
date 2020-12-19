@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <haproxy/acl.h>
+#include <haproxy/buf.h>
 #include <haproxy/capture-t.h>
 #include <haproxy/cfgparse.h>
 #include <haproxy/check.h>
@@ -210,6 +211,14 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 				err_code |= ERR_ALERT | ERR_FATAL;
 		}
 
+		curproxy = log_forward_by_name(args[1]);
+		if (curproxy) {
+			ha_alert("Parsing [%s:%d]: %s '%s' has the same name as log forward section '%s' declared at %s:%d.\n",
+			         file, linenum, proxy_cap_str(rc), args[1],
+			         curproxy->id, curproxy->conf.file, curproxy->conf.line);
+			err_code |= ERR_ALERT | ERR_FATAL;
+		}
+
 		if ((curproxy = calloc(1, sizeof(*curproxy))) == NULL) {
 			ha_alert("parsing [%s:%d] : out of memory.\n", file, linenum);
 			err_code |= ERR_ALERT | ERR_ABORT;
@@ -236,7 +245,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		memcpy(&curproxy->defsrv, &defproxy.defsrv, sizeof(curproxy->defsrv));
 		curproxy->defsrv.id = "default-server";
 
-		curproxy->state = defproxy.state;
+		curproxy->disabled = defproxy.disabled;
 		curproxy->options = defproxy.options;
 		curproxy->options2 = defproxy.options2;
 		curproxy->no_options = defproxy.no_options;
@@ -360,8 +369,6 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 			curproxy->timeout.tarpit = defproxy.timeout.tarpit;
 			curproxy->timeout.httpreq = defproxy.timeout.httpreq;
 			curproxy->timeout.httpka = defproxy.timeout.httpka;
-			curproxy->mon_net = defproxy.mon_net;
-			curproxy->mon_mask = defproxy.mon_mask;
 			if (defproxy.monitor_uri)
 				curproxy->monitor_uri = strdup(defproxy.monitor_uri);
 			curproxy->monitor_uri_len = defproxy.monitor_uri_len;
@@ -653,17 +660,8 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 		goto out;
 	}
 	else if (!strcmp(args[0], "monitor-net")) {  /* set the range of IPs to ignore */
-		if (!*args[1] || !str2net(args[1], 1, &curproxy->mon_net, &curproxy->mon_mask)) {
-			ha_alert("parsing [%s:%d] : '%s' expects address[/mask].\n",
-				 file, linenum, args[0]);
-			err_code |= ERR_ALERT | ERR_FATAL;
-			goto out;
-		}
-		if (warnifnotcap(curproxy, PR_CAP_FE, file, linenum, args[0], NULL))
-			err_code |= ERR_WARN;
-
-		/* flush useless bits */
-		curproxy->mon_net.s_addr &= curproxy->mon_mask.s_addr;
+		ha_alert("parsing [%s:%d] : 'monitor-net' doesn't exist anymore. Please use 'http-request return status 200 if { src %s }' instead.\n", file, linenum, args[1]);
+		err_code |= ERR_ALERT | ERR_FATAL;
 		goto out;
 	}
 	else if (!strcmp(args[0], "monitor-uri")) {  /* set the URI to intercept */
@@ -694,7 +692,11 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 		if (!strcmp(args[1], "http")) curproxy->mode = PR_MODE_HTTP;
 		else if (!strcmp(args[1], "tcp")) curproxy->mode = PR_MODE_TCP;
-		else if (!strcmp(args[1], "health")) curproxy->mode = PR_MODE_HEALTH;
+		else if (!strcmp(args[1], "health")) {
+			ha_alert("parsing [%s:%d] : 'mode health' doesn't exist anymore. Please use 'http-request return status 200' instead.\n", file, linenum);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
 		else {
 			ha_alert("parsing [%s:%d] : unknown proxy mode '%s'.\n", file, linenum, args[1]);
 			err_code |= ERR_ALERT | ERR_FATAL;
@@ -774,12 +776,12 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 	else if (!strcmp(args[0], "disabled")) {  /* disables this proxy */
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))
 			goto out;
-		curproxy->state = PR_STSTOPPED;
+		curproxy->disabled = 1;
 	}
 	else if (!strcmp(args[0], "enabled")) {  /* enables this proxy (used to revert a disabled default) */
 		if (alertif_too_many_args(0, file, linenum, args, &err_code))
 			goto out;
-		curproxy->state = PR_STNEW;
+		curproxy->disabled = 0;
 	}
 	else if (!strcmp(args[0], "bind-process")) {  /* enable this proxy only on some processes */
 		int cur_arg = 1;
@@ -1922,6 +1924,12 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 				err_code |= ERR_ALERT | ERR_ABORT;
 				goto out;
 			}
+		} else if (!strcmp(args[1], "show-modules")) {
+			if (!stats_set_flag(&curproxy->uri_auth, STAT_SHMODULES)) {
+				ha_alert("parsing [%s:%d]: out of memory.\n", file, linenum);
+				err_code |= ERR_ALERT | ERR_ABORT;
+				goto out;
+			}
 		} else if (!strcmp(args[1], "show-node")) {
 
 			if (*args[2]) {
@@ -2587,6 +2595,9 @@ stats_error_parsing:
 		curproxy->grace = val;
 		if (alertif_too_many_args(1, file, linenum, args, &err_code))
 			goto out;
+
+		ha_warning("parsing [%s:%d]: the '%s' is deprecated and will be removed in a future version.\n",
+			   file, linenum, args[0]);
 	}
 	else if (!strcmp(args[0], "dispatch")) {  /* dispatch address */
 		struct sockaddr_storage *sk;
@@ -2821,7 +2832,13 @@ stats_error_parsing:
 			goto out;
 		}
 		chunk_destroy(&curproxy->log_tag);
-		chunk_initstr(&curproxy->log_tag, strdup(args[1]));
+		chunk_initlen(&curproxy->log_tag, strdup(args[1]), strlen(args[1]), strlen(args[1]));
+		if (b_orig(&curproxy->log_tag) == NULL) {
+			chunk_destroy(&curproxy->log_tag);
+			ha_alert("parsing [%s:%d]: cannot allocate memory for '%s'.\n", file, linenum, args[0]);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
 	}
 	else if (!strcmp(args[0], "log")) { /* "no log" or "log ..." */
 		if (!parse_logsrv(args, &curproxy->logsrvs, (kwm == KWM_NO), &errmsg)) {

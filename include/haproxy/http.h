@@ -57,6 +57,8 @@ int http_parse_header(const struct ist hdr, struct ist *name, struct ist *value)
 int http_parse_stline(const struct ist line, struct ist *p1, struct ist *p2, struct ist *p3);
 int http_parse_status_val(const struct ist value, struct ist *status, struct ist *reason);
 
+int http_compare_etags(struct ist etag1, struct ist etag2);
+
 /*
  * Given a path string and its length, find the position of beginning of the
  * query string. Returns NULL if no query string is found in the path.
@@ -102,6 +104,27 @@ static inline int http_language_range_match(const char *range, int range_len,
 	}
 	/* Return true only if the last char of the tag is matched. */
 	return tag == tend;
+}
+
+static inline enum http_etag_type http_get_etag_type(const struct ist etag)
+{
+	/* An ETag must be at least 2 characters. */
+	if (etag.len < 2)
+		return ETAG_INVALID;
+
+	/* The last character must be a `"`. */
+	if (etag.ptr[etag.len - 1] != '"')
+		return ETAG_INVALID;
+
+	/* If the ETag starts with a `"` then it is a strong ETag. */
+	if (etag.ptr[0] == '"')
+		return ETAG_STRONG;
+
+	/* If the ETag starts with `W/"` then it is a weak ETag. */
+	if (istnmatch(etag, ist("W/\""), 3))
+		return ETAG_WEAK;
+
+	return ETAG_INVALID;
 }
 
 

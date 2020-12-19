@@ -35,6 +35,7 @@
 #include <haproxy/obj_type-t.h>
 #include <haproxy/peers.h>
 #include <haproxy/pool.h>
+#include <haproxy/protocol.h>
 #include <haproxy/proto_tcp.h>
 #include <haproxy/proxy.h>
 #include <haproxy/server-t.h>
@@ -137,8 +138,6 @@ const char *proxy_mode_str(int mode) {
 		return "tcp";
 	else if (mode == PR_MODE_HTTP)
 		return "http";
-	else if (mode == PR_MODE_HEALTH)
-		return "health";
 	else if (mode == PR_MODE_CLI)
 		return "cli";
 	else
@@ -1043,24 +1042,48 @@ void init_new_proxy(struct proxy *p)
 	/* Default to only allow L4 retries */
 	p->retry_type = PR_RE_CONN_FAILED;
 
-	HA_SPIN_INIT(&p->lock);
+	HA_RWLOCK_INIT(&p->lock);
 }
 
-/*
- * This function finishes the startup of proxies by marking them ready. */
-void start_proxies(void)
+/* to be called under the proxy lock after stopping some listeners. This will
+ * automatically update the p->disabled flag after stopping the last one, and
+ * will emit a log indicating the proxy's condition. The function is idempotent
+ * so that it will not emit multiple logs; a proxy will be disabled only once.
+ */
+void proxy_cond_disable(struct proxy *p)
 {
-	struct proxy *curproxy;
+	if (p->disabled)
+		return;
 
-	for (curproxy = proxies_list; curproxy != NULL; curproxy = curproxy->next) {
-		if (curproxy->state != PR_STNEW)
-			continue; /* already initialized */
+	if (p->li_ready + p->li_paused > 0)
+		return;
 
-		curproxy->state = PR_STREADY;
-		send_log(curproxy, LOG_NOTICE, "Proxy %s started.\n", curproxy->id);
-	}
+	p->disabled = 1;
+
+	if (!(proc_mask(p->bind_proc) & pid_bit))
+		goto silent;
+
+	/* Note: syslog proxies use their own loggers so while it's somewhat OK
+	 * to report them being stopped as a warning, we must not spam their log
+	 * servers which are in fact production servers. For other types (CLI,
+	 * peers, etc) we must not report them at all as they're not really on
+	 * the data plane but on the control plane.
+	 */
+	if (p->mode == PR_MODE_TCP || p->mode == PR_MODE_HTTP || p->mode == PR_MODE_SYSLOG)
+		ha_warning("Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
+			   p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
+
+	if (p->mode == PR_MODE_TCP || p->mode == PR_MODE_HTTP)
+		send_log(p, LOG_WARNING, "Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
+			 p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
+
+ silent:
+	if (p->table && p->table->size && p->table->sync_task)
+		task_wakeup(p->table->sync_task, TASK_WOKEN_MSG);
+
+	if (p->task)
+		task_wakeup(p->task, TASK_WOKEN_MSG);
 }
-
 
 /*
  * This is the proxy management task. It enables proxies when there are enough
@@ -1079,14 +1102,10 @@ struct task *manage_proxy(struct task *t, void *context, unsigned short state)
 	 */
 
 	/* first, let's check if we need to stop the proxy */
-	if (unlikely(stopping && p->state != PR_STSTOPPED)) {
+	if (unlikely(stopping && !p->disabled)) {
 		int t;
 		t = tick_remain(now_ms, p->stop_time);
 		if (t == 0) {
-			ha_warning("Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
-				   p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
-			send_log(p, LOG_WARNING, "Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
-				 p->id, p->fe_counters.cum_conn, p->be_counters.cum_conn);
 			stop_proxy(p);
 			/* try to free more memory */
 			pool_gc(NULL);
@@ -1103,7 +1122,7 @@ struct task *manage_proxy(struct task *t, void *context, unsigned short state)
 	 * be in neither list. Any entry being dumped will have ref_cnt > 0.
 	 * However we protect tables that are being synced to peers.
 	 */
-	if (unlikely(stopping && p->state == PR_STSTOPPED && p->table && p->table->current)) {
+	if (unlikely(stopping && p->disabled && p->table && p->table->current)) {
 		if (!p->table->syncing) {
 			stktable_trash_oldest(p->table, p->table->current);
 			pool_gc(NULL);
@@ -1119,15 +1138,8 @@ struct task *manage_proxy(struct task *t, void *context, unsigned short state)
 		goto out;
 
 	/* check the various reasons we may find to block the frontend */
-	if (unlikely(p->feconn >= p->maxconn)) {
-		if (p->state == PR_STREADY)
-			p->state = PR_STFULL;
+	if (unlikely(p->feconn >= p->maxconn))
 		goto out;
-	}
-
-	/* OK we have no reason to block, so let's unblock if we were blocking */
-	if (p->state == PR_STFULL)
-		p->state = PR_STREADY;
 
 	if (p->fe_sps_lim &&
 	    (wait = next_event_delay(&p->fe_sess_per_sec, p->fe_sps_lim, 0))) {
@@ -1219,7 +1231,6 @@ struct task *hard_stop(struct task *t, void *context, unsigned short state)
 void soft_stop(void)
 {
 	struct proxy *p;
-	struct peers *prs;
 	struct task *task;
 
 	stopping = 1;
@@ -1235,25 +1246,16 @@ void soft_stop(void)
 			ha_alert("out of memory trying to allocate the hard-stop task.\n");
 		}
 	}
+
+	/* stop all stoppable listeners, resulting in disabling all proxies
+	 * that don't use a grace period.
+	 */
+	protocol_stop_now();
+
 	p = proxies_list;
 	tv_update_date(0,1); /* else, the old time before select will be used */
 	while (p) {
-		/* Zombie proxy, let's close the file descriptors */
-		if (p->state == PR_STSTOPPED &&
-		    !LIST_ISEMPTY(&p->conf.listeners) &&
-		    LIST_ELEM(p->conf.listeners.n,
-		    struct listener *, by_fe)->state > LI_ASSIGNED) {
-			struct listener *l;
-			list_for_each_entry(l, &p->conf.listeners, by_fe) {
-				if (l->state > LI_ASSIGNED) {
-					fd_delete(l->rx.fd);
-					l->rx.fd = -1;
-				}
-				l->state = LI_INIT;
-			}
-		}
-
-		if (p->state != PR_STSTOPPED) {
+		if (!p->disabled) {
 			ha_warning("Stopping %s %s in %d ms.\n", proxy_cap_str(p->cap), p->id, p->grace);
 			send_log(p, LOG_WARNING, "Stopping %s %s in %d ms.\n", proxy_cap_str(p->cap), p->id, p->grace);
 			p->stop_time = tick_add(now_ms, p->grace);
@@ -1270,85 +1272,31 @@ void soft_stop(void)
 		p = p->next;
 	}
 
-	prs = cfg_peers;
-	while (prs) {
-		if (prs->peers_fe)
-			stop_proxy(prs->peers_fe);
-		prs = prs->next;
-	}
 	/* signal zero is used to broadcast the "stopping" event */
 	signal_handler(0);
 }
 
 
 /* Temporarily disables listening on all of the proxy's listeners. Upon
- * success, the proxy enters the PR_PAUSED state. If disabling at least one
- * listener returns an error, then the proxy state is set to PR_STERROR
- * because we don't know how to resume from this. The function returns 0
+ * success, the proxy enters the PR_PAUSED state. The function returns 0
  * if it fails, or non-zero on success.
  */
 int pause_proxy(struct proxy *p)
 {
 	struct listener *l;
 
-	if (!(p->cap & PR_CAP_FE) || p->state == PR_STERROR ||
-	    p->state == PR_STSTOPPED || p->state == PR_STPAUSED)
+	if (!(p->cap & PR_CAP_FE) || p->disabled || !p->li_ready)
 		return 1;
 
-	ha_warning("Pausing %s %s.\n", proxy_cap_str(p->cap), p->id);
-	send_log(p, LOG_WARNING, "Pausing %s %s.\n", proxy_cap_str(p->cap), p->id);
+	list_for_each_entry(l, &p->conf.listeners, by_fe)
+		pause_listener(l);
 
-	list_for_each_entry(l, &p->conf.listeners, by_fe) {
-		if (!pause_listener(l))
-			p->state = PR_STERROR;
-	}
-
-	if (p->state == PR_STERROR) {
+	if (p->li_ready) {
 		ha_warning("%s %s failed to enter pause mode.\n", proxy_cap_str(p->cap), p->id);
 		send_log(p, LOG_WARNING, "%s %s failed to enter pause mode.\n", proxy_cap_str(p->cap), p->id);
 		return 0;
 	}
-
-	p->state = PR_STPAUSED;
 	return 1;
-}
-
-/* This function makes the proxy unusable, but keeps the listening sockets
- * opened, so that if any process requests them, we are able to serve them.
- * This should only be called early, before we started accepting requests.
- */
-void zombify_proxy(struct proxy *p)
-{
-	struct listener *l;
-	struct listener *first_to_listen = NULL;
-
-	list_for_each_entry(l, &p->conf.listeners, by_fe) {
-		enum li_state oldstate = l->state;
-
-		unbind_listener_no_close(l);
-		if (l->state >= LI_ASSIGNED) {
-			delete_listener(l);
-		}
-		/*
-		 * Pretend we're still up and running so that the fd
-		 * will be sent if asked.
-		 */
-		l->state = LI_ZOMBIE;
-		if (!first_to_listen && oldstate >= LI_LISTEN)
-			first_to_listen = l;
-	}
-	/* Quick hack : at stop time, to know we have to close the sockets
-	 * despite the proxy being marked as stopped, make the first listener
-	 * of the listener list an active one, so that we don't have to
-	 * parse the whole list to be sure.
-	 */
-	if (first_to_listen && LIST_ELEM(p->conf.listeners.n,
-	    struct listener *, by_fe) != first_to_listen) {
-		LIST_DEL(&l->by_fe);
-		LIST_ADD(&p->conf.listeners, &l->by_fe);
-	}
-
-	p->state = PR_STSTOPPED;
 }
 
 /*
@@ -1362,29 +1310,18 @@ void zombify_proxy(struct proxy *p)
 void stop_proxy(struct proxy *p)
 {
 	struct listener *l;
-	int nostop = 0;
 
-	HA_SPIN_LOCK(PROXY_LOCK, &p->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &p->lock);
 
-	list_for_each_entry(l, &p->conf.listeners, by_fe) {
-		if (l->options & LI_O_NOSTOP) {
-			HA_ATOMIC_ADD(&unstoppable_jobs, 1);
-			nostop = 1;
-			continue;
-		}
-		/* The master should not close an inherited FD */
-		if (master && (l->rx.flags & RX_F_INHERITED))
-			unbind_listener_no_close(l);
-		else
-			unbind_listener(l);
-		if (l->state >= LI_ASSIGNED) {
-			delete_listener(l);
-		}
+	list_for_each_entry(l, &p->conf.listeners, by_fe)
+		stop_listener(l, 1, 0, 0);
+
+	if (!p->disabled && !p->li_ready) {
+		/* might be just a backend */
+		p->disabled = 1;
 	}
-	if (!nostop)
-		p->state = PR_STSTOPPED;
 
-	HA_SPIN_UNLOCK(PROXY_LOCK, &p->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &p->lock);
 }
 
 /* This function resumes listening on the specified proxy. It scans all of its
@@ -1397,11 +1334,8 @@ int resume_proxy(struct proxy *p)
 	struct listener *l;
 	int fail;
 
-	if (p->state != PR_STPAUSED)
+	if (p->disabled || !p->li_paused)
 		return 1;
-
-	ha_warning("Enabling %s %s.\n", proxy_cap_str(p->cap), p->id);
-	send_log(p, LOG_WARNING, "Enabling %s %s.\n", proxy_cap_str(p->cap), p->id);
 
 	fail = 0;
 	list_for_each_entry(l, &p->conf.listeners, by_fe) {
@@ -1428,79 +1362,11 @@ int resume_proxy(struct proxy *p)
 		}
 	}
 
-	p->state = PR_STREADY;
 	if (fail) {
 		pause_proxy(p);
 		return 0;
 	}
 	return 1;
-}
-
-/*
- * This function temporarily disables listening so that another new instance
- * can start listening. It is designed to be called upon reception of a
- * SIGTTOU, after which either a SIGUSR1 can be sent to completely stop
- * the proxy, or a SIGTTIN can be sent to listen again.
- */
-void pause_proxies(void)
-{
-	int err;
-	struct proxy *p;
-	struct peers *prs;
-
-	err = 0;
-	p = proxies_list;
-	tv_update_date(0,1); /* else, the old time before select will be used */
-	while (p) {
-		err |= !pause_proxy(p);
-		p = p->next;
-	}
-
-	prs = cfg_peers;
-	while (prs) {
-		if (prs->peers_fe)
-			err |= !pause_proxy(prs->peers_fe);
-		prs = prs->next;
-        }
-
-	if (err) {
-		ha_warning("Some proxies refused to pause, performing soft stop now.\n");
-		send_log(p, LOG_WARNING, "Some proxies refused to pause, performing soft stop now.\n");
-		soft_stop();
-	}
-}
-
-
-/*
- * This function reactivates listening. This can be used after a call to
- * sig_pause(), for example when a new instance has failed starting up.
- * It is designed to be called upon reception of a SIGTTIN.
- */
-void resume_proxies(void)
-{
-	int err;
-	struct proxy *p;
-	struct peers *prs;
-
-	err = 0;
-	p = proxies_list;
-	tv_update_date(0,1); /* else, the old time before select will be used */
-	while (p) {
-		err |= !resume_proxy(p);
-		p = p->next;
-	}
-
-	prs = cfg_peers;
-	while (prs) {
-		if (prs->peers_fe)
-			err |= !resume_proxy(prs->peers_fe);
-		prs = prs->next;
-        }
-
-	if (err) {
-		ha_warning("Some proxies refused to resume, a restart is probably needed to resume safe operations.\n");
-		send_log(p, LOG_WARNING, "Some proxies refused to resume, a restart is probably needed to resume safe operations.\n");
-	}
 }
 
 /* Set current stream's backend to <be>. Nothing is done if the
@@ -1694,14 +1560,14 @@ void proxy_capture_error(struct proxy *proxy, int is_back,
 	/* note: we still lock since we have to be certain that nobody is
 	 * dumping the output while we free.
 	 */
-	HA_SPIN_LOCK(PROXY_LOCK, &proxy->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &proxy->lock);
 	if (is_back) {
 		es = HA_ATOMIC_XCHG(&proxy->invalid_rep, es);
 	} else {
 		es = HA_ATOMIC_XCHG(&proxy->invalid_req, es);
 	}
 	free(es);
-	HA_SPIN_UNLOCK(PROXY_LOCK, &proxy->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &proxy->lock);
 }
 
 /* Configure all proxies which lack a maxconn setting to use the global one by
@@ -1716,7 +1582,7 @@ void proxy_adjust_all_maxconn()
 	struct switching_rule *swrule1, *swrule2;
 
 	for (curproxy = proxies_list; curproxy; curproxy = curproxy->next) {
-		if (curproxy->state == PR_STSTOPPED)
+		if (curproxy->disabled)
 			continue;
 
 		if (!(curproxy->cap & PR_CAP_FE))
@@ -1760,7 +1626,7 @@ void proxy_adjust_all_maxconn()
 	 * loop above because cross-references are not yet fully resolved.
 	 */
 	for (curproxy = proxies_list; curproxy; curproxy = curproxy->next) {
-		if (curproxy->state == PR_STSTOPPED)
+		if (curproxy->disabled)
 			continue;
 
 		/* If <fullconn> is not set, let's set it to 10% of the sum of
@@ -2071,9 +1937,9 @@ static int cli_parse_enable_dyncookie_backend(char **args, char *payload, struct
 	/* Note: this lock is to make sure this doesn't change while another
 	 * thread is in srv_set_dyncookie().
 	 */
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &px->lock);
 	px->ck_opts |= PR_CK_DYNAMIC;
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
@@ -2103,9 +1969,9 @@ static int cli_parse_disable_dyncookie_backend(char **args, char *payload, struc
 	/* Note: this lock is to make sure this doesn't change while another
 	 * thread is in srv_set_dyncookie().
 	 */
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &px->lock);
 	px->ck_opts &= ~PR_CK_DYNAMIC;
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
@@ -2146,10 +2012,10 @@ static int cli_parse_set_dyncookie_key_backend(char **args, char *payload, struc
 	/* Note: this lock is to make sure this doesn't change while another
 	 * thread is in srv_set_dyncookie().
 	 */
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &px->lock);
 	free(px->dyncookie_key);
 	px->dyncookie_key = newkey;
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &px->lock);
 
 	for (s = px->srv; s != NULL; s = s->next) {
 		HA_SPIN_LOCK(SERVER_LOCK, &s->lock);
@@ -2187,7 +2053,7 @@ static int cli_parse_set_maxconn_frontend(char **args, char *payload, struct app
 	/* OK, the value is fine, so we assign it to the proxy and to all of
 	 * its listeners. The blocked ones will be dequeued.
 	 */
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &px->lock);
 
 	px->maxconn = v;
 	list_for_each_entry(l, &px->conf.listeners, by_fe) {
@@ -2198,7 +2064,7 @@ static int cli_parse_set_maxconn_frontend(char **args, char *payload, struct app
 	if (px->maxconn > px->feconn)
 		dequeue_proxy_listeners(px);
 
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &px->lock);
 
 	return 1;
 }
@@ -2218,13 +2084,8 @@ static int cli_parse_shutdown_frontend(char **args, char *payload, struct appctx
 	if (!px)
 		return 1;
 
-	if (px->state == PR_STSTOPPED)
+	if (px->disabled)
 		return cli_msg(appctx, LOG_NOTICE, "Frontend was already shut down.\n");
-
-	ha_warning("Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
-		   px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
-	send_log(px, LOG_WARNING, "Proxy %s stopped (cumulated conns: FE: %lld, BE: %lld).\n",
-	         px->id, px->fe_counters.cum_conn, px->be_counters.cum_conn);
 
 	stop_proxy(px);
 	return 1;
@@ -2246,15 +2107,15 @@ static int cli_parse_disable_frontend(char **args, char *payload, struct appctx 
 	if (!px)
 		return 1;
 
-	if (px->state == PR_STSTOPPED)
+	if (px->disabled)
 		return cli_msg(appctx, LOG_NOTICE, "Frontend was previously shut down, cannot disable.\n");
 
-	if (px->state == PR_STPAUSED)
-		return cli_msg(appctx, LOG_NOTICE, "Frontend is already disabled.\n");
+	if (!px->li_ready)
+		return cli_msg(appctx, LOG_NOTICE, "All sockets are already disabled.\n");
 
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &px->lock);
 	ret = pause_proxy(px);
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &px->lock);
 
 	if (!ret)
 		return cli_err(appctx, "Failed to pause frontend, check logs for precise cause.\n");
@@ -2278,15 +2139,15 @@ static int cli_parse_enable_frontend(char **args, char *payload, struct appctx *
 	if (!px)
 		return 1;
 
-	if (px->state == PR_STSTOPPED)
+	if (px->disabled)
 		return cli_err(appctx, "Frontend was previously shut down, cannot enable.\n");
 
-	if (px->state != PR_STPAUSED)
-		return cli_msg(appctx, LOG_NOTICE, "Frontend is already enabled.\n");
+	if (px->li_ready == px->li_all)
+		return cli_msg(appctx, LOG_NOTICE, "All sockets are already enabled.\n");
 
-	HA_SPIN_LOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRLOCK(PROXY_LOCK, &px->lock);
 	ret = resume_proxy(px);
-	HA_SPIN_UNLOCK(PROXY_LOCK, &px->lock);
+	HA_RWLOCK_WRUNLOCK(PROXY_LOCK, &px->lock);
 
 	if (!ret)
 		return cli_err(appctx, "Failed to resume frontend, check logs for precise cause (port conflict?).\n");
@@ -2365,7 +2226,7 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 	while (appctx->ctx.errors.px) {
 		struct error_snapshot *es;
 
-		HA_SPIN_LOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
+		HA_RWLOCK_RDLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
 
 		if ((appctx->ctx.errors.flag & 1) == 0) {
 			es = appctx->ctx.errors.px->invalid_req;
@@ -2475,7 +2336,7 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 			appctx->ctx.errors.bol = newline;
 		};
 	next:
-		HA_SPIN_UNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
+		HA_RWLOCK_RDUNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
 		appctx->ctx.errors.bol = 0;
 		appctx->ctx.errors.ptr = -1;
 		appctx->ctx.errors.flag ^= 1;
@@ -2487,7 +2348,7 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
 	return 1;
 
  cant_send_unlock:
-	HA_SPIN_UNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
+	HA_RWLOCK_RDUNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
  cant_send:
 	si_rx_room_blk(si);
 	return 0;

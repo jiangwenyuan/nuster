@@ -30,7 +30,8 @@
 #include <haproxy/api-t.h>
 #include <haproxy/obj_type-t.h>
 #include <haproxy/receiver-t.h>
-#include <haproxy/thread-t.h>
+#include <haproxy/stats-t.h>
+#include <haproxy/thread.h>
 
 #ifdef USE_OPENSSL
 #include <haproxy/openssl-compat.h>
@@ -42,6 +43,7 @@ struct protocol;
 struct xprt_ops;
 struct proxy;
 struct fe_counters;
+struct connection;
 
 /* listener state */
 enum li_state {
@@ -49,7 +51,6 @@ enum li_state {
 	LI_INIT,        /* all parameters filled in, but not assigned yet */
 	LI_ASSIGNED,    /* assigned to the protocol, but not listening yet */
 	LI_PAUSED,      /* listener was paused, it's bound but not listening  */
-	LI_ZOMBIE,	/* The listener doesn't belong to the process, but is kept opened */
 	LI_LISTEN,      /* started, listening but not enabled */
 	LI_READY,       /* started, listening and enabled */
 	LI_FULL,        /* reached its connection limit */
@@ -90,15 +91,15 @@ enum li_state {
 #define LI_O_DEF_ACCEPT         0x0008  /* wait up to 1 second for data before accepting */
 #define LI_O_TCP_L4_RULES       0x0010  /* run TCP L4 rules checks on the incoming connection */
 #define LI_O_TCP_L5_RULES       0x0020  /* run TCP L5 rules checks on the incoming session */
-#define LI_O_CHK_MONNET         0x0040  /* check the source against a monitor-net rule */
+/* unused                       0x0040  */
 #define LI_O_ACC_PROXY          0x0080  /* find the proxied address in the first request line */
 #define LI_O_UNLIMITED          0x0100  /* listener not subject to global limits (peers & stats socket) */
 #define LI_O_TCP_FO             0x0200  /* enable TCP Fast Open (linux >= 3.7) */
 /* unused                       0x0400  */
 /* unused                       0x0800  */
 #define LI_O_ACC_CIP            0x1000  /* find the proxied address in the NetScaler Client IP header */
-/* unused                       0x2000 */
-#define LI_O_MWORKER            0x4000  /* keep the FD open in the master but close it in the children */
+/* unused                       0x2000  */
+/* unused                       0x4000  */
 #define LI_O_NOSTOP             0x8000  /* keep the listener active even after a soft stop */
 
 /* Note: if a listener uses LI_O_UNLIMITED, it is highly recommended that it adds its own
@@ -156,7 +157,6 @@ struct bind_conf {
 	struct ssl_bind_conf *default_ssl_conf; /* custom SSL conf of default_ctx */
 	int strict_sni;            /* refuse negotiation if sni doesn't match a certificate */
 	int ssl_options;           /* ssl options */
-	__decl_thread(HA_RWLOCK_T sni_lock); /* lock the SNI trees during add/del operations */
 	struct eb_root sni_ctx;    /* sni_ctx tree of all known certs full-names sorted by name */
 	struct eb_root sni_w_ctx;  /* sni_ctx tree of all known certs wildcards sorted by name */
 	struct tls_keys_ref *keys_ref; /* TLS ticket keys reference */
@@ -179,6 +179,7 @@ struct bind_conf {
 	char *arg;                 /* argument passed to "bind" for better error reporting */
 	char *file;                /* file where the section appears */
 	int line;                  /* line where the section appears */
+	__decl_thread(HA_RWLOCK_T sni_lock); /* lock the SNI trees during add/del operations */
 	struct rx_settings settings; /* all the settings needed for the listening socket */
 };
 
@@ -192,12 +193,14 @@ struct listener {
 	short int nice;                 /* nice value to assign to the instantiated tasks */
 	int luid;			/* listener universally unique ID, used for SNMP */
 	int options;			/* socket options : LI_O_* */
+	__decl_thread(HA_SPINLOCK_T lock);
+
 	struct fe_counters *counters;	/* statistics counters */
 	int nbconn;			/* current number of connections on this listener */
 	int maxconn;			/* maximum connections allowed on this listener */
 	unsigned int backlog;		/* if set, listen backlog */
 	int maxaccept;         /* if set, max number of connections accepted at once (-1 when disabled) */
-	int (*accept)(struct listener *l, int fd, struct sockaddr_storage *addr); /* upper layer's accept() */
+	int (*accept)(struct connection *conn); /* upper layer's accept() */
 	enum obj_type *default_target;  /* default target to use for accepted sessions or NULL */
 	/* cache line boundary */
 	struct mt_list wait_queue;	/* link element to make the listener wait for something (LI_LIMITED)  */
@@ -206,8 +209,6 @@ struct listener {
 	int maxseg;			/* for TCP, advertised MSS */
 	int tcp_ut;                     /* for TCP, user timeout */
 	char *name;			/* listener's name */
-
-	__decl_thread(HA_SPINLOCK_T lock);
 
 	/* cache line boundary */
 	unsigned int thr_conn[MAX_THREADS]; /* number of connections per thread */
@@ -221,6 +222,8 @@ struct listener {
 	struct {
 		struct eb32_node id;	/* place in the tree of used IDs */
 	} conf;				/* config information */
+
+	EXTRA_COUNTERS(extra_counters);
 };
 
 /* Descriptor for a "bind" keyword. The ->parse() function returns 0 in case of
@@ -252,29 +255,14 @@ struct bind_kw_list {
 	struct bind_kw kw[VAR_ARRAY];
 };
 
-/* This is used to create the accept queue, optimized to be 64 bytes long. */
-struct accept_queue_entry {
-	struct listener *listener;          // 8 bytes
-	int fd __attribute__((aligned(8))); // 4 bytes
-	int addr_len;                       // 4 bytes
-
-	union {
-		sa_family_t family;         // 2 bytes
-		struct sockaddr_in in;      // 16 bytes
-		struct sockaddr_in6 in6;    // 28 bytes
-	} addr; // this is normally 28 bytes
-	/* 20-bytes hole here */
-	char pad0[0] __attribute((aligned(64)));
-};
-
 /* The per-thread accept queue ring, must be a power of two minus 1 */
-#define ACCEPT_QUEUE_SIZE ((1<<8) - 1)
+#define ACCEPT_QUEUE_SIZE ((1<<10) - 1)
 
 struct accept_queue_ring {
 	unsigned int head;
 	unsigned int tail;
 	struct tasklet *tasklet;  /* tasklet of the thread owning this ring */
-	struct accept_queue_entry entry[ACCEPT_QUEUE_SIZE] __attribute((aligned(64)));
+	struct connection *entry[ACCEPT_QUEUE_SIZE] __attribute((aligned(64)));
 };
 
 

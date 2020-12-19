@@ -1,6 +1,324 @@
 ChangeLog :
 ===========
 
+2020/11/05 : 2.3.0
+    - CLEANUP: pattern: remove unused entry "tree" in pattern.val
+    - BUILD: ssl: use SSL_CTRL_GET_RAW_CIPHERLIST instead of OpenSSL versions
+    - BUG/MEDIUM: filters: Don't try to init filters for disabled proxies
+    - BUG/MINOR: proxy/server: Skip per-proxy/server post-check for disabled proxies
+    - BUG/MINOR: checks: Report a socket error before any connection attempt
+    - BUG/MINOR: server: Set server without addr but with dns in RMAINT on startup
+    - MINOR: server: Copy configuration file and line for server templates
+    - BUG/MEDIUM: mux-pt: Release the tasklet during an HTTP upgrade
+    - BUILD: ssl: use HAVE_OPENSSL_KEYLOG instead of OpenSSL versions
+    - MINOR: debug: don't count free(NULL) in memstats
+    - BUG/MINOR: filters: Skip disabled proxies during startup only
+    - MINOR: mux_h2: capitalize frame type in stats
+    - MINOR: mux_h2: add stat for total count of connections/streams
+    - MINOR: stats: do not display empty stat module title on html
+    - BUG/MEDIUM: stick-table: limit the time spent purging old entries
+    - BUG/MEDIUM: listener: only enable a listening listener if needed
+    - BUG/MEDIUM: listener: never suspend inherited sockets
+    - BUG/MEDIUM: listener: make the master also keep workers' inherited FDs
+    - MINOR: fd: add fd_want_recv_safe()
+    - MEDIUM: listeners: make use of fd_want_recv_safe() to enable early receivers
+    - REGTESTS: mark abns_socket as working now
+    - CLEANUP: mux-h2: Remove the h1 parser state from the h2 stream
+    - MINOR: sock: add a check against cross worker<->master socket activities
+    - CI: github actions: limit OpenSSL no-deprecated builds to "default,bug,devel" reg-tests
+    - BUG/MEDIUM: server: make it possible to kill last idle connections
+    - MINOR: mworker/cli: the master CLI use its own applet
+    - MINOR: ssl: define SSL_CTX_set1_curves_list to itself on BoringSSL
+    - BUILD: ssl: use feature macros for detecting ec curves manipulation support
+    - DOC: Add dns as an available domain to show stat
+    - BUILD: makefile: usual reorder of objects for faster builds
+    - DOC: update INSTALL to mention that TCC is supported
+    - DOC: mention in INSTALL that haproxy 2.3 is a stable version
+    - MINOR: version: mention that it's stable now
+
+2020/10/31 : 2.3-dev9
+    - CLEANUP: http_ana: remove unused assignation of `att_beg`
+    - BUG/MEDIUM: ssl: OCSP must work with BoringSSL
+    - BUG/MINOR: log: fix memory leak on logsrv parse error
+    - BUG/MINOR: log: fix risk of null deref on error path
+    - BUILD: ssl: more elegant OpenSSL early data support check
+    - CI: github actions: update h2spec to 2.6.0
+    - BUG/MINOR: cache: Check the return value of http_replace_res_status
+    - MINOR: cache: Store the "Last-Modified" date in the cache_entry
+    - MINOR: cache: Process the If-Modified-Since header in conditional requests
+    - MINOR: cache: Create res.cache_hit and res.cache_name sample fetches
+    - MINOR: mux-h2: register a stats module
+    - MINOR: mux-h2: add counters instance to h2c
+    - MINOR: mux-h2: add stats for received frame types
+    - MINOR: mux-h2: report detected error on stats
+    - MINOR: mux-h2: count open connections/streams on stats
+    - BUG/MINOR: server: fix srv downtime calcul on starting
+    - BUG/MINOR: server: fix down_time report for stats
+    - BUG/MINOR: lua: initialize sample before using it
+    - MINOR: cache: Add Expires header value parsing
+    - MINOR: ist: Add a case insensitive istmatch function
+    - BUG/MINOR: cache: Manage multiple values in cache-control header value
+    - BUG/MINOR: cache: Inverted variables in http_calc_maxage function
+    - MINOR: pattern: make pat_ref_append() return the newly added element
+    - MINOR: pattern: make pat_ref_add() rely on pat_ref_append()
+    - MINOR: pattern: export pat_ref_push()
+    - CLEANUP: pattern: use calloc() rather than malloc for structures
+    - CLEANUP: pattern: fix spelling/grammatical/copy-paste in comments
+
+2020/10/24 : 2.3-dev8
+    - MINOR: backend: replace the lbprm lock with an rwlock
+    - MINOR: lb/map: use seek lock and read locks where appropriate
+    - MINOR: lb/leastconn: only take a read lock in fwlc_get_next_server()
+    - MINOR: lb/first: use a read lock in fas_get_next_server()
+    - MINOR: lb/chash: use a read lock in chash_get_server_hash()
+    - BUG/MINOR: disable dynamic OCSP load with BoringSSL
+    - BUILD: ssl: make BoringSSL use its own version numbers
+    - CLEANUP: threads: don't register an initcall when not debugging
+    - MINOR: threads: change lock_t to an unsigned int
+    - CLEANUP: tree-wide: reorder a few structures to plug some holes around locks
+    - CLEANUP: task: remove the unused and mishandled global_rqueue_size
+    - BUG/MEDIUM: connection: Never cleanup server lists when freeing private conns
+    - MEDIUM: config: report that "nbproc" is deprecated
+    - BUG/MINOR: listener: close before free in `listener_accept`
+    - MINOR: ssl: 'ssl-load-extra-del-ext' removes the certificate extension
+    - BUG/MINOR: queue: properly report redistributed connections
+    - CONTRIB: tcploop: remove unused local variables in tcp_pause()
+    - BUILD: makefile: add entries to build common debugging tools
+    - BUG/MEDIUM: server: support changing the slowstart value from state-file
+    - MINOR: http: Add `enum etag_type http_get_etag_type(const struct ist)`
+    - MINOR: http: Add etag comparison function
+    - MEDIUM: cache: Store the ETag information in the cache_entry
+    - MEDIUM: cache: Add support for 'If-None-Match' request header
+    - REGTEST: cache: Add if-none-match test case
+    - CLEANUP: compression: Make use of http_get_etag_type()
+    - BUG/MINOR: http-ana: Don't send payload for internal responses to HEAD requests
+    - BUG/MAJOR: mux-h2: Don't try to send data if we know it is no longer possible
+    - MINOR: threads/debug: only report used lock stats
+    - MINOR: threads/debug: only report lock stats for used operations
+    - MINOR: proxy; replace the spinlock with an rwlock
+    - MINOR: server: read-lock the cookie during srv_set_dyncookie()
+    - MINOR: proxy/cli: only take a read lock in "show errors"
+    - OPTIM: queue: don't call pendconn_unlink() when the pendconn is not queued
+    - MINOR: queue: split __pendconn_unlink() in per-srv and per-prx
+    - MINOR: queue: reduce the locked area in pendconn_add()
+    - OPTIM: queue: make the nbpend counters atomic
+    - OPTIM: queue: decrement the nbpend and totpend counters outside of the lock
+    - MINOR: leastconn: take the queue length into account when queuing servers
+    - MEDIUM: fwlc: re-enable per-server queuing up to maxqueue
+    - Revert "OPTIM: queue: don't call pendconn_unlink() when the pendconn is not queued"
+    - MINOR: stats: support the "up" output modifier for "show stat"
+    - MINOR: stats: also support a "no-maint" show stat modifier
+    - MINOR: stats: indicate the number of servers in a backend's status
+    - MEDIUM: ssl: ssl-load-extra-del-ext work only with .crt
+    - REGTEST: ssl: test "set ssl cert" with separate key / crt
+    - DOC: management: apply the "show stat" modifiers to "show stat", not "show info"
+    - MINOR: stats: report server's user-configured weight next to effective weight
+    - CI: travis-ci: switch to Ubuntu 20.04
+    - CONTRIB: release-estimator: Add release estimating tool
+    - BUG/MEDIUM: queue: fix unsafe proxy pointer when counting nbpend
+    - BUG/MINOR: extcheck: add missing checks on extchk_setenv()
+
+2020/10/17 : 2.3-dev7
+    - CI: travis-ci: replace not defined SSL_LIB, SSL_INC for BotringSSL builds
+    - BUG/MINOR: init: only keep rlim_fd_cur if max is unlimited
+    - BUG/MINOR: mux-h2: do not stop outgoing connections on stopping
+    - MINOR: fd: report an error message when failing initial allocations
+    - MINOR: proto-tcp: make use of connect(AF_UNSPEC) for the pause
+    - MINOR: sock: add sock_accept_conn() to test a listening socket
+    - MINOR: protocol: make proto_tcp & proto_uxst report listening sockets
+    - MINOR: sockpair: implement the .rx_listening function
+    - CLEANUP: tcp: make use of sock_accept_conn() where relevant
+    - CLEANUP: unix: make use of sock_accept_conn() where relevant
+    - BUG/MINOR: listener: detect and handle shared sockets stopped in other processes
+    - CONTRIB: tcploop: implement a disconnect operation 'D'
+    - CLEANUP: protocol: intitialize all of the sockaddr when disconnecting
+    - BUG/MEDIUM: deinit: check fdtab before fdtab[fd].owner
+    - BUG/MINOR: connection: fix loop iter on connection takeover
+    - BUG/MEDIUM: connection: fix srv idle count on conn takeover
+    - MINOR: connection: improve list api usage
+    - MINOR: mux/connection: add a new mux flag for HOL risk
+    - MINOR: connection: don't check priv flag on free
+    - MEDIUM: backend: add new conn to session if mux marked as HOL blocking
+    - MEDIUM: backend: add reused conn to sess if mux marked as HOL blocking
+    - MEDIUM: h2: remove conn from session on detach
+    - MEDIUM: fcgi: remove conn from session on detach
+    - DOC: Describe reuse safe for HOL handling
+    - MEDIUM: proxy: remove obsolete "mode health"
+    - MEDIUM: proxy: remove obsolete "monitor-net"
+    - CLEANUP: protocol: remove the ->drain() function
+    - CLEANUP: fd: finally get rid of fd_done_recv()
+    - MINOR: connection: make sockaddr_alloc() take the address to be copied
+    - MEDIUM: listener: allocate the connection before queuing a new connection
+    - MINOR: session: simplify error path in session_accept_fd()
+    - MINOR: connection: add new error codes for accept_conn()
+    - MINOR: sock: rename sock_accept_conn() to sock_accepting_conn()
+    - MINOR: protocol: add a new function accept_conn()
+    - MINOR: sock: implement sock_accept_conn() to accept a connection
+    - MINOR: sockpair: implement sockpair_accept_conn() to accept a connection
+    - MEDIUM: listener: use protocol->accept_conn() to accept a connection
+    - MEDIUM: listener: remove the second pass of fd manipulation at the end
+    - MINOR: protocol: add a default I/O callback and put it into the receiver
+    - MINOR: log: set the UDP receiver's I/O handler in the receiver
+    - MINOR: protocol: register the receiver's I/O handler and not the protocol's
+    - CLEANUP: protocol: remove the now unused <handler> field of proto_fam->bind()
+    - DOC: improve the documentation for "option nolinger"
+    - BUG/MEDIUM: proxy: properly stop backends
+    - BUG/MEDIUM: task: bound the number of tasks picked from the wait queue at once
+    - MINOR: threads: augment rwlock debugging stats to report seek lock stats
+    - MINOR: threads: add the transitions to/from the seek state
+    - MEDIUM: task: use an upgradable seek lock when scanning the wait queue
+    - BUILD: listener: avoir a build warning when threads are disabled
+    - BUG/MINOR: peers: Possible unexpected peer seesion reset after collisions.
+    - MINOR: ssl: add volatile flags to ssl samples
+    - MEDIUM: backend: reuse connection if using a static sni
+    - BUG/MEDIUM: spoe: Unset variable instead of set it if no data provided
+    - BUG/MEDIUM: mux-h1: Get the session from the H1S when capturing bad messages
+    - BUG/MEDIUM: lb: Always lock the server when calling server_{take,drop}_conn
+    - DOC: fix typo in MAX_SESS_STKCTR
+
+2020/10/10 : 2.3-dev6
+    - REGTESTS: use "command" instead of "which" for better POSIX compatibility
+    - BUILD: makefile: Update feature flags for OpenBSD
+    - DOC: agent-check: fix typo in "fail" word expected reply
+    - DOC: crt: advise to move away from cert bundle
+    - BUG/MINOR: ssl/crt-list: exit on warning out of crtlist_parse_line()
+    - REGTEST: fix host part in balance-uri-path-only.vtc
+    - REGTEST: make ssl_client_samples and ssl_server_samples requiret to 2.3
+    - REGTEST: the iif converter test requires 2.3
+    - REGTEST: make agent-check.vtc require 1.8
+    - REGTEST: make abns_socket.vtc require 1.8
+    - REGTEST: make map_regm_with_backref require 1.7
+    - BUILD: makefile: Update feature flags for FreeBSD
+    - OPTIM: backend/random: never queue on the server, always on the backend
+    - OPTIM: backend: skip LB when we know the backend is full
+    - BUILD: makefile: Fix building with closefrom() support enabled
+    - BUILD: makefile: add an EXTRAVERSION variable to ease local naming
+    - MINOR: tools: support for word expansion of environment in parse_line
+    - BUILD: tools: fix minor build issue on isspace()
+    - BUILD: makefile: Enable closefrom() support on Solaris
+    - CLEANUP: ssl: Use structured format for error line report during crt-list parsing
+    - MINOR: ssl: Add error if a crt-list might be truncated
+    - MINOR: ssl: remove uneeded check in crtlist_parse_file
+    - BUG/MINOR: Fix several leaks of 'log_tag' in init().
+    - DOC: tcp-rules: Refresh details about L7 matching for tcp-request content rules
+    - MEDIUM: tcp-rules: Warn if a track-sc* content rule doesn't depend on content
+    - BUG/MINOR: tcpcheck: Set socks4 and send-proxy flags before the connect call
+    - DOC: ssl: new "cert bundle" behavior
+    - BUG/MEDIUM: queue: make pendconn_cond_unlink() really thread-safe
+    - CLEANUP: ssl: "bundle" is not an OpenSSL wording
+    - MINOR: counters: fix a typo in comment
+    - BUG/MINOR: stats: fix validity of the json schema
+    - REORG: stats: export some functions
+    - MINOR: stats: add stats size as a parameter for csv/json dump
+    - MINOR: stats: hide px/sv/li fields in applet struct
+    - REORG: stats: extract proxy json dump
+    - REORG: stats: extract proxies dump loop in a function
+    - MINOR: hlua: Display debug messages on stderr only in debug mode
+    - MINOR: stats: define the concept of domain for statistics
+    - MINOR: stats: define additional flag px cap on domain
+    - MEDIUM: stats: add delimiter for static proxy stats on csv
+    - MEDIUM: stats: define an API to register stat modules
+    - MEDIUM: stats: add abstract type to store counters
+    - MEDIUM: stats: integrate static proxies stats in new stats
+    - MINOR: stats: support clear counters for dynamic stats
+    - MINOR: stats: display extra proxy stats on the html page
+    - MINOR: stats: add config "stats show modules"
+    - MINOR: dns/stats: integrate dns counters in stats
+    - MINOR: stats: remove for loop declaration
+    - DOC: ssl: fix typo about ocsp files
+    - BUG/MINOR: peers: Inconsistency when dumping peer status codes.
+    - DOC: update INSTALL with supported OpenBSD / FreeBSD versions
+    - BUG/MINOR: proto_tcp: Report warning messages when listeners are bound
+    - CLEANUP: cache: Fix leak of cconf->c.name during config check
+    - CLEANUP: ssl: Release cached SSL sessions on deinit
+    - BUG/MINOR: mux-h1: Be sure to only set CO_RFL_READ_ONCE for the first read
+    - BUG/MINOR: mux-h1: Always set the session on frontend h1 stream
+    - MINOR: mux-h1: Don't wakeup the H1C when output buffer become available
+    - CLEANUP: sock-unix: Remove an unreachable goto clause
+    - BUG/MINOR: proxy: inc req counter on new syslog messages.
+    - BUG/MEDIUM: log: old processes with log foward section don't die on soft stop.
+    - MINOR: stats: inc req counter on listeners.
+    - MINOR: channel: new getword and getchar functions on channel.
+    - MEDIUM: log: syslog TCP support on log forward section.
+    - BUG/MINOR: proxy/log: frontend/backend and log forward names must differ
+    - DOC: re-work log forward bind statement documentation.
+    - DOC: fix a confusing typo on a regsub example
+    - BUILD: Add a DragonFlyBSD target
+    - BUG/MINOR: makefile: fix a tiny typo in the target list
+    - BUILD: makefile: Update feature flags for NetBSD
+    - CI: travis-ci: help Coverity to detect BUG_ON() as a real stop
+    - DOC: Add missing stats fields in the management doc
+    - BUG/MEDIUM: mux-fcgi: Don't handle pending read0 too early on streams
+    - BUG/MEDIUM: mux-h2: Don't handle pending read0 too early on streams
+    - DOC: Fix typos in configuration.txt
+    - BUG/MINOR: http: Fix content-length of the default 500 error
+    - BUG/MINOR: http-htx: Expect no body for 204/304 internal HTTP responses
+    - REGTESTS: mark abns_socket as broken
+    - MEDIUM: fd: always wake up one thread when enabling a foreing FD
+    - MEDIUM: listeners: don't bounce listeners management between queues
+    - MEDIUM: init: stop disabled proxies after initializing fdtab
+    - MEDIUM: listeners: make unbind_listener() converge if needed
+    - MEDIUM: deinit: close all receivers/listeners before scanning proxies
+    - MEDIUM: listeners: remove the now unused ZOMBIE state
+    - MINOR: listeners: do not uselessly try to close zombie listeners in soft_stop()
+    - CLEANUP: proxy: remove the first_to_listen hack in zombify_proxy()
+    - MINOR: listeners: introduce listener_set_state()
+    - MINOR: proxy: maintain per-state counters of listeners
+    - MEDIUM: proxy: remove the unused PR_STFULL state
+    - MEDIUM: proxy: remove the PR_STERROR state
+    - MEDIUM: proxy: remove state PR_STPAUSED
+    - MINOR: startup: don't rely on PR_STNEW to check for listeners
+    - CLEANUP: peers: don't use the PR_ST* states to mark enabled/disabled
+    - MEDIUM: proxy: replace proxy->state with proxy->disabled
+    - MEDIUM: proxy: remove start_proxies()
+    - MEDIUM: proxy: merge zombify_proxy() with stop_proxy()
+    - MINOR: listeners: check the current listener state in pause_listener()
+    - MINOR: listeners: check the current listener earlier state in resume_listener()
+    - MEDIUM: listener/proxy: make the listeners notify about proxy pause/resume
+    - MINOR: protocol: introduce protocol_{pause,resume}_all()
+    - MAJOR: signals: use protocol_pause_all() and protocol_resume_all()
+    - CLEANUP: proxy: remove the now unused pause_proxies() and resume_proxies()
+    - MEDIUM: proto_tcp: make the pause() more robust in multi-process
+    - BUG/MEDIUM: listeners: correctly report pause() errors
+    - MINOR: listeners: move fd_stop_recv() to the receiver's socket code
+    - CLEANUP: protocol: remove the ->disable_all method
+    - CLEANUP: listeners: remove unused disable_listener and disable_all_listeners
+    - MINOR: listeners: export enable_listener()
+    - MINOR: protocol: directly call enable_listener() from protocol_enable_all()
+    - CLEANUP: protocol: remove the ->enable_all method
+    - CLEANUP: listeners: remove the now unused enable_all_listeners()
+    - MINOR: protocol: rename the ->listeners field to ->receivers
+    - MINOR: protocol: replace ->pause(listener) with ->rx_suspend(receiver)
+    - MINOR: protocol: implement an ->rx_resume() method
+    - MINOR: listener: use the protocol's ->rx_resume() method when available
+    - MINOR: sock: provide a set of generic enable/disable functions
+    - MINOR: protocol: add a new pair of rx_enable/rx_disable methods
+    - MINOR: protocol: add a new pair of enable/disable methods for listeners
+    - MEDIUM: listeners: now use the listener's ->enable/disable
+    - MINOR: listeners: split delete_listener() in two versions
+    - MINOR: listeners: count unstoppable jobs on creation, not deletion
+    - MINOR: listeners: add a new stop_listener() function
+    - MEDIUM: proxy: make stop_proxy() now use stop_listener()
+    - MEDIUM: proxy: add mode PR_MODE_PEERS to flag peers frontends
+    - MEDIUM: proxy: centralize proxy status update and reporting
+    - MINOR: protocol: add protocol_stop_now() to instant-stop listeners
+    - MEDIUM: proxy: make soft_stop() stop most listeners using protocol_stop_now()
+    - MEDIUM: udp: implement udp_suspend() and udp_resume()
+    - MINOR: listener: add a few BUG_ON() statements to detect inconsistencies
+    - MEDIUM: listeners: always close master vs worker listeners
+    - BROKEN/MEDIUM: listeners: rework the unbind logic to make it idempotent
+    - MEDIUM: listener: let do_unbind_listener() decide whether to close or not
+    - CLEANUP: listeners: remove the do_close argument to unbind_listener()
+    - MINOR: listeners: move the LI_O_MWORKER flag to the receiver
+    - MEDIUM: receivers: add an rx_unbind() method in the protocols
+    - MINOR: listeners: split do_unbind_listener() in two
+    - MEDIUM: listeners: implement protocol level ->suspend/resume() calls
+    - MEDIUM: config: mark "grace" as deprecated
+    - MEDIUM: config: remove the deprecated and dangerous global "debug" directive
+    - BUG/MINOR: proxy: respect the proper format string in sig_pause/sig_listen
+    - MINOR: peers: heartbeat, collisions and handshake information for "show peers" command.
+    - BUILD: makefile: Enable getaddrinfo() on OS/X
+
 2020/09/25 : 2.3-dev5
     - DOC: Fix typo in iif() example
     - CLEANUP: Update .gitignore

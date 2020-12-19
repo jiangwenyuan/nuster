@@ -41,6 +41,10 @@
 #include <haproxy/task.h>
 
 static int udp_bind_listener(struct listener *listener, char *errmsg, int errlen);
+static int udp_suspend_receiver(struct receiver *rx);
+static int udp_resume_receiver(struct receiver *rx);
+static void udp_enable_listener(struct listener *listener);
+static void udp_disable_listener(struct listener *listener);
 static void udp4_add_listener(struct listener *listener, int port);
 static void udp6_add_listener(struct listener *listener, int port);
 
@@ -52,14 +56,20 @@ static struct protocol proto_udp4 = {
 	.sock_domain = AF_INET,
 	.sock_type = SOCK_DGRAM,
 	.sock_prot = IPPROTO_UDP,
-	.accept = NULL,
-	.connect = NULL,
-	.listen = udp_bind_listener,
-	.enable_all = enable_all_listeners,
-	.pause = udp_pause_listener,
 	.add = udp4_add_listener,
-	.listeners = LIST_HEAD_INIT(proto_udp4.listeners),
-	.nb_listeners = 0,
+	.listen = udp_bind_listener,
+	.enable = udp_enable_listener,
+	.disable = udp_disable_listener,
+	.unbind = default_unbind_listener,
+	.suspend = default_suspend_listener,
+	.resume  = default_resume_listener,
+	.rx_enable = sock_enable,
+	.rx_disable = sock_disable,
+	.rx_unbind = sock_unbind,
+	.rx_suspend = udp_suspend_receiver,
+	.rx_resume = udp_resume_receiver,
+	.receivers = LIST_HEAD_INIT(proto_udp4.receivers),
+	.nb_receivers = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_udp4);
@@ -72,14 +82,20 @@ static struct protocol proto_udp6 = {
 	.sock_domain = AF_INET6,
 	.sock_type = SOCK_DGRAM,
 	.sock_prot = IPPROTO_UDP,
-	.accept = NULL,
-	.connect = NULL,
-	.listen = udp_bind_listener,
-	.enable_all = enable_all_listeners,
-	.pause = udp_pause_listener,
 	.add = udp6_add_listener,
-	.listeners = LIST_HEAD_INIT(proto_udp6.listeners),
-	.nb_listeners = 0,
+	.listen = udp_bind_listener,
+	.enable = udp_enable_listener,
+	.disable = udp_disable_listener,
+	.unbind = default_unbind_listener,
+	.suspend = default_suspend_listener,
+	.resume  = default_resume_listener,
+	.rx_enable = sock_enable,
+	.rx_disable = sock_disable,
+	.rx_unbind = sock_unbind,
+	.rx_suspend = udp_suspend_receiver,
+	.rx_resume = udp_resume_receiver,
+	.receivers = LIST_HEAD_INIT(proto_udp6.receivers),
+	.nb_receivers = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_udp6);
@@ -114,7 +130,7 @@ int udp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 		goto udp_return;
 	}
 
-	listener->state = LI_LISTEN;
+	listener_set_state(listener, LI_LISTEN);
 
  udp_return:
 	if (msg && errlen) {
@@ -134,11 +150,11 @@ static void udp4_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
-	listener->state = LI_ASSIGNED;
+	listener_set_state(listener, LI_ASSIGNED);
 	listener->rx.proto = &proto_udp4;
 	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_udp4.listeners, &listener->rx.proto_list);
-	proto_udp4.nb_listeners++;
+	LIST_ADDQ(&proto_udp4.receivers, &listener->rx.proto_list);
+	proto_udp4.nb_receivers++;
 }
 
 /* Add <listener> to the list of udp6 listeners, on port <port>. The
@@ -149,20 +165,80 @@ static void udp6_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
-	listener->state = LI_ASSIGNED;
+	listener_set_state(listener, LI_ASSIGNED);
 	listener->rx.proto = &proto_udp6;
 	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_udp6.listeners, &listener->rx.proto_list);
-	proto_udp6.nb_listeners++;
+	LIST_ADDQ(&proto_udp6.receivers, &listener->rx.proto_list);
+	proto_udp6.nb_receivers++;
 }
 
-/* Pause a listener. Returns < 0 in case of failure, 0 if the listener
- * was totally stopped, or > 0 if correctly paused.
+/* Enable receipt of incoming connections for listener <l>. The receiver must
+ * still be valid.
  */
-int udp_pause_listener(struct listener *l)
+static void udp_enable_listener(struct listener *l)
 {
-	/* we don't support pausing on UDP */
-	return -1;
+	fd_want_recv_safe(l->rx.fd);
+}
+
+/* Disable receipt of incoming connections for listener <l>. The receiver must
+ * still be valid.
+ */
+static void udp_disable_listener(struct listener *l)
+{
+	fd_stop_recv(l->rx.fd);
+}
+
+/* Suspend a receiver. Returns < 0 in case of failure, 0 if the receiver
+ * was totally stopped, or > 0 if correctly suspended.
+ * The principle is a bit ugly but works well, at least on Linux: in order to
+ * suspend the receiver, we want it to stop receiving traffic, which means that
+ * the socket must be unhashed from the kernel's socket table. The simple way
+ * to do this is to connect to any address that is reachable and will not be
+ * used by regular traffic, and a great one is reconnecting to self.
+ */
+static int udp_suspend_receiver(struct receiver *rx)
+{
+	struct sockaddr_storage ss;
+	socklen_t len = sizeof(ss);
+
+	if (rx->fd < 0)
+		return 0;
+
+	/* we never do that with a shared FD otherwise we'd break it in the
+	 * parent process and any possible subsequent worker inheriting it.
+	 */
+	if (rx->flags & RX_F_INHERITED)
+		return -1;
+
+	if (getsockname(rx->fd, (struct sockaddr *)&ss, &len) < 0)
+		return -1;
+
+	if (connect(rx->fd, (struct sockaddr *)&ss, len) < 0)
+		return -1;
+
+	/* not necessary but may make debugging clearer */
+	fd_stop_recv(rx->fd);
+	return 1;
+}
+
+/* Resume a receiver. Returns < 0 in case of failure, 0 if the receiver
+ * was totally stopped, or > 0 if correctly suspended.
+ * The principle is to reverse the change above, we'll break the connection by
+ * connecting to AF_UNSPEC. The association breaks and the socket starts to
+ * receive from everywhere again.
+ */
+static int udp_resume_receiver(struct receiver *rx)
+{
+	const struct sockaddr sa = { .sa_family = AF_UNSPEC };
+
+	if (rx->fd < 0)
+		return 0;
+
+	if (connect(rx->fd, &sa, sizeof(sa)) < 0)
+		return -1;
+
+	fd_want_recv(rx->fd);
+	return 1;
 }
 
 /*

@@ -169,7 +169,7 @@ const struct name_desc stat_fields[ST_F_TOTAL_FIELDS] = {
 	[ST_F_WRETR]                         = { .name = "wretr",                       .desc = "Total number of server connection retries since the worker process started" },
 	[ST_F_WREDIS]                        = { .name = "wredis",                      .desc = "Total number of server redispatches due to connection failures since the worker process started" },
 	[ST_F_STATUS]                        = { .name = "status",                      .desc = "Frontend/listen status: OPEN/WAITING/FULL/STOP; backend: UP/DOWN; server: last check status" },
-	[ST_F_WEIGHT]                        = { .name = "weight",                      .desc = "Server weight, or sum of active servers' weights for a backend" },
+	[ST_F_WEIGHT]                        = { .name = "weight",                      .desc = "Server's effective weight, or sum of active servers' effective weights for a backend" },
 	[ST_F_ACT]                           = { .name = "act",                         .desc = "Total number of active UP servers with a non-zero weight" },
 	[ST_F_BCK]                           = { .name = "bck",                         .desc = "Total number of backup UP servers with a non-zero weight" },
 	[ST_F_CHKFAIL]                       = { .name = "chkfail",                     .desc = "Total number of failed individual health checks per server/backend, since the worker process started" },
@@ -250,16 +250,38 @@ const struct name_desc stat_fields[ST_F_TOTAL_FIELDS] = {
 	[ST_F_SAFE_CONN_CUR]                 = { .name = "safe_conn_cur",               .desc = "Current number of safe idle connections"},
 	[ST_F_USED_CONN_CUR]                 = { .name = "used_conn_cur",               .desc = "Current number of connections in use"},
 	[ST_F_NEED_CONN_EST]                 = { .name = "need_conn_est",               .desc = "Estimated needed number of connections"},
+	[ST_F_UWEIGHT]                       = { .name = "uweight",                     .desc = "Server's user weight, or sum of active servers' user weights for a backend" },
 };
 
 /* one line of info */
 static THREAD_LOCAL struct field info[INF_TOTAL_FIELDS];
-/* one line of stats */
-static THREAD_LOCAL struct field stats[ST_F_TOTAL_FIELDS];
+
+/* description of statistics (static and dynamic) */
+static struct name_desc *stat_f[STATS_DOMAIN_COUNT];
+static size_t stat_count[STATS_DOMAIN_COUNT];
+
+/* one line for stats */
+static struct field *stat_l[STATS_DOMAIN_COUNT];
+
+/* list of all registered stats module */
+static struct list stats_module_list[STATS_DOMAIN_COUNT] = {
+	LIST_HEAD_INIT(stats_module_list[STATS_DOMAIN_PROXY]),
+	LIST_HEAD_INIT(stats_module_list[STATS_DOMAIN_DNS]),
+};
+
+static inline uint8_t stats_get_domain(uint32_t domain)
+{
+	return domain >> STATS_DOMAIN & STATS_DOMAIN_MASK;
+}
+
+static inline enum stats_domain_px_cap stats_px_get_cap(uint32_t domain)
+{
+	return domain >> STATS_PX_CAP & STATS_PX_CAP_MASK;
+}
 
 static void stats_dump_json_schema(struct buffer *out);
 
-static int stats_putchk(struct channel *chn, struct htx *htx, struct buffer *chk)
+int stats_putchk(struct channel *chn, struct htx *htx, struct buffer *chk)
 {
 	if (htx) {
 		if (chk->data >= channel_htx_recv_max(chn, htx))
@@ -314,17 +336,24 @@ static const char *stats_scope_ptr(struct appctx *appctx, struct stream_interfac
  * NOTE: Some tools happen to rely on the field position instead of its name,
  *       so please only append new fields at the end, never in the middle.
  */
-static void stats_dump_csv_header()
+static void stats_dump_csv_header(enum stats_domain domain)
 {
 	int field;
 
 	chunk_appendf(&trash, "# ");
-	for (field = 0; field < ST_F_TOTAL_FIELDS; field++)
-		chunk_appendf(&trash, "%s,", stat_fields[field].name);
+	if (stat_f[domain]) {
+		for (field = 0; field < stat_count[domain]; ++field) {
+			chunk_appendf(&trash, "%s,", stat_f[domain][field].name);
+
+			/* print special delimiter on proxy stats to mark end of
+			   static fields */
+			if (domain == STATS_DOMAIN_PROXY && field + 1 == ST_F_TOTAL_FIELDS)
+				chunk_appendf(&trash, "-,");
+		}
+	}
 
 	chunk_appendf(&trash, "\n");
 }
-
 
 /* Emits a stats field without any surrounding element and properly encoded to
  * resist CSV output. Returns non-zero on success, 0 if the buffer is full.
@@ -340,6 +369,20 @@ int stats_emit_raw_data_field(struct buffer *out, const struct field *f)
 	case FF_FLT:   return chunk_appendf(out, "%f", f->u.flt);
 	case FF_STR:   return csv_enc_append(field_str(f, 0), 1, out) != NULL;
 	default:       return chunk_appendf(out, "[INCORRECT_FIELD_TYPE_%08x]", f->type);
+	}
+}
+
+const char *field_to_html_str(const struct field *f)
+{
+	switch (field_format(f, 0)) {
+	case FF_S32: return U2H(f->u.s32);
+	case FF_S64: return U2H(f->u.s64);
+	case FF_U64: return U2H(f->u.u64);
+	case FF_U32: return U2H(f->u.u32);
+	case FF_STR: return field_str(f, 0);
+	case FF_EMPTY:
+	default:
+		return "";
 	}
 }
 
@@ -512,45 +555,76 @@ int stats_emit_json_field_tags(struct buffer *out, const struct field *f)
 
 /* Dump all fields from <stats> into <out> using CSV format */
 static int stats_dump_fields_csv(struct buffer *out,
-				 const struct field *stats, unsigned int flags)
+                                 const struct field *stats, size_t stats_count,
+                                 unsigned int flags,
+                                 enum stats_domain domain)
 {
 	int field;
 
-	for (field = 0; field < ST_F_TOTAL_FIELDS; field++) {
+	for (field = 0; field < stats_count; ++field) {
 		if (!stats_emit_raw_data_field(out, &stats[field]))
 			return 0;
 		if (!chunk_strcat(out, ","))
 			return 0;
+
+		/* print special delimiter on proxy stats to mark end of
+		   static fields */
+		if (domain == STATS_DOMAIN_PROXY && field + 1 == ST_F_TOTAL_FIELDS) {
+			if (!chunk_strcat(out, "-,"))
+				return 0;
+		}
 	}
+
 	chunk_strcat(out, "\n");
 	return 1;
 }
 
 /* Dump all fields from <stats> into <out> using a typed "field:desc:type:value" format */
 static int stats_dump_fields_typed(struct buffer *out,
-				   const struct field *stats, unsigned int flags)
+                                   const struct field *stats,
+                                   size_t stats_count,
+                                   unsigned int flags,
+                                   enum stats_domain domain)
 {
 	int field;
 
-	for (field = 0; field < ST_F_TOTAL_FIELDS; field++) {
+	for (field = 0; field < stats_count; ++field) {
 		if (!stats[field].type)
 			continue;
 
-		chunk_appendf(out, "%c.%u.%u.%d.%s.%u:",
-		              stats[ST_F_TYPE].u.u32 == STATS_TYPE_FE ? 'F' :
-		              stats[ST_F_TYPE].u.u32 == STATS_TYPE_BE ? 'B' :
-		              stats[ST_F_TYPE].u.u32 == STATS_TYPE_SO ? 'L' :
-		              stats[ST_F_TYPE].u.u32 == STATS_TYPE_SV ? 'S' :
-		              '?',
-		              stats[ST_F_IID].u.u32, stats[ST_F_SID].u.u32,
-		              field, stat_fields[field].name, stats[ST_F_PID].u.u32);
+		switch (domain) {
+		case STATS_DOMAIN_PROXY:
+			chunk_appendf(out, "%c.%u.%u.%d.%s.%u:",
+			              stats[ST_F_TYPE].u.u32 == STATS_TYPE_FE ? 'F' :
+			              stats[ST_F_TYPE].u.u32 == STATS_TYPE_BE ? 'B' :
+			              stats[ST_F_TYPE].u.u32 == STATS_TYPE_SO ? 'L' :
+			              stats[ST_F_TYPE].u.u32 == STATS_TYPE_SV ? 'S' :
+			              '?',
+			              stats[ST_F_IID].u.u32, stats[ST_F_SID].u.u32,
+			              field,
+			              stat_f[domain][field].name,
+			              stats[ST_F_PID].u.u32);
+			break;
+
+		case STATS_DOMAIN_DNS:
+			chunk_appendf(out, "D.%d.%s:", field,
+			              stat_f[domain][field].name);
+			break;
+
+		default:
+			break;
+		}
 
 		if (!stats_emit_field_tags(out, &stats[field], ':'))
 			return 0;
 		if (!stats_emit_typed_data_field(out, &stats[field]))
 			return 0;
-		if ((flags & STAT_SHOW_FDESC) && !chunk_appendf(out, ":\"%s\"", stat_fields[field].desc))
+
+		if (flags & STAT_SHOW_FDESC
+		    && !chunk_appendf(out, ":\"%s\"", stat_f[domain][field].name)) {
 			return 0;
+		}
+
 		if (!chunk_strcat(out, "\n"))
 			return 0;
 	}
@@ -606,10 +680,51 @@ err:
 	return 0;
 }
 
+static void stats_print_proxy_field_json(struct buffer *out,
+                                         const struct field *stat,
+                                         const char *name,
+                                         int pos,
+                                         uint32_t field_type,
+                                         uint32_t iid,
+                                         uint32_t sid,
+                                         uint32_t pid)
+{
+	const char *obj_type;
+	switch (field_type) {
+		case STATS_TYPE_FE: obj_type = "Frontend"; break;
+		case STATS_TYPE_BE: obj_type = "Backend";  break;
+		case STATS_TYPE_SO: obj_type = "Listener"; break;
+		case STATS_TYPE_SV: obj_type = "Server";   break;
+		default:            obj_type = "Unknown";  break;
+	}
+
+	chunk_appendf(out,
+	              "{"
+	              "\"objType\":\"%s\","
+	              "\"proxyId\":%u,"
+	              "\"id\":%u,"
+	              "\"field\":{\"pos\":%d,\"name\":\"%s\"},"
+	              "\"processNum\":%u,",
+	              obj_type, iid, sid, pos, name, pid);
+}
+
+static void stats_print_dns_field_json(struct buffer *out,
+                                       const struct field *stat,
+                                       const char *name,
+                                       int pos)
+{
+	chunk_appendf(out,
+	              "{"
+	              "\"field\":{\"pos\":%d,\"name\":\"%s\"},",
+	              pos, name);
+}
+
+
 /* Dump all fields from <stats> into <out> using a typed "field:desc:type:value" format */
 static int stats_dump_fields_json(struct buffer *out,
-				  const struct field *stats,
-				  unsigned int flags)
+                                  const struct field *stats, size_t stats_count,
+                                  unsigned int flags,
+                                  enum stats_domain domain)
 {
 	int field;
 	int started = 0;
@@ -619,8 +734,7 @@ static int stats_dump_fields_json(struct buffer *out,
 	if (!chunk_strcat(out, "["))
 		return 0;
 
-	for (field = 0; field < ST_F_TOTAL_FIELDS; field++) {
-		const char *obj_type;
+	for (field = 0; field < stats_count; field++) {
 		int old_len;
 
 		if (!stats[field].type)
@@ -630,25 +744,21 @@ static int stats_dump_fields_json(struct buffer *out,
 			goto err;
 		started = 1;
 
-		switch (stats[ST_F_TYPE].u.u32) {
-		case STATS_TYPE_FE: obj_type = "Frontend"; break;
-		case STATS_TYPE_BE: obj_type = "Backend";  break;
-		case STATS_TYPE_SO: obj_type = "Listener"; break;
-		case STATS_TYPE_SV: obj_type = "Server";   break;
-		default:            obj_type = "Unknown";  break;
+		old_len = out->data;
+		if (domain == STATS_DOMAIN_PROXY) {
+			stats_print_proxy_field_json(out, &stats[field],
+			                             stat_f[domain][field].name,
+			                             field,
+			                             stats[ST_F_TYPE].u.u32,
+			                             stats[ST_F_IID].u.u32,
+			                             stats[ST_F_SID].u.u32,
+			                             stats[ST_F_PID].u.u32);
+		} else if (domain == STATS_DOMAIN_DNS) {
+			stats_print_dns_field_json(out, &stats[field],
+			                           stat_f[domain][field].name,
+			                           field);
 		}
 
-		old_len = out->data;
-		chunk_appendf(out,
-			      "{"
-				"\"objType\":\"%s\","
-				"\"proxyId\":%d,"
-				"\"id\":%d,"
-				"\"field\":{\"pos\":%d,\"name\":\"%s\"},"
-				"\"processNum\":%u,",
-			       obj_type, stats[ST_F_IID].u.u32,
-			       stats[ST_F_SID].u.u32, field,
-			       stat_fields[field].name, stats[ST_F_PID].u.u32);
 		if (old_len == out->data)
 			goto err;
 
@@ -677,13 +787,17 @@ err:
 
 /* Dump all fields from <stats> into <out> using the HTML format. A column is
  * reserved for the checkbox is STAT_ADMIN is set in <flags>. Some extra info
- * are provided if STAT_SHLGNDS is present in <flags>.
+ * are provided if STAT_SHLGNDS is present in <flags>. The statistics from
+ * extra modules are displayed at the end of the lines if STAT_SHMODULES is
+ * present in <flags>.
  */
 static int stats_dump_fields_html(struct buffer *out,
 				  const struct field *stats,
 				  unsigned int flags)
 {
 	struct buffer src;
+	struct stats_module *mod;
+	int i = 0, j = 0;
 
 	if (stats[ST_F_TYPE].u.u32 == STATS_TYPE_FE) {
 		chunk_appendf(out,
@@ -827,11 +941,36 @@ static int stats_dump_fields_html(struct buffer *out,
 		              /* server status : reflect frontend status */
 		              "<td class=ac>%s</td>"
 		              /* rest of server: nothing */
-		              "<td class=ac colspan=8></td></tr>"
+		              "<td class=ac colspan=8></td>"
 		              "",
 		              U2H(stats[ST_F_DREQ].u.u64), U2H(stats[ST_F_DRESP].u.u64),
 		              U2H(stats[ST_F_EREQ].u.u64),
 		              field_str(stats, ST_F_STATUS));
+
+		if (flags & STAT_SHMODULES) {
+			list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+				chunk_appendf(out, "<td>");
+
+				if (stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_FE) {
+					chunk_appendf(out,
+					              "<u>%s<div class=tips><table class=det>",
+					              mod->name);
+					for (j = 0; j < mod->stats_count; ++j) {
+						chunk_appendf(out,
+						              "<tr><th>%s</th><td>%s</td></tr>",
+						              mod->stats[j].desc, field_to_html_str(&stats[ST_F_TOTAL_FIELDS + i]));
+						++i;
+					}
+					chunk_appendf(out, "</table></div></u>");
+				} else {
+					i += mod->stats_count;
+				}
+
+				chunk_appendf(out, "</td>");
+			}
+		}
+
+		chunk_appendf(out, "</tr>");
 	}
 	else if (stats[ST_F_TYPE].u.u32 == STATS_TYPE_SO) {
 		chunk_appendf(out, "<tr class=socket>");
@@ -888,11 +1027,36 @@ static int stats_dump_fields_html(struct buffer *out,
 		              /* server status: reflect listener status */
 		              "<td class=ac>%s</td>"
 		              /* rest of server: nothing */
-		              "<td class=ac colspan=8></td></tr>"
+		              "<td class=ac colspan=8></td>"
 		              "",
 		              U2H(stats[ST_F_DREQ].u.u64), U2H(stats[ST_F_DRESP].u.u64),
 		              U2H(stats[ST_F_EREQ].u.u64),
 		              field_str(stats, ST_F_STATUS));
+
+		if (flags & STAT_SHMODULES) {
+			list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+				chunk_appendf(out, "<td>");
+
+				if (stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_LI) {
+					chunk_appendf(out,
+					              "<u>%s<div class=tips><table class=det>",
+					              mod->name);
+					for (j = 0; j < mod->stats_count; ++j) {
+						chunk_appendf(out,
+						              "<tr><th>%s</th><td>%s</td></tr>",
+						              mod->stats[j].desc, field_to_html_str(&stats[ST_F_TOTAL_FIELDS + i]));
+						++i;
+					}
+					chunk_appendf(out, "</table></div></u>");
+				} else {
+					i += mod->stats_count;
+				}
+
+				chunk_appendf(out, "</td>");
+			}
+		}
+
+		chunk_appendf(out, "</tr>");
 	}
 	else if (stats[ST_F_TYPE].u.u32 == STATS_TYPE_SV) {
 		const char *style;
@@ -1168,12 +1332,12 @@ static int stats_dump_fields_html(struct buffer *out,
 			chunk_appendf(out, "</td><td>");
 
 		chunk_appendf(out,
-		              /* weight */
-		              "</td><td class=ac>%d</td>"
+		              /* weight / uweight */
+		              "</td><td class=ac>%d/%d</td>"
 		              /* act, bck */
 		              "<td class=ac>%s</td><td class=ac>%s</td>"
 		              "",
-		              stats[ST_F_WEIGHT].u.u32,
+		              stats[ST_F_WEIGHT].u.u32, stats[ST_F_UWEIGHT].u.u32,
 		              stats[ST_F_BCK].u.u32 ? "-" : "Y",
 		              stats[ST_F_BCK].u.u32 ? "Y" : "-");
 
@@ -1205,9 +1369,34 @@ static int stats_dump_fields_html(struct buffer *out,
 
 		/* throttle */
 		if (stats[ST_F_THROTTLE].type)
-			chunk_appendf(out, "<td class=ac>%d %%</td></tr>\n", stats[ST_F_THROTTLE].u.u32);
+			chunk_appendf(out, "<td class=ac>%d %%</td>\n", stats[ST_F_THROTTLE].u.u32);
 		else
-			chunk_appendf(out, "<td class=ac>-</td></tr>\n");
+			chunk_appendf(out, "<td class=ac>-</td>");
+
+		if (flags & STAT_SHMODULES) {
+			list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+				chunk_appendf(out, "<td>");
+
+				if (stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_SRV) {
+					chunk_appendf(out,
+					              "<u>%s<div class=tips><table class=det>",
+					              mod->name);
+					for (j = 0; j < mod->stats_count; ++j) {
+						chunk_appendf(out,
+						              "<tr><th>%s</th><td>%s</td></tr>",
+						              mod->stats[j].desc, field_to_html_str(&stats[ST_F_TOTAL_FIELDS + i]));
+						++i;
+					}
+					chunk_appendf(out, "</table></div></u>");
+				} else {
+					i += mod->stats_count;
+				}
+
+				chunk_appendf(out, "</td>");
+			}
+		}
+
+		chunk_appendf(out, "</tr>\n");
 	}
 	else if (stats[ST_F_TYPE].u.u32 == STATS_TYPE_BE) {
 		chunk_appendf(out, "<tr class=\"backend\">");
@@ -1355,7 +1544,7 @@ static int stats_dump_fields_html(struct buffer *out,
 		               * if the backend has known working servers or if it has no server at
 		               * all (eg: for stats). Then we display the total weight, number of
 		               * active and backups. */
-		              "<td class=ac>%s %s</td><td class=ac>&nbsp;</td><td class=ac>%d</td>"
+		              "<td class=ac>%s %s</td><td class=ac>&nbsp;</td><td class=ac>%d/%d</td>"
 		              "<td class=ac>%d</td><td class=ac>%d</td>"
 		              "",
 		              U2H(stats[ST_F_DREQ].u.u64), U2H(stats[ST_F_DRESP].u.u64),
@@ -1366,33 +1555,59 @@ static int stats_dump_fields_html(struct buffer *out,
 		              (long long)stats[ST_F_WRETR].u.u64, (long long)stats[ST_F_WREDIS].u.u64,
 		              human_time(stats[ST_F_LASTCHG].u.u32, 1),
 		              strcmp(field_str(stats, ST_F_STATUS), "DOWN") ? field_str(stats, ST_F_STATUS) : "<font color=\"red\"><b>DOWN</b></font>",
-		              stats[ST_F_WEIGHT].u.u32,
+		              stats[ST_F_WEIGHT].u.u32, stats[ST_F_UWEIGHT].u.u32,
 		              stats[ST_F_ACT].u.u32, stats[ST_F_BCK].u.u32);
 
 		chunk_appendf(out,
 		              /* rest of backend: nothing, down transitions, total downtime, throttle */
 		              "<td class=ac>&nbsp;</td><td>%d</td>"
 		              "<td>%s</td>"
-		              "<td></td>"
-		              "</tr>",
+		              "<td></td>",
 		              stats[ST_F_CHKDOWN].u.u32,
 		              stats[ST_F_DOWNTIME].type ? human_time(stats[ST_F_DOWNTIME].u.u32, 1) : "&nbsp;");
+
+		if (flags & STAT_SHMODULES) {
+			list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+				chunk_appendf(out, "<td>");
+
+				if (stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_BE) {
+					chunk_appendf(out,
+					              "<u>%s<div class=tips><table class=det>",
+					              mod->name);
+					for (j = 0; j < mod->stats_count; ++j) {
+						chunk_appendf(out,
+						              "<tr><th>%s</th><td>%s</td></tr>",
+						              mod->stats[j].desc, field_to_html_str(&stats[ST_F_TOTAL_FIELDS + i]));
+						++i;
+					}
+					chunk_appendf(out, "</table></div></u>");
+				} else {
+					i += mod->stats_count;
+				}
+
+				chunk_appendf(out, "</td>");
+			}
+		}
+
+		chunk_appendf(out, "</tr>");
 	}
+
 	return 1;
 }
 
-static int stats_dump_one_line(const struct field *stats, struct proxy *px, struct appctx *appctx)
+int stats_dump_one_line(const struct field *stats, size_t stats_count,
+                        struct appctx *appctx)
 {
 	int ret;
 
 	if (appctx->ctx.stats.flags & STAT_FMT_HTML)
 		ret = stats_dump_fields_html(&trash, stats, appctx->ctx.stats.flags);
 	else if (appctx->ctx.stats.flags & STAT_FMT_TYPED)
-		ret = stats_dump_fields_typed(&trash, stats, appctx->ctx.stats.flags);
+		ret = stats_dump_fields_typed(&trash, stats, stats_count, appctx->ctx.stats.flags, appctx->ctx.stats.domain);
 	else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
-		ret = stats_dump_fields_json(&trash, stats, appctx->ctx.stats.flags);
+		ret = stats_dump_fields_json(&trash, stats, stats_count, appctx->ctx.stats.flags, appctx->ctx.stats.domain);
 	else
-		ret = stats_dump_fields_csv(&trash, stats, appctx->ctx.stats.flags);
+		ret = stats_dump_fields_csv(&trash, stats, stats_count, appctx->ctx.stats.flags, appctx->ctx.stats.domain);
 
 	if (ret)
 		appctx->ctx.stats.flags |= STAT_STARTED;
@@ -1410,8 +1625,6 @@ int stats_fill_fe_stats(struct proxy *px, struct field *stats, int len)
 	if (len < ST_F_TOTAL_FIELDS)
 		return 0;
 
-	memset(stats, 0, sizeof(*stats) * len);
-
 	stats[ST_F_PXNAME]   = mkf_str(FO_KEY|FN_NAME|FS_SERVICE, px->id);
 	stats[ST_F_SVNAME]   = mkf_str(FO_KEY|FN_NAME|FS_SERVICE, "FRONTEND");
 	stats[ST_F_MODE]     = mkf_str(FO_CONFIG|FS_SERVICE, proxy_mode_str(px->mode));
@@ -1426,7 +1639,7 @@ int stats_fill_fe_stats(struct proxy *px, struct field *stats, int len)
 	stats[ST_F_EREQ]     = mkf_u64(FN_COUNTER, px->fe_counters.failed_req);
 	stats[ST_F_DCON]     = mkf_u64(FN_COUNTER, px->fe_counters.denied_conn);
 	stats[ST_F_DSES]     = mkf_u64(FN_COUNTER, px->fe_counters.denied_sess);
-	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, px->state == PR_STREADY ? "OPEN" : px->state == PR_STFULL ? "FULL" : "STOP");
+	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, px->disabled ? "STOP" : "OPEN");
 	stats[ST_F_PID]      = mkf_u32(FO_KEY, relative_pid);
 	stats[ST_F_IID]      = mkf_u32(FO_KEY|FS_SERVICE, px->uuid);
 	stats[ST_F_SID]      = mkf_u32(FO_KEY|FS_SERVICE, 0);
@@ -1476,6 +1689,9 @@ int stats_fill_fe_stats(struct proxy *px, struct field *stats, int len)
 static int stats_dump_fe_stats(struct stream_interface *si, struct proxy *px)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
+	struct field *stats = stat_l[STATS_DOMAIN_PROXY];
+	struct stats_module *mod;
+	size_t stats_count = ST_F_TOTAL_FIELDS;
 
 	if (!(px->cap & PR_CAP_FE))
 		return 0;
@@ -1483,10 +1699,25 @@ static int stats_dump_fe_stats(struct stream_interface *si, struct proxy *px)
 	if ((appctx->ctx.stats.flags & STAT_BOUND) && !(appctx->ctx.stats.type & (1 << STATS_TYPE_FE)))
 		return 0;
 
+	memset(stats, 0, sizeof(struct field) * stat_count[STATS_DOMAIN_PROXY]);
+
 	if (!stats_fill_fe_stats(px, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, px, appctx);
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		void *counters;
+
+		if (!(stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_FE)) {
+			stats_count += mod->stats_count;
+			continue;
+		}
+
+		counters = EXTRA_COUNTERS_GET(px->extra_counters_fe, mod);
+		mod->fill_stats(counters, stats + stats_count);
+		stats_count += mod->stats_count;
+	}
+
+	return stats_dump_one_line(stats, stats_count, appctx);
 }
 
 /* Fill <stats> with the listener statistics. <stats> is
@@ -1507,7 +1738,6 @@ int stats_fill_li_stats(struct proxy *px, struct listener *l, int flags,
 		return 0;
 
 	chunk_reset(out);
-	memset(stats, 0, sizeof(*stats) * len);
 
 	stats[ST_F_PXNAME]   = mkf_str(FO_KEY|FN_NAME|FS_SERVICE, px->id);
 	stats[ST_F_SVNAME]   = mkf_str(FO_KEY|FN_NAME|FS_SERVICE, l->name);
@@ -1567,11 +1797,29 @@ int stats_fill_li_stats(struct proxy *px, struct listener *l, int flags,
 static int stats_dump_li_stats(struct stream_interface *si, struct proxy *px, struct listener *l)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
+	struct field *stats = stat_l[STATS_DOMAIN_PROXY];
+	struct stats_module *mod;
+	size_t stats_count = ST_F_TOTAL_FIELDS;
+
+	memset(stats, 0, sizeof(struct field) * stat_count[STATS_DOMAIN_PROXY]);
 
 	if (!stats_fill_li_stats(px, l, appctx->ctx.stats.flags, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, px, appctx);
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		void *counters;
+
+		if (!(stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_LI)) {
+			stats_count += mod->stats_count;
+			continue;
+		}
+
+		counters = EXTRA_COUNTERS_GET(l->extra_counters, mod);
+		mod->fill_stats(counters, stats + stats_count);
+		stats_count += mod->stats_count;
+	}
+
+	return stats_dump_one_line(stats, stats_count, appctx);
 }
 
 enum srv_stats_state {
@@ -1623,8 +1871,6 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 
 	if (len < ST_F_TOTAL_FIELDS)
 		return 0;
-
-	memset(stats, 0, sizeof(*stats) * len);
 
 	/* we have "via" which is the tracked server as described in the configuration,
 	 * and "ref" which is the checked server and the end of the chain.
@@ -1727,6 +1973,7 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, fld_status);
 	stats[ST_F_LASTCHG]  = mkf_u32(FN_AGE, now.tv_sec - sv->last_change);
 	stats[ST_F_WEIGHT]   = mkf_u32(FN_AVG, (sv->cur_eweight * px->lbprm.wmult + px->lbprm.wdiv - 1) / px->lbprm.wdiv);
+	stats[ST_F_UWEIGHT]  = mkf_u32(FN_AVG, sv->uweight);
 	stats[ST_F_ACT]      = mkf_u32(FO_STATUS, (sv->flags & SRV_F_BACKUP) ? 0 : 1);
 	stats[ST_F_BCK]      = mkf_u32(FO_STATUS, (sv->flags & SRV_F_BACKUP) ? 1 : 0);
 
@@ -1874,11 +2121,32 @@ int stats_fill_sv_stats(struct proxy *px, struct server *sv, int flags,
 static int stats_dump_sv_stats(struct stream_interface *si, struct proxy *px, struct server *sv)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
+	struct stats_module *mod;
+	struct field *stats = stat_l[STATS_DOMAIN_PROXY];
+	size_t stats_count = ST_F_TOTAL_FIELDS;
+
+	memset(stats, 0, sizeof(struct field) * stat_count[STATS_DOMAIN_PROXY]);
 
 	if (!stats_fill_sv_stats(px, sv, appctx->ctx.stats.flags, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, px, appctx);
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		void *counters;
+
+		if (stats_get_domain(mod->domain_flags) != STATS_DOMAIN_PROXY)
+			continue;
+
+		if (!(stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_SRV)) {
+			stats_count += mod->stats_count;
+			continue;
+		}
+
+		counters = EXTRA_COUNTERS_GET(sv->extra_counters, mod);
+		mod->fill_stats(counters, stats + stats_count);
+		stats_count += mod->stats_count;
+	}
+
+	return stats_dump_one_line(stats, stats_count, appctx);
 }
 
 /* Fill <stats> with the backend statistics. <stats> is
@@ -1891,11 +2159,31 @@ int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int le
 {
 	long long be_samples_counter;
 	unsigned int be_samples_window = TIME_STATS_SAMPLES;
+	struct buffer *out = get_trash_chunk();
+	const struct server *srv;
+	int nbup, nbsrv;
+	int totuw;
+	char *fld;
 
 	if (len < ST_F_TOTAL_FIELDS)
 		return 0;
 
-	memset(stats, 0, sizeof(*stats) * len);
+	totuw = 0;
+	nbup = nbsrv = 0;
+	for (srv = px->srv; srv; srv = srv->next) {
+		if (srv->cur_state != SRV_ST_STOPPED) {
+			nbup++;
+			if (srv_currently_usable(srv) &&
+			    (!px->srv_act ^ !(srv->flags & SRV_F_BACKUP)))
+				totuw += srv->uweight;
+		}
+		nbsrv++;
+	}
+
+	HA_RWLOCK_RDLOCK(LBPRM_LOCK, &px->lbprm.lock);
+	if (!px->srv_act && px->lbprm.fbck)
+		totuw = px->lbprm.fbck->uweight;
+	HA_RWLOCK_RDUNLOCK(LBPRM_LOCK, &px->lbprm.lock);
 
 	stats[ST_F_PXNAME]   = mkf_str(FO_KEY|FN_NAME|FS_SERVICE, px->id);
 	stats[ST_F_SVNAME]   = mkf_str(FO_KEY|FN_NAME|FS_SERVICE, "BACKEND");
@@ -1918,8 +2206,15 @@ int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int le
 	stats[ST_F_EINT]     = mkf_u64(FN_COUNTER, px->be_counters.internal_errors);
 	stats[ST_F_CONNECT]  = mkf_u64(FN_COUNTER, px->be_counters.connect);
 	stats[ST_F_REUSE]    = mkf_u64(FN_COUNTER, px->be_counters.reuse);
-	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, (px->lbprm.tot_weight > 0 || !px->srv) ? "UP" : "DOWN");
+
+	fld = chunk_newstr(out);
+	chunk_appendf(out, "%s", (px->lbprm.tot_weight > 0 || !px->srv) ? "UP" : "DOWN");
+	if (flags & (STAT_HIDE_MAINT|STAT_HIDE_DOWN))
+		chunk_appendf(out, " (%d/%d)", nbup, nbsrv);
+
+	stats[ST_F_STATUS]   = mkf_str(FO_STATUS, fld);
 	stats[ST_F_WEIGHT]   = mkf_u32(FN_AVG, (px->lbprm.tot_weight * px->lbprm.wmult + px->lbprm.wdiv - 1) / px->lbprm.wdiv);
+	stats[ST_F_UWEIGHT]  = mkf_u32(FN_AVG, totuw);
 	stats[ST_F_ACT]      = mkf_u32(0, px->srv_act);
 	stats[ST_F_BCK]      = mkf_u32(0, px->srv_bck);
 	stats[ST_F_CHKDOWN]  = mkf_u64(FN_COUNTER, px->down_trans);
@@ -1988,6 +2283,9 @@ int stats_fill_be_stats(struct proxy *px, int flags, struct field *stats, int le
 static int stats_dump_be_stats(struct stream_interface *si, struct proxy *px)
 {
 	struct appctx *appctx = __objt_appctx(si->end);
+	struct field *stats = stat_l[STATS_DOMAIN_PROXY];
+	struct stats_module *mod;
+	size_t stats_count = ST_F_TOTAL_FIELDS;
 
 	if (!(px->cap & PR_CAP_BE))
 		return 0;
@@ -1995,10 +2293,28 @@ static int stats_dump_be_stats(struct stream_interface *si, struct proxy *px)
 	if ((appctx->ctx.stats.flags & STAT_BOUND) && !(appctx->ctx.stats.type & (1 << STATS_TYPE_BE)))
 		return 0;
 
+	memset(stats, 0, sizeof(struct field) * stat_count[STATS_DOMAIN_PROXY]);
+
 	if (!stats_fill_be_stats(px, appctx->ctx.stats.flags, stats, ST_F_TOTAL_FIELDS))
 		return 0;
 
-	return stats_dump_one_line(stats, px, appctx);
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		struct extra_counters *counters;
+
+		if (stats_get_domain(mod->domain_flags) != STATS_DOMAIN_PROXY)
+			continue;
+
+		if (!(stats_px_get_cap(mod->domain_flags) & STATS_PX_CAP_BE)) {
+			stats_count += mod->stats_count;
+			continue;
+		}
+
+		counters = EXTRA_COUNTERS_GET(px->extra_counters_be, mod);
+		mod->fill_stats(counters, stats + stats_count);
+		stats_count += mod->stats_count;
+	}
+
+	return stats_dump_one_line(stats, stats_count, appctx);
 }
 
 /* Dumps the HTML table header for proxy <px> to the trash for and uses the state from
@@ -2009,6 +2325,8 @@ static void stats_dump_html_px_hdr(struct stream_interface *si, struct proxy *px
 {
 	struct appctx *appctx = __objt_appctx(si->end);
 	char scope_txt[STAT_SCOPE_TXT_MAXLEN + sizeof STAT_SCOPE_PATTERN];
+	struct stats_module *mod;
+	int stats_module_len = 0;
 
 	if (px->cap & PR_CAP_BE && px->srv && (appctx->ctx.stats.flags & STAT_ADMIN)) {
 		/* A form to enable/disable this proxy servers */
@@ -2077,7 +2395,18 @@ static void stats_dump_html_px_hdr(struct stream_interface *si, struct proxy *px
 	              "<th colspan=3>Session rate</th><th colspan=6>Sessions</th>"
 	              "<th colspan=2>Bytes</th><th colspan=2>Denied</th>"
 	              "<th colspan=3>Errors</th><th colspan=2>Warnings</th>"
-	              "<th colspan=9>Server</th>"
+	              "<th colspan=9>Server</th>");
+
+	if (appctx->ctx.stats.flags & STAT_SHMODULES) {
+		// calculate the count of module for colspan attribute
+		list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+			++stats_module_len;
+		}
+		chunk_appendf(&trash, "<th colspan=%d>Extra modules</th>",
+		              stats_module_len);
+	}
+
+	chunk_appendf(&trash,
 	              "</tr>\n"
 	              "<tr class=\"titre\">"
 	              "<th>Cur</th><th>Max</th><th>Limit</th>"
@@ -2087,8 +2416,15 @@ static void stats_dump_html_px_hdr(struct stream_interface *si, struct proxy *px
 	              "<th>Resp</th><th>Retr</th><th>Redis</th>"
 	              "<th>Status</th><th>LastChk</th><th>Wght</th><th>Act</th>"
 	              "<th>Bck</th><th>Chk</th><th>Dwn</th><th>Dwntme</th>"
-	              "<th>Thrtle</th>\n"
-	              "</tr>");
+	              "<th>Thrtle</th>\n");
+
+	if (appctx->ctx.stats.flags & STAT_SHMODULES) {
+		list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+			chunk_appendf(&trash, "<th>%s</th>", mod->name);
+		}
+	}
+
+	chunk_appendf(&trash, "</tr>");
 }
 
 /* Dumps the HTML table trailer for proxy <px> to the trash for and uses the state from
@@ -2208,13 +2544,13 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 				goto full;
 		}
 
-		appctx->ctx.stats.l = px->conf.listeners.n;
+		appctx->ctx.stats.obj2 = px->conf.listeners.n;
 		appctx->ctx.stats.px_st = STAT_PX_ST_LI;
 		/* fall through */
 
 	case STAT_PX_ST_LI:
-		/* stats.l has been initialized above */
-		for (; appctx->ctx.stats.l != &px->conf.listeners; appctx->ctx.stats.l = l->by_fe.n) {
+		/* obj2 points to listeners list as initialized above */
+		for (; appctx->ctx.stats.obj2 != &px->conf.listeners; appctx->ctx.stats.obj2 = l->by_fe.n) {
 			if (htx) {
 				if (htx_almost_full(htx))
 					goto full;
@@ -2224,7 +2560,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 					goto full;
 			}
 
-			l = LIST_ELEM(appctx->ctx.stats.l, struct listener *, by_fe);
+			l = LIST_ELEM(appctx->ctx.stats.obj2, struct listener *, by_fe);
 			if (!l->counters)
 				continue;
 
@@ -2243,13 +2579,13 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 			}
 		}
 
-		appctx->ctx.stats.sv = px->srv; /* may be NULL */
+		appctx->ctx.stats.obj2 = px->srv; /* may be NULL */
 		appctx->ctx.stats.px_st = STAT_PX_ST_SV;
 		/* fall through */
 
 	case STAT_PX_ST_SV:
-		/* stats.sv has been initialized above */
-		for (; appctx->ctx.stats.sv != NULL; appctx->ctx.stats.sv = sv->next) {
+		/* obj2 points to servers list as initialized above */
+		for (; appctx->ctx.stats.obj2 != NULL; appctx->ctx.stats.obj2 = sv->next) {
 			if (htx) {
 				if (htx_almost_full(htx))
 					goto full;
@@ -2259,7 +2595,7 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 					goto full;
 			}
 
-			sv = appctx->ctx.stats.sv;
+			sv = appctx->ctx.stats.obj2;
 
 			if (appctx->ctx.stats.flags & STAT_BOUND) {
 				if (!(appctx->ctx.stats.type & (1 << STATS_TYPE_SV)))
@@ -2267,6 +2603,12 @@ int stats_dump_proxy_to_buffer(struct stream_interface *si, struct htx *htx,
 
 				if (appctx->ctx.stats.sid != -1 && sv->puid != appctx->ctx.stats.sid)
 					continue;
+			}
+
+			/* do not report disabled servers */
+			if (appctx->ctx.stats.flags & STAT_HIDE_MAINT &&
+			    sv->cur_admin & SRV_ADMF_MAINT) {
+				continue;
 			}
 
 			svs = sv;
@@ -2724,6 +3066,46 @@ static void stats_dump_json_end()
 	chunk_strcat(&trash, "]");
 }
 
+/* Uses <appctx.ctx.stats.obj1> as a pointer to the current proxy and <obj2> as
+ * a pointer to the current server/listener.
+ */
+static int stats_dump_proxies(struct stream_interface *si,
+                              struct htx *htx,
+                              struct uri_auth *uri)
+{
+	struct appctx *appctx = __objt_appctx(si->end);
+	struct channel *rep = si_ic(si);
+	struct proxy *px;
+
+	/* dump proxies */
+	while (appctx->ctx.stats.obj1) {
+		if (htx) {
+			if (htx_almost_full(htx))
+				goto full;
+		}
+		else {
+			if (buffer_almost_full(&rep->buf))
+				goto full;
+		}
+
+		px = appctx->ctx.stats.obj1;
+		/* skip the disabled proxies, global frontend and non-networked ones */
+		if (!px->disabled && px->uuid > 0 && (px->cap & (PR_CAP_FE | PR_CAP_BE))) {
+			if (stats_dump_proxy_to_buffer(si, htx, px, uri) == 0)
+				return 0;
+		}
+
+		appctx->ctx.stats.obj1 = px->next;
+		appctx->ctx.stats.px_st = STAT_PX_ST_INIT;
+	}
+
+	return 1;
+
+  full:
+	si_rx_room_blk(si);
+	return 0;
+}
+
 /* This function dumps statistics onto the stream interface's read buffer in
  * either CSV or HTML format. <uri> contains some HTML-specific parameters that
  * are ignored for CSV format (hence <uri> may be NULL there). It returns 0 if
@@ -2736,7 +3118,7 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct htx *ht
 {
 	struct appctx *appctx = __objt_appctx(si->end);
 	struct channel *rep = si_ic(si);
-	struct proxy *px;
+	enum stats_domain domain = appctx->ctx.stats.domain;
 
 	chunk_reset(&trash);
 
@@ -2753,7 +3135,7 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct htx *ht
 		else if (appctx->ctx.stats.flags & STAT_FMT_JSON)
 			stats_dump_json_header();
 		else if (!(appctx->ctx.stats.flags & STAT_FMT_TYPED))
-			stats_dump_csv_header();
+			stats_dump_csv_header(appctx->ctx.stats.domain);
 
 		if (!stats_putchk(rep, htx, &trash))
 			goto full;
@@ -2772,33 +3154,30 @@ static int stats_dump_stat_to_buffer(struct stream_interface *si, struct htx *ht
 				goto full;
 		}
 
-		appctx->ctx.stats.px = proxies_list;
+		if (domain == STATS_DOMAIN_PROXY)
+			appctx->ctx.stats.obj1 = proxies_list;
+
 		appctx->ctx.stats.px_st = STAT_PX_ST_INIT;
 		appctx->st2 = STAT_ST_LIST;
 		/* fall through */
 
 	case STAT_ST_LIST:
-		/* dump proxies */
-		while (appctx->ctx.stats.px) {
-			if (htx) {
-				if (htx_almost_full(htx))
-					goto full;
+		switch (domain) {
+		case STATS_DOMAIN_DNS:
+			if (!stats_dump_dns(si, stat_l[domain],
+			                    stat_count[domain],
+			                    &stats_module_list[domain])) {
+				return 0;
 			}
-			else {
-				if (buffer_almost_full(&rep->buf))
-					goto full;
-			}
+			break;
 
-			px = appctx->ctx.stats.px;
-			/* skip the disabled proxies, global frontend and non-networked ones */
-			if (px->state != PR_STSTOPPED && px->uuid > 0 && (px->cap & (PR_CAP_FE | PR_CAP_BE)))
-				if (stats_dump_proxy_to_buffer(si, htx, px, uri) == 0)
-					return 0;
-
-			appctx->ctx.stats.px = px->next;
-			appctx->ctx.stats.px_st = STAT_PX_ST_INIT;
+		case STATS_DOMAIN_PROXY:
+		default:
+			/* dump proxies */
+			if (!stats_dump_proxies(si, htx, uri))
+				return 0;
+			break;
 		}
-		/* here, we just have reached the last proxy */
 
 		appctx->st2 = STAT_ST_END;
 		/* fall through */
@@ -3123,7 +3502,7 @@ static int stats_process_http_post(struct stream_interface *si)
 						total_servers++;
 						break;
 					case ST_ADM_ACTION_SHUTDOWN:
-						if (px->state != PR_STSTOPPED) {
+						if (!px->disabled) {
 							srv_shutdown_streams(sv, SF_ERR_KILLED);
 							altered_servers++;
 							total_servers++;
@@ -3295,6 +3674,9 @@ static void http_stats_io_handler(struct appctx *appctx)
 	struct channel *req = si_oc(si);
 	struct channel *res = si_ic(si);
 	struct htx *req_htx, *res_htx;
+
+	/* only proxy stats are available via http */
+	appctx->ctx.stats.domain = STATS_DOMAIN_PROXY;
 
 	res_htx = htx_from_buf(&res->buf);
 
@@ -3579,9 +3961,9 @@ static void stats_dump_json_schema(struct buffer *out)
 			"\"title\":\"Info\","
 			"\"type\":\"array\","
 			"\"items\":{"
+			 "\"title\":\"InfoItem\","
+			 "\"type\":\"object\","
 			 "\"properties\":{"
-			  "\"title\":\"InfoItem\","
-			  "\"type\":\"object\","
 			  "\"field\":{\"$ref\":\"#/definitions/field\"},"
 			  "\"processNum\":{\"$ref\":\"#/definitions/processNum\"},"
 			  "\"tags\":{\"$ref\":\"#/definitions/tags\"},"
@@ -3626,9 +4008,9 @@ static void stats_dump_json_schema(struct buffer *out)
 			"\"properties\":{"
 			 "\"errorStr\":{"
 			  "\"type\":\"string\""
-			 "},"
-			 "\"required\":[\"errorStr\"]"
-			"}"
+			 "}"
+			"},"
+			"\"required\":[\"errorStr\"]"
 		       "}"
 		      "],"
 		      "\"definitions\":{"
@@ -3792,6 +4174,7 @@ static int cli_parse_clear_counters(char **args, char *payload, struct appctx *a
 	struct proxy *px;
 	struct server *sv;
 	struct listener *li;
+	struct stats_module *mod;
 	int clrall = 0;
 
 	if (strcmp(args[2], "all") == 0)
@@ -3852,6 +4235,49 @@ static int cli_parse_clear_counters(char **args, char *payload, struct appctx *a
 	global.ssl_fe_keys_max = 0;
 	global.ssl_be_keys_max = 0;
 
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		if (!mod->clearable && !clrall)
+			continue;
+
+		for (px = proxies_list; px; px = px->next) {
+			enum stats_domain_px_cap mod_cap = stats_px_get_cap(mod->domain_flags);
+
+			if (px->cap & PR_CAP_FE && mod_cap & STATS_PX_CAP_FE) {
+				EXTRA_COUNTERS_INIT(px->extra_counters_fe,
+				                    mod,
+				                    mod->counters,
+				                    mod->counters_size);
+			}
+
+			if (px->cap & PR_CAP_BE && mod_cap & STATS_PX_CAP_BE) {
+				EXTRA_COUNTERS_INIT(px->extra_counters_be,
+				                    mod,
+				                    mod->counters,
+				                    mod->counters_size);
+			}
+
+			if (mod_cap & STATS_PX_CAP_SRV) {
+				for (sv = px->srv; sv; sv = sv->next) {
+					EXTRA_COUNTERS_INIT(sv->extra_counters,
+				                            mod,
+					                    mod->counters,
+					                    mod->counters_size);
+				}
+			}
+
+			if (mod_cap & STATS_PX_CAP_LI) {
+				list_for_each_entry(li, &px->conf.listeners, by_fe) {
+					EXTRA_COUNTERS_INIT(li->extra_counters,
+				                            mod,
+					                    mod->counters,
+					                    mod->counters_size);
+				}
+			}
+		}
+	}
+
+	dns_stats_clear_counters(clrall, &stats_module_list[STATS_DOMAIN_DNS]);
+
 	memset(activity, 0, sizeof(activity));
 	return 1;
 }
@@ -3889,7 +4315,23 @@ static int cli_parse_show_stat(char **args, char *payload, struct appctx *appctx
 	if ((strm_li(si_strm(appctx->owner))->bind_conf->level & ACCESS_LVL_MASK) >= ACCESS_LVL_OPER)
 		appctx->ctx.stats.flags |= STAT_SHLGNDS;
 
-	if (*args[arg] && *args[arg+1] && *args[arg+2]) {
+	/* proxy is the default domain */
+	appctx->ctx.stats.domain = STATS_DOMAIN_PROXY;
+	if (!strcmp(args[arg], "domain")) {
+		++args;
+
+		if (!strcmp(args[arg], "proxy")) {
+			++args;
+		} else if (!strcmp(args[arg], "dns")) {
+			appctx->ctx.stats.domain = STATS_DOMAIN_DNS;
+			++args;
+		} else {
+			return cli_err(appctx, "Invalid statistics domain.\n");
+		}
+	}
+
+	if (appctx->ctx.stats.domain == STATS_DOMAIN_PROXY
+	    && *args[arg] && *args[arg+1] && *args[arg+2]) {
 		struct proxy *px;
 
 		px = proxy_find_by_name(args[arg], 0, 0);
@@ -3914,6 +4356,10 @@ static int cli_parse_show_stat(char **args, char *payload, struct appctx *appctx
 			appctx->ctx.stats.flags = (appctx->ctx.stats.flags & ~STAT_FMT_MASK) | STAT_FMT_JSON;
 		else if (strcmp(args[arg], "desc") == 0)
 			appctx->ctx.stats.flags |= STAT_SHOW_FDESC;
+		else if (strcmp(args[arg], "no-maint") == 0)
+			appctx->ctx.stats.flags |= STAT_HIDE_MAINT;
+		else if (strcmp(args[arg], "up") == 0)
+			appctx->ctx.stats.flags |= STAT_HIDE_DOWN;
 		arg++;
 	}
 
@@ -3938,11 +4384,175 @@ static int cli_io_handler_dump_json_schema(struct appctx *appctx)
 	return stats_dump_json_schema_to_buffer(appctx->owner);
 }
 
+static int stats_allocate_proxy_counters_internal(struct extra_counters **counters,
+                                                  int type, int px_cap)
+{
+	struct stats_module *mod;
+
+	EXTRA_COUNTERS_REGISTER(counters, type, alloc_failed);
+
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		if (!(stats_px_get_cap(mod->domain_flags) & px_cap))
+			continue;
+
+		EXTRA_COUNTERS_ADD(mod, *counters, mod->counters, mod->counters_size);
+	}
+
+	EXTRA_COUNTERS_ALLOC(*counters, alloc_failed);
+
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		if (!(stats_px_get_cap(mod->domain_flags) & px_cap))
+			continue;
+
+		EXTRA_COUNTERS_INIT(*counters, mod, mod->counters, mod->counters_size);
+	}
+
+	return 1;
+
+  alloc_failed:
+	return 0;
+}
+
+/* Initialize and allocate all extra counters for a proxy and its attached
+ * servers/listeners with all already registered stats module
+ */
+int stats_allocate_proxy_counters(struct proxy *px)
+{
+	struct server *sv;
+	struct listener *li;
+
+	if (px->cap & PR_CAP_FE) {
+		if (!stats_allocate_proxy_counters_internal(&px->extra_counters_fe,
+		                                            COUNTERS_FE,
+		                                            STATS_PX_CAP_FE)) {
+			return 0;
+		}
+	}
+
+	if (px->cap & PR_CAP_BE) {
+		if (!stats_allocate_proxy_counters_internal(&px->extra_counters_be,
+		                                            COUNTERS_BE,
+		                                            STATS_PX_CAP_BE)) {
+			return 0;
+		}
+	}
+
+	for (sv = px->srv; sv; sv = sv->next) {
+		if (!stats_allocate_proxy_counters_internal(&sv->extra_counters,
+		                                            COUNTERS_SV,
+		                                            STATS_PX_CAP_SRV)) {
+			return 0;
+		}
+	}
+
+	list_for_each_entry(li, &px->conf.listeners, by_fe) {
+		if (!stats_allocate_proxy_counters_internal(&li->extra_counters,
+		                                            COUNTERS_LI,
+		                                            STATS_PX_CAP_LI)) {
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+void stats_register_module(struct stats_module *m)
+{
+	const uint8_t domain = stats_get_domain(m->domain_flags);
+
+	LIST_ADDQ(&stats_module_list[domain], &m->list);
+	stat_count[domain] += m->stats_count;
+}
+
+static int allocate_stats_px_postcheck(void)
+{
+	struct stats_module *mod;
+	size_t i = ST_F_TOTAL_FIELDS;
+	int err_code = 0;
+	struct proxy *px;
+
+	stat_count[STATS_DOMAIN_PROXY] += ST_F_TOTAL_FIELDS;
+
+	stat_f[STATS_DOMAIN_PROXY] = malloc(stat_count[STATS_DOMAIN_PROXY] * sizeof(struct name_desc));
+	if (!stat_f[STATS_DOMAIN_PROXY]) {
+		ha_alert("stats: cannot allocate all fields for proxy statistics\n");
+		err_code |= ERR_ALERT | ERR_FATAL;
+		return err_code;
+	}
+
+	memcpy(stat_f[STATS_DOMAIN_PROXY], stat_fields,
+	       ST_F_TOTAL_FIELDS * sizeof(struct name_desc));
+
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_PROXY], list) {
+		memcpy(stat_f[STATS_DOMAIN_PROXY] + i,
+		       mod->stats,
+		       mod->stats_count * sizeof(struct name_desc));
+		i += mod->stats_count;
+	}
+
+	for (px = proxies_list; px; px = px->next) {
+		if (!stats_allocate_proxy_counters(px)) {
+			ha_alert("stats: cannot allocate all counters for proxy statistics\n");
+			err_code |= ERR_ALERT | ERR_FATAL;
+			return err_code;
+		}
+	}
+
+	stat_l[STATS_DOMAIN_PROXY] = malloc(stat_count[STATS_DOMAIN_PROXY] * sizeof(struct field));
+	if (!stat_l[STATS_DOMAIN_PROXY]) {
+		ha_alert("stats: cannot allocate a line for proxy statistics\n");
+		err_code |= ERR_ALERT | ERR_FATAL;
+		return err_code;
+	}
+
+	return err_code;
+}
+
+REGISTER_CONFIG_POSTPARSER("allocate-stats-px", allocate_stats_px_postcheck);
+
+static int allocate_stats_dns_postcheck(void)
+{
+	struct stats_module *mod;
+	size_t i = 0;
+	int err_code = 0;
+
+	stat_f[STATS_DOMAIN_DNS] = malloc(stat_count[STATS_DOMAIN_DNS] * sizeof(struct name_desc));
+	if (!stat_f[STATS_DOMAIN_DNS]) {
+		ha_alert("stats: cannot allocate all fields for dns statistics\n");
+		err_code |= ERR_ALERT | ERR_FATAL;
+		return err_code;
+	}
+
+	list_for_each_entry(mod, &stats_module_list[STATS_DOMAIN_DNS], list) {
+		memcpy(stat_f[STATS_DOMAIN_DNS] + i,
+		       mod->stats,
+		       mod->stats_count * sizeof(struct name_desc));
+		i += mod->stats_count;
+	}
+
+	if (!dns_allocate_counters(&stats_module_list[STATS_DOMAIN_DNS])) {
+		ha_alert("stats: cannot allocate all counters for dns statistics\n");
+		err_code |= ERR_ALERT | ERR_FATAL;
+		return err_code;
+	}
+
+	stat_l[STATS_DOMAIN_DNS] = malloc(stat_count[STATS_DOMAIN_DNS] * sizeof(struct field));
+	if (!stat_l[STATS_DOMAIN_DNS]) {
+		ha_alert("stats: cannot allocate a line for dns statistics\n");
+		err_code |= ERR_ALERT | ERR_FATAL;
+		return err_code;
+	}
+
+	return err_code;
+}
+
+REGISTER_CONFIG_POSTPARSER("allocate-stats-dns", allocate_stats_dns_postcheck);
+
 /* register cli keywords */
 static struct cli_kw_list cli_kws = {{ },{
 	{ { "clear", "counters",  NULL }, "clear counters : clear max statistics counters (add 'all' for all counters)", cli_parse_clear_counters, NULL, NULL },
 	{ { "show", "info",  NULL }, "show info      : report information about the running process [desc|json|typed]*", cli_parse_show_info, cli_io_handler_dump_info, NULL },
-	{ { "show", "stat",  NULL }, "show stat      : report counters for each proxy and server [desc|json|typed]*", cli_parse_show_stat, cli_io_handler_dump_stat, NULL },
+	{ { "show", "stat",  NULL }, "show stat      : report counters for each proxy and server [desc|json|no-maint|typed|up]*", cli_parse_show_stat, cli_io_handler_dump_stat, NULL },
 	{ { "show", "schema",  "json", NULL }, "show schema json : report schema used for stats", NULL, cli_io_handler_dump_json_schema, NULL },
 	{{},}
 }};

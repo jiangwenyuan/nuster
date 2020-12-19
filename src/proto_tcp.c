@@ -45,6 +45,10 @@
 
 
 static int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen);
+static int tcp_suspend_receiver(struct receiver *rx);
+static int tcp_resume_receiver(struct receiver *rx);
+static void tcp_enable_listener(struct listener *listener);
+static void tcp_disable_listener(struct listener *listener);
 static void tcpv4_add_listener(struct listener *listener, int port);
 static void tcpv6_add_listener(struct listener *listener, int port);
 
@@ -56,14 +60,24 @@ static struct protocol proto_tcpv4 = {
 	.sock_domain = AF_INET,
 	.sock_type = SOCK_STREAM,
 	.sock_prot = IPPROTO_TCP,
-	.accept = &listener_accept,
-	.connect = tcp_connect_server,
-	.listen = tcp_bind_listener,
-	.enable_all = enable_all_listeners,
-	.pause = tcp_pause_listener,
 	.add = tcpv4_add_listener,
-	.listeners = LIST_HEAD_INIT(proto_tcpv4.listeners),
-	.nb_listeners = 0,
+	.listen = tcp_bind_listener,
+	.enable = tcp_enable_listener,
+	.disable = tcp_disable_listener,
+	.unbind = default_unbind_listener,
+	.suspend = default_suspend_listener,
+	.resume  = default_resume_listener,
+	.accept_conn = sock_accept_conn,
+	.rx_enable = sock_enable,
+	.rx_disable = sock_disable,
+	.rx_unbind = sock_unbind,
+	.rx_suspend = tcp_suspend_receiver,
+	.rx_resume = tcp_resume_receiver,
+	.rx_listening = sock_accepting_conn,
+	.default_iocb = &sock_accept_iocb,
+	.connect = tcp_connect_server,
+	.receivers = LIST_HEAD_INIT(proto_tcpv4.receivers),
+	.nb_receivers = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv4);
@@ -76,14 +90,24 @@ static struct protocol proto_tcpv6 = {
 	.sock_domain = AF_INET6,
 	.sock_type = SOCK_STREAM,
 	.sock_prot = IPPROTO_TCP,
-	.accept = &listener_accept,
-	.connect = tcp_connect_server,
-	.listen = tcp_bind_listener,
-	.enable_all = enable_all_listeners,
-	.pause = tcp_pause_listener,
 	.add = tcpv6_add_listener,
-	.listeners = LIST_HEAD_INIT(proto_tcpv6.listeners),
-	.nb_listeners = 0,
+	.listen = tcp_bind_listener,
+	.enable = tcp_enable_listener,
+	.disable = tcp_disable_listener,
+	.unbind = default_unbind_listener,
+	.suspend = default_suspend_listener,
+	.resume  = default_resume_listener,
+	.accept_conn = sock_accept_conn,
+	.rx_enable = sock_enable,
+	.rx_disable = sock_disable,
+	.rx_unbind = sock_unbind,
+	.rx_suspend = tcp_suspend_receiver,
+	.rx_resume = tcp_resume_receiver,
+	.rx_listening = sock_accepting_conn,
+	.default_iocb = &sock_accept_iocb,
+	.connect = tcp_connect_server,
+	.receivers = LIST_HEAD_INIT(proto_tcpv6.receivers),
+	.nb_receivers = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv6);
@@ -548,7 +572,6 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 {
 	int fd, err;
 	int ready;
-	socklen_t ready_len;
 	char *msg = NULL;
 
 	err = ERR_NONE;
@@ -656,10 +679,8 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 		}
 	}
 #endif
-	ready = 0;
-	ready_len = sizeof(ready);
-	if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &ready, &ready_len) == -1)
-		ready = 0;
+
+	ready = sock_accepting_conn(&listener->rx) > 0;
 
 	if (!ready && /* only listen if not already done by external process */
 	    listen(fd, listener_backlog(listener)) == -1) {
@@ -676,8 +697,8 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 #endif
 
 	/* the socket is ready */
-	listener->state = LI_LISTEN;
-	return err;
+	listener_set_state(listener, LI_LISTEN);
+	goto tcp_return;
 
  tcp_close_return:
 	close(fd);
@@ -702,11 +723,11 @@ static void tcpv4_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
-	listener->state = LI_ASSIGNED;
+	listener_set_state(listener, LI_ASSIGNED);
 	listener->rx.proto = &proto_tcpv4;
 	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_tcpv4.listeners, &listener->rx.proto_list);
-	proto_tcpv4.nb_listeners++;
+	LIST_ADDQ(&proto_tcpv4.receivers, &listener->rx.proto_list);
+	proto_tcpv4.nb_receivers++;
 }
 
 /* Add <listener> to the list of tcpv6 listeners, on port <port>. The
@@ -720,27 +741,80 @@ static void tcpv6_add_listener(struct listener *listener, int port)
 {
 	if (listener->state != LI_INIT)
 		return;
-	listener->state = LI_ASSIGNED;
+	listener_set_state(listener, LI_ASSIGNED);
 	listener->rx.proto = &proto_tcpv6;
 	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_tcpv6.listeners, &listener->rx.proto_list);
-	proto_tcpv6.nb_listeners++;
+	LIST_ADDQ(&proto_tcpv6.receivers, &listener->rx.proto_list);
+	proto_tcpv6.nb_receivers++;
 }
 
-/* Pause a listener. Returns < 0 in case of failure, 0 if the listener
- * was totally stopped, or > 0 if correctly paused.
+/* Enable receipt of incoming connections for listener <l>. The receiver must
+ * still be valid.
  */
-int tcp_pause_listener(struct listener *l)
+static void tcp_enable_listener(struct listener *l)
 {
-	if (shutdown(l->rx.fd, SHUT_WR) != 0)
-		return -1; /* Solaris dies here */
+	fd_want_recv_safe(l->rx.fd);
+}
 
-	if (listen(l->rx.fd, listener_backlog(l)) != 0)
-		return -1; /* OpenBSD dies here */
+/* Disable receipt of incoming connections for listener <l>. The receiver must
+ * still be valid.
+ */
+static void tcp_disable_listener(struct listener *l)
+{
+	fd_stop_recv(l->rx.fd);
+}
 
-	if (shutdown(l->rx.fd, SHUT_RD) != 0)
-		return -1; /* should always be OK */
+/* Suspend a receiver. Returns < 0 in case of failure, 0 if the receiver
+ * was totally stopped, or > 0 if correctly suspended.
+ */
+static int tcp_suspend_receiver(struct receiver *rx)
+{
+	const struct sockaddr sa = { .sa_family = AF_UNSPEC };
+	int ret;
+
+	/* we never do that with a shared FD otherwise we'd break it in the
+	 * parent process and any possible subsequent worker inheriting it.
+	 */
+	if (rx->flags & RX_F_INHERITED)
+		return -1;
+
+	if (connect(rx->fd, &sa, sizeof(sa)) < 0)
+		goto check_already_done;
+
+	fd_stop_recv(rx->fd);
 	return 1;
+
+ check_already_done:
+	/* in case one of the shutdown() above fails, it might be because we're
+	 * dealing with a socket that is shared with other processes doing the
+	 * same. Let's check if it's still accepting connections.
+	 */
+	ret = sock_accepting_conn(rx);
+	if (ret <= 0) {
+		/* unrecoverable or paused by another process */
+		fd_stop_recv(rx->fd);
+		return ret == 0;
+	}
+
+	/* still listening, that's not good */
+	return -1;
+}
+
+/* Resume a receiver. Returns < 0 in case of failure, 0 if the receiver
+ * was totally stopped, or > 0 if correctly suspended.
+ */
+static int tcp_resume_receiver(struct receiver *rx)
+{
+	struct listener *l = LIST_ELEM(rx, struct listener *, rx);
+
+	if (rx->fd < 0)
+		return 0;
+
+	if (listen(rx->fd, listener_backlog(l)) == 0) {
+		fd_want_recv(l->rx.fd);
+		return 1;
+	}
+	return -1;
 }
 
 

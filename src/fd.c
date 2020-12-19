@@ -407,9 +407,19 @@ void updt_fd_polling(const int fd)
 		do {
 			if (update_mask == fdtab[fd].thread_mask)
 				return;
-		} while (!_HA_ATOMIC_CAS(&fdtab[fd].update_mask, &update_mask,
-		    fdtab[fd].thread_mask));
+		} while (!_HA_ATOMIC_CAS(&fdtab[fd].update_mask, &update_mask, fdtab[fd].thread_mask));
+
 		fd_add_to_fd_list(&update_list, fd, offsetof(struct fdtab, update));
+
+		if (fd_active(fd) &&
+		    !(fdtab[fd].thread_mask & tid_bit) &&
+		    (fdtab[fd].thread_mask & ~tid_bit & all_threads_mask & ~sleeping_thread_mask) == 0) {
+			/* we need to wake up one thread to handle it immediately */
+			int thr = my_ffsl(fdtab[fd].thread_mask & ~tid_bit & all_threads_mask) - 1;
+
+			_HA_ATOMIC_AND(&sleeping_thread_mask, ~(1UL << thr));
+			wake_thread(thr);
+		}
 	}
 }
 
@@ -655,14 +665,20 @@ int init_pollers()
 	int p;
 	struct poller *bp;
 
-	if ((fdtab = calloc(global.maxsock, sizeof(*fdtab))) == NULL)
+	if ((fdtab = calloc(global.maxsock, sizeof(*fdtab))) == NULL) {
+		ha_alert("Not enough memory to allocate %d entries for fdtab!\n", global.maxsock);
 		goto fail_tab;
+	}
 
-	if ((polled_mask = calloc(global.maxsock, sizeof(*polled_mask))) == NULL)
+	if ((polled_mask = calloc(global.maxsock, sizeof(*polled_mask))) == NULL) {
+		ha_alert("Not enough memory to allocate %d entries for polled_mask!\n", global.maxsock);
 		goto fail_polledmask;
+	}
 
-	if ((fdinfo = calloc(global.maxsock, sizeof(*fdinfo))) == NULL)
+	if ((fdinfo = calloc(global.maxsock, sizeof(*fdinfo))) == NULL) {
+		ha_alert("Not enough memory to allocate %d entries for fdinfo!\n", global.maxsock);
 		goto fail_info;
+	}
 
 	update_list.first = update_list.last = -1;
 

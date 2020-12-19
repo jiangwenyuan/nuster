@@ -14,7 +14,6 @@
 #include <haproxy/api.h>
 #include <haproxy/cfgparse.h>
 #include <haproxy/connection.h>
-#include <haproxy/h1.h>
 #include <haproxy/h2.h>
 #include <haproxy/hpack-dec.h>
 #include <haproxy/hpack-enc.h>
@@ -25,6 +24,7 @@
 #include <haproxy/log.h>
 #include <haproxy/net_helper.h>
 #include <haproxy/session-t.h>
+#include <haproxy/stats.h>
 #include <haproxy/stream.h>
 #include <haproxy/stream_interface.h>
 #include <haproxy/trace.h>
@@ -128,6 +128,7 @@ struct h2c {
 	unsigned int stream_cnt;  /* total number of streams seen */
 	struct proxy *proxy; /* the proxy this connection was created for */
 	struct task *task;  /* timeout management task */
+	struct h2_counters *px_counters; /* h2 counters attached to proxy */
 	struct eb_root streams_by_id; /* all active streams by their ID */
 	struct list send_list; /* list of blocked streams requesting to send */
 	struct list fctl_list; /* list of streams blocked by connection's fctl */
@@ -190,13 +191,12 @@ enum h2_ss {
 
 
 /* H2 stream descriptor, describing the stream as it appears in the H2C, and as
- * it is being processed in the internal HTTP representation (H1 for now).
+ * it is being processed in the internal HTTP representation (HTX).
  */
 struct h2s {
 	struct conn_stream *cs;
 	struct session *sess;
 	struct h2c *h2c;
-	struct h1m h1m;         /* request or response parser state for H1 */
 	struct eb32_node by_id; /* place in h2c's streams_by_id */
 	int32_t id; /* stream ID */
 	uint32_t flags;      /* H2_SF_* */
@@ -376,6 +376,110 @@ static struct trace_source trace_h2 = {
 #define TRACE_SOURCE &trace_h2
 INITCALL1(STG_REGISTER, trace_register_source, TRACE_SOURCE);
 
+/* h2 stats module */
+enum {
+	H2_ST_HEADERS_RCVD,
+	H2_ST_DATA_RCVD,
+	H2_ST_SETTINGS_RCVD,
+	H2_ST_RST_STREAM_RCVD,
+	H2_ST_GOAWAY_RCVD,
+
+	H2_ST_CONN_PROTO_ERR,
+	H2_ST_STRM_PROTO_ERR,
+	H2_ST_RST_STREAM_RESP,
+	H2_ST_GOAWAY_RESP,
+
+	H2_ST_OPEN_CONN,
+	H2_ST_OPEN_STREAM,
+	H2_ST_TOTAL_CONN,
+	H2_ST_TOTAL_STREAM,
+
+	H2_STATS_COUNT /* must be the last member of the enum */
+};
+
+static struct name_desc h2_stats[] = {
+	[H2_ST_HEADERS_RCVD]    = { .name = "h2_headers_rcvd",
+	                            .desc = "Total number of received HEADERS frames" },
+	[H2_ST_DATA_RCVD]       = { .name = "h2_data_rcvd",
+	                            .desc = "Total number of received DATA frames" },
+	[H2_ST_SETTINGS_RCVD]   = { .name = "h2_settings_rcvd",
+	                            .desc = "Total number of received SETTINGS frames" },
+	[H2_ST_RST_STREAM_RCVD] = { .name = "h2_rst_stream_rcvd",
+	                            .desc = "Total number of received RST_STREAM frames" },
+	[H2_ST_GOAWAY_RCVD]     = { .name = "h2_goaway_rcvd",
+	                            .desc = "Total number of received GOAWAY frames" },
+
+	[H2_ST_CONN_PROTO_ERR]  = { .name = "h2_detected_conn_protocol_errors",
+	                            .desc = "Total number of connection protocol errors" },
+	[H2_ST_STRM_PROTO_ERR]  = { .name = "h2_detected_strm_protocol_errors",
+	                            .desc = "Total number of stream protocol errors" },
+	[H2_ST_RST_STREAM_RESP] = { .name = "h2_rst_stream_resp",
+	                            .desc = "Total number of RST_STREAM sent on detected error" },
+	[H2_ST_GOAWAY_RESP]     = { .name = "h2_goaway_resp",
+	                            .desc = "Total number of GOAWAY sent on detected error" },
+
+	[H2_ST_OPEN_CONN]    = { .name = "h2_open_connections",
+	                         .desc = "Count of currently open connections" },
+	[H2_ST_OPEN_STREAM]  = { .name = "h2_backend_open_streams",
+	                         .desc = "Count of currently open streams" },
+	[H2_ST_TOTAL_CONN]   = { .name = "h2_open_connections",
+	                         .desc = "Total number of connections" },
+	[H2_ST_TOTAL_STREAM] = { .name = "h2_backend_open_streams",
+	                         .desc = "Total number of streams" },
+};
+
+static struct h2_counters {
+	long long headers_rcvd;    /* total number of HEADERS frame received */
+	long long data_rcvd;       /* total number of DATA frame received */
+	long long settings_rcvd;   /* total number of SETTINGS frame received */
+	long long rst_stream_rcvd; /* total number of RST_STREAM frame received */
+	long long goaway_rcvd;     /* total number of GOAWAY frame received */
+
+	long long conn_proto_err;  /* total number of protocol errors detected */
+	long long strm_proto_err;  /* total number of protocol errors detected */
+	long long rst_stream_resp; /* total number of RST_STREAM frame sent on error */
+	long long goaway_resp;     /* total number of GOAWAY frame sent on error */
+
+	long long open_conns;    /* count of currently open connections */
+	long long open_streams;  /* count of currently open streams */
+	long long total_conns;   /* total number of connections */
+	long long total_streams; /* total number of streams */
+} h2_counters;
+
+static void h2_fill_stats(void *data, struct field *stats)
+{
+	struct h2_counters *counters = data;
+
+	stats[H2_ST_HEADERS_RCVD]    = mkf_u64(FN_COUNTER, counters->headers_rcvd);
+	stats[H2_ST_DATA_RCVD]       = mkf_u64(FN_COUNTER, counters->data_rcvd);
+	stats[H2_ST_SETTINGS_RCVD]   = mkf_u64(FN_COUNTER, counters->settings_rcvd);
+	stats[H2_ST_RST_STREAM_RCVD] = mkf_u64(FN_COUNTER, counters->rst_stream_rcvd);
+	stats[H2_ST_GOAWAY_RCVD]     = mkf_u64(FN_COUNTER, counters->goaway_rcvd);
+
+	stats[H2_ST_CONN_PROTO_ERR]  = mkf_u64(FN_COUNTER, counters->conn_proto_err);
+	stats[H2_ST_STRM_PROTO_ERR]  = mkf_u64(FN_COUNTER, counters->strm_proto_err);
+	stats[H2_ST_RST_STREAM_RESP] = mkf_u64(FN_COUNTER, counters->rst_stream_resp);
+	stats[H2_ST_GOAWAY_RESP]     = mkf_u64(FN_COUNTER, counters->goaway_resp);
+
+	stats[H2_ST_OPEN_CONN]    = mkf_u64(FN_GAUGE,   counters->open_conns);
+	stats[H2_ST_OPEN_STREAM]  = mkf_u64(FN_GAUGE,   counters->open_streams);
+	stats[H2_ST_TOTAL_CONN]   = mkf_u64(FN_COUNTER, counters->total_conns);
+	stats[H2_ST_TOTAL_STREAM] = mkf_u64(FN_COUNTER, counters->total_streams);
+}
+
+static struct stats_module h2_stats_module = {
+	.name          = "h2",
+	.fill_stats    = h2_fill_stats,
+	.stats         = h2_stats,
+	.stats_count   = H2_STATS_COUNT,
+	.counters      = &h2_counters,
+	.counters_size = sizeof(h2_counters),
+	.domain_flags  = MK_STATS_PROXY_DOMAIN(STATS_PX_CAP_FE|STATS_PX_CAP_BE),
+	.clearable     = 1,
+};
+
+INITCALL1(STG_REGISTER, stats_register_module, &h2_stats_module);
+
 /* the h2c connection pool */
 DECLARE_STATIC_POOL(pool_head_h2c, "h2c", sizeof(struct h2c));
 
@@ -549,6 +653,18 @@ static void h2_trace(enum trace_level level, uint64_t mask, const struct trace_s
 				      HTX_SL_P2_LEN(sl), HTX_SL_P2_PTR(sl),
 				      HTX_SL_P3_LEN(sl), HTX_SL_P3_PTR(sl));
 	}
+}
+
+
+/* Detect a pending read0 for a H2 connection. It happens if a read0 is pending
+ * on the connection AND if there is no more data in the demux buffer. The
+ * function returns 1 to report a read0 or 0 otherwise.
+ */
+static int h2c_read0_pending(struct h2c *h2c)
+{
+	if (conn_xprt_read0_pending(h2c->conn) && !b_data(&h2c->dbuf))
+		return 1;
+	return 0;
 }
 
 /* returns true if the connection is allowed to expire, false otherwise. A
@@ -796,11 +912,17 @@ static int h2_init(struct connection *conn, struct proxy *prx, struct session *s
 		h2c->shut_timeout = h2c->timeout = prx->timeout.server;
 		if (tick_isset(prx->timeout.serverfin))
 			h2c->shut_timeout = prx->timeout.serverfin;
+
+		h2c->px_counters = EXTRA_COUNTERS_GET(prx->extra_counters_be,
+		                                      &h2_stats_module);
 	} else {
 		h2c->flags = H2_CF_NONE;
 		h2c->shut_timeout = h2c->timeout = prx->timeout.client;
 		if (tick_isset(prx->timeout.clientfin))
 			h2c->shut_timeout = prx->timeout.clientfin;
+
+		h2c->px_counters = EXTRA_COUNTERS_GET(prx->extra_counters_fe,
+		                                      &h2_stats_module);
 	}
 
 	h2c->proxy = prx;
@@ -873,6 +995,9 @@ static int h2_init(struct connection *conn, struct proxy *prx, struct session *s
 		if (!h2s)
 			goto fail_stream;
 	}
+
+	HA_ATOMIC_ADD(&h2c->px_counters->open_conns, 1);
+	HA_ATOMIC_ADD(&h2c->px_counters->total_conns, 1);
 
 	/* prepare to read something */
 	h2c_restart_reading(h2c, 1);
@@ -954,6 +1079,8 @@ static void h2_release(struct h2c *h2c)
 		if (conn && h2c->wait_event.events != 0)
 			conn->xprt->unsubscribe(conn, conn->xprt_ctx, h2c->wait_event.events,
 						&h2c->wait_event);
+
+		HA_ATOMIC_SUB(&h2c->px_counters->open_conns, 1);
 
 		pool_free(pool_head_h2c, h2c);
 	}
@@ -1233,6 +1360,8 @@ static inline void h2s_close(struct h2s *h2s)
 			if (!(h2s->cs->flags & CS_FL_EOS) && !b_data(&h2s->rxbuf))
 				h2s_notify_recv(h2s);
 		}
+		HA_ATOMIC_SUB(&h2s->h2c->px_counters->open_streams, 1);
+
 		TRACE_LEAVE(H2_EV_H2S_END, h2s->h2c->conn, h2s);
 	}
 	h2s->st = H2_SS_CLOSED;
@@ -1307,16 +1436,6 @@ static struct h2s *h2s_new(struct h2c *h2c, int id)
 	h2s->body_len  = 0;
 	h2s->rxbuf     = BUF_NULL;
 
-	if (h2c->flags & H2_CF_IS_BACK) {
-		h1m_init_req(&h2s->h1m);
-		h2s->h1m.err_pos = -1; // don't care about errors on the request path
-		h2s->h1m.flags |= H1_MF_TOLOWER;
-	} else {
-		h1m_init_res(&h2s->h1m);
-		h2s->h1m.err_pos = -1; // don't care about errors on the response path
-		h2s->h1m.flags |= H1_MF_TOLOWER;
-	}
-
 	h2s->by_id.key = h2s->id = id;
 	if (id > 0)
 		h2c->max_id      = id;
@@ -1326,6 +1445,9 @@ static struct h2s *h2s_new(struct h2c *h2c, int id)
 	eb32_insert(&h2c->streams_by_id, &h2s->by_id);
 	h2c->nb_streams++;
 	h2c->stream_cnt++;
+
+	HA_ATOMIC_ADD(&h2c->px_counters->open_streams, 1);
+	HA_ATOMIC_ADD(&h2c->px_counters->total_streams, 1);
 
 	TRACE_LEAVE(H2_EV_H2S_NEW, h2c->conn, h2s);
 	return h2s;
@@ -1543,8 +1665,10 @@ static int h2c_frt_recv_preface(struct h2c *h2c)
 		if (ret1 < 0)
 			sess_log(h2c->conn->owner);
 
-		if (ret1 < 0 || conn_xprt_read0_pending(h2c->conn))
+		if (ret1 < 0 || conn_xprt_read0_pending(h2c->conn)) {
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+			HA_ATOMIC_ADD(&h2c->px_counters->conn_proto_err, 1);
+		}
 		ret2 = 0;
 		goto out;
 	}
@@ -1679,6 +1803,7 @@ static int h2c_send_goaway_error(struct h2c *h2c, struct h2s *h2s)
 	}
 	h2c->flags |= H2_CF_GOAWAY_SENT;
  out:
+	HA_ATOMIC_ADD(&h2c->px_counters->goaway_resp, 1);
 	TRACE_LEAVE(H2_EV_TX_FRAME|H2_EV_TX_GOAWAY, h2c->conn);
 	return ret;
 }
@@ -1823,6 +1948,7 @@ static int h2c_send_rst_stream(struct h2c *h2c, struct h2s *h2s)
 	}
 
  out:
+	HA_ATOMIC_ADD(&h2c->px_counters->rst_stream_resp, 1);
 	TRACE_LEAVE(H2_EV_TX_FRAME|H2_EV_TX_RST, h2c->conn, h2s);
 	return ret;
 }
@@ -1901,7 +2027,7 @@ static void h2s_wake_one_stream(struct h2s *h2s)
 		return;
 	}
 
-	if (conn_xprt_read0_pending(h2s->h2c->conn)) {
+	if (h2c_read0_pending(h2s->h2c)) {
 		if (h2s->st == H2_SS_OPEN)
 			h2s->st = H2_SS_HREM;
 		else if (h2s->st == H2_SS_HLOC)
@@ -2023,6 +2149,7 @@ static int h2c_handle_settings(struct h2c *h2c)
 		case H2_SETTINGS_MAX_FRAME_SIZE:
 			if (arg < 16384 || arg > 16777215) { // RFC7540#6.5.2
 				error = H2_ERR_PROTOCOL_ERROR;
+				HA_ATOMIC_ADD(&h2c->px_counters->conn_proto_err, 1);
 				goto fail;
 			}
 			h2c->mfs = arg;
@@ -2030,6 +2157,7 @@ static int h2c_handle_settings(struct h2c *h2c)
 		case H2_SETTINGS_ENABLE_PUSH:
 			if (arg < 0 || arg > 1) { // RFC7540#6.5.2
 				error = H2_ERR_PROTOCOL_ERROR;
+				HA_ATOMIC_ADD(&h2c->px_counters->conn_proto_err, 1);
 				goto fail;
 			}
 			break;
@@ -2299,6 +2427,7 @@ static int h2c_handle_window_update(struct h2c *h2c, struct h2s *h2s)
 
 		if (!inc) {
 			error = H2_ERR_PROTOCOL_ERROR;
+			HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 			goto strm_err;
 		}
 
@@ -2320,6 +2449,7 @@ static int h2c_handle_window_update(struct h2c *h2c, struct h2s *h2s)
 		/* connection window update */
 		if (!inc) {
 			error = H2_ERR_PROTOCOL_ERROR;
+			HA_ATOMIC_ADD(&h2c->px_counters->conn_proto_err, 1);
 			goto conn_err;
 		}
 
@@ -2391,6 +2521,7 @@ static int h2c_handle_priority(struct h2c *h2c)
 	if (h2_get_n32(&h2c->dbuf, 0) == h2c->dsi) {
 		/* 7540#5.3 : can't depend on itself */
 		h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+		HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 		TRACE_DEVEL("leaving on error", H2_EV_RX_FRAME|H2_EV_RX_PRIO, h2c->conn);
 		return 0;
 	}
@@ -2485,6 +2616,7 @@ static struct h2s *h2c_frt_handle_headers(struct h2c *h2c, struct h2s *h2s)
 	else if (h2c->dsi <= h2c->max_id || !(h2c->dsi & 1)) {
 		/* RFC7540#5.1.1 stream id > prev ones, and must be odd here */
 		error = H2_ERR_PROTOCOL_ERROR;
+		HA_ATOMIC_ADD(&h2c->px_counters->conn_proto_err, 1);
 		sess_log(h2c->conn->owner);
 		goto conn_err;
 	}
@@ -2614,6 +2746,7 @@ static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 		/* stream error : send RST_STREAM */
 		h2s_error(h2s, H2_ERR_PROTOCOL_ERROR);
 		h2c->st0 = H2_CS_FRAME_E;
+		HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 		goto fail;
 	}
 
@@ -2679,6 +2812,7 @@ static int h2c_frt_handle_data(struct h2c *h2c, struct h2s *h2s)
 	if ((h2s->flags & H2_SF_DATA_CLEN) && (h2c->dfl - h2c->dpl) > h2s->body_len) {
 		/* RFC7540#8.1.2 */
 		error = H2_ERR_PROTOCOL_ERROR;
+		HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 		goto strm_err;
 	}
 
@@ -2722,6 +2856,7 @@ static int h2c_frt_handle_data(struct h2c *h2c, struct h2s *h2s)
 		if (h2s->flags & H2_SF_DATA_CLEN && h2s->body_len) {
 			/* RFC7540#8.1.2 */
 			error = H2_ERR_PROTOCOL_ERROR;
+			HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 			goto strm_err;
 		}
 	}
@@ -2757,6 +2892,7 @@ static int h2_frame_check_vs_state(struct h2c *h2c, struct h2s *h2s)
 			/* only log if no other stream can report the error */
 			sess_log(h2c->conn->owner);
 		}
+		HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 		TRACE_DEVEL("leaving in error (idle&!hdrs&!prio)", H2_EV_RX_FRAME|H2_EV_RX_FHDR|H2_EV_PROTO_ERR, h2c->conn, h2s);
 		return 0;
 	}
@@ -2764,6 +2900,7 @@ static int h2_frame_check_vs_state(struct h2c *h2c, struct h2s *h2s)
 	if (h2s->st == H2_SS_IDLE && (h2c->flags & H2_CF_IS_BACK)) {
 		/* only PUSH_PROMISE would be permitted here */
 		h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+		HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 		TRACE_DEVEL("leaving in error (idle&back)", H2_EV_RX_FRAME|H2_EV_RX_FHDR|H2_EV_PROTO_ERR, h2c->conn, h2s);
 		return 0;
 	}
@@ -2775,10 +2912,13 @@ static int h2_frame_check_vs_state(struct h2c *h2c, struct h2s *h2s)
 		 * 6.2, 6.6 and 6.10 further mandate that HEADERS/
 		 * PUSH_PROMISE/CONTINUATION cause connection errors.
 		 */
-		if (h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK)
+		if (h2_ft_bit(h2c->dft) & H2_FT_HDR_MASK) {
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
-		else
+			HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
+		}
+		else {
 			h2s_error(h2s, H2_ERR_STREAM_CLOSED);
+		}
 		TRACE_DEVEL("leaving in error (hrem&!wu&!rst&!prio)", H2_EV_RX_FRAME|H2_EV_RX_FHDR|H2_EV_PROTO_ERR, h2c->conn, h2s);
 		return 0;
 	}
@@ -2924,6 +3064,7 @@ static void h2_process_demux(struct h2c *h2c)
 				h2c->st0 = H2_CS_ERROR2;
 				if (!(h2c->flags & H2_CF_IS_BACK))
 					sess_log(h2c->conn->owner);
+				HA_ATOMIC_ADD(&h2c->px_counters->conn_proto_err, 1);
 				goto fail;
 			}
 
@@ -2942,6 +3083,7 @@ static void h2_process_demux(struct h2c *h2c)
 			 * deleted above.
 			 */
 			padlen = 0;
+			HA_ATOMIC_ADD(&h2c->px_counters->settings_rcvd, 1);
 			goto new_frame;
 		}
 	}
@@ -3008,6 +3150,7 @@ static void h2_process_demux(struct h2c *h2c)
 					h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
 					if (!(h2c->flags & H2_CF_IS_BACK))
 						sess_log(h2c->conn->owner);
+					HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 					goto fail;
 				}
 
@@ -3050,7 +3193,7 @@ static void h2_process_demux(struct h2c *h2c)
 
 		if (tmp_h2s != h2s && h2s && h2s->cs &&
 		    (b_data(&h2s->rxbuf) ||
-		     conn_xprt_read0_pending(h2c->conn) ||
+		     h2c_read0_pending(h2c) ||
 		     h2s->st == H2_SS_CLOSED ||
 		     (h2s->flags & H2_SF_ES_RCVD) ||
 		     (h2s->cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING|CS_FL_EOS)))) {
@@ -3073,6 +3216,7 @@ static void h2_process_demux(struct h2c *h2c)
 				TRACE_PROTO("receiving H2 SETTINGS frame", H2_EV_RX_FRAME|H2_EV_RX_SETTINGS, h2c->conn, h2s);
 				ret = h2c_handle_settings(h2c);
 			}
+			HA_ATOMIC_ADD(&h2c->px_counters->settings_rcvd, 1);
 
 			if (h2c->st0 == H2_CS_FRAME_A) {
 				TRACE_PROTO("sending H2 SETTINGS ACK frame", H2_EV_TX_FRAME|H2_EV_RX_SETTINGS, h2c->conn, h2s);
@@ -3109,6 +3253,7 @@ static void h2_process_demux(struct h2c *h2c)
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
 			if (!(h2c->flags & H2_CF_IS_BACK))
 				sess_log(h2c->conn->owner);
+			HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 			goto fail;
 
 		case H2_FT_HEADERS:
@@ -3123,6 +3268,7 @@ static void h2_process_demux(struct h2c *h2c)
 					ret = 1;
 				}
 			}
+			HA_ATOMIC_ADD(&h2c->px_counters->headers_rcvd, 1);
 			break;
 
 		case H2_FT_DATA:
@@ -3130,6 +3276,7 @@ static void h2_process_demux(struct h2c *h2c)
 				TRACE_PROTO("receiving H2 DATA frame", H2_EV_RX_FRAME|H2_EV_RX_DATA, h2c->conn, h2s);
 				ret = h2c_frt_handle_data(h2c, h2s);
 			}
+			HA_ATOMIC_ADD(&h2c->px_counters->data_rcvd, 1);
 
 			if (h2c->st0 == H2_CS_FRAME_A) {
 				TRACE_PROTO("sending stream WINDOW_UPDATE frame", H2_EV_TX_FRAME|H2_EV_TX_WU, h2c->conn, h2s);
@@ -3149,6 +3296,7 @@ static void h2_process_demux(struct h2c *h2c)
 				TRACE_PROTO("receiving H2 RST_STREAM frame", H2_EV_RX_FRAME|H2_EV_RX_RST|H2_EV_RX_EOI, h2c->conn, h2s);
 				ret = h2c_handle_rst_stream(h2c, h2s);
 			}
+			HA_ATOMIC_ADD(&h2c->px_counters->rst_stream_rcvd, 1);
 			break;
 
 		case H2_FT_GOAWAY:
@@ -3156,6 +3304,7 @@ static void h2_process_demux(struct h2c *h2c)
 				TRACE_PROTO("receiving H2 GOAWAY frame", H2_EV_RX_FRAME|H2_EV_RX_GOAWAY, h2c->conn, h2s);
 				ret = h2c_handle_goaway(h2c);
 			}
+			HA_ATOMIC_ADD(&h2c->px_counters->goaway_rcvd, 1);
 			break;
 
 			/* implement all extra frame types here */
@@ -3213,7 +3362,7 @@ static void h2_process_demux(struct h2c *h2c)
 	/* we can go here on missing data, blocked response or error */
 	if (h2s && h2s->cs &&
 	    (b_data(&h2s->rxbuf) ||
-	     conn_xprt_read0_pending(h2c->conn) ||
+	     h2c_read0_pending(h2c) ||
 	     h2s->st == H2_SS_CLOSED ||
 	     (h2s->flags & H2_SF_ES_RCVD) ||
 	     (h2s->cs->flags & (CS_FL_ERROR|CS_FL_ERR_PENDING|CS_FL_EOS)))) {
@@ -3457,7 +3606,8 @@ static int h2_send(struct h2c *h2c)
 		if (h2c->flags & H2_CF_MUX_MALLOC)
 			done = 1; // we won't go further without extra buffers
 
-		if (conn->flags & CO_FL_ERROR)
+		if ((conn->flags & (CO_FL_SOCK_WR_SH|CO_FL_ERROR)) ||
+		    (h2c->st0 == H2_CS_ERROR2) || (h2c->flags & H2_CF_GOAWAY_FAILED))
 			break;
 
 		if (h2c->flags & (H2_CF_MUX_MFULL | H2_CF_DEM_MBUSY | H2_CF_DEM_MROOM))
@@ -3597,7 +3747,7 @@ static int h2_process(struct h2c *h2c)
 	}
 	h2_send(h2c);
 
-	if (unlikely(h2c->proxy->state == PR_STSTOPPED)) {
+	if (unlikely(h2c->proxy->disabled) && !(h2c->flags & H2_CF_IS_BACK)) {
 		/* frontend is stopping, reload likely in progress, let's try
 		 * to announce a graceful shutdown if not yet done. We don't
 		 * care if it fails, it will be tried again later.
@@ -3630,7 +3780,7 @@ static int h2_process(struct h2c *h2c)
 		}
 	}
 
-	if (conn->flags & CO_FL_ERROR || conn_xprt_read0_pending(conn) ||
+	if (conn->flags & CO_FL_ERROR || h2c_read0_pending(h2c) ||
 	    h2c->st0 == H2_CS_ERROR2 || h2c->flags & H2_CF_GOAWAY_FAILED ||
 	    (eb_is_empty(&h2c->streams_by_id) && h2c->last_sid >= 0 &&
 	     h2c->max_id >= h2c->last_sid)) {
@@ -3963,6 +4113,14 @@ static void h2_detach(struct conn_stream *cs)
 			}
 			else {
 				if (eb_is_empty(&h2c->streams_by_id)) {
+					/* If the connection is owned by the session, first remove it
+					 * from its list
+					 */
+					if (h2c->conn->owner) {
+						session_unown_conn(h2c->conn->owner, h2c->conn);
+						h2c->conn->owner = NULL;
+					}
+
 					if (!srv_add_to_idle_list(objt_server(h2c->conn->target), h2c->conn, 1)) {
 						/* The server doesn't want it, let's kill the connection right away */
 						h2c->conn->mux->destroy(h2c);
@@ -3978,7 +4136,8 @@ static void h2_detach(struct conn_stream *cs)
 
 				}
 				else if (MT_LIST_ISEMPTY(&h2c->conn->list) &&
-					 h2_avail_streams(h2c->conn) > 0 && objt_server(h2c->conn->target)) {
+					 h2_avail_streams(h2c->conn) > 0 && objt_server(h2c->conn->target) &&
+					 !LIST_ADDED(&h2c->conn->session_list)) {
 					LIST_ADD(&__objt_server(h2c->conn->target)->available_conns[tid], mt_list_to_list(&h2c->conn->list));
 				}
 			}
@@ -4310,6 +4469,7 @@ next_frame:
 			/* RFC7540#6.10: frame of unexpected type */
 			TRACE_STATE("not continuation!", H2_EV_RX_FRAME|H2_EV_RX_FHDR|H2_EV_RX_HDR|H2_EV_RX_CONT|H2_EV_H2C_ERR|H2_EV_PROTO_ERR, h2c->conn);
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+			HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 			goto fail;
 		}
 
@@ -4317,6 +4477,7 @@ next_frame:
 			/* RFC7540#6.10: frame of different stream */
 			TRACE_STATE("different stream ID!", H2_EV_RX_FRAME|H2_EV_RX_FHDR|H2_EV_RX_HDR|H2_EV_RX_CONT|H2_EV_H2C_ERR|H2_EV_PROTO_ERR, h2c->conn);
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+			HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 			goto fail;
 		}
 
@@ -4369,6 +4530,7 @@ next_frame:
 			/* RFC7540#5.3.1 : stream dep may not depend on itself */
 			TRACE_STATE("invalid stream dependency!", H2_EV_RX_FRAME|H2_EV_RX_HDR|H2_EV_H2C_ERR|H2_EV_PROTO_ERR, h2c->conn);
 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+			HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 			goto fail;
 		}
 
@@ -4496,6 +4658,7 @@ next_frame:
 		/* It's a trailer but it's missing ES flag */
 		TRACE_STATE("missing EH on trailers frame", H2_EV_RX_FRAME|H2_EV_RX_HDR|H2_EV_H2C_ERR|H2_EV_PROTO_ERR, h2c->conn);
 		h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+		HA_ATOMIC_ADD(&h2c->px_counters->strm_proto_err, 1);
 		goto fail;
 	}
 
@@ -5796,7 +5959,7 @@ static size_t h2_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 		cs->flags &= ~(CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
 		if (h2s->flags & H2_SF_ES_RCVD)
 			cs->flags |= CS_FL_EOI;
-		if (conn_xprt_read0_pending(h2c->conn) || h2s->st == H2_SS_CLOSED)
+		if (h2c_read0_pending(h2c) || h2s->st == H2_SS_CLOSED)
 			cs->flags |= CS_FL_EOS;
 		if (cs->flags & CS_FL_ERR_PENDING)
 			cs->flags |= CS_FL_ERROR;
@@ -6207,7 +6370,7 @@ static const struct mux_ops h2_ops = {
 	.ctl = h2_ctl,
 	.show_fd = h2_show_fd,
 	.takeover = h2_takeover,
-	.flags = MX_FL_CLEAN_ABRT|MX_FL_HTX,
+	.flags = MX_FL_CLEAN_ABRT|MX_FL_HTX|MX_FL_HOL_RISK,
 	.name = "H2",
 };
 

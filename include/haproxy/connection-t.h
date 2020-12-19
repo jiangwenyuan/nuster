@@ -243,6 +243,16 @@ enum {
 	CO_ER_SOCKS4_ABORT,      /* SOCKS4 Proxy handshake aborted by server */
 };
 
+/* error return codes for accept_conn() */
+enum {
+	CO_AC_NONE = 0,  /* no error, valid connection returned */
+	CO_AC_DONE,      /* reached the end of the queue (typically EAGAIN) */
+	CO_AC_RETRY,     /* late signal delivery or anything requiring the caller to try again */
+	CO_AC_YIELD,     /* short-lived limitation that requires a short pause */
+	CO_AC_PAUSE,     /* long-lived issue (resource/memory allocation error, paused FD) */
+	CO_AC_PERMERR,   /* permanent, non-recoverable error (e.g. closed listener socket) */
+};
+
 /* source address settings for outgoing connections */
 enum {
 	/* Tproxy exclusive values from 0 to 7 */
@@ -281,6 +291,7 @@ enum {
 	MX_FL_NONE        = 0x00000000,
 	MX_FL_CLEAN_ABRT  = 0x00000001, /* abort is clearly reported as an error */
 	MX_FL_HTX         = 0x00000002, /* set if it is an HTX multiplexer */
+	MX_FL_HOL_RISK    = 0x00000004, /* set if the protocol is subject the to head-of-line blocking on server */
 };
 
 /* PROTO token registration */
@@ -606,8 +617,8 @@ struct tlv_ssl {
  */
 struct idle_conns {
 	struct mt_list toremove_conns;
-	__decl_thread(HA_SPINLOCK_T takeover_lock);
 	struct task *cleanup_task;
+	__decl_thread(HA_SPINLOCK_T takeover_lock);
 } THREAD_ALIGNED(64);
 
 #endif /* _HAPROXY_CONNECTION_T_H */

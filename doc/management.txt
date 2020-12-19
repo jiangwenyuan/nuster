@@ -196,9 +196,8 @@ list of options is :
     error is encountered. Presence of warnings will be reported if any.
 
   -d : enable debug mode. This disables daemon mode, forces the process to stay
-    in foreground and to show incoming and outgoing events. It is equivalent to
-    the "global" section's "debug" keyword. It must never be used in an init
-    script.
+    in foreground and to show incoming and outgoing events. It must never be
+    used in an init script.
 
   -dG : disable use of getaddrinfo() to resolve host names into addresses. It
     can be used when suspecting that getaddrinfo() doesn't work as expected.
@@ -944,6 +943,10 @@ mechanism is the HTTP statistics page. This page also exposes an alternative
 CSV output format for monitoring tools. The same format is provided on the
 Unix socket.
 
+Statistics are regroup in categories labelled as domains, corresponding to the
+multiple components of HAProxy. There are two domains avaiable: proxy and dns.
+If not specified, the proxy domain is selected. Note that only the proxy
+statistics are printed on the HTTP page.
 
 9.1. CSV format
 ---------------
@@ -959,10 +962,14 @@ text is doubled ('""'), which is the format that most tools recognize. Please
 do not insert any column before these ones in order not to break tools which
 use hard-coded column positions.
 
-In brackets after each field name are the types which may have a value for
-that field. The types are L (Listeners), F (Frontends), B (Backends), and
-S (Servers).
+For proxy statistics, after each field name, the types which may have a value
+for that field are specified in brackets. The types are L (Listeners), F
+(Frontends), B (Backends), and S (Servers). There is a fixed set of static
+fields that are always available in the same order. A column containing the
+character '-' delimits the end of the static fields, after which presence or
+order of the fields are not guaranteed.
 
+Here is the list of static fields using the proxy statistics domain:
   0. pxname [LFBS]: proxy name
   1. svname [LFBS]: service name (FRONTEND for frontend, BACKEND for backend,
      any name for server/listener)
@@ -1002,7 +1009,7 @@ S (Servers).
      server. The server value counts the number of times that server was
      switched away from.
  17. status [LFBS]: status (UP/DOWN/NOLB/MAINT/MAINT(via)/MAINT(resolution)...)
- 18. weight [..BS]: total weight (backend), server weight (server)
+ 18. weight [..BS]: total effective weight (backend), effective weight (server)
  19. act [..BS]: number of active servers (backend), server is active (server)
  20. bck [..BS]: number of backup servers (backend), server is backup (server)
  21. chkfail [...S]: number of failed checks. (Only counts checks failed when
@@ -1119,7 +1126,15 @@ S (Servers).
  92. rtime_max [..BS]: the maximum observed response time in ms (0 for TCP)
  93. ttime_max [..BS]: the maximum observed total session time in ms
  94. eint [LFBS]: cumulative number of internal errors
+ 95. idle_conn_cur [...S]: current number of unsafe idle connections
+ 96. safe_conn_cur [...S]: current number of safe idle connections
+ 97. used_conn_cur [...S]: current number of connections in use
+ 98. need_conn_est [...S]: estimated needed number of connections
+ 99. uweight [..BS]: total user weight (backend), server user weight (server)
 
+For all other statistics domains, the presence or the order of the fields are
+not guaranteed. In this case, the header line should always be used to parse
+the CSV data.
 
 9.2) Typed output format
 ------------------------
@@ -2423,12 +2438,14 @@ show sess <id>
   The special id "all" dumps the states of all sessions, which must be avoided
   as much as possible as it is highly CPU intensive and can take a lot of time.
 
-show stat [{<iid>|<proxy>} <type> <sid>] [typed|json] [desc]
-  Dump statistics using the CSV format; using the extended typed output
-  format described in the section above if "typed" is passed after the
-  other arguments; or in JSON if "json" is passed after the other arguments
-  . By passing <id>, <type> and <sid>, it is possible to dump only selected
-  items :
+show stat [domain <dns|proxy>] [{<iid>|<proxy>} <type> <sid>] [typed|json] \
+          [desc] [up|no-maint]
+  Dump statistics. The domain is used to select which statistics to print; dns
+  and proxy are available for now. By default, the CSV format is used; you can
+  activate the extended typed output format described in the section above if
+  "typed" is passed after the other arguments; or in JSON if "json" is passed
+  after the other arguments. By passing <id>, <type> and <sid>, it is possible
+  to dump only selected items :
     - <iid> is a proxy ID, -1 to dump everything. Alternatively, a proxy name
       <proxy> may be specified. In this case, this proxy's ID will be used as
       the ID selector.
@@ -2470,6 +2487,13 @@ show stat [{<iid>|<proxy>} <type> <sid>] [typed|json] [desc]
   stats by passing ";typed" after the URI. It is very important to note that in
   typed output format, the dump for a single object is contiguous so that there
   is no need for a consumer to store everything at once.
+
+  The "up" modifier will result in listing only servers which reportedly up or
+  not checked. Those down, unresolved, or in maintenance will not be listed.
+  This is analogous to the ";up" option on the HTTP stats. Similarly, the
+  "no-maint" modifier will act like the ";no-maint" HTTP modifier and will
+  result in disabled servers not to be listed. The difference is that those
+  which are enabled but down will not be evicted.
 
   When using the typed output format, each line is made of 4 columns delimited
   by colons (':'). The first column is a dot-delimited series of 5 elements. The

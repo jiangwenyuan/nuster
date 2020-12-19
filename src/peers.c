@@ -789,8 +789,6 @@ void __peer_session_deinit(struct peer *peer)
 	/* reset teaching and learning flags to 0 */
 	peer->flags &= PEER_TEACH_RESET;
 	peer->flags &= PEER_LEARN_RESET;
-	/* set this peer as dead from heartbeat point of view */
-	peer->flags &= ~PEER_F_ALIVE;
 	task_wakeup(peers->sync_task, TASK_WOKEN_MSG);
 }
 
@@ -810,6 +808,7 @@ static void peer_session_release(struct appctx *appctx)
 		HA_SPIN_LOCK(PEER_LOCK, &peer->lock);
 		if (peer->appctx == appctx)
 			__peer_session_deinit(peer);
+		peer->flags &= ~PEER_F_ALIVE;
 		HA_SPIN_UNLOCK(PEER_LOCK, &peer->lock);
 	}
 }
@@ -2120,8 +2119,10 @@ static inline void init_accepted_peer(struct peer *peer, struct peers *peers)
 {
 	struct shared_table *st;
 
+	peer->heartbeat = tick_add(now_ms, MS_TO_TICKS(PEER_HEARTBEAT_TIMEOUT));
 	/* Register status code */
 	peer->statuscode = PEER_SESS_SC_SUCCESSCODE;
+	peer->last_hdshk = now_ms;
 
 	/* Awake main task */
 	task_wakeup(peers->sync_task, TASK_WOKEN_MSG);
@@ -2165,6 +2166,7 @@ static inline void init_connected_peer(struct peer *peer, struct peers *peers)
 {
 	struct shared_table *st;
 
+	peer->heartbeat = tick_add(now_ms, MS_TO_TICKS(PEER_HEARTBEAT_TIMEOUT));
 	/* Init cursors */
 	for (st = peer->tables; st ; st = st->next) {
 		st->last_get = st->last_acked = 0;
@@ -2270,6 +2272,8 @@ switchstate:
 					 */
 					curpeer->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + ha_random() % 2000));
 					peer_session_forceshutdown(curpeer);
+					curpeer->heartbeat = TICK_ETERNITY;
+					curpeer->coll++;
 				}
 				if (maj_ver != (unsigned int)-1 && min_ver != (unsigned int)-1) {
 					if (min_ver == PEER_DWNGRD_MINOR_VER) {
@@ -2280,6 +2284,7 @@ switchstate:
 					}
 				}
 				curpeer->appctx = appctx;
+				curpeer->flags |= PEER_F_ALIVE;
 				appctx->ctx.peers.ptr = curpeer;
 				appctx->st0 = PEER_SESS_ST_SENDSUCCESS;
 				_HA_ATOMIC_ADD(&active_peers, 1);
@@ -2355,6 +2360,7 @@ switchstate:
 
 				/* Register status code */
 				curpeer->statuscode = atoi(trash.area);
+				curpeer->last_hdshk = now_ms;
 
 				/* Awake main task */
 				task_wakeup(curpeers->sync_task, TASK_WOKEN_MSG);
@@ -2521,6 +2527,7 @@ void peers_setup_frontend(struct proxy *fe)
 {
 	fe->last_change = now.tv_sec;
 	fe->cap = PR_CAP_FE | PR_CAP_BE;
+	fe->mode = PR_MODE_PEERS;
 	fe->maxconn = 0;
 	fe->conn_retries = CONN_RETRIES;
 	fe->timeout.client = MS_TO_TICKS(5000);
@@ -2541,8 +2548,9 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 	struct stream *s;
 
 	peer->reconnect = tick_add(now_ms, MS_TO_TICKS(PEER_RECONNECT_TIMEOUT));
-	peer->heartbeat = tick_add(now_ms, MS_TO_TICKS(PEER_HEARTBEAT_TIMEOUT));
+	peer->heartbeat = TICK_ETERNITY;
 	peer->statuscode = PEER_SESS_SC_CONNECTCODE;
+	peer->last_hdshk = now_ms;
 	s = NULL;
 
 	appctx = appctx_new(&peer_applet, tid_bit);
@@ -2569,9 +2577,8 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 
 	/* initiate an outgoing connection */
 	s->target = peer_session_target(peer, s);
-	if (!sockaddr_alloc(&s->target_addr))
+	if (!sockaddr_alloc(&s->target_addr, &peer->addr, sizeof(peer->addr)))
 		goto out_free_strm;
-	*s->target_addr = peer->addr;
 	s->flags = SF_ASSIGNED|SF_ADDR_SET;
 	s->si[1].flags |= SI_FL_NOLINGER;
 
@@ -2722,6 +2729,7 @@ static struct task *process_peer_sync(struct task * task, void *context, unsigne
 								}
 								else  {
 									ps->reconnect = tick_add(now_ms, MS_TO_TICKS(50 + ha_random() % 2000));
+									ps->heartbeat = TICK_ETERNITY;
 									peer_session_forceshutdown(ps);
 									ps->no_hbt++;
 								}
@@ -3065,11 +3073,11 @@ static int peers_dump_head(struct buffer *msg, struct stream_interface *si, stru
 	struct tm tm;
 
 	get_localtime(peers->last_change, &tm);
-	chunk_appendf(msg, "%p: [%02d/%s/%04d:%02d:%02d:%02d] id=%s state=%d flags=0x%x resync_timeout=%s task_calls=%u\n",
+	chunk_appendf(msg, "%p: [%02d/%s/%04d:%02d:%02d:%02d] id=%s disabled=%d flags=0x%x resync_timeout=%s task_calls=%u\n",
 	              peers,
 	              tm.tm_mday, monthname[tm.tm_mon], tm.tm_year+1900,
 	              tm.tm_hour, tm.tm_min, tm.tm_sec,
-	              peers->id, peers->state, peers->flags,
+	              peers->id, peers->disabled, peers->flags,
 	              peers->resync_timeout ?
 			             tick_is_expired(peers->resync_timeout, now_ms) ? "<PAST>" :
 			                     human_time(TICKS_TO_MS(peers->resync_timeout - now_ms),
@@ -3099,17 +3107,32 @@ static int peers_dump_peer(struct buffer *msg, struct stream_interface *si, stru
 	struct shared_table *st;
 
 	addr_to_str(&peer->addr, pn, sizeof pn);
-	chunk_appendf(msg, "  %p: id=%s(%s) addr=%s:%d status=%s reconnect=%s confirm=%u tx_hbt=%u rx_hbt=%u no_hbt=%u new_conn=%u proto_err=%u\n",
+	chunk_appendf(msg, "  %p: id=%s(%s,%s) addr=%s:%d last_status=%s",
 	              peer, peer->id,
 	              peer->local ? "local" : "remote",
+	              peer->appctx ? "active" : "inactive",
 	              pn, get_host_port(&peer->addr),
-	              statuscode_str(peer->statuscode),
+	              statuscode_str(peer->statuscode));
+
+	chunk_appendf(msg, " last_hdshk=%s\n",
+	              peer->last_hdshk ? human_time(TICKS_TO_MS(now_ms - peer->last_hdshk),
+	                                            TICKS_TO_MS(1000)) : "<NEVER>");
+
+	chunk_appendf(msg, "        reconnect=%s",
 	              peer->reconnect ?
 			             tick_is_expired(peer->reconnect, now_ms) ? "<PAST>" :
 			                     human_time(TICKS_TO_MS(peer->reconnect - now_ms),
-			                     TICKS_TO_MS(1000)) : "<NEVER>",
+			                     TICKS_TO_MS(1000)) : "<NEVER>");
+
+	chunk_appendf(msg, " heartbeat=%s",
+	              peer->heartbeat ?
+			             tick_is_expired(peer->heartbeat, now_ms) ? "<PAST>" :
+			                     human_time(TICKS_TO_MS(peer->heartbeat - now_ms),
+			                     TICKS_TO_MS(1000)) : "<NEVER>");
+
+	chunk_appendf(msg, " confirm=%u tx_hbt=%u rx_hbt=%u no_hbt=%u new_conn=%u proto_err=%u coll=%u\n",
 	              peer->confirm, peer->tx_hbt, peer->rx_hbt,
-	              peer->no_hbt, peer->new_conn, peer->proto_err);
+	              peer->no_hbt, peer->new_conn, peer->proto_err, peer->coll);
 
 	chunk_appendf(&trash, "        flags=0x%x", peer->flags);
 

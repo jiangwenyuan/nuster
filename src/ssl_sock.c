@@ -129,7 +129,8 @@ struct global_ssl global_ssl = {
 	.ctx_cache = DEFAULT_SSL_CTX_CACHE,
 	.capture_cipherlist = 0,
 	.extra_files = SSL_GF_ALL,
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	.extra_files_noext = 0,
+#ifdef HAVE_OPENSSL_KEYLOG
 	.keylog = 0
 #endif
 };
@@ -436,7 +437,7 @@ struct pool_head *pool_head_ssl_capture = NULL;
 int ssl_capture_ptr_index = -1;
 static int ssl_app_data_index = -1;
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 int ssl_keylog_index = -1;
 struct pool_head *pool_head_ssl_keylog = NULL;
 struct pool_head *pool_head_ssl_keylog_str = NULL;
@@ -512,7 +513,7 @@ static void ssl_sock_parse_clienthello(struct connection *conn, int write_p, int
                                        int content_type, const void *buf, size_t len,
                                        SSL *ssl);
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 static void ssl_init_keylog(struct connection *conn, int write_p, int version,
                             int content_type, const void *buf, size_t len,
                             SSL *ssl);
@@ -557,7 +558,7 @@ static int ssl_sock_register_msg_callbacks(void)
 		if (!ssl_sock_register_msg_callback(ssl_sock_parse_clienthello))
 			return ERR_ABORT;
 	}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 	if (global_ssl.keylog > 0) {
 		if (!ssl_sock_register_msg_callback(ssl_init_keylog))
 			return ERR_ABORT;
@@ -1278,7 +1279,7 @@ int ssl_sock_ocsp_stapling_cbk(SSL *ssl, void *arg)
 
 #endif
 
-#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) || defined OPENSSL_IS_BORINGSSL)
+#if ((defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB && !defined OPENSSL_NO_OCSP) && !defined OPENSSL_IS_BORINGSSL)
 
 
 /*
@@ -1313,7 +1314,6 @@ static void ssl_sock_free_ocsp(struct certificate_ocsp *ocsp)
  * Returns 1 if no ".ocsp" file found, 0 if OCSP status extension is
  * successfully enabled, or -1 in other error case.
  */
-#ifndef OPENSSL_IS_BORINGSSL
 static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckch, STACK_OF(X509) *chain)
 {
 	X509 *x, *issuer;
@@ -1443,13 +1443,13 @@ out:
 
 	return ret;
 }
-#else /* OPENSSL_IS_BORINGSSL */
+#endif
+
+#ifdef OPENSSL_IS_BORINGSSL
 static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckch, STACK_OF(X509) *chain)
 {
 	return SSL_CTX_set_ocsp_response(ctx, (const uint8_t *)ckch->ocsp_response->area, ckch->ocsp_response->data);
 }
-#endif
-
 #endif
 
 
@@ -1734,7 +1734,7 @@ static void ssl_sock_parse_clienthello(struct connection *conn, int write_p, int
 }
 
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 static void ssl_init_keylog(struct connection *conn, int write_p, int version,
                             int content_type, const void *buf, size_t len,
                             SSL *ssl)
@@ -3919,7 +3919,7 @@ void ssl_set_shctx(SSL_CTX *ctx)
  * We only need to copy the secret as there is a sample fetch for the ClientRandom
  */
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 void SSL_CTX_keylog(const SSL *ssl, const char *line)
 {
 	struct ssl_keylog *keylog;
@@ -4155,7 +4155,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 #if HA_OPENSSL_VERSION_NUMBER >= 0x00907000L
 	SSL_CTX_set_msg_callback(ctx, ssl_sock_msgcbk);
 #endif
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 	SSL_CTX_set_keylog_callback(ctx, SSL_CTX_keylog);
 #endif
 
@@ -4177,7 +4177,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 	if (ssl_conf_cur)
 		SSL_CTX_set_alpn_select_cb(ctx, ssl_sock_advertise_alpn_protos, ssl_conf_cur);
 #endif
-#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+#if defined(SSL_CTX_set1_curves_list)
 	conf_curves = (ssl_conf && ssl_conf->curves) ? ssl_conf->curves : bind_conf->ssl_conf.curves;
 	if (conf_curves) {
 		if (!SSL_CTX_set1_curves_list(ctx, conf_curves)) {
@@ -4721,6 +4721,14 @@ void ssl_sock_free_srv_ctx(struct server *srv)
 	if (srv->ssl_ctx.npn_str)
 		free(srv->ssl_ctx.npn_str);
 #endif
+	if (srv->ssl_ctx.reused_sess) {
+		int i;
+
+		for (i = 0; i < global.nbthread; i++)
+			free(srv->ssl_ctx.reused_sess[i].ptr);
+		free(srv->ssl_ctx.reused_sess);
+	}
+
 	if (srv->ssl_ctx.ctx)
 		SSL_CTX_free(srv->ssl_ctx.ctx);
 }
@@ -5022,7 +5030,7 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 			goto err;
 		}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef SSL_READ_EARLY_DATA_SUCCESS
 		if (__objt_listener(conn->target)->bind_conf->ssl_conf.early_data) {
 			b_alloc(&ctx->early_buf);
 			SSL_set_max_early_data(ctx->ssl,
@@ -5038,7 +5046,7 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 
 		/* leave init state and start handshake */
 		conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef SSL_READ_EARLY_DATA_SUCCESS
 		conn->flags |= CO_FL_EARLY_SSL_HS;
 #endif
 
@@ -5076,7 +5084,7 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 	if (!conn->xprt_ctx)
 		goto out_error;
 
-#if HA_OPENSSL_VERSION_NUMBER >= 0x10101000L
+#ifdef SSL_READ_EARLY_DATA_SUCCESS
 	/*
 	 * Check if we have early data. If we do, we have to read them
 	 * before SSL_do_handshake() is called, And there's no way to
@@ -5283,7 +5291,7 @@ check_error:
 			goto out_error;
 		}
 	}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef SSL_READ_EARLY_DATA_SUCCESS
 	else {
 		/*
 		 * If the server refused the early data, we have to send a
@@ -5677,7 +5685,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 	 * in which case we accept to do it once again.
 	 */
 	while (count) {
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef SSL_READ_EARLY_DATA_SUCCESS
 		size_t written_data;
 #endif
 
@@ -5698,7 +5706,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 			ctx->xprt_st |= SSL_SOCK_SEND_UNLIMITED;
 		}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef SSL_READ_EARLY_DATA_SUCCESS
 		if (!SSL_is_init_finished(ctx->ssl) && conn_is_back(conn)) {
 			unsigned int max_early;
 
@@ -6590,7 +6598,7 @@ static void ssl_sock_capture_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *
 	pool_free(pool_head_ssl_capture, ptr);
 }
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 static void ssl_sock_keylog_free_func(void *parent, void *ptr, CRYPTO_EX_DATA *ad, int idx, long argl, void *argp)
 {
 	struct ssl_keylog *keylog;
@@ -6657,7 +6665,7 @@ static void __ssl_sock_init(void)
 
 	ssl_app_data_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 	ssl_capture_ptr_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_capture_free_func);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 	ssl_keylog_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, ssl_sock_keylog_free_func);
 #endif
 #ifndef OPENSSL_NO_ENGINE

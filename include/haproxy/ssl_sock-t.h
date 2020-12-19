@@ -226,7 +226,7 @@ struct ssl_capture {
 	char ciphersuite[VAR_ARRAY];
 };
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_OPENSSL_KEYLOG
 #define SSL_KEYLOG_MAX_SECRET_SIZE 129
 
 struct ssl_keylog {
@@ -274,7 +274,7 @@ struct global_ssl {
 	char *listen_default_ciphersuites;
 	char *connect_default_ciphersuites;
 #endif
-#if ((HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL) || defined(LIBRESSL_VERSION_NUMBER))
+#if defined(SSL_CTX_set1_curves_list)
 	char *listen_default_curves;
 #endif
 	int listen_default_ssloptions;
@@ -290,6 +290,7 @@ struct global_ssl {
 	int capture_cipherlist; /* Size of the cipherlist buffer. */
 	int keylog; /* activate keylog  */
 	int extra_files; /* which files not defined in the configuration file are we looking for */
+	int extra_files_noext; /* whether we remove the extension when looking up a extra file */
 };
 
 /* The order here matters for picking a default context,

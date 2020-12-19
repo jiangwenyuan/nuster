@@ -45,9 +45,29 @@
 #define __decl_rwlock(lock)
 #define __decl_aligned_rwlock(lock)
 
+#elif !defined(DEBUG_THREAD) && !defined(DEBUG_FULL)
+
+/************** THREADS ENABLED WITHOUT DEBUGGING **************/
+
+/* declare a self-initializing spinlock */
+#define __decl_spinlock(lock)                                  \
+	HA_SPINLOCK_T (lock) = 0;
+
+/* declare a self-initializing spinlock, aligned on a cache line */
+#define __decl_aligned_spinlock(lock)                          \
+	HA_SPINLOCK_T (lock) __attribute__((aligned(64))) = 0;
+
+/* declare a self-initializing rwlock */
+#define __decl_rwlock(lock)                                    \
+	HA_RWLOCK_T   (lock) = 0;
+
+/* declare a self-initializing rwlock, aligned on a cache line */
+#define __decl_aligned_rwlock(lock)                            \
+	HA_RWLOCK_T   (lock) __attribute__((aligned(64))) = 0;
+
 #else /* !USE_THREAD */
 
-/********************** THREADS ENABLED ************************/
+/**************** THREADS ENABLED WITH DEBUGGING ***************/
 
 /* declare a self-initializing spinlock */
 #define __decl_spinlock(lock)                               \
@@ -75,8 +95,8 @@
 /*** Common parts below ***/
 
 /* storage types used by spinlocks and RW locks */
-#define __HA_SPINLOCK_T     unsigned long
-#define __HA_RWLOCK_T       unsigned long
+#define __HA_SPINLOCK_T     unsigned int
+#define __HA_RWLOCK_T       unsigned int
 
 
 /* When thread debugging is enabled, we remap HA_SPINLOCK_T and HA_RWLOCK_T to
@@ -97,10 +117,13 @@
 struct lock_stat {
 	uint64_t nsec_wait_for_write;
 	uint64_t nsec_wait_for_read;
+	uint64_t nsec_wait_for_seek;
 	uint64_t num_write_locked;
 	uint64_t num_write_unlocked;
 	uint64_t num_read_locked;
 	uint64_t num_read_unlocked;
+	uint64_t num_seek_locked;
+	uint64_t num_seek_unlocked;
 };
 
 struct ha_spinlock {
@@ -123,6 +146,8 @@ struct ha_rwlock {
 		unsigned long wait_writers; /* a bit is set to 1 << tid for waiting writers */
 		unsigned long cur_readers; /* a bit is set to 1 << tid for current readers */
 		unsigned long wait_readers; /* a bit is set to 1 << tid for waiting waiters */
+		unsigned long cur_seeker;   /* a bit is set to 1 << tid for the lock seekers */
+		unsigned long wait_seekers; /* a bit is set to 1 << tid for waiting seekers */
 		struct {
 			const char *function;
 			const char *file;

@@ -50,6 +50,7 @@ struct shared_table {
 
 struct peer {
 	int local;                    /* proxy state */
+	__decl_thread(HA_SPINLOCK_T lock); /* lock used to handle this peer section */
 	char *id;
 	struct {
 		const char *file;         /* file where the section appears */
@@ -65,24 +66,24 @@ struct peer {
 	unsigned int reconnect;       /* next connect timer */
 	unsigned int heartbeat;       /* next heartbeat timer */
 	unsigned int confirm;         /* confirm message counter */
+	unsigned int last_hdshk;      /* Date of the last handshake. */
 	uint32_t rx_hbt;              /* received heartbeats counter */
 	uint32_t tx_hbt;              /* transmitted heartbeats counter */
 	uint32_t no_hbt;              /* no received heartbeat counter */
 	uint32_t new_conn;            /* new connection after reconnection timeout expiration counter */
 	uint32_t proto_err;           /* protocol errors counter */
+	uint32_t coll;                /* connection collisions counter */
 	struct appctx *appctx;        /* the appctx running it */
 	struct shared_table *remote_table;
 	struct shared_table *last_local_table;
 	struct shared_table *tables;
 	struct server *srv;
 	struct dcache *dcache;        /* dictionary cache */
-	__decl_thread(HA_SPINLOCK_T lock); /* lock used to handle this peer section */
 	struct peer *next;            /* next peer in the list */
 };
 
 
 struct peers {
-	int state;                      /* proxy state */
 	char *id;                       /* peer section name */
 	struct task *sync_task;         /* main sync task */
 	struct sig_handler *sighandler; /* signal handler */
@@ -98,6 +99,7 @@ struct peers {
 	unsigned int flags;             /* current peers section resync state */
 	unsigned int resync_timeout;    /* resync timeout timer */
 	int count;                      /* total of peers */
+	int disabled;                   /* peers proxy disabled if >0 */
 };
 
 /* LRU cache for dictionaies */

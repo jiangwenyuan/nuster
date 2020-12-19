@@ -30,6 +30,9 @@
 #include <haproxy/list.h>
 #include <haproxy/listener-t.h>
 
+/* adjust the listener's state and its proxy's listener counters if needed */
+void listener_set_state(struct listener *l, enum li_state st);
+
 /* This function tries to temporarily disable a listener, depending on the OS
  * capabilities. Linux unbinds the listen socket after a SHUT_RD, and ignores
  * SHUT_WR. Solaris refuses either shutdown(). OpenBSD ignores SHUT_RD but
@@ -45,20 +48,22 @@ int pause_listener(struct listener *l);
  */
 int resume_listener(struct listener *l);
 
-/* This function adds all of the protocol's listener's file descriptors to the
- * polling lists when they are in the LI_LISTEN state. It is intended to be
- * used as a protocol's generic enable_all() primitive, for use after the
- * fork(). It puts the listeners into LI_READY or LI_FULL states depending on
- * their number of connections. It always returns ERR_NONE.
+/*
+ * This function completely stops a listener. It will need to operate under the
+ * proxy's lock, the protocol's lock, and the listener's lock. The caller is
+ * responsible for indicating in lpx, lpr, lli whether the respective locks are
+ * already held (non-zero) or not (zero) so that the function picks the missing
+ * ones, in this order.
  */
-int enable_all_listeners(struct protocol *proto);
+void stop_listener(struct listener *l, int lpx, int lpr, int lli);
 
-/* This function removes all of the protocol's listener's file descriptors from
- * the polling lists when they are in the LI_READY or LI_FULL states. It is
- * intended to be used as a protocol's generic disable_all() primitive. It puts
- * the listeners into LI_LISTEN, and always returns ERR_NONE.
+/* This function adds the specified listener's file descriptor to the polling
+ * lists if it is in the LI_LISTEN state. The listener enters LI_READY or
+ * LI_FULL state depending on its number of connections. In daemon mode, we
+ * also support binding only the relevant processes to their respective
+ * listeners. We don't do that in debug mode however.
  */
-int disable_all_listeners(struct protocol *proto);
+void enable_listener(struct listener *listener);
 
 /* Dequeues all listeners waiting for a resource the global wait queue */
 void dequeue_all_listeners();
@@ -66,22 +71,22 @@ void dequeue_all_listeners();
 /* Dequeues all listeners waiting for a resource in proxy <px>'s queue */
 void dequeue_proxy_listeners(struct proxy *px);
 
-/* Must be called with the lock held. Depending on <do_close> value, it does
- * what unbind_listener or unbind_listener_no_close should do.
+/* This function closes the listening socket for the specified listener,
+ * provided that it's already in a listening state. The listener enters the
+ * LI_ASSIGNED state, except if the FD is not closed, in which case it may
+ * remain in LI_LISTEN. Depending on the process' status (master or worker),
+ * the listener's bind options and the receiver's origin, it may or may not
+ * close the receiver's FD. Must be called with the lock held.
  */
-void do_unbind_listener(struct listener *listener, int do_close);
+void do_unbind_listener(struct listener *listener);
 
 /* This function closes the listening socket for the specified listener,
  * provided that it's already in a listening state. The listener enters the
- * LI_ASSIGNED state. This function is intended to be used as a generic
+ * LI_ASSIGNED state, except if the FD is not closed, in which case it may
+ * remain in LI_LISTEN. This function is intended to be used as a generic
  * function for standard protocols.
  */
 void unbind_listener(struct listener *listener);
-
-/* This function pretends the listener is dead, but keeps the FD opened, so
- * that we can provide it, for conf reloading.
- */
-void unbind_listener_no_close(struct listener *listener);
 
 /* creates one or multiple listeners for bind_conf <bc> on sockaddr <ss> on port
  * range <portl> to <porth>, and possibly attached to fd <fd> (or -1 for auto
@@ -99,12 +104,13 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
  * been unbound. This is the generic function to use to remove a listener.
  */
 void delete_listener(struct listener *listener);
+void __delete_listener(struct listener *listener);
 
 /* This function is called on a read event from a listening socket, corresponding
  * to an accept. It tries to accept as many connections as possible, and for each
  * calls the listener's accept handler (generally the frontend's accept handler).
  */
-void listener_accept(int fd);
+void listener_accept(struct listener *l);
 
 /* Returns a suitable value for a listener's backlog. It uses the listener's,
  * otherwise the frontend's backlog, otherwise the listener's maxconn,
@@ -117,6 +123,31 @@ int listener_backlog(const struct listener *l);
  * listening when it was limited.
  */
 void listener_release(struct listener *l);
+
+/* default function used to unbind a listener. This is for use by standard
+ * protocols working on top of accepted sockets. The receiver's rx_unbind()
+ * will automatically be used after the listener is disabled if the socket is
+ * still bound. This must be used under the listener's lock.
+ */
+void default_unbind_listener(struct listener *listener);
+
+/* default function called to suspend a listener: it simply passes the call to
+ * the underlying receiver. This is find for most socket-based protocols. This
+ * must be called under the listener's lock. It will return non-zero on success,
+ * 0 on failure. If no receiver-level suspend is provided, the operation is
+ * assumed to succeed.
+ */
+int default_suspend_listener(struct listener *l);
+
+/* Tries to resume a suspended listener, and returns non-zero on success or
+ * zero on failure. On certain errors, an alert or a warning might be displayed.
+ * It must be called with the listener's lock held. Depending on the listener's
+ * state and protocol, a listen() call might be used to resume operations, or a
+ * call to the receiver's resume() function might be used as well. This is
+ * suitable as a default function for TCP and UDP. This must be called with the
+ * listener's lock held.
+ */
+int default_resume_listener(struct listener *l);
 
 /*
  * Registers the bind keyword list <kwl> as a list of valid keywords for next
@@ -165,8 +196,8 @@ static inline struct bind_conf *bind_conf_alloc(struct proxy *fe, const char *fi
 
 static inline const char *listener_state_str(const struct listener *l)
 {
-	static const char *states[9] = {
-		"NEW", "INI", "ASS", "PAU", "ZOM", "LIS", "RDY", "FUL", "LIM",
+	static const char *states[8] = {
+		"NEW", "INI", "ASS", "PAU", "LIS", "RDY", "FUL", "LIM",
 	};
 	unsigned int st = l->state;
 

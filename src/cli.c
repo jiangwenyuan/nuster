@@ -53,6 +53,7 @@
 #include <haproxy/sample-t.h>
 #include <haproxy/server.h>
 #include <haproxy/session.h>
+#include <haproxy/sock.h>
 #include <haproxy/stats-t.h>
 #include <haproxy/stream.h>
 #include <haproxy/stream_interface.h>
@@ -65,6 +66,7 @@
 #define PAYLOAD_PATTERN "<<"
 
 static struct applet cli_applet;
+static struct applet mcli_applet;
 
 static const char stats_sock_usage_msg[] =
 	"Unknown command. Please enter one of the following commands only :\n"
@@ -109,11 +111,11 @@ static char *cli_gen_usage_msg(struct appctx *appctx)
 		while (kw->str_kw[0]) {
 
 			/* in a worker or normal process, don't display master only commands */
-			if (master == 0 && (kw->level & ACCESS_MASTER_ONLY))
+			if (appctx->applet == &cli_applet && (kw->level & ACCESS_MASTER_ONLY))
 				goto next_kw;
 
 			/* in master don't displays if we don't have the master bits */
-			if (master == 1 && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
+			if (appctx->applet == &mcli_applet && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
 				goto next_kw;
 
 			/* only show expert commands in expert mode */
@@ -565,11 +567,11 @@ static int cli_parse_request(struct appctx *appctx)
 		return 0;
 
 	/* in a worker or normal process, don't display master only commands */
-	if (master == 0 && (kw->level & ACCESS_MASTER_ONLY))
+	if (appctx->applet == &cli_applet && (kw->level & ACCESS_MASTER_ONLY))
 		return 0;
 
 	/* in master don't displays if we don't have the master bits */
-	if (master == 1 && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
+	if (appctx->applet == &mcli_applet && !(kw->level & (ACCESS_MASTER_ONLY|ACCESS_MASTER)))
 		return 0;
 
 	/* only accept expert commands in expert mode */
@@ -1020,7 +1022,7 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			px = objt_proxy(((struct connection *)fdt.owner)->target);
 			is_back = conn_is_back((struct connection *)fdt.owner);
 		}
-		else if (fdt.iocb == listener_accept)
+		else if (fdt.iocb == sock_accept_iocb)
 			li = fdt.owner;
 
 		chunk_printf(&trash,
@@ -1064,7 +1066,7 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 			else
 				chunk_appendf(&trash, " nomux");
 		}
-		else if (fdt.iocb == listener_accept) {
+		else if (fdt.iocb == sock_accept_iocb) {
 			chunk_appendf(&trash, ") l.st=%s fe=%s",
 			              listener_state_str(li),
 			              li->bind_conf->frontend->id);
@@ -1707,7 +1709,7 @@ static int _getsocks(char **args, char *payload, struct appctx *appctx, void *pr
 		/* for now we can only retrieve namespaces and interfaces from
 		 * pure listeners.
 		 */
-		if (fdtab[cur_fd].iocb == listener_accept) {
+		if (fdtab[cur_fd].iocb == sock_accept_iocb) {
 			const struct listener *l = fdtab[cur_fd].owner;
 
 			if (l->rx.settings->interface) {
@@ -1836,9 +1838,9 @@ static enum obj_type *pcli_pid_to_server(int proc_pid)
 {
 	struct mworker_proc *child;
 
-	/* return the CLI applet of the master */
+	/* return the  mCLI applet of the master */
 	if (proc_pid == 0)
-		return &cli_applet.obj_type;
+		return &mcli_applet.obj_type;
 
 	list_for_each_entry(child, &proc_list, list) {
 		if (child->pid == proc_pid){
@@ -2428,7 +2430,6 @@ int mworker_cli_proxy_create()
 	proxies_list = mworker_proxy;
 	mworker_proxy->id = strdup("MASTER");
 	mworker_proxy->mode = PR_MODE_CLI;
-	mworker_proxy->state = PR_STNEW;
 	mworker_proxy->last_change = now.tv_sec;
 	mworker_proxy->cap = PR_CAP_LISTEN; /* this is a listen section */
 	mworker_proxy->maxconn = 10;                 /* default to 10 concurrent connections */
@@ -2602,7 +2603,8 @@ int mworker_cli_proxy_new_listener(char *line)
 		l->accept = session_accept_fd;
 		l->default_target = mworker_proxy->default_target;
 		/* don't make the peers subject to global limits and don't close it in the master */
-		l->options |= (LI_O_UNLIMITED|LI_O_MWORKER); /* we are keeping this FD in the master */
+		l->options  |= LI_O_UNLIMITED;
+		l->rx.flags |= RX_F_MWORKER; /* we are keeping this FD in the master */
 		l->nice = -64;  /* we want to boost priority for local stats */
 		global.maxsock++; /* for the listening socket */
 	}
@@ -2670,6 +2672,7 @@ int mworker_cli_sockpair_new(struct mworker_proc *mworker_proc, int proc)
 		l->accept = session_accept_fd;
 		l->default_target = global.stats_fe->default_target;
 		l->options |= (LI_O_UNLIMITED | LI_O_NOSTOP);
+		HA_ATOMIC_ADD(&unstoppable_jobs, 1);
 		/* it's a sockpair but we don't want to keep the fd in the master */
 		l->rx.flags &= ~RX_F_INHERITED;
 		l->nice = -64;  /* we want to boost priority for local stats */
@@ -2689,6 +2692,14 @@ error:
 static struct applet cli_applet = {
 	.obj_type = OBJ_TYPE_APPLET,
 	.name = "<CLI>", /* used for logging */
+	.fct = cli_io_handler,
+	.release = cli_release_handler,
+};
+
+/* master CLI */
+static struct applet mcli_applet = {
+	.obj_type = OBJ_TYPE_APPLET,
+	.name = "<MCLI>", /* used for logging */
 	.fct = cli_io_handler,
 	.release = cli_release_handler,
 };

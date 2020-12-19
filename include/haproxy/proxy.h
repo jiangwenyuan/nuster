@@ -39,15 +39,12 @@ extern struct eb_root proxy_by_name;    /* tree of proxies sorted by name */
 extern const struct cfg_opt cfg_opts[];
 extern const struct cfg_opt cfg_opts2[];
 
-void start_proxies(void);
 struct task *manage_proxy(struct task *t, void *context, unsigned short state);
+void proxy_cond_disable(struct proxy *p);
 void soft_stop(void);
 int pause_proxy(struct proxy *p);
 int resume_proxy(struct proxy *p);
 void stop_proxy(struct proxy *p);
-void zombify_proxy(struct proxy *p);
-void pause_proxies(void);
-void resume_proxies(void);
 int  stream_set_backend(struct stream *s, struct proxy *be);
 
 const char *proxy_cap_str(int cap);
@@ -140,9 +137,11 @@ static inline void proxy_inc_be_ctr(struct proxy *be)
 }
 
 /* increase the number of cumulated requests on the designated frontend */
-static inline void proxy_inc_fe_req_ctr(struct proxy *fe)
+static inline void proxy_inc_fe_req_ctr(struct listener *l, struct proxy *fe)
 {
 	_HA_ATOMIC_ADD(&fe->fe_counters.p.http.cum_req, 1);
+	if (l->counters)
+		_HA_ATOMIC_ADD(&l->counters->p.http.cum_req, 1);
 	HA_ATOMIC_UPDATE_MAX(&fe->fe_counters.p.http.rps_max,
 			     update_freq_ctr(&fe->fe_req_per_sec, 1));
 }
