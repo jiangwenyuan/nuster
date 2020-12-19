@@ -22,7 +22,7 @@
 #ifndef _NUSTER_H
 #define _NUSTER_H
 
-#define NUSTER_VERSION    "5.2.0.22"
+#define NUSTER_VERSION    "5.3.0.23"
 #define NUSTER_COPYRIGHT  "2017-present, Jiang Wenyuan, <koubunen AT gmail DOT com >"
 
 #include <haproxy/applet-t.h>
