@@ -2993,7 +2993,7 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const struct cert_key_and_chain
 		/* Clear openssl global errors stack */
 		ERR_clear_error();
 
-		if (global_ssl.default_dh_param <= 1024) {
+		if (global_ssl.default_dh_param && global_ssl.default_dh_param <= 1024) {
 			/* we are limited to DH parameter of 1024 bits anyway */
 			if (local_dh_1024 == NULL)
 				local_dh_1024 = ssl_get_dh_1024();
@@ -3454,24 +3454,24 @@ error:
 int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 {
 	struct stat buf;
-	char fp[MAXPATHLEN+1];
 	int cfgerr = 0;
 	struct ckch_store *ckchs;
 	struct ckch_inst *ckch_inst = NULL;
+	int found = 0; /* did we found a file to load ? */
 
 	if ((ckchs = ckchs_lookup(path))) {
 		/* we found the ckchs in the tree, we can use it directly */
-		return ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
-	}
-	if (stat(path, &buf) == 0) {
+		 cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+		 found++;
+	} else if (stat(path, &buf) == 0) {
+		found++;
 		if (S_ISDIR(buf.st_mode) == 0) {
 			ckchs =  ckchs_load_cert_file(path, err);
 			if (!ckchs)
-				return ERR_ALERT | ERR_FATAL;
-
-			return ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+				cfgerr |= ERR_ALERT | ERR_FATAL;
+			cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
 		} else {
-			return ssl_sock_load_cert_list_file(path, 1, bind_conf, bind_conf->frontend, err);
+			cfgerr |= ssl_sock_load_cert_list_file(path, 1, bind_conf, bind_conf->frontend, err);
 		}
 	} else {
 		/* stat failed, could be a bundle */
@@ -3490,20 +3490,24 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 
 				if ((ckchs = ckchs_lookup(fp))) {
 					cfgerr |= ssl_sock_load_ckchs(fp, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+					found++;
 				} else {
 					if (stat(fp, &buf) == 0) {
+						found++;
 						ckchs =  ckchs_load_cert_file(fp, err);
 						if (!ckchs)
-							return ERR_ALERT | ERR_FATAL;
+							cfgerr |= ERR_ALERT | ERR_FATAL;
 						cfgerr |= ssl_sock_load_ckchs(fp, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
 					}
 				}
 			}
-		} else {
-			memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
-			          err && *err ? *err : "", fp, strerror(errno));
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+
 		}
+	}
+	if (!found) {
+		memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
+		          err && *err ? *err : "", path, strerror(errno));
+		cfgerr |= ERR_ALERT | ERR_FATAL;
 	}
 
 	return cfgerr;
@@ -6187,7 +6191,7 @@ int ssl_load_global_issuer_from_BIO(BIO *in, char *fp, char **err)
 	struct issuer_chain *issuer = NULL;
 
 	akid = X509_get_ext_d2i(cert, NID_authority_key_identifier, NULL, NULL);
-	if (akid) {
+	if (akid && akid->keyid) {
 		struct eb64_node *node;
 		u64 hk;
 		hk = XXH64(ASN1_STRING_get0_data(akid->keyid), ASN1_STRING_length(akid->keyid), 0);

@@ -447,7 +447,6 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 	struct crtlist *newlist;
 	struct crtlist_entry *entry = NULL;
 	char thisline[CRT_LINESIZE];
-	char path[MAXPATHLEN+1];
 	FILE *f;
 	struct stat buf;
 	int linenum = 0;
@@ -470,7 +469,9 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 		char *end;
 		char *line = thisline;
 		char *crt_path;
+		char path[MAXPATHLEN+1];
 		struct ckch_store *ckchs;
+		int found = 0;
 
 		if (missing_lf != -1) {
 			memprintf(err, "parsing [%s:%d]: Stray NUL character at position %d.\n",
@@ -537,6 +538,7 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 		ckchs = ckchs_lookup(crt_path);
 		if (ckchs == NULL) {
 			if (stat(crt_path, &buf) == 0) {
+				found++;
 
 				ckchs = ckchs_load_cert_file(crt_path, err);
 				if (ckchs == NULL) {
@@ -550,7 +552,7 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 				LIST_ADDQ(&newlist->ord_entries, &entry->by_crtlist);
 				LIST_ADDQ(&ckchs->crtlist_entry, &entry->by_ckch_store);
 
-			} else {
+			} else if (global_ssl.extra_files & SSL_GF_BUNDLE) {
 				/* If we didn't find the file, this could be a
 				bundle, since 2.3 we don't support multiple
 				certificate in the same OpenSSL store, so we
@@ -564,40 +566,56 @@ int crtlist_parse_file(char *file, struct bind_conf *bind_conf, struct proxy *cu
 					struct stat buf;
 					int ret;
 
-					ret = snprintf(fp, sizeof(fp), "%s.%s", path, SSL_SOCK_KEYTYPE_NAMES[n]);
+					ret = snprintf(fp, sizeof(fp), "%s.%s", crt_path, SSL_SOCK_KEYTYPE_NAMES[n]);
 					if (ret > sizeof(fp))
 						continue;
 
 					ckchs = ckchs_lookup(fp);
-					if (!ckchs && stat(fp, &buf) == 0) {
-
-						ckchs = ckchs_load_cert_file(fp, err);
-						if (ckchs == NULL) {
-							cfgerr |= ERR_ALERT | ERR_FATAL;
-							goto error;
-						}
-
-						linenum++; /* we duplicate the line for this entry in the bundle */
-						if (!entry_dup) { /* if the entry was used, duplicate one */
-							linenum++;
-							entry_dup = crtlist_entry_dup(entry);
-							if (!entry_dup) {
+					if (!ckchs) {
+						if (stat(fp, &buf) == 0) {
+							ckchs = ckchs_load_cert_file(fp, err);
+							if (!ckchs) {
 								cfgerr |= ERR_ALERT | ERR_FATAL;
 								goto error;
 							}
-							entry_dup->linenum = linenum;
+						} else {
+							continue; /* didn't find this extension, skip */
 						}
-
-						entry_dup->node.key = ckchs;
-						entry_dup->crtlist = newlist;
-						ebpt_insert(&newlist->entries, &entry_dup->node);
-						LIST_ADDQ(&newlist->ord_entries, &entry_dup->by_crtlist);
-						LIST_ADDQ(&ckchs->crtlist_entry, &entry_dup->by_ckch_store);
-
-						entry_dup = NULL; /* the entry was used, we need a new one next round */
 					}
+					found++;
+					linenum++; /* we duplicate the line for this entry in the bundle */
+					if (!entry_dup) { /* if the entry was used, duplicate one */
+						linenum++;
+						entry_dup = crtlist_entry_dup(entry);
+						if (!entry_dup) {
+							cfgerr |= ERR_ALERT | ERR_FATAL;
+							goto error;
+						}
+						entry_dup->linenum = linenum;
+					}
+
+					entry_dup->node.key = ckchs;
+					entry_dup->crtlist = newlist;
+					ebpt_insert(&newlist->entries, &entry_dup->node);
+					LIST_ADDQ(&newlist->ord_entries, &entry_dup->by_crtlist);
+					LIST_ADDQ(&ckchs->crtlist_entry, &entry_dup->by_ckch_store);
+
+					entry_dup = NULL; /* the entry was used, we need a new one next round */
 				}
 			}
+			if (!found) {
+				memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
+				          err && *err ? *err : "", crt_path, strerror(errno));
+				cfgerr |= ERR_ALERT | ERR_FATAL;
+			}
+
+		} else {
+			entry->node.key = ckchs;
+			entry->crtlist = newlist;
+			ebpt_insert(&newlist->entries, &entry->node);
+			LIST_ADDQ(&newlist->ord_entries, &entry->by_crtlist);
+			LIST_ADDQ(&ckchs->crtlist_entry, &entry->by_ckch_store);
+			found++;
 		}
 		entry = NULL;
 	}

@@ -1,6 +1,70 @@
 ChangeLog :
 ===========
 
+2020/11/28 : 2.3.2
+    - BUILD: http-htx: fix build warning regarding long type in printf
+    - CLEANUP: cfgparse: remove duplicate registration for transparent build options
+    - BUG/MEDIUM: filters: Forward all filtered data at the end of http filtering
+    - BUG/MINOR: http-ana: Don't wait for the body of CONNECT requests
+    - DOC: add missing 3.10 in the summary
+    - BUG/MINOR: ssl: segv on startup when AKID but no keyid
+    - BUG/MEDIUM: http-ana: Don't eval http-after-response ruleset on empty messages
+    - BUG/MEDIUM: ssl/crt-list: bundle support broken in crt-list
+    - BUG/MEDIUM: ssl: error when no certificate are found
+    - BUG/MINOR: ssl/crt-list: load bundle in crt-list only if activated
+    - BUG/MEDIUM: ssl/crt-list: fix error when no file found
+    - BUILD: makefile: enable crypt(3) for OpenBSD
+    - DOC: clarify how to create a fallback crt
+    - CLEANUP: connection: do not use conn->owner when the session is known
+    - BUG/MAJOR: connection: reset conn->owner when detaching from session list
+    - BUG/MINOR: http_htx: Fix searching headers by substring
+    - DOC: better describes how to configure a fallback crt
+    - BUG/MAJOR: filters: Always keep all offsets up to date during data filtering
+    - MEDIUM: cache: Change caching conditions
+    - DOC: cache: Add new caching limitation information
+    - REGTESTS: Add sample_fetches/cook.vtc
+    - REGTESTS: converter: add url_dec test
+    - MINOR: http_act: Add -m flag for del-header name matching method
+    - BUILD: Make DEBUG part of .build_opts
+    - BUILD: Show the value of DEBUG= in haproxy -vv
+    - BUG/MEDIUM: http_act: Restore init of log-format list
+    - BUG/MAJOR: peers: fix partial message decoding
+    - DOC: better document the config file format and escaping/quoting rules
+    - DOC: Clarify %HP description in log-format
+    - BUG/MINOR: tcpcheck: Don't forget to reset tcp-check flags on new kind of check
+    - MINOR: tcpcheck: Don't handle anymore in-progress send rules in tcpcheck_main
+    - BUG/MAJOR: tcpcheck: Allocate input and output buffers from the buffer pool
+    - DOC: config: Move req.hdrs and req.hdrs_bin in L7 samples fetches section
+    - BUG/MINOR: http-fetch: Fix smp_fetch_body() when called from a health-check
+
+2020/11/13 : 2.3.1
+    - BUG/MINOR: ssl: don't report 1024 bits DH param load error when it's higher
+    - MINOR: http-htx: Add understandable errors for the errorfiles parsing
+    - DOC: config: Fix a typo on ssl_c_chain_der
+    - BUG/MEDIUM: ssl/crt-list: correctly insert crt-list line if crt already loaded
+    - BUG/MINOR: pattern: a sample marked as const could be written
+    - BUG/MINOR: lua: set buffer size during map lookups
+    - BUG/MINOR: stats: free dynamically stats fields/lines on shutdown
+    - BUG/MINOR: peers: Do not ignore a protocol error for dictionary entries.
+    - BUG/MINOR: peers: Missing TX cache entries reset.
+    - BUG/MEDIUM: peers: fix decoding of multi-byte length in stick-table messages
+    - BUG/MINOR: http-fetch: Extract cookie value even when no cookie name
+    - BUG/MINOR: http-fetch: Fix calls w/o parentheses of the cookie sample fetches
+    - BUG/MEDIUM: check: reuse srv proto only if using same mode
+    - MINOR: check: report error on incompatible proto
+    - MINOR: check: report error on incompatible connect proto
+    - BUG/MINOR: http-htx: Handle warnings when parsing http-error and http-errors
+    - BUG/MAJOR: spoe: Be sure to remove all references on a released spoe applet
+    - MINOR: spoe: Don't close connection in sync mode on processing timeout
+    - BUG/MINOR: tcpcheck: Don't warn on unused rules if check option is after
+    - MINOR: init: Fix the prototype for per-thread free callbacks
+    - MINOR: config/mux-h2: Return ERR_ flags from init_h2() instead of a status
+    - MINOR: cfgparse: tighten the scope of newnameserver variable, free it on error.
+    - REGTEST: ssl: test wildcard and multi-type + exclusions
+    - REGTEST: ssl: mark reg-tests/ssl/ssl_crt-list_filters.vtc as broken
+    - MINOR: peers: Add traces to peer_treat_updatemsg().
+    - REGTEST: make ssl_client_samples and ssl_server_samples require to 2.2
+
 2020/11/05 : 2.3.0
     - CLEANUP: pattern: remove unused entry "tree" in pattern.val
     - BUILD: ssl: use SSL_CTRL_GET_RAW_CIPHERLIST instead of OpenSSL versions

@@ -393,7 +393,7 @@ struct server_deinit_fct {
 struct list per_thread_free_list = LIST_HEAD_INIT(per_thread_free_list);
 struct per_thread_free_fct {
 	struct list list;
-	int (*fct)();
+	void (*fct)();
 };
 
 /* These functions are called for each thread just after the scheduler loop and
@@ -565,7 +565,7 @@ void hap_register_per_thread_deinit(void (*fct)())
 }
 
 /* used to register some free functions to call for each thread. */
-void hap_register_per_thread_free(int (*fct)())
+void hap_register_per_thread_free(void (*fct)())
 {
 	struct per_thread_free_fct *b;
 
@@ -631,6 +631,9 @@ static void display_build_opts()
 #endif
 #ifdef BUILD_OPTIONS
 	       "\n  OPTIONS = " BUILD_OPTIONS
+#endif
+#ifdef BUILD_DEBUG
+	       "\n  DEBUG   = " BUILD_DEBUG
 #endif
 #ifdef BUILD_FEATURES
 	       "\n\nFeature list : " BUILD_FEATURES

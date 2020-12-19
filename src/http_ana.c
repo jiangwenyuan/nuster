@@ -1050,6 +1050,10 @@ int http_wait_for_request_body(struct stream *s, struct channel *req, int an_bit
 	if (htx->flags & HTX_FL_PROCESSING_ERROR)
 		goto return_int_err;
 
+	/* CONNECT requests have no body */
+	if (txn->meth == HTTP_METH_CONNECT)
+		goto http_end;
+
 	if (msg->msg_state < HTTP_MSG_BODY)
 		goto missing_data;
 
@@ -2840,13 +2844,9 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 {
 	struct session *sess = strm_sess(s);
 	struct http_txn *txn = s->txn;
-	struct htx *htx;
 	struct act_rule *rule;
-	struct http_hdr_ctx ctx;
 	enum rule_result rule_ret = HTTP_RULE_RES_CONT;
 	int act_opts = 0;
-
-	htx = htxbuf(&s->req.buf);
 
 	/* If "the current_rule_list" match the executed rule list, we are in
 	 * resume condition. If a resume is needed it is always in the action
@@ -2960,13 +2960,6 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 				s->logs.level = rule->arg.http.i;
 				break;
 
-			case ACT_HTTP_DEL_HDR:
-				/* remove all occurrences of the header */
-				ctx.blk = NULL;
-				while (http_find_header(htx, rule->arg.http.str, &ctx, 1))
-					http_remove_header(htx, &ctx);
-				break;
-
 			/* other flags exists, but normally, they never be matched. */
 			default:
 				break;
@@ -2996,13 +2989,9 @@ static enum rule_result http_res_get_intercept_rule(struct proxy *px, struct lis
 {
 	struct session *sess = strm_sess(s);
 	struct http_txn *txn = s->txn;
-	struct htx *htx;
 	struct act_rule *rule;
-	struct http_hdr_ctx ctx;
 	enum rule_result rule_ret = HTTP_RULE_RES_CONT;
 	int act_opts = 0;
-
-	htx = htxbuf(&s->res.buf);
 
 	/* If "the current_rule_list" match the executed rule list, we are in
 	 * resume condition. If a resume is needed it is always in the action
@@ -3102,13 +3091,6 @@ resume_execution:
 
 			case ACT_HTTP_SET_LOGL:
 				s->logs.level = rule->arg.http.i;
-				break;
-
-			case ACT_HTTP_DEL_HDR:
-				/* remove all occurrences of the header */
-				ctx.blk = NULL;
-				while (http_find_header(htx, rule->arg.http.str, &ctx, 1))
-					http_remove_header(htx, &ctx);
 				break;
 
 			case ACT_HTTP_REDIR:
@@ -3918,6 +3900,8 @@ void http_check_response_for_cacheability(struct stream *s, struct channel *res)
 	struct http_txn *txn = s->txn;
 	struct http_hdr_ctx ctx = { .blk = NULL };
 	struct htx *htx;
+	int has_freshness_info = 0;
+	int has_validator = 0;
 
 	if (txn->status < 200) {
 		/* do not try to cache interim responses! */
@@ -3955,7 +3939,37 @@ void http_check_response_for_cacheability(struct stream *s, struct channel *res)
 			txn->flags &= ~TX_CACHE_COOK;
 			continue;
 		}
+
+		if (istmatchi(ctx.value, ist("s-maxage")) ||
+		    istmatchi(ctx.value, ist("max-age"))) {
+			has_freshness_info = 1;
+			continue;
+		}
 	}
+
+	/* If no freshness information could be found in Cache-Control values,
+	 * look for an Expires header. */
+	if (!has_freshness_info) {
+		ctx.blk = NULL;
+		has_freshness_info = http_find_header(htx, ist("expires"), &ctx, 0);
+	}
+
+	/* If no freshness information could be found in Cache-Control or Expires
+	 * values, look for an explicit validator. */
+	if (!has_freshness_info) {
+		ctx.blk = NULL;
+		has_validator = 1;
+		if (!http_find_header(htx, ist("etag"), &ctx, 0)) {
+			ctx.blk = NULL;
+			if (!http_find_header(htx, ist("last-modified"), &ctx, 0))
+				has_validator = 0;
+		}
+	}
+
+	/* We won't store an entry that has neither a cache validator nor an
+	 * explicit expiration time, as suggested in RFC 7234#3. */
+	if (!has_freshness_info && !has_validator)
+		txn->flags |= TX_CACHE_IGNORE;
 }
 
 /*
@@ -4526,7 +4540,7 @@ int http_forward_proxy_resp(struct stream *s, int final)
 	if (final) {
 		htx->flags |= HTX_FL_PROXY_RESP;
 
-		if (!http_eval_after_res_rules(s))
+		if (!htx_is_empty(htx) && !http_eval_after_res_rules(s))
 			return 0;
 
 		if (s->txn->meth == HTTP_METH_HEAD)

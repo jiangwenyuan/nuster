@@ -254,7 +254,7 @@ EXTRA =
 # feed CPU_CFLAGS, which in turn feed CFLAGS, so it is not mandatory to use
 # them. You should not have to change these options. Better use CPU_CFLAGS or
 # even CFLAGS instead.
-CPU_CFLAGS.generic    = -O0
+CPU_CFLAGS.generic    = -O2
 CPU_CFLAGS.native     = -O2 -march=native
 CPU_CFLAGS.i586       = -O2 -march=i586
 CPU_CFLAGS.i686       = -O2 -march=i686
@@ -390,8 +390,8 @@ endif
 # OpenBSD 6.3 and above
 ifeq ($(TARGET),openbsd)
   set_target_defaults = $(call default_opts, \
-    USE_POLL USE_TPROXY USE_THREAD USE_KQUEUE USE_ACCEPT4 USE_CLOSEFROM   \
-    USE_GETADDRINFO)
+    USE_POLL USE_TPROXY USE_LIBCRYPT USE_THREAD USE_KQUEUE USE_ACCEPT4        \
+    USE_CLOSEFROM USE_GETADDRINFO)
 endif
 
 # NetBSD 8 and above
@@ -493,8 +493,10 @@ BUILD_FEATURES := $(foreach opt,$(patsubst USE_%,%,$(use_opts)),$(if $(USE_$(opt
 OPTIONS_CFLAGS += $(foreach opt,$(use_opts),$(if $($(opt)),-D$(opt),))
 
 ifneq ($(USE_LIBCRYPT),)
+ifneq ($(TARGET),openbsd)
 ifneq ($(TARGET),osx)
 OPTIONS_LDFLAGS += -lcrypt
+endif
 endif
 endif
 
@@ -893,7 +895,7 @@ help:
 # Used only to force a rebuild if some build options change, but we don't do
 # it for certain targets which take no build options
 ifneq (reg-tests, $(firstword $(MAKECMDGOALS)))
-build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS) $(DEBUG)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 .build_opts: $(build_opts)
 else
 .build_opts:
@@ -934,6 +936,7 @@ src/haproxy.o:	src/haproxy.c $(DEP)
 	      -DBUILD_CC='"$(strip $(CC))"' \
 	      -DBUILD_CFLAGS='"$(strip $(VERBOSE_CFLAGS))"' \
 	      -DBUILD_OPTIONS='"$(strip $(BUILD_OPTIONS))"' \
+	      -DBUILD_DEBUG='"$(strip $(DEBUG))"' \
 	      -DBUILD_FEATURES='"$(strip $(BUILD_FEATURES))"' \
 	       -c -o $@ $<
 
