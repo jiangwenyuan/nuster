@@ -123,10 +123,11 @@ enum srv_initaddr {
     "srv_f_forced_id "            \
     "srv_fqdn "                   \
     "srv_port "                   \
-    "srvrecord"
+    "srvrecord "                  \
+    "srv_use_ssl"
 
-#define SRV_STATE_FILE_MAX_FIELDS 20
-#define SRV_STATE_FILE_NB_FIELDS_VERSION_1 19
+#define SRV_STATE_FILE_MAX_FIELDS 21
+#define SRV_STATE_FILE_NB_FIELDS_VERSION_1 20
 #define SRV_STATE_LINE_MAXLEN 512
 
 /* server flags -- 32 bits */
@@ -308,7 +309,7 @@ struct server {
 			int allocated_size;
 		} * reused_sess;
 		char *ciphers;			/* cipher suite to use if non-null */
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L && !defined OPENSSL_IS_BORINGSSL && !defined LIBRESSL_VERSION_NUMBER)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 		char *ciphersuites;			/* TLS 1.3 cipher suite to use if non-null */
 #endif
 		int options;			/* ssl options */

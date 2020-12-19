@@ -34,7 +34,6 @@ extern int pat_match_types[PAT_MATCH_NUM];
 
 extern int (*pat_parse_fcts[PAT_MATCH_NUM])(const char *, struct pattern *, int, char **);
 extern int (*pat_index_fcts[PAT_MATCH_NUM])(struct pattern_expr *, struct pattern *, char **);
-extern void (*pat_delete_fcts[PAT_MATCH_NUM])(struct pattern_expr *, struct pat_ref_elt *);
 extern void (*pat_prune_fcts[PAT_MATCH_NUM])(struct pattern_expr *);
 extern struct pattern *(*pat_match_fcts[PAT_MATCH_NUM])(struct sample *, struct pattern_expr *, int);
 
@@ -78,16 +77,11 @@ int pat_idx_tree_pfx(struct pattern_expr *expr, struct pattern *pat, char **err)
 
 /*
  *
- * The following functions search pattern <pattern> into the pattern
- * expression <expr>. If the pattern is found, delete it. This function
- * never fails.
+ * The following function deletes all patterns related to reference pattern
+ * element <elt> in pattern refernce <ref>.
  *
  */
-void pat_del_list_val(struct pattern_expr *expr, struct pat_ref_elt *ref);
-void pat_del_tree_ip(struct pattern_expr *expr, struct pat_ref_elt *ref);
-void pat_del_list_ptr(struct pattern_expr *expr, struct pat_ref_elt *ref);
-void pat_del_tree_str(struct pattern_expr *expr, struct pat_ref_elt *ref);
-void pat_del_list_reg(struct pattern_expr *expr, struct pat_ref_elt *ref);
+void pat_delete_gen(struct pat_ref *ref, struct pat_ref_elt *elt);
 
 /*
  *
@@ -95,9 +89,7 @@ void pat_del_list_reg(struct pattern_expr *expr, struct pat_ref_elt *ref);
  * reset the tree and list root.
  *
  */
-void pat_prune_val(struct pattern_expr *expr);
-void pat_prune_ptr(struct pattern_expr *expr);
-void pat_prune_reg(struct pattern_expr *expr);
+void pat_prune_gen(struct pattern_expr *expr);
 
 /*
  *
@@ -190,14 +182,17 @@ struct pat_ref *pat_ref_new(const char *reference, const char *display, unsigned
 struct pat_ref *pat_ref_newid(int unique_id, const char *display, unsigned int flags);
 struct pat_ref_elt *pat_ref_find_elt(struct pat_ref *ref, const char *key);
 struct pat_ref_elt *pat_ref_append(struct pat_ref *ref, const char *pattern, const char *sample, int line);
+struct pat_ref_elt *pat_ref_load(struct pat_ref *ref, unsigned int gen, const char *pattern, const char *sample, int line, char **err);
 int pat_ref_push(struct pat_ref_elt *elt, struct pattern_expr *expr, int patflags, char **err);
 int pat_ref_add(struct pat_ref *ref, const char *pattern, const char *sample, char **err);
 int pat_ref_set(struct pat_ref *ref, const char *pattern, const char *sample, char **err);
 int pat_ref_set_by_id(struct pat_ref *ref, struct pat_ref_elt *refelt, const char *value, char **err);
 int pat_ref_delete(struct pat_ref *ref, const char *key);
+void pat_ref_delete_by_ptr(struct pat_ref *ref, struct pat_ref_elt *elt);
 int pat_ref_delete_by_id(struct pat_ref *ref, struct pat_ref_elt *refelt);
 int pat_ref_prune(struct pat_ref *ref);
-int pat_ref_load(struct pat_ref *ref, struct pattern_expr *expr, int patflags, int soe, char **err);
+int pat_ref_commit(struct pat_ref *ref, struct pat_ref_elt *elt, char **err);
+int pat_ref_purge_older(struct pat_ref *ref, unsigned int oldest, int budget);
 void pat_ref_reload(struct pat_ref *ref, struct pat_ref *replace);
 
 

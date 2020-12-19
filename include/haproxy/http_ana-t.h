@@ -59,12 +59,12 @@
 /* cacheability management, bits values 0x1000 to 0x3000 (0-3 shift 12) */
 #define TX_CACHEABLE	0x00001000	/* at least part of the response is cacheable */
 #define TX_CACHE_COOK	0x00002000	/* a cookie in the response is cacheable */
-#define TX_CACHE_IGNORE 0x00004000	/* do not retrieve object from cache */
+#define TX_CACHE_IGNORE 0x00004000	/* do not retrieve object from cache, or avoid caching response */
 #define TX_CACHE_SHIFT	12		/* bit shift */
 
 #define TX_CON_WANT_TUN 0x00008000	/* Will be a tunnel (CONNECT or 101-Switching-Protocol) */
 
-#define TX_WAIT_NEXT_RQ	0x00010000	/* waiting for the second request to start, use keep-alive timeout */
+/* unsued 0x00010000 */
 
 #define TX_USE_PX_CONN	0x00020000	/* Use "Proxy-Connection" instead of "Connection" */
 
@@ -89,6 +89,13 @@
 #define HTTP_MSGF_COMPRESSING 0x00000020  /* data compression is in progress */
 
 #define HTTP_MSGF_BODYLESS    0x00000040  /* The message has no body (content-length = 0) */
+
+/* Maximum length of the cache secondary key (sum of all the possible parts of
+ * the secondary key). The actual keys might be smaller for some
+ * request/response pairs, because they depend on the responses' optional Vary
+ * header. The differents sizes can be found in the vary_information object (see
+ * cache.c).*/
+#define HTTP_CACHE_SEC_KEY_LEN (sizeof(int)+sizeof(int))
 
 
 /* Redirect flags */
@@ -163,6 +170,7 @@ struct http_msg {
 	struct channel *chn;                   /* pointer to the channel transporting the message */
 };
 
+
 /* This is an HTTP transaction. It contains both a request message and a
  * response message (which can be empty).
  */
@@ -176,6 +184,7 @@ struct http_txn {
 	struct http_reply *http_reply;  /* The HTTP reply to use as reply */
 
 	char cache_hash[20];               /* Store the cache hash  */
+	char cache_secondary_hash[HTTP_CACHE_SEC_KEY_LEN]; /* Optional cache secondary key. */
 	char *uri;                      /* first line if log needed, NULL otherwise */
 	char *cli_cookie;               /* cookie presented by the client, in capture mode */
 	char *srv_cookie;               /* cookie presented by the server, in capture mode */

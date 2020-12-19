@@ -41,61 +41,71 @@
 #include <haproxy/task.h>
 
 static int udp_bind_listener(struct listener *listener, char *errmsg, int errlen);
-static int udp_suspend_receiver(struct receiver *rx);
-static int udp_resume_receiver(struct receiver *rx);
 static void udp_enable_listener(struct listener *listener);
 static void udp_disable_listener(struct listener *listener);
-static void udp4_add_listener(struct listener *listener, int port);
-static void udp6_add_listener(struct listener *listener, int port);
 
 /* Note: must not be declared <const> as its list will be overwritten */
-static struct protocol proto_udp4 = {
-	.name = "udp4",
-	.fam = &proto_fam_inet4,
-	.ctrl_type = SOCK_DGRAM,
-	.sock_domain = AF_INET,
-	.sock_type = SOCK_DGRAM,
-	.sock_prot = IPPROTO_UDP,
-	.add = udp4_add_listener,
-	.listen = udp_bind_listener,
-	.enable = udp_enable_listener,
-	.disable = udp_disable_listener,
-	.unbind = default_unbind_listener,
-	.suspend = default_suspend_listener,
-	.resume  = default_resume_listener,
-	.rx_enable = sock_enable,
-	.rx_disable = sock_disable,
-	.rx_unbind = sock_unbind,
-	.rx_suspend = udp_suspend_receiver,
-	.rx_resume = udp_resume_receiver,
-	.receivers = LIST_HEAD_INIT(proto_udp4.receivers),
-	.nb_receivers = 0,
+struct protocol proto_udp4 = {
+	.name           = "udp4",
+
+	/* connection layer */
+	.ctrl_type      = SOCK_DGRAM,
+	.listen         = udp_bind_listener,
+	.enable         = udp_enable_listener,
+	.disable        = udp_disable_listener,
+	.add            = default_add_listener,
+	.unbind         = default_unbind_listener,
+	.suspend        = default_suspend_listener,
+	.resume         = default_resume_listener,
+
+	/* binding layer */
+	.rx_suspend     = udp_suspend_receiver,
+	.rx_resume      = udp_resume_receiver,
+
+	/* address family */
+	.fam            = &proto_fam_inet4,
+
+	/* socket layer */
+	.sock_type      = SOCK_DGRAM,
+	.sock_prot      = IPPROTO_UDP,
+	.rx_enable      = sock_enable,
+	.rx_disable     = sock_disable,
+	.rx_unbind      = sock_unbind,
+	.receivers      = LIST_HEAD_INIT(proto_udp4.receivers),
+	.nb_receivers   = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_udp4);
 
 /* Note: must not be declared <const> as its list will be overwritten */
-static struct protocol proto_udp6 = {
-	.name = "udp6",
-	.fam = &proto_fam_inet6,
-	.ctrl_type = SOCK_DGRAM,
-	.sock_domain = AF_INET6,
-	.sock_type = SOCK_DGRAM,
-	.sock_prot = IPPROTO_UDP,
-	.add = udp6_add_listener,
-	.listen = udp_bind_listener,
-	.enable = udp_enable_listener,
-	.disable = udp_disable_listener,
-	.unbind = default_unbind_listener,
-	.suspend = default_suspend_listener,
-	.resume  = default_resume_listener,
-	.rx_enable = sock_enable,
-	.rx_disable = sock_disable,
-	.rx_unbind = sock_unbind,
-	.rx_suspend = udp_suspend_receiver,
-	.rx_resume = udp_resume_receiver,
-	.receivers = LIST_HEAD_INIT(proto_udp6.receivers),
-	.nb_receivers = 0,
+struct protocol proto_udp6 = {
+	.name           = "udp6",
+
+	/* connection layer */
+	.ctrl_type      = SOCK_DGRAM,
+	.listen         = udp_bind_listener,
+	.enable         = udp_enable_listener,
+	.disable        = udp_disable_listener,
+	.add            = default_add_listener,
+	.unbind         = default_unbind_listener,
+	.suspend        = default_suspend_listener,
+	.resume         = default_resume_listener,
+
+	/* binding layer */
+	.rx_suspend     = udp_suspend_receiver,
+	.rx_resume      = udp_resume_receiver,
+
+	/* address family */
+	.fam            = &proto_fam_inet6,
+
+	/* socket layer */
+	.sock_type      = SOCK_DGRAM,
+	.sock_prot      = IPPROTO_UDP,
+	.rx_enable      = sock_enable,
+	.rx_disable     = sock_disable,
+	.rx_unbind      = sock_unbind,
+	.receivers      = LIST_HEAD_INIT(proto_udp6.receivers),
+	.nb_receivers   = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_udp6);
@@ -142,36 +152,6 @@ int udp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 	return err;
 }
 
-/* Add <listener> to the list of udp4 listeners, on port <port>. The
- * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
- * The number of listeners for the protocol is updated.
- */
-static void udp4_add_listener(struct listener *listener, int port)
-{
-	if (listener->state != LI_INIT)
-		return;
-	listener_set_state(listener, LI_ASSIGNED);
-	listener->rx.proto = &proto_udp4;
-	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_udp4.receivers, &listener->rx.proto_list);
-	proto_udp4.nb_receivers++;
-}
-
-/* Add <listener> to the list of udp6 listeners, on port <port>. The
- * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
- * The number of listeners for the protocol is updated.
- */
-static void udp6_add_listener(struct listener *listener, int port)
-{
-	if (listener->state != LI_INIT)
-		return;
-	listener_set_state(listener, LI_ASSIGNED);
-	listener->rx.proto = &proto_udp6;
-	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_udp6.receivers, &listener->rx.proto_list);
-	proto_udp6.nb_receivers++;
-}
-
 /* Enable receipt of incoming connections for listener <l>. The receiver must
  * still be valid.
  */
@@ -196,7 +176,7 @@ static void udp_disable_listener(struct listener *l)
  * to do this is to connect to any address that is reachable and will not be
  * used by regular traffic, and a great one is reconnecting to self.
  */
-static int udp_suspend_receiver(struct receiver *rx)
+int udp_suspend_receiver(struct receiver *rx)
 {
 	struct sockaddr_storage ss;
 	socklen_t len = sizeof(ss);
@@ -227,7 +207,7 @@ static int udp_suspend_receiver(struct receiver *rx)
  * connecting to AF_UNSPEC. The association breaks and the socket starts to
  * receive from everywhere again.
  */
-static int udp_resume_receiver(struct receiver *rx)
+int udp_resume_receiver(struct receiver *rx)
 {
 	const struct sockaddr sa = { .sa_family = AF_UNSPEC };
 

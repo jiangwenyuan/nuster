@@ -390,8 +390,8 @@ endif
 # OpenBSD 6.3 and above
 ifeq ($(TARGET),openbsd)
   set_target_defaults = $(call default_opts, \
-    USE_POLL USE_TPROXY USE_THREAD USE_KQUEUE USE_ACCEPT4 USE_CLOSEFROM   \
-    USE_GETADDRINFO)
+    USE_POLL USE_TPROXY USE_LIBCRYPT USE_THREAD USE_KQUEUE USE_ACCEPT4        \
+    USE_CLOSEFROM USE_GETADDRINFO)
 endif
 
 # NetBSD 8 and above
@@ -493,8 +493,10 @@ BUILD_FEATURES := $(foreach opt,$(patsubst USE_%,%,$(use_opts)),$(if $(USE_$(opt
 OPTIONS_CFLAGS += $(foreach opt,$(use_opts),$(if $($(opt)),-D$(opt),))
 
 ifneq ($(USE_LIBCRYPT),)
+ifneq ($(TARGET),openbsd)
 ifneq ($(TARGET),osx)
 OPTIONS_LDFLAGS += -lcrypt
+endif
 endif
 endif
 
@@ -851,7 +853,7 @@ OBJS += src/mux_h2.o src/mux_fcgi.o src/http_ana.o src/stream.o                \
         src/ebimtree.o src/uri_auth.o src/freq_ctr.o src/ebsttree.o            \
         src/ebistree.o src/auth.o src/wdt.o src/http_acl.o                     \
         src/hpack-enc.o src/hpack-huff.o src/ebtree.o src/base64.o             \
-        src/hash.o src/dgram.o src/version.o
+        src/hash.o src/dgram.o src/version.o src/fix.o src/mqtt.o
 
 OBJS += src/nuster/cache/engine.o src/nuster/cache/filter.o                    \
         src/nuster/nosql/engine.o src/nuster/nosql/filter.o                    \
@@ -893,7 +895,7 @@ help:
 # Used only to force a rebuild if some build options change, but we don't do
 # it for certain targets which take no build options
 ifneq (reg-tests, $(firstword $(MAKECMDGOALS)))
-build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
+build_opts = $(shell rm -f .build_opts.new; echo \'$(TARGET) $(BUILD_OPTIONS) $(VERBOSE_CFLAGS) $(DEBUG)\' > .build_opts.new; if cmp -s .build_opts .build_opts.new; then rm -f .build_opts.new; else mv -f .build_opts.new .build_opts; fi)
 .build_opts: $(build_opts)
 else
 .build_opts:
@@ -934,6 +936,7 @@ src/haproxy.o:	src/haproxy.c $(DEP)
 	      -DBUILD_CC='"$(strip $(CC))"' \
 	      -DBUILD_CFLAGS='"$(strip $(VERBOSE_CFLAGS))"' \
 	      -DBUILD_OPTIONS='"$(strip $(BUILD_OPTIONS))"' \
+	      -DBUILD_DEBUG='"$(strip $(DEBUG))"' \
 	      -DBUILD_FEATURES='"$(strip $(BUILD_FEATURES))"' \
 	       -c -o $@ $<
 

@@ -191,8 +191,6 @@ int sink_announce_dropped(struct sink *sink, int facility)
 		if (!metadata[LOG_META_HOST].len) {
 			if (global.log_send_hostname)
 				metadata[LOG_META_HOST] = ist2(global.log_send_hostname, strlen(global.log_send_hostname));
-			else
-				metadata[LOG_META_HOST] = ist2(hostname, strlen(hostname));
 		}
 
 		if (!metadata[LOG_META_TAG].len)
@@ -350,18 +348,18 @@ static void sink_forward_io_handler(struct appctx *appctx)
 		ofs += ring->ofs;
 	}
 
-	/* we were already there, adjust the offset to be relative to
-	 * the buffer's head and remove us from the counter.
-	 */
-	ofs -= ring->ofs;
-	BUG_ON(ofs >= buf->size);
-	HA_ATOMIC_SUB(b_peek(buf, ofs), 1);
-
 	/* in this loop, ofs always points to the counter byte that precedes
 	 * the message so that we can take our reference there if we have to
 	 * stop before the end (ret=0).
 	 */
 	if (si_opposite(si)->state == SI_ST_EST) {
+		/* we were already there, adjust the offset to be relative to
+		 * the buffer's head and remove us from the counter.
+		 */
+		ofs -= ring->ofs;
+		BUG_ON(ofs >= buf->size);
+		HA_ATOMIC_SUB(b_peek(buf, ofs), 1);
+
 		ret = 1;
 		while (ofs + 1 < b_data(buf)) {
 			cnt = 1;
@@ -490,18 +488,18 @@ static void sink_forward_oc_io_handler(struct appctx *appctx)
 		ofs += ring->ofs;
 	}
 
-	/* we were already there, adjust the offset to be relative to
-	 * the buffer's head and remove us from the counter.
-	 */
-	ofs -= ring->ofs;
-	BUG_ON(ofs >= buf->size);
-	HA_ATOMIC_SUB(b_peek(buf, ofs), 1);
-
 	/* in this loop, ofs always points to the counter byte that precedes
 	 * the message so that we can take our reference there if we have to
 	 * stop before the end (ret=0).
 	 */
 	if (si_opposite(si)->state == SI_ST_EST) {
+		/* we were already there, adjust the offset to be relative to
+		 * the buffer's head and remove us from the counter.
+		 */
+		ofs -= ring->ofs;
+		BUG_ON(ofs >= buf->size);
+		HA_ATOMIC_SUB(b_peek(buf, ofs), 1);
+
 		ret = 1;
 		while (ofs + 1 < b_data(buf)) {
 			cnt = 1;
@@ -642,7 +640,7 @@ static struct appctx *sink_forward_session_create(struct sink *sink, struct sink
 		goto out_free_appctx;
 	}
 
-	if ((s = stream_new(sess, &appctx->obj_type)) == NULL) {
+	if ((s = stream_new(sess, &appctx->obj_type, &BUF_NULL)) == NULL) {
 		ha_alert("Failed to initialize stream in peer_session_create().\n");
 		goto out_free_sess;
 	}
@@ -972,7 +970,7 @@ int cfg_post_parse_ring()
 */
 int post_sink_resolve()
 {
-	int err_code = 0;
+	int err_code = ERR_NONE;
 	struct logsrv *logsrv, *logb;
 	struct sink *sink;
 	struct proxy *px;

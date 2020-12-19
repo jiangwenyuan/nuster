@@ -33,6 +33,7 @@
 #include <haproxy/listener.h>
 #include <haproxy/log.h>
 #include <haproxy/protocol.h>
+#include <haproxy/proto_uxst.h>
 #include <haproxy/sock.h>
 #include <haproxy/sock_unix.h>
 #include <haproxy/time.h>
@@ -42,38 +43,49 @@
 
 static int uxst_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int uxst_connect_server(struct connection *conn, int flags);
-static void uxst_add_listener(struct listener *listener, int port);
 static void uxst_enable_listener(struct listener *listener);
 static void uxst_disable_listener(struct listener *listener);
 static int uxst_suspend_receiver(struct receiver *rx);
 
 /* Note: must not be declared <const> as its list will be overwritten */
-static struct protocol proto_unix = {
-	.name = "unix_stream",
-	.fam = &proto_fam_unix,
-	.ctrl_type = SOCK_STREAM,
-	.sock_domain = PF_UNIX,
-	.sock_type = SOCK_STREAM,
-	.sock_prot = 0,
-	.add = uxst_add_listener,
-	.listen = uxst_bind_listener,
-	.enable = uxst_enable_listener,
-	.disable = uxst_disable_listener,
-	.unbind = default_unbind_listener,
-	.suspend = default_suspend_listener,
-	.accept_conn = sock_accept_conn,
-	.rx_enable = sock_enable,
-	.rx_disable = sock_disable,
-	.rx_unbind = sock_unbind,
-	.rx_suspend = uxst_suspend_receiver,
-	.rx_listening = sock_accepting_conn,
-	.default_iocb = &sock_accept_iocb,
-	.connect = &uxst_connect_server,
-	.receivers = LIST_HEAD_INIT(proto_unix.receivers),
-	.nb_receivers = 0,
+struct protocol proto_uxst = {
+	.name           = "unix_stream",
+
+	/* connection layer */
+	.ctrl_type      = SOCK_STREAM,
+	.listen         = uxst_bind_listener,
+	.enable         = uxst_enable_listener,
+	.disable        = uxst_disable_listener,
+	.add            = default_add_listener,
+	.unbind         = default_unbind_listener,
+	.suspend        = default_suspend_listener,
+	.accept_conn    = sock_accept_conn,
+	.ctrl_init      = sock_conn_ctrl_init,
+	.ctrl_close     = sock_conn_ctrl_close,
+	.connect        = uxst_connect_server,
+	.drain          = sock_drain,
+	.check_events   = sock_check_events,
+	.ignore_events  = sock_ignore_events,
+
+	/* binding layer */
+	.rx_suspend     = uxst_suspend_receiver,
+
+	/* address family */
+	.fam            = &proto_fam_unix,
+
+	/* socket layer */
+	.sock_type      = SOCK_STREAM,
+	.sock_prot      = 0,
+	.rx_enable      = sock_enable,
+	.rx_disable     = sock_disable,
+	.rx_unbind      = sock_unbind,
+	.rx_listening   = sock_accepting_conn,
+	.default_iocb   = sock_accept_iocb,
+	.receivers      = LIST_HEAD_INIT(proto_uxst.receivers),
+	.nb_receivers   = 0,
 };
 
-INITCALL1(STG_REGISTER, protocol_register, &proto_unix);
+INITCALL1(STG_REGISTER, protocol_register, &proto_uxst);
 
 /********************************
  * 1) low-level socket functions
@@ -133,23 +145,6 @@ static int uxst_bind_listener(struct listener *listener, char *errmsg, int errle
 		snprintf(errmsg, errlen, "%s [%s]", msg, path);
 	}
 	return err;
-}
-
-/* Add <listener> to the list of unix stream listeners (port is ignored). The
- * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
- * The number of listeners for the protocol is updated.
- *
- * Must be called with proto_lock held.
- *
- */
-static void uxst_add_listener(struct listener *listener, int port)
-{
-	if (listener->state != LI_INIT)
-		return;
-	listener_set_state(listener, LI_ASSIGNED);
-	listener->rx.proto = &proto_unix;
-	LIST_ADDQ(&proto_unix.receivers, &listener->rx.proto_list);
-	proto_unix.nb_receivers++;
 }
 
 /* Enable receipt of incoming connections for listener <l>. The receiver must

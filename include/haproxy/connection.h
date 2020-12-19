@@ -46,12 +46,6 @@ extern struct mux_proto_list mux_proto_list;
 #define IS_HTX_CONN(conn) ((conn)->mux && ((conn)->mux->flags & MX_FL_HTX))
 #define IS_HTX_CS(cs)     (IS_HTX_CONN((cs)->conn))
 
-/* I/O callback for fd-based connections. It calls the read/write handlers
- * provided by the connection's sock_ops.
- */
-void conn_fd_handler(int fd);
-int conn_fd_check(struct connection *conn);
-
 /* receive a PROXY protocol header over a connection */
 int conn_recv_proxy(struct connection *conn, int flag);
 int make_proxy_line(char *buf, int buf_len, struct server *srv, struct connection *remote, struct stream *strm);
@@ -65,10 +59,10 @@ int conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, st
 int conn_recv_netscaler_cip(struct connection *conn, int flag);
 
 /* raw send() directly on the socket */
-int conn_sock_send(struct connection *conn, const void *buf, int len, int flags);
+int conn_ctrl_send(struct connection *conn, const void *buf, int len, int flags);
 
 /* drains any pending bytes from the socket */
-int conn_sock_drain(struct connection *conn);
+int conn_ctrl_drain(struct connection *conn);
 
 /* scoks4 proxy handshake */
 int conn_send_socks4_proxy_request(struct connection *conn);
@@ -124,29 +118,29 @@ static inline void conn_xprt_close(struct connection *conn)
 }
 
 /* Initializes the connection's control layer which essentially consists in
- * registering the file descriptor for polling and setting the CO_FL_CTRL_READY
- * flag. The caller is responsible for ensuring that the control layer is
- * already assigned to the connection prior to the call.
+ * registering the connection handle (e.g. file descriptor) for events and
+ * setting the CO_FL_CTRL_READY flag. The caller is responsible for ensuring
+ * that the control layer is already assigned to the connection prior to the
+ * call.
  */
 static inline void conn_ctrl_init(struct connection *conn)
 {
 	if (!conn_ctrl_ready(conn)) {
-		int fd = conn->handle.fd;
-
-		fd_insert(fd, conn, conn_fd_handler, tid_bit);
 		conn->flags |= CO_FL_CTRL_READY;
+		if (conn->ctrl->ctrl_init)
+			conn->ctrl->ctrl_init(conn);
 	}
 }
 
-/* Deletes the FD if the transport layer is already gone. Once done,
- * it then removes the CO_FL_CTRL_READY flag.
+/* Deletes the connection's handle (e.g. FD) if the transport layer is already
+ * gone, and removes the CO_FL_CTRL_READY flag.
  */
 static inline void conn_ctrl_close(struct connection *conn)
 {
 	if ((conn->flags & (CO_FL_XPRT_READY|CO_FL_CTRL_READY)) == CO_FL_CTRL_READY) {
-		fd_delete(conn->handle.fd);
-		conn->handle.fd = DEAD_FD_MAGIC;
 		conn->flags &= ~CO_FL_CTRL_READY;
+		if (conn->ctrl->ctrl_close)
+			conn->ctrl->ctrl_close(conn);
 	}
 }
 
@@ -170,22 +164,6 @@ static inline void conn_stop_tracking(struct connection *conn)
 	conn->flags &= ~CO_FL_XPRT_TRACKED;
 }
 
-/* Stop all polling on the fd. This might be used when an error is encountered
- * for example.
- */
-static inline void conn_stop_polling(struct connection *c)
-{
-	if (conn_ctrl_ready(c))
-		fd_stop_both(c->handle.fd);
-}
-
-/* Stops polling in case of error on the connection. */
-static inline void conn_cond_update_polling(struct connection *c)
-{
-	if (unlikely(c->flags & CO_FL_ERROR))
-		conn_stop_polling(c);
-}
-
 /* read shutdown, called from the rcv_buf/rcv_pipe handlers when
  * detecting an end of connection.
  */
@@ -193,7 +171,6 @@ static inline void conn_sock_read0(struct connection *c)
 {
 	c->flags |= CO_FL_SOCK_RD_SH;
 	if (conn_ctrl_ready(c)) {
-		fd_stop_recv(c->handle.fd);
 		/* we don't risk keeping ports unusable if we found the
 		 * zero from the other side.
 		 */
@@ -210,7 +187,6 @@ static inline void conn_sock_shutw(struct connection *c, int clean)
 {
 	c->flags |= CO_FL_SOCK_WR_SH;
 	if (conn_ctrl_ready(c)) {
-		fd_stop_send(c->handle.fd);
 		/* don't perform a clean shutdown if we're going to reset or
 		 * if the shutr was already received.
 		 */
@@ -221,9 +197,6 @@ static inline void conn_sock_shutw(struct connection *c, int clean)
 
 static inline void conn_xprt_shutw(struct connection *c)
 {
-	if (conn_ctrl_ready(c))
-		fd_stop_send(c->handle.fd);
-
 	/* clean data-layer shutdown */
 	if (c->xprt && c->xprt->shutw)
 		c->xprt->shutw(c, c->xprt_ctx, 1);
@@ -231,12 +204,55 @@ static inline void conn_xprt_shutw(struct connection *c)
 
 static inline void conn_xprt_shutw_hard(struct connection *c)
 {
-	if (conn_ctrl_ready(c))
-		fd_stop_send(c->handle.fd);
-
 	/* unclean data-layer shutdown */
 	if (c->xprt && c->xprt->shutw)
 		c->xprt->shutw(c, c->xprt_ctx, 0);
+}
+
+/* This is used at the end of the socket IOCB to possibly create the mux if it
+ * was not done yet, or wake it up if flags changed compared to old_flags or if
+ * need_wake insists on this. It returns <0 if the connection was destroyed and
+ * must not be used, >=0 otherwise.
+ */
+static inline int conn_notify_mux(struct connection *conn, int old_flags, int forced_wake)
+{
+	int ret = 0;
+
+	/* If we don't yet have a mux, that means we were waiting for
+	 * information to create one, typically from the ALPN. If we're
+	 * done with the handshake, attempt to create one.
+	 */
+	if (unlikely(!conn->mux) && !(conn->flags & CO_FL_WAIT_XPRT)) {
+		ret = conn_create_mux(conn);
+		if (ret < 0)
+			goto done;
+	}
+
+	/* The wake callback is normally used to notify the data layer about
+	 * data layer activity (successful send/recv), connection establishment,
+	 * shutdown and fatal errors. We need to consider the following
+	 * situations to wake up the data layer :
+	 *  - change among the CO_FL_NOTIFY_DONE flags :
+	 *      SOCK_{RD,WR}_SH, ERROR,
+	 *  - absence of any of {L4,L6}_CONN and CONNECTED, indicating the
+	 *    end of handshake and transition to CONNECTED
+	 *  - raise of CONNECTED with HANDSHAKE down
+	 *  - end of HANDSHAKE with CONNECTED set
+	 *  - regular data layer activity
+	 *
+	 * Note that the wake callback is allowed to release the connection and
+	 * the fd (and return < 0 in this case).
+	 */
+	if ((forced_wake ||
+	     ((conn->flags ^ old_flags) & CO_FL_NOTIFY_DONE) ||
+	     ((old_flags & CO_FL_WAIT_XPRT) && !(conn->flags & CO_FL_WAIT_XPRT))) &&
+	    conn->mux && conn->mux->wake) {
+		ret = conn->mux->wake(conn);
+		if (ret < 0)
+			goto done;
+	}
+ done:
+	return ret;
 }
 
 /* shut read */
@@ -264,6 +280,14 @@ static inline void cs_close(struct conn_stream *cs)
 {
 	cs_shutw(cs, CS_SHW_SILENT);
 	cs_shutr(cs, CS_SHR_RESET);
+	cs->flags = CS_FL_NONE;
+}
+
+/* completely close a conn_stream after draining possibly pending data (but do not detach it) */
+static inline void cs_drain_and_close(struct conn_stream *cs)
+{
+	cs_shutw(cs, CS_SHW_SILENT);
+	cs_shutr(cs, CS_SHR_DRAIN);
 	cs->flags = CS_FL_NONE;
 }
 

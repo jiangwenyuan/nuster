@@ -81,7 +81,6 @@ enum {
 	 * the stream-interface :
 	 */
 	CS_FL_NOT_FIRST     = 0x00100000,  /* this stream is not the first one */
-	CS_FL_READ_PARTIAL  = 0x00200000,  /* some data were received (not necessarily xferred) */
 };
 
 /* cs_shutr() modes */
@@ -312,10 +311,19 @@ enum proto_proxy_side {
 /* ctl command used by mux->ctl() */
 enum mux_ctl_type {
 	MUX_STATUS, /* Expects an int as output, sets it to a combinaison of MUX_STATUS flags */
+	MUX_EXIT_STATUS, /* Expects an int as output, sets the mux exist/error/http status, if known or 0 */
 };
 
 /* response for ctl MUX_STATUS */
 #define MUX_STATUS_READY (1 << 0)
+
+enum mux_exit_status {
+	MUX_ES_SUCCESS,      /* Success */
+	MUX_ES_INVALID_ERR,  /* invalid input */
+	MUX_ES_TOUT_ERR,     /* timeout */
+	MUX_ES_INTERNAL_ERR, /* internal error */
+	MUX_ES_UNKNOWN       /* unknown status (must be the last) */
+};
 
 /* socks4 response length */
 #define SOCKS4_HS_RSP_LEN 8
@@ -400,7 +408,6 @@ struct mux_ops {
 	int (*used_streams)(struct connection *conn);  /* Returns the number of streams in use on a connection. */
 	void (*destroy)(void *ctx); /* Let the mux know one of its users left, so it may have to disappear */
 	void (*reset)(struct connection *conn); /* Reset the mux, because we're re-trying to connect */
-	const struct cs_info *(*get_cs_info)(struct conn_stream *cs); /* Return info on the specified conn_stream or NULL if not defined */
 	int (*ctl)(struct connection *conn, enum mux_ctl_type mux_ctl, void *arg); /* Provides information about the mux */
 	int (*takeover)(struct connection *conn, int orig_tid); /* Attempts to migrate the connection to the current thread */
 	unsigned int flags;                           /* some flags characterizing the mux's capabilities (MX_FL_*) */
@@ -452,19 +459,6 @@ struct conn_stream {
 	void *data;                          /* pointer to upper layer's entity (eg: stream interface) */
 	const struct data_cb *data_cb;       /* data layer callbacks. Must be set before xprt->init() */
 	void *ctx;                           /* mux-specific context */
-};
-
-/*
- * This structure describes the info related to a conn_stream known by the mux
- * only but useful for the upper layer.
- * For now, only some dates and durations are reported. This structure will
- * envolved. But for now, only the bare minimum is referenced.
- */
-struct cs_info {
-	struct timeval create_date;  /* Creation date of the conn_stream in user date */
-	struct timeval tv_create;    /* Creation date of the conn_stream in internal date (monotonic) */
-	long t_handshake;            /* handshake duration, -1 if never occurs */
-	long t_idle;                 /* idle duration, -1 if never occurs */
 };
 
 /* This structure describes a connection with its methods and data.

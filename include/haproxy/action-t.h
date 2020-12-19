@@ -78,7 +78,6 @@ enum act_name {
 	ACT_ACTION_DENY,
 
 	/* common http actions .*/
-	ACT_HTTP_DEL_HDR,
 	ACT_HTTP_REDIR,
 	ACT_HTTP_SET_NICE,
 	ACT_HTTP_SET_LOGL,
@@ -92,6 +91,12 @@ enum act_name {
 	ACT_TCP_EXPECT_PX,
 	ACT_TCP_EXPECT_CIP,
 	ACT_TCP_CLOSE, /* close at the sender's */
+};
+
+/* Timeout name valid for a set-timeout rule */
+enum act_timeout_name {
+	ACT_TIMEOUT_SERVER,
+	ACT_TIMEOUT_TUNNEL,
 };
 
 /* NOTE: if <.action_ptr> is defined, the referenced function will always be
@@ -138,6 +143,11 @@ struct act_rule {
 			struct sample_expr *expr;
 			int idx;
 		} capid;
+		struct {
+			int value;                  /* plain timeout value in ms if no expr is used */
+			enum act_timeout_name type; /* timeout type */
+			struct sample_expr *expr;   /* timeout value as an expression */
+		} timeout;
 		struct hlua_rule *hlua_rule;
 		struct {
 			struct sample_expr *expr;

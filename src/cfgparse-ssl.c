@@ -125,7 +125,7 @@ static int ssl_parse_global_ssl_async(char **args, int section_type, struct prox
                                        struct proxy *defpx, const char *file, int line,
                                        char **err)
 {
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 	global_ssl.async = 1;
 	global.ssl_used_async_engines = nb_engines;
 	return 0;
@@ -203,7 +203,7 @@ static int ssl_parse_global_ciphers(char **args, int section_type, struct proxy 
 	return 0;
 }
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 /* parse the "ssl-default-bind-ciphersuites" / "ssl-default-server-ciphersuites" keywords
  * in global section. Returns <0 on alert, >0 on warning, 0 on success.
  */
@@ -613,7 +613,7 @@ static int bind_parse_ciphers(char **args, int cur_arg, struct proxy *px, struct
 	return ssl_bind_parse_ciphers(args, cur_arg, px, &conf->ssl_conf, err);
 }
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 /* parse the "ciphersuites" bind keyword */
 static int ssl_bind_parse_ciphersuites(char **args, int cur_arg, struct proxy *px, struct ssl_bind_conf *conf, char **err)
 {
@@ -1049,7 +1049,7 @@ static int bind_parse_ssl(char **args, int cur_arg, struct proxy *px, struct bin
 	if (global_ssl.listen_default_curves && !conf->ssl_conf.curves)
 		conf->ssl_conf.curves = strdup(global_ssl.listen_default_curves);
 #endif
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	if (global_ssl.listen_default_ciphersuites && !conf->ssl_conf.ciphersuites)
 		conf->ssl_conf.ciphersuites = strdup(global_ssl.listen_default_ciphersuites);
 #endif
@@ -1357,23 +1357,30 @@ static int srv_parse_check_sni(char **args, int *cur_arg, struct proxy *px, stru
 
 }
 
+/* common function to init ssl_ctx */
+static void ssl_sock_init_srv(struct server *s)
+{
+	if (global_ssl.connect_default_ciphers && !s->ssl_ctx.ciphers)
+		s->ssl_ctx.ciphers = strdup(global_ssl.connect_default_ciphers);
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
+	if (global_ssl.connect_default_ciphersuites && !s->ssl_ctx.ciphersuites)
+		s->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
+#endif
+	s->ssl_ctx.options |= global_ssl.connect_default_ssloptions;
+	s->ssl_ctx.methods.flags |= global_ssl.connect_default_sslmethods.flags;
+
+	if (!s->ssl_ctx.methods.min)
+		s->ssl_ctx.methods.min = global_ssl.connect_default_sslmethods.min;
+
+	if (!s->ssl_ctx.methods.max)
+		s->ssl_ctx.methods.max = global_ssl.connect_default_sslmethods.max;
+}
+
 /* parse the "check-ssl" server keyword */
 static int srv_parse_check_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
 	newsrv->check.use_ssl = 1;
-	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
-		newsrv->ssl_ctx.ciphers = strdup(global_ssl.connect_default_ciphers);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
-		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
-#endif
-	newsrv->ssl_ctx.options |= global_ssl.connect_default_ssloptions;
-	newsrv->ssl_ctx.methods.flags |= global_ssl.connect_default_sslmethods.flags;
-	if (!newsrv->ssl_ctx.methods.min)
-		newsrv->ssl_ctx.methods.min = global_ssl.connect_default_sslmethods.min;
-	if (!newsrv->ssl_ctx.methods.max)
-		newsrv->ssl_ctx.methods.max = global_ssl.connect_default_sslmethods.max;
-
+	ssl_sock_init_srv(newsrv);
 	return 0;
 }
 
@@ -1390,7 +1397,7 @@ static int srv_parse_ciphers(char **args, int *cur_arg, struct proxy *px, struct
 	return 0;
 }
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 /* parse the "ciphersuites" server keyword */
 static int srv_parse_ciphersuites(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
@@ -1476,9 +1483,14 @@ static int srv_parse_no_send_proxy_cn(char **args, int *cur_arg, struct proxy *p
 /* parse the "no-ssl" server keyword */
 static int srv_parse_no_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
+	/* if default-server have use_ssl, prepare ssl settings */
+	if (newsrv->use_ssl == 1)
+		ssl_sock_init_srv(newsrv);
+	else {
+		free(newsrv->ssl_ctx.ciphers);
+		newsrv->ssl_ctx.ciphers = NULL;
+	}
 	newsrv->use_ssl = -1;
-	free(newsrv->ssl_ctx.ciphers);
-	newsrv->ssl_ctx.ciphers = NULL;
 	return 0;
 }
 
@@ -1545,22 +1557,7 @@ static int srv_parse_sni(char **args, int *cur_arg, struct proxy *px, struct ser
 static int srv_parse_ssl(char **args, int *cur_arg, struct proxy *px, struct server *newsrv, char **err)
 {
 	newsrv->use_ssl = 1;
-	if (global_ssl.connect_default_ciphers && !newsrv->ssl_ctx.ciphers)
-		newsrv->ssl_ctx.ciphers = strdup(global_ssl.connect_default_ciphers);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-	if (global_ssl.connect_default_ciphersuites && !newsrv->ssl_ctx.ciphersuites)
-		newsrv->ssl_ctx.ciphersuites = strdup(global_ssl.connect_default_ciphersuites);
-#endif
-	newsrv->ssl_ctx.options |= global_ssl.connect_default_ssloptions;
-	newsrv->ssl_ctx.methods.flags |= global_ssl.connect_default_sslmethods.flags;
-
-	if (!newsrv->ssl_ctx.methods.min)
-		newsrv->ssl_ctx.methods.min = global_ssl.connect_default_sslmethods.min;
-
-	if (!newsrv->ssl_ctx.methods.max)
-		newsrv->ssl_ctx.methods.max = global_ssl.connect_default_sslmethods.max;
-
-
+	ssl_sock_init_srv(newsrv);
 	return 0;
 }
 
@@ -1736,7 +1733,7 @@ struct ssl_bind_kw ssl_bind_kws[] = {
 	{ "ca-file",               ssl_bind_parse_ca_file,          1 }, /* set CAfile to process ca-names and verify on client cert */
 	{ "ca-verify-file",        ssl_bind_parse_ca_verify_file,   1 }, /* set CAverify file to process verify on client cert */
 	{ "ciphers",               ssl_bind_parse_ciphers,          1 }, /* set SSL cipher suite */
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	{ "ciphersuites",          ssl_bind_parse_ciphersuites,     1 }, /* set TLS 1.3 cipher suite */
 #endif
 	{ "crl-file",              ssl_bind_parse_crl_file,         1 }, /* set certificate revocation list file use on client cert verify */
@@ -1761,7 +1758,7 @@ static struct bind_kw_list bind_kws = { "SSL", { }, {
 	{ "ca-sign-file",          bind_parse_ca_sign_file,       1 }, /* set CAFile used to generate and sign server certs */
 	{ "ca-sign-pass",          bind_parse_ca_sign_pass,       1 }, /* set CAKey passphrase */
 	{ "ciphers",               bind_parse_ciphers,            1 }, /* set SSL cipher suite */
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	{ "ciphersuites",          bind_parse_ciphersuites,       1 }, /* set TLS 1.3 cipher suite */
 #endif
 	{ "crl-file",              bind_parse_crl_file,           1 }, /* set certificate revocation list file use on client cert verify */
@@ -1811,7 +1808,7 @@ static struct srv_kw_list srv_kws = { "SSL", { }, {
 	{ "check-sni",               srv_parse_check_sni,          1, 1 }, /* set SNI */
 	{ "check-ssl",               srv_parse_check_ssl,          0, 1 }, /* enable SSL for health checks */
 	{ "ciphers",                 srv_parse_ciphers,            1, 1 }, /* select the cipher suite */
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	{ "ciphersuites",            srv_parse_ciphersuites,       1, 1 }, /* select the cipher suite */
 #endif
 	{ "crl-file",                srv_parse_crl_file,           1, 1 }, /* set certificate revocation list file use on server cert verify */
@@ -1880,7 +1877,7 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 #if defined(SSL_CTX_set1_curves_list)
 	{ CFG_GLOBAL, "ssl-default-bind-curves", ssl_parse_global_curves },
 #endif
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	{ CFG_GLOBAL, "ssl-default-bind-ciphersuites", ssl_parse_global_ciphersuites },
 	{ CFG_GLOBAL, "ssl-default-server-ciphersuites", ssl_parse_global_ciphersuites },
 #endif

@@ -1009,8 +1009,17 @@ spoe_handle_agentack_frame(struct appctx *appctx, struct spoe_context **ctx,
 		    (unsigned int)stream_id, (unsigned int)frame_id);
 
 	SPOE_APPCTX(appctx)->status_code = SPOE_FRM_ERR_FRAMEID_NOTFOUND;
-	if (appctx->st0 == SPOE_APPCTX_ST_WAITING_SYNC_ACK)
-		return -1;
+	if (appctx->st0 == SPOE_APPCTX_ST_WAITING_SYNC_ACK) {
+		/* Report an error if we are waiting the ack for another frame,
+		 * but not if there is no longer frame waiting for a ack
+		 * (timeout)
+		 */
+		if (!LIST_ISEMPTY(&SPOE_APPCTX(appctx)->waiting_queue) ||
+		    SPOE_APPCTX(appctx)->frag_ctx.ctx)
+			return -1;
+		appctx->st0 = SPOE_APPCTX_ST_PROCESSING;
+		SPOE_APPCTX(appctx)->cur_fpa = 0;
+	}
 	return 0;
 
   found:
@@ -1253,6 +1262,7 @@ spoe_release_appctx(struct appctx *appctx)
 		LIST_INIT(&ctx->list);
 		_HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
 		spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
+		ctx->spoe_appctx = NULL;
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
@@ -1268,8 +1278,13 @@ spoe_release_appctx(struct appctx *appctx)
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
 	}
 
-	if (!LIST_ISEMPTY(&agent->rt[tid].applets))
+	if (!LIST_ISEMPTY(&agent->rt[tid].applets)) {
+		list_for_each_entry_safe(ctx, back, &agent->rt[tid].waiting_queue, list) {
+			if (ctx->spoe_appctx == spoe_appctx)
+				ctx->spoe_appctx = NULL;
+		}
 		goto end;
+	}
 
 	/* If this was the last running applet, notify all waiting streams */
 	list_for_each_entry_safe(ctx, back, &agent->rt[tid].sending_queue, list) {
@@ -1277,6 +1292,7 @@ spoe_release_appctx(struct appctx *appctx)
 		LIST_INIT(&ctx->list);
 		_HA_ATOMIC_SUB(&agent->counters.nb_sending, 1);
 		spoe_update_stat_time(&ctx->stats.tv_queue, &ctx->stats.t_queue);
+		ctx->spoe_appctx = NULL;
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
@@ -1286,6 +1302,7 @@ spoe_release_appctx(struct appctx *appctx)
 		LIST_INIT(&ctx->list);
 		_HA_ATOMIC_SUB(&agent->counters.nb_waiting, 1);
 		spoe_update_stat_time(&ctx->stats.tv_wait, &ctx->stats.t_waiting);
+		ctx->spoe_appctx = NULL;
 		ctx->state = SPOE_CTX_ST_ERROR;
 		ctx->status_code = (spoe_appctx->status_code + 0x100);
 		task_wakeup(ctx->strm->task, TASK_WOKEN_MSG);
@@ -1966,7 +1983,7 @@ spoe_create_appctx(struct spoe_config *conf)
 	if (!sess)
 		goto out_free_spoe;
 
-	if ((strm = stream_new(sess, &appctx->obj_type)) == NULL)
+	if ((strm = stream_new(sess, &appctx->obj_type, &BUF_NULL)) == NULL)
 		goto out_free_sess;
 
 	stream_set_backend(strm, conf->agent->b.be);

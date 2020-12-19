@@ -182,6 +182,39 @@ struct cli_kw* cli_find_kw(char **args)
 	return NULL;
 }
 
+struct cli_kw* cli_find_kw_exact(char **args)
+{
+	struct cli_kw_list *kw_list;
+	int found = 0;
+	int i;
+	int j;
+
+	if (LIST_ISEMPTY(&cli_keywords.list))
+		return NULL;
+
+	list_for_each_entry(kw_list, &cli_keywords.list, list) {
+		for (i = 0; kw_list->kw[i].str_kw[0]; i++) {
+			found = 1;
+			for (j = 0; j < CLI_PREFIX_KW_NB; j++) {
+				if (args[j] == NULL && kw_list->kw[i].str_kw[j] == NULL) {
+					break;
+				}
+				if (args[j] == NULL || kw_list->kw[i].str_kw[j] == NULL) {
+					found = 0;
+					break;
+				}
+				if (strcmp(args[j], kw_list->kw[i].str_kw[j]) != 0) {
+					found = 0;
+					break;
+				}
+			}
+			if (found)
+				return &kw_list->kw[i];
+		}
+	}
+	return NULL;
+}
+
 void cli_register_kw(struct cli_kw_list *kw_list)
 {
 	LIST_ADDQ(&cli_keywords.list, &kw_list->list);
@@ -1013,7 +1046,7 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 #endif
 				goto skip; // closed
 		}
-		else if (fdt.iocb == conn_fd_handler) {
+		else if (fdt.iocb == sock_conn_iocb) {
 			conn_flags = ((struct connection *)fdt.owner)->flags;
 			mux = ((struct connection *)fdt.owner)->mux;
 			ctx = ((struct connection *)fdt.owner)->ctx;
@@ -1049,7 +1082,7 @@ static int cli_io_handler_show_fd(struct appctx *appctx)
 		if (!fdt.owner) {
 			chunk_appendf(&trash, ")");
 		}
-		else if (fdt.iocb == conn_fd_handler) {
+		else if (fdt.iocb == sock_conn_iocb) {
 			chunk_appendf(&trash, ") back=%d cflg=0x%08x", is_back, conn_flags);
 			if (px)
 				chunk_appendf(&trash, " px=%s", px->id);

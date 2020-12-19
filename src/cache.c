@@ -49,6 +49,7 @@ struct cache {
 	unsigned int maxage;     /* max-age */
 	unsigned int maxblocks;
 	unsigned int maxobjsz;   /* max-object-size (in bytes) */
+	uint8_t vary_processing_enabled;     /* boolean : manage Vary header (disabled by default) */
 	char id[33];             /* cache name */
 };
 
@@ -61,6 +62,41 @@ struct cache_flt_conf {
 	unsigned int flags;   /* CACHE_FLT_F_* */
 };
 
+
+/*
+ * Vary-related structures and functions
+ */
+enum vary_header_bit {
+	VARY_ACCEPT_ENCODING = (1 << 0),
+	VARY_REFERER =         (1 << 1),
+	VARY_LAST  /* should always be last */
+};
+
+typedef int(*http_header_normalizer)(struct ist value, char *buf, unsigned int *buf_len);
+
+struct vary_hashing_information {
+	struct ist hdr_name;                 /* Header name */
+	enum vary_header_bit value;          /* Bit repesenting the header in a vary signature */
+	unsigned int hash_length;            /* Size of the sub hash for this header's value */
+	http_header_normalizer norm_fn;      /* Normalization function */
+};
+
+static int accept_encoding_normalizer(struct ist value, char *buf, unsigned int *buf_len);
+static int default_normalizer(struct ist value, char *buf, unsigned int *buf_len);
+
+/* Warning : do not forget to update HTTP_CACHE_SEC_KEY_LEN when new items are
+ * added to this array. */
+const struct vary_hashing_information vary_information[] = {
+	{ IST("accept-encoding"), VARY_ACCEPT_ENCODING, sizeof(int), &accept_encoding_normalizer },
+	{ IST("referer"), VARY_REFERER, sizeof(int), &default_normalizer },
+};
+
+static int http_request_prebuild_full_secondary_key(struct stream *s);
+static int http_request_build_secondary_key(struct stream *s, int vary_signature);
+static int http_request_reduce_secondary_key(unsigned int vary_signature,
+					     char prebuilt_key[HTTP_CACHE_SEC_KEY_LEN]);
+
+
 /*
  * cache ctx for filters
  */
@@ -69,12 +105,17 @@ struct cache_st {
 };
 
 struct cache_entry {
+	unsigned int complete;    /* An entry won't be valid until complete is not null. */
 	unsigned int latest_validation;     /* latest validation date */
 	unsigned int expire;      /* expiration date */
 	unsigned int age;         /* Origin server "Age" header value */
 
 	struct eb32_node eb;     /* ebtree node used to hold the cache object */
 	char hash[20];
+
+	char secondary_key[HTTP_CACHE_SEC_KEY_LEN];  /* Optional secondary key. */
+	unsigned int secondary_key_signature;  /* Bitfield of the HTTP headers that should be used
+					        * to build secondary keys for this cache entry. */
 
 	unsigned int etag_length; /* Length of the ETag value (if one was found in the response). */
 	unsigned int etag_offset; /* Offset of the ETag value in the data buffer. */
@@ -121,6 +162,36 @@ struct cache_entry *entry_exist(struct cache *cache, char *hash)
 	}
 	return NULL;
 
+}
+
+/*
+ * There can be multiple entries with the same primary key in the ebtree so in
+ * order to get the proper one out of the list, we use a secondary_key.
+ * This function simply iterates over all the entries with the same primary_key
+ * until it finds the right one.
+ * Returns the cache_entry in case of success, NULL otherwise.
+ */
+struct cache_entry *secondary_entry_exist(struct cache *cache, struct cache_entry *entry,
+					  char *secondary_key)
+{
+	struct eb32_node *node = &entry->eb;
+
+	if (!entry->secondary_key_signature)
+		return NULL;
+
+	while (entry && memcmp(entry->secondary_key, secondary_key, HTTP_CACHE_SEC_KEY_LEN) != 0) {
+		node = eb32_next_dup(node);
+		entry = node ? eb32_entry(node, struct cache_entry, eb) : NULL;
+	}
+
+	/* Expired entry */
+	if (entry && entry->expire <= now.tv_sec) {
+		eb32_delete(&entry->eb);
+		entry->eb.key = 0;
+		entry = NULL;
+	}
+
+	return entry;
 }
 
 static inline struct shared_context *shctx_ptr(struct cache *cache)
@@ -408,13 +479,9 @@ cache_store_http_end(struct stream *s, struct filter *filter,
 
 		object = (struct cache_entry *)st->first_block->data;
 
-		/* does not need to test if the insertion worked, if it
-		 * doesn't, the blocks will be reused anyway */
-
 		shctx_lock(shctx);
-		if (eb32_insert(&cache->entries, &object->eb) != &object->eb) {
-			object->eb.key = 0;
-		}
+		/* The whole payload was cached, the entry can now be used. */
+		object->complete = 1;
 		/* remove from the hotlist */
 		shctx_row_dec_hot(shctx, st->first_block);
 		shctx_unlock(shctx);
@@ -468,6 +535,10 @@ char *directive_value(const char *sample, int slen, const char *word, int wlen)
 
 /*
  * Return the maxage in seconds of an HTTP response.
+ * The returned value will always take the cache's configuration into account
+ * (cache->maxage) but the actual max age of the response will be set in the
+ * true_maxage parameter. It will be used to determine if a response is already
+ * stale or not.
  * Compute the maxage using either:
  *  - the assigned max-age of the cache
  *  - the s-maxage directive
@@ -476,16 +547,22 @@ char *directive_value(const char *sample, int slen, const char *word, int wlen)
  *  - the default-max-age of the cache
  *
  */
-int http_calc_maxage(struct stream *s, struct cache *cache)
+int http_calc_maxage(struct stream *s, struct cache *cache, int *true_maxage)
 {
 	struct htx *htx = htxbuf(&s->res.buf);
 	struct http_hdr_ctx ctx = { .blk = NULL };
-	int smaxage = -1;
-	int maxage = -1;
+	long smaxage = -1;
+	long maxage = -1;
 	int expires = -1;
 	struct tm tm = {};
 	time_t expires_val = 0;
+	char *endptr = NULL;
+	int offset = 0;
 
+	/* The Cache-Control max-age and s-maxage directives should be followed by
+	 * a positive numerical value (see RFC 7234#5.2.1.1). According to the
+	 * specs, a sender "should not" generate a quoted-string value but we will
+	 * still accept this format since it isn't strictly forbidden. */
 	while (http_find_header(htx, ist("cache-control"), &ctx, 0)) {
 		char *value;
 
@@ -495,7 +572,10 @@ int http_calc_maxage(struct stream *s, struct cache *cache)
 
 			chunk_strncat(chk, value, ctx.value.len - 8 + 1);
 			chunk_strncat(chk, "", 1);
-			smaxage = atoi(chk->area);
+			offset = (*chk->area == '"') ? 1 : 0;
+			smaxage = strtol(chk->area + offset, &endptr, 10);
+			if (unlikely(smaxage < 0 || endptr == chk->area))
+				return -1;
 		}
 
 		value = directive_value(ctx.value.ptr, ctx.value.len, "max-age", 7);
@@ -504,7 +584,10 @@ int http_calc_maxage(struct stream *s, struct cache *cache)
 
 			chunk_strncat(chk, value, ctx.value.len - 7 + 1);
 			chunk_strncat(chk, "", 1);
-			maxage = atoi(chk->area);
+			offset = (*chk->area == '"') ? 1 : 0;
+			maxage = strtol(chk->area + offset, &endptr, 10);
+			if (unlikely(maxage < 0 || endptr == chk->area))
+				return -1;
 		}
 	}
 
@@ -532,14 +615,23 @@ int http_calc_maxage(struct stream *s, struct cache *cache)
 	}
 
 
-	if (smaxage > 0)
+	if (smaxage > 0) {
+		if (true_maxage)
+			*true_maxage = smaxage;
 		return MIN(smaxage, cache->maxage);
+	}
 
-	if (maxage > 0)
+	if (maxage > 0) {
+		if (true_maxage)
+			*true_maxage = maxage;
 		return MIN(maxage, cache->maxage);
+	}
 
-	if (expires >= 0)
+	if (expires >= 0) {
+		if (true_maxage)
+			*true_maxage = expires;
 		return MIN(expires, cache->maxage);
+	}
 
 	return cache->maxage;
 
@@ -590,20 +682,56 @@ static time_t get_last_modified_time(struct htx *htx)
 }
 
 /*
+ * Checks the vary header's value. The headers on which vary should be applied
+ * must be explicitely supported in the vary_information array (see cache.c). If
+ * any other header is mentioned, we won't store the response.
+ * Returns 1 if Vary-based storage can work, 0 otherwise.
+ */
+static int http_check_vary_header(struct htx *htx, unsigned int *vary_signature)
+{
+	unsigned int vary_idx;
+	unsigned int vary_info_count;
+	const struct vary_hashing_information *vary_info;
+	struct http_hdr_ctx ctx = { .blk = NULL };
+
+	int retval = 1;
+
+	*vary_signature = 0;
+
+	vary_info_count = sizeof(vary_information)/sizeof(*vary_information);
+	while (retval && http_find_header(htx, ist("Vary"), &ctx, 0)) {
+		for (vary_idx = 0; vary_idx < vary_info_count; ++vary_idx) {
+			vary_info = &vary_information[vary_idx];
+			if (isteqi(ctx.value, vary_info->hdr_name)) {
+				*vary_signature |= vary_info->value;
+				break;
+			}
+		}
+		retval = (vary_idx < vary_info_count);
+	}
+
+	return retval;
+}
+
+
+
+/*
  * This function will store the headers of the response in a buffer and then
  * register a filter to store the data
  */
 enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 					struct session *sess, struct stream *s, int flags)
 {
-	unsigned int age;
 	long long hdr_age;
+	int effective_maxage = 0;
+	int true_maxage = 0;
 	struct http_txn *txn = s->txn;
 	struct http_msg *msg = &txn->rsp;
 	struct filter *filter;
 	struct shared_block *first = NULL;
 	struct cache_flt_conf *cconf = rule->arg.act.p[0];
-	struct shared_context *shctx = shctx_ptr(cconf->c.cache);
+	struct cache *cache = cconf->c.cache;
+	struct shared_context *shctx = shctx_ptr(cache);
 	struct cache_st *cache_ctx = NULL;
 	struct cache_entry *object, *old;
 	unsigned int key = read_u32(txn->cache_hash);
@@ -611,10 +739,8 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	struct http_hdr_ctx ctx;
 	size_t hdrs_len = 0;
 	int32_t pos;
-	unsigned int etag_length = 0;
-	unsigned int etag_offset = 0;
 	struct ist header_name = IST_NULL;
-	time_t last_modified = 0;
+	unsigned int vary_signature = 0;
 
 	/* Don't cache if the response came from a cache */
 	if ((obj_type(s->target) == OBJ_TYPE_APPLET) &&
@@ -627,8 +753,34 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 		goto out;
 
 	/* cache only GET method */
-	if (txn->meth != HTTP_METH_GET)
+	if (txn->meth != HTTP_METH_GET) {
+		/* In case of successful unsafe method on a stored resource, the
+		 * cached entry must be invalidated (see RFC7234#4.4).
+		 * A "non-error response" is one with a 2xx (Successful) or 3xx
+		 * (Redirection) status code. */
+		if (txn->status >= 200 && txn->status < 400) {
+			switch (txn->meth) {
+			case HTTP_METH_OPTIONS:
+			case HTTP_METH_GET:
+			case HTTP_METH_HEAD:
+			case HTTP_METH_TRACE:
+				break;
+
+			default: /* Any unsafe method */
+				/* Discard any corresponding entry in case of sucessful
+				 * unsafe request (such as PUT, POST or DELETE). */
+				shctx_lock(shctx);
+
+				old = entry_exist(cconf->c.cache, txn->cache_hash);
+				if (old) {
+					eb32_delete(&old->eb);
+					old->eb.key = 0;
+				}
+				shctx_unlock(shctx);
+			}
+		}
 		goto out;
+	}
 
 	/* cache key was not computed */
 	if (!key)
@@ -657,30 +809,102 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	    htx->data + htx->extra > shctx->max_obj_size)
 		goto out;
 
-	/* Does not manage Vary at the moment. We will need a secondary key later for that */
+	/* Only a subset of headers are supported in our Vary implementation. If
+	 * any other header is present in the Vary header value, we won't be
+	 * able to use the cache. Likewise, if Vary header support is disabled,
+	 * avoid caching responses that contain such a header. */
 	ctx.blk = NULL;
-	if (http_find_header(htx, ist("Vary"), &ctx, 0))
+	if (cache->vary_processing_enabled) {
+		if (!http_check_vary_header(htx, &vary_signature))
+			goto out;
+		if (vary_signature)
+			http_request_reduce_secondary_key(vary_signature, txn->cache_secondary_hash);
+	}
+	else if (http_find_header(htx, ist("Vary"), &ctx, 0)) {
 		goto out;
+	}
 
 	http_check_response_for_cacheability(s, &s->res);
 
-	if (!(txn->flags & TX_CACHEABLE) || !(txn->flags & TX_CACHE_COOK))
+	if (!(txn->flags & TX_CACHEABLE) || !(txn->flags & TX_CACHE_COOK) || (txn->flags & TX_CACHE_IGNORE))
 		goto out;
 
-	age = 0;
+	shctx_lock(shctx);
+	old = entry_exist(cache, txn->cache_hash);
+	if (old) {
+		if (vary_signature)
+			old = secondary_entry_exist(cconf->c.cache, old,
+						    txn->cache_secondary_hash);
+		if (old) {
+			if (!old->complete) {
+				/* An entry with the same primary key is already being
+				 * created, we should not try to store the current
+				 * response because it will waste space in the cache. */
+				shctx_unlock(shctx);
+				goto out;
+			}
+			eb32_delete(&old->eb);
+			old->eb.key = 0;
+		}
+	}
+	first = shctx_row_reserve_hot(shctx, NULL, sizeof(struct cache_entry));
+	if (!first) {
+		shctx_unlock(shctx);
+		goto out;
+	}
+	/* the received memory is not initialized, we need at least to mark
+	 * the object as not indexed yet.
+	 */
+	object = (struct cache_entry *)first->data;
+	memset(object, 0, sizeof(*object));
+	object->eb.key = key;
+	object->secondary_key_signature = vary_signature;
+	/* We need to temporarily set a valid expiring time until the actual one
+	 * is set by the end of this function (in case of concurrent accesses to
+	 * the same resource). This way the second access will find an existing
+	 * but not yet usable entry in the tree and will avoid storing its data. */
+	object->expire = now.tv_sec + 2;
+
+	memcpy(object->hash, txn->cache_hash, sizeof(object->hash));
+	if (vary_signature)
+		memcpy(object->secondary_key, txn->cache_secondary_hash, HTTP_CACHE_SEC_KEY_LEN);
+
+	/* Insert the entry in the tree even if the payload is not cached yet. */
+	if (eb32_insert(&cache->entries, &object->eb) != &object->eb) {
+		object->eb.key = 0;
+		shctx_unlock(shctx);
+		goto out;
+	}
+	shctx_unlock(shctx);
+
+	/* reserve space for the cache_entry structure */
+	first->len = sizeof(struct cache_entry);
+	first->last_append = NULL;
+
+	/* Determine the entry's maximum age (taking into account the cache's
+	 * configuration) as well as the response's explicit max age (extracted
+	 * from cache-control directives or the expires header). */
+	effective_maxage = http_calc_maxage(s, cconf->c.cache, &true_maxage);
+
 	ctx.blk = NULL;
 	if (http_find_header(htx, ist("Age"), &ctx, 0)) {
 		if (!strl2llrc(ctx.value.ptr, ctx.value.len, &hdr_age) && hdr_age > 0) {
 			if (unlikely(hdr_age > CACHE_ENTRY_MAX_AGE))
 				hdr_age = CACHE_ENTRY_MAX_AGE;
-			age = hdr_age;
+			/* A response with an Age value greater than its
+			 * announced max age is stale and should not be stored. */
+			object->age = hdr_age;
+			if (unlikely(object->age > true_maxage))
+				goto out;
 		}
+		else
+			goto out;
 		http_remove_header(htx, &ctx);
 	}
 
 	/* Build a last-modified time that will be stored in the cache_entry and
 	 * compared to a future If-Modified-Since client header. */
-	last_modified = get_last_modified_time(htx);
+	object->last_modified = get_last_modified_time(htx);
 
 	chunk_reset(&trash);
 	for (pos = htx_get_first(htx); pos != -1; pos = htx_get_next(htx, pos)) {
@@ -699,8 +923,8 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 		if (type == HTX_BLK_HDR) {
 			header_name = htx_get_blk_name(htx, blk);
 			if (isteq(header_name, ist("etag"))) {
-				etag_length = sz - istlen(header_name);
-				etag_offset = sizeof(struct cache_entry) + b_data(&trash) - sz + istlen(header_name);
+				object->etag_length = sz - istlen(header_name);
+				object->etag_offset = sizeof(struct cache_entry) + b_data(&trash) - sz + istlen(header_name);
 			}
 		}
 		if (type == HTX_BLK_EOH)
@@ -712,35 +936,17 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 		goto out;
 
 	shctx_lock(shctx);
-	first = shctx_row_reserve_hot(shctx, NULL, sizeof(struct cache_entry) + trash.data);
-	if (!first) {
+	if (!shctx_row_reserve_hot(shctx, first, trash.data)) {
 		shctx_unlock(shctx);
 		goto out;
 	}
 	shctx_unlock(shctx);
 
-	/* the received memory is not initialized, we need at least to mark
-	 * the object as not indexed yet.
-	 */
-	object = (struct cache_entry *)first->data;
-	object->eb.node.leaf_p = NULL;
-	object->eb.key = 0;
-	object->age = age;
-	object->last_modified = last_modified;
-
-	/* reserve space for the cache_entry structure */
-	first->len = sizeof(struct cache_entry);
-	first->last_append = NULL;
 	/* cache the headers in a http action because it allows to chose what
 	 * to cache, for example you might want to cache a response before
 	 * modifying some HTTP headers, or on the contrary after modifying
 	 * those headers.
 	 */
-
-	/* Write the ETag information in the cache_entry if needed. */
-	object->etag_length = etag_length;
-	object->etag_offset = etag_offset;
-
 	/* does not need to be locked because it's in the "hot" list,
 	 * copy the headers */
 	if (shctx_row_data_append(shctx, first, NULL, (unsigned char *)trash.area, trash.data) < 0)
@@ -750,23 +956,9 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	if (cache_ctx) {
 		cache_ctx->first_block = first;
 
-		object->eb.key = key;
-
-		memcpy(object->hash, txn->cache_hash, sizeof(object->hash));
-		/* Insert the node later on caching success */
-
-		shctx_lock(shctx);
-
-		old = entry_exist(cconf->c.cache, txn->cache_hash);
-		if (old) {
-			eb32_delete(&old->eb);
-			old->eb.key = 0;
-		}
-		shctx_unlock(shctx);
-
 		/* store latest value and expiration time */
 		object->latest_validation = now.tv_sec;
-		object->expire = now.tv_sec + http_calc_maxage(s, cconf->c.cache);
+		object->expire = now.tv_sec + effective_maxage;
 		return ACT_RET_CONT;
 	}
 
@@ -775,6 +967,8 @@ out:
 	if (first) {
 		shctx_lock(shctx);
 		first->len = 0;
+		if (object->eb.key)
+			eb32_delete(&object->eb);
 		object->eb.key = 0;
 		shctx_row_dec_hot(shctx, first);
 		shctx_unlock(shctx);
@@ -1163,15 +1357,6 @@ int sha1_hosturi(struct stream *s)
 	trash = get_trash_chunk();
 	ctx.blk = NULL;
 
-	switch (txn->meth) {
-	case HTTP_METH_HEAD:
-	case HTTP_METH_GET:
-		chunk_memcat(trash, "GET", 3);
-		break;
-	default:
-		return 0;
-	}
-
 	sl = http_get_stline(htx);
 	uri = htx_sl_req_uri(sl); // whole uri
 	if (!uri.len)
@@ -1295,9 +1480,11 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
 {
 
 	struct http_txn *txn = s->txn;
-	struct cache_entry *res;
+	struct cache_entry *res, *sec_entry = NULL;
 	struct cache_flt_conf *cconf = rule->arg.act.p[0];
 	struct cache *cache = cconf->c.cache;
+	struct shared_block *entry_block;
+
 
 	/* Ignore cache for HTTP/1.0 requests and for requests other than GET
 	 * and HEAD */
@@ -1307,10 +1494,14 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
 
 	http_check_request_for_cacheability(s, &s->req);
 
-	if ((s->txn->flags & (TX_CACHE_IGNORE|TX_CACHEABLE)) == TX_CACHE_IGNORE)
+	/* The request's hash has to be calculated for all requests, even POSTs
+	 * or PUTs for instance because RFC7234 specifies that a sucessful
+	 * "unsafe" method on a stored resource must invalidate it
+	 * (see RFC7234#4.4). */
+	if (!sha1_hosturi(s))
 		return ACT_RET_CONT;
 
-	if (!sha1_hosturi(s))
+	if ((s->txn->flags & (TX_CACHE_IGNORE|TX_CACHEABLE)) == TX_CACHE_IGNORE)
 		return ACT_RET_CONT;
 
 	if (s->txn->flags & TX_CACHE_IGNORE)
@@ -1323,10 +1514,43 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
 
 	shctx_lock(shctx_ptr(cache));
 	res = entry_exist(cache, s->txn->cache_hash);
-	if (res) {
+	/* We must not use an entry that is not complete. */
+	if (res && res->complete) {
 		struct appctx *appctx;
-		shctx_row_inc_hot(shctx_ptr(cache), block_ptr(res));
+		entry_block = block_ptr(res);
+		shctx_row_inc_hot(shctx_ptr(cache), entry_block);
 		shctx_unlock(shctx_ptr(cache));
+
+		/* In case of Vary, we could have multiple entries with the same
+		 * primary hash. We need to calculate the secondary has in order
+		 * to find the actual entry we want (if it exists). */
+		if (res->secondary_key_signature) {
+			if (!http_request_build_secondary_key(s, res->secondary_key_signature)) {
+				shctx_lock(shctx_ptr(cache));
+				sec_entry = secondary_entry_exist(cache, res,
+								 s->txn->cache_secondary_hash);
+				if (sec_entry && sec_entry != res) {
+					/* The wrong row was added to the hot list. */
+					shctx_row_dec_hot(shctx_ptr(cache), entry_block);
+					entry_block = block_ptr(sec_entry);
+					shctx_row_inc_hot(shctx_ptr(cache), entry_block);
+				}
+				res = sec_entry;
+				shctx_unlock(shctx_ptr(cache));
+			}
+			else
+				res = NULL;
+		}
+
+		/* We looked for a valid secondary entry and could not find one,
+		 * the request must be forwarded to the server. */
+		if (!res) {
+			shctx_lock(shctx_ptr(cache));
+			shctx_row_dec_hot(shctx_ptr(cache), entry_block);
+			shctx_unlock(shctx_ptr(cache));
+			return ACT_RET_CONT;
+		}
+
 		s->target = &http_cache_applet.obj_type;
 		if ((appctx = si_register_handler(&s->si[1], objt_applet(s->target)))) {
 			appctx->st0 = HTX_CACHE_INIT;
@@ -1344,12 +1568,20 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
 			return ACT_RET_CONT;
 		} else {
 			shctx_lock(shctx_ptr(cache));
-			shctx_row_dec_hot(shctx_ptr(cache), block_ptr(res));
+			shctx_row_dec_hot(shctx_ptr(cache), entry_block);
 			shctx_unlock(shctx_ptr(cache));
 			return ACT_RET_YIELD;
 		}
 	}
 	shctx_unlock(shctx_ptr(cache));
+
+	/* Shared context does not need to be locked while we calculate the
+	 * secondary hash. */
+	if (!res && cache->vary_processing_enabled) {
+		/* Build a complete secondary hash until the server response
+		 * tells us which fields should be kept (if any). */
+		http_request_prebuild_full_secondary_key(s);
+	}
 	return ACT_RET_CONT;
 }
 
@@ -1478,6 +1710,19 @@ int cfg_parse_cache(const char *file, int linenum, char **args, int kwm)
 			goto out;
 		}
 		tmp_cache_config->maxobjsz = maxobjsz;
+	} else if (strcmp(args[0], "process-vary") == 0) {
+		if (alertif_too_many_args(1, file, linenum, args, &err_code)) {
+			err_code |= ERR_ABORT;
+			goto out;
+		}
+
+		if (!*args[1]) {
+			ha_warning("parsing [%s:%d]: '%s' expects 0 or 1 (disable or enable vary processing).\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
+		}
+
+		tmp_cache_config->vary_processing_enabled = atoi(args[1]);
 	}
 	else if (*args[0] != 0) {
 		ha_alert("parsing [%s:%d] : unknown keyword '%s' in 'cache' section\n", file, linenum, args[0]);
@@ -1533,7 +1778,7 @@ int post_check_cache()
 	struct cache *back, *cache_config, *cache;
 	struct shared_context *shctx;
 	int ret_shctx;
-	int err_code = 0;
+	int err_code = ERR_NONE;
 
 	list_for_each_entry_safe(cache_config, back, &caches_config, list) {
 
@@ -1555,7 +1800,7 @@ int post_check_cache()
 		 * list */
 		memcpy(shctx->data, cache_config, sizeof(struct cache));
 		cache = (struct cache *)shctx->data;
-		cache->entries = EB_ROOT_UNIQUE;
+		cache->entries = EB_ROOT;
 		LIST_ADDQ(&caches, &cache->list);
 		LIST_DEL(&cache_config->list);
 		free(cache_config);
@@ -1604,6 +1849,197 @@ struct flt_ops cache_ops = {
 	.http_payload        = cache_store_http_payload,
 	.http_end            = cache_store_http_end,
 };
+
+
+int accept_encoding_cmp(const void *a, const void *b)
+{
+	unsigned int int_a = *(unsigned int*)a;
+	unsigned int int_b = *(unsigned int*)b;
+
+	if (int_a < int_b)
+		return -1;
+	if (int_a > int_b)
+		return 1;
+	return 0;
+}
+
+#define ACCEPT_ENCODING_MAX_ENTRIES 16
+/*
+ * Build a hash of the accept-encoding header. The different parts of the
+ * header value are first sorted, appended and then a crc is calculated
+ * for the newly constructed buffer.
+ * Returns 0 in case of success.
+ */
+static int accept_encoding_normalizer(struct ist full_value, char *buf, unsigned int *buf_len)
+{
+	unsigned int values[ACCEPT_ENCODING_MAX_ENTRIES] = {};
+	size_t count = 0;
+	char *comma = NULL;
+	unsigned int hash_value = 0;
+	unsigned int prev = 0, curr = 0;
+
+	/* Turn accept-encoding value to lower case */
+	full_value = ist2bin_lc(istptr(full_value), full_value);
+
+	/* The hash will be built out of a sorted list of accepted encodings. */
+	while (count < (ACCEPT_ENCODING_MAX_ENTRIES - 1) && (comma = istchr(full_value, ',')) != NULL) {
+		size_t length = comma - istptr(full_value);
+
+		values[count++] = hash_crc32(istptr(full_value), length);
+
+		full_value = istadv(full_value, length + 1);
+
+	}
+	values[count++] = hash_crc32(istptr(full_value), istlen(full_value));
+
+	/* Sort the values alphabetically. */
+	qsort(values, count, sizeof(*values), &accept_encoding_cmp);
+
+	while (count) {
+		curr = values[--count];
+		if (curr != prev) {
+			hash_value ^= curr;
+		}
+		prev = curr;
+	}
+
+	memcpy(buf, &hash_value, sizeof(hash_value));
+	*buf_len = sizeof(hash_value);
+
+	return 0;
+}
+#undef ACCEPT_ENCODING_MAX_ENTRIES
+
+/*
+ * Normalizer used by default for User-Agent and Referer headers. It only
+ * calculates a simple crc of the whole value.
+ * Returns 0 in case of success.
+ */
+static int default_normalizer(struct ist value, char *buf, unsigned int *buf_len)
+{
+	int hash_value = 0;
+
+	hash_value = hash_crc32(istptr(value), istlen(value));
+
+	memcpy(buf, &hash_value, sizeof(hash_value));
+	*buf_len = sizeof(hash_value);
+
+	return 0;
+}
+
+
+/*
+ * Pre-calculate the hashes of all the supported headers (in our Vary
+ * implementation) of a given request. We have to calculate all the hashes
+ * in advance because the actual Vary signature won't be known until the first
+ * response.
+ * Only the first occurrence of every header will be taken into account in the
+ * hash.
+ * If the header is not present, the hash portion of the given header will be
+ * filled with zeros.
+ * Returns 0 in case of success.
+ */
+static int http_request_prebuild_full_secondary_key(struct stream *s)
+{
+	struct http_txn *txn = s->txn;
+	struct htx *htx = htxbuf(&s->req.buf);
+	struct http_hdr_ctx ctx = { .blk = NULL };
+
+	unsigned int idx;
+	const struct vary_hashing_information *info = NULL;
+	unsigned int hash_length = 0;
+	int retval = 0;
+	int offset = 0;
+
+	for (idx = 0; idx < sizeof(vary_information)/sizeof(*vary_information) && !retval; ++idx) {
+		info = &vary_information[idx];
+
+		ctx.blk = NULL;
+		if (info->norm_fn != NULL && http_find_header(htx, info->hdr_name, &ctx, 1)) {
+			retval = info->norm_fn(ctx.value, &txn->cache_secondary_hash[offset], &hash_length);
+			offset += hash_length;
+		}
+		else {
+			/* Fill hash with 0s. */
+			hash_length = info->hash_length;
+			memset(&txn->cache_secondary_hash[offset], 0, hash_length);
+			offset += hash_length;
+		}
+	}
+
+	return retval;
+}
+
+
+/*
+ * Calculate the secondary key for a request for which we already have a known
+ * vary signature. The key is made by aggregating hashes calculated for every
+ * header mentioned in the vary signature.
+ * Only the first occurrence of every header will be taken into account in the
+ * hash.
+ * If the header is not present, the hash portion of the given header will be
+ * filled with zeros.
+ * Returns 0 in case of success.
+ */
+static int http_request_build_secondary_key(struct stream *s, int vary_signature)
+{
+	struct http_txn *txn = s->txn;
+	struct htx *htx = htxbuf(&s->req.buf);
+	struct http_hdr_ctx ctx = { .blk = NULL };
+
+	unsigned int idx;
+	const struct vary_hashing_information *info = NULL;
+	unsigned int hash_length = 0;
+	int retval = 0;
+	int offset = 0;
+
+	for (idx = 0; idx < sizeof(vary_information)/sizeof(*vary_information) && !retval; ++idx) {
+		info = &vary_information[idx];
+
+		ctx.blk = NULL;
+		if ((vary_signature & info->value) && info->norm_fn != NULL &&
+		    http_find_header(htx, info->hdr_name, &ctx, 1)) {
+			retval = info->norm_fn(ctx.value, &txn->cache_secondary_hash[offset], &hash_length);
+			offset += hash_length;
+		}
+		else {
+			/* Fill hash with 0s. */
+			hash_length = info->hash_length;
+			memset(&txn->cache_secondary_hash[offset], 0, hash_length);
+			offset += hash_length;
+		}
+	}
+
+	return retval;
+}
+
+/*
+ * Build the actual secondary key of a given request out of the prebuilt key and
+ * the actual vary signature (extracted from the response).
+ * Returns 0 in case of success.
+ */
+static int http_request_reduce_secondary_key(unsigned int vary_signature,
+					     char prebuilt_key[HTTP_CACHE_SEC_KEY_LEN])
+{
+	int offset = 0;
+	int global_offset = 0;
+	int vary_info_count = 0;
+	int keep = 0;
+	unsigned int vary_idx;
+	const struct vary_hashing_information *vary_info;
+
+	vary_info_count = sizeof(vary_information)/sizeof(*vary_information);
+	for (vary_idx = 0; vary_idx < vary_info_count; ++vary_idx) {
+		vary_info = &vary_information[vary_idx];
+		keep = (vary_signature & vary_info->value) ? 0xff : 0;
+
+		for (offset = 0; offset < vary_info->hash_length; ++offset,++global_offset) {
+			prebuilt_key[global_offset] &= keep;
+		}
+	}
+
+	return 0;
+}
 
 
 
@@ -1699,6 +2135,7 @@ static int cli_io_handler_show_cache(struct appctx *appctx)
 		struct eb32_node *node = NULL;
 		unsigned int next_key;
 		struct cache_entry *entry;
+		unsigned int i;
 
 		next_key = appctx->ctx.cli.i0;
 		if (!next_key) {
@@ -1714,7 +2151,8 @@ static int cli_io_handler_show_cache(struct appctx *appctx)
 		while (1) {
 
 			shctx_lock(shctx_ptr(cache));
-			node = eb32_lookup_ge(&cache->entries, next_key);
+			if (!node || (node = eb32_next_dup(node)) == NULL)
+				node = eb32_lookup_ge(&cache->entries, next_key);
 			if (!node) {
 				shctx_unlock(shctx_ptr(cache));
 				appctx->ctx.cli.i0 = 0;
@@ -1722,7 +2160,10 @@ static int cli_io_handler_show_cache(struct appctx *appctx)
 			}
 
 			entry = container_of(node, struct cache_entry, eb);
-			chunk_printf(&trash, "%p hash:%u size:%u (%u blocks), refcount:%u, expire:%d\n", entry, read_u32(entry->hash), block_ptr(entry)->len, block_ptr(entry)->block_count, block_ptr(entry)->refcount, entry->expire - (int)now.tv_sec);
+			chunk_printf(&trash, "%p hash:%u vary:0x", entry, read_u32(entry->hash));
+			for (i = 0; i < HTTP_CACHE_SEC_KEY_LEN; ++i)
+				chunk_appendf(&trash, "%02x", (unsigned char)entry->secondary_key[i]);
+			chunk_appendf(&trash, " size:%u (%u blocks), refcount:%u, expire:%d\n", block_ptr(entry)->len, block_ptr(entry)->block_count, block_ptr(entry)->refcount, entry->expire - (int)now.tv_sec);
 
 			next_key = node->key + 1;
 			appctx->ctx.cli.i0 = next_key;

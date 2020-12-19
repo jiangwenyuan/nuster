@@ -56,6 +56,9 @@ struct log_fmt_st {
 };
 
 static const struct log_fmt_st log_formats[LOG_FORMATS] = {
+	[LOG_FORMAT_LOCAL] = {
+		.name = "local",
+	},
 	[LOG_FORMAT_RFC3164] = {
 		.name = "rfc3164",
 	},
@@ -166,7 +169,8 @@ static const struct logformat_type logformat_keywords[] = {
 	{ "hs", LOG_FMT_HDRRESPONS, PR_MODE_TCP, LW_RSPHDR, NULL },  /* header response */
 	{ "hsl", LOG_FMT_HDRRESPONSLIST, PR_MODE_TCP, LW_RSPHDR, NULL },  /* header response list */
 	{ "HM", LOG_FMT_HTTP_METHOD, PR_MODE_HTTP, LW_REQ, NULL },  /* HTTP method */
-	{ "HP", LOG_FMT_HTTP_PATH, PR_MODE_HTTP, LW_REQ, NULL },  /* HTTP path */
+	{ "HP", LOG_FMT_HTTP_PATH, PR_MODE_HTTP, LW_REQ, NULL },  /* HTTP relative or absolute path */
+	{ "HPO", LOG_FMT_HTTP_PATH_ONLY, PR_MODE_HTTP, LW_REQ, NULL }, /* HTTP path only (without host nor query string) */
 	{ "HQ", LOG_FMT_HTTP_QUERY, PR_MODE_HTTP, LW_REQ, NULL },  /* HTTP query */
 	{ "HU", LOG_FMT_HTTP_URI, PR_MODE_HTTP, LW_REQ, NULL },  /* HTTP full URI */
 	{ "HV", LOG_FMT_HTTP_VERSION, PR_MODE_HTTP, LW_REQ, NULL },  /* HTTP version */
@@ -1475,6 +1479,14 @@ struct ist *build_log_header(enum log_fmt format, int level, int facility,
 				else
 					format = LOG_FORMAT_RFC3164;
 			}
+			else if (metadata[LOG_META_TAG].len) {
+				/* Tag is present but no hostname, we should
+				 * consider we try to emmit a local log
+				 * in legacy format (analog to RFC3164 but
+				 * with stripped hostname).
+				 */
+				format = LOG_FORMAT_LOCAL;
+			}
 			else if (metadata[LOG_META_PRIO].len) {
 				/* the source seems a parsed message
 				 * offering a valid level/prio prefix
@@ -1487,6 +1499,7 @@ struct ist *build_log_header(enum log_fmt format, int level, int facility,
 
 	/* prepare priority, stored into 1 single elem */
 	switch (format) {
+		case LOG_FORMAT_LOCAL:
 		case LOG_FORMAT_RFC3164:
 		case LOG_FORMAT_RFC5424:
 		case LOG_FORMAT_PRIO:
@@ -1516,6 +1529,7 @@ struct ist *build_log_header(enum log_fmt format, int level, int facility,
 
 	/* prepare timestamp, stored into a max of 4 elems */
 	switch (format) {
+		case LOG_FORMAT_LOCAL:
 		case LOG_FORMAT_RFC3164:
 			/* rfc3164 ex: 'Jan  1 00:00:00 ' */
 			if (metadata && metadata[LOG_META_TIME].len == LOG_LEGACYTIME_LEN) {
@@ -1656,9 +1670,10 @@ struct ist *build_log_header(enum log_fmt format, int level, int facility,
 				hdr_ctx.ist_vector[(*nbelem)++] = metadata[LOG_META_HOST];
 				hdr_ctx.ist_vector[(*nbelem)++] = ist2(" ", 1);
 			}
-			else /* the caller MUST fill the hostname */
+			else /* the caller MUST fill the hostname, this field is mandatory */
 				hdr_ctx.ist_vector[(*nbelem)++] = ist2("localhost ", 10);
-
+			/* fall through */
+		case LOG_FORMAT_LOCAL:
 			if (!metadata || !metadata[LOG_META_TAG].len)
 				break;
 
@@ -1918,8 +1933,6 @@ void __send_log(struct list *logsrvs, struct buffer *tagb, int level,
 	if (!metadata[LOG_META_HOST].len) {
 		if (global.log_send_hostname)
 			metadata[LOG_META_HOST] = ist2(global.log_send_hostname, strlen(global.log_send_hostname));
-		else
-			metadata[LOG_META_HOST] = ist2(hostname, strlen(hostname));
 	}
 
 	if (!tagb || !tagb->area)
@@ -2071,7 +2084,7 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 	struct proxy *be;
 	struct http_txn *txn;
 	const struct strm_logs *logs;
-	struct connection *be_conn;
+	struct connection *fe_conn, *be_conn;
 	unsigned int s_flags;
 	unsigned int uniq_id;
 	struct buffer chunk;
@@ -2087,9 +2100,11 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 	char *tmplog;
 	char *ret;
 	int iret;
+	int status;
 	struct logformat_node *tmp;
 	struct timeval tv;
 	struct strm_logs tmp_strm_log;
+	struct ist path;
 
 	/* FIXME: let's limit ourselves to frontend logging for now. */
 
@@ -2097,6 +2112,7 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 		be = s->be;
 		txn = s->txn;
 		be_conn = cs_conn(objt_cs(s->si[1].end));
+		status = (txn ? txn->status : 0);
 		s_flags = s->flags;
 		uniq_id = s->uniq_id;
 		logs = &s->logs;
@@ -2110,7 +2126,9 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 		 */
 		be = fe;
 		txn = NULL;
+		fe_conn = objt_conn(sess->origin);
 		be_conn = NULL;
+		status = 0;
 		s_flags = SF_ERR_PRXCOND | SF_FINST_R;
 		uniq_id = _HA_ATOMIC_XADD(&global.req_count, 1);
 
@@ -2118,7 +2136,7 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 		tmp_strm_log.tv_accept = sess->tv_accept;
 		tmp_strm_log.accept_date = sess->accept_date;
 		tmp_strm_log.t_handshake = sess->t_handshake;
-		tmp_strm_log.t_idle = tv_ms_elapsed(&sess->tv_accept, &now) - sess->t_handshake;
+		tmp_strm_log.t_idle = (sess->t_idle >= 0 ? sess->t_idle : 0);
 		tv_zero(&tmp_strm_log.tv_request);
 		tmp_strm_log.t_queue = -1;
 		tmp_strm_log.t_connect = -1;
@@ -2130,6 +2148,32 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 		tmp_strm_log.srv_queue_pos = 0;
 
 		logs = &tmp_strm_log;
+
+		if ((fe->mode == PR_MODE_HTTP) && fe_conn && fe_conn->mux && fe_conn->mux->ctl) {
+			enum mux_exit_status es = fe_conn->mux->ctl(fe_conn, MUX_EXIT_STATUS, NULL);
+
+			switch (es) {
+			case MUX_ES_SUCCESS:
+				break;
+			case MUX_ES_INVALID_ERR:
+				status = 400;
+				if ((fe_conn->flags & CO_FL_ERROR) || conn_xprt_read0_pending(fe_conn))
+					s_flags = SF_ERR_CLICL | SF_FINST_R;
+				else
+					s_flags = SF_ERR_PRXCOND | SF_FINST_R;
+				break;
+			case MUX_ES_TOUT_ERR:
+				status = 408;
+				s_flags = SF_ERR_CLITO | SF_FINST_R;
+				break;
+			case MUX_ES_INTERNAL_ERR:
+				status = 500;
+				s_flags = SF_ERR_INTERNAL | SF_FINST_R;
+				break;
+			default:
+				break;
+			}
+		}
 	}
 
 	t_request = -1;
@@ -2573,7 +2617,7 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				break;
 
 			case LOG_FMT_STATUS: // %ST
-				ret = ltoa_o(txn ? txn->status : 0, tmplog, dst + maxsize - tmplog);
+				ret = ltoa_o(status, tmplog, dst + maxsize - tmplog);
 				if (ret == NULL)
 					goto out;
 				tmplog = ret;
@@ -2830,6 +2874,52 @@ int sess_build_logline(struct session *sess, struct stream *s, char *dst, size_t
 				} else {
 					chunk.area = uri;
 					chunk.data = spc - uri;
+				}
+
+				ret = lf_encode_chunk(tmplog, dst + maxsize, '#', url_encode_map, &chunk, tmp);
+				if (ret == NULL || *ret != '\0')
+					goto out;
+
+				tmplog = ret;
+				if (tmp->options & LOG_OPT_QUOTE)
+					LOGCHAR('"');
+
+				last_isspace = 0;
+				break;
+
+			case LOG_FMT_HTTP_PATH_ONLY: // %HPO
+				uri = txn && txn->uri ? txn->uri : "<BADREQ>";
+
+				if (tmp->options & LOG_OPT_QUOTE)
+					LOGCHAR('"');
+
+				end = uri + strlen(uri);
+
+				// look for the first whitespace character
+				while (uri < end && !HTTP_IS_SPHT(*uri))
+					uri++;
+
+				// keep advancing past multiple spaces
+				while (uri < end && HTTP_IS_SPHT(*uri)) {
+					uri++; nspaces++;
+				}
+
+				// look for first space after url
+				spc = uri;
+				while (spc < end && !HTTP_IS_SPHT(*spc))
+					spc++;
+
+				path.ptr = uri;
+				path.len = spc - uri;
+
+				// extract relative path without query params from url
+				path = iststop(http_get_path(path), '?');
+				if (!txn || !txn->uri || nspaces == 0) {
+					chunk.area = "<BADREQ>";
+					chunk.data = strlen("<BADREQ>");
+				} else {
+					chunk.area = path.ptr;
+					chunk.data = path.len;
 				}
 
 				ret = lf_encode_chunk(tmplog, dst + maxsize, '#', url_encode_map, &chunk, tmp);

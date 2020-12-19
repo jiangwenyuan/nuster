@@ -20,7 +20,7 @@
 #include <openssl/engine.h>
 #endif
 
-#if (OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC) && !defined(LIBRESSL_VERSION_NUMBER)
+#ifdef SSL_MODE_ASYNC
 #include <openssl/async.h>
 #endif
 
@@ -31,12 +31,6 @@
  * extra features with ORs and not with AND NOT.
  */
 #define HA_OPENSSL_VERSION_NUMBER 0x1000107fL
-#elif defined(OPENSSL_IS_BORINGSSL)
-/*
- * in 49e9f67d8b7cbeb3953b5548ad1009d15947a523 BoringSSL has changed its version to 1.1.1
- * Let's switch it back to 1.1.0
- */
-#define HA_OPENSSL_VERSION_NUMBER 0x1010007f
 #else /* this is for a real OpenSSL or a truly compatible derivative */
 #define HA_OPENSSL_VERSION_NUMBER OPENSSL_VERSION_NUMBER
 #endif
@@ -45,6 +39,10 @@
 #define OPENSSL_VERSION         SSLEAY_VERSION
 #define OpenSSL_version(x)      SSLeay_version(x)
 #define OpenSSL_version_num     SSLeay
+#endif
+
+#if ((OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER) && !defined(OPENSSL_IS_BORINGSSL))
+#define HAVE_SSL_CTX_SET_CIPHERSUITES
 #endif
 
 #if (HA_OPENSSL_VERSION_NUMBER < 0x0090800fL)

@@ -70,7 +70,7 @@
 #include <haproxy/ssl_crtlist.h>
 #include <haproxy/ssl_sock.h>
 #include <haproxy/ssl_utils.h>
-#include <haproxy/stats-t.h>
+#include <haproxy/stats.h>
 #include <haproxy/stream-t.h>
 #include <haproxy/stream_interface.h>
 #include <haproxy/task.h>
@@ -104,13 +104,9 @@ struct global_ssl global_ssl = {
 #ifdef CONNECT_DEFAULT_CIPHERS
 	.connect_default_ciphers = CONNECT_DEFAULT_CIPHERS,
 #endif
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
-#ifdef LISTEN_DEFAULT_CIPHERSUITES
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	.listen_default_ciphersuites = LISTEN_DEFAULT_CIPHERSUITES,
-#endif
-#ifdef CONNECT_DEFAULT_CIPHERSUITES
 	.connect_default_ciphersuites = CONNECT_DEFAULT_CIPHERSUITES,
-#endif
 #endif
 	.listen_default_ssloptions = BC_SSL_O_NONE,
 	.connect_default_ssloptions = SRV_SSL_O_NONE,
@@ -138,6 +134,52 @@ struct global_ssl global_ssl = {
 static BIO_METHOD *ha_meth;
 
 DECLARE_STATIC_POOL(ssl_sock_ctx_pool, "ssl_sock_ctx_pool", sizeof(struct ssl_sock_ctx));
+
+/* ssl stats module */
+enum {
+	SSL_ST_SESS,
+	SSL_ST_REUSED_SESS,
+	SSL_ST_FAILED_HANDSHAKE,
+
+	SSL_ST_STATS_COUNT /* must be the last member of the enum */
+};
+
+static struct name_desc ssl_stats[] = {
+	[SSL_ST_SESS]             = { .name = "ssl_sess",
+	                              .desc = "Total number of ssl sessions established" },
+	[SSL_ST_REUSED_SESS]      = { .name = "ssl_reused_sess",
+	                              .desc = "Total number of ssl sessions reused" },
+	[SSL_ST_FAILED_HANDSHAKE] = { .name = "ssl_failed_handshake",
+	                              .desc = "Total number of failed handshake" },
+};
+
+static struct ssl_counters {
+	long long sess;
+	long long reused_sess;
+	long long failed_handshake;
+} ssl_counters;
+
+static void ssl_fill_stats(void *data, struct field *stats)
+{
+	struct ssl_counters *counters = data;
+
+	stats[SSL_ST_SESS]             = mkf_u64(FN_COUNTER, counters->sess);
+	stats[SSL_ST_REUSED_SESS]      = mkf_u64(FN_COUNTER, counters->reused_sess);
+	stats[SSL_ST_FAILED_HANDSHAKE] = mkf_u64(FN_COUNTER, counters->failed_handshake);
+}
+
+static struct stats_module ssl_stats_module = {
+	.name          = "ssl",
+	.fill_stats    = ssl_fill_stats,
+	.stats         = ssl_stats,
+	.stats_count   = SSL_ST_STATS_COUNT,
+	.counters      = &ssl_counters,
+	.counters_size = sizeof(ssl_counters),
+	.domain_flags  = MK_STATS_PROXY_DOMAIN(STATS_PX_CAP_FE|STATS_PX_CAP_LI|STATS_PX_CAP_BE|STATS_PX_CAP_SRV),
+	.clearable     = 1,
+};
+
+INITCALL1(STG_REGISTER, stats_register_module, &ssl_stats_module);
 
 static struct task *ssl_sock_io_cb(struct task *, void *, unsigned short);
 static int ssl_sock_handshake(struct connection *conn, unsigned int flag);
@@ -565,7 +607,7 @@ static int ssl_sock_register_msg_callbacks(void)
 	}
 #endif
 
-	return 0;
+	return ERR_NONE;
 }
 
 /* Used to free all SSL/TLS protocol message callbacks that were
@@ -656,7 +698,7 @@ fail_get:
 }
 #endif
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 /*
  * openssl async fd handler
  */
@@ -1198,7 +1240,7 @@ static int tlskeys_finalize_config(void)
 	/* swap root */
 	LIST_ADD(&tkr, &tlskeys_reference);
 	LIST_DEL(&tkr);
-	return 0;
+	return ERR_NONE;
 }
 #endif /* SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB */
 
@@ -2993,7 +3035,7 @@ static int ssl_sock_load_dh_params(SSL_CTX *ctx, const struct cert_key_and_chain
 		/* Clear openssl global errors stack */
 		ERR_clear_error();
 
-		if (global_ssl.default_dh_param <= 1024) {
+		if (global_ssl.default_dh_param && global_ssl.default_dh_param <= 1024) {
 			/* we are limited to DH parameter of 1024 bits anyway */
 			if (local_dh_1024 == NULL)
 				local_dh_1024 = ssl_get_dh_1024();
@@ -3454,24 +3496,24 @@ error:
 int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 {
 	struct stat buf;
-	char fp[MAXPATHLEN+1];
 	int cfgerr = 0;
 	struct ckch_store *ckchs;
 	struct ckch_inst *ckch_inst = NULL;
+	int found = 0; /* did we found a file to load ? */
 
 	if ((ckchs = ckchs_lookup(path))) {
 		/* we found the ckchs in the tree, we can use it directly */
-		return ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
-	}
-	if (stat(path, &buf) == 0) {
+		 cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+		 found++;
+	} else if (stat(path, &buf) == 0) {
+		found++;
 		if (S_ISDIR(buf.st_mode) == 0) {
 			ckchs =  ckchs_load_cert_file(path, err);
 			if (!ckchs)
-				return ERR_ALERT | ERR_FATAL;
-
-			return ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+				cfgerr |= ERR_ALERT | ERR_FATAL;
+			cfgerr |= ssl_sock_load_ckchs(path, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
 		} else {
-			return ssl_sock_load_cert_list_file(path, 1, bind_conf, bind_conf->frontend, err);
+			cfgerr |= ssl_sock_load_cert_list_file(path, 1, bind_conf, bind_conf->frontend, err);
 		}
 	} else {
 		/* stat failed, could be a bundle */
@@ -3490,20 +3532,30 @@ int ssl_sock_load_cert(char *path, struct bind_conf *bind_conf, char **err)
 
 				if ((ckchs = ckchs_lookup(fp))) {
 					cfgerr |= ssl_sock_load_ckchs(fp, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
+					found++;
 				} else {
 					if (stat(fp, &buf) == 0) {
+						found++;
 						ckchs =  ckchs_load_cert_file(fp, err);
 						if (!ckchs)
-							return ERR_ALERT | ERR_FATAL;
+							cfgerr |= ERR_ALERT | ERR_FATAL;
 						cfgerr |= ssl_sock_load_ckchs(fp, ckchs, bind_conf, NULL, NULL, 0, &ckch_inst, err);
 					}
 				}
 			}
-		} else {
-			memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
-			          err && *err ? *err : "", fp, strerror(errno));
-			cfgerr |= ERR_ALERT | ERR_FATAL;
+#if HA_OPENSSL_VERSION_NUMBER < 0x10101000L
+			if (found) {
+				memprintf(err, "%sCan't load '%s'. Loading a multi certificates bundle requires OpenSSL >= 1.1.1\n",
+				          err && *err ? *err : "", path);
+				cfgerr |= ERR_ALERT | ERR_FATAL;
+			}
+#endif
 		}
+	}
+	if (!found) {
+		memprintf(err, "%sunable to stat SSL certificate from file '%s' : %s.\n",
+		          err && *err ? *err : "", path, strerror(errno));
+		cfgerr |= ERR_ALERT | ERR_FATAL;
 	}
 
 	return cfgerr;
@@ -3628,7 +3680,7 @@ ssl_sock_initial_ctx(struct bind_conf *bind_conf)
 
 	SSL_CTX_set_options(ctx, options);
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 	if (global_ssl.async)
 		mode |= SSL_MODE_ASYNC;
 #endif
@@ -4004,7 +4056,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 	int verify = SSL_VERIFY_NONE;
 	struct ssl_bind_conf __maybe_unused *ssl_conf_cur;
 	const char *conf_ciphers;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	const char *conf_ciphersuites;
 #endif
 	const char *conf_curves = NULL;
@@ -4112,7 +4164,7 @@ int ssl_sock_prepare_ctx(struct bind_conf *bind_conf, struct ssl_bind_conf *ssl_
 		cfgerr |= ERR_ALERT | ERR_FATAL;
 	}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	conf_ciphersuites = (ssl_conf && ssl_conf->ciphersuites) ? ssl_conf->ciphersuites : bind_conf->ssl_conf.ciphersuites;
 	if (conf_ciphersuites &&
 	    !SSL_CTX_set_ciphersuites(ctx, conf_ciphersuites)) {
@@ -4479,7 +4531,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 		options |= SSL_OP_NO_TICKET;
 	SSL_CTX_set_options(ctx, options);
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 	if (global_ssl.async)
 		mode |= SSL_MODE_ASYNC;
 #endif
@@ -4569,7 +4621,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 		cfgerr++;
 	}
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	if (srv->ssl_ctx.ciphersuites &&
 		!SSL_CTX_set_ciphersuites(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
 		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set TLS 1.3 cipher suites to '%s'.\n",
@@ -5077,9 +5129,33 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 {
 	struct ssl_sock_ctx *ctx = conn->xprt_ctx;
 	int ret;
+	struct ssl_counters *counters = NULL;
+	struct ssl_counters *counters_px = NULL;
+	struct listener *li;
+	struct server *srv;
 
 	if (!conn_ctrl_ready(conn))
 		return 0;
+
+	/* get counters */
+	switch (obj_type(conn->target)) {
+	case OBJ_TYPE_LISTENER:
+		li = objt_listener(conn->target);
+		counters = EXTRA_COUNTERS_GET(li->extra_counters, &ssl_stats_module);
+		counters_px = EXTRA_COUNTERS_GET(li->bind_conf->frontend->extra_counters_fe,
+		                                 &ssl_stats_module);
+		break;
+
+	case OBJ_TYPE_SERVER:
+		srv = objt_server(conn->target);
+		counters = EXTRA_COUNTERS_GET(srv->extra_counters, &ssl_stats_module);
+		counters_px = EXTRA_COUNTERS_GET(srv->proxy->extra_counters_be,
+		                                 &ssl_stats_module);
+		break;
+
+	default:
+		break;
+	}
 
 	if (!conn->xprt_ctx)
 		goto out_error;
@@ -5145,7 +5221,7 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 					ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_RECV, &ctx->wait_event);
 				return 0;
 			}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 			else if (ret == SSL_ERROR_WANT_ASYNC) {
 				ssl_async_process_fds(ctx);
 				return 0;
@@ -5200,7 +5276,7 @@ static int ssl_sock_handshake(struct connection *conn, unsigned int flag)
 				 * TCP sockets. We first try to drain possibly pending
 				 * data to avoid this as much as possible.
 				 */
-				conn_sock_drain(conn);
+				conn_ctrl_drain(conn);
 				if (!conn->err_code)
 					conn->err_code = (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT) ?
 						CO_ER_SSL_KILLED_HB : CO_ER_SSL_HANDSHAKE;
@@ -5229,7 +5305,7 @@ check_error:
 				    SUB_RETRY_RECV, &ctx->wait_event);
 			return 0;
 		}
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 		else if (ret == SSL_ERROR_WANT_ASYNC) {
 			ssl_async_process_fds(ctx);
 			return 0;
@@ -5284,7 +5360,7 @@ check_error:
 			 * TCP sockets. We first try to drain possibly pending
 			 * data to avoid this as much as possible.
 			 */
-			conn_sock_drain(conn);
+			conn_ctrl_drain(conn);
 			if (!conn->err_code)
 				conn->err_code = (ctx->xprt_st & SSL_SOCK_RECV_HEARTBEAT) ?
 					CO_ER_SSL_KILLED_HB : CO_ER_SSL_HANDSHAKE;
@@ -5310,7 +5386,7 @@ check_error:
 
 reneg_ok:
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 	/* ASYNC engine API doesn't support moving read/write
 	 * buffers. So we disable ASYNC mode right after
 	 * the handshake to avoid buffer overflow.
@@ -5330,6 +5406,15 @@ reneg_ok:
 			if (global.ssl_fe_keys_per_sec.curr_ctr > global.ssl_fe_keys_max)
 				global.ssl_fe_keys_max = global.ssl_fe_keys_per_sec.curr_ctr;
 		}
+
+		if (counters) {
+			++counters->sess;
+			++counters_px->sess;
+		}
+	}
+	else if (counters) {
+		++counters->reused_sess;
+		++counters_px->reused_sess;
 	}
 
 	/* The connection is now established at both layers, it's time to leave */
@@ -5345,6 +5430,11 @@ reneg_ok:
 	if (objt_server(conn->target) && __objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr) {
 		free(__objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr);
 		__objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr = NULL;
+	}
+
+	if (counters) {
+		++counters->failed_handshake;
+		++counters_px->failed_handshake;
 	}
 
 	/* Fail on all other handshake errors */
@@ -5600,7 +5690,7 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 				/* handshake is running, and it needs to enable write */
 				conn->flags |= CO_FL_SSL_WAIT_HS;
 				ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND, &ctx->wait_event);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 				/* Async mode can be re-enabled, because we're leaving data state.*/
 				if (global_ssl.async)
 					SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
@@ -5614,7 +5704,7 @@ static size_t ssl_sock_to_buf(struct connection *conn, void *xprt_ctx, struct bu
 							     &ctx->wait_event);
 					/* handshake is running, and it may need to re-enable read */
 					conn->flags |= CO_FL_SSL_WAIT_HS;
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 					/* Async mode can be re-enabled, because we're leaving data state.*/
 					if (global_ssl.async)
 						SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
@@ -5762,7 +5852,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 					/* handshake is running, and it may need to re-enable write */
 					conn->flags |= CO_FL_SSL_WAIT_HS;
 					ctx->xprt->subscribe(conn, ctx->xprt_ctx, SUB_RETRY_SEND, &ctx->wait_event);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 					/* Async mode can be re-enabled, because we're leaving data state.*/
 					if (global_ssl.async)
 						SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
@@ -5778,7 +5868,7 @@ static size_t ssl_sock_from_buf(struct connection *conn, void *xprt_ctx, const s
 				ctx->xprt->subscribe(conn, ctx->xprt_ctx,
 				                     SUB_RETRY_RECV,
 						     &ctx->wait_event);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 				/* Async mode can be re-enabled, because we're leaving data state.*/
 				if (global_ssl.async)
 					SSL_set_mode(ctx->ssl, SSL_MODE_ASYNC);
@@ -5817,7 +5907,7 @@ static void ssl_sock_close(struct connection *conn, void *xprt_ctx) {
 
 		if (ctx->xprt->close)
 			ctx->xprt->close(conn, ctx->xprt_ctx);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 		if (global_ssl.async) {
 			OSSL_ASYNC_FD all_fd[32], afd;
 			size_t num_all_fds = 0;
@@ -6187,7 +6277,7 @@ int ssl_load_global_issuer_from_BIO(BIO *in, char *fp, char **err)
 	struct issuer_chain *issuer = NULL;
 
 	akid = X509_get_ext_d2i(cert, NID_authority_key_identifier, NULL, NULL);
-	if (akid) {
+	if (akid && akid->keyid) {
 		struct eb64_node *node;
 		u64 hk;
 		hk = XXH64(ASN1_STRING_get0_data(akid->keyid), ASN1_STRING_length(akid->keyid), 0);
@@ -6222,7 +6312,7 @@ void ssl_free_global_issuers(void)
 
 #ifndef OPENSSL_NO_ENGINE
 static int ssl_check_async_engine_count(void) {
-	int err_code = 0;
+	int err_code = ERR_NONE;
 
 	if (global_ssl.async && (openssl_engines_initialized > 32)) {
 		ha_alert("ssl-mode-async only supports a maximum of 32 engines.\n");
@@ -6633,7 +6723,7 @@ static void __ssl_sock_init(void)
 		global_ssl.listen_default_ciphers = strdup(global_ssl.listen_default_ciphers);
 	if (global_ssl.connect_default_ciphers)
 		global_ssl.connect_default_ciphers = strdup(global_ssl.connect_default_ciphers);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
 	if (global_ssl.listen_default_ciphersuites)
 		global_ssl.listen_default_ciphersuites = strdup(global_ssl.listen_default_ciphersuites);
 	if (global_ssl.connect_default_ciphersuites)
@@ -6815,6 +6905,23 @@ static void __ssl_sock_deinit(void)
         CRYPTO_cleanup_all_ex_data();
 #endif
 	BIO_meth_free(ha_meth);
+}
+
+/* Activate ssl on server <s>.
+ * do nothing if there is no change to apply
+ *
+ * Must be called with the server lock held.
+ */
+void ssl_sock_set_srv(struct server *s, signed char use_ssl)
+{
+	if (s->use_ssl == use_ssl)
+		return;
+
+	s->use_ssl = use_ssl;
+	if (s->use_ssl == 1)
+		s->xprt = &ssl_sock;
+	else
+		s->xprt = s->check.xprt = s->agent.xprt = xprt_get(XPRT_RAW);
 }
 
 /*

@@ -528,6 +528,10 @@ proxy_parse_retry_on(char **args, int section, struct proxy *curpx,
 			curpx->retry_type |= PR_RE_DISCONNECTED;
 		else if (!strcmp(args[i], "response-timeout"))
 			curpx->retry_type |= PR_RE_TIMEOUT;
+		else if (!strcmp(args[i], "401"))
+			curpx->retry_type |= PR_RE_401;
+		else if (!strcmp(args[i], "403"))
+			curpx->retry_type |= PR_RE_403;
 		else if (!strcmp(args[i], "404"))
 			curpx->retry_type |= PR_RE_404;
 		else if (!strcmp(args[i], "408"))
@@ -1041,6 +1045,9 @@ void init_new_proxy(struct proxy *p)
 
 	/* Default to only allow L4 retries */
 	p->retry_type = PR_RE_CONN_FAILED;
+
+	p->extra_counters_fe = NULL;
+	p->extra_counters_be = NULL;
 
 	HA_RWLOCK_INIT(&p->lock);
 }
@@ -1797,14 +1804,15 @@ static int dump_servers_state(struct stream_interface *si)
 			             "%d %s %s "
 			             "%d %d %d %d %ld "
 			             "%d %d %d %d %d "
-			             "%d %d %s %u %s"
+			             "%d %d %s %u "
+				     "%s %d"
 			             "\n",
 			             px->uuid, px->id,
 			             srv->puid, srv->id, srv_addr,
 			             srv->cur_state, srv->cur_admin, srv->uweight, srv->iweight, (long int)srv_time_since_last_change,
 			             srv->check.status, srv->check.result, srv->check.health, srv->check.state, srv->agent.state,
 			             bk_f_forced_id, srv_f_forced_id, srv->hostname ? srv->hostname : "-", srv->svc_port,
-			             srvrecord ? srvrecord : "-");
+			             srvrecord ? srvrecord : "-", srv->use_ssl);
 		} else {
 			/* show servers conn */
 			int thr;

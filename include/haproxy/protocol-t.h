@@ -70,6 +70,7 @@ struct proto_fam {
 	int (*bind)(struct receiver *rx, char **errmsg); /* bind a receiver */
 	int (*get_src)(int fd, struct sockaddr *, socklen_t, int dir); /* syscall used to retrieve src addr */
 	int (*get_dst)(int fd, struct sockaddr *, socklen_t, int dir); /* syscall used to retrieve dst addr */
+	void (*set_port)(struct sockaddr_storage *, int port);  /* set the port on the address; NULL if not implemented */
 };
 
 /* This structure contains all information needed to easily handle a protocol.
@@ -82,12 +83,11 @@ struct protocol {
 	char name[PROTO_NAME_LEN];			/* protocol name, zero-terminated */
 	struct proto_fam *fam;                          /* protocol family */
 	int ctrl_type;                                  /* control layer type (SOCK_STREAM/SOCK_DGRAM) */
-	int sock_domain;				/* socket domain, as passed to socket()   */
 	int sock_type;					/* socket type, as passed to socket()     */
 	int sock_prot;					/* socket protocol, as passed to socket() */
 
 	/* functions acting on the listener */
-	void (*add)(struct listener *l, int port);      /* add a listener for this protocol and port */
+	void (*add)(struct protocol *p, struct listener *l); /* add a listener for this protocol */
 	int (*listen)(struct listener *l, char *errmsg, int errlen); /* start a listener */
 	void (*enable)(struct listener *l);             /* enable receipt of new connections */
 	void (*disable)(struct listener *l);            /* disable receipt of new connections */
@@ -95,20 +95,25 @@ struct protocol {
 	int (*suspend)(struct listener *l);             /* try to suspend the listener */
 	int (*resume)(struct listener *l);              /* try to resume a suspended listener */
 	struct connection *(*accept_conn)(struct listener *l, int *status); /* accept a new connection */
+	/* functions acting on connections */
+	void (*ctrl_init)(struct connection *);         /* completes initialization of the connection */
+	void (*ctrl_close)(struct connection *);        /* completes release of the connection */
+	int (*connect)(struct connection *, int flags); /* connect function if any, see below for flags values */
+	int (*drain)(struct connection *);              /* drain pending data; 0=failed, >0=success */
+	int (*check_events)(struct connection *conn, int event_type);  /* subscribe to socket events */
+	void (*ignore_events)(struct connection *conn, int event_type);  /* unsubscribe from socket events */
 
 	/* functions acting on the receiver */
+	int (*rx_suspend)(struct receiver *rx);         /* temporarily suspend this receiver for a soft restart */
+	int (*rx_resume)(struct receiver *rx);          /* try to resume a temporarily suspended receiver */
 	void (*rx_enable)(struct receiver *rx);         /* enable receiving on the receiver */
 	void (*rx_disable)(struct receiver *rx);        /* disable receiving on the receiver */
 	void (*rx_unbind)(struct receiver *rx);         /* unbind the receiver, most often closing the FD */
-	int (*rx_suspend)(struct receiver *rx);         /* temporarily suspend this receiver for a soft restart */
-	int (*rx_resume)(struct receiver *rx);          /* try to resume a temporarily suspended receiver */
 	int (*rx_listening)(const struct receiver *rx); /* is the receiver listening ? 0=no, >0=OK, <0=unrecoverable */
 
 	/* default I/O handler */
 	void (*default_iocb)(int fd);                   /* generic I/O handler (typically accept callback) */
 
-	/* functions acting on connections */
-	int (*connect)(struct connection *, int flags); /* connect function if any, see below for flags values */
 
 	struct list receivers;				/* list of receivers using this protocol (under proto_lock) */
 	int nb_receivers;				/* number of receivers (under proto_lock) */

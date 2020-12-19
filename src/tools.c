@@ -48,6 +48,7 @@
 #include <haproxy/listener.h>
 #include <haproxy/namespace.h>
 #include <haproxy/protocol.h>
+#include <haproxy/sock.h>
 #include <haproxy/ssl_sock.h>
 #include <haproxy/stream_interface.h>
 #include <haproxy/task.h>
@@ -2216,6 +2217,10 @@ const char *parse_time_err(const char *text, unsigned *ret, unsigned unit_flags)
 	unsigned long long imult, idiv;
 	unsigned long long omult, odiv;
 	unsigned long long value, result;
+	const char *str = text;
+
+	if (!isdigit((unsigned char)*text))
+		return text;
 
 	omult = odiv = 1;
 
@@ -2246,7 +2251,7 @@ const char *parse_time_err(const char *text, unsigned *ret, unsigned unit_flags)
 	switch (*text) {
 	case '\0': /* no unit = default unit */
 		imult = omult = idiv = odiv = 1;
-		break;
+		goto end;
 	case 's': /* second = unscaled unit */
 		break;
 	case 'u': /* microsecond : "us" */
@@ -2254,7 +2259,7 @@ const char *parse_time_err(const char *text, unsigned *ret, unsigned unit_flags)
 			idiv = 1000000;
 			text++;
 		}
-		break;
+		return text;
 	case 'm': /* millisecond : "ms" or minute: "m" */
 		if (text[1] == 's') {
 			idiv = 1000;
@@ -2272,7 +2277,13 @@ const char *parse_time_err(const char *text, unsigned *ret, unsigned unit_flags)
 		return text;
 		break;
 	}
+	if (*(++text) != '\0') {
+		ha_warning("unexpected character '%c' after the timer value '%s', only "
+			   "(us=microseconds,ms=milliseconds,s=seconds,m=minutes,h=hours,d=days) are supported."
+			   " This will be reported as an error in next versions.\n", *text, str);
+	}
 
+  end:
 	if (omult % idiv == 0) { omult /= idiv; idiv = 1; }
 	if (idiv % omult == 0) { idiv /= omult; omult = 1; }
 	if (imult % odiv == 0) { imult /= odiv; odiv = 1; }
@@ -2293,6 +2304,9 @@ const char *parse_time_err(const char *text, unsigned *ret, unsigned unit_flags)
  */
 const char *parse_size_err(const char *text, unsigned *ret) {
 	unsigned value = 0;
+
+	if (!isdigit((unsigned char)*text))
+		return text;
 
 	while (1) {
 		unsigned int j;
@@ -4585,7 +4599,7 @@ const void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr)
 		{ .func = process_stream, .name = "process_stream" },
 		{ .func = task_run_applet, .name = "task_run_applet" },
 		{ .func = si_cs_io_cb, .name = "si_cs_io_cb" },
-		{ .func = conn_fd_handler, .name = "conn_fd_handler" },
+		{ .func = sock_conn_iocb, .name = "sock_conn_iocb" },
 		{ .func = dgram_fd_handler, .name = "dgram_fd_handler" },
 		{ .func = listener_accept, .name = "listener_accept" },
 		{ .func = poller_pipe_io_handler, .name = "poller_pipe_io_handler" },
@@ -4593,7 +4607,7 @@ const void *resolve_sym_name(struct buffer *buf, const char *pfx, void *addr)
 #ifdef USE_LUA
 		{ .func = hlua_process_task, .name = "hlua_process_task" },
 #endif
-#if defined(USE_OPENSSL) && (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC)
+#ifdef SSL_MODE_ASYNC
 		{ .func = ssl_async_fd_free, .name = "ssl_async_fd_free" },
 		{ .func = ssl_async_fd_handler, .name = "ssl_async_fd_handler" },
 #endif

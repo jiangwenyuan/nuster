@@ -1,7 +1,7 @@
                              ------------------------
                              HAProxy Management Guide
                              ------------------------
-                                   version 2.3
+                                   version 2.4
 
 
 This document describes how to start, stop, manage, and troubleshoot HAProxy,
@@ -1136,7 +1136,7 @@ For all other statistics domains, the presence or the order of the fields are
 not guaranteed. In this case, the header line should always be used to parse
 the CSV data.
 
-9.2) Typed output format
+9.2. Typed output format
 ------------------------
 
 Both "show info" and "show stat" support a mode where each output value comes
@@ -1861,6 +1861,9 @@ set server <backend>/<server> fqdn <FQDN>
   Change a server's FQDN to the value passed in argument. This requires the
   internal run-time DNS resolver to be configured and enabled for this server.
 
+set server <backend>/<server> ssl [ on | off ]
+  This option configures SSL ciphering on outgoing connections to the server.
+
 set severity-output [ none | number | string ]
   Change the severity output format of the stats socket connected to for the
   duration of the current session.
@@ -2018,15 +2021,16 @@ show cache
   3. pointer to the mmap area (shctx)
   4. number of blocks available for reuse in the shctx
 
-  0x7f6ac6c5b4cc hash:286881868 size:39114 (39 blocks), refcount:9, expire:237
-           1               2            3        4            5           6
+  0x7f6ac6c5b4cc hash:286881868 vary:0x0011223344556677 size:39114 (39 blocks), refcount:9, expire:237
+           1               2               3                    4        5            6           7
 
   1. pointer to the cache entry
   2. first 32 bits of the hash
-  3. size of the object in bytes
-  4. number of blocks used for the object
-  5. number of transactions using the entry
-  6. expiration time, can be negative if already expired
+  3. secondary hash of the entry in case of vary
+  4. size of the object in bytes
+  5. number of blocks used for the object
+  6. number of transactions using the entry
+  7. expiration time, can be negative if already expired
 
 show env [<name>]
   Dump one or all environment variables known by the process. Without any
@@ -2416,6 +2420,7 @@ show servers state [<backend>]
      srv_fqdn:                    Server FQDN.
      srv_port:                    Server port.
      srvrecord:                   DNS SRV record associated to this SRV.
+     srv_use_ssl:                 use ssl for server connections.
 
 show sess
   Dump all known sessions. Avoid doing this on slow connections as this can

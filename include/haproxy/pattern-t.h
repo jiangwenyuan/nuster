@@ -69,6 +69,7 @@ enum {
 /* possible flags for patterns storage */
 enum {
 	PAT_SF_TREE        = 1 << 0,       /* some patterns are arranged in a tree */
+	PAT_SF_REGFREE     = 1 << 1,       /* run regex_free() on the pointer */
 };
 
 /* ACL match methods */
@@ -105,18 +106,25 @@ struct pat_ref {
 	struct list head; /* The head of the list of struct pat_ref_elt. */
 	struct list pat; /* The head of the list of struct pattern_expr. */
 	unsigned int flags; /* flags PAT_REF_*. */
+	unsigned int curr_gen; /* current generation number (anything below can be removed) */
+	unsigned int next_gen; /* next generation number (insertions use this one) */
 	int unique_id; /* Each pattern reference have unique id. */
+	unsigned long long revision; /* updated for each update */
 	__decl_thread(HA_SPINLOCK_T lock); /* Lock used to protect pat ref elements */
 };
 
-/* This is a part of struct pat_ref. Each entry contain one
- * pattern and one associated value as original string.
+/* This is a part of struct pat_ref. Each entry contains one pattern and one
+ * associated value as original string. All derivative forms (via exprs) are
+ * accessed from list_head or tree_head.
  */
 struct pat_ref_elt {
 	struct list list; /* Used to chain elements. */
 	struct list back_refs; /* list of users tracking this pat ref */
+	void *list_head; /* all &pattern_list->from_ref derived from this reference, ends with NULL */
+	void *tree_head; /* all &pattern_tree->from_ref derived from this reference, ends with NULL */
 	char *pattern;
 	char *sample;
+	unsigned int gen_id; /* generation of pat_ref this was made for */
 	int line;
 };
 
@@ -124,6 +132,7 @@ struct pat_ref_elt {
  * "sample" with a tree entry. It is used with maps.
  */
 struct pattern_tree {
+	void *from_ref;    // pattern_tree linked from pat_ref_elt, ends with NULL
 	struct sample_data *data;
 	struct pat_ref_elt *ref;
 	struct ebmb_node node;
@@ -158,7 +167,7 @@ struct pattern {
 		void *ptr;              /* any data */
 		char *str;              /* any string  */
 		struct my_regex *reg;   /* a compiled regex */
-	} ptr;                          /* indirect values, allocated */
+	} ptr;                          /* indirect values, allocated or NULL */
 	int len;                        /* data length when required  */
 	int sflags;                     /* flags relative to the storage method. */
 	struct sample_data *data;       /* used to store a pointer to sample value associated
@@ -168,6 +177,7 @@ struct pattern {
 
 /* This struct is just used for chaining patterns */
 struct pattern_list {
+	void *from_ref;    // pattern_tree linked from pat_ref_elt, ends with NULL
 	struct list list;
 	struct pattern pat;
 };
@@ -179,7 +189,6 @@ struct pattern_list {
  */
 struct pattern_expr {
 	struct list list; /* Used for chaining pattern_expr in pat_ref. */
-	unsigned long long revision; /* updated for each update */
 	struct pat_ref *ref; /* The pattern reference if exists. */
 	struct pattern_head *pat_head; /* Point to the pattern_head that contain manipulation functions.
 	                                * Note that this link point on compatible head but not on the real
@@ -210,7 +219,6 @@ struct pattern_head {
 	int (*parse)(const char *text, struct pattern *pattern, int flags, char **err);
 	int (*parse_smp)(const char *text, struct sample_data *data);
 	int (*index)(struct pattern_expr *, struct pattern *, char **);
-	void (*delete)(struct pattern_expr *, struct pat_ref_elt *);
 	void (*prune)(struct pattern_expr *);
 	struct pattern *(*match)(struct sample *, struct pattern_expr *, int);
 	int expect_type; /* type of the expected sample (SMP_T_*) */

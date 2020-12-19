@@ -40,31 +40,15 @@ void check_notify_stopping(struct check *check);
 void check_notify_success(struct check *check);
 struct task *process_chk(struct task *t, void *context, unsigned short state);
 
+int check_buf_available(void *target);
+struct buffer *check_get_buf(struct check *check, struct buffer *bptr);
+void check_release_buf(struct check *check, struct buffer *bptr);
 const char *init_check(struct check *check, int type);
 void free_check(struct check *check);
 
 /* Declared here, but the definitions are in flt_spoe.c */
 int spoe_prepare_healthcheck_request(char **req, int *len);
 int spoe_handle_healthcheck_response(char *frame, size_t size, char *err, int errlen);
-
-int proxy_parse_tcp_check_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-			      const char *file, int line);
-int proxy_parse_redis_check_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-				const char *file, int line);
-int proxy_parse_ssl_hello_chk_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-				  const char *file, int line);
-int proxy_parse_smtpchk_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-			const char *file, int line);
-int proxy_parse_pgsql_check_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-				const char *file, int line);
-int proxy_parse_mysql_check_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-			    const char *file, int line);
-int proxy_parse_ldap_check_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-			       const char *file, int line);
-int proxy_parse_spop_check_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-			       const char *file, int line);
-int proxy_parse_httpchk_opt(char **args, int cur_arg, struct proxy *curpx, struct proxy *defpx,
-			    const char *file, int line);
 
 int set_srv_agent_send(struct server *srv, const char *send);
 

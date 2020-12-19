@@ -58,8 +58,8 @@ extern struct list streams;
 
 extern struct data_cb sess_conn_cb;
 
-struct stream *stream_new(struct session *sess, enum obj_type *origin);
-int stream_create_from_cs(struct conn_stream *cs);
+struct stream *stream_new(struct session *sess, enum obj_type *origin, struct buffer *input);
+int stream_create_from_cs(struct conn_stream *cs, struct buffer *input);
 
 /* kill a stream and set the termination flags to <why> (one of SF_ERR_*) */
 void stream_shutdown(struct stream *stream, int why);
@@ -230,36 +230,11 @@ static inline void stream_track_stkctr(struct stkctr *ctr, struct stktable *t, s
 /* Increase the number of cumulated HTTP requests in the tracked counters */
 static inline void stream_inc_http_req_ctr(struct stream *s)
 {
-	struct stksess *ts;
-	void *ptr;
 	int i;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
-		struct stkctr *stkctr = &s->stkctr[i];
-
-		ts = stkctr_entry(stkctr);
-		if (!ts) {
-			stkctr = &s->sess->stkctr[i];
-			ts = stkctr_entry(stkctr);
-			if (!ts)
-				continue;
-		}
-
-		HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-
-		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_CNT);
-		if (ptr)
-			stktable_data_cast(ptr, http_req_cnt)++;
-
-		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_RATE);
-		if (ptr)
-			update_freq_ctr_period(&stktable_data_cast(ptr, http_req_rate),
-					       stkctr->table->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u, 1);
-
-		HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-		/* If data was modified, we need to touch to re-schedule sync */
-		stktable_touch_local(stkctr->table, ts, 0);
+		if (!stkctr_inc_http_req_ctr(&s->stkctr[i]))
+			stkctr_inc_http_req_ctr(&s->sess->stkctr[i]);
 	}
 }
 
@@ -268,35 +243,13 @@ static inline void stream_inc_http_req_ctr(struct stream *s)
  */
 static inline void stream_inc_be_http_req_ctr(struct stream *s)
 {
-	struct stksess *ts;
-	void *ptr;
 	int i;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
-		struct stkctr *stkctr = &s->stkctr[i];
-
-		ts = stkctr_entry(stkctr);
-		if (!ts)
+		if (!stkctr_entry(&s->stkctr[i]) || !(stkctr_flags(&s->stkctr[i]) & STKCTR_TRACK_BACKEND))
 			continue;
 
-		if (!(stkctr_flags(&s->stkctr[i]) & STKCTR_TRACK_BACKEND))
-			continue;
-
-		HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-
-		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_CNT);
-		if (ptr)
-			stktable_data_cast(ptr, http_req_cnt)++;
-
-		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_REQ_RATE);
-		if (ptr)
-			update_freq_ctr_period(&stktable_data_cast(ptr, http_req_rate),
-			                       stkctr->table->data_arg[STKTABLE_DT_HTTP_REQ_RATE].u, 1);
-
-		HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-		/* If data was modified, we need to touch to re-schedule sync */
-		stktable_touch_local(stkctr->table, ts, 0);
+		stkctr_inc_http_req_ctr(&s->stkctr[i]);
 	}
 }
 
@@ -308,36 +261,11 @@ static inline void stream_inc_be_http_req_ctr(struct stream *s)
  */
 static inline void stream_inc_http_err_ctr(struct stream *s)
 {
-	struct stksess *ts;
-	void *ptr;
 	int i;
 
 	for (i = 0; i < MAX_SESS_STKCTR; i++) {
-		struct stkctr *stkctr = &s->stkctr[i];
-
-		ts = stkctr_entry(stkctr);
-		if (!ts) {
-			stkctr = &s->sess->stkctr[i];
-			ts = stkctr_entry(stkctr);
-			if (!ts)
-				continue;
-		}
-
-		HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-
-		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_ERR_CNT);
-		if (ptr)
-			stktable_data_cast(ptr, http_err_cnt)++;
-
-		ptr = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_HTTP_ERR_RATE);
-		if (ptr)
-			update_freq_ctr_period(&stktable_data_cast(ptr, http_err_rate),
-			                       stkctr->table->data_arg[STKTABLE_DT_HTTP_ERR_RATE].u, 1);
-
-		HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-		/* If data was modified, we need to touch to re-schedule sync */
-		stktable_touch_local(stkctr->table, ts, 0);
+		if (!stkctr_inc_http_err_ctr(&s->stkctr[i]))
+			stkctr_inc_http_err_ctr(&s->sess->stkctr[i]);
 	}
 }
 
@@ -415,7 +343,10 @@ static inline void stream_choose_redispatch(struct stream *s)
 
 }
 
+int stream_set_timeout(struct stream *s, enum act_timeout_name name, int timeout);
+
 void service_keywords_register(struct action_kw_list *kw_list);
+struct action_kw *service_find(const char *kw);
 void list_services(FILE *out);
 
 #endif /* _HAPROXY_STREAM_H */

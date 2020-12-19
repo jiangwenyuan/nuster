@@ -80,6 +80,7 @@ enum hlua_exec {
 
 struct hlua {
 	lua_State *T; /* The LUA stack. */
+	int state_id; /* contains the lua state id. 0 is common state, 1 to n are per-thread states.*/
 	int Tref; /* The reference of the stack in coroutine case.
 	             -1 for the main lua stack. */
 	int Mref; /* The reference of the memory context in coroutine case.
@@ -110,8 +111,9 @@ struct hlua_init_function {
  * or actions.
  */
 struct hlua_function {
+	struct list l;
 	char *name;
-	int function_ref;
+	int function_ref[MAX_THREADS + 1];
 	int nargs;
 };
 
@@ -122,7 +124,7 @@ struct hlua_function {
  * It contains the lua execution configuration.
  */
 struct hlua_rule {
-	struct hlua_function fcn;
+	struct hlua_function *fcn;
 	char **args;
 };
 

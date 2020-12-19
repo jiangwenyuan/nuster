@@ -2,9 +2,9 @@
                                 HAProxy
                           Configuration Manual
                          ----------------------
-                              version 2.3
+                              version 2.4
                              willy tarreau
-                              2020/11/05
+                              2020/12/11
 
 
 This document covers the configuration language as implemented in the version
@@ -54,6 +54,7 @@ Summary
 3.7.      Programs
 3.8.      HTTP-errors
 3.9.      Rings
+3.10.     Log forwarding
 
 4.    Proxies
 4.1.      Proxy keywords matrix
@@ -403,28 +404,137 @@ details.
 HAProxy's configuration process involves 3 major sources of parameters :
 
   - the arguments from the command-line, which always take precedence
-  - the "global" section, which sets process-wide parameters
-  - the proxies sections which can take form of "defaults", "listen",
-    "frontend" and "backend".
+  - the configuration file(s), whose format is described here
+  - the running process' environment, in case some environment variables are
+    explicitly referenced
 
-The configuration file syntax consists in lines beginning with a keyword
-referenced in this manual, optionally followed by one or several parameters
-delimited by spaces.
+The configuration file follows a fairly simple hierarchical format which obey
+a few basic rules:
+
+  1. a configuration file is an ordered sequence of statements
+
+  2. a statement is a single non-empty line before any unprotected "#" (hash)
+
+  3. a line is a series of tokens or "words" delimited by unprotected spaces or
+     tab characters
+
+  4. the first word or sequence of words of a line is one of the keywords or
+     keyword sequences listed in this document
+
+  5. all other words are all arguments of the first one, some being well-known
+     keywords listed in this document, others being values, references to other
+     parts of the configuration, or expressions
+
+  6. certain keywords delimit a section inside which only a subset of keywords
+     are supported
+
+  7. a section ends at the end of a file or on a special keyword starting a new
+     section
+
+This is all that is needed to know to write a simple but reliable configuration
+generator, but this is not enough to reliably parse any configuration nor to
+figure how to deal with certain corner cases.
+
+First, there are a few consequences of the rules above. Rule 6 and 7 imply that
+the keywords used to define a new section are valid everywhere and cannot have
+a different meaning in a specific section. These keywords are always a single
+word (as opposed to a sequence of words), and traditionally the section that
+follows them is designated using the same name. For example when speaking about
+the "global section", it designates the section of configuration that follows
+the "global" keyword. This usage is used a lot in error messages to help locate
+the parts that need to be addressed.
+
+A number of sections create an internal object or configuration space, which
+requires to be distinguished from other ones. In this case they will take an
+extra word which will set the name of this particular section. For some of them
+the section name is mandatory. For example "frontend foo" will create a new
+section of type "frontend" named "foo". Usually a name is specific to its
+section and two sections of different types may use the same name, but this is
+not recommended as it tends to complexify configuration management.
+
+A direct consequence of rule 7 is that when multiple files are read at once,
+each of them must start with a new section, and the end of each file will end
+a section. A file cannot contain sub-sections nor end an existing section and
+start a new one.
+
+Rule 1 mentioned that ordering matters. Indeed, some keywords create directives
+that can be repeated multiple times to create ordered sequences of rules to be
+applied in a certain order. For example "tcp-request" can be used to alternate
+"accept" and "reject" rules on varying criteria. As such, a configuration file
+processor must always preserve a section's ordering when editing a file. The
+ordering of sections usually does not matter except for the global section
+which must be placed before other sections, but it may be repeated if needed.
+In addition, some automatic identifiers may automatically be assigned to some
+of the created objects (e.g. proxies), and by reordering sections, their
+identifiers will change. These ones appear in the statistics for example. As
+such, the configuration below will assign "foo" ID number 1 and "bar" ID number
+2, which will be swapped if the two sections are reversed:
+
+     listen foo
+         bind :80
+
+     listen bar
+         bind :81
+
+Another important point is that according to rules 2 and 3 above, empty lines,
+spaces, tabs, and comments following and unprotected "#" character are not part
+of the configuration as they are just used as delimiters. This implies that the
+following configurations are strictly equivalent:
+
+         global#this is the global section
+     daemon#daemonize
+         frontend         foo
+     mode             http   # or tcp
+
+and:
+
+     global
+         daemon
+
+     # this is the public web frontend
+     frontend foo
+         mode http
+
+The common practice is to align to the left only the keyword that initiates a
+new section, and indent (i.e. prepend a tab character or a few spaces) all
+other keywords so that it's instantly visible that they belong to the same
+section (as done in the second example above). Placing comments before a new
+section helps the reader decide if it's the desired one. Leaving a blank line
+at the end of a section also visually helps spotting the end when editing it.
+
+Tabs are very convenient for indent but they do not copy-paste well. If spaces
+are used instead, it is recommended to avoid placing too many (2 to 4) so that
+editing in field doesn't become a burden with limited editors that do not
+support automatic indent.
+
+In the early days it used to be common to see arguments split at fixed tab
+positions because most keywords would not take more than two arguments. With
+modern versions featuring complex expressions this practice does not stand
+anymore, and is not recommended.
 
 
 2.2. Quoting and escaping
 -------------------------
 
-HAProxy's configuration introduces a quoting and escaping system similar to
-many programming languages. The configuration file supports 3 types: escaping
-with a backslash, weak quoting with double quotes, and strong quoting with
-single quotes.
+In modern configurations, some arguments require the use of some characters
+that were previously considered as pure delimiters. In order to make this
+possible, HAProxy supports character escaping by prepending a backslash ('\')
+in front of the character to be escaped, weak quoting within double quotes
+('"') and strong quoting within single quotes ("'").
 
-If spaces have to be entered in strings, then they must be escaped by preceding
-them by a backslash ('\') or by quoting them. Backslashes also have to be
-escaped by doubling or strong quoting them.
+This is pretty similar to what is done in a number of programming languages and
+very close to what is commonly encountered in Bourne shell. The principle is
+the following: while the configuration parser cuts the lines into words, it
+also takes care of quotes and backslashes to decide whether a character is a
+delimiter or is the raw representation of this character within the current
+word. The escape character is then removed, the quotes are removed, and the
+remaining word is used as-is as a keyword or argument for example.
 
-Escaping is achieved by preceding a special character by a backslash ('\'):
+If a backslash is needed in a word, it must either be escaped using itself
+(i.e. double backslash) or be strongly quoted.
+
+Escaping outside quotes is achieved by preceding a special character by a
+backslash ('\'):
 
   \    to mark a space and differentiate it from a delimiter
   \#   to mark a hash and differentiate it from a comment
@@ -432,39 +542,161 @@ Escaping is achieved by preceding a special character by a backslash ('\'):
   \'   to use a single quote and differentiate it from strong quoting
   \"   to use a double quote and differentiate it from weak quoting
 
-Weak quoting is achieved by using double quotes (""). Weak quoting prevents
-the interpretation of:
+In addition, a few non-printable characters may be emitted using their usual
+C-language representation:
 
-       space as a parameter separator
+  \n   to insert a line feed (LF, character \x0a or ASCII 10 decimal)
+  \r   to insert a carriage return (CR, character \x0d or ASCII 13 decimal)
+  \t   to insert a tab (character \x09 or ASCII 9 decimal)
+  \xNN to insert character having ASCII code hex NN (e.g \x0a for LF).
+
+Weak quoting is achieved by surrounding double quotes ("") around the character
+or sequence of characters to protect. Weak quoting prevents the interpretation
+of:
+
+       space or tab as a word separator
   '    single quote as a strong quoting delimiter
   #    hash as a comment start
 
-Weak quoting permits the interpretation of variables, if you want to use a non
--interpreted dollar within a double quoted string, you should escape it with a
-backslash ("\$"), it does not work outside weak quoting.
+Weak quoting permits the interpretation of environment variables (which are not
+evaluated outside of quotes) by preceding them with a dollar sign ('$'). If a
+dollar character is needed inside double quotes, it must be escaped using a
+backslash.
 
-Interpretation of escaping and special characters are not prevented by weak
-quoting.
+Strong quoting is achieved by surrounding single quotes ('') around the
+character or sequence of characters to protect. Inside single quotes, nothing
+is interpreted, it's the efficient way to quote regular expressions.
 
-Strong quoting is achieved by using single quotes (''). Inside single quotes,
-nothing is interpreted, it's the efficient way to quote regexes.
+As a result, here is the matrix indicating how special characters can be
+entered in different contexts (unprintable characters are replaced with their
+name within angle brackets). Note that some characters that may only be
+represented escaped have no possible representation inside single quotes,
+hence the '-' there:
 
-Quoted and escaped strings are replaced in memory by their interpreted
-equivalent, it allows you to perform concatenation.
+  Character  |  Unquoted     |  Weakly quoted              |  Strongly quoted
+  -----------+---------------+-----------------------------+-----------------
+    <TAB>    |  \<TAB>, \x09 |  "<TAB>", "\<TAB>", "\x09"  |  '<TAB>'
+    <LF>     |  \n, \x0a     |  "\n", "\x0a"               |   -
+    <CR>     |  \r, \x0d     |  "\r", "\x0d"               |   -
+    <SPC>    |  \<SPC>, \x20 |  "<SPC>", "\<SPC>", "\x20"  |  '<SPC>'
+    "        |  \", \x22     |  "\"", "\x22"               |  '"'
+    #        |  \#, \x23     |  "#", "\#", "\x23"          |  '#'
+    $        |  $, \$, \x24  |  "\$", "\x24"               |  '$'
+    '        |  \', \x27     |  "'", "\'", "\x27"          |   -
+    \        |  \\, \x5c     |  "\\", "\x5c"               |  '\'
 
   Example:
-      # those are equivalents:
+      # those are all strictly equivalent:
       log-format %{+Q}o\ %t\ %s\ %{-Q}r
       log-format "%{+Q}o %t %s %{-Q}r"
       log-format '%{+Q}o %t %s %{-Q}r'
       log-format "%{+Q}o %t"' %s %{-Q}r'
       log-format "%{+Q}o %t"' %s'\ %{-Q}r
 
-      # those are equivalents:
-      reqrep "^([^\ :]*)\ /static/(.*)"     \1\ /\2
-      reqrep "^([^ :]*)\ /static/(.*)"     '\1 /\2'
-      reqrep "^([^ :]*)\ /static/(.*)"     "\1 /\2"
-      reqrep "^([^ :]*)\ /static/(.*)"     "\1\ /\2"
+There is one particular case where a second level of quoting or escaping may be
+necessary. Some keywords take arguments within parenthesis, sometimes delimited
+by commas. These arguments are commonly integers or predefined words, but when
+they are arbitrary strings, it may be required to perform a separate level of
+escaping to disambiguate the characters that belong to the argument from the
+characters that are used to delimit the arguments themselves. A pretty common
+case is the "regsub" converter. It takes a regular expression in argument, and
+if a closing parenthesis is needed inside, this one will require to have its
+own quotes.
+
+The keyword argument parser is exactly the same as the top-level one regarding
+quotes, except that is will not make special cases of backslashes. But what is
+not always obvious is that the delimitors used inside must first be escaped or
+quoted so that they are not resolved at the top level.
+
+Let's take this example making use of the "regsub" converter which takes 3
+arguments, one regular expression, one replacement string and one set of flags:
+
+    # replace all occurrences of "foo" with "blah" in the path:
+    http-request set-path %[path,regsub(foo,blah,g)]
+
+Here no special quoting was necessary. But if now we want to replace either
+"foo" or "bar" with "blah", we'll need the regular expression "(foo|bar)". We
+cannot write:
+
+    http-request set-path %[path,regsub((foo|bar),blah,g)]
+
+because we would like the string to cut like this:
+
+    http-request set-path %[path,regsub((foo|bar),blah,g)]
+                                       |---------|----|-|
+                                 arg1 _/         /    /
+                                 arg2 __________/    /
+                                 arg3 ______________/
+
+but actually what is passed is a string between the opening and closing
+parenthesis then garbage:
+
+    http-request set-path %[path,regsub((foo|bar),blah,g)]
+                                       |--------|--------|
+                        arg1=(foo|bar _/        /
+                    trailing garbage  _________/
+
+The obvious solution here seems to be that the closing parenthesis needs to be
+quoted, but alone this will not work, because as mentioned above, quotes are
+processed by the top-level parser which will resolve them before processing
+this word:
+
+    http-request set-path %[path,regsub("(foo|bar)",blah,g)]
+    ------------ -------- ----------------------------------
+       word1       word2    word3=%[path,regsub((foo|bar),blah,g)]
+
+So we didn't change anything for the argument parser at the second level which
+still sees a truncated regular expression as the only argument, and garbage at
+the end of the string. By escaping the quotes they will be passed unmodified to
+the second level:
+
+    http-request set-path %[path,regsub(\"(foo|bar)\",blah,g)]
+    ------------ -------- ------------------------------------
+       word1       word2    word3=%[path,regsub("(foo|bar)",blah,g)]
+                                                |---------||----|-|
+                                arg1=(foo|bar) _/          /    /
+                                    arg2=blah  ___________/    /
+                                        arg3=g _______________/
+
+Another approch consists in using single quotes outside the whole string and
+double quotes inside (so that the double quotes are not stripped again):
+
+    http-request set-path '%[path,regsub("(foo|bar)",blah,g)]'
+    ------------ --------  ----------------------------------
+       word1       word2    word3=%[path,regsub("(foo|bar)",blah,g)]
+                                                |---------||----|-|
+                                arg1=(foo|bar) _/          /    /
+                                          arg2 ___________/    /
+                                          arg3 _______________/
+
+When using regular expressions, it can happen that the dollar ('$') character
+appears in the expression or that a backslash ('\') is used in the replacement
+string. In this case these ones will also be processed inside the double quotes
+thus single quotes are preferred (or double escaping). Example:
+
+    http-request set-path '%[path,regsub("^/(here)(/|$)","my/\1",g)]'
+    ------------ --------  -----------------------------------------
+       word1       word2    word3=%[path,regsub("^/(here)(/|$)","my/\1",g)]
+                                                |-------------| |-----||-|
+                              arg1=(here)(/|$) _/               /      /
+                                    arg2=my/\1 ________________/      /
+                                          arg3 ______________________/
+
+Remember that backslahes are not escape characters withing single quotes and
+that the whole word3 above is already protected against them using the single
+quotes. Conversely, if double quotes had been used around the whole expression,
+single the dollar character and the backslashes would have been resolved at top
+level, breaking the argument contents at the second level.
+
+When in doubt, simply do not use quotes anywhere, and start to place single or
+double quotes around arguments that require a comma or a closing parenthesis,
+and think about escaping these quotes using a backslash of the string contains
+a dollar or a backslash. Again, this is pretty similar to what is used under
+a Bourne shell when double-escaping a command passed to "eval". For API writers
+the best is probably to place escaped quotes around each and every argument,
+regardless of their contents. Users will probably find that using single quotes
+around the whole expression and double quotes around each argument provides
+more readable configurations.
 
 
 2.3. Environment variables
@@ -605,6 +837,7 @@ The following keywords are supported in the "global" section :
    - log-tag
    - log-send-hostname
    - lua-load
+   - lua-load-per-thread
    - lua-prepend-path
    - mworker-max-reloads
    - nbproc
@@ -1047,7 +1280,12 @@ log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
   <format> is the log format used when generating syslog messages. It may be
            one of the following :
 
-    rfc3164   The RFC3164 syslog message format. This is the default.
+    local     Analog to rfc3164 syslog message format except that hostname
+              field is stripped. This is the default.
+              Note: option "log-send-hostname" switches the default to
+              rfc3164.
+
+    rfc3164   The RFC3164 syslog message format.
               (https://tools.ietf.org/html/rfc3164)
 
     rfc5424   The RFC5424 syslog message format.
@@ -1126,8 +1364,30 @@ log-tag <string>
   running on the same host. See also the per-proxy "log-tag" directive.
 
 lua-load <file>
-  This global directive loads and executes a Lua file. This directive can be
+  This global directive loads and executes a Lua file in the shared context
+  that is visible to all threads. Any variable set in such a context is visible
+  from any thread. This is the easiest and recommended way to load Lua programs
+  but it will not scale well if a lot of Lua calls are performed, as only one
+  thread may be running on the global state at a time. A program loaded this
+  way will always see 0 in the "core.thread" variable. This directive can be
   used multiple times.
+
+lua-load-per-thread <file>
+  This global directive loads and executes a Lua file into each started thread.
+  Any global variable has a thread-local visibility so that each thread could
+  see a different value. As such it is strongly recommended not to use global
+  variables in programs loaded this way. An independent copy is loaded and
+  initialized for each thread, everything is done sequentially and in the
+  thread's numeric order from 1 to nbthread. If some operations need to be
+  performed only once, the program should check the "core.thread" variable to
+  figure what thread is being initialized. Programs loaded this way will run
+  concurrently on all threads and will be highly scalable. This is the
+  recommended way to load simple functions that register sample-fetches,
+  converters, actions or services once it is certain the program doesn't depend
+  on global variables. For the sake of simplicity, the directive is available
+  even if only one thread is used and even if threads are disabled (in which
+  case it will be equivalent to lua-load). This directive can be used multiple
+  times.
 
 lua-prepend-path <string> [<type>]
   Prepends the given string followed by a semicolon to Lua's package.<type>
@@ -1914,12 +2174,8 @@ tune.bufsize <number>
   value set using this parameter will automatically be rounded up to the next
   multiple of 8 on 32-bit machines and 16 on 64-bit machines.
 
-tune.chksize <number>
-  Sets the check buffer size to this size (in bytes). Higher values may help
-  find string or regex patterns in very large pages, though doing so may imply
-  more memory and CPU usage. The default value is 16384 and can be changed at
-  build time. It is not recommended to change this value, but to use better
-  checks whenever possible.
+tune.chksize <number> (deprecated)
+  This option is deprecated and ignored.
 
 tune.comp.maxlevel <number>
   Sets the maximum compression level. The compression level affects CPU
@@ -2699,13 +2955,18 @@ format <format>
               The PID, process name and system name are omitted. This is
               designed to be used with a local log server.
 
+      local   Analog to rfc3164 syslog message format except that hostname
+              field is stripped. This is the default.
+              Note: option "log-send-hostname" switches the default to
+              rfc3164.
+
       raw     A message containing only the text. The level, PID, date, time,
               process name and system name are omitted. This is designed to be
               used in containers or during development, where the severity
               only depends on the file descriptor used (stdout/stderr). This
               is the default.
 
-      rfc3164 The RFC3164 syslog message format. This is the default.
+      rfc3164 The RFC3164 syslog message format.
               (https://tools.ietf.org/html/rfc3164)
 
       rfc5424 The RFC5424 syslog message format.
@@ -4666,6 +4927,10 @@ http-after-response <action> <options...> [ { if | unless } <condition> ]
   There is no limit to the number of http-after-response statements per
   instance.
 
+  Note: Errors emitted in early stage of the request parsing are handled by the
+        multiplexer at a lower level, before any http analysis. Thus no
+        http-after-response ruleset is evaluated on these errors.
+
   Example:
     http-after-response set-header Strict-Transport-Security "max-age=31536000"
     http-after-response set-header Cache-Control "no-store,no-cache,private"
@@ -4686,9 +4951,13 @@ http-after-response allow [ { if | unless } <condition> ]
   This stops the evaluation of the rules and lets the response pass the check.
   No further "http-after-response" rules are evaluated.
 
-http-after-response del-header <name> [ { if | unless } <condition> ]
+http-after-response del-header <name> [ -m <meth> ] [ { if | unless } <condition> ]
 
-  This removes all HTTP header fields whose name is specified in <name>.
+  This removes all HTTP header fields whose name is specified in <name>. <meth>
+  is the matching method, applied on the header name. Supported matching methods
+  are "str" (exact match), "beg" (prefix match), "end" (suffix match), "sub"
+  (substring match) and "reg" (regex match). If not specified, exact matching
+  method is used.
 
 http-after-response replace-header <name> <regex-match> <replace-fmt>
                                    [ { if | unless } <condition> ]
@@ -4897,7 +5166,9 @@ http-check disable-on-404
   reports "NOLB" for a server in this mode. It is important to note that this
   option only works in conjunction with the "httpchk" option. If this option
   is used with "http-check expect", then it has precedence over it so that 404
-  responses will still be considered as soft-stop.
+  responses will still be considered as soft-stop. Note also that a stopped
+  server will stay stopped even if it replies 404s. This option is only
+  evaluated for running servers.
 
   See also : "option httpchk" and "http-check expect".
 
@@ -4929,15 +5200,18 @@ http-check expect [min-recv <int>] [comment <msg>]
                        the last rule in the tcp-check ruleset. "L7OK", "L7OKC",
                        "L6OK" and "L4OK" are supported :
                          - L7OK  : check passed on layer 7
-                         - L7OKC : check conditionally passed on layer 7, for
-                                   example 404 with disable-on-404
+                         - L7OKC : check conditionally passed on layer 7, set
+                                   server to NOLB state.
                          - L6OK  : check passed on layer 6
                          - L4OK  : check passed on layer 4
                        By default "L7OK" is used.
 
     error-status <st>  is optional and can be used to set the check status if
                        an error occurred during the expect rule evaluation.
-                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported :
+                       "L7OKC", "L7RSP", "L7STS", "L6RSP" and "L4CON" are
+                       supported :
+                         - L7OKC : check conditionally passed on layer 7, set
+                                   server to NOLB state.
                          - L7RSP : layer 7 invalid response - protocol error
                          - L7STS : layer 7 response error, for example HTTP 5xx
                          - L6RSP : layer 6 invalid response - protocol error
@@ -5047,7 +5321,7 @@ http-check expect [min-recv <int>] [comment <msg>]
                       considered invalid if the body contains the string.
 
   It is important to note that the responses will be limited to a certain size
-  defined by the global "tune.chksize" option, which defaults to 16384 bytes.
+  defined by the global "tune.bufsize" option, which defaults to 16384 bytes.
   Thus, too large responses may not contain the mandatory pattern when using
   "string" or "rstring". If a large response is absolutely required, it is
   possible to change the default max size by setting the global variable.
@@ -5322,6 +5596,12 @@ http-error status <code> [content-type <type>]
   For this reason, the errors continue to be returned even when the process is
   chrooted, and no file change is considered while the process is running.
 
+  Note: 400/408/500 errors emitted in early stage of the request parsing are
+        handled by the multiplexer at a lower level. No custom formatting is
+        supported at this level. Thus only static error messages, defined with
+        "errorfile" directive, are supported. However, this limitation only
+        exists during the request headers parsing or between two transactions.
+
   See also : "errorfile", "errorfiles", "errorloc", "errorloc302",
              "errorloc303" and section 3.8 about http-errors.
 
@@ -5460,9 +5740,13 @@ http-request del-acl(<file-name>) <key fmt> [ { if | unless } <condition> ]
   It is the equivalent of the "del acl" command from the stats socket, but can
   be triggered by an HTTP request.
 
-http-request del-header <name> [ { if | unless } <condition> ]
+http-request del-header <name> [ -m <meth> ] [ { if | unless } <condition> ]
 
-  This removes all HTTP header fields whose name is specified in <name>.
+  This removes all HTTP header fields whose name is specified in <name>. <meth>
+  is the matching method, applied on the header name. Supported matching methods
+  are "str" (exact match), "beg" (prefix match), "end" (suffix match), "sub"
+  (substring match) and "reg" (regex match). If not specified, exact matching
+  method is used.
 
 http-request del-map(<file-name>) <key fmt> [ { if | unless } <condition> ]
 
@@ -5981,6 +6265,24 @@ http-request set-src-port <expr> [ { if | unless } <condition> ]
   the address family supports a port, otherwise it forces the source address to
   IPv4 "0.0.0.0" before rewriting the port.
 
+http-request set-timeout server|tunnel { <timeout> | <expr> }
+                                       [ { if | unless } <condition> ]
+
+  This action overrides the specified "server" or "tunnel" timeout for the
+  current stream only. The timeout can be specified in millisecond or with any
+  other unit if the number is suffixed by the unit as explained at the top of
+  this document. It is also possible to write an expression which must returns
+  a number interpreted as a timeout in millisecond.
+
+  Note that the server/tunnel timeouts are only relevant on the backend side
+  and thus this rule is only available for the proxies with backend
+  capabilities. Also the timeout value must be non-null to obtain the expected
+  results.
+
+  Example:
+    http-request set-timeout server 5s
+    http-request set-timeout hdr(host),map_int(host.lst)
+
 http-request set-tos <tos> [ { if | unless } <condition> ]
 
   This is used to set the TOS or DSCP field value of packets sent to the client
@@ -6273,9 +6575,13 @@ http-response del-acl(<file-name>) <key fmt> [ { if | unless } <condition> ]
   It is the equivalent of the "del acl" command from the stats socket, but can
   be triggered by an HTTP response.
 
-http-response del-header <name> [ { if | unless } <condition> ]
+http-response del-header <name> [ -m <meth> ] [ { if | unless } <condition> ]
 
-  This removes all HTTP header fields whose name is specified in <name>.
+  This removes all HTTP header fields whose name is specified in <name>. <meth>
+  is the matching method, applied on the header name. Supported matching methods
+  are "str" (exact match), "beg" (prefix match), "end" (suffix match), "sub"
+  (substring match) and "reg" (regex match). If not specified, exact matching
+  method is used.
 
 http-response del-map(<file-name>) <key fmt> [ { if | unless } <condition> ]
 
@@ -6930,7 +7236,12 @@ no log
     <format> is the log format used when generating syslog messages. It may be
              one of the following :
 
-      rfc3164   The RFC3164 syslog message format. This is the default.
+      local     Analog to rfc3164 syslog message format except that hostname
+                field is stripped. This is the default.
+                Note: option "log-send-hostname" switches the default to
+                rfc3164.
+
+      rfc3164   The RFC3164 syslog message format.
                 (https://tools.ietf.org/html/rfc3164)
 
       rfc5424   The RFC5424 syslog message format.
@@ -9307,10 +9618,11 @@ retry-on [list of keywords]
                         rejected by the server. These requests are generally
                         considered to be safe to retry.
 
-      <status>          any HTTP status code among "404" (Not Found), "408"
-                        (Request Timeout), "425" (Too Early), "500" (Server
-                        Error), "501" (Not Implemented), "502" (Bad Gateway),
-                        "503" (Service Unavailable), "504" (Gateway Timeout).
+      <status>          any HTTP status code among "401" (Unauthorized), "403"
+                        (Forbidden), "404" (Not Found), "408" (Request Timeout),
+                        "425" (Too Early), "500" (Server Error), "501" (Not
+                        Implemented), "502" (Bad Gateway), "503" (Service
+                        Unavailable), "504" (Gateway Timeout).
 
       all-retryable-errors
                         retry request for any error that are considered
@@ -10803,15 +11115,18 @@ tcp-check expect [min-recv <int>] [comment <msg>]
                        the last rule in the tcp-check ruleset. "L7OK", "L7OKC",
                        "L6OK" and "L4OK" are supported :
                          - L7OK  : check passed on layer 7
-                         - L7OKC : check conditionally passed on layer 7, for
-                                   example 404 with disable-on-404
+                         - L7OKC : check conditionally passed on layer 7, set
+                                   server to NOLB state.
                          - L6OK  : check passed on layer 6
                          - L4OK  : check passed on layer 4
                         By default "L7OK" is used.
 
     error-status <st>  is optional and can be used to set the check status if
                        an error occurred during the expect rule evaluation.
-                       "L7RSP", "L7STS", "L6RSP" and "L4CON" are supported :
+                       "L7OKC", "L7RSP", "L7STS", "L6RSP" and "L4CON" are
+                       supported :
+                         - L7OKC : check conditionally passed on layer 7, set
+                                   server to NOLB state.
                          - L7RSP : layer 7 invalid response - protocol error
                          - L7STS : layer 7 response error, for example HTTP 5xx
                          - L6RSP : layer 6 invalid response - protocol error
@@ -10901,7 +11216,7 @@ tcp-check expect [min-recv <int>] [comment <msg>]
                          buffer.
 
   It is important to note that the responses will be limited to a certain size
-  defined by the global "tune.chksize" option, which defaults to 16384 bytes.
+  defined by the global "tune.bufsize" option, which defaults to 16384 bytes.
   Thus, too large responses may not contain the mandatory pattern when using
   "string", "rstring" or binary. If a large response is absolutely required, it
   is possible to change the default max size by setting the global variable.
@@ -10932,7 +11247,7 @@ tcp-check expect [min-recv <int>] [comment <msg>]
 
 
   See also : "option tcp-check", "tcp-check connect", "tcp-check send",
-             "tcp-check send-binary", "http-check expect", tune.chksize
+             "tcp-check send-binary", "http-check expect", tune.bufsize
 
 
 tcp-check send <data> [comment <msg>]
@@ -10958,7 +11273,7 @@ tcp-check send-lf <fmt> [comment <msg>]
          tcp-check expect string role:master
 
   See also : "option tcp-check", "tcp-check connect", "tcp-check expect",
-             "tcp-check send-binary", tune.chksize
+             "tcp-check send-binary", tune.bufsize
 
 
 tcp-check send-binary <hexstring> [comment <msg>]
@@ -10986,7 +11301,7 @@ tcp-check send-binary-lf <hexfmt> [comment <msg>]
 
 
   See also : "option tcp-check", "tcp-check connect", "tcp-check expect",
-             "tcp-check send", tune.chksize
+             "tcp-check send", tune.bufsize
 
 
 tcp-check set-var(<var-name>) <expr>
@@ -12595,10 +12910,11 @@ crt-list <file>
   configuration set in bind line for the certificate.
 
   Wildcards are supported in the SNI filter. Negative filter are also supported,
-  only useful in combination with a wildcard filter to exclude a particular SNI.
-  The certificates will be presented to clients who provide a valid TLS Server
-  Name Indication field matching one of the SNI filters. If no SNI filter is
-  specified, the CN and alt subjects are used. This directive may be specified
+  useful in combination with a wildcard filter to exclude a particular SNI, or
+  after the first certificate to exclude a pattern from its CN or Subject Alt
+  Name (SAN). The certificates will be presented to clients who provide a valid
+  TLS Server Name Indication field matching one of the SNI filters. If no SNI
+  filter is specified, the CN and SAN are used. This directive may be specified
   multiple times. See the "crt" option for more information. The default
   certificate is still needed to meet OpenSSL expectations. If it is not used,
   the 'strict-sni' option may be used.
@@ -12609,8 +12925,17 @@ crt-list <file>
 
   Empty lines as well as lines beginning with a hash ('#') will be ignored.
 
+  The first declared certificate of a bind line is used as the default
+  certificate, either from crt or crt-list option, which haproxy should use in
+  the TLS handshake if no other certificate matches. This certificate will also
+  be used if the provided SNI matches its CN or SAN, even if a matching SNI
+  filter is found on any crt-list. The SNI filter !* can be used after the first
+  declared certificate to not include its CN and SAN in the SNI tree, so it will
+  never match except if no other certificate matches. This way the first
+  declared certificate act as a fallback.
+
   crt-list file example:
-        cert1.pem
+        cert1.pem !*
         # comment
         cert2.pem [alpn h2,http/1.1]
         certW.pem                   *.domain.tld !secure.domain.tld
@@ -13551,6 +13876,10 @@ no-ssl
   It may also be used as "default-server" setting to reset any previous
   "default-server" "ssl" setting.
 
+  Note that using `default-server ssl` setting and `no-ssl` on server will
+  however init SSL connection, so it can be later be enabled through the
+  runtime API: see `set server` commands in management doc.
+
 no-ssl-reuse
   This option disables SSL session reuse when SSL is used to communicate with
   the server. It will force the server to perform a full handshake for every
@@ -14269,9 +14598,14 @@ replaced by "<CACHE>".
 The cache won't store and won't deliver objects in these cases:
 
 - If the response is not a 200
-- If the response contains a Vary header
+- If the response contains a Vary header and either the process-vary option is
+  disabled, or a currently unmanaged header is specified in the Vary value (only
+  accept-encoding and referer are managed for now)
 - If the Content-Length + the headers size is greater than "max-object-size"
 - If the response is not cacheable
+- If the response does not have an explicit expiration time (s-maxage or max-age
+  Cache-Control directives or Expires header) or a validator (ETag or Last-Modified
+  headers)
 
 - If the request is not a GET
 - If the HTTP version of the request is smaller than 1.1
@@ -14307,6 +14641,13 @@ max-age <seconds>
   Cache-Control response header and this value. The default value is 60
   seconds, which means that you can't cache an object more than 60 seconds by
   default.
+
+process-vary <0 or 1>
+  Disable or enable the processing of the Vary header. When disabled, a response
+  containing such a header will never be cached. When enabled, we need to calculate
+  a preliminary hash for a subset of request headers on all the incoming requests
+  (which might come with a cpu cost) which will be used to build a secondary key
+  for a given request (see RFC 7234#4.1). The default value is 0 (disabled).
 
 
 6.2.2. Proxy section
@@ -15133,6 +15474,52 @@ field(<index>,<delimiters>[,<count>])
       str(f1_f2_f3__f5),field(-2,_,3) # f2_f3_
       str(f1_f2_f3__f5),field(-3,_,0) # f1_f2_f3
 
+fix_is_valid
+  Parses a binary payload and performs sanity checks regarding FIX (Financial
+  Information eXchange):
+
+  - checks that all tag IDs and values are not empty and the tags IDs are well
+    numeric
+  - checks the BeginString tag is the first tag with a valide FIX version
+  - checks the BodyLength tag is the second one with the right body length
+  - checks the MstType tag is the third tag.
+  - checks that last tag in the message is the CheckSum tag with a valid
+    checksum
+
+  Due to current HAProxy design, only the first message sent by the client and
+  the server can be parsed.
+
+  This converter returns a boolean, true if the payload contains a valid FIX
+  message, false if not.
+
+  See also the fix_tag_value converter.
+
+  Example:
+      tcp-request inspect-delay 10s
+      tcp-request content reject unless { req.payload(0,0),fix_is_valid }
+
+fix_tag_value(<tag>)
+  Parses a FIX (Financial Information eXchange) message and extracts the value
+  from the tag <tag>. <tag> can be a string or an integer pointing to the
+  desired tag. Any integer value is accepted, but only the following strings
+  are translated into their integer equivalent: BeginString, BodyLength,
+  MsgType, SenderComID, TargetComID, CheckSum. More tag names can be easily
+  added.
+
+  Due to current HAProxy design, only the first message sent by the client and
+  the server can be parsed. No message validation is performed by this
+  converter. It is highly recommended to validate the message first using
+  fix_is_valid converter.
+
+  See also the fix_is_valid converter.
+
+  Example:
+      tcp-request inspect-delay 10s
+      tcp-request content reject unless { req.payload(0,0),fix_is_valid }
+      # MsgType tag ID is 35, so both lines below will return the same content
+      tcp-request content set-var(txn.foo) req.payload(0,0),fix_tag_value(35)
+      tcp-request content set-var(txn.bar) req.payload(0,0),fix_tag_value(MsgType)
+
 hex
   Converts a binary input sample to a hex string containing two hex digits per
   input byte. It is used to log or transfer hex dumps of some binary input data
@@ -15363,6 +15750,93 @@ mod(<value>)
     "res"  : the variable is shared only during response processing
   This prefix is followed by a name. The separator is a '.'. The name may only
   contain characters 'a-z', 'A-Z', '0-9', '.' and '_'.
+
+mqtt_field_value(<packettype>,<fieldname or property ID>)
+  Returns value of <fieldname> found in input MQTT payload of type
+  <packettype>.
+  <packettype> can be either a string (case insensitive matching) or a numeric
+  value corresponding to the type of packet we're supposed to extract data
+  from.
+  Supported string and integers can be found here:
+  https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718021
+  https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901022
+
+  <fieldname> depends on <packettype> and can be any of the following below.
+  (note that <fieldname> matching is case insensitive).
+  <property id> can only be found in MQTT v5.0 streams. check this table:
+  https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901029
+
+  - CONNECT (or 1): flags, protocol_name, protocol_version, client_identifier,
+                    will_topic, will_payload, username, password, keepalive
+                    OR any property ID as a numeric value (for MQTT v5.0
+                    packets only):
+                       17: Session Expiry Interval
+                       33: Receive Maximum
+                       39: Maximum Packet Size
+                       34: Topic Alias Maximum
+                       25: Request Response Information
+                       23: Request Problem Information
+                       21: Authentication Method
+                       22: Authentication Data
+                       18: Will Delay Interval
+                        1: Payload Format Indicator
+                        2: Message Expiry Interval
+                        3: Content Type
+                        8: Response Topic
+                        9: Correlation Data
+                    Not supported yet:
+                       38: User Property
+
+  - CONNACK (or 2): flags, protocol_version, reason_code
+                    OR any property ID as a numeric value (for MQTT v5.0
+                    packets only):
+                       17: Session Expiry Interval
+                       33: Receive Maximum
+                       36: Maximum QoS
+                       37: Retain Available
+                       39: Maximum Packet Size
+                       18: Assigned Client Identifier
+                       34: Topic Alias Maximum
+                       31: Reason String
+                       40; Wildcard Subscription Available
+                       41: Subscription Identifiers Available
+                       42: Shared Subscription Available
+                       19: Server Keep Alive
+                       26: Response Information
+                       28: Server Reference
+                       21: Authentication Method
+                       22: Authentication Data
+                    Not supported yet:
+                       38: User Property
+
+  Due to current HAProxy design, only the first message sent by the client and
+  the server can be parsed. Thus this converter can extract data only from
+  CONNECT and CONNACK packet types. CONNECT is the first message sent by the
+  client and CONNACK is the first response sent by the server.
+
+  Example:
+
+      acl data_in_buffer req.len ge 4
+      tcp-request content set-var(txn.username) \
+              req.payload(0,0),mqtt_field_value(connect,protocol_name) \
+              if data_in_buffer
+      # do the same as above
+      tcp-request content set-var(txn.username) \
+              req.payload(0,0),mqtt_field_value(1,protocol_name) \
+              if data_in_buffer
+
+mqtt_is_valid
+  Checks that the binary input is a valid MQTT packet. It returns a boolean.
+
+  Due to current HAProxy design, only the first message sent by the client and
+  the server can be parsed. Thus this converter can extract data only from
+  CONNECT and CONNACK packet types. CONNECT is the first message sent by the
+  client and CONNACK is the first response sent by the server.
+
+  Example:
+
+      acl data_in_buffer req.len ge 4
+      tcp-request content reject unless req.payload(0,0),mqtt_is_valid
 
 mul(<value>)
   Multiplies the input value of type signed integer by <value>, and returns
@@ -16381,6 +16855,26 @@ be_name : string
   frontends with responses to check which backend processed the request. It can
   also be used in a tcp-check or an http-check ruleset.
 
+be_server_timeout : integer
+  Returns the configuration value in millisecond for the server timeout of the
+  current backend. This timeout can be overwritten by a "set-timeout" rule. See
+  also the "cur_server_timeout".
+
+be_tunnel_timeout : integer
+  Returns the configuration value in millisecond for the tunnel timeout of the
+  current backend. This timeout can be overwritten by a "set-timeout" rule. See
+  also the "cur_tunnel_timeout".
+
+cur_server_timeout : integer
+  Returns the currently applied server timeout in millisecond for the stream.
+  In the default case, this will be equal to be_server_timeout unless a
+  "set-timeout" rule has been applied. See also "be_server_timeout".
+
+cur_tunnel_timeout : integer
+  Returns the currently applied tunnel timeout in millisecond for the stream.
+  In the default case, this will be equal to be_tunnel_timeout unless a
+  "set-timeout" rule has been applied. See also "be_tunnel_timeout".
+
 dst : ip
   This is the destination IPv4 address of the connection on the client side,
   which is the address the client connected to. It can be useful when running
@@ -16503,6 +16997,10 @@ fe_name : string
   Returns a string containing the current frontend's name. It can be used in
   backends to check from which frontend it was called, or to stick all users
   coming via a same frontend to the same server.
+
+fe_client_timeout : integer
+  Returns the configuration value in millisecond for the client timeout of the
+  current frontend.
 
 sc_bytes_in_rate(<ctr>[,<table>]) : integer
 sc0_bytes_in_rate([<table>]) : integer
@@ -17101,17 +17599,17 @@ ssl_c_ca_err_depth : integer
   verification of the client certificate. If no error is encountered, 0 is
   returned.
 
-ssl_c_der : binary
-  Returns the DER formatted certificate presented by the client when the
-  incoming connection was made over an SSL/TLS transport layer. When used for
-  an ACL, the value(s) to match against can be passed in hexadecimal form.
-
-ssl_c_der_chain : binary
+ssl_c_chain_der : binary
   Returns the DER formatted chain certificate presented by the client when the
   incoming connection was made over an SSL/TLS transport layer. When used for
   an ACL, the value(s) to match against can be passed in hexadecimal form. One
   can parse the result with any lib accepting ASN.1 DER data. It currentlly
   does not support resumed sessions.
+
+ssl_c_der : binary
+  Returns the DER formatted certificate presented by the client when the
+  incoming connection was made over an SSL/TLS transport layer. When used for
+  an ACL, the value(s) to match against can be passed in hexadecimal form.
 
 ssl_c_err : integer
   When the incoming connection was made over an SSL/TLS transport layer,
@@ -17570,25 +18068,6 @@ payload_lv(<offset1>,<length>[,<offset2>]) : binary (deprecated)
   This is an alias for "req.payload_lv" when used in the context of a request
   (e.g. "stick on", "stick match"), and for "res.payload_lv" when used in the
   context of a response such as in "stick store response".
-
-req.hdrs : string
-  Returns the current request headers as string including the last empty line
-  separating headers from the request body. The last empty line can be used to
-  detect a truncated header block. This sample fetch is useful for some SPOE
-  headers analyzers and for advanced logging.
-
-req.hdrs_bin : binary
-  Returns the current request headers contained in preparsed binary form. This
-  is useful for offloading some processing with SPOE. Each string is described
-  by a length followed by the number of bytes indicated in the length. The
-  length is represented using the variable integer encoding detailed in the
-  SPOE documentation. The end of the list is marked by a couple of empty header
-  names and values (length of 0 for both).
-
-  *(<str:header-name><str:header-value>)<empty string><empty string>
-
-  int:  refer to the SPOE documentation for the encoding
-  str:  <int:length><bytes>
 
 req.len : integer
 req_len : integer (deprecated)
@@ -18065,7 +18544,24 @@ hdr_val([<name>[,<occ>]]) : integer (deprecated)
   the first one. Negative values indicate positions relative to the last one,
   with -1 being the last one. A typical use is with the X-Forwarded-For header.
 
+req.hdrs : string
+  Returns the current request headers as string including the last empty line
+  separating headers from the request body. The last empty line can be used to
+  detect a truncated header block. This sample fetch is useful for some SPOE
+  headers analyzers and for advanced logging.
 
+req.hdrs_bin : binary
+  Returns the current request headers contained in preparsed binary form. This
+  is useful for offloading some processing with SPOE. Each string is described
+  by a length followed by the number of bytes indicated in the length. The
+  length is represented using the variable integer encoding detailed in the
+  SPOE documentation. The end of the list is marked by a couple of empty header
+  names and values (length of 0 for both).
+
+  *(<str:header-name><str:header-value>)<empty string><empty string>
+
+  int:  refer to the SPOE documentation for the encoding
+  str:  <int:length><bytes>
 
 http_auth(<userlist>) : boolean
   Returns a boolean indicating whether the authentication data received from
@@ -19213,7 +19709,8 @@ Please refer to the table below for currently defined variables :
   | H | %CS  | captured_response_cookie                      | string      |
   |   | %H   | hostname                                      | string      |
   | H | %HM  | HTTP method (ex: POST)                        | string      |
-  | H | %HP  | HTTP request URI without query string (path)  | string      |
+  | H | %HP  | HTTP request URI without query string         | string      |
+  | H | %HPO | HTTP path only (without host nor query string)| string      |
   | H | %HQ  | HTTP request URI query string (ex: ?bar=baz)  | string      |
   | H | %HU  | HTTP request URI (ex: /foo?bar=baz)           | string      |
   | H | %HV  | HTTP version (ex: HTTP/1.0)                   | string      |
@@ -20133,16 +20630,13 @@ See also : "filter"
 9.1. Trace
 ----------
 
-filter trace [name <name>] [random-parsing] [random-forwarding] [hexdump]
+filter trace [name <name>] [random-forwarding] [hexdump]
 
   Arguments:
     <name>               is an arbitrary name that will be reported in
                          messages. If no name is provided, "TRACE" is used.
 
-    <random-parsing>     enables the random parsing of data exchanged between
-                         the client and the server. By default, this filter
-                         parses all available data. With this parameter, it
-                         only parses a random amount of the available data.
+    <quiet>              inhibits trace messages.
 
     <random-forwarding>  enables the random forwarding of parsed data. By
                          default, this filter forwards all previously parsed

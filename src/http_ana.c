@@ -95,6 +95,8 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 
 	htx = htxbuf(&req->buf);
 
+	BUG_ON(htx_is_empty(htx) || htx->first == -1);
+
 	/* Parsing errors are caught here */
 	if (htx->flags & (HTX_FL_PARSING_ERROR|HTX_FL_PROCESSING_ERROR)) {
 		stream_inc_http_req_ctr(s);
@@ -109,173 +111,11 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 	/* we're speaking HTTP here, so let's speak HTTP to the client */
 	s->srv_error = http_return_srv_error;
 
-	/* If there is data available for analysis, log the end of the idle time. */
-	if (c_data(req) && s->logs.t_idle == -1) {
-		const struct cs_info *csinfo = si_get_cs_info(objt_cs(s->si[0].end));
-
-		s->logs.t_idle = ((csinfo)
-				  ? csinfo->t_idle
-				  : tv_ms_elapsed(&s->logs.tv_accept, &now) - s->logs.t_handshake);
-	}
-
-	/*
-	 * Now we quickly check if we have found a full valid request.
-	 * If not so, we check the FD and buffer states before leaving.
-	 * A full request is indicated by the fact that we have seen
-	 * the double LF/CRLF, so the state is >= HTTP_MSG_BODY. Invalid
-	 * requests are checked first. When waiting for a second request
-	 * on a keep-alive stream, if we encounter and error, close, t/o,
-	 * we note the error in the stream flags but don't set any state.
-	 * Since the error will be noted there, it will not be counted by
-	 * process_stream() as a frontend error.
-	 * Last, we may increase some tracked counters' http request errors on
-	 * the cases that are deliberately the client's fault. For instance,
-	 * a timeout or connection reset is not counted as an error. However
-	 * a bad request is.
-	 */
-	if (unlikely(htx_is_empty(htx) || htx->first == -1)) {
-		if (htx->flags & HTX_FL_UPGRADE)
-			goto failed_keep_alive;
-
-		/* 1: have we encountered a read error ? */
-		if (req->flags & CF_READ_ERROR) {
-			if (!(s->flags & SF_ERR_MASK))
-				s->flags |= SF_ERR_CLICL;
-
-			if (txn->flags & TX_WAIT_NEXT_RQ)
-				goto failed_keep_alive;
-
-			if (sess->fe->options & PR_O_IGNORE_PRB)
-				goto failed_keep_alive;
-
-			stream_inc_http_err_ctr(s);
-			stream_inc_http_req_ctr(s);
-			proxy_inc_fe_req_ctr(sess->listener, sess->fe);
-			_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
-			if (sess->listener->counters)
-				_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
-
-			txn->status = 400;
-			http_reply_and_close(s, txn->status, NULL);
-			req->analysers &= AN_REQ_FLT_END;
-
-			if (!(s->flags & SF_FINST_MASK))
-				s->flags |= SF_FINST_R;
-			return 0;
-		}
-
-		/* 2: has the read timeout expired ? */
-		else if (req->flags & CF_READ_TIMEOUT || tick_is_expired(req->analyse_exp, now_ms)) {
-			if (!(s->flags & SF_ERR_MASK))
-				s->flags |= SF_ERR_CLITO;
-
-			if (txn->flags & TX_WAIT_NEXT_RQ)
-				goto failed_keep_alive;
-
-			if (sess->fe->options & PR_O_IGNORE_PRB)
-				goto failed_keep_alive;
-
-			stream_inc_http_err_ctr(s);
-			stream_inc_http_req_ctr(s);
-			proxy_inc_fe_req_ctr(sess->listener, sess->fe);
-			_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
-			if (sess->listener->counters)
-				_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
-
-			txn->status = 408;
-			http_reply_and_close(s, txn->status, http_error_message(s));
-			req->analysers &= AN_REQ_FLT_END;
-
-			if (!(s->flags & SF_FINST_MASK))
-				s->flags |= SF_FINST_R;
-			return 0;
-		}
-
-		/* 3: have we encountered a close ? */
-		else if (req->flags & CF_SHUTR) {
-			if (!(s->flags & SF_ERR_MASK))
-				s->flags |= SF_ERR_CLICL;
-
-			if (txn->flags & TX_WAIT_NEXT_RQ)
-				goto failed_keep_alive;
-
-			if (sess->fe->options & PR_O_IGNORE_PRB)
-				goto failed_keep_alive;
-
-			stream_inc_http_err_ctr(s);
-			stream_inc_http_req_ctr(s);
-			proxy_inc_fe_req_ctr(sess->listener, sess->fe);
-			_HA_ATOMIC_ADD(&sess->fe->fe_counters.failed_req, 1);
-			if (sess->listener->counters)
-				_HA_ATOMIC_ADD(&sess->listener->counters->failed_req, 1);
-
-			txn->status = 400;
-			http_reply_and_close(s, txn->status, http_error_message(s));
-			req->analysers &= AN_REQ_FLT_END;
-
-			if (!(s->flags & SF_FINST_MASK))
-				s->flags |= SF_FINST_R;
-			return 0;
-		}
-
-		channel_dont_connect(req);
-		req->flags |= CF_READ_DONTWAIT; /* try to get back here ASAP */
-		s->res.flags &= ~CF_EXPECT_MORE; /* speed up sending a previous response */
-
-		if (sess->listener->options & LI_O_NOQUICKACK && htx_is_not_empty(htx) &&
-		    objt_conn(sess->origin) && conn_ctrl_ready(__objt_conn(sess->origin))) {
-			/* We need more data, we have to re-enable quick-ack in case we
-			 * previously disabled it, otherwise we might cause the client
-			 * to delay next data.
-			 */
-			conn_set_quickack(objt_conn(sess->origin), 1);
-		}
-
-		if ((req->flags & CF_READ_PARTIAL) && (txn->flags & TX_WAIT_NEXT_RQ)) {
-			/* If the client starts to talk, let's fall back to
-			 * request timeout processing.
-			 */
-			txn->flags &= ~TX_WAIT_NEXT_RQ;
-			req->analyse_exp = TICK_ETERNITY;
-		}
-
-		/* just set the request timeout once at the beginning of the request */
-		if (!tick_isset(req->analyse_exp)) {
-			if ((txn->flags & TX_WAIT_NEXT_RQ) && tick_isset(s->be->timeout.httpka))
-				req->analyse_exp = tick_add(now_ms, s->be->timeout.httpka);
-			else
-				req->analyse_exp = tick_add_ifset(now_ms, s->be->timeout.httpreq);
-		}
-
-		/* we're not ready yet */
-		DBG_TRACE_DEVEL("waiting for the request",
-				STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn);
-		return 0;
-
-	failed_keep_alive:
-		/* Here we process low-level errors for keep-alive requests. In
-		 * short, if the request is not the first one and it experiences
-		 * a timeout, read error or shutdown, we just silently close so
-		 * that the client can try again.
-		 */
-		txn->status = 0;
-		msg->msg_state = HTTP_MSG_RQBEFORE;
-		req->analysers &= AN_REQ_FLT_END;
-		s->logs.logwait = 0;
-		s->logs.level = 0;
-		s->res.flags &= ~CF_EXPECT_MORE; /* speed up sending a previous response */
-		http_reply_and_close(s, txn->status, NULL);
-		DBG_TRACE_DEVEL("leaving by closing K/A connection",
-				STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn);
-		return 0;
-	}
-
 	msg->msg_state = HTTP_MSG_BODY;
 	stream_inc_http_req_ctr(s);
 	proxy_inc_fe_req_ctr(sess->listener, sess->fe); /* one more valid request for this FE */
 
 	/* kill the pending keep-alive timeout */
-	txn->flags &= ~TX_WAIT_NEXT_RQ;
 	req->analyse_exp = TICK_ETERNITY;
 
 	BUG_ON(htx_get_first_type(htx) != HTX_BLK_REQ_SL);
@@ -310,7 +150,10 @@ int http_wait_for_request(struct stream *s, struct channel *req, int an_bit)
 	if (sl->flags & HTX_SL_F_VER_11)
                 msg->flags |= HTTP_MSGF_VER_11;
 	msg->flags |= HTTP_MSGF_XFER_LEN;
-	msg->flags |= ((sl->flags & HTX_SL_F_CLEN) ? HTTP_MSGF_CNT_LEN : HTTP_MSGF_TE_CHNK);
+	if (sl->flags & HTX_SL_F_CLEN)
+		msg->flags |= HTTP_MSGF_CNT_LEN;
+	else if (sl->flags & HTX_SL_F_CHNK)
+		msg->flags |= HTTP_MSGF_TE_CHNK;
 	if (sl->flags & HTX_SL_F_BODYLESS)
 		msg->flags |= HTTP_MSGF_BODYLESS;
 
@@ -482,11 +325,6 @@ int http_process_req_common(struct stream *s, struct channel *req, int an_bit, s
 	struct redirect_rule *rule;
 	enum rule_result verdict;
 	struct connection *conn = objt_conn(sess->origin);
-
-	if (unlikely(msg->msg_state < HTTP_MSG_BODY)) {
-		/* we need more data */
-		goto return_prx_yield;
-	}
 
 	DBG_TRACE_ENTER(STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn, msg);
 
@@ -732,17 +570,10 @@ int http_process_request(struct stream *s, struct channel *req, int an_bit)
 {
 	struct session *sess = s->sess;
 	struct http_txn *txn = s->txn;
-	struct http_msg *msg = &txn->req;
 	struct htx *htx;
 	struct connection *cli_conn = objt_conn(strm_sess(s)->origin);
 
-	if (unlikely(msg->msg_state < HTTP_MSG_BODY)) {
-		/* we need more data */
-		channel_dont_connect(req);
-		return 0;
-	}
-
-	DBG_TRACE_ENTER(STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn, msg);
+	DBG_TRACE_ENTER(STRM_EV_STRM_ANA|STRM_EV_HTTP_ANA, s, txn);
 
 	/*
 	 * Right now, we know that we have processed the entire headers
@@ -1050,8 +881,9 @@ int http_wait_for_request_body(struct stream *s, struct channel *req, int an_bit
 	if (htx->flags & HTX_FL_PROCESSING_ERROR)
 		goto return_int_err;
 
-	if (msg->msg_state < HTTP_MSG_BODY)
-		goto missing_data;
+	/* Do nothing for bodyless and CONNECT requests */
+	if (txn->meth == HTTP_METH_CONNECT || (msg->flags & HTTP_MSGF_BODYLESS))
+		goto http_end;
 
 	/* We have to parse the HTTP request body to find any required data.
 	 * "balance url_param check_post" should have been the only way to get
@@ -1073,7 +905,6 @@ int http_wait_for_request_body(struct stream *s, struct channel *req, int an_bit
 	    channel_htx_full(req, htx, global.tune.maxrewrite))
 		goto http_end;
 
- missing_data:
 	if ((req->flags & CF_READ_TIMEOUT) || tick_is_expired(req->analyse_exp, now_ms)) {
 		txn->status = 408;
 		if (!(s->flags & SF_ERR_MASK))
@@ -1715,10 +1546,13 @@ int http_wait_for_response(struct stream *s, struct channel *rep, int an_bit)
                 msg->flags |= HTTP_MSGF_VER_11;
 	if (sl->flags & HTX_SL_F_XFER_LEN) {
 		msg->flags |= HTTP_MSGF_XFER_LEN;
-		msg->flags |= ((sl->flags & HTX_SL_F_CLEN) ? HTTP_MSGF_CNT_LEN : HTTP_MSGF_TE_CHNK);
-		if (sl->flags & HTX_SL_F_BODYLESS)
-			msg->flags |= HTTP_MSGF_BODYLESS;
+		if (sl->flags & HTX_SL_F_CLEN)
+			msg->flags |= HTTP_MSGF_CNT_LEN;
+		else if (sl->flags & HTX_SL_F_CHNK)
+			msg->flags |= HTTP_MSGF_TE_CHNK;
 	}
+	if (sl->flags & HTX_SL_F_BODYLESS)
+		msg->flags |= HTTP_MSGF_BODYLESS;
 
 	n = txn->status / 100;
 	if (n < 1 || n > 5)
@@ -2840,13 +2674,9 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 {
 	struct session *sess = strm_sess(s);
 	struct http_txn *txn = s->txn;
-	struct htx *htx;
 	struct act_rule *rule;
-	struct http_hdr_ctx ctx;
 	enum rule_result rule_ret = HTTP_RULE_RES_CONT;
 	int act_opts = 0;
-
-	htx = htxbuf(&s->req.buf);
 
 	/* If "the current_rule_list" match the executed rule list, we are in
 	 * resume condition. If a resume is needed it is always in the action
@@ -2960,13 +2790,6 @@ static enum rule_result http_req_get_intercept_rule(struct proxy *px, struct lis
 				s->logs.level = rule->arg.http.i;
 				break;
 
-			case ACT_HTTP_DEL_HDR:
-				/* remove all occurrences of the header */
-				ctx.blk = NULL;
-				while (http_find_header(htx, rule->arg.http.str, &ctx, 1))
-					http_remove_header(htx, &ctx);
-				break;
-
 			/* other flags exists, but normally, they never be matched. */
 			default:
 				break;
@@ -2996,13 +2819,9 @@ static enum rule_result http_res_get_intercept_rule(struct proxy *px, struct lis
 {
 	struct session *sess = strm_sess(s);
 	struct http_txn *txn = s->txn;
-	struct htx *htx;
 	struct act_rule *rule;
-	struct http_hdr_ctx ctx;
 	enum rule_result rule_ret = HTTP_RULE_RES_CONT;
 	int act_opts = 0;
-
-	htx = htxbuf(&s->res.buf);
 
 	/* If "the current_rule_list" match the executed rule list, we are in
 	 * resume condition. If a resume is needed it is always in the action
@@ -3102,13 +2921,6 @@ resume_execution:
 
 			case ACT_HTTP_SET_LOGL:
 				s->logs.level = rule->arg.http.i;
-				break;
-
-			case ACT_HTTP_DEL_HDR:
-				/* remove all occurrences of the header */
-				ctx.blk = NULL;
-				while (http_find_header(htx, rule->arg.http.str, &ctx, 1))
-					http_remove_header(htx, &ctx);
 				break;
 
 			case ACT_HTTP_REDIR:
@@ -3918,6 +3730,8 @@ void http_check_response_for_cacheability(struct stream *s, struct channel *res)
 	struct http_txn *txn = s->txn;
 	struct http_hdr_ctx ctx = { .blk = NULL };
 	struct htx *htx;
+	int has_freshness_info = 0;
+	int has_validator = 0;
 
 	if (txn->status < 200) {
 		/* do not try to cache interim responses! */
@@ -3955,7 +3769,37 @@ void http_check_response_for_cacheability(struct stream *s, struct channel *res)
 			txn->flags &= ~TX_CACHE_COOK;
 			continue;
 		}
+
+		if (istmatchi(ctx.value, ist("s-maxage")) ||
+		    istmatchi(ctx.value, ist("max-age"))) {
+			has_freshness_info = 1;
+			continue;
+		}
 	}
+
+	/* If no freshness information could be found in Cache-Control values,
+	 * look for an Expires header. */
+	if (!has_freshness_info) {
+		ctx.blk = NULL;
+		has_freshness_info = http_find_header(htx, ist("expires"), &ctx, 0);
+	}
+
+	/* If no freshness information could be found in Cache-Control or Expires
+	 * values, look for an explicit validator. */
+	if (!has_freshness_info) {
+		ctx.blk = NULL;
+		has_validator = 1;
+		if (!http_find_header(htx, ist("etag"), &ctx, 0)) {
+			ctx.blk = NULL;
+			if (!http_find_header(htx, ist("last-modified"), &ctx, 0))
+				has_validator = 0;
+		}
+	}
+
+	/* We won't store an entry that has neither a cache validator nor an
+	 * explicit expiration time, as suggested in RFC 7234#3. */
+	if (!has_freshness_info && !has_validator)
+		txn->flags |= TX_CACHE_IGNORE;
 }
 
 /*
@@ -4526,7 +4370,7 @@ int http_forward_proxy_resp(struct stream *s, int final)
 	if (final) {
 		htx->flags |= HTX_FL_PROXY_RESP;
 
-		if (!http_eval_after_res_rules(s))
+		if (!htx_is_empty(htx) && !http_eval_after_res_rules(s))
 			return 0;
 
 		if (s->txn->meth == HTTP_METH_HEAD)
@@ -4592,7 +4436,6 @@ void http_reply_and_close(struct stream *s, short status, struct http_reply *msg
 
 end:
 	s->res.wex = tick_add_ifset(now_ms, s->res.wto);
-	s->txn->flags &= ~TX_WAIT_NEXT_RQ;
 
 	channel_auto_read(&s->req);
 	channel_abort(&s->req);
@@ -5090,9 +4933,7 @@ void http_init_txn(struct stream *s)
 	struct http_txn *txn = s->txn;
 	struct conn_stream *cs = objt_cs(s->si[0].end);
 
-	txn->flags = ((cs && cs->flags & CS_FL_NOT_FIRST)
-		      ? (TX_NOT_FIRST|TX_WAIT_NEXT_RQ)
-		      : 0);
+	txn->flags = ((cs && cs->flags & CS_FL_NOT_FIRST) ? TX_NOT_FIRST : 0);
 	txn->status = -1;
 	txn->http_reply = NULL;
 	write_u32(txn->cache_hash, 0);

@@ -165,7 +165,6 @@ struct global global = {
 		.options = GTUNE_LISTENER_MQ,
 		.bufsize = (BUFSIZE + 2*sizeof(void *) - 1) & -(2*sizeof(void *)),
 		.maxrewrite = MAXREWRITE,
-		.chksize = (BUFSIZE + 2*sizeof(void *) - 1) & -(2*sizeof(void *)),
 		.reserved_bufs = RESERVED_BUFS,
 		.pattern_cache = DEFAULT_PAT_LRU_SIZE,
 		.pool_low_ratio  = 20,
@@ -393,7 +392,7 @@ struct server_deinit_fct {
 struct list per_thread_free_list = LIST_HEAD_INIT(per_thread_free_list);
 struct per_thread_free_fct {
 	struct list list;
-	int (*fct)();
+	void (*fct)();
 };
 
 /* These functions are called for each thread just after the scheduler loop and
@@ -565,7 +564,7 @@ void hap_register_per_thread_deinit(void (*fct)())
 }
 
 /* used to register some free functions to call for each thread. */
-void hap_register_per_thread_free(int (*fct)())
+void hap_register_per_thread_free(void (*fct)())
 {
 	struct per_thread_free_fct *b;
 
@@ -631,6 +630,9 @@ static void display_build_opts()
 #endif
 #ifdef BUILD_OPTIONS
 	       "\n  OPTIONS = " BUILD_OPTIONS
+#endif
+#ifdef BUILD_DEBUG
+	       "\n  DEBUG   = " BUILD_DEBUG
 #endif
 #ifdef BUILD_FEATURES
 	       "\n\nFeature list : " BUILD_FEATURES
@@ -826,7 +828,7 @@ void mworker_reload()
 		if (fdtab)
 			deinit_pollers();
 	}
-#if defined(USE_OPENSSL) && (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+#if defined(USE_OPENSSL) && (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(OPENSSL_IS_BORINGSSL)
 	/* close random device FDs */
 	RAND_keep_random_devices_open(0);
 #endif
@@ -3474,7 +3476,7 @@ int main(int argc, char **argv)
 			}
 			ret = cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, -1, sizeof(cpuset), &cpuset);
 		}
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__DragonFly__)
 			sched_setaffinity(0, sizeof(unsigned long), (void *)&global.cpu_map.proc[proc]);
 #endif
 #endif

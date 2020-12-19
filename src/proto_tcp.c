@@ -49,65 +49,87 @@ static int tcp_suspend_receiver(struct receiver *rx);
 static int tcp_resume_receiver(struct receiver *rx);
 static void tcp_enable_listener(struct listener *listener);
 static void tcp_disable_listener(struct listener *listener);
-static void tcpv4_add_listener(struct listener *listener, int port);
-static void tcpv6_add_listener(struct listener *listener, int port);
 
 /* Note: must not be declared <const> as its list will be overwritten */
-static struct protocol proto_tcpv4 = {
-	.name = "tcpv4",
-	.fam = &proto_fam_inet4,
-	.ctrl_type = SOCK_STREAM,
-	.sock_domain = AF_INET,
-	.sock_type = SOCK_STREAM,
-	.sock_prot = IPPROTO_TCP,
-	.add = tcpv4_add_listener,
-	.listen = tcp_bind_listener,
-	.enable = tcp_enable_listener,
-	.disable = tcp_disable_listener,
-	.unbind = default_unbind_listener,
-	.suspend = default_suspend_listener,
-	.resume  = default_resume_listener,
-	.accept_conn = sock_accept_conn,
-	.rx_enable = sock_enable,
-	.rx_disable = sock_disable,
-	.rx_unbind = sock_unbind,
-	.rx_suspend = tcp_suspend_receiver,
-	.rx_resume = tcp_resume_receiver,
-	.rx_listening = sock_accepting_conn,
-	.default_iocb = &sock_accept_iocb,
-	.connect = tcp_connect_server,
-	.receivers = LIST_HEAD_INIT(proto_tcpv4.receivers),
-	.nb_receivers = 0,
+struct protocol proto_tcpv4 = {
+	.name           = "tcpv4",
+
+	/* connection layer */
+	.ctrl_type      = SOCK_STREAM,
+	.listen         = tcp_bind_listener,
+	.enable         = tcp_enable_listener,
+	.disable        = tcp_disable_listener,
+	.add            = default_add_listener,
+	.unbind         = default_unbind_listener,
+	.suspend        = default_suspend_listener,
+	.resume         = default_resume_listener,
+	.accept_conn    = sock_accept_conn,
+	.ctrl_init      = sock_conn_ctrl_init,
+	.ctrl_close     = sock_conn_ctrl_close,
+	.connect        = tcp_connect_server,
+	.drain          = sock_drain,
+	.check_events   = sock_check_events,
+	.ignore_events  = sock_ignore_events,
+
+	/* binding layer */
+	.rx_suspend     = tcp_suspend_receiver,
+	.rx_resume      = tcp_resume_receiver,
+
+	/* address family */
+	.fam            = &proto_fam_inet4,
+
+	/* socket layer */
+	.sock_type      = SOCK_STREAM,
+	.sock_prot      = IPPROTO_TCP,
+	.rx_enable      = sock_enable,
+	.rx_disable     = sock_disable,
+	.rx_unbind      = sock_unbind,
+	.rx_listening   = sock_accepting_conn,
+	.default_iocb   = sock_accept_iocb,
+	.receivers      = LIST_HEAD_INIT(proto_tcpv4.receivers),
+	.nb_receivers   = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv4);
 
 /* Note: must not be declared <const> as its list will be overwritten */
-static struct protocol proto_tcpv6 = {
-	.name = "tcpv6",
-	.fam = &proto_fam_inet6,
-	.ctrl_type = SOCK_STREAM,
-	.sock_domain = AF_INET6,
-	.sock_type = SOCK_STREAM,
-	.sock_prot = IPPROTO_TCP,
-	.add = tcpv6_add_listener,
-	.listen = tcp_bind_listener,
-	.enable = tcp_enable_listener,
-	.disable = tcp_disable_listener,
-	.unbind = default_unbind_listener,
-	.suspend = default_suspend_listener,
-	.resume  = default_resume_listener,
-	.accept_conn = sock_accept_conn,
-	.rx_enable = sock_enable,
-	.rx_disable = sock_disable,
-	.rx_unbind = sock_unbind,
-	.rx_suspend = tcp_suspend_receiver,
-	.rx_resume = tcp_resume_receiver,
-	.rx_listening = sock_accepting_conn,
-	.default_iocb = &sock_accept_iocb,
-	.connect = tcp_connect_server,
-	.receivers = LIST_HEAD_INIT(proto_tcpv6.receivers),
-	.nb_receivers = 0,
+struct protocol proto_tcpv6 = {
+	.name           = "tcpv6",
+
+	/* connection layer */
+	.ctrl_type      = SOCK_STREAM,
+	.listen         = tcp_bind_listener,
+	.enable         = tcp_enable_listener,
+	.disable        = tcp_disable_listener,
+	.add            = default_add_listener,
+	.unbind         = default_unbind_listener,
+	.suspend        = default_suspend_listener,
+	.resume         = default_resume_listener,
+	.accept_conn    = sock_accept_conn,
+	.ctrl_init      = sock_conn_ctrl_init,
+	.ctrl_close     = sock_conn_ctrl_close,
+	.connect        = tcp_connect_server,
+	.drain          = sock_drain,
+	.check_events   = sock_check_events,
+	.ignore_events  = sock_ignore_events,
+
+	/* binding layer */
+	.rx_suspend     = tcp_suspend_receiver,
+	.rx_resume      = tcp_resume_receiver,
+
+	/* address family */
+	.fam            = &proto_fam_inet6,
+
+	/* socket layer */
+	.sock_type      = SOCK_STREAM,
+	.sock_prot      = IPPROTO_TCP,
+	.rx_enable      = sock_enable,
+	.rx_disable     = sock_disable,
+	.rx_unbind      = sock_unbind,
+	.rx_listening   = sock_accepting_conn,
+	.default_iocb   = sock_accept_iocb,
+	.receivers      = LIST_HEAD_INIT(proto_tcpv6.receivers),
+	.nb_receivers   = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_tcpv6);
@@ -710,42 +732,6 @@ int tcp_bind_listener(struct listener *listener, char *errmsg, int errlen)
 		snprintf(errmsg, errlen, "%s [%s:%d]", msg, pn, get_host_port(&listener->rx.addr));
 	}
 	return err;
-}
-
-/* Add <listener> to the list of tcpv4 listeners, on port <port>. The
- * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
- * The number of listeners for the protocol is updated.
- *
- * Must be called with proto_lock held.
- *
- */
-static void tcpv4_add_listener(struct listener *listener, int port)
-{
-	if (listener->state != LI_INIT)
-		return;
-	listener_set_state(listener, LI_ASSIGNED);
-	listener->rx.proto = &proto_tcpv4;
-	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_tcpv4.receivers, &listener->rx.proto_list);
-	proto_tcpv4.nb_receivers++;
-}
-
-/* Add <listener> to the list of tcpv6 listeners, on port <port>. The
- * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
- * The number of listeners for the protocol is updated.
- *
- * Must be called with proto_lock held.
- *
- */
-static void tcpv6_add_listener(struct listener *listener, int port)
-{
-	if (listener->state != LI_INIT)
-		return;
-	listener_set_state(listener, LI_ASSIGNED);
-	listener->rx.proto = &proto_tcpv6;
-	((struct sockaddr_in *)(&listener->rx.addr))->sin_port = htons(port);
-	LIST_ADDQ(&proto_tcpv6.receivers, &listener->rx.proto_list);
-	proto_tcpv6.nb_receivers++;
 }
 
 /* Enable receipt of incoming connections for listener <l>. The receiver must

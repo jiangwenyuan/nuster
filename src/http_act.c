@@ -1438,20 +1438,67 @@ static enum act_parse_ret parse_http_replace_header(const char **args, int *orig
 	return ACT_RET_PRS_OK;
 }
 
-/* Parse a "del-header" action. It takes an header name as argument. It returns
- * ACT_RET_PRS_OK on success, ACT_RET_PRS_ERR on error.
+/* This function executes a del-header action with selected matching mode for
+ * header name. It finds the matching method to be performed in <.action>, previously
+ * filled by function parse_http_del_header(). On success, it returns ACT_RET_CONT.
+ * Otherwise ACT_RET_ERR is returned.
+ */
+static enum act_return http_action_del_header(struct act_rule *rule, struct proxy *px,
+						  struct session *sess, struct stream *s, int flags)
+{
+	struct http_hdr_ctx ctx;
+	struct http_msg *msg = ((rule->from == ACT_F_HTTP_REQ) ? &s->txn->req : &s->txn->rsp);
+	struct htx *htx = htxbuf(&msg->chn->buf);
+	enum act_return ret = ACT_RET_CONT;
+
+	/* remove all occurrences of the header */
+	ctx.blk = NULL;
+	switch (rule->action) {
+	case PAT_MATCH_STR:
+		while (http_find_header(htx, rule->arg.http.str, &ctx, 1))
+			http_remove_header(htx, &ctx);
+		break;
+	case PAT_MATCH_BEG:
+		while (http_find_pfx_header(htx, rule->arg.http.str, &ctx, 1))
+			http_remove_header(htx, &ctx);
+		break;
+	case PAT_MATCH_END:
+		while (http_find_sfx_header(htx, rule->arg.http.str, &ctx, 1))
+			http_remove_header(htx, &ctx);
+		break;
+	case PAT_MATCH_SUB:
+		while (http_find_sub_header(htx, rule->arg.http.str, &ctx, 1))
+			http_remove_header(htx, &ctx);
+		break;
+	case PAT_MATCH_REG:
+		while (http_match_header(htx, rule->arg.http.re, &ctx, 1))
+			http_remove_header(htx, &ctx);
+		break;
+	default:
+		return ACT_RET_ERR;
+	}
+	return ret;
+}
+
+/* Parse a "del-header" action. It takes string as a required argument,
+ * optional flag (currently only -m) and optional matching method of input string
+ * with header name to be deleted. Default matching method is exact match (-m str).
+ * It returns ACT_RET_PRS_OK on success, ACT_RET_PRS_ERR on error.
  */
 static enum act_parse_ret parse_http_del_header(const char **args, int *orig_arg, struct proxy *px,
 						struct act_rule *rule, char **err)
 {
 	int cur_arg;
+	int pat_idx;
 
-	rule->action = ACT_HTTP_DEL_HDR;
+	/* set exact matching (-m str) as default */
+	rule->action = PAT_MATCH_STR;
+	rule->action_ptr = http_action_del_header;
 	rule->release_ptr = release_http_action;
 
 	cur_arg = *orig_arg;
 	if (!*args[cur_arg]) {
-		memprintf(err, "expects exactly 1 arguments");
+		memprintf(err, "expects at least 1 argument");
 		return ACT_RET_PRS_ERR;
 	}
 
@@ -1460,6 +1507,32 @@ static enum act_parse_ret parse_http_del_header(const char **args, int *orig_arg
 	px->conf.args.ctx = (rule->from == ACT_F_HTTP_REQ ? ARGC_HRQ : ARGC_HRS);
 
 	LIST_INIT(&rule->arg.http.fmt);
+	if (strcmp(args[cur_arg+1], "-m") == 0) {
+		cur_arg++;
+		if (!*args[cur_arg+1]) {
+			memprintf(err, "-m flag expects exactly 1 argument");
+			return ACT_RET_PRS_ERR;
+		}
+
+		cur_arg++;
+		pat_idx = pat_find_match_name(args[cur_arg]);
+		switch (pat_idx) {
+		case PAT_MATCH_REG:
+			if (!(rule->arg.http.re = regex_comp(rule->arg.http.str.ptr, 1, 1, err)))
+				return ACT_RET_PRS_ERR;
+			/* fall through */
+		case PAT_MATCH_STR:
+		case PAT_MATCH_BEG:
+		case PAT_MATCH_END:
+		case PAT_MATCH_SUB:
+			rule->action = pat_idx;
+			break;
+		default:
+			memprintf(err, "-m with unsupported matching method '%s'", args[cur_arg]);
+			return ACT_RET_PRS_ERR;
+		}
+	}
+
 	*orig_arg = cur_arg + 1;
 	return ACT_RET_PRS_OK;
 }
@@ -1828,6 +1901,67 @@ static enum act_parse_ret parse_http_track_sc(const char **args, int *orig_arg, 
 	return ACT_RET_PRS_OK;
 }
 
+static enum act_return action_timeout_set_stream_timeout(struct act_rule *rule,
+                                                         struct proxy *px,
+                                                         struct session *sess,
+                                                         struct stream *s,
+                                                         int flags)
+{
+	struct sample *key;
+
+	if (rule->arg.timeout.expr) {
+		key = sample_fetch_as_type(px, sess, s, SMP_OPT_FINAL, rule->arg.timeout.expr, SMP_T_SINT);
+		if (!key)
+			return ACT_RET_CONT;
+
+		stream_set_timeout(s, rule->arg.timeout.type, MS_TO_TICKS(key->data.u.sint));
+	}
+	else {
+		stream_set_timeout(s, rule->arg.timeout.type, MS_TO_TICKS(rule->arg.timeout.value));
+	}
+
+	return ACT_RET_CONT;
+}
+
+/* Parse a "set-timeout" action. Returns ACT_RET_PRS_ERR if parsing error.
+ */
+static enum act_parse_ret parse_http_set_timeout(const char **args,
+                                                 int *orig_arg,
+                                                 struct proxy *px,
+                                                 struct act_rule *rule, char **err)
+{
+	int cur_arg;
+
+	rule->action = ACT_CUSTOM;
+	rule->action_ptr = action_timeout_set_stream_timeout;
+	rule->release_ptr = release_timeout_action;
+
+	cur_arg = *orig_arg;
+	if (!*args[cur_arg] || !*args[cur_arg + 1]) {
+		memprintf(err, "expects exactly 2 arguments");
+		return ACT_RET_PRS_ERR;
+	}
+
+	if (!(px->cap & PR_CAP_BE)) {
+		memprintf(err, "proxy '%s' has no backend capability", px->id);
+		return ACT_RET_PRS_ERR;
+	}
+
+	if (cfg_parse_rule_set_timeout(args, cur_arg,
+	                               &rule->arg.timeout.value,
+	                               &rule->arg.timeout.type,
+	                               &rule->arg.timeout.expr,
+	                               err,
+	                               px->conf.args.file,
+	                               px->conf.args.line, &px->conf.args) == -1) {
+		return ACT_RET_PRS_ERR;
+	}
+
+	*orig_arg = cur_arg + 2;
+
+	return ACT_RET_PRS_OK;
+}
+
 /* This function executes a strict-mode actions. On success, it always returns
  * ACT_RET_CONT
  */
@@ -1961,6 +2095,7 @@ static struct action_kw_list http_req_actions = {
 		{ "strict-mode",      parse_http_strict_mode,          0 },
 		{ "tarpit",           parse_http_deny,                 0 },
 		{ "track-sc",         parse_http_track_sc,             1 },
+		{ "set-timeout",      parse_http_set_timeout,          0 },
 		{ NULL, NULL }
 	}
 };

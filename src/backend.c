@@ -1207,7 +1207,7 @@ static struct connection *conn_backend_get(struct stream *s, struct server *srv,
 			/* attach the connection to the session private list
 			 */
 			conn->owner = s->sess;
-			session_add_conn(conn->owner, conn, conn->target);
+			session_add_conn(s->sess, conn, conn->target);
 		}
 		else {
 			LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&conn->list));
@@ -1563,7 +1563,7 @@ int connect_server(struct stream *s)
 		         ((s->be->options & PR_O_REUSE_MASK) == PR_O_REUSE_SAFE &&
 		          srv_conn->mux->flags & MX_FL_HOL_RISK)) {
 			/* If it fail now, the same will be done in mux->detach() callback */
-			session_add_conn(srv_conn->owner, srv_conn, srv_conn->target);
+			session_add_conn(s->sess, srv_conn, srv_conn->target);
 		}
 	}
 
@@ -2919,6 +2919,42 @@ smp_fetch_srv_uweight(const struct arg *args, struct sample *smp, const char *kw
 	return 1;
 }
 
+static int
+smp_fetch_be_server_timeout(const struct arg *args, struct sample *smp, const char *km, void *private)
+{
+	struct proxy *px = NULL;
+
+	if (smp->strm)
+		px = smp->strm->be;
+	else if (obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		px = __objt_check(smp->sess->origin)->proxy;
+	if (!px)
+		return 0;
+
+	smp->flags = SMP_F_VOL_TXN;
+	smp->data.type = SMP_T_SINT;
+	smp->data.u.sint = TICKS_TO_MS(px->timeout.server);
+	return 1;
+}
+
+static int
+smp_fetch_be_tunnel_timeout(const struct arg *args, struct sample *smp, const char *km, void *private)
+{
+	struct proxy *px = NULL;
+
+	if (smp->strm)
+		px = smp->strm->be;
+	else if (obj_type(smp->sess->origin) == OBJ_TYPE_CHECK)
+		px = __objt_check(smp->sess->origin)->proxy;
+	if (!px)
+		return 0;
+
+	smp->flags = SMP_F_VOL_TXN;
+	smp->data.type = SMP_T_SINT;
+	smp->data.u.sint = TICKS_TO_MS(px->timeout.tunnel);
+	return 1;
+}
+
 static int sample_conv_nbsrv(const struct arg *args, struct sample *smp, void *private)
 {
 
@@ -2974,25 +3010,27 @@ sample_conv_srv_queue(const struct arg *args, struct sample *smp, void *private)
  * Please take care of keeping this list alphabetically sorted.
  */
 static struct sample_fetch_kw_list smp_kws = {ILH, {
-	{ "avg_queue",     smp_fetch_avg_queue_size, ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "be_conn",       smp_fetch_be_conn,        ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "be_conn_free",  smp_fetch_be_conn_free,   ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "be_id",         smp_fetch_be_id,          0,           NULL, SMP_T_SINT, SMP_USE_BKEND, },
-	{ "be_name",       smp_fetch_be_name,        0,           NULL, SMP_T_STR,  SMP_USE_BKEND, },
-	{ "be_sess_rate",  smp_fetch_be_sess_rate,   ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "connslots",     smp_fetch_connslots,      ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "nbsrv",         smp_fetch_nbsrv,          ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "queue",         smp_fetch_queue_size,     ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "srv_conn",      smp_fetch_srv_conn,       ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "srv_conn_free", smp_fetch_srv_conn_free,  ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "srv_id",        smp_fetch_srv_id,         0,           NULL, SMP_T_SINT, SMP_USE_SERVR, },
-	{ "srv_is_up",     smp_fetch_srv_is_up,      ARG1(1,SRV), NULL, SMP_T_BOOL, SMP_USE_INTRN, },
-	{ "srv_name",      smp_fetch_srv_name,       0,           NULL, SMP_T_STR,  SMP_USE_SERVR, },
-	{ "srv_queue",     smp_fetch_srv_queue,      ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "srv_sess_rate", smp_fetch_srv_sess_rate,  ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "srv_weight",    smp_fetch_srv_weight,     ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "srv_iweight",   smp_fetch_srv_iweight,    ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
-	{ "srv_uweight",   smp_fetch_srv_uweight,    ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "avg_queue",         smp_fetch_avg_queue_size,    ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "be_conn",           smp_fetch_be_conn,           ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "be_conn_free",      smp_fetch_be_conn_free,      ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "be_id",             smp_fetch_be_id,             0,           NULL, SMP_T_SINT, SMP_USE_BKEND, },
+	{ "be_name",           smp_fetch_be_name,           0,           NULL, SMP_T_STR,  SMP_USE_BKEND, },
+	{ "be_server_timeout", smp_fetch_be_server_timeout, 0,           NULL, SMP_T_SINT, SMP_USE_BKEND, },
+	{ "be_sess_rate",      smp_fetch_be_sess_rate,      ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "be_tunnel_timeout", smp_fetch_be_tunnel_timeout, 0,           NULL, SMP_T_SINT, SMP_USE_BKEND, },
+	{ "connslots",         smp_fetch_connslots,         ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "nbsrv",             smp_fetch_nbsrv,             ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "queue",             smp_fetch_queue_size,        ARG1(1,BE),  NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_conn",          smp_fetch_srv_conn,          ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_conn_free",     smp_fetch_srv_conn_free,     ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_id",            smp_fetch_srv_id,            0,           NULL, SMP_T_SINT, SMP_USE_SERVR, },
+	{ "srv_is_up",         smp_fetch_srv_is_up,         ARG1(1,SRV), NULL, SMP_T_BOOL, SMP_USE_INTRN, },
+	{ "srv_name",          smp_fetch_srv_name,          0,           NULL, SMP_T_STR,  SMP_USE_SERVR, },
+	{ "srv_queue",         smp_fetch_srv_queue,         ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_sess_rate",     smp_fetch_srv_sess_rate,     ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_weight",        smp_fetch_srv_weight,        ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_iweight",       smp_fetch_srv_iweight,       ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
+	{ "srv_uweight",       smp_fetch_srv_uweight,       ARG1(1,SRV), NULL, SMP_T_SINT, SMP_USE_INTRN, },
 	{ /* END */ },
 }};
 

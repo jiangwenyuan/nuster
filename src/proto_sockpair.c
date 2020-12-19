@@ -43,7 +43,6 @@
 #include <haproxy/version.h>
 
 
-static void sockpair_add_listener(struct listener *listener, int port);
 static int sockpair_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static void sockpair_enable_listener(struct listener *listener);
 static void sockpair_disable_listener(struct listener *listener);
@@ -64,47 +63,43 @@ struct proto_fam proto_fam_sockpair = {
 };
 
 /* Note: must not be declared <const> as its list will be overwritten */
-static struct protocol proto_sockpair = {
-	.name = "sockpair",
-	.fam = &proto_fam_sockpair,
-	.ctrl_type = SOCK_STREAM,
-	.sock_domain = AF_CUST_SOCKPAIR,
-	.sock_type = SOCK_STREAM,
-	.sock_prot = 0,
-	.add = sockpair_add_listener,
-	.listen = sockpair_bind_listener,
-	.enable = sockpair_enable_listener,
-	.disable = sockpair_disable_listener,
-	.unbind = default_unbind_listener,
-	.accept_conn = sockpair_accept_conn,
-	.rx_unbind = sock_unbind,
-	.rx_enable = sock_enable,
-	.rx_disable = sock_disable,
-	.rx_listening = sockpair_accepting_conn,
-	.default_iocb = &sock_accept_iocb,
-	.connect = &sockpair_connect_server,
-	.receivers = LIST_HEAD_INIT(proto_sockpair.receivers),
-	.nb_receivers = 0,
+struct protocol proto_sockpair = {
+	.name           = "sockpair",
+
+	/* connection layer */
+	.ctrl_type      = SOCK_STREAM,
+	.listen         = sockpair_bind_listener,
+	.enable         = sockpair_enable_listener,
+	.disable        = sockpair_disable_listener,
+	.add            = default_add_listener,
+	.unbind         = default_unbind_listener,
+	.accept_conn    = sockpair_accept_conn,
+	.ctrl_init      = sock_conn_ctrl_init,
+	.ctrl_close     = sock_conn_ctrl_close,
+	.connect        = sockpair_connect_server,
+	.drain          = sock_drain,
+	.check_events   = sock_check_events,
+	.ignore_events  = sock_ignore_events,
+
+	/* binding layer */
+	/* Note: suspend/resume not supported */
+
+	/* address family */
+	.fam            = &proto_fam_sockpair,
+
+	/* socket layer */
+	.sock_type      = SOCK_STREAM,
+	.sock_prot      = 0,
+	.rx_enable      = sock_enable,
+	.rx_disable     = sock_disable,
+	.rx_unbind      = sock_unbind,
+	.rx_listening   = sockpair_accepting_conn,
+	.default_iocb   = sock_accept_iocb,
+	.receivers      = LIST_HEAD_INIT(proto_sockpair.receivers),
+	.nb_receivers   = 0,
 };
 
 INITCALL1(STG_REGISTER, protocol_register, &proto_sockpair);
-
-/* Add <listener> to the list of sockpair listeners (port is ignored). The
- * listener's state is automatically updated from LI_INIT to LI_ASSIGNED.
- * The number of listeners for the protocol is updated.
- *
- * Must be called with proto_lock held.
- *
- */
-static void sockpair_add_listener(struct listener *listener, int port)
-{
-	if (listener->state != LI_INIT)
-		return;
-	listener_set_state(listener, LI_ASSIGNED);
-	listener->rx.proto = &proto_sockpair;
-	LIST_ADDQ(&proto_sockpair.receivers, &listener->rx.proto_list);
-	proto_sockpair.nb_receivers++;
-}
 
 /* Enable receipt of incoming connections for listener <l>. The receiver must
  * still be valid.

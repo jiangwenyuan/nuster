@@ -42,6 +42,7 @@
 #include <haproxy/thread.h>
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
+#include <haproxy/trace.h>
 
 
 /*******************************/
@@ -287,6 +288,69 @@ static void peer_session_forceshutdown(struct peer *peer);
 static struct ebpt_node *dcache_tx_insert(struct dcache *dc,
                                           struct dcache_tx_entry *i);
 static inline void flush_dcache(struct peer *peer);
+
+/* trace source and events */
+static void peers_trace(enum trace_level level, uint64_t mask,
+                        const struct trace_source *src,
+                        const struct ist where, const struct ist func,
+                        const void *a1, const void *a2, const void *a3, const void *a4);
+
+static const struct trace_event peers_trace_events[] = {
+#define PEERS_EV_UPDTMSG         (1 << 0)
+	{ .mask = PEERS_EV_UPDTMSG,    .name = "updtmsg",      .desc = "update message received" },
+};
+
+static const struct name_desc peers_trace_lockon_args[4] = {
+	/* arg1 */ { /* already used by the connection */ },
+	/* arg2 */ { .name="peers", .desc="Peers protocol" },
+	/* arg3 */ { },
+	/* arg4 */ { }
+};
+
+static const struct name_desc peers_trace_decoding[] = {
+#define PEERS_VERB_CLEAN    1
+	{ .name="clean",    .desc="only user-friendly stuff, generally suitable for level \"user\"" },
+	{ /* end */ }
+};
+
+
+struct trace_source trace_peers = {
+	.name = IST("peers"),
+	.desc = "Peers protocol",
+	.arg_def = TRC_ARG1_CONN,  /* TRACE()'s first argument is always a connection */
+	.default_cb = peers_trace,
+	.known_events = peers_trace_events,
+	.lockon_args = peers_trace_lockon_args,
+	.decoding = peers_trace_decoding,
+	.report_events = ~0,  /* report everything by default */
+};
+
+#define TRACE_SOURCE    &trace_peers
+INITCALL1(STG_REGISTER, trace_register_source, TRACE_SOURCE);
+
+static void peers_trace(enum trace_level level, uint64_t mask,
+                        const struct trace_source *src,
+                        const struct ist where, const struct ist func,
+                        const void *a1, const void *a2, const void *a3, const void *a4)
+{
+	if (mask & PEERS_EV_UPDTMSG) {
+		if (a2) {
+			const struct peer *peer = a2;
+
+			chunk_appendf(&trace_buf, " peer=%s", peer->id);
+		}
+		if (a3) {
+			const char *p = a3;
+
+			chunk_appendf(&trace_buf, " @%p", p);
+		}
+		if (a4) {
+			const size_t *val = a4;
+
+			chunk_appendf(&trace_buf, " %llu", (unsigned long long)*val);
+		}
+	}
+}
 
 static const char *statuscode_str(int statuscode)
 {
@@ -1352,6 +1416,7 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 	unsigned int data_type;
 	void *data_ptr;
 
+	TRACE_ENTER(PEERS_EV_UPDTMSG, NULL, p);
 	/* Here we have data message */
 	if (!st)
 		goto ignore_msg;
@@ -1359,8 +1424,10 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 	expire = MS_TO_TICKS(st->table->expire);
 
 	if (updt) {
-		if (msg_len < sizeof(update))
+		if (msg_len < sizeof(update)) {
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG, NULL, p);
 			goto malformed_exit;
+		}
 
 		memcpy(&update, *msg_cur, sizeof(update));
 		*msg_cur += sizeof(update);
@@ -1373,8 +1440,13 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 	if (exp) {
 		size_t expire_sz = sizeof expire;
 
-		if (*msg_cur + expire_sz > msg_end)
+		if (*msg_cur + expire_sz > msg_end) {
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, *msg_cur);
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, msg_end, &expire_sz);
 			goto malformed_exit;
+		}
 
 		memcpy(&expire, *msg_cur, expire_sz);
 		*msg_cur += expire_sz;
@@ -1389,12 +1461,19 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 		unsigned int to_read, to_store;
 
 		to_read = intdecode(msg_cur, msg_end);
-		if (!*msg_cur)
+		if (!*msg_cur) {
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG, NULL, p);
 			goto malformed_free_newts;
+		}
 
 		to_store = MIN(to_read, st->table->key_size - 1);
-		if (*msg_cur + to_store > msg_end)
+		if (*msg_cur + to_store > msg_end) {
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, *msg_cur);
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, msg_end, &to_store);
 			goto malformed_free_newts;
+		}
 
 		memcpy(newts->key.key, *msg_cur, to_store);
 		newts->key.key[to_store] = 0;
@@ -1403,8 +1482,13 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 	else if (st->table->type == SMP_T_SINT) {
 		unsigned int netinteger;
 
-		if (*msg_cur + sizeof(netinteger) > msg_end)
+		if (*msg_cur + sizeof(netinteger) > msg_end) {
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, *msg_cur);
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, msg_end);
 			goto malformed_free_newts;
+		}
 
 		memcpy(&netinteger, *msg_cur, sizeof(netinteger));
 		netinteger = ntohl(netinteger);
@@ -1412,8 +1496,13 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 		*msg_cur += sizeof(netinteger);
 	}
 	else {
-		if (*msg_cur + st->table->key_size > msg_end)
+		if (*msg_cur + st->table->key_size > msg_end) {
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, *msg_cur);
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+			            NULL, p, msg_end, &st->table->key_size);
 			goto malformed_free_newts;
+		}
 
 		memcpy(newts->key.key, *msg_cur, st->table->key_size);
 		*msg_cur += st->table->key_size;
@@ -1435,8 +1524,10 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 			continue;
 
 		decoded_int = intdecode(msg_cur, msg_end);
-		if (!*msg_cur)
+		if (!*msg_cur) {
+			TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG, NULL, p);
 			goto malformed_unlock;
+		}
 
 		switch (stktable_data_types[data_type].std_type) {
 		case STD_T_SINT:
@@ -1467,12 +1558,16 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 
 			data.curr_tick = tick_add(now_ms, -decoded_int) & ~0x1;
 			data.curr_ctr = intdecode(msg_cur, msg_end);
-			if (!*msg_cur)
+			if (!*msg_cur) {
+				TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG, NULL, p);
 				goto malformed_unlock;
+			}
 
 			data.prev_ctr = intdecode(msg_cur, msg_end);
-			if (!*msg_cur)
+			if (!*msg_cur) {
+				TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG, NULL, p);
 				goto malformed_unlock;
+			}
 
 			data_ptr = stktable_data_ptr(st->table, ts, data_type);
 			if (data_ptr)
@@ -1492,22 +1587,33 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 				break;
 			}
 			data_len = decoded_int;
-			if (*msg_cur + data_len > msg_end)
+			if (*msg_cur + data_len > msg_end) {
+				TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+				            NULL, p, *msg_cur);
+				TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+				            NULL, p, msg_end, &data_len);
 				goto malformed_unlock;
+			}
 
 			/* Compute the end of the current data, <msg_end> being at the end of
 			 * the entire message.
 			 */
 			end = *msg_cur + data_len;
 			id = intdecode(msg_cur, end);
-			if (!*msg_cur || !id)
+			if (!*msg_cur || !id) {
+				TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+				            NULL, p, *msg_cur, &id);
 				goto malformed_unlock;
+			}
 
 			dc = p->dcache;
 			if (*msg_cur == end) {
 				/* Dictionary entry key without value. */
-				if (id > dc->max_entries)
-					break;
+				if (id > dc->max_entries) {
+					TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+					            NULL, p, NULL, &id);
+					goto malformed_unlock;
+				}
 				/* IDs sent over the network are numbered from 1. */
 				de = dc->rx[id - 1].de;
 			}
@@ -1515,8 +1621,13 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 				chunk = get_trash_chunk();
 				value_len = intdecode(msg_cur, end);
 				if (!*msg_cur || *msg_cur + value_len > end ||
-					unlikely(value_len + 1 >= chunk->size))
+					unlikely(value_len + 1 >= chunk->size)) {
+					TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+					            NULL, p, *msg_cur, &value_len);
+					TRACE_PROTO("malformed message", PEERS_EV_UPDTMSG,
+					            NULL, p, end, &chunk->size);
 					goto malformed_unlock;
+				}
 
 				chunk_memcpy(chunk, *msg_cur, value_len);
 				chunk->area[chunk->data] = '\0';
@@ -1539,11 +1650,13 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 
 	HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
 	stktable_touch_remote(st->table, ts, 1);
+	TRACE_LEAVE(PEERS_EV_UPDTMSG, NULL, p);
 	return 1;
 
  ignore_msg:
 	/* skip consumed message */
 	co_skip(si_oc(si), totl);
+	TRACE_DEVEL("leaving in error", PEERS_EV_UPDTMSG);
 	return 0;
 
  malformed_unlock:
@@ -1551,6 +1664,7 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 	HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
 	stktable_touch_remote(st->table, ts, 1);
 	appctx->st0 = PEER_SESS_ST_ERRPROTO;
+	TRACE_DEVEL("leaving in error", PEERS_EV_UPDTMSG);
 	return 0;
 
  malformed_free_newts:
@@ -1558,6 +1672,7 @@ static int peer_treat_updatemsg(struct appctx *appctx, struct peer *p, int updt,
 	stksess_free(st->table, newts);
  malformed_exit:
 	appctx->st0 = PEER_SESS_ST_ERRPROTO;
+	TRACE_DEVEL("leaving in error", PEERS_EV_UPDTMSG);
 	return 0;
 }
 
@@ -1711,7 +1826,14 @@ static inline int peer_treat_definemsg(struct appctx *appctx, struct peer *p,
 }
 
 /*
- * Receive a stick-table message.
+ * Receive a stick-table message or pre-parse any other message.
+ * The message's header will be sent into <msg_head> which must be at least
+ * <msg_head_sz> bytes long (at least 7 to store 32-bit variable lengths).
+ * The first two bytes are always read, and the rest is only read if the
+ * first bytes indicate a stick-table message. If the message is a stick-table
+ * message, the varint is decoded and the equivalent number of bytes will be
+ * copied into the trash at trash.area. <totl> is incremented by the number of
+ * bytes read EVEN IN CASE OF INCOMPLETE MESSAGES.
  * Returns 1 if there was no error, if not, returns 0 if not enough data were available,
  * -1 if there was an error updating the appctx state st0 accordingly.
  */
@@ -1720,6 +1842,7 @@ static inline int peer_recv_msg(struct appctx *appctx, char *msg_head, size_t ms
 {
 	int reql;
 	struct stream_interface *si = appctx->owner;
+	char *cur;
 
 	reql = co_getblk(si_oc(si), msg_head, 2 * sizeof(char), *totl);
 	if (reql <= 0) /* closed or EOL not found */
@@ -1730,46 +1853,32 @@ static inline int peer_recv_msg(struct appctx *appctx, char *msg_head, size_t ms
 	if (!(msg_head[1] & PEER_MSG_STKT_BIT_MASK))
 		return 1;
 
+	/* This is a stick-table message, let's go on */
+
 	/* Read and Decode message length */
-	reql = co_getblk(si_oc(si), &msg_head[2], sizeof(char), *totl);
+	msg_head    += *totl;
+	msg_head_sz -= *totl;
+	reql = co_data(si_oc(si)) - *totl;
+	if (reql > msg_head_sz)
+		reql = msg_head_sz;
+
+	reql = co_getblk(si_oc(si), msg_head, reql, *totl);
 	if (reql <= 0) /* closed */
 		goto incomplete;
 
-	*totl += reql;
+	cur = msg_head;
+	*msg_len = intdecode(&cur, cur + reql);
+	if (!cur) {
+		/* the number is truncated, did we read enough ? */
+		if (reql < msg_head_sz)
+			goto incomplete;
 
-	if ((unsigned int)msg_head[2] < PEER_ENC_2BYTES_MIN) {
-		*msg_len = msg_head[2];
+		/* malformed message */
+		TRACE_PROTO("malformed message: too large length encoding", PEERS_EV_UPDTMSG);
+		appctx->st0 = PEER_SESS_ST_ERRPROTO;
+		return -1;
 	}
-	else {
-		int i;
-		char *cur;
-		char *end;
-
-		for (i = 3 ; i < msg_head_sz ; i++) {
-			reql = co_getblk(si_oc(si), &msg_head[i], sizeof(char), *totl);
-			if (reql <= 0) /* closed */
-				goto incomplete;
-
-			*totl += reql;
-
-			if (!(msg_head[i] & PEER_MSG_STKT_BIT_MASK))
-				break;
-		}
-
-		if (i == msg_head_sz) {
-			/* malformed message */
-			appctx->st0 = PEER_SESS_ST_ERRPROTO;
-			return -1;
-		}
-		end = msg_head + msg_head_sz;
-		cur = &msg_head[2];
-		*msg_len = intdecode(&cur, end);
-		if (!cur) {
-			/* malformed message */
-			appctx->st0 = PEER_SESS_ST_ERRPROTO;
-			return -1;
-		}
-	}
+	*totl += cur - msg_head;
 
 	/* Read message content */
 	if (*msg_len) {
@@ -1788,8 +1897,8 @@ static inline int peer_recv_msg(struct appctx *appctx, char *msg_head, size_t ms
 	return 1;
 
  incomplete:
-	if (reql < 0) {
-		/* there was an error */
+	if (reql < 0 || (si_oc(si)->flags & (CF_SHUTW|CF_SHUTW_NOW))) {
+		/* there was an error or the message was truncated */
 		appctx->st0 = PEER_SESS_ST_END;
 		return -1;
 	}
@@ -2384,7 +2493,7 @@ switchstate:
 				uint32_t msg_len = 0;
 				char *msg_cur = trash.area;
 				char *msg_end = trash.area;
-				unsigned char msg_head[7];
+				unsigned char msg_head[7]; // 2 + 5 for varint32
 				int totl = 0;
 
 				prev_state = appctx->st0;
@@ -2566,7 +2675,7 @@ static struct appctx *peer_session_create(struct peers *peers, struct peer *peer
 		goto out_free_appctx;
 	}
 
-	if ((s = stream_new(sess, &appctx->obj_type)) == NULL) {
+	if ((s = stream_new(sess, &appctx->obj_type, &BUF_NULL)) == NULL) {
 		ha_alert("Failed to initialize stream in peer_session_create().\n");
 		goto out_free_sess;
 	}
@@ -2947,8 +3056,12 @@ static inline void flush_dcache(struct peer *peer)
 	int i;
 	struct dcache *dc = peer->dcache;
 
-	for (i = 0; i < dc->max_entries; i++)
+	for (i = 0; i < dc->max_entries; i++) {
 		ebpt_delete(&dc->tx->entries[i]);
+		dc->tx->entries[i].key = NULL;
+	}
+	dc->tx->prev_lookup = NULL;
+	dc->tx->lru_key = 0;
 
 	memset(dc->rx, 0, dc->max_entries * sizeof *dc->rx);
 }

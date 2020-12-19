@@ -43,7 +43,7 @@ static PyObject *module_ipaddress;
 static PyObject *ipv4_address;
 static PyObject *ipv6_address;
 static PyObject *spoa_error;
-static PyObject *empty_array;
+static PyObject *empty_tuple;
 static struct worker *worker;
 
 static int ps_python_start_worker(struct worker *w);
@@ -90,7 +90,7 @@ static PyObject *ps_python_register_message(PyObject *self, PyObject *args)
 
 	ps_register_message(&ps_python_bindings, name, (void *)ref);
 
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_null(PyObject *self, PyObject *args)
@@ -106,10 +106,10 @@ static PyObject *ps_python_set_var_null(PyObject *self, PyObject *args)
 	if (name_len_i == -1)
 		return NULL;
 	if (!set_var_null(worker, name, name_len_i, scope)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_boolean(PyObject *self, PyObject *args)
@@ -126,10 +126,10 @@ static PyObject *ps_python_set_var_boolean(PyObject *self, PyObject *args)
 	if (name_len_i == -1)
 		return NULL;
 	if (!set_var_bool(worker, name, name_len_i, scope, value)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_int32(PyObject *self, PyObject *args)
@@ -146,10 +146,10 @@ static PyObject *ps_python_set_var_int32(PyObject *self, PyObject *args)
 	if (name_len_i == -1)
 		return NULL;
 	if (!set_var_int32(worker, name, name_len_i, scope, value)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_uint32(PyObject *self, PyObject *args)
@@ -166,10 +166,10 @@ static PyObject *ps_python_set_var_uint32(PyObject *self, PyObject *args)
 	if (name_len_i == -1)
 		return NULL;
 	if (!set_var_uint32(worker, name, name_len_i, scope, value)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_int64(PyObject *self, PyObject *args)
@@ -186,10 +186,10 @@ static PyObject *ps_python_set_var_int64(PyObject *self, PyObject *args)
 	if (name_len_i == -1)
 		return NULL;
 	if (!set_var_int64(worker, name, name_len_i, scope, value)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_uint64(PyObject *self, PyObject *args)
@@ -206,10 +206,10 @@ static PyObject *ps_python_set_var_uint64(PyObject *self, PyObject *args)
 	if (name_len_i == -1)
 		return NULL;
 	if (!set_var_uint64(worker, name, name_len_i, scope, value)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_ipv4(PyObject *self, PyObject *args)
@@ -236,17 +236,17 @@ static PyObject *ps_python_set_var_ipv4(PyObject *self, PyObject *args)
 	if (value == NULL)
 		return NULL;
 	if (PY_STRING_GET_SIZE(value) != sizeof(ip)) {
-		PyErr_Format(spoa_error, "UPv6 manipulation internal error");
+		PyErr_Format(spoa_error, "IPv4 manipulation internal error");
 		return NULL;
 	}
 	memcpy(&ip, PY_STRING_AS_STRING(value), PY_STRING_GET_SIZE(value));
 	if (!set_var_ipv4(worker, name, name_len_i, scope, &ip)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
 	/* Once we set the IP value in the worker, we don't need it anymore... */
 	Py_XDECREF(value);
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_ipv6(PyObject *self, PyObject *args)
@@ -273,17 +273,17 @@ static PyObject *ps_python_set_var_ipv6(PyObject *self, PyObject *args)
 	if (value == NULL)
 		return NULL;
 	if (PY_STRING_GET_SIZE(value) != sizeof(ip)) {
-		PyErr_Format(spoa_error, "UPv6 manipulation internal error");
+		PyErr_Format(spoa_error, "IPv6 manipulation internal error");
 		return NULL;
 	}
 	memcpy(&ip, PY_STRING_AS_STRING(value), PY_STRING_GET_SIZE(value));
 	if (!set_var_ipv6(worker, name, name_len_i, scope, &ip)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
 	/* Once we set the IP value in the worker, we don't need it anymore... */
 	Py_XDECREF(value);
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_str(PyObject *self, PyObject *args)
@@ -303,10 +303,10 @@ static PyObject *ps_python_set_var_str(PyObject *self, PyObject *args)
 	if (name_len_i == -1 || value_len_i == -1)
 		return NULL;
 	if (!set_var_string(worker, name, name_len_i, scope, value, value_len_i)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 static PyObject *ps_python_set_var_bin(PyObject *self, PyObject *args)
@@ -326,10 +326,10 @@ static PyObject *ps_python_set_var_bin(PyObject *self, PyObject *args)
 	if (name_len_i == -1 || value_len_i == -1)
 		return NULL;
 	if (!set_var_bin(worker, name, name_len_i, scope, value, value_len_i)) {
-		PyErr_SetString(spoa_error, "No space left available");
+		PyErr_SetString(spoa_error, "No more memory space available");
 		return NULL;
 	}
-	return Py_None;
+	Py_RETURN_NONE;
 }
 
 
@@ -410,25 +410,42 @@ static int ps_python_start_worker(struct worker *w)
 
 	ipv4_address = PyObject_GetAttrString(module_ipaddress, "IPv4Address");
 	if (ipv4_address == NULL) {
+		Py_DECREF(module_ipaddress);
 		PyErr_Print();
 		return 0;
 	}
 
 	ipv6_address = PyObject_GetAttrString(module_ipaddress, "IPv6Address");
 	if (ipv6_address == NULL) {
+		Py_DECREF(ipv4_address);
+		Py_DECREF(module_ipaddress);
 		PyErr_Print();
 		return 0;
 	}
 
 	PY_INIT_MODULE(m, "spoa", spoa_methods, &spoa_module_definition);
 	if (m == NULL) {
+		Py_DECREF(ipv4_address);
+		Py_DECREF(ipv6_address);
+		Py_DECREF(module_ipaddress);
 		PyErr_Print();
 		return 0;
 	}
 
 	spoa_error = PyErr_NewException("spoa.error", NULL, NULL);
+	 /* PyModule_AddObject will steal the reference to spoa_error
+	 * in case of success only
+	 * We need to increment the counters to continue using it
+	 * but cleanup in case of failure
+	 */
 	Py_INCREF(spoa_error);
-	PyModule_AddObject(m, "error", spoa_error);
+	ret = PyModule_AddObject(m, "error", spoa_error);
+	if (ret == -1) {
+		Py_DECREF(m);
+		Py_DECREF(spoa_error);
+		PyErr_Print();
+		return 0;
+	}
 
 
 	value = PyLong_FromLong(SPOE_SCOPE_PROC);
@@ -439,60 +456,74 @@ static int ps_python_start_worker(struct worker *w)
 
 	ret = PyModule_AddObject(m, "scope_proc", value);
 	if (ret == -1) {
+		Py_DECREF(m);
+		Py_DECREF(value);
 		PyErr_Print();
 		return 0;
 	}
 
 	value = PyLong_FromLong(SPOE_SCOPE_SESS);
 	if (value == NULL) {
+		Py_DECREF(m);
 		PyErr_Print();
 		return 0;
 	}
 
 	ret = PyModule_AddObject(m, "scope_sess", value);
 	if (ret == -1) {
+		Py_DECREF(m);
+		Py_DECREF(value);
 		PyErr_Print();
 		return 0;
 	}
 
 	value = PyLong_FromLong(SPOE_SCOPE_TXN);
 	if (value == NULL) {
+		Py_DECREF(m);
 		PyErr_Print();
 		return 0;
 	}
 
 	ret = PyModule_AddObject(m, "scope_txn", value);
 	if (ret == -1) {
+		Py_DECREF(m);
+		Py_DECREF(value);
 		PyErr_Print();
 		return 0;
 	}
 
 	value = PyLong_FromLong(SPOE_SCOPE_REQ);
 	if (value == NULL) {
+		Py_DECREF(m);
 		PyErr_Print();
 		return 0;
 	}
 
 	ret = PyModule_AddObject(m, "scope_req", value);
 	if (ret == -1) {
+		Py_DECREF(m);
+		Py_DECREF(value);
 		PyErr_Print();
 		return 0;
 	}
 
 	value = PyLong_FromLong(SPOE_SCOPE_RES);
 	if (value == NULL) {
+		Py_DECREF(m);
 		PyErr_Print();
 		return 0;
 	}
 
 	ret = PyModule_AddObject(m, "scope_res", value);
 	if (ret == -1) {
+		Py_DECREF(m);
+		Py_DECREF(value);
 		PyErr_Print();
 		return 0;
 	}
 
-	empty_array = PyDict_New();
-	if (empty_array == NULL) {
+	empty_tuple = PyTuple_New(0);
+	if (empty_tuple == NULL) {
 		PyErr_Print();
 		return 0;
 	}
@@ -591,7 +622,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 			return 0;
 		}
 
-		/* Create th value entry */
+		/* Create the value entry */
 
 		key = PY_STRING_FROM_STRING("value");
 		if (key == NULL) {
@@ -603,6 +634,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 
 		switch (args[i].value.type) {
 		case SPOE_DATA_T_NULL:
+			Py_INCREF(Py_None);
 			value = Py_None;
 			break;
 		case SPOE_DATA_T_BOOL:
@@ -679,7 +711,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 				PyErr_Print();
 				return 0;
 			}
-			value = PyObject_Call(func, empty_array, ip_dict);
+			value = PyObject_Call(func, empty_tuple, ip_dict);
 			Py_DECREF(func);
 			Py_DECREF(ip_dict);
 			break;
@@ -691,6 +723,7 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 			value = PY_BYTES_FROM_STRING_AND_SIZE(args[i].value.u.buffer.str, args[i].value.u.buffer.len);
 			break;
 		default:
+			Py_INCREF(Py_None);
 			value = Py_None;
 			break;
 		}
@@ -749,15 +782,13 @@ static int ps_python_exec_message(struct worker *w, void *ref, int nargs, struct
 		return 0;
 	}
 
-	result = PyObject_Call(python_ref, empty_array, fkw);
+	result = PyObject_Call(python_ref, empty_tuple, fkw);
 	Py_DECREF(fkw);
 	if (result == NULL) {
 		PyErr_Print();
 		return 0;
 	}
-	if (result != Py_None) {
-		Py_DECREF(result);
-	}
+	Py_DECREF(result);
 
 	return 1;
 }

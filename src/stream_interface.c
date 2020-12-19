@@ -383,10 +383,10 @@ int conn_si_send_proxy(struct connection *conn, unsigned int flag)
 		/* we have to send trash from (ret+sp for -sp bytes). If the
 		 * data layer has a pending write, we'll also set MSG_MORE.
 		 */
-		ret = conn_sock_send(conn,
+		ret = conn_ctrl_send(conn,
 				     trash.area + ret + conn->send_proxy_ofs,
 		                     -conn->send_proxy_ofs,
-		                     (conn->subs && conn->subs->events & SUB_RETRY_SEND) ? MSG_MORE : 0);
+		                     (conn->subs && conn->subs->events & SUB_RETRY_SEND) ? CO_SFL_MSG_MORE : 0);
 
 		if (ret < 0)
 			goto out_error;
@@ -1008,7 +1008,6 @@ static void stream_int_shutr_conn(struct stream_interface *si)
 static void stream_int_shutw_conn(struct stream_interface *si)
 {
 	struct conn_stream *cs = __objt_cs(si->end);
-	struct connection *conn = cs->conn;
 	struct channel *ic = si_ic(si);
 	struct channel *oc = si_oc(si);
 
@@ -1056,13 +1055,8 @@ static void stream_int_shutw_conn(struct stream_interface *si)
 			 */
 			cs_shutw(cs, CS_SHW_NORMAL);
 
-			if (!(ic->flags & (CF_SHUTR|CF_DONT_READ))) {
-				/* OK just a shutw, but we want the caller
-				 * to disable polling on this FD if exists.
-				 */
-				conn_cond_update_polling(conn);
+			if (!(ic->flags & (CF_SHUTR|CF_DONT_READ)))
 				return;
-			}
 		}
 
 		/* fall through */
@@ -1345,12 +1339,6 @@ int si_cs_recv(struct conn_stream *cs)
 
 		if (cs->flags & CS_FL_WANT_ROOM)
 			si_rx_room_blk(si);
-
-		if (cs->flags & CS_FL_READ_PARTIAL) {
-			if (tick_isset(ic->rex))
-				ic->rex = tick_add_ifset(now_ms, ic->rto);
-			cs->flags &= ~CS_FL_READ_PARTIAL;
-		}
 
 		if (ret <= 0) {
 			/* if we refrained from reading because we asked for a

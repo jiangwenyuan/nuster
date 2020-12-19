@@ -201,6 +201,16 @@ Core class
   :see: :js:attr:`core.proxies`
   :see: :js:attr:`core.backends`
 
+.. js:attribute:: core.thread
+
+  **context**: task, action, sample-fetch, converter, applet
+
+  This variable contains the executing thread number starting at 1. 0 is a
+  special case for the common lua context. So, if thread is 0, Lua scope is
+  shared by all threads, otherwise the scope is dedicated to a single thread.
+  A program which needs to execute some parts exactly once regardless of the
+  number of threads can check that core.thread is 0 or 1.
+
 .. js:function:: core.log(loglevel, msg)
 
   **context**: body, init, task, action, sample-fetch, converter
@@ -762,8 +772,8 @@ Core class
 
   Immediately stops the current Lua execution and returns to the caller which
   may be a sample fetch, a converter or an action and returns the specified
-  value (ignored for actions). It is used when the LUA process finishes its
-  work and wants to give back the control to HAProxy without executing the
+  value (ignored for actions and init). It is used when the LUA process finishes
+  its work and wants to give back the control to HAProxy without executing the
   remaining code. It can be seen as a multi-level "return".
 
 .. js:function:: core.yield()

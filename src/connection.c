@@ -54,10 +54,10 @@ int conn_create_mux(struct connection *conn)
 			goto fail;
 
 		if (sess && obj_type(sess->origin) == OBJ_TYPE_CHECK) {
-			if (conn_install_mux_chk(conn, conn->ctx, conn->owner) < 0)
+			if (conn_install_mux_chk(conn, conn->ctx, sess) < 0)
 				goto fail;
 		}
-		else if (conn_install_mux_be(conn, conn->ctx, conn->owner) < 0)
+		else if (conn_install_mux_be(conn, conn->ctx, sess) < 0)
 			goto fail;
 		srv = objt_server(conn->target);
 
@@ -72,7 +72,7 @@ int conn_create_mux(struct connection *conn)
 			LIST_ADDQ(&srv->available_conns[tid], mt_list_to_list(&conn->list));
 		else if (conn->flags & CO_FL_PRIVATE) {
 			/* If it fail now, the same will be done in mux->detach() callback */
-			session_add_conn(conn->owner, conn, conn->target);
+			session_add_conn(sess, conn, conn->target);
 		}
 		return 0;
 fail:
@@ -84,195 +84,6 @@ fail:
 
 }
 
-/* I/O callback for fd-based connections. It calls the read/write handlers
- * provided by the connection's sock_ops, which must be valid.
- */
-void conn_fd_handler(int fd)
-{
-	struct connection *conn = fdtab[fd].owner;
-	unsigned int flags;
-	int need_wake = 0;
-
-	if (unlikely(!conn)) {
-		activity[tid].conn_dead++;
-		return;
-	}
-
-	flags = conn->flags & ~CO_FL_ERROR; /* ensure to call the wake handler upon error */
-
-	if (unlikely(conn->flags & CO_FL_WAIT_L4_CONN) &&
-	    ((fd_send_ready(fd) && fd_send_active(fd)) ||
-	     (fd_recv_ready(fd) && fd_recv_active(fd)))) {
-		/* Still waiting for a connection to establish and nothing was
-		 * attempted yet to probe the connection. this will clear the
-		 * CO_FL_WAIT_L4_CONN flag on success.
-		 */
-		if (!conn_fd_check(conn))
-			goto leave;
-		need_wake = 1;
-	}
-
-	if (fd_send_ready(fd) && fd_send_active(fd)) {
-		/* force reporting of activity by clearing the previous flags :
-		 * we'll have at least ERROR or CONNECTED at the end of an I/O,
-		 * both of which will be detected below.
-		 */
-		flags = 0;
-		if (conn->subs && conn->subs->events & SUB_RETRY_SEND) {
-			need_wake = 0; // wake will be called after this I/O
-			tasklet_wakeup(conn->subs->tasklet);
-			conn->subs->events &= ~SUB_RETRY_SEND;
-			if (!conn->subs->events)
-				conn->subs = NULL;
-		}
-		fd_stop_send(fd);
-	}
-
-	/* The data transfer starts here and stops on error and handshakes. Note
-	 * that we must absolutely test conn->xprt at each step in case it suddenly
-	 * changes due to a quick unexpected close().
-	 */
-	if (fd_recv_ready(fd) && fd_recv_active(fd)) {
-		/* force reporting of activity by clearing the previous flags :
-		 * we'll have at least ERROR or CONNECTED at the end of an I/O,
-		 * both of which will be detected below.
-		 */
-		flags = 0;
-		if (conn->subs && conn->subs->events & SUB_RETRY_RECV) {
-			need_wake = 0; // wake will be called after this I/O
-			tasklet_wakeup(conn->subs->tasklet);
-			conn->subs->events &= ~SUB_RETRY_RECV;
-			if (!conn->subs->events)
-				conn->subs = NULL;
-		}
-		fd_stop_recv(fd);
-	}
-
- leave:
-	/* If we don't yet have a mux, that means we were waiting for
-	 * information to create one, typically from the ALPN. If we're
-	 * done with the handshake, attempt to create one.
-	 */
-	if (unlikely(!conn->mux) && !(conn->flags & CO_FL_WAIT_XPRT))
-		if (conn_create_mux(conn) < 0)
-			return;
-
-	/* The wake callback is normally used to notify the data layer about
-	 * data layer activity (successful send/recv), connection establishment,
-	 * shutdown and fatal errors. We need to consider the following
-	 * situations to wake up the data layer :
-	 *  - change among the CO_FL_NOTIFY_DONE flags :
-	 *      SOCK_{RD,WR}_SH, ERROR,
-	 *  - absence of any of {L4,L6}_CONN and CONNECTED, indicating the
-	 *    end of handshake and transition to CONNECTED
-	 *  - raise of CONNECTED with HANDSHAKE down
-	 *  - end of HANDSHAKE with CONNECTED set
-	 *  - regular data layer activity
-	 *
-	 * Note that the wake callback is allowed to release the connection and
-	 * the fd (and return < 0 in this case).
-	 */
-	if ((need_wake || ((conn->flags ^ flags) & CO_FL_NOTIFY_DONE) ||
-	     ((flags & CO_FL_WAIT_XPRT) && !(conn->flags & CO_FL_WAIT_XPRT))) &&
-	    conn->mux && conn->mux->wake && conn->mux->wake(conn) < 0)
-		return;
-
-	/* commit polling changes */
-	conn_cond_update_polling(conn);
-	return;
-}
-
-/* This is the callback which is set when a connection establishment is pending
- * and we have nothing to send. It may update the FD polling status to indicate
- * !READY. It returns 0 if it fails in a fatal way or needs to poll to go
- * further, otherwise it returns non-zero and removes the CO_FL_WAIT_L4_CONN
- * flag from the connection's flags. In case of error, it sets CO_FL_ERROR and
- * leaves the error code in errno.
- */
-int conn_fd_check(struct connection *conn)
-{
-	struct sockaddr_storage *addr;
-	int fd = conn->handle.fd;
-
-	if (conn->flags & CO_FL_ERROR)
-		return 0;
-
-	if (!conn_ctrl_ready(conn))
-		return 0;
-
-	if (!(conn->flags & CO_FL_WAIT_L4_CONN))
-		return 1; /* strange we were called while ready */
-
-	if (!fd_send_ready(fd))
-		return 0;
-
-	/* Here we have 2 cases :
-	 *  - modern pollers, able to report ERR/HUP. If these ones return any
-	 *    of these flags then it's likely a failure, otherwise it possibly
-	 *    is a success (i.e. there may have been data received just before
-	 *    the error was reported).
-	 *  - select, which doesn't report these and with which it's always
-	 *    necessary either to try connect() again or to check for SO_ERROR.
-	 * In order to simplify everything, we double-check using connect() as
-	 * soon as we meet either of these delicate situations. Note that
-	 * SO_ERROR would clear the error after reporting it!
-	 */
-	if (cur_poller.flags & HAP_POLL_F_ERRHUP) {
-		/* modern poller, able to report ERR/HUP */
-		if ((fdtab[fd].ev & (FD_POLL_IN|FD_POLL_ERR|FD_POLL_HUP)) == FD_POLL_IN)
-			goto done;
-		if ((fdtab[fd].ev & (FD_POLL_OUT|FD_POLL_ERR|FD_POLL_HUP)) == FD_POLL_OUT)
-			goto done;
-		if (!(fdtab[fd].ev & (FD_POLL_ERR|FD_POLL_HUP)))
-			goto wait;
-		/* error present, fall through common error check path */
-	}
-
-	/* Use connect() to check the state of the socket. This has the double
-	 * advantage of *not* clearing the error (so that health checks can
-	 * still use getsockopt(SO_ERROR)) and giving us the following info :
-	 *  - error
-	 *  - connecting (EALREADY, EINPROGRESS)
-	 *  - connected (EISCONN, 0)
-	 */
-	addr = conn->dst;
-	if ((conn->flags & CO_FL_SOCKS4) && obj_type(conn->target) == OBJ_TYPE_SERVER)
-		addr = &objt_server(conn->target)->socks4_addr;
-
-	if (connect(fd, (const struct sockaddr *)addr, get_addr_len(addr)) == -1) {
-		if (errno == EALREADY || errno == EINPROGRESS)
-			goto wait;
-
-		if (errno && errno != EISCONN)
-			goto out_error;
-	}
-
- done:
-	/* The FD is ready now, we'll mark the connection as complete and
-	 * forward the event to the transport layer which will notify the
-	 * data layer.
-	 */
-	conn->flags &= ~CO_FL_WAIT_L4_CONN;
-	fd_may_send(fd);
-	fd_cond_recv(fd);
-	errno = 0; // make health checks happy
-	return 1;
-
- out_error:
-	/* Write error on the file descriptor. Report it to the connection
-	 * and disable polling on this FD.
-	 */
-	fdtab[fd].linger_risk = 0;
-	conn->flags |= CO_FL_ERROR | CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH;
-	conn_stop_polling(conn);
-	return 0;
-
- wait:
-	fd_cant_send(fd);
-	fd_want_send(fd);
-	return 0;
-}
-
 /* Send a message over an established connection. It makes use of send() and
  * returns the same return code and errno. If the socket layer is not ready yet
  * then -1 is returned and ENOTSOCK is set into errno. If the fd is not marked
@@ -282,11 +93,13 @@ int conn_fd_check(struct connection *conn)
  * (typically send_proxy). In case of EAGAIN, the fd is marked as "cant_send".
  * It automatically retries on EINTR. Other errors cause the connection to be
  * marked as in error state. It takes similar arguments as send() except the
- * first one which is the connection instead of the file descriptor. Note,
- * MSG_DONTWAIT and MSG_NOSIGNAL are forced on the flags.
+ * first one which is the connection instead of the file descriptor. <flags>
+ * only support CO_SFL_MSG_MORE.
  */
-int conn_sock_send(struct connection *conn, const void *buf, int len, int flags)
+int conn_ctrl_send(struct connection *conn, const void *buf, int len, int flags)
 {
+	const struct buffer buffer = b_make((char*)buf, len, 0, len);
+	const struct xprt_ops *xprt = xprt_get(XPRT_RAW);
 	int ret;
 
 	ret = -1;
@@ -302,37 +115,22 @@ int conn_sock_send(struct connection *conn, const void *buf, int len, int flags)
 	if (!len)
 		goto fail;
 
-	if (!fd_send_ready(conn->handle.fd))
-		goto wait;
-
-	do {
-		ret = send(conn->handle.fd, buf, len, flags | MSG_DONTWAIT | MSG_NOSIGNAL);
-	} while (ret < 0 && errno == EINTR);
-
-
-	if (ret > 0) {
-		if (conn->flags & CO_FL_WAIT_L4_CONN) {
-			conn->flags &= ~CO_FL_WAIT_L4_CONN;
-			fd_may_send(conn->handle.fd);
-			fd_cond_recv(conn->handle.fd);
-		}
-		return ret;
-	}
-
-	if (ret == 0 || errno == EAGAIN || errno == ENOTCONN) {
-	wait:
-		fd_cant_send(conn->handle.fd);
-		return 0;
-	}
+	/* snd_buf() already takes care of updating conn->flags and handling
+	 * the FD polling status.
+	 */
+	ret = xprt->snd_buf(conn, NULL, &buffer, buffer.data, flags);
+	if (conn->flags & CO_FL_ERROR)
+		ret = -1;
+	return ret;
  fail:
 	conn->flags |= CO_FL_SOCK_RD_SH | CO_FL_SOCK_WR_SH | CO_FL_ERROR;
 	return ret;
 }
 
-/* Called from the upper layer, to subscribe <es> to events <event_type>. The
- * event subscriber <es> is not allowed to change from a previous call as long
- * as at least one event is still subscribed. The <event_type> must only be a
- * combination of SUB_RETRY_RECV and SUB_RETRY_SEND. It always returns 0.
+/* Called from the upper layer, to unsubscribe <es> from events <event_type>.
+ * The event subscriber <es> is not allowed to change from a previous call as
+ * long as at least one event is still subscribed. The <event_type> must only
+ * be a combination of SUB_RETRY_RECV and SUB_RETRY_SEND. It always returns 0.
  */
 int conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
@@ -343,119 +141,57 @@ int conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, st
 	if (!es->events)
 		conn->subs = NULL;
 
-	if (conn_ctrl_ready(conn)) {
-		if (event_type & SUB_RETRY_RECV)
-			fd_stop_recv(conn->handle.fd);
+	if (conn_ctrl_ready(conn) && conn->ctrl->ignore_events)
+		conn->ctrl->ignore_events(conn, event_type);
 
-		if (event_type & SUB_RETRY_SEND)
-			fd_stop_send(conn->handle.fd);
-	}
 	return 0;
 }
 
 /* Called from the upper layer, to subscribe <es> to events <event_type>.
  * The <es> struct is not allowed to differ from the one passed during a
- * previous call to subscribe(). If the FD is ready, the wait_event is
- * immediately woken up and the subcription is cancelled. It always
- * returns zero.
+ * previous call to subscribe(). If the connection's ctrl layer is ready,
+ * the wait_event is immediately woken up and the subcription is cancelled.
+ * It always returns zero.
  */
 int conn_subscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
+	int ret = 0;
+
 	BUG_ON(event_type & ~(SUB_RETRY_SEND|SUB_RETRY_RECV));
 	BUG_ON(conn->subs && conn->subs != es);
 
 	if (conn->subs && (conn->subs->events & event_type) == event_type)
 		return 0;
 
-	conn->subs = es;
-	es->events |= event_type;
-
-	if (conn_ctrl_ready(conn)) {
-		if (event_type & SUB_RETRY_RECV) {
-			if (fd_recv_ready(conn->handle.fd)) {
-				tasklet_wakeup(es->tasklet);
-				es->events &= ~SUB_RETRY_RECV;
-				if (!es->events)
-					conn->subs = NULL;
-			}
-			else
-				fd_want_recv(conn->handle.fd);
-		}
-
-		if (event_type & SUB_RETRY_SEND) {
-			if (fd_send_ready(conn->handle.fd)) {
-				tasklet_wakeup(es->tasklet);
-				es->events &= ~SUB_RETRY_SEND;
-				if (!es->events)
-					conn->subs = NULL;
-			}
-			else
-				fd_want_send(conn->handle.fd);
-		}
+	if (conn_ctrl_ready(conn) && conn->ctrl->check_events) {
+		ret = conn->ctrl->check_events(conn, event_type);
+		if (ret)
+			tasklet_wakeup(es->tasklet);
 	}
+
+	es->events = (es->events | event_type) & ~ret;
+	conn->subs = es->events ? es : NULL;
 	return 0;
 }
 
-/* Drains possibly pending incoming data on the file descriptor attached to the
- * connection and update the connection's flags accordingly. This is used to
- * know whether we need to disable lingering on close. Returns non-zero if it
- * is safe to close without disabling lingering, otherwise zero. The SOCK_RD_SH
- * flag may also be updated if the incoming shutdown was reported by the drain()
- * function.
+/* Drains possibly pending incoming data on the connection and update the flags
+ * accordingly. This is used to know whether we need to disable lingering on
+ * close. Returns non-zero if it is safe to close without disabling lingering,
+ * otherwise zero. The CO_FL_SOCK_RD_SH flag may also be updated if the incoming
+ * shutdown was reported by the ->drain() function.
  */
-int conn_sock_drain(struct connection *conn)
+int conn_ctrl_drain(struct connection *conn)
 {
-	int turns = 2;
-	int len;
+	int ret = 0;
 
-	if (!conn_ctrl_ready(conn))
-		return 1;
-
-	if (conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH))
-		return 1;
-
-	if (fdtab[conn->handle.fd].ev & (FD_POLL_ERR|FD_POLL_HUP))
-		goto shut;
-
-	if (!fd_recv_ready(conn->handle.fd))
-		return 0;
-
-	/* no drain function defined, use the generic one */
-
-	while (turns) {
-#ifdef MSG_TRUNC_CLEARS_INPUT
-		len = recv(conn->handle.fd, NULL, INT_MAX, MSG_DONTWAIT | MSG_NOSIGNAL | MSG_TRUNC);
-		if (len == -1 && errno == EFAULT)
-#endif
-			len = recv(conn->handle.fd, trash.area, trash.size,
-				   MSG_DONTWAIT | MSG_NOSIGNAL);
-
-		if (len == 0)
-			goto shut;
-
-		if (len < 0) {
-			if (errno == EAGAIN) {
-				/* connection not closed yet */
-				fd_cant_recv(conn->handle.fd);
-				break;
-			}
-			if (errno == EINTR)  /* oops, try again */
-				continue;
-			/* other errors indicate a dead connection, fine. */
-			goto shut;
-		}
-		/* OK we read some data, let's try again once */
-		turns--;
+	if (!conn_ctrl_ready(conn) || conn->flags & (CO_FL_ERROR | CO_FL_SOCK_RD_SH))
+		ret = 1;
+	else if (conn->ctrl->drain) {
+		ret = conn->ctrl->drain(conn);
+		if (ret)
+			conn->flags |= CO_FL_SOCK_RD_SH;
 	}
-
-	/* some data are still present, give up */
-	return 0;
-
- shut:
-	/* we're certain the connection was shut down */
-	fdtab[conn->handle.fd].linger_risk = 0;
-	conn->flags |= CO_FL_SOCK_RD_SH;
-	return 1;
+	return ret;
 }
 
 /*
@@ -1077,11 +813,11 @@ int conn_send_socks4_proxy_request(struct connection *conn)
 		/* we are sending the socks4_req_line here. If the data layer
 		 * has a pending write, we'll also set MSG_MORE.
 		 */
-		ret = conn_sock_send(
+		ret = conn_ctrl_send(
 				conn,
 				((char *)(&req_line)) + (sizeof(req_line)+conn->send_proxy_ofs),
 				-conn->send_proxy_ofs,
-				(conn->subs && conn->subs->events & SUB_RETRY_SEND) ? MSG_MORE : 0);
+				(conn->subs && conn->subs->events & SUB_RETRY_SEND) ? CO_SFL_MSG_MORE : 0);
 
 		DPRINTF(stderr, "SOCKS PROXY HS FD[%04X]: Before send remain is [%d], sent [%d]\n",
 				conn->handle.fd, -conn->send_proxy_ofs, ret);

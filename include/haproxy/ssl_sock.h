@@ -65,6 +65,7 @@ const char *ssl_sock_get_proto_version(struct connection *conn);
 int ssl_sock_parse_alpn(char *arg, char **alpn_str, int *alpn_len, char **err);
 void ssl_sock_set_alpn(struct connection *conn, const unsigned char *, int);
 void ssl_sock_set_servername(struct connection *conn, const char *hostname);
+void ssl_sock_set_srv(struct server *s, signed char use_ssl);
 
 int ssl_sock_get_cert_used_sess(struct connection *conn);
 int ssl_sock_get_cert_used_conn(struct connection *conn);
@@ -94,7 +95,7 @@ SSL_CTX *ssl_sock_get_generated_cert(unsigned int key, struct bind_conf *bind_co
 int ssl_sock_set_generated_cert(SSL_CTX *ctx, unsigned int key, struct bind_conf *bind_conf);
 unsigned int ssl_sock_generated_cert_key(const void *data, size_t len);
 void ssl_sock_load_cert_sni(struct ckch_inst *ckch_inst, struct bind_conf *bind_conf);
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1010000fL) && !defined(OPENSSL_NO_ASYNC) && !defined(LIBRESSL_VERSION_NUMBER)
+#ifdef SSL_MODE_ASYNC
 void ssl_async_fd_handler(int fd);
 void ssl_async_fd_free(int fd);
 #endif

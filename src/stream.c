@@ -48,6 +48,7 @@
 #include <haproxy/proxy.h>
 #include <haproxy/queue.h>
 #include <haproxy/server.h>
+#include <haproxy/sample.h>
 #include <haproxy/session.h>
 #include <haproxy/stats-t.h>
 #include <haproxy/stick_table.h>
@@ -267,13 +268,16 @@ static void strm_trace(enum trace_level level, uint64_t mask, const struct trace
 
 /* Create a new stream for connection <conn>. Return < 0 on error. This is only
  * valid right after the handshake, before the connection's data layer is
- * initialized, because it relies on the session to be in conn->owner.
+ * initialized, because it relies on the session to be in conn->owner. On
+ * success, <input> buffer is transferred to the stream and thus points to
+ * BUF_NULL. On error, it is unchanged and it is the caller responsibility to
+ * release it.
  */
-int stream_create_from_cs(struct conn_stream *cs)
+int stream_create_from_cs(struct conn_stream *cs, struct buffer *input)
 {
 	struct stream *strm;
 
-	strm = stream_new(cs->conn->owner, &cs->obj_type);
+	strm = stream_new(cs->conn->owner, &cs->obj_type, input);
 	if (strm == NULL)
 		return -1;
 
@@ -313,15 +317,17 @@ int stream_buf_available(void *arg)
  * end point is assigned to <origin>, which must be valid. The stream's task
  * is configured with a nice value inherited from the listener's nice if any.
  * The task's context is set to the new stream, and its function is set to
- * process_stream(). Target and analysers are null.
+ * process_stream(). Target and analysers are null. <input> is used as input
+ * buffer for the request channel and may contain data. On success, it is
+ * transfer to the stream and <input> is set to BUF_NULL. On error, <input>
+ * buffer is unchanged and it is the caller responsibility to release it.
  */
-struct stream *stream_new(struct session *sess, enum obj_type *origin)
+struct stream *stream_new(struct session *sess, enum obj_type *origin, struct buffer *input)
 {
 	struct stream *s;
 	struct task *t;
 	struct conn_stream *cs  = objt_cs(origin);
 	struct appctx *appctx   = objt_appctx(origin);
-	const struct cs_info *csinfo;
 
 	DBG_TRACE_ENTER(STRM_EV_STRM_NEW);
 	if (unlikely((s = pool_alloc(pool_head_stream)) == NULL))
@@ -346,19 +352,10 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	s->logs.srv_queue_pos = 0; /* we will get this number soon */
 	s->obj_type = OBJ_TYPE_STREAM;
 
-	csinfo = si_get_cs_info(cs);
-	if (csinfo) {
-		s->logs.accept_date = csinfo->create_date;
-		s->logs.tv_accept = csinfo->tv_create;
-		s->logs.t_handshake = csinfo->t_handshake;
-		s->logs.t_idle = csinfo->t_idle;
-	}
-	else {
-		s->logs.accept_date = sess->accept_date;
-		s->logs.tv_accept = sess->tv_accept;
-		s->logs.t_handshake = sess->t_handshake;
-		s->logs.t_idle = -1;
-	}
+	s->logs.accept_date = sess->accept_date;
+	s->logs.tv_accept = sess->tv_accept;
+	s->logs.t_handshake = sess->t_handshake;
+	s->logs.t_idle = sess->t_idle;
 
 	/* default logging function */
 	s->do_log = strm_log;
@@ -415,8 +412,6 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	 * when the default backend is assigned.
 	 */
 	s->be  = sess->fe;
-	s->req.buf = BUF_NULL;
-	s->res.buf = BUF_NULL;
 	s->req_cap = NULL;
 	s->res_cap = NULL;
 
@@ -510,6 +505,8 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 	s->dns_ctx.hostname_dn_len = 0;
 	s->dns_ctx.parent = NULL;
 
+	s->tunnel_timeout = TICK_ETERNITY;
+
 	HA_SPIN_LOCK(STRMS_LOCK, &streams_lock);
 	LIST_ADDQ(&streams, &s->list);
 	HA_SPIN_UNLOCK(STRMS_LOCK, &streams_lock);
@@ -524,6 +521,17 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
 
 	if (sess->fe->accept && sess->fe->accept(s) < 0)
 		goto out_fail_accept;
+
+	if (!b_is_null(input)) {
+		/* Xfer the input buffer to the request channel. <input> will
+		 * than point to BUF_NULL. From this point, it is the stream
+		 * responsibility to release it.
+		 */
+		s->req.buf = *input;
+		*input = BUF_NULL;
+		s->req.total = (IS_HTX_STRM(s) ? htxbuf(&s->req.buf)->data : b_data(&s->req.buf));
+		s->req.flags |= (s->req.total ? CF_READ_PARTIAL : 0);
+	}
 
 	/* it is important not to call the wakeup function directly but to
 	 * pass through task_wakeup(), because this one knows how to apply
@@ -767,8 +775,6 @@ void stream_process_counters(struct stream *s)
 {
 	struct session *sess = s->sess;
 	unsigned long long bytes;
-	void *ptr1,*ptr2;
-	struct stksess *ts;
 	int i;
 
 	bytes = s->req.total - s->logs.bytes_in;
@@ -784,30 +790,8 @@ void stream_process_counters(struct stream *s)
 			_HA_ATOMIC_ADD(&sess->listener->counters->bytes_in, bytes);
 
 		for (i = 0; i < MAX_SESS_STKCTR; i++) {
-			struct stkctr *stkctr = &s->stkctr[i];
-
-			ts = stkctr_entry(stkctr);
-			if (!ts) {
-				stkctr = &sess->stkctr[i];
-				ts = stkctr_entry(stkctr);
-				if (!ts)
-					continue;
-			}
-
-			HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-			ptr1 = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_BYTES_IN_CNT);
-			if (ptr1)
-				stktable_data_cast(ptr1, bytes_in_cnt) += bytes;
-
-			ptr2 = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_BYTES_IN_RATE);
-			if (ptr2)
-				update_freq_ctr_period(&stktable_data_cast(ptr2, bytes_in_rate),
-						       stkctr->table->data_arg[STKTABLE_DT_BYTES_IN_RATE].u, bytes);
-			HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-			/* If data was modified, we need to touch to re-schedule sync */
-			if (ptr1 || ptr2)
-				stktable_touch_local(stkctr->table, ts, 0);
+			if (!stkctr_inc_bytes_in_ctr(&s->stkctr[i], bytes))
+				stkctr_inc_bytes_in_ctr(&sess->stkctr[i], bytes);
 		}
 	}
 
@@ -824,31 +808,26 @@ void stream_process_counters(struct stream *s)
 			_HA_ATOMIC_ADD(&sess->listener->counters->bytes_out, bytes);
 
 		for (i = 0; i < MAX_SESS_STKCTR; i++) {
-			struct stkctr *stkctr = &s->stkctr[i];
-
-			ts = stkctr_entry(stkctr);
-			if (!ts) {
-				stkctr = &sess->stkctr[i];
-				ts = stkctr_entry(stkctr);
-				if (!ts)
-					continue;
-			}
-
-			HA_RWLOCK_WRLOCK(STK_SESS_LOCK, &ts->lock);
-			ptr1 = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_BYTES_OUT_CNT);
-			if (ptr1)
-				stktable_data_cast(ptr1, bytes_out_cnt) += bytes;
-
-			ptr2 = stktable_data_ptr(stkctr->table, ts, STKTABLE_DT_BYTES_OUT_RATE);
-			if (ptr2)
-				update_freq_ctr_period(&stktable_data_cast(ptr2, bytes_out_rate),
-						       stkctr->table->data_arg[STKTABLE_DT_BYTES_OUT_RATE].u, bytes);
-			HA_RWLOCK_WRUNLOCK(STK_SESS_LOCK, &ts->lock);
-
-			/* If data was modified, we need to touch to re-schedule sync */
-			if (ptr1 || ptr2)
-				stktable_touch_local(stkctr->table, stkctr_entry(stkctr), 0);
+			if (!stkctr_inc_bytes_out_ctr(&s->stkctr[i], bytes))
+				stkctr_inc_bytes_out_ctr(&sess->stkctr[i], bytes);
 		}
+	}
+}
+
+int stream_set_timeout(struct stream *s, enum act_timeout_name name, int timeout)
+{
+	switch (name) {
+	case ACT_TIMEOUT_SERVER:
+		s->req.wto = timeout;
+		s->res.rto = timeout;
+		return 1;
+
+	case ACT_TIMEOUT_TUNNEL:
+		s->tunnel_timeout = timeout;
+		return 1;
+
+	default:
+		return 0;
 	}
 }
 
@@ -920,9 +899,17 @@ static void back_establish(struct stream *s)
 	si_rx_endp_more(si);
 	rep->flags |= CF_READ_ATTACHED; /* producer is now attached */
 	if (objt_cs(si->end)) {
-		/* real connections have timeouts */
-		req->wto = s->be->timeout.server;
-		rep->rto = s->be->timeout.server;
+		/* real connections have timeouts
+		 * if already defined, it means that a set-timeout rule has
+		 * been executed so do not overwrite them
+		 */
+		if (!tick_isset(req->wto))
+			req->wto = s->be->timeout.server;
+		if (!tick_isset(rep->rto))
+			rep->rto = s->be->timeout.server;
+		if (!tick_isset(s->tunnel_timeout))
+			s->tunnel_timeout = s->be->timeout.tunnel;
+
 		/* The connection is now established, try to read data from the
 		 * underlying layer, and subscribe to recv events. We use a
 		 * delayed recv here to give a chance to the data to flow back
@@ -2208,9 +2195,9 @@ struct task *process_stream(struct task *t, void *context, unsigned short state)
 		 * tunnel timeout set, use it now. Note that we must respect
 		 * the half-closed timeouts as well.
 		 */
-		if (!req->analysers && s->be->timeout.tunnel) {
+		if (!req->analysers && s->tunnel_timeout) {
 			req->rto = req->wto = res->rto = res->wto =
-				s->be->timeout.tunnel;
+				s->tunnel_timeout;
 
 			if ((req->flags & CF_SHUTR) && tick_isset(sess->fe->timeout.clientfin))
 				res->wto = sess->fe->timeout.clientfin;
@@ -2768,6 +2755,11 @@ static enum act_parse_ret stream_parse_use_service(const char **args, int *cur_a
 void service_keywords_register(struct action_kw_list *kw_list)
 {
 	LIST_ADDQ(&service_keywords, &kw_list->list);
+}
+
+struct action_kw *service_find(const char *kw)
+{
+	return action_lookup(&service_keywords, kw);
 }
 
 /* Lists the known services on <out> */
@@ -3464,6 +3456,39 @@ static struct action_kw_list stream_http_keywords = { ILH, {
 }};
 
 INITCALL1(STG_REGISTER, http_req_keywords_register, &stream_http_keywords);
+
+static int smp_fetch_cur_server_timeout(const struct arg *args, struct sample *smp, const char *km, void *private)
+{
+	smp->flags = SMP_F_VOL_TXN;
+	smp->data.type = SMP_T_SINT;
+	if (!smp->strm)
+		return 0;
+
+	smp->data.u.sint = TICKS_TO_MS(smp->strm->res.rto);
+	return 1;
+}
+
+static int smp_fetch_cur_tunnel_timeout(const struct arg *args, struct sample *smp, const char *km, void *private)
+{
+	smp->flags = SMP_F_VOL_TXN;
+	smp->data.type = SMP_T_SINT;
+	if (!smp->strm)
+		return 0;
+
+	smp->data.u.sint = TICKS_TO_MS(smp->strm->tunnel_timeout);
+	return 1;
+}
+
+/* Note: must not be declared <const> as its list will be overwritten.
+ * Please take care of keeping this list alphabetically sorted.
+ */
+static struct sample_fetch_kw_list smp_kws = {ILH, {
+	{ "cur_server_timeout", smp_fetch_cur_server_timeout, 0, NULL, SMP_T_SINT, SMP_USE_BKEND, },
+	{ "cur_tunnel_timeout", smp_fetch_cur_tunnel_timeout, 0, NULL, SMP_T_SINT, SMP_USE_BKEND, },
+	{ NULL, NULL, 0, 0, 0 },
+}};
+
+INITCALL1(STG_REGISTER, sample_register_fetches, &smp_kws);
 
 /*
  * Local variables:

@@ -73,14 +73,49 @@ static inline void session_store_counters(struct session *sess)
 	}
 }
 
+/* Increase the number of cumulated HTTP requests in the tracked counters */
+static inline void session_inc_http_req_ctr(struct session *sess)
+{
+	int i;
+
+	for (i = 0; i < MAX_SESS_STKCTR; i++)
+		stkctr_inc_http_req_ctr(&sess->stkctr[i]);
+}
+
+/* Increase the number of cumulated failed HTTP requests in the tracked
+ * counters. Only 4xx requests should be counted here so that we can
+ * distinguish between errors caused by client behaviour and other ones.
+ * Note that even 404 are interesting because they're generally caused by
+ * vulnerability scans.
+ */
+static inline void session_inc_http_err_ctr(struct session *sess)
+{
+	int i;
+
+	for (i = 0; i < MAX_SESS_STKCTR; i++)
+		stkctr_inc_http_err_ctr(&sess->stkctr[i]);
+}
+
+
 /* Remove the connection from the session list, and destroy the srv_list if it's now empty */
 static inline void session_unown_conn(struct session *sess, struct connection *conn)
 {
 	struct sess_srv_list *srv_list = NULL;
 
+	/* WT: this currently is a workaround for an inconsistency between
+	 * the link status of the connection in the session list and the
+	 * connection's owner. This should be removed as soon as all this
+	 * is addressed. Right now it's possible to enter here with a non-null
+	 * conn->owner that points to a dead session, but in this case the
+	 * element is not linked.
+	 */
+	if (!LIST_ADDED(&conn->session_list))
+		return;
+
 	if (conn->flags & CO_FL_SESS_IDLE)
 		sess->idle_conns--;
 	LIST_DEL_INIT(&conn->session_list);
+	conn->owner = NULL;
 	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
 		if (srv_list->target == conn->target) {
 			if (LIST_ISEMPTY(&srv_list->conn_list)) {
@@ -103,7 +138,7 @@ static inline int session_add_conn(struct session *sess, struct connection *conn
 	int found = 0;
 
 	/* Already attach to the session or not the connection owner */
-	if (!LIST_ISEMPTY(&conn->session_list) || conn->owner != sess)
+	if (!LIST_ISEMPTY(&conn->session_list) || (conn->owner && conn->owner != sess))
 		return 1;
 
 	list_for_each_entry(srv_list, &sess->srv_list, srv_list) {
