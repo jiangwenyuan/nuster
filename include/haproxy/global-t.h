@@ -194,6 +194,7 @@ struct global {
 			int disk_loader;                 /* the number of files load once */
 			int disk_saver;                  /* the number of entries checked once for persist_async */
 			int clean_temp;                  /* clean temp file or not */
+			int always_check_disk;           /* always try to read disk file or not */
 
 			struct ist root;                 /* disk root directory */
 
@@ -211,6 +212,7 @@ struct global {
 			int disk_loader;                 /* the number of files load once */
 			int disk_saver;                  /* the number of entries checked once for persist_async */
 			int clean_temp;                  /* clean temp file or not */
+			int always_check_disk;           /* always try to read disk file or not */
 
 			struct ist root;                 /* disk root directory */
 

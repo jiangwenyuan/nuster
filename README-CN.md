@@ -263,9 +263,9 @@ backend be
 
 **syntax:**
 
-*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
+*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off] [always-check-disk on|off]*
 
-*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
+*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off] [always-check-disk on|off]*
 
 **default:** *none*
 
@@ -340,6 +340,12 @@ dict.nosql.used:                0
 `dir`定义的目录下会自动创建一个`.tmp`的目录来存储临时文件。
 
 该选项定义是否在启动时删除该目录下的临时文件。默认是off。
+
+### always-check-disk on|off
+
+定义是否总是检查硬盘有无缓存文件，特别是硬盘被多个实例共享时有可能缓存不能命中。
+
+默认是off。
 
 ## proxy: nuster cache|nosql
 

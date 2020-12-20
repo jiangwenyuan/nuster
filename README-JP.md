@@ -266,9 +266,9 @@ HTTP methodを定義する。ディフォルトは `PURGE`。
 
 **syntax:**
 
-*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
+*nuster cache on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off] [always-check-disk on|off]*
 
-*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off]*
+*nuster nosql on|off [data-size size] [dict-size size] [dir DIR] [dict-cleaner n] [data-cleaner n] [disk-cleaner n] [disk-loader n] [disk-saver n] [clean-temp on|off] [always-check-disk on|off]*
 
 **default:** *none*
 
@@ -342,6 +342,12 @@ dict.nosql.used:                0
 `dir`で定義したディレクトリの下に一時ファイル保存用の`.tmp`というディレクトリが自動的生成される。
 
 起動時その一時ファイルを削除するかどうかを決める。ディフォルトはoff。
+
+### always-check-disk on|off
+
+常にディスクキャッシュをチェックする。特にディスクが複数のインスタンスに共有された場合キャッシュがスミする可能性がある。
+
+默认是off。
 
 ## proxy: nuster cache|nosql
 
