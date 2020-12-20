@@ -659,7 +659,7 @@ backend be
     nuster rule r1 if { path /a1 }
     nuster rule r2 key method.scheme.host.path.delimiter.query.cookie_userId if { path /a2 }
     nuster rule r3 ttl 10 if { path /a3 }
-    nuster rule r4 disk only if { path /a4 }
+    nuster rule r4 disk on if { path /a4 }
 
     server s1 127.0.0.1:8081
 ```
