@@ -216,7 +216,7 @@ void
 nst_key_hash(nst_key_t *key) {
     blk_SHA_CTX ctx;
 
-    key->hash = XXH64(key->data, key->size, 0);
+    key->hash = XXH3(key->data, key->size, 0);
 
     blk_SHA1_Init(&ctx);
     blk_SHA1_Update(&ctx, key->data, key->size);
