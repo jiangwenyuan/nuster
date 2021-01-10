@@ -49,6 +49,7 @@ struct cache {
 	unsigned int maxage;     /* max-age */
 	unsigned int maxblocks;
 	unsigned int maxobjsz;   /* max-object-size (in bytes) */
+	unsigned int max_secondary_entries;  /* maximum number of secondary entries with the same primary hash */
 	uint8_t vary_processing_enabled;     /* boolean : manage Vary header (disabled by default) */
 	char id[33];             /* cache name */
 };
@@ -72,29 +73,59 @@ enum vary_header_bit {
 	VARY_LAST  /* should always be last */
 };
 
-typedef int(*http_header_normalizer)(struct ist value, char *buf, unsigned int *buf_len);
+/*
+ * Encoding list extracted from
+ * https://www.iana.org/assignments/http-parameters/http-parameters.xhtml
+ * and RFC7231#5.3.4.
+ */
+enum vary_encoding {
+	VARY_ENCODING_GZIP =		(1 << 0),
+	VARY_ENCODING_DEFLATE =		(1 << 1),
+	VARY_ENCODING_BR =		(1 << 2),
+	VARY_ENCODING_COMPRESS =	(1 << 3),
+	VARY_ENCODING_AES128GCM =	(1 << 4),
+	VARY_ENCODING_EXI =		(1 << 5),
+	VARY_ENCODING_PACK200_GZIP =	(1 << 6),
+	VARY_ENCODING_ZSTD =		(1 << 7),
+	VARY_ENCODING_IDENTITY =	(1 << 8),
+	VARY_ENCODING_STAR =		(1 << 9),
+	VARY_ENCODING_OTHER =		(1 << 10)
+};
 
 struct vary_hashing_information {
 	struct ist hdr_name;                 /* Header name */
-	enum vary_header_bit value;          /* Bit repesenting the header in a vary signature */
+	enum vary_header_bit value;          /* Bit representing the header in a vary signature */
 	unsigned int hash_length;            /* Size of the sub hash for this header's value */
-	http_header_normalizer norm_fn;      /* Normalization function */
+	int(*norm_fn)(struct htx*,struct ist hdr_name,char* buf,unsigned int* buf_len);  /* Normalization function */
+	int(*cmp_fn)(const void *ref_hash, const void *new_hash, unsigned int hash_len); /* Comparison function, should return 0 if the hashes are alike */
 };
 
-static int accept_encoding_normalizer(struct ist value, char *buf, unsigned int *buf_len);
-static int default_normalizer(struct ist value, char *buf, unsigned int *buf_len);
-
-/* Warning : do not forget to update HTTP_CACHE_SEC_KEY_LEN when new items are
- * added to this array. */
-const struct vary_hashing_information vary_information[] = {
-	{ IST("accept-encoding"), VARY_ACCEPT_ENCODING, sizeof(int), &accept_encoding_normalizer },
-	{ IST("referer"), VARY_REFERER, sizeof(int), &default_normalizer },
-};
+struct accept_encoding_hash {
+	unsigned int encoding_bitmap;
+	unsigned int hash;
+} __attribute__((packed));
 
 static int http_request_prebuild_full_secondary_key(struct stream *s);
 static int http_request_build_secondary_key(struct stream *s, int vary_signature);
 static int http_request_reduce_secondary_key(unsigned int vary_signature,
 					     char prebuilt_key[HTTP_CACHE_SEC_KEY_LEN]);
+
+static int parse_encoding_value(struct ist value, unsigned int *encoding_value,
+				unsigned int *has_null_weight);
+
+static int accept_encoding_normalizer(struct htx *htx, struct ist hdr_name,
+				      char *buf, unsigned int *buf_len);
+static int default_normalizer(struct htx *htx, struct ist hdr_name,
+			      char *buf, unsigned int *buf_len);
+
+static int accept_encoding_hash_cmp(const void *ref_hash, const void *new_hash, unsigned int hash_len);
+
+/* Warning : do not forget to update HTTP_CACHE_SEC_KEY_LEN when new items are
+ * added to this array. */
+const struct vary_hashing_information vary_information[] = {
+	{ IST("accept-encoding"), VARY_ACCEPT_ENCODING, sizeof(struct accept_encoding_hash), &accept_encoding_normalizer, &accept_encoding_hash_cmp },
+	{ IST("referer"), VARY_REFERER, sizeof(int), &default_normalizer, NULL },
+};
 
 
 /*
@@ -103,6 +134,8 @@ static int http_request_reduce_secondary_key(unsigned int vary_signature,
 struct cache_st {
 	struct shared_block *first_block;
 };
+
+#define DEFAULT_MAX_SECONDARY_ENTRY 10
 
 struct cache_entry {
 	unsigned int complete;    /* An entry won't be valid until complete is not null. */
@@ -116,6 +149,8 @@ struct cache_entry {
 	char secondary_key[HTTP_CACHE_SEC_KEY_LEN];  /* Optional secondary key. */
 	unsigned int secondary_key_signature;  /* Bitfield of the HTTP headers that should be used
 					        * to build secondary keys for this cache entry. */
+	unsigned int secondary_entries_count;  /* Should only be filled in the last entry of a list of dup entries */
+	unsigned int last_clear_ts;          /* Timestamp of the last call to clear_expired_duplicates. */
 
 	unsigned int etag_length; /* Length of the ETag value (if one was found in the response). */
 	unsigned int etag_offset; /* Offset of the ETag value in the data buffer. */
@@ -139,6 +174,9 @@ static struct cache *tmp_cache_config = NULL;
 
 DECLARE_STATIC_POOL(pool_head_cache_st, "cache_st", sizeof(struct cache_st));
 
+static struct eb32_node *insert_entry(struct cache *cache, struct cache_entry *new_entry);
+static void delete_entry(struct cache_entry *del_entry);
+
 struct cache_entry *entry_exist(struct cache *cache, char *hash)
 {
 	struct eb32_node *node;
@@ -157,11 +195,40 @@ struct cache_entry *entry_exist(struct cache *cache, char *hash)
 	if (entry->expire > now.tv_sec) {
 		return entry;
 	} else {
-		eb32_delete(node);
+		delete_entry(entry);
 		entry->eb.key = 0;
 	}
 	return NULL;
 
+}
+
+
+/*
+ * Compare a newly built secondary key to the one found in a cache_entry.
+ * Every sub-part of the key is compared to the reference through the dedicated
+ * comparison function of the sub-part (that might do more than a simple
+ * memcmp).
+ * Returns 0 if the keys are alike.
+ */
+static int secondary_key_cmp(const char *ref_key, const char *new_key)
+{
+	int retval = 0;
+	int idx = 0;
+	int offset = 0;
+	const struct vary_hashing_information *info;
+
+	for (idx = 0; idx < sizeof(vary_information)/sizeof(*vary_information) && !retval; ++idx) {
+		info = &vary_information[idx];
+
+		if (info->cmp_fn)
+			retval = info->cmp_fn(&ref_key[offset], &new_key[offset], info->hash_length);
+		else
+			retval = memcmp(&ref_key[offset], &new_key[offset], info->hash_length);
+
+		offset += info->hash_length;
+	}
+
+	return retval;
 }
 
 /*
@@ -172,15 +239,25 @@ struct cache_entry *entry_exist(struct cache *cache, char *hash)
  * Returns the cache_entry in case of success, NULL otherwise.
  */
 struct cache_entry *secondary_entry_exist(struct cache *cache, struct cache_entry *entry,
-					  char *secondary_key)
+					  const char *secondary_key)
 {
 	struct eb32_node *node = &entry->eb;
 
 	if (!entry->secondary_key_signature)
 		return NULL;
 
-	while (entry && memcmp(entry->secondary_key, secondary_key, HTTP_CACHE_SEC_KEY_LEN) != 0) {
+	while (entry && secondary_key_cmp(entry->secondary_key, secondary_key) != 0) {
 		node = eb32_next_dup(node);
+
+		/* Make the best use of this iteration and clear expired entries
+		 * when we find them. Calling delete_entry would be too costly
+		 * so we simply call eb32_delete. The secondary_entry count will
+		 * be updated when we try to insert a new entry to this list. */
+		if (entry->expire <= now.tv_sec) {
+			eb32_delete(&entry->eb);
+			entry->eb.key = 0;
+		}
+
 		entry = node ? eb32_entry(node, struct cache_entry, eb) : NULL;
 	}
 
@@ -193,6 +270,143 @@ struct cache_entry *secondary_entry_exist(struct cache *cache, struct cache_entr
 
 	return entry;
 }
+
+
+/*
+ * Remove all expired entries from a list of duplicates.
+ * Return the number of alive entries in the list and sets dup_tail to the
+ * current last item of the list.
+ */
+static unsigned int clear_expired_duplicates(struct eb32_node **dup_tail)
+{
+	unsigned int entry_count = 0;
+	struct cache_entry *entry = NULL;
+	struct eb32_node *prev = *dup_tail;
+	struct eb32_node *tail = NULL;
+
+	while (prev) {
+		entry = container_of(prev, struct cache_entry, eb);
+		prev = eb32_prev_dup(prev);
+		if (entry->expire <= now.tv_sec) {
+			eb32_delete(&entry->eb);
+			entry->eb.key = 0;
+		}
+		else {
+			if (!tail)
+				tail = &entry->eb;
+			++entry_count;
+		}
+	}
+
+	*dup_tail = tail;
+
+	return entry_count;
+}
+
+
+/*
+ * This function inserts a cache_entry in the cache's ebtree. In case of
+ * duplicate entries (vary), it then checks that the number of entries did not
+ * reach the max number of secondary entries. If this entry should not have been
+ * created, remove it.
+ * In the regular case (unique entries), this function does not do more than a
+ * simple insert. In case of secondary entries, it will at most cost an
+ * insertion+max_sec_entries time checks and entry deletion.
+ * Returns the newly inserted node in case of success, NULL otherwise.
+ */
+static struct eb32_node *insert_entry(struct cache *cache, struct cache_entry *new_entry)
+{
+	struct eb32_node *prev = NULL;
+	struct cache_entry *entry = NULL;
+	unsigned int entry_count = 0;
+	unsigned int last_clear_ts = now.tv_sec;
+
+	struct eb32_node *node = eb32_insert(&cache->entries, &new_entry->eb);
+
+	/* We should not have multiple entries with the same primary key unless
+	 * the entry has a non null vary signature. */
+	if (!new_entry->secondary_key_signature)
+		return node;
+
+	prev = eb32_prev_dup(node);
+	if (prev != NULL) {
+		/* The last entry of a duplicate list should contain the current
+		 * number of entries in the list. */
+		entry = container_of(prev, struct cache_entry, eb);
+		entry_count = entry->secondary_entries_count;
+		last_clear_ts = entry->last_clear_ts;
+
+		if (entry_count >= cache->max_secondary_entries) {
+			/* Some entries of the duplicate list might be expired so
+			 * we will iterate over all the items in order to free some
+			 * space. In order to avoid going over the same list too
+			 * often, we first check the timestamp of the last check
+			 * performed. */
+			if (last_clear_ts == now.tv_sec) {
+				/* Too many entries for this primary key, clear the
+				 * one that was inserted. */
+				eb32_delete(node);
+				node->key = 0;
+				return NULL;
+			}
+
+			entry_count = clear_expired_duplicates(&prev);
+			if (entry_count >= cache->max_secondary_entries) {
+				/* Still too many entries for this primary key, delete
+				 * the newly inserted one. */
+				entry = container_of(prev, struct cache_entry, eb);
+				entry->last_clear_ts = now.tv_sec;
+				eb32_delete(node);
+				node->key = 0;
+				return NULL;
+			}
+		}
+	}
+
+	new_entry->secondary_entries_count = entry_count + 1;
+	new_entry->last_clear_ts = last_clear_ts;
+
+	return node;
+}
+
+
+/*
+ * This function removes an entry from the ebtree. If the entry was a duplicate
+ * (in case of Vary), it updates the secondary entry counter in another
+ * duplicate entry (the last entry of the dup list).
+ */
+static void delete_entry(struct cache_entry *del_entry)
+{
+	struct eb32_node *prev = NULL, *next = NULL;
+	struct cache_entry *entry = NULL;
+	struct eb32_node *last = NULL;
+
+	if (del_entry->secondary_key_signature) {
+		next = &del_entry->eb;
+
+		/* Look for last entry of the duplicates list. */
+		while ((next = eb32_next_dup(next))) {
+			last = next;
+		}
+
+		if (last) {
+			entry = container_of(last, struct cache_entry, eb);
+			--entry->secondary_entries_count;
+		}
+		else {
+			/* The current entry is the last one, look for the
+			 * previous one to update its counter. */
+			prev = eb32_prev_dup(&del_entry->eb);
+			if (prev) {
+				entry = container_of(prev, struct cache_entry, eb);
+				entry->secondary_entries_count = del_entry->secondary_entries_count - 1;
+			}
+		}
+	}
+	eb32_delete(&del_entry->eb);
+	del_entry->eb.key = 0;
+}
+
 
 static inline struct shared_context *shctx_ptr(struct cache *cache)
 {
@@ -237,7 +451,7 @@ cache_store_check(struct proxy *px, struct flt_conf *fconf)
 	*  post_check.
 	*/
 	list_for_each_entry(cache, &caches_config, list) {
-		if (!strcmp(cache->id, cconf->c.name))
+		if (strcmp(cache->id, cconf->c.name) == 0)
 			goto found;
 	}
 
@@ -365,6 +579,7 @@ static inline void disable_cache_entry(struct cache_st *st,
 	filter->ctx = NULL; /* disable cache  */
 	shctx_lock(shctx);
 	shctx_row_dec_hot(shctx, st->first_block);
+	eb32_delete(&object->eb);
 	object->eb.key = 0;
 	shctx_unlock(shctx);
 	pool_free(pool_head_cache_st, st);
@@ -498,7 +713,7 @@ cache_store_http_end(struct stream *s, struct filter *filter,
  /*
   * This intends to be used when checking HTTP headers for some
   * word=value directive. Return a pointer to the first character of value, if
-  * the word was not found or if there wasn't any value assigned ot it return NULL
+  * the word was not found or if there wasn't any value assigned to it return NULL
   */
 char *directive_value(const char *sample, int slen, const char *word, int wlen)
 {
@@ -643,7 +858,7 @@ static void cache_free_blocks(struct shared_block *first, struct shared_block *b
 	struct cache_entry *object = (struct cache_entry *)block->data;
 
 	if (first == block && object->eb.key)
-		eb32_delete(&object->eb);
+		delete_entry(object);
 	object->eb.key = 0;
 }
 
@@ -683,7 +898,7 @@ static time_t get_last_modified_time(struct htx *htx)
 
 /*
  * Checks the vary header's value. The headers on which vary should be applied
- * must be explicitely supported in the vary_information array (see cache.c). If
+ * must be explicitly supported in the vary_information array (see cache.c). If
  * any other header is mentioned, we won't store the response.
  * Returns 1 if Vary-based storage can work, 0 otherwise.
  */
@@ -714,6 +929,46 @@ static int http_check_vary_header(struct htx *htx, unsigned int *vary_signature)
 }
 
 
+/*
+ * Look for the accept-encoding part of the secondary_key and replace the
+ * encoding bitmap part of the hash with the actual encoding of the response,
+ * extracted from the content-encoding header value.
+ */
+static void set_secondary_key_encoding(struct htx *htx, char *secondary_key)
+{
+	unsigned int resp_encoding_bitmap = 0;
+	const struct vary_hashing_information *info = vary_information;
+	unsigned int offset = 0;
+	unsigned int count = 0;
+	unsigned int hash_info_count = sizeof(vary_information)/sizeof(*vary_information);
+	unsigned int encoding_value;
+	struct http_hdr_ctx ctx = { .blk = NULL };
+
+	/* Look for the accept-encoding part of the secondary_key. */
+	while (count < hash_info_count && info->value != VARY_ACCEPT_ENCODING) {
+		offset += info->hash_length;
+		++info;
+		++count;
+	}
+
+	if (count == hash_info_count)
+		return;
+
+	while (http_find_header(htx, ist("content-encoding"), &ctx, 0)) {
+		if (!parse_encoding_value(ctx.value, &encoding_value, NULL))
+			resp_encoding_bitmap |= encoding_value;
+		else
+			resp_encoding_bitmap |= VARY_ENCODING_OTHER;
+	}
+
+	if (!resp_encoding_bitmap)
+		resp_encoding_bitmap |= VARY_ENCODING_IDENTITY;
+
+	/* Rewrite the bitmap part of the hash with the new bitmap that only
+	 * corresponds the the response's encoding. */
+	write_u32(secondary_key + offset, resp_encoding_bitmap);
+}
+
 
 /*
  * This function will store the headers of the response in a buffer and then
@@ -722,7 +977,6 @@ static int http_check_vary_header(struct htx *htx, unsigned int *vary_signature)
 enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 					struct session *sess, struct stream *s, int flags)
 {
-	long long hdr_age;
 	int effective_maxage = 0;
 	int true_maxage = 0;
 	struct http_txn *txn = s->txn;
@@ -739,7 +993,6 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	struct http_hdr_ctx ctx;
 	size_t hdrs_len = 0;
 	int32_t pos;
-	struct ist header_name = IST_NULL;
 	unsigned int vary_signature = 0;
 
 	/* Don't cache if the response came from a cache */
@@ -767,7 +1020,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 				break;
 
 			default: /* Any unsafe method */
-				/* Discard any corresponding entry in case of sucessful
+				/* Discard any corresponding entry in case of successful
 				 * unsafe request (such as PUT, POST or DELETE). */
 				shctx_lock(shctx);
 
@@ -817,8 +1070,13 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	if (cache->vary_processing_enabled) {
 		if (!http_check_vary_header(htx, &vary_signature))
 			goto out;
-		if (vary_signature)
+		if (vary_signature) {
+			/* If something went wrong during the secondary key
+			 * building, do not store the response. */
+			if (!(txn->flags & TX_CACHE_HAS_SEC_KEY))
+				goto out;
 			http_request_reduce_secondary_key(vary_signature, txn->cache_secondary_hash);
+		}
 	}
 	else if (http_find_header(htx, ist("Vary"), &ctx, 0)) {
 		goto out;
@@ -843,7 +1101,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 				shctx_unlock(shctx);
 				goto out;
 			}
-			eb32_delete(&old->eb);
+			delete_entry(old);
 			old->eb.key = 0;
 		}
 	}
@@ -870,7 +1128,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 		memcpy(object->secondary_key, txn->cache_secondary_hash, HTTP_CACHE_SEC_KEY_LEN);
 
 	/* Insert the entry in the tree even if the payload is not cached yet. */
-	if (eb32_insert(&cache->entries, &object->eb) != &object->eb) {
+	if (insert_entry(cache, object) != &object->eb) {
 		object->eb.key = 0;
 		shctx_unlock(shctx);
 		goto out;
@@ -888,6 +1146,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 
 	ctx.blk = NULL;
 	if (http_find_header(htx, ist("Age"), &ctx, 0)) {
+		long long hdr_age;
 		if (!strl2llrc(ctx.value.ptr, ctx.value.len, &hdr_age) && hdr_age > 0) {
 			if (unlikely(hdr_age > CACHE_ENTRY_MAX_AGE))
 				hdr_age = CACHE_ENTRY_MAX_AGE;
@@ -921,7 +1180,7 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 		 * future conditional requests to be able to perform ETag
 		 * comparisons. */
 		if (type == HTX_BLK_HDR) {
-			header_name = htx_get_blk_name(htx, blk);
+			struct ist header_name = htx_get_blk_name(htx, blk);
 			if (isteq(header_name, ist("etag"))) {
 				object->etag_length = sz - istlen(header_name);
 				object->etag_offset = sizeof(struct cache_entry) + b_data(&trash) - sz + istlen(header_name);
@@ -934,6 +1193,13 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	/* Do not cache objects if the headers are too big. */
 	if (hdrs_len > htx->size - global.tune.maxrewrite)
 		goto out;
+
+	/* If the response has a secondary_key, fill its key part related to
+	 * encodings with the actual encoding of the response. This way any
+	 * subsequent request having the same primary key will have its accepted
+	 * encodings tested upon the cached response's one. */
+	if (cache->vary_processing_enabled && vary_signature)
+		set_secondary_key_encoding(htx, object->secondary_key);
 
 	shctx_lock(shctx);
 	if (!shctx_row_reserve_hot(shctx, first, trash.data)) {
@@ -955,7 +1221,6 @@ enum act_return http_action_store_cache(struct act_rule *rule, struct proxy *px,
 	/* register the buffer in the filter ctx for filling it with data*/
 	if (cache_ctx) {
 		cache_ctx->first_block = first;
-
 		/* store latest value and expiration time */
 		object->latest_validation = now.tv_sec;
 		object->expire = now.tv_sec + effective_maxage;
@@ -968,7 +1233,7 @@ out:
 		shctx_lock(shctx);
 		first->len = 0;
 		if (object->eb.key)
-			eb32_delete(&object->eb);
+			delete_entry(object);
 		object->eb.key = 0;
 		shctx_row_dec_hot(shctx, first);
 		shctx_unlock(shctx);
@@ -1289,7 +1554,7 @@ static int parse_cache_rule(struct proxy *proxy, const char *name, struct act_ru
 	list_for_each_entry(fconf, &proxy->filter_configs, list) {
 		if (fconf->id == cache_store_flt_id) {
 			cconf = fconf->conf;
-			if (cconf && !strcmp((char *)cconf->c.name, name)) {
+			if (cconf && strcmp((char *)cconf->c.name, name) == 0) {
 				rule->arg.act.p[0] = cconf;
 				return 1;
 			}
@@ -1495,13 +1760,10 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
 	http_check_request_for_cacheability(s, &s->req);
 
 	/* The request's hash has to be calculated for all requests, even POSTs
-	 * or PUTs for instance because RFC7234 specifies that a sucessful
+	 * or PUTs for instance because RFC7234 specifies that a successful
 	 * "unsafe" method on a stored resource must invalidate it
 	 * (see RFC7234#4.4). */
 	if (!sha1_hosturi(s))
-		return ACT_RET_CONT;
-
-	if ((s->txn->flags & (TX_CACHE_IGNORE|TX_CACHEABLE)) == TX_CACHE_IGNORE)
 		return ACT_RET_CONT;
 
 	if (s->txn->flags & TX_CACHE_IGNORE)
@@ -1522,7 +1784,7 @@ enum act_return http_action_req_cache_use(struct act_rule *rule, struct proxy *p
 		shctx_unlock(shctx_ptr(cache));
 
 		/* In case of Vary, we could have multiple entries with the same
-		 * primary hash. We need to calculate the secondary has in order
+		 * primary hash. We need to calculate the secondary hash in order
 		 * to find the actual entry we want (if it exists). */
 		if (res->secondary_key_signature) {
 			if (!http_request_build_secondary_key(s, res->secondary_key_signature)) {
@@ -1646,6 +1908,7 @@ int cfg_parse_cache(const char *file, int linenum, char **args, int kwm)
 			tmp_cache_config->maxage = 60;
 			tmp_cache_config->maxblocks = 0;
 			tmp_cache_config->maxobjsz = 0;
+			tmp_cache_config->max_secondary_entries = DEFAULT_MAX_SECONDARY_ENTRY;
 		}
 	} else if (strcmp(args[0], "total-max-size") == 0) {
 		unsigned long int maxsize;
@@ -1717,12 +1980,42 @@ int cfg_parse_cache(const char *file, int linenum, char **args, int kwm)
 		}
 
 		if (!*args[1]) {
-			ha_warning("parsing [%s:%d]: '%s' expects 0 or 1 (disable or enable vary processing).\n",
+			ha_warning("parsing [%s:%d]: '%s' expects \"on\" or \"off\" (enable or disable vary processing).\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
+		}
+		if (strcmp(args[1], "on") == 0)
+			tmp_cache_config->vary_processing_enabled = 1;
+		else if (strcmp(args[1], "off") == 0)
+			tmp_cache_config->vary_processing_enabled = 0;
+		else {
+			ha_warning("parsing [%s:%d]: '%s' expects \"on\" or \"off\" (enable or disable vary processing).\n",
+				   file, linenum, args[0]);
+			err_code |= ERR_WARN;
+		}
+	} else if (strcmp(args[0], "max-secondary-entries") == 0) {
+		unsigned int max_sec_entries;
+		char *err;
+
+		if (alertif_too_many_args(1, file, linenum, args, &err_code)) {
+			err_code |= ERR_ABORT;
+			goto out;
+		}
+
+		if (!*args[1]) {
+			ha_warning("parsing [%s:%d]: '%s' expects a strictly positive number.\n",
 				   file, linenum, args[0]);
 			err_code |= ERR_WARN;
 		}
 
-		tmp_cache_config->vary_processing_enabled = atoi(args[1]);
+		max_sec_entries = strtoul(args[1], &err, 10);
+		if (err == args[1] || *err != '\0' || max_sec_entries == 0) {
+			ha_warning("parsing [%s:%d]: max-secondary-entries wrong value '%s'\n",
+			           file, linenum, args[1]);
+			err_code |= ERR_ABORT;
+			goto out;
+		}
+		tmp_cache_config->max_secondary_entries = max_sec_entries;
 	}
 	else if (*args[0] != 0) {
 		ha_alert("parsing [%s:%d] : unknown keyword '%s' in 'cache' section\n", file, linenum, args[0]);
@@ -1817,7 +2110,7 @@ int post_check_cache()
 					continue;
 
 				cconf = fconf->conf;
-				if (!strcmp(cache->id, cconf->c.name)) {
+				if (strcmp(cache->id, cconf->c.name) == 0) {
 					free(cconf->c.name);
 					cconf->flags |= CACHE_FLT_INIT;
 					cconf->c.cache = cache;
@@ -1863,34 +2156,185 @@ int accept_encoding_cmp(const void *a, const void *b)
 	return 0;
 }
 
+
+#define CHECK_ENCODING(str, encoding_name, encoding_value) \
+	({ \
+		int retval = 0; \
+		if (istmatch(str, (struct ist){ .ptr = encoding_name+1, .len = sizeof(encoding_name) - 2 })) { \
+			retval = encoding_value; \
+			encoding = istadv(encoding, sizeof(encoding_name) - 2); \
+		} \
+		(retval); \
+	})
+
+/*
+ * Parse the encoding <encoding> and try to match the encoding part upon an
+ * encoding list of explicitly supported encodings (which all have a specific
+ * bit in an encoding bitmap). If a weight is included in the value, find out if
+ * it is null or not. The bit value will be set in the <encoding_value>
+ * parameter and the <has_null_weight> will be set to 1 if the weight is strictly
+ * 0, 1 otherwise.
+ * The encodings list is extracted from
+ * https://www.iana.org/assignments/http-parameters/http-parameters.xhtml.
+ * Returns 0 in case of success and -1 in case of error.
+ */
+static int parse_encoding_value(struct ist encoding, unsigned int *encoding_value,
+				unsigned int *has_null_weight)
+{
+	int retval = 0;
+
+	if (!encoding_value)
+		return -1;
+
+	if (!istlen(encoding))
+		return -1;	/* Invalid encoding */
+
+	*encoding_value = 0;
+	if (has_null_weight)
+		*has_null_weight = 0;
+
+	switch (*encoding.ptr) {
+	case 'a':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "aes128gcm", VARY_ENCODING_AES128GCM);
+		break;
+	case 'b':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "br", VARY_ENCODING_BR);
+		break;
+	case 'c':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "compress", VARY_ENCODING_COMPRESS);
+		break;
+	case 'd':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "deflate", VARY_ENCODING_DEFLATE);
+		break;
+	case 'e':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "exi", VARY_ENCODING_EXI);
+		break;
+	case 'g':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "gzip", VARY_ENCODING_GZIP);
+		break;
+	case 'i':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "identity", VARY_ENCODING_IDENTITY);
+		break;
+	case 'p':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "pack200-gzip", VARY_ENCODING_PACK200_GZIP);
+		break;
+	case 'x':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "x-gzip", VARY_ENCODING_GZIP);
+		if (!*encoding_value)
+			*encoding_value = CHECK_ENCODING(encoding, "x-compress", VARY_ENCODING_COMPRESS);
+		break;
+	case 'z':
+		encoding = istadv(encoding, 1);
+		*encoding_value = CHECK_ENCODING(encoding, "zstd", VARY_ENCODING_ZSTD);
+		break;
+	case '*':
+		encoding = istadv(encoding, 1);
+		*encoding_value = VARY_ENCODING_STAR;
+		break;
+	default:
+		retval = -1; /* Unmanaged encoding */
+		break;
+	}
+
+	/* Process the optional weight part of the encoding. */
+	if (*encoding_value) {
+		encoding = http_trim_leading_spht(encoding);
+		if (istlen(encoding)) {
+			if (*encoding.ptr != ';')
+				return -1;
+
+			if (has_null_weight) {
+				encoding = istadv(encoding, 1);
+
+				encoding = http_trim_leading_spht(encoding);
+
+				*has_null_weight = isteq(encoding, ist("q=0"));
+			}
+		}
+	}
+
+	return retval;
+}
+
 #define ACCEPT_ENCODING_MAX_ENTRIES 16
 /*
- * Build a hash of the accept-encoding header. The different parts of the
- * header value are first sorted, appended and then a crc is calculated
- * for the newly constructed buffer.
- * Returns 0 in case of success.
+ * Build a hash of the accept-encoding header. The hash is split into an
+ * encoding bitmap and an actual hash of the different encodings.
+ * The bitmap is built by matching every sub-part of the accept-encoding value
+ * with a subset of explicitly supported encodings, which all have their own bit
+ * in the bitmap. This bitmap will be used to determine if a response can be
+ * served to a client (that is if it has an encoding that is accepted by the
+ * client).
+ * The hash part is built out of all the sub-parts of the value, which are
+ * converted to lower case, hashed, sorted and then all the unique sub-hashes
+ * are XORed into a single hash.
+ * Returns 0 in case of success, 1 if the hash buffer should be filled with 0s
+ * and -1 in case of error.
  */
-static int accept_encoding_normalizer(struct ist full_value, char *buf, unsigned int *buf_len)
+static int accept_encoding_normalizer(struct htx *htx, struct ist hdr_name,
+				      char *buf, unsigned int *buf_len)
 {
 	unsigned int values[ACCEPT_ENCODING_MAX_ENTRIES] = {};
 	size_t count = 0;
-	char *comma = NULL;
-	unsigned int hash_value = 0;
+	struct accept_encoding_hash hash = {};
+	unsigned int encoding_bmp_bl = -1;
 	unsigned int prev = 0, curr = 0;
+	struct http_hdr_ctx ctx = { .blk = NULL };
+	unsigned int encoding_value;
+	unsigned int rejected_encoding;
 
-	/* Turn accept-encoding value to lower case */
-	full_value = ist2bin_lc(istptr(full_value), full_value);
+	/* A user agent always accepts an unencoded value unless it explicitly
+	 * refuses it through an "identity;q=0" accept-encoding value. */
+	hash.encoding_bitmap |= VARY_ENCODING_IDENTITY;
 
-	/* The hash will be built out of a sorted list of accepted encodings. */
-	while (count < (ACCEPT_ENCODING_MAX_ENTRIES - 1) && (comma = istchr(full_value, ',')) != NULL) {
-		size_t length = comma - istptr(full_value);
+	/* Iterate over all the ACCEPT_ENCODING_MAX_ENTRIES first accept-encoding
+	 * values that might span acrosse multiple accept-encoding headers. */
+	while (http_find_header(htx, hdr_name, &ctx, 0) && count < ACCEPT_ENCODING_MAX_ENTRIES) {
+		/* Turn accept-encoding value to lower case */
+		ist2bin_lc(istptr(ctx.value), ctx.value);
 
-		values[count++] = hash_crc32(istptr(full_value), length);
+		/* Try to identify a known encoding and to manage null weights. */
+		if (!parse_encoding_value(ctx.value, &encoding_value, &rejected_encoding)) {
+			if (rejected_encoding)
+				encoding_bmp_bl &= ~encoding_value;
+			else
+				hash.encoding_bitmap |= encoding_value;
+		}
+		else {
+			/* Unknown encoding */
+			hash.encoding_bitmap |= VARY_ENCODING_OTHER;
+		}
 
-		full_value = istadv(full_value, length + 1);
-
+		values[count++] = hash_crc32(istptr(ctx.value), istlen(ctx.value));
 	}
-	values[count++] = hash_crc32(istptr(full_value), istlen(full_value));
+
+	/* If a "*" was found in the accepted encodings (without a null weight),
+	 * all the encoding are accepted except the ones explicitly rejected. */
+	if (hash.encoding_bitmap & VARY_ENCODING_STAR) {
+		hash.encoding_bitmap = ~0;
+	}
+
+	/* Clear explicitly rejected encodings from the bitmap */
+	hash.encoding_bitmap &= encoding_bmp_bl;
+
+	/* As per RFC7231#5.3.4, "If no Accept-Encoding field is in the request,
+	 * any content-coding is considered acceptable by the user agent". */
+	if (count == 0)
+		hash.encoding_bitmap = ~0;
+
+	/* A request with more than ACCEPT_ENCODING_MAX_ENTRIES accepted
+	 * encodings might be illegitimate so we will not use it. */
+	if (count == ACCEPT_ENCODING_MAX_ENTRIES)
+		return -1;
 
 	/* Sort the values alphabetically. */
 	qsort(values, count, sizeof(*values), &accept_encoding_cmp);
@@ -1898,33 +2342,83 @@ static int accept_encoding_normalizer(struct ist full_value, char *buf, unsigned
 	while (count) {
 		curr = values[--count];
 		if (curr != prev) {
-			hash_value ^= curr;
+			hash.hash ^= curr;
 		}
 		prev = curr;
 	}
 
-	memcpy(buf, &hash_value, sizeof(hash_value));
-	*buf_len = sizeof(hash_value);
+	write_u32(buf, hash.encoding_bitmap);
+	*buf_len = sizeof(hash.encoding_bitmap);
+	write_u32(buf+*buf_len, hash.hash);
+	*buf_len += sizeof(hash.hash);
 
+	/* This function fills the hash buffer correctly even if no header was
+	 * found, hence the 0 return value (success). */
 	return 0;
 }
 #undef ACCEPT_ENCODING_MAX_ENTRIES
 
 /*
- * Normalizer used by default for User-Agent and Referer headers. It only
+ * Normalizer used by default for the Referer header. It only
  * calculates a simple crc of the whole value.
- * Returns 0 in case of success.
+ * Only the first occurrence of the header will be taken into account in the
+ * hash.
+ * Returns 0 in case of success, 1 if the hash buffer should be filled with 0s
+ * and -1 in case of error.
  */
-static int default_normalizer(struct ist value, char *buf, unsigned int *buf_len)
+static int default_normalizer(struct htx *htx, struct ist hdr_name,
+			      char *buf, unsigned int *buf_len)
 {
-	int hash_value = 0;
+	int retval = 1;
+	struct http_hdr_ctx ctx = { .blk = NULL };
 
-	hash_value = hash_crc32(istptr(value), istlen(value));
+	if (http_find_header(htx, hdr_name, &ctx, 1)) {
+		retval = 0;
+		write_u32(buf, hash_crc32(istptr(ctx.value), istlen(ctx.value)));
+		*buf_len = sizeof(int);
+	}
 
-	memcpy(buf, &hash_value, sizeof(hash_value));
-	*buf_len = sizeof(hash_value);
+	return retval;
+}
 
-	return 0;
+/*
+ * Accept-Encoding sub-hash comparison function.
+ * Returns 0 if the hashes are alike.
+ */
+static int accept_encoding_hash_cmp(const void *ref_hash, const void *new_hash, unsigned int hash_len)
+{
+	struct accept_encoding_hash ref = {};
+	struct accept_encoding_hash new = {};
+
+	ref.encoding_bitmap = read_u32(ref_hash);
+	new.encoding_bitmap = read_u32(new_hash);
+
+	if (!(ref.encoding_bitmap & VARY_ENCODING_OTHER)) {
+		/* All the bits set in the reference bitmap correspond to the
+		 * stored response' encoding and should all be set in the new
+		 * encoding bitmap in order for the client to be able to manage
+		 * the response.
+		 *
+		 * If this is the case the cached response has encodings that
+		 * are accepted by the client. It can be served directly by
+		 * the cache (as far as the accept-encoding part is concerned).
+		 */
+
+		return (ref.encoding_bitmap & new.encoding_bitmap) != ref.encoding_bitmap;
+	}
+	else {
+		/* We must compare hashes only when the the response contains
+		 * unknown encodings.
+		 * Otherwise we might serve unacceptable responses if the hash
+		 * of a client's `accept-encoding` header collides with a
+		 * known encoding.
+		 */
+
+		ref.hash = read_u32(ref_hash+sizeof(ref.encoding_bitmap));
+		new.hash = read_u32(new_hash+sizeof(new.encoding_bitmap));
+
+		return ref.hash != new.hash;
+	}
 }
 
 
@@ -1941,33 +2435,9 @@ static int default_normalizer(struct ist value, char *buf, unsigned int *buf_len
  */
 static int http_request_prebuild_full_secondary_key(struct stream *s)
 {
-	struct http_txn *txn = s->txn;
-	struct htx *htx = htxbuf(&s->req.buf);
-	struct http_hdr_ctx ctx = { .blk = NULL };
-
-	unsigned int idx;
-	const struct vary_hashing_information *info = NULL;
-	unsigned int hash_length = 0;
-	int retval = 0;
-	int offset = 0;
-
-	for (idx = 0; idx < sizeof(vary_information)/sizeof(*vary_information) && !retval; ++idx) {
-		info = &vary_information[idx];
-
-		ctx.blk = NULL;
-		if (info->norm_fn != NULL && http_find_header(htx, info->hdr_name, &ctx, 1)) {
-			retval = info->norm_fn(ctx.value, &txn->cache_secondary_hash[offset], &hash_length);
-			offset += hash_length;
-		}
-		else {
-			/* Fill hash with 0s. */
-			hash_length = info->hash_length;
-			memset(&txn->cache_secondary_hash[offset], 0, hash_length);
-			offset += hash_length;
-		}
-	}
-
-	return retval;
+	/* The fake signature (second parameter) will ensure that every part of the
+	 * secondary key is calculated. */
+	return http_request_build_secondary_key(s, ~0);
 }
 
 
@@ -1985,7 +2455,6 @@ static int http_request_build_secondary_key(struct stream *s, int vary_signature
 {
 	struct http_txn *txn = s->txn;
 	struct htx *htx = htxbuf(&s->req.buf);
-	struct http_hdr_ctx ctx = { .blk = NULL };
 
 	unsigned int idx;
 	const struct vary_hashing_information *info = NULL;
@@ -1993,13 +2462,14 @@ static int http_request_build_secondary_key(struct stream *s, int vary_signature
 	int retval = 0;
 	int offset = 0;
 
-	for (idx = 0; idx < sizeof(vary_information)/sizeof(*vary_information) && !retval; ++idx) {
+	for (idx = 0; idx < sizeof(vary_information)/sizeof(*vary_information) && retval >= 0; ++idx) {
 		info = &vary_information[idx];
 
-		ctx.blk = NULL;
+		/* The normalizing functions will be in charge of getting the
+		 * header values from the htx. This way they can manage multiple
+		 * occurrences of their processed header. */
 		if ((vary_signature & info->value) && info->norm_fn != NULL &&
-		    http_find_header(htx, info->hdr_name, &ctx, 1)) {
-			retval = info->norm_fn(ctx.value, &txn->cache_secondary_hash[offset], &hash_length);
+		    !(retval = info->norm_fn(htx, info->hdr_name, &txn->cache_secondary_hash[offset], &hash_length))) {
 			offset += hash_length;
 		}
 		else {
@@ -2010,7 +2480,10 @@ static int http_request_build_secondary_key(struct stream *s, int vary_signature
 		}
 	}
 
-	return retval;
+	if (retval >= 0)
+		txn->flags |= TX_CACHE_HAS_SEC_KEY;
+
+	return (retval < 0);
 }
 
 /*
@@ -2071,7 +2544,7 @@ parse_cache_flt(char **args, int *cur_arg, struct proxy *px,
 			continue;
 
 		cconf = f->conf;
-		if (strcmp(name, cconf->c.name)) {
+		if (strcmp(name, cconf->c.name) != 0) {
 			cconf = NULL;
 			continue;
 		}

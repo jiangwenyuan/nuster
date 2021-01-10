@@ -1136,6 +1136,7 @@ int smp_resolve_args(struct proxy *p)
 		case ARGC_SRV:   where = "in server directive in"; break;
 		case ARGC_SPOE:  where = "in spoe-message directive in"; break;
 		case ARGC_HERR:  where = "in http-error directive in"; break;
+		case ARGC_OT:    where = "in ot-scope directive in"; break;
 		}
 
 		/* set a few default settings */
@@ -1289,7 +1290,7 @@ int smp_resolve_args(struct proxy *p)
 			}
 
 			if (p->uri_auth && p->uri_auth->userlist &&
-			    !strcmp(p->uri_auth->userlist->name, arg->data.str.area))
+			    strcmp(p->uri_auth->userlist->name, arg->data.str.area) == 0)
 				ul = p->uri_auth->userlist;
 			else
 				ul = auth_find_userlist(arg->data.str.area);
@@ -2094,6 +2095,20 @@ static int sample_conv_xxh64(const struct arg *arg_p, struct sample *smp, void *
 		seed = 0;
 	smp->data.u.sint = (long long int)XXH64(smp->data.u.str.area,
 						smp->data.u.str.data, seed);
+	smp->data.type = SMP_T_SINT;
+	return 1;
+}
+
+static int sample_conv_xxh3(const struct arg *arg_p, struct sample *smp, void *private)
+{
+	unsigned long long int seed;
+
+	if (arg_p && arg_p->data.sint)
+		seed = (unsigned long long int)arg_p->data.sint;
+	else
+		seed = 0;
+	smp->data.u.sint = (long long int)XXH3(smp->data.u.str.area,
+	                                       smp->data.u.str.data, seed);
 	smp->data.type = SMP_T_SINT;
 	return 1;
 }
@@ -3272,7 +3287,7 @@ static int sample_conv_fix_value_check(struct arg *args, struct sample_conv *con
  * Checks that a buffer contains a valid FIX message
  *
  * Return 1 if the check could be run, 0 if not.
- * The result of the analyse itsef is stored in <smp> as a boolean
+ * The result of the analyse itself is stored in <smp> as a boolean
  */
 static int sample_conv_fix_is_valid(const struct arg *arg_p, struct sample *smp, void *private)
 {
@@ -3333,7 +3348,7 @@ static int sample_conv_mqtt_field_value(const struct arg *arg_p, struct sample *
  * this function checks the "mqtt_field_value" converter configuration.
  * It expects a known packet type name or ID and a field name, in this order
  *
- * Args[0] will be turned into a MQTT_CPT_* value for direct maching when parsing
+ * Args[0] will be turned into a MQTT_CPT_* value for direct matching when parsing
  * a packet.
  */
 static int sample_conv_mqtt_field_value_check(struct arg *args, struct sample_conv *conv,
@@ -3958,6 +3973,7 @@ static struct sample_conv_kw_list sample_conv_kws = {ILH, {
 	{ "djb2",   sample_conv_djb2,      ARG1(0,SINT), NULL, SMP_T_BIN,  SMP_T_SINT  },
 	{ "sdbm",   sample_conv_sdbm,      ARG1(0,SINT), NULL, SMP_T_BIN,  SMP_T_SINT  },
 	{ "wt6",    sample_conv_wt6,       ARG1(0,SINT), NULL, SMP_T_BIN,  SMP_T_SINT  },
+	{ "xxh3",   sample_conv_xxh3,      ARG1(0,SINT), NULL, SMP_T_BIN,  SMP_T_SINT  },
 	{ "xxh32",  sample_conv_xxh32,     ARG1(0,SINT), NULL, SMP_T_BIN,  SMP_T_SINT  },
 	{ "xxh64",  sample_conv_xxh64,     ARG1(0,SINT), NULL, SMP_T_BIN,  SMP_T_SINT  },
 	{ "json",   sample_conv_json,      ARG1(1,STR),  sample_conv_json_check, SMP_T_STR,  SMP_T_STR },

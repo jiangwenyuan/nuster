@@ -64,7 +64,7 @@
 
 #define TX_CON_WANT_TUN 0x00008000	/* Will be a tunnel (CONNECT or 101-Switching-Protocol) */
 
-/* unsued 0x00010000 */
+#define TX_CACHE_HAS_SEC_KEY 0x00010000 /* secondary key building succedeed */
 
 #define TX_USE_PX_CONN	0x00020000	/* Use "Proxy-Connection" instead of "Connection" */
 
@@ -93,9 +93,9 @@
 /* Maximum length of the cache secondary key (sum of all the possible parts of
  * the secondary key). The actual keys might be smaller for some
  * request/response pairs, because they depend on the responses' optional Vary
- * header. The differents sizes can be found in the vary_information object (see
+ * header. The different sizes can be found in the vary_information object (see
  * cache.c).*/
-#define HTTP_CACHE_SEC_KEY_LEN (sizeof(int)+sizeof(int))
+#define HTTP_CACHE_SEC_KEY_LEN (sizeof(int)+sizeof(int)+sizeof(int))
 
 
 /* Redirect flags */

@@ -2807,7 +2807,7 @@ static struct h2s *h2c_bck_handle_headers(struct h2c *h2c, struct h2s *h2s)
 /* processes a DATA frame. Returns > 0 on success or zero on missing data.
  * It may return an error in h2c or h2s. Described in RFC7540#6.1.
  */
-static int h2c_frt_handle_data(struct h2c *h2c, struct h2s *h2s)
+static int h2c_handle_data(struct h2c *h2c, struct h2s *h2s)
 {
 	int error;
 
@@ -3304,7 +3304,7 @@ static void h2_process_demux(struct h2c *h2c)
 		case H2_FT_DATA:
 			if (h2c->st0 == H2_CS_FRAME_P) {
 				TRACE_PROTO("receiving H2 DATA frame", H2_EV_RX_FRAME|H2_EV_RX_DATA, h2c->conn, h2s);
-				ret = h2c_frt_handle_data(h2c, h2s);
+				ret = h2c_handle_data(h2c, h2s);
 			}
 			HA_ATOMIC_ADD(&h2c->px_counters->data_rcvd, 1);
 
@@ -5400,7 +5400,7 @@ static size_t h2s_bck_make_req_headers(struct h2s *h2s, struct htx *htx)
  * happened subsequently to a successful send. Returns the number of data bytes
  * consumed, or zero if nothing done. Note that EOM count for 1 byte.
  */
-static size_t h2s_frt_make_resp_data(struct h2s *h2s, struct buffer *buf, size_t count)
+static size_t h2s_make_data(struct h2s *h2s, struct buffer *buf, size_t count)
 {
 	struct h2c *h2c = h2s->h2c;
 	struct htx *htx;
@@ -6108,7 +6108,7 @@ static size_t h2_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 				 * This EOM necessarily is one before trailers, as the EOM following
 				 * trailers would have been consumed by the trailers parser.
 				 */
-				ret = h2s_frt_make_resp_data(h2s, buf, count);
+				ret = h2s_make_data(h2s, buf, count);
 				if (ret > 0) {
 					htx = htx_from_buf(buf);
 					total += ret;
@@ -6160,9 +6160,10 @@ static size_t h2_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 	htx_to_buf(htx, buf);
 
 	if (total > 0) {
-		if (!(h2s->h2c->wait_event.events & SUB_RETRY_SEND))
+		if (!(h2s->h2c->wait_event.events & SUB_RETRY_SEND)) {
 			TRACE_DEVEL("data queued, waking up h2c sender", H2_EV_H2S_SEND|H2_EV_H2C_SEND, h2s->h2c->conn, h2s);
 			tasklet_wakeup(h2s->h2c->wait_event.tasklet);
+		}
 
 	}
 	/* If we're waiting for flow control, and we got a shutr on the

@@ -4,7 +4,7 @@
                          ----------------------
                               version 2.4
                              willy tarreau
-                              2020/12/11
+                              2021/01/06
 
 
 This document covers the configuration language as implemented in the version
@@ -118,6 +118,7 @@ Summary
 9.3.      Stream Processing Offload Engine (SPOE)
 9.4.      Cache
 9.5.      fcgi-app
+9.6.      OpenTracing
 
 10.   FastCGI applications
 10.1.     Setup
@@ -605,7 +606,7 @@ own quotes.
 
 The keyword argument parser is exactly the same as the top-level one regarding
 quotes, except that is will not make special cases of backslashes. But what is
-not always obvious is that the delimitors used inside must first be escaped or
+not always obvious is that the delimiters used inside must first be escaped or
 quoted so that they are not resolved at the top level.
 
 Let's take this example making use of the "regsub" converter which takes 3
@@ -658,7 +659,7 @@ the second level:
                                     arg2=blah  ___________/    /
                                         arg3=g _______________/
 
-Another approch consists in using single quotes outside the whole string and
+Another approach consists in using single quotes outside the whole string and
 double quotes inside (so that the double quotes are not stripped again):
 
     http-request set-path '%[path,regsub("(foo|bar)",blah,g)]'
@@ -682,7 +683,7 @@ thus single quotes are preferred (or double escaping). Example:
                                     arg2=my/\1 ________________/      /
                                           arg3 ______________________/
 
-Remember that backslahes are not escape characters withing single quotes and
+Remember that backslahes are not escape characters within single quotes and
 that the whole word3 above is already protected against them using the single
 quotes. Conversely, if double quotes had been used around the whole expression,
 single the dollar character and the backslashes would have been resolved at top
@@ -1214,7 +1215,7 @@ localpeer <name>
   This option will also set the HAPROXY_LOCALPEER environment variable.
   See also "-L" in the management guide and "peers" section below.
 
-log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
+log <address> [len <length>] [format <format>] [sample <ranges>:<sample_size>]
     <facility> [max level [min level]]
   Adds a global syslog server. Several global servers can be defined. They
   will receive logs for starts and exits, as well as all logs from proxies
@@ -2700,7 +2701,7 @@ default-server [param*]
 enable
   This re-enables a disabled peers section which was previously disabled.
 
-log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
+log <address> [len <length>] [format <format>] [sample <ranges>:<sample_size>]
     <facility> [<level> [<minlevel>]]
   "peers" sections support the same "log" keyword as for the proxies to
   log information about the "peers" listener. See "log" option for proxies for
@@ -3068,7 +3069,7 @@ dgram-bind <addr> [param*]
   silently ignored as irrelevant for UDP/syslog case.
 
 log global
-log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
+log <address> [len <length>] [format <format>] [sample <ranges>:<sample_size>]
     <facility> [<level> [<minlevel>]]
   Used to configure target log servers. See more details on proxies
   documentation.
@@ -5410,14 +5411,11 @@ http-check send [meth <method>] [{ uri <uri> | uri-lf <fmt> }>] [ver <version>]
   "Transfer-encoding" header should not be present in the request provided by
   "http-check send". If so, it will be ignored. The old trick consisting to add
   headers after the version string on the "option httpchk" line is now
-  deprecated. Note also the "Connection: close" header is still added if a
-  "http-check expect" directive is defined independently of this directive, just
-  like the state header if the directive "http-check send-state" is defined.
+  deprecated.
 
   Also "http-check send" doesn't support HTTP keep-alive. Keep in mind that it
-  will automatically append a "Connection: close" header, meaning that this
-  header should not be present in the request provided by "http-check send". If
-  so, it will be ignored.
+  will automatically append a "Connection: close" header, unless a Connection
+  header has already already been configured via a hdr entry.
 
   Note that the Host header and the request authority, when both defined, are
   automatically synchronized. It means when the HTTP request is sent, when a
@@ -7140,7 +7138,7 @@ load-server-state-from-file { global | local | none }
 
 
 log global
-log <address> [len <length>] [format <format>] [sample <ranges>:<smp_size>]
+log <address> [len <length>] [format <format>] [sample <ranges>:<sample_size>]
     <facility> [<level> [<minlevel>]]
 no log
   Enable per-instance logging of events and traffic.
@@ -8638,7 +8636,7 @@ no option nolinger
   This option may be used both on frontends and backends, depending on the side
   where it is required. Use it on the frontend for clients, and on the backend
   for servers. While this option is technically supported in "defaults"
-  sections, it must really not be used there as it risks to accidently
+  sections, it must really not be used there as it risks to accidentally
   propagate to sections that must no use it and to cause problems there.
 
   If this option has been enabled in a "defaults" section, it can be disabled
@@ -10649,7 +10647,7 @@ stick store-request <pattern> [table <table>] [{if | unless} <condition>]
 
 
 stick-table type {ip | integer | string [len <length>] | binary [len <length>]}
-            size <size> [expire <expire>] [nopurge] [peers <peersect>]
+            size <size> [expire <expire>] [nopurge] [peers <peersect>] [srvkey <srvkey>]
             [store <data_type>]*
   Configure the stickiness table for the current section
   May be used in sections :   defaults | frontend | listen | backend
@@ -10725,6 +10723,16 @@ stick-table type {ip | integer | string [len <length>] | binary [len <length>]}
                the session won't automatically expire, but older entries will
                be removed once full. Be sure not to use the "nopurge" parameter
                if not expiration delay is specified.
+
+    <srvkey>   specifies how each server is identified for the purposes of the
+               stick table. The valid values are "name" and "addr". If "name" is
+               given, then <name> argument for the server (may be generated by
+               a template). If "addr" is given, then the server is identified
+               by its current network address, including the port. "addr" is
+               especially useful if you are using service discovery to generate
+               the addresses for servers with peered stick-tables and want
+               to consistently use the same host across peers for a stickiness
+               token.
 
    <data_type> is used to store additional information in the stick-table. This
                may be used by ACLs in order to control various criteria related
@@ -14606,6 +14614,8 @@ The cache won't store and won't deliver objects in these cases:
 - If the response does not have an explicit expiration time (s-maxage or max-age
   Cache-Control directives or Expires header) or a validator (ETag or Last-Modified
   headers)
+- If the process-vary option is enabled and there are already max-secondary-entries
+  entries with the same primary key as the current response
 
 - If the request is not a GET
 - If the HTTP version of the request is smaller than 1.1
@@ -14636,18 +14646,23 @@ max-object-size <bytes>
   All objects with sizes larger than "max-object-size" will not be cached.
 
 max-age <seconds>
-  Define the maximum expiration duration. The expiration is set has the lowest
+  Define the maximum expiration duration. The expiration is set as the lowest
   value between the s-maxage or max-age (in this order) directive in the
   Cache-Control response header and this value. The default value is 60
   seconds, which means that you can't cache an object more than 60 seconds by
   default.
 
-process-vary <0 or 1>
-  Disable or enable the processing of the Vary header. When disabled, a response
+process-vary <on/off>
+  Enable or disable the processing of the Vary header. When disabled, a response
   containing such a header will never be cached. When enabled, we need to calculate
   a preliminary hash for a subset of request headers on all the incoming requests
   (which might come with a cpu cost) which will be used to build a secondary key
-  for a given request (see RFC 7234#4.1). The default value is 0 (disabled).
+  for a given request (see RFC 7234#4.1). The default value is off (disabled).
+
+max-secondary-entries <number>
+  Define the maximum number of simultaneous secondary entries with the same primary
+  key in the cache. This needs the vary support to be enabled. Its default value is 10
+  and should be passed a strictly positive integer.
 
 
 6.2.2. Proxy section
@@ -15480,7 +15495,7 @@ fix_is_valid
 
   - checks that all tag IDs and values are not empty and the tags IDs are well
     numeric
-  - checks the BeginString tag is the first tag with a valide FIX version
+  - checks the BeginString tag is the first tag with a valid FIX version
   - checks the BodyLength tag is the second one with the right body length
   - checks the MstType tag is the third tag.
   - checks that last tag in the message is the CheckSum tag with a valid
@@ -16350,6 +16365,15 @@ xor(<value>)
     "res"  : the variable is shared only during response processing.
   This prefix is followed by a name. The separator is a '.'. The name may only
   contain characters 'a-z', 'A-Z', '0-9', '.' and '_'.
+
+xxh3([<seed>])
+  Hashes a binary input sample into a signed 64-bit quantity using the XXH3
+  64-bit variant of the XXhash hash function. This hash supports a seed which
+  defaults to zero but a different value maybe passed as the <seed> argument.
+  This hash is known to be very good and very fast so it can be used to hash
+  URLs and/or URL parameters for use as stick-table keys to collect statistics
+  with a low collision rate, though care must be taken as the algorithm is not
+  considered as cryptographically secure.
 
 xxh32([<seed>])
   Hashes a binary input sample into an unsigned 32-bit quantity using the 32-bit
@@ -17603,7 +17627,7 @@ ssl_c_chain_der : binary
   Returns the DER formatted chain certificate presented by the client when the
   incoming connection was made over an SSL/TLS transport layer. When used for
   an ACL, the value(s) to match against can be passed in hexadecimal form. One
-  can parse the result with any lib accepting ASN.1 DER data. It currentlly
+  can parse the result with any lib accepting ASN.1 DER data. It currently
   does not support resumed sessions.
 
 ssl_c_der : binary
@@ -17979,7 +18003,7 @@ ssl_s_chain_der : binary
   Returns the DER formatted chain certificate presented by the server when the
   outgoing connection was made over an SSL/TLS transport layer. When used for
   an ACL, the value(s) to match against can be passed in hexadecimal form. One
-  can parse the result with any lib accepting ASN.1 DER data. It currentlly
+  can parse the result with any lib accepting ASN.1 DER data. It currently
   does not support resumed sessions.
 
 ssl_s_key_alg : string
@@ -20747,6 +20771,40 @@ See also: "use-fcgi-app", section 9.2 about the compression filter, section 9.4
           about the cache filter and section 10 about FastCGI application.
 
 
+9.6. OpenTracing
+----------------
+
+The OpenTracing filter adds native support for using distributed tracing in
+HAProxy. This is enabled by sending an OpenTracing compliant request to one
+of the supported tracers such as Datadog, Jaeger, Lightstep and Zipkin tracers.
+Please note: tracers are not listed by any preference, but alphabetically.
+
+This feature is only enabled when haproxy was built with USE_OT=1.
+
+The OpenTracing filter activation is done explicitly by specifying it in the
+HAProxy configuration. If this is not done, the OpenTracing filter in no way
+participates in the work of HAProxy.
+
+filter opentracing [id <id>] config <file>
+
+  Arguments :
+
+    <id>        is the OpenTracing filter id that will be used to find the
+                right scope in the configuration file. If no filter id is
+                specified, 'ot-filter' is used as default.  If scope is not
+                specified in the configuration file, it applies to all defined
+                OpenTracing filters.
+
+    <file>      is the path of the OpenTracing configuration file. The same
+                file can contain configurations for multiple OpenTracing
+                filters simultaneously. In that case we do not need to define
+                scope so the same configuration applies to all filters or each
+                filter must have its own scope defined.
+
+More detailed documentation related to the operation, configuration and use
+of the filter can be found in the contrib/opentracing directory.
+
+
 10. FastCGI applications
 -------------------------
 
@@ -20796,7 +20854,7 @@ index <script-name>
 
 log-stderr global
 log-stderr <address> [len <length>] [format <format>]
-    [sample <ranges>:<smp_size>] <facility> [<level> [<minlevel>]]
+    [sample <ranges>:<sample_size>] <facility> [<level> [<minlevel>]]
   Enable logging of STDERR messages reported by the FastCGI application.
 
   See "log" keyword in section 4.2 for details. It is an optional setting. By

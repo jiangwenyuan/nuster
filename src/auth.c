@@ -49,7 +49,7 @@ __decl_thread(static HA_SPINLOCK_T auth_lock);
 #endif
 
 /* find targets for selected groups. The function returns pointer to
- * the userlist struct ot NULL if name is NULL/empty or unresolvable.
+ * the userlist struct or NULL if name is NULL/empty or unresolvable.
  */
 
 struct userlist *
@@ -61,7 +61,7 @@ auth_find_userlist(char *name)
 		return NULL;
 
 	for (l = userlist; l; l = l->next)
-		if (!strcmp(l->name, name))
+		if (strcmp(l->name, name) == 0)
 			return l;
 
 	return NULL;
@@ -139,7 +139,7 @@ int userlist_postinit()
 
 			while ((group = strtok(group?NULL:curuser->u.groups_names, ","))) {
 				for (ag = curuserlist->groups; ag; ag = ag->next) {
-					if (!strcmp(ag->name, group))
+					if (strcmp(ag->name, group) == 0)
 						break;
 				}
 
@@ -176,7 +176,7 @@ int userlist_postinit()
 
 			while ((user = strtok(user?NULL:ag->groupusers, ","))) {
 				for (curuser = curuserlist->users; curuser; curuser = curuser->next) {
-					if (!strcmp(curuser->user, user))
+					if (strcmp(curuser->user, user) == 0)
 						break;
 				}
 
@@ -241,7 +241,7 @@ check_user(struct userlist *ul, const char *user, const char *pass)
 #endif
 
 	for (u = ul->users; u; u = u->next)
-		if (!strcmp(user, u->user))
+		if (strcmp(user, u->user) == 0)
 			break;
 
 	if (!u)

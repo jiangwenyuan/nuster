@@ -53,6 +53,7 @@
 #   USE_SYSTEMD          : enable sd_notify() support.
 #   USE_OBSOLETE_LINKER  : use when the linker fails to emit __start_init/__stop_init
 #   USE_THREAD_DUMP      : use the more advanced thread state dump system. Automatic.
+#   USE_OT               : enable the OpenTracing filter
 #
 # Options can be forced by specifying "USE_xxx=1" or can be disabled by using
 # "USE_xxx=" (empty string). The list of enabled and disabled options for a
@@ -102,6 +103,10 @@
 #   LUA_INC        : force the include path to lua
 #   LUA_LIB_NAME   : force the lib name (or automatically evaluated, by order of
 #                                        priority : lua5.3, lua53, lua).
+#   OT_DEBUG       : compile the OpenTracing filter in debug mode
+#   OT_INC         : force the include path to libopentracing-c-wrapper
+#   OT_LIB         : force the lib path to libopentracing-c-wrapper
+#   OT_RUNPATH     : add RUNPATH for libopentracing-c-wrapper to haproxy executable
 #   IGNOREGIT      : ignore GIT commit versions if set.
 #   VERSION        : force haproxy version reporting.
 #   SUBVERS        : add a sub-version (eg: platform, model, ...).
@@ -296,7 +301,8 @@ use_opts = USE_EPOLL USE_KQUEUE USE_NETFILTER                                 \
            USE_GETADDRINFO USE_OPENSSL USE_LUA USE_FUTEX USE_ACCEPT4          \
            USE_CLOSEFROM USE_ZLIB USE_SLZ USE_CPU_AFFINITY USE_TFO USE_NS     \
            USE_DL USE_RT USE_DEVICEATLAS USE_51DEGREES USE_WURFL USE_SYSTEMD  \
-           USE_OBSOLETE_LINKER USE_PRCTL USE_THREAD_DUMP USE_EVPORTS
+           USE_OBSOLETE_LINKER USE_PRCTL USE_THREAD_DUMP USE_EVPORTS USE_OT   \
+           USE_QUIC
 
 #### Target system options
 # Depending on the target platform, some options are set, as well as some
@@ -563,6 +569,10 @@ OPTIONS_LDFLAGS += -ldl
 endif
 OPTIONS_OBJS  += src/ssl_sample.o src/ssl_sock.o src/ssl_crtlist.o src/ssl_ckch.o src/ssl_utils.o src/cfgparse-ssl.o
 endif
+ifneq ($(USE_QUIC),)
+OPTIONS_OBJS += src/quic_sock.o src/proto_quic.o src/xprt_quic.o src/quic_tls.o \
+                src/quic_frame.o src/quic_cc.o src/quic_cc_newreno.o
+endif
 
 # The private cache option affect the way the shctx is built
 ifeq ($(USE_PRIVATE_CACHE),)
@@ -578,7 +588,6 @@ OPTIONS_CFLAGS  += -DNUSTER_USE_PTHREAD
 OPTIONS_LDFLAGS += -lpthread
 endif
 endif
-
 ifneq ($(USE_LUA),)
 check_lua_lib = $(shell echo "int main(){}" | $(CC) -o /dev/null -x c - $(2) -l$(1) 2>/dev/null && echo $(1))
 check_lua_inc = $(shell if [ -d $(2)$(1) ]; then echo $(2)$(1); fi;)
@@ -767,6 +776,10 @@ ifneq ($(USE_NS),)
 OPTIONS_OBJS  += src/namespace.o
 endif
 
+ifneq ($(USE_OT),)
+include contrib/opentracing/Makefile
+endif
+
 #### Global link options
 # These options are added at the end of the "ld" command line. Use LDFLAGS to
 # add options at the beginning of the "ld" command line if needed.
@@ -784,23 +797,35 @@ endif
 
 ifeq ($(TARGET),)
 all:
+	@echo "Building HAProxy without specifying a TARGET is not supported."
 	@echo
-	@echo "Due to too many reports of suboptimized setups, building without"
-	@echo "specifying the target is no longer supported. Please specify the"
-	@echo "target OS in the TARGET variable, in the following form:"
+	@echo "Usage:"
 	@echo
-	@echo "   $ make TARGET=xxx"
+	@echo "    $ make help                       # To print a full explanation."
+	@echo "    $ make TARGET=xxx USE_<feature>=1 # To build HAProxy."
 	@echo
-	@echo "Please choose the target among the following supported list :"
+	@echo "The most commonly used targets are:"
 	@echo
-	@echo "   linux-glibc, linux-glibc-legacy, linux-musl, solaris, freebsd, dragonfly, "
-	@echo "   openbsd, netbsd, cygwin, haiku, aix51, aix52, aix72-gcc, osx, generic, "
-	@echo "   custom"
+	@echo "    linux-glibc    - Modern Linux with glibc"
+	@echo "    linux-musl     - Modern Linux with musl"
+	@echo "    freebsd        - FreeBSD"
+	@echo "    openbsd        - OpenBSD"
+	@echo "    netbsd         - NetBSD"
+	@echo "    osx            - macOS"
+	@echo "    solaris        - Solaris"
 	@echo
-	@echo "Use \"generic\" if you don't want any optimization, \"custom\" if you"
-	@echo "want to precisely tweak every option, or choose the target which"
-	@echo "matches your OS the most in order to gain the maximum performance"
-	@echo "out of it. Please check the Makefile in case of doubts."
+	@echo "Choose the target which matches your OS the most in order to"
+	@echo "gain the maximum performance out of it."
+	@echo
+	@echo "Common features you might want to include in your build are:"
+	@echo
+	@echo "    USE_OPENSSL=1 - Support for TLS encrypted connections"
+	@echo "    USE_ZLIB=1    - Support for HTTP response compression"
+	@echo "    USE_PCRE=1    - Support for PCRE regular expressions"
+	@echo "    USE_LUA=1     - Support for dynamic processing using Lua"
+	@echo
+	@echo "Use 'make help' to print a full explanation of supported targets"
+	@echo "and features."
 	@echo
 	@exit 1
 else
@@ -846,7 +871,7 @@ OBJS += src/mux_h2.o src/mux_fcgi.o src/http_ana.o src/stream.o                \
         src/mworker-prog.o src/signal.o src/proto_udp.o src/lb_map.o           \
         src/sock_inet.o src/ev_select.o src/cfgparse-tcp.o                     \
         src/action.o src/thread.o src/sha1.o src/ebmbtree.o                    \
-        src/cfgparse-unix.o src/dict.o src/xxhash.o src/time.o                 \
+        src/cfgparse-unix.o src/dict.o src/time.o                              \
         src/hpack-dec.o src/arg.o src/hpack-tbl.o src/eb64tree.o               \
         src/chunk.o src/shctx.o src/regex.o src/fcgi.o src/eb32tree.o          \
         src/eb32sctree.o src/dynbuf.o src/pipe.o src/lru.o                     \
@@ -863,7 +888,6 @@ OBJS += src/nuster/cache/engine.o src/nuster/cache/filter.o                    \
         src/nuster/shmem.o src/nuster/parser.o src/nuster/http.o               \
         src/nuster/key.o src/nuster/dict.o src/nuster/sample.o                 \
         src/nuster/misc.o src/nuster/nuster.o
-
 ifneq ($(TRACE),)
 OBJS += src/calltrace.o
 endif
@@ -980,6 +1004,7 @@ clean:
 	$(Q)for dir in . src include/* doc; do rm -f $$dir/*~ $$dir/*.rej $$dir/core; done
 	$(Q)rm -f haproxy-$(VERSION).tar.gz haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION).tar.gz
 	$(Q)rm -f haproxy-$(VERSION) haproxy-$(VERSION)$(SUBVERS)$(EXTRAVERSION) nohup.out gmon.out
+	$(Q)rm -f contrib/*/*.[oas] contrib/*/*/*.[oas] contrib/*/*/*/*.[oas]
 	$(Q)rm -f contrib/halog/halog contrib/debug/flags contrib/debug/poll contrib/tcploop/tcploop
 	$(Q)rm -f src/nuster/*.[oas] src/nuster/*/*.[oas]
 

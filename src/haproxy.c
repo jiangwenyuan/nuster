@@ -1,6 +1,6 @@
 /*
  * HA-Proxy : High Availability-enabled HTTP/TCP proxy
- * Copyright 2000-2020 Willy Tarreau <willy@haproxy.org>.
+ * Copyright 2000-2021 Willy Tarreau <willy@haproxy.org>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -779,7 +779,7 @@ static void get_cur_unixsocket()
 					if (!cur_unixsocket) {
 						cur_unixsocket = strdup(un->sun_path);
 					} else {
-						if (old_unixsocket && !strcmp(un->sun_path, old_unixsocket)) {
+						if (old_unixsocket && strcmp(un->sun_path, old_unixsocket) == 0) {
 							free(cur_unixsocket);
 							cur_unixsocket = strdup(old_unixsocket);
 							return;

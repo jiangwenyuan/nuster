@@ -78,6 +78,7 @@
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
 #include <haproxy/vars.h>
+#include <haproxy/xprt_quic.h>
 
 
 /* ***** READ THIS before adding code here! *****
@@ -477,7 +478,7 @@ static STACK_OF(X509_NAME)* ssl_get_client_ca_file(char *path)
 
 struct pool_head *pool_head_ssl_capture = NULL;
 int ssl_capture_ptr_index = -1;
-static int ssl_app_data_index = -1;
+int ssl_app_data_index = -1;
 
 #ifdef HAVE_OPENSSL_KEYLOG
 int ssl_keylog_index = -1;
@@ -1495,7 +1496,7 @@ static int ssl_sock_load_ocsp(SSL_CTX *ctx, const struct cert_key_and_chain *ckc
 #endif
 
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
+#ifdef HAVE_SL_CTX_ADD_SERVER_CUSTOM_EXT
 
 #define CT_EXTENSION_TYPE 18
 
@@ -1920,7 +1921,7 @@ ssl_sock_do_create_cert(const char *servername, struct bind_conf *bind_conf, SSL
 	int 	      key_type;
 
 	/* Get the private key of the default certificate and use it */
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x10002000L)
+#ifdef HAVE_SSL_CTX_get0_privatekey
 	pkey = SSL_CTX_get0_privatekey(bind_conf->default_ctx);
 #else
 	tmp_ssl = SSL_new(bind_conf->default_ctx);
@@ -2291,7 +2292,7 @@ static void ssl_sock_switchctx_set(SSL *ssl, SSL_CTX *ctx)
 
 #if ((HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL))
 
-static int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
+int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
 {
 	struct bind_conf *s = priv;
 	(void)al; /* shut gcc stupid warning */
@@ -2302,11 +2303,11 @@ static int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
 }
 
 #ifdef OPENSSL_IS_BORINGSSL
-static int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx)
+int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx)
 {
 	SSL *ssl = ctx->ssl;
 #else
-static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
+int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 {
 #endif
 	struct connection *conn;
@@ -2324,6 +2325,24 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	s = __objt_listener(conn->target)->bind_conf;
+
+#ifdef USE_QUIC
+	if (conn->qc) {
+		/* Look for the QUIC transport parameters. */
+#ifdef OPENSSL_IS_BORINGSSL
+		if (!SSL_early_callback_ctx_extension_get(ctx, TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS,
+		                                          &extension_data, &extension_len))
+#else
+		if (!SSL_client_hello_get0_ext(ssl, TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS,
+		                               &extension_data, &extension_len))
+#endif
+			goto abort;
+
+		if (!quic_transport_params_store(conn->qc, 0, extension_data,
+		                                 extension_data + extension_len))
+			goto abort;
+	}
+#endif
 
 	if (s->ssl_conf.early_data)
 		allow_early = 1;
@@ -2471,7 +2490,7 @@ static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 					/* If this is a wildcard, look for an exclusion on the same crt-list line */
 					sni = container_of(n, struct sni_ctx, name);
 					list_for_each_entry(sni_tmp, &sni->ckch_inst->sni_ctx, by_ckch_inst) {
-						if (sni_tmp->neg && (!strcmp((const char *)sni_tmp->name.key, trash.area))) {
+						if (sni_tmp->neg && (strcmp((const char *)sni_tmp->name.key, trash.area) == 0)) {
 							skip = 1;
 							break;
 						}
@@ -3168,7 +3187,7 @@ static int ssl_sock_put_ckch_into_ctx(const char *path, const struct cert_key_an
 	}
 #endif
 
-#if (HA_OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined OPENSSL_NO_TLSEXT && !defined OPENSSL_IS_BORINGSSL)
+#ifdef HAVE_SL_CTX_ADD_SERVER_CUSTOM_EXT
 	if (sctl_ex_index >= 0 && ckch->sctl) {
 		if (ssl_sock_load_sctl(ctx, ckch->sctl) < 0) {
 			memprintf(err, "%s '%s.sctl' is present but cannot be read or parsed'.\n",
@@ -4643,6 +4662,26 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 	return cfgerr;
 }
 
+/*
+ * Create an initial CTX used to start the SSL connections.
+ * May be used by QUIC xprt which makes usage of SSL sessions initialized from SSL_CTXs.
+ * Returns 0 if succeeded, or something >0 if not.
+ */
+#ifdef USE_QUIC
+static int ssl_initial_ctx(struct bind_conf *bind_conf)
+{
+	if (bind_conf->xprt == xprt_get(XPRT_QUIC))
+		return ssl_quic_initial_ctx(bind_conf);
+	else
+		return ssl_sock_initial_ctx(bind_conf);
+}
+#else
+static int ssl_initial_ctx(struct bind_conf *bind_conf)
+{
+	return ssl_sock_initial_ctx(bind_conf);
+}
+#endif
+
 /* Walks down the two trees in bind_conf and prepares all certs. The pointer may
  * be NULL, in which case nothing is done. Returns the number of errors
  * encountered.
@@ -4665,10 +4704,10 @@ int ssl_sock_prepare_all_ctx(struct bind_conf *bind_conf)
 	}
 	/* Create initial_ctx used to start the ssl connection before do switchctx */
 	if (!bind_conf->initial_ctx) {
-		err += ssl_sock_initial_ctx(bind_conf);
+		err += ssl_initial_ctx(bind_conf);
 		/* It should not be necessary to call this function, but it's
 		   necessary first to check and move all initialisation related
-		   to initial_ctx in ssl_sock_initial_ctx. */
+		   to initial_ctx in ssl_initial_ctx. */
 		errcode |= ssl_sock_prepare_ctx(bind_conf, NULL, bind_conf->initial_ctx, &errmsg);
 	}
 	if (bind_conf->default_ctx)
@@ -4926,6 +4965,64 @@ ssl_sock_free_ca(struct bind_conf *bind_conf)
 }
 
 /*
+ * Try to allocate the BIO and SSL session objects of <conn> connection with <bio> and
+ * <ssl> as addresses, <bio_meth> as BIO method and <ssl_ctx> as SSL context inherited settings.
+ * Connect the allocated BIO to the allocated SSL session. Also set <ctx> as address of custom
+ * data for the BIO and store <conn> as user data of the SSL session object.
+ * This is the responsibility of the caller to check the validity of all the pointers passed
+ * as parameters to this function.
+ * Return 0 if succeeded, -1 if not. If failed, sets the ->err_code member of <conn> to
+ * CO_ER_SSL_NO_MEM.
+ */
+int ssl_bio_and_sess_init(struct connection *conn, SSL_CTX *ssl_ctx,
+                          SSL **ssl, BIO **bio, BIO_METHOD *bio_meth, void *ctx)
+{
+	int retry = 1;
+
+ retry:
+	/* Alloc a new SSL session. */
+	*ssl = SSL_new(ssl_ctx);
+	if (!*ssl) {
+		if (!retry--)
+			goto err;
+
+		pool_gc(NULL);
+		goto retry;
+	}
+
+	*bio = BIO_new(bio_meth);
+	if (!*bio) {
+		SSL_free(*ssl);
+		*ssl = NULL;
+		if (!retry--)
+			goto err;
+
+		pool_gc(NULL);
+		goto retry;
+	}
+
+	BIO_set_data(*bio, ctx);
+	SSL_set_bio(*ssl, *bio, *bio);
+
+	/* set connection pointer. */
+	if (!SSL_set_ex_data(*ssl, ssl_app_data_index, conn)) {
+		SSL_free(*ssl);
+		*ssl = NULL;
+		if (!retry--)
+			goto err;
+
+		pool_gc(NULL);
+		goto retry;
+	}
+
+	return 0;
+
+ err:
+	conn->err_code = CO_ER_SSL_NO_MEM;
+	return -1;
+}
+
+/*
  * This function is called if SSL * context is not yet allocated. The function
  * is designed to be called before any other data-layer operation and sets the
  * handshake flag on the connection. It is safe to call it multiple times.
@@ -4979,45 +5076,9 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 	/* If it is in client mode initiate SSL session
 	   in connect state otherwise accept state */
 	if (objt_server(conn->target)) {
-		int may_retry = 1;
-
-	retry_connect:
-		/* Alloc a new SSL session ctx */
-		ctx->ssl = SSL_new(__objt_server(conn->target)->ssl_ctx.ctx);
-		if (!ctx->ssl) {
-			if (may_retry--) {
-				pool_gc(NULL);
-				goto retry_connect;
-			}
-			conn->err_code = CO_ER_SSL_NO_MEM;
+		if (ssl_bio_and_sess_init(conn, __objt_server(conn->target)->ssl_ctx.ctx,
+		                          &ctx->ssl, &ctx->bio, ha_meth, ctx) == -1)
 			goto err;
-		}
-		ctx->bio = BIO_new(ha_meth);
-		if (!ctx->bio) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
-			if (may_retry--) {
-				pool_gc(NULL);
-				goto retry_connect;
-			}
-			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
-		}
-		BIO_set_data(ctx->bio, ctx);
-		SSL_set_bio(ctx->ssl, ctx->bio, ctx->bio);
-
-		/* set connection pointer */
-		if (!SSL_set_ex_data(ctx->ssl, ssl_app_data_index, conn)) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
-			conn->xprt_ctx = NULL;
-			if (may_retry--) {
-				pool_gc(NULL);
-				goto retry_connect;
-			}
-			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
-		}
 
 		SSL_set_connect_state(ctx->ssl);
 		if (__objt_server(conn->target)->ssl_ctx.reused_sess[tid].ptr) {
@@ -5043,47 +5104,14 @@ static int ssl_sock_init(struct connection *conn, void **xprt_ctx)
 		return 0;
 	}
 	else if (objt_listener(conn->target)) {
-		int may_retry = 1;
+		struct bind_conf *bc = __objt_listener(conn->target)->bind_conf;
 
-	retry_accept:
-		/* Alloc a new SSL session ctx */
-		ctx->ssl = SSL_new(__objt_listener(conn->target)->bind_conf->initial_ctx);
-		if (!ctx->ssl) {
-			if (may_retry--) {
-				pool_gc(NULL);
-				goto retry_accept;
-			}
-			conn->err_code = CO_ER_SSL_NO_MEM;
+		if (ssl_bio_and_sess_init(conn, bc->initial_ctx,
+		                           &ctx->ssl, &ctx->bio, ha_meth, ctx) == -1)
 			goto err;
-		}
-		ctx->bio = BIO_new(ha_meth);
-		if (!ctx->bio) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
-			if (may_retry--) {
-				pool_gc(NULL);
-				goto retry_accept;
-			}
-			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
-		}
-		BIO_set_data(ctx->bio, ctx);
-		SSL_set_bio(ctx->ssl, ctx->bio, ctx->bio);
-
-		/* set connection pointer */
-		if (!SSL_set_ex_data(ctx->ssl, ssl_app_data_index, conn)) {
-			SSL_free(ctx->ssl);
-			ctx->ssl = NULL;
-			if (may_retry--) {
-				pool_gc(NULL);
-				goto retry_accept;
-			}
-			conn->err_code = CO_ER_SSL_NO_MEM;
-			goto err;
-		}
 
 #ifdef SSL_READ_EARLY_DATA_SUCCESS
-		if (__objt_listener(conn->target)->bind_conf->ssl_conf.early_data) {
+		if (bc->ssl_conf.early_data) {
 			b_alloc(&ctx->early_buf);
 			SSL_set_max_early_data(ctx->ssl,
 			    /* Only allow early data if we managed to allocate
@@ -6242,7 +6270,7 @@ int ssl_load_global_issuer_from_BIO(BIO *in, char *fp, char **err)
 		memprintf(err, "unable to load issuers-chain %s : SubjectName not found.\n", fp);
 		goto end;
 	}
-	key = XXH64(ASN1_STRING_get0_data(skid), ASN1_STRING_length(skid), 0);
+	key = XXH3(ASN1_STRING_get0_data(skid), ASN1_STRING_length(skid), 0);
 	for (node = eb64_lookup(&cert_issuer_tree, key); node; node = eb64_next(node)) {
 		issuer = container_of(node, typeof(*issuer), node);
 		if (!X509_NAME_cmp(name, X509_get_subject_name(sk_X509_value(issuer->chain, 0)))) {
@@ -6280,7 +6308,7 @@ int ssl_load_global_issuer_from_BIO(BIO *in, char *fp, char **err)
 	if (akid && akid->keyid) {
 		struct eb64_node *node;
 		u64 hk;
-		hk = XXH64(ASN1_STRING_get0_data(akid->keyid), ASN1_STRING_length(akid->keyid), 0);
+		hk = XXH3(ASN1_STRING_get0_data(akid->keyid), ASN1_STRING_length(akid->keyid), 0);
 		for (node = eb64_lookup(&cert_issuer_tree, hk); node; node = eb64_next(node)) {
 			struct issuer_chain *ti = container_of(node, typeof(*issuer), node);
 			if (X509_check_issued(sk_X509_value(ti->chain, 0), cert) == X509_V_OK) {
@@ -6322,27 +6350,22 @@ static int ssl_check_async_engine_count(void) {
 }
 #endif
 
-/* This function is used with TLS ticket keys management. It permits to browse
- * each reference. The variable <getnext> must contain the current node,
- * <end> point to the root node.
- */
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
+/* This function is used with TLS ticket keys management. It permits to browse
+ * each reference. The variable <ref> must point to the current node's list
+ * element (which starts by the root), and <end> must point to the root node.
+ */
 static inline
-struct tls_keys_ref *tlskeys_list_get_next(struct tls_keys_ref *getnext, struct list *end)
+struct tls_keys_ref *tlskeys_list_get_next(struct list *ref, struct list *end)
 {
-	struct tls_keys_ref *ref = getnext;
+	/* Get next list entry. */
+	ref = ref->n;
 
-	while (1) {
+	/* If the entry is the last of the list, return NULL. */
+	if (ref == end)
+		return NULL;
 
-		/* Get next list entry. */
-		ref = LIST_NEXT(&ref->list, struct tls_keys_ref *, list);
-
-		/* If the entry is the last of the list, return NULL. */
-		if (&ref->list == end)
-			return NULL;
-
-		return ref;
-	}
+	return LIST_ELEM(ref, struct tls_keys_ref *, list);
 }
 
 static inline
@@ -6406,10 +6429,8 @@ static int cli_io_handler_tlskeys_files(struct appctx *appctx) {
 		 * available field of this pointer is <list>. It is used with the function
 		 * tlskeys_list_get_next() for retruning the first available entry
 		 */
-		if (appctx->ctx.cli.p0 == NULL) {
-			appctx->ctx.cli.p0 = LIST_ELEM(&tlskeys_reference, struct tls_keys_ref *, list);
-			appctx->ctx.cli.p0 = tlskeys_list_get_next(appctx->ctx.cli.p0, &tlskeys_reference);
-		}
+		if (appctx->ctx.cli.p0 == NULL)
+			appctx->ctx.cli.p0 = tlskeys_list_get_next(&tlskeys_reference, &tlskeys_reference);
 
 		appctx->st2 = STAT_ST_LIST;
 		/* fall through */
@@ -6479,7 +6500,7 @@ static int cli_io_handler_tlskeys_files(struct appctx *appctx) {
 				break;
 
 			/* get next list entry and check the end of the list */
-			appctx->ctx.cli.p0 = tlskeys_list_get_next(appctx->ctx.cli.p0, &tlskeys_reference);
+			appctx->ctx.cli.p0 = tlskeys_list_get_next(&ref->list, &tlskeys_reference);
 		}
 
 		appctx->st2 = STAT_ST_FIN;

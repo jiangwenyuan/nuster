@@ -55,13 +55,13 @@
 /* 0x00002000 - 0x00008000 unused */
 
 #define H1C_F_WAIT_OPPOSITE  0x00010000 /* Don't read more data for now, waiting sync with opposite side */
-#define H1C_F_WANT_SPLICE    0x00020000 /* Don't read into a bufffer because we want to use or we are using splicing */
+#define H1C_F_WANT_SPLICE    0x00020000 /* Don't read into a buffer because we want to use or we are using splicing */
 #define H1C_F_ERR_PENDING    0x00040000 /* Send an error and close the connection ASAP (implies H1C_F_ST_ERROR) */
 #define H1C_F_WAIT_NEXT_REQ  0x00080000 /*  waiting for the next request to start, use keep-alive timeout */
 #define H1C_F_UPG_H2C        0x00100000 /* set if an upgrade to h2 should be done */
 #define H1C_F_CO_MSG_MORE    0x00200000 /* set if CO_SFL_MSG_MORE must be set when calling xprt->snd_buf() */
 #define H1C_F_CO_STREAMER    0x00400000 /* set if CO_SFL_STREAMER must be set when calling xprt->snd_buf() */
-/* 0x00800000 - 0x40000000 unsued*/
+/* 0x00800000 - 0x40000000 unused */
 
 #define H1C_F_IS_BACK        0x80000000 /* Set on outgoing connection */
 
@@ -69,7 +69,7 @@
  * H1 Stream flags (32 bits)
  */
 #define H1S_F_NONE           0x00000000
-/* 0x00000001..0x00000004 unsued */
+/* 0x00000001..0x00000004 unused */
 #define H1S_F_REOS           0x00000008 /* End of input stream seen even if not delivered yet */
 #define H1S_F_WANT_KAL       0x00000010
 #define H1S_F_WANT_TUN       0x00000020
@@ -934,7 +934,7 @@ static void h1_set_cli_conn_mode(struct h1s *h1s, struct h1m *h1m)
 
 	if (h1m->flags & H1_MF_RESP) {
 		/* Output direction: second pass */
-		if ((h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) ||
+		if ((h1s->meth == HTTP_METH_CONNECT && h1s->status >= 200 && h1s->status < 300) ||
 		    h1s->status == 101) {
 			/* Either we've established an explicit tunnel, or we're
 			 * switching the protocol. In both cases, we're very unlikely to
@@ -994,7 +994,7 @@ static void h1_set_srv_conn_mode(struct h1s *h1s, struct h1m *h1m)
 
 	if (h1m->flags & H1_MF_RESP) {
 		/* Input direction: second pass */
-		if ((h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) ||
+		if ((h1s->meth == HTTP_METH_CONNECT && h1s->status >= 200 && h1s->status < 300) ||
 		    h1s->status == 101) {
 			/* Either we've established an explicit tunnel, or we're
 			 * switching the protocol. In both cases, we're very unlikely to
@@ -1125,11 +1125,11 @@ static void h1_adjust_case_outgoing_hdr(struct h1s *h1s, struct h1m *h1m, struct
 	if (eb_is_empty(&hdrs_map.map))
 		return;
 
-	/* No conversion fo the request headers */
+	/* No conversion for the request headers */
 	if (!(h1m->flags & H1_MF_RESP) && !(h1s->h1c->px->options2 & PR_O2_H1_ADJ_BUGSRV))
 		return;
 
-	/* No conversion fo the response headers */
+	/* No conversion for the response headers */
 	if ((h1m->flags & H1_MF_RESP) && !(h1s->h1c->px->options2 & PR_O2_H1_ADJ_BUGCLI))
 		return;
 
@@ -1568,7 +1568,10 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, size_t count
 		h1s->cs->flags &= ~CS_FL_MAY_SPLICE;
 	}
 
-	if (h1s->flags & H1S_F_PARSING_DONE)
+	/* Don't set EOI on the conn-stream for protocol upgrade requests, wait
+	 * the response to do so or not depending on the status code.
+	 */
+	if ((h1s->flags & H1S_F_PARSING_DONE) && !(h1m->flags & H1_MF_CONN_UPG))
 		h1s->cs->flags |= CS_FL_EOI;
 
 	if (h1s_data_pending(h1s) && !htx_is_empty(htx))
@@ -1577,8 +1580,10 @@ static size_t h1_process_input(struct h1c *h1c, struct buffer *buf, size_t count
 		h1s->cs->flags &= ~(CS_FL_RCV_MORE | CS_FL_WANT_ROOM);
 		if (h1s->flags & H1S_F_REOS) {
 			h1s->cs->flags |= CS_FL_EOS;
-			if (h1m->state == H1_MSG_TUNNEL)
+			if (h1m->state >= H1_MSG_DONE) {
+				/* DONE or TUNNEL, set EOI on the conn-stream */
 				h1s->cs->flags |= CS_FL_EOI;
+			}
 			else if (h1m->state > H1_MSG_LAST_LF && h1m->state < H1_MSG_DONE)
 				h1s->cs->flags |= CS_FL_ERROR;
 		}
@@ -1817,8 +1822,8 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 				if ((h1s->meth != HTTP_METH_CONNECT &&
 				     (h1m->flags & (H1_MF_VER_11|H1_MF_RESP|H1_MF_CLEN|H1_MF_CHNK|H1_MF_XFER_LEN)) ==
 				     (H1_MF_VER_11|H1_MF_XFER_LEN)) ||
-				    (h1s->status >= 200 && h1s->status != 204 && h1s->status != 304 &&
-				     h1s->meth != HTTP_METH_HEAD && !(h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) &&
+				    (h1s->status >= 200 && h1s->status != 204 && h1s->status != 304 && h1s->meth != HTTP_METH_HEAD &&
+				     !(h1s->meth == HTTP_METH_CONNECT && h1s->status >= 200 && h1s->status < 300) &&
 				     (h1m->flags & (H1_MF_VER_11|H1_MF_RESP|H1_MF_CLEN|H1_MF_CHNK|H1_MF_XFER_LEN)) ==
 				     (H1_MF_VER_11|H1_MF_RESP|H1_MF_XFER_LEN))) {
 					/* chunking needed but header not seen */
@@ -1862,7 +1867,7 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 					h1_set_req_tunnel_mode(h1s);
 				}
 				else if ((h1m->flags & H1_MF_RESP) &&
-					 ((h1s->meth == HTTP_METH_CONNECT && h1s->status == 200) || h1s->status == 101)) {
+					 ((h1s->meth == HTTP_METH_CONNECT && h1s->status >= 200 && h1s->status < 300) || h1s->status == 101)) {
 					/* a successful reply to a CONNECT or a protocol switching is sent
 					 * to the client. Switch the response to tunnel mode.
 					 */
@@ -2023,6 +2028,13 @@ static size_t h1_process_output(struct h1c *h1c, struct buffer *buf, size_t coun
 
 	htx_to_buf(chn_htx, buf);
   out:
+	/* Both the request and the response reached the DONE state. So set EOI
+	 * flag on the conn-stream. Most of time, the flag will already be set,
+	 * except for protocol upgrades.
+	 */
+	if (h1s->cs && h1s->req.state == H1_MSG_DONE && h1s->res.state == H1_MSG_DONE)
+			h1s->cs->flags |= CS_FL_EOI;
+
 	if (!buf_room_for_htx_data(&h1c->obuf)) {
 		TRACE_STATE("h1c obuf full", H1_EV_TX_DATA|H1_EV_H1S_BLK, h1c->conn, h1s);
 		h1c->flags |= H1C_F_OUT_FULL;
@@ -2589,6 +2601,7 @@ static struct task *h1_timeout_task(struct task *t, void *context, unsigned shor
 				h1_send(h1c);
 			if (b_data(&h1c->obuf) || (h1c->flags & H1C_F_ERR_PENDING)) {
 				h1_refresh_timeout(h1c);
+				HA_SPIN_UNLOCK(OTHER_LOCK, &idle_conns[tid].takeover_lock);
 				return t;
 			}
 		}
@@ -2769,8 +2782,10 @@ static void h1_detach(struct conn_stream *cs)
 			/* If we have a new request, process it immediately or
 			 * subscribe for reads waiting for new data
 			 */
-			if (unlikely(b_data(&h1c->ibuf)))
-				h1_process(h1c);
+			if (unlikely(b_data(&h1c->ibuf))) {
+				if (h1_process(h1c) == -1)
+					goto end;
+			}
 			else
 				h1c->conn->xprt->subscribe(h1c->conn, h1c->conn->xprt_ctx, SUB_RETRY_RECV, &h1c->wait_event);
 		}
@@ -3168,7 +3183,7 @@ static int add_hdr_case_adjust(const char *from, const char *to, char **err)
 	}
 
 	/* Be sure only the case differs between <from> and <to> */
-	if (strcasecmp(from, to)) {
+	if (strcasecmp(from, to) != 0) {
 		memprintf(err, "<from> and <to> must not differ execpt the case");
 		return -1;
 	}

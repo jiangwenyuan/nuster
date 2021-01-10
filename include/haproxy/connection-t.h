@@ -45,6 +45,7 @@ struct proxy;
 struct server;
 struct session;
 struct pipe;
+struct quic_conn;
 
 /* Note: subscribing to these events is only valid after the caller has really
  * attempted to perform the operation, and failed to proceed or complete.
@@ -282,6 +283,7 @@ enum {
 	XPRT_RAW = 0,
 	XPRT_SSL = 1,
 	XPRT_HANDSHAKE = 2,
+	XPRT_QUIC = 3,
 	XPRT_ENTRIES /* must be last one */
 };
 
@@ -496,6 +498,7 @@ struct connection {
 	char *proxy_authority;	      /* Value of authority TLV received via PROXYv2 */
 	uint8_t proxy_authority_len;  /* Length of authority TLV received via PROXYv2 */
 	struct ist proxy_unique_id;  /* Value of the unique ID TLV received via PROXYv2 */
+	struct quic_conn *qc;         /* Only present if this connection is a QUIC one */
 };
 
 struct mux_proto_list {
