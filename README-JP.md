@@ -1094,7 +1094,7 @@ HAProxyの`query`と同じで、ただ request とresponse 両方使える.
 
 ## debug方法?
 
-`global`に`debug`を設定か, `nuster`を`-d`で起動する。
+`nuster`を`-d`で起動する。
 
 nusterに関するメッセージは`[nuster`を含む。
 
@@ -1131,7 +1131,6 @@ global
     nuster cache on data-size 100m
     nuster nosql on data-size 100m
     # daemon
-    # debug
 defaults
     retries 3
     option redispatch

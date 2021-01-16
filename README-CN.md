@@ -1096,7 +1096,7 @@ Nuster 加入了一些新的sample fetches
 
 ## 如何调试?
 
-在`global`添加`debug`， 或者带`-d`启动`nuster`
+带`-d`启动`nuster`
 
 nuster相关的调试信息以`[nuster`开头
 
@@ -1134,7 +1134,6 @@ global
     nuster nosql on data-size 100m
     master-worker # v3
     # daemon
-    # debug
 defaults
     retries 3
     option redispatch

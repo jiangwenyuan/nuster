@@ -1133,9 +1133,7 @@ Set `master-worker` in `global` section, or start `nuster` with `-W`.
 
 ## How to debug?
 
-Set `debug` in `global` section, or start `nuster` with `-d`.
-
-Nuster related debug messages start with `[nuster`.
+Start `nuster` with `-d`.
 
 ## How to cache POST request?
 
@@ -1174,7 +1172,6 @@ global
     nuster nosql on data-size 100m
     master-worker # since v3
     # daemon
-    # debug
 defaults
     retries 3
     option redispatch
