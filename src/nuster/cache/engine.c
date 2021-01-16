@@ -432,10 +432,6 @@ nst_cache_init() {
     uint64_t      dict_size, data_size, size;
     int           clean_temp;
 
-#ifdef USE_THREAD
-    pthread_t     tid;
-#endif
-
     root       = global.nuster.cache.root;
     dict_size  = global.nuster.cache.dict_size;
     data_size  = global.nuster.cache.data_size;
@@ -472,7 +468,7 @@ nst_cache_init() {
         nuster.cache->shmem = shmem;
         nuster.cache->root  = root;
 
-        if(nst_store_init(&nuster.cache->store, root, shmem, clean_temp) != NST_OK) {
+        if(nst_store_init(&nuster.cache->store, root, shmem, clean_temp, nuster.cache) != NST_OK) {
             ha_alert("Failed to init nuster cache store.\n");
             exit(1);
         }
@@ -482,9 +478,6 @@ nst_cache_init() {
             exit(1);
         }
 
-#ifdef USE_THREAD
-        pthread_create(&tid, NULL, nst_disk_load_thread, nuster.cache);
-#endif
 
     }
 }

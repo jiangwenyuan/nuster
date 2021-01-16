@@ -481,7 +481,7 @@ int nst_disk_read_path(nst_disk_obj_t *obj, hpx_ist_t path);
 int nst_disk_read_etag(nst_disk_obj_t *obj, hpx_ist_t etag);
 int nst_disk_read_last_modified(nst_disk_obj_t *obj, hpx_ist_t last_modified);
 
-int nst_disk_init(nst_disk_t *disk, hpx_ist_t root, nst_shmem_t *shmem, int clean_temp);
+int nst_disk_init(nst_disk_t *disk, hpx_ist_t root, nst_shmem_t *shmem, int clean_temp, void *data);
 void nst_disk_load(nst_core_t *core);
 void nst_disk_cleanup(nst_core_t *core);
 int nst_disk_purge_by_key(nst_disk_obj_t *disk, nst_key_t *key, hpx_ist_t root);

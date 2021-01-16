@@ -392,10 +392,6 @@ nst_nosql_init() {
     uint64_t      dict_size, data_size, size;
     int           clean_temp;
 
-#ifdef USE_THREAD
-    pthread_t     tid;
-#endif
-
     root       = global.nuster.nosql.root;
     dict_size  = global.nuster.nosql.dict_size;
     data_size  = global.nuster.nosql.data_size;
@@ -432,7 +428,7 @@ nst_nosql_init() {
         nuster.nosql->shmem = shmem;
         nuster.nosql->root  = root;
 
-        if(nst_store_init(&nuster.nosql->store, root, shmem, clean_temp) != NST_OK) {
+        if(nst_store_init(&nuster.nosql->store, root, shmem, clean_temp, nuster.nosql) != NST_OK) {
             ha_alert("Failed to init nuster nosql store.\n");
             exit(1);
         }
@@ -441,10 +437,6 @@ nst_nosql_init() {
             ha_alert("Failed to init nuster nosql dict.\n");
             exit(1);
         }
-
-#ifdef USE_THREAD
-        pthread_create(&tid, NULL, nst_disk_load_thread, nuster.nosql);
-#endif
 
     }
 }
