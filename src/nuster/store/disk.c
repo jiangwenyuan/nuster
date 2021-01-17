@@ -200,6 +200,10 @@ nst_disk_read_last_modified(nst_disk_obj_t *obj, hpx_ist_t last_modified) {
 int
 nst_disk_init(nst_disk_t *disk, hpx_ist_t root, nst_shmem_t *shmem, int clean_temp, void *data) {
 
+    if(global.chroot != NULL) {
+        return NST_OK;
+    }
+
     if(root.len) {
 
 #ifdef USE_THREAD

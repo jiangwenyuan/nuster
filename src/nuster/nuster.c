@@ -230,3 +230,36 @@ nuster_init() {
     nst_nosql_init();
 }
 
+void
+nuster_handle_chroot() {
+    hpx_ist_t     root;
+    nst_shmem_t  *shmem;
+    nst_disk_t   *disk;
+    int           clean_temp;
+
+    root       = global.nuster.cache.root;
+    clean_temp = global.nuster.cache.clean_temp;
+    shmem      = global.nuster.cache.shmem;
+    disk       = &nuster.cache->store.disk;
+
+    if(nst_disk_init(disk, root, shmem, clean_temp, nuster.cache) != NST_OK) {
+        goto err;
+    }
+
+    root       = global.nuster.nosql.root;
+    clean_temp = global.nuster.nosql.clean_temp;
+    shmem      = global.nuster.nosql.shmem;
+    disk       = &nuster.nosql->store.disk;
+
+    if(nst_disk_init(disk, root, shmem, clean_temp, nuster.nosql) != NST_OK) {
+        goto err;
+    }
+
+    return;
+
+err:
+    ha_alert("[nuster] Failed init disk.\n");
+
+    exit(1);
+}
+

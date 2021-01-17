@@ -315,6 +315,15 @@ If `dict.nosql.used` is greater than `dict.nosql.length`, then increase `dict-si
 
 Specify the root directory of the disk persistence. This has to be set in order to use disk persistence.
 
+If chroot is also set, the real directory is chroot+dir. For example
+
+```
+chroot /data
+nuster cache on dir /cache
+```
+
+Cache is saved to /data/cache
+
 ### dict-cleaner
 
 Prior to v2.x, manager tasks like removing invalid cache data, resetting dict entries are executed in iterations in each HTTP request. Corresponding indicators or pointers are increased or advanced in each iteration.

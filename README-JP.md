@@ -311,6 +311,15 @@ dict.nosql.used:                0
 
 パーシステンスのrootディレクトリを設定する、パーシステンス使うには必要。
 
+chrootある場合、実際の保存場所はchroot+dir。例えば
+
+```
+chroot /data
+nuster cache on dir /cache
+```
+
+キャッシュの実際の保存場所は/data/cache
+
 ### dict-cleaner
 
 一回で最多`dict-cleaner`個のentries をチェックして, 無効なentriesは削除する(デフォルト、1000).

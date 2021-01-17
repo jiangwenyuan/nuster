@@ -74,4 +74,6 @@ nuster_check_applet(hpx_stream_t *s, hpx_channel_t *req, hpx_proxy_t *px) {
     return nst_manager(s, req, px) || nst_nosql_check_applet(s, req, px);
 }
 
+void nuster_handle_chroot();
+
 #endif /* _NUSTER_H */

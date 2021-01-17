@@ -3568,6 +3568,8 @@ int main(int argc, char **argv)
 		global.chroot = NULL;
 		set_identity(argv[0]);
 
+		nuster_handle_chroot();
+
 		/* pass through every cli socket, and check if it's bound to
 		 * the current process and if it exposes listeners sockets.
 		 * Caution: the GTUNE_SOCKET_TRANSFER is now set after the fork.
