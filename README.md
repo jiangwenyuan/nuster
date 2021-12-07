@@ -1144,6 +1144,16 @@ Set `master-worker` in `global` section, or start `nuster` with `-W`.
 
 Start `nuster` with `-d`.
 
+## What could be the cause of 504 gateway timeout?
+
+Please check your backend settings. Did you specify a port in the server directive? If set, all connections will
+be sent to this port. If unset, the same port the client connected to will be used.
+```
+backend be
+    mode http
+    server s1 10.0.0.3:80
+```
+
 ## How to cache POST request?
 
 Enable `option http-buffer-request` and set `body` in cache rule `key`.
